@@ -9,3 +9,8 @@ donkey
 *.enc
 .secret_key
 secrets.toml
+
+# Testament artifacts
+testresults/
+tests/**/*[!.nim]
+!tests/**/*.nim
