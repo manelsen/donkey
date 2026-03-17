@@ -1,6 +1,6 @@
 ## Logger tests — verifies filtering, child loggers, and subsystem names
 
-import std/[strutils, unittest]
+import std/unittest
 import donkey/core/log
 import donkey/core/types
 
