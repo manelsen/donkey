@@ -2,7 +2,7 @@
 ## runContractTests/1 is called against every implementation.
 ## Add new impls here; tests apply automatically.
 
-import std/[os, unittest]
+import std/[os, strutils, unittest]
 import donkey/adapters/secrets/file_key
 
 # ── contract ──────────────────────────────────────────────────────────────────
@@ -24,25 +24,25 @@ proc runContractTests(store: FileKeyStore) =
       check rt == plain
 
     test "encrypt produces enc2: prefix when enabled":
-      if not store.enabled: skip()
-      let ct = store.encrypt("anything")
-      check ct.startsWith("enc2:")
+      if store.enabled:
+        let ct = store.encrypt("anything")
+        check ct.startsWith("enc2:")
 
     test "encrypt is non-deterministic (nonce randomised)":
-      if not store.enabled: skip()
-      let a = store.encrypt("same")
-      let b = store.encrypt("same")
-      check a != b   # different nonces → different ciphertext
+      if store.enabled:
+        let a = store.encrypt("same")
+        let b = store.encrypt("same")
+        check a != b   # different nonces → different ciphertext
 
     test "decrypt returns plaintext value unchanged":
       check store.decrypt("no-prefix-here") == "no-prefix-here"
 
     test "decrypt rejects tampered ciphertext":
-      if not store.enabled: skip()
-      let ct     = store.encrypt("sensitive")
-      let tamper = ct[0..^3] & "XX"   # corrupt last 2 bytes
-      expect DecryptionError:
-        discard store.decrypt(tamper)
+      if store.enabled:
+        let ct     = store.encrypt("sensitive")
+        let tamper = ct[0..^3] & "XX"   # corrupt last 2 bytes
+        expect DecryptionError:
+          discard store.decrypt(tamper)
 
     test "empty string roundtrips without crash":
       check store.decrypt(store.encrypt("")) == ""

@@ -1,6 +1,6 @@
 ## Config loader contract tests — RED first, then implement loader.nim
 
-import std/[os, unittest]
+import std/[os, strutils, unittest]
 import donkey/config/loader
 import donkey/core/types
 

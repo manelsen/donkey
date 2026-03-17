@@ -14,4 +14,4 @@ requires "parsetoml >= 0.6.0"
 
 # Tasks
 task test, "Run all tests":
-  exec "testament all"
+  exec "testament --megatest:off all"
