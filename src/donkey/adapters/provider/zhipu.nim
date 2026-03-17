@@ -16,7 +16,7 @@ import ../../ports/provider
 
 const
   ZhipuEndpoint* = "https://api.z.ai/api/coding/paas/v4/chat/completions"
-  ZhipuDefaultModel* = "glm-4-flash"
+  ZhipuDefaultModel* = "glm-4.7"
 
 type
   ZhipuAdapter* = object
