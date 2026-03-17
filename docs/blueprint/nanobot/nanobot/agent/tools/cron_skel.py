@@ -1,0 +1,36 @@
+"""Cron tool for scheduling reminders and tasks."""
+from contextvars import ContextVar
+from typing import Any
+from nanobot.agent.tools.base import Tool
+from nanobot.cron.service import CronService
+from nanobot.cron.types import CronSchedule
+class CronTool(Tool):
+    """Tool to schedule reminders and recurring tasks."""
+    def __init__(self, cron_service: CronService):
+        ...
+    def set_context(self, channel: str, chat_id: str) -> None:
+        """Set the current session context for delivery."""
+        ...
+    def set_cron_context(self, active: bool):
+        """Mark whether the tool is executing inside a cron job callback."""
+        ...
+    def reset_cron_context(self, token) -> None:
+        """Restore previous cron context."""
+        ...
+    @property
+    def name(self) -> str:
+        ...
+    @property
+    def description(self) -> str:
+        ...
+    @property
+    def parameters(self) -> dict[str, Any]:
+        ...
+    async def execute(self, action: str, message: str = '', every_seconds: int | None = None, cron_expr: str | None = None, tz: str | None = None, at: str | None = None, job_id: str | None = None, **kwargs: Any) -> str:
+        ...
+    def _add_job(self, message: str, every_seconds: int | None, cron_expr: str | None, tz: str | None, at: str | None) -> str:
+        ...
+    def _list_jobs(self) -> str:
+        ...
+    def _remove_job(self, job_id: str | None) -> str:
+        ...

@@ -1,0 +1,11 @@
+nimcache/
+nimblecache/
+.nimble/
+*.exe
+donkey
+/dist/
+
+# Never commit plaintext secrets or the key file
+*.enc
+.secret_key
+secrets.toml

@@ -1,0 +1,1372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="generator" content="Asciidoctor 2.0.16">
+<title>The Nim memory model</title>
+<style>
+table {
+    border-collapse: separate;
+    border-spacing: 0.2em 0.6em;
+}
+
+*, *:before, *:after {
+    box-sizing: border-box;
+    -moz-box-sizing: border-box;
+    -webkit-box-sizing: border-box;
+}
+
+#header, #content, #footnotes, #footer {
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    max-width: 45em;
+    position: relative;
+    padding-left: 1em;
+    padding-right: 1em
+}
+
+body {
+    background: #fcfaf7;
+    color: #222727;
+    margin-top: -1.8em;
+    font-family: "Fira Sans", "Open Sans", "Noto Sans", "DejaVu Sans", sans-serif;
+    line-height: 1.6;
+    tab-size: 4;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, #toctitle, .sidebarblock>.content>.title, h4, h5, h6 {
+    font-weight: 400;
+    font-style: normal;
+    color: #cb4b16;
+    margin-top: 2.5em;
+}
+
+h1 {
+  margin-top: 4.0em;
+}
+
+h3 {
+    font-style: italic;
+}
+
+code {
+    font-family: "Fira Mono", "Hack", "Noto Sans Mono", "DejaVu Sans Mono", monospace;
+    font-size: 0.9em;
+    font-weight: 400;
+}
+
+a {
+    color: #268bd2;
+    text-decoration-color: #7daed1;
+}
+
+a:hover, a:focus {
+    color: #cb4b16;
+    text-decoration-color: #cb4b16;
+}
+
+p {
+    font-size: 1.125em;
+    text-rendering: optimizeLegibility
+}
+
+
+*:not(pre)>code {
+    padding: 0.0em 0.35ex;
+    background-color: #eeebe2;
+    border-radius: 6px;
+    -webkit-border-radius: 6px;
+    word-wrap: break-word;
+}
+
+pre.rouge {
+  padding: 1.0em;
+}
+
+pre, pre>code {
+    line-height: 1.30;
+    font-family: "Fira Mono", "Hack", "Noto Sans Mono", "DejaVu Sans Mono", monospace;
+    font-size: 0.95em;
+    border-radius: 12px;
+    -webkit-border-radius: 12px;
+}
+
+td {
+    vertical-align: top;
+}
+
+.admonitionblock td.icon [class^="fa icon-"] {
+    font-size: 2.5em;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, .5);
+}
+
+.admonitionblock>table td.icon {
+    text-align: center;
+    width: 80px;
+}
+
+.admonitionblock td.icon .icon-note:before {
+    content: "\f05a";
+    color: #586e75;
+}
+
+.admonitionblock td.icon .icon-warning:before {
+    content: "\f071";
+    color: #cb4b16;
+}
+
+.literalblock pre, .listingblock pre:not(.highlight), .listingblock pre[class="highlight"], .listingblock pre[class^="highlight "], .listingblock pre.CodeRay, .listingblock pre.prettyprint {
+    background: #eeebe2;
+    padding: 10px;
+}
+
+.listingblock>.title {
+    line-height: 1.0;
+    font-size: 0.95em;
+    color: #cb4b16;
+    font-weight: 400;
+    font-style: italic;
+    margin-bottom: -0.5em;
+}
+
+.conum[data-value] {
+    display: inline-block;
+    color: #fcfaf7;
+    background-color: #586e75;
+    border-radius: 5px;
+    -webkit-border-radius: 5px;
+    text-align: center;
+    font-size: 0.8em;
+    width: 3.0em;
+    line-height: 1.5em;
+    margin-right: 1em;
+    font-style: normal;
+    font-weight: bold;
+}
+
+hr {
+    border: solid #586e75;
+    border-width: 1px 0 0;
+    margin-top: 5em;
+}
+
+em, i {
+    font-style: italic;
+    line-height: inherit;
+}
+
+strong, b {
+    font-weight: bold;
+    line-height: inherit;
+}
+
+.conum[data-value]+b {
+    display: none;
+}
+
+.conum[data-value]:after {
+    content: attr(data-value)
+}
+
+pre .conum[data-value] {
+    position: relative;
+    top: -.125em;
+}
+
+b.conum * {
+    color: inherit!important;
+}
+
+ol li {
+    padding-left: 1em;
+}
+
+@media only screen and (min-width:850px) {
+    body.toc2 {
+        padding-left: 15em;
+        margin-top: -5em;
+    }
+
+    #toc.toc2 {
+        background: #fcfaf7;
+        position: fixed;
+        width: 15em;
+        left: 0;
+        top: 0;
+        border-right: 2px solid #efefed;
+        padding: 0.5em;
+        height: 100%;
+        overflow: auto;
+    }
+}
+
+#toc.toc2 #toctitle {
+    margin-top: 0;
+    margin-bottom: .8rem;
+    font-size: 1.25em;
+}
+#toc.toc2>ul {
+    font-size: 0.875em;
+    padding-left: 0.5em;
+}
+
+#toc.toc2 ul ul {
+    padding-left: 0.5em;
+}
+
+#toc.toc2 a {
+    text-decoration: none;
+}
+
+#toc.toc2 li {
+    margin-left: 0.5em;
+    margin-top: 0em;
+    margin-bottom: 0em;
+}
+
+</style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+</head>
+<body class="book toc2 toc-left">
+<div id="header">
+<h1>The Nim memory model</h1>
+<div id="toc" class="toc2">
+<div id="toctitle">Table of Contents</div>
+<ul class="sectlevel1">
+<li><a href="#_introduction">Introduction</a></li>
+<li><a href="#_computer_memory_basics">Computer memory basics</a>
+<ul class="sectlevel2">
+<li><a href="#_word_size">Word size</a></li>
+<li><a href="#_endianess">Endianess</a></li>
+</ul>
+</li>
+<li><a href="#_two_ways_to_organize_memory">Two ways to organize memory</a>
+<ul class="sectlevel2">
+<li><a href="#_the_stack">The stack</a>
+<ul class="sectlevel3">
+<li><a href="#_stack_theory">Stack theory</a></li>
+<li><a href="#_stacks_in_practice">Stacks in practice</a></li>
+</ul>
+</li>
+<li><a href="#_the_heap">The heap</a>
+<ul class="sectlevel3">
+<li><a href="#_heap_theory">Heap theory</a></li>
+<li><a href="#_the_heap_in_practice">The heap in practice</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#_memory_organization_in_nim">Memory organization in Nim</a>
+<ul class="sectlevel2">
+<li><a href="#_using_pointers">Using pointers</a></li>
+<li><a href="#_the_stack_local_variables">The stack: local variables</a></li>
+<li><a href="#_traced_references_and_the_garbage_collector">Traced references and the garbage collector</a></li>
+</ul>
+</li>
+<li><a href="#_how_nim_stores_data_in_memory">How Nim stores data in memory</a>
+<ul class="sectlevel2">
+<li><a href="#_primitive_types">Primitive types</a></li>
+<li><a href="#_compound_types_objects">Compound types: objects</a></li>
+<li><a href="#_strings_and_seqs">Strings and seqs</a>
+<ul class="sectlevel3">
+<li><a href="#_lets_talk_about_seqs">Let&#8217;s talk about seqs</a></li>
+<li><a href="#_growing_a_seq">Growing a seq</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#_conclusion">Conclusion</a></li>
+</ul>
+</div>
+</div>
+<div id="content">
+<div class="sect1">
+<h2 id="_introduction">Introduction</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>This is a small tutorial explaining how Nim stores data in memory. It will
+explain the essentials which every Nim programmer should know, but it will also
+dive deeper in the way Nim organizes its data structures like strings and seqs.</p>
+</div>
+<div class="paragraph">
+<p>For most practical purposes, Nim will take care of all memory management for
+your program without bothering you with the details. As long as you stick to
+the safe parts of the language, you will rarely have to work with memory
+addresses, or make explicit memory allocations. This changes however when you
+want your Nim code to interop with external C code or C libraries - in this
+case you might need to know where and how your Nim objects are stored in memory
+so you can pass this to C, or you will need to know how to access C-allocated
+data to make it accessible by Nim.</p>
+</div>
+<div class="paragraph">
+<p>The first parts of this document will be familiar to readers with a C or C++
+background, as a lot of it is not unique to the Nim language. In contrast, some
+things might be new to programmers coming from dynamic languages like Python or
+Javascript, where memory handling is more abstracted away.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+Most&#8201;&#8212;&#8201;if not all&#8201;&#8212;&#8201;of this document applies to the C and C++ code generator,
+since the Javascript backend does not use raw memory but relies on Javascript
+objects instead.
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_computer_memory_basics">Computer memory basics</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>This section gives a brief and abstract introduction (warning: gross
+simplifications ahead!) about computer memory, and what it looks like from the
+point of view of a CPU and a computer program.</p>
+</div>
+<div class="sect2">
+<h3 id="_word_size">Word size</h3>
+<div class="paragraph">
+<p>A computer&#8217;s main memory (RAM) consists of a lot of memory locations, each of
+which has an unique address. Depending on the CPU architecture the size of each
+memory location (the "word size") typically varies between one byte (8 bit) to
+eight bytes (64 bit), while the CPU is usually also able to access large words
+as smaller chunks. Some architectures can read and write memory from arbitrary
+addresses, while others can only access memory at addresses which are a
+multiple of the word size.</p>
+</div>
+<div class="paragraph">
+<p>The CPU accesses memory using specific instructions that allow it to read or
+write data of a given word size from or to a given address. For example, it
+might store the value 0x12345 as a 32 bit number at address 0x100000. The low
+level assembly instruction for doing this might look something like this:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>mov [0x100000], 0x12345</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>This is what the memory on address 0x100000 will look like after the above
+instruction completes, with each column representing a byte:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>            00   01   02   03   04
+          +----+----+----+----+----
+0x100000  | 00 | 01 | 23 | 45 | ..
+          +----+----+----+----+----</pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_endianess">Endianess</h3>
+<div class="paragraph">
+<p>To complicate things a bit more, the actual order of bytes within a word varies
+between CPU types - some CPUs put the most significant byte first, while others
+put the least significant byte first. This is called the <em>endianess</em> of a CPU.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Most CPUs these days (Intel compatible, x86, amd64, most ARM families) are
+little endian. The integer 0x1234 is stored with the <strong>least</strong> significant byte
+first:</p>
+<div class="literalblock">
+<div class="content">
+<pre>  00   01
++----+----+
+| 34 | 12 |
++----+----+</pre>
+</div>
+</div>
+</li>
+<li>
+<p>Some other CPUs like Freescale or OpenRISC are big endian. The integer 0x1234
+is stored with the <strong>most</strong> significant byte first. Most network protocols
+serialize data in big endian order when sending it out on the network; this
+is why big endian is also know as <em>network endian</em>:</p>
+<div class="literalblock">
+<div class="content">
+<pre>  00   01
++----+----+
+| 12 | 34 |
++----+----+</pre>
+</div>
+</div>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Most important of all: if you want to write portable code, do not ever
+make any assumptions about your machines endianess when writing binary data
+to disk or over the network and make sure to explicitly convert your data
+to the proper endianess.</p>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_two_ways_to_organize_memory">Two ways to organize memory</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Traditionally, C programs use two common methods used for organizing objects in
+computer memory: the <em>stack</em> and the <em>heap</em>. Both methods serve different
+purposes and have very different characteristics. Nim code is compiled to C or
+C++ code, so Nim naturally shares the memory model of these languages.</p>
+</div>
+<div class="sect2">
+<h3 id="_the_stack">The stack</h3>
+<div class="paragraph">
+<p>A stack is a region of memory where data is always added and removed from one
+end. This is called "last-in-first-out" (LIFO).</p>
+</div>
+<div class="sect3">
+<h4 id="_stack_theory">Stack theory</h4>
+<div class="paragraph">
+<p>A good analogy for a stack is a stack of plates in a restaurant kitchen: new
+plates are taken out of the dishwasher and added on top; when plates are
+needed, they are also taken from the top. Plates are never inserted halfway or
+on the bottom, and plates are never taken from the middle or bottom of the
+stack.</p>
+</div>
+<div class="paragraph">
+<p>For historical reasons, computer stacks usually work top down: new data is
+added to and removed from the bottom of the stack, but this does not change the
+mechanism itself.</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>+--------------+ &lt;-- stack top
+|              |
+|   in use     |
+|              |
+|              |
++--------------+ &lt;-- stack pointer
+|              |
+|              | | new data added
+:    free      : v on the bottom</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The administration for a stack is pretty simple: the program needs to keep
+track of only one address which points to the current stack bottom&#8201;&#8212;&#8201;this is
+commonly know as the <em>stack pointer</em>. When data is added to the stack, it is
+copied in place and the stack pointer is decreased. When data is removed from
+the stack, it is copied out and the stack pointer is again increased.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_stacks_in_practice">Stacks in practice</h4>
+<div class="paragraph">
+<p>In Nim, C and most other compiled languages, the stack is used for two
+different purposes:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>first it is used as a place to store temporary local variables. These
+variables only exist in a function as long as the function is active (i.e. it
+has not returned).</p>
+</li>
+<li>
+<p>the compiler also uses the stack for a different kind of bookkeeping: every
+time a function is called, the address of the next instruction after the
+<code>call</code> instruction is placed on the stack&#8201;&#8212;&#8201;this is the <em>return address</em>.
+When the function returns, it finds that address on the stack, and jumps to
+it.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The combination data of the above two mechanisms make up a <em>stack frame</em>: this is
+a section of the stack which holds the return address of the current active
+function, together with all its local variables.</p>
+</div>
+<div class="paragraph">
+<p>During program execution, this is what the stack will look like if your program
+is nested two functions deep:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>+----------------+ &lt;-- stack top
+| return address |
+| variable       | &lt;-- stack frame #1
+| variable       |
+| ...            |
++----------------+
+| return address |
+| variable       | &lt;-- stack frame #2
+| ...            |
++----------------+ &lt;-- stack pointer
+|     free       |
+:                :</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Using the stack for both data and return addresses is a pretty neat trick and
+has the nice side effect of offering automatic storage allocation and cleanup
+for data in a program.</p>
+</div>
+<div class="paragraph">
+<p>Stacks also work nicely with threads: each thread simply has its own stack,
+storing its own local variables and holding is own stack frames.</p>
+</div>
+<div class="paragraph">
+<p>Now you know where Nim gets the information from when it generates a <em>stack
+trace</em> when it hits a run time error or exception: It will find the address of
+the innermost active function on the stack, and print its name. Then it goes
+looking further up the stack for the next level active function, all the way to
+the top.</p>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_the_heap">The heap</h3>
+<div class="paragraph">
+<p>Next to the stack, the heap is the other place to store data in a computer
+program. While the stack is typically used to hold local variables, the heap
+can be used for more dynamic storage.</p>
+</div>
+<div class="sect3">
+<h4 id="_heap_theory">Heap theory</h4>
+<div class="paragraph">
+<p>A heap is a region of memory which is a bit like a warehouse. The memory region
+is called the <em>arena</em>:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>:              : ^ heap can grow at the top
+|              | |
+|              |
+|    free!     | &lt;--- The heap arena
+|              |
+|              |
++--------------+</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>When a program wants to store data, it will first calculate how much storage it
+will need. It will then go to the warehouse clerk (the memory allocator) and
+request a place to store the data. The clerk has a ledger where it keeps track
+of all allocations in the warehouse, and it will find a free spot that is large
+enough to fit the data. It will then make an entry in the ledger that the area
+at that address and size is now taken, and it returns the address to the
+program. The program can now store and retrieve its data from this area in
+memory at will.</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>:              :
+|    free      |
+|              |
++--------------+
+|  allocated   | &lt;--- allocation address
++--------------+</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The above process can be repeated, allocating other blocks on the heap, some of
+different sizes:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>:              :
+|    free      |
++--------------+
+|              |
+| allocated #3 |
+|              |
++--------------+
+| allocated #2 |
++--------------+
+| allocated #1 |
++--------------+</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>When the data block is no longer used, the program will tell the memory
+allocator the address of the block. The allocator looks up the address in the
+ledger, and removes the entry. This block is now free for future use. This
+is what the above picture looks like when block #2 is released:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>:              :
+|    free      |
++--------------+
+|              |
+| allocated #3 |
+|              |
++--------------+
+|    free      | &lt;-- There's a hole in the heap!
++--------------+
+| allocated #1 |
++--------------+</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>As you can see, the freeing of block #2 now leaves a hole in the heap, which
+might lead to problems in the future. Consider the next allocation request:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>If the size of the next allocation is smaller then the size of the hole, the
+allocator might reuse the free space in the hole; but since the new request
+is smaller, a new smaller hole will be left after the new block</p>
+</li>
+<li>
+<p>If the size of the next allocation is bigger then the size of the hole, the
+allocator has to find a bigger free spot somewhere, leaving the hole open.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The only way to effectively reuse the hole is if the next allocation is of the
+exact same size of the hole.</p>
+</div>
+<div class="paragraph">
+<p>Heavy use of a heap with a lot of different sized objects might lead to a
+phenomenon called <em>fragmentation</em>. This means that the allocator is not able to
+effectively use 100% of the arena size to fulfil allocation requests,
+effectively wasting a part of the available memory.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_the_heap_in_practice">The heap in practice</h4>
+<div class="paragraph">
+<p>In Nim, all your data is stored on the stack, unless you explicitly request it
+to go on the heap: the <code>new()</code> proc is typically used allocate memory on the
+heap for a new object:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>type Thing = object
+  a: int
+
+var t = new Thing</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The above snippet will allocate memory on the heap to store an object of type
+<code>Thing</code> The <em>address</em> of the newly allocated memory block is returned by <code>new</code>,
+which is now of type <code>ref Thing</code>. A <code>ref</code> is a special kind of pointer which is
+generally managed by Nim for you. More on this in the section
+<a href="#_traced_references_and_the_garbage_collector">Traced references and the garbage collector</a></p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_memory_organization_in_nim">Memory organization in Nim</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>As long as you stick to the <em>safe</em> parts of the language, Nim will take care of
+managing memory allocations for you. It will make sure your data is stored at
+the appropriate place, and freed when you no longer need it. However, if the
+need arises, Nim offers you full control as well, allowing you to choose
+exactly how and where to store your data.</p>
+</div>
+<div class="paragraph">
+<p>Nim offers some handy functions to allow you to inspect how your data is
+organized in memory. These will be used in the examples in the sections below
+to inspect how and where Nim stores your data:</p>
+</div>
+<div class="dlist">
+<dl>
+<dt class="hdlist1"><code>addr(x)</code></dt>
+<dd>
+<p>This proc returns the address of variable <code>x</code>. For a variable of
+type <code>T</code>, its address will have type <code>ptr T</code></p>
+</dd>
+<dt class="hdlist1"><code>unsafeAddr(x)</code></dt>
+<dd>
+<p>This proc is basically the same as <code>addr()</code>, but it can be
+              used even if Nim thinks it would not be safe to get the address
+of an object&#8201;&#8212;&#8201;more on this later.</p>
+</dd>
+<dt class="hdlist1"><code>sizeof(x)</code></dt>
+<dd>
+<p>Returns the size of variable <code>x</code> in bytes</p>
+</dd>
+<dt class="hdlist1"><code>typeof(x)</code></dt>
+<dd>
+<p>Returns the string representation of the type of variable <code>x</code></p>
+</dd>
+</dl>
+</div>
+<div class="paragraph">
+<p>The result of <code>addr(x)</code> and <code>unsafeAddr(x)</code> on an object of type <code>T</code> has a
+result of type <code>ptr T</code>. Nim does not know how to print this by default, so we
+will make use of <code>repr()</code> to nicely format the type for us:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>var a: int
+echo a.addr.repr
+# ptr 0x56274ece0c60 --&gt; 0</pre>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_using_pointers">Using pointers</h3>
+<div class="paragraph">
+<p>Basically, a pointer is nothing more then a special type of variable which
+holds a memory address&#8201;&#8212;&#8201;it points to something else in memory. As briefly
+mentioned above, there are two types of pointers in Nim:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>ptr T</code> for <em>untraced references</em>, aka <em>pointers</em></p>
+</li>
+<li>
+<p><code>ref T</code> for <em>traced references</em>, for memory that is managed by Nim</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The <code>ptr T</code> pointer type is considered <em>unsafe</em>. Pointers point to manually
+allocated objects or to objects somewhere else in memory, and it is your task
+as a programmer to make sure your pointers always point to valid data.</p>
+</div>
+<div class="paragraph">
+<p>When you want to access the data in the memory that the pointer points to&#8201;&#8212;&#8201;the contents of the address with that numerical index&#8201;&#8212;&#8201;you need to
+<em>dereference</em> (or in short, <em>deref</em>) the pointer.</p>
+</div>
+<div class="paragraph">
+<p>In Nim you can use an empty array subscript <code>[]</code> to do this, analogous to using
+the <code>*</code> prefix operator in C. The snippet below shows how to create an alias to
+an int and change its value.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>var a = 20 <i class="conum" data-value="1"></i><b>(1)</b>
+var p = a.addr <i class="conum" data-value="2"></i><b>(2)</b>
+p[] = 30 <i class="conum" data-value="3"></i><b>(3)</b>
+echo a  # --&gt; 30</pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Here a normal variable <code>a</code> is declared and initialized with the value 20</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td><code>p</code> is a pointer of type <code>ptr int</code>, pointing to the address of int <code>a</code></td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>The <code>[]</code> operator is used to dereference the pointer p. As <code>p</code> is a pointer
+of type <code>ptr int</code> which points to the memory address where <code>a</code> is stored,
+dereferenced variable <code>p[]</code> is again of type int. The variables <code>a</code> and <code>p[]</code>
+now refer to the exact same memory location, so assigning a value to <code>p[]</code>
+will also change the value of <code>a</code></td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>For object or tuple access, Nim will perform automatic dereferencing for you:
+the normal <code>.</code> access operator can be used just as with a normal object.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_the_stack_local_variables">The stack: local variables</h3>
+<div class="paragraph">
+<p>Local variables (also called <em>automatic</em> variables) are the default method by
+which Nim stores your variables and data.</p>
+</div>
+<div class="paragraph">
+<p>Nim will reserve space for your variable on the stack, and it will stay there
+as long as it is in scope. In practice, this means that the variable will exist
+as long as the function in which it is declared does not return. As soon as the
+function returns the stack <em>unwinds</em> and the variables are gone.</p>
+</div>
+<div class="paragraph">
+<p>Here are some examples of variables which will be stored on the stack:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>type Thing = object
+  a, b: int
+
+var a: int
+var b = 14
+var c: Thing
+var d = Thing(a: 5, b: 18)</pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_traced_references_and_the_garbage_collector">Traced references and the garbage collector</h3>
+<div class="paragraph">
+<p>In the previous sections we saw that pointers in Nim as returned by <code>addr()</code>
+are of the type <code>ptr T</code>, but we saw that <code>new</code> returns a <code>ref T</code>.</p>
+</div>
+<div class="paragraph">
+<p>While both <code>ptr</code> and <code>ref</code> are pointers to data, there is an important
+difference between the two:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>a <code>ptr T</code> is just a pointer&#8201;&#8212;&#8201;a variable holding an address which points to
+data living elsewhere. You as the programmer are responsible for making sure
+this pointer is referencing to valid memory when you use it.</p>
+</li>
+<li>
+<p>a <code>ref T</code> is a <em>traced reference</em>: this also is an address pointing to
+something else, but Nim will keep track of data it points to for you, and
+make sure this will be freed when it is no longer needed.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The only way to acquire a <code>ref T</code> pointer is to allocate the memory using the
+<code>new()</code> proc. Nim will reserve the memory for you, and also will start keeping
+track of where in the code this data is referenced. When the Nim runtime sees
+that the data is no longer referred to, it knows it is safe to discard it and
+it will automatically free it for you. This is known as <em>garbage collection</em>,
+or <em>GC</em> for short.</p>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_how_nim_stores_data_in_memory">How Nim stores data in memory</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>This section will show some experiments where we investigate how Nim stores
+various data types in memory.</p>
+</div>
+<div class="sect2">
+<h3 id="_primitive_types">Primitive types</h3>
+<div class="paragraph">
+<p>A <em>primitive</em> or <em>scalar</em> type is a "single" value like an <code>int</code>, a <code>bool</code> or a
+<code>float</code>.  Scalars are usually kept on the stack, unless they are part of a
+container type like an object.</p>
+</div>
+<div class="paragraph">
+<p>Let&#8217;s see how Nim manages memory for primitive types for us. The snippet below
+first creates a variable <code>a</code> of type <code>int</code> and prints this variable and its
+size.  Then it will create a second variable <code>b</code> of type <code>ptr int</code> which is
+called a <em>pointer</em>, and now holds the <em>address</em> of variable <code>a</code>.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>var a = 9
+echo a.repr
+echo sizeof(a)
+
+var b = a.addr
+echo b.repr
+echo sizeof(b)</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>On my machine I might get the following output:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>9  <i class="conum" data-value="1"></i><b>(1)</b>
+8  <i class="conum" data-value="2"></i><b>(2)</b>
+ptr 0x300000 --&gt; 9 <i class="conum" data-value="3"></i><b>(3)</b>
+8  <i class="conum" data-value="4"></i><b>(4)</b></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>No surprise here: this is the value of variable <code>a</code></td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>This is the size of the variable, in bytes. 8 bytes makes 64 bits, which
+happens to be the default size for <code>int</code> types in Nim on my machine. So far
+so good.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>This line shows a representation of variable <code>b</code>. <code>b</code> holds the address
+of variable <code>a</code>, which happens to live at address <code>0x300000</code>. In Nim an
+address is known as a <em>ref</em> or a <em>pointer</em>.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td><code>b</code> itself is also a variable, which is not of the type <code>ptr int</code>. On
+my machine memory addresses also have a size of 64 bit, which equals 8
+bytes.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The above can be represented by the following diagram:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>           +---------------------------------------+
+0x??????:  | 00 | 00 | 00 | 00 | 30 | 00 | 00 | 00 | b: ptr int =
+           +---------------------------------------+    0x300000
+                               |
+                               |
+                               v
+           +---------------------------------------+
+0x300000:  | 00 | 00 | 00 | 00 | 00 | 00 | 00 | 09 | a: int = 9
+           +---------------------------------------+</pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_compound_types_objects">Compound types: objects</h3>
+<div class="paragraph">
+<p>Let&#8217;s put a more complicated object on the stack and see what happens:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>type Thing = object <i class="conum" data-value="1"></i><b>(1)</b>
+  a: uint32
+  b: uint8
+  c: uint16
+
+var t: Thing <i class="conum" data-value="2"></i><b>(2)</b>
+
+echo "size t.a ", t.a.sizeof
+echo "size t.b ", t.b.sizeof
+echo "size t.c ", t.c.sizeof
+echo "size t   ", t.sizeof  <i class="conum" data-value="3"></i><b>(3)</b>
+
+echo "addr t.a ", t.a.addr.repr
+echo "addr t.b ", t.b.addr.repr
+echo "addr t.c ", t.c.addr.repr
+echo "addr t   ", t.addr.repr  <i class="conum" data-value="4"></i><b>(4)</b></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The definition of our object type <code>Thing</code>, which holds integers of various
+sizes</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Create a variable <code>t</code> of type <code>Thing</code></td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Print the size of <code>t</code> and all its fields</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Print the address of <code>t</code> and all its fields</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>In Nim, an object is just a way of grouping variables into a handy container,
+making sure they are placed next to each other in memory the same way as C
+would do.</p>
+</div>
+<div class="paragraph">
+<p>Here is the output on my machine:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>size t.a 4  <i class="conum" data-value="1"></i><b>(1)</b>
+size t.b 1
+size t.c 2
+size t   8  <i class="conum" data-value="2"></i><b>(2)</b>
+addr t   ptr 0x300000 --&gt; [a = 0, b = 0, c = 0]  <i class="conum" data-value="3"></i><b>(3)</b>
+addr t.a ptr 0x300000 --&gt; 0  <i class="conum" data-value="4"></i><b>(4)</b>
+addr t.b ptr 0x300004 --&gt; 0
+addr t.c ptr 0x300006 --&gt; 0  <i class="conum" data-value="5"></i><b>(5)</b></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Lets go through the output:</p>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>First get the size of fields of the object. <code>a</code> was declared as an <code>uint32</code>, which
+is 4 bytes big, <code>b</code> is an <code>uint8</code> which is 1 byte, and <code>c</code> is an <code>uint16</code> which is 2 bytes
+big. check!</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Here is a bit of a surprise: print the size of the container object <code>t</code>, which seems
+to be 8 bytes big. But that does not add up, as the contents of the object is
+only 4+1+2 = 7 bytes! More on this below.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Let&#8217;s get the address of the object <code>t</code>: on my machine it was placed on
+address <code>0x300000</code> on the stack.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Here we can see that the field <code>t.a</code> lies at exactly the same place in memory as the object
+itself: <code>0x300000</code>. The address of <code>t.b</code> is <code>0x300004</code>, which is 4
+bytes after <code>t.a</code>. That makes sense, since <code>t.a</code> is four bytes big.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="5"></i><b>5</b></td>
+<td>The address of <code>t.c</code> is <code>0x300006</code>, which is 2 (!) bytes after <code>t.b</code>, but <code>t.b</code> is only
+one byte big?</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>So, let&#8217;s draw a little picture of what we have learned from the above:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>              00   01   02   03   04   05   06   07
+            +-------------------+----+----+---------+
+ 0x300000:  | a                 | b  | ?? | c       |
+            +-------------------+----+----+---------+
+            ^                   ^         ^
+            |                   |         |
+         address of           addr       addr
+         t and t.a           of t.b     of t.c</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>So this is what our <code>Thing</code> object looks like in memory.  So what is up with
+the hole marked <code>??</code> at offset 5, and why is the total size not 7 but 8 bytes?</p>
+</div>
+<div class="paragraph">
+<p>This is caused by something the compiler does which is called <em>alignment</em>, to
+make it easier for the CPU to access the data in memory. By making sure objects
+are nicely aligned in memory at a multiple of their size (or a multiple of the
+architecture&#8217;s word size), the CPU can access the memory more efficiently. This
+usually results in faster code, at the price of wasting some memory.</p>
+</div>
+<div class="paragraph">
+<p>(You can hint the Nim compiler not to do alignment but to place the fields of
+an object back-to-back in memory using the <code>{.packed.}</code> pragma&#8201;&#8212;&#8201;refer to the
+<a href="https://nim-lang.github.io/Nim/manual.html#">Nim language manual</a> for details)</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_strings_and_seqs">Strings and seqs</h3>
+<div class="paragraph">
+<p>The above sections described how Nim manages relativily simple static objects
+in memory. This section will go into the implementation of more complex and
+dynamic data types which are part of the Nim language: strings and seqs.</p>
+</div>
+<div class="paragraph">
+<p>In Nim, the <code>string</code> and <code>seq</code> data types are closely related. These are
+basically a long row of objects of the same type (chars for a strings, any
+other type for seqs). What is different for these types is that they can
+dynamically grow or shrink in memory.</p>
+</div>
+<div class="sect3">
+<h4 id="_lets_talk_about_seqs">Let&#8217;s talk about seqs</h4>
+<div class="paragraph">
+<p>Lets create a <code>seq</code> and do some experiments with it:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>var a = @[ 30, 40, 50 ]</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Let&#8217;s ask Nim what the type of variable <code>a</code> is:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>var a = @[ 30, 40, 50 ]
+echo typeof(a)   # -&gt; seq[int]</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>We see the type is <code>seq[int]</code>, which is what was expected.</p>
+</div>
+<div class="paragraph">
+<p>Now, lets add some code to see how Nim stores the data:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>var a = @[ 0x30, 0x40, 0x50 ]
+echo a.repr
+echo a.len
+echo a[0].addr.repr
+echo a[1].addr.repr</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>And here is the output on my machine:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>ptr 0x300000 --&gt; 0x900000@[0x30, 0x40, 0x50]  <i class="conum" data-value="1"></i><b>(1)</b>
+3 <i class="conum" data-value="2"></i><b>(2)</b>
+ptr 0x900010 --&gt; 0x30  <i class="conum" data-value="3"></i><b>(3)</b>
+ptr 0x900018 --&gt; 0x40  <i class="conum" data-value="4"></i><b>(4)</b></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>What can be deduced from this?</p>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The variable <code>a</code> itself is placed on the stack, which happens to be at
+address <code>0x300000</code> on my machine. A is some kind of pointer that points to
+address <code>0x900000</code> which is on the heap! And this is where the actual seq
+lives.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>This seq contains 3 elements, just as it should be.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td><code>a[0]</code> is the first element of the seq. Its value is <code>0x30</code>, and i is stored
+at address <code>0x900010</code>, which is right after the seq itself</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>The second item in the seq is <code>a[1]</code>, which is placed at address <code>0x900018</code>.
+This makes perfect sense, as the size of an <code>int</code> is 8 bytes, and all
+ints in the seq are placed back-to-back in memory.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Let&#8217;s make a little drawing again. We know <code>a</code> is a pointer living on the
+stack, which refers to something on the heap with a size of 16 bytes, followed
+by the elements of our seq:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>             stack
+           +---------------------------------------+
+0x300000   | 00 | 00 | 00 | 00 | 90 | 00 | 00 | 00 | a: seq[int]
+           +---------------------------------------+
+                               |
+             heap              v
+           +---------------------------------------+
+0x900000   | ?? | ?? | ?? | ?? | ?? | ?? | ?? | ?? |
+           +---------------------------------------+
+0x900008   | ?? | ?? | ?? | ?? | ?? | ?? | ?? | ?? |
+           +---------------------------------------+
+0x900010   | 00 | 00 | 00 | 00 | 00 | 00 | 00 | 30 | a[0] = 0x30
+           +---------------------------------------+
+0x900018   | 00 | 00 | 00 | 00 | 00 | 00 | 00 | 40 | a[1] = 0x40
+           +---------------------------------------+
+0x900020   | 00 | 00 | 00 | 00 | 00 | 00 | 00 | 50 | a[2] = 0x50
+           +---------------------------------------+</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>This almost explains all of the seq, except for the 16 unknown bytes at the
+start of the block: this area is where Nim stores its internal information
+about the seq.</p>
+</div>
+<div class="paragraph">
+<p>This data is normally hidden from the user, but you can simply find the
+implementation of this header in the Nim system library, and it looks like
+this:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>type TGenericSeq = object
+  len: int  <i class="conum" data-value="1"></i><b>(1)</b>
+  reserved: int <i class="conum" data-value="2"></i><b>(2)</b></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The <code>len</code> field is used by Nim to store the current length of the seq -
+that is how many elements are in it.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>The <code>reserved</code> field is used to keep track of the actual size of the storage
+inside the seq&#8201;&#8212;&#8201;for performance reasons Nim might reserve a larger space
+ahead of time to avoid resizing the seq when new items need to be added.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Let&#8217;s do a little experiment to inspect what is in the our seq header (unsafe
+code ahead!):</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>type TGenericSeq = object <i class="conum" data-value="1"></i><b>(1)</b>
+  len, reserved: int
+
+var a = @[10, 20, 30]
+var b = cast[ptr TGenericSeq](a) <i class="conum" data-value="2"></i><b>(2)</b>
+echo b.repr</pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The original <code>TGenericSeq</code> object is not exported from the system lib, so
+here the same object is defined</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Here the variable <code>a</code> is casted to the <code>TGenericSeq</code> type.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>When we print the result with <code>echo b.repr</code>, the output looks like this:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>ptr 0x900000 --&gt; [len = 3, reserved = 3]</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>There we have it: Our seq has a size of 3, and has reserved space for 3
+elements in total. The next section will explain what happens when more fields
+are added to a seq.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_growing_a_seq">Growing a seq</h4>
+<div class="paragraph">
+<p>The snippet below starts with the same seq, and then adds new elements. Each
+iteration it will print the seq header:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>type TGenericSeq = object
+  len, reserved: int
+
+var a = @[10, 20, 30]
+
+for i in 0..4:
+  echo cast[ptr TGenericSeq](a).repr
+  a.add i</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Here is the output, see if you can spot the interesting bits:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>ptr 0x900000 --&gt; [len = 3, reserved = 3] <i class="conum" data-value="1"></i><b>(1)</b>
+ptr 0x900070 --&gt; [len = 4, reserved = 6] <i class="conum" data-value="2"></i><b>(2)</b>
+ptr 0x900070 --&gt; [len = 5, reserved = 6] <i class="conum" data-value="3"></i><b>(3)</b>
+ptr 0x900070 --&gt; [len = 6, reserved = 6]
+ptr 0x9000d0 --&gt; [len = 7, reserved = 12] <i class="conum" data-value="4"></i><b>(4)</b></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>This is the original 3 element seq: it is stored on the heap at
+address <code>0x900000</code>, has a length of 3 elements, and reserved storage for
+3 elements as well</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>One element was added, and a few notable things have happened:
+<div class="ulist">
+<ul>
+<li>
+<p>the <code>len</code> field is increased to 4, which makes perfect sense because the
+seq now holds 4 elements</p>
+</li>
+<li>
+<p>the <code>reserved</code> field increased from 3 to 6. This is because Nim
+doubles the storage size when doing a new allocation - this is more
+efficient when repeatedly adding data without having to resize the
+allocation for every <code>add()</code></p>
+</li>
+<li>
+<p>note that the address of the seq itself also changed!  The reason for
+this is that the inital memory allocation for the seq data on the heap
+was not large enough to fit the new element, so Nim had to find a larger
+chunk of memory to hold the data. It is likely that the allocator already
+reserved the area directly behind the seq to something else, so it was
+not possible to grow this area. Instead, a new allocation somewhere else
+on the heap was made, the old data of the seq was copied from the old
+location to the new location, and the new element was added.</p>
+</li>
+</ul>
+</div></td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>When adding the 4th element above, Nim resized the seq storage to hold 6
+elements&#8201;&#8212;&#8201;this allows adding two more elements without having to make
+a larger allocation. There are now 6 elements placed in the seq, with a total
+reserved size for 6 elements.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>And here the same happens once more: The block is not large enough to fit
+the 7th item, so the whole seq is moved to another place, and the allocation is
+scaled up to hold 12 elements.</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_conclusion">Conclusion</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>This document only scratched the surface of how Nim&#8217;s handles memory, there is
+a lot more to tell. Here are some subjects I think also deserve a chapter one
+day, but which I didn&#8217;t come to write yet:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>A more elaborate discussion on garbage collection, and the available GC
+flavours in Nim.</p>
+</li>
+<li>
+<p>Using Nim without a garbage collector / embedded systems with tight memory.</p>
+</li>
+<li>
+<p>The new Nim runtime!</p>
+</li>
+<li>
+<p>Memory usage in closures/iterators/async&#8201;&#8212;&#8201;locals do not always go on the stack.</p>
+</li>
+<li>
+<p>FFI: Discussion and examples of passing data between C and Nim.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>This is a document in progress, any comments are much appreciated. The source
+can be found on github at <a href="https://github.com/zevv/nim-memory" class="bare">https://github.com/zevv/nim-memory</a></p>
+</div>
+</div>
+</div>
+</div>
+</body>
+</html>

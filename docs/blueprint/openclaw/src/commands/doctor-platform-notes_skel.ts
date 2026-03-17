@@ -1,0 +1,18 @@
+import { execFile } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+import type { OpenClawConfig } from "../config/config.js";
+import { hasConfiguredSecretInput } from "../config/types.secrets.js";
+import { note } from "../terminal/note.js";
+import { shortenHomePath } from "../utils.js";
+function resolveHomeDir(): string;
+export async function noteMacLaunchAgentOverrides();
+async function launchctlGetenv(name: string): Promise<string | undefined>;
+function hasConfigGatewayCreds(cfg: OpenClawConfig): boolean;
+export async function noteMacLaunchctlGatewayEnvOverrides(;
+export function noteDeprecatedLegacyEnvVars(;
+function isTruthyEnvValue(value: string | undefined): boolean;
+function isTmpCompileCachePath(cachePath: string): boolean;
+export function noteStartupOptimizationHints(;
