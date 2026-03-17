@@ -91,31 +91,48 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) =
 
   log.info("polling for messages…")
   while true:
-    let msgs = channel.receive()
+    # Receive — if the poll fails (network hiccup) log and retry next iteration.
+    var msgs: seq[InboundMessage]
+    try:
+      msgs = channel.receive()
+    except CatchableError as e:
+      log.error("receive error: " & e.msg)
+      continue
+
     for msg in msgs:
       let uid = $msg.userId
       if uid notin runners:
         runners[uid] = newAgentRunner(memory, provider, log.child("agent." & uid))
 
       var runner = runners[uid]
-      let needsOnboard = needsOnboarding(memory.hasProfile(msg.userId))
 
-      let reply =
+      # Generate reply — if the LLM call fails, send an apology and move on.
+      var reply = ""
+      try:
+        let needsOnboard = needsOnboarding(memory.hasProfile(msg.userId))
         if needsOnboard:
           onboarding[uid] = true
           let (text, done) = runner.runOnboardingTurn(msg.userId, msg.text)
           if done:
             onboarding.del(uid)
-          text
+          reply = text
         else:
-          runner.runTurn(msg.userId, msg.text)
+          reply = runner.runTurn(msg.userId, msg.text)
+      except CatchableError as e:
+        log.error("agent error for " & uid & ": " & e.msg)
+        reply = "Desculpe, ocorreu um erro interno. Tente novamente."
 
       runners[uid] = runner
-      channel.send(OutboundMessage(
-        userId:  msg.userId,
-        text:    reply,
-        replyTo: msg.channelId,
-      ))
+
+      # Send — if delivery fails, log and continue (don't crash the daemon).
+      try:
+        channel.send(OutboundMessage(
+          userId:  msg.userId,
+          text:    reply,
+          replyTo: msg.channelId,
+        ))
+      except CatchableError as e:
+        log.error("send error for " & uid & ": " & e.msg)
 
 # ── main ───────────────────────────────────────────────────────────────────────
 
