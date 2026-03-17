@@ -75,6 +75,14 @@ proc resolve*(r: IdentityResolver; telegramUserId: int64): UserId =
     r.save()
   r.store[telegramUserId]
 
+proc telegramId*(r: IdentityResolver; userId: UserId): int64 =
+  ## Reverse lookup: internal UserId → Telegram numeric ID.
+  ## Returns 0 if not found (should not happen in normal flow).
+  for tgId, uid in r.store:
+    if uid == userId:
+      return tgId
+  return 0
+
 # ── API helpers ───────────────────────────────────────────────────────────────
 
 proc apiUrl(a: TelegramAdapter; meth: string): string =
@@ -94,8 +102,9 @@ proc post(a: TelegramAdapter; meth: string; body: JsonNode): JsonNode =
 # ── ChannelPort implementation ────────────────────────────────────────────────
 
 proc send*(a: TelegramAdapter; msg: OutboundMessage) =
+  let tgId = a.resolver.telegramId(msg.userId)
   var body = %* {
-    "chat_id":    msg.userId.`$`(),
+    "chat_id":    tgId,
     "text":       msg.text,
     "parse_mode": "Markdown",
   }
