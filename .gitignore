@@ -2,7 +2,7 @@ nimcache/
 nimblecache/
 .nimble/
 *.exe
-donkey
+/donkey
 /dist/
 
 # Never commit plaintext secrets or the key file
@@ -10,7 +10,8 @@ donkey
 .secret_key
 secrets.toml
 
-# Testament artifacts
+# Testament artifacts: ignore compiled test binaries, allow source dirs and .nim files
 testresults/
-tests/**/*[!.nim]
+tests/**
+!tests/**/
 !tests/**/*.nim
