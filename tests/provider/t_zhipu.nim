@@ -9,8 +9,8 @@ import donkey/domain/message
 suite "ZhipuAdapter caps":
 
   test "name includes model":
-    let a = newZhipuAdapter("dummy", model = "glm-4-flash")
-    check a.caps().name == "zhipu/glm-4-flash"
+    let a = newZhipuAdapter("dummy", model = "glm-4.7")
+    check a.caps().name == "zhipu/glm-4.7"
 
   test "native tools declared":
     let caps = newZhipuAdapter("x").caps()
