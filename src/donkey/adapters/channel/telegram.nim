@@ -46,6 +46,7 @@ proc newIdentityResolver*(path: string): IdentityResolver =
           discard
 
 proc save(r: IdentityResolver) =
+  createDir(r.path.parentDir())
   var content = ""
   for tgId, uid in r.store:
     content.add $tgId & '\t' & $uid & '\n'
