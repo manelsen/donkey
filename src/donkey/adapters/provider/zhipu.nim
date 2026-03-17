@@ -13,6 +13,7 @@
 import std/[httpclient, json, strutils]
 import ../../domain/message
 import ../../ports/provider
+import ../../core/pipeops
 
 const
   ZhipuEndpoint* = "https://api.z.ai/api/coding/paas/v4/chat/completions"
@@ -54,35 +55,34 @@ proc buildBody*(a: ZhipuAdapter; req: CompletionRequest): JsonNode =
 
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
-proc complete*(a: ZhipuAdapter; req: CompletionRequest): CompletionResponse =
-  let client = newHttpClient()
-  defer: client.close()
+proc complete*(a: ZhipuAdapter; req: CompletionRequest): Result[CompletionResponse, string] =
+  try:
+    let client = newHttpClient()
+    defer: client.close()
 
-  client.headers = newHttpHeaders({
-    "Content-Type":  "application/json",
-    "Authorization": "Bearer " & a.apiKey,
-  })
+    client.headers = newHttpHeaders({
+      "Content-Type":  "application/json",
+      "Authorization": "Bearer " & a.apiKey,
+    })
 
-  let body   = $a.buildBody(req)
-  let url    = if a.endpoint.len > 0: a.endpoint else: ZhipuEndpoint
-  let resp   = client.post(url, body = body)
+    let body = $a.buildBody(req)
+    let url  = if a.endpoint.len > 0: a.endpoint else: ZhipuEndpoint
+    let resp = client.post(url, body = body)
 
-  if resp.status[0] != '2':
-    raise newException(IOError,
-      "Zhipu API error " & resp.status & ": " & resp.body)
+    if resp.status[0] != '2':
+      return err("Zhipu API error " & resp.status & ": " & resp.body)
 
-  let parsed = parseJson(resp.body)
-  let choice = parsed["choices"][0]
-  let msg    = choice["message"]
+    let parsed = parseJson(resp.body)
+    let msg    = parsed["choices"][0]["message"]
+    let usage  = parsed.getOrDefault("usage")
 
-  let text   = msg["content"].getStr("")
-  let usage  = parsed.getOrDefault("usage")
-
-  result = CompletionResponse(
-    text:         text,
-    inputTokens:  if usage != nil: usage["prompt_tokens"].getInt(0) else: 0,
-    outputTokens: if usage != nil: usage["completion_tokens"].getInt(0) else: 0,
-  )
+    ok CompletionResponse(
+      text:         msg["content"].getStr(""),
+      inputTokens:  if usage != nil: usage["prompt_tokens"].getInt(0)    else: 0,
+      outputTokens: if usage != nil: usage["completion_tokens"].getInt(0) else: 0,
+    )
+  except CatchableError as e:
+    err(e.msg)
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

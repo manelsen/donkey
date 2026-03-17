@@ -16,6 +16,47 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Providers mapeados (F3): OpenRouter, Zhipu, Gemini, Anthropic, MiniMax
 - Channels prioritários: Telegram (v1), Discord (v2), depois channels chineses
 
+## Estilo de código
+
+### Result[T, E] + pipeline operators — obrigatório em todo I/O
+
+Exceções (`raise`/`try`) são proibidas em adapters e na camada de aplicação. Todo I/O fallível retorna `Result[T, string]`. O código de chamada decide o que fazer com o erro — o adapter só reporta.
+
+```nim
+import donkey/core/pipeops   # exporta results + |> e >>=
+
+# Adapter retorna Result — nunca lança exceção
+proc complete*(a: ZhipuAdapter; req: CompletionRequest): Result[CompletionResponse, string] =
+  try:
+    # ... HTTP call ...
+    ok(CompletionResponse(...))
+  except CatchableError as e:
+    err(e.msg)
+
+# ? propaga o erro para cima (igual ao ? do Rust)
+proc runTurn*(runner: var AgentRunner; ...): Result[string, string] =
+  let resp = ? runner.provider.complete(req)   # retorna Err se falhar
+  ok(resp.text)
+
+# No loop principal: valueOr e isOkOr para terminação local
+let msgs = channel.receive().valueOr:
+  log.error("receive: " & error)
+  continue
+
+channel.send(outMsg).isOkOr: log.error("send: " & error)
+
+# |> para transformações puras encadeadas
+let context = (ctx.memoryMd & "\n" & ctx.preferencesMd) |> strip
+
+# >>= para encadear steps fallíveis (railway-oriented)
+provider.complete(req) >>= saveToMemory >>= notifyUser
+```
+
+**Regras:**
+- `try/except` apenas dentro do adapter, nunca exposto para fora
+- Procs do domínio (`func`) continuam puros — sem Result, sem I/O
+- `pipeops.nim` é o único lugar onde `results` é importado diretamente; o resto importa via `pipeops`
+
 ## Decisões arquiteturais tomadas
 
 ### Linguagem e concorrência

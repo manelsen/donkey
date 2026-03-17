@@ -3,21 +3,12 @@
 ## Wires together: ChannelPort (recv/send) + MemoryPort (load/save) +
 ## ProviderPort (complete) + SecretStore.
 ##
-## Bootstrapping flow:
-##   1. Receive inbound message.
-##   2. If no user profile → run onboarding conversation (collect name/callMe/tz/lang).
-##   3. Load context (USER.md + MEMORY.md + PREFERENCES.md).
-##   4. Build prompt (system + history + context).
-##   5. Call provider.complete().
-##   6. Append user+assistant turns to history.
-##   7. Send outbound message.
-##   8. Persist updated memory.
-##
 ## This module uses proc (effectful). The pure decisions live in domain/message.nim.
 
 import std/strutils
 import ../domain/message
 import ../core/log
+import ../core/pipeops
 import ../adapters/memory/md_file
 import ../adapters/provider/zhipu
 
@@ -69,34 +60,26 @@ func parseOnboardingResponse*(text: string): OnboardingResult =
 
 type
   AgentRunner* = object
-    memory*:   MdFileAdapter
-    provider*: ZhipuAdapter
-    logger*:   Logger
-    history*:  ConversationHistory
-    maxHistory*: int   ## max turns kept in memory (default 20)
+    memory*:     MdFileAdapter
+    provider*:   ZhipuAdapter
+    logger*:     Logger
+    history*:    ConversationHistory
+    maxHistory*: int
 
 proc newAgentRunner*(memory: MdFileAdapter;
                      provider: ZhipuAdapter;
                      logger: Logger;
                      maxHistory = 20): AgentRunner =
-  AgentRunner(
-    memory:     memory,
-    provider:   provider,
-    logger:     logger,
-    history:    newHistory(),
-    maxHistory: maxHistory,
-  )
+  AgentRunner(memory: memory, provider: provider, logger: logger,
+              history: newHistory(), maxHistory: maxHistory)
 
 proc runOnboardingTurn*(runner: var AgentRunner;
                         userId: UserId;
-                        userText: string): tuple[reply: string; done: bool] =
-  ## Runs one turn of the onboarding conversation.
-  ## Returns the assistant's reply and whether onboarding is complete.
+                        userText: string): Result[string, string] =
   runner.history.addUser(userText)
   runner.history.trimTo(runner.maxHistory)
 
-  let req  = buildPrompt(OnboardingSystem, runner.history, "")
-  let resp = runner.provider.complete(req)
+  let resp = ? runner.provider.complete(buildPrompt(OnboardingSystem, runner.history, ""))
 
   runner.history.addAssistant(resp.text)
   runner.logger.info("onboarding turn tokens_in=" & $resp.inputTokens &
@@ -104,31 +87,25 @@ proc runOnboardingTurn*(runner: var AgentRunner;
 
   let parsed = parseOnboardingResponse(resp.text)
   if parsed.complete:
-    let userMd = bootstrapUserMd(parsed.name, parsed.callMe, parsed.tz, parsed.lang)
-    runner.memory.saveUserMd(userId, userMd)
+    runner.memory.saveUserMd(userId,
+      bootstrapUserMd(parsed.name, parsed.callMe, parsed.tz, parsed.lang))
     runner.logger.info("onboarding complete user=" & $userId)
-    return (resp.text, true)
 
-  return (resp.text, false)
+  ok(resp.text)
 
 proc runTurn*(runner: var AgentRunner;
               userId: UserId;
-              userText: string): string =
-  ## Runs one normal conversation turn.
-  ## Returns the assistant's reply text.
+              userText: string): Result[string, string] =
   let ctx = runner.memory.loadContext(userId)
-
   runner.history.addUser(userText)
   runner.history.trimTo(runner.maxHistory)
 
-  let system  = DefaultSystem
-  let context = ctx.memoryMd & "\n" & ctx.preferencesMd
-  let req     = buildPrompt(system, runner.history, context.strip())
-  let resp    = runner.provider.complete(req)
+  let context = (ctx.memoryMd & "\n" & ctx.preferencesMd).strip()
+  let resp    = ? runner.provider.complete(
+                    buildPrompt(DefaultSystem, runner.history, context))
 
   runner.history.addAssistant(resp.text)
   runner.logger.info("turn complete user=" & $userId &
                      " tokens_in=" & $resp.inputTokens &
                      " tokens_out=" & $resp.outputTokens)
-
-  result = resp.text
+  ok(resp.text)
