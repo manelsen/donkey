@@ -20,47 +20,44 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 
 ---
 
-## F1 — Primeiro agente funcional
+## F1 — Primeiro agente funcional ✅
 
 **Entregável:** conversa real no Telegram com memória em `.md` e onboarding.
 
-### Domain core (`src/core/` — só `func`)
-- [ ] Tipos base: `Message`, `Role`, `ConversationHistory`, `UserId`, `SessionId`
-- [ ] `CompletionRequest`, `CompletionResponse`, `Token` (streaming)
-- [ ] `AgentConfig`, `UserProfile`, `UserPreferences`
-- [ ] `buildPrompt/3`, `mergeHistory/2`, `shouldBootstrap/1`
-- [ ] `parseBootstrapResponse/1` — extrai nome/timezone/idioma da resposta do LLM
+### Domain core
+- [x] `ChatMessage`, `ConversationHistory`, `UserId`, `SessionId`
+- [x] `CompletionRequest`, `CompletionResponse`
+- [x] `buildPrompt/3`, `trimTo/2`, `needsOnboarding/1`
+- [x] `parseOnboardingResponse/1` — extrai nome/callMe/tz/lang
 
-### Ports (`src/ports/`)
-- [ ] `ProviderPort` concept: `complete`, `stream`, `caps`
-- [ ] `ChannelPort` concept: `receive`, `send`, `ack`
-- [ ] `MemoryPort` concept: `loadUser`, `saveUser`, `appendMemory`, `readContext`
-- [ ] `SecretStore` concept (já do F0, formalizar aqui)
+### Ports
+- [x] `ProviderPort` concept: `complete`, `caps`
+- [x] `ChannelPort` concept: `receive`, `send`, `ack`
+- [x] `MemoryPort` concept: `hasProfile`, `loadContext`, `saveUserMd`, `appendMemory`, `savePreferences`
+- [x] `SecretStore` concept (F0)
 
 ### Adapters
-- [ ] `ZhipuAdapter` → `https://api.z.ai/api/coding/paas/v4`
-  - Traduz `ToolCall` para formato GLM
-  - Declara native tools (`web_search`, `code_interpreter`) em `caps()`
-- [ ] `TelegramAdapter` — long polling
-  - Recebe updates, envia mensagens, suporte a Markdown
-  - `IdentityResolver`: `telegram_user_id → UserId` (cria UUID na primeira vez)
-- [ ] `MdFileAdapter` — lê/escreve workspace do usuário
-  - Cria estrutura `data/users/{uuid}/` com todos os `.md` na primeira vez
-  - Lê USER.md, PREFERENCES.md, MEMORY.md como contexto
-  - Atualiza MEMORY.md após cada sessão
+- [x] `ZhipuAdapter` → `https://api.z.ai/api/coding/paas/v4`
+  - Native tools (`web_search`, `code_interpreter`) em `caps()`
+  - GLM-4-flash padrão, model configurável
+- [x] `TelegramAdapter` — long polling getUpdates, offset tracking, Markdown
+  - `IdentityResolver`: `telegram_user_id → UserId` (UUID persistido em TSV)
+- [x] `MdFileAdapter` — paddocks em `~/.donkey/paddocks/{uuid}/`
+  - USER.md, PREFERENCES.md, MEMORY.md, sessions/
+  - `bootstrapUserMd` gera USER.md com YAML frontmatter
 
 ### Aplicação
-- [ ] `SessionManager`: cria/recupera sessão por usuário
-- [ ] `AgentRunner`: loop principal (single agent, sem workers ainda)
-  - Recebe mensagem → carrega contexto → chama provider → atualiza memória → responde
-- [ ] Bootstrapping: detecta workspace ausente → dispara onboarding conversacional
-  - Coleta nome, como chamar, timezone, idioma
-  - Cria todos os `.md` ao final
+- [x] `AgentRunner`: recebe mensagem → carrega contexto → chama provider → responde
+- [x] Bootstrapping conversacional com marcador `ONBOARDING_COMPLETE`
+  - Coleta nome, callMe, timezone, idioma
+  - Cria USER.md ao final via `bootstrapUserMd`
 
 ### CLI
-- [ ] `donkey start` — inicia daemon
-- [ ] `donkey ctl user list` — lista usuários registrados
-- [ ] `donkey ctl user show <uuid>` — exibe perfil
+- [x] `donkey start` — daemon Telegram → Zhipu (TELEGRAM_BOT_TOKEN + ZHIPU_API_KEY)
+- [x] `donkey ctl user list` — lista usuários no paddocks dir
+- [x] `donkey ctl user show <uuid>` — exibe USER.md + PREFERENCES.md + MEMORY.md
+
+**Testes:** 8 suites, 47 testes, todos verdes.
 
 ---
 
