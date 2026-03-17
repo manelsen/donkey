@@ -4,18 +4,19 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 
 ---
 
-## F0 — Scaffolding
+## F0 — Scaffolding ✅
 
 **Entregável:** `donkey --version` compila, testa e loga.
 
-- [ ] Projeto nimble: `donkey.nimble`, dependências (Chronos, nimcrypto, parsetoml)
-- [ ] Estrutura de diretórios: `src/core/`, `src/ports/`, `src/adapters/`, `src/app/`, `tests/`
-- [ ] Logger estruturado (nível, timestamp, contexto) — sem dependência externa
-- [ ] Config loader: lê `donkey.toml`, valida campos obrigatórios, falha com mensagem clara
-- [ ] `SecretStore` port + `FileSecretAdapter` (nimcrypto ChaCha20-Poly1305 + PBKDF2)
-- [ ] `DONKEY_MASTER_KEY` via env; prompt interativo se ausente
-- [ ] Suite de testes rodando (`testament` ou `unittest2`)
-- [ ] `donkey --version` e `donkey --help`
+- [x] Projeto nimble: `donkey.nimble`, dependências (Chronos, nimcrypto, parsetoml)
+- [x] Estrutura de diretórios: `src/core/`, `src/ports/`, `src/adapters/`, `src/app/`, `tests/`
+- [x] Logger estruturado (nível, timestamp, contexto, sink intercambiável para testes)
+- [x] Config loader: lê `donkey.toml`, aplica DONKEY_HOME, retorna defaults graciosamente
+- [x] `SecretStore` port + `FileKeyStore` — **AES-256-GCM** (nimcrypto 0.7.3 removeu chacha20)
+      Wire format: `enc2:<hex(iv[12] || ct || tag[16])>` — compatível com nullclaw enc2:
+- [x] Contract tests para SecretStore (padrão nullclaw) — 2 implementações testadas
+- [x] `testament --megatest:off all` — 20 testes passando
+- [x] `donkey --version` e `donkey --help`
 
 ---
 

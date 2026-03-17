@@ -1,2 +1,2 @@
 [
-{"name":"tests/core/t_log.nim c","category":"core","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"0d499bee0f3","branch":"master"}]
+{"name":"tests/core/t_log.nim c","category":"core","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"17916993776","branch":"master"}]
