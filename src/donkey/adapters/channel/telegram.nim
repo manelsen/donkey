@@ -11,6 +11,7 @@
 
 import std/[httpclient, json, os, random, strutils, tables]
 import ../../core/types
+import ../../core/pipeops
 import ../../domain/message
 
 const
@@ -101,59 +102,50 @@ proc post(a: TelegramAdapter; meth: string; body: JsonNode): JsonNode =
 
 # ── ChannelPort implementation ────────────────────────────────────────────────
 
-proc send*(a: TelegramAdapter; msg: OutboundMessage) =
-  let tgId = a.resolver.telegramId(msg.userId)
-  var body = %* {
-    "chat_id": tgId,
-    "text":    msg.text,
-  }
-  if msg.replyTo.len > 0:
-    body["reply_to_message_id"] = %msg.replyTo
-  discard a.post("sendMessage", body)
+proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
+  try:
+    let tgId = a.resolver.telegramId(msg.userId)
+    var body = %* {"chat_id": tgId, "text": msg.text}
+    if msg.replyTo.len > 0:
+      body["reply_to_message_id"] = %msg.replyTo
+    discard a.post("sendMessage", body)
+    ok()
+  except CatchableError as e:
+    err(e.msg)
 
-proc receive*(a: var TelegramAdapter): seq[InboundMessage] =
+proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
   ## Long-polls getUpdates; advances a.offset on success.
-  let body = %* {
-    "offset":  a.offset,
-    "limit":   100,
-    "timeout": DefaultPollTimeout,
-  }
-  let resp = a.post("getUpdates", body)
-  let updates = resp["result"]
+  try:
+    let body = %* {
+      "offset":  a.offset,
+      "limit":   100,
+      "timeout": DefaultPollTimeout,
+    }
+    let updates = a.post("getUpdates", body)["result"]
 
-  result = @[]
-  var maxUpdateId: int64 = a.offset - 1
+    var msgs: seq[InboundMessage] = @[]
+    var maxUpdateId = a.offset - 1
 
-  for upd in updates:
-    let updateId = upd["update_id"].getBiggestInt().int64
-    if updateId > maxUpdateId:
-      maxUpdateId = updateId
+    for upd in updates:
+      let updateId = upd["update_id"].getBiggestInt().int64
+      if updateId > maxUpdateId: maxUpdateId = updateId
+      if not upd.hasKey("message"): continue
 
-    if not upd.hasKey("message"):
-      continue
+      let tgMsg = upd["message"]
+      if not tgMsg.hasKey("text"): continue
 
-    let tgMsg  = upd["message"]
-    if not tgMsg.hasKey("text"):
-      continue
+      let fromId = tgMsg["from"]["id"].getBiggestInt().int64
+      msgs.add InboundMessage(
+        userId:    a.resolver.resolve(fromId),
+        channelId: $tgMsg["message_id"].getInt(),
+        text:      tgMsg["text"].getStr(),
+        mediaUrl:  if tgMsg.hasKey("photo"): "tg://photo/" & $tgMsg["message_id"].getInt() else: "",
+      )
 
-    let fromId = tgMsg["from"]["id"].getBiggestInt().int64
-    let uid    = a.resolver.resolve(fromId)
-    let msgId  = $tgMsg["message_id"].getInt()
-    let text   = tgMsg["text"].getStr()
-
-    var mediaUrl = ""
-    if tgMsg.hasKey("photo"):
-      mediaUrl = "tg://photo/" & msgId
-
-    result.add InboundMessage(
-      userId:    uid,
-      channelId: msgId,
-      text:      text,
-      mediaUrl:  mediaUrl,
-    )
-
-  if maxUpdateId >= a.offset:
-    a.offset = maxUpdateId + 1
+    if maxUpdateId >= a.offset: a.offset = maxUpdateId + 1
+    ok(msgs)
+  except CatchableError as e:
+    err(e.msg)
 
 proc ack*(a: TelegramAdapter; channelId: string) =
   ## Telegram ack is implicit via offset advancement in receive().
