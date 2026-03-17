@@ -104,9 +104,8 @@ proc post(a: TelegramAdapter; meth: string; body: JsonNode): JsonNode =
 proc send*(a: TelegramAdapter; msg: OutboundMessage) =
   let tgId = a.resolver.telegramId(msg.userId)
   var body = %* {
-    "chat_id":    tgId,
-    "text":       msg.text,
-    "parse_mode": "Markdown",
+    "chat_id": tgId,
+    "text":    msg.text,
   }
   if msg.replyTo.len > 0:
     body["reply_to_message_id"] = %msg.replyTo
