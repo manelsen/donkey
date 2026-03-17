@@ -1,0 +1,25 @@
+import { loadConfig } from "../config/config.js";
+import type { OpenClawConfig } from "../config/config.js";
+import { emitDiagnosticEvent } from "../infra/diagnostic-events.js";
+import {
+import { createSubsystemLogger } from "./subsystem.js";
+function loadCommandPollBackoffRuntime();
+function markActivity();
+export function resolveStuckSessionWarnMs(config?: OpenClawConfig): number;
+export function logWebhookReceived(params:;
+export function logWebhookProcessed(params:;
+export function logWebhookError(params:;
+export function logMessageQueued(params:;
+export function logMessageProcessed(params:;
+export function logSessionStateChange(;
+export function logSessionStuck(params: SessionRef &;
+export function logLaneEnqueue(lane: string, queueSize: number);
+export function logLaneDequeue(lane: string, waitMs: number, queueSize: number);
+export function logRunAttempt(params: SessionRef &;
+export function logToolLoopAction(;
+export function logActiveRuns();
+export function startDiagnosticHeartbeat(config?: OpenClawConfig);
+export function stopDiagnosticHeartbeat();
+export function getDiagnosticSessionStateCountForTest(): number;
+export function resetDiagnosticStateForTest(): void;
+export { diag as diagnosticLogger };

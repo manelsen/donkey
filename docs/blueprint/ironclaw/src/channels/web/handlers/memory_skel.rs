@@ -1,0 +1,1 @@
+//! Memory/workspace API handlers.use std::sync::Arc;use axum::{    Json,    extract::{Query, State},    http::StatusCode,};use serde::Deserialize;use crate::channels::web::server::GatewayState;use crate::channels::web::types::*;#[derive(Deserialize)]pub struct TreeQuery {    #[allow(dead_code)]    pub depth: Option<usize>,}

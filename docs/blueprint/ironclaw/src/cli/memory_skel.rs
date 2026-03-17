@@ -1,0 +1,1 @@
+//! Memory/workspace CLI commands.//!//! Exposes the workspace system for direct CLI use without starting the agent.use std::io::Read;use std::sync::Arc;use clap::Subcommand;use crate::workspace::{EmbeddingProvider, SearchConfig, Workspace};/// Run a memory command using the Database trait (works with any backend).

@@ -1,0 +1,1 @@
+//! MCP protocol types.use serde::{Deserialize, Deserializer, Serialize};/// Flexibly deserialize a JSON-RPC id that may be a number, string, or null.
