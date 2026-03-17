@@ -9,7 +9,7 @@
 ##   - sendMessage supports parse_mode=Markdown
 ##   - ack advances the offset (offset = update_id + 1)
 
-import std/[httpclient, json, os, random, strutils, tables, times]
+import std/[httpclient, json, os, random, strutils, tables]
 import ../../core/types
 import ../../domain/message
 
