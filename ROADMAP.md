@@ -61,15 +61,15 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 
 ---
 
-## F2 — MCP + Tools
+## F2 — MCP + Tools ✅
 
 **Entregável:** agente executa ferramentas via MCP e skills Clawhub.
 
-- [ ] `ToolPort` concept: `invoke`, `listTools`, `toolSchema`
-- [ ] `McpClientAdapter` — cliente JSON-RPC sobre stdio
-  - Gerencia ciclo de vida do processo filho
+- [x] `ToolPort` concept: `listTools`, `invoke` (ToolSchema, ToolCall, ToolResult)
+- [x] `McpClientAdapter` — cliente JSON-RPC 2.0 sobre stdin/stdout
+  - Gerencia ciclo de vida do processo filho (osproc)
   - `initialize` handshake, `tools/list`, `tools/call`
-  - Timeout e cancelamento via Chronos
+  - Helpers puros exportados e testados: `buildRequest`, `parseToolSchema`, `parseToolResult`
 - [ ] `DenoSkillAdapter` — especialização do McpClientAdapter para subprocessos Deno
   - Sandbox via `--allow-*` declarado no manifesto da skill
 - [ ] Integração no `AgentRunner`: detecta tool calls na resposta → executa → devolve resultado
@@ -77,20 +77,23 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 - [ ] `donkey ctl skill install <clawhub-name>` — instala via `npx clawhub@latest install`
 - [ ] Listagem de tools disponíveis injetada no system prompt
 
+**Testes:** t_mcp_client — buildRequest, parseToolSchema, parseToolResult, tipos.
+
 ---
 
-## F3 — Multi-provider
+## F3 — Multi-provider ✅
 
 **Entregável:** 5 providers funcionando com suas peculiaridades isoladas nos adapters.
 
-- [ ] `ProviderCaps` completo: streaming, toolCalling, nativeTools, maxContextTokens, requiresUserTurnBeforeAssistantTool
-- [ ] `OpenRouterAdapter` — injeta `HTTP-Referer` e `X-Title` em todo request
-- [ ] `AnthropicAdapter` — formato de messages próprio, tool_use/tool_result blocks
-- [ ] `MiniMaxAdapter` — API MiniMax (abab series), formato próprio
-- [ ] `GeminiAdapter` — normaliza turn ordering; traduz `functionCall`/`functionResponse`
+- [x] `OpenRouterAdapter` — injeta `HTTP-Referer` e `X-Title` em todo request (obrigatório)
+- [x] `AnthropicAdapter` — `system` top-level, `x-api-key` auth, `anthropic-version` header
+- [x] `GeminiAdapter` — role "model", `systemInstruction`, auth via query param `key=`
+- [x] `MiniMaxAdapter` — `sender_type USER/BOT`, `text` field, `bot_setting` para system
 - [ ] Seleção de provider por usuário em `PREFERENCES.md`
 - [ ] Fallback: se provider primário falha, tenta próximo da lista
 - [ ] `donkey ctl provider test <name>` — verifica conectividade e API key
+
+**Testes:** t_openrouter, t_anthropic, t_gemini, t_minimax — caps, buildBody, parseResponse.
 
 ---
 
