@@ -495,7 +495,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
 
         of deMessage:
           let userId = dcAdapter.resolver.resolve(ckDiscord, event.discordUserId)
-          if event.content.strip() == "/mycode":
+          if (event.content |> strip) == "/mycode":
             let code   = dcAdapter.resolver.generateLinkCode(userId)
             dcAdapter.send(OutboundMessage(
               userId:  userId,
@@ -513,7 +513,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
             toolClients, tools, globalOutbox, log, msgSeq)
 
         of deInteraction:
-          let code   = event.content.strip()
+          let code   = event.content |> strip
           let linked = dcAdapter.resolver.consumeLinkCode(
             code, ckDiscord, event.discordUserId)
           let replyText =
@@ -529,7 +529,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     if wecomCorpId.len > 0:
       var (hasWcEvent, wcEvent) = wcAdapter.tryRecvEvent()
       while hasWcEvent:
-        if wcEvent.msgType == "text" and wcEvent.content.strip().len > 0:
+        if wcEvent.msgType == "text" and (wcEvent.content |> strip).len > 0:
           let userId = wcAdapter.resolver.resolve(ckWeCom, wcEvent.fromUser)
           ensureSession(sm, InboundMessage(
             userId:    userId,
@@ -544,7 +544,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     if feishuAppId.len > 0:
       var (hasFsEvent, fsEvent) = fsAdapter.tryRecvEvent()
       while hasFsEvent:
-        if fsEvent.msgType == "text" and fsEvent.content.strip().len > 0:
+        if fsEvent.msgType == "text" and (fsEvent.content |> strip).len > 0:
           let userId = fsAdapter.resolver.resolve(ckFeishu, fsEvent.openId)
           ensureSession(sm, InboundMessage(
             userId:    userId,
@@ -562,7 +562,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       continue
 
     for msg in tgMsgs:
-      let cmd = msg.text.strip()
+      let cmd = msg.text |> strip
 
       if cmd == "/mycode":
         let code = tgAdapter.resolver.generateLinkCode(msg.userId)

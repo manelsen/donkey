@@ -44,19 +44,19 @@ func parseOnboardingResponse*(text: string): OnboardingResult =
   ## Extracts onboarding fields from LLM response. Pure func.
   ## Looks for: ONBOARDING_COMPLETE: name=X|callMe=Y|tz=Z|lang=W
   for line in text.splitLines():
-    let stripped = line.strip()
+    let stripped = line |> strip
     if not stripped.startsWith("ONBOARDING_COMPLETE:"):
       continue
-    let payload = stripped[len("ONBOARDING_COMPLETE:") ..^ 1].strip()
+    let payload = stripped[len("ONBOARDING_COMPLETE:") ..^ 1] |> strip
     result.complete = true
     for part in payload.split('|'):
       let kv = part.split('=', 1)
       if kv.len < 2: continue
-      case kv[0].strip()
-      of "name":   result.name   = kv[1].strip()
-      of "callMe": result.callMe = kv[1].strip()
-      of "tz":     result.tz     = kv[1].strip()
-      of "lang":   result.lang   = kv[1].strip()
+      case kv[0] |> strip
+      of "name":   result.name   = kv[1] |> strip
+      of "callMe": result.callMe = kv[1] |> strip
+      of "tz":     result.tz     = kv[1] |> strip
+      of "lang":   result.lang   = kv[1] |> strip
     return
   result.complete = false
 
@@ -69,6 +69,12 @@ func buildToolsSystemSuffix*(tools: seq[ToolDescription]): string =
   result = "\n\n## Available tools\n"
   for td in tools:
     result.add("- **" & td.name & "**: " & td.description & "\n")
+
+func extractText*(resp: CompletionResponse): Result[string, string] =
+  ## Lifts CompletionResponse.text into Result, treating empty as error.
+  ## Used in >>= chains: complete >>= extractText.
+  if resp.text.len > 0: ok(resp.text)
+  else: err("empty LLM response")
 
 proc executeToolCalls*(clients: var seq[McpClientAdapter];
                        calls:   seq[ToolCallRequest];
@@ -137,7 +143,7 @@ proc runOnboardingTurn*(runner: var AgentRunner;
   runner.history.addUser(userText)
   runner.history.trimTo(runner.maxHistory)
 
-  let resp = ? runner.complete(buildPrompt(OnboardingSystem, runner.history, ""))
+  let resp = ? (buildPrompt(OnboardingSystem, runner.history, "") |> runner.complete)
 
   runner.history.addAssistant(resp.text)
   runner.logger.info("onboarding turn tokens_in=" & $resp.inputTokens &
@@ -158,15 +164,14 @@ proc runTurn*(runner: var AgentRunner;
   runner.history.addUser(userText)
   runner.history.trimTo(runner.maxHistory)
 
-  let context     = (ctx.memoryMd & "\n" & ctx.preferencesMd).strip()
-  let toolsSuffix = buildToolsSystemSuffix(runner.tools)
+  let context     = (ctx.memoryMd & "\n" & ctx.preferencesMd) |> strip
+  let toolsSuffix = runner.tools |> buildToolsSystemSuffix
   let system      = DefaultSystem & toolsSuffix
 
   var round = 0
   while round < MaxToolRounds:
     inc round
-    let req  = buildPrompt(system, runner.history, context, runner.tools)
-    let resp = ? runner.complete(req)
+    let resp = ? (buildPrompt(system, runner.history, context, runner.tools) |> runner.complete)
 
     if resp.toolCalls.len == 0:
       ## Final text response — record and return.

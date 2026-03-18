@@ -179,7 +179,7 @@ proc runOrchestrator*(inbox:       AsyncQueue[AgentMessage];
   asyncSpawn(runToolAgent(toolInbox, workerOut, clients))
 
   var history: ConversationHistory = newHistory()
-  let toolsSuffix = orchToolsSuffix(tools)
+  let toolsSuffix = tools |> orchToolsSuffix
   let systemBase = """You are Donkey, a personal AI assistant.
 Be concise, helpful, and remember what the user tells you.
 Respond in the user's preferred language.""" & toolsSuffix
