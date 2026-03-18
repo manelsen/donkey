@@ -223,6 +223,65 @@ proc ack*(a: TelegramAdapter; channelId: string) =
   ## No-op for ChannelPort conformance.
   discard
 
+proc deleteMessage*(a: TelegramAdapter; userId: UserId;
+                    msgId: string): Result[void, string] =
+  ## Deletes a message by id (used to remove reaction/status messages).
+  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  if rawId.len == 0: return err("deleteMessage: no id for " & $userId)
+  var chatId: int64
+  try: chatId = parseBiggestInt(rawId).int64
+  except ValueError: return err("deleteMessage: bad id: " & rawId)
+  var msgIdInt: int
+  try: msgIdInt = parseInt(msgId)
+  except ValueError: return err("deleteMessage: bad msgId: " & msgId)
+  discard ? a.post("deleteMessage",
+                   %* {"chat_id": chatId, "message_id": msgIdInt})
+  ok()
+
+proc sendStatus*(a: TelegramAdapter; userId: UserId;
+                 text: string; replyTo = ""): Result[string, string] =
+  ## Sends a status/reaction message and returns its id.
+  ## Used for queued🔄 / processing⚙️ / done✅ lifecycle messages.
+  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  if rawId.len == 0: return err("sendStatus: no id for " & $userId)
+  var chatId: int64
+  try: chatId = parseBiggestInt(rawId).int64
+  except ValueError: return err("sendStatus: bad id: " & rawId)
+  var body = %* {"chat_id": chatId, "text": text}
+  if replyTo.len > 0:
+    try: body["reply_to_message_id"] = %parseInt(replyTo)
+    except ValueError: discard
+  let resp = ? a.post("sendMessage", body)
+  ok($resp["result"]["message_id"].getInt())
+
+proc editStatus*(a: TelegramAdapter; userId: UserId;
+                 msgId, text: string): Result[void, string] =
+  ## Updates a status message in place (e.g. ⚙️ → ✅).
+  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  if rawId.len == 0: return err("editStatus: no id for " & $userId)
+  var chatId: int64
+  try: chatId = parseBiggestInt(rawId).int64
+  except ValueError: return err("editStatus: bad id: " & rawId)
+  var msgIdInt: int
+  try: msgIdInt = parseInt(msgId)
+  except ValueError: return err("editStatus: bad msgId: " & msgId)
+  discard ? a.post("editMessageText",
+                   %* {"chat_id": chatId, "message_id": msgIdInt, "text": text})
+  ok()
+
+proc setMyCommands*(a: TelegramAdapter): Result[void, string] =
+  ## Registers bot commands in the Telegram menu (the / hint list).
+  let cmds = %* [
+    {"command": "help",    "description": "Ajuda e lista de comandos"},
+    {"command": "reset",   "description": "Reinicia a conversa atual"},
+    {"command": "mycode",  "description": "Gera código de linkagem cross-channel"},
+    {"command": "models",  "description": "Seleciona modelo de IA"},
+    {"command": "memory",  "description": "Exibe memórias salvas"},
+    {"command": "start",   "description": "Inicia ou recomeça a conversa"},
+  ]
+  discard ? a.post("setMyCommands", %* {"commands": cmds})
+  ok()
+
 # ── Constructor ───────────────────────────────────────────────────────────────
 
 proc newTelegramAdapter*(token: string;
