@@ -1,2 +1,3 @@
 [
-{"name":"tests/config/t_loader.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"17916993776","branch":"master"}]
+{"name":"tests/config/t_loader.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"fbf56fa1942","branch":"master"},
+{"name":"tests/config/t_skills_registry.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"fbf56fa1942","branch":"master"}]
