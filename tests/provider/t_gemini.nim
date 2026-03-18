@@ -86,6 +86,54 @@ suite "GeminiAdapter parseResponse":
     check resp.inputTokens  == 0
     check resp.outputTokens == 0
 
+  test "extracts toolCalls from functionCall parts":
+    let j = %* {
+      "candidates": [{
+        "content": {
+          "parts": [{
+            "functionCall": {
+              "name": "search",
+              "args": {"q": "nim lang"}
+            }
+          }]
+        },
+        "finishReason": "STOP"
+      }],
+      "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 0}
+    }
+    let resp = parseGeminiResponse(j)
+    check resp.toolCalls.len      == 1
+    check resp.toolCalls[0].name  == "search"
+    check resp.toolCalls[0].inputJson.contains("nim lang")
+
+suite "GeminiAdapter tool calling (buildBody)":
+
+  test "tools as functionDeclarations when req.tools non-empty":
+    let tools = @[ToolDescription(name: "search", description: "web search", schemaJson: "{}")]
+    let req  = CompletionRequest(system: "", messages: newHistory(), tools: tools)
+    let body = newGeminiAdapter("k").buildBody(req)
+    check body.hasKey("tools")
+    let decls = body["tools"][0]["functionDeclarations"]
+    check decls.len                    == 1
+    check decls[0]["name"].getStr()        == "search"
+    check decls[0]["description"].getStr() == "web search"
+
+  test "tools absent when req.tools empty":
+    let req  = CompletionRequest(system: "", messages: newHistory())
+    let body = newGeminiAdapter("k").buildBody(req)
+    check not body.hasKey("tools")
+
+  test "tool result message becomes user turn with functionResponse part":
+    var h = newHistory()
+    h.addToolResult(callId = "ignored", toolName = "search", output = "results")
+    let body = newGeminiAdapter("k").buildBody(
+      CompletionRequest(system: "", messages: h))
+    let contents = body["contents"]
+    check contents[0]["role"].getStr() == "user"
+    let part = contents[0]["parts"][0]
+    check part.hasKey("functionResponse")
+    check part["functionResponse"]["name"].getStr() == "search"
+
 suite "GeminiAdapter buildUrl":
 
   test "api key is in query string":
