@@ -30,8 +30,12 @@ import donkey/domain/agent_message
 import donkey/domain/message
 import donkey/ports/provider
 import donkey/app/orchestrator
+import donkey/app/ipc_server
 import donkey/app/session_manager
 import donkey/ports/memory
+import donkey/adapters/ipc/types    as ipcTypes
+import donkey/adapters/ipc/client   as ipcClient
+import donkey/tui/dashboard
 
 const Version* = "0.1.0"
 
@@ -61,6 +65,8 @@ Commands:
   ctl provider test <name>              Test provider connectivity
   ctl memory search <uuid> <q>   Semantic search in user memory  (-d:withPostgres)
   ctl memory import <uuid>       Import .md paddock into Postgres (-d:withPostgres)
+  ctl status                     Show daemon status (daemon must be running)
+  tui                            Open live TUI dashboard (daemon must be running)
 """
 
 # ── ctl user commands ──────────────────────────────────────────────────────────
@@ -572,6 +578,35 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ## Typing function for Telegram — reuses token+resolver without polling offset.
   let tgTypingFn = makeTgTypingFn(telegramToken, identityPath)
 
+  ## IPC server — exposes status + log ring over Unix socket.
+  let sockPath = cfg.home / "donkey.sock"
+  let ipcStatusFn: StatusProvider = proc(): DaemonStatus {.gcsafe, raises: [].} =
+    var sessions: seq[SessionInfo]
+    {.cast(gcsafe).}:
+      for (uid, chans) in sm.listSessions():
+        var chanNames: seq[string]
+        for (ck, _) in chans: chanNames.add($ck)
+        sessions.add(SessionInfo(userId: $uid, channels: chanNames))
+    var activeChannels: seq[string]
+    if telegramToken.len > 0: activeChannels.add("telegram")
+    if discordToken.len > 0:  activeChannels.add("discord")
+    if wecomCorpId.len > 0:   activeChannels.add("wecom")
+    if feishuAppId.len > 0:   activeChannels.add("feishu")
+    DaemonStatus(
+      uptimeSec:     (nowMs() - daemonStartMs) div 1000,
+      sessionCount:  sm.sessionCount(),
+      sessions:      sessions,
+      channels:      activeChannels,
+      providers:     @["openrouter"],
+      toolsCount:    tools.len,
+      memoryBackend: when defined(withPostgres): "postgres" else: "md",
+    )
+  let ipcLogFn: LogProvider = proc(n: int): seq[IpcLogEntry] {.gcsafe, raises: [].} =
+    for e in ringSnapshot(n):
+      result.add(IpcLogEntry(ts: e.ts, level: e.level, subsys: e.sub, msg: e.msg))
+  {.cast(gcsafe).}: startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
+  log.info("IPC socket: " & sockPath)
+
   ## Semantic search function — wired when Postgres DSN is configured.
   var globalSearchFn: SearchFn = nil
   when defined(withPostgres):
@@ -1012,6 +1047,7 @@ proc main =
     configPath = home / "donkey.toml"
 
   let cfg = loadConfig(configPath)
+  ringInit()   ## enable ring buffer before the first Logger is created
   let log = newLogger("donkey")
 
   let registryPath = cfg.home / "tools.toml"
@@ -1054,8 +1090,31 @@ proc main =
         ctlMemoryImport(pgDsn, cfg.paddocks, args[3]); quit(0)
       else:
         echo "Recompile with -d:withPostgres to use memory import"; quit(1)
+    elif args.len >= 2 and args[1] == "status":
+      let sockPath = cfg.home / "donkey.sock"
+      let sr = ipcClient.queryStatus(sockPath)
+      if sr.isErr:
+        echo "Error: " & sr.error; quit(1)
+      let st = sr.value
+      echo "Donkey status"
+      echo "  Uptime:   " & $st.uptimeSec & "s"
+      echo "  Sessions: " & $st.sessionCount
+      echo "  Channels: " & st.channels.join(", ")
+      echo "  Providers:" & st.providers.join(", ")
+      echo "  Tools:    " & $st.toolsCount
+      echo "  Memory:   " & st.memoryBackend
+      if st.sessions.len > 0:
+        echo "  Active sessions:"
+        for s in st.sessions:
+          echo "    " & s.userId & " [" & s.channels.join(", ") & "]"
+      quit(0)
     else:
       printHelp(); quit(1)
+
+  if args.len >= 1 and args[0] == "tui":
+    let sockPath = cfg.home / "donkey.sock"
+    runTui(sockPath)
+    quit(0)
 
   log.info("donkey " & Version & " starting")
   log.info("home: " & cfg.home)

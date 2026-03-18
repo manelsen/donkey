@@ -153,17 +153,20 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 
 ---
 
-## F9 — TUI + Admin
+## F9 — TUI + Admin ✅
 
 **Entregável:** interface terminal para operação do daemon.
 
-- [ ] TUI com `illwill` ou similar
-  - Dashboard: sessões ativas, providers em uso, memória, uptime
-  - Log viewer com filtro por usuário/sessão/nível
-  - User manager: listar, editar perfil, revogar acesso
-- [ ] `donkey ctl` expandido: todos os comandos de F1-F8 consolidados
-- [ ] Health check endpoint (Unix socket local — sem HTTP externo)
-- [ ] `donkey ctl status` — snapshot do estado do daemon
+- [x] IPC endpoint Unix socket (`~/.donkey/donkey.sock`) — line-delimited JSON
+  - Commands: `status` → DaemonStatus JSON; `logs` → ring buffer snapshot
+  - Chronos async server (`app/ipc_server.nim`), sync client (`adapters/ipc/client.nim`)
+- [x] Log ring buffer (500 entries, Lock-protected) in `core/log.nim` — `ringInit()` / `ringSnapshot(n)`
+  - Default sink writes to stderr AND pushes to ring; CLI tools skip ring (ringInit not called)
+- [x] `donkey ctl status` — snapshot: uptime, sessions, channels, providers, tools, memory backend
+- [x] `donkey tui` — live illwill dashboard (3 panels: Sessions · Logs · Stats)
+  - Auto-refresh every 2s via IPC socket; keys: q=quit, tab=next panel, r=force refresh
+- [ ] User manager panel (listar, editar perfil, revogar acesso) — pós-F9
+- [ ] `donkey ctl` expandido consolidado com todos os comandos F1-F8 — pós-F9
 
 ---
 
