@@ -15,3 +15,11 @@ testresults/
 tests/**
 !tests/**/
 !tests/**/*.nim
+
+# Build artifacts
+donkey_release
+src/donkey.out
+src/donkey/app/orchestrator
+
+# Downloaded SDKs (análise apenas, não são deps)
+larksuiteoapi-node-sdk-*.tgz
