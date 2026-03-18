@@ -1,102 +1,115 @@
-## MiniMaxAdapter — ProviderPort for MiniMax AI.
+## MiniMaxAdapter — ProviderPort for MiniMax AI (M2 model).
 ##
-## API endpoint: https://api.minimax.chat/v1/text/chatcompletion_pro
+## API endpoint: https://api.minimax.io/v1/chat/completions
 ## Auth: Bearer token
-## Default model: abab6.5s-chat
+## Default model: MiniMax-M2
+##
+## Format: OpenAI-compatible (role/content pairs, system as first message).
 ##
 ## Quirks absorbed here:
-##   - Messages use `sender_type: "USER"|"BOT"` instead of role
-##   - Messages have `text` field instead of `content`
-##   - System prompt goes into `bot_setting` array (top-level field)
-##   - Response: choices[0].messages[0].text
-##   - No streaming in current API (streaming=false)
-##   - No native tool calling (toolCalling=false)
+##   - None beyond standard OpenAI format — M2 is fully compatible
 
-import std/[httpclient, json, strutils]
+import std/[json]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
+import ../http/std_http
 
 const
-  MiniMaxEndpoint*     = "https://api.minimax.chat/v1/text/chatcompletion_pro"
-  MiniMaxDefaultModel* = "abab6.5s-chat"
+  MiniMaxEndpoint*     = "https://api.minimax.io/v1/chat/completions"
+  MiniMaxDefaultModel* = "MiniMax-M2"
 
 type
   MiniMaxAdapter* = object
     apiKey*:   string
     model*:    string
     endpoint*: string   ## override for testing
+    http*:     StdHttpAdapter
 
 # ── Concept conformance ───────────────────────────────────────────────────────
 
-proc caps*(a: MiniMaxAdapter): ProviderCaps =
+func caps*(a: MiniMaxAdapter): ProviderCaps =
   ProviderCaps(
     name:              "minimax/" & a.model,
     streaming:         false,
-    toolCalling:       false,
+    toolCalling:       true,
     nativeTools:       @[],
-    maxContextTokens:  245_760,
+    maxContextTokens:  1_000_000,
     requiresUserFirst: false,
   )
 
-# ── Role mapping ──────────────────────────────────────────────────────────────
-
-func miniMaxSenderType(role: string): string =
-  ## Maps OpenAI-style roles to MiniMax sender_type.
-  if role == roleAssistant: "BOT" else: "USER"
-
 # ── JSON serialisation ────────────────────────────────────────────────────────
 
-proc toJson(msg: ChatMessage): JsonNode =
-  ## MiniMax message format: sender_type + text (not role + content).
-  %* {"sender_type": miniMaxSenderType(msg.role), "text": msg.text}
+func toJson(msg: ChatMessage): JsonNode =
+  if msg.toolCallId.len > 0:
+    ## Tool result: role=tool, tool_call_id, content (OpenAI-compatible)
+    %* {"role": roleTool, "tool_call_id": msg.toolCallId, "content": msg.text}
+  else:
+    %* {"role": msg.role, "content": msg.text}
 
 proc buildBody*(a: MiniMaxAdapter; req: CompletionRequest): JsonNode =
   ## Exported for unit testing.
   var messages: seq[JsonNode] = @[]
+  if req.system.len > 0:
+    messages.add(%* {"role": "system", "content": req.system})
   for m in req.messages:
     messages.add(m.toJson())
 
   result = %* {"model": a.model, "messages": messages}
 
-  if req.system.len > 0:
-    result["bot_setting"] = %* [{"bot_name": "Donkey", "content": req.system}]
-
   if req.maxTokens > 0:
-    result["tokens_to_generate"] = %req.maxTokens
+    result["max_tokens"] = %req.maxTokens
+
+  if req.tools.len > 0:
+    var tools: seq[JsonNode] = @[]
+    for td in req.tools:
+      let schema = if td.schemaJson.len > 0:
+                     try: parseJson(td.schemaJson) except: newJObject()
+                   else: newJObject()
+      tools.add(%* {
+        "type": "function",
+        "function": {"name": td.name, "description": td.description, "parameters": schema}
+      })
+    result["tools"] = %tools
 
 # ── Response parsing ──────────────────────────────────────────────────────────
 
 func parseMiniMaxResponse*(j: JsonNode): CompletionResponse =
   ## Exported for unit testing.
-  let text  = j["choices"][0]["messages"][0]["text"].getStr("")
+  let msg   = j["choices"][0]["message"]
   let usage = j.getOrDefault("usage")
+
+  var toolCalls: seq[ToolCallRequest]
+  let rawCalls = msg.getOrDefault("tool_calls")
+  if rawCalls != nil and rawCalls.kind == JArray:
+    for tc in rawCalls:
+      let fn = tc["function"]
+      toolCalls.add(ToolCallRequest(
+        id:        tc["id"].getStr(""),
+        name:      fn["name"].getStr(""),
+        inputJson: fn["arguments"].getStr(""),
+      ))
+
   CompletionResponse(
-    text:         text,
+    text:         msg.getOrDefault("content").getStr(""),
     inputTokens:  if usage != nil: usage.getOrDefault("prompt_tokens").getInt(0)     else: 0,
     outputTokens: if usage != nil: usage.getOrDefault("completion_tokens").getInt(0) else: 0,
+    toolCalls:    toolCalls,
   )
 
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
 proc complete*(a: MiniMaxAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
+  let headers = @[
+    ("Content-Type",  "application/json"),
+    ("Authorization", "Bearer " & a.apiKey),
+  ]
+  let url  = if a.endpoint.len > 0: a.endpoint else: MiniMaxEndpoint
+  let resp = ? a.http.post(url, $a.buildBody(req), headers)
+  if resp.status < 200 or resp.status >= 300:
+    return err("MiniMax API error " & $resp.status & ": " & resp.body)
   try:
-    let client = newHttpClient()
-    defer: client.close()
-
-    client.headers = newHttpHeaders({
-      "Content-Type":  "application/json",
-      "Authorization": "Bearer " & a.apiKey,
-    })
-
-    let body = $a.buildBody(req)
-    let url  = if a.endpoint.len > 0: a.endpoint else: MiniMaxEndpoint
-    let resp = client.post(url, body = body)
-
-    if resp.status[0] != '2':
-      return err("MiniMax API error " & resp.status & ": " & resp.body)
-
     let parsed = parseJson(resp.body)
     ok(parseMiniMaxResponse(parsed))
   except CatchableError as e:
@@ -107,4 +120,5 @@ proc complete*(a: MiniMaxAdapter;
 proc newMiniMaxAdapter*(apiKey:   string;
                         model    = MiniMaxDefaultModel;
                         endpoint = ""): MiniMaxAdapter =
-  MiniMaxAdapter(apiKey: apiKey, model: model, endpoint: endpoint)
+  MiniMaxAdapter(apiKey: apiKey, model: model, endpoint: endpoint,
+                 http: newStdHttpAdapter())
