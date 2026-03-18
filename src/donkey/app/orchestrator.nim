@@ -44,6 +44,8 @@ const
   DebounceWindowMs* = 1_200   ## ms — exact timer via withTimeout
   StreamFlushMs     = 1_000   ## ms between streaming partial edits
 
+type TypingFn* = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: [].}
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 proc safeComplete(fn: CompleteFn; req: CompletionRequest
@@ -169,7 +171,8 @@ proc runOrchestrator*(inbox:       AsyncQueue[AgentMessage];
                       completeFn:  CompleteFn;
                       streamFn:    StreamFn;
                       clients:     seq[McpClientAdapter];
-                      tools:       seq[ToolDescription]): Future[void] {.async.} =
+                      tools:       seq[ToolDescription];
+                      typingFn:    TypingFn = nil): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
   let memInbox  = newAsyncQueue[AgentMessage]()
   let toolInbox = newAsyncQueue[AgentMessage]()
@@ -256,6 +259,15 @@ Keep it to 2–3 sentences maximum. No bullet points, no feature lists."""
         history.addUser(userText)
       history.trimTo(20)
 
+      ## Start typing loop — fires every 4 s while LLM processes.
+      var typingActive = true
+      proc typingLoopProc() {.async.} =
+        while typingActive:
+          if typingFn != nil:
+            {.cast(gcsafe).}: typingFn(uid, msg.channel)
+          await sleepAsync(milliseconds(4_000))
+      asyncSpawn typingLoopProc()
+
       var round     = 0
       var finalText = ""
       var done      = false
@@ -302,6 +314,9 @@ Keep it to 2–3 sentences maximum. No bullet points, no feature lists."""
           await toolInbox.put(newTaskMsg(taskId, tkInvokeTool, "", payload))
           let toolReply = await workerOut.get()
           history.addToolResult(tc.id, tc.name, toolReply.text)
+
+      ## Stop typing loop.
+      typingActive = false
 
       ## 6. Send final reply (non-streaming path only; streaming already sent).
       if not done:

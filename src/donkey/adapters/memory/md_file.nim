@@ -66,6 +66,11 @@ proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) =
   a.ensurePaddock(userId)
   writeFile(a.preferencesMdPath(userId), content)
 
+proc clearMemory*(a: MdFileAdapter; userId: UserId) =
+  ## Clears MEMORY.md for this user (irreversible).
+  let path = a.memoryMdPath(userId)
+  if fileExists(path): writeFile(path, "")
+
 # ── Scaffold USER.md from onboarding answers ──────────────────────────────────
 
 proc bootstrapUserMd*(name, callMe, timezone, language: string): string =
