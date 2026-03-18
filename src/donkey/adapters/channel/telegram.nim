@@ -144,6 +144,23 @@ proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
     for upd in updates:
       let updateId = upd["update_id"].getBiggestInt().int64
       if updateId > maxUpdateId: maxUpdateId = updateId
+
+      ## callback_query — inline keyboard button press.
+      if upd.hasKey("callback_query"):
+        let cq     = upd["callback_query"]
+        let fromId = cq["from"]["id"].getBiggestInt().int64
+        ## Ack immediately so Telegram stops showing the loading spinner.
+        discard a.post("answerCallbackQuery",
+                       %* {"callback_query_id": cq["id"].getStr("")})
+        msgs.add InboundMessage(
+          userId:    a.resolver.resolve(ckTelegram, $fromId),
+          channel:   ckTelegram,
+          channelId: cq.getOrDefault("message").getOrDefault("message_id").getStr(""),
+          text:      "/callback " & cq["data"].getStr(""),
+          mediaUrl:  "",
+        )
+        continue
+
       if not upd.hasKey("message"): continue
 
       let tgMsg  = upd["message"]
@@ -267,6 +284,58 @@ proc editStatus*(a: TelegramAdapter; userId: UserId;
   except ValueError: return err("editStatus: bad msgId: " & msgId)
   discard ? a.post("editMessageText",
                    %* {"chat_id": chatId, "message_id": msgIdInt, "text": text})
+  ok()
+
+proc sendKeyboard*(a: TelegramAdapter; userId: UserId;
+                   text: string;
+                   buttons: seq[seq[(string, string)]];  ## [[("label","data"),...],...]
+                   replyTo = ""): Result[string, string] =
+  ## Sends a message with an inline keyboard. Returns the message id.
+  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  if rawId.len == 0: return err("sendKeyboard: no id for " & $userId)
+  var chatId: int64
+  try: chatId = parseBiggestInt(rawId).int64
+  except ValueError: return err("sendKeyboard: bad id: " & rawId)
+  var rows: seq[JsonNode]
+  for row in buttons:
+    var cols: seq[JsonNode]
+    for (label, data) in row:
+      cols.add(%* {"text": label, "callback_data": data})
+    rows.add(%cols)
+  var body = %* {
+    "chat_id": chatId,
+    "text":    text,
+    "reply_markup": {"inline_keyboard": rows},
+  }
+  if replyTo.len > 0:
+    try: body["reply_to_message_id"] = %parseInt(replyTo)
+    except ValueError: discard
+  let resp = ? a.post("sendMessage", body)
+  ok($resp["result"]["message_id"].getInt())
+
+proc editKeyboard*(a: TelegramAdapter; userId: UserId;
+                   msgId: string;
+                   buttons: seq[seq[(string, string)]]): Result[void, string] =
+  ## Replaces the inline keyboard of an existing message (e.g. to remove it after selection).
+  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  if rawId.len == 0: return err("editKeyboard: no id for " & $userId)
+  var chatId: int64
+  try: chatId = parseBiggestInt(rawId).int64
+  except ValueError: return err("editKeyboard: bad id: " & rawId)
+  var msgIdInt: int
+  try: msgIdInt = parseInt(msgId)
+  except ValueError: return err("editKeyboard: bad msgId: " & msgId)
+  var rows: seq[JsonNode]
+  for row in buttons:
+    var cols: seq[JsonNode]
+    for (label, data) in row:
+      cols.add(%* {"text": label, "callback_data": data})
+    rows.add(%cols)
+  discard ? a.post("editMessageReplyMarkup", %* {
+    "chat_id":      chatId,
+    "message_id":   msgIdInt,
+    "reply_markup": {"inline_keyboard": rows},
+  })
   ok()
 
 proc setMyCommands*(a: TelegramAdapter): Result[void, string] =
