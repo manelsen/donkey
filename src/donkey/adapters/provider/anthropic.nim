@@ -12,10 +12,11 @@
 ##   - Response: content[0].text
 ##   - max_tokens is REQUIRED by the API (no default)
 
-import std/[httpclient, json, strutils]
+import std/[json]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
+import ../http/std_http
 
 const
   AnthropicEndpoint*     = "https://api.anthropic.com/v1/messages"
@@ -28,10 +29,11 @@ type
     apiKey*:   string
     model*:    string
     endpoint*: string   ## override for testing
+    http*:     StdHttpAdapter
 
 # ── Concept conformance ───────────────────────────────────────────────────────
 
-proc caps*(a: AnthropicAdapter): ProviderCaps =
+func caps*(a: AnthropicAdapter): ProviderCaps =
   ProviderCaps(
     name:              "anthropic/" & a.model,
     streaming:         true,
@@ -43,13 +45,20 @@ proc caps*(a: AnthropicAdapter): ProviderCaps =
 
 # ── JSON serialisation ────────────────────────────────────────────────────────
 
-proc toJson(msg: ChatMessage): JsonNode =
-  ## Anthropic uses "user" and "assistant"; content is a plain string.
-  %* {"role": msg.role, "content": msg.text}
+func toJson(msg: ChatMessage): JsonNode =
+  ## Anthropic uses "user" and "assistant".
+  ## Tool results: user role with tool_result content block.
+  if msg.toolCallId.len > 0:
+    %* {
+      "role": "user",
+      "content": [{"type": "tool_result", "tool_use_id": msg.toolCallId, "content": msg.text}]
+    }
+  else:
+    %* {"role": msg.role, "content": msg.text}
 
 proc buildBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
   ## Exported for unit testing.
-  ## system is top-level; messages array contains only user/assistant turns.
+  ## system is top-level; messages array contains only user/assistant/tool turns.
   var messages: seq[JsonNode] = @[]
   for m in req.messages:
     messages.add(m.toJson())
@@ -65,44 +74,59 @@ proc buildBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
   if req.system.len > 0:
     result["system"] = %req.system
 
+  if req.tools.len > 0:
+    var tools: seq[JsonNode] = @[]
+    for td in req.tools:
+      let schema = if td.schemaJson.len > 0:
+                     try: parseJson(td.schemaJson) except: newJObject()
+                   else: newJObject()
+      tools.add(%* {"name": td.name, "description": td.description, "input_schema": schema})
+    result["tools"] = %tools
+
 # ── Response parsing ──────────────────────────────────────────────────────────
 
 func parseAnthropicResponse*(j: JsonNode): CompletionResponse =
   ## Exported for unit testing.
   let content = j["content"]
-  var text = ""
+  var text      = ""
+  var toolCalls: seq[ToolCallRequest]
+
   for blk in content:
-    if blk.getOrDefault("type").getStr("") == "text":
+    let blkType = blk.getOrDefault("type").getStr("")
+    case blkType
+    of "text":
       text = blk.getOrDefault("text").getStr("")
-      break
+    of "tool_use":
+      let inputNode = blk.getOrDefault("input")
+      toolCalls.add(ToolCallRequest(
+        id:        blk["id"].getStr(""),
+        name:      blk["name"].getStr(""),
+        inputJson: if inputNode != nil: $inputNode else: "{}",
+      ))
+    else: discard
+
   let usage = j.getOrDefault("usage")
   CompletionResponse(
     text:         text,
     inputTokens:  if usage != nil: usage.getOrDefault("input_tokens").getInt(0)  else: 0,
     outputTokens: if usage != nil: usage.getOrDefault("output_tokens").getInt(0) else: 0,
+    toolCalls:    toolCalls,
   )
 
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
 proc complete*(a: AnthropicAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
+  let headers = @[
+    ("Content-Type",      "application/json"),
+    ("x-api-key",         a.apiKey),
+    ("anthropic-version", AnthropicVersion),
+  ]
+  let url  = if a.endpoint.len > 0: a.endpoint else: AnthropicEndpoint
+  let resp = ? a.http.post(url, $a.buildBody(req), headers)
+  if resp.status < 200 or resp.status >= 300:
+    return err("Anthropic API error " & $resp.status & ": " & resp.body)
   try:
-    let client = newHttpClient()
-    defer: client.close()
-
-    client.headers = newHttpHeaders({
-      "Content-Type":    "application/json",
-      "x-api-key":       a.apiKey,
-      "anthropic-version": AnthropicVersion,
-    })
-
-    let body = $a.buildBody(req)
-    let url  = if a.endpoint.len > 0: a.endpoint else: AnthropicEndpoint
-    let resp = client.post(url, body = body)
-
-    if resp.status[0] != '2':
-      return err("Anthropic API error " & resp.status & ": " & resp.body)
-
     let parsed = parseJson(resp.body)
     ok(parseAnthropicResponse(parsed))
   except CatchableError as e:
@@ -113,4 +137,5 @@ proc complete*(a: AnthropicAdapter;
 proc newAnthropicAdapter*(apiKey:   string;
                           model    = AnthropicDefaultModel;
                           endpoint = ""): AnthropicAdapter =
-  AnthropicAdapter(apiKey: apiKey, model: model, endpoint: endpoint)
+  AnthropicAdapter(apiKey: apiKey, model: model, endpoint: endpoint,
+                   http: newStdHttpAdapter())

@@ -92,3 +92,49 @@ suite "AnthropicAdapter parseResponse":
     check resp.text        == "Hi"
     check resp.inputTokens  == 0
     check resp.outputTokens == 0
+
+  test "extracts toolCalls from tool_use content blocks":
+    let j = %* {
+      "stop_reason": "tool_use",
+      "content": [{
+        "type":  "tool_use",
+        "id":    "toolu_abc",
+        "name":  "search",
+        "input": {"q": "nim lang"}
+      }],
+      "usage": {"input_tokens": 10, "output_tokens": 0}
+    }
+    let resp = parseAnthropicResponse(j)
+    check resp.toolCalls.len          == 1
+    check resp.toolCalls[0].id        == "toolu_abc"
+    check resp.toolCalls[0].name      == "search"
+    check resp.toolCalls[0].inputJson.contains("nim lang")
+
+suite "AnthropicAdapter tool calling (buildBody)":
+
+  test "tools array in Anthropic format when req.tools non-empty":
+    let tools = @[ToolDescription(name: "search", description: "web search", schemaJson: "{}")]
+    let req  = CompletionRequest(system: "", messages: newHistory(), tools: tools)
+    let body = newAnthropicAdapter("k").buildBody(req)
+    check body.hasKey("tools")
+    check body["tools"].len                      == 1
+    check body["tools"][0]["name"].getStr()        == "search"
+    check body["tools"][0]["description"].getStr() == "web search"
+    check body["tools"][0].hasKey("input_schema")
+
+  test "tools absent when req.tools empty":
+    let req  = CompletionRequest(system: "", messages: newHistory())
+    let body = newAnthropicAdapter("k").buildBody(req)
+    check not body.hasKey("tools")
+
+  test "tool result message becomes user turn with tool_result block":
+    var h = newHistory()
+    h.addToolResult(callId = "toolu_abc", toolName = "search", output = "results")
+    let body = newAnthropicAdapter("k").buildBody(
+      CompletionRequest(system: "", messages: h))
+    let msgs = body["messages"]
+    check msgs[0]["role"].getStr() == "user"
+    let blk = msgs[0]["content"][0]
+    check blk["type"].getStr()        == "tool_result"
+    check blk["tool_use_id"].getStr() == "toolu_abc"
+    check blk["content"].getStr()     == "results"
