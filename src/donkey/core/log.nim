@@ -27,37 +27,43 @@ type
 
 # ── default sink ──────────────────────────────────────────────────────────────
 
-proc stderrSink(e: LogEntry) =
-  let tag = case e.level
-    of lvlDebug: "DBG"
-    of lvlInfo:  "INF"
-    of lvlWarn:  "WRN"
-    of lvlError: "ERR"
-    of lvlFatal: "FTL"
-  stderr.writeLine &"[{e.timestamp}] {tag} [{e.subsystem}] {e.message}"
+func toTag(l: LogLevel): string =
+  case l
+  of lvlDebug: "DBG"
+  of lvlInfo:  "INF"
+  of lvlWarn:  "WRN"
+  of lvlError: "ERR"
+  of lvlFatal: "FTL"
+
+proc stderrSink(e: LogEntry) {.gcsafe, raises: [].} =
+  try: stderr.writeLine &"[{e.timestamp}] {e.level.toTag} [{e.subsystem}] {e.message}"
+  except IOError: discard
 
 # ── constructors ──────────────────────────────────────────────────────────────
 
-proc newLogger*(subsystem: string;
+func newLogger*(subsystem: string;
                 level: LogLevel = lvlInfo;
                 sink: LogSink = stderrSink): Logger =
   Logger(subsystem: subsystem, minLevel: level, sink: sink)
 
-proc child*(logger: Logger; subsystem: string): Logger =
+func child*(logger: Logger; subsystem: string): Logger =
   Logger(subsystem: logger.subsystem & "." & subsystem,
          minLevel:  logger.minLevel,
          sink:      logger.sink)
 
 # ── emit ──────────────────────────────────────────────────────────────────────
 
-proc log*(logger: Logger; level: LogLevel; msg: string) =
+proc log*(logger: Logger; level: LogLevel; msg: string) {.gcsafe, raises: [].} =
   if level < logger.minLevel: return
-  logger.sink(LogEntry(
-    timestamp: now().format("yyyy-MM-dd'T'HH:mm:ss"),
-    level:     level,
-    subsystem: logger.subsystem,
-    message:   msg,
-  ))
+  {.cast(gcsafe).}:
+    try:
+      logger.sink(LogEntry(
+        timestamp: now().format("yyyy-MM-dd'T'HH:mm:ss"),
+        level:     level,
+        subsystem: logger.subsystem,
+        message:   msg,
+      ))
+    except Exception: discard
 
 template debug*(logger: Logger; msg: string) = logger.log(lvlDebug, msg)
 template info*(logger: Logger; msg: string)  = logger.log(lvlInfo,  msg)
