@@ -68,8 +68,7 @@ proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) =
 
 # ── Scaffold USER.md from onboarding answers ──────────────────────────────────
 
-proc bootstrapUserMd*(name, callMe, timezone, language: string): string =
-  ## Pure helper (could be func but lives here for proximity to adapter).
+func bootstrapUserMd*(name, callMe, timezone, language: string): string =
   ## Generates the initial USER.md following the OpenClaw USER.md template.
   """---
 summary: """ & name & """ — onboarded via Donkey bootstrapping.
