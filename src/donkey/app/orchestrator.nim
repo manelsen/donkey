@@ -87,6 +87,26 @@ proc collectWithDebounce(inbox: AsyncQueue[AgentMessage];
   result         = latest
   result.payload = strutils.join(texts, "\n\n")
 
+# ── Thinking tag filter ────────────────────────────────────────────────────────
+
+func filterThinking*(text: string): string =
+  ## Removes completed <thinking>...</thinking> blocks.
+  ## If a <thinking> block has no closing tag yet, strips from <thinking> to end
+  ## (suppresses partial thinking preview).
+  const open  = "<thinking>"
+  const close = "</thinking>"
+  result = ""
+  var i = 0
+  while i < text.len:
+    let s = text.find(open, i)
+    if s < 0:
+      result.add(text[i .. ^1])
+      break
+    result.add(text[i ..< s])          ## text before <thinking>
+    let e = text.find(close, s)
+    if e < 0: break                    ## incomplete block — suppress the rest
+    i = e + close.len
+
 # ── Thread-based streaming ─────────────────────────────────────────────────────
 
 const doneSentinel = "\x00DONE"
@@ -128,29 +148,31 @@ proc streamToOutbox(fn:        StreamFn;
     var (has, tok) = tokenChan.tryRecv()
     while has:
       if tok == doneSentinel:
-        ## Final flush — send isPartial=false.
-        if accumulated.len > 0:
+        ## Final flush — send isPartial=false. Filter thinking blocks.
+        let visible = filterThinking(accumulated)
+        if visible.len > 0:
           await outbox.put(OutboundMessage(
             userId:    userId,
             channel:   ch,
-            text:      accumulated,
+            text:      visible,
             replyTo:   replyTo,
             streamId:  streamId,
             isPartial: false,
           ))
         tokenChan.close()
         joinThread(t)
-        return accumulated
+        return accumulated   ## return raw (with thinking) for history
       accumulated.add(tok)
       (has, tok) = tokenChan.tryRecv()
 
-    ## Periodic partial flush.
-    if accumulated.len > 0 and nowMs() - lastFlush >= StreamFlushMs:
+    ## Periodic partial flush — suppress thinking sections during streaming.
+    let visible = filterThinking(accumulated)
+    if visible.len > 0 and nowMs() - lastFlush >= StreamFlushMs:
       lastFlush = nowMs()
       await outbox.put(OutboundMessage(
         userId:    userId,
         channel:   ch,
-        text:      accumulated,
+        text:      visible,
         replyTo:   replyTo,
         streamId:  streamId,
         isPartial: true,

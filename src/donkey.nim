@@ -496,6 +496,30 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   var msgSeq:        int
   sm.init()
 
+  ## Uptime reference.
+  let daemonStartMs = nowMs()
+
+  ## Think-level options (saved to PREFERENCES.md as thinking = "off"|"low"|"medium"|"high").
+  const ThinkLevels = ["off", "low", "medium", "high"]
+
+  proc getCurrentThinkLevel(userId: UserId): string =
+    let ctx = memory.loadContext(userId)
+    if ctx.preferencesMd.len == 0: return "off"
+    try:
+      {.cast(gcsafe).}:
+        let t = parsetoml.parseString(ctx.preferencesMd)
+        if t.hasKey("thinking"): return t["thinking"].getStr("off")
+    except: discard
+    "off"
+
+  proc buildThinkButtons(userId: UserId): seq[seq[(string, string)]] =
+    let curr = getCurrentThinkLevel(userId)
+    var row: seq[(string, string)]
+    for lvl in ThinkLevels:
+      let label = if lvl == curr: "✓ " & lvl else: lvl
+      row.add((label, "think:set:" & lvl))
+    @[row]
+
   ## Model picker data — provider → model list.
   const ModelMenu = [
     ("zhipu",      @["glm-4.7",    "glm-4-plus",   "glm-z1-flash"]),
@@ -732,8 +756,11 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
                    "/help — esta mensagem\n" &
                    "/reset — reinicia a conversa atual\n" &
                    "/models — seleciona o modelo de IA\n" &
+                   "/think — controla o nível de raciocínio\n" &
                    "/memory — exibe memórias salvas\n" &
                    "/forget — apaga as memórias salvas\n" &
+                   "/status — snapshot da sessão atual\n" &
+                   "/ping — testa latência do provider\n" &
                    "/doctor — diagnóstico do sistema\n" &
                    "/mycode — gera código de linkagem cross-channel\n" &
                    "/continue <code> — conecta este canal a outra sessão\n\n" &
@@ -806,6 +833,77 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
           if kbdId.len > 0:
             tgAdapter.editKeyboard(msg.userId, kbdId,
                                    buildProviderButtons(msg.userId)).isOkOr: discard
+        elif data.startsWith("think:set:"):
+          let level = data[10 .. ^1]
+          if level in ThinkLevels:
+            let ctx2  = memory.loadContext(msg.userId)
+            var prefs = ctx2.preferencesMd
+            var lines = prefs.splitLines()
+            var found = false
+            for i in 0 ..< lines.len:
+              if lines[i].startsWith("thinking"):
+                lines[i] = "thinking = \"" & level & "\""
+                found = true
+            if not found: lines.add("thinking = \"" & level & "\"")
+            memory.savePreferences(msg.userId, lines.join("\n"))
+            let kbdId = kbdMsgIds.getOrDefault($msg.userId)
+            if kbdId.len > 0:
+              tgAdapter.editKeyboard(msg.userId, kbdId, @[]).isOkOr: discard
+              kbdMsgIds.del($msg.userId)
+            tgAdapter.send(OutboundMessage(
+              userId:  msg.userId, channel: ckTelegram,
+              text:    "🧠 Thinking: <b>" & level & "</b>",
+              replyTo: msg.channelId,
+            )).isOkOr: discard
+        continue
+
+      if cmd == "/ping":
+        let t0 = nowMs()
+        let (prov, mdl) = getCurrentProviderModel(msg.userId)
+        let pingFn = buildCompleteFn("provider = \"" & prov & "\"\nmodel = \"" & mdl & "\"")
+        var ph = newHistory()
+        ph.addUser("ping")
+        let preq = buildPrompt("Reply with one word: pong", ph, "")
+        let presp = pingFn(preq)
+        let delta = nowMs() - t0
+        let pingText = if presp.isOk:
+                         "🏓 pong — <b>" & prov & " / " & mdl & "</b> — <b>" & $delta & "ms</b>"
+                       else:
+                         "❌ " & prov & " error: " & presp.error
+        tgAdapter.send(OutboundMessage(
+          userId:  msg.userId, channel: ckTelegram, text: pingText,
+          replyTo: msg.channelId,
+        )).isOkOr: log.error("tg /ping reply: " & error)
+        continue
+
+      if cmd == "/think":
+        let thinkId = tgAdapter.sendKeyboard(msg.userId,
+          "Nível de raciocínio:", buildThinkButtons(msg.userId),
+          replyTo = msg.channelId).valueOr: ""
+        if thinkId.len > 0: kbdMsgIds[$msg.userId] = thinkId
+        continue
+
+      if cmd == "/status":
+        let (sProv, sMdl) = getCurrentProviderModel(msg.userId)
+        let sThink = getCurrentThinkLevel(msg.userId)
+        let ctx = memory.loadContext(msg.userId)
+        let memLines = ctx.memoryMd.countLines()
+        let uptimeSec = (nowMs() - daemonStartMs) div 1_000
+        let uptimeStr = if uptimeSec < 60: $uptimeSec & "s"
+                        elif uptimeSec < 3600: $(uptimeSec div 60) & "m"
+                        else: $(uptimeSec div 3600) & "h " & $((uptimeSec mod 3600) div 60) & "m"
+        let activeSess = sm.sessionCount()
+        let statusText = "<b>📊 Status</b>\n\n" &
+          "🤖 Provider: <b>" & sProv & " / " & sMdl & "</b>\n" &
+          "🧠 Thinking: <b>" & sThink & "</b>\n" &
+          "🔧 Tools: <b>" & $tools.len & "</b>\n" &
+          "💬 Sessões ativas: <b>" & $activeSess & "</b>\n" &
+          "📝 Memórias: <b>" & $memLines & " linhas</b>\n" &
+          "⏱ Uptime: <b>" & uptimeStr & "</b>"
+        tgAdapter.send(OutboundMessage(
+          userId:  msg.userId, channel: ckTelegram, text: statusText,
+          replyTo: msg.channelId,
+        )).isOkOr: log.error("tg /status reply: " & error)
         continue
 
       if cmd == "/reset":

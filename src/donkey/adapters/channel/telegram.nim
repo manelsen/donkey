@@ -177,8 +177,15 @@ proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
       ## Skip updates with no content to process.
       if text.len == 0 and mediaUrl.len == 0: continue
 
+      ## P0 #3: group session keying — use chat.id for groups so all members
+      ## share one session. For private chats chat.id == from.id anyway.
+      let chatId   = tgMsg["chat"]["id"].getBiggestInt().int64
+      let chatType = tgMsg["chat"].getOrDefault("type").getStr("private")
+      let sessionRaw = if chatType in ["group", "supergroup"]: $chatId
+                       else: $fromId
+
       msgs.add InboundMessage(
-        userId:    a.resolver.resolve(ckTelegram, $fromId),
+        userId:    a.resolver.resolve(ckTelegram, sessionRaw),
         channel:   ckTelegram,
         channelId: $tgMsg["message_id"].getInt(),
         text:      text,
@@ -345,8 +352,11 @@ proc setMyCommands*(a: TelegramAdapter): Result[void, string] =
     {"command": "reset",   "description": "Reinicia a conversa atual"},
     {"command": "mycode",  "description": "Gera código de linkagem cross-channel"},
     {"command": "models",  "description": "Seleciona modelo de IA"},
+    {"command": "think",   "description": "Controla o nível de raciocínio"},
     {"command": "memory",  "description": "Exibe memórias salvas"},
     {"command": "forget",  "description": "Apaga as memórias salvas"},
+    {"command": "status",  "description": "Snapshot da sessão atual"},
+    {"command": "ping",    "description": "Testa latência do provider"},
     {"command": "doctor",  "description": "Diagnóstico do sistema"},
     {"command": "start",   "description": "Inicia ou recomeça a conversa"},
   ]
