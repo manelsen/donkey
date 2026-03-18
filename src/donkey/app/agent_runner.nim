@@ -1,16 +1,18 @@
 ## AgentRunner — main loop for a single-agent session.
 ##
 ## Wires together: ChannelPort (recv/send) + MemoryPort (load/save) +
-## ProviderPort (complete) + SecretStore.
+## ProviderPort (complete) + ToolPort (invoke).
 ##
 ## This module uses proc (effectful). The pure decisions live in domain/message.nim.
 
-import std/strutils
+import std/[json, strutils]
 import ../domain/message
 import ../core/log
 import ../core/pipeops
 import ../adapters/memory/md_file
-import ../adapters/provider/zhipu
+import ../adapters/tool/mcp_client
+import ../ports/provider
+import ../ports/tool
 
 # ── System prompts ─────────────────────────────────────────────────────────────
 
@@ -25,6 +27,8 @@ where each value is on one line with no extra spaces."""
   DefaultSystem* = """You are Donkey, a personal AI assistant.
 Be concise, helpful, and remember what the user tells you.
 Respond in the user's preferred language."""
+
+  MaxToolRounds* = 5   ## safety limit on tool call loops
 
 # ── Onboarding parser ──────────────────────────────────────────────────────────
 
@@ -56,21 +60,75 @@ func parseOnboardingResponse*(text: string): OnboardingResult =
     return
   result.complete = false
 
+# ── Tool helpers ────────────────────────────────────────────────────────────────
+
+func buildToolsSystemSuffix*(tools: seq[ToolDescription]): string =
+  ## Pure func. Appends a tool list to the system prompt when tools are available.
+  if tools.len == 0:
+    return ""
+  result = "\n\n## Available tools\n"
+  for td in tools:
+    result.add("- **" & td.name & "**: " & td.description & "\n")
+
+proc executeToolCalls*(clients: var seq[McpClientAdapter];
+                       calls:   seq[ToolCallRequest];
+                       logger:  Logger): seq[(ToolCallRequest, string)] =
+  ## Executes all tool calls. Returns (call, output) pairs.
+  for tc in calls:
+    let input =
+      try: parseJson(tc.inputJson)
+      except: newJObject()
+    let call = ToolCall(id: tc.id, name: tc.name, input: input)
+
+    var invoked = false
+    for i in 0 ..< clients.len:
+      # Try each client in order; stop at first that knows this tool.
+      let res = clients[i].invoke(call)
+      if res.isOk:
+        result.add((tc, res.value.output))
+        invoked = true
+        break
+      # If the client returned an error, continue to next client.
+
+    if not invoked:
+      logger.warn("tool not found: " & tc.name)
+      result.add((tc, "Tool '" & tc.name & "' not found."))
+
 # ── AgentRunner ────────────────────────────────────────────────────────────────
 
 type
   AgentRunner* = object
     memory*:     MdFileAdapter
-    provider*:   ZhipuAdapter
+    complete*:   CompleteFn
+    clients*:    seq[McpClientAdapter]  ## registered tool servers
+    tools*:      seq[ToolDescription]   ## cached tool schemas
     logger*:     Logger
     history*:    ConversationHistory
     maxHistory*: int
 
-proc newAgentRunner*(memory: MdFileAdapter;
-                     provider: ZhipuAdapter;
-                     logger: Logger;
+proc newAgentRunner*(memory:    MdFileAdapter;
+                     complete:  CompleteFn;
+                     logger:    Logger;
+                     clients:   seq[McpClientAdapter] = @[];
                      maxHistory = 20): AgentRunner =
-  AgentRunner(memory: memory, provider: provider, logger: logger,
+  ## Load tool schemas from all registered clients.
+  var tools:     seq[ToolDescription]
+  var liveClients: seq[McpClientAdapter] = clients
+
+  for i in 0 ..< liveClients.len:
+    let schemasRes = liveClients[i].listTools()
+    if schemasRes.isOk:
+      for s in schemasRes.value:
+        tools.add(ToolDescription(
+          name:        s.name,
+          description: s.description,
+          schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
+        ))
+    else:
+      logger.warn("listTools failed for client " & $i & ": " & schemasRes.error)
+
+  AgentRunner(memory: memory, complete: complete, clients: liveClients,
+              tools: tools, logger: logger,
               history: newHistory(), maxHistory: maxHistory)
 
 proc runOnboardingTurn*(runner: var AgentRunner;
@@ -79,7 +137,7 @@ proc runOnboardingTurn*(runner: var AgentRunner;
   runner.history.addUser(userText)
   runner.history.trimTo(runner.maxHistory)
 
-  let resp = ? runner.provider.complete(buildPrompt(OnboardingSystem, runner.history, ""))
+  let resp = ? runner.complete(buildPrompt(OnboardingSystem, runner.history, ""))
 
   runner.history.addAssistant(resp.text)
   runner.logger.info("onboarding turn tokens_in=" & $resp.inputTokens &
@@ -100,12 +158,31 @@ proc runTurn*(runner: var AgentRunner;
   runner.history.addUser(userText)
   runner.history.trimTo(runner.maxHistory)
 
-  let context = (ctx.memoryMd & "\n" & ctx.preferencesMd).strip()
-  let resp    = ? runner.provider.complete(
-                    buildPrompt(DefaultSystem, runner.history, context))
+  let context     = (ctx.memoryMd & "\n" & ctx.preferencesMd).strip()
+  let toolsSuffix = buildToolsSystemSuffix(runner.tools)
+  let system      = DefaultSystem & toolsSuffix
 
-  runner.history.addAssistant(resp.text)
-  runner.logger.info("turn complete user=" & $userId &
-                     " tokens_in=" & $resp.inputTokens &
-                     " tokens_out=" & $resp.outputTokens)
-  ok(resp.text)
+  var round = 0
+  while round < MaxToolRounds:
+    inc round
+    let req  = buildPrompt(system, runner.history, context, runner.tools)
+    let resp = ? runner.complete(req)
+
+    if resp.toolCalls.len == 0:
+      ## Final text response — record and return.
+      if resp.text.len > 0:
+        runner.history.addAssistant(resp.text)
+      runner.logger.info("turn complete user=" & $userId &
+                         " round=" & $round &
+                         " tokens_in=" & $resp.inputTokens &
+                         " tokens_out=" & $resp.outputTokens)
+      return ok(resp.text)
+
+    ## Tool call round — execute and feed results back.
+    runner.logger.info("tool calls=" & $resp.toolCalls.len & " round=" & $round)
+    let results = executeToolCalls(runner.clients, resp.toolCalls, runner.logger)
+    for (tc, output) in results:
+      runner.history.addToolResult(tc.id, tc.name, output)
+
+  ## Exceeded MaxToolRounds — return last assistant text if any.
+  err("Tool call loop exceeded " & $MaxToolRounds & " rounds")
