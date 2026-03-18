@@ -1,19 +1,16 @@
 ## ChannelPort — concept for messaging channels (Telegram, Discord, WeChat…).
 ##
-## Adapters: TelegramAdapter (F1), DiscordAdapter (F5), WeComAdapter (F8).
-## Each adapter absorbs its own auth, polling/webhook, and message format quirks.
+## `c` is immutable: send and ack work on a value or ref.
+## `vc` is mutable: receive may advance internal state (offset, buffer, etc.).
+##
+## Discord's send() uses a ref Table internally for DM channel caching, so it
+## works fine with an immutable receiver despite mutating the cache through the ref.
 
 import ../domain/message
+import ../core/pipeops
 
 type
-  ChannelPort* = concept c
-    c.send(OutboundMessage)
-    ## Delivers a message to the channel. Raises on unrecoverable error.
-
-    c.receive() is seq[InboundMessage]
-    ## Returns zero or more new inbound messages.
-    ## Long-polling adapters block until timeout; webhook adapters drain a queue.
-
+  ChannelPort* = concept c, var vc
+    c.send(OutboundMessage) is Result[void, string]
+    vc.receive() is Result[seq[InboundMessage], string]
     c.ack(string)
-    ## Acknowledges a message by its channel-specific id (channelId).
-    ## No-op for channels that do not require explicit ack.
