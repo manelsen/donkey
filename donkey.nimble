@@ -14,6 +14,7 @@ requires "parsetoml >= 0.6.0"
 requires "results >= 0.5.0"
 requires "ws >= 0.5.0"
 requires "db_connector >= 0.1.0"  ## PostgreSQL + pgvector + AGE (-d:withPostgres)
+requires "illwill >= 0.4.0"       ## TUI dashboard (donkey tui)
 
 # Tasks
 task test, "Run all tests":
