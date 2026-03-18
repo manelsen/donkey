@@ -479,8 +479,37 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   var sm:            SessionManager
   var streamMsgIds:  Table[string, string]   ## streamId → channel message id
   var statusMsgIds:  Table[string, string]   ## userId string → status message id
+  var kbdMsgIds:     Table[string, string]   ## userId string → open keyboard msgId
   var msgSeq:        int
   sm.init()
+
+  ## Model picker data — provider → model list.
+  const ModelMenu = [
+    ("zhipu",      @["glm-4.7",    "glm-4-plus",   "glm-z1-flash"]),
+    ("openrouter", @["openai/gpt-4o-mini", "openai/gpt-4o", "anthropic/claude-opus-4-6"]),
+    ("anthropic",  @["claude-opus-4-6",   "claude-sonnet-4-6"]),
+    ("gemini",     @["gemini-2.0-flash",  "gemini-2.5-pro"]),
+    ("minimax",    @["MiniMax-M2",        "MiniMax-Text-01"]),
+  ]
+
+  proc buildProviderButtons(): seq[seq[(string, string)]] =
+    ## Top-level keyboard: one button per provider.
+    result = @[]
+    for (prov, _) in ModelMenu:
+      result.add(@[(prov, "models:provider:" & prov)])
+
+  proc buildModelButtons(provider: string): seq[seq[(string, string)]] =
+    ## Second-level keyboard: models for chosen provider + Back.
+    result = @[]
+    for (prov, models) in ModelMenu:
+      if prov != provider: continue
+      var row: seq[(string, string)]
+      for m in models:
+        row.add((m, "models:set:" & prov & ":" & m))
+        if row.len == 2:
+          result.add(row); row = @[]
+      if row.len > 0: result.add(row)
+    result.add(@[("← voltar", "models:back")])
 
   log.info("polling for messages…")
   while true:
@@ -627,6 +656,60 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
           text:    if memText.len > 0: memText else: "Nenhuma memória salva ainda.",
           replyTo: msg.channelId,
         )).isOkOr: log.error("tg /memory reply: " & error)
+        continue
+
+      if cmd == "/models":
+        let kbdId = tgAdapter.sendKeyboard(msg.userId,
+          "Escolha o provider:", buildProviderButtons(),
+          replyTo = msg.channelId).valueOr: ""
+        if kbdId.len > 0: kbdMsgIds[$msg.userId] = kbdId
+        continue
+
+      if cmd.startsWith("/callback "):
+        let data = cmd[10 .. ^1] |> strip
+        if data.startsWith("models:provider:"):
+          let prov = data[16 .. ^1]
+          let kbdId = kbdMsgIds.getOrDefault($msg.userId)
+          if kbdId.len > 0:
+            tgAdapter.editKeyboard(msg.userId, kbdId,
+                                   buildModelButtons(prov)).isOkOr: discard
+        elif data.startsWith("models:set:"):
+          ## "models:set:<provider>:<model>"
+          let parts = data[11 .. ^1].split(':', 1)
+          if parts.len == 2:
+            let (prov, model) = (parts[0], parts[1])
+            let ctx   = memory.loadContext(msg.userId)
+            var prefs = ctx.preferencesMd
+            ## Inject/replace provider and model lines.
+            var lines = prefs.splitLines()
+            var foundProv  = false
+            var foundModel = false
+            for i in 0 ..< lines.len:
+              if lines[i].startsWith("provider"):
+                lines[i] = "provider = \"" & prov & "\""
+                foundProv = true
+              elif lines[i].startsWith("model"):
+                lines[i] = "model = \"" & model & "\""
+                foundModel = true
+            if not foundProv:  lines.add("provider = \"" & prov & "\"")
+            if not foundModel: lines.add("model = \"" & model & "\"")
+            memory.savePreferences(msg.userId, lines.join("\n"))
+            ## Remove keyboard and confirm.
+            let kbdId = kbdMsgIds.getOrDefault($msg.userId)
+            if kbdId.len > 0:
+              tgAdapter.editKeyboard(msg.userId, kbdId, @[]).isOkOr: discard
+              kbdMsgIds.del($msg.userId)
+            tgAdapter.send(OutboundMessage(
+              userId:  msg.userId,
+              channel: ckTelegram,
+              text:    "✅ Modelo definido: <b>" & prov & " / " & model & "</b>",
+              replyTo: msg.channelId,
+            )).isOkOr: discard
+        elif data == "models:back":
+          let kbdId = kbdMsgIds.getOrDefault($msg.userId)
+          if kbdId.len > 0:
+            tgAdapter.editKeyboard(msg.userId, kbdId,
+                                   buildProviderButtons()).isOkOr: discard
         continue
 
       if cmd == "/reset":
