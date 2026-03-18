@@ -55,3 +55,5 @@ proc recordChannel*(sm: var SessionManager;
 func listSessions*(sm: SessionManager): seq[(UserId, seq[(ChannelKind, string)])] =
   for uid, entry in sm.entries:
     result.add((UserId(uid), entry.channels))
+
+func sessionCount*(sm: SessionManager): int = sm.entries.len

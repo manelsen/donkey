@@ -346,6 +346,8 @@ proc setMyCommands*(a: TelegramAdapter): Result[void, string] =
     {"command": "mycode",  "description": "Gera código de linkagem cross-channel"},
     {"command": "models",  "description": "Seleciona modelo de IA"},
     {"command": "memory",  "description": "Exibe memórias salvas"},
+    {"command": "forget",  "description": "Apaga as memórias salvas"},
+    {"command": "doctor",  "description": "Diagnóstico do sistema"},
     {"command": "start",   "description": "Inicia ou recomeça a conversa"},
   ]
   discard ? a.post("setMyCommands", %* {"commands": cmds})

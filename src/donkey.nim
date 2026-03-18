@@ -277,6 +277,17 @@ proc ctlProviderTest(name: string) =
 ##     - subsequent partials: editMessage
 ##     - isPartial=false: editMessage + delete from streamMsgIds
 
+proc makeTgTypingFn(token: string; identityPath: string): TypingFn =
+  ## Returns a TypingFn that sends typing indicators to Telegram users.
+  ## Uses its own TelegramAdapter instance (token + resolver shared via ref).
+  let tg = new TelegramAdapter
+  tg[] = newTelegramAdapter(token, identityPath, pollTimeout = 0)
+  result = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: [].} =
+    if channel == ckTelegram:
+      try:
+        {.cast(gcsafe).}: tg[].sendTyping(userId).isOkOr: discard
+      except: discard
+
 proc ensureSession(sm:           var SessionManager;
                    msg:          InboundMessage;
                    memory:       MdFileAdapter;
@@ -286,7 +297,8 @@ proc ensureSession(sm:           var SessionManager;
                    tools:        seq[ToolDescription];
                    globalOutbox: AsyncQueue[OutboundMessage];
                    log:          Logger;
-                   msgSeq:       var int) {.gcsafe.} =
+                   msgSeq:       var int;
+                   typingFn:     TypingFn = nil) {.gcsafe.} =
   ## Creates session + orchestrator on first contact; then enqueues message.
   ## Fire-and-forget: does NOT wait for reply.
   let uid   = $msg.userId
@@ -315,7 +327,8 @@ proc ensureSession(sm:           var SessionManager;
             ))
         sessionClients.add(client)
     asyncSpawn runOrchestrator(entry.inbox, globalOutbox, memory,
-                               fallbackFn, streamFn, sessionClients, sessionTools)
+                               fallbackFn, streamFn, sessionClients, sessionTools,
+                               typingFn)
     log.info("new session: " & uid)
 
   sm.recordChannel(msg.userId, msg.channel, msg.channelId)
@@ -492,24 +505,46 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     ("minimax",    @["MiniMax-M2",        "MiniMax-Text-01"]),
   ]
 
-  proc buildProviderButtons(): seq[seq[(string, string)]] =
-    ## Top-level keyboard: one button per provider.
+  proc getCurrentProviderModel(userId: UserId): (string, string) =
+    ## Reads PREFERENCES.md and returns (provider, model) or defaults.
+    let ctx = memory.loadContext(userId)
+    var prov  = "zhipu"
+    var model = ""
+    if ctx.preferencesMd.len > 0:
+      try:
+        {.cast(gcsafe).}:
+          let t = parsetoml.parseString(ctx.preferencesMd)
+          if t.hasKey("provider"): prov  = t["provider"].getStr()
+          if t.hasKey("model"):    model = t["model"].getStr()
+      except: discard
+    (prov, model)
+
+  proc buildProviderButtons(userId: UserId): seq[seq[(string, string)]] =
+    ## Top-level keyboard: one button per provider, current one marked with ✓.
+    let (currProv, _) = getCurrentProviderModel(userId)
     result = @[]
     for (prov, _) in ModelMenu:
-      result.add(@[(prov, "models:provider:" & prov)])
+      let label = if prov == currProv: "✓ " & prov else: prov
+      result.add(@[(label, "models:provider:" & prov)])
 
-  proc buildModelButtons(provider: string): seq[seq[(string, string)]] =
+  proc buildModelButtons(provider: string; userId: UserId): seq[seq[(string, string)]] =
     ## Second-level keyboard: models for chosen provider + Back.
+    ## Current selection is marked with ✓.
+    let (currProv, currModel) = getCurrentProviderModel(userId)
     result = @[]
     for (prov, models) in ModelMenu:
       if prov != provider: continue
       var row: seq[(string, string)]
       for m in models:
-        row.add((m, "models:set:" & prov & ":" & m))
+        let label = if prov == currProv and m == currModel: "✓ " & m else: m
+        row.add((label, "models:set:" & prov & ":" & m))
         if row.len == 2:
           result.add(row); row = @[]
       if row.len > 0: result.add(row)
     result.add(@[("← voltar", "models:back")])
+
+  ## Typing function for Telegram — reuses token+resolver without polling offset.
+  let tgTypingFn = makeTgTypingFn(telegramToken, identityPath)
 
   log.info("polling for messages…")
   while true:
@@ -521,11 +556,17 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
                (if outMsg.streamId.len > 0: " [stream]" else: ""))
 
       ## Clear ⚙️ status message on first real reply (non-partial or non-streaming).
+      ## Show ❌ on error replies, delete otherwise.
       let uidStr = $outMsg.userId
       if outMsg.channel == ckTelegram and not outMsg.isPartial and
          uidStr in statusMsgIds:
-        tgAdapter.deleteMessage(outMsg.userId,
-                                statusMsgIds[uidStr]).isOkOr: discard
+        let isError = outMsg.text.startsWith("Desculpe") or
+                      outMsg.text.startsWith("Tool call loop")
+        if isError:
+          tgAdapter.editStatus(outMsg.userId, statusMsgIds[uidStr], "❌").isOkOr: discard
+        else:
+          tgAdapter.deleteMessage(outMsg.userId,
+                                  statusMsgIds[uidStr]).isOkOr: discard
         statusMsgIds.del(uidStr)
 
       routeOutbound(outMsg, tgAdapter, dcAdapter, wcAdapter, fsAdapter, log, streamMsgIds)
@@ -629,6 +670,59 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
         )).isOkOr: log.error("tg /mycode reply: " & error)
         continue
 
+      if cmd.startsWith("/continue "):
+        let code    = cmd[10 .. ^1] |> strip
+        let rawTgId = tgAdapter.resolver.reverseChannel(msg.userId, ckTelegram)
+        let linked  = tgAdapter.resolver.consumeLinkCode(code, ckTelegram, rawTgId)
+        let replyText = if linked: "✅ Sessão reconectada! Seu histórico foi preservado."
+                        else: "❌ Código inválido ou expirado. Gere um novo com /mycode."
+        tgAdapter.send(OutboundMessage(
+          userId:  msg.userId,
+          channel: ckTelegram,
+          text:    replyText,
+          replyTo: msg.channelId,
+        )).isOkOr: log.error("tg /continue reply: " & error)
+        continue
+
+      if cmd == "/forget":
+        memory.clearMemory(msg.userId)
+        tgAdapter.send(OutboundMessage(
+          userId:  msg.userId,
+          channel: ckTelegram,
+          text:    "🗑️ Memórias apagadas.",
+          replyTo: msg.channelId,
+        )).isOkOr: log.error("tg /forget reply: " & error)
+        continue
+
+      if cmd == "/doctor":
+        var report = "<b>🩺 Donkey Doctor</b>\n\n"
+        ## Provider check
+        let testFn = buildCompleteFn("")
+        var h2 = newHistory()
+        h2.addUser("ping")
+        let testReq  = buildPrompt("Reply with one word: pong", h2, "")
+        let testResp = testFn(testReq)
+        if testResp.isOk:
+          report.add("✅ Provider: OK\n")
+        else:
+          report.add("❌ Provider: " & testResp.error & "\n")
+        ## Memory check
+        let mpath = memory.paddocksDir
+        report.add(if dirExists(mpath): "✅ Memory dir: " & mpath & "\n"
+                   else: "❌ Memory dir missing: " & mpath & "\n")
+        ## Tools check
+        report.add("🔧 Tools loaded: " & $tools.len & "\n")
+        report.add("🔌 MCP clients: " & $toolClients.len & "\n")
+        ## Session check
+        report.add("💬 Active sessions: " & $sm.sessionCount() & "\n")
+        tgAdapter.send(OutboundMessage(
+          userId:  msg.userId,
+          channel: ckTelegram,
+          text:    report,
+          replyTo: msg.channelId,
+        )).isOkOr: log.error("tg /doctor reply: " & error)
+        continue
+
       if cmd == "/help":
         tgAdapter.send(OutboundMessage(
           userId:  msg.userId,
@@ -639,6 +733,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
                    "/reset — reinicia a conversa atual\n" &
                    "/models — seleciona o modelo de IA\n" &
                    "/memory — exibe memórias salvas\n" &
+                   "/forget — apaga as memórias salvas\n" &
+                   "/doctor — diagnóstico do sistema\n" &
                    "/mycode — gera código de linkagem cross-channel\n" &
                    "/continue <code> — conecta este canal a outra sessão\n\n" &
                    "Envie qualquer mensagem para conversar. " &
@@ -660,7 +756,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
 
       if cmd == "/models":
         let kbdId = tgAdapter.sendKeyboard(msg.userId,
-          "Escolha o provider:", buildProviderButtons(),
+          "Escolha o provider:", buildProviderButtons(msg.userId),
           replyTo = msg.channelId).valueOr: ""
         if kbdId.len > 0: kbdMsgIds[$msg.userId] = kbdId
         continue
@@ -672,7 +768,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
           let kbdId = kbdMsgIds.getOrDefault($msg.userId)
           if kbdId.len > 0:
             tgAdapter.editKeyboard(msg.userId, kbdId,
-                                   buildModelButtons(prov)).isOkOr: discard
+                                   buildModelButtons(prov, msg.userId)).isOkOr: discard
         elif data.startsWith("models:set:"):
           ## "models:set:<provider>:<model>"
           let parts = data[11 .. ^1].split(':', 1)
@@ -709,7 +805,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
           let kbdId = kbdMsgIds.getOrDefault($msg.userId)
           if kbdId.len > 0:
             tgAdapter.editKeyboard(msg.userId, kbdId,
-                                   buildProviderButtons()).isOkOr: discard
+                                   buildProviderButtons(msg.userId)).isOkOr: discard
         continue
 
       if cmd == "/reset":
@@ -736,7 +832,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
         statusMsgIds[$msg.userId] = statusId
 
       ensureSession(sm, msg, memory, globalCompleteFn, globalStreamFn,
-                    toolClients, tools, globalOutbox, log, msgSeq)
+                    toolClients, tools, globalOutbox, log, msgSeq, tgTypingFn)
 
     ## 4. Yield to Chronos — lets orchestrators and streaming threads run.
     await sleepAsync(milliseconds(100))
