@@ -31,6 +31,7 @@ import donkey/domain/message
 import donkey/ports/provider
 import donkey/app/orchestrator
 import donkey/app/session_manager
+import donkey/ports/memory
 
 const Version* = "0.1.0"
 
@@ -298,7 +299,8 @@ proc ensureSession(sm:           var SessionManager;
                    globalOutbox: AsyncQueue[OutboundMessage];
                    log:          Logger;
                    msgSeq:       var int;
-                   typingFn:     TypingFn = nil) {.gcsafe.} =
+                   typingFn:     TypingFn = nil;
+                   searchFn:     SearchFn = nil) {.gcsafe.} =
   ## Creates session + orchestrator on first contact; then enqueues message.
   ## Fire-and-forget: does NOT wait for reply.
   let uid   = $msg.userId
@@ -328,7 +330,7 @@ proc ensureSession(sm:           var SessionManager;
         sessionClients.add(client)
     asyncSpawn runOrchestrator(entry.inbox, globalOutbox, memory,
                                fallbackFn, streamFn, sessionClients, sessionTools,
-                               typingFn)
+                               typingFn, searchFn)
     log.info("new session: " & uid)
 
   sm.recordChannel(msg.userId, msg.channel, msg.channelId)
@@ -570,6 +572,23 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ## Typing function for Telegram — reuses token+resolver without polling offset.
   let tgTypingFn = makeTgTypingFn(telegramToken, identityPath)
 
+  ## Semantic search function — wired when Postgres DSN is configured.
+  var globalSearchFn: SearchFn = nil
+  when defined(withPostgres):
+    let pgDsnRuntime = getEnv("DONKEY_PG_DSN")
+    if pgDsnRuntime.len > 0:
+      let orEmbedKey = getEnv("OPENROUTER_API_KEY")
+      let embedAdapter = newOpenRouterEmbeddingAdapter(orEmbedKey)
+      let embedFn2: EmbedFn = proc(text: string): seq[float32] =
+        {.cast(gcsafe).}: embedAdapter.embed(text)
+      let pgSearch = newPostgresMemoryAdapter(pgDsnRuntime, embedFn2)
+      pgSearch.migrate()
+      globalSearchFn = proc(userId: UserId; query: string; limit: int): seq[MemoryHit]
+                           {.gcsafe, raises: [].} =
+        try: {.cast(gcsafe).}: pgSearch.search(userId, query, limit)
+        except: @[]
+      log.info("Postgreyskull semantic search enabled")
+
   log.info("polling for messages…")
   while true:
 
@@ -623,7 +642,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
               channelId: event.messageId,
               text:      event.content,
             ), memory, globalCompleteFn, globalStreamFn,
-            toolClients, tools, globalOutbox, log, msgSeq)
+            toolClients, tools, globalOutbox, log, msgSeq,
+            searchFn = globalSearchFn)
 
         of deInteraction:
           let code   = event.content |> strip
@@ -957,7 +977,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
         statusMsgIds[$msg.userId] = statusId
 
       ensureSession(sm, msg, memory, globalCompleteFn, globalStreamFn,
-                    toolClients, tools, globalOutbox, log, msgSeq, tgTypingFn)
+                    toolClients, tools, globalOutbox, log, msgSeq,
+                    tgTypingFn, globalSearchFn)
 
     ## 4. Yield to Chronos — lets orchestrators and streaming threads run.
     await sleepAsync(milliseconds(100))

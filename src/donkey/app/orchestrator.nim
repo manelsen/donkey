@@ -36,6 +36,7 @@ import ../domain/message
 import ../adapters/memory/md_file
 import ../adapters/tool/mcp_client
 import ../ports/provider
+import ../ports/memory
 import ./memory_agent
 import ./tool_agent
 
@@ -194,13 +195,14 @@ proc runOrchestrator*(inbox:       AsyncQueue[AgentMessage];
                       streamFn:    StreamFn;
                       clients:     seq[McpClientAdapter];
                       tools:       seq[ToolDescription];
-                      typingFn:    TypingFn = nil): Future[void] {.async.} =
+                      typingFn:    TypingFn  = nil;
+                      searchFn:    SearchFn  = nil): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
   let memInbox  = newAsyncQueue[AgentMessage]()
   let toolInbox = newAsyncQueue[AgentMessage]()
   let workerOut = newAsyncQueue[AgentMessage]()
 
-  asyncSpawn(runMemoryAgent(memInbox, workerOut, memory))
+  asyncSpawn(runMemoryAgent(memInbox, workerOut, memory, searchFn))
   asyncSpawn(runToolAgent(toolInbox, workerOut, clients))
 
   var history:    ConversationHistory = newHistory()
@@ -280,7 +282,8 @@ Keep it to 2–3 sentences maximum. No bullet points, no feature lists."""
         ))
 
       ## 2. Load memory context; detect first contact for onboarding.
-      await memInbox.put(newTaskMsg(msg.id, tkLoadCtx, msg.userId, ""))
+      ## Pass the raw payload as search query for semantic retrieval when searchFn is set.
+      await memInbox.put(newTaskMsg(msg.id, tkLoadCtx, msg.userId, msg.payload))
       let ctxReply  = await workerOut.get()
       let context   = if ctxReply.kind == amkResult: ctxReply.text else: ""
       let isNewUser = needsOnboarding(memory.hasProfile(uid))

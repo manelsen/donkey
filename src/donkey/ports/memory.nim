@@ -50,3 +50,7 @@ type
     m.appendMemory(UserId, string)
     m.savePreferences(UserId, string)
     m.search(UserId, string, int) is seq[MemoryHit]
+
+  SearchFn* = proc(userId: UserId; query: string; limit: int): seq[MemoryHit]
+    {.gcsafe, raises: [].}
+  ## Closure form of the search operation. Nil = no semantic search (fall back to raw MEMORY.md).
