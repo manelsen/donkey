@@ -357,6 +357,7 @@ proc setMyCommands*(a: TelegramAdapter): Result[void, string] =
     {"command": "forget",  "description": "Apaga as memórias salvas"},
     {"command": "status",  "description": "Snapshot da sessão atual"},
     {"command": "ping",    "description": "Testa latência do provider"},
+    {"command": "debug",   "description": "Ativa/desativa modo verbose"},
     {"command": "doctor",  "description": "Diagnóstico do sistema"},
     {"command": "start",   "description": "Inicia ou recomeça a conversa"},
   ]

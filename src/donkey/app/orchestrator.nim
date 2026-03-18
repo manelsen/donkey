@@ -203,7 +203,8 @@ proc runOrchestrator*(inbox:       AsyncQueue[AgentMessage];
   asyncSpawn(runMemoryAgent(memInbox, workerOut, memory))
   asyncSpawn(runToolAgent(toolInbox, workerOut, clients))
 
-  var history: ConversationHistory = newHistory()
+  var history:   ConversationHistory = newHistory()
+  var debugMode: bool = false
   let toolsSuffix = tools |> orchToolsSuffix
   let systemBase = """You are Donkey, a personal AI assistant.
 Be concise, helpful, and remember what the user tells you.
@@ -233,6 +234,17 @@ Keep it to 2–3 sentences maximum. No bullet points, no feature lists."""
           userId:  UserId(msg.userId),
           channel: msg.channel,
           text:    "Conversa reiniciada.",
+          replyTo: msg.replyTo,
+        ))
+        continue
+
+      if msg.taskKind == tkDebugToggle:
+        debugMode = not debugMode
+        await globalOutbox.put(OutboundMessage(
+          userId:  UserId(msg.userId),
+          channel: msg.channel,
+          text:    if debugMode: "🔍 Debug mode ON — tokens e tool calls serão exibidos."
+                  else: "🔕 Debug mode OFF.",
           replyTo: msg.replyTo,
         ))
         continue
@@ -323,18 +335,34 @@ Keep it to 2–3 sentences maximum. No bullet points, no feature lists."""
             history.addAssistant(r.text)
             finalText = r.text
             done = true
+            if debugMode:
+              let dbgText = "🔍 <b>[debug]</b> tokens in=" & $r.inputTokens &
+                            " out=" & $r.outputTokens &
+                            " chars=" & $r.text.len
+              await globalOutbox.put(OutboundMessage(
+                userId: uid, channel: msg.channel, text: dbgText))
           else:
             history.addUser("(Your response was empty. Please provide your answer.)")
           continue
 
         ## 5. Tool calls — execute via ToolAgent.
         for i, tc in r.toolCalls:
+          if debugMode:
+            let dbgTool = "🔧 <b>[debug tool]</b> " & tc.name & "\n<code>" &
+                          tc.inputJson & "</code>"
+            await globalOutbox.put(OutboundMessage(
+              userId: uid, channel: msg.channel, text: dbgTool))
           let payload = $ %* {
             "name": tc.name, "id": tc.id, "inputJson": tc.inputJson
           }
           let taskId = msg.id & "-" & $round & "-" & $i
           await toolInbox.put(newTaskMsg(taskId, tkInvokeTool, "", payload))
           let toolReply = await workerOut.get()
+          if debugMode:
+            let dbgResult = "📤 <b>[debug result]</b> " & tc.name & "\n<code>" &
+                            toolReply.text[0 ..< min(200, toolReply.text.len)] & "</code>"
+            await globalOutbox.put(OutboundMessage(
+              userId: uid, channel: msg.channel, text: dbgResult))
           history.addToolResult(tc.id, tc.name, toolReply.text)
 
       ## Stop typing loop.

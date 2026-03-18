@@ -761,6 +761,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
                    "/forget — apaga as memórias salvas\n" &
                    "/status — snapshot da sessão atual\n" &
                    "/ping — testa latência do provider\n" &
+                   "/debug — ativa/desativa modo verbose (tokens, tool calls)\n" &
                    "/doctor — diagnóstico do sistema\n" &
                    "/mycode — gera código de linkagem cross-channel\n" &
                    "/continue <code> — conecta este canal a outra sessão\n\n" &
@@ -904,6 +905,21 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
           userId:  msg.userId, channel: ckTelegram, text: statusText,
           replyTo: msg.channelId,
         )).isOkOr: log.error("tg /status reply: " & error)
+        continue
+
+      if cmd == "/debug":
+        if sm.hasSession(msg.userId):
+          let entry = sm.getOrCreate(msg.userId)
+          inc msgSeq
+          entry.inbox.addLastNoWait(
+            newTaskMsg($msgSeq, tkDebugToggle, $msg.userId, "",
+                       ckTelegram, msg.channelId))
+        else:
+          tgAdapter.send(OutboundMessage(
+            userId:  msg.userId, channel: ckTelegram,
+            text:    "Nenhuma sessão ativa. Envie uma mensagem primeiro.",
+            replyTo: msg.channelId,
+          )).isOkOr: discard
         continue
 
       if cmd == "/reset":

@@ -16,6 +16,7 @@ type
     tkSaveMem
     tkSavePrefs
     tkInvokeTool
+    tkDebugToggle   ## toggles verbose debug mode in the orchestrator
 
   AgentMessage* = object
     kind*:     AgentMessageKind
