@@ -604,13 +604,18 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
         of deMessage:
           let userId = dcAdapter.resolver.resolve(ckDiscord, event.discordUserId)
           if (event.content |> strip) == "/mycode":
-            let code   = dcAdapter.resolver.generateLinkCode(userId)
-            dcAdapter.send(OutboundMessage(
-              userId:  userId,
-              channel: ckDiscord,
-              text:    "Your link code: **" & code & "** (valid 10 minutes)\n" &
-                       "Enter `/continue " & code & "` on another channel to reconnect.",
-            )).isOkOr: log.error("dc /mycode reply: " & error)
+            let code     = dcAdapter.resolver.generateLinkCode(userId)
+            let codeText = "Your link code: **" & code & "** (valid 10 min)\n" &
+                           "Type `/continue` on another channel to reconnect."
+            if event.interactionId.len > 0:
+              ## Came from slash command — must ack as interaction response.
+              dcAdapter.sendInteractionResponse(
+                event.interactionId, event.interactionToken, codeText).isOkOr:
+                log.error("dc /mycode interaction resp: " & error)
+            else:
+              dcAdapter.send(OutboundMessage(
+                userId: userId, channel: ckDiscord, text: codeText,
+              )).isOkOr: log.error("dc /mycode reply: " & error)
           else:
             ensureSession(sm, InboundMessage(
               userId:    userId,
@@ -625,11 +630,17 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
           let linked = dcAdapter.resolver.consumeLinkCode(
             code, ckDiscord, event.discordUserId)
           let replyText =
-            if linked: "Session reconnected! Your conversation history carries over."
-            else:      "Invalid or expired code. Generate a fresh one with `/mycode`."
+            if linked: "✅ Session reconnected! Your conversation history carries over."
+            else:      "❌ Invalid or expired code. Generate a fresh one with `/mycode`."
           dcAdapter.sendInteractionResponse(
             event.interactionId, event.interactionToken, replyText).isOkOr:
             log.error("dc interaction response: " & error)
+
+        of deModalRequest:
+          ## User typed /continue without a code — show a modal dialog.
+          dcAdapter.sendInteractionModal(
+            event.interactionId, event.interactionToken).isOkOr:
+            log.error("dc send modal: " & error)
 
         (hasEvent, event) = dcAdapter.tryRecvEvent()
 

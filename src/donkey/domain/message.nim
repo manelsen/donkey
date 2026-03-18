@@ -37,6 +37,7 @@ type
     channel*:   ChannelKind
     streamId*:  string       ## non-empty for streaming turns
     isPartial*: bool         ## true for streaming partial edits
+    mediaUrl*:  string       ## non-empty → send as photo/document instead of text
 
   ToolDescription* = object
     name*:        string
