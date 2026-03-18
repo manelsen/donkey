@@ -203,8 +203,11 @@ proc runOrchestrator*(inbox:       AsyncQueue[AgentMessage];
   asyncSpawn(runMemoryAgent(memInbox, workerOut, memory))
   asyncSpawn(runToolAgent(toolInbox, workerOut, clients))
 
-  var history:   ConversationHistory = newHistory()
-  var debugMode: bool = false
+  var history:    ConversationHistory = newHistory()
+  var debugMode:  bool = false
+  var lastUserId: UserId              ## tracks userId for JSONL save on exit
+  ## Session ID used for JSONL persistence: monotonic ms timestamp.
+  let sessionId   = $nowMs()
   let toolsSuffix = tools |> orchToolsSuffix
   let systemBase = """You are Donkey, a personal AI assistant.
 Be concise, helpful, and remember what the user tells you.
@@ -222,6 +225,9 @@ Keep it to 2–3 sentences maximum. No bullet points, no feature lists."""
     case msg.kind
 
     of amkCancel:
+      ## Persist conversation history before stopping.
+      if $lastUserId != "":
+        {.cast(gcsafe).}: memory.saveSession(lastUserId, sessionId, history)
       await memInbox.put(newCancelMsg())
       await toolInbox.put(newCancelMsg())
       break
@@ -229,9 +235,12 @@ Keep it to 2–3 sentences maximum. No bullet points, no feature lists."""
     of amkTask:
       ## Handle session-level control tasks before the LLM path.
       if msg.taskKind == tkReset:
+        ## Save current history before wiping.
+        let rstUid = UserId(msg.userId)
+        {.cast(gcsafe).}: memory.saveSession(rstUid, sessionId, history)
         history = newHistory()
         await globalOutbox.put(OutboundMessage(
-          userId:  UserId(msg.userId),
+          userId:  rstUid,
           channel: msg.channel,
           text:    "Conversa reiniciada.",
           replyTo: msg.replyTo,
@@ -259,6 +268,7 @@ Keep it to 2–3 sentences maximum. No bullet points, no feature lists."""
 
       inc turnSeq
       let uid      = UserId(msg.userId)
+      lastUserId   = uid
       let streamId = msg.userId & "-" & $turnSeq
 
       template replyMsg(replyText: string) {.dirty.} =

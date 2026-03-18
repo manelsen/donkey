@@ -6,9 +6,10 @@
 ## All I/O is synchronous (proc). The domain layer (func) uses the pure
 ## UserContext value; this adapter is the side-effectful shell.
 
-import std/[os, strutils]
+import std/[json, os, strutils, times]
 import ../../core/types
 import ../../ports/memory
+import ../../domain/message
 
 type
   MdFileAdapter* = object
@@ -70,6 +71,30 @@ proc clearMemory*(a: MdFileAdapter; userId: UserId) =
   ## Clears MEMORY.md for this user (irreversible).
   let path = a.memoryMdPath(userId)
   if fileExists(path): writeFile(path, "")
+
+proc saveSession*(a: MdFileAdapter; userId: UserId;
+                  sessionId: string; history: ConversationHistory) =
+  ## Persists a conversation as JSONL: one JSON object per turn.
+  ## Path: {paddock}/sessions/{sessionId}.jsonl
+  ## Skips sessions with fewer than 2 turns (empty/ping sessions).
+  if history.len < 2: return
+  a.ensurePaddock(userId)
+  let dir  = a.paddockDir(userId) / "sessions"
+  createDir(dir)
+  let path = dir / sessionId & ".jsonl"
+  var buf  = ""
+  for msg in history:
+    buf.add($(%* {"role": msg.role, "text": msg.text,
+                  "imageUrl": msg.imageUrl}) & "\n")
+  writeFile(path, buf)
+
+proc listSessions*(a: MdFileAdapter; userId: UserId): seq[string] =
+  ## Returns session file names (without extension) sorted newest-first.
+  let dir = a.paddockDir(userId) / "sessions"
+  if not dirExists(dir): return @[]
+  for kind, path in walkDir(dir):
+    if kind == pcFile and path.endsWith(".jsonl"):
+      result.add(path.extractFilename().changeFileExt(""))
 
 # ── Scaffold USER.md from onboarding answers ──────────────────────────────────
 

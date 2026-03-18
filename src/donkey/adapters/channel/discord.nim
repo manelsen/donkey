@@ -29,8 +29,9 @@ const DiscordMaxChars* = 2000
 
 type
   DiscordEventKind* = enum
-    deMessage      ## regular DM or guild message
-    deInteraction  ## slash command interaction
+    deMessage       ## regular DM or guild message
+    deInteraction   ## slash command interaction (code already extracted)
+    deModalRequest  ## /continue slash cmd without code → need to show modal
 
   DiscordRawEvent* = object
     kind*:             DiscordEventKind
@@ -88,28 +89,74 @@ proc handleDispatch(t: string; d: JsonNode) =
     ))
 
   of "INTERACTION_CREATE":
-    if d.getOrDefault("type").getInt(0) != 2: return  ## APPLICATION_COMMAND only
-    let iData = d.getOrDefault("data")
-    if iData == nil: return
-    if iData["name"].getStr() != "continue": return
-    var code = ""
-    let opts = iData.getOrDefault("options")
-    if opts != nil and opts.kind == JArray:
-      for opt in opts:
-        if opt["name"].getStr() == "code":
-          code = opt["value"].getStr()
-    ## Guild interactions have "member.user"; DM interactions have "user".
+    let interactionType = d.getOrDefault("type").getInt(0)
+    let interactionId    = d["id"].getStr()
+    let interactionToken = d["token"].getStr()
     let userNode = if d.hasKey("user"): d["user"]
                    elif d.hasKey("member"): d["member"]["user"]
                    else: nil
     if userNode == nil: return
-    gDiscordEvents.send(DiscordRawEvent(
-      kind:             deInteraction,
-      discordUserId:    userNode["id"].getStr(),
-      content:          code,
-      interactionId:    d["id"].getStr(),
-      interactionToken: d["token"].getStr(),
-    ))
+    let userId = userNode["id"].getStr()
+
+    ## Type 2: APPLICATION_COMMAND
+    if interactionType == 2:
+      let iData = d.getOrDefault("data")
+      if iData == nil: return
+      let cmdName = iData["name"].getStr()
+      ## /mycode — push as regular message with text "/mycode" so daemon handles it.
+      if cmdName == "mycode":
+        gDiscordEvents.send(DiscordRawEvent(
+          kind:          deMessage,
+          discordUserId: userId,
+          content:       "/mycode",
+          interactionId: interactionId,
+          interactionToken: interactionToken,
+        ))
+        return
+      if cmdName != "continue": return
+      var code = ""
+      let opts = iData.getOrDefault("options")
+      if opts != nil and opts.kind == JArray:
+        for opt in opts:
+          if opt["name"].getStr() == "code":
+            code = opt["value"].getStr()
+      if code.len > 0:
+        ## Has inline code — process directly (legacy slash command style).
+        gDiscordEvents.send(DiscordRawEvent(
+          kind:             deInteraction,
+          discordUserId:    userId,
+          content:          code,
+          interactionId:    interactionId,
+          interactionToken: interactionToken,
+        ))
+      else:
+        ## No code — request a modal from the daemon (needs HTTP response).
+        gDiscordEvents.send(DiscordRawEvent(
+          kind:             deModalRequest,
+          discordUserId:    userId,
+          interactionId:    interactionId,
+          interactionToken: interactionToken,
+        ))
+
+    ## Type 5: MODAL_SUBMIT
+    if interactionType == 5:
+      ## Extract code from modal component rows.
+      var code = ""
+      let components = d.getOrDefault("data").getOrDefault("components")
+      if components != nil and components.kind == JArray:
+        for row in components:
+          let rowComps = row.getOrDefault("components")
+          if rowComps != nil and rowComps.kind == JArray:
+            for comp in rowComps:
+              if comp.getOrDefault("custom_id").getStr("") == "link_code":
+                code = comp.getOrDefault("value").getStr("")
+      gDiscordEvents.send(DiscordRawEvent(
+        kind:             deInteraction,
+        discordUserId:    userId,
+        content:          code,
+        interactionId:    interactionId,
+        interactionToken: interactionToken,
+      ))
 
   else: discard
 
@@ -286,6 +333,37 @@ proc sendInteractionResponse*(a: DiscordAdapter;
     return err("Discord interaction response error " & $resp.status)
   ok()
 
+proc sendInteractionModal*(a: DiscordAdapter;
+                           interactionId, interactionToken: string): Result[void, string] =
+  ## Responds to a slash command with a modal dialog (type 9).
+  ## The modal has a single text input with custom_id "link_code".
+  let body = %* {
+    "type": 9,   ## MODAL
+    "data": {
+      "custom_id": "continue_modal",
+      "title":     "Continue Session",
+      "components": [{
+        "type": 1,   ## ACTION_ROW
+        "components": [{
+          "type":        4,   ## TEXT_INPUT
+          "custom_id":   "link_code",
+          "label":       "Link code (from /mycode on another channel)",
+          "style":       1,   ## SHORT
+          "min_length":  6,
+          "max_length":  8,
+          "placeholder": "e.g. AB3X7Q",
+          "required":    true,
+        }],
+      }],
+    },
+  }
+  let headers = @[a.authHeader(), ("Content-Type", "application/json")]
+  let url = a.base() & "/interactions/" & interactionId & "/" & interactionToken & "/callback"
+  let resp = ? a.http.post(url, $body, headers)
+  if resp.status < 200 or resp.status >= 300:
+    return err("Discord modal error " & $resp.status & ": " & resp.body)
+  ok()
+
 proc sendReturnId*(a: DiscordAdapter; msg: OutboundMessage): Result[string, string] =
   ## Sends a single chunk (first DiscordMaxChars) and returns the Discord message id.
   ## Used by the streaming machinery to obtain the id for subsequent editMessage calls.
@@ -351,23 +429,26 @@ proc getAppId*(a: DiscordAdapter): Result[string, string] =
     err(e.msg)
 
 proc registerSlashCommands*(a: DiscordAdapter; appId: string): Result[void, string] =
-  ## Registers /continue as a global application command.
-  let body = %* {
-    "name":        "continue",
-    "type":        1,
-    "description": "Continue your conversation from another channel",
-    "options": [{
-      "name":        "code",
-      "description": "The code from /mycode on your other channel",
-      "type":        3,   ## STRING
-      "required":    true,
-    }],
-  }
+  ## Registers /continue and /mycode as global application commands.
+  ## /continue has no required options — it opens a modal to collect the code.
+  let commands = %* [
+    {
+      "name":        "continue",
+      "type":        1,
+      "description": "Continue your session from another channel (opens dialog)",
+    },
+    {
+      "name":        "mycode",
+      "type":        1,
+      "description": "Generate a link code to reconnect from another channel",
+    },
+  ]
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url = a.base() & "/applications/" & appId & "/commands"
-  let resp = ? a.http.post(url, $body, headers)
+  ## Bulk overwrite — replaces all existing global commands.
+  let resp = ? a.http.put(url, $commands, headers)
   if resp.status < 200 or resp.status >= 300:
-    return err("Discord register command error " & $resp.status & ": " & resp.body)
+    return err("Discord register commands error " & $resp.status & ": " & resp.body)
   ok()
 
 # ── Constructor ────────────────────────────────────────────────────────────────

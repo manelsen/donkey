@@ -80,8 +80,29 @@ proc sendTyping*(a: TelegramAdapter; userId: UserId): Result[void, string] =
   except ValueError:
     err("TelegramAdapter.sendTyping: bad id: " & rawId)
 
+proc sendMedia*(a: TelegramAdapter; tgId: int64;
+                url, caption, replyTo: string): Result[void, string] =
+  ## Sends a photo (if URL looks like an image) or a document otherwise.
+  ## Falls back to sending a plain URL as text if the API call fails.
+  let isImage = url.endsWith(".jpg") or url.endsWith(".jpeg") or
+                url.endsWith(".png") or url.endsWith(".gif") or
+                url.endsWith(".webp")
+  let meth    = if isImage: "sendPhoto" else: "sendDocument"
+  let fileKey = if isImage: "photo"     else: "document"
+  var body = %* {"chat_id": tgId, fileKey: url}
+  if caption.len > 0:  body["caption"] = %caption
+  if replyTo.len > 0:
+    try: body["reply_to_message_id"] = %parseInt(replyTo)
+    except ValueError: discard
+  let res = a.post(meth, body)
+  if res.isOk: return ok()
+  ## Fallback: send URL as text
+  discard ? a.post("sendMessage", %* {"chat_id": tgId, "text": url})
+  ok()
+
 proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message with Markdown (plain-text fallback), split at 4096 chars.
+  ## If msg.mediaUrl is set, sends as photo/document (caption = msg.text).
   ## reply_to_message_id is attached only to the first chunk.
   let rawId = a.resolver.reverseChannel(msg.userId, ckTelegram)
   if rawId.len == 0:
@@ -89,6 +110,8 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
   var tgId: int64
   try: tgId = parseBiggestInt(rawId).int64
   except ValueError: return err("TelegramAdapter.send: bad Telegram ID: " & rawId)
+  if msg.mediaUrl.len > 0:
+    return a.sendMedia(tgId, msg.mediaUrl, msg.text, msg.replyTo)
   let chunks = splitChunks(msg.text, TelegramMaxChars)
   for i, chunk in chunks:
     let r = a.sendChunk(tgId, chunk, msg.replyTo, i == 0)

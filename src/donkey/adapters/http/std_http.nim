@@ -37,6 +37,20 @@ proc post*(a: StdHttpAdapter; url, body: string;
   except CatchableError as e:
     err(e.msg)
 
+proc put*(a: StdHttpAdapter; url, body: string;
+          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] =
+  try:
+    let client = newHttpClient()
+    defer: client.close()
+    if headers.len > 0:
+      var h = newHttpHeaders()
+      for (k, v) in headers: h[k] = v
+      client.headers = h
+    let resp = client.request(url, httpMethod = HttpPut, body = body)
+    ok(HttpResponse(status: resp.code.int, body: resp.body))
+  except CatchableError as e:
+    err(e.msg)
+
 proc patch*(a: StdHttpAdapter; url, body: string;
             headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] =
   try:
