@@ -67,17 +67,11 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 
 - [x] `ToolPort` concept: `listTools`, `invoke` (ToolSchema, ToolCall, ToolResult)
 - [x] `McpClientAdapter` — cliente JSON-RPC 2.0 sobre stdin/stdout
-  - Gerencia ciclo de vida do processo filho (osproc)
-  - `initialize` handshake, `tools/list`, `tools/call`
-  - Helpers puros exportados e testados: `buildRequest`, `parseToolSchema`, `parseToolResult`
-- [ ] `DenoSkillAdapter` — especialização do McpClientAdapter para subprocessos Deno
-  - Sandbox via `--allow-*` declarado no manifesto da skill
-- [ ] Integração no `AgentRunner`: detecta tool calls na resposta → executa → devolve resultado
-- [ ] `donkey ctl tool install <mcp-server-cmd>` — registra MCP server
-- [ ] `donkey ctl skill install <clawhub-name>` — instala via `npx clawhub@latest install`
-- [ ] Listagem de tools disponíveis injetada no system prompt
-
-**Testes:** t_mcp_client — buildRequest, parseToolSchema, parseToolResult, tipos.
+- [x] `DenoSkillAdapter` — McpClientAdapter + sandbox Deno `--allow-*`
+- [x] Integração no orchestrator: tool calls → ToolAgent → resultado → history
+- [x] `donkey ctl tool install <mcp-server-cmd>` — registra MCP server
+- [x] `donkey ctl skill install/list/update` — gestão de skills Deno
+- [x] Tools injetadas no system prompt do orchestrator
 
 ---
 
@@ -85,83 +79,77 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 
 **Entregável:** 5 providers funcionando com suas peculiaridades isoladas nos adapters.
 
-- [x] `OpenRouterAdapter` — injeta `HTTP-Referer` e `X-Title` em todo request (obrigatório)
-- [x] `AnthropicAdapter` — `system` top-level, `x-api-key` auth, `anthropic-version` header
-- [x] `GeminiAdapter` — role "model", `systemInstruction`, auth via query param `key=`
-- [x] `MiniMaxAdapter` — `sender_type USER/BOT`, `text` field, `bot_setting` para system
-- [ ] Seleção de provider por usuário em `PREFERENCES.md`
-- [ ] Fallback: se provider primário falha, tenta próximo da lista
-- [ ] `donkey ctl provider test <name>` — verifica conectividade e API key
-
-**Testes:** t_openrouter, t_anthropic, t_gemini, t_minimax — caps, buildBody, parseResponse.
+- [x] `OpenRouterAdapter`, `AnthropicAdapter`, `GeminiAdapter`, `MiniMaxAdapter`, `ZhipuAdapter`
+- [x] Seleção de provider por usuário em `PREFERENCES.md` (inline keyboard `/models`)
+- [x] Fallback automático: `buildFallbackFn` + fallback chain por sessão
+- [x] `donkey ctl provider test <name>`
 
 ---
 
-## F4 — Multi-agente
+## F4 — Multi-agente ✅
 
 **Entregável:** orchestrator delega para workers especializados via message passing.
 
-- [ ] `AgentMessage` type (variant: task, result, cancel, error)
-- [ ] `AgentId` e `AgentRef` (handle para inbox Chronos)
-- [ ] `OrchestratorAgent` refatorado: planeja e delega, não executa diretamente
-- [ ] `MemoryAgent`: especializado em recuperação e persistência de contexto
-- [ ] `ToolAgent`: especializado em execução de MCP/skills
-- [ ] Cancelamento em cascata: encerrar sessão cancela todos os workers filhos
-- [ ] Native tools Zhipu: orchestrator decide entre ToolAgent vs. delegar ao provider por `caps()`
+- [x] `AgentMessage` type (amkTask, amkCancel, amkResult, amkError)
+- [x] `OrchestratorAgent` + `MemoryAgent` + `ToolAgent` — actors com AsyncQueue inbox
+- [x] Cancelamento em cascata via amkCancel
+- [x] Native tools Zhipu via `caps()` (web_search, code_interpreter)
+- [x] Streaming via OS thread + Channel[string] + partials no globalOutbox
 
 ---
 
-## F5 — Discord + Cross-channel
+## F5 — Discord + Cross-channel ✅
 
 **Entregável:** usuário continua conversa do Telegram no Discord sem perder contexto.
 
-- [ ] `DiscordAdapter` — gateway WebSocket, slash commands, embeds
-- [ ] `IdentityResolver` generalizado: `(ChannelType, channel_user_id) → UserId`
-- [ ] `SessionManager` multi-canal: sessão tem `seq[ActiveChannel]`
-- [ ] `/continue` command em qualquer canal — reanexar sessão ativa
-- [ ] `SessionChannel` tracking no workspace (qual canal está ativo)
-- [ ] `donkey ctl session list <user>` — exibe sessões e canais ativos
+- [x] `DiscordAdapter` — gateway WebSocket próprio (ws_client.nim, RFC 6455)
+- [x] `IdentityResolver` multi-canal: `(ChannelKind, rawId) → UserId`
+- [x] `SessionManager` multi-canal com `recordChannel`
+- [x] `/continue` no Telegram + `/continue` modal no Discord
+- [x] `/mycode` cross-channel OTP com TTL 10 min
+- [x] `donkey ctl session list <user>`
+- [x] Session keying por `chat_id` em grupos Telegram
 
 ---
 
-## F6 — Postgreyskull
+## F6 — Postgreyskull ✅ (pgvector + AGE)
 
 **Entregável:** memória semântica e relacional substituindo os `.md` como backend.
 
-- [ ] Setup PostgreSQL + pgvector + Apache AGE
-- [ ] Schema do grafo (nodes: Person, Fact, Solution, ErrorPattern, Concept, Memory, Session; edges conforme doc)
-- [ ] `PostgresMemoryAdapter` implementando `MemoryPort`
-  - `storeNode`, `storeEdge`, `vectorSearch`, `graphTraverse`, `hybridSearch`
-- [ ] Pipeline de embedding: texto → `qwen3-embedding-8b` (OpenRouter) → vetor
-- [ ] Migração: importa `.md` existentes para o grafo na primeira vez
-- [ ] `.md` passam a ser exports/views do grafo (gerados sob demanda)
-- [ ] `donkey ctl memory search <user> "<query>"` — busca híbrida manual
+- [x] `PostgresMemoryAdapter` implementando `SemanticMemoryPort` (`-d:withPostgres`)
+  - Schema: `donkey_memories` (pgvector `vector(4096)`, IVFFlat index)
+  - `hasProfile`, `loadContext`, `saveUserMd`, `appendMemory`, `savePreferences`
+  - `search()`: hybrid vector cosine + AGE graph enrichment
+  - `importFromMd()`: migração de paddock `.md` → Postgres
+- [x] Apache AGE graph `donkey_graph`:
+  - Labels: Memory, Person, Concept, Fact, Solution, Session, Task, Preference
+  - Edges: HAS_MEMORY, ABOUT, FROM, RESOLVES, USES, CONTINUED_IN, KNOWS, HAS_PREFERENCE
+  - `graphUpsertSession`, `graphLinkSessions`, `graphAddFact`, `graphAddPerson`, `graphTraverse`
+- [x] `OpenRouterEmbeddingAdapter`: POST /v1/embeddings, Qwen/Qwen3-Embedding (4096-dim)
+- [x] `donkey ctl memory search <user> "<query>"` + `ctl memory import <user>`
+- [ ] `.md` como views/exports do grafo (gerados sob demanda) — pós-F6
 
 ---
 
-## F7 — Skills Ecosystem
+## F7 — Skills Ecosystem ✅
 
 **Entregável:** marketplace Clawhub integrado, skills por usuário.
 
-- [ ] `SkillManifest`: nome, versão, permissões Deno, descrição, tools expostas
-- [ ] Registry local: `config/skills.toml` com skills instaladas globalmente
-- [ ] Per-user override: `data/users/{uuid}/skills/` com versões ou configs locais
-- [ ] `donkey ctl skill list` — skills instaladas + tools que expõem
-- [ ] `donkey ctl skill update` — atualiza todas via Clawhub
-- [ ] Versionamento: `clawhub@1.2.3` fixado por usuário se necessário
+- [x] `SkillManifest`: nome, versão, script, tools, permissões Deno
+- [x] Registry global: `config/skills.toml`; per-user: `data/users/{uuid}/skills/`
+- [x] `donkey ctl skill list/install/update`
+- [x] User skills mergeadas no orchestrator na criação de sessão
 
 ---
 
-## F8 — Channels chineses
+## F8 — Channels chineses (parcial)
 
-**Entregável:** WeCom funcional; WeChat e QQ mapeados.
+**Entregável:** WeCom + Feishu funcionais; WeChat e QQ mapeados.
 
-- [ ] `WeComAdapter` — Webhook + API corporativa (autenticação mais simples)
-  - Token validation, message receive/send, media
-- [ ] `WeChatAdapter` — Official Account API
-  - OAuth 2.0, menu, template messages
-- [ ] `QQAdapter` — OneBot protocol (escolher implementação)
-- [ ] Documentação de autenticação por channel (cada um tem seu fluxo)
+- [x] `WeComAdapter` — Webhook HTTP + API corporativa (corp_id, corp_secret, agent_id)
+- [x] `FeishuAdapter` — WebSocket gateway + Lark Open API
+- [ ] `WeChatAdapter` — Official Account API (OAuth 2.0, template messages)
+- [ ] `QQAdapter` — OneBot protocol
 
 ---
 
