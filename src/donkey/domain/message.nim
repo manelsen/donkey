@@ -13,12 +13,6 @@ const
   roleAssistant* = "assistant"
   roleSystem*    = "system"
 
-# ── channel kinds ─────────────────────────────────────────────────────────────
-
-type
-  ChannelKind* = enum
-    ckTelegram, ckDiscord, ckWeCom, ckWeChat, ckQQ, ckFeishu
-
 # ── wire types ────────────────────────────────────────────────────────────────
 
 type
