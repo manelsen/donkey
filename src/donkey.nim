@@ -435,6 +435,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   else:
     log.info("FEISHU_APP_ID not set — Feishu disabled")
 
+  ## Register Telegram command menu (/help, /reset, /models, etc.).
+  tgAdapter.setMyCommands().isOkOr:
+    log.warn("setMyCommands failed: " & error)
+
   var toolClients: seq[McpClientAdapter]
   var tools: seq[ToolDescription]
   {.cast(gcsafe).}:
@@ -472,9 +476,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ## Shared async queue — all orchestrators post replies here.
   let globalOutbox = newAsyncQueue[OutboundMessage]()
 
-  var sm:           SessionManager
-  var streamMsgIds: Table[string, string]   ## streamId → channel message id
-  var msgSeq:       int
+  var sm:            SessionManager
+  var streamMsgIds:  Table[string, string]   ## streamId → channel message id
+  var statusMsgIds:  Table[string, string]   ## userId string → status message id
+  var msgSeq:        int
   sm.init()
 
   log.info("polling for messages…")
@@ -485,6 +490,15 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       let outMsg = await globalOutbox.get()
       log.info("reply user=" & $outMsg.userId & " chars=" & $outMsg.text.len &
                (if outMsg.streamId.len > 0: " [stream]" else: ""))
+
+      ## Clear ⚙️ status message on first real reply (non-partial or non-streaming).
+      let uidStr = $outMsg.userId
+      if outMsg.channel == ckTelegram and not outMsg.isPartial and
+         uidStr in statusMsgIds:
+        tgAdapter.deleteMessage(outMsg.userId,
+                                statusMsgIds[uidStr]).isOkOr: discard
+        statusMsgIds.del(uidStr)
+
       routeOutbound(outMsg, tgAdapter, dcAdapter, wcAdapter, fsAdapter, log, streamMsgIds)
 
     ## 2. Drain Discord events (non-blocking).
@@ -564,6 +578,17 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     for msg in tgMsgs:
       let cmd = msg.text |> strip
 
+      if cmd == "/start":
+        tgAdapter.send(OutboundMessage(
+          userId:  msg.userId,
+          channel: ckTelegram,
+          text:    "Olá! Sou o Donkey 🫏, seu assistente pessoal.\n\n" &
+                   "Envie qualquer mensagem para começarmos.\n" &
+                   "Use /help para ver os comandos disponíveis.",
+          replyTo: msg.channelId,
+        )).isOkOr: log.error("tg /start reply: " & error)
+        continue
+
       if cmd == "/mycode":
         let code = tgAdapter.resolver.generateLinkCode(msg.userId)
         tgAdapter.send(OutboundMessage(
@@ -579,15 +604,29 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
         tgAdapter.send(OutboundMessage(
           userId:  msg.userId,
           channel: ckTelegram,
-          text:    "*Donkey* — comandos disponíveis:\n\n" &
+          text:    "<b>Donkey 🫏</b> — comandos disponíveis:\n\n" &
+                   "/start — apresentação\n" &
                    "/help — esta mensagem\n" &
                    "/reset — reinicia a conversa atual\n" &
+                   "/models — seleciona o modelo de IA\n" &
+                   "/memory — exibe memórias salvas\n" &
                    "/mycode — gera código de linkagem cross-channel\n" &
-                   "/continue `<código>` — conecta este canal a outra sessão\n\n" &
-                   "Envie qualquer mensagem para conversar.\n" &
-                   "Imagens, documentos e áudios são aceitos.",
+                   "/continue <code> — conecta este canal a outra sessão\n\n" &
+                   "Envie qualquer mensagem para conversar. " &
+                   "Imagens e documentos são aceitos.",
           replyTo: msg.channelId,
         )).isOkOr: log.error("tg /help reply: " & error)
+        continue
+
+      if cmd == "/memory":
+        let ctx = memory.loadContext(msg.userId)
+        let memText = ctx.memoryMd |> strip
+        tgAdapter.send(OutboundMessage(
+          userId:  msg.userId,
+          channel: ckTelegram,
+          text:    if memText.len > 0: memText else: "Nenhuma memória salva ainda.",
+          replyTo: msg.channelId,
+        )).isOkOr: log.error("tg /memory reply: " & error)
         continue
 
       if cmd == "/reset":
@@ -606,8 +645,12 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
           )).isOkOr: discard
         continue
 
-      ## Typing indicator before handing off to the orchestrator.
+      ## ⚙️ processing indicator — replaced by the real reply when it arrives.
       tgAdapter.sendTyping(msg.userId).isOkOr: discard
+      let statusId = tgAdapter.sendStatus(msg.userId, "⚙️",
+                                          replyTo = msg.channelId).valueOr: ""
+      if statusId.len > 0:
+        statusMsgIds[$msg.userId] = statusId
 
       ensureSession(sm, msg, memory, globalCompleteFn, globalStreamFn,
                     toolClients, tools, globalOutbox, log, msgSeq)
