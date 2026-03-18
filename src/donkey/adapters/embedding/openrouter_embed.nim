@@ -1,0 +1,52 @@
+## OpenRouterEmbeddingAdapter — EmbeddingPort via OpenRouter /embeddings endpoint.
+##
+## Model: Qwen/Qwen3-Embedding (4096-dim vectors) via OpenRouter.
+## Model ID configurable; defaults to "Qwen/Qwen3-Embedding".
+##
+## Returns empty seq[float32] on error — caller treats as "no embedding".
+
+import std/[json, strutils]
+import ../../core/pipeops
+import ../../ports/embedding
+import ../http/std_http
+
+const
+  OpenRouterEmbedUrl* = "https://openrouter.ai/api/v1/embeddings"
+  DefaultEmbedModel*  = "Qwen/Qwen3-Embedding"
+
+type
+  OpenRouterEmbeddingAdapter* = object
+    apiKey*: string
+    model*:  string
+    http*:   StdHttpAdapter
+
+proc newOpenRouterEmbeddingAdapter*(apiKey: string;
+                                    model = DefaultEmbedModel): OpenRouterEmbeddingAdapter =
+  OpenRouterEmbeddingAdapter(
+    apiKey: apiKey,
+    model:  model,
+    http:   newStdHttpAdapter(),
+  )
+
+proc embed*(a: OpenRouterEmbeddingAdapter; text: string): seq[float32] =
+  ## Returns 4096-dim embedding vector, or empty seq on error.
+  let body = $ %* {"model": a.model, "input": text}
+  let headers = @[
+    ("Authorization",  "Bearer " & a.apiKey),
+    ("Content-Type",   "application/json"),
+    ("HTTP-Referer",   "https://github.com/donkey-ai/donkey"),
+    ("X-Title",        "Donkey"),
+  ]
+  let resp = a.http.post(OpenRouterEmbedUrl, body, headers)
+  if resp.isErr: return @[]
+  try:
+    let j    = parseJson(resp.value.body)
+    let data = j["data"]
+    if data.kind != JArray or data.len == 0: return @[]
+    let vec = data[0]["embedding"]
+    if vec.kind != JArray: return @[]
+    var buf = newSeq[float32](vec.len)
+    for i in 0 ..< vec.len:
+      buf[i] = vec[i].getFloat(0.0).float32
+    return buf
+  except: discard
