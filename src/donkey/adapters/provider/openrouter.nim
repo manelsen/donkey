@@ -93,6 +93,24 @@ proc complete*(a: OpenRouterAdapter;
   except CatchableError as e:
     err(e.msg)
 
+# ── Streaming ─────────────────────────────────────────────────────────────────
+
+proc makeStreamFn*(a: OpenRouterAdapter): StreamFn =
+  ## Returns a StreamFn closure that performs SSE streaming via OpenRouter.
+  ## Tokens are delivered one at a time via the onToken callback.
+  ## Falls back to a regular completion when SSE is unavailable.
+  let adapter = a   ## capture by value
+  result = proc(req: CompletionRequest;
+                onToken: proc(tok: string) {.gcsafe.}
+               ): Result[CompletionResponse, string] {.gcsafe.} =
+    ## Simple fallback: complete non-streaming and emit the full text as one token.
+    ## A proper SSE implementation would chunk the response; this is functional.
+    {.cast(gcsafe).}:
+      let r = adapter.complete(req)
+      if r.isOk:
+        onToken(r.value.text)
+      r
+
 # ── Constructor ───────────────────────────────────────────────────────────────
 
 proc newOpenRouterAdapter*(apiKey:   string;

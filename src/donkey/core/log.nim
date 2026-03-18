@@ -18,7 +18,7 @@ type
     subsystem*: string
     message*:   string
 
-  LogSink* = proc(entry: LogEntry) {.closure.}
+  LogSink* = proc(entry: LogEntry) {.closure, gcsafe.}
 
   Logger* = object
     subsystem*: string

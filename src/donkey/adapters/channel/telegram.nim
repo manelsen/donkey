@@ -1,90 +1,36 @@
 ## TelegramAdapter — ChannelPort via Bot API long polling.
 ##
-## Auth: BOT_TOKEN in Authorization header / URL path.
+## Auth: BOT_TOKEN in path segment /bot{token}/
 ## API base: https://api.telegram.org/bot{token}/
 ##
 ## Quirks absorbed here:
 ##   - getUpdates long-polling: offset, limit, timeout params
-##   - IdentityResolver: maps telegram_user_id (int) → UserId (UUID string)
-##   - sendMessage supports parse_mode=Markdown
-##   - ack advances the offset (offset = update_id + 1)
+##   - pollTimeout=0 → non-blocking (daemon uses this for async loop)
+##   - sendMessage: parse_mode=HTML with plain-text fallback
+##   - sendReturnId: returns message_id for streaming in-place edits
+##   - editMessageText: updates existing message (streaming)
+##   - ack is implicit via offset advancement in receive()
 
-import std/[httpclient, json, os, random, strutils, tables]
+import std/[httpclient, json, os, strutils]
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
+import ../identity/identity_resolver
+
+export identity_resolver   ## re-export so callers get IdentityResolver type
 
 const
   TelegramApiBase* = "https://api.telegram.org"
-  DefaultPollTimeout = 30   ## seconds for long-polling getUpdates
 
 type
-  IdentityResolver* = ref object
-    ## Maps Telegram numeric user ids to stable UUIDs.
-    ## Persistence: simple tab-separated file (data/identities.tsv).
-    ## On first contact a new UUID is generated and saved.
-    store: Table[int64, UserId]
-    path: string
-
   TelegramAdapter* = object
-    token*:    string
-    apiBase*:  string        ## override for testing (e.g. mock server URL)
-    offset*:   int64         ## getUpdates offset (mutable via nextOffset)
-    resolver*: IdentityResolver
+    token*:       string
+    apiBase*:     string   ## override for testing
+    offset*:      int64
+    pollTimeout*: int      ## seconds; 0 = non-blocking
+    resolver*:    IdentityResolver
 
-# ── IdentityResolver ──────────────────────────────────────────────────────────
-
-proc newIdentityResolver*(path: string): IdentityResolver =
-  result = IdentityResolver(path: path)
-  result.store = initTable[int64, UserId]()
-  if fileExists(path):
-    for line in lines(path):
-      let parts = line.split('\t')
-      if parts.len == 2:
-        try:
-          result.store[parseBiggestInt(parts[0]).int64] = UserId(parts[1])
-        except ValueError:
-          discard
-
-proc save(r: IdentityResolver) =
-  createDir(r.path.parentDir())
-  var content = ""
-  for tgId, uid in r.store:
-    content.add $tgId & '\t' & $uid & '\n'
-  writeFile(r.path, content)
-
-proc generateUUID(): string =
-  ## Generates a random UUID v4 (hex, no dashes removed for simplicity).
-  ## For production use a proper UUID library; this is sufficient for F1.
-  randomize()
-  let hex = "0123456789abcdef"
-  result = newStringOfCap(36)
-  for i in 0..<36:
-    if i in [8, 13, 18, 23]:
-      result.add '-'
-    elif i == 14:
-      result.add '4'
-    elif i == 19:
-      result.add hex[(rand(3) + 8)]
-    else:
-      result.add hex[rand(15)]
-
-proc resolve*(r: IdentityResolver; telegramUserId: int64): UserId =
-  ## Returns the stable UserId for a Telegram user, creating one if absent.
-  if telegramUserId notin r.store:
-    r.store[telegramUserId] = UserId(generateUUID())
-    r.save()
-  r.store[telegramUserId]
-
-proc telegramId*(r: IdentityResolver; userId: UserId): int64 =
-  ## Reverse lookup: internal UserId → Telegram numeric ID.
-  ## Returns 0 if not found (should not happen in normal flow).
-  for tgId, uid in r.store:
-    if uid == userId:
-      return tgId
-  return 0
-
-# ── API helpers ───────────────────────────────────────────────────────────────
+# ── API helpers ────────────────────────────────────────────────────────────────
 
 proc apiUrl(a: TelegramAdapter; meth: string): string =
   let base = if a.apiBase.len > 0: a.apiBase else: TelegramApiBase
@@ -100,26 +46,67 @@ proc post(a: TelegramAdapter; meth: string; body: JsonNode): JsonNode =
     raise newException(IOError,
       "Telegram API error [" & meth & "]: " & $result)
 
-# ── ChannelPort implementation ────────────────────────────────────────────────
+# ── ChannelPort implementation ─────────────────────────────────────────────────
 
 proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
   try:
     let tgId = a.resolver.telegramId(msg.userId)
-    var body = %* {"chat_id": tgId, "text": msg.text}
+    var body = %* {"chat_id": tgId, "text": msg.text, "parse_mode": "HTML"}
     if msg.replyTo.len > 0:
       body["reply_to_message_id"] = %msg.replyTo
     discard a.post("sendMessage", body)
     ok()
   except CatchableError as e:
+    ## Fallback: retry without parse_mode if HTML was rejected.
+    try:
+      let tgId2 = a.resolver.telegramId(msg.userId)
+      var body2 = %* {"chat_id": tgId2, "text": msg.text}
+      if msg.replyTo.len > 0:
+        body2["reply_to_message_id"] = %msg.replyTo
+      discard a.post("sendMessage", body2)
+      ok()
+    except CatchableError as e2:
+      err(e2.msg)
+
+proc sendReturnId*(a: TelegramAdapter;
+                   msg: OutboundMessage): Result[string, string] =
+  ## Sends a message and returns the Telegram message_id as string.
+  ## Used for streaming: first partial creates the message; edits follow.
+  try:
+    let tgId = a.resolver.telegramId(msg.userId)
+    var body = %* {"chat_id": tgId, "text": msg.text, "parse_mode": "HTML"}
+    if msg.replyTo.len > 0:
+      body["reply_to_message_id"] = %msg.replyTo
+    let resp = a.post("sendMessage", body)
+    let msgId = $resp["result"]["message_id"].getInt()
+    ok(msgId)
+  except CatchableError as e:
+    err(e.msg)
+
+proc editMessage*(a: TelegramAdapter; userId: UserId;
+                  messageId, text: string): Result[void, string] =
+  ## Edits an existing message in place (for streaming updates).
+  try:
+    let tgId = a.resolver.telegramId(userId)
+    let body = %* {
+      "chat_id":    tgId,
+      "message_id": parseInt(messageId),
+      "text":       text,
+      "parse_mode": "HTML",
+    }
+    discard a.post("editMessageText", body)
+    ok()
+  except CatchableError as e:
     err(e.msg)
 
 proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
-  ## Long-polls getUpdates; advances a.offset on success.
+  ## Polls getUpdates; advances a.offset on success.
+  ## pollTimeout=0 returns immediately (non-blocking).
   try:
     let body = %* {
       "offset":  a.offset,
       "limit":   100,
-      "timeout": DefaultPollTimeout,
+      "timeout": a.pollTimeout,
     }
     let updates = a.post("getUpdates", body)["result"]
 
@@ -137,9 +124,10 @@ proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
       let fromId = tgMsg["from"]["id"].getBiggestInt().int64
       msgs.add InboundMessage(
         userId:    a.resolver.resolve(fromId),
+        channel:   ckTelegram,
         channelId: $tgMsg["message_id"].getInt(),
         text:      tgMsg["text"].getStr(),
-        mediaUrl:  if tgMsg.hasKey("photo"): "tg://photo/" & $tgMsg["message_id"].getInt() else: "",
+        mediaUrl:  "",
       )
 
     if maxUpdateId >= a.offset: a.offset = maxUpdateId + 1
@@ -147,19 +135,31 @@ proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
   except CatchableError as e:
     err(e.msg)
 
+proc sendTyping*(a: TelegramAdapter; userId: UserId): Result[void, string] =
+  ## Sends a "typing" chat action to show the bot is composing a reply.
+  try:
+    let tgId = a.resolver.telegramId(userId)
+    if tgId == 0: return ok()
+    let body = %* {"chat_id": tgId, "action": "typing"}
+    discard a.post("sendChatAction", body)
+    ok()
+  except CatchableError as e:
+    err(e.msg)
+
 proc ack*(a: TelegramAdapter; channelId: string) =
-  ## Telegram ack is implicit via offset advancement in receive().
-  ## This is a no-op kept for ChannelPort conformance.
+  ## No-op: Telegram ack is implicit via offset advancement in receive().
   discard
 
-# ── Constructor ───────────────────────────────────────────────────────────────
+# ── Constructor ────────────────────────────────────────────────────────────────
 
 proc newTelegramAdapter*(token: string;
                          identityPath: string;
-                         apiBase = ""): TelegramAdapter =
+                         apiBase      = "";
+                         pollTimeout  = 30): TelegramAdapter =
   TelegramAdapter(
-    token:    token,
-    apiBase:  apiBase,
-    offset:   0,
-    resolver: newIdentityResolver(identityPath),
+    token:       token,
+    apiBase:     apiBase,
+    offset:      0,
+    pollTimeout: pollTimeout,
+    resolver:    newIdentityResolver(identityPath),
   )
