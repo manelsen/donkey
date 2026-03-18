@@ -1,118 +1,128 @@
-## IdentityResolver — multi-channel identity mapping + cross-channel pairing.
+## IdentityResolver — maps (ChannelKind, raw_channel_user_id) → UserId.
 ##
-## Maps (ChannelKind, channel_user_id) → stable UserId (UUID v4).
-## Persistence: tab-separated file with columns: channel, channelUserId, uuid.
+## Persistence: tab-separated file, one mapping per line:
+##   telegram:12345\tuuid\n
+##   discord:678901234\tuuid\n
 ##
-## Cross-channel pairing:
-##   generateLinkCode(userId) → 6-digit OTP, TTL 10 min, max 5 attempts.
-##   consumeLinkCode(code, channel, channelUserId) → bool (true if linked).
+## Link codes enable cross-channel identity linking (/mycode → /continue):
+##   User on Telegram calls /mycode → gets 6-char code, valid 10 minutes.
+##   User on Discord calls /continue <code> → their Discord ID is mapped
+##   to the same UUID as the Telegram user.
 
 import std/[os, random, strutils, tables, times]
 import ../../core/types
-import ../../domain/message   ## for ChannelKind
 
 type
   LinkEntry = object
-    userId:   UserId
-    expiry:   Time
-    attempts: int
+    userId: UserId
+    expiry: Time
 
   IdentityResolver* = ref object
-    ## Maps (channel, channelUserId) → UserId; stored as TSV.
-    store:  Table[string, UserId]    ## key = "$channel\t$channelUserId"
-    path:   string
-    codes:  Table[string, LinkEntry] ## OTP codes in flight
+    store*:       Table[string, UserId]       ## "kind:rawId" → uuid
+    reverseMap*:  Table[string, seq[string]]  ## string(uuid) → seq["kind:rawId"]
+    path*:        string
+    pendingLinks: Table[string, LinkEntry]    ## code → {userId, expiry}
 
 const
-  LinkCodeTtlSecs  = 600   ## 10 minutes
-  LinkCodeMaxTries = 5
+  LinkCodeAlpha  = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+  LinkCodeLen    = 6
+  LinkCodeTtlSec = 600  ## 10 minutes
 
-# ── Persistence ───────────────────────────────────────────────────────────────
+func channelKey*(kind: ChannelKind; rawId: string): string =
+  ## Storage key: "telegram:12345" or "discord:678901234".
+  $kind & ":" & rawId
+
+proc generateUUID*(): string =
+  ## Random UUID v4.
+  var b: array[16, byte]
+  for i in 0..<16: b[i] = byte(rand(255))
+  b[6] = (b[6] and 0x0F) or 0x40   ## version 4
+  b[8] = (b[8] and 0x3F) or 0x80   ## variant RFC 4122
+  result = newStringOfCap(36)
+  const hex = "0123456789abcdef"
+  for i, v in b:
+    if i in [4, 6, 8, 10]: result.add('-')
+    result.add(hex[v shr 4])
+    result.add(hex[v and 0x0F])
 
 proc save(r: IdentityResolver) =
-  createDir(parentDir(r.path))
-  var content = ""
-  for key, uid in r.store:
-    content.add key & '\t' & $uid & '\n'
-  writeFile(r.path, content)
+  createDir(r.path.parentDir())
+  var buf = ""
+  for k, v in r.store:
+    buf.add(k & '\t' & $v & '\n')
+  writeFile(r.path, buf)
 
 proc newIdentityResolver*(path: string): IdentityResolver =
-  result = IdentityResolver(path: path,
-                            store: initTable[string, UserId](),
-                            codes: initTable[string, LinkEntry]())
+  result = IdentityResolver(
+    path:         path,
+    store:        initTable[string, UserId](),
+    reverseMap:   initTable[string, seq[string]](),
+    pendingLinks: initTable[string, LinkEntry](),
+  )
   if fileExists(path):
     for line in lines(path):
       let parts = line.split('\t')
-      if parts.len == 3:   ## channel \t channelUserId \t uuid
-        let key = parts[0] & '\t' & parts[1]
-        result.store[key] = UserId(parts[2])
+      if parts.len == 2:
+        let key = parts[0]
+        let uid = UserId(parts[1])
+        result.store[key] = uid
+        let us = $uid
+        if us notin result.reverseMap:
+          result.reverseMap[us] = @[]
+        result.reverseMap[us].add(key)
 
-# ── Core resolution ────────────────────────────────────────────────────────────
-
-proc generateUUID(): string =
-  randomize()
-  let hex = "0123456789abcdef"
-  result = newStringOfCap(36)
-  for i in 0..<36:
-    if i in [8, 13, 18, 23]: result.add '-'
-    elif i == 14:             result.add '4'
-    elif i == 19:             result.add hex[(rand(3) + 8)]
-    else:                     result.add hex[rand(15)]
-
-proc resolve*(r: IdentityResolver; channel: ChannelKind;
-              channelUserId: string): UserId =
-  ## Returns the stable UserId for a (channel, id) pair, creating one if absent.
-  let key = $channel & '\t' & channelUserId
+proc resolve*(r: IdentityResolver; kind: ChannelKind; rawId: string): UserId =
+  ## Returns the stable UserId for (kind, rawId), minting a new UUID on first contact.
+  let key = channelKey(kind, rawId)
   if key notin r.store:
-    r.store[key] = UserId(generateUUID())
+    randomize()
+    let uid = UserId(generateUUID())
+    r.store[key] = uid
+    let us = $uid
+    if us notin r.reverseMap:
+      r.reverseMap[us] = @[]
+    r.reverseMap[us].add(key)
     r.save()
   r.store[key]
 
-# ── Telegram-specific resolve (int64 overload) ────────────────────────────────
-
-proc resolve*(r: IdentityResolver; telegramUserId: int64): UserId =
-  r.resolve(ckTelegram, $telegramUserId)
-
-proc telegramId*(r: IdentityResolver; userId: UserId): int64 =
-  ## Reverse lookup: internal UserId → Telegram numeric ID.
-  for key, uid in r.store:
-    if uid == userId:
-      let parts = key.split('\t')
-      if parts.len == 2 and parts[0] == $ckTelegram:
-        try: return parseBiggestInt(parts[1]).int64
-        except: discard
-  return 0
-
-# ── Cross-channel pairing (OTP) ───────────────────────────────────────────────
+proc reverseChannel*(r: IdentityResolver; userId: UserId; kind: ChannelKind): string =
+  ## Reverse lookup: UserId + channel kind → raw channel user ID.
+  ## Returns "" if not found.
+  let us = $userId
+  if us notin r.reverseMap: return ""
+  let prefix = $kind & ":"
+  for key in r.reverseMap[us]:
+    if key.startsWith(prefix):
+      return key[prefix.len .. ^1]
+  ""
 
 proc generateLinkCode*(r: IdentityResolver; userId: UserId): string =
-  ## Generates a fresh 6-digit OTP valid for LinkCodeTtlSecs seconds.
-  ## Any previous code for this userId is replaced.
+  ## Generates a 6-char one-time code for cross-channel linking.
+  ## Valid for 10 minutes. Call this when user types /mycode on any channel.
   randomize()
-  result = $rand(100_000..999_999)
-  ## Remove any existing code for this user.
-  var toDelete: seq[string]
-  for code, entry in r.codes:
-    if entry.userId == userId: toDelete.add(code)
-  for c in toDelete: r.codes.del(c)
-  r.codes[result] = LinkEntry(userId:   userId,
-                               expiry:   getTime() + initDuration(seconds = LinkCodeTtlSecs),
-                               attempts: 0)
+  result = newString(LinkCodeLen)
+  for i in 0..<LinkCodeLen:
+    result[i] = LinkCodeAlpha[rand(LinkCodeAlpha.len - 1)]
+  r.pendingLinks[result] = LinkEntry(
+    userId: userId,
+    expiry: getTime() + initDuration(seconds = LinkCodeTtlSec),
+  )
 
 proc consumeLinkCode*(r: IdentityResolver; code: string;
-                      channel: ChannelKind; channelUserId: string): bool =
-  ## Validates the OTP and, if valid, links (channel, channelUserId) to the
-  ## code's owner UserId. Returns true on success.
-  if code notin r.codes:
+                      kind: ChannelKind; rawId: string): bool =
+  ## Links (kind, rawId) to the userId stored under code. Single-use. Saves to disk.
+  ## Returns false if code is unknown or expired.
+  if code notin r.pendingLinks: return false
+  let entry = r.pendingLinks[code]
+  if getTime() > entry.expiry:
+    r.pendingLinks.del(code)
     return false
-  var entry = r.codes[code]
-  inc entry.attempts
-  if getTime() > entry.expiry or entry.attempts > LinkCodeMaxTries:
-    r.codes.del(code)
-    return false
-  ## Link the new channel identity to the existing user.
-  let key = $channel & '\t' & channelUserId
+  let key = channelKey(kind, rawId)
   r.store[key] = entry.userId
+  let us = $entry.userId
+  if us notin r.reverseMap: r.reverseMap[us] = @[]
+  if key notin r.reverseMap[us]:
+    r.reverseMap[us].add(key)
+  r.pendingLinks.del(code)
   r.save()
-  r.codes.del(code)
   true
