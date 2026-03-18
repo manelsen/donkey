@@ -10,10 +10,11 @@
 ##     but native tools are passed as {"type":"web_search"} etc.
 ##   - No streaming in F1 (streaming added in F4)
 
-import std/[httpclient, json, strutils]
+import std/[json, strutils]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
+import ../http/std_http
 
 const
   ZhipuEndpoint* = "https://api.z.ai/api/coding/paas/v4/chat/completions"
@@ -24,10 +25,11 @@ type
     apiKey*:   string
     model*:    string   ## defaults to ZhipuDefaultModel
     endpoint*: string   ## override for testing
+    http*:     StdHttpAdapter
 
 # ── Concept conformance ───────────────────────────────────────────────────────
 
-proc caps*(a: ZhipuAdapter): ProviderCaps =
+func caps*(a: ZhipuAdapter): ProviderCaps =
   ProviderCaps(
     name:             "zhipu/" & a.model,
     streaming:        false,
@@ -39,10 +41,10 @@ proc caps*(a: ZhipuAdapter): ProviderCaps =
 
 # ── JSON serialisation ────────────────────────────────────────────────────────
 
-proc toJson(msg: ChatMessage): JsonNode =
+func toJson(msg: ChatMessage): JsonNode =
   %* {"role": msg.role, "content": msg.text}
 
-proc buildBody*(a: ZhipuAdapter; req: CompletionRequest): JsonNode =
+func buildBody*(a: ZhipuAdapter; req: CompletionRequest): JsonNode =
   ## Exported for unit testing of JSON serialisation without live HTTP.
   var messages: seq[JsonNode] = @[]
   if req.system.len > 0:
@@ -56,26 +58,18 @@ proc buildBody*(a: ZhipuAdapter; req: CompletionRequest): JsonNode =
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
 proc complete*(a: ZhipuAdapter; req: CompletionRequest): Result[CompletionResponse, string] =
+  let headers = @[
+    ("Content-Type",  "application/json"),
+    ("Authorization", "Bearer " & a.apiKey),
+  ]
+  let url  = if a.endpoint.len > 0: a.endpoint else: ZhipuEndpoint
+  let resp = ? a.http.post(url, $a.buildBody(req), headers)
+  if resp.status < 200 or resp.status >= 300:
+    return err("Zhipu API error " & $resp.status & ": " & resp.body)
   try:
-    let client = newHttpClient()
-    defer: client.close()
-
-    client.headers = newHttpHeaders({
-      "Content-Type":  "application/json",
-      "Authorization": "Bearer " & a.apiKey,
-    })
-
-    let body = $a.buildBody(req)
-    let url  = if a.endpoint.len > 0: a.endpoint else: ZhipuEndpoint
-    let resp = client.post(url, body = body)
-
-    if resp.status[0] != '2':
-      return err("Zhipu API error " & resp.status & ": " & resp.body)
-
     let parsed = parseJson(resp.body)
     let msg    = parsed["choices"][0]["message"]
     let usage  = parsed.getOrDefault("usage")
-
     ok CompletionResponse(
       text:         msg["content"].getStr(""),
       inputTokens:  if usage != nil: usage["prompt_tokens"].getInt(0)    else: 0,
@@ -89,4 +83,5 @@ proc complete*(a: ZhipuAdapter; req: CompletionRequest): Result[CompletionRespon
 proc newZhipuAdapter*(apiKey: string;
                       model    = ZhipuDefaultModel;
                       endpoint = ""): ZhipuAdapter =
-  ZhipuAdapter(apiKey: apiKey, model: model, endpoint: endpoint)
+  ZhipuAdapter(apiKey: apiKey, model: model, endpoint: endpoint,
+               http: newStdHttpAdapter())
