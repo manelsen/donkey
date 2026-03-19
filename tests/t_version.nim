@@ -1,6 +1,6 @@
 ## Smoke test: binary compiles and --version exits 0
 
-import std/[os, osproc, strutils, unittest]
+import std/[os, unittest]
 
 suite "Binary":
   test "--version prints semver and exits 0":

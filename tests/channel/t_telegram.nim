@@ -3,6 +3,7 @@
 
 import std/[os, unittest]
 import donkey/adapters/channel/telegram
+import donkey/adapters/identity/identity_resolver
 import donkey/core/types
 
 suite "IdentityResolver":
@@ -13,7 +14,7 @@ suite "IdentityResolver":
     defer: removeFile(path)
 
     let r   = newIdentityResolver(path)
-    let uid = r.resolve(int64(12345678))
+    let uid = r.resolve(ckTelegram, $12345678)
     check $uid != ""
     check ($uid).len > 0
 
@@ -23,8 +24,8 @@ suite "IdentityResolver":
     defer: removeFile(path)
 
     let r  = newIdentityResolver(path)
-    let u1 = r.resolve(int64(99))
-    let u2 = r.resolve(int64(99))
+    let u1 = r.resolve(ckTelegram, $99)
+    let u2 = r.resolve(ckTelegram, $99)
     check u1 == u2
 
   test "different telegram ids get different UserIds":
@@ -33,8 +34,8 @@ suite "IdentityResolver":
     defer: removeFile(path)
 
     let r  = newIdentityResolver(path)
-    let u1 = r.resolve(int64(1))
-    let u2 = r.resolve(int64(2))
+    let u1 = r.resolve(ckTelegram, $1)
+    let u2 = r.resolve(ckTelegram, $2)
     check u1 != u2
 
   test "identity persists across resolver instances":
@@ -42,8 +43,8 @@ suite "IdentityResolver":
     removeFile(path)
     defer: removeFile(path)
 
-    let uid1 = newIdentityResolver(path).resolve(int64(555))
-    let uid2 = newIdentityResolver(path).resolve(int64(555))
+    let uid1 = newIdentityResolver(path).resolve(ckTelegram, $555)
+    let uid2 = newIdentityResolver(path).resolve(ckTelegram, $555)
     check uid1 == uid2
 
   test "generated id looks like a UUID":
@@ -51,7 +52,7 @@ suite "IdentityResolver":
     removeFile(path)
     defer: removeFile(path)
 
-    let uid = $newIdentityResolver(path).resolve(int64(777))
+    let uid = $newIdentityResolver(path).resolve(ckTelegram, $777)
     # UUID v4 format: 8-4-4-4-12 hex chars with dashes
     check uid.len == 36
     check uid[8]  == '-'

@@ -77,17 +77,76 @@ proc ringSnapshot*(n: int): seq[RingEntry] {.gcsafe.} =
     for i in 0 ..< take:
       result[i] = gRingBuf[(oldest + offset + i) mod RingCap]
 
+# ── human-friendly mode (TTY) ────────────────────────────────────────────────
+
+var gHumanLog {.global.}: bool = false
+
+proc enableHumanLog*() =
+  ## Switch stderr output to compact, colored human format.
+  ## Call once from main when stderr is a TTY.
+  {.cast(gcsafe).}: gHumanLog = true
+
+proc shortenUuids(s: string): string =
+  ## Replace 36-char UUID strings with [first8chars].
+  result = newStringOfCap(s.len)
+  var i = 0
+  while i < s.len:
+    if i + 35 < s.len and
+        s[i + 8] == '-' and s[i + 13] == '-' and
+        s[i + 18] == '-' and s[i + 23] == '-':
+      var ok = true
+      for j in 0 .. 35:
+        let c = s[i + j]
+        if j in {8, 13, 18, 23}:
+          if c != '-': ok = false; break
+        elif not (c in '0'..'9' or c in 'a'..'f' or c in 'A'..'F'):
+          ok = false; break
+      if ok:
+        result.add('[')
+        result.add(s[i ..< i + 8])
+        result.add(']')
+        i += 36
+        continue
+    result.add(s[i])
+    inc i
+
+const
+  Rst = "\e[0m"
+  Dim = "\e[2m"
+  Yel = "\e[33m"
+  Red = "\e[31m"
+  Mag = "\e[1m\e[35m"
+
+proc humanLine(e: LogEntry) =
+  let ts  = if e.timestamp.len >= 19: e.timestamp[11 .. 18] else: e.timestamp
+  let msg = shortenUuids(e.message)
+  case e.level
+  of lvlDebug:
+    stderr.writeLine(Dim & ts & "  · " & msg & Rst)
+  of lvlInfo:
+    stderr.writeLine(Dim & ts & Rst & "  " & msg)
+  of lvlWarn:
+    stderr.writeLine(Dim & ts & Rst & "  " & Yel & "!" & Rst & " " & msg)
+  of lvlError:
+    stderr.writeLine(Dim & ts & Rst & "  " & Red & "x" & Rst & " " & msg)
+  of lvlFatal:
+    stderr.writeLine(Dim & ts & Rst & "  " & Mag & "!!" & Rst & " " & msg)
+
 # ── default sink ──────────────────────────────────────────────────────────────
 
 proc stderrSink(e: LogEntry) =
-  let tag = case e.level
-    of lvlDebug: "DBG"
-    of lvlInfo:  "INF"
-    of lvlWarn:  "WRN"
-    of lvlError: "ERR"
-    of lvlFatal: "FTL"
-  stderr.writeLine &"[{e.timestamp}] {tag} [{e.subsystem}] {e.message}"
-  ringPush(e)
+  {.cast(gcsafe).}:
+    if gHumanLog:
+      humanLine(e)
+    else:
+      let tag = case e.level
+        of lvlDebug: "DBG"
+        of lvlInfo:  "INF"
+        of lvlWarn:  "WRN"
+        of lvlError: "ERR"
+        of lvlFatal: "FTL"
+      stderr.writeLine &"[{e.timestamp}] {tag} [{e.subsystem}] {e.message}"
+    ringPush(e)
 
 # ── constructors ──────────────────────────────────────────────────────────────
 
@@ -103,14 +162,16 @@ proc child*(logger: Logger; subsystem: string): Logger =
 
 # ── emit ──────────────────────────────────────────────────────────────────────
 
-proc log*(logger: Logger; level: LogLevel; msg: string) =
+proc log*(logger: Logger; level: LogLevel; msg: string) {.raises: [].} =
   if level < logger.minLevel: return
-  logger.sink(LogEntry(
-    timestamp: now().format("yyyy-MM-dd'T'HH:mm:ss"),
-    level:     level,
-    subsystem: logger.subsystem,
-    message:   msg,
-  ))
+  try:
+    logger.sink(LogEntry(
+      timestamp: now().format("yyyy-MM-dd'T'HH:mm:ss"),
+      level:     level,
+      subsystem: logger.subsystem,
+      message:   msg,
+    ))
+  except: discard
 
 template debug*(logger: Logger; msg: string) = logger.log(lvlDebug, msg)
 template info*(logger: Logger; msg: string)  = logger.log(lvlInfo,  msg)

@@ -29,21 +29,32 @@ proc loadConfig*(path: string): DonkeyConfig =
   try:
     let t = parseFile(path)
 
-    if not t.hasKey("donkey"): return
-    let d = t["donkey"]
+    if t.hasKey("donkey"):
+      let d = t["donkey"]
 
-    if d.hasKey("log_level"):
-      result.logLevel = parseLogLevel(d["log_level"].getStr())
+      if d.hasKey("log_level"):
+        result.logLevel = parseLogLevel(d["log_level"].getStr())
 
-    if d.hasKey("log_file"):
-      let lf = d["log_file"].getStr().strip()
-      if lf.len > 0:
-        result.logFile = expandTilde(lf)
+      if d.hasKey("log_file"):
+        let lf = d["log_file"].getStr().strip()
+        if lf.len > 0:
+          result.logFile = expandTilde(lf)
 
-    if d.hasKey("paddocks"):
-      let p = d["paddocks"].getStr().strip()
-      if p.len > 0:
-        result.paddocks = expandTilde(p)
+      if d.hasKey("paddocks"):
+        let p = d["paddocks"].getStr().strip()
+        if p.len > 0:
+          result.paddocks = expandTilde(p)
+
+    if t.hasKey("sandbox"):
+      let s = t["sandbox"]
+      if s.hasKey("mode"):
+        case s["mode"].getStr().strip().toLowerAscii()
+        of "docker": result.sandboxMode = smDocker
+        else:        result.sandboxMode = smNone
+      if s.hasKey("image"):
+        let img = s["image"].getStr().strip()
+        if img.len > 0:
+          result.sandboxImage = img
 
   except:
     discard  # Bad TOML → silently fall back to defaults (caller should log)

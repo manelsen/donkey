@@ -11,8 +11,6 @@ import donkey/domain/agent_message
 import donkey/domain/message
 import donkey/core/pipeops
 import donkey/adapters/memory/md_file
-import donkey/adapters/tool/mcp_client
-import donkey/ports/provider
 import donkey/app/memory_agent
 import donkey/app/tool_agent
 import donkey/app/orchestrator

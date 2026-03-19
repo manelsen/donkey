@@ -8,7 +8,7 @@
 ## |>  — pipe forward:  a |> f   ≡  f(a)          (pure transformations)
 ## >>= — monadic bind:  r >>= f  ≡  r.andThen(f)  (fallible steps, Result chain)
 
-import std/[times, monotimes]
+import std/monotimes
 import results
 export results
 
