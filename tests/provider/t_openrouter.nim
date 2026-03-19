@@ -89,3 +89,77 @@ suite "OpenRouterAdapter parseResponse":
     check resp.text        == "Hi"
     check resp.inputTokens  == 0
     check resp.outputTokens == 0
+
+  test "parses tool_calls from response":
+    let j = %* {
+      "choices": [{
+        "message": {
+          "content": "",
+          "tool_calls": [{
+            "id": "call_abc123",
+            "type": "function",
+            "function": {"name": "calc", "arguments": "{\"expression\":\"2+2\"}"}
+          }]
+        }
+      }],
+      "usage": {"prompt_tokens": 20, "completion_tokens": 8}
+    }
+    let resp = parseOpenRouterResponse(j)
+    check resp.toolCalls.len == 1
+    check resp.toolCalls[0].id        == "call_abc123"
+    check resp.toolCalls[0].name      == "calc"
+    check resp.toolCalls[0].inputJson == "{\"expression\":\"2+2\"}"
+
+  test "toolCalls is empty when no tool_calls field":
+    let j = %* {"choices": [{"message": {"content": "plain text"}}]}
+    let resp = parseOpenRouterResponse(j)
+    check resp.toolCalls.len == 0
+
+suite "OpenRouterAdapter buildBody with tools":
+
+  test "tools array present when tools provided":
+    let req = CompletionRequest(
+      system: "",
+      messages: newHistory(),
+      tools: @[ToolDescription(
+        name: "calc",
+        description: "Evaluate math",
+        schemaJson: "{\"type\":\"object\",\"properties\":{\"expression\":{\"type\":\"string\"}},\"required\":[\"expression\"]}"
+      )]
+    )
+    let body = newOpenRouterAdapter("k").buildBody(req)
+    check body.hasKey("tools")
+    check body.hasKey("tool_choice")
+    check body["tool_choice"].getStr() == "auto"
+    let tools = body["tools"]
+    check tools.len == 1
+    check tools[0]["type"].getStr()              == "function"
+    check tools[0]["function"]["name"].getStr()  == "calc"
+
+  test "no tools key when tools seq empty":
+    let req = CompletionRequest(system: "", messages: newHistory())
+    let body = newOpenRouterAdapter("k").buildBody(req)
+    check not body.hasKey("tools")
+
+  test "tool result message serialised with tool_call_id":
+    var h = newHistory()
+    h.addToolResult("call_x", "calc", "4")
+    let body = newOpenRouterAdapter("k").buildBody(
+      CompletionRequest(system: "", messages: h))
+    let msg = body["messages"][0]
+    check msg["role"].getStr()         == "tool"
+    check msg["tool_call_id"].getStr() == "call_x"
+    check msg["content"].getStr()      == "4"
+
+  test "assistant message with tool_calls serialised correctly":
+    var h = newHistory()
+    h.addAssistantWithToolCalls("", @[ToolCallRequest(
+      id: "call_1", name: "bash", inputJson: "{\"command\":\"ls\"}")])
+    let body = newOpenRouterAdapter("k").buildBody(
+      CompletionRequest(system: "", messages: h))
+    let msg = body["messages"][0]
+    check msg["role"].getStr() == "assistant"
+    let tcs = msg["tool_calls"]
+    check tcs.len == 1
+    check tcs[0]["id"].getStr()                    == "call_1"
+    check tcs[0]["function"]["name"].getStr()      == "bash"

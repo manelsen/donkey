@@ -41,6 +41,25 @@ proc caps*(a: OpenRouterAdapter): ProviderCaps =
 # ── JSON serialisation ────────────────────────────────────────────────────────
 
 proc toJson(msg: ChatMessage): JsonNode =
+  ## Serialises a ChatMessage to OpenAI-compatible JSON.
+  if msg.role == "tool":
+    ## Tool result message — must carry tool_call_id.
+    return %* {"role": "tool",
+               "tool_call_id": msg.toolCallId,
+               "content":      msg.text}
+  if msg.toolCalls.len > 0:
+    ## Assistant message with pending tool calls.
+    var calls = newJArray()
+    for tc in msg.toolCalls:
+      calls.add(%* {"id": tc.id, "type": "function",
+                    "function": {"name": tc.name, "arguments": tc.inputJson}})
+    return %* {"role": "assistant", "content": msg.text, "tool_calls": calls}
+  if msg.imageUrl.len > 0:
+    let content = %* [
+      {"type": "text",      "text": msg.text},
+      {"type": "image_url", "image_url": {"url": msg.imageUrl}},
+    ]
+    return %* {"role": msg.role, "content": content}
   %* {"role": msg.role, "content": msg.text}
 
 proc buildBody*(a: OpenRouterAdapter; req: CompletionRequest): JsonNode =
@@ -53,6 +72,16 @@ proc buildBody*(a: OpenRouterAdapter; req: CompletionRequest): JsonNode =
   result = %* {"model": a.model, "messages": messages}
   if req.maxTokens > 0:
     result["max_tokens"] = %req.maxTokens
+  if req.tools.len > 0:
+    var toolsArr = newJArray()
+    for td in req.tools:
+      let schema = try: parseJson(td.schemaJson) except: newJObject()
+      toolsArr.add(%* {"type": "function",
+                        "function": {"name":        td.name,
+                                     "description": td.description,
+                                     "parameters":  schema}})
+    result["tools"]       = toolsArr
+    result["tool_choice"] = %"auto"
 
 # ── Response parsing ──────────────────────────────────────────────────────────
 
@@ -60,10 +89,21 @@ func parseOpenRouterResponse*(j: JsonNode): CompletionResponse =
   ## Exported for unit testing of response parsing without live HTTP.
   let msg   = j["choices"][0]["message"]
   let usage = j.getOrDefault("usage")
+  var toolCalls: seq[ToolCallRequest] = @[]
+  let tcs = msg.getOrDefault("tool_calls")
+  if tcs != nil and tcs.kind == JArray:
+    for tc in tcs:
+      let fn = tc["function"]
+      toolCalls.add ToolCallRequest(
+        id:        tc["id"].getStr(""),
+        name:      fn["name"].getStr(""),
+        inputJson: fn["arguments"].getStr("{}"),
+      )
   CompletionResponse(
-    text:         msg["content"].getStr(""),
+    text:         msg.getOrDefault("content").getStr(""),
     inputTokens:  if usage != nil: usage.getOrDefault("prompt_tokens").getInt(0)     else: 0,
     outputTokens: if usage != nil: usage.getOrDefault("completion_tokens").getInt(0) else: 0,
+    toolCalls:    toolCalls,
   )
 
 # ── HTTP call ─────────────────────────────────────────────────────────────────

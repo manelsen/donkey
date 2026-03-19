@@ -17,9 +17,11 @@ const
 
 type
   ChatMessage* = object
-    role*:     string
-    text*:     string
-    imageUrl*: string        ## non-empty when message carries an image
+    role*:       string
+    text*:       string
+    imageUrl*:   string        ## non-empty when message carries an image
+    toolCalls*:  seq[ToolCallRequest]  ## non-empty: assistant issued pending calls
+    toolCallId*: string        ## non-empty: this message is a tool result
 
   ConversationHistory* = seq[ChatMessage]
 
@@ -38,6 +40,7 @@ type
     streamId*:  string       ## non-empty for streaming turns
     isPartial*: bool         ## true for streaming partial edits
     mediaUrl*:  string       ## non-empty → send as photo/document instead of text
+    keyboard*:  seq[seq[(string, string)]]  ## non-empty → send with inline keyboard buttons: [[("label","callback_data"),...],...]
 
   ToolDescription* = object
     name*:        string
@@ -75,8 +78,14 @@ func addAssistant*(h: var ConversationHistory; text: string) =
   h.add ChatMessage(role: roleAssistant, text: text)
 
 func addToolResult*(h: var ConversationHistory; id, name, output: string) =
-  ## Appends a tool result message. The role "tool" identifies it downstream.
-  h.add ChatMessage(role: "tool", text: output)
+  ## Appends a tool result message. Preserves call id for function-calling APIs.
+  h.add ChatMessage(role: "tool", text: output, toolCallId: id)
+
+func addAssistantWithToolCalls*(h: var ConversationHistory;
+                                text: string; calls: seq[ToolCallRequest]) =
+  ## Appends an assistant message that requested tool calls.
+  ## Required before addToolResult for correct function-calling conversation format.
+  h.add ChatMessage(role: roleAssistant, text: text, toolCalls: calls)
 
 func trimTo*(h: var ConversationHistory; maxLen: int) =
   ## Keeps the most recent `maxLen` turns (discards oldest).
