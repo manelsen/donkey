@@ -5,9 +5,8 @@
 ##
 ## Returns empty seq[float32] on error — caller treats as "no embedding".
 
-import std/[json, strutils]
+import std/json
 import ../../core/pipeops
-import ../../ports/embedding
 import ../http/std_http
 
 const

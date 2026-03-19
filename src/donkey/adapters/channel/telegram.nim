@@ -10,7 +10,7 @@
 ##
 ## IdentityResolver is now in adapters/identity — maps telegram_user_id → UserId.
 
-import std/[json, os, strutils]
+import std/[json, strutils]
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
@@ -100,8 +100,31 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
   discard ? a.post("sendMessage", %* {"chat_id": tgId, "text": url})
   ok()
 
+proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
+                     text: string;
+                     buttons: seq[seq[(string, string)]];
+                     replyTo: string): Result[void, string] =
+  ## Internal helper: sends a keyboard message to a known chatId.
+  var rows: seq[JsonNode]
+  for row in buttons:
+    var cols: seq[JsonNode]
+    for (label, data) in row:
+      cols.add(%* {"text": label, "callback_data": data})
+    rows.add(%cols)
+  var body = %* {
+    "chat_id": chatId,
+    "text":    text,
+    "reply_markup": {"inline_keyboard": rows},
+  }
+  if replyTo.len > 0:
+    try: body["reply_to_message_id"] = %parseInt(replyTo)
+    except ValueError: discard
+  discard ? a.post("sendMessage", body)
+  ok()
+
 proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message with Markdown (plain-text fallback), split at 4096 chars.
+  ## If msg.keyboard is non-empty, sends with an inline keyboard.
   ## If msg.mediaUrl is set, sends as photo/document (caption = msg.text).
   ## reply_to_message_id is attached only to the first chunk.
   let rawId = a.resolver.reverseChannel(msg.userId, ckTelegram)
@@ -110,6 +133,8 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
   var tgId: int64
   try: tgId = parseBiggestInt(rawId).int64
   except ValueError: return err("TelegramAdapter.send: bad Telegram ID: " & rawId)
+  if msg.keyboard.len > 0:
+    return a.sendKeyboardRaw(tgId, msg.text, msg.keyboard, msg.replyTo)
   if msg.mediaUrl.len > 0:
     return a.sendMedia(tgId, msg.mediaUrl, msg.text, msg.replyTo)
   let chunks = splitChunks(msg.text, TelegramMaxChars)

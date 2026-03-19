@@ -16,7 +16,9 @@ type
     tkSaveMem
     tkSavePrefs
     tkInvokeTool
-    tkDebugToggle   ## toggles verbose debug mode in the orchestrator
+    tkDebugToggle        ## toggles verbose debug mode in the orchestrator
+    tkPersonalityChoice  ## payload = "personality:dim:valor" (inline keyboard callback)
+    tkNameChoice         ## payload = "name:<chosen-name>" (name selection callback)
 
   AgentMessage* = object
     kind*:     AgentMessageKind

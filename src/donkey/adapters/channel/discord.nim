@@ -32,6 +32,7 @@ type
     deMessage       ## regular DM or guild message
     deInteraction   ## slash command interaction (code already extracted)
     deModalRequest  ## /continue slash cmd without code → need to show modal
+    deButtonClick   ## component button click — content = custom_id
 
   DiscordRawEvent* = object
     kind*:             DiscordEventKind
@@ -137,6 +138,18 @@ proc handleDispatch(t: string; d: JsonNode) =
           interactionId:    interactionId,
           interactionToken: interactionToken,
         ))
+
+    ## Type 3: MESSAGE_COMPONENT (button click)
+    if interactionType == 3:
+      let customId = d.getOrDefault("data").getOrDefault("custom_id").getStr("")
+      gDiscordEvents.send(DiscordRawEvent(
+        kind:             deButtonClick,
+        discordUserId:    userId,
+        content:          customId,
+        interactionId:    interactionId,
+        interactionToken: interactionToken,
+      ))
+      return
 
     ## Type 5: MODAL_SUBMIT
     if interactionType == 5:
@@ -311,9 +324,56 @@ proc sendChunk(a: DiscordAdapter; chId, text: string): Result[void, string] =
     return err("Discord send error " & $resp.status & ": " & resp.body)
   ok()
 
+proc sendKeyboard*(a: DiscordAdapter; userId: UserId;
+                   text: string;
+                   buttons: seq[seq[(string, string)]]): Result[string, string] =
+  ## Sends a message with Discord component buttons. Returns the message id.
+  ## Each inner seq becomes an ACTION_ROW (max 5 buttons per row).
+  let discordId = a.resolver.reverseChannel(userId, ckDiscord)
+  if discordId.len == 0:
+    return err("DiscordAdapter.sendKeyboard: no Discord ID for " & $userId)
+  let chId = ? a.dmChannelFor(discordId)
+  var rows: seq[JsonNode]
+  for row in buttons:
+    var comps: seq[JsonNode]
+    for (label, data) in row:
+      comps.add(%* {
+        "type":      2,   ## BUTTON
+        "style":     1,   ## PRIMARY (blurple)
+        "label":     label,
+        "custom_id": data,
+      })
+    if comps.len > 0:
+      rows.add(%* {"type": 1, "components": comps})  ## ACTION_ROW
+  let body    = %* {"content": text, "components": rows}
+  let headers = @[a.authHeader(), ("Content-Type", "application/json")]
+  let resp = ? a.http.post(a.base() & "/channels/" & chId & "/messages", $body, headers)
+  if resp.status < 200 or resp.status >= 300:
+    return err("Discord sendKeyboard error " & $resp.status & ": " & resp.body)
+  try:
+    ok(parseJson(resp.body)["id"].getStr())
+  except CatchableError as e:
+    err(e.msg)
+
+proc sendButtonAck*(a: DiscordAdapter;
+                    interactionId, interactionToken: string): Result[void, string] =
+  ## Acknowledges a button interaction with type 6 (DEFERRED_UPDATE_MESSAGE).
+  ## Must be called within 3 s of the button click to suppress the loading spinner.
+  let body    = %* {"type": 6}
+  let headers = @[a.authHeader(), ("Content-Type", "application/json")]
+  let url = a.base() & "/interactions/" & interactionId & "/" & interactionToken & "/callback"
+  let resp = ? a.http.post(url, $body, headers)
+  if resp.status < 200 or resp.status >= 300:
+    return err("Discord button ack error " & $resp.status)
+  ok()
+
 proc send*(a: DiscordAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message to the user's DM channel on Discord.
+  ## If msg.keyboard is non-empty, sends with component buttons.
   ## Splits messages longer than 2000 characters into multiple sends.
+  if msg.keyboard.len > 0:
+    discard ? a.sendKeyboard(msg.userId, msg.text, msg.keyboard)
+    return ok()
   let discordId = a.resolver.reverseChannel(msg.userId, ckDiscord)
   if discordId.len == 0:
     return err("DiscordAdapter.send: no Discord ID for user " & $msg.userId)

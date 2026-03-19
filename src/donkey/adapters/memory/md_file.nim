@@ -10,6 +10,8 @@ import std/[json, os, strutils, times]
 import ../../core/types
 import ../../ports/memory
 import ../../domain/message
+import ../../domain/personality
+export json  ## re-export so callers can inspect JsonNode reminder fields
 
 type
   MdFileAdapter* = object
@@ -95,6 +97,98 @@ proc listSessions*(a: MdFileAdapter; userId: UserId): seq[string] =
   for kind, path in walkDir(dir):
     if kind == pcFile and path.endsWith(".jsonl"):
       result.add(path.extractFilename().changeFileExt(""))
+
+# ── Agent identity helpers ────────────────────────────────────────────────────
+
+proc hasIdentity*(a: MdFileAdapter; userId: UserId): bool =
+  ## True when agent_name is present in PREFERENCES.md.
+  let path = a.preferencesMdPath(userId)
+  if not fileExists(path): return false
+  for line in readFile(path).splitLines():
+    if line.startsWith("agent_name"): return true
+  false
+
+proc saveIdentity*(a: MdFileAdapter; userId: UserId;
+                   traits: PersonalityTraits; name: string) =
+  ## Merges agent identity into PREFERENCES.md (TOML key=value format).
+  a.ensurePaddock(userId)
+  let path  = a.preferencesMdPath(userId)
+  var lines = readOrEmpty(path).splitLines()
+  proc setKey(ls: var seq[string]; key, val: string) =
+    for i in 0 ..< ls.len:
+      if ls[i].startsWith(key & " ") or ls[i].startsWith(key & "="):
+        ls[i] = key & " = \"" & val & "\""
+        return
+    ls.add(key & " = \"" & val & "\"")
+  lines.setKey("agent_name",       name)
+  lines.setKey("agent_energy",     traits.energy)
+  lines.setKey("agent_tone",       traits.tone)
+  lines.setKey("agent_length",     traits.length)
+  lines.setKey("agent_initiative", traits.initiative)
+  writeFile(path, lines.join("\n"))
+
+proc loadIdentity*(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits) =
+  ## Returns (agent_name, PersonalityTraits) from PREFERENCES.md.
+  ## Empty strings when not set.
+  let path = a.preferencesMdPath(userId)
+  if not fileExists(path): return ("", PersonalityTraits())
+  var name   = ""
+  var traits = PersonalityTraits()
+  for line in readFile(path).splitLines():
+    let parts = line.split('=', 1)
+    if parts.len != 2: continue
+    let k = parts[0].strip
+    let v = parts[1].strip.strip(chars = {'"'})
+    case k
+    of "agent_name":       name             = v
+    of "agent_energy":     traits.energy    = v
+    of "agent_tone":       traits.tone      = v
+    of "agent_length":     traits.length    = v
+    of "agent_initiative": traits.initiative = v
+    else: discard
+  (name, traits)
+
+# ── Reminder store ────────────────────────────────────────────────────────────
+
+proc reminderDir*(a: MdFileAdapter; userId: UserId): string =
+  a.paddockDir(userId) / "reminders"
+
+proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
+                       channel: string; scheduledAt: int64;
+                       message: string): string =
+  ## Writes a reminder JSON file. Returns the reminder id.
+  a.ensurePaddock(userId)
+  createDir(a.reminderDir(userId))
+  let id   = $getTime().toUnix() & "_" & $userId
+  let data = %* {
+    "id":          id,
+    "userId":      $userId,
+    "channel":     channel,
+    "scheduledAt": scheduledAt,
+    "message":     message,
+  }
+  writeFile(a.reminderDir(userId) / id & ".json", $data)
+  id
+
+proc loadDueReminders*(a: MdFileAdapter): seq[JsonNode] =
+  ## Scans ALL paddocks for reminders whose scheduledAt <= now (UTC seconds).
+  let now = getTime().toUnix()
+  if not dirExists(a.paddocksDir): return @[]
+  for _, paddockPath in walkDir(a.paddocksDir):
+    let remDir = paddockPath / "reminders"
+    if not dirExists(remDir): continue
+    for _, rPath in walkDir(remDir):
+      if not rPath.endsWith(".json"): continue
+      try:
+        let j = parseJson(readFile(rPath))
+        if j["scheduledAt"].getBiggestInt() <= now:
+          result.add(j)
+      except: discard
+
+proc deleteReminder*(a: MdFileAdapter; userId: UserId; reminderId: string) =
+  ## Deletes a reminder file by id.
+  let path = a.reminderDir(userId) / reminderId & ".json"
+  if fileExists(path): removeFile(path)
 
 # ── Scaffold USER.md from onboarding answers ──────────────────────────────────
 
