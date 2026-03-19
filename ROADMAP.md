@@ -73,16 +73,33 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 - [x] `donkey ctl skill install/list/update` — gestão de skills Deno
 - [x] Tools injetadas no system prompt do orchestrator
 
+### F2 — Revisão de segurança e robustez (2026-03)
+
+- [x] **Function calling estruturado** (OpenRouter + Zhipu): `req.tools` serializado como array OpenAI format; response parsing extrai `tool_calls[{id, name, arguments}]`; `addAssistantWithToolCalls` registra turn antes de tool results
+- [x] **Paddock por usuário**: `~/.donkey/paddocks/{uuid}/` — isolamento de filesystem entre usuários
+- [x] **Path enforcement**: `resolveInPaddock` (string-based, zero syscall) + `inPaddock` — rejeita paths fora do paddock
+- [x] **Symlinks ignorados**: `pcLinkToFile`/`pcLinkToDir` → `discard` em `walkFind` e `grepDir` — sem traversal para fora do paddock
+- [x] **Docker sandbox**: `sandbox.nim` com `buildDockerCmd` + `sandboxBash`; bind mount paddock em `/workspace`; `smNone`/`smDocker` configuráveis em `donkey.toml [sandbox]`
+- [x] **Config `[sandbox]`**: `SandboxMode` enum em `config/types.nim`; loader parseia `mode` e `image`; default `smNone` + `alpine`
+- [x] **Startup warning**: `sandboxLogLevel` emite warn se smNone, info se smDocker
+- [x] **Suite de testes native tools**: 70+ testes determinísticos cobrindo `resolveInPaddock`, `inPaddock`, `performBash`, `performHashline`, `performFind`, `performGrep`, `applyTodoOps`, `executeNativeTool` (todas as branches)
+
 ---
 
-## F3 — Multi-provider ✅
+## F3 — Multi-provider 🚧
 
 **Entregável:** 5 providers funcionando com suas peculiaridades isoladas nos adapters.
 
-- [x] `OpenRouterAdapter`, `AnthropicAdapter`, `GeminiAdapter`, `MiniMaxAdapter`, `ZhipuAdapter`
-- [x] Seleção de provider por usuário em `PREFERENCES.md` (inline keyboard `/models`)
+### Pronto
+- [x] `OpenRouterAdapter`, `AnthropicAdapter`, `GeminiAdapter`, `MiniMaxAdapter`, `ZhipuAdapter` — completions básicas
+- [x] Seleção de provider por usuário em `PREFERENCES.md` (inline keyboard `/models` com dois níveis)
 - [x] Fallback automático: `buildFallbackFn` + fallback chain por sessão
 - [x] `donkey ctl provider test <name>`
+
+### Pendente
+- [ ] **Anthropic function calling**: `caps()` declara `toolCalling: true` mas `buildBody` ignora `req.tools` — `tool_use`/`tool_result` content blocks não implementados (comentário no adapter: "F3+ scope")
+- [ ] **Gemini function calling**: idem — `function_declarations` ausente em `buildBody`; `requiresUserFirst` quirk não aplicado no histórico
+- [ ] **Streaming real**: `makeStreamFn` em OpenRouter é fallback não-streaming ("complete non-streaming and emit full text as one token"); `streaming: true` nas `caps()` é impreciso; Anthropic streaming também pendente
 
 ---
 
@@ -95,6 +112,13 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 - [x] Cancelamento em cascata via amkCancel
 - [x] Native tools Zhipu via `caps()` (web_search, code_interpreter)
 - [x] Streaming via OS thread + Channel[string] + partials no globalOutbox
+
+### F4 — Revisão de robustez (2026-03)
+
+- [x] **Detecção de repetição**: `recentCalls: seq[(tool, args)]`; aborta se mesmo `(toolName, inputJson)` visto ≥ 2 vezes — substitui `MaxToolRoundsOrch = 5`
+- [x] **Hard cap elevado**: `MaxToolRoundsOrch = 50` como safety net
+- [x] **Progress embed**: após cada tool call, `isPartial=true` com `streamId&"-st"`; fecha com `isPartial=false` e contagem total ao final do loop
+- [x] **Sandbox integrado**: `paddockDir` criado em `runOrchestrator`; `sandboxMode`/`sandboxImage` passados do config para `NativeCtx`
 
 ---
 
@@ -131,14 +155,24 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 
 ---
 
-## F7 — Skills Ecosystem ✅
+## F7 — Skills Ecosystem 🚧
 
 **Entregável:** marketplace Clawhub integrado, skills por usuário.
 
+### Infra local — pronto
 - [x] `SkillManifest`: nome, versão, script, tools, permissões Deno
+- [x] `DenoSkillAdapter`: `McpClientAdapter` + `deno run <permissions> <script>`
 - [x] Registry global: `config/skills.toml`; per-user: `data/users/{uuid}/skills/`
-- [x] `donkey ctl skill list/install/update`
-- [x] User skills mergeadas no orchestrator na criação de sessão
+- [x] `mergeSkills`: user skills override global registry por nome
+- [x] `loadUserSkills`: carrega skills por usuário
+
+### Clawhub marketplace — pendente
+- [ ] HTTP client para o registry remoto Clawhub (busca, listagem)
+- [ ] Download de skill + verificação de hash/assinatura
+- [ ] `donkey ctl skill search <query>` — pesquisa no registry remoto
+- [ ] `donkey ctl skill install <name>` via registry (hoje: path local apenas)
+- [ ] `donkey ctl skill update` — compara versões locais com registry
+- [ ] User skills mergeadas no orchestrator na criação de sessão
 
 ---
 
@@ -165,15 +199,26 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 - [x] `donkey ctl status` — snapshot: uptime, sessions, channels, providers, tools, memory backend
 - [x] `donkey tui` — live illwill dashboard (3 panels: Sessions · Logs · Stats)
   - Auto-refresh every 2s via IPC socket; keys: q=quit, tab=next panel, r=force refresh
+- [x] `deploy/donkey.service` — unit systemd --user (Type=simple, Restart=on-failure, EnvironmentFile)
+- [x] `deploy/donkey.env.example` — template de variáveis de ambiente (API keys, bot tokens)
+- [x] `deploy/donkey.toml.example` — template de config comentado
+- [x] `deploy/install.sh` — script standalone (sem root): cria dirs, instala binary, config, registra service
+- [x] `donkey service install` — instala como systemd --user; injeta keys do processo atual automaticamente
+- [x] `donkey service remove` — desregistra service; preserva config e dados
+- [x] `donkey service start / stop / restart` — wraps systemctl --user
+- [x] `donkey service logs [-f] [--cat]` — journalctl --user; `-f` segue; `--cat` sem metadata
 - [ ] User manager panel (listar, editar perfil, revogar acesso) — pós-F9
 - [ ] `donkey ctl` expandido consolidado com todos os comandos F1-F8 — pós-F9
 
 ---
 
-## Decisões abertas (para antes ou durante cada fase)
+## Decisões abertas
 
-- [ ] **F1:** Long polling (dev) vs. webhook (produção) — flag de config ou automático?
-- [ ] **F2:** Manifesto de skill: TOML embutido no pacote npm ou `clawhub.toml` na raiz?
-- [ ] **F4:** Workers persistentes vs. on-demand — revisar após F4 com dados reais de uso
-- [ ] **F6:** `.md` como views automáticas (geradas pelo daemon) ou exportadas sob comando?
-- [ ] **F8:** QQ — OneBot v11/v12 ou API oficial (se disponível para o caso de uso)?
+- [ ] **F6:** `.md` como views do grafo — automáticas ao fechar sessão ou exportadas via `ctl memory export`?
+- [ ] **F8:** QQ — OneBot v11/v12 ou API oficial?
+
+### Fechadas
+
+- **F1 long polling vs webhook** → config `[telegram] webhook_url` presente → webhook; ausente → long polling
+- **F2 manifesto de skill** → `SkillManifest` em `skills.toml [[skill]]`; Clawhub integration é problema de F7
+- **F4 workers** → on-demand: `asyncSpawn` fire-and-forget por sessão
