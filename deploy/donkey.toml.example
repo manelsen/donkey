@@ -1,0 +1,11 @@
+# Donkey configuration — copy to /etc/donkey/donkey.toml and adjust as needed.
+# Most values have sensible defaults and can be omitted.
+
+[donkey]
+# log_level = "info"    # debug | info | warn | error
+# log_file  = ""        # leave empty to log to stderr (captured by journald)
+# paddocks  = ""        # defaults to $DONKEY_HOME/paddocks
+
+[sandbox]
+# mode  = "none"        # "none" (workdir only) or "docker" (ephemeral container)
+# image = "alpine"      # Docker image used when mode = "docker"
