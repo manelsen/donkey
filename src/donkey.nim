@@ -1,6 +1,6 @@
 ## donkey — AI agent system entry point.
 
-import std/[json, os, parseopt, strutils, tables]
+import std/[json, os, parseopt, strutils, tables, terminal]
 import chronos
 import chronos/asyncsync
 import parsetoml
@@ -28,6 +28,9 @@ import donkey/adapters/channel/feishu
 import donkey/adapters/tool/mcp_client
 import donkey/domain/agent_message
 import donkey/domain/message
+import donkey/domain/reminder
+import donkey/domain/builtin_tools
+import donkey/domain/more_tools
 import donkey/ports/provider
 import donkey/app/orchestrator
 import donkey/app/ipc_server
@@ -67,7 +70,181 @@ Commands:
   ctl memory import <uuid>       Import .md paddock into Postgres (-d:withPostgres)
   ctl status                     Show daemon status (daemon must be running)
   tui                            Open live TUI dashboard (daemon must be running)
+  service install                Install as systemd --user service
+  service remove                 Remove the systemd --user service
+  service start                  systemctl --user start donkey
+  service stop                   systemctl --user stop donkey
+  service restart                systemctl --user restart donkey
+  service logs [-f] [--cat]      Show service logs (follow with -f, clean output with --cat)
 """
+
+# ── service commands ───────────────────────────────────────────────────────────
+
+const ServiceFileContent = """
+[Unit]
+Description=Donkey AI Agent Daemon
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/donkey/donkey.env
+ExecStart=%h/.local/bin/donkey start --config %h/.config/donkey/donkey.toml
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=default.target
+"""
+
+const EnvFileTemplate = """# Donkey environment — fill in the values you need.
+# Permissions: chmod 600 ~/.config/donkey/donkey.env
+
+TELEGRAM_BOT_TOKEN=
+DISCORD_BOT_TOKEN=
+WECOM_CORP_ID=
+WECOM_CORP_SECRET=
+WECOM_AGENT_ID=
+WECOM_CALLBACK_TOKEN=
+FEISHU_APP_ID=
+FEISHU_APP_SECRET=
+FEISHU_VERIFICATION_TOKEN=
+
+ZHIPU_API_KEY=
+OPENROUTER_API_KEY=
+ANTHROPIC_API_KEY=
+GEMINI_API_KEY=
+MINIMAX_API_KEY=
+
+BRAVE_API_KEY=
+# DONKEY_PG_DSN=
+"""
+
+const TomlTemplate = """# Donkey configuration
+
+[donkey]
+# log_level = "info"    # debug | info | warn | error
+# log_file  = ""        # leave empty to log to stderr (journald)
+
+[sandbox]
+# mode  = "none"        # "none" or "docker"
+# image = "alpine"
+"""
+
+proc svcUnitDir(): string = getHomeDir() / ".config" / "systemd" / "user"
+proc svcUnitFile(): string = svcUnitDir() / "donkey.service"
+proc svcCfgDir(): string  = getHomeDir() / ".config" / "donkey"
+proc svcBinPath(): string = getHomeDir() / ".local" / "bin" / "donkey"
+
+proc svcRun(cmd: string): bool =
+  execShellCmd(cmd) == 0
+
+proc ctlServiceInstall =
+  # Directories
+  createDir(svcUnitDir())
+  createDir(svcCfgDir())
+  createDir(getHomeDir() / ".local" / "bin")
+
+  # Binary — copy current executable
+  let src = getAppFilename()
+  let dst = svcBinPath()
+  copyFile(src, dst)
+  discard svcRun("chmod 755 " & dst)
+  echo "  binary  → " & dst
+
+  # Service unit file
+  writeFile(svcUnitFile(), ServiceFileContent.strip() & "\n")
+  echo "  service → " & svcUnitFile()
+
+  # Env file — create if missing, then inject any keys found in current env
+  let envPath = svcCfgDir() / "donkey.env"
+  if not fileExists(envPath):
+    writeFile(envPath, EnvFileTemplate)
+    discard svcRun("chmod 600 " & envPath)
+
+  const knownKeys = [
+    "TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN",
+    "WECOM_CORP_ID", "WECOM_CORP_SECRET", "WECOM_AGENT_ID",
+    "WECOM_CALLBACK_TOKEN", "FEISHU_APP_ID", "FEISHU_APP_SECRET",
+    "FEISHU_VERIFICATION_TOKEN",
+    "ZHIPU_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY", "MINIMAX_API_KEY",
+    "BRAVE_API_KEY", "DONKEY_PG_DSN",
+  ]
+  var envContent = readFile(envPath)
+  var injected: seq[string]
+  for k in knownKeys:
+    let v = getEnv(k)
+    if v.len == 0: continue
+    var lines = envContent.splitLines()
+    var found = false
+    for i in 0 ..< lines.len:
+      if lines[i].startsWith(k & "="):
+        lines[i] = k & "=" & v
+        found = true
+        break
+    if not found:
+      lines.add(k & "=" & v)
+    envContent = lines.join("\n")
+    injected.add(k)
+  writeFile(envPath, envContent)
+
+  if injected.len > 0:
+    echo "  env     → " & envPath & " (injected: " & injected.join(", ") & ")"
+  else:
+    echo "  env     → " & envPath & " (no keys in current env — fill in manually)"
+
+  # Toml config — create if missing
+  let tomlPath = svcCfgDir() / "donkey.toml"
+  if not fileExists(tomlPath):
+    writeFile(tomlPath, TomlTemplate)
+    echo "  config  → " & tomlPath
+  else:
+    echo "  config  → " & tomlPath & " (already exists — kept)"
+
+  # Register with systemd
+  discard svcRun("systemctl --user daemon-reload")
+  if svcRun("systemctl --user enable donkey"):
+    echo ""
+    echo "✓ Installed. Run: donkey service start"
+    echo "  Logs:         donkey service logs -f"
+    echo "  Auto-start:   loginctl enable-linger " & getEnv("USER", "your-user")
+  else:
+    echo "Warning: systemctl enable failed — is systemd --user running?"
+
+proc ctlServiceRemove =
+  discard svcRun("systemctl --user stop donkey")
+  discard svcRun("systemctl --user disable donkey")
+  if fileExists(svcUnitFile()):
+    removeFile(svcUnitFile())
+    echo "Removed " & svcUnitFile()
+  discard svcRun("systemctl --user daemon-reload")
+  echo "✓ Service removed. Config preserved at " & svcCfgDir()
+
+proc ctlServiceStart =
+  if not svcRun("systemctl --user start donkey"):
+    echo "Failed. Check: donkey service logs -f"
+  else:
+    echo "✓ Started. Logs: donkey service logs -f"
+
+proc ctlServiceStop =
+  if not svcRun("systemctl --user stop donkey"):
+    echo "Failed."
+  else:
+    echo "✓ Stopped."
+
+proc ctlServiceRestart =
+  if not svcRun("systemctl --user restart donkey"):
+    echo "Failed. Check: donkey service logs -f"
+  else:
+    echo "✓ Restarted. Logs: donkey service logs -f"
+
+proc ctlServiceLogs(follow: bool; cat: bool) =
+  var cmd = "journalctl --user -u donkey --no-pager"
+  if follow: cmd.add(" -f")
+  if cat:    cmd.add(" -o cat")
+  discard execShellCmd(cmd)
 
 # ── ctl user commands ──────────────────────────────────────────────────────────
 
@@ -305,6 +482,8 @@ proc ensureSession(sm:           var SessionManager;
                    globalOutbox: AsyncQueue[OutboundMessage];
                    log:          Logger;
                    msgSeq:       var int;
+                   sandboxMode:  SandboxMode = smNone;
+                   sandboxImage: string = "alpine";
                    typingFn:     TypingFn = nil;
                    searchFn:     SearchFn = nil) {.gcsafe.} =
   ## Creates session + orchestrator on first contact; then enqueues message.
@@ -334,9 +513,49 @@ proc ensureSession(sm:           var SessionManager;
               schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
             ))
         sessionClients.add(client)
+    ## Native tools — always available.
+    sessionTools.add(ToolDescription(
+      name:        ReminderToolName,
+      description: ReminderToolDescription,
+      schemaJson:  ReminderToolSchema,
+    ))
+    sessionTools.add(ToolDescription(
+      name:        CurrentTimeToolName,
+      description: CurrentTimeToolDescription,
+      schemaJson:  CurrentTimeToolSchema,
+    ))
+    sessionTools.add(ToolDescription(
+      name:        WebFetchToolName,
+      description: WebFetchToolDescription,
+      schemaJson:  WebFetchToolSchema,
+    ))
+    ## Extended native tools.
+    for (n, d, s) in [
+      (BashToolName,         BashToolDescription,         BashToolSchema),
+      (HashlineToolName,     HashlineToolDescription,     HashlineToolSchema),
+      (FindToolName,         FindToolDescription,         FindToolSchema),
+      (GrepToolName,         GrepToolDescription,         GrepToolSchema),
+      (FetchToolName,        FetchToolDescription,        FetchToolSchema),
+      (WebSearchToolName,    WebSearchToolDescription,    WebSearchToolSchema),
+      (CalcToolName,         CalcToolDescription,         CalcToolSchema),
+      (RenderMermaidToolName,RenderMermaidToolDescription,RenderMermaidToolSchema),
+      (InspectImageToolName, InspectImageToolDescription, InspectImageToolSchema),
+      (AskToolName,          AskToolDescription,          AskToolSchema),
+      (TodoWriteToolName,    TodoWriteToolDescription,    TodoWriteToolSchema),
+      (CheckpointToolName,   CheckpointToolDescription,   CheckpointToolSchema),
+      (RewindToolName,       RewindToolDescription,       RewindToolSchema),
+      (TaskToolName,         TaskToolDescription,         TaskToolSchema),
+      (SubmitResultToolName, SubmitResultToolDescription, SubmitResultToolSchema),
+      (ReportFindingToolName,ReportFindingToolDescription,ReportFindingToolSchema),
+      (CancelJobToolName,    CancelJobToolDescription,    CancelJobToolSchema),
+      (AwaitToolName,        AwaitToolDescription,        AwaitToolSchema),
+    ]:
+      sessionTools.add(ToolDescription(name: n, description: d, schemaJson: s))
+    let provLabel = providerLabelFromPrefs(ctx.preferencesMd)
     asyncSpawn runOrchestrator(entry.inbox, globalOutbox, memory,
                                fallbackFn, streamFn, sessionClients, sessionTools,
-                               typingFn, searchFn)
+                               typingFn, searchFn, log.child("orch"), provLabel,
+                               sandboxMode, sandboxImage)
     log.info("new session: " & uid)
 
   sm.recordChannel(msg.userId, msg.channel, msg.channelId)
@@ -497,9 +716,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ## Shared async queue — all orchestrators post replies here.
   let globalOutbox = newAsyncQueue[OutboundMessage]()
 
-  var sm:            SessionManager
-  var streamMsgIds:  Table[string, string]   ## streamId → channel message id
-  var statusMsgIds:  Table[string, string]   ## userId string → status message id
+  var sm:                 SessionManager
+  var streamMsgIds:       Table[string, string]   ## streamId → channel message id
+  var statusMsgIds:       Table[string, string]   ## userId string → status message id
+  var lastReminderCheckMs: int64 = 0              ## epoch ms of last reminder scan
   var kbdMsgIds:     Table[string, string]   ## userId string → open keyboard msgId
   var msgSeq:        int
   sm.init()
@@ -630,8 +850,6 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     ## 1. Drain globalOutbox (non-blocking: stop when empty).
     while globalOutbox.len > 0:
       let outMsg = await globalOutbox.get()
-      log.info("reply user=" & $outMsg.userId & " chars=" & $outMsg.text.len &
-               (if outMsg.streamId.len > 0: " [stream]" else: ""))
 
       ## Clear ⚙️ status message on first real reply (non-partial or non-streaming).
       ## Show ❌ on error replies, delete otherwise.
@@ -678,6 +896,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
               text:      event.content,
             ), memory, globalCompleteFn, globalStreamFn,
             toolClients, tools, globalOutbox, log, msgSeq,
+            cfg.sandboxMode, cfg.sandboxImage,
             searchFn = globalSearchFn)
 
         of deInteraction:
@@ -697,6 +916,21 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
             event.interactionId, event.interactionToken).isOkOr:
             log.error("dc send modal: " & error)
 
+        of deButtonClick:
+          ## Component button pressed (personality/name choice from inline keyboard).
+          let userId = dcAdapter.resolver.resolve(ckDiscord, event.discordUserId)
+          ## Acknowledge immediately to suppress Discord's loading spinner.
+          dcAdapter.sendButtonAck(
+            event.interactionId, event.interactionToken).isOkOr:
+            log.error("dc button ack: " & error)
+          ## Route the callback data to the session orchestrator.
+          let data = event.content
+          let entry = sm.getOrCreate(userId)
+          inc msgSeq
+          let tk = if data.startsWith("name:"): tkNameChoice else: tkPersonalityChoice
+          entry.inbox.addLastNoWait(
+            newTaskMsg($msgSeq, tk, $userId, data, ckDiscord, ""))
+
         (hasEvent, event) = dcAdapter.tryRecvEvent()
 
     ## 3. Drain WeCom webhook events (non-blocking).
@@ -711,7 +945,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
             channelId: wcEvent.msgId,
             text:      wcEvent.content,
           ), memory, globalCompleteFn, globalStreamFn,
-          toolClients, tools, globalOutbox, log, msgSeq)
+          toolClients, tools, globalOutbox, log, msgSeq,
+          cfg.sandboxMode, cfg.sandboxImage)
         (hasWcEvent, wcEvent) = wcAdapter.tryRecvEvent()
 
     ## 4. Drain Feishu gateway events (non-blocking).
@@ -726,7 +961,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
             channelId: fsEvent.msgId,
             text:      fsEvent.content,
           ), memory, globalCompleteFn, globalStreamFn,
-          toolClients, tools, globalOutbox, log, msgSeq)
+          toolClients, tools, globalOutbox, log, msgSeq,
+          cfg.sandboxMode, cfg.sandboxImage)
         (hasFsEvent, fsEvent) = fsAdapter.tryRecvEvent()
 
     ## 5. Telegram poll (non-blocking: timeout=0 returns immediately).
@@ -922,6 +1158,13 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
               text:    "🧠 Thinking: <b>" & level & "</b>",
               replyTo: msg.channelId,
             )).isOkOr: discard
+        elif data.startsWith("personality:") or data.startsWith("name:"):
+          ## Route to orchestrator as personality/name choice task.
+          let entry = sm.getOrCreate(msg.userId)
+          inc msgSeq
+          let tk = if data.startsWith("name:"): tkNameChoice else: tkPersonalityChoice
+          entry.inbox.addLastNoWait(
+            newTaskMsg($msgSeq, tk, $msg.userId, data, ckTelegram, msg.channelId))
         continue
 
       if cmd == "/ping":
@@ -1013,9 +1256,30 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
 
       ensureSession(sm, msg, memory, globalCompleteFn, globalStreamFn,
                     toolClients, tools, globalOutbox, log, msgSeq,
+                    cfg.sandboxMode, cfg.sandboxImage,
                     tgTypingFn, globalSearchFn)
 
-    ## 4. Yield to Chronos — lets orchestrators and streaming threads run.
+    ## 6. Check due reminders (every 30 s) and publish to globalOutbox.
+    if nowMs() - lastReminderCheckMs >= 30_000:
+      lastReminderCheckMs = nowMs()
+      let dueReminders = memory.loadDueReminders()
+      for rem in dueReminders:
+        let rUid = UserId(rem["userId"].getStr())
+        let rCh  = block:
+          var found = ckTelegram
+          for ck in ChannelKind:
+            if $ck == rem["channel"].getStr(): found = ck; break
+          found
+        let rId  = rem["id"].getStr()
+        await globalOutbox.put(OutboundMessage(
+          userId:  rUid,
+          channel: rCh,
+          text:    "⏰ " & rem["message"].getStr(),
+        ))
+        memory.deleteReminder(rUid, rId)
+        log.info("reminder fired " & $rUid)
+
+    ## 7. Yield to Chronos — lets orchestrators and streaming threads run.
     await sleepAsync(milliseconds(100))
 
 # ── main ───────────────────────────────────────────────────────────────────────
@@ -1023,6 +1287,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
 proc main =
   var configPath = ""
   var args: seq[string] = @[]
+  var logsFollow = false
+  var logsCat    = false
 
   for kind, key, val in getopt():
     case kind
@@ -1031,11 +1297,13 @@ proc main =
       of "version": printVersion(); quit(0)
       of "help":    printHelp();    quit(0)
       of "config":  configPath = val
+      of "cat":     logsCat    = true
       else: discard
     of cmdShortOption:
       case key
       of "v": printVersion(); quit(0)
       of "h": printHelp();    quit(0)
+      of "f": logsFollow = true
       else: discard
     of cmdArgument:
       args.add key
@@ -1048,6 +1316,7 @@ proc main =
 
   let cfg = loadConfig(configPath)
   ringInit()   ## enable ring buffer before the first Logger is created
+  if isatty(stderr): enableHumanLog()
   let log = newLogger("donkey")
 
   let registryPath = cfg.home / "tools.toml"
@@ -1110,6 +1379,17 @@ proc main =
       quit(0)
     else:
       printHelp(); quit(1)
+
+  if args.len >= 2 and args[0] == "service":
+    case args[1]
+    of "install": ctlServiceInstall(); quit(0)
+    of "remove":  ctlServiceRemove();  quit(0)
+    of "start":   ctlServiceStart();   quit(0)
+    of "stop":    ctlServiceStop();    quit(0)
+    of "restart": ctlServiceRestart(); quit(0)
+    of "logs":
+      ctlServiceLogs(logsFollow, logsCat); quit(0)
+    else: printHelp(); quit(1)
 
   if args.len >= 1 and args[0] == "tui":
     let sockPath = cfg.home / "donkey.sock"
