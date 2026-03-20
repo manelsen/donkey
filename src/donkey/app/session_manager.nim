@@ -13,9 +13,19 @@ import ../domain/message
 
 type
   SessionEntry* = object
-    inbox*:    AsyncQueue[AgentMessage]
+    inbox*:                AsyncQueue[AgentMessage]
+    askInbox*:             AsyncQueue[string]
+    awaitingAsk*:          bool
     ## outbox removed: orchestrators write replies to the global outbox directly.
-    channels*: seq[(ChannelKind, string)]  ## (channel, raw_channel_user_id)
+    channels*:             seq[(ChannelKind, string)]  ## (channel, raw_channel_user_id)
+    toolCatalogSignature*: string
+
+  SessionLease* = object
+    entry*:    ptr SessionEntry
+    oldInbox*: AsyncQueue[AgentMessage]
+    oldAskInbox*: AsyncQueue[string]
+    isNew*:    bool
+    rebuilt*:  bool
 
   SessionManager* = object
     entries*: Table[string, SessionEntry]  ## string(UserId) → entry
@@ -34,7 +44,10 @@ proc getOrCreate*(sm: var SessionManager; userId: UserId): ptr SessionEntry =
   if uid notin sm.entries:
     sm.entries[uid] = SessionEntry(
       inbox:    newAsyncQueue[AgentMessage](),
+      askInbox: newAsyncQueue[string](),
+      awaitingAsk: false,
       channels: @[],
+      toolCatalogSignature: "",
     )
   addr sm.entries[uid]
 
@@ -57,3 +70,33 @@ func listSessions*(sm: SessionManager): seq[(UserId, seq[(ChannelKind, string)])
     result.add((UserId(uid), entry.channels))
 
 func sessionCount*(sm: SessionManager): int = sm.entries.len
+
+proc prepareEntry*(sm: var SessionManager;
+                   userId: UserId;
+                   toolCatalogSignature: string): SessionLease =
+  let uid = $userId
+  if uid notin sm.entries:
+    sm.entries[uid] = SessionEntry(
+      inbox: newAsyncQueue[AgentMessage](),
+      askInbox: newAsyncQueue[string](),
+      awaitingAsk: false,
+      channels: @[],
+      toolCatalogSignature: toolCatalogSignature,
+    )
+    return SessionLease(
+      entry: addr sm.entries[uid],
+      oldInbox: nil,
+      oldAskInbox: nil,
+      isNew: true,
+      rebuilt: false,
+    )
+
+  result.entry = addr sm.entries[uid]
+  if result.entry[].toolCatalogSignature != toolCatalogSignature:
+    result.oldInbox = result.entry[].inbox
+    result.oldAskInbox = result.entry[].askInbox
+    result.entry[].inbox = newAsyncQueue[AgentMessage]()
+    result.entry[].askInbox = newAsyncQueue[string]()
+    result.entry[].awaitingAsk = false
+    result.entry[].toolCatalogSignature = toolCatalogSignature
+    result.rebuilt = true

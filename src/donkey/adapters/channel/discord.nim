@@ -16,6 +16,7 @@
 ##   Discord heartbeat interval is ~41 s; occasional missed beats are tolerated.
 
 import std/[json, net, os, random, strutils, tables, times]
+import ../../core/app_meta
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
@@ -208,7 +209,7 @@ proc runGatewaySession(token: string; state: var GatewayState) =
       "d": {
         "token":      token,
         "intents":    DiscordIntents,
-        "properties": {"os": "linux", "browser": "donkey", "device": "donkey"},
+        "properties": {"os": "linux", "browser": AppSlug, "device": AppSlug},
       },
     })
 

@@ -1,6 +1,6 @@
 ## IPC server — Chronos async Unix socket for daemon status queries.
 ##
-## Socket path: $DONKEY_HOME/donkey.sock
+## Socket path: $DONKEY_HOME/{SockFileName}
 ##
 ## Protocol (newline-terminated JSON, one request/response per connection):
 ##   {"cmd":"status"}       → {"ok":true,"data":{DaemonStatus}}

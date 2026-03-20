@@ -24,6 +24,7 @@
 ##   OutboundMessage with isPartial=true. The final flush has isPartial=false.
 
 import std/json
+import std/options
 import std/os
 import std/strutils except strip
 import std/strformat
@@ -34,9 +35,9 @@ import ../core/log
 import ../domain/agent_message
 import ../domain/message
 import ../domain/personality
-import ../domain/reminder
 import ../config/types as cfgTypes
 import ../adapters/memory/md_file
+import ./session_manager
 import ../adapters/tool/mcp_client
 import ./sandbox
 import ../ports/provider
@@ -53,6 +54,137 @@ const
   StreamFlushMs        = 1_000
 
 type TypingFn* = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: [].}
+
+type ToolCallResult = object
+  text:          string
+  checkpointNow: bool
+  newHistory:    Option[ConversationHistory]
+
+type ToolLoopRunResult = object
+  history:       ConversationHistory
+  finalText:     string
+  done:          bool
+  toolCallCount: int
+
+type ToolBatchResult = object
+  history:       ConversationHistory
+  toolCallCount: int
+  aborted:       bool
+  recentCalls:   seq[(string, string)]
+
+type CompletionHandlingResult = object
+  history:    ConversationHistory
+  finalText:  string
+  done:       bool
+  debugText:  string
+
+type NormalTurnPrep = object
+  history:        ConversationHistory
+  context:        string
+  systemBase:     string
+  agentName:      string
+  agentTraits:    PersonalityTraits
+  identityLoaded: bool
+  obPhase:        OnboardingPhase
+
+type TypingFlag = ref bool
+
+type OnboardingRuntime* = object
+  phase*:       OnboardingPhase
+  traits*:      PersonalityTraits
+  names*:       seq[string]
+  userName*:    string
+  timezone*:    string
+  language*:    string
+
+type IdentityRuntime* = object
+  name*:          string
+  traits*:        PersonalityTraits
+  identityLoaded*: bool
+
+type OnboardingTurnResult = object
+  history:            ConversationHistory
+  onboarding:         OnboardingRuntime
+  identity:           IdentityRuntime
+  handled:            bool
+
+type ControlTaskResult = object
+  history:      ConversationHistory
+  onboarding:   OnboardingRuntime
+  identity:     IdentityRuntime
+  debugMode:    bool
+  handled:      bool
+
+type OrchestratorState = object
+  history:     ConversationHistory
+  debugMode:   bool
+  lastUserId:  UserId
+  onboarding:  OnboardingRuntime
+  identity:    IdentityRuntime
+  turnSeq:     int
+
+type StreamRoundResult = object
+  finalText: string
+
+type ToolLoopCompletionInput = object
+  completion: CompletionHandlingResult
+
+type ToolLoopBatchInput = object
+  batch: ToolBatchResult
+
+type FreeConvoContext* = object
+  history*:      ConversationHistory
+  onboarding*:   OnboardingRuntime
+  request*:      CompletionRequest
+  rawText*:      string
+  visibleText*:  string
+  parsedTraits*: Option[PersonalityTraits]
+
+type GuidedChoiceContext* = object
+  onboarding*: OnboardingRuntime
+  replyText*:  string
+  keyboard*:   seq[seq[(string, string)]]
+  needsNames*: bool
+  handled*:    bool
+
+type UserProfileContext* = object
+  onboarding*:   OnboardingRuntime
+  identity*:     IdentityRuntime
+  replyText*:    string
+  userMd*:       string
+  saveIdentity*: bool
+  saveUserMd*:   bool
+  advanced*:     bool
+
+type ResetControlContext* = object
+  history*:       ConversationHistory
+  sessionId*:     string
+  replyText*:     string
+  shouldPersist*: bool
+
+type DebugControlContext* = object
+  debugMode*: bool
+  replyText*: string
+
+type OnboardingControlContext* = object
+  onboarding*: OnboardingRuntime
+  identity*:   IdentityRuntime
+  handled*:    bool
+  dim*:        string
+  value*:      string
+  name*:       string
+
+type UserTurnSetup = object
+  uid:         UserId
+  streamId:    string
+  userText:    string
+  isNewUser:   bool
+  nativeCtx:   NativeCtx
+  typingLoop:  TypingFlag
+
+type ActorMessageResult = object
+  stateRuntime: OrchestratorState
+  shouldStop:   bool
 
 func providerLabelFromPrefs*(prefs: string): string =
   ## Extracts "provider/model" label from PREFERENCES.md TOML content.
@@ -77,11 +209,454 @@ proc safeComplete(fn: CompleteFn; req: CompletionRequest
   try: fn(req)
   except Exception as e: err(e.msg)
 
+proc generateNames(completeFn: CompleteFn;
+                   traits: PersonalityTraits): seq[string] {.gcsafe, raises: [].}
+
 func orchToolsSuffix(tools: seq[ToolDescription]): string =
   if tools.len == 0: return ""
   result = "\n\n## Available tools\n"
   for td in tools:
     result.add &"- **{td.name}**: {td.description}\n"
+
+func recentRepeatCount*(recentCalls: seq[(string, string)];
+                        tc: ToolCallRequest): int =
+  let callKey = (tc.name, tc.inputJson)
+  for rc in recentCalls:
+    if rc == callKey:
+      inc result
+
+proc registerToolCall*(recentCalls: var seq[(string, string)];
+                       tc: ToolCallRequest) =
+  recentCalls.add((tc.name, tc.inputJson))
+  if recentCalls.len > 30:
+    recentCalls = recentCalls[recentCalls.len - 30 .. ^1]
+
+func buildRepeatAbortText*(toolName: string; repeatCount: int): string =
+  "⚠️ Loop detectado: '" & toolName & "' chamado " &
+  $(repeatCount + 1) & " vezes com os mesmos argumentos. Interrompendo."
+
+func buildToolDebugCallText*(tc: ToolCallRequest): string =
+  "🔧 <b>[debug tool]</b> " & tc.name & "\n<code>" & tc.inputJson & "</code>"
+
+func buildToolDebugResultText*(toolName, toolResult: string): string =
+  "📤 <b>[debug result]</b> " & toolName & "\n<code>" &
+  toolResult[0 ..< min(200, toolResult.len)] & "</code>"
+
+func buildCompletionDebugText*(r: CompletionResponse): string =
+  "🔍 <b>[debug]</b> tokens in=" & $r.inputTokens &
+  " out=" & $r.outputTokens &
+  " chars=" & $r.text.len
+
+func buildToolProgressText*(toolName: string;
+                            toolCallCount: int;
+                            toolResult: string): string =
+  let resultLines = toolResult.splitLines()
+  let tail = resultLines[max(0, resultLines.len - 5) .. ^1].join("\n")
+  let tailTrunc = if tail.len > 400: tail[0 ..< 400] & "…" else: tail
+  "🔧 <code>" & toolName & "</code> [" & $toolCallCount & "]\n<code>" &
+    tailTrunc & "</code>"
+
+func isEmptyCompletionRetry*(r: CompletionResponse): bool =
+  r.toolCalls.len == 0 and r.text.len == 0
+
+func buildSystemBase*(agentTraits: PersonalityTraits;
+                      agentName: string;
+                      toolsSuffix: string): string =
+  let personalityPrompt = buildPersonalityPrompt(agentTraits, agentName)
+  (if personalityPrompt.len > 0:
+     personalityPrompt & "\n\n"
+   else:
+     "You are a personal AI assistant.\n\n") &
+  "Be helpful and remember what the user tells you. " &
+  "Respond in the user's preferred language." &
+  toolsSuffix
+
+proc addUserTurn*(history: ConversationHistory;
+                  userText: string;
+                  userImageUrl: string): ConversationHistory =
+  result = history
+  if userImageUrl.len > 0:
+    result.addUserWithImage(userText, userImageUrl)
+  else:
+    result.addUser(userText)
+  result.trimTo(20)
+
+proc buildToolLoopDoneText*(toolCallCount: int): string =
+  "✅ " & $toolCallCount & " tool call(s)"
+
+const FreeConvoSystemPrompt* = """You are discovering your own identity through conversation.
+Your user will describe your personality, tone, and style.
+Listen actively. Ask clarifying questions if needed.
+When you have a clear picture of who you should be, output this exact block (no extra formatting):
+
+IDENTITY_READY:
+energy: <reservado|neutro|entusiasmado>
+tone: <formal|neutro|casual>
+length: <conciso|moderado|detalhado>
+initiative: <reativo|moderado|proativo>
+
+Then continue the conversation naturally. Only output the block when you are confident about all four dimensions."""
+
+proc startFreeConvoContext*(history: ConversationHistory;
+                            onboarding: OnboardingRuntime;
+                            userText: string): Result[FreeConvoContext, string] =
+  var nextHistory = history
+  nextHistory.addUser(userText)
+  nextHistory.trimTo(20)
+  ok(FreeConvoContext(
+    history: nextHistory,
+    onboarding: onboarding,
+  ))
+
+proc withFreeConvoRequest*(ctx: FreeConvoContext): Result[FreeConvoContext, string] =
+  var nextCtx = ctx
+  nextCtx.request = buildPrompt(FreeConvoSystemPrompt, ctx.history, "")
+  ok(nextCtx)
+
+proc completeFreeConvo*(completeFn: CompleteFn): proc(ctx: FreeConvoContext): Result[FreeConvoContext, string] {.gcsafe, raises: [].} =
+  result =
+    proc(ctx: FreeConvoContext): Result[FreeConvoContext, string] {.gcsafe, raises: [].} =
+      let resp = safeComplete(completeFn, ctx.request)
+      if resp.isErr:
+        return err(resp.error)
+      var nextCtx = ctx
+      nextCtx.rawText = resp.value.text
+      ok(nextCtx)
+
+proc parseFreeConvoReply*(ctx: FreeConvoContext): Result[FreeConvoContext, string] =
+  var nextCtx = ctx
+  nextCtx.visibleText = stripIdentityReady(ctx.rawText)
+  nextCtx.parsedTraits = parseIdentityReady(ctx.rawText)
+  nextCtx.history.addAssistant(ctx.rawText)
+  if nextCtx.parsedTraits.isSome:
+    nextCtx.onboarding.traits = nextCtx.parsedTraits.get()
+  ok(nextCtx)
+
+proc finalizeFreeConvoIdentity*(completeFn: CompleteFn): proc(ctx: FreeConvoContext): Result[FreeConvoContext, string] {.gcsafe, raises: [].} =
+  result =
+    proc(ctx: FreeConvoContext): Result[FreeConvoContext, string] {.gcsafe, raises: [].} =
+      if ctx.parsedTraits.isNone:
+        return ok(ctx)
+      var nextCtx = ctx
+      var names: seq[string]
+      {.cast(gcsafe).}: names = generateNames(completeFn, nextCtx.onboarding.traits)
+      nextCtx.onboarding.names = names
+      nextCtx.onboarding.phase = opNameChoice
+      ok(nextCtx)
+
+proc startGuidedChoiceContext*(onboarding: OnboardingRuntime;
+                               dim: string;
+                               valor: string): Result[GuidedChoiceContext, string] =
+  var nextCtx = GuidedChoiceContext(onboarding: onboarding)
+  case nextCtx.onboarding.phase
+  of opModeChoice:
+    if dim != "mode":
+      return ok(nextCtx)
+    if valor == "guided":
+      nextCtx.onboarding.phase = opGuidedEnergy
+      (nextCtx.replyText, nextCtx.keyboard) = guidedDimensionMsg(dkEnergy)
+      nextCtx.handled = true
+    elif valor == "free":
+      nextCtx.onboarding.phase = opFreeConvo
+      nextCtx.replyText =
+        "Ótimo! Descreva como imagina que eu devo ser — " &
+        "meu jeito, meu tom, minha forma de responder. " &
+        "Pode ser em poucas palavras ou um parágrafo."
+      nextCtx.handled = true
+
+  of opGuidedEnergy:
+    nextCtx.onboarding.traits.energy = valor
+    nextCtx.onboarding.phase = opGuidedTone
+    (nextCtx.replyText, nextCtx.keyboard) = guidedDimensionMsg(dkTone)
+    nextCtx.handled = true
+
+  of opGuidedTone:
+    nextCtx.onboarding.traits.tone = valor
+    nextCtx.onboarding.phase = opGuidedLength
+    (nextCtx.replyText, nextCtx.keyboard) = guidedDimensionMsg(dkLength)
+    nextCtx.handled = true
+
+  of opGuidedLength:
+    nextCtx.onboarding.traits.length = valor
+    nextCtx.onboarding.phase = opGuidedInitiative
+    (nextCtx.replyText, nextCtx.keyboard) = guidedDimensionMsg(dkInitiative)
+    nextCtx.handled = true
+
+  of opGuidedInitiative:
+    nextCtx.onboarding.traits.initiative = valor
+    nextCtx.onboarding.phase = opNameChoice
+    nextCtx.needsNames = true
+    nextCtx.handled = true
+
+  else:
+    discard
+
+  ok(nextCtx)
+
+proc finalizeGuidedChoice*(completeFn: CompleteFn): proc(ctx: GuidedChoiceContext): Result[GuidedChoiceContext, string] {.gcsafe, raises: [].} =
+  result =
+    proc(ctx: GuidedChoiceContext): Result[GuidedChoiceContext, string] {.gcsafe, raises: [].} =
+      if not ctx.needsNames:
+        return ok(ctx)
+      var nextCtx = ctx
+      var names: seq[string]
+      {.cast(gcsafe).}: names = generateNames(completeFn, nextCtx.onboarding.traits)
+      nextCtx.onboarding.names = names
+      ok(nextCtx)
+
+proc startUserProfileContext*(onboarding: OnboardingRuntime;
+                              identity: IdentityRuntime;
+                              userText: string): Result[UserProfileContext, string] =
+  var nextCtx = UserProfileContext(onboarding: onboarding, identity: identity)
+  case nextCtx.onboarding.phase
+  of opNameChoice:
+    if userText.len == 0:
+      return ok(nextCtx)
+    nextCtx.identity.name = userText
+    nextCtx.identity.traits = nextCtx.onboarding.traits
+    nextCtx.identity.identityLoaded = true
+    nextCtx.onboarding.phase = opUserName
+    nextCtx.replyText =
+      "Perfeito. Serei " & nextCtx.identity.name &
+      ".\n\nAgora me conta sobre você — qual é o seu nome?"
+    nextCtx.saveIdentity = true
+    nextCtx.advanced = true
+
+  of opUserName:
+    nextCtx.onboarding.userName = userText
+    nextCtx.onboarding.phase = opUserTimezone
+    nextCtx.replyText =
+      "Ótimo, " & nextCtx.onboarding.userName & "! Em que fuso horário você está? " &
+      "(ex: America/Sao_Paulo, UTC-3, Europa/Lisboa)"
+    nextCtx.advanced = true
+
+  of opUserTimezone:
+    nextCtx.onboarding.timezone = userText
+    nextCtx.onboarding.phase = opUserLanguage
+    nextCtx.replyText =
+      "Entendido. Qual idioma prefere que eu use? " &
+      "(ex: Português, English, Español)"
+    nextCtx.advanced = true
+
+  of opUserLanguage:
+    nextCtx.onboarding.language = userText
+    nextCtx.onboarding.phase = opDone
+    nextCtx.userMd = bootstrapUserMd(
+      nextCtx.onboarding.userName, nextCtx.onboarding.userName,
+      nextCtx.onboarding.timezone, nextCtx.onboarding.language)
+    nextCtx.replyText =
+      "Tudo certo! Serei " & nextCtx.identity.name & " e você é " & nextCtx.onboarding.userName &
+      ".\n\nPronto para conversar. Como posso ajudar?"
+    nextCtx.saveUserMd = true
+    nextCtx.advanced = true
+
+  else:
+    discard
+
+  ok(nextCtx)
+
+proc startResetControlContext*(history: ConversationHistory;
+                               sessionId: string): Result[ResetControlContext, string] =
+  ok(ResetControlContext(
+    history: newHistory(),
+    sessionId: sessionId,
+    replyText: "Conversa reiniciada.",
+    shouldPersist: true,
+  ))
+
+proc startDebugControlContext*(debugMode: bool): Result[DebugControlContext, string] =
+  let nextDebugMode = not debugMode
+  ok(DebugControlContext(
+    debugMode: nextDebugMode,
+    replyText:
+      (if nextDebugMode:
+        "🔍 Debug mode ON — tokens e tool calls serão exibidos."
+      else:
+        "🔕 Debug mode OFF."),
+  ))
+
+proc startOnboardingControlContext*(msg: AgentMessage;
+                                    onboarding: OnboardingRuntime;
+                                    identity: IdentityRuntime): Result[OnboardingControlContext, string] =
+  var nextCtx = OnboardingControlContext(onboarding: onboarding, identity: identity)
+  case msg.taskKind
+  of tkPersonalityChoice:
+    let parts = msg.payload.split(':', 2)
+    if parts.len != 3:
+      return err("invalid personality payload")
+    nextCtx.dim = parts[1]
+    nextCtx.value = parts[2]
+    nextCtx.handled = true
+
+  of tkNameChoice:
+    let raw = msg.payload
+    nextCtx.name = if raw.startsWith("name:"): raw[5 .. ^1] else: raw
+    if nextCtx.name.len == 0:
+      return err("empty name choice")
+    nextCtx.handled = true
+
+  else:
+    discard
+
+  ok(nextCtx)
+
+proc sendReplyText*(globalOutbox: AsyncQueue[OutboundMessage];
+                    uid: UserId;
+                    channel: ChannelKind;
+                    replyTo: string;
+                    text: string): Future[void] {.async.} =
+  await globalOutbox.put(OutboundMessage(
+    userId: uid,
+    channel: channel,
+    text: text,
+    replyTo: replyTo,
+  ))
+
+proc sendReplyKeyboard*(globalOutbox: AsyncQueue[OutboundMessage];
+                        uid: UserId;
+                        channel: ChannelKind;
+                        replyTo: string;
+                        text: string;
+                        keyboard: seq[seq[(string, string)]]): Future[void] {.async.} =
+  await globalOutbox.put(OutboundMessage(
+    userId: uid,
+    channel: channel,
+    text: text,
+    replyTo: replyTo,
+    keyboard: keyboard,
+  ))
+
+proc sendPipelineError(globalOutbox: AsyncQueue[OutboundMessage];
+                       uid: UserId;
+                       channel: ChannelKind;
+                       replyTo: string;
+                       errMsg: string): Future[void] {.async.} =
+  await sendReplyText(
+    globalOutbox, uid, channel, replyTo,
+    "Desculpe, erro: " & errMsg)
+
+func buildNameChoiceKeyboard*(names: seq[string]): seq[seq[(string, string)]] =
+  var nameRow: seq[(string, string)] = @[]
+  for n in names:
+    nameRow.add((n, "name:" & n))
+  @[nameRow]
+
+proc unwrapOrReplyError*[T](globalOutbox: AsyncQueue[OutboundMessage];
+                            uid: UserId;
+                            channel: ChannelKind;
+                            replyTo: string;
+                            pipelineResult: Result[T, string]): Future[Option[T]] {.async.} =
+  if pipelineResult.isErr:
+    await sendPipelineError(globalOutbox, uid, channel, replyTo, pipelineResult.error)
+    return none(T)
+  some(pipelineResult.get())
+
+proc sendNameChoiceOrPrompt(globalOutbox: AsyncQueue[OutboundMessage];
+                            uid: UserId;
+                            channel: ChannelKind;
+                            replyTo: string;
+                            names: seq[string];
+                            keyboardText: string): Future[void] {.async.} =
+  if names.len > 0:
+    await sendReplyKeyboard(
+      globalOutbox, uid, channel, replyTo,
+      keyboardText,
+      buildNameChoiceKeyboard(names))
+  else:
+    await sendReplyText(globalOutbox, uid, channel, replyTo, "Que nome você quer me dar?")
+
+proc persistUserProfile(memory: MdFileAdapter;
+                        uid: UserId;
+                        profileCtx: UserProfileContext) =
+  if profileCtx.saveIdentity:
+    {.cast(gcsafe).}: memory.saveIdentity(uid, profileCtx.identity.traits, profileCtx.identity.name)
+  if profileCtx.saveUserMd:
+    {.cast(gcsafe).}: memory.saveUserMd(uid, profileCtx.userMd)
+
+func newOrchestratorState*(): OrchestratorState =
+  OrchestratorState(
+    history: newHistory(),
+    debugMode: false,
+    onboarding: OnboardingRuntime(phase: opWakeUp),
+    identity: IdentityRuntime(),
+  )
+
+func nextTurn*(state: OrchestratorState): OrchestratorState =
+  result = state
+  inc result.turnSeq
+
+func streamIdFor*(state: OrchestratorState; userId: string): string =
+  userId & "-" & $state.turnSeq
+
+func withLastUser*(uid: UserId; state: OrchestratorState): OrchestratorState =
+  result = state
+  result.lastUserId = uid
+
+func withControlResult*(controlResult: ControlTaskResult;
+                        state: OrchestratorState): OrchestratorState =
+  result = state
+  result.history = controlResult.history
+  result.onboarding = controlResult.onboarding
+  result.identity = controlResult.identity
+  result.debugMode = controlResult.debugMode
+
+func withOnboardingResult*(onboardingResult: OnboardingTurnResult;
+                           state: OrchestratorState): OrchestratorState =
+  result = state
+  result.history = onboardingResult.history
+  result.onboarding = onboardingResult.onboarding
+  result.identity = onboardingResult.identity
+
+func withTurnPrep*(turnPrep: NormalTurnPrep;
+                   state: OrchestratorState): OrchestratorState =
+  result = state
+  result.history = turnPrep.history
+  result.identity.name = turnPrep.agentName
+  result.identity.traits = turnPrep.agentTraits
+  result.identity.identityLoaded = turnPrep.identityLoaded
+  result.onboarding.phase = turnPrep.obPhase
+
+func withLoopResult*(loopResult: ToolLoopRunResult;
+                     state: OrchestratorState): OrchestratorState =
+  result = state
+  result.history = loopResult.history
+
+func newToolLoopState*(history: ConversationHistory): ToolLoopRunResult =
+  ToolLoopRunResult(history: history)
+
+func withStreamRound*(streamResult: StreamRoundResult;
+                      state: ToolLoopRunResult): ToolLoopRunResult =
+  result = state
+  result.finalText = streamResult.finalText
+  result.history.addAssistant(streamResult.finalText)
+  result.done = true
+
+func withCompletionRound*(completionInput: ToolLoopCompletionInput;
+                          state: ToolLoopRunResult): ToolLoopRunResult =
+  result = state
+  result.history = completionInput.completion.history
+  result.finalText = completionInput.completion.finalText
+  result.done = completionInput.completion.done
+
+func withToolBatchRound*(batchInput: ToolLoopBatchInput;
+                         state: ToolLoopRunResult): ToolLoopRunResult =
+  result = state
+  result.history = batchInput.batch.history
+  result.toolCallCount = batchInput.batch.toolCallCount
+  result.done = batchInput.batch.aborted
+
+proc decodeUserPayload*(payload: string): (string, string) =
+  ## Decodes the session payload envelope produced by ensureSession.
+  ## Returns (text, mediaUrl). Plain text payloads pass through unchanged.
+  result = (payload, "")
+  if payload.len == 0 or payload[0] != '{':
+    return
+  try:
+    let j = parseJson(payload)
+    result[0] = j.getOrDefault("text").getStr(payload)
+    result[1] = j.getOrDefault("mediaUrl").getStr("")
+  except CatchableError:
+    discard
 
 # ── Debounce collector ─────────────────────────────────────────────────────────
 
@@ -215,509 +790,832 @@ proc generateNames(completeFn: CompleteFn;
   if resp.isErr: return @[]
   parseNameOptions(resp.value.text)
 
+proc awaitExpectedReply(outbox: AsyncQueue[AgentMessage];
+                        expectedId: string;
+                        workerName: string): Future[AgentMessage] {.async.} =
+  let reply = await outbox.get()
+  if reply.id != expectedId:
+    return newErrorMsg(expectedId,
+      workerName & ": correlated reply mismatch (expected " & expectedId &
+      ", got " & reply.id & ")")
+  reply
+
+proc invokeToolAgent(toolInbox: AsyncQueue[AgentMessage];
+                     toolOut: AsyncQueue[AgentMessage];
+                     msgId: string;
+                     round: int;
+                     callIndex: int;
+                     tc: ToolCallRequest;
+                     providerLabel: string;
+                     log: Logger): Future[string] {.async.} =
+  let payload = $ %* {
+    "name": tc.name, "id": tc.id, "inputJson": tc.inputJson
+  }
+  let taskId = msgId & "-" & $round & "-" & $callIndex
+  await toolInbox.put(newTaskMsg(taskId, tkInvokeTool, "", payload))
+  let toolReply = await awaitExpectedReply(toolOut, taskId, "ToolAgent")
+  log.info("[tool] (" & tc.name & ") -> [" & providerLabel & "] |" &
+           $toolReply.text.len & "|")
+  toolReply.text
+
+proc executeToolCall(globalOutbox: AsyncQueue[OutboundMessage];
+                     toolInbox: AsyncQueue[AgentMessage];
+                     toolOut: AsyncQueue[AgentMessage];
+                     nativeCtx: NativeCtx;
+                     state: SessionState;
+                     history: ConversationHistory;
+                     uid: UserId;
+                     channel: ChannelKind;
+                     msgId: string;
+                     round: int;
+                     callIndex: int;
+                     tc: ToolCallRequest;
+                     providerLabel: string;
+                     debugMode: bool;
+                     log: Logger): Future[ToolCallResult] {.async.} =
+  if debugMode:
+    await globalOutbox.put(OutboundMessage(
+      userId: uid, channel: channel, text: buildToolDebugCallText(tc)))
+
+  log.info("[tool] (" & tc.name & ") <- [" & providerLabel & "] |" &
+           $tc.inputJson.len & "|")
+
+  let nr = await executeNativeTool(tc, nativeCtx, state, history)
+  if nr.handled:
+    return ToolCallResult(
+      text: nr.text,
+      checkpointNow: nr.checkpointNow,
+      newHistory: nr.newHistory,
+    )
+
+  let toolResult = await invokeToolAgent(
+    toolInbox, toolOut, msgId, round, callIndex, tc, providerLabel, log)
+  if debugMode:
+    await globalOutbox.put(OutboundMessage(
+      userId: uid, channel: channel,
+      text: buildToolDebugResultText(tc.name, toolResult)))
+  ToolCallResult(text: toolResult)
+
+proc handleFinalCompletion(history: ConversationHistory;
+                           r: CompletionResponse;
+                           debugMode: bool): CompletionHandlingResult =
+  result.history = history
+  if r.text.len > 0:
+    result.history.addAssistant(r.text)
+    result.finalText = r.text
+    result.done = true
+    if debugMode:
+      result.debugText = buildCompletionDebugText(r)
+  else:
+    result.history.addUser("(Your response was empty. Please provide your answer.)")
+
+proc processToolCalls(globalOutbox: AsyncQueue[OutboundMessage];
+                      toolInbox: AsyncQueue[AgentMessage];
+                      toolOut: AsyncQueue[AgentMessage];
+                      nativeCtx: NativeCtx;
+                      state: SessionState;
+                      history: ConversationHistory;
+                      uid: UserId;
+                      channel: ChannelKind;
+                      replyTo: string;
+                      msgId: string;
+                      round: int;
+                      toolStatusId: string;
+                      toolCalls: seq[ToolCallRequest];
+                      providerLabel: string;
+                      debugMode: bool;
+                      toolCallCount: int;
+                      recentCalls: seq[(string, string)];
+                      log: Logger): Future[ToolBatchResult] {.async.} =
+  result.history = history
+  result.toolCallCount = toolCallCount
+  result.recentCalls = recentCalls
+  for i, tc in toolCalls:
+    let repeatCount = recentRepeatCount(result.recentCalls, tc)
+    if repeatCount >= RepeatAbortThreshold:
+      await globalOutbox.put(OutboundMessage(
+        userId: uid,
+        channel: channel,
+        text: buildRepeatAbortText(tc.name, repeatCount),
+        replyTo: replyTo,
+      ))
+      result.aborted = true
+      break
+    registerToolCall(result.recentCalls, tc)
+
+    let toolResult = await executeToolCall(
+      globalOutbox, toolInbox, toolOut, nativeCtx, state, result.history,
+      uid, channel, msgId, round, i, tc, providerLabel, debugMode, log)
+    if toolResult.checkpointNow:
+      state.checkpoints.add(result.history)
+    if toolResult.newHistory.isSome:
+      result.history = toolResult.newHistory.get()
+
+    result.history.addToolResult(tc.id, tc.name, toolResult.text)
+
+    inc result.toolCallCount
+    await globalOutbox.put(OutboundMessage(
+      userId: uid,
+      channel: channel,
+      text: buildToolProgressText(tc.name, result.toolCallCount, toolResult.text),
+      streamId: toolStatusId,
+      isPartial: true,
+    ))
+
+proc prepareNormalTurn(memory: MdFileAdapter;
+                       memInbox: AsyncQueue[AgentMessage];
+                       memOut: AsyncQueue[AgentMessage];
+                       uid: UserId;
+                       msg: AgentMessage;
+                       history: ConversationHistory;
+                       identityLoaded: bool;
+                       obPhase: OnboardingPhase;
+                       agentName: string;
+                       agentTraits: PersonalityTraits;
+                       toolsSuffix: string): Future[NormalTurnPrep] {.async.} =
+  result.agentName = agentName
+  result.agentTraits = agentTraits
+  result.identityLoaded = identityLoaded
+  result.obPhase = obPhase
+
+  if not result.identityLoaded:
+    {.cast(gcsafe).}:
+      (result.agentName, result.agentTraits) = memory.loadIdentity(uid)
+    result.identityLoaded = true
+    result.obPhase = opDone
+
+  result.systemBase = buildSystemBase(
+    result.agentTraits, result.agentName, toolsSuffix)
+
+  await memInbox.put(newTaskMsg(msg.id, tkLoadCtx, msg.userId, msg.payload))
+  let ctxReply = await awaitExpectedReply(memOut, msg.id, "MemoryAgent")
+  result.context = if ctxReply.kind == amkResult: ctxReply.text else: ""
+
+  let (userText, userImageUrl) = decodeUserPayload(msg.payload)
+  result.history = addUserTurn(history, userText, userImageUrl)
+
+proc startTypingLoop*(typingFn: TypingFn;
+                      uid: UserId;
+                      channel: ChannelKind): TypingFlag =
+  var flag: TypingFlag
+  new(flag)
+  flag[] = true
+  proc typingLoopProc() {.async.} =
+    while flag[]:
+      if typingFn != nil:
+        {.cast(gcsafe).}: typingFn(uid, channel)
+      await sleepAsync(milliseconds(4_000))
+  asyncSpawn typingLoopProc()
+  flag
+
+proc stopTypingLoop*(flag: TypingFlag) =
+  if flag != nil:
+    flag[] = false
+
+proc finalizeNormalTurn(globalOutbox: AsyncQueue[OutboundMessage];
+                        uid: UserId;
+                        channel: ChannelKind;
+                        replyTo: string;
+                        streamId: string;
+                        streamFn: StreamFn;
+                        loopResult: ToolLoopRunResult): Future[void] {.async.} =
+  if loopResult.toolCallCount > 0:
+    await globalOutbox.put(OutboundMessage(
+      userId: uid,
+      channel: channel,
+      text: buildToolLoopDoneText(loopResult.toolCallCount),
+      streamId: streamId & "-st",
+      isPartial: false,
+    ))
+
+  if not loopResult.done:
+    await globalOutbox.put(OutboundMessage(
+      userId: uid,
+      channel: channel,
+      text: "Tool call loop exceeded " & $MaxToolRoundsOrch & " rounds",
+      replyTo: replyTo,
+    ))
+  elif streamFn == nil:
+    await globalOutbox.put(OutboundMessage(
+      userId: uid,
+      channel: channel,
+      text: loopResult.finalText,
+      replyTo: replyTo,
+    ))
+
+proc buildNativeCtx*(uid: UserId;
+                     channel: ChannelKind;
+                     globalOutbox: AsyncQueue[OutboundMessage];
+                     session: ptr SessionEntry;
+                     memory: MdFileAdapter;
+                     completeFn: CompleteFn;
+                     tools: seq[ToolDescription];
+                     log: Logger;
+                     paddockDir: string;
+                     sandboxMode: SandboxMode;
+                     sandboxImage: string): NativeCtx =
+  NativeCtx(
+    uid:          uid,
+    channel:      channel,
+    outbox:       globalOutbox,
+    session:      session,
+    memory:       memory,
+    completeFn:   completeFn,
+    braveApiKey:  getEnv("BRAVE_API_KEY", ""),
+    tools:        tools,
+    log:          log,
+    paddockDir:   paddockDir,
+    sandboxMode:  sandboxMode,
+    sandboxImage: sandboxImage,
+  )
+
+proc handleCancel(memory: MdFileAdapter;
+                  memInbox: AsyncQueue[AgentMessage];
+                  toolInbox: AsyncQueue[AgentMessage];
+                  lastUserId: UserId;
+                  sessionId: string;
+                  history: ConversationHistory): Future[void] {.async.} =
+  if $lastUserId != "":
+    {.cast(gcsafe).}: memory.saveSession(lastUserId, sessionId, history)
+  await memInbox.put(newCancelMsg())
+  await toolInbox.put(newCancelMsg())
+
+proc persistSessionSnapshot(memory: MdFileAdapter;
+                            userId: UserId;
+                            sessionId: string;
+                            history: ConversationHistory) =
+  if $userId == "":
+    return
+  {.cast(gcsafe).}: memory.saveSession(userId, sessionId, history)
+
+proc handleGuidedPersonalityChoice(globalOutbox: AsyncQueue[OutboundMessage];
+                                   completeFn: CompleteFn;
+                                   uid: UserId;
+                                   channel: ChannelKind;
+                                   replyTo: string;
+                                   onboarding: OnboardingRuntime;
+                                   dim: string;
+                                   valor: string): Future[OnboardingRuntime] {.async.} =
+  result = onboarding
+  let pipelineResult =
+    startGuidedChoiceContext(onboarding, dim, valor) >>=
+    finalizeGuidedChoice(completeFn)
+  let guidedOpt = await unwrapOrReplyError(
+    globalOutbox, uid, channel, replyTo, pipelineResult)
+  if guidedOpt.isNone:
+    return
+
+  let guidedCtx = guidedOpt.get()
+  result = guidedCtx.onboarding
+
+  if guidedCtx.keyboard.len > 0:
+    await sendReplyKeyboard(globalOutbox, uid, channel, replyTo, guidedCtx.replyText, guidedCtx.keyboard)
+  elif guidedCtx.needsNames:
+    await sendNameChoiceOrPrompt(
+      globalOutbox, uid, channel, replyTo,
+      guidedCtx.onboarding.names,
+      "Aqui estão alguns nomes que combinam com essa personalidade. Qual prefere?")
+  elif guidedCtx.replyText.len > 0:
+    await sendReplyText(globalOutbox, uid, channel, replyTo, guidedCtx.replyText)
+
+proc handleFreeConvoOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
+                               completeFn: CompleteFn;
+                               uid: UserId;
+                               channel: ChannelKind;
+                               replyTo: string;
+                               userText: string;
+                               history: ConversationHistory;
+                               onboarding: OnboardingRuntime): Future[(ConversationHistory, OnboardingRuntime)] {.async.} =
+  result = (history, onboarding)
+  let pipelineResult =
+    startFreeConvoContext(history, onboarding, userText) >>=
+    withFreeConvoRequest >>=
+    completeFreeConvo(completeFn) >>=
+    parseFreeConvoReply >>=
+    finalizeFreeConvoIdentity(completeFn)
+  let freeOpt = await unwrapOrReplyError(
+    globalOutbox, uid, channel, replyTo, pipelineResult)
+  if freeOpt.isNone:
+    return
+
+  let freeCtx = freeOpt.get()
+  result = (freeCtx.history, freeCtx.onboarding)
+
+  if freeCtx.visibleText.len > 0:
+    await sendReplyText(globalOutbox, uid, channel, replyTo, freeCtx.visibleText)
+
+  if freeCtx.parsedTraits.isSome:
+    await sendNameChoiceOrPrompt(
+      globalOutbox, uid, channel, replyTo,
+      freeCtx.onboarding.names,
+      "Com base em quem você quer que eu seja, aqui estão alguns nomes:")
+
+proc advanceUserProfileOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
+                                  memory: MdFileAdapter;
+                                  uid: UserId;
+                                  channel: ChannelKind;
+                                  replyTo: string;
+                                  userText: string;
+                                  onboarding: OnboardingRuntime;
+                                  identity: IdentityRuntime): Future[(OnboardingRuntime, IdentityRuntime)] {.async.} =
+  result = (onboarding, identity)
+  let pipelineResult = startUserProfileContext(onboarding, identity, userText)
+  let profileOpt = await unwrapOrReplyError(
+    globalOutbox, uid, channel, replyTo, pipelineResult)
+  if profileOpt.isNone:
+    return
+
+  let profileCtx = profileOpt.get()
+  result = (profileCtx.onboarding, profileCtx.identity)
+  persistUserProfile(memory, uid, profileCtx)
+  if profileCtx.replyText.len > 0:
+    await sendReplyText(globalOutbox, uid, channel, replyTo, profileCtx.replyText)
+
+proc handleResetControlTask(globalOutbox: AsyncQueue[OutboundMessage];
+                            memory: MdFileAdapter;
+                            uid: UserId;
+                            channel: ChannelKind;
+                            replyTo: string;
+                            sessionId: string;
+                            history: ConversationHistory): Future[ConversationHistory] {.async.} =
+  let pipelineResult = startResetControlContext(history, sessionId)
+  let resetOpt = await unwrapOrReplyError(
+    globalOutbox, uid, channel, replyTo, pipelineResult)
+  if resetOpt.isNone:
+    return history
+  let resetCtx = resetOpt.get()
+  if resetCtx.shouldPersist:
+    {.cast(gcsafe).}: memory.saveSession(uid, resetCtx.sessionId, history)
+  await sendReplyText(globalOutbox, uid, channel, replyTo, resetCtx.replyText)
+  resetCtx.history
+
+proc handleDebugToggleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
+                                  uid: UserId;
+                                  channel: ChannelKind;
+                                  replyTo: string;
+                                  debugMode: bool): Future[bool] {.async.} =
+  result = debugMode
+  let pipelineResult = startDebugControlContext(debugMode)
+  let debugOpt = await unwrapOrReplyError(
+    globalOutbox, uid, channel, replyTo, pipelineResult)
+  if debugOpt.isNone:
+    return
+  let debugCtx = debugOpt.get()
+  result = debugCtx.debugMode
+  await sendReplyText(globalOutbox, uid, channel, replyTo, debugCtx.replyText)
+
+proc handleOnboardingControlTask(globalOutbox: AsyncQueue[OutboundMessage];
+                                 memory: MdFileAdapter;
+                                 completeFn: CompleteFn;
+                                 uid: UserId;
+                                 channel: ChannelKind;
+                                 replyTo: string;
+                                 msg: AgentMessage;
+                                 onboarding: OnboardingRuntime;
+                                 identity: IdentityRuntime): Future[(OnboardingRuntime, IdentityRuntime, bool)] {.async.} =
+  result = (onboarding, identity, false)
+  let pipelineResult = startOnboardingControlContext(msg, onboarding, identity)
+  if pipelineResult.isErr:
+    return
+  let controlCtx = pipelineResult.get()
+
+  case msg.taskKind
+  of tkPersonalityChoice:
+    result[0] = await handleGuidedPersonalityChoice(
+      globalOutbox, completeFn, uid, channel, replyTo,
+      controlCtx.onboarding, controlCtx.dim, controlCtx.value)
+    result[2] = controlCtx.handled
+
+  of tkNameChoice:
+    (result[0], result[1]) = await advanceUserProfileOnboarding(
+      globalOutbox, memory, uid, channel, replyTo,
+      controlCtx.name, controlCtx.onboarding, controlCtx.identity)
+    result[2] = controlCtx.handled
+
+  else:
+    discard
+
+proc handleWakeUpOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
+                            uid: UserId;
+                            channel: ChannelKind;
+                            replyTo: string;
+                            onboarding: OnboardingRuntime): Future[OnboardingRuntime] {.async.} =
+  result = onboarding
+  result.phase = opModeChoice
+  await sendReplyKeyboard(
+    globalOutbox, uid, channel, replyTo,
+    "Olá. Acabei de ligar.\n\nComo quer definir minha personalidade?",
+    @[@[("Guiado 🎛️", "personality:mode:guided"),
+       ("Livre 💬",   "personality:mode:free")]])
+
+proc handleButtonOnlyOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
+                                uid: UserId;
+                                channel: ChannelKind;
+                                replyTo: string): Future[void] {.async.} =
+  await sendReplyText(globalOutbox, uid, channel, replyTo, "Use os botões acima para escolher.")
+
+proc handleMessageDrivenOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
+                                   memory: MdFileAdapter;
+                                   completeFn: CompleteFn;
+                                   uid: UserId;
+                                   channel: ChannelKind;
+                                   replyTo: string;
+                                   userText: string;
+                                   history: ConversationHistory;
+                                   onboarding: OnboardingRuntime;
+                                   identity: IdentityRuntime): Future[(ConversationHistory, OnboardingRuntime, IdentityRuntime)] {.async.} =
+  result = (history, onboarding, identity)
+  case result[1].phase
+  of opFreeConvo:
+    (result[0], result[1]) = await handleFreeConvoOnboarding(
+      globalOutbox, completeFn, uid, channel, replyTo, userText, result[0], result[1])
+
+  of opNameChoice, opUserName, opUserTimezone, opUserLanguage:
+    (result[1], result[2]) = await advanceUserProfileOnboarding(
+      globalOutbox, memory, uid, channel, replyTo, userText, result[1], result[2])
+
+  else:
+    discard
+
+proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
+                          session: ptr SessionEntry;
+                          memory: MdFileAdapter;
+                          completeFn: CompleteFn;
+                          tools: seq[ToolDescription];
+                          paddockDir: string;
+                          typingFn: TypingFn;
+                          log: Logger;
+                          sandboxMode: SandboxMode;
+                          sandboxImage: string;
+                          msg: AgentMessage;
+                          stateRuntime: OrchestratorState): UserTurnSetup =
+  result.uid = UserId(msg.userId)
+  result.streamId = stateRuntime.streamIdFor(msg.userId)
+  (result.userText, _) = msg.payload |> decodeUserPayload
+  result.isNewUser = not memory.hasProfile(result.uid)
+  result.nativeCtx = buildNativeCtx(
+    result.uid, msg.channel, globalOutbox, session, memory, completeFn, tools, log,
+    paddockDir, sandboxMode, sandboxImage)
+  {.cast(gcsafe).}: createDir(paddockDir)
+  result.typingLoop = startTypingLoop(typingFn, result.uid, msg.channel)
+
+proc handleToolLoopProviderError(globalOutbox: AsyncQueue[OutboundMessage];
+                                 uid: UserId;
+                                 channel: ChannelKind;
+                                 replyTo: string;
+                                 errMsg: string;
+                                 loopState: ToolLoopRunResult): Future[ToolLoopRunResult] {.async.} =
+  result = loopState
+  await globalOutbox.put(OutboundMessage(
+    userId: uid,
+    channel: channel,
+    text: "Desculpe, ocorreu um erro: " & errMsg,
+    replyTo: replyTo,
+  ))
+  result.done = true
+
+proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
+                       memory: MdFileAdapter;
+                       completeFn: CompleteFn;
+                       uid: UserId;
+                       channel: ChannelKind;
+                       replyTo: string;
+                       msg: AgentMessage;
+                       history: ConversationHistory;
+                       onboarding: OnboardingRuntime;
+                       identity: IdentityRuntime;
+                       debugMode: bool;
+                       sessionId: string): Future[ControlTaskResult] {.async.} =
+  result.history = history
+  result.onboarding = onboarding
+  result.identity = identity
+  result.debugMode = debugMode
+
+  case msg.taskKind
+  of tkReset:
+    result.history = await handleResetControlTask(
+      globalOutbox, memory, uid, channel, replyTo, sessionId, result.history)
+    result.handled = true
+
+  of tkDebugToggle:
+    result.debugMode = await handleDebugToggleControlTask(
+      globalOutbox, uid, channel, replyTo, result.debugMode)
+    result.handled = true
+
+  of tkPersonalityChoice, tkNameChoice:
+    (result.onboarding, result.identity, result.handled) = await handleOnboardingControlTask(
+      globalOutbox, memory, completeFn, uid, channel, replyTo,
+      msg, result.onboarding, result.identity)
+
+  else:
+    discard
+
+proc handleOnboardingTurn(globalOutbox: AsyncQueue[OutboundMessage];
+                          memory: MdFileAdapter;
+                          completeFn: CompleteFn;
+                          uid: UserId;
+                          channel: ChannelKind;
+                          replyTo: string;
+                          userText: string;
+                          history: ConversationHistory;
+                          onboarding: OnboardingRuntime;
+                          identity: IdentityRuntime): Future[OnboardingTurnResult] {.async.} =
+  result.history = history
+  result.onboarding = onboarding
+  result.identity = identity
+  let strippedUserText = userText |> strutils.strip
+
+  case result.onboarding.phase
+
+  of opWakeUp:
+    result.onboarding = await handleWakeUpOnboarding(
+      globalOutbox, uid, channel, replyTo, result.onboarding)
+
+  of opModeChoice, opGuidedEnergy, opGuidedTone, opGuidedLength, opGuidedInitiative:
+    await handleButtonOnlyOnboarding(globalOutbox, uid, channel, replyTo)
+
+  of opFreeConvo, opNameChoice, opUserName, opUserTimezone, opUserLanguage:
+    (result.history, result.onboarding, result.identity) = await handleMessageDrivenOnboarding(
+      globalOutbox, memory, completeFn, uid, channel, replyTo,
+      strippedUserText, result.history, result.onboarding, result.identity)
+
+  of opDone:
+    return OnboardingTurnResult(
+      history: result.history,
+      onboarding: result.onboarding,
+      identity: result.identity,
+      handled: false,
+    )
+
+  result.handled = true
+
+proc runToolLoop(globalOutbox: AsyncQueue[OutboundMessage];
+                 toolInbox: AsyncQueue[AgentMessage];
+                 toolOut: AsyncQueue[AgentMessage];
+                 memory: MdFileAdapter;
+                 completeFn: CompleteFn;
+                 streamFn: StreamFn;
+                 nativeCtx: NativeCtx;
+                 state: SessionState;
+                 history: ConversationHistory;
+                 uid: UserId;
+                 channel: ChannelKind;
+                 replyTo: string;
+                 msgId: string;
+                 streamId: string;
+                 systemBase: string;
+                 context: string;
+                 tools: seq[ToolDescription];
+                 providerLabel: string;
+                 debugMode: bool;
+                 log: Logger): Future[ToolLoopRunResult] {.async.} =
+  var loopState = history |> newToolLoopState
+  var round = 0
+  var recentCalls: seq[(string, string)] = @[]
+  let toolStatusId = streamId & "-st"
+
+  while not loopState.done and round < MaxToolRoundsOrch:
+    inc round
+
+    let req = buildPrompt(systemBase, loopState.history, context, tools)
+
+    if streamFn != nil and round == 1 and tools.len == 0:
+      let streamResult = StreamRoundResult(finalText: await streamToOutbox(
+        streamFn, req, globalOutbox, uid, channel, replyTo, streamId)
+      )
+      log.info($uid & " (" & $channel & ") <- [" & providerLabel &
+               "] |" & $streamResult.finalText.len & "| stream")
+      loopState =
+        loopState |>->
+        withStreamRound(streamResult)
+      continue
+
+    let resp = safeComplete(completeFn, req)
+    if resp.isErr:
+      loopState = await handleToolLoopProviderError(
+        globalOutbox, uid, channel, replyTo, resp.error, loopState)
+      continue
+
+    let r = resp.value
+    if r.toolCalls.len == 0:
+      if r.text.len > 0:
+        log.info($uid & " (" & $channel & ") <- [" & providerLabel &
+                 "] |" & $r.text.len & "|")
+      let completionResult = handleFinalCompletion(loopState.history, r, debugMode)
+      loopState =
+        loopState |>->
+        withCompletionRound(ToolLoopCompletionInput(
+          completion: completionResult,
+        ))
+      if completionResult.debugText.len > 0:
+        await globalOutbox.put(OutboundMessage(
+          userId: uid, channel: channel, text: completionResult.debugText))
+      continue
+
+    loopState.history.addAssistantWithToolCalls(r.text, r.toolCalls)
+    let batchResult = await processToolCalls(
+      globalOutbox, toolInbox, toolOut, nativeCtx, state, loopState.history,
+      uid, channel, replyTo, msgId, round, toolStatusId, r.toolCalls,
+      providerLabel, debugMode, loopState.toolCallCount, recentCalls, log)
+    loopState =
+      loopState |>->
+      withToolBatchRound(ToolLoopBatchInput(batch: batchResult))
+    recentCalls = batchResult.recentCalls
+  loopState
+
+proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
+                    memInbox: AsyncQueue[AgentMessage];
+                    toolInbox: AsyncQueue[AgentMessage];
+                    memOut: AsyncQueue[AgentMessage];
+                    toolOut: AsyncQueue[AgentMessage];
+                    session: ptr SessionEntry;
+                    memory: MdFileAdapter;
+                    completeFn: CompleteFn;
+                    streamFn: StreamFn;
+                    tools: seq[ToolDescription];
+                    paddockDir: string;
+                    typingFn: TypingFn;
+                    log: Logger;
+                    providerLabel: string;
+                    sandboxMode: SandboxMode;
+                    sandboxImage: string;
+                    toolsSuffix: string;
+                    state: SessionState;
+                    msg: AgentMessage;
+                    stateRuntime: OrchestratorState): Future[OrchestratorState] {.async.} =
+  result = stateRuntime |> nextTurn
+  let turnSetup = prepareUserTurnSetup(
+    globalOutbox, session, memory, completeFn, tools, paddockDir, typingFn, log,
+    sandboxMode, sandboxImage, msg, result)
+
+  if turnSetup.isNewUser:
+    let onboardingResult = await handleOnboardingTurn(
+      globalOutbox, memory, completeFn, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.userText,
+      result.history, result.onboarding, result.identity)
+    result =
+      result |>->
+      withOnboardingResult(onboardingResult)
+    if onboardingResult.handled:
+      return
+
+  let turnPrep = await prepareNormalTurn(
+    memory, memInbox, memOut, turnSetup.uid, msg, result.history,
+    result.identity.identityLoaded, result.onboarding.phase,
+    result.identity.name, result.identity.traits, toolsSuffix)
+  result =
+    result |>->
+    withTurnPrep(turnPrep)
+
+  log.info($turnSetup.uid & " (" & $msg.channel & ") -> [" & providerLabel & "] |" &
+           $turnSetup.userText.len & "|")
+  let loopResult = await runToolLoop(
+    globalOutbox, toolInbox, toolOut, memory, completeFn, streamFn, turnSetup.nativeCtx,
+    state, result.history, turnSetup.uid, msg.channel, msg.replyTo, msg.id, turnSetup.streamId,
+    turnPrep.systemBase, turnPrep.context, tools, providerLabel,
+    result.debugMode, log)
+  result =
+    result |>->
+    withLoopResult(loopResult)
+
+  stopTypingLoop(turnSetup.typingLoop)
+  await finalizeNormalTurn(
+    globalOutbox, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.streamId, streamFn, loopResult)
+
+proc handleActorCancel(memory: MdFileAdapter;
+                       memInbox: AsyncQueue[AgentMessage];
+                       toolInbox: AsyncQueue[AgentMessage];
+                       sessionId: string;
+                       stateRuntime: OrchestratorState): Future[void] {.async.} =
+  await handleCancel(
+    memory, memInbox, toolInbox,
+    stateRuntime.lastUserId, sessionId, stateRuntime.history)
+
+proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
+                     session: ptr SessionEntry;
+                     memInbox: AsyncQueue[AgentMessage];
+                     toolInbox: AsyncQueue[AgentMessage];
+                     memOut: AsyncQueue[AgentMessage];
+                     toolOut: AsyncQueue[AgentMessage];
+                     memory: MdFileAdapter;
+                     completeFn: CompleteFn;
+                     streamFn: StreamFn;
+                     tools: seq[ToolDescription];
+                     paddockDir: string;
+                     typingFn: TypingFn;
+                     log: Logger;
+                     providerLabel: string;
+                     sandboxMode: SandboxMode;
+                     sandboxImage: string;
+                     sessionId: string;
+                     toolsSuffix: string;
+                     state: SessionState;
+                     msg: AgentMessage;
+                     stateRuntime: OrchestratorState): Future[OrchestratorState] {.async.} =
+  result = stateRuntime
+  let uid = UserId(msg.userId)
+  result =
+    result |>->
+    withLastUser(uid)
+
+  let controlResult = await handleControlTask(
+    globalOutbox, memory, completeFn, uid, msg.channel, msg.replyTo, msg,
+    result.history, result.onboarding, result.identity,
+    result.debugMode, sessionId)
+  result =
+    result |>->
+    withControlResult(controlResult)
+  if controlResult.handled and msg.taskKind == tkUserMsg:
+    persistSessionSnapshot(memory, uid, sessionId, result.history)
+  if controlResult.handled or msg.taskKind notin {tkUserMsg}:
+    return
+
+  result = await handleUserTurn(
+    globalOutbox, memInbox, toolInbox, memOut, toolOut, session, memory,
+    completeFn, streamFn, tools, paddockDir, typingFn, log,
+    providerLabel, sandboxMode, sandboxImage, toolsSuffix,
+    state, msg, result)
+  persistSessionSnapshot(memory, uid, sessionId, result.history)
+
+proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
+                        session: ptr SessionEntry;
+                        globalOutbox: AsyncQueue[OutboundMessage];
+                        memInbox: AsyncQueue[AgentMessage];
+                        toolInbox: AsyncQueue[AgentMessage];
+                        memOut: AsyncQueue[AgentMessage];
+                        toolOut: AsyncQueue[AgentMessage];
+                        memory: MdFileAdapter;
+                        completeFn: CompleteFn;
+                        streamFn: StreamFn;
+                        tools: seq[ToolDescription];
+                        paddockDir: string;
+                        typingFn: TypingFn;
+                        log: Logger;
+                        providerLabel: string;
+                        sandboxMode: SandboxMode;
+                        sandboxImage: string;
+                        sessionId: string;
+                        toolsSuffix: string;
+                        state: SessionState;
+                        msg: AgentMessage;
+                        stateRuntime: OrchestratorState): Future[ActorMessageResult] {.async.} =
+  result.stateRuntime = stateRuntime
+  case msg.kind
+  of amkCancel:
+    await handleActorCancel(memory, memInbox, toolInbox, sessionId, stateRuntime)
+    result.shouldStop = true
+
+  of amkTask:
+    result.stateRuntime = await handleActorTask(
+      globalOutbox, session, memInbox, toolInbox, memOut, toolOut, memory,
+      completeFn, streamFn, tools, paddockDir, typingFn, log,
+      providerLabel, sandboxMode, sandboxImage, sessionId,
+      toolsSuffix, state, msg, stateRuntime)
+
+  else:
+    discard
+
 # ── Main orchestrator ──────────────────────────────────────────────────────────
 
 proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
+                      session:        ptr SessionEntry;
                       globalOutbox:   AsyncQueue[OutboundMessage];
                       memory:         MdFileAdapter;
                       completeFn:     CompleteFn;
                       streamFn:       StreamFn;
                       clients:        seq[McpClientAdapter];
                       tools:          seq[ToolDescription];
+                      paddockDir:     string;
                       typingFn:       TypingFn    = nil;
                       searchFn:       SearchFn    = nil;
                       log:            Logger      = newLogger("orch");
                       providerLabel:  string      = "?";
+                      skillPrompt:    string      = "";
                       sandboxMode:    SandboxMode = smNone;
                       sandboxImage:   string      = "alpine"): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
   let memInbox  = newAsyncQueue[AgentMessage]()
   let toolInbox = newAsyncQueue[AgentMessage]()
-  let workerOut = newAsyncQueue[AgentMessage]()
+  let memOut    = newAsyncQueue[AgentMessage]()
+  let toolOut   = newAsyncQueue[AgentMessage]()
 
-  asyncSpawn(runMemoryAgent(memInbox, workerOut, memory, searchFn))
-  asyncSpawn(runToolAgent(toolInbox, workerOut, clients))
+  asyncSpawn(runMemoryAgent(memInbox, memOut, memory, searchFn))
+  asyncSpawn(runToolAgent(toolInbox, toolOut, clients))
   sandboxLogLevel(sandboxMode, sandboxImage, log)
 
-  var history:    ConversationHistory = newHistory()
-  var debugMode:  bool = false
-  var lastUserId: UserId
+  var stateRuntime = newOrchestratorState()
   let state = newSessionState()
   let sessionId   = $nowMs()
-  let toolsSuffix = tools |> orchToolsSuffix
-
-  ## Onboarding state.
-  var obPhase:    OnboardingPhase = opWakeUp
-  var obTraits:   PersonalityTraits
-  var obNames:    seq[string]
-  var obUserName: string
-  var obTz:       string
-  var obLang:     string
-
-  ## Resolved agent identity (loaded from PREFERENCES.md once per session).
-  var agentName:   string = ""
-  var agentTraits: PersonalityTraits
-  var identityLoaded = false
-
-  var turnSeq = 0
+  let toolsSuffix =
+    (tools |> orchToolsSuffix) &
+    (if skillPrompt.len > 0: "\n\n" & skillPrompt else: "")
 
   while true:
     let msg = await collectWithDebounce(inbox, DebounceWindowMs)
-
-    case msg.kind
-
-    of amkCancel:
-      if $lastUserId != "":
-        {.cast(gcsafe).}: memory.saveSession(lastUserId, sessionId, history)
-      await memInbox.put(newCancelMsg())
-      await toolInbox.put(newCancelMsg())
+    let actorResult = await handleActorMessage(
+      inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
+      completeFn, streamFn, tools, paddockDir, typingFn, log,
+      providerLabel, sandboxMode, sandboxImage, sessionId,
+      toolsSuffix, state, msg, stateRuntime)
+    stateRuntime = actorResult.stateRuntime
+    if actorResult.shouldStop:
       break
-
-    of amkTask:
-      let uid    = UserId(msg.userId)
-      lastUserId = uid
-      let paddockDir = getHomeDir() / ".donkey" / "paddocks" / $uid
-      {.cast(gcsafe).}: createDir(paddockDir)
-      let nativeCtx = NativeCtx(
-        uid:          uid,
-        channel:      msg.channel,
-        outbox:       globalOutbox,
-        inbox:        inbox,
-        completeFn:   completeFn,
-        braveApiKey:  getEnv("BRAVE_API_KEY", ""),
-        tools:        tools,
-        log:          log,
-        paddockDir:   paddockDir,
-        sandboxMode:  sandboxMode,
-        sandboxImage: sandboxImage,
-      )
-
-      ## ── inline keyboard helpers ───────────────────────────────────────────
-      template replyText(txt: string) {.dirty.} =
-        await globalOutbox.put(OutboundMessage(
-          userId:  uid,
-          channel: msg.channel,
-          text:    txt,
-          replyTo: msg.replyTo,
-        ))
-
-      template replyKeyboard(txt: string; kb: seq[seq[(string, string)]]) {.dirty.} =
-        await globalOutbox.put(OutboundMessage(
-          userId:   uid,
-          channel:  msg.channel,
-          text:     txt,
-          replyTo:  msg.replyTo,
-          keyboard: kb,
-        ))
-
-      ## ── session-level control tasks ───────────────────────────────────────
-      if msg.taskKind == tkReset:
-        let rstUid = UserId(msg.userId)
-        {.cast(gcsafe).}: memory.saveSession(rstUid, sessionId, history)
-        history = newHistory()
-        replyText("Conversa reiniciada.")
-        continue
-
-      if msg.taskKind == tkDebugToggle:
-        debugMode = not debugMode
-        replyText(if debugMode: "🔍 Debug mode ON — tokens e tool calls serão exibidos."
-                  else: "🔕 Debug mode OFF.")
-        continue
-
-      ## ── personality dimension choice (inline keyboard callback) ──────────
-      if msg.taskKind == tkPersonalityChoice:
-        ## payload = "personality:<dim>:<valor>"
-        let parts = msg.payload.split(':', 2)
-        if parts.len != 3:
-          continue
-        let (dim, valor) = (parts[1], parts[2])
-
-        case obPhase
-        of opModeChoice:
-          if dim == "mode":
-            if valor == "guided":
-              obPhase = opGuidedEnergy
-              let (txt, kb) = guidedDimensionMsg(dkEnergy)
-              replyKeyboard(txt, kb)
-            elif valor == "free":
-              obPhase = opFreeConvo
-              replyText("Ótimo! Descreva como imagina que eu devo ser — " &
-                "meu jeito, meu tom, minha forma de responder. " &
-                "Pode ser em poucas palavras ou um parágrafo.")
-
-        of opGuidedEnergy:
-          obTraits.energy = valor
-          obPhase = opGuidedTone
-          let (txt, kb) = guidedDimensionMsg(dkTone)
-          replyKeyboard(txt, kb)
-
-        of opGuidedTone:
-          obTraits.tone = valor
-          obPhase = opGuidedLength
-          let (txt, kb) = guidedDimensionMsg(dkLength)
-          replyKeyboard(txt, kb)
-
-        of opGuidedLength:
-          obTraits.length = valor
-          obPhase = opGuidedInitiative
-          let (txt, kb) = guidedDimensionMsg(dkInitiative)
-          replyKeyboard(txt, kb)
-
-        of opGuidedInitiative:
-          obTraits.initiative = valor
-          ## All dimensions set → generate names.
-          var names: seq[string]
-          {.cast(gcsafe).}: names = generateNames(completeFn, obTraits)
-          obNames = names
-          obPhase = opNameChoice
-          if names.len > 0:
-            var nameRow: seq[(string, string)]
-            for n in names: nameRow.add((n, "name:" & n))
-            replyKeyboard(
-              "Aqui estão alguns nomes que combinam com essa personalidade. Qual prefere?",
-              @[nameRow])
-          else:
-            replyText("Que nome você quer me dar?")
-
-        else:
-          discard  ## ignore in wrong phase
-        continue
-
-      ## ── name choice (inline keyboard or free-text fallback) ──────────────
-      if msg.taskKind == tkNameChoice:
-        ## payload = "name:<chosen-name>"
-        let raw  = msg.payload
-        let name = if raw.startsWith("name:"): raw[5 .. ^1] else: raw
-        if name.len == 0: continue
-        agentName   = name
-        agentTraits = obTraits
-        identityLoaded = true
-        {.cast(gcsafe).}: memory.saveIdentity(uid, agentTraits, agentName)
-        obPhase = opUserName
-        replyText("Perfeito. Serei " & name & ".\n\nAgora me conta sobre você — qual é o seu nome?")
-        continue
-
-      ## ── unknown task kinds (worker tasks, etc.) ──────────────────────────
-      if msg.taskKind notin {tkUserMsg}:
-        continue
-
-      ## ── tkUserMsg ─────────────────────────────────────────────────────────
-
-      inc turnSeq
-      let streamId = msg.userId & "-" & $turnSeq
-
-      ## Check if onboarding is still in progress.
-      let isNewUser = not memory.hasProfile(uid)
-
-      if isNewUser:
-        ## ── Onboarding state machine ────────────────────────────────────────
-        let userText = (msg.payload |> strutils.strip)
-
-        case obPhase
-
-        of opWakeUp:
-          ## First message from new user — send wakeup + mode choice keyboard.
-          obPhase = opModeChoice
-          replyKeyboard(
-            "Olá. Acabei de ligar.\n\nComo quer definir minha personalidade?",
-            @[@[("Guiado 🎛️", "personality:mode:guided"),
-               ("Livre 💬",   "personality:mode:free")]])
-
-        of opModeChoice, opGuidedEnergy, opGuidedTone, opGuidedLength, opGuidedInitiative:
-          replyText("Use os botões acima para escolher.")
-
-        of opFreeConvo:
-          ## Conversational identity discovery — LLM checks for IDENTITY_READY:.
-          const freeSystem = """You are discovering your own identity through conversation.
-Your user will describe your personality, tone, and style.
-Listen actively. Ask clarifying questions if needed.
-When you have a clear picture of who you should be, output this exact block (no extra formatting):
-
-IDENTITY_READY:
-energy: <reservado|neutro|entusiasmado>
-tone: <formal|neutro|casual>
-length: <conciso|moderado|detalhado>
-initiative: <reativo|moderado|proativo>
-
-Then continue the conversation naturally. Only output the block when you are confident about all four dimensions."""
-
-          history.addUser(userText)
-          history.trimTo(20)
-          let req  = buildPrompt(freeSystem, history, "")
-          let resp = safeComplete(completeFn, req)
-          if resp.isErr:
-            replyText("Desculpe, erro: " & resp.error)
-          else:
-            let rawText = resp.value.text
-            let parsed  = parseIdentityReady(rawText)
-            let visible = stripIdentityReady(rawText)
-            history.addAssistant(rawText)
-            if visible.len > 0:
-              replyText(visible)
-
-            if parsed.isSome:
-              obTraits = parsed.get()
-              var names: seq[string]
-              {.cast(gcsafe).}: names = generateNames(completeFn, obTraits)
-              obNames = names
-              obPhase = opNameChoice
-              if names.len > 0:
-                var nameRow: seq[(string, string)]
-                for n in names: nameRow.add((n, "name:" & n))
-                replyKeyboard(
-                  "Com base em quem você quer que eu seja, aqui estão alguns nomes:",
-                  @[nameRow])
-              else:
-                replyText("Que nome você quer me dar?")
-
-        of opNameChoice:
-          ## User typed a name instead of clicking a button.
-          if userText.len > 0:
-            agentName   = userText
-            agentTraits = obTraits
-            identityLoaded = true
-            {.cast(gcsafe).}: memory.saveIdentity(uid, agentTraits, agentName)
-            obPhase = opUserName
-            replyText("Perfeito. Serei " & agentName & ".\n\nAgora me conta sobre você — qual é o seu nome?")
-
-        of opUserName:
-          obUserName = userText
-          obPhase    = opUserTimezone
-          replyText("Ótimo, " & obUserName & "! Em que fuso horário você está? " &
-                    "(ex: America/Sao_Paulo, UTC-3, Europa/Lisboa)")
-
-        of opUserTimezone:
-          obTz    = userText
-          obPhase = opUserLanguage
-          replyText("Entendido. Qual idioma prefere que eu use? " &
-                    "(ex: Português, English, Español)")
-
-        of opUserLanguage:
-          obLang  = userText
-          obPhase = opDone
-          let userMd = bootstrapUserMd(obUserName, obUserName, obTz, obLang)
-          {.cast(gcsafe).}: memory.saveUserMd(uid, userMd)
-          replyText("Tudo certo! Serei " & agentName & " e você é " & obUserName &
-                    ".\n\nPronto para conversar. Como posso ajudar?")
-
-        of opDone:
-          discard  ## shouldn't reach here while isNewUser, fall through
-
-        continue  ## onboarding turn done — skip normal LLM path
-
-      ## ── Normal conversation turn ──────────────────────────────────────────
-
-      ## Load agent identity from PREFERENCES.md once per session.
-      if not identityLoaded:
-        var loadedName: string
-        var loadedTraits: PersonalityTraits
-        {.cast(gcsafe).}: (loadedName, loadedTraits) = memory.loadIdentity(uid)
-        agentName      = loadedName
-        agentTraits    = loadedTraits
-        identityLoaded = true
-        obPhase        = opDone
-
-      let personalityPrompt = buildPersonalityPrompt(agentTraits, agentName)
-      let systemBase = (if personalityPrompt.len > 0:
-                          personalityPrompt & "\n\n"
-                        else:
-                          "You are a personal AI assistant.\n\n") &
-                       "Be helpful and remember what the user tells you. " &
-                       "Respond in the user's preferred language." &
-                       toolsSuffix
-
-      ## 2. Load memory context.
-      await memInbox.put(newTaskMsg(msg.id, tkLoadCtx, msg.userId, msg.payload))
-      let ctxReply = await workerOut.get()
-      let context  = if ctxReply.kind == amkResult: ctxReply.text else: ""
-
-      ## 3. Build history turn.
-      var userText     = msg.payload
-      var userImageUrl = ""
-      if msg.payload.len > 0 and msg.payload[0] == '{':
-        try:
-          let j = parseJson(msg.payload)
-          userText     = j.getOrDefault("text").getStr(msg.payload)
-          userImageUrl = j.getOrDefault("mediaUrl").getStr("")
-        except: discard
-
-      if userImageUrl.len > 0:
-        history.addUserWithImage(userText, userImageUrl)
-      else:
-        history.addUser(userText)
-      history.trimTo(20)
-
-      log.info($uid & " (" & $msg.channel & ") -> [" & providerLabel & "] |" &
-               $userText.len & "|")
-
-      ## Start typing loop.
-      var typingActive = true
-      proc typingLoopProc() {.async.} =
-        while typingActive:
-          if typingFn != nil:
-            {.cast(gcsafe).}: typingFn(uid, msg.channel)
-          await sleepAsync(milliseconds(4_000))
-      asyncSpawn typingLoopProc()
-
-      var round        = 0
-      var finalText    = ""
-      var done         = false
-      var recentCalls: seq[(string, string)] = @[]   ## (tool, inputJson) history
-      var toolCallCount = 0
-      let toolStatusId  = streamId & "-st"           ## stream id for the progress embed
-
-      while not done and round < MaxToolRoundsOrch:
-        inc round
-
-        let req = buildPrompt(systemBase, history, context, tools)
-
-        ## 4a. Streaming path.
-        if streamFn != nil and round == 1:
-          finalText = await streamToOutbox(
-            streamFn, req, globalOutbox, uid, msg.channel, msg.replyTo, streamId)
-          log.info($uid & " (" & $msg.channel & ") <- [" & providerLabel &
-                   "] |" & $finalText.len & "| stream")
-          history.addAssistant(finalText)
-          done = true
-          continue
-
-        ## 4b. Blocking completion path.
-        let resp = safeComplete(completeFn, req)
-
-        if resp.isErr:
-          replyText("Desculpe, ocorreu um erro: " & resp.error)
-          done = true
-          continue
-
-        let r = resp.value
-
-        if r.toolCalls.len == 0:
-          if r.text.len > 0:
-            log.info($uid & " (" & $msg.channel & ") <- [" & providerLabel &
-                     "] |" & $r.text.len & "|")
-            history.addAssistant(r.text)
-            finalText = r.text
-            done = true
-            if debugMode:
-              let dbgText = "🔍 <b>[debug]</b> tokens in=" & $r.inputTokens &
-                            " out=" & $r.outputTokens &
-                            " chars=" & $r.text.len
-              await globalOutbox.put(OutboundMessage(
-                userId: uid, channel: msg.channel, text: dbgText))
-          else:
-            history.addUser("(Your response was empty. Please provide your answer.)")
-          continue
-
-        ## 5. Tool calls.
-        ## Record the assistant turn that issued the tool calls before results.
-        history.addAssistantWithToolCalls(r.text, r.toolCalls)
-
-        var toolLoopAborted = false
-
-        for i, tc in r.toolCalls:
-          ## Repetition guard — abort before executing the call.
-          let callKey = (tc.name, tc.inputJson)
-          var repeatCount = 0
-          for rc in recentCalls:
-            if rc == callKey: inc repeatCount
-          if repeatCount >= RepeatAbortThreshold:
-            replyText("⚠️ Loop detectado: '" & tc.name &
-                      "' chamado " & $(repeatCount + 1) & " vezes com os mesmos argumentos. Interrompendo.")
-            toolLoopAborted = true
-            break
-          recentCalls.add(callKey)
-          if recentCalls.len > 30:
-            recentCalls = recentCalls[recentCalls.len - 30 .. ^1]
-
-          if debugMode:
-            let dbgTool = "🔧 <b>[debug tool]</b> " & tc.name & "\n<code>" &
-                          tc.inputJson & "</code>"
-            await globalOutbox.put(OutboundMessage(
-              userId: uid, channel: msg.channel, text: dbgTool))
-
-          log.info("[tool] (" & tc.name & ") <- [" & providerLabel & "] |" &
-                   $tc.inputJson.len & "|")
-
-          var toolResult = ""
-
-          ## schedule_reminder — needs memory access, handled here directly.
-          if tc.name == ReminderToolName:
-            toolResult = block:
-              try:
-                let j       = parseJson(tc.inputJson)
-                let whenStr = j.getOrDefault("when").getStr("")
-                let remMsg  = j.getOrDefault("message").getStr("")
-                if whenStr.len == 0 or remMsg.len == 0:
-                  "Error: both 'when' and 'message' are required."
-                else:
-                  let ts    = parseWhen(whenStr)
-                  let chStr = $msg.channel
-                  {.cast(gcsafe).}: discard memory.scheduleReminder(uid, chStr, ts, remMsg)
-                  "Reminder scheduled."
-              except CatchableError as e:
-                "Error scheduling reminder: " & e.msg
-          else:
-            ## All other native tools dispatched via native_tools.nim.
-            let nr = await executeNativeTool(tc, nativeCtx, state, history)
-            if nr.handled:
-              if nr.checkpointNow:
-                state.checkpoints.add(history)
-              if nr.newHistory.isSome:
-                history = nr.newHistory.get()
-              toolResult = nr.text
-            else:
-              let payload = $ %* {
-                "name": tc.name, "id": tc.id, "inputJson": tc.inputJson
-              }
-              let taskId = msg.id & "-" & $round & "-" & $i
-              await toolInbox.put(newTaskMsg(taskId, tkInvokeTool, "", payload))
-              let toolReply = await workerOut.get()
-              log.info("[tool] (" & tc.name & ") -> [" & providerLabel & "] |" &
-                       $toolReply.text.len & "|")
-              if debugMode:
-                let dbgResult = "📤 <b>[debug result]</b> " & tc.name & "\n<code>" &
-                                toolReply.text[0 ..< min(200, toolReply.text.len)] & "</code>"
-                await globalOutbox.put(OutboundMessage(
-                  userId: uid, channel: msg.channel, text: dbgResult))
-              toolResult = toolReply.text
-
-          history.addToolResult(tc.id, tc.name, toolResult)
-
-          ## Progress embed — last 5 lines of result, edited in place.
-          inc toolCallCount
-          let resultLines = toolResult.splitLines()
-          let tail = resultLines[max(0, resultLines.len - 5) .. ^1].join("\n")
-          let tailTrunc = if tail.len > 400: tail[0 ..< 400] & "…" else: tail
-          await globalOutbox.put(OutboundMessage(
-            userId:    uid,
-            channel:   msg.channel,
-            text:      "🔧 <code>" & tc.name & "</code> [" & $toolCallCount & "]\n<code>" &
-                       tailTrunc & "</code>",
-            streamId:  toolStatusId,
-            isPartial: true,
-          ))
-
-        if toolLoopAborted:
-          done = true
-
-      ## Stop typing loop.
-      typingActive = false
-
-      ## Close tool progress embed (if any tool calls happened).
-      if toolCallCount > 0:
-        await globalOutbox.put(OutboundMessage(
-          userId:    uid,
-          channel:   msg.channel,
-          text:      "✅ " & $toolCallCount & " tool call(s)",
-          streamId:  toolStatusId,
-          isPartial: false,
-        ))
-
-      ## 6. Send final reply (non-streaming path only).
-      if not done:
-        replyText("Tool call loop exceeded " & $MaxToolRoundsOrch & " rounds")
-      elif streamFn == nil:
-        replyText(finalText)
-
-    else:
-      discard

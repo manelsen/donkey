@@ -1,7 +1,7 @@
-# Donkey configuration — copy to /etc/donkey/donkey.toml and adjust as needed.
+# __APP_NAME__ configuration — copy to /etc/__APP_SLUG__/__CONFIG_FILE_NAME__ and adjust as needed.
 # Most values have sensible defaults and can be omitted.
 
-[donkey]
+[__CONFIG_SECTION_NAME__]
 # log_level = "info"    # debug | info | warn | error
 # log_file  = ""        # leave empty to log to stderr (captured by journald)
 # paddocks  = ""        # defaults to $DONKEY_HOME/paddocks

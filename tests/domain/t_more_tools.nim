@@ -1,10 +1,12 @@
 import unittest
 import std/json
+import std/strutils
 import donkey/domain/more_tools
 
 suite "tool metadata — non-empty":
   test "bash": check BashToolName.len > 0 and BashToolDescription.len > 0
-  test "hashline": check HashlineToolName.len > 0 and HashlineToolDescription.len > 0
+  test "read_file": check ReadFileToolName.len > 0 and ReadFileToolDescription.len > 0
+  test "edit_file": check EditFileToolName.len > 0 and EditFileToolDescription.len > 0
   test "find": check FindToolName.len > 0 and FindToolDescription.len > 0
   test "grep": check GrepToolName.len > 0 and GrepToolDescription.len > 0
   test "fetch": check FetchToolName.len > 0 and FetchToolDescription.len > 0
@@ -28,7 +30,8 @@ suite "tool schemas — valid JSON with type=object":
     check j["type"].getStr() == "object"
 
   test "bash":         checkSchema(BashToolSchema)
-  test "hashline":     checkSchema(HashlineToolSchema)
+  test "read_file":    checkSchema(ReadFileToolSchema)
+  test "edit_file":    checkSchema(EditFileToolSchema)
   test "find":         checkSchema(FindToolSchema)
   test "grep":         checkSchema(GrepToolSchema)
   test "fetch":        checkSchema(FetchToolSchema)
@@ -61,6 +64,35 @@ suite "required fields present in schemas":
     let j = parseJson(FindToolSchema)
     check j["required"][0].getStr() == "path"
 
+  test "read_file requires path":
+    let j = parseJson(ReadFileToolSchema)
+    check j["required"][0].getStr() == "path"
+
+  test "edit_file requires path and edits":
+    let j = parseJson(EditFileToolSchema)
+    let req = j["required"]
+    check req[0].getStr() == "path"
+    check req[1].getStr() == "edits"
+
   test "calc requires expression":
     let j = parseJson(CalcToolSchema)
     check j["required"][0].getStr() == "expression"
+
+suite "tool metadata matches runtime contracts":
+
+  test "bash description reflects paddock execution":
+    check BashToolDescription.contains("paddock")
+
+  test "grep schema declares literal search":
+    let j = parseJson(GrepToolSchema)
+    check j["properties"]["pattern"]["description"].getStr().contains("Literal")
+
+  test "task and await descriptions mention job ids":
+    check TaskToolDescription.contains("job_id")
+    check AwaitToolDescription.contains("job_id")
+
+  test "ask description mentions interruption on rebuild":
+    check AskToolDescription.contains("interruption")
+
+  test "inspect_image description mentions default describe behavior":
+    check InspectImageToolDescription.contains("detailed description")

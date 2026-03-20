@@ -9,7 +9,9 @@
 import std/[os, strformat, strutils, times]
 import illwill
 import ../core/pipeops
+import ../core/types
 import ../adapters/ipc/[types, client]
+import ../adapters/memory/md_file
 
 const
   RefreshMs    = 2_000
@@ -17,11 +19,12 @@ const
 
 type
   Panel = enum
-    pSessions, pLogs, pStats
+    pUsers, pSessions, pLogs, pStats
 
   TuiState = object
     status:    DaemonStatus
     logs:      seq[IpcLogEntry]
+    users:     seq[UserSummary]
     sockPath:  string
     panel:     Panel
     lastFetch: float       ## epochTime() of last successful fetch
@@ -59,6 +62,9 @@ proc fetchData(st: var TuiState) =
   let lr = queryLogs(st.sockPath, MaxLogLines)
   if lr.isOk:
     st.logs = lr.value
+  let homeDir = st.sockPath.parentDir()
+  let memory = MdFileAdapter(paddocksDir: homeDir / "paddocks")
+  st.users = memory.listUsers()
 
 # ── rendering ─────────────────────────────────────────────────────────────────
 
@@ -82,6 +88,7 @@ proc drawPanelBar(tb: var TerminalBuffer; active: Panel) =
   for p in Panel:
     let label = " " & (case p
       of pSessions: "Sessions"
+      of pUsers:    "Users"
       of pLogs:     "Logs"
       of pStats:    "Stats") & " "
     if p == active:
@@ -106,6 +113,25 @@ proc drawFooter(tb: var TerminalBuffer; st: TuiState) =
     tb.write(1, y, &"Last refresh: {ago}s ago")
   tb.setForegroundColor(fgWhite)
   tb.setBackgroundColor(bgNone)
+
+proc drawUsers(tb: var TerminalBuffer; st: TuiState; y0: int) =
+  let maxY = tb.height - 2
+  var y = y0
+  if st.users.len == 0:
+    tb.setForegroundColor(fgBlack, bright = true)
+    tb.write(2, y, "(no users)")
+    return
+  for user in st.users:
+    if y >= maxY: break
+    let name = if user.preferredName.len > 0: user.preferredName else: "-"
+    let accessColor = if user.access.toLowerAscii() == "revoked": fgRed else: fgGreen
+    tb.setForegroundColor(fgCyan)
+    tb.write(2, y, $user.userId)
+    tb.setForegroundColor(fgWhite)
+    tb.write(40, y, name)
+    tb.setForegroundColor(accessColor)
+    tb.write(max(60, tb.width - 12), y, user.access)
+    inc y
 
 proc drawSessions(tb: var TerminalBuffer; st: TuiState; y0: int) =
   let maxY = tb.height - 2
@@ -156,6 +182,7 @@ proc drawStats(tb: var TerminalBuffer; st: TuiState; y0: int) =
     inc y
 
   row("Uptime",          fmtUptime(st.status.uptimeSec))
+  row("Users",           $st.users.len)
   row("Sessions",        $st.status.sessionCount)
   row("Memory backend",  st.status.memoryBackend)
   row("Tools",           $st.status.toolsCount)
@@ -170,6 +197,7 @@ proc render(tb: var TerminalBuffer; st: TuiState) =
   tb.drawHorizLine(0, tb.width - 1, 2)
   let y0 = 3
   case st.panel
+  of pUsers:    drawUsers(tb, st, y0)
   of pSessions: drawSessions(tb, st, y0)
   of pLogs:     drawLogs(tb, st, y0)
   of pStats:    drawStats(tb, st, y0)

@@ -1,5 +1,5 @@
 ## Built-in native tools — tool metadata and pure helpers.
-## Side-effectful execution (HTTP calls, clock) lives in orchestrator.nim.
+## Side-effectful execution (HTTP calls, clock) lives in app/native_tools.nim.
 
 import std/[strutils, times]
 

@@ -69,3 +69,29 @@ suite "SessionManager":
       if uid == u1: foundU1 = true
       if uid == u2: foundU2 = true
     check foundU1 and foundU2
+
+  test "prepareEntry creates new session lease with signature":
+    var sm: SessionManager
+    sm.init()
+    let lease = sm.prepareEntry(UserId("sig-uuid-1"), "sig-a")
+    check lease.isNew
+    check not lease.rebuilt
+    check lease.entry != nil
+    check lease.entry[].toolCatalogSignature == "sig-a"
+
+  test "prepareEntry rebuilds runtime when signature changes":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("sig-uuid-2")
+    let first = sm.prepareEntry(uid, "sig-a")
+    first.entry[].awaitingAsk = true
+    let oldInbox = first.entry[].inbox
+    let oldAskInbox = first.entry[].askInbox
+    let rebuilt = sm.prepareEntry(uid, "sig-b")
+    check not rebuilt.isNew
+    check rebuilt.rebuilt
+    check rebuilt.oldInbox == oldInbox
+    check rebuilt.oldAskInbox == oldAskInbox
+    check rebuilt.entry[].inbox != oldInbox
+    check rebuilt.entry[].askInbox != oldAskInbox
+    check not rebuilt.entry[].awaitingAsk

@@ -5,6 +5,7 @@
 import std/[os, strutils, unittest]
 import donkey/config/types
 import donkey/app/sandbox
+import donkey/core/types
 
 suite "buildDockerCmd":
 
@@ -33,6 +34,32 @@ suite "buildDockerCmd":
     let cmd = buildDockerCmd("echo hello world", "/home/u/paddock", "alpine")
     ## quoteShell wraps in single quotes or escapes — either way it's present
     check cmd.contains("echo hello world")
+
+suite "buildSandboxPlan":
+
+  test "smNone keeps original command and working dir":
+    let plan = buildSandboxPlan("pwd", "/tmp/p1", smNone, "alpine")
+    check plan.command == "pwd"
+    check plan.workingDir == "/tmp/p1"
+    check plan.ensureWorkDir
+
+  test "smDocker wraps command through docker":
+    let plan = buildSandboxPlan("pwd", "/tmp/p1", smDocker, "alpine")
+    check plan.command.startsWith("docker run --rm")
+    check plan.workingDir == ""
+    check not plan.ensureWorkDir
+
+suite "formatSandboxResult":
+
+  test "trims trailing newline":
+    check formatSandboxResult("ok\n", 0) == "ok"
+
+  test "appends exit code on failure":
+    let result = formatSandboxResult("oops", 3)
+    check result.contains("[exit 3]")
+
+  test "empty output returns exit marker":
+    check formatSandboxResult("", 0) == "[exit 0]"
 
 suite "sandboxBash — smNone":
 
@@ -73,3 +100,15 @@ suite "SandboxMode values":
 
   test "smDocker string value":
     check $smDocker == "docker"
+
+suite "sandboxStatusMessage":
+
+  test "smNone warns":
+    let (level, msg) = sandboxStatusMessage(smNone, "alpine")
+    check level == lvlWarn
+    check msg.contains("workingDir isolation only")
+
+  test "smDocker informs image":
+    let (level, msg) = sandboxStatusMessage(smDocker, "debian:bookworm-slim")
+    check level == lvlInfo
+    check msg.contains("debian:bookworm-slim")

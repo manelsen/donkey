@@ -7,6 +7,7 @@
 
 import std/json
 import ../../core/pipeops
+import ../../core/app_meta
 import ../http/std_http
 
 const
@@ -33,8 +34,8 @@ proc embed*(a: OpenRouterEmbeddingAdapter; text: string): seq[float32] =
   let headers = @[
     ("Authorization",  "Bearer " & a.apiKey),
     ("Content-Type",   "application/json"),
-    ("HTTP-Referer",   "https://github.com/donkey-ai/donkey"),
-    ("X-Title",        "Donkey"),
+    ("HTTP-Referer",   OpenRouterRefererUrl),
+    ("X-Title",        AppName),
   ]
   let resp = a.http.post(OpenRouterEmbedUrl, body, headers)
   if resp.isErr: return @[]

@@ -13,9 +13,11 @@
 import std/unittest
 
 when defined(withPostgres):
+  import db_connector/db_postgres
   import std/os
   import donkey/ports/memory
   import donkey/core/types
+  import donkey/domain/message
 
 when defined(withPostgres):
   import std/strutils
@@ -29,6 +31,71 @@ when defined(withPostgres):
   let hasPg = pgDsn.len > 0
 
   suite "PostgresMemoryAdapter (integration — needs DONKEY_TEST_PG_DSN)":
+
+    test "buildVectorLiteral returns empty for zero vectors":
+      check buildVectorLiteral(@[0.0'f32, 0.0'f32]) == ""
+
+    test "buildVectorLiteral serializes non-zero vectors":
+      let literal = buildVectorLiteral(@[1.5'f32, 2.25'f32])
+      check literal == "[1.5,2.25]"
+
+    test "sanitizeAgeText escapes quotes and truncates":
+      let text = "abc'def"
+      check sanitizeAgeText(text, 20) == "abc\\'def"
+      check sanitizeAgeText("0123456789", 5) == "01234"
+
+    test "stripAgeValue removes wrapping quotes":
+      check stripAgeValue("\"hello\"") == "hello"
+
+    test "splitMemorySections keeps only meaningful blocks":
+      let sections = splitMemorySections("short\n\nthis is a long enough block\n\n another valid block ")
+      check sections.len == 2
+      check sections[0] == "this is a long enough block"
+
+    test "buildContextFromRows reconstructs context":
+      let rows: seq[Row] = @[
+        @["user_profile", "# User"],
+        @["memory", "memory a"],
+        @["fact", "fact b"],
+        @["preference", "provider = \"zhipu\""],
+      ]
+      let ctx = buildContextFromRows(UserId("u1"), rows)
+      check ctx.userMd == "# User"
+      check ctx.memoryMd.contains("memory a")
+      check ctx.memoryMd.contains("fact b")
+      check ctx.preferencesMd == "provider = \"zhipu\""
+
+    test "buildMemoryHits parses score column":
+      let rows: seq[Row] = @[
+        @["content a", "memory", "0.75"],
+      ]
+      let hits = buildMemoryHits(rows)
+      check hits.len == 1
+      check hits[0].score == 0.75'f32
+
+    test "buildRecentMemoryHits defaults score to zero":
+      let rows: seq[Row] = @[
+        @["content a", "memory"],
+      ]
+      let hits = buildRecentMemoryHits(rows)
+      check hits.len == 1
+      check hits[0].score == 0.0'f32
+
+    test "buildMemoryExportEntries uses deterministic file order":
+      let ctx = UserContext(
+        userId: UserId("u1"),
+        userMd: "# User",
+        memoryMd: "memory block",
+        preferencesMd: "provider = \"zhipu\"",
+      )
+      let entries = buildMemoryExportEntries(ctx)
+      check entries.len == 3
+      check entries[0].fileName == "USER.md"
+      check entries[0].content == "# User"
+      check entries[1].fileName == "MEMORY.md"
+      check entries[1].content == "memory block"
+      check entries[2].fileName == "PREFERENCES.md"
+      check entries[2].content == "provider = \"zhipu\""
 
     test "migrate: schema created without error":
       if not hasPg: skip()

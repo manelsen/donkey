@@ -15,7 +15,8 @@ const
     "IMPORTANT: always convert the user's local time to an absolute ISO 8601 " &
     "string with timezone offset before calling this tool (e.g. " &
     "\"2025-03-18T17:25:00-03:00\"). Alternatively, use a relative offset: " &
-    "+30m (30 minutes), +2h (2 hours), +1d (1 day)."
+    "+30m (30 minutes), +2h (2 hours), +1d (1 day). " &
+    "The reminder text is delivered later as a normal outbound message."
 
   ReminderToolSchema* = """{"type":"object","properties":{"when":{"type":"string","description":"ISO 8601 datetime with timezone (e.g. 2025-03-18T17:25:00-03:00) or relative offset (+30m, +2h, +1d)"},"message":{"type":"string","description":"The reminder message text to deliver to the user"}},"required":["when","message"]}"""
 
