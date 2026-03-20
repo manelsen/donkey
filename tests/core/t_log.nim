@@ -19,7 +19,9 @@ suite "Logger":
 
   test "messages below minLevel are silently dropped":
     var written = 0
-    let log = newLogger("filter", lvlWarn, sink = proc(e: LogEntry) = inc written)
+    let log = newLogger("filter", lvlWarn,
+                        sink = proc(e: LogEntry) {.gcsafe.} =
+                          {.cast(gcsafe).}: inc written)
     log.debug("should be dropped")
     log.info("should be dropped")
     log.warn("should pass")
@@ -29,7 +31,8 @@ suite "Logger":
   test "message above minLevel reaches sink":
     var got: LogEntry
     let log = newLogger("sink_test", lvlDebug,
-                        sink = proc(e: LogEntry) = got = e)
+                        sink = proc(e: LogEntry) {.gcsafe.} =
+                          {.cast(gcsafe).}: got = e)
     log.info("hello donkey")
     check got.message   == "hello donkey"
     check got.level     == lvlInfo
@@ -38,6 +41,7 @@ suite "Logger":
   test "LogEntry has non-empty timestamp":
     var got: LogEntry
     let log = newLogger("ts_test", lvlDebug,
-                        sink = proc(e: LogEntry) = got = e)
+                        sink = proc(e: LogEntry) {.gcsafe.} =
+                          {.cast(gcsafe).}: got = e)
     log.debug("ts check")
     check got.timestamp.len > 0

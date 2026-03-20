@@ -5,6 +5,10 @@ type
   UserId*    = distinct string
   SessionId* = distinct string
 
+  ChannelKind* = enum
+    ## Identifies which messaging channel a message arrived on / should be sent to.
+    ckTelegram, ckDiscord, ckWeCom, ckWeChat, ckQQ, ckFeishu
+
   LogLevel* = enum
     lvlDebug, lvlInfo, lvlWarn, lvlError, lvlFatal
 
@@ -33,3 +37,12 @@ func `$`*(id: UserId): string    {.borrow.}
 func `==`*(a, b: UserId): bool   {.borrow.}
 func `$`*(id: SessionId): string  {.borrow.}
 func `==`*(a, b: SessionId): bool {.borrow.}
+
+func `$`*(k: ChannelKind): string =
+  case k
+  of ckTelegram: "telegram"
+  of ckDiscord:  "discord"
+  of ckWeCom:    "wecom"
+  of ckWeChat:   "wechat"
+  of ckQQ:       "qq"
+  of ckFeishu:   "feishu"
