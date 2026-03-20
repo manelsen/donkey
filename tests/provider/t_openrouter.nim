@@ -3,6 +3,7 @@
 
 import std/[json, strutils, unittest]
 import donkey/adapters/provider/openrouter
+import donkey/core/pipeops
 import donkey/domain/message
 
 suite "OpenRouterAdapter caps":
@@ -163,3 +164,33 @@ suite "OpenRouterAdapter buildBody with tools":
     check tcs.len == 1
     check tcs[0]["id"].getStr()                    == "call_1"
     check tcs[0]["function"]["name"].getStr()      == "bash"
+
+suite "OpenRouterAdapter streaming helpers":
+
+  test "buildStreamBody enables stream and usage":
+    let body = newOpenRouterAdapter("k").buildStreamBody(
+      CompletionRequest(system: "", messages: newHistory()))
+    check body["stream"].getBool()
+    check body["stream_options"]["include_usage"].getBool()
+
+  test "parseOpenRouterSseLine extracts token delta":
+    let line = """data: {"choices":[{"delta":{"content":"Hel"}}]}"""
+    let parsed = parseOpenRouterSseLine(line)
+    check not parsed.isErr
+    let chunk = parsed.value
+    check chunk.token == "Hel"
+    check not chunk.done
+
+  test "parseOpenRouterSseLine extracts usage when present":
+    let line = """data: {"choices":[{"delta":{}}],"usage":{"prompt_tokens":12,"completion_tokens":5}}"""
+    let parsed = parseOpenRouterSseLine(line)
+    check not parsed.isErr
+    let chunk = parsed.value
+    check chunk.inputTokens == 12
+    check chunk.outputTokens == 5
+
+  test "parseOpenRouterSseLine handles done sentinel":
+    let parsed = parseOpenRouterSseLine("data: [DONE]")
+    check not parsed.isErr
+    let chunk = parsed.value
+    check chunk.done

@@ -7,12 +7,13 @@
 ##
 ## Quirks absorbed here:
 ##   - `system` is a top-level field, not a message in the array
-##   - Messages: [{role: "user"|"assistant", content: "text"}]
-##   - Tool use uses tool_use/tool_result content blocks (F3+ scope)
-##   - Response: content[0].text
+##   - Messages: [{role: "user"|"assistant", content: "...|[blocks]"}]
+##   - Tool use uses tool_use/tool_result content blocks
+##   - Tool results are sent back as role=user content blocks of type tool_result
+##   - Response parsing must extract both text blocks and tool_use blocks
 ##   - max_tokens is REQUIRED by the API (no default)
 
-import std/[httpclient, json, strutils]
+import std/[httpclient, json, streams, strutils]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
@@ -29,6 +30,12 @@ type
     model*:    string
     endpoint*: string   ## override for testing
 
+  AnthropicSseChunk* = object
+    token*:        string
+    done*:         bool
+    inputTokens*:  int
+    outputTokens*: int
+
 # ── Concept conformance ───────────────────────────────────────────────────────
 
 proc caps*(a: AnthropicAdapter): ProviderCaps =
@@ -43,8 +50,41 @@ proc caps*(a: AnthropicAdapter): ProviderCaps =
 
 # ── JSON serialisation ────────────────────────────────────────────────────────
 
+proc textBlock(text: string): JsonNode =
+  %* {"type": "text", "text": text}
+
+proc toolUseBlock(tc: ToolCallRequest): JsonNode =
+  let input = try: parseJson(tc.inputJson) except: newJObject()
+  %* {
+    "type": "tool_use",
+    "id": tc.id,
+    "name": tc.name,
+    "input": input,
+  }
+
+proc toolResultBlock(msg: ChatMessage): JsonNode =
+  %* {
+    "type": "tool_result",
+    "tool_use_id": msg.toolCallId,
+    "content": msg.text,
+  }
+
 proc toJson(msg: ChatMessage): JsonNode =
-  ## Anthropic uses "user" and "assistant"; content is a plain string.
+  ## Anthropic tool results are represented as a user turn with tool_result blocks.
+  if msg.role == "tool":
+    return %* {
+      "role": "user",
+      "content": [toolResultBlock(msg)],
+    }
+
+  if msg.toolCalls.len > 0:
+    var content = newJArray()
+    if msg.text.len > 0:
+      content.add(textBlock(msg.text))
+    for tc in msg.toolCalls:
+      content.add(toolUseBlock(tc))
+    return %* {"role": msg.role, "content": content}
+
   %* {"role": msg.role, "content": msg.text}
 
 proc buildBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
@@ -64,23 +104,82 @@ proc buildBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
 
   if req.system.len > 0:
     result["system"] = %req.system
+  if req.tools.len > 0:
+    var toolsArr = newJArray()
+    for td in req.tools:
+      let schema = try: parseJson(td.schemaJson) except: newJObject()
+      toolsArr.add(%* {
+        "name": td.name,
+        "description": td.description,
+        "input_schema": schema,
+      })
+    result["tools"] = toolsArr
+
+proc buildStreamBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
+  result = a.buildBody(req)
+  result["stream"] = %true
 
 # ── Response parsing ──────────────────────────────────────────────────────────
 
 func parseAnthropicResponse*(j: JsonNode): CompletionResponse =
   ## Exported for unit testing.
   let content = j["content"]
-  var text = ""
+  var textParts: seq[string] = @[]
+  var toolCalls: seq[ToolCallRequest] = @[]
   for blk in content:
-    if blk.getOrDefault("type").getStr("") == "text":
-      text = blk.getOrDefault("text").getStr("")
-      break
+    case blk.getOrDefault("type").getStr("")
+    of "text":
+      let text = blk.getOrDefault("text").getStr("")
+      if text.len > 0:
+        textParts.add(text)
+    of "tool_use":
+      let input =
+        if blk.hasKey("input"): blk["input"]
+        else: newJObject()
+      toolCalls.add(ToolCallRequest(
+        id: blk.getOrDefault("id").getStr(""),
+        name: blk.getOrDefault("name").getStr(""),
+        inputJson: $input,
+      ))
+    else:
+      discard
   let usage = j.getOrDefault("usage")
   CompletionResponse(
-    text:         text,
+    text:         textParts.join("\n"),
     inputTokens:  if usage != nil: usage.getOrDefault("input_tokens").getInt(0)  else: 0,
     outputTokens: if usage != nil: usage.getOrDefault("output_tokens").getInt(0) else: 0,
+    toolCalls:    toolCalls,
   )
+
+proc parseAnthropicSseLine*(line: string): Result[AnthropicSseChunk, string] =
+  let trimmed = line.strip()
+  if trimmed.len == 0 or not trimmed.startsWith("data:"):
+    return ok(AnthropicSseChunk())
+  let payload = trimmed["data:".len .. ^1].strip()
+  if payload.len == 0:
+    return ok(AnthropicSseChunk())
+  let j = try: parseJson(payload) except CatchableError as e: return err(e.msg)
+  let kind = j.getOrDefault("type").getStr("")
+  case kind
+  of "content_block_delta":
+    let delta = j.getOrDefault("delta")
+    ok(AnthropicSseChunk(token: if delta != nil: delta.getOrDefault("text").getStr("") else: ""))
+  of "message_stop":
+    ok(AnthropicSseChunk(done: true))
+  of "message_start":
+    let usage = j.getOrDefault("message").getOrDefault("usage")
+    ok(AnthropicSseChunk(
+      inputTokens: if usage != nil: usage.getOrDefault("input_tokens").getInt(0) else: 0,
+      outputTokens: if usage != nil: usage.getOrDefault("output_tokens").getInt(0) else: 0,
+    ))
+  of "message_delta":
+    let usage = j.getOrDefault("usage")
+    ok(AnthropicSseChunk(
+      inputTokens: if usage != nil: usage.getOrDefault("input_tokens").getInt(0) else: 0,
+      outputTokens: if usage != nil: usage.getOrDefault("output_tokens").getInt(0) else: 0,
+    ))
+  else:
+    ok(AnthropicSseChunk())
 
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
@@ -107,6 +206,53 @@ proc complete*(a: AnthropicAdapter;
     ok(parseAnthropicResponse(parsed))
   except CatchableError as e:
     err(e.msg)
+
+proc makeStreamFn*(a: AnthropicAdapter): StreamFn =
+  let adapter = a
+  result = proc(req: CompletionRequest;
+                onToken: proc(tok: string) {.gcsafe.}
+               ): Result[CompletionResponse, string] {.gcsafe.} =
+    try:
+      let client = newHttpClient()
+      defer: client.close()
+
+      client.headers = newHttpHeaders({
+        "Content-Type": "application/json",
+        "x-api-key": adapter.apiKey,
+        "anthropic-version": AnthropicVersion,
+      })
+
+      let body = $adapter.buildStreamBody(req)
+      let url  = if adapter.endpoint.len > 0: adapter.endpoint else: AnthropicEndpoint
+      let resp = client.request(url, httpMethod = HttpPost, body = body)
+
+      if resp.status[0] != '2':
+        return err("Anthropic API error " & resp.status & ": " & resp.body)
+
+      var accumulated = ""
+      var inputTokens = 0
+      var outputTokens = 0
+      var line = ""
+      while resp.bodyStream.readLine(line):
+        let chunk = parseAnthropicSseLine(line).valueOr:
+          return err(error)
+        if chunk.done:
+          break
+        if chunk.token.len > 0:
+          accumulated.add(chunk.token)
+          onToken(chunk.token)
+        if chunk.inputTokens > 0:
+          inputTokens = chunk.inputTokens
+        if chunk.outputTokens > 0:
+          outputTokens = chunk.outputTokens
+
+      ok(CompletionResponse(
+        text: accumulated,
+        inputTokens: inputTokens,
+        outputTokens: outputTokens,
+      ))
+    except CatchableError as e:
+      err(e.msg)
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

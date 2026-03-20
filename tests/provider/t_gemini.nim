@@ -1,6 +1,6 @@
 ## GeminiAdapter unit tests — no real HTTP calls.
 ## Tests: caps(), buildBody JSON shape, role mapping (assistant→model),
-## systemInstruction placement, response parsing.
+## tool serialization, alternation normalization, response parsing.
 
 import std/[json, strutils, unittest]
 import donkey/adapters/provider/gemini
@@ -15,8 +15,8 @@ suite "GeminiAdapter caps":
     let a = newGeminiAdapter("key", model = "gemini-2.0-flash")
     check a.caps().name.contains("gemini")
 
-  test "streaming reported":
-    check newGeminiAdapter("key").caps().streaming
+  test "streaming not yet reported":
+    check not newGeminiAdapter("key").caps().streaming
 
 suite "GeminiAdapter buildBody":
 
@@ -60,6 +60,68 @@ suite "GeminiAdapter buildBody":
     check body.hasKey("generationConfig")
     check body["generationConfig"]["maxOutputTokens"].getInt() == 1024
 
+  test "tools are serialized as function declarations":
+    let req = CompletionRequest(
+      system: "",
+      messages: newHistory(),
+      tools: @[
+        ToolDescription(
+          name: "read_file",
+          description: "Read a file",
+          schemaJson: """{"type":"object","properties":{"path":{"type":"string"}}}""",
+        )
+      ],
+    )
+    let body = newGeminiAdapter("k").buildBody(req)
+    check body.hasKey("tools")
+    check body["tools"][0]["functionDeclarations"][0]["name"].getStr() == "read_file"
+    check body["tools"][0]["functionDeclarations"][0]["parameters"]["type"].getStr() == "object"
+
+  test "assistant tool calls become functionCall parts":
+    let h = @[
+      ChatMessage(
+        role: roleAssistant,
+        text: "Vou chamar uma função.",
+        toolCalls: @[
+          ToolCallRequest(id: "call_1", name: "calc", inputJson: """{"expression":"2+2"}""")
+        ],
+      )
+    ]
+    let body = newGeminiAdapter("k").buildBody(CompletionRequest(system: "", messages: h))
+    let parts = body["contents"][0]["parts"]
+    check body["contents"][0]["role"].getStr() == "model"
+    check parts[0]["text"].getStr() == "Vou chamar uma função."
+    check parts[1]["functionCall"]["name"].getStr() == "calc"
+    check parts[1]["functionCall"]["args"]["expression"].getStr() == "2+2"
+
+  test "tool result becomes user functionResponse part":
+    let h = @[
+      ChatMessage(
+        role: roleAssistant,
+        text: "",
+        toolCalls: @[
+          ToolCallRequest(id: "call_1", name: "calc", inputJson: """{"expression":"2+2"}""")
+        ],
+      ),
+      ChatMessage(role: "tool", text: """{"result":"4"}""", toolCallId: "call_1"),
+    ]
+    let body = newGeminiAdapter("k").buildBody(CompletionRequest(system: "", messages: h))
+    let responsePart = body["contents"][1]["parts"][0]["functionResponse"]
+    check body["contents"][1]["role"].getStr() == "user"
+    check responsePart["name"].getStr() == "calc"
+    check responsePart["response"]["result"].getStr() == "4"
+
+  test "adjacent user turns are merged to satisfy alternation":
+    let h = @[
+      ChatMessage(role: roleUser, text: "one"),
+      ChatMessage(role: roleUser, text: "two"),
+    ]
+    let body = newGeminiAdapter("k").buildBody(CompletionRequest(system: "", messages: h))
+    check body["contents"].len == 1
+    check body["contents"][0]["role"].getStr() == "user"
+    check body["contents"][0]["parts"][0]["text"].getStr() == "one"
+    check body["contents"][0]["parts"][1]["text"].getStr() == "two"
+
 suite "GeminiAdapter parseResponse":
 
   test "extracts text from candidates[0].content.parts[0].text":
@@ -85,6 +147,27 @@ suite "GeminiAdapter parseResponse":
     check resp.text         == "hi"
     check resp.inputTokens  == 0
     check resp.outputTokens == 0
+
+  test "parses functionCall parts from response":
+    let j = %* {
+      "candidates": [{
+        "content": {"parts": [
+          {"text": "Vou usar uma tool."},
+          {"functionCall": {"id": "call_7", "name": "read_file",
+                            "args": {"path": "src/app.nim"}}}
+        ]}
+      }],
+      "usageMetadata": {
+        "promptTokenCount": 12,
+        "candidatesTokenCount": 5
+      }
+    }
+    let resp = parseGeminiResponse(j)
+    check resp.text == "Vou usar uma tool."
+    check resp.toolCalls.len == 1
+    check resp.toolCalls[0].id == "call_7"
+    check resp.toolCalls[0].name == "read_file"
+    check parseJson(resp.toolCalls[0].inputJson)["path"].getStr() == "src/app.nim"
 
 suite "GeminiAdapter buildUrl":
 
