@@ -17,6 +17,12 @@ type
   MdFileAdapter* = object
     paddocksDir*: string  ## base directory, e.g. ~/.donkey/paddocks
 
+  UserSummary* = object
+    userId*:      UserId
+    hasProfile*:  bool
+    preferredName*: string
+    access*:      string
+
 # ── path helpers ──────────────────────────────────────────────────────────────
 
 func paddockDir*(a: MdFileAdapter; userId: UserId): string =
@@ -35,6 +41,29 @@ func preferencesMdPath*(a: MdFileAdapter; userId: UserId): string =
 
 proc readOrEmpty(path: string): string =
   if fileExists(path): readFile(path) else: ""
+
+proc parseUserField*(content, label: string): string =
+  let prefix = "**" & label & ":**"
+  for line in content.splitLines():
+    let trimmed = line.strip()
+    if trimmed.startsWith(prefix):
+      return trimmed[prefix.len .. ^1].strip()
+  ""
+
+proc setUserFieldText*(content, label, value: string): string =
+  let prefix = "**" & label & ":** "
+  var lines = content.splitLines()
+  for i in 0 ..< lines.len:
+    if lines[i].strip().startsWith("**" & label & ":**"):
+      lines[i] = prefix & value
+      return lines.join("\n")
+  if lines.len > 0 and lines[^1].len > 0:
+    lines.add("")
+  lines.add(prefix & value)
+  lines.join("\n")
+
+proc isRevokedUserMd*(content: string): bool =
+  content.parseUserField("Access").toLowerAscii() == "revoked"
 
 proc ensurePaddock*(a: MdFileAdapter; userId: UserId) =
   ## Creates the paddock directory tree if it does not exist.
@@ -57,6 +86,34 @@ proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext =
 proc saveUserMd*(a: MdFileAdapter; userId: UserId; content: string) =
   a.ensurePaddock(userId)
   writeFile(a.userMdPath(userId), content)
+
+proc listUsers*(a: MdFileAdapter): seq[UserSummary] =
+  if not dirExists(a.paddocksDir):
+    return @[]
+  for kind, path in walkDir(a.paddocksDir):
+    if kind != pcDir:
+      continue
+    let uid = UserId(path.extractFilename())
+    let userMd = readOrEmpty(a.userMdPath(uid))
+    result.add(UserSummary(
+      userId: uid,
+      hasProfile: userMd.len > 0,
+      preferredName: userMd.parseUserField("Preferred name"),
+      access: block:
+        let access = userMd.parseUserField("Access")
+        if access.len > 0: access else: "active",
+    ))
+
+proc updateUserField*(a: MdFileAdapter; userId: UserId; field, value: string) =
+  let current = readOrEmpty(a.userMdPath(userId))
+  let label =
+    if field.toLowerAscii() == "preferred_name": "Preferred name"
+    elif field.toLowerAscii() == "access": "Access"
+    else: field
+  a.saveUserMd(userId, current.setUserFieldText(label, value))
+
+proc isRevoked*(a: MdFileAdapter; userId: UserId): bool =
+  isRevokedUserMd(readOrEmpty(a.userMdPath(userId)))
 
 proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) =
   a.ensurePaddock(userId)

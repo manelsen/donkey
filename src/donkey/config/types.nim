@@ -1,6 +1,7 @@
 ## DonkeyConfig — typed, validated representation of donkey.toml.
 
 import ../core/types
+import ../core/app_meta
 
 type
   SandboxMode* = enum
@@ -19,7 +20,7 @@ func defaultConfig*(home: string): DonkeyConfig =
   DonkeyConfig(
     home:         home,
     logLevel:     lvlInfo,
-    logFile:      home & "/donkey.log",
+    logFile:      home & "/" & LogFileName,
     paddocks:     home & "/paddocks",
     sandboxMode:  smNone,
     sandboxImage: "alpine",

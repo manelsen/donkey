@@ -74,6 +74,13 @@ proc runContractTests(adapter: MdFileAdapter) =
       adapter.ensurePaddock(uid)
       check dirExists(adapter.paddockDir(uid) / "sessions")
 
+    test "updateUserField: stores preferred name and access":
+      adapter.updateUserField(uid, "Preferred name", "Ada")
+      adapter.updateUserField(uid, "Access", "revoked")
+      let ctx = adapter.loadContext(uid)
+      check parseUserField(ctx.userMd, "Preferred name") == "Ada"
+      check adapter.isRevoked(uid)
+
 # ── bootstrapUserMd helper ────────────────────────────────────────────────────
 
 suite "bootstrapUserMd":

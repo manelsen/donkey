@@ -16,20 +16,19 @@
 
 when defined(withPostgres):
   import db_connector/db_postgres
-  import std/[json, os, strutils]
+  import std/[os, strutils]
+  import ../../core/app_meta
   import ../../core/types
   import ../../ports/memory
   import ../../ports/embedding
 
-  const GraphName = "donkey_graph"
-
   # ── SQL schema ──────────────────────────────────────────────────────────────
 
-  const SchemaSql = """
+  let SchemaSql = """
   CREATE EXTENSION IF NOT EXISTS vector;
   CREATE EXTENSION IF NOT EXISTS age;
 
-  CREATE TABLE IF NOT EXISTS donkey_memories (
+  CREATE TABLE IF NOT EXISTS """ & PgMemoryTableName & """ (
     id         BIGSERIAL PRIMARY KEY,
     user_id    TEXT        NOT NULL,
     kind       TEXT        NOT NULL,
@@ -40,10 +39,10 @@ when defined(withPostgres):
   );
 
   CREATE INDEX IF NOT EXISTS idx_dm_user_kind
-    ON donkey_memories (user_id, kind);
+    ON """ & PgMemoryTableName & """ (user_id, kind);
 
   CREATE INDEX IF NOT EXISTS idx_dm_embed
-    ON donkey_memories USING ivfflat (embedding vector_cosine_ops)
+    ON """ & PgMemoryTableName & """ USING ivfflat (embedding vector_cosine_ops)
     WITH (lists = 100);
   """
 
@@ -53,6 +52,10 @@ when defined(withPostgres):
     PostgresMemoryAdapter* = object
       dsn*:    string
       embedFn: EmbedFn
+
+    MemoryExportEntry* = object
+      fileName*: string
+      content*:  string
 
   proc newPostgresMemoryAdapter*(dsn: string; embedFn: EmbedFn): PostgresMemoryAdapter =
     PostgresMemoryAdapter(dsn: dsn, embedFn: embedFn)
@@ -64,12 +67,87 @@ when defined(withPostgres):
     db.exec(sql"SET search_path = ag_catalog, public")
     db
 
+  proc sanitizeAgeText*(text: string; maxLen = 200): string {.gcsafe, raises: [].} =
+    let safe = text.replace("'", "\\'")
+    if safe.len == 0:
+      return ""
+    safe[0 ..< min(maxLen, safe.len)]
+
+  proc stripAgeValue*(value: string): string {.gcsafe, raises: [].} =
+    value.strip(chars = {'"'})
+
+  proc splitMemorySections*(content: string): seq[string] {.gcsafe, raises: [].} =
+    for section in content.split("\n\n"):
+      let s = section.strip()
+      if s.len > 10:
+        result.add(s)
+
+  proc buildVectorLiteral*(vec: seq[float32]): string {.gcsafe, raises: [].} =
+    if vec.len == 0:
+      return ""
+    var allZero = true
+    for v in vec:
+      if v != 0.0:
+        allZero = false
+        break
+    if allZero:
+      return ""
+    var buf = "["
+    for i, v in vec:
+      if i > 0:
+        buf.add(',')
+      buf.add($v)
+    buf.add(']')
+    buf
+
+  proc buildContextFromRows*(userId: UserId; rows: seq[Row]): UserContext {.gcsafe, raises: [].} =
+    var userMd = ""
+    var memLines: seq[string]
+    var prefMd = ""
+    for row in rows:
+      case row[0]
+      of "user_profile":
+        userMd = row[1]
+      of "preference":
+        prefMd = row[1]
+      of "memory", "fact", "solution":
+        memLines.add(row[1])
+      else:
+        discard
+    UserContext(
+      userId: userId,
+      userMd: userMd,
+      memoryMd: memLines.join("\n\n"),
+      preferencesMd: prefMd,
+    )
+
+  proc buildMemoryHits*(rows: seq[Row]): seq[MemoryHit] {.gcsafe, raises: [].} =
+    for row in rows:
+      let score = try: parseFloat(row[2]).float32 except: 0.0
+      result.add MemoryHit(content: row[0], kind: row[1], score: score)
+
+  proc buildRecentMemoryHits*(rows: seq[Row]): seq[MemoryHit] {.gcsafe, raises: [].} =
+    for row in rows:
+      result.add MemoryHit(content: row[0], kind: row[1], score: 0.0)
+
+  proc buildMemoryExportEntries*(ctx: UserContext): seq[MemoryExportEntry] {.gcsafe, raises: [].} =
+    @[
+      MemoryExportEntry(fileName: "USER.md", content: ctx.userMd),
+      MemoryExportEntry(fileName: "MEMORY.md", content: ctx.memoryMd),
+      MemoryExportEntry(fileName: "PREFERENCES.md", content: ctx.preferencesMd),
+    ]
+
+  proc exportContextToDir*(ctx: UserContext; outDir: string) =
+    createDir(outDir)
+    for entry in buildMemoryExportEntries(ctx):
+      writeFile(outDir / entry.fileName, entry.content)
+
   # ── AGE graph helpers ──────────────────────────────────────────────────────
 
   proc ageGraphExists(db: DbConn): bool =
     let rows = db.getAllRows(
       sql"SELECT count(*) FROM ag_catalog.ag_graph WHERE name = $1",
-      GraphName)
+      PgGraphName)
     rows.len > 0 and rows[0][0] != "0"
 
   proc ageCypher(db: DbConn; cypher: string; retCols: seq[string] = @[]): seq[Row] =
@@ -77,13 +155,13 @@ when defined(withPostgres):
     ## Example: ageCypher(db, "MATCH (n:Memory {user_id:'x'}) RETURN id(n)", @["id"])
     if retCols.len == 0:
       ## Fire-and-forget — still need at least one return column alias for AGE.
-      db.exec(sql("SELECT * FROM cypher('" & GraphName & "', $$ " & cypher & " $$) AS (r agtype)"))
+      db.exec(sql("SELECT * FROM cypher('" & PgGraphName & "', $$ " & cypher & " $$) AS (r agtype)"))
       return @[]
     var cols = ""
     for i, c in retCols:
       if i > 0: cols.add(", ")
       cols.add(c & " agtype")
-    let q = "SELECT * FROM cypher('" & GraphName & "', $$ " & cypher & " $$) AS (" & cols & ")"
+    let q = "SELECT * FROM cypher('" & PgGraphName & "', $$ " & cypher & " $$) AS (" & cols & ")"
     db.getAllRows(sql(q))
 
   # ── Migration ──────────────────────────────────────────────────────────────
@@ -103,8 +181,8 @@ when defined(withPostgres):
       db.exec(sql"LOAD 'age'")
       if not db.ageGraphExists():
         discard db.ageCypher("RETURN 1")   ## no-op to verify AGE is working
-        db.exec(sql("SELECT * FROM ag_catalog.create_graph('" & GraphName & "')"))
-    except Exception as e:
+        db.exec(sql("SELECT * FROM ag_catalog.create_graph('" & PgGraphName & "')"))
+    except Exception:
       ## AGE might not be installed — continue with pgvector-only mode.
       discard
 
@@ -112,58 +190,34 @@ when defined(withPostgres):
 
   proc upsert(db: DbConn; userId, kind, content: string) =
     ## Updates content if (user_id, kind) exists (for singleton kinds like user_profile/preference).
-    db.exec(sql"""
-      INSERT INTO donkey_memories (user_id, kind, content)
-      VALUES ($1, $2, $3)
-      ON CONFLICT DO NOTHING
-    """, userId, kind, content)
-    db.exec(sql"""
-      UPDATE donkey_memories SET content = $1, created_at = now()
-      WHERE user_id = $2 AND kind = $3
-    """, content, userId, kind)
+    db.exec(sql(
+      "INSERT INTO " & PgMemoryTableName & " (user_id, kind, content) " &
+      "VALUES ($1, $2, $3) ON CONFLICT DO NOTHING"
+    ), userId, kind, content)
+    db.exec(sql(
+      "UPDATE " & PgMemoryTableName & " SET content = $1, created_at = now() " &
+      "WHERE user_id = $2 AND kind = $3"
+    ), content, userId, kind)
 
   proc embedOrNull(a: PostgresMemoryAdapter; text: string): string =
     ## Returns pgvector literal '[0.1,0.2,...]' or "" if embedding unavailable/zero.
-    let vec = a.embedFn(text)
-    if vec.len == 0: return ""
-    var allZero = true
-    for v in vec:
-      if v != 0.0: allZero = false; break
-    if allZero: return ""
-    var buf = "["
-    for i, v in vec:
-      if i > 0: buf.add(',')
-      buf.add($v)
-    buf.add(']')
-    buf
+    buildVectorLiteral(a.embedFn(text))
 
   proc hasProfile*(a: PostgresMemoryAdapter; userId: UserId): bool =
     let db = a.open()
     defer: db.close()
     let rows = db.getAllRows(
-      sql"SELECT 1 FROM donkey_memories WHERE user_id = $1 AND kind = 'user_profile' LIMIT 1",
+      sql("SELECT 1 FROM " & PgMemoryTableName & " WHERE user_id = $1 AND kind = 'user_profile' LIMIT 1"),
       $userId)
     rows.len > 0
 
   proc loadContext*(a: PostgresMemoryAdapter; userId: UserId): UserContext =
     let db = a.open()
     defer: db.close()
-    var userMd = ""; var memLines: seq[string]; var prefMd = ""
     let rows = db.getAllRows(
-      sql"SELECT kind, content FROM donkey_memories WHERE user_id = $1 ORDER BY created_at",
+      sql("SELECT kind, content FROM " & PgMemoryTableName & " WHERE user_id = $1 ORDER BY created_at"),
       $userId)
-    for row in rows:
-      case row[0]
-      of "user_profile":  userMd = row[1]
-      of "preference":    prefMd = row[1]
-      of "memory", "fact", "solution": memLines.add(row[1])
-      else: discard
-    UserContext(
-      userId:        userId,
-      userMd:        userMd,
-      memoryMd:      memLines.join("\n\n"),
-      preferencesMd: prefMd,
-    )
+    buildContextFromRows(userId, rows)
 
   proc saveUserMd*(a: PostgresMemoryAdapter; userId: UserId; content: string) =
     let db = a.open()
@@ -174,7 +228,7 @@ when defined(withPostgres):
       db.exec(sql"LOAD 'age'")
       discard db.ageCypher(
         "MERGE (p:Person {user_id: '" & $userId & "'}) SET p.profile = '" &
-        content.replace("'", "\\'")[0 ..< min(200, content.len)] & "' RETURN p")
+        sanitizeAgeText(content) & "' RETURN p")
     except: discard
 
   proc appendMemory*(a: PostgresMemoryAdapter; userId: UserId; text: string) =
@@ -182,21 +236,20 @@ when defined(withPostgres):
     defer: db.close()
     ## Store the text node.
     var nodeId = ""
-    let rows = db.getAllRows(sql"""
-      INSERT INTO donkey_memories (user_id, kind, content)
-      VALUES ($1, 'memory', $2)
-      RETURNING id
-    """, $userId, text)
+    let rows = db.getAllRows(sql(
+      "INSERT INTO " & PgMemoryTableName & " (user_id, kind, content) " &
+      "VALUES ($1, 'memory', $2) RETURNING id"
+    ), $userId, text)
     if rows.len > 0: nodeId = rows[0][0]
     ## Update embedding if available.
     let vecStr = a.embedOrNull(text)
     if vecStr.len > 0 and nodeId.len > 0:
-      db.exec(sql("UPDATE donkey_memories SET embedding = '" & vecStr &
+      db.exec(sql("UPDATE " & PgMemoryTableName & " SET embedding = '" & vecStr &
                   "'::vector WHERE id = " & nodeId))
     ## Create Memory node in AGE graph.
     try:
       db.exec(sql"LOAD 'age'")
-      let safeText = text.replace("'", "\\'")[0 ..< min(200, text.len)]
+      let safeText = sanitizeAgeText(text)
       discard db.ageCypher(
         "MERGE (u:Person {user_id: '" & $userId & "'}) " &
         "CREATE (m:Memory {node_id: '" & nodeId & "', user_id: '" & $userId &
@@ -222,15 +275,13 @@ when defined(withPostgres):
       let rows = db.getAllRows(sql("""
         SELECT content, kind,
                1 - (embedding <=> '""" & vecStr & """'::vector) AS score
-        FROM donkey_memories
+        FROM """ & PgMemoryTableName & """
         WHERE user_id = $1
           AND embedding IS NOT NULL
         ORDER BY embedding <=> '""" & vecStr & """'::vector
         LIMIT $2
       """), $userId, $limit)
-      for row in rows:
-        let score = try: parseFloat(row[2]).float32 except: 0.0
-        result.add MemoryHit(content: row[0], kind: row[1], score: score)
+      result = buildMemoryHits(rows)
       ## ── Graph enrichment: find nodes related to top hit via AGE ──
       if result.len > 0:
         let topContent = result[0].content[0 ..< min(50, result[0].content.len)]
@@ -241,19 +292,17 @@ when defined(withPostgres):
             "WHERE m.content STARTS WITH '" & topContent.replace("'", "\\'") & "' " &
             "RETURN n.content", @["content"])
           for gr in graphRows:
-            let content = gr[0].strip(chars = {'"'})
+            let content = stripAgeValue(gr[0])
             if content.len > 0 and content != "null":
               result.add MemoryHit(content: content, kind: "graph", score: 0.5)
         except: discard
     else:
       ## Fallback: recent memories by insertion order.
-      let rows = db.getAllRows(sql"""
-        SELECT content, kind FROM donkey_memories
-        WHERE user_id = $1
-        ORDER BY created_at DESC LIMIT $2
-      """, $userId, $limit)
-      for row in rows:
-        result.add MemoryHit(content: row[0], kind: row[1], score: 0.0)
+      let rows = db.getAllRows(sql(
+        "SELECT content, kind FROM " & PgMemoryTableName & " " &
+        "WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2"
+      ), $userId, $limit)
+      result = buildRecentMemoryHits(rows)
 
   # ── AGE graph operations (beyond MemoryPort) ───────────────────────────────
 
@@ -288,14 +337,14 @@ when defined(withPostgres):
     let db = a.open()
     defer: db.close()
     ## Insert into flat table with embedding.
-    let rows = db.getAllRows(sql"""
-      INSERT INTO donkey_memories (user_id, kind, content)
-      VALUES ($1, 'fact', $2) RETURNING id
-    """, $userId, fact)
+    let rows = db.getAllRows(sql(
+      "INSERT INTO " & PgMemoryTableName & " (user_id, kind, content) " &
+      "VALUES ($1, 'fact', $2) RETURNING id"
+    ), $userId, fact)
     let nodeId = if rows.len > 0: rows[0][0] else: ""
     let vecStr = a.embedOrNull(fact)
     if vecStr.len > 0 and nodeId.len > 0:
-      db.exec(sql("UPDATE donkey_memories SET embedding = '" & vecStr &
+      db.exec(sql("UPDATE " & PgMemoryTableName & " SET embedding = '" & vecStr &
                   "'::vector WHERE id = " & nodeId))
     ## AGE graph.
     try:
@@ -344,7 +393,7 @@ when defined(withPostgres):
         "WHERE related.user_id = '" & $userId & "' " &
         "RETURN related.content", @["content"])
       for row in rows:
-        let c = row[0].strip(chars = {'"'})
+        let c = stripAgeValue(row[0])
         if c.len > 0 and c != "null": result.add(c)
     except: discard
 
@@ -365,10 +414,8 @@ when defined(withPostgres):
     if fileExists(memMdPath):
       ## Split MEMORY.md into sections (separated by blank lines or "---").
       let content = readFile(memMdPath)
-      for section in content.split("\n\n"):
-        let s = section.strip()
-        if s.len > 10:   ## skip tiny fragments
-          a.appendMemory(userId, s)
+      for section in splitMemorySections(content):
+        a.appendMemory(userId, section)
 
   # ── Test helper ────────────────────────────────────────────────────────────
 
@@ -376,7 +423,7 @@ when defined(withPostgres):
     ## Removes all rows for userId. Used by integration tests for isolation.
     let db = a.open()
     defer: db.close()
-    db.exec(sql"DELETE FROM donkey_memories WHERE user_id = $1", $userId)
+    db.exec(sql("DELETE FROM " & PgMemoryTableName & " WHERE user_id = $1"), $userId)
     try:
       db.exec(sql"LOAD 'age'")
       discard db.ageCypher(

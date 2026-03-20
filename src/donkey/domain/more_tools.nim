@@ -7,27 +7,46 @@ const
   BashToolName* = "bash"
   BashToolDescription* =
     "Execute a shell command and return stdout+stderr. " &
-    "Use for system operations, running scripts, git commands, build tools. " &
-    "Working directory is the server's CWD."
+    "Use for system operations, running scripts, git commands, and build tools. " &
+    "Commands run inside the agent paddock when available."
   BashToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
     "\"command\":{\"type\":\"string\",\"description\":\"Shell command to run\"}," &
     "\"timeout\":{\"type\":\"integer\",\"description\":\"Timeout in seconds (default 30)\"}" &
     "},\"required\":[\"command\"]}"
 
-# ── hashline ──────────────────────────────────────────────────────────────────
+# ── read_file ─────────────────────────────────────────────────────────────────
 const
-  HashlineToolName* = "hashline"
-  HashlineToolDescription* =
-    "Compute SHA-256 hash of a string or file. " &
-    "Provide 'input' for a string, 'file' for a file path, or 'file'+'line' " &
-    "for a specific line number. Returns lowercase hex digest."
-  HashlineToolSchema* =
+  ReadFileToolName* = "read_file"
+  ReadFileToolDescription* =
+    "Read a local file and return each line prefixed with a stable hashline anchor " &
+    "in the form LINE#ID:text. Use this before edit_file. " &
+    "The anchors act as both addresses and stale-read checks."
+  ReadFileToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
-    "\"input\":{\"type\":\"string\",\"description\":\"String to hash\"}," &
-    "\"file\":{\"type\":\"string\",\"description\":\"File path to hash\"}," &
-    "\"line\":{\"type\":\"integer\",\"description\":\"Hash a specific line (1-indexed, requires file)\"}" &
-    "}}"
+    "\"path\":{\"type\":\"string\",\"description\":\"File path to read\"}," &
+    "\"start_line\":{\"type\":\"integer\",\"description\":\"First line number to return (default: 1)\"}," &
+    "\"max_lines\":{\"type\":\"integer\",\"description\":\"Maximum lines to return (default: 200)\"}" &
+    "},\"required\":[\"path\"]}"
+
+# ── edit_file ─────────────────────────────────────────────────────────────────
+const
+  EditFileToolName* = "edit_file"
+  EditFileToolDescription* =
+    "Apply precise in-place file edits using hashline anchors from read_file. " &
+    "Supports replace, prepend, and append operations. " &
+    "If the file changed since the last read, stale anchors are rejected."
+  EditFileToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"File path to edit\"}," &
+    "\"edits\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{" &
+    "\"op\":{\"type\":\"string\",\"enum\":[\"replace\",\"prepend\",\"append\"]}," &
+    "\"pos\":{\"type\":\"string\",\"description\":\"Anchor LINE#ID for the target line\"}," &
+    "\"end\":{\"type\":\"string\",\"description\":\"Inclusive end anchor for replace ranges\"}," &
+    "\"lines\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}," &
+    "\"description\":\"Literal replacement or inserted lines; empty array deletes for replace\"}" &
+    "}},\"description\":\"Edits applied bottom-up\"}" &
+    "},\"required\":[\"path\",\"edits\"]}"
 
 # ── find ──────────────────────────────────────────────────────────────────────
 const
@@ -55,7 +74,7 @@ const
     "For regex, use bash(\"grep -rn 'pattern' /path\")."
   GrepToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
-    "\"pattern\":{\"type\":\"string\",\"description\":\"Regex pattern\"}," &
+    "\"pattern\":{\"type\":\"string\",\"description\":\"Literal string pattern to search for\"}," &
     "\"path\":{\"type\":\"string\",\"description\":\"File or directory to search\"}," &
     "\"recursive\":{\"type\":\"boolean\",\"description\":\"Recurse into subdirectories (default: true)\"}," &
     "\"max\":{\"type\":\"integer\",\"description\":\"Max matches (default: 50)\"}" &
@@ -119,7 +138,8 @@ const
   InspectImageToolDescription* =
     "Analyze a local image file using a vision-capable AI model. " &
     "Reads the file, encodes it, and sends it to the active provider. " &
-    "Returns the model's description or answer to your prompt."
+    "Returns the model's description or answer to your prompt. " &
+    "If prompt is omitted, it asks for a detailed description."
   InspectImageToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
     "\"path\":{\"type\":\"string\",\"description\":\"Local image file path\"}," &
@@ -133,7 +153,7 @@ const
   AskToolDescription* =
     "Ask the user a clarifying question and wait for their reply. " &
     "Use when you need information that isn't available from context. " &
-    "Returns the user's exact response text."
+    "Returns the user's exact response text, or an interruption error if the session is rebuilt."
   AskToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
     "\"question\":{\"type\":\"string\",\"description\":\"Question to ask the user\"}}" &
@@ -186,9 +206,9 @@ const
 const
   TaskToolName* = "task"
   TaskToolDescription* =
-    "Run a focused subtask using the AI model. " &
-    "The model receives the prompt (plus optional context) and returns its response. " &
-    "Use to parallelize independent research or analysis."
+    "Start a focused background subtask using the active AI model. " &
+    "Returns a job_id immediately; use await to collect results and cancel_job to stop it. " &
+    "Use for independent research or analysis that can run separately from the current turn."
   TaskToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
     "\"prompt\":{\"type\":\"string\",\"description\":\"Task for the model to complete\"}," &
@@ -199,8 +219,8 @@ const
 const
   SubmitResultToolName* = "submit_result"
   SubmitResultToolDescription* =
-    "Submit the final result of a task (for use by subagents). " &
-    "In single-agent context, returns the result verbatim."
+    "Submit the final result of a background or delegated task. " &
+    "In the current single-agent runtime, returns the result verbatim."
   SubmitResultToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
     "\"result\":{\"type\":\"string\",\"description\":\"Final result to submit\"}}" &
@@ -210,7 +230,7 @@ const
 const
   ReportFindingToolName* = "report_finding"
   ReportFindingToolDescription* =
-    "Report an intermediate finding during a task. " &
+    "Report an intermediate finding during a background or delegated task. " &
     "Used to surface partial results without ending the task. " &
     "Returns the finding acknowledged."
   ReportFindingToolSchema* =
@@ -222,7 +242,7 @@ const
 const
   CancelJobToolName* = "cancel_job"
   CancelJobToolDescription* =
-    "Cancel a running background job created by the task tool."
+    "Cancel a background job created by task using its job_id."
   CancelJobToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
     "\"job_id\":{\"type\":\"string\",\"description\":\"Job ID to cancel\"}}" &
@@ -232,7 +252,7 @@ const
 const
   AwaitToolName* = "await"
   AwaitToolDescription* =
-    "Wait for one or more background jobs to complete and return their results."
+    "Wait for one or more background jobs created by task and return lines in the form job_id: result."
   AwaitToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
     "\"job_ids\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}," &

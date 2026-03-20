@@ -2,19 +2,19 @@
 ## Tests procs that do not require live HTTP, LLM calls, or interactive I/O.
 ##
 ## Covered:
-##   Shell      : performBash (with workingDir), performHashline, performFind, performGrep
+##   Shell      : performBash, hashline read/edit helpers, performFind, performGrep
 ##   Paddock    : resolveInPaddock, inPaddock, path escape rejection
 ##   Session    : applyTodoOps
 ##   via executeNativeTool: calc, checkpoint, rewind, submit_result, report_finding
 ##   Misc       : unknown tool → handled=false
 
-import std/[json, options, os, strutils, times, unittest]
+import std/[json, options, os, strutils, tables, times, unittest]
 import chronos
 import chronos/asyncsync
 import donkey/core/pipeops
 import donkey/core/log
 import donkey/domain/message
-import donkey/domain/agent_message
+import donkey/adapters/memory/md_file
 import donkey/app/session_state
 import donkey/app/native_tools
 
@@ -25,14 +25,15 @@ proc stubComplete(req: CompletionRequest): Result[CompletionResponse, string] =
 
 proc makeCtx(): NativeCtx =
   NativeCtx(
-    uid:        UserId("test-user"),
-    channel:    ckTelegram,
-    outbox:     newAsyncQueue[OutboundMessage](),
-    inbox:      newAsyncQueue[AgentMessage](),
-    completeFn: stubComplete,
+    uid:         UserId("test-user"),
+    channel:     ckTelegram,
+    outbox:      newAsyncQueue[OutboundMessage](),
+    session:     nil,
+    memory:      MdFileAdapter(paddocksDir: getTempDir()),
+    completeFn:  stubComplete,
     braveApiKey: "",
-    tools:      @[],
-    log:        newLogger("test"),
+    tools:       @[],
+    log:         newLogger("test"),
   )
 
 proc makeTc(name, inputJson: string): ToolCallRequest =
@@ -115,53 +116,34 @@ suite "performBash":
     check dirExists(tmpDir)
     check r.contains(tmpDir)
 
-# ── performHashline — string ──────────────────────────────────────────────────
+# ── hashline read/edit helpers ────────────────────────────────────────────────
 
-suite "performHashline — string input":
+suite "hashline file helpers":
 
-  test "sha256 of 'hello' is known value":
-    # echo -n hello | sha256sum
-    check performHashline(input = "hello") ==
-      "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+  test "formatHashlineLine prefixes LINE#ID":
+    let line = formatHashlineLine(3, "let x = 1")
+    check line.startsWith("3#")
+    check line.endsWith(":let x = 1")
 
-  test "two different strings produce different hashes":
-    let h1 = performHashline(input = "hello")
-    let h2 = performHashline(input = "world")
-    check h1 != h2
+  test "parseHashlineAnchor parses valid anchor":
+    let parsed = parseHashlineAnchor("12#abc123")
+    check parsed.isOk
+    check parsed.value.line == 12
+    check parsed.value.hash == "abc123"
 
-  test "empty input with no file returns error":
-    check performHashline().startsWith("Error:")
+  test "renderHashlineSlice formats file lines":
+    let rendered = renderHashlineSlice("alpha\nbeta", 1, 10)
+    check rendered.contains(":alpha")
+    check rendered.contains(":beta")
 
-# ── performHashline — file ────────────────────────────────────────────────────
-
-suite "performHashline — file input":
-
-  let tmpFile = getTempDir() / "donkey_test_hash.txt"
-
-  setup:
-    writeFile(tmpFile, "abc\ndef\n")
-
-  teardown:
-    if fileExists(tmpFile): removeFile(tmpFile)
-
-  test "hash of file matches hash of its content":
-    let content = readFile(tmpFile)
-    check performHashline(file = tmpFile) == performHashline(input = content)
-
-  test "hash of line 1":
-    # line 1 = "abc"
-    check performHashline(file = tmpFile, line = 1) == performHashline(input = "abc")
-
-  test "hash of line 2":
-    check performHashline(file = tmpFile, line = 2) == performHashline(input = "def")
-
-  test "out-of-range line returns error":
-    let r = performHashline(file = tmpFile, line = 99)
-    check r.startsWith("Error:")
-
-  test "missing file returns error":
-    let r = performHashline(file = "/nonexistent/path/x.txt")
-    check r.startsWith("Error:")
+  test "applyEditFileOps replaces anchored line":
+    let lines = @["alpha", "beta"]
+    let anchor = HashlineAnchor(line: 2, hash: computeLineHash(2, "beta"))
+    let applyResult = applyEditFileOps(lines, @[
+      EditFileOp(kind: efokReplace, pos: some(anchor), stop: none(HashlineAnchor), lines: @["gamma"])
+    ])
+    check applyResult.isOk
+    check applyResult.value == @["alpha", "gamma"]
 
 # ── performFind ───────────────────────────────────────────────────────────────
 
@@ -354,6 +336,107 @@ suite "applyTodoOps — misc":
 
 # ── executeNativeTool — sync-friendly cases ───────────────────────────────────
 
+suite "native_tools pure contexts":
+
+  test "parseAskContext extracts required question":
+    let parsed = parseAskContext(parseJson("""{"question":"where are you?"}"""))
+    check parsed.isOk
+    check parsed.value.question == "where are you?"
+
+  test "parseBashContext extracts command":
+    let parsed = parseBashContext(parseJson("""{"command":"pwd"}"""))
+    check parsed.isOk
+    check parsed.value.command == "pwd"
+
+  test "parseReadFileContext resolves file path inside paddock":
+    let parsed = parseReadFileContext(parseJson("""{"path":"src/app.nim","start_line":2}"""), "/tmp/paddock")
+    check parsed.isOk
+    check parsed.value.path == "/tmp/paddock/src/app.nim"
+    check parsed.value.startLine == 2
+
+  test "parseEditFileContext parses replace edit":
+    let editJson = $(%*{
+      "path": "src/app.nim",
+      "edits": [
+        {"op": "replace", "pos": "2#abc123", "lines": ["echo 1"]}
+      ]
+    })
+    let parsed = parseEditFileContext(parseJson(editJson), "/tmp/paddock")
+    check parsed.isOk
+    check parsed.value.path == "/tmp/paddock/src/app.nim"
+    check parsed.value.edits.len == 1
+    check parsed.value.edits[0].kind == efokReplace
+
+  test "parseFindContext resolves path inside paddock":
+    let parsed = parseFindContext(parseJson("""{"path":"src","pattern":"*.nim"}"""), "/tmp/paddock")
+    check parsed.isOk
+    check parsed.value.path == "/tmp/paddock/src"
+    check parsed.value.pattern == "*.nim"
+
+  test "parseGrepContext rejects path outside paddock":
+    let parsed = parseGrepContext(parseJson("""{"pattern":"x","path":"../../etc/passwd"}"""), "/tmp/paddock")
+    check parsed.isErr
+    check parsed.error.contains("outside paddock")
+
+  test "parseFetchContext applies default max":
+    let parsed = parseFetchContext(parseJson("""{"url":"https://example.com"}"""), 123)
+    check parsed.isOk
+    check parsed.value.maxCh == 123
+
+  test "parseCalcContext extracts expression":
+    let parsed = parseCalcContext(parseJson("""{"expression":"2+2"}"""))
+    check parsed.isOk
+    check parsed.value.expression == "2+2"
+
+  test "parseTaskContext extracts prompt and optional context":
+    let parsed = parseTaskContext(parseJson("""{"prompt":"do it","context":"extra"}"""))
+    check parsed.isOk
+    check parsed.value.prompt == "do it"
+    check parsed.value.context == "extra"
+
+  test "parseAwaitContext extracts job ids":
+    let parsed = parseAwaitContext(parseJson("""{"job_ids":["a","b"]}"""))
+    check parsed.isOk
+    check parsed.value.ids == @["a", "b"]
+
+  test "parseFindingContext extracts required finding":
+    let parsed = parseFindingContext(parseJson("""{"finding":"disk full"}"""))
+    check parsed.isOk
+    check parsed.value.finding == "disk full"
+
+  test "parseTodoOps rejects non-array ops":
+    let parsed = parseTodoOps(parseJson("""{"ops":{}}"""))
+    check parsed.isErr
+    check parsed.error.startsWith("Error:")
+
+  test "buildSubmitResult returns raw result text":
+    let result = buildSubmitResult(parseJson("""{"result":"ok"}"""))
+    check result.handled
+    check result.text == "ok"
+
+  test "buildTaskStartedText returns job_id and running status":
+    check buildTaskStartedText("job-7") == "job_id=job-7\nstatus=running"
+
+  test "buildCheckpointResult marks checkpointNow":
+    let result = buildCheckpointResult(newSessionState())
+    check result.handled
+    check result.checkpointNow
+
+  test "parseRewindIndex defaults to latest checkpoint":
+    let parsed = parseRewindIndex(parseJson("{}"), 2)
+    check parsed.isOk
+    check parsed.value == 1
+
+  test "buildRewindResult returns restored history":
+    let state = newSessionState()
+    var history = newHistory()
+    history.addUser("hello")
+    state.checkpoints.add(history)
+    let result = buildRewindResult(state, 0)
+    check result.isOk
+    check result.value.newHistory.isSome
+    check result.value.newHistory.get().len == 1
+
 suite "executeNativeTool — calc":
 
   test "2+2 returns 4":
@@ -468,6 +551,149 @@ suite "executeNativeTool — unknown tool":
     let r = waitFor executeNativeTool(tc, ctx, state, newHistory())
     check not r.handled
 
+suite "executeNativeTool — read_file and edit_file":
+
+  var paddock: string
+  var target: string
+
+  setup:
+    paddock = getTempDir() / ("donkey_edit_test_" & $epochTime().int)
+    createDir(paddock)
+    target = paddock / "sample.txt"
+    writeFile(target, "alpha\nbeta\n")
+
+  teardown:
+    if dirExists(paddock): removeDir(paddock)
+
+  proc ctxWithEditPaddock(pd: string): NativeCtx =
+    NativeCtx(
+      uid:         UserId("test-user"),
+      channel:     ckTelegram,
+      outbox:      newAsyncQueue[OutboundMessage](),
+      session:     nil,
+      memory:      MdFileAdapter(paddocksDir: pd),
+      completeFn:  stubComplete,
+      braveApiKey: "",
+      tools:       @[],
+      log:         newLogger("test"),
+      paddockDir:  pd,
+    )
+
+  test "read_file returns hashline-prefixed content":
+    let ctx = ctxWithEditPaddock(paddock)
+    let tc = makeTc("read_file", """{"path":"sample.txt"}""")
+    let result = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
+    check result.handled
+    check result.text.contains(":alpha")
+    check result.text.contains(":beta")
+    check result.text.splitLines()[0].contains("#")
+
+  test "edit_file replaces anchored line":
+    let ctx = ctxWithEditPaddock(paddock)
+    let readTc = makeTc("read_file", """{"path":"sample.txt"}""")
+    let readResult = waitFor executeNativeTool(readTc, ctx, newSessionState(), newHistory())
+    let secondAnchor = readResult.text.splitLines()[1].split(":", maxsplit = 1)[0]
+    let editJson = $(%*{
+      "path": "sample.txt",
+      "edits": [
+        {"op": "replace", "pos": secondAnchor, "lines": ["gamma"]}
+      ]
+    })
+    let editTc = makeTc("edit_file", editJson)
+    let editResult = waitFor executeNativeTool(editTc, ctx, newSessionState(), newHistory())
+    check editResult.handled
+    check editResult.text.contains("Edited")
+    check readFile(target).strip() == "alpha\ngamma"
+
+  test "edit_file rejects stale anchor":
+    let ctx = ctxWithEditPaddock(paddock)
+    let staleAnchor = formatHashlineRef(2, "beta")
+    writeFile(target, "alpha\ndelta\n")
+    let editJson = $(%*{
+      "path": "sample.txt",
+      "edits": [
+        {"op": "replace", "pos": staleAnchor, "lines": ["gamma"]}
+      ]
+    })
+    let editTc = makeTc("edit_file", editJson)
+    let editResult = waitFor executeNativeTool(editTc, ctx, newSessionState(), newHistory())
+    check editResult.handled
+    check editResult.text.startsWith("Error: stale anchor")
+
+suite "executeNativeTool — schedule_reminder":
+
+  var paddock: string
+
+  setup:
+    paddock = getTempDir() / ("donkey_reminder_test_" & $epochTime().int)
+    createDir(paddock)
+
+  teardown:
+    if dirExists(paddock): removeDir(paddock)
+
+  test "schedule_reminder is handled as native tool":
+    let memory = MdFileAdapter(paddocksDir: paddock)
+    let ctx = NativeCtx(
+      uid:         UserId("test-user"),
+      channel:     ckTelegram,
+      outbox:      newAsyncQueue[OutboundMessage](),
+      session:     nil,
+      memory:      memory,
+      completeFn:  stubComplete,
+      braveApiKey: "",
+      tools:       @[],
+      log:         newLogger("test"),
+    )
+    let tc = makeTc("schedule_reminder", """{"when":"in 1 minute","message":"standup"}""")
+    let result = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
+    check result.handled
+    check result.text == "Reminder scheduled."
+    var reminderCount = 0
+    for _ in walkDirRec(memory.reminderDir(UserId("test-user"))):
+      inc reminderCount
+    check reminderCount == 1
+
+suite "executeNativeTool — task jobs":
+
+  proc extractJobId(text: string): string =
+    for line in text.splitLines():
+      if line.startsWith("job_id="):
+        return line["job_id=".len .. ^1]
+    ""
+
+  test "task creates a background job id":
+    let ctx   = makeCtx()
+    let state = newSessionState()
+    let tc    = makeTc("task", """{"prompt":"say hi"}""")
+    let r = waitFor executeNativeTool(tc, ctx, state, newHistory())
+    check r.handled
+    check r.text.contains("job_id=")
+    let jobId = extractJobId(r.text)
+    check jobId.len > 0
+    check state.jobs.hasKey(jobId)
+
+  test "await returns result of created job":
+    let ctx   = makeCtx()
+    let state = newSessionState()
+    let taskTc = makeTc("task", """{"prompt":"say hi"}""")
+    let taskResult = waitFor executeNativeTool(taskTc, ctx, state, newHistory())
+    let jobId = extractJobId(taskResult.text)
+    let awaitTc = makeTc("await", $(%*{"job_ids": [jobId]}))
+    let awaitResult = waitFor executeNativeTool(awaitTc, ctx, state, newHistory())
+    check awaitResult.handled
+    check awaitResult.text.contains(jobId & ": stub")
+
+  test "cancel_job cancels created job":
+    let ctx   = makeCtx()
+    let state = newSessionState()
+    let taskTc = makeTc("task", """{"prompt":"say hi"}""")
+    let taskResult = waitFor executeNativeTool(taskTc, ctx, state, newHistory())
+    let jobId = extractJobId(taskResult.text)
+    let cancelTc = makeTc("cancel_job", $(%*{"job_id": jobId}))
+    let cancelResult = waitFor executeNativeTool(cancelTc, ctx, state, newHistory())
+    check cancelResult.handled
+    check cancelResult.text.contains("cancelled")
+
 # ── executeNativeTool — paddock path enforcement ──────────────────────────────
 
 suite "executeNativeTool — paddock path enforcement":
@@ -487,7 +713,8 @@ suite "executeNativeTool — paddock path enforcement":
       uid:         UserId("test-user"),
       channel:     ckTelegram,
       outbox:      newAsyncQueue[OutboundMessage](),
-      inbox:       newAsyncQueue[AgentMessage](),
+      session:     nil,
+      memory:      MdFileAdapter(paddocksDir: pd),
       completeFn:  stubComplete,
       braveApiKey: "",
       tools:       @[],

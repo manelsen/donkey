@@ -7,31 +7,33 @@
 ##   checkpointNow  → orchestrator must push current history to state.checkpoints
 ##
 ## Tool categories:
-##   Shell   : bash, hashline, find, grep
+##   Shell   : bash, read_file, edit_file, find, grep
 ##   Web     : fetch, web_search
 ##   Utility : calc, render_mermaid, inspect_image
 ##   Session : ask, todo_write, checkpoint, rewind
 ##   Agent   : task, submit_result, report_finding, cancel_job, await
 ##   Legacy  : schedule_reminder, current_time, web_fetch  (moved here from orchestrator)
 
-import std/[json, osproc, os, strutils, base64, tables, sequtils, times, options, uri]
+import std/[algorithm, json, osproc, os, strutils, base64, tables, sequtils, times, options, uri]
 import chronos
 import chronos/asyncsync
 import nimcrypto/sha2
+import ../core/app_meta
 import ../core/pipeops
 import ../core/log
 import ../domain/message
-import ../domain/agent_message
 import ../domain/more_tools
 import ../domain/builtin_tools
 import ../domain/calc
 import ../domain/reminder
 import ../adapters/http/std_http
+import ../adapters/memory/md_file
 import ../ports/http as httpPort
 import ../ports/provider
 import ../config/types as cfgTypes
 import ./sandbox
 import ./session_state
+import ./session_manager
 
 # ── Result type ───────────────────────────────────────────────────────────────
 
@@ -42,6 +44,76 @@ type
     newHistory*:    Option[ConversationHistory]  ## set by rewind
     checkpointNow*: bool                         ## set by checkpoint
 
+  AskContext* = object
+    question*: string
+
+  BashContext* = object
+    command*: string
+
+  ReadFileContext* = object
+    path*:      string
+    startLine*: int
+    maxLines*:  int
+
+  HashlineAnchor* = object
+    line*: int
+    hash*: string
+
+  EditFileOpKind* = enum
+    efokReplace = "replace"
+    efokAppend = "append"
+    efokPrepend = "prepend"
+
+  EditFileOp* = object
+    kind*:  EditFileOpKind
+    pos*:   Option[HashlineAnchor]
+    stop*:  Option[HashlineAnchor]
+    lines*: seq[string]
+
+  EditFileContext* = object
+    path*:  string
+    edits*: seq[EditFileOp]
+
+  FindContext* = object
+    path*:    string
+    pattern*: string
+    kind*:    string
+    max*:     int
+
+  GrepContext* = object
+    pattern*:   string
+    path*:      string
+    recursive*: bool
+    max*:       int
+
+  FetchContext* = object
+    url*:    string
+    maxCh*:  int
+
+  WebSearchContext* = object
+    query*: string
+    count*: int
+
+  CalcContext* = object
+    expression*: string
+
+  MermaidContext* = object
+    diagram*: string
+
+  InspectImageContext* = object
+    path*:   string
+    prompt*: string
+
+  TaskContext* = object
+    prompt*:  string
+    context*: string
+
+  AwaitContext* = object
+    ids*: seq[string]
+
+  FindingContext* = object
+    finding*: string
+
 # ── Context ───────────────────────────────────────────────────────────────────
 
 type
@@ -49,7 +121,8 @@ type
     uid*:          UserId
     channel*:      ChannelKind
     outbox*:       AsyncQueue[OutboundMessage]
-    inbox*:        AsyncQueue[AgentMessage]
+    session*:      ptr SessionEntry
+    memory*:       MdFileAdapter
     completeFn*:   CompleteFn
     braveApiKey*:  string
     tools*:        seq[ToolDescription]
@@ -57,6 +130,17 @@ type
     paddockDir*:   string       ## agent workspace root; empty = unconstrained (tests only)
     sandboxMode*:  SandboxMode  ## bash isolation mode
     sandboxImage*: string       ## Docker image when sandboxMode = smDocker
+
+  NativeToolCategoryHandler = proc(tc: ToolCallRequest;
+                                   ctx: NativeCtx;
+                                   state: SessionState;
+                                   history: ConversationHistory;
+                                   j: JsonNode;
+                                  ): Future[NativeToolResult] {.nimcall, gcsafe, raises: [].}
+
+  NativeToolCategory = object
+    handler: NativeToolCategoryHandler
+    passThroughTools: seq[string]
 
 # ── Paddock path helpers ───────────────────────────────────────────────────────
 
@@ -155,7 +239,7 @@ proc performBash*(cmd: string; workingDir = ""): string {.gcsafe, raises: [].} =
   except CatchableError as e:
     result = "Error: " & e.msg
 
-# ── hashline ──────────────────────────────────────────────────────────────────
+# ── hashline-backed read/edit ────────────────────────────────────────────────
 
 proc sha256hex(data: string): string {.gcsafe, raises: [].} =
   var ctx: sha256
@@ -165,23 +249,114 @@ proc sha256hex(data: string): string {.gcsafe, raises: [].} =
   for b in digest.data:
     result.add(b.toHex(2).toLowerAscii())
 
-proc performHashline*(input: string = ""; file: string = "";
-                      line: int = 0): string {.gcsafe, raises: [].} =
-  if file.len > 0:
-    try:
-      let content = readFile(file)
-      if line > 0:
-        let lines = content.splitLines()
-        if line > lines.len:
-          return "Error: file has " & $lines.len & " lines, requested " & $line
-        return sha256hex(lines[line - 1])
-      return sha256hex(content)
-    except CatchableError as e:
-      return "Error: " & e.msg
-  elif input.len > 0:
-    return sha256hex(input)
-  else:
-    return "Error: provide 'input' or 'file'"
+proc normalizeHashlineLine(line: string): string {.gcsafe, raises: [].} =
+  line.replace("\r", "").strip(leading = false, trailing = true)
+
+proc computeLineHash*(lineNum: int; line: string): string {.gcsafe, raises: [].} =
+  let normalized = normalizeHashlineLine(line)
+  let seed =
+    if normalized.anyIt(it.isAlphaNumeric): normalized
+    else: normalized & ":" & $lineNum
+  sha256hex(seed)[0 .. 5]
+
+proc formatHashlineRef*(lineNum: int; line: string): string {.gcsafe, raises: [].} =
+  $lineNum & "#" & computeLineHash(lineNum, line)
+
+proc formatHashlineLine*(lineNum: int; line: string): string {.gcsafe, raises: [].} =
+  formatHashlineRef(lineNum, line) & ":" & line
+
+proc splitEditableLines(content: string): seq[string] {.gcsafe, raises: [].} =
+  if content.len == 0: @[]
+  else: content.splitLines()
+
+proc displayLines(content: string): seq[string] {.gcsafe, raises: [].} =
+  let lines = splitEditableLines(content)
+  if lines.len == 0: @[""]
+  else: lines
+
+proc renderHashlineSlice*(content: string; startLine, maxLines: int): string {.gcsafe, raises: [].} =
+  let lines = displayLines(content)
+  if startLine > lines.len:
+    return "(no lines)"
+  let firstLine = max(1, startLine)
+  let lastLine = min(lines.len, firstLine + max(1, maxLines) - 1)
+  for idx in firstLine .. lastLine:
+    result.add(formatHashlineLine(idx, lines[idx - 1]))
+    if idx < lastLine:
+      result.add('\n')
+
+proc parseHashlineAnchor*(raw: string): Result[HashlineAnchor, string] {.gcsafe, raises: [].} =
+  let parts = raw.split("#", maxsplit = 1)
+  if parts.len != 2 or parts[0].len == 0 or parts[1].len == 0:
+    return err("Error: invalid anchor '" & raw & "'. Expected LINE#ID.")
+  try:
+    let line = parseInt(parts[0])
+    if line < 1:
+      return err("Error: invalid anchor '" & raw & "'. Line must be >= 1.")
+    ok(HashlineAnchor(line: line, hash: parts[1].toLowerAscii()))
+  except ValueError:
+    err("Error: invalid anchor '" & raw & "'. Expected LINE#ID.")
+
+proc validateHashlineAnchor*(anchor: HashlineAnchor;
+                             lines: seq[string]): Result[bool, string] {.gcsafe, raises: [].} =
+  if anchor.line < 1 or anchor.line > lines.len:
+    return err("Error: line " & $anchor.line & " does not exist (file has " & $lines.len & " lines).")
+  let actual = computeLineHash(anchor.line, lines[anchor.line - 1])
+  if actual != anchor.hash:
+    return err("Error: stale anchor " & $anchor.line & "#" & anchor.hash &
+               ". Current line is " & formatHashlineLine(anchor.line, lines[anchor.line - 1]) & ".")
+  ok(true)
+
+proc applyEditFileOps*(lines: seq[string];
+                       edits: seq[EditFileOp]): Result[seq[string], string] {.gcsafe, raises: [].} =
+  var updated = lines
+  for edit in edits:
+    if edit.pos.isSome:
+      let posResult = validateHashlineAnchor(edit.pos.get(), updated)
+      if posResult.isErr:
+        return err(posResult.error)
+    if edit.stop.isSome:
+      let stopResult = validateHashlineAnchor(edit.stop.get(), updated)
+      if stopResult.isErr:
+        return err(stopResult.error)
+
+  proc sortLine(edit: EditFileOp; lineCount: int): int =
+    case edit.kind
+    of efokReplace:
+      if edit.stop.isSome: edit.stop.get().line else: edit.pos.get().line
+    of efokAppend:
+      if edit.pos.isSome: edit.pos.get().line else: lineCount + 1
+    of efokPrepend:
+      if edit.pos.isSome: edit.pos.get().line else: 0
+
+  var sortedEdits = edits
+  sortedEdits.sort(proc(a, b: EditFileOp): int =
+    cmp(sortLine(b, updated.len), sortLine(a, updated.len))
+  )
+
+  for edit in sortedEdits:
+    case edit.kind
+    of efokReplace:
+      let startLine = edit.pos.get().line
+      let stopLine =
+        if edit.stop.isSome: edit.stop.get().line
+        else: startLine
+      if stopLine < startLine:
+        return err("Error: replace range end precedes start.")
+      updated.delete(startLine - 1 .. stopLine - 1)
+      updated.insert(edit.lines, startLine - 1)
+    of efokAppend:
+      if edit.pos.isSome:
+        updated.insert(edit.lines, edit.pos.get().line)
+      else:
+        updated.add(edit.lines)
+    of efokPrepend:
+      if edit.pos.isSome:
+        updated.insert(edit.lines, edit.pos.get().line - 1)
+      else:
+        updated.insert(edit.lines, 0)
+
+  ok(updated)
 
 # ── find ──────────────────────────────────────────────────────────────────────
 
@@ -323,8 +498,8 @@ proc performWebSearch*(query: string; count: int;
 
 proc performRenderMermaid*(diagram: string): string {.gcsafe, raises: [].} =
   let ts    = $getTime().toUnix()
-  let inF   = "/tmp/donkey_mermaid_" & ts & ".mmd"
-  let outF  = "/tmp/donkey_mermaid_" & ts & ".svg"
+  let inF   = "/tmp/" & MermaidTempPrefix & ts & ".mmd"
+  let outF  = "/tmp/" & MermaidTempPrefix & ts & ".svg"
   try:
     writeFile(inF, diagram)
     let (_, code) = execCmdEx("mmdc -i " & inF & " -o " & outF,
@@ -433,231 +608,567 @@ proc performTask*(prompt, context: string;
   except Exception as e:
     "Task error: " & e.msg
 
+proc nextJobId*(state: SessionState): string {.gcsafe, raises: [].} =
+  let id = "job-" & $state.jobCounter
+  inc state.jobCounter
+  id
+
+proc buildTaskStartedText*(jobId: string): string {.gcsafe, raises: [].} =
+  "job_id=" & jobId & "\nstatus=running"
+
+proc spawnTaskJob*(state: SessionState;
+                   prompt, context: string;
+                   completeFn: CompleteFn): string {.gcsafe, raises: [].} =
+  proc runTaskJob(jobFuture: Future[string];
+                  prompt, context: string;
+                  completeFn: CompleteFn): Future[void] {.async, gcsafe.} =
+    await sleepAsync(chronos.milliseconds(1))
+    if not jobFuture.finished():
+      jobFuture.complete(performTask(prompt, context, completeFn))
+
+  let jobId = state.nextJobId()
+  let jobFuture = newFuture[string]()
+  state.jobs[jobId] = JobState(future: jobFuture, done: false, result: "")
+  asyncSpawn runTaskJob(jobFuture, prompt, context, completeFn)
+  jobId
+
 # ── Main dispatcher ───────────────────────────────────────────────────────────
+
+proc handledText(text: string): NativeToolResult {.gcsafe, raises: [].} =
+  NativeToolResult(handled: true, text: text)
+
+proc resolveToolPath(path, paddockDir: string): Result[string, string] {.gcsafe, raises: [].}
+
+proc requireStringField(j: JsonNode; key: string): Result[string, string] {.gcsafe, raises: [].} =
+  let value = j.getOrDefault(key).getStr("")
+  if value.len == 0:
+    return err("Error: '" & key & "' is required.")
+  ok(value)
+
+proc parseAskContext*(j: JsonNode): Result[AskContext, string] {.gcsafe, raises: [].} =
+  j.requireStringField("question") >>=
+    proc(question: string): Result[AskContext, string] =
+      ok(AskContext(question: question))
+
+proc parseBashContext*(j: JsonNode): Result[BashContext, string] {.gcsafe, raises: [].} =
+  j.requireStringField("command") >>=
+    proc(command: string): Result[BashContext, string] =
+      ok(BashContext(command: command))
+
+proc parseReadFileContext*(j: JsonNode;
+                           paddockDir: string): Result[ReadFileContext, string] {.gcsafe, raises: [].} =
+  let pathResult = j.requireStringField("path")
+  if pathResult.isErr:
+    return err(pathResult.error)
+  let resolvedPathResult = resolveToolPath(pathResult.value, paddockDir)
+  if resolvedPathResult.isErr:
+    return err(resolvedPathResult.error)
+  ok(ReadFileContext(
+    path: resolvedPathResult.value,
+    startLine: max(1, j.getOrDefault("start_line").getInt(1)),
+    maxLines: max(1, j.getOrDefault("max_lines").getInt(200)),
+  ))
+
+proc parseEditLines(node: JsonNode): Result[seq[string], string] {.gcsafe, raises: [].} =
+  if node.isNil or node.kind == JNull:
+    return ok(newSeq[string]())
+  if node.kind != JArray:
+    return err("Error: 'lines' must be an array of strings.")
+  var lines: seq[string] = @[]
+  for item in node:
+    if item.kind != JString:
+      return err("Error: 'lines' must be an array of strings.")
+    lines.add(item.getStr())
+  ok(lines)
+
+proc parseEditKind(raw: string): Result[EditFileOpKind, string] {.gcsafe, raises: [].} =
+  case raw
+  of "replace": ok(efokReplace)
+  of "append": ok(efokAppend)
+  of "prepend": ok(efokPrepend)
+  else: err("Error: unsupported edit op '" & raw & "'.")
+
+proc parseOptionalAnchor(node: JsonNode; key: string): Result[Option[HashlineAnchor], string] {.gcsafe, raises: [].} =
+  if not node.hasKey(key):
+    return ok(none(HashlineAnchor))
+  let raw = node.getOrDefault(key).getStr("")
+  if raw.len == 0:
+    return ok(none(HashlineAnchor))
+  parseHashlineAnchor(raw) >>=
+    proc(anchor: HashlineAnchor): Result[Option[HashlineAnchor], string] =
+      ok(some(anchor))
+
+proc parseEditFileOp(node: JsonNode): Result[EditFileOp, string] {.gcsafe, raises: [].} =
+  let opKindResult = parseEditKind(node.getOrDefault("op").getStr(""))
+  if opKindResult.isErr:
+    return err(opKindResult.error)
+  let posResult = parseOptionalAnchor(node, "pos")
+  if posResult.isErr:
+    return err(posResult.error)
+  let stopResult = parseOptionalAnchor(node, "end")
+  if stopResult.isErr:
+    return err(stopResult.error)
+  let linesResult = parseEditLines(node.getOrDefault("lines"))
+  if linesResult.isErr:
+    return err(linesResult.error)
+  if opKindResult.value == efokReplace and posResult.value.isNone:
+    return err("Error: replace edits require 'pos'.")
+  if stopResult.value.isSome and posResult.value.isNone:
+    return err("Error: 'end' requires 'pos'.")
+  ok(EditFileOp(
+    kind: opKindResult.value,
+    pos: posResult.value,
+    stop: stopResult.value,
+    lines: linesResult.value,
+  ))
+
+proc parseEditFileContext*(j: JsonNode;
+                           paddockDir: string): Result[EditFileContext, string] {.gcsafe, raises: [].} =
+  let pathResult = j.requireStringField("path")
+  if pathResult.isErr:
+    return err(pathResult.error)
+  let resolvedPathResult = resolveToolPath(pathResult.value, paddockDir)
+  if resolvedPathResult.isErr:
+    return err(resolvedPathResult.error)
+  let editsNode = j.getOrDefault("edits")
+  if editsNode.kind != JArray:
+    return err("Error: 'edits' must be an array.")
+  var edits: seq[EditFileOp] = @[]
+  for item in editsNode:
+    let editResult = parseEditFileOp(item)
+    if editResult.isErr:
+      return err(editResult.error)
+    edits.add(editResult.value)
+  ok(EditFileContext(path: resolvedPathResult.value, edits: edits))
+
+proc parseFindContext*(j: JsonNode; paddockDir: string): Result[FindContext, string] {.gcsafe, raises: [].} =
+  let pathResult = j.requireStringField("path")
+  if pathResult.isErr:
+    return err(pathResult.error)
+  let resolvedPathResult = resolveToolPath(pathResult.value, paddockDir)
+  if resolvedPathResult.isErr:
+    return err(resolvedPathResult.error)
+  ok(FindContext(
+    path: resolvedPathResult.value,
+    pattern: j.getOrDefault("pattern").getStr("*"),
+    kind: j.getOrDefault("type").getStr("file"),
+    max: j.getOrDefault("max").getInt(50),
+  ))
+
+proc parseGrepContext*(j: JsonNode; paddockDir: string): Result[GrepContext, string] {.gcsafe, raises: [].} =
+  let patternResult = j.requireStringField("pattern")
+  if patternResult.isErr:
+    return err(patternResult.error)
+  let pathResult = j.requireStringField("path")
+  if pathResult.isErr:
+    return err(pathResult.error)
+  let resolvedPathResult = resolveToolPath(pathResult.value, paddockDir)
+  if resolvedPathResult.isErr:
+    return err(resolvedPathResult.error)
+  ok(GrepContext(
+    pattern: patternResult.value,
+    path: resolvedPathResult.value,
+    recursive: j.getOrDefault("recursive").getBool(true),
+    max: j.getOrDefault("max").getInt(50),
+  ))
+
+proc parseFetchContext*(j: JsonNode; defaultMax: int): Result[FetchContext, string] {.gcsafe, raises: [].} =
+  j.requireStringField("url") >>=
+    proc(url: string): Result[FetchContext, string] =
+      ok(FetchContext(url: url, maxCh: j.getOrDefault("max_chars").getInt(defaultMax)))
+
+proc parseWebSearchContext*(j: JsonNode): Result[WebSearchContext, string] {.gcsafe, raises: [].} =
+  j.requireStringField("query") >>=
+    proc(query: string): Result[WebSearchContext, string] =
+      ok(WebSearchContext(query: query, count: j.getOrDefault("count").getInt(5)))
+
+proc parseCalcContext*(j: JsonNode): Result[CalcContext, string] {.gcsafe, raises: [].} =
+  j.requireStringField("expression") >>=
+    proc(expression: string): Result[CalcContext, string] =
+      ok(CalcContext(expression: expression))
+
+proc parseMermaidContext*(j: JsonNode): Result[MermaidContext, string] {.gcsafe, raises: [].} =
+  j.requireStringField("diagram") >>=
+    proc(diagram: string): Result[MermaidContext, string] =
+      ok(MermaidContext(diagram: diagram))
+
+proc parseInspectImageContext*(j: JsonNode): Result[InspectImageContext, string] {.gcsafe, raises: [].} =
+  j.requireStringField("path") >>=
+    proc(path: string): Result[InspectImageContext, string] =
+      ok(InspectImageContext(
+        path: path,
+        prompt: j.getOrDefault("prompt").getStr(""),
+      ))
+
+proc parseTaskContext*(j: JsonNode): Result[TaskContext, string] {.gcsafe, raises: [].} =
+  j.requireStringField("prompt") >>=
+    proc(prompt: string): Result[TaskContext, string] =
+      ok(TaskContext(
+        prompt: prompt,
+        context: j.getOrDefault("context").getStr(""),
+      ))
+
+proc parseAwaitContext*(j: JsonNode): Result[AwaitContext, string] {.gcsafe, raises: [].} =
+  let ids = j.getOrDefault("job_ids")
+  if ids.kind != JArray:
+    return err("Error: 'job_ids' must be an array.")
+  ok(AwaitContext(ids: ids.mapIt(it.getStr())))
+
+proc parseFindingContext*(j: JsonNode): Result[FindingContext, string] {.gcsafe, raises: [].} =
+  j.requireStringField("finding") >>=
+    proc(finding: string): Result[FindingContext, string] =
+      ok(FindingContext(finding: finding))
+
+proc parseTodoOps*(j: JsonNode): Result[JsonNode, string] {.gcsafe, raises: [].} =
+  let ops = j.getOrDefault("ops")
+  if ops.kind != JArray:
+    return err("Error: 'ops' must be an array.")
+  ok(ops)
+
+proc buildCheckpointResult*(state: SessionState): NativeToolResult {.gcsafe, raises: [].} =
+  NativeToolResult(
+    handled: true,
+    text: "Checkpoint " & $state.checkpoints.len & " saved.",
+    checkpointNow: true,
+  )
+
+proc buildSubmitResult*(j: JsonNode): NativeToolResult {.gcsafe, raises: [].} =
+  handledText(j.getOrDefault("result").getStr(""))
+
+proc parseRewindIndex*(j: JsonNode; checkpointCount: int): Result[int, string] {.gcsafe, raises: [].} =
+  if checkpointCount == 0:
+    return err("Error: no checkpoints saved.")
+  let idx = j.getOrDefault("index").getInt(checkpointCount - 1)
+  if idx < 0 or idx >= checkpointCount:
+    return err("Error: checkpoint index " & $idx & " out of range (0.." &
+               $(checkpointCount - 1) & ").")
+  ok(idx)
+
+proc buildRewindResult*(state: SessionState; idx: int): Result[NativeToolResult, string] {.gcsafe, raises: [].} =
+  if idx < 0 or idx >= state.checkpoints.len:
+    return err("Error: checkpoint index " & $idx & " out of range (0.." &
+               $(state.checkpoints.len - 1) & ").")
+  let restored = state.checkpoints[idx]
+  ok(NativeToolResult(
+    handled: true,
+    text: "Rewound to checkpoint " & $idx & ".",
+    newHistory: some(restored),
+  ))
+
+proc resolveToolPath(path, paddockDir: string): Result[string, string] {.gcsafe, raises: [].} =
+  if path.len == 0 or paddockDir.len == 0:
+    return ok(path)
+  let resolvedPath = resolveInPaddock(path, paddockDir)
+  if not inPaddock(resolvedPath, paddockDir):
+    return err("Error: path outside paddock: " & path)
+  ok(resolvedPath)
+
+proc cancelJob(state: SessionState; jobId: string): NativeToolResult =
+  if jobId notin state.jobs:
+    return handledText("Error: job '" & jobId & "' not found.")
+  let job = state.jobs[jobId]
+  if not job.done and not job.future.isNil:
+    job.future.cancelSoon()
+    state.jobs[jobId] = JobState(future: nil, done: true, result: "(cancelled)")
+  handledText("Job " & jobId & " cancelled.")
+
+proc awaitJobs(state: SessionState; ctx: AwaitContext): Future[NativeToolResult] {.async.} =
+  var lines: seq[string] = @[]
+  for id in ctx.ids:
+    if id notin state.jobs:
+      lines.add(id & ": not found")
+      continue
+    var job = state.jobs[id]
+    if job.done:
+      lines.add(id & ": " & job.result)
+    else:
+      try:
+        let r = await job.future
+        state.jobs[id] = JobState(future: nil, done: true, result: r)
+        lines.add(id & ": " & r)
+      except CancelledError:
+        state.jobs[id] = JobState(future: nil, done: true, result: "(cancelled)")
+        lines.add(id & ": cancelled")
+      except CatchableError as e:
+        state.jobs[id] = JobState(future: nil, done: true, result: "error — " & e.msg)
+        lines.add(id & ": error — " & e.msg)
+  handledText(lines.join("\n"))
+
+proc recordFinding(ctx: NativeCtx; findingCtx: FindingContext): NativeToolResult =
+  ctx.log.info("[finding] " & findingCtx.finding)
+  handledText("Finding recorded: " & findingCtx.finding)
+
+proc executeLegacyNativeTool(tc: ToolCallRequest;
+                             ctx: NativeCtx;
+                             state: SessionState;
+                             history: ConversationHistory;
+                             j: JsonNode;
+                            ): Future[NativeToolResult] {.async.} =
+  discard state
+  discard history
+  case tc.name
+  of ReminderToolName:
+    let whenStr = j.getOrDefault("when").getStr("")
+    let remMsg  = j.getOrDefault("message").getStr("")
+    if whenStr.len == 0 or remMsg.len == 0:
+      return handledText("Error: 'when' and 'message' are required.")
+    let ts = parseWhen(whenStr)
+    discard ctx.memory.scheduleReminder(ctx.uid, $ctx.channel, ts, remMsg)
+    return handledText("Reminder scheduled.")
+
+  of CurrentTimeToolName:
+    return handledText(currentTimeResult())
+
+  of WebFetchToolName:
+    let url   = j.getOrDefault("url").getStr("")
+    let maxCh = j.getOrDefault("max_chars").getInt(DefaultMaxChars)
+    if url.len == 0: return handledText("Error: 'url' is required.")
+    if isPrivateUrl(url): return handledText("Error: private addresses not allowed.")
+    var fetched = ""
+    {.cast(gcsafe).}: fetched = performFetch(url, maxCh)
+    return handledText(fetched)
+
+  else:
+    return NativeToolResult(handled: false)
+
+proc executeShellNativeTool(tc: ToolCallRequest;
+                            ctx: NativeCtx;
+                            state: SessionState;
+                            history: ConversationHistory;
+                            j: JsonNode;
+                           ): Future[NativeToolResult] {.async.} =
+  discard state
+  discard history
+  case tc.name
+  of BashToolName:
+    let bashCtx = parseBashContext(j).valueOr:
+      return handledText(error)
+    var r = ""
+    {.cast(gcsafe).}: r = sandboxBash(bashCtx.command, ctx.paddockDir,
+                                       ctx.sandboxMode, ctx.sandboxImage)
+    return handledText(r)
+
+  of ReadFileToolName:
+    let readCtx = parseReadFileContext(j, ctx.paddockDir).valueOr:
+      return handledText(error)
+    try:
+      return handledText(renderHashlineSlice(
+        readFile(readCtx.path),
+        readCtx.startLine,
+        readCtx.maxLines,
+      ))
+    except CatchableError as e:
+      return handledText("Error: " & e.msg)
+
+  of EditFileToolName:
+    let editCtx = parseEditFileContext(j, ctx.paddockDir).valueOr:
+      return handledText(error)
+    try:
+      let original = readFile(editCtx.path)
+      let applyResult = applyEditFileOps(splitEditableLines(original), editCtx.edits).valueOr:
+        return handledText(error)
+      writeFile(editCtx.path, applyResult.join("\n"))
+      return handledText("Edited " & editCtx.path &
+                         " successfully. Re-read the file before additional edits.")
+    except CatchableError as e:
+      return handledText("Error: " & e.msg)
+
+  of FindToolName:
+    let findCtx = parseFindContext(j, ctx.paddockDir).valueOr:
+      return handledText(error)
+    var r = ""
+    {.cast(gcsafe).}: r = performFind(
+      findCtx.path,
+      findCtx.pattern,
+      findCtx.kind,
+      findCtx.max,
+    )
+    return handledText(r)
+
+  of GrepToolName:
+    let grepCtx = parseGrepContext(j, ctx.paddockDir).valueOr:
+      return handledText(error)
+    var r = ""
+    {.cast(gcsafe).}: r = performGrep(
+      grepCtx.pattern,
+      grepCtx.path,
+      grepCtx.recursive,
+      grepCtx.max,
+    )
+    return handledText(r)
+
+  else:
+    return NativeToolResult(handled: false)
+
+proc executeWebNativeTool(tc: ToolCallRequest;
+                          ctx: NativeCtx;
+                          state: SessionState;
+                          history: ConversationHistory;
+                          j: JsonNode;
+                         ): Future[NativeToolResult] {.async.} =
+  discard state
+  discard history
+  case tc.name
+  of FetchToolName:
+    let fetchCtx = parseFetchContext(j, FetchDefaultMax).valueOr:
+      return handledText(error)
+    var r = ""
+    {.cast(gcsafe).}: r = performFetch(fetchCtx.url, fetchCtx.maxCh)
+    return handledText(r)
+
+  of WebSearchToolName:
+    let searchCtx = parseWebSearchContext(j).valueOr:
+      return handledText(error)
+    var r = ""
+    {.cast(gcsafe).}: r = performWebSearch(searchCtx.query, searchCtx.count, ctx.braveApiKey)
+    return handledText(r)
+
+  else:
+    return NativeToolResult(handled: false)
+
+proc executeUtilityNativeTool(tc: ToolCallRequest;
+                              ctx: NativeCtx;
+                              state: SessionState;
+                              history: ConversationHistory;
+                              j: JsonNode;
+                             ): Future[NativeToolResult] {.async.} =
+  discard state
+  discard history
+  case tc.name
+  of CalcToolName:
+    let calcCtx = parseCalcContext(j).valueOr:
+      return handledText(error)
+    var calcResult = ""
+    try: calcResult = evalCalc(calcCtx.expression)
+    except Exception as e: calcResult = "Error: " & e.msg
+    return handledText(calcResult)
+
+  of RenderMermaidToolName:
+    let mermaidCtx = parseMermaidContext(j).valueOr:
+      return handledText(error)
+    var r = ""
+    {.cast(gcsafe).}: r = performRenderMermaid(mermaidCtx.diagram)
+    return handledText(r)
+
+  of InspectImageToolName:
+    let inspectCtx = parseInspectImageContext(j).valueOr:
+      return handledText(error)
+    var r = ""
+    {.cast(gcsafe).}: r = performInspectImage(inspectCtx.path, inspectCtx.prompt, ctx.completeFn)
+    return handledText(r)
+
+  else:
+    return NativeToolResult(handled: false)
+
+proc executeSessionNativeTool(tc: ToolCallRequest;
+                              ctx: NativeCtx;
+                              state: SessionState;
+                              history: ConversationHistory;
+                              j: JsonNode;
+                             ): Future[NativeToolResult] {.async.} =
+  discard history
+  case tc.name
+  of AskToolName:
+    let askCtx = parseAskContext(j).valueOr:
+      return handledText(error)
+    if ctx.session.isNil:
+      return handledText("Error: ask channel unavailable.")
+    ctx.session[].awaitingAsk = true
+    await ctx.outbox.put(OutboundMessage(
+      userId:  ctx.uid,
+      channel: ctx.channel,
+      text:    askCtx.question,
+    ))
+    let reply = await ctx.session[].askInbox.get()
+    ctx.session[].awaitingAsk = false
+    if reply == "__DONKEY_ASK_CANCELLED__":
+      return handledText("Error: ask interrupted.")
+    return handledText(reply)
+
+  of TodoWriteToolName:
+    let ops = parseTodoOps(j).valueOr:
+      return handledText(error)
+    var r = ""
+    {.cast(gcsafe).}: r = applyTodoOps(state, ops)
+    return handledText(r)
+
+  of CheckpointToolName:
+    return buildCheckpointResult(state)
+
+  of RewindToolName:
+    let rewindResult =
+      parseRewindIndex(j, state.checkpoints.len) >>=
+      proc(idx: int): Result[NativeToolResult, string] =
+        buildRewindResult(state, idx)
+    return rewindResult.valueOr:
+      handledText(error)
+
+  else:
+    return NativeToolResult(handled: false)
+
+proc executeAgentNativeTool(tc: ToolCallRequest;
+                            ctx: NativeCtx;
+                            state: SessionState;
+                            history: ConversationHistory;
+                            j: JsonNode;
+                           ): Future[NativeToolResult] {.async.} =
+  case tc.name
+  of TaskToolName:
+    let taskCtx = parseTaskContext(j).valueOr:
+      return handledText(error)
+    discard history
+    let jobId = spawnTaskJob(state, taskCtx.prompt, taskCtx.context, ctx.completeFn)
+    return handledText(buildTaskStartedText(jobId))
+
+  of SubmitResultToolName:
+    return buildSubmitResult(j)
+
+  of ReportFindingToolName:
+    let findingCtx = parseFindingContext(j).valueOr:
+      return handledText(error)
+    return recordFinding(ctx, findingCtx)
+
+  of CancelJobToolName:
+    return cancelJob(state, j.getOrDefault("job_id").getStr(""))
+
+  of AwaitToolName:
+    let awaitCtx = parseAwaitContext(j).valueOr:
+      return handledText(error)
+    return await awaitJobs(state, awaitCtx)
+
+  else:
+    return NativeToolResult(handled: false)
+
+proc executeNativeCategory(tc: ToolCallRequest;
+                           ctx: NativeCtx;
+                           state: SessionState;
+                           history: ConversationHistory;
+                           j: JsonNode;
+                           category: NativeToolCategory;
+                          ): Future[NativeToolResult] {.async.} =
+  let categoryResult = await category.handler(tc, ctx, state, history, j)
+  if categoryResult.handled or tc.name in category.passThroughTools:
+    return categoryResult
+  NativeToolResult(handled: false)
 
 proc executeNativeTool*(tc:      ToolCallRequest;
                         ctx:     NativeCtx;
                         state:   SessionState;
                         history: ConversationHistory;
                        ): Future[NativeToolResult] {.async.} =
-  template handled(txt: string): NativeToolResult =
-    NativeToolResult(handled: true, text: txt)
-
   let j = try: parseJson(tc.inputJson)
           except: newJObject()
+  let categories = @[
+    NativeToolCategory(handler: executeLegacyNativeTool, passThroughTools: @[]),
+    NativeToolCategory(handler: executeShellNativeTool, passThroughTools: @[]),
+    NativeToolCategory(handler: executeWebNativeTool, passThroughTools: @[]),
+    NativeToolCategory(handler: executeUtilityNativeTool, passThroughTools: @[]),
+    NativeToolCategory(handler: executeSessionNativeTool, passThroughTools: @[]),
+    NativeToolCategory(handler: executeAgentNativeTool, passThroughTools: @[]),
+  ]
+  for category in categories:
+    let categoryResult = await executeNativeCategory(tc, ctx, state, history, j, category)
+    if categoryResult.handled or tc.name in category.passThroughTools:
+      return categoryResult
 
-  case tc.name
-
-  # ── Legacy tools (moved from orchestrator) ──────────────────────────────────
-
-  of ReminderToolName:
-    let whenStr = j.getOrDefault("when").getStr("")
-    let remMsg  = j.getOrDefault("message").getStr("")
-    if whenStr.len == 0 or remMsg.len == 0:
-      return handled("Error: 'when' and 'message' are required.")
-    let ts = parseWhen(whenStr)
-    # memory is not in NativeCtx — orchestrator handles this one directly
-    return NativeToolResult(handled: false)  # fall through to orchestrator legacy path
-
-  of CurrentTimeToolName:
-    return handled(currentTimeResult())
-
-  of WebFetchToolName:
-    let url   = j.getOrDefault("url").getStr("")
-    let maxCh = j.getOrDefault("max_chars").getInt(DefaultMaxChars)
-    if url.len == 0: return handled("Error: 'url' is required.")
-    if isPrivateUrl(url): return handled("Error: private addresses not allowed.")
-    var fetched = ""
-    {.cast(gcsafe).}: fetched = performFetch(url, maxCh)
-    return handled(fetched)
-
-  # ── Shell tools ─────────────────────────────────────────────────────────────
-
-  of BashToolName:
-    let cmd = j.getOrDefault("command").getStr("")
-    if cmd.len == 0: return handled("Error: 'command' is required.")
-    var r = ""
-    {.cast(gcsafe).}: r = sandboxBash(cmd, ctx.paddockDir,
-                                       ctx.sandboxMode, ctx.sandboxImage)
-    return handled(r)
-
-  of HashlineToolName:
-    let input = j.getOrDefault("input").getStr("")
-    let file  = j.getOrDefault("file").getStr("")
-    let line  = j.getOrDefault("line").getInt(0)
-    if file.len > 0 and ctx.paddockDir.len > 0 and not inPaddock(file, ctx.paddockDir):
-      return handled("Error: path outside paddock: " & file)
-    var r = ""
-    {.cast(gcsafe).}: r = performHashline(input, file, line)
-    return handled(r)
-
-  of FindToolName:
-    let path    = j.getOrDefault("path").getStr("")
-    let pattern = j.getOrDefault("pattern").getStr("*")
-    let kind    = j.getOrDefault("type").getStr("file")
-    let max     = j.getOrDefault("max").getInt(50)
-    if path.len == 0: return handled("Error: 'path' is required.")
-    let resolvedPath =
-      if ctx.paddockDir.len > 0:
-        let rp = resolveInPaddock(path, ctx.paddockDir)
-        if not inPaddock(rp, ctx.paddockDir):
-          return handled("Error: path outside paddock: " & path)
-        rp
-      else:
-        path
-    var r = ""
-    {.cast(gcsafe).}: r = performFind(resolvedPath, pattern, kind, max)
-    return handled(r)
-
-  of GrepToolName:
-    let pattern   = j.getOrDefault("pattern").getStr("")
-    let path      = j.getOrDefault("path").getStr("")
-    let recursive = j.getOrDefault("recursive").getBool(true)
-    let max       = j.getOrDefault("max").getInt(50)
-    if pattern.len == 0: return handled("Error: 'pattern' is required.")
-    if path.len == 0: return handled("Error: 'path' is required.")
-    let resolvedPath =
-      if ctx.paddockDir.len > 0:
-        let rp = resolveInPaddock(path, ctx.paddockDir)
-        if not inPaddock(rp, ctx.paddockDir):
-          return handled("Error: path outside paddock: " & path)
-        rp
-      else:
-        path
-    var r = ""
-    {.cast(gcsafe).}: r = performGrep(pattern, resolvedPath, recursive, max)
-    return handled(r)
-
-  # ── Web tools ───────────────────────────────────────────────────────────────
-
-  of FetchToolName:
-    let url   = j.getOrDefault("url").getStr("")
-    let maxCh = j.getOrDefault("max_chars").getInt(FetchDefaultMax)
-    if url.len == 0: return handled("Error: 'url' is required.")
-    var r = ""
-    {.cast(gcsafe).}: r = performFetch(url, maxCh)
-    return handled(r)
-
-  of WebSearchToolName:
-    let query = j.getOrDefault("query").getStr("")
-    let count = j.getOrDefault("count").getInt(5)
-    if query.len == 0: return handled("Error: 'query' is required.")
-    var r = ""
-    {.cast(gcsafe).}: r = performWebSearch(query, count, ctx.braveApiKey)
-    return handled(r)
-
-  # ── Utility tools ────────────────────────────────────────────────────────────
-
-  of CalcToolName:
-    let expr = j.getOrDefault("expression").getStr("")
-    if expr.len == 0: return handled("Error: 'expression' is required.")
-    var calcResult = ""
-    try: calcResult = evalCalc(expr)
-    except Exception as e: calcResult = "Error: " & e.msg
-    return handled(calcResult)
-
-  of RenderMermaidToolName:
-    let diagram = j.getOrDefault("diagram").getStr("")
-    if diagram.len == 0: return handled("Error: 'diagram' is required.")
-    var r = ""
-    {.cast(gcsafe).}: r = performRenderMermaid(diagram)
-    return handled(r)
-
-  of InspectImageToolName:
-    let path   = j.getOrDefault("path").getStr("")
-    let prompt = j.getOrDefault("prompt").getStr("")
-    if path.len == 0: return handled("Error: 'path' is required.")
-    var r = ""
-    {.cast(gcsafe).}: r = performInspectImage(path, prompt, ctx.completeFn)
-    return handled(r)
-
-  # ── Session tools ────────────────────────────────────────────────────────────
-
-  of AskToolName:
-    let question = j.getOrDefault("question").getStr("")
-    if question.len == 0: return handled("Error: 'question' is required.")
-    await ctx.outbox.put(OutboundMessage(
-      userId:  ctx.uid,
-      channel: ctx.channel,
-      text:    question,
-    ))
-    let reply = await ctx.inbox.get()
-    return handled(reply.payload)
-
-  of TodoWriteToolName:
-    let ops = j.getOrDefault("ops")
-    if ops.kind != JArray: return handled("Error: 'ops' must be an array.")
-    var r = ""
-    {.cast(gcsafe).}: r = applyTodoOps(state, ops)
-    return handled(r)
-
-  of CheckpointToolName:
-    return NativeToolResult(handled: true,
-                            text:    "Checkpoint " & $state.checkpoints.len & " saved.",
-                            checkpointNow: true)
-
-  of RewindToolName:
-    if state.checkpoints.len == 0:
-      return handled("Error: no checkpoints saved.")
-    let idx = j.getOrDefault("index").getInt(state.checkpoints.len - 1)
-    if idx < 0 or idx >= state.checkpoints.len:
-      return handled("Error: checkpoint index " & $idx & " out of range (0.." &
-                     $(state.checkpoints.len - 1) & ").")
-    let restored = state.checkpoints[idx]
-    return NativeToolResult(handled: true,
-                            text:    "Rewound to checkpoint " & $idx & ".",
-                            newHistory: some(restored))
-
-  # ── Agent coordination tools ─────────────────────────────────────────────────
-
-  of TaskToolName:
-    let prompt  = j.getOrDefault("prompt").getStr("")
-    let context = j.getOrDefault("context").getStr("")
-    if prompt.len == 0: return handled("Error: 'prompt' is required.")
-    var r = ""
-    {.cast(gcsafe).}: r = performTask(prompt, context, ctx.completeFn)
-    return handled(r)
-
-  of SubmitResultToolName:
-    return handled(j.getOrDefault("result").getStr(""))
-
-  of ReportFindingToolName:
-    let finding = j.getOrDefault("finding").getStr("")
-    ctx.log.info("[finding] " & finding)
-    return handled("Finding recorded: " & finding)
-
-  of CancelJobToolName:
-    let jobId = j.getOrDefault("job_id").getStr("")
-    if jobId notin state.jobs:
-      return handled("Error: job '" & jobId & "' not found.")
-    let job = state.jobs[jobId]
-    if not job.done and not job.future.isNil:
-      job.future.cancelSoon()
-      state.jobs[jobId] = JobState(done: true, result: "(cancelled)")
-    return handled("Job " & jobId & " cancelled.")
-
-  of AwaitToolName:
-    let ids = j.getOrDefault("job_ids")
-    if ids.kind != JArray: return handled("Error: 'job_ids' must be an array.")
-    var lines: seq[string] = @[]
-    for idNode in ids:
-      let id = idNode.getStr()
-      if id notin state.jobs:
-        lines.add(id & ": not found")
-        continue
-      var job = state.jobs[id]
-      if job.done:
-        lines.add(id & ": " & job.result)
-      else:
-        try:
-          let r = await job.future
-          state.jobs[id] = JobState(done: true, result: r)
-          lines.add(id & ": " & r)
-        except CancelledError:
-          lines.add(id & ": cancelled")
-        except CatchableError as e:
-          lines.add(id & ": error — " & e.msg)
-    return handled(lines.join("\n"))
-
-  else:
-    return NativeToolResult(handled: false)
+  return NativeToolResult(handled: false)

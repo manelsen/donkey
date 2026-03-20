@@ -1,0 +1,20 @@
+[Unit]
+Description=__APP_NAME__ AI Agent Daemon
+Documentation=__APP_REPO_URL__
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+
+# Secrets and API keys
+EnvironmentFile=%h/.config/__CONFIG_DIR_NAME__/__ENV_FILE_NAME__
+
+ExecStart=%h/.local/bin/__APP_SLUG__ start --config %h/.config/__CONFIG_DIR_NAME__/__CONFIG_FILE_NAME__
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=default.target

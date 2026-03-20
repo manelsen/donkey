@@ -14,6 +14,7 @@
 import std/[json, osproc, streams, strutils]
 import ../../ports/tool
 import ../../core/pipeops
+import ../../core/app_meta
 
 # ── Pure helpers (exported for unit tests) ────────────────────────────────────
 
@@ -117,7 +118,7 @@ proc initialize(c: var McpClientAdapter): Result[void, string] =
   let params = %* {
     "protocolVersion": "2024-11-05",
     "capabilities": {},
-    "clientInfo": {"name": "donkey", "version": "0.1.0"}
+    "clientInfo": {"name": AppSlug, "version": AppVersion}
   }
   let _ = ? c.rpc("initialize", params)
   # Send initialized notification (no response expected)

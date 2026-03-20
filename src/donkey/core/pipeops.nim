@@ -2,22 +2,41 @@
 ##
 ## Usage:
 ##   "hello" |> strip |> toUpperAscii
+##   "world" |>-> surround("hello ")
 ##
 ##   provider.complete(req) >>= extractText >>= saveMemory
 ##
 ## |>  — pipe forward:  a |> f   ≡  f(a)          (pure transformations)
+## |>-> — pipe into last arg: a |>-> f(x) ≡ f(x, a)
 ## >>= — monadic bind:  r >>= f  ≡  r.andThen(f)  (fallible steps, Result chain)
 
-import std/monotimes
+import std/[macros, monotimes]
 import results
 export results
 
 template `|>`*(a: untyped; f: untyped): untyped =
   f(a)
 
+macro `|>->`*(a: untyped; f: untyped): untyped =
+  case f.kind
+  of nnkCall, nnkCommand:
+    result = newNimNode(f.kind)
+    for child in f:
+      result.add(child)
+    result.add(a)
+  of nnkIdent, nnkSym, nnkDotExpr, nnkAccQuoted:
+    result = newCall(f, a)
+  else:
+    error("`|>->` expects a callable expression on the right-hand side", f)
+
 template `>>=`*[T, E, U](r: Result[T, E];
-                          f: proc(x: T): Result[U, E]): Result[U, E] =
-  r.andThen(f)
+                          f: proc(x: T): Result[U, E] {.gcsafe, raises: [].}): Result[U, E] =
+  (block:
+    let bound = r
+    if bound.isOk:
+      f(bound.get())
+    else:
+      err(Result[U, E], bound.error))
 
 proc nowMs*(): int64 =
   ## Returns current monotonic time in milliseconds.
