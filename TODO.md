@@ -1,67 +1,88 @@
 # TODO — Donkey
 
-Itens concretos em aberto, ordenados por urgência dentro de cada categoria. Para roadmap de fases, ver `ROADMAP.md`.
+Itens realmente abertos no estado atual do código. Para visão por fases, ver [`ROADMAP.md`](/home/micelio/git/donkey/ROADMAP.md). Para histórico do refactor-base, ver [`REFACTOR_PLAN.md`](/home/micelio/git/donkey/REFACTOR_PLAN.md).
 
 ---
 
-## F3 — Function calling e streaming (providers pendentes)
+## P0 — Hardening imediato
 
-- [ ] **Anthropic function calling**: `buildBody` ignora `req.tools`; precisa serializar como `tools:[{name,description,input_schema}]` e parsear `tool_use` blocks na resposta; histórico usa `tool_result` content blocks (não `role=="tool"`).
-- [ ] **Gemini function calling**: `buildBody` ignora `req.tools`; precisa de `tools:[{functionDeclarations:[...]}]`; resposta tem `functionCall` part; `requiresUserFirst=true` — normalizar histórico (function response não pode seguir user turn).
-- [ ] **Anthropic/Gemini `caps()` correction**: enquanto não implementado, `toolCalling` deveria ser `false` para não enganar o orchestrator.
-- [ ] **OpenRouter SSE streaming**: `makeStreamFn` é fallback não-streaming ("emit full text as one token"). Implementar SSE real com `data: [DONE]` detection.
-- [ ] **Anthropic streaming**: `streaming: true` nas `caps()` mas não implementado — `content_block_delta` events.
+- [ ] **Prompt injection via tool output**
+  Estado:
+  o runtime ainda trata tool output como texto comum no histórico.
+  Próximo passo:
+  prefixar output de tools com marcador não-instrucional e separar melhor erro operacional de resultado funcional.
 
-## Tools / Native tools
+- [ ] **`grep` com regex sem dependência frágil de PCRE**
+  Estado:
+  o comportamento ainda pode variar por distro.
+  Próximo passo:
+  padronizar engine suportada ou documentar explicitamente o subset aceito.
 
-- [ ] **`grep` com regex**: regex literal não funciona (libpcre.so.3 ausente em algumas distros). Opções: (a) usar `re` de Nim com PCRE bundled, (b) implementar subset básico de regex sem PCRE, (c) exigir instalação do pacote e documentar.
-- [ ] **Validação de permissions em `saveSkillEntry`**: bloquear `--allow-all` e `--allow-run` sem confirmação explícita do operador; exigir targets concretos em `--allow-net`/`--allow-read`.
-- [ ] **Docker sandbox integration test**: `smDocker` tests em `t_sandbox.nim` marcados como skip — adicionar quando Docker disponível no CI.
-
-## Memória
-
-- [ ] **`.md` como views/exports do grafo** (F6+): gerados sob demanda via `donkey ctl memory export <user>` ou automaticamente pelo daemon a cada sessão fechada.
-
-## Channels
-
-- [ ] **`WeChatAdapter`** (F8): Official Account API, OAuth 2.0, template messages.
-- [ ] **`QQAdapter`** (F8): OneBot protocol — definir v11 vs v12.
-
-## CLI / TUI
-
-- [ ] **`donkey ctl` consolidado** (pós-F9): todos os comandos F1-F8 num único help. Atualmente comandos definidos em módulos separados sem entry point unificado.
-- [ ] **User manager panel** (pós-F9): painel TUI para listar usuários, editar perfil, revogar acesso.
-
-## Segurança
-
-- [ ] **Prompt injection via tool output**: sem solução técnica completa disponível. Documentado em CLAUDE.md (Threat model). Mitigações a considerar: prefixar todo tool output com marcador não-instrução, separar em content blocks distintos se o provider suportar.
-
-## Decisões abertas
-
-- [ ] **F6:** `.md` como views do grafo — geradas automaticamente pelo daemon ao fechar sessão, ou exportadas sob demanda via `donkey ctl memory export <user>`? (Decisão de F6, não urgente.)
-- [ ] **F8:** QQ — OneBot v11/v12 ou API oficial?
-
-### Fechadas (não remover — histórico)
-
-- ~~**F2 manifesto de skill**~~ → `SkillManifest` como struct Nim em `skills.toml [[skill]]`. Clawhub integration é problema de F7, não de formato.
-- ~~**F4 workers persistentes vs. on-demand**~~ → On-demand: `asyncSpawn` fire-and-forget por sessão (ver orchestrator.nim).
-- ~~**F1 long polling vs webhook**~~ → Config: `[telegram] webhook_url` presente → webhook; ausente → long polling. (Webhook não implementado ainda — ver TODO acima.)
+- [ ] **Trocar `std/sha1` deprecated no `WeChatAdapter`**
+  Estado:
+  a validação de assinatura compila e funciona, mas usa módulo deprecated.
+  Próximo passo:
+  migrar para `checksums/sha1` ou equivalente não deprecated.
 
 ---
 
-## Config / Secrets
+## F7 — Skills ecosystem
 
-- [ ] **Long polling vs webhook**: `TelegramAdapter` usa long polling. Adicionar modo webhook (flag ou auto-detect por URL configurada). Decisão: config `[telegram] webhook_url` presente → webhook; ausente → long polling.
+- [ ] **Bundles remotos executáveis além do modo “skill de instrução”**
+  Estado:
+  bundles remotos do ClawHub já entram no runtime da sessão como skill prompt (`SKILL.md` instalado é injetado no system prompt e participa do rebuild de sessão), mas ainda não viram MCP/Deno skills executáveis automaticamente.
 
-## Feito recentemente (não mergear de volta)
+- [ ] **Hardening de permissões em skills**
+  Estado:
+  continua faltando validar/bloquear permissões perigosas demais em `saveSkillEntry`.
 
-- ✅ Function calling OpenRouter + Zhipu (tools array + tool_calls parsing)
-- ✅ Paddock por usuário + path enforcement (`resolveInPaddock`, `inPaddock`)
-- ✅ Symlinks ignorados em find/grep
-- ✅ Detecção de repetição substituindo MaxToolRoundsOrch=5
-- ✅ Progress embed (isPartial streaming durante tool loop)
-- ✅ Docker sandbox (`sandbox.nim`, `smNone`/`smDocker`, `[sandbox]` em config)
-- ✅ Suite completa de testes native tools (70+ testes)
-- ✅ Faxina de warnings do compilador
-- ✅ `donkey service install/remove/start/stop/restart/logs` — systemd --user, sem root
-- ✅ `deploy/` — unit file, env.example, toml.example, install.sh standalone
+---
+
+## F8 — Canais chineses
+
+- [ ] **Ingress real de WeChat**
+  Estado:
+  `WeChatAdapter` já cobre OAuth URL, parsing de webhook XML, envio e template message, mas o inbound ainda depende de forwarding externo para `enqueueWebhookXml`.
+
+- [ ] **Ingress real de QQ / OneBot**
+  Estado:
+  `QQAdapter` já cobre send e parsing de evento, mas ainda depende de forwarding externo para `enqueueEventJson`.
+
+- [ ] **Fixtures/end-to-end dos canais novos**
+  Estado:
+  há testes unitários de parse/roteamento, mas não há smoke e2e dos fluxos completos de inbound/outbound nesses canais.
+
+---
+
+## F9+ — Admin / operação
+
+- [ ] **Persistir e expor estado administrativo mais rico no IPC**
+  Estado:
+  o TUI já mostra usuários locais e o CLI já edita/revoga, mas o daemon ainda não expõe um modelo administrativo mais rico via IPC.
+
+- [ ] **Ações administrativas interativas no TUI**
+  Estado:
+  o painel de usuários existe, mas edição/revogação ainda ficam no `ctl`.
+
+---
+
+## CI / infraestrutura
+
+- [ ] **Docker sandbox integration test**
+  Estado:
+  `smDocker` continua sem cobertura automática porque o ambiente de teste nem sempre tem Docker disponível.
+
+- [ ] **Cobertura de Postgres com banco real em CI**
+  Estado:
+  a parte `withPostgres` compila e tem testes, mas parte da validação ainda é compile-only quando não há socket/banco disponível.
+
+---
+
+## Feito recentemente
+
+- ✅ F3 fechado: function calling real em Anthropic/Gemini e streaming real em OpenRouter/Anthropic
+- ✅ F6 fechado: `ctl memory export` e views textuais sobre Postgres
+- ✅ F7 fechado no CLI: search/install/update remotos do ClawHub com lock/origin/hash
+- ✅ F8 fechado no runtime base: `WeChatAdapter` e `QQAdapter` integrados ao daemon/outbound
+- ✅ F9 fechado no runtime base: painel de usuários no TUI, `ctl user edit/revoke/allow`, bloqueio de usuário revogado no ingresso
+- ✅ Refactor-base concluído: daemon, orchestrator, bootstrap, outbound, loaders e native tools fatiados e cobertos
