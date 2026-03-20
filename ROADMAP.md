@@ -82,11 +82,11 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 - [x] **Docker sandbox**: `sandbox.nim` com `buildDockerCmd` + `sandboxBash`; bind mount paddock em `/workspace`; `smNone`/`smDocker` configuráveis em `donkey.toml [sandbox]`
 - [x] **Config `[sandbox]`**: `SandboxMode` enum em `config/types.nim`; loader parseia `mode` e `image`; default `smNone` + `alpine`
 - [x] **Startup warning**: `sandboxLogLevel` emite warn se smNone, info se smDocker
-- [x] **Suite de testes native tools**: 70+ testes determinísticos cobrindo `resolveInPaddock`, `inPaddock`, `performBash`, `performHashline`, `performFind`, `performGrep`, `applyTodoOps`, `executeNativeTool` (todas as branches)
+- [x] **Suite de testes native tools**: 70+ testes determinísticos cobrindo `resolveInPaddock`, `inPaddock`, `performBash`, `read_file`/`edit_file` com hashline anchors, `performFind`, `performGrep`, `applyTodoOps`, jobs e `executeNativeTool`
 
 ---
 
-## F3 — Multi-provider 🚧
+## F3 — Multi-provider ✅
 
 **Entregável:** 5 providers funcionando com suas peculiaridades isoladas nos adapters.
 
@@ -96,10 +96,10 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 - [x] Fallback automático: `buildFallbackFn` + fallback chain por sessão
 - [x] `donkey ctl provider test <name>`
 
-### Pendente
-- [ ] **Anthropic function calling**: `caps()` declara `toolCalling: true` mas `buildBody` ignora `req.tools` — `tool_use`/`tool_result` content blocks não implementados (comentário no adapter: "F3+ scope")
-- [ ] **Gemini function calling**: idem — `function_declarations` ausente em `buildBody`; `requiresUserFirst` quirk não aplicado no histórico
-- [ ] **Streaming real**: `makeStreamFn` em OpenRouter é fallback não-streaming ("complete non-streaming and emit full text as one token"); `streaming: true` nas `caps()` é impreciso; Anthropic streaming também pendente
+### Fechado
+- [x] **Anthropic function calling**: request serializa tools; resposta parseia `tool_use`; histórico usa `tool_result`
+- [x] **Gemini function calling**: body inclui `functionDeclarations`; resposta parseia `functionCall`; histórico respeita `requiresUserFirst`
+- [x] **Streaming real**: OpenRouter e Anthropic usam SSE real; o orquestrador evita streaming no primeiro round quando há tools
 
 ---
 
@@ -119,6 +119,11 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 - [x] **Hard cap elevado**: `MaxToolRoundsOrch = 50` como safety net
 - [x] **Progress embed**: após cada tool call, `isPartial=true` com `streamId&"-st"`; fecha com `isPartial=false` e contagem total ao final do loop
 - [x] **Sandbox integrado**: `paddockDir` criado em `runOrchestrator`; `sandboxMode`/`sandboxImage` passados do config para `NativeCtx`
+- [x] **`ask` isolado do inbox principal**: sessão agora usa `askInbox` dedicado, sem competir com mensagens normais do actor
+- [x] **Correlação explícita de workers**: replies de memória e tools usam filas distintas (`memOut` / `toolOut`) e validação por `id`
+- [x] **Persistência periódica de sessão**: snapshot salvo ao final de cada `tkUserMsg`, não só em cancel/reset
+- [x] **Runtime efêmero rebuildável**: drift em tools/skills/provider surface recria só o actor da sessão, preservando memória persistente
+- [x] **`schedule_reminder` unificada**: reminder saiu do special-case do orquestrador e segue o caminho normal de tools nativas
 
 ---
 
@@ -151,11 +156,11 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
   - `graphUpsertSession`, `graphLinkSessions`, `graphAddFact`, `graphAddPerson`, `graphTraverse`
 - [x] `OpenRouterEmbeddingAdapter`: POST /v1/embeddings, Qwen/Qwen3-Embedding (4096-dim)
 - [x] `donkey ctl memory search <user> "<query>"` + `ctl memory import <user>`
-- [ ] `.md` como views/exports do grafo (gerados sob demanda) — pós-F6
+- [x] `.md` como views/exports do grafo sob demanda via `donkey ctl memory export`
 
 ---
 
-## F7 — Skills Ecosystem 🚧
+## F7 — Skills Ecosystem ✅ no plano de CLI/runtime-base
 
 **Entregável:** marketplace Clawhub integrado, skills por usuário.
 
@@ -166,24 +171,30 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 - [x] `mergeSkills`: user skills override global registry por nome
 - [x] `loadUserSkills`: carrega skills por usuário
 
-### Clawhub marketplace — pendente
-- [ ] HTTP client para o registry remoto Clawhub (busca, listagem)
-- [ ] Download de skill + verificação de hash/assinatura
-- [ ] `donkey ctl skill search <query>` — pesquisa no registry remoto
-- [ ] `donkey ctl skill install <name>` via registry (hoje: path local apenas)
-- [ ] `donkey ctl skill update` — compara versões locais com registry
-- [ ] User skills mergeadas no orchestrator na criação de sessão
+### Clawhub marketplace — entregue no CLI
+- [x] HTTP client para o registry remoto Clawhub (busca, listagem)
+- [x] Download de skill + verificação de hash/assinatura
+- [x] `donkey ctl skill search <query>` — pesquisa no registry remoto
+- [x] `donkey ctl skill install <slug>` via registry remoto
+- [x] `donkey ctl skill update` — compara versões locais com registry
+- [x] User skills mergeadas no bootstrap de sessão
+
+### Próximo passo além da fase
+- [ ] Tornar bundles remotos do ClawHub executáveis no mesmo fluxo das skills Deno locais, sem depender só do lock/install no CLI
 
 ---
 
-## F8 — Channels chineses (parcial)
+## F8 — Channels chineses ✅ no runtime base
 
 **Entregável:** WeCom + Feishu funcionais; WeChat e QQ mapeados.
 
 - [x] `WeComAdapter` — Webhook HTTP + API corporativa (corp_id, corp_secret, agent_id)
 - [x] `FeishuAdapter` — WebSocket gateway + Lark Open API
-- [ ] `WeChatAdapter` — Official Account API (OAuth 2.0, template messages)
-- [ ] `QQAdapter` — OneBot protocol
+- [x] `WeChatAdapter` — Official Account API (OAuth 2.0, template messages)
+- [x] `QQAdapter` — OneBot v11 HTTP
+
+### Limitação atual
+- [ ] Ingress próprio desses canais ainda depende de forwarding externo para os adapters, em vez de um servidor dedicado embutido no daemon
 
 ---
 
@@ -197,18 +208,19 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 - [x] Log ring buffer (500 entries, Lock-protected) in `core/log.nim` — `ringInit()` / `ringSnapshot(n)`
   - Default sink writes to stderr AND pushes to ring; CLI tools skip ring (ringInit not called)
 - [x] `donkey ctl status` — snapshot: uptime, sessions, channels, providers, tools, memory backend
-- [x] `donkey tui` — live illwill dashboard (3 panels: Sessions · Logs · Stats)
+- [x] `donkey tui` — live illwill dashboard (Users · Sessions · Logs · Stats)
   - Auto-refresh every 2s via IPC socket; keys: q=quit, tab=next panel, r=force refresh
-- [x] `deploy/donkey.service` — unit systemd --user (Type=simple, Restart=on-failure, EnvironmentFile)
-- [x] `deploy/donkey.env.example` — template de variáveis de ambiente (API keys, bot tokens)
-- [x] `deploy/donkey.toml.example` — template de config comentado
+- [x] Deploy templates generalizados em `deploy/` — unit/env/config renderizados por variáveis centrais
 - [x] `deploy/install.sh` — script standalone (sem root): cria dirs, instala binary, config, registra service
 - [x] `donkey service install` — instala como systemd --user; injeta keys do processo atual automaticamente
 - [x] `donkey service remove` — desregistra service; preserva config e dados
 - [x] `donkey service start / stop / restart` — wraps systemctl --user
 - [x] `donkey service logs [-f] [--cat]` — journalctl --user; `-f` segue; `--cat` sem metadata
-- [ ] User manager panel (listar, editar perfil, revogar acesso) — pós-F9
-- [ ] `donkey ctl` expandido consolidado com todos os comandos F1-F8 — pós-F9
+- [x] User manager panel básico (listar usuários no TUI; editar/revogar via `ctl`)
+- [x] `donkey ctl` expandido consolidado com os comandos de F1-F9 já disponíveis no binário
+
+### Próximo passo além da fase
+- [ ] Ações administrativas interativas diretamente no TUI
 
 ---
 
@@ -222,3 +234,4 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 - **F1 long polling vs webhook** → config `[telegram] webhook_url` presente → webhook; ausente → long polling
 - **F2 manifesto de skill** → `SkillManifest` em `skills.toml [[skill]]`; Clawhub integration é problema de F7
 - **F4 workers** → on-demand: `asyncSpawn` fire-and-forget por sessão
+- **Base runtime/refactor** → concluída: daemon, orchestrator, native tools, loader, bootstrap, sandbox, outbound e runtimes de canal já foram fatiados e cobertos por testes de contrato

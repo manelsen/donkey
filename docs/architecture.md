@@ -218,7 +218,7 @@ donkey service remove     # desregistra; config e dados preservados
 ```
 
 Arquivos:
-- Unit: `~/.config/systemd/user/donkey.service`
+- Unit: `~/.config/systemd/user/<app>.service`
 - Env/secrets: `~/.config/donkey/donkey.env` (chmod 600)
 - Config: `~/.config/donkey/donkey.toml`
 - Binary: `~/.local/bin/donkey`
