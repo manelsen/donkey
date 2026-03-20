@@ -7,16 +7,17 @@
 ## Format: OpenAI-compatible (system as first message with role=system,
 ## messages array with role/content pairs).
 
-import std/[httpclient, json, strutils]
+import std/[httpclient, json, streams, strutils]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
+import ../../core/app_meta
 
 const
   OpenRouterEndpoint*    = "https://openrouter.ai/api/v1/chat/completions"
   OpenRouterDefaultModel = "openai/gpt-4o-mini"
-  OpenRouterReferer*     = "https://github.com/donkey-ai/donkey"
-  OpenRouterTitle*       = "Donkey"
+  OpenRouterReferer*     = OpenRouterRefererUrl
+  OpenRouterTitle*       = AppName
 
 type
   OpenRouterAdapter* = object
@@ -25,6 +26,12 @@ type
     endpoint*: string   ## override for testing
     referer*:  string   ## HTTP-Referer header value
     xTitle*:   string   ## X-Title header value
+
+  OpenRouterSseChunk* = object
+    token*:        string
+    done*:         bool
+    inputTokens*:  int
+    outputTokens*: int
 
 # ── Concept conformance ───────────────────────────────────────────────────────
 
@@ -83,6 +90,11 @@ proc buildBody*(a: OpenRouterAdapter; req: CompletionRequest): JsonNode =
     result["tools"]       = toolsArr
     result["tool_choice"] = %"auto"
 
+proc buildStreamBody*(a: OpenRouterAdapter; req: CompletionRequest): JsonNode =
+  result = a.buildBody(req)
+  result["stream"] = %true
+  result["stream_options"] = %* {"include_usage": true}
+
 # ── Response parsing ──────────────────────────────────────────────────────────
 
 func parseOpenRouterResponse*(j: JsonNode): CompletionResponse =
@@ -105,6 +117,27 @@ func parseOpenRouterResponse*(j: JsonNode): CompletionResponse =
     outputTokens: if usage != nil: usage.getOrDefault("completion_tokens").getInt(0) else: 0,
     toolCalls:    toolCalls,
   )
+
+proc parseOpenRouterSseLine*(line: string): Result[OpenRouterSseChunk, string] =
+  let trimmed = line.strip()
+  if trimmed.len == 0 or not trimmed.startsWith("data:"):
+    return ok(OpenRouterSseChunk())
+  let payload = trimmed["data:".len .. ^1].strip()
+  if payload == "[DONE]":
+    return ok(OpenRouterSseChunk(done: true))
+  let j = try: parseJson(payload) except CatchableError as e: return err(e.msg)
+  let usage = j.getOrDefault("usage")
+  let choices = j.getOrDefault("choices")
+  var token = ""
+  if choices != nil and choices.kind == JArray and choices.len > 0:
+    let delta = choices[0].getOrDefault("delta")
+    if delta != nil:
+      token = delta.getOrDefault("content").getStr("")
+  ok(OpenRouterSseChunk(
+    token: token,
+    inputTokens: if usage != nil: usage.getOrDefault("prompt_tokens").getInt(0) else: 0,
+    outputTokens: if usage != nil: usage.getOrDefault("completion_tokens").getInt(0) else: 0,
+  ))
 
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
@@ -143,13 +176,48 @@ proc makeStreamFn*(a: OpenRouterAdapter): StreamFn =
   result = proc(req: CompletionRequest;
                 onToken: proc(tok: string) {.gcsafe.}
                ): Result[CompletionResponse, string] {.gcsafe.} =
-    ## Simple fallback: complete non-streaming and emit the full text as one token.
-    ## A proper SSE implementation would chunk the response; this is functional.
-    {.cast(gcsafe).}:
-      let r = adapter.complete(req)
-      if r.isOk:
-        onToken(r.value.text)
-      r
+    try:
+      let client = newHttpClient()
+      defer: client.close()
+
+      client.headers = newHttpHeaders({
+        "Content-Type":  "application/json",
+        "Authorization": "Bearer " & adapter.apiKey,
+        "HTTP-Referer":  adapter.referer,
+        "X-Title":       adapter.xTitle,
+      })
+
+      let body = $adapter.buildStreamBody(req)
+      let url  = if adapter.endpoint.len > 0: adapter.endpoint else: OpenRouterEndpoint
+      let resp = client.request(url, httpMethod = HttpPost, body = body)
+
+      if resp.status[0] != '2':
+        return err("OpenRouter API error " & resp.status & ": " & resp.body)
+
+      var accumulated = ""
+      var inputTokens = 0
+      var outputTokens = 0
+      var line = ""
+      while resp.bodyStream.readLine(line):
+        let chunk = parseOpenRouterSseLine(line).valueOr:
+          return err(error)
+        if chunk.done:
+          break
+        if chunk.token.len > 0:
+          accumulated.add(chunk.token)
+          onToken(chunk.token)
+        if chunk.inputTokens > 0:
+          inputTokens = chunk.inputTokens
+        if chunk.outputTokens > 0:
+          outputTokens = chunk.outputTokens
+
+      ok(CompletionResponse(
+        text: accumulated,
+        inputTokens: inputTokens,
+        outputTokens: outputTokens,
+      ))
+    except CatchableError as e:
+      err(e.msg)
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

@@ -73,6 +73,27 @@ proc buildBody*(a: ZhipuAdapter; req: CompletionRequest): JsonNode =
     result["tools"]       = toolsArr
     result["tool_choice"] = %"auto"
 
+func parseZhipuResponse*(parsed: JsonNode): CompletionResponse =
+  let msg   = parsed["choices"][0]["message"]
+  let usage = parsed.getOrDefault("usage")
+  var toolCalls: seq[ToolCallRequest] = @[]
+  let tcs = msg.getOrDefault("tool_calls")
+  if tcs != nil and tcs.kind == JArray:
+    for tc in tcs:
+      let fn = tc["function"]
+      toolCalls.add ToolCallRequest(
+        id:        tc["id"].getStr(""),
+        name:      fn["name"].getStr(""),
+        inputJson: fn["arguments"].getStr("{}"),
+      )
+
+  CompletionResponse(
+    text:         msg.getOrDefault("content").getStr(""),
+    inputTokens:  if usage != nil: usage["prompt_tokens"].getInt(0) else: 0,
+    outputTokens: if usage != nil: usage["completion_tokens"].getInt(0) else: 0,
+    toolCalls:    toolCalls,
+  )
+
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
 proc complete*(a: ZhipuAdapter; req: CompletionRequest): Result[CompletionResponse, string] =
@@ -93,25 +114,7 @@ proc complete*(a: ZhipuAdapter; req: CompletionRequest): Result[CompletionRespon
       return err("Zhipu API error " & resp.status & ": " & resp.body)
 
     let parsed = parseJson(resp.body)
-    let msg    = parsed["choices"][0]["message"]
-    let usage  = parsed.getOrDefault("usage")
-    var toolCalls: seq[ToolCallRequest] = @[]
-    let tcs = msg.getOrDefault("tool_calls")
-    if tcs != nil and tcs.kind == JArray:
-      for tc in tcs:
-        let fn = tc["function"]
-        toolCalls.add ToolCallRequest(
-          id:        tc["id"].getStr(""),
-          name:      fn["name"].getStr(""),
-          inputJson: fn["arguments"].getStr("{}"),
-        )
-
-    ok CompletionResponse(
-      text:         msg.getOrDefault("content").getStr(""),
-      inputTokens:  if usage != nil: usage["prompt_tokens"].getInt(0)    else: 0,
-      outputTokens: if usage != nil: usage["completion_tokens"].getInt(0) else: 0,
-      toolCalls:    toolCalls,
-    )
+    ok(parseZhipuResponse(parsed))
   except CatchableError as e:
     err(e.msg)
 
