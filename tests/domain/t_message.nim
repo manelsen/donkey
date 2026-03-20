@@ -1,6 +1,6 @@
 ## Domain types + buildPrompt — pure func, zero side effects.
 
-import std/[os, strutils, unittest]
+import std/[strutils, unittest]
 import donkey/domain/message
 
 suite "Message types":
