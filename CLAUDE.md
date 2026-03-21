@@ -148,6 +148,21 @@ OUTBOUND ADAPTERS
 
 Ports são `concept` Nim (structural typing, verificado em compile-time). Adapters não declaram conformidade — o compilador verifica. Mocks para TDD são qualquer tipo que satisfaça o concept.
 
+## Boundary Rules
+
+Estas regras agora são enforced por `scripts/check_boundaries.sh` e `tests/architecture/t_boundaries.nim`.
+
+- `core` só contém tipos, parsers, reducers, deciders e helpers puros
+- `core` não importa `adapters/*`, `chronos`, `chronos/asyncsync`, `osproc`, `httpclient` nem `parsetoml`
+- `ports` definem capacidades estáveis; não importam `adapters/*` nem `app/*`
+- `app` é shell de casos de uso: lifecycle, actors, queues, streaming, polling, wiring
+- `adapters` traduzem I/O externo para `ports`; não carregam semântica cross-channel ou decisão de negócio
+
+Checklist de refactor/PR:
+- isso é `core` ou `shell`?
+- isso depende de `port` ou de adapter concreto?
+- isso deveria ser uma decisão pura testável?
+
 ## Multi-agente
 
 Agentes são actors: cada um tem `AsyncChannel[AgentMessage]` (Chronos) como inbox. Sem estado compartilhado. OrchestratorAgent por sessão ativa; workers spawned on demand, não persistentes.
