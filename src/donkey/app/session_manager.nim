@@ -10,7 +10,7 @@ import chronos
 import chronos/asyncsync
 import ../domain/agent_message
 import ../domain/message
-import ../core/session_ingress
+import ../core/session/session_ingress
 
 type
   SessionEntry* = object

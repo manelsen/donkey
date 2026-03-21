@@ -9,8 +9,7 @@ import std/[json, strutils]
 import ../domain/message
 import ../core/log
 import ../core/pipeops
-import ../adapters/memory/md_file
-import ../adapters/tool/mcp_client
+import ../ports/memory
 import ../ports/provider
 import ../ports/tool
 
@@ -76,7 +75,7 @@ func extractText*(resp: CompletionResponse): Result[string, string] =
   if resp.text.len > 0: ok(resp.text)
   else: err("empty LLM response")
 
-proc executeToolCalls*(clients: var seq[McpClientAdapter];
+proc executeToolCalls*(clients: var seq[ToolRuntimePort];
                        calls:   seq[ToolCallRequest];
                        logger:  Logger): seq[(ToolCallRequest, string)] =
   ## Executes all tool calls. Returns (call, output) pairs.
@@ -104,22 +103,22 @@ proc executeToolCalls*(clients: var seq[McpClientAdapter];
 
 type
   AgentRunner* = object
-    memory*:     MdFileAdapter
+    memory*:     MemoryRuntimePort
     complete*:   CompleteFn
-    clients*:    seq[McpClientAdapter]  ## registered tool servers
+    clients*:    seq[ToolRuntimePort]  ## registered tool servers
     tools*:      seq[ToolDescription]   ## cached tool schemas
     logger*:     Logger
     history*:    ConversationHistory
     maxHistory*: int
 
-proc newAgentRunner*(memory:    MdFileAdapter;
+proc newAgentRunner*(memory:    MemoryRuntimePort;
                      complete:  CompleteFn;
                      logger:    Logger;
-                     clients:   seq[McpClientAdapter] = @[];
+                     clients:   seq[ToolRuntimePort] = @[];
                      maxHistory = 20): AgentRunner =
   ## Load tool schemas from all registered clients.
   var tools:     seq[ToolDescription]
-  var liveClients: seq[McpClientAdapter] = clients
+  var liveClients: seq[ToolRuntimePort] = clients
 
   for i in 0 ..< liveClients.len:
     let schemasRes = liveClients[i].listTools()

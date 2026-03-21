@@ -1,5 +1,5 @@
 import std/unittest
-import donkey/core/session_ingress
+import donkey/core/session/session_ingress
 import donkey/core/types
 
 suite "session ingress decisions":
@@ -48,4 +48,3 @@ suite "session ingress decisions":
     check decision.target == sitActorInbox
     check decision.startsSessionRuntime
     check decision.rebuildsSessionRuntime
-

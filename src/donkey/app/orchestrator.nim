@@ -32,17 +32,18 @@ import chronos
 import chronos/asyncsync
 import ../core/pipeops
 import ../core/log
-import ../core/onboarding
+import ../core/onboarding/onboarding
+import ../core/tooling/tool_loop
 import ../domain/agent_message
 import ../domain/message
 import ../domain/personality
 import ../config/types as cfgTypes
-import ../adapters/memory/md_file
 import ./session_manager
-import ../adapters/tool/mcp_client
 import ./sandbox
 import ../ports/provider
 import ../ports/memory
+import ../ports/http
+import ../ports/tool
 import ./memory_agent
 import ./tool_agent
 import ./session_state
@@ -63,23 +64,7 @@ type ToolCallResult = object
   checkpointNow: bool
   newHistory:    Option[ConversationHistory]
 
-type ToolLoopRunResult = object
-  history:       ConversationHistory
-  finalText:     string
-  done:          bool
-  toolCallCount: int
-
-type ToolBatchResult = object
-  history:       ConversationHistory
-  toolCallCount: int
-  aborted:       bool
-  recentCalls:   seq[(string, string)]
-
-type CompletionHandlingResult = object
-  history:    ConversationHistory
-  finalText:  string
-  done:       bool
-  debugText:  string
+type ToolBatchResult = ToolBatchState
 
 type NormalTurnPrep = object
   history:        ConversationHistory
@@ -112,15 +97,6 @@ type OrchestratorState = object
   onboarding:  OnboardingRuntime
   identity:    IdentityRuntime
   turnSeq:     int
-
-type StreamRoundResult = object
-  finalText: string
-
-type ToolLoopCompletionInput = object
-  completion: CompletionHandlingResult
-
-type ToolLoopBatchInput = object
-  batch: ToolBatchResult
 
 type ResetControlContext* = object
   history*:       ConversationHistory
@@ -175,47 +151,6 @@ func orchToolsSuffix(tools: seq[ToolDescription]): string =
   result = "\n\n## Available tools\n"
   for td in tools:
     result.add &"- **{td.name}**: {td.description}\n"
-
-func recentRepeatCount*(recentCalls: seq[(string, string)];
-                        tc: ToolCallRequest): int =
-  let callKey = (tc.name, tc.inputJson)
-  for rc in recentCalls:
-    if rc == callKey:
-      inc result
-
-proc registerToolCall*(recentCalls: var seq[(string, string)];
-                       tc: ToolCallRequest) =
-  recentCalls.add((tc.name, tc.inputJson))
-  if recentCalls.len > 30:
-    recentCalls = recentCalls[recentCalls.len - 30 .. ^1]
-
-func buildRepeatAbortText*(toolName: string; repeatCount: int): string =
-  "⚠️ Loop detectado: '" & toolName & "' chamado " &
-  $(repeatCount + 1) & " vezes com os mesmos argumentos. Interrompendo."
-
-func buildToolDebugCallText*(tc: ToolCallRequest): string =
-  "🔧 <b>[debug tool]</b> " & tc.name & "\n<code>" & tc.inputJson & "</code>"
-
-func buildToolDebugResultText*(toolName, toolResult: string): string =
-  "📤 <b>[debug result]</b> " & toolName & "\n<code>" &
-  toolResult[0 ..< min(200, toolResult.len)] & "</code>"
-
-func buildCompletionDebugText*(r: CompletionResponse): string =
-  "🔍 <b>[debug]</b> tokens in=" & $r.inputTokens &
-  " out=" & $r.outputTokens &
-  " chars=" & $r.text.len
-
-func buildToolProgressText*(toolName: string;
-                            toolCallCount: int;
-                            toolResult: string): string =
-  let resultLines = toolResult.splitLines()
-  let tail = resultLines[max(0, resultLines.len - 5) .. ^1].join("\n")
-  let tailTrunc = if tail.len > 400: tail[0 ..< 400] & "…" else: tail
-  "🔧 <code>" & toolName & "</code> [" & $toolCallCount & "]\n<code>" &
-    tailTrunc & "</code>"
-
-func isEmptyCompletionRetry*(r: CompletionResponse): bool =
-  r.toolCalls.len == 0 and r.text.len == 0
 
 func buildSystemBase*(agentTraits: PersonalityTraits;
                       agentName: string;
@@ -330,6 +265,46 @@ proc sendPipelineError(globalOutbox: AsyncQueue[OutboundMessage];
     globalOutbox, uid, channel, replyTo,
     "Desculpe, erro: " & errMsg)
 
+proc safeLoadIdentity(memory: MemoryRuntimePort;
+                      uid: UserId): (string, PersonalityTraits) {.gcsafe, raises: [].} =
+  try:
+    memory.loadIdentity(uid)
+  except Exception:
+    ("", PersonalityTraits())
+
+proc safeHasProfile(memory: MemoryRuntimePort;
+                    uid: UserId): bool {.gcsafe, raises: [].} =
+  try:
+    memory.hasProfile(uid)
+  except Exception:
+    false
+
+proc safeSaveSession(memory: MemoryRuntimePort;
+                     uid: UserId;
+                     sessionId: string;
+                     history: ConversationHistory) {.gcsafe, raises: [].} =
+  try:
+    memory.saveSession(uid, sessionId, history)
+  except Exception:
+    discard
+
+proc safeSaveIdentity(memory: MemoryRuntimePort;
+                      uid: UserId;
+                      traits: PersonalityTraits;
+                      name: string) {.gcsafe, raises: [].} =
+  try:
+    memory.saveIdentity(uid, traits, name)
+  except Exception:
+    discard
+
+proc safeSaveUserMd(memory: MemoryRuntimePort;
+                    uid: UserId;
+                    content: string) {.gcsafe, raises: [].} =
+  try:
+    memory.saveUserMd(uid, content)
+  except Exception:
+    discard
+
 func buildNameChoiceKeyboard*(names: seq[string]): seq[seq[(string, string)]] =
   var nameRow: seq[(string, string)] = @[]
   for n in names:
@@ -360,13 +335,13 @@ proc sendNameChoiceOrPrompt(globalOutbox: AsyncQueue[OutboundMessage];
   else:
     await sendReplyText(globalOutbox, uid, channel, replyTo, "Que nome você quer me dar?")
 
-proc persistUserProfile(memory: MdFileAdapter;
+proc persistUserProfile(memory: MemoryRuntimePort;
                         uid: UserId;
                         profileCtx: UserProfileContext) =
   if profileCtx.saveIdentity:
-    {.cast(gcsafe).}: memory.saveIdentity(uid, profileCtx.identity.traits, profileCtx.identity.name)
+    safeSaveIdentity(memory, uid, profileCtx.identity.traits, profileCtx.identity.name)
   if profileCtx.saveUserMd:
-    {.cast(gcsafe).}: memory.saveUserMd(uid, profileCtx.userMd)
+    safeSaveUserMd(memory, uid, profileCtx.userMd)
 
 func newOrchestratorState*(): OrchestratorState =
   OrchestratorState(
@@ -415,30 +390,6 @@ func withLoopResult*(loopResult: ToolLoopRunResult;
                      state: OrchestratorState): OrchestratorState =
   result = state
   result.history = loopResult.history
-
-func newToolLoopState*(history: ConversationHistory): ToolLoopRunResult =
-  ToolLoopRunResult(history: history)
-
-func withStreamRound*(streamResult: StreamRoundResult;
-                      state: ToolLoopRunResult): ToolLoopRunResult =
-  result = state
-  result.finalText = streamResult.finalText
-  result.history.addAssistant(streamResult.finalText)
-  result.done = true
-
-func withCompletionRound*(completionInput: ToolLoopCompletionInput;
-                          state: ToolLoopRunResult): ToolLoopRunResult =
-  result = state
-  result.history = completionInput.completion.history
-  result.finalText = completionInput.completion.finalText
-  result.done = completionInput.completion.done
-
-func withToolBatchRound*(batchInput: ToolLoopBatchInput;
-                         state: ToolLoopRunResult): ToolLoopRunResult =
-  result = state
-  result.history = batchInput.batch.history
-  result.toolCallCount = batchInput.batch.toolCallCount
-  result.done = batchInput.batch.aborted
 
 proc decodeUserPayload*(payload: string): (string, string) =
   ## Decodes the session payload envelope produced by ensureSession.
@@ -651,19 +602,6 @@ proc executeToolCall(globalOutbox: AsyncQueue[OutboundMessage];
       text: buildToolDebugResultText(tc.name, toolResult)))
   ToolCallResult(text: toolResult)
 
-proc handleFinalCompletion(history: ConversationHistory;
-                           r: CompletionResponse;
-                           debugMode: bool): CompletionHandlingResult =
-  result.history = history
-  if r.text.len > 0:
-    result.history.addAssistant(r.text)
-    result.finalText = r.text
-    result.done = true
-    if debugMode:
-      result.debugText = buildCompletionDebugText(r)
-  else:
-    result.history.addUser("(Your response was empty. Please provide your answer.)")
-
 proc processToolCalls(globalOutbox: AsyncQueue[OutboundMessage];
                       toolInbox: AsyncQueue[AgentMessage];
                       toolOut: AsyncQueue[AgentMessage];
@@ -682,42 +620,44 @@ proc processToolCalls(globalOutbox: AsyncQueue[OutboundMessage];
                       toolCallCount: int;
                       recentCalls: seq[(string, string)];
                       log: Logger): Future[ToolBatchResult] {.async.} =
-  result.history = history
-  result.toolCallCount = toolCallCount
-  result.recentCalls = recentCalls
+  result = newToolBatchState(history, toolCallCount, recentCalls)
   for i, tc in toolCalls:
-    let repeatCount = recentRepeatCount(result.recentCalls, tc)
-    if repeatCount >= RepeatAbortThreshold:
+    let prePlan = planToolBatchItem(
+      result.recentCalls, tc, RepeatAbortThreshold, result.toolCallCount + 1, "")
+    if prePlan.shouldAbort:
       await globalOutbox.put(OutboundMessage(
         userId: uid,
         channel: channel,
-        text: buildRepeatAbortText(tc.name, repeatCount),
+        text: prePlan.abortText,
         replyTo: replyTo,
       ))
-      result.aborted = true
+      result =
+        result |>->
+        withAbortedBatch(prePlan)
       break
-    registerToolCall(result.recentCalls, tc)
+    result =
+      result |>->
+      withRegisteredToolCall(tc)
 
     let toolResult = await executeToolCall(
       globalOutbox, toolInbox, toolOut, nativeCtx, state, result.history,
       uid, channel, msgId, round, i, tc, providerLabel, debugMode, log)
     if toolResult.checkpointNow:
       state.checkpoints.add(result.history)
-    if toolResult.newHistory.isSome:
-      result.history = toolResult.newHistory.get()
-
-    result.history.addToolResult(tc.id, tc.name, toolResult.text)
-
-    inc result.toolCallCount
+    result =
+      result |>->
+      withToolResult(tc, toolResult.text, toolResult.newHistory)
+    let postPlan = planToolBatchItem(
+      @[], tc, RepeatAbortThreshold, result.toolCallCount, toolResult.text)
     await globalOutbox.put(OutboundMessage(
       userId: uid,
       channel: channel,
-      text: buildToolProgressText(tc.name, result.toolCallCount, toolResult.text),
+      text: postPlan.progressText,
       streamId: toolStatusId,
       isPartial: true,
     ))
 
-proc prepareNormalTurn(memory: MdFileAdapter;
+proc prepareNormalTurn(memory: MemoryRuntimePort;
                        memInbox: AsyncQueue[AgentMessage];
                        memOut: AsyncQueue[AgentMessage];
                        uid: UserId;
@@ -735,7 +675,7 @@ proc prepareNormalTurn(memory: MdFileAdapter;
 
   if not result.identityLoaded:
     {.cast(gcsafe).}:
-      (result.agentName, result.agentTraits) = memory.loadIdentity(uid)
+      (result.agentName, result.agentTraits) = safeLoadIdentity(memory, uid)
     result.identityLoaded = true
     result.obPhase = opDone
 
@@ -787,7 +727,7 @@ proc finalizeNormalTurn(globalOutbox: AsyncQueue[OutboundMessage];
     await globalOutbox.put(OutboundMessage(
       userId: uid,
       channel: channel,
-      text: "Tool call loop exceeded " & $MaxToolRoundsOrch & " rounds",
+      text: loopResult.finalText,
       replyTo: replyTo,
     ))
   elif streamFn == nil:
@@ -802,8 +742,9 @@ proc buildNativeCtx*(uid: UserId;
                      channel: ChannelKind;
                      globalOutbox: AsyncQueue[OutboundMessage];
                      session: ptr SessionEntry;
-                     memory: MdFileAdapter;
+                     memory: MemoryRuntimePort;
                      completeFn: CompleteFn;
+                     http: HttpRuntimePort;
                      tools: seq[ToolDescription];
                      log: Logger;
                      paddockDir: string;
@@ -816,6 +757,7 @@ proc buildNativeCtx*(uid: UserId;
     session:      session,
     memory:       memory,
     completeFn:   completeFn,
+    http:         http,
     braveApiKey:  getEnv("BRAVE_API_KEY", ""),
     tools:        tools,
     log:          log,
@@ -824,24 +766,24 @@ proc buildNativeCtx*(uid: UserId;
     sandboxImage: sandboxImage,
   )
 
-proc handleCancel(memory: MdFileAdapter;
+proc handleCancel(memory: MemoryRuntimePort;
                   memInbox: AsyncQueue[AgentMessage];
                   toolInbox: AsyncQueue[AgentMessage];
                   lastUserId: UserId;
                   sessionId: string;
                   history: ConversationHistory): Future[void] {.async.} =
   if $lastUserId != "":
-    {.cast(gcsafe).}: memory.saveSession(lastUserId, sessionId, history)
+    safeSaveSession(memory, lastUserId, sessionId, history)
   await memInbox.put(newCancelMsg())
   await toolInbox.put(newCancelMsg())
 
-proc persistSessionSnapshot(memory: MdFileAdapter;
+proc persistSessionSnapshot(memory: MemoryRuntimePort;
                             userId: UserId;
                             sessionId: string;
                             history: ConversationHistory) =
   if $userId == "":
     return
-  {.cast(gcsafe).}: memory.saveSession(userId, sessionId, history)
+  safeSaveSession(memory, userId, sessionId, history)
 
 proc handleGuidedPersonalityChoice(globalOutbox: AsyncQueue[OutboundMessage];
                                    completeFn: CompleteFn;
@@ -906,7 +848,7 @@ proc handleFreeConvoOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
       "Com base em quem você quer que eu seja, aqui estão alguns nomes:")
 
 proc advanceUserProfileOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
-                                  memory: MdFileAdapter;
+                                  memory: MemoryRuntimePort;
                                   uid: UserId;
                                   channel: ChannelKind;
                                   replyTo: string;
@@ -927,7 +869,7 @@ proc advanceUserProfileOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
     await sendReplyText(globalOutbox, uid, channel, replyTo, profileCtx.replyText)
 
 proc handleResetControlTask(globalOutbox: AsyncQueue[OutboundMessage];
-                            memory: MdFileAdapter;
+                            memory: MemoryRuntimePort;
                             uid: UserId;
                             channel: ChannelKind;
                             replyTo: string;
@@ -940,7 +882,7 @@ proc handleResetControlTask(globalOutbox: AsyncQueue[OutboundMessage];
     return history
   let resetCtx = resetOpt.get()
   if resetCtx.shouldPersist:
-    {.cast(gcsafe).}: memory.saveSession(uid, resetCtx.sessionId, history)
+    safeSaveSession(memory, uid, resetCtx.sessionId, history)
   await sendReplyText(globalOutbox, uid, channel, replyTo, resetCtx.replyText)
   resetCtx.history
 
@@ -960,7 +902,7 @@ proc handleDebugToggleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
   await sendReplyText(globalOutbox, uid, channel, replyTo, debugCtx.replyText)
 
 proc handleOnboardingControlTask(globalOutbox: AsyncQueue[OutboundMessage];
-                                 memory: MdFileAdapter;
+                                 memory: MemoryRuntimePort;
                                  completeFn: CompleteFn;
                                  uid: UserId;
                                  channel: ChannelKind;
@@ -990,8 +932,9 @@ proc handleOnboardingControlTask(globalOutbox: AsyncQueue[OutboundMessage];
 
 proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
                           session: ptr SessionEntry;
-                          memory: MdFileAdapter;
+                          memory: MemoryRuntimePort;
                           completeFn: CompleteFn;
+                          http: HttpRuntimePort;
                           tools: seq[ToolDescription];
                           paddockDir: string;
                           typingFn: TypingFn;
@@ -1003,30 +946,15 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
   result.uid = UserId(msg.userId)
   result.streamId = stateRuntime.streamIdFor(msg.userId)
   (result.userText, _) = msg.payload |> decodeUserPayload
-  result.isNewUser = not memory.hasProfile(result.uid)
+  result.isNewUser = not safeHasProfile(memory, result.uid)
   result.nativeCtx = buildNativeCtx(
-    result.uid, msg.channel, globalOutbox, session, memory, completeFn, tools, log,
+    result.uid, msg.channel, globalOutbox, session, memory, completeFn, http, tools, log,
     paddockDir, sandboxMode, sandboxImage)
   {.cast(gcsafe).}: createDir(paddockDir)
   result.typingLoop = startTypingLoop(typingFn, result.uid, msg.channel)
 
-proc handleToolLoopProviderError(globalOutbox: AsyncQueue[OutboundMessage];
-                                 uid: UserId;
-                                 channel: ChannelKind;
-                                 replyTo: string;
-                                 errMsg: string;
-                                 loopState: ToolLoopRunResult): Future[ToolLoopRunResult] {.async.} =
-  result = loopState
-  await globalOutbox.put(OutboundMessage(
-    userId: uid,
-    channel: channel,
-    text: "Desculpe, ocorreu um erro: " & errMsg,
-    replyTo: replyTo,
-  ))
-  result.done = true
-
 proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
-                       memory: MdFileAdapter;
+                       memory: MemoryRuntimePort;
                        completeFn: CompleteFn;
                        uid: UserId;
                        channel: ChannelKind;
@@ -1062,7 +990,7 @@ proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
     discard
 
 proc handleOnboardingTurn(globalOutbox: AsyncQueue[OutboundMessage];
-                          memory: MdFileAdapter;
+                          memory: MemoryRuntimePort;
                           completeFn: CompleteFn;
                           uid: UserId;
                           channel: ChannelKind;
@@ -1112,7 +1040,7 @@ proc handleOnboardingTurn(globalOutbox: AsyncQueue[OutboundMessage];
 proc runToolLoop(globalOutbox: AsyncQueue[OutboundMessage];
                  toolInbox: AsyncQueue[AgentMessage];
                  toolOut: AsyncQueue[AgentMessage];
-                 memory: MdFileAdapter;
+                 memory: MemoryRuntimePort;
                  completeFn: CompleteFn;
                  streamFn: StreamFn;
                  nativeCtx: NativeCtx;
@@ -1139,48 +1067,72 @@ proc runToolLoop(globalOutbox: AsyncQueue[OutboundMessage];
 
     let req = buildPrompt(systemBase, loopState.history, context, tools)
 
-    if streamFn != nil and round == 1 and tools.len == 0:
-      let streamResult = StreamRoundResult(finalText: await streamToOutbox(
+    if decideToolLoopStreaming(
+      round = round,
+      toolsCount = tools.len,
+      streamingAvailable = streamFn != nil,
+    ).useStreaming:
+      let streamText = await streamToOutbox(
         streamFn, req, globalOutbox, uid, channel, replyTo, streamId)
-      )
+      
       log.info($uid & " (" & $channel & ") <- [" & providerLabel &
-               "] |" & $streamResult.finalText.len & "| stream")
+               "] |" & $streamText.len & "| stream")
       loopState =
         loopState |>->
-        withStreamRound(streamResult)
+        withStreamFinalText(streamText)
       continue
 
     let resp = safeComplete(completeFn, req)
     if resp.isErr:
-      loopState = await handleToolLoopProviderError(
-        globalOutbox, uid, channel, replyTo, resp.error, loopState)
+      await globalOutbox.put(OutboundMessage(
+        userId: uid,
+        channel: channel,
+        text: buildProviderErrorText(resp.error),
+        replyTo: replyTo,
+      ))
+      loopState.done = true
       continue
 
     let r = resp.value
-    if r.toolCalls.len == 0:
+    case decideToolLoopRound(
+      round = round,
+      toolsCount = tools.len,
+      streamingAvailable = false,
+      completion = r,
+    ).kind
+    of tlrkHandleCompletion:
       if r.text.len > 0:
         log.info($uid & " (" & $channel & ") <- [" & providerLabel &
                  "] |" & $r.text.len & "|")
-      let completionResult = handleFinalCompletion(loopState.history, r, debugMode)
+      let completionResult = applyCompletionDecision(
+        loopState.history,
+        decideCompletion(r, debugMode),
+      )
       loopState =
         loopState |>->
-        withCompletionRound(ToolLoopCompletionInput(
-          completion: completionResult,
-        ))
+        withCompletionResult(completionResult)
       if completionResult.debugText.len > 0:
         await globalOutbox.put(OutboundMessage(
           userId: uid, channel: channel, text: completionResult.debugText))
       continue
 
-    loopState.history.addAssistantWithToolCalls(r.text, r.toolCalls)
-    let batchResult = await processToolCalls(
-      globalOutbox, toolInbox, toolOut, nativeCtx, state, loopState.history,
-      uid, channel, replyTo, msgId, round, toolStatusId, r.toolCalls,
-      providerLabel, debugMode, loopState.toolCallCount, recentCalls, log)
-    loopState =
-      loopState |>->
-      withToolBatchRound(ToolLoopBatchInput(batch: batchResult))
-    recentCalls = batchResult.recentCalls
+    of tlrkHandleToolBatch:
+      loopState.history.addAssistantWithToolCalls(r.text, r.toolCalls)
+      let batchResult = await processToolCalls(
+        globalOutbox, toolInbox, toolOut, nativeCtx, state, loopState.history,
+        uid, channel, replyTo, msgId, round, toolStatusId, r.toolCalls,
+        providerLabel, debugMode, loopState.toolCallCount, recentCalls, log)
+      loopState =
+        loopState |>->
+        withToolBatchState(batchResult)
+      recentCalls = batchResult.recentCalls
+
+    of tlrkUseStreaming:
+      discard
+  let termination = decideToolLoopTermination(loopState.done, round, MaxToolRoundsOrch)
+  if termination.kind == tltkExceededMaxRounds:
+    loopState.done = false
+    loopState.finalText = termination.replyText
   loopState
 
 proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
@@ -1189,8 +1141,9 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     memOut: AsyncQueue[AgentMessage];
                     toolOut: AsyncQueue[AgentMessage];
                     session: ptr SessionEntry;
-                    memory: MdFileAdapter;
+                    memory: MemoryRuntimePort;
                     completeFn: CompleteFn;
+                    http: HttpRuntimePort;
                     streamFn: StreamFn;
                     tools: seq[ToolDescription];
                     paddockDir: string;
@@ -1205,7 +1158,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     stateRuntime: OrchestratorState): Future[OrchestratorState] {.async.} =
   result = stateRuntime |> nextTurn
   let turnSetup = prepareUserTurnSetup(
-    globalOutbox, session, memory, completeFn, tools, paddockDir, typingFn, log,
+    globalOutbox, session, memory, completeFn, http, tools, paddockDir, typingFn, log,
     sandboxMode, sandboxImage, msg, result)
 
   if turnSetup.isNewUser:
@@ -1241,7 +1194,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   await finalizeNormalTurn(
     globalOutbox, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.streamId, streamFn, loopResult)
 
-proc handleActorCancel(memory: MdFileAdapter;
+proc handleActorCancel(memory: MemoryRuntimePort;
                        memInbox: AsyncQueue[AgentMessage];
                        toolInbox: AsyncQueue[AgentMessage];
                        sessionId: string;
@@ -1256,8 +1209,9 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
                      toolInbox: AsyncQueue[AgentMessage];
                      memOut: AsyncQueue[AgentMessage];
                      toolOut: AsyncQueue[AgentMessage];
-                     memory: MdFileAdapter;
+                     memory: MemoryRuntimePort;
                      completeFn: CompleteFn;
+                     http: HttpRuntimePort;
                      streamFn: StreamFn;
                      tools: seq[ToolDescription];
                      paddockDir: string;
@@ -1291,7 +1245,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
 
   result = await handleUserTurn(
     globalOutbox, memInbox, toolInbox, memOut, toolOut, session, memory,
-    completeFn, streamFn, tools, paddockDir, typingFn, log,
+    completeFn, http, streamFn, tools, paddockDir, typingFn, log,
     providerLabel, sandboxMode, sandboxImage, toolsSuffix,
     state, msg, result)
   persistSessionSnapshot(memory, uid, sessionId, result.history)
@@ -1303,8 +1257,9 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
                         toolInbox: AsyncQueue[AgentMessage];
                         memOut: AsyncQueue[AgentMessage];
                         toolOut: AsyncQueue[AgentMessage];
-                        memory: MdFileAdapter;
+                        memory: MemoryRuntimePort;
                         completeFn: CompleteFn;
+                        http: HttpRuntimePort;
                         streamFn: StreamFn;
                         tools: seq[ToolDescription];
                         paddockDir: string;
@@ -1327,7 +1282,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
   of amkTask:
     result.stateRuntime = await handleActorTask(
       globalOutbox, session, memInbox, toolInbox, memOut, toolOut, memory,
-      completeFn, streamFn, tools, paddockDir, typingFn, log,
+      completeFn, http, streamFn, tools, paddockDir, typingFn, log,
       providerLabel, sandboxMode, sandboxImage, sessionId,
       toolsSuffix, state, msg, stateRuntime)
 
@@ -1339,10 +1294,11 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
 proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       session:        ptr SessionEntry;
                       globalOutbox:   AsyncQueue[OutboundMessage];
-                      memory:         MdFileAdapter;
+                      memory:         MemoryRuntimePort;
                       completeFn:     CompleteFn;
+                      http:           HttpRuntimePort;
                       streamFn:       StreamFn;
-                      clients:        seq[McpClientAdapter];
+                      clients:        seq[ToolRuntimePort];
                       tools:          seq[ToolDescription];
                       paddockDir:     string;
                       typingFn:       TypingFn    = nil;
@@ -1373,7 +1329,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
     let msg = await collectWithDebounce(inbox, DebounceWindowMs)
     let actorResult = await handleActorMessage(
       inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
-      completeFn, streamFn, tools, paddockDir, typingFn, log,
+      completeFn, http, streamFn, tools, paddockDir, typingFn, log,
       providerLabel, sandboxMode, sandboxImage, sessionId,
       toolsSuffix, state, msg, stateRuntime)
     stateRuntime = actorResult.stateRuntime

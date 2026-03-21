@@ -12,7 +12,7 @@
 import std/[json, os]
 import chronos
 import chronos/transports/stream
-import ../adapters/ipc/types
+import ../ports/ipc
 
 type
   StatusProvider* = proc(): DaemonStatus {.gcsafe, raises: [].}

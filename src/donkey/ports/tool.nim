@@ -33,3 +33,15 @@ type
 
     t.invoke(ToolCall) is Result[ToolResult, string]
     ## Invokes one tool. Returns result or error description.
+
+  ToolRuntimePort* = object
+    listTools*: proc(): Result[seq[ToolSchema], string] {.gcsafe.}
+    invoke*:    proc(call: ToolCall): Result[ToolResult, string] {.gcsafe.}
+    close*:     proc() {.gcsafe.}
+
+  LoadedToolRuntime* = object
+    port*:    ToolRuntimePort
+    schemas*: seq[ToolSchema]
+
+  SkillRuntimeBuilder* = proc(script: string; permissions: seq[string]): Result[LoadedToolRuntime, string]
+                           {.gcsafe.}

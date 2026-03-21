@@ -1,10 +1,10 @@
 ## Pure onboarding state, events and decisions.
 
 import std/[options, strutils]
-import ../core/pipeops
-import ../domain/agent_message
-import ../domain/message
-import ../domain/personality
+import ../pipeops
+import ../../domain/agent_message
+import ../../domain/message
+import ../../domain/personality
 
 export options, personality
 
@@ -95,7 +95,7 @@ func buildUserMd(name, callMe, timezone, language: string): string =
   "**Timezone:** " & timezone & "\n" &
   "**Language:** " & language & "\n"
 
-proc startFreeConvoContext*(history: ConversationHistory;
+func startFreeConvoContext*(history: ConversationHistory;
                             onboarding: OnboardingRuntime;
                             userText: string): Result[FreeConvoContext, string] {.gcsafe, raises: [].} =
   var nextHistory = history
@@ -106,7 +106,7 @@ proc startFreeConvoContext*(history: ConversationHistory;
     onboarding: onboarding,
   ))
 
-proc withFreeConvoRequest*(ctx: FreeConvoContext): Result[FreeConvoContext, string] =
+func withFreeConvoRequest*(ctx: FreeConvoContext): Result[FreeConvoContext, string] =
   ok(FreeConvoContext(
     history: ctx.history,
     onboarding: ctx.onboarding,
@@ -114,7 +114,7 @@ proc withFreeConvoRequest*(ctx: FreeConvoContext): Result[FreeConvoContext, stri
     rawText: ctx.rawText,
   ))
 
-proc parseFreeConvoReply*(ctx: FreeConvoContext): Result[FreeConvoContext, string] =
+func parseFreeConvoReply*(ctx: FreeConvoContext): Result[FreeConvoContext, string] =
   var nextCtx = ctx
   nextCtx.visibleText = stripIdentityReady(ctx.rawText)
   nextCtx.parsedTraits = parseIdentityReady(ctx.rawText)
@@ -123,7 +123,7 @@ proc parseFreeConvoReply*(ctx: FreeConvoContext): Result[FreeConvoContext, strin
     nextCtx.onboarding.traits = nextCtx.parsedTraits.get()
   ok(nextCtx)
 
-proc startGuidedChoiceContext*(onboarding: OnboardingRuntime;
+func startGuidedChoiceContext*(onboarding: OnboardingRuntime;
                                dim: string;
                                valor: string): Result[GuidedChoiceContext, string] {.gcsafe, raises: [].} =
   var next = onboarding
@@ -173,7 +173,7 @@ proc startGuidedChoiceContext*(onboarding: OnboardingRuntime;
   else:
     err("dimensão inválida")
 
-proc startUserProfileContext*(onboarding: OnboardingRuntime;
+func startUserProfileContext*(onboarding: OnboardingRuntime;
                               identity: IdentityRuntime;
                               userText: string): Result[UserProfileContext, string] {.gcsafe, raises: [].} =
   var ob = onboarding
@@ -240,7 +240,7 @@ proc startUserProfileContext*(onboarding: OnboardingRuntime;
   else:
     err("fase inválida para perfil")
 
-proc startOnboardingControlContext*(msg: AgentMessage;
+func startOnboardingControlContext*(msg: AgentMessage;
                                     onboarding: OnboardingRuntime;
                                     identity: IdentityRuntime): Result[OnboardingControlContext, string] {.gcsafe, raises: [].} =
   case msg.taskKind
@@ -275,7 +275,7 @@ proc startOnboardingControlContext*(msg: AgentMessage;
       handled: false,
     ))
 
-proc decideOnboardingTurn*(onboarding: OnboardingRuntime;
+func decideOnboardingTurn*(onboarding: OnboardingRuntime;
                            userText: string): OnboardingDecision {.gcsafe, raises: [].} =
   let strippedUserText = userText.strip
   case onboarding.phase
@@ -305,7 +305,7 @@ proc decideOnboardingTurn*(onboarding: OnboardingRuntime;
   of opDone:
     OnboardingDecision(kind: oekDone, onboarding: onboarding, handled: false)
 
-proc decideOnboardingControl*(msg: AgentMessage;
+func decideOnboardingControl*(msg: AgentMessage;
                               onboarding: OnboardingRuntime;
                               identity: IdentityRuntime): Result[OnboardingDecision, string] {.gcsafe, raises: [].} =
   let ctx = startOnboardingControlContext(msg, onboarding, identity).valueOr:

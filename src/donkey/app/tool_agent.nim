@@ -15,12 +15,11 @@ import std/json
 import chronos
 import chronos/asyncsync
 import ../domain/agent_message
-import ../adapters/tool/mcp_client
 import ../ports/tool
 
 proc runToolAgent*(inbox:   AsyncQueue[AgentMessage];
                    outbox:  AsyncQueue[AgentMessage];
-                   clients: seq[McpClientAdapter]): Future[void] {.async.} =
+                   clients: seq[ToolRuntimePort]): Future[void] {.async.} =
   var liveClients = clients  ## local mutable copy
 
   while true:
@@ -53,7 +52,11 @@ proc runToolAgent*(inbox:   AsyncQueue[AgentMessage];
 
       var invoked = false
       for i in 0 ..< liveClients.len:
-        let res = liveClients[i].invoke(call)
+        let res: Result[ToolResult, string] =
+          try:
+            liveClients[i].invoke(call)
+          except Exception as e:
+            Result[ToolResult, string].err("ToolAgent invoke: " & e.msg)
         if res.isOk:
           await outbox.put(newResultMsg(msg.id, res.value.output))
           invoked = true

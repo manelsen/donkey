@@ -2,6 +2,7 @@ import std/[os, strutils, tables]
 import chronos/asyncsync
 import parsetoml
 import results
+import ../../core/commands/command_routing
 import ../../core/pipeops
 import ../../adapters/memory/md_file
 import ../../app/session_manager
@@ -26,36 +27,6 @@ type
     model*:    string
     thinking*: string
 
-  TelegramCallbackKind* = enum
-    tckUnknown
-    tckModelsProvider
-    tckModelsSet
-    tckModelsBack
-    tckThinkSet
-    tckCore
-
-  TelegramCallback* = object
-    kind*:     TelegramCallbackKind
-    provider*: string
-    model*:    string
-    value*:    string
-
-  TelegramCoreCommandKind* = enum
-    tcmdNone
-    tcmdStart
-    tcmdForget
-    tcmdDoctor
-    tcmdHelp
-    tcmdMemory
-    tcmdDebug
-    tcmdReset
-    tcmdMyCode
-    tcmdContinue
-
-  TelegramCoreCommand* = object
-    kind*:  TelegramCoreCommandKind
-    value*: string
-
 proc defaultTelegramPrefs*(): TelegramPrefs =
   TelegramPrefs(provider: "zhipu", model: "", thinking: "off")
 
@@ -77,44 +48,6 @@ proc parseTelegramPrefs*(preferencesMd: string): TelegramPrefs =
 
 proc loadTelegramPrefs*(memory: MdFileAdapter; userId: UserId): TelegramPrefs =
   parseTelegramPrefs(memory.loadContext(userId).preferencesMd)
-
-proc parseTelegramCallback*(data: string): TelegramCallback =
-  if data.startsWith("models:provider:"):
-    return TelegramCallback(
-      kind: tckModelsProvider,
-      provider: data[16 .. ^1],
-    )
-  if data.startsWith("models:set:"):
-    let parts = data[11 .. ^1].split(':', 1)
-    if parts.len == 2:
-      return TelegramCallback(
-        kind: tckModelsSet,
-        provider: parts[0],
-        model: parts[1],
-      )
-  if data == "models:back":
-    return TelegramCallback(kind: tckModelsBack)
-  if data.startsWith("think:set:"):
-    return TelegramCallback(kind: tckThinkSet, value: data[10 .. ^1])
-  if data.startsWith("personality:") or data.startsWith("name:"):
-    return TelegramCallback(kind: tckCore, value: data)
-  TelegramCallback(kind: tckUnknown)
-
-proc parseTelegramCoreCommand*(cmd: string): TelegramCoreCommand =
-  case cmd
-  of "/start": TelegramCoreCommand(kind: tcmdStart)
-  of "/forget": TelegramCoreCommand(kind: tcmdForget)
-  of "/doctor": TelegramCoreCommand(kind: tcmdDoctor)
-  of "/help": TelegramCoreCommand(kind: tcmdHelp)
-  of "/memory": TelegramCoreCommand(kind: tcmdMemory)
-  of "/debug": TelegramCoreCommand(kind: tcmdDebug)
-  of "/reset": TelegramCoreCommand(kind: tcmdReset)
-  of "/mycode": TelegramCoreCommand(kind: tcmdMyCode)
-  else:
-    if cmd.startsWith("/continue "):
-      TelegramCoreCommand(kind: tcmdContinue, value: cmd[10 .. ^1].strip)
-    else:
-      TelegramCoreCommand(kind: tcmdNone)
 
 proc getCurrentThinkLevel*(memory: MdFileAdapter; userId: UserId): string =
   memory.loadTelegramPrefs(userId).thinking
@@ -184,11 +117,11 @@ proc clearTelegramKeyboard*(tgAdapter: var TelegramAdapter;
     kbdMsgIds.del($userId)
 
 proc handleTelegramModels*(msg: InboundMessage;
-                           cmd: string;
+                           command: CommandDecision;
                            tgAdapter: var TelegramAdapter;
                            kbdMsgIds: var Table[string, string];
                            memory: MdFileAdapter): bool =
-  if cmd != "/models":
+  if command.kind != cmdModels:
     return false
   let kbdId = tgAdapter.sendKeyboard(msg.userId,
     "Escolha o provider:", memory.buildProviderButtons(msg.userId),
@@ -198,13 +131,12 @@ proc handleTelegramModels*(msg: InboundMessage;
   true
 
 proc handleTelegramModelCallback*(msg: InboundMessage;
-                                  data: string;
+                                  callback: CallbackDecision;
                                   tgAdapter: var TelegramAdapter;
                                   kbdMsgIds: var Table[string, string];
                                   memory: MdFileAdapter): bool =
-  let callback = parseTelegramCallback(data)
   case callback.kind
-  of tckModelsProvider:
+  of cbkModelsProvider:
     let kbdId = kbdMsgIds.getOrDefault($msg.userId)
     if kbdId.len > 0:
       tgAdapter.editKeyboard(msg.userId, kbdId,
@@ -212,7 +144,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
         discard
     return true
 
-  of tckModelsSet:
+  of cbkModelsSet:
     memory.saveTelegramPreference(msg.userId, "provider", callback.provider)
     memory.saveTelegramPreference(msg.userId, "model", callback.model)
     tgAdapter.clearTelegramKeyboard(kbdMsgIds, msg.userId)
@@ -225,7 +157,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
       discard
     return true
 
-  of tckModelsBack:
+  of cbkModelsBack:
     let kbdId = kbdMsgIds.getOrDefault($msg.userId)
     if kbdId.len > 0:
       tgAdapter.editKeyboard(msg.userId, kbdId,
@@ -237,12 +169,11 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
     false
 
 proc handleTelegramThinkingCallback*(msg: InboundMessage;
-                                     data: string;
+                                     callback: CallbackDecision;
                                      tgAdapter: var TelegramAdapter;
                                      kbdMsgIds: var Table[string, string];
                                      memory: MdFileAdapter): bool =
-  let callback = parseTelegramCallback(data)
-  if callback.kind != tckThinkSet:
+  if callback.kind != cbkThinkSet:
     return false
 
   let level = callback.value
@@ -259,11 +190,11 @@ proc handleTelegramThinkingCallback*(msg: InboundMessage;
   true
 
 proc handleTelegramThink*(msg: InboundMessage;
-                          cmd: string;
+                          command: CommandDecision;
                           tgAdapter: var TelegramAdapter;
                           kbdMsgIds: var Table[string, string];
                           memory: MdFileAdapter): bool =
-  if cmd != "/think":
+  if command.kind != cmdThink:
     return false
   let thinkId = tgAdapter.sendKeyboard(msg.userId,
     "Nível de raciocínio:", memory.buildThinkButtons(msg.userId),
@@ -273,25 +204,25 @@ proc handleTelegramThink*(msg: InboundMessage;
   true
 
 proc handleTelegramUiCommand*(msg: InboundMessage;
-                              cmd: string;
+                              command: CommandDecision;
                               tgAdapter: var TelegramAdapter;
                               kbdMsgIds: var Table[string, string];
                               memory: MdFileAdapter): bool =
-  case cmd
-  of "/models":
-    handleTelegramModels(msg, cmd, tgAdapter, kbdMsgIds, memory)
-  of "/think":
-    handleTelegramThink(msg, cmd, tgAdapter, kbdMsgIds, memory)
+  case command.kind
+  of cmdModels:
+    handleTelegramModels(msg, command, tgAdapter, kbdMsgIds, memory)
+  of cmdThink:
+    handleTelegramThink(msg, command, tgAdapter, kbdMsgIds, memory)
   else:
     false
 
 proc handleTelegramUiCallback*(msg: InboundMessage;
-                               data: string;
+                               callback: CallbackDecision;
                                tgAdapter: var TelegramAdapter;
                                kbdMsgIds: var Table[string, string];
                                memory: MdFileAdapter): bool =
-  handleTelegramModelCallback(msg, data, tgAdapter, kbdMsgIds, memory) or
-    handleTelegramThinkingCallback(msg, data, tgAdapter, kbdMsgIds, memory)
+  handleTelegramModelCallback(msg, callback, tgAdapter, kbdMsgIds, memory) or
+    handleTelegramThinkingCallback(msg, callback, tgAdapter, kbdMsgIds, memory)
 
 proc buildTelegramStatusText*(memory: MdFileAdapter;
                               userId: UserId;
@@ -315,11 +246,11 @@ proc buildTelegramStatusText*(memory: MdFileAdapter;
     "⏱ Uptime: <b>" & uptimeStr & "</b>"
 
 proc handleTelegramPing*(msg: InboundMessage;
-                         cmd: string;
+                         command: CommandDecision;
                          tgAdapter: var TelegramAdapter;
                          memory: MdFileAdapter;
                          completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.}): bool =
-  if cmd != "/ping":
+  if command.kind != cmdPing:
     return false
 
   let t0 = nowMs()
@@ -344,13 +275,13 @@ proc handleTelegramPing*(msg: InboundMessage;
   true
 
 proc handleTelegramStatus*(msg: InboundMessage;
-                           cmd: string;
+                           command: CommandDecision;
                            tgAdapter: var TelegramAdapter;
                            memory: MdFileAdapter;
                            toolsCount: int;
                            sessionCount: int;
                            daemonStartMs: int64): bool =
-  if cmd != "/status":
+  if command.kind != cmdStatus:
     return false
 
   tgAdapter.send(OutboundMessage(
@@ -364,16 +295,15 @@ proc handleTelegramStatus*(msg: InboundMessage;
 
 proc handleTelegramCoreCommand*(sm: var SessionManager;
                                 msg: InboundMessage;
-                                cmd: string;
+                                command: CommandDecision;
                                 tgAdapter: var TelegramAdapter;
                                 memory: MdFileAdapter;
                                 completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
                                 toolsCount: int;
                                 toolClientsCount: int;
                                 msgSeq: var int): bool =
-  let coreCommand = parseTelegramCoreCommand(cmd)
-  case coreCommand.kind
-  of tcmdStart:
+  case decideLocalCommandAction(command)
+  of lcaStartIntro:
     tgAdapter.send(OutboundMessage(
       userId:  msg.userId,
       channel: ckTelegram,
@@ -384,7 +314,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
     )).isOkOr:
       discard
     return true
-  of tcmdMyCode:
+  of lcaGenerateLinkCode:
     let code = tgAdapter.resolver.generateLinkCode(msg.userId)
     tgAdapter.send(OutboundMessage(
       userId:  msg.userId,
@@ -395,7 +325,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
     )).isOkOr:
       discard
     return true
-  of tcmdForget:
+  of lcaClearMemory:
     memory.clearMemory(msg.userId)
     tgAdapter.send(OutboundMessage(
       userId:  msg.userId,
@@ -405,7 +335,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
     )).isOkOr:
       discard
     return true
-  of tcmdDoctor:
+  of lcaDoctorReport:
     var report = "<b>🩺 Donkey Doctor</b>\n\n"
     let testFn = completeBuilder("")
     var history = newHistory()
@@ -430,7 +360,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
     )).isOkOr:
       discard
     return true
-  of tcmdHelp:
+  of lcaHelpText:
     tgAdapter.send(OutboundMessage(
       userId:  msg.userId,
       channel: ckTelegram,
@@ -454,7 +384,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
     )).isOkOr:
       discard
     return true
-  of tcmdMemory:
+  of lcaShowMemory:
     let ctx = memory.loadContext(msg.userId)
     let memText = ctx.memoryMd |> strip
     tgAdapter.send(OutboundMessage(
@@ -465,39 +395,9 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
     )).isOkOr:
       discard
     return true
-  of tcmdDebug:
-    if sm.hasSession(msg.userId):
-      let entry = sm.getOrCreate(msg.userId)
-      inc msgSeq
-      entry.inbox.addLastNoWait(
-        newTaskMsg($msgSeq, tkDebugToggle, $msg.userId, "", ckTelegram, msg.channelId))
-    else:
-      tgAdapter.send(OutboundMessage(
-        userId:  msg.userId,
-        channel: ckTelegram,
-        text:    "Nenhuma sessão ativa. Envie uma mensagem primeiro.",
-        replyTo: msg.channelId,
-      )).isOkOr:
-        discard
-    return true
-  of tcmdReset:
-    if sm.hasSession(msg.userId):
-      let entry = sm.getOrCreate(msg.userId)
-      inc msgSeq
-      entry.inbox.addLastNoWait(
-        newTaskMsg($msgSeq, tkReset, $msg.userId, "", ckTelegram, msg.channelId))
-    else:
-      tgAdapter.send(OutboundMessage(
-        userId:  msg.userId,
-        channel: ckTelegram,
-        text:    "Nenhuma conversa ativa para reiniciar.",
-        replyTo: msg.channelId,
-      )).isOkOr:
-        discard
-    return true
-  of tcmdContinue:
+  of lcaContinueLink:
     let rawTgId = tgAdapter.resolver.reverseChannel(msg.userId, ckTelegram)
-    let linked = tgAdapter.resolver.consumeLinkCode(coreCommand.value, ckTelegram, rawTgId)
+    let linked = tgAdapter.resolver.consumeLinkCode(command.value, ckTelegram, rawTgId)
     let replyText = if linked: "✅ Sessão reconectada! Seu histórico foi preservado."
                     else: "❌ Código inválido ou expirado. Gere um novo com /mycode."
     tgAdapter.send(OutboundMessage(
@@ -513,17 +413,45 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
 
   false
 
-proc handleTelegramCoreCallback*(sm: var SessionManager;
-                                 msg: InboundMessage;
-                                 data: string;
-                                 msgSeq: var int): bool =
-  let callback = parseTelegramCallback(data)
-  if callback.kind == tckCore:
+proc handleTelegramTaskCommand*(sm: var SessionManager;
+                                msg: InboundMessage;
+                                command: CommandDecision;
+                                tgAdapter: var TelegramAdapter;
+                                msgSeq: var int): bool =
+  if not isSessionTaskCommand(command.kind):
+    return false
+
+  if sm.hasSession(msg.userId):
     let entry = sm.getOrCreate(msg.userId)
     inc msgSeq
-    let tk = if callback.value.startsWith("name:"): tkNameChoice else: tkPersonalityChoice
     entry.inbox.addLastNoWait(
-      newTaskMsg($msgSeq, tk, $msg.userId, callback.value, ckTelegram, msg.channelId))
+      newTaskMsg($msgSeq, commandTaskKind(command), $msg.userId,
+                 "", ckTelegram, msg.channelId))
+  else:
+    let text =
+      if command.kind == cmdDebug:
+        "Nenhuma sessão ativa. Envie uma mensagem primeiro."
+      else:
+        "Nenhuma conversa ativa para reiniciar."
+    tgAdapter.send(OutboundMessage(
+      userId:  msg.userId,
+      channel: ckTelegram,
+      text:    text,
+      replyTo: msg.channelId,
+    )).isOkOr:
+      discard
+  true
+
+proc handleTelegramCoreCallback*(sm: var SessionManager;
+                                 msg: InboundMessage;
+                                 callback: CallbackDecision;
+                                 msgSeq: var int): bool =
+  if callback.route == cbrSessionTask:
+    let entry = sm.getOrCreate(msg.userId)
+    inc msgSeq
+    entry.inbox.addLastNoWait(
+      newTaskMsg($msgSeq, callbackTaskKind(callback), $msg.userId,
+                 callback.value, ckTelegram, msg.channelId))
     return true
   false
 
@@ -537,21 +465,28 @@ proc handleTelegramMessage*(msg: InboundMessage;
                             toolsCount: int;
                             msgSeq: var int;
                             daemonStartMs: int64): bool =
-  let cmd = msg.text |> strip
-  if handleTelegramCoreCommand(sm, msg, cmd, tgAdapter, memory,
-                               completeBuilder, toolsCount, toolClientsCount, msgSeq):
-    return true
-  if handleTelegramUiCommand(msg, cmd, tgAdapter, kbdMsgIds, memory):
-    return true
-  if cmd.startsWith("/callback "):
-    let data = cmd[10 .. ^1] |> strip
-    if handleTelegramUiCallback(msg, data, tgAdapter, kbdMsgIds, memory):
-      return true
-    if handleTelegramCoreCallback(sm, msg, data, msgSeq):
-      return true
-  if handleTelegramPing(msg, cmd, tgAdapter, memory, completeBuilder):
-    return true
-  if handleTelegramStatus(msg, cmd, tgAdapter, memory,
-                          toolsCount, sm.sessionCount(), daemonStartMs):
-    return true
-  false
+  let command = decideCommandRequest(CommandRequest(channel: msg.channel, text: msg.text))
+  case command.route
+  of crLocal:
+    return handleTelegramCoreCommand(sm, msg, command, tgAdapter, memory,
+                                     completeBuilder, toolsCount, toolClientsCount, msgSeq)
+  of crSessionTask:
+    return handleTelegramTaskCommand(sm, msg, command, tgAdapter, msgSeq)
+  of crUi:
+    return handleTelegramUiCommand(msg, command, tgAdapter, kbdMsgIds, memory)
+  of crCallback:
+    let callback = decideCallbackRequest(CallbackRequest(channel: msg.channel, data: command.value))
+    case callback.route
+    of cbrUi:
+      handleTelegramUiCallback(msg, callback, tgAdapter, kbdMsgIds, memory)
+    of cbrSessionTask:
+      handleTelegramCoreCallback(sm, msg, callback, msgSeq)
+    of cbrNone:
+      false
+  of crPing:
+    handleTelegramPing(msg, command, tgAdapter, memory, completeBuilder)
+  of crStatus:
+    handleTelegramStatus(msg, command, tgAdapter, memory,
+                         toolsCount, sm.sessionCount(), daemonStartMs)
+  of crNone:
+    false

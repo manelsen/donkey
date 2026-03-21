@@ -99,10 +99,7 @@ func isPrivateUrl*(rawUrl: string): bool =
 
   false
 
-# ── side-effectful helper (proc, not func) ───────────────────────────────────
-
-proc currentTimeResult*(): string =
+func currentTimeResult*(t: DateTime): string =
   ## Returns a formatted UTC timestamp string for the current_time tool result.
-  let t = now().utc()
   "Current UTC time: " & t.format("yyyy-MM-dd HH:mm:ss") &
   " (day: " & $t.weekday & ")"

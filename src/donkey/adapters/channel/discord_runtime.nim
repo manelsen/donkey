@@ -1,5 +1,6 @@
 import std/strutils
 import chronos/asyncsync
+import ../../core/commands/command_routing
 import ../../core/log
 import ../../core/pipeops
 import ../../adapters/memory/md_file
@@ -23,7 +24,8 @@ proc handleDiscordEvent*(sm: var SessionManager;
   case event.kind
   of deMessage:
     let userId = dcAdapter.resolver.resolve(ckDiscord, event.discordUserId)
-    if (event.content |> strip) == "/mycode":
+    let command = decideCommandRequest(CommandRequest(channel: ckDiscord, text: event.content))
+    if decideLocalCommandAction(command) == lcaGenerateLinkCode:
       let code = dcAdapter.resolver.generateLinkCode(userId)
       let codeText = "Your link code: **" & code & "** (valid 10 min)\n" &
                      "Type `/continue` on another channel to reconnect."
@@ -67,12 +69,14 @@ proc handleDiscordEvent*(sm: var SessionManager;
     dcAdapter.sendButtonAck(
       event.interactionId, event.interactionToken).isOkOr:
         log.error("dc button ack: " & error)
-    let data = event.content
+    let callback = decideCallbackRequest(
+      CallbackRequest(channel: ckDiscord, data: event.content))
+    if callback.route != cbrSessionTask:
+      return
     let entry = sm.getOrCreate(userId)
     inc msgSeq
-    let tk = if data.startsWith("name:"): tkNameChoice else: tkPersonalityChoice
     entry.inbox.addLastNoWait(
-      newTaskMsg($msgSeq, tk, $userId, data, ckDiscord, ""))
+      newTaskMsg($msgSeq, callbackTaskKind(callback), $userId, callback.value, ckDiscord, ""))
 
 proc drainDiscordEvents*(sm: var SessionManager;
                          dcAdapter: DiscordAdapter;

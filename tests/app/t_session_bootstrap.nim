@@ -1,5 +1,6 @@
 import std/[json, os, sequtils, strutils, unittest]
 import donkey/adapters/memory/md_file
+import donkey/adapters/provider/runtime_builder
 import donkey/app/session_bootstrap
 import donkey/domain/more_tools
 import donkey/domain/message
@@ -73,7 +74,7 @@ model = "claude-opus"
 provider = "gemini"
 model = "gemini-2.5-flash"
 """)
-    let ctx = loadSessionContext(memory, userId)
+    let ctx = loadSessionContext(memory.toRuntimePort(), userId)
     check ctx.preferencesMd.contains("provider = \"gemini\"")
     check ctx.paddockDir == memory.paddockDir(userId)
     check ctx.providerLabel == "gemini/gemini-2.5-flash"
@@ -95,11 +96,11 @@ model = "gemini-2.5-flash"
     check plan.providerLabel == "zhipu"
 
   test "buildProviderBundle exposes streamFn only for providers that implement it":
-    let openrouter = buildProviderBundle("provider = \"openrouter\"")
-    let anthropic = buildProviderBundle("provider = \"anthropic\"")
-    let gemini = buildProviderBundle("provider = \"gemini\"")
-    let minimax = buildProviderBundle("provider = \"minimax\"")
-    let zhipu = buildProviderBundle("provider = \"zhipu\"")
+    let openrouter = buildProviderBundle("provider = \"openrouter\"", runtime_builder.buildProviderBundle)
+    let anthropic = buildProviderBundle("provider = \"anthropic\"", runtime_builder.buildProviderBundle)
+    let gemini = buildProviderBundle("provider = \"gemini\"", runtime_builder.buildProviderBundle)
+    let minimax = buildProviderBundle("provider = \"minimax\"", runtime_builder.buildProviderBundle)
+    let zhipu = buildProviderBundle("provider = \"zhipu\"", runtime_builder.buildProviderBundle)
     check openrouter.streamFn != nil
     check anthropic.streamFn != nil
     check gemini.streamFn == nil
