@@ -9,6 +9,15 @@ import ../domain/message
 import ../core/pipeops
 
 type
+  ProviderPrefs* = object
+    providerName*: string
+    modelName*:    string
+
+  ProviderSpec* = object
+    providerName*: string
+    modelName*:    string
+    apiKey*:       string
+
   ProviderCaps* = object
     ## Static description of what a provider supports.
     name*:               string
@@ -29,6 +38,12 @@ type
                    onToken: proc(tok: string) {.gcsafe.}
                   ): Result[CompletionResponse, string]
                      {.gcsafe.}
+
+  ProviderBundle* = object
+    completeFn*: CompleteFn
+    streamFn*:   StreamFn
+
+  ProviderRuntimeBuilder* = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.}
 
   ProviderPort* = concept p
     p.complete(CompletionRequest) is CompletionResponse

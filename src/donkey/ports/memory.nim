@@ -11,6 +11,8 @@
 ##     sessions/      — per-session conversation logs
 
 import ../core/types
+import ../domain/message
+import ../domain/personality
 
 type
   UserContext* = object
@@ -54,3 +56,34 @@ type
   SearchFn* = proc(userId: UserId; query: string; limit: int): seq[MemoryHit]
     {.gcsafe, raises: [].}
   ## Closure form of the search operation. Nil = no semantic search (fall back to raw MEMORY.md).
+
+  MemoryRuntimePort* = object
+    hasProfile*:      proc(userId: UserId): bool {.gcsafe.}
+    loadContext*:     proc(userId: UserId): UserContext {.gcsafe.}
+    saveUserMd*:      proc(userId: UserId; content: string) {.gcsafe.}
+    appendMemory*:    proc(userId: UserId; text: string) {.gcsafe.}
+    savePreferences*: proc(userId: UserId; content: string) {.gcsafe.}
+    clearMemory*:     proc(userId: UserId) {.gcsafe.}
+    saveSession*:     proc(userId: UserId; sessionId: string; history: ConversationHistory)
+                        {.gcsafe.}
+    saveIdentity*:    proc(userId: UserId; traits: PersonalityTraits; name: string)
+                        {.gcsafe.}
+    loadIdentity*:    proc(userId: UserId): (string, PersonalityTraits)
+                        {.gcsafe.}
+    paddockDir*:      proc(userId: UserId): string {.gcsafe.}
+    scheduleReminder*: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string
+                         {.gcsafe.}
+
+proc bootstrapUserMd*(name, callMe, timezone, language: string): string =
+  ## Generates the initial USER.md following the OpenClaw USER.md template.
+  """---
+summary: """ & name & """ — onboarded via Donkey bootstrapping.
+read_when: every conversation
+---
+
+# """ & name & """
+
+**Preferred name:** """ & callMe & """
+**Timezone:** """ & timezone & """
+**Language:** """ & language & """
+"""

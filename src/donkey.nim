@@ -8,18 +8,21 @@ import donkey/config/types
 import donkey/config/tools_registry
 import donkey/config/skills_registry
 import donkey/config/clawhub_registry
-import donkey/adapters/tool/deno_skill
+import donkey/adapters/tool/runtime_builder
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/app_meta
-import donkey/core/session_ingress
+import donkey/core/session/session_ingress
 import donkey/adapters/memory/md_file
 when defined(withPostgres):
   import donkey/adapters/memory/postgres_memory
   import donkey/adapters/embedding/openrouter_embed
   import donkey/ports/embedding
 import donkey/adapters/provider/openrouter
+import donkey/adapters/provider/runtime_builder
+import donkey/adapters/http/std_http
 import donkey/adapters/channel/telegram
+import donkey/adapters/channel/outbound_builder
 import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/channel/discord
 import donkey/adapters/channel/discord_runtime
@@ -35,6 +38,7 @@ import donkey/adapters/tool/mcp_client
 import donkey/domain/message
 import donkey/domain/agent_message
 import donkey/ports/provider
+import donkey/ports/tool
 import donkey/app/orchestrator
 import donkey/app/ipc_server
 import donkey/app/outbound_runtime
@@ -471,7 +475,7 @@ proc ctlSkillUpdateRemote(home, registry, slug: string) =
 # ── ctl provider test ──────────────────────────────────────────────────────────
 
 proc ctlProviderTest(name: string) =
-  let fn = buildCompleteFn("provider = \"" & name & "\"")
+  let fn = buildCompleteFn("provider = \"" & name & "\"", buildProviderBundle)
   var h = newHistory()
   h.addUser("ping")
   let req  = buildPrompt("Reply with one word: pong", h, "")
@@ -511,7 +515,7 @@ proc makeTgTypingFn(token: string; identityPath: string): TypingFn =
       except: discard
 
 type DaemonToolBundle = object
-  clients: seq[McpClientAdapter]
+  clients: seq[ToolRuntimePort]
   tools:   seq[ToolDescription]
 
 type GlobalProviderBundle = object
@@ -538,7 +542,7 @@ type DaemonAdapters = object
   fs: FeishuAdapter
 
 type DaemonServices = object
-  toolClients:      seq[McpClientAdapter]
+  toolClients:      seq[ToolRuntimePort]
   tools:            seq[ToolDescription]
   globalCompleteFn: CompleteFn
   globalStreamFn:   StreamFn
@@ -584,23 +588,26 @@ proc loadDaemonToolBundle(cfgHome: string): DaemonToolBundle =
             description: s.description,
             schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
           ))
-      result.clients.add(client)
+      result.clients.add(client.toRuntimePort())
     for manifest in loadSkillRegistry(cfgHome / "skills.toml"):
-      var client = newDenoSkillAdapter(manifest.script, manifest.permissions)
-      let schemasRes = client.listTools()
-      if schemasRes.isOk:
-        for s in schemasRes.value:
+      let runtimeRes = buildDenoSkillRuntime(manifest.script, manifest.permissions)
+      if runtimeRes.isOk:
+        for s in runtimeRes.value.schemas:
           result.tools.add(ToolDescription(
             name:        s.name,
             description: s.description,
             schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
           ))
-      result.clients.add(client)
+        result.clients.add(runtimeRes.value.port)
+
+proc makeProviderFn[A](a: A): CompleteFn =
+  result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
+    a.complete(req)
 
 proc buildGlobalProviderBundle(): GlobalProviderBundle =
   let orKey = getEnv("OPENROUTER_API_KEY")
   let orAdapter = newOpenRouterAdapter(orKey)
-  result.completeFn = if orKey.len > 0: makeFn(orAdapter) else: nil
+  result.completeFn = if orKey.len > 0: makeProviderFn(orAdapter) else: nil
   result.streamFn = if orKey.len > 0: orAdapter.makeStreamFn() else: nil
 
 proc buildGlobalSearchFn(): SearchFn
@@ -806,7 +813,7 @@ type SessionIngressServices = object
   memory:       MdFileAdapter
   completeFn:   CompleteFn
   streamFn:     StreamFn
-  toolClients:  seq[McpClientAdapter]
+  toolClients:  seq[ToolRuntimePort]
   tools:        seq[ToolDescription]
   globalOutbox: AsyncQueue[OutboundMessage]
   log:          Logger
@@ -863,7 +870,7 @@ proc buildSessionIngressContext*(sm: var SessionManager;
 func buildSessionIngressServices*(memory: MdFileAdapter;
                                   completeFn: CompleteFn;
                                   streamFn: StreamFn;
-                                  toolClients: seq[McpClientAdapter];
+                                  toolClients: seq[ToolRuntimePort];
                                   tools: seq[ToolDescription];
                                   globalOutbox: AsyncQueue[OutboundMessage];
                                   log: Logger;
@@ -924,8 +931,8 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
     plan.oldAskInbox.addLastNoWait("__DONKEY_ASK_CANCELLED__")
   if plan.decision.rebuildsSessionRuntime and not plan.oldInbox.isNil:
     plan.oldInbox.addLastNoWait(newCancelMsg())
-  asyncSpawn runOrchestrator(plan.entry[].inbox, plan.entry, globalOutbox, memory,
-                             bootstrap.completeFn, streamFn,
+  asyncSpawn runOrchestrator(plan.entry[].inbox, plan.entry, globalOutbox, memory.toRuntimePort(),
+                             bootstrap.completeFn, newStdHttpAdapter().toRuntimePort(), streamFn,
                              bootstrap.clients, bootstrap.tools,
                              bootstrap.paddockDir,
                              typingFn, searchFn, log.child("orch"), bootstrap.providerLabel,
@@ -948,7 +955,9 @@ proc startSessionIngress*(sm: var SessionManager;
                           services: SessionIngressServices;
                           msgSeq: var int): SessionIngressContext {.gcsafe.} =
   let bootstrap = buildSessionBootstrap(
-    services.memory, msg.userId, services.completeFn, services.toolClients, services.tools)
+    services.memory.toRuntimePort(), msg.userId, services.completeFn, buildProviderBundle,
+    buildDenoSkillRuntime,
+    services.toolClients, services.tools)
   let signature = toolCatalogSignature(
     bootstrap.tools, bootstrap.providerLabel, bootstrap.paddockDir, bootstrap.skillPrompt)
   result = sm.buildSessionIngressContext(msg, signature, msgSeq)
@@ -1016,13 +1025,15 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
                          tgAdapter:    var TelegramAdapter;
                          services:     SessionIngressServices;
                          log:          Logger): bool =
+  let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+    buildCompleteFn(preferencesMd, buildProviderBundle)
   let tgMsgs = tgAdapter.receive().valueOr:
     log.error("telegram receive: " & error)
     return false
 
   for msg in tgMsgs:
     if not telegram_runtime.handleTelegramMessage(
-      msg, runtime.sm, tgAdapter, runtime.kbdMsgIds, services.memory, buildCompleteFn,
+      msg, runtime.sm, tgAdapter, runtime.kbdMsgIds, services.memory, completeBuilder,
       services.toolClients.len, services.tools.len, runtime.msgSeq, runtime.daemonStartMs):
       handleTelegramFallback(runtime, tgAdapter, msg, services)
   true
@@ -1069,12 +1080,13 @@ proc clearTelegramStatus(runtime:   var DaemonRuntime;
 proc drainGlobalOutbox(runtime:  var DaemonRuntime;
                        adapters: var DaemonAdapters;
                        log:      Logger) =
+  let outboundPorts = buildOutboundPorts(
+    addr adapters.tg, addr adapters.dc, addr adapters.wc,
+    addr adapters.wch, addr adapters.qq, addr adapters.fs)
   while runtime.globalOutbox.len > 0:
     let outMsg = runtime.globalOutbox.getNoWait()
     clearTelegramStatus(runtime, adapters.tg, outMsg)
-    routeOutbound(outMsg, adapters.tg, adapters.dc, adapters.wc, adapters.wch,
-                  adapters.qq, adapters.fs,
-                  log, runtime.streamMsgIds)
+    routeOutbound(outMsg, outboundPorts, log, runtime.streamMsgIds)
 
 proc startDaemonIngress(ctx: DaemonContext;
                         log: Logger) =
@@ -1114,8 +1126,10 @@ proc drainDiscordGateway(ctx: DaemonContext;
                          cfg: DonkeyConfig;
                          memory: MdFileAdapter;
                          log: Logger) =
+  let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+    buildCompleteFn(preferencesMd, buildProviderBundle)
   discord_runtime.drainDiscordEvents(
-    ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, memory, buildCompleteFn,
+    ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, memory, completeBuilder,
     ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.msgSeq, log,
     proc(msg: InboundMessage) =
       handleGatewayFallback(ctx, cfg, memory, msg, log))

@@ -19,6 +19,7 @@ import chronos
 import chronos/asyncsync
 import nimcrypto/sha2
 import ../core/app_meta
+import ../core/tooling/native_tool_dispatch
 import ../core/pipeops
 import ../core/log
 import ../domain/message
@@ -26,10 +27,9 @@ import ../domain/more_tools
 import ../domain/builtin_tools
 import ../domain/calc
 import ../domain/reminder
-import ../adapters/http/std_http
-import ../adapters/memory/md_file
 import ../ports/http as httpPort
 import ../ports/provider
+import ../ports/memory
 import ../config/types as cfgTypes
 import ./sandbox
 import ./session_state
@@ -122,8 +122,9 @@ type
     channel*:      ChannelKind
     outbox*:       AsyncQueue[OutboundMessage]
     session*:      ptr SessionEntry
-    memory*:       MdFileAdapter
+    memory*:       MemoryRuntimePort
     completeFn*:   CompleteFn
+    http*:         httpPort.HttpRuntimePort
     braveApiKey*:  string
     tools*:        seq[ToolDescription]
     log*:          Logger
@@ -137,10 +138,6 @@ type
                                    history: ConversationHistory;
                                    j: JsonNode;
                                   ): Future[NativeToolResult] {.nimcall, gcsafe, raises: [].}
-
-  NativeToolCategory = object
-    handler: NativeToolCategoryHandler
-    passThroughTools: seq[string]
 
 # ── Paddock path helpers ───────────────────────────────────────────────────────
 
@@ -434,11 +431,11 @@ proc performGrep*(pattern, path: string; recursive: bool;
 const FetchHardMax* = 20_000
 const FetchDefaultMax* = 5_000
 
-proc performFetch*(url: string; maxCh: int): string {.gcsafe, raises: [].} =
+proc performFetch*(http: httpPort.HttpRuntimePort;
+                   url: string; maxCh: int): string {.gcsafe, raises: [].} =
   try:
     if isPrivateUrl(url):
       return "Error: private/internal addresses not allowed."
-    let http = newStdHttpAdapter()
     var resp: Result[HttpResponse, string]
     {.cast(gcsafe).}: resp = http.get(url, @[])
     if resp.isErr: return "Error: " & resp.error
@@ -463,7 +460,8 @@ proc performFetch*(url: string; maxCh: int): string {.gcsafe, raises: [].} =
 const BraveSearchUrl = "https://api.search.brave.com/res/v1/web/search"
 
 proc performWebSearch*(query: string; count: int;
-                       apiKey: string): string {.gcsafe, raises: [].} =
+                       apiKey: string;
+                       http: httpPort.HttpRuntimePort): string {.gcsafe, raises: [].} =
   if apiKey.len == 0:
     return "Error: BRAVE_API_KEY not configured. Set the environment variable."
   try:
@@ -472,7 +470,6 @@ proc performWebSearch*(query: string; count: int;
       ("X-Subscription-Token", apiKey),
       ("Accept",               "application/json"),
     ]
-    let http = newStdHttpAdapter()
     var resp: Result[HttpResponse, string]
     {.cast(gcsafe).}:
       try: resp = http.get(url, headers)
@@ -912,12 +909,15 @@ proc executeLegacyNativeTool(tc: ToolCallRequest;
     let remMsg  = j.getOrDefault("message").getStr("")
     if whenStr.len == 0 or remMsg.len == 0:
       return handledText("Error: 'when' and 'message' are required.")
-    let ts = parseWhen(whenStr)
-    discard ctx.memory.scheduleReminder(ctx.uid, $ctx.channel, ts, remMsg)
+    let ts = parseWhen(whenStr, getTime().toUnix())
+    try:
+      discard ctx.memory.scheduleReminder(ctx.uid, $ctx.channel, ts, remMsg)
+    except Exception as e:
+      return handledText("Error: " & e.msg)
     return handledText("Reminder scheduled.")
 
   of CurrentTimeToolName:
-    return handledText(currentTimeResult())
+    return handledText(currentTimeResult(now().utc()))
 
   of WebFetchToolName:
     let url   = j.getOrDefault("url").getStr("")
@@ -925,7 +925,7 @@ proc executeLegacyNativeTool(tc: ToolCallRequest;
     if url.len == 0: return handledText("Error: 'url' is required.")
     if isPrivateUrl(url): return handledText("Error: private addresses not allowed.")
     var fetched = ""
-    {.cast(gcsafe).}: fetched = performFetch(url, maxCh)
+    {.cast(gcsafe).}: fetched = performFetch(ctx.http, url, maxCh)
     return handledText(fetched)
 
   else:
@@ -1013,14 +1013,14 @@ proc executeWebNativeTool(tc: ToolCallRequest;
     let fetchCtx = parseFetchContext(j, FetchDefaultMax).valueOr:
       return handledText(error)
     var r = ""
-    {.cast(gcsafe).}: r = performFetch(fetchCtx.url, fetchCtx.maxCh)
+    {.cast(gcsafe).}: r = performFetch(ctx.http, fetchCtx.url, fetchCtx.maxCh)
     return handledText(r)
 
   of WebSearchToolName:
     let searchCtx = parseWebSearchContext(j).valueOr:
       return handledText(error)
     var r = ""
-    {.cast(gcsafe).}: r = performWebSearch(searchCtx.query, searchCtx.count, ctx.braveApiKey)
+    {.cast(gcsafe).}: r = performWebSearch(searchCtx.query, searchCtx.count, ctx.braveApiKey, ctx.http)
     return handledText(r)
 
   else:
@@ -1139,15 +1139,24 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
   else:
     return NativeToolResult(handled: false)
 
+func categoryHandler(kind: NativeToolCategoryKind): NativeToolCategoryHandler =
+  case kind
+  of ntckLegacy: executeLegacyNativeTool
+  of ntckShell: executeShellNativeTool
+  of ntckWeb: executeWebNativeTool
+  of ntckUtility: executeUtilityNativeTool
+  of ntckSession: executeSessionNativeTool
+  of ntckAgent: executeAgentNativeTool
+
 proc executeNativeCategory(tc: ToolCallRequest;
                            ctx: NativeCtx;
                            state: SessionState;
                            history: ConversationHistory;
                            j: JsonNode;
-                           category: NativeToolCategory;
+                           category: NativeToolCategoryKind;
                           ): Future[NativeToolResult] {.async.} =
-  let categoryResult = await category.handler(tc, ctx, state, history, j)
-  if categoryResult.handled or tc.name in category.passThroughTools:
+  let categoryResult = await category.categoryHandler()(tc, ctx, state, history, j)
+  if categoryResult.handled:
     return categoryResult
   NativeToolResult(handled: false)
 
@@ -1158,17 +1167,9 @@ proc executeNativeTool*(tc:      ToolCallRequest;
                        ): Future[NativeToolResult] {.async.} =
   let j = try: parseJson(tc.inputJson)
           except: newJObject()
-  let categories = @[
-    NativeToolCategory(handler: executeLegacyNativeTool, passThroughTools: @[]),
-    NativeToolCategory(handler: executeShellNativeTool, passThroughTools: @[]),
-    NativeToolCategory(handler: executeWebNativeTool, passThroughTools: @[]),
-    NativeToolCategory(handler: executeUtilityNativeTool, passThroughTools: @[]),
-    NativeToolCategory(handler: executeSessionNativeTool, passThroughTools: @[]),
-    NativeToolCategory(handler: executeAgentNativeTool, passThroughTools: @[]),
-  ]
-  for category in categories:
+  for category in nativeToolCategoryOrder():
     let categoryResult = await executeNativeCategory(tc, ctx, state, history, j, category)
-    if categoryResult.handled or tc.name in category.passThroughTools:
+    if categoryResult.handled:
       return categoryResult
 
   return NativeToolResult(handled: false)

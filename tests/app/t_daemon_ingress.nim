@@ -3,7 +3,7 @@ import chronos/asyncsync
 import donkey
 import donkey/adapters/memory/md_file
 import donkey/app/session_manager
-import donkey/core/session_ingress
+import donkey/core/session/session_ingress
 import donkey/domain/agent_message
 import donkey/domain/message
 

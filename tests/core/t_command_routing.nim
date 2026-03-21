@@ -1,0 +1,98 @@
+import donkey/domain/message
+import donkey/domain/agent_message
+import std/unittest
+import donkey/core/commands/command_routing
+
+suite "core command routing":
+
+  test "parseCommandText parses continue and callback payloads":
+    let cont = parseCommandText("/continue abc123")
+    let cb = parseCommandText("/callback models:back")
+    check cont.kind == cmdContinue
+    check cont.route == crLocal
+    check cont.value == "abc123"
+    check cb.kind == cmdCallback
+    check cb.route == crCallback
+    check cb.value == "models:back"
+
+  test "parseCallbackData parses ui and core callbacks":
+    let modelSet = parseCallbackData("models:set:openrouter:openai/gpt-4o")
+    let thinkSet = parseCallbackData("think:set:medium")
+    let personality = parseCallbackData("personality:tone:warm")
+    let name = parseCallbackData("name:Ada")
+    check modelSet.kind == cbkModelsSet
+    check modelSet.route == cbrUi
+    check modelSet.provider == "openrouter"
+    check modelSet.model == "openai/gpt-4o"
+    check thinkSet.kind == cbkThinkSet
+    check thinkSet.route == cbrUi
+    check thinkSet.value == "medium"
+    check personality.kind == cbkPersonality
+    check personality.route == cbrSessionTask
+    check name.kind == cbkName
+    check name.route == cbrSessionTask
+
+  test "callback helpers classify routes and task kinds":
+    check isUiCallback(cbkModelsProvider)
+    check isUiCallback(cbkThinkSet)
+    check isCoreCallback(cbkPersonality)
+    check isCoreCallback(cbkName)
+    check decideCallbackRoute(cbkModelsBack) == cbrUi
+    check decideCallbackRoute(cbkName) == cbrSessionTask
+    check decideCallbackRoute(cbkUnknown) == cbrNone
+    check callbackTaskKind(CallbackDecision(kind: cbkPersonality)) == tkPersonalityChoice
+    check callbackTaskKind(CallbackDecision(kind: cbkName)) == tkNameChoice
+
+  test "decideCallbackRequest wraps parser semantics":
+    let decision = decideCallbackRequest(CallbackRequest(channel: ckTelegram, data: "name:Ada"))
+    check decision.kind == cbkName
+    check decision.route == cbrSessionTask
+
+  test "parseCommandText parses ui and status commands":
+    check parseCommandText("/models").kind == cmdModels
+    check parseCommandText("/models").route == crUi
+    check parseCommandText("/think").kind == cmdThink
+    check parseCommandText("/ping").kind == cmdPing
+    check parseCommandText("/ping").route == crPing
+    check parseCommandText("/status").kind == cmdStatus
+    check parseCommandText("/status").route == crStatus
+
+  test "command kind helpers classify semantic groups":
+    check isCoreCommand(cmdHelp)
+    check isCoreCommand(cmdMyCode)
+    check isLocalCommand(cmdHelp)
+    check isSessionTaskCommand(cmdDebug)
+    check isSessionTaskCommand(cmdReset)
+    check isUiCommand(cmdModels)
+    check isUiCommand(cmdThink)
+    check isPingCommand(cmdPing)
+    check isStatusCommand(cmdStatus)
+    check not isCoreCommand(cmdNone)
+
+  test "decideCommandRequest wraps parser semantics":
+    let decision = decideCommandRequest(CommandRequest(channel: ckTelegram, text: "/help"))
+    check decision.kind == cmdHelp
+    check decision.route == crLocal
+
+  test "decideCommandRoute classifies key command families":
+    check decideCommandRoute(cmdHelp) == crLocal
+    check decideCommandRoute(cmdDebug) == crSessionTask
+    check decideCommandRoute(cmdModels) == crUi
+    check decideCommandRoute(cmdPing) == crPing
+    check decideCommandRoute(cmdStatus) == crStatus
+    check decideCommandRoute(cmdCallback) == crCallback
+    check decideCommandRoute(cmdNone) == crNone
+
+  test "commandTaskKind maps session task commands":
+    check commandTaskKind(CommandDecision(kind: cmdDebug)) == tkDebugToggle
+    check commandTaskKind(CommandDecision(kind: cmdReset)) == tkReset
+
+  test "decideLocalCommandAction maps local command semantics":
+    check decideLocalCommandAction(CommandDecision(kind: cmdStart)) == lcaStartIntro
+    check decideLocalCommandAction(CommandDecision(kind: cmdMyCode)) == lcaGenerateLinkCode
+    check decideLocalCommandAction(CommandDecision(kind: cmdForget)) == lcaClearMemory
+    check decideLocalCommandAction(CommandDecision(kind: cmdDoctor)) == lcaDoctorReport
+    check decideLocalCommandAction(CommandDecision(kind: cmdHelp)) == lcaHelpText
+    check decideLocalCommandAction(CommandDecision(kind: cmdMemory)) == lcaShowMemory
+    check decideLocalCommandAction(CommandDecision(kind: cmdContinue)) == lcaContinueLink
+    check decideLocalCommandAction(CommandDecision(kind: cmdModels)) == lcaNone
