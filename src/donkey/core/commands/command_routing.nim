@@ -54,6 +54,7 @@ type
     cbkUnknown
     cbkModelsProvider
     cbkModelsSet
+    cbkModelsPage
     cbkModelsBack
     cbkThinkSet
     cbkPersonality
@@ -74,6 +75,7 @@ type
     provider*: string
     model*:    string
     value*:    string
+    page*:     int
 
 func decideCommandRoute*(kind: CommandKind): CommandRoute =
   case kind
@@ -107,12 +109,18 @@ func parseCommandText*(text: string): CommandDecision =
   of "/debug": newCommandDecision(cmdDebug)
   of "/reset": newCommandDecision(cmdReset)
   of "/mycode": newCommandDecision(cmdMyCode)
-  of "/models": newCommandDecision(cmdModels)
-  of "/think": newCommandDecision(cmdThink)
   of "/ping": newCommandDecision(cmdPing)
   of "/status": newCommandDecision(cmdStatus)
   else:
-    if cmd.startsWith("/continue "):
+    if cmd.startsWith("/models "):
+      newCommandDecision(cmdModels, cmd[8 .. ^1].strip)
+    elif cmd.startsWith("/think "):
+      newCommandDecision(cmdThink, cmd[7 .. ^1].strip)
+    elif cmd == "/models":
+      newCommandDecision(cmdModels)
+    elif cmd == "/think":
+      newCommandDecision(cmdThink)
+    elif cmd.startsWith("/continue "):
       newCommandDecision(cmdContinue, cmd[10 .. ^1].strip)
     elif cmd.startsWith("/callback "):
       newCommandDecision(cmdCallback, cmd[10 .. ^1].strip)
@@ -143,7 +151,7 @@ func decideLocalCommandAction*(decision: CommandDecision): LocalCommandAction =
 
 func decideCallbackRoute*(kind: CallbackKind): CallbackRoute =
   case kind
-  of cbkModelsProvider, cbkModelsSet, cbkModelsBack, cbkThinkSet:
+  of cbkModelsProvider, cbkModelsSet, cbkModelsPage, cbkModelsBack, cbkThinkSet:
     cbrUi
   of cbkPersonality, cbkName:
     cbrSessionTask
@@ -153,13 +161,15 @@ func decideCallbackRoute*(kind: CallbackKind): CallbackRoute =
 func newCallbackDecision(kind: CallbackKind;
                          value = "";
                          provider = "";
-                         model = ""): CallbackDecision =
+                         model = "";
+                         page = 0): CallbackDecision =
   CallbackDecision(
     kind: kind,
     route: decideCallbackRoute(kind),
     provider: provider,
     model: model,
     value: value,
+    page: page,
   )
 
 func parseCallbackData*(data: string): CallbackDecision =
@@ -169,6 +179,10 @@ func parseCallbackData*(data: string): CallbackDecision =
     let parts = data[11 .. ^1].split(':', 1)
     if parts.len == 2:
       return newCallbackDecision(cbkModelsSet, provider = parts[0], model = parts[1])
+  if data.startsWith("models:page:"):
+    let parts = data[12 .. ^1].rsplit(':', 1)
+    if parts.len == 2:
+      return newCallbackDecision(cbkModelsPage, provider = parts[0], page = parseInt(parts[1]))
   if data == "models:back":
     return newCallbackDecision(cbkModelsBack)
   if data.startsWith("think:set:"):
@@ -186,7 +200,7 @@ func isCoreCallback*(kind: CallbackKind): bool =
   kind in {cbkPersonality, cbkName}
 
 func isUiCallback*(kind: CallbackKind): bool =
-  kind in {cbkModelsProvider, cbkModelsSet, cbkModelsBack, cbkThinkSet}
+  kind in {cbkModelsProvider, cbkModelsSet, cbkModelsPage, cbkModelsBack, cbkThinkSet}
 
 func callbackTaskKind*(callback: CallbackDecision): TaskKind =
   case callback.kind

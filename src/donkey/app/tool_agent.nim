@@ -63,7 +63,7 @@ proc runToolAgent*(inbox:   AsyncQueue[AgentMessage];
           break
 
       if not invoked:
-        await outbox.put(newResultMsg(msg.id,
+        await outbox.put(newErrorMsg(msg.id,
           "Tool '" & toolName & "' not found in any registered server."))
 
     else:

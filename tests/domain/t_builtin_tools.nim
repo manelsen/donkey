@@ -1,5 +1,6 @@
 import unittest
 import std/[json, strutils]
+import donkey/config/types
 import donkey/domain/builtin_tools
 
 suite "web_fetch tool metadata":
@@ -74,3 +75,33 @@ suite "isPrivateUrl":
 
   test "hostname containing '127' in path is not private":
     check not isPrivateUrl("https://example.com/ref/127")
+
+suite "web allowlist":
+
+  test "parseWebAllowlist trims and normalizes hosts":
+    check parseWebAllowlist(" example.com, api.github.com ,,Docs.Nim-lang.org ") ==
+      @["example.com", "api.github.com", "docs.nim-lang.org"]
+
+  test "isAllowedPublicUrl allows public URLs when allowlist empty":
+    check isAllowedPublicUrl("https://example.com/docs", @[])
+
+  test "isAllowedPublicUrl blocks public URL outside allowlist":
+    check not isAllowedPublicUrl("https://example.com/docs", @["api.github.com"])
+
+  test "isAllowedPublicUrl accepts subdomains of allowed host":
+    check isAllowedPublicUrl("https://docs.nim-lang.org/manual", @["nim-lang.org"])
+
+  test "buildUrlAccessError mentions allowlist env var":
+    let msg = buildUrlAccessError("https://example.com/docs", @["api.github.com"])
+    check msg.contains(WebAllowlistEnvVar)
+    check msg.contains("example.com")
+
+  test "matchesWebAccessRule enforces path prefix":
+    let rule = WebAccessRule(host: "api.github.com", pathPrefix: "/repos/")
+    check matchesWebAccessRule("https://api.github.com/repos/openai/openai", rule)
+    check not matchesWebAccessRule("https://api.github.com/users/openai", rule)
+
+  test "rule-based allowlist prefers explicit rules":
+    let rules = @[WebAccessRule(host: "docs.nim-lang.org", pathPrefix: "/manual")]
+    check isAllowedPublicUrl("https://docs.nim-lang.org/manual.html", rules, @["example.com"])
+    check not isAllowedPublicUrl("https://docs.nim-lang.org/tutorials.html", rules, @["docs.nim-lang.org"])

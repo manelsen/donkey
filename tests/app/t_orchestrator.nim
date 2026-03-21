@@ -145,7 +145,7 @@ suite "ToolAgent":
       return reply
     let reply = waitFor doTest()
 
-    check reply.kind == amkResult
+    check reply.kind == amkError
     check reply.text.contains("not found")
 
 # ── OrchestratorAgent ─────────────────────────────────────────────────────────

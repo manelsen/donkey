@@ -17,6 +17,7 @@ suite "core command routing":
 
   test "parseCallbackData parses ui and core callbacks":
     let modelSet = parseCallbackData("models:set:openrouter:openai/gpt-4o")
+    let modelPage = parseCallbackData("models:page:openrouter:2")
     let thinkSet = parseCallbackData("think:set:medium")
     let personality = parseCallbackData("personality:tone:warm")
     let name = parseCallbackData("name:Ada")
@@ -24,6 +25,9 @@ suite "core command routing":
     check modelSet.route == cbrUi
     check modelSet.provider == "openrouter"
     check modelSet.model == "openai/gpt-4o"
+    check modelPage.kind == cbkModelsPage
+    check modelPage.provider == "openrouter"
+    check modelPage.page == 2
     check thinkSet.kind == cbkThinkSet
     check thinkSet.route == cbrUi
     check thinkSet.value == "medium"
@@ -51,7 +55,9 @@ suite "core command routing":
   test "parseCommandText parses ui and status commands":
     check parseCommandText("/models").kind == cmdModels
     check parseCommandText("/models").route == crUi
+    check parseCommandText("/models gemini gemini-2.5-pro").value == "gemini gemini-2.5-pro"
     check parseCommandText("/think").kind == cmdThink
+    check parseCommandText("/think medium").value == "medium"
     check parseCommandText("/ping").kind == cmdPing
     check parseCommandText("/ping").route == crPing
     check parseCommandText("/status").kind == cmdStatus

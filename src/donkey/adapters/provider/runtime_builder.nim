@@ -35,6 +35,10 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
     ProviderBundle(
       completeFn: makeFn(newMiniMaxAdapter(spec.apiKey, model = spec.modelName))
     )
+  of "zai":
+    ProviderBundle(
+      completeFn: makeFn(newZaiAdapter(spec.apiKey, model = spec.modelName))
+    )
   else:
     ProviderBundle(
       completeFn: makeFn(newZhipuAdapter(spec.apiKey, model = spec.modelName))

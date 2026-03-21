@@ -43,5 +43,12 @@ type
     port*:    ToolRuntimePort
     schemas*: seq[ToolSchema]
 
-  SkillRuntimeBuilder* = proc(script: string; permissions: seq[string]): Result[LoadedToolRuntime, string]
+  SkillRuntimePolicy* = object
+    allowNetHosts*: seq[string]
+
+  SkillRuntimePolicyResolver* = proc(skillName: string): SkillRuntimePolicy {.gcsafe.}
+
+  SkillRuntimeBuilder* = proc(script: string;
+                              permissions: seq[string];
+                              policy: SkillRuntimePolicy): Result[LoadedToolRuntime, string]
                            {.gcsafe.}

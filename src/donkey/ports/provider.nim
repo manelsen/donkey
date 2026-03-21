@@ -18,6 +18,23 @@ type
     modelName*:    string
     apiKey*:       string
 
+  ModelCatalogEntry* = object
+    providerName*: string
+    modelName*:    string
+    label*:        string
+    isFree*:       bool
+    available*:    bool
+
+  ModelCatalogSource* = enum
+    mcsLive
+    mcsCache
+    mcsFallback
+
+  ModelCatalogResult* = object
+    entries*:      seq[ModelCatalogEntry]
+    source*:       ModelCatalogSource
+    fetchedAtUnix*: int64
+
   ProviderCaps* = object
     ## Static description of what a provider supports.
     name*:               string
@@ -44,6 +61,7 @@ type
     streamFn*:   StreamFn
 
   ProviderRuntimeBuilder* = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.}
+  ModelCatalogLoader* = proc(providerName: string): Result[ModelCatalogResult, string] {.gcsafe.}
 
   ProviderPort* = concept p
     p.complete(CompletionRequest) is CompletionResponse
@@ -51,3 +69,15 @@ type
 
     p.caps() is ProviderCaps
     ## Declare provider capabilities (pure metadata, no I/O).
+
+func catalogSourceLabel*(source: ModelCatalogSource): string =
+  case source
+  of mcsLive: "live"
+  of mcsCache: "cache"
+  of mcsFallback: "fallback"
+
+func relativeAgeText*(ageSec: int64): string =
+  if ageSec <= 0: "agora"
+  elif ageSec < 60: $ageSec & "s"
+  elif ageSec < 3600: $(ageSec div 60) & "m"
+  else: $(ageSec div 3600) & "h " & $((ageSec mod 3600) div 60) & "m"

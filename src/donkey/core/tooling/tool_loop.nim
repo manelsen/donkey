@@ -104,12 +104,13 @@ func withAbortedBatch*(_: ToolBatchItemPlan;
 
 func withToolResult*(tc: ToolCallRequest;
                      toolResultText: string;
+                     toolResultKind: ToolResultKind;
                      newHistory: Option[ConversationHistory];
                      state: ToolBatchState): ToolBatchState =
   result = state
   if newHistory.isSome:
     result.history = newHistory.get()
-  result.history.addToolResult(tc.id, tc.name, toolResultText)
+  result.history.addToolResult(tc.id, tc.name, toolResultText, toolResultKind)
   inc result.toolCallCount
 
 func buildRepeatAbortText*(toolName: string; repeatCount: int): string =
