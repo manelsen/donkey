@@ -32,6 +32,7 @@ import chronos
 import chronos/asyncsync
 import ../core/pipeops
 import ../core/log
+import ../core/onboarding
 import ../domain/agent_message
 import ../domain/message
 import ../domain/personality
@@ -46,6 +47,8 @@ import ./memory_agent
 import ./tool_agent
 import ./session_state
 import ./native_tools
+
+export onboarding
 
 const
   MaxToolRoundsOrch    = 50   ## hard safety cap; loop ends earlier on repeated calls
@@ -89,19 +92,6 @@ type NormalTurnPrep = object
 
 type TypingFlag = ref bool
 
-type OnboardingRuntime* = object
-  phase*:       OnboardingPhase
-  traits*:      PersonalityTraits
-  names*:       seq[string]
-  userName*:    string
-  timezone*:    string
-  language*:    string
-
-type IdentityRuntime* = object
-  name*:          string
-  traits*:        PersonalityTraits
-  identityLoaded*: bool
-
 type OnboardingTurnResult = object
   history:            ConversationHistory
   onboarding:         OnboardingRuntime
@@ -132,30 +122,6 @@ type ToolLoopCompletionInput = object
 type ToolLoopBatchInput = object
   batch: ToolBatchResult
 
-type FreeConvoContext* = object
-  history*:      ConversationHistory
-  onboarding*:   OnboardingRuntime
-  request*:      CompletionRequest
-  rawText*:      string
-  visibleText*:  string
-  parsedTraits*: Option[PersonalityTraits]
-
-type GuidedChoiceContext* = object
-  onboarding*: OnboardingRuntime
-  replyText*:  string
-  keyboard*:   seq[seq[(string, string)]]
-  needsNames*: bool
-  handled*:    bool
-
-type UserProfileContext* = object
-  onboarding*:   OnboardingRuntime
-  identity*:     IdentityRuntime
-  replyText*:    string
-  userMd*:       string
-  saveIdentity*: bool
-  saveUserMd*:   bool
-  advanced*:     bool
-
 type ResetControlContext* = object
   history*:       ConversationHistory
   sessionId*:     string
@@ -165,14 +131,6 @@ type ResetControlContext* = object
 type DebugControlContext* = object
   debugMode*: bool
   replyText*: string
-
-type OnboardingControlContext* = object
-  onboarding*: OnboardingRuntime
-  identity*:   IdentityRuntime
-  handled*:    bool
-  dim*:        string
-  value*:      string
-  name*:       string
 
 type UserTurnSetup = object
   uid:         UserId
@@ -284,35 +242,6 @@ proc addUserTurn*(history: ConversationHistory;
 proc buildToolLoopDoneText*(toolCallCount: int): string =
   "✅ " & $toolCallCount & " tool call(s)"
 
-const FreeConvoSystemPrompt* = """You are discovering your own identity through conversation.
-Your user will describe your personality, tone, and style.
-Listen actively. Ask clarifying questions if needed.
-When you have a clear picture of who you should be, output this exact block (no extra formatting):
-
-IDENTITY_READY:
-energy: <reservado|neutro|entusiasmado>
-tone: <formal|neutro|casual>
-length: <conciso|moderado|detalhado>
-initiative: <reativo|moderado|proativo>
-
-Then continue the conversation naturally. Only output the block when you are confident about all four dimensions."""
-
-proc startFreeConvoContext*(history: ConversationHistory;
-                            onboarding: OnboardingRuntime;
-                            userText: string): Result[FreeConvoContext, string] =
-  var nextHistory = history
-  nextHistory.addUser(userText)
-  nextHistory.trimTo(20)
-  ok(FreeConvoContext(
-    history: nextHistory,
-    onboarding: onboarding,
-  ))
-
-proc withFreeConvoRequest*(ctx: FreeConvoContext): Result[FreeConvoContext, string] =
-  var nextCtx = ctx
-  nextCtx.request = buildPrompt(FreeConvoSystemPrompt, ctx.history, "")
-  ok(nextCtx)
-
 proc completeFreeConvo*(completeFn: CompleteFn): proc(ctx: FreeConvoContext): Result[FreeConvoContext, string] {.gcsafe, raises: [].} =
   result =
     proc(ctx: FreeConvoContext): Result[FreeConvoContext, string] {.gcsafe, raises: [].} =
@@ -322,15 +251,6 @@ proc completeFreeConvo*(completeFn: CompleteFn): proc(ctx: FreeConvoContext): Re
       var nextCtx = ctx
       nextCtx.rawText = resp.value.text
       ok(nextCtx)
-
-proc parseFreeConvoReply*(ctx: FreeConvoContext): Result[FreeConvoContext, string] =
-  var nextCtx = ctx
-  nextCtx.visibleText = stripIdentityReady(ctx.rawText)
-  nextCtx.parsedTraits = parseIdentityReady(ctx.rawText)
-  nextCtx.history.addAssistant(ctx.rawText)
-  if nextCtx.parsedTraits.isSome:
-    nextCtx.onboarding.traits = nextCtx.parsedTraits.get()
-  ok(nextCtx)
 
 proc finalizeFreeConvoIdentity*(completeFn: CompleteFn): proc(ctx: FreeConvoContext): Result[FreeConvoContext, string] {.gcsafe, raises: [].} =
   result =
@@ -344,55 +264,6 @@ proc finalizeFreeConvoIdentity*(completeFn: CompleteFn): proc(ctx: FreeConvoCont
       nextCtx.onboarding.phase = opNameChoice
       ok(nextCtx)
 
-proc startGuidedChoiceContext*(onboarding: OnboardingRuntime;
-                               dim: string;
-                               valor: string): Result[GuidedChoiceContext, string] =
-  var nextCtx = GuidedChoiceContext(onboarding: onboarding)
-  case nextCtx.onboarding.phase
-  of opModeChoice:
-    if dim != "mode":
-      return ok(nextCtx)
-    if valor == "guided":
-      nextCtx.onboarding.phase = opGuidedEnergy
-      (nextCtx.replyText, nextCtx.keyboard) = guidedDimensionMsg(dkEnergy)
-      nextCtx.handled = true
-    elif valor == "free":
-      nextCtx.onboarding.phase = opFreeConvo
-      nextCtx.replyText =
-        "Ótimo! Descreva como imagina que eu devo ser — " &
-        "meu jeito, meu tom, minha forma de responder. " &
-        "Pode ser em poucas palavras ou um parágrafo."
-      nextCtx.handled = true
-
-  of opGuidedEnergy:
-    nextCtx.onboarding.traits.energy = valor
-    nextCtx.onboarding.phase = opGuidedTone
-    (nextCtx.replyText, nextCtx.keyboard) = guidedDimensionMsg(dkTone)
-    nextCtx.handled = true
-
-  of opGuidedTone:
-    nextCtx.onboarding.traits.tone = valor
-    nextCtx.onboarding.phase = opGuidedLength
-    (nextCtx.replyText, nextCtx.keyboard) = guidedDimensionMsg(dkLength)
-    nextCtx.handled = true
-
-  of opGuidedLength:
-    nextCtx.onboarding.traits.length = valor
-    nextCtx.onboarding.phase = opGuidedInitiative
-    (nextCtx.replyText, nextCtx.keyboard) = guidedDimensionMsg(dkInitiative)
-    nextCtx.handled = true
-
-  of opGuidedInitiative:
-    nextCtx.onboarding.traits.initiative = valor
-    nextCtx.onboarding.phase = opNameChoice
-    nextCtx.needsNames = true
-    nextCtx.handled = true
-
-  else:
-    discard
-
-  ok(nextCtx)
-
 proc finalizeGuidedChoice*(completeFn: CompleteFn): proc(ctx: GuidedChoiceContext): Result[GuidedChoiceContext, string] {.gcsafe, raises: [].} =
   result =
     proc(ctx: GuidedChoiceContext): Result[GuidedChoiceContext, string] {.gcsafe, raises: [].} =
@@ -403,57 +274,6 @@ proc finalizeGuidedChoice*(completeFn: CompleteFn): proc(ctx: GuidedChoiceContex
       {.cast(gcsafe).}: names = generateNames(completeFn, nextCtx.onboarding.traits)
       nextCtx.onboarding.names = names
       ok(nextCtx)
-
-proc startUserProfileContext*(onboarding: OnboardingRuntime;
-                              identity: IdentityRuntime;
-                              userText: string): Result[UserProfileContext, string] =
-  var nextCtx = UserProfileContext(onboarding: onboarding, identity: identity)
-  case nextCtx.onboarding.phase
-  of opNameChoice:
-    if userText.len == 0:
-      return ok(nextCtx)
-    nextCtx.identity.name = userText
-    nextCtx.identity.traits = nextCtx.onboarding.traits
-    nextCtx.identity.identityLoaded = true
-    nextCtx.onboarding.phase = opUserName
-    nextCtx.replyText =
-      "Perfeito. Serei " & nextCtx.identity.name &
-      ".\n\nAgora me conta sobre você — qual é o seu nome?"
-    nextCtx.saveIdentity = true
-    nextCtx.advanced = true
-
-  of opUserName:
-    nextCtx.onboarding.userName = userText
-    nextCtx.onboarding.phase = opUserTimezone
-    nextCtx.replyText =
-      "Ótimo, " & nextCtx.onboarding.userName & "! Em que fuso horário você está? " &
-      "(ex: America/Sao_Paulo, UTC-3, Europa/Lisboa)"
-    nextCtx.advanced = true
-
-  of opUserTimezone:
-    nextCtx.onboarding.timezone = userText
-    nextCtx.onboarding.phase = opUserLanguage
-    nextCtx.replyText =
-      "Entendido. Qual idioma prefere que eu use? " &
-      "(ex: Português, English, Español)"
-    nextCtx.advanced = true
-
-  of opUserLanguage:
-    nextCtx.onboarding.language = userText
-    nextCtx.onboarding.phase = opDone
-    nextCtx.userMd = bootstrapUserMd(
-      nextCtx.onboarding.userName, nextCtx.onboarding.userName,
-      nextCtx.onboarding.timezone, nextCtx.onboarding.language)
-    nextCtx.replyText =
-      "Tudo certo! Serei " & nextCtx.identity.name & " e você é " & nextCtx.onboarding.userName &
-      ".\n\nPronto para conversar. Como posso ajudar?"
-    nextCtx.saveUserMd = true
-    nextCtx.advanced = true
-
-  else:
-    discard
-
-  ok(nextCtx)
 
 proc startResetControlContext*(history: ConversationHistory;
                                sessionId: string): Result[ResetControlContext, string] =
@@ -474,31 +294,6 @@ proc startDebugControlContext*(debugMode: bool): Result[DebugControlContext, str
       else:
         "🔕 Debug mode OFF."),
   ))
-
-proc startOnboardingControlContext*(msg: AgentMessage;
-                                    onboarding: OnboardingRuntime;
-                                    identity: IdentityRuntime): Result[OnboardingControlContext, string] =
-  var nextCtx = OnboardingControlContext(onboarding: onboarding, identity: identity)
-  case msg.taskKind
-  of tkPersonalityChoice:
-    let parts = msg.payload.split(':', 2)
-    if parts.len != 3:
-      return err("invalid personality payload")
-    nextCtx.dim = parts[1]
-    nextCtx.value = parts[2]
-    nextCtx.handled = true
-
-  of tkNameChoice:
-    let raw = msg.payload
-    nextCtx.name = if raw.startsWith("name:"): raw[5 .. ^1] else: raw
-    if nextCtx.name.len == 0:
-      return err("empty name choice")
-    nextCtx.handled = true
-
-  else:
-    discard
-
-  ok(nextCtx)
 
 proc sendReplyText*(globalOutbox: AsyncQueue[OutboundMessage];
                     uid: UserId;
@@ -1174,65 +969,21 @@ proc handleOnboardingControlTask(globalOutbox: AsyncQueue[OutboundMessage];
                                  onboarding: OnboardingRuntime;
                                  identity: IdentityRuntime): Future[(OnboardingRuntime, IdentityRuntime, bool)] {.async.} =
   result = (onboarding, identity, false)
-  let pipelineResult = startOnboardingControlContext(msg, onboarding, identity)
-  if pipelineResult.isErr:
+  let decision = decideOnboardingControl(msg, onboarding, identity).valueOr:
     return
-  let controlCtx = pipelineResult.get()
 
-  case msg.taskKind
-  of tkPersonalityChoice:
+  case decision.kind
+  of oekGuidedChoice:
     result[0] = await handleGuidedPersonalityChoice(
       globalOutbox, completeFn, uid, channel, replyTo,
-      controlCtx.onboarding, controlCtx.dim, controlCtx.value)
-    result[2] = controlCtx.handled
+      decision.onboarding, decision.dim, decision.value)
+    result[2] = decision.handled
 
-  of tkNameChoice:
+  of oekNameChoice:
     (result[0], result[1]) = await advanceUserProfileOnboarding(
       globalOutbox, memory, uid, channel, replyTo,
-      controlCtx.name, controlCtx.onboarding, controlCtx.identity)
-    result[2] = controlCtx.handled
-
-  else:
-    discard
-
-proc handleWakeUpOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
-                            uid: UserId;
-                            channel: ChannelKind;
-                            replyTo: string;
-                            onboarding: OnboardingRuntime): Future[OnboardingRuntime] {.async.} =
-  result = onboarding
-  result.phase = opModeChoice
-  await sendReplyKeyboard(
-    globalOutbox, uid, channel, replyTo,
-    "Olá. Acabei de ligar.\n\nComo quer definir minha personalidade?",
-    @[@[("Guiado 🎛️", "personality:mode:guided"),
-       ("Livre 💬",   "personality:mode:free")]])
-
-proc handleButtonOnlyOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
-                                uid: UserId;
-                                channel: ChannelKind;
-                                replyTo: string): Future[void] {.async.} =
-  await sendReplyText(globalOutbox, uid, channel, replyTo, "Use os botões acima para escolher.")
-
-proc handleMessageDrivenOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
-                                   memory: MdFileAdapter;
-                                   completeFn: CompleteFn;
-                                   uid: UserId;
-                                   channel: ChannelKind;
-                                   replyTo: string;
-                                   userText: string;
-                                   history: ConversationHistory;
-                                   onboarding: OnboardingRuntime;
-                                   identity: IdentityRuntime): Future[(ConversationHistory, OnboardingRuntime, IdentityRuntime)] {.async.} =
-  result = (history, onboarding, identity)
-  case result[1].phase
-  of opFreeConvo:
-    (result[0], result[1]) = await handleFreeConvoOnboarding(
-      globalOutbox, completeFn, uid, channel, replyTo, userText, result[0], result[1])
-
-  of opNameChoice, opUserName, opUserTimezone, opUserLanguage:
-    (result[1], result[2]) = await advanceUserProfileOnboarding(
-      globalOutbox, memory, uid, channel, replyTo, userText, result[1], result[2])
+      decision.name, decision.onboarding, decision.identity)
+    result[2] = decision.handled
 
   else:
     discard
@@ -1323,23 +1074,29 @@ proc handleOnboardingTurn(globalOutbox: AsyncQueue[OutboundMessage];
   result.history = history
   result.onboarding = onboarding
   result.identity = identity
-  let strippedUserText = userText |> strutils.strip
+  let decision = decideOnboardingTurn(result.onboarding, userText)
+  result.onboarding = decision.onboarding
 
-  case result.onboarding.phase
+  case decision.kind
+  of oekWakeUp:
+    await sendReplyKeyboard(
+      globalOutbox, uid, channel, replyTo,
+      decision.replyText, decision.keyboard)
 
-  of opWakeUp:
-    result.onboarding = await handleWakeUpOnboarding(
-      globalOutbox, uid, channel, replyTo, result.onboarding)
+  of oekButtonOnly:
+    await sendReplyText(globalOutbox, uid, channel, replyTo, decision.replyText)
 
-  of opModeChoice, opGuidedEnergy, opGuidedTone, opGuidedLength, opGuidedInitiative:
-    await handleButtonOnlyOnboarding(globalOutbox, uid, channel, replyTo)
+  of oekFreeConvoText:
+    (result.history, result.onboarding) = await handleFreeConvoOnboarding(
+      globalOutbox, completeFn, uid, channel, replyTo,
+      userText |> strutils.strip, result.history, result.onboarding)
 
-  of opFreeConvo, opNameChoice, opUserName, opUserTimezone, opUserLanguage:
-    (result.history, result.onboarding, result.identity) = await handleMessageDrivenOnboarding(
-      globalOutbox, memory, completeFn, uid, channel, replyTo,
-      strippedUserText, result.history, result.onboarding, result.identity)
+  of oekUserProfileText:
+    (result.onboarding, result.identity) = await advanceUserProfileOnboarding(
+      globalOutbox, memory, uid, channel, replyTo,
+      userText |> strutils.strip, result.onboarding, result.identity)
 
-  of opDone:
+  of oekDone:
     return OnboardingTurnResult(
       history: result.history,
       onboarding: result.onboarding,
@@ -1347,7 +1104,10 @@ proc handleOnboardingTurn(globalOutbox: AsyncQueue[OutboundMessage];
       handled: false,
     )
 
-  result.handled = true
+  else:
+    discard
+
+  result.handled = decision.handled
 
 proc runToolLoop(globalOutbox: AsyncQueue[OutboundMessage];
                  toolInbox: AsyncQueue[AgentMessage];
