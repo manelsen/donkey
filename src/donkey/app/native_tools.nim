@@ -19,6 +19,7 @@ import chronos
 import chronos/asyncsync
 import nimcrypto/sha2
 import ../core/app_meta
+import ../core/tooling/native_tool_dispatch
 import ../core/pipeops
 import ../core/log
 import ../domain/message
@@ -26,10 +27,9 @@ import ../domain/more_tools
 import ../domain/builtin_tools
 import ../domain/calc
 import ../domain/reminder
-import ../adapters/http/std_http
-import ../adapters/memory/md_file
 import ../ports/http as httpPort
 import ../ports/provider
+import ../ports/memory
 import ../config/types as cfgTypes
 import ./sandbox
 import ./session_state
@@ -41,6 +41,7 @@ type
   NativeToolResult* = object
     handled*:       bool
     text*:          string
+    resultKind*:    ToolResultKind
     newHistory*:    Option[ConversationHistory]  ## set by rewind
     checkpointNow*: bool                         ## set by checkpoint
 
@@ -122,9 +123,12 @@ type
     channel*:      ChannelKind
     outbox*:       AsyncQueue[OutboundMessage]
     session*:      ptr SessionEntry
-    memory*:       MdFileAdapter
+    memory*:       MemoryRuntimePort
     completeFn*:   CompleteFn
+    http*:         httpPort.HttpRuntimePort
     braveApiKey*:  string
+    webAllowlist*: seq[string]
+    toolWebPolicy*: seq[cfgTypes.ToolWebPolicy]
     tools*:        seq[ToolDescription]
     log*:          Logger
     paddockDir*:   string       ## agent workspace root; empty = unconstrained (tests only)
@@ -137,10 +141,6 @@ type
                                    history: ConversationHistory;
                                    j: JsonNode;
                                   ): Future[NativeToolResult] {.nimcall, gcsafe, raises: [].}
-
-  NativeToolCategory = object
-    handler: NativeToolCategoryHandler
-    passThroughTools: seq[string]
 
 # ── Paddock path helpers ───────────────────────────────────────────────────────
 
@@ -434,11 +434,15 @@ proc performGrep*(pattern, path: string; recursive: bool;
 const FetchHardMax* = 20_000
 const FetchDefaultMax* = 5_000
 
-proc performFetch*(url: string; maxCh: int): string {.gcsafe, raises: [].} =
+proc performFetch*(http: httpPort.HttpRuntimePort;
+                   url: string;
+                   maxCh: int;
+                   allowRules: seq[cfgTypes.WebAccessRule] = @[];
+                   fallbackAllowlist: seq[string] = @[];
+                   policyLabel = "web access"): string {.gcsafe, raises: [].} =
   try:
-    if isPrivateUrl(url):
-      return "Error: private/internal addresses not allowed."
-    let http = newStdHttpAdapter()
+    if not isAllowedPublicUrl(url, allowRules, fallbackAllowlist):
+      return buildUrlAccessError(url, allowRules, fallbackAllowlist, policyLabel)
     var resp: Result[HttpResponse, string]
     {.cast(gcsafe).}: resp = http.get(url, @[])
     if resp.isErr: return "Error: " & resp.error
@@ -463,16 +467,20 @@ proc performFetch*(url: string; maxCh: int): string {.gcsafe, raises: [].} =
 const BraveSearchUrl = "https://api.search.brave.com/res/v1/web/search"
 
 proc performWebSearch*(query: string; count: int;
-                       apiKey: string): string {.gcsafe, raises: [].} =
+                       apiKey: string;
+                       http: httpPort.HttpRuntimePort;
+                       allowRules: seq[cfgTypes.WebAccessRule] = @[];
+                       fallbackAllowlist: seq[string] = @[]): string {.gcsafe, raises: [].} =
   if apiKey.len == 0:
     return "Error: BRAVE_API_KEY not configured. Set the environment variable."
   try:
     let url     = BraveSearchUrl & "?q=" & encodeUrl(query) & "&count=" & $min(count, 20)
+    if not isAllowedPublicUrl(url, allowRules, fallbackAllowlist):
+      return buildUrlAccessError(url, allowRules, fallbackAllowlist, "web_search")
     let headers = @[
       ("X-Subscription-Token", apiKey),
       ("Accept",               "application/json"),
     ]
-    let http = newStdHttpAdapter()
     var resp: Result[HttpResponse, string]
     {.cast(gcsafe).}:
       try: resp = http.get(url, headers)
@@ -635,7 +643,28 @@ proc spawnTaskJob*(state: SessionState;
 # ── Main dispatcher ───────────────────────────────────────────────────────────
 
 proc handledText(text: string): NativeToolResult {.gcsafe, raises: [].} =
-  NativeToolResult(handled: true, text: text)
+  NativeToolResult(handled: true, text: text, resultKind: trkOutput)
+
+proc handledError(text: string): NativeToolResult {.gcsafe, raises: [].} =
+  NativeToolResult(handled: true, text: text, resultKind: trkOperationalError)
+
+func isOperationalErrorText(text: string): bool =
+  text.startsWith("Error:") or
+  text.startsWith("HTTP error ") or
+  text.startsWith("Brave API error ")
+
+proc handledOutcome(text: string): NativeToolResult {.gcsafe, raises: [].} =
+  if isOperationalErrorText(text):
+    handledError(text)
+  else:
+    handledText(text)
+
+func toolWebRules(ctx: NativeCtx; toolName: string): seq[cfgTypes.WebAccessRule] =
+  let cfg = cfgTypes.DonkeyConfig(
+    webAllowlist: ctx.webAllowlist,
+    toolWebPolicy: ctx.toolWebPolicy,
+  )
+  cfg.effectiveToolWebRules(toolName)
 
 proc resolveToolPath(path, paddockDir: string): Result[string, string] {.gcsafe, raises: [].}
 
@@ -829,6 +858,7 @@ proc buildCheckpointResult*(state: SessionState): NativeToolResult {.gcsafe, rai
   NativeToolResult(
     handled: true,
     text: "Checkpoint " & $state.checkpoints.len & " saved.",
+    resultKind: trkOutput,
     checkpointNow: true,
   )
 
@@ -852,6 +882,7 @@ proc buildRewindResult*(state: SessionState; idx: int): Result[NativeToolResult,
   ok(NativeToolResult(
     handled: true,
     text: "Rewound to checkpoint " & $idx & ".",
+    resultKind: trkOutput,
     newHistory: some(restored),
   ))
 
@@ -865,7 +896,7 @@ proc resolveToolPath(path, paddockDir: string): Result[string, string] {.gcsafe,
 
 proc cancelJob(state: SessionState; jobId: string): NativeToolResult =
   if jobId notin state.jobs:
-    return handledText("Error: job '" & jobId & "' not found.")
+    return handledError("Error: job '" & jobId & "' not found.")
   let job = state.jobs[jobId]
   if not job.done and not job.future.isNil:
     job.future.cancelSoon()
@@ -892,7 +923,7 @@ proc awaitJobs(state: SessionState; ctx: AwaitContext): Future[NativeToolResult]
       except CatchableError as e:
         state.jobs[id] = JobState(future: nil, done: true, result: "error — " & e.msg)
         lines.add(id & ": error — " & e.msg)
-  handledText(lines.join("\n"))
+  handledOutcome(lines.join("\n"))
 
 proc recordFinding(ctx: NativeCtx; findingCtx: FindingContext): NativeToolResult =
   ctx.log.info("[finding] " & findingCtx.finding)
@@ -911,22 +942,28 @@ proc executeLegacyNativeTool(tc: ToolCallRequest;
     let whenStr = j.getOrDefault("when").getStr("")
     let remMsg  = j.getOrDefault("message").getStr("")
     if whenStr.len == 0 or remMsg.len == 0:
-      return handledText("Error: 'when' and 'message' are required.")
-    let ts = parseWhen(whenStr)
-    discard ctx.memory.scheduleReminder(ctx.uid, $ctx.channel, ts, remMsg)
+      return handledError("Error: 'when' and 'message' are required.")
+    let ts = parseWhen(whenStr, getTime().toUnix())
+    try:
+      discard ctx.memory.scheduleReminder(ctx.uid, $ctx.channel, ts, remMsg)
+    except Exception as e:
+      return handledError("Error: " & e.msg)
     return handledText("Reminder scheduled.")
 
   of CurrentTimeToolName:
-    return handledText(currentTimeResult())
+    return handledText(currentTimeResult(now().utc()))
 
   of WebFetchToolName:
     let url   = j.getOrDefault("url").getStr("")
     let maxCh = j.getOrDefault("max_chars").getInt(DefaultMaxChars)
-    if url.len == 0: return handledText("Error: 'url' is required.")
-    if isPrivateUrl(url): return handledText("Error: private addresses not allowed.")
+    if url.len == 0: return handledError("Error: 'url' is required.")
+    let rules = toolWebRules(ctx, WebFetchToolName)
+    if not isAllowedPublicUrl(url, rules, ctx.webAllowlist):
+      return handledError(buildUrlAccessError(url, rules, ctx.webAllowlist, WebFetchToolName))
     var fetched = ""
-    {.cast(gcsafe).}: fetched = performFetch(url, maxCh)
-    return handledText(fetched)
+    {.cast(gcsafe).}: fetched = performFetch(
+      ctx.http, url, maxCh, rules, ctx.webAllowlist, WebFetchToolName)
+    return handledOutcome(fetched)
 
   else:
     return NativeToolResult(handled: false)
@@ -942,15 +979,15 @@ proc executeShellNativeTool(tc: ToolCallRequest;
   case tc.name
   of BashToolName:
     let bashCtx = parseBashContext(j).valueOr:
-      return handledText(error)
+      return handledError(error)
     var r = ""
     {.cast(gcsafe).}: r = sandboxBash(bashCtx.command, ctx.paddockDir,
                                        ctx.sandboxMode, ctx.sandboxImage)
-    return handledText(r)
+    return handledOutcome(r)
 
   of ReadFileToolName:
     let readCtx = parseReadFileContext(j, ctx.paddockDir).valueOr:
-      return handledText(error)
+      return handledError(error)
     try:
       return handledText(renderHashlineSlice(
         readFile(readCtx.path),
@@ -958,24 +995,24 @@ proc executeShellNativeTool(tc: ToolCallRequest;
         readCtx.maxLines,
       ))
     except CatchableError as e:
-      return handledText("Error: " & e.msg)
+      return handledError("Error: " & e.msg)
 
   of EditFileToolName:
     let editCtx = parseEditFileContext(j, ctx.paddockDir).valueOr:
-      return handledText(error)
+      return handledError(error)
     try:
       let original = readFile(editCtx.path)
       let applyResult = applyEditFileOps(splitEditableLines(original), editCtx.edits).valueOr:
-        return handledText(error)
+        return handledError(error)
       writeFile(editCtx.path, applyResult.join("\n"))
       return handledText("Edited " & editCtx.path &
                          " successfully. Re-read the file before additional edits.")
     except CatchableError as e:
-      return handledText("Error: " & e.msg)
+      return handledError("Error: " & e.msg)
 
   of FindToolName:
     let findCtx = parseFindContext(j, ctx.paddockDir).valueOr:
-      return handledText(error)
+      return handledError(error)
     var r = ""
     {.cast(gcsafe).}: r = performFind(
       findCtx.path,
@@ -983,11 +1020,11 @@ proc executeShellNativeTool(tc: ToolCallRequest;
       findCtx.kind,
       findCtx.max,
     )
-    return handledText(r)
+    return handledOutcome(r)
 
   of GrepToolName:
     let grepCtx = parseGrepContext(j, ctx.paddockDir).valueOr:
-      return handledText(error)
+      return handledError(error)
     var r = ""
     {.cast(gcsafe).}: r = performGrep(
       grepCtx.pattern,
@@ -995,7 +1032,7 @@ proc executeShellNativeTool(tc: ToolCallRequest;
       grepCtx.recursive,
       grepCtx.max,
     )
-    return handledText(r)
+    return handledOutcome(r)
 
   else:
     return NativeToolResult(handled: false)
@@ -1011,17 +1048,21 @@ proc executeWebNativeTool(tc: ToolCallRequest;
   case tc.name
   of FetchToolName:
     let fetchCtx = parseFetchContext(j, FetchDefaultMax).valueOr:
-      return handledText(error)
+      return handledError(error)
+    let rules = toolWebRules(ctx, FetchToolName)
     var r = ""
-    {.cast(gcsafe).}: r = performFetch(fetchCtx.url, fetchCtx.maxCh)
-    return handledText(r)
+    {.cast(gcsafe).}: r = performFetch(
+      ctx.http, fetchCtx.url, fetchCtx.maxCh, rules, ctx.webAllowlist, FetchToolName)
+    return handledOutcome(r)
 
   of WebSearchToolName:
     let searchCtx = parseWebSearchContext(j).valueOr:
-      return handledText(error)
+      return handledError(error)
+    let rules = toolWebRules(ctx, WebSearchToolName)
     var r = ""
-    {.cast(gcsafe).}: r = performWebSearch(searchCtx.query, searchCtx.count, ctx.braveApiKey)
-    return handledText(r)
+    {.cast(gcsafe).}: r = performWebSearch(
+      searchCtx.query, searchCtx.count, ctx.braveApiKey, ctx.http, rules, ctx.webAllowlist)
+    return handledOutcome(r)
 
   else:
     return NativeToolResult(handled: false)
@@ -1037,25 +1078,25 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
   case tc.name
   of CalcToolName:
     let calcCtx = parseCalcContext(j).valueOr:
-      return handledText(error)
+      return handledError(error)
     var calcResult = ""
     try: calcResult = evalCalc(calcCtx.expression)
     except Exception as e: calcResult = "Error: " & e.msg
-    return handledText(calcResult)
+    return handledOutcome(calcResult)
 
   of RenderMermaidToolName:
     let mermaidCtx = parseMermaidContext(j).valueOr:
-      return handledText(error)
+      return handledError(error)
     var r = ""
     {.cast(gcsafe).}: r = performRenderMermaid(mermaidCtx.diagram)
-    return handledText(r)
+    return handledOutcome(r)
 
   of InspectImageToolName:
     let inspectCtx = parseInspectImageContext(j).valueOr:
-      return handledText(error)
+      return handledError(error)
     var r = ""
     {.cast(gcsafe).}: r = performInspectImage(inspectCtx.path, inspectCtx.prompt, ctx.completeFn)
-    return handledText(r)
+    return handledOutcome(r)
 
   else:
     return NativeToolResult(handled: false)
@@ -1070,9 +1111,9 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
   case tc.name
   of AskToolName:
     let askCtx = parseAskContext(j).valueOr:
-      return handledText(error)
+      return handledError(error)
     if ctx.session.isNil:
-      return handledText("Error: ask channel unavailable.")
+      return handledError("Error: ask channel unavailable.")
     ctx.session[].awaitingAsk = true
     await ctx.outbox.put(OutboundMessage(
       userId:  ctx.uid,
@@ -1082,15 +1123,15 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
     let reply = await ctx.session[].askInbox.get()
     ctx.session[].awaitingAsk = false
     if reply == "__DONKEY_ASK_CANCELLED__":
-      return handledText("Error: ask interrupted.")
+      return handledError("Error: ask interrupted.")
     return handledText(reply)
 
   of TodoWriteToolName:
     let ops = parseTodoOps(j).valueOr:
-      return handledText(error)
+      return handledError(error)
     var r = ""
     {.cast(gcsafe).}: r = applyTodoOps(state, ops)
-    return handledText(r)
+    return handledOutcome(r)
 
   of CheckpointToolName:
     return buildCheckpointResult(state)
@@ -1101,7 +1142,7 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
       proc(idx: int): Result[NativeToolResult, string] =
         buildRewindResult(state, idx)
     return rewindResult.valueOr:
-      handledText(error)
+      handledError(error)
 
   else:
     return NativeToolResult(handled: false)
@@ -1115,7 +1156,7 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
   case tc.name
   of TaskToolName:
     let taskCtx = parseTaskContext(j).valueOr:
-      return handledText(error)
+      return handledError(error)
     discard history
     let jobId = spawnTaskJob(state, taskCtx.prompt, taskCtx.context, ctx.completeFn)
     return handledText(buildTaskStartedText(jobId))
@@ -1125,7 +1166,7 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
 
   of ReportFindingToolName:
     let findingCtx = parseFindingContext(j).valueOr:
-      return handledText(error)
+      return handledError(error)
     return recordFinding(ctx, findingCtx)
 
   of CancelJobToolName:
@@ -1133,21 +1174,30 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
 
   of AwaitToolName:
     let awaitCtx = parseAwaitContext(j).valueOr:
-      return handledText(error)
+      return handledError(error)
     return await awaitJobs(state, awaitCtx)
 
   else:
     return NativeToolResult(handled: false)
+
+func categoryHandler(kind: NativeToolCategoryKind): NativeToolCategoryHandler =
+  case kind
+  of ntckLegacy: executeLegacyNativeTool
+  of ntckShell: executeShellNativeTool
+  of ntckWeb: executeWebNativeTool
+  of ntckUtility: executeUtilityNativeTool
+  of ntckSession: executeSessionNativeTool
+  of ntckAgent: executeAgentNativeTool
 
 proc executeNativeCategory(tc: ToolCallRequest;
                            ctx: NativeCtx;
                            state: SessionState;
                            history: ConversationHistory;
                            j: JsonNode;
-                           category: NativeToolCategory;
+                           category: NativeToolCategoryKind;
                           ): Future[NativeToolResult] {.async.} =
-  let categoryResult = await category.handler(tc, ctx, state, history, j)
-  if categoryResult.handled or tc.name in category.passThroughTools:
+  let categoryResult = await category.categoryHandler()(tc, ctx, state, history, j)
+  if categoryResult.handled:
     return categoryResult
   NativeToolResult(handled: false)
 
@@ -1158,17 +1208,9 @@ proc executeNativeTool*(tc:      ToolCallRequest;
                        ): Future[NativeToolResult] {.async.} =
   let j = try: parseJson(tc.inputJson)
           except: newJObject()
-  let categories = @[
-    NativeToolCategory(handler: executeLegacyNativeTool, passThroughTools: @[]),
-    NativeToolCategory(handler: executeShellNativeTool, passThroughTools: @[]),
-    NativeToolCategory(handler: executeWebNativeTool, passThroughTools: @[]),
-    NativeToolCategory(handler: executeUtilityNativeTool, passThroughTools: @[]),
-    NativeToolCategory(handler: executeSessionNativeTool, passThroughTools: @[]),
-    NativeToolCategory(handler: executeAgentNativeTool, passThroughTools: @[]),
-  ]
-  for category in categories:
+  for category in nativeToolCategoryOrder():
     let categoryResult = await executeNativeCategory(tc, ctx, state, history, j, category)
-    if categoryResult.handled or tc.name in category.passThroughTools:
+    if categoryResult.handled:
       return categoryResult
 
   return NativeToolResult(handled: false)

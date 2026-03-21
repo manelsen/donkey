@@ -55,6 +55,23 @@ type
     initialized*: bool
     nextId:       int
 
+proc listTools*(c: var McpClientAdapter): Result[seq[ToolSchema], string]
+proc invoke*(c: var McpClientAdapter; call: ToolCall): Result[ToolResult, string]
+proc close*(c: var McpClientAdapter)
+
+proc toRuntimePort*(c: McpClientAdapter): ToolRuntimePort =
+  var client = c
+  ToolRuntimePort(
+    listTools: proc(): Result[seq[ToolSchema], string] {.gcsafe.} =
+      {.cast(gcsafe).}: result = client.listTools()
+    ,
+    invoke: proc(call: ToolCall): Result[ToolResult, string] {.gcsafe.} =
+      {.cast(gcsafe).}: result = client.invoke(call)
+    ,
+    close: proc() {.gcsafe.} =
+      {.cast(gcsafe).}: client.close()
+  )
+
 # ── Constructor ───────────────────────────────────────────────────────────────
 
 proc newMcpClient*(command: string; args: seq[string] = @[]): McpClientAdapter =

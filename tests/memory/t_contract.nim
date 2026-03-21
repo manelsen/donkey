@@ -67,8 +67,8 @@ proc runContractTests(adapter: MdFileAdapter) =
       check content.contains("note B")
 
     test "savePreferences: round-trips content":
-      adapter.savePreferences(uid, "provider: zhipu\n")
-      check readFile(adapter.preferencesMdPath(uid)) == "provider: zhipu\n"
+      adapter.savePreferences(uid, "provider: zai-coding\n")
+      check readFile(adapter.preferencesMdPath(uid)) == "provider: zai-coding\n"
 
     test "ensurePaddock: creates sessions/ subdirectory":
       adapter.ensurePaddock(uid)

@@ -14,3 +14,16 @@ type
     c.send(OutboundMessage) is Result[void, string]
     vc.receive() is Result[seq[InboundMessage], string]
     c.ack(string)
+
+  OutboundChannelPort* = object
+    send*:         proc(msg: OutboundMessage): Result[void, string] {.gcsafe.}
+    sendReturnId*: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.}
+    editMessage*:  proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.}
+
+  OutboundChannelPorts* = object
+    telegram*: OutboundChannelPort
+    discord*:  OutboundChannelPort
+    wecom*:    OutboundChannelPort
+    wechat*:   OutboundChannelPort
+    qq*:       OutboundChannelPort
+    feishu*:   OutboundChannelPort

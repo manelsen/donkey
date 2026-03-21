@@ -1,5 +1,5 @@
 import std/unittest
-import donkey/core/onboarding
+import donkey/core/onboarding/onboarding
 import donkey/core/pipeops
 import donkey/domain/agent_message
 

@@ -2,17 +2,20 @@
 ## Side-effectful execution (HTTP calls, clock) lives in app/native_tools.nim.
 
 import std/[strutils, times]
+import ../config/types
 
 # ── web_fetch ─────────────────────────────────────────────────────────────────
 
 const
   WebFetchToolName* = "web_fetch"
+  WebAllowlistEnvVar* = "DONKEY_WEB_ALLOWLIST"
 
   WebFetchToolDescription* =
     "Fetch the text content of a public URL. " &
     "Use when the user asks you to read a web page, check documentation, " &
     "or access any public HTTP endpoint. " &
-    "Do NOT use for private/internal network addresses."
+    "Do NOT use for private/internal network addresses. " &
+    "When a web allowlist is configured, only allowlisted hosts may be accessed."
 
   WebFetchToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
@@ -99,10 +102,122 @@ func isPrivateUrl*(rawUrl: string): bool =
 
   false
 
-# ── side-effectful helper (proc, not func) ───────────────────────────────────
+func extractUrlHost*(rawUrl: string): string =
+  let lower = rawUrl.toLowerAscii()
+  let afterScheme =
+    if "://" in lower: lower[lower.find("://") + 3 .. ^1] else: lower
+  let afterAt =
+    if "@" in afterScheme:
+      afterScheme[afterScheme.rfind('@') + 1 .. ^1]
+    else:
+      afterScheme
+  var hostPort = afterAt
+  for i, c in afterAt:
+    if c in {'/', '?', '#'}:
+      hostPort = afterAt[0 ..< i]
+      break
+  let colon = hostPort.rfind(':')
+  result = hostPort
+  if colon > 0:
+    let afterColon = hostPort[colon + 1 .. ^1]
+    if afterColon.len > 0 and afterColon.allCharsInSet({'0'..'9'}):
+      result = hostPort[0 ..< colon]
 
-proc currentTimeResult*(): string =
+func extractUrlPath*(rawUrl: string): string =
+  let lower = rawUrl.toLowerAscii()
+  let afterScheme =
+    if "://" in lower: lower[lower.find("://") + 3 .. ^1] else: lower
+  let afterAt =
+    if "@" in afterScheme:
+      afterScheme[afterScheme.rfind('@') + 1 .. ^1]
+    else:
+      afterScheme
+  var start = afterAt.find('/')
+  if start < 0:
+    return "/"
+  result = afterAt[start .. ^1]
+  for i, c in result:
+    if c in {'?', '#'}:
+      result = result[0 ..< i]
+      break
+  if result.len == 0:
+    result = "/"
+
+func parseWebAllowlist*(raw: string): seq[string] =
+  for item in raw.split(','):
+    let host = item.strip().toLowerAscii()
+    if host.len > 0:
+      result.add(host)
+
+func hostMatchesAllowlist*(host, allowedHost: string): bool =
+  host == allowedHost or host.endsWith("." & allowedHost)
+
+func normalizePolicyPathPrefix*(raw: string): string =
+  if raw.len == 0 or raw == "/":
+    return ""
+  if raw[0] == '/':
+    return raw
+  "/" & raw
+
+func matchesWebAccessRule*(rawUrl: string; rule: WebAccessRule): bool =
+  let host = extractUrlHost(rawUrl)
+  if host.len == 0 or not hostMatchesAllowlist(host, rule.host):
+    return false
+  let requiredPrefix = normalizePolicyPathPrefix(rule.pathPrefix)
+  if requiredPrefix.len == 0:
+    return true
+  let path = extractUrlPath(rawUrl)
+  path == requiredPrefix or path.startsWith(requiredPrefix)
+
+func isAllowedPublicUrl*(rawUrl: string;
+                         allowlist: seq[string]): bool =
+  if isPrivateUrl(rawUrl):
+    return false
+  if allowlist.len == 0:
+    return true
+  let host = extractUrlHost(rawUrl)
+  if host.len == 0:
+    return false
+  for allowedHost in allowlist:
+    if hostMatchesAllowlist(host, allowedHost):
+      return true
+  false
+
+func isAllowedPublicUrl*(rawUrl: string;
+                         rules: seq[WebAccessRule];
+                         fallbackAllowlist: seq[string]): bool =
+  if isPrivateUrl(rawUrl):
+    return false
+  if rules.len > 0:
+    for rule in rules:
+      if matchesWebAccessRule(rawUrl, rule):
+        return true
+    return false
+  isAllowedPublicUrl(rawUrl, fallbackAllowlist)
+
+func buildUrlAccessError*(rawUrl: string;
+                          allowlist: seq[string]): string =
+  if isPrivateUrl(rawUrl):
+    return "Error: private/internal addresses not allowed."
+  let host = extractUrlHost(rawUrl)
+  if allowlist.len == 0:
+    return "Error: invalid or blocked URL."
+  "Error: host '" & host & "' is not in " & WebAllowlistEnvVar & "."
+
+func buildUrlAccessError*(rawUrl: string;
+                          rules: seq[WebAccessRule];
+                          fallbackAllowlist: seq[string];
+                          policyLabel: string): string =
+  if isPrivateUrl(rawUrl):
+    return "Error: private/internal addresses not allowed."
+  let host = extractUrlHost(rawUrl)
+  let path = extractUrlPath(rawUrl)
+  if rules.len > 0:
+    return "Error: URL '" & host & path & "' is outside the configured " &
+      policyLabel & " policy."
+  buildUrlAccessError(rawUrl, fallbackAllowlist)
+
+func currentTimeResult*(t: DateTime): string =
   ## Returns a formatted UTC timestamp string for the current_time tool result.
-  let t = now().utc()
   "Current UTC time: " & t.format("yyyy-MM-dd HH:mm:ss") &
   " (day: " & $t.weekday & ")"

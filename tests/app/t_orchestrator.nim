@@ -11,6 +11,8 @@ import donkey/domain/agent_message
 import donkey/domain/message
 import donkey/domain/personality
 import donkey/core/pipeops
+import donkey/core/tooling/tool_loop
+import donkey/adapters/http/std_http
 import donkey/adapters/memory/md_file
 import donkey/app/memory_agent
 import donkey/app/tool_agent
@@ -93,7 +95,7 @@ suite "MemoryAgent":
       let mem   = MdFileAdapter(paddocksDir: dir)
       let inbox  = newAsyncQueue[AgentMessage]()
       let outbox = newAsyncQueue[AgentMessage]()
-      asyncSpawn runMemoryAgent(inbox, outbox, mem)
+      asyncSpawn runMemoryAgent(inbox, outbox, mem.toRuntimePort())
       await inbox.put(newTaskMsg("req1", tkLoadCtx, "u1", ""))
       let reply = await outbox.get()
       await inbox.put(newCancelMsg())
@@ -116,7 +118,7 @@ suite "MemoryAgent":
       let mem    = MdFileAdapter(paddocksDir: dir)
       let inbox  = newAsyncQueue[AgentMessage]()
       let outbox = newAsyncQueue[AgentMessage]()
-      asyncSpawn runMemoryAgent(inbox, outbox, mem)
+      asyncSpawn runMemoryAgent(inbox, outbox, mem.toRuntimePort())
       await inbox.put(newTaskMsg("req2", tkSaveMem, "u1", "Likes Nim."))
       let reply = await outbox.get()
       await inbox.put(newCancelMsg())
@@ -143,7 +145,7 @@ suite "ToolAgent":
       return reply
     let reply = waitFor doTest()
 
-    check reply.kind == amkResult
+    check reply.kind == amkError
     check reply.text.contains("not found")
 
 # ── OrchestratorAgent ─────────────────────────────────────────────────────────
@@ -164,7 +166,7 @@ suite "OrchestratorAgent":
       let outbox   = newAsyncQueue[OutboundMessage]()
       var session = makeSessionEntry()
       session.inbox = inbox
-      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem, stubComplete, nil, @[], @[],
+      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
                                  dir / "u42"))
       await inbox.put(newTaskMsg("req4", tkUserMsg, "u42", "ping"))
       let reply = await outbox.get()
@@ -189,7 +191,7 @@ suite "OrchestratorAgent":
       let outbox = newAsyncQueue[OutboundMessage]()
       var session = makeSessionEntry()
       session.inbox = inbox
-      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem, stubCompleteRetry, nil, @[], @[],
+      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubCompleteRetry, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
                                  dir / "u1"))
       await inbox.put(newTaskMsg("req6", tkUserMsg, "u1", "hello"))
       let reply = await outbox.get()
@@ -214,7 +216,7 @@ suite "OrchestratorAgent":
       let outbox = newAsyncQueue[OutboundMessage]()
       var session = makeSessionEntry()
       session.inbox = inbox
-      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem, stubCompleteEmpty, nil, @[], @[],
+      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubCompleteEmpty, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
                                  dir / "u1"))
       await inbox.put(newTaskMsg("req5", tkUserMsg, "u1", "hello"))
       let reply = await outbox.get()
@@ -237,7 +239,7 @@ suite "OrchestratorAgent":
       let mem    = MdFileAdapter(paddocksDir: dir)
       var session = makeSessionEntry()
       session.inbox = inbox
-      let fut    = runOrchestrator(inbox, addr session, outbox, mem, stubComplete, nil, @[], @[],
+      let fut    = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
                                    dir / "u1")
       await inbox.put(newCancelMsg())
       await fut
@@ -268,10 +270,10 @@ suite "tool loop helpers":
     ]
     check recentRepeatCount(recent, tc) == 2
 
-  test "registerToolCall keeps only the last 30 entries":
+  test "withRegisteredToolCall keeps only the last 30 entries":
     var recent: seq[(string, string)] = @[]
     for i in 0 .. 30:
-      registerToolCall(recent, ToolCallRequest(
+      recent = withRegisteredToolCall(recent, ToolCallRequest(
         id: $i, name: "tool" & $i, inputJson: """{"i":""" & $i & "}"))
     check recent.len == 30
     check recent[0] == ("tool1", """{"i":1}""")

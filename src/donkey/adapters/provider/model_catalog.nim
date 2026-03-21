@@ -1,0 +1,428 @@
+import std/[algorithm, httpclient, json, os, strutils, times]
+import ../../ports/provider
+import ../../core/pipeops
+import openrouter
+import anthropic
+
+const
+  OpenRouterModelsEndpoint = "https://openrouter.ai/api/v1/models"
+  GroqModelsEndpoint = "https://api.groq.com/openai/v1/models"
+  AnthropicModelsEndpoint = "https://api.anthropic.com/v1/models"
+  GeminiModelsEndpoint = "https://generativelanguage.googleapis.com/v1beta/models"
+  DefaultCatalogTtlSec = 12 * 60 * 60
+
+func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
+  case providerName
+  of "openrouter":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-4o-mini", label: "openai/gpt-4o-mini", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-4o", label: "openai/gpt-4o", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "anthropic/claude-opus-4-6", label: "anthropic/claude-opus-4-6", isFree: false, available: true),
+    ]
+  of "groq":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "llama-3.3-70b-versatile", label: "llama-3.3-70b-versatile", isFree: true, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "llama-3.1-8b-instant", label: "llama-3.1-8b-instant", isFree: true, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-oss-20b", label: "openai/gpt-oss-20b", isFree: true, available: true),
+    ]
+  of "zen":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "gpt-5.4", label: "gpt-5.4", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "claude-sonnet-4-6", label: "claude-sonnet-4-6", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-5", label: "glm-5", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "minimax-m2.5-free", label: "minimax-m2.5-free", isFree: true, available: true),
+    ]
+  of "anthropic":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "claude-opus-4-6", label: "claude-opus-4-6", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "claude-sonnet-4-6", label: "claude-sonnet-4-6", isFree: false, available: true),
+    ]
+  of "gemini":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "gemini-2.0-flash", label: "gemini-2.0-flash", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gemini-2.5-pro", label: "gemini-2.5-pro", isFree: false, available: true),
+    ]
+  of "minimax":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M2", label: "MiniMax-M2", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-Text-01", label: "MiniMax-Text-01", isFree: false, available: true),
+    ]
+  of "zai", "zai-coding":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-5", label: "glm-5", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-4.7", label: "glm-4.7", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-4.6", label: "glm-4.6", isFree: false, available: true),
+    ]
+  else:
+    @[]
+
+func sortCatalog(entries: seq[ModelCatalogEntry]): seq[ModelCatalogEntry] =
+  result = entries
+  result.sort(proc(a, b: ModelCatalogEntry): int =
+    if a.isFree != b.isFree:
+      return if a.isFree: -1 else: 1
+    cmp(a.label.toLowerAscii(), b.label.toLowerAscii())
+  )
+
+func catalogResult(entries: seq[ModelCatalogEntry];
+                   source: ModelCatalogSource;
+                   fetchedAtUnix: int64): ModelCatalogResult =
+  ModelCatalogResult(entries: entries, source: source, fetchedAtUnix: fetchedAtUnix)
+
+func fallbackCatalog(providerName: string): ModelCatalogResult =
+  catalogResult(staticCatalog(providerName), mcsFallback, 0)
+
+func modelCatalogTtlSec(): int64 =
+  let raw = getEnv("DONKEY_MODEL_CATALOG_TTL_SEC")
+  if raw.len == 0:
+    return DefaultCatalogTtlSec
+  try:
+    let ttl = parseInt(raw)
+    if ttl > 0: ttl else: DefaultCatalogTtlSec
+  except ValueError:
+    DefaultCatalogTtlSec
+
+func modelCatalogBaseDir(): string =
+  let home = getEnv("DONKEY_HOME")
+  if home.len > 0:
+    home / "state"
+  else:
+    getHomeDir() / ".donkey" / "state"
+
+func sanitizeProviderName(providerName: string): string =
+  providerName.multiReplace(("/", "_"), (":", "_"), (" ", "_"))
+
+func modelCatalogCachePath(providerName: string): string =
+  modelCatalogBaseDir() / ("model_catalog_" & sanitizeProviderName(providerName) & ".json")
+
+proc saveCatalogCache(providerName: string; entries: seq[ModelCatalogEntry]) =
+  try:
+    createDir(modelCatalogBaseDir())
+    let cachePath = modelCatalogCachePath(providerName)
+    var data = newJArray()
+    for entry in entries:
+      data.add(%* {
+        "provider": providerName,
+        "id": entry.modelName,
+        "label": entry.label,
+        "is_free": entry.isFree,
+        "available": entry.available,
+      })
+    let payload = %* {
+      "provider": providerName,
+      "fetched_at": getTime().toUnix(),
+      "data": data,
+    }
+    writeFile(cachePath, $payload)
+  except CatchableError:
+    discard
+
+proc loadCatalogCache(providerName: string): Result[ModelCatalogResult, string] =
+  try:
+    let cachePath = modelCatalogCachePath(providerName)
+    if not fileExists(cachePath):
+      return err("cache missing")
+    let parsed = parseJson(readFile(cachePath))
+    let fetchedAt = parsed.getOrDefault("fetched_at").getInt(0).int64
+    let nowSec = getTime().toUnix()
+    if fetchedAt <= 0 or nowSec - fetchedAt > modelCatalogTtlSec():
+      return err("cache expired")
+    let data = parsed.getOrDefault("data")
+    if data == nil or data.kind != JArray:
+      return err("cache missing data")
+    var entries: seq[ModelCatalogEntry] = @[]
+    for item in data:
+      let modelId = item.getOrDefault("id").getStr("")
+      if modelId.len == 0:
+        continue
+      entries.add(ModelCatalogEntry(
+        providerName: providerName,
+        modelName: modelId,
+        label: item.getOrDefault("label").getStr(modelId),
+        isFree: item.getOrDefault("is_free").getBool(false),
+        available: item.getOrDefault("available").getBool(true),
+      ))
+    ok(catalogResult(entries.sortCatalog(), mcsCache, fetchedAt))
+  except CatchableError as e:
+    err(e.msg)
+
+proc withCacheFallback(providerName: string;
+                       live: Result[seq[ModelCatalogEntry], string]): Result[ModelCatalogResult, string] =
+  if live.isOk and live.value.len > 0:
+    saveCatalogCache(providerName, live.value)
+    return ok(catalogResult(live.value.sortCatalog(), mcsLive, getTime().toUnix()))
+  let cached = loadCatalogCache(providerName)
+  if cached.isOk and cached.value.entries.len > 0:
+    return ok(cached.value)
+  ok(fallbackCatalog(providerName))
+
+proc parseOpenRouterCatalog(body: string): Result[seq[ModelCatalogEntry], string] =
+  try:
+    let parsed = parseJson(body)
+    let data = parsed.getOrDefault("data")
+    if data == nil or data.kind != JArray:
+      return err("openrouter models missing data")
+    var entries: seq[ModelCatalogEntry] = @[]
+    for item in data:
+      let modelId = item.getOrDefault("id").getStr("")
+      if modelId.len == 0:
+        continue
+      let pricing = item.getOrDefault("pricing")
+      let promptCost = if pricing != nil: pricing.getOrDefault("prompt").getStr("") else: ""
+      let completionCost = if pricing != nil: pricing.getOrDefault("completion").getStr("") else: ""
+      let isFree = modelId.endsWith(":free") or
+        ((promptCost == "0" or promptCost == "0.0") and (completionCost == "0" or completionCost == "0.0"))
+      entries.add(ModelCatalogEntry(
+        providerName: "openrouter",
+        modelName: modelId,
+        label: item.getOrDefault("name").getStr(modelId),
+        isFree: isFree,
+        available: true,
+      ))
+    ok(entries.sortCatalog())
+  except CatchableError as e:
+    err(e.msg)
+
+func modelLooksFree(modelId, label: string): bool =
+  let lowerId = modelId.toLowerAscii()
+  let lowerLabel = label.toLowerAscii()
+  lowerId.endsWith(":free") or lowerId.endsWith("-free") or
+    lowerLabel.endsWith(":free") or lowerLabel.endsWith("-free") or
+    lowerId.contains(".free") or lowerLabel.contains(".free")
+
+func normalizedListModelId(rawId: string): string =
+  if rawId.startsWith("models/"):
+    rawId["models/".len .. ^1]
+  else:
+    rawId
+
+func extractModelArray(parsed: JsonNode): JsonNode =
+  let data = parsed.getOrDefault("data")
+  if data != nil:
+    if data.kind == JArray:
+      return data
+    if data.kind == JObject:
+      let dataModels = data.getOrDefault("models")
+      if dataModels != nil and dataModels.kind == JArray:
+        return dataModels
+      let dataList = data.getOrDefault("list")
+      if dataList != nil and dataList.kind == JArray:
+        return dataList
+      let dataItems = data.getOrDefault("items")
+      if dataItems != nil and dataItems.kind == JArray:
+        return dataItems
+  for key in ["models", "list", "items"]:
+    let candidate = parsed.getOrDefault(key)
+    if candidate != nil and candidate.kind == JArray:
+      return candidate
+  nil
+
+proc parseSimpleListCatalog*(providerName, body: string): Result[seq[ModelCatalogEntry], string] =
+  try:
+    let parsed = parseJson(body)
+    let data = extractModelArray(parsed)
+    if data == nil or data.kind != JArray:
+      return err(providerName & " models missing data")
+    var entries: seq[ModelCatalogEntry] = @[]
+    for item in data:
+      if item.kind != JObject:
+        continue
+      var modelId = item.getOrDefault("id").getStr("")
+      if modelId.len == 0:
+        modelId = item.getOrDefault("model").getStr("")
+      if modelId.len == 0:
+        modelId = item.getOrDefault("name").getStr("")
+      modelId = normalizedListModelId(modelId)
+      if modelId.len == 0:
+        continue
+      let rawLabel =
+        block:
+          let displayName = item.getOrDefault("display_name").getStr("")
+          if displayName.len > 0: displayName
+          else:
+            let camelDisplay = item.getOrDefault("displayName").getStr("")
+            if camelDisplay.len > 0: camelDisplay
+            else:
+              let itemName = item.getOrDefault("name").getStr("")
+              if itemName.len > 0 and itemName != modelId:
+                normalizedListModelId(itemName)
+              else:
+                modelId
+      let label = if rawLabel.len > 0: rawLabel else: modelId
+      entries.add(ModelCatalogEntry(
+        providerName: providerName,
+        modelName: modelId,
+        label: label,
+        isFree: modelLooksFree(modelId, label),
+        available: true,
+      ))
+    ok(entries.sortCatalog())
+  except CatchableError as e:
+    err(e.msg)
+
+proc parseAnthropicCatalog(body: string): Result[seq[ModelCatalogEntry], string] =
+  try:
+    let parsed = parseJson(body)
+    let data = parsed.getOrDefault("data")
+    if data == nil or data.kind != JArray:
+      return err("anthropic models missing data")
+    var entries: seq[ModelCatalogEntry] = @[]
+    for item in data:
+      let modelId = item.getOrDefault("id").getStr("")
+      if modelId.len == 0:
+        continue
+      entries.add(ModelCatalogEntry(
+        providerName: "anthropic",
+        modelName: modelId,
+        label: item.getOrDefault("display_name").getStr(modelId),
+        isFree: false,
+        available: true,
+      ))
+    ok(entries.sortCatalog())
+  except CatchableError as e:
+    err(e.msg)
+
+proc parseGeminiCatalog(body: string): Result[seq[ModelCatalogEntry], string] =
+  try:
+    let parsed = parseJson(body)
+    let models = parsed.getOrDefault("models")
+    if models == nil or models.kind != JArray:
+      return err("gemini models missing models")
+    var entries: seq[ModelCatalogEntry] = @[]
+    for item in models:
+      let methods = item.getOrDefault("supportedGenerationMethods")
+      var supportsGenerate = false
+      if methods != nil and methods.kind == JArray:
+        for supportedMethod in methods:
+          if supportedMethod.getStr("") == "generateContent":
+            supportsGenerate = true
+      if not supportsGenerate:
+        continue
+      var modelId = item.getOrDefault("name").getStr("")
+      if modelId.startsWith("models/"):
+        modelId = modelId["models/".len .. ^1]
+      if modelId.len == 0:
+        continue
+      entries.add(ModelCatalogEntry(
+        providerName: "gemini",
+        modelName: modelId,
+        label: item.getOrDefault("displayName").getStr(modelId),
+        isFree: false,
+        available: true,
+      ))
+    ok(entries.sortCatalog())
+  except CatchableError as e:
+    err(e.msg)
+
+proc fetchCatalog(url: string;
+                  headers: seq[(string, string)] = @[]): Result[string, string] =
+  try:
+    let client = newHttpClient()
+    defer: client.close()
+    if headers.len > 0:
+      client.headers = newHttpHeaders(headers)
+    let resp = client.get(url)
+    if resp.status[0] != '2':
+      return err(resp.status & ": " & resp.body)
+    ok(resp.body)
+  except CatchableError as e:
+    err(e.msg)
+
+proc loadOpenRouterCatalog(apiKey: string): Result[ModelCatalogResult, string] =
+  let headers =
+    if apiKey.len > 0:
+      @[("Authorization", "Bearer " & apiKey),
+        ("HTTP-Referer", OpenRouterReferer),
+        ("X-Title", OpenRouterTitle)]
+    else:
+      @[("HTTP-Referer", OpenRouterReferer), ("X-Title", OpenRouterTitle)]
+  let fetched = fetchCatalog(OpenRouterModelsEndpoint, headers)
+  if fetched.isErr:
+    let live = Result[seq[ModelCatalogEntry], string].err(fetched.error)
+    return withCacheFallback("openrouter", live)
+  let body = fetched.value
+  let parsed = parseOpenRouterCatalog(body)
+  withCacheFallback("openrouter", parsed)
+
+proc loadGroqCatalog(apiKey: string): Result[ModelCatalogResult, string] =
+  if apiKey.len == 0:
+    return ok(fallbackCatalog("groq"))
+  let fetched = fetchCatalog(GroqModelsEndpoint, @[("Authorization", "Bearer " & apiKey)])
+  if fetched.isErr:
+    let live = Result[seq[ModelCatalogEntry], string].err(fetched.error)
+    return withCacheFallback("groq", live)
+  let body = fetched.value
+  let parsed = parseSimpleListCatalog("groq", body)
+  withCacheFallback("groq", parsed)
+
+proc loadAnthropicCatalog(apiKey: string): Result[ModelCatalogResult, string] =
+  if apiKey.len == 0:
+    return ok(fallbackCatalog("anthropic"))
+  let fetched = fetchCatalog(AnthropicModelsEndpoint, @[
+    ("x-api-key", apiKey),
+    ("anthropic-version", AnthropicVersion),
+  ])
+  if fetched.isErr:
+    let live = Result[seq[ModelCatalogEntry], string].err(fetched.error)
+    return withCacheFallback("anthropic", live)
+  let body = fetched.value
+  let parsed = parseAnthropicCatalog(body)
+  withCacheFallback("anthropic", parsed)
+
+proc loadGeminiCatalog(apiKey: string): Result[ModelCatalogResult, string] =
+  if apiKey.len == 0:
+    return ok(fallbackCatalog("gemini"))
+  let url = GeminiModelsEndpoint & "?key=" & apiKey
+  let fetched = fetchCatalog(url)
+  if fetched.isErr:
+    let live = Result[seq[ModelCatalogEntry], string].err(fetched.error)
+    return withCacheFallback("gemini", live)
+  let body = fetched.value
+  let parsed = parseGeminiCatalog(body)
+  withCacheFallback("gemini", parsed)
+
+proc loadZaiCatalog(apiKey: string; coding: bool): Result[ModelCatalogResult, string] =
+  let providerName = if coding: "zai-coding" else: "zai"
+  if apiKey.len == 0:
+    return ok(fallbackCatalog(providerName))
+  let base =
+    if coding: "https://api.z.ai/api/coding/paas/v4/models"
+    else: "https://api.z.ai/api/paas/v4/models"
+  let fetched = fetchCatalog(base, @[("Authorization", "Bearer " & apiKey)])
+  if fetched.isErr:
+    let live = Result[seq[ModelCatalogEntry], string].err(fetched.error)
+    return withCacheFallback(providerName, live)
+  let body = fetched.value
+  let parsed = parseSimpleListCatalog(providerName, body)
+  withCacheFallback(providerName, parsed)
+
+proc loadZenCatalog(): Result[ModelCatalogResult, string] =
+  let fetched = fetchCatalog("https://opencode.ai/zen/v1/models")
+  if fetched.isErr:
+    let live = Result[seq[ModelCatalogEntry], string].err(fetched.error)
+    return withCacheFallback("zen", live)
+  let body = fetched.value
+  let parsed = parseSimpleListCatalog("zen", body)
+  withCacheFallback("zen", parsed)
+
+proc buildModelCatalogLoader*(): ModelCatalogLoader {.gcsafe.} =
+  result = proc(providerName: string): Result[ModelCatalogResult, string] {.gcsafe.} =
+    case providerName
+    of "openrouter":
+      loadOpenRouterCatalog(getEnv("OPENROUTER_API_KEY"))
+    of "groq":
+      loadGroqCatalog(getEnv("GROQ_API_KEY"))
+    of "anthropic":
+      loadAnthropicCatalog(getEnv("ANTHROPIC_API_KEY"))
+    of "gemini":
+      loadGeminiCatalog(getEnv("GEMINI_API_KEY"))
+    of "minimax":
+      ok(fallbackCatalog("minimax"))
+    of "zai":
+      loadZaiCatalog(getEnv("ZAI_API_KEY"), false)
+    of "zai-coding":
+      loadZaiCatalog(getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")), true)
+    of "zen":
+      loadZenCatalog()
+    else:
+      ok(fallbackCatalog(providerName))

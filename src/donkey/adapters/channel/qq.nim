@@ -87,11 +87,28 @@ proc targetFor*(a: QQAdapter; userId: UserId): Result[(string, string), string] 
     return ok(("send_group_msg", rawId["group:".len .. ^1]))
   ok(("send_private_msg", rawId))
 
-proc send*(a: var QQAdapter; msg: OutboundMessage): Result[void, string] =
-  let (apiMethod, targetId) = ? a.targetFor(msg.userId)
+proc sendToRawId*(a: var QQAdapter;
+                  rawId: string;
+                  msg: OutboundMessage): Result[void, string] =
+  let (apiMethod, targetId) =
+    if rawId.len == 0:
+      return err("QQAdapter.send: missing raw QQ id")
+    elif rawId.startsWith("group:"):
+      ("send_group_msg", rawId["group:".len .. ^1])
+    else:
+      ("send_private_msg", rawId)
   let key = if apiMethod == "send_group_msg": "group_id" else: "user_id"
   let body = %* {key: targetId, "message": msg.text}
   let resp = ? a.http.post(a.base() & "/" & apiMethod, $body, a.authHeaders())
   if resp.status < 200 or resp.status >= 300:
     return err("qq send error " & $resp.status & ": " & resp.body)
   ok()
+
+proc send*(a: var QQAdapter; msg: OutboundMessage): Result[void, string] =
+  let (_, rawId) = ? a.targetFor(msg.userId)
+  let fullRawId =
+    if a.resolver.reverseChannel(msg.userId, ckQQ).startsWith("group:"):
+      "group:" & rawId
+    else:
+      rawId
+  a.sendToRawId(fullRawId, msg)

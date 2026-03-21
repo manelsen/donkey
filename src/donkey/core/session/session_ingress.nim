@@ -1,7 +1,7 @@
 ## Pure session ingress decisions.
 ## This module knows nothing about queues, adapters or runtime wiring.
 
-import ./types
+import ../types
 
 type
   SessionRuntimeSignature* = distinct string
@@ -58,4 +58,3 @@ func rebuildsSessionRuntime*(decision: SessionIngressDecision): bool =
 
 func startsNewSession*(decision: SessionIngressDecision): bool =
   decision.actionKind == siaStartNewSession
-

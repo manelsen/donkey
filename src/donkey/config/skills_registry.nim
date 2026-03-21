@@ -8,8 +8,10 @@
 ##   tools       = ["fetch_url"]
 ##   permissions = ["--allow-net=api.example.com"]
 
-import std/[os, strutils, sequtils]
+import std/[os, strutils]
 import parsetoml
+import ../domain/builtin_tools
+import ../core/pipeops
 
 type
   SkillManifest* = object
@@ -39,6 +41,44 @@ proc saveSkillEntry*(path: string; m: SkillManifest) =
     f.writeLine("tools       = " & tomlStrArray(m.tools))
   if m.permissions.len > 0:
     f.writeLine("permissions = " & tomlStrArray(m.permissions))
+
+func parseAllowNetHosts*(permission: string): seq[string] =
+  if not permission.startsWith("--allow-net="):
+    return
+  let rawHosts = permission["--allow-net=".len .. ^1]
+  for host in rawHosts.split(','):
+    let normalized = host.strip().toLowerAscii()
+    if normalized.len > 0:
+      result.add(normalized)
+
+func validateSkillPermissions*(permissions: seq[string];
+                               webAllowlist: seq[string]): Result[seq[string], string] =
+  for permission in permissions:
+    case permission
+    of "-A", "--allow-all":
+      return err("Error: unrestricted Deno permissions are not allowed for skills.")
+    of "--allow-net", "--allow-net=":
+      return err("Error: --allow-net must declare explicit hosts.")
+    else:
+      discard
+
+    if permission.startsWith("--allow-net="):
+      let hosts = parseAllowNetHosts(permission)
+      if hosts.len == 0:
+        return err("Error: --allow-net must declare explicit hosts.")
+      if "*" in hosts:
+        return err("Error: wildcard --allow-net is not allowed for skills.")
+      if webAllowlist.len > 0:
+        for host in hosts:
+          var allowed = false
+          for allowHost in webAllowlist:
+            if hostMatchesAllowlist(host, allowHost):
+              allowed = true
+              break
+          if not allowed:
+            return err("Error: skill host '" & host & "' is outside the configured web allowlist.")
+
+  ok(permissions)
 
 proc loadSkillRegistry*(path: string): seq[SkillManifest] =
   ## Reads all [[skill]] entries from the TOML file at `path`.

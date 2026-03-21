@@ -1,5 +1,6 @@
 import std/[json, os, sequtils, strutils, unittest]
 import donkey/adapters/memory/md_file
+import donkey/adapters/provider/runtime_builder
 import donkey/app/session_bootstrap
 import donkey/domain/more_tools
 import donkey/domain/message
@@ -8,7 +9,7 @@ suite "session_bootstrap":
 
   test "parseProviderPrefs returns defaults when empty":
     let prefs = parseProviderPrefs("")
-    check prefs.providerName == "zhipu"
+    check prefs.providerName == "zai-coding"
     check prefs.modelName == ""
 
   test "parseProviderPrefs reads provider and model from toml":
@@ -24,9 +25,9 @@ model = "gemini-2.5-pro"
     check spec.providerName == "openrouter"
     check spec.modelName == "openai/gpt-4o-mini"
 
-  test "buildProviderSpec falls back to zhipu defaults":
+  test "buildProviderSpec falls back to zai-coding defaults":
     let spec = buildProviderSpec(ProviderPrefs(providerName: "weird", modelName: ""))
-    check spec.providerName == "zhipu"
+    check spec.providerName == "zai-coding"
     check spec.modelName == "glm-4.7"
 
   test "providerLabelFromPrefs returns provider/model label":
@@ -73,7 +74,7 @@ model = "claude-opus"
 provider = "gemini"
 model = "gemini-2.5-flash"
 """)
-    let ctx = loadSessionContext(memory, userId)
+    let ctx = loadSessionContext(memory.toRuntimePort(), userId)
     check ctx.preferencesMd.contains("provider = \"gemini\"")
     check ctx.paddockDir == memory.paddockDir(userId)
     check ctx.providerLabel == "gemini/gemini-2.5-flash"
@@ -86,22 +87,22 @@ model = "gemini-2.5-flash"
 
   test "loadSessionBootstrapPlan maps context fields":
     let plan = loadSessionBootstrapPlan(SessionContext(
-      preferencesMd: "provider = \"zhipu\"",
+      preferencesMd: "provider = \"zai-coding\"",
       paddockDir: "/tmp/paddock-x",
-      providerLabel: "zhipu",
+      providerLabel: "zai-coding",
     ))
     check plan.preferencesMd.contains("provider")
     check plan.paddockDir == "/tmp/paddock-x"
-    check plan.providerLabel == "zhipu"
+    check plan.providerLabel == "zai-coding"
 
   test "buildProviderBundle exposes streamFn only for providers that implement it":
-    let openrouter = buildProviderBundle("provider = \"openrouter\"")
-    let anthropic = buildProviderBundle("provider = \"anthropic\"")
-    let gemini = buildProviderBundle("provider = \"gemini\"")
-    let minimax = buildProviderBundle("provider = \"minimax\"")
-    let zhipu = buildProviderBundle("provider = \"zhipu\"")
+    let openrouter = buildProviderBundle("provider = \"openrouter\"", runtime_builder.buildProviderBundle)
+    let anthropic = buildProviderBundle("provider = \"anthropic\"", runtime_builder.buildProviderBundle)
+    let gemini = buildProviderBundle("provider = \"gemini\"", runtime_builder.buildProviderBundle)
+    let minimax = buildProviderBundle("provider = \"minimax\"", runtime_builder.buildProviderBundle)
+    let zaiCoding = buildProviderBundle("provider = \"zai-coding\"", runtime_builder.buildProviderBundle)
     check openrouter.streamFn != nil
     check anthropic.streamFn != nil
     check gemini.streamFn == nil
     check minimax.streamFn == nil
-    check zhipu.streamFn == nil
+    check zaiCoding.streamFn == nil

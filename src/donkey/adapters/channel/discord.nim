@@ -105,23 +105,51 @@ proc handleDispatch(t: string; d: JsonNode) =
       let iData = d.getOrDefault("data")
       if iData == nil: return
       let cmdName = iData["name"].getStr()
-      ## /mycode — push as regular message with text "/mycode" so daemon handles it.
-      if cmdName == "mycode":
+      proc optionValue(name: string): string =
+        let opts = iData.getOrDefault("options")
+        if opts != nil and opts.kind == JArray:
+          for opt in opts:
+            if opt["name"].getStr() == name:
+              return opt["value"].getStr()
+        ""
+
+      if cmdName in ["start", "help", "memory", "forget", "doctor",
+                     "reset", "debug", "mycode", "ping", "status"]:
         gDiscordEvents.send(DiscordRawEvent(
           kind:          deMessage,
           discordUserId: userId,
-          content:       "/mycode",
+          content:       "/" & cmdName,
           interactionId: interactionId,
+          interactionToken: interactionToken,
+        ))
+        return
+      if cmdName == "models":
+        let provider = optionValue("provider")
+        let model = optionValue("model")
+        let suffix = if provider.len > 0 and model.len > 0: " " & provider & " " & model
+                     elif provider.len > 0: " " & provider
+                     else: ""
+        gDiscordEvents.send(DiscordRawEvent(
+          kind:             deMessage,
+          discordUserId:    userId,
+          content:          "/models" & suffix,
+          interactionId:    interactionId,
+          interactionToken: interactionToken,
+        ))
+        return
+      if cmdName == "think":
+        let level = optionValue("level")
+        gDiscordEvents.send(DiscordRawEvent(
+          kind:             deMessage,
+          discordUserId:    userId,
+          content:          if level.len > 0: "/think " & level else: "/think",
+          interactionId:    interactionId,
           interactionToken: interactionToken,
         ))
         return
       if cmdName != "continue": return
       var code = ""
-      let opts = iData.getOrDefault("options")
-      if opts != nil and opts.kind == JArray:
-        for opt in opts:
-          if opt["name"].getStr() == "code":
-            code = opt["value"].getStr()
+      code = optionValue("code")
       if code.len > 0:
         ## Has inline code — process directly (legacy slash command style).
         gDiscordEvents.send(DiscordRawEvent(
@@ -356,6 +384,35 @@ proc sendKeyboard*(a: DiscordAdapter; userId: UserId;
   except CatchableError as e:
     err(e.msg)
 
+proc editKeyboard*(a: DiscordAdapter; userId: UserId;
+                   msgId: string;
+                   text: string;
+                   buttons: seq[seq[(string, string)]]): Result[void, string] =
+  ## Edits an existing DM message with new content and component buttons.
+  let discordId = a.resolver.reverseChannel(userId, ckDiscord)
+  if discordId.len == 0:
+    return err("DiscordAdapter.editKeyboard: no Discord ID for " & $userId)
+  let chId = ? a.dmChannelFor(discordId)
+  var rows: seq[JsonNode]
+  for row in buttons:
+    var comps: seq[JsonNode]
+    for (label, data) in row:
+      comps.add(%* {
+        "type": 2,
+        "style": 1,
+        "label": label,
+        "custom_id": data,
+      })
+    if comps.len > 0:
+      rows.add(%* {"type": 1, "components": comps})
+  let body = %* {"content": text, "components": rows}
+  let headers = @[a.authHeader(), ("Content-Type", "application/json")]
+  let url = a.base() & "/channels/" & chId & "/messages/" & msgId
+  let resp = ? a.http.patch(url, $body, headers)
+  if resp.status < 200 or resp.status >= 300:
+    return err("Discord editKeyboard error " & $resp.status & ": " & resp.body)
+  ok()
+
 proc sendButtonAck*(a: DiscordAdapter;
                     interactionId, interactionToken: string): Result[void, string] =
   ## Acknowledges a button interaction with type 6 (DEFERRED_UPDATE_MESSAGE).
@@ -490,19 +547,67 @@ proc getAppId*(a: DiscordAdapter): Result[string, string] =
     err(e.msg)
 
 proc registerSlashCommands*(a: DiscordAdapter; appId: string): Result[void, string] =
-  ## Registers /continue and /mycode as global application commands.
-  ## /continue has no required options — it opens a modal to collect the code.
+  ## Registers the operational command surface as global application commands.
   let commands = %* [
+    {"name": "start",   "type": 1, "description": "Show the intro text"},
+    {"name": "help",    "type": 1, "description": "Show available commands"},
+    {"name": "memory",  "type": 1, "description": "Show saved memories"},
+    {"name": "forget",  "type": 1, "description": "Clear saved memories"},
+    {"name": "doctor",  "type": 1, "description": "Run a runtime diagnostic"},
+    {"name": "reset",   "type": 1, "description": "Reset the active session"},
+    {"name": "debug",   "type": 1, "description": "Toggle verbose tool/debug mode"},
     {
       "name":        "continue",
       "type":        1,
       "description": "Continue your session from another channel (opens dialog)",
+      "options": [
+        {
+          "name": "code",
+          "description": "Link code from /mycode on another channel",
+          "type": 3,
+          "required": false,
+        }
+      ],
     },
     {
       "name":        "mycode",
       "type":        1,
       "description": "Generate a link code to reconnect from another channel",
     },
+    {
+      "name":        "models",
+      "type":        1,
+      "description": "Show or change the active provider/model",
+      "options": [
+        {
+          "name": "provider",
+          "description": "Provider name",
+          "type": 3,
+          "required": false,
+        },
+        {
+          "name": "model",
+          "description": "Model name",
+          "type": 3,
+          "required": false,
+        }
+      ],
+    },
+    {
+      "name":        "think",
+      "type":        1,
+      "description": "Show or change the reasoning level",
+      "options": [
+        {
+          "name": "level",
+          "description": "off, low, medium, or high",
+          "type": 3,
+          "required": false,
+        }
+      ],
+    },
+    {"name": "ping",   "type": 1, "description": "Measure provider latency"},
+    {"name": "status", "type": 1, "description": "Show session/runtime status"},
   ]
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url = a.base() & "/applications/" & appId & "/commands"

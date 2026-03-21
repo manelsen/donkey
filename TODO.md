@@ -1,16 +1,10 @@
 # TODO — Donkey
 
-Itens realmente abertos no estado atual do código. Para visão por fases, ver [`ROADMAP.md`](/home/micelio/git/donkey/ROADMAP.md). Para histórico do refactor-base, ver [`REFACTOR_PLAN.md`](/home/micelio/git/donkey/REFACTOR_PLAN.md).
+Itens realmente abertos no estado atual do código. Para visão macro, ver [`ROADMAP.md`](/home/micelio/git/donkey/ROADMAP.md). Para a trilha de paridade funcional com IronClaw, ver [`IRONCLAW_PARITY.md`](/home/micelio/git/donkey/IRONCLAW_PARITY.md).
 
 ---
 
 ## P0 — Hardening imediato
-
-- [ ] **Prompt injection via tool output**
-  Estado:
-  o runtime ainda trata tool output como texto comum no histórico.
-  Próximo passo:
-  prefixar output de tools com marcador não-instrucional e separar melhor erro operacional de resultado funcional.
 
 - [ ] **`grep` com regex sem dependência frágil de PCRE**
   Estado:
@@ -54,6 +48,26 @@ Itens realmente abertos no estado atual do código. Para visão por fases, ver [
 
 ---
 
+## Gateway / automação contínua
+
+- [ ] **HTTP/Web gateway com SSE/WebSocket**
+  Estado:
+  o daemon já tem IPC e streaming por canal, mas não expõe ainda um gateway contínuo para UI/browser nem broadcast de eventos.
+
+- [ ] **Heartbeat / execução proativa**
+  Estado:
+  reminders já existem, mas não há um runtime mais amplo de heartbeat/maintenance tasks no estilo IronClaw.
+
+- [ ] **Smart model routing**
+  Estado:
+  já temos múltiplos providers e fallback por sessão, mas ainda não há roteamento automático por complexidade/custo/latência.
+
+- [ ] **Ollama provider**
+  Estado:
+  o Donkey cobre OpenRouter, Anthropic, Gemini, MiniMax e Zhipu; Ollama ainda não foi implementado.
+
+---
+
 ## F9+ — Admin / operação
 
 - [ ] **Persistir e expor estado administrativo mais rico no IPC**
@@ -80,9 +94,13 @@ Itens realmente abertos no estado atual do código. Para visão por fases, ver [
 
 ## Feito recentemente
 
+- ✅ Hardening básico de tool output: resultado de tool agora entra no histórico envelopado como conteúdo não confiável
+- ✅ Separação básica entre erro operacional e resultado funcional nas native tools e no ToolAgent
+- ✅ Policy explícita de rede por tool/skill: `[security].web_allowlist`, regras por tool/path e validação de `--allow-net` em skills Deno
 - ✅ F3 fechado: function calling real em Anthropic/Gemini e streaming real em OpenRouter/Anthropic
 - ✅ F6 fechado: `ctl memory export` e views textuais sobre Postgres
 - ✅ F7 fechado no CLI: search/install/update remotos do ClawHub com lock/origin/hash
 - ✅ F8 fechado no runtime base: `WeChatAdapter` e `QQAdapter` integrados ao daemon/outbound
 - ✅ F9 fechado no runtime base: painel de usuários no TUI, `ctl user edit/revoke/allow`, bloqueio de usuário revogado no ingresso
 - ✅ Refactor-base concluído: daemon, orchestrator, bootstrap, outbound, loaders e native tools fatiados e cobertos
+- ✅ Boundary refactor concluído: `core/*` e `domain/*` ficaram determinísticos, com enforcement automático de camadas

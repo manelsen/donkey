@@ -8,6 +8,30 @@ import ../../core/pipeops
 type StdHttpAdapter* = object  ## Stateless — safe to copy into adapter structs.
 
 proc newStdHttpAdapter*(): StdHttpAdapter = StdHttpAdapter()
+proc get*(a: StdHttpAdapter; url: string;
+          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string]
+proc post*(a: StdHttpAdapter; url, body: string;
+           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string]
+proc put*(a: StdHttpAdapter; url, body: string;
+          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string]
+proc patch*(a: StdHttpAdapter; url, body: string;
+            headers: seq[HttpHeader] = @[]): Result[HttpResponse, string]
+
+proc toRuntimePort*(a: StdHttpAdapter): HttpRuntimePort =
+  HttpRuntimePort(
+    get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      {.cast(gcsafe).}: result = a.get(url, headers)
+    ,
+    post: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      {.cast(gcsafe).}: result = a.post(url, body, headers)
+    ,
+    put: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      {.cast(gcsafe).}: result = a.put(url, body, headers)
+    ,
+    patch: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      {.cast(gcsafe).}: result = a.patch(url, body, headers)
+    ,
+  )
 
 proc get*(a: StdHttpAdapter; url: string;
           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] =

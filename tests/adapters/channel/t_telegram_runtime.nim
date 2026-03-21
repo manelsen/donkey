@@ -1,4 +1,5 @@
 import std/[os, sequtils, strutils, unittest]
+import donkey/core/commands/command_routing
 import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/memory/md_file
 import donkey/domain/message
@@ -7,7 +8,7 @@ suite "telegram_runtime":
 
   test "parseTelegramPrefs returns defaults when empty":
     let prefs = parseTelegramPrefs("")
-    check prefs.provider == "zhipu"
+    check prefs.provider == "zai-coding"
     check prefs.model == ""
     check prefs.thinking == "off"
 
@@ -21,28 +22,28 @@ thinking = "high"
     check prefs.model == "gemini-2.5-pro"
     check prefs.thinking == "high"
 
-  test "parseTelegramCallback parses model set":
-    let callback = parseTelegramCallback("models:set:openrouter:openai/gpt-4o")
-    check callback.kind == tckModelsSet
+  test "parseCallbackData parses model set":
+    let callback = parseCallbackData("models:set:openrouter:openai/gpt-4o")
+    check callback.kind == cbkModelsSet
     check callback.provider == "openrouter"
     check callback.model == "openai/gpt-4o"
 
-  test "parseTelegramCallback parses thinking set":
-    let callback = parseTelegramCallback("think:set:medium")
-    check callback.kind == tckThinkSet
+  test "parseCallbackData parses thinking set":
+    let callback = parseCallbackData("think:set:medium")
+    check callback.kind == cbkThinkSet
     check callback.value == "medium"
 
-  test "parseTelegramCallback parses core callbacks":
-    check parseTelegramCallback("personality:tone:warm").kind == tckCore
-    check parseTelegramCallback("name:Ada").kind == tckCore
+  test "parseCallbackData parses core callbacks":
+    check parseCallbackData("personality:tone:warm").kind == cbkPersonality
+    check parseCallbackData("name:Ada").kind == cbkName
 
-  test "parseTelegramCoreCommand parses continue":
-    let cmd = parseTelegramCoreCommand("/continue abc123")
-    check cmd.kind == tcmdContinue
+  test "parseCommandText parses continue":
+    let cmd = parseCommandText("/continue abc123")
+    check cmd.kind == cmdContinue
     check cmd.value == "abc123"
 
-  test "parseTelegramCoreCommand parses reset":
-    check parseTelegramCoreCommand("/reset").kind == tcmdReset
+  test "parseCommandText parses reset":
+    check parseCommandText("/reset").kind == cmdReset
 
   test "buildProviderButtons marks current provider":
     let tmpDir = getTempDir() / "donkey_tg_runtime_provider"
@@ -91,7 +92,7 @@ thinking = "low"
     defer:
       if dirExists(tmpDir):
         removeDir(tmpDir)
-    memory.savePreferences(userId, "provider = \"zhipu\"")
+    memory.savePreferences(userId, "provider = \"zai-coding\"")
     saveTelegramPreference(memory, userId, "provider", "gemini")
     let prefs = memory.loadContext(userId).preferencesMd
     check prefs.contains("provider = \"gemini\"")
