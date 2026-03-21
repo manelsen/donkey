@@ -8,7 +8,7 @@ suite "telegram_runtime":
 
   test "parseTelegramPrefs returns defaults when empty":
     let prefs = parseTelegramPrefs("")
-    check prefs.provider == "zhipu"
+    check prefs.provider == "zai-coding"
     check prefs.model == ""
     check prefs.thinking == "off"
 
@@ -92,7 +92,7 @@ thinking = "low"
     defer:
       if dirExists(tmpDir):
         removeDir(tmpDir)
-    memory.savePreferences(userId, "provider = \"zhipu\"")
+    memory.savePreferences(userId, "provider = \"zai-coding\"")
     saveTelegramPreference(memory, userId, "provider", "gemini")
     let prefs = memory.loadContext(userId).preferencesMd
     check prefs.contains("provider = \"gemini\"")

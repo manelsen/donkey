@@ -20,6 +20,7 @@ when defined(withPostgres):
   import donkey/ports/embedding
 import donkey/adapters/provider/openrouter
 import donkey/adapters/provider/runtime_builder
+import donkey/adapters/provider/model_catalog
 import donkey/adapters/http/std_http
 import donkey/adapters/channel/telegram
 import donkey/adapters/channel/outbound_builder
@@ -30,7 +31,7 @@ import donkey/adapters/channel/wecom
 import donkey/adapters/channel/wecom_runtime
 import donkey/adapters/channel/wechat
 import donkey/adapters/channel/wechat_runtime
-import donkey/adapters/channel/qq
+import donkey/adapters/channel/qq_channel
 import donkey/adapters/channel/qq_runtime
 import donkey/adapters/channel/feishu
 import donkey/adapters/channel/feishu_runtime
@@ -133,12 +134,19 @@ FEISHU_APP_SECRET=
 FEISHU_VERIFICATION_TOKEN=
 QQ_ONEBOT_URL=
 QQ_ONEBOT_TOKEN=
+QQ_OFFICIAL_APP_ID=
+QQ_OFFICIAL_CLIENT_SECRET=
+# QQ_OFFICIAL_API_BASE=https://api.sgroup.qq.com
+# QQ_OFFICIAL_TOKEN_BASE=https://bots.qq.com
 
+ZAI_API_KEY=
+ZAI_CODING_API_KEY=
 ZHIPU_API_KEY=
 OPENROUTER_API_KEY=
 ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
 MINIMAX_API_KEY=
+OPENCODE_API_KEY=
 
 BRAVE_API_KEY=
 # DONKEY_PG_DSN=
@@ -149,6 +157,11 @@ const TomlTemplate = """# """ & AppName & """ configuration
 [""" & ConfigSectionName & """]
 # log_level = "info"    # debug | info | warn | error
 # log_file  = ""        # leave empty to log to stderr (journald)
+
+[security]
+# web_allowlist = ["docs.nim-lang.org", "api.github.com"]
+# When non-empty, native web tools and Deno skill --allow-net permissions
+# must stay within these public hosts/subdomains.
 
 [sandbox]
 # mode  = "none"        # "none" or "docker"
@@ -194,8 +207,12 @@ proc ctlServiceInstall =
     "FEISHU_APP_ID", "FEISHU_APP_SECRET",
     "FEISHU_VERIFICATION_TOKEN",
     "QQ_ONEBOT_URL", "QQ_ONEBOT_TOKEN",
-    "ZHIPU_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
+    "QQ_OFFICIAL_APP_ID", "QQ_OFFICIAL_CLIENT_SECRET",
+    "QQ_OFFICIAL_API_BASE", "QQ_OFFICIAL_TOKEN_BASE",
+    "ZAI_API_KEY", "ZAI_CODING_API_KEY", "ZHIPU_API_KEY",
+    "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
     "GEMINI_API_KEY", "MINIMAX_API_KEY",
+    "OPENCODE_API_KEY",
     "BRAVE_API_KEY", "DONKEY_PG_DSN",
   ]
   var envContent = readFile(envPath)
@@ -391,8 +408,19 @@ proc ctlToolInstall(registryPath: string; command: string; args: seq[string]) =
   saveToolEntry(registryPath, entry)
   echo "Registered MCP server: " & command
 
-proc ctlSkillInstall(skillsPath: string; name, scriptPath: string;
+func buildSkillRuntimePolicy(cfg: DonkeyConfig;
+                             skillName: string): SkillRuntimePolicy =
+  SkillRuntimePolicy(allowNetHosts: cfg.effectiveSkillAllowNetHosts(skillName))
+
+func buildSkillRuntimePolicyResolver(cfg: DonkeyConfig): SkillRuntimePolicyResolver =
+  result = proc(skillName: string): SkillRuntimePolicy =
+    buildSkillRuntimePolicy(cfg, skillName)
+
+proc ctlSkillInstall(cfg: DonkeyConfig; skillsPath: string; name, scriptPath: string;
                      permissions: seq[string]) =
+  discard validateSkillPermissions(permissions, cfg.webAllowlist).valueOr:
+    echo error
+    quit(1)
   saveSkillEntry(skillsPath, SkillManifest(
     name:        name,
     version:     "0.1.0",
@@ -420,9 +448,12 @@ proc ctlSkillList(skillsPath: string) =
       if s.permissions.len > 0: echo "  permissions: " & s.permissions.join(", ")
   echoRemoteSkillInstalls(parentDir(skillsPath))
 
-proc ctlSkillUpdate(skillsPath, name, scriptPath: string;
+proc ctlSkillUpdate(cfg: DonkeyConfig; skillsPath, name, scriptPath: string;
                     permissions: seq[string]) =
   ## Replaces the named skill entry in the registry (re-writes the file).
+  discard validateSkillPermissions(permissions, cfg.webAllowlist).valueOr:
+    echo error
+    quit(1)
   var skills = loadSkillRegistry(skillsPath)
   var found  = false
   for i in 0 ..< skills.len:
@@ -529,6 +560,8 @@ type DaemonEnv = object
   wechatAppId:   string
   feishuAppId:   string
   qqApiBase:     string
+  qqOfficialAppId: string
+  qqOfficialApiBase: string
   memory:        MdFileAdapter
   identityPath:  string
   wecomAgentId:  int
@@ -538,7 +571,7 @@ type DaemonAdapters = object
   dc: DiscordAdapter
   wc: WeComAdapter
   wch: WeChatAdapter
-  qq: QQAdapter
+  qq: QQChannelAdapter
   fs: FeishuAdapter
 
 type DaemonServices = object
@@ -555,6 +588,7 @@ type DaemonRuntime = ref object
   streamMsgIds:         Table[string, string]
   statusMsgIds:         Table[string, string]
   kbdMsgIds:            Table[string, string]
+  dcKbdMsgIds:          Table[string, string]
   lastReminderCheckMs:  int64
   msgSeq:               int
   daemonStartMs:        int64
@@ -576,9 +610,9 @@ type DaemonBootstrap = object
   memory: MdFileAdapter
   ctx:    DaemonContext
 
-proc loadDaemonToolBundle(cfgHome: string): DaemonToolBundle =
+proc loadDaemonToolBundle(cfg: DonkeyConfig): DaemonToolBundle =
   {.cast(gcsafe).}:
-    for entry in loadToolRegistry(cfgHome / "tools.toml"):
+    for entry in loadToolRegistry(cfg.home / "tools.toml"):
       var client = buildMcpClient(entry)
       let schemasRes = client.listTools()
       if schemasRes.isOk:
@@ -589,8 +623,9 @@ proc loadDaemonToolBundle(cfgHome: string): DaemonToolBundle =
             schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
           ))
       result.clients.add(client.toRuntimePort())
-    for manifest in loadSkillRegistry(cfgHome / "skills.toml"):
-      let runtimeRes = buildDenoSkillRuntime(manifest.script, manifest.permissions)
+    for manifest in loadSkillRegistry(cfg.home / "skills.toml"):
+      let runtimeRes = buildDenoSkillRuntime(
+        manifest.script, manifest.permissions, buildSkillRuntimePolicy(cfg, manifest.name))
       if runtimeRes.isOk:
         for s in runtimeRes.value.schemas:
           result.tools.add(ToolDescription(
@@ -615,7 +650,7 @@ proc buildGlobalSearchFn(): SearchFn
 proc initDaemonServices(cfg: DonkeyConfig;
                         env: DaemonEnv;
                         log: Logger): DaemonServices =
-  let toolBundle = loadDaemonToolBundle(cfg.home)
+  let toolBundle = loadDaemonToolBundle(cfg)
   result.toolClients = toolBundle.clients
   result.tools = toolBundle.tools
 
@@ -640,6 +675,8 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.wechatAppId = getEnv("WECHAT_APP_ID")
   result.feishuAppId = getEnv("FEISHU_APP_ID")
   result.qqApiBase = getEnv("QQ_ONEBOT_URL")
+  result.qqOfficialAppId = getEnv("QQ_OFFICIAL_APP_ID")
+  result.qqOfficialApiBase = getEnv("QQ_OFFICIAL_API_BASE")
   result.memory = MdFileAdapter(paddocksDir: cfg.paddocks)
   result.identityPath = cfg.home / "identities.tsv"
   let wecomAgentIdStr = getEnv("WECOM_AGENT_ID")
@@ -656,8 +693,19 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
                                 getEnv("WECHAT_CALLBACK_TOKEN"),
                                 getEnv("WECHAT_TEMPLATE_ID"),
                                 env.identityPath)
-  result.qq = newQQAdapter(env.qqApiBase, getEnv("QQ_ONEBOT_TOKEN"),
-                           env.identityPath)
+  if env.qqOfficialAppId.len > 0 and getEnv("QQ_OFFICIAL_CLIENT_SECRET").len > 0:
+    result.qq = newQQOfficialChannelAdapter(
+      env.qqOfficialAppId,
+      getEnv("QQ_OFFICIAL_CLIENT_SECRET"),
+      env.identityPath,
+      apiBase = getEnv("QQ_OFFICIAL_API_BASE"),
+      tokenBase = getEnv("QQ_OFFICIAL_TOKEN_BASE"),
+    )
+  elif env.qqApiBase.len > 0:
+    result.qq = newQQOneBotChannelAdapter(env.qqApiBase, getEnv("QQ_ONEBOT_TOKEN"),
+                                          env.identityPath)
+  else:
+    result.qq = newQQDisabledChannelAdapter(env.identityPath)
   result.fs = newFeishuAdapter(env.feishuAppId, getEnv("FEISHU_APP_SECRET"),
                                env.identityPath)
 
@@ -731,13 +779,21 @@ proc startOptionalWeChatGateway(wchAdapter: var WeChatAdapter;
   wchAdapter.startWebhook(port)
   log.info("WeChat webhook listener started on port " & $port)
 
-proc startOptionalQQGateway(qqAdapter: var QQAdapter;
-                            qqApiBase: string;
+proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
                             log: Logger) =
-  if qqApiBase.len == 0:
-    log.info("QQ_ONEBOT_URL not set — QQ disabled")
+  if not qqAdapter.enabled():
+    log.info("QQ not configured — QQ disabled")
     return
-  log.info("QQ OneBot HTTP client enabled: " & qqApiBase)
+  case qqAdapter.kind
+  of qbkOneBot:
+    log.info("QQ OneBot client enabled")
+  of qbkOfficial:
+    log.info("QQ official API client enabled")
+    {.cast(gcsafe).}:
+      qqAdapter.startGateway()
+    log.info("QQ official gateway started")
+  of qbkNone:
+    discard
 
 proc buildGlobalSearchFn(): SearchFn =
   when defined(withPostgres):
@@ -765,7 +821,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
                     wecomCorpId: string;
                     wechatAppId: string;
                     feishuAppId: string;
-                    qqApiBase: string;
+                    qqEnabled: bool;
                     log: Logger) =
   let sockPath = cfg.home / SockFileName
   let ipcStatusFn: StatusProvider = proc(): DaemonStatus {.gcsafe, raises: [].} =
@@ -782,7 +838,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
     if wecomCorpId.len > 0: activeChannels.add("wecom")
     if wechatAppId.len > 0: activeChannels.add("wechat")
     if feishuAppId.len > 0: activeChannels.add("feishu")
-    if qqApiBase.len > 0: activeChannels.add("qq")
+    if qqEnabled: activeChannels.add("qq")
     DaemonStatus(
       uptimeSec:     (nowMs() - daemonStartMs) div 1000,
       sessionCount:  sm.sessionCount(),
@@ -810,6 +866,7 @@ type SessionIngressContext* = object
   msgId*: string
 
 type SessionIngressServices = object
+  cfg:          DonkeyConfig
   memory:       MdFileAdapter
   completeFn:   CompleteFn
   streamFn:     StreamFn
@@ -868,6 +925,7 @@ proc buildSessionIngressContext*(sm: var SessionManager;
   result.msgId = $msg.userId & "-" & $msgSeq
 
 func buildSessionIngressServices*(memory: MdFileAdapter;
+                                  cfg: DonkeyConfig;
                                   completeFn: CompleteFn;
                                   streamFn: StreamFn;
                                   toolClients: seq[ToolRuntimePort];
@@ -879,6 +937,7 @@ func buildSessionIngressServices*(memory: MdFileAdapter;
                                   typingFn: TypingFn;
                                   searchFn: SearchFn): SessionIngressServices =
   SessionIngressServices(
+    cfg: cfg,
     memory: memory,
     completeFn: completeFn,
     streamFn: streamFn,
@@ -903,6 +962,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
                                 log: Logger): SessionIngressServices =
   buildSessionIngressServices(
     memory,
+    cfg,
     ctx.services.globalCompleteFn,
     ctx.services.globalStreamFn,
     ctx.services.toolClients,
@@ -916,6 +976,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
   )
 
 proc startSessionOrchestrator*(plan: EnsureSessionPlan;
+                               cfg: DonkeyConfig;
                                memory: MdFileAdapter;
                                streamFn: StreamFn;
                                bootstrap: SessionBootstrap;
@@ -937,7 +998,8 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              bootstrap.paddockDir,
                              typingFn, searchFn, log.child("orch"), bootstrap.providerLabel,
                              bootstrap.skillPrompt,
-                             sandboxMode, sandboxImage)
+                             sandboxMode, sandboxImage,
+                             cfg.webAllowlist, cfg.toolWebPolicy)
 
 proc enqueueSessionMessage*(entry: var SessionEntry;
                             msg: InboundMessage;
@@ -956,12 +1018,13 @@ proc startSessionIngress*(sm: var SessionManager;
                           msgSeq: var int): SessionIngressContext {.gcsafe.} =
   let bootstrap = buildSessionBootstrap(
     services.memory.toRuntimePort(), msg.userId, services.completeFn, buildProviderBundle,
-    buildDenoSkillRuntime,
+    buildDenoSkillRuntime, buildSkillRuntimePolicyResolver(services.cfg),
     services.toolClients, services.tools)
   let signature = toolCatalogSignature(
     bootstrap.tools, bootstrap.providerLabel, bootstrap.paddockDir, bootstrap.skillPrompt)
   result = sm.buildSessionIngressContext(msg, signature, msgSeq)
-  startSessionOrchestrator(result.plan, services.memory,
+  startSessionOrchestrator(result.plan, services.cfg,
+                           services.memory,
                            services.streamFn, bootstrap,
                            services.globalOutbox, services.log,
                            services.sandboxMode, services.sandboxImage,
@@ -1027,6 +1090,7 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
                          log:          Logger): bool =
   let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
     buildCompleteFn(preferencesMd, buildProviderBundle)
+  let modelCatalogLoader = buildModelCatalogLoader()
   let tgMsgs = tgAdapter.receive().valueOr:
     log.error("telegram receive: " & error)
     return false
@@ -1034,6 +1098,7 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
   for msg in tgMsgs:
     if not telegram_runtime.handleTelegramMessage(
       msg, runtime.sm, tgAdapter, runtime.kbdMsgIds, services.memory, completeBuilder,
+      modelCatalogLoader,
       services.toolClients.len, services.tools.len, runtime.msgSeq, runtime.daemonStartMs):
       handleTelegramFallback(runtime, tgAdapter, msg, services)
   true
@@ -1094,7 +1159,7 @@ proc startDaemonIngress(ctx: DaemonContext;
   startOptionalWeComGateway(ctx.adapters.wc, ctx.env.wecomCorpId, log)
   startOptionalWeChatGateway(ctx.adapters.wch, ctx.env.wechatAppId, log)
   startOptionalFeishuGateway(ctx.adapters.fs, ctx.env.feishuAppId, log)
-  startOptionalQQGateway(ctx.adapters.qq, ctx.env.qqApiBase, log)
+  startOptionalQQGateway(ctx.adapters.qq, log)
   ctx.adapters.tg.setMyCommands().isOkOr:
     log.warn("setMyCommands failed: " & error)
 
@@ -1103,7 +1168,7 @@ proc setupDaemonRuntime(ctx: DaemonContext;
                         log: Logger) =
   setupIpcServer(cfg, ctx.runtime.sm, ctx.services.tools.len, ctx.runtime.daemonStartMs,
                  ctx.env.telegramToken, ctx.env.discordToken, ctx.env.wecomCorpId,
-                 ctx.env.wechatAppId, ctx.env.feishuAppId, ctx.env.qqApiBase, log)
+                 ctx.env.wechatAppId, ctx.env.feishuAppId, ctx.adapters.qq.enabled(), log)
 
 proc activateDaemonBootstrap(ctx: DaemonContext;
                              cfg: DonkeyConfig;
@@ -1128,9 +1193,11 @@ proc drainDiscordGateway(ctx: DaemonContext;
                          log: Logger) =
   let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
     buildCompleteFn(preferencesMd, buildProviderBundle)
+  let modelCatalogLoader = buildModelCatalogLoader()
   discord_runtime.drainDiscordEvents(
-    ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, memory, completeBuilder,
-    ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.msgSeq, log,
+    ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.dcKbdMsgIds, memory, completeBuilder, modelCatalogLoader,
+    ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
+    ctx.runtime.msgSeq, log,
     proc(msg: InboundMessage) =
       handleGatewayFallback(ctx, cfg, memory, msg, log))
 
@@ -1138,8 +1205,13 @@ proc drainWeComGateway(ctx: DaemonContext;
                        cfg: DonkeyConfig;
                        memory: MdFileAdapter;
                        log: Logger) =
+  let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+    buildCompleteFn(preferencesMd, buildProviderBundle)
+  let modelCatalogLoader = buildModelCatalogLoader()
   wecom_runtime.drainWeComEvents(
-    ctx.adapters.wc, ctx.env.wecomCorpId, memory,
+    ctx.adapters.wc, ctx.env.wecomCorpId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
+    ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
+    ctx.runtime.msgSeq,
     proc(msg: InboundMessage) =
       handleGatewayFallback(ctx, cfg, memory, msg, log))
 
@@ -1147,8 +1219,13 @@ proc drainWeChatGateway(ctx: DaemonContext;
                         cfg: DonkeyConfig;
                         memory: MdFileAdapter;
                         log: Logger) =
+  let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+    buildCompleteFn(preferencesMd, buildProviderBundle)
+  let modelCatalogLoader = buildModelCatalogLoader()
   wechat_runtime.drainWeChatEvents(
-    ctx.adapters.wch, ctx.env.wechatAppId,
+    ctx.adapters.wch, ctx.env.wechatAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
+    ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
+    ctx.runtime.msgSeq,
     proc(msg: InboundMessage) =
       handleGatewayFallback(ctx, cfg, memory, msg, log))
 
@@ -1156,8 +1233,13 @@ proc drainQQGateway(ctx: DaemonContext;
                     cfg: DonkeyConfig;
                     memory: MdFileAdapter;
                     log: Logger) =
+  let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+    buildCompleteFn(preferencesMd, buildProviderBundle)
+  let modelCatalogLoader = buildModelCatalogLoader()
   qq_runtime.drainQQEvents(
-    ctx.adapters.qq, ctx.env.qqApiBase,
+    ctx.adapters.qq, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
+    ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
+    ctx.runtime.msgSeq,
     proc(msg: InboundMessage) =
       handleGatewayFallback(ctx, cfg, memory, msg, log))
 
@@ -1165,8 +1247,13 @@ proc drainFeishuGateway(ctx: DaemonContext;
                         cfg: DonkeyConfig;
                         memory: MdFileAdapter;
                         log: Logger) =
+  let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+    buildCompleteFn(preferencesMd, buildProviderBundle)
+  let modelCatalogLoader = buildModelCatalogLoader()
   feishu_runtime.drainFeishuEvents(
-    ctx.adapters.fs, ctx.env.feishuAppId, memory,
+    ctx.adapters.fs, ctx.env.feishuAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
+    ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
+    ctx.runtime.msgSeq,
     proc(msg: InboundMessage) =
       handleGatewayFallback(ctx, cfg, memory, msg, log))
 
@@ -1309,7 +1396,7 @@ proc main =
       ctlToolInstall(registryPath, args[3], args[4 ..^ 1]); quit(0)
     elif args.len >= 5 and args[1] == "skill" and args[2] == "install":
       let skillsPath = cfg.home / "skills.toml"
-      ctlSkillInstall(skillsPath, args[3], args[4], args[5 ..^ 1]); quit(0)
+      ctlSkillInstall(cfg, skillsPath, args[3], args[4], args[5 ..^ 1]); quit(0)
     elif args.len >= 4 and args[1] == "skill" and args[2] == "search":
       ctlSkillSearchRemote(getEnv("CLAWHUB_REGISTRY", ClawhubDefaultRegistry), args[3]); quit(0)
     elif args.len == 4 and args[1] == "skill" and args[2] == "install":
@@ -1318,7 +1405,7 @@ proc main =
       ctlSkillList(cfg.home / "skills.toml"); quit(0)
     elif args.len >= 5 and args[1] == "skill" and args[2] == "update":
       let skillsPath = cfg.home / "skills.toml"
-      ctlSkillUpdate(skillsPath, args[3], args[4], args[5 ..^ 1]); quit(0)
+      ctlSkillUpdate(cfg, skillsPath, args[3], args[4], args[5 ..^ 1]); quit(0)
     elif args.len >= 3 and args[1] == "skill" and args[2] == "update":
       let slug = if args.len >= 4: args[3] else: ""
       ctlSkillUpdateRemote(cfg.home, getEnv("CLAWHUB_REGISTRY", ClawhubDefaultRegistry), slug); quit(0)

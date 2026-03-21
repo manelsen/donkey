@@ -393,6 +393,33 @@ proc editKeyboard*(a: TelegramAdapter; userId: UserId;
   })
   ok()
 
+proc editKeyboardText*(a: TelegramAdapter; userId: UserId;
+                       msgId: string;
+                       text: string;
+                       buttons: seq[seq[(string, string)]]): Result[void, string] =
+  ## Replaces both message text and inline keyboard of an existing message.
+  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  if rawId.len == 0: return err("editKeyboardText: no id for " & $userId)
+  var chatId: int64
+  try: chatId = parseBiggestInt(rawId).int64
+  except ValueError: return err("editKeyboardText: bad id: " & rawId)
+  var msgIdInt: int
+  try: msgIdInt = parseInt(msgId)
+  except ValueError: return err("editKeyboardText: bad msgId: " & msgId)
+  var rows: seq[JsonNode]
+  for row in buttons:
+    var cols: seq[JsonNode]
+    for (label, data) in row:
+      cols.add(%* {"text": label, "callback_data": data})
+    rows.add(%cols)
+  discard ? a.post("editMessageText", %* {
+    "chat_id": chatId,
+    "message_id": msgIdInt,
+    "text": text,
+    "reply_markup": {"inline_keyboard": rows},
+  })
+  ok()
+
 proc setMyCommands*(a: TelegramAdapter): Result[void, string] =
   ## Registers bot commands in the Telegram menu (the / hint list).
   let cmds = %* [

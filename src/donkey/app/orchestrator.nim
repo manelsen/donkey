@@ -61,6 +61,7 @@ type TypingFn* = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: []
 
 type ToolCallResult = object
   text:          string
+  resultKind:    ToolResultKind
   checkpointNow: bool
   newHistory:    Option[ConversationHistory]
 
@@ -122,8 +123,8 @@ type ActorMessageResult = object
 
 func providerLabelFromPrefs*(prefs: string): string =
   ## Extracts "provider/model" label from PREFERENCES.md TOML content.
-  ## Returns "zhipu" (default) when not set.
-  var prov = "zhipu"
+  ## Returns "zai-coding" (default) when not set.
+  var prov = "zai-coding"
   var mdl  = ""
   for line in strutils.splitLines(prefs):
     let parts = strutils.split(line, '=', 1)
@@ -553,7 +554,7 @@ proc invokeToolAgent(toolInbox: AsyncQueue[AgentMessage];
                      callIndex: int;
                      tc: ToolCallRequest;
                      providerLabel: string;
-                     log: Logger): Future[string] {.async.} =
+                     log: Logger): Future[ToolCallResult] {.async.} =
   let payload = $ %* {
     "name": tc.name, "id": tc.id, "inputJson": tc.inputJson
   }
@@ -562,7 +563,10 @@ proc invokeToolAgent(toolInbox: AsyncQueue[AgentMessage];
   let toolReply = await awaitExpectedReply(toolOut, taskId, "ToolAgent")
   log.info("[tool] (" & tc.name & ") -> [" & providerLabel & "] |" &
            $toolReply.text.len & "|")
-  toolReply.text
+  ToolCallResult(
+    text: toolReply.text,
+    resultKind: if toolReply.kind == amkError: trkOperationalError else: trkOutput,
+  )
 
 proc executeToolCall(globalOutbox: AsyncQueue[OutboundMessage];
                      toolInbox: AsyncQueue[AgentMessage];
@@ -590,6 +594,7 @@ proc executeToolCall(globalOutbox: AsyncQueue[OutboundMessage];
   if nr.handled:
     return ToolCallResult(
       text: nr.text,
+      resultKind: nr.resultKind,
       checkpointNow: nr.checkpointNow,
       newHistory: nr.newHistory,
     )
@@ -599,8 +604,8 @@ proc executeToolCall(globalOutbox: AsyncQueue[OutboundMessage];
   if debugMode:
     await globalOutbox.put(OutboundMessage(
       userId: uid, channel: channel,
-      text: buildToolDebugResultText(tc.name, toolResult)))
-  ToolCallResult(text: toolResult)
+      text: buildToolDebugResultText(tc.name, toolResult.text)))
+  toolResult
 
 proc processToolCalls(globalOutbox: AsyncQueue[OutboundMessage];
                       toolInbox: AsyncQueue[AgentMessage];
@@ -646,7 +651,7 @@ proc processToolCalls(globalOutbox: AsyncQueue[OutboundMessage];
       state.checkpoints.add(result.history)
     result =
       result |>->
-      withToolResult(tc, toolResult.text, toolResult.newHistory)
+      withToolResult(tc, toolResult.text, toolResult.resultKind, toolResult.newHistory)
     let postPlan = planToolBatchItem(
       @[], tc, RepeatAbortThreshold, result.toolCallCount, toolResult.text)
     await globalOutbox.put(OutboundMessage(
@@ -745,6 +750,7 @@ proc buildNativeCtx*(uid: UserId;
                      memory: MemoryRuntimePort;
                      completeFn: CompleteFn;
                      http: HttpRuntimePort;
+                     cfg: cfgTypes.DonkeyConfig;
                      tools: seq[ToolDescription];
                      log: Logger;
                      paddockDir: string;
@@ -759,6 +765,8 @@ proc buildNativeCtx*(uid: UserId;
     completeFn:   completeFn,
     http:         http,
     braveApiKey:  getEnv("BRAVE_API_KEY", ""),
+    webAllowlist: cfg.webAllowlist,
+    toolWebPolicy: cfg.toolWebPolicy,
     tools:        tools,
     log:          log,
     paddockDir:   paddockDir,
@@ -936,6 +944,8 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
                           completeFn: CompleteFn;
                           http: HttpRuntimePort;
                           tools: seq[ToolDescription];
+                          webAllowlist: seq[string];
+                          toolWebPolicy: seq[cfgTypes.ToolWebPolicy];
                           paddockDir: string;
                           typingFn: TypingFn;
                           log: Logger;
@@ -948,7 +958,9 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
   (result.userText, _) = msg.payload |> decodeUserPayload
   result.isNewUser = not safeHasProfile(memory, result.uid)
   result.nativeCtx = buildNativeCtx(
-    result.uid, msg.channel, globalOutbox, session, memory, completeFn, http, tools, log,
+    result.uid, msg.channel, globalOutbox, session, memory, completeFn, http,
+    cfgTypes.DonkeyConfig(webAllowlist: webAllowlist, toolWebPolicy: toolWebPolicy),
+    tools, log,
     paddockDir, sandboxMode, sandboxImage)
   {.cast(gcsafe).}: createDir(paddockDir)
   result.typingLoop = startTypingLoop(typingFn, result.uid, msg.channel)
@@ -1146,6 +1158,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     http: HttpRuntimePort;
                     streamFn: StreamFn;
                     tools: seq[ToolDescription];
+                    webAllowlist: seq[string];
+                    toolWebPolicy: seq[cfgTypes.ToolWebPolicy];
                     paddockDir: string;
                     typingFn: TypingFn;
                     log: Logger;
@@ -1158,7 +1172,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     stateRuntime: OrchestratorState): Future[OrchestratorState] {.async.} =
   result = stateRuntime |> nextTurn
   let turnSetup = prepareUserTurnSetup(
-    globalOutbox, session, memory, completeFn, http, tools, paddockDir, typingFn, log,
+    globalOutbox, session, memory, completeFn, http, tools, webAllowlist, toolWebPolicy,
+    paddockDir, typingFn, log,
     sandboxMode, sandboxImage, msg, result)
 
   if turnSetup.isNewUser:
@@ -1214,6 +1229,8 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
                      http: HttpRuntimePort;
                      streamFn: StreamFn;
                      tools: seq[ToolDescription];
+                     webAllowlist: seq[string];
+                     toolWebPolicy: seq[cfgTypes.ToolWebPolicy];
                      paddockDir: string;
                      typingFn: TypingFn;
                      log: Logger;
@@ -1245,7 +1262,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
 
   result = await handleUserTurn(
     globalOutbox, memInbox, toolInbox, memOut, toolOut, session, memory,
-    completeFn, http, streamFn, tools, paddockDir, typingFn, log,
+    completeFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
     providerLabel, sandboxMode, sandboxImage, toolsSuffix,
     state, msg, result)
   persistSessionSnapshot(memory, uid, sessionId, result.history)
@@ -1262,6 +1279,8 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
                         http: HttpRuntimePort;
                         streamFn: StreamFn;
                         tools: seq[ToolDescription];
+                        webAllowlist: seq[string];
+                        toolWebPolicy: seq[cfgTypes.ToolWebPolicy];
                         paddockDir: string;
                         typingFn: TypingFn;
                         log: Logger;
@@ -1282,7 +1301,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
   of amkTask:
     result.stateRuntime = await handleActorTask(
       globalOutbox, session, memInbox, toolInbox, memOut, toolOut, memory,
-      completeFn, http, streamFn, tools, paddockDir, typingFn, log,
+      completeFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
       providerLabel, sandboxMode, sandboxImage, sessionId,
       toolsSuffix, state, msg, stateRuntime)
 
@@ -1307,7 +1326,9 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       providerLabel:  string      = "?";
                       skillPrompt:    string      = "";
                       sandboxMode:    SandboxMode = smNone;
-                      sandboxImage:   string      = "alpine"): Future[void] {.async.} =
+                      sandboxImage:   string      = "alpine";
+                      webAllowlist:   seq[string] = @[];
+                      toolWebPolicy:  seq[cfgTypes.ToolWebPolicy] = @[]): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
   let memInbox  = newAsyncQueue[AgentMessage]()
   let toolInbox = newAsyncQueue[AgentMessage]()
@@ -1329,7 +1350,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
     let msg = await collectWithDebounce(inbox, DebounceWindowMs)
     let actorResult = await handleActorMessage(
       inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
-      completeFn, http, streamFn, tools, paddockDir, typingFn, log,
+      completeFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
       providerLabel, sandboxMode, sandboxImage, sessionId,
       toolsSuffix, state, msg, stateRuntime)
     stateRuntime = actorResult.stateRuntime

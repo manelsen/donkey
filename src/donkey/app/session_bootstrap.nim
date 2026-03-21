@@ -47,7 +47,7 @@ type
     skillPrompt*:   string
 
 proc defaultProviderPrefs*(): ProviderPrefs =
-  ProviderPrefs(providerName: "zhipu", modelName: "")
+  ProviderPrefs(providerName: "zai-coding", modelName: "")
 
 proc parseProviderPrefs*(preferencesMd: string): ProviderPrefs {.gcsafe, raises: [].} =
   result = defaultProviderPrefs()
@@ -89,11 +89,17 @@ proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: []
       modelName: if prefs.modelName.len > 0: prefs.modelName else: "MiniMax-M2",
       apiKey: getEnv("MINIMAX_API_KEY"),
     )
+  of "zai":
+    ProviderSpec(
+      providerName: "zai",
+      modelName: if prefs.modelName.len > 0: prefs.modelName else: "glm-4.7",
+      apiKey: getEnv("ZAI_API_KEY"),
+    )
   else:
     ProviderSpec(
-      providerName: "zhipu",
+      providerName: "zai-coding",
       modelName: if prefs.modelName.len > 0: prefs.modelName else: "glm-4.7",
-      apiKey: getEnv("ZHIPU_API_KEY"),
+      apiKey: getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")),
     )
 
 proc buildProviderBundle*(preferencesMd: string;
@@ -114,7 +120,7 @@ proc buildFallbackFn*(primary: CompleteFn; fallbacks: seq[CompleteFn]): Complete
     r
 
 func providerLabelFromPrefs*(prefs: string): string =
-  var prov = "zhipu"
+  var prov = "zai-coding"
   var mdl  = ""
   for line in prefs.splitLines():
     let parts = line.split('=', 1)
@@ -177,6 +183,7 @@ func addNativeSessionTools*(tools: seq[ToolDescription]): seq[ToolDescription] =
 
 proc mergeUserSkillsIntoSession*(skillsDir: string;
                                  skillRuntimeBuilder: SkillRuntimeBuilder;
+                                 skillRuntimePolicyResolver: SkillRuntimePolicyResolver;
                                  sessionClients: var seq[ToolRuntimePort];
                                  sessionTools:   var seq[ToolDescription]) {.gcsafe.}
 
@@ -194,10 +201,11 @@ proc startSessionToolBundle*(toolClients: seq[ToolRuntimePort];
                              tools: seq[ToolDescription]): SessionToolBundle =
   SessionToolBundle(clients: toolClients, tools: tools)
 
-proc withUserSkills*(input: (string, SkillRuntimeBuilder, SessionToolBundle)): SessionToolBundle {.gcsafe.} =
-  let (skillsDir, skillRuntimeBuilder, toolBundle) = input
+proc withUserSkills*(input: (string, SkillRuntimeBuilder, SkillRuntimePolicyResolver, SessionToolBundle)): SessionToolBundle {.gcsafe.} =
+  let (skillsDir, skillRuntimeBuilder, skillRuntimePolicyResolver, toolBundle) = input
   result = toolBundle
-  mergeUserSkillsIntoSession(skillsDir, skillRuntimeBuilder, result.clients, result.tools)
+  mergeUserSkillsIntoSession(
+    skillsDir, skillRuntimeBuilder, skillRuntimePolicyResolver, result.clients, result.tools)
 
 func withNativeTools*(toolBundle: SessionToolBundle): SessionToolBundle =
   result = toolBundle
@@ -205,12 +213,13 @@ func withNativeTools*(toolBundle: SessionToolBundle): SessionToolBundle =
 
 proc mergeUserSkillsIntoSession*(skillsDir: string;
                                  skillRuntimeBuilder: SkillRuntimeBuilder;
+                                 skillRuntimePolicyResolver: SkillRuntimePolicyResolver;
                                  sessionClients: var seq[ToolRuntimePort];
                                  sessionTools:   var seq[ToolDescription]) {.gcsafe.} =
   {.cast(gcsafe).}:
     let userSkills = mergeSkills(@[], loadUserSkills(skillsDir))
     for m in userSkills:
-      let res = skillRuntimeBuilder(m.script, m.permissions)
+      let res = skillRuntimeBuilder(m.script, m.permissions, skillRuntimePolicyResolver(m.name))
       if res.isOk:
         for s in res.value.schemas:
           sessionTools.add(ToolDescription(
@@ -261,10 +270,12 @@ func finalizeSessionBootstrap*(plan: SessionBootstrapPlan): SessionBootstrap =
 proc buildSessionToolBundle*(memory:      MemoryRuntimePort;
                              userId:      UserId;
                              skillRuntimeBuilder: SkillRuntimeBuilder;
+                             skillRuntimePolicyResolver: SkillRuntimePolicyResolver;
                              toolClients: seq[ToolRuntimePort];
                              tools:       seq[ToolDescription]): SessionToolBundle {.gcsafe.} =
   let skillsDir = userSkillsDir(memory, userId)
-  ((skillsDir, skillRuntimeBuilder, startSessionToolBundle(toolClients, tools)) |>
+  ((skillsDir, skillRuntimeBuilder, skillRuntimePolicyResolver,
+    startSessionToolBundle(toolClients, tools)) |>
     withUserSkills) |>
     withNativeTools
 
@@ -273,9 +284,11 @@ proc buildSessionBootstrap*(memory:      MemoryRuntimePort;
                             completeFn:  CompleteFn;
                             providerRuntimeBuilder: ProviderRuntimeBuilder;
                             skillRuntimeBuilder: SkillRuntimeBuilder;
+                            skillRuntimePolicyResolver: SkillRuntimePolicyResolver;
                             toolClients: seq[ToolRuntimePort];
                             tools:       seq[ToolDescription]): SessionBootstrap {.gcsafe.} =
-  let toolBundle = buildSessionToolBundle(memory, userId, skillRuntimeBuilder, toolClients, tools)
+  let toolBundle = buildSessionToolBundle(
+    memory, userId, skillRuntimeBuilder, skillRuntimePolicyResolver, toolClients, tools)
   result =
     (((loadSessionContext(memory, userId) |>
        loadSessionBootstrapPlan) |>->

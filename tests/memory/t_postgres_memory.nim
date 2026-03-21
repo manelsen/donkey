@@ -57,13 +57,13 @@ when defined(withPostgres):
         @["user_profile", "# User"],
         @["memory", "memory a"],
         @["fact", "fact b"],
-        @["preference", "provider = \"zhipu\""],
+        @["preference", "provider = \"zai-coding\""],
       ]
       let ctx = buildContextFromRows(UserId("u1"), rows)
       check ctx.userMd == "# User"
       check ctx.memoryMd.contains("memory a")
       check ctx.memoryMd.contains("fact b")
-      check ctx.preferencesMd == "provider = \"zhipu\""
+      check ctx.preferencesMd == "provider = \"zai-coding\""
 
     test "buildMemoryHits parses score column":
       let rows: seq[Row] = @[
@@ -86,7 +86,7 @@ when defined(withPostgres):
         userId: UserId("u1"),
         userMd: "# User",
         memoryMd: "memory block",
-        preferencesMd: "provider = \"zhipu\"",
+        preferencesMd: "provider = \"zai-coding\"",
       )
       let entries = buildMemoryExportEntries(ctx)
       check entries.len == 3
@@ -95,7 +95,7 @@ when defined(withPostgres):
       check entries[1].fileName == "MEMORY.md"
       check entries[1].content == "memory block"
       check entries[2].fileName == "PREFERENCES.md"
-      check entries[2].content == "provider = \"zhipu\""
+      check entries[2].content == "provider = \"zai-coding\""
 
     test "migrate: schema created without error":
       if not hasPg: skip()
@@ -128,11 +128,11 @@ when defined(withPostgres):
       a.deleteUser(uid)
       a.saveUserMd(uid, "user content")
       a.appendMemory(uid, "mem block A")
-      a.savePreferences(uid, "provider = \"zhipu\"")
+      a.savePreferences(uid, "provider = \"zai-coding\"")
       let ctx = a.loadContext(uid)
       check ctx.userMd        == "user content"
       check ctx.memoryMd.contains("mem block A")
-      check ctx.preferencesMd == "provider = \"zhipu\""
+      check ctx.preferencesMd == "provider = \"zai-coding\""
 
     test "appendMemory: accumulates entries":
       if not hasPg: skip()

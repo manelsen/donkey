@@ -150,7 +150,8 @@ suite "OpenRouterAdapter buildBody with tools":
     let msg = body["messages"][0]
     check msg["role"].getStr()         == "tool"
     check msg["tool_call_id"].getStr() == "call_x"
-    check msg["content"].getStr()      == "4"
+    check msg["content"].getStr().contains("""status="output"""")
+    check msg["content"].getStr().contains("4")
 
   test "assistant message with tool_calls serialised correctly":
     var h = newHistory()

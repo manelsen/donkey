@@ -7,7 +7,7 @@ import telegram
 import discord
 import wecom
 import wechat
-import qq
+import qq_channel
 import feishu
 
 proc unsupportedSendReturnId(msg: OutboundMessage): Result[string, string] =
@@ -23,7 +23,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          dcAdapter: ptr DiscordAdapter;
                          wcAdapter: ptr WeComAdapter;
                          wchAdapter: ptr WeChatAdapter;
-                         qqAdapter: ptr QQAdapter;
+                         qqAdapter: ptr QQChannelAdapter;
                          fsAdapter: ptr FeishuAdapter): OutboundChannelPorts =
   result.telegram = OutboundChannelPort(
     send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
