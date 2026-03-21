@@ -112,6 +112,64 @@ Contrato:
 - ambos consomem `AgentMessage` e respondem em `workerOut`;
 - o desenho assume uso sequencial suficientemente ordenado pelo orquestrador.
 
+## 2.5 Fronteiras de Camada
+
+O runtime atual já está bem mais fatiado do que antes, mas ainda não reflete integralmente a separação `Core` / `Ports` / `Adapters` / `Shell`.
+
+Classificação operacional atual:
+
+- `Core`
+  - `src/donkey/domain/message.nim`
+  - `src/donkey/domain/agent_message.nim`
+  - `src/donkey/domain/personality.nim`
+  - `src/donkey/domain/reminder.nim`
+  - `src/donkey/domain/calc.nim`
+  - `src/donkey/domain/builtin_tools.nim`
+  - `src/donkey/domain/more_tools.nim`
+  - `src/donkey/app/session_state.nim`
+  - `src/donkey/core/types.nim`
+  - `src/donkey/core/pipeops.nim`
+- `Ports`
+  - `src/donkey/ports/provider.nim`
+  - `src/donkey/ports/tool.nim`
+  - `src/donkey/ports/memory.nim`
+  - `src/donkey/ports/channel.nim`
+  - `src/donkey/ports/http.nim`
+  - `src/donkey/ports/secrets.nim`
+  - `src/donkey/ports/embedding.nim`
+- `Adapters`
+  - `src/donkey/adapters/*`
+  - `src/donkey/tui/dashboard.nim`
+  - `src/donkey/app/ipc_server.nim`
+- `Shell / Mixed`
+  - `src/donkey.nim`
+  - `src/donkey/app/orchestrator.nim`
+  - `src/donkey/app/session_bootstrap.nim`
+  - `src/donkey/app/outbound_runtime.nim`
+  - `src/donkey/app/native_tools.nim`
+  - `src/donkey/app/memory_agent.nim`
+  - `src/donkey/app/tool_agent.nim`
+  - `src/donkey/app/session_manager.nim`
+  - `src/donkey/config/*`
+
+Fronteiras-alvo:
+
+- `Core` não deve conhecer `AsyncQueue`, `Thread`, `JsonNode`, adapters concretos, SDKs de canal, TOML, HTTP nem processos.
+- `Ports` não devem importar `adapters/*` nem `app/*`.
+- `Adapters` não devem conter decisão de onboarding, tool loop, rebuild de sessão nem semântica cross-channel.
+- `Shell` deve aplicar decisões e lifecycle, não acumular reducers/deciders puros longos.
+
+Módulos que ainda misturam regra e efeito de forma estrutural:
+
+- `src/donkey/app/orchestrator.nim`
+- `src/donkey/app/session_bootstrap.nim`
+- `src/donkey/app/outbound_runtime.nim`
+- `src/donkey/app/native_tools.nim`
+
+Inventário detalhado e mapa `atual -> alvo`:
+
+- [`BOUNDARY_MAP.md`](./BOUNDARY_MAP.md)
+
 ## 3. Ownership de Estado
 
 ### 3.1 Estado do processo
