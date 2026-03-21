@@ -2,6 +2,13 @@
 
 Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 
+Estado atual:
+
+- base runtime/refactor concluída
+- boundary refactor concluído
+- `core/*` e `domain/*` em grande parte determinísticos
+- próximo vetor principal: paridade funcional seletiva com IronClaw
+
 ---
 
 ## F0 — Scaffolding ✅
@@ -235,3 +242,28 @@ Cada fase termina com algo que roda e é testável. Red-Green-Refactor em tudo.
 - **F2 manifesto de skill** → `SkillManifest` em `skills.toml [[skill]]`; Clawhub integration é problema de F7
 - **F4 workers** → on-demand: `asyncSpawn` fire-and-forget por sessão
 - **Base runtime/refactor** → concluída: daemon, orchestrator, native tools, loader, bootstrap, sandbox, outbound e runtimes de canal já foram fatiados e cobertos por testes de contrato
+- **Boundary / functional core** → concluído: regras de ingresso, onboarding, tool loop, outbound, command routing e dispatch nativo foram para `core/*`; `domain/*` ficou sem `proc`
+
+---
+
+## Próximo ciclo sugerido
+
+Ver também [`IRONCLAW_PARITY.md`](/home/micelio/git/donkey/IRONCLAW_PARITY.md).
+
+1. Hardening de segurança
+   - prompt injection via tool output
+   - allowlist explícita de endpoints
+   - troca de `std/sha1` deprecated no WeChat
+
+2. Fechar inbound real de canais novos
+   - WeChat
+   - QQ / OneBot
+
+3. Gateway contínuo
+   - HTTP/Web gateway com SSE/WebSocket
+   - broadcast de eventos do runtime
+
+4. Inteligência operacional
+   - smart model routing
+   - heartbeat / execução proativa
+   - próximo provider local provável: Ollama

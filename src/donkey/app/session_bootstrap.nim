@@ -5,14 +5,6 @@
 
 import std/[json, os, strutils]
 import parsetoml
-import ../adapters/memory/md_file
-import ../adapters/provider/zhipu
-import ../adapters/provider/openrouter
-import ../adapters/provider/anthropic
-import ../adapters/provider/gemini
-import ../adapters/provider/minimax
-import ../adapters/tool/deno_skill
-import ../adapters/tool/mcp_client
 import ../config/skills_registry
 import ../config/clawhub_registry
 import ../core/pipeops
@@ -21,34 +13,20 @@ import ../domain/message
 import ../domain/builtin_tools
 import ../domain/more_tools
 import ../domain/reminder
+import ../ports/memory
 import ../ports/provider
-
-proc makeFn*[A](a: A): CompleteFn =
-  result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
-    a.complete(req)
+import ../ports/tool
+export provider
 
 type
-  ProviderPrefs* = object
-    providerName*: string
-    modelName*:    string
-
-  ProviderSpec* = object
-    providerName*: string
-    modelName*:    string
-    apiKey*:       string
-
-  ProviderBundle* = object
-    completeFn*: CompleteFn
-    streamFn*:   StreamFn
-
   SessionToolBundle* = object
-    clients*: seq[McpClientAdapter]
+    clients*: seq[ToolRuntimePort]
     tools*:   seq[ToolDescription]
 
   SessionBootstrap* = object
     completeFn*:    CompleteFn
     paddockDir*:    string
-    clients*:       seq[McpClientAdapter]
+    clients*:       seq[ToolRuntimePort]
     tools*:         seq[ToolDescription]
     providerLabel*: string
     skillPrompt*:   string
@@ -57,7 +35,7 @@ type
     preferencesMd*: string
     paddockDir*:    string
     completeFn*:    CompleteFn
-    clients*:       seq[McpClientAdapter]
+    clients*:       seq[ToolRuntimePort]
     tools*:         seq[ToolDescription]
     providerLabel*: string
     skillPrompt*:   string
@@ -69,7 +47,7 @@ type
     skillPrompt*:   string
 
 proc defaultProviderPrefs*(): ProviderPrefs =
-  ProviderPrefs(providerName: "zhipu", modelName: "")
+  ProviderPrefs(providerName: "zai-coding", modelName: "")
 
 proc parseProviderPrefs*(preferencesMd: string): ProviderPrefs {.gcsafe, raises: [].} =
   result = defaultProviderPrefs()
@@ -111,41 +89,26 @@ proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: []
       modelName: if prefs.modelName.len > 0: prefs.modelName else: "MiniMax-M2",
       apiKey: getEnv("MINIMAX_API_KEY"),
     )
+  of "zai":
+    ProviderSpec(
+      providerName: "zai",
+      modelName: if prefs.modelName.len > 0: prefs.modelName else: "glm-4.7",
+      apiKey: getEnv("ZAI_API_KEY"),
+    )
   else:
     ProviderSpec(
-      providerName: "zhipu",
+      providerName: "zai-coding",
       modelName: if prefs.modelName.len > 0: prefs.modelName else: "glm-4.7",
-      apiKey: getEnv("ZHIPU_API_KEY"),
+      apiKey: getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")),
     )
 
-proc buildProviderBundle*(preferencesMd: string): ProviderBundle {.gcsafe.} =
-  let providerSpec = buildProviderSpec(parseProviderPrefs(preferencesMd))
-  case providerSpec.providerName
-  of "openrouter":
-    let adapter = newOpenRouterAdapter(providerSpec.apiKey, model = providerSpec.modelName)
-    result = ProviderBundle(completeFn: makeFn(adapter),
-                            streamFn:   adapter.makeStreamFn())
-  of "anthropic":
-    let adapter = newAnthropicAdapter(providerSpec.apiKey, model = providerSpec.modelName)
-    result = ProviderBundle(
-      completeFn: makeFn(adapter),
-      streamFn:   adapter.makeStreamFn(),
-    )
-  of "gemini":
-    result = ProviderBundle(
-      completeFn: makeFn(newGeminiAdapter(providerSpec.apiKey, model = providerSpec.modelName))
-    )
-  of "minimax":
-    result = ProviderBundle(
-      completeFn: makeFn(newMiniMaxAdapter(providerSpec.apiKey, model = providerSpec.modelName))
-    )
-  else:
-    result = ProviderBundle(
-      completeFn: makeFn(newZhipuAdapter(providerSpec.apiKey, model = providerSpec.modelName))
-    )
+proc buildProviderBundle*(preferencesMd: string;
+                          providerRuntimeBuilder: ProviderRuntimeBuilder): ProviderBundle {.gcsafe.} =
+  providerRuntimeBuilder(buildProviderSpec(parseProviderPrefs(preferencesMd)))
 
-proc buildCompleteFn*(preferencesMd: string): CompleteFn {.gcsafe.} =
-  buildProviderBundle(preferencesMd).completeFn
+proc buildCompleteFn*(preferencesMd: string;
+                      providerRuntimeBuilder: ProviderRuntimeBuilder): CompleteFn {.gcsafe.} =
+  buildProviderBundle(preferencesMd, providerRuntimeBuilder).completeFn
 
 proc buildFallbackFn*(primary: CompleteFn; fallbacks: seq[CompleteFn]): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
@@ -157,7 +120,7 @@ proc buildFallbackFn*(primary: CompleteFn; fallbacks: seq[CompleteFn]): Complete
     r
 
 func providerLabelFromPrefs*(prefs: string): string =
-  var prov = "zhipu"
+  var prov = "zai-coding"
   var mdl  = ""
   for line in prefs.splitLines():
     let parts = line.split('=', 1)
@@ -182,7 +145,7 @@ proc buildSessionTaskMsg*(msg: InboundMessage; msgId: string): AgentMessage =
   newTaskMsg(msgId, tkUserMsg, $msg.userId, encodeSessionPayload(msg),
              msg.channel, sessionReplyTo(msg))
 
-func userSkillsDir*(memory: MdFileAdapter; userId: UserId): string =
+proc userSkillsDir*(memory: MemoryRuntimePort; userId: UserId): string {.gcsafe.} =
   memory.paddockDir(userId) / "skills"
 
 func nativeSessionTools*(): seq[ToolDescription] =
@@ -219,12 +182,14 @@ func addNativeSessionTools*(tools: seq[ToolDescription]): seq[ToolDescription] =
   result.add(nativeSessionTools())
 
 proc mergeUserSkillsIntoSession*(skillsDir: string;
-                                 sessionClients: var seq[McpClientAdapter];
+                                 skillRuntimeBuilder: SkillRuntimeBuilder;
+                                 skillRuntimePolicyResolver: SkillRuntimePolicyResolver;
+                                 sessionClients: var seq[ToolRuntimePort];
                                  sessionTools:   var seq[ToolDescription]) {.gcsafe.}
 
-proc loadSessionContext*(memory: MdFileAdapter; userId: UserId): SessionContext {.gcsafe.} =
+proc loadSessionContext*(memory: MemoryRuntimePort; userId: UserId): SessionContext {.gcsafe.} =
   let ctx = memory.loadContext(userId)
-  let homeDir = parentDir(memory.paddocksDir)
+  let homeDir = parentDir(parentDir(memory.paddockDir(userId)))
   SessionContext(
     preferencesMd: ctx.preferencesMd,
     paddockDir: memory.paddockDir(userId),
@@ -232,39 +197,42 @@ proc loadSessionContext*(memory: MdFileAdapter; userId: UserId): SessionContext 
     skillPrompt: buildInstalledRemoteSkillPrompt(loadInstalledRemoteSkills(homeDir)),
   )
 
-proc startSessionToolBundle*(toolClients: seq[McpClientAdapter];
+proc startSessionToolBundle*(toolClients: seq[ToolRuntimePort];
                              tools: seq[ToolDescription]): SessionToolBundle =
   SessionToolBundle(clients: toolClients, tools: tools)
 
-proc withUserSkills*(input: (string, SessionToolBundle)): SessionToolBundle {.gcsafe.} =
-  let (skillsDir, toolBundle) = input
+proc withUserSkills*(input: (string, SkillRuntimeBuilder, SkillRuntimePolicyResolver, SessionToolBundle)): SessionToolBundle {.gcsafe.} =
+  let (skillsDir, skillRuntimeBuilder, skillRuntimePolicyResolver, toolBundle) = input
   result = toolBundle
-  mergeUserSkillsIntoSession(skillsDir, result.clients, result.tools)
+  mergeUserSkillsIntoSession(
+    skillsDir, skillRuntimeBuilder, skillRuntimePolicyResolver, result.clients, result.tools)
 
 func withNativeTools*(toolBundle: SessionToolBundle): SessionToolBundle =
   result = toolBundle
   result.tools = result.tools |> addNativeSessionTools
 
 proc mergeUserSkillsIntoSession*(skillsDir: string;
-                                 sessionClients: var seq[McpClientAdapter];
+                                 skillRuntimeBuilder: SkillRuntimeBuilder;
+                                 skillRuntimePolicyResolver: SkillRuntimePolicyResolver;
+                                 sessionClients: var seq[ToolRuntimePort];
                                  sessionTools:   var seq[ToolDescription]) {.gcsafe.} =
   {.cast(gcsafe).}:
     let userSkills = mergeSkills(@[], loadUserSkills(skillsDir))
     for m in userSkills:
-      var client = newDenoSkillAdapter(m.script, m.permissions)
-      let res = client.listTools()
+      let res = skillRuntimeBuilder(m.script, m.permissions, skillRuntimePolicyResolver(m.name))
       if res.isOk:
-        for s in res.value:
+        for s in res.value.schemas:
           sessionTools.add(ToolDescription(
             name:        s.name,
             description: s.description,
             schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
           ))
-      sessionClients.add(client)
+        sessionClients.add(res.value.port)
 
 proc buildSessionCompleteFn*(preferencesMd: string;
-                             fallbackCompleteFn: CompleteFn): CompleteFn {.gcsafe.} =
-  let primary = buildCompleteFn(preferencesMd)
+                             fallbackCompleteFn: CompleteFn;
+                             providerRuntimeBuilder: ProviderRuntimeBuilder): CompleteFn {.gcsafe.} =
+  let primary = buildCompleteFn(preferencesMd, providerRuntimeBuilder)
   buildFallbackFn(primary, @[fallbackCompleteFn])
 
 proc loadSessionBootstrapPlan*(input: SessionContext): SessionBootstrapPlan {.gcsafe.} =
@@ -277,9 +245,11 @@ proc loadSessionBootstrapPlan*(input: SessionContext): SessionBootstrapPlan {.gc
   )
 
 proc withSessionCompleteFn*(fallbackCompleteFn: CompleteFn;
+                            providerRuntimeBuilder: ProviderRuntimeBuilder;
                             plan: SessionBootstrapPlan): SessionBootstrapPlan {.gcsafe.} =
   result = plan
-  result.completeFn = buildSessionCompleteFn(plan.preferencesMd, fallbackCompleteFn)
+  result.completeFn = buildSessionCompleteFn(
+    plan.preferencesMd, fallbackCompleteFn, providerRuntimeBuilder)
 
 func withSessionToolBundle*(toolBundle: SessionToolBundle;
                             plan: SessionBootstrapPlan): SessionBootstrapPlan =
@@ -297,24 +267,31 @@ func finalizeSessionBootstrap*(plan: SessionBootstrapPlan): SessionBootstrap =
     skillPrompt: plan.skillPrompt,
   )
 
-proc buildSessionToolBundle*(memory:      MdFileAdapter;
+proc buildSessionToolBundle*(memory:      MemoryRuntimePort;
                              userId:      UserId;
-                             toolClients: seq[McpClientAdapter];
+                             skillRuntimeBuilder: SkillRuntimeBuilder;
+                             skillRuntimePolicyResolver: SkillRuntimePolicyResolver;
+                             toolClients: seq[ToolRuntimePort];
                              tools:       seq[ToolDescription]): SessionToolBundle {.gcsafe.} =
   let skillsDir = userSkillsDir(memory, userId)
-  ((skillsDir, startSessionToolBundle(toolClients, tools)) |>
+  ((skillsDir, skillRuntimeBuilder, skillRuntimePolicyResolver,
+    startSessionToolBundle(toolClients, tools)) |>
     withUserSkills) |>
     withNativeTools
 
-proc buildSessionBootstrap*(memory:      MdFileAdapter;
+proc buildSessionBootstrap*(memory:      MemoryRuntimePort;
                             userId:      UserId;
                             completeFn:  CompleteFn;
-                            toolClients: seq[McpClientAdapter];
+                            providerRuntimeBuilder: ProviderRuntimeBuilder;
+                            skillRuntimeBuilder: SkillRuntimeBuilder;
+                            skillRuntimePolicyResolver: SkillRuntimePolicyResolver;
+                            toolClients: seq[ToolRuntimePort];
                             tools:       seq[ToolDescription]): SessionBootstrap {.gcsafe.} =
-  let toolBundle = buildSessionToolBundle(memory, userId, toolClients, tools)
+  let toolBundle = buildSessionToolBundle(
+    memory, userId, skillRuntimeBuilder, skillRuntimePolicyResolver, toolClients, tools)
   result =
     (((loadSessionContext(memory, userId) |>
        loadSessionBootstrapPlan) |>->
-       withSessionCompleteFn(completeFn)) |>->
+       withSessionCompleteFn(completeFn, providerRuntimeBuilder)) |>->
        withSessionToolBundle(toolBundle)) |>
        finalizeSessionBootstrap

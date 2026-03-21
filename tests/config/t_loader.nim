@@ -161,3 +161,45 @@ image = "   "
     let cfg = loadConfig(tmp)
     check cfg.sandboxMode == smDocker
     check cfg.sandboxImage == "alpine"
+
+  test "reads security web_allowlist from toml":
+    let tmp = getTempDir() / "t_loader_security.toml"
+    writeFile(tmp, """
+[security]
+web_allowlist = ["example.com", "api.github.com"]
+""")
+    defer: removeFile(tmp)
+    let cfg = loadConfig(tmp)
+    check cfg.webAllowlist == @["example.com", "api.github.com"]
+
+  test "DONKEY_WEB_ALLOWLIST overrides toml":
+    let tmp = getTempDir() / "t_loader_security_env.toml"
+    writeFile(tmp, """
+[security]
+web_allowlist = ["example.com"]
+""")
+    defer:
+      delEnv("DONKEY_WEB_ALLOWLIST")
+      removeFile(tmp)
+    putEnv("DONKEY_WEB_ALLOWLIST", "docs.nim-lang.org, api.github.com")
+    let cfg = loadConfig(tmp)
+    check cfg.webAllowlist == @["docs.nim-lang.org", "api.github.com"]
+
+  test "reads tool and skill network policies":
+    let tmp = getTempDir() / "t_loader_security_policy.toml"
+    writeFile(tmp, """
+[security.tools.fetch]
+allow = ["docs.nim-lang.org/manual", "api.github.com/repos/"]
+
+[security.skills.github_skill]
+allow_net = ["api.github.com"]
+""")
+    defer: removeFile(tmp)
+    let cfg = loadConfig(tmp)
+    check cfg.toolWebPolicy.len == 1
+    check cfg.toolWebPolicy[0].toolName == "fetch"
+    check cfg.toolWebPolicy[0].allow[0].host == "docs.nim-lang.org"
+    check cfg.toolWebPolicy[0].allow[0].pathPrefix == "/manual"
+    check cfg.skillNetPolicy.len == 1
+    check cfg.skillNetPolicy[0].skillName == "github_skill"
+    check cfg.skillNetPolicy[0].allowNetHosts == @["api.github.com"]

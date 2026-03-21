@@ -12,6 +12,7 @@ import ../../ports/memory
 import ../../domain/message
 import ../../domain/personality
 export json  ## re-export so callers can inspect JsonNode reminder fields
+export memory
 
 type
   MdFileAdapter* = object
@@ -22,6 +23,61 @@ type
     hasProfile*:  bool
     preferredName*: string
     access*:      string
+
+proc hasProfile*(a: MdFileAdapter; userId: UserId): bool {.gcsafe.}
+proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext {.gcsafe.}
+proc saveUserMd*(a: MdFileAdapter; userId: UserId; content: string) {.gcsafe.}
+proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) {.gcsafe.}
+proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) {.gcsafe.}
+proc clearMemory*(a: MdFileAdapter; userId: UserId) {.gcsafe.}
+proc saveSession*(a: MdFileAdapter; userId: UserId;
+                  sessionId: string; history: ConversationHistory) {.gcsafe.}
+proc saveIdentity*(a: MdFileAdapter; userId: UserId;
+                   traits: PersonalityTraits; name: string) {.gcsafe.}
+proc loadIdentity*(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits) {.gcsafe.}
+func paddockDir*(a: MdFileAdapter; userId: UserId): string {.gcsafe.}
+proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
+                       channel: string; scheduledAt: int64;
+                       message: string): string {.gcsafe.}
+
+proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
+  MemoryRuntimePort(
+    hasProfile: proc(userId: UserId): bool {.gcsafe.} =
+      {.cast(gcsafe).}: result = a.hasProfile(userId)
+    ,
+    loadContext: proc(userId: UserId): UserContext {.gcsafe.} =
+      {.cast(gcsafe).}: result = a.loadContext(userId)
+    ,
+    saveUserMd: proc(userId: UserId; content: string) {.gcsafe.} =
+      {.cast(gcsafe).}: a.saveUserMd(userId, content)
+    ,
+    appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
+      {.cast(gcsafe).}: a.appendMemory(userId, text)
+    ,
+    savePreferences: proc(userId: UserId; content: string) {.gcsafe.} =
+      {.cast(gcsafe).}: a.savePreferences(userId, content)
+    ,
+    clearMemory: proc(userId: UserId) {.gcsafe.} =
+      {.cast(gcsafe).}: a.clearMemory(userId)
+    ,
+    saveSession: proc(userId: UserId; sessionId: string; history: ConversationHistory)
+                      {.gcsafe.} =
+      {.cast(gcsafe).}: a.saveSession(userId, sessionId, history)
+    ,
+    saveIdentity: proc(userId: UserId; traits: PersonalityTraits; name: string)
+                       {.gcsafe.} =
+      {.cast(gcsafe).}: a.saveIdentity(userId, traits, name)
+    ,
+    loadIdentity: proc(userId: UserId): (string, PersonalityTraits) {.gcsafe.} =
+      {.cast(gcsafe).}: result = a.loadIdentity(userId)
+    ,
+    paddockDir: proc(userId: UserId): string {.gcsafe.} =
+      {.cast(gcsafe).}: result = a.paddockDir(userId)
+    ,
+    scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string
+                           {.gcsafe.} =
+      {.cast(gcsafe).}: result = a.scheduleReminder(userId, channel, scheduledAt, message)
+  )
 
 # ── path helpers ──────────────────────────────────────────────────────────────
 
@@ -246,20 +302,3 @@ proc deleteReminder*(a: MdFileAdapter; userId: UserId; reminderId: string) =
   ## Deletes a reminder file by id.
   let path = a.reminderDir(userId) / reminderId & ".json"
   if fileExists(path): removeFile(path)
-
-# ── Scaffold USER.md from onboarding answers ──────────────────────────────────
-
-proc bootstrapUserMd*(name, callMe, timezone, language: string): string =
-  ## Pure helper (could be func but lives here for proximity to adapter).
-  ## Generates the initial USER.md following the OpenClaw USER.md template.
-  """---
-summary: """ & name & """ — onboarded via Donkey bootstrapping.
-read_when: every conversation
----
-
-# """ & name & """
-
-**Preferred name:** """ & callMe & """
-**Timezone:** """ & timezone & """
-**Language:** """ & language & """
-"""

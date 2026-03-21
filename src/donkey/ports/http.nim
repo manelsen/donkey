@@ -13,4 +13,11 @@ type
   HttpPort* = concept h
     h.get(string, seq[HttpHeader]) is Result[HttpResponse, string]
     h.post(string, string, seq[HttpHeader]) is Result[HttpResponse, string]
+    h.put(string, string, seq[HttpHeader]) is Result[HttpResponse, string]
     h.patch(string, string, seq[HttpHeader]) is Result[HttpResponse, string]
+
+  HttpRuntimePort* = object
+    get*:   proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
+    post*:  proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
+    put*:   proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
+    patch*: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}

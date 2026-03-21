@@ -129,6 +129,11 @@ Classificação operacional atual:
   - `src/donkey/app/session_state.nim`
   - `src/donkey/core/types.nim`
   - `src/donkey/core/pipeops.nim`
+  - `src/donkey/core/session/*`
+  - `src/donkey/core/onboarding/*`
+  - `src/donkey/core/tooling/*`
+  - `src/donkey/core/outbound/*`
+  - `src/donkey/core/commands/*`
 - `Ports`
   - `src/donkey/ports/provider.nim`
   - `src/donkey/ports/tool.nim`
@@ -151,6 +156,12 @@ Classificação operacional atual:
   - `src/donkey/app/tool_agent.nim`
   - `src/donkey/app/session_manager.nim`
   - `src/donkey/config/*`
+
+Estado atual da boundary:
+
+- decisões de ingresso, onboarding, tool loop, outbound, command routing e classificação nativa já moram em `core/*`
+- `app/*` passou a consumir `ports/*` em vez de adapters concretos
+- o enforcement de imports proibidos está em `scripts/check_boundaries.sh` e `tests/architecture/t_boundaries.nim`
 
 Fronteiras-alvo:
 

@@ -9,6 +9,7 @@
 ## "Threat model — Skills de terceiros" for the full analysis.
 
 import ./mcp_client
+export mcp_client
 
 type
   DenoSkillAdapter* = McpClientAdapter

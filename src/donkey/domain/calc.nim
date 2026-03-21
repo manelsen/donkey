@@ -7,140 +7,193 @@
 ## globMatch: simple * / ? glob. Used by the find tool.
 
 import std/[math, strutils]
+import results
 
-type CalcError* = object of ValueError
+type
+  ParseState = tuple[value: float, pos: int]
 
-# ── Parser internals ───────────────────────────────────────────────────────────
+func skipWs(s: string; pos: int): int =
+  result = pos
+  while result < s.len and s[result] in {' ', '\t', '\r', '\n'}:
+    inc result
 
-type Parser = object
-  s:   string
-  pos: int
+func peek(s: string; pos: int): char =
+  if pos < s.len: s[pos] else: '\0'
 
-proc peek(p: Parser): char {.inline.} =
-  if p.pos < p.s.len: p.s[p.pos] else: '\0'
+func parseBinaryDigits(s: string; pos: int): Result[ParseState, string] =
+  var i = pos
+  var value = 0
+  var digits = 0
+  while i < s.len and s[i] in {'0', '1'}:
+    value = value * 2 + (ord(s[i]) - ord('0'))
+    inc i
+    inc digits
+  if digits == 0:
+    return err("invalid binary literal")
+  ok((float(value), i))
 
-proc eat(p: var Parser): char {.discardable, inline.} =
-  result = p.s[p.pos]; inc p.pos
+func parseOctalDigits(s: string; pos: int): Result[ParseState, string] =
+  var i = pos
+  var value = 0
+  var digits = 0
+  while i < s.len and s[i] in {'0'..'7'}:
+    value = value * 8 + (ord(s[i]) - ord('0'))
+    inc i
+    inc digits
+  if digits == 0:
+    return err("invalid octal literal")
+  ok((float(value), i))
 
-proc skipWs(p: var Parser) =
-  while p.pos < p.s.len and p.s[p.pos] in {' ', '\t', '\r', '\n'}:
-    inc p.pos
-
-proc readNumber(p: var Parser): float =
-  let start = p.pos
-  if p.pos + 1 < p.s.len and p.s[p.pos] == '0':
-    case p.s[p.pos + 1]
-    of 'x', 'X':
-      p.pos += 2
-      let hs = p.pos
-      while p.pos < p.s.len and p.s[p.pos] in {'0'..'9','a'..'f','A'..'F'}:
-        inc p.pos
-      if p.pos == hs: raise newException(CalcError, "invalid hex literal")
-      return float(parseHexInt(p.s[hs ..< p.pos]))
-    of 'b', 'B':
-      p.pos += 2
-      var v, n = 0
-      while p.pos < p.s.len and p.s[p.pos] in {'0','1'}:
-        v = v * 2 + (ord(p.s[p.pos]) - ord('0')); inc p.pos; inc n
-      if n == 0: raise newException(CalcError, "invalid binary literal")
-      return float(v)
-    of 'o', 'O':
-      p.pos += 2
-      var v, n = 0
-      while p.pos < p.s.len and p.s[p.pos] in {'0'..'7'}:
-        v = v * 8 + (ord(p.s[p.pos]) - ord('0')); inc p.pos; inc n
-      if n == 0: raise newException(CalcError, "invalid octal literal")
-      return float(v)
-    else: discard
-  while p.pos < p.s.len and p.s[p.pos] in {'0'..'9'}: inc p.pos
-  if p.pos < p.s.len and p.s[p.pos] == '.':
-    inc p.pos
-    while p.pos < p.s.len and p.s[p.pos] in {'0'..'9'}: inc p.pos
-  if p.pos < p.s.len and p.s[p.pos] in {'e','E'}:
-    inc p.pos
-    if p.pos < p.s.len and p.s[p.pos] in {'+','-'}: inc p.pos
-    while p.pos < p.s.len and p.s[p.pos] in {'0'..'9'}: inc p.pos
-  if p.pos == start: raise newException(CalcError, "expected number at pos " & $p.pos)
-  try: parseFloat(p.s[start ..< p.pos])
-  except ValueError: raise newException(CalcError, "bad number: " & p.s[start ..< p.pos])
-
-proc parseExpr(p: var Parser): float   # forward decl
-
-proc parsePrimary(p: var Parser): float =
-  p.skipWs()
-  if p.peek() == '(':
-    discard p.eat()
-    result = p.parseExpr()
-    p.skipWs()
-    if p.peek() == ')': discard p.eat()
-    else: raise newException(CalcError, "expected ')'")
-  elif p.peek() in {'0'..'9', '.'}:
-    result = p.readNumber()
-  else:
-    let c = p.peek()
-    if c == '\0': raise newException(CalcError, "unexpected end of expression")
-    raise newException(CalcError, "unexpected '" & $c & "'")
-
-proc parseUnary(p: var Parser): float =
-  p.skipWs()
-  case p.peek()
-  of '-': discard p.eat(); return -p.parseUnary()
-  of '+': discard p.eat(); return p.parseUnary()
-  else:   return p.parsePrimary()
-
-proc parsePower(p: var Parser): float =
-  result = p.parseUnary()
-  p.skipWs()
-  if p.pos + 1 < p.s.len and p.s[p.pos] == '*' and p.s[p.pos + 1] == '*':
-    p.pos += 2
-    result = pow(result, p.parsePower())   # right-associative
-
-proc parseTerm(p: var Parser): float =
-  result = p.parsePower()
-  while true:
-    p.skipWs()
-    let c = p.peek()
-    if c == '*' and not (p.pos + 1 < p.s.len and p.s[p.pos + 1] == '*'):
-      discard p.eat(); result = result * p.parsePower()
-    elif c == '/':
-      discard p.eat()
-      let d = p.parsePower()
-      if d == 0.0: raise newException(CalcError, "division by zero")
-      result = result / d
-    elif c == '%':
-      discard p.eat()
-      let d = p.parsePower()
-      if d == 0.0: raise newException(CalcError, "modulo by zero")
-      result = floorMod(result, d)
-    else: break
-
-proc parseExpr(p: var Parser): float =
-  result = p.parseTerm()
-  while true:
-    p.skipWs()
-    case p.peek()
-    of '+': discard p.eat(); result = result + p.parseTerm()
-    of '-': discard p.eat(); result = result - p.parseTerm()
-    else:   break
-
-proc evalCalc*(expr: string): string {.gcsafe.} =
-  ## Evaluates a math expression. Returns result or "Error: ...".
-  if expr.strip().len == 0: return "Error: empty expression"
-  var p = Parser(s: expr.strip(), pos: 0)
+func parseHexDigits(s: string; pos: int): Result[ParseState, string] =
+  var i = pos
+  while i < s.len and s[i] in {'0'..'9', 'a'..'f', 'A'..'F'}:
+    inc i
+  if i == pos:
+    return err("invalid hex literal")
   try:
-    var v = 0.0
-    {.cast(gcsafe).}: v = p.parseExpr()
-    p.skipWs()
-    if p.pos < p.s.len:
-      return "Error: unexpected '" & $p.s[p.pos] & "' at pos " & $p.pos
-    if abs(v - round(v)) < 1e-9 and abs(v) < 9e18:
-      return $int64(round(v))
+    ok((float(parseHexInt(s[pos ..< i])), i))
+  except ValueError:
+    err("invalid hex literal")
+
+func parseDecimalNumber(s: string; pos: int): Result[ParseState, string] =
+  let start = pos
+  var i = pos
+  while i < s.len and s[i] in {'0'..'9'}:
+    inc i
+  if i < s.len and s[i] == '.':
+    inc i
+    while i < s.len and s[i] in {'0'..'9'}:
+      inc i
+  if i < s.len and s[i] in {'e', 'E'}:
+    inc i
+    if i < s.len and s[i] in {'+', '-'}:
+      inc i
+    while i < s.len and s[i] in {'0'..'9'}:
+      inc i
+  if i == start:
+    return err("expected number at pos " & $pos)
+  try:
+    ok((parseFloat(s[start ..< i]), i))
+  except ValueError:
+    err("bad number: " & s[start ..< i])
+
+func readNumber(s: string; pos: int): Result[ParseState, string] =
+  if pos + 1 < s.len and s[pos] == '0':
+    case s[pos + 1]
+    of 'x', 'X':
+      return parseHexDigits(s, pos + 2)
+    of 'b', 'B':
+      return parseBinaryDigits(s, pos + 2)
+    of 'o', 'O':
+      return parseOctalDigits(s, pos + 2)
     else:
-      return $v
-  except CalcError as e:
-    return "Error: " & e.msg
-  except ValueError as e:
-    return "Error: " & e.msg
+      discard
+  parseDecimalNumber(s, pos)
+
+func parseExpr(s: string; pos: int): Result[ParseState, string]
+
+func parsePrimary(s: string; pos: int): Result[ParseState, string] =
+  let i = skipWs(s, pos)
+  let c = peek(s, i)
+  if c == '(':
+    let inner = parseExpr(s, i + 1).valueOr:
+      return err(error)
+    let closePos = skipWs(s, inner.pos)
+    if peek(s, closePos) != ')':
+      return err("expected ')'")
+    return ok((inner.value, closePos + 1))
+  if c in {'0'..'9', '.'}:
+    return readNumber(s, i)
+  if c == '\0':
+    return err("unexpected end of expression")
+  err("unexpected '" & $c & "'")
+
+func parseUnary(s: string; pos: int): Result[ParseState, string] =
+  let i = skipWs(s, pos)
+  case peek(s, i)
+  of '-':
+    let parsed = parseUnary(s, i + 1).valueOr:
+      return err(error)
+    ok((-parsed.value, parsed.pos))
+  of '+':
+    parseUnary(s, i + 1)
+  else:
+    parsePrimary(s, i)
+
+func parsePower(s: string; pos: int): Result[ParseState, string] =
+  let left = parseUnary(s, pos).valueOr:
+    return err(error)
+  let i = skipWs(s, left.pos)
+  if i + 1 < s.len and s[i] == '*' and s[i + 1] == '*':
+    let right = parsePower(s, i + 2).valueOr:
+      return err(error)
+    return ok((pow(left.value, right.value), right.pos))
+  ok(left)
+
+func parseTerm(s: string; pos: int): Result[ParseState, string] =
+  var current = parsePower(s, pos).valueOr:
+    return err(error)
+  while true:
+    let i = skipWs(s, current.pos)
+    let c = peek(s, i)
+    case c
+    of '*':
+      if i + 1 < s.len and s[i + 1] == '*':
+        break
+      let rhs = parsePower(s, i + 1).valueOr:
+        return err(error)
+      current = (current.value * rhs.value, rhs.pos)
+    of '/':
+      let rhs = parsePower(s, i + 1).valueOr:
+        return err(error)
+      if rhs.value == 0.0:
+        return err("division by zero")
+      current = (current.value / rhs.value, rhs.pos)
+    of '%':
+      let rhs = parsePower(s, i + 1).valueOr:
+        return err(error)
+      if rhs.value == 0.0:
+        return err("modulo by zero")
+      current = (floorMod(current.value, rhs.value), rhs.pos)
+    else:
+      break
+  ok(current)
+
+func parseExpr(s: string; pos: int): Result[ParseState, string] =
+  var current = parseTerm(s, pos).valueOr:
+    return err(error)
+  while true:
+    let i = skipWs(s, current.pos)
+    case peek(s, i)
+    of '+':
+      let rhs = parseTerm(s, i + 1).valueOr:
+        return err(error)
+      current = (current.value + rhs.value, rhs.pos)
+    of '-':
+      let rhs = parseTerm(s, i + 1).valueOr:
+        return err(error)
+      current = (current.value - rhs.value, rhs.pos)
+    else:
+      break
+  ok(current)
+
+func formatCalcValue(value: float): string =
+  if abs(value - round(value)) < 1e-9 and abs(value) < 9e18:
+    $int64(round(value))
+  else:
+    $value
+
+func evalCalc*(expr: string): string {.gcsafe.} =
+  ## Evaluates a math expression. Returns result or "Error: ...".
+  let trimmed = expr.strip()
+  if trimmed.len == 0:
+    return "Error: empty expression"
+  let parsed = parseExpr(trimmed, 0).valueOr:
+    return "Error: " & error
+  let finalPos = skipWs(trimmed, parsed.pos)
+  if finalPos < trimmed.len:
+    return "Error: unexpected '" & $trimmed[finalPos] & "' at pos " & $finalPos
+  formatCalcValue(parsed.value)
 
 # ── Glob matcher ───────────────────────────────────────────────────────────────
 

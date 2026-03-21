@@ -1,4 +1,4 @@
-## ZhipuAdapter — ProviderPort for Zhipu AI (GLM series).
+## ZhipuAdapter — ProviderPort for Z.AI Coding (GLM series).
 ##
 ## API endpoint: https://api.z.ai/api/coding/paas/v4/chat/completions
 ## Auth: Bearer token via Authorization header
@@ -17,6 +17,7 @@ import ../../core/pipeops
 
 const
   ZhipuEndpoint* = "https://api.z.ai/api/coding/paas/v4/chat/completions"
+  ZaiGeneralEndpoint* = "https://api.z.ai/api/paas/v4/chat/completions"
   ZhipuDefaultModel* = "glm-4.7"
 
 type
@@ -29,7 +30,7 @@ type
 
 proc caps*(a: ZhipuAdapter): ProviderCaps =
   ProviderCaps(
-    name:             "zhipu/" & a.model,
+    name:             "zai-coding/" & a.model,
     streaming:        false,
     toolCalling:      true,
     nativeTools:      @["web_search", "code_interpreter"],
@@ -124,3 +125,12 @@ proc newZhipuAdapter*(apiKey: string;
                       model    = ZhipuDefaultModel;
                       endpoint = ""): ZhipuAdapter =
   ZhipuAdapter(apiKey: apiKey, model: model, endpoint: endpoint)
+
+proc newZaiAdapter*(apiKey: string;
+                    model    = ZhipuDefaultModel;
+                    endpoint = ""): ZhipuAdapter =
+  ZhipuAdapter(
+    apiKey: apiKey,
+    model: model,
+    endpoint: if endpoint.len > 0: endpoint else: ZaiGeneralEndpoint,
+  )

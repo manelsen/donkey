@@ -16,12 +16,18 @@ import ../core/pipeops
 export types
 
 const EnvHome* = "DONKEY_HOME"
+const EnvWebAllowlist* = "DONKEY_WEB_ALLOWLIST"
 
 type
   MainConfigPatch* = object
     logLevel*: Option[LogLevel]
     logFile*:  Option[string]
     paddocks*: Option[string]
+
+  SecurityConfigPatch* = object
+    webAllowlist*: Option[seq[string]]
+    toolWebPolicy*: Option[seq[ToolWebPolicy]]
+    skillNetPolicy*: Option[seq[SkillNetPolicy]]
 
   SandboxConfigPatch* = object
     sandboxMode*:  Option[SandboxMode]
@@ -39,6 +45,113 @@ proc parseSandboxMode*(rawMode: string): SandboxMode =
   case rawMode.strip().toLowerAscii()
   of "docker": smDocker
   else:        smNone
+
+proc parseHostList*(raw: string): seq[string] =
+  for item in raw.split(','):
+    let host = item.strip().toLowerAscii()
+    if host.len > 0:
+      result.add(host)
+
+proc parseHostList*(items: seq[string]): seq[string] =
+  for item in items:
+    result.add(parseHostList(item))
+
+proc parseWebAccessRule*(raw: string): WebAccessRule =
+  let trimmed = raw.strip()
+  let withoutScheme =
+    if "://" in trimmed: trimmed[trimmed.find("://") + 3 .. ^1] else: trimmed
+  let withoutQuery =
+    block:
+      var v = withoutScheme
+      for i, c in v:
+        if c in {'?', '#'}:
+          v = v[0 ..< i]
+          break
+      v
+  let slash = withoutQuery.find('/')
+  if slash < 0:
+    return WebAccessRule(host: withoutQuery.toLowerAscii(), pathPrefix: "")
+  let rawPrefix = withoutQuery[slash .. ^1]
+  WebAccessRule(
+    host: withoutQuery[0 ..< slash].toLowerAscii(),
+    pathPrefix: if rawPrefix == "/" or rawPrefix.len == 0: "" else: rawPrefix,
+  )
+
+proc parseWebAccessRules*(node: TomlValueRef): seq[WebAccessRule] =
+  case node.kind
+  of TomlValueKind.String:
+    result.add(parseWebAccessRule(node.getStr()))
+  of TomlValueKind.Array:
+    for item in node.getElems():
+      result.add(parseWebAccessRule(item.getStr()))
+  else:
+    discard
+
+proc parseSecurityConfigPatch*(doc: TomlValueRef): SecurityConfigPatch =
+  if not doc.hasKey("security"):
+    return
+  let securitySection = doc["security"]
+  if securitySection.hasKey("web_allowlist"):
+    let node = securitySection["web_allowlist"]
+    case node.kind
+    of TomlValueKind.String:
+      result.webAllowlist = some(parseHostList(node.getStr()))
+    of TomlValueKind.Array:
+      var hosts: seq[string] = @[]
+      for item in node.getElems():
+        hosts.add(parseHostList(item.getStr()))
+      result.webAllowlist = some(hosts)
+    else:
+      discard
+
+  if securitySection.hasKey("tools"):
+    let toolsSection = securitySection["tools"]
+    if toolsSection.kind == TomlValueKind.Table:
+      var toolPolicy: seq[ToolWebPolicy] = @[]
+      for toolName, toolNode in toolsSection.tableVal.pairs:
+        if toolNode.kind == TomlValueKind.Table and toolNode.hasKey("allow"):
+          toolPolicy.add(ToolWebPolicy(
+            toolName: toolName,
+            allow: parseWebAccessRules(toolNode["allow"]),
+          ))
+      result.toolWebPolicy = some(toolPolicy)
+
+  if securitySection.hasKey("skills"):
+    let skillsSection = securitySection["skills"]
+    if skillsSection.kind == TomlValueKind.Table:
+      var skillPolicy: seq[SkillNetPolicy] = @[]
+      for skillName, skillNode in skillsSection.tableVal.pairs:
+        if skillNode.kind == TomlValueKind.Table and skillNode.hasKey("allow_net"):
+          let allowNet = skillNode["allow_net"]
+          var hosts: seq[string] = @[]
+          case allowNet.kind
+          of TomlValueKind.String:
+            hosts = parseHostList(allowNet.getStr())
+          of TomlValueKind.Array:
+            for item in allowNet.getElems():
+              hosts.add(parseHostList(item.getStr()))
+          else:
+            discard
+          skillPolicy.add(SkillNetPolicy(
+            skillName: skillName,
+            allowNetHosts: hosts,
+          ))
+      result.skillNetPolicy = some(skillPolicy)
+
+proc applySecurityConfigPatch*(patch: SecurityConfigPatch; cfg: DonkeyConfig): DonkeyConfig =
+  result = cfg
+  if patch.webAllowlist.isSome:
+    result.webAllowlist = patch.webAllowlist.get()
+  if patch.toolWebPolicy.isSome:
+    result.toolWebPolicy = patch.toolWebPolicy.get()
+  if patch.skillNetPolicy.isSome:
+    result.skillNetPolicy = patch.skillNetPolicy.get()
+
+proc applyEnvOverrides*(cfg: DonkeyConfig): DonkeyConfig =
+  result = cfg
+  let rawAllowlist = getEnv(EnvWebAllowlist).strip()
+  if rawAllowlist.len > 0:
+    result.webAllowlist = parseHostList(rawAllowlist)
 
 proc parseMainConfigPatch*(doc: TomlValueRef): MainConfigPatch =
   if not doc.hasKey(ConfigSectionName):
@@ -103,8 +216,11 @@ proc loadConfig*(path: string): DonkeyConfig =
 
   let doc = docOpt.get()
   let mainPatch = parseMainConfigPatch(doc)
+  let securityPatch = parseSecurityConfigPatch(doc)
   let sandboxPatch = parseSandboxConfigPatch(doc)
   result =
     baseConfig |>->
     applyMainConfigPatch(mainPatch) |>->
+    applySecurityConfigPatch(securityPatch) |>->
     applySandboxConfigPatch(sandboxPatch)
+  result = result |> applyEnvOverrides

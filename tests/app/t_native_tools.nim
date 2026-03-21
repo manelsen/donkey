@@ -29,7 +29,7 @@ proc makeCtx(): NativeCtx =
     channel:     ckTelegram,
     outbox:      newAsyncQueue[OutboundMessage](),
     session:     nil,
-    memory:      MdFileAdapter(paddocksDir: getTempDir()),
+    memory:      MdFileAdapter(paddocksDir: getTempDir()).toRuntimePort(),
     completeFn:  stubComplete,
     braveApiKey: "",
     tools:       @[],
@@ -571,7 +571,7 @@ suite "executeNativeTool — read_file and edit_file":
       channel:     ckTelegram,
       outbox:      newAsyncQueue[OutboundMessage](),
       session:     nil,
-      memory:      MdFileAdapter(paddocksDir: pd),
+      memory:      MdFileAdapter(paddocksDir: pd).toRuntimePort(),
       completeFn:  stubComplete,
       braveApiKey: "",
       tools:       @[],
@@ -619,6 +619,7 @@ suite "executeNativeTool — read_file and edit_file":
     let editResult = waitFor executeNativeTool(editTc, ctx, newSessionState(), newHistory())
     check editResult.handled
     check editResult.text.startsWith("Error: stale anchor")
+    check editResult.resultKind == trkOperationalError
 
 suite "executeNativeTool — schedule_reminder":
 
@@ -638,7 +639,7 @@ suite "executeNativeTool — schedule_reminder":
       channel:     ckTelegram,
       outbox:      newAsyncQueue[OutboundMessage](),
       session:     nil,
-      memory:      memory,
+      memory:      memory.toRuntimePort(),
       completeFn:  stubComplete,
       braveApiKey: "",
       tools:       @[],
@@ -648,6 +649,7 @@ suite "executeNativeTool — schedule_reminder":
     let result = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
     check result.handled
     check result.text == "Reminder scheduled."
+    check result.resultKind == trkOutput
     var reminderCount = 0
     for _ in walkDirRec(memory.reminderDir(UserId("test-user"))):
       inc reminderCount
@@ -714,7 +716,7 @@ suite "executeNativeTool — paddock path enforcement":
       channel:     ckTelegram,
       outbox:      newAsyncQueue[OutboundMessage](),
       session:     nil,
-      memory:      MdFileAdapter(paddocksDir: pd),
+      memory:      MdFileAdapter(paddocksDir: pd).toRuntimePort(),
       completeFn:  stubComplete,
       braveApiKey: "",
       tools:       @[],
@@ -743,6 +745,7 @@ suite "executeNativeTool — paddock path enforcement":
     check r.handled
     check r.text.startsWith("Error:")
     check r.text.contains("outside paddock")
+    check r.resultKind == trkOperationalError
 
   test "find with .. traversal rejected":
     let ctx = ctxWithPaddock(paddock)

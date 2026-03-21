@@ -3,7 +3,7 @@ import chronos/asyncsync
 import donkey
 import donkey/adapters/memory/md_file
 import donkey/app/session_manager
-import donkey/core/session_ingress
+import donkey/core/session/session_ingress
 import donkey/domain/agent_message
 import donkey/domain/message
 
@@ -14,11 +14,11 @@ suite "daemon session ingress":
       ToolDescription(name: "a", description: "desc-a", schemaJson: """{"type":"object"}"""),
       ToolDescription(name: "b", description: "desc-b", schemaJson: """{"type":"object","x":1}"""),
     ]
-    let same = toolCatalogSignature(baseTools, "zhipu/glm-4.7", "/tmp/p1")
+    let same = toolCatalogSignature(baseTools, "zai-coding/glm-4.7", "/tmp/p1")
     let changedProvider = toolCatalogSignature(baseTools, "gemini/flash", "/tmp/p1")
     let changedTool = toolCatalogSignature(
       @[ToolDescription(name: "a", description: "desc-a2", schemaJson: """{"type":"object"}""")],
-      "zhipu/glm-4.7",
+      "zai-coding/glm-4.7",
       "/tmp/p1",
     )
     check same != changedProvider
