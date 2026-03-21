@@ -12,6 +12,7 @@ import donkey/adapters/tool/deno_skill
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/app_meta
+import donkey/core/session_ingress
 import donkey/adapters/memory/md_file
 when defined(withPostgres):
   import donkey/adapters/memory/postgres_memory
@@ -792,8 +793,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
 
 type EnsureSessionPlan = object
   uid*:      string
-  isNew*:    bool
-  rebuilt*:  bool
+  decision*: SessionIngressDecision
   oldInbox*: AsyncQueue[AgentMessage]
   oldAskInbox*: AsyncQueue[string]
   entry*:    ptr SessionEntry
@@ -818,29 +818,35 @@ type SessionIngressServices = object
 func toolCatalogSignature*(tools: seq[ToolDescription];
                            providerLabel: string;
                            paddockDir: string;
-                           skillPrompt = ""): string =
-  result.add(providerLabel)
-  result.add('\n')
-  result.add(paddockDir)
-  result.add('\n')
-  result.add(skillPrompt)
-  result.add('\n')
+                           skillPrompt = ""): SessionRuntimeSignature =
+  var signature = newStringOfCap(256)
+  signature.add(providerLabel)
+  signature.add('\n')
+  signature.add(paddockDir)
+  signature.add('\n')
+  signature.add(skillPrompt)
+  signature.add('\n')
   for tool in tools:
-    result.add(tool.name)
-    result.add('\t')
-    result.add(tool.description)
-    result.add('\t')
-    result.add(tool.schemaJson)
-    result.add('\n')
+    signature.add(tool.name)
+    signature.add('\t')
+    signature.add(tool.description)
+    signature.add('\t')
+    signature.add(tool.schemaJson)
+    signature.add('\n')
+  result = SessionRuntimeSignature(signature)
 
 proc buildEnsureSessionPlan*(sm: var SessionManager;
                              userId: UserId;
-                             toolCatalogSignature: string): EnsureSessionPlan =
-  let lease = sm.prepareEntry(userId, toolCatalogSignature)
+                             toolCatalogSignature: SessionRuntimeSignature): EnsureSessionPlan =
+  let decision = decideSessionIngress(SessionIngressRequest(
+    userId: userId,
+    state: sm.snapshot(userId),
+    nextSignature: toolCatalogSignature,
+  ))
+  let lease = sm.applyIngressDecision(userId, decision, toolCatalogSignature)
   EnsureSessionPlan(
     uid: $userId,
-    isNew: lease.isNew,
-    rebuilt: lease.rebuilt,
+    decision: decision,
     oldInbox: lease.oldInbox,
     oldAskInbox: lease.oldAskInbox,
     entry: lease.entry,
@@ -848,7 +854,7 @@ proc buildEnsureSessionPlan*(sm: var SessionManager;
 
 proc buildSessionIngressContext*(sm: var SessionManager;
                                  msg: InboundMessage;
-                                 toolCatalogSignature: string;
+                                 toolCatalogSignature: SessionRuntimeSignature;
                                  msgSeq: var int): SessionIngressContext =
   result.plan = sm.buildEnsureSessionPlan(msg.userId, toolCatalogSignature)
   inc msgSeq
@@ -912,11 +918,11 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                                sandboxImage: string;
                                typingFn: TypingFn;
                                searchFn: SearchFn) {.gcsafe.} =
-  if not (plan.isNew or plan.rebuilt):
+  if not plan.decision.startsSessionRuntime:
     return
-  if plan.rebuilt and not plan.oldAskInbox.isNil:
+  if plan.decision.rebuildsSessionRuntime and not plan.oldAskInbox.isNil:
     plan.oldAskInbox.addLastNoWait("__DONKEY_ASK_CANCELLED__")
-  if plan.rebuilt and not plan.oldInbox.isNil:
+  if plan.decision.rebuildsSessionRuntime and not plan.oldInbox.isNil:
     plan.oldInbox.addLastNoWait(newCancelMsg())
   asyncSpawn runOrchestrator(plan.entry[].inbox, plan.entry, globalOutbox, memory,
                              bootstrap.completeFn, streamFn,
@@ -928,11 +934,13 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
 
 proc enqueueSessionMessage*(entry: var SessionEntry;
                             msg: InboundMessage;
-                            msgId: string) =
-  if entry.awaitingAsk:
+                            msgId: string;
+                            target: SessionIngressTarget) =
+  case target
+  of sitAskInbox:
     entry.awaitingAsk = false
     entry.askInbox.addLastNoWait(msg.text)
-  else:
+  of sitActorInbox:
     entry.inbox.addLastNoWait(buildSessionTaskMsg(msg, msgId))
 
 proc startSessionIngress*(sm: var SessionManager;
@@ -949,16 +957,22 @@ proc startSessionIngress*(sm: var SessionManager;
                            services.globalOutbox, services.log,
                            services.sandboxMode, services.sandboxImage,
                            services.typingFn, services.searchFn)
-  if result.plan.isNew:
+  if result.plan.decision.startsNewSession:
     services.log.info("new session: " & result.plan.uid)
-  elif result.plan.rebuilt:
+  elif result.plan.decision.rebuildsSessionRuntime:
     services.log.info("rebuilt session runtime after tool catalog change: " & result.plan.uid)
 
 proc finalizeSessionIngress*(sm: var SessionManager;
                              ingress: SessionIngressContext;
                              msg: InboundMessage) =
-  sm.recordChannel(msg.userId, msg.channel, msg.channelId)
-  enqueueSessionMessage(ingress.plan.entry[], msg, ingress.msgId)
+  if ingress.plan.decision.shouldRecordChannel:
+    sm.recordChannel(msg.userId, msg.channel, msg.channelId)
+  enqueueSessionMessage(
+    ingress.plan.entry[],
+    msg,
+    ingress.msgId,
+    ingress.plan.decision.target,
+  )
 
 proc ensureSession(sm:       var SessionManager;
                    msg:      InboundMessage;

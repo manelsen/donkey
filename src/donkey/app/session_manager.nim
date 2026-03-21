@@ -10,6 +10,7 @@ import chronos
 import chronos/asyncsync
 import ../domain/agent_message
 import ../domain/message
+import ../core/session_ingress
 
 type
   SessionEntry* = object
@@ -30,6 +31,15 @@ type
   SessionManager* = object
     entries*: Table[string, SessionEntry]  ## string(UserId) → entry
 
+proc newSessionEntry(toolCatalogSignature: SessionRuntimeSignature): SessionEntry =
+  SessionEntry(
+    inbox: newAsyncQueue[AgentMessage](),
+    askInbox: newAsyncQueue[string](),
+    awaitingAsk: false,
+    channels: @[],
+    toolCatalogSignature: $toolCatalogSignature,
+  )
+
 proc init*(sm: var SessionManager) =
   sm.entries = initTable[string, SessionEntry]()
 
@@ -42,13 +52,7 @@ proc getOrCreate*(sm: var SessionManager; userId: UserId): ptr SessionEntry =
   ## (check hasSession before calling getOrCreate to detect new sessions).
   let uid = $userId
   if uid notin sm.entries:
-    sm.entries[uid] = SessionEntry(
-      inbox:    newAsyncQueue[AgentMessage](),
-      askInbox: newAsyncQueue[string](),
-      awaitingAsk: false,
-      channels: @[],
-      toolCatalogSignature: "",
-    )
+    sm.entries[uid] = newSessionEntry(SessionRuntimeSignature(""))
   addr sm.entries[uid]
 
 proc get*(sm: var SessionManager; userId: UserId): ptr SessionEntry =
@@ -71,32 +75,62 @@ func listSessions*(sm: SessionManager): seq[(UserId, seq[(ChannelKind, string)])
 
 func sessionCount*(sm: SessionManager): int = sm.entries.len
 
-proc prepareEntry*(sm: var SessionManager;
-                   userId: UserId;
-                   toolCatalogSignature: string): SessionLease =
+func snapshot*(sm: SessionManager; userId: UserId): SessionIngressState =
   let uid = $userId
   if uid notin sm.entries:
-    sm.entries[uid] = SessionEntry(
-      inbox: newAsyncQueue[AgentMessage](),
-      askInbox: newAsyncQueue[string](),
+    return SessionIngressState(
+      hasSession: false,
       awaitingAsk: false,
-      channels: @[],
-      toolCatalogSignature: toolCatalogSignature,
+      currentSignature: SessionRuntimeSignature(""),
     )
-    return SessionLease(
+  let entry = sm.entries[uid]
+  SessionIngressState(
+    hasSession: true,
+    awaitingAsk: entry.awaitingAsk,
+    currentSignature: SessionRuntimeSignature(entry.toolCatalogSignature),
+  )
+
+proc applyIngressDecision*(sm: var SessionManager;
+                           userId: UserId;
+                           decision: SessionIngressDecision;
+                           toolCatalogSignature: SessionRuntimeSignature): SessionLease =
+  let uid = $userId
+  case decision.actionKind
+  of siaStartNewSession:
+    sm.entries[uid] = newSessionEntry(toolCatalogSignature)
+    result = SessionLease(
       entry: addr sm.entries[uid],
       oldInbox: nil,
       oldAskInbox: nil,
       isNew: true,
       rebuilt: false,
     )
-
-  result.entry = addr sm.entries[uid]
-  if result.entry[].toolCatalogSignature != toolCatalogSignature:
+  of siaReuseSessionRuntime:
+    result = SessionLease(
+      entry: addr sm.entries[uid],
+      oldInbox: nil,
+      oldAskInbox: nil,
+      isNew: false,
+      rebuilt: false,
+    )
+  of siaRebuildSessionRuntime:
+    result.entry = addr sm.entries[uid]
     result.oldInbox = result.entry[].inbox
     result.oldAskInbox = result.entry[].askInbox
     result.entry[].inbox = newAsyncQueue[AgentMessage]()
     result.entry[].askInbox = newAsyncQueue[string]()
     result.entry[].awaitingAsk = false
-    result.entry[].toolCatalogSignature = toolCatalogSignature
+    result.entry[].toolCatalogSignature = $toolCatalogSignature
+    result.isNew = false
     result.rebuilt = true
+
+proc prepareEntry*(sm: var SessionManager;
+                   userId: UserId;
+                   toolCatalogSignature: string): SessionLease =
+  let signature = SessionRuntimeSignature(toolCatalogSignature)
+  let decision = decideSessionIngress(SessionIngressRequest(
+    userId: userId,
+    state: sm.snapshot(userId),
+    nextSignature: signature,
+  ))
+  sm.applyIngressDecision(userId, decision, signature)
