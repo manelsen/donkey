@@ -10,6 +10,18 @@ Este documento descreve o esqueleto funcional do diretório `src/` do projeto Do
 
 Baseado no estado atual do código em `src/donkey.nim` e `src/donkey/**`.
 
+## 0. Boundary Status
+
+O refactor de boundaries foi concluído neste ciclo.
+
+- `core/session/*`: ingresso de sessão
+- `core/onboarding/*`: onboarding
+- `core/tooling/*`: tool loop e dispatch nativo
+- `core/outbound/*`: decisão de outbound/stream
+- `core/commands/*`: parse e roteamento semântico de comandos
+
+`app/*` permanece como shell de runtime, consumindo `ports/*` e aplicando efeitos.
+
 ## 1. Visão Geral
 
 O Donkey é um daemon em Nim que:
@@ -43,16 +55,17 @@ flowchart TD
     E --> N[app/tool_agent.nim]
     E --> O[app/native_tools.nim]
     E --> P[app/session_state.nim]
-    E --> Q[domain/message.nim]
-    E --> R[domain/agent_message.nim]
-    E --> S[domain/personality.nim]
-    E --> T[domain/reminder.nim]
+    E --> Q[core/session/session_ingress.nim]
+    E --> R[core/onboarding/onboarding.nim]
+    E --> S[core/tooling/tool_loop.nim]
+    E --> T[core/commands/command_routing.nim]
+    E --> U[core/outbound/outbound.nim]
 
-    O --> U[app/sandbox.nim]
-    O --> V[adapters/http/std_http.nim]
-    O --> W[domain/builtin_tools.nim]
-    O --> X[domain/more_tools.nim]
-    O --> Y[domain/calc.nim]
+    O --> V[app/sandbox.nim]
+    O --> W[core/tooling/native_tool_dispatch.nim]
+    O --> X[domain/builtin_tools.nim]
+    O --> Y[domain/more_tools.nim]
+    O --> Z[domain/calc.nim]
 ```
 
 ## 3. Mapa de Responsabilidades
@@ -73,11 +86,10 @@ flowchart TD
 - `app/orchestrator.nim`
   - ator por sessão
   - debounce de mensagens
-  - onboarding
   - carregamento de contexto
   - turn loop com LLM
-  - tool loop
   - streaming parcial
+  - aplicação de decisões de `core/onboarding/*` e `core/tooling/*`
 
 - `app/memory_agent.nim`
   - worker para `loadCtx`, `saveMem`, `savePrefs`
@@ -96,7 +108,27 @@ flowchart TD
   - estado mutável da sessão
   - todos, checkpoints e jobs
 
-### 3.3 Domain layer
+### 3.3 Core layer
+
+- `core/session/session_ingress.nim`
+  - decisão pura de sessão nova, reuse, rebuild e redireção para `askInbox`
+
+- `core/onboarding/onboarding.nim`
+  - estado e reducers puros do onboarding
+
+- `core/tooling/tool_loop.nim`
+  - decisão do loop de tools, repetição, finalização e batch planning
+
+- `core/tooling/native_tool_dispatch.nim`
+  - classificação pura das tools nativas por categoria
+
+- `core/outbound/outbound.nim`
+  - decisão de stream/create/edit/suppress/cleanup
+
+- `core/commands/command_routing.nim`
+  - parse semântico de comandos e callbacks
+
+### 3.4 Domain layer
 
 - `domain/message.nim`
   - tipos de conversa e montagem de `CompletionRequest`
@@ -114,7 +146,7 @@ flowchart TD
 - `domain/builtin_tools.nim`, `domain/more_tools.nim`, `domain/calc.nim`
   - schemas e utilitários das tools
 
-### 3.4 Adapters
+### 3.5 Adapters
 
 - `adapters/channel/*`
   - integração com Telegram, Discord, WeCom, Feishu
