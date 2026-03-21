@@ -3,6 +3,7 @@ import chronos/asyncsync
 import donkey
 import donkey/adapters/memory/md_file
 import donkey/app/session_manager
+import donkey/core/session_ingress
 import donkey/domain/agent_message
 import donkey/domain/message
 
@@ -33,11 +34,11 @@ suite "daemon session ingress":
       channelId: "42",
       text: "hello",
     )
-    let first = sm.buildSessionIngressContext(msg, "sig-a", msgSeq)
-    let second = sm.buildSessionIngressContext(msg, "sig-a", msgSeq)
-    check first.plan.isNew
-    check not first.plan.rebuilt
-    check not second.plan.isNew
+    let first = sm.buildSessionIngressContext(msg, SessionRuntimeSignature("sig-a"), msgSeq)
+    let second = sm.buildSessionIngressContext(msg, SessionRuntimeSignature("sig-a"), msgSeq)
+    check first.plan.decision.actionKind == siaStartNewSession
+    check not first.plan.decision.rebuildsSessionRuntime
+    check second.plan.decision.actionKind == siaReuseSessionRuntime
     check first.msgId == "u-ingress-1"
     check second.msgId == "u-ingress-2"
     check first.plan.entry == second.plan.entry
@@ -56,7 +57,7 @@ suite "daemon session ingress":
       channelId: "77",
       text: "my answer",
     )
-    enqueueSessionMessage(entry, msg, "u-ask-1")
+    enqueueSessionMessage(entry, msg, "u-ask-1", sitAskInbox)
     check not entry.awaitingAsk
     check entry.askInbox.popFirstNoWait() == "my answer"
     check entry.inbox.len == 0
@@ -75,7 +76,7 @@ suite "daemon session ingress":
       channelId: "88",
       text: "hello world",
     )
-    enqueueSessionMessage(entry, msg, "u-normal-3")
+    enqueueSessionMessage(entry, msg, "u-normal-3", sitActorInbox)
     let queued = entry.inbox.popFirstNoWait()
     check queued.id == "u-normal-3"
     check queued.replyTo == "88"
