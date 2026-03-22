@@ -3,6 +3,7 @@
 import std/[algorithm, json, os, parseopt, strutils, tables, terminal, times]
 import chronos
 import chronos/asyncsync
+import chronos/timer as ctimer
 import donkey/config/loader
 import donkey/config/types
 import donkey/config/tools_registry
@@ -11,6 +12,7 @@ import donkey/config/clawhub_registry
 import donkey/adapters/tool/runtime_builder
 import donkey/core/log
 import donkey/core/pipeops
+import donkey/core/agent_events
 import donkey/core/app_meta
 import donkey/core/providers/smart_routing
 import donkey/core/session/session_ingress
@@ -1179,7 +1181,9 @@ proc setupIpcServer(cfg: DonkeyConfig;
     {.cast(gcsafe).}: ipcStatusFn()
   let gwLogFn: GatewayLogFn = proc(n: int): seq[IpcLogEntry] {.gcsafe.} =
     {.cast(gcsafe).}: ipcLogFn(n)
-  {.cast(gcsafe).}: startHttpGateway(httpPort, gwStatusFn, gwLogFn)
+  let gwEventFn: GatewayEventFn = proc(n: int): seq[AgentEvent] {.gcsafe.} =
+    {.cast(gcsafe).}: agentEventSnapshot(n)
+  {.cast(gcsafe).}: startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn)
   log.info("HTTP gateway: http://0.0.0.0:" & $httpPort)
 
 type EnsureSessionPlan = object
@@ -1727,7 +1731,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   log.info("polling for messages…")
   while true:
     let loopResult = runDaemonLoop(ctx, cfg, memory, log)
-    await sleepAsync(loopResult.sleepMs)
+    await sleepAsync(ctimer.milliseconds(loopResult.sleepMs.int64))
 
 # ── main ───────────────────────────────────────────────────────────────────────
 
@@ -1762,7 +1766,8 @@ proc main =
     configPath = home / ConfigFileName
 
   let cfg = loadConfig(configPath)
-  ringInit()   ## enable ring buffer before the first Logger is created
+  ringInit()            ## enable log ring buffer before the first Logger is created
+  agentEventRingInit()  ## enable agent event ring buffer
   if isatty(stderr): enableHumanLog()
   let log = newLogger(AppSlug)
 

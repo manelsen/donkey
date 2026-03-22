@@ -11,7 +11,7 @@
 ## Concrete tasks shipped here:
 ##   deliverDueReminders — polls MemoryRuntimePort for due reminders, delivers via outbox fn.
 
-import std/[json, strutils]
+import std/[json]
 import chronos
 import ../ports/memory
 import ../core/types

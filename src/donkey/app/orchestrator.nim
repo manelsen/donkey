@@ -35,6 +35,7 @@ import ../core/log
 import ../core/onboarding/onboarding
 import ../core/tooling/tool_loop
 import ../core/security/secret_scan
+import ../core/agent_events
 import ../domain/agent_message
 import ../domain/message
 import ../domain/personality
@@ -590,6 +591,13 @@ proc executeToolCall(globalOutbox: AsyncQueue[OutboundMessage];
 
   log.info("[tool] (" & tc.name & ") <- [" & providerLabel & "] |" &
            $tc.inputJson.len & "|")
+  pushAgentEvent(AgentEvent(
+    kind:     aekToolCall,
+    userId:   $uid,
+    channel:  $channel,
+    toolName: tc.name,
+    summary:  tc.inputJson[0 ..< min(tc.inputJson.len, 80)],
+  ))
 
   let nr = await executeNativeTool(tc, nativeCtx, state, history)
   if nr.handled:
@@ -653,6 +661,13 @@ proc processToolCalls(globalOutbox: AsyncQueue[OutboundMessage];
     ## Warn if tool output appears to contain leaked credentials.
     if hasSecrets(toolResult.text):
       log.warn("tool '" & tc.name & "' output may contain secrets — check tool output")
+    pushAgentEvent(AgentEvent(
+      kind:     aekToolResult,
+      userId:   $uid,
+      channel:  $channel,
+      toolName: tc.name,
+      summary:  toolResult.text[0 ..< min(toolResult.text.len, 80)],
+    ))
     result =
       result |>->
       withToolResult(tc, toolResult.text, toolResult.resultKind, toolResult.newHistory)
@@ -1100,6 +1115,12 @@ proc runToolLoop(globalOutbox: AsyncQueue[OutboundMessage];
 
     let resp = safeComplete(completeFn, req)
     if resp.isErr:
+      pushAgentEvent(AgentEvent(
+        kind:    aekError,
+        userId:  $uid,
+        channel: $channel,
+        summary: "provider: " & resp.error[0 ..< min(resp.error.len, 80)],
+      ))
       await globalOutbox.put(OutboundMessage(
         userId: uid,
         channel: channel,
@@ -1120,6 +1141,12 @@ proc runToolLoop(globalOutbox: AsyncQueue[OutboundMessage];
       if r.text.len > 0:
         log.info($uid & " (" & $channel & ") <- [" & providerLabel &
                  "] |" & $r.text.len & "|")
+        pushAgentEvent(AgentEvent(
+          kind:    aekModelResponse,
+          userId:  $uid,
+          channel: $channel,
+          summary: r.text[0 ..< min(r.text.len, 80)],
+        ))
       let completionResult = applyCompletionDecision(
         loopState.history,
         decideCompletion(r, debugMode),
@@ -1346,6 +1373,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
   var stateRuntime = newOrchestratorState()
   let state = newSessionState()
   let sessionId   = $nowMs()
+  pushAgentEvent(AgentEvent(kind: aekSessionStart, summary: "session " & sessionId))
   let toolsSuffix =
     (tools |> orchToolsSuffix) &
     (if skillPrompt.len > 0: "\n\n" & skillPrompt else: "")

@@ -13,6 +13,7 @@
 
 import std/[json, net, os, strutils]
 import ../ports/ipc
+import ../core/agent_events
 
 const
   GatewayDefaultPort* = 8080
@@ -29,6 +30,7 @@ type
 type
   GatewayStatusFn* = proc(): DaemonStatus {.gcsafe.}
   GatewayLogFn*    = proc(n: int): seq[IpcLogEntry] {.gcsafe.}
+  GatewayEventFn*  = proc(n: int): seq[AgentEvent] {.gcsafe.}
 
 # ── Pure functions ─────────────────────────────────────────────────────────────
 
@@ -57,6 +59,12 @@ func buildStatusBody*(st: DaemonStatus): string =
 func buildLogsBody*(entries: seq[IpcLogEntry]): string =
   var arr = newJArray()
   for e in entries:
+    arr.add(e.toJson())
+  $arr
+
+func buildAgentEventsBody*(events: seq[AgentEvent]): string =
+  var arr = newJArray()
+  for e in events:
     arr.add(e.toJson())
   $arr
 
@@ -130,7 +138,8 @@ proc parseQueryInt(requestLine: string; key: string; default: int): int =
 
 proc handleGatewayConn(client: Socket;
                         statusFn: GatewayStatusFn;
-                        logFn:    GatewayLogFn) =
+                        logFn:    GatewayLogFn;
+                        eventFn:  GatewayEventFn) =
   try:
     let requestLine = client.readHttpLine()
     if requestLine.len == 0:
@@ -164,18 +173,23 @@ proc handleGatewayConn(client: Socket;
       client.sendSseHeaders()
       ## Push a heartbeat comment immediately to confirm stream started.
       try: client.send(": connected\n\n") except CatchableError: discard
-      ## Poll loop: push log snapshot every SseHeartbeatIntervalMs.
-      var lastCount = 0
+      ## Poll loop: push log + agent event snapshots every SseHeartbeatIntervalMs.
+      var lastLogCount   = 0
+      var lastEventCount = 0
       for _ in 0 ..< SseMaxPollCycles:
         os.sleep(SseHeartbeatIntervalMs)
         let entries = logFn(100)
-        ## Only push if there are new entries (by count heuristic).
-        if entries.len > lastCount or entries.len > 0:
-          lastCount = entries.len
-          let data = buildLogsBody(entries)
-          if not client.sendSseData("logs", data):
-            break  ## client disconnected
-        else:
+        if entries.len > lastLogCount or entries.len > 0:
+          lastLogCount = entries.len
+          if not client.sendSseData("logs", buildLogsBody(entries)):
+            break
+        if eventFn != nil:
+          let evs = eventFn(100)
+          if evs.len > lastEventCount or evs.len > 0:
+            lastEventCount = evs.len
+            if not client.sendSseData("agent", buildAgentEventsBody(evs)):
+              break
+        if entries.len == 0 and (eventFn == nil or eventFn(1).len == 0):
           ## Heartbeat comment to keep connection alive.
           try: client.send(": heartbeat\n\n") except CatchableError: break
 
@@ -195,9 +209,11 @@ type GatewayArgs = object
   port:     int
   statusFn: GatewayStatusFn
   logFn:    GatewayLogFn
+  eventFn:  GatewayEventFn
 
 var gGatewayStatusFn: GatewayStatusFn
 var gGatewayLogFn:    GatewayLogFn
+var gGatewayEventFn:  GatewayEventFn
 
 proc gatewayThread(args: GatewayArgs) {.thread.} =
   {.cast(gcsafe).}:
@@ -208,16 +224,18 @@ proc gatewayThread(args: GatewayArgs) {.thread.} =
     while true:
       var client: Socket
       server.accept(client)
-      handleGatewayConn(client, args.statusFn, args.logFn)
+      handleGatewayConn(client, args.statusFn, args.logFn, args.eventFn)
 
 var gGatewayThread: Thread[GatewayArgs]
 
 proc startHttpGateway*(port: int;
                        statusFn: GatewayStatusFn;
-                       logFn:    GatewayLogFn) =
+                       logFn:    GatewayLogFn;
+                       eventFn:  GatewayEventFn = nil) =
   ## Starts the HTTP gateway on a dedicated OS thread.
-  ## statusFn and logFn are called on each request; they must be gcsafe.
+  ## statusFn, logFn, and eventFn are called on each request; they must be gcsafe.
   gGatewayStatusFn = statusFn
   gGatewayLogFn    = logFn
-  let args = GatewayArgs(port: port, statusFn: statusFn, logFn: logFn)
+  gGatewayEventFn  = eventFn
+  let args = GatewayArgs(port: port, statusFn: statusFn, logFn: logFn, eventFn: eventFn)
   createThread(gGatewayThread, gatewayThread, args)

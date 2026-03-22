@@ -10,7 +10,7 @@
 ##     but native tools are passed as {"type":"web_search"} etc.
 ##   - No streaming in F1 (streaming added in F4)
 
-import std/[httpclient, json, strutils]
+import std/[httpclient, json]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops

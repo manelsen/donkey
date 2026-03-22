@@ -12,7 +12,7 @@
 ##   - No streaming in current API (streaming=false)
 ##   - No native tool calling (toolCalling=false)
 
-import std/[httpclient, json, strutils]
+import std/[httpclient, json]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops

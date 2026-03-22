@@ -2,6 +2,11 @@
 # including testament test files in tests/.
 switch("path", "src")
 
+# Strict Compilation & Panics
+switch("styleCheck", "error")
+switch("warningAsError", "on")
+switch("panics", "on")
+
 # Required for httpclient HTTPS (Telegram API, Zhipu API).
 switch("define", "ssl")
 

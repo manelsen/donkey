@@ -1,2 +1,10 @@
 [
-{"name":"tests/core/t_log.nim c","category":"core","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"d03108e386e","branch":"feat/f6-age"}]
+{"name":"tests/core/t_command_routing.nim c","category":"core","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"4a3b5c345ae","branch":"master"},
+{"name":"tests/core/t_log.nim c","category":"core","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"4a3b5c345ae","branch":"master"},
+{"name":"tests/core/t_native_tool_dispatch.nim c","category":"core","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"4a3b5c345ae","branch":"master"},
+{"name":"tests/core/t_onboarding.nim c","category":"core","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"4a3b5c345ae","branch":"master"},
+{"name":"tests/core/t_outbound.nim c","category":"core","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"4a3b5c345ae","branch":"master"},
+{"name":"tests/core/t_pipeops.nim c","category":"core","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"4a3b5c345ae","branch":"master"},
+{"name":"tests/core/t_session_ingress.nim c","category":"core","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"4a3b5c345ae","branch":"master"},
+{"name":"tests/core/t_smart_routing.nim c","category":"core","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"4a3b5c345ae","branch":"master"},
+{"name":"tests/core/t_tool_loop.nim c","category":"core","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"4a3b5c345ae","branch":"master"}]

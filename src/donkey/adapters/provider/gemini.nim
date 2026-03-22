@@ -13,7 +13,7 @@
 ##   - Response: candidates[0].content.parts[0].text
 ##   - Token usage: usageMetadata.promptTokenCount / candidatesTokenCount
 
-import std/[httpclient, json, strutils, tables, uri]
+import std/[httpclient, json, strutils, tables]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
