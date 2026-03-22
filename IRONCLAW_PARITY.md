@@ -52,8 +52,8 @@ Este documento não tenta copiar a arquitetura do IronClaw. O objetivo é mapear
 - `[x]` Feishu
 - `[x]` WeChat runtime base
 - `[x]` QQ runtime base
-- `[-]` WeChat inbound real ainda pendente
-- `[-]` QQ / OneBot inbound real ainda pendente
+- `[x]` WeChat inbound real: servidor HTTP embutido com SHA1 challenge + POST XML
+- `[x]` QQ / OneBot inbound real: servidor HTTP embutido para POST JSON OneBot v11
 - `[ ]` Signal
 - `[ ]` Slack channel real
 - `[ ]` WhatsApp
@@ -145,8 +145,6 @@ Este documento não tenta copiar a arquitetura do IronClaw. O objetivo é mapear
 
 ### P0
 
-- `[>]` ingress real de WeChat
-- `[>]` ingress real de QQ / OneBot
 - `[>]` leak detection de segredos em request/response de tools
 
 ### P1
@@ -179,4 +177,3 @@ O maior gap está em:
 - hardening de segurança de tool/runtime
 - gateway contínuo com eventos/streaming para clientes
 - automação contínua (`heartbeat`, webhooks, rotinas mais ricas)
-- canais mais maduros e com inbound real
