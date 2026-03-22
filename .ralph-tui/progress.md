@@ -34,6 +34,17 @@ When a public proc returns a non-Result type (e.g. `DiagResult`) but needs to co
 
 ---
 
+## 2026-03-22 - US-005
+- What was implemented: `src/donkey/core/network.nim` — pure SSRF IP validator. Provides `parseIpv4` (dotted-quad → `Result[array[4, uint8], string]`), `isPrivateOctets` (covers RFC 1918 + CGNAT + loopback + link-local + bogon + reserved ranges), `isPrivateIpv6` (textual prefix matching for ::1, fe80::, fc/fd ULA, ::ffff:), and `isPrivateIp` (unified entry point returning `Result[bool, string]`, designed for `|>` and `>>=` piping).
+- Files changed:
+  - `src/donkey/core/network.nim` — new pure module
+  - `tests/core/t_network.nim` — 36 tests across 5 suites covering all functions and all three pipeops operators
+- **Learnings:**
+  - `strutils` must be imported in tests even when `contains(string, string)` seems obvious — `results` `Opt.contains` overload wins otherwise (same gotcha as US-003).
+  - Using `int(o[0])` casts before range checks avoids `uint8` literal arithmetic issues entirely — cleaner than `16u8..31u8` range syntax.
+  - Pre-validation with `allCharsInSet({'0'..'9'})` + `len > 3` guard makes `parseInt` safe inside `func` without try/except — keeps the function clean.
+---
+
 ## 2026-03-22 - US-004
 - What was implemented: `donkey doctor` CLI command — system diagnostics tool checking for docker binary + compose plugin, pgvector/PostgreSQL (optional F2+), and API key environment variables.
 - Files changed:
