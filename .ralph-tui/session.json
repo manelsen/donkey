@@ -3,10 +3,10 @@
   "sessionId": "8e9c25da-de6b-418c-92fd-0b05970ac77a",
   "status": "running",
   "startedAt": "2026-03-22T23:43:56.640Z",
-  "updatedAt": "2026-03-22T23:51:22.487Z",
-  "currentIteration": 0,
+  "updatedAt": "2026-03-22T23:59:50.216Z",
+  "currentIteration": 1,
   "maxIterations": 0,
-  "tasksCompleted": 0,
+  "tasksCompleted": 1,
   "isPaused": false,
   "agentPlugin": "claude",
   "trackerState": {
@@ -14,7 +14,18 @@
     "totalTasks": 0,
     "tasks": []
   },
-  "iterations": [],
+  "iterations": [
+    {
+      "iteration": 1,
+      "status": "completed",
+      "taskId": "US-012",
+      "taskTitle": "Telegram Parser (Pure)",
+      "taskCompleted": true,
+      "durationMs": 433590,
+      "startedAt": "2026-03-22T23:44:08.895Z",
+      "endedAt": "2026-03-22T23:51:22.485Z"
+    }
+  ],
   "skippedTaskIds": [],
   "cwd": "/home/micelio/git/donkey",
   "activeTaskIds": [],
