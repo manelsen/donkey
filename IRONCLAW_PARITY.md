@@ -37,8 +37,8 @@ Este documento não tenta copiar a arquitetura do IronClaw. O objetivo é mapear
 - `[x]` TUI básica
 - `[x]` health/status operacional via CLI e IPC
 - `[-]` doctor de sistema existe, mas ainda não é um subsistema profundo tipo IronClaw
-- `[ ]` HTTP gateway/web UI com SSE/WebSocket
-- `[ ]` broadcast de eventos de agente para clientes conectados
+- `[x]` HTTP gateway com SSE: `/api/status`, `/api/logs`, `/api/events`
+- `[-]` broadcast de eventos de agente para clientes conectados (logs sim; eventos de agente/sessão ainda não)
 - `[ ]` hot reload de configuração
 - `[ ]` heartbeat system para execução proativa de manutenção
 - `[ ]` self-repair/stuck operation recovery
@@ -92,7 +92,7 @@ Este documento não tenta copiar a arquitetura do IronClaw. O objetivo é mapear
 - `[x]` Zhipu
 - `[x]` OpenAI-compatible via OpenRouter-style base
 - `[ ]` OpenAI adapter dedicado
-- `[ ]` Ollama
+- `[x]` Ollama
 - `[ ]` Bedrock
 - `[x]` smart model routing por complexidade
   heurística por request (tools, imagem, contexto longo, thinking level), feedback recente persistido por rota, circuit-breaker em nível de rota e de provider, cooldowns com persistência, reordenação por custo via `RoutingCostHook`, `/budget` surfaçado em todos os canais.
@@ -149,9 +149,8 @@ Este documento não tenta copiar a arquitetura do IronClaw. O objetivo é mapear
 
 ### P1
 
-- `[>]` Ollama provider
-- `[>]` HTTP/web gateway com SSE
-- `[>]` event broadcast do runtime
+- `[>]` event broadcast do runtime (eventos de agente/sessão além de logs)
+- `[>]` heartbeat/proactive runtime
 
 ### P2
 
