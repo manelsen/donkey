@@ -41,6 +41,24 @@ An inner `func` that reads/writes an outer `var` is a side-effect; Nim rejects i
 ### Helper procs for Result construction in DiagResult converters
 When a public proc returns a non-Result type (e.g. `DiagResult`) but needs to construct intermediate `Result[string, string]` values for `|>->` piping, extract the Result-building logic into a private helper proc. The helper returns `Result[string, string]`, so `ok(v)` / `err(msg)` work normally inside it.
 
+### |>-> inside boolean `and` requires parentheses
+`cond and x |>-> f(y)` is a parse error — `|>->` binds `f(y) and ...` as its callable. Always write `cond and (x |>-> f(y))`.
+
+### ok() type inference in test blocks
+`ok("value") >>= f` fails in a test block because there is no surrounding Result-returning proc to infer from. Use `Result[string, string].ok("value")` explicitly. The `ok[T, E](v)` generic form does NOT work with this results library.
+
+---
+
+## 2026-03-22 - US-007
+- What was implemented: Shannon entropy analysis added to `src/donkey/core/security/secret_scan.nim`. Added `calculateEntropy()` (Shannon formula using `std/math.log2`), `entropyAbove(threshold, s)` (last-arg for `|>->`), `scanHighEntropy()` (detects random-looking tokens above `EntropyThreshold = 3.5` bits/char), `checkForSecrets()` (Result gate for `>>=` chaining), `skHighEntropy` enum variant. All three pipeops operators demonstrated in production code and tests. Existing prefix-mask and contextual-key scanners unchanged.
+- Files changed:
+  - `src/donkey/core/security/secret_scan.nim` — added entropy functions, `checkForSecrets`, `skHighEntropy`; added `import std/math` and `import ../pipeops`
+  - `tests/core/t_secret_scan.nim` — added suites: `calculateEntropy`, `entropyAbove`, high-entropy detection, pipeops operators (8 new tests); added `import std/sequtils` and `import donkey/core/pipeops`
+- **Learnings:**
+  - `|>->` inside an `and` expression must be parenthesized: `a and (x |>-> f(y))` — without parens, `|>->` tries to consume `f(y) and ...` as its callable and gives a type mismatch.
+  - `ok("value")` cannot infer Result type in test blocks (no surrounding proc with Result return type) — must use `Result[string, string].ok("value")` explicitly. The `ok[T, E](v)` form does NOT work.
+  - `filterIt` requires `import std/sequtils` even when `strutils` is already imported.
+  - Shannon entropy with `std/math.log2` is pure and compiles in `func` without any exception annotation issues.
 ---
 
 ## 2026-03-22 - US-006

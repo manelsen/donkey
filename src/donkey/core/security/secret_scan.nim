@@ -3,16 +3,24 @@
 ## Used to warn when tool output, HTTP responses, or other external content
 ## may contain leaked credentials before they enter the conversation history.
 ##
-## No regex dependency: all pattern matching uses string prefix/length checks.
-## Conservative by design — known patterns only, to minimise false positives.
+## Pattern matching uses string prefix masks (KnownPrefixes) and Shannon
+## entropy analysis. Conservative by design — false positives are worse than
+## false negatives for user experience.
+##
+## Pipeline topology (pipeops):
+##   text |> scanForSecrets              -- unary scan
+##   text |>-> entropyAbove(3.5)         -- last-arg threshold test
+##   ok(text) >>= checkForSecrets        -- Result chaining (gate in pipeline)
 
-import std/strutils
+import std/[strutils, math]
+import ../pipeops
 
 type
   SecretKind* = enum
     skKnownPrefix    ## matches a known API key prefix (sk-, AKIA, ghp_, …)
     skBearerToken    ## Bearer <long-token>
     skContextualKey  ## key/token/secret/password word followed by long value
+    skHighEntropy    ## high Shannon entropy (> EntropyThreshold bits/char)
 
   SecretFinding* = object
     kind*: SecretKind
@@ -21,10 +29,11 @@ type
 # ── tunables ──────────────────────────────────────────────────────────────────
 
 const
-  MinTokenLen   = 20    ## minimum length for a value to look like a secret
-  HintPrefixLen = 6     ## how many chars to keep in the hint
+  MinTokenLen      = 20      ## minimum length for a value to look like a secret
+  HintPrefixLen    = 6       ## how many chars to keep in the hint
+  EntropyThreshold = 3.5'f64 ## bits per char; random API keys typically > 4.0
 
-# ── known provider prefixes ───────────────────────────────────────────────────
+# ── known provider prefix masks ───────────────────────────────────────────────
 
 const KnownPrefixes = [
   "sk-ant-api03-",   ## Anthropic (new format)
@@ -55,7 +64,7 @@ const ContextWords = [
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-func makeHint(s: string): string =
+func makeHint*(s: string): string =
   let n = min(HintPrefixLen, s.len)
   s[0 ..< n] & "..."
 
@@ -79,6 +88,27 @@ func tokenSplit(text: string): seq[string] =
       current.add(c)
   if current.len > 0:
     result.add(current)
+
+# ── entropy ───────────────────────────────────────────────────────────────────
+
+func calculateEntropy*(s: string): float =
+  ## Computes Shannon entropy (bits per character) of s.
+  ## High values (> 3.5) suggest random/secret content; low-entropy strings
+  ## like repeated chars or dictionary words score below 3.0.
+  if s.len == 0: return 0.0'f64
+  var freq: array[256, int]
+  for c in s:
+    inc freq[ord(c)]
+  let n = s.len.float
+  for count in freq:
+    if count > 0:
+      let p = count.float / n
+      result -= p * log2(p)
+
+func entropyAbove*(threshold: float; s: string): bool =
+  ## Returns true if s has Shannon entropy > threshold.
+  ## Designed for |>-> piping: s |>-> entropyAbove(3.5)
+  calculateEntropy(s) > threshold
 
 # ── scanners ──────────────────────────────────────────────────────────────────
 
@@ -162,14 +192,32 @@ func scanContextualKeys(text: string): seq[SecretFinding] =
       if looksLikePassword(val):
         result.add SecretFinding(kind: skContextualKey, hint: makeHint(val))
 
+func scanHighEntropy(text: string): seq[SecretFinding] =
+  ## Flags tokens with Shannon entropy > EntropyThreshold.
+  ## Catches random-looking strings that don't match any known prefix mask.
+  for token in tokenSplit(text):
+    if token.len >= MinTokenLen and (token |>-> entropyAbove(EntropyThreshold)):
+      result.add SecretFinding(kind: skHighEntropy, hint: makeHint(token))
+
 # ── public API ────────────────────────────────────────────────────────────────
 
 func scanForSecrets*(text: string): seq[SecretFinding] =
   ## Returns all detected secret-like patterns in `text`.
-  ## Conservative: only known patterns and contextual heuristics.
+  ## Conservative: only known prefix masks, contextual heuristics, and high entropy.
   result.add scanKnownPrefixes(text)
   result.add scanBearerTokens(text)
   result.add scanContextualKeys(text)
+  result.add scanHighEntropy(text)
 
 func hasSecrets*(text: string): bool =
-  scanForSecrets(text).len > 0
+  ## Convenience predicate; designed for use with |> in boolean pipelines.
+  text |> scanForSecrets |> len > 0
+
+func checkForSecrets*(text: string): Result[string, string] =
+  ## Returns Ok(text) if clean, Err(hint) if secrets detected.
+  ## Designed for >>= chaining: ok(text) >>= checkForSecrets >>= nextStep
+  let findings = text |> scanForSecrets
+  if findings.len > 0:
+    err("secret detected: " & findings[0].hint)
+  else:
+    ok(text)
