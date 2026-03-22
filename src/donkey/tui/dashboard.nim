@@ -209,6 +209,19 @@ proc drawStats(tb: var TerminalBuffer; st: TuiState; y0: int) =
           it.route & " ok:" & $it.okCalls & "/" & $it.calls &
           " err:" & $it.errCalls &
           " avg:" & $it.avgLatencyMs & "ms").join(", "))
+  row("Recent provider metrics",
+      if st.status.recentProviderMetrics.len == 0:
+        "-"
+      else:
+        st.status.recentProviderMetrics.mapIt(
+          it.providerName & " ok:" & $it.okCalls & "/" & $it.calls &
+          " err:" & $it.errCalls &
+          " avg:" & $it.avgLatencyMs & "ms").join(", "))
+  row("Provider cooldowns",
+      if st.status.providerCooldowns.len == 0:
+        "-"
+      else:
+        st.status.providerCooldowns.join(", "))
   row("Log entries",     $st.logs.len)
 
 proc render(tb: var TerminalBuffer; st: TuiState) =
