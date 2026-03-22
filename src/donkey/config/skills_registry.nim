@@ -21,27 +21,6 @@ type
     tools*:       seq[string]
     permissions*: seq[string]
 
-proc saveSkillEntry*(path: string; m: SkillManifest) =
-  ## Appends one [[skill]] section to the TOML file at `path`.
-  ## Creates the file (and parent dirs) if it does not exist.
-  createDir(parentDir(path))
-  var f = open(path, fmAppend)
-  defer: f.close()
-  f.writeLine("\n[[skill]]")
-  f.writeLine("name    = \"" & m.name & "\"")
-  f.writeLine("version = \"" & m.version & "\"")
-  f.writeLine("script  = \"" & m.script & "\"")
-  proc tomlStrArray(items: seq[string]): string =
-    result = "["
-    for i, s in items:
-      if i > 0: result.add(", ")
-      result.add("\"" & s & "\"")
-    result.add("]")
-  if m.tools.len > 0:
-    f.writeLine("tools       = " & tomlStrArray(m.tools))
-  if m.permissions.len > 0:
-    f.writeLine("permissions = " & tomlStrArray(m.permissions))
-
 func parseAllowNetHosts*(permission: string): seq[string] =
   if not permission.startsWith("--allow-net="):
     return
@@ -50,6 +29,25 @@ func parseAllowNetHosts*(permission: string): seq[string] =
     let normalized = host.strip().toLowerAscii()
     if normalized.len > 0:
       result.add(normalized)
+
+func validateDangerousPermissions*(permissions: seq[string]): Result[void, string] =
+  ## Rejects permissions that are unconditionally unsafe regardless of allowlist.
+  ## Called by saveSkillEntry as a last-resort guard.
+  for permission in permissions:
+    case permission
+    of "-A", "--allow-all":
+      return err("Error: unrestricted Deno permissions are not allowed for skills.")
+    of "--allow-net", "--allow-net=":
+      return err("Error: --allow-net must declare explicit hosts.")
+    else:
+      discard
+    if permission.startsWith("--allow-net="):
+      let hosts = parseAllowNetHosts(permission)
+      if hosts.len == 0:
+        return err("Error: --allow-net must declare explicit hosts.")
+      if "*" in hosts:
+        return err("Error: wildcard --allow-net is not allowed for skills.")
+  ok()
 
 func validateSkillPermissions*(permissions: seq[string];
                                webAllowlist: seq[string]): Result[seq[string], string] =
@@ -79,6 +77,30 @@ func validateSkillPermissions*(permissions: seq[string];
             return err("Error: skill host '" & host & "' is outside the configured web allowlist.")
 
   ok(permissions)
+
+proc saveSkillEntry*(path: string; m: SkillManifest): Result[void, string] =
+  ## Appends one [[skill]] section to the TOML file at `path`.
+  ## Creates the file (and parent dirs) if it does not exist.
+  ## Returns Err without writing if permissions contain unconditionally unsafe flags.
+  ? validateDangerousPermissions(m.permissions)
+  createDir(parentDir(path))
+  var f = open(path, fmAppend)
+  defer: f.close()
+  f.writeLine("\n[[skill]]")
+  f.writeLine("name    = \"" & m.name & "\"")
+  f.writeLine("version = \"" & m.version & "\"")
+  f.writeLine("script  = \"" & m.script & "\"")
+  proc tomlStrArray(items: seq[string]): string =
+    result = "["
+    for i, s in items:
+      if i > 0: result.add(", ")
+      result.add("\"" & s & "\"")
+    result.add("]")
+  if m.tools.len > 0:
+    f.writeLine("tools       = " & tomlStrArray(m.tools))
+  if m.permissions.len > 0:
+    f.writeLine("permissions = " & tomlStrArray(m.permissions))
+  ok()
 
 proc loadSkillRegistry*(path: string): seq[SkillManifest] =
   ## Reads all [[skill]] entries from the TOML file at `path`.
