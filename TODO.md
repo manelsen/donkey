@@ -12,12 +12,6 @@ Itens realmente abertos no estado atual do código. Para visão macro, ver [`ROA
   Próximo passo:
   padronizar engine suportada ou documentar explicitamente o subset aceito.
 
-- [ ] **Trocar `std/sha1` deprecated no `WeChatAdapter`**
-  Estado:
-  a validação de assinatura compila e funciona, mas usa módulo deprecated.
-  Próximo passo:
-  migrar para `checksums/sha1` ou equivalente não deprecated.
-
 ---
 
 ## F7 — Skills ecosystem
@@ -33,14 +27,6 @@ Itens realmente abertos no estado atual do código. Para visão macro, ver [`ROA
 ---
 
 ## F8 — Canais chineses
-
-- [ ] **Ingress real de WeChat**
-  Estado:
-  `WeChatAdapter` já cobre OAuth URL, parsing de webhook XML, envio e template message, mas o inbound ainda depende de forwarding externo para `enqueueWebhookXml`.
-
-- [ ] **Ingress real de QQ / OneBot**
-  Estado:
-  `QQAdapter` já cobre send e parsing de evento, mas ainda depende de forwarding externo para `enqueueEventJson`.
 
 - [ ] **Fixtures/end-to-end dos canais novos**
   Estado:
@@ -90,6 +76,9 @@ Itens realmente abertos no estado atual do código. Para visão macro, ver [`ROA
 
 ## Feito recentemente
 
+- ✅ `std/sha1` deprecated substituído por `checksums/sha1` no WeChatAdapter
+- ✅ Ingress real de WeChat: servidor HTTP embutido com validação SHA1, GET challenge e POST XML, thread dedicada, Channel thread-safe
+- ✅ Ingress real de QQ OneBot: servidor HTTP embutido para eventos OneBot v11 POST JSON, thread dedicada, Channel thread-safe
 - ✅ Smart model routing completo: heurística por request (tools/imagem/contexto/thinking), circuit-breaker em nível de rota e de provider, cooldowns persistidos, reordenação por custo, `/budget` em todos os canais, telemetria exposta no TUI e IPC
 - ✅ Hardening básico de tool output: resultado de tool agora entra no histórico envelopado como conteúdo não confiável
 - ✅ Separação básica entre erro operacional e resultado funcional nas native tools e no ToolAgent

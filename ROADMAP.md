@@ -200,8 +200,9 @@ Estado atual:
 - [x] `WeChatAdapter` — Official Account API (OAuth 2.0, template messages)
 - [x] `QQAdapter` — OneBot v11 HTTP
 
-### Limitação atual
-- [ ] Ingress próprio desses canais ainda depende de forwarding externo para os adapters, em vez de um servidor dedicado embutido no daemon
+### Fechado
+- [x] Ingress real de WeChat: servidor HTTP embutido com challenge GET + POST XML, SHA1 signature, thread dedicada
+- [x] Ingress real de QQ OneBot: servidor HTTP embutido para POST JSON OneBot v11, thread dedicada
 
 ---
 
@@ -253,11 +254,11 @@ Ver também [`IRONCLAW_PARITY.md`](/home/micelio/git/donkey/IRONCLAW_PARITY.md).
 1. Hardening de segurança
    - prompt injection via tool output
    - allowlist explícita de endpoints
-   - troca de `std/sha1` deprecated no WeChat
+   - ✅ troca de `std/sha1` deprecated no WeChat → `checksums/sha1`
 
-2. Fechar inbound real de canais novos
-   - WeChat
-   - QQ / OneBot
+2. ✅ Fechar inbound real de canais novos
+   - ✅ WeChat — servidor HTTP embutido
+   - ✅ QQ OneBot — servidor HTTP embutido
 
 3. Gateway contínuo
    - HTTP/Web gateway com SSE/WebSocket
