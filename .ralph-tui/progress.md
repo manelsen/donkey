@@ -47,6 +47,21 @@ When a public proc returns a non-Result type (e.g. `DiagResult`) but needs to co
 ### ok() type inference in test blocks
 `ok("value") >>= f` fails in a test block because there is no surrounding Result-returning proc to infer from. Use `Result[string, string].ok("value")` explicitly. The `ok[T, E](v)` generic form does NOT work with this results library.
 
+### Multi-line |>-> chain requires operator at end of line or parentheses
+Nim does not allow a line to begin with a binary operator as a continuation (invalid indentation error). For multi-line `|>->` chains, either put the operator at the end of the preceding line (`x |>-> f(...) |>->`) or parenthesize the first call: `(x |>-> f(...)) |>-> g(...)`.
+
+---
+
+## 2026-03-22 - US-008
+- What was implemented: Response sanitizer in `src/donkey/core/output_sanitizer.nim`. Provides `stripTagPair(open, close, text)` (last-arg for `|>->`), `stripThoughtTags(text)` (strips `<thinking>` and `<think>` blocks, designed for `|>`), `maskSecrets(text)` (replaces secret tokens with `[REDACTED]` using the same tokenizer as `secret_scan`, designed for `|>`), and `cleanResponse(text)` (main entry point chaining `text |> stripThoughtTags |> maskSecrets`).
+- Files changed:
+  - `src/donkey/core/output_sanitizer.nim` — new pure module (37 tests passing)
+  - `tests/core/t_output_sanitizer.nim` — 37 tests across 8 suites covering all functions and all three pipeops operators
+- **Learnings:**
+  - Multi-line `|>->` chains: cannot start a continuation line with `|>->` — Nim reports invalid indentation. Fix: put `|>->` at the end of the preceding line, or wrap the first call in parens: `(x |>-> f(...)) |>-> g(...)`.
+  - `func` can freely mutate its implicit `result` variable in a loop — this is not a side-effect restriction. Pattern `result = text; for pair in pairs: result = result |>-> f(pair[0], pair[1])` compiles cleanly.
+  - Iterating an array of tuples with `for pair in ThoughtTagPairs: let (open, close) = pair` is cleaner than `for (open, close) in ...` which may have parsing edge cases.
+  - `>>=` pipeline test pattern confirmed: `Result[string, string].ok(cleaned) >>= checkForSecrets` — must use full type annotation in test blocks.
 ---
 
 ## 2026-03-22 - US-007
