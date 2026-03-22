@@ -37,6 +37,9 @@ model = "claude-opus"
 """)
     check label == "anthropic/claude-opus"
 
+  test "providerLabelFromPrefs returns auto when prefs do not pin provider":
+    check providerLabelFromPrefs("thinking = \"medium\"") == "auto"
+
   test "encodeSessionPayload keeps plain text when no media":
     let msg = InboundMessage(userId: UserId("u1"), text: "hello")
     check encodeSessionPayload(msg) == "hello"

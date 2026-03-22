@@ -24,6 +24,9 @@ type
     label*:        string
     isFree*:       bool
     available*:    bool
+    hasPricing*:   bool
+    inputCostMicrosPer1k*: int
+    outputCostMicrosPer1k*: int
 
   ModelCatalogSource* = enum
     mcsLive

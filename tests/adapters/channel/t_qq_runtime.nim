@@ -32,7 +32,7 @@ suite "qq_runtime":
 
   test "qq rich help and status use markdown structure":
     let help = qqHelpText(qbkOfficial)
-    let status = qqStatusText("groq", "llama-3.1-8b-instant", "high", 7, 2, "15m")
+    let status = qqStatusText("Provider: groq / llama-3.1-8b-instant", "high", 7, 2, "15m")
     check help.contains("## Donkey")
     check help.contains("- `/models` seletor de modelo")
     check status.contains("## Status")

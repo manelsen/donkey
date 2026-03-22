@@ -60,7 +60,7 @@ Itens realmente abertos no estado atual do código. Para visão macro, ver [`ROA
 
 - [ ] **Smart model routing**
   Estado:
-  já temos múltiplos providers e fallback por sessão, mas ainda não há roteamento automático por complexidade/custo/latência.
+  já existe roteamento automático por request, com telemetry agregada, preview de `auto` na UI, policy declarada de budget (`cheap-first` / `balanced` / `quality-first`), reordenação por saúde recente da rota, circuit-breaker leve, janela recente persistida no estado local e preferência por rotas com pricing real conhecido; ainda faltam surface de comando para budget, cobertura melhor de pricing fora do OpenRouter e policies mais fortes de fallback/circuit-breaker.
 
 - [ ] **Ollama provider**
   Estado:

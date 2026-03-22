@@ -3,11 +3,11 @@
 ## Concentrates provider selection, fallback composition, per-user skill merge
 ## and native tool exposure so the daemon entrypoint only coordinates lifecycle.
 
-import std/[json, os, strutils]
-import parsetoml
+import std/[json, os]
 import ../config/skills_registry
 import ../config/clawhub_registry
 import ../core/pipeops
+import ../core/providers/smart_routing
 import ../domain/agent_message
 import ../domain/message
 import ../domain/builtin_tools
@@ -50,18 +50,8 @@ proc defaultProviderPrefs*(): ProviderPrefs =
   ProviderPrefs(providerName: "zai-coding", modelName: "")
 
 proc parseProviderPrefs*(preferencesMd: string): ProviderPrefs {.gcsafe, raises: [].} =
-  result = defaultProviderPrefs()
-  if preferencesMd.len == 0:
-    return
-  try:
-    {.cast(gcsafe).}:
-      let t = parsetoml.parseString(preferencesMd)
-      if t.hasKey("provider"):
-        result.providerName = t["provider"].getStr()
-      if t.hasKey("model"):
-        result.modelName = t["model"].getStr()
-  except:
-    discard
+  let prefs = parseSmartRoutingPrefs(preferencesMd)
+  ProviderPrefs(providerName: prefs.providerName, modelName: prefs.modelName)
 
 proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: [].} =
   case prefs.providerName
@@ -106,9 +96,62 @@ proc buildProviderBundle*(preferencesMd: string;
                           providerRuntimeBuilder: ProviderRuntimeBuilder): ProviderBundle {.gcsafe.} =
   providerRuntimeBuilder(buildProviderSpec(parseProviderPrefs(preferencesMd)))
 
+func detectProviderAvailability*(): ProviderAvailability =
+  ProviderAvailability(
+    openrouter: getEnv("OPENROUTER_API_KEY").len > 0,
+    anthropic: getEnv("ANTHROPIC_API_KEY").len > 0,
+    gemini: getEnv("GEMINI_API_KEY").len > 0,
+    minimax: getEnv("MINIMAX_API_KEY").len > 0,
+    zai: getEnv("ZAI_API_KEY").len > 0,
+    zaiCoding: getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")).len > 0,
+  )
+
+func toProviderSpec*(selection: ProviderSelection): ProviderSpec =
+  buildProviderSpec(ProviderPrefs(
+    providerName: selection.providerName,
+    modelName: selection.modelName,
+  ))
+
 proc buildCompleteFn*(preferencesMd: string;
-                      providerRuntimeBuilder: ProviderRuntimeBuilder): CompleteFn {.gcsafe.} =
-  buildProviderBundle(preferencesMd, providerRuntimeBuilder).completeFn
+                      providerRuntimeBuilder: ProviderRuntimeBuilder;
+                      routingHook: RoutingTelemetryHook = nil;
+                      routingResultHook: RoutingResultHook = nil;
+                      routingFeedbackHook: RoutingFeedbackHook = nil;
+                      routingCostHook: RoutingCostHook = nil): CompleteFn {.gcsafe.} =
+  let prefs = parseSmartRoutingPrefs(preferencesMd)
+  let availability = detectProviderAvailability()
+  result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
+    let baseSelections = smartRouteSelections(prefs, req, availability)
+    let rankedSelections =
+      if routingFeedbackHook != nil:
+        reorderSelectionsWithFeedback(baseSelections, routingFeedbackHook())
+      else:
+        baseSelections
+    let selections =
+      if routingFeedbackHook != nil:
+        applyCircuitBreaker(rankedSelections, routingFeedbackHook())
+      else:
+        rankedSelections
+    let costAwareSelections =
+      if routingCostHook != nil:
+        reorderSelectionsWithCost(selections, routingCostHook(), prefs.budgetPolicy)
+      else:
+        selections
+    var lastErr = "no provider available"
+    for selection in costAwareSelections:
+      if routingHook != nil:
+        routingHook(selection, prefs, req)
+      let startedAt = nowMs()
+      let bundle = providerRuntimeBuilder(selection.toProviderSpec)
+      if bundle.completeFn == nil:
+        continue
+      let response = bundle.completeFn(req)
+      if routingResultHook != nil:
+        routingResultHook(selection, nowMs() - startedAt, response.isOk)
+      if response.isOk:
+        return response
+      lastErr = response.error
+    err(lastErr)
 
 proc buildFallbackFn*(primary: CompleteFn; fallbacks: seq[CompleteFn]): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
@@ -120,18 +163,7 @@ proc buildFallbackFn*(primary: CompleteFn; fallbacks: seq[CompleteFn]): Complete
     r
 
 func providerLabelFromPrefs*(prefs: string): string =
-  var prov = "zai-coding"
-  var mdl  = ""
-  for line in prefs.splitLines():
-    let parts = line.split('=', 1)
-    if parts.len != 2: continue
-    let k = parts[0].strip()
-    let v = parts[1].strip().strip(chars = {'"'})
-    case k
-    of "provider": prov = v
-    of "model":    mdl  = v
-    else: discard
-  if mdl.len > 0: prov & "/" & mdl else: prov
+  parseSmartRoutingPrefs(prefs).routingLabel
 
 func encodeSessionPayload*(msg: InboundMessage): string =
   if msg.mediaUrl.len == 0:
@@ -229,11 +261,21 @@ proc mergeUserSkillsIntoSession*(skillsDir: string;
           ))
         sessionClients.add(res.value.port)
 
-proc buildSessionCompleteFn*(preferencesMd: string;
+proc buildSessionCompleteFn*(memory: MemoryRuntimePort;
+                             userId: UserId;
                              fallbackCompleteFn: CompleteFn;
-                             providerRuntimeBuilder: ProviderRuntimeBuilder): CompleteFn {.gcsafe.} =
-  let primary = buildCompleteFn(preferencesMd, providerRuntimeBuilder)
-  buildFallbackFn(primary, @[fallbackCompleteFn])
+                             providerRuntimeBuilder: ProviderRuntimeBuilder;
+                             routingHook: RoutingTelemetryHook = nil;
+                             routingResultHook: RoutingResultHook = nil;
+                             routingFeedbackHook: RoutingFeedbackHook = nil;
+                             routingCostHook: RoutingCostHook = nil): CompleteFn {.gcsafe.} =
+  result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
+    let preferencesMd = memory.loadContext(userId).preferencesMd
+    let primary = buildCompleteFn(
+      preferencesMd, providerRuntimeBuilder, routingHook, routingResultHook,
+      routingFeedbackHook, routingCostHook)
+    let fallbacks = if fallbackCompleteFn != nil: @[fallbackCompleteFn] else: @[]
+    buildFallbackFn(primary, fallbacks)(req)
 
 proc loadSessionBootstrapPlan*(input: SessionContext): SessionBootstrapPlan {.gcsafe.} =
   let ctx = input
@@ -246,10 +288,17 @@ proc loadSessionBootstrapPlan*(input: SessionContext): SessionBootstrapPlan {.gc
 
 proc withSessionCompleteFn*(fallbackCompleteFn: CompleteFn;
                             providerRuntimeBuilder: ProviderRuntimeBuilder;
+                            memory: MemoryRuntimePort;
+                            userId: UserId;
+                            routingHook: RoutingTelemetryHook;
+                            routingResultHook: RoutingResultHook;
+                            routingFeedbackHook: RoutingFeedbackHook;
+                            routingCostHook: RoutingCostHook;
                             plan: SessionBootstrapPlan): SessionBootstrapPlan {.gcsafe.} =
   result = plan
   result.completeFn = buildSessionCompleteFn(
-    plan.preferencesMd, fallbackCompleteFn, providerRuntimeBuilder)
+    memory, userId, fallbackCompleteFn, providerRuntimeBuilder,
+    routingHook, routingResultHook, routingFeedbackHook, routingCostHook)
 
 func withSessionToolBundle*(toolBundle: SessionToolBundle;
                             plan: SessionBootstrapPlan): SessionBootstrapPlan =
@@ -286,12 +335,18 @@ proc buildSessionBootstrap*(memory:      MemoryRuntimePort;
                             skillRuntimeBuilder: SkillRuntimeBuilder;
                             skillRuntimePolicyResolver: SkillRuntimePolicyResolver;
                             toolClients: seq[ToolRuntimePort];
-                            tools:       seq[ToolDescription]): SessionBootstrap {.gcsafe.} =
+                            tools:       seq[ToolDescription];
+                            routingHook: RoutingTelemetryHook = nil;
+                            routingResultHook: RoutingResultHook = nil;
+                            routingFeedbackHook: RoutingFeedbackHook = nil;
+                            routingCostHook: RoutingCostHook = nil): SessionBootstrap {.gcsafe.} =
   let toolBundle = buildSessionToolBundle(
     memory, userId, skillRuntimeBuilder, skillRuntimePolicyResolver, toolClients, tools)
   result =
     (((loadSessionContext(memory, userId) |>
        loadSessionBootstrapPlan) |>->
-       withSessionCompleteFn(completeFn, providerRuntimeBuilder)) |>->
+       withSessionCompleteFn(
+         completeFn, providerRuntimeBuilder, memory, userId,
+         routingHook, routingResultHook, routingFeedbackHook, routingCostHook)) |>->
        withSessionToolBundle(toolBundle)) |>
        finalizeSessionBootstrap

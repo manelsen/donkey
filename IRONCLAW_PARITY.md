@@ -94,8 +94,10 @@ Este documento não tenta copiar a arquitetura do IronClaw. O objetivo é mapear
 - `[ ]` OpenAI adapter dedicado
 - `[ ]` Ollama
 - `[ ]` Bedrock
-- `[ ]` smart model routing por complexidade
-- `[ ]` provider telemetry de roteamento
+- `[-]` smart model routing por complexidade
+  já existe heurística por request, feedback recente persistido, circuit-breaker leve e preferência por pricing conhecido; ainda faltam budget policy e defaults mais ricos por modelo.
+- `[-]` provider telemetry de roteamento
+  já existem contadores e métricas agregadas/Recentes no daemon e no TUI; ainda falta telemetria mais profunda por custo real e janela operacional mais rica.
 - `[ ]` reasoning/thinking defaults por modelo
 
 ## 6. Tools e extensibilidade
@@ -149,7 +151,8 @@ Este documento não tenta copiar a arquitetura do IronClaw. O objetivo é mapear
 
 ### P1
 
-- `[>]` smart model routing por complexidade
+- `[-]` smart model routing por complexidade
+  já saiu do zero: hoje há feedback recente persistido, circuit-breaker leve e custo conhecido quando o catálogo expõe pricing.
 - `[>]` Ollama provider
 - `[>]` HTTP/web gateway com SSE
 - `[>]` event broadcast do runtime
