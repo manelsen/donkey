@@ -1,5 +1,6 @@
 ## QQChannelAdapter — unified QQ channel facade for OneBot and official QQ Bot API.
 
+import std/net
 import ../../core/pipeops
 import ../../core/types
 import ../../domain/message
@@ -143,5 +144,12 @@ proc startGateway*(a: var QQChannelAdapter) =
   case a.kind
   of qbkOfficial:
     a.official.startGateway()
+  else:
+    discard
+
+proc startWebhook*(a: QQChannelAdapter; port: Port) =
+  case a.kind
+  of qbkOneBot:
+    a.onebot.startWebhook(port)
   else:
     discard
