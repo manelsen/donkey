@@ -62,6 +62,17 @@ suite "common_runtime":
     check text.contains("high")
     check getCurrentThinkLevel(memory, userId) == "high"
 
+  test "applyBudgetTextCommand persists policy":
+    let tmpDir = getTempDir() / "donkey_common_runtime_budget"
+    let memory = MdFileAdapter(paddocksDir: tmpDir)
+    let userId = UserId("u-common-budget")
+    defer:
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+    let text = applyBudgetTextCommand(memory, userId, "cheap-first").get()
+    check text.contains("cheap-first")
+    check getCurrentBudgetPolicy(memory, userId) == "cheap-first"
+
   test "buildModelsHelpText shows catalog source":
     let tmpDir = getTempDir() / "donkey_common_runtime_catalog"
     let memory = MdFileAdapter(paddocksDir: tmpDir)

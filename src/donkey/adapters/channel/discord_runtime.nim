@@ -117,6 +117,10 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
         if msgId.len > 0:
           kbdMsgIds[$userId] = msgId
     true
+  of cmdBudget:
+    let reply = memory.applyBudgetTextCommand(userId, command.value).valueOr: error
+    sendDiscordReply(event, dcAdapter, userId, reply, log)
+    true
   else:
     false
 

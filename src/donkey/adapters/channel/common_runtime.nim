@@ -8,6 +8,7 @@ import ../../domain/message
 import ../../ports/provider
 
 const ThinkLevels* = ["off", "low", "medium", "high"]
+const BudgetPolicies* = ["cheap-first", "balanced", "quality-first"]
 const ModelPageSize* = 8
 
 const ModelMenu* = [
@@ -86,6 +87,9 @@ proc getCurrentProviderModel*(memory: MdFileAdapter;
 
 proc getCurrentThinkLevel*(memory: MdFileAdapter; userId: UserId): string =
   memory.loadChannelPrefs(userId).thinking
+
+proc getCurrentBudgetPolicy*(memory: MdFileAdapter; userId: UserId): string =
+  parseSmartRoutingPrefs(memory.loadContext(userId).preferencesMd).budgetPolicy
 
 proc buildThinkButtons*(memory: MdFileAdapter;
                         userId: UserId): seq[seq[(string, string)]] =
@@ -239,6 +243,14 @@ func parseThinkArgs*(value: string): Result[string, string] =
     return err("Nível inválido: `" & level & "`.")
   ok(level)
 
+func parseBudgetArgs*(value: string): Result[string, string] =
+  let policy = normalizeBudgetPolicy(value)
+  if value.strip.len == 0:
+    return err("Use `/budget <cheap-first|balanced|quality-first>`.")
+  if policy != value.strip.toLowerAscii():
+    return err("Policy inválida: `" & value.strip & "`.")
+  ok(policy)
+
 proc buildModelsHelpText*(memory: MdFileAdapter;
                           userId: UserId;
                           modelCatalogLoader: ModelCatalogLoader = nil): string =
@@ -279,6 +291,11 @@ proc buildThinkHelpText*(memory: MdFileAdapter; userId: UserId): string =
   "\nNíveis: " & ThinkLevels.join(", ") &
   "\n\nUse `/think <level>` para trocar."
 
+proc buildBudgetHelpText*(memory: MdFileAdapter; userId: UserId): string =
+  "Budget atual: " & memory.getCurrentBudgetPolicy(userId) &
+  "\nPolicies: " & BudgetPolicies.join(", ") &
+  "\n\nUse `/budget <policy>` para trocar."
+
 proc applyModelsTextCommand*(memory: MdFileAdapter;
                              userId: UserId;
                              value: string;
@@ -316,6 +333,15 @@ proc applyThinkTextCommand*(memory: MdFileAdapter;
   let level = ? parseThinkArgs(value)
   memory.saveChannelPreference(userId, "thinking", level)
   ok("Thinking definido: " & level)
+
+proc applyBudgetTextCommand*(memory: MdFileAdapter;
+                             userId: UserId;
+                             value: string): Result[string, string] =
+  if value.strip.len == 0:
+    return ok(memory.buildBudgetHelpText(userId))
+  let policy = ? parseBudgetArgs(value)
+  memory.saveChannelPreference(userId, "budget", policy)
+  ok("Budget definido: " & policy)
 
 proc buildProviderStatusLine*(memory: MdFileAdapter; userId: UserId): string =
   let prefs = parseSmartRoutingPrefs(memory.loadContext(userId).preferencesMd)
@@ -363,10 +389,12 @@ func buildHelpText*(interactiveUi: bool): string =
     "/reset — reinicia a conversa atual\n" &
     (if interactiveUi:
        "/models — seleciona o modelo de IA\n" &
-       "/think — controla o nível de raciocínio\n"
+       "/think — controla o nível de raciocínio\n" &
+       "/budget — controla a policy de custo/qualidade\n"
      else:
        "/models [provider model] — vê ou troca o modelo de IA\n" &
-       "/think [level] — vê ou troca o nível de raciocínio\n") &
+       "/think [level] — vê ou troca o nível de raciocínio\n" &
+       "/budget [policy] — vê ou troca a policy de custo/qualidade\n") &
     "/memory — exibe memórias salvas\n" &
     "/forget — apaga as memórias salvas\n" &
     "/status — snapshot da sessão atual\n" &

@@ -90,6 +90,8 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
             memory.applyModelsTextCommand(userId, command.value, modelCatalogLoader).valueOr: error
           of cmdThink:
             memory.applyThinkTextCommand(userId, command.value).valueOr: error
+          of cmdBudget:
+            memory.applyBudgetTextCommand(userId, command.value).valueOr: error
           else:
             ""
         if reply.len > 0:

@@ -58,6 +58,9 @@ suite "core command routing":
     check parseCommandText("/models gemini gemini-2.5-pro").value == "gemini gemini-2.5-pro"
     check parseCommandText("/think").kind == cmdThink
     check parseCommandText("/think medium").value == "medium"
+    check parseCommandText("/budget").kind == cmdBudget
+    check parseCommandText("/budget").route == crUi
+    check parseCommandText("/budget cheap-first").value == "cheap-first"
     check parseCommandText("/ping").kind == cmdPing
     check parseCommandText("/ping").route == crPing
     check parseCommandText("/status").kind == cmdStatus
@@ -71,6 +74,7 @@ suite "core command routing":
     check isSessionTaskCommand(cmdReset)
     check isUiCommand(cmdModels)
     check isUiCommand(cmdThink)
+    check isUiCommand(cmdBudget)
     check isPingCommand(cmdPing)
     check isStatusCommand(cmdStatus)
     check not isCoreCommand(cmdNone)

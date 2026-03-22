@@ -147,6 +147,16 @@ proc handleDispatch(t: string; d: JsonNode) =
           interactionToken: interactionToken,
         ))
         return
+      if cmdName == "budget":
+        let policy = optionValue("policy")
+        gDiscordEvents.send(DiscordRawEvent(
+          kind:             deMessage,
+          discordUserId:    userId,
+          content:          if policy.len > 0: "/budget " & policy else: "/budget",
+          interactionId:    interactionId,
+          interactionToken: interactionToken,
+        ))
+        return
       if cmdName != "continue": return
       var code = ""
       code = optionValue("code")
@@ -601,6 +611,19 @@ proc registerSlashCommands*(a: DiscordAdapter; appId: string): Result[void, stri
         {
           "name": "level",
           "description": "off, low, medium, or high",
+          "type": 3,
+          "required": false,
+        }
+      ],
+    },
+    {
+      "name":        "budget",
+      "type":        1,
+      "description": "Show or change the cost/quality policy",
+      "options": [
+        {
+          "name": "policy",
+          "description": "cheap-first, balanced, or quality-first",
           "type": 3,
           "required": false,
         }
