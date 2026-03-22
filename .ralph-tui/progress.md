@@ -20,6 +20,24 @@ When a pure `func` needs to call stdlib procs that raise (e.g. `parseInt`, `pars
 ### Replacing try/except in func with pre-validation
 For simple numeric parsing where the value is already structurally validated (e.g. a digit-only string slice), use `allCharsInSet({'0'..'9'})` instead of try/except. This keeps pure funcs exception-free entirely when the format guarantee already holds.
 
+### Generic type parameter on non-generic funcs
+`func foo*[M](depth: int; s: MailboxStats): MailboxStats` — the `[M]` is invalid when no generic is actually used in the signature. Nim gives `Error: cannot instantiate: 'M'` at the call site. Remove unused type params from function signatures.
+
+### Inner func accessing outer var
+An inner `func` that reads/writes an outer `var` is a side-effect; Nim rejects it with `'foo' can have side effects`. Workaround: use a module-level `proc` for the callback, or redesign the test to avoid shared mutable state.
+
+---
+
+## 2026-03-22 - US-003
+- What was implemented: `src/donkey/core/actor.nim` — pure actor model mailbox types and resilience logic (BEAM/Pincer-inspired). Provides `Envelope[M]`, `DeadLetter[M]`, `MailboxPolicy`, `MailboxStats`, and pipeline-friendly pure functions (`incrementAttempt`, `toDeadLetter`, `trackSent/Received/Dropped`, `updateMaxDepth`, `applyPolicy`, `shouldRetry`, `isExpired`). All operators demonstrated: `|>` for unary transforms, `|>->` for last-arg composition, `>>=` for Result chaining.
+- Files changed:
+  - `src/donkey/core/actor.nim` — new module
+  - `tests/core/t_actor.nim` — 30 tests across 6 suites
+- **Learnings:**
+  - `core/` boundary rule blocks Chronos/asyncsync — actor mailbox async transport stays in `app/`; `core/actor.nim` provides the pure domain model (Envelope, DeadLetter, MailboxStats) that the app-layer AsyncQueue wraps.
+  - `500_i64` syntax is invalid in Nim — use plain `500` and let type inference work (or cast explicitly: `int64(500)`).
+  - `strutils` must be imported in tests to get `contains(string, string)` — otherwise the `results` `Opt.contains` overload takes precedence and causes a type mismatch.
+  - `func` cannot read outer `var` (side effect); the `>>=` template requires `{.gcsafe, raises: [].}` so inner test funcs must be pure and self-contained.
 ---
 
 ## 2026-03-22 - US-002
