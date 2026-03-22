@@ -1072,7 +1072,8 @@ proc startOptionalWeChatGateway(wchAdapter: var WeChatAdapter;
 
   let port = Port(parseInt(if getEnv("WECHAT_WEBHOOK_PORT").len > 0:
                              getEnv("WECHAT_WEBHOOK_PORT") else: "8081"))
-  wchAdapter.startWebhook(port)
+  {.cast(gcsafe).}:
+    wchAdapter.startWebhook(port)
   log.info("WeChat webhook listener started on port " & $port)
 
 proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
@@ -1082,7 +1083,12 @@ proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
     return
   case qqAdapter.kind
   of qbkOneBot:
-    log.info("QQ OneBot client enabled")
+    let oneBotPort = Port(parseInt(
+      if getEnv("QQ_ONEBOT_WEBHOOK_PORT").len > 0:
+        getEnv("QQ_ONEBOT_WEBHOOK_PORT") else: "8082"))
+    {.cast(gcsafe).}:
+      qqAdapter.startWebhook(oneBotPort)
+    log.info("QQ OneBot webhook listener started on port " & $oneBotPort)
   of qbkOfficial:
     log.info("QQ official API client enabled")
     {.cast(gcsafe).}:
