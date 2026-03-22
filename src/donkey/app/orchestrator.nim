@@ -34,6 +34,7 @@ import ../core/pipeops
 import ../core/log
 import ../core/onboarding/onboarding
 import ../core/tooling/tool_loop
+import ../core/security/secret_scan
 import ../domain/agent_message
 import ../domain/message
 import ../domain/personality
@@ -649,6 +650,9 @@ proc processToolCalls(globalOutbox: AsyncQueue[OutboundMessage];
       uid, channel, msgId, round, i, tc, providerLabel, debugMode, log)
     if toolResult.checkpointNow:
       state.checkpoints.add(result.history)
+    ## Warn if tool output appears to contain leaked credentials.
+    if hasSecrets(toolResult.text):
+      log.warn("tool '" & tc.name & "' output may contain secrets — check tool output")
     result =
       result |>->
       withToolResult(tc, toolResult.text, toolResult.resultKind, toolResult.newHistory)

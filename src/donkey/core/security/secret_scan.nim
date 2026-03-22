@@ -1,0 +1,175 @@
+## secret_scan — pure functions for detecting secret-like strings in text.
+##
+## Used to warn when tool output, HTTP responses, or other external content
+## may contain leaked credentials before they enter the conversation history.
+##
+## No regex dependency: all pattern matching uses string prefix/length checks.
+## Conservative by design — known patterns only, to minimise false positives.
+
+import std/strutils
+
+type
+  SecretKind* = enum
+    skKnownPrefix    ## matches a known API key prefix (sk-, AKIA, ghp_, …)
+    skBearerToken    ## Bearer <long-token>
+    skContextualKey  ## key/token/secret/password word followed by long value
+
+  SecretFinding* = object
+    kind*: SecretKind
+    hint*: string   ## first few chars of match + "…" — never exposes the full key
+
+# ── tunables ──────────────────────────────────────────────────────────────────
+
+const
+  MinTokenLen   = 20    ## minimum length for a value to look like a secret
+  HintPrefixLen = 6     ## how many chars to keep in the hint
+
+# ── known provider prefixes ───────────────────────────────────────────────────
+
+const KnownPrefixes = [
+  "sk-ant-api03-",   ## Anthropic (new format)
+  "sk-ant-",         ## Anthropic (older format)
+  "sk-proj-",        ## OpenAI project key
+  "sk-",             ## OpenAI / generic
+  "AKIA",            ## AWS access key ID
+  "ghp_",            ## GitHub personal access token
+  "ghs_",            ## GitHub service token
+  "gho_",            ## GitHub OAuth token
+  "ghr_",            ## GitHub refresh token
+  "github_pat_",     ## GitHub fine-grained PAT
+  "xoxb-",           ## Slack bot token
+  "xoxp-",           ## Slack user token
+  "xoxa-",           ## Slack app token
+  "xoxs-",           ## Slack session token
+  "ya29.",           ## Google OAuth2 access token
+  "AIza",            ## Google API key
+]
+
+# ── context words that may precede a secret value ─────────────────────────────
+
+const ContextWords = [
+  "apikey", "api_key", "api-key",
+  "token", "secret", "password", "passwd",
+  "credential", "credentials",
+]
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+func makeHint(s: string): string =
+  let n = min(HintPrefixLen, s.len)
+  s[0 ..< n] & "..."
+
+func looksLikeSecretValue(s: string): bool =
+  ## Returns true if s is long enough and contains only token-safe characters.
+  if s.len < MinTokenLen: return false
+  for c in s:
+    if c notin {'a'..'z', 'A'..'Z', '0'..'9', '-', '_', '.', '+', '/', '='}:
+      return false
+  true
+
+func tokenSplit(text: string): seq[string] =
+  ## Splits text into tokens on whitespace and common key=value delimiters.
+  var current = ""
+  for c in text:
+    if c in {' ', '\t', '\n', '\r', '"', '\'', ',', ';', '(', ')', '[', ']', '{', '}'}:
+      if current.len > 0:
+        result.add(current)
+        current = ""
+    else:
+      current.add(c)
+  if current.len > 0:
+    result.add(current)
+
+# ── scanners ──────────────────────────────────────────────────────────────────
+
+func scanKnownPrefixes(text: string): seq[SecretFinding] =
+  for token in tokenSplit(text):
+    ## Strip leading key=value prefix so "api_key=sk-abc…" catches the value.
+    let value =
+      block:
+        let eq = token.find('=')
+        let colon = token.find(':')
+        if eq > 0: token[eq + 1 .. ^1]
+        elif colon > 0: token[colon + 1 .. ^1]
+        else: token
+    if value.len < MinTokenLen: continue
+    for prefix in KnownPrefixes:
+      if value.startsWith(prefix) and value.len >= prefix.len + 8:
+        result.add SecretFinding(kind: skKnownPrefix, hint: makeHint(value))
+        break
+
+func scanBearerTokens(text: string): seq[SecretFinding] =
+  ## Looks for "Bearer <token>" pattern.
+  var lower = text.toLowerAscii()
+  var pos = 0
+  while pos < lower.len:
+    let idx = lower.find("bearer ", pos)
+    if idx < 0: break
+    let valueStart = idx + "bearer ".len
+    ## Collect the token (non-whitespace chars)
+    var valueEnd = valueStart
+    while valueEnd < lower.len and lower[valueEnd] notin {' ', '\t', '\n', '\r', '"', '\''}:
+      inc valueEnd
+    let value = text[valueStart ..< valueEnd]
+    if looksLikeSecretValue(value):
+      result.add SecretFinding(kind: skBearerToken, hint: makeHint(value))
+    pos = valueEnd
+
+func looksLikePassword(s: string): bool =
+  ## Looser check for contextual keys: any non-whitespace value of length >= MinTokenLen.
+  if s.len < MinTokenLen: return false
+  for c in s:
+    if c in {' ', '\t', '\n', '\r'}: return false
+  true
+
+func isContextKeyword(keyPart: string): bool =
+  ## Returns true if keyPart is (or ends with) a known context word.
+  for cw in ContextWords:
+    if keyPart == cw or
+       keyPart.endsWith("_" & cw) or
+       keyPart.endsWith("-" & cw):
+      return true
+  false
+
+func scanContextualKeys(text: string): seq[SecretFinding] =
+  ## Looks for contextWord=VALUE or contextWord: VALUE patterns.
+  let tokens = tokenSplit(text)
+  let lowerTokens = tokenSplit(text.toLowerAscii())
+  for i in 0 ..< tokens.len:
+    let lw = lowerTokens[i]
+
+    ## Case 1: "keyword=value" or "keyword:value" fused into one token.
+    let eq = lw.find('=')
+    let sep =
+      if eq > 0: eq
+      else:
+        let col = lw.find(':')
+        if col > 0: col else: -1
+    if sep > 0:
+      let keyPart = lw[0 ..< sep]
+      let valPart = tokens[i][sep + 1 .. ^1]
+      if isContextKeyword(keyPart) and looksLikePassword(valPart):
+        result.add SecretFinding(kind: skContextualKey, hint: makeHint(valPart))
+        continue   ## matched in Case 1; skip Case 2 for this token
+
+    ## Case 2: bare context word (or "word:") as standalone token;
+    ##         the value is the immediately following token.
+    let bareKey = lw.strip(chars = {':', '='})
+    if isContextKeyword(bareKey) and i + 1 < tokens.len:
+      var val = tokens[i + 1]
+      if val.len > 0 and val[0] in {'=', ':'}:
+        val = val[1 .. ^1]
+      if looksLikePassword(val):
+        result.add SecretFinding(kind: skContextualKey, hint: makeHint(val))
+
+# ── public API ────────────────────────────────────────────────────────────────
+
+func scanForSecrets*(text: string): seq[SecretFinding] =
+  ## Returns all detected secret-like patterns in `text`.
+  ## Conservative: only known patterns and contextual heuristics.
+  result.add scanKnownPrefixes(text)
+  result.add scanBearerTokens(text)
+  result.add scanContextualKeys(text)
+
+func hasSecrets*(text: string): bool =
+  scanForSecrets(text).len > 0
