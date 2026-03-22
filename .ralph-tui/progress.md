@@ -52,6 +52,18 @@ Nim does not allow a line to begin with a binary operator as a continuation (inv
 
 ---
 
+## 2026-03-22 - US-010
+- What was implemented: Adaptive debounce pure domain in `src/donkey/core/debounce.nim`. Provides `windowMs(partCount, lastLen)` (computes adaptive window 1.2s–8s), `initDebounce(text, nowMs)` (creates fresh state), `appendFragment(text, nowMs, state)` (last-arg for `|>->`), `shouldFlush(nowMs, state)` (last-arg for `|>->`), `mergeFragments(parts)` (unary for `|>`), `markFlushed(state)` (unary for `|>`), `flushText(state)` (unary for `|>`), `validateState(state)` (Result for `>>=`), `toMergedText(state)` (Result for `>>=` chaining after validateState).
+- Files changed:
+  - `src/donkey/core/debounce.nim` — new pure domain module (all three pipeops operators used)
+  - `tests/core/t_debounce.nim` — 39 tests across 9 suites covering window computation, state transitions, all three pipeops operators, and full lifecycle
+- **Learnings:**
+  - For `|>->` with a state-transformation pattern, put the value being transformed (state) as the last argument so `state |>-> appendFragment(text, nowMs)` → `appendFragment(text, nowMs, state)` — consistent with existing patterns.
+  - Accumulating fragments across multiple `|>->` calls requires explicit parenthesization: `(s0 |>-> appendFragment("b", 100)) |>-> appendFragment("c", 200)` — nesting intermediate results.
+  - `int64(partCount)` cast is needed before multiplication with `int64` constants in `windowMs` — Nim doesn't auto-promote `int` to `int64` in arithmetic.
+  - `min(base + ext, MaxWindowMs)` with all `int64` operands compiles cleanly when constants are `1_200i64` style literals.
+---
+
 ## 2026-03-22 - US-009
 - What was implemented: Cross-channel identity domain in `src/donkey/domain/identity.nim`. Pure functions for mapping platform IDs to storage keys and validating identity artifacts. Provides `channelKey(kind, rawId)` (last-arg for `|>->`), `parseChannelKind(s)` (Result for `>>=`), `parseChannelKey(key)` (parses "telegram:12345" → `Result[(ChannelKind, string), string]`), `validateRawId(rawId)` (unary for `|>` and `>>=`), `isValidLinkCode(code)` (pure bool for `|>`), and `validateLinkCode(code)` (Result for `>>=`).
 - Files changed:

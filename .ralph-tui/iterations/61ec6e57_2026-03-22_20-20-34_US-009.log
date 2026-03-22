@@ -1,0 +1,70 @@
+# Iteration 9 Log
+
+## Metadata
+
+- **Task ID**: US-009
+- **Task Title**: Cross-Channel Identity Map
+- **Description**: Map unique users across different platforms (Donkey F1).
+- **Status**: completed
+- **Task Completed**: Yes
+- **Promise Detected**: Yes
+- **Started At**: 2026-03-22T23:20:34.936Z
+- **Ended At**: 2026-03-22T23:27:53.327Z
+- **Duration**: 7m 18s
+- **Input Tokens**: 64
+- **Output Tokens**: 9648
+- **Total Tokens**: 9712
+- **Agent**: claude
+- **Model**: claude-sonnet-4-6
+- **Sandbox Mode**: auto
+- **Sandbox Network**: Enabled
+--- RAW OUTPUT ---
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Glob][0m [95m/home/micelio/git/donkey[0m pattern: [96msrc/**/*.nim[0m
+I can see `src/donkey/adapters/identity/identity_resolver.nim` already exists. Let me check what's there and if a domain/identity.nim exists too.
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/adapters/identity/identity_resolver.nim[0m
+[94m[Glob][0m [95m/home/micelio/git/donkey[0m pattern: [96m**/identity*[0m
+[94m[Glob][0m [95m/home/micelio/git/donkey[0m pattern: [96mtests/**/*.nim[0m
+No `domain/identity.nim` exists yet, and no identity tests in the tests folder. Let me check the core types and understand existing patterns.
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/core/types.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/core/pipeops.nim[0m
+Let me look at a recent test file for reference.
+[94m[Read][0m [95m/home/micelio/git/donkey/tests/core/t_output_sanitizer.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/tests/architecture/t_boundaries.nim[0m
+Let me look at a domain module to understand the patterns.
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/domain/reminder.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/tests/domain/t_reminder.nim[0m
+Now I have everything I need. Let me implement the domain module and its tests.
+[94m[Write][0m [95m/home/micelio/git/donkey/src/donkey/domain/identity.nim[0m "## Identity domain — pure functions for cross-channel identity mapping.
+##
+## Maps (ChannelKind, rawId) pairs to/from storage keys.
+## UUID generation and file persistence live in the adapter layer.
+#... (2784 chars)"
+Now write the tests (TDD — Red first, then verify Green):
+[94m[Write][0m [95m/home/micelio/git/donkey/tests/domain/t_identity.nim[0m "## Cross-channel identity domain unit tests.
+##
+## Covers all three pipeops operators:
+##   |>   — unary pure transforms (validateRawId, isValidLinkCode)
+##   |>-> — last-arg pipe (channelKey with raw... (6671 chars)"
+Now let me run the build check and tests:
+[94m[Bash][0m Type-check domain/identity.nim $ nim check --mm:orc --styleCheck:error --warnings:error src/donkey/domain/identity.nim 2>&1
+
+[91m[Error: Exit code 1
+command line(1, 2) Error: 'on', 'off' or 'list' expected, but 'error' found][0m
+[94m[Bash][0m Type-check domain/identity.nim with orc $ nim check --mm:orc src/donkey/domain/identity.nim 2>&1
+[94m[Bash][0m Type-check the identity test file $ nim check --mm:orc tests/domain/t_identity.nim 2>&1
+Both compile clean. Now run the tests:
+[94m[Bash][0m Run identity domain tests via testament $ testament pattern 'tests/domain/t_identity.nim' 2>&1
+All tests pass. Now let's verify the full test suite still passes:
+[94m[Bash][0m Run full test suite $ testament pattern 'tests/**/*.nim' 2>&1 | tail -20
+[94m[Bash][0m Check for failures in full test suite $ testament pattern 'tests/**/*.nim' 2>&1 | grep -E "FAIL|ERROR|passed|failed"
+[94m[Bash][0m Summary of test results $ testament pattern 'tests/**/*.nim' 2>&1 | grep -iE "fail|error|pass" | tail -5
+All PASS, no failures. Now let me update the progress file:
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Edit][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m edit: "---
+
+## 2026-03-22 - US-008" → "---
+
+## 2026-03-22 - US-009
+- What was implemented..."
+<promise>COMPLETE</promise>
