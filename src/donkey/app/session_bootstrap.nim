@@ -117,7 +117,8 @@ proc buildCompleteFn*(preferencesMd: string;
                       routingHook: RoutingTelemetryHook = nil;
                       routingResultHook: RoutingResultHook = nil;
                       routingFeedbackHook: RoutingFeedbackHook = nil;
-                      routingCostHook: RoutingCostHook = nil): CompleteFn {.gcsafe.} =
+                      routingCostHook: RoutingCostHook = nil;
+                      routingProviderCooldownHook: RoutingProviderCooldownHook = nil): CompleteFn {.gcsafe.} =
   let prefs = parseSmartRoutingPrefs(preferencesMd)
   let availability = detectProviderAvailability()
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
@@ -132,11 +133,23 @@ proc buildCompleteFn*(preferencesMd: string;
         applyCircuitBreaker(rankedSelections, routingFeedbackHook())
       else:
         rankedSelections
-    let costAwareSelections =
-      if routingCostHook != nil:
-        reorderSelectionsWithCost(selections, routingCostHook(), prefs.budgetPolicy)
+    let providerHealthySelections =
+      if routingFeedbackHook != nil:
+        applyProviderCircuitBreaker(selections, routingFeedbackHook())
       else:
         selections
+    let cooldownFilteredSelections =
+      if routingProviderCooldownHook != nil:
+        applyProviderCooldowns(providerHealthySelections, routingProviderCooldownHook(),
+                               nowMs() div 1000)
+      else:
+        providerHealthySelections
+    let costAwareSelections =
+      if routingCostHook != nil:
+        reorderSelectionsWithCost(cooldownFilteredSelections, routingCostHook(),
+                                  prefs.budgetPolicy)
+      else:
+        cooldownFilteredSelections
     var lastErr = "no provider available"
     for selection in costAwareSelections:
       if routingHook != nil:
@@ -268,12 +281,13 @@ proc buildSessionCompleteFn*(memory: MemoryRuntimePort;
                              routingHook: RoutingTelemetryHook = nil;
                              routingResultHook: RoutingResultHook = nil;
                              routingFeedbackHook: RoutingFeedbackHook = nil;
-                             routingCostHook: RoutingCostHook = nil): CompleteFn {.gcsafe.} =
+                             routingCostHook: RoutingCostHook = nil;
+                             routingProviderCooldownHook: RoutingProviderCooldownHook = nil): CompleteFn {.gcsafe.} =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
     let preferencesMd = memory.loadContext(userId).preferencesMd
     let primary = buildCompleteFn(
       preferencesMd, providerRuntimeBuilder, routingHook, routingResultHook,
-      routingFeedbackHook, routingCostHook)
+      routingFeedbackHook, routingCostHook, routingProviderCooldownHook)
     let fallbacks = if fallbackCompleteFn != nil: @[fallbackCompleteFn] else: @[]
     buildFallbackFn(primary, fallbacks)(req)
 
@@ -294,11 +308,13 @@ proc withSessionCompleteFn*(fallbackCompleteFn: CompleteFn;
                             routingResultHook: RoutingResultHook;
                             routingFeedbackHook: RoutingFeedbackHook;
                             routingCostHook: RoutingCostHook;
+                            routingProviderCooldownHook: RoutingProviderCooldownHook;
                             plan: SessionBootstrapPlan): SessionBootstrapPlan {.gcsafe.} =
   result = plan
   result.completeFn = buildSessionCompleteFn(
     memory, userId, fallbackCompleteFn, providerRuntimeBuilder,
-    routingHook, routingResultHook, routingFeedbackHook, routingCostHook)
+    routingHook, routingResultHook, routingFeedbackHook, routingCostHook,
+    routingProviderCooldownHook)
 
 func withSessionToolBundle*(toolBundle: SessionToolBundle;
                             plan: SessionBootstrapPlan): SessionBootstrapPlan =
@@ -339,7 +355,8 @@ proc buildSessionBootstrap*(memory:      MemoryRuntimePort;
                             routingHook: RoutingTelemetryHook = nil;
                             routingResultHook: RoutingResultHook = nil;
                             routingFeedbackHook: RoutingFeedbackHook = nil;
-                            routingCostHook: RoutingCostHook = nil): SessionBootstrap {.gcsafe.} =
+                            routingCostHook: RoutingCostHook = nil;
+                            routingProviderCooldownHook: RoutingProviderCooldownHook = nil): SessionBootstrap {.gcsafe.} =
   let toolBundle = buildSessionToolBundle(
     memory, userId, skillRuntimeBuilder, skillRuntimePolicyResolver, toolClients, tools)
   result =
@@ -347,6 +364,7 @@ proc buildSessionBootstrap*(memory:      MemoryRuntimePort;
        loadSessionBootstrapPlan) |>->
        withSessionCompleteFn(
          completeFn, providerRuntimeBuilder, memory, userId,
-         routingHook, routingResultHook, routingFeedbackHook, routingCostHook)) |>->
+         routingHook, routingResultHook, routingFeedbackHook, routingCostHook,
+         routingProviderCooldownHook)) |>->
        withSessionToolBundle(toolBundle)) |>
        finalizeSessionBootstrap
