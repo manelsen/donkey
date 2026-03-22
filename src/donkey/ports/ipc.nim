@@ -23,6 +23,13 @@ type
     errCalls*: int
     avgLatencyMs*: int
 
+  ProviderMetric* = object
+    providerName*: string
+    calls*: int
+    okCalls*: int
+    errCalls*: int
+    avgLatencyMs*: int
+
   DaemonStatus* = object
     uptimeSec*:     int64
     sessionCount*:  int
@@ -32,6 +39,8 @@ type
     routeCounts*:   seq[RouteCount]
     routeMetrics*:  seq[RouteMetric]
     recentRouteMetrics*: seq[RouteMetric]
+    recentProviderMetrics*: seq[ProviderMetric]
+    providerCooldowns*: seq[string]
     toolsCount*:    int
     memoryBackend*: string
 
@@ -75,6 +84,18 @@ func toJson*(st: DaemonStatus): JsonNode =
       "errCalls": rm.errCalls,
       "avgLatencyMs": rm.avgLatencyMs,
     })
+  var recentProviderMetrics = newJArray()
+  for pm in st.recentProviderMetrics:
+    recentProviderMetrics.add(%*{
+      "providerName": pm.providerName,
+      "calls": pm.calls,
+      "okCalls": pm.okCalls,
+      "errCalls": pm.errCalls,
+      "avgLatencyMs": pm.avgLatencyMs,
+    })
+  var providerCooldowns = newJArray()
+  for item in st.providerCooldowns:
+    providerCooldowns.add(%item)
   %*{
     "uptimeSec":     st.uptimeSec,
     "sessionCount":  st.sessionCount,
@@ -84,6 +105,8 @@ func toJson*(st: DaemonStatus): JsonNode =
     "routeCounts":   routeCounts,
     "routeMetrics":  routeMetrics,
     "recentRouteMetrics": recentRouteMetrics,
+    "recentProviderMetrics": recentProviderMetrics,
+    "providerCooldowns": providerCooldowns,
     "toolsCount":    st.toolsCount,
     "memoryBackend": st.memoryBackend,
   }
@@ -118,6 +141,16 @@ func fromJsonStatus*(j: JsonNode): DaemonStatus =
       errCalls: rm{"errCalls"}.getInt(0),
       avgLatencyMs: rm{"avgLatencyMs"}.getInt(0),
     ))
+  for pm in j{"recentProviderMetrics"}:
+    result.recentProviderMetrics.add(ProviderMetric(
+      providerName: pm{"providerName"}.getStr(),
+      calls: pm{"calls"}.getInt(0),
+      okCalls: pm{"okCalls"}.getInt(0),
+      errCalls: pm{"errCalls"}.getInt(0),
+      avgLatencyMs: pm{"avgLatencyMs"}.getInt(0),
+    ))
+  for item in j{"providerCooldowns"}:
+    result.providerCooldowns.add(item.getStr())
   for s in j{"sessions"}:
     var si = SessionInfo(userId: s{"userId"}.getStr())
     for ch in s{"channels"}:

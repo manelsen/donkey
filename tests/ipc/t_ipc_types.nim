@@ -16,6 +16,8 @@ suite "IPC types serialization":
       routeCounts:   @[RouteCount(route: "anthropic/claude-opus-4-6", count: 7)],
       routeMetrics:  @[RouteMetric(route: "anthropic/claude-opus-4-6", calls: 7, okCalls: 6, errCalls: 1, avgLatencyMs: 840)],
       recentRouteMetrics: @[RouteMetric(route: "openrouter/openai/gpt-4o-mini", calls: 4, okCalls: 4, errCalls: 0, avgLatencyMs: 620)],
+      recentProviderMetrics: @[ProviderMetric(providerName: "openrouter", calls: 4, okCalls: 4, errCalls: 0, avgLatencyMs: 620)],
+      providerCooldowns: @["anthropic (5m)"],
       toolsCount:    5,
       memoryBackend: "md",
     )
@@ -44,6 +46,13 @@ suite "IPC types serialization":
     check st2.recentRouteMetrics[0].okCalls == 4
     check st2.recentRouteMetrics[0].errCalls == 0
     check st2.recentRouteMetrics[0].avgLatencyMs == 620
+    check st2.recentProviderMetrics.len == 1
+    check st2.recentProviderMetrics[0].providerName == "openrouter"
+    check st2.recentProviderMetrics[0].calls == 4
+    check st2.recentProviderMetrics[0].okCalls == 4
+    check st2.recentProviderMetrics[0].errCalls == 0
+    check st2.recentProviderMetrics[0].avgLatencyMs == 620
+    check st2.providerCooldowns == @["anthropic (5m)"]
     check st2.toolsCount   == 5
     check st2.memoryBackend == "md"
 
