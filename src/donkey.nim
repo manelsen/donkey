@@ -50,6 +50,7 @@ import donkey/app/heartbeat
 import donkey/app/outbound_runtime
 import donkey/app/session_manager
 import donkey/app/session_bootstrap
+import donkey/app/doctor
 import donkey/ports/memory
 import donkey/adapters/ipc/types    as ipcTypes
 import donkey/adapters/ipc/client   as ipcClient
@@ -99,6 +100,7 @@ Commands:
   service stop                   systemctl --user stop """ & AppSlug & """
   service restart                systemctl --user restart """ & AppSlug & """
   service logs [-f] [--cat]      Show service logs (follow with -f, clean output with --cat)
+  doctor                         Check external dependencies (docker, pgvector, API keys)
 """
 
 # ── service commands ───────────────────────────────────────────────────────────
@@ -1868,6 +1870,9 @@ proc main =
     let sockPath = cfg.home / SockFileName
     runTui(sockPath)
     quit(0)
+
+  if args.len >= 1 and args[0] == "doctor":
+    quit(runDoctor())
 
   log.info(AppSlug & " " & Version & " starting")
   log.info("home: " & cfg.home)
