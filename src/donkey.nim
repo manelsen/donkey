@@ -44,6 +44,7 @@ import donkey/ports/tool
 import donkey/app/orchestrator
 import donkey/app/ipc_server
 import donkey/app/http_gateway
+import donkey/app/heartbeat
 import donkey/app/outbound_runtime
 import donkey/app/session_manager
 import donkey/app/session_bootstrap
@@ -1702,6 +1703,26 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let memory = bootstrap.memory
   let ctx = bootstrap.ctx
   activateDaemonBootstrap(ctx, cfg, log)
+
+  ## Heartbeat: periodic maintenance (reminder delivery, etc.)
+  var hbReg = newHeartbeatRegistry()
+  let memPort = memory.toRuntimePort()
+  let reminderOutboxFn: ReminderOutboxFn = proc(userId, channel, message: string) {.gcsafe.} =
+    {.cast(gcsafe).}:
+      let uid = UserId(userId)
+      ctx.runtime.globalOutbox.putNoWait(OutboundMessage(
+        userId:  uid,
+        channel: parseEnum[ChannelKind](channel, ckTelegram),
+        text:    message,
+      ))
+  hbReg.registerTask("reminders", proc() {.gcsafe.} =
+    {.cast(gcsafe).}: deliverDueReminders(memPort, reminderOutboxFn))
+  let hbIntervalStr = getEnv("DONKEY_HEARTBEAT_SEC")
+  let hbInterval = if hbIntervalStr.len > 0:
+    try: parseInt(hbIntervalStr) except ValueError: 60
+  else: 60
+  startHeartbeat(hbReg, intervalSec = hbInterval)
+  log.info("heartbeat: every " & $hbInterval & "s")
 
   log.info("polling for messages…")
   while true:
