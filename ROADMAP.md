@@ -264,6 +264,6 @@ Ver também [`IRONCLAW_PARITY.md`](/home/micelio/git/donkey/IRONCLAW_PARITY.md).
    - broadcast de eventos do runtime
 
 4. Inteligência operacional
-   - smart model routing com telemetry, UI de modo `auto`, budget policy declarada, feedback recente persistido por rota e preferência por pricing conhecido
+   - ✅ smart model routing: heurística por request, circuit-breaker por rota e provider, cooldowns persistidos, reordenação por custo, `/budget` em todos os canais
    - heartbeat / execução proativa
    - próximo provider local provável: Ollama
