@@ -52,6 +52,18 @@ Nim does not allow a line to begin with a binary operator as a continuation (inv
 
 ---
 
+## 2026-03-22 - US-009
+- What was implemented: Cross-channel identity domain in `src/donkey/domain/identity.nim`. Pure functions for mapping platform IDs to storage keys and validating identity artifacts. Provides `channelKey(kind, rawId)` (last-arg for `|>->`), `parseChannelKind(s)` (Result for `>>=`), `parseChannelKey(key)` (parses "telegram:12345" → `Result[(ChannelKind, string), string]`), `validateRawId(rawId)` (unary for `|>` and `>>=`), `isValidLinkCode(code)` (pure bool for `|>`), and `validateLinkCode(code)` (Result for `>>=`).
+- Files changed:
+  - `src/donkey/domain/identity.nim` — new pure domain module (all three pipeops operators used in design)
+  - `tests/domain/t_identity.nim` — 40 tests across 10 suites covering all functions and all three pipeops operators
+- **Learnings:**
+  - `func` with `Result` return type using `?` operator for propagation works cleanly for multi-step parsing (parseChannelKey calls parseChannelKind with `?`).
+  - `notin` for `string` membership check works against a `const string` (e.g. `c notin LinkCodeAlpha`) — no import needed.
+  - `|>` on a func returning `bool` works fine (isValidLinkCode) — pipeops is not limited to string/Result types.
+  - Keep `LinkCodeAlpha` constant in domain — both domain validation and adapter UUID generation can share it without duplication.
+---
+
 ## 2026-03-22 - US-008
 - What was implemented: Response sanitizer in `src/donkey/core/output_sanitizer.nim`. Provides `stripTagPair(open, close, text)` (last-arg for `|>->`), `stripThoughtTags(text)` (strips `<thinking>` and `<think>` blocks, designed for `|>`), `maskSecrets(text)` (replaces secret tokens with `[REDACTED]` using the same tokenizer as `secret_scan`, designed for `|>`), and `cleanResponse(text)` (main entry point chaining `text |> stripThoughtTags |> maskSecrets`).
 - Files changed:
