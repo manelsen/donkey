@@ -1,4 +1,4 @@
 [
-{"name":"tests/config/t_clawhub_registry.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"4a3b5c345ae","branch":"master"},
-{"name":"tests/config/t_loader.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"4a3b5c345ae","branch":"master"},
-{"name":"tests/config/t_skills_registry.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"4a3b5c345ae","branch":"master"}]
+{"name":"tests/config/t_clawhub_registry.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"deffa4e801c","branch":"master"},
+{"name":"tests/config/t_loader.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"deffa4e801c","branch":"master"},
+{"name":"tests/config/t_skills_registry.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"deffa4e801c","branch":"master"}]
