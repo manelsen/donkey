@@ -1,16 +1,20 @@
 ## WeChatAdapter — Official Account style channel adapter.
 ##
 ## Receiving:
-##   Webhook delivery is expected to be terminated elsewhere and forwarded here
-##   via enqueueWebhookXml(). The adapter validates/parses the XML payload and
-##   exposes tryRecvEvent() for the daemon loop.
+##   startWebhook(port) launches an embedded HTTP server on a dedicated OS
+##   thread. It handles WeChat's GET verification challenge and POST message
+##   delivery, validates the SHA1 signature, and pushes parsed events into a
+##   thread-safe Channel drained by tryRecvEvent().
+##
+##   For testing or external forwarding, enqueueWebhookXml() accepts raw XML
+##   directly without going through the HTTP path.
 ##
 ## Sending:
 ##   Uses WeChat Official Account APIs for customer-service text messages and
 ##   template messages.
 
-import std/[algorithm, json, nativesockets, strutils, uri]
-import std/sha1
+import std/[algorithm, json, nativesockets, net, strutils, tables, uri]
+import checksums/sha1
 import ../../core/pipeops
 import ../../domain/message
 import ../http/std_http
@@ -44,7 +48,16 @@ type
     apiBase*:       string
     resolver*:      IdentityResolver
     http*:          StdHttpAdapter
-    events:         seq[WeChatEvent]
+    events:         seq[WeChatEvent]   ## direct-injection queue (tests / external)
+
+  WeChatWebhookArgs = object
+    port:  int
+    token: string
+
+var gWeChatEvents: Channel[WeChatEvent]
+var gWeChatEventsOpen  = false
+var gWeChatWebhookStarted = false
+var gWeChatWebhookThread: Thread[WeChatWebhookArgs]
 
 func base(a: WeChatAdapter): string =
   if a.apiBase.len > 0: a.apiBase else: WeChatApiBase
@@ -62,6 +75,18 @@ proc newWeChatAdapter*(appId, appSecret, callbackToken, templateId: string;
     http:          newStdHttpAdapter(),
     events:        @[],
   )
+
+func parseQueryString*(query: string): Table[string, string] =
+  ## Splits a URL query string into a key→value table.
+  ## Values are NOT percent-decoded (WeChat params are plain ASCII).
+  for pair in query.split('&'):
+    if pair.len == 0:
+      continue
+    let kv = pair.split('=', 1)
+    if kv.len == 2:
+      result[kv[0]] = kv[1]
+    elif kv.len == 1 and kv[0].len > 0:
+      result[kv[0]] = ""
 
 proc extractXmlTag*(xml, tag: string): string =
   let openTag = "<" & tag & ">"
@@ -102,7 +127,10 @@ proc verifyWebhookSignature*(token, timestamp, nonce, signature: string): bool =
 
 proc enqueueWebhookXml*(a: var WeChatAdapter; xml: string): Result[void, string] =
   let event = ? parseWebhookXml(xml)
-  a.events.add(event)
+  if gWeChatEventsOpen:
+    gWeChatEvents.send(event)
+  else:
+    a.events.add(event)
   ok()
 
 proc buildOAuthUrl*(a: WeChatAdapter;
@@ -214,10 +242,102 @@ proc sendTemplate*(a: WeChatAdapter;
     return err("wechat template send error " & $resp.status & ": " & resp.body)
   ok()
 
-proc startWebhook*(a: var WeChatAdapter; port: Port) =
-  discard
+proc wechatWebhookThread(args: WeChatWebhookArgs) {.thread.} =
+  ## Minimal HTTP/1.1 server for WeChat Official Account webhook.
+  ## GET  /?signature=…&timestamp=…&nonce=…&echostr=…  → echo echostr if valid
+  ## POST /?signature=…&timestamp=…&nonce=…            → parse XML, enqueue event
+
+  proc readLine(s: Socket): string =
+    var buf = ""
+    var c: char
+    while true:
+      if s.recv(c.addr, 1) != 1:
+        return buf
+      if c == '\r':
+        discard s.recv(c.addr, 1)
+        break
+      buf.add(c)
+    buf
+
+  proc respond(s: Socket; status, body: string) =
+    let resp = "HTTP/1.1 " & status & "\r\nContent-Length: " &
+               $body.len & "\r\nConnection: close\r\n\r\n" & body
+    try: s.send(resp) except CatchableError: discard
+
+  var server = newSocket()
+  server.setSockOpt(OptReuseAddr, true)
+  server.bindAddr(Port(args.port))
+  server.listen()
+
+  while true:
+    var client: Socket
+    try:
+      server.accept(client)
+    except CatchableError:
+      continue
+    try:
+      let requestLine = client.readLine()
+      let parts = requestLine.split(' ')
+      let meth  = if parts.len >= 1: parts[0] else: ""
+      let url   = if parts.len >= 2: parts[1] else: "/"
+      let qpos  = url.find('?')
+      let query = if qpos >= 0: url[qpos + 1 .. ^1] else: ""
+      # Read headers
+      var contentLength = 0
+      while true:
+        let h = client.readLine()
+        if h.len == 0:
+          break
+        let lower = h.toLowerAscii()
+        if lower.startsWith("content-length:"):
+          try: contentLength = parseInt(h[15 .. ^1].strip())
+          except ValueError: discard
+      # Read body
+      var body = ""
+      if contentLength > 0:
+        body = newString(contentLength)
+        var received = 0
+        while received < contentLength:
+          let n = client.recv(body[received].addr, contentLength - received)
+          if n <= 0: break
+          received += n
+
+      let params    = parseQueryString(query)
+      let signature = params.getOrDefault("signature")
+      let timestamp = params.getOrDefault("timestamp")
+      let nonce     = params.getOrDefault("nonce")
+
+      if not verifyWebhookSignature(args.token, timestamp, nonce, signature):
+        client.respond("403 Forbidden", "forbidden")
+      elif meth == "GET":
+        client.respond("200 OK", params.getOrDefault("echostr"))
+      elif meth == "POST":
+        let evRes = parseWebhookXml(body)
+        if evRes.isOk:
+          gWeChatEvents.send(evRes.value)
+        client.respond("200 OK", "success")
+      else:
+        client.respond("405 Method Not Allowed", "")
+    except CatchableError:
+      discard
+    try: client.close() except CatchableError: discard
+
+proc startWebhook*(a: WeChatAdapter; port: Port) =
+  ## Starts the embedded WeChat webhook HTTP server on the given port.
+  ## Safe to call multiple times — only the first call has effect.
+  if gWeChatWebhookStarted:
+    return
+  gWeChatEvents.open()
+  gWeChatEventsOpen    = true
+  gWeChatWebhookStarted = true
+  createThread(gWeChatWebhookThread, wechatWebhookThread,
+               WeChatWebhookArgs(port: port.int, token: a.callbackToken))
 
 proc tryRecvEvent*(a: var WeChatAdapter): (bool, WeChatEvent) =
+  if gWeChatEventsOpen:
+    let (ok, ev) = gWeChatEvents.tryRecv()
+    if ok:
+      return (true, ev)
   if a.events.len == 0:
     return (false, WeChatEvent())
   let event = a.events[0]
