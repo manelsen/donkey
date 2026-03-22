@@ -422,13 +422,14 @@ proc ctlSkillInstall(cfg: DonkeyConfig; skillsPath: string; name, scriptPath: st
   discard validateSkillPermissions(permissions, cfg.webAllowlist).valueOr:
     echo error
     quit(1)
-  discard saveSkillEntry(skillsPath, SkillManifest(
+  let saveRes = saveSkillEntry(skillsPath, SkillManifest(
     name:        name,
     version:     "0.1.0",
     script:      scriptPath,
     permissions: permissions,
-  )).valueOr:
-    echo error
+  ))
+  if saveRes.isErr:
+    echo saveRes.error
     quit(1)
   echo "Registered skill: " & name & " (" & scriptPath & ")"
 
@@ -469,8 +470,9 @@ proc ctlSkillUpdate(cfg: DonkeyConfig; skillsPath, name, scriptPath: string;
                              permissions: permissions))
   if fileExists(skillsPath): removeFile(skillsPath)
   for s in skills:
-    discard saveSkillEntry(skillsPath, s).valueOr:
-      echo error
+    let sr = saveSkillEntry(skillsPath, s)
+    if sr.isErr:
+      echo sr.error
       quit(1)
   echo "Updated skill: " & name
 

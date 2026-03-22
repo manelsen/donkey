@@ -11,9 +11,8 @@ Itens realmente abertos no estado atual do código. Para visão macro, ver [`ROA
   Estado:
   bundles remotos do ClawHub já entram no runtime da sessão como skill prompt (`SKILL.md` instalado é injetado no system prompt e participa do rebuild de sessão), mas ainda não viram MCP/Deno skills executáveis automaticamente.
 
-- [ ] **Hardening de permissões em skills**
-  Estado:
-  continua faltando validar/bloquear permissões perigosas demais em `saveSkillEntry`.
+- ✅ **Hardening de permissões em skills**
+  `validateDangerousPermissions` em `saveSkillEntry` — bloqueia `-A`, `--allow-all`, `--allow-net` sem hosts e `--allow-net=*` antes de tocar o filesystem. `saveSkillEntry` retorna `Result[void, string]`.
 
 ---
 
@@ -35,9 +34,8 @@ Itens realmente abertos no estado atual do código. Para visão macro, ver [`ROA
   Estado:
   reminders já existem, mas não há um runtime mais amplo de heartbeat/maintenance tasks no estilo IronClaw.
 
-- [ ] **Ollama provider**
-  Estado:
-  o Donkey cobre OpenRouter, Anthropic, Gemini, MiniMax e Zhipu; Ollama ainda não foi implementado.
+- ✅ **Ollama provider**
+  `OllamaAdapter` com `complete`, `makeStreamFn`, `caps`, `buildBody`, `parseOllamaResponse`, `parseOllamaSseLine`. Wired em `runtime_builder` e `model_catalog` (catálogo live via `/api/tags`, fallback estático). `spec.apiKey` reaproveitado como `baseUrl` override; padrão `http://localhost:11434`.
 
 ---
 

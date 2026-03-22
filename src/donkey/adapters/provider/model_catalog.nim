@@ -54,6 +54,13 @@ func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
       ModelCatalogEntry(providerName: providerName, modelName: "glm-4.7", label: "glm-4.7", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "glm-4.6", label: "glm-4.6", isFree: false, available: true),
     ]
+  of "ollama":
+    ## Static fallback — Ollama catalog is loaded live from /api/tags.
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "llama3", label: "llama3", isFree: true, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "mistral", label: "mistral", isFree: true, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "codellama", label: "codellama", isFree: true, available: true, hasPricing: true),
+    ]
   else:
     @[]
 
@@ -444,6 +451,42 @@ proc loadZenCatalog(): Result[ModelCatalogResult, string] =
   let parsed = parseSimpleListCatalog("zen", body)
   withCacheFallback("zen", parsed)
 
+proc parseOllamaTagsCatalog*(body: string): Result[seq[ModelCatalogEntry], string] =
+  try:
+    let parsed = parseJson(body)
+    let models = parsed.getOrDefault("models")
+    if models == nil or models.kind != JArray:
+      return err("ollama /api/tags missing models array")
+    var entries: seq[ModelCatalogEntry] = @[]
+    for item in models:
+      var modelName = item.getOrDefault("name").getStr("")
+      if modelName.len == 0:
+        modelName = item.getOrDefault("model").getStr("")
+      if modelName.len == 0:
+        continue
+      entries.add(ModelCatalogEntry(
+        providerName: "ollama",
+        modelName: modelName,
+        label: modelName,
+        isFree: true,
+        available: true,
+        hasPricing: true,
+        inputCostMicrosPer1k: 0,
+        outputCostMicrosPer1k: 0,
+      ))
+    ok(entries.sortCatalog())
+  except CatchableError as e:
+    err(e.msg)
+
+proc loadOllamaCatalog(baseUrl: string): Result[ModelCatalogResult, string] =
+  let url = (if baseUrl.len > 0: baseUrl else: "http://localhost:11434") & "/api/tags"
+  let fetched = fetchCatalog(url)
+  if fetched.isErr:
+    let live = Result[seq[ModelCatalogEntry], string].err(fetched.error)
+    return withCacheFallback("ollama", live)
+  let parsed = parseOllamaTagsCatalog(fetched.value)
+  withCacheFallback("ollama", parsed)
+
 proc buildModelCatalogLoader*(): ModelCatalogLoader {.gcsafe.} =
   result = proc(providerName: string): Result[ModelCatalogResult, string] {.gcsafe.} =
     case providerName
@@ -463,5 +506,7 @@ proc buildModelCatalogLoader*(): ModelCatalogLoader {.gcsafe.} =
       loadZaiCatalog(getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")), true)
     of "zen":
       loadZenCatalog()
+    of "ollama":
+      loadOllamaCatalog(getEnv("OLLAMA_BASE_URL"))
     else:
       ok(fallbackCatalog(providerName))

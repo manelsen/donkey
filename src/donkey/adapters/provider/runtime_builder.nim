@@ -8,6 +8,7 @@ import openrouter
 import anthropic
 import gemini
 import minimax
+import ollama
 
 proc makeFn[A](a: A): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
@@ -38,6 +39,16 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
   of "zai":
     ProviderBundle(
       completeFn: makeFn(newZaiAdapter(spec.apiKey, model = spec.modelName))
+    )
+  of "ollama":
+    ## For Ollama, apiKey field is repurposed as baseUrl override.
+    ## Empty → http://localhost:11434 (standard local Ollama).
+    let adapter = newOllamaAdapter(model = spec.modelName,
+                                   baseUrl = if spec.apiKey.len > 0: spec.apiKey
+                                             else: OllamaDefaultBaseUrl)
+    ProviderBundle(
+      completeFn: makeFn(adapter),
+      streamFn:   adapter.makeStreamFn(),
     )
   else:
     ProviderBundle(
