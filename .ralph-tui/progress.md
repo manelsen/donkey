@@ -26,6 +26,27 @@ For simple numeric parsing where the value is already structurally validated (e.
 ### Inner func accessing outer var
 An inner `func` that reads/writes an outer `var` is a side-effect; Nim rejects it with `'foo' can have side effects`. Workaround: use a module-level `proc` for the callback, or redesign the test to avoid shared mutable state.
 
+### ok/err type inference in mixed-return procs
+`ok(v)` and `err(msg)` only infer the Result type when the surrounding proc/func returns `Result[T, E]`. In a proc returning some other type (e.g. `DiagResult`), use `Result[string, string].ok(v)` / `Result[string, string].err(msg)`. The `ok[T, E](v)` generic syntax does NOT work with this results library version.
+
+### Helper procs for Result construction in DiagResult converters
+When a public proc returns a non-Result type (e.g. `DiagResult`) but needs to construct intermediate `Result[string, string]` values for `|>->` piping, extract the Result-building logic into a private helper proc. The helper returns `Result[string, string]`, so `ok(v)` / `err(msg)` work normally inside it.
+
+---
+
+## 2026-03-22 - US-004
+- What was implemented: `donkey doctor` CLI command — system diagnostics tool checking for docker binary + compose plugin, pgvector/PostgreSQL (optional F2+), and API key environment variables.
+- Files changed:
+  - `src/donkey/core/diagnostics.nim` — new pure module: `DiagResult`, `DiagStatus`, and pipeline-friendly functions (`toDiagResult`, `markWarn`, `formatResult`, `countFailed`, `allPassed`, `formatReport`)
+  - `src/donkey/app/doctor.nim` — new effectful module: `runDockerCmd`, `checkDockerCompose`, `checkDocker`, `checkApiKey`, `checkPgvector`, `runDoctorChecks`, `printDoctorReport`, `runDoctor`
+  - `tests/core/t_diagnostics.nim` — 22 tests covering all pure functions and all three pipeops operators
+  - `tests/app/t_doctor.nim` — 16 tests covering effectful checks, environment-independence, and `>>=` chaining
+  - `src/donkey.nim` — added `import donkey/app/doctor`, `doctor` to help text, `doctor` command dispatch
+- **Learnings:**
+  - `ok[T, E](v)` syntax does NOT work with this results library — use `Result[T, E].ok(v)` at call sites where return type can't be inferred.
+  - Helper procs returning `Result[string, string]` are the clean pattern when a public proc returns a non-Result type (e.g. `DiagResult`) but needs `|>->` piping; `ok(v)` / `err(msg)` work normally inside Result-returning procs.
+  - `checkDockerCompose` with `{.gcsafe, raises: [].}` + `try/except` compiles correctly for `>>=` chaining.
+  - `markWarn` only downgrades `dsErr` → `dsWarn`; `dsOk` passes through unchanged — important for test expectations when DSN is set vs not set.
 ---
 
 ## 2026-03-22 - US-003
