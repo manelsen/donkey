@@ -94,11 +94,9 @@ func isPrivateUrl*(rawUrl: string): bool =
   # 172.16.0.0 – 172.31.255.255.
   if host.startsWith("172."):
     let parts = host.split('.')
-    if parts.len >= 2:
-      try:
-        let second = parseInt(parts[1])
-        if second in 16 .. 31: return true
-      except ValueError: discard
+    if parts.len >= 2 and parts[1].len > 0 and parts[1].allCharsInSet({'0'..'9'}):
+      let second = parseInt(parts[1])
+      if second in 16 .. 31: return true
 
   false
 
