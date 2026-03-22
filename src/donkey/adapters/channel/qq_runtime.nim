@@ -21,6 +21,7 @@ func qqHelpText*(kind: QQBackendKind): string =
     "- `/help` esta ajuda\n" &
     "- `/models` seletor de modelo\n" &
     "- `/think` seletor de raciocínio\n" &
+    "- `/budget` policy de custo/qualidade\n" &
     "- `/memory` mostra memórias\n" &
     "- `/forget` apaga memórias\n" &
     "- `/status` visão geral da sessão\n" &
@@ -196,6 +197,11 @@ proc handleQQUiCommand(msg: InboundMessage;
       memory.buildThinkButtons(msg.userId), replyTo = msg.channelId,
       allowedRawUserId = rawUserId).isOkOr:
         discard
+    true
+  of cmdBudget:
+    let reply = memory.applyBudgetTextCommand(msg.userId, command.value).valueOr: error
+    qqAdapter.send(OutboundMessage(userId: msg.userId, channel: ckQQ, text: reply, replyTo: msg.channelId)).isOkOr:
+      discard
     true
   else:
     false

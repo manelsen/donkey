@@ -233,6 +233,22 @@ proc handleTelegramThink*(msg: InboundMessage;
       kbdMsgIds[$msg.userId] = thinkId
   true
 
+proc handleTelegramBudget*(msg: InboundMessage;
+                           command: CommandDecision;
+                           tgAdapter: var TelegramAdapter;
+                           memory: MdFileAdapter): bool =
+  if command.kind != cmdBudget:
+    return false
+  let reply = memory.applyBudgetTextCommand(msg.userId, command.value).valueOr: error
+  tgAdapter.send(OutboundMessage(
+    userId:  msg.userId,
+    channel: ckTelegram,
+    text:    reply,
+    replyTo: msg.channelId,
+  )).isOkOr:
+    discard
+  true
+
 proc handleTelegramUiCommand*(msg: InboundMessage;
                               command: CommandDecision;
                               tgAdapter: var TelegramAdapter;
@@ -244,6 +260,8 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
     handleTelegramModels(msg, command, tgAdapter, kbdMsgIds, memory, modelCatalogLoader)
   of cmdThink:
     handleTelegramThink(msg, command, tgAdapter, kbdMsgIds, memory)
+  of cmdBudget:
+    handleTelegramBudget(msg, command, tgAdapter, memory)
   else:
     false
 
