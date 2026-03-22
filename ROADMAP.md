@@ -261,8 +261,7 @@ Ver também [`IRONCLAW_PARITY.md`](/home/micelio/git/donkey/IRONCLAW_PARITY.md).
    - ✅ QQ OneBot — servidor HTTP embutido
 
 3. Gateway contínuo
-   - HTTP/Web gateway com SSE/WebSocket
-   - broadcast de eventos do runtime
+   - ✅ HTTP/Web gateway com SSE: `/api/status`, `/api/logs`, `/api/events` (SSE), CORS, porta configurável
 
 4. Inteligência operacional
    - ✅ smart model routing: heurística por request, circuit-breaker por rota e provider, cooldowns persistidos, reordenação por custo, `/budget` em todos os canais
