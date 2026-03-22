@@ -10,6 +10,7 @@
 ##     SOLUTIONS.md   — reusable solutions
 ##     sessions/      — per-session conversation logs
 
+import std/json
 import ../core/types
 import ../domain/message
 import ../domain/personality
@@ -71,8 +72,10 @@ type
     loadIdentity*:    proc(userId: UserId): (string, PersonalityTraits)
                         {.gcsafe.}
     paddockDir*:      proc(userId: UserId): string {.gcsafe.}
-    scheduleReminder*: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string
-                         {.gcsafe.}
+    scheduleReminder*:  proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string
+                          {.gcsafe.}
+    loadDueReminders*:  proc(): seq[JsonNode] {.gcsafe.}
+    deleteReminder*:    proc(userId: UserId; reminderId: string) {.gcsafe.}
 
 proc bootstrapUserMd*(name, callMe, timezone, language: string): string =
   ## Generates the initial USER.md following the OpenClaw USER.md template.

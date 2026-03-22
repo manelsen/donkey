@@ -39,6 +39,8 @@ func paddockDir*(a: MdFileAdapter; userId: UserId): string {.gcsafe.}
 proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
                        channel: string; scheduledAt: int64;
                        message: string): string {.gcsafe.}
+proc loadDueReminders*(a: MdFileAdapter): seq[JsonNode] {.gcsafe.}
+proc deleteReminder*(a: MdFileAdapter; userId: UserId; reminderId: string) {.gcsafe.}
 
 proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
   MemoryRuntimePort(
@@ -77,6 +79,12 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
     scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string
                            {.gcsafe.} =
       {.cast(gcsafe).}: result = a.scheduleReminder(userId, channel, scheduledAt, message)
+    ,
+    loadDueReminders: proc(): seq[JsonNode] {.gcsafe.} =
+      {.cast(gcsafe).}: result = a.loadDueReminders()
+    ,
+    deleteReminder: proc(userId: UserId; reminderId: string) {.gcsafe.} =
+      {.cast(gcsafe).}: a.deleteReminder(userId, reminderId)
   )
 
 # ── path helpers ──────────────────────────────────────────────────────────────
