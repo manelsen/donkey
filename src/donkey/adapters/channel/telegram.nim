@@ -14,6 +14,8 @@ import std/[json, strutils]
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
+import ../../domain/channels/telegram_pure
+import ../../ports/http
 import ../http/std_http
 import ../identity/identity_resolver
 
@@ -39,10 +41,9 @@ func apiUrl(a: TelegramAdapter; meth: string): string =
   let base = if a.apiBase.len > 0: a.apiBase else: TelegramApiBase
   base & "/bot" & a.token & "/" & meth
 
-proc post(a: TelegramAdapter; meth: string;
-          body: JsonNode): Result[JsonNode, string] =
-  let headers = @[("Content-Type", "application/json")]
-  let resp = ? a.http.post(a.apiUrl(meth), $body, headers)
+proc parseTgResp(meth: string; resp: HttpResponse): Result[JsonNode, string]
+                 {.gcsafe, raises: [].} =
+  ## Validates a Telegram API HTTP response; designed for >>= chaining.
   try:
     let parsed = parseJson(resp.body)
     if not parsed["ok"].getBool(false):
@@ -50,6 +51,13 @@ proc post(a: TelegramAdapter; meth: string;
     ok(parsed)
   except CatchableError as e:
     err(e.msg)
+
+proc post(a: TelegramAdapter; meth: string;
+          body: JsonNode): Result[JsonNode, string] =
+  let headers = @[("Content-Type", "application/json")]
+  a.http.post(a.apiUrl(meth), $body, headers) >>=
+    proc(resp: HttpResponse): Result[JsonNode, string] {.gcsafe, raises: [].} =
+      parseTgResp(meth, resp)
 
 # ── ChannelPort implementation ────────────────────────────────────────────────
 
@@ -145,105 +153,38 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
 
 proc getFileUrl*(a: TelegramAdapter; fileId: string): Result[string, string] =
   ## Resolves a Telegram file_id to a download URL via getFile API.
-  let resp = ? a.post("getFile", %* {"file_id": fileId})
-  try:
-    let filePath = resp["result"]["file_path"].getStr()
-    let base = if a.apiBase.len > 0: a.apiBase else: TelegramApiBase
-    ok(base & "/file/bot" & a.token & "/" & filePath)
-  except CatchableError as e:
-    err(e.msg)
-
-proc extractMediaUrl(a: TelegramAdapter; tgMsg: JsonNode): string =
-  ## Returns a download URL for the best available attachment, or "".
-  if tgMsg.hasKey("photo"):
-    let photos = tgMsg["photo"]
-    if photos.kind == JArray and photos.len > 0:
-      let fileId = photos[^1].getOrDefault("file_id").getStr("")
-      if fileId.len > 0:
-        let r = a.getFileUrl(fileId)
-        if r.isOk: return r.value
-  elif tgMsg.hasKey("document"):
-    let fileId = tgMsg["document"].getOrDefault("file_id").getStr("")
-    if fileId.len > 0:
-      let r = a.getFileUrl(fileId)
-      if r.isOk: return r.value
-  elif tgMsg.hasKey("voice"):
-    let fileId = tgMsg["voice"].getOrDefault("file_id").getStr("")
-    if fileId.len > 0:
-      let r = a.getFileUrl(fileId)
-      if r.isOk: return r.value
-  ""
+  ## Uses >>= to chain post result → extract file path.
+  let base  = if a.apiBase.len > 0: a.apiBase else: TelegramApiBase
+  let token = a.token
+  a.post("getFile", %* {"file_id": fileId}) >>=
+    proc(resp: JsonNode): Result[string, string] {.gcsafe, raises: [].} =
+      try:
+        ok(base & "/file/bot" & token & "/" & resp["result"]["file_path"].getStr())
+      except CatchableError as e:
+        err(e.msg)
 
 proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
   ## Long-polls getUpdates; advances a.offset on success.
-  ## Handles text, photo+caption, document, and voice messages.
+  ## Parsing delegated to telegram_pure (|> parseUpdates).
+  ## Offset advancement uses |>-> maxNextOffset(a.offset).
   let timeout = if a.pollTimeout > 0: a.pollTimeout else: DefaultPollTimeout
-  let body = %* {
-    "offset":  a.offset,
-    "limit":   100,
-    "timeout": timeout,
-  }
-  let parsed = ? a.post("getUpdates", body)
-  try:
-    let updates = parsed["result"]
-    var msgs: seq[InboundMessage] = @[]
-    var maxUpdateId = a.offset - 1
-
-    for upd in updates:
-      let updateId = upd["update_id"].getBiggestInt().int64
-      if updateId > maxUpdateId: maxUpdateId = updateId
-
-      ## callback_query — inline keyboard button press.
-      if upd.hasKey("callback_query"):
-        let cq     = upd["callback_query"]
-        let fromId = cq["from"]["id"].getBiggestInt().int64
-        ## Ack immediately so Telegram stops showing the loading spinner.
-        discard a.post("answerCallbackQuery",
-                       %* {"callback_query_id": cq["id"].getStr("")})
-        msgs.add InboundMessage(
-          userId:    a.resolver.resolve(ckTelegram, $fromId),
-          channel:   ckTelegram,
-          channelId: cq.getOrDefault("message").getOrDefault("message_id").getStr(""),
-          text:      "/callback " & cq["data"].getStr(""),
-          mediaUrl:  "",
-        )
-        continue
-
-      if not upd.hasKey("message"): continue
-
-      let tgMsg  = upd["message"]
-      let fromId = tgMsg["from"]["id"].getBiggestInt().int64
-
-      ## Text comes from "text" field, or "caption" for media messages.
-      var text = tgMsg.getOrDefault("text").getStr("")
-      if text.len == 0:
-        text = tgMsg.getOrDefault("caption").getStr("")
-
-      ## Resolve attachment to download URL.
-      let mediaUrl = a.extractMediaUrl(tgMsg)
-
-      ## Skip updates with no content to process.
-      if text.len == 0 and mediaUrl.len == 0: continue
-
-      ## P0 #3: group session keying — use chat.id for groups so all members
-      ## share one session. For private chats chat.id == from.id anyway.
-      let chatId   = tgMsg["chat"]["id"].getBiggestInt().int64
-      let chatType = tgMsg["chat"].getOrDefault("type").getStr("private")
-      let sessionRaw = if chatType in ["group", "supergroup"]: $chatId
-                       else: $fromId
-
-      msgs.add InboundMessage(
-        userId:    a.resolver.resolve(ckTelegram, sessionRaw),
-        channel:   ckTelegram,
-        channelId: $tgMsg["message_id"].getInt(),
-        text:      text,
-        mediaUrl:  mediaUrl,
-      )
-
-    if maxUpdateId >= a.offset: a.offset = maxUpdateId + 1
-    ok(msgs)
-  except CatchableError as e:
-    err(e.msg)
+  let body = %* {"offset": a.offset, "limit": 100, "timeout": timeout}
+  let parsed  = ? a.post("getUpdates", body)
+  let updates = parsed["result"]
+  let results = updates |> parseUpdates
+  var msgs: seq[InboundMessage]
+  for r in results:
+    ## Ack callback_queries immediately (Telegram spinner).
+    if r.hasCallbackId:
+      discard a.post("answerCallbackQuery",
+                     %* {"callback_query_id": r.callbackId})
+    ## Resolve media file_id → download URL.
+    let mediaUrl = if r.hasMedia: a.getFileUrl(r.mediaFileId).valueOr: ""
+                   else: ""
+    let userId = a.resolver.resolve(ckTelegram, r.sessionKey)
+    msgs.add r.toInbound(userId, mediaUrl)
+  a.offset = updates |>-> maxNextOffset(a.offset)
+  ok(msgs)
 
 proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, string] =
   ## Like send(), but sends only the first chunk and returns the Telegram message_id.
