@@ -4,15 +4,6 @@ Itens realmente abertos no estado atual do código. Para visão macro, ver [`ROA
 
 ---
 
-## P0 — Hardening imediato
-
-- [ ] **`grep` com regex sem dependência frágil de PCRE**
-  Estado:
-  o comportamento ainda pode variar por distro.
-  Próximo passo:
-  padronizar engine suportada ou documentar explicitamente o subset aceito.
-
----
 
 ## F7 — Skills ecosystem
 
@@ -76,6 +67,7 @@ Itens realmente abertos no estado atual do código. Para visão macro, ver [`ROA
 
 ## Feito recentemente
 
+- ✅ `grep` nativo usa literal substring (intencional, documentado na tool description e no source); regex via `bash("grep -rn ...")`
 - ✅ `std/sha1` deprecated substituído por `checksums/sha1` no WeChatAdapter
 - ✅ Ingress real de WeChat: servidor HTTP embutido com validação SHA1, GET challenge e POST XML, thread dedicada, Channel thread-safe
 - ✅ Ingress real de QQ OneBot: servidor HTTP embutido para eventos OneBot v11 POST JSON, thread dedicada, Channel thread-safe
