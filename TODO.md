@@ -58,10 +58,6 @@ Itens realmente abertos no estado atual do código. Para visão macro, ver [`ROA
   Estado:
   reminders já existem, mas não há um runtime mais amplo de heartbeat/maintenance tasks no estilo IronClaw.
 
-- [ ] **Smart model routing**
-  Estado:
-  já existe roteamento automático por request, com telemetry agregada, preview de `auto` na UI, policy declarada de budget (`cheap-first` / `balanced` / `quality-first`), reordenação por saúde recente da rota, circuit-breaker leve, janela recente persistida no estado local e preferência por rotas com pricing real conhecido; ainda faltam surface de comando para budget, cobertura melhor de pricing fora do OpenRouter e policies mais fortes de fallback/circuit-breaker.
-
 - [ ] **Ollama provider**
   Estado:
   o Donkey cobre OpenRouter, Anthropic, Gemini, MiniMax e Zhipu; Ollama ainda não foi implementado.
@@ -94,6 +90,7 @@ Itens realmente abertos no estado atual do código. Para visão macro, ver [`ROA
 
 ## Feito recentemente
 
+- ✅ Smart model routing completo: heurística por request (tools/imagem/contexto/thinking), circuit-breaker em nível de rota e de provider, cooldowns persistidos, reordenação por custo, `/budget` em todos os canais, telemetria exposta no TUI e IPC
 - ✅ Hardening básico de tool output: resultado de tool agora entra no histórico envelopado como conteúdo não confiável
 - ✅ Separação básica entre erro operacional e resultado funcional nas native tools e no ToolAgent
 - ✅ Policy explícita de rede por tool/skill: `[security].web_allowlist`, regras por tool/path e validação de `--allow-net` em skills Deno

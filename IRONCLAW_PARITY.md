@@ -94,10 +94,10 @@ Este documento não tenta copiar a arquitetura do IronClaw. O objetivo é mapear
 - `[ ]` OpenAI adapter dedicado
 - `[ ]` Ollama
 - `[ ]` Bedrock
-- `[-]` smart model routing por complexidade
-  já existe heurística por request, feedback recente persistido, circuit-breaker leve e preferência por pricing conhecido; ainda faltam budget policy e defaults mais ricos por modelo.
-- `[-]` provider telemetry de roteamento
-  já existem contadores e métricas agregadas/Recentes no daemon e no TUI; ainda falta telemetria mais profunda por custo real e janela operacional mais rica.
+- `[x]` smart model routing por complexidade
+  heurística por request (tools, imagem, contexto longo, thinking level), feedback recente persistido por rota, circuit-breaker em nível de rota e de provider, cooldowns com persistência, reordenação por custo via `RoutingCostHook`, `/budget` surfaçado em todos os canais.
+- `[x]` provider telemetry de roteamento
+  `routeMetrics` e `recentRouteMetrics` agregados por janela recente; `recentProviderMetrics` e `providerCooldowns` expostos via IPC e renderizados no TUI; `RoutingTelemetryHook` e `RoutingResultHook` injetados na session bootstrap.
 - `[ ]` reasoning/thinking defaults por modelo
 
 ## 6. Tools e extensibilidade
@@ -151,8 +151,6 @@ Este documento não tenta copiar a arquitetura do IronClaw. O objetivo é mapear
 
 ### P1
 
-- `[-]` smart model routing por complexidade
-  já saiu do zero: hoje há feedback recente persistido, circuit-breaker leve e custo conhecido quando o catálogo expõe pricing.
 - `[>]` Ollama provider
 - `[>]` HTTP/web gateway com SSE
 - `[>]` event broadcast do runtime
@@ -182,4 +180,3 @@ O maior gap está em:
 - gateway contínuo com eventos/streaming para clientes
 - automação contínua (`heartbeat`, webhooks, rotinas mais ricas)
 - canais mais maduros e com inbound real
-- roteamento inteligente de modelo
