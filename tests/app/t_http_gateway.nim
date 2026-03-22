@@ -3,6 +3,7 @@
 
 import std/[json, strutils, unittest]
 import donkey/app/http_gateway
+import donkey/core/agent_events
 import donkey/ports/ipc
 
 suite "http_gateway request parsing":
@@ -67,6 +68,27 @@ suite "http_gateway JSON serialisation":
 
   test "buildLogsBody returns empty array for no entries":
     let body = buildLogsBody(@[])
+    let j = parseJson(body)
+    check j.kind == JArray
+    check j.len == 0
+
+suite "http_gateway agent events serialisation":
+
+  test "buildAgentEventsBody returns JSON array":
+    agentEventRingInit()
+    pushAgentEvent(AgentEvent(kind: aekToolCall, userId: "u1",
+                              toolName: "bash", summary: "ls"))
+    let events = agentEventSnapshot(10)
+    let body = buildAgentEventsBody(events)
+    let j = parseJson(body)
+    check j.kind == JArray
+    check j.len == 1
+    check j[0]{"kind"}.getStr() == "tool_call"
+    check j[0]{"userId"}.getStr() == "u1"
+
+  test "buildAgentEventsBody returns empty array for no events":
+    agentEventRingInit()
+    let body = buildAgentEventsBody(@[])
     let j = parseJson(body)
     check j.kind == JArray
     check j.len == 0

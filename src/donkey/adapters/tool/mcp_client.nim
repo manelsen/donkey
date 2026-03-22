@@ -148,8 +148,8 @@ proc initialize(c: var McpClientAdapter): Result[void, string] =
 
 proc listTools*(c: var McpClientAdapter): Result[seq[ToolSchema], string] =
   ? c.initialize()
-  let result_node = ? c.rpc("tools/list", %* {})
-  let toolsNode = result_node.getOrDefault("tools")
+  let resultNode = ? c.rpc("tools/list", %* {})
+  let toolsNode = resultNode.getOrDefault("tools")
   if toolsNode == nil or toolsNode.kind != JArray:
     return err("tools/list response missing 'tools' array")
   var schemas: seq[ToolSchema]
@@ -163,8 +163,8 @@ proc invoke*(c: var McpClientAdapter; call: ToolCall): Result[ToolResult, string
     "name":      call.name,
     "arguments": call.input
   }
-  let result_node = ? c.rpc("tools/call", params)
-  ok(parseToolResult(call.id, result_node))
+  let resultNode = ? c.rpc("tools/call", params)
+  ok(parseToolResult(call.id, resultNode))
 
 proc close*(c: var McpClientAdapter) =
   ## Terminates the subprocess if running.

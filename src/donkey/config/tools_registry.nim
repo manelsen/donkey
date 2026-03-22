@@ -6,7 +6,7 @@
 ##   command = "uvx"
 ##   args    = ["mcp-server-fetch"]
 
-import std/[os, strutils]
+import std/[os]
 import parsetoml
 import ../adapters/tool/mcp_client
 
