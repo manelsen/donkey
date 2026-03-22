@@ -52,6 +52,17 @@ Nim does not allow a line to begin with a binary operator as a continuation (inv
 
 ---
 
+## 2026-03-22 - US-011
+- What was implemented: `src/donkey/ports/channel.nim` extended with three pipeline-friendly pure helpers: `filterInbound(userId, msgs)` (last-arg for `|>->`), `countInbound(msgs)` (unary for `|>`), `validateOutbound(msg)` (Result for `>>=`). The existing concept definitions (`ChannelPort`, `OutboundChannelPort`, `OutboundChannelPorts`) already had `send()` and `receive()` with `Result` signatures.
+- Files changed:
+  - `src/donkey/ports/channel.nim` — added three pure helpers with pipeops topology comments
+  - `tests/ports/t_channel.nim` — new test file: 15 tests across 4 suites covering concept satisfaction, `|>->` (filterInbound), `|>` (countInbound), and `>>=` (validateOutbound chain)
+- **Learnings:**
+  - Port concept files are primarily type declarations; to satisfy the pipeops requirement, add pure helper functions that operate on the port's domain types and are designed as unary or last-arg callables.
+  - `XDeclaredButNotUsed` is a `Hint`, not a `Warning` — `--warningAsError:on` does not promote it to an error, so an unused `ack` proc in tests is tolerated.
+  - MockChannel satisfying `ChannelPort` concept: `send(c: MockChannel; ...)` and `receive(vc: var MockChannel)` with correct return types compile as concept conformance — no explicit `implements` declaration needed (structural typing).
+---
+
 ## 2026-03-22 - US-010
 - What was implemented: Adaptive debounce pure domain in `src/donkey/core/debounce.nim`. Provides `windowMs(partCount, lastLen)` (computes adaptive window 1.2s–8s), `initDebounce(text, nowMs)` (creates fresh state), `appendFragment(text, nowMs, state)` (last-arg for `|>->`), `shouldFlush(nowMs, state)` (last-arg for `|>->`), `mergeFragments(parts)` (unary for `|>`), `markFlushed(state)` (unary for `|>`), `flushText(state)` (unary for `|>`), `validateState(state)` (Result for `>>=`), `toMergedText(state)` (Result for `>>=` chaining after validateState).
 - Files changed:
