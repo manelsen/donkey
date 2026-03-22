@@ -29,9 +29,32 @@ An inner `func` that reads/writes an outer `var` is a side-effect; Nim rejects i
 ### ok/err type inference in mixed-return procs
 `ok(v)` and `err(msg)` only infer the Result type when the surrounding proc/func returns `Result[T, E]`. In a proc returning some other type (e.g. `DiagResult`), use `Result[string, string].ok(v)` / `Result[string, string].err(msg)`. The `ok[T, E](v)` generic syntax does NOT work with this results library version.
 
+### raises:[] on func calling isPrivateIp → wrap in try/except ValueError
+`isPrivateIp` propagates the `{.raises: [ValueError].}` effect from `parseInt` in `parseIpv4` even though pre-validation makes it unreachable. A `func` annotated `{.raises: [].}` that calls `isPrivateIp` must wrap the call in `try/except ValueError as e: err(e.msg)` inside the `func` body. This is safe and keeps the public API exception-free.
+
+### |>-> + >>= in same expression requires parentheses
+`"x" |>-> f("ctx") >>= g` is a parse error — `|>->` tries to consume `f("ctx") >>= g` as its callable. Always parenthesize the `|>->` sub-expression first: `("x" |>-> f("ctx")) >>= g`.
+
+### nativesockets DNS resolution pattern
+`getAddrInfo(host, Port(0), AF_UNSPEC, SOCK_STREAM)` returns a `ptr AddrInfo` linked list. Iterate with `.ai_next`; call `getAddrString(it.ai_addr)` to get the IP as a string. Always `defer: freeAddrInfo(info)` immediately after the call — the defer fires even on early `return`.
+
 ### Helper procs for Result construction in DiagResult converters
 When a public proc returns a non-Result type (e.g. `DiagResult`) but needs to construct intermediate `Result[string, string]` values for `|>->` piping, extract the Result-building logic into a private helper proc. The helper returns `Result[string, string]`, so `ok(v)` / `err(msg)` work normally inside it.
 
+---
+
+## 2026-03-22 - US-006
+- What was implemented: DNS resolver adapter with SSRF protection. `src/donkey/core/dns.nim` — pure module with `blockIfPrivate` (unary, for `|>` and `>>=`) and `labelledBlock` (last-arg, for `|>->`). `src/donkey/adapters/network/dns_resolver.nim` — `safeResolve` proc using `nativesockets.getAddrInfo` + `getAddrString`, iterates all resolved IPs and blocks if any is private.
+- Files changed:
+  - `src/donkey/core/dns.nim` — new pure module
+  - `src/donkey/adapters/network/dns_resolver.nim` — new adapter
+  - `tests/core/t_dns.nim` — 29 tests across 4 suites covering all three pipeops operators
+  - `tests/adapters/network/t_dns_resolver.nim` — 10 tests covering SSRF blocking, |>, >>=, |>->
+- **Learnings:**
+  - `nativesockets.getAddrString*` and `freeAddrInfo` are exported from `std/nativesockets` in Nim 2.2 — use `getAddrInfo(host, Port(0), AF_UNSPEC, SOCK_STREAM)` + iterate linked list via `.ai_next` for multi-address resolution.
+  - `defer: freeAddrInfo(info)` fires even on early `return` inside a `try` block — safe pattern for cleaning up `ptr AddrInfo`.
+  - `{.raises: [].}` on a `func` that calls `isPrivateIp` fails because `parseInt` in `parseIpv4` is statically marked as raising `ValueError`, even though pre-validation makes it unreachable. Fix: wrap the call in `try/except ValueError` inside the `func` body.
+  - Combined `|>->` + `>>=` in a single expression requires explicit parentheses: `("ip" |>-> f("ctx")) >>= g` — without parens, `|>->` tries to consume `f("ctx") >>= g` as its callable argument and fails.
 ---
 
 ## 2026-03-22 - US-005
