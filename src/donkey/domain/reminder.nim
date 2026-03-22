@@ -2,6 +2,7 @@
 ## Pure functions only. No I/O.
 
 import std/strutils
+import ../core/pipeops
 
 # ── Tool metadata (injected into every session) ───────────────────────────────
 
@@ -40,13 +41,13 @@ func unixFromUtcParts(year, month, day, hour, minute, second: int): int64 =
   int64(minute) * 60 +
   int64(second)
 
-func parseIsoWhen(s: string): int64 =
+func parseIsoWhen(s: string): Result[int64, string] =
   try:
     if s.len == 10 and s[4] == '-' and s[7] == '-':
       let year = parseFixedInt(s, 0, 4)
       let month = parseFixedInt(s, 5, 2)
       let day = parseFixedInt(s, 8, 2)
-      return unixFromUtcParts(year, month, day, 0, 0, 0)
+      return ok(unixFromUtcParts(year, month, day, 0, 0, 0))
 
     if s.len >= 19 and s[4] == '-' and s[7] == '-' and s[10] in {'T', ' '} and
        s[13] == ':' and s[16] == ':':
@@ -59,10 +60,10 @@ func parseIsoWhen(s: string): int64 =
       var unixTs = unixFromUtcParts(year, month, day, hour, minute, second)
 
       if s.len == 19:
-        return unixTs
+        return ok(unixTs)
 
       if s.len == 20 and s[^1] == 'Z':
-        return unixTs
+        return ok(unixTs)
 
       if s.len >= 25 and s[19] in {'+', '-'} and s[22] == ':':
         let sign = if s[19] == '+': 1 else: -1
@@ -70,11 +71,11 @@ func parseIsoWhen(s: string): int64 =
         let offsetMinute = parseFixedInt(s, 23, 2)
         let offsetSec = int64(sign * (offsetHour * 3_600 + offsetMinute * 60))
         unixTs -= offsetSec
-        return unixTs
+        return ok(unixTs)
   except ValueError:
-    discard
+    return err("invalid ISO date: " & s)
 
-  int64.low
+  err("unrecognized date format: " & s)
 
 func parseWhen*(whenStr: string; nowSec: int64): int64 =
   ## Parses a "when" string into a Unix timestamp (seconds since epoch, UTC).
@@ -92,19 +93,13 @@ func parseWhen*(whenStr: string; nowSec: int64): int64 =
   if s.len >= 2 and s[0] == '+':
     let unit   = s[^1]
     let numStr = s[1 ..< s.len - 1]
-    try:
+    if numStr.len > 0 and numStr.allCharsInSet({'0'..'9'}):
       let n = parseInt(numStr)
       return case unit
         of 'm': base + n.int64 * 60
         of 'h': base + n.int64 * 3600
         of 'd': base + n.int64 * 86400
         else:   base + n.int64 * 60   ## unknown unit → treat as minutes
-    except ValueError: discard
 
   ## ── Absolute ISO 8601 ───────────────────────────────────────────────────
-  let parsed = parseIsoWhen(s)
-  if parsed != int64.low:
-    return parsed
-
-  ## ── Fallback ─────────────────────────────────────────────────────────────
-  base + 3_600   ## 1 hour from now
+  parseIsoWhen(s).valueOr(base + 3_600)

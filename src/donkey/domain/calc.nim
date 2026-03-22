@@ -7,7 +7,7 @@
 ## globMatch: simple * / ? glob. Used by the find tool.
 
 import std/[math, strutils]
-import results
+import ../core/pipeops
 
 type
   ParseState = tuple[value: float, pos: int]
