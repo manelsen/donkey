@@ -35,6 +35,23 @@ suite "model_catalog":
   test "parseSimpleListCatalog rejects bodies without model array":
     check parseSimpleListCatalog("zen", """{"ok":true}""").isErr
 
+  test "parseOllamaTagsCatalog extracts model names":
+    let body = """
+{"models":[
+  {"name":"llama3:latest","modified_at":"2024-01-01T00:00:00Z","size":4000000000},
+  {"name":"mistral:7b","modified_at":"2024-01-02T00:00:00Z","size":4000000000}
+]}
+"""
+    let parsed = parseOllamaTagsCatalog(body).get()
+    check parsed.len == 2
+    ## sorted alphabetically (both free)
+    check parsed[0].modelName == "llama3:latest"
+    check parsed[0].isFree
+    check parsed[0].providerName == "ollama"
+
+  test "parseOllamaTagsCatalog rejects missing models array":
+    check parseOllamaTagsCatalog("""{"ok":true}""").isErr
+
   test "parseOpenRouterCatalog keeps pricing metadata":
     let body = """
 {"data":[

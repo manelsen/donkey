@@ -266,5 +266,5 @@ Ver também [`IRONCLAW_PARITY.md`](/home/micelio/git/donkey/IRONCLAW_PARITY.md).
 
 4. Inteligência operacional
    - ✅ smart model routing: heurística por request, circuit-breaker por rota e provider, cooldowns persistidos, reordenação por custo, `/budget` em todos os canais
+   - ✅ Ollama provider: adapter local com tool calling, streaming e catálogo live via `/api/tags`
    - heartbeat / execução proativa
-   - próximo provider local provável: Ollama
