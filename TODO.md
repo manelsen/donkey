@@ -26,9 +26,8 @@ Itens realmente abertos no estado atual do código. Para visão macro, ver [`ROA
 
 ## Gateway / automação contínua
 
-- [ ] **HTTP/Web gateway com SSE/WebSocket**
-  Estado:
-  o daemon já tem IPC e streaming por canal, mas não expõe ainda um gateway contínuo para UI/browser nem broadcast de eventos.
+- ✅ **HTTP/Web gateway com SSE**
+  `app/http_gateway.nim`: servidor HTTP/1.1 dedicado em OS thread. Endpoints: `GET /api/status`, `GET /api/logs?n=N`, `GET /api/events` (SSE push a cada 5s). Porta configurável via `DONKEY_HTTP_PORT` (padrão 8080). CORS habilitado para acesso browser. Wired no daemon ao lado do IPC socket.
 
 - [ ] **Heartbeat / execução proativa**
   Estado:

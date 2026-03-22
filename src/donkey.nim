@@ -43,6 +43,7 @@ import donkey/ports/provider
 import donkey/ports/tool
 import donkey/app/orchestrator
 import donkey/app/ipc_server
+import donkey/app/http_gateway
 import donkey/app/outbound_runtime
 import donkey/app/session_manager
 import donkey/app/session_bootstrap
@@ -1168,6 +1169,17 @@ proc setupIpcServer(cfg: DonkeyConfig;
       result.add(IpcLogEntry(ts: e.ts, level: e.level, subsys: e.sub, msg: e.msg))
   {.cast(gcsafe).}: startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
   log.info("IPC socket: " & sockPath)
+  let httpPortStr = getEnv("DONKEY_HTTP_PORT")
+  let httpPort = if httpPortStr.len > 0:
+    try: parseInt(httpPortStr) except ValueError: GatewayDefaultPort
+  else:
+    GatewayDefaultPort
+  let gwStatusFn: GatewayStatusFn = proc(): DaemonStatus {.gcsafe.} =
+    {.cast(gcsafe).}: ipcStatusFn()
+  let gwLogFn: GatewayLogFn = proc(n: int): seq[IpcLogEntry] {.gcsafe.} =
+    {.cast(gcsafe).}: ipcLogFn(n)
+  {.cast(gcsafe).}: startHttpGateway(httpPort, gwStatusFn, gwLogFn)
+  log.info("HTTP gateway: http://0.0.0.0:" & $httpPort)
 
 type EnsureSessionPlan = object
   uid*:      string
