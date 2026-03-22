@@ -34,3 +34,20 @@ suite "model_catalog":
 
   test "parseSimpleListCatalog rejects bodies without model array":
     check parseSimpleListCatalog("zen", """{"ok":true}""").isErr
+
+  test "parseOpenRouterCatalog keeps pricing metadata":
+    let body = """
+{"data":[
+  {"id":"cheap-model","name":"cheap-model","pricing":{"prompt":"0.0000001","completion":"0.0000002"}},
+  {"id":"free-model:free","name":"free-model:free","pricing":{"prompt":"0","completion":"0"}}
+]}
+"""
+    let parsed = parseOpenRouterCatalog(body).get()
+    check parsed.len == 2
+    check parsed[0].modelName == "free-model:free"
+    check parsed[0].hasPricing
+    check parsed[0].inputCostMicrosPer1k == 0
+    check parsed[1].modelName == "cheap-model"
+    check parsed[1].hasPricing
+    check parsed[1].inputCostMicrosPer1k == 100
+    check parsed[1].outputCostMicrosPer1k == 200

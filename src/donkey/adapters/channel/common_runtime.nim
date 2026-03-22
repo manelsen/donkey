@@ -2,6 +2,7 @@ import std/[algorithm, os, sequtils, strutils, times]
 import parsetoml
 import results
 import ../../core/pipeops
+import ../../core/providers/smart_routing
 import ../../adapters/memory/md_file
 import ../../domain/message
 import ../../ports/provider
@@ -25,12 +26,23 @@ type
     provider*: string
     model*:    string
     thinking*: string
+    budget*:   string
 
 func defaultChannelPrefs*(): ChannelPrefs =
-  ChannelPrefs(provider: "zai-coding", model: "", thinking: "off")
+  ChannelPrefs(provider: "zai-coding", model: "", thinking: "off", budget: "balanced")
 
 func emptyCatalogResult*(): ModelCatalogResult =
   ModelCatalogResult(entries: @[], source: mcsFallback, fetchedAtUnix: 0)
+
+func availableProvidersFromEnv(): ProviderAvailability =
+  ProviderAvailability(
+    openrouter: getEnv("OPENROUTER_API_KEY").len > 0,
+    anthropic: getEnv("ANTHROPIC_API_KEY").len > 0,
+    gemini: getEnv("GEMINI_API_KEY").len > 0,
+    minimax: getEnv("MINIMAX_API_KEY").len > 0,
+    zai: getEnv("ZAI_API_KEY").len > 0,
+    zaiCoding: getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")).len > 0,
+  )
 
 proc parseChannelPrefs*(preferencesMd: string): ChannelPrefs =
   result = defaultChannelPrefs()
@@ -45,6 +57,8 @@ proc parseChannelPrefs*(preferencesMd: string): ChannelPrefs =
         result.model = t["model"].getStr()
       if t.hasKey("thinking"):
         result.thinking = t["thinking"].getStr("off")
+      if t.hasKey("budget"):
+        result.budget = normalizeBudgetPolicy(t["budget"].getStr("balanced"))
   except:
     discard
 
@@ -228,11 +242,21 @@ func parseThinkArgs*(value: string): Result[string, string] =
 proc buildModelsHelpText*(memory: MdFileAdapter;
                           userId: UserId;
                           modelCatalogLoader: ModelCatalogLoader = nil): string =
+  let prefs = parseSmartRoutingPrefs(memory.loadContext(userId).preferencesMd)
+  let availability = availableProvidersFromEnv()
   let (provider, model) = memory.getCurrentProviderModel(userId)
   let providerText = supportedProviders().join(", ")
-  var text = "Provider atual: " & provider
-  if model.len > 0:
+  var text =
+    if prefs.usesSmartRouting:
+      "Provider atual: auto [" & prefs.budgetPolicy & "]"
+    else:
+      "Provider atual: " & provider
+  if model.len > 0 and not prefs.usesSmartRouting:
     text.add(" / " & model)
+  if prefs.usesSmartRouting:
+    let preview = formatSelectionPreview(previewSmartRouteSelections(prefs, availability))
+    if preview.len > 0:
+      text.add("\nRota base: " & preview)
   text.add("\n\nProviders: " & providerText)
   var catalogInfo = ""
   let currentModels =
@@ -293,12 +317,24 @@ proc applyThinkTextCommand*(memory: MdFileAdapter;
   memory.saveChannelPreference(userId, "thinking", level)
   ok("Thinking definido: " & level)
 
+proc buildProviderStatusLine*(memory: MdFileAdapter; userId: UserId): string =
+  let prefs = parseSmartRoutingPrefs(memory.loadContext(userId).preferencesMd)
+  let availability = availableProvidersFromEnv()
+  let (provider, model) = memory.getCurrentProviderModel(userId)
+  if prefs.usesSmartRouting:
+    let preview = formatSelectionPreview(previewSmartRouteSelections(prefs, availability))
+    if preview.len > 0:
+      "Provider: auto [" & prefs.budgetPolicy & "] (" & preview & ")"
+    else:
+      "Provider: auto [" & prefs.budgetPolicy & "]"
+  else:
+    "Provider: " & provider & " / " & model
+
 proc buildTextStatusText*(memory: MdFileAdapter;
                           userId: UserId;
                           toolsCount: int;
                           sessionCount: int;
                           daemonStartMs: int64): string =
-  let (provider, model) = memory.getCurrentProviderModel(userId)
   let thinking = memory.getCurrentThinkLevel(userId)
   let ctx = memory.loadContext(userId)
   let memLines = ctx.memoryMd.countLines()
@@ -306,8 +342,9 @@ proc buildTextStatusText*(memory: MdFileAdapter;
   let uptimeStr = if uptimeSec < 60: $uptimeSec & "s"
                   elif uptimeSec < 3600: $(uptimeSec div 60) & "m"
                   else: $(uptimeSec div 3600) & "h " & $((uptimeSec mod 3600) div 60) & "m"
+  let providerLine = buildProviderStatusLine(memory, userId)
   "Status\n\n" &
-    "Provider: " & provider & " / " & model & "\n" &
+    providerLine & "\n" &
     "Thinking: " & thinking & "\n" &
     "Tools: " & $toolsCount & "\n" &
     "Sessões ativas: " & $sessionCount & "\n" &

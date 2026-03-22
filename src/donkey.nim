@@ -1,6 +1,6 @@
 ## donkey — AI agent system entry point.
 
-import std/[json, os, parseopt, strutils, tables, terminal]
+import std/[algorithm, json, os, parseopt, strutils, tables, terminal, times]
 import chronos
 import chronos/asyncsync
 import donkey/config/loader
@@ -12,6 +12,7 @@ import donkey/adapters/tool/runtime_builder
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/app_meta
+import donkey/core/providers/smart_routing
 import donkey/core/session/session_ingress
 import donkey/adapters/memory/md_file
 when defined(withPostgres):
@@ -574,6 +575,15 @@ type DaemonAdapters = object
   qq: QQChannelAdapter
   fs: FeishuAdapter
 
+const
+  RecentRouteSampleLimit = 32
+  DefaultRecentRouteSampleTtlSec = 6 * 60 * 60
+
+type RouteSample = object
+  ok: bool
+  elapsedMs: int
+  recordedAtUnix: int64
+
 type DaemonServices = object
   toolClients:      seq[ToolRuntimePort]
   tools:            seq[ToolDescription]
@@ -589,6 +599,13 @@ type DaemonRuntime = ref object
   statusMsgIds:         Table[string, string]
   kbdMsgIds:            Table[string, string]
   dcKbdMsgIds:          Table[string, string]
+  routeCounts:          Table[string, int]
+  routeCallCounts:      Table[string, int]
+  routeOkCounts:        Table[string, int]
+  routeErrCounts:       Table[string, int]
+  routeLatencyTotalsMs: Table[string, int64]
+  routeRecentSamples:   Table[string, seq[RouteSample]]
+  routeHealthPath:      string
   lastReminderCheckMs:  int64
   msgSeq:               int
   daemonStartMs:        int64
@@ -709,11 +726,203 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
   result.fs = newFeishuAdapter(env.feishuAppId, getEnv("FEISHU_APP_SECRET"),
                                env.identityPath)
 
-proc initDaemonRuntime(): DaemonRuntime =
+func recentRouteSampleTtlSec(): int64 =
+  let raw = getEnv("DONKEY_ROUTE_HEALTH_TTL_SEC")
+  if raw.len == 0:
+    return DefaultRecentRouteSampleTtlSec
+  try:
+    let ttl = parseInt(raw)
+    if ttl > 0: ttl else: DefaultRecentRouteSampleTtlSec
+  except ValueError:
+    DefaultRecentRouteSampleTtlSec
+
+func routeHealthPath(home: string): string =
+  home / "state" / "route_health.json"
+
+proc pruneRecentRouteSamples(runtime: DaemonRuntime) =
+  let nowSec = getTime().toUnix()
+  let ttlSec = recentRouteSampleTtlSec()
+  for route, samples in runtime.routeRecentSamples.mpairs:
+    var kept: seq[RouteSample] = @[]
+    for sample in samples:
+      if sample.recordedAtUnix > 0 and nowSec - sample.recordedAtUnix <= ttlSec:
+        kept.add(sample)
+    if kept.len > RecentRouteSampleLimit:
+      kept = kept[(kept.len - RecentRouteSampleLimit) .. ^1]
+    samples = kept
+
+proc saveRecentRouteSamples(runtime: DaemonRuntime) =
+  if runtime.routeHealthPath.len == 0:
+    return
+  try:
+    runtime.pruneRecentRouteSamples()
+    createDir(parentDir(runtime.routeHealthPath))
+    var data = newJArray()
+    for route, samples in runtime.routeRecentSamples:
+      if samples.len == 0:
+        continue
+      var sampleData = newJArray()
+      for sample in samples:
+        sampleData.add(%*{
+          "ok": sample.ok,
+          "elapsed_ms": sample.elapsedMs,
+          "recorded_at": sample.recordedAtUnix,
+        })
+      data.add(%*{
+        "route": route,
+        "samples": sampleData,
+      })
+    writeFile(runtime.routeHealthPath, $(%*{
+      "saved_at": getTime().toUnix(),
+      "routes": data,
+    }))
+  except CatchableError:
+    discard
+
+proc loadRecentRouteSamples(runtime: DaemonRuntime) =
+  if runtime.routeHealthPath.len == 0 or not fileExists(runtime.routeHealthPath):
+    return
+  try:
+    let parsed = parseJson(readFile(runtime.routeHealthPath))
+    for routeNode in parsed{"routes"}:
+      let route = routeNode{"route"}.getStr("")
+      if route.len == 0:
+        continue
+      var samples: seq[RouteSample] = @[]
+      for sampleNode in routeNode{"samples"}:
+        samples.add(RouteSample(
+          ok: sampleNode{"ok"}.getBool(false),
+          elapsedMs: sampleNode{"elapsed_ms"}.getInt(0),
+          recordedAtUnix: sampleNode{"recorded_at"}.getBiggestInt(0),
+        ))
+      runtime.routeRecentSamples[route] = samples
+    runtime.pruneRecentRouteSamples()
+  except CatchableError:
+    discard
+
+proc initDaemonRuntime(home: string): DaemonRuntime =
   new(result)
   result.globalOutbox = newAsyncQueue[OutboundMessage]()
   result.sm.init()
+  result.routeHealthPath = routeHealthPath(home)
+  result.loadRecentRouteSamples()
   result.daemonStartMs = nowMs()
+
+proc recordRouteChoice(runtime: DaemonRuntime; selection: ProviderSelection) =
+  let key = selection.formatSelection
+  runtime.routeCounts[key] = runtime.routeCounts.getOrDefault(key) + 1
+
+proc recordRouteResult(runtime: DaemonRuntime;
+                       selection: ProviderSelection;
+                       elapsedMs: int64;
+                       ok: bool) =
+  let key = selection.formatSelection
+  let nowSec = getTime().toUnix()
+  runtime.routeCallCounts[key] = runtime.routeCallCounts.getOrDefault(key) + 1
+  runtime.routeLatencyTotalsMs[key] = runtime.routeLatencyTotalsMs.getOrDefault(key) + elapsedMs
+  var samples = runtime.routeRecentSamples.getOrDefault(key)
+  samples.add(RouteSample(
+    ok: ok,
+    elapsedMs: if elapsedMs > 0: int(elapsedMs) else: 0,
+    recordedAtUnix: nowSec,
+  ))
+  if samples.len > RecentRouteSampleLimit:
+    samples = samples[(samples.len - RecentRouteSampleLimit) .. ^1]
+  runtime.routeRecentSamples[key] = samples
+  runtime.pruneRecentRouteSamples()
+  runtime.saveRecentRouteSamples()
+  if ok:
+    runtime.routeOkCounts[key] = runtime.routeOkCounts.getOrDefault(key) + 1
+  else:
+    runtime.routeErrCounts[key] = runtime.routeErrCounts.getOrDefault(key) + 1
+
+proc topRouteCounts(runtime: DaemonRuntime; limit = 5): seq[ipcTypes.RouteCount] =
+  var items: seq[(string, int)] = @[]
+  for route, count in runtime.routeCounts:
+    items.add((route, count))
+  items.sort(proc(a, b: (string, int)): int =
+    if a[1] != b[1]:
+      return cmp(b[1], a[1])
+    cmp(a[0], b[0])
+  )
+  for i in 0 ..< min(limit, items.len):
+    result.add(ipcTypes.RouteCount(route: items[i][0], count: items[i][1]))
+
+proc topRouteMetrics(runtime: DaemonRuntime; limit = 5): seq[ipcTypes.RouteMetric] =
+  var items: seq[(string, int)] = @[]
+  for route, calls in runtime.routeCallCounts:
+    items.add((route, calls))
+  items.sort(proc(a, b: (string, int)): int =
+    if a[1] != b[1]:
+      return cmp(b[1], a[1])
+    cmp(a[0], b[0])
+  )
+  for i in 0 ..< min(limit, items.len):
+    let route = items[i][0]
+    let calls = items[i][1]
+    let totalLatency = runtime.routeLatencyTotalsMs.getOrDefault(route)
+    result.add(ipcTypes.RouteMetric(
+      route: route,
+      calls: calls,
+      okCalls: runtime.routeOkCounts.getOrDefault(route),
+      errCalls: runtime.routeErrCounts.getOrDefault(route),
+      avgLatencyMs: if calls > 0: int(totalLatency div calls) else: 0,
+    ))
+
+proc topRecentRouteMetrics(runtime: DaemonRuntime; limit = 5): seq[ipcTypes.RouteMetric] =
+  runtime.pruneRecentRouteSamples()
+  var items: seq[(string, int)] = @[]
+  for route, samples in runtime.routeRecentSamples:
+    if samples.len > 0:
+      items.add((route, samples.len))
+  items.sort(proc(a, b: (string, int)): int =
+    if a[1] != b[1]:
+      return cmp(b[1], a[1])
+    cmp(a[0], b[0])
+  )
+  for i in 0 ..< min(limit, items.len):
+    let route = items[i][0]
+    let samples = runtime.routeRecentSamples.getOrDefault(route)
+    var okCalls = 0
+    var errCalls = 0
+    var totalLatency = 0
+    for sample in samples:
+      totalLatency += sample.elapsedMs
+      if sample.ok:
+        inc okCalls
+      else:
+        inc errCalls
+    let calls = samples.len
+    result.add(ipcTypes.RouteMetric(
+      route: route,
+      calls: calls,
+      okCalls: okCalls,
+      errCalls: errCalls,
+      avgLatencyMs: if calls > 0: totalLatency div calls else: 0,
+    ))
+
+proc currentRouteFeedback(runtime: DaemonRuntime): seq[RouteFeedback] =
+  runtime.pruneRecentRouteSamples()
+  for route, samples in runtime.routeRecentSamples:
+    if samples.len == 0:
+      continue
+    var okCalls = 0
+    var errCalls = 0
+    var totalLatency = 0
+    for sample in samples:
+      totalLatency += sample.elapsedMs
+      if sample.ok:
+        inc okCalls
+      else:
+        inc errCalls
+    let calls = samples.len
+    result.add(RouteFeedback(
+      route: route,
+      calls: calls,
+      okCalls: okCalls,
+      errCalls: errCalls,
+      avgLatencyMs: if calls > 0: totalLatency div calls else: 0,
+    ))
 
 proc initDaemonContext(cfg: DonkeyConfig;
                        env: DaemonEnv;
@@ -722,7 +931,7 @@ proc initDaemonContext(cfg: DonkeyConfig;
   result.env = env
   result.adapters = initDaemonAdapters(env)
   result.services = initDaemonServices(cfg, env, log)
-  result.runtime = initDaemonRuntime()
+  result.runtime = initDaemonRuntime(cfg.home)
 
 proc loadDaemonBootstrap(cfg: DonkeyConfig;
                          log: Logger): DaemonBootstrap =
@@ -813,6 +1022,7 @@ proc buildGlobalSearchFn(): SearchFn =
     discard
 
 proc setupIpcServer(cfg: DonkeyConfig;
+                    runtime: DaemonRuntime;
                     sm: SessionManager;
                     toolsCount: int;
                     daemonStartMs: int64;
@@ -845,6 +1055,9 @@ proc setupIpcServer(cfg: DonkeyConfig;
       sessions:      sessions,
       channels:      activeChannels,
       providers:     @["openrouter"],
+      routeCounts:   runtime.topRouteCounts(),
+      routeMetrics:  runtime.topRouteMetrics(),
+      recentRouteMetrics: runtime.topRecentRouteMetrics(),
       toolsCount:    toolsCount,
       memoryBackend: when defined(withPostgres): "postgres" else: "md",
     )
@@ -878,6 +1091,10 @@ type SessionIngressServices = object
   sandboxImage: string
   typingFn:     TypingFn
   searchFn:     SearchFn
+  routeRecordHook: proc(selection: ProviderSelection) {.gcsafe.}
+  routeResultHook: proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.}
+  routeFeedbackHook: proc(): seq[RouteFeedback] {.gcsafe.}
+  routeCostHook: proc(): seq[RouteCostHint] {.gcsafe.}
 
 func toolCatalogSignature*(tools: seq[ToolDescription];
                            providerLabel: string;
@@ -935,7 +1152,11 @@ func buildSessionIngressServices*(memory: MdFileAdapter;
                                   sandboxMode: SandboxMode;
                                   sandboxImage: string;
                                   typingFn: TypingFn;
-                                  searchFn: SearchFn): SessionIngressServices =
+                                  searchFn: SearchFn;
+                                  routeRecordHook: proc(selection: ProviderSelection) {.gcsafe.} = nil;
+                                  routeResultHook: proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.} = nil;
+                                  routeFeedbackHook: proc(): seq[RouteFeedback] {.gcsafe.} = nil;
+                                  routeCostHook: proc(): seq[RouteCostHint] {.gcsafe.} = nil): SessionIngressServices =
   SessionIngressServices(
     cfg: cfg,
     memory: memory,
@@ -949,6 +1170,10 @@ func buildSessionIngressServices*(memory: MdFileAdapter;
     sandboxImage: sandboxImage,
     typingFn: typingFn,
     searchFn: searchFn,
+    routeRecordHook: routeRecordHook,
+    routeResultHook: routeResultHook,
+    routeFeedbackHook: routeFeedbackHook,
+    routeCostHook: routeCostHook,
   )
 
 func withTypingFn*(typingFn: TypingFn;
@@ -973,6 +1198,15 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     cfg.sandboxImage,
     nil,
     ctx.services.globalSearchFn,
+    proc(selection: ProviderSelection) {.gcsafe.} =
+      ctx.runtime.recordRouteChoice(selection),
+    proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.} =
+      ctx.runtime.recordRouteResult(selection, elapsedMs, ok),
+    proc(): seq[RouteFeedback] {.gcsafe.} =
+      ctx.runtime.currentRouteFeedback(),
+    proc(): seq[RouteCostHint] {.gcsafe.} =
+      loadRouteCostHints(@["openrouter", "groq", "anthropic", "gemini",
+                           "minimax", "zai", "zai-coding", "zen"]),
   )
 
 proc startSessionOrchestrator*(plan: EnsureSessionPlan;
@@ -1016,10 +1250,30 @@ proc startSessionIngress*(sm: var SessionManager;
                           msg: InboundMessage;
                           services: SessionIngressServices;
                           msgSeq: var int): SessionIngressContext {.gcsafe.} =
+  let routingHook: RoutingTelemetryHook =
+    proc(selection: ProviderSelection;
+         prefs: SmartRoutingPrefs;
+         req: CompletionRequest) {.gcsafe.} =
+      if prefs.usesSmartRouting:
+        if services.routeRecordHook != nil:
+          services.routeRecordHook(selection)
+        var hasImage = false
+        for turn in req.messages:
+          if turn.imageUrl.len > 0:
+            hasImage = true
+            break
+        services.log.info("[route] " & $msg.userId & " -> " &
+                          selection.formatSelection &
+                          " | thinking=" & prefs.thinking &
+                          " tools=" & $req.tools.len &
+                          " image=" & $hasImage &
+                          " chars=" & $requestApproxChars(req))
   let bootstrap = buildSessionBootstrap(
     services.memory.toRuntimePort(), msg.userId, services.completeFn, buildProviderBundle,
     buildDenoSkillRuntime, buildSkillRuntimePolicyResolver(services.cfg),
-    services.toolClients, services.tools)
+    services.toolClients, services.tools,
+    routingHook, services.routeResultHook, services.routeFeedbackHook,
+    services.routeCostHook)
   let signature = toolCatalogSignature(
     bootstrap.tools, bootstrap.providerLabel, bootstrap.paddockDir, bootstrap.skillPrompt)
   result = sm.buildSessionIngressContext(msg, signature, msgSeq)
@@ -1166,7 +1420,7 @@ proc startDaemonIngress(ctx: DaemonContext;
 proc setupDaemonRuntime(ctx: DaemonContext;
                         cfg: DonkeyConfig;
                         log: Logger) =
-  setupIpcServer(cfg, ctx.runtime.sm, ctx.services.tools.len, ctx.runtime.daemonStartMs,
+  setupIpcServer(cfg, ctx.runtime, ctx.runtime.sm, ctx.services.tools.len, ctx.runtime.daemonStartMs,
                  ctx.env.telegramToken, ctx.env.discordToken, ctx.env.wecomCorpId,
                  ctx.env.wechatAppId, ctx.env.feishuAppId, ctx.adapters.qq.enabled(), log)
 
@@ -1333,7 +1587,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   log.info("polling for messages…")
   while true:
     let loopResult = runDaemonLoop(ctx, cfg, memory, log)
-    await sleepAsync(milliseconds(loopResult.sleepMs))
+    await sleepAsync(loopResult.sleepMs)
 
 # ── main ───────────────────────────────────────────────────────────────────────
 

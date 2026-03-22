@@ -81,3 +81,26 @@ suite "common_runtime":
     let text = buildModelsHelpText(memory, userId, loader)
     check text.contains("Fonte: cache")
     check text.contains("model-a")
+
+  test "buildModelsHelpText shows auto routing preview when provider is not pinned":
+    let tmpDir = getTempDir() / "donkey_common_runtime_auto_models"
+    let memory = MdFileAdapter(paddocksDir: tmpDir)
+    let userId = UserId("u-common-auto-models")
+    defer:
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+    memory.savePreferences(userId, "thinking = \"medium\"\nbudget = \"cheap-first\"")
+    let text = buildModelsHelpText(memory, userId)
+    check text.contains("Provider atual: auto")
+    check text.contains("cheap-first")
+
+  test "buildTextStatusText shows auto routing preview when provider is not pinned":
+    let tmpDir = getTempDir() / "donkey_common_runtime_auto_status"
+    let memory = MdFileAdapter(paddocksDir: tmpDir)
+    let userId = UserId("u-common-auto-status")
+    defer:
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+    memory.savePreferences(userId, "thinking = \"high\"\nbudget = \"quality-first\"")
+    let text = buildTextStatusText(memory, userId, 3, 1, 0)
+    check text.contains("Provider: auto [quality-first]")

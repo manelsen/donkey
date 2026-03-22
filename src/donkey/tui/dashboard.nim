@@ -6,7 +6,7 @@
 ##
 ## Requires illwill. Runs in foreground (no Chronos).
 
-import std/[os, strformat, strutils, times]
+import std/[os, sequtils, strformat, strutils, times]
 import illwill
 import ../core/pipeops
 import ../core/types
@@ -188,6 +188,27 @@ proc drawStats(tb: var TerminalBuffer; st: TuiState; y0: int) =
   row("Tools",           $st.status.toolsCount)
   row("Channels",        st.status.channels.join(", "))
   row("Providers",       st.status.providers.join(", "))
+  row("Top routes",
+      if st.status.routeCounts.len == 0:
+        "-"
+      else:
+        st.status.routeCounts.mapIt(it.route & " (" & $it.count & ")").join(", "))
+  row("Route metrics",
+      if st.status.routeMetrics.len == 0:
+        "-"
+      else:
+        st.status.routeMetrics.mapIt(
+          it.route & " ok:" & $it.okCalls & "/" & $it.calls &
+          " err:" & $it.errCalls &
+          " avg:" & $it.avgLatencyMs & "ms").join(", "))
+  row("Recent route metrics",
+      if st.status.recentRouteMetrics.len == 0:
+        "-"
+      else:
+        st.status.recentRouteMetrics.mapIt(
+          it.route & " ok:" & $it.okCalls & "/" & $it.calls &
+          " err:" & $it.errCalls &
+          " avg:" & $it.avgLatencyMs & "ms").join(", "))
   row("Log entries",     $st.logs.len)
 
 proc render(tb: var TerminalBuffer; st: TuiState) =

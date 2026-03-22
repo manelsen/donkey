@@ -12,12 +12,26 @@ type
     userId*:   string
     channels*: seq[string]
 
+  RouteCount* = object
+    route*: string
+    count*: int
+
+  RouteMetric* = object
+    route*: string
+    calls*: int
+    okCalls*: int
+    errCalls*: int
+    avgLatencyMs*: int
+
   DaemonStatus* = object
     uptimeSec*:     int64
     sessionCount*:  int
     sessions*:      seq[SessionInfo]
     channels*:      seq[string]
     providers*:     seq[string]
+    routeCounts*:   seq[RouteCount]
+    routeMetrics*:  seq[RouteMetric]
+    recentRouteMetrics*: seq[RouteMetric]
     toolsCount*:    int
     memoryBackend*: string
 
@@ -40,12 +54,36 @@ func toJson*(st: DaemonStatus): JsonNode =
   var providers = newJArray()
   for p in st.providers:
     providers.add(%p)
+  var routeCounts = newJArray()
+  for rc in st.routeCounts:
+    routeCounts.add(%*{"route": rc.route, "count": rc.count})
+  var routeMetrics = newJArray()
+  for rm in st.routeMetrics:
+    routeMetrics.add(%*{
+      "route": rm.route,
+      "calls": rm.calls,
+      "okCalls": rm.okCalls,
+      "errCalls": rm.errCalls,
+      "avgLatencyMs": rm.avgLatencyMs,
+    })
+  var recentRouteMetrics = newJArray()
+  for rm in st.recentRouteMetrics:
+    recentRouteMetrics.add(%*{
+      "route": rm.route,
+      "calls": rm.calls,
+      "okCalls": rm.okCalls,
+      "errCalls": rm.errCalls,
+      "avgLatencyMs": rm.avgLatencyMs,
+    })
   %*{
     "uptimeSec":     st.uptimeSec,
     "sessionCount":  st.sessionCount,
     "sessions":      sessions,
     "channels":      channels,
     "providers":     providers,
+    "routeCounts":   routeCounts,
+    "routeMetrics":  routeMetrics,
+    "recentRouteMetrics": recentRouteMetrics,
     "toolsCount":    st.toolsCount,
     "memoryBackend": st.memoryBackend,
   }
@@ -59,6 +97,27 @@ func fromJsonStatus*(j: JsonNode): DaemonStatus =
     result.channels.add(c.getStr())
   for p in j{"providers"}:
     result.providers.add(p.getStr())
+  for rc in j{"routeCounts"}:
+    result.routeCounts.add(RouteCount(
+      route: rc{"route"}.getStr(),
+      count: rc{"count"}.getInt(0),
+    ))
+  for rm in j{"routeMetrics"}:
+    result.routeMetrics.add(RouteMetric(
+      route: rm{"route"}.getStr(),
+      calls: rm{"calls"}.getInt(0),
+      okCalls: rm{"okCalls"}.getInt(0),
+      errCalls: rm{"errCalls"}.getInt(0),
+      avgLatencyMs: rm{"avgLatencyMs"}.getInt(0),
+    ))
+  for rm in j{"recentRouteMetrics"}:
+    result.recentRouteMetrics.add(RouteMetric(
+      route: rm{"route"}.getStr(),
+      calls: rm{"calls"}.getInt(0),
+      okCalls: rm{"okCalls"}.getInt(0),
+      errCalls: rm{"errCalls"}.getInt(0),
+      avgLatencyMs: rm{"avgLatencyMs"}.getInt(0),
+    ))
   for s in j{"sessions"}:
     var si = SessionInfo(userId: s{"userId"}.getStr())
     for ch in s{"channels"}:

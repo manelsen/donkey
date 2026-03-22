@@ -13,6 +13,9 @@ suite "IPC types serialization":
       ],
       channels:      @["telegram", "discord"],
       providers:     @["openrouter"],
+      routeCounts:   @[RouteCount(route: "anthropic/claude-opus-4-6", count: 7)],
+      routeMetrics:  @[RouteMetric(route: "anthropic/claude-opus-4-6", calls: 7, okCalls: 6, errCalls: 1, avgLatencyMs: 840)],
+      recentRouteMetrics: @[RouteMetric(route: "openrouter/openai/gpt-4o-mini", calls: 4, okCalls: 4, errCalls: 0, avgLatencyMs: 620)],
       toolsCount:    5,
       memoryBackend: "md",
     )
@@ -26,6 +29,21 @@ suite "IPC types serialization":
     check st2.sessions[1].channels == @["telegram"]
     check st2.channels     == @["telegram", "discord"]
     check st2.providers    == @["openrouter"]
+    check st2.routeCounts.len == 1
+    check st2.routeCounts[0].route == "anthropic/claude-opus-4-6"
+    check st2.routeCounts[0].count == 7
+    check st2.routeMetrics.len == 1
+    check st2.routeMetrics[0].route == "anthropic/claude-opus-4-6"
+    check st2.routeMetrics[0].calls == 7
+    check st2.routeMetrics[0].okCalls == 6
+    check st2.routeMetrics[0].errCalls == 1
+    check st2.routeMetrics[0].avgLatencyMs == 840
+    check st2.recentRouteMetrics.len == 1
+    check st2.recentRouteMetrics[0].route == "openrouter/openai/gpt-4o-mini"
+    check st2.recentRouteMetrics[0].calls == 4
+    check st2.recentRouteMetrics[0].okCalls == 4
+    check st2.recentRouteMetrics[0].errCalls == 0
+    check st2.recentRouteMetrics[0].avgLatencyMs == 620
     check st2.toolsCount   == 5
     check st2.memoryBackend == "md"
 

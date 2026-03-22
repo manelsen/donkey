@@ -1,6 +1,7 @@
 import std/[algorithm, httpclient, json, os, strutils, times]
 import ../../ports/provider
 import ../../core/pipeops
+import ../../core/providers/smart_routing
 import openrouter
 import anthropic
 
@@ -21,9 +22,9 @@ func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
     ]
   of "groq":
     @[
-      ModelCatalogEntry(providerName: providerName, modelName: "llama-3.3-70b-versatile", label: "llama-3.3-70b-versatile", isFree: true, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "llama-3.1-8b-instant", label: "llama-3.1-8b-instant", isFree: true, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-oss-20b", label: "openai/gpt-oss-20b", isFree: true, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "llama-3.3-70b-versatile", label: "llama-3.3-70b-versatile", isFree: true, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "llama-3.1-8b-instant", label: "llama-3.1-8b-instant", isFree: true, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-oss-20b", label: "openai/gpt-oss-20b", isFree: true, available: true, hasPricing: true),
     ]
   of "zen":
     @[
@@ -72,6 +73,14 @@ func catalogResult(entries: seq[ModelCatalogEntry];
 func fallbackCatalog(providerName: string): ModelCatalogResult =
   catalogResult(staticCatalog(providerName), mcsFallback, 0)
 
+func parseCostMicrosPer1k(raw: string): int =
+  if raw.len == 0:
+    return 0
+  try:
+    int(parseFloat(raw) * 1_000_000.0 * 1000.0 + 0.5)
+  except ValueError:
+    0
+
 func modelCatalogTtlSec(): int64 =
   let raw = getEnv("DONKEY_MODEL_CATALOG_TTL_SEC")
   if raw.len == 0:
@@ -107,6 +116,9 @@ proc saveCatalogCache(providerName: string; entries: seq[ModelCatalogEntry]) =
         "label": entry.label,
         "is_free": entry.isFree,
         "available": entry.available,
+        "has_pricing": entry.hasPricing,
+        "input_cost_micros_per_1k": entry.inputCostMicrosPer1k,
+        "output_cost_micros_per_1k": entry.outputCostMicrosPer1k,
       })
     let payload = %* {
       "provider": providerName,
@@ -141,6 +153,9 @@ proc loadCatalogCache(providerName: string): Result[ModelCatalogResult, string] 
         label: item.getOrDefault("label").getStr(modelId),
         isFree: item.getOrDefault("is_free").getBool(false),
         available: item.getOrDefault("available").getBool(true),
+        hasPricing: item.getOrDefault("has_pricing").getBool(false),
+        inputCostMicrosPer1k: item.getOrDefault("input_cost_micros_per_1k").getInt(0),
+        outputCostMicrosPer1k: item.getOrDefault("output_cost_micros_per_1k").getInt(0),
       ))
     ok(catalogResult(entries.sortCatalog(), mcsCache, fetchedAt))
   except CatchableError as e:
@@ -156,7 +171,7 @@ proc withCacheFallback(providerName: string;
     return ok(cached.value)
   ok(fallbackCatalog(providerName))
 
-proc parseOpenRouterCatalog(body: string): Result[seq[ModelCatalogEntry], string] =
+proc parseOpenRouterCatalog*(body: string): Result[seq[ModelCatalogEntry], string] =
   try:
     let parsed = parseJson(body)
     let data = parsed.getOrDefault("data")
@@ -172,12 +187,17 @@ proc parseOpenRouterCatalog(body: string): Result[seq[ModelCatalogEntry], string
       let completionCost = if pricing != nil: pricing.getOrDefault("completion").getStr("") else: ""
       let isFree = modelId.endsWith(":free") or
         ((promptCost == "0" or promptCost == "0.0") and (completionCost == "0" or completionCost == "0.0"))
+      let inputCostMicrosPer1k = parseCostMicrosPer1k(promptCost)
+      let outputCostMicrosPer1k = parseCostMicrosPer1k(completionCost)
       entries.add(ModelCatalogEntry(
         providerName: "openrouter",
         modelName: modelId,
         label: item.getOrDefault("name").getStr(modelId),
         isFree: isFree,
         available: true,
+        hasPricing: promptCost.len > 0 or completionCost.len > 0,
+        inputCostMicrosPer1k: inputCostMicrosPer1k,
+        outputCostMicrosPer1k: outputCostMicrosPer1k,
       ))
     ok(entries.sortCatalog())
   except CatchableError as e:
@@ -259,6 +279,25 @@ proc parseSimpleListCatalog*(providerName, body: string): Result[seq[ModelCatalo
     ok(entries.sortCatalog())
   except CatchableError as e:
     err(e.msg)
+
+proc loadRouteCostHints*(
+    providerNames: seq[string]): seq[RouteCostHint] {.gcsafe.} =
+  for providerName in providerNames:
+    let catalog =
+      block:
+        let cached = loadCatalogCache(providerName)
+        if cached.isOk and cached.value.entries.len > 0:
+          cached.value
+        else:
+          fallbackCatalog(providerName)
+    for entry in catalog.entries:
+      if entry.hasPricing or entry.isFree:
+        result.add(RouteCostHint(
+          route: entry.providerName & "/" & entry.modelName,
+          hasPricing: entry.hasPricing or entry.isFree,
+          inputCostMicrosPer1k: entry.inputCostMicrosPer1k,
+          outputCostMicrosPer1k: entry.outputCostMicrosPer1k,
+        ))
 
 proc parseAnthropicCatalog(body: string): Result[seq[ModelCatalogEntry], string] =
   try:

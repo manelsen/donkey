@@ -67,11 +67,11 @@ func qqModelConfirmedText*(provider, model: string): string =
 func qqThinkingConfirmedText*(level: string): string =
   qqPickerText("Thinking definido", "**" & level & "**")
 
-func qqStatusText*(provider, model, thinking: string;
+func qqStatusText*(providerLine, thinking: string;
                    toolsCount, sessionCount: int;
                    uptimeStr: string): string =
   "## Status\n\n" &
-    "- Provider: **" & provider & " / " & model & "**\n" &
+    "- " & providerLine.replace("Provider: ", "Provider: **") & "**\n" &
     "- Thinking: **" & thinking & "**\n" &
     "- Tools: **" & $toolsCount & "**\n" &
     "- Sessões ativas: **" & $sessionCount & "**\n" &
@@ -297,7 +297,7 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
           text: buildPingText(memory, userId, completeBuilder),
         )).isOkOr: discard
       of crStatus:
-        let (provider, model) = memory.getCurrentProviderModel(userId)
+        let providerLine = buildProviderStatusLine(memory, userId)
         let thinking = memory.getCurrentThinkLevel(userId)
         let uptimeSec = (nowMs() - daemonStartMs) div 1_000
         let uptimeStr =
@@ -309,7 +309,7 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
           channel: ckQQ,
           text:
             if qqAdapter.kind == qbkOfficial:
-              qqStatusText(provider, model, thinking, toolsCount, sm.sessionCount(), uptimeStr)
+              qqStatusText(providerLine, thinking, toolsCount, sm.sessionCount(), uptimeStr)
             else:
               buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs),
         )).isOkOr: discard
