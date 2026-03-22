@@ -94,6 +94,69 @@ thinking = "high"
     ])
     check filtered == base
 
+  test "aggregateProviderFeedback combines route health by provider":
+    let aggregated = aggregateProviderFeedback(@[
+      RouteFeedback(route: "openrouter/openai/gpt-4o-mini", calls: 4, okCalls: 4, errCalls: 0, avgLatencyMs: 700),
+      RouteFeedback(route: "openrouter/anthropic/claude-sonnet-4-6", calls: 2, okCalls: 1, errCalls: 1, avgLatencyMs: 1300),
+      RouteFeedback(route: "anthropic/claude-opus-4-6", calls: 3, okCalls: 0, errCalls: 3, avgLatencyMs: 9000),
+    ])
+    check aggregated.len == 2
+    check aggregated[0].providerName == "openrouter"
+    check aggregated[0].calls == 6
+    check aggregated[0].okCalls == 5
+    check aggregated[0].errCalls == 1
+
+  test "applyProviderCircuitBreaker removes unhealthy providers when alternatives exist":
+    let base = @[
+      ProviderSelection(providerName: "anthropic", modelName: "claude-opus-4-6"),
+      ProviderSelection(providerName: "anthropic", modelName: "claude-sonnet-4-6"),
+      ProviderSelection(providerName: "openrouter", modelName: "openai/gpt-4o-mini"),
+    ]
+    let filtered = applyProviderCircuitBreaker(base, @[
+      RouteFeedback(route: "anthropic/claude-opus-4-6", calls: 5, okCalls: 0, errCalls: 5, avgLatencyMs: 19_000),
+      RouteFeedback(route: "anthropic/claude-sonnet-4-6", calls: 5, okCalls: 1, errCalls: 4, avgLatencyMs: 18_500),
+      RouteFeedback(route: "openrouter/openai/gpt-4o-mini", calls: 6, okCalls: 6, errCalls: 0, avgLatencyMs: 800),
+    ])
+    check filtered == @[
+      ProviderSelection(providerName: "openrouter", modelName: "openai/gpt-4o-mini"),
+    ]
+
+  test "applyProviderCircuitBreaker keeps only provider when no alternative remains":
+    let base = @[
+      ProviderSelection(providerName: "anthropic", modelName: "claude-opus-4-6"),
+      ProviderSelection(providerName: "anthropic", modelName: "claude-sonnet-4-6"),
+    ]
+    let filtered = applyProviderCircuitBreaker(base, @[
+      RouteFeedback(route: "anthropic/claude-opus-4-6", calls: 6, okCalls: 0, errCalls: 6, avgLatencyMs: 19_000),
+      RouteFeedback(route: "anthropic/claude-sonnet-4-6", calls: 6, okCalls: 0, errCalls: 6, avgLatencyMs: 19_000),
+    ])
+    check filtered == base
+
+  test "applyProviderCooldowns removes providers with active cooldowns":
+    let base = @[
+      ProviderSelection(providerName: "anthropic", modelName: "claude-opus-4-6"),
+      ProviderSelection(providerName: "openrouter", modelName: "openai/gpt-4o-mini"),
+      ProviderSelection(providerName: "gemini", modelName: "gemini-2.0-flash"),
+    ]
+    let filtered = applyProviderCooldowns(base, @[
+      ProviderCooldown(providerName: "anthropic", untilUnix: 200),
+      ProviderCooldown(providerName: "gemini", untilUnix: 199),
+    ], 100)
+    check filtered == @[
+      ProviderSelection(providerName: "openrouter", modelName: "openai/gpt-4o-mini"),
+    ]
+
+  test "applyProviderCooldowns keeps base when every provider is cooling down":
+    let base = @[
+      ProviderSelection(providerName: "anthropic", modelName: "claude-opus-4-6"),
+      ProviderSelection(providerName: "openrouter", modelName: "openai/gpt-4o-mini"),
+    ]
+    let filtered = applyProviderCooldowns(base, @[
+      ProviderCooldown(providerName: "anthropic", untilUnix: 200),
+      ProviderCooldown(providerName: "openrouter", untilUnix: 210),
+    ], 100)
+    check filtered == base
+
   test "reorderSelectionsWithCost prefers cheaper priced routes":
     let base = @[
       ProviderSelection(providerName: "anthropic", modelName: "claude-opus-4-6"),

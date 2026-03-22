@@ -47,7 +47,19 @@ type
     errCalls*: int
     avgLatencyMs*: int
 
+  ProviderFeedback* = object
+    providerName*: string
+    calls*: int
+    okCalls*: int
+    errCalls*: int
+    avgLatencyMs*: int
+
+  ProviderCooldown* = object
+    providerName*: string
+    untilUnix*: int64
+
   RoutingFeedbackHook* = proc(): seq[RouteFeedback] {.gcsafe.}
+  RoutingProviderCooldownHook* = proc(): seq[ProviderCooldown] {.gcsafe.}
 
   RouteCostHint* = object
     route*: string
@@ -220,6 +232,69 @@ func shouldCircuitBreakRoute*(feedback: RouteFeedback): bool =
     return true
   false
 
+func routeProviderName*(route: string): string =
+  let parts = route.split('/', 1)
+  if parts.len > 0: parts[0] else: ""
+
+func aggregateProviderFeedback*(feedback: seq[RouteFeedback]): seq[ProviderFeedback] =
+  for item in feedback:
+    let providerName = routeProviderName(item.route)
+    if providerName.len == 0:
+      continue
+    var found = false
+    for existing in result.mitems:
+      if existing.providerName == providerName:
+        let totalCalls = existing.calls + item.calls
+        let totalLatency =
+          existing.avgLatencyMs * existing.calls + item.avgLatencyMs * item.calls
+        existing.calls = totalCalls
+        existing.okCalls += item.okCalls
+        existing.errCalls += item.errCalls
+        existing.avgLatencyMs =
+          if totalCalls > 0: totalLatency div totalCalls else: 0
+        found = true
+        break
+    if not found:
+      result.add(ProviderFeedback(
+        providerName: providerName,
+        calls: item.calls,
+        okCalls: item.okCalls,
+        errCalls: item.errCalls,
+        avgLatencyMs: item.avgLatencyMs,
+      ))
+
+func shouldCircuitBreakProvider*(feedback: ProviderFeedback): bool =
+  if feedback.calls < 4:
+    return false
+  let errRate = (feedback.errCalls * 100) div max(feedback.calls, 1)
+  if feedback.errCalls == feedback.calls:
+    return true
+  if feedback.calls >= 8 and errRate >= 75:
+    return true
+  if errRate >= 60 and feedback.avgLatencyMs >= 18_000:
+    return true
+  false
+
+func applyProviderCooldowns*(selections: seq[ProviderSelection];
+                             cooldowns: seq[ProviderCooldown];
+                             nowUnix: int64): seq[ProviderSelection] =
+  if selections.len <= 1:
+    return selections
+
+  for selection in selections:
+    var blocked = false
+    for cooldown in cooldowns:
+      if cooldown.providerName == selection.providerName and cooldown.untilUnix > nowUnix:
+        blocked = true
+        break
+    if not blocked:
+      result.add(selection)
+
+  if result.len == 0:
+    selections
+  else:
+    result
+
 func reorderSelectionsWithFeedback*(selections: seq[ProviderSelection];
                                     feedback: seq[RouteFeedback]): seq[ProviderSelection] =
   type RankedSelection = object
@@ -256,6 +331,26 @@ func applyCircuitBreaker*(selections: seq[ProviderSelection];
     var blocked = false
     for item in feedback:
       if item.route == route and item.shouldCircuitBreakRoute:
+        blocked = true
+        break
+    if not blocked:
+      result.add(selection)
+
+  if result.len == 0:
+    selections
+  else:
+    result
+
+func applyProviderCircuitBreaker*(selections: seq[ProviderSelection];
+                                  feedback: seq[RouteFeedback]): seq[ProviderSelection] =
+  if selections.len <= 1:
+    return selections
+
+  let providerFeedback = aggregateProviderFeedback(feedback)
+  for selection in selections:
+    var blocked = false
+    for item in providerFeedback:
+      if item.providerName == selection.providerName and item.shouldCircuitBreakProvider:
         blocked = true
         break
     if not blocked:
