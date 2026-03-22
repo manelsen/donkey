@@ -3,10 +3,10 @@
   "sessionId": "61ec6e57-50fc-4383-8948-ed23ac31ae24",
   "status": "running",
   "startedAt": "2026-03-22T21:56:12.993Z",
-  "updatedAt": "2026-03-22T23:08:28.137Z",
-  "currentIteration": 5,
+  "updatedAt": "2026-03-22T23:15:51.424Z",
+  "currentIteration": 6,
   "maxIterations": 0,
-  "tasksCompleted": 5,
+  "tasksCompleted": 6,
   "isPaused": false,
   "agentPlugin": "claude",
   "trackerState": {
@@ -64,6 +64,16 @@
       "durationMs": 442998,
       "startedAt": "2026-03-22T22:45:16.641Z",
       "endedAt": "2026-03-22T22:52:39.639Z"
+    },
+    {
+      "iteration": 6,
+      "status": "completed",
+      "taskId": "US-006",
+      "taskTitle": "SSRF DNS Resolver",
+      "taskCompleted": true,
+      "durationMs": 947303,
+      "startedAt": "2026-03-22T22:52:40.831Z",
+      "endedAt": "2026-03-22T23:08:28.134Z"
     }
   ],
   "skippedTaskIds": [],
