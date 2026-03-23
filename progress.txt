@@ -46,3 +46,16 @@
   - Nim's `|>` does NOT work with closures capturing outer scope vars - use `|>->` or direct function calls instead
   - `|>->` pipes into the LAST argument: `a |>-> f(x)` = `f(x, a)` - use when the piped value is the last argument
   - When a function call like `normalizeHistoryAlternation(provider)` returns a value (not a function), you cannot pipe into it with `|>` - use direct function call `normalizeHistoryAlternation(msgs, provider)`
+
+---
+
+## 2026-03-23 (US-035)
+- Implemented `domain/providers/openai_pure.nim` — pure functions for formatting OpenAI/OpenRouter request/response bodies (buildMessagesArray, buildToolsArray, buildRequestBody, parseResponseFrom, toolResultToOpenAIMessage).
+- Files changed: `src/donkey/domain/providers/openai_pure.nim` (new file), `tests/domain/providers/t_openai_pure.nim` (new test file with 21 tests).
+- **Learnings for future iterations:**
+  - `parseJson` can raise `JsonParsingError` - any function calling it must be `proc`, not `func`. Use try/except inside the proc to handle gracefully.
+  - `getCurrentExceptionMsg` in an except clause is a side effect, so the containing proc cannot be `func`.
+  - `seq.map` conflicts with `results.map` when both are in scope - use explicit for-loops instead of `.map()` on sequences.
+  - `>>=` pipe expects `Result[T, E]` on the left side - if the left side is just a `JsonNode`, call the function directly instead of using `>>=`.
+  - `|>` with multi-arg functions: `a |> f(b, c)` becomes `f(b, c, a)` - design function signatures accordingly or call directly.
+  - Nim's `IndexDefect` on `arr[0]` is NOT caught by `except IndexError` - check `arr.len > 0` before indexing.
