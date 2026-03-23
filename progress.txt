@@ -248,3 +248,15 @@
   - Nim's `result` is a special return variable — don't use it as a local variable name inside functions (causes `ResultShadowed` warnings)
   - `mapIt` and `filterIt` from `std/sequtils` don't work well with `|>` pipe operator — use explicit for-loops instead
   - For `sort`, use `cmp(b.val, a.val)` for descending order (first arg comes before second when positive)
+
+## 2026-03-23 (US-054)
+- Implemented `domain/memory/graph_pure.nim` — pure Subject-Predicate-Object triple extraction with tokenization, stopword filtering, be-pattern detection, verb-based extraction, and preposition relationships.
+- Created `tests/domain/memory/t_graph_pure.nim` with 37 tests covering all functions.
+- Files changed: `src/donkey/domain/memory/graph_pure.nim` (new), `tests/domain/memory/t_graph_pure.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `object` is a Nim keyword and cannot be used as a field name — use `obj` or similar
+  - `sorted` from `std/algorithm` must be explicitly imported for sorting operations
+  - Empty sequence literals `@[]` need explicit type annotation in tests — use `len == 0` instead of comparing to `@[]`
+  - `|>` pipe template cannot span multiple lines easily — keep pipe chains on single lines or use method chaining directly
+  - `isSignificantWord` only works for single words (no spaces) — multi-word phrases go through `isValidEntity` which uses `tokenize` and checks each token
+  - Nim's `findAll` regex iterator returns `RegexMatch` objects where `m.group(i)` accesses capture groups by index
