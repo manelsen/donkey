@@ -1,0 +1,84 @@
+# Iteration 12 Log
+
+## Metadata
+
+- **Task ID**: US-023
+- **Task Title**: Feishu/Lark Parser
+- **Description**: Handle Feishu event structures.
+- **Status**: completed
+- **Task Completed**: Yes
+- **Promise Detected**: Yes
+- **Started At**: 2026-03-23T01:23:20.635Z
+- **Ended At**: 2026-03-23T01:30:51.374Z
+- **Duration**: 7m 30s
+- **Input Tokens**: 63
+- **Output Tokens**: 16366
+- **Total Tokens**: 16429
+- **Agent**: claude
+- **Model**: claude-sonnet-4-6
+- **Sandbox Mode**: auto
+- **Sandbox Network**: Enabled
+--- RAW OUTPUT ---
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Glob][0m pattern: [96msrc/donkey/domain/channels/*.nim[0m
+No `feishu_pure.nim` yet. Let me study a recent pure parser and the test patterns.
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/domain/channels/wechat_pure.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/domain/channels/whatsapp_pure.nim[0m
+Now let me look at the test pattern and core types:
+[94m[Read][0m [95m/home/micelio/git/donkey/tests/domain/channels/t_wechat_pure.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/domain/message.nim[0m
+Now let me look at the core types and understand how Feishu/Lark events are structured:
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/core/types.nim[0m
+[94m[Glob][0m pattern: [96mtests/domain/channels/*.nim[0m
+`ckFeishu` is already in the enum. Now I'll implement `feishu_pure.nim` and its tests.
+[94m[Write][0m [95m/home/micelio/git/donkey/src/donkey/domain/channels/feishu_pure.nim[0m "## feishu_pure.nim — pure parsing of Feishu/Lark webhook event payloads.
+##
+## No I/O, no side effects. All parsing functions are `func`.
+##
+## Feishu (Lark) delivers events as JSON (schema 2.0). Mess... (7743 chars)"
+Let me check the Nim version and build config before proceeding:
+[94m[Bash][0m Check Nim version $ nim --version 2>&1 | head -3
+[94m[Read][0m [95m/home/micelio/git/donkey/config.nims[0m
+I need to handle the double-encoded JSON content field without calling `parseJson` from a `func` (since `parseJson` is a `proc` in stdlib). I'll use string extraction similar to how `wechat_pure` handles XML:
+[94m[Write][0m [95m/home/micelio/git/donkey/src/donkey/domain/channels/feishu_pure.nim[0m "## feishu_pure.nim — pure parsing of Feishu/Lark webhook event payloads.
+##
+## No I/O, no side effects. All parsing functions are `func`.
+##
+## Feishu (Lark) delivers events as JSON (schema 2.0). Mess... (8063 chars)"
+Now let me write the tests:
+[94m[Write][0m [95m/home/micelio/git/donkey/tests/domain/channels/t_feishu_pure.nim[0m "## Tests for domain/channels/feishu_pure.nim — pure Feishu/Lark event parser.
+## No I/O or HTTP; all input is constructed directly as JsonNode.
+
+import std/[json, unittest]
+import donkey/core/pipeops
+... (10144 chars)"
+Now let's run the build check and tests:
+[94m[Bash][0m Check feishu_pure.nim compiles $ nim check --mm:orc --styleCheck:error --warnings:error src/donkey/domain/channels/feishu_pure.nim 2>...
+
+[91m[Error: Exit code 1
+command line(1, 2) Error: 'on', 'off' or 'list' expected, but 'error' found][0m
+[94m[Bash][0m Check feishu_pure.nim compiles $ nim check --mm:orc src/donkey/domain/channels/feishu_pure.nim 2>&1
+Compiles clean. Let's run the tests:
+[94m[Bash][0m Run feishu_pure tests $ testament pattern 'tests/domain/channels/t_feishu_pure.nim' 2>&1
+All tests pass. Let's also run the full test suite to confirm nothing is broken:
+[94m[Bash][0m Run full test suite $ testament pattern 'tests/**/*.nim' 2>&1 | tail -20
+[94m[Bash][0m Check for any failures $ testament pattern 'tests/**/*.nim' 2>&1 | grep -E "FAIL|Error" | head -10
+All tests pass, no failures. Now let me update the progress log:
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Edit][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m edit: "---
+
+## 2026-03-22 - US-022" → "### `extractJsonStr` — safe JSON string extraction..."
+All done. Here's what was implemented:
+
+**US-023 — Feishu/Lark Parser**
+
+- **`src/donkey/domain/channels/feishu_pure.nim`** — pure parser (all `func`) for Feishu/Lark webhook events
+- **`tests/domain/channels/t_feishu_pure.nim`** — 32 tests covering all message kinds
+
+Key design decisions:
+- Feishu's `message.content` is double-encoded JSON (a JSON string inside JsonNode). Since `std/json.parseJson` is a `proc` (not callable from `func`), implemented `extractJsonStr(key, encoded)` — a pure string scanner using `|>->` for last-arg piping
+- Handles url_verification challenges (top-level `type` field), schema 2.0 message events (`im.message.receive_v1`), and generic events
+- `fileKey` maps to `mediaUrl` in `toInbound` — adapter downloads via Feishu File API
+- `ckFeishu` was already in `ChannelKind` — no enum updates needed
+
+<promise>COMPLETE</promise>

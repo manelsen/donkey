@@ -34,6 +34,40 @@ inside a `func`.
 
 ---
 
+## 2026-03-22 - US-024
+- Replaced `src/donkey/adapters/channel/feishu.nim` stub with a full HTTP webhook adapter
+- Created `tests/channel/t_feishu.nim` with 20 tests covering identity, construction, challenge parsing, and event queue routing
+
+**What was implemented:**
+- `FeishuEvent` object: msgType, openId, msgId, chatId, chatType, content — backward-compatible with feishu_runtime.nim
+- `gFsEvents` — module-level `Channel[FeishuEvent]` (same thread-safe pattern as Slack/WhatsApp)
+- `parseChallenge(payload)` — wraps feishu_pure.parseEvent + isVerification; returns challenge string
+- `pushEvent(payload)` — parses via feishu_pure and enqueues; ignores verification/unknown/fmkEvent/fmkInteractive
+- `FeishuAdapter` with appId, appSecret, accessToken (tenant_access_token), apiBase, resolver, http
+- `parseFsBody(resp)` — named `{.gcsafe, raises: [].}` proc validates HTTP status + Feishu "code" field
+- `postJson(a, path, body)` — Feishu Open API helper using `>>=` chain
+- `sendChunk` — sends text to open_id via `/open-apis/im/v1/messages?receive_id_type=open_id`
+- `send`, `sendReturnId` — ChannelPort procs; sendReturnId chains `>>= extractMsgId`
+- `editMessage` — PATCH `/open-apis/im/v1/messages/{msgId}` with updated content
+- `ack` — no-op (HTTP 200 response suffices for Feishu webhook)
+- `openQueue`, `tryRecvEvent` — queue management (non-var receiver, matches Slack/WhatsApp pattern)
+- `startGateway` — wrapper around openQueue for compatibility with donkey.nim lifecycle
+- `newFeishuAdapter` — constructor with accessToken and apiBase as optional params (backward-compatible)
+
+**Files changed:**
+- `src/donkey/adapters/channel/feishu.nim` (replaced stub with full webhook adapter)
+- `tests/channel/t_feishu.nim` (new)
+
+**Learnings:**
+- The existing stub used `var FeishuAdapter` for `tryRecvEvent` — switching to non-var (matching Slack/WhatsApp) is safe because the module-level `Channel` is global and mutations don't go through the adapter instance
+- `startGateway` must remain in the adapter even for webhook mode — `donkey.nim` calls it unconditionally in the lifecycle; for webhook adapters it simply calls `openQueue()`
+- Feishu sends content as a JSON-encoded string inside the request body (e.g. `"content": "{\"text\":\"hello\"}"`) — the `sendChunk` proc must manually escape the message text for JSON embedding
+- Feishu message editing uses `PATCH /open-apis/im/v1/messages/{id}` (not `PUT`) — use `http.patch`
+- `StdHttpAdapter` already exports `patch` — no changes needed to the HTTP layer
+- The `FeishuEvent` type kept backward-compatible field names (msgType, openId, msgId, content) so `feishu_runtime.nim` compiles without any changes
+
+---
+
 ## 2026-03-22 - US-023
 - Implemented `src/donkey/domain/channels/feishu_pure.nim` — pure parser for Feishu/Lark webhook event payloads
 - Created `tests/domain/channels/t_feishu_pure.nim` with 32 tests covering all message kinds
