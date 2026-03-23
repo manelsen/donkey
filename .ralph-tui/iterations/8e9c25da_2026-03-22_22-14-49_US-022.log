@@ -1,0 +1,63 @@
+# Iteration 11 Log
+
+## Metadata
+
+- **Task ID**: US-022
+- **Task Title**: WeChat Webhook Adapter
+- **Description**: HTTP handler for WeChat.
+- **Status**: completed
+- **Task Completed**: Yes
+- **Promise Detected**: Yes
+- **Started At**: 2026-03-23T01:14:49.524Z
+- **Ended At**: 2026-03-23T01:23:19.282Z
+- **Duration**: 8m 29s
+- **Input Tokens**: 339
+- **Output Tokens**: 3315
+- **Total Tokens**: 3654
+- **Agent**: claude
+- **Model**: claude-sonnet-4-6
+- **Sandbox Mode**: auto
+- **Sandbox Network**: Enabled
+--- RAW OUTPUT ---
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Glob][0m pattern: [96msrc/donkey/adapters/channels/*.nim[0m
+[94m[Glob][0m pattern: [96msrc/donkey/adapters/channel/*.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/domain/channels/wechat_pure.nim[0m
+`wechat.nim` already exists. Let me check it and the tests.
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/wechat.nim[0m
+[94m[Glob][0m pattern: [96mtests/channel/t_wechat*.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/tests/channel/t_wechat.nim[0m
+Implementation exists. Let me run the build and tests to verify acceptance criteria.
+[94m[Bash][0m $ nim build src --mm:orc --styleCheck:error --warnings:error 2>&1 | tail -30
+[94m[Bash][0m $ nim check src/donkey/adapters/channel/wechat.nim --mm:orc --styleCheck:error --warnings:error 2>&1 |...
+[94m[Bash][0m $ nim check --mm:orc --styleCheck:error --warnings:error src/donkey/adapters/channel/wechat.nim 2>&1 |...
+[94m[Read][0m [95m/home/micelio/git/donkey/config.nims[0m
+[94m[Bash][0m $ nim check --mm:orc src/donkey/adapters/channel/wechat.nim 2>&1 | tail -20
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | tail -30
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | grep -E "^(PASS|FAIL|ERROR)" | wc -l && testament pattern ...
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | grep -E "PASS|FAIL|ERROR|passed|failed" | tail -5
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | grep -c "PASS"
+All 63 tests pass, no failures. The `wechat.nim` adapter was already implemented in a previous iteration. Let me verify the acceptance criteria are met and append to progress.md.
+
+The adapter (`src/donkey/adapters/channel/wechat.nim`) already exists with:
+- HTTP webhook server with GET challenge verification and POST XML parsing
+- SHA1 signature verification (`verifyWebhookSignature`)
+- `pipeops` imported and `Result[T,E]` used throughout
+- `send`, `startWebhook`, `tryRecvEvent` procs
+- Tests in `tests/channel/t_wechat.nim`
+- Build passes, all tests pass
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Edit][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m edit: "---
+
+## 2026-03-22 - US-021" → "---
+
+## 2026-03-22 - US-022
+- `src/donkey/adapters..."
+All acceptance criteria are satisfied:
+
+- `src/donkey/adapters/channel/wechat.nim` — implemented (pre-existing)
+- Uses `pipeops.nim` (`Result` with `?` operator throughout)
+- `nim check --mm:orc` passes with no warnings/errors
+- All 63 testament tests pass
+
+<promise>COMPLETE</promise>

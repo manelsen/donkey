@@ -23,6 +23,44 @@ Safer pattern: define a named helper `proc myHelper(x: T): Result[U, E] {.gcsafe
 `adapters/http/std_http.nim` imports but does NOT export `HttpResponse` from `ports/http`.
 Any adapter module that references `HttpResponse` in signatures must `import ../../ports/http` directly.
 
+### `extractJsonStr` — safe JSON string extraction in `func`
+Feishu's `message.content` is a JSON-encoded string nested inside an already-parsed `JsonNode`.
+Calling `parseJson` from a `func` would fail because `parseJson` is a `proc` in stdlib.
+Solution: implement `extractJsonStr(key, encoded)` — a pure string scanner that extracts a quoted
+value from simple JSON objects (single level, string values) without any proc calls.
+Designed for `|>->` with the encoded string as the last arg.
+This pattern applies whenever a JSON field is itself a JSON-encoded string that must be parsed
+inside a `func`.
+
+---
+
+## 2026-03-22 - US-023
+- Implemented `src/donkey/domain/channels/feishu_pure.nim` — pure parser for Feishu/Lark webhook event payloads
+- Created `tests/domain/channels/t_feishu_pure.nim` with 32 tests covering all message kinds
+
+**What was implemented:**
+- `FsMsgKind` enum: fmkText, fmkImage, fmkAudio, fmkFile, fmkSticker, fmkInteractive, fmkEvent, fmkUnknown
+- `FsParseResult` type with kind, rawId, messageId, text, fileKey, chatId, chatType, eventType, challenge
+- `extractJsonStr(key, encoded)` — extracts string value from JSON-encoded string; designed for `|>->` (encoded string as last arg); avoids calling stdlib `parseJson` which is a `proc` (not `func`-compatible)
+- `getField(name, node)` — string field extractor from JsonNode; designed for `|>->`
+- `parseSenderId(sender)` — extracts open_id from nested sender_id object
+- `parseMessage(event)` — inner dispatcher for im.message.receive_v1 events
+- `parseEvent(payload)` — top-level parser; handles url_verification challenges, schema 2.0 message events, and other event types
+- `toInbound(r, userId)` — domain conversion; fileKey goes to mediaUrl (adapter downloads via Feishu File API)
+- `hasMedia(r)` — predicate; true for fmkImage, fmkAudio, fmkFile, fmkSticker
+- `isVerification(r)` — predicate; true when url_verification challenge must be echoed back
+
+**Files changed:**
+- `src/donkey/domain/channels/feishu_pure.nim` (new)
+- `tests/domain/channels/t_feishu_pure.nim` (new)
+
+**Learnings:**
+- `parseJson` from `std/json` is a `proc` (not `func`) in Nim 2.2 — cannot be called from a `func`; use string-based extraction for nested JSON strings instead
+- Feishu `content` field is double-encoded JSON (a JSON string whose value is itself JSON) — the `extractJsonStr` helper scans for `"key":"value"` patterns covering common escapes
+- Feishu url_verification payloads have a top-level `type` field (no `schema`/`header`) — must be detected before the schema 2.0 branch
+- `ckFeishu` was already present in `core/types.nim` ChannelKind enum — no enum updates needed
+- For audio/file/sticker, all three use `file_key` in content — a single `fmkAudio, fmkFile, fmkSticker` branch handles them identically
+
 ---
 
 ## 2026-03-22 - US-022
