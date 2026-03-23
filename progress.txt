@@ -9,16 +9,20 @@
 
 ---
 
-## 2026-03-23 (US-041)
-- Implemented `domain/providers/ollama_pure.nim` — pure wire-format helpers: `messageToOllama`, `buildOllamaRequest`, `parseOllamaResponse`.
-- Refactored `adapters/provider/ollama.nim` to delegate to pure module, re-exporting functions for backwards compatibility.
-- Added `tests/domain/providers/t_ollama_pure.nim` with 27 tests covering all pure functions.
-- Files changed: `src/donkey/domain/providers/ollama_pure.nim`, `src/donkey/adapters/provider/ollama.nim`, `tests/domain/providers/t_ollama_pure.nim`, `prd.json`
+## 2026-03-23 (US-058)
+- Fixed boundary violation in `core/memory/silent_turn.nim` — removed `when defined(withPostgres)` block with direct adapter imports (age_store, pgvector_store) that violated boundary rules.
+- Pure F1 fallback `runSilentMemoryTurn` remains in core; postgres-specific implementation needs proper port abstraction to be re-added later.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all` including boundary check.
+- Files changed: `src/donkey/core/memory/silent_turn.nim` (restructured), `prd.json`
 - **Learnings for future iterations:**
-  - `parseJson` can raise, so functions calling it must be `proc` not `func` — `messageToOllama` is `proc` for this reason
-  - Nim's `|>` pipe passes the LEFT value as the LAST argument — when using `buildOllamaRequest(model, req, stream)`, pipe direction matters: `req |> f(model)` becomes `f(model, req)` which is wrong; call directly as `f(model, req)` to avoid confusion
-  - `JNull` kind must be explicitly handled alongside `nil` checks when parsing JSON — use `argsNode == nil or argsNode.kind == JNull` to default to `"{}"`
-  - Nim's `$` on JsonNode produces compact JSON with no spaces after colons — tests checking exact JSON string values must match this format
+  - `when defined(withPostgres):` blocks in `core/` must NOT contain adapter imports — the boundary check script catches these even inside conditional blocks
+  - If postgres-specific code needs adapters, it must live in `adapters/` or be properly abstracted through a port interface
+  - The `app/` directory also cannot import adapters directly per boundary check — architecture requires all adapter usage to be through ports
+  - Boundary check script checks `app/`, `core/`, and `ports/` directories for adapter imports
+
+---
+
 
 ---
 
