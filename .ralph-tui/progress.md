@@ -25,6 +25,37 @@ Any adapter module that references `HttpResponse` in signatures must `import ../
 
 ---
 
+## 2026-03-22 - US-017
+- Implemented `src/donkey/adapters/channel/slack.nim` — Slack Events API webhook adapter
+- Created `tests/channel/t_slack.nim` with 20 tests covering identity, construction, challenge parsing, and event routing
+
+**What was implemented:**
+- `SlackRawEventKind` enum: srMessage, srSlashCommand, srBlockAction
+- `SlackRawEvent` object with kind, slackUserId, text, channelId, teamId, responseUrl, triggerId
+- `gSlackEvents` — module-level `Channel[SlackRawEvent]` (same thread-safe pattern as Discord)
+- `parseChallenge(payload)` — returns challenge string for url_verification; empty otherwise
+- `pushEvent(payload)` — parses via slack_pure and enqueues events; ignores verification/unknown
+- `openQueue()` / `tryRecvEvent()` — lifecycle and polling interface
+- `postJson(endpoint, body)` — Slack Web API helper using `>>=` chain (`http.post >>= parseSlackBody`)
+- `parseSlackBody(resp)` — named `{.gcsafe, raises: [].}` proc validates HTTP status + Slack "ok" field
+- `dmChannelFor(slackUserId)` — lazy DM channel resolution via `conversations.open` (cached in `ref Table`)
+- `send()`, `sendToChannel()`, `sendReturnId()`, `editMessage()`, `ack()` — ChannelPort procs
+- `newSlackAdapter(botToken, identityPath, apiBase)` — constructor
+
+**Files changed:**
+- `src/donkey/adapters/channel/slack.nim` (new)
+- `tests/channel/t_slack.nim` (new)
+
+**Learnings:**
+- Disk full (100%) caused spurious compile failure — cleaned nimcache (209M) to free space
+- The `ref Table` pattern for DM channel caching (same as Discord's `dmChannels`) works correctly with value receivers because mutations go through the ref
+- `parseSlackBody` as a named `{.gcsafe, raises: [].}` proc enables clean `>>= parseSlackBody` chaining without lambda wrapping
+- Slack webhook ack is implicit (HTTP 200 response from the HTTP layer) — `ack()` is a no-op
+- `gSlackEvents.open()` must be wrapped in `{.cast(gcsafe).}` in `openQueue()` (same pattern as Discord)
+- `export identity_resolver` in the adapter avoids double-import for downstream modules
+
+---
+
 ## 2026-03-22 - US-016
 - Implemented `src/donkey/domain/channels/slack_pure.nim` — pure (all `func`) parser for Slack Events API webhook payloads
 - Created `tests/domain/channels/t_slack_pure.nim` with 40 tests covering all event kinds
