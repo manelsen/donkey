@@ -7,13 +7,17 @@
 ##   GET /             → 200 OK, plain-text info
 ##   GET /api/status   → DaemonStatus JSON
 ##   GET /api/logs     → recent log entries JSON (?n=N, default 50)
-##   GET /api/events   → SSE stream of log events (long-lived connection)
+##   GET /api/events    → SSE stream of log events (long-lived connection)
+##   POST /api/chat     → receive inbound message from web UI (bidirectional SSE)
 ##
 ## CORS: Access-Control-Allow-Origin: * for local browser access.
 
 import std/[json, net, os, strutils]
+import ../core/pipeops
+import ../core/types
 import ../ports/ipc
 import ../core/agent_events
+import ../domain/message
 
 const
   GatewayDefaultPort* = 8080
@@ -32,7 +36,12 @@ type
   GatewayLogFn*    = proc(n: int): seq[IpcLogEntry] {.gcsafe.}
   GatewayEventFn*  = proc(n: int): seq[AgentEvent] {.gcsafe.}
 
-# ── Pure functions ─────────────────────────────────────────────────────────────
+# ── Inbound handler ───────────────────────────────────────────────────────────
+
+type
+  GatewayInboundFn* = proc(msg: InboundMessage) {.gcsafe.}
+    ## Callback to handle inbound messages from web UI POST /api/chat.
+    ## Called on the gateway thread; must be thread-safe.
 
 func parseGatewayRequest*(requestLine: string): GatewayRequest =
   ## Parses the first line of an HTTP request into method + path.
@@ -74,12 +83,19 @@ func routeGatewayRequest*(req: GatewayRequest): string =
   of "/api/status":    "status"
   of "/api/logs":      "logs"
   of "/api/events":    "events"
+  of "/api/chat":      "chat"
   else:                "notfound"
+
+func routeChatMethod*(meth: string): string =
+  case meth
+  of "POST":  "chat"
+  of "GET":   "chat_get"
+  else:       "method_not_allowed"
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 const CorsHeaders = "Access-Control-Allow-Origin: *\r\n" &
-                    "Access-Control-Allow-Methods: GET, OPTIONS\r\n" &
+                    "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" &
                     "Access-Control-Allow-Headers: Content-Type\r\n"
 
 proc readHttpLine(s: Socket): string =
@@ -134,12 +150,49 @@ proc parseQueryInt(requestLine: string; key: string; default: int): int =
       except ValueError: return default
   default
 
+# ── Chat POST parsing ─────────────────────────────────────────────────────────
+
+const
+  CliDefaultUserId* = UserId("local:webui")
+    ## Default user id for web UI messages.
+
+proc parseChatPost*(body: string): Result[InboundMessage, string] =
+  ## Parses a JSON body from POST /api/chat into an InboundMessage.
+  ## Expected format: {"text": "message text", "userId": "optional-user-id"}
+  if body.len == 0:
+    return err("empty body")
+  var jsonBody: JsonNode
+  try:
+    jsonBody = parseJson(body)
+  except JsonParsingError as e:
+    return err("invalid JSON: " & e.msg)
+  if jsonBody.kind != JObject:
+    return err("expected JSON object")
+  let textNode = jsonBody.getOrDefault("text")
+  if textNode.isNil or textNode.kind != JString or textNode.getStr().len == 0:
+    return err("missing or empty 'text' field")
+  let text = textNode.getStr()
+  let userIdNode = jsonBody.getOrDefault("userId")
+  var userId = CliDefaultUserId
+  if not userIdNode.isNil and userIdNode.kind == JString:
+    let uid = userIdNode.getStr()
+    if uid.len > 0:
+      userId = UserId(uid)
+  ok(InboundMessage(
+    userId:    userId,
+    channelId: "webui",
+    text:      text,
+    mediaUrl:  "",
+    channel:   ckCli,
+  ))
+
 # ── Connection handler ────────────────────────────────────────────────────────
 
 proc handleGatewayConn(client: Socket;
                         statusFn: GatewayStatusFn;
                         logFn:    GatewayLogFn;
-                        eventFn:  GatewayEventFn) =
+                        eventFn:  GatewayEventFn;
+                        inboundFn: GatewayInboundFn) =
   try:
     let requestLine = client.readHttpLine()
     if requestLine.len == 0:
@@ -148,9 +201,14 @@ proc handleGatewayConn(client: Socket;
 
     ## Drain headers
     var rawPath = if requestLine.splitWhitespace().len >= 2: requestLine.splitWhitespace()[1] else: "/"
+    var contentLength = 0
     while true:
       let h = client.readHttpLine()
       if h.len == 0: break
+      let lc = h.toLowerAscii()
+      if lc.startsWith("content-length:"):
+        let val = lc[14..^1].strip()
+        try: contentLength = parseInt(val) except ValueError: discard
 
     let req = parseGatewayRequest(requestLine)
     let action = routeGatewayRequest(req)
@@ -158,7 +216,7 @@ proc handleGatewayConn(client: Socket;
     case action
     of "index":
       client.sendResponse("200 OK", "text/plain",
-        "Donkey HTTP gateway\nEndpoints: /api/status /api/logs /api/events\n")
+        "Donkey HTTP gateway\nEndpoints: /api/status /api/logs /api/events /api/chat\n")
 
     of "status":
       let st = statusFn()
@@ -193,6 +251,38 @@ proc handleGatewayConn(client: Socket;
           ## Heartbeat comment to keep connection alive.
           try: client.send(": heartbeat\n\n") except CatchableError: break
 
+    of "chat":
+      let methAction = routeChatMethod(req.meth)
+      case methAction
+      of "chat":
+        if inboundFn == nil:
+          client.sendResponse("503 Service Unavailable", "application/json",
+                             "{\"error\":\"inbound handler not configured\"}\n")
+        else:
+          var body = ""
+          if contentLength > 0 and contentLength < 1024 * 1024:  # max 1MB
+            var buf = newString(contentLength)
+            let received = client.recv(buf.addr, contentLength)
+            if received > 0:
+              body = buf[0 ..< received]
+          if body.len == 0:
+            client.sendResponse("400 Bad Request", "application/json",
+                               "{\"error\":\"empty body\"}\n")
+          else:
+            let msgResult = parseChatPost(body)
+            if msgResult.isErr:
+              client.sendResponse("400 Bad Request", "application/json",
+                                 "{\"error\":\"" & msgResult.error & "\"}\n")
+            else:
+              inboundFn(msgResult.get())
+              client.sendResponse("202 Accepted", "application/json",
+                                 "{\"status\":\"accepted\"}\n")
+      of "chat_get":
+        client.sendResponse("200 OK", "application/json",
+                           "{\"info\":\"POST to /api/chat to send messages\"}\n")
+      else:
+        client.sendResponse("405 Method Not Allowed", "text/plain", "")
+
     of "notfound":
       client.sendResponse("404 Not Found", "text/plain", "Not found\n")
 
@@ -206,14 +296,16 @@ proc handleGatewayConn(client: Socket;
 # ── Gateway thread ────────────────────────────────────────────────────────────
 
 type GatewayArgs = object
-  port:     int
-  statusFn: GatewayStatusFn
-  logFn:    GatewayLogFn
-  eventFn:  GatewayEventFn
+  port:      int
+  statusFn:  GatewayStatusFn
+  logFn:     GatewayLogFn
+  eventFn:   GatewayEventFn
+  inboundFn: GatewayInboundFn
 
 var gGatewayStatusFn: GatewayStatusFn
 var gGatewayLogFn:    GatewayLogFn
 var gGatewayEventFn:  GatewayEventFn
+var gGatewayInboundFn: GatewayInboundFn
 
 proc gatewayThread(args: GatewayArgs) {.thread.} =
   {.cast(gcsafe).}:
@@ -224,18 +316,22 @@ proc gatewayThread(args: GatewayArgs) {.thread.} =
     while true:
       var client: Socket
       server.accept(client)
-      handleGatewayConn(client, args.statusFn, args.logFn, args.eventFn)
+      handleGatewayConn(client, args.statusFn, args.logFn, args.eventFn, args.inboundFn)
 
 var gGatewayThread: Thread[GatewayArgs]
 
 proc startHttpGateway*(port: int;
                        statusFn: GatewayStatusFn;
                        logFn:    GatewayLogFn;
-                       eventFn:  GatewayEventFn = nil) =
+                       eventFn:  GatewayEventFn = nil;
+                       inboundFn: GatewayInboundFn = nil) =
   ## Starts the HTTP gateway on a dedicated OS thread.
   ## statusFn, logFn, and eventFn are called on each request; they must be gcsafe.
-  gGatewayStatusFn = statusFn
-  gGatewayLogFn    = logFn
-  gGatewayEventFn  = eventFn
-  let args = GatewayArgs(port: port, statusFn: statusFn, logFn: logFn, eventFn: eventFn)
+  ## inboundFn is called when POST /api/chat is received; may be nil.
+  gGatewayStatusFn  = statusFn
+  gGatewayLogFn     = logFn
+  gGatewayEventFn   = eventFn
+  gGatewayInboundFn = inboundFn
+  let args = GatewayArgs(port: port, statusFn: statusFn, logFn: logFn,
+                         eventFn: eventFn, inboundFn: inboundFn)
   createThread(gGatewayThread, gatewayThread, args)

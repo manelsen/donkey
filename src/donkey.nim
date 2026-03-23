@@ -1139,6 +1139,11 @@ proc buildGlobalSearchFn(): SearchFn =
   else:
     discard
 
+# Forward declaration for handleGatewayFallback (defined later, used in setupIpcServer)
+proc handleGatewayFallback(ctx: DaemonContext; cfg: DonkeyConfig;
+                          memory: MdFileAdapter; msg: InboundMessage;
+                          log: Logger)
+
 proc setupIpcServer(cfg: DonkeyConfig;
                     runtime: DaemonRuntime;
                     sm: SessionManager;
@@ -1150,7 +1155,10 @@ proc setupIpcServer(cfg: DonkeyConfig;
                     wechatAppId: string;
                     feishuAppId: string;
                     qqEnabled: bool;
-                    log: Logger) =
+                    log: Logger;
+                    gatewayInboundCtx: DaemonContext;
+                    gatewayInboundMemory: MdFileAdapter;
+                    gatewayInboundLog: Logger) =
   let sockPath = cfg.home / SockFileName
   let ipcStatusFn: StatusProvider = proc(): DaemonStatus {.gcsafe, raises: [].} =
     var sessions: seq[SessionInfo]
@@ -1184,6 +1192,9 @@ proc setupIpcServer(cfg: DonkeyConfig;
   let ipcLogFn: LogProvider = proc(n: int): seq[IpcLogEntry] {.gcsafe, raises: [].} =
     for e in ringSnapshot(n):
       result.add(IpcLogEntry(ts: e.ts, level: e.level, subsys: e.sub, msg: e.msg))
+  let gwInboundFn: GatewayInboundFn = proc(msg: InboundMessage) {.gcsafe.} =
+    {.cast(gcsafe).}:
+      handleGatewayFallback(gatewayInboundCtx, cfg, gatewayInboundMemory, msg, gatewayInboundLog)
   {.cast(gcsafe).}: startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
   log.info("IPC socket: " & sockPath)
   let httpPortStr = getEnv("DONKEY_HTTP_PORT")
@@ -1197,8 +1208,8 @@ proc setupIpcServer(cfg: DonkeyConfig;
     {.cast(gcsafe).}: ipcLogFn(n)
   let gwEventFn: GatewayEventFn = proc(n: int): seq[AgentEvent] {.gcsafe.} =
     {.cast(gcsafe).}: agentEventSnapshot(n)
-  {.cast(gcsafe).}: startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn)
-  log.info("HTTP gateway: http://0.0.0.0:" & $httpPort)
+  {.cast(gcsafe).}: startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn)
+  log.info("HTTP gateway: http://0.0.0.0:" & $httpPort & " (bidirectional SSE enabled)")
 
 type EnsureSessionPlan = object
   uid*:      string
@@ -1558,16 +1569,19 @@ proc startDaemonIngress(ctx: DaemonContext;
 
 proc setupDaemonRuntime(ctx: DaemonContext;
                         cfg: DonkeyConfig;
+                        memory: MdFileAdapter;
                         log: Logger) =
   setupIpcServer(cfg, ctx.runtime, ctx.runtime.sm, ctx.services.tools.len, ctx.runtime.daemonStartMs,
                  ctx.env.telegramToken, ctx.env.discordToken, ctx.env.wecomCorpId,
-                 ctx.env.wechatAppId, ctx.env.feishuAppId, ctx.adapters.qq.enabled(), log)
+                 ctx.env.wechatAppId, ctx.env.feishuAppId, ctx.adapters.qq.enabled(), log,
+                 ctx, memory, log)
 
 proc activateDaemonBootstrap(ctx: DaemonContext;
                              cfg: DonkeyConfig;
+                             memory: MdFileAdapter;
                              log: Logger) =
   startDaemonIngress(ctx, log)
-  setupDaemonRuntime(ctx, cfg, log)
+  setupDaemonRuntime(ctx, cfg, memory, log)
 
 proc handleGatewayFallback(ctx: DaemonContext;
                            cfg: DonkeyConfig;
@@ -1721,7 +1735,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory
   let ctx = bootstrap.ctx
-  activateDaemonBootstrap(ctx, cfg, log)
+  activateDaemonBootstrap(ctx, cfg, memory, log)
 
   ## Heartbeat: periodic maintenance (reminder delivery, etc.)
   var hbReg = newHeartbeatRegistry()

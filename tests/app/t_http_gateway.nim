@@ -4,6 +4,8 @@
 import std/[json, strutils, unittest]
 import donkey/app/http_gateway
 import donkey/core/agent_events
+import donkey/core/pipeops
+import donkey/core/types
 import donkey/ports/ipc
 
 suite "http_gateway request parsing":
@@ -114,3 +116,67 @@ suite "http_gateway route dispatch":
   test "routeGatewayRequest maps root to index action":
     let req = GatewayRequest(meth: "GET", path: "/")
     check routeGatewayRequest(req) == "index"
+
+  test "routeGatewayRequest maps POST /api/chat to chat action":
+    let req = GatewayRequest(meth: "POST", path: "/api/chat")
+    check routeGatewayRequest(req) == "chat"
+
+suite "http_gateway chat method routing":
+
+  test "routeChatMethod maps POST to chat":
+    check routeChatMethod("POST") == "chat"
+
+  test "routeChatMethod maps GET to chat_get":
+    check routeChatMethod("GET") == "chat_get"
+
+  test "routeChatMethod maps unknown methods to method_not_allowed":
+    check routeChatMethod("DELETE") == "method_not_allowed"
+    check routeChatMethod("PUT") == "method_not_allowed"
+
+suite "http_gateway chat POST parsing":
+
+  test "parseChatPost parses valid JSON with text":
+    let result = parseChatPost("""{"text": "hello world"}""")
+    check result.isOk
+    let msg = result.get()
+    check msg.text == "hello world"
+    check msg.userId == CliDefaultUserId
+    check msg.channelId == "webui"
+    check msg.channel == ckCli
+
+  test "parseChatPost parses JSON with custom userId":
+    let result = parseChatPost("""{"text": "hi", "userId": "alice"}""")
+    check result.isOk
+    let msg = result.get()
+    check msg.text == "hi"
+    check msg.userId == UserId("alice")
+
+  test "parseChatPost rejects empty body":
+    let result = parseChatPost("")
+    check result.isErr
+    check result.error.contains("empty body")
+
+  test "parseChatPost rejects invalid JSON":
+    let result = parseChatPost("not json")
+    check result.isErr
+    check result.error.contains("invalid JSON")
+
+  test "parseChatPost rejects non-object JSON":
+    let result = parseChatPost("""["array"]""")
+    check result.isErr
+    check result.error.contains("expected JSON object")
+
+  test "parseChatPost rejects missing text field":
+    let result = parseChatPost("""{"userId": "alice"}""")
+    check result.isErr
+    check result.error.contains("missing or empty 'text' field")
+
+  test "parseChatPost rejects empty text field":
+    let result = parseChatPost("""{"text": ""}""")
+    check result.isErr
+    check result.error.contains("missing or empty 'text' field")
+
+  test "parseChatPost handles JSON with extra fields":
+    let result = parseChatPost("""{"text": "hello", "extra": "ignored"}""")
+    check result.isOk
+    check result.get().text == "hello"
