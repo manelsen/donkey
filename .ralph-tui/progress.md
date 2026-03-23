@@ -34,6 +34,39 @@ inside a `func`.
 
 ---
 
+## 2026-03-22 - US-026
+- Implemented `src/donkey/adapters/channel/qq_webhook.nim` — HTTP webhook adapter for QQ official bot using qq_pure
+- Created `tests/channel/t_qq_webhook.nim` with 22 tests covering identity, construction, event queue routing, and pure parser integration
+
+**What was implemented:**
+- `QQWebhookEvent` object: messageType, userId, groupId, messageId, content
+- `gQQWbEvents` — module-level `Channel[QQWebhookEvent]` (same thread-safe pattern as other webhook adapters)
+- `pushEvent(payload)` — parses via qq_pure.parseEvent; enqueues qqkPrivate, qqkGroup, qqkInteraction; ignores qqkUnknown
+- `QQWebhookAdapter` with appId, clientSecret, apiBase, tokenBase, resolver, http, accessToken, tokenExpirySec
+- `parseQqBody(resp)` — named `{.gcsafe, raises: [].}` proc for `>>=` chaining
+- `ensureAccessToken` — refreshes QQBot bearer token via `{tokenBase}/app/getAppAccessToken`
+- `buildSendUrl(apiBase, rawId)` — routes to /v2/users/{id}/messages or /v2/groups/{gid}/messages based on "group:" prefix
+- `parseReplyToken(replyTo)` — splits "event:<id>" / "msg:<id>" into (kind, id)
+- `buildSendBody(msg)` — builds QQ official bot message body with optional reply token
+- `sendToRawId`, `send`, `sendReturnId` — ChannelPort send procs
+- `editMessage` — no-op (QQ official v1 doesn't support editing)
+- `ack` — no-op (HTTP 200 suffices)
+- `openQueue`, `startGateway`, `tryRecvEvent` — queue management
+- `newQQWebhookAdapter` — constructor with optional apiBase/tokenBase overrides
+
+**Files changed:**
+- `src/donkey/adapters/channel/qq_webhook.nim` (new)
+- `tests/channel/t_qq_webhook.nim` (new)
+
+**Learnings:**
+- The acceptance criteria referenced "adapters/channels/qq.nim" (plural) but the existing codebase uses `adapters/channel/` (singular) and already has `qq.nim` (OneBot v11). The correct approach was to create `qq_webhook.nim` as the new QQ official webhook adapter using `qq_pure.nim`, parallel to `feishu.nim` using `feishu_pure.nim`.
+- QQ official bot token uses `"QQBot " & token` header prefix (not "Bearer") — consistent with `qq_official.nim`
+- `expires_in` can arrive as a JSON string (e.g. `"7200"`) or as an integer depending on QQ API version — handle both via kind check
+- `sendReturnId` extracts `"id"` (not `"message_id"`) from QQ official bot send response — different from Feishu/Slack patterns
+- The global channel pattern (`{.cast(gcsafe).}` in `openQueue`) is consistent across all webhook adapters; no change needed for this adapter
+
+---
+
 ## 2026-03-22 - US-025
 - Implemented `src/donkey/domain/channels/qq_pure.nim` — pure parser for QQ official bot event payloads
 - Created `tests/domain/channels/t_qq_pure.nim` with 42 tests covering all event kinds
