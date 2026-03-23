@@ -260,3 +260,17 @@
   - `|>` pipe template cannot span multiple lines easily — keep pipe chains on single lines or use method chaining directly
   - `isSignificantWord` only works for single words (no spaces) — multi-word phrases go through `isValidEntity` which uses `tokenize` and checks each token
   - Nim's `findAll` regex iterator returns `RegexMatch` objects where `m.group(i)` accesses capture groups by index
+
+---
+
+## 2026-03-23 (US-055)
+- Implemented `adapters/memory/age_store.nim` — Apache AGE Graph Adapter with Result[T, string] API and Cypher query execution. Supports node/edge CRUD, triple storage, graph traversal, and person/session/fact/memory operations.
+- Created `tests/adapters/memory/t_age_store.nim` with 17 pure function tests and integration test structure.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all`.
+- Files changed: `src/donkey/adapters/memory/age_store.nim` (new), `tests/adapters/memory/t_age_store.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - Pure helper functions (`sanitizeTextForCypher`, `triplesToCypherNodes`, `triplesToCypherEdges`) must be defined outside the `when defined(withPostgres):` block to be testable without the flag
+  - AGE node labels are case-sensitive in Cypher — `Person` and `person` are different; use consistent casing when creating nodes
+  - `strip` with `chars` parameter strips ALL occurrences of those characters from both ends — `""hello""` becomes `hello` not `"hello"`
+  - `cypher` and `cypherVoid` helpers abstract AGE's `cypher()` function with proper agtype return type handling
