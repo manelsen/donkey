@@ -13,10 +13,16 @@
 ##   - Response: candidates[0].content.parts[0].text
 ##   - Token usage: usageMetadata.promptTokenCount / candidatesTokenCount
 
-import std/[httpclient, json, strutils, tables]
+import std/[httpclient, json]
 import ../../domain/message
+import ../../domain/providers/gemini_pure as gp
 import ../../ports/provider
 import ../../core/pipeops
+
+# Re-export from pure module for backwards compatibility
+export gp.geminiRole, gp.textPart, gp.functionCallPart, gp.functionResponsePart,
+       gp.toGeminiContent, gp.appendContent, gp.buildGeminiContents,
+       gp.buildGeminiRequest, gp.parseGeminiResponse
 
 const
   GeminiBaseUrl*     = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -48,108 +54,12 @@ proc buildUrl*(a: GeminiAdapter): string =
     return a.endpoint
   GeminiBaseUrl & "/" & a.model & ":generateContent?key=" & a.apiKey
 
-# ── Role mapping ──────────────────────────────────────────────────────────────
-
-func geminiRole(role: string): string =
-  ## Maps OpenAI-style roles to Gemini roles.
-  if role == roleAssistant: "model"
-  elif role == "tool": "user"
-  else: role
-
-proc textPart(text: string): JsonNode =
-  %* {"text": text}
-
-proc functionCallPart(tc: ToolCallRequest): JsonNode =
-  let args = try: parseJson(tc.inputJson) except: newJObject()
-  %* {"functionCall": {"name": tc.name, "args": args}}
-
-proc functionResponsePart(msg: ChatMessage; functionName: string): JsonNode =
-  let response = try: parseJson(msg.text) except: %* {"result": msg.text}
-  %* {"functionResponse": {"name": functionName, "response": response, "id": msg.toolCallId}}
-
-proc toGeminiContent(msg: ChatMessage): JsonNode =
-  var parts = newJArray()
-  if msg.text.len > 0:
-    parts.add(textPart(msg.text))
-  for tc in msg.toolCalls:
-    parts.add(functionCallPart(tc))
-  %* {"role": geminiRole(msg.role), "parts": parts}
-
-proc appendContent(contents: var seq[JsonNode]; content: JsonNode) =
-  ## Gemini wants alternating user/model turns; merge adjacent same-role parts.
-  if contents.len > 0 and contents[^1]["role"].getStr("") == content["role"].getStr(""):
-    for part in content["parts"]:
-      contents[^1]["parts"].add(part)
-  else:
-    contents.add(content)
-
-# ── JSON serialisation ────────────────────────────────────────────────────────
+# ── JSON serialisation (delegated to pure) ────────────────────────────────────
 
 proc buildBody*(a: GeminiAdapter; req: CompletionRequest): JsonNode =
   ## Exported for unit testing.
-  ## Produces Gemini generateContent request format.
-  var contents: seq[JsonNode] = @[]
-  var toolNamesById: Table[string, string]
-  for m in req.messages:
-    if m.role == "tool":
-      let functionName = toolNamesById.getOrDefault(m.toolCallId, "")
-      appendContent(contents, %* {
-        "role": "user",
-        "parts": [functionResponsePart(m, functionName)],
-      })
-      continue
-
-    for tc in m.toolCalls:
-      toolNamesById[tc.id] = tc.name
-    appendContent(contents, toGeminiContent(m))
-
-  result = %* {"contents": contents}
-
-  if req.system.len > 0:
-    result["systemInstruction"] = %* {
-      "parts": [{"text": req.system}]
-    }
-
-  if req.maxTokens > 0:
-    result["generationConfig"] = %* {"maxOutputTokens": req.maxTokens}
-  if req.tools.len > 0:
-    var declarations = newJArray()
-    for td in req.tools:
-      let schema = try: parseJson(td.schemaJson) except: newJObject()
-      declarations.add(%* {
-        "name": td.name,
-        "description": td.description,
-        "parameters": schema,
-      })
-    result["tools"] = %* [{"functionDeclarations": declarations}]
-
-# ── Response parsing ──────────────────────────────────────────────────────────
-
-func parseGeminiResponse*(j: JsonNode): CompletionResponse =
-  ## Exported for unit testing.
-  let cand  = j["candidates"][0]
-  let parts = cand["content"]["parts"]
-  var textParts: seq[string] = @[]
-  var toolCalls: seq[ToolCallRequest] = @[]
-  for part in parts:
-    if part.hasKey("text"):
-      let text = part["text"].getStr("")
-      if text.len > 0:
-        textParts.add(text)
-    elif part.hasKey("functionCall"):
-      let fc = part["functionCall"]
-      toolCalls.add(ToolCallRequest(
-        id: fc.getOrDefault("id").getStr(""),
-        name: fc.getOrDefault("name").getStr(""),
-        inputJson: $fc.getOrDefault("args"),
-      ))
-  let usage = j.getOrDefault("usageMetadata")
-  CompletionResponse(
-    text:         textParts.join("\n"),
-    inputTokens:  if usage != nil: usage.getOrDefault("promptTokenCount").getInt(0)     else: 0,
-    outputTokens: if usage != nil: usage.getOrDefault("candidatesTokenCount").getInt(0) else: 0,
-    toolCalls:    toolCalls,
-  )
+  ## Produces Gemini generateContent request format by delegating to pure helpers.
+  req.buildGeminiRequest()
 
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
