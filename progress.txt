@@ -207,3 +207,17 @@
   - `pipeops` must be imported in test files to get `isOk`/`isErr` templates in scope
   - Explicit type annotation on empty seq (`@[]: seq[T]`) can cause parse errors — use `let x: seq[T] = @[]` instead
 
+---
+
+## 2026-03-23 (US-051)
+- Implemented `adapters/memory/pgvector_store.nim` — Result-based PostgreSQL pgvector adapter with vector storage, semantic search, and chunk reconstruction.
+- Created pure helper functions `buildVectorLiteral` and `parseVectorLiteral` outside the `when defined(withPostgres)` block so they can be tested without a database.
+- Created `tests/adapters/memory/t_pgvector_store.nim` with unit tests for pure functions and integration test structure.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all`.
+- Files changed: `src/donkey/adapters/memory/pgvector_store.nim` (new), `tests/adapters/memory/t_pgvector_store.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - When a module uses `when defined(withPostgres):`, pure helper functions should be defined outside the when block if they need to be tested without the flag
+  - Nim's `result` variable is special — don't use it as a local variable name in procs returning Result types
+  - `ok(@[])` doesn't type-infer correctly for empty seqs — use `let empty: seq[T] = @[]` then `return ok(empty)`
+  - `buildVectorLiteral` and `parseVectorLiteral` are companion functions needed for vector serialization/deserialization — export them for use in tests
