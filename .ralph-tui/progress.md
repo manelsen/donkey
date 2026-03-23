@@ -25,6 +25,38 @@ Any adapter module that references `HttpResponse` in signatures must `import ../
 
 ---
 
+## 2026-03-22 - US-018
+- Implemented `src/donkey/domain/channels/whatsapp_pure.nim` — pure (all `func`) parser for WhatsApp Cloud API webhook payloads
+- Created `tests/domain/channels/t_whatsapp_pure.nim` with 34 tests covering all message kinds
+- Added `ckWhatsApp` to `ChannelKind` enum and updated dependent files
+
+**What was implemented:**
+- `WaMsgKind` enum: wmkText, wmkInteractive, wmkMedia, wmkUnknown
+- `WaParseResult` type with kind, rawId, text, messageId, phoneNumberId, mediaId
+- `parseWebhook(payload)` — top-level dispatcher; walks entry→changes→value→messages array
+- `parseMessage(phoneNumberId, msg)` — per-message dispatcher designed for `|>->`
+- `parseTextMsg`, `parseInteractiveMsg`, `parseMediaMsg` — all designed for `|>->` (phoneNumberId as first arg, msg as last)
+- `extractStr(name, node)` — field extractor for `|>->` piping
+- `mediaIdFor(msgType, msg)` — extracts media id from dynamic sub-object keyed by type
+- `toInbound(r, userId)` — domain conversion; mediaId goes to mediaUrl (adapter resolves to URL)
+- `hasMedia(r)` — predicate; true for wmkMedia
+
+**Files changed:**
+- `src/donkey/domain/channels/whatsapp_pure.nim` (new)
+- `tests/domain/channels/t_whatsapp_pure.nim` (new)
+- `src/donkey/core/types.nim` (added ckWhatsApp)
+- `src/donkey/ports/channel.nim` (added whatsapp field to OutboundChannelPorts)
+- `src/donkey/app/outbound_runtime.nim` (added ckWhatsApp cases)
+- `src/donkey/core/outbound/outbound.nim` (added ckWhatsApp to isImplementedOutboundChannel set)
+
+**Learnings:**
+- WA Cloud API nests messages three levels deep: entry[].changes[].value.messages[] — the helper `parseChangeValue` handles the innermost level cleanly
+- `mediaIdFor(msgType, msg)` pattern: when the sub-object key equals the message type string (e.g. `msg["image"]["id"]`), passing the type string as an arg avoids a large case statement
+- Status-only webhooks have a `statuses` array but no `messages` array — `getOrDefault("messages")` returning nil and the nil-guard returning `@[]` handles this without special-casing
+- `toInbound` maps `mediaId` to `mediaUrl` field — the adapter must resolve the WA media ID to a URL via the Media API before the message is useful; this is consistent with Telegram's file_id → URL pattern
+
+---
+
 ## 2026-03-22 - US-017
 - Implemented `src/donkey/adapters/channel/slack.nim` — Slack Events API webhook adapter
 - Created `tests/channel/t_slack.nim` with 20 tests covering identity, construction, challenge parsing, and event routing
