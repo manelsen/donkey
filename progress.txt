@@ -1,0 +1,26 @@
+# Better Ralph Progress
+
+## Codebase Patterns
+- Build command: `nim c --mm:orc -o:<out> src/donkey.nim` (config.nims sets styleCheck/warnings/panics globally)
+- Test command: `testament --megatest:off all`
+- Adapters live in `src/donkey/adapters/channel/` with `_pure.nim` parsers in `src/donkey/domain/channels/`
+- `OutboundChannelPorts` in `ports/channel.nim` must list every `ChannelKind`; add new channels here + in `outbound_builder.nim` + in `outbound_runtime.nim` case statements
+- CLI channel (`ckCli`) needs: `types.nim` enum entry + `$` case, `OutboundChannelPorts` field, `buildOutboundPorts` wiring, `DaemonAdapters` field + init, `outbound_runtime.nim` cases
+
+---
+
+## 2026-03-23 00:50:00 - US-030
+- Completed QQ Official Bot Adapter — implemented adapters for QQ OneBot and QQ Official Bot webhooks.
+- Files changed: `src/donkey/adapters/channel/qq_official.nim`, `src/donkey/adapters/channel/qq_webhook.nim`, `src/donkey/domain/channels/qq_pure.nim`, `src/donkey/adapters/channel/qq_runtime.nim`, `src/donkey/adapters/channel/qq_channel.nim`, `tests/channel/t_qq_official.nim`
+- **Learnings for future iterations:**
+  - QQ's signature verification uses HMAC-SHA1 with a custom header name (`X-Qq-Appid`) — follow the existing pattern carefully
+
+---
+
+## 2026-03-23 01:28:00 - US-031
+- Implemented CLI REPL Interactive adapter (`adapters/channels/cli_repl.nim`) — ChannelPort for local terminal with stdin/stdout, pure helpers for slash-command detection.
+- Files changed: `src/donkey/core/types.nim`, `src/donkey/adapters/channel/cli_repl.nim`, `tests/ports/t_cli_repl.nim`, `src/donkey/ports/channel.nim`, `src/donkey/adapters/channel/outbound_builder.nim`, `src/donkey/app/outbound_runtime.nim`, `src/donkey.nim`, `prd.json`, `tasks/prd.json`
+- **Learnings for future iterations:**
+  - Adding a new `ChannelKind` requires: types.nim (enum + `$` case), OutboundChannelPorts (ports/channel.nim), buildOutboundPorts wiring (outbound_builder.nim), DaemonAdapters + init (donkey.nim), and case statements in outbound_runtime.nim (channelPortFor, sendImmediateOutbound error, editStreamOutbound discard, createStreamOutbound discard)
+  - CLI is primarily an input channel but must be wired into OutboundChannelPorts since the global outbox routes to all channels
+  - `cli_repl.nim` uses `splitChunks` from `pipeops.nim` for output; pure helpers `isCommand`/`stripCommand` are unary `func`s designed for `|>` chaining
