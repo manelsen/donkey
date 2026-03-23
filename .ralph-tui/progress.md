@@ -25,6 +25,38 @@ Any adapter module that references `HttpResponse` in signatures must `import ../
 
 ---
 
+## 2026-03-22 - US-019
+- Implemented `src/donkey/adapters/channel/whatsapp.nim` — WhatsApp Cloud API webhook adapter
+- Created `tests/channel/t_whatsapp.nim` with 20 tests covering identity, construction, verification, and event routing
+
+**What was implemented:**
+- `WaRawEventKind` enum: wrkText, wrkInteractive, wrkMedia
+- `WaRawEvent` object with kind, waUserId, text, messageId, phoneNumberId, mediaId
+- `gWaEvents` — module-level `Channel[WaRawEvent]` (same thread-safe pattern as Slack/Discord)
+- `verifyChallenge(hubMode, hubChallenge, hubVerifyToken, configToken)` — returns challenge or "" for 403
+- `pushEvent(payload)` — parses via whatsapp_pure and enqueues events; ignores wmkUnknown
+- `openQueue()` / `tryRecvEvent()` — lifecycle and polling interface
+- `postJson(path, body)` / `getJson(path)` — Graph API helpers using `>>=` chain
+- `parseWaBody(resp)` — named `{.gcsafe, raises: [].}` proc validates HTTP status
+- `resolveMediaUrl(mediaId)` — resolves WA media ID to download URL via Media API
+- `sendChunk`, `send`, `sendToPhone`, `sendReturnId` — ChannelPort procs
+- `extractMsgId(j)` — named `{.gcsafe, raises: [].}` proc for `>>= extractMsgId` chaining
+- `ack(phoneNumberId, messageId)` — marks message as read via status update (errors silently ignored)
+- `newWhatsAppAdapter(accessToken, phoneNumberId, identityPath, apiBase)` — constructor
+
+**Files changed:**
+- `src/donkey/adapters/channel/whatsapp.nim` (new)
+- `tests/channel/t_whatsapp.nim` (new)
+
+**Learnings:**
+- WhatsApp webhook verification is a GET request (hub.mode/hub.challenge/hub.verify_token query params), not a JSON POST like Slack — `verifyChallenge` is a pure func taking four strings
+- WA `ack` sends a POST with `{"status":"read","message_id":"..."}` to the messages endpoint, not a separate ACK endpoint
+- Unlike Slack (DM channels) or Discord (dmChannels cache), WhatsApp sends directly to phone numbers — no channel ID resolution needed, simplifying `send` significantly
+- `extractMsgId` as a named `{.gcsafe, raises: [].}` proc enables clean `>>= extractMsgId` in `sendReturnId` without a lambda wrapper
+- `tables` import causes UnusedImport warning/error if no `Table` is used — remove it (WhatsApp adapter has no caching unlike Slack)
+
+---
+
 ## 2026-03-22 - US-018
 - Implemented `src/donkey/domain/channels/whatsapp_pure.nim` — pure (all `func`) parser for WhatsApp Cloud API webhook payloads
 - Created `tests/domain/channels/t_whatsapp_pure.nim` with 34 tests covering all message kinds
