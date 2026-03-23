@@ -34,6 +34,37 @@ inside a `func`.
 
 ---
 
+## 2026-03-22 - US-025
+- Implemented `src/donkey/domain/channels/qq_pure.nim` — pure parser for QQ official bot event payloads
+- Created `tests/domain/channels/t_qq_pure.nim` with 42 tests covering all event kinds
+
+**What was implemented:**
+- `QqMsgKind` enum: qqkPrivate, qqkGroup, qqkInteraction, qqkUnknown
+- `QqParseResult` type with kind, rawId, groupId, messageId, text
+- `getStr(name, node)` — field extractor for `|>->` piping (node as last arg)
+- `parseC2cEvent(data)` — parses C2C_MESSAGE_CREATE (private DM)
+- `parseGroupEvent(data)` — parses GROUP_AT_MESSAGE_CREATE / GROUP_MSG_RECEIVE
+- `parseInteractionEvent(data)` — parses INTERACTION_CREATE; button data as "/callback <data>"
+- `detectFlatEventType(data)` — infers event type from flat webhook payload (no "t" field)
+- `parseDispatch(t, d)` — dispatches by event type string (gateway op=0 pattern, like discord_pure)
+- `parseEvent(payload)` — top-level; handles wrapped gateway format (op+t+d) and flat webhook format
+- `toInbound(r, userId)` — domain conversion; no mediaUrl (QQ official v1 has no media inbound)
+- `qqRawIdentity(r)` — routing key: "group:<group_openid>" when groupId non-empty, else rawId
+- `isInteraction(r)` — predicate; true for qqkInteraction
+- `hasMedia(r)` — always false (no media support in current scope)
+
+**Files changed:**
+- `src/donkey/domain/channels/qq_pure.nim` (new)
+- `tests/domain/channels/t_qq_pure.nim` (new)
+
+**Learnings:**
+- `qqRawIdentity` should check `groupId.len > 0` (not just `kind == qqkGroup`) — group interactions also carry a groupId and need the "group:" prefix for correct routing
+- QQ official bot uses two payload formats: gateway dispatch `{"op":0,"t":"TYPE","d":{...}}` and flat webhook `{...fields directly...}` — the flat format is detected by checking for `group_openid` or `author.user_openid` presence
+- `parseDispatch(t, d)` is the right API for QQ (same as discord_pure) because `t` and `d` arrive as separate fields — forcing a unary pipe would require wrapping; the adapter unwraps and calls `parseDispatch` directly
+- The existing `qq_official.nim` already has many pure `func` helpers (`detectOfficialEventType`, `parseOfficialEventNode`, etc.) — `qq_pure.nim` provides a clean domain layer with a consistent `QqParseResult` type following the same pattern as other channel parsers
+
+---
+
 ## 2026-03-22 - US-024
 - Replaced `src/donkey/adapters/channel/feishu.nim` stub with a full HTTP webhook adapter
 - Created `tests/channel/t_feishu.nim` with 20 tests covering identity, construction, challenge parsing, and event queue routing
