@@ -9,11 +9,19 @@
 
 ---
 
-## 2026-03-23 00:50:00 - US-030
-- Completed QQ Official Bot Adapter — implemented adapters for QQ OneBot and QQ Official Bot webhooks.
-- Files changed: `src/donkey/adapters/channel/qq_official.nim`, `src/donkey/adapters/channel/qq_webhook.nim`, `src/donkey/domain/channels/qq_pure.nim`, `src/donkey/adapters/channel/qq_runtime.nim`, `src/donkey/adapters/channel/qq_channel.nim`, `tests/channel/t_qq_official.nim`
+## 2026-03-23 (US-041)
+- Implemented `domain/providers/ollama_pure.nim` — pure wire-format helpers: `messageToOllama`, `buildOllamaRequest`, `parseOllamaResponse`.
+- Refactored `adapters/provider/ollama.nim` to delegate to pure module, re-exporting functions for backwards compatibility.
+- Added `tests/domain/providers/t_ollama_pure.nim` with 27 tests covering all pure functions.
+- Files changed: `src/donkey/domain/providers/ollama_pure.nim`, `src/donkey/adapters/provider/ollama.nim`, `tests/domain/providers/t_ollama_pure.nim`, `prd.json`
 - **Learnings for future iterations:**
-  - QQ's signature verification uses HMAC-SHA1 with a custom header name (`X-Qq-Appid`) — follow the existing pattern carefully
+  - `parseJson` can raise, so functions calling it must be `proc` not `func` — `messageToOllama` is `proc` for this reason
+  - Nim's `|>` pipe passes the LEFT value as the LAST argument — when using `buildOllamaRequest(model, req, stream)`, pipe direction matters: `req |> f(model)` becomes `f(model, req)` which is wrong; call directly as `f(model, req)` to avoid confusion
+  - `JNull` kind must be explicitly handled alongside `nil` checks when parsing JSON — use `argsNode == nil or argsNode.kind == JNull` to default to `"{}"`
+  - Nim's `$` on JsonNode produces compact JSON with no spaces after colons — tests checking exact JSON string values must match this format
+
+---
+
 
 ---
 
