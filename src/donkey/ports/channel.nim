@@ -36,6 +36,7 @@ type
     whatsapp*:  OutboundChannelPort
     signal*:    OutboundChannelPort
     dingtalk*:  OutboundChannelPort
+    matrix*:    OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 

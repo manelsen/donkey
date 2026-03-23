@@ -1,0 +1,99 @@
+# Iteration 17 Log
+
+## Metadata
+
+- **Task ID**: US-028
+- **Task Title**: DingTalk Webhook Adapter
+- **Description**: HTTP handler for DingTalk.
+- **Status**: completed
+- **Task Completed**: Yes
+- **Promise Detected**: Yes
+- **Started At**: 2026-03-23T02:14:15.322Z
+- **Ended At**: 2026-03-23T02:23:46.157Z
+- **Duration**: 9m 30s
+- **Input Tokens**: 292
+- **Output Tokens**: 19616
+- **Total Tokens**: 19908
+- **Agent**: claude
+- **Model**: claude-sonnet-4-6
+- **Sandbox Mode**: auto
+- **Sandbox Network**: Enabled
+--- RAW OUTPUT ---
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Glob][0m pattern: [96msrc/donkey/adapters/channels/*.nim[0m
+
+[91m[Error: File content (11044 tokens) exceeds maximum allowed tokens (10000). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.][0m
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Glob][0m pattern: [96msrc/donkey/**/*.nim[0m
+[94m[Glob][0m pattern: [96msrc/donkey/domain/channels/dingtalk*.nim[0m
+[94m[Glob][0m pattern: [96msrc/donkey/adapters/channel/dingtalk*.nim[0m
+[94m[Glob][0m pattern: [96mtests/channel/t_dingtalk*.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/domain/channels/dingtalk_pure.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/feishu.nim[0m
+Now let me look at the QQ webhook adapter and a test file for reference.
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/qq_webhook.nim[0m
+[94m[Glob][0m pattern: [96mtests/channel/t_feishu*.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/tests/channel/t_feishu.nim[0m
+[94m[Glob][0m pattern: [96mtests/channel/t_qq_webhook.nim[0m
+Let me check the domain types and look at an existing test for DingTalk pure.
+[94m[Grep][0m pattern: [96mckDingTalk[0m
+[94m[Glob][0m pattern: [96mtests/domain/channels/t_dingtalk*.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/app/outbound_runtime.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/ports/channel.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/qq_runtime.nim[0m
+Now I have enough context. Let me implement the DingTalk webhook adapter and tests.
+[94m[Write][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/dingtalk.nim[0m "## DingTalkAdapter — ChannelPort for DingTalk webhook (HTTP callback) mode.
+##
+## Receiving: DingTalk POSTs events to your callback endpoint.
+##   The HTTP layer calls pushEvent() with the parsed JSON... (9868 chars)"
+Now let me write the tests. Let me first check the QQ webhook test for reference.
+[94m[Read][0m [95m/home/micelio/git/donkey/tests/channel/t_qq_webhook.nim[0m
+[94m[Write][0m [95m/home/micelio/git/donkey/tests/channel/t_dingtalk.nim[0m "## DingTalkAdapter unit tests.
+## HTTP calls are not made; tests cover adapter construction, identity
+## resolution, event queue routing, and pure parser integration.
+
+import std/[json, os, unittest]
+... (12406 chars)"
+Now let's run the build and tests:
+[94m[Bash][0m $ nim c --mm:orc --styleCheck:error --warnings:error -p:src src/donkey/adapters/channel/dingtalk.nim 2...
+
+[91m[Error: Exit code 1
+command line(1, 2) Error: 'on', 'off' or 'list' expected, but 'error' found][0m
+[94m[Bash][0m $ nim c --mm:orc --styleCheck:on --warnings:on -p:src src/donkey/adapters/channel/dingtalk.nim 2>&1
+
+[91m[Error: Exit code 1
+command line(1, 2) Error: 'off', 'hint', 'warning', 'error' or 'usages' expected, but 'on' found][0m
+[94m[Bash][0m $ nim --version 2>&1 | head -3
+[94m[Bash][0m $ nim c --mm:orc -p:src src/donkey/adapters/channel/dingtalk.nim 2>&1
+Build succeeds. Now let's run the tests:
+[94m[Bash][0m $ testament r tests/channel/t_dingtalk.nim 2>&1
+All tests pass. Let me run the full test suite to verify nothing is broken:
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | tail -30
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | grep -E 'FAIL|ERROR|total|passed'
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | grep -c PASS
+All 66 tests pass. Now let me update the progress log:
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Edit][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m edit: "---
+
+## 2026-03-22 - US-026" → "---
+
+## 2026-03-22 - US-028
+- Implemented `src/don..."
+All done. Here's a summary:
+
+**US-028 implemented:**
+
+- `src/donkey/adapters/channel/dingtalk.nim` — DingTalk HTTP webhook adapter
+- `tests/channel/t_dingtalk.nim` — 26 tests, all passing
+
+Key design decisions:
+- Group events use `"conv:" + conversationId` as rawId (parallel to QQ's `"group:"` prefix)
+- DingTalk-specific token header: `x-acs-dingtalk-access-token` 
+- Send body uses `msgKey: "sampleText"` / `msgParam` JSON-encoded string pattern
+- `parseDtBody` is a named `{.gcsafe, raises: [].}` proc for `>>=` chaining
+- `editMessage` and `ack` are no-ops
+
+Full testament suite: **66/66 PASS**
+
+<promise>COMPLETE</promise>

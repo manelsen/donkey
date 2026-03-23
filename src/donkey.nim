@@ -38,6 +38,7 @@ import donkey/adapters/channel/qq_channel
 import donkey/adapters/channel/qq_runtime
 import donkey/adapters/channel/feishu
 import donkey/adapters/channel/feishu_runtime
+import donkey/adapters/channel/matrix
 import donkey/adapters/tool/mcp_client
 import donkey/domain/message
 import donkey/domain/agent_message
@@ -587,6 +588,7 @@ type DaemonAdapters = object
   wch: WeChatAdapter
   qq: QQChannelAdapter
   fs: FeishuAdapter
+  mx: MatrixAdapter
 
 const
   RecentRouteSampleLimit = 32
@@ -740,6 +742,8 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
     result.qq = newQQDisabledChannelAdapter(env.identityPath)
   result.fs = newFeishuAdapter(env.feishuAppId, getEnv("FEISHU_APP_SECRET"),
                                env.identityPath)
+  result.mx = newMatrixAdapter(getEnv("MATRIX_HOMESERVER"), getEnv("MATRIX_BOT_USER_ID"),
+                               getEnv("MATRIX_ACCESS_TOKEN"), env.identityPath)
 
 func recentRouteSampleTtlSec(): int64 =
   let raw = getEnv("DONKEY_ROUTE_HEALTH_TTL_SEC")
@@ -1527,7 +1531,7 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
                        log:      Logger) =
   let outboundPorts = buildOutboundPorts(
     addr adapters.tg, addr adapters.dc, addr adapters.wc,
-    addr adapters.wch, addr adapters.qq, addr adapters.fs)
+    addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx)
   while runtime.globalOutbox.len > 0:
     let outMsg = runtime.globalOutbox.getNoWait()
     clearTelegramStatus(runtime, adapters.tg, outMsg)

@@ -517,11 +517,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 29,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-011"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-030",
@@ -1250,6 +1251,6 @@
     }
   ],
   "metadata": {
-    "updatedAt": "2026-03-23T02:23:46.160Z"
+    "updatedAt": "2026-03-23T02:49:21.702Z"
   }
 }
