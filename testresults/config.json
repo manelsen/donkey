@@ -1,4 +1,4 @@
 [
-{"name":"tests/config/t_clawhub_registry.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"8b6c3eb3e3e","branch":"ralph/donkey-v1-sovereign-pipeops"},
-{"name":"tests/config/t_loader.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"8b6c3eb3e3e","branch":"ralph/donkey-v1-sovereign-pipeops"},
-{"name":"tests/config/t_skills_registry.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"8b6c3eb3e3e","branch":"ralph/donkey-v1-sovereign-pipeops"}]
+{"name":"tests/config/t_clawhub_registry.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"bce970f56ba","branch":"ralph/donkey-v1-sovereign-pipeops"},
+{"name":"tests/config/t_loader.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"bce970f56ba","branch":"ralph/donkey-v1-sovereign-pipeops"},
+{"name":"tests/config/t_skills_registry.nim c","category":"config","target":"c","action":"run","result":"reSuccess","expected":"","given":"","machine":"hostname","commit":"bce970f56ba","branch":"ralph/donkey-v1-sovereign-pipeops"}]
