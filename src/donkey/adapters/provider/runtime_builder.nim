@@ -9,6 +9,7 @@ import anthropic
 import gemini
 import minimax
 import ollama
+import openai
 
 proc makeFn[A](a: A): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
@@ -46,6 +47,12 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
     let adapter = newOllamaAdapter(model = spec.modelName,
                                    baseUrl = if spec.apiKey.len > 0: spec.apiKey
                                              else: OllamaDefaultBaseUrl)
+    ProviderBundle(
+      completeFn: makeFn(adapter),
+      streamFn:   adapter.makeStreamFn(),
+    )
+  of "openai":
+    let adapter = newOpenAIAdapter(spec.apiKey, model = spec.modelName)
     ProviderBundle(
       completeFn: makeFn(adapter),
       streamFn:   adapter.makeStreamFn(),
