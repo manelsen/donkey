@@ -25,6 +25,33 @@ Any adapter module that references `HttpResponse` in signatures must `import ../
 
 ---
 
+## 2026-03-22 - US-022
+- `src/donkey/adapters/channel/wechat.nim` was already implemented (pre-existing)
+- Verified: build passes (`nim check --mm:orc`), all 63 tests pass
+
+**What was implemented (pre-existing):**
+- `WeChatAdapter` with appId, appSecret, callbackToken, templateId, resolver, http
+- `parseQueryString` — pure func; splits URL query string into Table
+- `extractXmlTag` — extracts CDATA or plain tag content from XML
+- `parseWebhookXml` — parses XML envelope into `WeChatEvent`; returns `Result[WeChatEvent, string]`
+- `verifyWebhookSignature` — SHA1 verification of WeChat signature (sort+join+hash)
+- `enqueueWebhookXml` — injects raw XML; pushes to thread-safe Channel or fallback seq
+- `buildOAuthUrl` — OAuth2 URL builder
+- `fetchAccessToken`, `fetchOAuthOpenId`, `fetchProfile` — WeChat API helpers
+- `sendCustomText`, `sendTemplate` — sending via customer-service and template message APIs
+- `wechatWebhookThread` / `startWebhook` — embedded HTTP/1.1 server on dedicated OS thread
+- `tryRecvEvent`, `send` — ChannelPort-compatible procs
+
+**Files changed:** none (already complete)
+
+**Learnings:**
+- WeChat webhook server uses `std/net` directly (not an HTTP framework) — same raw socket pattern as in Signal adapter
+- `gWeChatEventsOpen` boolean guards whether to use the thread-safe channel or the direct injection queue; this allows test code to call `enqueueWebhookXml` without starting the server thread
+- SHA1 signature: sort [token, timestamp, nonce] lexicographically, join, hash — `checksums/sha1` package handles this cleanly
+- The adapter does NOT use `wechat_pure.nim` (US-021) — it duplicates `extractXmlTag` inline; this is pre-existing and consistent with its own `WeChatEvent` type rather than `WcParseResult`
+
+---
+
 ## 2026-03-22 - US-021
 - Implemented `src/donkey/domain/channels/wechat_pure.nim` — pure parser for WeChat/WeCom XML webhook payloads
 - Created `tests/domain/channels/t_wechat_pure.nim` with 28 tests covering all message kinds
