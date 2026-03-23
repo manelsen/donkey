@@ -59,3 +59,13 @@
   - `>>=` pipe expects `Result[T, E]` on the left side - if the left side is just a `JsonNode`, call the function directly instead of using `>>=`.
   - `|>` with multi-arg functions: `a |> f(b, c)` becomes `f(b, c, a)` - design function signatures accordingly or call directly.
   - Nim's `IndexDefect` on `arr[0]` is NOT caught by `except IndexError` - check `arr.len > 0` before indexing.
+
+---
+
+## 2026-03-23 (US-036)
+- Implemented `adapters/provider/openai.nim` — OpenAI API ProviderPort adapter with streaming SSE support, reusing pure helpers from `openai_pure.nim` (buildRequestBody, parseResponseFrom).
+- Files changed: `src/donkey/adapters/provider/openai.nim` (new), `src/donkey/adapters/provider/runtime_builder.nim` (added openai case), `tests/adapters/provider/t_openai.nim` (new with 11 tests).
+- **Learnings for future iterations:**
+  - OpenAI adapter reuses `openai_pure.nim` pure helpers (buildRequestBody, parseResponseFrom) via >>= chain — unlike openrouter which duplicates serialization logic
+  - `strutils` must be explicitly imported for `strip()` on strings
+  - SSE streaming pattern: read lines from `resp.bodyStream`, parse each with `parseOpenAISseLine`, accumulate tokens, call `onToken` callback
