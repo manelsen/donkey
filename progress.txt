@@ -98,7 +98,16 @@
 - **Learnings for future iterations:**
   - `{.global.}` pragma on local variables inside procs causes gcsafe issues in the resulting closures — avoid and just use local variables
   - `parseJson` can raise, so functions calling it must be `proc` not `func`; higher-level functions that call those procs must also be `proc`
-  - Nim bracket access like `content{"parts"}[0]{"text"}` requires proper brackets — `[0]{"text"}` not `[0{"text"}`
+  - Nim bracket access like `content{"parts"}[0]{"text"}` requires proper brackets — `[0]{"text"}` not `[0{"text"}]
 
 ---
 
+## 2026-03-23 (US-042)
+- Marked US-042 (Ollama IO Adapter) as complete. The adapter (`adapters/provider/ollama.nim`) was already fully implemented with `complete()`, `makeStreamFn()`, and all JSON serialization delegated to `domain/providers/ollama_pure.nim`.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all`.
+- Files changed: `prd.json`
+- **Learnings for future iterations:**
+  - US-042 depends on US-041 (ollama_pure.nim) and US-033 (ProviderPort) — both already implemented and wired via `runtime_builder.nim`
+
+---

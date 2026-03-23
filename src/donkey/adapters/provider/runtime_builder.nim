@@ -10,6 +10,7 @@ import gemini
 import minimax
 import ollama
 import openai
+import deepseek
 
 proc makeFn[A](a: A): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
@@ -53,6 +54,12 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
     )
   of "openai":
     let adapter = newOpenAIAdapter(spec.apiKey, model = spec.modelName)
+    ProviderBundle(
+      completeFn: makeFn(adapter),
+      streamFn:   adapter.makeStreamFn(),
+    )
+  of "deepseek":
+    let adapter = newDeepSeekAdapter(spec.apiKey, model = spec.modelName)
     ProviderBundle(
       completeFn: makeFn(adapter),
       streamFn:   adapter.makeStreamFn(),
