@@ -3,10 +3,10 @@
   "sessionId": "d5a9a3a3-f1fd-4960-8f15-51d1eaf989bb",
   "status": "running",
   "startedAt": "2026-03-23T03:46:06.949Z",
-  "updatedAt": "2026-03-23T03:50:17.735Z",
-  "currentIteration": 0,
+  "updatedAt": "2026-03-23T03:50:18.987Z",
+  "currentIteration": 1,
   "maxIterations": 0,
-  "tasksCompleted": 0,
+  "tasksCompleted": 1,
   "isPaused": false,
   "agentPlugin": "opencode",
   "trackerState": {
@@ -14,9 +14,22 @@
     "totalTasks": 0,
     "tasks": []
   },
-  "iterations": [],
+  "iterations": [
+    {
+      "iteration": 1,
+      "status": "completed",
+      "taskId": "US-030",
+      "taskTitle": "Email IMAP/SMTP Adapter",
+      "taskCompleted": true,
+      "durationMs": 242893,
+      "startedAt": "2026-03-23T03:46:14.840Z",
+      "endedAt": "2026-03-23T03:50:17.733Z"
+    }
+  ],
   "skippedTaskIds": [],
   "cwd": "/home/micelio/git/donkey",
-  "activeTaskIds": [],
+  "activeTaskIds": [
+    "US-031"
+  ],
   "subagentPanelVisible": true
 }
