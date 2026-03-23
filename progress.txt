@@ -156,3 +156,13 @@
   - Nim's `{}` interpolation only works with simple variables, not object field access.
   - `mapIt` requires importing from std/algorithm — use explicit for-loops to avoid import confusion.
   - `in` operator for strings requires `strutils` to be imported for `contains`/`find`.
+
+## 2026-03-23 (US-047)
+- Implemented `adapters/memory/markdown.nim` — Result-based Markdown Memory FS adapter using `>>=` for chaining fallible I/O operations.
+- Created `tests/memory/t_markdown.nim` with 19 tests covering all core operations (hasProfile, loadContext, saveUserMd, appendMemory, etc.).
+- Files changed: `src/donkey/adapters/memory/markdown.nim` (new), `tests/memory/t_markdown.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `ok(@[])` doesn't type-infer correctly for empty seqs — use typed variable first: `let empty: seq[T] = @[]` then `return ok(empty)`
+  - `let` declarations inside anonymous `proc` literals within `>>=` chains cause parser errors in Nim — use explicit error handling with `if result.isErr: return err(...)` instead
+  - Forward declaration or proper ordering is needed: helper procs like `parseUserField` must be defined before procs that use them
+  - When using Result types in tests, import `donkey/core/pipeops` explicitly to ensure `results` templates like `isOk` are in scope
