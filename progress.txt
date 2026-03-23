@@ -343,3 +343,16 @@
   - `execCmdEx` with poEvalCommand expects proper shell quoting — pass full command as single string rather than command + args
 
 ---
+
+## 2026-03-23 (US-062)
+- Implemented `domain/tools/shell_ast.nim` — Pure shell operator detection with loop-based algorithm to correctly identify standalone `|` vs `||` and `&` vs `&&`. Exports: isShellOperatorChar, containsShellOperators, hasPipe/hasSemicolon/hasAmpersand/hasInputRedirect/hasOutputRedirect, detectShellOperators, validateShellSafe, isShellSafe, shellValidationErrorMsg, shellBlockReason.
+- Created `tests/domain/tools/t_shell_ast.nim` with 93 tests covering all functions and edge cases.
+- Files changed: `src/donkey/domain/tools/shell_ast.nim` (new), `tests/domain/tools/t_shell_ast.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - Use loop-based detection for operators that appear in compound forms (||, &&) to avoid double-counting
+  - For `||`, skip both characters when detected — can't just check if `|` at position i is part of `||` by looking at neighbors
+  - The condition `hasPipe(input) and not (input.contains("||") and input.contains("|"))` is WRONG — `contains("|")` is always true when there's a pipe, making the whole condition false
+  - Proper algorithm: detect compound operators first, then for each `|` check if it's the first char of `||` (look ahead), if so skip both chars
+  - For shell error messages, use "shell operators blocked (multiple):" format to make test assertions easier
+
+---
