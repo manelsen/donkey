@@ -38,6 +38,7 @@ type
     dingtalk*:  OutboundChannelPort
     matrix*:    OutboundChannelPort
     email*:     OutboundChannelPort
+    cli*:       OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 

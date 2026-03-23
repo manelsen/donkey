@@ -1,0 +1,1258 @@
+{
+  "name": "Donkey v1.0 — The Sovereign Architecture (Pipeops Edition)",
+  "description": "Transcrição profunda das matrizes de paridade, garantindo a topologia pipeops do Donkey: funções unárias, last-arg binding e monadic error handling.",
+  "branchName": "ralph/donkey-v1-sovereign-pipeops",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Strict Compilation & Panics",
+      "description": "Enforce Nim compiler strictness for zero-ambiguity.",
+      "acceptanceCriteria": [
+        "Add --styleCheck:error, --warnings:error, --panics:on",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-002",
+      "title": "Result[T, E] & Pipeops Pervasiveness",
+      "description": "Eradicate try/except from business logic and enforce pipeops topology.",
+      "acceptanceCriteria": [
+        "Ensure core/pipeops.nim is exported and used",
+        "Refactor core to never raise, using `>>=` for chaining",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-001"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-003",
+      "title": "Actor Model Mailbox",
+      "description": "Resilient async message passing (inspired by BEAM/Pincer).",
+      "acceptanceCriteria": [
+        "Implement lock-free or channel-based inbox/outbox in core/actor.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-004",
+      "title": "System Diagnostics (Doctor)",
+      "description": "CLI tool to verify external dependencies (DBs, binaries).",
+      "acceptanceCriteria": [
+        "Implement `donkey doctor` checking for pgvector, docker, API keys",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-005",
+      "title": "SSRF IP Validator (Pure)",
+      "description": "Detect local/private/bogon IPs to prevent internal network scanning.",
+      "acceptanceCriteria": [
+        "Implement network.nim with isPrivateIp() parsing logic",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-006",
+      "title": "SSRF DNS Resolver",
+      "description": "Resolve domains and block if they map to private IPs (nanobot style).",
+      "acceptanceCriteria": [
+        "Implement safeResolve() adapter returning Result",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-005"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-007",
+      "title": "Secret Scanner & Entropy",
+      "description": "Detect API keys via Regex and Shannon Entropy (ironclaw style).",
+      "acceptanceCriteria": [
+        "Implement secrets.nim with calculateEntropy() and regex masks",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-008",
+      "title": "Output Sanitizer",
+      "description": "Strip internal thought tags and mask secrets before user delivery.",
+      "acceptanceCriteria": [
+        "Implement clean_response() via `|>` chaining",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-007"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-009",
+      "title": "Cross-Channel Identity Map",
+      "description": "Map unique users across different platforms (Donkey F1).",
+      "acceptanceCriteria": [
+        "Implement domain/identity.nim mapping platform IDs to internal UUIDs",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-010",
+      "title": "Adaptive Debounce",
+      "description": "Handle split messages based on timing/length (nullclaw style).",
+      "acceptanceCriteria": [
+        "Implement pure message debounce/merge logic (1.2s to 8s window)",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-011",
+      "title": "Hexagonal Channel Port",
+      "description": "Define the abstract interface for all incoming/outgoing messages.",
+      "acceptanceCriteria": [
+        "Create ports/channel.nim with send(), receive() Result signatures",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-003"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-012",
+      "title": "Telegram Parser (Pure)",
+      "description": "Parse TG updates into internal domain objects.",
+      "acceptanceCriteria": [
+        "Implement domain/channels/telegram_pure.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-011"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-013",
+      "title": "Telegram IO Adapter",
+      "description": "HTTP long-polling or webhook adapter for TG.",
+      "acceptanceCriteria": [
+        "Implement adapters/channels/telegram.nim using `>>=` for HTTP flows",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-012"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-014",
+      "title": "Discord Parser (Pure)",
+      "description": "Parse Discord gateway/webhook events.",
+      "acceptanceCriteria": [
+        "Implement domain/channels/discord_pure.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-011"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-015",
+      "title": "Discord IO Adapter",
+      "description": "WebSocket or REST adapter for Discord.",
+      "acceptanceCriteria": [
+        "Implement adapters/channels/discord.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-014"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-016",
+      "title": "Slack Parser (Pure)",
+      "description": "Parse Slack Events API payload.",
+      "acceptanceCriteria": [
+        "Implement domain/channels/slack_pure.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-011"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-017",
+      "title": "Slack Socket/Webhook Adapter",
+      "description": "Socket Mode and Webhook support.",
+      "acceptanceCriteria": [
+        "Implement adapters/channels/slack.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-016"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-018",
+      "title": "WhatsApp Parser (Pure)",
+      "description": "Parse WA Cloud API payloads.",
+      "acceptanceCriteria": [
+        "Implement domain/channels/whatsapp_pure.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-011"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-019",
+      "title": "WhatsApp Webhook Adapter",
+      "description": "HTTP handler for WA.",
+      "acceptanceCriteria": [
+        "Implement adapters/channels/whatsapp.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 19,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-018"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-020",
+      "title": "Signal CLI DBus Adapter",
+      "description": "Communicate with signal-cli daemon via IPC/DBus.",
+      "acceptanceCriteria": [
+        "Implement adapters/channels/signal.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 20,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-011"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-021",
+      "title": "WeChat/WeCom Parser",
+      "description": "Handle WeChat XML/JSON quirks.",
+      "acceptanceCriteria": [
+        "Implement domain/channels/wechat_pure.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 21,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-011"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-022",
+      "title": "WeChat Webhook Adapter",
+      "description": "HTTP handler for WeChat.",
+      "acceptanceCriteria": [
+        "Implement adapters/channels/wechat.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 22,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-021"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-023",
+      "title": "Feishu/Lark Parser",
+      "description": "Handle Feishu event structures.",
+      "acceptanceCriteria": [
+        "Implement domain/channels/feishu_pure.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 23,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-011"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-024",
+      "title": "Feishu Webhook Adapter",
+      "description": "HTTP handler for Feishu.",
+      "acceptanceCriteria": [
+        "Implement adapters/channels/feishu.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 24,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-023"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-025",
+      "title": "QQ Parser",
+      "description": "Handle QQ official bot events.",
+      "acceptanceCriteria": [
+        "Implement domain/channels/qq_pure.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 25,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-011"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-026",
+      "title": "QQ Webhook Adapter",
+      "description": "HTTP handler for QQ.",
+      "acceptanceCriteria": [
+        "Implement adapters/channels/qq.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 26,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-025"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-027",
+      "title": "DingTalk Parser",
+      "description": "Handle DingTalk payloads.",
+      "acceptanceCriteria": [
+        "Implement domain/channels/dingtalk_pure.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 27,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-011"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-028",
+      "title": "DingTalk Webhook Adapter",
+      "description": "HTTP handler for DingTalk.",
+      "acceptanceCriteria": [
+        "Implement adapters/channels/dingtalk.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 28,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-027"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-029",
+      "title": "Matrix Synapse Adapter",
+      "description": "Client-server API for Matrix.",
+      "acceptanceCriteria": [
+        "Implement adapters/channels/matrix.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 29,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-011"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-030",
+      "title": "Email IMAP/SMTP Adapter",
+      "description": "Polling IMAP for inbox, SMTP for outbox.",
+      "acceptanceCriteria": [
+        "Implement adapters/channels/email.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 30,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-011"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-031",
+      "title": "CLI REPL Interactive",
+      "description": "Local terminal loop with history.",
+      "acceptanceCriteria": [
+        "Implement adapters/channels/cli_repl.nim chaining via `>>=`",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 31,
+      "passes": true,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-011"
+      ],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-032",
+      "title": "Web UI SSE Gateway",
+      "description": "Real-time log and agent event streaming (Donkey F1).",
+      "acceptanceCriteria": [
+        "Extend http_gateway.nim for bidirectional SSE",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 32,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-011"
+      ]
+    },
+    {
+      "id": "US-033",
+      "title": "Hexagonal Provider Port",
+      "description": "Define abstract LLM interface with streaming.",
+      "acceptanceCriteria": [
+        "Create ports/provider.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 33,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-034",
+      "title": "Provider Quirks Normalizer",
+      "description": "Normalize message blocks across Anthropic/OAI/Gemini.",
+      "acceptanceCriteria": [
+        "Implement domain/providers/quirks.nim (pure)",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 34,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-035",
+      "title": "OpenAI Protocol (Pure)",
+      "description": "Format requests/responses for OpenAI/OpenRouter.",
+      "acceptanceCriteria": [
+        "Implement domain/providers/openai_pure.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 35,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-034"
+      ]
+    },
+    {
+      "id": "US-036",
+      "title": "OpenAI IO Adapter",
+      "description": "HTTP client for OAI API.",
+      "acceptanceCriteria": [
+        "Implement adapters/providers/openai.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 36,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-035",
+        "US-033"
+      ]
+    },
+    {
+      "id": "US-037",
+      "title": "Anthropic Protocol (Pure)",
+      "description": "Format XML/JSON for Claude APIs.",
+      "acceptanceCriteria": [
+        "Implement domain/providers/anthropic_pure.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 37,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-034"
+      ]
+    },
+    {
+      "id": "US-038",
+      "title": "Anthropic IO Adapter",
+      "description": "HTTP client for Anthropic.",
+      "acceptanceCriteria": [
+        "Implement adapters/providers/anthropic.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 38,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-037",
+        "US-033"
+      ]
+    },
+    {
+      "id": "US-039",
+      "title": "Gemini Protocol (Pure)",
+      "description": "Format requests for Google Gemini.",
+      "acceptanceCriteria": [
+        "Implement domain/providers/gemini_pure.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 39,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-034"
+      ]
+    },
+    {
+      "id": "US-040",
+      "title": "Gemini IO Adapter",
+      "description": "HTTP client for Gemini.",
+      "acceptanceCriteria": [
+        "Implement adapters/providers/gemini.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 40,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-039",
+        "US-033"
+      ]
+    },
+    {
+      "id": "US-041",
+      "title": "Ollama Protocol (Pure)",
+      "description": "Format requests for local GGUF models.",
+      "acceptanceCriteria": [
+        "Implement domain/providers/ollama_pure.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 41,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-034"
+      ]
+    },
+    {
+      "id": "US-042",
+      "title": "Ollama IO Adapter",
+      "description": "HTTP client for Ollama.",
+      "acceptanceCriteria": [
+        "Implement adapters/providers/ollama.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 42,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-041",
+        "US-033"
+      ]
+    },
+    {
+      "id": "US-043",
+      "title": "DeepSeek Adapter",
+      "description": "OpenAI-compatible wrapper with DeepSeek specific reasoning extraction.",
+      "acceptanceCriteria": [
+        "Implement adapters/providers/deepseek.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 43,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-035"
+      ]
+    },
+    {
+      "id": "US-044",
+      "title": "Zhipu/GLM Adapter",
+      "description": "Adapter for Z.AI models.",
+      "acceptanceCriteria": [
+        "Implement adapters/providers/zhipu.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 44,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-035"
+      ]
+    },
+    {
+      "id": "US-045",
+      "title": "Smart Routing Classifier",
+      "description": "Pure logic to pick provider based on task cost/complexity.",
+      "acceptanceCriteria": [
+        "Implement domain/routing/smart_route.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 45,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-046",
+      "title": "Failover State Machine",
+      "description": "Pure logic to handle API timeouts and fallback chains.",
+      "acceptanceCriteria": [
+        "Implement domain/routing/failover.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 46,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-047",
+      "title": "Markdown Memory FS Sync",
+      "description": "Sync MEMORY.md and USER.md to context (openclaw style).",
+      "acceptanceCriteria": [
+        "Implement adapters/memory/markdown.nim using `>>=` for safe IO",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 47,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-048",
+      "title": "SQLite Fast Cache",
+      "description": "Store raw session logs locally for fast reboot.",
+      "acceptanceCriteria": [
+        "Implement adapters/memory/sqlite_store.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 48,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-049",
+      "title": "Text Chunking & Hashing",
+      "description": "Pure logic to split text with overlap and SHA256 (openclaw style).",
+      "acceptanceCriteria": [
+        "Implement domain/memory/chunking.nim using `|>` chaining",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 49,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-050",
+      "title": "Embedding Pipeline",
+      "description": "Coordinate chunking with Provider Port to get vectors.",
+      "acceptanceCriteria": [
+        "Implement core/memory/embedder.nim via `>>=` chaining",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 50,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-049",
+        "US-033"
+      ]
+    },
+    {
+      "id": "US-051",
+      "title": "pgvector Adapter",
+      "description": "PostgreSQL schema and IO for vectors.",
+      "acceptanceCriteria": [
+        "Implement adapters/memory/pgvector_store.nim returning Result",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 51,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-052",
+      "title": "Reciprocal Rank Fusion",
+      "description": "Pure math to merge BM25 and Cosine Similarity scores (nullclaw style).",
+      "acceptanceCriteria": [
+        "Implement domain/memory/rrf.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 52,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-053",
+      "title": "Temporal Decay Penalty",
+      "description": "Pure logic to decay memory relevance over time.",
+      "acceptanceCriteria": [
+        "Implement domain/memory/decay.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 53,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-054",
+      "title": "Triple Extraction Logic",
+      "description": "Pure logic to parse Subject-Predicate-Object from text.",
+      "acceptanceCriteria": [
+        "Implement domain/memory/graph_pure.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 54,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-055",
+      "title": "Apache AGE Adapter",
+      "description": "Execute Cypher queries against PostgreSQL (Pincer style).",
+      "acceptanceCriteria": [
+        "Implement adapters/memory/age_store.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 55,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-054"
+      ]
+    },
+    {
+      "id": "US-056",
+      "title": "Silent Memory Turn",
+      "description": "Background orchestrator loop to extract memories without user prompt (moltis).",
+      "acceptanceCriteria": [
+        "Implement core/memory/silent_turn.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 56,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-055",
+        "US-051"
+      ]
+    },
+    {
+      "id": "US-057",
+      "title": "Blackboard Scratchpad",
+      "description": "Short-term planning memory injected into context (Supernova style).",
+      "acceptanceCriteria": [
+        "Implement core/memory/blackboard.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 57,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-058",
+      "title": "Native Tool Port",
+      "description": "Abstract interface for tool execution.",
+      "acceptanceCriteria": [
+        "Create ports/tool.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 58,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-059",
+      "title": "Path Security Sandbox",
+      "description": "Pure function to block `../` and restrict to workspace.",
+      "acceptanceCriteria": [
+        "Implement domain/tools/path_guard.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 59,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-060",
+      "title": "File System Tools",
+      "description": "Native read_file, write_file, list_dir.",
+      "acceptanceCriteria": [
+        "Implement adapters/tools/fs.nim chained with `>>=`",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 60,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-059",
+        "US-058"
+      ]
+    },
+    {
+      "id": "US-061",
+      "title": "Git Introspection Tools",
+      "description": "Native git status, log, diff.",
+      "acceptanceCriteria": [
+        "Implement adapters/tools/git.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 61,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-058"
+      ]
+    },
+    {
+      "id": "US-062",
+      "title": "Safe Shell AST",
+      "description": "Pure parser to detect/block shell operators (Pincer/Supernova style).",
+      "acceptanceCriteria": [
+        "Implement domain/tools/shell_ast.nim blocking `;|&<>`",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 62,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-063",
+      "title": "Native Shell Execution",
+      "description": "Subprocess execution mapped to tool port.",
+      "acceptanceCriteria": [
+        "Implement adapters/tools/shell.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 63,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-062",
+        "US-058"
+      ]
+    },
+    {
+      "id": "US-064",
+      "title": "Web Fetch & DOM parse",
+      "description": "Download HTML and convert to clean Markdown.",
+      "acceptanceCriteria": [
+        "Implement adapters/tools/web_fetch.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 64,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-006",
+        "US-058"
+      ]
+    },
+    {
+      "id": "US-065",
+      "title": "Headless Browser",
+      "description": "Playwright/Puppeteer adapter for JS rendering and screenshots.",
+      "acceptanceCriteria": [
+        "Implement adapters/tools/browser.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 65,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-006",
+        "US-058"
+      ]
+    },
+    {
+      "id": "US-066",
+      "title": "Cron Scheduled Tasks",
+      "description": "Background task scheduler (nanobot style).",
+      "acceptanceCriteria": [
+        "Implement core/cron.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 66,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-058"
+      ]
+    },
+    {
+      "id": "US-067",
+      "title": "MCP Client Protocol",
+      "description": "Communicate with external Model Context Protocol servers over stdio.",
+      "acceptanceCriteria": [
+        "Implement adapters/tools/mcp_client.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 67,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-058"
+      ]
+    },
+    {
+      "id": "US-068",
+      "title": "Paddock: OS Limits",
+      "description": "Cgroups/rlimit wrappers for CPU/RAM restriction.",
+      "acceptanceCriteria": [
+        "Implement infra/sandbox/limits.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 68,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-069",
+      "title": "Paddock: Process Spawn",
+      "description": "Spawn native tools in restricted child processes (moltis style).",
+      "acceptanceCriteria": [
+        "Implement infra/sandbox/paddock.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 69,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-068",
+        "US-063"
+      ]
+    },
+    {
+      "id": "US-070",
+      "title": "WASM Sandbox",
+      "description": "Wasmtime integration for untrusted plugin execution (ironclaw style).",
+      "acceptanceCriteria": [
+        "Implement infra/sandbox/wasm.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 70,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-071",
+      "title": "Docker Ephemeral Sandbox",
+      "description": "Spawn isolated containers for arbitrary Python/Node code (nullclaw).",
+      "acceptanceCriteria": [
+        "Implement infra/sandbox/docker.nim",
+        "Code MUST use `pipeops.nim` (`|>` for pure, `|>->` for last-arg, `>>=` for Result binding) instead of imperative variable assignments where applicable.",
+        "nim build src --mm:orc --styleCheck:error --warnings:error passes",
+        "testament pattern 'tests/**/*.nim' passes"
+      ],
+      "priority": 71,
+      "passes": false,
+      "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
+      "dependsOn": [
+        "US-002"
+      ]
+    }
+  ],
+  "metadata": {
+    "updatedAt": "2026-03-23T03:50:18.982Z"
+  }
+}
