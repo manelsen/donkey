@@ -69,3 +69,15 @@
   - OpenAI adapter reuses `openai_pure.nim` pure helpers (buildRequestBody, parseResponseFrom) via >>= chain — unlike openrouter which duplicates serialization logic
   - `strutils` must be explicitly imported for `strip()` on strings
   - SSE streaming pattern: read lines from `resp.bodyStream`, parse each with `parseOpenAISseLine`, accumulate tokens, call `onToken` callback
+
+---
+
+## 2026-03-23 (US-037)
+- Implemented `domain/providers/anthropic_pure.nim` — pure functions for formatting Anthropic Messages API request/response bodies (buildMessagesArray, buildToolsArray, buildRequestBody, parseResponseFrom, toolResultToAnthropicBlock).
+- Files changed: `src/donkey/domain/providers/anthropic_pure.nim` (new file), `tests/domain/providers/t_anthropic_pure.nim` (new test file with 33 tests).
+- **Learnings for future iterations:**
+  - Nim's `case object` discriminator must be an ordinal type — `string` is NOT ordinal, use a flat object with if/elif/else instead
+  - `block` is a Nim keyword — cannot be used as variable/iterator names, use `cb` or `theBlocks` instead
+  - `parseJson` can raise — functions calling it must be `proc`, and any function calling them must also be `proc`
+  - `contentBlockToJson` uses `parseJson` (proc) → must be proc → callers like `anthropicMessageToJson` and `buildMessagesArray` must also be proc
+  - `body{"key"}` returns nil when key is missing — always check with `isNil` before accessing fields
