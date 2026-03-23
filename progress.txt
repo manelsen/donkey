@@ -35,3 +35,14 @@
   - Forward declarations needed when a later-defined proc is called from an earlier-defined proc via closure (e.g., `handleGatewayFallback` called from `setupIpcServer`'s inboundFn closure)
   - `{.cast(gcsafe).}` required when calling non-gcsafe procs from within a `{.gcsafe.}` closure
   - Adding parameters to `setupIpcServer` required cascading updates: `setupDaemonRuntime` → `activateDaemonBootstrap` → `startDaemon` to pass `memory` through
+
+---
+
+## 2026-03-23 (US-034)
+- Implemented `domain/providers/quirks.nim` — pure functions for normalizing message history across providers (role mapping, history alternation for Gemini).
+- Files changed: `src/donkey/domain/providers/quirks.nim` (new file with pure normalization helpers), `tests/domain/providers/t_quirks.nim` (new test file with 15 tests).
+- **Learnings for future iterations:**
+  - Nim's `|>` pipe passes the LEFT value as the first argument: `a |> f` = `f(a)`, NOT `f(x, a)` - use `|>` only when the piped value is the first argument
+  - Nim's `|>` does NOT work with closures capturing outer scope vars - use `|>->` or direct function calls instead
+  - `|>->` pipes into the LAST argument: `a |>-> f(x)` = `f(x, a)` - use when the piped value is the last argument
+  - When a function call like `normalizeHistoryAlternation(provider)` returns a value (not a function), you cannot pipe into it with `|>` - use direct function call `normalizeHistoryAlternation(msgs, provider)`
