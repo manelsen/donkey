@@ -191,3 +191,19 @@
   - `step`-based offset calculation (globalOffset += step) doesn't account for boundary finding jumps — use actual positions tracked during chunking instead
   - `countup(start, min(stop, text.len - 1))` must handle text.len edge case correctly
 
+---
+
+## 2026-03-23 (US-050)
+- Implemented `core/memory/embedder.nim` — Embedding Pipeline that coordinates chunking with embedding providers. Exports: `EmbeddedChunk` type, `embedText`, `embedChunks`, `embedChunk`, `newEmbeddedChunk`, `emptyEmbedding`, `totalDimensions`, `hasValidEmbedding`.
+- Created `tests/core/memory/t_embedder.nim` with 18 tests covering all functions.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all`.
+- Files changed: `src/donkey/core/memory/embedder.nim` (new), `tests/core/memory/t_embedder.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `func` cannot call `proc` pointer types (like `EmbedFn`) — use `proc` for functions that call embedding providers
+  - Nim method call `a.f(b, c)` passes `a` as first arg — design parameter order to match piping: `text.embedText(fn)` = `embedText(text, fn)`
+  - `embedChunks` must filter/skip empty chunks — `chunkTextWithOverlap` can produce empty chunks in edge cases, and embedding empty strings always fails
+  - `EmbedFn = proc(string): seq[float32]` is a proc type alias, not an object — it doesn't have `.embed()` method; call it directly as `fn("text")`
+  - `pipeops` must be imported in test files to get `isOk`/`isErr` templates in scope
+  - Explicit type annotation on empty seq (`@[]: seq[T]`) can cause parse errors — use `let x: seq[T] = @[]` instead
+
