@@ -8,7 +8,7 @@ type
   ChannelKind* = enum
     ## Identifies which messaging channel a message arrived on / should be sent to.
     ckTelegram, ckDiscord, ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp,
-    ckSignal, ckDingTalk
+    ckSignal, ckDingTalk, ckMatrix
 
   LogLevel* = enum
     lvlDebug, lvlInfo, lvlWarn, lvlError, lvlFatal
@@ -51,3 +51,4 @@ func `$`*(k: ChannelKind): string =
   of ckWhatsApp:   "whatsapp"
   of ckSignal:     "signal"
   of ckDingTalk:   "dingtalk"
+  of ckMatrix:     "matrix"

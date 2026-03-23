@@ -9,6 +9,7 @@ import wecom
 import wechat
 import qq_channel
 import feishu
+import matrix
 
 proc unsupportedSendReturnId(msg: OutboundMessage): Result[string, string] =
   err("sendReturnId unsupported for channel " & $msg.channel)
@@ -24,7 +25,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          wcAdapter: ptr WeComAdapter;
                          wchAdapter: ptr WeChatAdapter;
                          qqAdapter: ptr QQChannelAdapter;
-                         fsAdapter: ptr FeishuAdapter): OutboundChannelPorts =
+                         fsAdapter: ptr FeishuAdapter;
+                         mxAdapter: ptr MatrixAdapter): OutboundChannelPorts =
   result.telegram = OutboundChannelPort(
     send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
       tgAdapter[].send(msg),
@@ -64,4 +66,12 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
       fsAdapter[].send(msg),
     sendReturnId: unsupportedSendReturnId,
     editMessage: unsupportedEditMessage,
+  )
+  result.matrix = OutboundChannelPort(
+    send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+      mxAdapter[].send(msg),
+    sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
+      mxAdapter[].sendReturnId(msg),
+    editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+      mxAdapter[].editMessage(userId, msgId, text),
   )

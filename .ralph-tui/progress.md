@@ -34,6 +34,58 @@ inside a `func`.
 
 ---
 
+## 2026-03-22 - US-029
+- Implemented `src/donkey/domain/channels/matrix_pure.nim` — pure parser for Matrix Client-Server API events
+- Implemented `src/donkey/adapters/channel/matrix.nim` — webhook-style adapter using matrix_pure
+- Created `tests/channel/t_matrix.nim` with 32 tests covering identity, construction, event queue routing, and pure parser integration
+- Updated `src/donkey/core/types.nim` — added `ckMatrix` to ChannelKind enum
+- Updated `src/donkey/ports/channel.nim` — added `matrix*` field to OutboundChannelPorts
+- Updated `src/donkey/adapters/channel/outbound_builder.nim` — added MatrixAdapter parameter and matrix port builder
+- Updated `src/donkey/app/outbound_runtime.nim` — added ckMatrix to all case statements
+- Updated `src/donkey/app/outbound_runtime.nim` — added ckMatrix to all case statements
+- Updated `src/donkey/donkey.nim` — added `mx: MatrixAdapter` to DaemonAdapters, Matrix initialization, import, and buildOutboundPorts call
+
+**What was implemented:**
+- `MxParseResult` / `MxMsgKind` — pure domain types (mxkText, mxkImage, mxkAudio, mxkVideo, mxkFile, mxkUnknown)
+- `parseEvent(JsonNode)` — parses Matrix events; handles m.text/m.notice/m.emote → mxkText; m.image/audio/video/file → media kinds; non-m.room.message → mxkUnknown
+- Routing convention: rawId = room_id for all events (enables outbound sends via reverseChannel → room_id)
+- `MatrixEvent` object: msgType, roomId, senderId, eventId, content, mediaUrl
+- `gMxEvents` — module-level `Channel[MatrixEvent]`
+- `pushEvent(payload)` — parses via matrix_pure.parseEvent; enqueues all supported kinds; ignores mxkUnknown
+- `MatrixAdapter` with homeserver, botUserId, accessToken, apiBase, resolver, http
+- `parseMxBody(resp)` — named `{.gcsafe, raises: [].}` proc for `>>=` chaining
+- `extractEventId(j)` — named `{.gcsafe, raises: [].}` proc for `>>=` chaining
+- `buildSendUrl(base, roomId, txnId)` — pure func building `/_matrix/client/v3/rooms/{roomId}/send/m.room.message/{txnId}`
+- `buildSendBody(text)` — pure func building `{"msgtype":"m.text","body":"..."}` JSON body
+- `sendChunk`, `sendToRoom`, `send`, `sendReturnId` — send procs using PUT + Bearer auth
+- `editMessage` — sends m.replace replacement event for streaming edits
+- `ack` — no-op (Application Service doesn't require explicit ack)
+- `openQueue`, `startGateway`, `tryRecvEvent` — queue management with `{.cast(gcsafe).}`
+- `nextTxnId()` — monotonic timestamp + global counter for unique Matrix transaction IDs
+- `newMatrixAdapter` — constructor with optional apiBase override for testing
+- Env vars: `MATRIX_HOMESERVER`, `MATRIX_BOT_USER_ID`, `MATRIX_ACCESS_TOKEN`
+
+**Files changed:**
+- `src/donkey/domain/channels/matrix_pure.nim` (new)
+- `src/donkey/adapters/channel/matrix.nim` (new)
+- `tests/channel/t_matrix.nim` (new)
+- `src/donkey/core/types.nim` (updated: ckMatrix added)
+- `src/donkey/ports/channel.nim` (updated: matrix* field added)
+- `src/donkey/adapters/channel/outbound_builder.nim` (updated: matrix import + port + mxAdapter param)
+- `src/donkey/app/outbound_runtime.nim` (updated: ckMatrix in all case statements)
+- `src/donkey/donkey.nim` (updated: mx adapter field, import, init, buildOutboundPorts call)
+
+**Learnings:**
+- Matrix Client-Server API uses `PUT /_matrix/client/v3/rooms/{roomId}/send/m.room.message/{txnId}` for sending; response contains `event_id` (not `message_id`)
+- Transaction IDs must be unique per request; using `nowMs() & counter` is sufficient for single-process adapters
+- Matrix access tokens are long-lived (no expiry by default for bot accounts) — no token refresh logic needed
+- Message editing uses `m.relates_to: {rel_type: "m.replace", event_id: ...}` with `m.new_content` block
+- m.notice and m.emote are valid msgtypes that map to mxkText (same as m.text from the bot's perspective)
+- Routing via room_id (not sender MXID) as rawId is the correct choice: the bot always replies to the room where the message came from, and `reverseChannel(userId, ckMatrix)` → room_id works naturally for outbound
+- `outbound_runtime.nim` has case expressions inside template macros (`isOkOr`, `valueOr`) — when adding new enum values to combined `of X, Y, Z:` branches, they must stay on the same branch line (not separate `of ckMatrix: discard` on a new indented line outside the block)
+
+---
+
 ## 2026-03-22 - US-028
 - Implemented `src/donkey/adapters/channel/dingtalk.nim` — HTTP webhook adapter for DingTalk using dingtalk_pure
 - Created `tests/channel/t_dingtalk.nim` with 26 tests covering identity, construction, event queue routing, and pure parser integration
