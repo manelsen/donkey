@@ -1,0 +1,158 @@
+# Iteration 9 Log
+
+## Metadata
+
+- **Task ID**: US-020
+- **Task Title**: Signal CLI DBus Adapter
+- **Description**: Communicate with signal-cli daemon via IPC/DBus.
+- **Status**: completed
+- **Task Completed**: Yes
+- **Promise Detected**: Yes
+- **Started At**: 2026-03-23T00:52:56.456Z
+- **Ended At**: 2026-03-23T01:06:39.813Z
+- **Duration**: 13m 43s
+- **Input Tokens**: 256
+- **Output Tokens**: 31250
+- **Total Tokens**: 31506
+- **Agent**: claude
+- **Model**: claude-sonnet-4-6
+- **Sandbox Mode**: auto
+- **Sandbox Network**: Enabled
+--- RAW OUTPUT ---
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Glob][0m pattern: [96msrc/donkey/adapters/channels/**[0m
+[94m[Glob][0m pattern: [96msrc/donkey/adapters/**/*.nim[0m
+[94m[Glob][0m pattern: [96msrc/donkey/domain/channels/**/*.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/whatsapp.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/adapters/ipc/client.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/core/types.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/ports/channel.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/app/outbound_runtime.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/core/outbound/outbound.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/domain/message.nim[0m
+[94m[Glob][0m pattern: [96msrc/donkey/**/*signal*[0m
+[94m[Glob][0m pattern: [96mtests/**/*signal*[0m
+[94m[Glob][0m pattern: [96mtests/channel/*.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/telegram.nim[0m
+Now let me look at a test file to understand test patterns, and also check config.nims for build settings:
+[94m[Read][0m [95m/home/micelio/git/donkey/tests/channel/t_whatsapp.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/adapters/identity/identity_resolver.nim[0m
+Now let me check the pipeops.nim and look at a domain pure parser for pattern reference:
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/core/pipeops.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/domain/channels/slack_pure.nim[0m
+Now I have a complete picture of the codebase. Let me implement US-020:
+[94m[TodoWrite][0m
+
+[91m[Error: <tool_use_error>InputValidationError: TodoWrite failed due to the following issue:
+The parameter `todos` type is expected as `array` but provided as `string`
+
+This tool's schema was not sent to the API — it was not in the discovered-tool set derived from message history. Without the schema in your prompt, typed parameters (arrays, numbers, booleans) get emitted as strings and the client-side parser rejects them. Load the tool first: call ToolSearch with query "select:TodoWrite", then retry this call.</tool_use_error>][0m
+[94m[Write][0m [95m/home/micelio/git/donkey/src/donkey/domain/channels/signal_pure.nim[0m "## signal_pure.nim — pure parsing of signal-cli JSON-RPC message envelopes.
+##
+## No I/O, no side effects. All parsing functions are `func`.
+##
+## Topology (pipeops):
+##   |>    — unary pure transform... (4853 chars)"
+Now add `ckSignal` to types.nim:
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/core/types.nim[0m edit: "  ChannelKind* = enum
+    ## Identifies which mess..." → "  ChannelKind* = enum
+    ## Identifies which mess..."
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/core/types.nim[0m edit: "  of ckSlack:      "slack"
+  of ckWhatsApp:   "wha..." → "  of ckSlack:      "slack"
+  of ckWhatsApp:   "wha..."
+Now update ports/channel.nim to add the signal field:
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/ports/channel.nim[0m edit: "    slack*:     OutboundChannelPort
+    whatsapp*:..." → "    slack*:     OutboundChannelPort
+    whatsapp*:..."
+Now update outbound_runtime.nim:
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/app/outbound_runtime.nim[0m edit: "  of ckSlack:     ports.slack
+  of ckWhatsApp:  po..." → "  of ckSlack:     ports.slack
+  of ckWhatsApp:  po..."
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/app/outbound_runtime.nim[0m edit: "    of ckSlack:     log.error("sl send: " & error)..." → "    of ckSlack:     log.error("sl send: " & error)..."
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/app/outbound_runtime.nim[0m
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/app/outbound_runtime.nim[0m edit: "    of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack,..." → "    of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack,..."
+Now update outbound.nim:
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/core/outbound/outbound.nim[0m edit: "func isImplementedOutboundChannel*(channel: Channe..." → "func isImplementedOutboundChannel*(channel: Channe..."
+Now create the Signal adapter:
+[94m[Write][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/signal.nim[0m "## SignalAdapter — ChannelPort for signal-cli via JSON-RPC over Unix socket.
+##
+## signal-cli daemon mode:
+##   signal-cli --socket /run/signal-cli/socket daemon
+##
+## JSON-RPC transport: one short-li... (4806 chars)"
+Now create the pure parser tests:
+[94m[Bash][0m $ ls /home/micelio/git/donkey/tests/domain/channels/
+[94m[Write][0m [95m/home/micelio/git/donkey/tests/domain/channels/t_signal_pure.nim[0m "## signal_pure unit tests.
+## Pure parsing functions only — no I/O, no sockets.
+
+import std/[json, unittest]
+import donkey/domain/channels/signal_pure
+import donkey/core/types
+import donkey/core/pipeo... (9697 chars)"
+Now create the adapter tests:
+[94m[Write][0m [95m/home/micelio/git/donkey/tests/channel/t_signal.nim[0m "## SignalAdapter unit tests.
+## IPC calls are not made; tests cover adapter construction, identity
+## resolution, and signal_pure parsing integration.
+
+import std/[json, os, unittest]
+import donkey/ad... (6634 chars)"
+Now let's run the build and tests:
+[94m[Bash][0m $ nim build src --mm:orc --styleCheck:error --warnings:error 2>&1 | head -60
+[94m[Bash][0m $ nim c --mm:orc --styleCheck:error --warnings:error src/donkey/adapters/channel/signal.nim 2>&1 | hea...
+[94m[Bash][0m $ cat /home/micelio/git/donkey/config.nims
+[94m[Bash][0m $ nim c --mm:orc src/donkey/adapters/channel/signal.nim 2>&1 | head -60
+[94m[Bash][0m $ nim c --mm:orc src/donkey/domain/channels/signal_pure.nim 2>&1 | tail -5
+Both compile. Now run the tests:
+[94m[Bash][0m $ testament pattern 'tests/domain/channels/t_signal_pure.nim' 2>&1
+[94m[Bash][0m $ testament pattern 'tests/channel/t_signal.nim' 2>&1
+
+[91m[Error: Exit code 1
+[31mFAIL: [36mtests/channel/t_signal.nim c                                [34m ( 1.01 sec)[0m
+[1m[36mTest "tests/channel/t_signal.nim" in category "pattern"[0m
+[1m[31mFailure: reNimcCrash[0m
+$ /home/micelio/.nimble/bin/nim c --hints:on -d:testing --nimblePath:build/deps/pkgs2   --nimCache:nimcache/tests/channel/t_signal.nim_4a8a08f09d37b73795649038408b5f33  tests/channel/t_signal.nim
+Hint: used config file '/home/micelio/.choosenim/toolchains/nim-2.2.8/config/nim.cfg' [Conf]
+Hint: used config file '/home/micelio/.choosenim/toolchains/nim-2.2.8/config/config.nims' [Conf]
+Hint: used config file '/home/micelio/git/donkey/config.nims' [Conf]
+..........................................................................................................................................................
+/home/micelio/git/donkey/tests/channel/t_signal.nim(103, 1) template/generic instantiation of `suite` from here
+/home/micelio/git/donkey/tests/channel/t_signal.nim(198, 3) template/generic instantiation of `test` from here
+/home/micelio/git/donkey/tests/channel/t_signal.nim(203, 5) template/generic instantiation of `check` from here
+/home/micelio/.choosenim/toolchains/nim-2.2.8/lib/pure/unittest.nim(759, 14) Error: undeclared field: 'isOk' for type results.Result [type declared in /home/micelio/.nimble/pkgs2/results-0.5.1-a9c011f74bc9ed5c91103917b9f382b12e82a9e7/results.nim(17, 3)]
+
+FAILURE! total: 1 passed: 0 skipped: 0 failed: 1][0m
+The test file needs `pipeops` imported to get `isOk`:
+[94m[Edit][0m [95m/home/micelio/git/donkey/tests/channel/t_signal.nim[0m edit: "import std/[json, os, unittest]
+import donkey/adap..." → "import std/[json, os, unittest]
+import donkey/adap..."
+[94m[Bash][0m $ testament pattern 'tests/channel/t_signal.nim' 2>&1
+Both test files pass. Let's run the full test suite:
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | tail -20
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | grep -E "FAIL|passed|failed"
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | grep -E "FAIL|total:"
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | grep -c "PASS"
+All 63 tests pass. Now let's also clean up the generated binary:
+[94m[Bash][0m Remove build artifacts from compilation tests $ rm -f /home/micelio/git/donkey/src/donkey/adapters/channel/signal /home/micelio/git/donkey/src/donke...
+Now update progress.md:
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Edit][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m edit: "---
+
+## 2026-03-22 - US-019" → "---
+
+## 2026-03-22 - US-020
+- Implemented `src/don..."
+All tests pass (63/63). US-020 is complete.
+
+**Summary of what was implemented:**
+
+- **`signal_pure.nim`** — pure parser for signal-cli JSON-RPC envelopes (`smkText`, `smkAttachment`, `smkUnknown`), with `|>` and `|>->` pipeline topology
+- **`signal.nim`** — Signal adapter using JSON-RPC over Unix socket (`/run/signal-cli/socket`), with `receive()`, `send()`, `sendReturnId()`, `editMessage()` (no-op), and `ack()` (no-op)
+- **Tests** — 28 pure parser tests + 20 adapter tests, all passing
+- **`ckSignal`** added to `ChannelKind` and all dependent files updated (`types.nim`, `ports/channel.nim`, `outbound_runtime.nim`, `outbound.nim`)
+
+Key design decisions:
+- No DBus library needed — uses signal-cli's JSON-RPC over Unix socket mode (minimal deps)
+- `rpcCall` is a standalone proc, allowing both mutable (`receive`) and immutable (`send`) callers
+- Non-data envelopes (receipts, typing, sync) filtered via nil-guard on `dataMessage`
+
+<promise>COMPLETE</promise>

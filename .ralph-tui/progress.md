@@ -25,6 +25,34 @@ Any adapter module that references `HttpResponse` in signatures must `import ../
 
 ---
 
+## 2026-03-22 - US-021
+- Implemented `src/donkey/domain/channels/wechat_pure.nim` — pure parser for WeChat/WeCom XML webhook payloads
+- Created `tests/domain/channels/t_wechat_pure.nim` with 28 tests covering all message kinds
+
+**What was implemented:**
+- `WcMsgKind` enum: wckText, wckImage, wckVoice, wckVideo, wckFile, wckEvent, wckUnknown
+- `WcParseResult` type with kind, rawId, msgId, text, mediaId, picUrl, eventType
+- `extractTag(tag, xml)` — extracts CDATA-wrapped or plain tag content; designed for `|>->` (xml as last arg)
+- `parseMsgKind(msgType)` — internal dispatcher for MsgType strings
+- `parseXmlMsg(xml)` — top-level parser; `xml |> parseXmlMsg` returns WcParseResult
+- `toInbound(r, userId)` — domain conversion; mediaId goes to mediaUrl (adapter resolves via Media API)
+- `hasMedia(r)` — predicate; true for wckImage, wckVoice, wckVideo, wckFile
+- `isEvent(r)` — predicate; true when kind is wckEvent
+
+**Files changed:**
+- `src/donkey/domain/channels/wechat_pure.nim` (new)
+- `tests/domain/channels/t_wechat_pure.nim` (new)
+
+**Learnings:**
+- WeChat XML uses CDATA wrappers for string fields (`<![CDATA[…]]>`) but plain integers directly (MsgId, CreateTime) — `extractTag` handles both cases
+- WeCom file messages have no CDATA quirks beyond the standard WeChat format; just adds `AgentID` and `FileName` fields
+- Event messages have no MsgId in the XML — the msgId field is left empty; channelId in InboundMessage will be "" for events
+- Test files using `|>->` need `donkey/core/pipeops` imported directly; not re-exported by the module under test
+- Using `wck` prefix (WeChat Kind) avoids enum name collision with WhatsApp's `wmk` prefix in the same global namespace
+- `shortvideo` maps to `wckVideo` (same treatment as `video`) — no separate kind needed
+
+---
+
 ## 2026-03-22 - US-020
 - Implemented `src/donkey/domain/channels/signal_pure.nim` — pure parser for signal-cli JSON-RPC receive envelopes
 - Implemented `src/donkey/adapters/channel/signal.nim` — Signal adapter communicating via JSON-RPC over Unix socket
