@@ -1,0 +1,79 @@
+# Iteration 7 Log
+
+## Metadata
+
+- **Task ID**: US-018
+- **Task Title**: WhatsApp Parser (Pure)
+- **Description**: Parse WA Cloud API payloads.
+- **Status**: completed
+- **Task Completed**: Yes
+- **Promise Detected**: Yes
+- **Started At**: 2026-03-23T00:42:57.736Z
+- **Ended At**: 2026-03-23T00:47:45.285Z
+- **Duration**: 4m 47s
+- **Input Tokens**: 4488
+- **Output Tokens**: 13678
+- **Total Tokens**: 18166
+- **Agent**: claude
+- **Model**: claude-sonnet-4-6
+- **Sandbox Mode**: auto
+- **Sandbox Network**: Enabled
+--- RAW OUTPUT ---
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Glob][0m pattern: [96msrc/donkey/domain/channels/**/*.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/domain/channels/slack_pure.nim[0m
+[94m[Glob][0m pattern: [96mtests/domain/channels/**/*.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/tests/domain/channels/t_slack_pure.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/core/types.nim[0m
+Now let me check the ports and outbound files to know what I need to update for ckWhatsApp:
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/ports/channel.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/core/outbound/outbound.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/app/outbound_runtime.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/domain/message.nim[0m
+Now I have all the context needed. Let me implement US-018. I'll update the required files and create the new WhatsApp pure parser.
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/core/types.nim[0m edit: "  ChannelKind* = enum
+    ## Identifies which mess..." → "  ChannelKind* = enum
+    ## Identifies which mess..."
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/core/types.nim[0m edit: "  of ckSlack:    "slack"" → "  of ckSlack:      "slack"
+  of ckWhatsApp:   "wha..."
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/ports/channel.nim[0m edit: "    slack*:    OutboundChannelPort" → "    slack*:     OutboundChannelPort
+    whatsapp*:..."
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/app/outbound_runtime.nim[0m edit: "  of ckSlack:    ports.slack" → "  of ckSlack:     ports.slack
+  of ckWhatsApp:  po..."
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/app/outbound_runtime.nim[0m edit: "    of ckSlack:    log.error("sl send: " & error)" → "    of ckSlack:     log.error("sl send: " & error)..."
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/app/outbound_runtime.nim[0m edit: "    of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack:..." → "    of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack,..."
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/app/outbound_runtime.nim[0m edit: "    of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack:..." → "    of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack,..."
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/core/outbound/outbound.nim[0m edit: "  channel in {ckTelegram, ckDiscord, ckWeCom, ckWe..." → "  channel in {ckTelegram, ckDiscord, ckWeCom, ckWe..."
+Now create the WhatsApp pure parser:
+[94m[Write][0m [95m/home/micelio/git/donkey/src/donkey/domain/channels/whatsapp_pure.nim[0m "## whatsapp_pure.nim — pure parsing of WhatsApp Cloud API webhook payloads.
+##
+## No I/O, no side effects. All parsing functions are `func`.
+##
+## Topology (pipeops):
+##   |>    — unary pure transform... (6340 chars)"
+Now create the tests:
+[94m[Write][0m [95m/home/micelio/git/donkey/tests/domain/channels/t_whatsapp_pure.nim[0m "## Tests for domain/channels/whatsapp_pure.nim — pure WhatsApp Cloud API parser.
+## No I/O or HTTP; all input is constructed directly as JsonNode.
+
+import std/[json, unittest]
+import donkey/domain/cha... (10979 chars)"
+Now let's run the build and tests:
+[94m[Bash][0m Build the project with style and warning checks $ nim build src --mm:orc --styleCheck:error --warnings:error 2>&1 | tail -30
+[94m[Bash][0m Type-check the new whatsapp_pure module $ nim check --mm:orc --styleCheck:error --warnings:error src/donkey/domain/channels/whatsapp_pure.nim ...
+
+[91m[Error: Exit code 1
+command line(1, 2) Error: 'on', 'off' or 'list' expected, but 'error' found][0m
+[94m[Bash][0m Type-check whatsapp_pure.nim $ nim check --mm:orc src/donkey/domain/channels/whatsapp_pure.nim 2>&1
+[94m[Bash][0m Run whatsapp_pure tests $ testament pattern 'tests/domain/channels/t_whatsapp_pure.nim' 2>&1
+[94m[Bash][0m Run full test suite $ testament pattern 'tests/**/*.nim' 2>&1 | tail -20
+All tests pass. Now let me append to the progress log:
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Edit][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m edit: "---
+
+## 2026-03-22 - US-017" → "---
+
+## 2026-03-22 - US-018
+- Implemented `src/don..."
+All done. Tests pass (34 tests across all suites, full suite green).
+
+<promise>COMPLETE</promise>
