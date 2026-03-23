@@ -1050,11 +1050,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 59,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Implemented domain/tools/path_guard.nim with pure path security functions: normalizePath, splitPath, containsPathTraversal, isPathTraversalAttempt, isPathInDirectory, isPathSafe, validatePathAccess, pathAccessErrorMsg. Detects ../ traversal, null bytes, and workspace escape. All 28 tests pass."
     },
     {
       "id": "US-060",
