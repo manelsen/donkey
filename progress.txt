@@ -166,3 +166,16 @@
   - `let` declarations inside anonymous `proc` literals within `>>=` chains cause parser errors in Nim — use explicit error handling with `if result.isErr: return err(...)` instead
   - Forward declaration or proper ordering is needed: helper procs like `parseUserField` must be defined before procs that use them
   - When using Result types in tests, import `donkey/core/pipeops` explicitly to ensure `results` templates like `isOk` are in scope
+
+---
+
+## 2026-03-23 (US-048)
+- Implemented `adapters/memory/sqlite_store.nim` — SQLite-backed session cache with Result[T, string] API and `>>=` chaining. Schema: users, sessions, reminders tables with proper indexes. Conditional compilation via `-d:withSqlite`.
+- Files changed: `src/donkey/adapters/memory/sqlite_store.nim` (new), `tests/adapters/memory/t_sqlite_store.nim` (new), `config.nims` (added sqlite3 linking), `prd.json`
+- **Learnings for future iterations:**
+  - `db_sqlite` is part of `db_connector` package, not stdlib — use `import db_connector/db_sqlite`
+  - `db_sqlite.open(path)` takes 4 args: path, user, password, extra — use `db_sqlite.open(a.dbPath, "", "", "")`
+  - When using `sql` template, all SQL must be wrapped with `sql"""..."""` — plain strings cause type mismatch
+  - `when defined(withSqlite):` must wrap ALL code (types + procs) — not just the type definition
+  - Use global `reminderCounter` for unique reminder IDs, exported for test reset
+  - Test setup must delete and recreate DB file for isolation between tests
