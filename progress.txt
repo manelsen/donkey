@@ -319,3 +319,14 @@
 
 ---
 
+## 2026-03-23 (US-060)
+- Implemented `adapters/tools/fs.nim` — FileSystemTools adapter conforming to ToolPort with read_file, write_file, list_dir tools. Uses `validatePathAccess` from path_guard for security before any I/O.
+- Created `tests/adapters/tools/t_fs.nim` with 31 tests covering all tools, workspace restrictions, error handling, and call ID preservation.
+- Files changed: `src/donkey/adapters/tools/fs.nim` (new), `tests/adapters/tools/t_fs.nim` (new)
+- **Learnings for future iterations:**
+  - Tool schemas must be defined as `proc`s (not `const`) because `JsonNode` is runtime-only
+  - Error handling returns `ToolResult` with `isError: true` for normal tool errors — never propagate via `?`
+  - `list_dir` must check if path is a directory before listing entries
+  - Workspace restriction: prepend workspace to relative paths before validation
+
+---
