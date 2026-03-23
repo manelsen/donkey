@@ -179,3 +179,15 @@
   - `when defined(withSqlite):` must wrap ALL code (types + procs) — not just the type definition
   - Use global `reminderCounter` for unique reminder IDs, exported for test reset
   - Test setup must delete and recreate DB file for isolation between tests
+
+## 2026-03-23 (US-049)
+- Implemented `domain/memory/chunking.nim` — pure text chunking with overlap and SHA256 hashing. Includes `sha256Hash`, `chunkTextNoOverlap`, `chunkTextWithOverlap`, `chunkTextWithHash`, `chunkAndHash`, `deduplicateByHash`, and helper functions.
+- Created `tests/domain/memory/t_chunking.nim` with 27 tests covering all chunking modes, hash computation, offset tracking, and edge cases.
+- Files changed: `src/donkey/domain/memory/chunking.nim` (new), `tests/domain/memory/t_chunking.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `nimcrypto/sha2` requires iterating over `digest.data` and calling `b.toHex(2)` for each byte to produce hex string — `digest.toHex()` doesn't work directly
+  - Empty string edge case: `splitChunks` returns `@[""]` for empty input, but our `chunkTextNoOverlap` now returns `@[]` for empty strings
+  - `chunkTextWithOverlapPos` helper tracks actual character positions during boundary finding, needed for accurate offset tracking in `chunkTextWithHash`
+  - `step`-based offset calculation (globalOffset += step) doesn't account for boundary finding jumps — use actual positions tracked during chunking instead
+  - `countup(start, min(stop, text.len - 1))` must handle text.len edge case correctly
+
