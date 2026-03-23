@@ -25,6 +25,29 @@ Any adapter module that references `HttpResponse` in signatures must `import ../
 
 ---
 
+## 2026-03-22 - US-014
+- Implemented `src/donkey/domain/channels/discord_pure.nim` — pure (all `func`) parser for Discord gateway dispatch events
+- Created `tests/domain/channels/t_discord_pure.nim` with 40 tests covering all event kinds
+
+**What was implemented:**
+- `DsEventKind` enum: dekMessage, dekSlashCommand, dekButtonClick, dekModalSubmit, dekUnknown
+- `DsParseResult` type with kind, rawId, content, channelId, messageId, interactionId, interactionToken, needsModal
+- `parseDispatch(t, d)` — single dispatch parser; routes by event type using `|>` for internal helpers
+- `toInbound(r, userId)` — domain conversion to InboundMessage
+- `hasInteraction(r)` — predicate; true when interaction ack is required
+- Internal helpers: `extractDiscordUser`, `findOption` (designed for `|>->` piping), `buildSlashContent`, `parseMessageCreate`, `parseInteractionCreate`, `parseApplicationCommand`, `extractModalCode`
+
+**Files changed:**
+- `src/donkey/domain/channels/discord_pure.nim` (new)
+- `tests/domain/channels/t_discord_pure.nim` (new)
+
+**Learnings:**
+- `findOption` was designed as `findOption(name, opts)` so `opts |>-> findOption(name)` works (piped value last)
+- Guild context interactions carry `member.user` instead of top-level `user` — extractDiscordUser handles both
+- Discord op=0 dispatches arrive as `(t, d)` pairs, not a single node; `parseDispatch(t, d)` is the natural API rather than forcing a unary pipe
+- `|>` still useful internally: `d |> parseMessageCreate`, `d |> extractDiscordUser`, `d |> extractModalCode`
+---
+
 ## 2026-03-22 - US-012
 - Implemented `src/donkey/domain/channels/telegram_pure.nim` — pure (all `func`) parser for Telegram Bot API updates
 - Created `tests/domain/channels/t_telegram_pure.nim` with 25 tests covering all update kinds
