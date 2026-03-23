@@ -233,3 +233,18 @@
   - `topK` should sort internally since callers may pass unsorted lists — the function doc says "Return top K results" implying highest scores first
   - Missing ranks (rank < 0) must be skipped in RRF calculation — `rrfScore(-1)` gives 1/(k-1) which is wrong
   - `tables` module must be imported explicitly for `Table[T, int]` in memory domain code
+
+---
+
+## 2026-03-23 (US-053)
+- Implemented `domain/memory/decay.nim` — pure temporal decay functions with three decay models: exponential, linear, and half-life. Exports: `DecayModel`, `DecayConfig`, `DecayedItem[T]`, `ScoredItem[T]`, `decayScore`, `decayScores`, `filterByDecayedScore`, `sortByDecayedScore`, `relevanceRatio`, `defaultDecayConfig`.
+- Created `tests/domain/memory/t_decay.nim` with 31 tests covering all decay functions, threshold filtering, and relevance ratio.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all`.
+- Files changed: `src/donkey/domain/memory/decay.nim` (new), `tests/domain/memory/t_decay.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `proc` type aliases (like `hoursElapsedFn: proc(item: T): float`) are considered side-effectful by Nim — functions using them must be `proc` not `func`
+  - Use `{.gcsafe.}` pragma on proc type aliases when used in `proc` functions to avoid hidden pointer indirection warnings
+  - Nim's `result` is a special return variable — don't use it as a local variable name inside functions (causes `ResultShadowed` warnings)
+  - `mapIt` and `filterIt` from `std/sequtils` don't work well with `|>` pipe operator — use explicit for-loops instead
+  - For `sort`, use `cmp(b.val, a.val)` for descending order (first arg comes before second when positive)
