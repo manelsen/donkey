@@ -1,6 +1,6 @@
 {
-  "name": "Donkey v1.0 — The Sovereign Architecture (Pipeops Edition)",
-  "description": "Transcrição profunda das matrizes de paridade, garantindo a topologia pipeops do Donkey: funções unárias, last-arg binding e monadic error handling.",
+  "name": "Donkey v1.0 \u2014 The Sovereign Architecture (Pipeops Edition)",
+  "description": "Transcri\u00e7\u00e3o profunda das matrizes de paridade, garantindo a topologia pipeops do Donkey: fun\u00e7\u00f5es un\u00e1rias, last-arg binding e monadic error handling.",
   "branchName": "ralph/donkey-v1-sovereign-pipeops",
   "userStories": [
     {
@@ -871,11 +871,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 49,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-050",
