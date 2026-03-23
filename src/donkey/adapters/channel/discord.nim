@@ -20,6 +20,8 @@ import ../../core/app_meta
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
+import ../../domain/channels/discord_pure
+import ../../ports/http
 import ../http/std_http
 import ../identity/identity_resolver
 import ./ws_client
@@ -73,144 +75,67 @@ proc sendHeartbeat(state: var GatewayState) =
   state.lastBeatMs = epochMs()
 
 proc handleDispatch(t: string; d: JsonNode) =
-  ## Parses a Discord dispatch event and pushes to gDiscordEvents.
-  case t
-
-  of "MESSAGE_CREATE":
-    let author = d.getOrDefault("author")
-    if author == nil: return
-    if author.getOrDefault("bot").getBool(false): return  ## ignore bot messages
-    let content = d.getOrDefault("content").getStr("")
-    if content.len == 0: return
+  ## Routes op=0 dispatch events to gDiscordEvents via discord_pure parser.
+  ## Mapping: DsEventKind → DiscordEventKind:
+  ##   dekMessage     → deMessage
+  ##   dekButtonClick → deButtonClick
+  ##   dekModalSubmit → deInteraction  (code extracted by pure parser)
+  ##   dekSlashCommand with needsModal → deModalRequest
+  ##   dekSlashCommand with "/" content → deMessage  (regular slash cmd)
+  ##   dekSlashCommand without "/" → deInteraction  (/continue code)
+  let r = parseDispatch(t, d)
+  case r.kind
+  of dekUnknown: return
+  of dekMessage:
     gDiscordEvents.send(DiscordRawEvent(
       kind:          deMessage,
-      discordUserId: author["id"].getStr(),
-      content:       content,
-      channelId:     d["channel_id"].getStr(),
-      messageId:     d["id"].getStr(),
+      discordUserId: r.rawId,
+      content:       r.content,
+      channelId:     r.channelId,
+      messageId:     r.messageId,
     ))
-
-  of "INTERACTION_CREATE":
-    let interactionType = d.getOrDefault("type").getInt(0)
-    let interactionId    = d["id"].getStr()
-    let interactionToken = d["token"].getStr()
-    let userNode = if d.hasKey("user"): d["user"]
-                   elif d.hasKey("member"): d["member"]["user"]
-                   else: nil
-    if userNode == nil: return
-    let userId = userNode["id"].getStr()
-
-    ## Type 2: APPLICATION_COMMAND
-    if interactionType == 2:
-      let iData = d.getOrDefault("data")
-      if iData == nil: return
-      let cmdName = iData["name"].getStr()
-      proc optionValue(name: string): string =
-        let opts = iData.getOrDefault("options")
-        if opts != nil and opts.kind == JArray:
-          for opt in opts:
-            if opt["name"].getStr() == name:
-              return opt["value"].getStr()
-        ""
-
-      if cmdName in ["start", "help", "memory", "forget", "doctor",
-                     "reset", "debug", "mycode", "ping", "status"]:
-        gDiscordEvents.send(DiscordRawEvent(
-          kind:          deMessage,
-          discordUserId: userId,
-          content:       "/" & cmdName,
-          interactionId: interactionId,
-          interactionToken: interactionToken,
-        ))
-        return
-      if cmdName == "models":
-        let provider = optionValue("provider")
-        let model = optionValue("model")
-        let suffix = if provider.len > 0 and model.len > 0: " " & provider & " " & model
-                     elif provider.len > 0: " " & provider
-                     else: ""
-        gDiscordEvents.send(DiscordRawEvent(
-          kind:             deMessage,
-          discordUserId:    userId,
-          content:          "/models" & suffix,
-          interactionId:    interactionId,
-          interactionToken: interactionToken,
-        ))
-        return
-      if cmdName == "think":
-        let level = optionValue("level")
-        gDiscordEvents.send(DiscordRawEvent(
-          kind:             deMessage,
-          discordUserId:    userId,
-          content:          if level.len > 0: "/think " & level else: "/think",
-          interactionId:    interactionId,
-          interactionToken: interactionToken,
-        ))
-        return
-      if cmdName == "budget":
-        let policy = optionValue("policy")
-        gDiscordEvents.send(DiscordRawEvent(
-          kind:             deMessage,
-          discordUserId:    userId,
-          content:          if policy.len > 0: "/budget " & policy else: "/budget",
-          interactionId:    interactionId,
-          interactionToken: interactionToken,
-        ))
-        return
-      if cmdName != "continue": return
-      var code = ""
-      code = optionValue("code")
-      if code.len > 0:
-        ## Has inline code — process directly (legacy slash command style).
-        gDiscordEvents.send(DiscordRawEvent(
-          kind:             deInteraction,
-          discordUserId:    userId,
-          content:          code,
-          interactionId:    interactionId,
-          interactionToken: interactionToken,
-        ))
-      else:
-        ## No code — request a modal from the daemon (needs HTTP response).
-        gDiscordEvents.send(DiscordRawEvent(
-          kind:             deModalRequest,
-          discordUserId:    userId,
-          interactionId:    interactionId,
-          interactionToken: interactionToken,
-        ))
-
-    ## Type 3: MESSAGE_COMPONENT (button click)
-    if interactionType == 3:
-      let customId = d.getOrDefault("data").getOrDefault("custom_id").getStr("")
+  of dekSlashCommand:
+    if r.needsModal:
       gDiscordEvents.send(DiscordRawEvent(
-        kind:             deButtonClick,
-        discordUserId:    userId,
-        content:          customId,
-        interactionId:    interactionId,
-        interactionToken: interactionToken,
+        kind:             deModalRequest,
+        discordUserId:    r.rawId,
+        interactionId:    r.interactionId,
+        interactionToken: r.interactionToken,
       ))
-      return
-
-    ## Type 5: MODAL_SUBMIT
-    if interactionType == 5:
-      ## Extract code from modal component rows.
-      var code = ""
-      let components = d.getOrDefault("data").getOrDefault("components")
-      if components != nil and components.kind == JArray:
-        for row in components:
-          let rowComps = row.getOrDefault("components")
-          if rowComps != nil and rowComps.kind == JArray:
-            for comp in rowComps:
-              if comp.getOrDefault("custom_id").getStr("") == "link_code":
-                code = comp.getOrDefault("value").getStr("")
+    elif r.content.len > 0 and not r.content.startsWith("/"):
+      ## /continue with inline code — deliver as deInteraction
       gDiscordEvents.send(DiscordRawEvent(
         kind:             deInteraction,
-        discordUserId:    userId,
-        content:          code,
-        interactionId:    interactionId,
-        interactionToken: interactionToken,
+        discordUserId:    r.rawId,
+        content:          r.content,
+        interactionId:    r.interactionId,
+        interactionToken: r.interactionToken,
       ))
-
-  else: discard
+    else:
+      gDiscordEvents.send(DiscordRawEvent(
+        kind:             deMessage,
+        discordUserId:    r.rawId,
+        content:          r.content,
+        interactionId:    r.interactionId,
+        interactionToken: r.interactionToken,
+      ))
+  of dekButtonClick:
+    gDiscordEvents.send(DiscordRawEvent(
+      kind:             deButtonClick,
+      discordUserId:    r.rawId,
+      content:          r.content,
+      interactionId:    r.interactionId,
+      interactionToken: r.interactionToken,
+    ))
+  of dekModalSubmit:
+    ## Modal submit always carries a code from the link_code text input.
+    gDiscordEvents.send(DiscordRawEvent(
+      kind:             deInteraction,
+      discordUserId:    r.rawId,
+      content:          r.content,
+      interactionId:    r.interactionId,
+      interactionToken: r.interactionToken,
+    ))
 
 proc runGatewaySession(token: string; state: var GatewayState) =
   ## Single gateway session: connect, identify/resume, loop until error.
@@ -218,7 +143,7 @@ proc runGatewaySession(token: string; state: var GatewayState) =
     if state.resumeUrl.startsWith("wss://"):
       let noScheme = state.resumeUrl[6 .. ^1]
       if '/' in noScheme: noScheme[0 ..< noScheme.find('/')] else: noScheme
-    else: "gateway.discord.gg"
+    else: DiscordGatewayUrl[6 .. ^1]  ## strip "wss://" from the constant
 
   state.ws = wsConnect(host, Port(443), "/?v=10&encoding=json", useTls = true)
 
@@ -334,6 +259,30 @@ func authHeader(a: DiscordAdapter): (string, string) =
 func base(a: DiscordAdapter): string =
   if a.apiBase.len > 0: a.apiBase else: DiscordApiBase
 
+# ── REST response helpers (for >>= chains) ────────────────────────────────────
+
+func extractJsonId(j: JsonNode): string =
+  ## Extracts the "id" string field from a JSON object. Designed for |> piping.
+  j.getOrDefault("id").getStr("")
+
+proc parseJsonBody(resp: HttpResponse): Result[JsonNode, string]
+                  {.gcsafe, raises: [].} =
+  ## Parses a 2xx HTTP response body as JSON; propagates status errors.
+  if resp.status < 200 or resp.status >= 300:
+    return err("Discord API error " & $resp.status & ": " & resp.body)
+  try: ok(parseJson(resp.body))
+  except CatchableError as e: err(e.msg)
+
+proc extractId(resp: HttpResponse): Result[string, string]
+               {.gcsafe, raises: [].} =
+  ## Validates status, parses JSON, and returns the top-level "id" field.
+  ## Used with >>= for procs that return a Discord resource id.
+  resp |> parseJsonBody >>= proc(j: JsonNode): Result[string, string]
+                                {.gcsafe, raises: [].} =
+    let id = j |> extractJsonId
+    if id.len == 0: err("Discord response missing 'id' field")
+    else: ok(id)
+
 # ── REST helpers ───────────────────────────────────────────────────────────────
 
 proc dmChannelFor(a: DiscordAdapter; discordUserId: string): Result[string, string] =
@@ -346,8 +295,8 @@ proc dmChannelFor(a: DiscordAdapter; discordUserId: string): Result[string, stri
   if resp.status < 200 or resp.status >= 300:
     return err("Discord create-DM error " & $resp.status & ": " & resp.body)
   try:
-    let j = parseJson(resp.body)
-    let chId = j["id"].getStr()
+    let chId = parseJson(resp.body) |> extractJsonId
+    if chId.len == 0: return err("Discord create-DM: response missing 'id'")
     a.dmChannels[][discordUserId] = chId
     ok(chId)
   except CatchableError as e:
@@ -495,6 +444,7 @@ proc sendInteractionModal*(a: DiscordAdapter;
 proc sendReturnId*(a: DiscordAdapter; msg: OutboundMessage): Result[string, string] =
   ## Sends a single chunk (first DiscordMaxChars) and returns the Discord message id.
   ## Used by the streaming machinery to obtain the id for subsequent editMessage calls.
+  ## Uses >>= to chain HTTP response → JSON parse → id extraction.
   let discordId = a.resolver.reverseChannel(msg.userId, ckDiscord)
   if discordId.len == 0:
     return err("DiscordAdapter.sendReturnId: no Discord ID for " & $msg.userId)
@@ -503,13 +453,7 @@ proc sendReturnId*(a: DiscordAdapter; msg: OutboundMessage): Result[string, stri
              else: msg.text
   let body    = %* {"content": txt}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
-  let resp = ? a.http.post(a.base() & "/channels/" & chId & "/messages", $body, headers)
-  if resp.status < 200 or resp.status >= 300:
-    return err("Discord sendReturnId error " & $resp.status & ": " & resp.body)
-  try:
-    ok(parseJson(resp.body)["id"].getStr())
-  except CatchableError as e:
-    err(e.msg)
+  a.http.post(a.base() & "/channels/" & chId & "/messages", $body, headers) >>= extractId
 
 proc editMessage*(a: DiscordAdapter; userId: UserId;
                   msgId, text: string): Result[void, string] =
@@ -547,14 +491,8 @@ proc tryRecvEvent*(a: DiscordAdapter): (bool, DiscordRawEvent) =
 
 proc getAppId*(a: DiscordAdapter): Result[string, string] =
   ## Fetches the bot's application ID via GET /users/@me.
-  let headers = @[a.authHeader()]
-  let resp = ? a.http.get(a.base() & "/users/@me", headers)
-  if resp.status < 200 or resp.status >= 300:
-    return err("Discord /users/@me error " & $resp.status)
-  try:
-    ok(parseJson(resp.body)["id"].getStr())
-  except CatchableError as e:
-    err(e.msg)
+  ## Uses >>= to chain HTTP response → JSON parse → id extraction.
+  a.http.get(a.base() & "/users/@me", @[a.authHeader()]) >>= extractId
 
 proc registerSlashCommands*(a: DiscordAdapter; appId: string): Result[void, string] =
   ## Registers the operational command surface as global application commands.

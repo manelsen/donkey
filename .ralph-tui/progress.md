@@ -25,6 +25,31 @@ Any adapter module that references `HttpResponse` in signatures must `import ../
 
 ---
 
+## 2026-03-22 - US-015
+- Refactored `src/donkey/adapters/channel/discord.nim` to use `discord_pure.parseDispatch` and pipeops operators
+- Created `tests/channel/t_discord.nim` with 15 tests covering identity resolution, adapter construction, and dispatch routing
+
+**What was implemented:**
+- Added imports: `discord_pure` and `ports/http` (needed for `HttpResponse` in `>>=` helper procs)
+- Replaced inline `handleDispatch` (150 lines) with a clean `case r.kind` dispatch using `parseDispatch(t, d)`
+- Added `extractJsonId(j)` pure func for `|>` piping from JSON → id string
+- Added `parseJsonBody(resp)` and `extractId(resp)` helper procs for `>>=` chaining
+- Refactored `getAppId` to single-line: `a.http.get(...) >>= extractId`
+- Refactored `sendReturnId` to use `>>= extractId` instead of manual parse
+- Refactored `dmChannelFor` to use `parseJson(resp.body) |> extractJsonId`
+- Fixed unused `DiscordGatewayUrl` constant by using it in `runGatewaySession` host extraction
+
+**Files changed:**
+- `src/donkey/adapters/channel/discord.nim` (refactored)
+- `tests/channel/t_discord.nim` (new)
+
+**Learnings:**
+- `parseJsonBody >>= extractId` pattern is cleaner than inline try/except for JSON id extraction
+- `DsEventKind` (discord_pure) maps to `DiscordEventKind` (adapter) via: dekMessage→deMessage, dekButtonClick→deButtonClick, dekModalSubmit→deInteraction, dekSlashCommand with needsModal→deModalRequest, dekSlashCommand with "/" content→deMessage, dekSlashCommand without "/"→deInteraction (/continue code)
+- Unused module-level constants (e.g. `DiscordGatewayUrl`) generate a Hint (not warning), but it's cleaner to use them
+- `extractId` as a named `{.gcsafe, raises: [].}` proc makes it directly usable in `>>=` without a lambda wrapper
+---
+
 ## 2026-03-22 - US-014
 - Implemented `src/donkey/domain/channels/discord_pure.nim` — pure (all `func`) parser for Discord gateway dispatch events
 - Created `tests/domain/channels/t_discord_pure.nim` with 40 tests covering all event kinds
