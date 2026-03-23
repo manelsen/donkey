@@ -146,3 +146,13 @@
   - Anonymous proc literals with `|>` can cause indentation errors — prefer direct function calls for clarity
 
 ---
+
+## 2026-03-23 (US-046)
+- Implemented `domain/routing/failover.nim` — pure failover state machine with `FailoverState` enum (idle/attempting/succeeded/failed/exhausted), `FailoverContext` for tracking attempts, `FailoverAttempt` for per-provider error+latency recording, and pure helper functions (`recordFailure`, `recordTimeout`, `recordHttpError`, `isRetriable`, `shouldContinueFailover`, `formatTrace`, `failoverSummary`).
+- Created `tests/domain/routing/t_failover.nim` with 35 tests covering all state transitions, error types, retriable classification, and formatting functions.
+- Files changed: `src/donkey/domain/routing/failover.nim`, `tests/domain/routing/t_failover.nim`, `prd.json`
+- **Learnings for future iterations:**
+  - Nim's `&"..."` string interpolation with `{}` does NOT support field access like `{a.latencyMs}` — use explicit concatenation: `"[" & a.providerName & "/" & a.modelName & " failed after " & $a.latencyMs & "ms: " & a.error & "]"`.
+  - Nim's `{}` interpolation only works with simple variables, not object field access.
+  - `mapIt` requires importing from std/algorithm — use explicit for-loops to avoid import confusion.
+  - `in` operator for strings requires `strutils` to be imported for `contains`/`find`.
