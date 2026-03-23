@@ -221,3 +221,15 @@
   - Nim's `result` variable is special — don't use it as a local variable name in procs returning Result types
   - `ok(@[])` doesn't type-infer correctly for empty seqs — use `let empty: seq[T] = @[]` then `return ok(empty)`
   - `buildVectorLiteral` and `parseVectorLiteral` are companion functions needed for vector serialization/deserialization — export them for use in tests
+
+## 2026-03-23 (US-052)
+- Implemented `domain/memory/rrf.nim` — Reciprocal Rank Fusion for merging BM25 and Cosine Similarity scores. Exports: `RankedItem[T]`, `FusionResult[T]`, `rrfScore`, `rrfScoreWeighted`, `fuseRanks`, `rankItems`, `fuseRankedLists`, `fuseRankedListsWeighted`, `topK`, `rrfScores`, `items`.
+- Created `tests/domain/memory/t_rrf.nim` with 24 tests covering all RRF functions.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all`.
+- Files changed: `src/donkey/domain/memory/rrf.nim` (new), `tests/domain/memory/t_rrf.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - RRF sort must use `cmp(b.rrfScore, a.rrfScore)` (not `cmp(a, b)`) for descending order — in Nim's sort, negative means "a comes before b"
+  - `topK` should sort internally since callers may pass unsorted lists — the function doc says "Return top K results" implying highest scores first
+  - Missing ranks (rank < 0) must be skipped in RRF calculation — `rrfScore(-1)` gives 1/(k-1) which is wrong
+  - `tables` module must be imported explicitly for `Table[T, int]` in memory domain code
