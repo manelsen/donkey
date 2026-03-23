@@ -381,3 +381,16 @@
   - Error messages from `shellValidationErrorMsg` use enum strings like "command separator (;)" not "semicolon" — check for substrings that actually appear in the message
 
 ---
+
+## 2026-03-23 (US-065)
+- Implemented `adapters/tools/browser.nim` — Lightpanda CDP-based headless browser via ToolPort. 3 tools: browser_navigate, browser_content, browser_screenshot. Uses ws_client.nim for WebSocket CDP, spawns `lightpanda serve` subprocess.
+- Created `tests/adapters/tools/t_browser.nim` with 27 tests covering ToolPort conformance, SSRF blocking, input validation, error handling.
+- Files changed: `src/donkey/adapters/tools/browser.nim` (new), `tests/adapters/tools/t_browser.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `method` is a Nim keyword — cannot be used as parameter names; renamed to `cdpMethod`
+  - `epochTime` from `std/times` needed for CDP timeout deadline tracking
+  - `Port` type from `std/net` is distinct from `int` — cast explicitly: `Port(bt.port)`
+  - SSRF check must happen BEFORE spawning subprocess — spawn fails fast on missing binary before URL validation
+  - ws_client is synchronous blocking — fine for tool adapters since they're proc-based (not func)
+  - Nim's `discard` on `Result[T, E]` doesn't discard the value — must use `when false: discard` pattern or explicit handling
+  - Lightpanda binary not installed on build machine — adapter handles gracefully with clear error message
