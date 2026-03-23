@@ -32,6 +32,7 @@ type
     wechat*:   OutboundChannelPort
     qq*:       OutboundChannelPort
     feishu*:   OutboundChannelPort
+    slack*:    OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 

@@ -25,6 +25,34 @@ Any adapter module that references `HttpResponse` in signatures must `import ../
 
 ---
 
+## 2026-03-22 - US-016
+- Implemented `src/donkey/domain/channels/slack_pure.nim` — pure (all `func`) parser for Slack Events API webhook payloads
+- Created `tests/domain/channels/t_slack_pure.nim` with 40 tests covering all event kinds
+- Added `ckSlack` to `ChannelKind` enum in `core/types.nim` and updated `outbound_runtime.nim`, `outbound.nim`, and `ports/channel.nim` accordingly
+
+**What was implemented:**
+- `SlkEventKind` enum: sekMessage, sekSlashCommand, sekBlockAction, sekVerification, sekUnknown
+- `SlkParseResult` type with kind, rawId, text, channelId, teamId, eventTs, responseUrl, triggerId, challenge
+- `parseEvent(payload)` — single dispatcher; routes by top-level `type` field
+- `toInbound(r, userId)` — domain conversion to InboundMessage (uses `eventTs` as `channelId` for dedup)
+- `isVerification(r)` — predicate; true when challenge ack is required
+- Internal helpers: `extractField` (for `|>->` piping), `extractUserId` (handles both string and `{id}` object), `parseMessageEvent` (designed for `|>->` with teamId as first arg), `parseSlashCommand`, `parseBlockActions`
+
+**Files changed:**
+- `src/donkey/domain/channels/slack_pure.nim` (new)
+- `tests/domain/channels/t_slack_pure.nim` (new)
+- `src/donkey/core/types.nim` (added ckSlack)
+- `src/donkey/ports/channel.nim` (added slack field to OutboundChannelPorts)
+- `src/donkey/app/outbound_runtime.nim` (added ckSlack cases)
+- `src/donkey/core/outbound/outbound.nim` (added ckSlack to isImplementedOutboundChannel)
+
+**Learnings:**
+- When a multi-arg helper needs to be used with `|>->`, make the piped subject the LAST parameter — `parseMessageEvent(teamId, event)` not `parseMessageEvent(event, teamId)`, then `event |>-> parseMessageEvent(teamId)` works correctly
+- `|>` cannot be used with partial application like `event |> parseMessageEvent(teamId)` — that expands to `parseMessageEvent(teamId)(event)` which fails; use `|>->` instead when extra args are needed
+- Adding a new `ChannelKind` enum variant requires updating several files: `core/types.nim` (`$`), `ports/channel.nim` (OutboundChannelPorts struct), `app/outbound_runtime.nim` (all case statements), `core/outbound/outbound.nim` (isImplementedOutboundChannel set)
+- The `extractUserId` helper that handles both `"user": "U..."` (string) and `"user": {"id": "U..."}` (object) is needed because Slack uses different user formats in event callbacks vs block_actions payloads
+---
+
 ## 2026-03-22 - US-015
 - Refactored `src/donkey/adapters/channel/discord.nim` to use `discord_pure.parseDispatch` and pipeops operators
 - Created `tests/channel/t_discord.nim` with 15 tests covering identity resolution, adapter construction, and dispatch routing

@@ -1,0 +1,81 @@
+# Iteration 4 Log
+
+## Metadata
+
+- **Task ID**: US-015
+- **Task Title**: Discord IO Adapter
+- **Description**: WebSocket or REST adapter for Discord.
+- **Status**: completed
+- **Task Completed**: Yes
+- **Promise Detected**: Yes
+- **Started At**: 2026-03-23T00:04:13.689Z
+- **Ended At**: 2026-03-23T00:15:30.549Z
+- **Duration**: 11m 16s
+- **Input Tokens**: 90
+- **Output Tokens**: 21436
+- **Total Tokens**: 21526
+- **Agent**: claude
+- **Model**: claude-sonnet-4-6
+- **Sandbox Mode**: auto
+- **Sandbox Network**: Enabled
+--- RAW OUTPUT ---
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Glob][0m pattern: [96msrc/donkey/adapters/channels/**[0m
+[94m[Glob][0m pattern: [96msrc/donkey/adapters/**[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/telegram.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/discord.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/domain/channels/discord_pure.nim[0m
+Now let me check if there are existing tests for the discord adapter and the test structure.
+[94m[Glob][0m pattern: [96mtests/**/*discord*[0m
+[94m[Glob][0m pattern: [96mtests/**/*telegram*[0m
+[94m[Glob][0m pattern: [96mtests/channel/**[0m
+[94m[Glob][0m pattern: [96mtests/adapters/**[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/tests/channel/t_telegram.nim[0m
+[94m[Bash][0m $ ls /home/micelio/git/donkey/tests/channel/
+[94m[Bash][0m $ nim c --mm:orc --styleCheck:error --warnings:error -p:src src/donkey/adapters/channel/discord.nim 2>...
+[94m[Bash][0m $ nim c --mm:orc --styleCheck:error -p:src src/donkey/adapters/channel/discord.nim 2>&1 | head -50
+[94m[Read][0m [95m/home/micelio/git/donkey/config.nims[0m
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | tail -30
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | grep -E 'FAIL|ERROR|total|passed' | head -20
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | grep -v PASS | head -30
+Let me check if the `DiscordGatewayUrl` constant is actually used and if there's a warning issue:
+[94m[Bash][0m $ grep -n "DiscordGatewayUrl" /home/micelio/git/donkey/src/donkey/adapters/channel/discord.nim
+[94m[Bash][0m $ grep -n "DiscordGatewayUrl\|gateway.discord.gg" /home/micelio/git/donkey/src/donkey/adapters/channel...
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/core/pipeops.nim[0m
+Now I have a clear picture. The `discord.nim` exists but:
+1. Doesn't use `discord_pure` (from US-014) — the `handleDispatch` parses events inline
+2. Uses pipeops import but no operators
+3. Has an unused `DiscordGatewayUrl` constant
+
+I need to:
+1. Refactor `handleDispatch` to use `discord_pure.parseDispatch`
+2. Add `>>=` and `|>` usage in REST helpers
+3. Add `tests/channel/t_discord.nim`
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/discord.nim[0m edit: "import std/[json, net, os, random, strutils, table..." → "import std/[json, net, os, random, strutils, table..."
+Now fix the unused `DiscordGatewayUrl` constant by using it in `runGatewaySession`:
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/discord.nim[0m edit: "    else: "gateway.discord.gg"" → "    else: DiscordGatewayUrl[6 .. ^1]  ## strip "ws..."
+Now replace the entire `handleDispatch` proc with a version that uses `discord_pure`:
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/discord.nim[0m edit: "proc handleDispatch(t: string; d: JsonNode) =
+  ##..." → "proc handleDispatch(t: string; d: JsonNode) =
+  ##..."
+Now add `>>=` usage in `getAppId` and add a helper proc. Also add `|>` for the DM channel id extraction:
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/discord.nim[0m edit: "func authHeader(a: DiscordAdapter): (string, strin..." → "func authHeader(a: DiscordAdapter): (string, strin..."
+Now refactor `getAppId` and `sendReturnId` to use `>>=`:
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/discord.nim[0m edit: "proc getAppId*(a: DiscordAdapter): Result[string, ..." → "proc getAppId*(a: DiscordAdapter): Result[string, ..."
+[94m[Edit][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/discord.nim[0m edit: "proc sendReturnId*(a: DiscordAdapter; msg: Outboun..." → "proc sendReturnId*(a: DiscordAdapter; msg: Outboun..."
+Now let's verify the file compiles:
+[94m[Bash][0m $ nim c --mm:orc -p:src src/donkey/adapters/channel/discord.nim 2>&1 | grep -v "^Hint\|^CC:" | head -3...
+Good, it compiles. Now let's write the test file:
+[94m[Write][0m [95m/home/micelio/git/donkey/tests/channel/t_discord.nim[0m "## DiscordAdapter unit tests.
+## HTTP calls are not made; tests cover adapter construction, identity
+## resolution, and the handleDispatch routing via discord_pure.
+
+import std/[json, os, unittest]
+im... (5945 chars)"
+[94m[Bash][0m $ testament pattern 'tests/channel/t_discord.nim' 2>&1
+Tests pass. Now run the full test suite:
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | grep -v PASS | head -20
+All tests pass. Now append to progress.md:
+[94m[Edit][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m edit: "## 2026-03-22 - US-014" → "## 2026-03-22 - US-015
+- Refactored `src/donkey/ad..."
+<promise>COMPLETE</promise>
