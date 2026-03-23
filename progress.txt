@@ -81,3 +81,16 @@
   - `parseJson` can raise — functions calling it must be `proc`, and any function calling them must also be `proc`
   - `contentBlockToJson` uses `parseJson` (proc) → must be proc → callers like `anthropicMessageToJson` and `buildMessagesArray` must also be proc
   - `body{"key"}` returns nil when key is missing — always check with `isNil` before accessing fields
+
+## 2026-03-23 (US-039)
+- Implemented `domain/providers/gemini_pure.nim` — pure wire-format helpers extracted from the adapter: `geminiRole`, `textPart`, `functionCallPart`, `functionResponsePart`, `toGeminiContent`, `appendContent`, `buildGeminiContents`, `buildGeminiRequest`, `parseGeminiResponse`.
+- Refactored `adapters/provider/gemini.nim` to delegate to pure module, re-exporting functions for backwards compatibility.
+- Added `tests/domain/providers/t_gemini_pure.nim` with 27 tests covering all pure functions.
+- Files changed: `src/donkey/domain/providers/gemini_pure.nim`, `src/donkey/adapters/provider/gemini.nim`, `tests/domain/providers/t_gemini_pure.nim`, `prd.json`
+- **Learnings for future iterations:**
+  - `{.global.}` pragma on local variables inside procs causes gcsafe issues in the resulting closures — avoid and just use local variables
+  - `parseJson` can raise, so functions calling it must be `proc` not `func`; higher-level functions that call those procs must also be `proc`
+  - Nim bracket access like `content{"parts"}[0]{"text"}` requires proper brackets — `[0]{"text"}` not `[0{"text"}`
+
+---
+
