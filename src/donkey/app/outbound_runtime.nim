@@ -19,6 +19,7 @@ proc channelPortFor(ports: OutboundChannelPorts;
   of ckSlack:     ports.slack
   of ckWhatsApp:  ports.whatsapp
   of ckSignal:    ports.signal
+  of ckDingTalk:  ports.dingtalk
 
 proc sendImmediateOutbound*(msg: OutboundMessage;
                             ports: OutboundChannelPorts;
@@ -35,6 +36,7 @@ proc sendImmediateOutbound*(msg: OutboundMessage;
     of ckSlack:     log.error("sl send: " & error)
     of ckWhatsApp:  log.error("wa send: " & error)
     of ckSignal:    log.error("sig send: " & error)
+    of ckDingTalk:  log.error("dt send: " & error)
 
 proc editStreamOutbound*(msg: OutboundMessage;
                          channelMsgId: string;
@@ -45,7 +47,7 @@ proc editStreamOutbound*(msg: OutboundMessage;
     case msg.channel
     of ckTelegram: log.warn("tg editMessage: " & error)
     of ckDiscord:  log.warn("dc editMessage: " & error)
-    of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal: discard
+    of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk: discard
 
 proc createStreamOutbound*(msg: OutboundMessage;
                            ports: OutboundChannelPorts;
@@ -55,7 +57,7 @@ proc createStreamOutbound*(msg: OutboundMessage;
     case msg.channel
     of ckTelegram: log.error("tg sendReturnId: " & error)
     of ckDiscord:  log.error("dc sendReturnId: " & error)
-    of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal: discard
+    of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk: discard
     ""
 
 proc routeOutbound*(msg: OutboundMessage;
