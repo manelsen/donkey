@@ -111,3 +111,15 @@
   - US-042 depends on US-041 (ollama_pure.nim) and US-033 (ProviderPort) — both already implemented and wired via `runtime_builder.nim`
 
 ---
+
+## 2026-03-23 (US-043)
+- Implemented `adapters/provider/deepseek.nim` — OpenAI-compatible adapter with DeepSeek-specific `reasoning` field extraction (chain-of-thought not exposed to user since CompletionResponse has no field for it).
+- Reuses `openai_pure.nim` for request body building (same format as DeepSeek).
+- Added streaming SSE support via `parseDeepSeekSseLine`.
+- Files changed: `src/donkey/adapters/provider/deepseek.nim`, `src/donkey/adapters/provider/runtime_builder.nim` (added deepseek case), `tests/adapters/provider/t_deepseek.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `>>=` requires `Result[T, E]` on the left — when calling `parseJson` (which returns `JsonNode` not `Result`), use direct call with `.valueOr:` instead
+  - DeepSeek's `reasoning` field is discarded since `CompletionResponse` has no field for chain-of-thought; absorbed as adapter quirk
+  - DeepSeek is otherwise OpenAI-compatible: same endpoint structure, auth, request format
+
+---
