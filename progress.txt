@@ -357,6 +357,18 @@
 
 ---
 
+## 2026-03-23 (US-064)
+- Implemented `adapters/tools/web_fetch.nim` — WebFetchTools adapter conforming to ToolPort with web_fetch tool for fetching URL content and converting HTML to clean text.
+- Created `domain/tools/web_fetch_helpers.nim` with pure URL validation (isPrivateUrl for SSRF protection, extractUrlHost) and HTML-to-text conversion (htmlToText with entity decoding, tag stripping, whitespace normalization, Markdown conversion).
+- Files changed: `src/donkey/adapters/tools/web_fetch.nim` (new), `src/donkey/domain/tools/web_fetch_helpers.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - adapters/ can safely import from domain/tools/ (shell_ast, path_guard, web_fetch_helpers pattern)
+  - Pure URL validation and HTML conversion should live in domain/tools/ to be reusable across adapters
+  - StdHttpAdapter provides HttpPort implementation for HTTP requests
+  - ToolPort adapters return ToolResult with isError=true for normal errors; Err is only for programming errors
+
+---
+
 ## 2026-03-23 (US-063)
 - Implemented `adapters/tools/shell.nim` — Shell execution adapter conforming to ToolPort. Uses `shell_ast.nim` (US-062) to validate commands and block dangerous shell operators (|, &, ;, <, >, &&, ||, 2>, >>). Executes via `/bin/sh` with proper quoting using `quoteShell()`. Exports: ShellTools, shellExecSchema, listTools, invoke, runShellExec, validateCommand, newShellTools.
 - Created `tests/adapters/tools/t_shell.nim` with 31 tests covering all functions.
