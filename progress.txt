@@ -274,3 +274,18 @@
   - AGE node labels are case-sensitive in Cypher — `Person` and `person` are different; use consistent casing when creating nodes
   - `strip` with `chars` parameter strips ALL occurrences of those characters from both ends — `""hello""` becomes `hello` not `"hello"`
   - `cypher` and `cypherVoid` helpers abstract AGE's `cypher()` function with proper agtype return type handling
+
+---
+
+## 2026-03-23 (US-056)
+- Implemented `core/memory/silent_turn.nim` — Background Memory Extraction Loop. Runs a silent LLM turn before session compaction to extract structured memories (triples, facts, preferences, concepts) and persist them via AGE graph adapter and pgvector adapter.
+- Created `tests/core/memory/t_silent_turn.nim` with 14 tests covering formatConversationForMemory, parseMemoryExtractionResponse, and tryParseJson.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all`.
+- Files changed: `src/donkey/core/memory/silent_turn.nim` (new), `tests/core/memory/t_silent_turn.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `when` and `concept` are Nim keywords and cannot be used as variable names — rename to `whenDefined`, `conceptStr`, etc.
+  - `result` is a Nim special variable for return values — avoid shadowing by using different names like `memResult`
+  - `parseJson` can raise — any function calling it must be `proc` not `func`
+  - `isSome()` and `isNone()` on Option types use method-call syntax without parentheses in tests: `result.isSome` not `result.isSome()`
+  - Empty response should return ok(emptyResult) not err — callers expect successful parsing with zero counts
