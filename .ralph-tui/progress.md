@@ -25,6 +25,52 @@ Any adapter module that references `HttpResponse` in signatures must `import ../
 
 ---
 
+## 2026-03-22 - US-020
+- Implemented `src/donkey/domain/channels/signal_pure.nim` — pure parser for signal-cli JSON-RPC receive envelopes
+- Implemented `src/donkey/adapters/channel/signal.nim` — Signal adapter communicating via JSON-RPC over Unix socket
+- Created `tests/domain/channels/t_signal_pure.nim` with 28 tests covering all envelope kinds
+- Created `tests/channel/t_signal.nim` with 20 tests covering identity, construction, and event routing
+- Added `ckSignal` to ChannelKind and updated all dependent files
+
+**What was implemented:**
+- `SigMsgKind` enum: smkText, smkAttachment, smkUnknown
+- `SigParseResult` with kind, rawId, text, timestamp, attachmentId
+- `parseEnvelope(item)` — parses a single result-array item from signal-cli receive
+- `parseEnvelopes(items)` — filters result array, discards smkUnknown
+- `toInbound(r, userId)` — domain conversion; attachmentId → mediaUrl field
+- `hasAttachment(r)` — predicate; true for smkAttachment
+- `firstAttachmentId(atts)` — extracts attachment id or filename from array
+- `senderNumber(env)` — prefers sourceNumber, falls back to source
+- `parseDataMessage(source, ts, data)` — designed for `|>->` (data as last arg)
+- `rpcCall(sockPath, meth, params)` — standalone proc; opens Unix socket, sends JSON-RPC, reads response, closes
+- `SignalAdapter` with sockPath, account, resolver
+- `receive(var a)` — polls via JSON-RPC "receive", returns seq[InboundMessage]
+- `send(a)` — sends via JSON-RPC "send" with E.164 recipient
+- `sendReturnId(a)` — sends and returns timestamp as message id
+- `editMessage(a)` — no-op (Signal doesn't support editing)
+- `ack(a)` — no-op (daemon manages delivery receipts)
+- `newSignalAdapter(account, identityPath, sockPath)` — constructor
+
+**Files changed:**
+- `src/donkey/domain/channels/signal_pure.nim` (new)
+- `src/donkey/adapters/channel/signal.nim` (new)
+- `tests/domain/channels/t_signal_pure.nim` (new)
+- `tests/channel/t_signal.nim` (new)
+- `src/donkey/core/types.nim` (added ckSignal)
+- `src/donkey/ports/channel.nim` (added signal field to OutboundChannelPorts)
+- `src/donkey/app/outbound_runtime.nim` (added ckSignal cases)
+- `src/donkey/core/outbound/outbound.nim` (added ckSignal to isImplementedOutboundChannel set)
+
+**Learnings:**
+- Signal CLI communicates via JSON-RPC over Unix socket — no HTTP adapter needed; `std/net` directly handles the Unix domain socket
+- `rpcCall` as a standalone proc (not a method) lets both `send` (immutable) and `receive` (var) call it without needing two proc variants
+- signal-cli uses `sourceNumber` (always E.164) and `source` (may be UUID) — prefer `sourceNumber`, fall back to `source`
+- Non-data envelopes (receipts, typing, sync, calls) have no `dataMessage` field — nil guard on `dataMessage` cleanly filters them to smkUnknown
+- `editMessage` returns `ok()` but requires the unused parameters to be `discard`ed explicitly to suppress `--styleCheck:error` warnings
+- Test files need `donkey/core/pipeops` imported to access `isOk` and other results helpers
+
+---
+
 ## 2026-03-22 - US-019
 - Implemented `src/donkey/adapters/channel/whatsapp.nim` — WhatsApp Cloud API webhook adapter
 - Created `tests/channel/t_whatsapp.nim` with 20 tests covering identity, construction, verification, and event routing

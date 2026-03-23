@@ -34,6 +34,7 @@ type
     feishu*:   OutboundChannelPort
     slack*:     OutboundChannelPort
     whatsapp*:  OutboundChannelPort
+    signal*:    OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 
