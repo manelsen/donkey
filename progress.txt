@@ -305,3 +305,17 @@
   - Empty key validation must happen before duplicate check in addEntry to return the correct error message
 
 ---
+
+## 2026-03-23 (US-059)
+- Implemented `domain/tools/path_guard.nim` — pure path security functions: normalizePath, splitPath, containsPathTraversal, isPathTraversalAttempt, isPathInDirectory, isPathSafe, validatePathAccess, pathAccessErrorMsg. Detects `../` traversal, null bytes, and workspace escape.
+- Created `tests/domain/tools/t_path_guard.nim` with 28 tests covering all functions.
+- Files changed: `src/donkey/domain/tools/path_guard.nim` (new), `tests/domain/tools/t_path_guard.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `path.contains("../")` checks for literal `../` substring — note `../foo` starts with `../e`, not `../` — use `path.startsWith("../")` for prefix check, `path.contains("../")` for anywhere
+  - `normalizePath` resolves `..` only when there's a parent directory to pop — `../foo` normalizes to `../foo` (not to `foo`) because there's nothing above root to pop
+  - Any presence of `../` in a path is flagged as traversal attempt — even if it resolves safely after normalization (e.g., `a/../b` is flagged)
+  - `splitPath` for root files: `/foo.txt` → `("/", "foo.txt")`, `/` → `("/", "")`
+  - `strutils` must be explicitly imported in test files for `.contains()` on strings
+
+---
+
