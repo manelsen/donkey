@@ -1087,11 +1087,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 61,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-058"
-      ]
+      ],
+      "completionNotes": "Implemented GitTools adapter (adapters/tools/git.nim) conforming to ToolPort with git_status, git_log, git_diff tools. Uses execCmdEx for subprocess execution, returns Result[T, string]. 27 tests pass."
     },
     {
       "id": "US-062",
