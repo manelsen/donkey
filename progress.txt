@@ -330,3 +330,16 @@
   - Workspace restriction: prepend workspace to relative paths before validation
 
 ---
+
+## 2026-03-23 (US-061)
+- Implemented `adapters/tools/git.nim` — GitTools adapter conforming to ToolPort with git_status, git_log, git_diff tools. Uses `execCmdEx` for subprocess execution, returns Result[T, string].
+- Created `tests/adapters/tools/t_git.nim` with 27 tests covering all tools, concept conformance, error handling, and call ID preservation.
+- Files changed: `src/donkey/adapters/tools/git.nim` (new), `tests/adapters/tools/t_git.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `execProcess` with args array triggers `poEvalCommand` mode when args is empty — use `execCmdEx` instead for shell-like command execution
+  - `execCmdEx` returns `tuple[output: string, exitCode: int]` (2 elements), not 3 — use appropriate unpacking
+  - `git log` on empty repo returns exit code 128 with "does not have any commits" message — handle as non-error (empty history)
+  - Format strings with `|` character in `git log --format` can conflict with shell pipe — use single quotes around the format string: `'%H %h %an %ad %s'`
+  - `execCmdEx` with poEvalCommand expects proper shell quoting — pass full command as single string rather than command + args
+
+---
