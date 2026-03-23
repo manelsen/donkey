@@ -24,3 +24,14 @@
   - Adding a new `ChannelKind` requires: types.nim (enum + `$` case), OutboundChannelPorts (ports/channel.nim), buildOutboundPorts wiring (outbound_builder.nim), DaemonAdapters + init (donkey.nim), and case statements in outbound_runtime.nim (channelPortFor, sendImmediateOutbound error, editStreamOutbound discard, createStreamOutbound discard)
   - CLI is primarily an input channel but must be wired into OutboundChannelPorts since the global outbox routes to all channels
   - `cli_repl.nim` uses `splitChunks` from `pipeops.nim` for output; pure helpers `isCommand`/`stripCommand` are unary `func`s designed for `|>` chaining
+
+---
+
+## 2026-03-23 (US-032)
+- Implemented bidirectional SSE gateway: POST /api/chat endpoint receives messages from web UI, routes to session via handleGatewayFallback.
+- Files changed: `src/donkey/app/http_gateway.nim` (added GatewayInboundFn, parseChatPost, POST /api/chat handler), `src/donkey.nim` (setupIpcServer now accepts inbound callback, wired to handleGatewayFallback), `tests/app/t_http_gateway.nim` (new tests for chat parsing and routing).
+- **Learnings for future iterations:**
+  - `proc` vs `func` for JSON parsing: `parseJson` has side effects (can raise), so `parseChatPost` must be `proc` not `func`
+  - Forward declarations needed when a later-defined proc is called from an earlier-defined proc via closure (e.g., `handleGatewayFallback` called from `setupIpcServer`'s inboundFn closure)
+  - `{.cast(gcsafe).}` required when calling non-gcsafe procs from within a `{.gcsafe.}` closure
+  - Adding parameters to `setupIpcServer` required cascading updates: `setupDaemonRuntime` → `activateDaemonBootstrap` → `startDaemon` to pass `memory` through
