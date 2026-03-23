@@ -289,3 +289,15 @@
   - `parseJson` can raise — any function calling it must be `proc` not `func`
   - `isSome()` and `isNone()` on Option types use method-call syntax without parentheses in tests: `result.isSome` not `result.isSome()`
   - Empty response should return ok(emptyResult) not err — callers expect successful parsing with zero counts
+## 2026-03-23 (US-057)
+- Implemented `core/memory/blackboard.nim` — Short-term planning memory (Blackboard Pattern) for session-scoped scratchpad data injected into LLM context. Exports: `Blackboard`, `BlackboardEntry`, `Priority`, `newBlackboard`, `addEntry`, `updateEntry`, `removeEntry`, `getEntry`, `hasEntry`, `filterByPrefix`, `filterByPriority`, `render`, `renderForUser`, `sortEntries`.
+- Created `tests/core/memory/t_blackboard.nim` with 40 tests covering all functions.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- Files changed: `src/donkey/core/memory/blackboard.nim` (new), `tests/core/memory/t_blackboard.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `filterIt`, `mapIt`, `anyIt` from std/sequtils are not used in this codebase — use explicit for-loops instead for consistency
+  - `Option[T]` requires `import std/options` — use `some()` and `none()` constructors
+  - `sorted(seq, cmp)` from std/algorithm requires explicit comparison function — can't use `-` on enum values directly
+  - Empty key validation must happen before duplicate check in addEntry to return the correct error message
+
+---
