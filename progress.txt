@@ -123,3 +123,26 @@
   - DeepSeek is otherwise OpenAI-compatible: same endpoint structure, auth, request format
 
 ---
+
+## 2026-03-23 (US-044)
+- Marked US-044 (Zhipu/GLM Adapter) as complete. The adapter (`adapters/provider/zhipu.nim`) was already fully implemented with `complete()`, `buildBody()`, `parseZhipuResponse()`, and both `newZhipuAdapter()` / `newZaiAdapter()` constructors. Wired in `runtime_builder.nim` under the "zai" case.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all` (77 tests).
+- Files changed: `prd.json`
+- **Learnings for future iterations:**
+  - US-044 depends on US-035 (OpenAI Protocol Pure) — both already implemented; zhipu uses its own JSON serialization (`buildBody`, `parseZhipuResponse`) rather than reusing openai_pure due to minor differences in tool_call structure
+
+---
+
+## 2026-03-23 (US-045)
+- Implemented `domain/routing/smart_route.nim` — pure task complexity classification module with `TaskComplexity` enum (tcSimple, tcModerate, tcComplex), scoring functions (scoreInputComplexity, scoreToolComplexity, scoreContextComplexity), and routeByComplexity for provider selection based on complexity.
+- Created `tests/domain/routing/t_smart_route.nim` with 22 tests covering all classification and routing functions.
+- Files changed: `src/donkey/domain/routing/smart_route.nim` (new), `tests/domain/routing/t_smart_route.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - When importing modules that re-export other modules (smart_routing exports pipeops), avoid duplicate symbol definitions (LongContextChars, normalizeThinking) — use the already-exported versions
+  - Nim enum values cannot have `*` suffix like enum members — only the type name gets `*`
+  - `&"string..."` interpolation syntax doesn't work in Nim — use explicit `&` concatenation: `"(" & var & ", text=" & $val & ")"`
+  - For weighted scoring with 0-100 input scores, divide by 100 to normalize: `((tool*40) + (input*30) + (ctx*30)) div 100`
+  - Anonymous proc literals with `|>` can cause indentation errors — prefer direct function calls for clarity
+
+---
