@@ -50,7 +50,7 @@ func decideStreamAction*(msg: OutboundMessage;
   )
 
 func isImplementedOutboundChannel*(channel: ChannelKind): bool =
-  channel in {ckTelegram, ckDiscord, ckWeCom, ckWeChat, ckQQ, ckFeishu}
+  channel in {ckTelegram, ckDiscord, ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack}
 
 func shouldClearStream*(msg: OutboundMessage): bool =
   msg.streamId.len > 0 and not msg.isPartial
