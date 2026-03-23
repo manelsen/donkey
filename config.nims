@@ -16,3 +16,9 @@ switch("define", "ssl")
 #                            apk add postgresql-dev  (Alpine)
 when defined(withPostgres):
   switch("passL", "-lpq")
+
+# SQLite fast-cache backend (opt-in).
+# Build with: nimble build -d:withSqlite
+# Requires libsqlite3 installed: apt install libsqlite3-dev  (Debian/Ubuntu)
+when defined(withSqlite):
+  switch("passL", "-lsqlite3")
