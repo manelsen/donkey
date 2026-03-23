@@ -1,13 +1,13 @@
 {
-  "id": "8e9c25da-de6b-418c-92fd-0b05970ac77a",
+  "id": "d5a9a3a3-f1fd-4960-8f15-51d1eaf989bb",
   "status": "running",
-  "startedAt": "2026-03-22T23:43:56.468Z",
-  "updatedAt": "2026-03-23T02:23:46.346Z",
-  "agentPlugin": "claude",
+  "startedAt": "2026-03-23T03:46:06.228Z",
+  "updatedAt": "2026-03-23T03:46:06.228Z",
+  "agentPlugin": "opencode",
   "trackerPlugin": "json",
-  "currentIteration": 17,
+  "currentIteration": 0,
   "maxIterations": 0,
   "totalTasks": 0,
-  "tasksCompleted": 17,
+  "tasksCompleted": 0,
   "cwd": "/home/micelio/git/donkey"
 }

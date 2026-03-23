@@ -37,6 +37,7 @@ type
     signal*:    OutboundChannelPort
     dingtalk*:  OutboundChannelPort
     matrix*:    OutboundChannelPort
+    email*:     OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 

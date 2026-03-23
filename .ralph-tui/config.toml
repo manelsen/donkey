@@ -1,7 +1,7 @@
 configVersion = "2.1"
-defaultAgent = "claude"
+defaultAgent = "opencode"
 maxIterations = 0
-agent = "claude"
+agent = "opencode"
 tracker = "json"
 autoCommit = true
 subagentTracingDetail = "full"
