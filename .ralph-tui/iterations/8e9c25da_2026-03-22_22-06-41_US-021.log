@@ -1,0 +1,123 @@
+# Iteration 10 Log
+
+## Metadata
+
+- **Task ID**: US-021
+- **Task Title**: WeChat/WeCom Parser
+- **Description**: Handle WeChat XML/JSON quirks.
+- **Status**: completed
+- **Task Completed**: Yes
+- **Promise Detected**: Yes
+- **Started At**: 2026-03-23T01:06:41.023Z
+- **Ended At**: 2026-03-23T01:14:48.338Z
+- **Duration**: 8m 7s
+- **Input Tokens**: 241
+- **Output Tokens**: 14383
+- **Total Tokens**: 14624
+- **Agent**: claude
+- **Model**: claude-sonnet-4-6
+- **Sandbox Mode**: auto
+- **Sandbox Network**: Enabled
+--- RAW OUTPUT ---
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Glob][0m pattern: [96msrc/donkey/domain/channels/**/*.nim[0m
+Let me study the existing pure parsers and types to understand the patterns:
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/domain/channels/whatsapp_pure.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/core/types.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/domain/message.nim[0m
+[94m[Glob][0m pattern: [96mtests/domain/channels/*.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/tests/domain/channels/t_whatsapp_pure.nim[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/core/pipeops.nim[0m
+[94m[Glob][0m pattern: [96msrc/donkey/**/*wechat*[0m
+[94m[Glob][0m pattern: [96msrc/donkey/**/*wecom*[0m
+[94m[Read][0m [95m/home/micelio/git/donkey/src/donkey/adapters/channel/wechat.nim[0m
+Now I have a clear picture of the codebase. Let me implement `wechat_pure.nim`:
+[94m[Write][0m [95m/home/micelio/git/donkey/src/donkey/domain/channels/wechat_pure.nim[0m "## wechat_pure.nim — pure parsing of WeChat/WeCom XML webhook payloads.
+##
+## No I/O, no side effects. All parsing functions are `func`.
+##
+## WeChat Official Account and WeCom (Enterprise WeChat) bot... (5421 chars)"
+Now write the tests:
+[94m[Write][0m [95m/home/micelio/git/donkey/tests/domain/channels/t_wechat_pure.nim[0m "## Tests for domain/channels/wechat_pure.nim — pure WeChat/WeCom XML parser.
+## No I/O or HTTP; all input is constructed directly as XML strings.
+
+import std/unittest
+import donkey/domain/channels/wec... (10213 chars)"
+Now let's build and run the tests:
+[94m[Bash][0m $ nim build src --mm:orc --styleCheck:error --warnings:error 2>&1 | head -50
+[94m[Bash][0m $ nim check --mm:orc --styleCheck:error --warnings:error src/donkey/domain/channels/wechat_pure.nim 2>...
+
+[91m[Error: Exit code 1
+command line(1, 2) Error: 'on', 'off' or 'list' expected, but 'error' found][0m
+[94m[Read][0m [95m/home/micelio/git/donkey/config.nims[0m
+[94m[Bash][0m $ nim check --mm:orc src/donkey/domain/channels/wechat_pure.nim 2>&1
+[94m[Bash][0m $ testament pattern 'tests/domain/channels/t_wechat_pure.nim' 2>&1
+
+[91m[Error: Exit code 1
+[31mFAIL: [36mtests/domain/channels/t_wechat_pure.nim c                   [34m ( 0.82 sec)[0m
+[1m[36mTest "tests/domain/channels/t_wechat_pure.nim" in category "pattern"[0m
+[1m[31mFailure: reNimcCrash[0m
+$ /home/micelio/.nimble/bin/nim c --hints:on -d:testing --nimblePath:build/deps/pkgs2   --nimCache:nimcache/tests/domain/channels/t_wechat_pure.nim_4a8a08f09d37b73795649038408b5f33  tests/domain/channels/t_wechat_pure.nim
+Hint: used config file '/home/micelio/.choosenim/toolchains/nim-2.2.8/config/nim.cfg' [Conf]
+Hint: used config file '/home/micelio/.choosenim/toolchains/nim-2.2.8/config/config.nims' [Conf]
+Hint: used config file '/home/micelio/git/donkey/config.nims' [Conf]
+........................................................................................................................................
+/home/micelio/git/donkey/tests/domain/channels/t_wechat_pure.nim(101, 1) template/generic instantiation of `suite` from here
+/home/micelio/git/donkey/tests/domain/channels/t_wechat_pure.nim(117, 3) template/generic instantiation of `test` from here
+/home/micelio/git/donkey/tests/domain/channels/t_wechat_pure.nim(119, 19) Error: undeclared identifier: '|>->'
+candidates (edit distance, scope distance); see '--spellSuggest': 
+ (3, 6): '-%'
+ (3, 6): '-'
+ (3, 6): '-='
+
+FAILURE! total: 1 passed: 0 skipped: 0 failed: 1][0m
+Tests need `pipeops` import:
+[94m[Edit][0m [95m/home/micelio/git/donkey/tests/domain/channels/t_wechat_pure.nim[0m edit: "import std/unittest
+import donkey/domain/channels/..." → "import std/unittest
+import donkey/core/pipeops
+imp..."
+[94m[Bash][0m $ testament pattern 'tests/domain/channels/t_wechat_pure.nim' 2>&1
+
+[91m[Error: Exit code 1
+[31mFAIL: [36mtests/domain/channels/t_wechat_pure.nim c                   [34m ( 0.87 sec)[0m
+[1m[36mTest "tests/domain/channels/t_wechat_pure.nim" in category "pattern"[0m
+[1m[31mFailure: reNimcCrash[0m
+$ /home/micelio/.nimble/bin/nim c --hints:on -d:testing --nimblePath:build/deps/pkgs2   --nimCache:nimcache/tests/domain/channels/t_wechat_pure.nim_4a8a08f09d37b73795649038408b5f33  tests/domain/channels/t_wechat_pure.nim
+Hint: used config file '/home/micelio/.choosenim/toolchains/nim-2.2.8/config/nim.cfg' [Conf]
+Hint: used config file '/home/micelio/.choosenim/toolchains/nim-2.2.8/config/config.nims' [Conf]
+Hint: used config file '/home/micelio/git/donkey/config.nims' [Conf]
+........................................................................................................................................
+/home/micelio/git/donkey/tests/domain/channels/t_wechat_pure.nim(243, 1) template/generic instantiation of `suite` from here
+/home/micelio/git/donkey/tests/domain/channels/t_wechat_pure.nim(244, 3) template/generic instantiation of `test` from here
+/home/micelio/git/donkey/tests/domain/channels/t_wechat_pure.nim(246, 7) Error: attempting to call undeclared routine: 'replace'
+
+FAILURE! total: 1 passed: 0 skipped: 0 failed: 1][0m
+[94m[Edit][0m [95m/home/micelio/git/donkey/tests/domain/channels/t_wechat_pure.nim[0m edit: "import std/unittest
+import donkey/core/pipeops" → "import std/[strutils, unittest]
+import donkey/core..."
+[94m[Bash][0m $ testament pattern 'tests/domain/channels/t_wechat_pure.nim' 2>&1
+All tests pass. Now run the broader test suite to verify nothing broke:
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | tail -20
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | grep -E "FAIL|total:"
+[94m[Bash][0m $ testament pattern 'tests/**/*.nim' 2>&1 | grep -c "PASS"
+63 PASS, 0 FAIL. Now append to progress.md:
+[94m[Read][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m
+[94m[Edit][0m [95m/home/micelio/git/donkey/.ralph-tui/progress.md[0m edit: "---
+
+## 2026-03-22 - US-020" → "---
+
+## 2026-03-22 - US-021
+- Implemented `src/don..."
+All done.
+
+- Implemented `src/donkey/domain/channels/wechat_pure.nim` — pure XML parser for WeChat/WeCom messages
+- 28 tests covering text, image, voice, video, shortvideo, file (WeCom), event (subscribe/CLICK/SCAN), plain tags, edge cases, and `toInbound`/predicates
+- All 63 tests pass, 0 failures
+
+Key design decisions:
+- `extractTag(tag, xml)` has xml as last arg for `|>->` piping
+- `wck` prefix avoids enum collision with WhatsApp's `wmk` prefix
+- `shortvideo` maps to `wckVideo` — no separate kind needed
+- Event messages have empty `msgId` (WeChat XML doesn't include MsgId for events)
+
+<promise>COMPLETE</promise>
