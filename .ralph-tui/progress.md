@@ -34,6 +34,40 @@ inside a `func`.
 
 ---
 
+## 2026-03-22 - US-028
+- Implemented `src/donkey/adapters/channel/dingtalk.nim` — HTTP webhook adapter for DingTalk using dingtalk_pure
+- Created `tests/channel/t_dingtalk.nim` with 26 tests covering identity, construction, event queue routing, and pure parser integration
+
+**What was implemented:**
+- `DingTalkEvent` object: msgType, rawId, messageId, content, downloadCode
+- `gDtEvents` — module-level `Channel[DingTalkEvent]`
+- `pushEvent(payload)` — parses via dingtalk_pure.parseEvent; enqueues dtkText/dtkImage/dtkAudio/dtkVideo/dtkFile; ignores dtkUnknown
+- Group routing convention: rawId = "conv:" + conversationId for group events (isGroup=true)
+- `DingTalkAdapter` with appKey, appSecret, robotCode, apiBase, resolver, http, accessToken, tokenExpirySec
+- `parseDtBody(resp)` — named `{.gcsafe, raises: [].}` proc for `>>=` chaining
+- `ensureAccessToken` — refreshes DingTalk token via `/v1.0/oauth2/accessToken`
+- `buildSendUrl(apiBase, rawId)` — routes to `/v1.0/robot/groupMessages/send` (conv: prefix) or `/v1.0/robot/oToMessages/batchSend`
+- `buildSendBody(robotCode, rawId, text)` — builds DingTalk robot message body with msgKey/msgParam pattern
+- `sendToRawId`, `send`, `sendReturnId` — ChannelPort send procs; sendReturnId returns processQueryKey
+- `editMessage` — no-op (DingTalk robot API doesn't support editing)
+- `ack` — no-op (HTTP 200 suffices)
+- `openQueue`, `startGateway`, `tryRecvEvent` — queue management with `{.cast(gcsafe).}` for global channel
+- `newDingTalkAdapter` — constructor with optional apiBase override
+
+**Files changed:**
+- `src/donkey/adapters/channel/dingtalk.nim` (new)
+- `tests/channel/t_dingtalk.nim` (new)
+
+**Learnings:**
+- DingTalk uses `x-acs-dingtalk-access-token` header (not `Authorization: Bearer`) for robot API calls
+- Token endpoint is `/v1.0/oauth2/accessToken` with `{"appKey":..,"appSecret":..}`; response field is `accessToken` (camelCase, not `access_token`) and `expireIn` (not `expires_in`)
+- Send body uses `msgKey: "sampleText"` and `msgParam: "{\"content\":\"..\"}"` (JSON-encoded string, not object)
+- Group send uses `openConversationId` + `/v1.0/robot/groupMessages/send`; p2p uses `userIds: [rawId]` + `/v1.0/robot/oToMessages/batchSend`
+- `{.cast(gcsafe).}` needed in both `pushEvent` (global Channel.send) and `tryRecvEvent` (global Channel.tryRecv) to suppress gcsafe warnings
+- The `adapters/channels/` path in acceptance criteria is wrong — correct path is `adapters/channel/` (singular), consistent with all other channel adapters
+
+---
+
 ## 2026-03-22 - US-026
 - Implemented `src/donkey/adapters/channel/qq_webhook.nim` — HTTP webhook adapter for QQ official bot using qq_pure
 - Created `tests/channel/t_qq_webhook.nim` with 22 tests covering identity, construction, event queue routing, and pure parser integration
