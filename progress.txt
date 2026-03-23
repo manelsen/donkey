@@ -356,3 +356,16 @@
   - For shell error messages, use "shell operators blocked (multiple):" format to make test assertions easier
 
 ---
+
+## 2026-03-23 (US-063)
+- Implemented `adapters/tools/shell.nim` — Shell execution adapter conforming to ToolPort. Uses `shell_ast.nim` (US-062) to validate commands and block dangerous shell operators (|, &, ;, <, >, &&, ||, 2>, >>). Executes via `/bin/sh` with proper quoting using `quoteShell()`. Exports: ShellTools, shellExecSchema, listTools, invoke, runShellExec, validateCommand, newShellTools.
+- Created `tests/adapters/tools/t_shell.nim` with 31 tests covering all functions.
+- Files changed: `src/donkey/adapters/tools/shell.nim` (new), `tests/adapters/tools/t_shell.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `result` is a special Nim implicit return variable — don't shadow it with local variables; use different names like `execResult` to avoid `ResultShadowed` warnings
+  - `quoteShell` from `std/os` properly quotes strings for shell execution — use it instead of manual quoting
+  - `execCmdEx("sh -c " & quoteShell(cmd))` properly executes shell commands with correct exit codes
+  - shell_ast is conservative and blocks operators even inside quotes — safer this way, but adjust tests accordingly
+  - Error messages from `shellValidationErrorMsg` use enum strings like "command separator (;)" not "semicolon" — check for substrings that actually appear in the message
+
+---
