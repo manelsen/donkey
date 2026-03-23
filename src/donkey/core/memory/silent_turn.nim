@@ -134,140 +134,42 @@ proc tryParseJson*(s: string): Option[JsonNode] =
   except CatchableError:
     none(JsonNode)
 
-when defined(withPostgres):
-  import chronos
-  import ../../adapters/memory/age_store
-  import ../../adapters/memory/pgvector_store
-  import ../../domain/memory/chunking
-  import ../../core/memory/embedder
-  
-  proc runSilentMemoryTurn*(
-    history: ConversationHistory;
-    completeFn: CompleteFn;
-    userId: UserId;
-    ageAdapter: AgeStoreAdapter;
-    embedFn: EmbedFn;
-    pgAdapter: PgvectorStoreAdapter;
-  ): Future[Result[SilentMemoryResult, string]] {.async.} =
-    ## Runs a silent memory extraction turn with full postgres support.
-    ##
-    ## 1. Formats conversation for the memory extraction prompt
-    ## 2. Calls LLM with system prompt asking for structured JSON extraction
-    ## 3. Parses response and stores triples via AGE adapter
-    ## 4. Stores facts/concepts via pgvector adapter
-    ## 5. Returns counts of what was stored (LLM text response is discarded)
-    
-    if history.len == 0:
-      return
-  
-    let conversationText = formatConversationForMemory(history)
-    let req = CompletionRequest(
-      system: SilentMemorySystemPrompt,
-      messages: @[ChatMessage(role: roleUser, text: conversationText)],
-      maxTokens: 2048,
-    )
-    
-    let resp = completeFn(req)
-    if resp.isErr:
-      return err("silent turn complete: " & resp.error)
-    
-    let responseText = resp.get().text
-    let parseResult = parseMemoryExtractionResponse(responseText)
-    if parseResult.isErr:
-      return err("silent turn parse: " & parseResult.error)
-    
-    var result = parseResult.get()
-    
-    if result.triplesCount > 0:
-      let j = tryParseJson(responseText)
-      if j.isSome:
-        let triplesJson = j.get()
-        if triplesJson.hasKey("triples"):
-          var triples: seq[TripleText] = @[]
-          for item in triplesJson["triples"]:
-            let subj = item["subject"].getStr()
-            let pred = item["predicate"].getStr()
-            let obj = item["object"].getStr()
-            let conf = if item.hasKey("confidence"): item["confidence"].getFloat() else: 0.8
-            triples.add(buildTriple(subj, pred, obj, responseText, conf.float))
-          
-          if triples.len > 0:
-            let storeResult = ageAdapter.storeTriples(userId, triples)
-            if storeResult.isErr:
-              log.warn("silent turn storeTriples: " & storeResult.error)
-            else:
-              result.filesWritten.add("age://graph/triples")
-    
-    if result.factsCount > 0 or result.conceptsCount > 0:
-      let j = tryParseJson(responseText)
-      if j.isSome:
-        let memJson = j.get()
-        
-        if memJson.hasKey("facts"):
-          for factItem in memJson["facts"]:
-            let fact = factItem.getStr()
-            let chunks = fact.chunkTextWithHash(500, 50)
-            for chunk in chunks:
-              let embResult = embedChunk(chunk, embedFn)
-              if embResult.isOk:
-                let embedded = embResult.get()
-                let storeResult = pgAdapter.storeChunk(userId, embedded)
-                if storeResult.isErr:
-                  log.warn("silent turn storeChunk(fact): " & storeResult.error)
-        
-        if memJson.hasKey("concepts"):
-          for conceptItem in memJson["concepts"]:
-            let conceptStr = conceptItem.getStr()
-            let chunks = conceptStr.chunkTextWithHash(500, 50)
-            for chunk in chunks:
-              let embResult = embedChunk(chunk, embedFn)
-              if embResult.isOk:
-                let embedded = embResult.get()
-                let storeResult = pgAdapter.storeChunk(userId, embedded)
-                if storeResult.isErr:
-                  log.warn("silent turn storeChunk(concept): " & storeResult.error)
-        
-        result.filesWritten.add("pgvector://memories")
-    
-    ok(result)
+proc runSilentMemoryTurn*(
+  history: ConversationHistory;
+  completeFn: CompleteFn;
+  userId: UserId;
+): Result[SilentMemoryResult, string] =
+  ## Runs a silent memory extraction turn without postgres (F1 fallback).
+  ## Returns empty result since no storage is available in F1.
 
-else:
-  proc runSilentMemoryTurn*(
-    history: ConversationHistory;
-    completeFn: CompleteFn;
-    userId: UserId;
-  ): Result[SilentMemoryResult, string] =
-    ## Runs a silent memory extraction turn without postgres (F1 fallback).
-    ## Returns empty result since no storage is available in F1.
-    
-    if history.len == 0:
-      return ok(SilentMemoryResult(
-        triplesCount: 0,
-        factsCount: 0,
-        preferencesCount: 0,
-        conceptsCount: 0,
-        filesWritten: @[],
-      ))
-    
-    let conversationText = formatConversationForMemory(history)
-    let req = CompletionRequest(
-      system: SilentMemorySystemPrompt,
-      messages: @[ChatMessage(role: roleUser, text: conversationText)],
-      maxTokens: 2048,
-    )
-    
-    let resp = completeFn(req)
-    if resp.isErr:
-      return err("silent turn complete: " & resp.error)
-    
-    let responseText = resp.get().text
-    let parseResult = parseMemoryExtractionResponse(responseText)
-    if parseResult.isErr:
-      return err("silent turn parse: " & parseResult.error)
-    
-    var memResult = parseResult.get()
-    # In F1 without postgres, we can't store the memories persistently
-    # The LLM's extraction is still performed and logged
-    memResult.filesWritten.add("memory:extraction_only")
-    
-    ok(memResult)
+  if history.len == 0:
+    return ok(SilentMemoryResult(
+      triplesCount: 0,
+      factsCount: 0,
+      preferencesCount: 0,
+      conceptsCount: 0,
+      filesWritten: @[],
+    ))
+
+  let conversationText = formatConversationForMemory(history)
+  let req = CompletionRequest(
+    system: SilentMemorySystemPrompt,
+    messages: @[ChatMessage(role: roleUser, text: conversationText)],
+    maxTokens: 2048,
+  )
+
+  let resp = completeFn(req)
+  if resp.isErr:
+    return err("silent turn complete: " & resp.error)
+
+  let responseText = resp.get().text
+  let parseResult = parseMemoryExtractionResponse(responseText)
+  if parseResult.isErr:
+    return err("silent turn parse: " & parseResult.error)
+
+  var memResult = parseResult.get()
+  # In F1 without postgres, we can't store the memories persistently
+  # The LLM's extraction is still performed and logged
+  memResult.filesWritten.add("memory:extraction_only")
+
+  ok(memResult)
