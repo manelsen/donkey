@@ -475,3 +475,28 @@ inside a `func`.
 - `HttpResponse` is NOT re-exported by `std_http` — must import `ports/http` directly when referencing it in signatures
 - The pure parser (`telegram_pure`) cleanly replaces the manual for-loop in `receive`; adapter only handles side-effectful work (ack, file URL resolution, identity)
 ---
+
+## 2026-03-22 - US-027
+- Implemented pure DingTalk Stream mode parser
+
+**What was implemented:**
+- Added `ckDingTalk` to `ChannelKind` enum in `src/donkey/core/types.nim` with `"dingtalk"` string representation
+- Created `src/donkey/domain/channels/dingtalk_pure.nim` — pure parser for DingTalk Stream SDK payloads
+- Created `tests/domain/channels/t_dingtalk_pure.nim` — 20 tests covering all message types and edge cases
+- Updated `src/donkey/ports/channel.nim` — added `dingtalk*` field to `OutboundChannelPorts`
+- Updated `src/donkey/app/outbound_runtime.nim` — added `ckDingTalk` to all case branches
+- Updated `src/donkey/core/outbound/outbound.nim` — added `ckDingTalk` to `isImplementedOutboundChannel`
+
+**Files changed:**
+- `src/donkey/core/types.nim`
+- `src/donkey/domain/channels/dingtalk_pure.nim` (new)
+- `tests/domain/channels/t_dingtalk_pure.nim` (new)
+- `src/donkey/ports/channel.nim`
+- `src/donkey/app/outbound_runtime.nim`
+- `src/donkey/core/outbound/outbound.nim`
+
+**Learnings:**
+- DingTalk Stream SDK payload: text in `text.content` for text/markdown types; media in JSON-encoded `content` field with `downloadCode` key for picture/audio/video/file
+- The `extractJsonStr` pattern (pure string scanner for JSON-encoded string fields) is reusable across multiple channel parsers — each module implements its own copy to stay self-contained (no cross-channel imports)
+- Adding a new `ChannelKind` requires updating: `types.nim` (enum + `$`), `ports/channel.nim` (OutboundChannelPorts field), `outbound_runtime.nim` (3 case branches), `outbound.nim` (set literal in `isImplementedOutboundChannel`)
+---

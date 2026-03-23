@@ -35,6 +35,7 @@ type
     slack*:     OutboundChannelPort
     whatsapp*:  OutboundChannelPort
     signal*:    OutboundChannelPort
+    dingtalk*:  OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 
