@@ -10,6 +10,7 @@
 
 import std/[locks, strformat, times]
 import ./types
+export types
 
 type
   LogEntry* = object
@@ -79,12 +80,17 @@ proc ringSnapshot*(n: int): seq[RingEntry] {.gcsafe.} =
 
 # ── human-friendly mode (TTY) ────────────────────────────────────────────────
 
-var gHumanLog {.global.}: bool = false
+var gHumanLog   {.global.}: bool = false
+var gColorLog   {.global.}: bool = false
 
 proc enableHumanLog*() =
-  ## Switch stderr output to compact, colored human format.
-  ## Call once from main when stderr is a TTY.
+  ## Switch stderr to compact human format. Call once from main.
+  ## Colors are enabled separately only when stderr is a TTY.
   {.cast(gcsafe).}: gHumanLog = true
+
+proc enableColorLog*() =
+  ## Enable ANSI colors in human format. Call when stderr is a TTY.
+  {.cast(gcsafe).}: gColorLog = true
 
 proc shortenUuids(s: string): string =
   ## Replace 36-char UUID strings with [first8chars].
@@ -120,17 +126,20 @@ const
 proc humanLine(e: LogEntry) =
   let ts  = if e.timestamp.len >= 19: e.timestamp[11 .. 18] else: e.timestamp
   let msg = shortenUuids(e.message)
-  case e.level
-  of lvlDebug:
-    stderr.writeLine(Dim & ts & "  · " & msg & Rst)
-  of lvlInfo:
-    stderr.writeLine(Dim & ts & Rst & "  " & msg)
-  of lvlWarn:
-    stderr.writeLine(Dim & ts & Rst & "  " & Yel & "!" & Rst & " " & msg)
-  of lvlError:
-    stderr.writeLine(Dim & ts & Rst & "  " & Red & "x" & Rst & " " & msg)
-  of lvlFatal:
-    stderr.writeLine(Dim & ts & Rst & "  " & Mag & "!!" & Rst & " " & msg)
+  if gColorLog:
+    case e.level
+    of lvlDebug: stderr.writeLine(Dim & ts & "  · " & msg & Rst)
+    of lvlInfo:  stderr.writeLine(Dim & ts & Rst & "  " & msg)
+    of lvlWarn:  stderr.writeLine(Dim & ts & Rst & "  " & Yel & "!" & Rst & " " & msg)
+    of lvlError: stderr.writeLine(Dim & ts & Rst & "  " & Red & "x" & Rst & " " & msg)
+    of lvlFatal: stderr.writeLine(Dim & ts & Rst & "  " & Mag & "!!" & Rst & " " & msg)
+  else:
+    case e.level
+    of lvlDebug: stderr.writeLine(ts & "  · " & msg)
+    of lvlInfo:  stderr.writeLine(ts & "  " & msg)
+    of lvlWarn:  stderr.writeLine(ts & "  ! " & msg)
+    of lvlError: stderr.writeLine(ts & "  x " & msg)
+    of lvlFatal: stderr.writeLine(ts & "  !! " & msg)
 
 # ── default sink ──────────────────────────────────────────────────────────────
 
