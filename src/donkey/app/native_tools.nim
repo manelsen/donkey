@@ -443,8 +443,7 @@ proc performFetch*(http: httpPort.HttpRuntimePort;
   try:
     if not isAllowedPublicUrl(url, allowRules, fallbackAllowlist):
       return buildUrlAccessError(url, allowRules, fallbackAllowlist, policyLabel)
-    var resp: Result[HttpResponse, string]
-    {.cast(gcsafe).}: resp = http.get(url, @[])
+    let resp = http.get(url, @[])
     if resp.isErr: return "Error: " & resp.error
     let r = resp.value
     if r.status < 200 or r.status >= 300:
@@ -482,9 +481,8 @@ proc performWebSearch*(query: string; count: int;
       ("Accept",               "application/json"),
     ]
     var resp: Result[HttpResponse, string]
-    {.cast(gcsafe).}:
-      try: resp = http.get(url, headers)
-      except Exception as e: return "Error: " & e.msg
+    try: resp = http.get(url, headers)
+    except Exception as e: return "Error: " & e.msg
     if resp.isErr: return "Error: " & resp.error
     if resp.value.status != 200:
       return "Brave API error " & $resp.value.status
@@ -960,8 +958,7 @@ proc executeLegacyNativeTool(tc: ToolCallRequest;
     let rules = toolWebRules(ctx, WebFetchToolName)
     if not isAllowedPublicUrl(url, rules, ctx.webAllowlist):
       return handledError(buildUrlAccessError(url, rules, ctx.webAllowlist, WebFetchToolName))
-    var fetched = ""
-    {.cast(gcsafe).}: fetched = performFetch(
+    let fetched = performFetch(
       ctx.http, url, maxCh, rules, ctx.webAllowlist, WebFetchToolName)
     return handledOutcome(fetched)
 
@@ -980,9 +977,8 @@ proc executeShellNativeTool(tc: ToolCallRequest;
   of BashToolName:
     let bashCtx = parseBashContext(j).valueOr:
       return handledError(error)
-    var r = ""
-    {.cast(gcsafe).}: r = sandboxBash(bashCtx.command, ctx.paddockDir,
-                                       ctx.sandboxMode, ctx.sandboxImage)
+    let r = sandboxBash(bashCtx.command, ctx.paddockDir,
+                        ctx.sandboxMode, ctx.sandboxImage)
     return handledOutcome(r)
 
   of ReadFileToolName:
@@ -1013,8 +1009,7 @@ proc executeShellNativeTool(tc: ToolCallRequest;
   of FindToolName:
     let findCtx = parseFindContext(j, ctx.paddockDir).valueOr:
       return handledError(error)
-    var r = ""
-    {.cast(gcsafe).}: r = performFind(
+    let r = performFind(
       findCtx.path,
       findCtx.pattern,
       findCtx.kind,
@@ -1025,8 +1020,7 @@ proc executeShellNativeTool(tc: ToolCallRequest;
   of GrepToolName:
     let grepCtx = parseGrepContext(j, ctx.paddockDir).valueOr:
       return handledError(error)
-    var r = ""
-    {.cast(gcsafe).}: r = performGrep(
+    let r = performGrep(
       grepCtx.pattern,
       grepCtx.path,
       grepCtx.recursive,
@@ -1050,8 +1044,7 @@ proc executeWebNativeTool(tc: ToolCallRequest;
     let fetchCtx = parseFetchContext(j, FetchDefaultMax).valueOr:
       return handledError(error)
     let rules = toolWebRules(ctx, FetchToolName)
-    var r = ""
-    {.cast(gcsafe).}: r = performFetch(
+    let r = performFetch(
       ctx.http, fetchCtx.url, fetchCtx.maxCh, rules, ctx.webAllowlist, FetchToolName)
     return handledOutcome(r)
 
@@ -1059,8 +1052,7 @@ proc executeWebNativeTool(tc: ToolCallRequest;
     let searchCtx = parseWebSearchContext(j).valueOr:
       return handledError(error)
     let rules = toolWebRules(ctx, WebSearchToolName)
-    var r = ""
-    {.cast(gcsafe).}: r = performWebSearch(
+    let r = performWebSearch(
       searchCtx.query, searchCtx.count, ctx.braveApiKey, ctx.http, rules, ctx.webAllowlist)
     return handledOutcome(r)
 
@@ -1087,15 +1079,13 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
   of RenderMermaidToolName:
     let mermaidCtx = parseMermaidContext(j).valueOr:
       return handledError(error)
-    var r = ""
-    {.cast(gcsafe).}: r = performRenderMermaid(mermaidCtx.diagram)
+    let r = performRenderMermaid(mermaidCtx.diagram)
     return handledOutcome(r)
 
   of InspectImageToolName:
     let inspectCtx = parseInspectImageContext(j).valueOr:
       return handledError(error)
-    var r = ""
-    {.cast(gcsafe).}: r = performInspectImage(inspectCtx.path, inspectCtx.prompt, ctx.completeFn)
+    let r = performInspectImage(inspectCtx.path, inspectCtx.prompt, ctx.completeFn)
     return handledOutcome(r)
 
   else:
@@ -1129,8 +1119,7 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
   of TodoWriteToolName:
     let ops = parseTodoOps(j).valueOr:
       return handledError(error)
-    var r = ""
-    {.cast(gcsafe).}: r = applyTodoOps(state, ops)
+    let r = applyTodoOps(state, ops)
     return handledOutcome(r)
 
   of CheckpointToolName:

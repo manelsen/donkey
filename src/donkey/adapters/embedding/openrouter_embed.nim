@@ -28,7 +28,7 @@ proc newOpenRouterEmbeddingAdapter*(apiKey: string;
     http:   newStdHttpAdapter(),
   )
 
-proc embed*(a: OpenRouterEmbeddingAdapter; text: string): seq[float32] =
+proc embed*(a: OpenRouterEmbeddingAdapter; text: string): seq[float32] {.gcsafe.} =
   ## Returns 4096-dim embedding vector, or empty seq on error.
   let body = $ %* {"model": a.model, "input": text}
   let headers = @[

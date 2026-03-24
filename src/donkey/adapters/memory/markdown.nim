@@ -63,7 +63,7 @@ proc ensurePaddock*(a: MarkdownMemoryAdapter; userId: UserId): Result[void, stri
   except CatchableError as e:
     err("ensurePaddock: " & e.msg)
 
-proc hasProfile*(a: MarkdownMemoryAdapter; userId: UserId): Result[bool, string] =
+proc hasProfile*(a: MarkdownMemoryAdapter; userId: UserId): Result[bool, string] {.gcsafe.} =
   ## Returns true iff USER.md exists for this user.
   let path = a.userMdPath(userId)
   if fileExists(path):
@@ -89,7 +89,7 @@ proc writeFileResult*(path, content: string): Result[void, string] =
   except CatchableError as e:
     err("writeFile: " & e.msg)
 
-proc loadContext*(a: MarkdownMemoryAdapter; userId: UserId): Result[UserContext, string] =
+proc loadContext*(a: MarkdownMemoryAdapter; userId: UserId): Result[UserContext, string] {.gcsafe.} =
   ## Loads USER.md + MEMORY.md + PREFERENCES.md into a UserContext.
   ## Chains three read operations via >>=.
   let userMdPath = a.userMdPath(userId)
@@ -111,7 +111,7 @@ proc loadContext*(a: MarkdownMemoryAdapter; userId: UserId): Result[UserContext,
     preferencesMd: preferencesResult.get(),
   ))
 
-proc saveUserMd*(a: MarkdownMemoryAdapter; userId: UserId; content: string): Result[void, string] =
+proc saveUserMd*(a: MarkdownMemoryAdapter; userId: UserId; content: string): Result[void, string] {.gcsafe.} =
   ## Overwrites USER.md for the given user.
   let ensureResult = a.ensurePaddock(userId)
   if ensureResult.isErr:
@@ -121,7 +121,7 @@ proc saveUserMd*(a: MarkdownMemoryAdapter; userId: UserId; content: string): Res
     return err(writeResult.error)
   ok()
 
-proc appendMemory*(a: MarkdownMemoryAdapter; userId: UserId; text: string): Result[void, string] =
+proc appendMemory*(a: MarkdownMemoryAdapter; userId: UserId; text: string): Result[void, string] {.gcsafe.} =
   ## Appends a block of text to MEMORY.md (creates if absent).
   let ensureResult = a.ensurePaddock(userId)
   if ensureResult.isErr:
@@ -138,7 +138,7 @@ proc appendMemory*(a: MarkdownMemoryAdapter; userId: UserId; text: string): Resu
     return err(writeResult.error)
   ok()
 
-proc savePreferences*(a: MarkdownMemoryAdapter; userId: UserId; content: string): Result[void, string] =
+proc savePreferences*(a: MarkdownMemoryAdapter; userId: UserId; content: string): Result[void, string] {.gcsafe.} =
   ## Overwrites PREFERENCES.md.
   let ensureResult = a.ensurePaddock(userId)
   if ensureResult.isErr:
@@ -148,7 +148,7 @@ proc savePreferences*(a: MarkdownMemoryAdapter; userId: UserId; content: string)
     return err(writeResult.error)
   ok()
 
-proc clearMemory*(a: MarkdownMemoryAdapter; userId: UserId): Result[void, string] =
+proc clearMemory*(a: MarkdownMemoryAdapter; userId: UserId): Result[void, string] {.gcsafe.} =
   ## Clears MEMORY.md for this user (irreversible).
   let ensureResult = a.ensurePaddock(userId)
   if ensureResult.isErr:
@@ -161,7 +161,7 @@ proc clearMemory*(a: MarkdownMemoryAdapter; userId: UserId): Result[void, string
   ok()
 
 proc saveSession*(a: MarkdownMemoryAdapter; userId: UserId;
-                  sessionId: string; history: ConversationHistory): Result[void, string] =
+                  sessionId: string; history: ConversationHistory): Result[void, string] {.gcsafe.} =
   ## Persists a conversation as JSONL: one JSON object per turn.
   ## Path: {paddock}/sessions/{sessionId}.jsonl
   ## Skips sessions with fewer than 2 turns.
@@ -279,7 +279,7 @@ proc hasIdentity*(a: MarkdownMemoryAdapter; userId: UserId): Result[bool, string
   ok(false)
 
 proc saveIdentity*(a: MarkdownMemoryAdapter; userId: UserId;
-                   traits: PersonalityTraits; name: string): Result[void, string] =
+                   traits: PersonalityTraits; name: string): Result[void, string] {.gcsafe.} =
   ## Merges agent identity into PREFERENCES.md (TOML key=value format).
   let ensureResult = a.ensurePaddock(userId)
   if ensureResult.isErr:
@@ -303,7 +303,7 @@ proc saveIdentity*(a: MarkdownMemoryAdapter; userId: UserId;
     return err(writeResult.error)
   ok()
 
-proc loadIdentity*(a: MarkdownMemoryAdapter; userId: UserId): Result[(string, PersonalityTraits), string] =
+proc loadIdentity*(a: MarkdownMemoryAdapter; userId: UserId): Result[(string, PersonalityTraits), string] {.gcsafe.} =
   ## Returns (agent_name, PersonalityTraits) from PREFERENCES.md.
   ## Empty strings when not set.
   let path = a.preferencesMdPath(userId)
@@ -330,7 +330,7 @@ proc loadIdentity*(a: MarkdownMemoryAdapter; userId: UserId): Result[(string, Pe
 
 proc scheduleReminder*(a: MarkdownMemoryAdapter; userId: UserId;
                        channel: string; scheduledAt: int64;
-                       message: string): Result[string, string] =
+                       message: string): Result[string, string] {.gcsafe.} =
   ## Writes a reminder JSON file. Returns the reminder id.
   let ensureResult = a.ensurePaddock(userId)
   if ensureResult.isErr:
@@ -354,7 +354,7 @@ proc scheduleReminder*(a: MarkdownMemoryAdapter; userId: UserId;
     return err(writeResult.error)
   ok(id)
 
-proc loadDueReminders*(a: MarkdownMemoryAdapter): Result[seq[JsonNode], string] =
+proc loadDueReminders*(a: MarkdownMemoryAdapter): Result[seq[JsonNode], string] {.gcsafe.} =
   ## Scans ALL paddocks for reminders whose scheduledAt <= now (UTC seconds).
   let now = getTime().toUnix()
   if not dirExists(a.paddocksDir):
@@ -375,7 +375,7 @@ proc loadDueReminders*(a: MarkdownMemoryAdapter): Result[seq[JsonNode], string] 
         discard
   ok(due)
 
-proc deleteReminder*(a: MarkdownMemoryAdapter; userId: UserId; reminderId: string): Result[void, string] =
+proc deleteReminder*(a: MarkdownMemoryAdapter; userId: UserId; reminderId: string): Result[void, string] {.gcsafe.} =
   ## Deletes a reminder file by id.
   let path = a.reminderDir(userId) / reminderId & ".json"
   if fileExists(path):
@@ -391,46 +391,22 @@ proc deleteReminder*(a: MarkdownMemoryAdapter; userId: UserId; reminderId: strin
 
 proc toRuntimePort*(a: MarkdownMemoryAdapter): MemoryRuntimePort =
   MemoryRuntimePort(
-    hasProfile: proc(userId: UserId): bool {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.hasProfile(userId).valueOr(false)
-    ,
-    loadContext: proc(userId: UserId): UserContext {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.loadContext(userId).valueOr(
-        UserContext(userId: userId))
-    ,
-    saveUserMd: proc(userId: UserId; content: string) {.gcsafe.} =
-      {.cast(gcsafe).}: discard a.saveUserMd(userId, content)
-    ,
-    appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
-      {.cast(gcsafe).}: discard a.appendMemory(userId, text)
-    ,
-    savePreferences: proc(userId: UserId; content: string) {.gcsafe.} =
-      {.cast(gcsafe).}: discard a.savePreferences(userId, content)
-    ,
-    clearMemory: proc(userId: UserId) {.gcsafe.} =
-      {.cast(gcsafe).}: discard a.clearMemory(userId)
-    ,
-    saveSession: proc(userId: UserId; sessionId: string; history: ConversationHistory)
-                      {.gcsafe.} =
-      {.cast(gcsafe).}: discard a.saveSession(userId, sessionId, history)
-    ,
-    saveIdentity: proc(userId: UserId; traits: PersonalityTraits; name: string)
-                       {.gcsafe.} =
-      {.cast(gcsafe).}: discard a.saveIdentity(userId, traits, name)
-    ,
-    loadIdentity: proc(userId: UserId): (string, PersonalityTraits) {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.loadIdentity(userId).valueOr(("", PersonalityTraits()))
-    ,
-    paddockDir: proc(userId: UserId): string {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.paddockDir(userId)
-    ,
-    scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string
-                           {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.scheduleReminder(userId, channel, scheduledAt, message).valueOr("")
-    ,
-    loadDueReminders: proc(): seq[JsonNode] {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.loadDueReminders().valueOr(@[])
-    ,
-    deleteReminder: proc(userId: UserId; reminderId: string) {.gcsafe.} =
-      {.cast(gcsafe).}: discard a.deleteReminder(userId, reminderId)
+    hasProfile:       proc(userId: UserId): bool {.gcsafe.} = a.hasProfile(userId).valueOr(false),
+    loadContext:      proc(userId: UserId): UserContext {.gcsafe.} =
+                        a.loadContext(userId).valueOr(UserContext(userId: userId)),
+    saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} = discard a.saveUserMd(userId, content),
+    appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = discard a.appendMemory(userId, text),
+    savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = discard a.savePreferences(userId, content),
+    clearMemory:      proc(userId: UserId) {.gcsafe.} = discard a.clearMemory(userId),
+    saveSession:      proc(userId: UserId; sessionId: string; history: ConversationHistory) {.gcsafe.} =
+                        discard a.saveSession(userId, sessionId, history),
+    saveIdentity:     proc(userId: UserId; traits: PersonalityTraits; name: string) {.gcsafe.} =
+                        discard a.saveIdentity(userId, traits, name),
+    loadIdentity:     proc(userId: UserId): (string, PersonalityTraits) {.gcsafe.} =
+                        a.loadIdentity(userId).valueOr(("", PersonalityTraits())),
+    paddockDir:       proc(userId: UserId): string {.gcsafe.} = a.paddockDir(userId),
+    scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string {.gcsafe.} =
+                        a.scheduleReminder(userId, channel, scheduledAt, message).valueOr(""),
+    loadDueReminders: proc(): seq[JsonNode] {.gcsafe.} = a.loadDueReminders().valueOr(@[]),
+    deleteReminder:   proc(userId: UserId; reminderId: string) {.gcsafe.} = discard a.deleteReminder(userId, reminderId),
   )

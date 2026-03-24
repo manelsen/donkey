@@ -322,16 +322,17 @@ proc wechatWebhookThread(args: WeChatWebhookArgs) {.thread.} =
       discard
     try: client.close() except CatchableError: discard
 
-proc startWebhook*(a: WeChatAdapter; port: Port) =
+proc startWebhook*(a: WeChatAdapter; port: Port) {.gcsafe.} =
   ## Starts the embedded WeChat webhook HTTP server on the given port.
   ## Safe to call multiple times — only the first call has effect.
-  if gWeChatWebhookStarted:
-    return
-  gWeChatEvents.open()
-  gWeChatEventsOpen    = true
-  gWeChatWebhookStarted = true
-  createThread(gWeChatWebhookThread, wechatWebhookThread,
-               WeChatWebhookArgs(port: port.int, token: a.callbackToken))
+  {.cast(gcsafe).}:
+    if gWeChatWebhookStarted:
+      return
+    gWeChatEvents.open()
+    gWeChatEventsOpen    = true
+    gWeChatWebhookStarted = true
+    createThread(gWeChatWebhookThread, wechatWebhookThread,
+                 WeChatWebhookArgs(port: port.int, token: a.callbackToken))
 
 proc tryRecvEvent*(a: var WeChatAdapter): (bool, WeChatEvent) =
   if gWeChatEventsOpen:

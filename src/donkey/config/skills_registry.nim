@@ -102,12 +102,13 @@ proc saveSkillEntry*(path: string; m: SkillManifest): Result[void, string] =
     f.writeLine("permissions = " & tomlStrArray(m.permissions))
   ok()
 
-proc loadSkillRegistry*(path: string): seq[SkillManifest] =
+proc loadSkillRegistry*(path: string): seq[SkillManifest] {.gcsafe.} =
   ## Reads all [[skill]] entries from the TOML file at `path`.
   ## Returns empty seq if file does not exist or contains no entries.
   if not fileExists(path):
     return @[]
-  let t = parsetoml.parseFile(path)
+  var t: parsetoml.TomlValueRef
+  {.cast(gcsafe).}: t = parsetoml.parseFile(path)
   if not t.hasKey("skill"):
     return @[]
   for node in t["skill"].getElems():
@@ -123,7 +124,7 @@ proc loadSkillRegistry*(path: string): seq[SkillManifest] =
     if m.name.len > 0 and m.script.len > 0:
       result.add(m)
 
-proc loadUserSkills*(skillsDir: string): seq[SkillManifest] =
+proc loadUserSkills*(skillsDir: string): seq[SkillManifest] {.gcsafe.} =
   ## Loads skills from a user-specific skills directory.
   ## Expects a skills.toml inside skillsDir, or individual .toml files.
   let tomlPath = skillsDir / "skills.toml"
@@ -133,7 +134,7 @@ proc loadUserSkills*(skillsDir: string): seq[SkillManifest] =
   ## stored alongside. For now: if no skills.toml, return empty.
   return @[]
 
-proc mergeSkills*(base, extra: seq[SkillManifest]): seq[SkillManifest] =
+proc mergeSkills*(base, extra: seq[SkillManifest]): seq[SkillManifest] {.gcsafe.} =
   ## Merges two skill lists. Entries in `extra` override entries in `base`
   ## by name. Returns a combined list with overrides applied.
   result = base

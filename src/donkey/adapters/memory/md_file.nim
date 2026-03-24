@@ -44,47 +44,22 @@ proc deleteReminder*(a: MdFileAdapter; userId: UserId; reminderId: string) {.gcs
 
 proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
   MemoryRuntimePort(
-    hasProfile: proc(userId: UserId): bool {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.hasProfile(userId)
-    ,
-    loadContext: proc(userId: UserId): UserContext {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.loadContext(userId)
-    ,
-    saveUserMd: proc(userId: UserId; content: string) {.gcsafe.} =
-      {.cast(gcsafe).}: a.saveUserMd(userId, content)
-    ,
-    appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
-      {.cast(gcsafe).}: a.appendMemory(userId, text)
-    ,
-    savePreferences: proc(userId: UserId; content: string) {.gcsafe.} =
-      {.cast(gcsafe).}: a.savePreferences(userId, content)
-    ,
-    clearMemory: proc(userId: UserId) {.gcsafe.} =
-      {.cast(gcsafe).}: a.clearMemory(userId)
-    ,
-    saveSession: proc(userId: UserId; sessionId: string; history: ConversationHistory)
-                      {.gcsafe.} =
-      {.cast(gcsafe).}: a.saveSession(userId, sessionId, history)
-    ,
-    saveIdentity: proc(userId: UserId; traits: PersonalityTraits; name: string)
-                       {.gcsafe.} =
-      {.cast(gcsafe).}: a.saveIdentity(userId, traits, name)
-    ,
-    loadIdentity: proc(userId: UserId): (string, PersonalityTraits) {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.loadIdentity(userId)
-    ,
-    paddockDir: proc(userId: UserId): string {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.paddockDir(userId)
-    ,
-    scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string
-                           {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.scheduleReminder(userId, channel, scheduledAt, message)
-    ,
-    loadDueReminders: proc(): seq[JsonNode] {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.loadDueReminders()
-    ,
-    deleteReminder: proc(userId: UserId; reminderId: string) {.gcsafe.} =
-      {.cast(gcsafe).}: a.deleteReminder(userId, reminderId)
+    hasProfile:       proc(userId: UserId): bool {.gcsafe.} = a.hasProfile(userId),
+    loadContext:      proc(userId: UserId): UserContext {.gcsafe.} = a.loadContext(userId),
+    saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} = a.saveUserMd(userId, content),
+    appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = a.appendMemory(userId, text),
+    savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = a.savePreferences(userId, content),
+    clearMemory:      proc(userId: UserId) {.gcsafe.} = a.clearMemory(userId),
+    saveSession:      proc(userId: UserId; sessionId: string; history: ConversationHistory) {.gcsafe.} =
+                        a.saveSession(userId, sessionId, history),
+    saveIdentity:     proc(userId: UserId; traits: PersonalityTraits; name: string) {.gcsafe.} =
+                        a.saveIdentity(userId, traits, name),
+    loadIdentity:     proc(userId: UserId): (string, PersonalityTraits) {.gcsafe.} = a.loadIdentity(userId),
+    paddockDir:       proc(userId: UserId): string {.gcsafe.} = a.paddockDir(userId),
+    scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string {.gcsafe.} =
+                        a.scheduleReminder(userId, channel, scheduledAt, message),
+    loadDueReminders: proc(): seq[JsonNode] {.gcsafe.} = a.loadDueReminders(),
+    deleteReminder:   proc(userId: UserId; reminderId: string) {.gcsafe.} = a.deleteReminder(userId, reminderId),
   )
 
 # ── path helpers ──────────────────────────────────────────────────────────────

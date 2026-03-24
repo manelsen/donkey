@@ -38,8 +38,7 @@ proc runMemoryAgent*(inbox:     AsyncQueue[AgentMessage];
           ## Semantic search enrichment: if searchFn and a query are available,
           ## replace raw MEMORY.md with the top-k relevant hits.
           if searchFn != nil and msg.payload.len > 0:
-            {.cast(gcsafe).}:
-              let hits = searchFn(userId, msg.payload, 8)
+            let hits = searchFn(userId, msg.payload, 8)
             if hits.len > 0:
               var lines: seq[string]
               for h in hits:

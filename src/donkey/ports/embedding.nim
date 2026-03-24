@@ -6,7 +6,7 @@
 import ../core/pipeops
 
 type
-  EmbedFn* = proc(text: string): seq[float32]
+  EmbedFn* = proc(text: string): seq[float32] {.gcsafe.}
   ## Closure form — same pattern as CompleteFn. Embeddings never fail
   ## in the interface (caller receives empty slice on error).
 
