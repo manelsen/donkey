@@ -427,3 +427,18 @@
 
 ---
 
+## 2026-03-23 (US-068)
+- Implemented `infra/sandbox/limits.nim` — OS resource limit wrappers using Linux setrlimit(2). Provides RLIMIT_CPU, RLIMIT_AS (memory), RLIMIT_NPROC, RLIMIT_FSIZE, RLIMIT_NOFILE setters and getters returning Result[void, string]. Includes snapshotLimits, applyLimits, and convenience constructors (cpuSeconds, memBytes, nprocCount, fsizeBytes, nofileCount).
+- Created `tests/infra/sandbox/t_limits.nim` with 48 tests covering all functions.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all`.
+- Files changed: `src/donkey/infra/sandbox/limits.nim` (new), `tests/infra/sandbox/t_limits.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - Nim's `RLimit` type uses `int` for `rlim_cur`/`rlim_max` (not `rlim_t`) — RLIM_INFINITY is represented as -1
+  - `posix` module from stdlib provides `setrlimit`/`getrlimit` procs — no external dependencies needed
+  - `distinct` types need explicit `==` operators to compare values — they don't inherit from base type
+  - `proc` (not `func`) must be used for functions that call syscalls since they access `errno` global
+  - Anonymous `func` lambdas in `>>=` chains cannot call `proc` functions — use explicit proc callbacks or sequential if/return
+  - `CurrentLimits.$` must wrap fields in limit types to call the correct `$` formatter
+
+---
