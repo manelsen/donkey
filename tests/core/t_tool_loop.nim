@@ -131,6 +131,21 @@ suite "core tool loop decisions":
     check plan.progressText.contains("search")
     check plan.progressText.contains("[3]")
 
+  test "withStreamFinalText sets wasStreamed = true":
+    let state = newToolLoopState(newHistory())
+    let next = withStreamFinalText("pong", state)
+    check next.finalText == "pong"
+    check next.wasStreamed
+    check next.done
+
+  test "withCompletionResult does NOT set wasStreamed":
+    let state = newToolLoopState(newHistory())
+    let comp = CompletionHandlingResult(finalText: "pong", done: true)
+    let next = withCompletionResult(comp, state)
+    check next.finalText == "pong"
+    check not next.wasStreamed
+    check next.done
+
   test "tool batch state transitions stay pure":
     let tc = ToolCallRequest(id: "1", name: "search", inputJson: """{"q":"nim"}""")
     var state = newToolBatchState(newHistory(), 0, @[])
