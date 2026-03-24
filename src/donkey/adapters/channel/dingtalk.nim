@@ -214,6 +214,51 @@ proc send*(a: var DingTalkAdapter; msg: OutboundMessage): Result[void, string] =
     return err("DingTalkAdapter.send: no DingTalk id for user " & $msg.userId)
   a.sendToRawId(rawId, msg)
 
+func buildActionCardBody(robotCode, rawId, text: string;
+                         buttons: seq[seq[(string, string)]]): Result[JsonNode, string] =
+  ## Builds a DingTalk ActionCard message body.
+  var btns = newJArray()
+  for row in buttons:
+    for (label, data) in row:
+      btns.add(%* {"title": label, "actionURL": "dtcallback://" & data})
+
+  let msgParam = %* {
+    "title": "Donkey Interaction",
+    "text":  text,
+    "btns":  btns,
+    "btnOrientation": "1",
+  }
+  let msgParamStr = $msgParam
+
+  if rawId.startsWith("conv:"):
+    let convId = rawId["conv:".len .. ^1]
+    return ok(%* {
+      "robotCode":          robotCode,
+      "openConversationId": convId,
+      "msgKey":             "sampleActionCard",
+      "msgParam":           msgParamStr,
+    })
+  ok(%* {
+    "robotCode": robotCode,
+    "userIds":   [rawId],
+    "msgKey":    "sampleActionCard",
+    "msgParam":  msgParamStr,
+  })
+
+proc sendKeyboard*(a: var DingTalkAdapter; userId: UserId;
+                   text: string;
+                   buttons: seq[seq[(string, string)]]): Result[void, string] =
+  ## Sends an ActionCard with buttons to the user.
+  let rawId = a.resolver.reverseChannel(userId, ckDingTalk)
+  if rawId.len == 0:
+    return err("DingTalkAdapter.sendKeyboard: no id for " & $userId)
+  let token = ? a.ensureAccessToken()
+  let url   = ? buildSendUrl(a.resolvedApiBase(), rawId)
+  let body  = ? buildActionCardBody(a.robotCode, rawId, text, buttons)
+  let hdrs  = @[dtTokenHeader(token), ("Content-Type", "application/json")]
+  discard ? (a.http.post(url, $body, hdrs) >>= parseDtBody)
+  ok()
+
 proc sendReturnId*(a: var DingTalkAdapter;
                    msg: OutboundMessage): Result[string, string] =
   ## Sends a message and returns the processQueryKey from the API response.
