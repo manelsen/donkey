@@ -395,6 +395,36 @@ func buildStartIntroText*(): string =
   "Envie qualquer mensagem para começarmos.\n" &
   "Use /help para ver os comandos disponíveis."
 
+func buildHelpPages*(): seq[(string, string)] =
+  ## Returns (title, body) per page for paginated help embeds (Discord).
+  @[
+    ("Conversa",
+      "`/start` — apresentação\n" &
+      "`/help` — esta mensagem\n" &
+      "`/reset` — reinicia a conversa atual\n" &
+      "`/memory` — exibe memórias salvas\n" &
+      "`/forget` — apaga as memórias salvas"),
+    ("Modelos & Config",
+      "`/models` — seleciona o modelo de IA\n" &
+      "`/think` — nível de raciocínio\n" &
+      "`/budget` — policy de custo/qualidade\n" &
+      "`/ping` — latência do provider"),
+    ("Sistema",
+      "`/status` — snapshot da sessão atual\n" &
+      "`/debug` — ativa/desativa modo verbose\n" &
+      "`/doctor` — diagnóstico do sistema\n" &
+      "`/mycode` — gera código de linkagem cross-channel\n" &
+      "`/continue <code>` — conecta a outra sessão"),
+  ]
+
+func buildHelpNavButtons*(page, total: int): seq[seq[(string, string)]] =
+  var row: seq[(string, string)]
+  if page > 0:
+    row.add(("◀ Anterior", "help:page:" & $(page - 1)))
+  if page < total - 1:
+    row.add(("Próximo ▶", "help:page:" & $(page + 1)))
+  if row.len > 0: @[row] else: @[]
+
 func buildHelpText*(interactiveUi: bool): string =
   "Donkey — comandos disponíveis:\n\n" &
     "/start — apresentação\n" &
