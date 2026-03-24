@@ -394,3 +394,20 @@
   - ws_client is synchronous blocking — fine for tool adapters since they're proc-based (not func)
   - Nim's `discard` on `Result[T, E]` doesn't discard the value — must use `when false: discard` pattern or explicit handling
   - Lightpanda binary not installed on build machine — adapter handles gracefully with clear error message
+
+---
+
+## 2026-03-23 (US-066)
+- Implemented `core/cron.nim` — pure cron expression parsing (parseCronExpr, parseCronField, parseFieldRange), field matching (fieldMatches, matchesCron), next-run calculation (nextRun), and helper constructors (everyMinute, everyNMinutes, hourlyAt, dailyAt). ScheduledTask type with enable/disable/shouldRun.
+- Created `tests/core/t_cron.nim` with 64 tests covering all functions.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all`.
+- Files changed: `src/donkey/core/cron.nim` (new), `tests/core/t_cron.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `end` is a Nim keyword — cannot use as variable name, use `rangeEnd` instead
+  - `ok(@[])` doesn't infer type — use `let empty: seq[T] = @[]` then `ok(empty)`
+  - `dt.month` returns `Month` enum — convert to int with `dt.month.ord` for field matching
+  - `DateTime + initTimeInterval()` is effectful (proc, not func) — nextRun must be `proc`
+  - `initDateTime` in newer Nim requires 7+ args (monthday, month, year, hour, minute, second, nanosecond, zone) — pass all arguments explicitly
+  - `&"{...}"` is concatenation, not interpolation in Nim — use explicit `&` with `$` for non-strings: `"value=" & $var`
+  - `everyNMinutes(n)` must manually build step values (0, n, 2n, ...) since it doesn't use the step parser
