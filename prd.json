@@ -1216,11 +1216,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 68,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Implemented infra/sandbox/limits.nim with setrlimit wrappers for RLIMIT_CPU, RLIMIT_AS (mem), RLIMIT_NPROC, RLIMIT_FSIZE, and RLIMIT_NOFILE. Returns Result[void, string] for all setters. Provides getrlimit getters, snapshotLimits, applyLimits, and convenience constructors (cpuSeconds, memBytes, nprocCount, fsizeBytes, nofileCount). 48 tests pass."
     },
     {
       "id": "US-069",

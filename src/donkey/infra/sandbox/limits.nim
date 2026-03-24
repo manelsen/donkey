@@ -18,10 +18,19 @@ import ../../core/pipeops
 export pipeops
 
 # ── Linux rlimit constants ──────────────────────────────────────────────────────
+## RLIMIT_* resource constants from <sys/resource.h>
 
 const
-  RlimInfinity* = 0xFFFFFFFFFFFFFFFF'u64
-  ## RLIM_INFINITY — no limit (64-bit Linux)
+  RLIMIT_CPU* = 0  ## CPU time limit (seconds)
+  RLIMIT_AS*  = 9  ## Address space (bytes) — virtual memory
+  RLIMIT_NPROC* = 6 ## Max processes per user
+  RLIMIT_FSIZE* = 1 ## Max file size (bytes)
+  RLIMIT_NOFILE* = 7 ## Max open files
+
+  # In Nim's RLimit, rlim_cur/rlim_max are int.
+  # -1 represents RLIM_INFINITY (unlimited) when cast appropriately.
+  # We use a very large positive number to mean "unlimited" internally.
+  RlimInfinityInternal* = -1
 
 type
   ResourceKind* = distinct cint
@@ -53,16 +62,26 @@ type
     fsize*:  int64
     nofile*: int64
 
-# ── rlimit syscall wrappers ────────────────────────────────────────────────────
+# ── Equality operators for distinct types ──────────────────────────────────────
 
-func toRlim*(x: int64): rlim_t =
+func `==`*(a, b: CpuLimit): bool = a.int64 == b.int64
+func `==`*(a, b: MemLimit): bool = a.int64 == b.int64
+func `==`*(a, b: NprocLimit): bool = a.int64 == b.int64
+func `==`*(a, b: FsizeLimit): bool = a.int64 == b.int64
+func `==`*(a, b: NofileLimit): bool = a.int64 == b.int64
+
+# ── Conversion helpers ─────────────────────────────────────────────────────────
+
+func toRlim*(x: int64): int =
+  ## Convert int64 limit to RLimit int field. 0 means unlimited.
   if x <= 0:
-    RlimInfinity
+    RlimInfinityInternal
   else:
-    x.rlim_t
+    x.int
 
-func fromRlim*(x: rlim_t): int64 =
-  if x == RlimInfinity:
+func fromRlim*(x: int): int64 =
+  ## Convert RLimit int field to int64. -1 (infinity) becomes 0.
+  if x == RlimInfinityInternal:
     0
   else:
     x.int64
@@ -80,90 +99,90 @@ func errnoString*(err: cint): string =
 
 # ── CPU limit ─────────────────────────────────────────────────────────────────
 
-func setrlimitCpu*(cpuSecs: CpuLimit): LimitResult =
-  var lim: rlimit
+proc setrlimitCpu*(cpuSecs: CpuLimit): LimitResult =
+  var lim: RLimit
   lim.rlim_cur = cpuSecs.int64.toRlim
   lim.rlim_max = cpuSecs.int64.toRlim
-  if setrlimit(RLIMIT_CPU, lim) < 0:
+  if setrlimit(RLIMIT_CPU.cint, lim) < 0:
     err errnoString(errno)
   else:
     ok()
 
 func getrlimitCpu*(): int64 =
-  var lim: rlimit
-  if getrlimit(RLIMIT_CPU, lim) == 0:
+  var lim: RLimit
+  if getrlimit(RLIMIT_CPU.cint, lim) == 0:
     lim.rlim_cur.fromRlim
   else:
     0
 
 # ── Memory (address space) limit ───────────────────────────────────────────────
 
-func setrlimitMem*(bytes: MemLimit): LimitResult =
-  var lim: rlimit
+proc setrlimitMem*(bytes: MemLimit): LimitResult =
+  var lim: RLimit
   lim.rlim_cur = bytes.int64.toRlim
   lim.rlim_max = bytes.int64.toRlim
-  if setrlimit(RLIMIT_AS, lim) < 0:
+  if setrlimit(RLIMIT_AS.cint, lim) < 0:
     err errnoString(errno)
   else:
     ok()
 
 func getrlimitMem*(): int64 =
-  var lim: rlimit
-  if getrlimit(RLIMIT_AS, lim) == 0:
+  var lim: RLimit
+  if getrlimit(RLIMIT_AS.cint, lim) == 0:
     lim.rlim_cur.fromRlim
   else:
     0
 
 # ── NPROC limit ────────────────────────────────────────────────────────────────
 
-func setrlimitNproc*(maxProcs: NprocLimit): LimitResult =
-  var lim: rlimit
+proc setrlimitNproc*(maxProcs: NprocLimit): LimitResult =
+  var lim: RLimit
   lim.rlim_cur = maxProcs.int64.toRlim
   lim.rlim_max = maxProcs.int64.toRlim
-  if setrlimit(RLIMIT_NPROC, lim) < 0:
+  if setrlimit(RLIMIT_NPROC.cint, lim) < 0:
     err errnoString(errno)
   else:
     ok()
 
 func getrlimitNproc*(): int64 =
-  var lim: rlimit
-  if getrlimit(RLIMIT_NPROC, lim) == 0:
+  var lim: RLimit
+  if getrlimit(RLIMIT_NPROC.cint, lim) == 0:
     lim.rlim_cur.fromRlim
   else:
     0
 
 # ── File size limit ────────────────────────────────────────────────────────────
 
-func setrlimitFsize*(bytes: FsizeLimit): LimitResult =
-  var lim: rlimit
+proc setrlimitFsize*(bytes: FsizeLimit): LimitResult =
+  var lim: RLimit
   lim.rlim_cur = bytes.int64.toRlim
   lim.rlim_max = bytes.int64.toRlim
-  if setrlimit(RLIMIT_FSIZE, lim) < 0:
+  if setrlimit(RLIMIT_FSIZE.cint, lim) < 0:
     err errnoString(errno)
   else:
     ok()
 
 func getrlimitFsize*(): int64 =
-  var lim: rlimit
-  if getrlimit(RLIMIT_FSIZE, lim) == 0:
+  var lim: RLimit
+  if getrlimit(RLIMIT_FSIZE.cint, lim) == 0:
     lim.rlim_cur.fromRlim
   else:
     0
 
 # ── NOFILE limit ──────────────────────────────────────────────────────────────
 
-func setrlimitNofile*(maxFiles: NofileLimit): LimitResult =
-  var lim: rlimit
+proc setrlimitNofile*(maxFiles: NofileLimit): LimitResult =
+  var lim: RLimit
   lim.rlim_cur = maxFiles.int64.toRlim
   lim.rlim_max = maxFiles.int64.toRlim
-  if setrlimit(RLIMIT_NOFILE, lim) < 0:
+  if setrlimit(RLIMIT_NOFILE.cint, lim) < 0:
     err errnoString(errno)
   else:
     ok()
 
 func getrlimitNofile*(): int64 =
-  var lim: rlimit
-  if getrlimit(RLIMIT_NOFILE, lim) == 0:
+  var lim: RLimit
+  if getrlimit(RLIMIT_NOFILE.cint, lim) == 0:
     lim.rlim_cur.fromRlim
   else:
     0
@@ -181,14 +200,22 @@ func snapshotLimits*(): CurrentLimits =
 
 # ── Apply a complete limit set ────────────────────────────────────────────────
 
-func applyLimits*(cpu: CpuLimit; mem: MemLimit; nproc: NprocLimit;
+proc applyLimits*(cpu: CpuLimit; mem: MemLimit; nproc: NprocLimit;
                   fsize: FsizeLimit; nofile: NofileLimit): LimitResult =
   ## Set all resource limits at once. Short-circuits on first failure.
-  cpu.setrlimitCpu() >>= func(_: void): LimitResult =
-    mem.setrlimitMem() >>= func(_: void): LimitResult =
-      nproc.setrlimitNproc() >>= func(_: void): LimitResult =
-        fsize.setrlimitFsize() >>= func(_: void): LimitResult =
-          nofile.setrlimitNofile()
+  let cpuRes = cpu.setrlimitCpu()
+  if cpuRes.isErr:
+    return err(cpuRes.error)
+  let memRes = mem.setrlimitMem()
+  if memRes.isErr:
+    return err(memRes.error)
+  let nprocRes = nproc.setrlimitNproc()
+  if nprocRes.isErr:
+    return err(nprocRes.error)
+  let fsizeRes = fsize.setrlimitFsize()
+  if fsizeRes.isErr:
+    return err(fsizeRes.error)
+  nofile.setrlimitNofile()
 
 # ── Convenience constructors ───────────────────────────────────────────────────
 
@@ -236,8 +263,8 @@ func `$`*(lim: NofileLimit): string =
   if n <= 0: "unlimited" else: $n
 
 func `$`*(limits: CurrentLimits): string =
-  "CurrentLimits(cpu=" & $limits.cpu &
-           ", mem=" & $limits.mem &
-           ", nproc=" & $limits.nproc &
-           ", fsize=" & $limits.fsize &
-           ", nofile=" & $limits.nofile & ")"
+  "CurrentLimits(cpu=" & $(CpuLimit(limits.cpu)) &
+           ", mem=" & $(MemLimit(limits.mem)) &
+           ", nproc=" & $(NprocLimit(limits.nproc)) &
+           ", fsize=" & $(FsizeLimit(limits.fsize)) &
+           ", nofile=" & $(NofileLimit(limits.nofile)) & ")"
