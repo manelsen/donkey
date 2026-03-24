@@ -55,11 +55,12 @@ proc handleConn(server: StreamServer;
 
 proc startIpcServer*(sockPath:  string;
                      statusFn:  StatusProvider;
-                     logFn:     LogProvider) =
+                     logFn:     LogProvider) {.gcsafe.} =
   ## Sets up the Unix socket server synchronously. The accept loop runs
   ## inside the Chronos event loop automatically after server.start().
-  gStatusFn = statusFn
-  gLogFn    = logFn
+  {.cast(gcsafe).}:
+    gStatusFn = statusFn
+    gLogFn    = logFn
 
   ## Remove stale socket from a previous run.
   if fileExists(sockPath):

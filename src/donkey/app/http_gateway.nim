@@ -328,10 +328,11 @@ proc startHttpGateway*(port: int;
   ## Starts the HTTP gateway on a dedicated OS thread.
   ## statusFn, logFn, and eventFn are called on each request; they must be gcsafe.
   ## inboundFn is called when POST /api/chat is received; may be nil.
-  gGatewayStatusFn  = statusFn
-  gGatewayLogFn     = logFn
-  gGatewayEventFn   = eventFn
-  gGatewayInboundFn = inboundFn
-  let args = GatewayArgs(port: port, statusFn: statusFn, logFn: logFn,
-                         eventFn: eventFn, inboundFn: inboundFn)
-  createThread(gGatewayThread, gatewayThread, args)
+  {.cast(gcsafe).}:
+    gGatewayStatusFn  = statusFn
+    gGatewayLogFn     = logFn
+    gGatewayEventFn   = eventFn
+    gGatewayInboundFn = inboundFn
+    let args = GatewayArgs(port: port, statusFn: statusFn, logFn: logFn,
+                           eventFn: eventFn, inboundFn: inboundFn)
+    createThread(gGatewayThread, gatewayThread, args)

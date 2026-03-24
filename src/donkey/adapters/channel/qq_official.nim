@@ -515,15 +515,16 @@ proc qqOfficialGatewayThread(arg: QQOfficialGatewayArgs) {.thread.} =
       sleep(backoffMs)
       backoffMs = min(backoffMs * 2, 60_000)
 
-proc startGateway*(a: QQOfficialAdapter; intents = QQOfficialDefaultIntents) =
-  if gQQOfficialGatewayStarted:
-    return
-  gQQOfficialEvents.open()
-  gQQOfficialGatewayStarted = true
-  createThread(gQQOfficialGatewayThread, qqOfficialGatewayThread, QQOfficialGatewayArgs(
-    appId: a.appId,
-    clientSecret: a.clientSecret,
-    apiBase: a.apiBase(),
-    tokenBase: a.tokenBase(),
-    intents: intents,
-  ))
+proc startGateway*(a: QQOfficialAdapter; intents = QQOfficialDefaultIntents) {.gcsafe.} =
+  {.cast(gcsafe).}:
+    if gQQOfficialGatewayStarted:
+      return
+    gQQOfficialEvents.open()
+    gQQOfficialGatewayStarted = true
+    createThread(gQQOfficialGatewayThread, qqOfficialGatewayThread, QQOfficialGatewayArgs(
+      appId: a.appId,
+      clientSecret: a.clientSecret,
+      apiBase: a.apiBase(),
+      tokenBase: a.tokenBase(),
+      intents: intents,
+    ))

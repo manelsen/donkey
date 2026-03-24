@@ -265,7 +265,7 @@ when defined(withPostgres):
   # ── SemanticMemoryPort extension ───────────────────────────────────────────
 
   proc search*(a: PostgresMemoryAdapter; userId: UserId; query: string;
-               limit: int): seq[MemoryHit] =
+               limit: int): seq[MemoryHit] {.gcsafe.} =
     ## Hybrid search: vector similarity (pgvector) + optional graph enrichment (AGE).
     let db = a.open()
     defer: db.close()

@@ -261,18 +261,17 @@ proc mergeUserSkillsIntoSession*(skillsDir: string;
                                  skillRuntimePolicyResolver: SkillRuntimePolicyResolver;
                                  sessionClients: var seq[ToolRuntimePort];
                                  sessionTools:   var seq[ToolDescription]) {.gcsafe.} =
-  {.cast(gcsafe).}:
-    let userSkills = mergeSkills(@[], loadUserSkills(skillsDir))
-    for m in userSkills:
-      let res = skillRuntimeBuilder(m.script, m.permissions, skillRuntimePolicyResolver(m.name))
-      if res.isOk:
-        for s in res.value.schemas:
-          sessionTools.add(ToolDescription(
-            name:        s.name,
-            description: s.description,
-            schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
-          ))
-        sessionClients.add(res.value.port)
+  let userSkills = mergeSkills(@[], loadUserSkills(skillsDir))
+  for m in userSkills:
+    let res = skillRuntimeBuilder(m.script, m.permissions, skillRuntimePolicyResolver(m.name))
+    if res.isOk:
+      for s in res.value.schemas:
+        sessionTools.add(ToolDescription(
+          name:        s.name,
+          description: s.description,
+          schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
+        ))
+      sessionClients.add(res.value.port)
 
 proc buildSessionCompleteFn*(memory: MemoryRuntimePort;
                              userId: UserId;

@@ -196,8 +196,7 @@ proc finalizeFreeConvoIdentity*(completeFn: CompleteFn): proc(ctx: FreeConvoCont
       if ctx.parsedTraits.isNone:
         return ok(ctx)
       var nextCtx = ctx
-      var names: seq[string]
-      {.cast(gcsafe).}: names = generateNames(completeFn, nextCtx.onboarding.traits)
+      let names = generateNames(completeFn, nextCtx.onboarding.traits)
       nextCtx.onboarding.names = names
       nextCtx.onboarding.phase = opNameChoice
       ok(nextCtx)
@@ -208,8 +207,7 @@ proc finalizeGuidedChoice*(completeFn: CompleteFn): proc(ctx: GuidedChoiceContex
       if not ctx.needsNames:
         return ok(ctx)
       var nextCtx = ctx
-      var names: seq[string]
-      {.cast(gcsafe).}: names = generateNames(completeFn, nextCtx.onboarding.traits)
+      let names = generateNames(completeFn, nextCtx.onboarding.traits)
       nextCtx.onboarding.names = names
       ok(nextCtx)
 
@@ -463,11 +461,10 @@ type StreamJob* = object
   req*: CompletionRequest
   ch*:  ptr Channel[string]
 
-proc doStreamJob*(job: StreamJob) {.thread.} =
-  {.cast(gcsafe).}:
-    discard job.fn(job.req,
-                   proc(tok: string) = job.ch[].send(tok))
-    job.ch[].send(doneSentinel)
+proc doStreamJob*(job: StreamJob) {.thread, gcsafe.} =
+  discard job.fn(job.req,
+                 proc(tok: string) {.gcsafe.} = job.ch[].send(tok))
+  job.ch[].send(doneSentinel)
 
 proc streamToOutbox(fn:        StreamFn;
                     req:       CompletionRequest;
@@ -496,6 +493,16 @@ proc streamToOutbox(fn:        StreamFn;
             userId:    userId,
             channel:   ch,
             text:      visible,
+            replyTo:   replyTo,
+            streamId:  streamId,
+            isPartial: false,
+          ))
+        else:
+          # Resposta foi apenas thinking — envia mensagem vazia para não deixar usuário sem resposta
+          await outbox.put(OutboundMessage(
+            userId:    userId,
+            channel:   ch,
+            text:      "...",
             replyTo:   replyTo,
             streamId:  streamId,
             isPartial: false,
@@ -698,8 +705,7 @@ proc prepareNormalTurn(memory: MemoryRuntimePort;
   result.obPhase = obPhase
 
   if not result.identityLoaded:
-    {.cast(gcsafe).}:
-      (result.agentName, result.agentTraits) = safeLoadIdentity(memory, uid)
+    (result.agentName, result.agentTraits) = safeLoadIdentity(memory, uid)
     result.identityLoaded = true
     result.obPhase = opDone
 
@@ -722,7 +728,7 @@ proc startTypingLoop*(typingFn: TypingFn;
   proc typingLoopProc() {.async.} =
     while flag[]:
       if typingFn != nil:
-        {.cast(gcsafe).}: typingFn(uid, channel)
+        typingFn(uid, channel)
       await sleepAsync(milliseconds(4_000))
   asyncSpawn typingLoopProc()
   flag
@@ -747,20 +753,14 @@ proc finalizeNormalTurn(globalOutbox: AsyncQueue[OutboundMessage];
       isPartial: false,
     ))
 
-  if not loopResult.done:
-    await globalOutbox.put(OutboundMessage(
-      userId: uid,
-      channel: channel,
-      text: loopResult.finalText,
-      replyTo: replyTo,
-    ))
-  elif streamFn == nil:
-    await globalOutbox.put(OutboundMessage(
-      userId: uid,
-      channel: channel,
-      text: loopResult.finalText,
-      replyTo: replyTo,
-    ))
+  if not loopResult.done or not loopResult.wasStreamed:
+    if loopResult.finalText.len > 0:
+      await globalOutbox.put(OutboundMessage(
+        userId: uid,
+        channel: channel,
+        text: loopResult.finalText,
+        replyTo: replyTo,
+      ))
 
 proc buildNativeCtx*(uid: UserId;
                      channel: ChannelKind;
@@ -981,7 +981,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
     cfgTypes.DonkeyConfig(webAllowlist: webAllowlist, toolWebPolicy: toolWebPolicy),
     tools, log,
     paddockDir, sandboxMode, sandboxImage)
-  {.cast(gcsafe).}: createDir(paddockDir)
+  createDir(paddockDir)
   result.typingLoop = startTypingLoop(typingFn, result.uid, msg.channel)
 
 proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];

@@ -35,12 +35,13 @@ proc saveToolEntry*(path: string; entry: ToolEntry) =
   argsLit.add("]")
   f.writeLine("args    = " & argsLit)
 
-proc loadToolRegistry*(path: string): seq[ToolEntry] =
+proc loadToolRegistry*(path: string): seq[ToolEntry] {.gcsafe.} =
   ## Reads all [[tool]] entries from the TOML file at `path`.
   ## Returns empty seq if file does not exist or contains no entries.
   if not fileExists(path):
     return @[]
-  let t = parsetoml.parseFile(path)
+  var t: parsetoml.TomlValueRef
+  {.cast(gcsafe).}: t = parsetoml.parseFile(path)
   if not t.hasKey("tool"):
     return @[]
   for node in t["tool"].getElems():

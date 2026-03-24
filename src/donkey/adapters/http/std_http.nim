@@ -9,32 +9,32 @@ type StdHttpAdapter* = object  ## Stateless — safe to copy into adapter struct
 
 proc newStdHttpAdapter*(): StdHttpAdapter = StdHttpAdapter()
 proc get*(a: StdHttpAdapter; url: string;
-          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string]
+          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
 proc post*(a: StdHttpAdapter; url, body: string;
-           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string]
+           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
 proc put*(a: StdHttpAdapter; url, body: string;
-          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string]
+          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
 proc patch*(a: StdHttpAdapter; url, body: string;
-            headers: seq[HttpHeader] = @[]): Result[HttpResponse, string]
+            headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
 
 proc toRuntimePort*(a: StdHttpAdapter): HttpRuntimePort =
   HttpRuntimePort(
     get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.get(url, headers)
+      result = a.get(url, headers)
     ,
     post: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.post(url, body, headers)
+      result = a.post(url, body, headers)
     ,
     put: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.put(url, body, headers)
+      result = a.put(url, body, headers)
     ,
     patch: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
-      {.cast(gcsafe).}: result = a.patch(url, body, headers)
+      result = a.patch(url, body, headers)
     ,
   )
 
 proc get*(a: StdHttpAdapter; url: string;
-          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] =
+          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
   try:
     let client = newHttpClient()
     defer: client.close()
@@ -48,7 +48,7 @@ proc get*(a: StdHttpAdapter; url: string;
     err(e.msg)
 
 proc post*(a: StdHttpAdapter; url, body: string;
-           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] =
+           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
   try:
     let client = newHttpClient()
     defer: client.close()
@@ -62,7 +62,7 @@ proc post*(a: StdHttpAdapter; url, body: string;
     err(e.msg)
 
 proc put*(a: StdHttpAdapter; url, body: string;
-          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] =
+          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
   try:
     let client = newHttpClient()
     defer: client.close()
@@ -76,7 +76,7 @@ proc put*(a: StdHttpAdapter; url, body: string;
     err(e.msg)
 
 proc patch*(a: StdHttpAdapter; url, body: string;
-            headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] =
+            headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
   try:
     let client = newHttpClient()
     defer: client.close()
