@@ -411,3 +411,19 @@
   - `initDateTime` in newer Nim requires 7+ args (monthday, month, year, hour, minute, second, nanosecond, zone) — pass all arguments explicitly
   - `&"{...}"` is concatenation, not interpolation in Nim — use explicit `&` with `$` for non-strings: `"value=" & $var`
   - `everyNMinutes(n)` must manually build step values (0, n, 2n, ...) since it doesn't use the step parser
+
+## 2026-03-23 (US-067)
+- Implemented `adapters/tools/mcp_client.nim` — MCP Client Protocol adapter with McpClient low-level JSON-RPC client over stdio and McpClientAdapter implementing ToolPort. Supports initialize, tools/list, tools/call. Meta-tools: mcp_list_tools, mcp_call_tool, mcp_server_info, mcp_ping.
+- Created `tests/adapters/tools/t_mcp_client.nim` with 16 tests covering all functions.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all`.
+- Files changed: `src/donkey/adapters/tools/mcp_client.nim` (new), `tests/adapters/tools/t_mcp_client.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `result` is a Nim special variable for implicit returns — never use it as a local variable name (shadowing causes `ResultShadowed` warnings and type inference issues)
+  - `%*{}` json macro has issues with complex expressions — use `%` with explicit `newJObject()` and field assignments instead
+  - `poStdErrToStdOut` is correct spelling (not `poStdErrToStdout`)
+  - `ok(@[])` doesn't infer types for empty sequences — use `let empty: seq[T] = @[]` then `ok(empty)`
+  - `method` is a Nim reserved keyword — use `rpcMethod` or similar for JSON-RPC method names
+
+---
+
