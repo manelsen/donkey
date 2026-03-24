@@ -18,5 +18,7 @@ requires "illwill >= 0.4.0"       ## TUI dashboard (donkey tui)
 requires "checksums >= 0.2.0"     ## SHA1 for WeChat webhook signature (replaces deprecated std/sha1)
 
 # Tasks
-task test, "Run all tests":
-  exec "testament --megatest:off all"
+task test, "Compile and run all tests (execution mode)":
+  ## Uses nim -r instead of testament bare 'all' (which defaults to compile-only
+  ## for files without a `discard """action: "run""""` spec block).
+  exec "bash scripts/run_tests.sh"
