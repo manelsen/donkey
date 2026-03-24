@@ -9,6 +9,21 @@ after each iteration and it's included in prompts for context.
 
 ---
 
+## 2026-03-23 - US-031
+- **Status**: Already implemented — verified acceptance criteria met
+- **Files**: `src/donkey/adapters/channel/cli_repl.nim` (89 lines), `tests/ports/t_cli_repl.nim` (90 lines)
+- **Verification**: `nim c --mm:orc src/donkey.nim` passes, `testament --megatest:off all` passes (all 68 tests green)
+- **Learnings:**
+  - CLI REPL adapter follows the standard channel adapter pattern: pure helpers (`isCommand`, `stripCommand`) + effectful adapter (`receive`, `send`, `ack`)
+  - Single-user local adapter with fixed identity `UserId("local:cli")` and sequential message counter
+  - pipeops usage: `?` operator for Result propagation in `sendReturnId` (`? a.send(msg)` chains fallible steps)
+  - `splitChunks` from pipeops used for text chunking in `send`
+  - `ChannelPort` concept satisfied by `receive*`, `send*`, `ack*` procs on `CliAdapter`
+  - `editMessage` returns ok silently (CLI doesn't support editing)
+  - Build note: `--styleCheck:error` and `warningAsError:on` are enforced via `config.nims`, no need to pass on CLI
+
+---
+
 ## 2026-03-23 - US-030
 - **Status**: Already implemented — verified acceptance criteria met
 - **Files**: `src/donkey/adapters/channel/email.nim` (340 lines), `src/donkey/domain/channels/email_pure.nim` (148 lines), `tests/channel/t_email.nim` (272 lines)
