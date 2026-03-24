@@ -1271,11 +1271,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 71,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Implemented infra/sandbox/docker.nim with DockerSandbox, DockerOptions, DockerResult types. Provides pythonSandbox() and nodeSandbox() convenience constructors with default resource limits (60s CPU, 512MB memory, no network, read-only root). Includes buildDockerArgs, runContainer, pullImage, listContainers, stopAllContainers helpers. Uses docker run --rm for ephemeral containers with proper isolation flags. 38 tests pass."
     }
   ],
   "metadata": {
