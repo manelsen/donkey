@@ -106,3 +106,26 @@ suite "core command routing":
     check decideLocalCommandAction(CommandDecision(kind: cmdMemory)) == lcaShowMemory
     check decideLocalCommandAction(CommandDecision(kind: cmdContinue)) == lcaContinueLink
     check decideLocalCommandAction(CommandDecision(kind: cmdModels)) == lcaNone
+
+  test "stripBotMention removes @botname suffix from command token":
+    check stripBotMention("/models@Ostervalt")   == "/models"
+    check stripBotMention("/models@Ostervalt ")  == "/models "
+    check stripBotMention("/models@Bot arg")     == "/models arg"
+    check stripBotMention("/models")             == "/models"
+    check stripBotMention("/models args")        == "/models args"
+    check stripBotMention("/start@MyBot")        == "/start"
+    check stripBotMention("/think@Bot medium")   == "/think medium"
+    check stripBotMention("hello@world")         == "hello@world"  ## non-command unchanged
+    check stripBotMention("")                    == ""
+
+  test "parseCommandText handles @botname suffix (group chat regression)":
+    check parseCommandText("/models@Ostervalt").kind  == cmdModels
+    check parseCommandText("/models@Ostervalt").route == crUi
+    check parseCommandText("/think@Ostervalt").kind   == cmdThink
+    check parseCommandText("/budget@Ostervalt").kind  == cmdBudget
+    check parseCommandText("/start@MyBot").kind       == cmdStart
+    check parseCommandText("/help@MyBot").kind        == cmdHelp
+    check parseCommandText("/ping@MyBot").kind        == cmdPing
+    ## With arguments after @botname — rare but possible
+    check parseCommandText("/models@Bot gemini gemini-2.5-pro").kind  == cmdModels
+    check parseCommandText("/models@Bot gemini gemini-2.5-pro").value == "gemini gemini-2.5-pro"
