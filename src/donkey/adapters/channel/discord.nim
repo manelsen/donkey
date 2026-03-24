@@ -709,6 +709,10 @@ proc registerSlashCommands*(a: DiscordAdapter; appId: string; guildId = ""): Res
     {"name": "ping",   "type": 1, "description": "Measure provider latency"},
     {"name": "status", "type": 1, "description": "Show session/runtime status"},
   ]
+  ## Add DM support: integration_types [GUILD_INSTALL, USER_INSTALL] + contexts [GUILD, BOT_DM, PRIVATE_CHANNEL]
+  for i in 0 ..< commands.len:
+    commands[i]["integration_types"] = %* [0, 1]
+    commands[i]["contexts"]          = %* [0, 1, 2]
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url =
     if guildId.len > 0:

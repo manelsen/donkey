@@ -1074,11 +1074,14 @@ proc startOptionalDiscordGateway(dcAdapter: var DiscordAdapter;
     log.warn("Discord getAppId failed: " & error); ""
   if appId.len > 0:
     log.info("Discord appId: " & appId)
-    ## Registra comandos globalmente (sem guildId) para funcionar em DMs também
+    ## Register globally (DM support via integration_types=[0,1] + contexts=[0,1,2])
     dcAdapter.registerSlashCommands(appId, guildId = "").isOkOr:
-      log.warn("Discord slash cmd reg failed: " & error)
+      log.warn("Discord slash cmd reg (global) failed: " & error)
+    ## Also register guild commands when DISCORD_GUILD_ID is set — takes effect immediately
     if discordGuildId.len > 0:
-      log.info("Discord slash commands registered (global) — também funciona na guild " & discordGuildId)
+      dcAdapter.registerSlashCommands(appId, guildId = discordGuildId).isOkOr:
+        log.warn("Discord slash cmd reg (guild) failed: " & error)
+      log.info("Discord slash commands registered (global + guild " & discordGuildId & ")")
     else:
       log.info("Discord slash commands registered (global)")
   else:
