@@ -9,6 +9,7 @@ type
     finalText*:     string
     done*:          bool
     toolCallCount*: int
+    wasStreamed*:   bool
 
   CompletionHandlingResult* = object
     history*:    ConversationHistory
@@ -199,6 +200,7 @@ func withStreamFinalText*(finalText: string;
   result.finalText = finalText
   result.history.addAssistant(finalText)
   result.done = true
+  result.wasStreamed = true
 
 func withCompletionResult*(completion: CompletionHandlingResult;
                            state: ToolLoopRunResult): ToolLoopRunResult =
