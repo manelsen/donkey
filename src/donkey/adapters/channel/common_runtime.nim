@@ -9,7 +9,7 @@ import ../../ports/provider
 
 const ThinkLevels* = ["off", "low", "medium", "high"]
 const BudgetPolicies* = ["cheap-first", "balanced", "quality-first"]
-const ModelPageSize* = 8
+const ModelPageSize* = 6  ## Discord: máx 5 action rows. 6 modelos / 2 por row = 3 rows + 1 nav = 4 rows (seguro)
 
 const ModelMenu* = [
   ("zai",        @["glm-5",      "glm-4.7",      "glm-4.6"]),
@@ -114,9 +114,15 @@ proc buildProviderButtons*(memory: MdFileAdapter;
                            userId: UserId): seq[seq[(string, string)]] =
   let (currProv, _) = memory.getCurrentProviderModel(userId)
   result = @[]
+  var row: seq[(string, string)]
   for (prov, _) in ModelMenu:
     let label = if prov == currProv: "✓ " & prov else: prov
-    result.add(@[(label, "models:provider:" & prov)])
+    row.add((label, "models:provider:" & prov))
+    if row.len == 3:
+      result.add(row)
+      row = @[]
+  if row.len > 0:
+    result.add(row)
 
 proc buildModelButtons*(memory: MdFileAdapter;
                         provider: string;
@@ -168,8 +174,8 @@ func pageEntries*(entries: seq[ModelCatalogEntry];
     return @[]
   entries[start ..< stop]
 
-func buildModelPageTitle*(provider: string; page, totalPages: int): string =
-  "Modelos de " & provider & " — página " & $(page + 1) & "/" & $max(totalPages, 1)
+func buildModelPageTitle*(provider: string; page: int; entries: seq[ModelCatalogEntry]): string =
+  "Modelos de " & provider & " — página " & $(page + 1) & "/" & $max(pageCount(entries), 1)
 
 proc buildCatalogSourceText*(catalog: ModelCatalogResult): string =
   let sourceText = catalogSourceLabel(catalog.source)
@@ -183,21 +189,28 @@ func buildModelPageButtons*(provider: string;
                             currentProvider: string;
                             currentModel: string;
                             page: int): seq[seq[(string, string)]] =
-  let sorted = sortModelCatalog(normalizeModelCatalog(provider, entries))
-  let safePage = clampPage(page, sorted)
-  for entry in pageEntries(sorted, safePage):
+  let safePage = clampPage(page, entries)
+  var row: seq[(string, string)]
+  for entry in pageEntries(entries, safePage):
     let selected = provider == currentProvider and entry.modelName == currentModel
-    let freeTag = if entry.isFree: " [free]" else: ""
+    let alreadyTagged = entry.isFree and entry.label.toLowerAscii().contains("free")
+    let freeTag = if entry.isFree and not alreadyTagged: " [free]" else: ""
     let label = (if selected: "✓ " else: "") & entry.label & freeTag
-    result.add(@[(label, "models:set:" & provider & ":" & entry.modelName)])
-  var nav: seq[(string, string)]
+    row.add((label, "models:set:" & provider & ":" & entry.modelName))
+    if row.len == 2:
+      result.add(row)
+      row = @[]
+  if row.len > 0:
+    result.add(row)
+
+  ## Navegação em única linha (máx 5 botões permitidos por row no Discord)
+  var navRow: seq[(string, string)]
   if safePage > 0:
-    nav.add(("← anterior", "models:page:" & provider & ":" & $(safePage - 1)))
-  if safePage + 1 < pageCount(sorted):
-    nav.add(("próxima →", "models:page:" & provider & ":" & $(safePage + 1)))
-  if nav.len > 0:
-    result.add(nav)
-  result.add(@[("← voltar", "models:back")])
+    navRow.add(("← ant", "models:page:" & provider & ":" & $(safePage - 1)))
+  if safePage + 1 < pageCount(entries):
+    navRow.add(("próx →", "models:page:" & provider & ":" & $(safePage + 1)))
+  navRow.add(("← voltar", "models:back"))
+  result.add(navRow)
 
 func parseModelsArgs*(value: string): Result[(string, string), string] =
   let parts = value.splitWhitespace()
@@ -410,22 +423,70 @@ proc buildDoctorReport*(memory: MdFileAdapter;
                         toolsCount: int;
                         toolClientsCount: int;
                         sessionCount: int): string =
-  var report = "Donkey Doctor\n\n"
+  var report = "🩺 Donkey Doctor\n\n"
+  
+  ## Teste do provider
+  let t0 = nowMs()
   let testFn = completeBuilder("")
   var history = newHistory()
   history.addUser("ping")
   let req = buildPrompt("Reply with one word: pong", history, "")
   let resp = testFn(req)
+  let delta = nowMs() - t0
   if resp.isOk:
-    report.add("Provider: OK\n")
+    report.add("✅ Provider: OK (" & $delta & "ms)\n")
   else:
-    report.add("Provider: " & resp.error & "\n")
+    report.add("❌ Provider: " & resp.error & "\n")
+  
+  ## Modelo atual
+  let (prov, mdl) = memory.getCurrentProviderModel(userId)
+  report.add("📦 Modelo: " & prov & " / " & mdl & "\n")
+  
+  ## Diretório de memória
   let mpath = memory.paddocksDir
-  report.add(if dirExists(mpath): "Memory dir: " & mpath & "\n"
-             else: "Memory dir missing: " & mpath & "\n")
-  report.add("Tools loaded: " & $toolsCount & "\n")
-  report.add("MCP clients: " & $toolClientsCount & "\n")
-  report.add("Active sessions: " & $sessionCount & "\n")
+  if dirExists(mpath):
+    var size = 0
+    for kind, path in walkDir(mpath):
+      inc size
+    report.add("📁 Memory dir: " & mpath & " (" & $size & " arquivos)\n")
+  else:
+    report.add("❌ Memory dir missing: " & mpath & "\n")
+  
+  ## Tools e MCP
+  report.add("🔧 Tools loaded: " & $toolsCount & "\n")
+  report.add("🔌 MCP clients: " & $toolClientsCount & "\n")
+  
+  ## Sessões ativas
+  report.add("👥 Active sessions: " & $sessionCount & "\n")
+  
+  ## Canais ativos (verifica identidade)
+  var channels: seq[string] = @[]
+  if getEnv("TELEGRAM_BOT_TOKEN").len > 0: channels.add("Telegram")
+  if getEnv("DISCORD_BOT_TOKEN").len > 0: channels.add("Discord")
+  if getEnv("FEISHU_APP_ID").len > 0: channels.add("Feishu")
+  if getEnv("WECOM_CORP_ID").len > 0: channels.add("WeCom")
+  if channels.len > 0:
+    report.add("📡 Active channels: " & channels.join(", ") & "\n")
+  else:
+    report.add("📡 Active channels: nenhum\n")
+  
+  ## Environment checks
+  let envVars = [
+    ("OPENROUTER_API_KEY", "OpenRouter"),
+    ("ZAI_API_KEY", "Zhipu"),
+    ("ANTHROPIC_API_KEY", "Anthropic"),
+    ("GEMINI_API_KEY", "Gemini"),
+    ("MINIMAX_API_KEY", "MiniMax"),
+  ]
+  var configuredProviders: seq[string] = @[]
+  for (envVar, name) in envVars:
+    if getEnv(envVar).len > 0:
+      configuredProviders.add(name)
+  if configuredProviders.len > 0:
+    report.add("🔑 API keys: " & configuredProviders.join(", ") & "\n")
+  else:
+    report.add("🔑 API keys: nenhuma configurada\n")
+  
   report
 
 proc buildPingText*(memory: MdFileAdapter;
