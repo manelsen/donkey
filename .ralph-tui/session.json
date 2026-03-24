@@ -3,10 +3,10 @@
   "sessionId": "d5a9a3a3-f1fd-4960-8f15-51d1eaf989bb",
   "status": "running",
   "startedAt": "2026-03-23T03:46:06.949Z",
-  "updatedAt": "2026-03-24T00:54:57.593Z",
-  "currentIteration": 1,
+  "updatedAt": "2026-03-24T00:54:57.918Z",
+  "currentIteration": 2,
   "maxIterations": 0,
-  "tasksCompleted": 1,
+  "tasksCompleted": 2,
   "isPaused": false,
   "agentPlugin": "opencode",
   "trackerState": {
@@ -24,6 +24,16 @@
       "durationMs": 242893,
       "startedAt": "2026-03-23T03:46:14.840Z",
       "endedAt": "2026-03-23T03:50:17.733Z"
+    },
+    {
+      "iteration": 2,
+      "status": "interrupted",
+      "taskId": "US-031",
+      "taskTitle": "CLI REPL Interactive",
+      "taskCompleted": true,
+      "durationMs": 75878616,
+      "startedAt": "2026-03-23T03:50:18.969Z",
+      "endedAt": "2026-03-24T00:54:57.585Z"
     }
   ],
   "skippedTaskIds": [],
