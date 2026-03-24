@@ -49,10 +49,11 @@ func qqPickerText*(title, body: string): string =
     "## " & title & "\n\n" & body
 
 proc qqModelPickerTitle*(provider: string;
-                         page, totalPages: int;
+                         page: int;
+                         entries: seq[ModelCatalogEntry];
                          catalog: ModelCatalogResult): string =
   qqPickerText(
-    buildModelPageTitle(provider, page, totalPages),
+    buildModelPageTitle(provider, page, entries),
     buildCatalogSourceText(catalog),
   )
 
@@ -87,14 +88,12 @@ proc handleQQModelCallback(msg: InboundMessage;
   case callback.kind
   of cbkModelsProvider:
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
+    let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
     let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
     qqAdapter.sendKeyboard(
       msg.userId,
-      qqModelPickerTitle(
-        callback.provider, 0,
-        pageCount(normalizeModelCatalog(callback.provider, catalog.entries)),
-        catalog),
-      buildModelPageButtons(callback.provider, catalog.entries, currProv, currModel, 0),
+      qqModelPickerTitle(callback.provider, 0, entries, catalog),
+      buildModelPageButtons(callback.provider, entries, currProv, currModel, 0),
       replyTo = msg.channelId,
       allowedRawUserId = rawUserId).isOkOr:
         discard
@@ -112,14 +111,12 @@ proc handleQQModelCallback(msg: InboundMessage;
     true
   of cbkModelsPage:
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
+    let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
     let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
     qqAdapter.sendKeyboard(
       msg.userId,
-      qqModelPickerTitle(
-        callback.provider, callback.page,
-        pageCount(normalizeModelCatalog(callback.provider, catalog.entries)),
-        catalog),
-      buildModelPageButtons(callback.provider, catalog.entries, currProv, currModel, callback.page),
+      qqModelPickerTitle(callback.provider, callback.page, entries, catalog),
+      buildModelPageButtons(callback.provider, entries, currProv, currModel, callback.page),
       replyTo = msg.channelId,
       allowedRawUserId = rawUserId).isOkOr:
         discard
@@ -166,13 +163,11 @@ proc handleQQUiCommand(msg: InboundMessage;
     if provider.len > 0:
         let catalog = modelCatalogLoader(provider).valueOr: emptyCatalogResult()
         let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
+        let entries = sortModelCatalog(normalizeModelCatalog(provider, catalog.entries))
         qqAdapter.sendKeyboard(
           msg.userId,
-          qqModelPickerTitle(
-            provider, 0,
-            pageCount(normalizeModelCatalog(provider, catalog.entries)),
-            catalog),
-          buildModelPageButtons(provider, catalog.entries, currProv, currModel, 0),
+          qqModelPickerTitle(provider, 0, entries, catalog),
+          buildModelPageButtons(provider, entries, currProv, currModel, 0),
           replyTo = msg.channelId,
           allowedRawUserId = rawUserId).isOkOr:
             discard
