@@ -195,6 +195,17 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
         event, userId, kbdId, "Escolha o provider:", memory.buildProviderButtons(userId)).isOkOr:
           core_log.log(logger, core_log.lvlError, "dc provider menu: " & error)
     true
+  of cbkHelpPage:
+    const HelpColor = 0x5865F2
+    let pages = buildHelpPages()
+    let page  = min(max(callback.page, 0), pages.len - 1)
+    let (pTitle, pBody) = pages[page]
+    let title   = "📖 Ajuda — " & pTitle & " (" & $(page + 1) & "/" & $pages.len & ")"
+    let buttons = buildHelpNavButtons(page, pages.len)
+    dcAdapter.editInteractionEmbedPage(
+      event.interactionToken, title, pBody, HelpColor, buttons).isOkOr:
+        core_log.log(logger, core_log.lvlError, "dc help page: " & error)
+    true
   of cbkThinkSet:
     let level = callback.value
     if level in ThinkLevels:
@@ -251,7 +262,19 @@ proc handleDiscordEvent*(sm: var SessionManager;
           buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount()),
           logger)
       of lcaHelpText:
-        sendDiscordReply(event, dcAdapter, userId, buildHelpText(true), logger)
+        const HelpColor = 0x5865F2  ## Discord blurple
+        let pages = buildHelpPages()
+        if event.interactionId.len > 0 and pages.len > 0:
+          let (pTitle, pBody) = pages[0]
+          let title   = "📖 Ajuda — " & pTitle & " (1/" & $pages.len & ")"
+          let buttons = buildHelpNavButtons(0, pages.len)
+          dcAdapter.sendInteractionEmbedPage(
+            event.interactionId, event.interactionToken,
+            title, pBody, HelpColor, buttons).isOkOr:
+              core_log.log(logger, core_log.lvlWarn, "dc help embed: " & error)
+              sendDiscordReply(event, dcAdapter, userId, buildHelpText(true), logger)
+        else:
+          sendDiscordReply(event, dcAdapter, userId, buildHelpText(true), logger)
       of lcaShowMemory:
         let memText = memory.loadContext(userId).memoryMd.strip
         sendDiscordReply(event, dcAdapter, userId,

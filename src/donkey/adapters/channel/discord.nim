@@ -379,6 +379,15 @@ proc fetchUnreadMessages*(a: DiscordAdapter; chId: string; limit = 10): Result[s
 
 # ── ChannelPort procs ──────────────────────────────────────────────────────────
 
+proc makeComponentRows(buttons: seq[seq[(string, string)]]): seq[JsonNode] =
+  ## Converts a seq-of-rows of (label, custom_id) pairs to Discord ACTION_ROW components.
+  for row in buttons:
+    var comps: seq[JsonNode]
+    for (label, data) in row:
+      comps.add(%* {"type": 2, "style": 1, "label": label, "custom_id": data})
+    if comps.len > 0:
+      result.add(%* {"type": 1, "components": comps})
+
 proc sendChunk(a: DiscordAdapter; chId, text: string): Result[void, string] =
   let body    = %* {"content": text}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
@@ -397,19 +406,7 @@ proc sendKeyboard*(a: DiscordAdapter; userId: UserId;
   if discordId.len == 0:
     return err("DiscordAdapter.sendKeyboard: no Discord ID for " & $userId)
   let chId = ? a.dmChannelFor(discordId)
-  var rows: seq[JsonNode]
-  for row in buttons:
-    var comps: seq[JsonNode]
-    for (label, data) in row:
-      comps.add(%* {
-        "type":      2,   ## BUTTON
-        "style":     1,   ## PRIMARY (blurple)
-        "label":     label,
-        "custom_id": data,
-      })
-    if comps.len > 0:
-      rows.add(%* {"type": 1, "components": comps})  ## ACTION_ROW
-  let body    = %* {"content": text, "components": rows}
+  let body = %* {"content": text, "components": makeComponentRows(buttons)}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let resp = ? a.http.post(a.base() & "/channels/" & chId & "/messages", $body, headers)
   if resp.status < 200 or resp.status >= 300:
@@ -426,19 +423,7 @@ proc editKeyboard*(a: DiscordAdapter; userId: UserId;
   if discordId.len == 0:
     return err("DiscordAdapter.editKeyboard: no Discord ID for " & $userId)
   let chId = ? a.dmChannelFor(discordId)
-  var rows: seq[JsonNode]
-  for row in buttons:
-    var comps: seq[JsonNode]
-    for (label, data) in row:
-      comps.add(%* {
-        "type": 2,
-        "style": 1,
-        "label": label,
-        "custom_id": data,
-      })
-    if comps.len > 0:
-      rows.add(%* {"type": 1, "components": comps})
-  let body = %* {"content": text, "components": rows}
+  let body = %* {"content": text, "components": makeComponentRows(buttons)}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url = a.base() & "/channels/" & chId & "/messages/" & msgId
   let resp = ? a.http.patch(url, $body, headers)
@@ -450,19 +435,7 @@ proc editInteractionKeyboard*(a: DiscordAdapter;
                               interactionToken, text: string;
                               buttons: seq[seq[(string, string)]]): Result[void, string] =
   ## Edits the original interaction message with new text and components.
-  var rows: seq[JsonNode]
-  for row in buttons:
-    var comps: seq[JsonNode]
-    for (label, data) in row:
-      comps.add(%* {
-        "type": 2,
-        "style": 1,
-        "label": label,
-        "custom_id": data,
-      })
-    if comps.len > 0:
-      rows.add(%* {"type": 1, "components": comps})
-  let body = %* {"content": text, "components": rows}
+  let body = %* {"content": text, "components": makeComponentRows(buttons)}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   ## Use PATCH /webhooks/{application_id}/{interaction_token}/messages/@original
   let appId = if a.appId != nil: a.appId[] else: "unknown"
@@ -514,30 +487,53 @@ proc sendInteractionKeyboard*(a: DiscordAdapter;
                               interactionId, interactionToken, text: string;
                               buttons: seq[seq[(string, string)]]): Result[void, string] =
   ## Responds to a slash command interaction with text and buttons.
-  var rows: seq[JsonNode]
-  for row in buttons:
-    var comps: seq[JsonNode]
-    for (label, data) in row:
-      comps.add(%* {
-        "type":      2,
-        "style":     1,
-        "label":     label,
-        "custom_id": data,
-      })
-    if comps.len > 0:
-      rows.add(%* {"type": 1, "components": comps})
   let body = %* {
     "type": 4,
-    "data": {
-      "content": text,
-      "components": rows,
-    }
+    "data": {"content": text, "components": makeComponentRows(buttons)},
   }
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url = a.base() & "/interactions/" & interactionId & "/" & interactionToken & "/callback"
   let resp = ? a.http.post(url, $body, headers)
   if resp.status < 200 or resp.status >= 300:
     return err("Discord interaction keyboard error " & $resp.status & ": " & resp.body)
+  ok()
+
+proc sendInteractionEmbedPage*(a: DiscordAdapter;
+                               interactionId, interactionToken: string;
+                               title, description: string;
+                               color: int;
+                               buttons: seq[seq[(string, string)]]): Result[void, string] =
+  ## Responds to a slash command with a rich embed + navigation buttons (type 4).
+  let body = %* {
+    "type": 4,
+    "data": {
+      "embeds": [{"title": title, "description": description, "color": color}],
+      "components": makeComponentRows(buttons),
+    },
+  }
+  let headers = @[a.authHeader(), ("Content-Type", "application/json")]
+  let url = a.base() & "/interactions/" & interactionId & "/" & interactionToken & "/callback"
+  let resp = ? a.http.post(url, $body, headers)
+  if resp.status < 200 or resp.status >= 300:
+    return err("Discord interaction embed error " & $resp.status & ": " & resp.body)
+  ok()
+
+proc editInteractionEmbedPage*(a: DiscordAdapter;
+                               interactionToken: string;
+                               title, description: string;
+                               color: int;
+                               buttons: seq[seq[(string, string)]]): Result[void, string] =
+  ## Edits the original interaction embed + buttons via webhook PATCH.
+  let body = %* {
+    "embeds": [{"title": title, "description": description, "color": color}],
+    "components": makeComponentRows(buttons),
+  }
+  let headers = @[a.authHeader(), ("Content-Type", "application/json")]
+  let appId = if a.appId != nil: a.appId[] else: "unknown"
+  let url = a.base() & "/webhooks/" & appId & "/" & interactionToken & "/messages/@original"
+  let resp = ? a.http.patch(url, $body, headers)
+  if resp.status < 200 or resp.status >= 300:
+    return err("Discord edit embed error " & $resp.status & ": " & resp.body)
   ok()
 
 proc sendInteractionModal*(a: DiscordAdapter;

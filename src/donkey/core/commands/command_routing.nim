@@ -58,6 +58,7 @@ type
     cbkModelsPage
     cbkModelsBack
     cbkThinkSet
+    cbkHelpPage
     cbkPersonality
     cbkName
 
@@ -172,7 +173,7 @@ func decideLocalCommandAction*(decision: CommandDecision): LocalCommandAction =
 
 func decideCallbackRoute*(kind: CallbackKind): CallbackRoute =
   case kind
-  of cbkModelsProvider, cbkModelsSet, cbkModelsPage, cbkModelsBack, cbkThinkSet:
+  of cbkModelsProvider, cbkModelsSet, cbkModelsPage, cbkModelsBack, cbkThinkSet, cbkHelpPage:
     cbrUi
   of cbkPersonality, cbkName:
     cbrSessionTask
@@ -209,6 +210,11 @@ func parseCallbackData*(data: string): CallbackDecision =
         return newCallbackDecision(cbkUnknown)
   if data == "models:back":
     return newCallbackDecision(cbkModelsBack)
+  if data.startsWith("help:page:"):
+    try:
+      return newCallbackDecision(cbkHelpPage, page = parseInt(data[10 .. ^1]))
+    except:
+      return newCallbackDecision(cbkUnknown)
   if data.startsWith("think:set:"):
     return newCallbackDecision(cbkThinkSet, value = data[10 .. ^1])
   if data.startsWith("personality:"):
@@ -224,7 +230,7 @@ func isCoreCallback*(kind: CallbackKind): bool =
   kind in {cbkPersonality, cbkName}
 
 func isUiCallback*(kind: CallbackKind): bool =
-  kind in {cbkModelsProvider, cbkModelsSet, cbkModelsPage, cbkModelsBack, cbkThinkSet}
+  kind in {cbkModelsProvider, cbkModelsSet, cbkModelsPage, cbkModelsBack, cbkThinkSet, cbkHelpPage}
 
 func callbackTaskKind*(callback: CallbackDecision): TaskKind =
   case callback.kind
