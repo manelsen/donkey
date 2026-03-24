@@ -459,3 +459,19 @@
   - RLIMIT_CPU may not work in all containerized environments — test CPU-intensive workloads carefully
 
 ---
+
+## 2026-03-23 (US-070)
+- Implemented `infra/sandbox/wasm.nim` — Wasmtime-based WASM sandbox for untrusted plugin execution. Exports: WasmEngine, WasmSandboxOpts, WasmModule, WasmInstance, WasmCallResult, WasmValidationResult. Functions: newWasmEngine, validateWasmFile (magic byte checking fallback), loadModule, instantiate, call, loadAndCall.
+- Created `tests/infra/sandbox/t_wasm.nim` with 34 tests covering all functions.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all`.
+- Files changed: `src/donkey/infra/sandbox/wasm.nim` (new), `tests/infra/sandbox/t_wasm.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `mod` is a Nim keyword — cannot use as parameter names; rename to `m` or similar
+  - `execCmdEx` from `std/osproc` must be explicitly imported for subprocess execution
+  - `opts` field in object types must be exported with `*` if tests need to construct instances directly
+  - `writeChars` returns `int` (bytes written) — must `discard` the return value
+  - Functions using `wasmDefaults()` must be defined after `wasmDefaults` in the source file — Nim doesn't allow forward references to functions
+  - `readChars` is deprecated — use `readChars(toOpenArray(buf, start, len-1))` instead
+
+---
