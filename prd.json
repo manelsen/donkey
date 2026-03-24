@@ -1234,12 +1234,13 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 69,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-068",
         "US-063"
-      ]
+      ],
+      "completionNotes": "Implemented infra/sandbox/paddock.nim with fork+execvp pattern for spawning restricted child processes. Exports: Paddock, SpawnOptions, SpawnResult, spawn helpers (newPaddock, paddockDefaults, sandboxDefaults, sandboxQuick, sandboxInteractive), runSpawned for both (cmd, args) and string command forms. Uses setrlimit from limits.nim to apply RLIMIT_CPU, RLIMIT_AS, RLIMIT_NPROC, RLIMIT_FSIZE, RLIMIT_NOFILE before exec. Captures stdout/stderr via pipes, supports stdin data and working directory. 32 tests pass."
     },
     {
       "id": "US-070",

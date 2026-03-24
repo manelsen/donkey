@@ -442,3 +442,20 @@
   - `CurrentLimits.$` must wrap fields in limit types to call the correct `$` formatter
 
 ---
+
+## 2026-03-23 (US-069)
+- Implemented `infra/sandbox/paddock.nim` — fork+execvp-based process spawner with resource limits. Provides Paddock, SpawnOptions, SpawnResult types; convenience constructors (newPaddock, paddockDefaults, sandboxDefaults, sandboxQuick, sandboxInteractive); runSpawned for both (cmd, args) and string command forms. Applies setrlimit limits (cpu, mem, nproc, fsize, nofile) before exec. Captures stdout/stderr via pipes, supports stdin data and working directory.
+- Created `tests/infra/sandbox/t_paddock.nim` with 32 tests covering all functions.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all`.
+- Files changed: `src/donkey/infra/sandbox/paddock.nim` (new), `tests/infra/sandbox/t_paddock.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `_exit` is not directly available from Nim's posix module — need to declare it: `proc c_exit(code: cint) {.importc: "_exit", header: "<unistd.h>".}`
+  - `execve` does NOT search PATH — use `execvp` which does, or provide full path to command
+  - `string(buf.toOpenArray(...))` doesn't work — use `copyMem` to a properly sized string instead
+  - Nim's `result` is special for implicit returns — avoid using it as a local variable name
+  - For reading from pipes, allocate `newString(n)` then `copyMem(chunk.cstring, buf.addr, n)` and add to buffer
+  - `cstringArray` is lowercase in Nim (not `cStringArray`)
+  - RLIMIT_CPU may not work in all containerized environments — test CPU-intensive workloads carefully
+
+---
