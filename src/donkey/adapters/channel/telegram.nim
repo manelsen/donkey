@@ -53,11 +53,14 @@ proc parseTgResp(meth: string; resp: HttpResponse): Result[JsonNode, string]
     err(e.msg)
 
 proc post(a: TelegramAdapter; meth: string;
-          body: JsonNode): Result[JsonNode, string] =
-  let headers = @[("Content-Type", "application/json")]
-  a.http.post(a.apiUrl(meth), $body, headers) >>=
-    proc(resp: HttpResponse): Result[JsonNode, string] {.gcsafe, raises: [].} =
-      parseTgResp(meth, resp)
+          body: JsonNode): Result[JsonNode, string] {.gcsafe, raises: [].} =
+  try:
+    let headers = @[("Content-Type", "application/json")]
+    a.http.post(a.apiUrl(meth), $body, headers) >>=
+      proc(resp: HttpResponse): Result[JsonNode, string] {.gcsafe, raises: [].} =
+        parseTgResp(meth, resp)
+  except Exception as e:
+    err(e.msg)
 
 # ── ChannelPort implementation ────────────────────────────────────────────────
 
@@ -76,7 +79,7 @@ proc sendChunk(a: TelegramAdapter; chatId: int64; text, replyTo: string;
   discard ? a.post("sendMessage", plain)
   ok()
 
-proc sendTyping*(a: TelegramAdapter; userId: UserId): Result[void, string] =
+proc sendTyping*(a: TelegramAdapter; userId: UserId): Result[void, string] {.gcsafe.} =
   ## Sends a "typing…" indicator to the user's chat.
   ## For DM bots the chat_id equals the Telegram user ID.
   let rawId = a.resolver.reverseChannel(userId, ckTelegram)
@@ -120,13 +123,17 @@ proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
       cols.add(%* {"text": label, "callback_data": data})
     rows.add(%cols)
   var body = %* {
-    "chat_id": chatId,
-    "text":    text,
+    "chat_id":    chatId,
+    "text":       text,
+    "parse_mode": "Markdown",
     "reply_markup": {"inline_keyboard": rows},
   }
   if replyTo.len > 0:
     try: body["reply_to_message_id"] = %parseInt(replyTo)
     except ValueError: discard
+  let res = a.post("sendMessage", body)
+  if res.isOk: return ok()
+  body.delete("parse_mode")
   discard ? a.post("sendMessage", body)
   ok()
 
@@ -237,56 +244,55 @@ proc ack*(a: TelegramAdapter; channelId: string) =
   discard
 
 proc deleteMessage*(a: TelegramAdapter; userId: UserId;
-                    msgId: string): Result[void, string] =
-  ## Deletes a message by id (used to remove reaction/status messages).
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
-  if rawId.len == 0: return err("deleteMessage: no id for " & $userId)
-  var chatId: int64
-  try: chatId = parseBiggestInt(rawId).int64
-  except ValueError: return err("deleteMessage: bad id: " & rawId)
-  var msgIdInt: int
-  try: msgIdInt = parseInt(msgId)
-  except ValueError: return err("deleteMessage: bad msgId: " & msgId)
-  discard ? a.post("deleteMessage",
-                   %* {"chat_id": chatId, "message_id": msgIdInt})
-  ok()
+                    msgId: string): Result[void, string] {.gcsafe, raises: [].} =
+  ## Deletes a message by id.
+  try:
+    let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+    if rawId.len == 0: return err("deleteMessage: no id for " & $userId)
+    var chatId: int64
+    try: chatId = parseBiggestInt(rawId).int64
+    except ValueError: return err("deleteMessage: bad id: " & rawId)
+    var msgIdInt: int
+    try: msgIdInt = parseInt(msgId)
+    except ValueError: return err("deleteMessage: bad msgId: " & msgId)
+    discard ? a.post("deleteMessage",
+                     %* {"chat_id": chatId, "message_id": msgIdInt})
+    ok()
+  except CatchableError as e:
+    err(e.msg)
 
-proc sendStatus*(a: TelegramAdapter; userId: UserId;
-                 text: string; replyTo = ""): Result[string, string] =
-  ## Sends a status/reaction message and returns its id.
-  ## Used for queued🔄 / processing⚙️ / done✅ lifecycle messages.
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
-  if rawId.len == 0: return err("sendStatus: no id for " & $userId)
-  var chatId: int64
-  try: chatId = parseBiggestInt(rawId).int64
-  except ValueError: return err("sendStatus: bad id: " & rawId)
-  var body = %* {"chat_id": chatId, "text": text}
-  if replyTo.len > 0:
-    try: body["reply_to_message_id"] = %parseInt(replyTo)
-    except ValueError: discard
-  let resp = ? a.post("sendMessage", body)
-  ok($resp["result"]["message_id"].getInt())
+proc setMessageReaction*(a: TelegramAdapter; userId: UserId;
+                         msgId: string; emoji: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
+  ## Sets a reaction on a message (e.g. ⚙️, ✅, ❌).
+  ## msgId is the message to react to.
+  ## Pass emoji="" to remove reaction.
+  try:
+    let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+    if rawId.len == 0: return err("setMessageReaction: no id for " & $userId)
+    var chatId: int64
+    try: chatId = parseBiggestInt(rawId).int64
+    except ValueError: return err("setMessageReaction: bad id: " & rawId)
+    var msgIdInt: int
+    try: msgIdInt = parseInt(msgId)
+    except ValueError: return err("setMessageReaction: bad msgId: " & msgId)
 
-proc editStatus*(a: TelegramAdapter; userId: UserId;
-                 msgId, text: string): Result[void, string] =
-  ## Updates a status message in place (e.g. ⚙️ → ✅).
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
-  if rawId.len == 0: return err("editStatus: no id for " & $userId)
-  var chatId: int64
-  try: chatId = parseBiggestInt(rawId).int64
-  except ValueError: return err("editStatus: bad id: " & rawId)
-  var msgIdInt: int
-  try: msgIdInt = parseInt(msgId)
-  except ValueError: return err("editStatus: bad msgId: " & msgId)
-  discard ? a.post("editMessageText",
-                   %* {"chat_id": chatId, "message_id": msgIdInt, "text": text})
-  ok()
+    var reaction = newJArray()
+    if emoji.len > 0:
+      reaction.add(%* {"type": "emoji", "emoji": emoji})
+
+    discard ? a.post("setMessageReaction",
+                     %* {"chat_id": chatId, "message_id": msgIdInt,
+                         "reaction": reaction})
+    ok()
+  except CatchableError as e:
+    err(e.msg)
 
 proc sendKeyboard*(a: TelegramAdapter; userId: UserId;
                    text: string;
                    buttons: seq[seq[(string, string)]];  ## [[("label","data"),...],...]
-                   replyTo = ""): Result[string, string] =
-  ## Sends a message with an inline keyboard. Returns the message id.
+                   replyTo = ""): Result[void, string] =
+  ## Sends a message with an inline keyboard.
   let rawId = a.resolver.reverseChannel(userId, ckTelegram)
   if rawId.len == 0: return err("sendKeyboard: no id for " & $userId)
   var chatId: int64
@@ -306,8 +312,8 @@ proc sendKeyboard*(a: TelegramAdapter; userId: UserId;
   if replyTo.len > 0:
     try: body["reply_to_message_id"] = %parseInt(replyTo)
     except ValueError: discard
-  let resp = ? a.post("sendMessage", body)
-  ok($resp["result"]["message_id"].getInt())
+  discard ? a.post("sendMessage", body)
+  ok()
 
 proc editKeyboard*(a: TelegramAdapter; userId: UserId;
                    msgId: string;
@@ -353,6 +359,15 @@ proc editKeyboardText*(a: TelegramAdapter; userId: UserId;
     for (label, data) in row:
       cols.add(%* {"text": label, "callback_data": data})
     rows.add(%cols)
+  let editBody = %* {
+    "chat_id": chatId,
+    "message_id": msgIdInt,
+    "text": text,
+    "parse_mode": "Markdown",
+    "reply_markup": {"inline_keyboard": rows},
+  }
+  let editRes = a.post("editMessageText", editBody)
+  if editRes.isOk: return ok()
   discard ? a.post("editMessageText", %* {
     "chat_id": chatId,
     "message_id": msgIdInt,
@@ -373,8 +388,9 @@ proc setMyCommands*(a: TelegramAdapter): Result[void, string] =
     {"command": "forget",  "description": "Apaga as memórias salvas"},
     {"command": "status",  "description": "Snapshot da sessão atual"},
     {"command": "ping",    "description": "Testa latência do provider"},
-    {"command": "debug",   "description": "Ativa/desativa modo verbose"},
+    {"command": "debug",    "description": "Ativa/desativa modo verbose"},
     {"command": "doctor",  "description": "Diagnóstico do sistema"},
+    {"command": "continue", "description": "Continua sessão de outro canal"},
     {"command": "start",   "description": "Inicia ou recomeça a conversa"},
   ]
   discard ? a.post("setMyCommands", %* {"commands": cmds})
