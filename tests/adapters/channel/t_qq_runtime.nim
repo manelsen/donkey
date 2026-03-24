@@ -27,7 +27,7 @@ suite "qq_runtime":
     let catalog = emptyCatalogResult()
     check qqProviderPickerTitle().contains("## Escolha o provider")
     check qqThinkPickerTitle().contains("## Nível de raciocínio")
-    check qqModelPickerTitle("groq", 0, 1, catalog).contains("## Modelos de groq")
+    check qqModelPickerTitle("groq", 0, @[], catalog).contains("## Modelos de groq")
     check qqModelConfirmedText("groq", "llama-3.1-8b-instant").contains("**groq / llama-3.1-8b-instant**")
     check qqThinkingConfirmedText("high").contains("**high**")
 
