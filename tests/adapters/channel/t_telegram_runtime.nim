@@ -83,7 +83,7 @@ thinking = "low"
 """)
     let text = buildTelegramStatusText(memory, userId, 7, 2, 0)
     check text.contains("anthropic / claude-opus")
-    check text.contains("Thinking: <b>low</b>")
+    check text.contains("Thinking: low")
 
   test "saveTelegramPreference upserts key":
     let tmpDir = getTempDir() / "donkey_tg_runtime_save"
