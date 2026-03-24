@@ -16,6 +16,7 @@
 ##   Discord heartbeat interval is ~41 s; occasional missed beats are tolerated.
 
 import std/[json, net, os, random, strutils, tables, times]
+import ../../core/log
 import ../../core/app_meta
 import ../../core/types
 import ../../core/pipeops
@@ -51,6 +52,10 @@ type
 ## Module-level channel — opened once, valid for daemon lifetime.
 var gDiscordEvents* {.global.}: Channel[DiscordRawEvent]
 
+## Buffer for messages received before gateway is ready.
+var gDiscordPending* {.global.}: seq[DiscordRawEvent] = @[]
+var gDiscordReady* {.global.}: bool = false
+
 const
   DiscordApiBase*   = "https://discord.com/api/v10"
   DiscordGatewayUrl = "wss://gateway.discord.gg"
@@ -74,8 +79,9 @@ proc sendHeartbeat(state: var GatewayState) =
   state.ws.sendFrame("{\"op\":1,\"d\":" & payload & "}")
   state.lastBeatMs = epochMs()
 
-proc handleDispatch(t: string; d: JsonNode) =
+proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
   ## Routes op=0 dispatch events to gDiscordEvents via discord_pure parser.
+  ## Messages received before gateway is ready are buffered.
   ## Mapping: DsEventKind → DiscordEventKind:
   ##   dekMessage     → deMessage
   ##   dekButtonClick → deButtonClick
@@ -87,145 +93,187 @@ proc handleDispatch(t: string; d: JsonNode) =
   case r.kind
   of dekUnknown: return
   of dekMessage:
-    gDiscordEvents.send(DiscordRawEvent(
+    logger.debug("discord: message from " & r.rawId)
+    let event = DiscordRawEvent(
       kind:          deMessage,
       discordUserId: r.rawId,
       content:       r.content,
       channelId:     r.channelId,
       messageId:     r.messageId,
-    ))
-  of dekSlashCommand:
-    if r.needsModal:
-      gDiscordEvents.send(DiscordRawEvent(
-        kind:             deModalRequest,
-        discordUserId:    r.rawId,
-        interactionId:    r.interactionId,
-        interactionToken: r.interactionToken,
-      ))
-    elif r.content.len > 0 and not r.content.startsWith("/"):
-      ## /continue with inline code — deliver as deInteraction
-      gDiscordEvents.send(DiscordRawEvent(
-        kind:             deInteraction,
-        discordUserId:    r.rawId,
-        content:          r.content,
-        interactionId:    r.interactionId,
-        interactionToken: r.interactionToken,
-      ))
+    )
+    if gDiscordReady:
+      gDiscordEvents.send(event)
     else:
-      gDiscordEvents.send(DiscordRawEvent(
-        kind:             deMessage,
-        discordUserId:    r.rawId,
-        content:          r.content,
-        interactionId:    r.interactionId,
-        interactionToken: r.interactionToken,
-      ))
+      {.cast(gcsafe).}:
+        gDiscordPending.add(event)
+  of dekSlashCommand:
+    logger.debug("discord: slash command from " & r.rawId)
+    let event =
+      if r.needsModal:
+        DiscordRawEvent(
+          kind:             deModalRequest,
+          discordUserId:    r.rawId,
+          interactionId:    r.interactionId,
+          interactionToken: r.interactionToken,
+        )
+      elif r.content.len > 0 and not r.content.startsWith("/"):
+        DiscordRawEvent(
+          kind:             deInteraction,
+          discordUserId:    r.rawId,
+          content:          r.content,
+          interactionId:    r.interactionId,
+          interactionToken: r.interactionToken,
+        )
+      else:
+        DiscordRawEvent(
+          kind:             deMessage,
+          discordUserId:    r.rawId,
+          content:          r.content,
+          interactionId:    r.interactionId,
+          interactionToken: r.interactionToken,
+        )
+    if gDiscordReady:
+      gDiscordEvents.send(event)
+    else:
+      {.cast(gcsafe).}:
+        gDiscordPending.add(event)
   of dekButtonClick:
-    gDiscordEvents.send(DiscordRawEvent(
+    logger.debug("discord: button click from " & r.rawId)
+    let event = DiscordRawEvent(
       kind:             deButtonClick,
       discordUserId:    r.rawId,
       content:          r.content,
       interactionId:    r.interactionId,
       interactionToken: r.interactionToken,
-    ))
+    )
+    if gDiscordReady:
+      gDiscordEvents.send(event)
+    else:
+      {.cast(gcsafe).}:
+        gDiscordPending.add(event)
   of dekModalSubmit:
     ## Modal submit always carries a code from the link_code text input.
-    gDiscordEvents.send(DiscordRawEvent(
+    logger.debug("discord: modal submit from " & r.rawId)
+    let event = DiscordRawEvent(
       kind:             deInteraction,
       discordUserId:    r.rawId,
       content:          r.content,
       interactionId:    r.interactionId,
       interactionToken: r.interactionToken,
-    ))
+    )
+    if gDiscordReady:
+      gDiscordEvents.send(event)
+    else:
+      {.cast(gcsafe).}:
+        gDiscordPending.add(event)
 
-proc runGatewaySession(token: string; state: var GatewayState) =
+proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
   ## Single gateway session: connect, identify/resume, loop until error.
-  let host =
-    if state.resumeUrl.startsWith("wss://"):
-      let noScheme = state.resumeUrl[6 .. ^1]
-      if '/' in noScheme: noScheme[0 ..< noScheme.find('/')] else: noScheme
-    else: DiscordGatewayUrl[6 .. ^1]  ## strip "wss://" from the constant
+  {.cast(gcsafe).}:
+    let host =
+      if state.resumeUrl.startsWith("wss://"):
+        let noScheme = state.resumeUrl[6 .. ^1]
+        if '/' in noScheme: noScheme[0 ..< noScheme.find('/')] else: noScheme
+      else: DiscordGatewayUrl[6 .. ^1]  ## strip "wss://" from the constant
 
-  state.ws = wsConnect(host, Port(443), "/?v=10&encoding=json", useTls = true)
+    logger.info("discord: connecting to " & host)
+    state.ws = wsConnect(host, Port(443), "/?v=10&encoding=json", useTls = true)
 
-  ## 1. Hello → get heartbeat interval.
-  let helloFrame = state.ws.recvFrame()
-  let hello = parseJson(helloFrame.data)
-  state.heartbeatMs = hello["d"]["heartbeat_interval"].getInt(41250)
+    ## 1. Hello → get heartbeat interval.
+    let helloFrame = state.ws.recvFrame()
+    let hello = parseJson(helloFrame.data)
+    state.heartbeatMs = hello["d"]["heartbeat_interval"].getInt(41250)
+    logger.debug("discord: hello, heartbeat=" & $state.heartbeatMs)
 
-  ## 2. Send first heartbeat with random jitter (Discord requirement).
-  randomize()
-  let jitter = rand(state.heartbeatMs)
-  let startMs = epochMs()
-  while epochMs() - startMs < jitter:
-    sleep(100)
-  state.sendHeartbeat()
+    ## 2. Send first heartbeat with random jitter (Discord requirement).
+    ## Use smaller jitter at startup (max 5s) for faster initial response.
+    randomize()
+    let jitter = rand(min(state.heartbeatMs, 5000))  # 0-5s instead of 0-41s
+    let startMs = epochMs()
+    while epochMs() - startMs < jitter:
+      sleep(100)
+    state.sendHeartbeat()
 
-  ## 3. Identify or Resume.
-  if state.sessionId.len > 0:
-    state.ws.sendFrame($ %* {
-      "op": 6,
-      "d": {"token": token, "session_id": state.sessionId, "seq": state.lastSeq},
-    })
-  else:
-    state.ws.sendFrame($ %* {
-      "op": 2,
-      "d": {
-        "token":      token,
-        "intents":    DiscordIntents,
-        "properties": {"os": "linux", "browser": AppSlug, "device": AppSlug},
-      },
-    })
+    ## 3. Identify or Resume.
+    if state.sessionId.len > 0:
+      logger.info("discord: resuming session " & state.sessionId)
+      state.ws.sendFrame($ %* {
+        "op": 6,
+        "d": {"token": token, "session_id": state.sessionId, "seq": state.lastSeq},
+      })
+    else:
+      logger.info("discord: identifying")
+      state.ws.sendFrame($ %* {
+        "op": 2,
+        "d": {
+          "token":      token,
+          "intents":    DiscordIntents,
+          "properties": {"os": "linux", "browser": AppSlug, "device": AppSlug},
+        },
+      })
 
-  ## 4. Main receive loop.
-  while true:
-    if epochMs() - state.lastBeatMs >= state.heartbeatMs:
-      state.sendHeartbeat()
+    ## 4. Main receive loop.
+    while true:
+      if epochMs() - state.lastBeatMs >= state.heartbeatMs:
+        state.sendHeartbeat()
 
-    try:
-      let frame = state.ws.recvFrame()
-      case frame.opcode
+      try:
+        let frame = state.ws.recvFrame()
+        case frame.opcode
 
-      of WsOpcodeText:
-        let j = parseJson(frame.data)
-        let op = j["op"].getInt()
+        of WsOpcodeText:
+          let j = parseJson(frame.data)
+          let op = j["op"].getInt()
 
-        case op
-        of 0:  ## Dispatch
-          let s = j["s"].getInt(0)
-          if s > 0: state.lastSeq = s
-          let t = j["t"].getStr("")
-          let d = j["d"]
-          if t == "READY":
-            state.sessionId = d["session_id"].getStr()
-            let rgu = d.getOrDefault("resume_gateway_url")
-            if rgu != nil: state.resumeUrl = rgu.getStr()
-          else:
-            handleDispatch(t, d)
+          case op
+          of 0:  ## Dispatch
+            let s = j["s"].getInt(0)
+            if s > 0: state.lastSeq = s
+            let t = j["t"].getStr("")
+            let d = j["d"]
+            if t == "READY":
+              state.sessionId = d["session_id"].getStr()
+              let rgu = d.getOrDefault("resume_gateway_url")
+              if rgu != nil: state.resumeUrl = rgu.getStr()
+              logger.info("discord: ready, session=" & state.sessionId)
+              ## Gateway is now ready — flush buffered messages
+              gDiscordReady = true
+              if gDiscordPending.len > 0:
+                logger.info("discord: flushing " & $gDiscordPending.len & " buffered message(s)")
+                for event in gDiscordPending:
+                  gDiscordEvents.send(event)
+                gDiscordPending = @[]
+            else:
+              handleDispatch(t, d, logger)
 
-        of 7:  ## Reconnect
-          raise newException(IOError, "Discord requested reconnect (op=7)")
+          of 7:  ## Reconnect
+            logger.info("discord: reconnect requested (op=7)")
+            raise newException(IOError, "Discord requested reconnect (op=7)")
 
-        of 9:  ## Invalid Session
-          if not j["d"].getBool(false):
-            state.sessionId = ""; state.resumeUrl = ""
-          raise newException(IOError, "Invalid session (op=9)")
+          of 9:  ## Invalid Session
+            logger.warn("discord: invalid session (op=9)")
+            if not j["d"].getBool(false):
+              state.sessionId = ""; state.resumeUrl = ""
+            raise newException(IOError, "Invalid session (op=9)")
 
-        of 11: discard  ## Heartbeat ACK
-        else:  discard
+          of 11: discard  ## Heartbeat ACK
+          else:  discard
 
-      of WsOpcodePing:
-        state.ws.sendFrame(frame.data, WsOpcodePong)
+        of WsOpcodePing:
+          state.ws.sendFrame(frame.data, WsOpcodePong)
 
-      of WsOpcodeClose:
-        raise newException(IOError, "Discord gateway closed (op=close)")
+        of WsOpcodeClose:
+          logger.warn("discord: websocket closed")
+          raise newException(IOError, "Discord gateway closed (op=close)")
 
-      else: discard
+        else: discard
 
-    except TimeoutError:
-      discard  ## no data — loop back to heartbeat check
+      except TimeoutError:
+        discard  ## no data — loop back to heartbeat check
 
 type GatewayArgs = object
-  token: string
+  token:  string
+  logger: Logger
 
 proc discordGatewayThread(arg: GatewayArgs) {.thread.} =
   ## Entry point for the dedicated gateway OS thread.
@@ -234,10 +282,9 @@ proc discordGatewayThread(arg: GatewayArgs) {.thread.} =
   var backoffMs = 1000
   while true:
     try:
-      runGatewaySession(arg.token, state)
+      runGatewaySession(arg.token, state, arg.logger)
     except Exception as e:
-      echo "[discord] gateway error: " & e.msg & " — reconnecting in " &
-           $backoffMs & " ms"
+      arg.logger.error("discord: gateway error: " & e.msg & " — reconnecting in " & $backoffMs & " ms")
       sleep(backoffMs)
       backoffMs = min(backoffMs * 2, 60_000)
 
@@ -249,6 +296,7 @@ type
   DiscordAdapter* = object
     token*:     string
     apiBase*:   string       ## override for testing
+    appId*:     ref string   ## cached application ID
     resolver*:  IdentityResolver
     dmChannels: ref Table[string, string]  ## discord_user_id → dm_channel_id (ref allows value receiver)
     http*:      StdHttpAdapter
@@ -285,7 +333,7 @@ proc extractId(resp: HttpResponse): Result[string, string]
 
 # ── REST helpers ───────────────────────────────────────────────────────────────
 
-proc dmChannelFor(a: DiscordAdapter; discordUserId: string): Result[string, string] =
+proc dmChannelFor*(a: DiscordAdapter; discordUserId: string): Result[string, string] =
   ## Returns (or creates) the DM channel ID for the given Discord user.
   if discordUserId in a.dmChannels[]:
     return ok(a.dmChannels[][discordUserId])
@@ -302,6 +350,33 @@ proc dmChannelFor(a: DiscordAdapter; discordUserId: string): Result[string, stri
   except CatchableError as e:
     err(e.msg)
 
+proc fetchUnreadMessages*(a: DiscordAdapter; chId: string; limit = 10): Result[seq[JsonNode], string] =
+  ## Fetches recent messages from a channel via REST API.
+  ## Used to process messages received while bot was offline.
+  let headers = @[a.authHeader()]
+  let url = a.base() & "/channels/" & chId & "/messages?limit=" & $limit
+  let resp = ? a.http.get(url, headers)
+  if resp.status < 200 or resp.status >= 300:
+    return err("Discord fetch messages error " & $resp.status)
+  try:
+    let msgs = parseJson(resp.body)
+    if msgs.kind != JArray:
+      return err("Discord messages response is not an array")
+    var filtered: seq[JsonNode] = @[]
+    for msg in msgs:
+      # Skip bot's own messages
+      let author = msg.getOrDefault("author")
+      if author.getOrDefault("bot").getBool(false):
+        continue
+      # Skip messages without content
+      let content = msg.getOrDefault("content").getStr("")
+      if content.len == 0:
+        continue
+      filtered.add(msg)
+    ok(filtered)
+  except CatchableError as e:
+    err(e.msg)
+
 # ── ChannelPort procs ──────────────────────────────────────────────────────────
 
 proc sendChunk(a: DiscordAdapter; chId, text: string): Result[void, string] =
@@ -315,8 +390,9 @@ proc sendChunk(a: DiscordAdapter; chId, text: string): Result[void, string] =
 proc sendKeyboard*(a: DiscordAdapter; userId: UserId;
                    text: string;
                    buttons: seq[seq[(string, string)]]): Result[string, string] =
-  ## Sends a message with Discord component buttons. Returns the message id.
+  ## Sends a message with Discord component buttons.
   ## Each inner seq becomes an ACTION_ROW (max 5 buttons per row).
+  ## Returns the message_id of the sent message.
   let discordId = a.resolver.reverseChannel(userId, ckDiscord)
   if discordId.len == 0:
     return err("DiscordAdapter.sendKeyboard: no Discord ID for " & $userId)
@@ -338,10 +414,8 @@ proc sendKeyboard*(a: DiscordAdapter; userId: UserId;
   let resp = ? a.http.post(a.base() & "/channels/" & chId & "/messages", $body, headers)
   if resp.status < 200 or resp.status >= 300:
     return err("Discord sendKeyboard error " & $resp.status & ": " & resp.body)
-  try:
-    ok(parseJson(resp.body)["id"].getStr())
-  except CatchableError as e:
-    err(e.msg)
+  let msgId = resp.body.parseJson().getOrDefault("id").getStr("")
+  ok(msgId)
 
 proc editKeyboard*(a: DiscordAdapter; userId: UserId;
                    msgId: string;
@@ -372,16 +446,42 @@ proc editKeyboard*(a: DiscordAdapter; userId: UserId;
     return err("Discord editKeyboard error " & $resp.status & ": " & resp.body)
   ok()
 
-proc sendButtonAck*(a: DiscordAdapter;
-                    interactionId, interactionToken: string): Result[void, string] =
+proc editInteractionKeyboard*(a: DiscordAdapter;
+                              interactionToken, text: string;
+                              buttons: seq[seq[(string, string)]]): Result[void, string] =
+  ## Edits the original interaction message with new text and components.
+  var rows: seq[JsonNode]
+  for row in buttons:
+    var comps: seq[JsonNode]
+    for (label, data) in row:
+      comps.add(%* {
+        "type": 2,
+        "style": 1,
+        "label": label,
+        "custom_id": data,
+      })
+    if comps.len > 0:
+      rows.add(%* {"type": 1, "components": comps})
+  let body = %* {"content": text, "components": rows}
+  let headers = @[a.authHeader(), ("Content-Type", "application/json")]
+  ## Use PATCH /webhooks/{application_id}/{interaction_token}/messages/@original
+  let appId = if a.appId != nil: a.appId[] else: "unknown"
+  let url = a.base() & "/webhooks/" & appId & "/" & interactionToken & "/messages/@original"
+  let resp = ? a.http.patch(url, $body, headers)
+  if resp.status < 200 or resp.status >= 300:
+    return err("Discord edit interaction keyboard error " & $resp.status & ": " & resp.body)
+  ok()
+
+proc sendDeferredUpdate*(a: DiscordAdapter;
+                         interactionId, interactionToken: string): Result[void, string] =
   ## Acknowledges a button interaction with type 6 (DEFERRED_UPDATE_MESSAGE).
-  ## Must be called within 3 s of the button click to suppress the loading spinner.
+  ## This suppresses the loading spinner and allows updating the message via webhook later.
   let body    = %* {"type": 6}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url = a.base() & "/interactions/" & interactionId & "/" & interactionToken & "/callback"
   let resp = ? a.http.post(url, $body, headers)
   if resp.status < 200 or resp.status >= 300:
-    return err("Discord button ack error " & $resp.status)
+    return err("Discord deferred update error " & $resp.status)
   ok()
 
 proc send*(a: DiscordAdapter; msg: OutboundMessage): Result[void, string] =
@@ -389,7 +489,7 @@ proc send*(a: DiscordAdapter; msg: OutboundMessage): Result[void, string] =
   ## If msg.keyboard is non-empty, sends with component buttons.
   ## Splits messages longer than 2000 characters into multiple sends.
   if msg.keyboard.len > 0:
-    discard ? a.sendKeyboard(msg.userId, msg.text, msg.keyboard)
+    discard a.sendKeyboard(msg.userId, msg.text, msg.keyboard)
     return ok()
   let discordId = a.resolver.reverseChannel(msg.userId, ckDiscord)
   if discordId.len == 0:
@@ -408,6 +508,36 @@ proc sendInteractionResponse*(a: DiscordAdapter;
   let resp = ? a.http.post(url, $body, headers)
   if resp.status < 200 or resp.status >= 300:
     return err("Discord interaction response error " & $resp.status)
+  ok()
+
+proc sendInteractionKeyboard*(a: DiscordAdapter;
+                              interactionId, interactionToken, text: string;
+                              buttons: seq[seq[(string, string)]]): Result[void, string] =
+  ## Responds to a slash command interaction with text and buttons.
+  var rows: seq[JsonNode]
+  for row in buttons:
+    var comps: seq[JsonNode]
+    for (label, data) in row:
+      comps.add(%* {
+        "type":      2,
+        "style":     1,
+        "label":     label,
+        "custom_id": data,
+      })
+    if comps.len > 0:
+      rows.add(%* {"type": 1, "components": comps})
+  let body = %* {
+    "type": 4,
+    "data": {
+      "content": text,
+      "components": rows,
+    }
+  }
+  let headers = @[a.authHeader(), ("Content-Type", "application/json")]
+  let url = a.base() & "/interactions/" & interactionId & "/" & interactionToken & "/callback"
+  let resp = ? a.http.post(url, $body, headers)
+  if resp.status < 200 or resp.status >= 300:
+    return err("Discord interaction keyboard error " & $resp.status & ": " & resp.body)
   ok()
 
 proc sendInteractionModal*(a: DiscordAdapter;
@@ -477,11 +607,11 @@ proc ack*(a: DiscordAdapter; channelId: string) =
 
 # ── Gateway management ─────────────────────────────────────────────────────────
 
-proc startGateway*(a: DiscordAdapter) {.gcsafe.} =
+proc startGateway*(a: DiscordAdapter; logger: Logger) {.gcsafe.} =
   ## Starts the Discord gateway thread. Call once at daemon startup.
   {.cast(gcsafe).}:
     gDiscordEvents.open()
-    createThread(gGatewayThread, discordGatewayThread, GatewayArgs(token: a.token))
+    createThread(gGatewayThread, discordGatewayThread, GatewayArgs(token: a.token, logger: logger))
 
 proc tryRecvEvent*(a: DiscordAdapter): (bool, DiscordRawEvent) =
   ## Non-blocking poll for gateway events. Returns (false, default) when empty.
@@ -491,11 +621,20 @@ proc tryRecvEvent*(a: DiscordAdapter): (bool, DiscordRawEvent) =
 
 proc getAppId*(a: DiscordAdapter): Result[string, string] =
   ## Fetches the bot's application ID via GET /users/@me.
-  ## Uses >>= to chain HTTP response → JSON parse → id extraction.
-  a.http.get(a.base() & "/users/@me", @[a.authHeader()]) >>= extractId
+  try:
+    let resp = ? a.http.get(a.base() & "/users/@me", @[a.authHeader()])
+    if resp.status == 401:
+      return err("Discord getAppId error 401: Unauthorized. Check if DISCORD_BOT_TOKEN is correct.")
+    if resp.status < 200 or resp.status >= 300:
+      return err("Discord getAppId error " & $resp.status & ": " & resp.body)
+    let id = ? extractId(resp)
+    if a.appId != nil: a.appId[] = id
+    ok(id)
+  except Exception as e:
+    err(e.msg)
 
-proc registerSlashCommands*(a: DiscordAdapter; appId: string): Result[void, string] =
-  ## Registers the operational command surface as global application commands.
+proc registerSlashCommands*(a: DiscordAdapter; appId: string; guildId = ""): Result[void, string] =
+  ## Registers the operational command surface as global or guild application commands.
   let commands = %* [
     {"name": "start",   "type": 1, "description": "Show the intro text"},
     {"name": "help",    "type": 1, "description": "Show available commands"},
@@ -571,12 +710,21 @@ proc registerSlashCommands*(a: DiscordAdapter; appId: string): Result[void, stri
     {"name": "status", "type": 1, "description": "Show session/runtime status"},
   ]
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
-  let url = a.base() & "/applications/" & appId & "/commands"
-  ## Bulk overwrite — replaces all existing global commands.
-  let resp = ? a.http.put(url, $commands, headers)
-  if resp.status < 200 or resp.status >= 300:
-    return err("Discord register commands error " & $resp.status & ": " & resp.body)
-  ok()
+  let url =
+    if guildId.len > 0:
+      a.base() & "/applications/" & appId & "/guilds/" & guildId & "/commands"
+    else:
+      a.base() & "/applications/" & appId & "/commands"
+  ## Bulk overwrite — replaces all existing global or guild commands.
+  try:
+    let resp = ? a.http.put(url, $commands, headers)
+    if resp.status == 403:
+      return err("Discord register commands error 403: Forbidden. Check if application.commands scope is granted.")
+    if resp.status < 200 or resp.status >= 300:
+      return err("Discord register commands error " & $resp.status & ": " & resp.body)
+    ok()
+  except Exception as e:
+    err("Discord register commands failed: " & e.msg)
 
 # ── Constructor ────────────────────────────────────────────────────────────────
 
@@ -585,9 +733,12 @@ proc newDiscordAdapter*(token:        string;
                         apiBase       = ""): DiscordAdapter =
   var t = new(Table[string, string])
   t[] = initTable[string, string]()
+  var appId = new(string)
+  appId[] = ""
   DiscordAdapter(
     token:      token,
     apiBase:    apiBase,
+    appId:      appId,
     resolver:   newIdentityResolver(identityPath),
     dmChannels: t,
     http:       newStdHttpAdapter(),
