@@ -99,8 +99,24 @@ func decideCommandRoute*(kind: CommandKind): CommandRoute =
 func newCommandDecision(kind: CommandKind; value = ""): CommandDecision =
   CommandDecision(kind: kind, route: decideCommandRoute(kind), value: value)
 
+func stripBotMention*(text: string): string =
+  ## Strips the @botname suffix Telegram appends in group chats.
+  ## "/models@Ostervalt args" → "/models args"
+  ## "/models@Ostervalt"     → "/models"
+  ## "/models"               → "/models"  (unchanged)
+  if text.len == 0 or text[0] != '/':
+    return text
+  let spaceIdx = text.find(' ')
+  let token    = if spaceIdx >= 0: text[0 ..< spaceIdx] else: text
+  let atIdx    = token.find('@')
+  if atIdx > 0:
+    let base = token[0 ..< atIdx]
+    if spaceIdx >= 0: base & text[spaceIdx .. ^1] else: base
+  else:
+    text
+
 func parseCommandText*(text: string): CommandDecision =
-  let cmd = text.strip
+  let cmd = stripBotMention(text.strip)
   case cmd
   of "/start": newCommandDecision(cmdStart)
   of "/forget": newCommandDecision(cmdForget)
@@ -187,7 +203,10 @@ func parseCallbackData*(data: string): CallbackDecision =
   if data.startsWith("models:page:"):
     let parts = data[12 .. ^1].rsplit(':', 1)
     if parts.len == 2:
-      return newCallbackDecision(cbkModelsPage, provider = parts[0], page = parseInt(parts[1]))
+      try:
+        return newCallbackDecision(cbkModelsPage, provider = parts[0], page = parseInt(parts[1]))
+      except:
+        return newCallbackDecision(cbkUnknown)
   if data == "models:back":
     return newCallbackDecision(cbkModelsBack)
   if data.startsWith("think:set:"):
