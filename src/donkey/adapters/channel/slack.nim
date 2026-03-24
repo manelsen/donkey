@@ -200,6 +200,55 @@ proc editMessage*(a: SlackAdapter; userId: UserId;
                        %* {"channel": chId, "ts": msgId, "text": txt})
   ok()
 
+proc buildSlackBlocks(text: string; buttons: seq[seq[(string, string)]]): JsonNode =
+  ## Internal helper to build Slack Block Kit payload.
+  result = newJArray()
+  result.add(%* {
+    "type": "section",
+    "text": { "type": "mrkdwn", "text": text }
+  })
+  if buttons.len > 0:
+    var elements = newJArray()
+    for row in buttons:
+      for (label, data) in row:
+        elements.add(%* {
+          "type":      "button",
+          "text":      { "type": "plain_text", "text": label },
+          "value":     data,
+          "action_id": data,
+        })
+    if elements.len > 0:
+      result.add(%* {
+        "type": "actions",
+        "elements": elements
+      })
+
+proc sendKeyboard*(a: SlackAdapter; userId: UserId;
+                   text: string;
+                   buttons: seq[seq[(string, string)]]): Result[void, string] =
+  ## Sends a message with Block Kit buttons to the user's Slack DM.
+  let slackId = a.resolver.reverseChannel(userId, ckSlack)
+  if slackId.len == 0:
+    return err("SlackAdapter.sendKeyboard: no Slack ID for user " & $userId)
+  let chId = ? a.dmChannelFor(slackId)
+  let blocks = buildSlackBlocks(text, buttons)
+  discard ? a.postJson("chat.postMessage",
+                       %* {"channel": chId, "text": text, "blocks": blocks})
+  ok()
+
+proc editKeyboard*(a: SlackAdapter; userId: UserId;
+                   msgId, text: string;
+                   buttons: seq[seq[(string, string)]]): Result[void, string] =
+  ## Replaces the content and blocks of an existing message.
+  let slackId = a.resolver.reverseChannel(userId, ckSlack)
+  if slackId.len == 0:
+    return err("SlackAdapter.editKeyboard: no Slack ID for user " & $userId)
+  let chId = ? a.dmChannelFor(slackId)
+  let blocks = buildSlackBlocks(text, buttons)
+  discard ? a.postJson("chat.update",
+                       %* {"channel": chId, "ts": msgId, "text": text, "blocks": blocks})
+  ok()
+
 proc ack*(a: SlackAdapter; channelId: string) =
   ## No-op — Slack webhook ack is the HTTP 200 response, handled by the HTTP layer.
   discard
