@@ -28,43 +28,56 @@ proc sendImmediateOutbound*(msg: OutboundMessage;
                             ports: OutboundChannelPorts;
                             log: Logger) {.gcsafe.} =
   let port = ports.channelPortFor(msg.channel)
-  port.send(msg).isOkOr:
-    case msg.channel
-    of ckTelegram: log.error("tg send: " & error)
-    of ckDiscord:  log.error("dc send: " & error)
-    of ckWeCom:    log.error("wc send: " & error)
-    of ckWeChat:   log.error("wechat send: " & error)
-    of ckQQ:       log.error("qq send: " & error)
-    of ckFeishu:   log.error("fs send: " & error)
-    of ckSlack:     log.error("sl send: " & error)
-    of ckWhatsApp:  log.error("wa send: " & error)
-    of ckSignal:    log.error("sig send: " & error)
-    of ckDingTalk:  log.error("dt send: " & error)
-    of ckMatrix:    log.error("mx send: " & error)
-    of ckEmail:     log.error("em send: " & error)
-    of ckCli:       log.error("cli send: " & error)
+  let sendResult = port.send(msg)
+  if sendResult.isOk:
+    log.info("sent " & $msg.channel & " -> " & $msg.userId & " (" & $msg.text.len & " chars)")
+    return
+  let error = sendResult.error
+  case msg.channel
+  of ckTelegram:  log.error("tg send: " & error)
+  of ckDiscord:   log.error("dc send: " & error)
+  of ckWeCom:     log.error("wc send: " & error)
+  of ckWeChat:    log.error("wechat send: " & error)
+  of ckQQ:        log.error("qq send: " & error)
+  of ckFeishu:    log.error("fs send: " & error)
+  of ckSlack:     log.error("sl send: " & error)
+  of ckWhatsApp:  log.error("wa send: " & error)
+  of ckSignal:    log.error("sig send: " & error)
+  of ckDingTalk:  log.error("dt send: " & error)
+  of ckMatrix:    log.error("mx send: " & error)
+  of ckEmail:     log.error("em send: " & error)
+  of ckCli:       log.error("cli send: " & error)
 
 proc editStreamOutbound*(msg: OutboundMessage;
                          channelMsgId: string;
                          ports: OutboundChannelPorts;
                          log: Logger) {.gcsafe.} =
   let port = ports.channelPortFor(msg.channel)
-  port.editMessage(msg.userId, channelMsgId, msg.text).isOkOr:
-    case msg.channel
-    of ckTelegram: log.warn("tg editMessage: " & error)
-    of ckDiscord:  log.warn("dc editMessage: " & error)
-    of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli: discard
+  let res = port.editMessage(msg.userId, channelMsgId, msg.text)
+  if res.isOk:
+    log.info("sent " & $msg.channel & " (edit) -> " & $msg.userId & " (" & $msg.text.len & " chars)")
+    return
+  let error = res.error
+  case msg.channel
+  of ckTelegram: log.warn("tg editMessage: " & error)
+  of ckDiscord:  log.warn("dc editMessage: " & error)
+  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli: discard
 
 proc createStreamOutbound*(msg: OutboundMessage;
                            ports: OutboundChannelPorts;
                            log: Logger): string {.gcsafe.} =
   let port = ports.channelPortFor(msg.channel)
-  port.sendReturnId(msg).valueOr:
-    case msg.channel
-    of ckTelegram: log.error("tg sendReturnId: " & error)
-    of ckDiscord:  log.error("dc sendReturnId: " & error)
-    of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli: discard
-    ""
+  let res = port.sendReturnId(msg)
+  if res.isOk:
+    let channelMsgId = res.value
+    log.info("sent " & $msg.channel & " (new stream) -> " & $msg.userId & " (" & $msg.text.len & " chars)")
+    return channelMsgId
+  let error = res.error
+  case msg.channel
+  of ckTelegram: log.error("tg sendReturnId: " & error)
+  of ckDiscord:  log.error("dc sendReturnId: " & error)
+  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli: discard
+  ""
 
 proc routeOutbound*(msg: OutboundMessage;
                     ports: OutboundChannelPorts;
