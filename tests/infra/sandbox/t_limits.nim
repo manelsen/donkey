@@ -1,4 +1,4 @@
-import std/[strutils]
+import std/[strutils, posix]
 import unittest2
 import ../../../src/donkey/infra/sandbox/limits
 import ../../../src/donkey/core/pipeops
@@ -7,19 +7,19 @@ suite "infra/sandbox/limits":
 
   suite "toRlim / fromRlim":
     test "toRlim: zero becomes infinity":
-      check toRlim(0) == RlimInfinity
+      check toRlim(0) == RlimInfinityInternal
 
     test "toRlim: positive value passed through":
-      check toRlim(60) == 60.rlim_t
+      check toRlim(60) == 60
 
     test "toRlim: negative becomes infinity":
-      check toRlim(-1) == RlimInfinity
+      check toRlim(-1) == RlimInfinityInternal
 
     test "fromRlim: infinity becomes zero":
-      check fromRlim(RlimInfinity) == 0
+      check fromRlim(RlimInfinityInternal) == 0
 
     test "fromRlim: finite value passed through":
-      check fromRlim(120.rlim_t) == 120
+      check fromRlim(120) == 120
 
   suite "CpuLimit formatting":
     test "zero shows as unlimited":
