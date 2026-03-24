@@ -38,11 +38,14 @@ proc sendDiscordKeyboard(dcAdapter: DiscordAdapter;
                          ackText: string;
                          logger: Logger) =
   if event.interactionId.len > 0:
-    dcAdapter.sendInteractionKeyboard(
-      event.interactionId, event.interactionToken, title, buttons).isOkOr:
-        core_log.log(logger, core_log.lvlError, "dc interaction keyboard: " & error)
-    kbdMsgIds[$userId] = "interaction"
-    return
+    let r = dcAdapter.sendInteractionKeyboard(
+      event.interactionId, event.interactionToken, title, buttons)
+    if r.isOk:
+      kbdMsgIds[$userId] = "interaction"
+      return
+    ## Interaction expired or already used — fall back to a regular DM keyboard
+    core_log.log(logger, core_log.lvlWarn,
+      "dc interaction keyboard fallback (expired?): " & r.error)
 
   let msgId = dcAdapter.sendKeyboard(userId, title, buttons).valueOr:
     core_log.log(logger, core_log.lvlError, "dc send keyboard: " & error)
@@ -81,7 +84,7 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
       let title = buildModelPageTitle(providerOnly, 0, entries) &
         "\n" & buildCatalogSourceText(catalog)
       let buttons = buildModelPageButtons(providerOnly, entries, currProv, currModel, 0)
-      if kbdId.len > 0:
+      if kbdId.len > 0 and event.interactionId.len == 0:
         dcAdapter.smartEditKeyboard(event, userId, kbdId, title, buttons).isOkOr:
           core_log.log(logger, core_log.lvlError, "dc provider direct menu: " & error)
       else:
@@ -94,7 +97,7 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
       sendDiscordReply(event, dcAdapter, userId, reply, logger)
     else:
       let kbdId = kbdMsgIds.getOrDefault($userId)
-      if kbdId.len > 0:
+      if kbdId.len > 0 and event.interactionId.len == 0:
         dcAdapter.smartEditKeyboard(event, userId, kbdId, "Escolha o provider:", memory.buildProviderButtons(userId)).isOkOr:
             core_log.log(logger, core_log.lvlError, "dc provider reopen: " & error)
       else:
@@ -112,7 +115,7 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
       sendDiscordReply(event, dcAdapter, userId, reply, logger)
     else:
       let kbdId = kbdMsgIds.getOrDefault($userId)
-      if kbdId.len > 0:
+      if kbdId.len > 0 and event.interactionId.len == 0:
         dcAdapter.smartEditKeyboard(event, userId, kbdId, "Nível de raciocínio:", memory.buildThinkButtons(userId)).isOkOr:
             core_log.log(logger, core_log.lvlError, "dc think reopen: " & error)
       else:
