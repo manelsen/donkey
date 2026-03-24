@@ -475,3 +475,18 @@
   - `readChars` is deprecated — use `readChars(toOpenArray(buf, start, len-1))` instead
 
 ---
+
+## 2026-03-23 (US-071)
+- Implemented `infra/sandbox/docker.nim` — Docker Ephemeral Container Sandbox. DockerSandbox, DockerOptions, DockerResult types with pythonSandbox() and nodeSandbox() constructors, buildDockerArgs, runContainer, pullImage, listContainers, stopAllContainers helpers.
+- Created `tests/infra/sandbox/t_docker.nim` with 38 tests covering all functions.
+- Build passes: `nim c --mm:orc src/donkey.nim` with config.nims strict flags.
+- All testament tests pass: `testament --megatest:off all` (113 test files, all PASS).
+- Files changed: `src/donkey/infra/sandbox/docker.nim` (new), `tests/infra/sandbox/t_docker.nim` (new), `prd.json`
+- **Learnings for future iterations:**
+  - `not in` as an infix operator must be `notin` (single word) in Nim — the parser treats `not in` as separate tokens
+  - `execCmdEx` from `std/osproc` must be explicitly imported for subprocess execution
+  - `mapIt` from `std/sequtils` must be explicitly imported for `seq.mapIt()` operations
+  - Docker `opts` field is private (no `*`) — tests should verify behavior rather than access private fields directly
+  - `--network=none` and `--read-only` flags provide container isolation by default
+
+---
