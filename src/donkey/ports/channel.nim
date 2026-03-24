@@ -24,6 +24,12 @@ type
     send*:         proc(msg: OutboundMessage): Result[void, string] {.gcsafe.}
     sendReturnId*: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.}
     editMessage*:  proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.}
+    sendKeyboard*: proc(userId: UserId; text: string;
+                        buttons: seq[seq[(string, string)]];
+                        replyTo = ""): Result[void, string] {.gcsafe.}
+    editKeyboard*: proc(userId: UserId; msgId, text: string;
+                        buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.}
+    setMessageReaction*: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.}
 
   OutboundChannelPorts* = object
     telegram*: OutboundChannelPort
