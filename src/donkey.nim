@@ -40,6 +40,8 @@ import donkey/adapters/channel/feishu
 import donkey/adapters/channel/feishu_runtime
 import donkey/adapters/channel/matrix
 import donkey/adapters/channel/email
+import donkey/adapters/channel/slack
+import donkey/adapters/channel/dingtalk
 import donkey/adapters/channel/cli_repl
 import donkey/adapters/tool/mcp_client
 import donkey/domain/message
@@ -108,23 +110,6 @@ Commands:
 
 # ── service commands ───────────────────────────────────────────────────────────
 
-const ServiceFileContent = """
-[Unit]
-Description=Donkey AI Agent Daemon
-After=network.target
-Wants=network.target
-
-[Service]
-Type=simple
-EnvironmentFile=%h/.config/""" & ConfigDirName & "/" & EnvFileName & """
-ExecStart=%h/.local/bin/""" & AppSlug & """ start --config %h/.config/""" & ConfigDirName & "/" & ConfigFileName & """
-Restart=on-failure
-RestartSec=5s
-TimeoutStopSec=10s
-
-[Install]
-WantedBy=default.target
-"""
 
 const EnvFileTemplate = """# """ & AppName & """ environment — fill in the values you need.
 # Permissions: chmod 600 ~/.config/""" & ConfigDirName & "/" & EnvFileName & """
@@ -186,21 +171,33 @@ proc svcBinPath(): string = getHomeDir() / ".local" / "bin" / AppSlug
 proc svcRun(cmd: string): bool =
   execShellCmd(cmd) == 0
 
+proc buildServiceFileContent(binPath: string): string =
+  ## Generates the systemd unit file pointing at the actual binary path.
+  ## nimble build takes effect on next service restart — no reinstall needed.
+  "[Unit]\n" &
+  "Description=Donkey AI Agent Daemon\n" &
+  "After=network.target\n" &
+  "Wants=network.target\n" &
+  "\n[Service]\n" &
+  "Type=simple\n" &
+  "EnvironmentFile=" & svcCfgDir() / EnvFileName & "\n" &
+  "ExecStart=" & binPath & " start --config " & svcCfgDir() / ConfigFileName & "\n" &
+  "Restart=on-failure\n" &
+  "RestartSec=5s\n" &
+  "TimeoutStopSec=10s\n" &
+  "\n[Install]\n" &
+  "WantedBy=default.target\n"
+
 proc ctlServiceInstall =
   # Directories
   createDir(svcUnitDir())
   createDir(svcCfgDir())
-  createDir(getHomeDir() / ".local" / "bin")
 
-  # Binary — copy current executable
-  let src = getAppFilename()
-  let dst = svcBinPath()
-  copyFile(src, dst)
-  discard svcRun("chmod 755 " & dst)
-  echo "  binary  → " & dst
-
-  # Service unit file
-  writeFile(svcUnitFile(), ServiceFileContent.strip() & "\n")
+  # Service unit file — points at the actual binary so nimble build takes
+  # effect on next restart without reinstalling.
+  let binPath = getAppFilename()
+  writeFile(svcUnitFile(), buildServiceFileContent(binPath))
+  echo "  binary  → " & binPath & " (in-place, no copy)"
   echo "  service → " & svcUnitFile()
 
   # Env file — create if missing, then inject any keys found in current env
@@ -293,10 +290,9 @@ proc ctlServiceRestart =
   else:
     echo "✓ Restarted. Logs: " & AppSlug & " service logs -f"
 
-proc ctlServiceLogs(follow: bool; cat: bool) =
-  var cmd = "journalctl --user -u " & AppSlug & " --no-pager"
+proc ctlServiceLogs(follow: bool) =
+  var cmd = "journalctl --user -u " & AppSlug & " --no-pager -o cat"
   if follow: cmd.add(" -f")
-  if cat:    cmd.add(" -o cat")
   discard execShellCmd(cmd)
 
 # ── ctl user commands ──────────────────────────────────────────────────────────
@@ -372,7 +368,7 @@ when defined(withPostgres):
   proc ctlMemorySearch(pgDsn: string; uuid, query: string; limit = 10) =
     let embedKey = getEnv("OPENROUTER_API_KEY")
     let embedAdapter = newOpenRouterEmbeddingAdapter(embedKey)
-    let embedFn: EmbedFn = proc(text: string): seq[float32] =
+    let embedFn: EmbedFn = proc(text: string): seq[float32] {.gcsafe.} =
       embedAdapter.embed(text)
     let pg = newPostgresMemoryAdapter(pgDsn, embedFn)
     pg.migrate()
@@ -389,7 +385,7 @@ when defined(withPostgres):
   proc ctlMemoryImport(pgDsn, paddocksDir: string; uuid: string) =
     let embedKey = getEnv("OPENROUTER_API_KEY")
     let embedAdapter = newOpenRouterEmbeddingAdapter(embedKey)
-    let embedFn: EmbedFn = proc(text: string): seq[float32] =
+    let embedFn: EmbedFn = proc(text: string): seq[float32] {.gcsafe.} =
       embedAdapter.embed(text)
     let pg = newPostgresMemoryAdapter(pgDsn, embedFn)
     pg.migrate()
@@ -399,7 +395,7 @@ when defined(withPostgres):
   proc ctlMemoryExport(pgDsn: string; uuid: string; outDir = "") =
     let embedKey = getEnv("OPENROUTER_API_KEY")
     let embedAdapter = newOpenRouterEmbeddingAdapter(embedKey)
-    let embedFn: EmbedFn = proc(text: string): seq[float32] =
+    let embedFn: EmbedFn = proc(text: string): seq[float32] {.gcsafe.} =
       embedAdapter.embed(text)
     let pg = newPostgresMemoryAdapter(pgDsn, embedFn)
     pg.migrate()
@@ -559,7 +555,7 @@ proc makeTgTypingFn(token: string; identityPath: string): TypingFn =
   result = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: [].} =
     if channel == ckTelegram:
       try:
-        {.cast(gcsafe).}: tg[].sendTyping(userId).isOkOr: discard
+        tg[].sendTyping(userId).isOkOr: discard
       except: discard
 
 type DaemonToolBundle = object
@@ -573,9 +569,14 @@ type GlobalProviderBundle = object
 type DaemonEnv = object
   telegramToken: string
   discordToken:  string
+  discordGuildId: string
   wecomCorpId:   string
   wechatAppId:   string
   feishuAppId:   string
+  slackBotToken: string
+  dingTalkAppKey: string
+  dingTalkAppSecret: string
+  dingTalkRobotCode: string
   qqApiBase:     string
   qqOfficialAppId: string
   qqOfficialApiBase: string
@@ -590,6 +591,8 @@ type DaemonAdapters = object
   wch: WeChatAdapter
   qq: QQChannelAdapter
   fs: FeishuAdapter
+  sl: SlackAdapter
+  dt: DingTalkAdapter
   mx: MatrixAdapter
   em: EmailAdapter
   cli: CliAdapter
@@ -649,29 +652,28 @@ type DaemonBootstrap = object
   ctx:    DaemonContext
 
 proc loadDaemonToolBundle(cfg: DonkeyConfig): DaemonToolBundle =
-  {.cast(gcsafe).}:
-    for entry in loadToolRegistry(cfg.home / "tools.toml"):
-      var client = buildMcpClient(entry)
-      let schemasRes = client.listTools()
-      if schemasRes.isOk:
-        for s in schemasRes.value:
-          result.tools.add(ToolDescription(
-            name:        s.name,
-            description: s.description,
-            schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
-          ))
-      result.clients.add(client.toRuntimePort())
-    for manifest in loadSkillRegistry(cfg.home / "skills.toml"):
-      let runtimeRes = buildDenoSkillRuntime(
-        manifest.script, manifest.permissions, buildSkillRuntimePolicy(cfg, manifest.name))
-      if runtimeRes.isOk:
-        for s in runtimeRes.value.schemas:
-          result.tools.add(ToolDescription(
-            name:        s.name,
-            description: s.description,
-            schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
-          ))
-        result.clients.add(runtimeRes.value.port)
+  for entry in loadToolRegistry(cfg.home / "tools.toml"):
+    var client = buildMcpClient(entry)
+    let schemasRes = client.listTools()
+    if schemasRes.isOk:
+      for s in schemasRes.value:
+        result.tools.add(ToolDescription(
+          name:        s.name,
+          description: s.description,
+          schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
+        ))
+    result.clients.add(client.toRuntimePort())
+  for manifest in loadSkillRegistry(cfg.home / "skills.toml"):
+    let runtimeRes = buildDenoSkillRuntime(
+      manifest.script, manifest.permissions, buildSkillRuntimePolicy(cfg, manifest.name))
+    if runtimeRes.isOk:
+      for s in runtimeRes.value.schemas:
+        result.tools.add(ToolDescription(
+          name:        s.name,
+          description: s.description,
+          schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
+        ))
+      result.clients.add(runtimeRes.value.port)
 
 proc makeProviderFn[A](a: A): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
@@ -683,7 +685,7 @@ proc buildGlobalProviderBundle(): GlobalProviderBundle =
   result.completeFn = if orKey.len > 0: makeProviderFn(orAdapter) else: nil
   result.streamFn = if orKey.len > 0: orAdapter.makeStreamFn() else: nil
 
-proc buildGlobalSearchFn(): SearchFn
+proc buildGlobalSearchFn(): SearchFn {.gcsafe.}
 
 proc initDaemonServices(cfg: DonkeyConfig;
                         env: DaemonEnv;
@@ -696,8 +698,7 @@ proc initDaemonServices(cfg: DonkeyConfig;
   result.globalCompleteFn = providerBundle.completeFn
   result.globalStreamFn = providerBundle.streamFn
   result.tgTypingFn = makeTgTypingFn(env.telegramToken, env.identityPath)
-  {.cast(gcsafe).}:
-    result.globalSearchFn = buildGlobalSearchFn()
+  result.globalSearchFn = buildGlobalSearchFn()
   when defined(withPostgres):
     if result.globalSearchFn != nil:
       log.info("Postgreyskull semantic search enabled")
@@ -709,9 +710,14 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
     quit(1)
 
   result.discordToken = getEnv("DISCORD_BOT_TOKEN")
+  result.discordGuildId = getEnv("DISCORD_GUILD_ID")
   result.wecomCorpId = getEnv("WECOM_CORP_ID")
   result.wechatAppId = getEnv("WECHAT_APP_ID")
   result.feishuAppId = getEnv("FEISHU_APP_ID")
+  result.slackBotToken = getEnv("SLACK_BOT_TOKEN")
+  result.dingTalkAppKey = getEnv("DINGTALK_APP_KEY")
+  result.dingTalkAppSecret = getEnv("DINGTALK_APP_SECRET")
+  result.dingTalkRobotCode = getEnv("DINGTALK_ROBOT_CODE")
   result.qqApiBase = getEnv("QQ_ONEBOT_URL")
   result.qqOfficialAppId = getEnv("QQ_OFFICIAL_APP_ID")
   result.qqOfficialApiBase = getEnv("QQ_OFFICIAL_API_BASE")
@@ -746,6 +752,9 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
     result.qq = newQQDisabledChannelAdapter(env.identityPath)
   result.fs = newFeishuAdapter(env.feishuAppId, getEnv("FEISHU_APP_SECRET"),
                                env.identityPath)
+  result.sl = newSlackAdapter(env.slackBotToken, env.identityPath)
+  result.dt = newDingTalkAdapter(env.dingTalkAppKey, env.dingTalkAppSecret,
+                                 env.dingTalkRobotCode, env.identityPath)
   result.mx = newMatrixAdapter(getEnv("MATRIX_HOMESERVER"), getEnv("MATRIX_BOT_USER_ID"),
                                getEnv("MATRIX_ACCESS_TOKEN"), env.identityPath)
   result.em = newEmailAdapter(getEnv("EMAIL_IMAP_HOST"), getEnv("EMAIL_SMTP_HOST"),
@@ -1053,18 +1062,28 @@ proc loadDaemonBootstrap(cfg: DonkeyConfig;
 
 proc startOptionalDiscordGateway(dcAdapter: var DiscordAdapter;
                                  discordToken: string;
+                                 discordGuildId: string;
                                  log: Logger) =
   if discordToken.len == 0:
     log.info("DISCORD_BOT_TOKEN not set — Discord disabled")
     return
 
-  dcAdapter.startGateway()
+  log.info("Discord gateway starting (token len=" & $discordToken.len & ")")
+  dcAdapter.startGateway(log)
   let appId = dcAdapter.getAppId().valueOr:
     log.warn("Discord getAppId failed: " & error); ""
   if appId.len > 0:
-    dcAdapter.registerSlashCommands(appId).isOkOr:
+    log.info("Discord appId: " & appId)
+    ## Registra comandos globalmente (sem guildId) para funcionar em DMs também
+    dcAdapter.registerSlashCommands(appId, guildId = "").isOkOr:
       log.warn("Discord slash cmd reg failed: " & error)
-  log.info("Discord gateway started")
+    if discordGuildId.len > 0:
+      log.info("Discord slash commands registered (global) — também funciona na guild " & discordGuildId)
+    else:
+      log.info("Discord slash commands registered (global)")
+  else:
+    log.warn("Discord slash commands NOT registered — appId unavailable")
+  log.info("Discord gateway thread started")
 
 proc startOptionalWeComGateway(wcAdapter: var WeComAdapter;
                                wecomCorpId: string;
@@ -1097,12 +1116,31 @@ proc startOptionalWeChatGateway(wchAdapter: var WeChatAdapter;
 
   let port = Port(parseInt(if getEnv("WECHAT_WEBHOOK_PORT").len > 0:
                              getEnv("WECHAT_WEBHOOK_PORT") else: "8081"))
-  {.cast(gcsafe).}:
-    wchAdapter.startWebhook(port)
+  wchAdapter.startWebhook(port)
   log.info("WeChat webhook listener started on port " & $port)
 
+proc startOptionalSlackGateway(slAdapter: var SlackAdapter;
+                               slackBotToken: string;
+                               log: Logger) =
+  if slackBotToken.len == 0:
+    log.info("SLACK_BOT_TOKEN not set — Slack disabled")
+    return
+
+  slAdapter.openQueue()
+  log.info("Slack gateway started")
+
+proc startOptionalDingTalkGateway(dtAdapter: var DingTalkAdapter;
+                                  dingTalkAppKey: string;
+                                  log: Logger) =
+  if dingTalkAppKey.len == 0:
+    log.info("DINGTALK_APP_KEY not set — DingTalk disabled")
+    return
+
+  dtAdapter.openQueue()
+  log.info("DingTalk gateway started")
+
 proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
-                            log: Logger) =
+                             log: Logger) =
   if not qqAdapter.enabled():
     log.info("QQ not configured — QQ disabled")
     return
@@ -1111,30 +1149,28 @@ proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
     let oneBotPort = Port(parseInt(
       if getEnv("QQ_ONEBOT_WEBHOOK_PORT").len > 0:
         getEnv("QQ_ONEBOT_WEBHOOK_PORT") else: "8082"))
-    {.cast(gcsafe).}:
-      qqAdapter.startWebhook(oneBotPort)
+    qqAdapter.startWebhook(oneBotPort)
     log.info("QQ OneBot webhook listener started on port " & $oneBotPort)
   of qbkOfficial:
     log.info("QQ official API client enabled")
-    {.cast(gcsafe).}:
-      qqAdapter.startGateway()
+    qqAdapter.startGateway()
     log.info("QQ official gateway started")
   of qbkNone:
     discard
 
-proc buildGlobalSearchFn(): SearchFn =
+proc buildGlobalSearchFn(): SearchFn {.gcsafe.} =
   when defined(withPostgres):
     let pgDsnRuntime = getEnv("DONKEY_PG_DSN")
     if pgDsnRuntime.len > 0:
       let orEmbedKey = getEnv("OPENROUTER_API_KEY")
       let embedAdapter = newOpenRouterEmbeddingAdapter(orEmbedKey)
-      let embedFn: EmbedFn = proc(text: string): seq[float32] =
-        {.cast(gcsafe).}: embedAdapter.embed(text)
+      let embedFn: EmbedFn = proc(text: string): seq[float32] {.gcsafe.} =
+        embedAdapter.embed(text)
       let pgSearch = newPostgresMemoryAdapter(pgDsnRuntime, embedFn)
       pgSearch.migrate()
       result = proc(userId: UserId; query: string; limit: int): seq[MemoryHit]
                     {.gcsafe, raises: [].} =
-        try: {.cast(gcsafe).}: pgSearch.search(userId, query, limit)
+        try: pgSearch.search(userId, query, limit)
         except: @[]
   else:
     discard
@@ -1142,7 +1178,7 @@ proc buildGlobalSearchFn(): SearchFn =
 # Forward declaration for handleGatewayFallback (defined later, used in setupIpcServer)
 proc handleGatewayFallback(ctx: DaemonContext; cfg: DonkeyConfig;
                           memory: MdFileAdapter; msg: InboundMessage;
-                          log: Logger)
+                          log: Logger) {.gcsafe.}
 
 proc setupIpcServer(cfg: DonkeyConfig;
                     runtime: DaemonRuntime;
@@ -1162,12 +1198,11 @@ proc setupIpcServer(cfg: DonkeyConfig;
   let sockPath = cfg.home / SockFileName
   let ipcStatusFn: StatusProvider = proc(): DaemonStatus {.gcsafe, raises: [].} =
     var sessions: seq[SessionInfo]
-    {.cast(gcsafe).}:
-      for (uid, chans) in sm.listSessions():
-        var chanNames: seq[string]
-        for (ck, _) in chans:
-          chanNames.add($ck)
-        sessions.add(SessionInfo(userId: $uid, channels: chanNames))
+    for (uid, chans) in sm.listSessions():
+      var chanNames: seq[string]
+      for (ck, _) in chans:
+        chanNames.add($ck)
+      sessions.add(SessionInfo(userId: $uid, channels: chanNames))
     var activeChannels: seq[string]
     if telegramToken.len > 0: activeChannels.add("telegram")
     if discordToken.len > 0: activeChannels.add("discord")
@@ -1193,9 +1228,8 @@ proc setupIpcServer(cfg: DonkeyConfig;
     for e in ringSnapshot(n):
       result.add(IpcLogEntry(ts: e.ts, level: e.level, subsys: e.sub, msg: e.msg))
   let gwInboundFn: GatewayInboundFn = proc(msg: InboundMessage) {.gcsafe.} =
-    {.cast(gcsafe).}:
-      handleGatewayFallback(gatewayInboundCtx, cfg, gatewayInboundMemory, msg, gatewayInboundLog)
-  {.cast(gcsafe).}: startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
+    handleGatewayFallback(gatewayInboundCtx, cfg, gatewayInboundMemory, msg, gatewayInboundLog)
+  startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
   log.info("IPC socket: " & sockPath)
   let httpPortStr = getEnv("DONKEY_HTTP_PORT")
   let httpPort = if httpPortStr.len > 0:
@@ -1203,12 +1237,12 @@ proc setupIpcServer(cfg: DonkeyConfig;
   else:
     GatewayDefaultPort
   let gwStatusFn: GatewayStatusFn = proc(): DaemonStatus {.gcsafe.} =
-    {.cast(gcsafe).}: ipcStatusFn()
+    ipcStatusFn()
   let gwLogFn: GatewayLogFn = proc(n: int): seq[IpcLogEntry] {.gcsafe.} =
-    {.cast(gcsafe).}: ipcLogFn(n)
+    ipcLogFn(n)
   let gwEventFn: GatewayEventFn = proc(n: int): seq[AgentEvent] {.gcsafe.} =
-    {.cast(gcsafe).}: agentEventSnapshot(n)
-  {.cast(gcsafe).}: startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn)
+    agentEventSnapshot(n)
+  startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn)
   log.info("HTTP gateway: http://0.0.0.0:" & $httpPort & " (bidirectional SSE enabled)")
 
 type EnsureSessionPlan = object
@@ -1475,10 +1509,8 @@ proc stageTelegramFallbackStatus(runtime: var DaemonRuntime;
                                  tgAdapter: var TelegramAdapter;
                                  msg: InboundMessage) =
   tgAdapter.sendTyping(msg.userId).isOkOr: discard
-  let statusId = tgAdapter.sendStatus(msg.userId, "⚙️",
-                                      replyTo = msg.channelId).valueOr: ""
-  if statusId.len > 0:
-    runtime.statusMsgIds[$msg.userId] = statusId
+  tgAdapter.setMessageReaction(msg.userId, msg.channelId, "⚙️").isOkOr: discard
+  runtime.statusMsgIds[$msg.userId] = msg.channelId
 
 proc handleTelegramFallback(runtime:      var DaemonRuntime;
                             tgAdapter:    var TelegramAdapter;
@@ -1502,7 +1534,7 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
     if not telegram_runtime.handleTelegramMessage(
       msg, runtime.sm, tgAdapter, runtime.kbdMsgIds, services.memory, completeBuilder,
       modelCatalogLoader,
-      services.toolClients.len, services.tools.len, runtime.msgSeq, runtime.daemonStartMs):
+      services.toolClients.len, services.tools.len, runtime.msgSeq, runtime.daemonStartMs, log):
       handleTelegramFallback(runtime, tgAdapter, msg, services)
   true
 
@@ -1537,13 +1569,21 @@ proc clearTelegramStatus(runtime:   var DaemonRuntime;
   if outMsg.channel != ckTelegram or outMsg.isPartial or uidStr notin runtime.statusMsgIds:
     return
 
+  let msgId = runtime.statusMsgIds[uidStr]
+  runtime.statusMsgIds.del(uidStr)
+
   let isError = outMsg.text.startsWith("Desculpe") or
                 outMsg.text.startsWith("Tool call loop")
   if isError:
-    tgAdapter.editStatus(outMsg.userId, runtime.statusMsgIds[uidStr], "❌").isOkOr: discard
+    tgAdapter.setMessageReaction(outMsg.userId, msgId, "❌").isOkOr: discard
+    # Remove error reaction after 3 seconds
+    let tgPtr = addr tgAdapter
+    proc cleanup() {.async.} =
+      await sleepAsync(3000)
+      tgPtr[].setMessageReaction(outMsg.userId, msgId, "").isOkOr: discard
+    asyncSpawn cleanup()
   else:
-    tgAdapter.deleteMessage(outMsg.userId, runtime.statusMsgIds[uidStr]).isOkOr: discard
-  runtime.statusMsgIds.del(uidStr)
+    tgAdapter.setMessageReaction(outMsg.userId, msgId, "").isOkOr: discard
 
 proc drainGlobalOutbox(runtime:  var DaemonRuntime;
                        adapters: var DaemonAdapters;
@@ -1551,7 +1591,7 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
   let outboundPorts = buildOutboundPorts(
     addr adapters.tg, addr adapters.dc, addr adapters.wc,
     addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx,
-    addr adapters.em, addr adapters.cli)
+    addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.cli)
   while runtime.globalOutbox.len > 0:
     let outMsg = runtime.globalOutbox.getNoWait()
     clearTelegramStatus(runtime, adapters.tg, outMsg)
@@ -1559,13 +1599,17 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
 
 proc startDaemonIngress(ctx: DaemonContext;
                         log: Logger) =
-  startOptionalDiscordGateway(ctx.adapters.dc, ctx.env.discordToken, log)
+  startOptionalDiscordGateway(ctx.adapters.dc, ctx.env.discordToken, ctx.env.discordGuildId, log)
   startOptionalWeComGateway(ctx.adapters.wc, ctx.env.wecomCorpId, log)
   startOptionalWeChatGateway(ctx.adapters.wch, ctx.env.wechatAppId, log)
   startOptionalFeishuGateway(ctx.adapters.fs, ctx.env.feishuAppId, log)
+  startOptionalSlackGateway(ctx.adapters.sl, ctx.env.slackBotToken, log)
+  startOptionalDingTalkGateway(ctx.adapters.dt, ctx.env.dingTalkAppKey, log)
   startOptionalQQGateway(ctx.adapters.qq, log)
-  ctx.adapters.tg.setMyCommands().isOkOr:
-    log.warn("setMyCommands failed: " & error)
+  if ctx.env.telegramToken.len > 0:
+    ctx.adapters.tg.setMyCommands().isOkOr:
+      log.warn("Telegram setMyCommands failed: " & error)
+    log.info("Telegram commands registered")
 
 proc setupDaemonRuntime(ctx: DaemonContext;
                         cfg: DonkeyConfig;
@@ -1587,7 +1631,7 @@ proc handleGatewayFallback(ctx: DaemonContext;
                            cfg: DonkeyConfig;
                            memory: MdFileAdapter;
                            msg: InboundMessage;
-                           log: Logger) =
+                           log: Logger) {.gcsafe.} =
   handleSessionFallback(
     ctx.runtime,
     msg,
@@ -1741,21 +1785,33 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   var hbReg = newHeartbeatRegistry()
   let memPort = memory.toRuntimePort()
   let reminderOutboxFn: ReminderOutboxFn = proc(userId, channel, message: string) {.gcsafe.} =
-    {.cast(gcsafe).}:
-      let uid = UserId(userId)
-      ctx.runtime.globalOutbox.putNoWait(OutboundMessage(
-        userId:  uid,
-        channel: parseEnum[ChannelKind](channel, ckTelegram),
-        text:    message,
-      ))
+    let uid = UserId(userId)
+    ctx.runtime.globalOutbox.putNoWait(OutboundMessage(
+      userId:  uid,
+      channel: parseEnum[ChannelKind](channel, ckTelegram),
+      text:    message,
+    ))
   hbReg.registerTask("reminders", proc() {.gcsafe.} =
-    {.cast(gcsafe).}: deliverDueReminders(memPort, reminderOutboxFn))
+    deliverDueReminders(memPort, reminderOutboxFn))
   let hbIntervalStr = getEnv("DONKEY_HEARTBEAT_SEC")
   let hbInterval = if hbIntervalStr.len > 0:
     try: parseInt(hbIntervalStr) except ValueError: 60
   else: 60
   startHeartbeat(hbReg, intervalSec = hbInterval)
   log.info("heartbeat: every " & $hbInterval & "s")
+
+  ## One-time startup: recover messages received while bot was offline.
+  block:
+    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+      buildCompleteFn(preferencesMd, buildProviderBundle)
+    let modelCatalogLoader = buildModelCatalogLoader()
+    discord_runtime.checkDiscordOfflineMessages(
+      ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.dcKbdMsgIds, memory,
+      completeBuilder, modelCatalogLoader,
+      ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
+      ctx.runtime.msgSeq, log,
+      proc(msg: InboundMessage) {.gcsafe.} =
+        handleGatewayFallback(ctx, cfg, memory, msg, log))
 
   log.info("polling for messages…")
   while true:
@@ -1794,10 +1850,23 @@ proc main =
     let home = resolveHome()
     configPath = home / ConfigFileName
 
+  ## Load env file if present (same file systemd uses via EnvironmentFile=).
+  ## Allows running ./donkey directly with the same environment as the service.
+  let envFilePath = svcCfgDir() / EnvFileName
+  if fileExists(envFilePath):
+    for line in lines(envFilePath):
+      let l = line.strip()
+      if l.len == 0 or l.startsWith("#"): continue
+      let s = (if l.startsWith("export "): l[7 .. ^1] else: l).strip()
+      let eq = s.find('=')
+      if eq > 0:
+        putEnv(s[0 ..< eq].strip(), s[eq + 1 .. ^1].strip())
+
   let cfg = loadConfig(configPath)
   ringInit()            ## enable log ring buffer before the first Logger is created
   agentEventRingInit()  ## enable agent event ring buffer
-  if isatty(stderr): enableHumanLog()
+  enableHumanLog()
+  if isatty(stderr): enableColorLog()
   let log = newLogger(AppSlug)
 
   let registryPath = cfg.home / "tools.toml"
@@ -1890,7 +1959,7 @@ proc main =
     of "stop":    ctlServiceStop();    quit(0)
     of "restart": ctlServiceRestart(); quit(0)
     of "logs":
-      ctlServiceLogs(logsFollow, logsCat); quit(0)
+      ctlServiceLogs(logsFollow); quit(0)
     else: printHelp(); quit(1)
 
   if args.len >= 1 and args[0] == "tui":
