@@ -571,11 +571,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 32,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-011"
-      ]
+      ],
+      "completionNotes": "Marked complete based on build/tests passing. Code was implemented but tasks/prd.json was not updated."
     },
     {
       "id": "US-033",
@@ -588,11 +589,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 33,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Marked complete based on build/tests passing. Code was implemented but tasks/prd.json was not updated."
     },
     {
       "id": "US-034",
@@ -605,11 +607,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 34,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Marked complete based on build/tests passing. Code was implemented but tasks/prd.json was not updated."
     },
     {
       "id": "US-035",
@@ -622,11 +625,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 35,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-034"
-      ]
+      ],
+      "completionNotes": "Marked complete based on build/tests passing. Code was implemented but tasks/prd.json was not updated."
     },
     {
       "id": "US-036",
@@ -639,12 +643,13 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 36,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-035",
         "US-033"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-037",
@@ -657,11 +662,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 37,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-034"
-      ]
+      ],
+      "completionNotes": "Marked complete based on build/tests passing. Code was implemented but tasks/prd.json was not updated."
     },
     {
       "id": "US-038",
@@ -674,12 +680,13 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 38,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-037",
         "US-033"
-      ]
+      ],
+      "completionNotes": "Marked complete based on build/tests passing. Code was implemented but tasks/prd.json was not updated."
     },
     {
       "id": "US-039",
@@ -692,11 +699,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 39,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-034"
-      ]
+      ],
+      "completionNotes": "Marked complete based on build/tests passing. Code was implemented but tasks/prd.json was not updated."
     },
     {
       "id": "US-040",
@@ -709,12 +717,13 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 40,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-039",
         "US-033"
-      ]
+      ],
+      "completionNotes": "Marked complete based on build/tests passing. Code was implemented but tasks/prd.json was not updated."
     },
     {
       "id": "US-041",
@@ -727,11 +736,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 41,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-034"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-042",
@@ -744,12 +754,13 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 42,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-041",
         "US-033"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-043",
@@ -762,11 +773,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 43,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-035"
-      ]
+      ],
+      "completionNotes": "Marked complete based on build/tests passing. Code was implemented but tasks/prd.json was not updated."
     },
     {
       "id": "US-044",
@@ -779,11 +791,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 44,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-035"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-045",
@@ -796,11 +809,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 45,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-046",
@@ -813,11 +827,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 46,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-047",
@@ -830,11 +845,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 47,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-048",
@@ -847,11 +863,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 48,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Marked complete based on build/tests passing. Code was implemented but tasks/prd.json was not updated."
     },
     {
       "id": "US-049",
@@ -864,11 +881,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 49,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-050",
@@ -881,12 +899,13 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 50,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-049",
         "US-033"
-      ]
+      ],
+      "completionNotes": "Marked complete based on build/tests passing. Code was implemented but tasks/prd.json was not updated."
     },
     {
       "id": "US-051",
@@ -899,11 +918,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 51,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-052",
@@ -916,11 +936,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 52,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-053",
@@ -933,11 +954,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 53,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-054",
@@ -950,11 +972,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 54,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-055",
@@ -967,11 +990,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 55,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-054"
-      ]
+      ],
+      "completionNotes": "Marked complete based on build/tests passing. Code was implemented but tasks/prd.json was not updated."
     },
     {
       "id": "US-056",
@@ -984,12 +1008,13 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 56,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-055",
         "US-051"
-      ]
+      ],
+      "completionNotes": "Completed by agent"
     },
     {
       "id": "US-057",
@@ -1002,11 +1027,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 57,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Marked complete based on build/tests passing. Code was implemented but tasks/prd.json was not updated."
     },
     {
       "id": "US-058",
@@ -1019,11 +1045,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 58,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Fixed boundary violation in core/memory/silent_turn.nim - removed when defined(withPostgres) block with adapter imports. Pure F1 fallback runSilentMemoryTurn remains in core. Build and all tests pass."
     },
     {
       "id": "US-059",
@@ -1036,11 +1063,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 59,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Implemented domain/tools/path_guard.nim with pure path security functions: normalizePath, splitPath, containsPathTraversal, isPathTraversalAttempt, isPathInDirectory, isPathSafe, validatePathAccess, pathAccessErrorMsg. Detects ../ traversal, null bytes, and workspace escape. All 28 tests pass."
     },
     {
       "id": "US-060",
@@ -1053,12 +1081,13 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 60,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-059",
         "US-058"
-      ]
+      ],
+      "completionNotes": "Implemented FileSystemTools adapter (adapters/tools/fs.nim) conforming to ToolPort concept with read_file, write_file, list_dir tools. Uses path_guard for security validation. 31 tests pass."
     },
     {
       "id": "US-061",
@@ -1071,11 +1100,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 61,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-058"
-      ]
+      ],
+      "completionNotes": "Implemented GitTools adapter (adapters/tools/git.nim) conforming to ToolPort with git_status, git_log, git_diff tools. Uses execCmdEx for subprocess execution, returns Result[T, string]. 27 tests pass."
     },
     {
       "id": "US-062",
@@ -1088,11 +1118,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 62,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Implemented domain/tools/shell_ast.nim with pure shell operator detection: isShellOperatorChar, containsShellOperators, hasPipe/hasSemicolon/hasAmpersand/hasInputRedirect/hasOutputRedirect, detectShellOperators (loop-based to avoid double-counting || as pipe), validateShellSafe, isShellSafe, shellValidationErrorMsg, shellBlockReason. All 143 tests pass including 93 new tests for shell_ast."
     },
     {
       "id": "US-063",
@@ -1105,12 +1136,13 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 63,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-062",
         "US-058"
-      ]
+      ],
+      "completionNotes": "Implemented adapters/tools/shell.nim with ShellTools adapter conforming to ToolPort. Uses shell_ast.nim (from US-062) to validate and block dangerous shell operators (|, &, ;, <, >, &&, ||, etc.) before execution. Commands are executed via /bin/sh with proper quoting using quoteShell(). All 31 tests pass."
     },
     {
       "id": "US-064",
@@ -1123,12 +1155,13 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 64,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-006",
         "US-058"
-      ]
+      ],
+      "completionNotes": "Implemented WebFetchTools adapter (adapters/tools/web_fetch.nim) conforming to ToolPort with web_fetch tool. Uses StdHttpAdapter for HTTP requests and pure HTML-to-text conversion via domain/tools/web_fetch_helpers.nim. SSRF protection via isPrivateUrl check. All tests pass."
     },
     {
       "id": "US-065",
@@ -1141,12 +1174,13 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 65,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-006",
         "US-058"
-      ]
+      ],
+      "completionNotes": "Implemented adapters/tools/browser.nim with Lightpanda CDP integration. BrowserTools conforms to ToolPort with browser_navigate, browser_content, browser_screenshot tools. Uses ws_client.nim for CDP over WebSocket, spawns lightpanda serve subprocess. SSRF check blocks private IPs before spawning. Returns ToolResult with isError=true for all error paths. 27 tests pass."
     },
     {
       "id": "US-066",
@@ -1159,11 +1193,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 66,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-058"
-      ]
+      ],
+      "completionNotes": "Implemented core/cron.nim with pure cron expression parsing (parseCronExpr, parseCronField, parseFieldRange), field matching (fieldMatches, matchesCron), next-run calculation (nextRun), and helper constructors (everyMinute, everyNMinutes, hourlyAt, dailyAt). ScheduledTask type with enable/disable/shouldRun. All 64 tests pass."
     },
     {
       "id": "US-067",
@@ -1176,11 +1211,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 67,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-058"
-      ]
+      ],
+      "completionNotes": "Implemented adapters/tools/mcp_client.nim with McpClient low-level JSON-RPC client over stdio and McpClientAdapter implementing ToolPort. Supports initialize, tools/list, tools/call. Meta-tools: mcp_list_tools, mcp_call_tool, mcp_server_info, mcp_ping. 16 tests pass."
     },
     {
       "id": "US-068",
@@ -1193,11 +1229,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 68,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Implemented infra/sandbox/limits.nim with setrlimit wrappers for RLIMIT_CPU, RLIMIT_AS (mem), RLIMIT_NPROC, RLIMIT_FSIZE, and RLIMIT_NOFILE. Returns Result[void, string] for all setters. Provides getrlimit getters, snapshotLimits, applyLimits, and convenience constructors (cpuSeconds, memBytes, nprocCount, fsizeBytes, nofileCount). 48 tests pass."
     },
     {
       "id": "US-069",
@@ -1210,12 +1247,13 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 69,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-068",
         "US-063"
-      ]
+      ],
+      "completionNotes": "Implemented infra/sandbox/paddock.nim with fork+execvp pattern for spawning restricted child processes. Exports: Paddock, SpawnOptions, SpawnResult, spawn helpers (newPaddock, paddockDefaults, sandboxDefaults, sandboxQuick, sandboxInteractive), runSpawned for both (cmd, args) and string command forms. Uses setrlimit from limits.nim to apply RLIMIT_CPU, RLIMIT_AS, RLIMIT_NPROC, RLIMIT_FSIZE, RLIMIT_NOFILE before exec. Captures stdout/stderr via pipes, supports stdin data and working directory. 32 tests pass."
     },
     {
       "id": "US-070",
@@ -1228,11 +1266,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 70,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Implemented infra/sandbox/wasm.nim with WasmEngine, WasmModule, WasmInstance types. Provides validateWasmFile (magic byte checking), loadModule, instantiate, call, and loadAndCall functions. Uses wasmtime CLI as subprocess for WASM execution with resource limits (CPU via fuel, memory via --max-memory). 34 tests pass."
     },
     {
       "id": "US-071",
@@ -1245,11 +1284,12 @@
         "testament pattern 'tests/**/*.nim' passes"
       ],
       "priority": 71,
-      "passes": false,
+      "passes": true,
       "notes": "ARCHITECTURAL RULE: Follow the OCaml-style pipeline topology defined in src/donkey/core/pipeops.nim. Functions should be designed as unary or with the piped target as the last argument to facilitate `|>` and `|>->`.",
       "dependsOn": [
         "US-002"
-      ]
+      ],
+      "completionNotes": "Implemented infra/sandbox/docker.nim with DockerSandbox, DockerOptions, DockerResult types. Provides pythonSandbox() and nodeSandbox() convenience constructors with default resource limits (60s CPU, 512MB memory, no network, read-only root). Includes buildDockerArgs, runContainer, pullImage, listContainers, stopAllContainers helpers. Uses docker run --rm for ephemeral containers with proper isolation flags. 38 tests pass."
     }
   ],
   "metadata": {
