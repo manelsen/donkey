@@ -29,6 +29,22 @@ proc sendDiscordReply(event: DiscordRawEvent;
   )).isOkOr:
     core_log.log(logger, core_log.lvlError, "dc send reply: " & error)
 
+proc sendDiscordEmbed(event: DiscordRawEvent;
+                      dcAdapter: DiscordAdapter;
+                      userId: UserId;
+                      title, description: string;
+                      color: int;
+                      logger: Logger) =
+  ## Sends a Discord embed when the event has an interactionId, otherwise plain text.
+  if event.interactionId.len > 0:
+    dcAdapter.sendInteractionEmbedPage(
+      event.interactionId, event.interactionToken,
+      title, description, color, @[]).isOkOr:
+        core_log.log(logger, core_log.lvlWarn, "dc embed fallback: " & error)
+        sendDiscordReply(event, dcAdapter, userId, description, logger)
+  else:
+    sendDiscordReply(event, dcAdapter, userId, description, logger)
+
 proc sendDiscordKeyboard(dcAdapter: DiscordAdapter;
                          event: DiscordRawEvent;
                          kbdMsgIds: var Table[string, string];
@@ -250,38 +266,43 @@ proc handleDiscordEvent*(sm: var SessionManager;
     of crLocal:
       case decideLocalCommandAction(command)
       of lcaStartIntro:
-        sendDiscordReply(event, dcAdapter, userId, buildStartIntroText(), logger)
+        sendDiscordEmbed(event, dcAdapter, userId,
+          "👋 Donkey", buildStartIntroText(), 0x5865F2, logger)
       of lcaGenerateLinkCode:
-        sendDiscordReply(event, dcAdapter, userId, buildLinkCodeText(dcAdapter.resolver.generateLinkCode(userId)), logger)
+        sendDiscordEmbed(event, dcAdapter, userId,
+          "🔗 Link Code", buildLinkCodeText(dcAdapter.resolver.generateLinkCode(userId)), 0x5865F2, logger)
       of lcaClearMemory:
         memory.clearMemory(userId)
-        sendDiscordReply(event, dcAdapter, userId, "Memórias apagadas.", logger)
+        sendDiscordEmbed(event, dcAdapter, userId,
+          "🗑️ Memórias", "Memórias apagadas.", 0xE67E22, logger)
       of lcaDoctorReport:
-        sendDiscordReply(
-          event, dcAdapter, userId,
+        sendDiscordEmbed(event, dcAdapter, userId,
+          "🩺 Doctor",
           buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount()),
-          logger)
+          0x95A5A6, logger)
       of lcaHelpText:
-        const HelpColor = 0x5865F2  ## Discord blurple
         let pages = buildHelpPages()
         if event.interactionId.len > 0 and pages.len > 0:
           let (pTitle, pBody) = pages[0]
-          let title   = "📖 Ajuda — " & pTitle & " (1/" & $pages.len & ")"
-          let buttons = buildHelpNavButtons(0, pages.len)
           dcAdapter.sendInteractionEmbedPage(
             event.interactionId, event.interactionToken,
-            title, pBody, HelpColor, buttons).isOkOr:
+            "📖 Ajuda — " & pTitle & " (1/" & $pages.len & ")",
+            pBody, 0x5865F2, buildHelpNavButtons(0, pages.len)).isOkOr:
               core_log.log(logger, core_log.lvlWarn, "dc help embed: " & error)
               sendDiscordReply(event, dcAdapter, userId, buildHelpText(true), logger)
         else:
           sendDiscordReply(event, dcAdapter, userId, buildHelpText(true), logger)
       of lcaShowMemory:
         let memText = memory.loadContext(userId).memoryMd.strip
-        sendDiscordReply(event, dcAdapter, userId,
-                         if memText.len > 0: memText else: "Nenhuma memória salva ainda.", logger)
+        sendDiscordEmbed(event, dcAdapter, userId,
+          "🧠 Memórias",
+          if memText.len > 0: memText else: "Nenhuma memória salva ainda.",
+          0x9B59B6, logger)
       of lcaContinueLink:
         let linked = dcAdapter.resolver.consumeLinkCode(command.value, ckDiscord, event.discordUserId)
-        sendDiscordReply(event, dcAdapter, userId, buildContinueResultText(linked), logger)
+        sendDiscordEmbed(event, dcAdapter, userId,
+          "🔗 Continue", buildContinueResultText(linked),
+          if linked: 0x57F287 else: 0xED4245, logger)
       else:
         discard
     of crSessionTask:
@@ -291,26 +312,21 @@ proc handleDiscordEvent*(sm: var SessionManager;
         entry.inbox.addLastNoWait(
           newTaskMsg($msgSeq, commandTaskKind(command), $userId, "", ckDiscord, ""))
       else:
-        let text =
-          if command.kind == cmdDebug:
-            "Nenhuma sessão ativa. Envie uma mensagem primeiro."
-          else:
-            "Nenhuma conversa ativa para reiniciar."
-        sendDiscordReply(event, dcAdapter, userId, text, logger)
+        let errText =
+          if command.kind == cmdDebug: "Nenhuma sessão ativa. Envie uma mensagem primeiro."
+          else: "Nenhuma conversa ativa para reiniciar."
+        sendDiscordEmbed(event, dcAdapter, userId, "ℹ️ Info", errText, 0xED4245, logger)
     of crUi:
       discard handleDiscordUiCommand(event, dcAdapter, kbdMsgIds, memory, userId, command, modelCatalogLoader, logger)
     of crPing:
-      sendDiscordReply(event, dcAdapter, userId, buildPingText(memory, userId, completeBuilder), logger)
+      let pingText = buildPingText(memory, userId, completeBuilder)
+      let pingColor = if "error" in pingText: 0xED4245 else: 0x57F287
+      sendDiscordEmbed(event, dcAdapter, userId, "🏓 Ping", pingText, pingColor, logger)
     of crStatus:
-      let statusText = buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs)
-      if event.interactionId.len > 0:
-        dcAdapter.sendInteractionEmbedPage(
-          event.interactionId, event.interactionToken,
-          "📊 Status", statusText, 0x57F287, @[]).isOkOr:
-            core_log.log(logger, core_log.lvlWarn, "dc status embed: " & error)
-            sendDiscordReply(event, dcAdapter, userId, statusText, logger)
-      else:
-        sendDiscordReply(event, dcAdapter, userId, statusText, logger)
+      sendDiscordEmbed(event, dcAdapter, userId,
+        "📊 Status",
+        buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs),
+        0x57F287, logger)
     of crCallback, crNone:
       handleSessionFallback(InboundMessage(
         userId:    userId,
