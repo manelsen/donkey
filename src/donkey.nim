@@ -1096,9 +1096,9 @@ proc startOptionalWeComGateway(wcAdapter: var WeComAdapter;
     return
 
   let wcPort = Port(parseInt(if getEnv("WECOM_WEBHOOK_PORT").len > 0:
-                               getEnv("WECOM_WEBHOOK_PORT") else: "8080"))
-  wcAdapter.startWebhook(wcPort)
-  log.info("WeCom webhook listener started on port " & $wcPort)
+                               getEnv("WECOM_WEBHOOK_PORT") else: "8081"))
+  wcAdapter.startWebhook(wcPort, log)
+  log.info("WeCom webhook started on port " & $wcPort)
 
 proc startOptionalFeishuGateway(fsAdapter: var FeishuAdapter;
                                 feishuAppId: string;
@@ -1665,7 +1665,7 @@ proc drainWeComGateway(ctx: DaemonContext;
   wecom_runtime.drainWeComEvents(
     ctx.adapters.wc, ctx.env.wecomCorpId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
     ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
-    ctx.runtime.msgSeq,
+    ctx.runtime.msgSeq, log,
     proc(msg: InboundMessage) =
       handleGatewayFallback(ctx, cfg, memory, msg, log))
 
