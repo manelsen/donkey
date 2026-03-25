@@ -68,7 +68,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     sendKeyboard: proc(userId: UserId; text: string;
                         buttons: seq[seq[(string, string)]];
                         replyTo = ""): Result[void, string] {.gcsafe.} =
-      tgAdapter[].sendKeyboard(userId, text, buttons, replyTo),
+      tgAdapter[].sendKeyboard(userId, text, buttons, replyTo).map(proc(s: string): void = discard s),
     editKeyboard: proc(userId: UserId; msgId, text: string;
                         buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} =
       tgAdapter[].editKeyboardText(userId, msgId, text, buttons),

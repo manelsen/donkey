@@ -78,9 +78,10 @@ proc handleTelegramModels*(msg: InboundMessage;
       tgAdapter.editKeyboardText(msg.userId, currentKbdId, title, buttons).isOkOr:
         discard
     else:
-      tgAdapter.sendKeyboard(msg.userId, title, buttons, replyTo = msg.channelId).isOkOr:
+      let sentId = tgAdapter.sendKeyboard(msg.userId, title, buttons, replyTo = msg.channelId).valueOr:
         core_log.log(logger, core_log.lvlError, "tg send keyboard error: " & error)
-      kbdMsgIds[$msg.userId] = "active"
+        return true
+      kbdMsgIds[$msg.userId] = sentId
     return true
   if command.value.strip.len > 0:
     let reply = memory.applyModelsTextCommand(msg.userId, command.value, modelCatalogLoader).valueOr: error
@@ -100,11 +101,12 @@ proc handleTelegramModels*(msg: InboundMessage;
       memory.buildProviderButtons(msg.userId)).isOkOr:
         discard
   else:
-    tgAdapter.sendKeyboard(msg.userId,
+    let sentId = tgAdapter.sendKeyboard(msg.userId,
       "Escolha o provider:", memory.buildProviderButtons(msg.userId),
-      replyTo = msg.channelId).isOkOr:
+      replyTo = msg.channelId).valueOr:
         core_log.log(logger, core_log.lvlError, "tg send provider keyboard error: " & error)
-    kbdMsgIds[$msg.userId] = "active"
+        return true
+    kbdMsgIds[$msg.userId] = sentId
   true
 
 proc handleTelegramModelCallback*(msg: InboundMessage;
@@ -232,11 +234,11 @@ proc handleTelegramThink*(msg: InboundMessage;
       memory.buildThinkButtons(msg.userId)).isOkOr:
         discard
   else:
-    tgAdapter.sendKeyboard(msg.userId,
+    let sentId = tgAdapter.sendKeyboard(msg.userId,
       "Nível de raciocínio:", memory.buildThinkButtons(msg.userId),
-      replyTo = msg.channelId).isOkOr:
-        discard
-    kbdMsgIds[$msg.userId] = "active"
+      replyTo = msg.channelId).valueOr:
+        return true
+    kbdMsgIds[$msg.userId] = sentId
   true
 
 proc handleTelegramBudget*(msg: InboundMessage;

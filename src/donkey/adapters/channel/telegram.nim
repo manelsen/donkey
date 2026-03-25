@@ -114,8 +114,9 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
 proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
                      text: string;
                      buttons: seq[seq[(string, string)]];
-                     replyTo: string): Result[void, string] =
+                     replyTo: string): Result[string, string] =
   ## Internal helper: sends a keyboard message to a known chatId.
+  ## Returns the Telegram message_id of the sent message.
   var rows: seq[JsonNode]
   for row in buttons:
     var cols: seq[JsonNode]
@@ -132,10 +133,11 @@ proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
     try: body["reply_to_message_id"] = %parseInt(replyTo)
     except ValueError: discard
   let res = a.post("sendMessage", body)
-  if res.isOk: return ok()
+  if res.isOk:
+    return ok($res.value["result"]["message_id"].getInt())
   body.delete("parse_mode")
-  discard ? a.post("sendMessage", body)
-  ok()
+  let plain = ? a.post("sendMessage", body)
+  ok($plain["result"]["message_id"].getInt())
 
 proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message with Markdown (plain-text fallback), split at 4096 chars.
@@ -149,7 +151,8 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
   try: tgId = parseBiggestInt(rawId).int64
   except ValueError: return err("TelegramAdapter.send: bad Telegram ID: " & rawId)
   if msg.keyboard.len > 0:
-    return a.sendKeyboardRaw(tgId, msg.text, msg.keyboard, msg.replyTo)
+    discard ? a.sendKeyboardRaw(tgId, msg.text, msg.keyboard, msg.replyTo)
+    return ok()
   if msg.mediaUrl.len > 0:
     return a.sendMedia(tgId, msg.mediaUrl, msg.text, msg.replyTo)
   let chunks = splitChunks(msg.text, TelegramMaxChars)
@@ -291,29 +294,15 @@ proc setMessageReaction*(a: TelegramAdapter; userId: UserId;
 proc sendKeyboard*(a: TelegramAdapter; userId: UserId;
                    text: string;
                    buttons: seq[seq[(string, string)]];  ## [[("label","data"),...],...]
-                   replyTo = ""): Result[void, string] =
+                   replyTo = ""): Result[string, string] =
   ## Sends a message with an inline keyboard.
+  ## Returns the Telegram message_id so the caller can later edit the message.
   let rawId = a.resolver.reverseChannel(userId, ckTelegram)
   if rawId.len == 0: return err("sendKeyboard: no id for " & $userId)
   var chatId: int64
   try: chatId = parseBiggestInt(rawId).int64
   except ValueError: return err("sendKeyboard: bad id: " & rawId)
-  var rows: seq[JsonNode]
-  for row in buttons:
-    var cols: seq[JsonNode]
-    for (label, data) in row:
-      cols.add(%* {"text": label, "callback_data": data})
-    rows.add(%cols)
-  var body = %* {
-    "chat_id": chatId,
-    "text":    text,
-    "reply_markup": {"inline_keyboard": rows},
-  }
-  if replyTo.len > 0:
-    try: body["reply_to_message_id"] = %parseInt(replyTo)
-    except ValueError: discard
-  discard ? a.post("sendMessage", body)
-  ok()
+  a.sendKeyboardRaw(chatId, text, buttons, replyTo)
 
 proc editKeyboard*(a: TelegramAdapter; userId: UserId;
                    msgId: string;
