@@ -302,10 +302,15 @@ proc handleDiscordEvent*(sm: var SessionManager;
     of crPing:
       sendDiscordReply(event, dcAdapter, userId, buildPingText(memory, userId, completeBuilder), logger)
     of crStatus:
-      sendDiscordReply(
-        event, dcAdapter, userId,
-        buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs),
-        logger)
+      let statusText = buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs)
+      if event.interactionId.len > 0:
+        dcAdapter.sendInteractionEmbedPage(
+          event.interactionId, event.interactionToken,
+          "📊 Status", statusText, 0x57F287, @[]).isOkOr:
+            core_log.log(logger, core_log.lvlWarn, "dc status embed: " & error)
+            sendDiscordReply(event, dcAdapter, userId, statusText, logger)
+      else:
+        sendDiscordReply(event, dcAdapter, userId, statusText, logger)
     of crCallback, crNone:
       handleSessionFallback(InboundMessage(
         userId:    userId,
