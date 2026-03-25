@@ -151,7 +151,9 @@ proc generateNames(completeFn: CompleteFn;
 
 func orchToolsSuffix(tools: seq[ToolDescription]): string =
   if tools.len == 0: return ""
-  result = "\n\n## Available tools\n"
+  result = "\n\n## Available tools\n\n"
+  result.add "You have access to the following tools. When a task requires one of them, " &
+             "call it — do not tell the user you cannot access files, the web, or run commands.\n\n"
   for td in tools:
     result.add &"- **{td.name}**: {td.description}\n"
 

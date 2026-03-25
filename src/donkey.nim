@@ -1539,7 +1539,7 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
     if not telegram_runtime.handleTelegramMessage(
       msg, runtime.sm, tgAdapter, runtime.kbdMsgIds, services.memory, completeBuilder,
       modelCatalogLoader,
-      services.toolClients.len, services.tools.len, runtime.msgSeq, runtime.daemonStartMs, log):
+      services.toolClients.len, services.tools.len + nativeSessionTools().len, runtime.msgSeq, runtime.daemonStartMs, log):
       handleTelegramFallback(runtime, tgAdapter, msg, services)
   true
 
@@ -1620,7 +1620,7 @@ proc setupDaemonRuntime(ctx: DaemonContext;
                         cfg: DonkeyConfig;
                         memory: MdFileAdapter;
                         log: Logger) =
-  setupIpcServer(cfg, ctx.runtime, ctx.runtime.sm, ctx.services.tools.len, ctx.runtime.daemonStartMs,
+  setupIpcServer(cfg, ctx.runtime, ctx.runtime.sm, ctx.services.tools.len + nativeSessionTools().len, ctx.runtime.daemonStartMs,
                  ctx.env.telegramToken, ctx.env.discordToken, ctx.env.wecomCorpId,
                  ctx.env.wechatAppId, ctx.env.feishuAppId, ctx.adapters.qq.enabled(), log,
                  ctx, memory, log)
@@ -1652,7 +1652,7 @@ proc drainDiscordGateway(ctx: DaemonContext;
   let modelCatalogLoader = buildModelCatalogLoader()
   discord_runtime.drainDiscordEvents(
     ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.dcKbdMsgIds, memory, completeBuilder, modelCatalogLoader,
-    ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
+    ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
     ctx.runtime.msgSeq, log,
     proc(msg: InboundMessage) =
       handleGatewayFallback(ctx, cfg, memory, msg, log))
@@ -1666,7 +1666,7 @@ proc drainWeComGateway(ctx: DaemonContext;
   let modelCatalogLoader = buildModelCatalogLoader()
   wecom_runtime.drainWeComEvents(
     ctx.adapters.wc, ctx.env.wecomCorpId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-    ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
+    ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
     ctx.runtime.msgSeq, log,
     proc(msg: InboundMessage) =
       handleGatewayFallback(ctx, cfg, memory, msg, log))
@@ -1680,7 +1680,7 @@ proc drainWeChatGateway(ctx: DaemonContext;
   let modelCatalogLoader = buildModelCatalogLoader()
   wechat_runtime.drainWeChatEvents(
     ctx.adapters.wch, ctx.env.wechatAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-    ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
+    ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
     ctx.runtime.msgSeq,
     proc(msg: InboundMessage) =
       handleGatewayFallback(ctx, cfg, memory, msg, log))
@@ -1694,7 +1694,7 @@ proc drainQQGateway(ctx: DaemonContext;
   let modelCatalogLoader = buildModelCatalogLoader()
   qq_runtime.drainQQEvents(
     ctx.adapters.qq, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-    ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
+    ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
     ctx.runtime.msgSeq,
     proc(msg: InboundMessage) =
       handleGatewayFallback(ctx, cfg, memory, msg, log))
@@ -1708,7 +1708,7 @@ proc drainFeishuGateway(ctx: DaemonContext;
   let modelCatalogLoader = buildModelCatalogLoader()
   feishu_runtime.drainFeishuEvents(
     ctx.adapters.fs, ctx.env.feishuAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-    ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
+    ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
     ctx.runtime.msgSeq,
     proc(msg: InboundMessage) =
       handleGatewayFallback(ctx, cfg, memory, msg, log))
@@ -1813,7 +1813,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     discord_runtime.checkDiscordOfflineMessages(
       ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.dcKbdMsgIds, memory,
       completeBuilder, modelCatalogLoader,
-      ctx.services.tools.len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
+      ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
       ctx.runtime.msgSeq, log,
       proc(msg: InboundMessage) {.gcsafe.} =
         handleGatewayFallback(ctx, cfg, memory, msg, log))
