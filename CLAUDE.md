@@ -4,17 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## O que é o Donkey
 
-**Donkey** é um sistema de agentes de IA ("Claw") escrito em Nim, self-hosted em VPS, servindo equipes corporativas pequenas. O projeto está em fase de design arquitetural — nenhuma linha de código do sistema foi escrita ainda.
+**Donkey** é um sistema de agentes de IA ("Claw") escrito em Nim, self-hosted em VPS, servindo equipes corporativas pequenas. O projeto tem ~30k LOC em 149 arquivos Nim com 120 arquivos de teste, seguindo rigorosamente arquitetura hexagonal e TDD.
 
-**Prioridades de design:**
-- Arquitetura hexagonal (ports & adapters) — inegociável
+**Estado atual (branch ralph/donkey-v1-sovereign-pipeops):**
+- Channels implementados: Telegram ✓, Discord ✓, WeCom ✓ — outros mapeados (F2+)
+- Providers implementados: OpenAI ✓, Anthropic ✓, OpenRouter ✓, Zhipu ✓, Gemini ✓, MiniMax ✓, DeepSeek ✓, Ollama ✓
+- Memória F1 (MdFile) ✓, Postgreyskull F2+ em andamento
+- Orchestrator multi-turn ✓, tool loop ✓, onboarding de 12 fases ✓
+- ZenAdapter (opencode gateway) — planejado, não implementado ainda
+
+**Princípios inegociáveis:**
+- Arquitetura hexagonal (ports & adapters)
 - TDD obrigatório — Red-Green-Refactor sem exceções; nunca escrever código antes do teste
 - Functional core (`func` Nim), effectful shell (`proc` com Chronos)
 - Implementações simples e funcionais primeiro; gaps atacados em iterações posteriores
 - Minimal dependencies — o projeto tem aspirações embedded (compila para VPS e potencialmente hardware restrito)
-- Providers prioritários (F1): OpenRouter, Zhipu Coding (`https://api.z.ai/api/coding/paas/v4`), OpenCode Zen (gateway multi-protocolo opencode, `opencode/<model-id>`)
-- Providers mapeados (F3): OpenRouter, Zhipu, Gemini, Anthropic, MiniMax
-- Channels prioritários: Telegram (v1), Discord (v2), depois channels chineses
 
 ## Estilo de código
 
@@ -101,12 +105,14 @@ type ProviderCaps* = object
 ```
 
 Quirks conhecidos por adapter:
-- **OpenRouterAdapter** — injeta `HTTP-Referer` e `X-Title` em todo request (obrigatório pela plataforma)
+- **OpenRouterAdapter** — injeta `HTTP-Referer` e `X-Title` em todo request (obrigatório pela plataforma); suporta model catalog live com cache TTL
 - **ZhipuAdapter** — traduz `ToolCall` para formato GLM nativo; declara native tools (`web_search`, `code_interpreter`) em `caps()` para que o orchestrator possa delegar ao provider em vez de usar o ToolPort
 - **GeminiAdapter** — normaliza histórico antes de enviar: function calls devem vir após model turns, nunca após user turns; converte `functionCall`/`functionResponse` (formato Gemini ≠ OpenAI)
 - **AnthropicAdapter** — formato de mensagens próprio (`content` blocks), `tool_use`/`tool_result` blocks distintos do padrão OpenAI
 - **MiniMaxAdapter** — API MiniMax (série abab), formato próprio
-- **ZenAdapter** — gateway multi-protocolo do opencode CLI. Model IDs: `opencode/<model-id>`. Roteia internamente: modelos OpenAI → `/zen/v1/responses`, modelos Anthropic → `/zen/v1/messages`. Implementado como roteador que despacha para sub-adapters com base URL diferente, não como adapter leaf.
+- **DeepSeekAdapter** — OpenAI-compatible com quirks de reasoning tokens
+- **OllamaAdapter** — instância local; sem streaming nativo, polling de resposta
+- **ZenAdapter** — PLANEJADO (F2+): gateway multi-protocolo do opencode CLI. Model IDs: `opencode/<model-id>`. Roteará: OpenAI → `/zen/v1/responses`, Anthropic → `/zen/v1/messages`. Não implementado ainda.
 
 Sem adapter genérico compartilhado — cada um tem o seu. OpenCode Zen é gateway curado (gratuitos disponíveis, zero markup), não OpenAI-compatible universal.
 
@@ -127,26 +133,49 @@ Formato do arquivo: `[salt 32B][nonce 12B][ciphertext][tag 16B]` — binário pu
 ## Arquitetura hexagonal
 
 ```
-INBOUND ADAPTERS
+INBOUND ADAPTERS (adapters/channel/)
   TelegramAdapter ─┐
   DiscordAdapter  ─┼→ IdentityResolver → SessionManager
-  [futuros]       ─┘
+  WeComAdapter    ─┤
+  [13 canais]     ─┘
 
-APPLICATION LAYER (Chronos, effectful)
-  SessionManager → OrchestratorAgent (por sessão)
-    ├── MemoryAgent  → MemoryPort  → MdFileAdapter (F1) / PostgresAdapter (F2)
+APPLICATION LAYER (app/ — Chronos, effectful)
+  SessionManager → OrchestratorAgent (por sessão, AsyncQueue[AgentMessage] como inbox)
+    ├── MemoryAgent  → MemoryPort  → MdFileAdapter (F1) / PostgresAdapter (F2+)
     ├── ToolAgent    → ToolPort    → McpClientAdapter (MCP/Deno subprocess)
-    └── [workers]   → ProviderPort → OpenRouterAdapter / ZhipuAdapter / GeminiAdapter
+    └── NativeTools  → ProviderPort → OpenRouterAdapter / ZhipuAdapter / [8 providers]
 
-DOMAIN CORE (Nim `func`, zero side effects — testável com mocks puros)
-  buildPrompt / planTask / routeMessage / mergeContext
-  scoreMemories / rankTools / buildGraphQuery
+DOMAIN LAYER (domain/ — Nim `func`, zero side effects, 100% testável)
+  ├── message.nim       → ChatMessage, CompletionRequest/Response, ToolCall
+  ├── identity.nim      → UserId, link codes, cross-channel mapping
+  ├── personality.nim   → PersonalityTraits, onboarding phases (12)
+  ├── channels/         → formatadores puros por canal (telegram_pure, discord_pure, …)
+  ├── providers/        → tradutores puros por provider (openai_pure, anthropic_pure, …)
+  ├── memory/           → chunking, decay, graph_pure, rrf (algoritmos puros)
+  └── routing/          → smart_route, failover
 
-OUTBOUND ADAPTERS
-  ChannelPort → TelegramAdapter / DiscordAdapter / [futuros]
+CORE INFRASTRUCTURE (core/ — sem I/O externo)
+  Log, Cron, Actor, Pipeops, Types, CommandRouting, Onboarding,
+  ToolLoop, NativeToolDispatch, SecretScan, SessionIngress, Debounce
+
+OUTBOUND ADAPTERS (adapters/channel/)
+  ChannelPort → TelegramAdapter / DiscordAdapter / WeComAdapter / [futuros]
 ```
 
 Ports são `concept` Nim (structural typing, verificado em compile-time). Adapters não declaram conformidade — o compilador verifica. Mocks para TDD são qualquer tipo que satisfaça o concept.
+
+**Camadas estruturais do source:**
+```
+src/donkey/
+  core/       ← infra pura, zero I/O externo (types, log, cron, actors, pipeops)
+  domain/     ← lógica de negócio pura (func only), zero side effects
+  ports/      ← concepts Nim (ChannelPort, ProviderPort, MemoryPort, ToolPort, …)
+  app/        ← shell de casos de uso: lifecycle, actors, queues, wiring (Chronos)
+  adapters/   ← I/O boundary: channel, provider, memory, tool, http, secrets, ipc
+  infra/      ← sandbox: Docker, WASM, limits, paddock layout
+  config/     ← DonkeyConfig, loader TOML, skills/clawhub registry
+  tui/        ← dashboard terminal
+```
 
 ## Boundary Rules
 
@@ -165,7 +194,7 @@ Checklist de refactor/PR:
 
 ## Multi-agente
 
-Agentes são actors: cada um tem `AsyncChannel[AgentMessage]` (Chronos) como inbox. Sem estado compartilhado. OrchestratorAgent por sessão ativa; workers spawned on demand, não persistentes.
+Agentes são actors: cada um tem `AsyncQueue[AgentMessage]` (Chronos) como inbox. Sem estado compartilhado. OrchestratorAgent por sessão ativa; workers spawned on demand, não persistentes.
 
 Native tools do Zhipu: quando disponíveis (`caps().nativeTools`), o orchestrator pode delegar diretamente ao provider em vez de despachar para o ToolAgent — mais rápido e mais barato para web search.
 
@@ -196,8 +225,10 @@ Mapeamento: `(channel_type, channel_user_id) → user UUID`.
 
 Os `.md` são vistas legíveis do conhecimento do agente sobre o usuário. Editáveis diretamente — o agente relê na próxima conversa. Em F2+ ficam sincronizados com o grafo.
 
+O caminho dos paddocks é configurável via `donkey.toml` (`paddocks = "~/.donkey/paddocks"`), padrão `{home}/paddocks/`.
+
 ```
-data/users/{uuid}/
+{paddocks}/{uuid}/
   USER.md             ← perfil do usuário (padrão OpenClaw, com frontmatter)
   PREFERENCES.md      ← preferências (idioma, provider, estilo)
   MEMORY.md           ← índice de memórias
@@ -242,22 +273,32 @@ The more you know, the better you can help. But remember — you're learning abo
 
 ## Bootstrapping (F1 — onboarding de novo usuário)
 
-Primeira mensagem de usuário desconhecido dispara onboarding conversacional via Telegram:
-1. Donkey se apresenta, pede permissão para fazer perguntas
-2. Coleta: nome, como chamar, fuso horário, idioma preferido
-3. Cria todos os `.md` do workspace
-4. Confirma e oferece ajuda
+Primeira mensagem de usuário desconhecido dispara onboarding conversacional. A state machine (`core/onboarding/onboarding.nim` + `domain/personality.nim`) tem 12 fases:
 
-Ao final: `data/users/{uuid}/` criado com todos os arquivos. Usuário é informado que pode editar `USER.md` diretamente.
+```
+WakeUp → ModeChoice → (Guided | Free) →
+  DimensionChoice → NameChoice →
+  UserName → Timezone → Language → Done
+```
 
-## F1 — Escopo da primeira fase
+Em modo Guided, o Donkey coleta dimensões de personalidade uma a uma. Em modo Free, pula direto para coleta de identidade. Ao final, `{paddocks}/{uuid}/` é criado com todos os arquivos e o usuário é informado que pode editar `USER.md` diretamente.
 
-- **Channel:** Telegram (long polling para dev, webhook para produção)
-- **Provider:** Zhipu Coding (URL própria, não via OpenRouter) + fallback OpenRouter
-- **Memória:** arquivos `.md` — sem Postgreyskull ainda
-- **MCP:** client desde o início
-- **Bootstrapping:** onboarding conversacional completo
+## F1 — Escopo da primeira fase (em produção)
+
+- **Channels:** Telegram ✓ (long polling para dev, webhook para produção), Discord ✓, WeCom ✓
+- **Providers:** todos 8 implementados; prioritários são Zhipu Coding e OpenRouter
+- **Memória:** arquivos `.md` no paddock do usuário ✓ — Postgreyskull é F2+
+- **MCP:** client desde o início ✓
+- **Bootstrapping:** onboarding de 12 fases ✓
+- **Native tools:** shell, web_fetch, web_search, calc, fs (read/write/find/grep), git ✓
+- **Sandbox:** Docker e WASM disponíveis para execução de código (infra/sandbox/)
 - **Binary:** `donkey` (daemon), `donkey ctl` (CLI de administração)
+- **Model catalog:** descoberta dinâmica de modelos via OpenRouter, Groq, Anthropic, Gemini e models.dev (com cache TTL)
+
+**Ainda não implementado (F2+):**
+- ZenAdapter (opencode gateway, `opencode/<model-id>`)
+- Postgreyskull (pgvector + Apache AGE)
+- Channels adicionais: QQ, Feishu, Slack, Signal, DingTalk, Matrix, Email, WhatsApp (adapters planejados)
 
 ## Material de referência (`docs/`)
 
