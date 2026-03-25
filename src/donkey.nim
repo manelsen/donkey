@@ -56,6 +56,7 @@ import donkey/app/outbound_runtime
 import donkey/app/session_manager
 import donkey/app/session_bootstrap
 import donkey/app/doctor
+import donkey/app/setup_wizard
 import donkey/ports/memory
 import donkey/adapters/ipc/types    as ipcTypes
 import donkey/adapters/ipc/client   as ipcClient
@@ -78,6 +79,7 @@ Options:
   --config <path>  Path to """ & ConfigFileName & """  (default: ~/""" & HomeDirName & "/" & ConfigFileName & """)
 
 Commands:
+  setup                          Interactive first-run configuration wizard
   start                          Start the daemon
   ctl user list                  List registered users
   ctl user show <uuid>           Show user profile
@@ -1964,6 +1966,10 @@ proc main =
     of "logs":
       ctlServiceLogs(logsFollow); quit(0)
     else: printHelp(); quit(1)
+
+  if args.len >= 1 and args[0] == "setup":
+    runSetupWizard(cfg.home)
+    quit(0)
 
   if args.len >= 1 and args[0] == "tui":
     let sockPath = cfg.home / SockFileName
