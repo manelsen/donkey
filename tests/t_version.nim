@@ -11,8 +11,9 @@ suite "Binary smoke test":
     let binary = currentSourcePath.parentDir / "../donkey"
     if not fileExists(binary):
       skip()  ## binary not built yet; run `nimble build` first
-    let (output, exitCode) = execCmdEx(binary & " --version")
-    check exitCode == 0
-    ## Must contain a semver-like string (MAJOR.MINOR.PATCH)
-    let hasVersion = output.strip.split('.').len >= 2
-    check hasVersion
+    else:
+      let (output, exitCode) = execCmdEx(binary & " --version")
+      check exitCode == 0
+      ## Must contain a semver-like string (MAJOR.MINOR.PATCH)
+      let hasVersion = output.strip.split('.').len >= 2
+      check hasVersion

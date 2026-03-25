@@ -16,6 +16,8 @@ import std/[httpclient, json]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
+import ../../core/json_helpers
+import ../http/helpers
 
 const
   MiniMaxEndpoint*     = "https://api.minimax.chat/v1/text/chatcompletion_pro"
@@ -73,34 +75,24 @@ func parseMiniMaxResponse*(j: JsonNode): CompletionResponse =
   let usage = j.getOrDefault("usage")
   CompletionResponse(
     text:         text,
-    inputTokens:  if usage != nil: usage.getOrDefault("prompt_tokens").getInt(0)     else: 0,
-    outputTokens: if usage != nil: usage.getOrDefault("completion_tokens").getInt(0) else: 0,
+    inputTokens:  usage.jInt("prompt_tokens"),
+    outputTokens: usage.jInt("completion_tokens"),
   )
 
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
 proc complete*(a: MiniMaxAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
-  try:
-    let client = newHttpClient()
-    defer: client.close()
-
+  withHttpClient:
     client.headers = newHttpHeaders({
       "Content-Type":  "application/json",
       "Authorization": "Bearer " & a.apiKey,
     })
-
     let body = $a.buildBody(req)
     let url  = if a.endpoint.len > 0: a.endpoint else: MiniMaxEndpoint
     let resp = client.post(url, body = body)
-
-    if resp.status[0] != '2':
-      return err("MiniMax API error " & resp.status & ": " & resp.body)
-
-    let parsed = parseJson(resp.body)
-    ok(parseMiniMaxResponse(parsed))
-  except CatchableError as e:
-    err(e.msg)
+    checkApiStatus(resp, "MiniMax")
+    resp.body |> parseJson |> parseMiniMaxResponse |> ok
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

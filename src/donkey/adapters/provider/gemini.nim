@@ -18,6 +18,7 @@ import ../../domain/message
 import ../../domain/providers/gemini_pure as gp
 import ../../ports/provider
 import ../../core/pipeops
+import ../http/helpers
 
 # Re-export from pure module for backwards compatibility
 export gp.geminiRole, gp.textPart, gp.functionCallPart, gp.functionResponsePart,
@@ -65,23 +66,13 @@ proc buildBody*(a: GeminiAdapter; req: CompletionRequest): JsonNode =
 
 proc complete*(a: GeminiAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
-  try:
-    let client = newHttpClient()
-    defer: client.close()
-
+  withHttpClient:
     client.headers = newHttpHeaders({"Content-Type": "application/json"})
-
     let body = $a.buildBody(req)
     let url  = a.buildUrl()
     let resp = client.post(url, body = body)
-
-    if resp.status[0] != '2':
-      return err("Gemini API error " & resp.status & ": " & resp.body)
-
-    let parsed = parseJson(resp.body)
-    ok(parseGeminiResponse(parsed))
-  except CatchableError as e:
-    err(e.msg)
+    checkApiStatus(resp, "Gemini")
+    resp.body |> parseJson |> parseGeminiResponse |> ok
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

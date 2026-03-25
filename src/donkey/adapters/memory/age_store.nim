@@ -122,6 +122,7 @@ func triplesToCypherEdges*(
 when defined(withPostgres):
   import db_connector/db_postgres
   import std/[os]
+  import ./pg_helpers
 
   type
     AgeStoreAdapter* = object
@@ -195,19 +196,11 @@ when defined(withPostgres):
 
   proc initGraph*(a: AgeStoreAdapter): Result[void, string] =
     ## Creates the AGE graph if it doesn't exist. Idempotent.
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-
-    try:
+    withDb(a):
       db.loadAge()
       if not a.graphExists(db):
         db.exec(sql("SELECT * FROM ag_catalog.create_graph('" & a.graphName & "')"))
       ok()
-    except CatchableError as e:
-      err("initGraph: " & e.msg)
 
   # ── Node operations ───────────────────────────────────────────────────────────
 
@@ -220,27 +213,22 @@ when defined(withPostgres):
     ## Creates or merges a node with given label and properties.
     ## Properties is a seq of (key, value) pairs.
     ## Returns the node id as string.
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
+    withDb(a):
+      var propsStr = ""
+      for i, (k, v) in properties:
+        if i > 0: propsStr.add(", ")
+        propsStr.add(k & ": '" & sanitizeTextForCypher(v) & "'")
+      propsStr.add(", user_id: '" & $userId & "'")
 
-    var propsStr = ""
-    for i, (k, v) in properties:
-      if i > 0: propsStr.add(", ")
-      propsStr.add(k & ": '" & sanitizeTextForCypher(v) & "'")
-    propsStr.add(", user_id: '" & $userId & "'")
-
-    let cypherQuery = "MERGE (n:" & label & " {" & propsStr & "}) RETURN id(n)"
-    let result = db.cypher(a.graphName, cypherQuery, @["id"])
-    if result.isErr:
-      return err(result.error)
-    let rows = result.get
-    if rows.len > 0:
-      ok(rows[0][0])
-    else:
-      ok("")
+      let cypherQuery = "MERGE (n:" & label & " {" & propsStr & "}) RETURN id(n)"
+      let r = db.cypher(a.graphName, cypherQuery, @["id"])
+      if r.isErr:
+        return err(r.error)
+      let rows = r.get
+      if rows.len > 0:
+        ok(rows[0][0])
+      else:
+        ok("")
 
   proc deleteNode*(
     a: AgeStoreAdapter;
@@ -250,16 +238,11 @@ when defined(withPostgres):
     propertyValue: string
   ): Result[void, string] =
     ## Deletes nodes matching the given label and property.
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-
-    let cypherQuery = "MATCH (n:" & label & " {" & propertyKey & ": '" &
-                      sanitizeTextForCypher(propertyValue) &
-                      "', user_id: '" & $userId & "'}) DETACH DELETE n"
-    db.cypherVoid(a.graphName, cypherQuery)
+    withDb(a):
+      let cypherQuery = "MATCH (n:" & label & " {" & propertyKey & ": '" &
+                        sanitizeTextForCypher(propertyValue) &
+                        "', user_id: '" & $userId & "'}) DETACH DELETE n"
+      db.cypherVoid(a.graphName, cypherQuery)
 
   # ── Edge operations ───────────────────────────────────────────────────────────
 
@@ -277,34 +260,29 @@ when defined(withPostgres):
   ): Result[string, string] =
     ## Creates a directed edge between two nodes.
     ## Returns the edge id.
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
+    withDb(a):
+      var propsStr = ""
+      for i, (k, v) in properties:
+        if i > 0: propsStr.add(", ")
+        propsStr.add(k & ": '" & sanitizeTextForCypher(v) & "'")
 
-    var propsStr = ""
-    for i, (k, v) in properties:
-      if i > 0: propsStr.add(", ")
-      propsStr.add(k & ": '" & sanitizeTextForCypher(v) & "'")
-
-    let cypherQuery = "MATCH (from:" & fromLabel & " {" & fromPropertyKey & ": '" &
-                      sanitizeTextForCypher(fromPropertyValue) &
-                      "', user_id: '" & $userId & "'}), " &
-                      "MATCH (to:" & toLabel & " {" & toPropertyKey & ": '" &
-                      sanitizeTextForCypher(toPropertyValue) &
-                      "', user_id: '" & $userId & "'}) " &
-                      "CREATE (from)-[r:" & edgeLabel &
-                      (if propsStr.len > 0: " {" & propsStr & "}" else: "") &
-                      "]->(to) RETURN id(r)"
-    let result = db.cypher(a.graphName, cypherQuery, @["id"])
-    if result.isErr:
-      return err(result.error)
-    let rows = result.get
-    if rows.len > 0:
-      ok(rows[0][0])
-    else:
-      ok("")
+      let cypherQuery = "MATCH (from:" & fromLabel & " {" & fromPropertyKey & ": '" &
+                        sanitizeTextForCypher(fromPropertyValue) &
+                        "', user_id: '" & $userId & "'}), " &
+                        "MATCH (to:" & toLabel & " {" & toPropertyKey & ": '" &
+                        sanitizeTextForCypher(toPropertyValue) &
+                        "', user_id: '" & $userId & "'}) " &
+                        "CREATE (from)-[r:" & edgeLabel &
+                        (if propsStr.len > 0: " {" & propsStr & "}" else: "") &
+                        "]->(to) RETURN id(r)"
+      let r = db.cypher(a.graphName, cypherQuery, @["id"])
+      if r.isErr:
+        return err(r.error)
+      let rows = r.get
+      if rows.len > 0:
+        ok(rows[0][0])
+      else:
+        ok("")
 
   # ── Triple storage ───────────────────────────────────────────────────────────
 
@@ -317,13 +295,7 @@ when defined(withPostgres):
     ## Stores a single triple as two nodes and an edge.
     ## Subject becomes a node of subjectLabel; object becomes a Memory node.
     ## The predicate becomes the edge label.
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-
-    try:
+    withDb(a):
       db.loadAge()
       let safeSubj = sanitizeTextForCypher(triple.subject)
       let safeObj = sanitizeTextForCypher(triple.obj)
@@ -343,8 +315,6 @@ when defined(withPostgres):
       """
       discard db.cypher(a.graphName, cypherQuery, @["id"])
       ok()
-    except CatchableError as e:
-      err("storeTriple: " & e.msg)
 
   proc storeTriples*(
     a: AgeStoreAdapter;
@@ -353,13 +323,7 @@ when defined(withPostgres):
     subjectLabel = "Concept"
   ): Result[int, string] =
     ## Stores multiple triples. Returns the count of stored edges.
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-
-    try:
+    withDb(a):
       db.loadAge()
       var count = 0
       for t in triples:
@@ -381,8 +345,6 @@ when defined(withPostgres):
         discard db.cypher(a.graphName, cypherQuery, @["id"])
         inc count
       ok(count)
-    except CatchableError as e:
-      err("storeTriples: " & e.msg)
 
   # ── Graph traversal ──────────────────────────────────────────────────────────
 
@@ -396,27 +358,22 @@ when defined(withPostgres):
     depth = 1
   ): Result[seq[string], string] =
     ## Returns content of nodes reachable via edgeLabel from the starting node.
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-
-    let cypherQuery = "MATCH (start:" & label & " {" & propertyKey & ": '" &
-                      sanitizeTextForCypher(propertyValue) &
-                      "', user_id: '" & $userId & "'})" &
-                      "-[r:" & edgeLabel & "*1.." & $depth & "]-(related) " &
-                      "WHERE related.user_id = '" & $userId & "' " &
-                      "RETURN DISTINCT related.name"
-    let result = db.cypher(a.graphName, cypherQuery, @["name"])
-    if result.isErr:
-      return err(result.error)
-    var names: seq[string]
-    for row in result.get:
-      let name = stripAgtpeValue(row[0])
-      if name.len > 0 and name != "null":
-        names.add(name)
-    ok(names)
+    withDb(a):
+      let cypherQuery = "MATCH (start:" & label & " {" & propertyKey & ": '" &
+                        sanitizeTextForCypher(propertyValue) &
+                        "', user_id: '" & $userId & "'})" &
+                        "-[r:" & edgeLabel & "*1.." & $depth & "]-(related) " &
+                        "WHERE related.user_id = '" & $userId & "' " &
+                        "RETURN DISTINCT related.name"
+      let r = db.cypher(a.graphName, cypherQuery, @["name"])
+      if r.isErr:
+        return err(r.error)
+      var names: seq[string]
+      for row in r.get:
+        let name = stripAgtpeValue(row[0])
+        if name.len > 0 and name != "null":
+          names.add(name)
+      ok(names)
 
   proc findRelatedConcepts*(
     a: AgeStoreAdapter;
@@ -425,27 +382,22 @@ when defined(withPostgres):
     depth = 2
   ): Result[seq[string], string] =
     ## Finds concepts related to the given concept via any edge.
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-
-    let cypherQuery = "MATCH (c:Concept {name: '" &
-                      sanitizeTextForCypher(conceptName) &
-                      "', user_id: '" & $userId & "'})" &
-                      "-[r]-(related) " &
-                      "WHERE related.user_id = '" & $userId & "' " &
-                      "RETURN DISTINCT related.name"
-    let result = db.cypher(a.graphName, cypherQuery, @["name"])
-    if result.isErr:
-      return err(result.error)
-    var names: seq[string]
-    for row in result.get:
-      let name = stripAgtpeValue(row[0])
-      if name.len > 0 and name != "null":
-        names.add(name)
-    ok(names)
+    withDb(a):
+      let cypherQuery = "MATCH (c:Concept {name: '" &
+                        sanitizeTextForCypher(conceptName) &
+                        "', user_id: '" & $userId & "'})" &
+                        "-[r]-(related) " &
+                        "WHERE related.user_id = '" & $userId & "' " &
+                        "RETURN DISTINCT related.name"
+      let r = db.cypher(a.graphName, cypherQuery, @["name"])
+      if r.isErr:
+        return err(r.error)
+      var names: seq[string]
+      for row in r.get:
+        let name = stripAgtpeValue(row[0])
+        if name.len > 0 and name != "null":
+          names.add(name)
+      ok(names)
 
   # ── Query operations ─────────────────────────────────────────────────────────
 
@@ -456,21 +408,16 @@ when defined(withPostgres):
     limit = 100
   ): Result[seq[(string, string)], string] =
     ## Returns (name, property) pairs for nodes of the given label.
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-
-    let cypherQuery = "MATCH (n:" & label & " {user_id: '" & $userId &
-                      "'}) RETURN n.name LIMIT " & $limit
-    let result = db.cypher(a.graphName, cypherQuery, @["name"])
-    if result.isErr:
-      return err(result.error)
-    var nodes: seq[(string, string)]
-    for row in result.get:
-      nodes.add((stripAgtpeValue(row[0]), label))
-    ok(nodes)
+    withDb(a):
+      let cypherQuery = "MATCH (n:" & label & " {user_id: '" & $userId &
+                        "'}) RETURN n.name LIMIT " & $limit
+      let r = db.cypher(a.graphName, cypherQuery, @["name"])
+      if r.isErr:
+        return err(r.error)
+      var nodes: seq[(string, string)]
+      for row in r.get:
+        nodes.add((stripAgtpeValue(row[0]), label))
+      ok(nodes)
 
   proc countNodes*(
     a: AgeStoreAdapter;
@@ -478,25 +425,20 @@ when defined(withPostgres):
     label: string
   ): Result[int, string] =
     ## Counts nodes of the given label for a user.
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-
-    let cypherQuery = "MATCH (n:" & label & " {user_id: '" & $userId &
-                      "'}) RETURN count(n)"
-    let result = db.cypher(a.graphName, cypherQuery, @["count"])
-    if result.isErr:
-      return err(result.error)
-    if result.get.len > 0:
-      let countStr = stripAgtpeValue(result.get[0][0])
-      try:
-        ok(parseInt(countStr))
-      except:
+    withDb(a):
+      let cypherQuery = "MATCH (n:" & label & " {user_id: '" & $userId &
+                        "'}) RETURN count(n)"
+      let r = db.cypher(a.graphName, cypherQuery, @["count"])
+      if r.isErr:
+        return err(r.error)
+      if r.get.len > 0:
+        let countStr = stripAgtpeValue(r.get[0][0])
+        try:
+          ok(parseInt(countStr))
+        except:
+          ok(0)
+      else:
         ok(0)
-    else:
-      ok(0)
 
   # ── Person and session operations ─────────────────────────────────────────────
 
@@ -581,13 +523,7 @@ when defined(withPostgres):
     content: string
   ): Result[void, string] =
     ## Adds a Memory node linked to the user's Person.
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-
-    try:
+    withDb(a):
       db.loadAge()
       let cypherQuery = """
         MERGE (u:Person {user_id: '""" & $userId & """', name: 'self'})
@@ -598,8 +534,6 @@ when defined(withPostgres):
       """
       discard db.cypher(a.graphName, cypherQuery, @["id"])
       ok()
-    except CatchableError as e:
-      err("addMemory: " & e.msg)
 
   # ── Utility ──────────────────────────────────────────────────────────────────
 
@@ -608,19 +542,11 @@ when defined(withPostgres):
     userId: UserId
   ): Result[void, string] =
     ## Removes all nodes and edges for a user. Use with caution.
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-
-    try:
+    withDb(a):
       db.loadAge()
       discard db.cypher(a.graphName,
         "MATCH (n {user_id: '" & $userId & "'}) DETACH DELETE n")
       ok()
-    except CatchableError as e:
-      err("clearUserGraph: " & e.msg)
 
   # ── Constructor ─────────────────────────────────────────────────────────────
 
