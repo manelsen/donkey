@@ -21,6 +21,7 @@ when defined(withPostgres):
   import ../../core/types
   import ../../ports/memory
   import ../../ports/embedding
+  import ./pgvector_store
 
   # ── SQL schema ──────────────────────────────────────────────────────────────
 
@@ -81,24 +82,6 @@ when defined(withPostgres):
       let s = section.strip()
       if s.len > 10:
         result.add(s)
-
-  proc buildVectorLiteral*(vec: seq[float32]): string {.gcsafe, raises: [].} =
-    if vec.len == 0:
-      return ""
-    var allZero = true
-    for v in vec:
-      if v != 0.0:
-        allZero = false
-        break
-    if allZero:
-      return ""
-    var buf = "["
-    for i, v in vec:
-      if i > 0:
-        buf.add(',')
-      buf.add($v)
-    buf.add(']')
-    buf
 
   proc buildContextFromRows*(userId: UserId; rows: seq[Row]): UserContext {.gcsafe, raises: [].} =
     var userMd = ""

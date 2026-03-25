@@ -14,6 +14,9 @@ import ../../domain/message
 import ../../domain/providers/openai_pure
 import ../../ports/provider
 import ../../core/pipeops
+import ../../core/json_helpers
+import ../http/helpers
+import ./sse
 
 const
   DeepSeekEndpoint*    = "https://api.deepseek.com/v1/chat/completions"
@@ -61,9 +64,9 @@ proc parseDeepSeekSseLine*(line: string): Result[DeepSeekSseChunk, string] =
     if delta != nil:
       token = delta.getOrDefault("content").getStr("")
   ok(DeepSeekSseChunk(
-    token: token,
-    inputTokens: if usage != nil: usage.getOrDefault("prompt_tokens").getInt(0) else: 0,
-    outputTokens: if usage != nil: usage.getOrDefault("completion_tokens").getInt(0) else: 0,
+    token:        token,
+    inputTokens:  usage.jInt("prompt_tokens"),
+    outputTokens: usage.jInt("completion_tokens"),
   ))
 
 proc parseDeepSeekResponse*(body: JsonNode): Result[CompletionResponse, string] =
@@ -110,28 +113,16 @@ proc parseDeepSeekResponse*(body: JsonNode): Result[CompletionResponse, string] 
 
 proc complete*(a: DeepSeekAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
-  try:
-    let client = newHttpClient()
-    defer: client.close()
-
+  withHttpClient:
     client.headers = newHttpHeaders({
       "Content-Type":  "application/json",
       "Authorization": "Bearer " & a.apiKey,
     })
-
     let body = buildRequestBody(a.model, req)
     let url  = if a.endpoint.len > 0: a.endpoint else: DeepSeekEndpoint
     let resp = client.post(url, body = $body)
-
-    if resp.status[0] != '2':
-      return err("DeepSeek API error " & resp.status & ": " & resp.body)
-
-    let parsed = parseJson(resp.body)
-    let response = parseDeepSeekResponse(parsed).valueOr:
-      return err(error)
-    ok(response)
-  except CatchableError as e:
-    err(e.msg)
+    checkApiStatus(resp, "DeepSeek")
+    resp.body |> parseJson |> parseDeepSeekResponse
 
 # ── Streaming ─────────────────────────────────────────────────────────────────
 
@@ -140,46 +131,21 @@ proc makeStreamFn*(a: DeepSeekAdapter): StreamFn =
   result = proc(req: CompletionRequest;
                 onToken: proc(tok: string) {.gcsafe.}
                ): Result[CompletionResponse, string] {.gcsafe.} =
-    try:
-      let client = newHttpClient()
-      defer: client.close()
-
+    withHttpClient:
       client.headers = newHttpHeaders({
         "Content-Type":  "application/json",
         "Authorization": "Bearer " & adapter.apiKey,
       })
-
       let body = buildRequestBody(adapter.model, req, stream = true)
       let url  = if adapter.endpoint.len > 0: adapter.endpoint else: DeepSeekEndpoint
       let resp = client.request(url, httpMethod = HttpPost, body = $body)
-
-      if resp.status[0] != '2':
-        return err("DeepSeek API error " & resp.status & ": " & resp.body)
-
-      var accumulated = ""
-      var inputTokens = 0
-      var outputTokens = 0
-      var line = ""
-      while resp.bodyStream.readLine(line):
-        let chunk = parseDeepSeekSseLine(line).valueOr:
-          return err(error)
-        if chunk.done:
-          break
-        if chunk.token.len > 0:
-          accumulated.add(chunk.token)
-          onToken(chunk.token)
-        if chunk.inputTokens > 0:
-          inputTokens = chunk.inputTokens
-        if chunk.outputTokens > 0:
-          outputTokens = chunk.outputTokens
-
+      checkApiStatus(resp, "DeepSeek")
+      sseAccumulate(resp.bodyStream, parseDeepSeekSseLine, onToken)
       ok(CompletionResponse(
-        text: accumulated,
-        inputTokens: inputTokens,
+        text:         accumulated,
+        inputTokens:  inputTokens,
         outputTokens: outputTokens,
       ))
-    except CatchableError as e:
-      err(e.msg)
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

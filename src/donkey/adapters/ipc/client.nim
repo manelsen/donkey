@@ -26,7 +26,7 @@ proc ipcQuery*(sockPath: string; payload: JsonNode): Result[JsonNode, string] =
     let line = sock.recvLine(timeout = 3000)
     if line.len == 0:
       return err("empty response from daemon")
-    ok(parseJson(line))
+    line |> parseJson |> ok
   except Exception as e:
     err(e.msg)
 
@@ -34,7 +34,7 @@ proc queryStatus*(sockPath: string): Result[DaemonStatus, string] =
   let r = ? ipcQuery(sockPath, %*{"cmd": "status"})
   if not r{"ok"}.getBool(false):
     return err(r{"error"}.getStr("unknown error from daemon"))
-  ok(fromJsonStatus(r{"data"}))
+  r{"data"} |> fromJsonStatus |> ok
 
 proc queryLogs*(sockPath: string; n: int = 50): Result[seq[IpcLogEntry], string] =
   let r = ? ipcQuery(sockPath, %*{"cmd": "logs", "n": n})

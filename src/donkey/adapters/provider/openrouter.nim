@@ -12,6 +12,9 @@ import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/app_meta
+import ../../core/json_helpers
+import ../http/helpers
+import ./sse
 
 const
   OpenRouterEndpoint*    = "https://openrouter.ai/api/v1/chat/completions"
@@ -113,8 +116,8 @@ func parseOpenRouterResponse*(j: JsonNode): CompletionResponse =
       )
   CompletionResponse(
     text:         msg.getOrDefault("content").getStr(""),
-    inputTokens:  if usage != nil: usage.getOrDefault("prompt_tokens").getInt(0)     else: 0,
-    outputTokens: if usage != nil: usage.getOrDefault("completion_tokens").getInt(0) else: 0,
+    inputTokens:  usage.jInt("prompt_tokens"),
+    outputTokens: usage.jInt("completion_tokens"),
     toolCalls:    toolCalls,
   )
 
@@ -134,37 +137,27 @@ proc parseOpenRouterSseLine*(line: string): Result[OpenRouterSseChunk, string] =
     if delta != nil:
       token = delta.getOrDefault("content").getStr("")
   ok(OpenRouterSseChunk(
-    token: token,
-    inputTokens: if usage != nil: usage.getOrDefault("prompt_tokens").getInt(0) else: 0,
-    outputTokens: if usage != nil: usage.getOrDefault("completion_tokens").getInt(0) else: 0,
+    token:        token,
+    inputTokens:  usage.jInt("prompt_tokens"),
+    outputTokens: usage.jInt("completion_tokens"),
   ))
 
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
 proc complete*(a: OpenRouterAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
-  try:
-    let client = newHttpClient()
-    defer: client.close()
-
+  withHttpClient:
     client.headers = newHttpHeaders({
       "Content-Type":  "application/json",
       "Authorization": "Bearer " & a.apiKey,
       "HTTP-Referer":  a.referer,
       "X-Title":       a.xTitle,
     })
-
     let body = $a.buildBody(req)
     let url  = if a.endpoint.len > 0: a.endpoint else: OpenRouterEndpoint
     let resp = client.post(url, body = body)
-
-    if resp.status[0] != '2':
-      return err("OpenRouter API error " & resp.status & ": " & resp.body)
-
-    let parsed = parseJson(resp.body)
-    ok(parseOpenRouterResponse(parsed))
-  except CatchableError as e:
-    err(e.msg)
+    checkApiStatus(resp, "OpenRouter")
+    resp.body |> parseJson |> parseOpenRouterResponse |> ok
 
 # ── Streaming ─────────────────────────────────────────────────────────────────
 
@@ -176,48 +169,23 @@ proc makeStreamFn*(a: OpenRouterAdapter): StreamFn =
   result = proc(req: CompletionRequest;
                 onToken: proc(tok: string) {.gcsafe.}
                ): Result[CompletionResponse, string] {.gcsafe.} =
-    try:
-      let client = newHttpClient()
-      defer: client.close()
-
+    withHttpClient:
       client.headers = newHttpHeaders({
         "Content-Type":  "application/json",
         "Authorization": "Bearer " & adapter.apiKey,
         "HTTP-Referer":  adapter.referer,
         "X-Title":       adapter.xTitle,
       })
-
       let body = $adapter.buildStreamBody(req)
       let url  = if adapter.endpoint.len > 0: adapter.endpoint else: OpenRouterEndpoint
       let resp = client.request(url, httpMethod = HttpPost, body = body)
-
-      if resp.status[0] != '2':
-        return err("OpenRouter API error " & resp.status & ": " & resp.body)
-
-      var accumulated = ""
-      var inputTokens = 0
-      var outputTokens = 0
-      var line = ""
-      while resp.bodyStream.readLine(line):
-        let chunk = parseOpenRouterSseLine(line).valueOr:
-          return err(error)
-        if chunk.done:
-          break
-        if chunk.token.len > 0:
-          accumulated.add(chunk.token)
-          onToken(chunk.token)
-        if chunk.inputTokens > 0:
-          inputTokens = chunk.inputTokens
-        if chunk.outputTokens > 0:
-          outputTokens = chunk.outputTokens
-
+      checkApiStatus(resp, "OpenRouter")
+      sseAccumulate(resp.bodyStream, parseOpenRouterSseLine, onToken)
       ok(CompletionResponse(
-        text: accumulated,
-        inputTokens: inputTokens,
+        text:         accumulated,
+        inputTokens:  inputTokens,
         outputTokens: outputTokens,
       ))
-    except CatchableError as e:
-      err(e.msg)
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

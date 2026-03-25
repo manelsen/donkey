@@ -1582,7 +1582,7 @@ proc clearTelegramStatus(runtime:   var DaemonRuntime;
     # Remove error reaction after 3 seconds
     let tgPtr = addr tgAdapter
     proc cleanup() {.async.} =
-      await sleepAsync(3000)
+      await sleepAsync(ctimer.milliseconds(3000))
       tgPtr[].setMessageReaction(outMsg.userId, msgId, "").isOkOr: discard
     asyncSpawn cleanup()
   else:

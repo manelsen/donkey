@@ -12,6 +12,9 @@ import ../../domain/message
 import ../../domain/providers/openai_pure
 import ../../ports/provider
 import ../../core/pipeops
+import ../../core/json_helpers
+import ../http/helpers
+import ./sse
 
 const
   OpenAIEndpoint*    = "https://api.openai.com/v1/chat/completions"
@@ -59,37 +62,25 @@ proc parseOpenAISseLine*(line: string): Result[OpenAISseChunk, string] =
     if delta != nil:
       token = delta.getOrDefault("content").getStr("")
   ok(OpenAISseChunk(
-    token: token,
-    inputTokens: if usage != nil: usage.getOrDefault("prompt_tokens").getInt(0) else: 0,
-    outputTokens: if usage != nil: usage.getOrDefault("completion_tokens").getInt(0) else: 0,
+    token:        token,
+    inputTokens:  usage.jInt("prompt_tokens"),
+    outputTokens: usage.jInt("completion_tokens"),
   ))
 
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
 proc complete*(a: OpenAIAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
-  try:
-    let client = newHttpClient()
-    defer: client.close()
-
+  withHttpClient:
     client.headers = newHttpHeaders({
       "Content-Type":  "application/json",
       "Authorization": "Bearer " & a.apiKey,
     })
-
     let body = buildRequestBody(a.model, req)
     let url  = if a.endpoint.len > 0: a.endpoint else: OpenAIEndpoint
     let resp = client.post(url, body = $body)
-
-    if resp.status[0] != '2':
-      return err("OpenAI API error " & resp.status & ": " & resp.body)
-
-    let parsed = parseJson(resp.body)
-    let response = parseResponseFrom(parsed).valueOr:
-      return err(error)
-    ok(response)
-  except CatchableError as e:
-    err(e.msg)
+    checkApiStatus(resp, "OpenAI")
+    resp.body |> parseJson |> parseResponseFrom
 
 # ── Streaming ─────────────────────────────────────────────────────────────────
 
@@ -98,46 +89,21 @@ proc makeStreamFn*(a: OpenAIAdapter): StreamFn =
   result = proc(req: CompletionRequest;
                 onToken: proc(tok: string) {.gcsafe.}
                ): Result[CompletionResponse, string] {.gcsafe.} =
-    try:
-      let client = newHttpClient()
-      defer: client.close()
-
+    withHttpClient:
       client.headers = newHttpHeaders({
         "Content-Type":  "application/json",
         "Authorization": "Bearer " & adapter.apiKey,
       })
-
       let body = buildRequestBody(adapter.model, req, stream = true)
       let url  = if adapter.endpoint.len > 0: adapter.endpoint else: OpenAIEndpoint
       let resp = client.request(url, httpMethod = HttpPost, body = $body)
-
-      if resp.status[0] != '2':
-        return err("OpenAI API error " & resp.status & ": " & resp.body)
-
-      var accumulated = ""
-      var inputTokens = 0
-      var outputTokens = 0
-      var line = ""
-      while resp.bodyStream.readLine(line):
-        let chunk = parseOpenAISseLine(line).valueOr:
-          return err(error)
-        if chunk.done:
-          break
-        if chunk.token.len > 0:
-          accumulated.add(chunk.token)
-          onToken(chunk.token)
-        if chunk.inputTokens > 0:
-          inputTokens = chunk.inputTokens
-        if chunk.outputTokens > 0:
-          outputTokens = chunk.outputTokens
-
+      checkApiStatus(resp, "OpenAI")
+      sseAccumulate(resp.bodyStream, parseOpenAISseLine, onToken)
       ok(CompletionResponse(
-        text: accumulated,
-        inputTokens: inputTokens,
+        text:         accumulated,
+        inputTokens:  inputTokens,
         outputTokens: outputTokens,
       ))
-    except CatchableError as e:
-      err(e.msg)
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

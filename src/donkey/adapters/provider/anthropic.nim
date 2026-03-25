@@ -17,6 +17,9 @@ import std/[httpclient, json, streams, strutils]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
+import ../../core/json_helpers
+import ../http/helpers
+import ./sse
 
 const
   AnthropicEndpoint*     = "https://api.anthropic.com/v1/messages"
@@ -146,8 +149,8 @@ func parseAnthropicResponse*(j: JsonNode): CompletionResponse =
   let usage = j.getOrDefault("usage")
   CompletionResponse(
     text:         textParts.join("\n"),
-    inputTokens:  if usage != nil: usage.getOrDefault("input_tokens").getInt(0)  else: 0,
-    outputTokens: if usage != nil: usage.getOrDefault("output_tokens").getInt(0) else: 0,
+    inputTokens:  usage.jInt("input_tokens"),
+    outputTokens: usage.jInt("output_tokens"),
     toolCalls:    toolCalls,
   )
 
@@ -169,14 +172,14 @@ proc parseAnthropicSseLine*(line: string): Result[AnthropicSseChunk, string] =
   of "message_start":
     let usage = j.getOrDefault("message").getOrDefault("usage")
     ok(AnthropicSseChunk(
-      inputTokens: if usage != nil: usage.getOrDefault("input_tokens").getInt(0) else: 0,
-      outputTokens: if usage != nil: usage.getOrDefault("output_tokens").getInt(0) else: 0,
+      inputTokens:  usage.jInt("input_tokens"),
+      outputTokens: usage.jInt("output_tokens"),
     ))
   of "message_delta":
     let usage = j.getOrDefault("usage")
     ok(AnthropicSseChunk(
-      inputTokens: if usage != nil: usage.getOrDefault("input_tokens").getInt(0) else: 0,
-      outputTokens: if usage != nil: usage.getOrDefault("output_tokens").getInt(0) else: 0,
+      inputTokens:  usage.jInt("input_tokens"),
+      outputTokens: usage.jInt("output_tokens"),
     ))
   else:
     ok(AnthropicSseChunk())
@@ -185,74 +188,39 @@ proc parseAnthropicSseLine*(line: string): Result[AnthropicSseChunk, string] =
 
 proc complete*(a: AnthropicAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
-  try:
-    let client = newHttpClient()
-    defer: client.close()
-
+  withHttpClient:
     client.headers = newHttpHeaders({
-      "Content-Type":    "application/json",
-      "x-api-key":       a.apiKey,
+      "Content-Type":      "application/json",
+      "x-api-key":         a.apiKey,
       "anthropic-version": AnthropicVersion,
     })
-
     let body = $a.buildBody(req)
     let url  = if a.endpoint.len > 0: a.endpoint else: AnthropicEndpoint
     let resp = client.post(url, body = body)
-
-    if resp.status[0] != '2':
-      return err("Anthropic API error " & resp.status & ": " & resp.body)
-
-    let parsed = parseJson(resp.body)
-    ok(parseAnthropicResponse(parsed))
-  except CatchableError as e:
-    err(e.msg)
+    checkApiStatus(resp, "Anthropic")
+    resp.body |> parseJson |> parseAnthropicResponse |> ok
 
 proc makeStreamFn*(a: AnthropicAdapter): StreamFn =
   let adapter = a
   result = proc(req: CompletionRequest;
                 onToken: proc(tok: string) {.gcsafe.}
                ): Result[CompletionResponse, string] {.gcsafe.} =
-    try:
-      let client = newHttpClient()
-      defer: client.close()
-
+    withHttpClient:
       client.headers = newHttpHeaders({
-        "Content-Type": "application/json",
-        "x-api-key": adapter.apiKey,
+        "Content-Type":      "application/json",
+        "x-api-key":         adapter.apiKey,
         "anthropic-version": AnthropicVersion,
       })
-
       let body = $adapter.buildStreamBody(req)
       let url  = if adapter.endpoint.len > 0: adapter.endpoint else: AnthropicEndpoint
       let resp = client.request(url, httpMethod = HttpPost, body = body)
-
-      if resp.status[0] != '2':
-        return err("Anthropic API error " & resp.status & ": " & resp.body)
-
-      var accumulated = ""
-      var inputTokens = 0
-      var outputTokens = 0
-      var line = ""
-      while resp.bodyStream.readLine(line):
-        let chunk = parseAnthropicSseLine(line).valueOr:
-          return err(error)
-        if chunk.done:
-          break
-        if chunk.token.len > 0:
-          accumulated.add(chunk.token)
-          onToken(chunk.token)
-        if chunk.inputTokens > 0:
-          inputTokens = chunk.inputTokens
-        if chunk.outputTokens > 0:
-          outputTokens = chunk.outputTokens
-
+      checkApiStatus(resp, "Anthropic")
+      sseAccumulate(resp.bodyStream, parseAnthropicSseLine, onToken)
       ok(CompletionResponse(
-        text: accumulated,
-        inputTokens: inputTokens,
+        text:         accumulated,
+        inputTokens:  inputTokens,
         outputTokens: outputTokens,
       ))
-    except CatchableError as e:
-      err(e.msg)
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

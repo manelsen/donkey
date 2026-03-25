@@ -14,6 +14,8 @@ import std/[httpclient, json]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
+import ../../core/json_helpers
+import ../http/helpers
 
 const
   ZhipuEndpoint* = "https://api.z.ai/api/coding/paas/v4/chat/completions"
@@ -90,34 +92,24 @@ func parseZhipuResponse*(parsed: JsonNode): CompletionResponse =
 
   CompletionResponse(
     text:         msg.getOrDefault("content").getStr(""),
-    inputTokens:  if usage != nil: usage["prompt_tokens"].getInt(0) else: 0,
-    outputTokens: if usage != nil: usage["completion_tokens"].getInt(0) else: 0,
+    inputTokens:  usage.jInt("prompt_tokens"),
+    outputTokens: usage.jInt("completion_tokens"),
     toolCalls:    toolCalls,
   )
 
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
 proc complete*(a: ZhipuAdapter; req: CompletionRequest): Result[CompletionResponse, string] =
-  try:
-    let client = newHttpClient()
-    defer: client.close()
-
+  withHttpClient:
     client.headers = newHttpHeaders({
       "Content-Type":  "application/json",
       "Authorization": "Bearer " & a.apiKey,
     })
-
     let body = $a.buildBody(req)
     let url  = if a.endpoint.len > 0: a.endpoint else: ZhipuEndpoint
     let resp = client.post(url, body = body)
-
-    if resp.status[0] != '2':
-      return err("Zhipu API error " & resp.status & ": " & resp.body)
-
-    let parsed = parseJson(resp.body)
-    ok(parseZhipuResponse(parsed))
-  except CatchableError as e:
-    err(e.msg)
+    checkApiStatus(resp, "Zhipu")
+    resp.body |> parseJson |> parseZhipuResponse |> ok
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

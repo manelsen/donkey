@@ -17,6 +17,7 @@ import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
 import ../../domain/providers/ollama_pure as opure
+import ../http/helpers
 
 const
   OllamaDefaultBaseUrl* = "http://localhost:11434"
@@ -90,51 +91,36 @@ proc parseOllamaSseLine*(line: string): Result[OllamaSseChunk, string] =
 
 proc complete*(a: OllamaAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
-  try:
-    let client = newHttpClient()
-    defer: client.close()
-
+  withHttpClient:
     var headers = @[("Content-Type", "application/json")]
     if a.apiKey.len > 0:
       headers.add(("Authorization", "Bearer " & a.apiKey))
     client.headers = newHttpHeaders(headers)
-
     let body = $a.buildBody(req)
     let url  = (if a.baseUrl.len > 0: a.baseUrl else: OllamaDefaultBaseUrl) & "/api/chat"
     let resp = client.post(url, body = body)
-
-    if resp.status[0] != '2':
-      return err("Ollama API error " & resp.status & ": " & resp.body)
-
-    let parsed = parseJson(resp.body)
-    ok(parseOllamaResponse(parsed))
-  except CatchableError as e:
-    err(e.msg)
+    checkApiStatus(resp, "Ollama")
+    resp.body |> parseJson |> parseOllamaResponse |> ok
 
 # ── Streaming ─────────────────────────────────────────────────────────────────
 
 proc makeStreamFn*(a: OllamaAdapter): StreamFn =
   ## Returns a StreamFn closure that performs SSE streaming via Ollama.
+  ## Note: Ollama's streaming model differs from OpenAI-compatible providers —
+  ## parse errors are skipped (continue) and token counts arrive on the done chunk.
   let adapter = a
   result = proc(req: CompletionRequest;
                 onToken: proc(tok: string) {.gcsafe.}
                ): Result[CompletionResponse, string] {.gcsafe.} =
-    try:
-      let client = newHttpClient()
-      defer: client.close()
-
+    withHttpClient:
       var headers = @[("Content-Type", "application/json")]
       if adapter.apiKey.len > 0:
         headers.add(("Authorization", "Bearer " & adapter.apiKey))
       client.headers = newHttpHeaders(headers)
-
       let body = $adapter.buildStreamBody(req)
       let url  = (if adapter.baseUrl.len > 0: adapter.baseUrl else: OllamaDefaultBaseUrl) & "/api/chat"
       let resp = client.request(url, httpMethod = HttpPost, body = body)
-
-      if resp.status[0] != '2':
-        return err("Ollama API error " & resp.status & ": " & resp.body)
-
+      checkApiStatus(resp, "Ollama")
       var accumulated  = ""
       var inputTokens  = 0
       var outputTokens = 0
@@ -153,5 +139,3 @@ proc makeStreamFn*(a: OllamaAdapter): StreamFn =
         inputTokens:  inputTokens,
         outputTokens: outputTokens,
       ))
-    except CatchableError as e:
-      err(e.msg)

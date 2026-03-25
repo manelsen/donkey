@@ -949,7 +949,7 @@ proc executeLegacyNativeTool(tc: ToolCallRequest;
     return handledText("Reminder scheduled.")
 
   of CurrentTimeToolName:
-    return handledText(currentTimeResult(now().utc()))
+    return now().utc() |> currentTimeResult |> handledText
 
   of WebFetchToolName:
     let url   = j.getOrDefault("url").getStr("")

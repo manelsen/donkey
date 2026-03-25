@@ -18,7 +18,8 @@
 ##   WECOM_CORP_ID, WECOM_CORP_SECRET, WECOM_AGENT_ID,
 ##   WECOM_CALLBACK_TOKEN, WECOM_WEBHOOK_PORT (default 8081)
 
-import std/[algorithm, json, net, os, sha1, strutils, tables, times]
+import std/[algorithm, json, net, strutils, tables, times]
+import checksums/sha1
 import ../../core/log
 import ../../core/pipeops
 import ../../domain/message

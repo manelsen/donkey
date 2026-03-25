@@ -94,7 +94,7 @@ proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: []
 
 proc buildProviderBundle*(preferencesMd: string;
                           providerRuntimeBuilder: ProviderRuntimeBuilder): ProviderBundle {.gcsafe.} =
-  providerRuntimeBuilder(buildProviderSpec(parseProviderPrefs(preferencesMd)))
+  preferencesMd |> parseProviderPrefs |> buildProviderSpec |> providerRuntimeBuilder
 
 func detectProviderAvailability*(): ProviderAvailability =
   ProviderAvailability(

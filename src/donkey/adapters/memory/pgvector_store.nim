@@ -65,6 +65,7 @@ when defined(withPostgres):
   import ../../core/memory/embedder
   import ../../ports/memory
   import ../../ports/embedding
+  import ./pg_helpers
 
   type
     PgvectorStoreAdapter* = object
@@ -119,36 +120,20 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
     ok()
 
   proc initStore*(a: PgvectorStoreAdapter): Result[void, string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    db.ensureSchema(a.tableName)
+    withDb(a):
+      db.ensureSchema(a.tableName)
 
   # ── Core I/O operations (Result-based, chainable via >>=) ────────────────────
 
   proc hasProfile*(a: PgvectorStoreAdapter; userId: UserId): Result[bool, string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    try:
+    withDb(a):
       let rows = db.getAllRows(
         sql("SELECT 1 FROM " & a.tableName & " WHERE user_id = $1 AND kind = 'user_profile' LIMIT 1"),
         $userId)
       ok(rows.len > 0)
-    except CatchableError as e:
-      err("hasProfile: " & e.msg)
 
   proc loadContext*(a: PgvectorStoreAdapter; userId: UserId): Result[UserContext, string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    try:
+    withDb(a):
       let rows = db.getAllRows(
         sql("SELECT kind, content FROM " & a.tableName & " WHERE user_id = $1 ORDER BY created_at"),
         $userId)
@@ -171,16 +156,9 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
         memoryMd: memLines.join("\n\n"),
         preferencesMd: prefMd,
       ))
-    except CatchableError as e:
-      err("loadContext: " & e.msg)
 
   proc saveUserMd*(a: PgvectorStoreAdapter; userId: UserId; content: string): Result[void, string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    try:
+    withDb(a):
       db.exec(sql(
         "INSERT INTO " & a.tableName & " (user_id, kind, content) " &
         "VALUES ($1, 'user_profile', $2) " &
@@ -191,31 +169,17 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
         "WHERE user_id = $2 AND kind = 'user_profile'"
       ), content, $userId)
       ok()
-    except CatchableError as e:
-      err("saveUserMd: " & e.msg)
 
   proc appendMemory*(a: PgvectorStoreAdapter; userId: UserId; text: string): Result[void, string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    try:
+    withDb(a):
       db.exec(sql(
         "INSERT INTO " & a.tableName & " (user_id, kind, content) " &
         "VALUES ($1, 'memory', $2)"
       ), $userId, text)
       ok()
-    except CatchableError as e:
-      err("appendMemory: " & e.msg)
 
   proc savePreferences*(a: PgvectorStoreAdapter; userId: UserId; content: string): Result[void, string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    try:
+    withDb(a):
       db.exec(sql(
         "INSERT INTO " & a.tableName & " (user_id, kind, content) " &
         "VALUES ($1, 'preference', $2) " &
@@ -226,34 +190,20 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
         "WHERE user_id = $2 AND kind = 'preference'"
       ), content, $userId)
       ok()
-    except CatchableError as e:
-      err("savePreferences: " & e.msg)
 
   proc clearMemory*(a: PgvectorStoreAdapter; userId: UserId): Result[void, string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    try:
+    withDb(a):
       db.exec(sql(
         "DELETE FROM " & a.tableName & " WHERE user_id = $1 AND kind = 'memory'"
       ), $userId)
       ok()
-    except CatchableError as e:
-      err("clearMemory: " & e.msg)
 
   # ── Vector storage operations ─────────────────────────────────────────────────
 
   proc storeChunk*(a: PgvectorStoreAdapter; userId: UserId;
                    chunk: EmbeddedChunk): Result[void, string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    let vecStr = buildVectorLiteral(chunk.vector)
-    try:
+    withDb(a):
+      let vecStr = buildVectorLiteral(chunk.vector)
       if vecStr.len > 0:
         db.exec(sql(
           "INSERT INTO " & a.tableName & " (user_id, kind, content, hash, chunk_index, offset, embedding) " &
@@ -265,19 +215,12 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
           "VALUES ($1, 'chunk', $2, $3, $4, $5)"
         ), $userId, chunk.chunk, chunk.hash, chunk.index, chunk.offset)
       ok()
-    except CatchableError as e:
-      err("storeChunk: " & e.msg)
 
   proc storeChunks*(a: PgvectorStoreAdapter; userId: UserId;
                     chunks: seq[EmbeddedChunk]): Result[void, string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    for chunk in chunks:
-      let vecStr = buildVectorLiteral(chunk.vector)
-      try:
+    withDb(a):
+      for chunk in chunks:
+        let vecStr = buildVectorLiteral(chunk.vector)
         if vecStr.len > 0:
           db.exec(sql(
             "INSERT INTO " & a.tableName & " (user_id, kind, content, hash, chunk_index, offset, embedding) " &
@@ -288,23 +231,15 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
             "INSERT INTO " & a.tableName & " (user_id, kind, content, hash, chunk_index, offset) " &
             "VALUES ($1, 'chunk', $2, $3, $4, $5)"
           ), $userId, chunk.chunk, chunk.hash, chunk.index, chunk.offset)
-      except CatchableError as e:
-        return err("storeChunks: " & e.msg)
-    ok()
+      ok()
 
   proc search*(a: PgvectorStoreAdapter; userId: UserId; query: string;
               limit: int): Result[seq[MemoryHit], string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    let vec = a.embedFn(query)
-    let vecStr = buildVectorLiteral(vec)
-    if vecStr.len == 0:
-      let empty: seq[MemoryHit] = @[]
-      return ok(empty)
-    try:
+    withDb(a):
+      let vec = a.embedFn(query)
+      let vecStr = buildVectorLiteral(vec)
+      if vecStr.len == 0:
+        return ok(@[])
       let rows = db.getAllRows(sql("""
         SELECT content, kind,
                1 - (embedding <=> $2::vector) AS score
@@ -319,17 +254,10 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
         let score = try: parseFloat(row[2]).float32 except: 0.0
         hits.add(MemoryHit(content: row[0], kind: row[1], score: score))
       ok(hits)
-    except CatchableError as e:
-      err("search: " & e.msg)
 
   proc searchByHash*(a: PgvectorStoreAdapter; userId: UserId;
                     hash: string): Result[seq[MemoryHit], string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    try:
+    withDb(a):
       let rows = db.getAllRows(sql("""
         SELECT content, kind, hash, chunk_index, offset
         FROM """ & a.tableName & """
@@ -340,17 +268,10 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
       for row in rows:
         hits.add(MemoryHit(content: row[0], kind: row[1], score: 1.0))
       ok(hits)
-    except CatchableError as e:
-      err("searchByHash: " & e.msg)
 
   proc getChunksByHash*(a: PgvectorStoreAdapter; userId: UserId;
                         hash: string): Result[seq[(string, int, int)], string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    try:
+    withDb(a):
       let rows = db.getAllRows(sql("""
         SELECT content, chunk_index, offset
         FROM """ & a.tableName & """
@@ -364,8 +285,6 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
         let offset = try: parseInt(row[2]) except: 0
         results.add((content, idx, offset))
       ok(results)
-    except CatchableError as e:
-      err("getChunksByHash: " & e.msg)
 
   # ── MemoryPort search (SemanticMemoryPort extension) ──────────────────────────
 
@@ -376,24 +295,12 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
   # ── Utility operations ───────────────────────────────────────────────────────
 
   proc deleteUser*(a: PgvectorStoreAdapter; userId: UserId): Result[void, string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    try:
+    withDb(a):
       db.exec(sql("DELETE FROM " & a.tableName & " WHERE user_id = $1"), $userId)
       ok()
-    except CatchableError as e:
-      err("deleteUser: " & e.msg)
 
   proc countMemories*(a: PgvectorStoreAdapter; userId: UserId): Result[int, string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    try:
+    withDb(a):
       let rows = db.getAllRows(sql(
         "SELECT COUNT(*) FROM " & a.tableName & " WHERE user_id = $1 AND kind = 'chunk'"
       ), $userId)
@@ -401,16 +308,9 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
         ok(rows[0][0].parseInt)
       else:
         ok(0)
-    except CatchableError as e:
-      err("countMemories: " & e.msg)
 
   proc getMemoryKinds*(a: PgvectorStoreAdapter; userId: UserId): Result[seq[string], string] =
-    let openResult = a.openDb
-    if openResult.isErr:
-      return err(openResult.error)
-    let db = openResult.get
-    defer: db.close()
-    try:
+    withDb(a):
       let rows = db.getAllRows(sql(
         "SELECT DISTINCT kind FROM " & a.tableName & " WHERE user_id = $1"
       ), $userId)
@@ -418,8 +318,6 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
       for row in rows:
         kinds.add(row[0])
       ok(kinds)
-    except CatchableError as e:
-      err("getMemoryKinds: " & e.msg)
 
   # ── Reconstruct text from chunks ──────────────────────────────────────────────
 
