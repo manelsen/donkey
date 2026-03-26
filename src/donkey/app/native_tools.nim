@@ -1000,9 +1000,9 @@ proc executeShellNativeTool(tc: ToolCallRequest;
       let original = readFile(editCtx.path)
       let applyResult = applyEditFileOps(splitEditableLines(original), editCtx.edits).valueOr:
         return handledError(error)
-      writeFile(editCtx.path, applyResult.join("\n"))
-      return handledText("Edited " & editCtx.path &
-                         " successfully. Re-read the file before additional edits.")
+      let updated = applyResult.join("\n")
+      writeFile(editCtx.path, updated)
+      return handledText(renderHashlineSlice(updated, 1, updated.splitLines().len))
     except CatchableError as e:
       return handledError("Error: " & e.msg)
 

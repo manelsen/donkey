@@ -618,8 +618,11 @@ suite "executeNativeTool — read_file and edit_file":
     let editTc = makeTc("edit_file", editJson)
     let editResult = waitFor executeNativeTool(editTc, ctx, newSessionState(), newHistory())
     check editResult.handled
-    check editResult.text.contains("Edited")
     check readFile(target).strip() == "alpha\ngamma"
+    ## edit_file returns updated hashline content so the model can chain edits
+    check editResult.text.contains(":alpha")
+    check editResult.text.contains(":gamma")
+    check editResult.text.contains("#")
 
   test "edit_file rejects stale anchor":
     let ctx = ctxWithEditPaddock(paddock)
