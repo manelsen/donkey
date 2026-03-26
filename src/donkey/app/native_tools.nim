@@ -250,7 +250,7 @@ proc sha256hex(data: string): string {.gcsafe, raises: [].} =
     result.add(b.toHex(2).toLowerAscii())
 
 proc normalizeHashlineLine(line: string): string {.gcsafe, raises: [].} =
-  line.replace("\r", "").strip(leading = false, trailing = true)
+  line.replace("\r", "").strip()
 
 proc computeLineHash*(lineNum: int; line: string): string {.gcsafe, raises: [].} =
   let normalized = normalizeHashlineLine(line)

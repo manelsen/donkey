@@ -145,6 +145,22 @@ suite "hashline file helpers":
     check applyResult.isOk
     check applyResult.value == @["alpha", "gamma"]
 
+  test "computeLineHash is stable across indentation changes":
+    ## Anchors must survive formatter runs that only change indentation.
+    let h0 = computeLineHash(5, "return x")
+    let h2 = computeLineHash(5, "  return x")
+    let h4 = computeLineHash(5, "    return x")
+    check h0 == h2
+    check h0 == h4
+
+  test "validateHashlineAnchor accepts re-indented line":
+    ## An anchor computed before formatting is still valid after indentation change.
+    let original = @["alpha", "  return x"]
+    let reindented = @["alpha", "    return x"]
+    let anchor = HashlineAnchor(line: 2, hash: computeLineHash(2, "  return x"))
+    let r = validateHashlineAnchor(anchor, reindented)
+    check r.isOk
+
 # ── performFind ───────────────────────────────────────────────────────────────
 
 suite "performFind":
