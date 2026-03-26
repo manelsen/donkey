@@ -124,6 +124,8 @@ suite "hashline file helpers":
     let line = formatHashlineLine(3, "let x = 1")
     check line.startsWith("3#")
     check line.endsWith(":let x = 1")
+    let anchor = line.split(":", maxsplit = 1)[0]  ## "3#xxxx"
+    check anchor.split("#")[1].len == 4
 
   test "parseHashlineAnchor parses valid anchor":
     let parsed = parseHashlineAnchor("12#abc123")

@@ -257,7 +257,7 @@ proc computeLineHash*(lineNum: int; line: string): string {.gcsafe, raises: [].}
   let seed =
     if normalized.anyIt(it.isAlphaNumeric): normalized
     else: normalized & ":" & $lineNum
-  sha256hex(seed)[0 .. 5]
+  sha256hex(seed)[0 .. 3]
 
 proc formatHashlineRef*(lineNum: int; line: string): string {.gcsafe, raises: [].} =
   $lineNum & "#" & computeLineHash(lineNum, line)
