@@ -44,7 +44,7 @@ proc registerTask*(reg: var HeartbeatRegistry; name: string; task: HeartbeatTask
 proc runAllTasks*(reg: HeartbeatRegistry) =
   for e in reg.entries:
     try: e.task()
-    except: discard
+    except CatchableError: discard
 
 # ── Concrete task: reminder delivery ─────────────────────────────────────────
 
@@ -60,7 +60,7 @@ proc deliverDueReminders*(memory: MemoryRuntimePort;
     let message = j{"message"}.getStr("")
     let remId   = j{"id"}.getStr("")
     if userId.len == 0 or message.len == 0: continue
-    try: outboxFn(userId, channel, message) except: discard
+    try: outboxFn(userId, channel, message) except CatchableError: discard
     if remId.len > 0 and memory.deleteReminder != nil:
       memory.deleteReminder(UserId(userId), remId)
 

@@ -180,7 +180,7 @@ proc log*(logger: Logger; level: LogLevel; msg: string) {.raises: [].} =
       subsystem: logger.subsystem,
       message:   msg,
     ))
-  except: discard
+  except Exception: discard   # honor raises: []
 
 template debug*(logger: Logger; msg: string) = logger.log(lvlDebug, msg)
 template info*(logger: Logger; msg: string)  = logger.log(lvlInfo,  msg)

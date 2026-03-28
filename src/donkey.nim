@@ -558,7 +558,7 @@ proc makeTgTypingFn(token: string; identityPath: string): TypingFn =
     if channel == ckTelegram:
       try:
         tg[].sendTyping(userId).isOkOr: discard
-      except: discard
+      except CatchableError: discard
 
 type DaemonToolBundle = object
   clients: seq[ToolRuntimePort]
