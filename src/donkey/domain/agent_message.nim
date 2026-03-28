@@ -19,6 +19,8 @@ type
     tkDebugToggle        ## toggles verbose debug mode in the orchestrator
     tkPersonalityChoice  ## payload = "personality:dim:valor" (inline keyboard callback)
     tkNameChoice         ## payload = "name:<chosen-name>" (name selection callback)
+    tkCompact            ## trigger session context compaction
+    tkNew                ## start a new session (clear context)
 
   AgentMessage* = object
     kind*:     AgentMessageKind
