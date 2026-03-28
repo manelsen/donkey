@@ -1,6 +1,7 @@
 ## DonkeyConfig — typed, validated representation of donkey.toml.
 
 import ../core/types
+import ../core/security/dm_policy
 import ../core/app_meta
 
 type
@@ -30,6 +31,7 @@ type
     skillNetPolicy*: seq[SkillNetPolicy]
     sandboxMode*:   SandboxMode  ## bash tool isolation; default: smNone
     sandboxImage*:  string       ## Docker image for smDocker; default: "alpine"
+    dmPolicy*:      DmPolicy     ## DM security policy; default: DmPolicyOpen
 
 func defaultConfig*(home: string): DonkeyConfig =
   DonkeyConfig(
