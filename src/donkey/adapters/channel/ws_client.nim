@@ -140,6 +140,6 @@ proc recvFrame*(ws: WsClient; timeoutMs = 1000): WsFrame =
 
 proc wsClose*(ws: WsClient) =
   try: ws.sendFrame("", WsOpcodeClose)
-  except: discard
+  except CatchableError: discard
   try: ws.sock.close()
-  except: discard
+  except IOError: discard

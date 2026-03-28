@@ -69,7 +69,7 @@ proc imapReadResponse(s: ImapSession; tag: string): Result[seq[string], string] 
           let sizeStr = line[bracePos + 1 ..< line.len - 1]
           var litSize = 0
           try: litSize = parseInt(sizeStr)
-          except: discard
+          except ValueError: discard
           lines.add(line)
           # Read exactly litSize bytes
           if litSize > 0:
@@ -104,7 +104,7 @@ proc imapExec(s: var ImapSession; cmd: string): Result[void, string] =
 
 proc imapClose(s: ImapSession) =
   try: s.sock.close()
-  except: discard
+  except IOError: discard
 
 proc newImapSession(host: string; port: int): Result[ImapSession, string] =
   try:
@@ -127,10 +127,10 @@ proc parseSearchNums(lines: seq[string]): seq[int]
     if line.startsWith("* SEARCH"):
       let rest = line[8 .. ^1].strip()
       if rest.len == 0: return
+      if rest.len == 0: return
       for p in rest.splitWhitespace():
         try: result.add(parseInt(p))
-        except: discard
-      return
+        except ValueError: discard
 
 proc extractFetchLiteral(lines: seq[string]): string =
   ## Returns the literal body from an IMAP FETCH response.
@@ -189,8 +189,7 @@ proc smtpClose(s: SmtpSession) =
   try:
     discard s.smtpSend("QUIT")
     s.sock.close()
-  except: discard
-
+  except IOError: discard
 proc newSmtpSession(host: string; port: int;
                     startTls: bool): Result[SmtpSession, string] =
   try:

@@ -279,7 +279,7 @@ proc loadDueReminders*(a: MdFileAdapter): seq[JsonNode] =
         let j = parseJson(readFile(rPath))
         if j["scheduledAt"].getBiggestInt() <= now:
           result.add(j)
-      except: discard
+      except CatchableError: discard
 
 proc deleteReminder*(a: MdFileAdapter; userId: UserId; reminderId: string) =
   ## Deletes a reminder file by id.

@@ -49,4 +49,4 @@ proc embed*(a: OpenRouterEmbeddingAdapter; text: string): seq[float32] {.gcsafe.
     for i in 0 ..< vec.len:
       buf[i] = vec[i].getFloat(0.0).float32
     return buf
-  except: discard
+  except CatchableError: discard

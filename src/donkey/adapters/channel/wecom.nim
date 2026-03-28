@@ -63,7 +63,7 @@ proc refreshToken*(a: var WeComAdapter): Result[void, string] =
   let resp = ? a.http.get(url)
   var j: JsonNode
   try: j = parseJson(resp.body)
-  except: return err("WeCom token: invalid JSON")
+  except JsonParsingError: return err("WeCom token: invalid JSON")
   let code = j.getOrDefault("errcode").getInt(0)
   if code != 0:
     return err("WeCom token error " & $code & ": " &
@@ -96,7 +96,7 @@ proc apiPost(a: var WeComAdapter; endpoint: string; body: JsonNode): Result[void
     return err("WeCom HTTP " & $resp.status)
   var j: JsonNode
   try: j = parseJson(resp.body)
-  except: return err("WeCom: invalid JSON response")
+  except JsonParsingError: return err("WeCom: invalid JSON response")
   let code = j.getOrDefault("errcode").getInt(0)
   if code != 0:
     return err("WeCom error " & $code & ": " & j.getOrDefault("errmsg").getStr(""))

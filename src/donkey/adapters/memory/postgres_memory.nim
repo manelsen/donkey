@@ -157,8 +157,8 @@ when defined(withPostgres):
     for stmt in SchemaSql.split(';'):
       let s = stmt.strip()
       if s.len > 0:
-        try: db.exec(sql(s))
-        except: discard   ## idempotent — IF NOT EXISTS guards
+try: db.exec(sql(s))
+except DbError: discard   ## idempotent — IF NOT EXISTS guards
     ## AGE: load extension per session, then create graph if absent.
     try:
       db.exec(sql"LOAD 'age'")
@@ -212,7 +212,7 @@ when defined(withPostgres):
       discard db.ageCypher(
         "MERGE (p:Person {user_id: '" & $userId & "'}) SET p.profile = '" &
         sanitizeAgeText(content) & "' RETURN p")
-    except: discard
+except CatchableError: discard
 
   proc appendMemory*(a: PostgresMemoryAdapter; userId: UserId; text: string) =
     let db = a.open()
@@ -238,7 +238,7 @@ when defined(withPostgres):
         "CREATE (m:Memory {node_id: '" & nodeId & "', user_id: '" & $userId &
         "', content: '" & safeText & "'}) " &
         "CREATE (u)-[:HAS_MEMORY]->(m) RETURN id(m)", @["id"])
-    except: discard
+except CatchableError: discard
 
   proc savePreferences*(a: PostgresMemoryAdapter; userId: UserId; content: string) =
     let db = a.open()
@@ -278,7 +278,7 @@ when defined(withPostgres):
             let content = stripAgeValue(gr[0])
             if content.len > 0 and content != "null":
               result.add MemoryHit(content: content, kind: "graph", score: 0.5)
-        except: discard
+except CatchableError: discard
     else:
       ## Fallback: recent memories by insertion order.
       let rows = db.getAllRows(sql(
@@ -299,7 +299,7 @@ when defined(withPostgres):
       discard db.ageCypher(
         "MERGE (s:Session {session_id: '" & sessionId & "', user_id: '" & $userId & "'}) " &
         "RETURN id(s)", @["id"])
-    except: discard
+except CatchableError: discard
 
   proc graphLinkSessions*(a: PostgresMemoryAdapter; userId: UserId;
                           prevSessionId, nextSessionId: string) =
@@ -312,7 +312,7 @@ when defined(withPostgres):
         "MATCH (prev:Session {session_id: '" & prevSessionId & "'}), " &
         "      (next:Session {session_id: '" & nextSessionId & "'}) " &
         "MERGE (prev)-[:CONTINUED_IN]->(next) RETURN id(prev)", @["id"])
-    except: discard
+except CatchableError: discard
 
   proc graphAddFact*(a: PostgresMemoryAdapter; userId: UserId;
                      fact: string; aboutConcept = "") =
@@ -343,7 +343,7 @@ when defined(withPostgres):
         discard db.ageCypher(
           "CREATE (f:Fact {node_id: '" & nodeId & "', user_id: '" & $userId &
           "', content: '" & safeFact & "'}) RETURN id(f)", @["id"])
-    except: discard
+except CatchableError: discard
 
   proc graphAddPerson*(a: PostgresMemoryAdapter; userId: UserId;
                        name: string; relation = "") =
@@ -362,7 +362,7 @@ when defined(withPostgres):
           "MATCH (u:Person {user_id: '" & $userId & "', name: 'self'}), " &
           "      (p:Person {name: '" & safeName & "', user_id: '" & $userId & "'}) " &
           "MERGE (u)-[:" & safeRel.toUpperAscii() & "]->(p) RETURN id(u)", @["id"])
-    except: discard
+except CatchableError: discard
 
   proc graphTraverse*(a: PostgresMemoryAdapter; userId: UserId;
                       startNodeId: string; depth = 2): seq[string] =
@@ -378,7 +378,7 @@ when defined(withPostgres):
       for row in rows:
         let c = stripAgeValue(row[0])
         if c.len > 0 and c != "null": result.add(c)
-    except: discard
+except CatchableError: discard
 
   # ── Import from .md paddock ────────────────────────────────────────────────
 
@@ -411,7 +411,7 @@ when defined(withPostgres):
       db.exec(sql"LOAD 'age'")
       discard db.ageCypher(
         "MATCH (n {user_id: '" & $userId & "'}) DETACH DELETE n")
-    except: discard
+except CatchableError: discard
 
 else:
   ## Stub — non-postgres builds import this module without activating any code.

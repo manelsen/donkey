@@ -295,15 +295,13 @@ proc close*(bt: var BrowserTools) =
   ## Clean up subprocess and WebSocket.
   try:
     bt.ws.wsClose()
-  except: discard
+  except CatchableError: discard
   if bt.process != nil:
     bt.process.terminate()
     bt.process.close()
     bt.process = nil
   bt.pageTargetId = ""
   bt.currentUrl = ""
-
-# ── invoke — ToolPort method ─────────────────────────────────────────────────
 
 proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
   case call.name

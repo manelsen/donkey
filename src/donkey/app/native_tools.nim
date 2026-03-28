@@ -454,7 +454,7 @@ proc performFetch*(http: httpPort.HttpRuntimePort;
       try:
         let jj = parseJson(body)
         body = jj.pretty()
-      except: discard
+      except CatchableError: discard
     elif body.startsWith("<"):
       body = stripHtml(body)
     truncateBody(body, cap)
@@ -518,7 +518,7 @@ proc performRenderMermaid*(diagram: string): string {.gcsafe, raises: [].} =
   except CatchableError:
     return "```mermaid\n" & diagram & "\n```"
   finally:
-    try: removeFile(inF) except: discard
+    discard tryRemoveFile(inF)
 
 # ── inspect_image ─────────────────────────────────────────────────────────────
 
