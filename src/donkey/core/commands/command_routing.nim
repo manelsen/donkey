@@ -22,6 +22,8 @@ type
     cmdPing
     cmdStatus
     cmdCallback
+    cmdCompact
+    cmdNew
 
   CommandRoute* = enum
     crNone
@@ -84,7 +86,7 @@ func decideCommandRoute*(kind: CommandKind): CommandRoute =
   of cmdStart, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
      cmdMyCode, cmdContinue:
     crLocal
-  of cmdDebug, cmdReset:
+  of cmdDebug, cmdReset, cmdCompact, cmdNew:
     crSessionTask
   of cmdModels, cmdThink, cmdBudget:
     crUi
@@ -129,6 +131,8 @@ func parseCommandText*(text: string): CommandDecision =
   of "/mycode": newCommandDecision(cmdMyCode)
   of "/ping": newCommandDecision(cmdPing)
   of "/status": newCommandDecision(cmdStatus)
+  of "/compact": newCommandDecision(cmdCompact)
+  of "/new": newCommandDecision(cmdNew)
   else:
     if cmd.startsWith("/models "):
       newCommandDecision(cmdModels, cmd[8 .. ^1].strip)
@@ -247,6 +251,10 @@ func commandTaskKind*(decision: CommandDecision): TaskKind =
     tkDebugToggle
   of cmdReset:
     tkReset
+  of cmdCompact:
+    tkCompact
+  of cmdNew:
+    tkNew
   else:
     tkUserMsg
 

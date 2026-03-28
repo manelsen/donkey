@@ -111,6 +111,11 @@ type DebugControlContext* = object
   debugMode*: bool
   replyText*: string
 
+type CompactControlContext* = object
+  history*:       ConversationHistory
+  replyText*:     string
+  tokensSaved*:   int
+
 type UserTurnSetup = object
   uid:         UserId
   streamId:    string
@@ -231,6 +236,24 @@ proc startDebugControlContext*(debugMode: bool): Result[DebugControlContext, str
         "🔍 Debug mode ON — tokens e tool calls serão exibidos."
       else:
         "🔕 Debug mode OFF."),
+  ))
+
+proc startCompactControlContext*(history: ConversationHistory): Result[CompactControlContext, string] =
+  ## Triggers session compaction to manage token limits.
+  ## Currently a stub that reports compaction as unavailable without F2+ memory.
+  let historyLen = history.len
+  let estimatedTokens = historyLen * 50  ## rough estimate
+  if estimatedTokens < 8000:
+    return ok(CompactControlContext(
+      history: history,
+      replyText: "Contexto ainda dentro do limite. Nada a compactar.",
+      tokensSaved: 0,
+    ))
+  ## With F2+ memory, this would run silentMemoryTurn and truncate history
+  return ok(CompactControlContext(
+    history: history,
+    replyText: "Compaction requer memória F2+ (PostgreSQL). Sessão contínua.",
+    tokensSaved: 0,
   ))
 
 proc sendReplyText*(globalOutbox: AsyncQueue[OutboundMessage];
@@ -930,6 +953,38 @@ proc handleDebugToggleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
   result = debugCtx.debugMode
   await sendReplyText(globalOutbox, uid, channel, replyTo, debugCtx.replyText)
 
+proc handleCompactControlTask(globalOutbox: AsyncQueue[OutboundMessage];
+                            uid: UserId;
+                            channel: ChannelKind;
+                            replyTo: string;
+                            history: ConversationHistory): Future[ConversationHistory] {.async.} =
+  let pipelineResult = startCompactControlContext(history)
+  let compactOpt = await unwrapOrReplyError(
+    globalOutbox, uid, channel, replyTo, pipelineResult)
+  if compactOpt.isNone:
+    return history
+  let compactCtx = compactOpt.get()
+  await sendReplyText(globalOutbox, uid, channel, replyTo, compactCtx.replyText)
+  compactCtx.history
+
+proc handleNewSessionTask(globalOutbox: AsyncQueue[OutboundMessage];
+                        memory: MemoryRuntimePort;
+                        uid: UserId;
+                        channel: ChannelKind;
+                        replyTo: string;
+                        sessionId: string;
+                        history: ConversationHistory): Future[ConversationHistory] {.async.} =
+  ## /new starts a fresh session, similar to /reset but preserves profile
+  let pipelineResult = startResetControlContext(history, sessionId)
+  let resetOpt = await unwrapOrReplyError(
+    globalOutbox, uid, channel, replyTo, pipelineResult)
+  if resetOpt.isNone:
+    return history
+  let resetCtx = resetOpt.get()
+  await sendReplyText(globalOutbox, uid, channel, replyTo,
+    "Nova conversa iniciada. 👋")
+  resetCtx.history
+
 proc handleOnboardingControlTask(globalOutbox: AsyncQueue[OutboundMessage];
                                  memory: MemoryRuntimePort;
                                  completeFn: CompleteFn;
@@ -1012,6 +1067,16 @@ proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
   of tkDebugToggle:
     result.debugMode = await handleDebugToggleControlTask(
       globalOutbox, uid, channel, replyTo, result.debugMode)
+    result.handled = true
+
+  of tkCompact:
+    result.history = await handleCompactControlTask(
+      globalOutbox, uid, channel, replyTo, result.history)
+    result.handled = true
+
+  of tkNew:
+    result.history = await handleNewSessionTask(
+      globalOutbox, memory, uid, channel, replyTo, sessionId, result.history)
     result.handled = true
 
   of tkPersonalityChoice, tkNameChoice:
