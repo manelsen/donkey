@@ -628,3 +628,38 @@ summary: Test user detail view.
     
     check s.name == "browser"
     check s.path == "/skills/browser"
+
+  test "ConfigNode represents config tree":
+    var cn: ConfigNode
+    cn.key = "donkey.home"
+    cn.value = "~/.donkey"
+    cn.kind = ckString
+    cn.changed = false
+    
+    check cn.key == "donkey.home"
+    check cn.kind == ckString
+    check cn.changed == false
+
+  test "ConfigNodeKind enum":
+    check ord(ckString) >= 0
+    check ord(ckInt) > ord(ckString)
+    check ord(ckBool) > ord(ckInt)
+
+  test "ConfigDiff tracks changes":
+    var diff: ConfigDiff
+    diff.key = "log_level"
+    diff.oldValue = "info"
+    diff.newValue = "debug"
+    
+    check diff.key == "log_level"
+    check diff.oldValue == "info"
+    check diff.newValue == "debug"
+
+  test "ConfigSnapshot for rollback":
+    var snap: ConfigSnapshot
+    snap.timestamp = 1234567890
+    snap.note = "before model change"
+    snap.entries = @[("log_level", "info")]
+    
+    check snap.entries.len == 1
+    check snap.note == "before model change"

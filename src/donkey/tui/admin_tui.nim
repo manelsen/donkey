@@ -126,6 +126,28 @@ type
     enabled*: bool
     manifest*: string
 
+  ConfigNodeKind* = enum
+    ckString
+    ckInt
+    ckBool
+    ckList
+
+  ConfigNode* = object
+    key*: string
+    value*: string
+    kind*: ConfigNodeKind
+    changed*: bool
+
+  ConfigDiff* = object
+    key*: string
+    oldValue*: string
+    newValue*: string
+
+  ConfigSnapshot* = object
+    timestamp*: int64
+    note*: string
+    entries*: seq[(string, string)]
+
   ProviderInfo* = object
     name*: string
     enabled*: bool
