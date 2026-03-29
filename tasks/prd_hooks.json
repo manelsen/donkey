@@ -93,7 +93,15 @@
         "Can be enabled/disabled via config",
         "Does NOT hardcode retrieval logic - uses port abstraction"
       ],
-      "priority": "P1"
+      "priority": "P1",
+      "completed": true,
+      "branch": "us/hook-004-rag-context-adapter",
+      "files": [
+        "src/donkey/adapters/hooks/rag_context_hook.nim",
+        "tests/adapters/hooks/t_rag_context_hook.nim"
+      ],
+      "tests": "9 tests passing",
+      "validation": "nim c --mm:orc + boundary check passed"
     },
     {
       "id": "HOOK-005",
