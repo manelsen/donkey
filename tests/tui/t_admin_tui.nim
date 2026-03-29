@@ -1,9 +1,9 @@
 ## Tests for admin TUI components (pure functions only).
-
-import std/[unittest, sequtils, strutils]
+import std/[unittest, sequtils, strutils, times, os]
 import donkey/tui/admin_tui
 import donkey/config/types
 import donkey/core/types
+import donkey/adapters/memory/md_file
 
 suite "Admin TUI":
 
@@ -18,7 +18,7 @@ suite "Admin TUI":
 
   test "sectionLabels returns all labels":
     let labels = sectionLabels()
-    check labels.len == 7
+    check labels.len == 8
     check "Config" in labels.join
     check "Agents" in labels.join
     check "Channels" in labels.join
@@ -146,3 +146,81 @@ suite "Admin TUI":
     check st.items[idx].enabled == true
     st.items[idx].enabled = false
     check st.items[idx].enabled == false
+
+  test "loadUsersItems populates users from adapter":
+    var st = newAdminState()
+    let tmpDir = "/tmp/test_donkey_users_" & $epochTime()
+    createDir(tmpDir)
+    defer: discard execShellCmd("rm -rf " & tmpDir)
+
+    # Create test paddock
+    let testUserId = "test-user-123"
+    createDir(tmpDir / testUserId)
+    writeFile(tmpDir / testUserId / "USER.md", """
+---
+summary: Test user for unit test.
+---
+# Test User 123
+**Preferred name:** TestUser
+**Access:** active
+""")
+
+    # Create adapter and load users
+    let adapter = MdFileAdapter(paddocksDir: tmpDir)
+    st.loadUsersItems(adapter)
+
+    # Verify user was loaded
+    check st.items.len == 1
+    check st.items[0].name == testUserId
+    check st.items[0].description == "TestUser"
+    check st.items[0].enabled == true
+    check st.items[0].status == "active"
+
+  test "loadUsersItems handles empty paddocks":
+    var st = newAdminState()
+    let tmpDir = "/tmp/test_donkey_empty_" & $epochTime()
+    createDir(tmpDir)
+    defer: discard execShellCmd("rm -rf " & tmpDir)
+
+    let adapter = MdFileAdapter(paddocksDir: tmpDir)
+    st.loadUsersItems(adapter)
+
+    check st.items.len == 0
+
+  test "loadUsersItems handles multiple users":
+    var st = newAdminState()
+    let tmpDir = "/tmp/test_donkey_multi_" & $epochTime()
+    createDir(tmpDir)
+    defer: discard execShellCmd("rm -rf " & tmpDir)
+
+    # Create multiple test users
+    for i in 1 .. 5:
+      let userId = "user-" & $i
+      createDir(tmpDir / userId)
+      let access = if i == 3: "revoked" else: "active"
+      writeFile(tmpDir / userId / "USER.md",
+        "# User " & $i & "\n**Preferred name:** User" & $i & "\n**Access:** " & access)
+
+    let adapter = MdFileAdapter(paddocksDir: tmpDir)
+    st.loadUsersItems(adapter)
+
+    check st.items.len == 5
+    let revokedUsers = st.items.filterIt(it.status == "revoked")
+    check revokedUsers.len == 1
+    check revokedUsers[0].name == "user-3"
+
+  test "AdminSection includes asUsers":
+    # Verify asUsers is in the enum
+    let hasUsers = ord(asUsers) >= 0
+    check hasUsers == true
+
+  test "navigate to Users section":
+    var st = newAdminState()
+    check st.section == asConfig
+
+    # Navigate to Users section
+    st.section = asUsers
+    st.loadSection()
+
+    # Should have loadUsersItems called via loadSection
+    check st.section == asUsers

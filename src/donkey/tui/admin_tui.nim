@@ -5,13 +5,14 @@
 ##
 ## Requires illwill. Runs in foreground (no Chronos).
 
-import std/[os, sequtils, strformat, strutils, tables, algorithm]
+import std/[strformat]
 import illwill as ill
 import terminal as term
 import ../core/types
 import ../core/commands/command_catalog
 import ../config/types
 import ../ports/provider
+import ../adapters/memory/md_file
 
 # Helper for drawing boxes
 proc repeatChar*(n: int; c: char): string =
@@ -28,6 +29,7 @@ type
     asModels
     asHooks
     asPlugins
+    asUsers
 
   AdminItem* = object
     name*: string
@@ -93,6 +95,7 @@ func sectionLabel*(s: AdminSection): string =
   of asModels:    "[Models]"
   of asHooks:     "[Hooks]"
   of asPlugins:    "[Plugins]"
+  of asUsers:     "[Users]"
 
 func sectionLabels*(): seq[string] =
   for s in AdminSection:
@@ -159,6 +162,18 @@ proc loadPluginItems*(st: var AdminState) =
     AdminItem(name: "mcp", description: "MCP client adapter", enabled: false, status: "disabled"),
   ]
 
+proc loadUsersItems*(st: var AdminState; adapter: MdFileAdapter) =
+  ## Load users from memory adapter into AdminItem list.
+  let users = adapter.listUsers()
+  st.items = @[]
+  for u in users:
+    st.items.add(AdminItem(
+      name: $u.userId,
+      description: u.preferredName,
+      enabled: u.access != "revoked",
+      status: u.access
+    ))
+
 proc loadSection*(st: var AdminState) =
   case st.section
   of asConfig:    st.loadConfigItems()
@@ -168,6 +183,7 @@ proc loadSection*(st: var AdminState) =
   of asModels:    st.loadModelItems()
   of asHooks:     st.loadHookItems()
   of asPlugins:   st.loadPluginItems()
+  of asUsers:     discard  # loaded via IPC
 
 # ── Rendering ───────────────────────────────────────────────────────────────
 
