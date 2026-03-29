@@ -72,8 +72,8 @@
         "bash scripts/check_boundaries.sh passes"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "docs/reference/channel_port.md created",
       "dependsOn": [
         "DOC-002"
       ]
