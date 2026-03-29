@@ -165,8 +165,8 @@
         "Include model selection examples"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "docs/topics/providers.md created",
       "dependsOn": [
         "DOC-001",
         "DOC-005"
