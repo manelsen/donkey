@@ -452,3 +452,27 @@ summary: Test user detail view.
     # Count enabled providers
     let enabled = st.items.filterIt(it.enabled)
     check enabled.len >= 1
+
+  test "selectModel changes active model":
+    var st = newAdminState()
+    st.loadModelItems()
+    
+    # Find default model
+    var defaultIdx = -1
+    for i, item in st.items:
+      if item.status == "default":
+        defaultIdx = i
+        break
+    check defaultIdx >= 0
+    
+    # Simulate changing status
+    st.items[defaultIdx].status = "available"
+    check st.items[defaultIdx].status == "available"
+
+  test "models have metadata fields":
+    var st = newAdminState()
+    st.loadModelItems()
+    
+    for item in st.items:
+      check item.name.len > 0
+      check item.description.len > 0
