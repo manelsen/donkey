@@ -684,3 +684,29 @@ summary: Test user detail view.
     
     check sm.role == "user"
     check sm.text == "Hello"
+
+  test "DaemonHealth tracks daemon status":
+    var dh: DaemonHealth
+    dh.uptimeSec = 86400
+    dh.pid = 12345
+    dh.version = "0.1.0"
+    dh.memoryMb = 128
+    dh.threadCount = 4
+    dh.status = dhsRunning
+    
+    check dh.uptimeSec == 86400
+    check dh.pid == 12345
+    check dh.status == dhsRunning
+
+  test "DaemonHealthStatus enum":
+    check ord(dhsRunning) == 0
+    check ord(dhsDegraded) > 0
+    check ord(dhsError) > ord(dhsDegraded)
+
+  test "LogFilter for log viewer":
+    var lf: LogFilter
+    lf.levels = @["ERR", "WRN"]
+    lf.subsystem = "orch"
+    
+    check lf.levels.len == 2
+    check lf.subsystem == "orch"

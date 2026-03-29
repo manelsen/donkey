@@ -160,6 +160,24 @@ type
     text*: string
     timestamp*: int64
 
+  DaemonHealthStatus* = enum
+    dhsRunning
+    dhsDegraded
+    dhsError
+
+  DaemonHealth* = object
+    uptimeSec*: int64
+    pid*: int32
+    version*: string
+    memoryMb*: int64
+    threadCount*: int
+    lastHeartbeat*: float
+    status*: DaemonHealthStatus
+
+  LogFilter* = object
+    levels*: seq[string]
+    subsystem*: string
+
   ProviderInfo* = object
     name*: string
     enabled*: bool
