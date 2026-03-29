@@ -133,7 +133,15 @@
         "Support built-in hooks by name",
         "Support custom hook registry"
       ],
-      "priority": "P1"
+      "priority": "P1",
+      "completed": true,
+      "branch": "us/hook-006-configuration",
+      "files": [
+        "src/donkey/core/hooks/hook_config.nim",
+        "tests/core/t_hook_config.nim"
+      ],
+      "tests": "10 tests passing",
+      "validation": "nim c --mm:orc + boundary check passed"
     },
     {
       "id": "HOOK-007",
