@@ -2,7 +2,7 @@
 ##
 ## API endpoint: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}
 ## Auth: query parameter `key=` (NOT a header)
-## Default model: gemini-2.0-flash
+## Default model: gemini-2.5-flash
 ##
 ## Quirks absorbed here:
 ##   - Role mapping: "assistant" → "model"
@@ -27,7 +27,7 @@ export gp.geminiRole, gp.textPart, gp.functionCallPart, gp.functionResponsePart,
 
 const
   GeminiBaseUrl*     = "https://generativelanguage.googleapis.com/v1beta/models"
-  GeminiDefaultModel = "gemini-2.0-flash"
+  GeminiDefaultModel = "gemini-2.5-flash"
 
 type
   GeminiAdapter* = object

@@ -135,7 +135,7 @@ func defaultModelForProvider*(providerName: string): string =
   case providerName
   of "openrouter": "openai/gpt-4o-mini"
   of "anthropic": "claude-opus-4-6"
-  of "gemini": "gemini-2.0-flash"
+  of "gemini": "gemini-2.5-flash"
   of "minimax": "MiniMax-M2"
   of "zai": "glm-4.7"
   else: "glm-4.7"
@@ -423,7 +423,7 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
 
   if signals.hasImage:
     result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
-    result.addIfAvailable(availability, "gemini", "gemini-2.0-flash")
+    result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
 
   if signals.approxInputChars >= LongContextChars:
     result.addIfAvailable(availability, "gemini", "gemini-2.5-pro")
@@ -447,23 +447,23 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
       result.addIfAvailable(availability, "zai-coding", "glm-5")
       result.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
       result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
-      result.addIfAvailable(availability, "gemini", "gemini-2.0-flash")
+      result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
     else:
       result.addIfAvailable(availability, "zai", "glm-5")
       result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
       result.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
-      result.addIfAvailable(availability, "gemini", "gemini-2.0-flash")
+      result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
       result.addIfAvailable(availability, "minimax", "MiniMax-M2")
   else:
     if signals.hasTools:
       result.addIfAvailable(availability, "zai-coding", "glm-4.7")
       result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
       result.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
-      result.addIfAvailable(availability, "gemini", "gemini-2.0-flash")
+      result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
     else:
       result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
       result.addIfAvailable(availability, "zai", "glm-4.7")
-      result.addIfAvailable(availability, "gemini", "gemini-2.0-flash")
+      result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
       result.addIfAvailable(availability, "minimax", "MiniMax-M2")
       result.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
 
@@ -471,12 +471,12 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
     result.addIfAvailable(availability, "zai-coding", "glm-4.7")
     result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
     result.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
-    result.addIfAvailable(availability, "gemini", "gemini-2.0-flash")
+    result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
     result.addIfAvailable(availability, "zai", "glm-4.7")
   else:
     result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
     result.addIfAvailable(availability, "zai", "glm-4.7")
-    result.addIfAvailable(availability, "gemini", "gemini-2.0-flash")
+    result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
     result.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
     result.addIfAvailable(availability, "minimax", "MiniMax-M2")
     result.addIfAvailable(availability, "zai-coding", "glm-4.7")

@@ -6,7 +6,7 @@ suite "failover state machine":
   let providers = @[
     ProviderSelection(providerName: "openrouter", modelName: "gpt-4o-mini"),
     ProviderSelection(providerName: "anthropic", modelName: "claude-sonnet-4-6"),
-    ProviderSelection(providerName: "gemini", modelName: "gemini-2.0-flash"),
+    ProviderSelection(providerName: "gemini", modelName: "gemini-2.5-flash"),
   ]
 
   test "newFailoverContext initializes correctly":
@@ -171,7 +171,7 @@ suite "failover state machine":
 
   test "formatProviderChain formats chain":
     let chain = formatProviderChain(providers)
-    check chain == "openrouter/gpt-4o-mini → anthropic/claude-sonnet-4-6 → gemini/gemini-2.0-flash"
+    check chain == "openrouter/gpt-4o-mini → anthropic/claude-sonnet-4-6 → gemini/gemini-2.5-flash"
 
   test "failoverSummary for idle":
     let ctx = newFailoverContext(providers)
@@ -231,7 +231,7 @@ suite "failover state machine":
     check "timeout" in formatted
 
   test "formatAttempt without latency":
-    let attempt = FailoverAttempt(providerName: "gemini", modelName: "gemini-2.0-flash", error: "parse error")
+    let attempt = FailoverAttempt(providerName: "gemini", modelName: "gemini-2.5-flash", error: "parse error")
     let formatted = formatAttempt(attempt)
     check "gemini" in formatted
     check "parse error" in formatted

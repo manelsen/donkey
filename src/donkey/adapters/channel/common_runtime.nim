@@ -18,7 +18,7 @@ const ModelMenu* = [
   ("groq",       @["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b"]),
   ("openrouter", @["openai/gpt-4o-mini", "openai/gpt-4o", "anthropic/claude-opus-4-6"]),
   ("anthropic",  @["claude-opus-4-6",   "claude-sonnet-4-6"]),
-  ("gemini",     @["gemini-2.0-flash",  "gemini-2.5-pro"]),
+  ("gemini",     @["gemini-2.5-flash",  "gemini-2.5-pro"]),
   ("minimax",    @["MiniMax-M2",        "MiniMax-Text-01"]),
 ]
 

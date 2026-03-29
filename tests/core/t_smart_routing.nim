@@ -62,7 +62,7 @@ thinking = "high"
     let base = @[
       ProviderSelection(providerName: "anthropic", modelName: "claude-opus-4-6"),
       ProviderSelection(providerName: "openrouter", modelName: "openai/gpt-4o-mini"),
-      ProviderSelection(providerName: "gemini", modelName: "gemini-2.0-flash"),
+      ProviderSelection(providerName: "gemini", modelName: "gemini-2.5-flash"),
     ]
     let reordered = reorderSelectionsWithFeedback(base, @[
       RouteFeedback(route: "anthropic/claude-opus-4-6", calls: 8, okCalls: 4, errCalls: 4, avgLatencyMs: 9000),
@@ -75,11 +75,11 @@ thinking = "high"
     let base = @[
       ProviderSelection(providerName: "anthropic", modelName: "claude-opus-4-6"),
       ProviderSelection(providerName: "openrouter", modelName: "openai/gpt-4o-mini"),
-      ProviderSelection(providerName: "gemini", modelName: "gemini-2.0-flash"),
+      ProviderSelection(providerName: "gemini", modelName: "gemini-2.5-flash"),
     ]
     let filtered = applyCircuitBreaker(base, @[
       RouteFeedback(route: "anthropic/claude-opus-4-6", calls: 5, okCalls: 0, errCalls: 5, avgLatencyMs: 2500),
-      RouteFeedback(route: "gemini/gemini-2.0-flash", calls: 6, okCalls: 1, errCalls: 5, avgLatencyMs: 19000),
+      RouteFeedback(route: "gemini/gemini-2.5-flash", calls: 6, okCalls: 1, errCalls: 5, avgLatencyMs: 19000),
     ])
     check filtered == @[
       ProviderSelection(providerName: "openrouter", modelName: "openai/gpt-4o-mini"),
@@ -136,7 +136,7 @@ thinking = "high"
     let base = @[
       ProviderSelection(providerName: "anthropic", modelName: "claude-opus-4-6"),
       ProviderSelection(providerName: "openrouter", modelName: "openai/gpt-4o-mini"),
-      ProviderSelection(providerName: "gemini", modelName: "gemini-2.0-flash"),
+      ProviderSelection(providerName: "gemini", modelName: "gemini-2.5-flash"),
     ]
     let filtered = applyProviderCooldowns(base, @[
       ProviderCooldown(providerName: "anthropic", untilUnix: 200),
@@ -161,7 +161,7 @@ thinking = "high"
     let base = @[
       ProviderSelection(providerName: "anthropic", modelName: "claude-opus-4-6"),
       ProviderSelection(providerName: "openrouter", modelName: "openai/gpt-4o-mini"),
-      ProviderSelection(providerName: "gemini", modelName: "gemini-2.0-flash"),
+      ProviderSelection(providerName: "gemini", modelName: "gemini-2.5-flash"),
     ]
     let reordered = reorderSelectionsWithCost(base, @[
       RouteCostHint(route: "anthropic/claude-opus-4-6", hasPricing: true,

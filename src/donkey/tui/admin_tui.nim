@@ -382,7 +382,7 @@ proc loadModelItems*(st: var AdminState) =
     AdminItem(name: "gpt-4o-mini", description: "OpenAI GPT-4o Mini", enabled: true, status: "static"),
     AdminItem(name: "gpt-4o", description: "OpenAI GPT-4o", enabled: true, status: "static"),
     AdminItem(name: "deepseek-chat", description: "DeepSeek Chat", enabled: false, status: "static"),
-    AdminItem(name: "gemini-2.0-flash", description: "Google Gemini 2.0 Flash", enabled: false, status: "static"),
+    AdminItem(name: "gemini-2.5-flash", description: "Google Gemini 2.0 Flash", enabled: false, status: "static"),
     AdminItem(name: "glm-4.7", description: "Zhipu GLM-4.7", enabled: false, status: "static"),
     AdminItem(name: "llama3", description: "Meta Llama 3 via Ollama", enabled: false, status: "static"),
     AdminItem(name: "abab6.5s-chat", description: "MiniMax ABAB 6.5s", enabled: false, status: "static"),

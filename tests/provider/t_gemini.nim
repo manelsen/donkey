@@ -12,7 +12,7 @@ suite "GeminiAdapter caps":
     check newGeminiAdapter("key").caps().requiresUserFirst
 
   test "name includes model":
-    let a = newGeminiAdapter("key", model = "gemini-2.0-flash")
+    let a = newGeminiAdapter("key", model = "gemini-2.5-flash")
     check a.caps().name.contains("gemini")
 
   test "streaming not yet reported":
@@ -172,11 +172,11 @@ suite "GeminiAdapter parseResponse":
 suite "GeminiAdapter buildUrl":
 
   test "api key is in query string":
-    let a   = newGeminiAdapter("my-api-key", model = "gemini-2.0-flash")
+    let a   = newGeminiAdapter("my-api-key", model = "gemini-2.5-flash")
     let url = a.buildUrl()
     check url.contains("key=my-api-key")
 
   test "model is in url path":
-    let a   = newGeminiAdapter("k", model = "gemini-2.0-flash")
+    let a   = newGeminiAdapter("k", model = "gemini-2.5-flash")
     let url = a.buildUrl()
-    check url.contains("gemini-2.0-flash")
+    check url.contains("gemini-2.5-flash")

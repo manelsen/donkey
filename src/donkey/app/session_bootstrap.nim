@@ -70,7 +70,7 @@ proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: []
   of "gemini":
     ProviderSpec(
       providerName: "gemini",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: "gemini-2.0-flash",
+      modelName: if prefs.modelName.len > 0: prefs.modelName else: "gemini-2.5-flash",
       apiKey: getEnv("GEMINI_API_KEY"),
     )
   of "minimax":

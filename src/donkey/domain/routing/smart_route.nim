@@ -135,14 +135,14 @@ func routeByComplexity*(score: ComplexityScore;
     candidates.addIfAvailable(availability, "minimax", "MiniMax-M2")
     candidates.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
     candidates.addIfAvailable(availability, "zai", "glm-4.7")
-    candidates.addIfAvailable(availability, "gemini", "gemini-2.0-flash")
+    candidates.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
     if normalizedBudget == "quality-first":
       candidates.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
   of tcModerate:
     # Balanced providers
     candidates.addIfAvailable(availability, "zai-coding", "glm-4.7")
     candidates.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
-    candidates.addIfAvailable(availability, "gemini", "gemini-2.0-flash")
+    candidates.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
     candidates.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
     if normalizedBudget == "cheap-first":
       candidates.addIfAvailable(availability, "minimax", "MiniMax-M2")
