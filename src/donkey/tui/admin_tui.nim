@@ -80,6 +80,32 @@ type
     current*: float
     trend*: SparklineTrend
 
+  HistogramBucket* = object
+    label*: string
+    count*: int
+    percentage*: float
+
+  AlertLevel* = enum
+    alInfo
+    alWarning
+    alCritical
+
+  AlertThreshold* = object
+    metric*: string
+    warning*: int
+    critical*: int
+    enabled*: bool
+
+  Alert* = object
+    level*: AlertLevel
+    message*: string
+    timestamp*: int64
+
+  TokenUsage* = object
+    inputTokens*: int64
+    outputTokens*: int64
+    costUsd*: float
+
   ProviderInfo* = object
     name*: string
     enabled*: bool

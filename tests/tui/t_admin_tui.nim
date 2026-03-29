@@ -555,3 +555,42 @@ summary: Test user detail view.
   test "SparklineTrend enum":
     check ord(stUp) < ord(stDown)  # Up is better than down
     check ord(stDown) < ord(stSpike)  # Spike is worst
+
+  test "HistogramBucket type":
+    var hb: HistogramBucket
+    hb.label = "1-3s"
+    hb.count = 50
+    hb.percentage = 25.0
+    
+    check hb.label == "1-3s"
+    check hb.count == 50
+    check hb.percentage == 25.0
+
+  test "AlertThreshold type":
+    var at: AlertThreshold
+    at.metric = "latency"
+    at.warning = 5000
+    at.critical = 10000
+    at.enabled = true
+    
+    check at.metric == "latency"
+    check at.warning == 5000
+    check at.critical == 10000
+
+  test "Alert type":
+    var alert: Alert
+    alert.level = alCritical
+    alert.message = "High latency"
+    alert.timestamp = 1234567890
+    
+    check alert.level == alCritical
+    check alert.message == "High latency"
+
+  test "TokenUsage type":
+    var tu: TokenUsage
+    tu.inputTokens = 1000000
+    tu.outputTokens = 500000
+    tu.costUsd = 25.50
+    
+    check tu.inputTokens == 1000000
+    check tu.costUsd == 25.50
