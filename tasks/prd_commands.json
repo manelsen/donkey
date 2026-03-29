@@ -1,0 +1,308 @@
+{
+  "id": "commands-parity",
+  "title": "Slash Commands Parity with OpenClaw",
+  "description": "Implement missing slash commands to achieve feature parity with OpenClaw's command system",
+  "priority": "P1",
+  "stories": [
+    {
+      "id": "CMD-001",
+      "title": "Command Catalog - Unified Command Registry",
+      "description": "Create a unified command catalog that defines all available commands with metadata (name, description, phase, route). Generate command list JSON for channel adapters.",
+      "completed": true,
+      "priority": "P0",
+      "branch": "us/cmd-001-command-catalog",
+      "files": [
+        "src/donkey/core/commands/command_catalog.nim",
+        "tests/core/t_command_catalog.nim"
+      ],
+      "tests": "13 tests passing",
+      "validation": "nim c --mm:orc + boundary check passed"
+    },
+    {
+      "id": "CMD-002",
+      "title": "/menu Command - Show Grouped Command Menu",
+      "description": "Implement /menu command that displays all available commands grouped by category (Navigation, Configuration, Status, Tasks).",
+      "completed": false,
+      "priority": "P0"
+    },
+    {
+      "id": "CMD-003",
+      "title": "/whoami Command - Show Session ID",
+      "description": "Implement /whoami command that displays the current session ID and user information.",
+      "completed": false,
+      "priority": "P0"
+    },
+    {
+      "id": "CMD-004",
+      "title": "/config Command - Runtime Configuration",
+      "description": "Implement /config command for viewing and managing runtime configuration. Show current config and allow runtime changes.",
+      "completed": false,
+      "priority": "P1"
+    },
+    {
+      "id": "CMD-005",
+      "title": "/verbose and /reasoning Commands",
+      "description": "Implement /verbose for logging verbosity and /reasoning for reasoning output control.",
+      "completed": false,
+      "priority": "P1"
+    },
+    {
+      "id": "CMD-006",
+      "title": "/exec Command - Execution Policy",
+      "description": "Implement /exec command to set execution policy (allow/deny shell commands).",
+      "completed": false,
+      "priority": "P1"
+    },
+    {
+      "id": "CMD-007",
+      "title": "/allowlist and /queue Commands",
+      "description": "Implement /allowlist to show URL allowlist and /queue to manage queue policy.",
+      "completed": false,
+      "priority": "P1"
+    },
+    {
+      "id": "CMD-008",
+      "title": "/usage Command - Usage Footer Mode",
+      "description": "Implement /usage command to control token/usage footer display mode.",
+      "completed": false,
+      "priority": "P1"
+    },
+    {
+      "id": "CMD-009",
+      "title": "/tasks and /agents Commands",
+      "description": "Implement /tasks to list background tasks and /agents to show active agents.",
+      "completed": false,
+      "priority": "P1"
+    },
+    {
+      "id": "CMD-010",
+      "title": "/poll Command - Pending Approvals",
+      "description": "Implement /poll command to show pending tasks and approvals requiring user action.",
+      "completed": false,
+      "priority": "P1"
+    },
+    {
+      "id": "CMD-011",
+      "title": "/stop and /restart Commands",
+      "description": "Implement /stop to stop active background task and /restart to restart current session.",
+      "completed": false,
+      "priority": "P1"
+    },
+    {
+      "id": "CMD-012",
+      "title": "/bind Command - Bind Chat to Agent",
+      "description": "Implement /bind command to bind current chat to a specific agent configuration.",
+      "completed": false,
+      "priority": "P1"
+    }
+  ],
+  "command_catalog": {
+    "existing": [
+      {
+        "command": "/start",
+        "description": "Start a conversation",
+        "route": "local"
+      },
+      {
+        "command": "/forget",
+        "description": "Clear memory",
+        "route": "local"
+      },
+      {
+        "command": "/doctor",
+        "description": "Memory diagnostics",
+        "route": "local"
+      },
+      {
+        "command": "/help",
+        "description": "Show help",
+        "route": "local"
+      },
+      {
+        "command": "/memory",
+        "description": "Memory tools",
+        "route": "local"
+      },
+      {
+        "command": "/debug",
+        "description": "Toggle debug mode",
+        "route": "session"
+      },
+      {
+        "command": "/reset",
+        "description": "Reset session",
+        "route": "session"
+      },
+      {
+        "command": "/mycode",
+        "description": "Generate link code",
+        "route": "local"
+      },
+      {
+        "command": "/continue",
+        "description": "Continue link",
+        "route": "local"
+      },
+      {
+        "command": "/models",
+        "description": "Switch model",
+        "route": "ui"
+      },
+      {
+        "command": "/think",
+        "description": "Set thinking level",
+        "route": "ui"
+      },
+      {
+        "command": "/budget",
+        "description": "Set budget",
+        "route": "ui"
+      },
+      {
+        "command": "/ping",
+        "description": "Ping",
+        "route": "ping"
+      },
+      {
+        "command": "/status",
+        "description": "Show status",
+        "route": "status"
+      },
+      {
+        "command": "/compact",
+        "description": "Compact context",
+        "route": "session"
+      },
+      {
+        "command": "/new",
+        "description": "New session",
+        "route": "session"
+      },
+      {
+        "command": "/callback",
+        "description": "Handle callback",
+        "route": "callback"
+      }
+    ],
+    "missing": [
+      {
+        "command": "/menu",
+        "description": "Show grouped command menu",
+        "route": "local"
+      },
+      {
+        "command": "/whoami",
+        "description": "Show current session id",
+        "route": "local"
+      },
+      {
+        "command": "/config",
+        "description": "Manage runtime config",
+        "route": "ui"
+      },
+      {
+        "command": "/verbose",
+        "description": "Set verbose level",
+        "route": "session"
+      },
+      {
+        "command": "/reasoning",
+        "description": "Set reasoning output",
+        "route": "session"
+      },
+      {
+        "command": "/exec",
+        "description": "Set exec policy",
+        "route": "session"
+      },
+      {
+        "command": "/allowlist",
+        "description": "Show allowlist",
+        "route": "status"
+      },
+      {
+        "command": "/queue",
+        "description": "Set queue policy",
+        "route": "session"
+      },
+      {
+        "command": "/usage",
+        "description": "Set usage footer mode",
+        "route": "session"
+      },
+      {
+        "command": "/tasks",
+        "description": "List background tasks",
+        "route": "ui"
+      },
+      {
+        "command": "/agents",
+        "description": "Show active agents",
+        "route": "ui"
+      },
+      {
+        "command": "/bind",
+        "description": "Bind chat to agent",
+        "route": "session"
+      },
+      {
+        "command": "/poll",
+        "description": "Show pending approvals",
+        "route": "ui"
+      },
+      {
+        "command": "/stop",
+        "description": "Stop background task",
+        "route": "session"
+      },
+      {
+        "command": "/restart",
+        "description": "Restart session",
+        "route": "session"
+      }
+    ]
+  },
+  "command_categories": {
+    "navigation": [
+      "/start",
+      "/menu",
+      "/new",
+      "/whoami"
+    ],
+    "configuration": [
+      "/config",
+      "/model",
+      "/verbose",
+      "/reasoning",
+      "/exec",
+      "/allowlist",
+      "/queue",
+      "/usage"
+    ],
+    "status": [
+      "/status",
+      "/tasks",
+      "/agents",
+      "/poll"
+    ],
+    "memory": [
+      "/forget",
+      "/memory",
+      "/doctor"
+    ],
+    "session": [
+      "/reset",
+      "/compact",
+      "/restart",
+      "/stop",
+      "/bind",
+      "/callback"
+    ],
+    "tools": [
+      "/help",
+      "/debug",
+      "/mycode",
+      "/continue"
+    ]
+  }
+}
