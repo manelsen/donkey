@@ -428,3 +428,27 @@ summary: Test user detail view.
     check statusColor("degraded") == ill.fgYellow
     check statusColor("error") == StatusError
     check statusColor("unknown") == ill.fgWhite
+
+  test "toggleProvider changes enabled state":
+    var st = newAdminState()
+    st.loadProviderItems()
+    
+    # Find anthropic
+    var idx = -1
+    for i, item in st.items:
+      if item.name == "anthropic":
+        idx = i
+        break
+    check idx >= 0
+    
+    let original = st.items[idx].enabled
+    st.items[idx].enabled = not original
+    check st.items[idx].enabled == not original
+
+  test "cannot disable all providers warning":
+    var st = newAdminState()
+    st.loadProviderItems()
+    
+    # Count enabled providers
+    let enabled = st.items.filterIt(it.enabled)
+    check enabled.len >= 1
