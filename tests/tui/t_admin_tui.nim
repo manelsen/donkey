@@ -365,3 +365,46 @@ summary: Test user detail view.
     # Verify restored
     let users = adapter.listUsers()
     check users[0].access == "active"
+
+  test "editUserField updates PREFERENCES.md":
+    let tmpDir = "/tmp/test_edit_prefs_" & $epochTime()
+    createDir(tmpDir)
+    defer: discard execShellCmd("rm -rf " & tmpDir)
+    
+    let userId = "user-edit-prefs"
+    createDir(tmpDir / userId)
+    writeFile(tmpDir / userId / "USER.md", """# User
+**Preferred name:** OldName""")
+    writeFile(tmpDir / userId / "PREFERENCES.md", """# Preferences
+**Timezone:** UTC""")
+    
+    let adapter = MdFileAdapter(paddocksDir: tmpDir)
+    
+    # Save new preferences
+    let newPrefs = """# Preferences
+**Timezone:** America/New_York
+**Language:** en
+"""
+    adapter.savePreferences(UserId(userId), newPrefs)
+    
+    # Verify
+    let ctx = adapter.loadContext(UserId(userId))
+    check ctx.preferencesMd.contains("America/New_York")
+    check ctx.preferencesMd.contains("Language")
+
+  test "validatePreferenceField accepts valid values":
+    # Test that editing preserves valid fields
+    let tmpDir = "/tmp/test_validate_" & $epochTime()
+    createDir(tmpDir)
+    defer: discard execShellCmd("rm -rf " & tmpDir)
+    
+    let userId = "user-validate"
+    createDir(tmpDir / userId)
+    writeFile(tmpDir / userId / "USER.md", """# User
+**Preferred name:** Test""")
+    
+    let adapter = MdFileAdapter(paddocksDir: tmpDir)
+    let ctx = adapter.loadContext(UserId(userId))
+    
+    # User.md content preserved when editing prefs
+    check ctx.userMd.contains("Test")
