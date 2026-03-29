@@ -146,8 +146,8 @@
         "Document message format differences"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "docs/topics/channels.md created",
       "dependsOn": [
         "DOC-001",
         "DOC-004"
