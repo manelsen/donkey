@@ -6,20 +6,21 @@
 ##
 ## Requires illwill. Runs in foreground (no Chronos).
 
-import std/[os, sequtils, strformat, strutils, times]
+import std/[os, sequtils, strformat, strutils, times, options]
 import illwill
 import ../core/pipeops
 import ../core/types
 import ../adapters/ipc/[types, client]
 import ../adapters/memory/md_file
+import admin_tui
 
 const
-  RefreshMs    = 2_000
+  RefreshMs    = 10_000
   MaxLogLines  = 200   ## ring snapshot depth
 
 type
   Panel = enum
-    pUsers, pSessions, pLogs, pStats
+    pUsers, pSessions, pLogs, pStats, pAdmin
 
   TuiState = object
     status:    DaemonStatus
@@ -31,6 +32,8 @@ type
     fetchErr:  string      ## last error, "" = OK
     width:     int
     height:    int
+    admin:     AdminState  ## admin panel state
+    memory:    MdFileAdapter
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -90,7 +93,8 @@ proc drawPanelBar(tb: var TerminalBuffer; active: Panel) =
       of pSessions: "Sessions"
       of pUsers:    "Users"
       of pLogs:     "Logs"
-      of pStats:    "Stats") & " "
+      of pStats:    "Stats"
+      of pAdmin:    "Admin") & " "
     if p == active:
       tb.setForegroundColor(fgBlack)
       tb.setBackgroundColor(bgWhite)
@@ -224,6 +228,63 @@ proc drawStats(tb: var TerminalBuffer; st: TuiState; y0: int) =
         st.status.providerCooldowns.join(", "))
   row("Log entries",     $st.logs.len)
 
+proc drawAdmin(tb: var TerminalBuffer; st: TuiState; y0: int) =
+  let admin = st.admin
+  let width = tb.width
+  let height = tb.height
+
+  ## Section tabs
+  var currentX = 2
+  for i in 0 ..< (high(AdminSection).ord + 1):
+    let s = AdminSection(i)
+    if i == ord(admin.section):
+      tb.setForegroundColor(fgBlack)
+      tb.setBackgroundColor(bgCyan)
+    else:
+      tb.setForegroundColor(fgWhite)
+      tb.setBackgroundColor(bgNone)
+    let label = " " & sectionLabel(s) & " "
+    tb.write(currentX, y0, label)
+    inc currentX, label.len
+  tb.setBackgroundColor(bgNone)
+  tb.setForegroundColor(fgWhite)
+
+  ## Items list
+  let listY = y0 + 2
+  let listH = height - listY - 2
+
+  if admin.viewMode == vmDetail and admin.selectedUserId.isSome:
+    ## Detail view
+    drawUserDetail(tb, admin, st.memory, listY, width, height)
+  else:
+    ## List view
+    for i in 0 ..< min(admin.items.len, listH):
+      let item = admin.items[i]
+      let selected = i == admin.selectedIndex
+      let y = listY + i
+      if y >= height - 2: break
+      if selected:
+        tb.setForegroundColor(fgBlack)
+        tb.setBackgroundColor(bgCyan)
+        tb.write(2, y, "> ")
+      else:
+        tb.setForegroundColor(fgWhite)
+        tb.write(2, y, "  ")
+      let nameStr = item.name & repeatChar(18 - item.name.len, ' ')
+      tb.setForegroundColor(if item.enabled: fgWhite else: fgBlack)
+      tb.write(4, y, nameStr)
+      let descTrunc = if item.description.len > 35: item.description[0 ..< 32] & "..."
+                      else: item.description
+      tb.write(24, y, descTrunc)
+      tb.setForegroundColor(if item.enabled: fgGreen else: fgRed)
+      tb.write(width - 14, y, "[" & item.status & "]")
+      tb.setBackgroundColor(bgNone)
+      tb.setForegroundColor(fgWhite)
+
+  ## Footer
+  tb.setForegroundColor(fgCyan)
+  tb.write(2, height - 2, "[<- ->] section  [^ v] nav  [Enter] toggle/detail  [D] delete  [Esc] back")
+
 proc render(tb: var TerminalBuffer; st: TuiState) =
   tb.clear()
   drawHeader(tb, st)
@@ -235,6 +296,7 @@ proc render(tb: var TerminalBuffer; st: TuiState) =
   of pSessions: drawSessions(tb, st, y0)
   of pLogs:     drawLogs(tb, st, y0)
   of pStats:    drawStats(tb, st, y0)
+  of pAdmin:    drawAdmin(tb, st, y0)
   drawFooter(tb, st)
   tb.display()
 
@@ -244,7 +306,7 @@ proc runTui*(sockPath: string) =
   illwillInit(fullScreen = true)
   defer: illwillDeinit()
 
-  var st = TuiState(sockPath: sockPath, panel: pSessions)
+  var st = TuiState(sockPath: sockPath, panel: pSessions, admin: newAdminState(), memory: MdFileAdapter(paddocksDir: sockPath.parentDir() / "paddocks"))
   fetchData(st)
   st.lastFetch = epochTime()
 
@@ -261,24 +323,74 @@ proc runTui*(sockPath: string) =
       st.height = h
       tb = newTerminalBuffer(w, h)
 
-    ## Auto-refresh.
+    ## Auto-refresh (fetch data before render).
     if epochTime() - lastRefresh >= RefreshMs / 1000.0:
       fetchData(st)
       st.lastFetch = epochTime()
       lastRefresh  = epochTime()
 
-    render(tb, st)
-
     ## Input (non-blocking, 100ms timeout).
     let key = getKeyWithTimeout(100)
     case key
-    of Key.Q, Key.Escape:
+    of Key.Q:
       break
+    of Key.Escape:
+      if st.panel == pAdmin:
+        if st.admin.viewMode == vmDetail:
+          st.admin.viewMode = vmList
+          st.admin.selectedUserId = UserId.none()
+        elif st.admin.confirmMode != cmNone:
+          st.admin.confirmMode = cmNone
+        else:
+          break
+      else:
+        break
     of Key.Tab:
       st.panel = Panel((ord(st.panel) + 1) mod (ord(Panel.high) + 1))
+      if st.panel == pAdmin:
+        st.admin.loadSection()
     of Key.R:
       fetchData(st)
-      st.lastFetch  = epochTime()
-      lastRefresh   = epochTime()
+      st.lastFetch = epochTime()
+      lastRefresh  = epochTime()
+    of Key.Left:
+      if st.panel == pAdmin:
+        st.admin.section = AdminSection((ord(st.admin.section) - 1 + (high(AdminSection).ord + 1)) mod (high(AdminSection).ord + 1))
+        st.admin.selectedIndex = 0
+        st.admin.loadSection()
+    of Key.Right:
+      if st.panel == pAdmin:
+        st.admin.section = AdminSection((ord(st.admin.section) + 1) mod (high(AdminSection).ord + 1))
+        st.admin.selectedIndex = 0
+        st.admin.loadSection()
+    of Key.Up:
+      if st.panel == pAdmin:
+        if st.admin.selectedIndex > 0:
+          dec st.admin.selectedIndex
+    of Key.Down:
+      if st.panel == pAdmin:
+        if st.admin.selectedIndex < st.admin.items.high:
+          inc st.admin.selectedIndex
+    of Key.Enter:
+      if st.panel == pAdmin:
+        if st.admin.section == asUsers and st.admin.items.len > 0 and st.admin.selectedIndex < st.admin.items.len:
+          if st.admin.viewMode == vmList:
+            st.admin.selectedUserId = some(UserId(st.admin.items[st.admin.selectedIndex].name))
+            st.admin.viewMode = vmDetail
+          else:
+            ## Toggle access
+            st.admin.items[st.admin.selectedIndex].enabled = not st.admin.items[st.admin.selectedIndex].enabled
+        elif st.admin.items.len > 0 and st.admin.selectedIndex < st.admin.items.len:
+          st.admin.items[st.admin.selectedIndex].enabled = not st.admin.items[st.admin.selectedIndex].enabled
+    of Key.D:
+      if st.panel == pAdmin:
+        if st.admin.viewMode == vmDetail and st.admin.selectedUserId.isSome:
+          st.admin.confirmMode = cmDelete
+    of Key.A:
+      if st.panel != pAdmin:
+        st.panel = pAdmin
+        st.admin.loadSection()
     else:
       discard
+
+    render(tb, st)

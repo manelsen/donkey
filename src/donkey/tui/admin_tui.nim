@@ -5,13 +5,11 @@
 ##
 ## Requires illwill. Runs in foreground (no Chronos).
 
-import std/[os, strformat, options, strutils]
+import std/[os, options, strutils]
 import illwill as ill
 import terminal as term
 import ../core/types
-import ../core/commands/command_catalog
 import ../config/types
-import ../ports/provider
 import ../adapters/memory/md_file
 
 # Helper for drawing boxes
