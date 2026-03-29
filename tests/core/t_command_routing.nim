@@ -129,3 +129,27 @@ suite "core command routing":
     ## With arguments after @botname — rare but possible
     check parseCommandText("/models@Bot gemini gemini-2.5-pro").kind  == cmdModels
     check parseCommandText("/models@Bot gemini gemini-2.5-pro").value == "gemini gemini-2.5-pro"
+
+  test "parseCommandText parses /menu command":
+    let result = parseCommandText("/menu")
+    check result.kind == cmdMenu
+    check result.route == crLocal
+
+  test "parseCommandText parses /whoami command":
+    let result = parseCommandText("/whoami")
+    check result.kind == cmdWhoami
+    check result.route == crLocal
+
+  test "decideLocalCommandAction maps menu to show menu":
+    let decision = CommandDecision(kind: cmdMenu)
+    let action = decideLocalCommandAction(decision)
+    check action == lcaShowMenu
+
+  test "decideLocalCommandAction maps whoami to show whoami":
+    let decision = CommandDecision(kind: cmdWhoami)
+    let action = decideLocalCommandAction(decision)
+    check action == lcaShowWhoami
+
+  test "isCoreCommand includes menu and whoami":
+    check isCoreCommand(cmdMenu) == true
+    check isCoreCommand(cmdWhoami) == true
