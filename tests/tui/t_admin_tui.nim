@@ -663,3 +663,24 @@ summary: Test user detail view.
     
     check snap.entries.len == 1
     check snap.note == "before model change"
+
+  test "SessionItem tracks active session":
+    var si: SessionItem
+    si.sessionId = "sess-123"
+    si.userId = "user-456"
+    si.channel = "discord"
+    si.messageCount = 42
+    si.ageSeconds = 300
+    
+    check si.sessionId == "sess-123"
+    check si.channel == "discord"
+    check si.messageCount == 42
+
+  test "SessionMessage for history view":
+    var sm: SessionMessage
+    sm.role = "user"
+    sm.text = "Hello"
+    sm.timestamp = 1234567890
+    
+    check sm.role == "user"
+    check sm.text == "Hello"

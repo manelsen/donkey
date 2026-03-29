@@ -148,6 +148,18 @@ type
     note*: string
     entries*: seq[(string, string)]
 
+  SessionItem* = object
+    sessionId*: string
+    userId*: string
+    channel*: string
+    messageCount*: int
+    ageSeconds*: int
+
+  SessionMessage* = object
+    role*: string
+    text*: string
+    timestamp*: int64
+
   ProviderInfo* = object
     name*: string
     enabled*: bool
