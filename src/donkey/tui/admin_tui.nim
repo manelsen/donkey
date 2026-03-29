@@ -68,6 +68,18 @@ type
     errors*: int
     avgResponseTimeMs*: int
 
+  SparklineTrend* = enum
+    stUp
+    stStable
+    stDown
+    stSpike
+
+  SparklineData* = object
+    label*: string
+    points*: seq[float]
+    current*: float
+    trend*: SparklineTrend
+
   ProviderInfo* = object
     name*: string
     enabled*: bool

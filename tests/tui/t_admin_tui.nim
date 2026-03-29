@@ -541,3 +541,17 @@ summary: Test user detail view.
     check ch.name == "telegram"
     check ch.status == "connected"
     check ch.userCount == 10
+
+  test "SparklineData type":
+    var sl: SparklineData
+    sl.label = "sessions"
+    sl.points = @[1.0, 2.0, 3.0, 4.0, 5.0]
+    sl.current = 5.0
+    
+    check sl.label == "sessions"
+    check sl.points.len == 5
+    check sl.current == 5.0
+
+  test "SparklineTrend enum":
+    check ord(stUp) < ord(stDown)  # Up is better than down
+    check ord(stDown) < ord(stSpike)  # Spike is worst
