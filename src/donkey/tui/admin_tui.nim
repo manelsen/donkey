@@ -218,6 +218,22 @@ type
     vmList
     vmDetail
 
+  CommandPalette* = object
+    query*: string
+    results*: seq[string]
+    selectedIndex*: int
+
+  ToastKind* = enum
+    tkSuccess
+    tkWarning
+    tkError
+    tkInfo
+
+  Toast* = object
+    message*: string
+    kind*: ToastKind
+    timestamp*: int64
+
   ConfirmMode* = enum
     cmNone
     cmDelete

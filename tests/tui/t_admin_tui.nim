@@ -710,3 +710,28 @@ summary: Test user detail view.
     
     check lf.levels.len == 2
     check lf.subsystem == "orch"
+
+  test "Toast for notifications":
+    var t: Toast
+    t.message = "User deleted"
+    t.kind = tkSuccess
+    t.timestamp = 1234567890
+    
+    check t.message == "User deleted"
+    check t.kind == tkSuccess
+
+  test "ToastKind enum":
+    check ord(tkSuccess) < ord(tkError)
+    check ord(tkWarning) < ord(tkError)
+
+  test "CommandPalette tracks query":
+    var cp: CommandPalette
+    cp.query = "delete"
+    cp.results = @["delete user", "delete session"]
+    
+    check cp.query == "delete"
+    check cp.results.len == 2
+
+  test "sectionCount matches AdminSection count":
+    let count = AdminSection.high.ord + 1
+    check count == 8  # Config, Agents, Channels, Providers, Models, Hooks, Plugins, Users
