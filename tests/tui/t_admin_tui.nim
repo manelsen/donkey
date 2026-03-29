@@ -1,5 +1,6 @@
 ## Tests for admin TUI components (pure functions only).
 import std/[unittest, sequtils, strutils, times, os, options]
+import illwill as ill
 import donkey/tui/admin_tui
 import donkey/config/types
 import donkey/core/types
@@ -408,3 +409,22 @@ summary: Test user detail view.
     
     # User.md content preserved when editing prefs
     check ctx.userMd.contains("Test")
+
+  test "ProviderItem tracks all provider fields":
+    var item: ProviderItem
+    item.name = "anthropic"
+    item.enabled = true
+    item.status = "healthy"
+    item.model = "claude-sonnet-4"
+    item.endpoint = "api.anthropic.com"
+    
+    check item.name == "anthropic"
+    check item.enabled == true
+    check item.status == "healthy"
+    check item.model == "claude-sonnet-4"
+
+  test "statusColor maps provider status":
+    check statusColor("healthy") == StatusOk
+    check statusColor("degraded") == ill.fgYellow
+    check statusColor("error") == StatusError
+    check statusColor("unknown") == ill.fgWhite

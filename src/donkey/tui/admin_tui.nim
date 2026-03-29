@@ -61,6 +61,13 @@ type
     models*: seq[string]
     priority*: int
 
+  ProviderItem* = object
+    name*: string
+    enabled*: bool
+    status*: string
+    model*: string
+    endpoint*: string
+
   AgentInfo* = object
     name*: string
     personality*: string
@@ -75,6 +82,13 @@ type
     cmNone
     cmDelete
     cmRevoke
+
+func statusColor*(s: string): ill.ForegroundColor =
+  case s
+  of "healthy", "ok": ill.fgGreen
+  of "degraded", "warning": ill.fgYellow
+  of "error", "failed": ill.fgRed
+  else: ill.fgWhite
 
 const
   BorderColor* = ill.fgBlue
