@@ -52,7 +52,15 @@
         "HookChain: hooks run in order, each sees output of previous",
         "Short-circuit on rejection - return error to user"
       ],
-      "priority": "P0"
+      "priority": "P0",
+      "completed": true,
+      "branch": "us/hook-002-executor-integration",
+      "files": [
+        "src/donkey/core/hooks/hook_executor.nim",
+        "tests/core/t_hook_executor.nim"
+      ],
+      "tests": "9 tests passing",
+      "validation": "nim c --mm:orc + boundary check passed"
     },
     {
       "id": "HOOK-003",
