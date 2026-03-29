@@ -48,57 +48,73 @@
       "id": "CMD-005",
       "title": "/verbose and /reasoning Commands",
       "description": "Implement /verbose for logging verbosity and /reasoning for reasoning output control.",
-      "completed": false,
-      "priority": "P1"
+      "completed": true,
+      "priority": "P1",
+      "branch": "us/cmd-005-012-remaining",
+      "validation": "nim c --mm:orc passed"
     },
     {
       "id": "CMD-006",
       "title": "/exec Command - Execution Policy",
       "description": "Implement /exec command to set execution policy (allow/deny shell commands).",
-      "completed": false,
-      "priority": "P1"
+      "completed": true,
+      "priority": "P1",
+      "branch": "us/cmd-005-012-remaining",
+      "validation": "nim c --mm:orc passed"
     },
     {
       "id": "CMD-007",
       "title": "/allowlist and /queue Commands",
       "description": "Implement /allowlist to show URL allowlist and /queue to manage queue policy.",
-      "completed": false,
-      "priority": "P1"
+      "completed": true,
+      "priority": "P1",
+      "branch": "us/cmd-005-012-remaining",
+      "validation": "nim c --mm:orc passed"
     },
     {
       "id": "CMD-008",
       "title": "/usage Command - Usage Footer Mode",
       "description": "Implement /usage command to control token/usage footer display mode.",
-      "completed": false,
-      "priority": "P1"
+      "completed": true,
+      "priority": "P1",
+      "branch": "us/cmd-005-012-remaining",
+      "validation": "nim c --mm:orc passed"
     },
     {
       "id": "CMD-009",
       "title": "/tasks and /agents Commands",
       "description": "Implement /tasks to list background tasks and /agents to show active agents.",
-      "completed": false,
-      "priority": "P1"
+      "completed": true,
+      "priority": "P1",
+      "branch": "us/cmd-005-012-remaining",
+      "validation": "nim c --mm:orc passed"
     },
     {
       "id": "CMD-010",
       "title": "/poll Command - Pending Approvals",
       "description": "Implement /poll command to show pending tasks and approvals requiring user action.",
-      "completed": false,
-      "priority": "P1"
+      "completed": true,
+      "priority": "P1",
+      "branch": "us/cmd-005-012-remaining",
+      "validation": "nim c --mm:orc passed"
     },
     {
       "id": "CMD-011",
       "title": "/stop and /restart Commands",
       "description": "Implement /stop to stop active background task and /restart to restart current session.",
-      "completed": false,
-      "priority": "P1"
+      "completed": true,
+      "priority": "P1",
+      "branch": "us/cmd-005-012-remaining",
+      "validation": "nim c --mm:orc passed"
     },
     {
       "id": "CMD-012",
       "title": "/bind Command - Bind Chat to Agent",
       "description": "Implement /bind command to bind current chat to a specific agent configuration.",
-      "completed": false,
-      "priority": "P1"
+      "completed": true,
+      "priority": "P1",
+      "branch": "us/cmd-005-012-remaining",
+      "validation": "nim c --mm:orc passed"
     }
   ],
   "command_catalog": {

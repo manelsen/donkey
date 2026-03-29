@@ -29,7 +29,17 @@ type
     cmdCallback
     cmdCompact
     cmdNew
-
+    cmdExec
+    cmdAllowlist
+    cmdQueue
+    cmdUsage
+    cmdTasks
+    cmdAgents
+    cmdPoll
+    cmdStop
+    cmdRestart
+    cmdBind
+    cmdTts
   CommandRoute* = enum
     crNone
     crLocal
@@ -93,12 +103,15 @@ func decideCommandRoute*(kind: CommandKind): CommandRoute =
   of cmdStart, cmdMenu, cmdWhoami, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
      cmdMyCode, cmdContinue:
     crLocal
-  of cmdDebug, cmdReset, cmdCompact, cmdNew, cmdVerbose, cmdReasoning:
+  of cmdDebug, cmdReset, cmdCompact, cmdNew, cmdVerbose, cmdReasoning,
+     cmdExec, cmdQueue, cmdUsage, cmdStop, cmdRestart, cmdBind, cmdTts:
     crSessionTask
-  of cmdConfig:
+  of cmdConfig, cmdTasks, cmdAgents, cmdPoll:
     crUi
   of cmdModels, cmdThink, cmdBudget:
     crUi
+  of cmdAllowlist:
+    crStatus
   of cmdPing:
     crPing
   of cmdStatus:
@@ -147,6 +160,17 @@ func parseCommandText*(text: string): CommandDecision =
   of "/config": newCommandDecision(cmdConfig)
   of "/verbose": newCommandDecision(cmdVerbose)
   of "/reasoning": newCommandDecision(cmdReasoning)
+  of "/exec": newCommandDecision(cmdExec)
+  of "/allowlist": newCommandDecision(cmdAllowlist)
+  of "/queue": newCommandDecision(cmdQueue)
+  of "/usage": newCommandDecision(cmdUsage)
+  of "/tasks": newCommandDecision(cmdTasks)
+  of "/agents": newCommandDecision(cmdAgents)
+  of "/poll": newCommandDecision(cmdPoll)
+  of "/stop": newCommandDecision(cmdStop)
+  of "/restart": newCommandDecision(cmdRestart)
+  of "/bind": newCommandDecision(cmdBind)
+  of "/tts": newCommandDecision(cmdTts)
   else:
     if cmd.startsWith("/models "):
       newCommandDecision(cmdModels, cmd[8 .. ^1].strip)
