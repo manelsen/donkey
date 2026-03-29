@@ -1,0 +1,226 @@
+{
+  "name": "Donkey Documentation",
+  "branchName": "ralph/docs",
+  "description": "Comprehensive didactic documentation inspired by Discord.PY",
+  "userStories": [
+    {
+      "id": "DOC-001",
+      "title": "Create configuration reference",
+      "description": "Complete donkey.toml reference with all options documented",
+      "acceptanceCriteria": [
+        "Document all [donkey] options",
+        "Document all channel configurations (telegram, discord, slack)",
+        "Document all provider configurations (anthropic, openai, openrouter, gemini)",
+        "Document hooks configuration",
+        "Document security settings",
+        "Document environment variables",
+        "nim c --mm:orc passes",
+        "bash scripts/check_boundaries.sh passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "docs/reference/configuration.md created",
+      "dependsOn": []
+    },
+    {
+      "id": "DOC-002",
+      "title": "Create API reference - Core types",
+      "description": "Document all core types (UserId, SessionId, ChannelKind, etc.)",
+      "acceptanceCriteria": [
+        "Document core/types.nim types",
+        "Document domain/message.nim types",
+        "Document domain/agent_message.nim types",
+        "Include examples for each type",
+        "nim c --mm:orc passes",
+        "bash scripts/check_boundaries.sh passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "DOC-003",
+      "title": "Create API reference - Hooks",
+      "description": "Document hook system API (ports/hook.nim, hook_executor, hook_config)",
+      "acceptanceCriteria": [
+        "Document HookPort interface",
+        "Document HookContext, HookResult types",
+        "Document HookExecutor",
+        "Document HookConfig",
+        "Include usage examples",
+        "nim c --mm:orc passes",
+        "bash scripts/check_boundaries.sh passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "DOC-001"
+      ]
+    },
+    {
+      "id": "DOC-004",
+      "title": "Create API reference - Channel Port",
+      "description": "Document channel abstraction interface",
+      "acceptanceCriteria": [
+        "Document ChannelPort interface",
+        "Document InboundMessage/OutboundMessage",
+        "Document ChannelKind enum",
+        "Include adapter examples (telegram, discord)",
+        "nim c --mm:orc passes",
+        "bash scripts/check_boundaries.sh passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "DOC-002"
+      ]
+    },
+    {
+      "id": "DOC-005",
+      "title": "Create API reference - Provider Port",
+      "description": "Document LLM provider interface",
+      "acceptanceCriteria": [
+        "Document ProviderPort interface",
+        "Document CompleteFn/StreamFn",
+        "Document ProviderCaps",
+        "Include adapter examples (anthropic, openai)",
+        "nim c --mm:orc passes",
+        "bash scripts/check_boundaries.sh passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "DOC-002"
+      ]
+    },
+    {
+      "id": "DOC-006",
+      "title": "Create API reference - Memory Port",
+      "description": "Document memory system interfaces",
+      "acceptanceCriteria": [
+        "Document MemoryPort concept",
+        "Document SemanticMemoryPort concept",
+        "Document MemoryHit type",
+        "Include adapter examples (md_file, postgres)",
+        "nim c --mm:orc passes",
+        "bash scripts/check_boundaries.sh passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "DOC-002"
+      ]
+    },
+    {
+      "id": "DOC-007",
+      "title": "Create sessions topic guide",
+      "description": "Document session management system",
+      "acceptanceCriteria": [
+        "Document session lifecycle",
+        "Document session ingress",
+        "Document session manager",
+        "Include examples of session operations",
+        "nim c --mm:orc passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "DOC-001"
+      ]
+    },
+    {
+      "id": "DOC-008",
+      "title": "Create channels topic guide",
+      "description": "Document channel adapters",
+      "acceptanceCriteria": [
+        "Document telegram adapter",
+        "Document discord adapter",
+        "Document slack adapter",
+        "Include configuration examples",
+        "Document message format differences"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "DOC-001",
+        "DOC-004"
+      ]
+    },
+    {
+      "id": "DOC-009",
+      "title": "Create providers topic guide",
+      "description": "Document LLM provider adapters",
+      "acceptanceCriteria": [
+        "Document anthropic adapter",
+        "Document openai adapter",
+        "Document openrouter adapter",
+        "Document gemini adapter",
+        "Include model selection examples"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "DOC-001",
+        "DOC-005"
+      ]
+    },
+    {
+      "id": "DOC-010",
+      "title": "Create deployment guide",
+      "description": "Complete deployment guide with all platforms",
+      "acceptanceCriteria": [
+        "Document systemd installation",
+        "Document Docker deployment",
+        "Document reverse proxy setup",
+        "Document SSL/TLS configuration",
+        "Document monitoring setup"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "DOC-001"
+      ]
+    },
+    {
+      "id": "DOC-011",
+      "title": "Create contributing guide",
+      "description": "Contributor documentation for Donkey",
+      "acceptanceCriteria": [
+        "Document development setup",
+        "Document code style guide",
+        "Document testing requirements",
+        "Document PR process",
+        "Document architectural decisions"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "DOC-012",
+      "title": "Create architecture guide",
+      "description": "Detailed architectural documentation",
+      "acceptanceCriteria": [
+        "Document hexagonal architecture",
+        "Document ports and adapters pattern",
+        "Document actor model",
+        "Document async runtime (chronos)",
+        "Include architecture diagrams"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    }
+  ]
+}
