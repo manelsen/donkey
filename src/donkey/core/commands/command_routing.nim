@@ -18,6 +18,9 @@ type
     cmdReset
     cmdMyCode
     cmdContinue
+    cmdConfig
+    cmdVerbose
+    cmdReasoning
     cmdModels
     cmdThink
     cmdBudget
@@ -90,8 +93,10 @@ func decideCommandRoute*(kind: CommandKind): CommandRoute =
   of cmdStart, cmdMenu, cmdWhoami, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
      cmdMyCode, cmdContinue:
     crLocal
-  of cmdDebug, cmdReset, cmdCompact, cmdNew:
+  of cmdDebug, cmdReset, cmdCompact, cmdNew, cmdVerbose, cmdReasoning:
     crSessionTask
+  of cmdConfig:
+    crUi
   of cmdModels, cmdThink, cmdBudget:
     crUi
   of cmdPing:
@@ -139,6 +144,9 @@ func parseCommandText*(text: string): CommandDecision =
   of "/status": newCommandDecision(cmdStatus)
   of "/compact": newCommandDecision(cmdCompact)
   of "/new": newCommandDecision(cmdNew)
+  of "/config": newCommandDecision(cmdConfig)
+  of "/verbose": newCommandDecision(cmdVerbose)
+  of "/reasoning": newCommandDecision(cmdReasoning)
   else:
     if cmd.startsWith("/models "):
       newCommandDecision(cmdModels, cmd[8 .. ^1].strip)
@@ -281,7 +289,7 @@ func isSessionTaskCommand*(kind: CommandKind): bool =
   decideCommandRoute(kind) == crSessionTask
 
 func isUiCommand*(kind: CommandKind): bool =
-  kind in {cmdModels, cmdThink, cmdBudget}
+  kind in {cmdConfig, cmdModels, cmdThink, cmdBudget}
 
 func isStatusCommand*(kind: CommandKind): bool =
   kind == cmdStatus

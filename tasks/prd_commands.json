@@ -39,8 +39,10 @@
       "id": "CMD-004",
       "title": "/config Command - Runtime Configuration",
       "description": "Implement /config command for viewing and managing runtime configuration. Show current config and allow runtime changes.",
-      "completed": false,
-      "priority": "P1"
+      "completed": true,
+      "priority": "P1",
+      "branch": "us/cmd-003-config-verbose-reasoning",
+      "validation": "nim c --mm:orc passed"
     },
     {
       "id": "CMD-005",
