@@ -321,3 +321,47 @@ summary: Test user detail view.
     var st = newAdminState()
     st.confirmMode = ConfirmMode(cmDelete)
     check st.confirmMode == cmDelete
+
+  test "revokeUser updates access field":
+    let tmpDir = "/tmp/test_revoke_" & $epochTime()
+    createDir(tmpDir)
+    defer: discard execShellCmd("rm -rf " & tmpDir)
+    
+    let userId = "user-revoke"
+    createDir(tmpDir / userId)
+    writeFile(tmpDir / userId / "USER.md", """# User
+**Access:** active
+**Preferred name:** TestUser""")
+    
+    let adapter = MdFileAdapter(paddocksDir: tmpDir)
+    
+    # Verify initial state
+    let users = adapter.listUsers()
+    check users[0].access == "active"
+    check users[0].preferredName == "TestUser"
+    
+    # Revoke user
+    adapter.updateUserField(UserId(userId), "access", "revoked")
+    
+    # Verify revoked
+    let usersAfter = adapter.listUsers()
+    check usersAfter[0].access == "revoked"
+
+  test "restoreUser sets access to active":
+    let tmpDir = "/tmp/test_restore_" & $epochTime()
+    createDir(tmpDir)
+    defer: discard execShellCmd("rm -rf " & tmpDir)
+    
+    let userId = "user-restore"
+    createDir(tmpDir / userId)
+    writeFile(tmpDir / userId / "USER.md", """# User
+**Access:** revoked""")
+    
+    let adapter = MdFileAdapter(paddocksDir: tmpDir)
+    
+    # Restore user
+    adapter.updateUserField(UserId(userId), "access", "active")
+    
+    # Verify restored
+    let users = adapter.listUsers()
+    check users[0].access == "active"
