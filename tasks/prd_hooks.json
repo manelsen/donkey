@@ -153,7 +153,14 @@
         "Test context enrichment flow",
         "Mock memory port for isolated testing"
       ],
-      "priority": "P1"
+      "priority": "P1",
+      "completed": true,
+      "branch": "us/hook-007-testing",
+      "files": [
+        "tests/hooks/t_hook_integration.nim"
+      ],
+      "tests": "7 tests passing",
+      "validation": "nim c --mm:orc + boundary check passed"
     }
   ]
 }
