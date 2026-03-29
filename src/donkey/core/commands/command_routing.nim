@@ -8,6 +8,8 @@ type
   CommandKind* = enum
     cmdNone
     cmdStart
+    cmdMenu
+    cmdWhoami
     cmdForget
     cmdDoctor
     cmdHelp
@@ -46,6 +48,8 @@ type
   LocalCommandAction* = enum
     lcaNone
     lcaStartIntro
+    lcaShowMenu
+    lcaShowWhoami
     lcaGenerateLinkCode
     lcaClearMemory
     lcaDoctorReport
@@ -83,7 +87,7 @@ type
 
 func decideCommandRoute*(kind: CommandKind): CommandRoute =
   case kind
-  of cmdStart, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
+  of cmdStart, cmdMenu, cmdWhoami, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
      cmdMyCode, cmdContinue:
     crLocal
   of cmdDebug, cmdReset, cmdCompact, cmdNew:
@@ -122,6 +126,8 @@ func parseCommandText*(text: string): CommandDecision =
   let cmd = stripBotMention(text.strip)
   case cmd
   of "/start": newCommandDecision(cmdStart)
+  of "/menu": newCommandDecision(cmdMenu)
+  of "/whoami": newCommandDecision(cmdWhoami)
   of "/forget": newCommandDecision(cmdForget)
   of "/doctor": newCommandDecision(cmdDoctor)
   of "/help": newCommandDecision(cmdHelp)
@@ -160,6 +166,10 @@ func decideLocalCommandAction*(decision: CommandDecision): LocalCommandAction =
   case decision.kind
   of cmdStart:
     lcaStartIntro
+  of cmdMenu:
+    lcaShowMenu
+  of cmdWhoami:
+    lcaShowWhoami
   of cmdMyCode:
     lcaGenerateLinkCode
   of cmdForget:
@@ -260,7 +270,7 @@ func commandTaskKind*(decision: CommandDecision): TaskKind =
 
 func isCoreCommand*(kind: CommandKind): bool =
   kind in {
-    cmdStart, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
+    cmdStart, cmdMenu, cmdWhoami, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
     cmdDebug, cmdReset, cmdMyCode, cmdContinue
   }
 

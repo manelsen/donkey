@@ -22,8 +22,11 @@
       "id": "CMD-002",
       "title": "/menu Command - Show Grouped Command Menu",
       "description": "Implement /menu command that displays all available commands grouped by category (Navigation, Configuration, Status, Tasks).",
-      "completed": false,
-      "priority": "P0"
+      "completed": true,
+      "priority": "P0",
+      "branch": "us/cmd-002-menu-whoami",
+      "tests": "Existing tests pass",
+      "validation": "nim c --mm:orc + boundary check passed"
     },
     {
       "id": "CMD-003",
