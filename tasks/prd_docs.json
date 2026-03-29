@@ -128,8 +128,8 @@
         "nim c --mm:orc passes"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "docs/topics/sessions.md created",
       "dependsOn": [
         "DOC-001"
       ]
