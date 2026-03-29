@@ -516,3 +516,28 @@ summary: Test user detail view.
     check ch.status == "connected"
     check ch.botName == "DonkeyBot"
     check ch.userCount == 42
+
+  test "ChannelMetrics tracks per-channel metrics":
+    var m: ChannelMetrics
+    m.messagesIn = 500
+    m.messagesOut = 480
+    m.errors = 5
+    m.avgResponseTimeMs = 1200
+    
+    check m.messagesIn == 500
+    check m.messagesOut == 480
+    check m.errors == 5
+
+  test "ChannelItem toggle preserves other fields":
+    var ch = ChannelItem(
+      name: "telegram",
+      enabled: true,
+      status: "connected",
+      botName: "TestBot",
+      userCount: 10
+    )
+    
+    ch.enabled = false
+    check ch.name == "telegram"
+    check ch.status == "connected"
+    check ch.userCount == 10

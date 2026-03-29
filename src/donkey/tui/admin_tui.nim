@@ -62,6 +62,12 @@ type
     botName*: string
     userCount*: int
 
+  ChannelMetrics* = object
+    messagesIn*: int
+    messagesOut*: int
+    errors*: int
+    avgResponseTimeMs*: int
+
   ProviderInfo* = object
     name*: string
     enabled*: bool
