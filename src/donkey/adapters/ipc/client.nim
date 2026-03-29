@@ -13,10 +13,21 @@ proc expandSockPath*(path: string): string =
   else:
     path
 
+proc existsOrRaise*(path: string): bool =
+  ## True for regular files and Unix sockets.
+  if fileExists(path):
+    return true
+  # fileExists may miss sockets on some systems; try getFileInfo
+  try:
+    let fi = getFileInfo(path, false)
+    return fi.kind in {pcFile, pcLinkToFile, pcDir, pcLinkToDir}
+  except:
+    return false
+
 proc ipcQuery*(sockPath: string; payload: JsonNode): Result[JsonNode, string] =
   ## Connects, sends JSON request, reads JSON response.
   let path = expandSockPath(sockPath)
-  if not fileExists(path):
+  if not existsOrRaise(path):
     return err("daemon not running (socket not found: " & path & ")")
   try:
     let sock = newSocket(Domain.AF_UNIX, SockType.SOCK_STREAM, Protocol.IPPROTO_IP)
