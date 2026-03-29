@@ -502,3 +502,17 @@ summary: Test user detail view.
     check ord(mtr1h) == 0
     check ord(mtr24h) == 1
     check ord(mtr7d) == 2
+
+  test "ChannelItem tracks extended fields":
+    var ch: ChannelItem
+    ch.name = "discord"
+    ch.enabled = true
+    ch.status = "connected"
+    ch.botName = "DonkeyBot"
+    ch.userCount = 42
+    
+    check ch.name == "discord"
+    check ch.enabled == true
+    check ch.status == "connected"
+    check ch.botName == "DonkeyBot"
+    check ch.userCount == 42

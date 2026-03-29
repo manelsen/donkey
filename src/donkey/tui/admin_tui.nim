@@ -55,6 +55,13 @@ type
     enabled*: bool
     adapter*: string
 
+  ChannelItem* = object
+    name*: string
+    enabled*: bool
+    status*: string
+    botName*: string
+    userCount*: int
+
   ProviderInfo* = object
     name*: string
     enabled*: bool
