@@ -72,7 +72,15 @@
         "Hook returns enriched context (not modified message - preserves LLM judgment)",
         "Context passed as hint, not directive - LLM decides relevance"
       ],
-      "priority": "P0"
+      "priority": "P0",
+      "completed": true,
+      "branch": "us/hook-003-context-injection",
+      "files": [
+        "src/donkey/core/hooks/context_injection_hook.nim",
+        "tests/core/t_context_injection_hook.nim"
+      ],
+      "tests": "9 tests passing",
+      "validation": "nim c --mm:orc + boundary check passed"
     },
     {
       "id": "HOOK-004",
