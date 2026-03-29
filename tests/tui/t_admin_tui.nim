@@ -476,3 +476,12 @@ summary: Test user detail view.
     for item in st.items:
       check item.name.len > 0
       check item.description.len > 0
+
+    var tres2: ProviderTestResult
+    tres2.provider = "openai"
+    tres2.success = false
+    tres2.latencyMs = 0
+    tres2.message = "Connection timeout"
+    
+    check tres2.success == false
+    check tres2.message.contains("timeout")

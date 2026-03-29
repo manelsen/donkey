@@ -68,6 +68,12 @@ type
     model*: string
     endpoint*: string
 
+  ProviderTestResult* = object
+    provider*: string
+    success*: bool
+    latencyMs*: int
+    message*: string
+
   AgentInfo* = object
     name*: string
     personality*: string
