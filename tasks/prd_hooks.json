@@ -113,7 +113,15 @@
         "Agnostic to memory backend - MdFileAdapter, PostgresAdapter, MAGMA, etc.",
         "Can be configured to capture: facts, decisions, preferences, todos"
       ],
-      "priority": "P1"
+      "priority": "P1",
+      "completed": true,
+      "branch": "us/hook-005-memory-capture",
+      "files": [
+        "src/donkey/adapters/hooks/memory_capture_hook.nim",
+        "tests/adapters/hooks/t_memory_capture_hook.nim"
+      ],
+      "tests": "8 tests passing",
+      "validation": "nim c --mm:orc + boundary check passed"
     },
     {
       "id": "HOOK-006",
