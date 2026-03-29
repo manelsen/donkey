@@ -1,5 +1,5 @@
 ## Tests for admin TUI components (pure functions only).
-import std/[unittest, sequtils, strutils, times, os]
+import std/[unittest, sequtils, strutils, times, os, options]
 import donkey/tui/admin_tui
 import donkey/config/types
 import donkey/core/types
@@ -224,3 +224,63 @@ summary: Test user for unit test.
 
     # Should have loadUsersItems called via loadSection
     check st.section == asUsers
+
+  test "showUserDetail populates detail view":
+    var st = newAdminState()
+    let tmpDir = "/tmp/test_detail_" & $epochTime()
+    createDir(tmpDir)
+    defer: discard execShellCmd("rm -rf " & tmpDir)
+
+    # Create test user with full context
+    let userId = "test-user-detail"
+    createDir(tmpDir / userId)
+    writeFile(tmpDir / userId / "USER.md", """
+---
+summary: Test user detail view.
+---
+# Test User Detail
+**Preferred name:** TestDetail
+**Access:** active
+**Timezone:** UTC
+""")
+    writeFile(tmpDir / userId / "MEMORY.md", """
+# Memory
+- Test fact 1
+- Test fact 2
+""")
+    writeFile(tmpDir / userId / "PREFERENCES.md", """
+# Preferences
+- Theme: dark
+- Language: en
+""")
+
+    # Load user detail
+    let adapter = MdFileAdapter(paddocksDir: tmpDir)
+    let ctx = adapter.loadContext(UserId(userId))
+    
+    check ctx.userId == UserId(userId)
+    check ctx.userMd.contains("TestDetail")
+    check ctx.memoryMd.contains("Test fact")
+    check ctx.preferencesMd.contains("dark")
+
+  test "showUserDetail handles missing memory":
+    var st = newAdminState()
+    let tmpDir = "/tmp/test_no_mem_" & $epochTime()
+    createDir(tmpDir)
+    defer: discard execShellCmd("rm -rf " & tmpDir)
+
+    let userId = "test-no-mem"
+    createDir(tmpDir / userId)
+    writeFile(tmpDir / userId / "USER.md", "# User\n**Access:** active")
+
+    let adapter = MdFileAdapter(paddocksDir: tmpDir)
+    let ctx = adapter.loadContext(UserId(userId))
+    
+    check ctx.memoryMd.len == 0
+    check ctx.preferencesMd.len == 0
+
+  test "AdminState can track selectedUserId":
+    var st = newAdminState()
+    st.selectedUserId = some(UserId("test-user"))
+    check st.selectedUserId.isSome()
+    check st.selectedUserId.get() == UserId("test-user")

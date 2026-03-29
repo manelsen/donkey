@@ -5,7 +5,7 @@
 ##
 ## Requires illwill. Runs in foreground (no Chronos).
 
-import std/[strformat]
+import std/[strformat, options, strutils]
 import illwill as ill
 import terminal as term
 import ../core/types
@@ -41,6 +41,8 @@ type
     section*: AdminSection
     selectedIndex*: int
     items*: seq[AdminItem]
+    selectedUserId*: Option[UserId]
+    viewMode*: ViewMode
     config*: DonkeyConfig
     logLevel*: string
     verbose*: string
@@ -64,6 +66,10 @@ type
     model*: string
     channels*: seq[string]
 
+  ViewMode* = enum
+    vmList
+    vmDetail
+
 const
   BorderColor* = ill.fgBlue
   HeaderColor* = ill.fgCyan
@@ -78,6 +84,8 @@ proc newAdminState*(cfg: DonkeyConfig = defaultConfig("")): AdminState =
     section: asConfig,
     selectedIndex: 0,
     items: @[],
+    selectedUserId: UserId.none(),
+    viewMode: vmList,
     config: cfg,
     logLevel: "info",
     verbose: "default",
@@ -248,6 +256,63 @@ proc drawItem*(tb: var ill.TerminalBuffer; item: AdminItem; x, y, w: int; select
     tb.write(x + w - 4, y, "X")
   tb.setBackgroundColor(ill.bgNone)
   tb.setForegroundColor(ItemColor)
+
+proc drawUserDetail*(tb: var ill.TerminalBuffer; st: AdminState; adapter: MdFileAdapter; startY: int; width, height: int) =
+  if st.selectedUserId.isNone:
+    tb.setForegroundColor(ill.fgYellow)
+    tb.write(2, startY, "Select a user and press Enter to view details")
+    return
+
+  let userId = st.selectedUserId.get()
+  let ctx = adapter.loadContext(userId)
+  var y = startY
+
+  tb.setForegroundColor(ill.fgCyan)
+  tb.write(2, y, "+- User Details -")
+  tb.setForegroundColor(ill.fgWhite)
+  tb.write(width - 3, y, "-+")
+  inc y, 2
+
+  tb.setForegroundColor(ill.fgBlue)
+  tb.write(2, y, "UUID: ")
+  tb.setForegroundColor(ill.fgWhite)
+  tb.write(8, y, $userId)
+  inc y
+
+  if ctx.userMd.len > 0:
+    tb.setForegroundColor(ill.fgBlue)
+    tb.write(2, y, "Profile:")
+    inc y
+    for line in ctx.userMd.splitLines:
+      if y >= height - 2: break
+      tb.setForegroundColor(ill.fgWhite)
+      tb.write(4, y, line[0 .. min(line.high, width - 6)])
+      inc y
+    inc y
+
+  if ctx.memoryMd.len > 0:
+    tb.setForegroundColor(ill.fgBlue)
+    tb.write(2, y, "Memory:")
+    inc y
+    for line in ctx.memoryMd.splitLines:
+      if y >= height - 2: break
+      tb.setForegroundColor(ill.fgWhite)
+      tb.write(4, y, line[0 .. min(line.high, width - 6)])
+      inc y
+    inc y
+
+  if ctx.preferencesMd.len > 0:
+    tb.setForegroundColor(ill.fgBlue)
+    tb.write(2, y, "Preferences:")
+    inc y
+    for line in ctx.preferencesMd.splitLines:
+      if y >= height - 2: break
+      tb.setForegroundColor(ill.fgWhite)
+      tb.write(4, y, line[0 .. min(line.high, width - 6)])
+      inc y
+
+  tb.setForegroundColor(ill.fgCyan)
+  tb.write(2, height - 2, "[Enter] toggle access  [D] delete  [Esc] back to list")
 
 proc drawList*(tb: var ill.TerminalBuffer; st: AdminState; startY: int; width, height: int) =
   let listHeight = height - 4
