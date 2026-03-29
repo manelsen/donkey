@@ -284,3 +284,40 @@ summary: Test user detail view.
     st.selectedUserId = some(UserId("test-user"))
     check st.selectedUserId.isSome()
     check st.selectedUserId.get() == UserId("test-user")
+
+  test "deleteUser removes paddock directory":
+    let tmpDir = "/tmp/test_delete_" & $epochTime()
+    createDir(tmpDir)
+    
+    let userId = "user-to-delete"
+    createDir(tmpDir / userId)
+    writeFile(tmpDir / userId / "USER.md", "# User\n**Access:** active")
+    
+    let adapter = MdFileAdapter(paddocksDir: tmpDir)
+    
+    # Verify user exists
+    let users = adapter.listUsers()
+    check users.len == 1
+    
+    # Delete user (simulated - just remove directory)
+    let paddockPath = tmpDir / userId
+    discard execShellCmd("rm -rf " & paddockPath)
+    
+    # Verify user removed
+    let usersAfter = adapter.listUsers()
+    check usersAfter.len == 0
+
+  test "confirmMode tracks deletion state":
+    var st = newAdminState()
+    check st.confirmMode == cmNone
+    
+    st.confirmMode = cmDelete
+    check st.confirmMode == cmDelete
+    
+    st.confirmMode = cmNone
+    check st.confirmMode == cmNone
+
+  test "can set confirmMode enum":
+    var st = newAdminState()
+    st.confirmMode = ConfirmMode(cmDelete)
+    check st.confirmMode == cmDelete

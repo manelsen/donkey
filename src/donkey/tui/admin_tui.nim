@@ -5,7 +5,7 @@
 ##
 ## Requires illwill. Runs in foreground (no Chronos).
 
-import std/[strformat, options, strutils]
+import std/[os, strformat, options, strutils]
 import illwill as ill
 import terminal as term
 import ../core/types
@@ -43,6 +43,7 @@ type
     items*: seq[AdminItem]
     selectedUserId*: Option[UserId]
     viewMode*: ViewMode
+    confirmMode*: ConfirmMode
     config*: DonkeyConfig
     logLevel*: string
     verbose*: string
@@ -70,6 +71,11 @@ type
     vmList
     vmDetail
 
+  ConfirmMode* = enum
+    cmNone
+    cmDelete
+    cmRevoke
+
 const
   BorderColor* = ill.fgBlue
   HeaderColor* = ill.fgCyan
@@ -86,6 +92,7 @@ proc newAdminState*(cfg: DonkeyConfig = defaultConfig("")): AdminState =
     items: @[],
     selectedUserId: UserId.none(),
     viewMode: vmList,
+    confirmMode: cmNone,
     config: cfg,
     logLevel: "info",
     verbose: "default",
@@ -256,6 +263,10 @@ proc drawItem*(tb: var ill.TerminalBuffer; item: AdminItem; x, y, w: int; select
     tb.write(x + w - 4, y, "X")
   tb.setBackgroundColor(ill.bgNone)
   tb.setForegroundColor(ItemColor)
+
+proc deleteUserPaddock*(paddockDir: string) =
+  ## Delete a user's paddock directory.
+  removeDir(paddockDir)
 
 proc drawUserDetail*(tb: var ill.TerminalBuffer; st: AdminState; adapter: MdFileAdapter; startY: int; width, height: int) =
   if st.selectedUserId.isNone:
