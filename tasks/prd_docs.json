@@ -218,8 +218,8 @@
         "Include architecture diagrams"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "docs/guides/architecture.md created",
       "dependsOn": []
     }
   ]
