@@ -594,3 +594,37 @@ summary: Test user detail view.
     
     check tu.inputTokens == 1000000
     check tu.costUsd == 25.50
+
+  test "HookItem tracks hook registry fields":
+    var h: HookItem
+    h.name = "rag_context"
+    h.hookType = "pre-llm"
+    h.enabled = true
+    h.execCount = 500
+    h.lastRun = 1234567890
+    
+    check h.name == "rag_context"
+    check h.hookType == "pre-llm"
+    check h.execCount == 500
+
+  test "ToolItem tracks MCP tool fields":
+    var t: ToolItem
+    t.name = "web_search"
+    t.server = "native"
+    t.enabled = true
+    t.execCount = 200
+    t.errors = 3
+    
+    check t.name == "web_search"
+    check t.server == "native"
+    check t.errors == 3
+
+  test "SkillItem tracks skill fields":
+    var s: SkillItem
+    s.name = "browser"
+    s.path = "/skills/browser"
+    s.enabled = true
+    s.manifest = "Browser automation"
+    
+    check s.name == "browser"
+    check s.path == "/skills/browser"

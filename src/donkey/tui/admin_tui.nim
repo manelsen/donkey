@@ -106,6 +106,26 @@ type
     outputTokens*: int64
     costUsd*: float
 
+  HookItem* = object
+    name*: string
+    hookType*: string
+    enabled*: bool
+    execCount*: int
+    lastRun*: int64
+
+  ToolItem* = object
+    name*: string
+    server*: string
+    enabled*: bool
+    execCount*: int
+    errors*: int
+
+  SkillItem* = object
+    name*: string
+    path*: string
+    enabled*: bool
+    manifest*: string
+
   ProviderInfo* = object
     name*: string
     enabled*: bool
