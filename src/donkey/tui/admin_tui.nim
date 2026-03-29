@@ -74,6 +74,17 @@ type
     latencyMs*: int
     message*: string
 
+  MetricsTimeRange* = enum
+    mtr1h
+    mtr24h
+    mtr7d
+
+  ProviderMetrics* = object
+    totalRequests*: int
+    successful*: int
+    failed*: int
+    avgLatencyMs*: int
+
   AgentInfo* = object
     name*: string
     personality*: string

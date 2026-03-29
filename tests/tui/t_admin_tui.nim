@@ -485,3 +485,20 @@ summary: Test user detail view.
     
     check tres2.success == false
     check tres2.message.contains("timeout")
+
+  test "ProviderMetrics tracks usage":
+    var m: ProviderMetrics
+    m.totalRequests = 1000
+    m.successful = 950
+    m.failed = 50
+    m.avgLatencyMs = 250
+    
+    check m.totalRequests == 1000
+    check m.successful == 950
+    check m.failed == 50
+    check m.avgLatencyMs == 250
+
+  test "MetricsTimeRange enum values":
+    check ord(mtr1h) == 0
+    check ord(mtr24h) == 1
+    check ord(mtr7d) == 2
