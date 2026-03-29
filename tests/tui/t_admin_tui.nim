@@ -69,18 +69,20 @@ suite "Admin TUI":
   test "loadProviderItems populates providers":
     var st = newAdminState()
     st.loadProviderItems()
-    check st.items.len == 4
+    check st.items.len == 8
     let names = st.items.mapIt(it.name)
     check "anthropic" in names
     check "openai" in names
+    check "openrouter" in names
+    check "zhipu" in names
 
   test "loadModelItems populates models":
     var st = newAdminState()
     st.loadModelItems()
-    check st.items.len == 5
+    check st.items.len == 10
     let names = st.items.mapIt(it.name)
-    check "claude-sonnet-4-5" in names
-    check "gpt-4o" in names
+    check "claude-opus-4-6" in names
+    check "gpt-4o-mini" in names
 
   test "loadHookItems populates hooks":
     var st = newAdminState()
@@ -114,11 +116,11 @@ suite "Admin TUI":
 
     st.section = asProviders
     st.loadSection()
-    check st.items.len == 4
+    check st.items.len == 8
 
     st.section = asModels
     st.loadSection()
-    check st.items.len == 5
+    check st.items.len == 10
 
     st.section = asHooks
     st.loadSection()
@@ -449,9 +451,10 @@ summary: Test user detail view.
     var st = newAdminState()
     st.loadProviderItems()
     
-    # Count enabled providers
-    let enabled = st.items.filterIt(it.enabled)
-    check enabled.len >= 1
+    # Fallback lists all known providers (none configured)
+    check st.items.len > 0
+    let names = st.items.mapIt(it.name)
+    check "anthropic" in names
 
   test "selectModel changes active model":
     var st = newAdminState()

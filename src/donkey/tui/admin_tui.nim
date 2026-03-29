@@ -5,7 +5,7 @@
 ##
 ## Requires illwill. Runs in foreground (no Chronos).
 
-import std/[os, options, strutils]
+import std/[os, options, strutils, times]
 import illwill as ill
 import terminal as term
 import ../core/types
@@ -47,6 +47,8 @@ type
     verbose*: string
     reasoning*: string
     lastRefresh*: float
+    runtimeProviders*: seq[string]
+    toast*: Option[Toast]
 
   ChannelInfo* = object
     name*: string
@@ -249,7 +251,7 @@ const
   HeaderColor* = ill.fgCyan
   SelectedBg* = ill.bgCyan
   ItemColor* = ill.fgWhite
-  DisabledColor* = ill.fgBlack
+  DisabledColor* = ill.fgCyan  ## visible but dimmed on dark terminals
   StatusOk* = ill.fgGreen
   StatusError* = ill.fgRed
 
@@ -313,20 +315,41 @@ proc loadChannelItems*(st: var AdminState) =
   ]
 
 proc loadProviderItems*(st: var AdminState) =
-  st.items = @[
-    AdminItem(name: "anthropic", description: "Claude via Anthropic API", enabled: true, status: "healthy"),
-    AdminItem(name: "openai", description: "GPT via OpenAI API", enabled: true, status: "healthy"),
-    AdminItem(name: "openrouter", description: "Multi-provider router", enabled: true, status: "healthy"),
-    AdminItem(name: "gemini", description: "Google Gemini AI", enabled: false, status: "disabled"),
-  ]
+  ## Load providers from runtime daemon status when available,
+  ## otherwise fall back to all known providers.
+  if st.runtimeProviders.len > 0:
+    st.items = @[]
+    for p in st.runtimeProviders:
+      st.items.add(AdminItem(
+        name: p,
+        description: "Active provider",
+        enabled: true,
+        status: "connected"
+      ))
+  else:
+    const knownProviders = ["anthropic", "openai", "openrouter", "gemini",
+                           "deepseek", "ollama", "minimax", "zhipu"]
+    st.items = @[]
+    for p in knownProviders:
+      st.items.add(AdminItem(
+        name: p,
+        description: "Provider",
+        enabled: false,
+        status: "not configured"
+      ))
 
 proc loadModelItems*(st: var AdminState) =
   st.items = @[
-    AdminItem(name: "claude-sonnet-4-5", description: "Anthropic Claude Sonnet 4", enabled: true, status: "default"),
+    AdminItem(name: "claude-opus-4-6", description: "Anthropic Claude Opus 4 (default)", enabled: true, status: "default"),
+    AdminItem(name: "claude-sonnet-4-5", description: "Anthropic Claude Sonnet 4.5", enabled: true, status: "available"),
+    AdminItem(name: "gpt-4o-mini", description: "OpenAI GPT-4o Mini (default)", enabled: true, status: "available"),
     AdminItem(name: "gpt-4o", description: "OpenAI GPT-4o", enabled: true, status: "available"),
-    AdminItem(name: "claude-opus-3", description: "Anthropic Claude Opus 3", enabled: true, status: "available"),
-    AdminItem(name: "gemini-2.0-flash", description: "Google Gemini 2.0 Flash", enabled: false, status: "disabled"),
-    AdminItem(name: "deepseek-chat", description: "DeepSeek Chat", enabled: false, status: "disabled"),
+    AdminItem(name: "deepseek-chat", description: "DeepSeek Chat (default)", enabled: false, status: "available"),
+    AdminItem(name: "gemini-2.0-flash", description: "Google Gemini 2.0 Flash (default)", enabled: false, status: "available"),
+    AdminItem(name: "glm-4.7", description: "Zhipu GLM-4.7 (default)", enabled: false, status: "available"),
+    AdminItem(name: "llama3", description: "Meta Llama 3 via Ollama (default)", enabled: false, status: "available"),
+    AdminItem(name: "abab6.5s-chat", description: "MiniMax ABAB 6.5s (default)", enabled: false, status: "available"),
+    AdminItem(name: "openai/gpt-4o-mini", description: "OpenRouter GPT-4o Mini (default)", enabled: true, status: "available"),
   ]
 
 proc loadHookItems*(st: var AdminState) =
@@ -368,6 +391,52 @@ proc loadSection*(st: var AdminState) =
   of asPlugins:   st.loadPluginItems()
   of asUsers:     discard  # loaded via IPC
 
+proc showToast*(st: var AdminState; msg: string; kind = tkInfo) =
+  st.toast = some(Toast(message: msg, kind: kind, timestamp: int64(times.epochTime())))
+
+proc clearExpiredToast*(st: var AdminState) =
+  if st.toast.isSome:
+    let age = int64(times.epochTime()) - st.toast.get().timestamp
+    if age > 3:
+      st.toast = Toast.none()
+
+proc cycleConfigValue*(st: var AdminState; index: int) =
+  ## Cycle through valid values for the selected config field.
+  if index < 0 or index >= st.items.len: return
+  let key = st.items[index].name
+  case key
+  of "log_level":
+    const levels = ["debug", "info", "warn", "error"]
+    let cur = st.items[index].description
+    var next = 0
+    for i, l in levels:
+      if l == cur: next = (i + 1) mod levels.len; break
+    st.items[index].description = levels[next]
+    st.config.logLevel = parseLogLevel(levels[next])
+    st.showToast("log_level -> " & levels[next], tkSuccess)
+  of "sandbox_mode":
+    const modes = ["none", "docker"]
+    let cur = st.items[index].description
+    var next = 0
+    for i, m in modes:
+      if m == cur: next = (i + 1) mod modes.len; break
+    st.items[index].description = modes[next]
+    st.showToast("sandbox_mode -> " & modes[next], tkSuccess)
+  of "verbose":
+    const vals = ["default", "verbose"]
+    let cur = st.items[index].description
+    let next = if cur == "default": "verbose" else: "default"
+    st.items[index].description = next
+    st.showToast("verbose -> " & next, tkSuccess)
+  of "reasoning":
+    const vals = ["auto", "always", "never"]
+    let cur = st.items[index].description
+    var next = 0
+    for i, v in vals:
+      if v == cur: next = (i + 1) mod vals.len; break
+    st.items[index].description = vals[next]
+    st.showToast("reasoning -> " & vals[next], tkSuccess)
+  else: discard
 # ── Rendering ───────────────────────────────────────────────────────────────
 
 proc drawBorder*(tb: var ill.TerminalBuffer; x, y, w, h: int) =

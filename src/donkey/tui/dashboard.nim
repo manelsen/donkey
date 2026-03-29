@@ -251,40 +251,67 @@ proc drawAdmin(tb: var TerminalBuffer; st: TuiState; y0: int) =
 
   ## Items list
   let listY = y0 + 2
-  let listH = height - listY - 2
+  let listH = height - listY - 3
 
   if admin.viewMode == vmDetail and admin.selectedUserId.isSome:
-    ## Detail view
     drawUserDetail(tb, admin, st.memory, listY, width, height)
   else:
-    ## List view
     for i in 0 ..< min(admin.items.len, listH):
       let item = admin.items[i]
       let selected = i == admin.selectedIndex
       let y = listY + i
-      if y >= height - 2: break
+      if y >= height - 3: break
       if selected:
         tb.setForegroundColor(fgBlack)
         tb.setBackgroundColor(bgCyan)
         tb.write(2, y, "> ")
       else:
+        tb.setBackgroundColor(bgNone)
         tb.setForegroundColor(fgWhite)
         tb.write(2, y, "  ")
-      let nameStr = item.name & repeatChar(18 - item.name.len, ' ')
-      tb.setForegroundColor(if item.enabled: fgWhite else: fgBlack)
+      let nameStr = item.name & repeatChar(20 - min(item.name.len, 20), ' ')
+      tb.setForegroundColor(if item.enabled: fgWhite else: DisabledColor)
       tb.write(4, y, nameStr)
-      let descTrunc = if item.description.len > 35: item.description[0 ..< 32] & "..."
-                      else: item.description
-      tb.write(24, y, descTrunc)
-      tb.setForegroundColor(if item.enabled: fgGreen else: fgRed)
-      tb.write(width - 14, y, "[" & item.status & "]")
+      let maxDesc = width - 4 - 20 - 16
+      let descTrunc = if maxDesc > 3 and item.description.len > maxDesc:
+                        item.description[0 ..< maxDesc - 3] & "..."
+                      elif maxDesc > 0:
+                        item.description
+                      else:
+                        ""
+      tb.setForegroundColor(if item.enabled: fgWhite else: DisabledColor)
+      tb.write(26, y, descTrunc)
+      let statusStr = "[" & item.status & "]"
+      tb.setForegroundColor(if item.status == "connected" or item.status == "active" or
+                              item.status == "healthy" or item.status == "default": fgGreen
+                            elif item.status == "not configured" or item.status == "disabled": fgYellow
+                            else: fgRed)
+      tb.write(width - statusStr.len - 2, y, statusStr)
+      if not item.enabled:
+        tb.setForegroundColor(fgYellow)
+        tb.write(width - 3, y, "X")
       tb.setBackgroundColor(bgNone)
       tb.setForegroundColor(fgWhite)
 
+  ## Toast notification
+  if admin.toast.isSome:
+    let t = admin.toast.get()
+    let toastColor = case t.kind
+      of tkSuccess: fgGreen
+      of tkWarning: fgYellow
+      of tkError: fgRed
+      of tkInfo: fgCyan
+    tb.setForegroundColor(toastColor)
+    tb.write(2, height - 3, t.message[0 ..< min(t.message.len, width - 4)])
+    tb.setForegroundColor(fgWhite)
+
   ## Footer
   tb.setForegroundColor(fgCyan)
-  tb.write(2, height - 2, "[<- ->] section  [^ v] nav  [Enter] toggle/detail  [D] delete  [Esc] back")
-
+  let footerHint = case admin.section
+    of asConfig: "[Enter] cycle value  [^ v] navigate"
+    of asUsers: "[Enter] view detail  [Esc] back"
+    else: "[Enter] toggle  [^ v] navigate  [<- ->] section"
+  tb.write(2, height - 2, footerHint)
 proc render(tb: var TerminalBuffer; st: TuiState) =
   tb.clear()
   drawHeader(tb, st)
