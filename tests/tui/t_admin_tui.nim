@@ -463,7 +463,7 @@ summary: Test user detail view.
     # Find default model
     var defaultIdx = -1
     for i, item in st.items:
-      if item.status == "default":
+      if item.status == "static":
         defaultIdx = i
         break
     check defaultIdx >= 0

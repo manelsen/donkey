@@ -13,6 +13,7 @@ import ../core/types
 import ../adapters/ipc/[types, client]
 import ../adapters/memory/md_file
 import admin_tui
+import ../adapters/provider/model_catalog
 
 const
   RefreshMs    = 10_000
@@ -335,6 +336,7 @@ proc runTui*(sockPath: string) =
 
   var st = TuiState(sockPath: sockPath, panel: pSessions, admin: newAdminState(), memory: MdFileAdapter(paddocksDir: sockPath.parentDir() / "paddocks"))
   fetchData(st)
+  st.admin.catalogLoader = buildModelCatalogLoader()
   st.lastFetch = epochTime()
 
   var tb = newTerminalBuffer(terminalWidth(), terminalHeight())

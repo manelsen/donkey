@@ -6,11 +6,13 @@
 ## Requires illwill. Runs in foreground (no Chronos).
 
 import std/[os, options, strutils, times]
+import results
 import illwill as ill
 import terminal as term
 import ../core/types
 import ../config/types
 import ../adapters/memory/md_file
+import ../ports/provider
 
 # Helper for drawing boxes
 proc repeatChar*(n: int; c: char): string =
@@ -47,6 +49,7 @@ type
     verbose*: string
     reasoning*: string
     lastRefresh*: float
+    catalogLoader*: ModelCatalogLoader
     runtimeProviders*: seq[string]
     toast*: Option[Toast]
 
@@ -339,17 +342,51 @@ proc loadProviderItems*(st: var AdminState) =
       ))
 
 proc loadModelItems*(st: var AdminState) =
+  ## When catalogLoader is wired (dashboard), fetch live models from provider
+  ## APIs. Otherwise fall back to a static list.
+  if st.catalogLoader != nil:
+    var loaded: seq[AdminItem]
+    var seenProviders: seq[string]
+    # Collect models from runtime providers first
+    for prov in st.runtimeProviders:
+      seenProviders.add(prov)
+      let catalog = st.catalogLoader(prov)
+      if catalog.isOk:
+        for entry in catalog.get().entries:
+          loaded.add(AdminItem(
+            name: entry.modelName,
+            description: entry.providerName & "/" & entry.label,
+            enabled: entry.available,
+            status: catalogSourceLabel(catalog.get().source),
+          ))
+    # Also fetch from known providers not yet covered
+    const knownProviders = ["anthropic", "openrouter", "gemini", "deepseek", "ollama", "minimax", "zhipu"]
+    for prov in knownProviders:
+      if prov in seenProviders: continue
+      let catalog = st.catalogLoader(prov)
+      if catalog.isOk:
+        for entry in catalog.get().entries:
+          loaded.add(AdminItem(
+            name: entry.modelName,
+            description: entry.providerName & "/" & entry.label,
+            enabled: entry.available,
+            status: catalogSourceLabel(catalog.get().source),
+          ))
+    if loaded.len > 0:
+      st.items = loaded
+      return
+  # Static fallback — used when catalogLoader is nil (tests) or no data returned
   st.items = @[
-    AdminItem(name: "claude-opus-4-6", description: "Anthropic Claude Opus 4 (default)", enabled: true, status: "default"),
-    AdminItem(name: "claude-sonnet-4-5", description: "Anthropic Claude Sonnet 4.5", enabled: true, status: "available"),
-    AdminItem(name: "gpt-4o-mini", description: "OpenAI GPT-4o Mini (default)", enabled: true, status: "available"),
-    AdminItem(name: "gpt-4o", description: "OpenAI GPT-4o", enabled: true, status: "available"),
-    AdminItem(name: "deepseek-chat", description: "DeepSeek Chat (default)", enabled: false, status: "available"),
-    AdminItem(name: "gemini-2.0-flash", description: "Google Gemini 2.0 Flash (default)", enabled: false, status: "available"),
-    AdminItem(name: "glm-4.7", description: "Zhipu GLM-4.7 (default)", enabled: false, status: "available"),
-    AdminItem(name: "llama3", description: "Meta Llama 3 via Ollama (default)", enabled: false, status: "available"),
-    AdminItem(name: "abab6.5s-chat", description: "MiniMax ABAB 6.5s (default)", enabled: false, status: "available"),
-    AdminItem(name: "openai/gpt-4o-mini", description: "OpenRouter GPT-4o Mini (default)", enabled: true, status: "available"),
+    AdminItem(name: "claude-opus-4-6", description: "Anthropic Claude Opus 4", enabled: true, status: "static"),
+    AdminItem(name: "claude-sonnet-4-5", description: "Anthropic Claude Sonnet 4.5", enabled: true, status: "static"),
+    AdminItem(name: "gpt-4o-mini", description: "OpenAI GPT-4o Mini", enabled: true, status: "static"),
+    AdminItem(name: "gpt-4o", description: "OpenAI GPT-4o", enabled: true, status: "static"),
+    AdminItem(name: "deepseek-chat", description: "DeepSeek Chat", enabled: false, status: "static"),
+    AdminItem(name: "gemini-2.0-flash", description: "Google Gemini 2.0 Flash", enabled: false, status: "static"),
+    AdminItem(name: "glm-4.7", description: "Zhipu GLM-4.7", enabled: false, status: "static"),
+    AdminItem(name: "llama3", description: "Meta Llama 3 via Ollama", enabled: false, status: "static"),
+    AdminItem(name: "abab6.5s-chat", description: "MiniMax ABAB 6.5s", enabled: false, status: "static"),
+    AdminItem(name: "openai/gpt-4o-mini", description: "OpenRouter GPT-4o Mini", enabled: true, status: "static"),
   ]
 
 proc loadHookItems*(st: var AdminState) =
