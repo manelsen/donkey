@@ -1,0 +1,119 @@
+{
+  "title": "Donkey Hooks System",
+  "version": "1.0",
+  "description": "Hexagonal middleware hooks for message flow, context injection, and memory capture - agnostic to memory backend",
+  "principles": [
+    "Hooks are a Port (interface), not an Adapter",
+    "Any memory backend can be used via SemanticMemoryPort or custom hook",
+    "Hooks receive context and return modified context - chain pattern",
+    "No hardcoded memory formats - injectable via configuration"
+  ],
+  "architecture": {
+    "port": "src/donkey/ports/hook.nim",
+    "core": [
+      "src/donkey/core/hooks/hook_executor.nim",
+      "src/donkey/core/hooks/hook_registry.nim"
+    ],
+    "adapters": [
+      "src/donkey/adapters/hooks/rag_context_hook.nim",
+      "src/donkey/adapters/hooks/memory_capture_hook.nim"
+    ]
+  },
+  "stories": [
+    {
+      "id": "HOOK-001",
+      "title": "Hook Port - Core Interfaces",
+      "description": "Define hook port and types in hexagonal architecture",
+      "acceptance": [
+        "HookPort concept in src/donkey/ports/hook.nim",
+        "HookPhase enum: pre_llm, post_llm, pre_tool, post_tool, post_response",
+        "HookContext: immutable input context (message, history, userId, sessionId, metadata)",
+        "HookResult: either modified context or rejection with error",
+        "HookRegistry: manages ordered execution of hooks per phase"
+      ],
+      "priority": "P0",
+      "completed": true,
+      "branch": "us/hook-001-port-core-interfaces",
+      "files": [
+        "src/donkey/ports/hook.nim",
+        "tests/ports/t_hook_port.nim"
+      ],
+      "tests": "13 tests passing",
+      "validation": "nim c --mm:orc + boundary check passed"
+    },
+    {
+      "id": "HOOK-002",
+      "title": "Hook Executor - Orchestrator Integration",
+      "description": "Integrate hook execution into orchestrator message flow",
+      "acceptance": [
+        "Hooks execute before LLM call (pre_llm phase)",
+        "Hooks execute after LLM response (post_llm phase)",
+        "Hooks execute before/after tool calls",
+        "HookChain: hooks run in order, each sees output of previous",
+        "Short-circuit on rejection - return error to user"
+      ],
+      "priority": "P0"
+    },
+    {
+      "id": "HOOK-003",
+      "title": "ContextInjection Hook - Abstract",
+      "description": "Abstract hook that injects relevant context into messages",
+      "acceptance": [
+        "Hook receives message and userId",
+        "Hook queries memory system via injected port",
+        "Hook returns enriched context (not modified message - preserves LLM judgment)",
+        "Context passed as hint, not directive - LLM decides relevance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "id": "HOOK-004",
+      "title": "RAG Context Hook Adapter",
+      "description": "Example adapter using semantic search for context retrieval",
+      "acceptance": [
+        "Implements HookPort",
+        "Uses SemanticMemoryPort.search() for vector retrieval",
+        "Returns top-k relevant context entries",
+        "Can be enabled/disabled via config",
+        "Does NOT hardcode retrieval logic - uses port abstraction"
+      ],
+      "priority": "P1"
+    },
+    {
+      "id": "HOOK-005",
+      "title": "MemoryCapture Hook",
+      "description": "Hook that extracts and persists relevant information to memory",
+      "acceptance": [
+        "Extracts structured data from LLM response (via post_llm)",
+        "Writes to memory via injected MemoryPort",
+        "Agnostic to memory backend - MdFileAdapter, PostgresAdapter, MAGMA, etc.",
+        "Can be configured to capture: facts, decisions, preferences, todos"
+      ],
+      "priority": "P1"
+    },
+    {
+      "id": "HOOK-006",
+      "title": "Hook Configuration",
+      "description": "Configure hooks per phase in donkey.toml",
+      "acceptance": [
+        "Specify hooks per phase: pre_llm_hooks = [\"rag_context\", \"user_prefs\"]",
+        "Configure hook parameters: rag_context.top_k = 5",
+        "Support built-in hooks by name",
+        "Support custom hook registry"
+      ],
+      "priority": "P1"
+    },
+    {
+      "id": "HOOK-007",
+      "title": "Hook Testing",
+      "description": "Test suite for hook system",
+      "acceptance": [
+        "Test hook chaining (order matters)",
+        "Test short-circuit on rejection",
+        "Test context enrichment flow",
+        "Mock memory port for isolated testing"
+      ],
+      "priority": "P1"
+    }
+  ]
+}
