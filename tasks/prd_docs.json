@@ -184,8 +184,8 @@
         "Document monitoring setup"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "docs/guides/deployment.md created",
       "dependsOn": [
         "DOC-001"
       ]
