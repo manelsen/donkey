@@ -59,12 +59,20 @@ suite "Admin TUI":
 
   test "loadChannelItems populates channels":
     var st = newAdminState()
+    st.runtimeChannels = @["telegram", "discord", "cli"]
     st.loadChannelItems()
-    check st.items.len == 4
+    check st.items.len == 3
     let names = st.items.mapIt(it.name)
     check "telegram" in names
     check "discord" in names
     check "cli" in names
+
+  test "loadChannelItems fallback without runtime channels":
+    var st = newAdminState()
+    st.loadChannelItems()
+    check st.items.len == 1
+    check st.items[0].name == "cli"
+    check st.items[0].status == "active"
 
   test "loadProviderItems populates providers":
     var st = newAdminState()
@@ -112,7 +120,7 @@ suite "Admin TUI":
 
     st.section = asChannels
     st.loadSection()
-    check st.items.len == 4
+    check st.items.len == 1  # fallback: only cli
 
     st.section = asProviders
     st.loadSection()
@@ -132,6 +140,7 @@ suite "Admin TUI":
 
   test "items have correct enabled status":
     var st = newAdminState()
+    st.runtimeChannels = @["telegram", "discord"]
     st.loadChannelItems()
     let telegram = st.items.filterIt(it.name == "telegram")[0]
     check telegram.enabled == true
@@ -139,6 +148,7 @@ suite "Admin TUI":
 
   test "items can be toggled":
     var st = newAdminState()
+    st.runtimeChannels = @["telegram", "discord"]
     st.loadChannelItems()
     var idx = -1
     for i, item in st.items:
@@ -170,7 +180,8 @@ summary: Test user for unit test.
 
     # Create adapter and load users
     let adapter = MdFileAdapter(paddocksDir: tmpDir)
-    st.loadUsersItems(adapter)
+    st.memory = adapter
+    st.loadUsersItems()
 
     # Verify user was loaded
     check st.items.len == 1
@@ -186,7 +197,8 @@ summary: Test user for unit test.
     defer: discard execShellCmd("rm -rf " & tmpDir)
 
     let adapter = MdFileAdapter(paddocksDir: tmpDir)
-    st.loadUsersItems(adapter)
+    st.memory = adapter
+    st.loadUsersItems()
 
     check st.items.len == 0
 
@@ -205,7 +217,8 @@ summary: Test user for unit test.
         "# User " & $i & "\n**Preferred name:** User" & $i & "\n**Access:** " & access)
 
     let adapter = MdFileAdapter(paddocksDir: tmpDir)
-    st.loadUsersItems(adapter)
+    st.memory = adapter
+    st.loadUsersItems()
 
     check st.items.len == 5
     let revokedUsers = st.items.filterIt(it.status == "revoked")

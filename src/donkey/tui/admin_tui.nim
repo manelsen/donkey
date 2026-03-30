@@ -51,6 +51,9 @@ type
     lastRefresh*: float
     catalogLoader*: ModelCatalogLoader
     runtimeProviders*: seq[string]
+    runtimeChannels*: seq[string]
+    runtimeSessionCount*: int
+    memory*: MdFileAdapter
     toast*: Option[Toast]
 
   ChannelInfo* = object
@@ -310,12 +313,21 @@ proc loadAgentItems*(st: var AdminState) =
   ]
 
 proc loadChannelItems*(st: var AdminState) =
-  st.items = @[
-    AdminItem(name: "telegram", description: "Telegram messaging", enabled: true, status: "connected"),
-    AdminItem(name: "discord", description: "Discord integration", enabled: true, status: "connected"),
-    AdminItem(name: "slack", description: "Slack workspace", enabled: false, status: "disconnected"),
-    AdminItem(name: "cli", description: "Command-line interface", enabled: true, status: "active"),
-  ]
+  ## Load channels from runtime daemon status when available.
+  if st.runtimeChannels.len > 0:
+    st.items = @[]
+    for ch in st.runtimeChannels:
+      st.items.add(AdminItem(
+        name: ch,
+        description: ch.capitalizeAscii() & " channel",
+        enabled: true,
+        status: "connected"
+      ))
+  else:
+    ## Fallback when no daemon is running.
+    st.items = @[
+      AdminItem(name: "cli", description: "Command-line interface", enabled: true, status: "active"),
+    ]
 
 proc loadProviderItems*(st: var AdminState) =
   ## Load providers from runtime daemon status when available,
@@ -405,9 +417,10 @@ proc loadPluginItems*(st: var AdminState) =
     AdminItem(name: "mcp", description: "MCP client adapter", enabled: false, status: "disabled"),
   ]
 
-proc loadUsersItems*(st: var AdminState; adapter: MdFileAdapter) =
+proc loadUsersItems*(st: var AdminState) =
   ## Load users from memory adapter into AdminItem list.
-  let users = adapter.listUsers()
+  if st.memory.paddocksDir.len == 0: return
+  let users = st.memory.listUsers()
   st.items = @[]
   for u in users:
     st.items.add(AdminItem(
@@ -426,7 +439,7 @@ proc loadSection*(st: var AdminState) =
   of asModels:    st.loadModelItems()
   of asHooks:     st.loadHookItems()
   of asPlugins:   st.loadPluginItems()
-  of asUsers:     discard  # loaded via IPC
+  of asUsers:     st.loadUsersItems()
 
 proc showToast*(st: var AdminState; msg: string; kind = tkInfo) =
   st.toast = some(Toast(message: msg, kind: kind, timestamp: int64(times.epochTime())))

@@ -68,7 +68,14 @@ proc fetchData(st: var TuiState) =
     st.logs = lr.value
   let homeDir = st.sockPath.parentDir()
   let memory = MdFileAdapter(paddocksDir: homeDir / "paddocks")
-  st.users = memory.listUsers()
+  st.memory = memory
+  st.users = st.memory.listUsers()
+
+  ## Wire IPC status into admin panel state.
+  st.admin.runtimeProviders = st.status.providers
+  st.admin.runtimeChannels = st.status.channels
+  st.admin.runtimeSessionCount = st.status.sessionCount
+  st.admin.memory = st.memory
 
 # ── rendering ─────────────────────────────────────────────────────────────────
 
