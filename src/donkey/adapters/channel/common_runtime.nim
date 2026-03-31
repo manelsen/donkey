@@ -396,6 +396,18 @@ func buildWhoamiText*(userId: UserId; sessionId, channelId: string): string =
   "*Session ID:* " & (if sessionId.len > 0: "`" & sessionId & "`" else: "_nenhuma_") & "\n" &
   "*Channel ID:* `" & channelId & "`"
 
+proc buildMenuButtons*(): seq[seq[(string, string)]] =
+  ## Main menu buttons grouped by category.
+  @[
+    @[("🔍 Modelos", "models"), ("🧠 Thinking", "think"), ("💰 Budget", "budget")],
+    @[("📖 Ajuda", "help"), ("📊 Status", "status"), ("🩺 Doctor", "doctor")],
+    @[("🗑️ Esquecer", "forget"), ("♻️ Reset", "reset"), ("🔗 My Code", "mycode")]
+  ]
+
+func buildMenuText*(): string =
+  "🫏 *Donkey Menu*\n\n" &
+  "Selecione uma categoria ou comando abaixo para configurar sua sessão ou obter informações."
+
 func buildStartIntroText*(): string =
   "Olá! Sou o Donkey, seu assistente pessoal.\n\n" &
   "Envie qualquer mensagem para começarmos.\n" &

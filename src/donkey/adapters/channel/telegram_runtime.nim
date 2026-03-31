@@ -366,6 +366,10 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
     )).isOkOr:
       discard
     return true
+  of lcaShowMenu:
+    discard tgAdapter.sendKeyboard(
+      msg.userId, buildMenuText(), buildMenuButtons(), replyTo = msg.channelId)
+    return true
   of lcaShowWhoami:
     let sessId = if sm.hasSession(msg.userId): "active" else: "" # SessionManager doesn't expose sessionId easily here, using placeholder
     tgAdapter.send(OutboundMessage(

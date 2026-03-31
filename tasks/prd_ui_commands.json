@@ -17,7 +17,7 @@
         "bash scripts/check_boundaries.sh passes"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "dependsOn": []
     },

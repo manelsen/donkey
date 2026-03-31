@@ -268,6 +268,13 @@ proc handleDiscordEvent*(sm: var SessionManager;
       of lcaStartIntro:
         sendDiscordEmbed(event, dcAdapter, userId,
           "👋 Donkey", buildStartIntroText(), 0x5865F2, logger)
+      of lcaShowMenu:
+        dcAdapter.sendInteractionKeyboard(
+          event.interactionId, event.interactionToken,
+          buildMenuText(), 0x5865F2, buildMenuButtons()).isOkOr:
+            core_log.log(logger, core_log.lvlWarn, "dc menu keyboard: " & error)
+            sendDiscordEmbed(event, dcAdapter, userId,
+              "🫏 Menu", buildMenuText(), 0x5865F2, logger)
       of lcaShowWhoami:
         let sessId = if sm.hasSession(userId): "active" else: ""
         sendDiscordEmbed(event, dcAdapter, userId,
