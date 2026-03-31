@@ -9,7 +9,7 @@ import ../../ports/provider
 
 const ThinkLevels* = ["off", "low", "medium", "high"]
 const BudgetPolicies* = ["cheap-first", "balanced", "quality-first"]
-const ModelPageSize* = 8
+const ModelPageSize* = 6  ## Discord: máx 5 action rows. 6 modelos / 2 por row = 3 rows + 1 nav = 4 rows (seguro)
 
 const ModelMenu* = [
   ("zai",        @["glm-5",      "glm-4.7",      "glm-4.6"]),

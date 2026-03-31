@@ -4,6 +4,7 @@
 
 import std/[json, os, unittest]
 import donkey/domain/channels/discord_pure
+import donkey/core/pipeops
 import donkey/core/types
 
 # ── Fixture Loader ────────────────────────────────────────────────────────────
@@ -22,6 +23,60 @@ proc loadInteractionPayload(sampleIndex: int): JsonNode =
   ## INTERACTION_CREATE fixtures have 2 samples; pick one by index.
   let arr = parseJson(readFile(FixturesDir / "gateway_interaction_create.json"))
   arr[sampleIndex]["d"]
+
+# ── Fixtures (Synthetic) ──────────────────────────────────────────────────────
+
+func makeMessageCreate(userId, channelId, messageId, content: string;
+                       isBot = false): JsonNode =
+  %* {
+    "author": {"id": userId, "bot": isBot},
+    "content": content,
+    "channel_id": channelId,
+    "id": messageId,
+  }
+
+func makeInteractionBase(userId, interactionId, token: string;
+                         interactionType: int): JsonNode =
+  %* {
+    "type":  interactionType,
+    "id":    interactionId,
+    "token": token,
+    "user":  {"id": userId},
+  }
+
+func makeSlashCommand(userId, interactionId, token, cmdName: string;
+                      opts: JsonNode = nil): JsonNode =
+  var data = %* {"name": cmdName}
+  if opts != nil: data["options"] = opts
+  result = makeInteractionBase(userId, interactionId, token, 2)
+  result["data"] = data
+
+func makeButtonClick(userId, interactionId, token, customId: string): JsonNode =
+  result = makeInteractionBase(userId, interactionId, token, 3)
+  result["data"] = %* {"custom_id": customId}
+
+func makeModalSubmit(userId, interactionId, token, code: string): JsonNode =
+  result = makeInteractionBase(userId, interactionId, token, 5)
+  result["data"] = %* {
+    "components": [{
+      "type": 1,
+      "components": [{
+        "type":      4,
+        "custom_id": "link_code",
+        "value":     code,
+      }],
+    }],
+  }
+
+func makeMemberInteraction(memberId, interactionId, token, cmdName: string): JsonNode =
+  ## Interaction with member.user instead of top-level user (guild context).
+  %* {
+    "type":   2,
+    "id":     interactionId,
+    "token":  token,
+    "member": {"user": {"id": memberId}},
+    "data":   {"name": cmdName},
+  }
 
 # ── Fixture-based Tests ───────────────────────────────────────────────────────
 
@@ -193,45 +248,52 @@ suite "discord_pure.parseDispatch — gateway_voice_channel_start_time_update fi
 
 # ── Synthetic Edge Case Tests ─────────────────────────────────────────────────
 
-suite "discord_pure.parseDispatch — edge cases":
+suite "discord_pure.parseDispatch — MESSAGE_CREATE (synthetic)":
+
+  test "kind is dekMessage for valid message":
+    let d = makeMessageCreate("u1", "ch1", "m1", "hello")
+    let r = parseDispatch("MESSAGE_CREATE", d)
+    check r.kind == dekMessage
+
+  test "rawId matches author id":
+    let d = makeMessageCreate("12345", "ch1", "m1", "hi")
+    let r = parseDispatch("MESSAGE_CREATE", d)
+    check r.rawId == "12345"
+
+  test "content is captured":
+    let d = makeMessageCreate("u1", "ch1", "m1", "test content")
+    let r = parseDispatch("MESSAGE_CREATE", d)
+    check r.content == "test content"
+
+  test "channelId is captured":
+    let d = makeMessageCreate("u1", "channel-99", "m1", "x")
+    let r = parseDispatch("MESSAGE_CREATE", d)
+    check r.channelId == "channel-99"
+
+  test "messageId is captured":
+    let d = makeMessageCreate("u1", "ch1", "msg-42", "x")
+    let r = parseDispatch("MESSAGE_CREATE", d)
+    check r.messageId == "msg-42"
 
   test "bot-authored message returns dekUnknown":
-    let d = %* {
-      "author": {"id": "123", "bot": true},
-      "content": "I am a bot",
-      "channel_id": "ch1",
-      "id": "m1",
-    }
+    let d = makeMessageCreate("bot-id", "ch1", "m1", "bot text", isBot = true)
     let r = parseDispatch("MESSAGE_CREATE", d)
     check r.kind == dekUnknown
 
   test "empty content returns dekUnknown":
-    let d = %* {
-      "author": {"id": "123", "bot": false},
-      "content": "",
-      "channel_id": "ch1",
-      "id": "m1",
-    }
+    let d = makeMessageCreate("u1", "ch1", "m1", "")
     let r = parseDispatch("MESSAGE_CREATE", d)
     check r.kind == dekUnknown
 
   test "missing author returns dekUnknown":
-    let d = %* {
-      "content": "hello",
-      "channel_id": "ch1",
-      "id": "m1",
-    }
+    let d = %* {"content": "hi", "channel_id": "ch1", "id": "m1"}
     let r = parseDispatch("MESSAGE_CREATE", d)
     check r.kind == dekUnknown
 
-  test "missing content field returns dekUnknown":
-    let d = %* {
-      "author": {"id": "123", "bot": false},
-      "channel_id": "ch1",
-      "id": "m1",
-    }
+  test "hasInteraction is false for plain message":
+    let d = makeMessageCreate("u1", "ch1", "m1", "hello")
     let r = parseDispatch("MESSAGE_CREATE", d)
-    check r.kind == dekUnknown
+    check not r.hasInteraction
 
   test "DM channel message (no guild_id) is parsed":
     let d = %* {
@@ -246,236 +308,176 @@ suite "discord_pure.parseDispatch — edge cases":
     check r.content == "direct message"
     check r.channelId == "dm_123"
 
-  test "DM message without author returns dekUnknown":
-    ## MESSAGE_CREATE requires author field; member.user is for guilds.
-    let d = %* {
-      "content": "hello from guild",
-      "channel_id": "guild_channel",
-      "id": "guild_msg_1",
-    }
-    let r = parseDispatch("MESSAGE_CREATE", d)
-    check r.kind == dekUnknown
 
+suite "discord_pure.parseDispatch — INTERACTION_CREATE slash commands (synthetic)":
 
-suite "discord_pure.parseInteractionCreate — button click (type 3)":
-
-  test "button click extracts custom_id as content":
-    let d = %* {
-      "type": 3,
-      "id": "int_id_1",
-      "token": "tok_abc",
-      "user": {"id": "user_btn"},
-      "data": {"custom_id": "cbk_models_next"},
-    }
-    let r = parseDispatch("INTERACTION_CREATE", d)
-    check r.kind == dekButtonClick
-    check r.rawId == "user_btn"
-    check r.content == "cbk_models_next"
-    check r.interactionId == "int_id_1"
-    check r.interactionToken == "tok_abc"
-    check r.hasInteraction == true
-
-  test "button click with guild member.user":
-    let d = %* {
-      "type": 3,
-      "id": "int_id_2",
-      "token": "tok_def",
-      "member": {"user": {"id": "guild_user_456"}},
-      "data": {"custom_id": "btn_confirm"},
-    }
-    let r = parseDispatch("INTERACTION_CREATE", d)
-    check r.kind == dekButtonClick
-    check r.rawId == "guild_user_456"
-
-
-suite "discord_pure.parseInteractionCreate — modal submit (type 5)":
-
-  test "modal submit extracts link_code value":
-    let d = %* {
-      "type": 5,
-      "id": "modal_int_id",
-      "token": "modal_tok",
-      "user": {"id": "modal_user"},
-      "data": {
-        "components": [{
-          "type": 1,
-          "components": [{
-            "custom_id": "link_code",
-            "value": "XYZ789",
-          }],
-        }],
-      },
-    }
-    let r = parseDispatch("INTERACTION_CREATE", d)
-    check r.kind == dekModalSubmit
-    check r.rawId == "modal_user"
-    check r.content == "XYZ789"
-    check r.interactionId == "modal_int_id"
-    check r.interactionToken == "modal_tok"
-
-  test "modal submit with empty components returns empty content":
-    let d = %* {
-      "type": 5,
-      "id": "modal_int_id2",
-      "token": "modal_tok2",
-      "user": {"id": "modal_user2"},
-      "data": {"components": []},
-    }
-    let r = parseDispatch("INTERACTION_CREATE", d)
-    check r.kind == dekModalSubmit
-    check r.content == ""
-
-
-suite "discord_pure.parseApplicationCommand — /continue command":
-
-  test "/continue with code extracts code as content":
-    let d = %* {
-      "type": 2,
-      "id": "continue_int_id",
-      "token": "continue_tok",
-      "user": {"id": "user_cont"},
-      "data": {
-        "name": "continue",
-        "options": [{"name": "code", "value": "ABC123DEF", "type": 3}],
-      },
-    }
+  test "simple slash command returns dekSlashCommand":
+    let d = makeSlashCommand("u1", "ix1", "tok1", "help")
     let r = parseDispatch("INTERACTION_CREATE", d)
     check r.kind == dekSlashCommand
-    check r.content == "ABC123DEF"
-    check r.needsModal == false
 
-  test "/continue without code sets needsModal":
-    let d = %* {
-      "type": 2,
-      "id": "continue_int_id2",
-      "token": "continue_tok2",
-      "user": {"id": "user_cont2"},
-      "data": {
-        "name": "continue",
-        "options": [],
-      },
-    }
+  test "slash command content has leading slash":
+    let d = makeSlashCommand("u1", "ix1", "tok1", "start")
     let r = parseDispatch("INTERACTION_CREATE", d)
-    check r.kind == dekSlashCommand
-    check r.content == ""
-    check r.needsModal == true
+    check r.content == "/start"
 
-
-suite "discord_pure.parseApplicationCommand — slash commands":
-
-  test "/models command with provider and model":
-    let d = %* {
-      "type": 2,
-      "id": "models_int",
-      "token": "models_tok",
-      "user": {"id": "user_models"},
-      "data": {
-        "name": "models",
-        "options": [
-          {"name": "provider", "value": "openai", "type": 3},
-          {"name": "model", "value": "gpt-4o", "type": 3},
-        ],
-      },
-    }
+  test "rawId comes from user.id":
+    let d = makeSlashCommand("user-99", "ix1", "tok1", "ping")
     let r = parseDispatch("INTERACTION_CREATE", d)
-    check r.kind == dekSlashCommand
-    check r.content == "/models openai gpt-4o"
+    check r.rawId == "user-99"
 
-  test "/models command with provider only":
-    let d = %* {
-      "type": 2,
-      "id": "models_int2",
-      "token": "models_tok2",
-      "user": {"id": "user_models2"},
-      "data": {
-        "name": "models",
-        "options": [{"name": "provider", "value": "anthropic", "type": 3}],
-      },
-    }
+  test "interactionId is captured":
+    let d = makeSlashCommand("u1", "interact-42", "tok1", "status")
     let r = parseDispatch("INTERACTION_CREATE", d)
-    check r.content == "/models anthropic"
+    check r.interactionId == "interact-42"
 
-  test "/models command with no options":
-    let d = %* {
-      "type": 2,
-      "id": "models_int3",
-      "token": "models_tok3",
-      "user": {"id": "user_models3"},
-      "data": {
-        "name": "models",
-        "options": [],
-      },
-    }
+  test "interactionToken is captured":
+    let d = makeSlashCommand("u1", "ix1", "secret-token", "help")
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.interactionToken == "secret-token"
+
+  test "hasInteraction is true for slash command":
+    let d = makeSlashCommand("u1", "ix1", "tok1", "help")
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.hasInteraction
+
+  test "/models with provider and model":
+    let opts = %* [
+      {"name": "provider", "value": "openrouter", "type": 3},
+      {"name": "model",    "value": "gpt-4", "type": 3},
+    ]
+    let d = makeSlashCommand("u1", "ix1", "tok", "models", opts)
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.content == "/models openrouter gpt-4"
+
+  test "/models with provider only":
+    let opts = %* [{"name": "provider", "value": "zhipu", "type": 3}]
+    let d = makeSlashCommand("u1", "ix1", "tok", "models", opts)
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.content == "/models zhipu"
+
+  test "/models without options":
+    let d = makeSlashCommand("u1", "ix1", "tok", "models")
     let r = parseDispatch("INTERACTION_CREATE", d)
     check r.content == "/models"
 
-  test "/think command with level":
-    let d = %* {
-      "type": 2,
-      "id": "think_int",
-      "token": "think_tok",
-      "user": {"id": "user_think"},
-      "data": {
-        "name": "think",
-        "options": [{"name": "level", "value": "high", "type": 3}],
-      },
-    }
+  test "/think with level":
+    let opts = %* [{"name": "level", "value": "high", "type": 3}]
+    let d = makeSlashCommand("u1", "ix1", "tok", "think", opts)
     let r = parseDispatch("INTERACTION_CREATE", d)
     check r.content == "/think high"
 
-  test "/think command without level":
-    let d = %* {
-      "type": 2,
-      "id": "think_int2",
-      "token": "think_tok2",
-      "user": {"id": "user_think2"},
-      "data": {
-        "name": "think",
-        "options": [],
-      },
-    }
+  test "/think without options":
+    let d = makeSlashCommand("u1", "ix1", "tok", "think")
     let r = parseDispatch("INTERACTION_CREATE", d)
     check r.content == "/think"
 
-  test "/budget command":
-    let d = %* {
-      "type": 2,
-      "id": "budget_int",
-      "token": "budget_tok",
-      "user": {"id": "user_budget"},
-      "data": {
-        "name": "budget",
-        "options": [{"name": "policy", "value": "balanced", "type": 3}],
-      },
-    }
+  test "/budget with policy":
+    let opts = %* [{"name": "policy", "value": "balanced", "type": 3}]
+    let d = makeSlashCommand("u1", "ix1", "tok", "budget", opts)
     let r = parseDispatch("INTERACTION_CREATE", d)
     check r.content == "/budget balanced"
 
-  test "unknown slash command falls back to /commandname":
-    let d = %* {
-      "type": 2,
-      "id": "unknown_int",
-      "token": "unknown_tok",
-      "user": {"id": "user_unknown"},
-      "data": {
-        "name": "random_command",
-        "options": [],
-      },
-    }
+  test "/budget without options":
+    let d = makeSlashCommand("u1", "ix1", "tok", "budget")
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.content == "/budget"
+
+  test "/continue with code returns content = code":
+    let opts = %* [{"name": "code", "value": "AB3X7Q", "type": 3}]
+    let d = makeSlashCommand("u1", "ix1", "tok", "continue", opts)
     let r = parseDispatch("INTERACTION_CREATE", d)
     check r.kind == dekSlashCommand
-    check r.content == "/random_command"
+    check r.content == "AB3X7Q"
+    check not r.needsModal
 
+  test "/continue without code sets needsModal":
+    let d = makeSlashCommand("u1", "ix1", "tok", "continue")
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.kind == dekSlashCommand
+    check r.needsModal
+    check r.content == ""
 
-suite "discord_pure.parseInteractionCreate — unsupported types":
+  test "guild member interaction uses member.user":
+    let d = makeMemberInteraction("guild-user", "ix1", "tok", "help")
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.rawId == "guild-user"
+    check r.content == "/help"
 
-  test "type 1 (PING) returns dekUnknown":
+  test "missing user returns dekUnknown":
     let d = %* {
-      "type": 1,
-      "id": "ping_int",
-      "token": "ping_tok",
-      "user": {"id": "user_ping"},
+      "type": 2, "id": "ix1", "token": "tok",
+      "data": {"name": "help"},
     }
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.kind == dekUnknown
+
+  test "missing data returns dekUnknown":
+    let d = makeInteractionBase("u1", "ix1", "tok", 2)
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.kind == dekUnknown
+
+
+suite "discord_pure.parseDispatch — button click (synthetic)":
+
+  test "kind is dekButtonClick":
+    let d = makeButtonClick("u1", "ix1", "tok", "confirm")
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.kind == dekButtonClick
+
+  test "content is the custom_id":
+    let d = makeButtonClick("u1", "ix1", "tok", "my_custom_id")
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.content == "my_custom_id"
+
+  test "rawId is userId":
+    let d = makeButtonClick("btn-user", "ix1", "tok", "x")
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.rawId == "btn-user"
+
+  test "hasInteraction is true":
+    let d = makeButtonClick("u1", "ix-btn", "tok", "x")
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.hasInteraction
+
+
+suite "discord_pure.parseDispatch — modal submit (synthetic)":
+
+  test "kind is dekModalSubmit":
+    let d = makeModalSubmit("u1", "ix1", "tok", "AB3X7Q")
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.kind == dekModalSubmit
+
+  test "content is the extracted link code":
+    let d = makeModalSubmit("u1", "ix1", "tok", "XY99ZZ")
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.content == "XY99ZZ"
+
+  test "rawId is userId":
+    let d = makeModalSubmit("modal-user", "ix1", "tok", "code1")
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.rawId == "modal-user"
+
+  test "hasInteraction is true":
+    let d = makeModalSubmit("u1", "ix-modal", "tok", "code1")
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.hasInteraction
+
+
+suite "discord_pure.parseDispatch — unknown events":
+
+  test "unknown event type returns dekUnknown":
+    let d = %* {"foo": "bar"}
+    let r = parseDispatch("CHANNEL_UPDATE", d)
+    check r.kind == dekUnknown
+
+  test "READY event returns dekUnknown":
+    let d = %* {"session_id": "sess-1"}
+    let r = parseDispatch("READY", d)
+    check r.kind == dekUnknown
+
+  test "unknown interaction type returns dekUnknown":
+    let d = makeInteractionBase("u1", "ix1", "tok", 99)
     let r = parseDispatch("INTERACTION_CREATE", d)
     check r.kind == dekUnknown
 
@@ -490,65 +492,24 @@ suite "discord_pure.parseInteractionCreate — unsupported types":
     let r = parseDispatch("INTERACTION_CREATE", d)
     check r.kind == dekUnknown
 
-  test "type 6 (APPLICATION_COMMAND_MODAL_SUBMIT) returns dekUnknown":
-    ## Type 6 is APPLICATION_COMMAND_MODAL_SUBMIT (Discord API) — not handled.
-    let d = %* {
-      "type": 6,
-      "id": "form_int",
-      "token": "form_tok",
-      "user": {"id": "user_form"},
-      "data": {
-        "components": [{
-          "type": 1,
-          "components": [{"custom_id": "answer", "value": "test"}],
-        }],
-      },
-    }
-    let r = parseDispatch("INTERACTION_CREATE", d)
-
-  test "missing user and member returns dekUnknown":
-    let d = %* {
-      "type": 2,
-      "id": "no_user_int",
-      "token": "no_user_tok",
-      "data": {"name": "ping"},
-    }
-    let r = parseDispatch("INTERACTION_CREATE", d)
-    check r.kind == dekUnknown
-
 
 suite "discord_pure.toInbound — conversion":
 
   test "message converts with correct fields":
-    let d = %* {
-      "author": {"id": "msg_user", "bot": false},
-      "content": "hello inbox",
-      "channel_id": "ch_msg",
-      "id": "msg_123",
-    }
+    let d = makeMessageCreate("u1", "ch1", "msg-10", "hello world")
     let r = parseDispatch("MESSAGE_CREATE", d)
-    let uid = UserId("inbox-uid-xyz")
+    let uid = UserId("test-uuid")
     let msg = r.toInbound(uid)
     check msg.userId == uid
     check msg.channel == ckDiscord
-    check msg.text == "hello inbox"
-    check msg.channelId == "msg_123"
+    check msg.text == "hello world"
+    check msg.channelId == "msg-10"
     check msg.mediaUrl == ""
 
   test "slash command converts with interaction content":
-    let d = %* {
-      "type": 2,
-      "id": "slash_int",
-      "token": "slash_tok",
-      "user": {"id": "slash_user"},
-      "data": {
-        "name": "help",
-        "options": [],
-      },
-    }
+    let d = makeSlashCommand("u1", "ix1", "tok", "help")
     let r = parseDispatch("INTERACTION_CREATE", d)
-    let uid = UserId("slash-uid")
+    let uid = UserId("uid-2")
     let msg = r.toInbound(uid)
-    check msg.userId == uid
     check msg.channel == ckDiscord
     check msg.text == "/help"

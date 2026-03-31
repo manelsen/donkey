@@ -127,7 +127,6 @@ proc parseSearchNums(lines: seq[string]): seq[int]
     if line.startsWith("* SEARCH"):
       let rest = line[8 .. ^1].strip()
       if rest.len == 0: return
-      if rest.len == 0: return
       for p in rest.splitWhitespace():
         try: result.add(parseInt(p))
         except ValueError: discard
@@ -190,6 +189,7 @@ proc smtpClose(s: SmtpSession) =
     discard s.smtpSend("QUIT")
     s.sock.close()
   except IOError: discard
+
 proc newSmtpSession(host: string; port: int;
                     startTls: bool): Result[SmtpSession, string] =
   try:

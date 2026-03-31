@@ -303,6 +303,8 @@ proc close*(bt: var BrowserTools) =
   bt.pageTargetId = ""
   bt.currentUrl = ""
 
+# ── invoke — ToolPort method ─────────────────────────────────────────────────
+
 proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
   case call.name
   of "browser_navigate":
