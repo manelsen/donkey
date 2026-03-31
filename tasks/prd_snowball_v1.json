@@ -1,0 +1,125 @@
+{
+  "name": "The Snowball - Hardening to Postgreyskull",
+  "branchName": "ralph/snowball-v1",
+  "description": "Integrated roadmap from production hardening to vectorized graph memory.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Mandatory Sandbox & Dev Mode",
+      "description": "Enforce sandboxing by default and implement --dev-mode flag.",
+      "acceptanceCriteria": [
+        "Implement --dev-mode CLI flag",
+        "Fail if sandbox_mode is 'none' in production",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-002",
+      "title": "Execution Timeouts & Resource Killers",
+      "description": "Enforce timeouts and resource limits for tool/provider calls.",
+      "acceptanceCriteria": [
+        "Add exec_timeout and memory_limit to donkey.toml",
+        "Implement SIGKILL for sandboxed processes exceeding limits",
+        "nimble test passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "",
+      "dependsOn": ["US-001"]
+    },
+    {
+      "id": "US-003",
+      "title": "JSON Logging & Metrics Endpoint",
+      "description": "Standardize observability with structured logs and metrics.",
+      "acceptanceCriteria": [
+        "Implement JSON sink in core/log.nim",
+        "Include request_id and latency in all logs",
+        "Create basic /metrics HTTP endpoint",
+        "nimble test passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-004",
+      "title": "ZenAdapter (Multi-Protocol Gateway)",
+      "description": "Unified gateway for OpenAI, Anthropic, and Gemini protocols.",
+      "acceptanceCriteria": [
+        "Implement adapters/provider/zen.nim",
+        "Map opencode/ models to respective protocols",
+        "Satisfy ProviderPort concept",
+        "nimble test passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": ["US-003"]
+    },
+    {
+      "id": "US-005",
+      "title": "Advanced Reliability (Retry, Failover, Circuit Breaker)",
+      "description": "Implement automatic resilience for provider instability.",
+      "acceptanceCriteria": [
+        "Implement Exponential Backoff Retry in HttpPort",
+        "Implement automatic Failover on 5xx errors",
+        "Implement basic Circuit Breaker",
+        "nimble test passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": ["US-004"]
+    },
+    {
+      "id": "US-006",
+      "title": "Network Boundary (Deny by Default)",
+      "description": "Enforce strict network allowlists for tools and providers.",
+      "acceptanceCriteria": [
+        "Implement outbound=deny default policy",
+        "Implement tool and provider allowlists",
+        "Block private/metadata IPs at DNS layer",
+        "nimble test passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": ["US-001"]
+    },
+    {
+      "id": "US-007",
+      "title": "Postgreyskull - Vector Integration",
+      "description": "Episodic memory using vector embeddings in PostgreSQL.",
+      "acceptanceCriteria": [
+        "Implement PostgresMemoryAdapter with pgvector",
+        "Implement bidirectional sync between DB and .md files",
+        "Verify with real PostgreSQL in Docker",
+        "nimble test passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "dependsOn": ["US-005"]
+    },
+    {
+      "id": "US-008",
+      "title": "Hybrid Semantic Search (Vector + Graph)",
+      "description": "Hybrid search combining pgvector and Apache AGE Cypher traversals.",
+      "acceptanceCriteria": [
+        "Implement Apache AGE graph schema",
+        "Create hybrid search function",
+        "Integrate hybrid search into RAG hook",
+        "nimble test passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "",
+      "dependsOn": ["US-007"]
+    }
+  ]
+}

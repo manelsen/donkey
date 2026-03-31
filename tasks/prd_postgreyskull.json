@@ -1,0 +1,101 @@
+{
+  "name": "Phases 5 & 6 - Advanced Intelligence & Postgreyskull Integration",
+  "branchName": "ralph/postgreyskull-migration",
+  "description": "Transition to ZenAdapter, refined orchestration, and PostgreSQL + pgvector + Apache AGE hybrid memory.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Implement ZenAdapter Multi-Protocol Gateway",
+      "description": "As a developer, I want a single adapter that routes requests to different providers using the OpenCode Zen protocol.",
+      "acceptanceCriteria": [
+        "Create ZenAdapter in src/donkey/adapters/provider/zen.nim",
+        "Implement mapping for opencode/<model-id> to respective provider endpoints",
+        "Support completion and streaming via Zen protocol",
+        "Satisfy ProviderPort concept",
+        "nimble test passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-002",
+      "title": "Refine Multi-Agent Coordination Logic",
+      "description": "As a user, I want the Orchestrator to coordinate more effectively with Tool and Memory agents.",
+      "acceptanceCriteria": [
+        "Optimize OrchestratorAgent message loops in src/donkey/app/orchestrator.nim",
+        "Implement parallel worker spawning/cleanup based on session lifecycle",
+        "Add explicit amkCancel propagation to all sub-agents",
+        "bash scripts/run_tests.sh passes",
+        "bash scripts/check_boundaries.sh passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-003",
+      "title": "Token Tracking and Advanced Failover",
+      "description": "As an operator, I want to track token usage per session and have the system automatically failover.",
+      "acceptanceCriteria": [
+        "Implement token usage recording in src/donkey/domain/usage_tracking.nim",
+        "Enhance failover.nim to trigger based on status codes/latency",
+        "Expose usage stats via the /status command",
+        "nimble test passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-004",
+      "title": "Postgreyskull - Schema and Vector Integration",
+      "description": "As a system, I need a PostgreSQL schema with pgvector support to store and retrieve embeddings.",
+      "acceptanceCriteria": [
+        "Create SQL migration scripts for donkey_memories table",
+        "Implement PostgresMemoryAdapter with pgvector support (4096 dimensions)",
+        "Implement vector insertion and similarity search in postgres_memory.nim",
+        "Verify with real PostgreSQL instance in Docker",
+        "nimble test passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": ["US-002"]
+    },
+    {
+      "id": "US-005",
+      "title": "Hybrid Memory Sync (DB <-> Markdown)",
+      "description": "As a user, I want my Markdown paddock files to stay in sync with the PostgreSQL database.",
+      "acceptanceCriteria": [
+        "Implement ingestion mechanism from .md files to DB",
+        "Implement export mechanism from DB to .md files (Markdown View)",
+        "Ensure MdFileAdapter acts as fallback",
+        "nimble test passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "dependsOn": ["US-004"]
+    },
+    {
+      "id": "US-006",
+      "title": "Hybrid Semantic Search (Vector + Cypher)",
+      "description": "As an agent, I want to perform hybrid searches combining vector similarity with AGE graph traversal.",
+      "acceptanceCriteria": [
+        "Implement Apache AGE graph schema (Nodes: Person, Fact, Memory; Edges: KNOWS, MENTIONS)",
+        "Create search function combining pgvector hits with Cypher results",
+        "Integrate hybrid search into RAG context hook",
+        "Verify with real PostgreSQL/AGE instance in Docker",
+        "nimble test passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "",
+      "dependsOn": ["US-005"]
+    }
+  ]
+}

@@ -77,6 +77,7 @@ Options:
   --version        Print version and exit
   --help           Show this help
   --config <path>  Path to """ & ConfigFileName & """  (default: ~/""" & HomeDirName & "/" & ConfigFileName & """)
+  --dev-mode       Enable development mode (allows sandbox=none)
 
 Commands:
   setup                          Interactive first-run configuration wizard
@@ -1830,6 +1831,7 @@ proc main =
   var args: seq[string] = @[]
   var logsFollow = false
   var logsCat    = false
+  var devMode    = false
 
   for kind, key, val in getopt():
     case kind
@@ -1839,6 +1841,7 @@ proc main =
       of "help":    printHelp();    quit(0)
       of "config":  configPath = val
       of "cat":     logsCat    = true
+      of "dev-mode": devMode   = true
       else: discard
     of cmdShortOption:
       case key
@@ -1868,6 +1871,12 @@ proc main =
         putEnv(s[0 ..< eq].strip(), s[eq + 1 .. ^1].strip())
 
   let cfg = loadConfig(configPath)
+
+  if not devMode and cfg.sandboxMode == smNone:
+    stderr.writeLine "Security Error: Sandbox mode 'none' is only allowed in --dev-mode"
+    stderr.writeLine "Enable --dev-mode if you are in development, or set sandbox.mode = \"docker\" in donkey.toml"
+    quit(1)
+
   ringInit()            ## enable log ring buffer before the first Logger is created
   agentEventRingInit()  ## enable agent event ring buffer
   enableHumanLog()

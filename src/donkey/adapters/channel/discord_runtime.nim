@@ -86,12 +86,16 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
                             userId: UserId;
                             command: CommandDecision;
                             modelCatalogLoader: ModelCatalogLoader;
+                            toolsCount: int;
+                            toolClientsCount: int;
+                            daemonStartMs: int64;
+                            msgSeq: var int;
                             logger: Logger): bool =
   case command.kind
   of cmdConfig:
     dcAdapter.sendInteractionKeyboard(
       event.interactionId, event.interactionToken,
-      memory.buildConfigText(userId), 0x5865F2, buildConfigButtons()).isOkOr:
+      memory.buildConfigText(userId), buildConfigButtons()).isOkOr:
         core_log.log(logger, core_log.lvlWarn, "dc config keyboard: " & error)
         sendDiscordEmbed(event, dcAdapter, userId,
           "⚙️ Config", memory.buildConfigText(userId), 0x5865F2, logger)
@@ -177,6 +181,10 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
                              userId: UserId;
                              callback: CallbackDecision;
                              modelCatalogLoader: ModelCatalogLoader;
+                             toolsCount: int;
+                             toolClientsCount: int;
+                             daemonStartMs: int64;
+                             msgSeq: var int;
                              logger: Logger): bool =
   logger.info("dc callback " & $callback.kind & " from " & $userId)
   case callback.kind
@@ -291,7 +299,7 @@ proc handleDiscordEvent*(sm: var SessionManager;
       of lcaShowMenu:
         dcAdapter.sendInteractionKeyboard(
           event.interactionId, event.interactionToken,
-          buildMenuText(), 0x5865F2, buildMenuButtons()).isOkOr:
+          buildMenuText(), buildMenuButtons()).isOkOr:
             core_log.log(logger, core_log.lvlWarn, "dc menu keyboard: " & error)
             sendDiscordEmbed(event, dcAdapter, userId,
               "🫏 Menu", buildMenuText(), 0x5865F2, logger)
@@ -348,7 +356,7 @@ proc handleDiscordEvent*(sm: var SessionManager;
           else: "Nenhuma conversa ativa para reiniciar."
         sendDiscordEmbed(event, dcAdapter, userId, "ℹ️ Info", errText, 0xED4245, logger)
     of crUi:
-      discard handleDiscordUiCommand(event, dcAdapter, kbdMsgIds, memory, userId, command, modelCatalogLoader, logger)
+      discard handleDiscordUiCommand(event, dcAdapter, kbdMsgIds, memory, userId, command, modelCatalogLoader, toolsCount, toolClientsCount, daemonStartMs, msgSeq, logger)
     of crPing:
       let pingText = buildPingText(memory, userId, completeBuilder)
       let pingColor = if "error" in pingText: 0xED4245 else: 0x57F287
@@ -391,7 +399,7 @@ proc handleDiscordEvent*(sm: var SessionManager;
       CallbackRequest(channel: ckDiscord, data: event.content))
     case callback.route
     of cbrUi:
-      discard handleDiscordUiCallback(event, dcAdapter, kbdMsgIds, memory, userId, callback, modelCatalogLoader, logger)
+      discard handleDiscordUiCallback(event, dcAdapter, kbdMsgIds, memory, userId, callback, modelCatalogLoader, toolsCount, toolClientsCount, daemonStartMs, msgSeq, logger)
     of cbrSessionTask:
       let entry = sm.getOrCreate(userId)
       inc msgSeq
