@@ -1,0 +1,107 @@
+{
+  "name": "Slash Commands UI Execution Completion",
+  "branchName": "ralph/slash-commands-ui",
+  "description": "Implement missing slash command UI executions to achieve feature parity with OpenClaw",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Implement /whoami command execution",
+      "description": "As a user, I want to use /whoami so that I can see my internal Donkey ID, my current active Session ID, and my channel information.",
+      "acceptanceCriteria": [
+        "Add lcaShowWhoami handler in src/donkey/adapters/channel/telegram_runtime.nim",
+        "Add lcaShowWhoami handler in src/donkey/adapters/channel/discord_runtime.nim",
+        "Render a message containing the mapped UserId (UUID)",
+        "Display the current active sessionId from the SessionManager (if active)",
+        "Display the raw channel ID (e.g., Telegram Chat ID / Discord User ID)",
+        "bash scripts/run_tests.sh passes",
+        "bash scripts/check_boundaries.sh passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-002",
+      "title": "Implement interactive /menu command",
+      "description": "As a user, I want an interactive /menu so that I can easily navigate and execute commands without typing them out.",
+      "acceptanceCriteria": [
+        "Add lcaShowMenu handler in telegram_runtime.nim and discord_runtime.nim",
+        "Group commands into logical categories (Navigation, Configuration, Tasks, System)",
+        "Render the menu using inline keyboards (buttons) for category selection",
+        "Support multi-page navigation if the menu exceeds channel limits (similar to /models implementation)",
+        "bash scripts/run_tests.sh passes",
+        "bash scripts/check_boundaries.sh passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-003",
+      "title": "Implement /config UI execution",
+      "description": "As a user, I want to use /config so that I can view and manage my runtime configuration interactively.",
+      "acceptanceCriteria": [
+        "Implement UI rendering for cmdConfig in handleTelegramUiCommand and handleDiscordUiCommand",
+        "Display current channel preferences (Provider, Model, Thinking, Budget) in a summary",
+        "Provide inline buttons to trigger the respective sub-menus (Models, Think, Budget)",
+        "bash scripts/run_tests.sh passes",
+        "bash scripts/check_boundaries.sh passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-004",
+      "title": "Implement /tasks and /agents UI execution",
+      "description": "As a user, I want to see active tasks and available agents so that I know what the system is currently processing or capable of.",
+      "acceptanceCriteria": [
+        "Implement UI rendering for cmdTasks and cmdAgents in channel adapters",
+        "/tasks: Show a list of currently running heartbeat tasks or scheduled cron jobs",
+        "/agents: Show a list of loaded skills/tools and MCP clients available in the session",
+        "bash scripts/run_tests.sh passes",
+        "bash scripts/check_boundaries.sh passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-005",
+      "title": "Implement /poll UI execution",
+      "description": "As a user, I want to use /poll so that I can view and interact with pending approvals (e.g., tool execution confirmations).",
+      "acceptanceCriteria": [
+        "Implement UI rendering for cmdPoll in channel adapters",
+        "Query the system for any pending interactive prompts or approval requests",
+        "If empty, render 'No pending approvals.'",
+        "bash scripts/run_tests.sh passes",
+        "bash scripts/check_boundaries.sh passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-006",
+      "title": "Wire Orchestrator control commands",
+      "description": "As a user, I want /stop, /restart, and /bind commands to properly route and execute in the Orchestrator.",
+      "acceptanceCriteria": [
+        "Implement handling for tkStop, tkRestart, and tkBind in src/donkey/app/orchestrator.nim (handleControlTask)",
+        "/stop: Should cancel the current ToolLoop and return to idle state",
+        "/restart: Should alias to /reset or clear the current session inbox",
+        "/bind: Should associate the current channel with a specified agent personality/profile",
+        "bash scripts/run_tests.sh passes",
+        "bash scripts/check_boundaries.sh passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    }
+  ]
+}
