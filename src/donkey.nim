@@ -12,6 +12,7 @@ import donkey/config/clawhub_registry
 import donkey/adapters/tool/runtime_builder
 import donkey/core/log
 import donkey/core/pipeops
+import donkey/core/reliability
 import donkey/core/agent_events
 import donkey/core/app_meta
 import donkey/core/providers/smart_routing
@@ -1878,6 +1879,7 @@ proc main =
     quit(1)
 
   ringInit()            ## enable log ring buffer before the first Logger is created
+  initReliability()     ## enable circuit breaker and reliability tracking
   agentEventRingInit()  ## enable agent event ring buffer
   enableHumanLog()
   if isatty(stderr): enableColorLog()

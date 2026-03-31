@@ -1,25 +1,69 @@
 ## StdHttpAdapter — HttpPort backed by std/httpclient + system OpenSSL.
 ## For IoT targets swap for ChronosHttpAdapter (chronos + bearssl, no system deps).
 
-import std/httpclient
+import std/[httpclient, strutils, os]
 import ../../ports/http
 import ../../core/pipeops
+import ../../core/reliability
 import ./helpers
 
 type StdHttpAdapter* = object
   timeout*: int  ## Timeout in seconds.
+  maxRetries*: int ## Maximum number of retries.
 
-proc newStdHttpAdapter*(timeout = 60): StdHttpAdapter =
-  StdHttpAdapter(timeout: timeout)
+proc newStdHttpAdapter*(timeout = 60, maxRetries = 3): StdHttpAdapter =
+  StdHttpAdapter(timeout: timeout, maxRetries: maxRetries)
+
+proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string; 
+                      headers: seq[HttpHeader]): Result[HttpResponse, string] {.gcsafe.} =
+  # Extract host for circuit breaker
+  let host = if url.contains("//"): url.split("//")[1].split("/")[0] else: url
+  
+  if not checkCircuit(host):
+    return err("Circuit breaker OPEN for host: " & host)
+
+  var lastError = ""
+  for attempt in 1 .. a.maxRetries:
+    let res = block:
+      withHttpClientTimeout(a.timeout):
+        if headers.len > 0:
+          var h = newHttpHeaders()
+          for (k, v) in headers: h[k] = v
+          client.headers = h
+        let resp = client.request(url, httpMethod = meth, body = body)
+        ok(HttpResponse(status: resp.code.int, body: resp.body))
+    
+    if res.isOk:
+      let val = res.get()
+      if val.status < 500: # Success or client error, don't retry
+        recordSuccess(host)
+        return ok(val)
+      else:
+        lastError = "HTTP " & $val.status
+    else:
+      lastError = res.error
+    
+    recordFailure(host)
+    if attempt < a.maxRetries:
+      sleep(getBackoffMs(attempt))
+  
+  err("HTTP " & $meth & " failed after " & $a.maxRetries & " attempts. Last error: " & lastError)
 
 proc get*(a: StdHttpAdapter; url: string;
-          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
+          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+  a.requestWithRetry(HttpGet, url, "", headers)
+
 proc post*(a: StdHttpAdapter; url, body: string;
-           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
+           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+  a.requestWithRetry(HttpPost, url, body, headers)
+
 proc put*(a: StdHttpAdapter; url, body: string;
-          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
+          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+  a.requestWithRetry(HttpPut, url, body, headers)
+
 proc patch*(a: StdHttpAdapter; url, body: string;
-            headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
+            headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+  a.requestWithRetry(HttpPatch, url, body, headers)
 
 proc toRuntimePort*(a: StdHttpAdapter): HttpRuntimePort =
   HttpRuntimePort(
@@ -36,43 +80,3 @@ proc toRuntimePort*(a: StdHttpAdapter): HttpRuntimePort =
       result = a.patch(url, body, headers)
     ,
   )
-
-proc get*(a: StdHttpAdapter; url: string;
-          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
-  withHttpClientTimeout(a.timeout):
-    if headers.len > 0:
-      var h = newHttpHeaders()
-      for (k, v) in headers: h[k] = v
-      client.headers = h
-    let resp = client.get(url)
-    ok(HttpResponse(status: resp.code.int, body: resp.body))
-
-proc post*(a: StdHttpAdapter; url, body: string;
-           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
-  withHttpClientTimeout(a.timeout):
-    if headers.len > 0:
-      var h = newHttpHeaders()
-      for (k, v) in headers: h[k] = v
-      client.headers = h
-    let resp = client.post(url, body = body)
-    ok(HttpResponse(status: resp.code.int, body: resp.body))
-
-proc put*(a: StdHttpAdapter; url, body: string;
-          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
-  withHttpClientTimeout(a.timeout):
-    if headers.len > 0:
-      var h = newHttpHeaders()
-      for (k, v) in headers: h[k] = v
-      client.headers = h
-    let resp = client.request(url, httpMethod = HttpPut, body = body)
-    ok(HttpResponse(status: resp.code.int, body: resp.body))
-
-proc patch*(a: StdHttpAdapter; url, body: string;
-            headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
-  withHttpClientTimeout(a.timeout):
-    if headers.len > 0:
-      var h = newHttpHeaders()
-      for (k, v) in headers: h[k] = v
-      client.headers = h
-    let resp = client.request(url, httpMethod = HttpPatch, body = body)
-    ok(HttpResponse(status: resp.code.int, body: resp.body))
