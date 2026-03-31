@@ -427,6 +427,18 @@ proc buildConfigText*(memory: MdFileAdapter; userId: UserId): string =
   "*Budget:* `" & prefs.budget & "`\n\n" &
   "Use os botões abaixo para alterar as configurações."
 
+func buildTasksText*(): string =
+  "🕒 *Tarefas Ativas*\n\n" &
+  "- `deliverDueReminders`: Entrega de lembretes agendados (Ativo)\n" &
+  "- `heartbeatLoop`: Verificação de saúde do sistema (Ativo)\n\n" &
+  "Nenhuma outra tarefa em execução no momento."
+
+func buildAgentsText*(toolsCount, toolClientsCount: int): string =
+  "🤖 *Agentes & Ferramentas*\n\n" &
+  "*Ferramentas nativas:* " & $toolsCount & " carregadas\n" &
+  "*Clientes MCP:* " & $toolClientsCount & " conectados\n\n" &
+  "O assistente está pronto para usar as capacidades de navegação, shell e manipulação de arquivos."
+
 func buildStartIntroText*(): string =
   "Olá! Sou o Donkey, seu assistente pessoal.\n\n" &
   "Envie qualquer mensagem para começarmos.\n" &

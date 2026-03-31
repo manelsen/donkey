@@ -96,6 +96,14 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
         sendDiscordEmbed(event, dcAdapter, userId,
           "⚙️ Config", memory.buildConfigText(userId), 0x5865F2, logger)
     true
+  of cmdTasks:
+    sendDiscordEmbed(event, dcAdapter, userId,
+      "🕒 Tarefas", buildTasksText(), 0x95A5A6, logger)
+    true
+  of cmdAgents:
+    sendDiscordEmbed(event, dcAdapter, userId,
+      "🤖 Agentes", buildAgentsText(toolsCount, toolClientsCount), 0x95A5A6, logger)
+    true
   of cmdModels:
     let providerOnly =
       if command.value.strip.len > 0: parseModelsProviderArg(command.value).valueOr: ""

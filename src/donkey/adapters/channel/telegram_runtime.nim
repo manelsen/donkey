@@ -263,11 +263,31 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
                               kbdMsgIds: var Table[string, string];
                               memory: MdFileAdapter;
                               modelCatalogLoader: ModelCatalogLoader;
+                              toolClientsCount: int;
+                              toolsCount: int;
                               logger: Logger): bool =
   case command.kind
   of cmdConfig:
     discard tgAdapter.sendKeyboard(
       msg.userId, memory.buildConfigText(msg.userId), buildConfigButtons(), replyTo = msg.channelId)
+    true
+  of cmdTasks:
+    tgAdapter.send(OutboundMessage(
+      userId:  msg.userId,
+      channel: ckTelegram,
+      text:    buildTasksText(),
+      replyTo: msg.channelId,
+    )).isOkOr:
+      discard
+    true
+  of cmdAgents:
+    tgAdapter.send(OutboundMessage(
+      userId:  msg.userId,
+      channel: ckTelegram,
+      text:    buildAgentsText(toolsCount, toolClientsCount),
+      replyTo: msg.channelId,
+    )).isOkOr:
+      discard
     true
   of cmdModels:
     handleTelegramModels(msg, command, tgAdapter, kbdMsgIds, memory, modelCatalogLoader, logger)
@@ -525,7 +545,7 @@ proc handleTelegramMessage*(msg: InboundMessage;
   of crSessionTask:
     return handleTelegramTaskCommand(sm, msg, command, tgAdapter, msgSeq)
   of crUi:
-    return handleTelegramUiCommand(msg, command, tgAdapter, kbdMsgIds, memory, modelCatalogLoader, logger)
+    return handleTelegramUiCommand(msg, command, tgAdapter, kbdMsgIds, memory, modelCatalogLoader, toolClientsCount, toolsCount, logger)
   of crCallback:
     let callback = decideCallbackRequest(CallbackRequest(channel: msg.channel, data: command.value))
     case callback.route
