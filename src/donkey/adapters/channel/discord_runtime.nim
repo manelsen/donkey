@@ -88,6 +88,14 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
                             modelCatalogLoader: ModelCatalogLoader;
                             logger: Logger): bool =
   case command.kind
+  of cmdConfig:
+    dcAdapter.sendInteractionKeyboard(
+      event.interactionId, event.interactionToken,
+      memory.buildConfigText(userId), 0x5865F2, buildConfigButtons()).isOkOr:
+        core_log.log(logger, core_log.lvlWarn, "dc config keyboard: " & error)
+        sendDiscordEmbed(event, dcAdapter, userId,
+          "⚙️ Config", memory.buildConfigText(userId), 0x5865F2, logger)
+    true
   of cmdModels:
     let providerOnly =
       if command.value.strip.len > 0: parseModelsProviderArg(command.value).valueOr: ""

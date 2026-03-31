@@ -408,6 +408,25 @@ func buildMenuText*(): string =
   "🫏 *Donkey Menu*\n\n" &
   "Selecione uma categoria ou comando abaixo para configurar sua sessão ou obter informações."
 
+proc buildConfigButtons*(): seq[seq[(string, string)]] =
+  ## Configuration menu buttons.
+  @[
+    @[("🔍 Selecionar Provider", "models")],
+    @[("🧠 Nível de Thinking", "think")],
+    @[("💰 Policy de Budget", "budget")],
+    @[("← voltar ao menu", "menu")]
+  ]
+
+proc buildConfigText*(memory: MdFileAdapter; userId: UserId): string =
+  let prefs = memory.loadChannelPrefs(userId)
+  let (currProv, currModel) = memory.getCurrentProviderModel(userId)
+  "⚙️ *Configurações da Sessão*\n\n" &
+  "*Provider:* `" & currProv & "`\n" &
+  "*Modelo:* `" & currModel & "`\n" &
+  "*Thinking:* `" & prefs.thinking & "`\n" &
+  "*Budget:* `" & prefs.budget & "`\n\n" &
+  "Use os botões abaixo para alterar as configurações."
+
 func buildStartIntroText*(): string =
   "Olá! Sou o Donkey, seu assistente pessoal.\n\n" &
   "Envie qualquer mensagem para começarmos.\n" &

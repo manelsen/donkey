@@ -265,6 +265,10 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
                               modelCatalogLoader: ModelCatalogLoader;
                               logger: Logger): bool =
   case command.kind
+  of cmdConfig:
+    discard tgAdapter.sendKeyboard(
+      msg.userId, memory.buildConfigText(msg.userId), buildConfigButtons(), replyTo = msg.channelId)
+    true
   of cmdModels:
     handleTelegramModels(msg, command, tgAdapter, kbdMsgIds, memory, modelCatalogLoader, logger)
   of cmdThink:
