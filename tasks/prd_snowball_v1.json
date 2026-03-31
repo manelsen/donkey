@@ -110,7 +110,7 @@
         "nimble test passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "dependsOn": [
         "US-005"
