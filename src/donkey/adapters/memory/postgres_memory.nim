@@ -244,6 +244,20 @@ when defined(withPostgres):
         LIMIT $2
       """), $userId, $limit)
       result = buildMemoryHits(rows)
+      ## ── Graph enrichment: find nodes related to top hit via AGE ──
+      if result.len > 0:
+        let topContent = result[0].content[0 ..< min(50, result[0].content.len)]
+        try:
+          db.exec(sql"LOAD 'age'")
+          let graphRows = db.ageCypher(
+            "MATCH (m:Memory {user_id: '" & $userId & "'})-[r]-(n) " &
+            "WHERE m.content STARTS WITH '" & topContent.replace("'", "\\'") & "' " &
+            "RETURN n.content", @["content"])
+          for gr in graphRows:
+            let content = stripAgeValue(gr[0])
+            if content.len > 0 and content != "null":
+              result.add MemoryHit(content: content, kind: "graph", score: 0.5)
+        except CatchableError: discard
     else:
       let rows = db.getAllRows(sql(
         "SELECT content, kind FROM " & PgMemoryTableName & " " &
