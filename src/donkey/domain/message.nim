@@ -12,6 +12,7 @@ const
   roleUser*      = "user"
   roleAssistant* = "assistant"
   roleSystem*    = "system"
+  roleTool*      = "tool"
 
 # ── wire types ────────────────────────────────────────────────────────────────
 
