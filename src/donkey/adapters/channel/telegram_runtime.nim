@@ -366,6 +366,16 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
     )).isOkOr:
       discard
     return true
+  of lcaShowWhoami:
+    let sessId = if sm.hasSession(msg.userId): "active" else: "" # SessionManager doesn't expose sessionId easily here, using placeholder
+    tgAdapter.send(OutboundMessage(
+      userId:  msg.userId,
+      channel: ckTelegram,
+      text:    buildWhoamiText(msg.userId, sessId, msg.channelId),
+      replyTo: msg.channelId,
+    )).isOkOr:
+      discard
+    return true
   of lcaGenerateLinkCode:
     let code = tgAdapter.resolver.generateLinkCode(msg.userId)
     tgAdapter.send(OutboundMessage(

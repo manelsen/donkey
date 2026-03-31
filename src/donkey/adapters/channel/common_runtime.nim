@@ -390,6 +390,12 @@ proc buildTextStatusText*(memory: MdFileAdapter;
     "Memórias: " & $memLines & " linhas\n" &
     "Uptime: " & uptimeStr
 
+func buildWhoamiText*(userId: UserId; sessionId, channelId: string): string =
+  "🆔 *Identity*\n\n" &
+  "*Donkey ID:* `" & $userId & "`\n" &
+  "*Session ID:* " & (if sessionId.len > 0: "`" & sessionId & "`" else: "_nenhuma_") & "\n" &
+  "*Channel ID:* `" & channelId & "`"
+
 func buildStartIntroText*(): string =
   "Olá! Sou o Donkey, seu assistente pessoal.\n\n" &
   "Envie qualquer mensagem para começarmos.\n" &

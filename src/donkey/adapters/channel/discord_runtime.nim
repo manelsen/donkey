@@ -268,6 +268,10 @@ proc handleDiscordEvent*(sm: var SessionManager;
       of lcaStartIntro:
         sendDiscordEmbed(event, dcAdapter, userId,
           "👋 Donkey", buildStartIntroText(), 0x5865F2, logger)
+      of lcaShowWhoami:
+        let sessId = if sm.hasSession(userId): "active" else: ""
+        sendDiscordEmbed(event, dcAdapter, userId,
+          "🆔 Identity", buildWhoamiText(userId, sessId, event.discordUserId), 0x5865F2, logger)
       of lcaGenerateLinkCode:
         sendDiscordEmbed(event, dcAdapter, userId,
           "🔗 Link Code", buildLinkCodeText(dcAdapter.resolver.generateLinkCode(userId)), 0x5865F2, logger)
