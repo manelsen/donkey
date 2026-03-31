@@ -21,6 +21,9 @@ type
     tkNameChoice         ## payload = "name:<chosen-name>" (name selection callback)
     tkCompact            ## trigger session context compaction
     tkNew                ## start a new session (clear context)
+    tkStop               ## abort current turn and return to idle
+    tkRestart            ## alias for reset/new
+    tkBind               ## associate chat with personality
 
   AgentMessage* = object
     kind*:     AgentMessageKind

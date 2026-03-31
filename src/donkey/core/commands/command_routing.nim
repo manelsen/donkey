@@ -295,6 +295,12 @@ func commandTaskKind*(decision: CommandDecision): TaskKind =
     tkCompact
   of cmdNew:
     tkNew
+  of cmdStop:
+    tkStop
+  of cmdRestart:
+    tkRestart
+  of cmdBind:
+    tkBind
   else:
     tkUserMsg
 

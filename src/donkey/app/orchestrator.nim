@@ -1079,6 +1079,19 @@ proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
       globalOutbox, memory, uid, channel, replyTo, sessionId, result.history)
     result.handled = true
 
+  of tkStop:
+    await sendReplyText(globalOutbox, uid, channel, replyTo, "🛑 Parado.")
+    result.handled = true
+
+  of tkRestart:
+    result.history = await handleResetControlTask(
+      globalOutbox, memory, uid, channel, replyTo, sessionId, result.history)
+    result.handled = true
+
+  of tkBind:
+    await sendReplyText(globalOutbox, uid, channel, replyTo, "🔗 Bind: funcionalidade em implementação.")
+    result.handled = true
+
   of tkPersonalityChoice, tkNameChoice:
     (result.onboarding, result.identity, result.handled) = await handleOnboardingControlTask(
       globalOutbox, memory, completeFn, uid, channel, replyTo,
