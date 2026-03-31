@@ -8,7 +8,7 @@
 ## Tests pass a custom `sink` proc to capture output.
 ## In production the default sink writes to stderr.
 
-import std/[locks, strformat, times]
+import std/[locks, strformat, times, json]
 import ./types
 export types
 
@@ -82,6 +82,7 @@ proc ringSnapshot*(n: int): seq[RingEntry] {.gcsafe.} =
 
 var gHumanLog   {.global.}: bool = false
 var gColorLog   {.global.}: bool = false
+var gJsonLog    {.global.}: bool = false
 
 proc enableHumanLog*() =
   ## Switch stderr to compact human format. Call once from main.
@@ -91,6 +92,10 @@ proc enableHumanLog*() =
 proc enableColorLog*() =
   ## Enable ANSI colors in human format. Call when stderr is a TTY.
   {.cast(gcsafe).}: gColorLog = true
+
+proc enableJsonLog*() =
+  ## Switch stderr to structured JSON output.
+  {.cast(gcsafe).}: gJsonLog = true
 
 proc shortenUuids(s: string): string =
   ## Replace 36-char UUID strings with [first8chars].
@@ -141,12 +146,23 @@ proc humanLine(e: LogEntry) =
     of lvlError: stderr.writeLine(ts & "  x " & msg)
     of lvlFatal: stderr.writeLine(ts & "  !! " & msg)
 
+proc jsonLine(e: LogEntry) =
+  let j = %* {
+    "ts":  e.timestamp,
+    "lvl": $e.level,
+    "sub": e.subsystem,
+    "msg": e.message
+  }
+  stderr.writeLine($j)
+
 # ── default sink ──────────────────────────────────────────────────────────────
 
 proc stderrSink(e: LogEntry) {.gcsafe, raises: [].} =
   {.cast(gcsafe).}:
     try:
-      if gHumanLog:
+      if gJsonLog:
+        jsonLine(e)
+      elif gHumanLog:
         humanLine(e)
       else:
         let tag = case e.level
