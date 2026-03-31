@@ -13,7 +13,7 @@
         "bash scripts/run_tests.sh passes"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "dependsOn": []
     },
@@ -29,7 +29,9 @@
       "priority": 1,
       "passes": false,
       "notes": "",
-      "dependsOn": ["US-001"]
+      "dependsOn": [
+        "US-001"
+      ]
     },
     {
       "id": "US-003",
@@ -59,7 +61,9 @@
       "priority": 2,
       "passes": false,
       "notes": "",
-      "dependsOn": ["US-003"]
+      "dependsOn": [
+        "US-003"
+      ]
     },
     {
       "id": "US-005",
@@ -74,7 +78,9 @@
       "priority": 3,
       "passes": false,
       "notes": "",
-      "dependsOn": ["US-004"]
+      "dependsOn": [
+        "US-004"
+      ]
     },
     {
       "id": "US-006",
@@ -89,7 +95,9 @@
       "priority": 3,
       "passes": false,
       "notes": "",
-      "dependsOn": ["US-001"]
+      "dependsOn": [
+        "US-001"
+      ]
     },
     {
       "id": "US-007",
@@ -104,7 +112,9 @@
       "priority": 4,
       "passes": false,
       "notes": "",
-      "dependsOn": ["US-005"]
+      "dependsOn": [
+        "US-005"
+      ]
     },
     {
       "id": "US-008",
@@ -119,7 +129,9 @@
       "priority": 5,
       "passes": false,
       "notes": "",
-      "dependsOn": ["US-007"]
+      "dependsOn": [
+        "US-007"
+      ]
     }
   ]
 }
