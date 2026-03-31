@@ -239,7 +239,7 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
       let vec = a.embedFn(query)
       let vecStr = buildVectorLiteral(vec)
       if vecStr.len == 0:
-        return ok(@[])
+        return ok(newSeq[MemoryHit]())
       let rows = db.getAllRows(sql("""
         SELECT content, kind,
                1 - (embedding <=> $2::vector) AS score
