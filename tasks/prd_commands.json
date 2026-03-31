@@ -32,7 +32,7 @@
       "id": "CMD-003",
       "title": "/whoami Command - Show Session ID",
       "description": "Implement /whoami command that displays the current session ID and user information.",
-      "completed": false,
+      "completed": true,
       "priority": "P0"
     },
     {
