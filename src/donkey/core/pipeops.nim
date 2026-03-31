@@ -10,7 +10,7 @@
 ## |>-> — pipe into last arg: a |>-> f(x) ≡ f(x, a)
 ## >>= — monadic bind:  r >>= f  ≡  r.andThen(f)  (fallible steps, Result chain)
 
-import std/[macros, monotimes]
+import std/[macros, monotimes, times]
 import results
 export results
 

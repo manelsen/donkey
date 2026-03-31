@@ -67,8 +67,8 @@ type
   ModelCatalogLoader* = proc(providerName: string): Result[ModelCatalogResult, string] {.gcsafe.}
 
   ProviderPort* = concept p
-    p.complete(CompletionRequest) is CompletionResponse
-    ## Blocking completion. Returns full response or raises on error.
+    p.complete(CompletionRequest) is Result[CompletionResponse, string]
+    ## Blocking completion. Returns Result to propagate errors.
 
     p.caps() is ProviderCaps
     ## Declare provider capabilities (pure metadata, no I/O).

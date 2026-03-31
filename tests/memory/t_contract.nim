@@ -3,7 +3,10 @@
 
 import std/[os, strutils, unittest]
 import donkey/adapters/memory/md_file
+import donkey/ports/memory
 import donkey/core/types
+
+proc verifyMemoryPort(m: MemoryPort) {.used.} = discard
 
 # ── contract ──────────────────────────────────────────────────────────────────
 
@@ -106,3 +109,10 @@ block mdFile:
   createDir(base)
   defer: removeDir(base)
   runContractTests(MdFileAdapter(paddocksDir: base))
+
+suite "MdFileAdapter satisfies MemoryPort concept":
+
+  test "compile-time concept check passes":
+    let a = MdFileAdapter(paddocksDir: getTempDir())
+    verifyMemoryPort(a)
+    check true
