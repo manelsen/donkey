@@ -20,6 +20,7 @@ tests/**
 donkey_release
 src/donkey.out
 src/donkey/app/orchestrator
+docs/
 
 # Downloaded SDKs (análise apenas, não são deps)
 larksuiteoapi-node-sdk-*.tgz
