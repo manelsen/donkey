@@ -21,6 +21,7 @@ donkey_release
 src/donkey.out
 src/donkey/app/orchestrator
 docs/
+.ralph-tui/
 
 # Downloaded SDKs (análise apenas, não são deps)
 larksuiteoapi-node-sdk-*.tgz
