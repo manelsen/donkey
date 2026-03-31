@@ -5,20 +5,25 @@ import std/[httpclient, strutils, os]
 import ../../ports/http
 import ../../core/pipeops
 import ../../core/reliability
+import ../../core/security/net_boundary
 import ./helpers
 
 type StdHttpAdapter* = object
   timeout*: int  ## Timeout in seconds.
   maxRetries*: int ## Maximum number of retries.
+  allowlist*: seq[string] ## Allowed hosts.
 
-proc newStdHttpAdapter*(timeout = 60, maxRetries = 3): StdHttpAdapter =
-  StdHttpAdapter(timeout: timeout, maxRetries: maxRetries)
+proc newStdHttpAdapter*(timeout = 60, maxRetries = 3, allowlist: seq[string] = @[]): StdHttpAdapter =
+  StdHttpAdapter(timeout: timeout, maxRetries: maxRetries, allowlist: allowlist)
 
 proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string; 
                       headers: seq[HttpHeader]): Result[HttpResponse, string] {.gcsafe.} =
-  # Extract host for circuit breaker
+  # Extract host for circuit breaker and allowlist
   let host = if url.contains("//"): url.split("//")[1].split("/")[0] else: url
   
+  if a.allowlist.len > 0 and not isHostAllowed(host, a.allowlist):
+    return err("Network egress BLOCKED: host '" & host & "' not in allowlist")
+
   if not checkCircuit(host):
     return err("Circuit breaker OPEN for host: " & host)
 
