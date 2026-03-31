@@ -13,6 +13,15 @@ template withHttpClient*(body: untyped): untyped =
   except CatchableError as e:
     err(e.msg)
 
+template withHttpClientTimeout*(timeoutSeconds: int; body: untyped): untyped =
+  ## Like withHttpClient but accepts a custom timeout in seconds.
+  try:
+    let client {.inject.} = newHttpClient(timeout = timeoutSeconds * 1000)
+    defer: client.close()
+    body
+  except CatchableError as e:
+    err(e.msg)
+
 template checkApiStatus*(resp: untyped; apiName: string) =
   ## Returns err from the calling proc if HTTP status is not 2xx.
   if resp.status[0] != '2':

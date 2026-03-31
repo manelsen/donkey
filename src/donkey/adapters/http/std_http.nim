@@ -6,9 +6,12 @@ import ../../ports/http
 import ../../core/pipeops
 import ./helpers
 
-type StdHttpAdapter* = object  ## Stateless — safe to copy into adapter structs.
+type StdHttpAdapter* = object
+  timeout*: int  ## Timeout in seconds.
 
-proc newStdHttpAdapter*(): StdHttpAdapter = StdHttpAdapter()
+proc newStdHttpAdapter*(timeout = 60): StdHttpAdapter =
+  StdHttpAdapter(timeout: timeout)
+
 proc get*(a: StdHttpAdapter; url: string;
           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
 proc post*(a: StdHttpAdapter; url, body: string;
@@ -36,7 +39,7 @@ proc toRuntimePort*(a: StdHttpAdapter): HttpRuntimePort =
 
 proc get*(a: StdHttpAdapter; url: string;
           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
-  withHttpClient:
+  withHttpClientTimeout(a.timeout):
     if headers.len > 0:
       var h = newHttpHeaders()
       for (k, v) in headers: h[k] = v
@@ -46,7 +49,7 @@ proc get*(a: StdHttpAdapter; url: string;
 
 proc post*(a: StdHttpAdapter; url, body: string;
            headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
-  withHttpClient:
+  withHttpClientTimeout(a.timeout):
     if headers.len > 0:
       var h = newHttpHeaders()
       for (k, v) in headers: h[k] = v
@@ -56,7 +59,7 @@ proc post*(a: StdHttpAdapter; url, body: string;
 
 proc put*(a: StdHttpAdapter; url, body: string;
           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
-  withHttpClient:
+  withHttpClientTimeout(a.timeout):
     if headers.len > 0:
       var h = newHttpHeaders()
       for (k, v) in headers: h[k] = v
@@ -66,7 +69,7 @@ proc put*(a: StdHttpAdapter; url, body: string;
 
 proc patch*(a: StdHttpAdapter; url, body: string;
             headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
-  withHttpClient:
+  withHttpClientTimeout(a.timeout):
     if headers.len > 0:
       var h = newHttpHeaders()
       for (k, v) in headers: h[k] = v

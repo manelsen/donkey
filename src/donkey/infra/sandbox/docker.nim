@@ -149,7 +149,16 @@ proc dockerAvailable*(): bool =
 
 func buildDockerArgs*(opts: DockerOptions; cmd: string; args: seq[string]): seq[string] =
   ## Build docker run argument list from options and command.
-  var dockerArgs: seq[string] = @["run"]
+  var dockerArgs: seq[string] = @[]
+
+  # Use system 'timeout' command if a timeout is specified
+  if opts.timeout > 0:
+    dockerArgs.add("timeout")
+    dockerArgs.add("--signal=SIGKILL")
+    dockerArgs.add($opts.timeout & "s")
+
+  dockerArgs.add("docker")
+  dockerArgs.add("run")
 
   # Remove container after exit
   dockerArgs.add("--rm")
@@ -195,9 +204,12 @@ func buildDockerArgs*(opts: DockerOptions; cmd: string; args: seq[string]): seq[
 # ── Internal: run docker command ───────────────────────────────────────────────
 
 proc runDockerCmd*(args: seq[string]): Result[tuple[output: string, exitCode: int], string] =
-  ## Run docker with given arguments and return output + exit code.
-  let cmd = "docker"
-  let (output, exitCode) = execCmdEx(cmd & " " & args.mapIt(quoteShell(it)).join(" "))
+  ## Run docker (or timeout docker) with given arguments and return output + exit code.
+  if args.len == 0: return err("Empty arguments")
+  let cmd = args[0]
+  let remainingArgs = args[1..^1]
+  let fullCmd = quoteShell(cmd) & " " & remainingArgs.mapIt(quoteShell(it)).join(" ")
+  let (output, exitCode) = execCmdEx(fullCmd)
   ok((output: output, exitCode: exitCode))
 
 # ── Run container ─────────────────────────────────────────────────────────────
@@ -218,9 +230,6 @@ proc runContainer*(d: var DockerSandbox; cmd: string; args: seq[string]): Result
   # Build docker run arguments
   let dockerArgs = opts.buildDockerArgs(cmd, args)
 
-  # Track start time for timeout
-  let startTime = epochTime()
-
   # Run docker
   let dockerRes = runDockerCmd(dockerArgs)
   if dockerRes.isErr:
@@ -228,14 +237,9 @@ proc runContainer*(d: var DockerSandbox; cmd: string; args: seq[string]): Result
 
   let (output, exitCode) = dockerRes.get()
 
-  # Check for timeout (if timeout was set)
-  let elapsed = epochTime() - startTime
-  var timedOut = false
-  var actualExitCode = exitCode
-
-  if opts.timeout > 0 and elapsed.float >= opts.timeout.float:
-    timedOut = true
-    actualExitCode = 124  # Standard timeout exit code
+  # Check for timeout (exit code 124 is standard for 'timeout' command, 137 if SIGKILL used)
+  let timedOut = (exitCode == 124 or exitCode == 137)
+  let actualExitCode = exitCode
 
   # Docker output format: stdout and stderr are combined in output
   # We need to split them - docker outputs to stdout/stderr separately
@@ -260,10 +264,9 @@ proc runContainer*(d: var DockerSandbox; runtime: ContainerRuntime; code: string
   ## Python code uses `python -c "$code"`, Node code uses `node -e "$code"`.
   case runtime
   of crPython:
-    let opts = d.opts
-    d.runContainer("python", @["python", "-c", code])
+    d.runContainer("python", @["-c", code])
   of crNode:
-    d.runContainer("node", @["node", "-e", code])
+    d.runContainer("node", @["-e", code])
   of crGeneric:
     err("Generic runtime requires explicit command")
 
