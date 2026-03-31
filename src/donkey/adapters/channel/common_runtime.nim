@@ -439,6 +439,11 @@ func buildAgentsText*(toolsCount, toolClientsCount: int): string =
   "*Clientes MCP:* " & $toolClientsCount & " conectados\n\n" &
   "O assistente está pronto para usar as capacidades de navegação, shell e manipulação de arquivos."
 
+func buildPollText*(): string =
+  "🗳️ *Aprovações Pendentes*\n\n" &
+  "Nenhuma solicitação de aprovação pendente no momento.\n\n" &
+  "Quando uma ferramenta exigir sua confirmação (ex: deletar arquivo), ela aparecerá aqui."
+
 func buildStartIntroText*(): string =
   "Olá! Sou o Donkey, seu assistente pessoal.\n\n" &
   "Envie qualquer mensagem para começarmos.\n" &

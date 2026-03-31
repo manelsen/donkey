@@ -289,6 +289,15 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
     )).isOkOr:
       discard
     true
+  of cmdPoll:
+    tgAdapter.send(OutboundMessage(
+      userId:  msg.userId,
+      channel: ckTelegram,
+      text:    buildPollText(),
+      replyTo: msg.channelId,
+    )).isOkOr:
+      discard
+    true
   of cmdModels:
     handleTelegramModels(msg, command, tgAdapter, kbdMsgIds, memory, modelCatalogLoader, logger)
   of cmdThink:
