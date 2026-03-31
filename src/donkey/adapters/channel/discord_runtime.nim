@@ -147,6 +147,10 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
     let reply = memory.applyBudgetTextCommand(userId, command.value).valueOr: error
     sendDiscordReply(event, dcAdapter, userId, reply, logger)
     true
+  of cmdBudget:
+    let reply = memory.applyBudgetTextCommand(userId, command.value).valueOr: error
+    sendDiscordReply(event, dcAdapter, userId, reply, log)
+    true
   else:
     false
 

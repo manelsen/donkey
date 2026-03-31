@@ -96,6 +96,8 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
     logger.debug("discord: message from " & r.rawId)
     let event = DiscordRawEvent(
       kind:          deMessage,
+    let event = DiscordRawEvent(
+      kind:          deMessage,
       discordUserId: r.rawId,
       content:       r.content,
       channelId:     r.channelId,
