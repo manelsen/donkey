@@ -10,7 +10,7 @@
 ##
 ## IdentityResolver is now in adapters/identity — maps telegram_user_id → UserId.
 
-import std/[json, strutils]
+import std/[json, os, sequtils, strutils]
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
@@ -143,153 +143,62 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message with Markdown (plain-text fallback), split at 4096 chars.
   ## If msg.keyboard is non-empty, sends with an inline keyboard.
   ## If msg.mediaUrl is set, sends as photo/document (caption = msg.text).
-  ## reply_to_message_id is attached only to the first chunk.
   let rawId = a.resolver.reverseChannel(msg.userId, ckTelegram)
-  if rawId.len == 0:
-    return err("TelegramAdapter.send: no Telegram ID for user " & $msg.userId)
-  var tgId: int64
-  try: tgId = parseBiggestInt(rawId).int64
-  except ValueError: return err("TelegramAdapter.send: bad Telegram ID: " & rawId)
+  if rawId.len == 0: return err("TelegramAdapter.send: no id for " & $msg.userId)
+  let chatId = parseBiggestInt(rawId).int64
+
   if msg.keyboard.len > 0:
-    discard ? a.sendKeyboardRaw(tgId, msg.text, msg.keyboard, msg.replyTo)
+    discard ? a.sendKeyboardRaw(chatId, msg.text, msg.keyboard, msg.replyTo)
     return ok()
+
   if msg.mediaUrl.len > 0:
-    return a.sendMedia(tgId, msg.mediaUrl, msg.text, msg.replyTo)
-  let chunks = splitChunks(msg.text, TelegramMaxChars)
-  for i, chunk in chunks:
-    let r = a.sendChunk(tgId, chunk, msg.replyTo, i == 0)
-    if r.isErr: return r
+    return a.sendMedia(chatId, msg.mediaUrl, msg.text, msg.replyTo)
+
+  for i, chunk in splitChunks(msg.text, TelegramMaxChars):
+    ? a.sendChunk(chatId, chunk, msg.replyTo, i == 0)
   ok()
 
-proc getFileUrl*(a: TelegramAdapter; fileId: string): Result[string, string] =
-  ## Resolves a Telegram file_id to a download URL via getFile API.
-  ## Uses >>= to chain post result → extract file path.
-  let base  = if a.apiBase.len > 0: a.apiBase else: TelegramApiBase
-  let token = a.token
-  a.post("getFile", %* {"file_id": fileId}) >>=
-    proc(resp: JsonNode): Result[string, string] {.gcsafe, raises: [].} =
-      try:
-        ok(base & "/file/bot" & token & "/" & resp["result"]["file_path"].getStr())
-      except CatchableError as e:
-        err(e.msg)
-
-proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
-  ## Long-polls getUpdates; advances a.offset on success.
-  ## Parsing delegated to telegram_pure (|> parseUpdates).
-  ## Offset advancement uses |>-> maxNextOffset(a.offset).
-  let timeout = if a.pollTimeout > 0: a.pollTimeout else: DefaultPollTimeout
-  let body = %* {"offset": a.offset, "limit": 100, "timeout": timeout}
-  let parsed  = ? a.post("getUpdates", body)
-  let updates = parsed["result"]
-  let results = updates |> parseUpdates
-  var msgs: seq[InboundMessage]
-  for r in results:
-    ## Ack callback_queries immediately (Telegram spinner).
-    if r.hasCallbackId:
-      discard a.post("answerCallbackQuery",
-                     %* {"callback_query_id": r.callbackId})
-    ## Resolve media file_id → download URL.
-    let mediaUrl = if r.hasMedia: a.getFileUrl(r.mediaFileId).valueOr: ""
-                   else: ""
-    let userId = a.resolver.resolve(ckTelegram, r.sessionKey)
-    msgs.add r.toInbound(userId, mediaUrl)
-  a.offset = updates |>-> maxNextOffset(a.offset)
-  ok(msgs)
-
 proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, string] =
-  ## Like send(), but sends only the first chunk and returns the Telegram message_id.
-  ## Used by the streaming machinery to obtain the id for subsequent editMessage calls.
+  ## Sends and returns the message_id.
   let rawId = a.resolver.reverseChannel(msg.userId, ckTelegram)
-  if rawId.len == 0:
-    return err("TelegramAdapter.sendReturnId: no Telegram ID for " & $msg.userId)
-  var tgId: int64
-  try: tgId = parseBiggestInt(rawId).int64
-  except ValueError: return err("TelegramAdapter.sendReturnId: bad id: " & rawId)
-  let chunk = splitChunks(msg.text, TelegramMaxChars)[0]
-  ## Try with Markdown, fall back to plain if Telegram rejects the formatting.
-  var body = %* {"chat_id": tgId, "text": chunk, "parse_mode": "Markdown"}
-  if msg.replyTo.len > 0: body["reply_to_message_id"] = %msg.replyTo
-  var resp = a.post("sendMessage", body)
-  if resp.isErr:
-    var plain = %* {"chat_id": tgId, "text": chunk}
-    if msg.replyTo.len > 0: plain["reply_to_message_id"] = %msg.replyTo
-    resp = a.post("sendMessage", plain)
-  try:
-    ok($resp.value["result"]["message_id"].getInt())
-  except CatchableError as e:
-    err(e.msg)
+  if rawId.len == 0: return err("TelegramAdapter.sendReturnId: no id for " & $msg.userId)
+  let chatId = parseBiggestInt(rawId).int64
+
+  if msg.keyboard.len > 0:
+    return a.sendKeyboardRaw(chatId, msg.text, msg.keyboard, msg.replyTo)
+
+  if msg.mediaUrl.len > 0:
+    ? a.sendMedia(chatId, msg.mediaUrl, msg.text, msg.replyTo)
+    return ok("")
+
+  var lastId = ""
+  for i, chunk in splitChunks(msg.text, TelegramMaxChars):
+    var body = %* {"chat_id": chatId, "text": chunk, "parse_mode": "Markdown"}
+    if i == 0 and msg.replyTo.len > 0:
+      body["reply_to_message_id"] = %msg.replyTo
+    let res = a.post("sendMessage", body)
+    if res.isOk:
+      lastId = $res.value["result"]["message_id"].getInt()
+    else:
+      # Fallback
+      body.delete("parse_mode")
+      let res2 = ? a.post("sendMessage", body)
+      lastId = $res2["result"]["message_id"].getInt()
+  ok(lastId)
 
 proc editMessage*(a: TelegramAdapter; userId: UserId;
                   msgId, text: string): Result[void, string] =
-  ## Edits an existing message (used to push streaming token batches).
-  ## Tries Markdown first; falls back to plain on parse error. Truncates at 4096.
+  ## Edits an existing message's text.
   let rawId = a.resolver.reverseChannel(userId, ckTelegram)
-  if rawId.len == 0:
-    return err("TelegramAdapter.editMessage: no Telegram ID for " & $userId)
-  var tgId: int64
-  try: tgId = parseBiggestInt(rawId).int64
-  except ValueError: return err("TelegramAdapter.editMessage: bad tg id: " & rawId)
-  var msgIdInt: int
-  try: msgIdInt = parseInt(msgId)
-  except ValueError: return err("TelegramAdapter.editMessage: bad msg id: " & msgId)
-  let txt = if text.len > TelegramMaxChars: text[0 ..< TelegramMaxChars] else: text
-  let body = %* {"chat_id": tgId, "message_id": msgIdInt,
-                 "text": txt, "parse_mode": "Markdown"}
+  if rawId.len == 0: return err("editMessage: no id for " & $userId)
+  let chatId = parseBiggestInt(rawId).int64
+  var body = %* {"chat_id": chatId, "message_id": parseBiggestInt(msgId), "text": text, "parse_mode": "Markdown"}
   let res = a.post("editMessageText", body)
   if res.isOk: return ok()
-  let plain = %* {"chat_id": tgId, "message_id": msgIdInt, "text": txt}
-  discard ? a.post("editMessageText", plain)
+  # Fallback
+  body.delete("parse_mode")
+  discard ? a.post("editMessageText", body)
   ok()
-
-proc ack*(a: TelegramAdapter; channelId: string) =
-  ## Telegram ack is implicit via offset advancement in receive().
-  ## No-op for ChannelPort conformance.
-  discard
-
-proc deleteMessage*(a: TelegramAdapter; userId: UserId;
-                    msgId: string): Result[void, string] {.gcsafe, raises: [].} =
-  ## Deletes a message by id.
-  try:
-    let rawId = a.resolver.reverseChannel(userId, ckTelegram)
-    if rawId.len == 0: return err("deleteMessage: no id for " & $userId)
-    var chatId: int64
-    try: chatId = parseBiggestInt(rawId).int64
-    except ValueError: return err("deleteMessage: bad id: " & rawId)
-    var msgIdInt: int
-    try: msgIdInt = parseInt(msgId)
-    except ValueError: return err("deleteMessage: bad msgId: " & msgId)
-    discard ? a.post("deleteMessage",
-                     %* {"chat_id": chatId, "message_id": msgIdInt})
-    ok()
-  except CatchableError as e:
-    err(e.msg)
-
-proc setMessageReaction*(a: TelegramAdapter; userId: UserId;
-                         msgId: string; emoji: string): Result[void, string]
-                        {.gcsafe, raises: [].} =
-  ## Sets a reaction on a message (e.g. ⚙️, ✅, ❌).
-  ## msgId is the message to react to.
-  ## Pass emoji="" to remove reaction.
-  try:
-    let rawId = a.resolver.reverseChannel(userId, ckTelegram)
-    if rawId.len == 0: return err("setMessageReaction: no id for " & $userId)
-    var chatId: int64
-    try: chatId = parseBiggestInt(rawId).int64
-    except ValueError: return err("setMessageReaction: bad id: " & rawId)
-    var msgIdInt: int
-    try: msgIdInt = parseInt(msgId)
-    except ValueError: return err("setMessageReaction: bad msgId: " & msgId)
-
-    var reaction = newJArray()
-    if emoji.len > 0:
-      reaction.add(%* {"type": "emoji", "emoji": emoji})
-
-    discard ? a.post("setMessageReaction",
-                     %* {"chat_id": chatId, "message_id": msgIdInt,
-                         "reaction": reaction})
-    ok()
-  except CatchableError as e:
-    err(e.msg)
 
 proc sendKeyboard*(a: TelegramAdapter; userId: UserId;
                    text: string;
@@ -310,62 +219,55 @@ proc editKeyboard*(a: TelegramAdapter; userId: UserId;
   ## Replaces the inline keyboard of an existing message (e.g. to remove it after selection).
   let rawId = a.resolver.reverseChannel(userId, ckTelegram)
   if rawId.len == 0: return err("editKeyboard: no id for " & $userId)
-  var chatId: int64
-  try: chatId = parseBiggestInt(rawId).int64
-  except ValueError: return err("editKeyboard: bad id: " & rawId)
-  var msgIdInt: int
-  try: msgIdInt = parseInt(msgId)
-  except ValueError: return err("editKeyboard: bad msgId: " & msgId)
-  var rows: seq[JsonNode]
-  for row in buttons:
-    var cols: seq[JsonNode]
-    for (label, data) in row:
-      cols.add(%* {"text": label, "callback_data": data})
-    rows.add(%cols)
-  discard ? a.post("editMessageReplyMarkup", %* {
-    "chat_id":      chatId,
-    "message_id":   msgIdInt,
-    "reply_markup": {"inline_keyboard": rows},
-  })
+  let chatId = parseBiggestInt(rawId).int64
+  let markup = %* {"inline_keyboard": buttons.mapIt(it.mapIt(%* {"text": it[0], "callback_data": it[1]}))}
+  discard ? a.post("editMessageReplyMarkup",
+                   %* {"chat_id": chatId, "message_id": parseBiggestInt(msgId),
+                       "reply_markup": markup})
   ok()
 
 proc editKeyboardText*(a: TelegramAdapter; userId: UserId;
-                       msgId: string;
-                       text: string;
+                       msgId, text: string;
                        buttons: seq[seq[(string, string)]]): Result[void, string] =
-  ## Replaces both message text and inline keyboard of an existing message.
+  ## Edits both text AND keyboard.
   let rawId = a.resolver.reverseChannel(userId, ckTelegram)
   if rawId.len == 0: return err("editKeyboardText: no id for " & $userId)
-  var chatId: int64
-  try: chatId = parseBiggestInt(rawId).int64
-  except ValueError: return err("editKeyboardText: bad id: " & rawId)
-  var msgIdInt: int
-  try: msgIdInt = parseInt(msgId)
-  except ValueError: return err("editKeyboardText: bad msgId: " & msgId)
-  var rows: seq[JsonNode]
-  for row in buttons:
-    var cols: seq[JsonNode]
-    for (label, data) in row:
-      cols.add(%* {"text": label, "callback_data": data})
-    rows.add(%cols)
-  let editBody = %* {
-    "chat_id": chatId,
-    "message_id": msgIdInt,
-    "text": text,
+  let chatId = parseBiggestInt(rawId).int64
+  let markup = %* {"inline_keyboard": buttons.mapIt(it.mapIt(%* {"text": it[0], "callback_data": it[1]}))}
+  var body = %* {
+    "chat_id":    chatId,
+    "message_id": parseBiggestInt(msgId),
+    "text":       text,
     "parse_mode": "Markdown",
-    "reply_markup": {"inline_keyboard": rows},
+    "reply_markup": markup
   }
-  let editRes = a.post("editMessageText", editBody)
-  if editRes.isOk: return ok()
-  discard ? a.post("editMessageText", %* {
-    "chat_id": chatId,
-    "message_id": msgIdInt,
-    "text": text,
-    "reply_markup": {"inline_keyboard": rows},
-  })
+  let res = a.post("editMessageText", body)
+  if res.isOk: return ok()
+  # Fallback
+  body.delete("parse_mode")
+  discard ? a.post("editMessageText", body)
   ok()
 
-proc setMyCommands*(a: TelegramAdapter): Result[void, string] =
+proc setMessageReaction*(a: TelegramAdapter; userId: UserId;
+                          msgId, emoji: string): Result[void, string] =
+  ## Sets a reaction (emoji) on a message.
+  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  if rawId.len == 0: return err("setMessageReaction: no id for " & $userId)
+  try:
+    let chatId = parseBiggestInt(rawId).int64
+    let msgIdInt = parseBiggestInt(msgId).int64
+    var reaction = newJArray()
+    if emoji.len > 0:
+      reaction.add(%* {"type": "emoji", "emoji": emoji})
+
+    discard ? a.post("setMessageReaction",
+                     %* {"chat_id": chatId, "message_id": msgIdInt,
+                         "reaction": reaction})
+    ok()
+  except CatchableError as e:
+    err(e.msg)
+
+proc registerBotCommands*(a: TelegramAdapter): Result[void, string] =
   ## Registers bot commands in the Telegram menu (the / hint list).
   let cmds = %* [
     {"command": "help",    "description": "Ajuda e lista de comandos"},
@@ -385,12 +287,34 @@ proc setMyCommands*(a: TelegramAdapter): Result[void, string] =
   discard ? a.post("setMyCommands", %* {"commands": cmds})
   ok()
 
-# ── Constructor ───────────────────────────────────────────────────────────────
+proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
+  ## Long-polls getUpdates and returns new user messages.
+  ## Advances update offset.
+  try:
+    let url = a.apiUrl("getUpdates") & "?offset=" & $a.offset &
+              "&timeout=" & $a.pollTimeout &
+              "&allowed_updates=[\"message\",\"callback_query\"]"
+    let resp = ? a.http.get(url)
+    let j = ? parseTgResp("getUpdates", resp)
+    let updates = j["result"]
+    var msgs: seq[InboundMessage]
+    for u in updates:
+      let updateId = u["update_id"].getBiggestInt()
+      a.offset = updateId + 1
+      let parsed = parseUpdate(u)
+      if parsed.kind == tukUnknown: continue
+      let uid = a.resolver.resolve(ckTelegram, parsed.rawId)
+      msgs.add(parsed.toInbound(uid))
+    ok(msgs)
+  except CatchableError as e:
+    err("TelegramAdapter.receive: " & e.msg)
 
-proc newTelegramAdapter*(token: string;
-                         identityPath: string;
-                         apiBase      = "";
-                         pollTimeout  = DefaultPollTimeout): TelegramAdapter =
+proc ack*(a: TelegramAdapter; msgId: string) =
+  ## No-op: Telegram offset is advanced during receive().
+  discard
+
+proc newTelegramAdapter*(token: string; identityPath: string;
+                         apiBase = ""; pollTimeout = DefaultPollTimeout): TelegramAdapter =
   TelegramAdapter(
     token:       token,
     apiBase:     apiBase,
