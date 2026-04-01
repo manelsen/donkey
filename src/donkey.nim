@@ -1614,9 +1614,10 @@ proc startDaemonIngress(ctx: DaemonContext;
   startOptionalDingTalkGateway(ctx.adapters.dt, ctx.env.dingTalkAppKey, log)
   startOptionalQQGateway(ctx.adapters.qq, log)
   if ctx.env.telegramToken.len > 0:
+    log.info("Telegram bot starting (token len=" & $ctx.env.telegramToken.len & ")")
     ctx.adapters.tg.registerBotCommands().isOkOr:
       log.warn("Telegram registerBotCommands failed: " & error)
-    log.info("Telegram commands registered")
+    log.info("Telegram bot started, polling active")
 
 proc setupDaemonRuntime(ctx: DaemonContext;
                         cfg: DonkeyConfig;

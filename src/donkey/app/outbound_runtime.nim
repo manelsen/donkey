@@ -29,24 +29,22 @@ proc sendImmediateOutbound*(msg: OutboundMessage;
                             log: Logger) {.gcsafe.} =
   let port = ports.channelPortFor(msg.channel)
   let sendResult = port.send(msg)
-  if sendResult.isOk:
-    log.info("sent " & $msg.channel & " -> " & $msg.userId & " (" & $msg.text.len & " chars)")
-    return
-  let error = sendResult.error
-  case msg.channel
-  of ckTelegram:  log.error("tg send: " & error)
-  of ckDiscord:   log.error("dc send: " & error)
-  of ckWeCom:     log.error("wc send: " & error)
-  of ckWeChat:    log.error("wechat send: " & error)
-  of ckQQ:        log.error("qq send: " & error)
-  of ckFeishu:    log.error("fs send: " & error)
-  of ckSlack:     log.error("sl send: " & error)
-  of ckWhatsApp:  log.error("wa send: " & error)
-  of ckSignal:    log.error("sig send: " & error)
-  of ckDingTalk:  log.error("dt send: " & error)
-  of ckMatrix:    log.error("mx send: " & error)
-  of ckEmail:     log.error("em send: " & error)
-  of ckCli:       log.error("cli send: " & error)
+  if sendResult.isErr:
+    let error = sendResult.error
+    case msg.channel
+    of ckTelegram:  log.error("tg send: " & error)
+    of ckDiscord:   log.error("dc send: " & error)
+    of ckWeCom:     log.error("wc send: " & error)
+    of ckWeChat:    log.error("wechat send: " & error)
+    of ckQQ:        log.error("qq send: " & error)
+    of ckFeishu:    log.error("fs send: " & error)
+    of ckSlack:     log.error("sl send: " & error)
+    of ckWhatsApp:  log.error("wa send: " & error)
+    of ckSignal:    log.error("sig send: " & error)
+    of ckDingTalk:  log.error("dt send: " & error)
+    of ckMatrix:    log.error("mx send: " & error)
+    of ckEmail:     log.error("em send: " & error)
+    of ckCli:       log.error("cli send: " & error)
 
 proc editStreamOutbound*(msg: OutboundMessage;
                          channelMsgId: string;
