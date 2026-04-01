@@ -1,4 +1,4 @@
-import std/[algorithm, httpclient, json, os, strutils, times]
+import std/[algorithm, httpclient, json, options, os, strutils, times]
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/providers/smart_routing
@@ -111,11 +111,11 @@ proc loadModelsDevCatalog(): Result[ModelCatalogResult, string] =
         # Mapeia provider names do models.dev para nossos nomes internos
         let internalProvider = case provider.toLowerAscii()
           of "minimax": "minimax"
-          of "zhipu", "zhipu ai": "zai"
+          of "zhipu", "zhipu ai": "zai-coding"
           of "groq": "groq"
           of "anthropic": "anthropic"
           of "google", "gemini": "gemini"
-          of "openai": "openrouter"  # OpenAI via OpenRouter
+          of "openai": "openai"
           of "deepseek": "deepseek"
           of "alibaba", "qwen": "alibaba"
           else: ""
@@ -474,20 +474,6 @@ proc parseGeminiCatalog(body: string): Result[seq[ModelCatalogEntry], string] =
   except CatchableError as e:
     err(e.msg)
 
-proc fetchCatalog(url: string;
-                  headers: seq[(string, string)] = @[]): Result[string, string] =
-  try:
-    let client = newHttpClient()
-    defer: client.close()
-    if headers.len > 0:
-      client.headers = newHttpHeaders(headers)
-    let resp = client.get(url)
-    if resp.status[0] != '2':
-      return err(resp.status & ": " & resp.body)
-    ok(resp.body)
-  except CatchableError as e:
-    err(e.msg)
-
 proc loadOpenRouterCatalog(apiKey: string): Result[ModelCatalogResult, string] =
   let headers =
     if apiKey.len > 0:
@@ -602,18 +588,31 @@ proc loadMinimaxCatalog(apiKey: string): Result[ModelCatalogResult, string] =
   ok(catalogResult(entries, mcsFallback, getTime().toUnix()))
 
 proc buildModelCatalogLoader*(): ModelCatalogLoader {.gcsafe.} =
+  ## Returns a closure that loads model catalogs with caching.
+  ## models.dev result is cached for 5 minutes to avoid re-fetching on every click.
+  var cachedModelsDev: Option[ModelCatalogResult] = none(ModelCatalogResult)
+  const CacheTtlSec = 300  # 5 minutes
+
   result = proc(providerName: string): Result[ModelCatalogResult, string] {.gcsafe.} =
-    ## Tenta buscar do models.dev primeiro, depois fallback para API específica ou catálogo estático
-    let modelsDevResult = loadModelsDevCatalog()
-    if modelsDevResult.isOk:
-      let allEntries = modelsDevResult.get().entries
+    ## Tenta buscar do models.dev primeiro (com cache), depois fallback para API específica
+    let now = getTime().toUnix()
+
+    # Check cache freshness
+    if cachedModelsDev.isNone or (now - cachedModelsDev.get().fetchedAtUnix) > CacheTtlSec:
+      let modelsDevResult = loadModelsDevCatalog()
+      if modelsDevResult.isOk:
+        cachedModelsDev = some(modelsDevResult.get())
+
+    # Try cached models.dev first
+    if cachedModelsDev.isSome:
+      let allEntries = cachedModelsDev.get().entries
       var filtered: seq[ModelCatalogEntry] = @[]
       for entry in allEntries:
         if entry.providerName == providerName:
           filtered.add(entry)
       if filtered.len > 0:
-        return ok(catalogResult(filtered, mcsLive, modelsDevResult.get().fetchedAtUnix))
-    
+        return ok(catalogResult(filtered, mcsLive, cachedModelsDev.get().fetchedAtUnix))
+
     ## Fallback para APIs específicas ou catálogo estático
     case providerName
     of "openrouter":
@@ -626,9 +625,7 @@ proc buildModelCatalogLoader*(): ModelCatalogLoader {.gcsafe.} =
       loadGeminiCatalog(getEnv("GEMINI_API_KEY"))
     of "minimax":
       loadMinimaxCatalog(getEnv("MINIMAX_API_KEY"))
-    of "zai":
-      loadZaiCatalog(getEnv("ZAI_API_KEY"), false)
-    of "zai-coding":
+    of "zai", "zai-coding":
       loadZaiCatalog(getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")), true)
     of "zen":
       loadZenCatalog()
