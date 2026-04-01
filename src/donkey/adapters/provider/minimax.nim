@@ -60,6 +60,8 @@ proc buildBody*(a: MiniMaxAdapter; req: CompletionRequest): JsonNode =
     messages.add(m.toJson())
 
   result = %* {"model": a.model, "messages": messages}
+  if req.reasoning:
+    result["reasoning_split"] = %true
 
   if req.system.len > 0:
     result["bot_setting"] = %* [{"bot_name": "Donkey", "content": req.system}]
@@ -69,15 +71,67 @@ proc buildBody*(a: MiniMaxAdapter; req: CompletionRequest): JsonNode =
 
 # ── Response parsing ──────────────────────────────────────────────────────────
 
-func parseMiniMaxResponse*(j: JsonNode): CompletionResponse =
+func parseMiniMaxResponse*(j: JsonNode): Result[CompletionResponse, string] =
   ## Exported for unit testing.
-  let text  = j["choices"][0]["messages"][0]["text"].getStr("")
-  let usage = j.getOrDefault("usage")
-  CompletionResponse(
-    text:         text,
-    inputTokens:  usage.jInt("prompt_tokens"),
-    outputTokens: usage.jInt("completion_tokens"),
-  )
+  ## Handles multiple MiniMax response formats:
+  ##   - v1 (legacy): choices[0].messages[0].text
+  ##   - v2 (new):    choices[0].message.content  (OpenAI-compatible)
+  ##   - error:       base_resp.status_msg or resp.status_msg
+
+  # Check for error responses first
+  for errKey in ["base_resp", "resp"]:
+    let errNode = j{errKey}
+    if not errNode.isNil:
+      let status = errNode{"status_code"}.getInt(0)
+      let msg = errNode{"status_msg"}.getStr("")
+      if status != 0 or msg.len > 0:
+        return err("MiniMax error: " & msg & " (code " & $status & ")")
+
+  # Check for top-level error field (some versions)
+  let topErr = j{"error"}
+  if not topErr.isNil:
+    let errMsg = topErr{"message"}.getStr(topErr.getStr(""))
+    if errMsg.len > 0:
+      return err("MiniMax error: " & errMsg)
+
+  let choices = j{"choices"}
+  if choices.isNil or choices.kind != JArray or choices.len == 0:
+    return err("Invalid MiniMax response: missing 'choices'")
+
+  let choice = choices[0]
+
+  # Format 1 (legacy): choices[0].messages[0].text
+  let messages = choice{"messages"}
+  if not messages.isNil and messages.kind == JArray and messages.len > 0:
+    let msgNode = messages[0]
+    let text    = msgNode{"text"}.getStr("")
+    var reasoning = msgNode{"reasoning_content"}.getStr("")
+    if reasoning.len == 0:
+      let details = msgNode{"reasoning_details"}
+      if details != nil and details.kind == JArray:
+        for d in details:
+          reasoning &= d{"text"}.getStr("")
+    let usage = j.getOrDefault("usage")
+    return ok CompletionResponse(
+      text:         text,
+      reasoning:    reasoning,
+      inputTokens:  usage.jInt("prompt_tokens"),
+      outputTokens: usage.jInt("completion_tokens"),
+    )
+
+  # Format 2 (OpenAI-compatible): choices[0].message.content
+  let msg = choice{"message"}
+  if not msg.isNil:
+    let text = msg{"content"}.getStr("")
+    let usage = j.getOrDefault("usage")
+    return ok CompletionResponse(
+      text:         text,
+      reasoning:    "",
+      inputTokens:  usage.jInt("prompt_tokens"),
+      outputTokens: usage.jInt("completion_tokens"),
+    )
+
+  err("Invalid MiniMax response: unrecognized choice format")
 
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
@@ -92,7 +146,7 @@ proc complete*(a: MiniMaxAdapter;
     let url  = if a.endpoint.len > 0: a.endpoint else: MiniMaxEndpoint
     let resp = client.post(url, body = body)
     checkApiStatus(resp, "MiniMax")
-    resp.body |> parseJson |> parseMiniMaxResponse |> ok
+    resp.body |> parseJson |> parseMiniMaxResponse
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

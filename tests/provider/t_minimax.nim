@@ -1,7 +1,8 @@
 ## MiniMaxAdapter unit tests.
 ## No HTTP calls are made; tests cover JSON construction and response parsing.
 
-import std/[json, unittest]
+import std/[json, unittest, strutils]
+import results
 import donkey/adapters/provider/minimax
 import donkey/domain/message
 import donkey/ports/provider
@@ -65,14 +66,73 @@ suite "MiniMaxAdapter parseResponse":
       "choices": [{"messages": [{"sender_type": "BOT", "text": "Hello"}]}],
       "usage": {"prompt_tokens": 5, "completion_tokens": 3}
     }
-    let resp = parseMiniMaxResponse(j)
+    let resp = parseMiniMaxResponse(j).get()
     check resp.text         == "Hello"
     check resp.inputTokens  == 5
     check resp.outputTokens == 3
 
   test "handles missing usage gracefully":
     let j = %* {"choices": [{"messages": [{"sender_type": "BOT", "text": "Hi"}]}]}
-    let resp = parseMiniMaxResponse(j)
+    let resp = parseMiniMaxResponse(j).get()
     check resp.text         == "Hi"
     check resp.inputTokens  == 0
     check resp.outputTokens == 0
+
+  test "extracts reasoning_content":
+    let j = %* {
+      "choices": [{"messages": [{
+        "sender_type": "BOT",
+        "text": "Final answer",
+        "reasoning_content": "Thinking process..."
+      }]}]
+    }
+    let resp = parseMiniMaxResponse(j).get()
+    check resp.text == "Final answer"
+    check resp.reasoning == "Thinking process..."
+
+  test "extracts reasoning_details":
+    let j = %* {
+      "choices": [{"messages": [{
+        "sender_type": "BOT",
+        "text": "Final answer",
+        "reasoning_details": [{"text": "Step 1. "}, {"text": "Step 2."}]
+      }]}]
+    }
+    let resp = parseMiniMaxResponse(j).get()
+    check resp.text == "Final answer"
+    check resp.reasoning == "Step 1. Step 2."
+
+  test "handles OpenAI-compatible format (message.content)":
+    let j = %* {
+      "choices": [{"message": {"role": "assistant", "content": "Hello from v2"}}],
+      "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+    }
+    let resp = parseMiniMaxResponse(j).get()
+    check resp.text == "Hello from v2"
+    check resp.inputTokens == 10
+
+  test "returns error for base_resp error":
+    let j = %* {
+      "base_resp": {"status_code": 1000, "status_msg": "Invalid API key"}
+    }
+    let r = parseMiniMaxResponse(j)
+    check r.isErr
+    check "Invalid API key" in r.error
+
+  test "returns error for top-level error field":
+    let j = %* {
+      "error": {"message": "Rate limit exceeded", "code": "rate_limit"}
+    }
+    let r = parseMiniMaxResponse(j)
+    check r.isErr
+    check "Rate limit exceeded" in r.error
+
+  test "returns error for empty choices":
+    let j = %* {"choices": []}
+    let r = parseMiniMaxResponse(j)
+    check r.isErr
+
+  test "returns error for completely empty response":
+    let j = %* {}
+    let r = parseMiniMaxResponse(j)
+    check r.isErr
