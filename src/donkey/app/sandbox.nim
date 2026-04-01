@@ -23,6 +23,8 @@ import ../config/types
 import ../core/log
 import ../core/types
 import ../core/app_meta
+import ../infra/sandbox/wasm_tools
+import ../infra/sandbox/shell_composer
 
 export SandboxMode
 
@@ -125,7 +127,8 @@ proc sandboxBash*(cmd, paddock: string;
   ## Executes cmd in the appropriate sandbox for `mode`.
   ## For smNone: runs directly with paddock as CWD.
   ## For smDocker: wraps cmd in an ephemeral container with paddock bind-mounted.
-  ## For smWasm: runs cmd via wasmtime + go-busybox shell.wasm.
+  ## For smWasm: runs via wasmtime + go-busybox. Pipes are composed in Nim
+  ## (ShellComposer) since WASI lacks fork/exec.
   ## Falls back to direct exec if shell.wasm is missing.
   case mode
   of smWasm:
@@ -134,6 +137,11 @@ proc sandboxBash*(cmd, paddock: string;
       # Graceful fallback
       let plan = SandboxPlan(command: cmd, workingDir: paddock, ensureWorkDir: true)
       return runSandboxPlan(plan)
+    # Use ShellComposer for pipes — composes applet chain in Nim
+    if "|" in cmd:
+      let adapter = newWasmToolAdapter(shellPath)
+      return adapter.composeFormatted(cmd, paddock)
+    # Single command — use wasmtime directly
     runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image))
   of smNone, smDocker:
     runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image))
