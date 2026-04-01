@@ -387,6 +387,31 @@ proc performFind*(path, pattern, kind: string; max: int): string {.gcsafe, raise
   if results.len == 0: return "(no matches)"
   results.join("\n")
 
+proc performFindWasm*(path, pattern, kind: string; max: int): string {.gcsafe, raises: [].} =
+  ## Find via WASM (go-busybox) — sandboxed execution.
+  let adapter = newWasmToolAdapter()
+  var args: seq[string] = @[path]
+  if pattern != "*":
+    args.add("-name")
+    args.add(pattern)
+  if kind == "file":
+    args.add("-type")
+    args.add("f")
+  elif kind == "dir":
+    args.add("-type")
+    args.add("d")
+  let parent = path.parentDir
+  let r = adapter.runApplet("find", args, if parent.len > 0: parent else: "/")
+  if not r.success:
+    if r.output.len == 0: return "(no matches)"
+    return "Error: " & r.output
+  let lines = r.output.splitLines().filterIt(it.len > 0)
+  if lines.len == 0: return "(no matches)"
+  if lines.len > max:
+    lines[0 ..< max].join("\n") & "\n... (" & $lines.len & " results, showing " & $max & ")"
+  else:
+    lines.join("\n")
+
 # ── grep ──────────────────────────────────────────────────────────────────────
 ## Note: grep uses literal substring search (case-sensitive).
 ## For full regex, use bash("grep -rn 'pattern' /path") instead.
@@ -1030,12 +1055,10 @@ proc executeShellNativeTool(tc: ToolCallRequest;
   of FindToolName:
     let findCtx = parseFindContext(j, ctx.paddockDir).valueOr:
       return handledError(error)
-    let r = performFind(
-      findCtx.path,
-      findCtx.pattern,
-      findCtx.kind,
-      findCtx.max,
-    )
+    let r = if ctx.sandboxMode == smWasm:
+      performFindWasm(findCtx.path, findCtx.pattern, findCtx.kind, findCtx.max)
+    else:
+      performFind(findCtx.path, findCtx.pattern, findCtx.kind, findCtx.max)
     return handledOutcome(r)
 
   of GrepToolName:
