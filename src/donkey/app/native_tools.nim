@@ -32,6 +32,7 @@ import ../ports/provider
 import ../ports/memory
 import ../config/types as cfgTypes
 import ./sandbox
+import ../infra/sandbox/wasm_tools
 import ./session_state
 import ./session_manager
 
@@ -428,6 +429,26 @@ proc performGrep*(pattern, path: string; recursive: bool;
     return "Error: path not found: " & path
   if results.len == 0: return "(no matches)"
   results.join("\n")
+
+proc performGrepWasm*(pattern, path: string; recursive: bool;
+                      max: int): string {.gcsafe, raises: [].} =
+  ## Grep via WASM (go-busybox) — sandboxed execution.
+  if pattern.len == 0: return "Error: empty pattern"
+  let adapter = newWasmToolAdapter()
+  var args: seq[string] = @["-n"]
+  if recursive:
+    args.add("-r")
+  args.add(pattern)
+  args.add(path)
+  let r = adapter.runApplet("grep", args, path.extractFilename.parentDir)
+  if not r.success:
+    if r.exitCode == 1: return "(no matches)"
+    return "Error: " & r.output
+  let lines = r.output.splitLines()
+  if lines.len > max:
+    lines[0 ..< max].join("\n") & "\n... (" & $lines.len & " matches, showing " & $max & ")"
+  else:
+    r.output.strip()
 
 # ── fetch ─────────────────────────────────────────────────────────────────────
 
@@ -1020,12 +1041,10 @@ proc executeShellNativeTool(tc: ToolCallRequest;
   of GrepToolName:
     let grepCtx = parseGrepContext(j, ctx.paddockDir).valueOr:
       return handledError(error)
-    let r = performGrep(
-      grepCtx.pattern,
-      grepCtx.path,
-      grepCtx.recursive,
-      grepCtx.max,
-    )
+    let r = if ctx.sandboxMode == smWasm:
+      performGrepWasm(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max)
+    else:
+      performGrep(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max)
     return handledOutcome(r)
 
   else:
