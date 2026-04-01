@@ -1,5 +1,5 @@
 ## MiniMaxAdapter unit tests.
-## No HTTP calls are made; tests cover JSON construction and response parsing.
+## Covers OpenAI-compatible response parsing and request building.
 
 import std/[json, unittest, strutils]
 import results
@@ -10,122 +10,80 @@ import donkey/ports/provider
 suite "MiniMaxAdapter construction":
 
   test "apiKey and model are stored":
-    let a = newMiniMaxAdapter("MY_KEY", "abab6.5s-chat")
+    let a = newMiniMaxAdapter("MY_KEY", "MiniMax-M2.7")
     check a.apiKey == "MY_KEY"
-    check a.model  == "abab6.5s-chat"
+    check a.model  == "MiniMax-M2.7"
 
 suite "MiniMaxAdapter caps":
 
   test "declares minimax name":
-    let a = newMiniMaxAdapter("k", model = "custom-m")
-    check a.caps.name == "minimax/custom-m"
+    let a = newMiniMaxAdapter("k", model = "MiniMax-M2")
+    check a.caps.name == "minimax/MiniMax-M2"
 
-  test "streaming is false":
-    check newMiniMaxAdapter("k").caps.streaming == false
+  test "streaming is true (OpenAI-compatible)":
+    check newMiniMaxAdapter("k").caps.streaming == true
 
-  test "toolCalling is false":
-    check newMiniMaxAdapter("k").caps.toolCalling == false
+  test "toolCalling is true":
+    check newMiniMaxAdapter("k").caps.toolCalling == true
 
 suite "MiniMaxAdapter buildBody":
 
   test "model is present":
     let req  = CompletionRequest(system: "", messages: newHistory())
-    let body = newMiniMaxAdapter("k", model = "m1").buildBody(req)
-    check body["model"].getStr() == "m1"
+    let body = newMiniMaxAdapter("k", model = "MiniMax-M2.5").buildBody(req)
+    check body["model"].getStr() == "MiniMax-M2.5"
 
-  test "system prompt maps to bot_setting":
-    let req  = CompletionRequest(system: "You are a helpful assistant", messages: newHistory())
+  test "system prompt goes to messages":
+    let req  = CompletionRequest(system: "You are helpful", messages: newHistory())
     let body = newMiniMaxAdapter("k").buildBody(req)
-    check body["bot_setting"][0]["content"].getStr() == "You are a helpful assistant"
+    check body["messages"][0]["role"].getStr() == "system"
+    check body["messages"][0]["content"].getStr() == "You are helpful"
 
-  test "user message maps to sender_type USER":
+  test "user message uses standard role format":
     var h = newHistory()
     h.addUser("hello")
     let req  = CompletionRequest(system: "", messages: h)
     let body = newMiniMaxAdapter("k").buildBody(req)
-    check body["messages"][0]["sender_type"].getStr() == "USER"
-    check body["messages"][0]["text"].getStr() == "hello"
+    check body["messages"][0]["role"].getStr() == "user"
+    check body["messages"][0]["content"].getStr() == "hello"
 
-  test "assistant message maps to sender_type BOT":
-    var h = newHistory()
-    h.addAssistant("hi there")
-    let req  = CompletionRequest(system: "", messages: h)
+  test "reasoning_split is present":
+    let req  = CompletionRequest(system: "", messages: newHistory(), reasoning: true)
     let body = newMiniMaxAdapter("k").buildBody(req)
-    check body["messages"][0]["sender_type"].getStr() == "BOT"
-    check body["messages"][0]["text"].getStr() == "hi there"
+    check body{"reasoning_split"}.getBool() == true
 
-  test "tokens_to_generate present when maxTokens set":
+  test "max_tokens present when maxTokens set":
     let req  = CompletionRequest(system: "", messages: newHistory(), maxTokens: 256)
     let body = newMiniMaxAdapter("k").buildBody(req)
-    check body["tokens_to_generate"].getInt() == 256
+    check body["max_tokens"].getInt() == 256
 
 suite "MiniMaxAdapter parseResponse":
 
-  test "extracts text from choices[0].messages[0].text":
+  test "extracts text from OpenAI format (message.content)":
     let j = %* {
-      "choices": [{"messages": [{"sender_type": "BOT", "text": "Hello"}]}],
+      "choices": [{"message": {"role": "assistant", "content": "Hello from MiniMax"}}],
       "usage": {"prompt_tokens": 5, "completion_tokens": 3}
     }
     let resp = parseMiniMaxResponse(j).get()
-    check resp.text         == "Hello"
+    check resp.text         == "Hello from MiniMax"
     check resp.inputTokens  == 5
     check resp.outputTokens == 3
 
   test "handles missing usage gracefully":
-    let j = %* {"choices": [{"messages": [{"sender_type": "BOT", "text": "Hi"}]}]}
+    let j = %* {"choices": [{"message": {"role": "assistant", "content": "Hi"}}]}
     let resp = parseMiniMaxResponse(j).get()
     check resp.text         == "Hi"
     check resp.inputTokens  == 0
     check resp.outputTokens == 0
 
-  test "extracts reasoning_content":
+  test "returns error for error field":
     let j = %* {
-      "choices": [{"messages": [{
-        "sender_type": "BOT",
-        "text": "Final answer",
-        "reasoning_content": "Thinking process..."
-      }]}]
-    }
-    let resp = parseMiniMaxResponse(j).get()
-    check resp.text == "Final answer"
-    check resp.reasoning == "Thinking process..."
-
-  test "extracts reasoning_details":
-    let j = %* {
-      "choices": [{"messages": [{
-        "sender_type": "BOT",
-        "text": "Final answer",
-        "reasoning_details": [{"text": "Step 1. "}, {"text": "Step 2."}]
-      }]}]
-    }
-    let resp = parseMiniMaxResponse(j).get()
-    check resp.text == "Final answer"
-    check resp.reasoning == "Step 1. Step 2."
-
-  test "handles OpenAI-compatible format (message.content)":
-    let j = %* {
-      "choices": [{"message": {"role": "assistant", "content": "Hello from v2"}}],
-      "usage": {"prompt_tokens": 10, "completion_tokens": 5}
-    }
-    let resp = parseMiniMaxResponse(j).get()
-    check resp.text == "Hello from v2"
-    check resp.inputTokens == 10
-
-  test "returns error for base_resp error":
-    let j = %* {
-      "base_resp": {"status_code": 1000, "status_msg": "Invalid API key"}
+      "error": {"message": "invalid api key", "code": "2049"}
     }
     let r = parseMiniMaxResponse(j)
     check r.isErr
-    check "Invalid API key" in r.error
-
-  test "returns error for top-level error field":
-    let j = %* {
-      "error": {"message": "Rate limit exceeded", "code": "rate_limit"}
-    }
-    let r = parseMiniMaxResponse(j)
-    check r.isErr
-    check "Rate limit exceeded" in r.error
+    check "invalid api key" in r.error
+    check "2049" in r.error
 
   test "returns error for empty choices":
     let j = %* {"choices": []}
