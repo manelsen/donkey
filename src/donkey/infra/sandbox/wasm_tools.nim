@@ -37,7 +37,7 @@ const
   ## Excludes stubbed applets: ash, sh, top, ps, kill, nice, nohup, etc.
   KnownApplets* = [
     # Text processing
-    "cat", "grep", "sed", "awk", "head", "tail", "wc",
+    "cat", "grep", "sed", "head", "tail", "wc",
     "sort", "uniq", "cut", "tr", "diff", "echo", "printf",
     # Filesystem
     "find", "ls", "cp", "mv", "mkdir", "rm", "rmdir", "pwd",

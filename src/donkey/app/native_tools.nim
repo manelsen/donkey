@@ -92,6 +92,18 @@ type
     expression*: string
     path*:       string
 
+  WcContext* = object
+    path*:  string
+    flags*: string
+
+  HeadTailContext* = object
+    path*:  string
+    lines*: int
+
+  SortContext* = object
+    path*:  string
+    flags*: string
+
   FetchContext* = object
     url*:    string
     maxCh*:  int
@@ -873,6 +885,37 @@ proc performSedWasm*(expression, path: string): string {.gcsafe, raises: [].} =
     return "Error: " & r.output
   r.output.strip()
 
+proc runWasmApplet*(applet: string; args: seq[string]; path: string): string {.gcsafe, raises: [].} =
+  ## Generic WASM applet execution helper.
+  let adapter = newWasmToolAdapter()
+  let parent = path.parentDir
+  let r = adapter.runApplet(applet, args, if parent.len > 0: parent else: "/")
+  if not r.success:
+    return "Error: " & r.output
+  r.output.strip()
+
+proc parsePathOnly*(j: JsonNode; paddockDir: string): Result[string, string] {.gcsafe, raises: [].} =
+  let pathResult = j.requireStringField("path")
+  if pathResult.isErr: return err(pathResult.error)
+  let resolvedPathResult = resolveToolPath(pathResult.value, paddockDir)
+  if resolvedPathResult.isErr: return err(resolvedPathResult.error)
+  ok(resolvedPathResult.value)
+
+proc parseWcContext*(j: JsonNode; paddockDir: string): Result[WcContext, string] {.gcsafe, raises: [].} =
+  parsePathOnly(j, paddockDir) >>=
+    proc(path: string): Result[WcContext, string] =
+      ok(WcContext(path: path, flags: j.getOrDefault("flags").getStr("")))
+
+proc parseHeadTailContext*(j: JsonNode; paddockDir: string): Result[HeadTailContext, string] {.gcsafe, raises: [].} =
+  parsePathOnly(j, paddockDir) >>=
+    proc(path: string): Result[HeadTailContext, string] =
+      ok(HeadTailContext(path: path, lines: j.getOrDefault("lines").getInt(10)))
+
+proc parseSortContext*(j: JsonNode; paddockDir: string): Result[SortContext, string] {.gcsafe, raises: [].} =
+  parsePathOnly(j, paddockDir) >>=
+    proc(path: string): Result[SortContext, string] =
+      ok(SortContext(path: path, flags: j.getOrDefault("flags").getStr("")))
+
 proc parseFetchContext*(j: JsonNode; defaultMax: int): Result[FetchContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("url") >>=
     proc(url: string): Result[FetchContext, string] =
@@ -1103,6 +1146,34 @@ proc executeShellNativeTool(tc: ToolCallRequest;
       return handledError(error)
     let r = performSedWasm(sedCtx.expression, sedCtx.path)
     return handledOutcome(r)
+
+  of WcToolName:
+    let wcCtx = parseWcContext(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    var args: seq[string] = @[]
+    if wcCtx.flags.len > 0: args.add(wcCtx.flags)
+    args.add(wcCtx.path)
+    return handledOutcome(runWasmApplet("wc", args, wcCtx.path))
+
+  of HeadToolName:
+    let headCtx = parseHeadTailContext(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    let r = runWasmApplet("head", @["-n", $headCtx.lines, headCtx.path], headCtx.path)
+    return handledOutcome(r)
+
+  of TailToolName:
+    let tailCtx = parseHeadTailContext(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    let r = runWasmApplet("tail", @["-n", $tailCtx.lines, tailCtx.path], tailCtx.path)
+    return handledOutcome(r)
+
+  of SortToolName:
+    let sortCtx = parseSortContext(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    var args: seq[string] = @[]
+    if sortCtx.flags.len > 0: args.add(sortCtx.flags)
+    args.add(sortCtx.path)
+    return handledOutcome(runWasmApplet("sort", args, sortCtx.path))
 
   else:
     return NativeToolResult(handled: false)

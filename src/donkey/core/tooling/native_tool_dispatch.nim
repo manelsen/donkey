@@ -23,6 +23,10 @@ const
     "find",
     "grep",
     "sed",
+    "wc",
+    "head",
+    "tail",
+    "sort",
   ]
 
   WebNativeTools* = [

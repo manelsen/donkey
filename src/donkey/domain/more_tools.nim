@@ -94,6 +94,54 @@ const
     "\"path\":{\"type\":\"string\",\"description\":\"File to process\"}" &
     "},\"required\":[\"expression\",\"path\"]}"
 
+# ── wc ────────────────────────────────────────────────────────────────────────
+const
+  WcToolName* = "wc"
+  WcToolDescription* =
+    "Count lines, words, and characters in files. " &
+    "Runs sandboxed via WASM. Flags: -l (lines), -w (words), -c (chars)."
+  WcToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"File to count\"}," &
+    "\"flags\":{\"type\":\"string\",\"description\":\"Flags: -l, -w, -c (default: all)\"}" &
+    "},\"required\":[\"path\"]}"
+
+# ── head ──────────────────────────────────────────────────────────────────────
+const
+  HeadToolName* = "head"
+  HeadToolDescription* =
+    "Return the first N lines of a file. " &
+    "Runs sandboxed via WASM."
+  HeadToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"File to read\"}," &
+    "\"lines\":{\"type\":\"integer\",\"description\":\"Number of lines (default: 10)\"}" &
+    "},\"required\":[\"path\"]}"
+
+# ── tail ──────────────────────────────────────────────────────────────────────
+const
+  TailToolName* = "tail"
+  TailToolDescription* =
+    "Return the last N lines of a file. " &
+    "Runs sandboxed via WASM."
+  TailToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"File to read\"}," &
+    "\"lines\":{\"type\":\"integer\",\"description\":\"Number of lines (default: 10)\"}" &
+    "},\"required\":[\"path\"]}"
+
+# ── sort ──────────────────────────────────────────────────────────────────────
+const
+  SortToolName* = "sort"
+  SortToolDescription* =
+    "Sort lines of text. " &
+    "Runs sandboxed via WASM. Flags: -r (reverse), -n (numeric), -u (unique)."
+  SortToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"File to sort\"}," &
+    "\"flags\":{\"type\":\"string\",\"description\":\"Flags: -r, -n, -u, -rn, etc.\"}" &
+    "},\"required\":[\"path\"]}"
+
 # ── fetch ─────────────────────────────────────────────────────────────────────
 const
   FetchToolName* = "fetch"
