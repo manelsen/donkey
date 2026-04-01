@@ -78,6 +78,7 @@ proc buildAppletCmd*(busyboxPath, applet: string;
                      paddock: string): string {.gcsafe, raises: [].} =
   ## Builds the wasmtime invocation string for a go-busybox applet.
   ## The busybox binary must be named "busybox" so that argv[0] dispatches correctly.
+  ## Args are shell-quoted to prevent glob expansion with poEvalCommand.
   var parts = @[
     "wasmtime", "run",
     "--dir=" & paddock,
@@ -86,7 +87,7 @@ proc buildAppletCmd*(busyboxPath, applet: string;
     applet,
   ]
   for a in args:
-    parts.add(a)
+    parts.add(quoteShell(a))
   parts.join(" ")
 
 proc formatAppletResult*(output: string; code: int): string {.gcsafe, raises: [].} =
