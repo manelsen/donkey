@@ -205,6 +205,7 @@ func nativeSessionTools*(): seq[ToolDescription] =
     (EditFileToolName,      EditFileToolDescription,      EditFileToolSchema),
     (FindToolName,          FindToolDescription,          FindToolSchema),
     (GrepToolName,          GrepToolDescription,          GrepToolSchema),
+    (SedToolName,           SedToolDescription,           SedToolSchema),
     (FetchToolName,         FetchToolDescription,         FetchToolSchema),
     (WebSearchToolName,     WebSearchToolDescription,     WebSearchToolSchema),
     (CalcToolName,          CalcToolDescription,          CalcToolSchema),

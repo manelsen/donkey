@@ -88,6 +88,10 @@ type
     recursive*: bool
     max*:       int
 
+  SedContext* = object
+    expression*: string
+    path*:       string
+
   FetchContext* = object
     url*:    string
     maxCh*:  int
@@ -845,6 +849,30 @@ proc parseGrepContext*(j: JsonNode; paddockDir: string): Result[GrepContext, str
     max: j.getOrDefault("max").getInt(50),
   ))
 
+proc parseSedContext*(j: JsonNode; paddockDir: string): Result[SedContext, string] {.gcsafe, raises: [].} =
+  let exprResult = j.requireStringField("expression")
+  if exprResult.isErr:
+    return err(exprResult.error)
+  let pathResult = j.requireStringField("path")
+  if pathResult.isErr:
+    return err(pathResult.error)
+  let resolvedPathResult = resolveToolPath(pathResult.value, paddockDir)
+  if resolvedPathResult.isErr:
+    return err(resolvedPathResult.error)
+  ok(SedContext(
+    expression: exprResult.value,
+    path: resolvedPathResult.value,
+  ))
+
+proc performSedWasm*(expression, path: string): string {.gcsafe, raises: [].} =
+  ## Sed via WASM (go-busybox) — sandboxed execution.
+  let adapter = newWasmToolAdapter()
+  let parent = path.parentDir
+  let r = adapter.runApplet("sed", @[expression, path], if parent.len > 0: parent else: "/")
+  if not r.success:
+    return "Error: " & r.output
+  r.output.strip()
+
 proc parseFetchContext*(j: JsonNode; defaultMax: int): Result[FetchContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("url") >>=
     proc(url: string): Result[FetchContext, string] =
@@ -1068,6 +1096,12 @@ proc executeShellNativeTool(tc: ToolCallRequest;
       performGrepWasm(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max)
     else:
       performGrep(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max)
+    return handledOutcome(r)
+
+  of SedToolName:
+    let sedCtx = parseSedContext(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    let r = performSedWasm(sedCtx.expression, sedCtx.path)
     return handledOutcome(r)
 
   else:

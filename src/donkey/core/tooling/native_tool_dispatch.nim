@@ -22,6 +22,7 @@ const
     "edit_file",
     "find",
     "grep",
+    "sed",
   ]
 
   WebNativeTools* = [

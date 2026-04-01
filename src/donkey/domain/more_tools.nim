@@ -80,6 +80,20 @@ const
     "\"max\":{\"type\":\"integer\",\"description\":\"Max matches (default: 50)\"}" &
     "},\"required\":[\"pattern\",\"path\"]}"
 
+# ── sed ──────────────────────────────────────────────────────────────────────
+const
+  SedToolName* = "sed"
+  SedToolDescription* =
+    "Stream editor for text transformations. " &
+    "Supports substitution (s/pattern/replacement/flags), deletion (d), " &
+    "print (-n with /pattern/p), and line addressing. " &
+    "Runs sandboxed via WASM. Example: expression='s/old/new/g'."
+  SedToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"expression\":{\"type\":\"string\",\"description\":\"sed expression (e.g. s/old/new/g, /pattern/d)\"}," &
+    "\"path\":{\"type\":\"string\",\"description\":\"File to process\"}" &
+    "},\"required\":[\"expression\",\"path\"]}"
+
 # ── fetch ─────────────────────────────────────────────────────────────────────
 const
   FetchToolName* = "fetch"
