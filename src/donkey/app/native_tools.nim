@@ -104,6 +104,10 @@ type
     path*:  string
     flags*: string
 
+  CpMvContext* = object
+    source*: string
+    dest*:   string
+
   FetchContext* = object
     url*:    string
     maxCh*:  int
@@ -916,6 +920,17 @@ proc parseSortContext*(j: JsonNode; paddockDir: string): Result[SortContext, str
     proc(path: string): Result[SortContext, string] =
       ok(SortContext(path: path, flags: j.getOrDefault("flags").getStr("")))
 
+proc parseCpMvContext*(j: JsonNode; paddockDir: string): Result[CpMvContext, string] {.gcsafe, raises: [].} =
+  let srcResult = j.requireStringField("source")
+  if srcResult.isErr: return err(srcResult.error)
+  let dstResult = j.requireStringField("dest")
+  if dstResult.isErr: return err(dstResult.error)
+  let resolvedSrc = resolveToolPath(srcResult.value, paddockDir)
+  if resolvedSrc.isErr: return err(resolvedSrc.error)
+  let resolvedDst = resolveToolPath(dstResult.value, paddockDir)
+  if resolvedDst.isErr: return err(resolvedDst.error)
+  ok(CpMvContext(source: resolvedSrc.value, dest: resolvedDst.value))
+
 proc parseFetchContext*(j: JsonNode; defaultMax: int): Result[FetchContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("url") >>=
     proc(url: string): Result[FetchContext, string] =
@@ -1174,6 +1189,32 @@ proc executeShellNativeTool(tc: ToolCallRequest;
     if sortCtx.flags.len > 0: args.add(sortCtx.flags)
     args.add(sortCtx.path)
     return handledOutcome(runWasmApplet("sort", args, sortCtx.path))
+
+  of CpToolName:
+    let cpCtx = parseCpMvContext(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    let parent = cpCtx.source.parentDir
+    return handledOutcome(runWasmApplet("cp", @[cpCtx.source, cpCtx.dest],
+      if parent.len > 0: parent else: "/"))
+
+  of MvToolName:
+    let mvCtx = parseCpMvContext(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    let parent = mvCtx.source.parentDir
+    return handledOutcome(runWasmApplet("mv", @[mvCtx.source, mvCtx.dest],
+      if parent.len > 0: parent else: "/"))
+
+  of RmToolName:
+    let rmCtx = parsePathOnly(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    let parent = rmCtx.parentDir
+    return handledOutcome(runWasmApplet("rm", @[rmCtx], if parent.len > 0: parent else: "/"))
+
+  of MkdirToolName:
+    let mkdirCtx = parsePathOnly(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    let parent = mkdirCtx.parentDir
+    return handledOutcome(runWasmApplet("mkdir", @[mkdirCtx], if parent.len > 0: parent else: "/"))
 
   else:
     return NativeToolResult(handled: false)

@@ -142,6 +142,48 @@ const
     "\"flags\":{\"type\":\"string\",\"description\":\"Flags: -r, -n, -u, -rn, etc.\"}" &
     "},\"required\":[\"path\"]}"
 
+# ── cp ────────────────────────────────────────────────────────────────────────
+const
+  CpToolName* = "cp"
+  CpToolDescription* =
+    "Copy a file. Runs sandboxed via WASM."
+  CpToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"source\":{\"type\":\"string\",\"description\":\"Source file path\"}," &
+    "\"dest\":{\"type\":\"string\",\"description\":\"Destination file path\"}" &
+    "},\"required\":[\"source\",\"dest\"]}"
+
+# ── mv ────────────────────────────────────────────────────────────────────────
+const
+  MvToolName* = "mv"
+  MvToolDescription* =
+    "Move or rename a file. Runs sandboxed via WASM."
+  MvToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"source\":{\"type\":\"string\",\"description\":\"Source file path\"}," &
+    "\"dest\":{\"type\":\"string\",\"description\":\"Destination file path\"}" &
+    "},\"required\":[\"source\",\"dest\"]}"
+
+# ── rm ────────────────────────────────────────────────────────────────────────
+const
+  RmToolName* = "rm"
+  RmToolDescription* =
+    "Remove a file. Runs sandboxed via WASM."
+  RmToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"File to remove\"}" &
+    "},\"required\":[\"path\"]}"
+
+# ── mkdir ─────────────────────────────────────────────────────────────────────
+const
+  MkdirToolName* = "mkdir"
+  MkdirToolDescription* =
+    "Create a directory. Runs sandboxed via WASM."
+  MkdirToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"Directory to create\"}" &
+    "},\"required\":[\"path\"]}"
+
 # ── fetch ─────────────────────────────────────────────────────────────────────
 const
   FetchToolName* = "fetch"

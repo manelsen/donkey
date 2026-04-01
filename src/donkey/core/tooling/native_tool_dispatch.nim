@@ -27,6 +27,10 @@ const
     "head",
     "tail",
     "sort",
+    "cp",
+    "mv",
+    "rm",
+    "mkdir",
   ]
 
   WebNativeTools* = [
