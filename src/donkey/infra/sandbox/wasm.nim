@@ -1,26 +1,30 @@
-## infra/sandbox/wasm — Wasmtime-based WASM sandbox for untrusted plugin execution.
+## infra/sandbox/wasm — wasm3 embedded WASM sandbox for untrusted plugin execution.
 ##
-## Spawns wasmtime as a subprocess to execute WebAssembly plugins in isolation.
-## WASM plugins are untrusted code run in a restricted environment with no filesystem
-## access, limited memory, and no networking.
+## Uses the wasm3 interpreter compiled directly into the Donkey binary.
+## No external runtime (wasmtime) required — zero subprocess overhead.
+## WASI support enabled via -d:wasm3HasWasi (set in config.nims).
 ##
 ## Usage:
-##   let engine = newWasmEngine("/usr/bin/wasmtime")
-##   let modResult = engine.loadModule("plugin.wasm")
+##   let engine = newWasmEngine()
+##   let modResult = engine.loadModule(readFile("plugin.wasm"))
 ##   if modResult.isErr:
 ##     echo "load failed: " & modResult.error
 ##     return
 ##   let inst = engine.instantiate(modResult.value)
-##   let result = inst.call("run", @["arg1", "arg2"]).valueOr:
+##   if inst.isErr:
+##     echo "instantiate failed: " & inst.error
+##     return
+##   var instance = inst.value
+##   let result = instance.callVoid("run").valueOr:
 ##     echo "call failed: " & error
 ##     return
-##   echo "output: " & result
+##   echo "output: " & result.stdout
 ##
 ## All functions return Result[T, string] so callers decide what to do on error.
-## Functions are designed as unary or with the piped target as last argument to
-## facilitate `|>` and `>>=` chaining where applicable.
 
-import std/[os, posix, strutils, json, osproc]
+import std/[os, posix, strutils]
+
+import wasm3
 
 import ../../core/pipeops
 import ./limits
@@ -31,8 +35,7 @@ export pipeops
 
 type
   WasmEngine* = object
-    ## Engine for loading and running WASM modules via wasmtime CLI.
-    wasmtimePath*: string   ## Path to wasmtime binary.
+    ## Engine configuration for wasm3-based WASM execution.
     opts*: WasmSandboxOpts
 
   WasmSandboxOpts* = object
@@ -42,14 +45,15 @@ type
     allowedDirs*: seq[string] ## Directories the plugin can access (empty = none).
 
   WasmModule* = object
-    ## Loaded WASM module ready for instantiation.
-    path*: string           ## Path to the WASM file.
-    enginePath*: string     ## Path to wasmtime binary.
+    ## Loaded WASM module (raw bytes) ready for instantiation.
+    source*: string         ## WASM bytecode.
+    name*: string           ## Module name (derived from filename or "module").
 
   WasmInstance* = object
-    ## Instantiation of a WASM module.
-    module*: WasmModule
-    opts*: WasmSandboxOpts
+    ## Instantiated WASM module with its own wasm3 runtime.
+    env*: WasmEnv           ## wasm3 environment (owns the runtime).
+    module*: WasmModule     ## Source module reference.
+    opts*: WasmSandboxOpts  ## Sandbox options for this instance.
 
   WasmCallResult* = object
     ## Result of a WASM function call.
@@ -69,19 +73,19 @@ type
 func wasmEngineError*(msg: string): string = "WasmEngine: " & msg
 func wasmModuleError*(msg: string): string = "WasmModule: " & msg
 func wasmInstanceError*(msg: string): string = "WasmInstance: " & msg
-func wasmtimeError*(msg: string): string = "wasmtime: " & msg
+func wasmRuntimeError*(msg: string): string = "wasm3: " & msg
 
 # ── Engine constructors ───────────────────────────────────────────────────────
 
-func newWasmEngine*(wasmtimePath: string): WasmEngine =
-  WasmEngine(wasmtimePath: wasmtimePath, opts: WasmSandboxOpts(
+func newWasmEngine*(): WasmEngine =
+  WasmEngine(opts: WasmSandboxOpts(
     cpuLimit: cpuSeconds(30),
     memLimit: memBytes(128 * 1024 * 1024),
     allowedDirs: @[]
   ))
 
-func newWasmEngine*(wasmtimePath: string; opts: WasmSandboxOpts): WasmEngine =
-  WasmEngine(wasmtimePath: wasmtimePath, opts: opts)
+func newWasmEngine*(opts: WasmSandboxOpts): WasmEngine =
+  WasmEngine(opts: opts)
 
 # ── Sandbox option constructors ───────────────────────────────────────────────
 
@@ -118,12 +122,19 @@ func sandboxWasmQuick*(): WasmSandboxOpts =
 
 # ── Formatting ─────────────────────────────────────────────────────────────────
 
+func formatMem*(bytes: int64): string =
+  if bytes <= 0: "unlimited"
+  elif bytes >= 1024 * 1024 * 1024: $(bytes div (1024 * 1024 * 1024)) & "GB"
+  elif bytes >= 1024 * 1024: $(bytes div (1024 * 1024)) & "MB"
+  elif bytes >= 1024: $(bytes div 1024) & "KB"
+  else: $bytes & "B"
+
 func `$`*(opts: WasmSandboxOpts): string =
   var parts: seq[string] = @[]
   if opts.cpuLimit.int64 > 0:
     parts.add("cpu=" & $opts.cpuLimit)
   if opts.memLimit.int64 > 0:
-    parts.add("mem=" & $opts.memLimit)
+    parts.add("mem=" & formatMem(opts.memLimit.int64))
   if opts.allowedDirs.len > 0:
     parts.add("dirs=" & opts.allowedDirs.join(","))
   if parts.len == 0:
@@ -132,10 +143,10 @@ func `$`*(opts: WasmSandboxOpts): string =
     "WasmSandboxOpts(" & parts.join(", ") & ")"
 
 func `$`*(engine: WasmEngine): string =
-  "WasmEngine(wasmtime=" & engine.wasmtimePath & ", " & $engine.opts & ")"
+  "WasmEngine(wasm3, " & $engine.opts & ")"
 
 func `$`*(m: WasmModule): string =
-  "WasmModule(path=" & m.path & ")"
+  "WasmModule(name=" & m.name & ", size=" & $m.source.len & ")"
 
 func `$`*(inst: WasmInstance): string =
   "WasmInstance(" & $inst.module & ")"
@@ -153,181 +164,219 @@ func `$`*(res: WasmValidationResult): string =
   else:
     "WasmValidationResult(valid=false, error=" & res.error & ")"
 
-# ── Pure helper: build wasmtime args ─────────────────────────────────────────
-
-func buildWasmtimeArgs*(opts: WasmSandboxOpts; wasmPath: string; funcName: string;
-                        args: seq[string]): seq[string] =
-  var cmdArgs: seq[string] = @[]
-  
-  # Disable all capabilities by default (secure by default)
-  cmdArgs.add("--disable-all-features")
-  
-  # Memory limits
-  if opts.memLimit.int64 > 0:
-    cmdArgs.add("--max-memory=" & $opts.memLimit.int64)
-  
-  # CPU limits via WASMtime's fuel mechanism (wasmtime uses fuel for timeouts)
-  # Note: fuel is measured in fuel units, roughly correlate to CPU instructions
-  if opts.cpuLimit.int64 > 0:
-    # Convert seconds to fuel units (rough approximation: 1 second = 10M fuel units)
-    let fuel = opts.cpuLimit.int64 * 10_000_000
-    cmdArgs.add("--fuel=" & $fuel)
-  
-  # Directory access restrictions (map dirs to sandbox)
-  for dir in opts.allowedDirs:
-    cmdArgs.add("--dir=" & dir)
-  
-  # If no dirs allowed, deny all filesystem access
-  if opts.allowedDirs.len == 0:
-    cmdArgs.add("--dir=")
-  
-  # Map /tmp as a temporary directory
-  cmdArgs.add("--dir=/tmp")
-  
-  # WASM file and function to call
-  cmdArgs.add(wasmPath)
-  cmdArgs.add("--invoke")
-  cmdArgs.add(funcName)
-  
-  # Arguments to the WASM function
-  for arg in args:
-    cmdArgs.add(arg)
-  
-  cmdArgs
-
 # ── Validate WASM binary ───────────────────────────────────────────────────────
 
 proc validateWasmFile*(wasmPath: string): Result[WasmValidationResult, string] =
   ## Validate a WASM file without executing it.
-  ## Returns WasmValidationResult with valid=true on success.
-  
+  ## Checks file existence and WASM magic bytes.
+
   if not wasmPath.fileExists:
     return ok(WasmValidationResult(valid: false, error: "File not found: " & wasmPath))
-  
+
   if wasmPath.dirExists:
     return ok(WasmValidationResult(valid: false, error: "Path is a directory, not a file: " & wasmPath))
-  
-  # Try to validate with wasmtime
-  let wasmtimePath = "wasmtime"  # Expect in PATH
-  
-  if not wasmtimePath.fileExists:
-    # Fall back: check magic bytes manually
-    let file = open(wasmPath, fmRead)
-    defer: close(file)
-    var header: array[8, char]
-    let bytesRead = readChars(file, header, 0, 8)
-    if bytesRead < 4:
-      return ok(WasmValidationResult(valid: false, error: "File too small to be a valid WASM binary"))
-    
-    # WASM magic: 0x00 0x61 0x73 0x6d ("\0asm")
-    if header[0] == '\0' and header[1] == 'a' and header[2] == 's' and header[3] == 'm':
-      return ok(WasmValidationResult(valid: true))
-    else:
-      return ok(WasmValidationResult(valid: false, error: "Invalid WASM magic bytes"))
-  
-  # Try wasmtime validate
-  let validateArgs = @["wasmtime", "validate", wasmPath]
-  let (output, exitCode) = execCmdEx(validateArgs.join(" "))
-  
-  if exitCode == 0:
+
+  # Check magic bytes: 0x00 0x61 0x73 0x6d ("\0asm")
+  let file = open(wasmPath, fmRead)
+  defer: close(file)
+  var header: array[8, char]
+  let bytesRead = file.readChars(header.toOpenArray(0, 7))
+  if bytesRead < 4:
+    return ok(WasmValidationResult(valid: false, error: "File too small to be a valid WASM binary"))
+
+  if header[0] == '\0' and header[1] == 'a' and header[2] == 's' and header[3] == 'm':
     return ok(WasmValidationResult(valid: true))
   else:
-    return ok(WasmValidationResult(valid: false, error: output.strip()))
+    return ok(WasmValidationResult(valid: false, error: "Invalid WASM magic bytes"))
 
-proc validateWasmFile*(engine: WasmEngine; wasmPath: string): Result[WasmValidationResult, string] =
-  validateWasmFile(wasmPath)
+proc validateWasmBytes*(data: openArray[char]): Result[WasmValidationResult, string] =
+  ## Validate WASM bytecode in memory.
+  if data.len < 4:
+    return ok(WasmValidationResult(valid: false, error: "Data too small to be a valid WASM binary"))
+
+  if data[0] == '\0' and data[1] == 'a' and data[2] == 's' and data[3] == 'm':
+    ok(WasmValidationResult(valid: true))
+  else:
+    ok(WasmValidationResult(valid: false, error: "Invalid WASM magic bytes"))
 
 # ── Load WASM module ───────────────────────────────────────────────────────────
 
-proc loadModule*(engine: var WasmEngine; wasmPath: string): Result[WasmModule, string] =
+proc loadModule*(engine: WasmEngine; wasmPath: string): Result[WasmModule, string] =
   ## Load a WASM module from file. Does not instantiate it.
-  
-  let wasmtimePath = engine.wasmtimePath
-  
-  # Check wasmtime exists
-  if not wasmtimePath.fileExists:
-    return err(wasmEngineError("wasmtime not found at: " & wasmtimePath))
-  
-  # Validate the file first
-  let validRes = engine.validateWasmFile(wasmPath)
+  let validRes = validateWasmFile(wasmPath)
   if validRes.isErr:
     return err(wasmModuleError("validation failed: " & validRes.error))
-  
   if not validRes.value.valid:
     return err(wasmModuleError("invalid WASM: " & validRes.value.error))
-  
-  ok(WasmModule(path: wasmPath, enginePath: wasmtimePath))
+
+  let name = wasmPath.extractFilename.changeFileExt("")
+  try:
+    let source = readFile(wasmPath)
+    ok(WasmModule(source: source, name: name))
+  except CatchableError as e:
+    err(wasmModuleError("failed to read file: " & e.msg))
+
+proc loadModuleFromBytes*(engine: WasmEngine; data: sink string;
+                          name: string = "module"): Result[WasmModule, string] =
+  ## Load a WASM module from raw bytes. Does not instantiate it.
+  let validRes = validateWasmBytes(data)
+  if validRes.isErr:
+    return err(wasmModuleError("validation failed: " & validRes.error))
+  if not validRes.value.valid:
+    return err(wasmModuleError("invalid WASM: " & validRes.value.error))
+
+  ok(WasmModule(source: data, name: name))
 
 # ── Instantiate WASM module ──────────────────────────────────────────────────
 
-proc instantiate*(engine: var WasmEngine; m: WasmModule): Result[WasmInstance, string] =
+proc instantiate*(engine: WasmEngine; m: WasmModule): Result[WasmInstance, string] =
   ## Create an instance of a loaded module.
-  WasmInstance(module: m, opts: engine.opts).ok()
+  ## Each instance gets its own wasm3 runtime (isolated execution).
+  try:
+    let stackSize = if engine.opts.memLimit.int64 > 0:
+      min(engine.opts.memLimit.int64, int64(high(uint32))).uint32
+    else:
+      high(uint16)
+
+    let env = loadWasmEnv(m.source, stackSize = stackSize)
+    ok(WasmInstance(env: env, module: m, opts: engine.opts))
+  except WasmError as e:
+    err(wasmInstanceError("failed to instantiate: " & e.msg))
+  except CatchableError as e:
+    err(wasmInstanceError("failed to instantiate: " & e.msg))
+
+# ── Output capture helpers ────────────────────────────────────────────────────
+
+proc captureAndCall(inst: var WasmInstance; funcName: string): Result[WasmCallResult, string] =
+  ## Call a wasm function with stdout/stderr capture via pipe redirection.
+  ## This works because wasm3's WASI implementation writes to real OS file descriptors.
+
+  # Create pipes for stdout and stderr capture
+  var stdoutPipe: array[2, cint]
+  var stderrPipe: array[2, cint]
+
+  if pipe(stdoutPipe) != 0:
+    return err(wasmRuntimeError("failed to create stdout pipe"))
+  if pipe(stderrPipe) != 0:
+    discard close(stdoutPipe[0])
+    discard close(stdoutPipe[1])
+    return err(wasmRuntimeError("failed to create stderr pipe"))
+
+  # Save original file descriptors
+  let origStdout = dup(STDOUT_FILENO)
+  let origStderr = dup(STDERR_FILENO)
+
+  if origStdout < 0 or origStderr < 0:
+    discard close(stdoutPipe[0]); discard close(stdoutPipe[1])
+    discard close(stderrPipe[0]); discard close(stderrPipe[1])
+    return err(wasmRuntimeError("failed to save original file descriptors"))
+
+  # Redirect stdout/stderr to pipes
+  discard dup2(stdoutPipe[1], STDOUT_FILENO)
+  discard dup2(stderrPipe[1], STDERR_FILENO)
+
+  # Close write ends (they're now duplicated to STDOUT/STDERR)
+  discard close(stdoutPipe[1])
+  discard close(stderrPipe[1])
+
+  # Call the wasm function
+  var callError: string
+  var timedOut = false
+  try:
+    let fnc = inst.env.findFunction(funcName)
+    fnc.call(void)
+  except WasmError as e:
+    callError = e.msg
+  except CatchableError as e:
+    callError = e.msg
+
+  # Flush stdout/stderr before restoring
+  flushFile(stdout)
+  flushFile(stderr)
+
+  # Restore original file descriptors
+  discard dup2(origStdout, STDOUT_FILENO)
+  discard dup2(origStderr, STDERR_FILENO)
+  discard close(origStdout)
+  discard close(origStderr)
+
+  # Read captured output
+  var stdoutBuf = newString(4096)
+  var stderrBuf = newString(4096)
+  var stdoutOut = ""
+  var stderrOut = ""
+
+  while true:
+    let n = read(stdoutPipe[0], stdoutBuf[0].addr, stdoutBuf.len)
+    if n <= 0: break
+    stdoutOut.add(stdoutBuf[0 ..< n])
+
+  while true:
+    let n = read(stderrPipe[0], stderrBuf[0].addr, stderrBuf.len)
+    if n <= 0: break
+    stderrOut.add(stderrBuf[0 ..< n])
+
+  discard close(stdoutPipe[0])
+  discard close(stderrPipe[0])
+
+  if callError.len > 0:
+    if stderrOut.len > 0:
+      stderrOut.add("\n")
+    stderrOut.add(callError)
+    return err(wasmRuntimeError(callError))
+
+  ok(WasmCallResult(
+    exitCode: 0,
+    stdout: stdoutOut,
+    stderr: stderrOut,
+    timedOut: timedOut,
+    success: true
+  ))
 
 # ── Call WASM function ─────────────────────────────────────────────────────────
+
+proc callVoid*(inst: var WasmInstance; funcName: string): Result[WasmCallResult, string] =
+  ## Call an exported void function on a WASM instance.
+  ## Captures stdout/stderr from WASI fd_write.
+  inst.captureAndCall(funcName)
 
 proc call*(inst: var WasmInstance; funcName: string;
            args: seq[string] = @[]): Result[WasmCallResult, string] =
   ## Call an exported function on a WASM instance.
-  ## Returns WasmCallResult with stdout, stderr, exit code, and success flag.
-  
-  let wasmPath = inst.module.path
-  let wasmtimePath = inst.module.enginePath
-  
-  # Build wasmtime command
-  let wasmtimeArgs = inst.opts.buildWasmtimeArgs(wasmPath, funcName, args)
-  
-  # Execute wasmtime
-  let cmd = wasmtimePath & " " & wasmtimeArgs.join(" ")
-  let (output, exitCode) = execCmdEx(cmd)
-  
-  # Parse stdout/stderr from output
-  # wasmtime outputs to stdout, errors to stderr
-  var stdout = output
-  var stderr = ""
-  var timedOut = false
-  var success = false
-  
-  # Check for timeout indicator (wasmtime returns 255 for trap/fuel exhaustion)
-  if exitCode == 255 or exitCode == 124:
-    # 124 is convention for timeout from --fuel
-    timedOut = true
-    success = false
-  elif exitCode == 0:
-    success = true
-  else:
-    success = false
-  
-  # wasmtime can output to both stdout and stderr
-  # If output contains null bytes or looks like binary, it's probably mixed
-  if '\0' in output:
-    # Binary output - split on null or treat all as stderr
-    stderr = output
-    stdout = ""
-  
-  return ok(WasmCallResult(
-    exitCode: exitCode,
-    stdout: stdout,
-    stderr: stderr,
-    timedOut: timedOut,
-    success: success
-  ))
+  ## For now, calls as void (no args). Use callVoid directly for void functions.
+  ## Plugins should return results via stdout or memory, not return values.
+  inst.captureAndCall(funcName)
 
 # ── Convenience: load and call in one step ─────────────────────────────────────
 
-proc loadAndCall*(engine: var WasmEngine; wasmPath: string;
-                  funcName: string; args: seq[string] = @[]): Result[WasmCallResult, string] =
+proc loadAndCall*(engine: WasmEngine; wasmPath: string;
+                  funcName: string): Result[WasmCallResult, string] =
   ## Load a WASM module and call a function in one step.
   let modRes = engine.loadModule(wasmPath)
   if modRes.isErr:
     return err(modRes.error)
-  
+
   let instRes = engine.instantiate(modRes.value)
   if instRes.isErr:
     return err(instRes.error)
-  
+
   var inst = instRes.value
-  inst.call(funcName, args)
+  inst.callVoid(funcName)
+
+proc loadBytesAndCall*(engine: WasmEngine; data: sink string;
+                       funcName: string;
+                       name: string = "module"): Result[WasmCallResult, string] =
+  ## Load WASM bytes and call a function in one step.
+  let modRes = engine.loadModuleFromBytes(data, name)
+  if modRes.isErr:
+    return err(modRes.error)
+
+  let instRes = engine.instantiate(modRes.value)
+  if instRes.isErr:
+    return err(instRes.error)
+
+  var inst = instRes.value
+  inst.callVoid(funcName)
 
 # ── Pure helpers ───────────────────────────────────────────────────────────────
 
