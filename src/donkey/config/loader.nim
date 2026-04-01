@@ -20,9 +20,11 @@ const EnvWebAllowlist* = "DONKEY_WEB_ALLOWLIST"
 
 type
   MainConfigPatch* = object
+    home*:     Option[string]
     logLevel*: Option[LogLevel]
     logFile*:  Option[string]
     paddocks*: Option[string]
+    wiring*:   Option[bool]
 
   SecurityConfigPatch* = object
     webAllowlist*: Option[seq[string]]
@@ -44,6 +46,7 @@ proc resolveHome*(): string =
 proc parseSandboxMode*(rawMode: string): SandboxMode =
   case rawMode.strip().toLowerAscii()
   of "docker": smDocker
+  of "wasm":   smWasm
   else:        smNone
 
 proc parseHostList*(raw: string): seq[string] =
@@ -158,6 +161,11 @@ proc parseMainConfigPatch*(doc: TomlValueRef): MainConfigPatch =
     return
   let mainSection = doc[ConfigSectionName]
 
+  if mainSection.hasKey("home"):
+    let homeVal = mainSection["home"].getStr().strip()
+    if homeVal.len > 0:
+      result.home = some(expandTilde(homeVal))
+
   if mainSection.hasKey("log_level"):
     result.logLevel = some(parseLogLevel(mainSection["log_level"].getStr()))
 
@@ -170,6 +178,9 @@ proc parseMainConfigPatch*(doc: TomlValueRef): MainConfigPatch =
     let paddocks = mainSection["paddocks"].getStr().strip()
     if paddocks.len > 0:
       result.paddocks = some(expandTilde(paddocks))
+
+  if mainSection.hasKey("wiring"):
+    result.wiring = some(mainSection["wiring"].getBool())
 
 proc parseSandboxConfigPatch*(doc: TomlValueRef): SandboxConfigPatch =
   if not doc.hasKey("sandbox"):
@@ -186,12 +197,16 @@ proc parseSandboxConfigPatch*(doc: TomlValueRef): SandboxConfigPatch =
 
 proc applyMainConfigPatch*(patch: MainConfigPatch; cfg: DonkeyConfig): DonkeyConfig =
   result = cfg
+  if patch.home.isSome:
+    result.home = patch.home.get()
   if patch.logLevel.isSome:
     result.logLevel = patch.logLevel.get()
   if patch.logFile.isSome:
     result.logFile = patch.logFile.get()
   if patch.paddocks.isSome:
     result.paddocks = patch.paddocks.get()
+  if patch.wiring.isSome:
+    result.wiring = patch.wiring.get()
 
 proc applySandboxConfigPatch*(patch: SandboxConfigPatch; cfg: DonkeyConfig): DonkeyConfig =
   result = cfg

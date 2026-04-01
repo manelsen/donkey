@@ -1,15 +1,20 @@
-## sandbox.nim — bash tool execution with optional Docker isolation.
+## sandbox.nim — bash tool execution with optional Docker/Wasm isolation.
 ##
 ## Modes (SandboxMode from config/types):
 ##   smNone   — direct exec in paddock dir; no OS-level isolation
 ##   smDocker — ephemeral container with bind-mounted paddock
+##   smWasm   — wasmtime CLI executing go-busybox shell.wasm
 ##
 ## Docker mode:
 ##   docker run --rm -v {paddock}:/workspace -w /workspace {image} sh -c {cmd}
 ##
-##   The paddock is bind-mounted (not a named volume) so files persist on the
-##   host between sessions regardless of container lifecycle.
-##   Network access is left enabled so the agent can run git, npm, curl, etc.
+## Wasm mode:
+##   wasmtime run --dir={paddock} --dir=/tmp {busybox} {applet} {args}
+##
+## The binary is go-busybox (https://github.com/rcarmo/go-busybox) — a
+## multi-call binary with 57 applets (cat, grep, sed, echo, ls, etc.).
+## MUST be named "busybox" (no extension) so argv[0] dispatches correctly.
+## Build with: scripts/setup_shell_wasm.sh
 ##
 ## Call sandboxLogLevel once at daemon startup to surface the active mode.
 
@@ -27,6 +32,16 @@ type
     workingDir*:     string
     ensureWorkDir*:  bool
 
+# ── Shell.wasm path resolution ────────────────────────────────────────────────
+
+proc resolveShellWasmPath*(): string {.gcsafe, raises: [].} =
+  ## Returns the path to shell.wasm (go-busybox).
+  ## The file must be named "busybox" (no extension) so that argv[0] works
+  ## with the go-busybox multi-call binary dispatcher.
+  let default = getHomeDir() / ".donkey" / "busybox"
+  if default.fileExists: return default
+  default  # return default even if missing; caller handles the check
+
 # ── Command builder (pure — exported for unit tests) ─────────────────────────
 
 proc buildDockerCmd*(cmd, paddock, image: string): string {.gcsafe, raises: [].} =
@@ -36,6 +51,17 @@ proc buildDockerCmd*(cmd, paddock, image: string): string {.gcsafe, raises: [].}
   "-w /workspace " &
   image & " sh -c " & quoteShell(cmd)
 
+proc buildWasmCmd*(cmd, paddock, shellPath: string): string {.gcsafe, raises: [].} =
+  ## Returns the wasmtime invocation string for go-busybox applets.
+  ## The binary must be named "busybox" so that argv[0] dispatches correctly.
+  ## Note: go-busybox's ash shell is stubbed under WASI, so complex shell
+  ## features (pipes, redirections, shell scripts) won't work. Simple applet
+  ## calls (cat, grep, sed, echo, ls, etc.) work fine.
+  "wasmtime run " &
+  "--dir=" & paddock & " " &
+  "--dir=/tmp " &
+  shellPath & " " & cmd
+
 proc buildSandboxPlan*(cmd, paddock: string;
                        mode: SandboxMode;
                        image: string): SandboxPlan {.gcsafe, raises: [].} =
@@ -44,6 +70,11 @@ proc buildSandboxPlan*(cmd, paddock: string;
     SandboxPlan(command: cmd, workingDir: paddock, ensureWorkDir: true)
   of smDocker:
     SandboxPlan(command: buildDockerCmd(cmd, paddock, image),
+                workingDir: "",
+                ensureWorkDir: false)
+  of smWasm:
+    let shellPath = resolveShellWasmPath()
+    SandboxPlan(command: buildWasmCmd(cmd, paddock, shellPath),
                 workingDir: "",
                 ensureWorkDir: false)
 
@@ -74,9 +105,17 @@ proc sandboxStatusMessage*(mode: SandboxMode; image: string): (LogLevel, string)
   of smNone:
     (lvlWarn,
      "bash sandbox: none — workingDir isolation only. " &
-     "Set [sandbox] mode = \"docker\" in " & ConfigFileName & " for full isolation.")
+     "Set [sandbox] mode = \"docker\" or \"wasm\" in " & ConfigFileName & " for full isolation.")
   of smDocker:
     (lvlInfo, "bash sandbox: docker (image: " & image & ")")
+  of smWasm:
+    let shellPath = resolveShellWasmPath()
+    if shellPath.fileExists:
+      (lvlInfo, "bash sandbox: wasm (wasmtime + " & shellPath & ")")
+    else:
+      (lvlWarn,
+       "bash sandbox: wasm mode enabled but shell.wasm not found at " & shellPath &
+       ". Run scripts/setup_shell_wasm.sh to build it.")
 
 # ── Executor ──────────────────────────────────────────────────────────────────
 
@@ -86,7 +125,18 @@ proc sandboxBash*(cmd, paddock: string;
   ## Executes cmd in the appropriate sandbox for `mode`.
   ## For smNone: runs directly with paddock as CWD.
   ## For smDocker: wraps cmd in an ephemeral container with paddock bind-mounted.
-  runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image))
+  ## For smWasm: runs cmd via wasmtime + go-busybox shell.wasm.
+  ## Falls back to direct exec if shell.wasm is missing.
+  case mode
+  of smWasm:
+    let shellPath = resolveShellWasmPath()
+    if not shellPath.fileExists:
+      # Graceful fallback
+      let plan = SandboxPlan(command: cmd, workingDir: paddock, ensureWorkDir: true)
+      return runSandboxPlan(plan)
+    runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image))
+  of smNone, smDocker:
+    runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image))
 
 # ── Startup log ───────────────────────────────────────────────────────────────
 
