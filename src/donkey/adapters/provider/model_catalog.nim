@@ -1,4 +1,4 @@
-import std/[algorithm, httpclient, json, options, os, strutils, times]
+import std/[algorithm, httpclient, json, options, os, strutils, tables, times]
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/providers/smart_routing
@@ -152,40 +152,55 @@ proc loadModelsDevCatalog(): Result[ModelCatalogResult, string] =
     if root.kind != JObject:
       return err("models.dev response is not an object")
 
+    # Provider key → internal name. Only canonical keys to avoid duplicates.
+    const providerMap = {
+      "minimax": "minimax",
+      "zhipu-coding": "zai-coding",
+      "openrouter": "openrouter",
+      "openai": "openai",
+      "groq": "groq",
+      "anthropic": "anthropic",
+      "google": "gemini",
+      "deepseek": "deepseek",
+      "qwen": "alibaba",
+    }.toTable()
+
     var entries: seq[ModelCatalogEntry] = @[]
+    var seen: seq[string] = @[]  # for dedup
 
     for providerKey, providerNode in root:
-      let providerName = providerNode.getOrDefault("name").getStr("")
+      let internalProvider = providerMap.getOrDefault(providerKey.toLowerAscii())
+      if internalProvider.len == 0:
+        continue
+
       let modelsNode = providerNode.getOrDefault("models")
       if modelsNode.isNil or modelsNode.kind != JObject:
         continue
 
-      let internalProvider = case providerKey.toLowerAscii()
-        of "minimax", "minimax-coding-plan", "minimax-cn": "minimax"
-        of "zhipu", "zhipu-coding", "zhipu-cn", "zhipu-cn-coding": "zai-coding"
-        of "openrouter": "openrouter"
-        of "openai": "openai"
-        of "groq": "groq"
-        of "anthropic": "anthropic"
-        of "google", "gemini", "google-vertex": "gemini"
-        of "deepseek": "deepseek"
-        of "alibaba", "qwen", "alibaba-cn": "alibaba"
-        of "ollama", "ollama-cloud": "ollama"
-        else: ""
-
-      if internalProvider.len == 0:
-        continue
-
       for modelId, modelData in modelsNode:
-        let inputCost = modelData.getOrDefault("inputCost").getFloat(0.0)
-        let isFree = inputCost == 0.0
+        # Dedup: skip if already added for this provider
+        let key = internalProvider & "/" & modelId
+        if key in seen:
+          continue
+        seen.add(key)
+
+        # isFree only when pricing is explicitly zero (not when null/missing)
+        let pricingNode = modelData.getOrDefault("pricing")
+        var isFree = false
+        var hasPricing = false
+        if not pricingNode.isNil and pricingNode.kind == JObject:
+          hasPricing = true
+          let inputCost = pricingNode.getOrDefault("input").getFloat(-1.0)
+          let outputCost = pricingNode.getOrDefault("output").getFloat(-1.0)
+          isFree = inputCost == 0.0 and outputCost == 0.0
+
         entries.add(ModelCatalogEntry(
           providerName: internalProvider,
           modelName: modelId,
           label: modelData.getOrDefault("name").getStr(modelId),
           isFree: isFree,
           available: true,
-          hasPricing: inputCost > 0.0
+          hasPricing: hasPricing,
         ))
 
     if entries.len > 0:
