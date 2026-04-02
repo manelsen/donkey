@@ -42,6 +42,20 @@ proc caps*(a: MiniMaxAdapter): ProviderCaps =
 
 # ── JSON serialisation (OpenAI-compatible) ────────────────────────────────────
 
+proc toJson(msg: ChatMessage): JsonNode =
+  ## Serialises a ChatMessage to OpenAI-compatible JSON for MiniMax.
+  if msg.role == "tool":
+    return %* {"role": "tool",
+               "tool_call_id": msg.toolCallId,
+               "content":      msg.text}
+  if msg.toolCalls.len > 0:
+    var calls = newJArray()
+    for tc in msg.toolCalls:
+      calls.add(%* {"id": tc.id, "type": "function",
+                    "function": {"name": tc.name, "arguments": tc.inputJson}})
+    return %* {"role": "assistant", "content": msg.text, "tool_calls": calls}
+  %* {"role": msg.role, "content": msg.text}
+
 proc buildBody*(a: MiniMaxAdapter; req: CompletionRequest): JsonNode =
   ## Exported for unit testing.
   ## OpenAI-compatible format with reasoning_split for thinking separation.
@@ -49,7 +63,7 @@ proc buildBody*(a: MiniMaxAdapter; req: CompletionRequest): JsonNode =
   if req.system.len > 0:
     messages.add(%* {"role": "system", "content": req.system})
   for m in req.messages:
-    messages.add(%* {"role": m.role, "content": m.text})
+    messages.add(m.toJson())
 
   result = %* {
     "model": a.model,
