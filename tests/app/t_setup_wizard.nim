@@ -24,46 +24,54 @@ suite "buildEnvContent":
 
   test "telegram token appears when provided":
     let env = buildEnvContent(
-      providerName = "zai-coding",
-      apiKey = "key123",
+      providers = @[("zai-coding", "key123")],
       channels = @[("telegram", "tg_token_abc")],
     )
-    check env.contains("TELEGRAM_BOT_TOKEN=tg_token_abc")
+    check "TELEGRAM_BOT_TOKEN=tg_token_abc" in env
 
   test "discord token appears when provided":
     let env = buildEnvContent(
-      providerName = "openrouter",
-      apiKey = "or_key",
+      providers = @[("openrouter", "or_key")],
       channels = @[("discord", "dc_token_xyz")],
     )
-    check env.contains("DISCORD_BOT_TOKEN=dc_token_xyz")
+    check "DISCORD_BOT_TOKEN=dc_token_xyz" in env
 
   test "provider key maps to correct env var for zai-coding":
-    let env = buildEnvContent("zai-coding", "mykey", @[])
-    check env.contains("ZAI_CODING_API_KEY=mykey")
+    let env = buildEnvContent(@[("zai-coding", "mykey")], @[])
+    check "ZAI_CODING_API_KEY=mykey" in env
 
   test "provider key maps to correct env var for openrouter":
-    let env = buildEnvContent("openrouter", "or123", @[])
-    check env.contains("OPENROUTER_API_KEY=or123")
+    let env = buildEnvContent(@[("openrouter", "or123")], @[])
+    check "OPENROUTER_API_KEY=or123" in env
 
   test "provider key maps to correct env var for anthropic":
-    let env = buildEnvContent("anthropic", "sk-ant", @[])
-    check env.contains("ANTHROPIC_API_KEY=sk-ant")
+    let env = buildEnvContent(@[("anthropic", "sk-ant")], @[])
+    check "ANTHROPIC_API_KEY=sk-ant" in env
 
   test "provider key maps to correct env var for gemini":
-    let env = buildEnvContent("gemini", "gm-key", @[])
-    check env.contains("GEMINI_API_KEY=gm-key")
+    let env = buildEnvContent(@[("gemini", "gm-key")], @[])
+    check "GEMINI_API_KEY=gm-key" in env
+
+  test "multiple providers appear":
+    let env = buildEnvContent(
+      @[("zai-coding", "zk"), ("openrouter", "ok"), ("anthropic", "ak")],
+      @[]
+    )
+    check "ZAI_CODING_API_KEY=zk" in env
+    check "OPENROUTER_API_KEY=ok" in env
+    check "ANTHROPIC_API_KEY=ak" in env
 
   test "omitted channel token left blank":
-    let env = buildEnvContent("zai-coding", "k", @[("telegram", "tok")])
-    check env.contains("DISCORD_BOT_TOKEN=\n") or
-          env.contains("DISCORD_BOT_TOKEN=")
+    let env = buildEnvContent(@[("zai-coding", "k")], @[("telegram", "tok")])
+    check "DISCORD_BOT_TOKEN=" in env
 
   test "multiple channels both appear":
-    let env = buildEnvContent("zai-coding", "k",
-      @[("telegram", "tg"), ("discord", "dc")])
-    check env.contains("TELEGRAM_BOT_TOKEN=tg")
-    check env.contains("DISCORD_BOT_TOKEN=dc")
+    let env = buildEnvContent(
+      @[("zai-coding", "k")],
+      @[("telegram", "tg"), ("discord", "dc")]
+    )
+    check "TELEGRAM_BOT_TOKEN=tg" in env
+    check "DISCORD_BOT_TOKEN=dc" in env
 
 suite "providerEnvVar":
 

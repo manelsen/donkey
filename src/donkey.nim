@@ -6,6 +6,7 @@ import chronos/asyncsync
 import chronos/timer as ctimer
 import donkey/config/loader
 import donkey/config/types
+import donkey/config/dotenv
 import donkey/config/tools_registry
 import donkey/config/skills_registry
 import donkey/config/clawhub_registry
@@ -1860,17 +1861,10 @@ proc main =
     let home = resolveHome()
     configPath = home / ConfigFileName
 
-  ## Load env file if present (same file systemd uses via EnvironmentFile=).
-  ## Allows running ./donkey directly with the same environment as the service.
-  let envFilePath = svcCfgDir() / EnvFileName
-  if fileExists(envFilePath):
-    for line in lines(envFilePath):
-      let l = line.strip()
-      if l.len == 0 or l.startsWith("#"): continue
-      let s = (if l.startsWith("export "): l[7 .. ^1] else: l).strip()
-      let eq = s.find('=')
-      if eq > 0:
-        putEnv(s[0 ..< eq].strip(), s[eq + 1 .. ^1].strip())
+  let home = resolveHome()
+
+  ## Load .env file if present — checks {home}/donkey.env then ~/.config/donkey/donkey.env
+  discard loadDonkeyEnv(home)
 
   let cfg = loadConfig(configPath)
 
