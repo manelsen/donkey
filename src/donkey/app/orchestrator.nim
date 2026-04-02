@@ -40,6 +40,7 @@ import ../domain/agent_message
 import ../domain/message
 import ../domain/personality
 import ../config/types as cfgTypes
+import ../adapters/channel/common_runtime
 import ./session_manager
 import ./sandbox
 import ../ports/provider
@@ -77,6 +78,7 @@ type NormalTurnPrep = object
   agentTraits:    PersonalityTraits
   identityLoaded: bool
   obPhase:        OnboardingPhase
+  showReasoning:  bool
 
 type TypingFlag = ref bool
 
@@ -87,17 +89,19 @@ type OnboardingTurnResult = object
   handled:            bool
 
 type ControlTaskResult = object
-  history:      ConversationHistory
-  onboarding:   OnboardingRuntime
-  identity:     IdentityRuntime
-  debugMode:    bool
-  handled:      bool
+  history:       ConversationHistory
+  onboarding:    OnboardingRuntime
+  identity:      IdentityRuntime
+  debugMode:     bool
+  showReasoning: bool
+  handled:       bool
 
 type OrchestratorState = object
-  history:     ConversationHistory
-  debugMode:   bool
-  lastUserId:  UserId
-  onboarding:  OnboardingRuntime
+  history:       ConversationHistory
+  debugMode:     bool
+  showReasoning: bool
+  lastUserId:    UserId
+  onboarding:    OnboardingRuntime
   identity:    IdentityRuntime
   turnSeq:     int
 
@@ -331,6 +335,14 @@ proc safeSaveUserMd(memory: MemoryRuntimePort;
   except Exception:
     discard
 
+proc safeAppendMemory(memory: MemoryRuntimePort;
+                      uid: UserId;
+                      text: string) {.gcsafe, raises: [].} =
+  try:
+    memory.appendMemory(uid, text)
+  except Exception:
+    discard
+
 func buildNameChoiceKeyboard*(names: seq[string]): seq[seq[(string, string)]] =
   var nameRow: seq[(string, string)] = @[]
   for n in names:
@@ -373,6 +385,7 @@ func newOrchestratorState*(): OrchestratorState =
   OrchestratorState(
     history: newHistory(),
     debugMode: false,
+    showReasoning: true,
     onboarding: OnboardingRuntime(phase: opWakeUp),
     identity: IdentityRuntime(),
   )
@@ -395,6 +408,7 @@ func withControlResult*(controlResult: ControlTaskResult;
   result.onboarding = controlResult.onboarding
   result.identity = controlResult.identity
   result.debugMode = controlResult.debugMode
+  result.showReasoning = controlResult.showReasoning
 
 func withOnboardingResult*(onboardingResult: OnboardingTurnResult;
                            state: OrchestratorState): OrchestratorState =
@@ -411,6 +425,7 @@ func withTurnPrep*(turnPrep: NormalTurnPrep;
   result.identity.traits = turnPrep.agentTraits
   result.identity.identityLoaded = turnPrep.identityLoaded
   result.onboarding.phase = turnPrep.obPhase
+  result.showReasoning = turnPrep.showReasoning
 
 func withLoopResult*(loopResult: ToolLoopRunResult;
                      state: OrchestratorState): OrchestratorState =
@@ -485,10 +500,13 @@ type StreamJob* = object
   fn*:  StreamFn
   req*: CompletionRequest
   ch*:  ptr Channel[string]
+  res*: ptr CompletionResponse # Output
 
 proc doStreamJob*(job: StreamJob) {.thread, gcsafe.} =
-  discard job.fn(job.req,
-                 proc(tok: string) {.gcsafe.} = job.ch[].send(tok))
+  let res = job.fn(job.req,
+                   proc(tok: string) {.gcsafe.} = job.ch[].send(tok))
+  if res.isOk:
+    job.res[] = res.value
   job.ch[].send(doneSentinel)
 
 proc streamToOutbox(fn:        StreamFn;
@@ -497,13 +515,14 @@ proc streamToOutbox(fn:        StreamFn;
                     userId:    UserId;
                     ch:        ChannelKind;
                     replyTo:   string;
-                    streamId:  string): Future[string] {.async.} =
+                    streamId:  string): Future[(string, string)] {.async.} =
   var tokenChan: Channel[string]
+  var finalResponse: CompletionResponse
   tokenChan.open(512)
 
   var t: Thread[StreamJob]
   createThread(t, doStreamJob,
-               StreamJob(fn: fn, req: req, ch: addr tokenChan))
+               StreamJob(fn: fn, req: req, ch: addr tokenChan, res: addr finalResponse))
 
   var accumulated = ""
   var lastFlush   = nowMs()
@@ -512,7 +531,7 @@ proc streamToOutbox(fn:        StreamFn;
     var (has, tok) = tokenChan.tryRecv()
     while has:
       if tok == doneSentinel:
-        let visible = filterThinking(accumulated)
+        let visible = filterThinking(finalResponse.text)
         if visible.len > 0:
           await outbox.put(OutboundMessage(
             userId:    userId,
@@ -523,7 +542,6 @@ proc streamToOutbox(fn:        StreamFn;
             isPartial: false,
           ))
         else:
-          # Resposta foi apenas thinking — envia mensagem vazia para não deixar usuário sem resposta
           await outbox.put(OutboundMessage(
             userId:    userId,
             channel:   ch,
@@ -534,7 +552,7 @@ proc streamToOutbox(fn:        StreamFn;
           ))
         tokenChan.close()
         joinThread(t)
-        return accumulated
+        return (finalResponse.text, finalResponse.reasoning)
       accumulated.add(tok)
       (has, tok) = tokenChan.tryRecv()
 
@@ -554,7 +572,7 @@ proc streamToOutbox(fn:        StreamFn;
 
   tokenChan.close()
   joinThread(t)
-  return accumulated
+  return (finalResponse.text, finalResponse.reasoning)
 
 # ── Name generation helper ─────────────────────────────────────────────────────
 
@@ -729,6 +747,10 @@ proc prepareNormalTurn(memory: MemoryRuntimePort;
   result.identityLoaded = identityLoaded
   result.obPhase = obPhase
 
+  let prefs = try: memory.loadContext(uid).preferencesMd |> parseChannelPrefs
+              except: defaultChannelPrefs()
+  result.showReasoning = prefs.reasoning == "on"
+
   if not result.identityLoaded:
     (result.agentName, result.agentTraits) = safeLoadIdentity(memory, uid)
     result.identityLoaded = true
@@ -768,6 +790,7 @@ proc finalizeNormalTurn(globalOutbox: AsyncQueue[OutboundMessage];
                         replyTo: string;
                         streamId: string;
                         streamFn: StreamFn;
+                        showReasoning: bool;
                         loopResult: ToolLoopRunResult): Future[void] {.async.} =
   if loopResult.toolCallCount > 0:
     await globalOutbox.put(OutboundMessage(
@@ -780,10 +803,17 @@ proc finalizeNormalTurn(globalOutbox: AsyncQueue[OutboundMessage];
 
   if not loopResult.done or not loopResult.wasStreamed:
     if loopResult.finalText.len > 0:
+      var fullText = ""
+      if showReasoning and loopResult.reasoning.len > 0:
+        let cleanReasoning = loopResult.reasoning.strip()
+        if cleanReasoning.len > 0:
+          fullText = "> " & cleanReasoning.replace("\n", "\n> ") & "\n\n"
+      fullText &= loopResult.finalText
+
       await globalOutbox.put(OutboundMessage(
         userId: uid,
         channel: channel,
-        text: loopResult.finalText,
+        text: fullText,
         replyTo: replyTo,
       ))
 
@@ -1052,11 +1082,13 @@ proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
                        onboarding: OnboardingRuntime;
                        identity: IdentityRuntime;
                        debugMode: bool;
+                       showReasoning: bool;
                        sessionId: string): Future[ControlTaskResult] {.async.} =
   result.history = history
   result.onboarding = onboarding
   result.identity = identity
   result.debugMode = debugMode
+  result.showReasoning = showReasoning
 
   case msg.taskKind
   of tkReset:
@@ -1167,6 +1199,7 @@ proc runToolLoop(globalOutbox: AsyncQueue[OutboundMessage];
                  tools: seq[ToolDescription];
                  providerLabel: string;
                  debugMode: bool;
+                 showReasoning: bool;
                  log: Logger): Future[ToolLoopRunResult] {.async.} =
   var loopState = history |> newToolLoopState
   var round = 0
@@ -1176,23 +1209,22 @@ proc runToolLoop(globalOutbox: AsyncQueue[OutboundMessage];
   while not loopState.done and round < MaxToolRoundsOrch:
     inc round
 
-    let req = buildPrompt(systemBase, loopState.history, context, tools)
+    let req = buildPrompt(systemBase, loopState.history, context, tools, reasoning = showReasoning)
 
     if decideToolLoopStreaming(
       round = round,
       toolsCount = tools.len,
       streamingAvailable = streamFn != nil,
     ).useStreaming:
-      let streamText = await streamToOutbox(
+      let (streamText, streamReasoning) = await streamToOutbox(
         streamFn, req, globalOutbox, uid, channel, replyTo, streamId)
-      
+
       log.info($uid & " (" & $channel & ") <- [" & providerLabel &
                "] |" & $streamText.len & "| stream")
       loopState =
         loopState |>->
-        withStreamFinalText(streamText)
+        withStreamFinalText(streamText, streamReasoning)
       continue
-
     let resp = safeComplete(completeFn, req)
     if resp.isErr:
       pushAgentEvent(AgentEvent(
@@ -1311,14 +1343,20 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     globalOutbox, toolInbox, toolOut, memory, completeFn, streamFn, turnSetup.nativeCtx,
     state, result.history, turnSetup.uid, msg.channel, msg.replyTo, msg.id, turnSetup.streamId,
     turnPrep.systemBase, turnPrep.context, tools, providerLabel,
-    result.debugMode, log)
+    result.debugMode, result.showReasoning, log)
   result =
     result |>->
     withLoopResult(loopResult)
 
   stopTypingLoop(turnSetup.typingLoop)
   await finalizeNormalTurn(
-    globalOutbox, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.streamId, streamFn, loopResult)
+    globalOutbox, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.streamId, streamFn, result.showReasoning, loopResult)
+
+  # Capture memory from substantive user messages
+  if turnSetup.userText.len > 30 and loopResult.finalText.len > 0:
+    let memEntry = "- **User:** " & turnSetup.userText[0 ..< min(turnSetup.userText.len, 500)] & "\n" &
+      "  **Response:** " & loopResult.finalText[0 ..< min(loopResult.finalText.len, 500)] & "\n"
+    safeAppendMemory(memory, turnSetup.uid, memEntry)
 
 proc handleActorCancel(memory: MemoryRuntimePort;
                        memInbox: AsyncQueue[AgentMessage];
@@ -1362,7 +1400,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
   let controlResult = await handleControlTask(
     globalOutbox, memory, completeFn, uid, msg.channel, msg.replyTo, msg,
     result.history, result.onboarding, result.identity,
-    result.debugMode, sessionId)
+    result.debugMode, result.showReasoning, sessionId)
   result =
     result |>->
     withControlResult(controlResult)
