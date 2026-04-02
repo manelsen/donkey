@@ -29,6 +29,60 @@ func catalogResult(entries: seq[ModelCatalogEntry];
                    fetchedAtUnix: int64): ModelCatalogResult =
   ModelCatalogResult(entries: entries, source: source, fetchedAtUnix: fetchedAtUnix)
 
+func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
+  case providerName
+  of "openrouter":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-4o-mini", label: "openai/gpt-4o-mini", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-4o", label: "openai/gpt-4o", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "anthropic/claude-opus-4-6", label: "anthropic/claude-opus-4-6", isFree: false, available: true),
+    ]
+  of "groq":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "llama-3.3-70b-versatile", label: "llama-3.3-70b-versatile", isFree: true, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "llama-3.1-8b-instant", label: "llama-3.1-8b-instant", isFree: true, available: true, hasPricing: true),
+    ]
+  of "zen":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "gpt-5.4", label: "gpt-5.4", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "claude-sonnet-4-6", label: "claude-sonnet-4-6", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-5", label: "glm-5", isFree: false, available: true),
+    ]
+  of "anthropic":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "claude-opus-4-6", label: "claude-opus-4-6", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "claude-sonnet-4-6", label: "claude-sonnet-4-6", isFree: false, available: true),
+    ]
+  of "gemini":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "gemini-2.5-flash", label: "gemini-2.5-flash", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gemini-2.5-pro", label: "gemini-2.5-pro", isFree: false, available: true),
+    ]
+  of "minimax":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M2", label: "MiniMax-M2", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M2.5", label: "MiniMax-M2.5", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M2.7", label: "MiniMax-M2.7", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M2.7-highspeed", label: "MiniMax-M2.7-highspeed", isFree: false, available: true),
+    ]
+  of "zai", "zai-coding":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-5.1", label: "glm-5.1", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-5", label: "glm-5", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-4.7", label: "glm-4.7", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-4.6", label: "glm-4.6", isFree: false, available: true),
+    ]
+  of "ollama":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "llama3", label: "llama3", isFree: true, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "mistral", label: "mistral", isFree: true, available: true, hasPricing: true),
+    ]
+  else:
+    @[]
+
+func fallbackCatalog(providerName: string): ModelCatalogResult =
+  catalogResult(staticCatalog(providerName), mcsFallback, 0)
+
 proc httpGetCatalog(url: string; headers: seq[(string, string)]): Result[string, string] =
   ## Makes HTTP GET request to fetch catalog JSON.
   try:
@@ -86,6 +140,7 @@ proc fetchWithQueryParam(url: string; queryParam: string; queryValue: string;
 
 proc loadModelsDevCatalog(): Result[ModelCatalogResult, string] =
   ## Carrega catálogo do models.dev (catálogo aberto mantido pela comunidade).
+  ## Formato: { "provider-id": { "name": "...", "models": { "model-id": { ... } } } }
   try:
     var client = newHttpClient(userAgent = "donkey/1.0")
     client.headers = newHttpHeaders([("Accept", "application/json")])
@@ -93,204 +148,60 @@ proc loadModelsDevCatalog(): Result[ModelCatalogResult, string] =
     if response.status[0] != '2':
       return err("models.dev returned status " & $response.status)
 
-    let models = parseJson(response.body)
-    if models.kind != JArray:
-      return err("models.dev response is not an array")
-    
+    let root = parseJson(response.body)
+    if root.kind != JObject:
+      return err("models.dev response is not an object")
+
     var entries: seq[ModelCatalogEntry] = @[]
-    for model in models:
-      let provider = model.getOrDefault("provider").getStr("")
-      let providerId = model.getOrDefault("providerId").getStr("")
-      let modelId = model.getOrDefault("modelId").getStr("")
-      let inputCost = model.getOrDefault("inputCost").getFloat(0.0)
-      
-      if providerId.len > 0:
-        # Determina se é free (custo zero)
+
+    for providerKey, providerNode in root:
+      let providerName = providerNode.getOrDefault("name").getStr("")
+      let modelsNode = providerNode.getOrDefault("models")
+      if modelsNode.isNil or modelsNode.kind != JObject:
+        continue
+
+      let internalProvider = case providerKey.toLowerAscii()
+        of "minimax", "minimax-coding-plan", "minimax-cn": "minimax"
+        of "zhipu", "zhipu-coding", "zhipu-cn", "zhipu-cn-coding": "zai-coding"
+        of "openrouter": "openrouter"
+        of "openai": "openai"
+        of "groq": "groq"
+        of "anthropic": "anthropic"
+        of "google", "gemini", "google-vertex": "gemini"
+        of "deepseek": "deepseek"
+        of "alibaba", "qwen", "alibaba-cn": "alibaba"
+        of "ollama", "ollama-cloud": "ollama"
+        else: ""
+
+      if internalProvider.len == 0:
+        continue
+
+      for modelId, modelData in modelsNode:
+        let inputCost = modelData.getOrDefault("inputCost").getFloat(0.0)
         let isFree = inputCost == 0.0
-        
-        # Mapeia provider names do models.dev para nossos nomes internos
-        let internalProvider = case provider.toLowerAscii()
-          of "minimax": "minimax"
-          of "zhipu", "zhipu ai": "zai-coding"
-          of "groq": "groq"
-          of "anthropic": "anthropic"
-          of "google", "gemini": "gemini"
-          of "openai": "openai"
-          of "deepseek": "deepseek"
-          of "alibaba", "qwen": "alibaba"
-          else: ""
-        
-        if internalProvider.len > 0:
-          entries.add(ModelCatalogEntry(
-            providerName: internalProvider,
-            modelName: providerId,
-            label: modelId,
-            isFree: isFree,
-            available: true,
-            hasPricing: inputCost > 0.0
-          ))
-    
+        entries.add(ModelCatalogEntry(
+          providerName: internalProvider,
+          modelName: modelId,
+          label: modelData.getOrDefault("name").getStr(modelId),
+          isFree: isFree,
+          available: true,
+          hasPricing: inputCost > 0.0
+        ))
+
     if entries.len > 0:
       return ok(catalogResult(entries.sortCatalog(), mcsLive, getTime().toUnix()))
     else:
       return err("models.dev returned no entries for supported providers")
   except Exception as e:
-    return err("models.dev fetch failed: " & e.msg)
-
-func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
-  case providerName
-  of "openrouter":
-    @[
-      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-4o-mini", label: "openai/gpt-4o-mini", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-4o", label: "openai/gpt-4o", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "anthropic/claude-opus-4-6", label: "anthropic/claude-opus-4-6", isFree: false, available: true),
-    ]
-  of "groq":
-    @[
-      ModelCatalogEntry(providerName: providerName, modelName: "llama-3.3-70b-versatile", label: "llama-3.3-70b-versatile", isFree: true, available: true, hasPricing: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "llama-3.1-8b-instant", label: "llama-3.1-8b-instant", isFree: true, available: true, hasPricing: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-oss-20b", label: "openai/gpt-oss-20b", isFree: true, available: true, hasPricing: true),
-    ]
-  of "zen":
-    @[
-      ModelCatalogEntry(providerName: providerName, modelName: "gpt-5.4", label: "gpt-5.4", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "claude-sonnet-4-6", label: "claude-sonnet-4-6", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "glm-5", label: "glm-5", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "minimax-m2.5-free", label: "minimax-m2.5-free", isFree: true, available: true),
-    ]
-  of "anthropic":
-    @[
-      ModelCatalogEntry(providerName: providerName, modelName: "claude-opus-4-6", label: "claude-opus-4-6", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "claude-sonnet-4-6", label: "claude-sonnet-4-6", isFree: false, available: true),
-    ]
-  of "gemini":
-    @[
-      ModelCatalogEntry(providerName: providerName, modelName: "gemini-2.5-flash", label: "gemini-2.5-flash", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "gemini-2.5-pro", label: "gemini-2.5-pro", isFree: false, available: true),
-    ]
-  of "minimax":
-    @[
-      ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M2", label: "MiniMax-M2", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M2.5", label: "MiniMax-M2.5", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M2.7", label: "MiniMax-M2.7", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-Text-01", label: "MiniMax-Text-01", isFree: false, available: true),
-    ]
-  of "zai", "zai-coding":
-    @[
-      ModelCatalogEntry(providerName: providerName, modelName: "glm-5", label: "glm-5", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "glm-4.7", label: "glm-4.7", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "glm-4.6", label: "glm-4.6", isFree: false, available: true),
-    ]
-  of "ollama":
-    ## Static fallback — Ollama catalog is loaded live from /api/tags.
-    @[
-      ModelCatalogEntry(providerName: providerName, modelName: "llama3", label: "llama3", isFree: true, available: true, hasPricing: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "mistral", label: "mistral", isFree: true, available: true, hasPricing: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "codellama", label: "codellama", isFree: true, available: true, hasPricing: true),
-    ]
-  else:
-    @[]
-
-func fallbackCatalog(providerName: string): ModelCatalogResult =
-  catalogResult(staticCatalog(providerName), mcsFallback, 0)
-
-func parseCostMicrosPer1k(raw: string): int =
-  if raw.len == 0:
-    return 0
-  try:
-    int(parseFloat(raw) * 1_000_000.0 * 1000.0 + 0.5)
-  except ValueError:
-    0
-
-func modelCatalogTtlSec(): int64 =
-  let raw = getEnv("DONKEY_MODEL_CATALOG_TTL_SEC")
-  if raw.len == 0:
-    return DefaultCatalogTtlSec
-  try:
-    let ttl = parseInt(raw)
-    if ttl > 0: ttl else: DefaultCatalogTtlSec
-  except ValueError:
-    DefaultCatalogTtlSec
-
-func modelCatalogBaseDir(): string =
-  let home = getEnv("DONKEY_HOME")
-  if home.len > 0:
-    home / "state"
-  else:
-    getHomeDir() / ".donkey" / "state"
-
-func sanitizeProviderName(providerName: string): string =
-  providerName.multiReplace(("/", "_"), (":", "_"), (" ", "_"))
-
-func modelCatalogCachePath(providerName: string): string =
-  modelCatalogBaseDir() / ("model_catalog_" & sanitizeProviderName(providerName) & ".json")
-
-proc saveCatalogCache(providerName: string; entries: seq[ModelCatalogEntry]) =
-  try:
-    createDir(modelCatalogBaseDir())
-    let cachePath = modelCatalogCachePath(providerName)
-    var data = newJArray()
-    for entry in entries:
-      data.add(%* {
-        "provider": providerName,
-        "id": entry.modelName,
-        "label": entry.label,
-        "is_free": entry.isFree,
-        "available": entry.available,
-        "has_pricing": entry.hasPricing,
-        "input_cost_micros_per_1k": entry.inputCostMicrosPer1k,
-        "output_cost_micros_per_1k": entry.outputCostMicrosPer1k,
-      })
-    let payload = %* {
-      "provider": providerName,
-      "fetched_at": getTime().toUnix(),
-      "data": data,
-    }
-    writeFile(cachePath, $payload)
-  except CatchableError:
-    discard
-
-proc loadCatalogCache(providerName: string): Result[ModelCatalogResult, string] =
-  try:
-    let cachePath = modelCatalogCachePath(providerName)
-    if not fileExists(cachePath):
-      return err("cache missing")
-    let parsed = parseJson(readFile(cachePath))
-    let fetchedAt = parsed.getOrDefault("fetched_at").getInt(0).int64
-    let nowSec = getTime().toUnix()
-    if fetchedAt <= 0 or nowSec - fetchedAt > modelCatalogTtlSec():
-      return err("cache expired")
-    let data = parsed.getOrDefault("data")
-    if data == nil or data.kind != JArray:
-      return err("cache missing data")
-    var entries: seq[ModelCatalogEntry] = @[]
-    for item in data:
-      let modelId = item.getOrDefault("id").getStr("")
-      if modelId.len == 0:
-        continue
-      entries.add(ModelCatalogEntry(
-        providerName: providerName,
-        modelName: modelId,
-        label: item.getOrDefault("label").getStr(modelId),
-        isFree: item.getOrDefault("is_free").getBool(false),
-        available: item.getOrDefault("available").getBool(true),
-        hasPricing: item.getOrDefault("has_pricing").getBool(false),
-        inputCostMicrosPer1k: item.getOrDefault("input_cost_micros_per_1k").getInt(0),
-        outputCostMicrosPer1k: item.getOrDefault("output_cost_micros_per_1k").getInt(0),
-      ))
-    ok(catalogResult(entries.sortCatalog(), mcsCache, fetchedAt))
-  except CatchableError as e:
     err(e.msg)
 
-proc withCacheFallback(providerName: string;
-                       live: Result[seq[ModelCatalogEntry], string]): Result[ModelCatalogResult, string] =
-  if live.isOk and live.value.len > 0:
-    saveCatalogCache(providerName, live.value)
-    return ok(catalogResult(live.value.sortCatalog(), mcsLive, getTime().toUnix()))
-  let cached = loadCatalogCache(providerName)
-  if cached.isOk and cached.value.entries.len > 0:
-    return ok(cached.value)
-  ok(fallbackCatalog(providerName))
+func parseCostMicrosPer1k(costStr: string): int =
+  ## Parses a cost string (e.g. "0.000003") to micros per 1k tokens.
+  if costStr.len == 0: return 0
+  try:
+    (costStr.parseFloat() * 1_000_000).int
+  except:
+    0
 
 proc parseOpenRouterCatalog*(body: string): Result[seq[ModelCatalogEntry], string] =
   try:
@@ -406,11 +317,7 @@ proc loadRouteCostHints*(
   for providerName in providerNames:
     let catalog =
       block:
-        let cached = loadCatalogCache(providerName)
-        if cached.isOk and cached.value.entries.len > 0:
-          cached.value
-        else:
-          fallbackCatalog(providerName)
+        fallbackCatalog(providerName)
     for entry in catalog.entries:
       if entry.hasPricing or entry.isFree:
         result.add(RouteCostHint(
