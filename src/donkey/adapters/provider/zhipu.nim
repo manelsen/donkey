@@ -35,7 +35,7 @@ proc caps*(a: ZhipuAdapter): ProviderCaps =
     name:             "zai-coding/" & a.model,
     streaming:        false,
     toolCalling:      true,
-    nativeTools:      @["web_search", "code_interpreter"],
+    nativeTools:      @[],
     maxContextTokens: 128_000,
     requiresUserFirst: false,
   )
@@ -63,6 +63,8 @@ proc buildBody*(a: ZhipuAdapter; req: CompletionRequest): JsonNode =
   for m in req.messages:
     messages.add(m.toJson())
   result = %* {"model": a.model, "messages": messages}
+  if req.reasoning:
+    result["thinking"] = %* {"type": "enabled"}
   if req.maxTokens > 0:
     result["max_tokens"] = %req.maxTokens
   if req.tools.len > 0:
@@ -76,22 +78,40 @@ proc buildBody*(a: ZhipuAdapter; req: CompletionRequest): JsonNode =
     result["tools"]       = toolsArr
     result["tool_choice"] = %"auto"
 
-func parseZhipuResponse*(parsed: JsonNode): CompletionResponse =
-  let msg   = parsed["choices"][0]["message"]
+func parseZhipuResponse*(parsed: JsonNode): Result[CompletionResponse, string] =
+  let choices = parsed{"choices"}
+  if choices.isNil or choices.kind != JArray or choices.len == 0:
+    let errorMsg = parsed{"error"}{"message"}.getStr("")
+    if errorMsg.len > 0:
+      return err("Zhipu error: " & errorMsg)
+    return err("Invalid Zhipu response: missing 'choices'")
+
+  let msg   = choices[0]{"message"}
+  if msg.isNil:
+    return err("Invalid Zhipu response: missing 'message' in first choice")
+
+  var reasoning = msg{"reasoning_content"}.getStr("")
+  if reasoning.len == 0:
+    reasoning = msg{"reasoning"}.getStr("")
+  if reasoning.len == 0:
+    reasoning = msg{"thought"}.getStr("")
+
   let usage = parsed.getOrDefault("usage")
   var toolCalls: seq[ToolCallRequest] = @[]
   let tcs = msg.getOrDefault("tool_calls")
   if tcs != nil and tcs.kind == JArray:
     for tc in tcs:
-      let fn = tc["function"]
+      let fn = tc{"function"}
+      if fn.isNil: continue
       toolCalls.add ToolCallRequest(
-        id:        tc["id"].getStr(""),
-        name:      fn["name"].getStr(""),
-        inputJson: fn["arguments"].getStr("{}"),
+        id:        tc{"id"}.getStr(""),
+        name:      fn{"name"}.getStr(""),
+        inputJson: fn{"arguments"}.getStr("{}"),
       )
 
-  CompletionResponse(
-    text:         msg.getOrDefault("content").getStr(""),
+  ok CompletionResponse(
+    text:         msg{"content"}.getStr(""),
+    reasoning:    msg{"reasoning_content"}.getStr(""),
     inputTokens:  usage.jInt("prompt_tokens"),
     outputTokens: usage.jInt("completion_tokens"),
     toolCalls:    toolCalls,
@@ -109,7 +129,7 @@ proc complete*(a: ZhipuAdapter; req: CompletionRequest): Result[CompletionRespon
     let url  = if a.endpoint.len > 0: a.endpoint else: ZhipuEndpoint
     let resp = client.post(url, body = body)
     checkApiStatus(resp, "Zhipu")
-    resp.body |> parseJson |> parseZhipuResponse |> ok
+    resp.body |> parseJson |> parseZhipuResponse
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 
@@ -125,4 +145,12 @@ proc newZaiAdapter*(apiKey: string;
     apiKey: apiKey,
     model: model,
     endpoint: if endpoint.len > 0: endpoint else: ZaiGeneralEndpoint,
+  )
+
+proc newZaiCodingAdapter*(apiKey: string;
+                          model    = ZhipuDefaultModel): ZhipuAdapter =
+  ZhipuAdapter(
+    apiKey: apiKey,
+    model: model,
+    endpoint: ZhipuEndpoint,
   )

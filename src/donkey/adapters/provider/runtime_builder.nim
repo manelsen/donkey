@@ -42,6 +42,10 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
     ProviderBundle(
       completeFn: makeFn(newZaiAdapter(spec.apiKey, model = spec.modelName))
     )
+  of "zai-coding":
+    ProviderBundle(
+      completeFn: makeFn(newZaiCodingAdapter(spec.apiKey, model = spec.modelName))
+    )
   of "ollama":
     ## For Ollama, apiKey field is repurposed as baseUrl override.
     ## Empty → http://localhost:11434 (standard local Ollama).
