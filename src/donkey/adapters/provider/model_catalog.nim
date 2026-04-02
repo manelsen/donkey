@@ -10,7 +10,7 @@ const
   GroqModelsEndpoint = "https://api.groq.com/openai/v1/models"
   AnthropicModelsEndpoint = "https://api.anthropic.com/v1/models"
   GeminiModelsEndpoint = "https://generativelanguage.googleapis.com/v1beta/models"
-  ModelsDevEndpoint = "https://models.dev/api/v1/models"
+  ModelsDevEndpoint = "https://models.dev/api.json"
   DefaultCatalogTtlSec = 12 * 60 * 60
 
 type
