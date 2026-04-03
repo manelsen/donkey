@@ -35,16 +35,29 @@ proc runMemoryAgent*(inbox:     AsyncQueue[AgentMessage];
           let userId = UserId(msg.userId)
           let ctx    = memory.loadContext(userId)
           var memSection = ctx.memoryMd
+          var lessonSection = ""
           ## Semantic search enrichment: if searchFn and a query are available,
-          ## replace raw MEMORY.md with the top-k relevant hits.
+          ## refine autobiographical memory hits and inject bounded lessons.
           if searchFn != nil and msg.payload.len > 0:
             let hits = searchFn(userId, msg.payload, 8)
             if hits.len > 0:
-              var lines: seq[string]
+              var memoryLines: seq[string]
+              var lessonLines: seq[string]
               for h in hits:
-                lines.add("- [" & h.kind & "] " & h.content)
-              memSection = lines.join("\n")
-          let text = ctx.userMd & "\n" & memSection & "\n" & ctx.preferencesMd
+                if h.kind == "lesson":
+                  if lessonLines.len < 3:
+                    lessonLines.add("- " & h.content)
+                else:
+                  memoryLines.add("- [" & h.kind & "] " & h.content)
+              if memoryLines.len > 0:
+                memSection = memoryLines.join("\n")
+              if lessonLines.len > 0:
+                lessonSection = "Relevant lessons:\n" & lessonLines.join("\n")
+          var parts = @[ctx.userMd, memSection]
+          if lessonSection.len > 0:
+            parts.add(lessonSection)
+          parts.add(ctx.preferencesMd)
+          let text = parts.join("\n")
           await outbox.put(newResultMsg(msg.id, text))
         except Exception as e:
           await outbox.put(newErrorMsg(msg.id, "MemoryAgent loadCtx: " & e.msg))

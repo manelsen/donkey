@@ -129,6 +129,41 @@ suite "MemoryAgent":
     check fileExists(tmpDir / "u1" / "MEMORY.md")
     check readFile(tmpDir / "u1" / "MEMORY.md").contains("Likes Nim.")
 
+  test "loadCtx injects relevant lessons after autobiographical memory and before preferences":
+    let tmpDir = getTempDir() / "donkey_test_mem_lessons"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[AgentMessage] {.async.} =
+      let userDir = dir / "u1"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Alice")
+      writeFile(userDir / "MEMORY.md", "Investigated retry amplification.")
+      writeFile(userDir / "PREFERENCES.md", "language = \"pt-BR\"")
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[AgentMessage]()
+      let searchFn: SearchFn =
+        proc(userId: UserId; query: string; limit: int): seq[MemoryHit] {.gcsafe, raises: [].} =
+          @[
+            MemoryHit(content: "Investigated retry amplification.", score: 0.9'f32, kind: "memory"),
+            MemoryHit(content: "Inspect retry amplification before raising timeouts.", score: 0.95'f32, kind: "lesson"),
+          ]
+      asyncSpawn runMemoryAgent(inbox, outbox, mem.toRuntimePort(), searchFn)
+      await inbox.put(newTaskMsg("req3", tkLoadCtx, "u1", "retry spike"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      return reply
+
+    let reply = waitFor doTest(tmpDir)
+    check reply.kind == amkResult
+    let memoryPos = reply.text.find("Investigated retry amplification.")
+    let lessonsPos = reply.text.find("Relevant lessons:")
+    let prefsPos = reply.text.find("language = \"pt-BR\"")
+    check memoryPos >= 0
+    check lessonsPos > memoryPos
+    check prefsPos > lessonsPos
+
 # ── ToolAgent ─────────────────────────────────────────────────────────────────
 
 suite "ToolAgent":
