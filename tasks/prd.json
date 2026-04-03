@@ -1,0 +1,420 @@
+{
+  "name": "Donkey Active Roadmap - Multigraph Memory First",
+  "branchName": "ralph/multigraph-memory-first",
+  "description": "Active backlog for the current Donkey session. Focus on making Multigraph Memory the authoritative memory runtime, exposing real graph-backed observability, and moving retrieval closer to the multigraph memory paper. This supersedes the older Postgreyskull memory direction for today's work.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add Multigraph Memory stats API for real memory counts",
+      "description": "As an operator, I want Multigraph Memory to expose counts for nodes, embeddings, and edges so that status and diagnostics reflect the real backend rather than file heuristics.",
+      "acceptanceCriteria": [
+        "Add graph-level stats proc(s) in src/donkey/adapters/memory/magma_graph.nim for memory, user_profile, preference, entity, embedding, and edge counts",
+        "Add adapter-level wrapper(s) in src/donkey/adapters/memory/magma_memory_adapter.nim so runtime code does not query SQL directly",
+        "Cover the stats API with PostgreSQL-backed tests",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Branch: us/us-001-multigraph-memory-stats-api\nStatus: complete\nFiles: src/donkey/adapters/memory/magma_graph.nim; src/donkey/adapters/memory/magma_memory_adapter.nim; tests/memory/t_magma_graph.nim; tests/memory/t_magma_memory_adapter.nim\nTests: added PostgreSQL-backed graph stats regression and adapter wrapper stats regression\nValidation: nim c -d:withPostgres -r tests/memory/t_magma_graph.nim (pass); nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim (pass); nim c src/donkey.nim (pass); nim c -d:withPostgres src/donkey.nim (pass)\nRisks: pre-existing warnings remain outside this story in pgvector_store.nim and one adapter test setup hint\nCarry forward: SQL aggregation now lives in MagmaGraph.stats(userId); runtime-facing code should call MagmaMemoryAdapter.stats(UserId) instead of querying counts directly.",
+      "dependsOn": []
+    },
+    {
+      "id": "US-002",
+      "title": "Expose Multigraph Memory counts in /status and /api/status",
+      "description": "As an operator, I want /status and the HTTP status payload to report Multigraph Memory counts so I can verify how much memory is actually stored.",
+      "acceptanceCriteria": [
+        "Extend src/donkey/ports/ipc.nim so DaemonStatus can carry Multigraph Memory stats when PostgreSQL memory is enabled",
+        "Populate those fields from the daemon status builder in src/donkey.nim",
+        "Update ctl status and /api/status output to show Multigraph Memory node and embedding counts",
+        "Add or update tests covering status serialization and user-visible output",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Branch: us/us-002-status-memory-counts\nStatus: complete\nFiles: src/donkey/ports/ipc.nim; src/donkey.nim; tests/ipc/t_ipc_types.nim; tests/app/t_http_gateway.nim; tests/memory/t_magma_memory_adapter.nim\nTests: added daemon-level aggregate stats regression, IPC round-trip coverage for MemoryStats, HTTP /api/status JSON coverage, and formatter coverage for ctl status output\nValidation: nim c -r tests/ipc/t_ipc_types.nim (pass); nim c -r tests/app/t_http_gateway.nim (pass); nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim (pass); nim c -d:withPostgres -r tests/memory/t_magma_graph.nim (pass); nim c src/donkey.nim (pass); nim c -d:withPostgres src/donkey.nim (pass)\nRisks: daemon status currently instantiates a fresh MagmaMemoryAdapter per request, matching existing adapter usage but still not pooled\nCarry forward: DaemonStatus now carries provider-agnostic MemoryStats and ctl status rendering should go through formatDaemonStatus(st); follow-on status/doctor work can reuse st.memoryStats directly.",
+      "dependsOn": [
+        "US-001"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Expose Multigraph Memory counts in /doctor",
+      "description": "As an operator, I want /doctor to report graph-backed memory stats so diagnostics stop relying on paddock file counts.",
+      "acceptanceCriteria": [
+        "Update buildDoctorReport in src/donkey/adapters/channel/common_runtime.nim to show Multigraph Memory node and embedding counts as the primary memory signal",
+        "Keep paddock path and file count only as secondary debug information when relevant",
+        "Add or update tests for doctor output text",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Branch: us/us-003-doctor-memory-counts\nStatus: complete\nFiles: src/donkey/adapters/channel/common_runtime.nim; tests/adapters/channel/t_common_runtime.nim\nTests: added PostgreSQL-backed buildDoctorReport regression covering graph counts as primary signal and paddock directory as debug-only signal\nValidation: nim c -d:withPostgres -r tests/adapters/channel/t_common_runtime.nim (pass); nim c -d:withPostgres -r tests/memory/t_magma_graph.nim (pass); nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim (pass); nim c src/donkey.nim (pass); nim c -d:withPostgres src/donkey.nim (pass)\nRisks: /doctor still opens a fresh adapter for stats, so repeated diagnostics share the same per-call instantiation cost as /status\nCarry forward: buildDoctorReport now treats Multigraph Memory as the primary memory signal and labels paddock counts as debug-only; /memory should follow the same user-facing principle of graph first, file second.",
+      "dependsOn": [
+        "US-001"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Make /memory read from Multigraph Memory",
+      "description": "As a user, I want /memory to show the graph-backed memory view so the command reflects what retrieval actually uses.",
+      "acceptanceCriteria": [
+        "Update channel /memory handlers to load reconstructed memory from Multigraph Memory when PostgreSQL memory is enabled",
+        "Preserve the existing Markdown-only behavior as fallback when Multigraph Memory is disabled",
+        "If both views are shown, label the Multigraph Memory-derived snapshot clearly so it is not confused with raw MEMORY.md",
+        "Add or update channel command tests for the new behavior",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Branch: us/us-004-memory-from-multigraph\nStatus: complete\nFiles: src/donkey/adapters/channel/common_runtime.nim; src/donkey/adapters/channel/telegram_runtime.nim; src/donkey/adapters/channel/discord_runtime.nim; src/donkey/adapters/channel/qq_runtime.nim; src/donkey/adapters/channel/wecom_runtime.nim; src/donkey/adapters/channel/wechat_runtime.nim; src/donkey/adapters/channel/feishu_runtime.nim; tests/adapters/channel/t_common_runtime.nim\nTests: added buildMemoryViewText regressions for graph-first rendering and markdown fallback\nValidation: nim c -d:withPostgres -r tests/adapters/channel/t_common_runtime.nim (pass); nim c -d:withPostgres -r tests/memory/t_magma_graph.nim (pass); nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim (pass); nim c src/donkey.nim (pass); nim c -d:withPostgres src/donkey.nim (pass)\nRisks: /memory still reconstructs from MagmaMemoryAdapter.loadContext, so it is graph-backed but not yet a richer timeline/entity view\nCarry forward: all channel runtimes now share buildMemoryViewText(memory, userId); the next context-loading story should reuse the same graph-first fallback rule instead of open-coding another markdown path.",
+      "dependsOn": [
+        "US-001"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Switch conversation context loading to Multigraph Memory-first",
+      "description": "As a developer, I want normal conversation context to load from Multigraph Memory first so the graph becomes the effective source of truth during runtime.",
+      "acceptanceCriteria": [
+        "Update the context loading path so profile, preferences, and memory are loaded from Multigraph Memory first when PostgreSQL memory is enabled",
+        "Use Markdown import only as bootstrap when the graph is empty for a user",
+        "Keep preference-dependent behaviors such as rerank resolution working under the Multigraph Memory-first flow",
+        "Add regression coverage for bootstrap import and Multigraph Memory-first context loading",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Branch: us/us-005-multigraph-context-first\nStatus: complete\nFiles: src/donkey/adapters/memory/md_file.nim, src/donkey.nim, tests/app/t_session_bootstrap.nim\nTests: added multigraph-first and bootstrap regressions in tests/app/t_session_bootstrap.nim\nValidation: nim c -d:withPostgres -r tests/app/t_session_bootstrap.nim; nim c src/donkey.nim; nim c -d:withPostgres src/donkey.nim; nim c -d:withPostgres -r tests/memory/t_magma_graph.nim; nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim\nRisks: when OPENROUTER_API_KEY is absent, bootstrap import falls back to empty embeddings\nCarry forward: md.loadContext is now the graph-first bootstrap boundary for runtime context and search preference resolution",
+      "dependsOn": [
+        "US-004"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Demote Markdown to export and debug mode",
+      "description": "As a maintainer, I want Markdown files to become derived export/debug artifacts instead of the authoritative memory backend.",
+      "acceptanceCriteria": [
+        "Change the PostgreSQL-enabled runtime path so Multigraph Memory is the authoritative write target for user profile, preferences, and memories",
+        "Keep or extend explicit export commands so USER.md, MEMORY.md, and PREFERENCES.md can still be generated from Multigraph Memory for inspection",
+        "Document clearly in README.md and TODO.md that Markdown is no longer the source of truth when Multigraph Memory is enabled",
+        "Keep the no-Postgres fallback path working for environments without Multigraph Memory",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Branch: us/us-006-markdown-debug-only\nStatus: complete\nFiles: src/donkey/adapters/memory/md_file.nim, src/donkey/adapters/memory/magma_memory_adapter.nim, tests/app/t_session_bootstrap.nim, README.md, TODO.md\nTests: added graph-authoritative runtime regressions for profile/preferences/memory writes, identity loading, and clearMemory in tests/app/t_session_bootstrap.nim\nValidation: nim c src/donkey.nim; nim c -d:withPostgres src/donkey.nim; nim c -d:withPostgres -r tests/app/t_session_bootstrap.nim; nim c -d:withPostgres -r tests/memory/t_magma_graph.nim; nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim\nRisks: direct MdFileAdapter methods still maintain Markdown plus shadow writes outside the runtime port; graph-authoritative behavior is now guaranteed on the PostgreSQL-enabled runtime path\nCarry forward: runtime save/load/clear operations and identity management now target Multigraph Memory first, while Markdown remains bootstrap/export/debug only",
+      "dependsOn": [
+        "US-005"
+      ]
+    },
+    {
+      "id": "US-007",
+      "title": "Materialize causal edges on the write path",
+      "description": "As a system, I want new memories to create real causal edges so Multigraph Memory covers more of the paper than semantic, temporal, and entity links alone.",
+      "acceptanceCriteria": [
+        "Implement causal extraction or inference in the Multigraph Memory write path for appendMemory and related persistence flows",
+        "Persist CAUSAL edges in magma_edges for representative cause/effect inputs",
+        "Add PostgreSQL-backed tests showing causal edges are created and linked to the right memory nodes",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Branch: us/us-007-causal-write-path\nStatus: complete\nFiles: src/donkey/adapters/memory/magma_memory_adapter.nim, tests/memory/t_magma_memory_adapter.nim\nTests: added PostgreSQL-backed causal edge regressions for sequential memories using effect markers and anaphoric causal markers\nValidation: nim c src/donkey.nim; nim c -d:withPostgres src/donkey.nim; nim c -d:withPostgres -r tests/memory/t_magma_graph.nim; nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim\nRisks: causal extraction is heuristic and currently limited to markers that imply the new memory is an effect of the previous memory\nCarry forward: CAUSAL edges now exist in magma_edges and can be consumed by retrieval scoring in the next story",
+      "dependsOn": [
+        "US-005"
+      ]
+    },
+    {
+      "id": "US-008",
+      "title": "Use causal signals in retrieval scoring",
+      "description": "As a user, I want causal questions to retrieve cause/effect memories so Multigraph Memory behaves more like the paper on why, led-to, and because queries.",
+      "acceptanceCriteria": [
+        "Extend search scoring or traversal in src/donkey/adapters/memory/magma_memory_adapter.nim to consider causal neighbors",
+        "Teach query policy classification to recognize causal intent in addition to semantic, temporal, and entity intent",
+        "Add tests showing causal queries surface the correct memories and score breakdowns",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Branch: us/us-008-causal-retrieval-scoring\nStatus: complete\nFiles: src/donkey/adapters/memory/magma_memory_adapter.nim, src/donkey/ports/reranking.nim, src/donkey/adapters/reranking/llm_rerank_common.nim, tests/memory/t_magma_memory_adapter.nim\nTests: added causal query policy coverage and a retrieval regression proving that cause memories outrank effect memories for 'what caused' queries\nValidation: nim c -r tests/reranking/t_openrouter_rerank.nim; nim c src/donkey.nim; nim c -d:withPostgres src/donkey.nim; nim c -d:withPostgres -r tests/memory/t_magma_graph.nim; nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim\nRisks: causal retrieval is currently depth-1 and marker-driven; richer causal chains still need a stronger policy layer\nCarry forward: query policy now distinguishes causal intent and retrieval scoring can prefer incoming or outgoing CAUSAL edges depending on question direction",
+      "dependsOn": [
+        "US-007"
+      ]
+    },
+    {
+      "id": "US-009",
+      "title": "Tighten retrieval policy toward the Multigraph Memory paper",
+      "description": "As a developer, I want the retrieval policy to move beyond the current heuristic blend so the implementation aligns better with the paper's structured query-adaptive retrieval.",
+      "acceptanceCriteria": [
+        "Refactor query policy and retrieval scoring so semantic, entity, temporal, and causal signals are represented explicitly and coherently",
+        "Keep reranking compatible with the richer score breakdown rather than bypassing it",
+        "Add regression tests covering semantic, entity, temporal, and causal query classes",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Branch: us/us-009-tighten-retrieval-policy\nStatus: complete\nFiles: src/donkey/adapters/memory/magma_memory_adapter.nim, tests/memory/t_magma_memory_adapter.nim\nTests: extended query policy regressions to assert explicit intent classes and kept semantic/entity/temporal/causal retrieval coverage green\nValidation: nim c src/donkey.nim; nim c -d:withPostgres src/donkey.nim; nim c -d:withPostgres -r tests/memory/t_magma_graph.nim; nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim\nRisks: query intent is still rule-based; a learned retrieval policy would be closer to the paper than the current explicit classifier\nCarry forward: retrieval now uses an explicit intent class plus coherent signal gating, and reranking still receives the richer semantic/entity/temporal/neighbor/causal breakdown",
+      "dependsOn": [
+        "US-008"
+      ]
+    },
+    {
+      "id": "US-010",
+      "title": "Add commitment and promise domain model",
+      "description": "As a system, I want commitments to be explicit domain objects so the agent can track promises, deadlines, and accountability instead of burying them in free text.",
+      "acceptanceCriteria": [
+        "Add a pure commitment model in src/donkey/domain/memory/commitment_pure.nim covering id, owner, status, dueAt, score, and source text",
+        "Define parsing or construction helpers that support both user-requested and agent-promised commitments",
+        "Add focused unit tests for commitment parsing and state transitions",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -r tests/domain/memory/t_commitment_pure.nim passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Branch: us/us-010-commitment-domain-model\nStatus: complete\nFiles: src/donkey/domain/memory/commitment_pure.nim, tests/domain/memory/t_commitment_pure.nim\nTests: added focused unit coverage for user-requested parsing, agent-promised parsing, due date extraction, score computation, and immutable state transitions\nValidation: nim c src/donkey.nim; nim c -d:withPostgres src/donkey.nim; nim c -r tests/domain/memory/t_commitment_pure.nim\nRisks: parsing is intentionally heuristic and currently optimized for explicit reminder/follow-up language, not subtle promise extraction\nCarry forward: the pure commitment model is ready to be persisted in Multigraph Memory and consumed by heartbeat/accountability logic",
+      "dependsOn": [
+        "US-006"
+      ]
+    },
+    {
+      "id": "US-011",
+      "title": "Persist commitments in Multigraph Memory",
+      "description": "As an operator, I want commitments to be stored in Multigraph Memory so they can be queried, updated, and linked to the conversations that created them.",
+      "acceptanceCriteria": [
+        "Add a commitment node type and related persistence helpers to the PostgreSQL-backed multigraph memory adapter",
+        "Store due date and status metadata so open, fulfilled, and missed commitments are distinguishable",
+        "Add PostgreSQL-backed tests covering commitment creation and status updates",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "Branch: us/us-011-persist-commitments\nStatus: complete\nFiles: src/donkey/adapters/memory/magma_memory_adapter.nim; tests/memory/t_magma_memory_adapter.nim\nTests: added PostgreSQL-backed regressions for commitment save/load and status update persistence\nValidation: nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim (pass); nim c src/donkey.nim (pass); nim c -d:withPostgres src/donkey.nim (pass); nim c -d:withPostgres -r tests/memory/t_magma_graph.nim (pass)\nRisks: commitment ids are still heuristic slugs, so repeated commitments with identical text for the same user will overwrite rather than fan out\nCarry forward: Multigraph Memory now stores commitment nodes with owner/status/dueAt/score in meta and exposes save/load/update helpers for heartbeat and learning flows.",
+      "dependsOn": [
+        "US-010"
+      ]
+    },
+    {
+      "id": "US-012",
+      "title": "Run commitment accountability on heartbeat",
+      "description": "As a user, I want the heartbeat loop to review open commitments so the agent can surface overdue promises and keep score on follow-through.",
+      "acceptanceCriteria": [
+        "Extend src/donkey/app/heartbeat.nim or adjacent runtime code with a commitment review task that can be registered alongside reminders",
+        "Score commitments based on current status and due time without mutating unrelated memory records",
+        "Add tests covering overdue, fulfilled, and pending commitment review behavior",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -r tests/app/t_heartbeat.nim passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Branch: us/us-012-heartbeat-commitments\nStatus: complete\nFiles: src/donkey/app/heartbeat.nim; tests/app/t_heartbeat.nim\nTests: added commitment accountability regressions for overdue open commitments, fulfilled commitments, and registry integration alongside reminder tasks\nValidation: nim c -r tests/app/t_heartbeat.nim (pass); nim c src/donkey.nim (pass); nim c -d:withPostgres src/donkey.nim (pass)\nRisks: the heartbeat API now supports commitment review tasks, but daemon wiring still needs a concrete loader/sink integration if we want automatic user-facing accountability messages\nCarry forward: heartbeat exposes CommitmentSnapshot, CommitmentReview, reviewCommitments, runCommitmentReview, and registerCommitmentReviewTask as the scheduling boundary for later episode/lesson work.",
+      "dependsOn": [
+        "US-011"
+      ]
+    },
+    {
+      "id": "US-013",
+      "title": "Add episode journal model and storage",
+      "description": "As a system, I want recent interactions to be consolidatable into explicit episodes so later learning and contemplation work from coherent units instead of raw memory fragments.",
+      "acceptanceCriteria": [
+        "Add episode journal types and helpers under src/donkey/core/memory or src/donkey/domain/memory for title, summary, timeframe, and source memory ids",
+        "Persist episode journals in the PostgreSQL-backed multigraph memory store with a distinct node type",
+        "Add tests covering episode creation and reconstruction from stored data",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "Branch: us/us-013-episode-journals\nStatus: complete\nFiles: src/donkey/domain/memory/episode_pure.nim; src/donkey/adapters/memory/magma_memory_adapter.nim; tests/memory/t_magma_memory_adapter.nim\nTests: added PostgreSQL-backed round-trip coverage for episode journal persistence, including title, summary, time window, and source memory ids\nValidation: nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim (pass); nim c src/donkey.nim (pass); nim c -d:withPostgres src/donkey.nim (pass)\nRisks: episode ids are derived from title and time window, so identical title/time pairs will overwrite\nCarry forward: EpisodeJournal is now a first-class pure type and Multigraph Memory stores episode nodes with start/end timestamps plus source memory links in meta.",
+      "dependsOn": [
+        "US-006"
+      ]
+    },
+    {
+      "id": "US-014",
+      "title": "Add contemplation runtime for idle episode journaling",
+      "description": "As a maintainer, I want an idle contemplation turn that consolidates recent memories into episodes so the agent can reflect without blocking live conversations.",
+      "acceptanceCriteria": [
+        "Add a contemplation runtime module that can be scheduled independently from the normal request path",
+        "Gate contemplation behind explicit config and ensure it uses a low-cost or local-capable completion path when available",
+        "Write contemplation output into episode journal records instead of raw freeform logs",
+        "Add tests covering contemplation scheduling guards and episode write behavior",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -r tests/app/t_heartbeat.nim passes"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "Branch: us/us-014-contemplation-runtime\nStatus: complete\nFiles: src/donkey/app/contemplation.nim; tests/app/t_heartbeat.nim\nTests: added contemplation runtime regressions for disabled scheduling guards and graph-friendly episode writes under a local-capable configuration\nValidation: nim c -r tests/app/t_heartbeat.nim (pass); nim c src/donkey.nim (pass); nim c -d:withPostgres src/donkey.nim (pass)\nRisks: contemplation is schedulable and graph-aware, but not yet wired into daemon bootstrap or backed by a real low-cost model invocation\nCarry forward: contemplation now has an explicit scheduling boundary with config gating, recent-memory input, episode output, and heartbeat registration support.",
+      "dependsOn": [
+        "US-013"
+      ]
+    },
+    {
+      "id": "US-015",
+      "title": "Add SIS lesson model and storage",
+      "description": "As a system, I want lessons to be first-class records so self-improvement does not depend on vague prompt text or ad hoc notes.",
+      "acceptanceCriteria": [
+        "Add lesson types covering lesson text, confidence, source episode, and retrieval tags",
+        "Persist lessons as distinct multigraph memory records separate from raw memories and episodes",
+        "Add tests covering lesson creation, confidence clamping, and round-trip loading",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -r tests/domain/memory/t_lessons_pure.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": "Branch: us/us-015-lesson-storage\nStatus: complete\nFiles: src/donkey/domain/memory/lessons_pure.nim; src/donkey/adapters/memory/magma_memory_adapter.nim; tests/domain/memory/t_lessons_pure.nim; tests/memory/t_magma_memory_adapter.nim\nTests: added pure lesson coverage for confidence clamping plus PostgreSQL-backed round-trip coverage for lesson storage and reconstruction\nValidation: nim c -r tests/domain/memory/t_lessons_pure.nim (pass); nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim (pass); nim c src/donkey.nim (pass); nim c -d:withPostgres src/donkey.nim (pass)\nRisks: lesson ids are text-derived and will overwrite if the same source episode emits the same lesson text twice\nCarry forward: lessons are now distinct multigraph records with confidence, source episode, retrieval tags, and embeddings suitable for later injection into context.",
+      "dependsOn": [
+        "US-013"
+      ]
+    },
+    {
+      "id": "US-016",
+      "title": "Extract lessons from episodes and outcomes",
+      "description": "As a user, I want the system to distill reusable lessons from completed episodes and commitment outcomes so the agent improves over time.",
+      "acceptanceCriteria": [
+        "Implement a lesson extraction path that reads closed episodes and commitment outcomes and writes at most a bounded number of lessons per source",
+        "Record source links so each lesson can be traced back to the episode or commitment outcome that produced it",
+        "Add tests showing successful and failed outcomes produce different lesson candidates",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -r tests/domain/memory/t_lessons_pure.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": "Branch: us/us-016-extract-lessons\nStatus: complete\nFiles: src/donkey/domain/memory/lessons_pure.nim; src/donkey/adapters/memory/magma_memory_adapter.nim; tests/domain/memory/t_lessons_pure.nim; tests/memory/t_magma_memory_adapter.nim\nTests: added pure regressions for successful vs failed commitment outcomes and bounded episode extraction, plus adapter coverage for bounded extraction and persistence across episode and commitment sources\nValidation: nim c -r tests/domain/memory/t_lessons_pure.nim (pass); nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim (pass); nim c src/donkey.nim (pass); nim c -d:withPostgres src/donkey.nim (pass)\nRisks: extraction is still heuristic and text-template based rather than model-driven, so lesson quality depends heavily on episode summaries and explicit commitment states\nCarry forward: the codebase now has a bounded extraction path from episodes and commitment outcomes into persisted lessons with traceable source refs.",
+      "dependsOn": [
+        "US-012",
+        "US-015"
+      ]
+    },
+    {
+      "id": "US-017",
+      "title": "Inject relevant lessons into context assembly",
+      "description": "As a developer, I want high-confidence lessons to be retrievable during prompt assembly so self-improvement changes future behavior rather than just creating artifacts.",
+      "acceptanceCriteria": [
+        "Add lesson retrieval to the context assembly path without replacing normal autobiographical memory recall",
+        "Keep lessons bounded and clearly labeled in the final context text",
+        "Add tests covering lesson retrieval and context injection ordering",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": "Branch: us/us-017-inject-lessons-context\nStatus: complete\nFiles: src/donkey/app/memory_agent.nim; src/donkey/adapters/memory/magma_memory_adapter.nim; tests/app/t_orchestrator.nim; tests/memory/t_magma_memory_adapter.nim\nTests: added MemoryAgent coverage for context ordering with lessons between autobiographical memory and preferences, plus adapter coverage proving search can surface lesson hits alongside memories\nValidation: nim c -r tests/app/t_orchestrator.nim (pass); nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim (pass); nim c src/donkey.nim (pass); nim c -d:withPostgres src/donkey.nim (pass)\nRisks: lesson retrieval is currently semantic plus confidence-boosted, not a dedicated learned ranker, so very sparse lesson corpora may still fall back to raw autobiographical context\nCarry forward: context assembly now preserves autobiographical recall, injects a bounded and labeled lesson block, and retrieval can surface high-confidence lesson nodes.",
+      "dependsOn": [
+        "US-016"
+      ]
+    },
+    {
+      "id": "US-018",
+      "title": "Add Knowledge Library collections and ACL",
+      "description": "As a maintainer, I want a document knowledge library separate from autobiographical memory so uploaded knowledge can have its own collections and access rules.",
+      "acceptanceCriteria": [
+        "Add a Knowledge Library data model with collection id, document id, chunk id, and agent-level access controls",
+        "Keep Knowledge Library storage and retrieval distinct from autobiographical multigraph memory records",
+        "Add tests covering collection membership and ACL filtering",
+        "nim c src/donkey.nim passes",
+        "nim c -r tests/domain/memory/t_knowledge_library_pure.nim passes"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": "Branch: us/us-018-knowledge-library-acl\nStatus: complete\nFiles: src/donkey/domain/memory/knowledge_library_pure.nim; tests/domain/memory/t_knowledge_library_pure.nim\nTests: added pure ACL coverage proving collection membership gates accessible chunks per agent\nValidation: nim c -r tests/domain/memory/t_knowledge_library_pure.nim (pass); nim c src/donkey.nim (pass)\nRisks: the library is still pure-domain only at this stage; no ingestion or search path exists yet\nCarry forward: Knowledge Library now has first-class collections, documents, chunks, and agent-level ACL filtering independent from autobiographical memory.",
+      "dependsOn": [
+        "US-006"
+      ]
+    },
+    {
+      "id": "US-019",
+      "title": "Add PDF ingestion for Knowledge Library",
+      "description": "As a user, I want PDF documents to be ingestible into the Knowledge Library so reference material can be searched alongside other long-form sources.",
+      "acceptanceCriteria": [
+        "Add a PDF ingestion path that extracts text, chunks it, and stores chunk records in the Knowledge Library",
+        "Associate ingested chunks with their source document and collection metadata",
+        "Add tests covering a small PDF fixture or extraction stub and chunk persistence behavior",
+        "nim c src/donkey.nim passes",
+        "nim c -r tests/domain/memory/t_knowledge_library_pure.nim passes"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": "Branch: us/us-019-pdf-ingestion\nStatus: complete\nFiles: src/donkey/domain/memory/knowledge_library_pure.nim; tests/domain/memory/t_knowledge_library_pure.nim\nTests: added PDF ingestion coverage proving extracted text is chunked and each chunk preserves document and collection metadata\nValidation: nim c -r tests/domain/memory/t_knowledge_library_pure.nim (pass); nim c src/donkey.nim (pass)\nRisks: PDF ingestion currently assumes text has already been extracted, so actual parser integration still needs an adapter layer later\nCarry forward: the Knowledge Library now has a pure PDF ingestion path that turns extracted text into chunked, collection-aware document records.",
+      "dependsOn": [
+        "US-018"
+      ]
+    },
+    {
+      "id": "US-020",
+      "title": "Add DOCX and XLSX ingestion for Knowledge Library",
+      "description": "As a user, I want DOCX and XLSX documents to be ingestible into the Knowledge Library so office documents become searchable knowledge, not orphaned attachments.",
+      "acceptanceCriteria": [
+        "Add DOCX ingestion that extracts ordered text into Knowledge Library chunks",
+        "Add XLSX ingestion that extracts sheet-aware text suitable for retrieval",
+        "Add tests covering document extraction stubs and collection-aware storage behavior",
+        "nim c src/donkey.nim passes",
+        "nim c -r tests/domain/memory/t_knowledge_library_pure.nim passes"
+      ],
+      "priority": 19,
+      "passes": true,
+      "notes": "Branch: us/us-020-docx-xlsx-ingestion\nStatus: complete\nFiles: src/donkey/domain/memory/knowledge_library_pure.nim; tests/domain/memory/t_knowledge_library_pure.nim\nTests: added DOCX ingestion coverage for ordered text chunking and XLSX ingestion coverage for sheet-aware chunk metadata\nValidation: nim c -r tests/domain/memory/t_knowledge_library_pure.nim (pass); nim c src/donkey.nim (pass)\nRisks: DOCX/XLSX ingestion still assumes text has already been extracted by an external parser layer\nCarry forward: the Knowledge Library now has pure ingestion paths for PDF, DOCX, and XLSX, with spreadsheet chunks preserving sheet provenance.",
+      "dependsOn": [
+        "US-018"
+      ]
+    },
+    {
+      "id": "US-021",
+      "title": "Add Knowledge Library retrieval path",
+      "description": "As a user, I want Knowledge Library documents to be retrievable through a bounded RAG path so reference docs and autobiographical memory can work together without being conflated.",
+      "acceptanceCriteria": [
+        "Add a retrieval path that searches Knowledge Library chunks and returns ACL-filtered citations or snippets",
+        "Keep Knowledge Library retrieval separate from autobiographical memory scoring, then combine them explicitly at context assembly time",
+        "Add tests covering mixed retrieval where private autobiographical memory and shared library docs are both present",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -r tests/domain/memory/t_knowledge_library_pure.nim passes"
+      ],
+      "priority": 20,
+      "passes": true,
+      "notes": "Branch: us/us-021-knowledge-library-retrieval\nStatus: complete\nFiles: src/donkey/domain/memory/knowledge_library_pure.nim; tests/domain/memory/t_knowledge_library_pure.nim\nTests: added retrieval coverage proving ACL-filtered document search and explicit context composition with autobiographical memory in separate sections\nValidation: nim c -r tests/domain/memory/t_knowledge_library_pure.nim (pass); nim c src/donkey.nim (pass); nim c -d:withPostgres src/donkey.nim (pass)\nRisks: Knowledge Library retrieval is currently lexical and pure-domain only; no daemon wiring or embedding-backed document search exists yet\nCarry forward: the library now supports ACL-filtered retrieval, document citations, and explicit mixed-context composition without conflating document knowledge with autobiographical memory.",
+      "dependsOn": [
+        "US-019",
+        "US-020"
+      ]
+    }
+  ]
+}

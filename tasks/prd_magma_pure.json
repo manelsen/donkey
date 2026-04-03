@@ -1,0 +1,189 @@
+{
+  "name": "MAGMA Puro Migration",
+  "branchName": "ralph/magma-pure-migration",
+  "description": "Migrate Donkey from the current md+magma hybrid memory runtime to a MAGMA-first architecture, keeping Markdown as export/debug and moving retrieval closer to the MAGMA paper.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add MAGMA stats API for real memory counts",
+      "description": "As an operator, I want MAGMA to expose counts for nodes, embeddings, and edges so that status and diagnostics reflect the real backend rather than file heuristics.",
+      "acceptanceCriteria": [
+        "Add graph-level stats proc(s) in src/donkey/adapters/memory/magma_graph.nim for memory, user_profile, preference, entity, embedding, and edge counts",
+        "Add adapter-level wrapper(s) in src/donkey/adapters/memory/magma_memory_adapter.nim so runtime code does not query SQL directly",
+        "Cover the stats API with PostgreSQL-backed tests",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-002",
+      "title": "Expose MAGMA counts in /status and /api/status",
+      "description": "As an operator, I want /status and the HTTP status payload to report MAGMA counts so I can verify how much memory is actually stored.",
+      "acceptanceCriteria": [
+        "Extend src/donkey/ports/ipc.nim so DaemonStatus can carry MAGMA stats when PostgreSQL memory is enabled",
+        "Populate those fields from the daemon status builder in src/donkey.nim",
+        "Update ctl status and /api/status output to show MAGMA node and embedding counts",
+        "Add or update tests covering status serialization and user-visible output",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-001"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Expose MAGMA counts in /doctor",
+      "description": "As an operator, I want /doctor to report graph-backed memory stats so diagnostics stop relying on paddock file counts.",
+      "acceptanceCriteria": [
+        "Update buildDoctorReport in src/donkey/adapters/channel/common_runtime.nim to show MAGMA node and embedding counts as the primary memory signal",
+        "Keep paddock path and file count only as secondary debug information when relevant",
+        "Add or update tests for doctor output text",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-001"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Make /memory read from MAGMA",
+      "description": "As a user, I want /memory to show the graph-backed memory view so the command reflects what retrieval actually uses.",
+      "acceptanceCriteria": [
+        "Update channel /memory handlers to load reconstructed memory from MAGMA when PostgreSQL memory is enabled",
+        "Preserve the existing Markdown-only behavior as fallback when MAGMA is disabled",
+        "If both views are shown, label the MAGMA-derived snapshot clearly so it is not confused with raw MEMORY.md",
+        "Add or update channel command tests for the new behavior",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-001"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Switch conversation context loading to MAGMA-first",
+      "description": "As a developer, I want normal conversation context to load from MAGMA first so the graph becomes the effective source of truth during runtime.",
+      "acceptanceCriteria": [
+        "Update the context loading path so profile, preferences, and memory are loaded from MAGMA first when PostgreSQL memory is enabled",
+        "Use Markdown import only as bootstrap when the graph is empty for a user",
+        "Keep preference-dependent behaviors such as rerank resolution working under the MAGMA-first flow",
+        "Add regression coverage for bootstrap import and MAGMA-first context loading",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-004"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Demote Markdown to export and debug mode",
+      "description": "As a maintainer, I want Markdown files to become derived export/debug artifacts instead of the authoritative memory backend.",
+      "acceptanceCriteria": [
+        "Change the PostgreSQL-enabled runtime path so MAGMA is the authoritative write target for user profile, preferences, and memories",
+        "Keep or extend explicit export commands so USER.md, MEMORY.md, and PREFERENCES.md can still be generated from MAGMA for inspection",
+        "Document clearly in README.md and TODO.md that Markdown is no longer the source of truth when MAGMA is enabled",
+        "Keep the no-Postgres fallback path working for environments without MAGMA",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-005"
+      ]
+    },
+    {
+      "id": "US-007",
+      "title": "Materialize causal edges on the write path",
+      "description": "As a system, I want new memories to create real causal edges so MAGMA covers more of the paper than semantic, temporal, and entity links alone.",
+      "acceptanceCriteria": [
+        "Implement causal extraction or inference in the MAGMA write path for appendMemory and related persistence flows",
+        "Persist CAUSAL edges in magma_edges for representative cause/effect inputs",
+        "Add PostgreSQL-backed tests showing causal edges are created and linked to the right memory nodes",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-005"
+      ]
+    },
+    {
+      "id": "US-008",
+      "title": "Use causal signals in retrieval scoring",
+      "description": "As a user, I want causal questions to retrieve cause/effect memories so MAGMA behaves more like the paper on why/led-to/because queries.",
+      "acceptanceCriteria": [
+        "Extend search scoring or traversal in src/donkey/adapters/memory/magma_memory_adapter.nim to consider causal neighbors",
+        "Teach query policy classification to recognize causal intent in addition to semantic, temporal, and entity intent",
+        "Add tests showing causal queries surface the correct memories and score breakdowns",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-007"
+      ]
+    },
+    {
+      "id": "US-009",
+      "title": "Tighten retrieval policy toward the MAGMA paper",
+      "description": "As a developer, I want the retrieval policy to move beyond the current heuristic blend so the implementation aligns better with the paper's structured query-adaptive retrieval.",
+      "acceptanceCriteria": [
+        "Refactor query policy and retrieval scoring so semantic, entity, temporal, and causal signals are represented explicitly and coherently",
+        "Keep reranking compatible with the richer score breakdown rather than bypassing it",
+        "Add regression tests covering semantic, entity, temporal, and causal query classes",
+        "nim c src/donkey.nim passes",
+        "nim c -d:withPostgres src/donkey.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_graph.nim passes",
+        "nim c -d:withPostgres -r tests/memory/t_magma_memory_adapter.nim passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-008"
+      ]
+    }
+  ]
+}

@@ -47,6 +47,7 @@ logLevel = "info"
 | `ANTHROPIC_API_KEY` | For Anthropic | claude-* models |
 | `GEMINI_API_KEY` | For Gemini | gemini-* models |
 | `MINIMAX_API_KEY` | For MiniMax | MiniMax-M2 |
+| `DONKEY_PG_DSN` | For Multigraph Memory | PostgreSQL DSN used by the graph-backed memory runtime |
 | `DONKEY_MASTER_KEY` | If using secrets | Master key for encrypted secrets |
 
 ### Per-user provider selection
@@ -89,7 +90,16 @@ Each user gets a paddock at `~/.donkey/paddocks/<uuid>/`:
   .secrets/        # encrypted API keys (nimcrypto)
 ```
 
-Files are human-editable. Donkey rereads them at the start of each conversation.
+When `DONKEY_PG_DSN` is not configured, these files are the live memory backend.
+
+When `DONKEY_PG_DSN` is configured and Donkey is compiled with `-d:withPostgres`,
+`Multigraph Memory` becomes the authoritative runtime store for profile,
+preferences, and episodic memory. In that mode:
+
+- conversations load context from the graph first
+- runtime writes go to the graph, not to `USER.md`, `PREFERENCES.md`, or `MEMORY.md`
+- Markdown remains useful for bootstrap, export, inspection, and debug
+- `./donkey ctl memory export <uuid>` regenerates the Markdown view from the graph
 
 ## Architecture
 
@@ -113,4 +123,4 @@ testament cat app
 ```
 
 See [CLAUDE.md](CLAUDE.md) for AI-assistant guidance and architectural decisions.
-See [ROADMAP.md](ROADMAP.md) for phase-by-phase feature plan.
+See [TODO.md](TODO.md) for the centralized backlog, including the Multigraph Memory-first migration plan.
