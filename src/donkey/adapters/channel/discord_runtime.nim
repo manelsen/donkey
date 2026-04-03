@@ -332,10 +332,9 @@ proc handleDiscordEvent*(sm: var SessionManager;
         else:
           sendDiscordReply(event, dcAdapter, userId, buildHelpText(true), logger)
       of lcaShowMemory:
-        let memText = memory.loadContext(userId).memoryMd.strip
         sendDiscordEmbed(event, dcAdapter, userId,
           "🧠 Memórias",
-          if memText.len > 0: memText else: "Nenhuma memória salva ainda.",
+          buildMemoryViewText(memory, userId),
           0x9B59B6, logger)
       of lcaContinueLink:
         let linked = dcAdapter.resolver.consumeLinkCode(command.value, ckDiscord, event.discordUserId)

@@ -20,9 +20,15 @@ import donkey/core/providers/smart_routing
 import donkey/core/session/session_ingress
 import donkey/adapters/memory/md_file
 when defined(withPostgres):
-  import donkey/adapters/memory/postgres_memory
+  import donkey/core/memory_rerank_prefs
+  import donkey/adapters/memory/magma_memory_adapter
   import donkey/adapters/embedding/openrouter_embed
+  import donkey/adapters/reranking/zai_rerank
+  import donkey/adapters/reranking/minimax_rerank
+  import donkey/adapters/reranking/openrouter_rerank
+  import donkey/adapters/provider/zhipu
   import donkey/ports/embedding
+  import donkey/ports/reranking
 import donkey/adapters/provider/openrouter
 import donkey/adapters/provider/runtime_builder
 import donkey/adapters/provider/model_catalog
@@ -99,9 +105,9 @@ Commands:
   ctl skill update <name> <script>      Update a local skill path
   ctl skill update [slug]               Update one/all remote installed skills
   ctl provider test <name>              Test provider connectivity
-  ctl memory search <uuid> <q>   Semantic search in user memory  (-d:withPostgres)
-  ctl memory import <uuid>       Import .md paddock into Postgres (-d:withPostgres)
-  ctl memory export <uuid> [dir] Export Postgres memory view as .md (-d:withPostgres)
+  ctl memory search <uuid> <q>   Semantic search in user memory via MAGMA (-d:withPostgres)
+  ctl memory import <uuid>       Import .md paddock into MAGMA (-d:withPostgres)
+  ctl memory export <uuid> [dir] Export MAGMA memory view as .md (-d:withPostgres)
   ctl status                     Show daemon status (daemon must be running)
   tui                            Open live TUI dashboard (daemon must be running)
   service install                Install as systemd --user service
@@ -362,6 +368,219 @@ proc ctlSessionList(sm: SessionManager; uuid: string) =
 # ── ctl memory commands ────────────────────────────────────────────────────────
 
 when defined(withPostgres):
+  type
+    MemoryExportEntry = object
+      fileName: string
+      content:  string
+
+  proc buildMagmaEmbedFn(): EmbedFn {.gcsafe.} =
+    let embedKey = getEnv("OPENROUTER_API_KEY")
+    let embedAdapter = newOpenRouterEmbeddingAdapter(embedKey)
+    result = proc(text: string): seq[float32] {.gcsafe.} =
+      embedAdapter.embed(text)
+
+  proc envIntOr(name: string; defaultValue: int): int =
+    let raw = getEnv(name)
+    if raw.len == 0:
+      return defaultValue
+    try:
+      result = parseInt(raw)
+    except ValueError:
+      result = defaultValue
+
+  proc envFloatOrUnit(name: string; defaultValue: float32): float32 =
+    let raw = getEnv(name)
+    if raw.len == 0:
+      return defaultValue
+    try:
+      result = parseFloat(raw).float32
+    except ValueError:
+      result = defaultValue
+    if result < 0.0'f32:
+      result = 0.0'f32
+    elif result > 1.0'f32:
+      result = 1.0'f32
+
+  proc buildMagmaSearchConfig(): SearchConfig =
+    result = defaultSearchConfig()
+    result.semanticTopKMultiplier = max(1, envIntOr(
+      "DONKEY_MEMORY_SEARCH_SEMANTIC_MULTIPLIER",
+      result.semanticTopKMultiplier,
+    ))
+    result.recentTopKMultiplier = max(1, envIntOr(
+      "DONKEY_MEMORY_SEARCH_RECENT_MULTIPLIER",
+      result.recentTopKMultiplier,
+    ))
+    result.rerankPoolSize = max(1, envIntOr(
+      "DONKEY_MEMORY_RERANK_POOL",
+      result.rerankPoolSize,
+    ))
+    result.rerankWeight = envFloatOrUnit(
+      "DONKEY_MEMORY_RERANK_WEIGHT",
+      result.rerankWeight,
+    )
+
+  type
+    ResolvedMagmaRerank = object
+      provider: string
+      model:    string
+
+  func normalizeRerankProvider(raw: string): string =
+    case raw.strip.toLowerAscii()
+    of "zhipu":
+      "zai-coding"
+    else:
+      raw.strip.toLowerAscii()
+
+  proc inferRerankProvider(model: string): string =
+    let normalized = model.strip
+    if normalized.len == 0:
+      return ""
+    if normalized.startsWith("MiniMax-"):
+      return "minimax"
+    if normalized.toLowerAscii().startsWith("glm-"):
+      if getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")).len > 0:
+        return "zai-coding"
+      if getEnv("ZAI_API_KEY").len > 0:
+        return "zai"
+      return "zai-coding"
+    if normalized.contains("/"):
+      return "openrouter"
+    ""
+
+  proc resolveMagmaRerank(preferencesMd: string): ResolvedMagmaRerank =
+    let rerankPrefs = parseMemoryRerankPrefs(preferencesMd)
+    let envMode = normalizeMemoryRerankMode(getEnv("DONKEY_MEMORY_RERANK_MODE"))
+    let explicitModel =
+      if rerankPrefs.model.len > 0: rerankPrefs.model
+      else: getEnv("DONKEY_MEMORY_RERANK_MODEL")
+
+    var mode =
+      if rerankPrefs.mode.len > 0: rerankPrefs.mode
+      else: envMode
+
+    if mode.len == 0:
+      let normalizedModel = explicitModel.strip.toLowerAscii()
+      if normalizedModel.len == 0 or normalizedModel in ["off", "none"]:
+        return ResolvedMagmaRerank()
+      mode = MemoryRerankExplicit
+
+    case mode
+    of MemoryRerankOff:
+      discard
+    of MemoryRerankDialogue:
+      let routingPrefs = parseSmartRoutingPrefs(preferencesMd)
+      if not routingPrefs.usesSmartRouting:
+        result.provider = normalizeRerankProvider(routingPrefs.providerName)
+        if routingPrefs.modelName.len > 0:
+          result.model = routingPrefs.modelName
+        elif result.provider.len > 0:
+          result.model = defaultModelForProvider(result.provider)
+    of MemoryRerankExplicit:
+      let normalizedModel = explicitModel.strip
+      if normalizedModel.len == 0 or normalizedModel.toLowerAscii in ["off", "none"]:
+        return ResolvedMagmaRerank()
+      let explicitProvider =
+        if rerankPrefs.provider.len > 0: rerankPrefs.provider
+        else: getEnv("DONKEY_MEMORY_RERANK_PROVIDER")
+      result.provider = normalizeRerankProvider(
+        if explicitProvider.len > 0: explicitProvider
+        else: inferRerankProvider(normalizedModel)
+      )
+      result.model = normalizedModel
+    else:
+      discard
+
+  proc buildMagmaRerankFn(preferencesMd = ""): RerankFn {.gcsafe.} =
+    let rerank = resolveMagmaRerank(preferencesMd)
+    if rerank.model.len == 0:
+      return nil
+    let maxChars = max(128, envIntOr("DONKEY_MEMORY_RERANK_MAX_CHARS", DefaultRerankMaxChars))
+    let maxTokens = max(128, envIntOr("DONKEY_MEMORY_RERANK_MAX_TOKENS", DefaultRerankMaxTokens))
+    case rerank.provider
+    of "openrouter":
+      let rerankKey = getEnv("OPENROUTER_API_KEY")
+      if rerankKey.len == 0:
+        return nil
+      let rerankAdapter = newOpenRouterRerankAdapter(
+        rerankKey,
+        model = rerank.model,
+        maxChars = maxChars,
+        maxTokens = maxTokens,
+      )
+      result = proc(query: string; candidates: seq[RerankCandidate]): seq[float32] {.gcsafe.} =
+        rerankAdapter.rerank(query, candidates)
+    of "zai":
+      let rerankKey = getEnv("ZAI_API_KEY")
+      if rerankKey.len == 0:
+        return nil
+      let rerankAdapter = newZaiRerankAdapter(
+        rerankKey,
+        model = rerank.model,
+        maxChars = maxChars,
+        maxTokens = maxTokens,
+      )
+      result = proc(query: string; candidates: seq[RerankCandidate]): seq[float32] {.gcsafe.} =
+        rerankAdapter.rerank(query, candidates)
+    of "zai-coding":
+      let rerankKey = getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY"))
+      if rerankKey.len == 0:
+        return nil
+      let rerankAdapter = newZaiCodingRerankAdapter(
+        rerankKey,
+        model = rerank.model,
+        maxChars = maxChars,
+        maxTokens = maxTokens,
+      )
+      result = proc(query: string; candidates: seq[RerankCandidate]): seq[float32] {.gcsafe.} =
+        rerankAdapter.rerank(query, candidates)
+    of "minimax":
+      let rerankKey = getEnv("MINIMAX_API_KEY")
+      if rerankKey.len == 0:
+        return nil
+      let rerankAdapter = newMiniMaxRerankAdapter(
+        rerankKey,
+        model = rerank.model,
+        maxChars = maxChars,
+        maxTokens = maxTokens,
+      )
+      result = proc(query: string; candidates: seq[RerankCandidate]): seq[float32] {.gcsafe.} =
+        rerankAdapter.rerank(query, candidates)
+    else:
+      discard
+
+  proc newCtlMagmaAdapter(pgDsn: string): MagmaMemoryAdapter =
+    newMagmaMemoryAdapter(
+      pgDsn,
+      buildMagmaEmbedFn(),
+      nil,
+      buildMagmaSearchConfig(),
+    )
+
+  proc buildMemoryExportEntries(ctx: UserContext): seq[MemoryExportEntry] =
+    @[
+      MemoryExportEntry(fileName: "USER.md", content: ctx.userMd),
+      MemoryExportEntry(fileName: "MEMORY.md", content: ctx.memoryMd),
+      MemoryExportEntry(fileName: "PREFERENCES.md", content: ctx.preferencesMd),
+    ]
+
+  proc exportContextToDir(ctx: UserContext; outDir: string) =
+    createDir(outDir)
+    for entry in buildMemoryExportEntries(ctx):
+      writeFile(outDir / entry.fileName, entry.content)
+
+  proc importContextToMagma(magma: MagmaMemoryAdapter;
+                            userId: UserId;
+                            ctx: UserContext) =
+    if ctx.userMd.strip.len > 0:
+      magma.saveUserMd(userId, ctx.userMd)
+    if ctx.preferencesMd.strip.len > 0:
+      magma.savePreferences(userId, ctx.preferencesMd)
+    for chunk in ctx.memoryMd.split("\n\n"):
+      let trimmed = chunk.strip()
+      if trimmed.len > 0:
+        magma.appendMemory(userId, trimmed)
+
   proc echoMemoryExport(entries: seq[MemoryExportEntry]) =
     for i, entry in entries:
       if i > 0:
@@ -370,15 +589,12 @@ when defined(withPostgres):
       echo ""
       echo entry.content
 
-  proc ctlMemorySearch(pgDsn: string; uuid, query: string; limit = 10) =
-    let embedKey = getEnv("OPENROUTER_API_KEY")
-    let embedAdapter = newOpenRouterEmbeddingAdapter(embedKey)
-    let embedFn: EmbedFn = proc(text: string): seq[float32] {.gcsafe.} =
-      embedAdapter.embed(text)
-    let pg = newPostgresMemoryAdapter(pgDsn, embedFn)
-    pg.migrate()
+  proc ctlMemorySearch(pgDsn, paddocksDir: string; uuid, query: string; limit = 10) =
+    let magma = newCtlMagmaAdapter(pgDsn)
     let uid = UserId(uuid)
-    let hits = pg.search(uid, query, limit)
+    let md = MdFileAdapter(paddocksDir: paddocksDir)
+    let prefsMd = md.loadContext(uid).preferencesMd
+    let hits = magma.searchWithRerank(uid, query, limit, buildMagmaRerankFn(prefsMd))
     if hits.len == 0:
       echo "(no results)"
       return
@@ -388,23 +604,17 @@ when defined(withPostgres):
       echo "---"
 
   proc ctlMemoryImport(pgDsn, paddocksDir: string; uuid: string) =
-    let embedKey = getEnv("OPENROUTER_API_KEY")
-    let embedAdapter = newOpenRouterEmbeddingAdapter(embedKey)
-    let embedFn: EmbedFn = proc(text: string): seq[float32] {.gcsafe.} =
-      embedAdapter.embed(text)
-    let pg = newPostgresMemoryAdapter(pgDsn, embedFn)
-    pg.migrate()
-    pg.importFromMd(paddocksDir, UserId(uuid))
+    let uid = UserId(uuid)
+    let md = MdFileAdapter(paddocksDir: paddocksDir)
+    let ctx = md.loadContext(uid)
+    let magma = newCtlMagmaAdapter(pgDsn)
+    magma.deleteUser(uid)
+    magma.importContextToMagma(uid, ctx)
     echo "Imported " & uuid & " from .md files"
 
   proc ctlMemoryExport(pgDsn: string; uuid: string; outDir = "") =
-    let embedKey = getEnv("OPENROUTER_API_KEY")
-    let embedAdapter = newOpenRouterEmbeddingAdapter(embedKey)
-    let embedFn: EmbedFn = proc(text: string): seq[float32] {.gcsafe.} =
-      embedAdapter.embed(text)
-    let pg = newPostgresMemoryAdapter(pgDsn, embedFn)
-    pg.migrate()
-    let ctx = pg.loadContext(UserId(uuid))
+    let magma = newCtlMagmaAdapter(pgDsn)
+    let ctx = magma.loadContext(UserId(uuid))
     let entries = buildMemoryExportEntries(ctx)
     if outDir.len == 0:
       echoMemoryExport(entries)
@@ -690,7 +900,7 @@ proc buildGlobalProviderBundle(): GlobalProviderBundle =
   result.completeFn = if orKey.len > 0: makeProviderFn(orAdapter) else: nil
   result.streamFn = if orKey.len > 0: orAdapter.makeStreamFn() else: nil
 
-proc buildGlobalSearchFn(): SearchFn {.gcsafe.}
+proc buildGlobalSearchFn(paddocksDir: string): SearchFn {.gcsafe.}
 
 proc initDaemonServices(cfg: DonkeyConfig;
                         env: DaemonEnv;
@@ -703,10 +913,10 @@ proc initDaemonServices(cfg: DonkeyConfig;
   result.globalCompleteFn = providerBundle.completeFn
   result.globalStreamFn = providerBundle.streamFn
   result.tgTypingFn = makeTgTypingFn(env.telegramToken, env.identityPath)
-  result.globalSearchFn = buildGlobalSearchFn()
+  result.globalSearchFn = buildGlobalSearchFn(cfg.paddocks)
   when defined(withPostgres):
     if result.globalSearchFn != nil:
-      log.info("Postgreyskull semantic search enabled")
+      log.info("MAGMA semantic search enabled")
 
 proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.telegramToken = getEnv("TELEGRAM_BOT_TOKEN")
@@ -726,7 +936,10 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.qqApiBase = getEnv("QQ_ONEBOT_URL")
   result.qqOfficialAppId = getEnv("QQ_OFFICIAL_APP_ID")
   result.qqOfficialApiBase = getEnv("QQ_OFFICIAL_API_BASE")
-  result.memory = MdFileAdapter(paddocksDir: cfg.paddocks)
+  result.memory = MdFileAdapter(
+    paddocksDir: cfg.paddocks,
+    magmaDsn: getEnv("DONKEY_PG_DSN"),
+  )
   result.identityPath = cfg.home / "identities.tsv"
   let wecomAgentIdStr = getEnv("WECOM_AGENT_ID")
   result.wecomAgentId =
@@ -1166,20 +1379,26 @@ proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
   of qbkNone:
     discard
 
-proc buildGlobalSearchFn(): SearchFn {.gcsafe.} =
+proc buildGlobalSearchFn(paddocksDir: string): SearchFn {.gcsafe.} =
   when defined(withPostgres):
     let pgDsnRuntime = getEnv("DONKEY_PG_DSN")
     if pgDsnRuntime.len > 0:
-      let orEmbedKey = getEnv("OPENROUTER_API_KEY")
-      let embedAdapter = newOpenRouterEmbeddingAdapter(orEmbedKey)
-      let embedFn: EmbedFn = proc(text: string): seq[float32] {.gcsafe.} =
-        embedAdapter.embed(text)
-      let pgSearch = newPostgresMemoryAdapter(pgDsnRuntime, embedFn)
-      pgSearch.migrate()
+      let magmaSearch = newMagmaMemoryAdapter(
+        pgDsnRuntime,
+        buildMagmaEmbedFn(),
+        nil,
+        buildMagmaSearchConfig(),
+      )
+      let md = MdFileAdapter(paddocksDir: paddocksDir, magmaDsn: pgDsnRuntime)
       result = proc(userId: UserId; query: string; limit: int): seq[MemoryHit]
                     {.gcsafe, raises: [].} =
-        try: pgSearch.search(userId, query, limit)
-        except: @[]
+        try:
+          let ctx = md.loadContext(userId)
+          let preferencesMd = ctx.preferencesMd
+          let rerankFn = buildMagmaRerankFn(preferencesMd)
+          magmaSearch.searchWithRerank(userId, query, limit, rerankFn)
+        except:
+          @[]
   else:
     discard
 
@@ -1218,6 +1437,26 @@ proc setupIpcServer(cfg: DonkeyConfig;
     if wechatAppId.len > 0: activeChannels.add("wechat")
     if feishuAppId.len > 0: activeChannels.add("feishu")
     if qqEnabled: activeChannels.add("qq")
+    var memoryStats: MemoryStats
+    when defined(withPostgres):
+      if gatewayInboundMemory.magmaDsn.len > 0:
+        try:
+          let magma = newMagmaMemoryAdapter(
+            gatewayInboundMemory.magmaDsn,
+            buildMagmaEmbedFn(),
+          )
+          let stats = magma.stats()
+          memoryStats = MemoryStats(
+            totalNodes: stats.totalNodes,
+            memoryNodes: stats.memoryNodes,
+            profileNodes: stats.profileNodes,
+            preferenceNodes: stats.preferenceNodes,
+            entityNodes: stats.entityNodes,
+            embeddingNodes: stats.embeddingNodes,
+            totalEdges: stats.totalEdges,
+          )
+        except CatchableError:
+          discard
     DaemonStatus(
       uptimeSec:     (nowMs() - daemonStartMs) div 1000,
       sessionCount:  sm.sessionCount(),
@@ -1230,7 +1469,8 @@ proc setupIpcServer(cfg: DonkeyConfig;
       recentProviderMetrics: runtime.topRecentProviderMetrics(),
       providerCooldowns: runtime.activeProviderCooldowns(),
       toolsCount:    toolsCount,
-      memoryBackend: when defined(withPostgres): "postgres" else: "md",
+      memoryBackend: if gatewayInboundMemory.magmaDsn.len > 0: "md+magma" else: "md",
+      memoryStats:   memoryStats,
     )
   let ipcLogFn: LogProvider = proc(n: int): seq[IpcLogEntry] {.gcsafe, raises: [].} =
     for e in ringSnapshot(n):
@@ -1923,7 +2163,7 @@ proc main =
       when defined(withPostgres):
         let pgDsn = getEnv("DONKEY_PG_DSN")
         if pgDsn.len == 0: echo "DONKEY_PG_DSN not set"; quit(1)
-        ctlMemorySearch(pgDsn, args[3], args[4]); quit(0)
+        ctlMemorySearch(pgDsn, cfg.paddocks, args[3], args[4]); quit(0)
       else:
         echo "Recompile with -d:withPostgres to use memory search"; quit(1)
     elif args.len >= 4 and args[1] == "memory" and args[2] == "import":
@@ -1947,17 +2187,7 @@ proc main =
       if sr.isErr:
         echo "Error: " & sr.error; quit(1)
       let st = sr.value
-      echo "Donkey status"
-      echo "  Uptime:   " & $st.uptimeSec & "s"
-      echo "  Sessions: " & $st.sessionCount
-      echo "  Channels: " & st.channels.join(", ")
-      echo "  Providers:" & st.providers.join(", ")
-      echo "  Tools:    " & $st.toolsCount
-      echo "  Memory:   " & st.memoryBackend
-      if st.sessions.len > 0:
-        echo "  Active sessions:"
-        for s in st.sessions:
-          echo "    " & s.userId & " [" & s.channels.join(", ") & "]"
+      echo formatDaemonStatus(st)
       quit(0)
     else:
       printHelp(); quit(1)

@@ -5,7 +5,7 @@
 ##   {"cmd":"status"}       -> DaemonStatus
 ##   {"cmd":"logs","n":50}  -> last N IpcLogEntry records
 
-import std/json
+import std/[json, strutils]
 
 type
   SessionInfo* = object
@@ -30,6 +30,15 @@ type
     errCalls*: int
     avgLatencyMs*: int
 
+  MemoryStats* = object
+    totalNodes*: int
+    memoryNodes*: int
+    profileNodes*: int
+    preferenceNodes*: int
+    entityNodes*: int
+    embeddingNodes*: int
+    totalEdges*: int
+
   DaemonStatus* = object
     uptimeSec*:     int64
     sessionCount*:  int
@@ -43,6 +52,7 @@ type
     providerCooldowns*: seq[string]
     toolsCount*:    int
     memoryBackend*: string
+    memoryStats*:   MemoryStats
 
   IpcLogEntry* = object
     ts*:     string
@@ -109,6 +119,15 @@ func toJson*(st: DaemonStatus): JsonNode =
     "providerCooldowns": providerCooldowns,
     "toolsCount":    st.toolsCount,
     "memoryBackend": st.memoryBackend,
+    "memoryStats": %*{
+      "totalNodes": st.memoryStats.totalNodes,
+      "memoryNodes": st.memoryStats.memoryNodes,
+      "profileNodes": st.memoryStats.profileNodes,
+      "preferenceNodes": st.memoryStats.preferenceNodes,
+      "entityNodes": st.memoryStats.entityNodes,
+      "embeddingNodes": st.memoryStats.embeddingNodes,
+      "totalEdges": st.memoryStats.totalEdges,
+    },
   }
 
 func fromJsonStatus*(j: JsonNode): DaemonStatus =
@@ -116,6 +135,15 @@ func fromJsonStatus*(j: JsonNode): DaemonStatus =
   result.sessionCount  = j{"sessionCount"}.getInt(0)
   result.toolsCount    = j{"toolsCount"}.getInt(0)
   result.memoryBackend = j{"memoryBackend"}.getStr("md")
+  result.memoryStats = MemoryStats(
+    totalNodes: j{"memoryStats"}{"totalNodes"}.getInt(0),
+    memoryNodes: j{"memoryStats"}{"memoryNodes"}.getInt(0),
+    profileNodes: j{"memoryStats"}{"profileNodes"}.getInt(0),
+    preferenceNodes: j{"memoryStats"}{"preferenceNodes"}.getInt(0),
+    entityNodes: j{"memoryStats"}{"entityNodes"}.getInt(0),
+    embeddingNodes: j{"memoryStats"}{"embeddingNodes"}.getInt(0),
+    totalEdges: j{"memoryStats"}{"totalEdges"}.getInt(0),
+  )
   for c in j{"channels"}:
     result.channels.add(c.getStr())
   for p in j{"providers"}:
@@ -167,3 +195,35 @@ func fromJsonLogEntry*(j: JsonNode): IpcLogEntry =
     subsys: j{"subsys"}.getStr(),
     msg:    j{"msg"}.getStr(),
   )
+
+func hasGraphMemoryStats*(st: DaemonStatus): bool =
+  st.memoryBackend.contains("magma") or
+  st.memoryStats.totalNodes > 0 or
+  st.memoryStats.embeddingNodes > 0 or
+  st.memoryStats.totalEdges > 0
+
+func formatDaemonStatus*(st: DaemonStatus): string =
+  var lines = @[
+    "Donkey status",
+    "  Uptime:   " & $st.uptimeSec & "s",
+    "  Sessions: " & $st.sessionCount,
+    "  Channels: " & st.channels.join(", "),
+    "  Providers:" & st.providers.join(", "),
+    "  Tools:    " & $st.toolsCount,
+    "  Memory:   " & st.memoryBackend,
+  ]
+  if st.hasGraphMemoryStats:
+    lines.add(
+      "  Graph:    nodes=" & $st.memoryStats.totalNodes &
+      " memory=" & $st.memoryStats.memoryNodes &
+      " profiles=" & $st.memoryStats.profileNodes &
+      " prefs=" & $st.memoryStats.preferenceNodes &
+      " entities=" & $st.memoryStats.entityNodes &
+      " embeddings=" & $st.memoryStats.embeddingNodes &
+      " edges=" & $st.memoryStats.totalEdges
+    )
+  if st.sessions.len > 0:
+    lines.add("  Active sessions:")
+    for s in st.sessions:
+      lines.add("    " & s.userId & " [" & s.channels.join(", ") & "]")
+  lines.join("\n")

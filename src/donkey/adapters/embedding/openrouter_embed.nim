@@ -1,7 +1,7 @@
 ## OpenRouterEmbeddingAdapter — EmbeddingPort via OpenRouter /embeddings endpoint.
 ##
-## Model: Qwen/Qwen3-Embedding (4096-dim vectors) via OpenRouter.
-## Model ID configurable; defaults to "Qwen/Qwen3-Embedding".
+## Model: qwen/qwen3-embedding-8b (4096-dim vectors) via OpenRouter.
+## Model ID configurable; defaults to "qwen/qwen3-embedding-8b".
 ##
 ## Returns empty seq[float32] on error — caller treats as "no embedding".
 
@@ -12,7 +12,7 @@ import ../http/std_http
 
 const
   OpenRouterEmbedUrl* = "https://openrouter.ai/api/v1/embeddings"
-  DefaultEmbedModel*  = "Qwen/Qwen3-Embedding"
+  DefaultEmbedModel*  = "qwen/qwen3-embedding-8b"
 
 type
   OpenRouterEmbeddingAdapter* = object

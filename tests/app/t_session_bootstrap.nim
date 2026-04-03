@@ -4,6 +4,11 @@ import donkey/adapters/provider/runtime_builder
 import donkey/app/session_bootstrap
 import donkey/domain/more_tools
 import donkey/domain/message
+import donkey/domain/personality
+when defined(withPostgres):
+  import db_connector/db_postgres
+  import donkey/adapters/memory/magma_graph
+  import donkey/adapters/memory/magma_memory_adapter
 
 suite "session_bootstrap":
 
@@ -109,3 +114,147 @@ model = "gemini-2.5-flash"
     check gemini.streamFn == nil
     check minimax.streamFn == nil
     check zaiCoding.streamFn == nil
+
+when defined(withPostgres):
+  const testDsn = "host=localhost port=5432 dbname=donkey_test"
+
+  proc setupGraph() =
+    let g = newMagmaGraph(testDsn)
+    g.migrate()
+
+  proc cleanGraph() =
+    let g = newMagmaGraph(testDsn)
+    let db = g.openDb()
+    defer: db.close()
+    try:
+      db.exec(sql"DELETE FROM magma_edges")
+      db.exec(sql"DELETE FROM magma_nodes")
+    except CatchableError:
+      discard
+
+  proc fakeEmbedFn(text: string): seq[float32] {.gcsafe.} = @[]
+
+  suite "session_bootstrap with multigraph memory":
+
+    test "loadSessionContext prefers multigraph memory when graph has data":
+      setupGraph()
+      cleanGraph()
+      let tmpDir = getTempDir() / "donkey_session_bootstrap_magma_first"
+      let userId = UserId("u-session-bootstrap-magma-first")
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+      createDir(tmpDir)
+      createDir(tmpDir / $userId)
+      defer:
+        if dirExists(tmpDir):
+          removeDir(tmpDir)
+
+      writeFile(tmpDir / $userId / "PREFERENCES.md", """
+provider = "anthropic"
+model = "claude-opus-4-6"
+""")
+
+      let memory = MdFileAdapter(paddocksDir: tmpDir, magmaDsn: testDsn)
+      let magma = newMagmaMemoryAdapter(testDsn, fakeEmbedFn)
+      magma.savePreferences(userId, """
+provider = "gemini"
+model = "gemini-2.5-pro"
+""")
+      magma.saveUserMd(userId, "# Graph User")
+      magma.appendMemory(userId, "graph memory")
+
+      let ctx = loadSessionContext(memory.toRuntimePort(), userId)
+      check ctx.preferencesMd.contains("provider = \"gemini\"")
+      check ctx.providerLabel == "gemini/gemini-2.5-pro"
+
+    test "loadSessionContext bootstraps multigraph memory from markdown when graph is empty":
+      setupGraph()
+      cleanGraph()
+      let tmpDir = getTempDir() / "donkey_session_bootstrap_magma_bootstrap"
+      let userId = UserId("u-session-bootstrap-magma-bootstrap")
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+      createDir(tmpDir / $userId)
+      defer:
+        if dirExists(tmpDir):
+          removeDir(tmpDir)
+
+      writeFile(tmpDir / $userId / "USER.md", "# Bootstrap User")
+      writeFile(tmpDir / $userId / "PREFERENCES.md", """
+provider = "gemini"
+model = "gemini-2.5-flash"
+""")
+      writeFile(tmpDir / $userId / "MEMORY.md", "bootstrap memory A\n\nbootstrap memory B")
+
+      let memory = MdFileAdapter(paddocksDir: tmpDir, magmaDsn: testDsn)
+      let ctx = loadSessionContext(memory.toRuntimePort(), userId)
+      check ctx.preferencesMd.contains("provider = \"gemini\"")
+      check ctx.providerLabel == "gemini/gemini-2.5-flash"
+
+      let magma = newMagmaMemoryAdapter(testDsn, fakeEmbedFn)
+      let graphCtx = magma.loadContext(userId)
+      check graphCtx.userMd.contains("Bootstrap User")
+      check graphCtx.preferencesMd.contains("gemini-2.5-flash")
+      check graphCtx.memoryMd.contains("bootstrap memory A")
+      check graphCtx.memoryMd.contains("bootstrap memory B")
+
+    test "runtime port writes to multigraph without shadow markdown files":
+      setupGraph()
+      cleanGraph()
+      let tmpDir = getTempDir() / "donkey_session_bootstrap_runtime_graph_only"
+      let userId = UserId("u-session-bootstrap-runtime-graph-only")
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+      defer:
+        if dirExists(tmpDir):
+          removeDir(tmpDir)
+
+      let memory = MdFileAdapter(paddocksDir: tmpDir, magmaDsn: testDsn)
+      let port = memory.toRuntimePort()
+      port.saveUserMd(userId, "# Graph User")
+      port.savePreferences(userId, """
+provider = "gemini"
+model = "gemini-2.5-flash"
+""")
+      port.appendMemory(userId, "graph-only memory")
+
+      check not fileExists(memory.userMdPath(userId))
+      check not fileExists(memory.preferencesMdPath(userId))
+      check not fileExists(memory.memoryMdPath(userId))
+
+      let graphCtx = newMagmaMemoryAdapter(testDsn, fakeEmbedFn).loadContext(userId)
+      check graphCtx.userMd == "# Graph User"
+      check graphCtx.preferencesMd.contains("gemini-2.5-flash")
+      check graphCtx.memoryMd.contains("graph-only memory")
+
+    test "runtime identity and clearMemory use multigraph-backed preferences and memories":
+      setupGraph()
+      cleanGraph()
+      let tmpDir = getTempDir() / "donkey_session_bootstrap_runtime_identity_graph"
+      let userId = UserId("u-session-bootstrap-runtime-identity-graph")
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+      defer:
+        if dirExists(tmpDir):
+          removeDir(tmpDir)
+
+      let memory = MdFileAdapter(paddocksDir: tmpDir, magmaDsn: testDsn)
+      let port = memory.toRuntimePort()
+      port.savePreferences(userId, "provider = \"openrouter\"")
+      port.appendMemory(userId, "memory to clear")
+      port.saveIdentity(userId, PersonalityTraits(
+        energy: "warm",
+        tone: "direct",
+        length: "short",
+        initiative: "medium",
+      ), "Donkey")
+
+      let (name, traits) = port.loadIdentity(userId)
+      check name == "Donkey"
+      check traits.energy == "warm"
+      check not fileExists(memory.preferencesMdPath(userId))
+
+      port.clearMemory(userId)
+      let graphCtx = newMagmaMemoryAdapter(testDsn, fakeEmbedFn).loadContext(userId)
+      check graphCtx.memoryMd == ""
+      check graphCtx.preferencesMd.contains("agent_name = \"Donkey\"")

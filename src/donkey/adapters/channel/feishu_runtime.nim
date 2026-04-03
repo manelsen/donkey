@@ -52,8 +52,7 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
           of lcaHelpText:
             buildHelpText(false)
           of lcaShowMemory:
-            let memText = memory.loadContext(userId).memoryMd.strip
-            if memText.len > 0: memText else: "Nenhuma memória salva ainda."
+            buildMemoryViewText(memory, userId)
           of lcaContinueLink:
             buildContinueResultText(fsAdapter.resolver.consumeLinkCode(command.value, ckFeishu, event.openId))
           else:

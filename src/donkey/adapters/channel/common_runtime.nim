@@ -6,6 +6,8 @@ import ../../core/providers/smart_routing
 import ../../adapters/memory/md_file
 import ../../domain/message
 import ../../ports/provider
+when defined(withPostgres):
+  import ../../adapters/memory/magma_memory_adapter
 
 const ThinkLevels* = ["off", "low", "medium", "high"]
 const BudgetPolicies* = ["cheap-first", "balanced", "quality-first"]
@@ -44,6 +46,9 @@ func availableProvidersFromEnv(): ProviderAvailability =
     zai: getEnv("ZAI_API_KEY").len > 0,
     zaiCoding: getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")).len > 0,
   )
+
+when defined(withPostgres):
+  proc noopDoctorEmbedFn(text: string): seq[float32] {.gcsafe.} = @[]
 
 proc parseChannelPrefs*(preferencesMd: string): ChannelPrefs =
   result = defaultChannelPrefs()
@@ -525,6 +530,23 @@ proc buildDoctorReport*(memory: MdFileAdapter;
   ## Modelo atual
   let (prov, mdl) = memory.getCurrentProviderModel(userId)
   report.add("📦 Modelo: " & prov & " / " & mdl & "\n")
+
+  when defined(withPostgres):
+    if memory.magmaDsn.len > 0:
+      try:
+        let magma = newMagmaMemoryAdapter(memory.magmaDsn, noopDoctorEmbedFn)
+        let stats = magma.stats()
+        report.add(
+          "🧠 Multigraph Memory: nodes=" & $stats.totalNodes &
+          " memory=" & $stats.memoryNodes &
+          " profiles=" & $stats.profileNodes &
+          " prefs=" & $stats.preferenceNodes &
+          " entities=" & $stats.entityNodes &
+          " embeddings=" & $stats.embeddingNodes &
+          " edges=" & $stats.totalEdges & "\n"
+        )
+      except CatchableError:
+        report.add("❌ Multigraph Memory: failed to read graph stats\n")
   
   ## Diretório de memória
   let mpath = memory.paddocksDir
@@ -532,9 +554,9 @@ proc buildDoctorReport*(memory: MdFileAdapter;
     var size = 0
     for kind, path in walkDir(mpath):
       inc size
-    report.add("📁 Memory dir: " & mpath & " (" & $size & " arquivos)\n")
+    report.add("📁 Memory dir (debug): " & mpath & " (" & $size & " arquivos)\n")
   else:
-    report.add("❌ Memory dir missing: " & mpath & "\n")
+    report.add("❌ Memory dir missing (debug): " & mpath & "\n")
   
   ## Tools e MCP
   report.add("🔧 Tools loaded: " & $toolsCount & "\n")
@@ -572,6 +594,28 @@ proc buildDoctorReport*(memory: MdFileAdapter;
     report.add("🔑 API keys: nenhuma configurada\n")
   
   report
+
+proc buildMemoryViewText*(memory: MdFileAdapter; userId: UserId): string =
+  let markdownPath = memory.memoryMdPath(userId)
+  let markdownText =
+    if fileExists(markdownPath): readFile(markdownPath).strip
+    else: ""
+  when defined(withPostgres):
+    if memory.magmaDsn.len > 0:
+      try:
+        let magma = newMagmaMemoryAdapter(memory.magmaDsn, noopDoctorEmbedFn)
+        let graphText = magma.loadContext(userId).memoryMd.strip
+        if graphText.len > 0:
+          return "🧠 Multigraph Memory\n" & graphText
+      except CatchableError:
+        discard
+      if markdownText.len > 0:
+        return "📄 Markdown fallback\n" & markdownText
+      return "Nenhuma memória salva ainda."
+  if markdownText.len > 0:
+    markdownText
+  else:
+    "Nenhuma memória salva ainda."
 
 proc buildPingText*(memory: MdFileAdapter;
                     userId: UserId;

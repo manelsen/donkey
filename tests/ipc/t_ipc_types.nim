@@ -1,4 +1,4 @@
-import unittest
+import std/[strutils, unittest]
 import donkey/adapters/ipc/types
 
 suite "IPC types serialization":
@@ -20,6 +20,15 @@ suite "IPC types serialization":
       providerCooldowns: @["anthropic (5m)"],
       toolsCount:    5,
       memoryBackend: "md",
+      memoryStats: MemoryStats(
+        totalNodes: 12,
+        memoryNodes: 8,
+        profileNodes: 2,
+        preferenceNodes: 1,
+        entityNodes: 1,
+        embeddingNodes: 11,
+        totalEdges: 9,
+      ),
     )
     let j   = st.toJson()
     let st2 = fromJsonStatus(j)
@@ -55,6 +64,13 @@ suite "IPC types serialization":
     check st2.providerCooldowns == @["anthropic (5m)"]
     check st2.toolsCount   == 5
     check st2.memoryBackend == "md"
+    check st2.memoryStats.totalNodes == 12
+    check st2.memoryStats.memoryNodes == 8
+    check st2.memoryStats.profileNodes == 2
+    check st2.memoryStats.preferenceNodes == 1
+    check st2.memoryStats.entityNodes == 1
+    check st2.memoryStats.embeddingNodes == 11
+    check st2.memoryStats.totalEdges == 9
 
   test "empty DaemonStatus serializes without error":
     let st  = DaemonStatus()
@@ -62,6 +78,29 @@ suite "IPC types serialization":
     check st2.uptimeSec    == 0
     check st2.sessionCount == 0
     check st2.sessions.len == 0
+
+  test "formatDaemonStatus includes graph-backed counts":
+    let rendered = formatDaemonStatus(DaemonStatus(
+      uptimeSec: 42,
+      sessionCount: 1,
+      channels: @["telegram"],
+      providers: @["openrouter"],
+      toolsCount: 3,
+      memoryBackend: "md+magma",
+      memoryStats: MemoryStats(
+        totalNodes: 12,
+        memoryNodes: 8,
+        profileNodes: 2,
+        preferenceNodes: 1,
+        entityNodes: 1,
+        embeddingNodes: 11,
+        totalEdges: 9,
+      ),
+    ))
+    check rendered.contains("Memory:   md+magma")
+    check rendered.contains("nodes=12")
+    check rendered.contains("embeddings=11")
+    check rendered.contains("edges=9")
 
   test "IpcLogEntry round-trips through JSON":
     let e  = IpcLogEntry(ts: "2026-01-01T12:00:00", level: "INF",

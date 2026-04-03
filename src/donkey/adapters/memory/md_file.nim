@@ -11,12 +11,17 @@ import ../../core/types
 import ../../ports/memory
 import ../../domain/message
 import ../../domain/personality
+when defined(withPostgres):
+  import ../../ports/embedding
+  import ../embedding/openrouter_embed
+  import ./magma_memory_adapter
 export json  ## re-export so callers can inspect JsonNode reminder fields
 export memory
 
 type
   MdFileAdapter* = object
     paddocksDir*: string  ## base directory, e.g. ~/.donkey/paddocks
+    magmaDsn*:   string   ## optional MAGMA shadow backend DSN
 
   UserSummary* = object
     userId*:      UserId
@@ -42,7 +47,189 @@ proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
 proc loadDueReminders*(a: MdFileAdapter): seq[JsonNode] {.gcsafe.}
 proc deleteReminder*(a: MdFileAdapter; userId: UserId; reminderId: string) {.gcsafe.}
 
+when defined(withPostgres):
+  proc buildMagmaEmbedFn(): EmbedFn =
+    let embedKey = getEnv("OPENROUTER_API_KEY")
+    if embedKey.len == 0:
+      return proc(text: string): seq[float32] {.gcsafe.} = @[]
+    let embedAdapter = newOpenRouterEmbeddingAdapter(embedKey)
+    result = proc(text: string): seq[float32] {.gcsafe.} =
+      embedAdapter.embed(text)
+
+  template withMagmaShadow(a: MdFileAdapter; body: untyped) =
+    if a.magmaDsn.len == 0:
+      discard
+    else:
+      try:
+        let magma {.inject.} = newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+        body
+      except CatchableError:
+        discard
+
+  func hasContextContent(ctx: UserContext): bool =
+    ctx.userMd.len > 0 or ctx.memoryMd.len > 0 or ctx.preferencesMd.len > 0
+
+  proc importMarkdownContext(magma: MagmaMemoryAdapter; ctx: UserContext) =
+    if ctx.userMd.strip.len > 0:
+      magma.saveUserMd(ctx.userId, ctx.userMd)
+    if ctx.preferencesMd.strip.len > 0:
+      magma.savePreferences(ctx.userId, ctx.preferencesMd)
+    for chunk in ctx.memoryMd.split("\n\n"):
+      let trimmed = chunk.strip
+      if trimmed.len > 0:
+        magma.appendMemory(ctx.userId, trimmed)
+
+# ── path helpers ──────────────────────────────────────────────────────────────
+
+func paddockDir*(a: MdFileAdapter; userId: UserId): string =
+  a.paddocksDir / $userId
+
+func userMdPath*(a: MdFileAdapter; userId: UserId): string =
+  a.paddockDir(userId) / "USER.md"
+
+func memoryMdPath*(a: MdFileAdapter; userId: UserId): string =
+  a.paddockDir(userId) / "MEMORY.md"
+
+func preferencesMdPath*(a: MdFileAdapter; userId: UserId): string =
+  a.paddockDir(userId) / "PREFERENCES.md"
+
+proc loadMarkdownContext(a: MdFileAdapter; userId: UserId): UserContext =
+  UserContext(
+    userId:        userId,
+    userMd:        if fileExists(a.userMdPath(userId)): readFile(a.userMdPath(userId)) else: "",
+    memoryMd:      if fileExists(a.memoryMdPath(userId)): readFile(a.memoryMdPath(userId)) else: "",
+    preferencesMd: if fileExists(a.preferencesMdPath(userId)): readFile(a.preferencesMdPath(userId)) else: "",
+  )
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+proc readOrEmpty(path: string): string =
+  if fileExists(path): readFile(path) else: ""
+
+proc mergeIdentityPrefs(content: string; traits: PersonalityTraits; name: string): string =
+  var lines = content.splitLines()
+  proc setKey(ls: var seq[string]; key, val: string) =
+    for i in 0 ..< ls.len:
+      if ls[i].startsWith(key & " ") or ls[i].startsWith(key & "="):
+        ls[i] = key & " = \"" & val & "\""
+        return
+    ls.add(key & " = \"" & val & "\"")
+  lines.setKey("agent_name",       name)
+  lines.setKey("agent_energy",     traits.energy)
+  lines.setKey("agent_tone",       traits.tone)
+  lines.setKey("agent_length",     traits.length)
+  lines.setKey("agent_initiative", traits.initiative)
+  lines.join("\n")
+
+proc parseIdentityPrefs(content: string): (string, PersonalityTraits) =
+  var name   = ""
+  var traits = PersonalityTraits()
+  for line in content.splitLines():
+    let parts = line.split('=', 1)
+    if parts.len != 2: continue
+    let k = parts[0].strip
+    let v = parts[1].strip.strip(chars = {'"'})
+    case k
+    of "agent_name":       name              = v
+    of "agent_energy":     traits.energy     = v
+    of "agent_tone":       traits.tone       = v
+    of "agent_length":     traits.length     = v
+    of "agent_initiative": traits.initiative = v
+    else: discard
+  (name, traits)
+
+when defined(withPostgres):
+  proc runtimeHasProfile(a: MdFileAdapter; userId: UserId): bool =
+    if a.magmaDsn.len > 0:
+      try:
+        let magma = newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+        return magma.hasProfile(userId) or a.hasProfile(userId)
+      except CatchableError:
+        discard
+    a.hasProfile(userId)
+
+  proc runtimeSaveUserMd(a: MdFileAdapter; userId: UserId; content: string) =
+    if a.magmaDsn.len > 0:
+      try:
+        let magma = newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+        magma.saveUserMd(userId, content)
+        return
+      except CatchableError:
+        discard
+    a.saveUserMd(userId, content)
+
+  proc runtimeAppendMemory(a: MdFileAdapter; userId: UserId; text: string) =
+    if a.magmaDsn.len > 0:
+      try:
+        let magma = newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+        magma.appendMemory(userId, text)
+        return
+      except CatchableError:
+        discard
+    a.appendMemory(userId, text)
+
+  proc runtimeSavePreferences(a: MdFileAdapter; userId: UserId; content: string) =
+    if a.magmaDsn.len > 0:
+      try:
+        let magma = newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+        magma.savePreferences(userId, content)
+        return
+      except CatchableError:
+        discard
+    a.savePreferences(userId, content)
+
+  proc runtimeClearMemory(a: MdFileAdapter; userId: UserId) =
+    if a.magmaDsn.len > 0:
+      try:
+        let magma = newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+        magma.clearMemory(userId)
+        return
+      except CatchableError:
+        discard
+    a.clearMemory(userId)
+
+  proc runtimeSaveIdentity(a: MdFileAdapter; userId: UserId;
+                           traits: PersonalityTraits; name: string) =
+    if a.magmaDsn.len > 0:
+      try:
+        let current = a.loadContext(userId).preferencesMd
+        a.runtimeSavePreferences(userId, mergeIdentityPrefs(current, traits, name))
+        return
+      except CatchableError:
+        discard
+    a.saveIdentity(userId, traits, name)
+
+  proc runtimeLoadIdentity(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits) =
+    if a.magmaDsn.len > 0:
+      try:
+        let current = a.loadContext(userId).preferencesMd
+        return parseIdentityPrefs(current)
+      except CatchableError:
+        discard
+    a.loadIdentity(userId)
+
 proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
+  when defined(withPostgres):
+    if a.magmaDsn.len > 0:
+      return MemoryRuntimePort(
+        hasProfile:       proc(userId: UserId): bool {.gcsafe.} = a.runtimeHasProfile(userId),
+        loadContext:      proc(userId: UserId): UserContext {.gcsafe.} = a.loadContext(userId),
+        saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} = a.runtimeSaveUserMd(userId, content),
+        appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = a.runtimeAppendMemory(userId, text),
+        savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = a.runtimeSavePreferences(userId, content),
+        clearMemory:      proc(userId: UserId) {.gcsafe.} = a.runtimeClearMemory(userId),
+        saveSession:      proc(userId: UserId; sessionId: string; history: ConversationHistory) {.gcsafe.} =
+                            a.saveSession(userId, sessionId, history),
+        saveIdentity:     proc(userId: UserId; traits: PersonalityTraits; name: string) {.gcsafe.} =
+                            a.runtimeSaveIdentity(userId, traits, name),
+        loadIdentity:     proc(userId: UserId): (string, PersonalityTraits) {.gcsafe.} =
+                            a.runtimeLoadIdentity(userId),
+        paddockDir:       proc(userId: UserId): string {.gcsafe.} = a.paddockDir(userId),
+        scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string {.gcsafe.} =
+                            a.scheduleReminder(userId, channel, scheduledAt, message),
+        loadDueReminders: proc(): seq[JsonNode] {.gcsafe.} = a.loadDueReminders(),
+        deleteReminder:   proc(userId: UserId; reminderId: string) {.gcsafe.} = a.deleteReminder(userId, reminderId),
+      )
   MemoryRuntimePort(
     hasProfile:       proc(userId: UserId): bool {.gcsafe.} = a.hasProfile(userId),
     loadContext:      proc(userId: UserId): UserContext {.gcsafe.} = a.loadContext(userId),
@@ -61,25 +248,6 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
     loadDueReminders: proc(): seq[JsonNode] {.gcsafe.} = a.loadDueReminders(),
     deleteReminder:   proc(userId: UserId; reminderId: string) {.gcsafe.} = a.deleteReminder(userId, reminderId),
   )
-
-# ── path helpers ──────────────────────────────────────────────────────────────
-
-func paddockDir*(a: MdFileAdapter; userId: UserId): string =
-  a.paddocksDir / $userId
-
-func userMdPath*(a: MdFileAdapter; userId: UserId): string =
-  a.paddockDir(userId) / "USER.md"
-
-func memoryMdPath*(a: MdFileAdapter; userId: UserId): string =
-  a.paddockDir(userId) / "MEMORY.md"
-
-func preferencesMdPath*(a: MdFileAdapter; userId: UserId): string =
-  a.paddockDir(userId) / "PREFERENCES.md"
-
-# ── helpers ───────────────────────────────────────────────────────────────────
-
-proc readOrEmpty(path: string): string =
-  if fileExists(path): readFile(path) else: ""
 
 proc parseUserField*(content, label: string): string =
   let prefix = "**" & label & ":**"
@@ -115,16 +283,27 @@ proc hasProfile*(a: MdFileAdapter; userId: UserId): bool =
   fileExists(a.userMdPath(userId))
 
 proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext =
-  UserContext(
-    userId:        userId,
-    userMd:        readOrEmpty(a.userMdPath(userId)),
-    memoryMd:      readOrEmpty(a.memoryMdPath(userId)),
-    preferencesMd: readOrEmpty(a.preferencesMdPath(userId)),
-  )
+  when defined(withPostgres):
+    if a.magmaDsn.len > 0:
+      try:
+        let magma = newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+        let graphCtx = magma.loadContext(userId)
+        if graphCtx.hasContextContent:
+          return graphCtx
+        let markdownCtx = a.loadMarkdownContext(userId)
+        if markdownCtx.hasContextContent:
+          magma.importMarkdownContext(markdownCtx)
+          return markdownCtx
+      except CatchableError:
+        discard
+  a.loadMarkdownContext(userId)
 
 proc saveUserMd*(a: MdFileAdapter; userId: UserId; content: string) =
   a.ensurePaddock(userId)
   writeFile(a.userMdPath(userId), content)
+  when defined(withPostgres):
+    a.withMagmaShadow:
+      magma.saveUserMd(userId, content)
 
 proc listUsers*(a: MdFileAdapter): seq[UserSummary] =
   if not dirExists(a.paddocksDir):
@@ -160,10 +339,16 @@ proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) =
   let existing = readOrEmpty(path)
   let sep = if existing.len > 0 and not existing.endsWith("\n"): "\n" else: ""
   writeFile(path, existing & sep & text)
+  when defined(withPostgres):
+    a.withMagmaShadow:
+      magma.appendMemory(userId, text)
 
 proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) =
   a.ensurePaddock(userId)
   writeFile(a.preferencesMdPath(userId), content)
+  when defined(withPostgres):
+    a.withMagmaShadow:
+      magma.savePreferences(userId, content)
 
 proc clearMemory*(a: MdFileAdapter; userId: UserId) =
   ## Clears MEMORY.md for this user (irreversible).
@@ -208,41 +393,15 @@ proc saveIdentity*(a: MdFileAdapter; userId: UserId;
                    traits: PersonalityTraits; name: string) =
   ## Merges agent identity into PREFERENCES.md (TOML key=value format).
   a.ensurePaddock(userId)
-  let path  = a.preferencesMdPath(userId)
-  var lines = readOrEmpty(path).splitLines()
-  proc setKey(ls: var seq[string]; key, val: string) =
-    for i in 0 ..< ls.len:
-      if ls[i].startsWith(key & " ") or ls[i].startsWith(key & "="):
-        ls[i] = key & " = \"" & val & "\""
-        return
-    ls.add(key & " = \"" & val & "\"")
-  lines.setKey("agent_name",       name)
-  lines.setKey("agent_energy",     traits.energy)
-  lines.setKey("agent_tone",       traits.tone)
-  lines.setKey("agent_length",     traits.length)
-  lines.setKey("agent_initiative", traits.initiative)
-  writeFile(path, lines.join("\n"))
+  writeFile(a.preferencesMdPath(userId),
+            mergeIdentityPrefs(readOrEmpty(a.preferencesMdPath(userId)), traits, name))
 
 proc loadIdentity*(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits) =
   ## Returns (agent_name, PersonalityTraits) from PREFERENCES.md.
   ## Empty strings when not set.
   let path = a.preferencesMdPath(userId)
   if not fileExists(path): return ("", PersonalityTraits())
-  var name   = ""
-  var traits = PersonalityTraits()
-  for line in readFile(path).splitLines():
-    let parts = line.split('=', 1)
-    if parts.len != 2: continue
-    let k = parts[0].strip
-    let v = parts[1].strip.strip(chars = {'"'})
-    case k
-    of "agent_name":       name             = v
-    of "agent_energy":     traits.energy    = v
-    of "agent_tone":       traits.tone      = v
-    of "agent_length":     traits.length    = v
-    of "agent_initiative": traits.initiative = v
-    else: discard
-  (name, traits)
+  parseIdentityPrefs(readFile(path))
 
 # ── Reminder store ────────────────────────────────────────────────────────────
 

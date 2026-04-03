@@ -4,6 +4,10 @@ import donkey/adapters/channel/common_runtime
 import donkey/adapters/memory/md_file
 import donkey/domain/message
 import donkey/ports/provider
+when defined(withPostgres):
+  import db_connector/db_postgres
+  import donkey/adapters/memory/magma_graph
+  import donkey/adapters/memory/magma_memory_adapter
 
 suite "common_runtime":
 
@@ -115,3 +119,105 @@ suite "common_runtime":
     memory.savePreferences(userId, "thinking = \"high\"\nbudget = \"quality-first\"")
     let text = buildTextStatusText(memory, userId, 3, 1, 0)
     check text.contains("Provider: auto [quality-first]")
+
+when defined(withPostgres):
+  const testDsn = "host=localhost port=5432 dbname=donkey_test"
+
+  proc fakeEmbedFn(text: string): seq[float32] {.gcsafe.} =
+    for i in 0 ..< 4096:
+      result.add(if i == 0: 1.0'f32 else: 0.0'f32)
+
+  proc setupGraph() =
+    let g = newMagmaGraph(testDsn)
+    g.migrate()
+
+  proc cleanGraph() =
+    let g = newMagmaGraph(testDsn)
+    let db = g.openDb()
+    defer: db.close()
+    try:
+      db.exec(sql"DELETE FROM magma_edges")
+      db.exec(sql"DELETE FROM magma_nodes")
+    except CatchableError:
+      discard
+
+  proc stubDoctorCompleteBuilder(preferencesMd: string): CompleteFn {.gcsafe.} =
+    proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+      ok(CompletionResponse(text: "pong", inputTokens: 1, outputTokens: 1))
+
+  suite "common_runtime doctor":
+
+    test "buildDoctorReport prefers multigraph memory stats over paddock file counts":
+      setupGraph()
+      cleanGraph()
+      let tmpDir = getTempDir() / "donkey_common_runtime_doctor"
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+      createDir(tmpDir)
+      createDir(tmpDir / "u-common-memory-view")
+      defer:
+        if dirExists(tmpDir):
+          removeDir(tmpDir)
+
+      let memory = MdFileAdapter(paddocksDir: tmpDir, magmaDsn: testDsn)
+      let userId = UserId("u-common-doctor")
+      let magma = newMagmaMemoryAdapter(testDsn, fakeEmbedFn)
+      magma.saveUserMd(userId, "# Ada")
+      magma.savePreferences(userId, "language = \"nim\"")
+      magma.appendMemory(userId, "m1")
+
+      let report = buildDoctorReport(
+        memory,
+        stubDoctorCompleteBuilder,
+        userId,
+        toolsCount = 4,
+        toolClientsCount = 1,
+        sessionCount = 2,
+      )
+
+      check report.contains("🧠 Multigraph Memory:")
+      check report.contains("nodes=3")
+      check report.contains("embeddings=3")
+      check report.contains("📁 Memory dir (debug):")
+
+    test "buildMemoryViewText prefers multigraph memory when available":
+      setupGraph()
+      cleanGraph()
+      let tmpDir = getTempDir() / "donkey_common_runtime_memory_view"
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+      createDir(tmpDir)
+      defer:
+        if dirExists(tmpDir):
+          removeDir(tmpDir)
+
+      let memory = MdFileAdapter(paddocksDir: tmpDir, magmaDsn: testDsn)
+      let userId = UserId("u-common-memory-view")
+      let magma = newMagmaMemoryAdapter(testDsn, fakeEmbedFn)
+      magma.appendMemory(userId, "graph-backed memory")
+      createDir(tmpDir / $userId)
+      writeFile(tmpDir / $userId / "MEMORY.md", "markdown memory only")
+
+      let view = buildMemoryViewText(memory, userId)
+      check view.contains("Multigraph Memory")
+      check view.contains("graph-backed memory")
+      check "markdown memory only" notin view
+
+    test "buildMemoryViewText falls back to markdown when graph is empty":
+      setupGraph()
+      cleanGraph()
+      let tmpDir = getTempDir() / "donkey_common_runtime_memory_fallback"
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+      createDir(tmpDir / "u-common-memory-fallback")
+      defer:
+        if dirExists(tmpDir):
+          removeDir(tmpDir)
+
+      let memory = MdFileAdapter(paddocksDir: tmpDir, magmaDsn: testDsn)
+      let userId = UserId("u-common-memory-fallback")
+      writeFile(tmpDir / $userId / "MEMORY.md", "markdown fallback memory")
+
+      let view = buildMemoryViewText(memory, userId)
+      check view.contains("Markdown fallback")
+      check view.contains("markdown fallback memory")

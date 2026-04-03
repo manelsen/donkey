@@ -97,9 +97,8 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
         of lcaHelpText:
           wcMd(wcAdapter, userId, buildWeComHelpMd())
         of lcaShowMemory:
-          let memText = memory.loadContext(userId).memoryMd.strip
           wcMd(wcAdapter, userId, buildWeComMemoryMd(
-            if memText.len > 0: memText else: "Nenhuma memória salva ainda."))
+            buildMemoryViewText(memory, userId)))
         of lcaContinueLink:
           let linked = wcAdapter.resolver.consumeLinkCode(command.value, ckWeCom, event.fromUser)
           wcReply(wcAdapter, userId, buildContinueResultText(linked))

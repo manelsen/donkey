@@ -52,10 +52,25 @@ suite "http_gateway SSE formatting":
 suite "http_gateway JSON serialisation":
 
   test "buildStatusBody returns valid JSON with uptimeSec":
-    let st = DaemonStatus(uptimeSec: 42, sessionCount: 2, memoryBackend: "md")
+    let st = DaemonStatus(
+      uptimeSec: 42,
+      sessionCount: 2,
+      memoryBackend: "md+magma",
+      memoryStats: MemoryStats(
+        totalNodes: 12,
+        memoryNodes: 8,
+        profileNodes: 2,
+        preferenceNodes: 1,
+        entityNodes: 1,
+        embeddingNodes: 11,
+        totalEdges: 9,
+      ),
+    )
     let body = buildStatusBody(st)
     let j = parseJson(body)
     check j{"uptimeSec"}.getBiggestInt() == 42
+    check j{"memoryStats"}{"totalNodes"}.getInt() == 12
+    check j{"memoryStats"}{"embeddingNodes"}.getInt() == 11
 
   test "buildLogsBody returns JSON array":
     let entries = @[

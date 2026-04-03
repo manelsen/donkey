@@ -261,11 +261,10 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
             text: qqHelpText(qqAdapter.kind),
           )).isOkOr: discard
         of lcaShowMemory:
-          let memText = memory.loadContext(userId).memoryMd.strip
           qqAdapter.send(OutboundMessage(
             userId: userId,
             channel: ckQQ,
-            text: if memText.len > 0: memText else: "Nenhuma memória salva ainda.",
+            text: buildMemoryViewText(memory, userId),
           )).isOkOr: discard
         of lcaContinueLink:
           let linked = qqAdapter.consumeLinkCode(command.value, qqRawIdentity(event))

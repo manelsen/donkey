@@ -63,8 +63,7 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
         of lcaHelpText:
           wchAdapter.sendWeChatReply(userId, buildHelpText(false))
         of lcaShowMemory:
-          let memText = memory.loadContext(userId).memoryMd.strip
-          wchAdapter.sendWeChatReply(userId, if memText.len > 0: memText else: "Nenhuma memória salva ainda.")
+          wchAdapter.sendWeChatReply(userId, buildMemoryViewText(memory, userId))
         of lcaContinueLink:
           let linked = wchAdapter.resolver.consumeLinkCode(command.value, ckWeChat, event.fromUser)
           wchAdapter.sendWeChatReply(userId, buildContinueResultText(linked))
