@@ -1,4 +1,4 @@
-import std/[algorithm, httpclient, json, options, os, strutils, tables, times]
+import std/[algorithm, httpclient, json, math, options, os, strutils, tables, times]
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/providers/smart_routing
@@ -11,7 +11,6 @@ const
   AnthropicModelsEndpoint = "https://api.anthropic.com/v1/models"
   GeminiModelsEndpoint = "https://generativelanguage.googleapis.com/v1beta/models"
   ModelsDevEndpoint = "https://models.dev/api.json"
-  DefaultCatalogTtlSec = 12 * 60 * 60
 
 type
   CatalogParser = proc(json: JsonNode): Result[seq[ModelCatalogEntry], string] {.gcsafe.}
@@ -71,6 +70,13 @@ func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
       ModelCatalogEntry(providerName: providerName, modelName: "glm-5", label: "glm-5", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "glm-4.7", label: "glm-4.7", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "glm-4.6", label: "glm-4.6", isFree: false, available: true),
+    ]
+  of "zai-anthropic":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-4.7", label: "glm-4.7", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-4.6", label: "glm-4.6", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-4.5", label: "glm-4.5", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-4.5-air", label: "glm-4.5-air", isFree: false, available: true),
     ]
   of "ollama":
     @[
@@ -211,10 +217,10 @@ proc loadModelsDevCatalog(): Result[ModelCatalogResult, string] =
     err(e.msg)
 
 func parseCostMicrosPer1k(costStr: string): int =
-  ## Parses a cost string (e.g. "0.000003") to micros per 1k tokens.
+  ## Parses a per-token USD cost string (e.g. "0.0000001") to micros per 1k tokens.
   if costStr.len == 0: return 0
   try:
-    (costStr.parseFloat() * 1_000_000).int
+    (costStr.parseFloat() * 1_000_000_000).round.int
   except:
     0
 
@@ -440,8 +446,9 @@ proc loadGeminiCatalog(apiKey: string): Result[ModelCatalogResult, string] =
   
   fetchWithQueryParam(GeminiModelsEndpoint, "key", apiKey, parser)
 
-proc loadZaiCatalog(apiKey: string; coding: bool): Result[ModelCatalogResult, string] =
-  let providerName = if coding: "zai-coding" else: "zai"
+proc loadZaiCatalog(apiKey: string;
+                    providerName: string;
+                    codingEndpoint: bool): Result[ModelCatalogResult, string] =
   if apiKey.len == 0:
     return ok(fallbackCatalog(providerName))
   
@@ -449,7 +456,7 @@ proc loadZaiCatalog(apiKey: string; coding: bool): Result[ModelCatalogResult, st
     parseSimpleListCatalog(providerName, $json)
   
   let base =
-    if coding: "https://api.z.ai/api/coding/paas/v4/models"
+    if codingEndpoint: "https://api.z.ai/api/coding/paas/v4/models"
     else: "https://api.z.ai/api/paas/v4/models"
   
   fetchWithApiKey(base, apiKey, parser)
@@ -548,7 +555,19 @@ proc buildModelCatalogLoader*(): ModelCatalogLoader {.gcsafe.} =
     of "minimax":
       loadMinimaxCatalog(getEnv("MINIMAX_API_KEY"))
     of "zai", "zai-coding":
-      loadZaiCatalog(getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")), true)
+      loadZaiCatalog(getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")), providerName, true)
+    of "zai-anthropic":
+      loadZaiCatalog(
+        getEnv(
+          "ZAI_ANTHROPIC_API_KEY",
+          getEnv(
+            "ANTHROPIC_AUTH_TOKEN",
+            getEnv("ZAI_CODING_API_KEY", getEnv("ZAI_API_KEY", getEnv("ZHIPU_API_KEY")))
+          )
+        ),
+        providerName,
+        true,
+      )
     of "zen":
       loadZenCatalog()
     of "ollama":

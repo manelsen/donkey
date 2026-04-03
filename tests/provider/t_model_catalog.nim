@@ -1,6 +1,7 @@
-import std/unittest
+import std/[os, sequtils, unittest]
 import results
 import donkey/adapters/provider/model_catalog
+import donkey/ports/provider
 
 suite "model_catalog":
 
@@ -68,3 +69,28 @@ suite "model_catalog":
     check parsed[1].hasPricing
     check parsed[1].inputCostMicrosPer1k == 100
     check parsed[1].outputCostMicrosPer1k == 200
+
+  test "buildModelCatalogLoader exposes zai-anthropic fallback catalog without keys":
+    let savedZaiAnthropic = getEnv("ZAI_ANTHROPIC_API_KEY")
+    let savedAnthropicAuth = getEnv("ANTHROPIC_AUTH_TOKEN")
+    let savedZaiCoding = getEnv("ZAI_CODING_API_KEY")
+    let savedZai = getEnv("ZAI_API_KEY")
+    let savedZhipu = getEnv("ZHIPU_API_KEY")
+    defer:
+      putEnv("ZAI_ANTHROPIC_API_KEY", savedZaiAnthropic)
+      putEnv("ANTHROPIC_AUTH_TOKEN", savedAnthropicAuth)
+      putEnv("ZAI_CODING_API_KEY", savedZaiCoding)
+      putEnv("ZAI_API_KEY", savedZai)
+      putEnv("ZHIPU_API_KEY", savedZhipu)
+
+    putEnv("ZAI_ANTHROPIC_API_KEY", "")
+    putEnv("ANTHROPIC_AUTH_TOKEN", "")
+    putEnv("ZAI_CODING_API_KEY", "")
+    putEnv("ZAI_API_KEY", "")
+    putEnv("ZHIPU_API_KEY", "")
+
+    let loader = buildModelCatalogLoader()
+    let loaded = loader("zai-anthropic").get()
+    check loaded.source == mcsFallback
+    check loaded.entries.len >= 1
+    check loaded.entries.anyIt(it.modelName == "glm-4.7")
