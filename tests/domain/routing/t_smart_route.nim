@@ -132,6 +132,24 @@ suite "smart_route classifier":
     check routes.len > 0
     check routes[0].providerName == "anthropic"
 
+  test "routeByComplexity falls back to zai-anthropic for complex tasks":
+    let score = ComplexityScore(
+      complexity: tcComplex,
+      inputScore: 80,
+      toolScore: 100,
+      contextScore: 80,
+      rawChars: 50_000,
+    )
+    let availability = ProviderAvailability(
+      zaiAnthropic: true,
+      zaiCoding: true,
+      gemini: true,
+    )
+    let routes = score.routeByComplexity(availability, "balanced")
+    check routes.len > 0
+    check routes[0].providerName == "zai-anthropic"
+    check routes[0].modelName == "glm-4.7"
+
   test "routeByComplexity respects cheap-first budget":
     let score = ComplexityScore(
       complexity: tcModerate,

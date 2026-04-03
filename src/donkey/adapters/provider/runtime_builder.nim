@@ -12,9 +12,19 @@ import ollama
 import openai
 import deepseek
 
+const
+  ZaiAnthropicBaseUrl = "https://api.z.ai/api/anthropic"
+
 proc makeFn[A](a: A): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
     a.complete(req)
+
+proc fallbackOnError*(primary: CompleteFn; fallback: CompleteFn): CompleteFn =
+  result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
+    let primaryResp = primary(req)
+    if primaryResp.isOk or fallback == nil:
+      return primaryResp
+    fallback(req)
 
 proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
   case spec.providerName
@@ -30,6 +40,16 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
       completeFn: makeFn(adapter),
       streamFn:   adapter.makeStreamFn(),
     )
+  of "zai-anthropic":
+    let adapter = newAnthropicAdapter(
+      spec.apiKey,
+      model = spec.modelName,
+      baseUrl = ZaiAnthropicBaseUrl,
+    )
+    ProviderBundle(
+      completeFn: makeFn(adapter),
+      streamFn:   adapter.makeStreamFn(),
+    )
   of "gemini":
     ProviderBundle(
       completeFn: makeFn(newGeminiAdapter(spec.apiKey, model = spec.modelName))
@@ -39,12 +59,24 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
       completeFn: makeFn(newMiniMaxAdapter(spec.apiKey, model = spec.modelName))
     )
   of "zai":
+    let primary = makeFn(newZaiAdapter(spec.apiKey, model = spec.modelName))
+    let compatible = makeFn(newAnthropicAdapter(
+      spec.apiKey,
+      model = spec.modelName,
+      baseUrl = ZaiAnthropicBaseUrl,
+    ))
     ProviderBundle(
-      completeFn: makeFn(newZaiAdapter(spec.apiKey, model = spec.modelName))
+      completeFn: fallbackOnError(primary, compatible)
     )
   of "zai-coding":
+    let primary = makeFn(newZaiCodingAdapter(spec.apiKey, model = spec.modelName))
+    let compatible = makeFn(newAnthropicAdapter(
+      spec.apiKey,
+      model = spec.modelName,
+      baseUrl = ZaiAnthropicBaseUrl,
+    ))
     ProviderBundle(
-      completeFn: makeFn(newZaiCodingAdapter(spec.apiKey, model = spec.modelName))
+      completeFn: fallbackOnError(primary, compatible)
     )
   of "ollama":
     ## For Ollama, apiKey field is repurposed as baseUrl override.

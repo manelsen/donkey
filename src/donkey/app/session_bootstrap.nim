@@ -67,6 +67,18 @@ proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: []
       modelName: if prefs.modelName.len > 0: prefs.modelName else: "claude-opus-4-6",
       apiKey: getEnv("ANTHROPIC_API_KEY"),
     )
+  of "zai-anthropic":
+    ProviderSpec(
+      providerName: "zai-anthropic",
+      modelName: if prefs.modelName.len > 0: prefs.modelName else: "glm-4.7",
+      apiKey: getEnv(
+        "ZAI_ANTHROPIC_API_KEY",
+        getEnv(
+          "ANTHROPIC_AUTH_TOKEN",
+          getEnv("ZAI_CODING_API_KEY", getEnv("ZAI_API_KEY", getEnv("ZHIPU_API_KEY")))
+        )
+      ),
+    )
   of "gemini":
     ProviderSpec(
       providerName: "gemini",
@@ -100,6 +112,13 @@ func detectProviderAvailability*(): ProviderAvailability =
   ProviderAvailability(
     openrouter: getEnv("OPENROUTER_API_KEY").len > 0,
     anthropic: getEnv("ANTHROPIC_API_KEY").len > 0,
+    zaiAnthropic: getEnv(
+      "ZAI_ANTHROPIC_API_KEY",
+      getEnv(
+        "ANTHROPIC_AUTH_TOKEN",
+        getEnv("ZAI_CODING_API_KEY", getEnv("ZAI_API_KEY", getEnv("ZHIPU_API_KEY")))
+      )
+    ).len > 0,
     gemini: getEnv("GEMINI_API_KEY").len > 0,
     minimax: getEnv("MINIMAX_API_KEY").len > 0,
     zai: getEnv("ZAI_API_KEY").len > 0,

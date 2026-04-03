@@ -77,9 +77,10 @@ suite "Admin TUI":
   test "loadProviderItems populates providers":
     var st = newAdminState()
     st.loadProviderItems()
-    check st.items.len == 8
+    check st.items.len == 9
     let names = st.items.mapIt(it.name)
     check "anthropic" in names
+    check "zai-anthropic" in names
     check "openai" in names
     check "openrouter" in names
     check "zhipu" in names
@@ -124,7 +125,7 @@ suite "Admin TUI":
 
     st.section = asProviders
     st.loadSection()
-    check st.items.len == 8
+    check st.items.len == 9
 
     st.section = asModels
     st.loadSection()
@@ -242,7 +243,6 @@ summary: Test user for unit test.
     check st.section == asUsers
 
   test "showUserDetail populates detail view":
-    var st = newAdminState()
     let tmpDir = "/tmp/test_detail_" & $epochTime()
     createDir(tmpDir)
     defer: discard execShellCmd("rm -rf " & tmpDir)
@@ -280,7 +280,6 @@ summary: Test user detail view.
     check ctx.preferencesMd.contains("dark")
 
   test "showUserDetail handles missing memory":
-    var st = newAdminState()
     let tmpDir = "/tmp/test_no_mem_" & $epochTime()
     createDir(tmpDir)
     defer: discard execShellCmd("rm -rf " & tmpDir)

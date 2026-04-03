@@ -1,6 +1,8 @@
 ## AnthropicAdapter — ProviderPort for Anthropic (Claude series).
 ##
 ## API endpoint: https://api.anthropic.com/v1/messages
+## Compatible base URLs can override the host while keeping the /v1/messages
+## contract, e.g. https://api.z.ai/api/anthropic
 ## Auth: x-api-key header (NOT Bearer)
 ## Required header: anthropic-version: 2023-06-01
 ## Default model: claude-opus-4-6
@@ -23,6 +25,7 @@ import ./sse
 
 const
   AnthropicEndpoint*     = "https://api.anthropic.com/v1/messages"
+  AnthropicDefaultBaseUrl* = "https://api.anthropic.com"
   AnthropicDefaultModel* = "claude-opus-4-6"
   AnthropicVersion*      = "2023-06-01"
   AnthropicDefaultMaxTok = 4096
@@ -31,6 +34,7 @@ type
   AnthropicAdapter* = object
     apiKey*:   string
     model*:    string
+    baseUrl*:  string   ## base URL override for compatible APIs
     endpoint*: string   ## override for testing
 
   AnthropicSseChunk* = object
@@ -127,6 +131,14 @@ proc buildStreamBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
   result = a.buildBody(req)
   result["stream"] = %true
 
+func messagesUrl*(a: AnthropicAdapter): string =
+  if a.endpoint.len > 0:
+    return a.endpoint
+  let baseUrl =
+    if a.baseUrl.len > 0: a.baseUrl.strip(chars = {'/'})
+    else: AnthropicDefaultBaseUrl
+  baseUrl & "/v1/messages"
+
 # ── Response parsing ──────────────────────────────────────────────────────────
 
 func parseAnthropicResponse*(j: JsonNode): Result[CompletionResponse, string] =
@@ -205,7 +217,7 @@ proc complete*(a: AnthropicAdapter;
       "anthropic-version": AnthropicVersion,
     })
     let body = $a.buildBody(req)
-    let url  = if a.endpoint.len > 0: a.endpoint else: AnthropicEndpoint
+    let url  = a.messagesUrl()
     let resp = client.post(url, body = body)
     checkApiStatus(resp, "Anthropic")
     resp.body |> parseJson |> parseAnthropicResponse
@@ -222,7 +234,7 @@ proc makeStreamFn*(a: AnthropicAdapter): StreamFn =
         "anthropic-version": AnthropicVersion,
       })
       let body = $adapter.buildStreamBody(req)
-      let url  = if adapter.endpoint.len > 0: adapter.endpoint else: AnthropicEndpoint
+      let url  = adapter.messagesUrl()
       let resp = client.request(url, httpMethod = HttpPost, body = body)
       checkApiStatus(resp, "Anthropic")
       sseAccumulate(resp.bodyStream, parseAnthropicSseLine, onToken)
@@ -236,5 +248,6 @@ proc makeStreamFn*(a: AnthropicAdapter): StreamFn =
 
 proc newAnthropicAdapter*(apiKey:   string;
                           model    = AnthropicDefaultModel;
-                          endpoint = ""): AnthropicAdapter =
-  AnthropicAdapter(apiKey: apiKey, model: model, endpoint: endpoint)
+                          endpoint = "";
+                          baseUrl  = ""): AnthropicAdapter =
+  AnthropicAdapter(apiKey: apiKey, model: model, baseUrl: baseUrl, endpoint: endpoint)

@@ -8,7 +8,6 @@
 ##     |> classifyTaskComplexity
 ##     |> routeByComplexity(availability, prefs.budgetPolicy)
 
-import std/[algorithm, strutils]
 import ../../core/pipeops
 import ../../core/providers/smart_routing
 import ../../domain/message
@@ -82,11 +81,34 @@ func providerIsAvailable*(av: ProviderAvailability; name: string): bool =
   case name
   of "openrouter": av.openrouter
   of "anthropic": av.anthropic
+  of "zai-anthropic": av.zaiAnthropic
   of "gemini": av.gemini
   of "minimax": av.minimax
   of "zai": av.zai
   of "zai-coding": av.zaiCoding
   else: false
+
+func addAnthropicCompatible*(candidates: var seq[ProviderSelection];
+                             availability: ProviderAvailability;
+                             anthropicModel: string;
+                             zaiModel = "") =
+  if availability.anthropic:
+    candidates.add(ProviderSelection(
+      providerName: "anthropic",
+      modelName: if anthropicModel.len > 0:
+        anthropicModel
+      else:
+        defaultModelForProvider("anthropic"),
+    ))
+  elif availability.zaiAnthropic:
+    let modelName = if zaiModel.len > 0: zaiModel else: anthropicModel
+    candidates.add(ProviderSelection(
+      providerName: "zai-anthropic",
+      modelName: if modelName.len > 0:
+        modelName
+      else:
+        defaultModelForProvider("zai-anthropic"),
+    ))
 
 func addIfAvailable*(candidates: var seq[ProviderSelection];
                      av: ProviderAvailability;
@@ -137,26 +159,26 @@ func routeByComplexity*(score: ComplexityScore;
     candidates.addIfAvailable(availability, "zai", "glm-4.7")
     candidates.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
     if normalizedBudget == "quality-first":
-      candidates.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
+      candidates.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
   of tcModerate:
     # Balanced providers
     candidates.addIfAvailable(availability, "zai-coding", "glm-4.7")
     candidates.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
     candidates.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
-    candidates.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
+    candidates.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
     if normalizedBudget == "cheap-first":
       candidates.addIfAvailable(availability, "minimax", "MiniMax-M2")
   of tcComplex:
     # Prefer capable providers
     if score.toolScore > 50 or score.contextScore > 60:
       # Tool-heavy or context-heavy -> use best tool providers
-      candidates.addIfAvailable(availability, "anthropic", "claude-opus-4-6")
+      candidates.addAnthropicCompatible(availability, "claude-opus-4-6", "glm-4.7")
       candidates.addIfAvailable(availability, "zai-coding", "glm-5")
       candidates.addIfAvailable(availability, "gemini", "gemini-2.5-pro")
       candidates.addIfAvailable(availability, "openrouter", "openai/gpt-4o")
     else:
       # General complexity
-      candidates.addIfAvailable(availability, "anthropic", "claude-opus-4-6")
+      candidates.addAnthropicCompatible(availability, "claude-opus-4-6", "glm-4.7")
       candidates.addIfAvailable(availability, "gemini", "gemini-2.5-pro")
       candidates.addIfAvailable(availability, "zai-coding", "glm-5")
       candidates.addIfAvailable(availability, "openrouter", "openai/gpt-4o")

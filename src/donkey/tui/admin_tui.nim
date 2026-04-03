@@ -342,7 +342,7 @@ proc loadProviderItems*(st: var AdminState) =
         status: "connected"
       ))
   else:
-    const knownProviders = ["anthropic", "openai", "openrouter", "gemini",
+    const knownProviders = ["anthropic", "zai-anthropic", "openai", "openrouter", "gemini",
                            "deepseek", "ollama", "minimax", "zhipu"]
     st.items = @[]
     for p in knownProviders:
@@ -372,7 +372,7 @@ proc loadModelItems*(st: var AdminState) =
             status: catalogSourceLabel(catalog.get().source),
           ))
     # Also fetch from known providers not yet covered
-    const knownProviders = ["anthropic", "openrouter", "gemini", "deepseek", "ollama", "minimax", "zhipu"]
+    const knownProviders = ["anthropic", "zai-anthropic", "openrouter", "gemini", "deepseek", "ollama", "minimax", "zhipu"]
     for prov in knownProviders:
       if prov in seenProviders: continue
       let catalog = st.catalogLoader(prov)

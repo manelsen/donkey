@@ -46,6 +46,19 @@ thinking = "low"
     check selections[0].providerName == "anthropic"
     check selections[0].modelName == "claude-opus-4-6"
 
+  test "smartRouteSelections falls back to zai-anthropic when anthropic is unavailable":
+    let prefs = parseSmartRoutingPrefs("thinking = \"high\"")
+    let req = CompletionRequest(
+      messages: @[ChatMessage(role: "user", text: "refactor this carefully")],
+      tools: @[ToolDescription(name: "bash")]
+    )
+    let selections = smartRouteSelections(prefs, req, ProviderAvailability(
+      openrouter: true, zaiAnthropic: true, gemini: true, zaiCoding: true
+    ))
+    check selections.len > 0
+    check selections[0].providerName == "zai-anthropic"
+    check selections[0].modelName == "glm-4.7"
+
   test "smartRouteSelections keeps explicit provider selection untouched":
     let prefs = parseSmartRoutingPrefs("""
 provider = "openrouter"

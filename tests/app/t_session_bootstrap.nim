@@ -30,6 +30,11 @@ model = "gemini-2.5-pro"
     check spec.providerName == "openrouter"
     check spec.modelName == "openai/gpt-4o-mini"
 
+  test "buildProviderSpec supports zai-anthropic defaults":
+    let spec = buildProviderSpec(ProviderPrefs(providerName: "zai-anthropic", modelName: ""))
+    check spec.providerName == "zai-anthropic"
+    check spec.modelName == "glm-4.7"
+
   test "buildProviderSpec falls back to zai-coding defaults":
     let spec = buildProviderSpec(ProviderPrefs(providerName: "weird", modelName: ""))
     check spec.providerName == "zai-coding"
@@ -106,11 +111,13 @@ model = "gemini-2.5-flash"
   test "buildProviderBundle exposes streamFn only for providers that implement it":
     let openrouter = buildProviderBundle("provider = \"openrouter\"", runtime_builder.buildProviderBundle)
     let anthropic = buildProviderBundle("provider = \"anthropic\"", runtime_builder.buildProviderBundle)
+    let zaiAnthropic = buildProviderBundle("provider = \"zai-anthropic\"", runtime_builder.buildProviderBundle)
     let gemini = buildProviderBundle("provider = \"gemini\"", runtime_builder.buildProviderBundle)
     let minimax = buildProviderBundle("provider = \"minimax\"", runtime_builder.buildProviderBundle)
     let zaiCoding = buildProviderBundle("provider = \"zai-coding\"", runtime_builder.buildProviderBundle)
     check openrouter.streamFn != nil
     check anthropic.streamFn != nil
+    check zaiAnthropic.streamFn != nil
     check gemini.streamFn == nil
     check minimax.streamFn == nil
     check zaiCoding.streamFn == nil

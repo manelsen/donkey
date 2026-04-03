@@ -23,6 +23,7 @@ type
   ProviderAvailability* = object
     openrouter*: bool
     anthropic*: bool
+    zaiAnthropic*: bool
     gemini*: bool
     minimax*: bool
     zai*: bool
@@ -135,6 +136,7 @@ func defaultModelForProvider*(providerName: string): string =
   case providerName
   of "openrouter": "openai/gpt-4o-mini"
   of "anthropic": "claude-opus-4-6"
+  of "zai-anthropic": "glm-4.7"
   of "gemini": "gemini-2.5-flash"
   of "minimax": "MiniMax-M2"
   of "zai": "glm-4.7"
@@ -173,11 +175,22 @@ func isAvailable(availability: ProviderAvailability; providerName: string): bool
   case providerName
   of "openrouter": availability.openrouter
   of "anthropic": availability.anthropic
+  of "zai-anthropic": availability.zaiAnthropic
   of "gemini": availability.gemini
   of "minimax": availability.minimax
   of "zai": availability.zai
   of "zai-coding": availability.zaiCoding
   else: false
+
+func addAnthropicCompatible(selections: var seq[ProviderSelection];
+                            availability: ProviderAvailability;
+                            anthropicModel: string;
+                            zaiModel = "") =
+  if availability.anthropic:
+    selections.add(selection("anthropic", anthropicModel))
+  elif availability.zaiAnthropic:
+    let modelName = if zaiModel.len > 0: zaiModel else: anthropicModel
+    selections.add(selection("zai-anthropic", modelName))
 
 func addIfAvailable(selections: var seq[ProviderSelection];
                     availability: ProviderAvailability;
@@ -427,57 +440,57 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
 
   if signals.approxInputChars >= LongContextChars:
     result.addIfAvailable(availability, "gemini", "gemini-2.5-pro")
-    result.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
+    result.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
     result.addIfAvailable(availability, "openrouter", "openai/gpt-4o")
 
   case signals.thinking
   of "high":
     if signals.hasTools:
-      result.addIfAvailable(availability, "anthropic", "claude-opus-4-6")
+      result.addAnthropicCompatible(availability, "claude-opus-4-6", "glm-4.7")
       result.addIfAvailable(availability, "zai-coding", "glm-5")
       result.addIfAvailable(availability, "gemini", "gemini-2.5-pro")
       result.addIfAvailable(availability, "openrouter", "openai/gpt-4o")
     else:
-      result.addIfAvailable(availability, "anthropic", "claude-opus-4-6")
+      result.addAnthropicCompatible(availability, "claude-opus-4-6", "glm-4.7")
       result.addIfAvailable(availability, "gemini", "gemini-2.5-pro")
       result.addIfAvailable(availability, "zai", "glm-5")
       result.addIfAvailable(availability, "openrouter", "openai/gpt-4o")
   of "medium":
     if signals.hasTools:
       result.addIfAvailable(availability, "zai-coding", "glm-5")
-      result.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
+      result.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
       result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
       result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
     else:
       result.addIfAvailable(availability, "zai", "glm-5")
       result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
-      result.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
+      result.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
       result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
       result.addIfAvailable(availability, "minimax", "MiniMax-M2")
   else:
     if signals.hasTools:
       result.addIfAvailable(availability, "zai-coding", "glm-4.7")
       result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
-      result.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
+      result.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
       result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
     else:
       result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
       result.addIfAvailable(availability, "zai", "glm-4.7")
       result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
       result.addIfAvailable(availability, "minimax", "MiniMax-M2")
-      result.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
+      result.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
 
   if signals.hasTools:
     result.addIfAvailable(availability, "zai-coding", "glm-4.7")
     result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
-    result.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
+    result.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
     result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
     result.addIfAvailable(availability, "zai", "glm-4.7")
   else:
     result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
     result.addIfAvailable(availability, "zai", "glm-4.7")
     result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
-    result.addIfAvailable(availability, "anthropic", "claude-sonnet-4-6")
+    result.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
     result.addIfAvailable(availability, "minimax", "MiniMax-M2")
     result.addIfAvailable(availability, "zai-coding", "glm-4.7")
 

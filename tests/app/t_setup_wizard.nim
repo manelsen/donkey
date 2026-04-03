@@ -29,6 +29,11 @@ suite "buildEnvContent":
     )
     check "TELEGRAM_BOT_TOKEN=tg_token_abc" in env
 
+  test "includes docker postgres recommendation":
+    let env = buildEnvContent(@[], @[])
+    check "docker compose up -d postgres" in env
+    check "DONKEY_PG_DSN=host=127.0.0.1" in env
+
   test "discord token appears when provided":
     let env = buildEnvContent(
       providers = @[("openrouter", "or_key")],
@@ -39,6 +44,10 @@ suite "buildEnvContent":
   test "provider key maps to correct env var for zai-coding":
     let env = buildEnvContent(@[("zai-coding", "mykey")], @[])
     check "ZAI_CODING_API_KEY=mykey" in env
+
+  test "provider key maps to correct env var for zai-anthropic":
+    let env = buildEnvContent(@[("zai-anthropic", "za-key")], @[])
+    check "ZAI_ANTHROPIC_API_KEY=za-key" in env
 
   test "provider key maps to correct env var for openrouter":
     let env = buildEnvContent(@[("openrouter", "or123")], @[])
@@ -77,6 +86,7 @@ suite "providerEnvVar":
 
   test "zai-coding":   check providerEnvVar("zai-coding")   == "ZAI_CODING_API_KEY"
   test "zai":          check providerEnvVar("zai")          == "ZAI_API_KEY"
+  test "zai-anthropic": check providerEnvVar("zai-anthropic") == "ZAI_ANTHROPIC_API_KEY"
   test "openrouter":   check providerEnvVar("openrouter")   == "OPENROUTER_API_KEY"
   test "anthropic":    check providerEnvVar("anthropic")    == "ANTHROPIC_API_KEY"
   test "gemini":       check providerEnvVar("gemini")       == "GEMINI_API_KEY"

@@ -25,6 +25,10 @@ suite "AnthropicAdapter caps":
 
 suite "AnthropicAdapter buildBody":
 
+  test "baseUrl resolves to v1/messages endpoint":
+    let adapter = newAnthropicAdapter("k", baseUrl = "https://api.z.ai/api/anthropic")
+    check adapter.messagesUrl() == "https://api.z.ai/api/anthropic/v1/messages"
+
   test "system is top-level field not a message":
     var h = newHistory()
     h.addUser("hello")
