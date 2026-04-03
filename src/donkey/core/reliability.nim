@@ -1,6 +1,6 @@
 ## reliability — resilience patterns for providers and tools.
 
-import std/[math, times, locks, tables]
+import std/[math, locks, tables]
 import ./pipeops
 
 type

@@ -45,7 +45,6 @@ proc loadToolRegistry*(path: string): seq[ToolEntry] {.gcsafe.} =
   if not t.hasKey("tool"):
     return @[]
   for node in t["tool"].getElems():
-    let kind = node.getOrDefault("kind").getStr("mcp")
     let cmd  = node.getOrDefault("command").getStr("")
     var args: seq[string]
     if node.hasKey("args"):

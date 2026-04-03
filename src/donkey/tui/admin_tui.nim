@@ -473,7 +473,6 @@ proc cycleConfigValue*(st: var AdminState; index: int) =
     st.items[index].description = modes[next]
     st.showToast("sandbox_mode -> " & modes[next], tkSuccess)
   of "verbose":
-    const vals = ["default", "verbose"]
     let cur = st.items[index].description
     let next = if cur == "default": "verbose" else: "default"
     st.items[index].description = next

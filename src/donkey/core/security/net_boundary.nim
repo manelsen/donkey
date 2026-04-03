@@ -1,8 +1,7 @@
 ## net_boundary — global network egress policy.
 
-import std/[strutils, sequtils]
+import std/[strutils]
 import ../pipeops
-import ../dns
 
 type
   NetPolicy* = object
