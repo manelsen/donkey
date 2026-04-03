@@ -13,6 +13,8 @@
 ##   https://ai.google.dev/api/rest/v1beta/models/generateContent
 
 import std/[json, tables, strutils]
+import results
+import ../../core/pipeops
 import ../../domain/message
 
 # ── Role mapping ──────────────────────────────────────────────────────────────
@@ -102,21 +104,47 @@ proc buildGeminiRequest*(req: CompletionRequest): JsonNode =
     }
   if req.maxTokens > 0:
     result["generationConfig"] = %* {"maxOutputTokens": req.maxTokens}
+
+  if req.reasoning:
+    if result.hasKey("generationConfig"):
+      result["generationConfig"]["thinking_config"] = %* {"include_thoughts": true, "thinking_level": "HIGH"}
+    else:
+      result["generationConfig"] = %* {"thinking_config": {"include_thoughts": true, "thinking_level": "HIGH"}}
+
   if req.tools.len > 0:
     result["tools"] = req.tools.buildToolsArray()
 
-func parseGeminiResponse*(j: JsonNode): CompletionResponse =
+func parseGeminiResponse*(j: JsonNode): Result[CompletionResponse, string] =
   ## Parses a Gemini generateContent response into a CompletionResponse.
   ## Exported for unit testing.
-  let cand  = j["candidates"][0]
-  let parts = cand["content"]["parts"]
+  let candidates = j{"candidates"}
+  if candidates.isNil or candidates.kind != JArray or candidates.len == 0:
+    let errorMsg = j{"error"}{"message"}.getStr("")
+    if errorMsg.len > 0:
+      return err("Gemini error: " & errorMsg)
+    return err("Invalid Gemini response: missing 'candidates'")
+
+  let cand  = candidates[0]
+  let parts = cand{"content"}{"parts"}
+  if parts.isNil or parts.kind != JArray:
+    return err("Invalid Gemini response: missing 'parts' in first candidate")
+
   var textParts: seq[string] = @[]
+  var reasoningParts: seq[string] = @[]
   var toolCalls: seq[ToolCallRequest] = @[]
   for part in parts:
     if part.hasKey("text"):
       let text = part["text"].getStr("")
       if text.len > 0:
-        textParts.add(text)
+        if part.getOrDefault("thought").getBool(false):
+          reasoningParts.add(text)
+        else:
+          textParts.add(text)
+    elif part.hasKey("thought"):
+      # Some versions return thought as a string field
+      let thought = part["thought"].getStr("")
+      if thought.len > 0:
+        reasoningParts.add(thought)
     elif part.hasKey("functionCall"):
       let fc = part["functionCall"]
       toolCalls.add(ToolCallRequest(
@@ -125,8 +153,9 @@ func parseGeminiResponse*(j: JsonNode): CompletionResponse =
         inputJson: $fc.getOrDefault("args"),
       ))
   let usage = j.getOrDefault("usageMetadata")
-  CompletionResponse(
+  ok CompletionResponse(
     text:         textParts.join("\n"),
+    reasoning:    reasoningParts.join("\n"),
     inputTokens:  if usage != nil: usage.getOrDefault("promptTokenCount").getInt(0)     else: 0,
     outputTokens: if usage != nil: usage.getOrDefault("candidatesTokenCount").getInt(0) else: 0,
     toolCalls:    toolCalls,

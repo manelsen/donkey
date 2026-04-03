@@ -2,6 +2,7 @@
 ## Tests cover: caps(), buildBody JSON shape, tool serialization and response parsing.
 
 import std/[json, strutils, unittest]
+import results
 import donkey/adapters/provider/zhipu
 import donkey/domain/message
 
@@ -119,14 +120,14 @@ suite "ZhipuAdapter parseResponse":
       "choices": [{"message": {"content": "Hello from Zhipu"}}],
       "usage": {"prompt_tokens": 9, "completion_tokens": 4}
     }
-    let resp = parseZhipuResponse(j)
+    let resp = parseZhipuResponse(j).get()
     check resp.text == "Hello from Zhipu"
     check resp.inputTokens == 9
     check resp.outputTokens == 4
 
   test "handles missing usage gracefully":
     let j = %* {"choices": [{"message": {"content": "plain text"}}]}
-    let resp = parseZhipuResponse(j)
+    let resp = parseZhipuResponse(j).get()
     check resp.text == "plain text"
     check resp.inputTokens == 0
     check resp.outputTokens == 0
@@ -145,7 +146,7 @@ suite "ZhipuAdapter parseResponse":
       }],
       "usage": {"prompt_tokens": 11, "completion_tokens": 5}
     }
-    let resp = parseZhipuResponse(j)
+    let resp = parseZhipuResponse(j).get()
     check resp.toolCalls.len == 1
     check resp.toolCalls[0].id == "call_9"
     check resp.toolCalls[0].name == "read_file"

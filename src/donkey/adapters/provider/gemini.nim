@@ -72,7 +72,7 @@ proc complete*(a: GeminiAdapter;
     let url  = a.buildUrl()
     let resp = client.post(url, body = body)
     checkApiStatus(resp, "Gemini")
-    resp.body |> parseJson |> parseGeminiResponse |> ok
+    resp.body |> parseJson |> parseGeminiResponse
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

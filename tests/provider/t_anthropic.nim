@@ -3,6 +3,7 @@
 ## tool serialization, tool result serialization, response parsing.
 
 import std/[json, strutils, unittest]
+import results
 import donkey/adapters/provider/anthropic
 import donkey/core/pipeops
 import donkey/domain/message
@@ -129,14 +130,14 @@ suite "AnthropicAdapter parseResponse":
       "content": [{"type": "text", "text": "Hello from Anthropic"}],
       "usage": {"input_tokens": 8, "output_tokens": 4}
     }
-    let resp = parseAnthropicResponse(j)
+    let resp = parseAnthropicResponse(j).get()
     check resp.text         == "Hello from Anthropic"
     check resp.inputTokens  == 8
     check resp.outputTokens == 4
 
   test "handles missing usage gracefully":
     let j = %* {"content": [{"type": "text", "text": "Hi"}]}
-    let resp = parseAnthropicResponse(j)
+    let resp = parseAnthropicResponse(j).get()
     check resp.text        == "Hi"
     check resp.inputTokens  == 0
     check resp.outputTokens == 0
@@ -150,7 +151,7 @@ suite "AnthropicAdapter parseResponse":
       ],
       "usage": {"input_tokens": 10, "output_tokens": 3}
     }
-    let resp = parseAnthropicResponse(j)
+    let resp = parseAnthropicResponse(j).get()
     check resp.text == "Vou chamar uma tool."
     check resp.toolCalls.len == 1
     check resp.toolCalls[0].id == "call_7"

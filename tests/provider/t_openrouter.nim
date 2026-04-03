@@ -79,14 +79,14 @@ suite "OpenRouterAdapter parseResponse":
       "choices": [{"message": {"content": "Hello!"}}],
       "usage": {"prompt_tokens": 10, "completion_tokens": 5}
     }
-    let resp = parseOpenRouterResponse(j)
+    let resp = parseOpenRouterResponse(j).get()
     check resp.text         == "Hello!"
     check resp.inputTokens  == 10
     check resp.outputTokens == 5
 
   test "handles missing usage gracefully":
     let j = %* {"choices": [{"message": {"content": "Hi"}}]}
-    let resp = parseOpenRouterResponse(j)
+    let resp = parseOpenRouterResponse(j).get()
     check resp.text        == "Hi"
     check resp.inputTokens  == 0
     check resp.outputTokens == 0
@@ -105,7 +105,7 @@ suite "OpenRouterAdapter parseResponse":
       }],
       "usage": {"prompt_tokens": 20, "completion_tokens": 8}
     }
-    let resp = parseOpenRouterResponse(j)
+    let resp = parseOpenRouterResponse(j).get()
     check resp.toolCalls.len == 1
     check resp.toolCalls[0].id        == "call_abc123"
     check resp.toolCalls[0].name      == "calc"
@@ -113,7 +113,7 @@ suite "OpenRouterAdapter parseResponse":
 
   test "toolCalls is empty when no tool_calls field":
     let j = %* {"choices": [{"message": {"content": "plain text"}}]}
-    let resp = parseOpenRouterResponse(j)
+    let resp = parseOpenRouterResponse(j).get()
     check resp.toolCalls.len == 0
 
 suite "OpenRouterAdapter buildBody with tools":

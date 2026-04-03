@@ -80,6 +80,8 @@ proc buildBody*(a: OpenRouterAdapter; req: CompletionRequest): JsonNode =
   for m in req.messages:
     messages.add(m.toJson())
   result = %* {"model": a.model, "messages": messages}
+  if req.reasoning:
+    result["include_reasoning"] = %true
   if req.maxTokens > 0:
     result["max_tokens"] = %req.maxTokens
   if req.tools.len > 0:
@@ -100,22 +102,38 @@ proc buildStreamBody*(a: OpenRouterAdapter; req: CompletionRequest): JsonNode =
 
 # ── Response parsing ──────────────────────────────────────────────────────────
 
-func parseOpenRouterResponse*(j: JsonNode): CompletionResponse =
+func parseOpenRouterResponse*(j: JsonNode): Result[CompletionResponse, string] =
   ## Exported for unit testing of response parsing without live HTTP.
-  let msg   = j["choices"][0]["message"]
+  let choices = j{"choices"}
+  if choices.isNil or choices.kind != JArray or choices.len == 0:
+    let errorMsg = j{"error"}{"message"}.getStr("")
+    if errorMsg.len > 0:
+      return err("OpenRouter error: " & errorMsg)
+    return err("Invalid OpenRouter response: missing 'choices'")
+
+  let msg   = choices[0]{"message"}
+  if msg.isNil:
+    return err("Invalid OpenRouter response: missing 'message' in first choice")
+
   let usage = j.getOrDefault("usage")
   var toolCalls: seq[ToolCallRequest] = @[]
   let tcs = msg.getOrDefault("tool_calls")
   if tcs != nil and tcs.kind == JArray:
     for tc in tcs:
-      let fn = tc["function"]
+      let fn = tc{"function"}
+      if fn.isNil: continue
       toolCalls.add ToolCallRequest(
-        id:        tc["id"].getStr(""),
-        name:      fn["name"].getStr(""),
-        inputJson: fn["arguments"].getStr("{}"),
+        id:        tc{"id"}.getStr(""),
+        name:      fn{"name"}.getStr(""),
+        inputJson: fn{"arguments"}.getStr("{}"),
       )
-  CompletionResponse(
-    text:         msg.getOrDefault("content").getStr(""),
+  var reasoning = msg{"reasoning"}.getStr("")
+  if reasoning.len == 0:
+    reasoning = msg{"reasoning_content"}.getStr("")
+
+  ok CompletionResponse(
+    text:         msg{"content"}.getStr(""),
+    reasoning:    reasoning,
     inputTokens:  usage.jInt("prompt_tokens"),
     outputTokens: usage.jInt("completion_tokens"),
     toolCalls:    toolCalls,
@@ -157,7 +175,7 @@ proc complete*(a: OpenRouterAdapter;
     let url  = if a.endpoint.len > 0: a.endpoint else: OpenRouterEndpoint
     let resp = client.post(url, body = body)
     checkApiStatus(resp, "OpenRouter")
-    resp.body |> parseJson |> parseOpenRouterResponse |> ok
+    resp.body |> parseJson |> parseOpenRouterResponse
 
 # ── Streaming ─────────────────────────────────────────────────────────────────
 

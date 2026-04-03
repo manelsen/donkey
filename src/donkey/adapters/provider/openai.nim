@@ -14,7 +14,6 @@ import ../../ports/provider
 import ../../core/pipeops
 import ../../core/json_helpers
 import ../http/helpers
-import ./sse
 
 const
   OpenAIEndpoint*    = "https://api.openai.com/v1/chat/completions"
@@ -28,6 +27,7 @@ type
 
   OpenAISseChunk* = object
     token*:        string
+    reasoning*:    string
     done*:         bool
     inputTokens*:  int
     outputTokens*: int
@@ -98,9 +98,28 @@ proc makeStreamFn*(a: OpenAIAdapter): StreamFn =
       let url  = if adapter.endpoint.len > 0: adapter.endpoint else: OpenAIEndpoint
       let resp = client.request(url, httpMethod = HttpPost, body = $body)
       checkApiStatus(resp, "OpenAI")
-      sseAccumulate(resp.bodyStream, parseOpenAISseLine, onToken)
+      
+      var accumulated = ""
+      var reasoning = ""
+      var inputTokens = 0
+      var outputTokens = 0
+      
+      for line in resp.bodyStream.lines:
+        let res = parseOpenAISseLine(line)
+        if res.isErr: continue
+        let chunk = res.value
+        if chunk.done: break
+        if chunk.token.len > 0:
+          accumulated &= chunk.token
+          onToken(chunk.token)
+        if chunk.reasoning.len > 0:
+          reasoning &= chunk.reasoning
+        if chunk.inputTokens > 0: inputTokens = chunk.inputTokens
+        if chunk.outputTokens > 0: outputTokens = chunk.outputTokens
+
       ok(CompletionResponse(
         text:         accumulated,
+        reasoning:    reasoning,
         inputTokens:  inputTokens,
         outputTokens: outputTokens,
       ))

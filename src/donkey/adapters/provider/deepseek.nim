@@ -16,7 +16,6 @@ import ../../ports/provider
 import ../../core/pipeops
 import ../../core/json_helpers
 import ../http/helpers
-import ./sse
 
 const
   DeepSeekEndpoint*    = "https://api.deepseek.com/v1/chat/completions"
@@ -30,6 +29,7 @@ type
 
   DeepSeekSseChunk* = object
     token*:        string
+    reasoning*:    string
     done*:         bool
     inputTokens*:  int
     outputTokens*: int
@@ -59,12 +59,15 @@ proc parseDeepSeekSseLine*(line: string): Result[DeepSeekSseChunk, string] =
   let usage = j.getOrDefault("usage")
   let choices = j.getOrDefault("choices")
   var token = ""
+  var reasoning = ""
   if choices != nil and choices.kind == JArray and choices.len > 0:
     let delta = choices[0].getOrDefault("delta")
     if delta != nil:
       token = delta.getOrDefault("content").getStr("")
+      reasoning = delta.getOrDefault("reasoning_content").getStr("")
   ok(DeepSeekSseChunk(
     token:        token,
+    reasoning:    reasoning,
     inputTokens:  usage.jInt("prompt_tokens"),
     outputTokens: usage.jInt("completion_tokens"),
   ))
@@ -82,9 +85,9 @@ proc parseDeepSeekResponse*(body: JsonNode): Result[CompletionResponse, string] 
     let msg = choice{"message"}
 
     let content = msg.getOrDefault("content").getStr("")
-    let reasoning = msg.getOrDefault("reasoning").getStr("")
-    if reasoning.len > 0:
-      discard  ## DeepSeek chain-of-thought; not exposed to user
+    var reasoning = msg.getOrDefault("reasoning").getStr("")
+    if reasoning.len == 0:
+      reasoning = msg.getOrDefault("reasoning_content").getStr("")
 
     var toolCalls: seq[ToolCallRequest] = @[]
     if not msg{"tool_calls"}.isNil:
@@ -102,6 +105,7 @@ proc parseDeepSeekResponse*(body: JsonNode): Result[CompletionResponse, string] 
 
     ok CompletionResponse(
       text:         content,
+      reasoning:    reasoning,
       inputTokens:  promptTokens,
       outputTokens: completionTokens,
       toolCalls:    toolCalls,
@@ -140,9 +144,28 @@ proc makeStreamFn*(a: DeepSeekAdapter): StreamFn =
       let url  = if adapter.endpoint.len > 0: adapter.endpoint else: DeepSeekEndpoint
       let resp = client.request(url, httpMethod = HttpPost, body = $body)
       checkApiStatus(resp, "DeepSeek")
-      sseAccumulate(resp.bodyStream, parseDeepSeekSseLine, onToken)
+      
+      var accumulated = ""
+      var reasoning = ""
+      var inputTokens = 0
+      var outputTokens = 0
+      
+      for line in resp.bodyStream.lines:
+        let res = parseDeepSeekSseLine(line)
+        if res.isErr: continue
+        let chunk = res.value
+        if chunk.done: break
+        if chunk.token.len > 0:
+          accumulated &= chunk.token
+          onToken(chunk.token)
+        if chunk.reasoning.len > 0:
+          reasoning &= chunk.reasoning
+        if chunk.inputTokens > 0: inputTokens = chunk.inputTokens
+        if chunk.outputTokens > 0: outputTokens = chunk.outputTokens
+
       ok(CompletionResponse(
         text:         accumulated,
+        reasoning:    reasoning,
         inputTokens:  inputTokens,
         outputTokens: outputTokens,
       ))

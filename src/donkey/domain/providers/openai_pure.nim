@@ -157,6 +157,8 @@ proc buildRequestBody*(model: string; req: CompletionRequest;
     result["tools"] = req.tools.buildToolsArray
   if req.maxTokens > 0:
     result["max_tokens"] = % req.maxTokens
+  if req.reasoning:
+    result["include_reasoning"] = % true
   result["stream"] = % stream
 
 func parseToolCallsFromChoice*(choice: OpenAIChoice): seq[ToolCallRequest] =
@@ -195,8 +197,13 @@ proc parseResponseFrom*(body: JsonNode): Result[CompletionResponse, string] =
     let promptTokens = usage{"prompt_tokens"}.getInt(0)
     let completionTokens = usage{"completion_tokens"}.getInt(0)
 
+    var reasoning = choice{"message"}{"reasoning"}.getStr("")
+    if reasoning.len == 0:
+      reasoning = choice{"message"}{"reasoning_content"}.getStr("")
+
     ok CompletionResponse(
       text:         content,
+      reasoning:    reasoning,
       inputTokens:  promptTokens,
       outputTokens: completionTokens,
       toolCalls:   toolCalls,

@@ -7,6 +7,7 @@ type
   ToolLoopRunResult* = object
     history*:       ConversationHistory
     finalText*:     string
+    reasoning*:     string
     done*:          bool
     toolCallCount*: int
     wasStreamed*:   bool
@@ -14,6 +15,7 @@ type
   CompletionHandlingResult* = object
     history*:    ConversationHistory
     finalText*:  string
+    reasoning*:  string
     done*:       bool
     debugText*:  string
 
@@ -42,6 +44,7 @@ type
   CompletionDecision* = object
     kind*:      CompletionDecisionKind
     finalText*: string
+    reasoning*: string
     debugText*: string
 
   ToolCallDecisionKind* = enum
@@ -130,6 +133,7 @@ func decideCompletion*(r: CompletionResponse; debugMode: bool): CompletionDecisi
     return CompletionDecision(
       kind: cdkFinishText,
       finalText: r.text,
+      reasoning: r.reasoning,
       debugText: if debugMode: buildCompletionDebugText(r) else: "",
     )
   CompletionDecision(kind: cdkRetryEmpty)
@@ -139,8 +143,9 @@ func applyCompletionDecision*(history: ConversationHistory;
   result.history = history
   case decision.kind
   of cdkFinishText:
-    result.history.addAssistant(decision.finalText)
+    result.history.addAssistant(decision.finalText, decision.reasoning)
     result.finalText = decision.finalText
+    result.reasoning = decision.reasoning
     result.debugText = decision.debugText
     result.done = true
   of cdkRetryEmpty:
@@ -195,10 +200,16 @@ func planToolBatchItem*(recentCalls: seq[(string, string)];
     )
 
 func withStreamFinalText*(finalText: string;
+                          reasoning: string;
                           state: ToolLoopRunResult): ToolLoopRunResult =
   result = state
   result.finalText = finalText
-  result.history.addAssistant(finalText)
+  if reasoning.len > 0:
+    if result.reasoning.len > 0:
+      result.reasoning &= "\n---\n" & reasoning
+    else:
+      result.reasoning = reasoning
+  result.history.addAssistant(finalText, reasoning)
   result.done = true
   result.wasStreamed = true
 
@@ -207,6 +218,11 @@ func withCompletionResult*(completion: CompletionHandlingResult;
   result = state
   result.history = completion.history
   result.finalText = completion.finalText
+  if completion.reasoning.len > 0:
+    if result.reasoning.len > 0:
+      result.reasoning &= "\n---\n" & completion.reasoning
+    else:
+      result.reasoning = completion.reasoning
   result.done = completion.done
 
 func withToolBatchState*(batch: ToolBatchState;
@@ -251,3 +267,4 @@ func decideToolLoopTermination*(done: bool;
       replyText: buildToolLoopExceededText(maxRounds),
     )
   ToolLoopTerminationDecision(kind: tltkContinue)
+

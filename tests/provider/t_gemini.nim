@@ -3,6 +3,7 @@
 ## tool serialization, alternation normalization, response parsing.
 
 import std/[json, strutils, unittest]
+import results
 import donkey/adapters/provider/gemini
 import donkey/domain/message
 
@@ -134,7 +135,7 @@ suite "GeminiAdapter parseResponse":
         "candidatesTokenCount": 6
       }
     }
-    let resp = parseGeminiResponse(j)
+    let resp = parseGeminiResponse(j).get()
     check resp.text         == "Hello from Gemini"
     check resp.inputTokens  == 10
     check resp.outputTokens == 6
@@ -143,7 +144,7 @@ suite "GeminiAdapter parseResponse":
     let j = %* {
       "candidates": [{"content": {"parts": [{"text": "hi"}]}}]
     }
-    let resp = parseGeminiResponse(j)
+    let resp = parseGeminiResponse(j).get()
     check resp.text         == "hi"
     check resp.inputTokens  == 0
     check resp.outputTokens == 0
@@ -162,7 +163,7 @@ suite "GeminiAdapter parseResponse":
         "candidatesTokenCount": 5
       }
     }
-    let resp = parseGeminiResponse(j)
+    let resp = parseGeminiResponse(j).get()
     check resp.text == "Vou usar uma tool."
     check resp.toolCalls.len == 1
     check resp.toolCalls[0].id == "call_7"

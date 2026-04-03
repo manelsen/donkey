@@ -100,10 +100,15 @@ proc buildBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
   let maxTok = if req.maxTokens > 0: req.maxTokens else: AnthropicDefaultMaxTok
 
   result = %* {
-    "model":      a.model,
+    "model": a.model,
     "max_tokens": maxTok,
-    "messages":   messages
+    "messages": messages,
   }
+
+  if req.reasoning:
+    result["thinking"] = %* {"type": "enabled", "budget_tokens": 1024}
+    if maxTok <= 1024:
+      result["max_tokens"] = %2048
 
   if req.system.len > 0:
     result["system"] = %req.system
@@ -124,9 +129,15 @@ proc buildStreamBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
 
 # ── Response parsing ──────────────────────────────────────────────────────────
 
-func parseAnthropicResponse*(j: JsonNode): CompletionResponse =
+func parseAnthropicResponse*(j: JsonNode): Result[CompletionResponse, string] =
   ## Exported for unit testing.
-  let content = j["content"]
+  let content = j{"content"}
+  if content.isNil or content.kind != JArray:
+    let errorMsg = j{"error"}{"message"}.getStr("")
+    if errorMsg.len > 0:
+      return err("Anthropic error: " & errorMsg)
+    return err("Invalid Anthropic response: missing 'content' array")
+
   var textParts: seq[string] = @[]
   var toolCalls: seq[ToolCallRequest] = @[]
   for blk in content:
@@ -136,18 +147,17 @@ func parseAnthropicResponse*(j: JsonNode): CompletionResponse =
       if text.len > 0:
         textParts.add(text)
     of "tool_use":
-      let input =
-        if blk.hasKey("input"): blk["input"]
-        else: newJObject()
+      let input = blk{"input"}
+      let inputNode = if not input.isNil: input else: newJObject()
       toolCalls.add(ToolCallRequest(
         id: blk.getOrDefault("id").getStr(""),
         name: blk.getOrDefault("name").getStr(""),
-        inputJson: $input,
+        inputJson: $inputNode,
       ))
     else:
       discard
   let usage = j.getOrDefault("usage")
-  CompletionResponse(
+  ok CompletionResponse(
     text:         textParts.join("\n"),
     inputTokens:  usage.jInt("input_tokens"),
     outputTokens: usage.jInt("output_tokens"),
@@ -198,7 +208,7 @@ proc complete*(a: AnthropicAdapter;
     let url  = if a.endpoint.len > 0: a.endpoint else: AnthropicEndpoint
     let resp = client.post(url, body = body)
     checkApiStatus(resp, "Anthropic")
-    resp.body |> parseJson |> parseAnthropicResponse |> ok
+    resp.body |> parseJson |> parseAnthropicResponse
 
 proc makeStreamFn*(a: AnthropicAdapter): StreamFn =
   let adapter = a
