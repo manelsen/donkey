@@ -42,9 +42,12 @@ proc apiKeyResult(v: string; envVar: string): Result[string, string] =
 
 proc pgvectorResult(dsn: string): Result[string, string] =
   if dsn.len == 0:
-    err("DONKEY_PG_DSN not set — pgvector skipped (optional, F2+ only)")
+    err(
+      "DONKEY_PG_DSN not set — recommended: `docker compose up -d postgres` " &
+      "and export `DONKEY_PG_DSN='host=127.0.0.1 user=postgres password=donkey_pass dbname=donkey port=5432'`"
+    )
   else:
-    ok("DONKEY_PG_DSN set — pgvector available when built with -d:withPostgres")
+    ok("DONKEY_PG_DSN set — pgvector available in the default build")
 
 # ── public named checks ────────────────────────────────────────────────────────
 

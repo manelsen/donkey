@@ -20,7 +20,7 @@ while IFS= read -r f; do
     *t_postgres*|*t_pgvector*|*t_age_store*) continue ;; # requires -d:withPostgres + live DB
   esac
 
-  if nim c --mm:orc -r "$f" > /tmp/donkey_test_out.txt 2>&1; then
+  if nim c --mm:orc -u:withPostgres -r "$f" > /tmp/donkey_test_out.txt 2>&1; then
     PASS=$((PASS + 1))
     # Print brief summary from unittest output
     summary=$(grep -E "\[Summary\]|\[OK\]" /tmp/donkey_test_out.txt | tail -1 || true)

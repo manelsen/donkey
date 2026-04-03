@@ -12,7 +12,7 @@ Designed to run on a VPS and scale down to a Raspberry Pi Zero.
 ## Build
 
 ```bash
-# Development build (fast, with -d:testing)
+# Development build (fast, Multigraph Memory enabled by default)
 nimble build
 
 # Release build (stripped, ~550KB)
@@ -24,6 +24,12 @@ strip donkey_release
 
 # Run tests
 nimble test
+```
+
+To build a Markdown-only binary without PostgreSQL support:
+
+```bash
+nimble build -u:withPostgres
 ```
 
 ## Configuration
@@ -49,6 +55,39 @@ logLevel = "info"
 | `MINIMAX_API_KEY` | For MiniMax | MiniMax-M2 |
 | `DONKEY_PG_DSN` | For Multigraph Memory | PostgreSQL DSN used by the graph-backed memory runtime |
 | `DONKEY_MASTER_KEY` | If using secrets | Master key for encrypted secrets |
+
+### PostgreSQL via Docker
+
+The recommended path for `Multigraph Memory` is to run PostgreSQL + `pgvector`
+in Docker instead of installing PostgreSQL on the host.
+
+```bash
+# Start only the database service
+docker compose up -d postgres
+
+# Donkey running on the host
+export DONKEY_PG_DSN='host=127.0.0.1 user=postgres password=donkey_pass dbname=donkey port=5432'
+
+# Build with Multigraph Memory enabled (default)
+nim c src/donkey.nim
+```
+
+If Donkey itself is running inside the same compose network, keep using:
+
+```bash
+export DONKEY_PG_DSN='host=postgres user=postgres password=donkey_pass dbname=donkey port=5432'
+```
+
+The bundled compose file persists database state in the named volume
+`donkey_pgdata`.
+
+If `5432` is already occupied on the host, override the published port:
+
+```bash
+export DONKEY_PG_PORT=5433
+docker compose up -d postgres
+export DONKEY_PG_DSN='host=127.0.0.1 user=postgres password=donkey_pass dbname=donkey port=5433'
+```
 
 ### Per-user provider selection
 
@@ -92,7 +131,7 @@ Each user gets a paddock at `~/.donkey/paddocks/<uuid>/`:
 
 When `DONKEY_PG_DSN` is not configured, these files are the live memory backend.
 
-When `DONKEY_PG_DSN` is configured and Donkey is compiled with `-d:withPostgres`,
+When `DONKEY_PG_DSN` is configured and Donkey is built with the default PostgreSQL-enabled build,
 `Multigraph Memory` becomes the authoritative runtime store for profile,
 preferences, and episodic memory. In that mode:
 

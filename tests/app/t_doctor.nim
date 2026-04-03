@@ -48,7 +48,7 @@ suite "doctor — checkPgvector":
     let r = checkPgvector()
     check r.name   == "pgvector"
     check r.status == dsWarn    # always advisory
-    check "F2+" in r.detail
+    check "docker compose up -d postgres" in r.detail
     if saved.len > 0: putEnv("DONKEY_PG_DSN", saved)
 
   test "returns dsOk when DONKEY_PG_DSN is set (DSN is configured)":
