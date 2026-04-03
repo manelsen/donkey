@@ -73,6 +73,17 @@ proc runContractTests(adapter: MdFileAdapter) =
       adapter.savePreferences(uid, "provider: zai-coding\n")
       check readFile(adapter.preferencesMdPath(uid)) == "provider: zai-coding\n"
 
+    test "resetBootstrap removes profile and preferences but keeps episodic memory":
+      adapter.saveUserMd(uid, "# Alice\n")
+      adapter.savePreferences(uid, "language = \"pt-BR\"\n")
+      adapter.appendMemory(uid, "memory content")
+      adapter.resetBootstrap(uid)
+      check not fileExists(adapter.userMdPath(uid))
+      check not fileExists(adapter.preferencesMdPath(uid))
+      check fileExists(adapter.memoryMdPath(uid))
+      check readFile(adapter.memoryMdPath(uid)) == "memory content"
+      check not adapter.hasProfile(uid)
+
     test "ensurePaddock: creates sessions/ subdirectory":
       adapter.ensurePaddock(uid)
       check dirExists(adapter.paddockDir(uid) / "sessions")

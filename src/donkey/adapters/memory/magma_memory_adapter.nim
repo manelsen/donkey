@@ -795,6 +795,10 @@ when defined(withPostgres):
     except CatchableError:
       discard
 
+  proc resetBootstrap*(a: MagmaMemoryAdapter; userId: UserId) =
+    discard a.graph.deleteNode(profileId(userId))
+    discard a.graph.deleteNode(prefId(userId))
+
 else:
   type
     MagmaMemoryAdapter* = ref object
@@ -856,3 +860,4 @@ else:
   proc toSearchFn*(a: MagmaMemoryAdapter): SearchFn = nil
   proc deleteUser*(a: MagmaMemoryAdapter; userId: UserId) = discard
   proc clearMemory*(a: MagmaMemoryAdapter; userId: UserId) = discard
+  proc resetBootstrap*(a: MagmaMemoryAdapter; userId: UserId) = discard

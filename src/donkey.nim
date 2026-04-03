@@ -1731,6 +1731,24 @@ proc finalizeSessionIngress*(sm: var SessionManager;
     ingress.plan.decision.target,
   )
 
+proc finalizeSessionTaskIngress*(sm: var SessionManager;
+                                 ingress: SessionIngressContext;
+                                 msg: InboundMessage;
+                                 taskKind: TaskKind;
+                                 payload: string) =
+  if ingress.plan.decision.shouldRecordChannel:
+    sm.recordChannel(msg.userId, msg.channel, msg.channelId)
+  ingress.plan.entry[].inbox.addLastNoWait(
+    newTaskMsg(
+      ingress.msgId,
+      taskKind,
+      $msg.userId,
+      payload,
+      msg.channel,
+      sessionReplyTo(msg),
+    )
+  )
+
 proc ensureSession(sm:       var SessionManager;
                    msg:      InboundMessage;
                    services: SessionIngressServices;
@@ -1739,6 +1757,15 @@ proc ensureSession(sm:       var SessionManager;
   ## Fire-and-forget: does NOT wait for reply.
   let ingress = startSessionIngress(sm, msg, services, msgSeq)
   finalizeSessionIngress(sm, ingress, msg)
+
+proc ensureSessionTask(sm:       var SessionManager;
+                       msg:      InboundMessage;
+                       services: SessionIngressServices;
+                       msgSeq:   var int;
+                       taskKind: TaskKind;
+                       payload:  string) {.gcsafe.} =
+  let ingress = startSessionIngress(sm, msg, services, msgSeq)
+  finalizeSessionTaskIngress(sm, ingress, msg, taskKind, payload)
 
 proc handleSessionFallback(runtime:      var DaemonRuntime;
                            msg:          InboundMessage;
@@ -1774,6 +1801,7 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
   let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
     buildCompleteFn(preferencesMd, buildProviderBundle)
   let modelCatalogLoader = buildModelCatalogLoader()
+  let runtimePtr = addr runtime
   let tgMsgs = tgAdapter.receive().valueOr:
     log.error("telegram receive: " & error)
     return false
@@ -1782,7 +1810,9 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
     if not telegram_runtime.handleTelegramMessage(
       msg, runtime.sm, tgAdapter, runtime.kbdMsgIds, services.memory, completeBuilder,
       modelCatalogLoader,
-      services.toolClients.len, services.tools.len + nativeSessionTools().len, runtime.msgSeq, runtime.daemonStartMs, log):
+      services.toolClients.len, services.tools.len + nativeSessionTools().len, runtime.msgSeq, runtime.daemonStartMs, log,
+      proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} =
+        ensureSessionTask(runtimePtr[].sm, msg, services, runtimePtr[].msgSeq, taskKind, payload)):
       handleTelegramFallback(runtime, tgAdapter, msg, services)
   true
 

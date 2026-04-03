@@ -10,6 +10,7 @@ import chronos/asyncsync
 import donkey/domain/agent_message
 import donkey/domain/message
 import donkey/domain/personality
+import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/tooling/tool_loop
 import donkey/adapters/http/std_http
@@ -280,6 +281,87 @@ suite "OrchestratorAgent":
       await fut
     waitFor doTest(tmpDir)
     check true
+
+  test "reset bootstrap clears profile and returns next turn to onboarding":
+    let tmpDir = getTempDir() / "donkey_test_reset_bootstrap"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[(OutboundMessage, OutboundMessage, OutboundMessage, seq[string])] {.async.} =
+      let userDir = dir / "u-reset"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Bob")
+      writeFile(userDir / "PREFERENCES.md", "language = \"pt-BR\"")
+      let mem    = MdFileAdapter(paddocksDir: dir)
+      let inbox  = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var logMessages: seq[string] = @[]
+      let orchLog = newLogger("test.orch", lvlInfo,
+        sink = proc(e: LogEntry) {.gcsafe.} =
+          if e.level == lvlInfo:
+            {.cast(gcsafe).}: logMessages.add(e.message))
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-reset",
+                                 log = orchLog))
+      await inbox.put(newTaskMsg("req-reset-1", tkUserMsg, "u-reset", "ping"))
+      let firstReply = await outbox.get()
+      await inbox.put(newTaskMsg("req-reset-2", tkReset, "u-reset", ""))
+      let resetReply = await outbox.get()
+      await inbox.put(newTaskMsg("req-reset-3", tkUserMsg, "u-reset", "oi"))
+      let onboardingReply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      return (firstReply, resetReply, onboardingReply, logMessages)
+
+    let (firstReply, resetReply, onboardingReply, logMessages) = waitFor doTest(tmpDir)
+
+    check firstReply.text == "pong"
+    check resetReply.text.contains("Bootstrap reiniciado")
+    check resetReply.text.contains("Como quer definir minha personalidade?")
+    check resetReply.keyboard.len > 0
+    check onboardingReply.text.contains("Use os botões acima para escolher")
+    check logMessages.anyIt(it.contains("reset bootstrap: started"))
+    check logMessages.anyIt(it.contains("reset bootstrap: completed; onboarding ready"))
+    check not fileExists(tmpDir / "u-reset" / "USER.md")
+    check not fileExists(tmpDir / "u-reset" / "PREFERENCES.md")
+
+  test "reset bootstrap stays in onboarding without calling provider on the next plain text":
+    let tmpDir = getTempDir() / "donkey_test_reset_bootstrap_provider_guard"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[(OutboundMessage, OutboundMessage, int)] {.async.} =
+      let userDir = dir / "u-reset-guard"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Bob")
+      writeFile(userDir / "PREFERENCES.md", "language = \"pt-BR\"")
+      let mem    = MdFileAdapter(paddocksDir: dir)
+      let inbox  = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var providerCalls = 0
+      let countingComplete =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+          {.cast(gcsafe).}:
+            inc providerCalls
+          ok(CompletionResponse(text: "pong", inputTokens: 1, outputTokens: 1))
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-reset-guard"))
+      await inbox.put(newTaskMsg("req-reset-1", tkReset, "u-reset-guard", ""))
+      let resetReply = await outbox.get()
+      await inbox.put(newTaskMsg("req-reset-2", tkUserMsg, "u-reset-guard", "oi"))
+      let onboardingReply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      return (resetReply, onboardingReply, providerCalls)
+
+    let (resetReply, onboardingReply, providerCalls) = waitFor doTest(tmpDir)
+
+    check resetReply.text.contains("Bootstrap reiniciado")
+    check resetReply.text.contains("Como quer definir minha personalidade?")
+    check onboardingReply.text.contains("Use os botões acima para escolher")
+    check providerCalls == 0
 
 suite "payload helpers":
 

@@ -11,7 +11,7 @@ type
 
   TaskKind* = enum
     tkUserMsg
-    tkReset
+    tkReset              ## clear profile/preferences and rerun onboarding
     tkLoadCtx
     tkSaveMem
     tkSavePrefs
@@ -20,7 +20,7 @@ type
     tkPersonalityChoice  ## payload = "personality:dim:valor" (inline keyboard callback)
     tkNameChoice         ## payload = "name:<chosen-name>" (name selection callback)
     tkCompact            ## trigger session context compaction
-    tkNew                ## start a new session (clear context)
+    tkNew                ## archive current session and clear context
     tkStop               ## abort current turn and return to idle
     tkRestart            ## alias for reset/new
     tkBind               ## associate chat with personality

@@ -35,6 +35,7 @@ proc saveUserMd*(a: MdFileAdapter; userId: UserId; content: string) {.gcsafe.}
 proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) {.gcsafe.}
 proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) {.gcsafe.}
 proc clearMemory*(a: MdFileAdapter; userId: UserId) {.gcsafe.}
+proc resetBootstrap*(a: MdFileAdapter; userId: UserId) {.gcsafe.}
 proc saveSession*(a: MdFileAdapter; userId: UserId;
                   sessionId: string; history: ConversationHistory) {.gcsafe.}
 proc saveIdentity*(a: MdFileAdapter; userId: UserId;
@@ -188,6 +189,9 @@ when defined(withPostgres):
         discard
     a.clearMemory(userId)
 
+  proc runtimeResetBootstrap(a: MdFileAdapter; userId: UserId) =
+    a.resetBootstrap(userId)
+
   proc runtimeSaveIdentity(a: MdFileAdapter; userId: UserId;
                            traits: PersonalityTraits; name: string) =
     if a.magmaDsn.len > 0:
@@ -218,6 +222,7 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
         appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = a.runtimeAppendMemory(userId, text),
         savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = a.runtimeSavePreferences(userId, content),
         clearMemory:      proc(userId: UserId) {.gcsafe.} = a.runtimeClearMemory(userId),
+        resetBootstrap:   proc(userId: UserId) {.gcsafe.} = a.runtimeResetBootstrap(userId),
         saveSession:      proc(userId: UserId; sessionId: string; history: ConversationHistory) {.gcsafe.} =
                             a.saveSession(userId, sessionId, history),
         saveIdentity:     proc(userId: UserId; traits: PersonalityTraits; name: string) {.gcsafe.} =
@@ -237,6 +242,7 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
     appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = a.appendMemory(userId, text),
     savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = a.savePreferences(userId, content),
     clearMemory:      proc(userId: UserId) {.gcsafe.} = a.clearMemory(userId),
+    resetBootstrap:   proc(userId: UserId) {.gcsafe.} = a.resetBootstrap(userId),
     saveSession:      proc(userId: UserId; sessionId: string; history: ConversationHistory) {.gcsafe.} =
                         a.saveSession(userId, sessionId, history),
     saveIdentity:     proc(userId: UserId; traits: PersonalityTraits; name: string) {.gcsafe.} =
@@ -354,6 +360,17 @@ proc clearMemory*(a: MdFileAdapter; userId: UserId) =
   ## Clears MEMORY.md for this user (irreversible).
   let path = a.memoryMdPath(userId)
   if fileExists(path): writeFile(path, "")
+
+proc resetBootstrap*(a: MdFileAdapter; userId: UserId) =
+  for path in [a.userMdPath(userId), a.preferencesMdPath(userId)]:
+    if fileExists(path):
+      try:
+        removeFile(path)
+      except CatchableError:
+        discard
+  when defined(withPostgres):
+    a.withMagmaShadow:
+      magma.resetBootstrap(userId)
 
 proc saveSession*(a: MdFileAdapter; userId: UserId;
                   sessionId: string; history: ConversationHistory) =

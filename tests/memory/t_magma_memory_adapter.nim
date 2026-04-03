@@ -68,7 +68,7 @@ when defined(withPostgres):
   suite "MagmaMemoryAdapter - hasProfile":
 
     setup:
-      let a = newTestAdapter()
+      let a {.used.} = newTestAdapter()
 
     test "returns false for unknown user":
       check not a.hasProfile(UserId("unknown"))
@@ -84,7 +84,7 @@ when defined(withPostgres):
   suite "MagmaMemoryAdapter - saveUserMd / loadContext":
 
     setup:
-      let a = newTestAdapter()
+      let a {.used.} = newTestAdapter()
 
     test "loadContext returns empty for unknown user":
       let ctx = a.loadContext(UserId("nobody"))
@@ -108,7 +108,7 @@ when defined(withPostgres):
   suite "MagmaMemoryAdapter - appendMemory":
 
     setup:
-      let a = newTestAdapter()
+      let a {.used.} = newTestAdapter()
 
     test "appendMemory stores content":
       a.appendMemory(UserId("u1"), "User likes Rust")
@@ -138,7 +138,7 @@ when defined(withPostgres):
   suite "MagmaMemoryAdapter - savePreferences":
 
     setup:
-      let a = newTestAdapter()
+      let a {.used.} = newTestAdapter()
 
     test "savePreferences stores and loads":
       let prefs = "language = \"pt-BR\"\ntimezone = \"America/Sao_Paulo\""
@@ -152,10 +152,26 @@ when defined(withPostgres):
       let ctx = a.loadContext(UserId("u1"))
       check ctx.preferencesMd == "updated prefs"
 
+  suite "MagmaMemoryAdapter - resetBootstrap":
+
+    setup:
+      let a {.used.} = newTestAdapter()
+
+    test "resetBootstrap removes profile and preferences but preserves memories":
+      a.saveUserMd(UserId("u1"), "# Alice")
+      a.savePreferences(UserId("u1"), "language = \"pt-BR\"")
+      a.appendMemory(UserId("u1"), "still here")
+      a.resetBootstrap(UserId("u1"))
+      let ctx = a.loadContext(UserId("u1"))
+      check not a.hasProfile(UserId("u1"))
+      check ctx.userMd == ""
+      check ctx.preferencesMd == ""
+      check ctx.memoryMd.contains("still here")
+
   suite "MagmaMemoryAdapter - stats":
 
     setup:
-      let a = newTestAdapter()
+      let a {.used.} = newTestAdapter()
 
     test "stats wraps graph counts without SQL in runtime code":
       a.saveUserMd(UserId("u1"), "# Ada")
@@ -190,7 +206,7 @@ when defined(withPostgres):
   suite "MagmaMemoryAdapter - commitments":
 
     setup:
-      let a = newTestAdapter()
+      let a {.used.} = newTestAdapter()
 
     test "saveCommitment stores open commitment metadata":
       let c = newCommitment(
@@ -222,7 +238,7 @@ when defined(withPostgres):
   suite "MagmaMemoryAdapter - episodes":
 
     setup:
-      let a = newTestAdapter()
+      let a {.used.} = newTestAdapter()
 
     test "saveEpisode stores episode metadata and source memory ids":
       a.appendMemory(UserId("u1"), "Investigated the timeout spike.")
@@ -246,7 +262,7 @@ when defined(withPostgres):
   suite "MagmaMemoryAdapter - lessons":
 
     setup:
-      let a = newTestAdapter()
+      let a {.used.} = newTestAdapter()
 
     test "saveLesson round-trips text confidence source episode and tags":
       let lesson = newLesson(
@@ -296,7 +312,7 @@ when defined(withPostgres):
   suite "MagmaMemoryAdapter - search":
 
     setup:
-      let a = newTestAdapter()
+      let a {.used.} = newTestAdapter()
 
     test "search returns empty for unknown user":
       let hits = a.search(UserId("nobody"), "query", 5)
@@ -346,7 +362,7 @@ when defined(withPostgres):
   suite "MagmaMemoryAdapter - entity extraction":
 
     setup:
-      let a = newTestAdapter()
+      let a {.used.} = newTestAdapter()
 
     test "appendMemory extracts triples as edges":
       a.appendMemory(UserId("u1"), "Alice is a developer")
@@ -363,7 +379,7 @@ when defined(withPostgres):
   suite "MagmaMemoryAdapter - temporal context":
 
     setup:
-      let a = newTestAdapter()
+      let a {.used.} = newTestAdapter()
 
     test "search enriches with temporal neighbors":
       a.appendMemory(UserId("u1"), "Started new project")
@@ -375,7 +391,7 @@ when defined(withPostgres):
   suite "MagmaMemoryAdapter - causal extraction":
 
     setup:
-      let a = newTestAdapter()
+      let a {.used.} = newTestAdapter()
 
     test "appendMemory creates causal edge for effect markers":
       a.appendMemory(UserId("u1"), "The deploy broke production")
@@ -435,7 +451,7 @@ when defined(withPostgres):
   suite "MagmaMemoryAdapter - RRF hybrid search":
 
     setup:
-      let a = newTestAdapter()
+      let a {.used.} = newTestAdapter()
 
     test "search combines semantic and temporal signals":
       for i in 0 ..< 5:

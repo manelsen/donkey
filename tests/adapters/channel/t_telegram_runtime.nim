@@ -1,8 +1,14 @@
-import std/[os, sequtils, strutils, unittest]
+import std/[os, sequtils, strutils, tables, unittest]
+import results
 import donkey/core/commands/command_routing
+import donkey/core/log
+import donkey/adapters/channel/telegram
 import donkey/adapters/channel/telegram_runtime
+import donkey/app/session_manager
 import donkey/adapters/memory/md_file
+import donkey/domain/agent_message
 import donkey/domain/message
+import donkey/ports/provider
 
 suite "telegram_runtime":
 
@@ -44,6 +50,149 @@ thinking = "high"
 
   test "parseCommandText parses reset":
     check parseCommandText("/reset").kind == cmdReset
+
+  test "handleTelegramTaskCommand delegates to ensure callback when provided":
+    var sm: SessionManager
+    sm.init()
+    var tgAdapter = TelegramAdapter(
+      resolver: newIdentityResolver(getTempDir() / "donkey_tg_runtime_resolver_test"),
+    )
+    let covered = [
+      (cmdDebug, tkDebugToggle, "/debug"),
+      (cmdReset, tkReset, "/reset"),
+      (cmdNew, tkNew, "/new"),
+      (cmdCompact, tkCompact, "/compact"),
+      (cmdStop, tkStop, "/stop"),
+      (cmdRestart, tkRestart, "/restart"),
+      (cmdBind, tkBind, "/bind"),
+    ]
+    for (kind, expectedTask, text) in covered:
+      var msgSeq = 0
+      var called = false
+      var seenTask = tkUserMsg
+      var seenUserId = ""
+      var seenPayload = ""
+      let msg = InboundMessage(
+        userId: UserId("u-tg-" & $kind),
+        channel: ckTelegram,
+        channelId: "42",
+        text: text,
+      )
+      let ensureTaskSession =
+        proc(seenMsg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} =
+          {.cast(gcsafe).}:
+            called = true
+            seenTask = taskKind
+            seenUserId = $seenMsg.userId
+            seenPayload = payload
+      check handleTelegramTaskCommand(
+        sm, msg, newCommandDecision(kind), tgAdapter, msgSeq, ensureTaskSession)
+      check called
+      check seenTask == expectedTask
+      check seenUserId == $msg.userId
+      check seenPayload == ""
+      check msgSeq == 0
+
+  test "handleTelegramUiCallback delegates reset callback to ensure callback when provided":
+    var sm: SessionManager
+    sm.init()
+    var tgAdapter = TelegramAdapter(
+      resolver: newIdentityResolver(getTempDir() / "donkey_tg_runtime_resolver_reset_callback_test"),
+    )
+    var kbdMsgIds = initTable[string, string]()
+    let tmpDir = getTempDir() / "donkey_tg_runtime_reset_callback"
+    let memory = MdFileAdapter(paddocksDir: tmpDir)
+    defer:
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+    var msgSeq = 0
+    var called = false
+    var seenTask = tkUserMsg
+    let msg = InboundMessage(
+      userId: UserId("u-tg-reset-callback"),
+      channel: ckTelegram,
+      channelId: "42",
+      callbackId: "cb-reset",
+      text: "/callback reset",
+    )
+    let completeBuilder =
+      proc(preferencesMd: string): CompleteFn {.gcsafe.} = nil
+    let modelCatalogLoader: ModelCatalogLoader =
+      proc(providerName: string): Result[ModelCatalogResult, string] {.gcsafe.} =
+        ok(ModelCatalogResult())
+    let logger = newLogger("test.telegram")
+    let ensureTaskSession =
+      proc(seenMsg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          called = true
+          seenTask = taskKind
+          check $seenMsg.userId == $msg.userId
+          check payload == ""
+    check handleTelegramUiCallback(
+      msg, parseCallbackData("reset"), sm, tgAdapter, kbdMsgIds, memory,
+      completeBuilder, modelCatalogLoader, 0, 0, msgSeq, 0, logger, ensureTaskSession)
+    check called
+    check seenTask == tkReset
+    check msgSeq == 0
+
+  test "handleTelegramUiCallback routes reasoning callback through local toggle":
+    var sm: SessionManager
+    sm.init()
+    var tgAdapter = TelegramAdapter(
+      resolver: newIdentityResolver(getTempDir() / "donkey_tg_runtime_resolver_reasoning_callback_test"),
+    )
+    var kbdMsgIds = initTable[string, string]()
+    let tmpDir = getTempDir() / "donkey_tg_runtime_reasoning_callback"
+    let memory = MdFileAdapter(paddocksDir: tmpDir)
+    let userId = UserId("u-tg-reasoning-callback")
+    defer:
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+    memory.savePreferences(userId, "reasoning = \"off\"")
+    var msgSeq = 0
+    let msg = InboundMessage(
+      userId: userId,
+      channel: ckTelegram,
+      channelId: "42",
+      callbackId: "cb-reasoning",
+      text: "/callback reasoning",
+    )
+    let completeBuilder =
+      proc(preferencesMd: string): CompleteFn {.gcsafe.} = nil
+    let modelCatalogLoader: ModelCatalogLoader =
+      proc(providerName: string): Result[ModelCatalogResult, string] {.gcsafe.} =
+        ok(ModelCatalogResult())
+    let logger = newLogger("test.telegram")
+    check handleTelegramUiCallback(
+      msg, parseCallbackData("reasoning"), sm, tgAdapter, kbdMsgIds, memory,
+      completeBuilder, modelCatalogLoader, 0, 0, msgSeq, 0, logger)
+    check memory.loadContext(userId).preferencesMd.contains("reasoning = \"on\"")
+
+  test "handleTelegramUiCommand handles deferred config commands without falling back":
+    var tgAdapter = TelegramAdapter(
+      resolver: newIdentityResolver(getTempDir() / "donkey_tg_runtime_resolver_deferred_ui_test"),
+    )
+    var kbdMsgIds = initTable[string, string]()
+    let tmpDir = getTempDir() / "donkey_tg_runtime_deferred_ui"
+    let memory = MdFileAdapter(paddocksDir: tmpDir)
+    defer:
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+    let logger = newLogger("test.telegram")
+    let modelCatalogLoader: ModelCatalogLoader =
+      proc(providerName: string): Result[ModelCatalogResult, string] {.gcsafe.} =
+        ok(ModelCatalogResult())
+    let commands = [cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts]
+    for kind in commands:
+      let msg = InboundMessage(
+        userId: UserId("u-tg-deferred-" & $kind),
+        channel: ckTelegram,
+        channelId: "42",
+        text: "/" & $kind,
+      )
+      check handleTelegramUiCommand(
+        msg, newCommandDecision(kind), tgAdapter, kbdMsgIds, memory,
+        modelCatalogLoader, 0, 0, logger)
 
   test "buildProviderButtons marks current provider":
     let tmpDir = getTempDir() / "donkey_tg_runtime_provider"

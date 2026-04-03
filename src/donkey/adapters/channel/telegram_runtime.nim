@@ -56,7 +56,8 @@ proc handleTelegramTaskCommand*(sm: var SessionManager;
                                  msg: InboundMessage;
                                  command: CommandDecision;
                                  tgAdapter: var TelegramAdapter;
-                                 msgSeq: var int): bool {.gcsafe.}
+                                 msgSeq: var int;
+                                 ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool {.gcsafe.}
 
 # ── Implementation ────────────────────────────────────────────────────────────
 
@@ -119,8 +120,7 @@ proc handleTelegramModels*(msg: InboundMessage;
     let catalog = modelCatalogLoader(providerOnly).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(providerOnly, catalog.entries))
     let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
-    let title = buildModelPageTitle(providerOnly, 0, entries) &
-      "\n" & buildCatalogSourceText(catalog)
+    let title = buildModelPageText(providerOnly, 0, entries, catalog)
     let buttons = buildModelPageButtons(providerOnly, entries, currProv, currModel, 0)
     if currentKbdId.len > 0:
       tgAdapter.editKeyboardText(msg.userId, currentKbdId, title, buttons).isOkOr:
@@ -177,8 +177,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
     if kbdId.len > 0:
       tgAdapter.editKeyboardText(
         msg.userId, kbdId,
-        buildModelPageTitle(callback.provider, 0, entries) &
-          "\n" & buildCatalogSourceText(catalog),
+        buildModelPageText(callback.provider, 0, entries, catalog),
         buildModelPageButtons(callback.provider, entries, currProv, currModel, 0)).isOkOr:
         core_log.log(logger, core_log.lvlError, "tg editKeyboard models:provider error: " & error)
     return true
@@ -214,8 +213,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
     if kbdId.len > 0:
       tgAdapter.editKeyboardText(
         msg.userId, kbdId,
-        buildModelPageTitle(callback.provider, callback.page, entries) &
-          "\n" & buildCatalogSourceText(catalog),
+        buildModelPageText(callback.provider, callback.page, entries, catalog),
         buildModelPageButtons(callback.provider, entries, currProv, currModel, callback.page)).isOkOr:
           core_log.log(logger, core_log.lvlError, "tg editKeyboard models:page error: " & error)
     return true
@@ -358,6 +356,16 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
     handleTelegramThink(msg, command, tgAdapter, kbdMsgIds, memory)
   of cmdBudget:
     handleTelegramBudget(msg, command, tgAdapter, memory)
+  of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
+    let reply = buildDeferredUiCommandText(command.kind)
+    tgAdapter.send(OutboundMessage(
+      userId:  msg.userId,
+      channel: ckTelegram,
+      text:    reply,
+      replyTo: msg.channelId,
+    )).isOkOr:
+      discard
+    true
   else:
     false
 
@@ -373,7 +381,8 @@ proc handleTelegramUiCallback*(msg: InboundMessage;
                                 toolsCount: int;
                                 msgSeq: var int;
                                 daemonStartMs: int64;
-                                logger: Logger): bool =
+                                logger: Logger;
+                                ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
   # Acknowledge the callback immediately to stop the loading spinner
   discard tgAdapter.answerCallback(msg.callbackId)
 
@@ -386,14 +395,14 @@ proc handleTelegramUiCallback*(msg: InboundMessage;
     let pages = buildHelpPages()
     let page  = min(max(callback.page, 0), pages.len - 1)
     let (pTitle, pBody) = pages[page]
-    let title   = "📖 Ajuda — " & pTitle & " (" & $(page + 1) & "/" & $pages.len & ")"
+    let helpText = "📖 Ajuda — " & pTitle & " (" & $(page + 1) & "/" & $pages.len & ")\n\n" & pBody
     let buttons = buildHelpNavButtons(page, pages.len)
     let kbdId = kbdMsgIds.getOrDefault($msg.userId)
     if kbdId.len > 0:
-      tgAdapter.editKeyboardText(msg.userId, kbdId, title, buttons).isOkOr:
+      tgAdapter.editKeyboardText(msg.userId, kbdId, helpText, buttons).isOkOr:
         core_log.log(logger, core_log.lvlError, "tg help page error: " & error)
     else:
-      let sentId = tgAdapter.sendKeyboard(msg.userId, title, buttons, replyTo = msg.channelId).valueOr:
+      let sentId = tgAdapter.sendKeyboard(msg.userId, helpText, buttons, replyTo = msg.channelId).valueOr:
         return true
       if sentId.len > 0: kbdMsgIds[$msg.userId] = sentId
     return true
@@ -413,11 +422,11 @@ proc handleTelegramUiCallback*(msg: InboundMessage;
   of cbkForget:
     return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdForget), tgAdapter, kbdMsgIds, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
   of cbkReset:
-    return handleTelegramTaskCommand(sm, msg, newCommandDecision(cmdReset), tgAdapter, msgSeq)
+    return handleTelegramTaskCommand(sm, msg, newCommandDecision(cmdReset), tgAdapter, msgSeq, ensureTaskSession)
   of cbkMyCode:
     return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdMyCode), tgAdapter, kbdMsgIds, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
   of cbkReasoning:
-    return handleTelegramTaskCommand(sm, msg, newCommandDecision(cmdReasoning), tgAdapter, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdReasoning), tgAdapter, kbdMsgIds, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
   of cbkMenu:
     return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdMenu), tgAdapter, kbdMsgIds, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
   of cbkConfig:
@@ -621,26 +630,31 @@ proc handleTelegramTaskCommand*(sm: var SessionManager;
                                  msg: InboundMessage;
                                  command: CommandDecision;
                                  tgAdapter: var TelegramAdapter;
-                                 msgSeq: var int): bool =
+                                 msgSeq: var int;
+                                 ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
   if not isSessionTaskCommand(command.kind):
     return false
 
   # Commands that should start a session if one doesn't exist
-  if command.kind in {cmdDebug, cmdReset, cmdNew, cmdCompact, cmdStop, cmdRestart}:
-    let entry = sm.getOrCreate(msg.userId)
-    inc msgSeq
-    entry.inbox.addLastNoWait(
-      newTaskMsg($msgSeq, commandTaskKind(command), $msg.userId,
-                 "", ckTelegram, msg.channelId))
+  if command.kind in {cmdDebug, cmdReset, cmdNew, cmdCompact, cmdStop, cmdRestart, cmdBind}:
+    if ensureTaskSession != nil:
+      ensureTaskSession(msg, commandTaskKind(command), "")
+    else:
+      let entry = sm.getOrCreate(msg.userId)
+      inc msgSeq
+      entry.inbox.addLastNoWait(
+        newTaskMsg($msgSeq, commandTaskKind(command), $msg.userId,
+                   "", ckTelegram, msg.channelId))
 
     # Send feedback for non-silent commands
     let feedback = case command.kind
       of cmdDebug: "🐞 Alterando modo debug..."
-      of cmdReset: "🔄 Reiniciando conversa..."
-      of cmdNew: "🆕 Iniciando nova sessão..."
+      of cmdReset: "🔄 Reiniciando bootstrap... vou avisar quando terminar."
+      of cmdNew: "🆕 Arquivando e iniciando nova sessão..."
       of cmdCompact: "🗜️ Compactando histórico..."
       of cmdStop: "🛑 Parando execução..."
       of cmdRestart: "♻️ Reiniciando..."
+      of cmdBind: "🔗 Preparando vínculo..."
       else: ""
     if feedback.len > 0:
       tgAdapter.send(OutboundMessage(
@@ -657,14 +671,18 @@ proc handleTelegramCoreCallback*(sm: var SessionManager;
                                  msg: InboundMessage;
                                  callback: CallbackDecision;
                                  tgAdapter: var TelegramAdapter;
-                                 msgSeq: var int): bool =
+                                 msgSeq: var int;
+                                 ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
   if callback.route == cbrSessionTask:
     discard tgAdapter.answerCallback(msg.callbackId)
-    let entry = sm.getOrCreate(msg.userId)
-    inc msgSeq
-    entry.inbox.addLastNoWait(
-      newTaskMsg($msgSeq, callbackTaskKind(callback), $msg.userId,
-                 callback.value, ckTelegram, msg.channelId))
+    if ensureTaskSession != nil:
+      ensureTaskSession(msg, callbackTaskKind(callback), callback.value)
+    else:
+      let entry = sm.getOrCreate(msg.userId)
+      inc msgSeq
+      entry.inbox.addLastNoWait(
+        newTaskMsg($msgSeq, callbackTaskKind(callback), $msg.userId,
+                   callback.value, ckTelegram, msg.channelId))
     return true
   false
 
@@ -679,23 +697,24 @@ proc handleTelegramMessage*(msg: InboundMessage;
                             toolsCount: int;
                             msgSeq: var int;
                             daemonStartMs: int64;
-                            logger: Logger): bool =
+                            logger: Logger;
+                            ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
   let command = decideCommandRequest(CommandRequest(channel: msg.channel, text: msg.text))
   case command.route
   of crLocal:
     return handleTelegramCoreCommand(sm, msg, command, tgAdapter, kbdMsgIds, memory,
                                      completeBuilder, toolsCount, toolClientsCount, msgSeq)
   of crSessionTask:
-    return handleTelegramTaskCommand(sm, msg, command, tgAdapter, msgSeq)
+    return handleTelegramTaskCommand(sm, msg, command, tgAdapter, msgSeq, ensureTaskSession)
   of crUi:
     return handleTelegramUiCommand(msg, command, tgAdapter, kbdMsgIds, memory, modelCatalogLoader, toolClientsCount, toolsCount, logger)
   of crCallback:
     let callback = decideCallbackRequest(CallbackRequest(channel: msg.channel, data: command.value))
     case callback.route
     of cbrUi:
-      handleTelegramUiCallback(msg, callback, sm, tgAdapter, kbdMsgIds, memory, completeBuilder, modelCatalogLoader, toolClientsCount, toolsCount, msgSeq, daemonStartMs, logger)
+      handleTelegramUiCallback(msg, callback, sm, tgAdapter, kbdMsgIds, memory, completeBuilder, modelCatalogLoader, toolClientsCount, toolsCount, msgSeq, daemonStartMs, logger, ensureTaskSession)
     of cbrSessionTask:
-      handleTelegramCoreCallback(sm, msg, callback, tgAdapter, msgSeq)
+      handleTelegramCoreCallback(sm, msg, callback, tgAdapter, msgSeq, ensureTaskSession)
     of cbrNone:
       false
   of crPing:

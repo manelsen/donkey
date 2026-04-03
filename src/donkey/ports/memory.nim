@@ -65,6 +65,7 @@ type
     appendMemory*:    proc(userId: UserId; text: string) {.gcsafe.}
     savePreferences*: proc(userId: UserId; content: string) {.gcsafe.}
     clearMemory*:     proc(userId: UserId) {.gcsafe.}
+    resetBootstrap*:  proc(userId: UserId) {.gcsafe.}
     saveSession*:     proc(userId: UserId; sessionId: string; history: ConversationHistory)
                         {.gcsafe.}
     saveIdentity*:    proc(userId: UserId; traits: PersonalityTraits; name: string)

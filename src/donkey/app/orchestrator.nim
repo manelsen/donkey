@@ -343,6 +343,14 @@ proc safeAppendMemory(memory: MemoryRuntimePort;
   except Exception:
     discard
 
+proc safeResetBootstrap(memory: MemoryRuntimePort;
+                        uid: UserId): bool {.gcsafe, raises: [].} =
+  try:
+    memory.resetBootstrap(uid)
+    true
+  except Exception:
+    false
+
 func buildNameChoiceKeyboard*(names: seq[string]): seq[seq[(string, string)]] =
   var nameRow: seq[(string, string)] = @[]
   for n in names:
@@ -955,18 +963,35 @@ proc handleResetControlTask(globalOutbox: AsyncQueue[OutboundMessage];
                             uid: UserId;
                             channel: ChannelKind;
                             replyTo: string;
+                            log: Logger;
                             sessionId: string;
-                            history: ConversationHistory): Future[ConversationHistory] {.async.} =
+                            history: ConversationHistory): Future[(ConversationHistory, OnboardingRuntime, bool)] {.async.} =
+  log.info($uid & " (" & $channel & ") reset bootstrap: started")
   let pipelineResult = startResetControlContext(history, sessionId)
   let resetOpt = await unwrapOrReplyError(
     globalOutbox, uid, channel, replyTo, pipelineResult)
   if resetOpt.isNone:
-    return history
+    return (history, OnboardingRuntime(), false)
   let resetCtx = resetOpt.get()
   if resetCtx.shouldPersist:
     safeSaveSession(memory, uid, resetCtx.sessionId, history)
-  await sendReplyText(globalOutbox, uid, channel, replyTo, resetCtx.replyText)
-  resetCtx.history
+  if not safeResetBootstrap(memory, uid):
+    log.warn($uid & " (" & $channel & ") reset bootstrap: failed")
+    await sendReplyText(globalOutbox, uid, channel, replyTo,
+      "Falha ao reiniciar bootstrap. Tente novamente.")
+    return (history, OnboardingRuntime(), false)
+  var nextOnboarding = OnboardingRuntime(phase: opWakeUp)
+  let wakeup = decideOnboardingTurn(nextOnboarding, "")
+  nextOnboarding = wakeup.onboarding
+  log.info($uid & " (" & $channel & ") reset bootstrap: completed; onboarding ready")
+  if wakeup.kind == oekWakeUp and wakeup.keyboard.len > 0:
+    await sendReplyKeyboard(globalOutbox, uid, channel, replyTo,
+      "✅ Bootstrap reiniciado.\n\n" & wakeup.replyText,
+      wakeup.keyboard)
+  else:
+    await sendReplyText(globalOutbox, uid, channel, replyTo,
+      "✅ Bootstrap reiniciado. Pronto para recomeçar.")
+  (resetCtx.history, nextOnboarding, true)
 
 proc handleDebugToggleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
                                   uid: UserId;
@@ -1004,13 +1029,15 @@ proc handleNewSessionTask(globalOutbox: AsyncQueue[OutboundMessage];
                         replyTo: string;
                         sessionId: string;
                         history: ConversationHistory): Future[ConversationHistory] {.async.} =
-  ## /new starts a fresh session, similar to /reset but preserves profile
+  ## /new archives the current session and starts a fresh one.
   let pipelineResult = startResetControlContext(history, sessionId)
   let resetOpt = await unwrapOrReplyError(
     globalOutbox, uid, channel, replyTo, pipelineResult)
   if resetOpt.isNone:
     return history
   let resetCtx = resetOpt.get()
+  if resetCtx.shouldPersist:
+    safeSaveSession(memory, uid, resetCtx.sessionId, history)
   await sendReplyText(globalOutbox, uid, channel, replyTo,
     "Nova conversa iniciada. 👋")
   resetCtx.history
@@ -1074,15 +1101,16 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
 proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
                        memory: MemoryRuntimePort;
                        completeFn: CompleteFn;
-                       uid: UserId;
+                        uid: UserId;
                        channel: ChannelKind;
                        replyTo: string;
-                       msg: AgentMessage;
+                        msg: AgentMessage;
                        history: ConversationHistory;
                        onboarding: OnboardingRuntime;
                        identity: IdentityRuntime;
                        debugMode: bool;
                        showReasoning: bool;
+                       log: Logger;
                        sessionId: string): Future[ControlTaskResult] {.async.} =
   result.history = history
   result.onboarding = onboarding
@@ -1092,8 +1120,12 @@ proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
 
   case msg.taskKind
   of tkReset:
-    result.history = await handleResetControlTask(
-      globalOutbox, memory, uid, channel, replyTo, sessionId, result.history)
+    let (nextHistory, nextOnboarding, resetApplied) = await handleResetControlTask(
+      globalOutbox, memory, uid, channel, replyTo, log, sessionId, result.history)
+    result.history = nextHistory
+    if resetApplied:
+      result.onboarding = nextOnboarding
+      result.identity = IdentityRuntime()
     result.handled = true
 
   of tkDebugToggle:
@@ -1116,7 +1148,7 @@ proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
     result.handled = true
 
   of tkRestart:
-    result.history = await handleResetControlTask(
+    result.history = await handleNewSessionTask(
       globalOutbox, memory, uid, channel, replyTo, sessionId, result.history)
     result.handled = true
 
@@ -1400,7 +1432,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
   let controlResult = await handleControlTask(
     globalOutbox, memory, completeFn, uid, msg.channel, msg.replyTo, msg,
     result.history, result.onboarding, result.identity,
-    result.debugMode, result.showReasoning, sessionId)
+    result.debugMode, result.showReasoning, log, sessionId)
   result =
     result |>->
     withControlResult(controlResult)

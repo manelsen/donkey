@@ -160,6 +160,18 @@ proc clearMemory*(a: MarkdownMemoryAdapter; userId: UserId): Result[void, string
       return err(writeResult.error)
   ok()
 
+proc resetBootstrap*(a: MarkdownMemoryAdapter; userId: UserId): Result[void, string] {.gcsafe.} =
+  let ensureResult = a.ensurePaddock(userId)
+  if ensureResult.isErr:
+    return err(ensureResult.error)
+  for path in [a.userMdPath(userId), a.preferencesMdPath(userId)]:
+    if fileExists(path):
+      try:
+        removeFile(path)
+      except CatchableError as e:
+        return err("resetBootstrap: " & e.msg)
+  ok()
+
 proc saveSession*(a: MarkdownMemoryAdapter; userId: UserId;
                   sessionId: string; history: ConversationHistory): Result[void, string] {.gcsafe.} =
   ## Persists a conversation as JSONL: one JSON object per turn.
@@ -398,6 +410,7 @@ proc toRuntimePort*(a: MarkdownMemoryAdapter): MemoryRuntimePort =
     appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = discard a.appendMemory(userId, text),
     savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = discard a.savePreferences(userId, content),
     clearMemory:      proc(userId: UserId) {.gcsafe.} = discard a.clearMemory(userId),
+    resetBootstrap:   proc(userId: UserId) {.gcsafe.} = discard a.resetBootstrap(userId),
     saveSession:      proc(userId: UserId; sessionId: string; history: ConversationHistory) {.gcsafe.} =
                         discard a.saveSession(userId, sessionId, history),
     saveIdentity:     proc(userId: UserId; traits: PersonalityTraits; name: string) {.gcsafe.} =
