@@ -35,7 +35,7 @@ proc caps*(a: ZhipuAdapter): ProviderCaps =
     name:             "zai-coding/" & a.model,
     streaming:        false,
     toolCalling:      true,
-    nativeTools:      @[],
+    nativeTools:      @["web_search", "code_interpreter"],
     maxContextTokens: 128_000,
     requiresUserFirst: false,
   )
