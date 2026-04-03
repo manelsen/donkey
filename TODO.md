@@ -20,3 +20,19 @@ Plano executável no ralph-tui: `tasks/prd.json`
 
 - [ ] Adicionar camada self-improving e contemplative sobre o Multigraph Memory.
   Prioridades: commitments/promises, heartbeat de accountability, episode journaling, SIS de lessons e Knowledge Library separada da memória autobiográfica.
+
+## Telegram e Bootstrap
+
+Backlog ativo para o ralph loop: `tasks/prd.json` (`US-022` a `US-025`)
+
+- [ ] Fechar gaps de ingress de session-task no Telegram.
+  Prioridade: garantir que texto e callbacks relevantes sempre sobem ou reutilizam o orchestrator antes de enfileirar tasks como `/reset`.
+
+- [ ] Manter o `/reset` estritamente dentro do onboarding.
+  Prioridade: depois do reset, o bot deve ficar em bootstrap até o usuário retomar o fluxo, sem rebuild/runtime drift nem completion indevida.
+
+- [ ] Corrigir o picker de modelos da Z.ai.
+  Prioridade: escolher `zai-coding` deve mostrar o catálogo certo com botões; se um provider não tiver modelos, a UI deve dizer isso explicitamente.
+
+- [ ] Resolver slash commands órfãos ainda marcados como session-task.
+  Prioridade: `/verbose`, `/exec`, `/queue`, `/usage` e `/tts` não devem cair no fallback conversacional por falta de handler explícito.

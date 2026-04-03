@@ -415,6 +415,78 @@
         "US-019",
         "US-020"
       ]
+    },
+    {
+      "id": "US-022",
+      "title": "Close Telegram session-task ingress gaps",
+      "description": "As a Telegram user, I want session commands and callbacks to reliably start or reuse a session orchestrator so commands like /reset never acknowledge and then disappear.",
+      "acceptanceCriteria": [
+        "Route Telegram session-task text commands and relevant callbacks through a single ensureSessionTask-style path instead of direct queue writes that can bypass orchestrator startup",
+        "Cover /debug, /reset, /new, /compact, /stop, /restart, /bind, and the reset callback with regression tests",
+        "Keep the reasoning callback on its local toggle path rather than sending it through session-task ingress",
+        "nim c -f src/donkey.nim passes",
+        "nim c -r tests/adapters/channel/t_telegram_runtime.nim passes",
+        "nim c -r tests/app/t_orchestrator.nim passes"
+      ],
+      "priority": 21,
+      "passes": true,
+      "notes": "Branch: us/us-022-telegram-session-task-ingress\nStatus: complete\nFiles: src/donkey.nim; src/donkey/adapters/channel/telegram_runtime.nim; tests/adapters/channel/t_telegram_runtime.nim\nTests: expanded Telegram runtime regressions to cover /debug, /reset, /new, /compact, /stop, /restart, /bind, the reset callback, and the reasoning callback local-toggle path\nValidation: nim c -r tests/adapters/channel/t_telegram_runtime.nim (pass); nim c -r tests/app/t_orchestrator.nim (pass); nim c -f src/donkey.nim (pass)\nRisks: other channels still use their own session-task ingress behavior and were not normalized in this story\nCarry forward: Telegram session-task text commands and the reset callback now go through ensureSessionTask/startSessionIngress before enqueueing, while reasoning remains a local UI toggle.",
+      "dependsOn": []
+    },
+    {
+      "id": "US-023",
+      "title": "Keep /reset onboarding inside bootstrap without stray provider turns",
+      "description": "As an operator, I want /reset to re-arm onboarding cleanly so the bot does not rebuild runtime state or fire a provider completion before the user actually resumes bootstrap.",
+      "acceptanceCriteria": [
+        "After /reset completes, the session remains in onboarding mode until the user makes an explicit bootstrap choice or sends onboarding text",
+        "Reset-driven onboarding must not trigger an unintended provider route or free-conversation completion before the user resumes bootstrap",
+        "Add regression coverage for reset completion and the first post-reset interaction path",
+        "nim c -f src/donkey.nim passes",
+        "nim c -r tests/app/t_orchestrator.nim passes",
+        "nim c -r tests/app/t_session_bootstrap.nim passes"
+      ],
+      "priority": 22,
+      "passes": true,
+      "notes": "Branch: us/us-023-reset-bootstrap-onboarding\nStatus: complete\nFiles: tests/app/t_orchestrator.nim; tasks/prd.json\nTests: added orchestrator regression proving that /reset and the first plain-text message after reset stay inside onboarding and do not call the provider before the user makes an explicit bootstrap choice\nValidation: nim c -r tests/app/t_orchestrator.nim (pass); nim c -r tests/app/t_session_bootstrap.nim (pass); nim c -f src/donkey.nim (pass)\nRisks: this story hardens the current behavior by regression; the original field report still needs a concrete reproduction if a future provider turn appears during a different onboarding branch\nCarry forward: reset completion now has explicit coverage that providerCalls stay at zero until the user exits the initial opModeChoice gating.",
+      "dependsOn": [
+        "US-022"
+      ]
+    },
+    {
+      "id": "US-024",
+      "title": "Fix Z.ai provider model picker and empty-state behavior",
+      "description": "As a user, I want selecting Zai Coding to show the correct Z.ai model list with buttons, instead of silently landing on the zai-anthropic page with no actionable models.",
+      "acceptanceCriteria": [
+        "Selecting Zai Coding in the Telegram model picker opens the intended provider catalog instead of zai-anthropic unless the user explicitly chose that provider",
+        "When a provider has models, the picker renders model buttons; when it does not, the UI shows an explicit empty-state explanation instead of a blank keyboard",
+        "Add regression coverage for Z.ai provider-to-catalog mapping and Telegram model-picker rendering",
+        "nim c -f src/donkey.nim passes",
+        "nim c -r tests/adapters/channel/t_telegram_runtime.nim passes",
+        "nim c -r tests/provider/t_anthropic.nim passes"
+      ],
+      "priority": 23,
+      "passes": true,
+      "notes": "Branch: us/us-024-zai-model-picker\nStatus: complete\nFiles: src/donkey/adapters/provider/model_catalog.nim; src/donkey/adapters/channel/common_runtime.nim; src/donkey/adapters/channel/telegram_runtime.nim; src/donkey/adapters/channel/discord_runtime.nim; src/donkey/adapters/channel/qq_runtime.nim; tests/adapters/channel/t_common_runtime.nim; tasks/prd.json\nTests: added regressions for ZAI alias normalization in model catalogs and explicit empty-state text for model pages; kept Telegram runtime and Anthropic-compatible provider tests green\nValidation: nim c -r tests/adapters/channel/t_common_runtime.nim (pass); nim c -r tests/adapters/channel/t_telegram_runtime.nim (pass); nim c -r tests/provider/t_anthropic.nim (pass); nim c -f src/donkey.nim (pass)\nRisks: the field report about clicking zai-coding landing on a zai-anthropic page was not reproduced verbatim; the fix makes both ZAI families render model lists consistently and makes true empty catalogs explicit\nCarry forward: ZAI coding and anthropic-compatible providers now share a normalized GLM catalog family for picker rendering, and empty provider pages say so instead of showing a blank model area.",
+      "dependsOn": []
+    },
+    {
+      "id": "US-025",
+      "title": "Resolve orphaned slash commands that still route as session tasks",
+      "description": "As a maintainer, I want slash commands like /verbose and /usage to have explicit runtime behavior so they do not fall through to the model as plain user text.",
+      "acceptanceCriteria": [
+        "Decide and implement explicit behavior for /verbose, /exec, /queue, /usage, and /tts, or reroute them away from crSessionTask until they are implemented",
+        "Keep core routing, Telegram handling, and command catalog metadata consistent for those commands",
+        "Add regressions proving those commands no longer escape to the fallback conversation path",
+        "nim c -f src/donkey.nim passes",
+        "nim c -r tests/core/t_command_routing.nim passes",
+        "nim c -r tests/adapters/channel/t_telegram_runtime.nim passes"
+      ],
+      "priority": 24,
+      "passes": true,
+      "notes": "Branch: us/us-025-orphaned-slash-commands\nStatus: complete\nFiles: src/donkey/core/commands/command_routing.nim; src/donkey/core/commands/command_catalog.nim; src/donkey/adapters/channel/common_runtime.nim; src/donkey/adapters/channel/telegram_runtime.nim; src/donkey/adapters/channel/discord_runtime.nim; src/donkey/adapters/channel/qq_runtime.nim; src/donkey/adapters/channel/wecom_runtime.nim; src/donkey/adapters/channel/wechat_runtime.nim; src/donkey/adapters/channel/feishu_runtime.nim; tests/core/t_command_routing.nim; tests/core/t_command_catalog.nim; tests/adapters/channel/t_telegram_runtime.nim; tasks/prd.json\nTests: added routing/catalog regressions for /verbose, /exec, /queue, /usage, /tts and a Telegram runtime regression proving those commands are handled explicitly instead of falling through to the conversation fallback\nValidation: nim c -r tests/core/t_command_routing.nim (pass); nim c -r tests/core/t_command_catalog.nim (pass); nim c -r tests/adapters/channel/t_telegram_runtime.nim (pass); nim c -f src/donkey.nim (pass)\nRisks: the five commands still use placeholder replies rather than full configuration flows; this story intentionally prevents fallback leakage first and leaves full implementations for later\nCarry forward: /verbose, /exec, /queue, /usage, and /tts are now routed as UI commands with explicit non-fallback replies across the lightweight text-channel handlers.",
+      "dependsOn": [
+        "US-022"
+      ]
     }
   ]
 }
