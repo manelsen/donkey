@@ -11,10 +11,11 @@
 ## Concrete tasks shipped here:
 ##   deliverDueReminders — polls MemoryRuntimePort for due reminders, delivers via outbox fn.
 
-import std/[json]
+import std/[json, options]
 import chronos
 import ../ports/memory
 import ../core/types
+import ../domain/memory/commitment_pure
 
 # ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -22,6 +23,22 @@ type
   HeartbeatTask* = proc() {.gcsafe.}
 
   ReminderOutboxFn* = proc(userId, channel, message: string) {.gcsafe.}
+
+  CommitmentSnapshot* = object
+    userId*:      UserId
+    commitment*:  Commitment
+
+  CommitmentReview* = object
+    userId*:       UserId
+    commitmentId*: string
+    status*:       CommitmentStatus
+    score*:        float32
+    overdue*:      bool
+    sourceText*:   string
+
+  CommitmentSnapshotLoader* = proc(): seq[CommitmentSnapshot] {.gcsafe.}
+  CommitmentReviewSink* = proc(review: CommitmentReview) {.gcsafe.}
+  NowSecFn* = proc(): int64 {.gcsafe.}
 
   HeartbeatEntry = object
     name: string
@@ -45,6 +62,41 @@ proc runAllTasks*(reg: HeartbeatRegistry) =
   for e in reg.entries:
     try: e.task()
     except CatchableError: discard
+
+proc reviewCommitments*(snapshots: seq[CommitmentSnapshot];
+                        nowSec: int64): seq[CommitmentReview] =
+  for snapshot in snapshots:
+    let commitment = snapshot.commitment
+    result.add(CommitmentReview(
+      userId: snapshot.userId,
+      commitmentId: commitment.id,
+      status: commitment.status,
+      score: commitmentScore(commitment, nowSec),
+      overdue: commitment.status == csOpen and commitment.dueAt.isSome and
+               commitment.dueAt.get() < nowSec,
+      sourceText: commitment.sourceText,
+    ))
+
+proc runCommitmentReview*(loadSnapshots: CommitmentSnapshotLoader;
+                          sink: CommitmentReviewSink;
+                          nowSec: int64) =
+  if loadSnapshots == nil or sink == nil:
+    return
+  for review in reviewCommitments(loadSnapshots(), nowSec):
+    try: sink(review)
+    except CatchableError: discard
+
+proc registerCommitmentReviewTask*(reg: var HeartbeatRegistry;
+                                   loadSnapshots: CommitmentSnapshotLoader;
+                                   sink: CommitmentReviewSink;
+                                   nowSecFn: NowSecFn) =
+  reg.registerTask("commitments", proc() {.gcsafe.} =
+    runCommitmentReview(
+      loadSnapshots,
+      sink,
+      if nowSecFn != nil: nowSecFn() else: 0'i64,
+    )
+  )
 
 # ── Concrete task: reminder delivery ─────────────────────────────────────────
 
