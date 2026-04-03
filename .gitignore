@@ -19,6 +19,10 @@ tests/**
 # Build artifacts
 donkey_release
 src/donkey.out
+src/donkey_pg.out
+src/donkey/app/sandbox
+src/donkey/infra/sandbox/wasm
+tests/reranking/t_*_rerank
 src/donkey/app/orchestrator
 docs/
 .ralph-tui/
