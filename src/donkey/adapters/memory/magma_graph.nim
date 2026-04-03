@@ -15,12 +15,13 @@
 
 when defined(withPostgres):
   import db_connector/db_postgres
-  import std/[json, strutils, options]
+  import std/[hashes, json, locks, options, strutils]
 
   const
     MagmaNodesTable = "magma_nodes"
     MagmaEdgesTable = "magma_edges"
     EmbeddingDim = 4096
+    MagmaSchemaCacheSlots = 16
 
   # ── Edge types ─────────────────────────────────────────────────────────────
 
@@ -33,6 +34,11 @@ when defined(withPostgres):
   # ── Types ───────────────────────────────────────────────────────────────────
 
   type
+    MagmaSchemaKey = object
+      hashA: Hash
+      hashB: Hash
+      length: int
+
     MagmaNode* = object
       id*:        string
       userId*:    string
@@ -65,6 +71,35 @@ when defined(withPostgres):
 
     MagmaGraph* = ref object
       dsn: string
+
+  var gMagmaSchemaLock {.global.}: Lock
+  var gMagmaSchemaReady {.global.}: array[MagmaSchemaCacheSlots, MagmaSchemaKey]
+  var gMagmaSchemaReadyCount {.global.}: int
+
+  initLock(gMagmaSchemaLock)
+
+  func schemaKey(dsn: string): MagmaSchemaKey =
+    MagmaSchemaKey(
+      hashA: hash(dsn),
+      hashB: hash("magma:" & dsn),
+      length: dsn.len,
+    )
+
+  proc hasCachedSchema(dsn: string): bool =
+    let key = schemaKey(dsn)
+    for idx in 0 ..< gMagmaSchemaReadyCount:
+      if gMagmaSchemaReady[idx] == key:
+        return true
+    false
+
+  proc cacheSchemaReady(dsn: string) =
+    let key = schemaKey(dsn)
+    if hasCachedSchema(dsn):
+      return
+    if gMagmaSchemaReadyCount >= MagmaSchemaCacheSlots:
+      return
+    gMagmaSchemaReady[gMagmaSchemaReadyCount] = key
+    inc gMagmaSchemaReadyCount
 
   # ── Schema ──────────────────────────────────────────────────────────────────
 
@@ -117,12 +152,21 @@ when defined(withPostgres):
   # ── Migration ───────────────────────────────────────────────────────────────
 
   proc migrate*(g: MagmaGraph) =
+    acquire(gMagmaSchemaLock)
+    defer: release(gMagmaSchemaLock)
+    if hasCachedSchema(g.dsn):
+      return
     let db = g.openDb()
     defer: db.close()
+    try:
+      db.exec(sql"SET client_min_messages TO WARNING")
+    except CatchableError:
+      discard
     for stmt in schemaSql().split(';'):
       let s = stmt.strip()
       if s.len > 0:
         db.exec(sql(s))
+    cacheSchemaReady(g.dsn)
 
   # ── Node CRUD ───────────────────────────────────────────────────────────────
 

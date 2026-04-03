@@ -58,8 +58,6 @@ func parseVectorLiteral*(literal: string): seq[float32] =
 
 when defined(withPostgres):
   import db_connector/db_postgres
-  import std/[os]
-  import ../../core/app_meta
   import ../../core/pipeops
   import ../../core/types
   import ../../core/memory/embedder

@@ -1,7 +1,7 @@
 ## Heartbeat unit tests — pure logic only, no real timers.
 ## Tests: task registration, tick counting, reminder delivery logic.
 
-import std/[json, os, strutils, times, unittest, options, sequtils]
+import std/[os, strutils, times, unittest, options, sequtils]
 import donkey/app/heartbeat
 import donkey/app/contemplation
 import donkey/core/types
