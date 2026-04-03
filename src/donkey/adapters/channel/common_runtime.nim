@@ -26,13 +26,20 @@ const ModelMenu* = [
 
 type
   ChannelPrefs* = object
-    provider*: string
-    model*:    string
-    thinking*: string
-    budget*:   string
+    provider*:  string
+    model*:     string
+    thinking*:  string
+    budget*:    string
+    reasoning*: string  ## "on" | "off"
 
 func defaultChannelPrefs*(): ChannelPrefs =
-  ChannelPrefs(provider: "zai-coding", model: "", thinking: "off", budget: "balanced")
+  ChannelPrefs(
+    provider: "zai-coding",
+    model: "",
+    thinking: "off",
+    budget: "balanced",
+    reasoning: "on"
+  )
 
 func emptyCatalogResult*(): ModelCatalogResult =
   ModelCatalogResult(entries: @[], source: mcsFallback, fetchedAtUnix: 0)
@@ -65,6 +72,8 @@ proc parseChannelPrefs*(preferencesMd: string): ChannelPrefs =
         result.thinking = t["thinking"].getStr("off")
       if t.hasKey("budget"):
         result.budget = normalizeBudgetPolicy(t["budget"].getStr("balanced"))
+      if t.hasKey("reasoning"):
+        result.reasoning = t["reasoning"].getStr("on")
   except:
     discard
 
@@ -387,9 +396,11 @@ proc buildTextStatusText*(memory: MdFileAdapter;
                   elif uptimeSec < 3600: $(uptimeSec div 60) & "m"
                   else: $(uptimeSec div 3600) & "h " & $((uptimeSec mod 3600) div 60) & "m"
   let providerLine = buildProviderStatusLine(memory, userId)
+  let prefs = memory.loadChannelPrefs(userId)
   "Status\n\n" &
     providerLine & "\n" &
-    "Thinking: " & thinking & "\n" &
+    "Thinking: " & prefs.thinking & "\n" &
+    "Reasoning: " & prefs.reasoning & "\n" &
     "Tools: " & $toolsCount & "\n" &
     "Sessões ativas: " & $sessionCount & "\n" &
     "Memórias: " & $memLines & " linhas\n" &
@@ -404,9 +415,10 @@ func buildWhoamiText*(userId: UserId; sessionId, channelId: string): string =
 proc buildMenuButtons*(): seq[seq[(string, string)]] =
   ## Main menu buttons grouped by category.
   @[
-    @[("🔍 Modelos", "models"), ("🧠 Thinking", "think"), ("💰 Budget", "budget")],
-    @[("📖 Ajuda", "help"), ("📊 Status", "status"), ("🩺 Doctor", "doctor")],
-    @[("🗑️ Esquecer", "forget"), ("♻️ Reset", "reset"), ("🔗 My Code", "mycode")]
+    @[("🔍 Modelos", "models"), ("🧠 Thinking", "think"), ("💭 Reasoning", "reasoning")],
+    @[("💰 Budget", "budget"), ("📖 Ajuda", "help"), ("📊 Status", "status")],
+    @[("🩺 Doctor", "doctor"), ("🗑️ Esquecer", "forget"), ("♻️ Reset", "reset")],
+    @[("🔗 My Code", "mycode")]
   ]
 
 func buildMenuText*(): string =
@@ -417,7 +429,7 @@ proc buildConfigButtons*(): seq[seq[(string, string)]] =
   ## Configuration menu buttons.
   @[
     @[("🔍 Selecionar Provider", "models")],
-    @[("🧠 Nível de Thinking", "think")],
+    @[("🧠 Nível de Thinking", "think"), ("💭 Toggle Reasoning", "reasoning")],
     @[("💰 Policy de Budget", "budget")],
     @[("← voltar ao menu", "menu")]
   ]
@@ -429,6 +441,7 @@ proc buildConfigText*(memory: MdFileAdapter; userId: UserId): string =
   "*Provider:* `" & currProv & "`\n" &
   "*Modelo:* `" & currModel & "`\n" &
   "*Thinking:* `" & prefs.thinking & "`\n" &
+  "*Reasoning:* `" & prefs.reasoning & "`\n" &
   "*Budget:* `" & prefs.budget & "`\n\n" &
   "Use os botões abaixo para alterar as configurações."
 
@@ -492,10 +505,12 @@ func buildHelpText*(interactiveUi: bool): string =
     (if interactiveUi:
        "/models — seleciona o modelo de IA\n" &
        "/think — controla o nível de raciocínio\n" &
+       "/reasoning — exibe o pensamento do modelo\n" &
        "/budget — controla a policy de custo/qualidade\n"
      else:
        "/models [provider model] — vê ou troca o modelo de IA\n" &
        "/think [level] — vê ou troca o nível de raciocínio\n" &
+       "/reasoning [on/off] — vê ou troca a exibição do pensamento\n" &
        "/budget [policy] — vê ou troca a policy de custo/qualidade\n") &
     "/memory — exibe memórias salvas\n" &
     "/forget — apaga as memórias salvas\n" &

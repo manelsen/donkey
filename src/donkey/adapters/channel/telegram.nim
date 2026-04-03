@@ -5,14 +5,15 @@
 ##
 ## Quirks absorbed here:
 ##   - getUpdates long-polling: offset, limit, timeout params
-##   - sendMessage supports parse_mode=Markdown
+##   - sendMessage supports parse_mode=HTML (converted from Markdown)
 ##   - ack advances the offset (offset = update_id + 1)
 ##
 ## IdentityResolver is now in adapters/identity — maps telegram_user_id → UserId.
 
-import std/[json, os, sequtils, strutils]
+import std/[json, sequtils, strutils]
 import ../../core/types
 import ../../core/pipeops
+import ../../core/telegram_format
 import ../../domain/message
 import ../../domain/channels/telegram_pure
 import ../../ports/http
@@ -66,13 +67,14 @@ proc post(a: TelegramAdapter; meth: string;
 
 proc sendChunk(a: TelegramAdapter; chatId: int64; text, replyTo: string;
                firstChunk: bool): Result[void, string] =
-  ## Sends one chunk with Markdown, falling back to plain text on parse error.
-  var body = %* {"chat_id": chatId, "text": text, "parse_mode": "Markdown"}
+  ## Sends one chunk with HTML (converted from MD), falling back to plain text.
+  let html = markdownToTelegramHtml(text)
+  var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
   if firstChunk and replyTo.len > 0:
     body["reply_to_message_id"] = %replyTo
   let res = a.post("sendMessage", body)
   if res.isOk: return ok()
-  ## Fallback: plain text (covers malformed markdown from LLM output).
+  ## Fallback: plain text
   var plain = %* {"chat_id": chatId, "text": text}
   if firstChunk and replyTo.len > 0:
     plain["reply_to_message_id"] = %replyTo
@@ -123,10 +125,11 @@ proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
     for (label, data) in row:
       cols.add(%* {"text": label, "callback_data": data})
     rows.add(%cols)
+  let html = markdownToTelegramHtml(text)
   var body = %* {
     "chat_id":    chatId,
-    "text":       text,
-    "parse_mode": "Markdown",
+    "text":       html,
+    "parse_mode": "HTML",
     "reply_markup": {"inline_keyboard": rows},
   }
   if replyTo.len > 0:
@@ -136,6 +139,7 @@ proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
   if res.isOk:
     return ok($res.value["result"]["message_id"].getInt())
   body.delete("parse_mode")
+  body["text"] = %text
   let plain = ? a.post("sendMessage", body)
   ok($plain["result"]["message_id"].getInt())
 
@@ -173,7 +177,8 @@ proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, str
 
   var lastId = ""
   for i, chunk in splitChunks(msg.text, TelegramMaxChars):
-    var body = %* {"chat_id": chatId, "text": chunk, "parse_mode": "Markdown"}
+    let html = markdownToTelegramHtml(chunk)
+    var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
     if i == 0 and msg.replyTo.len > 0:
       body["reply_to_message_id"] = %msg.replyTo
     let res = a.post("sendMessage", body)
@@ -182,6 +187,7 @@ proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, str
     else:
       # Fallback
       body.delete("parse_mode")
+      body["text"] = %chunk
       let res2 = ? a.post("sendMessage", body)
       lastId = $res2["result"]["message_id"].getInt()
   ok(lastId)
@@ -192,11 +198,13 @@ proc editMessage*(a: TelegramAdapter; userId: UserId;
   let rawId = a.resolver.reverseChannel(userId, ckTelegram)
   if rawId.len == 0: return err("editMessage: no id for " & $userId)
   let chatId = parseBiggestInt(rawId).int64
-  var body = %* {"chat_id": chatId, "message_id": parseBiggestInt(msgId), "text": text, "parse_mode": "Markdown"}
+  let html = markdownToTelegramHtml(text)
+  var body = %* {"chat_id": chatId, "message_id": parseBiggestInt(msgId), "text": html, "parse_mode": "HTML"}
   let res = a.post("editMessageText", body)
   if res.isOk: return ok()
   # Fallback
   body.delete("parse_mode")
+  body["text"] = %text
   discard ? a.post("editMessageText", body)
   ok()
 
@@ -234,17 +242,19 @@ proc editKeyboardText*(a: TelegramAdapter; userId: UserId;
   if rawId.len == 0: return err("editKeyboardText: no id for " & $userId)
   let chatId = parseBiggestInt(rawId).int64
   let markup = %* {"inline_keyboard": buttons.mapIt(it.mapIt(%* {"text": it[0], "callback_data": it[1]}))}
+  let html = markdownToTelegramHtml(text)
   var body = %* {
     "chat_id":    chatId,
     "message_id": parseBiggestInt(msgId),
-    "text":       text,
-    "parse_mode": "Markdown",
+    "text":       html,
+    "parse_mode": "HTML",
     "reply_markup": markup
   }
   let res = a.post("editMessageText", body)
   if res.isOk: return ok()
   # Fallback
   body.delete("parse_mode")
+  body["text"] = %text
   discard ? a.post("editMessageText", body)
   ok()
 
@@ -275,6 +285,7 @@ proc registerBotCommands*(a: TelegramAdapter): Result[void, string] =
     {"command": "mycode",  "description": "Gera código de linkagem cross-channel"},
     {"command": "models",  "description": "Seleciona modelo de IA"},
     {"command": "think",   "description": "Controla o nível de raciocínio"},
+    {"command": "reasoning", "description": "Exibe o pensamento do modelo (blockquote)"},
     {"command": "memory",  "description": "Exibe memórias salvas"},
     {"command": "forget",  "description": "Apaga as memórias salvas"},
     {"command": "status",  "description": "Snapshot da sessão atual"},
@@ -312,6 +323,12 @@ proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
 proc ack*(a: TelegramAdapter; msgId: string) =
   ## No-op: Telegram offset is advanced during receive().
   discard
+
+proc answerCallback*(a: TelegramAdapter; callbackId: string): Result[void, string] =
+  ## Acknowledges a callback query to remove the loading state in the client.
+  if callbackId.len == 0: return ok()
+  discard ? a.post("answerCallbackQuery", %* {"callback_id": callbackId})
+  ok()
 
 proc newTelegramAdapter*(token: string; identityPath: string;
                          apiBase = ""; pollTimeout = DefaultPollTimeout): TelegramAdapter =

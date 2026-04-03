@@ -121,11 +121,12 @@ func toInbound*(r: TgParseResult; userId: UserId;
   ## Converts a TgParseResult + resolved UserId into an InboundMessage.
   ## `mediaUrl` is the resolved download URL (empty when no attachment).
   InboundMessage(
-    userId:    userId,
-    channel:   ckTelegram,
-    channelId: r.channelId,
-    text:      r.text,
-    mediaUrl:  mediaUrl,
+    userId:     userId,
+    channel:    ckTelegram,
+    channelId:  r.channelId,
+    callbackId: r.callbackId,
+    text:       r.text,
+    mediaUrl:   mediaUrl,
   )
 
 func maxNextOffset*(currentOffset: int64; updates: JsonNode): int64 =

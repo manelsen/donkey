@@ -69,6 +69,7 @@ type
     lcaHelpText
     lcaShowMemory
     lcaContinueLink
+    lcaReasoningToggle
 
   CallbackKind* = enum
     cbkUnknown
@@ -80,6 +81,18 @@ type
     cbkHelpPage
     cbkPersonality
     cbkName
+    cbkModels
+    cbkThink
+    cbkBudget
+    cbkHelp
+    cbkStatus
+    cbkDoctor
+    cbkForget
+    cbkReset
+    cbkMyCode
+    cbkReasoning
+    cbkMenu
+    cbkConfig
 
   CallbackRoute* = enum
     cbrNone
@@ -101,9 +114,9 @@ type
 func decideCommandRoute*(kind: CommandKind): CommandRoute =
   case kind
   of cmdStart, cmdMenu, cmdWhoami, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
-     cmdMyCode, cmdContinue:
+     cmdMyCode, cmdContinue, cmdReasoning:
     crLocal
-  of cmdDebug, cmdReset, cmdCompact, cmdNew, cmdVerbose, cmdReasoning,
+  of cmdDebug, cmdReset, cmdCompact, cmdNew, cmdVerbose,
      cmdExec, cmdQueue, cmdUsage, cmdStop, cmdRestart, cmdBind, cmdTts:
     crSessionTask
   of cmdConfig, cmdTasks, cmdAgents, cmdPoll, cmdModels, cmdThink, cmdBudget:
@@ -119,7 +132,7 @@ func decideCommandRoute*(kind: CommandKind): CommandRoute =
   of cmdNone:
     crNone
 
-func newCommandDecision(kind: CommandKind; value = ""): CommandDecision =
+func newCommandDecision*(kind: CommandKind; value = ""): CommandDecision =
   CommandDecision(kind: kind, route: decideCommandRoute(kind), value: value)
 
 func stripBotMention*(text: string): string =
@@ -212,12 +225,14 @@ func decideLocalCommandAction*(decision: CommandDecision): LocalCommandAction =
     lcaShowMemory
   of cmdContinue:
     lcaContinueLink
+  of cmdReasoning:
+    lcaReasoningToggle
   else:
     lcaNone
-
 func decideCallbackRoute*(kind: CallbackKind): CallbackRoute =
   case kind
-  of cbkModelsProvider, cbkModelsSet, cbkModelsPage, cbkModelsBack, cbkThinkSet, cbkHelpPage:
+  of cbkModelsProvider, cbkModelsSet, cbkModelsPage, cbkModelsBack, cbkThinkSet, cbkHelpPage,
+     cbkModels, cbkThink, cbkBudget, cbkHelp, cbkStatus, cbkDoctor, cbkForget, cbkReset, cbkMyCode, cbkReasoning, cbkMenu, cbkConfig:
     cbrUi
   of cbkPersonality, cbkName:
     cbrSessionTask
@@ -239,6 +254,21 @@ func newCallbackDecision(kind: CallbackKind;
   )
 
 func parseCallbackData*(data: string): CallbackDecision =
+  case data
+  of "models":    return newCallbackDecision(cbkModels)
+  of "think":     return newCallbackDecision(cbkThink)
+  of "budget":    return newCallbackDecision(cbkBudget)
+  of "help":      return newCallbackDecision(cbkHelp)
+  of "status":    return newCallbackDecision(cbkStatus)
+  of "doctor":    return newCallbackDecision(cbkDoctor)
+  of "forget":    return newCallbackDecision(cbkForget)
+  of "reset":     return newCallbackDecision(cbkReset)
+  of "mycode":    return newCallbackDecision(cbkMyCode)
+  of "reasoning": return newCallbackDecision(cbkReasoning)
+  of "menu":      return newCallbackDecision(cbkMenu)
+  of "config":    return newCallbackDecision(cbkConfig)
+  else: discard
+
   if data.startsWith("models:provider:"):
     return newCallbackDecision(cbkModelsProvider, provider = data[16 .. ^1])
   if data.startsWith("models:set:"):
@@ -289,6 +319,8 @@ func commandTaskKind*(decision: CommandDecision): TaskKind =
   case decision.kind
   of cmdDebug:
     tkDebugToggle
+  of cmdReasoning:
+    tkReasoningToggle
   of cmdReset:
     tkReset
   of cmdCompact:
@@ -317,7 +349,7 @@ func isSessionTaskCommand*(kind: CommandKind): bool =
   decideCommandRoute(kind) == crSessionTask
 
 func isUiCommand*(kind: CommandKind): bool =
-  kind in {cmdConfig, cmdTasks, cmdAgents, cmdPoll, cmdModels, cmdThink, cmdBudget}
+  kind in {cmdConfig, cmdTasks, cmdAgents, cmdPoll, cmdModels, cmdThink, cmdBudget, cmdReasoning}
 
 func isStatusCommand*(kind: CommandKind): bool =
   kind == cmdStatus

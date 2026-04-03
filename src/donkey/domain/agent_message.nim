@@ -24,6 +24,7 @@ type
     tkStop               ## abort current turn and return to idle
     tkRestart            ## alias for reset/new
     tkBind               ## associate chat with personality
+    tkReasoningToggle    ## toggle chain-of-thought visibility
 
   AgentMessage* = object
     kind*:     AgentMessageKind
