@@ -74,10 +74,17 @@ suite "Command Catalog":
   test "new commands exist in catalog":
     let catalog = newCommandCatalog()
     let newCmds = @["/menu", "/whoami", "/config", "/verbose", "/reasoning",
-                   "/exec", "/allowlist", "/queue", "/usage", "/tasks",
+                   "/exec", "/allowlist", "/queue", "/usage", "/tts", "/tasks",
                    "/agents", "/poll", "/stop", "/restart", "/bind"]
     for cmd in newCmds:
       check catalog.isValidCommand(cmd) == true
+
+  test "deferred config commands use UI route metadata":
+    let catalog = newCommandCatalog()
+    for name in ["/verbose", "/exec", "/queue", "/usage", "/tts"]:
+      let cmd = catalog.findCommand(name)
+      check cmd.isSome()
+      check cmd.get().route == crUi
 
   test "categoryIcon returns emoji":
     check categoryIcon(ccNavigation) == "📍"

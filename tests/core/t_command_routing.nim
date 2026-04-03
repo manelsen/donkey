@@ -72,9 +72,15 @@ suite "core command routing":
     check isLocalCommand(cmdHelp)
     check isSessionTaskCommand(cmdDebug)
     check isSessionTaskCommand(cmdReset)
+    check not isSessionTaskCommand(cmdVerbose)
     check isUiCommand(cmdModels)
     check isUiCommand(cmdThink)
     check isUiCommand(cmdBudget)
+    check isUiCommand(cmdVerbose)
+    check isUiCommand(cmdExec)
+    check isUiCommand(cmdQueue)
+    check isUiCommand(cmdUsage)
+    check isUiCommand(cmdTts)
     check isPingCommand(cmdPing)
     check isStatusCommand(cmdStatus)
     check not isCoreCommand(cmdNone)
@@ -87,6 +93,11 @@ suite "core command routing":
   test "decideCommandRoute classifies key command families":
     check decideCommandRoute(cmdHelp) == crLocal
     check decideCommandRoute(cmdDebug) == crSessionTask
+    check decideCommandRoute(cmdVerbose) == crUi
+    check decideCommandRoute(cmdExec) == crUi
+    check decideCommandRoute(cmdQueue) == crUi
+    check decideCommandRoute(cmdUsage) == crUi
+    check decideCommandRoute(cmdTts) == crUi
     check decideCommandRoute(cmdModels) == crUi
     check decideCommandRoute(cmdPing) == crPing
     check decideCommandRoute(cmdStatus) == crStatus

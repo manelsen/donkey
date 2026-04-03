@@ -1,8 +1,6 @@
 ## Unified command catalog with metadata for all slash commands.
 
 import std/[strutils, options]
-import ../types
-import ../../domain/agent_message
 import command_routing
 
 type
@@ -30,7 +28,7 @@ const
     # Navigation
     CommandMetadata(name: "/start", description: "Start a conversation", category: ccNavigation, requiresArgs: false, route: crLocal),
     CommandMetadata(name: "/menu", description: "Show grouped command menu", category: ccNavigation, requiresArgs: false, route: crLocal),
-    CommandMetadata(name: "/new", description: "Clear history, start fresh", category: ccNavigation, requiresArgs: false, route: crSessionTask),
+    CommandMetadata(name: "/new", description: "Archive current session and start fresh", category: ccNavigation, requiresArgs: false, route: crSessionTask),
     CommandMetadata(name: "/whoami", description: "Show current session id", category: ccNavigation, requiresArgs: false, route: crLocal),
 
     # Configuration
@@ -38,12 +36,13 @@ const
     CommandMetadata(name: "/model", description: "Switch model", category: ccConfiguration, requiresArgs: false, route: crUi),
     CommandMetadata(name: "/think", description: "Set thinking level", category: ccConfiguration, requiresArgs: false, route: crUi),
     CommandMetadata(name: "/budget", description: "Set budget policy", category: ccConfiguration, requiresArgs: false, route: crUi),
-    CommandMetadata(name: "/verbose", description: "Set verbose level", category: ccConfiguration, requiresArgs: false, route: crSessionTask),
+    CommandMetadata(name: "/verbose", description: "Set verbose level", category: ccConfiguration, requiresArgs: false, route: crUi),
     CommandMetadata(name: "/reasoning", description: "Set reasoning output", category: ccConfiguration, requiresArgs: false, route: crSessionTask),
-    CommandMetadata(name: "/exec", description: "Set exec policy", category: ccConfiguration, requiresArgs: false, route: crSessionTask),
+    CommandMetadata(name: "/exec", description: "Set exec policy", category: ccConfiguration, requiresArgs: false, route: crUi),
     CommandMetadata(name: "/allowlist", description: "Show allowlist", category: ccConfiguration, requiresArgs: false, route: crStatus),
-    CommandMetadata(name: "/queue", description: "Set queue policy", category: ccConfiguration, requiresArgs: false, route: crSessionTask),
-    CommandMetadata(name: "/usage", description: "Set usage footer mode", category: ccConfiguration, requiresArgs: false, route: crSessionTask),
+    CommandMetadata(name: "/queue", description: "Set queue policy", category: ccConfiguration, requiresArgs: false, route: crUi),
+    CommandMetadata(name: "/usage", description: "Set usage footer mode", category: ccConfiguration, requiresArgs: false, route: crUi),
+    CommandMetadata(name: "/tts", description: "Configure text-to-speech mode", category: ccConfiguration, requiresArgs: false, route: crUi),
 
     # Status
     CommandMetadata(name: "/status", description: "Show model and stats", category: ccStatus, requiresArgs: false, route: crStatus),
@@ -57,7 +56,7 @@ const
     CommandMetadata(name: "/doctor", description: "Memory diagnostics", category: ccMemory, requiresArgs: false, route: crLocal),
 
     # Session
-    CommandMetadata(name: "/reset", description: "Reset session", category: ccSession, requiresArgs: false, route: crSessionTask),
+    CommandMetadata(name: "/reset", description: "Reset bootstrap and rerun onboarding", category: ccSession, requiresArgs: false, route: crSessionTask),
     CommandMetadata(name: "/compact", description: "Compact context now", category: ccSession, requiresArgs: false, route: crSessionTask),
     CommandMetadata(name: "/restart", description: "Restart session", category: ccSession, requiresArgs: false, route: crSessionTask),
     CommandMetadata(name: "/stop", description: "Stop active task", category: ccSession, requiresArgs: false, route: crSessionTask),

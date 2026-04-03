@@ -30,7 +30,8 @@ func qqHelpText*(kind: QQBackendKind): string =
     "- `/doctor` diagnóstico do sistema\n" &
     "- `/mycode` gera código de linkagem\n" &
     "- `/continue <code>` conecta este QQ a outra sessão\n" &
-    "- `/reset` reinicia a conversa atual"
+    "- `/new` arquiva a conversa atual e começa outra\n" &
+    "- `/reset` reinicia o bootstrap e roda onboarding de novo"
 
 func qqDirectModelProvider*(kind: QQBackendKind;
                             command: CommandDecision): string =
@@ -52,10 +53,7 @@ proc qqModelPickerTitle*(provider: string;
                          page: int;
                          entries: seq[ModelCatalogEntry];
                          catalog: ModelCatalogResult): string =
-  qqPickerText(
-    buildModelPageTitle(provider, page, entries),
-    buildCatalogSourceText(catalog),
-  )
+  buildModelPageText(provider, page, entries, catalog)
 
 func qqProviderPickerTitle*(): string =
   qqPickerText("Escolha o provider", "Selecione a família de modelos para abrir o catálogo.")
@@ -196,6 +194,15 @@ proc handleQQUiCommand(msg: InboundMessage;
   of cmdBudget:
     let reply = memory.applyBudgetTextCommand(msg.userId, command.value).valueOr: error
     qqAdapter.send(OutboundMessage(userId: msg.userId, channel: ckQQ, text: reply, replyTo: msg.channelId)).isOkOr:
+      discard
+    true
+  of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
+    qqAdapter.send(OutboundMessage(
+      userId: msg.userId,
+      channel: ckQQ,
+      text: buildDeferredUiCommandText(command.kind),
+      replyTo: msg.channelId,
+    )).isOkOr:
       discard
     true
   else:

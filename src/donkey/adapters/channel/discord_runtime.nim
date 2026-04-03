@@ -121,8 +121,7 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
       let (currProv, currModel) = memory.getCurrentProviderModel(userId)
       let catalog = modelCatalogLoader(providerOnly).valueOr: emptyCatalogResult()
       let entries = sortModelCatalog(normalizeModelCatalog(providerOnly, catalog.entries))
-      let title = buildModelPageTitle(providerOnly, 0, entries) &
-        "\n" & buildCatalogSourceText(catalog)
+      let title = buildModelPageText(providerOnly, 0, entries, catalog)
       let buttons = buildModelPageButtons(providerOnly, entries, currProv, currModel, 0)
       if kbdId.len > 0 and event.interactionId.len == 0:
         dcAdapter.smartEditKeyboard(event, userId, kbdId, title, buttons).isOkOr:
@@ -171,6 +170,9 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
     let reply = memory.applyBudgetTextCommand(userId, command.value).valueOr: error
     sendDiscordReply(event, dcAdapter, userId, reply, logger)
     true
+  of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
+    sendDiscordReply(event, dcAdapter, userId, buildDeferredUiCommandText(command.kind), logger)
+    true
   else:
     false
 
@@ -196,8 +198,7 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
     if kbdId.len > 0:
       dcAdapter.smartEditKeyboard(
         event, userId, kbdId,
-        buildModelPageTitle(callback.provider, 0, entries) &
-          "\n" & buildCatalogSourceText(catalog),
+        buildModelPageText(callback.provider, 0, entries, catalog),
         buildModelPageButtons(callback.provider, entries, currProv, currModel, 0)).isOkOr:
           core_log.log(logger, core_log.lvlError, "dc model menu: " & error)
     true
@@ -227,8 +228,7 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
     if kbdId.len > 0:
       dcAdapter.smartEditKeyboard(
         event, userId, kbdId,
-        buildModelPageTitle(callback.provider, callback.page, entries) &
-          "\n" & buildCatalogSourceText(catalog),
+        buildModelPageText(callback.provider, callback.page, entries, catalog),
         buildModelPageButtons(callback.provider, entries, currProv, currModel, callback.page)).isOkOr:
           core_log.log(logger, core_log.lvlError, "dc model page: " & error)
     true

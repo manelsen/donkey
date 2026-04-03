@@ -81,6 +81,8 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
             memory.applyThinkTextCommand(userId, command.value).valueOr: error
           of cmdBudget:
             memory.applyBudgetTextCommand(userId, command.value).valueOr: error
+          of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
+            buildDeferredUiCommandText(command.kind)
           else:
             ""
         if reply.len > 0:

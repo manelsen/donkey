@@ -2,6 +2,7 @@ import std/[algorithm, os, sequtils, strutils, times]
 import parsetoml
 import results
 import ../../core/pipeops
+import ../../core/commands/command_routing
 import ../../core/providers/smart_routing
 import ../../adapters/memory/md_file
 import ../../domain/message
@@ -20,6 +21,7 @@ const ModelMenu* = [
   ("groq",       @["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b"]),
   ("openrouter", @["openai/gpt-4o-mini", "openai/gpt-4o", "anthropic/claude-opus-4-6"]),
   ("anthropic",  @["claude-opus-4-6",   "claude-sonnet-4-6"]),
+  ("zai-anthropic", @["glm-4.7", "glm-4.6", "glm-4.5", "glm-4.5-air"]),
   ("gemini",     @["gemini-2.5-flash",  "gemini-2.5-pro"]),
   ("minimax",    @["MiniMax-M2",        "MiniMax-Text-01"]),
 ]
@@ -48,6 +50,13 @@ func availableProvidersFromEnv(): ProviderAvailability =
   ProviderAvailability(
     openrouter: getEnv("OPENROUTER_API_KEY").len > 0,
     anthropic: getEnv("ANTHROPIC_API_KEY").len > 0,
+    zaiAnthropic: getEnv(
+      "ZAI_ANTHROPIC_API_KEY",
+      getEnv(
+        "ANTHROPIC_AUTH_TOKEN",
+        getEnv("ZAI_CODING_API_KEY", getEnv("ZAI_API_KEY", getEnv("ZHIPU_API_KEY")))
+      )
+    ).len > 0,
     gemini: getEnv("GEMINI_API_KEY").len > 0,
     minimax: getEnv("MINIMAX_API_KEY").len > 0,
     zai: getEnv("ZAI_API_KEY").len > 0,
@@ -159,9 +168,23 @@ proc buildModelButtons*(memory: MdFileAdapter;
 
 func normalizeModelCatalog*(provider: string;
                             entries: seq[ModelCatalogEntry]): seq[ModelCatalogEntry] =
+  let wantedFamily =
+    case provider
+    of "zai", "zai-coding", "zai-anthropic":
+      "zai"
+    else:
+      provider
+  var seen: seq[string] = @[]
   for entry in entries:
-    if entry.providerName == provider:
+    let entryFamily =
+      case entry.providerName
+      of "zai", "zai-coding", "zai-anthropic":
+        "zai"
+      else:
+        entry.providerName
+    if entryFamily == wantedFamily and entry.modelName notin seen:
       result.add(entry)
+      seen.add(entry.modelName)
 
 func sortModelCatalog*(entries: seq[ModelCatalogEntry]): seq[ModelCatalogEntry] =
   result = entries
@@ -197,6 +220,14 @@ proc buildCatalogSourceText*(catalog: ModelCatalogResult): string =
     "Fonte: " & sourceText
   else:
     "Fonte: " & sourceText & " (" & relativeAgeText(getTime().toUnix() - catalog.fetchedAtUnix) & ")"
+
+proc buildModelPageText*(provider: string;
+                         page: int;
+                         entries: seq[ModelCatalogEntry];
+                         catalog: ModelCatalogResult): string =
+  result = buildModelPageTitle(provider, page, entries) & "\n" & buildCatalogSourceText(catalog)
+  if entries.len == 0:
+    result.add("\n\nNenhum modelo disponível para este provider no catálogo atual.")
 
 func buildModelPageButtons*(provider: string;
                             entries: seq[ModelCatalogEntry];
@@ -261,6 +292,21 @@ proc buildProviderCatalogText(provider: string;
     result.add("\nNenhum modelo listado no catálogo atual.")
   result.add("\n" & buildCatalogSourceText(catalog))
   result.add("\n\nUse `/models " & provider & " <model>` para trocar.")
+
+func buildDeferredUiCommandText*(kind: CommandKind): string =
+  case kind
+  of cmdVerbose:
+    "Ajuste fino de verbose ainda não foi exposto por slash command. Use `/debug` para alternar o modo de debug."
+  of cmdExec:
+    "A policy de exec ainda não foi exposta por slash command. Ajuste isso via configuração do runtime."
+  of cmdQueue:
+    "A policy de fila ainda não foi exposta por slash command."
+  of cmdUsage:
+    "O modo de rodapé de usage ainda não foi exposto por slash command."
+  of cmdTts:
+    "TTS ainda não está disponível por slash command neste canal."
+  else:
+    ""
 
 func parseThinkArgs*(value: string): Result[string, string] =
   let level = value.strip.toLowerAscii()
@@ -388,7 +434,6 @@ proc buildTextStatusText*(memory: MdFileAdapter;
                           toolsCount: int;
                           sessionCount: int;
                           daemonStartMs: int64): string =
-  let thinking = memory.getCurrentThinkLevel(userId)
   let ctx = memory.loadContext(userId)
   let memLines = ctx.memoryMd.countLines()
   let uptimeSec = (nowMs() - daemonStartMs) div 1_000
@@ -473,7 +518,8 @@ func buildHelpPages*(): seq[(string, string)] =
     ("Conversa",
       "`/start` — apresentação\n" &
       "`/help` — esta mensagem\n" &
-      "`/reset` — reinicia a conversa atual\n" &
+      "`/new` — arquiva a conversa atual e começa outra\n" &
+      "`/reset` — reinicia o bootstrap e roda onboarding de novo\n" &
       "`/memory` — exibe memórias salvas\n" &
       "`/forget` — apaga as memórias salvas"),
     ("Modelos & Config",
@@ -501,7 +547,8 @@ func buildHelpText*(interactiveUi: bool): string =
   "Donkey — comandos disponíveis:\n\n" &
     "/start — apresentação\n" &
     "/help — esta mensagem\n" &
-    "/reset — reinicia a conversa atual\n" &
+    "/new — arquiva a conversa atual e começa outra\n" &
+    "/reset — reinicia o bootstrap e roda onboarding de novo\n" &
     (if interactiveUi:
        "/models — seleciona o modelo de IA\n" &
        "/think — controla o nível de raciocínio\n" &
@@ -610,25 +657,57 @@ proc buildDoctorReport*(memory: MdFileAdapter;
   
   report
 
+proc buildMemoryBootstrapSnapshot(userMd, preferencesMd, sourceLabel: string): string =
+  var sections: seq[string]
+  if sourceLabel.len > 0:
+    sections.add(sourceLabel)
+  if userMd.strip.len > 0:
+    sections.add("👤 Perfil\n" & userMd.strip)
+  if preferencesMd.strip.len > 0:
+    sections.add("⚙️ Preferências\n" & preferencesMd.strip)
+  sections.add("📝 Memória episódica\nNenhuma memória salva ainda.")
+  sections.join("\n\n")
+
 proc buildMemoryViewText*(memory: MdFileAdapter; userId: UserId): string =
   let markdownPath = memory.memoryMdPath(userId)
   let markdownText =
     if fileExists(markdownPath): readFile(markdownPath).strip
     else: ""
+  let markdownUserText =
+    if fileExists(memory.userMdPath(userId)): readFile(memory.userMdPath(userId)).strip
+    else: ""
+  let markdownPrefsText =
+    if fileExists(memory.preferencesMdPath(userId)): readFile(memory.preferencesMdPath(userId)).strip
+    else: ""
   when defined(withPostgres):
     if memory.magmaDsn.len > 0:
       try:
         let magma = newMagmaMemoryAdapter(memory.magmaDsn, noopDoctorEmbedFn)
-        let graphText = magma.loadContext(userId).memoryMd.strip
+        let graphCtx = magma.loadContext(userId)
+        let graphText = graphCtx.memoryMd.strip
         if graphText.len > 0:
           return "🧠 Multigraph Memory\n" & graphText
+        if graphCtx.userMd.strip.len > 0 or graphCtx.preferencesMd.strip.len > 0:
+          return buildMemoryBootstrapSnapshot(
+            graphCtx.userMd,
+            graphCtx.preferencesMd,
+            "🧠 Multigraph Memory",
+          )
       except CatchableError:
         discard
       if markdownText.len > 0:
         return "📄 Markdown fallback\n" & markdownText
+      if markdownUserText.len > 0 or markdownPrefsText.len > 0:
+        return buildMemoryBootstrapSnapshot(
+          markdownUserText,
+          markdownPrefsText,
+          "📄 Markdown fallback",
+        )
       return "Nenhuma memória salva ainda."
   if markdownText.len > 0:
-    markdownText
+    return markdownText
+  if markdownUserText.len > 0 or markdownPrefsText.len > 0:
+    return buildMemoryBootstrapSnapshot(markdownUserText, markdownPrefsText, "")
   else:
     "Nenhuma memória salva ainda."
 

@@ -1,4 +1,4 @@
-import std/[os, strutils, times, unittest]
+import std/[os, sequtils, strutils, times, unittest]
 import results
 import donkey/adapters/channel/common_runtime
 import donkey/adapters/memory/md_file
@@ -16,6 +16,9 @@ suite "common_runtime":
     check parsed[0] == "gemini"
     check parsed[1] == "gemini-2.5-pro"
     check parseModelsArgs("gemini nope").isErr
+    let zaiAnthropic = parseModelsArgs("zai-anthropic glm-4.7").get()
+    check zaiAnthropic[0] == "zai-anthropic"
+    check zaiAnthropic[1] == "glm-4.7"
 
   test "parseModelsProviderArg validates provider-only route":
     check parseModelsProviderArg("groq").get() == "groq"
@@ -54,6 +57,27 @@ suite "common_runtime":
     check text.contains("Provider: groq")
     check text.contains("`free-model` [free]")
     check text.contains("Fonte: live")
+
+  test "normalizeModelCatalog treats ZAI provider aliases as the same catalog family":
+    let normalized = normalizeModelCatalog("zai-anthropic", @[
+      ModelCatalogEntry(providerName: "zai-coding", modelName: "glm-4.7", label: "GLM 4.7", available: true),
+      ModelCatalogEntry(providerName: "zai-anthropic", modelName: "glm-4.7", label: "GLM 4.7 duplicate", available: true),
+      ModelCatalogEntry(providerName: "zai", modelName: "glm-5", label: "GLM 5", available: true),
+    ])
+    check normalized.len == 2
+    check normalized.anyIt(it.modelName == "glm-4.7")
+    check normalized.anyIt(it.modelName == "glm-5")
+
+  test "buildModelPageText shows explicit empty state when catalog has no models":
+    let text = buildModelPageText(
+      "zai-anthropic",
+      0,
+      @[],
+      ModelCatalogResult(source: mcsLive, fetchedAtUnix: getTime().toUnix()),
+    )
+    check text.contains("Modelos de zai-anthropic")
+    check text.contains("Fonte: live")
+    check text.contains("Nenhum modelo disponível para este provider no catálogo atual.")
 
   test "applyThinkTextCommand persists level":
     let tmpDir = getTempDir() / "donkey_common_runtime_think"
@@ -221,3 +245,28 @@ when defined(withPostgres):
       let view = buildMemoryViewText(memory, userId)
       check view.contains("Markdown fallback")
       check view.contains("markdown fallback memory")
+
+    test "buildMemoryViewText shows profile and preferences when episodic memory is empty":
+      setupGraph()
+      cleanGraph()
+      let tmpDir = getTempDir() / "donkey_common_runtime_memory_profile_only"
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+      createDir(tmpDir)
+      defer:
+        if dirExists(tmpDir):
+          removeDir(tmpDir)
+
+      let memory = MdFileAdapter(paddocksDir: tmpDir, magmaDsn: testDsn)
+      let userId = UserId("u-common-memory-profile-only")
+      let magma = newMagmaMemoryAdapter(testDsn, fakeEmbedFn)
+      magma.saveUserMd(userId, "# Void\n**Timezone:** America/Sao_Paulo")
+      magma.savePreferences(userId, "language = \"pt-BR\"")
+
+      let view = buildMemoryViewText(memory, userId)
+      check view.contains("Multigraph Memory")
+      check view.contains("👤 Perfil")
+      check view.contains("America/Sao_Paulo")
+      check view.contains("⚙️ Preferências")
+      check view.contains("language = \"pt-BR\"")
+      check view.contains("Nenhuma memória salva ainda.")

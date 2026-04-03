@@ -116,10 +116,11 @@ func decideCommandRoute*(kind: CommandKind): CommandRoute =
   of cmdStart, cmdMenu, cmdWhoami, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
      cmdMyCode, cmdContinue, cmdReasoning:
     crLocal
-  of cmdDebug, cmdReset, cmdCompact, cmdNew, cmdVerbose,
-     cmdExec, cmdQueue, cmdUsage, cmdStop, cmdRestart, cmdBind, cmdTts:
+  of cmdDebug, cmdReset, cmdCompact, cmdNew,
+     cmdStop, cmdRestart, cmdBind:
     crSessionTask
-  of cmdConfig, cmdTasks, cmdAgents, cmdPoll, cmdModels, cmdThink, cmdBudget:
+  of cmdConfig, cmdTasks, cmdAgents, cmdPoll, cmdModels, cmdThink, cmdBudget,
+     cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
     crUi
   of cmdAllowlist:
     crStatus
@@ -349,7 +350,8 @@ func isSessionTaskCommand*(kind: CommandKind): bool =
   decideCommandRoute(kind) == crSessionTask
 
 func isUiCommand*(kind: CommandKind): bool =
-  kind in {cmdConfig, cmdTasks, cmdAgents, cmdPoll, cmdModels, cmdThink, cmdBudget, cmdReasoning}
+  kind in {cmdConfig, cmdTasks, cmdAgents, cmdPoll, cmdModels, cmdThink, cmdBudget,
+           cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts, cmdReasoning}
 
 func isStatusCommand*(kind: CommandKind): bool =
   kind == cmdStatus
