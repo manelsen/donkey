@@ -20,6 +20,7 @@ type
   SandboxMode* = enum
     smNone   = "none"    ## workingDir only — no OS-level isolation
     smDocker = "docker"  ## ephemeral container with bind-mounted paddock
+    smWasm   = "wasm"    ## embedded wasm3 runtime with WASI
 
   DonkeyConfig* = object
     home*:          string       ## Base dir; default: ~/.donkey
@@ -31,7 +32,9 @@ type
     skillNetPolicy*: seq[SkillNetPolicy]
     sandboxMode*:   SandboxMode  ## bash tool isolation; default: smNone
     sandboxImage*:  string       ## Docker image for smDocker; default: "alpine"
+    wasmShellPath*: string       ## path to .wasm shell for smWasm; default: {home}/shell.wasm
     dmPolicy*:      DmPolicy     ## DM security policy; default: DmPolicyOpen
+    wiring*:        bool         ## Enable advanced session wiring; default: false
 
 func defaultConfig*(home: string): DonkeyConfig =
   DonkeyConfig(
@@ -44,6 +47,8 @@ func defaultConfig*(home: string): DonkeyConfig =
     skillNetPolicy: @[],
     sandboxMode:  smNone,
     sandboxImage: "alpine",
+    wasmShellPath: home & "/shell.wasm",
+    wiring:       false,
   )
 
 func hostOnlyRule*(host: string): WebAccessRule =

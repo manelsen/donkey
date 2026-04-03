@@ -1,9 +1,10 @@
 # Package
-version     = "0.1.0"
-author      = "donkey contributors"
+version = "0.2.0"
+author = "Manelsen"
 description = "AI agent system"
-license     = "MIT"
+license = "MIT"
 srcDir      = "src"
+binDir      = "."
 bin         = @["donkey"]
 
 # Dependencies
@@ -13,9 +14,10 @@ requires "nimcrypto >= 0.6.0"
 requires "parsetoml >= 0.6.0"
 requires "results >= 0.5.0"
 requires "ws >= 0.5.0"
-requires "db_connector >= 0.1.0"  ## PostgreSQL + pgvector + AGE (-d:withPostgres)
-requires "illwill >= 0.4.0"       ## TUI dashboard (donkey tui)
-requires "checksums >= 0.2.0"     ## SHA1 for WeChat webhook signature (replaces deprecated std/sha1)
+requires "db_connector >= 0.1.0" ## PostgreSQL + pgvector + AGE (-d:withPostgres)
+requires "illwill >= 0.4.0" ## TUI dashboard (donkey tui)
+requires "wasm3 >= 0.1.6"
+requires "checksums >= 0.2.0" ## SHA1 for WeChat webhook signature (replaces deprecated std/sha1)
 
 # Tasks
 task test, "Compile and run all tests (execution mode)":
