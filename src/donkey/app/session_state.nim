@@ -30,8 +30,8 @@ type
 
 proc newSessionState*(): SessionState =
   SessionState(
-    todos:       @[],
-    checkpoints: @[],
-    jobs:        initTable[string, JobState](),
-    jobCounter:  0,
+    todos:           @[],
+    checkpoints:     @[],
+    jobs:            initTable[string, JobState](),
+    jobCounter:      0,
   )

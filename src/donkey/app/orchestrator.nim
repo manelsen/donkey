@@ -41,7 +41,6 @@ import ../domain/message
 import ../domain/personality
 import ../domain/more_tools
 import ../config/types as cfgTypes
-import ../adapters/channel/common_runtime
 import ./session_manager
 import ./sandbox
 import ../ports/provider
@@ -51,6 +50,7 @@ import ../ports/tool
 import ./memory_agent
 import ./tool_agent
 import ./session_state
+import ./channel_prefs_parse
 import ./native_tools
 
 export onboarding
@@ -866,24 +866,6 @@ proc buildNativeCtx*(uid: UserId;
     sandboxImage: sandboxImage,
   )
 
-proc handleCancel(memory: MemoryRuntimePort;
-                  memInbox: AsyncQueue[AgentMessage];
-                  toolInbox: AsyncQueue[AgentMessage];
-                  lastUserId: UserId;
-                  sessionId: string;
-                  history: ConversationHistory): Future[void] {.async.} =
-  if $lastUserId != "":
-    safeSaveSession(memory, lastUserId, sessionId, history)
-  await memInbox.put(newCancelMsg())
-  await toolInbox.put(newCancelMsg())
-
-proc persistSessionSnapshot(memory: MemoryRuntimePort;
-                            userId: UserId;
-                            sessionId: string;
-                            history: ConversationHistory) =
-  if $userId == "":
-    return
-  safeSaveSession(memory, userId, sessionId, history)
 
 proc handleGuidedPersonalityChoice(globalOutbox: AsyncQueue[OutboundMessage];
                                    completeFn: CompleteFn;
@@ -1400,14 +1382,15 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
       "  **Response:** " & loopResult.finalText[0 ..< min(loopResult.finalText.len, 500)] & "\n"
     safeAppendMemory(memory, turnSetup.uid, memEntry)
 
-proc handleActorCancel(memory: MemoryRuntimePort;
-                       memInbox: AsyncQueue[AgentMessage];
-                       toolInbox: AsyncQueue[AgentMessage];
-                       sessionId: string;
-                       stateRuntime: OrchestratorState): Future[void] {.async.} =
-  await handleCancel(
-    memory, memInbox, toolInbox,
-    stateRuntime.lastUserId, sessionId, stateRuntime.history)
+proc handleActorCancel(memory:          MemoryRuntimePort;
+                       memInbox:         AsyncQueue[AgentMessage];
+                       toolInbox:        AsyncQueue[AgentMessage];
+                       sessionId:        string;
+                       stateRuntime:     OrchestratorState): Future[void] {.async.} =
+  ## Save history on cancel so mid-turn rebuilds don't lose context.
+  safeSaveSession(memory, stateRuntime.lastUserId, sessionId, stateRuntime.history)
+  await memInbox.put(newCancelMsg())
+  await toolInbox.put(newCancelMsg())
 
 proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
                      session: ptr SessionEntry;
@@ -1447,7 +1430,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
     result |>->
     withControlResult(controlResult)
   if controlResult.handled and msg.taskKind == tkUserMsg:
-    persistSessionSnapshot(memory, uid, sessionId, result.history)
+    safeSaveSession(memory, uid, sessionId, result.history)
   if controlResult.handled or msg.taskKind notin {tkUserMsg}:
     return
 
@@ -1456,7 +1439,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
     completeFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
     providerLabel, sandboxMode, sandboxImage, toolsSuffix,
     state, msg, result)
-  persistSessionSnapshot(memory, uid, sessionId, result.history)
+  safeSaveSession(memory, uid, sessionId, result.history)
 
 proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
                         session: ptr SessionEntry;
@@ -1511,6 +1494,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       clients:        seq[ToolRuntimePort];
                       tools:          seq[ToolDescription];
                       paddockDir:     string;
+                      state:          SessionState;
                       typingFn:       TypingFn    = nil;
                       searchFn:       SearchFn    = nil;
                       log:            Logger      = newLogger("orch");
@@ -1531,7 +1515,6 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
   sandboxLogLevel(sandboxMode, sandboxImage, log)
 
   var stateRuntime = newOrchestratorState()
-  let state = newSessionState()
   let sessionId   = $nowMs()
   pushAgentEvent(AgentEvent(kind: aekSessionStart, summary: "session " & sessionId))
   let toolsSuffix =
