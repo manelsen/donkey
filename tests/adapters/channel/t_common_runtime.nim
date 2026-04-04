@@ -1,7 +1,9 @@
-import std/[os, sequtils, strutils, times, unittest]
+import std/[os, sequtils, strutils, tables, times, unittest]
 import results
 import donkey/adapters/channel/common_runtime
 import donkey/adapters/memory/md_file
+import donkey/config/clawhub_registry
+import donkey/config/skills_registry
 import donkey/domain/message
 import donkey/ports/provider
 when defined(withPostgres):
@@ -143,6 +145,110 @@ suite "common_runtime":
     memory.savePreferences(userId, "thinking = \"high\"\nbudget = \"quality-first\"")
     let text = buildTextStatusText(memory, userId, 3, 1, 0)
     check text.contains("Provider: auto [quality-first]")
+
+  suite "common_runtime skills":
+
+    proc setupInstalledRemoteSkill(home, slug: string;
+                                   scriptsToml = "";
+                                   scriptFile = "main.ts") =
+      let skillDir = remoteSkillDir(home, slug)
+      createDir(skillDir)
+      writeFile(skillDir / "SKILL.md", "# " & slug & "\n")
+      if scriptsToml.len > 0:
+        writeFile(skillDir / "skills.toml", scriptsToml)
+      writeFile(skillDir / scriptFile, "console.log('ok')\n")
+      writeRemoteSkillOrigin(skillDir, RemoteSkillOrigin(
+        version: 1,
+        registry: ClawhubDefaultRegistry,
+        slug: slug,
+        installedVersion: "1.2.3",
+        installedAt: getTime().toUnix(),
+      ))
+      var lock = readRemoteSkillLockfile(home)
+      lock.skills[slug] = RemoteSkillLockEntry(version: "1.2.3", installedAt: getTime().toUnix())
+      writeRemoteSkillLockfile(home, lock)
+
+    test "applySkillTextCommand shows help and list":
+      let home = getTempDir() / "donkey_common_runtime_skill_help"
+      let memory = MdFileAdapter(paddocksDir: home / "paddocks")
+      let userId = UserId("u-common-skill-help")
+      defer:
+        if dirExists(home):
+          removeDir(home)
+
+      discard saveSkillEntry(memory.userSkillsPath(userId), SkillManifest(
+        name: "local-browser",
+        version: "0.1.0",
+        script: "/tmp/browser.ts",
+      ))
+      setupInstalledRemoteSkill(home, "remote-browser")
+
+      let help = applySkillTextCommand(memory, userId, "", homeDir = home).get()
+      check help.contains("/skill install <slug>")
+
+      let listing = applySkillTextCommand(memory, userId, "list", homeDir = home).get()
+      check listing.contains("local-browser")
+      check listing.contains("remote-browser")
+
+    test "applySkillTextCommand enables installed remote skills for the current user":
+      let home = getTempDir() / "donkey_common_runtime_skill_enable"
+      let memory = MdFileAdapter(paddocksDir: home / "paddocks")
+      let userId = UserId("u-common-skill-enable")
+      defer:
+        if dirExists(home):
+          removeDir(home)
+
+      setupInstalledRemoteSkill(
+        home,
+        "remote-browser",
+        scriptsToml = """
+[[skill]]
+name = "remote-browser"
+version = "1.2.3"
+script = "main.ts"
+permissions = ["--allow-net=clawhub.ai"]
+""",
+      )
+
+      let reply = applySkillTextCommand(memory, userId, "enable remote-browser", homeDir = home).get()
+      check reply.contains("habilitada")
+      let enabled = loadSkillRegistry(memory.userSkillsPath(userId))
+      check enabled.len == 1
+      check enabled[0].name == "remote-browser"
+      check enabled[0].script == remoteSkillDir(home, "remote-browser") / "main.ts"
+      check enabled[0].permissions == @["--allow-net=clawhub.ai"]
+
+    test "applySkillTextCommand installs and enables remote skills via injected backend":
+      let home = getTempDir() / "donkey_common_runtime_skill_install"
+      let memory = MdFileAdapter(paddocksDir: home / "paddocks")
+      let userId = UserId("u-common-skill-install")
+      defer:
+        if dirExists(home):
+          removeDir(home)
+
+      let fakeInstall =
+        proc(homeDir, registry, slug: string): Result[RemoteSkillOrigin, string] {.gcsafe.} =
+          setupInstalledRemoteSkill(homeDir, slug)
+          ok(RemoteSkillOrigin(
+            version: 1,
+            registry: registry,
+            slug: slug,
+            installedVersion: "1.2.3",
+            installedAt: getTime().toUnix(),
+          ))
+
+      let reply = applySkillTextCommand(
+        memory,
+        userId,
+        "install remote-browser",
+        homeDir = home,
+        installBackend = fakeInstall,
+      ).get()
+
+      check reply.contains("instalada e habilitada")
+      let enabled = loadSkillRegistry(memory.userSkillsPath(userId))
+      check enabled.len == 1
+      check enabled[0].script == remoteSkillDir(home, "remote-browser") / "main.ts"
 
 when defined(withPostgres):
   const testDsn = "host=localhost port=5432 dbname=donkey_test"

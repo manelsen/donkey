@@ -65,6 +65,7 @@ const
 
     # Tools
     CommandMetadata(name: "/help", description: "Show help", category: ccTools, requiresArgs: false, route: crLocal),
+    CommandMetadata(name: "/skill", description: "Search, install, and enable skills", category: ccTools, requiresArgs: false, route: crLocal),
     CommandMetadata(name: "/debug", description: "Toggle debug mode", category: ccTools, requiresArgs: false, route: crSessionTask),
     CommandMetadata(name: "/mycode", description: "Generate link code", category: ccTools, requiresArgs: false, route: crLocal),
     CommandMetadata(name: "/continue", description: "Continue link", category: ccTools, requiresArgs: false, route: crLocal),

@@ -296,6 +296,21 @@ proc handleDiscordEvent*(sm: var SessionManager;
       of lcaStartIntro:
         sendDiscordEmbed(event, dcAdapter, userId,
           "👋 Donkey", buildStartIntroText(), 0x5865F2, logger)
+      of lcaSkillCommand:
+        let reply = applySkillTextCommand(
+          memory,
+          userId,
+          command.value,
+          homeDir = memory.donkeyHomeDir(),
+        ).valueOr:
+          error
+        sendDiscordReply(
+          event,
+          dcAdapter,
+          userId,
+          reply,
+          logger,
+        )
       of lcaShowMenu:
         dcAdapter.sendInteractionKeyboard(
           event.interactionId, event.interactionToken,

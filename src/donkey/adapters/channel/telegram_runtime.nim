@@ -532,6 +532,22 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
     )).isOkOr:
       discard
     return true
+  of lcaSkillCommand:
+    let reply = applySkillTextCommand(
+      memory,
+      msg.userId,
+      command.value,
+      homeDir = memory.donkeyHomeDir(),
+    ).valueOr:
+      error
+    tgAdapter.send(OutboundMessage(
+      userId:  msg.userId,
+      channel: ckTelegram,
+      text:    reply,
+      replyTo: msg.channelId,
+    )).isOkOr:
+      discard
+    return true
   of lcaGenerateLinkCode:
     let code = tgAdapter.resolver.generateLinkCode(msg.userId)
     tgAdapter.send(OutboundMessage(

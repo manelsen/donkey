@@ -151,6 +151,14 @@ suite "core command routing":
     check result.kind == cmdWhoami
     check result.route == crLocal
 
+  test "parseCommandText parses /skill command and carries args":
+    let bare = parseCommandText("/skill")
+    check bare.kind == cmdSkill
+    check bare.route == crLocal
+    let withArgs = parseCommandText("/skill search browser")
+    check withArgs.kind == cmdSkill
+    check withArgs.value == "search browser"
+
   test "decideLocalCommandAction maps menu to show menu":
     let decision = CommandDecision(kind: cmdMenu)
     let action = decideLocalCommandAction(decision)
@@ -160,6 +168,11 @@ suite "core command routing":
     let decision = CommandDecision(kind: cmdWhoami)
     let action = decideLocalCommandAction(decision)
     check action == lcaShowWhoami
+
+  test "decideLocalCommandAction maps skill to skill handler":
+    let decision = CommandDecision(kind: cmdSkill, value: "list")
+    let action = decideLocalCommandAction(decision)
+    check action == lcaSkillCommand
 
   test "isCoreCommand includes menu and whoami":
     check isCoreCommand(cmdMenu) == true

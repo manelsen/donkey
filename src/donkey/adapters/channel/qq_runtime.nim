@@ -246,6 +246,19 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
         case decideLocalCommandAction(command)
         of lcaStartIntro:
           qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: buildStartIntroText())).isOkOr: discard
+        of lcaSkillCommand:
+          let reply = applySkillTextCommand(
+            memory,
+            userId,
+            command.value,
+            homeDir = memory.donkeyHomeDir(),
+          ).valueOr:
+            error
+          qqAdapter.send(OutboundMessage(
+            userId: userId,
+            channel: ckQQ,
+            text: reply,
+          )).isOkOr: discard
         of lcaGenerateLinkCode:
           qqAdapter.send(OutboundMessage(
             userId: userId,

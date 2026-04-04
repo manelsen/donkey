@@ -85,6 +85,19 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
         case decideLocalCommandAction(command)
         of lcaStartIntro:
           wcReply(wcAdapter, userId, buildStartIntroText())
+        of lcaSkillCommand:
+          let reply = applySkillTextCommand(
+            memory,
+            userId,
+            command.value,
+            homeDir = memory.donkeyHomeDir(),
+          ).valueOr:
+            error
+          wcReply(
+            wcAdapter,
+            userId,
+            reply,
+          )
         of lcaGenerateLinkCode:
           wcMd(wcAdapter, userId, buildWeComMycodeM(
             buildLinkCodeText(wcAdapter.resolver.generateLinkCode(userId))))

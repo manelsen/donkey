@@ -79,6 +79,13 @@ suite "Command Catalog":
     for cmd in newCmds:
       check catalog.isValidCommand(cmd) == true
 
+  test "/skill exists in catalog as a local tools command":
+    let catalog = newCommandCatalog()
+    let cmd = catalog.findCommand("/skill")
+    check cmd.isSome()
+    check cmd.get().route == crLocal
+    check cmd.get().category == ccTools
+
   test "deferred config commands use UI route metadata":
     let catalog = newCommandCatalog()
     for name in ["/verbose", "/exec", "/queue", "/usage", "/tts"]:

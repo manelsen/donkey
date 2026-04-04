@@ -10,6 +10,7 @@ type
     cmdStart
     cmdMenu
     cmdWhoami
+    cmdSkill
     cmdForget
     cmdDoctor
     cmdHelp
@@ -63,6 +64,7 @@ type
     lcaStartIntro
     lcaShowMenu
     lcaShowWhoami
+    lcaSkillCommand
     lcaGenerateLinkCode
     lcaClearMemory
     lcaDoctorReport
@@ -113,7 +115,7 @@ type
 
 func decideCommandRoute*(kind: CommandKind): CommandRoute =
   case kind
-  of cmdStart, cmdMenu, cmdWhoami, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
+  of cmdStart, cmdMenu, cmdWhoami, cmdSkill, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
      cmdMyCode, cmdContinue, cmdReasoning:
     crLocal
   of cmdDebug, cmdReset, cmdCompact, cmdNew,
@@ -158,6 +160,7 @@ func parseCommandText*(text: string): CommandDecision =
   of "/start": newCommandDecision(cmdStart)
   of "/menu": newCommandDecision(cmdMenu)
   of "/whoami": newCommandDecision(cmdWhoami)
+  of "/skill": newCommandDecision(cmdSkill)
   of "/forget": newCommandDecision(cmdForget)
   of "/doctor": newCommandDecision(cmdDoctor)
   of "/help": newCommandDecision(cmdHelp)
@@ -196,6 +199,8 @@ func parseCommandText*(text: string): CommandDecision =
       newCommandDecision(cmdThink)
     elif cmd == "/budget":
       newCommandDecision(cmdBudget)
+    elif cmd.startsWith("/skill "):
+      newCommandDecision(cmdSkill, cmd[7 .. ^1].strip)
     elif cmd.startsWith("/continue "):
       newCommandDecision(cmdContinue, cmd[10 .. ^1].strip)
     elif cmd.startsWith("/callback "):
@@ -214,6 +219,8 @@ func decideLocalCommandAction*(decision: CommandDecision): LocalCommandAction =
     lcaShowMenu
   of cmdWhoami:
     lcaShowWhoami
+  of cmdSkill:
+    lcaSkillCommand
   of cmdMyCode:
     lcaGenerateLinkCode
   of cmdForget:
@@ -339,7 +346,7 @@ func commandTaskKind*(decision: CommandDecision): TaskKind =
 
 func isCoreCommand*(kind: CommandKind): bool =
   kind in {
-    cmdStart, cmdMenu, cmdWhoami, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
+    cmdStart, cmdMenu, cmdWhoami, cmdSkill, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
     cmdDebug, cmdReset, cmdMyCode, cmdContinue
   }
 

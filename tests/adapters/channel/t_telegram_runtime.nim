@@ -51,6 +51,11 @@ thinking = "high"
   test "parseCommandText parses reset":
     check parseCommandText("/reset").kind == cmdReset
 
+  test "parseCommandText parses skill":
+    let cmd = parseCommandText("/skill search browser")
+    check cmd.kind == cmdSkill
+    check cmd.value == "search browser"
+
   test "handleTelegramTaskCommand delegates to ensure callback when provided":
     var sm: SessionManager
     sm.init()
@@ -217,6 +222,31 @@ thinking = "high"
     let buttons = buildThinkButtons(memory, userId)
     check buttons.len == 1
     check buttons[0].anyIt(it[0] == "✓ medium")
+
+  test "handleTelegramCoreCommand handles /skill locally":
+    var sm: SessionManager
+    sm.init()
+    var tgAdapter = TelegramAdapter(
+      resolver: newIdentityResolver(getTempDir() / "donkey_tg_runtime_resolver_skill_test"),
+    )
+    var kbdMsgIds = initTable[string, string]()
+    let tmpDir = getTempDir() / "donkey_tg_runtime_skill"
+    let memory = MdFileAdapter(paddocksDir: tmpDir)
+    defer:
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+    let msg = InboundMessage(
+      userId: UserId("u-tg-skill"),
+      channel: ckTelegram,
+      channelId: "42",
+      text: "/skill",
+    )
+    let completeBuilder =
+      proc(preferencesMd: string): CompleteFn {.gcsafe.} = nil
+    var msgSeq = 0
+    check handleTelegramCoreCommand(
+      sm, msg, newCommandDecision(cmdSkill), tgAdapter, kbdMsgIds, memory,
+      completeBuilder, 0, 0, msgSeq)
 
   test "buildTelegramStatusText includes provider and thinking":
     let tmpDir = getTempDir() / "donkey_tg_runtime_status"

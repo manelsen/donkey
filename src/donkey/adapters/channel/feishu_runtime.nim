@@ -42,6 +42,15 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
           case decideLocalCommandAction(command)
           of lcaStartIntro:
             buildStartIntroText()
+          of lcaSkillCommand:
+            let reply = applySkillTextCommand(
+              memory,
+              userId,
+              command.value,
+              homeDir = memory.donkeyHomeDir(),
+            ).valueOr:
+              error
+            reply
           of lcaGenerateLinkCode:
             buildLinkCodeText(fsAdapter.resolver.generateLinkCode(userId))
           of lcaClearMemory:

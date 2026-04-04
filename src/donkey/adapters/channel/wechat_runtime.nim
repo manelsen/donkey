@@ -51,6 +51,18 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
         case decideLocalCommandAction(command)
         of lcaStartIntro:
           wchAdapter.sendWeChatReply(userId, buildStartIntroText())
+        of lcaSkillCommand:
+          let reply = applySkillTextCommand(
+            memory,
+            userId,
+            command.value,
+            homeDir = memory.donkeyHomeDir(),
+          ).valueOr:
+            error
+          wchAdapter.sendWeChatReply(
+            userId,
+            reply,
+          )
         of lcaGenerateLinkCode:
           wchAdapter.sendWeChatReply(userId, buildLinkCodeText(wchAdapter.resolver.generateLinkCode(userId)))
         of lcaClearMemory:
