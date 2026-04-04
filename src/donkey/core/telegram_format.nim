@@ -8,12 +8,7 @@
 ## This module converts common Markdown to these tags and escapes <, > and &.
 
 import std/[strutils, options]
-
-func escapeHtml*(text: string): string =
-  ## Escapes <, > and & for Telegram HTML.
-  result = text.replace("&", "&amp;")
-               .replace("<", "&lt;")
-               .replace(">", "&gt;")
+import ../domain/text_format
 
 func findTripleBacktick(md: string, start: int): Option[int] =
   let idx = md.find("```", start)
@@ -168,6 +163,44 @@ func markdownToTelegramHtml*(md: string): string =
           i = closeParen + 1
           lineStart = false
           continue
+
+    # ── Tables | col | → clean text lines ──
+    # Markdown tables: | A | B | \n |---|---|\n | 1 | 2 |
+    # Telegram has no table HTML; strip syntax and format as clean text.
+    if md[i] == '|':
+      var tableLines: seq[string] = @[]
+      var j = i
+      var foundTable = false
+      while j < md.len:
+        let lineEnd = md.find('\n', j)
+        let lineEndIdx = if lineEnd >= 0: lineEnd else: md.len
+        let line = md[j ..< lineEndIdx].strip
+        if line.len > 0 and line[0] == '|':
+          foundTable = true
+          let isSep = (let body = line[1 ..< line.len]; body.len > 0 and body.allCharsInSet({'-', '|', ' ', ':'}))
+          if not isSep:
+            var cells = line
+            if cells[^1] == '|': cells = cells[0 ..< ^1]
+            if cells.len > 0 and cells[0] == '|': cells = cells[1 ..< cells.len]
+            let parts = cells.split('|')
+            var cleanParts: seq[string]
+            for p in parts:
+              let stripped = p.strip
+              if stripped.len > 0: cleanParts.add(stripped)
+            tableLines.add(cleanParts.join(" • "))
+        elif foundTable:
+          break
+        if lineEnd < 0:
+          j = md.len
+          break
+        j = lineEnd + 1
+      if foundTable and tableLines.len > 0:
+        for t in tableLines:
+          buf.add(t)
+          buf.add('\n')
+        i = j
+        lineStart = true
+        continue
 
     # ── Normal character ──
     if md[i] == '\n':
