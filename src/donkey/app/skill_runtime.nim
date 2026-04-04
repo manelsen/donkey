@@ -85,7 +85,7 @@ proc inferRemoteSkillManifest(skillDir, slug, version: string): Result[seq[Skill
     candidates.add(path)
 
   if candidates.len == 0:
-    return err("Nenhum script Deno executável encontrado no bundle remoto `" & slug & "`.")
+    return err("Bundle remoto `" & slug & "` vazio ou sem scripts Deno/JS — bundle corrupto ou registry retornou zip vazio.")
 
   var preferred: seq[string] = @[]
   for path in candidates:

@@ -326,6 +326,8 @@ proc validateInstalledSkillDir*(skillDir: string; remoteFiles: seq[RemoteSkillVe
   ok()
 
 proc extractZipToDir*(zipBytes: seq[byte]; targetDir: string): Result[void, string] =
+  if zipBytes.len == 0:
+    return err("Zip bundle está vazio (0 bytes).")
   let tmpZip = targetDir.parentDir / (targetDir.extractFilename & ".tmp.zip")
   try:
     createDir(targetDir.parentDir)
@@ -366,7 +368,7 @@ proc installRemoteSkill*(home, registry, slug: string; force = false): Result[Re
   let validateResult = validateInstalledSkillDir(targetDir, remoteVersion.files)
   if validateResult.isErr:
     if dirExists(targetDir): removeDir(targetDir)
-    return err(validateResult.error)
+    return err("Bundle extraído mas " & validateResult.error & ".")
   let origin = RemoteSkillOrigin(
     version: 1,
     registry: normalizeRegistryUrl(registry),
