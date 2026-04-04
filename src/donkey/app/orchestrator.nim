@@ -165,9 +165,13 @@ func orchToolsSuffix*(tools: seq[ToolDescription]): string =
   result.add "You have access to the following tools. When a task requires one of them, " &
              "call it — do not tell the user you cannot access files, the web, or run commands.\n\n"
   if tools.anyIt(it.name == ManageSkillsToolName):
-    result.add "If the user asks whether you can install skills, enable new capabilities, " &
+    result.add "You can install and enable skills for the current user with `manage_skills`. " &
+               "Never say your toolset is fixed or that you cannot install skills. " &
+               "If the user asks whether you can install skills, how skill installation works, " &
                "or you discover a missing capability that could be provided by a skill, " &
-               "use `manage_skills` instead of claiming your toolset is fixed. " &
+               "use `manage_skills` or explain that you can search/install/enable a skill for them. " &
+               "If the user has not provided a specific skill slug or capability yet, ask what they want to add " &
+               "or offer to search the registry. " &
                "After installing or enabling a skill, tell the user it becomes available on their next message.\n\n"
   for td in tools:
     result.add &"- **{td.name}**: {td.description}\n"

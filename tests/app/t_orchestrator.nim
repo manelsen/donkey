@@ -435,7 +435,11 @@ suite "normal turn helpers":
         schemaJson: ManageSkillsToolSchema,
       )
     ])
+    check suffix.contains("You can install and enable skills")
+    check suffix.contains("how skill installation works")
     check suffix.contains("use `manage_skills`")
+    check suffix.contains("search/install/enable a skill")
+    check suffix.contains("offer to search the registry")
     check suffix.contains("toolset is fixed")
     check suffix.contains("next message")
 

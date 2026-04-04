@@ -96,7 +96,8 @@ suite "tool metadata matches runtime contracts":
   test "ask description mentions interruption on rebuild":
     check AskToolDescription.contains("interruption")
 
-  test "manage_skills description mentions next message activation":
+  test "manage_skills description covers installation guidance and next message activation":
+    check ManageSkillsToolDescription.contains("how to install or enable a skill")
     check ManageSkillsToolDescription.contains("next message")
 
   test "inspect_image description mentions default describe behavior":

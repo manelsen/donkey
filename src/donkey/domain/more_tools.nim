@@ -311,7 +311,8 @@ const
   ManageSkillsToolName* = "manage_skills"
   ManageSkillsToolDescription* =
     "Search the remote skill registry, install remote bundles, and enable or disable skills " &
-    "for the current user. Use this when you need a capability that is not already available. " &
+    "for the current user. Use this when you need a capability that is not already available, " &
+    "or when the user asks how to install or enable a skill. " &
     "Installed or enabled skills enter the runtime on the user's next message."
   ManageSkillsToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
