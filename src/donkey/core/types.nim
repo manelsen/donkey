@@ -10,6 +10,25 @@ type
     ckTelegram, ckDiscord, ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp,
     ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli
 
+  ChannelPrefs* = object
+    ## User preferences for a channel. Defined in core so app/domain can use it
+    ## without depending on the adapter. Parsing lives in adapters/channel/.
+    provider*:  string
+    model*:     string
+    thinking*:  string
+    budget*:    string
+    reasoning*: string  ## "on" | "off"
+
+func defaultChannelPrefs*(): ChannelPrefs =
+  ChannelPrefs(
+    provider: "zai-coding",
+    model: "",
+    thinking: "off",
+    budget: "balanced",
+    reasoning: "on"
+  )
+
+type
   LogLevel* = enum
     lvlDebug, lvlInfo, lvlWarn, lvlError, lvlFatal
 

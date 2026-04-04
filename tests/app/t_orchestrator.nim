@@ -20,6 +20,7 @@ import donkey/app/memory_agent
 import donkey/app/tool_agent
 import donkey/app/orchestrator
 import donkey/app/session_manager
+import donkey/app/session_state
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -203,8 +204,9 @@ suite "OrchestratorAgent":
       let outbox   = newAsyncQueue[OutboundMessage]()
       var session = makeSessionEntry()
       session.inbox = inbox
+      let state = newSessionState()
       asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
-                                 dir / "u42"))
+                                 dir / "u42", state))
       await inbox.put(newTaskMsg("req4", tkUserMsg, "u42", "ping"))
       let reply = await outbox.get()
       await inbox.put(newCancelMsg())
@@ -228,8 +230,9 @@ suite "OrchestratorAgent":
       let outbox = newAsyncQueue[OutboundMessage]()
       var session = makeSessionEntry()
       session.inbox = inbox
+      let state = newSessionState()
       asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubCompleteRetry, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
-                                 dir / "u1"))
+                                 dir / "u1", state))
       await inbox.put(newTaskMsg("req6", tkUserMsg, "u1", "hello"))
       let reply = await outbox.get()
       await inbox.put(newCancelMsg())
@@ -253,8 +256,9 @@ suite "OrchestratorAgent":
       let outbox = newAsyncQueue[OutboundMessage]()
       var session = makeSessionEntry()
       session.inbox = inbox
+      let state = newSessionState()
       asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubCompleteEmpty, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
-                                 dir / "u1"))
+                                 dir / "u1", state))
       await inbox.put(newTaskMsg("req5", tkUserMsg, "u1", "hello"))
       let reply = await outbox.get()
       await inbox.put(newCancelMsg())
@@ -276,8 +280,9 @@ suite "OrchestratorAgent":
       let mem    = MdFileAdapter(paddocksDir: dir)
       var session = makeSessionEntry()
       session.inbox = inbox
+      let state = newSessionState()
       let fut    = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
-                                   dir / "u1")
+                                   dir / "u1", state)
       await inbox.put(newCancelMsg())
       await fut
     waitFor doTest(tmpDir)
@@ -303,9 +308,10 @@ suite "OrchestratorAgent":
             {.cast(gcsafe).}: logMessages.add(e.message))
       var session = makeSessionEntry()
       session.inbox = inbox
+      let state = newSessionState()
       asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
                                  newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-reset",
-                                 log = orchLog))
+                                 state, log = orchLog))
       await inbox.put(newTaskMsg("req-reset-1", tkUserMsg, "u-reset", "ping"))
       let firstReply = await outbox.get()
       await inbox.put(newTaskMsg("req-reset-2", tkReset, "u-reset", ""))
@@ -348,8 +354,9 @@ suite "OrchestratorAgent":
           ok(CompletionResponse(text: "pong", inputTokens: 1, outputTokens: 1))
       var session = makeSessionEntry()
       session.inbox = inbox
+      let state = newSessionState()
       asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
-                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-reset-guard"))
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-reset-guard", state))
       await inbox.put(newTaskMsg("req-reset-1", tkReset, "u-reset-guard", ""))
       let resetReply = await outbox.get()
       await inbox.put(newTaskMsg("req-reset-2", tkUserMsg, "u-reset-guard", "oi"))

@@ -27,22 +27,6 @@ const ModelMenu* = [
   ("minimax",    @["MiniMax-M2",        "MiniMax-Text-01"]),
 ]
 
-type
-  ChannelPrefs* = object
-    provider*:  string
-    model*:     string
-    thinking*:  string
-    budget*:    string
-    reasoning*: string  ## "on" | "off"
-
-func defaultChannelPrefs*(): ChannelPrefs =
-  ChannelPrefs(
-    provider: "zai-coding",
-    model: "",
-    thinking: "off",
-    budget: "balanced",
-    reasoning: "on"
-  )
 
 func emptyCatalogResult*(): ModelCatalogResult =
   ModelCatalogResult(entries: @[], source: mcsFallback, fetchedAtUnix: 0)

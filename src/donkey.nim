@@ -54,6 +54,7 @@ import donkey/app/http_gateway
 import donkey/app/heartbeat
 import donkey/app/outbound_runtime
 import donkey/app/session_manager
+import donkey/app/session_state
 import donkey/app/session_bootstrap
 import donkey/app/doctor
 import donkey/app/setup_wizard
@@ -1360,6 +1361,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                                searchFn: SearchFn) {.gcsafe.} =
   if not plan.decision.startsSessionRuntime:
     return
+  let state = newSessionState()
   if plan.decision.rebuildsSessionRuntime and not plan.oldAskInbox.isNil:
     plan.oldAskInbox.addLastNoWait("__DONKEY_ASK_CANCELLED__")
   if plan.decision.rebuildsSessionRuntime and not plan.oldInbox.isNil:
@@ -1367,7 +1369,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
   asyncSpawn runOrchestrator(plan.entry[].inbox, plan.entry, globalOutbox, memory.toRuntimePort(),
                              bootstrap.completeFn, newStdHttpAdapter(allowlist = cfg.webAllowlist).toRuntimePort(), streamFn,
                              bootstrap.clients, bootstrap.tools,
-                             bootstrap.paddockDir,
+                             bootstrap.paddockDir, state,
                              typingFn, searchFn, log.child("orch"), bootstrap.providerLabel,
                              bootstrap.skillPrompt,
                              sandboxMode, sandboxImage,
@@ -1387,7 +1389,9 @@ proc enqueueSessionMessage*(entry: var SessionEntry;
 proc startSessionIngress*(sm: var SessionManager;
                           msg: InboundMessage;
                           services: SessionIngressServices;
-                          msgSeq: var int): SessionIngressContext {.gcsafe.} =
+                          msgSeq: var int;
+                          taskKind: TaskKind = tkUserMsg;
+                          taskPayload: string = ""): SessionIngressContext {.gcsafe.} =
   let routingHook: RoutingTelemetryHook =
     proc(selection: ProviderSelection;
          prefs: SmartRoutingPrefs;
@@ -1415,6 +1419,22 @@ proc startSessionIngress*(sm: var SessionManager;
   let signature = toolCatalogSignature(
     bootstrap.tools, bootstrap.providerLabel, bootstrap.paddockDir, bootstrap.skillPrompt)
   result = sm.buildSessionIngressContext(msg, signature, msgSeq)
+  if result.plan.decision.shouldRecordChannel:
+    sm.recordChannel(msg.userId, msg.channel, msg.channelId)
+  ## Enqueue task message BEFORE starting the new orchestrator.
+  ## This prevents the orchestrator from receiving a cancel message
+  ## (from the old orchestrator's inbox) before the task.
+  case result.plan.decision.target
+  of sitActorInbox:
+    if taskKind == tkUserMsg:
+      result.plan.entry[].inbox.addLastNoWait(buildSessionTaskMsg(msg, result.msgId))
+    else:
+      result.plan.entry[].inbox.addLastNoWait(newTaskMsg(
+        result.msgId, taskKind, $msg.userId, taskPayload,
+        msg.channel, sessionReplyTo(msg)))
+  of sitAskInbox:
+    result.plan.entry[].awaitingAsk = false
+    result.plan.entry[].askInbox.addLastNoWait(msg.text)
   startSessionOrchestrator(result.plan, services.cfg,
                            services.memory,
                            services.streamFn, bootstrap,
@@ -1426,44 +1446,11 @@ proc startSessionIngress*(sm: var SessionManager;
   elif result.plan.decision.rebuildsSessionRuntime:
     services.log.info("rebuilt session runtime after tool catalog change: " & result.plan.uid)
 
-proc finalizeSessionIngress*(sm: var SessionManager;
-                             ingress: SessionIngressContext;
-                             msg: InboundMessage) =
-  if ingress.plan.decision.shouldRecordChannel:
-    sm.recordChannel(msg.userId, msg.channel, msg.channelId)
-  enqueueSessionMessage(
-    ingress.plan.entry[],
-    msg,
-    ingress.msgId,
-    ingress.plan.decision.target,
-  )
-
-proc finalizeSessionTaskIngress*(sm: var SessionManager;
-                                 ingress: SessionIngressContext;
-                                 msg: InboundMessage;
-                                 taskKind: TaskKind;
-                                 payload: string) =
-  if ingress.plan.decision.shouldRecordChannel:
-    sm.recordChannel(msg.userId, msg.channel, msg.channelId)
-  ingress.plan.entry[].inbox.addLastNoWait(
-    newTaskMsg(
-      ingress.msgId,
-      taskKind,
-      $msg.userId,
-      payload,
-      msg.channel,
-      sessionReplyTo(msg),
-    )
-  )
-
 proc ensureSession(sm:       var SessionManager;
                    msg:      InboundMessage;
                    services: SessionIngressServices;
                    msgSeq:   var int) {.gcsafe.} =
-  ## Creates session + orchestrator on first contact; then enqueues message.
-  ## Fire-and-forget: does NOT wait for reply.
-  let ingress = startSessionIngress(sm, msg, services, msgSeq)
-  finalizeSessionIngress(sm, ingress, msg)
+  discard startSessionIngress(sm, msg, services, msgSeq)
 
 proc ensureSessionTask(sm:       var SessionManager;
                        msg:      InboundMessage;
@@ -1471,8 +1458,7 @@ proc ensureSessionTask(sm:       var SessionManager;
                        msgSeq:   var int;
                        taskKind: TaskKind;
                        payload:  string) {.gcsafe.} =
-  let ingress = startSessionIngress(sm, msg, services, msgSeq)
-  finalizeSessionTaskIngress(sm, ingress, msg, taskKind, payload)
+  discard startSessionIngress(sm, msg, services, msgSeq, taskKind, payload)
 
 proc handleSessionFallback(runtime:      var DaemonRuntime;
                            msg:          InboundMessage;
