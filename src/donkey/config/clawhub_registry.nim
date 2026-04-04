@@ -163,6 +163,18 @@ proc fetchJson*(registry, path: string): Result[JsonNode, string] =
   except CatchableError as e:
     err(e.msg)
 
+proc dumpSkillArtifact*(slug, reason: string; data: string = "") =
+  let path = "/tmp/donkey_skill_" & slug.replace("/", "_") & ".dump"
+  var body = "# donkey skill install post-mortem dump\n"
+  body.add("slug: " & slug & "\n")
+  body.add("reason: " & reason & "\n")
+  body.add("time: " & $getTime().toUnix() & "\n")
+  body.add("data.len: " & $data.len & "\n")
+  if data.len > 0:
+    body.add("\n-- data (first 1024 bytes) --\n")
+    body.add(data[0 .. min(data.high, 1023)])
+  writeFile(path, body)
+
 proc downloadZipBytes*(registry, slug, version: string): Result[seq[byte], string] =
   try:
     let client = newHttpClient()
@@ -177,9 +189,15 @@ proc downloadZipBytes*(registry, slug, version: string): Result[seq[byte], strin
       return err("ClawHub download error " & resp.status & ": " & resp.body)
     let ct = resp.headers.getOrDefault("Content-Type")
     if not ct.startsWith("application/"):
+      dumpSkillArtifact(slug, "Content-Type mismatch: " & ct, resp.body)
       return err("ClawHub download returned Content-Type \"" & ct & "\" — esperado application/zip. Registry pode estar bloqueando ou retornando página de erro.")
-    ok(resp.body.stringToBytes)
+    let bytes = resp.body.stringToBytes
+    if bytes.len == 0:
+      dumpSkillArtifact(slug, "empty zip response, Content-Type: " & ct)
+      return err("ClawHub download retornou corpo vazio.")
+    ok(bytes)
   except CatchableError as e:
+    dumpSkillArtifact(slug, "download exception: " & e.msg)
     err(e.msg)
 
 proc searchRemoteSkills*(registry, query: string; limit = 10): Result[seq[RemoteSkillSearchHit], string] =
@@ -330,8 +348,11 @@ proc validateInstalledSkillDir*(skillDir: string; remoteFiles: seq[RemoteSkillVe
 
 proc extractZipToDir*(zipBytes: seq[byte]; targetDir: string): Result[void, string] =
   if zipBytes.len == 0:
+    let slug = targetDir.extractFilename
+    dumpSkillArtifact(slug, "empty zip bytes at extract time")
     return err("Zip bundle está vazio (0 bytes).")
   let tmpZip = targetDir.parentDir / (targetDir.extractFilename & ".tmp.zip")
+  let slug = targetDir.extractFilename
   try:
     createDir(targetDir.parentDir)
     writeFile(tmpZip, bytesToString(zipBytes))
@@ -341,9 +362,17 @@ proc extractZipToDir*(zipBytes: seq[byte]; targetDir: string): Result[void, stri
       let tarCmd = quoteShellCommand(@["bsdtar", "-xf", tmpZip, "-C", targetDir])
       let (tarOut, tarCode) = execCmdEx(tarCmd)
       if tarCode != 0:
+        dumpSkillArtifact(slug, "unzip+bsdtar failed", outp & "\n" & tarOut)
         return err((outp & "\n" & tarOut).strip())
+    var extracted: seq[string] = @[]
+    for path in walkDirRec(targetDir):
+      extracted.add(path)
+    if extracted.len == 0:
+      dumpSkillArtifact(slug, "zip extracted 0 files (exit 0)", "unzip output: " & outp)
+      return err("Zip extraiu 0 arquivos.")
     ok()
   except CatchableError as e:
+    dumpSkillArtifact(slug, "extract exception: " & e.msg)
     err(e.msg)
   finally:
     if fileExists(tmpZip):
@@ -371,6 +400,8 @@ proc installRemoteSkill*(home, registry, slug: string; force = false): Result[Re
   let validateResult = validateInstalledSkillDir(targetDir, remoteVersion.files)
   if validateResult.isErr:
     if dirExists(targetDir): removeDir(targetDir)
+    let extracted = walkSkillFiles(targetDir)
+    dumpSkillArtifact(slug, "fingerprint mismatch after extract", extracted.join("\n"))
     return err("Bundle extraído mas " & validateResult.error & ".")
   let origin = RemoteSkillOrigin(
     version: 1,
