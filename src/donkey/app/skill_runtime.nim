@@ -85,7 +85,11 @@ proc inferRemoteSkillManifest(skillDir, slug, version: string): Result[seq[Skill
     candidates.add(path)
 
   if candidates.len == 0:
-    return err("Bundle remoto `" & slug & "` vazio ou sem scripts Deno/JS — bundle corrupto ou registry retornou zip vazio.")
+    let hasSkillMd =
+      fileExists(skillDir / "SKILL.md") or fileExists(skillDir / "skill.md")
+    if hasSkillMd:
+      return ok(@[SkillManifest(name: slug, version: version, script: "")])
+    return err("Bundle remoto `" & slug & "` sem SKILL.md nem scripts Deno/JS — bundle corrupto ou registry retornou zip vazio.")
 
   var preferred: seq[string] = @[]
   for path in candidates:
@@ -209,17 +213,32 @@ proc applySkillCommand*(userPaddockDir: string;
     if not dirExists(remoteSkillDir(home, slug)):
       discard installFn(home, registryUrl, slug).valueOr:
         return err(error)
-    let enabled = enableRemoteSkillForUser(userPaddockDir, home, slug).valueOr:
+    let manifests = resolveRemoteSkillManifests(home, slug).valueOr:
       return err(error)
-    ok(
-      "✅ Skill remota instalada e habilitada: `" & slug & "`.\n" &
-      enabled.map(formatSkillManifestLine).join("\n") &
-      "\n\nEla entra no runtime na próxima mensagem sua."
-    )
+    let hasExecutable = manifests.anyIt(it.script.len > 0)
+    if hasExecutable:
+      let enabled = enableRemoteSkillForUser(userPaddockDir, home, slug).valueOr:
+        return err(error)
+      ok(
+        "✅ Skill remota instalada e habilitada: `" & slug & "`.\n" &
+        enabled.map(formatSkillManifestLine).join("\n") &
+        "\n\nEla entra no runtime na próxima mensagem sua."
+      )
+    else:
+      ok(
+        "✅ Skill `" & slug & "` instalada — é uma skill guidance-only (só SKILL.md, sem scripts).\n" &
+        "Seu conteúdo já entra no system prompt automaticamente na próxima mensagem."
+      )
   of "enable":
     if parts.len != 2:
       return err("Use `/skill enable <slug>`.")
     let slug = parts[1]
+    let manifests = resolveRemoteSkillManifests(home, slug).valueOr:
+      return err(error)
+    let hasExecutable = manifests.anyIt(it.script.len > 0)
+    if not hasExecutable:
+      return ok("`" & slug & "` é uma skill guidance-only — não precisa de habilitação. " &
+        "Ela já entra no system prompt automaticamente.")
     let enabled = enableRemoteSkillForUser(userPaddockDir, home, slug).valueOr:
       return err(error)
     ok(
