@@ -242,6 +242,7 @@ func nativeSessionTools*(): seq[ToolDescription] =
     (TodoWriteToolName,     TodoWriteToolDescription,     TodoWriteToolSchema),
     (CheckpointToolName,    CheckpointToolDescription,    CheckpointToolSchema),
     (RewindToolName,        RewindToolDescription,        RewindToolSchema),
+    (ManageSkillsToolName,  ManageSkillsToolDescription,  ManageSkillsToolSchema),
     (TaskToolName,          TaskToolDescription,          TaskToolSchema),
     (SubmitResultToolName,  SubmitResultToolDescription,  SubmitResultToolSchema),
     (ReportFindingToolName, ReportFindingToolDescription, ReportFindingToolSchema),

@@ -49,6 +49,7 @@ const
     "todo_write",
     "checkpoint",
     "rewind",
+    "manage_skills",
   ]
 
   AgentNativeTools* = [

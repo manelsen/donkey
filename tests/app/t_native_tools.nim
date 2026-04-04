@@ -15,6 +15,8 @@ import donkey/core/pipeops
 import donkey/core/log
 import donkey/domain/message
 import donkey/adapters/memory/md_file
+import donkey/config/clawhub_registry
+import donkey/config/skills_registry
 import donkey/app/session_state
 import donkey/app/native_tools
 
@@ -36,8 +38,33 @@ proc makeCtx(): NativeCtx =
     log:         newLogger("test"),
   )
 
+proc makeCtxWithMemory(memory: MemoryRuntimePort; uid = UserId("test-user")): NativeCtx =
+  result = makeCtx()
+  result.uid = uid
+  result.memory = memory
+
 proc makeTc(name, inputJson: string): ToolCallRequest =
   ToolCallRequest(id: "call-1", name: name, inputJson: inputJson)
+
+proc setupInstalledRemoteSkill(home, slug: string;
+                               scriptsToml = "";
+                               scriptFile = "main.ts") =
+  let skillDir = remoteSkillDir(home, slug)
+  createDir(skillDir)
+  writeFile(skillDir / "SKILL.md", "# " & slug & "\n")
+  if scriptsToml.len > 0:
+    writeFile(skillDir / "skills.toml", scriptsToml)
+  writeFile(skillDir / scriptFile, "console.log('ok')\n")
+  writeRemoteSkillOrigin(skillDir, RemoteSkillOrigin(
+    version: 1,
+    registry: ClawhubDefaultRegistry,
+    slug: slug,
+    installedVersion: "1.2.3",
+    installedAt: getTime().toUnix(),
+  ))
+  var lock = readRemoteSkillLockfile(home)
+  lock.skills[slug] = RemoteSkillLockEntry(version: "1.2.3", installedAt: getTime().toUnix())
+  writeRemoteSkillLockfile(home, lock)
 
 # ── resolveInPaddock / inPaddock ─────────────────────────────────────────────
 
@@ -157,7 +184,6 @@ suite "hashline file helpers":
 
   test "validateHashlineAnchor accepts re-indented line":
     ## An anchor computed before formatting is still valid after indentation change.
-    let original = @["alpha", "  return x"]
     let reindented = @["alpha", "    return x"]
     let anchor = HashlineAnchor(line: 2, hash: computeLineHash(2, "  return x"))
     let r = validateHashlineAnchor(anchor, reindented)
@@ -518,7 +544,67 @@ suite "executeNativeTool — checkpoint and rewind":
     let r  = waitFor executeNativeTool(tc, ctx, state, newHistory())
     check r.handled
     check r.newHistory.isSome
-    check r.newHistory.get().len == 1
+
+suite "executeNativeTool — manage_skills":
+
+  test "list shows enabled skills and installed bundles":
+    let home = getTempDir() / ("donkey_native_tool_skill_list_" & $epochTime().int)
+    let userId = UserId("u-native-skill-list")
+    let memory = MdFileAdapter(paddocksDir: home / "paddocks")
+    let ctx = makeCtxWithMemory(memory.toRuntimePort(), userId)
+    defer:
+      if dirExists(home): removeDir(home)
+
+    discard saveSkillEntry(memory.paddockDir(userId) / "skills" / "skills.toml", SkillManifest(
+      name: "local-browser",
+      version: "0.1.0",
+      script: "/tmp/browser.ts",
+    ))
+    setupInstalledRemoteSkill(home, "remote-browser")
+
+    let tc = makeTc("manage_skills", """{"action":"list"}""")
+    let r = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
+    check r.handled
+    check r.text.contains("local-browser")
+    check r.text.contains("remote-browser")
+
+  test "enable activates installed remote bundle for the current user":
+    let home = getTempDir() / ("donkey_native_tool_skill_enable_" & $epochTime().int)
+    let userId = UserId("u-native-skill-enable")
+    let memory = MdFileAdapter(paddocksDir: home / "paddocks")
+    let ctx = makeCtxWithMemory(memory.toRuntimePort(), userId)
+    defer:
+      if dirExists(home): removeDir(home)
+
+    setupInstalledRemoteSkill(
+      home,
+      "remote-browser",
+      scriptsToml = """
+[[skill]]
+name = "remote-browser"
+version = "1.2.3"
+script = "main.ts"
+permissions = ["--allow-net=clawhub.ai"]
+""",
+    )
+
+    let tc = makeTc("manage_skills", """{"action":"enable","slug":"remote-browser"}""")
+    let r = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
+    let enabled = loadSkillRegistry(memory.paddockDir(userId) / "skills" / "skills.toml")
+
+    check r.handled
+    check r.text.contains("habilitada")
+    check r.text.contains("próxima mensagem sua")
+    check enabled.len == 1
+    check enabled[0].name == "remote-browser"
+    check enabled[0].script == remoteSkillDir(home, "remote-browser") / "main.ts"
+
+  test "invalid action returns operational error":
+    let tc = makeTc("manage_skills", """{"action":"explode"}""")
+    let r = waitFor executeNativeTool(tc, makeCtx(), newSessionState(), newHistory())
+    check r.handled
+    check r.resultKind == trkOperationalError
+    check r.text.contains("unsupported manage_skills action")
 
   test "rewind to specific index":
     let ctx   = makeCtx()

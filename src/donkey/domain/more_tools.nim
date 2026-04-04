@@ -306,6 +306,23 @@ const
     "\"index\":{\"type\":\"integer\"," &
     "\"description\":\"Checkpoint index (default: last checkpoint)\"}}}"
 
+# ── manage_skills ─────────────────────────────────────────────────────────────
+const
+  ManageSkillsToolName* = "manage_skills"
+  ManageSkillsToolDescription* =
+    "Search the remote skill registry, install remote bundles, and enable or disable skills " &
+    "for the current user. Use this when you need a capability that is not already available. " &
+    "Installed or enabled skills enter the runtime on the user's next message."
+  ManageSkillsToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"action\":{\"type\":\"string\",\"enum\":[\"help\",\"list\",\"search\",\"install\",\"enable\",\"disable\"]," &
+    "\"description\":\"Skill management action\"}," &
+    "\"query\":{\"type\":\"string\",\"description\":\"Search query for action=search\"}," &
+    "\"slug\":{\"type\":\"string\",\"description\":\"Remote bundle slug for action=install or action=enable\"}," &
+    "\"name\":{\"type\":\"string\",\"description\":\"Enabled skill name for action=disable\"}," &
+    "\"registry\":{\"type\":\"string\",\"description\":\"Optional registry override\"}" &
+    "}}"
+
 # ── task ──────────────────────────────────────────────────────────────────────
 const
   TaskToolName* = "task"

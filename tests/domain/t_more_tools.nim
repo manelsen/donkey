@@ -18,6 +18,7 @@ suite "tool metadata — non-empty":
   test "todo_write": check TodoWriteToolName.len > 0 and TodoWriteToolDescription.len > 0
   test "checkpoint": check CheckpointToolName.len > 0 and CheckpointToolDescription.len > 0
   test "rewind": check RewindToolName.len > 0 and RewindToolDescription.len > 0
+  test "manage_skills": check ManageSkillsToolName.len > 0 and ManageSkillsToolDescription.len > 0
   test "task": check TaskToolName.len > 0 and TaskToolDescription.len > 0
   test "submit_result": check SubmitResultToolName.len > 0 and SubmitResultToolDescription.len > 0
   test "report_finding": check ReportFindingToolName.len > 0 and ReportFindingToolDescription.len > 0
@@ -43,6 +44,7 @@ suite "tool schemas — valid JSON with type=object":
   test "todo_write":   checkSchema(TodoWriteToolSchema)
   test "checkpoint":   checkSchema(CheckpointToolSchema)
   test "rewind":       checkSchema(RewindToolSchema)
+  test "manage_skills": checkSchema(ManageSkillsToolSchema)
   test "task":         checkSchema(TaskToolSchema)
   test "submit_result": checkSchema(SubmitResultToolSchema)
   test "report_finding": checkSchema(ReportFindingToolSchema)
@@ -93,6 +95,9 @@ suite "tool metadata matches runtime contracts":
 
   test "ask description mentions interruption on rebuild":
     check AskToolDescription.contains("interruption")
+
+  test "manage_skills description mentions next message activation":
+    check ManageSkillsToolDescription.contains("next message")
 
   test "inspect_image description mentions default describe behavior":
     check InspectImageToolDescription.contains("detailed description")

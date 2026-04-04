@@ -32,6 +32,7 @@ import ../ports/provider
 import ../ports/memory
 import ../config/types as cfgTypes
 import ./sandbox
+import ./skill_runtime
 import ../infra/sandbox/wasm_tools
 import ./session_state
 import ./session_manager
@@ -135,6 +136,13 @@ type
 
   FindingContext* = object
     finding*: string
+
+  ManageSkillsContext* = object
+    action*:   string
+    query*:    string
+    slug*:     string
+    name*:     string
+    registry*: string
 
 # ── Context ───────────────────────────────────────────────────────────────────
 
@@ -704,6 +712,15 @@ proc spawnTaskJob*(state: SessionState;
   asyncSpawn runTaskJob(jobFuture, prompt, context, completeFn)
   jobId
 
+proc performManageSkills*(memory: MemoryRuntimePort;
+                          uid: UserId;
+                          value: string;
+                          registry = ""): Result[string, string] {.gcsafe, raises: [].} =
+  try:
+    applySkillCommand(memory.paddockDir(uid), value, registry = registry)
+  except Exception as e:
+    err("Error: " & e.msg)
+
 # ── Main dispatcher ───────────────────────────────────────────────────────────
 
 proc handledText(text: string): NativeToolResult {.gcsafe, raises: [].} =
@@ -977,6 +994,42 @@ proc parseFindingContext*(j: JsonNode): Result[FindingContext, string] {.gcsafe,
   j.requireStringField("finding") >>=
     proc(finding: string): Result[FindingContext, string] =
       ok(FindingContext(finding: finding))
+
+proc parseManageSkillsContext*(j: JsonNode): Result[ManageSkillsContext, string] {.gcsafe, raises: [].} =
+  let action = j.getOrDefault("action").getStr("help").strip.toLowerAscii()
+  case action
+  of "", "help", "list":
+    ok(ManageSkillsContext(action: if action.len == 0: "help" else: action))
+  of "search":
+    j.requireStringField("query") >>=
+      proc(query: string): Result[ManageSkillsContext, string] =
+        ok(ManageSkillsContext(action: action, query: query,
+                               registry: j.getOrDefault("registry").getStr("")))
+  of "install", "enable":
+    j.requireStringField("slug") >>=
+      proc(slug: string): Result[ManageSkillsContext, string] =
+        ok(ManageSkillsContext(action: action, slug: slug,
+                               registry: j.getOrDefault("registry").getStr("")))
+  of "disable", "remove":
+    j.requireStringField("name") >>=
+      proc(name: string): Result[ManageSkillsContext, string] =
+        ok(ManageSkillsContext(action: "disable", name: name,
+                               registry: j.getOrDefault("registry").getStr("")))
+  else:
+    err("Error: unsupported manage_skills action '" & action & "'.")
+
+func buildManageSkillsValue(ctx: ManageSkillsContext): string =
+  case ctx.action
+  of "help", "list":
+    ctx.action
+  of "search":
+    "search " & ctx.query
+  of "install", "enable":
+    ctx.action & " " & ctx.slug
+  of "disable":
+    "disable " & ctx.name
+  else:
+    ctx.action
 
 proc parseTodoOps*(j: JsonNode): Result[JsonNode, string] {.gcsafe, raises: [].} =
   let ops = j.getOrDefault("ops")
@@ -1320,6 +1373,18 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
         buildRewindResult(state, idx)
     return rewindResult.valueOr:
       handledError(error)
+
+  of ManageSkillsToolName:
+    let skillCtx = parseManageSkillsContext(j).valueOr:
+      return handledError(error)
+    let reply = performManageSkills(
+      ctx.memory,
+      ctx.uid,
+      buildManageSkillsValue(skillCtx),
+      registry = skillCtx.registry,
+    ).valueOr:
+      return handledError(error)
+    return handledText(reply)
 
   else:
     return NativeToolResult(handled: false)
