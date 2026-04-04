@@ -175,6 +175,9 @@ proc downloadZipBytes*(registry, slug, version: string): Result[seq[byte], strin
     let resp = client.get(url)
     if resp.status[0] != '2':
       return err("ClawHub download error " & resp.status & ": " & resp.body)
+    let ct = resp.headers.getOrDefault("Content-Type")
+    if not ct.startsWith("application/"):
+      return err("ClawHub download returned Content-Type \"" & ct & "\" — esperado application/zip. Registry pode estar bloqueando ou retornando página de erro.")
     ok(resp.body.stringToBytes)
   except CatchableError as e:
     err(e.msg)
