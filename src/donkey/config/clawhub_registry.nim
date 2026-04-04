@@ -87,7 +87,7 @@ func stringToBytes(text: string): seq[byte] =
   for i, ch in text:
     result[i] = byte(ord(ch))
 
-proc sha256Hex*(bytes: openArray[byte]): string =
+proc sha256Hex*(bytes: openArray[byte]): string {.gcsafe.} =
   let ctx = EVP_MD_CTX_create()
   defer: EVP_MD_CTX_destroy(ctx)
   discard EVP_DigestInit_ex(ctx, EVP_sha256())
@@ -99,10 +99,10 @@ proc sha256Hex*(bytes: openArray[byte]): string =
   for i in 0 ..< digestLen.int:
     result.add(toHex(digest[i].int, 2).toLowerAscii)
 
-proc sha256Hex*(text: string): string =
+proc sha256Hex*(text: string): string {.gcsafe.} =
   sha256Hex(text.stringToBytes)
 
-proc sha256FileHex*(path: string): string =
+proc sha256FileHex*(path: string): string {.gcsafe.} =
   sha256Hex(readFile(path))
 
 proc buildSkillFingerprint*(files: seq[RemoteSkillVersionFile]): string =
@@ -163,7 +163,7 @@ proc fetchJson*(registry, path: string): Result[JsonNode, string] =
   except CatchableError as e:
     err(e.msg)
 
-proc dumpSkillArtifact*(slug, reason: string; data: string = "") =
+proc dumpSkillArtifact*(slug, reason: string; data: string = "") {.gcsafe.} =
   let path = "/tmp/donkey_skill_" & slug.replace("/", "_") & ".dump"
   var body = "# donkey skill install post-mortem dump\n"
   body.add("slug: " & slug & "\n")
@@ -338,7 +338,7 @@ proc buildLocalSkillFiles*(skillDir: string): seq[RemoteSkillVersionFile] =
       size: getFileSize(full).int,
     )
 
-proc validateInstalledSkillDir*(skillDir: string; remoteFiles: seq[RemoteSkillVersionFile]): Result[void, string] =
+proc validateInstalledSkillDirSync*(skillDir: string; remoteFiles: seq[RemoteSkillVersionFile]): Result[void, string] =
   let localFiles = buildLocalSkillFiles(skillDir)
   let localFingerprint = buildSkillFingerprint(localFiles)
   let remoteFingerprint = buildSkillFingerprint(remoteFiles)
@@ -346,7 +346,11 @@ proc validateInstalledSkillDir*(skillDir: string; remoteFiles: seq[RemoteSkillVe
     return err("Installed bundle fingerprint mismatch")
   ok()
 
-proc extractZipToDir*(zipBytes: seq[byte]; targetDir: string): Result[void, string] =
+proc validateInstalledSkillDir*(skillDir: string; remoteFiles: seq[RemoteSkillVersionFile]): Result[void, string] =
+  validateInstalledSkillDirSync(skillDir, remoteFiles)
+
+proc findAndFlattenSkillRoot*(skillDir: string; slug: string): Result[void, string] {.gcsafe.}
+proc extractZipToDir*(zipBytes: seq[byte]; targetDir: string): Result[void, string] {.gcsafe.} =
   if zipBytes.len == 0:
     let slug = targetDir.extractFilename
     dumpSkillArtifact(slug, "empty zip bytes at extract time")
@@ -370,6 +374,10 @@ proc extractZipToDir*(zipBytes: seq[byte]; targetDir: string): Result[void, stri
     if extracted.len == 0:
       dumpSkillArtifact(slug, "zip extracted 0 files (exit 0)", "unzip output: " & outp)
       return err("Zip extraiu 0 arquivos.")
+    let flatRoot = findAndFlattenSkillRoot(targetDir, slug)
+    if flatRoot.isErr:
+      dumpSkillArtifact(slug, "findAndFlattenSkillRoot failed: " & flatRoot.error, extracted.join("\n"))
+      return err(flatRoot.error)
     ok()
   except CatchableError as e:
     dumpSkillArtifact(slug, "extract exception: " & e.msg)
@@ -378,7 +386,24 @@ proc extractZipToDir*(zipBytes: seq[byte]; targetDir: string): Result[void, stri
     if fileExists(tmpZip):
       removeFile(tmpZip)
 
-proc installRemoteSkill*(home, registry, slug: string; force = false): Result[RemoteSkillOrigin, string] =
+proc findAndFlattenSkillRoot*(skillDir: string; slug: string): Result[void, string] =
+  let skillMdInRoot = fileExists(skillDir / "SKILL.md") or fileExists(skillDir / "skill.md")
+  if skillMdInRoot:
+    return ok()
+  for kind, path in walkDir(skillDir):
+    if kind != pcDir: continue
+    let subdir = path
+    if fileExists(subdir / "SKILL.md") or fileExists(subdir / "skill.md"):
+      for k2, src in walkDir(subdir):
+        let fname = src.extractFilename
+        let dst = skillDir / fname
+        if k2 == pcDir: moveDir(src, dst)
+        else: moveFile(src, dst)
+      removeDir(subdir)
+      return ok()
+  ok()
+
+proc installRemoteSkill*(home, registry, slug: string; force = false): Result[RemoteSkillOrigin, string] {.gcsafe.} =
   let latestVersion = fetchRemoteSkillLatestVersion(registry, slug).valueOr:
     return err(error)
   if latestVersion.len == 0:
@@ -397,11 +422,16 @@ proc installRemoteSkill*(home, registry, slug: string; force = false): Result[Re
   if extractResult.isErr:
     if dirExists(targetDir): removeDir(targetDir)
     return err(extractResult.error)
-  let validateResult = validateInstalledSkillDir(targetDir, remoteVersion.files)
+  let validateResult = validateInstalledSkillDirSync(targetDir, remoteVersion.files)
   if validateResult.isErr:
-    if dirExists(targetDir): removeDir(targetDir)
     let extracted = walkSkillFiles(targetDir)
-    dumpSkillArtifact(slug, "fingerprint mismatch after extract", extracted.join("\n"))
+    var remoteFilesListing = ""
+    for f in remoteVersion.files:
+      if remoteFilesListing.len > 0: remoteFilesListing.add("\n")
+      remoteFilesListing.add(f.path & " " & f.sha256)
+    dumpSkillArtifact(slug, "fingerprint mismatch after extract",
+      "--- local files ---\n" & extracted.join("\n") & "\n\n--- remote expected ---\n" & remoteFilesListing)
+    if dirExists(targetDir): removeDir(targetDir)
     return err("Bundle extraído mas " & validateResult.error & ".")
   let origin = RemoteSkillOrigin(
     version: 1,
