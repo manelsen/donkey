@@ -39,6 +39,7 @@ import ../core/agent_events
 import ../domain/agent_message
 import ../domain/message
 import ../domain/personality
+import ../domain/more_tools
 import ../config/types as cfgTypes
 import ../adapters/channel/common_runtime
 import ./session_manager
@@ -158,11 +159,16 @@ proc safeComplete(fn: CompleteFn; req: CompletionRequest
 proc generateNames(completeFn: CompleteFn;
                    traits: PersonalityTraits): seq[string] {.gcsafe, raises: [].}
 
-func orchToolsSuffix(tools: seq[ToolDescription]): string =
+func orchToolsSuffix*(tools: seq[ToolDescription]): string =
   if tools.len == 0: return ""
   result = "\n\n## Available tools\n\n"
   result.add "You have access to the following tools. When a task requires one of them, " &
              "call it — do not tell the user you cannot access files, the web, or run commands.\n\n"
+  if tools.anyIt(it.name == ManageSkillsToolName):
+    result.add "If the user asks whether you can install skills, enable new capabilities, " &
+               "or you discover a missing capability that could be provided by a skill, " &
+               "use `manage_skills` instead of claiming your toolset is fixed. " &
+               "After installing or enabling a skill, tell the user it becomes available on their next message.\n\n"
   for td in tools:
     result.add &"- **{td.name}**: {td.description}\n"
 

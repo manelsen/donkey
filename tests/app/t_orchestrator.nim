@@ -10,6 +10,7 @@ import chronos/asyncsync
 import donkey/domain/agent_message
 import donkey/domain/message
 import donkey/domain/personality
+import donkey/domain/more_tools
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/tooling/tool_loop
@@ -425,6 +426,18 @@ suite "normal turn helpers":
     let systemBase = buildSystemBase(PersonalityTraits(), "", "\n\n## Available tools\n- x")
     check systemBase.contains("Respond in the user's preferred language.")
     check systemBase.contains("## Available tools")
+
+  test "orchToolsSuffix teaches manage_skills for missing capabilities":
+    let suffix = orchToolsSuffix(@[
+      ToolDescription(
+        name: ManageSkillsToolName,
+        description: ManageSkillsToolDescription,
+        schemaJson: ManageSkillsToolSchema,
+      )
+    ])
+    check suffix.contains("use `manage_skills`")
+    check suffix.contains("toolset is fixed")
+    check suffix.contains("next message")
 
   test "buildToolLoopDoneText formats summary":
     check buildToolLoopDoneText(3) == "✅ 3 tool call(s)"
