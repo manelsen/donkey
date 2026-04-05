@@ -310,16 +310,17 @@ const
 const
   ManageSkillsToolName* = "manage_skills"
   ManageSkillsToolDescription* =
-    "Search the remote skill registry, install remote bundles, and enable or disable skills " &
-    "for the current user. Use this when you need a capability that is not already available, " &
-    "or when the user asks how to install or enable a skill. " &
-    "Installed or enabled skills enter the runtime on the user's next message."
+    "Search the remote skill registry, install remote bundles, enable/disable skills, " &
+    "or read the SKILL.md content of any installed remote skill bundle. " &
+    "Use this when you need a capability not already available, " &
+    "or when the user asks how to install or enable a skill, " &
+    "or when you want to read the content of a skill's SKILL.md."
   ManageSkillsToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
-    "\"action\":{\"type\":\"string\",\"enum\":[\"help\",\"list\",\"search\",\"install\",\"enable\",\"disable\"]," &
+    "\"action\":{\"type\":\"string\",\"enum\":[\"help\",\"list\",\"search\",\"install\",\"enable\",\"disable\",\"read\"]," &
     "\"description\":\"Skill management action\"}," &
     "\"query\":{\"type\":\"string\",\"description\":\"Search query for action=search\"}," &
-    "\"slug\":{\"type\":\"string\",\"description\":\"Remote bundle slug for action=install or action=enable\"}," &
+    "\"slug\":{\"type\":\"string\",\"description\":\"Bundle slug for install/enable/read\"}," &
     "\"name\":{\"type\":\"string\",\"description\":\"Enabled skill name for action=disable\"}," &
     "\"registry\":{\"type\":\"string\",\"description\":\"Optional registry override\"}" &
     "}}"

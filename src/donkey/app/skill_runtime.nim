@@ -138,7 +138,8 @@ func buildSkillHelpText*(): string =
   "/skill search <query> — busca skills remotas no ClawHub\n" &
   "/skill install <slug> — baixa e habilita uma skill remota para você\n" &
   "/skill enable <slug> — habilita para você uma skill remota já instalada\n" &
-  "/skill disable <name> — desabilita uma skill do seu runtime"
+  "/skill disable <name> — desabilita uma skill do seu runtime\n" &
+  "/skill read <slug> — lê o SKILL.md de uma skill instalada"
 
 proc buildSkillListText(userPaddockDir, home: string): string =
   let enabled = loadSkillRegistry(userSkillsPath(userPaddockDir))
@@ -255,5 +256,12 @@ proc applySkillCommand*(userPaddockDir: string;
       ok("✅ Skill desabilitada: `" & parts[1] & "`.")
     else:
       err("Skill não habilitada para você: `" & parts[1] & "`.")
+  of "read":
+    if parts.len != 2:
+      return err("Use `/skill read <slug>`.")
+    let slug = parts[1]
+    let loaded = loadInstalledRemoteSkill(home, slug).valueOr:
+      return err(error)
+    ok(loaded.skillMd)
   else:
     err("Comando de skill inválido.\n\n" & buildSkillHelpText())
