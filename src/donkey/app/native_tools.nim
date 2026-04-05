@@ -1015,6 +1015,11 @@ proc parseManageSkillsContext*(j: JsonNode): Result[ManageSkillsContext, string]
       proc(name: string): Result[ManageSkillsContext, string] =
         ok(ManageSkillsContext(action: "disable", name: name,
                                registry: j.getOrDefault("registry").getStr("")))
+  of "read":
+    j.requireStringField("slug") >>=
+      proc(slug: string): Result[ManageSkillsContext, string] =
+        ok(ManageSkillsContext(action: action, slug: slug,
+                               registry: j.getOrDefault("registry").getStr("")))
   else:
     err("Error: unsupported manage_skills action '" & action & "'.")
 
@@ -1028,6 +1033,8 @@ func buildManageSkillsValue(ctx: ManageSkillsContext): string =
     ctx.action & " " & ctx.slug
   of "disable":
     "disable " & ctx.name
+  of "read":
+    "read " & ctx.slug
   else:
     ctx.action
 
