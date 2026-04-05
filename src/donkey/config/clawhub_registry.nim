@@ -339,11 +339,13 @@ proc buildLocalSkillFiles*(skillDir: string): seq[RemoteSkillVersionFile] =
     )
 
 proc validateInstalledSkillDirSync*(skillDir: string; remoteFiles: seq[RemoteSkillVersionFile]): Result[void, string] =
-  let localFiles = buildLocalSkillFiles(skillDir)
-  let localFingerprint = buildSkillFingerprint(localFiles)
-  let remoteFingerprint = buildSkillFingerprint(remoteFiles)
-  if localFingerprint != remoteFingerprint:
-    return err("Installed bundle fingerprint mismatch")
+  for rf in remoteFiles:
+    let localPath = skillDir / rf.path
+    if not fileExists(localPath):
+      return err("Missing expected file: " & rf.path)
+    let actualSha = sha256FileHex(localPath)
+    if actualSha != rf.sha256:
+      return err("SHA256 mismatch for " & rf.path & ": expected " & rf.sha256 & ", got " & actualSha)
   ok()
 
 proc validateInstalledSkillDir*(skillDir: string; remoteFiles: seq[RemoteSkillVersionFile]): Result[void, string] =
