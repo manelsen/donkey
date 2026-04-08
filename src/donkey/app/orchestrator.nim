@@ -866,6 +866,9 @@ proc buildNativeCtx*(uid: UserId;
     sandboxMode:  sandboxMode,
     sandboxRuntimeCmd: sandboxRuntimeCmd,
     sandboxImage: sandboxImage,
+    sandboxAllowHostFallback: cfg.sandboxAllowHostFallback,
+    sandboxAllowNetwork: cfg.sandboxAllowNetwork,
+    sandboxReadOnlyRootfs: cfg.sandboxReadOnlyRootfs,
   )
 
 

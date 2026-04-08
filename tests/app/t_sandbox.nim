@@ -13,6 +13,17 @@ suite "buildOciCmd":
     let cmd = buildOciCmd("ls", "/home/u/paddock", "alpine")
     check cmd.startsWith("docker run --rm")
 
+  test "disables network by default":
+    let cmd = buildOciCmd("ls", "/home/u/paddock", "alpine")
+    check cmd.contains("--network=none")
+
+  test "hardens rootfs by default":
+    let cmd = buildOciCmd("ls", "/home/u/paddock", "alpine")
+    check cmd.contains("--read-only")
+    check cmd.contains("--tmpfs /tmp:rw,noexec,nosuid,size=64m")
+    check cmd.contains("--cap-drop=ALL")
+    check cmd.contains("--security-opt no-new-privileges")
+
   test "bind-mounts paddock to /workspace":
     let cmd = buildOciCmd("ls", "/home/u/paddock", "alpine")
     check cmd.contains("-v /home/u/paddock:/workspace")
@@ -38,6 +49,11 @@ suite "buildOciCmd":
   test "supports non-docker runtimes":
     let cmd = buildOciCmd("ls", "/home/u/paddock", "alpine", "podman")
     check cmd.startsWith("podman run --rm")
+
+  test "allows opting into network and writable rootfs":
+    let cmd = buildOciCmd("ls", "/home/u/paddock", "alpine", "docker", true, false)
+    check "--network=none" notin cmd
+    check "--read-only" notin cmd
 
 suite "buildSandboxPlan":
 
@@ -76,12 +92,10 @@ suite "oci fallback":
         else:
           "ok"
 
-    let result = executeOciPlan("echo ok", "/tmp/p1", "alpine", "docker", runner)
+    let result = executeOciPlan("echo ok", "/tmp/p1", "alpine", "docker", true, false, true, runner)
 
-    check plans.len == 2
+    check plans.len == 1
     check plans[0].command.startsWith("docker run --rm")
-    check plans[1].command == "echo ok"
-    check plans[1].ensureWorkDir
     check result.contains("docker sandbox unavailable")
     check result.endsWith("ok")
 
@@ -92,10 +106,22 @@ suite "oci fallback":
         {.cast(gcsafe).}: plans.add(plan)
         "sh: foo: not found\n[exit 127]"
 
-    let result = executeOciPlan("foo", "/tmp/p1", "alpine", "docker", runner)
+    let result = executeOciPlan("foo", "/tmp/p1", "alpine", "docker", true, false, true, runner)
 
     check plans.len == 1
     check result == "sh: foo: not found\n[exit 127]"
+
+  test "executeOciPlan can refuse host fallback when runtime is unavailable":
+    var plans: seq[SandboxPlan] = @[]
+    let runner: SandboxRunner =
+      proc(plan: SandboxPlan): string {.closure, gcsafe.} =
+        {.cast(gcsafe).}: plans.add(plan)
+        "Cannot connect to the docker daemon.\n[exit 125]"
+
+    let result = executeOciPlan("echo ok", "/tmp/p1", "alpine", "docker", false, false, true, runner)
+
+    check plans.len == 1
+    check result.contains("host fallback is disabled")
 
 suite "formatSandboxResult":
 
@@ -140,6 +166,15 @@ suite "sandboxBash — smNone":
     defer: removeDir(paddock)
     let r = sandboxBash("echo ok", paddock, smNone, "alpine")
     check r == "ok"
+
+  test "smNone does not inherit secret-bearing host env":
+    let paddock = getTempDir() / "donkey_sb_envscrub"
+    createDir(paddock)
+    defer: removeDir(paddock)
+    putEnv("OPENAI_API_KEY", "super-secret")
+    defer: delEnv("OPENAI_API_KEY")
+    let r = sandboxBash("printf %s \"$OPENAI_API_KEY\"", paddock, smNone, "alpine")
+    check r == "[exit 0]"
 
 suite "SandboxMode values":
 

@@ -18,7 +18,7 @@
 ##
 ## Call sandboxLogLevel once at daemon startup to surface the active mode.
 
-import std/[osproc, os, strutils]
+import std/[osproc, os, strtabs, strutils]
 import ../config/types
 import ../core/log
 import ../core/types
@@ -36,6 +36,25 @@ type
 
   SandboxRunner* = proc(plan: SandboxPlan): string {.gcsafe, raises: [].}
 
+proc buildHostSandboxEnv*(paddock: string): StringTableRef {.gcsafe, raises: [].} =
+  result = newStringTable(mode = modeCaseSensitive)
+  let homeDir =
+    if paddock.len > 0: paddock
+    else: getHomeDir()
+  let tmpDir = getEnv("TMPDIR", "/tmp")
+  let lang = getEnv("LANG", "C.UTF-8")
+  let user = getEnv("USER", "donkey")
+  result["PATH"] = getEnv("PATH")
+  result["HOME"] = homeDir
+  result["TMPDIR"] = tmpDir
+  result["TMP"] = getEnv("TMP", tmpDir)
+  result["TEMP"] = getEnv("TEMP", tmpDir)
+  result["LANG"] = lang
+  result["LC_ALL"] = getEnv("LC_ALL", lang)
+  result["TERM"] = getEnv("TERM", "dumb")
+  result["USER"] = user
+  result["LOGNAME"] = getEnv("LOGNAME", user)
+
 # ── Shell.wasm path resolution ────────────────────────────────────────────────
 
 proc resolveShellWasmPath*(): string {.gcsafe, raises: [].} =
@@ -48,9 +67,15 @@ proc resolveShellWasmPath*(): string {.gcsafe, raises: [].} =
 
 # ── Command builder (pure — exported for unit tests) ─────────────────────────
 
-proc buildOciCmd*(cmd, paddock, image: string; runtimeCmd = "docker"): string {.gcsafe, raises: [].} =
+proc buildOciCmd*(cmd, paddock, image: string;
+                  runtimeCmd = "docker";
+                  allowNetwork = false;
+                  readOnlyRootfs = true): string {.gcsafe, raises: [].} =
   ## Returns the OCI runtime invocation string without executing it.
   runtimeCmd & " run --rm " &
+  (if allowNetwork: "" else: "--network=none ") &
+  (if readOnlyRootfs: "--read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m " else: "") &
+  "--cap-drop=ALL --security-opt no-new-privileges " &
   "-v " & paddock & ":/workspace " &
   "-w /workspace " &
   image & " sh -c " & quoteShell(cmd)
@@ -72,12 +97,14 @@ proc buildWasmCmd*(cmd, paddock, shellPath: string): string {.gcsafe, raises: []
 proc buildSandboxPlan*(cmd, paddock: string;
                        mode: SandboxMode;
                        image: string;
-                       runtimeCmd = "docker"): SandboxPlan {.gcsafe, raises: [].} =
+                       runtimeCmd = "docker";
+                       allowNetwork = false;
+                       readOnlyRootfs = true): SandboxPlan {.gcsafe, raises: [].} =
   case mode
   of smNone:
     buildDirectPlan(cmd, paddock)
   of smOci:
-    SandboxPlan(command: buildOciCmd(cmd, paddock, image, runtimeCmd),
+    SandboxPlan(command: buildOciCmd(cmd, paddock, image, runtimeCmd, allowNetwork, readOnlyRootfs),
                 workingDir: "",
                 ensureWorkDir: false)
   of smWasm:
@@ -97,13 +124,15 @@ proc formatSandboxResult*(output: string; code: int): string {.gcsafe, raises: [
   if result.len == 0:
     result = "[exit " & $code & "]"
 
-proc runSandboxPlan*(plan: SandboxPlan): string {.gcsafe, raises: [].} =
+proc runSandboxPlan*(plan: SandboxPlan;
+                     env: StringTableRef = nil): string {.gcsafe, raises: [].} =
   try:
     if plan.ensureWorkDir and plan.workingDir.len > 0:
       createDir(plan.workingDir)
     let (output, code) = execCmdEx(plan.command,
                                    options = {poEvalCommand, poStdErrToStdOut},
-                                   workingDir = plan.workingDir)
+                                   workingDir = plan.workingDir,
+                                   env = env)
     formatSandboxResult(output, code)
   except CatchableError as e:
     "Error: " & e.msg
@@ -121,12 +150,21 @@ func shouldFallbackOci*(output: string; runtimeCmd = "docker"): bool {.gcsafe, r
 
 proc executeOciPlan*(cmd, paddock, image: string;
                      runtimeCmd = "docker";
-                     runPlan: SandboxRunner = runSandboxPlan): string {.gcsafe, raises: [].} =
-  let ociResult = runPlan(buildSandboxPlan(cmd, paddock, smOci, image, runtimeCmd))
+                     allowHostFallback = true;
+                     allowNetwork = false;
+                     readOnlyRootfs = true;
+                     runPlan: SandboxRunner = nil): string {.gcsafe, raises: [].} =
+  let runner =
+    if runPlan != nil: runPlan
+    else: (proc(plan: SandboxPlan): string {.closure, gcsafe, raises: [].} =
+      runSandboxPlan(plan))
+  let ociResult = runner(buildSandboxPlan(cmd, paddock, smOci, image, runtimeCmd, allowNetwork, readOnlyRootfs))
   if not shouldFallbackOci(ociResult, runtimeCmd):
     return ociResult
+  if not allowHostFallback:
+    return "Error: " & runtimeCmd & " sandbox unavailable; host fallback is disabled by configuration."
 
-  let directResult = runPlan(buildDirectPlan(cmd, paddock))
+  let directResult = runSandboxPlan(buildDirectPlan(cmd, paddock), buildHostSandboxEnv(paddock))
   "Warning: " & runtimeCmd & " sandbox unavailable; executed without container isolation.\n" &
     directResult
 
@@ -152,7 +190,10 @@ proc sandboxStatusMessage*(mode: SandboxMode; image: string; runtimeCmd = "docke
 proc sandboxBash*(cmd, paddock: string;
                   mode:  SandboxMode;
                   image: string;
-                  runtimeCmd = "docker"): string {.gcsafe, raises: [].} =
+                  runtimeCmd = "docker";
+                  allowHostFallback = false;
+                  allowNetwork = false;
+                  readOnlyRootfs = true): string {.gcsafe, raises: [].} =
   ## Executes cmd in the appropriate sandbox for `mode`.
   ## For smNone: runs directly with paddock as CWD.
   ## For smOci: wraps cmd in an ephemeral container with paddock bind-mounted.
@@ -165,17 +206,19 @@ proc sandboxBash*(cmd, paddock: string;
     if not shellPath.fileExists:
       # Graceful fallback
       let plan = SandboxPlan(command: cmd, workingDir: paddock, ensureWorkDir: true)
-      return runSandboxPlan(plan)
+      return runSandboxPlan(plan, buildHostSandboxEnv(paddock))
     # Use ShellComposer for pipes — composes applet chain in Nim
     if "|" in cmd:
       let adapter = newWasmToolAdapter(shellPath)
       return adapter.composeFormatted(cmd, paddock)
     # Single command — use wasmtime directly
-    runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd))
+    runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd, allowNetwork, readOnlyRootfs),
+                   buildHostSandboxEnv(paddock))
   of smNone:
-    runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd))
+    runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd, allowNetwork, readOnlyRootfs),
+                   buildHostSandboxEnv(paddock))
   of smOci:
-    executeOciPlan(cmd, paddock, image, runtimeCmd)
+    executeOciPlan(cmd, paddock, image, runtimeCmd, allowHostFallback, allowNetwork, readOnlyRootfs)
 
 # ── Startup log ───────────────────────────────────────────────────────────────
 

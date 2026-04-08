@@ -93,6 +93,9 @@ paddocks = "/srv/donkey/paddocks"
   test "default sandbox mode is none":
     let cfg = loadConfig("/tmp/donkey_nonexistent_12345.toml")
     check cfg.sandboxMode == smNone
+    check not cfg.sandboxAllowHostFallback
+    check not cfg.sandboxAllowNetwork
+    check cfg.sandboxReadOnlyRootfs
 
   test "reads sandbox mode oci":
     let tmp = getTempDir() / "t_loader_sandbox.toml"
@@ -114,12 +117,18 @@ mode = "oci"
 mode = "docker"
 runtime = "podman"
 image = "debian:bookworm-slim"
+allow_host_fallback = true
+allow_network = true
+read_only_rootfs = false
 """)
     defer: removeFile(tmp)
     let cfg = loadConfig(tmp)
     check cfg.sandboxMode  == smOci
     check cfg.sandboxRuntimeCmd == "podman"
     check cfg.sandboxImage == "debian:bookworm-slim"
+    check cfg.sandboxAllowHostFallback
+    check cfg.sandboxAllowNetwork
+    check not cfg.sandboxReadOnlyRootfs
 
   test "unknown sandbox mode falls back to none":
     let tmp = getTempDir() / "t_loader_sbunk.toml"

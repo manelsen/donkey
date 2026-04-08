@@ -10,3 +10,6 @@
 # mode    = "none"      # "none" (workdir only), "oci" (ephemeral container) or "wasm"
 # runtime = "docker"    # OCI runtime CLI used when mode = "oci"
 # image   = "alpine"    # Container image used when mode = "oci"
+# allow_host_fallback = false  # set true only if you explicitly accept host exec when OCI fails
+# allow_network = false        # keep off unless shell access really needs egress
+# read_only_rootfs = true      # keeps container root read-only outside /workspace and /tmp

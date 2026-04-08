@@ -35,6 +35,9 @@ type
     sandboxMode*:       Option[SandboxMode]
     sandboxRuntimeCmd*: Option[string]
     sandboxImage*:      Option[string]
+    sandboxAllowHostFallback*: Option[bool]
+    sandboxAllowNetwork*: Option[bool]
+    sandboxReadOnlyRootfs*: Option[bool]
 
 proc resolveHomeFromEnv*(homeEnv: string): string =
   if homeEnv.len > 0:
@@ -201,6 +204,13 @@ proc parseSandboxConfigPatch*(doc: TomlValueRef): SandboxConfigPatch =
     if sandboxImage.len > 0:
       result.sandboxImage = some(sandboxImage)
 
+  if sandboxSection.hasKey("allow_host_fallback"):
+    result.sandboxAllowHostFallback = some(sandboxSection["allow_host_fallback"].getBool())
+  if sandboxSection.hasKey("allow_network"):
+    result.sandboxAllowNetwork = some(sandboxSection["allow_network"].getBool())
+  if sandboxSection.hasKey("read_only_rootfs"):
+    result.sandboxReadOnlyRootfs = some(sandboxSection["read_only_rootfs"].getBool())
+
 proc applyMainConfigPatch*(patch: MainConfigPatch; cfg: DonkeyConfig): DonkeyConfig =
   result = cfg
   if patch.home.isSome:
@@ -222,6 +232,12 @@ proc applySandboxConfigPatch*(patch: SandboxConfigPatch; cfg: DonkeyConfig): Don
     result.sandboxRuntimeCmd = patch.sandboxRuntimeCmd.get()
   if patch.sandboxImage.isSome:
     result.sandboxImage = patch.sandboxImage.get()
+  if patch.sandboxAllowHostFallback.isSome:
+    result.sandboxAllowHostFallback = patch.sandboxAllowHostFallback.get()
+  if patch.sandboxAllowNetwork.isSome:
+    result.sandboxAllowNetwork = patch.sandboxAllowNetwork.get()
+  if patch.sandboxReadOnlyRootfs.isSome:
+    result.sandboxReadOnlyRootfs = patch.sandboxReadOnlyRootfs.get()
 
 proc loadTomlConfig*(path: string): Option[TomlValueRef] =
   if not fileExists(path):

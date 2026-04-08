@@ -164,6 +164,9 @@ type
     sandboxMode*:  SandboxMode  ## bash isolation mode
     sandboxRuntimeCmd*: string  ## OCI runtime CLI when sandboxMode = smOci
     sandboxImage*: string       ## Container image when sandboxMode = smOci
+    sandboxAllowHostFallback*: bool ## allow host exec when OCI runtime is unavailable
+    sandboxAllowNetwork*: bool  ## allow network egress when sandboxMode = smOci
+    sandboxReadOnlyRootfs*: bool ## keep OCI rootfs read-only outside workspace/tmp
 
   NativeToolCategoryHandler = proc(tc: ToolCallRequest;
                                    ctx: NativeCtx;
@@ -1171,7 +1174,10 @@ proc executeShellNativeTool(tc: ToolCallRequest;
     let bashCtx = parseBashContext(j).valueOr:
       return handledError(error)
     let r = sandboxBash(bashCtx.command, ctx.paddockDir,
-                        ctx.sandboxMode, ctx.sandboxImage, ctx.sandboxRuntimeCmd)
+                        ctx.sandboxMode, ctx.sandboxImage, ctx.sandboxRuntimeCmd,
+                        ctx.sandboxAllowHostFallback,
+                        ctx.sandboxAllowNetwork,
+                        ctx.sandboxReadOnlyRootfs)
     return handledOutcome(r)
 
   of ReadFileToolName:

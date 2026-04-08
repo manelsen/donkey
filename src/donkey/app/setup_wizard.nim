@@ -38,7 +38,10 @@ func buildTomlContent*(home: string; logLevel = "info"): string =
   "[sandbox]\n" &
   "mode    = \"oci\"\n" &
   "runtime = \"docker\"\n" &
-  "image = \"alpine\"\n"
+  "image = \"alpine\"\n" &
+  "allow_host_fallback = false\n" &
+  "allow_network = false\n" &
+  "read_only_rootfs = true\n"
 
 func channelToken(channels: seq[(string, string)]; name: string): string =
   for (ch, tok) in channels:

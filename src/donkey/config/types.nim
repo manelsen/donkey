@@ -33,6 +33,9 @@ type
     sandboxMode*:   SandboxMode  ## bash tool isolation; default: smNone
     sandboxRuntimeCmd*: string   ## OCI runtime CLI; default: "docker"
     sandboxImage*:  string       ## Container image for smOci; default: "alpine"
+    sandboxAllowHostFallback*: bool ## Allow OCI runtime failure to fall back to host exec
+    sandboxAllowNetwork*: bool   ## Allow network egress inside OCI sandbox
+    sandboxReadOnlyRootfs*: bool ## Keep OCI rootfs read-only outside mounted workspace/tmp
     wasmShellPath*: string       ## path to .wasm shell for smWasm; default: {home}/shell.wasm
     dmPolicy*:      DmPolicy     ## DM security policy; default: DmPolicyOpen
     wiring*:        bool         ## Enable advanced session wiring; default: false
@@ -49,6 +52,9 @@ func defaultConfig*(home: string): DonkeyConfig =
     sandboxMode:  smNone,
     sandboxRuntimeCmd: "docker",
     sandboxImage: "alpine",
+    sandboxAllowHostFallback: false,
+    sandboxAllowNetwork: false,
+    sandboxReadOnlyRootfs: true,
     wasmShellPath: home & "/shell.wasm",
     wiring:       false,
   )
