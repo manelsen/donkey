@@ -8,6 +8,7 @@ import std/[os, strutils, unittest]
 import donkey/app/doctor
 import donkey/core/diagnostics
 import donkey/core/pipeops
+import donkey/config/types
 
 # ── checkApiKey ────────────────────────────────────────────────────────────────
 
@@ -69,30 +70,65 @@ suite "doctor — checkContainerRuntime":
     let r = checkContainerRuntime()
     check r.status in {dsOk, dsErr}
 
+suite "doctor — checkSandboxPolicy":
+
+  test "sandbox policy is err for none in production":
+    let cfg = DonkeyConfig(sandboxMode: smNone)
+    let r = checkSandboxPolicy(cfg, devMode = false)
+    check r.name == "sandbox policy"
+    check r.status == dsErr
+
+  test "sandbox policy warns when oci network is enabled":
+    let cfg = DonkeyConfig(
+      sandboxMode: smOci,
+      sandboxRuntimeCmd: "docker",
+      sandboxAllowNetwork: true,
+      sandboxReadOnlyRootfs: true
+    )
+    let r = checkSandboxPolicy(cfg, devMode = false)
+    check r.status == dsWarn
+
+  test "sandbox policy is ok for hardened oci config":
+    let cfg = DonkeyConfig(
+      sandboxMode: smOci,
+      sandboxRuntimeCmd: "docker",
+      sandboxAllowNetwork: false,
+      sandboxReadOnlyRootfs: true
+    )
+    let r = checkSandboxPolicy(cfg, devMode = false)
+    check r.status == dsOk
+
 # ── runDoctorChecks ────────────────────────────────────────────────────────────
 
 suite "doctor — runDoctorChecks":
 
   test "returns at least runtime + pgvector + API key checks":
-    let results = runDoctorChecks()
-    check results.len >= 2    # at least runtime + pgvector
+    let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
+    check results.len >= 3    # sandbox policy + runtime + pgvector
 
   test "result contains runtime check":
-    let results = runDoctorChecks()
+    let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
     var found = false
     for r in results:
       if r.name == "container runtime": found = true
     check found
 
   test "result contains pgvector check":
-    let results = runDoctorChecks()
+    let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
     var found = false
     for r in results:
       if r.name == "pgvector": found = true
     check found
 
+  test "result contains sandbox policy check":
+    let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
+    var found = false
+    for r in results:
+      if r.name == "sandbox policy": found = true
+    check found
+
   test "result contains at least one API key check":
-    let results = runDoctorChecks()
+    let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
     var found = false
     for r in results:
       if r.name in ["Telegram", "OpenRouter", "Zhipu/ZAI", "Anthropic"]:
@@ -100,17 +136,17 @@ suite "doctor — runDoctorChecks":
     check found
 
   test "allPassed pipeline works on doctor results":
-    let results = runDoctorChecks()
+    let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
     # Just verify the pipeline doesn't crash; result depends on environment.
     let _ = results |> allPassed
 
   test "countFailed pipeline works on doctor results":
-    let results = runDoctorChecks()
+    let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
     let failed = results |> countFailed
     check failed >= 0
 
   test "formatReport pipeline produces non-empty output":
-    let results = runDoctorChecks()
+    let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
     let report  = results |>-> formatReport("Donkey Doctor")
     check "Donkey Doctor" in report
     check report.len > 0

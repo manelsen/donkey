@@ -1900,9 +1900,10 @@ proc main =
 
   let cfg = loadConfig(configPath)
 
-  if not devMode and cfg.sandboxMode == smNone:
-    stderr.writeLine "Security Error: Sandbox mode 'none' is only allowed in --dev-mode"
-    stderr.writeLine "Enable --dev-mode if you are in development, or set sandbox.mode = \"oci\" or \"wasm\" in donkey.toml"
+  let sandboxPolicy = validateSandboxPolicy(cfg, devMode)
+  if sandboxPolicy.isErr:
+    stderr.writeLine sandboxPolicy.error
+    stderr.writeLine "Use --dev-mode only for local development, or tighten the [sandbox] policy in donkey.toml"
     quit(1)
 
   ringInit()            ## enable log ring buffer before the first Logger is created
@@ -2026,7 +2027,7 @@ proc main =
     quit(0)
 
   if args.len >= 1 and args[0] == "doctor":
-    quit(runDoctor(cfg.sandboxRuntimeCmd))
+    quit(runDoctor(cfg, devMode))
 
   log.info(AppSlug & " " & Version & " starting")
   log.info("home: " & cfg.home)

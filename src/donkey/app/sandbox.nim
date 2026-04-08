@@ -21,6 +21,7 @@
 import std/[osproc, os, streams, strtabs, strutils]
 import ../config/types
 import ../core/log
+import ../core/pipeops
 import ../core/types
 import ../core/app_meta
 import ../infra/sandbox/wasm_tools
@@ -232,6 +233,14 @@ proc sandboxStatusMessage*(mode: SandboxMode; image: string; runtimeCmd = "docke
       (lvlWarn,
        "bash sandbox: wasm mode enabled but shell.wasm not found at " & shellPath &
        ". Run scripts/setup_shell_wasm.sh to build it.")
+
+proc validateSandboxPolicy*(cfg: DonkeyConfig;
+                            devMode: bool): Result[void, string] {.gcsafe, raises: [].} =
+  if not devMode and cfg.sandboxMode == smNone:
+    return err("Security Error: Sandbox mode 'none' is only allowed in --dev-mode")
+  if not devMode and cfg.sandboxAllowHostFallback:
+    return err("Security Error: sandbox.allow_host_fallback=true is only allowed in --dev-mode")
+  ok()
 
 # ── Executor ──────────────────────────────────────────────────────────────────
 

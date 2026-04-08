@@ -12,6 +12,8 @@
 import std/[os, osproc, strutils]
 import ../core/pipeops
 import ../core/diagnostics
+import ../config/types
+import ./sandbox
 
 # ── raw Result-returning procs (for >>= chaining) ─────────────────────────────
 
@@ -68,6 +70,29 @@ proc checkPgvector*(): DiagResult =
   ## Downgrades to dsWarn — pgvector is an F2+ dependency.
   (pgvectorResult(getEnv("DONKEY_PG_DSN")) |>-> toDiagResult("pgvector")) |> markWarn
 
+proc sandboxPolicyResult*(cfg: DonkeyConfig;
+                          devMode: bool): Result[string, string] =
+  validateSandboxPolicy(cfg, devMode).map(
+    proc(_: void): string =
+      var details: seq[string] = @["mode=" & $cfg.sandboxMode]
+      if cfg.sandboxMode == smOci:
+        details.add("runtime=" & cfg.sandboxRuntimeCmd)
+        details.add("network=" & (if cfg.sandboxAllowNetwork: "on" else: "off"))
+        details.add("rootfs=" & (if cfg.sandboxReadOnlyRootfs: "ro" else: "rw"))
+      if cfg.sandboxAllowHostFallback:
+        details.add("host-fallback=on")
+      else:
+        details.add("host-fallback=off")
+      details.join(", ")
+  )
+
+proc checkSandboxPolicy*(cfg: DonkeyConfig;
+                         devMode: bool): DiagResult =
+  result = sandboxPolicyResult(cfg, devMode) |>-> toDiagResult("sandbox policy")
+  if result.status == dsOk and (cfg.sandboxAllowNetwork or not cfg.sandboxReadOnlyRootfs):
+    result.status = dsWarn
+    result.detail &= " | relaxed isolation"
+
 # ── orchestration ──────────────────────────────────────────────────────────────
 
 const ApiKeyChecks = [
@@ -79,11 +104,13 @@ const ApiKeyChecks = [
   ("MiniMax",    "MINIMAX_API_KEY"),
 ]
 
-proc runDoctorChecks*(runtimeCmd = "docker"): seq[DiagResult] =
+proc runDoctorChecks*(cfg: DonkeyConfig;
+                      devMode = false): seq[DiagResult] =
   ## Runs all dependency checks and returns the result list.
-  ## Required checks (dsErr on failure): container runtime
-  ## Advisory checks (dsWarn on failure): pgvector, API keys
-  result.add checkContainerRuntime(runtimeCmd)
+  ## Required checks (dsErr on failure): sandbox policy, container runtime
+  ## Advisory checks (dsWarn on failure): pgvector, API keys, relaxed sandbox knobs
+  result.add checkSandboxPolicy(cfg, devMode)
+  result.add checkContainerRuntime(cfg.sandboxRuntimeCmd)
   result.add checkPgvector()
   for (name, envVar) in ApiKeyChecks:
     result.add checkApiKey(name, envVar) |> markWarn
@@ -97,8 +124,9 @@ proc printDoctorReport*(results: seq[DiagResult]) =
   else:
     echo "All required checks passed."
 
-proc runDoctor*(runtimeCmd = "docker"): int =
+proc runDoctor*(cfg: DonkeyConfig;
+                devMode = false): int =
   ## Runs all checks, prints the report, returns 0 if all passed else 1.
-  let results = runDoctorChecks(runtimeCmd)
+  let results = runDoctorChecks(cfg, devMode)
   printDoctorReport(results)
   if results |> allPassed: 0 else: 1
