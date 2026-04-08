@@ -1,0 +1,11 @@
+nimTitle	slack_pure	donkey/domain/channels/slack_pure.html	module donkey/domain/channels/slack_pure		0
+nim	sekMessage	donkey/domain/channels/slack_pure.html#sekMessage	SlkEventKind.sekMessage		22
+nim	sekSlashCommand	donkey/domain/channels/slack_pure.html#sekSlashCommand	SlkEventKind.sekSlashCommand		22
+nim	sekBlockAction	donkey/domain/channels/slack_pure.html#sekBlockAction	SlkEventKind.sekBlockAction		22
+nim	sekVerification	donkey/domain/channels/slack_pure.html#sekVerification	SlkEventKind.sekVerification		22
+nim	sekUnknown	donkey/domain/channels/slack_pure.html#sekUnknown	SlkEventKind.sekUnknown		22
+nim	SlkEventKind	donkey/domain/channels/slack_pure.html#SlkEventKind	enum SlkEventKind		22
+nim	SlkParseResult	donkey/domain/channels/slack_pure.html#SlkParseResult	object SlkParseResult		29
+nim	parseEvent	donkey/domain/channels/slack_pure.html#parseEvent,JsonNode	proc parseEvent(payload: JsonNode): SlkParseResult		131
+nim	toInbound	donkey/domain/channels/slack_pure.html#toInbound,SlkParseResult,UserId	proc toInbound(r: SlkParseResult; userId: UserId): InboundMessage		158
+nim	isVerification	donkey/domain/channels/slack_pure.html#isVerification,SlkParseResult	proc isVerification(r: SlkParseResult): bool		167

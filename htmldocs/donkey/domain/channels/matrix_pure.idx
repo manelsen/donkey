@@ -1,0 +1,12 @@
+nimTitle	matrix_pure	donkey/domain/channels/matrix_pure.html	module donkey/domain/channels/matrix_pure		0
+nim	mxkText	donkey/domain/channels/matrix_pure.html#mxkText	MxMsgKind.mxkText		35
+nim	mxkImage	donkey/domain/channels/matrix_pure.html#mxkImage	MxMsgKind.mxkImage		35
+nim	mxkAudio	donkey/domain/channels/matrix_pure.html#mxkAudio	MxMsgKind.mxkAudio		35
+nim	mxkVideo	donkey/domain/channels/matrix_pure.html#mxkVideo	MxMsgKind.mxkVideo		35
+nim	mxkFile	donkey/domain/channels/matrix_pure.html#mxkFile	MxMsgKind.mxkFile		35
+nim	mxkUnknown	donkey/domain/channels/matrix_pure.html#mxkUnknown	MxMsgKind.mxkUnknown		35
+nim	MxMsgKind	donkey/domain/channels/matrix_pure.html#MxMsgKind	enum MxMsgKind		35
+nim	MxParseResult	donkey/domain/channels/matrix_pure.html#MxParseResult	object MxParseResult		43
+nim	parseEvent	donkey/domain/channels/matrix_pure.html#parseEvent,JsonNode	proc parseEvent(payload: JsonNode): MxParseResult		70
+nim	toInbound	donkey/domain/channels/matrix_pure.html#toInbound,MxParseResult,UserId	proc toInbound(r: MxParseResult; userId: UserId): InboundMessage		108
+nim	hasMedia	donkey/domain/channels/matrix_pure.html#hasMedia,MxParseResult	proc hasMedia(r: MxParseResult): bool		120

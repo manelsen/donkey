@@ -1,0 +1,12 @@
+nimTitle	reliability	donkey/core/reliability.html	module donkey/core/reliability		0
+nim	csClosed	donkey/core/reliability.html#csClosed	CircuitState.csClosed		7
+nim	csOpen	donkey/core/reliability.html#csOpen	CircuitState.csOpen		7
+nim	csHalfOpen	donkey/core/reliability.html#csHalfOpen	CircuitState.csHalfOpen		7
+nim	CircuitState	donkey/core/reliability.html#CircuitState	enum CircuitState		7
+nim	CircuitBreaker	donkey/core/reliability.html#CircuitBreaker	object CircuitBreaker		12
+nim	gBreakers	donkey/core/reliability.html#gBreakers	var gBreakers		19
+nim	initReliability	donkey/core/reliability.html#initReliability	proc initReliability()		23
+nim	getBackoffMs	donkey/core/reliability.html#getBackoffMs,int,int	proc getBackoffMs(attempt: int; baseMs = 1000): int		29
+nim	checkCircuit	donkey/core/reliability.html#checkCircuit,string	proc checkCircuit(name: string): bool		33
+nim	recordSuccess	donkey/core/reliability.html#recordSuccess,string	proc recordSuccess(name: string)		52
+nim	recordFailure	donkey/core/reliability.html#recordFailure,string	proc recordFailure(name: string)		62

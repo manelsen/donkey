@@ -1,0 +1,13 @@
+nimTitle	qq_runtime	donkey/adapters/channel/qq_runtime.html	module donkey/adapters/channel/qq_runtime		0
+nim	qqSupportsRichUi	donkey/adapters/channel/qq_runtime.html#qqSupportsRichUi,QQBackendKind	proc qqSupportsRichUi(kind: QQBackendKind): bool		13
+nim	qqHelpText	donkey/adapters/channel/qq_runtime.html#qqHelpText,QQBackendKind	proc qqHelpText(kind: QQBackendKind): string		16
+nim	qqDirectModelProvider	donkey/adapters/channel/qq_runtime.html#qqDirectModelProvider,QQBackendKind,CommandDecision	proc qqDirectModelProvider(kind: QQBackendKind; command: CommandDecision): string		36
+nim	qqShouldOpenThinkPicker	donkey/adapters/channel/qq_runtime.html#qqShouldOpenThinkPicker,QQBackendKind,CommandDecision	proc qqShouldOpenThinkPicker(kind: QQBackendKind; command: CommandDecision): bool		42
+nim	qqPickerText	donkey/adapters/channel/qq_runtime.html#qqPickerText,string,string	proc qqPickerText(title, body: string): string		46
+nim	qqModelPickerTitle	donkey/adapters/channel/qq_runtime.html#qqModelPickerTitle,string,int,seq[ModelCatalogEntry],ModelCatalogResult	proc qqModelPickerTitle(provider: string; page: int; entries: seq[ModelCatalogEntry];\n                   catalog: ModelCatalogResult): string		52
+nim	qqProviderPickerTitle	donkey/adapters/channel/qq_runtime.html#qqProviderPickerTitle	proc qqProviderPickerTitle(): string		58
+nim	qqThinkPickerTitle	donkey/adapters/channel/qq_runtime.html#qqThinkPickerTitle	proc qqThinkPickerTitle(): string		61
+nim	qqModelConfirmedText	donkey/adapters/channel/qq_runtime.html#qqModelConfirmedText,string,string	proc qqModelConfirmedText(provider, model: string): string		64
+nim	qqThinkingConfirmedText	donkey/adapters/channel/qq_runtime.html#qqThinkingConfirmedText,string	proc qqThinkingConfirmedText(level: string): string		67
+nim	qqStatusText	donkey/adapters/channel/qq_runtime.html#qqStatusText,string,string,int,int,string	proc qqStatusText(providerLine, thinking: string; toolsCount, sessionCount: int;\n             uptimeStr: string): string		70
+nim	drainQQEvents	donkey/adapters/channel/qq_runtime.html#drainQQEvents,QQChannelAdapter,SessionManager,MdFileAdapter,proc(string),ModelCatalogLoader,int,int,int64,int,proc(InboundMessage)	proc drainQQEvents(qqAdapter: var QQChannelAdapter; sm: var SessionManager;\n              memory: MdFileAdapter; completeBuilder: proc (\n    preferencesMd: string): CompleteFn {.gcsafe.};\n              modelCatalogLoader: ModelCatalogLoader; toolsCount: int;\n              toolClientsCount: int; daemonStartMs: int64; msgSeq: var int;\n              handleSessionFallback: proc (msg: InboundMessage) {.gcsafe.})		220

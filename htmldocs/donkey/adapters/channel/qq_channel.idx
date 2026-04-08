@@ -1,0 +1,22 @@
+nimTitle	qq_channel	donkey/adapters/channel/qq_channel.html	module donkey/adapters/channel/qq_channel		0
+nim	qbkNone	donkey/adapters/channel/qq_channel.html#qbkNone	QQBackendKind.qbkNone		13
+nim	qbkOneBot	donkey/adapters/channel/qq_channel.html#qbkOneBot	QQBackendKind.qbkOneBot		13
+nim	qbkOfficial	donkey/adapters/channel/qq_channel.html#qbkOfficial	QQBackendKind.qbkOfficial		13
+nim	QQBackendKind	donkey/adapters/channel/qq_channel.html#QQBackendKind	enum QQBackendKind		13
+nim	QQInboundEvent	donkey/adapters/channel/qq_channel.html#QQInboundEvent	object QQInboundEvent		18
+nim	QQChannelAdapter	donkey/adapters/channel/qq_channel.html#QQChannelAdapter	object QQChannelAdapter		25
+nim	qqRawIdentity	donkey/adapters/channel/qq_channel.html#qqRawIdentity,QQInboundEvent	proc qqRawIdentity(event: QQInboundEvent): string		35
+nim	enabled	donkey/adapters/channel/qq_channel.html#enabled,QQChannelAdapter	proc enabled(a: QQChannelAdapter): bool		41
+nim	backendLabel	donkey/adapters/channel/qq_channel.html#backendLabel,QQChannelAdapter	proc backendLabel(a: QQChannelAdapter): string		44
+nim	newQQDisabledChannelAdapter	donkey/adapters/channel/qq_channel.html#newQQDisabledChannelAdapter,string	proc newQQDisabledChannelAdapter(identityPath: string): QQChannelAdapter		50
+nim	newQQOneBotChannelAdapter	donkey/adapters/channel/qq_channel.html#newQQOneBotChannelAdapter,string,string,string	proc newQQOneBotChannelAdapter(apiBase, accessToken, identityPath: string): QQChannelAdapter		56
+nim	newQQOfficialChannelAdapter	donkey/adapters/channel/qq_channel.html#newQQOfficialChannelAdapter,string,string,string	proc newQQOfficialChannelAdapter(appId, clientSecret, identityPath: string;\n                            apiBase = QQOfficialDefaultApiBase;\n                            tokenBase = QQOfficialDefaultTokenBase): QQChannelAdapter		63
+nim	resolveUser	donkey/adapters/channel/qq_channel.html#resolveUser,QQChannelAdapter,QQInboundEvent	proc resolveUser(a: var QQChannelAdapter; event: QQInboundEvent): UserId		73
+nim	generateLinkCode	donkey/adapters/channel/qq_channel.html#generateLinkCode,QQChannelAdapter,UserId	proc generateLinkCode(a: var QQChannelAdapter; userId: UserId): string		76
+nim	consumeLinkCode	donkey/adapters/channel/qq_channel.html#consumeLinkCode,QQChannelAdapter,string,string	proc consumeLinkCode(a: var QQChannelAdapter; code: string; rawIdentity: string): bool		79
+nim	enqueueEventJson	donkey/adapters/channel/qq_channel.html#enqueueEventJson,QQChannelAdapter,string	proc enqueueEventJson(a: var QQChannelAdapter; payload: string): Result[void, string]		82
+nim	tryRecvEvent	donkey/adapters/channel/qq_channel.html#tryRecvEvent,QQChannelAdapter	proc tryRecvEvent(a: var QQChannelAdapter): (bool, QQInboundEvent)		91
+nim	send	donkey/adapters/channel/qq_channel.html#send,QQChannelAdapter,OutboundMessage	proc send(a: var QQChannelAdapter; msg: OutboundMessage): Result[void, string]		114
+nim	sendKeyboard	donkey/adapters/channel/qq_channel.html#sendKeyboard,QQChannelAdapter,UserId,string,seq[seq[]],string,string	proc sendKeyboard(a: var QQChannelAdapter; userId: UserId; text: string;\n             buttons: seq[seq[(string, string)]]; replyTo = "";\n             allowedRawUserId = ""): Result[void, string]		126
+nim	startGateway	donkey/adapters/channel/qq_channel.html#startGateway,QQChannelAdapter	proc startGateway(a: var QQChannelAdapter)		143
+nim	startWebhook	donkey/adapters/channel/qq_channel.html#startWebhook,QQChannelAdapter,Port	proc startWebhook(a: QQChannelAdapter; port: Port)		150

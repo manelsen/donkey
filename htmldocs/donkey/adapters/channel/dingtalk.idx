@@ -1,0 +1,17 @@
+nimTitle	dingtalk	donkey/adapters/channel/dingtalk.html	module donkey/adapters/channel/dingtalk		0
+nim	DtDefaultApiBase	donkey/adapters/channel/dingtalk.html#DtDefaultApiBase	const DtDefaultApiBase		36
+nim	DingTalkEvent	donkey/adapters/channel/dingtalk.html#DingTalkEvent	object DingTalkEvent		42
+nim	gDtEvents	donkey/adapters/channel/dingtalk.html#gDtEvents	var gDtEvents		51
+nim	pushEvent	donkey/adapters/channel/dingtalk.html#pushEvent,JsonNode	proc pushEvent(payload: JsonNode)		55
+nim	DingTalkAdapter	donkey/adapters/channel/dingtalk.html#DingTalkAdapter	object DingTalkAdapter		110
+nim	ensureAccessToken	donkey/adapters/channel/dingtalk.html#ensureAccessToken,DingTalkAdapter	proc ensureAccessToken(a: var DingTalkAdapter): Result[string, string]		141
+nim	sendToRawId	donkey/adapters/channel/dingtalk.html#sendToRawId,DingTalkAdapter,string,OutboundMessage	proc sendToRawId(a: var DingTalkAdapter; rawId: string; msg: OutboundMessage): Result[\n    void, string]		197
+nim	send	donkey/adapters/channel/dingtalk.html#send,DingTalkAdapter,OutboundMessage	proc send(a: var DingTalkAdapter; msg: OutboundMessage): Result[void, string]		210
+nim	sendKeyboard	donkey/adapters/channel/dingtalk.html#sendKeyboard,DingTalkAdapter,UserId,string,seq[seq[]]	proc sendKeyboard(a: var DingTalkAdapter; userId: UserId; text: string;\n             buttons: seq[seq[(string, string)]]): Result[void, string]		248
+nim	sendReturnId	donkey/adapters/channel/dingtalk.html#sendReturnId,DingTalkAdapter,OutboundMessage	proc sendReturnId(a: var DingTalkAdapter; msg: OutboundMessage): Result[string,\n    string]		262
+nim	editMessage	donkey/adapters/channel/dingtalk.html#editMessage,DingTalkAdapter,UserId,string,string	proc editMessage(a: DingTalkAdapter; userId: UserId; msgId, text: string): Result[\n    void, string]		275
+nim	ack	donkey/adapters/channel/dingtalk.html#ack,DingTalkAdapter,string	proc ack(a: DingTalkAdapter; msgId: string)		283
+nim	openQueue	donkey/adapters/channel/dingtalk.html#openQueue,DingTalkAdapter	proc openQueue(a: DingTalkAdapter)		289
+nim	startGateway	donkey/adapters/channel/dingtalk.html#startGateway,DingTalkAdapter	proc startGateway(a: var DingTalkAdapter)		294
+nim	tryRecvEvent	donkey/adapters/channel/dingtalk.html#tryRecvEvent,DingTalkAdapter	proc tryRecvEvent(a: DingTalkAdapter): (bool, DingTalkEvent)		299
+nim	newDingTalkAdapter	donkey/adapters/channel/dingtalk.html#newDingTalkAdapter,string,string,string,string,string	proc newDingTalkAdapter(appKey, appSecret, robotCode: string; identityPath: string;\n                   apiBase = ""): DingTalkAdapter		306

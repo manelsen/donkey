@@ -1,0 +1,27 @@
+nimTitle	personality	donkey/domain/personality.html	module donkey/domain/personality		0
+nim	PersonalityTraits	donkey/domain/personality.html#PersonalityTraits	object PersonalityTraits		11
+nim	dkEnergy	donkey/domain/personality.html#dkEnergy	DimensionKind.dkEnergy		17
+nim	dkTone	donkey/domain/personality.html#dkTone	DimensionKind.dkTone		17
+nim	dkLength	donkey/domain/personality.html#dkLength	DimensionKind.dkLength		17
+nim	dkInitiative	donkey/domain/personality.html#dkInitiative	DimensionKind.dkInitiative		17
+nim	DimensionKind	donkey/domain/personality.html#DimensionKind	enum DimensionKind		17
+nim	opWakeUp	donkey/domain/personality.html#opWakeUp	OnboardingPhase.opWakeUp		20
+nim	opModeChoice	donkey/domain/personality.html#opModeChoice	OnboardingPhase.opModeChoice		20
+nim	opGuidedEnergy	donkey/domain/personality.html#opGuidedEnergy	OnboardingPhase.opGuidedEnergy		20
+nim	opGuidedTone	donkey/domain/personality.html#opGuidedTone	OnboardingPhase.opGuidedTone		20
+nim	opGuidedLength	donkey/domain/personality.html#opGuidedLength	OnboardingPhase.opGuidedLength		20
+nim	opGuidedInitiative	donkey/domain/personality.html#opGuidedInitiative	OnboardingPhase.opGuidedInitiative		20
+nim	opFreeConvo	donkey/domain/personality.html#opFreeConvo	OnboardingPhase.opFreeConvo		20
+nim	opNameChoice	donkey/domain/personality.html#opNameChoice	OnboardingPhase.opNameChoice		20
+nim	opUserName	donkey/domain/personality.html#opUserName	OnboardingPhase.opUserName		20
+nim	opUserTimezone	donkey/domain/personality.html#opUserTimezone	OnboardingPhase.opUserTimezone		20
+nim	opUserLanguage	donkey/domain/personality.html#opUserLanguage	OnboardingPhase.opUserLanguage		20
+nim	opDone	donkey/domain/personality.html#opDone	OnboardingPhase.opDone		20
+nim	OnboardingPhase	donkey/domain/personality.html#OnboardingPhase	enum OnboardingPhase		20
+nim	OnboardingState	donkey/domain/personality.html#OnboardingState	object OnboardingState		34
+nim	buildPersonalityPrompt	donkey/domain/personality.html#buildPersonalityPrompt,PersonalityTraits,string	proc buildPersonalityPrompt(traits: PersonalityTraits; name: string): string		64
+nim	buildNameGenPrompt	donkey/domain/personality.html#buildNameGenPrompt,PersonalityTraits	proc buildNameGenPrompt(traits: PersonalityTraits): string		103
+nim	parseNameOptions	donkey/domain/personality.html#parseNameOptions,string	proc parseNameOptions(resp: string): seq[string]		115
+nim	parseIdentityReady	donkey/domain/personality.html#parseIdentityReady,string	proc parseIdentityReady(text: string): Option[PersonalityTraits]		126
+nim	stripIdentityReady	donkey/domain/personality.html#stripIdentityReady,string	proc stripIdentityReady(text: string): string		155
+nim	guidedDimensionMsg	donkey/domain/personality.html#guidedDimensionMsg,DimensionKind	proc guidedDimensionMsg(dk: DimensionKind): (string, seq[seq[(string, string)]])		186

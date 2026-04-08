@@ -1,0 +1,4 @@
+nimTitle	ollama_pure	donkey/domain/providers/ollama_pure.html	module donkey/domain/providers/ollama_pure		0
+nim	messageToOllama	donkey/domain/providers/ollama_pure.html#messageToOllama,ChatMessage	proc messageToOllama(msg: ChatMessage): JsonNode		21
+nim	buildOllamaRequest	donkey/domain/providers/ollama_pure.html#buildOllamaRequest,string,CompletionRequest	proc buildOllamaRequest(model: string; req: CompletionRequest; stream = false): JsonNode		42
+nim	parseOllamaResponse	donkey/domain/providers/ollama_pure.html#parseOllamaResponse,JsonNode	proc parseOllamaResponse(j: JsonNode): CompletionResponse		65

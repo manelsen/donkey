@@ -1,0 +1,6 @@
+nimTitle	client	donkey/adapters/ipc/client.html	module donkey/adapters/ipc/client		0
+nim	expandSockPath	donkey/adapters/ipc/client.html#expandSockPath,string	proc expandSockPath(path: string): string		10
+nim	existsOrRaise	donkey/adapters/ipc/client.html#existsOrRaise,string	proc existsOrRaise(path: string): bool		16
+nim	ipcQuery	donkey/adapters/ipc/client.html#ipcQuery,string,JsonNode	proc ipcQuery(sockPath: string; payload: JsonNode): Result[JsonNode, string]		27
+nim	queryStatus	donkey/adapters/ipc/client.html#queryStatus,string	proc queryStatus(sockPath: string): Result[DaemonStatus, string]		44
+nim	queryLogs	donkey/adapters/ipc/client.html#queryLogs,string,int	proc queryLogs(sockPath: string; n: int = 50): Result[seq[IpcLogEntry], string]		50

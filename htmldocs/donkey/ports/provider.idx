@@ -1,0 +1,18 @@
+nimTitle	provider	donkey/ports/provider.html	module donkey/ports/provider		0
+nim	ProviderPrefs	donkey/ports/provider.html#ProviderPrefs	object ProviderPrefs		12
+nim	ProviderSpec	donkey/ports/provider.html#ProviderSpec	object ProviderSpec		16
+nim	ModelCatalogEntry	donkey/ports/provider.html#ModelCatalogEntry	object ModelCatalogEntry		21
+nim	mcsLive	donkey/ports/provider.html#mcsLive	ModelCatalogSource.mcsLive		31
+nim	mcsCache	donkey/ports/provider.html#mcsCache	ModelCatalogSource.mcsCache		31
+nim	mcsFallback	donkey/ports/provider.html#mcsFallback	ModelCatalogSource.mcsFallback		31
+nim	ModelCatalogSource	donkey/ports/provider.html#ModelCatalogSource	enum ModelCatalogSource		31
+nim	ModelCatalogResult	donkey/ports/provider.html#ModelCatalogResult	object ModelCatalogResult		36
+nim	ProviderCaps	donkey/ports/provider.html#ProviderCaps	object ProviderCaps		41
+nim	CompleteFn	donkey/ports/provider.html#CompleteFn	type CompleteFn		52
+nim	StreamFn	donkey/ports/provider.html#StreamFn	type StreamFn		57
+nim	ProviderBundle	donkey/ports/provider.html#ProviderBundle	object ProviderBundle		62
+nim	ProviderRuntimeBuilder	donkey/ports/provider.html#ProviderRuntimeBuilder	type ProviderRuntimeBuilder		66
+nim	ModelCatalogLoader	donkey/ports/provider.html#ModelCatalogLoader	type ModelCatalogLoader		67
+nim	ProviderPort	donkey/ports/provider.html#ProviderPort	type ProviderPort		69
+nim	catalogSourceLabel	donkey/ports/provider.html#catalogSourceLabel,ModelCatalogSource	proc catalogSourceLabel(source: ModelCatalogSource): string		76
+nim	relativeAgeText	donkey/ports/provider.html#relativeAgeText,int64	proc relativeAgeText(ageSec: int64): string		82

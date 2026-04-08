@@ -1,0 +1,104 @@
+nimTitle	admin_tui	donkey/tui/admin_tui.html	module donkey/tui/admin_tui		0
+nim	repeatChar	donkey/tui/admin_tui.html#repeatChar,int,char	proc repeatChar(n: int; c: char): string		18
+nim	asConfig	donkey/tui/admin_tui.html#asConfig	AdminSection.asConfig		24
+nim	asAgents	donkey/tui/admin_tui.html#asAgents	AdminSection.asAgents		24
+nim	asChannels	donkey/tui/admin_tui.html#asChannels	AdminSection.asChannels		24
+nim	asProviders	donkey/tui/admin_tui.html#asProviders	AdminSection.asProviders		24
+nim	asModels	donkey/tui/admin_tui.html#asModels	AdminSection.asModels		24
+nim	asHooks	donkey/tui/admin_tui.html#asHooks	AdminSection.asHooks		24
+nim	asPlugins	donkey/tui/admin_tui.html#asPlugins	AdminSection.asPlugins		24
+nim	asUsers	donkey/tui/admin_tui.html#asUsers	AdminSection.asUsers		24
+nim	AdminSection	donkey/tui/admin_tui.html#AdminSection	enum AdminSection		24
+nim	AdminItem	donkey/tui/admin_tui.html#AdminItem	object AdminItem		34
+nim	AdminState	donkey/tui/admin_tui.html#AdminState	object AdminState		40
+nim	ChannelInfo	donkey/tui/admin_tui.html#ChannelInfo	object ChannelInfo		59
+nim	ChannelItem	donkey/tui/admin_tui.html#ChannelItem	object ChannelItem		64
+nim	ChannelMetrics	donkey/tui/admin_tui.html#ChannelMetrics	object ChannelMetrics		71
+nim	stUp	donkey/tui/admin_tui.html#stUp	SparklineTrend.stUp		77
+nim	stStable	donkey/tui/admin_tui.html#stStable	SparklineTrend.stStable		77
+nim	stDown	donkey/tui/admin_tui.html#stDown	SparklineTrend.stDown		77
+nim	stSpike	donkey/tui/admin_tui.html#stSpike	SparklineTrend.stSpike		77
+nim	SparklineTrend	donkey/tui/admin_tui.html#SparklineTrend	enum SparklineTrend		77
+nim	SparklineData	donkey/tui/admin_tui.html#SparklineData	object SparklineData		83
+nim	HistogramBucket	donkey/tui/admin_tui.html#HistogramBucket	object HistogramBucket		89
+nim	alInfo	donkey/tui/admin_tui.html#alInfo	AlertLevel.alInfo		94
+nim	alWarning	donkey/tui/admin_tui.html#alWarning	AlertLevel.alWarning		94
+nim	alCritical	donkey/tui/admin_tui.html#alCritical	AlertLevel.alCritical		94
+nim	AlertLevel	donkey/tui/admin_tui.html#AlertLevel	enum AlertLevel		94
+nim	AlertThreshold	donkey/tui/admin_tui.html#AlertThreshold	object AlertThreshold		99
+nim	Alert	donkey/tui/admin_tui.html#Alert	object Alert		105
+nim	TokenUsage	donkey/tui/admin_tui.html#TokenUsage	object TokenUsage		110
+nim	HookItem	donkey/tui/admin_tui.html#HookItem	object HookItem		115
+nim	ToolItem	donkey/tui/admin_tui.html#ToolItem	object ToolItem		122
+nim	SkillItem	donkey/tui/admin_tui.html#SkillItem	object SkillItem		129
+nim	ckString	donkey/tui/admin_tui.html#ckString	ConfigNodeKind.ckString		135
+nim	ckInt	donkey/tui/admin_tui.html#ckInt	ConfigNodeKind.ckInt		135
+nim	ckBool	donkey/tui/admin_tui.html#ckBool	ConfigNodeKind.ckBool		135
+nim	ckList	donkey/tui/admin_tui.html#ckList	ConfigNodeKind.ckList		135
+nim	ConfigNodeKind	donkey/tui/admin_tui.html#ConfigNodeKind	enum ConfigNodeKind		135
+nim	ConfigNode	donkey/tui/admin_tui.html#ConfigNode	object ConfigNode		141
+nim	ConfigDiff	donkey/tui/admin_tui.html#ConfigDiff	object ConfigDiff		147
+nim	ConfigSnapshot	donkey/tui/admin_tui.html#ConfigSnapshot	object ConfigSnapshot		152
+nim	SessionItem	donkey/tui/admin_tui.html#SessionItem	object SessionItem		157
+nim	SessionMessage	donkey/tui/admin_tui.html#SessionMessage	object SessionMessage		164
+nim	dhsRunning	donkey/tui/admin_tui.html#dhsRunning	DaemonHealthStatus.dhsRunning		169
+nim	dhsDegraded	donkey/tui/admin_tui.html#dhsDegraded	DaemonHealthStatus.dhsDegraded		169
+nim	dhsError	donkey/tui/admin_tui.html#dhsError	DaemonHealthStatus.dhsError		169
+nim	DaemonHealthStatus	donkey/tui/admin_tui.html#DaemonHealthStatus	enum DaemonHealthStatus		169
+nim	DaemonHealth	donkey/tui/admin_tui.html#DaemonHealth	object DaemonHealth		174
+nim	LogFilter	donkey/tui/admin_tui.html#LogFilter	object LogFilter		183
+nim	ProviderInfo	donkey/tui/admin_tui.html#ProviderInfo	object ProviderInfo		187
+nim	ProviderItem	donkey/tui/admin_tui.html#ProviderItem	object ProviderItem		193
+nim	ProviderTestResult	donkey/tui/admin_tui.html#ProviderTestResult	object ProviderTestResult		200
+nim	mtr1h	donkey/tui/admin_tui.html#mtr1h	MetricsTimeRange.mtr1h		206
+nim	mtr24h	donkey/tui/admin_tui.html#mtr24h	MetricsTimeRange.mtr24h		206
+nim	mtr7d	donkey/tui/admin_tui.html#mtr7d	MetricsTimeRange.mtr7d		206
+nim	MetricsTimeRange	donkey/tui/admin_tui.html#MetricsTimeRange	enum MetricsTimeRange		206
+nim	ProviderMetrics	donkey/tui/admin_tui.html#ProviderMetrics	object ProviderMetrics		211
+nim	AgentInfo	donkey/tui/admin_tui.html#AgentInfo	object AgentInfo		217
+nim	vmList	donkey/tui/admin_tui.html#vmList	ViewMode.vmList		223
+nim	vmDetail	donkey/tui/admin_tui.html#vmDetail	ViewMode.vmDetail		223
+nim	ViewMode	donkey/tui/admin_tui.html#ViewMode	enum ViewMode		223
+nim	CommandPalette	donkey/tui/admin_tui.html#CommandPalette	object CommandPalette		227
+nim	tkSuccess	donkey/tui/admin_tui.html#tkSuccess	ToastKind.tkSuccess		232
+nim	tkWarning	donkey/tui/admin_tui.html#tkWarning	ToastKind.tkWarning		232
+nim	tkError	donkey/tui/admin_tui.html#tkError	ToastKind.tkError		232
+nim	tkInfo	donkey/tui/admin_tui.html#tkInfo	ToastKind.tkInfo		232
+nim	ToastKind	donkey/tui/admin_tui.html#ToastKind	enum ToastKind		232
+nim	Toast	donkey/tui/admin_tui.html#Toast	object Toast		238
+nim	cmNone	donkey/tui/admin_tui.html#cmNone	ConfirmMode.cmNone		243
+nim	cmDelete	donkey/tui/admin_tui.html#cmDelete	ConfirmMode.cmDelete		243
+nim	cmRevoke	donkey/tui/admin_tui.html#cmRevoke	ConfirmMode.cmRevoke		243
+nim	ConfirmMode	donkey/tui/admin_tui.html#ConfirmMode	enum ConfirmMode		243
+nim	statusColor	donkey/tui/admin_tui.html#statusColor,string	proc statusColor(s: string): ill.ForegroundColor		248
+nim	BorderColor	donkey/tui/admin_tui.html#BorderColor	const BorderColor		256
+nim	HeaderColor	donkey/tui/admin_tui.html#HeaderColor	const HeaderColor		257
+nim	SelectedBg	donkey/tui/admin_tui.html#SelectedBg	const SelectedBg		258
+nim	ItemColor	donkey/tui/admin_tui.html#ItemColor	const ItemColor		259
+nim	DisabledColor	donkey/tui/admin_tui.html#DisabledColor	const DisabledColor		260
+nim	StatusOk	donkey/tui/admin_tui.html#StatusOk	const StatusOk		261
+nim	StatusError	donkey/tui/admin_tui.html#StatusError	const StatusError		262
+nim	newAdminState	donkey/tui/admin_tui.html#newAdminState,DonkeyConfig	proc newAdminState(cfg: DonkeyConfig = defaultConfig("")): AdminState		264
+nim	sectionLabel	donkey/tui/admin_tui.html#sectionLabel,AdminSection	proc sectionLabel(s: AdminSection): string		280
+nim	sectionLabels	donkey/tui/admin_tui.html#sectionLabels	proc sectionLabels(): seq[string]		291
+nim	loadConfigItems	donkey/tui/admin_tui.html#loadConfigItems,AdminState	proc loadConfigItems(st: var AdminState)		297
+nim	loadAgentItems	donkey/tui/admin_tui.html#loadAgentItems,AdminState	proc loadAgentItems(st: var AdminState)		308
+nim	loadChannelItems	donkey/tui/admin_tui.html#loadChannelItems,AdminState	proc loadChannelItems(st: var AdminState)		315
+nim	loadProviderItems	donkey/tui/admin_tui.html#loadProviderItems,AdminState	proc loadProviderItems(st: var AdminState)		332
+nim	loadModelItems	donkey/tui/admin_tui.html#loadModelItems,AdminState	proc loadModelItems(st: var AdminState)		356
+nim	loadHookItems	donkey/tui/admin_tui.html#loadHookItems,AdminState	proc loadHookItems(st: var AdminState)		404
+nim	loadPluginItems	donkey/tui/admin_tui.html#loadPluginItems,AdminState	proc loadPluginItems(st: var AdminState)		412
+nim	loadUsersItems	donkey/tui/admin_tui.html#loadUsersItems,AdminState	proc loadUsersItems(st: var AdminState)		420
+nim	loadSection	donkey/tui/admin_tui.html#loadSection,AdminState	proc loadSection(st: var AdminState)		433
+nim	showToast	donkey/tui/admin_tui.html#showToast,AdminState,string	proc showToast(st: var AdminState; msg: string; kind = tkInfo)		444
+nim	clearExpiredToast	donkey/tui/admin_tui.html#clearExpiredToast,AdminState	proc clearExpiredToast(st: var AdminState)		447
+nim	cycleConfigValue	donkey/tui/admin_tui.html#cycleConfigValue,AdminState,int	proc cycleConfigValue(st: var AdminState; index: int)		453
+nim	drawBorder	donkey/tui/admin_tui.html#drawBorder,,int,int,int,int	proc drawBorder(tb: var ill.TerminalBuffer; x, y, w, h: int)		491
+nim	drawHeader	donkey/tui/admin_tui.html#drawHeader,,int	proc drawHeader(tb: var ill.TerminalBuffer; width: int)		499
+nim	drawSections	donkey/tui/admin_tui.html#drawSections,,AdminState,int	proc drawSections(tb: var ill.TerminalBuffer; st: AdminState; y: int)		508
+nim	drawItem	donkey/tui/admin_tui.html#drawItem,,AdminItem,int,int,int,bool,int	proc drawItem(tb: var ill.TerminalBuffer; item: AdminItem; x, y, w: int;\n         selected: bool; index: int)		524
+nim	deleteUserPaddock	donkey/tui/admin_tui.html#deleteUserPaddock,string	proc deleteUserPaddock(paddockDir: string)		553
+nim	drawUserDetail	donkey/tui/admin_tui.html#drawUserDetail,,AdminState,MdFileAdapter,int,int,int	proc drawUserDetail(tb: var ill.TerminalBuffer; st: AdminState;\n               adapter: MdFileAdapter; startY: int; width, height: int)		557
+nim	drawList	donkey/tui/admin_tui.html#drawList,,AdminState,int,int,int	proc drawList(tb: var ill.TerminalBuffer; st: AdminState; startY: int;\n         width, height: int)		614
+nim	drawFooter	donkey/tui/admin_tui.html#drawFooter,,AdminState,int,int	proc drawFooter(tb: var ill.TerminalBuffer; st: AdminState; y, width: int)		623
+nim	runAdminTui	donkey/tui/admin_tui.html#runAdminTui,DonkeyConfig	proc runAdminTui(cfg: DonkeyConfig = defaultConfig(""))		630

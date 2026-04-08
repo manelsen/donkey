@@ -1,0 +1,22 @@
+nimTitle	slack	donkey/adapters/channel/slack.html	module donkey/adapters/channel/slack		0
+nim	SlackApiBase	donkey/adapters/channel/slack.html#SlackApiBase	const SlackApiBase		28
+nim	SlackMaxChars	donkey/adapters/channel/slack.html#SlackMaxChars	const SlackMaxChars		29
+nim	srMessage	donkey/adapters/channel/slack.html#srMessage	SlackRawEventKind.srMessage		34
+nim	srSlashCommand	donkey/adapters/channel/slack.html#srSlashCommand	SlackRawEventKind.srSlashCommand		34
+nim	srBlockAction	donkey/adapters/channel/slack.html#srBlockAction	SlackRawEventKind.srBlockAction		34
+nim	SlackRawEventKind	donkey/adapters/channel/slack.html#SlackRawEventKind	enum SlackRawEventKind		34
+nim	SlackRawEvent	donkey/adapters/channel/slack.html#SlackRawEvent	object SlackRawEvent		39
+nim	gSlackEvents	donkey/adapters/channel/slack.html#gSlackEvents	var gSlackEvents		50
+nim	parseChallenge	donkey/adapters/channel/slack.html#parseChallenge,JsonNode	proc parseChallenge(payload: JsonNode): string		54
+nim	pushEvent	donkey/adapters/channel/slack.html#pushEvent,JsonNode	proc pushEvent(payload: JsonNode)		60
+nim	SlackAdapter	donkey/adapters/channel/slack.html#SlackAdapter	object SlackAdapter		98
+nim	send	donkey/adapters/channel/slack.html#send,SlackAdapter,OutboundMessage	proc send(a: SlackAdapter; msg: OutboundMessage): Result[void, string]		156
+nim	sendToChannel	donkey/adapters/channel/slack.html#sendToChannel,SlackAdapter,string,string	proc sendToChannel(a: SlackAdapter; channelId, text: string): Result[void, string]		168
+nim	sendReturnId	donkey/adapters/channel/slack.html#sendReturnId,SlackAdapter,OutboundMessage	proc sendReturnId(a: SlackAdapter; msg: OutboundMessage): Result[string, string]		176
+nim	editMessage	donkey/adapters/channel/slack.html#editMessage,SlackAdapter,UserId,string,string	proc editMessage(a: SlackAdapter; userId: UserId; msgId, text: string): Result[void,\n    string]		191
+nim	sendKeyboard	donkey/adapters/channel/slack.html#sendKeyboard,SlackAdapter,UserId,string,seq[seq[]]	proc sendKeyboard(a: SlackAdapter; userId: UserId; text: string;\n             buttons: seq[seq[(string, string)]]): Result[void, string]		226
+nim	editKeyboard	donkey/adapters/channel/slack.html#editKeyboard,SlackAdapter,UserId,string,string,seq[seq[]]	proc editKeyboard(a: SlackAdapter; userId: UserId; msgId, text: string;\n             buttons: seq[seq[(string, string)]]): Result[void, string]		239
+nim	ack	donkey/adapters/channel/slack.html#ack,SlackAdapter,string	proc ack(a: SlackAdapter; channelId: string)		252
+nim	openQueue	donkey/adapters/channel/slack.html#openQueue,SlackAdapter	proc openQueue(a: SlackAdapter)		258
+nim	tryRecvEvent	donkey/adapters/channel/slack.html#tryRecvEvent,SlackAdapter	proc tryRecvEvent(a: SlackAdapter): (bool, SlackRawEvent)		263
+nim	newSlackAdapter	donkey/adapters/channel/slack.html#newSlackAdapter,string,string,string	proc newSlackAdapter(botToken: string; identityPath: string; apiBase = ""): SlackAdapter		269

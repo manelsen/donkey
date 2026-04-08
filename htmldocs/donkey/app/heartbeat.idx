@@ -1,0 +1,27 @@
+nimTitle	heartbeat	donkey/app/heartbeat.html	module donkey/app/heartbeat		0
+nim	HeartbeatTask	donkey/app/heartbeat.html#HeartbeatTask	type HeartbeatTask		24
+nim	ReminderOutboxFn	donkey/app/heartbeat.html#ReminderOutboxFn	type ReminderOutboxFn		26
+nim	HeartbeatOutboxFn	donkey/app/heartbeat.html#HeartbeatOutboxFn	type HeartbeatOutboxFn		29
+nim	CommitmentSnapshot	donkey/app/heartbeat.html#CommitmentSnapshot	object CommitmentSnapshot		31
+nim	CommitmentReview	donkey/app/heartbeat.html#CommitmentReview	object CommitmentReview		35
+nim	CommitmentSnapshotLoader	donkey/app/heartbeat.html#CommitmentSnapshotLoader	type CommitmentSnapshotLoader		43
+nim	CommitmentReviewSink	donkey/app/heartbeat.html#CommitmentReviewSink	type CommitmentReviewSink		44
+nim	NowSecFn	donkey/app/heartbeat.html#NowSecFn	type NowSecFn		45
+nim	HeartbeatRegistry	donkey/app/heartbeat.html#HeartbeatRegistry	object HeartbeatRegistry		51
+nim	newHeartbeatRegistry	donkey/app/heartbeat.html#newHeartbeatRegistry	proc newHeartbeatRegistry(): HeartbeatRegistry		56
+nim	taskCount	donkey/app/heartbeat.html#taskCount,HeartbeatRegistry	proc taskCount(reg: HeartbeatRegistry): int		59
+nim	registerTask	donkey/app/heartbeat.html#registerTask,HeartbeatRegistry,string,HeartbeatTask	proc registerTask(reg: var HeartbeatRegistry; name: string; task: HeartbeatTask)		62
+nim	runAllTasks	donkey/app/heartbeat.html#runAllTasks,HeartbeatRegistry	proc runAllTasks(reg: HeartbeatRegistry)		65
+nim	reviewCommitments	donkey/app/heartbeat.html#reviewCommitments,seq[CommitmentSnapshot],int64	proc reviewCommitments(snapshots: seq[CommitmentSnapshot]; nowSec: int64): seq[\n    CommitmentReview]		70
+nim	runCommitmentReview	donkey/app/heartbeat.html#runCommitmentReview,CommitmentSnapshotLoader,CommitmentReviewSink,int64	proc runCommitmentReview(loadSnapshots: CommitmentSnapshotLoader;\n                    sink: CommitmentReviewSink; nowSec: int64)		84
+nim	registerCommitmentReviewTask	donkey/app/heartbeat.html#registerCommitmentReviewTask,HeartbeatRegistry,CommitmentSnapshotLoader,CommitmentReviewSink,NowSecFn	proc registerCommitmentReviewTask(reg: var HeartbeatRegistry;\n                             loadSnapshots: CommitmentSnapshotLoader;\n                             sink: CommitmentReviewSink; nowSecFn: NowSecFn)		93
+nim	deliverDueReminders	donkey/app/heartbeat.html#deliverDueReminders,MemoryRuntimePort,ReminderOutboxFn	proc deliverDueReminders(memory: MemoryRuntimePort; outboxFn: ReminderOutboxFn)		107
+nim	HeartbeatFileName	donkey/app/heartbeat.html#HeartbeatFileName	const HeartbeatFileName		124
+nim	HeartbeatStateFile	donkey/app/heartbeat.html#HeartbeatStateFile	const HeartbeatStateFile		125
+nim	MaxHeartbeatTasksPerUser	donkey/app/heartbeat.html#MaxHeartbeatTasksPerUser	const MaxHeartbeatTasksPerUser		126
+nim	HeartbeatCooldownMs	donkey/app/heartbeat.html#HeartbeatCooldownMs	const HeartbeatCooldownMs		127
+nim	HeartbeatTaskEntry	donkey/app/heartbeat.html#HeartbeatTaskEntry	object HeartbeatTaskEntry		130
+nim	HeartbeatState	donkey/app/heartbeat.html#HeartbeatState	object HeartbeatState		134
+nim	parseHeartbeatMd	donkey/app/heartbeat.html#parseHeartbeatMd,string	proc parseHeartbeatMd(content: string): seq[HeartbeatTaskEntry]		137
+nim	deliverHeartbeats	donkey/app/heartbeat.html#deliverHeartbeats,string,HeartbeatOutboxFn	proc deliverHeartbeats(paddocksDir: string; outboxFn: HeartbeatOutboxFn)		169
+nim	startHeartbeat	donkey/app/heartbeat.html#startHeartbeat,HeartbeatRegistry,int	proc startHeartbeat(reg: HeartbeatRegistry; intervalSec = 60)		211

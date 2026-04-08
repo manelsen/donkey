@@ -1,0 +1,15 @@
+nimTitle	ipc	donkey/ports/ipc.html	module donkey/ports/ipc		0
+nim	SessionInfo	donkey/ports/ipc.html#SessionInfo	object SessionInfo		11
+nim	RouteCount	donkey/ports/ipc.html#RouteCount	object RouteCount		15
+nim	RouteMetric	donkey/ports/ipc.html#RouteMetric	object RouteMetric		19
+nim	ProviderMetric	donkey/ports/ipc.html#ProviderMetric	object ProviderMetric		26
+nim	MemoryStats	donkey/ports/ipc.html#MemoryStats	object MemoryStats		33
+nim	DaemonStatus	donkey/ports/ipc.html#DaemonStatus	object DaemonStatus		42
+nim	IpcLogEntry	donkey/ports/ipc.html#IpcLogEntry	object IpcLogEntry		57
+nim	toJson	donkey/ports/ipc.html#toJson,DaemonStatus	proc toJson(st: DaemonStatus): JsonNode		63
+nim	fromJsonStatus	donkey/ports/ipc.html#fromJsonStatus,JsonNode	proc fromJsonStatus(j: JsonNode): DaemonStatus		133
+nim	toJson	donkey/ports/ipc.html#toJson,IpcLogEntry	proc toJson(e: IpcLogEntry): JsonNode		188
+nim	fromJsonLogEntry	donkey/ports/ipc.html#fromJsonLogEntry,JsonNode	proc fromJsonLogEntry(j: JsonNode): IpcLogEntry		191
+nim	hasGraphMemoryStats	donkey/ports/ipc.html#hasGraphMemoryStats,DaemonStatus	proc hasGraphMemoryStats(st: DaemonStatus): bool		199
+nim	formatDaemonStatus	donkey/ports/ipc.html#formatDaemonStatus,DaemonStatus	proc formatDaemonStatus(st: DaemonStatus): string		205
+nimgrp	tojson	donkey/ports/ipc.html#toJson-procs-all	proc		63

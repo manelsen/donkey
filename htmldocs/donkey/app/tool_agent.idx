@@ -1,0 +1,2 @@
+nimTitle	tool_agent	donkey/app/tool_agent.html	module donkey/app/tool_agent		0
+nim	runToolAgent	donkey/app/tool_agent.html#runToolAgent,AsyncQueue[AgentMessage],AsyncQueue[AgentMessage],seq[ToolRuntimePort]	proc runToolAgent(inbox: AsyncQueue[AgentMessage]; outbox: AsyncQueue[AgentMessage];\n             clients: seq[ToolRuntimePort]): Future[void]		22

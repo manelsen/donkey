@@ -1,0 +1,9 @@
+nimTitle	skills_registry	donkey/config/skills_registry.html	module donkey/config/skills_registry		0
+nim	SkillManifest	donkey/config/skills_registry.html#SkillManifest	object SkillManifest		17
+nim	parseAllowNetHosts	donkey/config/skills_registry.html#parseAllowNetHosts,string	proc parseAllowNetHosts(permission: string): seq[string]		24
+nim	validateDangerousPermissions	donkey/config/skills_registry.html#validateDangerousPermissions,seq[string]	proc validateDangerousPermissions(permissions: seq[string]): Result[void, string]		33
+nim	validateSkillPermissions	donkey/config/skills_registry.html#validateSkillPermissions,seq[string],seq[string]	proc validateSkillPermissions(permissions: seq[string]; webAllowlist: seq[string]): Result[\n    seq[string], string]		52
+nim	saveSkillEntry	donkey/config/skills_registry.html#saveSkillEntry,string,SkillManifest	proc saveSkillEntry(path: string; m: SkillManifest): Result[void, string]		81
+nim	loadSkillRegistry	donkey/config/skills_registry.html#loadSkillRegistry,string	proc loadSkillRegistry(path: string): seq[SkillManifest]		105
+nim	loadUserSkills	donkey/config/skills_registry.html#loadUserSkills,string	proc loadUserSkills(skillsDir: string): seq[SkillManifest]		127
+nim	mergeSkills	donkey/config/skills_registry.html#mergeSkills,seq[SkillManifest],seq[SkillManifest]	proc mergeSkills(base, extra: seq[SkillManifest]): seq[SkillManifest]		137

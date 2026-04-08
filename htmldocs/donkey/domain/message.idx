@@ -1,0 +1,29 @@
+nimTitle	message	donkey/domain/message.html	module donkey/domain/message		0
+nim	roleUser	donkey/domain/message.html#roleUser	const roleUser		12
+nim	roleAssistant	donkey/domain/message.html#roleAssistant	const roleAssistant		13
+nim	roleSystem	donkey/domain/message.html#roleSystem	const roleSystem		14
+nim	roleTool	donkey/domain/message.html#roleTool	const roleTool		15
+nim	trkOutput	donkey/domain/message.html#trkOutput	ToolResultKind.trkOutput		20
+nim	trkOperationalError	donkey/domain/message.html#trkOperationalError	ToolResultKind.trkOperationalError		20
+nim	ToolResultKind	donkey/domain/message.html#ToolResultKind	enum ToolResultKind		20
+nim	ChatMessage	donkey/domain/message.html#ChatMessage	object ChatMessage		24
+nim	ConversationHistory	donkey/domain/message.html#ConversationHistory	type ConversationHistory		32
+nim	InboundMessage	donkey/domain/message.html#InboundMessage	object InboundMessage		34
+nim	OutboundMessage	donkey/domain/message.html#OutboundMessage	object OutboundMessage		42
+nim	ToolDescription	donkey/domain/message.html#ToolDescription	object ToolDescription		52
+nim	ToolCallRequest	donkey/domain/message.html#ToolCallRequest	object ToolCallRequest		57
+nim	CompletionRequest	donkey/domain/message.html#CompletionRequest	object CompletionRequest		62
+nim	CompletionResponse	donkey/domain/message.html#CompletionResponse	object CompletionResponse		69
+nim	newHistory	donkey/domain/message.html#newHistory	proc newHistory(): ConversationHistory		78
+nim	addUser	donkey/domain/message.html#addUser,ConversationHistory,string	proc addUser(h: var ConversationHistory; text: string)		80
+nim	addUserWithImage	donkey/domain/message.html#addUserWithImage,ConversationHistory,string,string	proc addUserWithImage(h: var ConversationHistory; text, imageUrl: string)		83
+nim	addAssistant	donkey/domain/message.html#addAssistant,ConversationHistory,string,string	proc addAssistant(h: var ConversationHistory; text: string; reasoning = "")		86
+nim	toolResultKindLabel	donkey/domain/message.html#toolResultKindLabel,ToolResultKind	proc toolResultKindLabel(kind: ToolResultKind): string		89
+nim	formatToolResultForHistory	donkey/domain/message.html#formatToolResultForHistory,string,string	proc formatToolResultForHistory(name, output: string; kind = trkOutput): string		94
+nim	addToolResult	donkey/domain/message.html#addToolResult,ConversationHistory,string,string,string	proc addToolResult(h: var ConversationHistory; id, name, output: string;\n              kind = trkOutput)		107
+nim	addAssistantWithToolCalls	donkey/domain/message.html#addAssistantWithToolCalls,ConversationHistory,string,seq[ToolCallRequest]	proc addAssistantWithToolCalls(h: var ConversationHistory; text: string;\n                          calls: seq[ToolCallRequest])		116
+nim	trimTo	donkey/domain/message.html#trimTo,ConversationHistory,int	proc trimTo(h: var ConversationHistory; maxLen: int)		122
+nim	buildPrompt	donkey/domain/message.html#buildPrompt,string,ConversationHistory,string	proc buildPrompt(system: string; history: ConversationHistory; context: string;\n            reasoning = false): CompletionRequest		129
+nim	buildPrompt	donkey/domain/message.html#buildPrompt,string,ConversationHistory,string,seq[ToolDescription]	proc buildPrompt(system: string; history: ConversationHistory; context: string;\n            tools: seq[ToolDescription]; reasoning = false): CompletionRequest		143
+nim	needsOnboarding	donkey/domain/message.html#needsOnboarding,bool	proc needsOnboarding(hasUserProfile: bool): bool		159
+nimgrp	buildprompt	donkey/domain/message.html#buildPrompt-procs-all	proc		129

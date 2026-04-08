@@ -1,0 +1,19 @@
+nimTitle	log	donkey/core/log.html	module donkey/core/log		0
+nim	LogEntry	donkey/core/log.html#LogEntry	object LogEntry		16
+nim	LogSink	donkey/core/log.html#LogSink	type LogSink		22
+nim	Logger	donkey/core/log.html#Logger	object Logger		24
+nim	RingEntry	donkey/core/log.html#RingEntry	object RingEntry		29
+nim	RingCap	donkey/core/log.html#RingCap	const RingCap		37
+nim	ringInit	donkey/core/log.html#ringInit	proc ringInit()		45
+nim	ringSnapshot	donkey/core/log.html#ringSnapshot,int	proc ringSnapshot(n: int): seq[RingEntry]		68
+nim	enableHumanLog	donkey/core/log.html#enableHumanLog	proc enableHumanLog()		87
+nim	enableColorLog	donkey/core/log.html#enableColorLog	proc enableColorLog()		92
+nim	enableJsonLog	donkey/core/log.html#enableJsonLog	proc enableJsonLog()		96
+nim	newLogger	donkey/core/log.html#newLogger,string,LogLevel,LogSink	proc newLogger(subsystem: string; level: LogLevel = lvlInfo;\n          sink: LogSink = stderrSink): Logger		180
+nim	child	donkey/core/log.html#child,Logger,string	proc child(logger: Logger; subsystem: string): Logger		185
+nim	log	donkey/core/log.html#log,Logger,LogLevel,string	proc log(logger: Logger; level: LogLevel; msg: string)		192
+nim	debug	donkey/core/log.html#debug.t,Logger,string	template debug(logger: Logger; msg: string)		204
+nim	info	donkey/core/log.html#info.t,Logger,string	template info(logger: Logger; msg: string)		205
+nim	warn	donkey/core/log.html#warn.t,Logger,string	template warn(logger: Logger; msg: string)		206
+nim	error	donkey/core/log.html#error.t,Logger,string	template error(logger: Logger; msg: string)		207
+nim	fatal	donkey/core/log.html#fatal.t,Logger,string	template fatal(logger: Logger; msg: string)		208

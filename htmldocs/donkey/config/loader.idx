@@ -1,0 +1,23 @@
+nimTitle	loader	donkey/config/loader.html	module donkey/config/loader		0
+nim	EnvHome	donkey/config/loader.html#EnvHome	const EnvHome		18
+nim	EnvWebAllowlist	donkey/config/loader.html#EnvWebAllowlist	const EnvWebAllowlist		19
+nim	MainConfigPatch	donkey/config/loader.html#MainConfigPatch	object MainConfigPatch		22
+nim	SecurityConfigPatch	donkey/config/loader.html#SecurityConfigPatch	object SecurityConfigPatch		29
+nim	SandboxConfigPatch	donkey/config/loader.html#SandboxConfigPatch	object SandboxConfigPatch		34
+nim	resolveHomeFromEnv	donkey/config/loader.html#resolveHomeFromEnv,string	proc resolveHomeFromEnv(homeEnv: string): string		38
+nim	resolveHome	donkey/config/loader.html#resolveHome	proc resolveHome(): string		43
+nim	parseSandboxMode	donkey/config/loader.html#parseSandboxMode,string	proc parseSandboxMode(rawMode: string): SandboxMode		46
+nim	parseHostList	donkey/config/loader.html#parseHostList,string	proc parseHostList(raw: string): seq[string]		52
+nim	parseHostList	donkey/config/loader.html#parseHostList,seq[string]	proc parseHostList(items: seq[string]): seq[string]		58
+nim	parseWebAccessRule	donkey/config/loader.html#parseWebAccessRule,string	proc parseWebAccessRule(raw: string): WebAccessRule		62
+nim	parseWebAccessRules	donkey/config/loader.html#parseWebAccessRules,TomlValueRef	proc parseWebAccessRules(node: TomlValueRef): seq[WebAccessRule]		83
+nim	parseSecurityConfigPatch	donkey/config/loader.html#parseSecurityConfigPatch,TomlValueRef	proc parseSecurityConfigPatch(doc: TomlValueRef): SecurityConfigPatch		93
+nim	applySecurityConfigPatch	donkey/config/loader.html#applySecurityConfigPatch,SecurityConfigPatch,DonkeyConfig	proc applySecurityConfigPatch(patch: SecurityConfigPatch; cfg: DonkeyConfig): DonkeyConfig		144
+nim	applyEnvOverrides	donkey/config/loader.html#applyEnvOverrides,DonkeyConfig	proc applyEnvOverrides(cfg: DonkeyConfig): DonkeyConfig		153
+nim	parseMainConfigPatch	donkey/config/loader.html#parseMainConfigPatch,TomlValueRef	proc parseMainConfigPatch(doc: TomlValueRef): MainConfigPatch		159
+nim	parseSandboxConfigPatch	donkey/config/loader.html#parseSandboxConfigPatch,TomlValueRef	proc parseSandboxConfigPatch(doc: TomlValueRef): SandboxConfigPatch		185
+nim	applyMainConfigPatch	donkey/config/loader.html#applyMainConfigPatch,MainConfigPatch,DonkeyConfig	proc applyMainConfigPatch(patch: MainConfigPatch; cfg: DonkeyConfig): DonkeyConfig		198
+nim	applySandboxConfigPatch	donkey/config/loader.html#applySandboxConfigPatch,SandboxConfigPatch,DonkeyConfig	proc applySandboxConfigPatch(patch: SandboxConfigPatch; cfg: DonkeyConfig): DonkeyConfig		211
+nim	loadTomlConfig	donkey/config/loader.html#loadTomlConfig,string	proc loadTomlConfig(path: string): Option[TomlValueRef]		218
+nim	loadConfig	donkey/config/loader.html#loadConfig,string	proc loadConfig(path: string): DonkeyConfig		226
+nimgrp	parsehostlist	donkey/config/loader.html#parseHostList-procs-all	proc		52

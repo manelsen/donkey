@@ -1,0 +1,18 @@
+nimTitle	telegram	donkey/adapters/channel/telegram.html	module donkey/adapters/channel/telegram		0
+nim	TelegramApiBase	donkey/adapters/channel/telegram.html#TelegramApiBase	const TelegramApiBase		26
+nim	TelegramMaxChars	donkey/adapters/channel/telegram.html#TelegramMaxChars	const TelegramMaxChars		28
+nim	TelegramAdapter	donkey/adapters/channel/telegram.html#TelegramAdapter	object TelegramAdapter		31
+nim	sendTyping	donkey/adapters/channel/telegram.html#sendTyping,TelegramAdapter,UserId	proc sendTyping(a: TelegramAdapter; userId: UserId): Result[void, string]		84
+nim	sendMedia	donkey/adapters/channel/telegram.html#sendMedia,TelegramAdapter,int64,string,string,string	proc sendMedia(a: TelegramAdapter; tgId: int64; url, caption, replyTo: string): Result[\n    void, string]		96
+nim	send	donkey/adapters/channel/telegram.html#send,TelegramAdapter,OutboundMessage	proc send(a: TelegramAdapter; msg: OutboundMessage): Result[void, string]		146
+nim	sendReturnId	donkey/adapters/channel/telegram.html#sendReturnId,TelegramAdapter,OutboundMessage	proc sendReturnId(a: TelegramAdapter; msg: OutboundMessage): Result[string, string]		165
+nim	editMessage	donkey/adapters/channel/telegram.html#editMessage,TelegramAdapter,UserId,string,string	proc editMessage(a: TelegramAdapter; userId: UserId; msgId, text: string): Result[\n    void, string]		195
+nim	sendKeyboard	donkey/adapters/channel/telegram.html#sendKeyboard,TelegramAdapter,UserId,string,seq[seq[]],string	proc sendKeyboard(a: TelegramAdapter; userId: UserId; text: string; buttons: seq[\n    seq[(string, string)]]; ## [[("label","data"),...],...]\n             replyTo = ""): Result[string, string]		211
+nim	editKeyboard	donkey/adapters/channel/telegram.html#editKeyboard,TelegramAdapter,UserId,string,seq[seq[]]	proc editKeyboard(a: TelegramAdapter; userId: UserId; msgId: string;\n             buttons: seq[seq[(string, string)]]): Result[void, string]		224
+nim	editKeyboardText	donkey/adapters/channel/telegram.html#editKeyboardText,TelegramAdapter,UserId,string,string,seq[seq[]]	proc editKeyboardText(a: TelegramAdapter; userId: UserId; msgId, text: string;\n                 buttons: seq[seq[(string, string)]]): Result[void, string]		237
+nim	setMessageReaction	donkey/adapters/channel/telegram.html#setMessageReaction,TelegramAdapter,UserId,string,string	proc setMessageReaction(a: TelegramAdapter; userId: UserId; msgId, emoji: string): Result[\n    void, string]		261
+nim	registerBotCommands	donkey/adapters/channel/telegram.html#registerBotCommands,TelegramAdapter	proc registerBotCommands(a: TelegramAdapter): Result[void, string]		280
+nim	receive	donkey/adapters/channel/telegram.html#receive,TelegramAdapter	proc receive(a: var TelegramAdapter): Result[seq[InboundMessage], string]		301
+nim	ack	donkey/adapters/channel/telegram.html#ack,TelegramAdapter,string	proc ack(a: TelegramAdapter; msgId: string)		323
+nim	answerCallback	donkey/adapters/channel/telegram.html#answerCallback,TelegramAdapter,string	proc answerCallback(a: TelegramAdapter; callbackId: string): Result[void, string]		327
+nim	newTelegramAdapter	donkey/adapters/channel/telegram.html#newTelegramAdapter,string,string,string	proc newTelegramAdapter(token: string; identityPath: string; apiBase = "";\n                   pollTimeout = DefaultPollTimeout): TelegramAdapter		333

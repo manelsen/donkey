@@ -1,0 +1,10 @@
+nimTitle	mcp_client	donkey/adapters/tool/mcp_client.html	module donkey/adapters/tool/mcp_client		0
+nim	buildRequest	donkey/adapters/tool/mcp_client.html#buildRequest,int,string,JsonNode	proc buildRequest(id: int; meth: string; params: JsonNode): string		21
+nim	parseToolSchema	donkey/adapters/tool/mcp_client.html#parseToolSchema,JsonNode	proc parseToolSchema(j: JsonNode): ToolSchema		25
+nim	parseToolResult	donkey/adapters/tool/mcp_client.html#parseToolResult,string,JsonNode	proc parseToolResult(callId: string; j: JsonNode): ToolResult		33
+nim	McpClientAdapter	donkey/adapters/tool/mcp_client.html#McpClientAdapter	object McpClientAdapter		51
+nim	listTools	donkey/adapters/tool/mcp_client.html#listTools,McpClientAdapter	proc listTools(c: var McpClientAdapter): Result[seq[ToolSchema], string]		58
+nim	invoke	donkey/adapters/tool/mcp_client.html#invoke,McpClientAdapter,ToolCall	proc invoke(c: var McpClientAdapter; call: ToolCall): Result[ToolResult, string]		59
+nim	close	donkey/adapters/tool/mcp_client.html#close,McpClientAdapter	proc close(c: var McpClientAdapter)		60
+nim	toRuntimePort	donkey/adapters/tool/mcp_client.html#toRuntimePort,McpClientAdapter	proc toRuntimePort(c: McpClientAdapter): ToolRuntimePort		62
+nim	newMcpClient	donkey/adapters/tool/mcp_client.html#newMcpClient,string,seq[string]	proc newMcpClient(command: string; args: seq[string] = @[]): McpClientAdapter		72

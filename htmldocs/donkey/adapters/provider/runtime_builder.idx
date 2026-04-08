@@ -1,0 +1,3 @@
+nimTitle	runtime_builder	donkey/adapters/provider/runtime_builder.html	module donkey/adapters/provider/runtime_builder		0
+nim	fallbackOnError	donkey/adapters/provider/runtime_builder.html#fallbackOnError,CompleteFn,CompleteFn	proc fallbackOnError(primary: CompleteFn; fallback: CompleteFn): CompleteFn		23
+nim	buildProviderBundle	donkey/adapters/provider/runtime_builder.html#buildProviderBundle,ProviderSpec	proc buildProviderBundle(spec: ProviderSpec): ProviderBundle		30

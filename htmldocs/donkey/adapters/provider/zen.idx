@@ -1,0 +1,16 @@
+nimTitle	zen	donkey/adapters/provider/zen.html	module donkey/adapters/provider/zen		0
+nim	zpkOpenAI	donkey/adapters/provider/zen.html#zpkOpenAI	ZenProviderKind.zpkOpenAI		14
+nim	zpkAnthropic	donkey/adapters/provider/zen.html#zpkAnthropic	ZenProviderKind.zpkAnthropic		14
+nim	zpkGemini	donkey/adapters/provider/zen.html#zpkGemini	ZenProviderKind.zpkGemini		14
+nim	zpkDeepSeek	donkey/adapters/provider/zen.html#zpkDeepSeek	ZenProviderKind.zpkDeepSeek		14
+nim	zpkOpenRouter	donkey/adapters/provider/zen.html#zpkOpenRouter	ZenProviderKind.zpkOpenRouter		14
+nim	zpkMiniMax	donkey/adapters/provider/zen.html#zpkMiniMax	ZenProviderKind.zpkMiniMax		14
+nim	zpkZhipu	donkey/adapters/provider/zen.html#zpkZhipu	ZenProviderKind.zpkZhipu		14
+nim	zpkOllama	donkey/adapters/provider/zen.html#zpkOllama	ZenProviderKind.zpkOllama		14
+nim	zpkUnknown	donkey/adapters/provider/zen.html#zpkUnknown	ZenProviderKind.zpkUnknown		14
+nim	ZenProviderKind	donkey/adapters/provider/zen.html#ZenProviderKind	enum ZenProviderKind		14
+nim	ZenAdapter	donkey/adapters/provider/zen.html#ZenAdapter	object ZenAdapter		25
+nim	parseZenModel	donkey/adapters/provider/zen.html#parseZenModel,string	proc parseZenModel(modelId: string): (ZenProviderKind, string)		33
+nim	caps	donkey/adapters/provider/zen.html#caps,ZenAdapter	proc caps(a: ZenAdapter): ProviderCaps		66
+nim	complete	donkey/adapters/provider/zen.html#complete,ZenAdapter,CompletionRequest	proc complete(a: ZenAdapter; req: CompletionRequest): Result[CompletionResponse,\n    string]		80
+nim	newZenAdapter	donkey/adapters/provider/zen.html#newZenAdapter,string,string	proc newZenAdapter(apiKey, modelId: string): ZenAdapter		96

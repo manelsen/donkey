@@ -1,0 +1,2 @@
+nimTitle	telegram_format	donkey/core/telegram_format.html	module donkey/core/telegram_format		0
+nim	markdownToTelegramHtml	donkey/core/telegram_format.html#markdownToTelegramHtml,string	proc markdownToTelegramHtml(md: string): string		17

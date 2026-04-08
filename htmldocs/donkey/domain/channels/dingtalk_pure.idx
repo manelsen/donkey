@@ -1,0 +1,12 @@
+nimTitle	dingtalk_pure	donkey/domain/channels/dingtalk_pure.html	module donkey/domain/channels/dingtalk_pure		0
+nim	dtkText	donkey/domain/channels/dingtalk_pure.html#dtkText	DtMsgKind.dtkText		33
+nim	dtkImage	donkey/domain/channels/dingtalk_pure.html#dtkImage	DtMsgKind.dtkImage		33
+nim	dtkAudio	donkey/domain/channels/dingtalk_pure.html#dtkAudio	DtMsgKind.dtkAudio		33
+nim	dtkVideo	donkey/domain/channels/dingtalk_pure.html#dtkVideo	DtMsgKind.dtkVideo		33
+nim	dtkFile	donkey/domain/channels/dingtalk_pure.html#dtkFile	DtMsgKind.dtkFile		33
+nim	dtkUnknown	donkey/domain/channels/dingtalk_pure.html#dtkUnknown	DtMsgKind.dtkUnknown		33
+nim	DtMsgKind	donkey/domain/channels/dingtalk_pure.html#DtMsgKind	enum DtMsgKind		33
+nim	DtParseResult	donkey/domain/channels/dingtalk_pure.html#DtParseResult	object DtParseResult		41
+nim	parseEvent	donkey/domain/channels/dingtalk_pure.html#parseEvent,JsonNode	proc parseEvent(payload: JsonNode): DtParseResult		103
+nim	toInbound	donkey/domain/channels/dingtalk_pure.html#toInbound,DtParseResult,UserId	proc toInbound(r: DtParseResult; userId: UserId): InboundMessage		142
+nim	hasMedia	donkey/domain/channels/dingtalk_pure.html#hasMedia,DtParseResult	proc hasMedia(r: DtParseResult): bool		154

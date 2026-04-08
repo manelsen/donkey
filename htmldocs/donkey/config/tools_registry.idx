@@ -1,0 +1,7 @@
+nimTitle	tools_registry	donkey/config/tools_registry.html	module donkey/config/tools_registry		0
+nim	tkMcp	donkey/config/tools_registry.html#tkMcp	ToolKind.tkMcp		14
+nim	ToolKind	donkey/config/tools_registry.html#ToolKind	enum ToolKind		14
+nim	ToolEntry	donkey/config/tools_registry.html#ToolEntry	object ToolEntry		17
+nim	saveToolEntry	donkey/config/tools_registry.html#saveToolEntry,string,ToolEntry	proc saveToolEntry(path: string; entry: ToolEntry)		22
+nim	loadToolRegistry	donkey/config/tools_registry.html#loadToolRegistry,string	proc loadToolRegistry(path: string): seq[ToolEntry]		38
+nim	buildMcpClient	donkey/config/tools_registry.html#buildMcpClient,ToolEntry	proc buildMcpClient(entry: ToolEntry): McpClientAdapter		56

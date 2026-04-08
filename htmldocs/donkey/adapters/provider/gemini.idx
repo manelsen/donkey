@@ -1,0 +1,8 @@
+nimTitle	gemini	donkey/adapters/provider/gemini.html	module donkey/adapters/provider/gemini		0
+nim	GeminiBaseUrl	donkey/adapters/provider/gemini.html#GeminiBaseUrl	const GeminiBaseUrl		29
+nim	GeminiAdapter	donkey/adapters/provider/gemini.html#GeminiAdapter	object GeminiAdapter		33
+nim	caps	donkey/adapters/provider/gemini.html#caps,GeminiAdapter	proc caps(a: GeminiAdapter): ProviderCaps		40
+nim	buildUrl	donkey/adapters/provider/gemini.html#buildUrl,GeminiAdapter	proc buildUrl(a: GeminiAdapter): string		52
+nim	buildBody	donkey/adapters/provider/gemini.html#buildBody,GeminiAdapter,CompletionRequest	proc buildBody(a: GeminiAdapter; req: CompletionRequest): JsonNode		60
+nim	complete	donkey/adapters/provider/gemini.html#complete,GeminiAdapter,CompletionRequest	proc complete(a: GeminiAdapter; req: CompletionRequest): Result[CompletionResponse,\n    string]		67
+nim	newGeminiAdapter	donkey/adapters/provider/gemini.html#newGeminiAdapter,string,string	proc newGeminiAdapter(apiKey: string; model = GeminiDefaultModel; endpoint = ""): GeminiAdapter		79

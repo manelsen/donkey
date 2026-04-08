@@ -1,0 +1,11 @@
+nimTitle	telegram_pure	donkey/domain/channels/telegram_pure.html	module donkey/domain/channels/telegram_pure		0
+nim	tukMessage	donkey/domain/channels/telegram_pure.html#tukMessage	TgUpdateKind.tukMessage		23
+nim	tukCallbackQuery	donkey/domain/channels/telegram_pure.html#tukCallbackQuery	TgUpdateKind.tukCallbackQuery		23
+nim	tukUnknown	donkey/domain/channels/telegram_pure.html#tukUnknown	TgUpdateKind.tukUnknown		23
+nim	TgUpdateKind	donkey/domain/channels/telegram_pure.html#TgUpdateKind	enum TgUpdateKind		23
+nim	TgParseResult	donkey/domain/channels/telegram_pure.html#TgParseResult	object TgParseResult		28
+nim	parseUpdate	donkey/domain/channels/telegram_pure.html#parseUpdate,JsonNode	proc parseUpdate(upd: JsonNode): TgParseResult		69
+nim	parseUpdates	donkey/domain/channels/telegram_pure.html#parseUpdates,JsonNode	proc parseUpdates(updates: JsonNode): seq[TgParseResult]		109
+nim	toInbound	donkey/domain/channels/telegram_pure.html#toInbound,TgParseResult,UserId,string	proc toInbound(r: TgParseResult; userId: UserId; mediaUrl = ""): InboundMessage		119
+nim	maxNextOffset	donkey/domain/channels/telegram_pure.html#maxNextOffset,int64,JsonNode	proc maxNextOffset(currentOffset: int64; updates: JsonNode): int64		132
+nim	hasCallbackId	donkey/domain/channels/telegram_pure.html#hasCallbackId,TgParseResult	proc hasCallbackId(r: TgParseResult): bool		143

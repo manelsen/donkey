@@ -1,0 +1,4 @@
+nimTitle	net_boundary	donkey/core/security/net_boundary.html	module donkey/core/security/net_boundary		0
+nim	NetPolicy	donkey/core/security/net_boundary.html#NetPolicy	object NetPolicy		7
+nim	isHostAllowed	donkey/core/security/net_boundary.html#isHostAllowed,string,seq[string]	proc isHostAllowed(host: string; allowlist: seq[string]): bool		11
+nim	validateEgress	donkey/core/security/net_boundary.html#validateEgress,string,seq[string]	proc validateEgress(host: string; allowlist: seq[string]): Result[string, string]		20

@@ -1,0 +1,13 @@
+nimTitle	email	donkey/adapters/channel/email.html	module donkey/adapters/channel/email		0
+nim	ImapDefaultPort	donkey/adapters/channel/email.html#ImapDefaultPort	const ImapDefaultPort		36
+nim	SmtpDefaultPort	donkey/adapters/channel/email.html#SmtpDefaultPort	const SmtpDefaultPort		37
+nim	EmailMaxChars	donkey/adapters/channel/email.html#EmailMaxChars	const EmailMaxChars		38
+nim	EmailAdapter	donkey/adapters/channel/email.html#EmailAdapter	object EmailAdapter		230
+nim	buildSmtpMessage	donkey/adapters/channel/email.html#buildSmtpMessage,string,string,string,string	proc buildSmtpMessage(fromAddr, toAddr, subject, body: string): string		243
+nim	pollInbox	donkey/adapters/channel/email.html#pollInbox,EmailAdapter	proc pollInbox(a: EmailAdapter): Result[seq[InboundMessage], string]		260
+nim	receive	donkey/adapters/channel/email.html#receive,EmailAdapter	proc receive(a: var EmailAdapter): Result[seq[InboundMessage], string]		291
+nim	send	donkey/adapters/channel/email.html#send,EmailAdapter,OutboundMessage	proc send(a: EmailAdapter; msg: OutboundMessage): Result[void, string]		295
+nim	sendReturnId	donkey/adapters/channel/email.html#sendReturnId,EmailAdapter,OutboundMessage	proc sendReturnId(a: EmailAdapter; msg: OutboundMessage): Result[string, string]		304
+nim	editMessage	donkey/adapters/channel/email.html#editMessage,EmailAdapter,UserId,string,string	proc editMessage(a: EmailAdapter; userId: UserId; msgId, text: string): Result[void,\n    string]		309
+nim	ack	donkey/adapters/channel/email.html#ack,EmailAdapter,string	proc ack(a: EmailAdapter; msgId: string)		315
+nim	newEmailAdapter	donkey/adapters/channel/email.html#newEmailAdapter,string,string,string,string,string,string	proc newEmailAdapter(imapHost, smtpHost, user, password: string;\n                identityPath: string; fromAddr = ""; imapPort = ImapDefaultPort;\n                smtpPort = SmtpDefaultPort; startTls = true): EmailAdapter		321

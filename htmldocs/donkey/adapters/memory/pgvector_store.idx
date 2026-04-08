@@ -1,0 +1,25 @@
+nimTitle	pgvector_store	donkey/adapters/memory/pgvector_store.html	module donkey/adapters/memory/pgvector_store		0
+nim	DefaultTableName	donkey/adapters/memory/pgvector_store.html#DefaultTableName	const DefaultTableName		26
+nim	buildVectorLiteral	donkey/adapters/memory/pgvector_store.html#buildVectorLiteral,seq[float32]	proc buildVectorLiteral(vec: seq[float32]): string		28
+nim	parseVectorLiteral	donkey/adapters/memory/pgvector_store.html#parseVectorLiteral,string	proc parseVectorLiteral(literal: string): seq[float32]		47
+nim	PgvectorStoreAdapter	donkey/adapters/memory/pgvector_store.html#PgvectorStoreAdapter	object PgvectorStoreAdapter		69
+nim	openDb	donkey/adapters/memory/pgvector_store.html#openDb,PgvectorStoreAdapter	proc openDb(a: PgvectorStoreAdapter): Result[DbConn, string]		103
+nim	ensureSchema	donkey/adapters/memory/pgvector_store.html#ensureSchema,DbConn,string	proc ensureSchema(db: DbConn; tableName: string): Result[void, string]		110
+nim	initStore	donkey/adapters/memory/pgvector_store.html#initStore,PgvectorStoreAdapter	proc initStore(a: PgvectorStoreAdapter): Result[void, string]		120
+nim	hasProfile	donkey/adapters/memory/pgvector_store.html#hasProfile,PgvectorStoreAdapter,UserId	proc hasProfile(a: PgvectorStoreAdapter; userId: UserId): Result[bool, string]		126
+nim	loadContext	donkey/adapters/memory/pgvector_store.html#loadContext,PgvectorStoreAdapter,UserId	proc loadContext(a: PgvectorStoreAdapter; userId: UserId): Result[UserContext, string]		133
+nim	saveUserMd	donkey/adapters/memory/pgvector_store.html#saveUserMd,PgvectorStoreAdapter,UserId,string	proc saveUserMd(a: PgvectorStoreAdapter; userId: UserId; content: string): Result[\n    void, string]		158
+nim	appendMemory	donkey/adapters/memory/pgvector_store.html#appendMemory,PgvectorStoreAdapter,UserId,string	proc appendMemory(a: PgvectorStoreAdapter; userId: UserId; text: string): Result[\n    void, string]		171
+nim	savePreferences	donkey/adapters/memory/pgvector_store.html#savePreferences,PgvectorStoreAdapter,UserId,string	proc savePreferences(a: PgvectorStoreAdapter; userId: UserId; content: string): Result[\n    void, string]		179
+nim	clearMemory	donkey/adapters/memory/pgvector_store.html#clearMemory,PgvectorStoreAdapter,UserId	proc clearMemory(a: PgvectorStoreAdapter; userId: UserId): Result[void, string]		192
+nim	storeChunk	donkey/adapters/memory/pgvector_store.html#storeChunk,PgvectorStoreAdapter,UserId,EmbeddedChunk	proc storeChunk(a: PgvectorStoreAdapter; userId: UserId; chunk: EmbeddedChunk): Result[\n    void, string]		201
+nim	storeChunks	donkey/adapters/memory/pgvector_store.html#storeChunks,PgvectorStoreAdapter,UserId,seq[EmbeddedChunk]	proc storeChunks(a: PgvectorStoreAdapter; userId: UserId; chunks: seq[EmbeddedChunk]): Result[\n    void, string]		217
+nim	search	donkey/adapters/memory/pgvector_store.html#search,PgvectorStoreAdapter,UserId,string,int	proc search(a: PgvectorStoreAdapter; userId: UserId; query: string; limit: int): Result[\n    seq[MemoryHit], string]		234
+nim	searchByHash	donkey/adapters/memory/pgvector_store.html#searchByHash,PgvectorStoreAdapter,UserId,string	proc searchByHash(a: PgvectorStoreAdapter; userId: UserId; hash: string): Result[\n    seq[MemoryHit], string]		256
+nim	getChunksByHash	donkey/adapters/memory/pgvector_store.html#getChunksByHash,PgvectorStoreAdapter,UserId,string	proc getChunksByHash(a: PgvectorStoreAdapter; userId: UserId; hash: string): Result[\n    seq[(string, int, int)], string]		270
+nim	searchMemory	donkey/adapters/memory/pgvector_store.html#searchMemory,PgvectorStoreAdapter,UserId,string,int	proc searchMemory(a: PgvectorStoreAdapter; userId: UserId; query: string; limit: int): Result[\n    seq[MemoryHit], string]		289
+nim	deleteUser	donkey/adapters/memory/pgvector_store.html#deleteUser,PgvectorStoreAdapter,UserId	proc deleteUser(a: PgvectorStoreAdapter; userId: UserId): Result[void, string]		295
+nim	countMemories	donkey/adapters/memory/pgvector_store.html#countMemories,PgvectorStoreAdapter,UserId	proc countMemories(a: PgvectorStoreAdapter; userId: UserId): Result[int, string]		300
+nim	getMemoryKinds	donkey/adapters/memory/pgvector_store.html#getMemoryKinds,PgvectorStoreAdapter,UserId	proc getMemoryKinds(a: PgvectorStoreAdapter; userId: UserId): Result[seq[string],\n    string]		310
+nim	reconstructFromChunks	donkey/adapters/memory/pgvector_store.html#reconstructFromChunks,PgvectorStoreAdapter,UserId,string	proc reconstructFromChunks(a: PgvectorStoreAdapter; userId: UserId; hash: string): Result[\n    string, string]		322
+nim	newPgvectorStoreAdapter	donkey/adapters/memory/pgvector_store.html#newPgvectorStoreAdapter,string,EmbedFn	proc newPgvectorStoreAdapter(dsn: string; embedFn: EmbedFn;\n                        tableName = DefaultTableName): PgvectorStoreAdapter		345

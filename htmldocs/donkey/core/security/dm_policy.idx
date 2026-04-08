@@ -1,0 +1,19 @@
+nimTitle	dm_policy	donkey/core/security/dm_policy.html	module donkey/core/security/dm_policy		0
+nim	DmPolicyOpen	donkey/core/security/dm_policy.html#DmPolicyOpen	DmPolicy.DmPolicyOpen		18
+nim	DmPolicyPairing	donkey/core/security/dm_policy.html#DmPolicyPairing	DmPolicy.DmPolicyPairing		18
+nim	DmPolicyAllowlist	donkey/core/security/dm_policy.html#DmPolicyAllowlist	DmPolicy.DmPolicyAllowlist		18
+nim	DmPolicy	donkey/core/security/dm_policy.html#DmPolicy	enum DmPolicy		18
+nim	DmSecurityState	donkey/core/security/dm_policy.html#DmSecurityState	object DmSecurityState		23
+nim	PairingState	donkey/core/security/dm_policy.html#PairingState	object PairingState		27
+nim	PairingCodeLength	donkey/core/security/dm_policy.html#PairingCodeLength	const PairingCodeLength		34
+nim	PairingExpirySeconds	donkey/core/security/dm_policy.html#PairingExpirySeconds	const PairingExpirySeconds		35
+nim	MaxPairingAttempts	donkey/core/security/dm_policy.html#MaxPairingAttempts	const MaxPairingAttempts		36
+nim	isAllowedDm	donkey/core/security/dm_policy.html#isAllowedDm,DmSecurityState,UserId	proc isAllowedDm(state: DmSecurityState; userId: UserId): bool		38
+nim	addToAllowlist	donkey/core/security/dm_policy.html#addToAllowlist,DmSecurityState,UserId	proc addToAllowlist(state: var DmSecurityState; userId: UserId)		51
+nim	removeFromAllowlist	donkey/core/security/dm_policy.html#removeFromAllowlist,DmSecurityState,UserId	proc removeFromAllowlist(state: var DmSecurityState; userId: UserId)		56
+nim	isValidByAttemptsAndExpiry	donkey/core/security/dm_policy.html#isValidByAttemptsAndExpiry,int,float	proc isValidByAttemptsAndExpiry(attempts: int; expiresAt: float): bool		62
+nim	newPairingState	donkey/core/security/dm_policy.html#newPairingState	proc newPairingState(): PairingState		66
+nim	isValid	donkey/core/security/dm_policy.html#isValid,PairingState	proc isValid(pairing: PairingState): bool		79
+nim	validatePairingCode	donkey/core/security/dm_policy.html#validatePairingCode,PairingState,string	proc validatePairingCode(pairing: PairingState; input: string): bool		82
+nim	recordFailedAttempt	donkey/core/security/dm_policy.html#recordFailedAttempt,PairingState	proc recordFailedAttempt(pairing: var PairingState)		87
+nim	`$`	donkey/core/security/dm_policy.html#$,DmPolicy	proc `$`(policy: DmPolicy): string		90

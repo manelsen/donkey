@@ -1,0 +1,12 @@
+nimTitle	qq	donkey/adapters/channel/qq.html	module donkey/adapters/channel/qq		0
+nim	OneBotDefaultBase	donkey/adapters/channel/qq.html#OneBotDefaultBase	const OneBotDefaultBase		21
+nim	QQEvent	donkey/adapters/channel/qq.html#QQEvent	object QQEvent		24
+nim	QQAdapter	donkey/adapters/channel/qq.html#QQAdapter	object QQAdapter		31
+nim	newQQAdapter	donkey/adapters/channel/qq.html#newQQAdapter,string,string,string	proc newQQAdapter(apiBase, accessToken, identityPath: string): QQAdapter		49
+nim	parseEventJson	donkey/adapters/channel/qq.html#parseEventJson,string	proc parseEventJson(payload: string): Result[QQEvent, string]		63
+nim	startWebhook	donkey/adapters/channel/qq.html#startWebhook,QQAdapter,Port	proc startWebhook(a: QQAdapter; port: Port)		146
+nim	enqueueEventJson	donkey/adapters/channel/qq.html#enqueueEventJson,QQAdapter,string	proc enqueueEventJson(a: var QQAdapter; payload: string): Result[void, string]		157
+nim	tryRecvEvent	donkey/adapters/channel/qq.html#tryRecvEvent,QQAdapter	proc tryRecvEvent(a: var QQAdapter): (bool, QQEvent)		165
+nim	targetFor	donkey/adapters/channel/qq.html#targetFor,QQAdapter,UserId	proc targetFor(a: QQAdapter; userId: UserId): Result[(string, string), string]		176
+nim	sendToRawId	donkey/adapters/channel/qq.html#sendToRawId,QQAdapter,string,OutboundMessage	proc sendToRawId(a: var QQAdapter; rawId: string; msg: OutboundMessage): Result[void,\n    string]		184
+nim	send	donkey/adapters/channel/qq.html#send,QQAdapter,OutboundMessage	proc send(a: var QQAdapter; msg: OutboundMessage): Result[void, string]		201

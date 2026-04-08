@@ -1,0 +1,8 @@
+nimTitle	std_http	donkey/adapters/http/std_http.html	module donkey/adapters/http/std_http		0
+nim	StdHttpAdapter	donkey/adapters/http/std_http.html#StdHttpAdapter	object StdHttpAdapter		11
+nim	newStdHttpAdapter	donkey/adapters/http/std_http.html#newStdHttpAdapter,int,int,seq[string]	proc newStdHttpAdapter(timeout = 60; maxRetries = 3; allowlist: seq[string] = @[]): StdHttpAdapter		16
+nim	get	donkey/adapters/http/std_http.html#get,StdHttpAdapter,string,seq[HttpHeader]	proc get(a: StdHttpAdapter; url: string; headers: seq[HttpHeader] = @[]): Result[\n    HttpResponse, string]		57
+nim	post	donkey/adapters/http/std_http.html#post,StdHttpAdapter,string,string,seq[HttpHeader]	proc post(a: StdHttpAdapter; url, body: string; headers: seq[HttpHeader] = @[]): Result[\n    HttpResponse, string]		61
+nim	put	donkey/adapters/http/std_http.html#put,StdHttpAdapter,string,string,seq[HttpHeader]	proc put(a: StdHttpAdapter; url, body: string; headers: seq[HttpHeader] = @[]): Result[\n    HttpResponse, string]		65
+nim	patch	donkey/adapters/http/std_http.html#patch,StdHttpAdapter,string,string,seq[HttpHeader]	proc patch(a: StdHttpAdapter; url, body: string; headers: seq[HttpHeader] = @[]): Result[\n    HttpResponse, string]		69
+nim	toRuntimePort	donkey/adapters/http/std_http.html#toRuntimePort,StdHttpAdapter	proc toRuntimePort(a: StdHttpAdapter): HttpRuntimePort		73

@@ -1,0 +1,40 @@
+nimTitle	smart_routing	donkey/core/providers/smart_routing.html	module donkey/core/providers/smart_routing		0
+nim	AutoProviderLabel	donkey/core/providers/smart_routing.html#AutoProviderLabel	const AutoProviderLabel		11
+nim	LongContextChars	donkey/core/providers/smart_routing.html#LongContextChars	const LongContextChars		12
+nim	SmartRoutingPrefs	donkey/core/providers/smart_routing.html#SmartRoutingPrefs	object SmartRoutingPrefs		15
+nim	ProviderAvailability	donkey/core/providers/smart_routing.html#ProviderAvailability	object ProviderAvailability		23
+nim	ProviderSelection	donkey/core/providers/smart_routing.html#ProviderSelection	object ProviderSelection		32
+nim	RoutingTelemetryHook	donkey/core/providers/smart_routing.html#RoutingTelemetryHook	type RoutingTelemetryHook		36
+nim	RoutingResultHook	donkey/core/providers/smart_routing.html#RoutingResultHook	type RoutingResultHook		40
+nim	RouteFeedback	donkey/core/providers/smart_routing.html#RouteFeedback	object RouteFeedback		44
+nim	ProviderFeedback	donkey/core/providers/smart_routing.html#ProviderFeedback	object ProviderFeedback		51
+nim	ProviderCooldown	donkey/core/providers/smart_routing.html#ProviderCooldown	object ProviderCooldown		58
+nim	RoutingFeedbackHook	donkey/core/providers/smart_routing.html#RoutingFeedbackHook	type RoutingFeedbackHook		62
+nim	RoutingProviderCooldownHook	donkey/core/providers/smart_routing.html#RoutingProviderCooldownHook	type RoutingProviderCooldownHook		63
+nim	RouteCostHint	donkey/core/providers/smart_routing.html#RouteCostHint	object RouteCostHint		65
+nim	RoutingCostHook	donkey/core/providers/smart_routing.html#RoutingCostHook	type RoutingCostHook		71
+nim	RoutingSignals	donkey/core/providers/smart_routing.html#RoutingSignals	object RoutingSignals		73
+nim	defaultSmartRoutingPrefs	donkey/core/providers/smart_routing.html#defaultSmartRoutingPrefs	proc defaultSmartRoutingPrefs(): SmartRoutingPrefs		79
+nim	normalizeThinking	donkey/core/providers/smart_routing.html#normalizeThinking,string	proc normalizeThinking(value: string): string		87
+nim	normalizeBudgetPolicy	donkey/core/providers/smart_routing.html#normalizeBudgetPolicy,string	proc normalizeBudgetPolicy(value: string): string		91
+nim	parseSmartRoutingPrefs	donkey/core/providers/smart_routing.html#parseSmartRoutingPrefs,string	proc parseSmartRoutingPrefs(preferencesMd: string): SmartRoutingPrefs		98
+nim	usesSmartRouting	donkey/core/providers/smart_routing.html#usesSmartRouting,SmartRoutingPrefs	proc usesSmartRouting(prefs: SmartRoutingPrefs): bool		120
+nim	routingLabel	donkey/core/providers/smart_routing.html#routingLabel,SmartRoutingPrefs	proc routingLabel(prefs: SmartRoutingPrefs): string		127
+nim	defaultModelForProvider	donkey/core/providers/smart_routing.html#defaultModelForProvider,string	proc defaultModelForProvider(providerName: string): string		135
+nim	requestApproxChars	donkey/core/providers/smart_routing.html#requestApproxChars,CompletionRequest	proc requestApproxChars(req: CompletionRequest): int		151
+nim	buildRoutingSignals	donkey/core/providers/smart_routing.html#buildRoutingSignals,SmartRoutingPrefs,CompletionRequest	proc buildRoutingSignals(prefs: SmartRoutingPrefs; req: CompletionRequest): RoutingSignals		160
+nim	dedupeSelections	donkey/core/providers/smart_routing.html#dedupeSelections,seq[ProviderSelection]	proc dedupeSelections(selections: seq[ProviderSelection]): seq[ProviderSelection]		202
+nim	explicitSelection	donkey/core/providers/smart_routing.html#explicitSelection,SmartRoutingPrefs	proc explicitSelection(prefs: SmartRoutingPrefs): ProviderSelection		213
+nim	formatSelection	donkey/core/providers/smart_routing.html#formatSelection,ProviderSelection	proc formatSelection(selection: ProviderSelection): string		219
+nim	shouldCircuitBreakRoute	donkey/core/providers/smart_routing.html#shouldCircuitBreakRoute,RouteFeedback	proc shouldCircuitBreakRoute(feedback: RouteFeedback): bool		236
+nim	routeProviderName	donkey/core/providers/smart_routing.html#routeProviderName,string	proc routeProviderName(route: string): string		248
+nim	aggregateProviderFeedback	donkey/core/providers/smart_routing.html#aggregateProviderFeedback,seq[RouteFeedback]	proc aggregateProviderFeedback(feedback: seq[RouteFeedback]): seq[ProviderFeedback]		252
+nim	shouldCircuitBreakProvider	donkey/core/providers/smart_routing.html#shouldCircuitBreakProvider,ProviderFeedback	proc shouldCircuitBreakProvider(feedback: ProviderFeedback): bool		279
+nim	applyProviderCooldowns	donkey/core/providers/smart_routing.html#applyProviderCooldowns,seq[ProviderSelection],seq[ProviderCooldown],int64	proc applyProviderCooldowns(selections: seq[ProviderSelection];\n                       cooldowns: seq[ProviderCooldown]; nowUnix: int64): seq[\n    ProviderSelection]		291
+nim	reorderSelectionsWithFeedback	donkey/core/providers/smart_routing.html#reorderSelectionsWithFeedback,seq[ProviderSelection],seq[RouteFeedback]	proc reorderSelectionsWithFeedback(selections: seq[ProviderSelection];\n                              feedback: seq[RouteFeedback]): seq[\n    ProviderSelection]		311
+nim	applyCircuitBreaker	donkey/core/providers/smart_routing.html#applyCircuitBreaker,seq[ProviderSelection],seq[RouteFeedback]	proc applyCircuitBreaker(selections: seq[ProviderSelection];\n                    feedback: seq[RouteFeedback]): seq[ProviderSelection]		337
+nim	applyProviderCircuitBreaker	donkey/core/providers/smart_routing.html#applyProviderCircuitBreaker,seq[ProviderSelection],seq[RouteFeedback]	proc applyProviderCircuitBreaker(selections: seq[ProviderSelection];\n                            feedback: seq[RouteFeedback]): seq[ProviderSelection]		357
+nim	reorderSelectionsWithCost	donkey/core/providers/smart_routing.html#reorderSelectionsWithCost,seq[ProviderSelection],seq[RouteCostHint],string	proc reorderSelectionsWithCost(selections: seq[ProviderSelection];\n                          costs: seq[RouteCostHint]; budgetPolicy = "balanced"): seq[\n    ProviderSelection]		402
+nim	smartRouteSelections	donkey/core/providers/smart_routing.html#smartRouteSelections,SmartRoutingPrefs,CompletionRequest,ProviderAvailability	proc smartRouteSelections(prefs: SmartRoutingPrefs; req: CompletionRequest;\n                     availability: ProviderAvailability): seq[ProviderSelection]		429
+nim	previewSmartRouteSelections	donkey/core/providers/smart_routing.html#previewSmartRouteSelections,SmartRoutingPrefs,ProviderAvailability	proc previewSmartRouteSelections(prefs: SmartRoutingPrefs;\n                            availability: ProviderAvailability): seq[\n    ProviderSelection]		499
+nim	formatSelectionPreview	donkey/core/providers/smart_routing.html#formatSelectionPreview,seq[ProviderSelection],int	proc formatSelectionPreview(selections: seq[ProviderSelection]; limit = 3): string		503

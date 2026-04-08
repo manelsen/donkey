@@ -1,0 +1,18 @@
+nimTitle	session_ingress	donkey/core/session/session_ingress.html	module donkey/core/session/session_ingress		0
+nim	SessionRuntimeSignature	donkey/core/session/session_ingress.html#SessionRuntimeSignature	type SessionRuntimeSignature		7
+nim	SessionIngressState	donkey/core/session/session_ingress.html#SessionIngressState	object SessionIngressState		9
+nim	SessionIngressRequest	donkey/core/session/session_ingress.html#SessionIngressRequest	object SessionIngressRequest		14
+nim	siaStartNewSession	donkey/core/session/session_ingress.html#siaStartNewSession	SessionIngressActionKind.siaStartNewSession		19
+nim	siaReuseSessionRuntime	donkey/core/session/session_ingress.html#siaReuseSessionRuntime	SessionIngressActionKind.siaReuseSessionRuntime		19
+nim	siaRebuildSessionRuntime	donkey/core/session/session_ingress.html#siaRebuildSessionRuntime	SessionIngressActionKind.siaRebuildSessionRuntime		19
+nim	SessionIngressActionKind	donkey/core/session/session_ingress.html#SessionIngressActionKind	enum SessionIngressActionKind		19
+nim	sitActorInbox	donkey/core/session/session_ingress.html#sitActorInbox	SessionIngressTarget.sitActorInbox		24
+nim	sitAskInbox	donkey/core/session/session_ingress.html#sitAskInbox	SessionIngressTarget.sitAskInbox		24
+nim	SessionIngressTarget	donkey/core/session/session_ingress.html#SessionIngressTarget	enum SessionIngressTarget		24
+nim	SessionIngressDecision	donkey/core/session/session_ingress.html#SessionIngressDecision	object SessionIngressDecision		28
+nim	`$`	donkey/core/session/session_ingress.html#$,SessionRuntimeSignature	proc `$`(signature: SessionRuntimeSignature): string		33
+nim	`==`	donkey/core/session/session_ingress.html#==,SessionRuntimeSignature,SessionRuntimeSignature	proc `==`(a, b: SessionRuntimeSignature): bool		34
+nim	decideSessionIngress	donkey/core/session/session_ingress.html#decideSessionIngress,SessionIngressRequest	proc decideSessionIngress(request: SessionIngressRequest): SessionIngressDecision		36
+nim	startsSessionRuntime	donkey/core/session/session_ingress.html#startsSessionRuntime,SessionIngressDecision	proc startsSessionRuntime(decision: SessionIngressDecision): bool		53
+nim	rebuildsSessionRuntime	donkey/core/session/session_ingress.html#rebuildsSessionRuntime,SessionIngressDecision	proc rebuildsSessionRuntime(decision: SessionIngressDecision): bool		56
+nim	startsNewSession	donkey/core/session/session_ingress.html#startsNewSession,SessionIngressDecision	proc startsNewSession(decision: SessionIngressDecision): bool		59

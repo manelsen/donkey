@@ -1,0 +1,84 @@
+nimTitle	native_tools	donkey/app/native_tools.html	module donkey/app/native_tools		0
+nim	NativeToolResult	donkey/app/native_tools.html#NativeToolResult	object NativeToolResult		43
+nim	AskContext	donkey/app/native_tools.html#AskContext	object AskContext		50
+nim	BashContext	donkey/app/native_tools.html#BashContext	object BashContext		53
+nim	ReadFileContext	donkey/app/native_tools.html#ReadFileContext	object ReadFileContext		56
+nim	HashlineAnchor	donkey/app/native_tools.html#HashlineAnchor	object HashlineAnchor		61
+nim	efokReplace	donkey/app/native_tools.html#efokReplace	EditFileOpKind.efokReplace		65
+nim	efokAppend	donkey/app/native_tools.html#efokAppend	EditFileOpKind.efokAppend		65
+nim	efokPrepend	donkey/app/native_tools.html#efokPrepend	EditFileOpKind.efokPrepend		65
+nim	EditFileOpKind	donkey/app/native_tools.html#EditFileOpKind	enum EditFileOpKind		65
+nim	EditFileOp	donkey/app/native_tools.html#EditFileOp	object EditFileOp		70
+nim	EditFileContext	donkey/app/native_tools.html#EditFileContext	object EditFileContext		76
+nim	FindContext	donkey/app/native_tools.html#FindContext	object FindContext		80
+nim	GrepContext	donkey/app/native_tools.html#GrepContext	object GrepContext		86
+nim	SedContext	donkey/app/native_tools.html#SedContext	object SedContext		92
+nim	WcContext	donkey/app/native_tools.html#WcContext	object WcContext		96
+nim	HeadTailContext	donkey/app/native_tools.html#HeadTailContext	object HeadTailContext		100
+nim	SortContext	donkey/app/native_tools.html#SortContext	object SortContext		104
+nim	CpMvContext	donkey/app/native_tools.html#CpMvContext	object CpMvContext		108
+nim	FetchContext	donkey/app/native_tools.html#FetchContext	object FetchContext		112
+nim	WebSearchContext	donkey/app/native_tools.html#WebSearchContext	object WebSearchContext		116
+nim	CalcContext	donkey/app/native_tools.html#CalcContext	object CalcContext		120
+nim	MermaidContext	donkey/app/native_tools.html#MermaidContext	object MermaidContext		123
+nim	InspectImageContext	donkey/app/native_tools.html#InspectImageContext	object InspectImageContext		126
+nim	TaskContext	donkey/app/native_tools.html#TaskContext	object TaskContext		130
+nim	AwaitContext	donkey/app/native_tools.html#AwaitContext	object AwaitContext		134
+nim	FindingContext	donkey/app/native_tools.html#FindingContext	object FindingContext		137
+nim	ManageSkillsContext	donkey/app/native_tools.html#ManageSkillsContext	object ManageSkillsContext		140
+nim	NativeCtx	donkey/app/native_tools.html#NativeCtx	object NativeCtx		150
+nim	resolveInPaddock	donkey/app/native_tools.html#resolveInPaddock,string,string	proc resolveInPaddock(path, paddock: string): string		176
+nim	inPaddock	donkey/app/native_tools.html#inPaddock,string,string	proc inPaddock(path, paddock: string): bool		189
+nim	performBash	donkey/app/native_tools.html#performBash,string,string	proc performBash(cmd: string; workingDir = ""): string		254
+nim	computeLineHash	donkey/app/native_tools.html#computeLineHash,int,string	proc computeLineHash(lineNum: int; line: string): string		284
+nim	formatHashlineRef	donkey/app/native_tools.html#formatHashlineRef,int,string	proc formatHashlineRef(lineNum: int; line: string): string		291
+nim	formatHashlineLine	donkey/app/native_tools.html#formatHashlineLine,int,string	proc formatHashlineLine(lineNum: int; line: string): string		294
+nim	renderHashlineSlice	donkey/app/native_tools.html#renderHashlineSlice,string,int,int	proc renderHashlineSlice(content: string; startLine, maxLines: int): string		306
+nim	parseHashlineAnchor	donkey/app/native_tools.html#parseHashlineAnchor,string	proc parseHashlineAnchor(raw: string): Result[HashlineAnchor, string]		317
+nim	validateHashlineAnchor	donkey/app/native_tools.html#validateHashlineAnchor,HashlineAnchor,seq[string]	proc validateHashlineAnchor(anchor: HashlineAnchor; lines: seq[string]): Result[bool,\n    string]		329
+nim	applyEditFileOps	donkey/app/native_tools.html#applyEditFileOps,seq[string],seq[EditFileOp]	proc applyEditFileOps(lines: seq[string]; edits: seq[EditFileOp]): Result[\n    seq[string], string]		339
+nim	performFind	donkey/app/native_tools.html#performFind,string,string,string,int	proc performFind(path, pattern, kind: string; max: int): string		412
+nim	performFindWasm	donkey/app/native_tools.html#performFindWasm,string,string,string,int	proc performFindWasm(path, pattern, kind: string; max: int): string		418
+nim	performGrep	donkey/app/native_tools.html#performGrep,string,string,bool,int	proc performGrep(pattern, path: string; recursive: bool; max: int): string		473
+nim	performGrepWasm	donkey/app/native_tools.html#performGrepWasm,string,string,bool,int	proc performGrepWasm(pattern, path: string; recursive: bool; max: int): string		486
+nim	FetchHardMax	donkey/app/native_tools.html#FetchHardMax	const FetchHardMax		508
+nim	FetchDefaultMax	donkey/app/native_tools.html#FetchDefaultMax	const FetchDefaultMax		509
+nim	performFetch	donkey/app/native_tools.html#performFetch,,string,int,seq[],seq[string],string	proc performFetch(http: httpPort.HttpRuntimePort; url: string; maxCh: int;\n             allowRules: seq[cfgTypes.WebAccessRule] = @[];\n             fallbackAllowlist: seq[string] = @[]; policyLabel = "web access"): string		511
+nim	performWebSearch	donkey/app/native_tools.html#performWebSearch,string,int,string,,seq[],seq[string]	proc performWebSearch(query: string; count: int; apiKey: string;\n                 http: httpPort.HttpRuntimePort;\n                 allowRules: seq[cfgTypes.WebAccessRule] = @[];\n                 fallbackAllowlist: seq[string] = @[]): string		542
+nim	performRenderMermaid	donkey/app/native_tools.html#performRenderMermaid,string	proc performRenderMermaid(diagram: string): string		579
+nim	performInspectImage	donkey/app/native_tools.html#performInspectImage,string,string,CompleteFn	proc performInspectImage(path, prompt: string; completeFn: CompleteFn): string		608
+nim	applyTodoOps	donkey/app/native_tools.html#applyTodoOps,SessionState,JsonNode	proc applyTodoOps(state: SessionState; ops: JsonNode): string		629
+nim	performTask	donkey/app/native_tools.html#performTask,string,string,CompleteFn	proc performTask(prompt, context: string; completeFn: CompleteFn): string		677
+nim	nextJobId	donkey/app/native_tools.html#nextJobId,SessionState	proc nextJobId(state: SessionState): string		691
+nim	buildTaskStartedText	donkey/app/native_tools.html#buildTaskStartedText,string	proc buildTaskStartedText(jobId: string): string		696
+nim	spawnTaskJob	donkey/app/native_tools.html#spawnTaskJob,SessionState,string,string,CompleteFn	proc spawnTaskJob(state: SessionState; prompt, context: string;\n             completeFn: CompleteFn): string		699
+nim	performManageSkills	donkey/app/native_tools.html#performManageSkills,MemoryRuntimePort,UserId,string,string	proc performManageSkills(memory: MemoryRuntimePort; uid: UserId; value: string;\n                    registry = ""): Result[string, string]		715
+nim	parseAskContext	donkey/app/native_tools.html#parseAskContext,JsonNode	proc parseAskContext(j: JsonNode): Result[AskContext, string]		758
+nim	parseBashContext	donkey/app/native_tools.html#parseBashContext,JsonNode	proc parseBashContext(j: JsonNode): Result[BashContext, string]		763
+nim	parseReadFileContext	donkey/app/native_tools.html#parseReadFileContext,JsonNode,string	proc parseReadFileContext(j: JsonNode; paddockDir: string): Result[ReadFileContext,\n    string]		768
+nim	parseEditFileContext	donkey/app/native_tools.html#parseEditFileContext,JsonNode,string	proc parseEditFileContext(j: JsonNode; paddockDir: string): Result[EditFileContext,\n    string]		835
+nim	parseFindContext	donkey/app/native_tools.html#parseFindContext,JsonNode,string	proc parseFindContext(j: JsonNode; paddockDir: string): Result[FindContext, string]		854
+nim	parseGrepContext	donkey/app/native_tools.html#parseGrepContext,JsonNode,string	proc parseGrepContext(j: JsonNode; paddockDir: string): Result[GrepContext, string]		868
+nim	parseSedContext	donkey/app/native_tools.html#parseSedContext,JsonNode,string	proc parseSedContext(j: JsonNode; paddockDir: string): Result[SedContext, string]		885
+nim	performSedWasm	donkey/app/native_tools.html#performSedWasm,string,string	proc performSedWasm(expression, path: string): string		900
+nim	runWasmApplet	donkey/app/native_tools.html#runWasmApplet,string,seq[string],string	proc runWasmApplet(applet: string; args: seq[string]; path: string): string		909
+nim	parsePathOnly	donkey/app/native_tools.html#parsePathOnly,JsonNode,string	proc parsePathOnly(j: JsonNode; paddockDir: string): Result[string, string]		918
+nim	parseWcContext	donkey/app/native_tools.html#parseWcContext,JsonNode,string	proc parseWcContext(j: JsonNode; paddockDir: string): Result[WcContext, string]		925
+nim	parseHeadTailContext	donkey/app/native_tools.html#parseHeadTailContext,JsonNode,string	proc parseHeadTailContext(j: JsonNode; paddockDir: string): Result[HeadTailContext,\n    string]		930
+nim	parseSortContext	donkey/app/native_tools.html#parseSortContext,JsonNode,string	proc parseSortContext(j: JsonNode; paddockDir: string): Result[SortContext, string]		935
+nim	parseCpMvContext	donkey/app/native_tools.html#parseCpMvContext,JsonNode,string	proc parseCpMvContext(j: JsonNode; paddockDir: string): Result[CpMvContext, string]		940
+nim	parseFetchContext	donkey/app/native_tools.html#parseFetchContext,JsonNode,int	proc parseFetchContext(j: JsonNode; defaultMax: int): Result[FetchContext, string]		951
+nim	parseWebSearchContext	donkey/app/native_tools.html#parseWebSearchContext,JsonNode	proc parseWebSearchContext(j: JsonNode): Result[WebSearchContext, string]		956
+nim	parseCalcContext	donkey/app/native_tools.html#parseCalcContext,JsonNode	proc parseCalcContext(j: JsonNode): Result[CalcContext, string]		961
+nim	parseMermaidContext	donkey/app/native_tools.html#parseMermaidContext,JsonNode	proc parseMermaidContext(j: JsonNode): Result[MermaidContext, string]		966
+nim	parseInspectImageContext	donkey/app/native_tools.html#parseInspectImageContext,JsonNode	proc parseInspectImageContext(j: JsonNode): Result[InspectImageContext, string]		971
+nim	parseTaskContext	donkey/app/native_tools.html#parseTaskContext,JsonNode	proc parseTaskContext(j: JsonNode): Result[TaskContext, string]		979
+nim	parseAwaitContext	donkey/app/native_tools.html#parseAwaitContext,JsonNode	proc parseAwaitContext(j: JsonNode): Result[AwaitContext, string]		987
+nim	parseFindingContext	donkey/app/native_tools.html#parseFindingContext,JsonNode	proc parseFindingContext(j: JsonNode): Result[FindingContext, string]		993
+nim	parseManageSkillsContext	donkey/app/native_tools.html#parseManageSkillsContext,JsonNode	proc parseManageSkillsContext(j: JsonNode): Result[ManageSkillsContext, string]		998
+nim	parseTodoOps	donkey/app/native_tools.html#parseTodoOps,JsonNode	proc parseTodoOps(j: JsonNode): Result[JsonNode, string]		1041
+nim	buildCheckpointResult	donkey/app/native_tools.html#buildCheckpointResult,SessionState	proc buildCheckpointResult(state: SessionState): NativeToolResult		1047
+nim	buildSubmitResult	donkey/app/native_tools.html#buildSubmitResult,JsonNode	proc buildSubmitResult(j: JsonNode): NativeToolResult		1055
+nim	parseRewindIndex	donkey/app/native_tools.html#parseRewindIndex,JsonNode,int	proc parseRewindIndex(j: JsonNode; checkpointCount: int): Result[int, string]		1058
+nim	buildRewindResult	donkey/app/native_tools.html#buildRewindResult,SessionState,int	proc buildRewindResult(state: SessionState; idx: int): Result[NativeToolResult,\n    string]		1067
+nim	executeNativeTool	donkey/app/native_tools.html#executeNativeTool,ToolCallRequest,NativeCtx,SessionState,ConversationHistory	proc executeNativeTool(tc: ToolCallRequest; ctx: NativeCtx; state: SessionState;\n                  history: ConversationHistory): Future[NativeToolResult]		1457

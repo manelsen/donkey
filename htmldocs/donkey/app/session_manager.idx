@@ -1,0 +1,14 @@
+nimTitle	session_manager	donkey/app/session_manager.html	module donkey/app/session_manager		0
+nim	SessionEntry	donkey/app/session_manager.html#SessionEntry	object SessionEntry		16
+nim	SessionLease	donkey/app/session_manager.html#SessionLease	object SessionLease		24
+nim	SessionManager	donkey/app/session_manager.html#SessionManager	object SessionManager		31
+nim	init	donkey/app/session_manager.html#init,SessionManager	proc init(sm: var SessionManager)		43
+nim	hasSession	donkey/app/session_manager.html#hasSession,SessionManager,UserId	proc hasSession(sm: SessionManager; userId: UserId): bool		46
+nim	getOrCreate	donkey/app/session_manager.html#getOrCreate,SessionManager,UserId	proc getOrCreate(sm: var SessionManager; userId: UserId): ptr SessionEntry		49
+nim	get	donkey/app/session_manager.html#get,SessionManager,UserId	proc get(sm: var SessionManager; userId: UserId): ptr SessionEntry		58
+nim	recordChannel	donkey/app/session_manager.html#recordChannel,SessionManager,UserId,ChannelKind,string	proc recordChannel(sm: var SessionManager; userId: UserId; kind: ChannelKind;\n              rawId: string)		61
+nim	listSessions	donkey/app/session_manager.html#listSessions,SessionManager	proc listSessions(sm: SessionManager): seq[(UserId, seq[(ChannelKind, string)])]		72
+nim	sessionCount	donkey/app/session_manager.html#sessionCount,SessionManager	proc sessionCount(sm: SessionManager): int		76
+nim	snapshot	donkey/app/session_manager.html#snapshot,SessionManager,UserId	proc snapshot(sm: SessionManager; userId: UserId): SessionIngressState		78
+nim	applyIngressDecision	donkey/app/session_manager.html#applyIngressDecision,SessionManager,UserId,SessionIngressDecision,SessionRuntimeSignature	proc applyIngressDecision(sm: var SessionManager; userId: UserId;\n                     decision: SessionIngressDecision;\n                     toolCatalogSignature: SessionRuntimeSignature): SessionLease		93
+nim	prepareEntry	donkey/app/session_manager.html#prepareEntry,SessionManager,UserId,string	proc prepareEntry(sm: var SessionManager; userId: UserId;\n             toolCatalogSignature: string): SessionLease		127

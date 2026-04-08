@@ -1,0 +1,6 @@
+nimTitle	openrouter_embed	donkey/adapters/embedding/openrouter_embed.html	module donkey/adapters/embedding/openrouter_embed		0
+nim	OpenRouterEmbedUrl	donkey/adapters/embedding/openrouter_embed.html#OpenRouterEmbedUrl	const OpenRouterEmbedUrl		14
+nim	DefaultEmbedModel	donkey/adapters/embedding/openrouter_embed.html#DefaultEmbedModel	const DefaultEmbedModel		15
+nim	OpenRouterEmbeddingAdapter	donkey/adapters/embedding/openrouter_embed.html#OpenRouterEmbeddingAdapter	object OpenRouterEmbeddingAdapter		18
+nim	newOpenRouterEmbeddingAdapter	donkey/adapters/embedding/openrouter_embed.html#newOpenRouterEmbeddingAdapter,string	proc newOpenRouterEmbeddingAdapter(apiKey: string; model = DefaultEmbedModel): OpenRouterEmbeddingAdapter		23
+nim	embed	donkey/adapters/embedding/openrouter_embed.html#embed,OpenRouterEmbeddingAdapter,string	proc embed(a: OpenRouterEmbeddingAdapter; text: string): seq[float32]		31

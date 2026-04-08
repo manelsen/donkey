@@ -1,0 +1,45 @@
+nimTitle	magma_memory_adapter	donkey/adapters/memory/magma_memory_adapter.html	module donkey/adapters/memory/magma_memory_adapter		0
+nim	qiSemantic	donkey/adapters/memory/magma_memory_adapter.html#qiSemantic	QueryIntent.qiSemantic		36
+nim	qiEntity	donkey/adapters/memory/magma_memory_adapter.html#qiEntity	QueryIntent.qiEntity		36
+nim	qiTemporal	donkey/adapters/memory/magma_memory_adapter.html#qiTemporal	QueryIntent.qiTemporal		36
+nim	qiCausal	donkey/adapters/memory/magma_memory_adapter.html#qiCausal	QueryIntent.qiCausal		36
+nim	qiHybrid	donkey/adapters/memory/magma_memory_adapter.html#qiHybrid	QueryIntent.qiHybrid		36
+nim	QueryIntent	donkey/adapters/memory/magma_memory_adapter.html#QueryIntent	enum QueryIntent		36
+nim	QueryPolicy	donkey/adapters/memory/magma_memory_adapter.html#QueryPolicy	object QueryPolicy		39
+nim	SearchConfig	donkey/adapters/memory/magma_memory_adapter.html#SearchConfig	object SearchConfig		47
+nim	defaultPolicy	donkey/adapters/memory/magma_memory_adapter.html#defaultPolicy	proc defaultPolicy(): QueryPolicy		53
+nim	defaultSearchConfig	donkey/adapters/memory/magma_memory_adapter.html#defaultSearchConfig	proc defaultSearchConfig(): SearchConfig		57
+nim	classifyQuery	donkey/adapters/memory/magma_memory_adapter.html#classifyQuery,string	proc classifyQuery(query: string): QueryPolicy		73
+nim	impliesPreviousCause	donkey/adapters/memory/magma_memory_adapter.html#impliesPreviousCause,string	proc impliesPreviousCause(text: string): bool		143
+nim	causalTraversalDirection	donkey/adapters/memory/magma_memory_adapter.html#causalTraversalDirection,string	proc causalTraversalDirection(query: string): string		152
+nim	MagmaMemoryAdapter	donkey/adapters/memory/magma_memory_adapter.html#MagmaMemoryAdapter	type MagmaMemoryAdapter		164
+nim	newMagmaMemoryAdapter	donkey/adapters/memory/magma_memory_adapter.html#newMagmaMemoryAdapter,string,EmbedFn,RerankFn	proc newMagmaMemoryAdapter(dsn: string; embedFn: EmbedFn; rerankFn: RerankFn = nil;\n                      searchConfig = defaultSearchConfig()): MagmaMemoryAdapter		170
+nim	profileId	donkey/adapters/memory/magma_memory_adapter.html#profileId,UserId	proc profileId(userId: UserId): string		183
+nim	prefId	donkey/adapters/memory/magma_memory_adapter.html#prefId,UserId	proc prefId(userId: UserId): string		186
+nim	memId	donkey/adapters/memory/magma_memory_adapter.html#memId,MagmaMemoryAdapter,UserId	proc memId(a: MagmaMemoryAdapter; userId: UserId): string		189
+nim	entId	donkey/adapters/memory/magma_memory_adapter.html#entId,UserId,string	proc entId(userId: UserId; name: string): string		210
+nim	commitmentNodeId	donkey/adapters/memory/magma_memory_adapter.html#commitmentNodeId,UserId,string	proc commitmentNodeId(userId: UserId; commitmentId: string): string		213
+nim	episodeNodeId	donkey/adapters/memory/magma_memory_adapter.html#episodeNodeId,UserId,string	proc episodeNodeId(userId: UserId; episodeId: string): string		216
+nim	lessonNodeId	donkey/adapters/memory/magma_memory_adapter.html#lessonNodeId,UserId,string	proc lessonNodeId(userId: UserId; lessonId: string): string		219
+nim	hasProfile	donkey/adapters/memory/magma_memory_adapter.html#hasProfile,MagmaMemoryAdapter,UserId	proc hasProfile(a: MagmaMemoryAdapter; userId: UserId): bool		334
+nim	loadContext	donkey/adapters/memory/magma_memory_adapter.html#loadContext,MagmaMemoryAdapter,UserId	proc loadContext(a: MagmaMemoryAdapter; userId: UserId): UserContext		337
+nim	stats	donkey/adapters/memory/magma_memory_adapter.html#stats,MagmaMemoryAdapter,UserId	proc stats(a: MagmaMemoryAdapter; userId: UserId): MagmaStats		358
+nim	stats	donkey/adapters/memory/magma_memory_adapter.html#stats,MagmaMemoryAdapter	proc stats(a: MagmaMemoryAdapter): MagmaStats		361
+nim	saveUserMd	donkey/adapters/memory/magma_memory_adapter.html#saveUserMd,MagmaMemoryAdapter,UserId,string	proc saveUserMd(a: MagmaMemoryAdapter; userId: UserId; content: string)		390
+nim	savePreferences	donkey/adapters/memory/magma_memory_adapter.html#savePreferences,MagmaMemoryAdapter,UserId,string	proc savePreferences(a: MagmaMemoryAdapter; userId: UserId; content: string)		394
+nim	saveCommitment	donkey/adapters/memory/magma_memory_adapter.html#saveCommitment,MagmaMemoryAdapter,UserId,Commitment	proc saveCommitment(a: MagmaMemoryAdapter; userId: UserId; commitment: Commitment)		398
+nim	loadCommitments	donkey/adapters/memory/magma_memory_adapter.html#loadCommitments,MagmaMemoryAdapter,UserId	proc loadCommitments(a: MagmaMemoryAdapter; userId: UserId): seq[Commitment]		410
+nim	updateCommitmentStatus	donkey/adapters/memory/magma_memory_adapter.html#updateCommitmentStatus,MagmaMemoryAdapter,UserId,string,CommitmentStatus	proc updateCommitmentStatus(a: MagmaMemoryAdapter; userId: UserId;\n                       commitmentId: string; status: CommitmentStatus): bool		430
+nim	saveEpisode	donkey/adapters/memory/magma_memory_adapter.html#saveEpisode,MagmaMemoryAdapter,UserId,EpisodeJournal	proc saveEpisode(a: MagmaMemoryAdapter; userId: UserId; episode: EpisodeJournal)		452
+nim	loadEpisodes	donkey/adapters/memory/magma_memory_adapter.html#loadEpisodes,MagmaMemoryAdapter,UserId	proc loadEpisodes(a: MagmaMemoryAdapter; userId: UserId): seq[EpisodeJournal]		466
+nim	saveLesson	donkey/adapters/memory/magma_memory_adapter.html#saveLesson,MagmaMemoryAdapter,UserId,Lesson	proc saveLesson(a: MagmaMemoryAdapter; userId: UserId; lesson: Lesson)		486
+nim	loadLessons	donkey/adapters/memory/magma_memory_adapter.html#loadLessons,MagmaMemoryAdapter,UserId	proc loadLessons(a: MagmaMemoryAdapter; userId: UserId): seq[Lesson]		498
+nim	extractAndSaveLessons	donkey/adapters/memory/magma_memory_adapter.html#extractAndSaveLessons,MagmaMemoryAdapter,UserId,seq[EpisodeJournal],seq[Commitment],int	proc extractAndSaveLessons(a: MagmaMemoryAdapter; userId: UserId;\n                      episodes: seq[EpisodeJournal];\n                      commitments: seq[Commitment]; maxLessonsPerSource = 1): int		518
+nim	appendMemory	donkey/adapters/memory/magma_memory_adapter.html#appendMemory,MagmaMemoryAdapter,UserId,string	proc appendMemory(a: MagmaMemoryAdapter; userId: UserId; text: string)		533
+nim	searchWithRerank	donkey/adapters/memory/magma_memory_adapter.html#searchWithRerank,MagmaMemoryAdapter,UserId,string,int,RerankFn	proc searchWithRerank(a: MagmaMemoryAdapter; userId: UserId; query: string;\n                 limit: int; rerankFnOverride: RerankFn = nil): seq[MemoryHit]		573
+nim	search	donkey/adapters/memory/magma_memory_adapter.html#search,MagmaMemoryAdapter,UserId,string,int	proc search(a: MagmaMemoryAdapter; userId: UserId; query: string; limit: int): seq[\n    MemoryHit]		761
+nim	toSearchFn	donkey/adapters/memory/magma_memory_adapter.html#toSearchFn,MagmaMemoryAdapter	proc toSearchFn(a: MagmaMemoryAdapter): SearchFn		765
+nim	deleteUser	donkey/adapters/memory/magma_memory_adapter.html#deleteUser,MagmaMemoryAdapter,UserId	proc deleteUser(a: MagmaMemoryAdapter; userId: UserId)		773
+nim	clearMemory	donkey/adapters/memory/magma_memory_adapter.html#clearMemory,MagmaMemoryAdapter,UserId	proc clearMemory(a: MagmaMemoryAdapter; userId: UserId)		783
+nim	resetBootstrap	donkey/adapters/memory/magma_memory_adapter.html#resetBootstrap,MagmaMemoryAdapter,UserId	proc resetBootstrap(a: MagmaMemoryAdapter; userId: UserId)		798
+nimgrp	stats	donkey/adapters/memory/magma_memory_adapter.html#stats-procs-all	proc		358

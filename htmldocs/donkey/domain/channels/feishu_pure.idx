@@ -1,0 +1,16 @@
+nimTitle	feishu_pure	donkey/domain/channels/feishu_pure.html	module donkey/domain/channels/feishu_pure		0
+nim	fmkText	donkey/domain/channels/feishu_pure.html#fmkText	FsMsgKind.fmkText		31
+nim	fmkImage	donkey/domain/channels/feishu_pure.html#fmkImage	FsMsgKind.fmkImage		31
+nim	fmkAudio	donkey/domain/channels/feishu_pure.html#fmkAudio	FsMsgKind.fmkAudio		31
+nim	fmkFile	donkey/domain/channels/feishu_pure.html#fmkFile	FsMsgKind.fmkFile		31
+nim	fmkSticker	donkey/domain/channels/feishu_pure.html#fmkSticker	FsMsgKind.fmkSticker		31
+nim	fmkInteractive	donkey/domain/channels/feishu_pure.html#fmkInteractive	FsMsgKind.fmkInteractive		31
+nim	fmkEvent	donkey/domain/channels/feishu_pure.html#fmkEvent	FsMsgKind.fmkEvent		31
+nim	fmkUnknown	donkey/domain/channels/feishu_pure.html#fmkUnknown	FsMsgKind.fmkUnknown		31
+nim	FsMsgKind	donkey/domain/channels/feishu_pure.html#FsMsgKind	enum FsMsgKind		31
+nim	FsParseResult	donkey/domain/channels/feishu_pure.html#FsParseResult	object FsParseResult		41
+nim	extractJsonStr	donkey/domain/channels/feishu_pure.html#extractJsonStr,string,string	proc extractJsonStr(key: string; encoded: string): string		60
+nim	parseEvent	donkey/domain/channels/feishu_pure.html#parseEvent,JsonNode	proc parseEvent(payload: JsonNode): FsParseResult		168
+nim	toInbound	donkey/domain/channels/feishu_pure.html#toInbound,FsParseResult,UserId	proc toInbound(r: FsParseResult; userId: UserId): InboundMessage		194
+nim	hasMedia	donkey/domain/channels/feishu_pure.html#hasMedia,FsParseResult	proc hasMedia(r: FsParseResult): bool		205
+nim	isVerification	donkey/domain/channels/feishu_pure.html#isVerification,FsParseResult	proc isVerification(r: FsParseResult): bool		209

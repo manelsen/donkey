@@ -1,0 +1,4 @@
+nimTitle	episode_pure	donkey/domain/memory/episode_pure.html	module donkey/domain/memory/episode_pure		0
+nim	EpisodeJournal	donkey/domain/memory/episode_pure.html#EpisodeJournal	object EpisodeJournal		7
+nim	episodeId	donkey/domain/memory/episode_pure.html#episodeId,string,int64,int64	proc episodeId(title: string; startTs, endTs: int64): string		21
+nim	newEpisodeJournal	donkey/domain/memory/episode_pure.html#newEpisodeJournal,string,string,int64,int64,seq[string]	proc newEpisodeJournal(title, summary: string; startTs, endTs: int64;\n                  sourceMemoryIds: seq[string]): EpisodeJournal		24

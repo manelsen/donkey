@@ -1,0 +1,10 @@
+nimTitle	skill_runtime	donkey/app/skill_runtime.html	module donkey/app/skill_runtime		0
+nim	SkillSearchBackend	donkey/app/skill_runtime.html#SkillSearchBackend	type SkillSearchBackend		9
+nim	SkillInstallBackend	donkey/app/skill_runtime.html#SkillInstallBackend	type SkillInstallBackend		11
+nim	donkeyHomeDirFromPaddocks	donkey/app/skill_runtime.html#donkeyHomeDirFromPaddocks,string	proc donkeyHomeDirFromPaddocks(paddocksDir: string): string		14
+nim	donkeyHomeDirFromPaddock	donkey/app/skill_runtime.html#donkeyHomeDirFromPaddock,string	proc donkeyHomeDirFromPaddock(userPaddockDir: string): string		17
+nim	userSkillsPath	donkey/app/skill_runtime.html#userSkillsPath,string	proc userSkillsPath(userPaddockDir: string): string		20
+nim	defaultSkillSearchBackend	donkey/app/skill_runtime.html#defaultSkillSearchBackend,string,string,int	proc defaultSkillSearchBackend(registry, query: string; limit: int): Result[\n    seq[RemoteSkillSearchHit], string]		23
+nim	defaultSkillInstallBackend	donkey/app/skill_runtime.html#defaultSkillInstallBackend,string,string,string	proc defaultSkillInstallBackend(home, registry, slug: string): Result[\n    RemoteSkillOrigin, string]		27
+nim	buildSkillHelpText	donkey/app/skill_runtime.html#buildSkillHelpText	proc buildSkillHelpText(): string		135
+nim	applySkillCommand	donkey/app/skill_runtime.html#applySkillCommand,string,string,string,string,SkillSearchBackend,SkillInstallBackend	proc applySkillCommand(userPaddockDir: string; value: string; homeDir = "";\n                  registry = ""; searchBackend: SkillSearchBackend = nil;\n                  installBackend: SkillInstallBackend = nil): Result[string,\n    string]		183

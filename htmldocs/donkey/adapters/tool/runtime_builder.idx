@@ -1,0 +1,2 @@
+nimTitle	runtime_builder	donkey/adapters/tool/runtime_builder.html	module donkey/adapters/tool/runtime_builder		0
+nim	buildDenoSkillRuntime	donkey/adapters/tool/runtime_builder.html#buildDenoSkillRuntime,string,seq[string],SkillRuntimePolicy	proc buildDenoSkillRuntime(script: string; permissions: seq[string];\n                      policy: SkillRuntimePolicy): Result[LoadedToolRuntime,\n    string]		8

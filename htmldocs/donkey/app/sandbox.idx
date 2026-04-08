@@ -1,0 +1,11 @@
+nimTitle	sandbox	donkey/app/sandbox.html	module donkey/app/sandbox		0
+nim	SandboxPlan	donkey/app/sandbox.html#SandboxPlan	object SandboxPlan		32
+nim	resolveShellWasmPath	donkey/app/sandbox.html#resolveShellWasmPath	proc resolveShellWasmPath(): string		39
+nim	buildDockerCmd	donkey/app/sandbox.html#buildDockerCmd,string,string,string	proc buildDockerCmd(cmd, paddock, image: string): string		49
+nim	buildWasmCmd	donkey/app/sandbox.html#buildWasmCmd,string,string,string	proc buildWasmCmd(cmd, paddock, shellPath: string): string		56
+nim	buildSandboxPlan	donkey/app/sandbox.html#buildSandboxPlan,string,string,SandboxMode,string	proc buildSandboxPlan(cmd, paddock: string; mode: SandboxMode; image: string): SandboxPlan		67
+nim	formatSandboxResult	donkey/app/sandbox.html#formatSandboxResult,string,int	proc formatSandboxResult(output: string; code: int): string		83
+nim	runSandboxPlan	donkey/app/sandbox.html#runSandboxPlan,SandboxPlan	proc runSandboxPlan(plan: SandboxPlan): string		94
+nim	sandboxStatusMessage	donkey/app/sandbox.html#sandboxStatusMessage,SandboxMode,string	proc sandboxStatusMessage(mode: SandboxMode; image: string): (LogLevel, string)		105
+nim	sandboxBash	donkey/app/sandbox.html#sandboxBash,string,string,SandboxMode,string	proc sandboxBash(cmd, paddock: string; mode: SandboxMode; image: string): string		124
+nim	sandboxLogLevel	donkey/app/sandbox.html#sandboxLogLevel,SandboxMode,string,Logger	proc sandboxLogLevel(mode: SandboxMode; image: string; log: Logger)		151

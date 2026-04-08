@@ -1,0 +1,16 @@
+nimTitle	matrix	donkey/adapters/channel/matrix.html	module donkey/adapters/channel/matrix		0
+nim	MxDefaultApiBase	donkey/adapters/channel/matrix.html#MxDefaultApiBase	const MxDefaultApiBase		36
+nim	MxMaxChars	donkey/adapters/channel/matrix.html#MxMaxChars	const MxMaxChars		38
+nim	MatrixEvent	donkey/adapters/channel/matrix.html#MatrixEvent	object MatrixEvent		43
+nim	gMxEvents	donkey/adapters/channel/matrix.html#gMxEvents	var gMxEvents		53
+nim	pushEvent	donkey/adapters/channel/matrix.html#pushEvent,JsonNode	proc pushEvent(payload: JsonNode)		65
+nim	MatrixAdapter	donkey/adapters/channel/matrix.html#MatrixAdapter	object MatrixAdapter		120
+nim	sendToRoom	donkey/adapters/channel/matrix.html#sendToRoom,MatrixAdapter,string,OutboundMessage	proc sendToRoom(a: MatrixAdapter; roomId: string; msg: OutboundMessage): Result[void,\n    string]		178
+nim	send	donkey/adapters/channel/matrix.html#send,MatrixAdapter,OutboundMessage	proc send(a: MatrixAdapter; msg: OutboundMessage): Result[void, string]		187
+nim	sendReturnId	donkey/adapters/channel/matrix.html#sendReturnId,MatrixAdapter,OutboundMessage	proc sendReturnId(a: MatrixAdapter; msg: OutboundMessage): Result[string, string]		194
+nim	editMessage	donkey/adapters/channel/matrix.html#editMessage,MatrixAdapter,UserId,string,string	proc editMessage(a: MatrixAdapter; userId: UserId; msgId, text: string): Result[void,\n    string]		204
+nim	ack	donkey/adapters/channel/matrix.html#ack,MatrixAdapter,string	proc ack(a: MatrixAdapter; msgId: string)		223
+nim	openQueue	donkey/adapters/channel/matrix.html#openQueue,MatrixAdapter	proc openQueue(a: MatrixAdapter)		229
+nim	startGateway	donkey/adapters/channel/matrix.html#startGateway,MatrixAdapter	proc startGateway(a: var MatrixAdapter)		234
+nim	tryRecvEvent	donkey/adapters/channel/matrix.html#tryRecvEvent,MatrixAdapter	proc tryRecvEvent(a: MatrixAdapter): (bool, MatrixEvent)		239
+nim	newMatrixAdapter	donkey/adapters/channel/matrix.html#newMatrixAdapter,string,string,string,string,string	proc newMatrixAdapter(homeserver, botUserId, accessToken: string;\n                 identityPath: string; apiBase = ""): MatrixAdapter		246

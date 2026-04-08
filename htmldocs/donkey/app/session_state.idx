@@ -1,0 +1,9 @@
+nimTitle	session_state	donkey/app/session_state.html	module donkey/app/session_state		0
+nim	phBacklog	donkey/app/session_state.html#phBacklog	TodoPhase.phBacklog		9
+nim	phInProgress	donkey/app/session_state.html#phInProgress	TodoPhase.phInProgress		9
+nim	phCompleted	donkey/app/session_state.html#phCompleted	TodoPhase.phCompleted		9
+nim	TodoPhase	donkey/app/session_state.html#TodoPhase	enum TodoPhase		9
+nim	TodoItem	donkey/app/session_state.html#TodoItem	object TodoItem		14
+nim	JobState	donkey/app/session_state.html#JobState	object JobState		20
+nim	SessionState	donkey/app/session_state.html#SessionState	type SessionState		25
+nim	newSessionState	donkey/app/session_state.html#newSessionState	proc newSessionState(): SessionState		32

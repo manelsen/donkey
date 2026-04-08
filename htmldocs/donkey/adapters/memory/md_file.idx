@@ -1,0 +1,31 @@
+nimTitle	md_file	donkey/adapters/memory/md_file.html	module donkey/adapters/memory/md_file		0
+nim	MdFileAdapter	donkey/adapters/memory/md_file.html#MdFileAdapter	object MdFileAdapter		22
+nim	UserSummary	donkey/adapters/memory/md_file.html#UserSummary	object UserSummary		26
+nim	hasProfile	donkey/adapters/memory/md_file.html#hasProfile,MdFileAdapter,UserId	proc hasProfile(a: MdFileAdapter; userId: UserId): bool		32
+nim	loadContext	donkey/adapters/memory/md_file.html#loadContext,MdFileAdapter,UserId	proc loadContext(a: MdFileAdapter; userId: UserId): UserContext		33
+nim	saveUserMd	donkey/adapters/memory/md_file.html#saveUserMd,MdFileAdapter,UserId,string	proc saveUserMd(a: MdFileAdapter; userId: UserId; content: string)		34
+nim	appendMemory	donkey/adapters/memory/md_file.html#appendMemory,MdFileAdapter,UserId,string	proc appendMemory(a: MdFileAdapter; userId: UserId; text: string)		35
+nim	savePreferences	donkey/adapters/memory/md_file.html#savePreferences,MdFileAdapter,UserId,string	proc savePreferences(a: MdFileAdapter; userId: UserId; content: string)		36
+nim	clearMemory	donkey/adapters/memory/md_file.html#clearMemory,MdFileAdapter,UserId	proc clearMemory(a: MdFileAdapter; userId: UserId)		37
+nim	resetBootstrap	donkey/adapters/memory/md_file.html#resetBootstrap,MdFileAdapter,UserId	proc resetBootstrap(a: MdFileAdapter; userId: UserId)		38
+nim	saveSession	donkey/adapters/memory/md_file.html#saveSession,MdFileAdapter,UserId,string,ConversationHistory	proc saveSession(a: MdFileAdapter; userId: UserId; sessionId: string;\n            history: ConversationHistory)		39
+nim	saveIdentity	donkey/adapters/memory/md_file.html#saveIdentity,MdFileAdapter,UserId,PersonalityTraits,string	proc saveIdentity(a: MdFileAdapter; userId: UserId; traits: PersonalityTraits;\n             name: string)		41
+nim	loadIdentity	donkey/adapters/memory/md_file.html#loadIdentity,MdFileAdapter,UserId	proc loadIdentity(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits)		43
+nim	paddockDir	donkey/adapters/memory/md_file.html#paddockDir,MdFileAdapter,UserId	proc paddockDir(a: MdFileAdapter; userId: UserId): string		44
+nim	scheduleReminder	donkey/adapters/memory/md_file.html#scheduleReminder,MdFileAdapter,UserId,string,int64,string	proc scheduleReminder(a: MdFileAdapter; userId: UserId; channel: string;\n                 scheduledAt: int64; message: string): string		45
+nim	loadDueReminders	donkey/adapters/memory/md_file.html#loadDueReminders,MdFileAdapter	proc loadDueReminders(a: MdFileAdapter): seq[JsonNode]		48
+nim	deleteReminder	donkey/adapters/memory/md_file.html#deleteReminder,MdFileAdapter,UserId,string	proc deleteReminder(a: MdFileAdapter; userId: UserId; reminderId: string)		49
+nim	userMdPath	donkey/adapters/memory/md_file.html#userMdPath,MdFileAdapter,UserId	proc userMdPath(a: MdFileAdapter; userId: UserId): string		88
+nim	memoryMdPath	donkey/adapters/memory/md_file.html#memoryMdPath,MdFileAdapter,UserId	proc memoryMdPath(a: MdFileAdapter; userId: UserId): string		91
+nim	preferencesMdPath	donkey/adapters/memory/md_file.html#preferencesMdPath,MdFileAdapter,UserId	proc preferencesMdPath(a: MdFileAdapter; userId: UserId): string		94
+nim	toRuntimePort	donkey/adapters/memory/md_file.html#toRuntimePort,MdFileAdapter	proc toRuntimePort(a: MdFileAdapter): MemoryRuntimePort		215
+nim	parseUserField	donkey/adapters/memory/md_file.html#parseUserField,string,string	proc parseUserField(content, label: string): string		258
+nim	setUserFieldText	donkey/adapters/memory/md_file.html#setUserFieldText,string,string,string	proc setUserFieldText(content, label, value: string): string		266
+nim	isRevokedUserMd	donkey/adapters/memory/md_file.html#isRevokedUserMd,string	proc isRevokedUserMd(content: string): bool		278
+nim	ensurePaddock	donkey/adapters/memory/md_file.html#ensurePaddock,MdFileAdapter,UserId	proc ensurePaddock(a: MdFileAdapter; userId: UserId)		281
+nim	listUsers	donkey/adapters/memory/md_file.html#listUsers,MdFileAdapter	proc listUsers(a: MdFileAdapter): seq[UserSummary]		314
+nim	updateUserField	donkey/adapters/memory/md_file.html#updateUserField,MdFileAdapter,UserId,string,string	proc updateUserField(a: MdFileAdapter; userId: UserId; field, value: string)		331
+nim	isRevoked	donkey/adapters/memory/md_file.html#isRevoked,MdFileAdapter,UserId	proc isRevoked(a: MdFileAdapter; userId: UserId): bool		339
+nim	listSessions	donkey/adapters/memory/md_file.html#listSessions,MdFileAdapter,UserId	proc listSessions(a: MdFileAdapter; userId: UserId): seq[string]		391
+nim	hasIdentity	donkey/adapters/memory/md_file.html#hasIdentity,MdFileAdapter,UserId	proc hasIdentity(a: MdFileAdapter; userId: UserId): bool		401
+nim	reminderDir	donkey/adapters/memory/md_file.html#reminderDir,MdFileAdapter,UserId	proc reminderDir(a: MdFileAdapter; userId: UserId): string		425

@@ -1,0 +1,6 @@
+nimTitle	pipeops	donkey/core/pipeops.html	module donkey/core/pipeops		0
+nim	`|>`	donkey/core/pipeops.html#|>.t,untyped,untyped	template `|>`(a: untyped; f: untyped): untyped		17
+nim	`|>->`	donkey/core/pipeops.html#|>->.m,untyped,untyped	macro `|>->`(a: untyped; f: untyped): untyped		20
+nim	`>>=`	donkey/core/pipeops.html#>>=.t,Result[T,E],proc(T)	template `>>=`[T, E, U](r: Result[T, E];\n               f: proc (x: T): Result[U, E] {.gcsafe, raises: [].}): Result[U, E]		32
+nim	nowMs	donkey/core/pipeops.html#nowMs	proc nowMs(): int64		41
+nim	splitChunks	donkey/core/pipeops.html#splitChunks,string,int	proc splitChunks(text: string; maxLen: int): seq[string]		46

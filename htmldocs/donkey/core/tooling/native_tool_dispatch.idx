@@ -1,0 +1,17 @@
+nimTitle	native_tool_dispatch	donkey/core/tooling/native_tool_dispatch.html	module donkey/core/tooling/native_tool_dispatch		0
+nim	ntckLegacy	donkey/core/tooling/native_tool_dispatch.html#ntckLegacy	NativeToolCategoryKind.ntckLegacy		4
+nim	ntckShell	donkey/core/tooling/native_tool_dispatch.html#ntckShell	NativeToolCategoryKind.ntckShell		4
+nim	ntckWeb	donkey/core/tooling/native_tool_dispatch.html#ntckWeb	NativeToolCategoryKind.ntckWeb		4
+nim	ntckUtility	donkey/core/tooling/native_tool_dispatch.html#ntckUtility	NativeToolCategoryKind.ntckUtility		4
+nim	ntckSession	donkey/core/tooling/native_tool_dispatch.html#ntckSession	NativeToolCategoryKind.ntckSession		4
+nim	ntckAgent	donkey/core/tooling/native_tool_dispatch.html#ntckAgent	NativeToolCategoryKind.ntckAgent		4
+nim	NativeToolCategoryKind	donkey/core/tooling/native_tool_dispatch.html#NativeToolCategoryKind	enum NativeToolCategoryKind		4
+nim	LegacyNativeTools	donkey/core/tooling/native_tool_dispatch.html#LegacyNativeTools	const LegacyNativeTools		13
+nim	ShellNativeTools	donkey/core/tooling/native_tool_dispatch.html#ShellNativeTools	const ShellNativeTools		19
+nim	WebNativeTools	donkey/core/tooling/native_tool_dispatch.html#WebNativeTools	const WebNativeTools		36
+nim	UtilityNativeTools	donkey/core/tooling/native_tool_dispatch.html#UtilityNativeTools	const UtilityNativeTools		41
+nim	SessionNativeTools	donkey/core/tooling/native_tool_dispatch.html#SessionNativeTools	const SessionNativeTools		47
+nim	AgentNativeTools	donkey/core/tooling/native_tool_dispatch.html#AgentNativeTools	const AgentNativeTools		55
+nim	nativeToolCategoryOrder	donkey/core/tooling/native_tool_dispatch.html#nativeToolCategoryOrder	proc nativeToolCategoryOrder(): seq[NativeToolCategoryKind]		72
+nim	classifyNativeTool	donkey/core/tooling/native_tool_dispatch.html#classifyNativeTool,string	proc classifyNativeTool(name: string): seq[NativeToolCategoryKind]		75
+nim	isKnownNativeTool	donkey/core/tooling/native_tool_dispatch.html#isKnownNativeTool,string	proc isKnownNativeTool(name: string): bool		80

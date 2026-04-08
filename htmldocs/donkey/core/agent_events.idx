@@ -1,0 +1,15 @@
+nimTitle	agent_events	donkey/core/agent_events.html	module donkey/core/agent_events		0
+nim	AgentEventRingCap	donkey/core/agent_events.html#AgentEventRingCap	const AgentEventRingCap		12
+nim	aekSessionStart	donkey/core/agent_events.html#aekSessionStart	AgentEventKind.aekSessionStart		15
+nim	aekSessionEnd	donkey/core/agent_events.html#aekSessionEnd	AgentEventKind.aekSessionEnd		15
+nim	aekToolCall	donkey/core/agent_events.html#aekToolCall	AgentEventKind.aekToolCall		15
+nim	aekToolResult	donkey/core/agent_events.html#aekToolResult	AgentEventKind.aekToolResult		15
+nim	aekModelResponse	donkey/core/agent_events.html#aekModelResponse	AgentEventKind.aekModelResponse		15
+nim	aekError	donkey/core/agent_events.html#aekError	AgentEventKind.aekError		15
+nim	AgentEventKind	donkey/core/agent_events.html#AgentEventKind	enum AgentEventKind		15
+nim	AgentEvent	donkey/core/agent_events.html#AgentEvent	object AgentEvent		23
+nim	agentEventRingInit	donkey/core/agent_events.html#agentEventRingInit	proc agentEventRingInit()		39
+nim	pushAgentEvent	donkey/core/agent_events.html#pushAgentEvent,AgentEvent	proc pushAgentEvent(ev: AgentEvent)		45
+nim	agentEventSnapshot	donkey/core/agent_events.html#agentEventSnapshot,int	proc agentEventSnapshot(n: int): seq[AgentEvent]		56
+nim	kindLabel	donkey/core/agent_events.html#kindLabel,AgentEventKind	proc kindLabel(k: AgentEventKind): string		69
+nim	toJson	donkey/core/agent_events.html#toJson,AgentEvent	proc toJson(ev: AgentEvent): JsonNode		78

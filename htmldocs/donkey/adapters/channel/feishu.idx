@@ -1,0 +1,16 @@
+nimTitle	feishu	donkey/adapters/channel/feishu.html	module donkey/adapters/channel/feishu		0
+nim	FsApiBase	donkey/adapters/channel/feishu.html#FsApiBase	const FsApiBase		29
+nim	FsMaxChars	donkey/adapters/channel/feishu.html#FsMaxChars	const FsMaxChars		30
+nim	FeishuEvent	donkey/adapters/channel/feishu.html#FeishuEvent	object FeishuEvent		35
+nim	gFsEvents	donkey/adapters/channel/feishu.html#gFsEvents	var gFsEvents		45
+nim	parseChallenge	donkey/adapters/channel/feishu.html#parseChallenge,JsonNode	proc parseChallenge(payload: JsonNode): string		49
+nim	pushEvent	donkey/adapters/channel/feishu.html#pushEvent,JsonNode	proc pushEvent(payload: JsonNode)		55
+nim	FeishuAdapter	donkey/adapters/channel/feishu.html#FeishuAdapter	object FeishuAdapter		106
+nim	send	donkey/adapters/channel/feishu.html#send,FeishuAdapter,OutboundMessage	proc send(a: FeishuAdapter; msg: OutboundMessage): Result[void, string]		155
+nim	sendReturnId	donkey/adapters/channel/feishu.html#sendReturnId,FeishuAdapter,OutboundMessage	proc sendReturnId(a: FeishuAdapter; msg: OutboundMessage): Result[string, string]		176
+nim	editMessage	donkey/adapters/channel/feishu.html#editMessage,FeishuAdapter,UserId,string,string	proc editMessage(a: FeishuAdapter; userId: UserId; msgId, text: string): Result[void,\n    string]		190
+nim	ack	donkey/adapters/channel/feishu.html#ack,FeishuAdapter,string	proc ack(a: FeishuAdapter; msgId: string)		202
+nim	openQueue	donkey/adapters/channel/feishu.html#openQueue,FeishuAdapter	proc openQueue(a: FeishuAdapter)		208
+nim	startGateway	donkey/adapters/channel/feishu.html#startGateway,FeishuAdapter	proc startGateway(a: var FeishuAdapter)		213
+nim	tryRecvEvent	donkey/adapters/channel/feishu.html#tryRecvEvent,FeishuAdapter	proc tryRecvEvent(a: FeishuAdapter): (bool, FeishuEvent)		219
+nim	newFeishuAdapter	donkey/adapters/channel/feishu.html#newFeishuAdapter,string,string,string,string,string	proc newFeishuAdapter(appId, appSecret: string; identityPath: string;\n                 accessToken = ""; apiBase = ""): FeishuAdapter		225

@@ -1,0 +1,16 @@
+nimTitle	anthropic	donkey/adapters/provider/anthropic.html	module donkey/adapters/provider/anthropic		0
+nim	AnthropicEndpoint	donkey/adapters/provider/anthropic.html#AnthropicEndpoint	const AnthropicEndpoint		27
+nim	AnthropicDefaultBaseUrl	donkey/adapters/provider/anthropic.html#AnthropicDefaultBaseUrl	const AnthropicDefaultBaseUrl		28
+nim	AnthropicDefaultModel	donkey/adapters/provider/anthropic.html#AnthropicDefaultModel	const AnthropicDefaultModel		29
+nim	AnthropicVersion	donkey/adapters/provider/anthropic.html#AnthropicVersion	const AnthropicVersion		30
+nim	AnthropicAdapter	donkey/adapters/provider/anthropic.html#AnthropicAdapter	object AnthropicAdapter		34
+nim	AnthropicSseChunk	donkey/adapters/provider/anthropic.html#AnthropicSseChunk	object AnthropicSseChunk		40
+nim	caps	donkey/adapters/provider/anthropic.html#caps,AnthropicAdapter	proc caps(a: AnthropicAdapter): ProviderCaps		48
+nim	buildBody	donkey/adapters/provider/anthropic.html#buildBody,AnthropicAdapter,CompletionRequest	proc buildBody(a: AnthropicAdapter; req: CompletionRequest): JsonNode		97
+nim	buildStreamBody	donkey/adapters/provider/anthropic.html#buildStreamBody,AnthropicAdapter,CompletionRequest	proc buildStreamBody(a: AnthropicAdapter; req: CompletionRequest): JsonNode		130
+nim	messagesUrl	donkey/adapters/provider/anthropic.html#messagesUrl,AnthropicAdapter	proc messagesUrl(a: AnthropicAdapter): string		134
+nim	parseAnthropicResponse	donkey/adapters/provider/anthropic.html#parseAnthropicResponse,JsonNode	proc parseAnthropicResponse(j: JsonNode): Result[CompletionResponse, string]		144
+nim	parseAnthropicSseLine	donkey/adapters/provider/anthropic.html#parseAnthropicSseLine,string	proc parseAnthropicSseLine(line: string): Result[AnthropicSseChunk, string]		179
+nim	complete	donkey/adapters/provider/anthropic.html#complete,AnthropicAdapter,CompletionRequest	proc complete(a: AnthropicAdapter; req: CompletionRequest): Result[\n    CompletionResponse, string]		211
+nim	makeStreamFn	donkey/adapters/provider/anthropic.html#makeStreamFn,AnthropicAdapter	proc makeStreamFn(a: AnthropicAdapter): StreamFn		225
+nim	newAnthropicAdapter	donkey/adapters/provider/anthropic.html#newAnthropicAdapter,string,string,string	proc newAnthropicAdapter(apiKey: string; model = AnthropicDefaultModel;\n                    endpoint = ""; baseUrl = ""): AnthropicAdapter		249

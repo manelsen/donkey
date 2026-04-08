@@ -1,0 +1,11 @@
+nimTitle	deepseek	donkey/adapters/provider/deepseek.html	module donkey/adapters/provider/deepseek		0
+nim	DeepSeekEndpoint	donkey/adapters/provider/deepseek.html#DeepSeekEndpoint	const DeepSeekEndpoint		21
+nim	DeepSeekDefaultModel	donkey/adapters/provider/deepseek.html#DeepSeekDefaultModel	const DeepSeekDefaultModel		22
+nim	DeepSeekAdapter	donkey/adapters/provider/deepseek.html#DeepSeekAdapter	object DeepSeekAdapter		25
+nim	DeepSeekSseChunk	donkey/adapters/provider/deepseek.html#DeepSeekSseChunk	object DeepSeekSseChunk		30
+nim	caps	donkey/adapters/provider/deepseek.html#caps,DeepSeekAdapter	proc caps(a: DeepSeekAdapter): ProviderCaps		39
+nim	parseDeepSeekSseLine	donkey/adapters/provider/deepseek.html#parseDeepSeekSseLine,string	proc parseDeepSeekSseLine(line: string): Result[DeepSeekSseChunk, string]		51
+nim	parseDeepSeekResponse	donkey/adapters/provider/deepseek.html#parseDeepSeekResponse,JsonNode	proc parseDeepSeekResponse(body: JsonNode): Result[CompletionResponse, string]		75
+nim	complete	donkey/adapters/provider/deepseek.html#complete,DeepSeekAdapter,CompletionRequest	proc complete(a: DeepSeekAdapter; req: CompletionRequest): Result[CompletionResponse,\n    string]		118
+nim	makeStreamFn	donkey/adapters/provider/deepseek.html#makeStreamFn,DeepSeekAdapter	proc makeStreamFn(a: DeepSeekAdapter): StreamFn		133
+nim	newDeepSeekAdapter	donkey/adapters/provider/deepseek.html#newDeepSeekAdapter,string,string	proc newDeepSeekAdapter(apiKey: string; model = DeepSeekDefaultModel; endpoint = ""): DeepSeekAdapter		175

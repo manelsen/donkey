@@ -1,0 +1,9 @@
+nimTitle	minimax	donkey/adapters/provider/minimax.html	module donkey/adapters/provider/minimax		0
+nim	MiniMaxEndpoint	donkey/adapters/provider/minimax.html#MiniMaxEndpoint	const MiniMaxEndpoint		22
+nim	MiniMaxDefaultModel	donkey/adapters/provider/minimax.html#MiniMaxDefaultModel	const MiniMaxDefaultModel		23
+nim	MiniMaxAdapter	donkey/adapters/provider/minimax.html#MiniMaxAdapter	object MiniMaxAdapter		26
+nim	caps	donkey/adapters/provider/minimax.html#caps,MiniMaxAdapter	proc caps(a: MiniMaxAdapter): ProviderCaps		33
+nim	buildBody	donkey/adapters/provider/minimax.html#buildBody,MiniMaxAdapter,CompletionRequest	proc buildBody(a: MiniMaxAdapter; req: CompletionRequest): JsonNode		59
+nim	parseMiniMaxResponse	donkey/adapters/provider/minimax.html#parseMiniMaxResponse,JsonNode	proc parseMiniMaxResponse(j: JsonNode): Result[CompletionResponse, string]		92
+nim	complete	donkey/adapters/provider/minimax.html#complete,MiniMaxAdapter,CompletionRequest	proc complete(a: MiniMaxAdapter; req: CompletionRequest): Result[CompletionResponse,\n    string]		114
+nim	newMiniMaxAdapter	donkey/adapters/provider/minimax.html#newMiniMaxAdapter,string,string	proc newMiniMaxAdapter(apiKey: string; model = MiniMaxDefaultModel; endpoint = ""): MiniMaxAdapter		129

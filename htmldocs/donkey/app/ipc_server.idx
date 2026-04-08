@@ -1,0 +1,4 @@
+nimTitle	ipc_server	donkey/app/ipc_server.html	module donkey/app/ipc_server		0
+nim	StatusProvider	donkey/app/ipc_server.html#StatusProvider	type StatusProvider		18
+nim	LogProvider	donkey/app/ipc_server.html#LogProvider	type LogProvider		19
+nim	startIpcServer	donkey/app/ipc_server.html#startIpcServer,string,StatusProvider,LogProvider	proc startIpcServer(sockPath: string; statusFn: StatusProvider; logFn: LogProvider)		56

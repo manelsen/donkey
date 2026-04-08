@@ -1,0 +1,19 @@
+nimTitle	commitment_pure	donkey/domain/memory/commitment_pure.html	module donkey/domain/memory/commitment_pure		0
+nim	coUser	donkey/domain/memory/commitment_pure.html#coUser	CommitmentOwner.coUser		8
+nim	coAgent	donkey/domain/memory/commitment_pure.html#coAgent	CommitmentOwner.coAgent		8
+nim	CommitmentOwner	donkey/domain/memory/commitment_pure.html#CommitmentOwner	enum CommitmentOwner		8
+nim	csOpen	donkey/domain/memory/commitment_pure.html#csOpen	CommitmentStatus.csOpen		11
+nim	csDone	donkey/domain/memory/commitment_pure.html#csDone	CommitmentStatus.csDone		11
+nim	csBroken	donkey/domain/memory/commitment_pure.html#csBroken	CommitmentStatus.csBroken		11
+nim	csCancelled	donkey/domain/memory/commitment_pure.html#csCancelled	CommitmentStatus.csCancelled		11
+nim	CommitmentStatus	donkey/domain/memory/commitment_pure.html#CommitmentStatus	enum CommitmentStatus		11
+nim	Commitment	donkey/domain/memory/commitment_pure.html#Commitment	object Commitment		14
+nim	commitmentId	donkey/domain/memory/commitment_pure.html#commitmentId,CommitmentOwner,string	proc commitmentId(owner: CommitmentOwner; sourceText: string): string		29
+nim	extractDueAt	donkey/domain/memory/commitment_pure.html#extractDueAt,string,int64	proc extractDueAt(sourceText: string; nowSec: int64): Option[int64]		40
+nim	commitmentScore	donkey/domain/memory/commitment_pure.html#commitmentScore,Commitment,int64	proc commitmentScore(c: Commitment; nowSec: int64 = 0): float32		54
+nim	newCommitment	donkey/domain/memory/commitment_pure.html#newCommitment,CommitmentOwner,string,int64,Option[int64]	proc newCommitment(owner: CommitmentOwner; sourceText: string; nowSec: int64 = 0;\n              dueAt: Option[int64] = none(int64)): Commitment		70
+nim	parseUserRequestedCommitment	donkey/domain/memory/commitment_pure.html#parseUserRequestedCommitment,string,int64	proc parseUserRequestedCommitment(sourceText: string; nowSec: int64 = 0): Option[\n    Commitment]		87
+nim	parseAgentPromisedCommitment	donkey/domain/memory/commitment_pure.html#parseAgentPromisedCommitment,string,int64	proc parseAgentPromisedCommitment(sourceText: string; nowSec: int64 = 0): Option[\n    Commitment]		106
+nim	markCompleted	donkey/domain/memory/commitment_pure.html#markCompleted,Commitment,int64	proc markCompleted(c: Commitment; nowSec: int64 = 0): Commitment		129
+nim	markBroken	donkey/domain/memory/commitment_pure.html#markBroken,Commitment,int64	proc markBroken(c: Commitment; nowSec: int64 = 0): Commitment		132
+nim	cancel	donkey/domain/memory/commitment_pure.html#cancel,Commitment,int64	proc cancel(c: Commitment; nowSec: int64 = 0): Commitment		135

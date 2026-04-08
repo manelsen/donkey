@@ -1,0 +1,12 @@
+nimTitle	zhipu	donkey/adapters/provider/zhipu.html	module donkey/adapters/provider/zhipu		0
+nim	ZhipuEndpoint	donkey/adapters/provider/zhipu.html#ZhipuEndpoint	const ZhipuEndpoint		21
+nim	ZaiGeneralEndpoint	donkey/adapters/provider/zhipu.html#ZaiGeneralEndpoint	const ZaiGeneralEndpoint		22
+nim	ZhipuDefaultModel	donkey/adapters/provider/zhipu.html#ZhipuDefaultModel	const ZhipuDefaultModel		23
+nim	ZhipuAdapter	donkey/adapters/provider/zhipu.html#ZhipuAdapter	object ZhipuAdapter		26
+nim	caps	donkey/adapters/provider/zhipu.html#caps,ZhipuAdapter	proc caps(a: ZhipuAdapter): ProviderCaps		33
+nim	buildBody	donkey/adapters/provider/zhipu.html#buildBody,ZhipuAdapter,CompletionRequest	proc buildBody(a: ZhipuAdapter; req: CompletionRequest): JsonNode		58
+nim	parseZhipuResponse	donkey/adapters/provider/zhipu.html#parseZhipuResponse,JsonNode	proc parseZhipuResponse(parsed: JsonNode): Result[CompletionResponse, string]		81
+nim	complete	donkey/adapters/provider/zhipu.html#complete,ZhipuAdapter,CompletionRequest	proc complete(a: ZhipuAdapter; req: CompletionRequest): Result[CompletionResponse,\n    string]		122
+nim	newZhipuAdapter	donkey/adapters/provider/zhipu.html#newZhipuAdapter,string,string	proc newZhipuAdapter(apiKey: string; model = ZhipuDefaultModel; endpoint = ""): ZhipuAdapter		136
+nim	newZaiAdapter	donkey/adapters/provider/zhipu.html#newZaiAdapter,string,string	proc newZaiAdapter(apiKey: string; model = ZhipuDefaultModel; endpoint = ""): ZhipuAdapter		141
+nim	newZaiCodingAdapter	donkey/adapters/provider/zhipu.html#newZaiCodingAdapter,string	proc newZaiCodingAdapter(apiKey: string; model = ZhipuDefaultModel): ZhipuAdapter		150

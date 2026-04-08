@@ -1,0 +1,8 @@
+nimTitle	memory	donkey/ports/memory.html	module donkey/ports/memory		0
+nim	UserContext	donkey/ports/memory.html#UserContext	object UserContext		19
+nim	MemoryHit	donkey/ports/memory.html#MemoryHit	object MemoryHit		26
+nim	MemoryPort	donkey/ports/memory.html#MemoryPort	type MemoryPort		32
+nim	SemanticMemoryPort	donkey/ports/memory.html#SemanticMemoryPort	type SemanticMemoryPort		48
+nim	SearchFn	donkey/ports/memory.html#SearchFn	type SearchFn		57
+nim	MemoryRuntimePort	donkey/ports/memory.html#MemoryRuntimePort	object MemoryRuntimePort		61
+nim	bootstrapUserMd	donkey/ports/memory.html#bootstrapUserMd,string,string,string,string	proc bootstrapUserMd(name, callMe, timezone, language: string): string		81

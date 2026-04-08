@@ -1,0 +1,4 @@
+nimTitle	dotenv	donkey/config/dotenv.html	module donkey/config/dotenv		0
+nim	loadEnvFile	donkey/config/dotenv.html#loadEnvFile,string	proc loadEnvFile(path: string): int		14
+nim	envFilePath	donkey/config/dotenv.html#envFilePath,string	proc envFilePath(home: string): string		51
+nim	loadDonkeyEnv	donkey/config/dotenv.html#loadDonkeyEnv,string	proc loadDonkeyEnv(home: string): int		59

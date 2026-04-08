@@ -1,0 +1,21 @@
+nimTitle	chunking	donkey/domain/memory/chunking.html	module donkey/domain/memory/chunking		0
+nim	ChunkWithHash	donkey/domain/memory/chunking.html#ChunkWithHash	object ChunkWithHash		20
+nim	DefaultMaxChunkLen	donkey/domain/memory/chunking.html#DefaultMaxChunkLen	const DefaultMaxChunkLen		27
+nim	DefaultOverlap	donkey/domain/memory/chunking.html#DefaultOverlap	const DefaultOverlap		28
+nim	MinChunkLen	donkey/domain/memory/chunking.html#MinChunkLen	const MinChunkLen		29
+nim	sha256Hash	donkey/domain/memory/chunking.html#sha256Hash,string	proc sha256Hash(text: string): string		31
+nim	isSignificantBoundary	donkey/domain/memory/chunking.html#isSignificantBoundary,string,int	proc isSignificantBoundary(text: string; pos: int): bool		41
+nim	findBoundaryBack	donkey/domain/memory/chunking.html#findBoundaryBack,string,int,int	proc findBoundaryBack(text: string; start, stop: int): int		55
+nim	findBoundaryForward	donkey/domain/memory/chunking.html#findBoundaryForward,string,int,int	proc findBoundaryForward(text: string; start, stop: int): int		65
+nim	chunkTextNoOverlap	donkey/domain/memory/chunking.html#chunkTextNoOverlap,string,int	proc chunkTextNoOverlap(text: string; maxLen: int): seq[string]		75
+nim	chunkTextWithOverlap	donkey/domain/memory/chunking.html#chunkTextWithOverlap,string,int,int	proc chunkTextWithOverlap(text: string; maxLen: int; overlap: int): seq[string]		82
+nim	chunkText	donkey/domain/memory/chunking.html#chunkText,string,int,int	proc chunkText(text: string; maxLen: int; overlap: int): seq[string]		116
+nim	chunkText	donkey/domain/memory/chunking.html#chunkText,string,int	proc chunkText(text: string; maxLen: int): seq[string]		121
+nim	chunkTextWithHashNoOverlap	donkey/domain/memory/chunking.html#chunkTextWithHashNoOverlap,string,int	proc chunkTextWithHashNoOverlap(text: string; maxLen: int): seq[ChunkWithHash]		125
+nim	chunkTextWithOverlapPos	donkey/domain/memory/chunking.html#chunkTextWithOverlapPos,string,int,int	proc chunkTextWithOverlapPos(text: string; maxLen: int; overlap: int): seq[\n    (string, int)]		136
+nim	chunkTextWithHash	donkey/domain/memory/chunking.html#chunkTextWithHash,string,int,int	proc chunkTextWithHash(text: string; maxLen: int; overlap: int): seq[ChunkWithHash]		164
+nim	hashChunks	donkey/domain/memory/chunking.html#hashChunks,seq[string]	proc hashChunks(chunks: seq[string]): seq[string]		180
+nim	chunkAndHash	donkey/domain/memory/chunking.html#chunkAndHash,string,int,int	proc chunkAndHash(text: string; maxLen: int; overlap: int): seq[ChunkWithHash]		184
+nim	totalCharCount	donkey/domain/memory/chunking.html#totalCharCount,seq[ChunkWithHash]	proc totalCharCount(chunks: seq[ChunkWithHash]): int		188
+nim	deduplicateByHash	donkey/domain/memory/chunking.html#deduplicateByHash,seq[ChunkWithHash]	proc deduplicateByHash(chunks: seq[ChunkWithHash]): seq[ChunkWithHash]		192
+nimgrp	chunktext	donkey/domain/memory/chunking.html#chunkText-procs-all	proc		116

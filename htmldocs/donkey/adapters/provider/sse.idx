@@ -1,0 +1,2 @@
+nimTitle	sse	donkey/adapters/provider/sse.html	module donkey/adapters/provider/sse		0
+nim	sseAccumulate	donkey/adapters/provider/sse.html#sseAccumulate.t,Stream,untyped,untyped	template sseAccumulate(stream: Stream; parseLine, onToken: untyped)		15

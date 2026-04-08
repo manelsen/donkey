@@ -1,0 +1,4 @@
+nimTitle	helpers	donkey/adapters/http/helpers.html	module donkey/adapters/http/helpers		0
+nim	withHttpClient	donkey/adapters/http/helpers.html#withHttpClient.t,untyped	template withHttpClient(body: untyped): untyped		6
+nim	withHttpClientTimeout	donkey/adapters/http/helpers.html#withHttpClientTimeout.t,int,untyped	template withHttpClientTimeout(timeoutSeconds: int; body: untyped): untyped		16
+nim	checkApiStatus	donkey/adapters/http/helpers.html#checkApiStatus.t,untyped,string	template checkApiStatus(resp: untyped; apiName: string)		25

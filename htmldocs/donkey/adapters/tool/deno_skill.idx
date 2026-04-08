@@ -1,0 +1,3 @@
+nimTitle	deno_skill	donkey/adapters/tool/deno_skill.html	module donkey/adapters/tool/deno_skill		0
+nim	DenoSkillAdapter	donkey/adapters/tool/deno_skill.html#DenoSkillAdapter	type DenoSkillAdapter		15
+nim	newDenoSkillAdapter	donkey/adapters/tool/deno_skill.html#newDenoSkillAdapter,string,seq[string]	proc newDenoSkillAdapter(script: string; permissions: seq[string] = @[]): DenoSkillAdapter		17

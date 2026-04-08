@@ -1,0 +1,29 @@
+nimTitle	magma_graph	donkey/adapters/memory/magma_graph.html	module donkey/adapters/memory/magma_graph		0
+nim	EdgeTemporal	donkey/adapters/memory/magma_graph.html#EdgeTemporal	const EdgeTemporal		29
+nim	EdgeCausal	donkey/adapters/memory/magma_graph.html#EdgeCausal	const EdgeCausal		30
+nim	EdgeMentions	donkey/adapters/memory/magma_graph.html#EdgeMentions	const EdgeMentions		31
+nim	EdgeAbout	donkey/adapters/memory/magma_graph.html#EdgeAbout	const EdgeAbout		32
+nim	MagmaNode	donkey/adapters/memory/magma_graph.html#MagmaNode	object MagmaNode		42
+nim	MagmaEdge	donkey/adapters/memory/magma_graph.html#MagmaEdge	object MagmaEdge		51
+nim	MagmaHit	donkey/adapters/memory/magma_graph.html#MagmaHit	object MagmaHit		58
+nim	MagmaStats	donkey/adapters/memory/magma_graph.html#MagmaStats	object MagmaStats		63
+nim	MagmaGraph	donkey/adapters/memory/magma_graph.html#MagmaGraph	type MagmaGraph		72
+nim	newMagmaGraph	donkey/adapters/memory/magma_graph.html#newMagmaGraph,string	proc newMagmaGraph(dsn: string): MagmaGraph		146
+nim	openDb	donkey/adapters/memory/magma_graph.html#openDb,MagmaGraph	proc openDb(g: MagmaGraph): DbConn		149
+nim	migrate	donkey/adapters/memory/magma_graph.html#migrate,MagmaGraph	proc migrate(g: MagmaGraph)		154
+nim	insertNode	donkey/adapters/memory/magma_graph.html#insertNode,MagmaGraph,MagmaNode	proc insertNode(g: MagmaGraph; node: MagmaNode): bool		173
+nim	getNode	donkey/adapters/memory/magma_graph.html#getNode,MagmaGraph,string	proc getNode(g: MagmaGraph; nodeId: string): Option[MagmaNode]		195
+nim	deleteNode	donkey/adapters/memory/magma_graph.html#deleteNode,MagmaGraph,string	proc deleteNode(g: MagmaGraph; nodeId: string): bool		217
+nim	insertEdge	donkey/adapters/memory/magma_graph.html#insertEdge,MagmaGraph,MagmaEdge	proc insertEdge(g: MagmaGraph; edge: MagmaEdge): bool		230
+nim	getEdges	donkey/adapters/memory/magma_graph.html#getEdges,MagmaGraph,string,string,string	proc getEdges(g: MagmaGraph; nodeId: string; edgeType: string = "";\n         direction: string = "out"): seq[MagmaEdge]		244
+nim	deleteEdges	donkey/adapters/memory/magma_graph.html#deleteEdges,MagmaGraph,string,string	proc deleteEdges(g: MagmaGraph; nodeId: string; edgeType: string = ""): int		283
+nim	getLastNode	donkey/adapters/memory/magma_graph.html#getLastNode,MagmaGraph,string,string	proc getLastNode(g: MagmaGraph; userId: string; nodeType: string = ""): Option[\n    MagmaNode]		302
+nim	linkTemporal	donkey/adapters/memory/magma_graph.html#linkTemporal,MagmaGraph,string,string	proc linkTemporal(g: MagmaGraph; fromId, toId: string)		331
+nim	searchSimilar	donkey/adapters/memory/magma_graph.html#searchSimilar,MagmaGraph,string,seq[float32],int,float32	proc searchSimilar(g: MagmaGraph; userId: string; embedding: seq[float32];\n              topK: int = 10; minScore: float32 = 0.0): seq[MagmaHit]		337
+nim	queryByTimeRange	donkey/adapters/memory/magma_graph.html#queryByTimeRange,MagmaGraph,string,int64,int64,int	proc queryByTimeRange(g: MagmaGraph; userId: string; tsStart, tsEnd: int64;\n                 limit: int = 50): seq[MagmaNode]		371
+nim	traverseNeighbors	donkey/adapters/memory/magma_graph.html#traverseNeighbors,MagmaGraph,string,seq[string],int	proc traverseNeighbors(g: MagmaGraph; nodeId: string; edgeTypes: seq[string] = @[];\n                  maxDepth: int = 2): seq[MagmaNode]		393
+nim	nodeCount	donkey/adapters/memory/magma_graph.html#nodeCount,MagmaGraph,string	proc nodeCount(g: MagmaGraph; userId: string): int		428
+nim	edgeCount	donkey/adapters/memory/magma_graph.html#edgeCount,MagmaGraph,string	proc edgeCount(g: MagmaGraph; userId: string): int		439
+nim	stats	donkey/adapters/memory/magma_graph.html#stats,MagmaGraph,string	proc stats(g: MagmaGraph; userId: string): MagmaStats		451
+nim	stats	donkey/adapters/memory/magma_graph.html#stats,MagmaGraph	proc stats(g: MagmaGraph): MagmaStats		476
+nimgrp	stats	donkey/adapters/memory/magma_graph.html#stats-procs-all	proc		451

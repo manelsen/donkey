@@ -1,0 +1,14 @@
+nimTitle	embedder	donkey/core/memory/embedder.html	module donkey/core/memory/embedder		0
+nim	EmbeddedChunk	donkey/core/memory/embedder.html#EmbeddedChunk	object EmbeddedChunk		12
+nim	DefaultEmbeddingDimensions	donkey/core/memory/embedder.html#DefaultEmbeddingDimensions	const DefaultEmbeddingDimensions		21
+nim	newEmbeddedChunk	donkey/core/memory/embedder.html#newEmbeddedChunk,ChunkWithHash,seq[float32]	proc newEmbeddedChunk(chunk: ChunkWithHash; vector: seq[float32]): EmbeddedChunk		23
+nim	newEmbeddedChunk	donkey/core/memory/embedder.html#newEmbeddedChunk,string,string,int,int,seq[float32]	proc newEmbeddedChunk(chunk: string; hash: string; index: int; offset: int;\n                 vector: seq[float32]): EmbeddedChunk		33
+nim	embedChunk	donkey/core/memory/embedder.html#embedChunk,ChunkWithHash,EmbedFn	proc embedChunk(chunk: ChunkWithHash; fn: EmbedFn): Result[EmbeddedChunk, string]		44
+nim	embedChunk	donkey/core/memory/embedder.html#embedChunk,string,string,int,int,EmbedFn	proc embedChunk(chunk: string; hash: string; index: int; offset: int; fn: EmbedFn): Result[\n    EmbeddedChunk, string]		51
+nim	embedChunks	donkey/core/memory/embedder.html#embedChunks,seq[ChunkWithHash],EmbedFn	proc embedChunks(chunks: seq[ChunkWithHash]; fn: EmbedFn): Result[seq[EmbeddedChunk],\n    string]		59
+nim	embedText	donkey/core/memory/embedder.html#embedText,string,EmbedFn	proc embedText(text: string; fn: EmbedFn; maxLen = DefaultMaxChunkLen;\n          overlap = DefaultOverlap): Result[seq[EmbeddedChunk], string]		72
+nim	emptyEmbedding	donkey/core/memory/embedder.html#emptyEmbedding,int	proc emptyEmbedding(dimensions: int): seq[float32]		80
+nim	totalDimensions	donkey/core/memory/embedder.html#totalDimensions,seq[EmbeddedChunk]	proc totalDimensions(chunks: seq[EmbeddedChunk]): int		83
+nim	hasValidEmbedding	donkey/core/memory/embedder.html#hasValidEmbedding,EmbeddedChunk	proc hasValidEmbedding(c: EmbeddedChunk): bool		86
+nimgrp	embedchunk	donkey/core/memory/embedder.html#embedChunk-procs-all	proc		44
+nimgrp	newembeddedchunk	donkey/core/memory/embedder.html#newEmbeddedChunk-procs-all	proc		23

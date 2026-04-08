@@ -1,0 +1,26 @@
+nimTitle	onboarding	donkey/core/onboarding/onboarding.html	module donkey/core/onboarding/onboarding		0
+nim	FreeConvoSystemPrompt	donkey/core/onboarding/onboarding.html#FreeConvoSystemPrompt	const FreeConvoSystemPrompt		11
+nim	OnboardingRuntime	donkey/core/onboarding/onboarding.html#OnboardingRuntime	object OnboardingRuntime		29
+nim	IdentityRuntime	donkey/core/onboarding/onboarding.html#IdentityRuntime	object IdentityRuntime		37
+nim	FreeConvoContext	donkey/core/onboarding/onboarding.html#FreeConvoContext	object FreeConvoContext		42
+nim	GuidedChoiceContext	donkey/core/onboarding/onboarding.html#GuidedChoiceContext	object GuidedChoiceContext		50
+nim	UserProfileContext	donkey/core/onboarding/onboarding.html#UserProfileContext	object UserProfileContext		57
+nim	OnboardingControlContext	donkey/core/onboarding/onboarding.html#OnboardingControlContext	object OnboardingControlContext		66
+nim	oekWakeUp	donkey/core/onboarding/onboarding.html#oekWakeUp	OnboardingEventKind.oekWakeUp		74
+nim	oekButtonOnly	donkey/core/onboarding/onboarding.html#oekButtonOnly	OnboardingEventKind.oekButtonOnly		74
+nim	oekFreeConvoText	donkey/core/onboarding/onboarding.html#oekFreeConvoText	OnboardingEventKind.oekFreeConvoText		74
+nim	oekUserProfileText	donkey/core/onboarding/onboarding.html#oekUserProfileText	OnboardingEventKind.oekUserProfileText		74
+nim	oekDone	donkey/core/onboarding/onboarding.html#oekDone	OnboardingEventKind.oekDone		74
+nim	oekGuidedChoice	donkey/core/onboarding/onboarding.html#oekGuidedChoice	OnboardingEventKind.oekGuidedChoice		74
+nim	oekNameChoice	donkey/core/onboarding/onboarding.html#oekNameChoice	OnboardingEventKind.oekNameChoice		74
+nim	oekIgnore	donkey/core/onboarding/onboarding.html#oekIgnore	OnboardingEventKind.oekIgnore		74
+nim	OnboardingEventKind	donkey/core/onboarding/onboarding.html#OnboardingEventKind	enum OnboardingEventKind		74
+nim	OnboardingDecision	donkey/core/onboarding/onboarding.html#OnboardingDecision	object OnboardingDecision		84
+nim	startFreeConvoContext	donkey/core/onboarding/onboarding.html#startFreeConvoContext,ConversationHistory,OnboardingRuntime,string	proc startFreeConvoContext(history: ConversationHistory;\n                      onboarding: OnboardingRuntime; userText: string): Result[\n    FreeConvoContext, string]		102
+nim	withFreeConvoRequest	donkey/core/onboarding/onboarding.html#withFreeConvoRequest,FreeConvoContext	proc withFreeConvoRequest(ctx: FreeConvoContext): Result[FreeConvoContext, string]		113
+nim	parseFreeConvoReply	donkey/core/onboarding/onboarding.html#parseFreeConvoReply,FreeConvoContext	proc parseFreeConvoReply(ctx: FreeConvoContext): Result[FreeConvoContext, string]		121
+nim	startGuidedChoiceContext	donkey/core/onboarding/onboarding.html#startGuidedChoiceContext,OnboardingRuntime,string,string	proc startGuidedChoiceContext(onboarding: OnboardingRuntime; dim: string;\n                         valor: string): Result[GuidedChoiceContext, string]		130
+nim	startUserProfileContext	donkey/core/onboarding/onboarding.html#startUserProfileContext,OnboardingRuntime,IdentityRuntime,string	proc startUserProfileContext(onboarding: OnboardingRuntime;\n                        identity: IdentityRuntime; userText: string): Result[\n    UserProfileContext, string]		180
+nim	startOnboardingControlContext	donkey/core/onboarding/onboarding.html#startOnboardingControlContext,AgentMessage,OnboardingRuntime,IdentityRuntime	proc startOnboardingControlContext(msg: AgentMessage; onboarding: OnboardingRuntime;\n                              identity: IdentityRuntime): Result[\n    OnboardingControlContext, string]		247
+nim	decideOnboardingTurn	donkey/core/onboarding/onboarding.html#decideOnboardingTurn,OnboardingRuntime,string	proc decideOnboardingTurn(onboarding: OnboardingRuntime; userText: string): OnboardingDecision		282
+nim	decideOnboardingControl	donkey/core/onboarding/onboarding.html#decideOnboardingControl,AgentMessage,OnboardingRuntime,IdentityRuntime	proc decideOnboardingControl(msg: AgentMessage; onboarding: OnboardingRuntime;\n                        identity: IdentityRuntime): Result[OnboardingDecision,\n    string]		312

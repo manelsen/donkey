@@ -1,0 +1,12 @@
+nimTitle	cli_repl	donkey/adapters/channel/cli_repl.html	module donkey/adapters/channel/cli_repl		0
+nim	CliMaxCols	donkey/adapters/channel/cli_repl.html#CliMaxCols	const CliMaxCols		15
+nim	CliAdapter	donkey/adapters/channel/cli_repl.html#CliAdapter	object CliAdapter		20
+nim	CliDefaultUserId	donkey/adapters/channel/cli_repl.html#CliDefaultUserId	const CliDefaultUserId		26
+nim	receive	donkey/adapters/channel/cli_repl.html#receive,CliAdapter	proc receive(a: var CliAdapter): Result[seq[InboundMessage], string]		30
+nim	send	donkey/adapters/channel/cli_repl.html#send,CliAdapter,OutboundMessage	proc send(a: CliAdapter; msg: OutboundMessage): Result[void, string]		47
+nim	sendReturnId	donkey/adapters/channel/cli_repl.html#sendReturnId,CliAdapter,OutboundMessage	proc sendReturnId(a: CliAdapter; msg: OutboundMessage): Result[string, string]		55
+nim	editMessage	donkey/adapters/channel/cli_repl.html#editMessage,CliAdapter,UserId,string,string	proc editMessage(a: CliAdapter; userId: UserId; msgId, text: string): Result[void,\n    string]		60
+nim	ack	donkey/adapters/channel/cli_repl.html#ack,CliAdapter,string	proc ack(a: CliAdapter; channelId: string)		68
+nim	newCliAdapter	donkey/adapters/channel/cli_repl.html#newCliAdapter	proc newCliAdapter(userId = CliDefaultUserId): CliAdapter		74
+nim	isCommand	donkey/adapters/channel/cli_repl.html#isCommand,string	proc isCommand(text: string): bool		79
+nim	stripCommand	donkey/adapters/channel/cli_repl.html#stripCommand,string	proc stripCommand(text: string): string		83

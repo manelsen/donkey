@@ -1,0 +1,17 @@
+nimTitle	http_gateway	donkey/app/http_gateway.html	module donkey/app/http_gateway		0
+nim	GatewayDefaultPort	donkey/app/http_gateway.html#GatewayDefaultPort	const GatewayDefaultPort		23
+nim	GatewayRequest	donkey/app/http_gateway.html#GatewayRequest	object GatewayRequest		28
+nim	GatewayStatusFn	donkey/app/http_gateway.html#GatewayStatusFn	type GatewayStatusFn		35
+nim	GatewayLogFn	donkey/app/http_gateway.html#GatewayLogFn	type GatewayLogFn		36
+nim	GatewayEventFn	donkey/app/http_gateway.html#GatewayEventFn	type GatewayEventFn		37
+nim	GatewayInboundFn	donkey/app/http_gateway.html#GatewayInboundFn	type GatewayInboundFn		42
+nim	parseGatewayRequest	donkey/app/http_gateway.html#parseGatewayRequest,string	proc parseGatewayRequest(requestLine: string): GatewayRequest		46
+nim	buildSseEvent	donkey/app/http_gateway.html#buildSseEvent,string,string	proc buildSseEvent(event, data: string): string		59
+nim	buildStatusBody	donkey/app/http_gateway.html#buildStatusBody,DaemonStatus	proc buildStatusBody(st: DaemonStatus): string		65
+nim	buildLogsBody	donkey/app/http_gateway.html#buildLogsBody,seq[IpcLogEntry]	proc buildLogsBody(entries: seq[IpcLogEntry]): string		68
+nim	buildAgentEventsBody	donkey/app/http_gateway.html#buildAgentEventsBody,seq[AgentEvent]	proc buildAgentEventsBody(events: seq[AgentEvent]): string		74
+nim	routeGatewayRequest	donkey/app/http_gateway.html#routeGatewayRequest,GatewayRequest	proc routeGatewayRequest(req: GatewayRequest): string		80
+nim	routeChatMethod	donkey/app/http_gateway.html#routeChatMethod,string	proc routeChatMethod(meth: string): string		89
+nim	CliDefaultUserId	donkey/app/http_gateway.html#CliDefaultUserId	const CliDefaultUserId		156
+nim	parseChatPost	donkey/app/http_gateway.html#parseChatPost,string	proc parseChatPost(body: string): Result[InboundMessage, string]		159
+nim	startHttpGateway	donkey/app/http_gateway.html#startHttpGateway,int,GatewayStatusFn,GatewayLogFn,GatewayEventFn,GatewayInboundFn	proc startHttpGateway(port: int; statusFn: GatewayStatusFn; logFn: GatewayLogFn;\n                 eventFn: GatewayEventFn = nil;\n                 inboundFn: GatewayInboundFn = nil)		323

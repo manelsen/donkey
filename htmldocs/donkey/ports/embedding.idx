@@ -1,0 +1,3 @@
+nimTitle	embedding	donkey/ports/embedding.html	module donkey/ports/embedding		0
+nim	EmbedFn	donkey/ports/embedding.html#EmbedFn	type EmbedFn		9
+nim	EmbeddingPort	donkey/ports/embedding.html#EmbeddingPort	type EmbeddingPort		13

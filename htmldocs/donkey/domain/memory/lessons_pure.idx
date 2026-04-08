@@ -1,0 +1,7 @@
+nimTitle	lessons_pure	donkey/domain/memory/lessons_pure.html	module donkey/domain/memory/lessons_pure		0
+nim	Lesson	donkey/domain/memory/lessons_pure.html#Lesson	object Lesson		9
+nim	lessonId	donkey/domain/memory/lessons_pure.html#lessonId,string,string	proc lessonId(sourceEpisodeId, text: string): string		23
+nim	clampConfidence	donkey/domain/memory/lessons_pure.html#clampConfidence,float32	proc clampConfidence(confidence: float32): float32		32
+nim	newLesson	donkey/domain/memory/lessons_pure.html#newLesson,string,float32,string,seq[string]	proc newLesson(text: string; confidence: float32; sourceEpisodeId: string;\n          retrievalTags: seq[string]): Lesson		40
+nim	extractLessonsFromEpisode	donkey/domain/memory/lessons_pure.html#extractLessonsFromEpisode,EpisodeJournal,int	proc extractLessonsFromEpisode(episode: EpisodeJournal; maxLessons = 2): seq[Lesson]		52
+nim	extractLessonsFromCommitmentOutcome	donkey/domain/memory/lessons_pure.html#extractLessonsFromCommitmentOutcome,Commitment,int	proc extractLessonsFromCommitmentOutcome(commitment: Commitment; maxLessons = 1): seq[\n    Lesson]		69

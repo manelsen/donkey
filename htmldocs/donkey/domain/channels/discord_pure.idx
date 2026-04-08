@@ -1,0 +1,11 @@
+nimTitle	discord_pure	donkey/domain/channels/discord_pure.html	module donkey/domain/channels/discord_pure		0
+nim	dekMessage	donkey/domain/channels/discord_pure.html#dekMessage	DsEventKind.dekMessage		22
+nim	dekSlashCommand	donkey/domain/channels/discord_pure.html#dekSlashCommand	DsEventKind.dekSlashCommand		22
+nim	dekButtonClick	donkey/domain/channels/discord_pure.html#dekButtonClick	DsEventKind.dekButtonClick		22
+nim	dekModalSubmit	donkey/domain/channels/discord_pure.html#dekModalSubmit	DsEventKind.dekModalSubmit		22
+nim	dekUnknown	donkey/domain/channels/discord_pure.html#dekUnknown	DsEventKind.dekUnknown		22
+nim	DsEventKind	donkey/domain/channels/discord_pure.html#DsEventKind	enum DsEventKind		22
+nim	DsParseResult	donkey/domain/channels/discord_pure.html#DsParseResult	object DsParseResult		29
+nim	parseDispatch	donkey/domain/channels/discord_pure.html#parseDispatch,string,JsonNode	proc parseDispatch(t: string; d: JsonNode): DsParseResult		174
+nim	toInbound	donkey/domain/channels/discord_pure.html#toInbound,DsParseResult,UserId	proc toInbound(r: DsParseResult; userId: UserId): InboundMessage		184
+nim	hasInteraction	donkey/domain/channels/discord_pure.html#hasInteraction,DsParseResult	proc hasInteraction(r: DsParseResult): bool		193

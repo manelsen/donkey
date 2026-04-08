@@ -1,0 +1,13 @@
+nimTitle	rrf	donkey/domain/memory/rrf.html	module donkey/domain/memory/rrf		0
+nim	RankedItem	donkey/domain/memory/rrf.html#RankedItem	object RankedItem		9
+nim	FusionResult	donkey/domain/memory/rrf.html#FusionResult	object FusionResult		14
+nim	DefaultRrfK	donkey/domain/memory/rrf.html#DefaultRrfK	const DefaultRrfK		20
+nim	rrfScore	donkey/domain/memory/rrf.html#rrfScore,int,float	proc rrfScore(rank: int; k: float = DefaultRrfK): float		22
+nim	rrfScoreWeighted	donkey/domain/memory/rrf.html#rrfScoreWeighted,int,float,float	proc rrfScoreWeighted(rank: int; weight: float; k: float = DefaultRrfK): float		27
+nim	fuseRanks	donkey/domain/memory/rrf.html#fuseRanks,int,int,float	proc fuseRanks(bm25Rank, cosineRank: int; k: float = DefaultRrfK): float		31
+nim	rankItems	donkey/domain/memory/rrf.html#rankItems,seq[tuple[T,float]],bool	proc rankItems[T](items: seq[tuple[item: T, score: float]]; ascending: bool = false): seq[\n    RankedItem[T]]		41
+nim	fuseRankedLists	donkey/domain/memory/rrf.html#fuseRankedLists,seq[RankedItem[T]],seq[RankedItem[T]],float	proc fuseRankedLists[T](bm25Items: seq[RankedItem[T]];\n                   cosineItems: seq[RankedItem[T]]; k: float = DefaultRrfK): seq[\n    FusionResult[T]]		66
+nim	fuseRankedListsWeighted	donkey/domain/memory/rrf.html#fuseRankedListsWeighted,seq[RankedItem[T]],seq[RankedItem[T]],float,float,float	proc fuseRankedListsWeighted[T](bm25Items: seq[RankedItem[T]];\n                           cosineItems: seq[RankedItem[T]]; bm25Weight: float;\n                           cosineWeight: float; k: float = DefaultRrfK): seq[\n    FusionResult[T]]		126
+nim	topK	donkey/domain/memory/rrf.html#topK,seq[FusionResult[T]],int	proc topK[T](fused: seq[FusionResult[T]]; k: int): seq[FusionResult[T]]		193
+nim	rrfScores	donkey/domain/memory/rrf.html#rrfScores,seq[FusionResult[T]]	proc rrfScores[T](fused: seq[FusionResult[T]]): seq[float]		209
+nim	items	donkey/domain/memory/rrf.html#items,seq[FusionResult[T]]	proc items[T](fused: seq[FusionResult[T]]): seq[T]		213

@@ -1,0 +1,12 @@
+nimTitle	zai_rerank	donkey/adapters/reranking/zai_rerank.html	module donkey/adapters/reranking/zai_rerank		0
+nim	ZaiRerankUrl	donkey/adapters/reranking/zai_rerank.html#ZaiRerankUrl	const ZaiRerankUrl		14
+nim	ZaiCodingRerankUrl	donkey/adapters/reranking/zai_rerank.html#ZaiCodingRerankUrl	const ZaiCodingRerankUrl		15
+nim	ZaiDefaultRerankModel	donkey/adapters/reranking/zai_rerank.html#ZaiDefaultRerankModel	const ZaiDefaultRerankModel		16
+nim	ZaiDefaultTemperature	donkey/adapters/reranking/zai_rerank.html#ZaiDefaultTemperature	const ZaiDefaultTemperature		17
+nim	ZaiRerankAdapter	donkey/adapters/reranking/zai_rerank.html#ZaiRerankAdapter	object ZaiRerankAdapter		20
+nim	parseScores	donkey/adapters/reranking/zai_rerank.html#parseScores,string,int	proc parseScores(content: string; count: int): seq[float32]		28
+nim	buildBody	donkey/adapters/reranking/zai_rerank.html#buildBody,ZaiRerankAdapter,string,seq[RerankCandidate]	proc buildBody(a: ZaiRerankAdapter; query: string; candidates: seq[RerankCandidate]): JsonNode		31
+nim	newZaiRerankAdapter	donkey/adapters/reranking/zai_rerank.html#newZaiRerankAdapter,string	proc newZaiRerankAdapter(apiKey: string; model = ZaiDefaultRerankModel;\n                    endpoint = ZaiRerankUrl; maxChars = DefaultRerankMaxChars;\n                    maxTokens = DefaultRerankMaxTokens): ZaiRerankAdapter		56
+nim	newZaiCodingRerankAdapter	donkey/adapters/reranking/zai_rerank.html#newZaiCodingRerankAdapter,string	proc newZaiCodingRerankAdapter(apiKey: string; model = ZaiDefaultRerankModel;\n                          maxChars = DefaultRerankMaxChars;\n                          maxTokens = DefaultRerankMaxTokens): ZaiRerankAdapter		70
+nim	rerank	donkey/adapters/reranking/zai_rerank.html#rerank,ZaiRerankAdapter,string,seq[RerankCandidate]	proc rerank(a: ZaiRerankAdapter; query: string; candidates: seq[RerankCandidate]): seq[\n    float32]		82
+nim	toRerankFn	donkey/adapters/reranking/zai_rerank.html#toRerankFn,ZaiRerankAdapter	proc toRerankFn(a: ZaiRerankAdapter): RerankFn		112

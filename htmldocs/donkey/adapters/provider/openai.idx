@@ -1,0 +1,10 @@
+nimTitle	openai	donkey/adapters/provider/openai.html	module donkey/adapters/provider/openai		0
+nim	OpenAIEndpoint	donkey/adapters/provider/openai.html#OpenAIEndpoint	const OpenAIEndpoint		19
+nim	OpenAIDefaultModel	donkey/adapters/provider/openai.html#OpenAIDefaultModel	const OpenAIDefaultModel		20
+nim	OpenAIAdapter	donkey/adapters/provider/openai.html#OpenAIAdapter	object OpenAIAdapter		23
+nim	OpenAISseChunk	donkey/adapters/provider/openai.html#OpenAISseChunk	object OpenAISseChunk		28
+nim	caps	donkey/adapters/provider/openai.html#caps,OpenAIAdapter	proc caps(a: OpenAIAdapter): ProviderCaps		37
+nim	parseOpenAISseLine	donkey/adapters/provider/openai.html#parseOpenAISseLine,string	proc parseOpenAISseLine(line: string): Result[OpenAISseChunk, string]		49
+nim	complete	donkey/adapters/provider/openai.html#complete,OpenAIAdapter,CompletionRequest	proc complete(a: OpenAIAdapter; req: CompletionRequest): Result[CompletionResponse,\n    string]		72
+nim	makeStreamFn	donkey/adapters/provider/openai.html#makeStreamFn,OpenAIAdapter	proc makeStreamFn(a: OpenAIAdapter): StreamFn		87
+nim	newOpenAIAdapter	donkey/adapters/provider/openai.html#newOpenAIAdapter,string,string	proc newOpenAIAdapter(apiKey: string; model = OpenAIDefaultModel; endpoint = ""): OpenAIAdapter		129

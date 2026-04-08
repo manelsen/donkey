@@ -1,0 +1,15 @@
+nimTitle	wasm_tools	donkey/infra/sandbox/wasm_tools.html	module donkey/infra/sandbox/wasm_tools		0
+nim	WasmToolAdapter	donkey/infra/sandbox/wasm_tools.html#WasmToolAdapter	object WasmToolAdapter		18
+nim	AppletResult	donkey/infra/sandbox/wasm_tools.html#AppletResult	object AppletResult		22
+nim	`$`	donkey/infra/sandbox/wasm_tools.html#$,AppletResult	proc `$`(r: AppletResult): string		28
+nim	KnownApplets	donkey/infra/sandbox/wasm_tools.html#KnownApplets	const KnownApplets		38
+nim	newWasmToolAdapter	donkey/infra/sandbox/wasm_tools.html#newWasmToolAdapter	proc newWasmToolAdapter(): WasmToolAdapter		54
+nim	newWasmToolAdapter	donkey/infra/sandbox/wasm_tools.html#newWasmToolAdapter,string	proc newWasmToolAdapter(busyboxPath: string): WasmToolAdapter		57
+nim	isValidAppletName	donkey/infra/sandbox/wasm_tools.html#isValidAppletName,string	proc isValidAppletName(name: string): bool		62
+nim	availableApplets	donkey/infra/sandbox/wasm_tools.html#availableApplets	proc availableApplets(): seq[string]		66
+nim	buildAppletArgs	donkey/infra/sandbox/wasm_tools.html#buildAppletArgs,seq[string]	proc buildAppletArgs(args: seq[string]): string		72
+nim	buildAppletCmd	donkey/infra/sandbox/wasm_tools.html#buildAppletCmd,string,string,seq[string],string	proc buildAppletCmd(busyboxPath, applet: string; args: seq[string]; paddock: string): string		76
+nim	formatAppletResult	donkey/infra/sandbox/wasm_tools.html#formatAppletResult,string,int	proc formatAppletResult(output: string; code: int): string		93
+nim	runApplet	donkey/infra/sandbox/wasm_tools.html#runApplet,WasmToolAdapter,string,seq[string],string	proc runApplet(adapter: WasmToolAdapter; applet: string; args: seq[string];\n          paddock: string): AppletResult		105
+nim	runAppletFormatted	donkey/infra/sandbox/wasm_tools.html#runAppletFormatted,WasmToolAdapter,string,seq[string],string	proc runAppletFormatted(adapter: WasmToolAdapter; applet: string; args: seq[string];\n                   paddock: string): string		132
+nimgrp	newwasmtooladapter	donkey/infra/sandbox/wasm_tools.html#newWasmToolAdapter-procs-all	proc		54

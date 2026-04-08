@@ -1,0 +1,2 @@
+nimTitle	channel_prefs_parse	donkey/app/channel_prefs_parse.html	module donkey/app/channel_prefs_parse		0
+nim	parseChannelPrefs	donkey/app/channel_prefs_parse.html#parseChannelPrefs,string	proc parseChannelPrefs(preferencesMd: string): ChannelPrefs		9

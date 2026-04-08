@@ -1,0 +1,6 @@
+nimTitle	model_catalog	donkey/adapters/provider/model_catalog.html	module donkey/adapters/provider/model_catalog		0
+nim	parseOpenRouterCatalog	donkey/adapters/provider/model_catalog.html#parseOpenRouterCatalog,string	proc parseOpenRouterCatalog(body: string): Result[seq[ModelCatalogEntry], string]		227
+nim	parseSimpleListCatalog	donkey/adapters/provider/model_catalog.html#parseSimpleListCatalog,string,string	proc parseSimpleListCatalog(providerName, body: string): Result[\n    seq[ModelCatalogEntry], string]		293
+nim	loadRouteCostHints	donkey/adapters/provider/model_catalog.html#loadRouteCostHints,seq[string]	proc loadRouteCostHints(providerNames: seq[string]): seq[RouteCostHint]		336
+nim	parseOllamaTagsCatalog	donkey/adapters/provider/model_catalog.html#parseOllamaTagsCatalog,string	proc parseOllamaTagsCatalog(body: string): Result[seq[ModelCatalogEntry], string]		470
+nim	buildModelCatalogLoader	donkey/adapters/provider/model_catalog.html#buildModelCatalogLoader	proc buildModelCatalogLoader(): ModelCatalogLoader		519

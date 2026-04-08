@@ -1,0 +1,10 @@
+nimTitle	email_pure	donkey/domain/channels/email_pure.html	module donkey/domain/channels/email_pure		0
+nim	emkText	donkey/domain/channels/email_pure.html#emkText	EmailMsgKind.emkText		39
+nim	emkHtml	donkey/domain/channels/email_pure.html#emkHtml	EmailMsgKind.emkHtml		39
+nim	emkUnknown	donkey/domain/channels/email_pure.html#emkUnknown	EmailMsgKind.emkUnknown		39
+nim	EmailMsgKind	donkey/domain/channels/email_pure.html#EmailMsgKind	enum EmailMsgKind		39
+nim	EmailParseResult	donkey/domain/channels/email_pure.html#EmailParseResult	object EmailParseResult		44
+nim	findHeader	donkey/domain/channels/email_pure.html#findHeader,string,string	proc findHeader(name: string; headers: string): string		66
+nim	parseEmail	donkey/domain/channels/email_pure.html#parseEmail,string	proc parseEmail(raw: string): EmailParseResult		114
+nim	toInbound	donkey/domain/channels/email_pure.html#toInbound,EmailParseResult,UserId	proc toInbound(r: EmailParseResult; userId: UserId): InboundMessage		133
+nim	hasAttachment	donkey/domain/channels/email_pure.html#hasAttachment,EmailParseResult	proc hasAttachment(r: EmailParseResult): bool		144

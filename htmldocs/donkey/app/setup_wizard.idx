@@ -1,0 +1,6 @@
+nimTitle	setup_wizard	donkey/app/setup_wizard.html	module donkey/app/setup_wizard		0
+nim	providerEnvVar	donkey/app/setup_wizard.html#providerEnvVar,string	proc providerEnvVar(providerName: string): string		16
+nim	buildTomlContent	donkey/app/setup_wizard.html#buildTomlContent,string,string	proc buildTomlContent(home: string; logLevel = "info"): string		30
+nim	buildEnvContent	donkey/app/setup_wizard.html#buildEnvContent,seq[],seq[]	proc buildEnvContent(providers: seq[(string, string)];\n                channels: seq[(string, string)]): string		47
+nim	setupAlreadyDone	donkey/app/setup_wizard.html#setupAlreadyDone,string	proc setupAlreadyDone(home: string): bool		71
+nim	runSetupWizard	donkey/app/setup_wizard.html#runSetupWizard,string	proc runSetupWizard(home: string)		114

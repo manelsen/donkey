@@ -1,0 +1,10 @@
+nimTitle	minimax_rerank	donkey/adapters/reranking/minimax_rerank.html	module donkey/adapters/reranking/minimax_rerank		0
+nim	MiniMaxDefaultRerankModel	donkey/adapters/reranking/minimax_rerank.html#MiniMaxDefaultRerankModel	const MiniMaxDefaultRerankModel		15
+nim	MiniMaxRerankUrl	donkey/adapters/reranking/minimax_rerank.html#MiniMaxRerankUrl	const MiniMaxRerankUrl		16
+nim	MiniMaxRerankTemperature	donkey/adapters/reranking/minimax_rerank.html#MiniMaxRerankTemperature	const MiniMaxRerankTemperature		17
+nim	MiniMaxRerankAdapter	donkey/adapters/reranking/minimax_rerank.html#MiniMaxRerankAdapter	object MiniMaxRerankAdapter		20
+nim	parseScores	donkey/adapters/reranking/minimax_rerank.html#parseScores,string,int	proc parseScores(content: string; count: int): seq[float32]		28
+nim	buildBody	donkey/adapters/reranking/minimax_rerank.html#buildBody,MiniMaxRerankAdapter,string,seq[RerankCandidate]	proc buildBody(a: MiniMaxRerankAdapter; query: string;\n          candidates: seq[RerankCandidate]): JsonNode		31
+nim	newMiniMaxRerankAdapter	donkey/adapters/reranking/minimax_rerank.html#newMiniMaxRerankAdapter,string	proc newMiniMaxRerankAdapter(apiKey: string; model = MiniMaxDefaultRerankModel;\n                        endpoint = MiniMaxRerankUrl;\n                        maxChars = DefaultRerankMaxChars;\n                        maxTokens = DefaultRerankMaxTokens): MiniMaxRerankAdapter		51
+nim	rerank	donkey/adapters/reranking/minimax_rerank.html#rerank,MiniMaxRerankAdapter,string,seq[RerankCandidate]	proc rerank(a: MiniMaxRerankAdapter; query: string; candidates: seq[RerankCandidate]): seq[\n    float32]		65
+nim	toRerankFn	donkey/adapters/reranking/minimax_rerank.html#toRerankFn,MiniMaxRerankAdapter	proc toRerankFn(a: MiniMaxRerankAdapter): RerankFn		95

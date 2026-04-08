@@ -1,0 +1,7 @@
+nimTitle	channel	donkey/ports/channel.html	module donkey/ports/channel		0
+nim	ChannelPort	donkey/ports/channel.html#ChannelPort	type ChannelPort		18
+nim	OutboundChannelPort	donkey/ports/channel.html#OutboundChannelPort	object OutboundChannelPort		23
+nim	OutboundChannelPorts	donkey/ports/channel.html#OutboundChannelPorts	object OutboundChannelPorts		34
+nim	filterInbound	donkey/ports/channel.html#filterInbound,UserId,seq[InboundMessage]	proc filterInbound(userId: UserId; msgs: seq[InboundMessage]): seq[InboundMessage]		51
+nim	countInbound	donkey/ports/channel.html#countInbound,seq[InboundMessage]	proc countInbound(msgs: seq[InboundMessage]): int		58
+nim	validateOutbound	donkey/ports/channel.html#validateOutbound,OutboundMessage	proc validateOutbound(msg: OutboundMessage): Result[OutboundMessage, string]		62

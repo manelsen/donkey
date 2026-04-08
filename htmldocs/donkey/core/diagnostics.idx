@@ -1,0 +1,12 @@
+nimTitle	diagnostics	donkey/core/diagnostics.html	module donkey/core/diagnostics		0
+nim	dsOk	donkey/core/diagnostics.html#dsOk	DiagStatus.dsOk		18
+nim	dsWarn	donkey/core/diagnostics.html#dsWarn	DiagStatus.dsWarn		18
+nim	dsErr	donkey/core/diagnostics.html#dsErr	DiagStatus.dsErr		18
+nim	DiagStatus	donkey/core/diagnostics.html#DiagStatus	enum DiagStatus		18
+nim	DiagResult	donkey/core/diagnostics.html#DiagResult	object DiagResult		23
+nim	toDiagResult	donkey/core/diagnostics.html#toDiagResult,string,Result[string,string]	proc toDiagResult(name: string; r: Result[string, string]): DiagResult		30
+nim	markWarn	donkey/core/diagnostics.html#markWarn,DiagResult	proc markWarn(r: DiagResult): DiagResult		40
+nim	formatResult	donkey/core/diagnostics.html#formatResult,DiagResult	proc formatResult(r: DiagResult): string		49
+nim	countFailed	donkey/core/diagnostics.html#countFailed,seq[DiagResult]	proc countFailed(results: seq[DiagResult]): int		58
+nim	allPassed	donkey/core/diagnostics.html#allPassed,seq[DiagResult]	proc allPassed(results: seq[DiagResult]): bool		64
+nim	formatReport	donkey/core/diagnostics.html#formatReport,string,seq[DiagResult]	proc formatReport(title: string; results: seq[DiagResult]): string		71

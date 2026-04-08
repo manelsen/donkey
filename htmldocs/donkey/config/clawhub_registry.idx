@@ -1,0 +1,52 @@
+nimTitle	clawhub_registry	donkey/config/clawhub_registry.html	module donkey/config/clawhub_registry		0
+nim	ClawhubDefaultRegistry	donkey/config/clawhub_registry.html#ClawhubDefaultRegistry	const ClawhubDefaultRegistry		11
+nim	ClawhubApiSearch	donkey/config/clawhub_registry.html#ClawhubApiSearch	const ClawhubApiSearch		12
+nim	ClawhubApiSkills	donkey/config/clawhub_registry.html#ClawhubApiSkills	const ClawhubApiSkills		13
+nim	ClawhubApiDownload	donkey/config/clawhub_registry.html#ClawhubApiDownload	const ClawhubApiDownload		14
+nim	ClawhubDotDir	donkey/config/clawhub_registry.html#ClawhubDotDir	const ClawhubDotDir		15
+nim	RemoteSkillSearchHit	donkey/config/clawhub_registry.html#RemoteSkillSearchHit	object RemoteSkillSearchHit		18
+nim	RemoteSkillVersionFile	donkey/config/clawhub_registry.html#RemoteSkillVersionFile	object RemoteSkillVersionFile		25
+nim	RemoteSkillVersion	donkey/config/clawhub_registry.html#RemoteSkillVersion	object RemoteSkillVersion		30
+nim	RemoteSkillOrigin	donkey/config/clawhub_registry.html#RemoteSkillOrigin	object RemoteSkillOrigin		34
+nim	RemoteSkillLockEntry	donkey/config/clawhub_registry.html#RemoteSkillLockEntry	object RemoteSkillLockEntry		41
+nim	RemoteSkillLockfile	donkey/config/clawhub_registry.html#RemoteSkillLockfile	object RemoteSkillLockfile		45
+nim	InstalledRemoteSkill	donkey/config/clawhub_registry.html#InstalledRemoteSkill	object InstalledRemoteSkill		49
+nim	normalizeRegistryUrl	donkey/config/clawhub_registry.html#normalizeRegistryUrl,string	proc normalizeRegistryUrl(registry: string): string		54
+nim	registryUrl	donkey/config/clawhub_registry.html#registryUrl,string,string	proc registryUrl(registry, path: string): string		58
+nim	remoteSkillsDir	donkey/config/clawhub_registry.html#remoteSkillsDir,string	proc remoteSkillsDir(home: string): string		61
+nim	remoteSkillDir	donkey/config/clawhub_registry.html#remoteSkillDir,string,string	proc remoteSkillDir(home, slug: string): string		64
+nim	remoteSkillLockPath	donkey/config/clawhub_registry.html#remoteSkillLockPath,string	proc remoteSkillLockPath(home: string): string		67
+nim	remoteSkillOriginPath	donkey/config/clawhub_registry.html#remoteSkillOriginPath,string	proc remoteSkillOriginPath(skillDir: string): string		70
+nim	remoteSkillReadmePath	donkey/config/clawhub_registry.html#remoteSkillReadmePath,string	proc remoteSkillReadmePath(skillDir: string): string		73
+nim	sha256Hex	donkey/config/clawhub_registry.html#sha256Hex,openArray[byte]	proc sha256Hex(bytes: openArray[byte]): string		90
+nim	sha256Hex	donkey/config/clawhub_registry.html#sha256Hex,string	proc sha256Hex(text: string): string		102
+nim	sha256FileHex	donkey/config/clawhub_registry.html#sha256FileHex,string	proc sha256FileHex(path: string): string		105
+nim	buildSkillFingerprint	donkey/config/clawhub_registry.html#buildSkillFingerprint,seq[RemoteSkillVersionFile]	proc buildSkillFingerprint(files: seq[RemoteSkillVersionFile]): string		108
+nim	parseSearchHits	donkey/config/clawhub_registry.html#parseSearchHits,JsonNode	proc parseSearchHits(j: JsonNode): seq[RemoteSkillSearchHit]		119
+nim	parseLatestVersion	donkey/config/clawhub_registry.html#parseLatestVersion,JsonNode	proc parseLatestVersion(j: JsonNode): string		132
+nim	parseRemoteSkillVersion	donkey/config/clawhub_registry.html#parseRemoteSkillVersion,JsonNode	proc parseRemoteSkillVersion(j: JsonNode): RemoteSkillVersion		135
+nim	newRegistryClient	donkey/config/clawhub_registry.html#newRegistryClient,string	proc newRegistryClient(registry: string): HttpClient		148
+nim	fetchJson	donkey/config/clawhub_registry.html#fetchJson,string,string	proc fetchJson(registry, path: string): Result[JsonNode, string]		155
+nim	dumpSkillArtifact	donkey/config/clawhub_registry.html#dumpSkillArtifact,string,string,string	proc dumpSkillArtifact(slug, reason: string; data: string = "")		166
+nim	downloadZipBytes	donkey/config/clawhub_registry.html#downloadZipBytes,string,string,string	proc downloadZipBytes(registry, slug, version: string): Result[seq[byte], string]		178
+nim	searchRemoteSkills	donkey/config/clawhub_registry.html#searchRemoteSkills,string,string,int	proc searchRemoteSkills(registry, query: string; limit = 10): Result[\n    seq[RemoteSkillSearchHit], string]		203
+nim	fetchRemoteSkillLatestVersion	donkey/config/clawhub_registry.html#fetchRemoteSkillLatestVersion,string,string	proc fetchRemoteSkillLatestVersion(registry, slug: string): Result[string, string]		207
+nim	fetchRemoteSkillVersion	donkey/config/clawhub_registry.html#fetchRemoteSkillVersion,string,string,string	proc fetchRemoteSkillVersion(registry, slug, version: string): Result[\n    RemoteSkillVersion, string]		210
+nim	writeRemoteSkillOrigin	donkey/config/clawhub_registry.html#writeRemoteSkillOrigin,string,RemoteSkillOrigin	proc writeRemoteSkillOrigin(skillDir: string; origin: RemoteSkillOrigin)		214
+nim	readRemoteSkillOrigin	donkey/config/clawhub_registry.html#readRemoteSkillOrigin,string	proc readRemoteSkillOrigin(skillDir: string): Result[RemoteSkillOrigin, string]		225
+nim	defaultRemoteSkillLockfile	donkey/config/clawhub_registry.html#defaultRemoteSkillLockfile	proc defaultRemoteSkillLockfile(): RemoteSkillLockfile		241
+nim	readRemoteSkillLockfile	donkey/config/clawhub_registry.html#readRemoteSkillLockfile,string	proc readRemoteSkillLockfile(home: string): RemoteSkillLockfile		244
+nim	writeRemoteSkillLockfile	donkey/config/clawhub_registry.html#writeRemoteSkillLockfile,string,RemoteSkillLockfile	proc writeRemoteSkillLockfile(home: string; lock: RemoteSkillLockfile)		262
+nim	stripFrontmatter	donkey/config/clawhub_registry.html#stripFrontmatter,string	proc stripFrontmatter(text: string): string		276
+nim	loadInstalledRemoteSkill	donkey/config/clawhub_registry.html#loadInstalledRemoteSkill,string,string	proc loadInstalledRemoteSkill(home, slug: string): Result[InstalledRemoteSkill,\n    string]		285
+nim	loadInstalledRemoteSkills	donkey/config/clawhub_registry.html#loadInstalledRemoteSkills,string	proc loadInstalledRemoteSkills(home: string): seq[InstalledRemoteSkill]		298
+nim	buildInstalledRemoteSkillPrompt	donkey/config/clawhub_registry.html#buildInstalledRemoteSkillPrompt,seq[InstalledRemoteSkill]	proc buildInstalledRemoteSkillPrompt(skills: seq[InstalledRemoteSkill]): string		309
+nim	walkSkillFiles	donkey/config/clawhub_registry.html#walkSkillFiles,string	proc walkSkillFiles(skillDir: string): seq[string]		321
+nim	buildLocalSkillFiles	donkey/config/clawhub_registry.html#buildLocalSkillFiles,string	proc buildLocalSkillFiles(skillDir: string): seq[RemoteSkillVersionFile]		330
+nim	validateInstalledSkillDirSync	donkey/config/clawhub_registry.html#validateInstalledSkillDirSync,string,seq[RemoteSkillVersionFile]	proc validateInstalledSkillDirSync(skillDir: string;\n                              remoteFiles: seq[RemoteSkillVersionFile]): Result[\n    void, string]		341
+nim	validateInstalledSkillDir	donkey/config/clawhub_registry.html#validateInstalledSkillDir,string,seq[RemoteSkillVersionFile]	proc validateInstalledSkillDir(skillDir: string;\n                          remoteFiles: seq[RemoteSkillVersionFile]): Result[\n    void, string]		351
+nim	findAndFlattenSkillRoot	donkey/config/clawhub_registry.html#findAndFlattenSkillRoot,string,string	proc findAndFlattenSkillRoot(skillDir: string; slug: string): Result[void, string]		354
+nim	extractZipToDir	donkey/config/clawhub_registry.html#extractZipToDir,seq[byte],string	proc extractZipToDir(zipBytes: seq[byte]; targetDir: string): Result[void, string]		355
+nim	installRemoteSkill	donkey/config/clawhub_registry.html#installRemoteSkill,string,string,string	proc installRemoteSkill(home, registry, slug: string; force = false): Result[\n    RemoteSkillOrigin, string]		408
+nim	updateRemoteSkill	donkey/config/clawhub_registry.html#updateRemoteSkill,string,string,string	proc updateRemoteSkill(home, registry: string; slug: string; force = false): Result[\n    string, string]		451
+nimgrp	sha256hex	donkey/config/clawhub_registry.html#sha256Hex-procs-all	proc		90

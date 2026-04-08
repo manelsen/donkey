@@ -1,0 +1,8 @@
+nimTitle	wecom_runtime	donkey/adapters/channel/wecom_runtime.html	module donkey/adapters/channel/wecom_runtime		0
+nim	buildWeComHelpMd	donkey/adapters/channel/wecom_runtime.html#buildWeComHelpMd	proc buildWeComHelpMd(): string		20
+nim	buildWeComStatusMd	donkey/adapters/channel/wecom_runtime.html#buildWeComStatusMd,string	proc buildWeComStatusMd(statusText: string): string		28
+nim	buildWeComDoctorMd	donkey/adapters/channel/wecom_runtime.html#buildWeComDoctorMd,string	proc buildWeComDoctorMd(reportText: string): string		32
+nim	buildWeComPingMd	donkey/adapters/channel/wecom_runtime.html#buildWeComPingMd,string	proc buildWeComPingMd(pingText: string): string		35
+nim	buildWeComMycodeM	donkey/adapters/channel/wecom_runtime.html#buildWeComMycodeM,string	proc buildWeComMycodeM(codeText: string): string		39
+nim	buildWeComMemoryMd	donkey/adapters/channel/wecom_runtime.html#buildWeComMemoryMd,string	proc buildWeComMemoryMd(memText: string): string		42
+nim	drainWeComEvents	donkey/adapters/channel/wecom_runtime.html#drainWeComEvents,WeComAdapter,string,SessionManager,MdFileAdapter,proc(string),ModelCatalogLoader,int,int,int64,int,Logger,proc(InboundMessage)	proc drainWeComEvents(wcAdapter: var WeComAdapter; wecomCorpId: string;\n                 sm: var SessionManager; memory: MdFileAdapter; completeBuilder: proc (\n    preferencesMd: string): CompleteFn {.gcsafe.};\n                 modelCatalogLoader: ModelCatalogLoader; toolsCount: int;\n                 toolClientsCount: int; daemonStartMs: int64; msgSeq: var int;\n                 logger: Logger;\n                 handleSessionFallback: proc (msg: InboundMessage) {.gcsafe.})		57

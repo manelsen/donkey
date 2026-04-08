@@ -1,0 +1,107 @@
+nimTitle	command_routing	donkey/core/commands/command_routing.html	module donkey/core/commands/command_routing		0
+nim	cmdNone	donkey/core/commands/command_routing.html#cmdNone	CommandKind.cmdNone		8
+nim	cmdStart	donkey/core/commands/command_routing.html#cmdStart	CommandKind.cmdStart		8
+nim	cmdMenu	donkey/core/commands/command_routing.html#cmdMenu	CommandKind.cmdMenu		8
+nim	cmdWhoami	donkey/core/commands/command_routing.html#cmdWhoami	CommandKind.cmdWhoami		8
+nim	cmdSkill	donkey/core/commands/command_routing.html#cmdSkill	CommandKind.cmdSkill		8
+nim	cmdForget	donkey/core/commands/command_routing.html#cmdForget	CommandKind.cmdForget		8
+nim	cmdDoctor	donkey/core/commands/command_routing.html#cmdDoctor	CommandKind.cmdDoctor		8
+nim	cmdHelp	donkey/core/commands/command_routing.html#cmdHelp	CommandKind.cmdHelp		8
+nim	cmdMemory	donkey/core/commands/command_routing.html#cmdMemory	CommandKind.cmdMemory		8
+nim	cmdDebug	donkey/core/commands/command_routing.html#cmdDebug	CommandKind.cmdDebug		8
+nim	cmdReset	donkey/core/commands/command_routing.html#cmdReset	CommandKind.cmdReset		8
+nim	cmdMyCode	donkey/core/commands/command_routing.html#cmdMyCode	CommandKind.cmdMyCode		8
+nim	cmdContinue	donkey/core/commands/command_routing.html#cmdContinue	CommandKind.cmdContinue		8
+nim	cmdConfig	donkey/core/commands/command_routing.html#cmdConfig	CommandKind.cmdConfig		8
+nim	cmdVerbose	donkey/core/commands/command_routing.html#cmdVerbose	CommandKind.cmdVerbose		8
+nim	cmdReasoning	donkey/core/commands/command_routing.html#cmdReasoning	CommandKind.cmdReasoning		8
+nim	cmdModels	donkey/core/commands/command_routing.html#cmdModels	CommandKind.cmdModels		8
+nim	cmdThink	donkey/core/commands/command_routing.html#cmdThink	CommandKind.cmdThink		8
+nim	cmdBudget	donkey/core/commands/command_routing.html#cmdBudget	CommandKind.cmdBudget		8
+nim	cmdPing	donkey/core/commands/command_routing.html#cmdPing	CommandKind.cmdPing		8
+nim	cmdStatus	donkey/core/commands/command_routing.html#cmdStatus	CommandKind.cmdStatus		8
+nim	cmdCallback	donkey/core/commands/command_routing.html#cmdCallback	CommandKind.cmdCallback		8
+nim	cmdCompact	donkey/core/commands/command_routing.html#cmdCompact	CommandKind.cmdCompact		8
+nim	cmdNew	donkey/core/commands/command_routing.html#cmdNew	CommandKind.cmdNew		8
+nim	cmdExec	donkey/core/commands/command_routing.html#cmdExec	CommandKind.cmdExec		8
+nim	cmdAllowlist	donkey/core/commands/command_routing.html#cmdAllowlist	CommandKind.cmdAllowlist		8
+nim	cmdQueue	donkey/core/commands/command_routing.html#cmdQueue	CommandKind.cmdQueue		8
+nim	cmdUsage	donkey/core/commands/command_routing.html#cmdUsage	CommandKind.cmdUsage		8
+nim	cmdTasks	donkey/core/commands/command_routing.html#cmdTasks	CommandKind.cmdTasks		8
+nim	cmdAgents	donkey/core/commands/command_routing.html#cmdAgents	CommandKind.cmdAgents		8
+nim	cmdPoll	donkey/core/commands/command_routing.html#cmdPoll	CommandKind.cmdPoll		8
+nim	cmdStop	donkey/core/commands/command_routing.html#cmdStop	CommandKind.cmdStop		8
+nim	cmdRestart	donkey/core/commands/command_routing.html#cmdRestart	CommandKind.cmdRestart		8
+nim	cmdBind	donkey/core/commands/command_routing.html#cmdBind	CommandKind.cmdBind		8
+nim	cmdTts	donkey/core/commands/command_routing.html#cmdTts	CommandKind.cmdTts		8
+nim	CommandKind	donkey/core/commands/command_routing.html#CommandKind	enum CommandKind		8
+nim	crNone	donkey/core/commands/command_routing.html#crNone	CommandRoute.crNone		44
+nim	crLocal	donkey/core/commands/command_routing.html#crLocal	CommandRoute.crLocal		44
+nim	crSessionTask	donkey/core/commands/command_routing.html#crSessionTask	CommandRoute.crSessionTask		44
+nim	crUi	donkey/core/commands/command_routing.html#crUi	CommandRoute.crUi		44
+nim	crPing	donkey/core/commands/command_routing.html#crPing	CommandRoute.crPing		44
+nim	crStatus	donkey/core/commands/command_routing.html#crStatus	CommandRoute.crStatus		44
+nim	crCallback	donkey/core/commands/command_routing.html#crCallback	CommandRoute.crCallback		44
+nim	CommandRoute	donkey/core/commands/command_routing.html#CommandRoute	enum CommandRoute		44
+nim	CommandRequest	donkey/core/commands/command_routing.html#CommandRequest	object CommandRequest		53
+nim	CommandDecision	donkey/core/commands/command_routing.html#CommandDecision	object CommandDecision		57
+nim	lcaNone	donkey/core/commands/command_routing.html#lcaNone	LocalCommandAction.lcaNone		62
+nim	lcaStartIntro	donkey/core/commands/command_routing.html#lcaStartIntro	LocalCommandAction.lcaStartIntro		62
+nim	lcaShowMenu	donkey/core/commands/command_routing.html#lcaShowMenu	LocalCommandAction.lcaShowMenu		62
+nim	lcaShowWhoami	donkey/core/commands/command_routing.html#lcaShowWhoami	LocalCommandAction.lcaShowWhoami		62
+nim	lcaSkillCommand	donkey/core/commands/command_routing.html#lcaSkillCommand	LocalCommandAction.lcaSkillCommand		62
+nim	lcaGenerateLinkCode	donkey/core/commands/command_routing.html#lcaGenerateLinkCode	LocalCommandAction.lcaGenerateLinkCode		62
+nim	lcaClearMemory	donkey/core/commands/command_routing.html#lcaClearMemory	LocalCommandAction.lcaClearMemory		62
+nim	lcaDoctorReport	donkey/core/commands/command_routing.html#lcaDoctorReport	LocalCommandAction.lcaDoctorReport		62
+nim	lcaHelpText	donkey/core/commands/command_routing.html#lcaHelpText	LocalCommandAction.lcaHelpText		62
+nim	lcaShowMemory	donkey/core/commands/command_routing.html#lcaShowMemory	LocalCommandAction.lcaShowMemory		62
+nim	lcaContinueLink	donkey/core/commands/command_routing.html#lcaContinueLink	LocalCommandAction.lcaContinueLink		62
+nim	lcaReasoningToggle	donkey/core/commands/command_routing.html#lcaReasoningToggle	LocalCommandAction.lcaReasoningToggle		62
+nim	LocalCommandAction	donkey/core/commands/command_routing.html#LocalCommandAction	enum LocalCommandAction		62
+nim	cbkUnknown	donkey/core/commands/command_routing.html#cbkUnknown	CallbackKind.cbkUnknown		76
+nim	cbkModelsProvider	donkey/core/commands/command_routing.html#cbkModelsProvider	CallbackKind.cbkModelsProvider		76
+nim	cbkModelsSet	donkey/core/commands/command_routing.html#cbkModelsSet	CallbackKind.cbkModelsSet		76
+nim	cbkModelsPage	donkey/core/commands/command_routing.html#cbkModelsPage	CallbackKind.cbkModelsPage		76
+nim	cbkModelsBack	donkey/core/commands/command_routing.html#cbkModelsBack	CallbackKind.cbkModelsBack		76
+nim	cbkThinkSet	donkey/core/commands/command_routing.html#cbkThinkSet	CallbackKind.cbkThinkSet		76
+nim	cbkHelpPage	donkey/core/commands/command_routing.html#cbkHelpPage	CallbackKind.cbkHelpPage		76
+nim	cbkPersonality	donkey/core/commands/command_routing.html#cbkPersonality	CallbackKind.cbkPersonality		76
+nim	cbkName	donkey/core/commands/command_routing.html#cbkName	CallbackKind.cbkName		76
+nim	cbkModels	donkey/core/commands/command_routing.html#cbkModels	CallbackKind.cbkModels		76
+nim	cbkThink	donkey/core/commands/command_routing.html#cbkThink	CallbackKind.cbkThink		76
+nim	cbkBudget	donkey/core/commands/command_routing.html#cbkBudget	CallbackKind.cbkBudget		76
+nim	cbkHelp	donkey/core/commands/command_routing.html#cbkHelp	CallbackKind.cbkHelp		76
+nim	cbkStatus	donkey/core/commands/command_routing.html#cbkStatus	CallbackKind.cbkStatus		76
+nim	cbkDoctor	donkey/core/commands/command_routing.html#cbkDoctor	CallbackKind.cbkDoctor		76
+nim	cbkForget	donkey/core/commands/command_routing.html#cbkForget	CallbackKind.cbkForget		76
+nim	cbkReset	donkey/core/commands/command_routing.html#cbkReset	CallbackKind.cbkReset		76
+nim	cbkMyCode	donkey/core/commands/command_routing.html#cbkMyCode	CallbackKind.cbkMyCode		76
+nim	cbkReasoning	donkey/core/commands/command_routing.html#cbkReasoning	CallbackKind.cbkReasoning		76
+nim	cbkMenu	donkey/core/commands/command_routing.html#cbkMenu	CallbackKind.cbkMenu		76
+nim	cbkConfig	donkey/core/commands/command_routing.html#cbkConfig	CallbackKind.cbkConfig		76
+nim	CallbackKind	donkey/core/commands/command_routing.html#CallbackKind	enum CallbackKind		76
+nim	cbrNone	donkey/core/commands/command_routing.html#cbrNone	CallbackRoute.cbrNone		99
+nim	cbrUi	donkey/core/commands/command_routing.html#cbrUi	CallbackRoute.cbrUi		99
+nim	cbrSessionTask	donkey/core/commands/command_routing.html#cbrSessionTask	CallbackRoute.cbrSessionTask		99
+nim	CallbackRoute	donkey/core/commands/command_routing.html#CallbackRoute	enum CallbackRoute		99
+nim	CallbackRequest	donkey/core/commands/command_routing.html#CallbackRequest	object CallbackRequest		104
+nim	CallbackDecision	donkey/core/commands/command_routing.html#CallbackDecision	object CallbackDecision		108
+nim	decideCommandRoute	donkey/core/commands/command_routing.html#decideCommandRoute,CommandKind	proc decideCommandRoute(kind: CommandKind): CommandRoute		116
+nim	newCommandDecision	donkey/core/commands/command_routing.html#newCommandDecision,CommandKind,string	proc newCommandDecision(kind: CommandKind; value = ""): CommandDecision		138
+nim	stripBotMention	donkey/core/commands/command_routing.html#stripBotMention,string	proc stripBotMention(text: string): string		141
+nim	parseCommandText	donkey/core/commands/command_routing.html#parseCommandText,string	proc parseCommandText(text: string): CommandDecision		157
+nim	decideCommandRequest	donkey/core/commands/command_routing.html#decideCommandRequest,CommandRequest	proc decideCommandRequest(request: CommandRequest): CommandDecision		211
+nim	decideLocalCommandAction	donkey/core/commands/command_routing.html#decideLocalCommandAction,CommandDecision	proc decideLocalCommandAction(decision: CommandDecision): LocalCommandAction		214
+nim	decideCallbackRoute	donkey/core/commands/command_routing.html#decideCallbackRoute,CallbackKind	proc decideCallbackRoute(kind: CallbackKind): CallbackRoute		240
+nim	parseCallbackData	donkey/core/commands/command_routing.html#parseCallbackData,string	proc parseCallbackData(data: string): CallbackDecision		264
+nim	decideCallbackRequest	donkey/core/commands/command_routing.html#decideCallbackRequest,CallbackRequest	proc decideCallbackRequest(request: CallbackRequest): CallbackDecision		308
+nim	isCoreCallback	donkey/core/commands/command_routing.html#isCoreCallback,CallbackKind	proc isCoreCallback(kind: CallbackKind): bool		311
+nim	isUiCallback	donkey/core/commands/command_routing.html#isUiCallback,CallbackKind	proc isUiCallback(kind: CallbackKind): bool		314
+nim	callbackTaskKind	donkey/core/commands/command_routing.html#callbackTaskKind,CallbackDecision	proc callbackTaskKind(callback: CallbackDecision): TaskKind		317
+nim	commandTaskKind	donkey/core/commands/command_routing.html#commandTaskKind,CommandDecision	proc commandTaskKind(decision: CommandDecision): TaskKind		326
+nim	isCoreCommand	donkey/core/commands/command_routing.html#isCoreCommand,CommandKind	proc isCoreCommand(kind: CommandKind): bool		347
+nim	isLocalCommand	donkey/core/commands/command_routing.html#isLocalCommand,CommandKind	proc isLocalCommand(kind: CommandKind): bool		353
+nim	isSessionTaskCommand	donkey/core/commands/command_routing.html#isSessionTaskCommand,CommandKind	proc isSessionTaskCommand(kind: CommandKind): bool		356
+nim	isUiCommand	donkey/core/commands/command_routing.html#isUiCommand,CommandKind	proc isUiCommand(kind: CommandKind): bool		359
+nim	isStatusCommand	donkey/core/commands/command_routing.html#isStatusCommand,CommandKind	proc isStatusCommand(kind: CommandKind): bool		363
+nim	isPingCommand	donkey/core/commands/command_routing.html#isPingCommand,CommandKind	proc isPingCommand(kind: CommandKind): bool		366

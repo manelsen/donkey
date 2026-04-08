@@ -1,0 +1,2 @@
+nimTitle	dashboard	donkey/tui/dashboard.html	module donkey/tui/dashboard		0
+nim	runTui	donkey/tui/dashboard.html#runTui,string	proc runTui(sockPath: string)		340

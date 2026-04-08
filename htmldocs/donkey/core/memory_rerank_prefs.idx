@@ -1,0 +1,8 @@
+nimTitle	memory_rerank_prefs	donkey/core/memory_rerank_prefs.html	module donkey/core/memory_rerank_prefs		0
+nim	MemoryRerankOff	donkey/core/memory_rerank_prefs.html#MemoryRerankOff	const MemoryRerankOff		6
+nim	MemoryRerankExplicit	donkey/core/memory_rerank_prefs.html#MemoryRerankExplicit	const MemoryRerankExplicit		7
+nim	MemoryRerankDialogue	donkey/core/memory_rerank_prefs.html#MemoryRerankDialogue	const MemoryRerankDialogue		8
+nim	MemoryRerankPrefs	donkey/core/memory_rerank_prefs.html#MemoryRerankPrefs	object MemoryRerankPrefs		11
+nim	defaultMemoryRerankPrefs	donkey/core/memory_rerank_prefs.html#defaultMemoryRerankPrefs	proc defaultMemoryRerankPrefs(): MemoryRerankPrefs		16
+nim	normalizeMemoryRerankMode	donkey/core/memory_rerank_prefs.html#normalizeMemoryRerankMode,string	proc normalizeMemoryRerankMode(value: string): string		19
+nim	parseMemoryRerankPrefs	donkey/core/memory_rerank_prefs.html#parseMemoryRerankPrefs,string	proc parseMemoryRerankPrefs(preferencesMd: string): MemoryRerankPrefs		33

@@ -1,0 +1,9 @@
+nimTitle	doctor	donkey/app/doctor.html	module donkey/app/doctor		0
+nim	runDockerCmd	donkey/app/doctor.html#runDockerCmd	proc runDockerCmd(): Result[string, string]		18
+nim	checkDockerCompose	donkey/app/doctor.html#checkDockerCompose,string	proc checkDockerCompose(dockerVersion: string): Result[string, string]		27
+nim	checkDocker	donkey/app/doctor.html#checkDocker	proc checkDocker(): DiagResult		54
+nim	checkApiKey	donkey/app/doctor.html#checkApiKey,string,string	proc checkApiKey(name: string; envVar: string): DiagResult		59
+nim	checkPgvector	donkey/app/doctor.html#checkPgvector	proc checkPgvector(): DiagResult		64
+nim	runDoctorChecks	donkey/app/doctor.html#runDoctorChecks	proc runDoctorChecks(): seq[DiagResult]		80
+nim	printDoctorReport	donkey/app/doctor.html#printDoctorReport,seq[DiagResult]	proc printDoctorReport(results: seq[DiagResult])		89
+nim	runDoctor	donkey/app/doctor.html#runDoctor	proc runDoctor(): int		98

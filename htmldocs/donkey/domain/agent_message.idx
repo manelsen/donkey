@@ -1,0 +1,28 @@
+nimTitle	agent_message	donkey/domain/agent_message.html	module donkey/domain/agent_message		0
+nim	amkTask	donkey/domain/agent_message.html#amkTask	AgentMessageKind.amkTask		6
+nim	amkCancel	donkey/domain/agent_message.html#amkCancel	AgentMessageKind.amkCancel		6
+nim	amkResult	donkey/domain/agent_message.html#amkResult	AgentMessageKind.amkResult		6
+nim	amkError	donkey/domain/agent_message.html#amkError	AgentMessageKind.amkError		6
+nim	AgentMessageKind	donkey/domain/agent_message.html#AgentMessageKind	enum AgentMessageKind		6
+nim	tkUserMsg	donkey/domain/agent_message.html#tkUserMsg	TaskKind.tkUserMsg		12
+nim	tkReset	donkey/domain/agent_message.html#tkReset	TaskKind.tkReset		12
+nim	tkLoadCtx	donkey/domain/agent_message.html#tkLoadCtx	TaskKind.tkLoadCtx		12
+nim	tkSaveMem	donkey/domain/agent_message.html#tkSaveMem	TaskKind.tkSaveMem		12
+nim	tkSavePrefs	donkey/domain/agent_message.html#tkSavePrefs	TaskKind.tkSavePrefs		12
+nim	tkInvokeTool	donkey/domain/agent_message.html#tkInvokeTool	TaskKind.tkInvokeTool		12
+nim	tkDebugToggle	donkey/domain/agent_message.html#tkDebugToggle	TaskKind.tkDebugToggle		12
+nim	tkPersonalityChoice	donkey/domain/agent_message.html#tkPersonalityChoice	TaskKind.tkPersonalityChoice		12
+nim	tkNameChoice	donkey/domain/agent_message.html#tkNameChoice	TaskKind.tkNameChoice		12
+nim	tkCompact	donkey/domain/agent_message.html#tkCompact	TaskKind.tkCompact		12
+nim	tkNew	donkey/domain/agent_message.html#tkNew	TaskKind.tkNew		12
+nim	tkStop	donkey/domain/agent_message.html#tkStop	TaskKind.tkStop		12
+nim	tkRestart	donkey/domain/agent_message.html#tkRestart	TaskKind.tkRestart		12
+nim	tkBind	donkey/domain/agent_message.html#tkBind	TaskKind.tkBind		12
+nim	tkReasoningToggle	donkey/domain/agent_message.html#tkReasoningToggle	TaskKind.tkReasoningToggle		12
+nim	tkHeartbeat	donkey/domain/agent_message.html#tkHeartbeat	TaskKind.tkHeartbeat		12
+nim	TaskKind	donkey/domain/agent_message.html#TaskKind	enum TaskKind		12
+nim	AgentMessage	donkey/domain/agent_message.html#AgentMessage	object AgentMessage		30
+nim	newTaskMsg	donkey/domain/agent_message.html#newTaskMsg,string,TaskKind,string,string,string	proc newTaskMsg(id: string; kind: TaskKind; userId, payload: string;\n           channel = ckTelegram; replyTo = ""): AgentMessage		40
+nim	newCancelMsg	donkey/domain/agent_message.html#newCancelMsg	proc newCancelMsg(): AgentMessage		46
+nim	newResultMsg	donkey/domain/agent_message.html#newResultMsg,string,string	proc newResultMsg(id, text: string): AgentMessage		49
+nim	newErrorMsg	donkey/domain/agent_message.html#newErrorMsg,string,string	proc newErrorMsg(id, text: string): AgentMessage		52

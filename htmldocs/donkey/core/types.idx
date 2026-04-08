@@ -1,0 +1,34 @@
+nimTitle	types	donkey/core/types.html	module donkey/core/types		0
+nim	UserId	donkey/core/types.html#UserId	type UserId		5
+nim	SessionId	donkey/core/types.html#SessionId	type SessionId		6
+nim	ckTelegram	donkey/core/types.html#ckTelegram	ChannelKind.ckTelegram		8
+nim	ckDiscord	donkey/core/types.html#ckDiscord	ChannelKind.ckDiscord		8
+nim	ckWeCom	donkey/core/types.html#ckWeCom	ChannelKind.ckWeCom		8
+nim	ckWeChat	donkey/core/types.html#ckWeChat	ChannelKind.ckWeChat		8
+nim	ckQQ	donkey/core/types.html#ckQQ	ChannelKind.ckQQ		8
+nim	ckFeishu	donkey/core/types.html#ckFeishu	ChannelKind.ckFeishu		8
+nim	ckSlack	donkey/core/types.html#ckSlack	ChannelKind.ckSlack		8
+nim	ckWhatsApp	donkey/core/types.html#ckWhatsApp	ChannelKind.ckWhatsApp		8
+nim	ckSignal	donkey/core/types.html#ckSignal	ChannelKind.ckSignal		8
+nim	ckDingTalk	donkey/core/types.html#ckDingTalk	ChannelKind.ckDingTalk		8
+nim	ckMatrix	donkey/core/types.html#ckMatrix	ChannelKind.ckMatrix		8
+nim	ckEmail	donkey/core/types.html#ckEmail	ChannelKind.ckEmail		8
+nim	ckCli	donkey/core/types.html#ckCli	ChannelKind.ckCli		8
+nim	ChannelKind	donkey/core/types.html#ChannelKind	enum ChannelKind		8
+nim	ChannelPrefs	donkey/core/types.html#ChannelPrefs	object ChannelPrefs		13
+nim	defaultChannelPrefs	donkey/core/types.html#defaultChannelPrefs	proc defaultChannelPrefs(): ChannelPrefs		22
+nim	lvlDebug	donkey/core/types.html#lvlDebug	LogLevel.lvlDebug		32
+nim	lvlInfo	donkey/core/types.html#lvlInfo	LogLevel.lvlInfo		32
+nim	lvlWarn	donkey/core/types.html#lvlWarn	LogLevel.lvlWarn		32
+nim	lvlError	donkey/core/types.html#lvlError	LogLevel.lvlError		32
+nim	lvlFatal	donkey/core/types.html#lvlFatal	LogLevel.lvlFatal		32
+nim	LogLevel	donkey/core/types.html#LogLevel	enum LogLevel		32
+nim	`$`	donkey/core/types.html#$,LogLevel	proc `$`(l: LogLevel): string		37
+nim	parseLogLevel	donkey/core/types.html#parseLogLevel,string	proc parseLogLevel(s: string): LogLevel		45
+nim	`$`	donkey/core/types.html#$,UserId	proc `$`(id: UserId): string		56
+nim	`==`	donkey/core/types.html#==,UserId,UserId	proc `==`(a, b: UserId): bool		57
+nim	`$`	donkey/core/types.html#$,SessionId	proc `$`(id: SessionId): string		58
+nim	`==`	donkey/core/types.html#==,SessionId,SessionId	proc `==`(a, b: SessionId): bool		59
+nim	`$`	donkey/core/types.html#$,ChannelKind	proc `$`(k: ChannelKind): string		61
+nimgrp	==	donkey/core/types.html#==-procs-all	proc		57
+nimgrp	$	donkey/core/types.html#$-procs-all	proc		37

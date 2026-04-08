@@ -1,0 +1,8 @@
+nimTitle	llm_rerank_common	donkey/adapters/reranking/llm_rerank_common.html	module donkey/adapters/reranking/llm_rerank_common		0
+nim	DefaultRerankMaxTokens	donkey/adapters/reranking/llm_rerank_common.html#DefaultRerankMaxTokens	const DefaultRerankMaxTokens		7
+nim	DefaultRerankMaxChars	donkey/adapters/reranking/llm_rerank_common.html#DefaultRerankMaxChars	const DefaultRerankMaxChars		8
+nim	clipScore	donkey/adapters/reranking/llm_rerank_common.html#clipScore,float32	proc clipScore(score: float32): float32		10
+nim	truncateCandidate	donkey/adapters/reranking/llm_rerank_common.html#truncateCandidate,string,int	proc truncateCandidate(text: string; maxChars: int): string		18
+nim	buildPrompt	donkey/adapters/reranking/llm_rerank_common.html#buildPrompt,string,seq[RerankCandidate]	proc buildPrompt(query: string; candidates: seq[RerankCandidate]): string		29
+nim	buildSchema	donkey/adapters/reranking/llm_rerank_common.html#buildSchema	proc buildSchema(): JsonNode		69
+nim	parseScores	donkey/adapters/reranking/llm_rerank_common.html#parseScores,string,int	proc parseScores(content: string; count: int): seq[float32]		105

@@ -1,0 +1,13 @@
+nimTitle	ollama	donkey/adapters/provider/ollama.html	module donkey/adapters/provider/ollama		0
+nim	OllamaDefaultBaseUrl	donkey/adapters/provider/ollama.html#OllamaDefaultBaseUrl	const OllamaDefaultBaseUrl		23
+nim	OllamaDefaultModel	donkey/adapters/provider/ollama.html#OllamaDefaultModel	const OllamaDefaultModel		24
+nim	OllamaAdapter	donkey/adapters/provider/ollama.html#OllamaAdapter	object OllamaAdapter		27
+nim	OllamaSseChunk	donkey/adapters/provider/ollama.html#OllamaSseChunk	object OllamaSseChunk		32
+nim	newOllamaAdapter	donkey/adapters/provider/ollama.html#newOllamaAdapter,string	proc newOllamaAdapter(model = OllamaDefaultModel; baseUrl = OllamaDefaultBaseUrl;\n                 apiKey = ""): OllamaAdapter		40
+nim	caps	donkey/adapters/provider/ollama.html#caps,OllamaAdapter	proc caps(a: OllamaAdapter): ProviderCaps		47
+nim	buildBody	donkey/adapters/provider/ollama.html#buildBody,OllamaAdapter,CompletionRequest	proc buildBody(a: OllamaAdapter; req: CompletionRequest): JsonNode		60
+nim	buildStreamBody	donkey/adapters/provider/ollama.html#buildStreamBody,OllamaAdapter,CompletionRequest	proc buildStreamBody(a: OllamaAdapter; req: CompletionRequest): JsonNode		64
+nim	parseOllamaResponse	donkey/adapters/provider/ollama.html#parseOllamaResponse,JsonNode	proc parseOllamaResponse(j: JsonNode): CompletionResponse		70
+nim	parseOllamaSseLine	donkey/adapters/provider/ollama.html#parseOllamaSseLine,string	proc parseOllamaSseLine(line: string): Result[OllamaSseChunk, string]		75
+nim	complete	donkey/adapters/provider/ollama.html#complete,OllamaAdapter,CompletionRequest	proc complete(a: OllamaAdapter; req: CompletionRequest): Result[CompletionResponse,\n    string]		92
+nim	makeStreamFn	donkey/adapters/provider/ollama.html#makeStreamFn,OllamaAdapter	proc makeStreamFn(a: OllamaAdapter): StreamFn		107

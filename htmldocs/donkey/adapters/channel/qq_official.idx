@@ -1,0 +1,35 @@
+nimTitle	qq_official	donkey/adapters/channel/qq_official.html	module donkey/adapters/channel/qq_official		0
+nim	QQOfficialDefaultApiBase	donkey/adapters/channel/qq_official.html#QQOfficialDefaultApiBase	const QQOfficialDefaultApiBase		22
+nim	QQOfficialDefaultTokenBase	donkey/adapters/channel/qq_official.html#QQOfficialDefaultTokenBase	const QQOfficialDefaultTokenBase		23
+nim	QQOfficialDefaultIntents	donkey/adapters/channel/qq_official.html#QQOfficialDefaultIntents	const QQOfficialDefaultIntents		25
+nim	QQOfficialEvent	donkey/adapters/channel/qq_official.html#QQOfficialEvent	object QQOfficialEvent		28
+nim	QQOfficialToken	donkey/adapters/channel/qq_official.html#QQOfficialToken	object QQOfficialToken		35
+nim	QQOfficialAdapter	donkey/adapters/channel/qq_official.html#QQOfficialAdapter	object QQOfficialAdapter		39
+nim	QQOfficialGatewayInfo	donkey/adapters/channel/qq_official.html#QQOfficialGatewayInfo	object QQOfficialGatewayInfo		50
+nim	gQQOfficialEvents	donkey/adapters/channel/qq_official.html#gQQOfficialEvents	var gQQOfficialEvents		68
+nim	qqBotHeaders	donkey/adapters/channel/qq_official.html#qqBotHeaders,string	proc qqBotHeaders(token: string): seq[HttpHeader]		86
+nim	authRequestHeaders	donkey/adapters/channel/qq_official.html#authRequestHeaders	proc authRequestHeaders(): seq[HttpHeader]		92
+nim	detectOfficialEventType	donkey/adapters/channel/qq_official.html#detectOfficialEventType,JsonNode	proc detectOfficialEventType(parsed: JsonNode): string		95
+nim	parseOfficialEventNode	donkey/adapters/channel/qq_official.html#parseOfficialEventNode,string,JsonNode	proc parseOfficialEventNode(eventType: string; data: JsonNode): Result[\n    QQOfficialEvent, string]		105
+nim	parseInteractionEventNode	donkey/adapters/channel/qq_official.html#parseInteractionEventNode,JsonNode	proc parseInteractionEventNode(data: JsonNode): Result[QQOfficialEvent, string]		139
+nim	parseOfficialEventJson	donkey/adapters/channel/qq_official.html#parseOfficialEventJson,string	proc parseOfficialEventJson(payload: string): Result[QQOfficialEvent, string]		158
+nim	buildAccessTokenUrl	donkey/adapters/channel/qq_official.html#buildAccessTokenUrl,string	proc buildAccessTokenUrl(tokenBase: string): string		171
+nim	parseAccessTokenResponse	donkey/adapters/channel/qq_official.html#parseAccessTokenResponse,string	proc parseAccessTokenResponse(body: string): Result[QQOfficialToken, string]		174
+nim	parseGatewayInfoResponse	donkey/adapters/channel/qq_official.html#parseGatewayInfoResponse,string	proc parseGatewayInfoResponse(body: string): Result[QQOfficialGatewayInfo, string]		193
+nim	buildSendUrl	donkey/adapters/channel/qq_official.html#buildSendUrl,string,string	proc buildSendUrl(apiBase, rawId: string): Result[string, string]		204
+nim	qqKeyboardButtonStyle	donkey/adapters/channel/qq_official.html#qqKeyboardButtonStyle,string,string	proc qqKeyboardButtonStyle(label, data: string): int		222
+nim	qqKeyboardVisitedLabel	donkey/adapters/channel/qq_official.html#qqKeyboardVisitedLabel,string	proc qqKeyboardVisitedLabel(label: string): string		229
+nim	buildSendBody	donkey/adapters/channel/qq_official.html#buildSendBody,OutboundMessage,int	proc buildSendBody(msg: OutboundMessage; msgSeq = 1): Result[JsonNode, string]		232
+nim	buildKeyboardBody	donkey/adapters/channel/qq_official.html#buildKeyboardBody,string,seq[seq[]],string,seq[string],int	proc buildKeyboardBody(text: string; buttons: seq[seq[(string, string)]];\n                  replyTo: string; allowedUserIds: seq[string] = @[]; msgSeq = 1): JsonNode		248
+nim	buildGatewayBotUrl	donkey/adapters/channel/qq_official.html#buildGatewayBotUrl,string	proc buildGatewayBotUrl(apiBase: string): string		292
+nim	newQQOfficialAdapter	donkey/adapters/channel/qq_official.html#newQQOfficialAdapter,string,string,string	proc newQQOfficialAdapter(appId, clientSecret, identityPath: string): QQOfficialAdapter		295
+nim	newQQOfficialAdapter	donkey/adapters/channel/qq_official.html#newQQOfficialAdapter,string,string,string,string,string,HttpRuntimePort	proc newQQOfficialAdapter(appId, clientSecret, identityPath, apiBase, tokenBase: string;\n                     http: HttpRuntimePort): QQOfficialAdapter		307
+nim	enqueueEventJson	donkey/adapters/channel/qq_official.html#enqueueEventJson,QQOfficialAdapter,string	proc enqueueEventJson(a: var QQOfficialAdapter; payload: string): Result[void, string]		330
+nim	tryRecvEvent	donkey/adapters/channel/qq_official.html#tryRecvEvent,QQOfficialAdapter	proc tryRecvEvent(a: var QQOfficialAdapter): (bool, QQOfficialEvent)		335
+nim	ensureAccessToken	donkey/adapters/channel/qq_official.html#ensureAccessToken,QQOfficialAdapter	proc ensureAccessToken(a: var QQOfficialAdapter): Result[string, string]		342
+nim	fetchGatewayInfo	donkey/adapters/channel/qq_official.html#fetchGatewayInfo,QQOfficialAdapter	proc fetchGatewayInfo(a: var QQOfficialAdapter): Result[QQOfficialGatewayInfo, string]		358
+nim	sendToRawId	donkey/adapters/channel/qq_official.html#sendToRawId,QQOfficialAdapter,string,OutboundMessage	proc sendToRawId(a: var QQOfficialAdapter; rawId: string; msg: OutboundMessage): Result[\n    void, string]		365
+nim	sendKeyboardToRawId	donkey/adapters/channel/qq_official.html#sendKeyboardToRawId,QQOfficialAdapter,string,string,seq[seq[]],string,string	proc sendKeyboardToRawId(a: var QQOfficialAdapter; rawId: string; text: string;\n                    buttons: seq[seq[(string, string)]]; replyTo = "";\n                    allowedUserId = ""): Result[void, string]		381
+nim	acknowledgeInteraction	donkey/adapters/channel/qq_official.html#acknowledgeInteraction,QQOfficialAdapter,string	proc acknowledgeInteraction(a: var QQOfficialAdapter; interactionId: string): Result[\n    void, string]		399
+nim	startGateway	donkey/adapters/channel/qq_official.html#startGateway,QQOfficialAdapter	proc startGateway(a: QQOfficialAdapter; intents = QQOfficialDefaultIntents)		518
+nimgrp	newqqofficialadapter	donkey/adapters/channel/qq_official.html#newQQOfficialAdapter-procs-all	proc		295

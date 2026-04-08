@@ -1,0 +1,14 @@
+nimTitle	openrouter	donkey/adapters/provider/openrouter.html	module donkey/adapters/provider/openrouter		0
+nim	OpenRouterEndpoint	donkey/adapters/provider/openrouter.html#OpenRouterEndpoint	const OpenRouterEndpoint		20
+nim	OpenRouterReferer	donkey/adapters/provider/openrouter.html#OpenRouterReferer	const OpenRouterReferer		22
+nim	OpenRouterTitle	donkey/adapters/provider/openrouter.html#OpenRouterTitle	const OpenRouterTitle		23
+nim	OpenRouterAdapter	donkey/adapters/provider/openrouter.html#OpenRouterAdapter	object OpenRouterAdapter		26
+nim	OpenRouterSseChunk	donkey/adapters/provider/openrouter.html#OpenRouterSseChunk	object OpenRouterSseChunk		33
+nim	caps	donkey/adapters/provider/openrouter.html#caps,OpenRouterAdapter	proc caps(a: OpenRouterAdapter): ProviderCaps		41
+nim	buildBody	donkey/adapters/provider/openrouter.html#buildBody,OpenRouterAdapter,CompletionRequest	proc buildBody(a: OpenRouterAdapter; req: CompletionRequest): JsonNode		75
+nim	buildStreamBody	donkey/adapters/provider/openrouter.html#buildStreamBody,OpenRouterAdapter,CompletionRequest	proc buildStreamBody(a: OpenRouterAdapter; req: CompletionRequest): JsonNode		98
+nim	parseOpenRouterResponse	donkey/adapters/provider/openrouter.html#parseOpenRouterResponse,JsonNode	proc parseOpenRouterResponse(j: JsonNode): Result[CompletionResponse, string]		105
+nim	parseOpenRouterSseLine	donkey/adapters/provider/openrouter.html#parseOpenRouterSseLine,string	proc parseOpenRouterSseLine(line: string): Result[OpenRouterSseChunk, string]		142
+nim	complete	donkey/adapters/provider/openrouter.html#complete,OpenRouterAdapter,CompletionRequest	proc complete(a: OpenRouterAdapter; req: CompletionRequest): Result[\n    CompletionResponse, string]		165
+nim	makeStreamFn	donkey/adapters/provider/openrouter.html#makeStreamFn,OpenRouterAdapter	proc makeStreamFn(a: OpenRouterAdapter): StreamFn		182
+nim	newOpenRouterAdapter	donkey/adapters/provider/openrouter.html#newOpenRouterAdapter,string,string	proc newOpenRouterAdapter(apiKey: string; model = OpenRouterDefaultModel;\n                     endpoint = ""; referer = OpenRouterReferer;\n                     xTitle = OpenRouterTitle): OpenRouterAdapter		210

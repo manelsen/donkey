@@ -1,0 +1,11 @@
+nimTitle	wecom	donkey/adapters/channel/wecom.html	module donkey/adapters/channel/wecom		0
+nim	WeComEvent	donkey/adapters/channel/wecom.html#WeComEvent	object WeComEvent		35
+nim	WeComAdapter	donkey/adapters/channel/wecom.html#WeComAdapter	object WeComAdapter		41
+nim	gWeComEvents	donkey/adapters/channel/wecom.html#gWeComEvents	var gWeComEvents		52
+nim	refreshToken	donkey/adapters/channel/wecom.html#refreshToken,WeComAdapter	proc refreshToken(a: var WeComAdapter): Result[void, string]		60
+nim	wecomSignature	donkey/adapters/channel/wecom.html#wecomSignature,string,string,string	proc wecomSignature(token, timestamp, nonce: string): string		83
+nim	send	donkey/adapters/channel/wecom.html#send,WeComAdapter,OutboundMessage	proc send(a: var WeComAdapter; msg: OutboundMessage): Result[void, string]		105
+nim	sendMarkdown	donkey/adapters/channel/wecom.html#sendMarkdown,WeComAdapter,UserId,string	proc sendMarkdown(a: var WeComAdapter; userId: UserId; md: string): Result[void,\n    string]		116
+nim	startWebhook	donkey/adapters/channel/wecom.html#startWebhook,WeComAdapter,Port,Logger	proc startWebhook(a: WeComAdapter; port: Port; logger: Logger)		270
+nim	tryRecvEvent	donkey/adapters/channel/wecom.html#tryRecvEvent,WeComAdapter	proc tryRecvEvent(a: var WeComAdapter): (bool, WeComEvent)		277
+nim	newWeComAdapter	donkey/adapters/channel/wecom.html#newWeComAdapter,string,string,string,int,string	proc newWeComAdapter(corpId, corpSecret, callbackToken: string; agentId: int;\n                identityPath: string): WeComAdapter		283

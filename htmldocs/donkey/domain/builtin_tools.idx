@@ -1,0 +1,25 @@
+nimTitle	builtin_tools	donkey/domain/builtin_tools.html	module donkey/domain/builtin_tools		0
+nim	WebFetchToolName	donkey/domain/builtin_tools.html#WebFetchToolName	const WebFetchToolName		10
+nim	WebAllowlistEnvVar	donkey/domain/builtin_tools.html#WebAllowlistEnvVar	const WebAllowlistEnvVar		11
+nim	WebFetchToolDescription	donkey/domain/builtin_tools.html#WebFetchToolDescription	const WebFetchToolDescription		13
+nim	WebFetchToolSchema	donkey/domain/builtin_tools.html#WebFetchToolSchema	const WebFetchToolSchema		20
+nim	DefaultMaxChars	donkey/domain/builtin_tools.html#DefaultMaxChars	const DefaultMaxChars		27
+nim	HardMaxChars	donkey/domain/builtin_tools.html#HardMaxChars	const HardMaxChars		28
+nim	CurrentTimeToolName	donkey/domain/builtin_tools.html#CurrentTimeToolName	const CurrentTimeToolName		33
+nim	CurrentTimeToolDescription	donkey/domain/builtin_tools.html#CurrentTimeToolDescription	const CurrentTimeToolDescription		35
+nim	CurrentTimeToolSchema	donkey/domain/builtin_tools.html#CurrentTimeToolSchema	const CurrentTimeToolSchema		40
+nim	truncateBody	donkey/domain/builtin_tools.html#truncateBody,string,int	proc truncateBody(body: string; maxChars: int): string		45
+nim	isPrivateUrl	donkey/domain/builtin_tools.html#isPrivateUrl,string	proc isPrivateUrl(rawUrl: string): bool		51
+nim	extractUrlHost	donkey/domain/builtin_tools.html#extractUrlHost,string	proc extractUrlHost(rawUrl: string): string		103
+nim	extractUrlPath	donkey/domain/builtin_tools.html#extractUrlPath,string	proc extractUrlPath(rawUrl: string): string		124
+nim	parseWebAllowlist	donkey/domain/builtin_tools.html#parseWebAllowlist,string	proc parseWebAllowlist(raw: string): seq[string]		144
+nim	hostMatchesAllowlist	donkey/domain/builtin_tools.html#hostMatchesAllowlist,string,string	proc hostMatchesAllowlist(host, allowedHost: string): bool		150
+nim	normalizePolicyPathPrefix	donkey/domain/builtin_tools.html#normalizePolicyPathPrefix,string	proc normalizePolicyPathPrefix(raw: string): string		153
+nim	matchesWebAccessRule	donkey/domain/builtin_tools.html#matchesWebAccessRule,string,WebAccessRule	proc matchesWebAccessRule(rawUrl: string; rule: WebAccessRule): bool		160
+nim	isAllowedPublicUrl	donkey/domain/builtin_tools.html#isAllowedPublicUrl,string,seq[string]	proc isAllowedPublicUrl(rawUrl: string; allowlist: seq[string]): bool		170
+nim	isAllowedPublicUrl	donkey/domain/builtin_tools.html#isAllowedPublicUrl,string,seq[WebAccessRule],seq[string]	proc isAllowedPublicUrl(rawUrl: string; rules: seq[WebAccessRule];\n                   fallbackAllowlist: seq[string]): bool		184
+nim	buildUrlAccessError	donkey/domain/builtin_tools.html#buildUrlAccessError,string,seq[string]	proc buildUrlAccessError(rawUrl: string; allowlist: seq[string]): string		196
+nim	buildUrlAccessError	donkey/domain/builtin_tools.html#buildUrlAccessError,string,seq[WebAccessRule],seq[string],string	proc buildUrlAccessError(rawUrl: string; rules: seq[WebAccessRule];\n                    fallbackAllowlist: seq[string]; policyLabel: string): string		205
+nim	currentTimeResult	donkey/domain/builtin_tools.html#currentTimeResult,DateTime	proc currentTimeResult(t: DateTime): string		218
+nimgrp	buildurlaccesserror	donkey/domain/builtin_tools.html#buildUrlAccessError-procs-all	proc		196
+nimgrp	isallowedpublicurl	donkey/domain/builtin_tools.html#isAllowedPublicUrl-procs-all	proc		170

@@ -1,0 +1,10 @@
+nimTitle	tool	donkey/ports/tool.html	module donkey/ports/tool		0
+nim	ToolSchema	donkey/ports/tool.html#ToolSchema	object ToolSchema		12
+nim	ToolCall	donkey/ports/tool.html#ToolCall	object ToolCall		18
+nim	ToolResult	donkey/ports/tool.html#ToolResult	object ToolResult		24
+nim	ToolPort	donkey/ports/tool.html#ToolPort	type ToolPort		30
+nim	ToolRuntimePort	donkey/ports/tool.html#ToolRuntimePort	object ToolRuntimePort		37
+nim	LoadedToolRuntime	donkey/ports/tool.html#LoadedToolRuntime	object LoadedToolRuntime		42
+nim	SkillRuntimePolicy	donkey/ports/tool.html#SkillRuntimePolicy	object SkillRuntimePolicy		46
+nim	SkillRuntimePolicyResolver	donkey/ports/tool.html#SkillRuntimePolicyResolver	type SkillRuntimePolicyResolver		49
+nim	SkillRuntimeBuilder	donkey/ports/tool.html#SkillRuntimeBuilder	type SkillRuntimeBuilder		51

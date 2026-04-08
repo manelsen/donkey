@@ -1,0 +1,30 @@
+nimTitle	graph_pure	donkey/domain/memory/graph_pure.html	module donkey/domain/memory/graph_pure		0
+nim	Triple	donkey/domain/memory/graph_pure.html#Triple	object Triple		18
+nim	TripleText	donkey/domain/memory/graph_pure.html#TripleText	type TripleText		26
+nim	TripleToken	donkey/domain/memory/graph_pure.html#TripleToken	object TripleToken		29
+nim	DefaultMinTripleLen	donkey/domain/memory/graph_pure.html#DefaultMinTripleLen	const DefaultMinTripleLen		39
+nim	DefaultMinConfidence	donkey/domain/memory/graph_pure.html#DefaultMinConfidence	const DefaultMinConfidence		42
+nim	VerbPatterns	donkey/domain/memory/graph_pure.html#VerbPatterns	const VerbPatterns		46
+nim	PrepositionList	donkey/domain/memory/graph_pure.html#PrepositionList	const PrepositionList		133
+nim	DefaultDenyList	donkey/domain/memory/graph_pure.html#DefaultDenyList	const DefaultDenyList		140
+nim	isStopword	donkey/domain/memory/graph_pure.html#isStopword,string,seq[string]	proc isStopword(word: string; denyList: seq[string] = DefaultDenyList): bool		158
+nim	isSignificantWord	donkey/domain/memory/graph_pure.html#isSignificantWord,string,seq[string]	proc isSignificantWord(word: string; denyList: seq[string] = DefaultDenyList): bool		162
+nim	tokenize	donkey/domain/memory/graph_pure.html#tokenize,string	proc tokenize(text: string): seq[string]		171
+nim	normalizeEntity	donkey/domain/memory/graph_pure.html#normalizeEntity,string	proc normalizeEntity(entity: string): string		191
+nim	isValidEntity	donkey/domain/memory/graph_pure.html#isValidEntity,string	proc isValidEntity(entity: string): bool		195
+nim	extractNounPhrasesSimple	donkey/domain/memory/graph_pure.html#extractNounPhrasesSimple,seq[string]	proc extractNounPhrasesSimple(tokens: seq[string]): seq[(string, int, int)]		203
+nim	findPredicateBetween	donkey/domain/memory/graph_pure.html#findPredicateBetween,string,string,string	proc findPredicateBetween(subject, obj: string; text: string): string		220
+nim	buildTriple	donkey/domain/memory/graph_pure.html#buildTriple,string,string,string,string,float	proc buildTriple(subject, predicate, objValue: string; rawText: string;\n            confidence: float): TripleText		258
+nim	extractBePatternTriples	donkey/domain/memory/graph_pure.html#extractBePatternTriples,string,seq[string]	proc extractBePatternTriples(sentence: string;\n                        denyList: seq[string] = DefaultDenyList): seq[TripleText]		268
+nim	extractTriplesFromSentence	donkey/domain/memory/graph_pure.html#extractTriplesFromSentence,string,seq[string]	proc extractTriplesFromSentence(sentence: string;\n                           denyList: seq[string] = DefaultDenyList): seq[\n    TripleText]		286
+nim	extractTriples	donkey/domain/memory/graph_pure.html#extractTriples,string,seq[string]	proc extractTriples(text: string; denyList: seq[string] = DefaultDenyList): seq[\n    TripleText]		322
+nim	extractTriplesWith	donkey/domain/memory/graph_pure.html#extractTriplesWith,string,seq[string]	proc extractTriplesWith(text: string; denyList: seq[string]): seq[TripleText]		339
+nim	filterByConfidence	donkey/domain/memory/graph_pure.html#filterByConfidence,seq[TripleText],float	proc filterByConfidence(triples: seq[TripleText]; threshold: float): seq[TripleText]		343
+nim	filterValidTriples	donkey/domain/memory/graph_pure.html#filterValidTriples,seq[TripleText]	proc filterValidTriples(triples: seq[TripleText]): seq[TripleText]		348
+nim	deduplicateTriples	donkey/domain/memory/graph_pure.html#deduplicateTriples,seq[TripleText]	proc deduplicateTriples(triples: seq[TripleText]): seq[TripleText]		357
+nim	sortByConfidence	donkey/domain/memory/graph_pure.html#sortByConfidence,seq[TripleText],bool	proc sortByConfidence(triples: seq[TripleText]; descending: bool = true): seq[\n    TripleText]		368
+nim	extractSubjects	donkey/domain/memory/graph_pure.html#extractSubjects,seq[TripleText]	proc extractSubjects(triples: seq[TripleText]): seq[string]		377
+nim	extractPredicates	donkey/domain/memory/graph_pure.html#extractPredicates,seq[TripleText]	proc extractPredicates(triples: seq[TripleText]): seq[string]		385
+nim	extractObjects	donkey/domain/memory/graph_pure.html#extractObjects,seq[TripleText]	proc extractObjects(triples: seq[TripleText]): seq[string]		393
+nim	triplesToText	donkey/domain/memory/graph_pure.html#triplesToText,seq[TripleText]	proc triplesToText(triples: seq[TripleText]): string		401
+nim	tripleCount	donkey/domain/memory/graph_pure.html#tripleCount,seq[TripleText]	proc tripleCount(triples: seq[TripleText]): tuple[total, valid, unique: int]		409

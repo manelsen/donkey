@@ -1,0 +1,2 @@
+nimTitle	text_format	donkey/domain/text_format.html	module donkey/domain/text_format		0
+nim	escapeHtml	donkey/domain/text_format.html#escapeHtml,string	proc escapeHtml(text: string): string		8

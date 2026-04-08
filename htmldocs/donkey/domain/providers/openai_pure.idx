@@ -1,0 +1,18 @@
+nimTitle	openai_pure	donkey/domain/providers/openai_pure.html	module donkey/domain/providers/openai_pure		0
+nim	OpenAIMessage	donkey/domain/providers/openai_pure.html#OpenAIMessage	object OpenAIMessage		24
+nim	OpenAIToolCall	donkey/domain/providers/openai_pure.html#OpenAIToolCall	object OpenAIToolCall		31
+nim	OpenAIFunction	donkey/domain/providers/openai_pure.html#OpenAIFunction	object OpenAIFunction		36
+nim	OpenAIFunctionTool	donkey/domain/providers/openai_pure.html#OpenAIFunctionTool	object OpenAIFunctionTool		40
+nim	OpenAIUsage	donkey/domain/providers/openai_pure.html#OpenAIUsage	object OpenAIUsage		45
+nim	OpenAIChoice	donkey/domain/providers/openai_pure.html#OpenAIChoice	object OpenAIChoice		50
+nim	OpenAIResponse	donkey/domain/providers/openai_pure.html#OpenAIResponse	object OpenAIResponse		54
+nim	roleToOpenAI	donkey/domain/providers/openai_pure.html#roleToOpenAI,string	proc roleToOpenAI(role: string): string		62
+nim	toolCallToOpenAI	donkey/domain/providers/openai_pure.html#toolCallToOpenAI,ToolCallRequest	proc toolCallToOpenAI(tc: ToolCallRequest): OpenAIToolCall		67
+nim	messageToOpenAI	donkey/domain/providers/openai_pure.html#messageToOpenAI,ChatMessage	proc messageToOpenAI(msg: ChatMessage): OpenAIMessage		79
+nim	openaiMessageToJson	donkey/domain/providers/openai_pure.html#openaiMessageToJson,OpenAIMessage	proc openaiMessageToJson(om: OpenAIMessage): JsonNode		92
+nim	buildMessagesArray	donkey/domain/providers/openai_pure.html#buildMessagesArray,seq[ChatMessage]	proc buildMessagesArray(messages: seq[ChatMessage]): JsonNode		114
+nim	buildToolsArray	donkey/domain/providers/openai_pure.html#buildToolsArray,seq[ToolDescription]	proc buildToolsArray(tools: seq[ToolDescription]): JsonNode		123
+nim	buildRequestBody	donkey/domain/providers/openai_pure.html#buildRequestBody,string,CompletionRequest	proc buildRequestBody(model: string; req: CompletionRequest; stream = false): JsonNode		140
+nim	parseToolCallsFromChoice	donkey/domain/providers/openai_pure.html#parseToolCallsFromChoice,OpenAIChoice	proc parseToolCallsFromChoice(choice: OpenAIChoice): seq[ToolCallRequest]		164
+nim	parseResponseFrom	donkey/domain/providers/openai_pure.html#parseResponseFrom,JsonNode	proc parseResponseFrom(body: JsonNode): Result[CompletionResponse, string]		174
+nim	toolResultToOpenAIMessage	donkey/domain/providers/openai_pure.html#toolResultToOpenAIMessage,string,string,string	proc toolResultToOpenAIMessage(id, name, output: string; kind = trkOutput): JsonNode		214

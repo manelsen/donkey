@@ -1,0 +1,12 @@
+nimTitle	ws_client	donkey/adapters/channel/ws_client.html	module donkey/adapters/channel/ws_client		0
+nim	WsOpcodeText	donkey/adapters/channel/ws_client.html#WsOpcodeText	const WsOpcodeText		15
+nim	WsOpcodeBin	donkey/adapters/channel/ws_client.html#WsOpcodeBin	const WsOpcodeBin		16
+nim	WsOpcodeClose	donkey/adapters/channel/ws_client.html#WsOpcodeClose	const WsOpcodeClose		17
+nim	WsOpcodePing	donkey/adapters/channel/ws_client.html#WsOpcodePing	const WsOpcodePing		18
+nim	WsOpcodePong	donkey/adapters/channel/ws_client.html#WsOpcodePong	const WsOpcodePong		19
+nim	WsFrame	donkey/adapters/channel/ws_client.html#WsFrame	object WsFrame		22
+nim	WsClient	donkey/adapters/channel/ws_client.html#WsClient	object WsClient		26
+nim	wsConnect	donkey/adapters/channel/ws_client.html#wsConnect,string,Port,string	proc wsConnect(host: string; port: Port; path: string; useTls = true): WsClient		42
+nim	sendFrame	donkey/adapters/channel/ws_client.html#sendFrame,WsClient,string	proc sendFrame(ws: WsClient; data: string; opcode = WsOpcodeText)		74
+nim	recvFrame	donkey/adapters/channel/ws_client.html#recvFrame,WsClient,int	proc recvFrame(ws: WsClient; timeoutMs = 1000): WsFrame		100
+nim	wsClose	donkey/adapters/channel/ws_client.html#wsClose,WsClient	proc wsClose(ws: WsClient)		141

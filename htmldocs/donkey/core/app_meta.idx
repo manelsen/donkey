@@ -1,0 +1,16 @@
+nimTitle	app_meta	donkey/core/app_meta.html	module donkey/core/app_meta		0
+nim	AppName	donkey/core/app_meta.html#AppName	const AppName		7
+nim	AppSlug	donkey/core/app_meta.html#AppSlug	const AppSlug		8
+nim	AppVersion	donkey/core/app_meta.html#AppVersion	const AppVersion		9
+nim	HomeDirName	donkey/core/app_meta.html#HomeDirName	const HomeDirName		10
+nim	ConfigDirName	donkey/core/app_meta.html#ConfigDirName	const ConfigDirName		11
+nim	ConfigFileName	donkey/core/app_meta.html#ConfigFileName	const ConfigFileName		12
+nim	EnvFileName	donkey/core/app_meta.html#EnvFileName	const EnvFileName		13
+nim	SockFileName	donkey/core/app_meta.html#SockFileName	const SockFileName		14
+nim	LogFileName	donkey/core/app_meta.html#LogFileName	const LogFileName		15
+nim	ServiceUnitName	donkey/core/app_meta.html#ServiceUnitName	const ServiceUnitName		16
+nim	ConfigSectionName	donkey/core/app_meta.html#ConfigSectionName	const ConfigSectionName		17
+nim	MermaidTempPrefix	donkey/core/app_meta.html#MermaidTempPrefix	const MermaidTempPrefix		18
+nim	PgMemoryTableName	donkey/core/app_meta.html#PgMemoryTableName	const PgMemoryTableName		19
+nim	PgGraphName	donkey/core/app_meta.html#PgGraphName	const PgGraphName		20
+nim	OpenRouterRefererUrl	donkey/core/app_meta.html#OpenRouterRefererUrl	const OpenRouterRefererUrl		21

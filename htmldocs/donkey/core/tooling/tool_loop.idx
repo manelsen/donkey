@@ -1,0 +1,49 @@
+nimTitle	tool_loop	donkey/core/tooling/tool_loop.html	module donkey/core/tooling/tool_loop		0
+nim	ToolLoopRunResult	donkey/core/tooling/tool_loop.html#ToolLoopRunResult	object ToolLoopRunResult		7
+nim	CompletionHandlingResult	donkey/core/tooling/tool_loop.html#CompletionHandlingResult	object CompletionHandlingResult		15
+nim	ToolBatchState	donkey/core/tooling/tool_loop.html#ToolBatchState	object ToolBatchState		22
+nim	ToolLoopStreamDecision	donkey/core/tooling/tool_loop.html#ToolLoopStreamDecision	object ToolLoopStreamDecision		28
+nim	tlrkUseStreaming	donkey/core/tooling/tool_loop.html#tlrkUseStreaming	ToolLoopRoundKind.tlrkUseStreaming		31
+nim	tlrkHandleCompletion	donkey/core/tooling/tool_loop.html#tlrkHandleCompletion	ToolLoopRoundKind.tlrkHandleCompletion		31
+nim	tlrkHandleToolBatch	donkey/core/tooling/tool_loop.html#tlrkHandleToolBatch	ToolLoopRoundKind.tlrkHandleToolBatch		31
+nim	ToolLoopRoundKind	donkey/core/tooling/tool_loop.html#ToolLoopRoundKind	enum ToolLoopRoundKind		31
+nim	ToolLoopRoundDecision	donkey/core/tooling/tool_loop.html#ToolLoopRoundDecision	object ToolLoopRoundDecision		36
+nim	cdkRetryEmpty	donkey/core/tooling/tool_loop.html#cdkRetryEmpty	CompletionDecisionKind.cdkRetryEmpty		39
+nim	cdkFinishText	donkey/core/tooling/tool_loop.html#cdkFinishText	CompletionDecisionKind.cdkFinishText		39
+nim	cdkContinueToolCalls	donkey/core/tooling/tool_loop.html#cdkContinueToolCalls	CompletionDecisionKind.cdkContinueToolCalls		39
+nim	CompletionDecisionKind	donkey/core/tooling/tool_loop.html#CompletionDecisionKind	enum CompletionDecisionKind		39
+nim	CompletionDecision	donkey/core/tooling/tool_loop.html#CompletionDecision	object CompletionDecision		44
+nim	tcdExecute	donkey/core/tooling/tool_loop.html#tcdExecute	ToolCallDecisionKind.tcdExecute		50
+nim	tcdAbortRepeated	donkey/core/tooling/tool_loop.html#tcdAbortRepeated	ToolCallDecisionKind.tcdAbortRepeated		50
+nim	ToolCallDecisionKind	donkey/core/tooling/tool_loop.html#ToolCallDecisionKind	enum ToolCallDecisionKind		50
+nim	ToolCallDecision	donkey/core/tooling/tool_loop.html#ToolCallDecision	object ToolCallDecision		54
+nim	ToolBatchItemPlan	donkey/core/tooling/tool_loop.html#ToolBatchItemPlan	object ToolBatchItemPlan		59
+nim	tltkContinue	donkey/core/tooling/tool_loop.html#tltkContinue	ToolLoopTerminationKind.tltkContinue		64
+nim	tltkExceededMaxRounds	donkey/core/tooling/tool_loop.html#tltkExceededMaxRounds	ToolLoopTerminationKind.tltkExceededMaxRounds		64
+nim	ToolLoopTerminationKind	donkey/core/tooling/tool_loop.html#ToolLoopTerminationKind	enum ToolLoopTerminationKind		64
+nim	ToolLoopTerminationDecision	donkey/core/tooling/tool_loop.html#ToolLoopTerminationDecision	object ToolLoopTerminationDecision		68
+nim	newToolBatchState	donkey/core/tooling/tool_loop.html#newToolBatchState,ConversationHistory,int,seq[]	proc newToolBatchState(history: ConversationHistory; toolCallCount: int;\n                  recentCalls: seq[(string, string)]): ToolBatchState		72
+nim	newToolLoopState	donkey/core/tooling/tool_loop.html#newToolLoopState,ConversationHistory	proc newToolLoopState(history: ConversationHistory): ToolLoopRunResult		82
+nim	recentRepeatCount	donkey/core/tooling/tool_loop.html#recentRepeatCount,seq[],ToolCallRequest	proc recentRepeatCount(recentCalls: seq[(string, string)]; tc: ToolCallRequest): int		85
+nim	withRegisteredToolCall	donkey/core/tooling/tool_loop.html#withRegisteredToolCall,seq[],ToolCallRequest	proc withRegisteredToolCall(recentCalls: seq[(string, string)]; tc: ToolCallRequest): seq[\n    (string, string)]		92
+nim	withRegisteredToolCall	donkey/core/tooling/tool_loop.html#withRegisteredToolCall,ToolCallRequest,ToolBatchState	proc withRegisteredToolCall(tc: ToolCallRequest; state: ToolBatchState): ToolBatchState		99
+nim	withAbortedBatch	donkey/core/tooling/tool_loop.html#withAbortedBatch,ToolBatchItemPlan,ToolBatchState	proc withAbortedBatch(_: ToolBatchItemPlan; state: ToolBatchState): ToolBatchState		104
+nim	withToolResult	donkey/core/tooling/tool_loop.html#withToolResult,ToolCallRequest,string,ToolResultKind,Option[ConversationHistory],ToolBatchState	proc withToolResult(tc: ToolCallRequest; toolResultText: string;\n               toolResultKind: ToolResultKind;\n               newHistory: Option[ConversationHistory]; state: ToolBatchState): ToolBatchState		109
+nim	buildRepeatAbortText	donkey/core/tooling/tool_loop.html#buildRepeatAbortText,string,int	proc buildRepeatAbortText(toolName: string; repeatCount: int): string		120
+nim	buildCompletionDebugText	donkey/core/tooling/tool_loop.html#buildCompletionDebugText,CompletionResponse	proc buildCompletionDebugText(r: CompletionResponse): string		124
+nim	decideCompletion	donkey/core/tooling/tool_loop.html#decideCompletion,CompletionResponse,bool	proc decideCompletion(r: CompletionResponse; debugMode: bool): CompletionDecision		129
+nim	applyCompletionDecision	donkey/core/tooling/tool_loop.html#applyCompletionDecision,ConversationHistory,CompletionDecision	proc applyCompletionDecision(history: ConversationHistory;\n                        decision: CompletionDecision): CompletionHandlingResult		141
+nim	decideToolCall	donkey/core/tooling/tool_loop.html#decideToolCall,seq[],ToolCallRequest,int	proc decideToolCall(recentCalls: seq[(string, string)]; tc: ToolCallRequest;\n               repeatAbortThreshold: int): ToolCallDecision		156
+nim	buildToolDebugCallText	donkey/core/tooling/tool_loop.html#buildToolDebugCallText,ToolCallRequest	proc buildToolDebugCallText(tc: ToolCallRequest): string		168
+nim	buildToolDebugResultText	donkey/core/tooling/tool_loop.html#buildToolDebugResultText,string,string	proc buildToolDebugResultText(toolName, toolResult: string): string		171
+nim	buildToolProgressText	donkey/core/tooling/tool_loop.html#buildToolProgressText,string,int,string	proc buildToolProgressText(toolName: string; toolCallCount: int; toolResult: string): string		175
+nim	planToolBatchItem	donkey/core/tooling/tool_loop.html#planToolBatchItem,seq[],ToolCallRequest,int,int,string	proc planToolBatchItem(recentCalls: seq[(string, string)]; tc: ToolCallRequest;\n                  repeatAbortThreshold: int; nextToolCallCount: int;\n                  toolResultText: string): ToolBatchItemPlan		184
+nim	withStreamFinalText	donkey/core/tooling/tool_loop.html#withStreamFinalText,string,string,ToolLoopRunResult	proc withStreamFinalText(finalText: string; reasoning: string;\n                    state: ToolLoopRunResult): ToolLoopRunResult		202
+nim	withCompletionResult	donkey/core/tooling/tool_loop.html#withCompletionResult,CompletionHandlingResult,ToolLoopRunResult	proc withCompletionResult(completion: CompletionHandlingResult;\n                     state: ToolLoopRunResult): ToolLoopRunResult		216
+nim	withToolBatchState	donkey/core/tooling/tool_loop.html#withToolBatchState,ToolBatchState,ToolLoopRunResult	proc withToolBatchState(batch: ToolBatchState; state: ToolLoopRunResult): ToolLoopRunResult		228
+nim	decideToolLoopStreaming	donkey/core/tooling/tool_loop.html#decideToolLoopStreaming,int,int,bool	proc decideToolLoopStreaming(round: int; toolsCount: int; streamingAvailable: bool): ToolLoopStreamDecision		235
+nim	decideToolLoopRound	donkey/core/tooling/tool_loop.html#decideToolLoopRound,int,int,bool,CompletionResponse	proc decideToolLoopRound(round: int; toolsCount: int; streamingAvailable: bool;\n                    completion: CompletionResponse): ToolLoopRoundDecision		242
+nim	buildProviderErrorText	donkey/core/tooling/tool_loop.html#buildProviderErrorText,string	proc buildProviderErrorText(errMsg: string): string		255
+nim	buildToolLoopExceededText	donkey/core/tooling/tool_loop.html#buildToolLoopExceededText,int	proc buildToolLoopExceededText(maxRounds: int): string		258
+nim	decideToolLoopTermination	donkey/core/tooling/tool_loop.html#decideToolLoopTermination,bool,int,int	proc decideToolLoopTermination(done: bool; round: int; maxRounds: int): ToolLoopTerminationDecision		261
+nimgrp	withregisteredtoolcall	donkey/core/tooling/tool_loop.html#withRegisteredToolCall-procs-all	proc		92

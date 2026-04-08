@@ -1,0 +1,5 @@
+nimTitle	reminder	donkey/domain/reminder.html	module donkey/domain/reminder		0
+nim	ReminderToolName	donkey/domain/reminder.html#ReminderToolName	const ReminderToolName		10
+nim	ReminderToolDescription	donkey/domain/reminder.html#ReminderToolDescription	const ReminderToolDescription		12
+nim	ReminderToolSchema	donkey/domain/reminder.html#ReminderToolSchema	const ReminderToolSchema		22
+nim	parseWhen	donkey/domain/reminder.html#parseWhen,string,int64	proc parseWhen(whenStr: string; nowSec: int64): int64		80

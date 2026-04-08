@@ -1,0 +1,33 @@
+nimTitle	discord	donkey/adapters/channel/discord.html	module donkey/adapters/channel/discord		0
+nim	DiscordMaxChars	donkey/adapters/channel/discord.html#DiscordMaxChars	const DiscordMaxChars		30
+nim	deMessage	donkey/adapters/channel/discord.html#deMessage	DiscordEventKind.deMessage		35
+nim	deInteraction	donkey/adapters/channel/discord.html#deInteraction	DiscordEventKind.deInteraction		35
+nim	deModalRequest	donkey/adapters/channel/discord.html#deModalRequest	DiscordEventKind.deModalRequest		35
+nim	deButtonClick	donkey/adapters/channel/discord.html#deButtonClick	DiscordEventKind.deButtonClick		35
+nim	DiscordEventKind	donkey/adapters/channel/discord.html#DiscordEventKind	enum DiscordEventKind		35
+nim	DiscordRawEvent	donkey/adapters/channel/discord.html#DiscordRawEvent	object DiscordRawEvent		41
+nim	gDiscordEvents	donkey/adapters/channel/discord.html#gDiscordEvents	var gDiscordEvents		53
+nim	gDiscordPending	donkey/adapters/channel/discord.html#gDiscordPending	var gDiscordPending		56
+nim	gDiscordReady	donkey/adapters/channel/discord.html#gDiscordReady	var gDiscordReady		57
+nim	DiscordApiBase	donkey/adapters/channel/discord.html#DiscordApiBase	const DiscordApiBase		60
+nim	DiscordAdapter	donkey/adapters/channel/discord.html#DiscordAdapter	object DiscordAdapter		296
+nim	dmChannelFor	donkey/adapters/channel/discord.html#dmChannelFor,DiscordAdapter,string	proc dmChannelFor(a: DiscordAdapter; discordUserId: string): Result[string, string]		336
+nim	fetchUnreadMessages	donkey/adapters/channel/discord.html#fetchUnreadMessages,DiscordAdapter,string,int	proc fetchUnreadMessages(a: DiscordAdapter; chId: string; limit = 10): Result[\n    seq[JsonNode], string]		353
+nim	sendKeyboard	donkey/adapters/channel/discord.html#sendKeyboard,DiscordAdapter,UserId,string,seq[seq[]]	proc sendKeyboard(a: DiscordAdapter; userId: UserId; text: string;\n             buttons: seq[seq[(string, string)]]): Result[string, string]		399
+nim	editKeyboard	donkey/adapters/channel/discord.html#editKeyboard,DiscordAdapter,UserId,string,string,seq[seq[]]	proc editKeyboard(a: DiscordAdapter; userId: UserId; msgId: string; text: string;\n             buttons: seq[seq[(string, string)]]): Result[void, string]		417
+nim	editInteractionKeyboard	donkey/adapters/channel/discord.html#editInteractionKeyboard,DiscordAdapter,string,string,seq[seq[]]	proc editInteractionKeyboard(a: DiscordAdapter; interactionToken, text: string;\n                        buttons: seq[seq[(string, string)]]): Result[void,\n    string]		434
+nim	sendDeferredUpdate	donkey/adapters/channel/discord.html#sendDeferredUpdate,DiscordAdapter,string,string	proc sendDeferredUpdate(a: DiscordAdapter; interactionId, interactionToken: string): Result[\n    void, string]		448
+nim	send	donkey/adapters/channel/discord.html#send,DiscordAdapter,OutboundMessage	proc send(a: DiscordAdapter; msg: OutboundMessage): Result[void, string]		460
+nim	sendInteractionResponse	donkey/adapters/channel/discord.html#sendInteractionResponse,DiscordAdapter,string,string,string	proc sendInteractionResponse(a: DiscordAdapter;\n                        interactionId, interactionToken, text: string): Result[\n    void, string]		475
+nim	sendInteractionKeyboard	donkey/adapters/channel/discord.html#sendInteractionKeyboard,DiscordAdapter,string,string,string,seq[seq[]]	proc sendInteractionKeyboard(a: DiscordAdapter;\n                        interactionId, interactionToken, text: string;\n                        buttons: seq[seq[(string, string)]]): Result[void,\n    string]		486
+nim	sendInteractionEmbedPage	donkey/adapters/channel/discord.html#sendInteractionEmbedPage,DiscordAdapter,string,string,string,string,int,seq[seq[]]	proc sendInteractionEmbedPage(a: DiscordAdapter;\n                         interactionId, interactionToken: string;\n                         title, description: string; color: int;\n                         buttons: seq[seq[(string, string)]]): Result[void,\n    string]		501
+nim	editInteractionEmbedPage	donkey/adapters/channel/discord.html#editInteractionEmbedPage,DiscordAdapter,string,string,string,int,seq[seq[]]	proc editInteractionEmbedPage(a: DiscordAdapter; interactionToken: string;\n                         title, description: string; color: int;\n                         buttons: seq[seq[(string, string)]]): Result[void,\n    string]		521
+nim	sendInteractionModal	donkey/adapters/channel/discord.html#sendInteractionModal,DiscordAdapter,string,string	proc sendInteractionModal(a: DiscordAdapter; interactionId, interactionToken: string): Result[\n    void, string]		539
+nim	sendReturnId	donkey/adapters/channel/discord.html#sendReturnId,DiscordAdapter,OutboundMessage	proc sendReturnId(a: DiscordAdapter; msg: OutboundMessage): Result[string, string]		570
+nim	editMessage	donkey/adapters/channel/discord.html#editMessage,DiscordAdapter,UserId,string,string	proc editMessage(a: DiscordAdapter; userId: UserId; msgId, text: string): Result[\n    void, string]		584
+nim	ack	donkey/adapters/channel/discord.html#ack,DiscordAdapter,string	proc ack(a: DiscordAdapter; channelId: string)		600
+nim	startGateway	donkey/adapters/channel/discord.html#startGateway,DiscordAdapter,Logger	proc startGateway(a: DiscordAdapter; logger: Logger)		606
+nim	tryRecvEvent	donkey/adapters/channel/discord.html#tryRecvEvent,DiscordAdapter	proc tryRecvEvent(a: DiscordAdapter): (bool, DiscordRawEvent)		612
+nim	getAppId	donkey/adapters/channel/discord.html#getAppId,DiscordAdapter	proc getAppId(a: DiscordAdapter): Result[string, string]		618
+nim	registerSlashCommands	donkey/adapters/channel/discord.html#registerSlashCommands,DiscordAdapter,string,string	proc registerSlashCommands(a: DiscordAdapter; appId: string; guildId = ""): Result[\n    void, string]		632
+nim	newDiscordAdapter	donkey/adapters/channel/discord.html#newDiscordAdapter,string,string,string	proc newDiscordAdapter(token: string; identityPath: string; apiBase = ""): DiscordAdapter		731

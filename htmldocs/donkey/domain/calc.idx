@@ -1,0 +1,3 @@
+nimTitle	calc	donkey/domain/calc.html	module donkey/domain/calc		0
+nim	evalCalc	donkey/domain/calc.html#evalCalc,string	proc evalCalc(expr: string): string		186
+nim	globMatch	donkey/domain/calc.html#globMatch,string,string	proc globMatch(pattern, str: string): bool		200

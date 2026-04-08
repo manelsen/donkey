@@ -1,0 +1,5 @@
+nimTitle	http	donkey/ports/http.html	module donkey/ports/http		0
+nim	HttpResponse	donkey/ports/http.html#HttpResponse	object HttpResponse		7
+nim	HttpHeader	donkey/ports/http.html#HttpHeader	tuple HttpHeader		11
+nim	HttpPort	donkey/ports/http.html#HttpPort	type HttpPort		13
+nim	HttpRuntimePort	donkey/ports/http.html#HttpRuntimePort	object HttpRuntimePort		19

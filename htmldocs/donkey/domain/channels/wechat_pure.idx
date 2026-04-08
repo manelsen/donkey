@@ -1,0 +1,15 @@
+nimTitle	wechat_pure	donkey/domain/channels/wechat_pure.html	module donkey/domain/channels/wechat_pure		0
+nim	wckText	donkey/domain/channels/wechat_pure.html#wckText	WcMsgKind.wckText		26
+nim	wckImage	donkey/domain/channels/wechat_pure.html#wckImage	WcMsgKind.wckImage		26
+nim	wckVoice	donkey/domain/channels/wechat_pure.html#wckVoice	WcMsgKind.wckVoice		26
+nim	wckVideo	donkey/domain/channels/wechat_pure.html#wckVideo	WcMsgKind.wckVideo		26
+nim	wckFile	donkey/domain/channels/wechat_pure.html#wckFile	WcMsgKind.wckFile		26
+nim	wckEvent	donkey/domain/channels/wechat_pure.html#wckEvent	WcMsgKind.wckEvent		26
+nim	wckUnknown	donkey/domain/channels/wechat_pure.html#wckUnknown	WcMsgKind.wckUnknown		26
+nim	WcMsgKind	donkey/domain/channels/wechat_pure.html#WcMsgKind	enum WcMsgKind		26
+nim	WcParseResult	donkey/domain/channels/wechat_pure.html#WcParseResult	object WcParseResult		35
+nim	extractTag	donkey/domain/channels/wechat_pure.html#extractTag,string,string	proc extractTag(tag: string; xml: string): string		46
+nim	parseXmlMsg	donkey/domain/channels/wechat_pure.html#parseXmlMsg,string	proc parseXmlMsg(xml: string): WcParseResult		78
+nim	toInbound	donkey/domain/channels/wechat_pure.html#toInbound,WcParseResult,UserId	proc toInbound(r: WcParseResult; userId: UserId): InboundMessage		138
+nim	hasMedia	donkey/domain/channels/wechat_pure.html#hasMedia,WcParseResult	proc hasMedia(r: WcParseResult): bool		149
+nim	isEvent	donkey/domain/channels/wechat_pure.html#isEvent,WcParseResult	proc isEvent(r: WcParseResult): bool		153

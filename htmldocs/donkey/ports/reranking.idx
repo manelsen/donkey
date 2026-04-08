@@ -1,0 +1,4 @@
+nimTitle	reranking	donkey/ports/reranking.html	module donkey/ports/reranking		0
+nim	RerankCandidate	donkey/ports/reranking.html#RerankCandidate	object RerankCandidate		7
+nim	RerankFn	donkey/ports/reranking.html#RerankFn	type RerankFn		19
+nim	RerankingPort	donkey/ports/reranking.html#RerankingPort	type RerankingPort		21

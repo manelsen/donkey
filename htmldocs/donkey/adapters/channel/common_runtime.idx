@@ -1,0 +1,59 @@
+nimTitle	common_runtime	donkey/adapters/channel/common_runtime.html	module donkey/adapters/channel/common_runtime		0
+nim	ThinkLevels	donkey/adapters/channel/common_runtime.html#ThinkLevels	const ThinkLevels		14
+nim	BudgetPolicies	donkey/adapters/channel/common_runtime.html#BudgetPolicies	const BudgetPolicies		15
+nim	ModelPageSize	donkey/adapters/channel/common_runtime.html#ModelPageSize	const ModelPageSize		16
+nim	ModelMenu	donkey/adapters/channel/common_runtime.html#ModelMenu	const ModelMenu		18
+nim	emptyCatalogResult	donkey/adapters/channel/common_runtime.html#emptyCatalogResult	proc emptyCatalogResult(): ModelCatalogResult		31
+nim	donkeyHomeDir	donkey/adapters/channel/common_runtime.html#donkeyHomeDir,MdFileAdapter	proc donkeyHomeDir(memory: MdFileAdapter): string		34
+nim	userSkillsPath	donkey/adapters/channel/common_runtime.html#userSkillsPath,MdFileAdapter,UserId	proc userSkillsPath(memory: MdFileAdapter; userId: UserId): string		37
+nim	parseChannelPrefs	donkey/adapters/channel/common_runtime.html#parseChannelPrefs,string	proc parseChannelPrefs(preferencesMd: string): ChannelPrefs		60
+nim	loadChannelPrefs	donkey/adapters/channel/common_runtime.html#loadChannelPrefs,MdFileAdapter,UserId	proc loadChannelPrefs(memory: MdFileAdapter; userId: UserId): ChannelPrefs		80
+nim	saveChannelPreference	donkey/adapters/channel/common_runtime.html#saveChannelPreference,MdFileAdapter,UserId,string,string	proc saveChannelPreference(memory: MdFileAdapter; userId: UserId; key, value: string)		83
+nim	getCurrentProviderModel	donkey/adapters/channel/common_runtime.html#getCurrentProviderModel,MdFileAdapter,UserId	proc getCurrentProviderModel(memory: MdFileAdapter; userId: UserId): (string, string)		97
+nim	getCurrentThinkLevel	donkey/adapters/channel/common_runtime.html#getCurrentThinkLevel,MdFileAdapter,UserId	proc getCurrentThinkLevel(memory: MdFileAdapter; userId: UserId): string		102
+nim	getCurrentBudgetPolicy	donkey/adapters/channel/common_runtime.html#getCurrentBudgetPolicy,MdFileAdapter,UserId	proc getCurrentBudgetPolicy(memory: MdFileAdapter; userId: UserId): string		105
+nim	buildThinkButtons	donkey/adapters/channel/common_runtime.html#buildThinkButtons,MdFileAdapter,UserId	proc buildThinkButtons(memory: MdFileAdapter; userId: UserId): seq[\n    seq[(string, string)]]		108
+nim	supportedProviders	donkey/adapters/channel/common_runtime.html#supportedProviders	proc supportedProviders(): seq[string]		117
+nim	supportedModels	donkey/adapters/channel/common_runtime.html#supportedModels,string	proc supportedModels(provider: string): seq[string]		121
+nim	buildProviderButtons	donkey/adapters/channel/common_runtime.html#buildProviderButtons,MdFileAdapter,UserId	proc buildProviderButtons(memory: MdFileAdapter; userId: UserId): seq[\n    seq[(string, string)]]		127
+nim	buildModelButtons	donkey/adapters/channel/common_runtime.html#buildModelButtons,MdFileAdapter,string,UserId	proc buildModelButtons(memory: MdFileAdapter; provider: string; userId: UserId): seq[\n    seq[(string, string)]]		141
+nim	normalizeModelCatalog	donkey/adapters/channel/common_runtime.html#normalizeModelCatalog,string,seq[ModelCatalogEntry]	proc normalizeModelCatalog(provider: string; entries: seq[ModelCatalogEntry]): seq[\n    ModelCatalogEntry]		160
+nim	sortModelCatalog	donkey/adapters/channel/common_runtime.html#sortModelCatalog,seq[ModelCatalogEntry]	proc sortModelCatalog(entries: seq[ModelCatalogEntry]): seq[ModelCatalogEntry]		180
+nim	pageCount	donkey/adapters/channel/common_runtime.html#pageCount,seq[ModelCatalogEntry]	proc pageCount(entries: seq[ModelCatalogEntry]; pageSize = ModelPageSize): int		188
+nim	clampPage	donkey/adapters/channel/common_runtime.html#clampPage,int,seq[ModelCatalogEntry]	proc clampPage(page: int; entries: seq[ModelCatalogEntry]; pageSize = ModelPageSize): int		192
+nim	pageEntries	donkey/adapters/channel/common_runtime.html#pageEntries,seq[ModelCatalogEntry],int	proc pageEntries(entries: seq[ModelCatalogEntry]; page: int; pageSize = ModelPageSize): seq[\n    ModelCatalogEntry]		195
+nim	buildModelPageTitle	donkey/adapters/channel/common_runtime.html#buildModelPageTitle,string,int,seq[ModelCatalogEntry]	proc buildModelPageTitle(provider: string; page: int; entries: seq[ModelCatalogEntry]): string		205
+nim	buildCatalogSourceText	donkey/adapters/channel/common_runtime.html#buildCatalogSourceText,ModelCatalogResult	proc buildCatalogSourceText(catalog: ModelCatalogResult): string		208
+nim	buildModelPageText	donkey/adapters/channel/common_runtime.html#buildModelPageText,string,int,seq[ModelCatalogEntry],ModelCatalogResult	proc buildModelPageText(provider: string; page: int; entries: seq[ModelCatalogEntry];\n                   catalog: ModelCatalogResult): string		215
+nim	buildModelPageButtons	donkey/adapters/channel/common_runtime.html#buildModelPageButtons,string,seq[ModelCatalogEntry],string,string,int	proc buildModelPageButtons(provider: string; entries: seq[ModelCatalogEntry];\n                      currentProvider: string; currentModel: string; page: int): seq[\n    seq[(string, string)]]		223
+nim	parseModelsArgs	donkey/adapters/channel/common_runtime.html#parseModelsArgs,string	proc parseModelsArgs(value: string): Result[(string, string), string]		251
+nim	parseModelsProviderArg	donkey/adapters/channel/common_runtime.html#parseModelsProviderArg,string	proc parseModelsProviderArg(value: string): Result[string, string]		264
+nim	buildDeferredUiCommandText	donkey/adapters/channel/common_runtime.html#buildDeferredUiCommandText,CommandKind	proc buildDeferredUiCommandText(kind: CommandKind): string		287
+nim	parseThinkArgs	donkey/adapters/channel/common_runtime.html#parseThinkArgs,string	proc parseThinkArgs(value: string): Result[string, string]		302
+nim	parseBudgetArgs	donkey/adapters/channel/common_runtime.html#parseBudgetArgs,string	proc parseBudgetArgs(value: string): Result[string, string]		310
+nim	buildModelsHelpText	donkey/adapters/channel/common_runtime.html#buildModelsHelpText,MdFileAdapter,UserId,ModelCatalogLoader	proc buildModelsHelpText(memory: MdFileAdapter; userId: UserId;\n                    modelCatalogLoader: ModelCatalogLoader = nil): string		318
+nim	buildThinkHelpText	donkey/adapters/channel/common_runtime.html#buildThinkHelpText,MdFileAdapter,UserId	proc buildThinkHelpText(memory: MdFileAdapter; userId: UserId): string		353
+nim	buildBudgetHelpText	donkey/adapters/channel/common_runtime.html#buildBudgetHelpText,MdFileAdapter,UserId	proc buildBudgetHelpText(memory: MdFileAdapter; userId: UserId): string		358
+nim	applyModelsTextCommand	donkey/adapters/channel/common_runtime.html#applyModelsTextCommand,MdFileAdapter,UserId,string,ModelCatalogLoader	proc applyModelsTextCommand(memory: MdFileAdapter; userId: UserId; value: string;\n                       modelCatalogLoader: ModelCatalogLoader = nil): Result[\n    string, string]		363
+nim	applyThinkTextCommand	donkey/adapters/channel/common_runtime.html#applyThinkTextCommand,MdFileAdapter,UserId,string	proc applyThinkTextCommand(memory: MdFileAdapter; userId: UserId; value: string): Result[\n    string, string]		392
+nim	applyBudgetTextCommand	donkey/adapters/channel/common_runtime.html#applyBudgetTextCommand,MdFileAdapter,UserId,string	proc applyBudgetTextCommand(memory: MdFileAdapter; userId: UserId; value: string): Result[\n    string, string]		401
+nim	applySkillTextCommand	donkey/adapters/channel/common_runtime.html#applySkillTextCommand,MdFileAdapter,UserId,string,string,string,proc (registry: string, query: string, limit: int): Result[seq[RemoteSkillSearchHit], system.string]{.closure, gcsafe.},proc (home: string, registry: string, slug: string): Result[clawhub_registry.RemoteSkillOrigin, system.string]{.closure, gcsafe.}	proc applySkillTextCommand(memory: MdFileAdapter; userId: UserId; value: string;\n                      homeDir = ""; registry = "";\n                      searchBackend: skill_runtime.SkillSearchBackend = nil;\n                      installBackend: skill_runtime.SkillInstallBackend = nil): Result[\n    string, string]		410
+nim	buildProviderStatusLine	donkey/adapters/channel/common_runtime.html#buildProviderStatusLine,MdFileAdapter,UserId	proc buildProviderStatusLine(memory: MdFileAdapter; userId: UserId): string		426
+nim	buildTextStatusText	donkey/adapters/channel/common_runtime.html#buildTextStatusText,MdFileAdapter,UserId,int,int,int64	proc buildTextStatusText(memory: MdFileAdapter; userId: UserId; toolsCount: int;\n                    sessionCount: int; daemonStartMs: int64): string		439
+nim	buildWhoamiText	donkey/adapters/channel/common_runtime.html#buildWhoamiText,UserId,string,string	proc buildWhoamiText(userId: UserId; sessionId, channelId: string): string		461
+nim	buildMenuButtons	donkey/adapters/channel/common_runtime.html#buildMenuButtons	proc buildMenuButtons(): seq[seq[(string, string)]]		467
+nim	buildMenuText	donkey/adapters/channel/common_runtime.html#buildMenuText	proc buildMenuText(): string		476
+nim	buildConfigButtons	donkey/adapters/channel/common_runtime.html#buildConfigButtons	proc buildConfigButtons(): seq[seq[(string, string)]]		480
+nim	buildConfigText	donkey/adapters/channel/common_runtime.html#buildConfigText,MdFileAdapter,UserId	proc buildConfigText(memory: MdFileAdapter; userId: UserId): string		489
+nim	buildTasksText	donkey/adapters/channel/common_runtime.html#buildTasksText	proc buildTasksText(): string		500
+nim	buildAgentsText	donkey/adapters/channel/common_runtime.html#buildAgentsText,int,int	proc buildAgentsText(toolsCount, toolClientsCount: int): string		506
+nim	buildPollText	donkey/adapters/channel/common_runtime.html#buildPollText	proc buildPollText(): string		512
+nim	buildStartIntroText	donkey/adapters/channel/common_runtime.html#buildStartIntroText	proc buildStartIntroText(): string		517
+nim	buildHelpPages	donkey/adapters/channel/common_runtime.html#buildHelpPages	proc buildHelpPages(): seq[(string, string)]		522
+nim	buildHelpNavButtons	donkey/adapters/channel/common_runtime.html#buildHelpNavButtons,int,int	proc buildHelpNavButtons(page, total: int): seq[seq[(string, string)]]		546
+nim	buildHelpText	donkey/adapters/channel/common_runtime.html#buildHelpText,bool	proc buildHelpText(interactiveUi: bool): string		554
+nim	buildDoctorReport	donkey/adapters/channel/common_runtime.html#buildDoctorReport,MdFileAdapter,proc(string),UserId,int,int,int	proc buildDoctorReport(memory: MdFileAdapter; completeBuilder: proc (\n    preferencesMd: string): CompleteFn {.gcsafe.}; userId: UserId;\n                  toolsCount: int; toolClientsCount: int; sessionCount: int): string		580
+nim	buildMemoryViewText	donkey/adapters/channel/common_runtime.html#buildMemoryViewText,MdFileAdapter,UserId	proc buildMemoryViewText(memory: MdFileAdapter; userId: UserId): string		680
+nim	buildPingText	donkey/adapters/channel/common_runtime.html#buildPingText,MdFileAdapter,UserId,proc(string)	proc buildPingText(memory: MdFileAdapter; userId: UserId; completeBuilder: proc (\n    preferencesMd: string): CompleteFn {.gcsafe.}): string		723
+nim	buildLinkCodeText	donkey/adapters/channel/common_runtime.html#buildLinkCodeText,string	proc buildLinkCodeText(code: string): string		739
+nim	buildContinueResultText	donkey/adapters/channel/common_runtime.html#buildContinueResultText,bool	proc buildContinueResultText(linked: bool): string		743

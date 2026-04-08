@@ -1,0 +1,5 @@
+nimTitle	outbound_runtime	donkey/app/outbound_runtime.html	module donkey/app/outbound_runtime		0
+nim	sendImmediateOutbound	donkey/app/outbound_runtime.html#sendImmediateOutbound,OutboundMessage,OutboundChannelPorts,Logger	proc sendImmediateOutbound(msg: OutboundMessage; ports: OutboundChannelPorts;\n                      log: Logger)		27
+nim	editStreamOutbound	donkey/app/outbound_runtime.html#editStreamOutbound,OutboundMessage,string,OutboundChannelPorts,Logger	proc editStreamOutbound(msg: OutboundMessage; channelMsgId: string;\n                   ports: OutboundChannelPorts; log: Logger)		49
+nim	createStreamOutbound	donkey/app/outbound_runtime.html#createStreamOutbound,OutboundMessage,OutboundChannelPorts,Logger	proc createStreamOutbound(msg: OutboundMessage; ports: OutboundChannelPorts;\n                     log: Logger): string		64
+nim	routeOutbound	donkey/app/outbound_runtime.html#routeOutbound,OutboundMessage,OutboundChannelPorts,Logger,Table[string,string]	proc routeOutbound(msg: OutboundMessage; ports: OutboundChannelPorts; log: Logger;\n              streamMsgIds: var Table[string, string])		80

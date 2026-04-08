@@ -1,0 +1,7 @@
+nimTitle	shell_composer	donkey/infra/sandbox/shell_composer.html	module donkey/infra/sandbox/shell_composer		0
+nim	PipeSegment	donkey/infra/sandbox/shell_composer.html#PipeSegment	object PipeSegment		21
+nim	`$`	donkey/infra/sandbox/shell_composer.html#$,PipeSegment	proc `$`(seg: PipeSegment): string		26
+nim	parsePipeExpr	donkey/infra/sandbox/shell_composer.html#parsePipeExpr,string	proc parsePipeExpr(expr: string): seq[PipeSegment]		54
+nim	needsStdin	donkey/infra/sandbox/shell_composer.html#needsStdin,string,seq[string]	proc needsStdin(applet: string; args: seq[string]): bool		77
+nim	compose	donkey/infra/sandbox/shell_composer.html#compose,WasmToolAdapter,string,string	proc compose(adapter: WasmToolAdapter; expr: string; paddock: string): AppletResult		93
+nim	composeFormatted	donkey/infra/sandbox/shell_composer.html#composeFormatted,WasmToolAdapter,string,string	proc composeFormatted(adapter: WasmToolAdapter; expr: string; paddock: string): string		153

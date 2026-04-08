@@ -1,0 +1,23 @@
+nimTitle	wechat	donkey/adapters/channel/wechat.html	module donkey/adapters/channel/wechat		0
+nim	WeChatApiBase	donkey/adapters/channel/wechat.html#WeChatApiBase	const WeChatApiBase		24
+nim	wsnsapiBase	donkey/adapters/channel/wechat.html#wsnsapiBase	WeChatScope.wsnsapiBase		27
+nim	wsnsapiUserInfo	donkey/adapters/channel/wechat.html#wsnsapiUserInfo	WeChatScope.wsnsapiUserInfo		27
+nim	WeChatScope	donkey/adapters/channel/wechat.html#WeChatScope	enum WeChatScope		27
+nim	WeChatEvent	donkey/adapters/channel/wechat.html#WeChatEvent	object WeChatEvent		31
+nim	WeChatProfile	donkey/adapters/channel/wechat.html#WeChatProfile	object WeChatProfile		37
+nim	WeChatAdapter	donkey/adapters/channel/wechat.html#WeChatAdapter	object WeChatAdapter		43
+nim	newWeChatAdapter	donkey/adapters/channel/wechat.html#newWeChatAdapter,string,string,string,string,string,string	proc newWeChatAdapter(appId, appSecret, callbackToken, templateId: string;\n                 identityPath: string; apiBase = ""): WeChatAdapter		65
+nim	parseQueryString	donkey/adapters/channel/wechat.html#parseQueryString,string	proc parseQueryString(query: string): Table[string, string]		79
+nim	extractXmlTag	donkey/adapters/channel/wechat.html#extractXmlTag,string,string	proc extractXmlTag(xml, tag: string): string		91
+nim	parseWebhookXml	donkey/adapters/channel/wechat.html#parseWebhookXml,string	proc parseWebhookXml(xml: string): Result[WeChatEvent, string]		109
+nim	verifyWebhookSignature	donkey/adapters/channel/wechat.html#verifyWebhookSignature,string,string,string,string	proc verifyWebhookSignature(token, timestamp, nonce, signature: string): bool		123
+nim	enqueueWebhookXml	donkey/adapters/channel/wechat.html#enqueueWebhookXml,WeChatAdapter,string	proc enqueueWebhookXml(a: var WeChatAdapter; xml: string): Result[void, string]		128
+nim	buildOAuthUrl	donkey/adapters/channel/wechat.html#buildOAuthUrl,WeChatAdapter,string,string	proc buildOAuthUrl(a: WeChatAdapter; redirectUri, state: string;\n              scope = wsnsapiUserInfo): string		136
+nim	fetchAccessToken	donkey/adapters/channel/wechat.html#fetchAccessToken,WeChatAdapter	proc fetchAccessToken(a: WeChatAdapter): Result[string, string]		144
+nim	fetchOAuthOpenId	donkey/adapters/channel/wechat.html#fetchOAuthOpenId,WeChatAdapter,string	proc fetchOAuthOpenId(a: WeChatAdapter; code: string): Result[string, string]		160
+nim	fetchProfile	donkey/adapters/channel/wechat.html#fetchProfile,WeChatAdapter,string	proc fetchProfile(a: WeChatAdapter; code: string): Result[WeChatProfile, string]		178
+nim	sendCustomText	donkey/adapters/channel/wechat.html#sendCustomText,WeChatAdapter,string,string	proc sendCustomText(a: WeChatAdapter; openId, text: string): Result[void, string]		210
+nim	sendTemplate	donkey/adapters/channel/wechat.html#sendTemplate,WeChatAdapter,string,string,string,string	proc sendTemplate(a: WeChatAdapter; openId, title, bodyText: string; url: string = ""): Result[\n    void, string]		223
+nim	startWebhook	donkey/adapters/channel/wechat.html#startWebhook,WeChatAdapter,Port	proc startWebhook(a: WeChatAdapter; port: Port)		325
+nim	tryRecvEvent	donkey/adapters/channel/wechat.html#tryRecvEvent,WeChatAdapter	proc tryRecvEvent(a: var WeChatAdapter): (bool, WeChatEvent)		337
+nim	send	donkey/adapters/channel/wechat.html#send,WeChatAdapter,OutboundMessage	proc send(a: var WeChatAdapter; msg: OutboundMessage): Result[void, string]		348

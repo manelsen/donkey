@@ -1,0 +1,21 @@
+nimTitle	outbound	donkey/core/outbound/outbound.html	module donkey/core/outbound/outbound		0
+nim	okImmediate	donkey/core/outbound/outbound.html#okImmediate	OutboundKind.okImmediate		7
+nim	okStreamCreate	donkey/core/outbound/outbound.html#okStreamCreate	OutboundKind.okStreamCreate		7
+nim	okStreamUpdate	donkey/core/outbound/outbound.html#okStreamUpdate	OutboundKind.okStreamUpdate		7
+nim	okSuppress	donkey/core/outbound/outbound.html#okSuppress	OutboundKind.okSuppress		7
+nim	OutboundKind	donkey/core/outbound/outbound.html#OutboundKind	enum OutboundKind		7
+nim	oiSend	donkey/core/outbound/outbound.html#oiSend	OutboundIntent.oiSend		13
+nim	oiStreamCreate	donkey/core/outbound/outbound.html#oiStreamCreate	OutboundIntent.oiStreamCreate		13
+nim	oiStreamUpdate	donkey/core/outbound/outbound.html#oiStreamUpdate	OutboundIntent.oiStreamUpdate		13
+nim	oiSuppress	donkey/core/outbound/outbound.html#oiSuppress	OutboundIntent.oiSuppress		13
+nim	OutboundIntent	donkey/core/outbound/outbound.html#OutboundIntent	enum OutboundIntent		13
+nim	StreamAction	donkey/core/outbound/outbound.html#StreamAction	object StreamAction		19
+nim	OutboundDecision	donkey/core/outbound/outbound.html#OutboundDecision	object OutboundDecision		24
+nim	supportsEditableStreams	donkey/core/outbound/outbound.html#supportsEditableStreams,ChannelKind	proc supportsEditableStreams(channel: ChannelKind): bool		30
+nim	classifyOutbound	donkey/core/outbound/outbound.html#classifyOutbound,OutboundMessage,Table[string,string]	proc classifyOutbound(msg: OutboundMessage; streamMsgIds: Table[string, string]): OutboundKind		33
+nim	decideStreamAction	donkey/core/outbound/outbound.html#decideStreamAction,OutboundMessage,Table[string,string]	proc decideStreamAction(msg: OutboundMessage; streamMsgIds: Table[string, string]): StreamAction		43
+nim	isImplementedOutboundChannel	donkey/core/outbound/outbound.html#isImplementedOutboundChannel,ChannelKind	proc isImplementedOutboundChannel(channel: ChannelKind): bool		52
+nim	shouldClearStream	donkey/core/outbound/outbound.html#shouldClearStream,OutboundMessage	proc shouldClearStream(msg: OutboundMessage): bool		55
+nim	toOutboundIntent	donkey/core/outbound/outbound.html#toOutboundIntent,OutboundKind	proc toOutboundIntent(kind: OutboundKind): OutboundIntent		58
+nim	decideOutbound	donkey/core/outbound/outbound.html#decideOutbound,OutboundMessage,Table[string,string]	proc decideOutbound(msg: OutboundMessage; streamMsgIds: Table[string, string]): OutboundDecision		69
+nim	withStreamCleanup	donkey/core/outbound/outbound.html#withStreamCleanup,OutboundMessage,Table[string,string]	proc withStreamCleanup(msg: OutboundMessage; streamMsgIds: Table[string, string]): Table[\n    string, string]		79

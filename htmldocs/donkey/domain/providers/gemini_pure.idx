@@ -1,0 +1,11 @@
+nimTitle	gemini_pure	donkey/domain/providers/gemini_pure.html	module donkey/domain/providers/gemini_pure		0
+nim	geminiRole	donkey/domain/providers/gemini_pure.html#geminiRole,string	proc geminiRole(role: string): string		22
+nim	textPart	donkey/domain/providers/gemini_pure.html#textPart,string	proc textPart(text: string): JsonNode		31
+nim	functionCallPart	donkey/domain/providers/gemini_pure.html#functionCallPart,ToolCallRequest	proc functionCallPart(tc: ToolCallRequest): JsonNode		34
+nim	functionResponsePart	donkey/domain/providers/gemini_pure.html#functionResponsePart,ChatMessage,string	proc functionResponsePart(msg: ChatMessage; functionName: string): JsonNode		40
+nim	toGeminiContent	donkey/domain/providers/gemini_pure.html#toGeminiContent,ChatMessage	proc toGeminiContent(msg: ChatMessage): JsonNode		47
+nim	appendContent	donkey/domain/providers/gemini_pure.html#appendContent,seq[JsonNode],JsonNode	proc appendContent(contents: var seq[JsonNode]; content: JsonNode)		56
+nim	buildGeminiContents	donkey/domain/providers/gemini_pure.html#buildGeminiContents,seq[ChatMessage]	proc buildGeminiContents(messages: seq[ChatMessage]): tuple[contents: seq[JsonNode],\n    toolNamesById: Table[string, string]]		64
+nim	buildToolsArray	donkey/domain/providers/gemini_pure.html#buildToolsArray,seq[ToolDescription]	proc buildToolsArray(tools: seq[ToolDescription]): JsonNode		82
+nim	buildGeminiRequest	donkey/domain/providers/gemini_pure.html#buildGeminiRequest,CompletionRequest	proc buildGeminiRequest(req: CompletionRequest): JsonNode		96
+nim	parseGeminiResponse	donkey/domain/providers/gemini_pure.html#parseGeminiResponse,JsonNode	proc parseGeminiResponse(j: JsonNode): Result[CompletionResponse, string]		117

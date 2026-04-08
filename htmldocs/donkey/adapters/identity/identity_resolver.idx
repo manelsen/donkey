@@ -1,0 +1,9 @@
+nimTitle	identity_resolver	donkey/adapters/identity/identity_resolver.html	module donkey/adapters/identity/identity_resolver		0
+nim	IdentityResolver	donkey/adapters/identity/identity_resolver.html#IdentityResolver	type IdentityResolver		20
+nim	channelKey	donkey/adapters/identity/identity_resolver.html#channelKey,ChannelKind,string	proc channelKey(kind: ChannelKind; rawId: string): string		31
+nim	generateUUID	donkey/adapters/identity/identity_resolver.html#generateUUID	proc generateUUID(): string		35
+nim	newIdentityResolver	donkey/adapters/identity/identity_resolver.html#newIdentityResolver,string	proc newIdentityResolver(path: string): IdentityResolver		55
+nim	resolve	donkey/adapters/identity/identity_resolver.html#resolve,IdentityResolver,ChannelKind,string	proc resolve(r: IdentityResolver; kind: ChannelKind; rawId: string): UserId		74
+nim	reverseChannel	donkey/adapters/identity/identity_resolver.html#reverseChannel,IdentityResolver,UserId,ChannelKind	proc reverseChannel(r: IdentityResolver; userId: UserId; kind: ChannelKind): string		88
+nim	generateLinkCode	donkey/adapters/identity/identity_resolver.html#generateLinkCode,IdentityResolver,UserId	proc generateLinkCode(r: IdentityResolver; userId: UserId): string		99
+nim	consumeLinkCode	donkey/adapters/identity/identity_resolver.html#consumeLinkCode,IdentityResolver,string,ChannelKind,string	proc consumeLinkCode(r: IdentityResolver; code: string; kind: ChannelKind;\n                rawId: string): bool		111

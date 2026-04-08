@@ -1,0 +1,2 @@
+nimTitle	memory_agent	donkey/app/memory_agent.html	module donkey/app/memory_agent		0
+nim	runMemoryAgent	donkey/app/memory_agent.html#runMemoryAgent,AsyncQueue[AgentMessage],AsyncQueue[AgentMessage],MemoryRuntimePort,SearchFn	proc runMemoryAgent(inbox: AsyncQueue[AgentMessage];\n               outbox: AsyncQueue[AgentMessage]; memory: MemoryRuntimePort;\n               searchFn: SearchFn = nil): Future[void]		20

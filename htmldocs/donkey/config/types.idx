@@ -1,0 +1,13 @@
+nimTitle	types	donkey/config/types.html	module donkey/config/types		0
+nim	WebAccessRule	donkey/config/types.html#WebAccessRule	object WebAccessRule		8
+nim	ToolWebPolicy	donkey/config/types.html#ToolWebPolicy	object ToolWebPolicy		12
+nim	SkillNetPolicy	donkey/config/types.html#SkillNetPolicy	object SkillNetPolicy		16
+nim	smNone	donkey/config/types.html#smNone	SandboxMode.smNone		20
+nim	smDocker	donkey/config/types.html#smDocker	SandboxMode.smDocker		20
+nim	smWasm	donkey/config/types.html#smWasm	SandboxMode.smWasm		20
+nim	SandboxMode	donkey/config/types.html#SandboxMode	enum SandboxMode		20
+nim	DonkeyConfig	donkey/config/types.html#DonkeyConfig	object DonkeyConfig		25
+nim	defaultConfig	donkey/config/types.html#defaultConfig,string	proc defaultConfig(home: string): DonkeyConfig		39
+nim	hostOnlyRule	donkey/config/types.html#hostOnlyRule,string	proc hostOnlyRule(host: string): WebAccessRule		54
+nim	effectiveToolWebRules	donkey/config/types.html#effectiveToolWebRules,DonkeyConfig,string	proc effectiveToolWebRules(cfg: DonkeyConfig; toolName: string): seq[WebAccessRule]		57
+nim	effectiveSkillAllowNetHosts	donkey/config/types.html#effectiveSkillAllowNetHosts,DonkeyConfig,string	proc effectiveSkillAllowNetHosts(cfg: DonkeyConfig; skillName: string): seq[string]		64

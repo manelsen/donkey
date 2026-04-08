@@ -1,0 +1,6 @@
+nimTitle	multigraph_runtime	donkey/app/multigraph_runtime.html	module donkey/app/multigraph_runtime		0
+nim	ctlMemorySearch	donkey/app/multigraph_runtime.html#ctlMemorySearch,string,string,string,string,int	proc ctlMemorySearch(pgDsn, paddocksDir: string; uuid, query: string; limit = 10)		239
+nim	ctlMemoryImport	donkey/app/multigraph_runtime.html#ctlMemoryImport,string,string,string	proc ctlMemoryImport(pgDsn, paddocksDir: string; uuid: string)		253
+nim	ctlMemoryExport	donkey/app/multigraph_runtime.html#ctlMemoryExport,string,string,string	proc ctlMemoryExport(pgDsn: string; uuid: string; outDir = "")		262
+nim	buildGlobalMagmaSearchFn	donkey/app/multigraph_runtime.html#buildGlobalMagmaSearchFn,string	proc buildGlobalMagmaSearchFn(paddocksDir: string): SearchFn		272
+nim	loadMagmaMemoryStats	donkey/app/multigraph_runtime.html#loadMagmaMemoryStats,string	proc loadMagmaMemoryStats(pgDsn: string): MemoryStats		292

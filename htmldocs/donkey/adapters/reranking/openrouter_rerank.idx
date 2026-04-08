@@ -1,0 +1,12 @@
+nimTitle	openrouter_rerank	donkey/adapters/reranking/openrouter_rerank.html	module donkey/adapters/reranking/openrouter_rerank		0
+nim	OpenRouterRerankUrl	donkey/adapters/reranking/openrouter_rerank.html#OpenRouterRerankUrl	const OpenRouterRerankUrl		19
+nim	DefaultRerankModel	donkey/adapters/reranking/openrouter_rerank.html#DefaultRerankModel	const DefaultRerankModel		20
+nim	DefaultRerankMaxTokens	donkey/adapters/reranking/openrouter_rerank.html#DefaultRerankMaxTokens	const DefaultRerankMaxTokens		21
+nim	DefaultRerankMaxChars	donkey/adapters/reranking/openrouter_rerank.html#DefaultRerankMaxChars	const DefaultRerankMaxChars		22
+nim	DefaultRerankTemperature	donkey/adapters/reranking/openrouter_rerank.html#DefaultRerankTemperature	const DefaultRerankTemperature		23
+nim	OpenRouterRerankAdapter	donkey/adapters/reranking/openrouter_rerank.html#OpenRouterRerankAdapter	object OpenRouterRerankAdapter		26
+nim	buildBody	donkey/adapters/reranking/openrouter_rerank.html#buildBody,OpenRouterRerankAdapter,string,seq[RerankCandidate]	proc buildBody(a: OpenRouterRerankAdapter; query: string;\n          candidates: seq[RerankCandidate]): JsonNode		33
+nim	parseScores	donkey/adapters/reranking/openrouter_rerank.html#parseScores,string,int	proc parseScores(content: string; count: int): seq[float32]		65
+nim	newOpenRouterRerankAdapter	donkey/adapters/reranking/openrouter_rerank.html#newOpenRouterRerankAdapter,string	proc newOpenRouterRerankAdapter(apiKey: string; model = DefaultRerankModel;\n                           maxChars = DefaultRerankMaxChars;\n                           maxTokens = DefaultRerankMaxTokens): OpenRouterRerankAdapter		68
+nim	rerank	donkey/adapters/reranking/openrouter_rerank.html#rerank,OpenRouterRerankAdapter,string,seq[RerankCandidate]	proc rerank(a: OpenRouterRerankAdapter; query: string;\n       candidates: seq[RerankCandidate]): seq[float32]		80
+nim	toRerankFn	donkey/adapters/reranking/openrouter_rerank.html#toRerankFn,OpenRouterRerankAdapter	proc toRerankFn(a: OpenRouterRerankAdapter): RerankFn		112
