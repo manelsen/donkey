@@ -46,6 +46,26 @@ proc sendImmediateOutbound*(msg: OutboundMessage;
     of ckEmail:     log.error("em send: " & error)
     of ckCli:       log.error("cli send: " & error)
 
+proc editImmediateOutbound*(msg: OutboundMessage;
+                            ports: OutboundChannelPorts;
+                            log: Logger): bool {.gcsafe.} =
+  let port = ports.channelPortFor(msg.channel)
+  let res =
+    if msg.replaceKeyboard or msg.keyboard.len > 0:
+      port.editKeyboard(msg.userId, msg.editTargetId, msg.text, msg.keyboard)
+    else:
+      port.editMessage(msg.userId, msg.editTargetId, msg.text)
+  if res.isOk:
+    log.info("sent " & $msg.channel & " (edit immediate) -> " & $msg.userId & " (" & $msg.text.len & " chars)")
+    return true
+  let error = res.error
+  case msg.channel
+  of ckTelegram: log.warn("tg editImmediate: " & error)
+  of ckDiscord:  log.warn("dc editImmediate: " & error)
+  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli:
+    discard
+  false
+
 proc editStreamOutbound*(msg: OutboundMessage;
                          channelMsgId: string;
                          ports: OutboundChannelPorts;
@@ -81,6 +101,10 @@ proc routeOutbound*(msg: OutboundMessage;
                     ports: OutboundChannelPorts;
                     log: Logger;
                     streamMsgIds: var Table[string, string]) {.gcsafe.} =
+  if msg.editTargetId.len > 0:
+    if not editImmediateOutbound(msg, ports, log):
+      sendImmediateOutbound(msg, ports, log)
+    return
   let decision = decideOutbound(msg, streamMsgIds)
   case decision.intent
   of oiSend:

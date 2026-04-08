@@ -274,12 +274,16 @@ proc sendReplyText*(globalOutbox: AsyncQueue[OutboundMessage];
                     uid: UserId;
                     channel: ChannelKind;
                     replyTo: string;
-                    text: string): Future[void] {.async.} =
+                    text: string;
+                    editTargetId = "";
+                    replaceKeyboard = false): Future[void] {.async.} =
   await globalOutbox.put(OutboundMessage(
     userId: uid,
     channel: channel,
     text: text,
     replyTo: replyTo,
+    editTargetId: editTargetId,
+    replaceKeyboard: replaceKeyboard,
   ))
 
 proc sendReplyKeyboard*(globalOutbox: AsyncQueue[OutboundMessage];
@@ -287,13 +291,16 @@ proc sendReplyKeyboard*(globalOutbox: AsyncQueue[OutboundMessage];
                         channel: ChannelKind;
                         replyTo: string;
                         text: string;
-                        keyboard: seq[seq[(string, string)]]): Future[void] {.async.} =
+                        keyboard: seq[seq[(string, string)]];
+                        editTargetId = ""): Future[void] {.async.} =
   await globalOutbox.put(OutboundMessage(
     userId: uid,
     channel: channel,
     text: text,
     replyTo: replyTo,
     keyboard: keyboard,
+    editTargetId: editTargetId,
+    replaceKeyboard: editTargetId.len > 0,
   ))
 
 proc sendPipelineError(globalOutbox: AsyncQueue[OutboundMessage];
@@ -318,6 +325,16 @@ proc safeHasProfile(memory: MemoryRuntimePort;
     memory.hasProfile(uid)
   except Exception:
     false
+
+proc safeHasCompletedBootstrap(memory: MemoryRuntimePort;
+                               uid: UserId): bool {.gcsafe, raises: [].} =
+  try:
+    memory.loadContext(uid).userMd.strip.len > 0
+  except Exception:
+    false
+
+func shouldEditTelegramBootstrap(channel: ChannelKind; editTargetId: string): bool =
+  channel == ckTelegram and editTargetId.len > 0
 
 proc safeSaveSession(memory: MemoryRuntimePort;
                      uid: UserId;
@@ -382,14 +399,17 @@ proc sendNameChoiceOrPrompt(globalOutbox: AsyncQueue[OutboundMessage];
                             channel: ChannelKind;
                             replyTo: string;
                             names: seq[string];
-                            keyboardText: string): Future[void] {.async.} =
+                            keyboardText: string;
+                            editTargetId = ""): Future[void] {.async.} =
   if names.len > 0:
     await sendReplyKeyboard(
       globalOutbox, uid, channel, replyTo,
       keyboardText,
-      buildNameChoiceKeyboard(names))
+      buildNameChoiceKeyboard(names),
+      editTargetId)
   else:
-    await sendReplyText(globalOutbox, uid, channel, replyTo, "Que nome você quer me dar?")
+    await sendReplyText(globalOutbox, uid, channel, replyTo, "Que nome você quer me dar?",
+      editTargetId = editTargetId, replaceKeyboard = editTargetId.len > 0)
 
 proc persistUserProfile(memory: MemoryRuntimePort;
                         uid: UserId;
@@ -891,16 +911,20 @@ proc handleGuidedPersonalityChoice(globalOutbox: AsyncQueue[OutboundMessage];
 
   let guidedCtx = guidedOpt.get()
   result = guidedCtx.onboarding
+  let editTargetId = if shouldEditTelegramBootstrap(channel, replyTo): replyTo else: ""
 
   if guidedCtx.keyboard.len > 0:
-    await sendReplyKeyboard(globalOutbox, uid, channel, replyTo, guidedCtx.replyText, guidedCtx.keyboard)
+    await sendReplyKeyboard(globalOutbox, uid, channel, replyTo,
+      guidedCtx.replyText, guidedCtx.keyboard, editTargetId)
   elif guidedCtx.needsNames:
     await sendNameChoiceOrPrompt(
       globalOutbox, uid, channel, replyTo,
       guidedCtx.onboarding.names,
-      "Aqui estão alguns nomes que combinam com essa personalidade. Qual prefere?")
+      "Aqui estão alguns nomes que combinam com essa personalidade. Qual prefere?",
+      editTargetId)
   elif guidedCtx.replyText.len > 0:
-    await sendReplyText(globalOutbox, uid, channel, replyTo, guidedCtx.replyText)
+    await sendReplyText(globalOutbox, uid, channel, replyTo, guidedCtx.replyText,
+      editTargetId = editTargetId, replaceKeyboard = editTargetId.len > 0)
 
 proc handleFreeConvoOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
                                completeFn: CompleteFn;
@@ -929,10 +953,12 @@ proc handleFreeConvoOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
     await sendReplyText(globalOutbox, uid, channel, replyTo, freeCtx.visibleText)
 
   if freeCtx.parsedTraits.isSome:
+    let editTargetId = if shouldEditTelegramBootstrap(channel, replyTo): replyTo else: ""
     await sendNameChoiceOrPrompt(
       globalOutbox, uid, channel, replyTo,
       freeCtx.onboarding.names,
-      "Com base em quem você quer que eu seja, aqui estão alguns nomes:")
+      "Com base em quem você quer que eu seja, aqui estão alguns nomes:",
+      editTargetId)
 
 proc advanceUserProfileOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
                                   memory: MemoryRuntimePort;
@@ -953,7 +979,9 @@ proc advanceUserProfileOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
   result = (profileCtx.onboarding, profileCtx.identity)
   persistUserProfile(memory, uid, profileCtx)
   if profileCtx.replyText.len > 0:
-    await sendReplyText(globalOutbox, uid, channel, replyTo, profileCtx.replyText)
+    let editTargetId = if shouldEditTelegramBootstrap(channel, replyTo): replyTo else: ""
+    await sendReplyText(globalOutbox, uid, channel, replyTo, profileCtx.replyText,
+      editTargetId = editTargetId, replaceKeyboard = editTargetId.len > 0)
 
 proc handleResetControlTask(globalOutbox: AsyncQueue[OutboundMessage];
                             memory: MemoryRuntimePort;
@@ -981,13 +1009,16 @@ proc handleResetControlTask(globalOutbox: AsyncQueue[OutboundMessage];
   let wakeup = decideOnboardingTurn(nextOnboarding, "")
   nextOnboarding = wakeup.onboarding
   log.info($uid & " (" & $channel & ") reset bootstrap: completed; onboarding ready")
+  let editTargetId = if shouldEditTelegramBootstrap(channel, replyTo): replyTo else: ""
   if wakeup.kind == oekWakeUp and wakeup.keyboard.len > 0:
     await sendReplyKeyboard(globalOutbox, uid, channel, replyTo,
       "✅ Bootstrap reiniciado.\n\n" & wakeup.replyText,
-      wakeup.keyboard)
+      wakeup.keyboard,
+      editTargetId)
   else:
     await sendReplyText(globalOutbox, uid, channel, replyTo,
-      "✅ Bootstrap reiniciado. Pronto para recomeçar.")
+      "✅ Bootstrap reiniciado. Pronto para recomeçar.",
+      editTargetId = editTargetId, replaceKeyboard = editTargetId.len > 0)
   (resetCtx.history, nextOnboarding, true)
 
 proc handleDebugToggleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
@@ -1185,7 +1216,8 @@ proc handleOnboardingTurn(globalOutbox: AsyncQueue[OutboundMessage];
       decision.replyText, decision.keyboard)
 
   of oekButtonOnly:
-    await sendReplyText(globalOutbox, uid, channel, replyTo, decision.replyText)
+    if channel != ckTelegram:
+      await sendReplyText(globalOutbox, uid, channel, replyTo, decision.replyText)
 
   of oekFreeConvoText:
     (result.history, result.onboarding) = await handleFreeConvoOnboarding(
@@ -1441,7 +1473,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
     safeSaveSession(memory, uid, sessionId, result.history)
   if controlResult.handled or msg.taskKind notin {tkUserMsg, tkHeartbeat}:
     return
-  if msg.taskKind == tkHeartbeat and not safeHasProfile(memory, uid):
+  if msg.taskKind == tkHeartbeat and not safeHasCompletedBootstrap(memory, uid):
     return
 
   result = await handleUserTurn(

@@ -43,11 +43,13 @@ type
     userId*:    UserId
     text*:      string
     replyTo*:   string       ## channel-specific id to reply to (optional)
+    editTargetId*: string    ## channel-specific message id to edit in place (optional)
     channel*:   ChannelKind
     streamId*:  string       ## non-empty for streaming turns
     isPartial*: bool         ## true for streaming partial edits
     mediaUrl*:  string       ## non-empty → send as photo/document instead of text
     keyboard*:  seq[seq[(string, string)]]  ## non-empty → send with inline keyboard buttons: [[("label","callback_data"),...],...]
+    replaceKeyboard*: bool   ## true → edit keyboard even when `keyboard` is empty
 
   ToolDescription* = object
     name*:        string

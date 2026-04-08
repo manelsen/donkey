@@ -429,8 +429,79 @@ suite "OrchestratorAgent":
 
     check resetReply.text.contains("Bootstrap reiniciado")
     check resetReply.text.contains("Como quer definir minha personalidade?")
-    check onboardingReply.text.contains("Use os botões acima para escolher")
+    check onboardingReply.text.len == 0
     check providerCalls == 0
+
+  test "telegram onboarding callback edits the same bootstrap message":
+    let tmpDir = getTempDir() / "donkey_test_tg_bootstrap_edits"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[(OutboundMessage, OutboundMessage)] {.async.} =
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-tg-bootstrap", state))
+      await inbox.put(newTaskMsg("req-tg-1", tkUserMsg, "u-tg-bootstrap", "oi", ckTelegram, "101"))
+      let wakeupReply = await outbox.get()
+      await inbox.put(newTaskMsg("req-tg-2", tkPersonalityChoice, "u-tg-bootstrap",
+                                 "personality:mode:guided", ckTelegram, "555"))
+      let guidedReply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      (wakeupReply, guidedReply)
+
+    let (wakeupReply, guidedReply) = waitFor doTest(tmpDir)
+    check wakeupReply.keyboard.len > 0
+    check wakeupReply.editTargetId.len == 0
+    check guidedReply.text.contains("energia e entusiasmo")
+    check guidedReply.keyboard.len > 0
+    check guidedReply.editTargetId == "555"
+
+  test "heartbeat remains blocked after agent name choice until user profile completes":
+    let tmpDir = getTempDir() / "donkey_test_orch_heartbeat_name_guard"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[(int, int)] {.async.} =
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var providerCalls = 0
+      let countingComplete =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+          {.cast(gcsafe).}: inc providerCalls
+          ok(CompletionResponse(text: "pong", inputTokens: 1, outputTokens: 1))
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-heartbeat-mid-bootstrap", state))
+      await inbox.put(newTaskMsg("req-mid-1", tkUserMsg, "u-heartbeat-mid-bootstrap", "oi", ckTelegram, "101"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-mid-2", tkPersonalityChoice, "u-heartbeat-mid-bootstrap", "personality:mode:guided", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-mid-3", tkPersonalityChoice, "u-heartbeat-mid-bootstrap", "personality:energy:neutro", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-mid-4", tkPersonalityChoice, "u-heartbeat-mid-bootstrap", "personality:tone:casual", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-mid-5", tkPersonalityChoice, "u-heartbeat-mid-bootstrap", "personality:length:moderado", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-mid-6", tkPersonalityChoice, "u-heartbeat-mid-bootstrap", "personality:initiative:proativo", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-mid-7", tkNameChoice, "u-heartbeat-mid-bootstrap", "name:Nex", ckTelegram, "555"))
+      let nameReply = await outbox.get()
+      await inbox.put(newTaskMsg("req-mid-hb", tkHeartbeat, "u-heartbeat-mid-bootstrap", "review pending"))
+      await sleepAsync(chronos.milliseconds(50))
+      await inbox.put(newCancelMsg())
+      (providerCalls, if nameReply.text.contains("qual é o seu nome?"): 1 else: 0)
+
+    let (providerCalls, sawNamePrompt) = waitFor doTest(tmpDir)
+    check providerCalls == 0
+    check sawNamePrompt == 1
 
 suite "payload helpers":
 

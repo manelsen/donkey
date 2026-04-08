@@ -1,6 +1,9 @@
 import std/[tables, unittest]
+import results
 import donkey/app/outbound_runtime
+import donkey/core/log
 import donkey/domain/message
+import donkey/ports/channel
 
 suite "outbound_runtime":
 
@@ -87,3 +90,74 @@ suite "outbound_runtime":
                               streamId: "s1", isPartial: false)
     streamIds = withStreamCleanup(msg, streamIds)
     check "s1" notin streamIds
+
+  test "routeOutbound edits immediate message when edit target is provided":
+    var sentCount = 0
+    var editedText = ""
+    var editedKeyboardCount = -1
+    let ports = OutboundChannelPorts(
+      telegram: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}: inc sentCount
+          ok(),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m1"),
+        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}: editedText = text
+          ok(),
+        sendKeyboard: proc(userId: UserId; text: string;
+                           buttons: seq[seq[(string, string)]];
+                           replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
+        editKeyboard: proc(userId: UserId; msgId, text: string;
+                           buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}:
+            editedText = text
+            editedKeyboardCount = buttons.len
+          ok(),
+        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+      )
+    )
+    var streamIds = initTable[string, string]()
+    routeOutbound(
+      OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "edit me", editTargetId: "42"),
+      ports,
+      newLogger("test.outbound"),
+      streamIds)
+    check sentCount == 0
+    check editedText == "edit me"
+    check editedKeyboardCount == -1
+
+  test "routeOutbound can replace keyboard while editing immediate message":
+    var editedText = ""
+    var editedKeyboardCount = -1
+    let ports = OutboundChannelPorts(
+      telegram: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} = ok(),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m1"),
+        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} = ok(),
+        sendKeyboard: proc(userId: UserId; text: string;
+                           buttons: seq[seq[(string, string)]];
+                           replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
+        editKeyboard: proc(userId: UserId; msgId, text: string;
+                           buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}:
+            editedText = text
+            editedKeyboardCount = buttons.len
+          ok(),
+        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+      )
+    )
+    var streamIds = initTable[string, string]()
+    routeOutbound(
+      OutboundMessage(
+        userId: UserId("u1"),
+        channel: ckTelegram,
+        text: "pick one",
+        editTargetId: "42",
+        replaceKeyboard: true,
+        keyboard: @[@[("A", "a")]],
+      ),
+      ports,
+      newLogger("test.outbound"),
+      streamIds)
+    check editedText == "pick one"
+    check editedKeyboardCount == 1
