@@ -30,6 +30,9 @@ type
 func supportsEditableStreams*(channel: ChannelKind): bool =
   channel in {ckTelegram, ckDiscord}
 
+func supportsEditableReplacement*(channel: ChannelKind): bool =
+  channel in {ckTelegram, ckDiscord}
+
 func classifyOutbound*(msg: OutboundMessage;
                        streamMsgIds: Table[string, string]): OutboundKind =
   if msg.streamId.len == 0:

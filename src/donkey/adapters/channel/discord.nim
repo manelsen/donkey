@@ -144,6 +144,7 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
       kind:             deButtonClick,
       discordUserId:    r.rawId,
       content:          r.content,
+      messageId:        r.messageId,
       interactionId:    r.interactionId,
       interactionToken: r.interactionToken,
     )

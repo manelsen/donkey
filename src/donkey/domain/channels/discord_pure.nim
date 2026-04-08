@@ -149,10 +149,12 @@ func parseInteractionCreate(d: JsonNode): DsParseResult =
 
   if interactionType == 3:
     let customId = d.getOrDefault("data").getOrDefault("custom_id").getStr("")
+    let messageId = d.getOrDefault("message").getOrDefault("id").getStr("")
     return DsParseResult(
       kind:             dekButtonClick,
       rawId:            userId,
       content:          customId,
+      messageId:        messageId,
       interactionId:    interactionId,
       interactionToken: interactionToken,
     )

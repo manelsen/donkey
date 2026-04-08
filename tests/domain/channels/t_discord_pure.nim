@@ -440,6 +440,12 @@ suite "discord_pure.parseDispatch — button click (synthetic)":
     let r = parseDispatch("INTERACTION_CREATE", d)
     check r.hasInteraction
 
+  test "messageId is captured from the clicked message":
+    var d = makeButtonClick("u1", "ix-btn", "tok", "x")
+    d["message"] = %* {"id": "msg-btn-42"}
+    let r = parseDispatch("INTERACTION_CREATE", d)
+    check r.messageId == "msg-btn-42"
+
 
 suite "discord_pure.parseDispatch — modal submit (synthetic)":
 

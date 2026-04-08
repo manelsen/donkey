@@ -32,6 +32,7 @@ import chronos
 import chronos/asyncsync
 import ../core/pipeops
 import ../core/log
+import ../core/outbound/outbound
 import ../core/onboarding/onboarding
 import ../core/tooling/tool_loop
 import ../core/security/secret_scan
@@ -333,8 +334,8 @@ proc safeHasCompletedBootstrap(memory: MemoryRuntimePort;
   except Exception:
     false
 
-func shouldEditTelegramBootstrap(channel: ChannelKind; editTargetId: string): bool =
-  channel == ckTelegram and editTargetId.len > 0
+func shouldEditBootstrapPrompt(channel: ChannelKind; editTargetId: string): bool =
+  editTargetId.len > 0 and supportsEditableReplacement(channel)
 
 proc safeSaveSession(memory: MemoryRuntimePort;
                      uid: UserId;
@@ -911,7 +912,7 @@ proc handleGuidedPersonalityChoice(globalOutbox: AsyncQueue[OutboundMessage];
 
   let guidedCtx = guidedOpt.get()
   result = guidedCtx.onboarding
-  let editTargetId = if shouldEditTelegramBootstrap(channel, replyTo): replyTo else: ""
+  let editTargetId = if shouldEditBootstrapPrompt(channel, replyTo): replyTo else: ""
 
   if guidedCtx.keyboard.len > 0:
     await sendReplyKeyboard(globalOutbox, uid, channel, replyTo,
@@ -953,7 +954,7 @@ proc handleFreeConvoOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
     await sendReplyText(globalOutbox, uid, channel, replyTo, freeCtx.visibleText)
 
   if freeCtx.parsedTraits.isSome:
-    let editTargetId = if shouldEditTelegramBootstrap(channel, replyTo): replyTo else: ""
+    let editTargetId = if shouldEditBootstrapPrompt(channel, replyTo): replyTo else: ""
     await sendNameChoiceOrPrompt(
       globalOutbox, uid, channel, replyTo,
       freeCtx.onboarding.names,
@@ -979,7 +980,7 @@ proc advanceUserProfileOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
   result = (profileCtx.onboarding, profileCtx.identity)
   persistUserProfile(memory, uid, profileCtx)
   if profileCtx.replyText.len > 0:
-    let editTargetId = if shouldEditTelegramBootstrap(channel, replyTo): replyTo else: ""
+    let editTargetId = if shouldEditBootstrapPrompt(channel, replyTo): replyTo else: ""
     await sendReplyText(globalOutbox, uid, channel, replyTo, profileCtx.replyText,
       editTargetId = editTargetId, replaceKeyboard = editTargetId.len > 0)
 
@@ -1009,7 +1010,7 @@ proc handleResetControlTask(globalOutbox: AsyncQueue[OutboundMessage];
   let wakeup = decideOnboardingTurn(nextOnboarding, "")
   nextOnboarding = wakeup.onboarding
   log.info($uid & " (" & $channel & ") reset bootstrap: completed; onboarding ready")
-  let editTargetId = if shouldEditTelegramBootstrap(channel, replyTo): replyTo else: ""
+  let editTargetId = if shouldEditBootstrapPrompt(channel, replyTo): replyTo else: ""
   if wakeup.kind == oekWakeUp and wakeup.keyboard.len > 0:
     await sendReplyKeyboard(globalOutbox, uid, channel, replyTo,
       "✅ Bootstrap reiniciado.\n\n" & wakeup.replyText,
@@ -1216,7 +1217,7 @@ proc handleOnboardingTurn(globalOutbox: AsyncQueue[OutboundMessage];
       decision.replyText, decision.keyboard)
 
   of oekButtonOnly:
-    if channel != ckTelegram:
+    if not shouldEditBootstrapPrompt(channel, replyTo):
       await sendReplyText(globalOutbox, uid, channel, replyTo, decision.replyText)
 
   of oekFreeConvoText:

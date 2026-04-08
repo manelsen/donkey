@@ -418,7 +418,7 @@ proc handleDiscordEvent*(sm: var SessionManager;
       let entry = sm.getOrCreate(userId)
       inc msgSeq
       entry.inbox.addLastNoWait(
-        newTaskMsg($msgSeq, callbackTaskKind(callback), $userId, callback.value, ckDiscord, ""))
+        newTaskMsg($msgSeq, callbackTaskKind(callback), $userId, callback.value, ckDiscord, event.messageId))
     of cbrNone:
       discard
 
