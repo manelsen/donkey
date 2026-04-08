@@ -53,8 +53,28 @@ logLevel = "info"
 | `ANTHROPIC_API_KEY` | For Anthropic | claude-* models |
 | `GEMINI_API_KEY` | For Gemini | gemini-* models |
 | `MINIMAX_API_KEY` | For MiniMax | MiniMax-M2 |
+| `DONKEY_MAGMA_SQLITE_PATH` | Optional | SQLite file used by the default MAGMA backend |
+| `DONKEY_SQLITE_VEC_PATH` | Optional | Path to the `sqlite-vec` extension binary for SQLite vector search |
 | `DONKEY_PG_DSN` | For Multigraph Memory | PostgreSQL DSN used by the graph-backed memory runtime |
 | `DONKEY_MASTER_KEY` | If using secrets | Master key for encrypted secrets |
+
+### SQLite default
+
+SQLite-backed MAGMA is now the default local path. If Donkey is built with
+`-d:withSqlite`, it will use `~/.donkey/state/magma.sqlite` automatically unless
+you override it. In this mode the build is self-contained: SQLite base and
+`sqlite-vec` are compiled into the Donkey binary.
+
+```bash
+export DONKEY_MAGMA_SQLITE_PATH="$HOME/.donkey/state/magma.sqlite"
+# Optional: enable sqlite-vec fast path
+export DONKEY_SQLITE_VEC_PATH=/absolute/path/to/vec0
+nim c -d:withSqlite src/donkey.nim
+```
+
+`DONKEY_SQLITE_VEC_PATH` is now mostly a fallback/override for non-embedded
+deployments. In the normal `withSqlite` build, no system `libsqlite3` or
+external vector extension is required at runtime.
 
 ### PostgreSQL via Docker
 
@@ -129,9 +149,10 @@ Each user gets a paddock at `~/.donkey/paddocks/<uuid>/`:
   .secrets/        # encrypted API keys (nimcrypto)
 ```
 
-When `DONKEY_PG_DSN` is not configured, these files are the live memory backend.
+When neither `DONKEY_MAGMA_SQLITE_PATH` nor `DONKEY_PG_DSN` is configured,
+these files are the live memory backend.
 
-When `DONKEY_PG_DSN` is configured and Donkey is built with the default PostgreSQL-enabled build,
+When `DONKEY_MAGMA_SQLITE_PATH` or `DONKEY_PG_DSN` is configured,
 `Multigraph Memory` becomes the authoritative runtime store for profile,
 preferences, and episodic memory. In that mode:
 

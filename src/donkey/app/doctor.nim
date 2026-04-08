@@ -42,7 +42,8 @@ proc apiKeyResult(v: string; envVar: string): Result[string, string] =
 proc pgvectorResult(dsn: string): Result[string, string] =
   if dsn.len == 0:
     err(
-      "DONKEY_PG_DSN not set — recommended: `docker compose up -d postgres` " &
+      "DONKEY_PG_DSN not set — SQLite MAGMA is now the default; " &
+      "PostgreSQL is optional and recommended for larger installs via `docker compose up -d postgres` " &
       "and export `DONKEY_PG_DSN='host=127.0.0.1 user=postgres password=donkey_pass dbname=donkey port=5432'`"
     )
   else:

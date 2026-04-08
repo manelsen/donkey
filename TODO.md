@@ -18,6 +18,9 @@ Plano executável no ralph-tui: `tasks/prd.json`
 - [ ] Aproximar a implementação do paper do Multigraph Memory.
   Prioridades: causalidade materializada de verdade, retrieval menos heurístico e política de recuperação mais próxima do desenho do paper.
 
+- [ ] Consolidar MAGMA SQLite self-contained com SQLite base e `sqlite-vec` embutidos.
+  Prioridades: manter o caminho local-first como padrão, reduzir ao mínimo os artefatos externos opcionais e deixar o trilho `GraphQLite` preparado como fase seguinte.
+
 - [ ] Adicionar camada self-improving e contemplative sobre o Multigraph Memory.
   Prioridades: commitments/promises, heartbeat de accountability, episode journaling, SIS de lessons e Knowledge Library separada da memória autobiográfica.
 

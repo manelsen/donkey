@@ -14,18 +14,15 @@ switch("define", "wasm3HasWasi")
 # Required for Discord gateway thread (Channel[T] cross-thread communication).
 switch("threads", "on")
 
-# PostgreSQL + pgvector + Apache AGE backend (default).
-# Opt out with: nimble build -u:withPostgres
-# Requires libpq installed: apt install libpq-dev  (Debian/Ubuntu)
-#                            apk add postgresql-dev  (Alpine)
-switch("define", "withPostgres")
+# PostgreSQL backend disabled by default on the sqlite branch.
+# Re-enable explicitly with: nim c -d:withPostgres ...
 
 when defined(withPostgres):
   switch("passL", "-lpq")
 
-# SQLite backend (opt-in).
+# SQLite fast-cache backend (opt-in).
 # Build with: nimble build -d:withSqlite
-# Uses the embedded SQLite amalgamation in self-contained builds.
+# Uses embedded SQLite amalgamation in self-contained builds.
 when defined(withSqlite):
   switch("define", "staticSqlite")
 

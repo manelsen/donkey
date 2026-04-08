@@ -33,6 +33,7 @@ suite "buildEnvContent":
     let env = buildEnvContent(@[], @[])
     check "docker compose up -d postgres" in env
     check "DONKEY_PG_DSN=host=127.0.0.1" in env
+    check "DONKEY_SQLITE_VEC_PATH=/absolute/path/to/vec0" in env
 
   test "generated toml uses oci mode with docker runtime":
     let toml = buildTomlContent(home = "/tmp/x")
