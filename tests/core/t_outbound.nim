@@ -77,3 +77,53 @@ suite "core outbound decisions":
                               streamId: "s1", isPartial: false)
     streamIds = withStreamCleanup(msg, streamIds)
     check "s1" notin streamIds
+
+  test "buildReplacementSurface models reusable outbound UI without channel specifics":
+    let surface = buildReplacementSurface(
+      slot = "bootstrap",
+      text = "Como quer definir minha personalidade?",
+      keyboard = @[@[("Calmo", "tone:calm")]],
+    )
+    check surface.kind == pskReplaceable
+    check surface.slot == "bootstrap"
+    check surface.fallbackText == "Como quer definir minha personalidade?"
+    check surface.msg.text == "Como quer definir minha personalidade?"
+    check surface.msg.keyboard.len == 1
+    check surface.msg.replacementSlot == "bootstrap"
+
+  test "buildStreamingSurface distinguishes append-only from replaceable status":
+    let partial = buildStreamingSurface(
+      slot = "status",
+      streamId = "s-1",
+      text = "Processando",
+      isPartial = true,
+    )
+    let final = buildStreamingSurface(
+      slot = "status",
+      streamId = "s-1",
+      text = "Concluído",
+      isPartial = false,
+    )
+    check partial.kind == pskStreaming
+    check partial.slot == "status"
+    check partial.fallbackText == "Processando"
+    check partial.msg.streamId == "s-1"
+    check partial.msg.isPartial
+    check final.kind == pskStreaming
+    check final.msg.streamId == "s-1"
+    check not final.msg.isPartial
+
+  test "toOutboundMessage projects a presentation surface onto a channel message":
+    let surface = buildReplacementSurface(
+      slot = "help",
+      text = "Ajuda",
+      keyboard = @[@[("Voltar", "help:page:0")]],
+    )
+    let base = OutboundMessage(userId: UserId("u1"), channel: ckTelegram, replyTo: "42")
+    let projected = toOutboundMessage(surface, base)
+    check projected.userId == UserId("u1")
+    check projected.channel == ckTelegram
+    check projected.replyTo == "42"
+    check projected.text == "Ajuda"
+    check projected.replacementSlot == "help"
+    check projected.keyboard.len == 1

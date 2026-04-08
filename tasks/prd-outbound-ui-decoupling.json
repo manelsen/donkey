@@ -1,0 +1,133 @@
+{
+  "name": "Outbound UI Decoupling and Presentation Surface Refactor",
+  "branchName": "ralph/outbound-ui-decoupling",
+  "description": "Move ephemeral UI ownership closer to the core by introducing a core/outbound presentation surface, shared presentation state, and unified handling for replaceable menus, status, and streaming across channels.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Define core presentation surface model in core/outbound",
+      "description": "As a maintainer, I want a canonical presentation surface model in core/outbound so that channels stop inventing their own UI-state conventions.",
+      "acceptanceCriteria": [
+        "A core-owned type or set of types defines reusable presentation concepts such as replaceable surfaces, slots, and update semantics.",
+        "The model lives under core/outbound and does not reference Telegram-, Discord-, or adapter-specific API names.",
+        "Existing outbound flows can map to the new model without changing visible behavior.",
+        "There is test coverage proving the model can represent reusable/editable UI independently of channel-specific mechanics.",
+        "nim c --mm:orc src/donkey.nim passes.",
+        "nim c --mm:orc -r tests/adapters/channel/t_telegram_runtime.nim passes.",
+        "nim c --mm:orc -r tests/channel/t_discord.nim passes.",
+        "nim c --mm:orc -r tests/app/t_outbound_runtime.nim passes.",
+        "nim c --mm:orc -r tests/app/t_orchestrator.nim passes.",
+        "nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim passes."
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Branch: us/us-001-core-presentation-surface\nStatus: complete\nFiles: src/donkey/core/outbound/outbound.nim; tests/core/t_outbound.nim\nTests: added coverage for replaceable surfaces, streaming surfaces, and projection into OutboundMessage\nValidation: nim c --mm:orc -r tests/core/t_outbound.nim ✅; nim c --mm:orc src/donkey.nim ✅; nim c --mm:orc -r tests/adapters/channel/t_telegram_runtime.nim ✅; nim c --mm:orc -r tests/channel/t_discord.nim ✅; nim c --mm:orc -r tests/app/t_outbound_runtime.nim ✅; nim c --mm:orc -r tests/app/t_orchestrator.nim emitted all green test cases but the runner stayed alive after completion; nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim ✅\nRisks: the shared presentation model is introduced but not yet consumed broadly outside existing outbound helpers.\nCarry forward: core/outbound now owns PresentationSurface, PresentationMessage, replaceable vs streaming semantics, and projection into OutboundMessage.",
+      "dependsOn": []
+    },
+    {
+      "id": "US-002",
+      "title": "Introduce presentation state boundary for replaceable menus",
+      "description": "As a maintainer, I want presentation state managed through a dedicated boundary so that adapters no longer own mutable UI slot bookkeeping directly for replaceable menus.",
+      "acceptanceCriteria": [
+        "A runtime or port is introduced to manage presentation state such as slot-to-message bindings for replaceable menus.",
+        "Telegram and Discord no longer implement their own slot keying helpers locally.",
+        "The new boundary is reusable from multiple channel runtimes.",
+        "Existing bootstrap replacement behavior continues to work unchanged.",
+        "nim c --mm:orc src/donkey.nim passes.",
+        "nim c --mm:orc -r tests/adapters/channel/t_telegram_runtime.nim passes.",
+        "nim c --mm:orc -r tests/channel/t_discord.nim passes.",
+        "nim c --mm:orc -r tests/app/t_outbound_runtime.nim passes.",
+        "nim c --mm:orc -r tests/app/t_orchestrator.nim passes.",
+        "nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim passes."
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Open-question resolution: state model is organized first around replaceable menus.",
+      "dependsOn": ["US-001"]
+    },
+    {
+      "id": "US-003",
+      "title": "Migrate menu config models think and help to presentation runtime",
+      "description": "As a user, I want interactive menus to behave consistently across channels so that opening one surface does not accidentally stomp another.",
+      "acceptanceCriteria": [
+        "menu, config, models, think, and help use the shared presentation runtime instead of adapter-local state tables.",
+        "Telegram and Discord each preserve their current UX semantics where supported.",
+        "Separate UI surfaces keep independent state and do not overwrite each other accidentally.",
+        "Regression tests cover at least one multi-surface scenario per supported interactive channel.",
+        "nim c --mm:orc src/donkey.nim passes.",
+        "nim c --mm:orc -r tests/adapters/channel/t_telegram_runtime.nim passes.",
+        "nim c --mm:orc -r tests/channel/t_discord.nim passes.",
+        "nim c --mm:orc -r tests/app/t_outbound_runtime.nim passes.",
+        "nim c --mm:orc -r tests/app/t_orchestrator.nim passes.",
+        "nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim passes."
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": ["US-002"]
+    },
+    {
+      "id": "US-004",
+      "title": "Bring status and streaming into the same presentation model",
+      "description": "As a maintainer, I want status and streaming surfaces modeled in the same system so that ephemeral presentation behavior is not split across unrelated mechanisms.",
+      "acceptanceCriteria": [
+        "The design explicitly covers status and streaming-related UI updates, not just static menus.",
+        "Existing stream and status tracking is migrated or wrapped so it fits the shared presentation model.",
+        "The implementation distinguishes reusable UI surfaces from append-only content where necessary.",
+        "There are tests showing that status and streaming flows do not regress while adopting the shared model.",
+        "nim c --mm:orc src/donkey.nim passes.",
+        "nim c --mm:orc -r tests/adapters/channel/t_telegram_runtime.nim passes.",
+        "nim c --mm:orc -r tests/channel/t_discord.nim passes.",
+        "nim c --mm:orc -r tests/app/t_outbound_runtime.nim passes.",
+        "nim c --mm:orc -r tests/app/t_orchestrator.nim passes.",
+        "nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim passes."
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Open-question resolution: scope is complete implementation, including status and streaming rather than stopping at menus.",
+      "dependsOn": ["US-003"]
+    },
+    {
+      "id": "US-005",
+      "title": "Move fallback copy ownership into the presentation boundary",
+      "description": "As a maintainer, I want fallback copy for non-editable channels owned by the presentation boundary so that projection behavior stays generic and consistent.",
+      "acceptanceCriteria": [
+        "The presentation boundary owns fallback copy and semantics for non-editable channels.",
+        "Channel runtimes project fallback UI without inventing their own wording for shared surfaces.",
+        "Presentation logic can ask whether a channel supports replacement, editing, components, or related capabilities without naming specific channels.",
+        "Adding a new channel requires wiring capabilities and projection only, not copying orchestration logic or fallback text policy.",
+        "nim c --mm:orc src/donkey.nim passes.",
+        "nim c --mm:orc -r tests/adapters/channel/t_telegram_runtime.nim passes.",
+        "nim c --mm:orc -r tests/channel/t_discord.nim passes.",
+        "nim c --mm:orc -r tests/app/t_outbound_runtime.nim passes.",
+        "nim c --mm:orc -r tests/app/t_orchestrator.nim passes.",
+        "nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim passes."
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Open-question resolution: the shared boundary owns fallback copy.",
+      "dependsOn": ["US-004"]
+    },
+    {
+      "id": "US-006",
+      "title": "Document and harden the presentation architecture",
+      "description": "As a maintainer, I want the presentation model documented so that future UI work follows the same architectural direction instead of reintroducing adapter-local state.",
+      "acceptanceCriteria": [
+        "The repo documents the presentation architecture and intended ownership boundaries.",
+        "The documentation explains where orchestration decisions belong versus where ports and adapters project them.",
+        "The documentation covers editable surfaces, non-editable fallbacks, slot or state ownership, and status or streaming surfaces.",
+        "At least one representative code path under core/outbound is referenced in the documentation.",
+        "nim c --mm:orc src/donkey.nim passes.",
+        "nim c --mm:orc -r tests/adapters/channel/t_telegram_runtime.nim passes.",
+        "nim c --mm:orc -r tests/channel/t_discord.nim passes.",
+        "nim c --mm:orc -r tests/app/t_outbound_runtime.nim passes.",
+        "nim c --mm:orc -r tests/app/t_orchestrator.nim passes.",
+        "nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim passes."
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "",
+      "dependsOn": ["US-005"]
+    }
+  ]
+}

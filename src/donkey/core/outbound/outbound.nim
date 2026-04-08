@@ -4,6 +4,23 @@ import std/tables
 import ../../domain/message
 
 type
+  PresentationSurfaceKind* = enum
+    pskReplaceable
+    pskStreaming
+
+  PresentationMessage* = object
+    text*: string
+    keyboard*: seq[seq[(string, string)]]
+    replacementSlot*: string
+    streamId*: string
+    isPartial*: bool
+
+  PresentationSurface* = object
+    kind*: PresentationSurfaceKind
+    slot*: string
+    fallbackText*: string
+    msg*: PresentationMessage
+
   OutboundKind* = enum
     okImmediate
     okStreamCreate
@@ -26,6 +43,44 @@ type
     streamId*:      string
     existingMsgId*: string
     shouldCleanup*: bool
+
+func buildReplacementSurface*(slot: string;
+                              text: string;
+                              keyboard: seq[seq[(string, string)]] = @[]): PresentationSurface =
+  PresentationSurface(
+    kind: pskReplaceable,
+    slot: slot,
+    fallbackText: text,
+    msg: PresentationMessage(
+      text: text,
+      keyboard: keyboard,
+      replacementSlot: slot,
+    ),
+  )
+
+func buildStreamingSurface*(slot: string;
+                            streamId: string;
+                            text: string;
+                            isPartial: bool): PresentationSurface =
+  PresentationSurface(
+    kind: pskStreaming,
+    slot: slot,
+    fallbackText: text,
+    msg: PresentationMessage(
+      text: text,
+      streamId: streamId,
+      isPartial: isPartial,
+    ),
+  )
+
+func toOutboundMessage*(surface: PresentationSurface;
+                        base: OutboundMessage): OutboundMessage =
+  result = base
+  result.text = surface.msg.text
+  result.keyboard = surface.msg.keyboard
+  result.replacementSlot = surface.msg.replacementSlot
+  result.streamId = surface.msg.streamId
+  result.isPartial = surface.msg.isPartial
 
 func supportsEditableStreams*(channel: ChannelKind): bool =
   channel in {ckTelegram, ckDiscord}
