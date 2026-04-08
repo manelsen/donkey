@@ -1,7 +1,7 @@
 ## Domain message types and pure orchestration helpers.
 ## No imports from adapters or ports — only stdlib and core/types.
 
-import std/strutils
+import std/[sets, strutils]
 import ../core/types
 
 export types
@@ -122,7 +122,21 @@ func addAssistantWithToolCalls*(h: var ConversationHistory;
 func trimTo*(h: var ConversationHistory; maxLen: int) =
   ## Keeps the most recent `maxLen` turns (discards oldest).
   if h.len > maxLen:
-    h = h[h.len - maxLen .. ^1]
+    let retained = h[h.len - maxLen .. ^1]
+    var seenToolCalls = initHashSet[string]()
+    var sanitized: ConversationHistory = @[]
+    for msg in retained:
+      if msg.toolCalls.len > 0:
+        for tc in msg.toolCalls:
+          if tc.id.len > 0:
+            seenToolCalls.incl(tc.id)
+        sanitized.add(msg)
+      elif msg.role == roleTool:
+        if msg.toolCallId.len == 0 or msg.toolCallId in seenToolCalls:
+          sanitized.add(msg)
+      else:
+        sanitized.add(msg)
+    h = sanitized
 
 # ── pure orchestration ────────────────────────────────────────────────────────
 

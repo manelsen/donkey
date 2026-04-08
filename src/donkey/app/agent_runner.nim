@@ -184,9 +184,11 @@ proc runTurn*(runner: var AgentRunner;
 
     ## Tool call round — execute and feed results back.
     runner.logger.info("tool calls=" & $resp.toolCalls.len & " round=" & $round)
+    runner.history.addAssistantWithToolCalls(resp.text, resp.toolCalls)
     let results = executeToolCalls(runner.clients, resp.toolCalls, runner.logger)
     for (tc, output) in results:
       runner.history.addToolResult(tc.id, tc.name, output)
+    runner.history.trimTo(runner.maxHistory)
 
   ## Exceeded MaxToolRounds — return last assistant text if any.
   err("Tool call loop exceeded " & $MaxToolRounds & " rounds")

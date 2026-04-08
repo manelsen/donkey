@@ -31,6 +31,29 @@ suite "Message types":
     check h.len == 5
     check h[0].text == "6"   # oldest retained
 
+  test "trimTo drops orphan tool results at the boundary":
+    var h = newHistory()
+    h.addUser("u1")
+    h.addAssistantWithToolCalls("", @[ToolCallRequest(id: "call_1", name: "search", inputJson: "{}")])
+    h.addToolResult(id = "call_1", name = "search", output = "results here")
+    h.addAssistant("done")
+    h.trimTo(2)
+    check h.len == 1
+    check h[0].role == roleAssistant
+    check h[0].text == "done"
+
+  test "trimTo preserves tool result when its assistant tool call is still retained":
+    var h = newHistory()
+    h.addUser("u1")
+    h.addAssistantWithToolCalls("", @[ToolCallRequest(id: "call_1", name: "search", inputJson: "{}")])
+    h.addToolResult(id = "call_1", name = "search", output = "results here")
+    h.addAssistant("done")
+    h.trimTo(3)
+    check h.len == 3
+    check h[0].toolCalls.len == 1
+    check h[1].role == roleTool
+    check h[1].toolCallId == "call_1"
+
 suite "buildPrompt":
 
   test "includes system prompt":
