@@ -1,4 +1,4 @@
-import std/[algorithm, os, sequtils, strutils, times]
+import std/[algorithm, os, sequtils, strutils, tables, times]
 import parsetoml
 import results
 import ../../core/pipeops
@@ -15,6 +15,11 @@ when defined(withPostgres) or defined(withSqlite):
 const ThinkLevels* = ["off", "low", "medium", "high"]
 const BudgetPolicies* = ["cheap-first", "balanced", "quality-first"]
 const ModelPageSize* = 6  ## Discord: máx 5 action rows. 6 modelos / 2 por row = 3 rows + 1 nav = 4 rows (seguro)
+const UiSlotMenu* = "menu"
+const UiSlotConfig* = "config"
+const UiSlotModels* = "models"
+const UiSlotThink* = "think"
+const UiSlotHelp* = "help"
 
 const ModelMenu* = [
   ("zai",        @["glm-5",      "glm-4.7",      "glm-4.6"]),
@@ -27,6 +32,25 @@ const ModelMenu* = [
   ("gemini",     @["gemini-2.5-flash",  "gemini-2.5-pro"]),
   ("minimax",    @["MiniMax-M2",        "MiniMax-Text-01"]),
 ]
+
+func uiSlotKey*(userId: UserId; slot: string): string =
+  $userId & "|" & slot
+
+proc getUiMsgId*(uiMsgIds: var Table[string, string];
+                 userId: UserId;
+                 slot: string): string =
+  uiMsgIds.getOrDefault(uiSlotKey(userId, slot))
+
+proc setUiMsgId*(uiMsgIds: var Table[string, string];
+                 userId: UserId;
+                 slot, msgId: string) =
+  if msgId.len > 0:
+    uiMsgIds[uiSlotKey(userId, slot)] = msgId
+
+proc clearUiMsgId*(uiMsgIds: var Table[string, string];
+                   userId: UserId;
+                   slot: string) =
+  uiMsgIds.del(uiSlotKey(userId, slot))
 
 
 func emptyCatalogResult*(): ModelCatalogResult =

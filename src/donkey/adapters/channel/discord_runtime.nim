@@ -12,31 +12,6 @@ import ../identity/identity_resolver
 import ./common_runtime
 import ./discord
 
-const
-  uiSlotMenu = "menu"
-  uiSlotConfig = "config"
-  uiSlotModels = "models"
-  uiSlotThink = "think"
-
-func uiSlotKey(userId: UserId; slot: string): string =
-  $userId & "|" & slot
-
-proc getUiMsgId(uiMsgIds: var Table[string, string];
-                userId: UserId;
-                slot: string): string =
-  uiMsgIds.getOrDefault(uiSlotKey(userId, slot))
-
-proc setUiMsgId(uiMsgIds: var Table[string, string];
-                userId: UserId;
-                slot, msgId: string) =
-  if msgId.len > 0:
-    uiMsgIds[uiSlotKey(userId, slot)] = msgId
-
-proc clearUiMsgId(uiMsgIds: var Table[string, string];
-                  userId: UserId;
-                  slot: string) =
-  uiMsgIds.del(uiSlotKey(userId, slot))
-
 proc sendDiscordReply(event: DiscordRawEvent;
                       dcAdapter: DiscordAdapter;
                       userId: UserId;
@@ -83,7 +58,7 @@ proc sendDiscordKeyboard(dcAdapter: DiscordAdapter;
     let r = dcAdapter.sendInteractionKeyboard(
       event.interactionId, event.interactionToken, title, buttons)
     if r.isOk:
-      kbdMsgIds.setUiMsgId(userId, slot, "interaction")
+      common_runtime.setUiMsgId(kbdMsgIds, userId, slot, "interaction")
       return
     ## Interaction expired or already used — fall back to a regular DM keyboard
     core_log.log(logger, core_log.lvlWarn,
@@ -92,7 +67,7 @@ proc sendDiscordKeyboard(dcAdapter: DiscordAdapter;
   let msgId = dcAdapter.sendKeyboard(userId, title, buttons).valueOr:
     core_log.log(logger, core_log.lvlError, "dc send keyboard: " & error)
     return
-  kbdMsgIds.setUiMsgId(userId, slot, msgId)
+  common_runtime.setUiMsgId(kbdMsgIds, userId, slot, msgId)
 
 proc smartEditKeyboard(dcAdapter: DiscordAdapter;
                        event: DiscordRawEvent;
@@ -119,14 +94,14 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
                             logger: Logger): bool =
   case command.kind
   of cmdConfig:
-    let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotConfig)
+    let kbdId = common_runtime.getUiMsgId(kbdMsgIds, userId, UiSlotConfig)
     if kbdId.len > 0 and event.interactionId.len == 0:
       dcAdapter.smartEditKeyboard(
         event, userId, kbdId, memory.buildConfigText(userId), buildConfigButtons()).isOkOr:
           core_log.log(logger, core_log.lvlWarn, "dc config keyboard: " & error)
     else:
       sendDiscordKeyboard(
-        dcAdapter, event, kbdMsgIds, userId, uiSlotConfig,
+        dcAdapter, event, kbdMsgIds, userId, UiSlotConfig,
         memory.buildConfigText(userId), buildConfigButtons(),
         "Abri a configuração na sua DM.", logger,
       )
@@ -148,7 +123,7 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
       if command.value.strip.len > 0: parseModelsProviderArg(command.value).valueOr: ""
       else: ""
     if providerOnly.len > 0:
-      let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotModels)
+      let kbdId = common_runtime.getUiMsgId(kbdMsgIds, userId, UiSlotModels)
       let (currProv, currModel) = memory.getCurrentProviderModel(userId)
       let catalog = modelCatalogLoader(providerOnly).valueOr: emptyCatalogResult()
       let entries = sortModelCatalog(normalizeModelCatalog(providerOnly, catalog.entries))
@@ -159,20 +134,20 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
           core_log.log(logger, core_log.lvlError, "dc provider direct menu: " & error)
       else:
         sendDiscordKeyboard(
-          dcAdapter, event, kbdMsgIds, userId, uiSlotModels, title, buttons,
+          dcAdapter, event, kbdMsgIds, userId, UiSlotModels, title, buttons,
           "Abri o catálogo de " & providerOnly & " na sua DM.", logger,
         )
     elif command.value.strip.len > 0:
       let reply = memory.applyModelsTextCommand(userId, command.value, modelCatalogLoader).valueOr: error
       sendDiscordReply(event, dcAdapter, userId, reply, logger)
     else:
-      let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotModels)
+      let kbdId = common_runtime.getUiMsgId(kbdMsgIds, userId, UiSlotModels)
       if kbdId.len > 0 and event.interactionId.len == 0:
         dcAdapter.smartEditKeyboard(event, userId, kbdId, "Escolha o provider:", memory.buildProviderButtons(userId)).isOkOr:
             core_log.log(logger, core_log.lvlError, "dc provider reopen: " & error)
       else:
         sendDiscordKeyboard(
-          dcAdapter, event, kbdMsgIds, userId, uiSlotModels,
+          dcAdapter, event, kbdMsgIds, userId, UiSlotModels,
           "Escolha o provider:",
           memory.buildProviderButtons(userId),
           "Abri o seletor de modelo na sua DM.",
@@ -184,13 +159,13 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
       let reply = memory.applyThinkTextCommand(userId, command.value).valueOr: error
       sendDiscordReply(event, dcAdapter, userId, reply, logger)
     else:
-      let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotThink)
+      let kbdId = common_runtime.getUiMsgId(kbdMsgIds, userId, UiSlotThink)
       if kbdId.len > 0 and event.interactionId.len == 0:
         dcAdapter.smartEditKeyboard(event, userId, kbdId, "Nível de raciocínio:", memory.buildThinkButtons(userId)).isOkOr:
             core_log.log(logger, core_log.lvlError, "dc think reopen: " & error)
       else:
         sendDiscordKeyboard(
-          dcAdapter, event, kbdMsgIds, userId, uiSlotThink,
+          dcAdapter, event, kbdMsgIds, userId, UiSlotThink,
           "Nível de raciocínio:",
           memory.buildThinkButtons(userId),
           "Abri o seletor de thinking na sua DM.",
@@ -225,7 +200,7 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
     let (currProv, currModel) = memory.getCurrentProviderModel(userId)
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
-    let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotModels)
+    let kbdId = common_runtime.getUiMsgId(kbdMsgIds, userId, UiSlotModels)
     if kbdId.len > 0:
       dcAdapter.smartEditKeyboard(
         event, userId, kbdId,
@@ -236,13 +211,13 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
   of cbkModelsSet:
     memory.saveChannelPreference(userId, "provider", callback.provider)
     memory.saveChannelPreference(userId, "model", callback.model)
-    let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotModels)
+    let kbdId = common_runtime.getUiMsgId(kbdMsgIds, userId, UiSlotModels)
     if kbdId.len > 0:
       dcAdapter.smartEditKeyboard(event, userId, kbdId,
         "Modelo definido: " & callback.provider & " / " & callback.model,
         @[]).isOkOr:
           core_log.log(logger, core_log.lvlError, "dc model confirm: " & error)
-      kbdMsgIds.clearUiMsgId(userId, uiSlotModels)
+      common_runtime.clearUiMsgId(kbdMsgIds, userId, UiSlotModels)
     else:
       dcAdapter.send(OutboundMessage(
         userId: userId,
@@ -255,7 +230,7 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
     let (currProv, currModel) = memory.getCurrentProviderModel(userId)
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
-    let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotModels)
+    let kbdId = common_runtime.getUiMsgId(kbdMsgIds, userId, UiSlotModels)
     if kbdId.len > 0:
       dcAdapter.smartEditKeyboard(
         event, userId, kbdId,
@@ -264,7 +239,7 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
           core_log.log(logger, core_log.lvlError, "dc model page: " & error)
     true
   of cbkModelsBack:
-    let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotModels)
+    let kbdId = common_runtime.getUiMsgId(kbdMsgIds, userId, UiSlotModels)
     if kbdId.len > 0:
       dcAdapter.smartEditKeyboard(
         event, userId, kbdId, "Escolha o provider:", memory.buildProviderButtons(userId)).isOkOr:
@@ -285,11 +260,11 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
     let level = callback.value
     if level in ThinkLevels:
       memory.saveChannelPreference(userId, "thinking", level)
-      let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotThink)
+      let kbdId = common_runtime.getUiMsgId(kbdMsgIds, userId, UiSlotThink)
       if kbdId.len > 0:
         dcAdapter.smartEditKeyboard(event, userId, kbdId, "Thinking definido: " & level, @[]).isOkOr:
           core_log.log(logger, core_log.lvlError, "dc think confirm: " & error)
-        kbdMsgIds.clearUiMsgId(userId, uiSlotThink)
+        common_runtime.clearUiMsgId(kbdMsgIds, userId, UiSlotThink)
       else:
         dcAdapter.send(OutboundMessage(
           userId: userId,
@@ -343,14 +318,14 @@ proc handleDiscordEvent*(sm: var SessionManager;
           logger,
         )
       of lcaShowMenu:
-        let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotMenu)
+        let kbdId = common_runtime.getUiMsgId(kbdMsgIds, userId, UiSlotMenu)
         if kbdId.len > 0 and event.interactionId.len == 0:
           dcAdapter.smartEditKeyboard(
             event, userId, kbdId, buildMenuText(), buildMenuButtons()).isOkOr:
               core_log.log(logger, core_log.lvlWarn, "dc menu keyboard: " & error)
         else:
           sendDiscordKeyboard(
-            dcAdapter, event, kbdMsgIds, userId, uiSlotMenu,
+            dcAdapter, event, kbdMsgIds, userId, UiSlotMenu,
             buildMenuText(), buildMenuButtons(),
             "Abri o menu na sua DM.", logger,
           )
