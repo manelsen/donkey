@@ -21,6 +21,9 @@ type
     fallbackText*: string
     msg*: PresentationMessage
 
+  PresentationState* = object
+    replacementMsgIds*: Table[string, string]
+
   OutboundKind* = enum
     okImmediate
     okStreamCreate
@@ -81,6 +84,30 @@ func toOutboundMessage*(surface: PresentationSurface;
   result.replacementSlot = surface.msg.replacementSlot
   result.streamId = surface.msg.streamId
   result.isPartial = surface.msg.isPartial
+
+func initPresentationState*(): PresentationState =
+  PresentationState(replacementMsgIds: initTable[string, string]())
+
+func replacementSurfaceKey*(channel: ChannelKind;
+                            userId: UserId;
+                            slot: string): string =
+  $channel & "|" & $userId & "|" & slot
+
+func replacementSurfaceKey*(msg: OutboundMessage): string =
+  replacementSurfaceKey(msg.channel, msg.userId, msg.replacementSlot)
+
+proc lookupReplacement*(state: PresentationState;
+                        msg: OutboundMessage): string =
+  if msg.replacementSlot.len == 0:
+    return ""
+  state.replacementMsgIds.getOrDefault(replacementSurfaceKey(msg))
+
+proc rememberReplacement*(state: var PresentationState;
+                          msg: OutboundMessage;
+                          channelMsgId: string) =
+  if msg.replacementSlot.len == 0 or channelMsgId.len == 0:
+    return
+  state.replacementMsgIds[replacementSurfaceKey(msg)] = channelMsgId
 
 func supportsEditableStreams*(channel: ChannelKind): bool =
   channel in {ckTelegram, ckDiscord}

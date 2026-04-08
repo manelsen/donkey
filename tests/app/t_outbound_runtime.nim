@@ -117,13 +117,13 @@ suite "outbound_runtime":
       )
     )
     var streamIds = initTable[string, string]()
-    var replacementIds = initTable[string, string]()
+    var presentationState = initPresentationState()
     routeOutbound(
       OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "edit me", editTargetId: "42"),
       ports,
       newLogger("test.outbound"),
       streamIds,
-      replacementIds)
+      presentationState)
     check sentCount == 0
     check editedText == "edit me"
     check editedKeyboardCount == -1
@@ -149,7 +149,7 @@ suite "outbound_runtime":
       )
     )
     var streamIds = initTable[string, string]()
-    var replacementIds = initTable[string, string]()
+    var presentationState = initPresentationState()
     routeOutbound(
       OutboundMessage(
         userId: UserId("u1"),
@@ -162,7 +162,7 @@ suite "outbound_runtime":
       ports,
       newLogger("test.outbound"),
       streamIds,
-      replacementIds)
+      presentationState)
     check editedText == "pick one"
     check editedKeyboardCount == 1
 
@@ -187,19 +187,20 @@ suite "outbound_runtime":
       )
     )
     var streamIds = initTable[string, string]()
-    var replacementIds = initTable[string, string]()
+    var presentationState = initPresentationState()
     routeOutbound(
       OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "first", replacementSlot: "bootstrap"),
       ports,
       newLogger("test.outbound"),
       streamIds,
-      replacementIds)
-    check replacementIds["telegram|u1|bootstrap"] == "m-slot"
+      presentationState)
+    check presentationState.lookupReplacement(
+      OutboundMessage(userId: UserId("u1"), channel: ckTelegram, replacementSlot: "bootstrap")) == "m-slot"
     routeOutbound(
       OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "second", replacementSlot: "bootstrap"),
       ports,
       newLogger("test.outbound"),
       streamIds,
-      replacementIds)
+      presentationState)
     check sentCount == 0
     check editedText == "m-slot:second"

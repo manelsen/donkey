@@ -577,7 +577,7 @@ type DaemonRuntime = ref object
   globalOutbox:         AsyncQueue[OutboundMessage]
   sm:                   SessionManager
   streamMsgIds:         Table[string, string]
-  replacementMsgIds:    Table[string, string]
+  presentationState:    PresentationState
   statusMsgIds:         Table[string, string]
   kbdMsgIds:            Table[string, string]
   dcKbdMsgIds:          Table[string, string]
@@ -850,6 +850,7 @@ proc initDaemonRuntime(home: string): DaemonRuntime =
   new(result)
   result.globalOutbox = newAsyncQueue[OutboundMessage]()
   result.sm.init()
+  result.presentationState = initPresentationState()
   result.routeHealthPath = routeHealthPath(home)
   result.loadRecentRouteSamples()
   result.daemonStartMs = nowMs()
@@ -1604,7 +1605,7 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
   while runtime.globalOutbox.len > 0:
     let outMsg = runtime.globalOutbox.getNoWait()
     clearTelegramStatus(runtime, adapters.tg, outMsg)
-    routeOutbound(outMsg, outboundPorts, log, runtime.streamMsgIds, runtime.replacementMsgIds)
+    routeOutbound(outMsg, outboundPorts, log, runtime.streamMsgIds, runtime.presentationState)
 
 proc startDaemonIngress(ctx: DaemonContext;
                         log: Logger) =

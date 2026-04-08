@@ -127,3 +127,34 @@ suite "core outbound decisions":
     check projected.text == "Ajuda"
     check projected.replacementSlot == "help"
     check projected.keyboard.len == 1
+
+  test "presentation state stores replacement bindings by channel user and slot":
+    var state = initPresentationState()
+    let msg = OutboundMessage(
+      userId: UserId("u1"),
+      channel: ckTelegram,
+      text: "Bootstrap",
+      replacementSlot: "bootstrap",
+    )
+    check state.lookupReplacement(msg) == ""
+    state.rememberReplacement(msg, "m-42")
+    check state.lookupReplacement(msg) == "m-42"
+
+  test "presentation state keeps bindings isolated per surface":
+    var state = initPresentationState()
+    let bootstrap = OutboundMessage(
+      userId: UserId("u1"),
+      channel: ckTelegram,
+      text: "Bootstrap",
+      replacementSlot: "bootstrap",
+    )
+    let help = OutboundMessage(
+      userId: UserId("u1"),
+      channel: ckTelegram,
+      text: "Ajuda",
+      replacementSlot: "help",
+    )
+    state.rememberReplacement(bootstrap, "m-bootstrap")
+    state.rememberReplacement(help, "m-help")
+    check state.lookupReplacement(bootstrap) == "m-bootstrap"
+    check state.lookupReplacement(help) == "m-help"

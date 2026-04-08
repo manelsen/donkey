@@ -97,9 +97,6 @@ proc createStreamOutbound*(msg: OutboundMessage;
   of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli: discard
   ""
 
-func replacementKey(msg: OutboundMessage): string =
-  $msg.channel & "|" & $msg.userId & "|" & msg.replacementSlot
-
 proc createReplacementOutbound*(msg: OutboundMessage;
                                 ports: OutboundChannelPorts;
                                 log: Logger): string {.gcsafe.} =
@@ -121,22 +118,22 @@ proc routeOutbound*(msg: OutboundMessage;
                     ports: OutboundChannelPorts;
                     log: Logger;
                     streamMsgIds: var Table[string, string];
-                    replacementMsgIds: var Table[string, string]) {.gcsafe.} =
+                    presentationState: var PresentationState) {.gcsafe.} =
   if msg.editTargetId.len > 0:
     if not editImmediateOutbound(msg, ports, log):
       sendImmediateOutbound(msg, ports, log)
     return
   if msg.replacementSlot.len > 0 and supportsEditableReplacement(msg.channel):
-    let key = replacementKey(msg)
-    if key in replacementMsgIds:
+    let existingMsgId = presentationState.lookupReplacement(msg)
+    if existingMsgId.len > 0:
       var editMsg = msg
-      editMsg.editTargetId = replacementMsgIds[key]
+      editMsg.editTargetId = existingMsgId
       editMsg.replaceKeyboard = editMsg.replaceKeyboard or editMsg.keyboard.len > 0
       if editImmediateOutbound(editMsg, ports, log):
         return
     let channelMsgId = createReplacementOutbound(msg, ports, log)
     if channelMsgId.len > 0:
-      replacementMsgIds[key] = channelMsgId
+      presentationState.rememberReplacement(msg, channelMsgId)
       return
     sendImmediateOutbound(msg, ports, log)
     return

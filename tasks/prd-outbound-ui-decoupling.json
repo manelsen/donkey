@@ -41,8 +41,8 @@
         "nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim passes."
       ],
       "priority": 2,
-      "passes": false,
-      "notes": "Open-question resolution: state model is organized first around replaceable menus.",
+      "passes": true,
+      "notes": "Branch: us/us-002-presentation-state-boundary\nStatus: complete\nFiles: src/donkey/core/outbound/outbound.nim; src/donkey/app/outbound_runtime.nim; src/donkey.nim; tests/core/t_outbound.nim; tests/app/t_outbound_runtime.nim\nTests: added coverage for PresentationState binding lookup and isolation; updated outbound runtime tests to use the new shared state boundary\nValidation: nim c --mm:orc -r tests/core/t_outbound.nim ✅; nim c --mm:orc -r tests/app/t_outbound_runtime.nim ✅; nim c --mm:orc src/donkey.nim ✅; nim c --mm:orc -r tests/adapters/channel/t_telegram_runtime.nim ✅; nim c --mm:orc -r tests/channel/t_discord.nim ✅; nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim ✅; nim c --mm:orc -r tests/app/t_orchestrator.nim emitted all green test cases but the runner stayed alive after completion\nRisks: outbound replacement state is now encapsulated, but menu slot state in channel runtimes still lives outside this boundary and is the next integration step.\nCarry forward: routeOutbound now depends on PresentationState instead of a raw replacement-id table, so the next story can migrate concrete UI surfaces onto that shared state path cleanly.",
       "dependsOn": ["US-001"]
     },
     {
