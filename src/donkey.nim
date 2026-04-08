@@ -1914,6 +1914,11 @@ proc main =
     stderr.writeLine "Security Error: " & sandboxAvailability.error
     stderr.writeLine "Install the configured sandbox runtime, or switch to a supported [sandbox] mode before starting in production"
     quit(1)
+  let paddockOwnership = validatePaddockOwnership(cfg, devMode)
+  if paddockOwnership.isErr:
+    stderr.writeLine paddockOwnership.error
+    stderr.writeLine "Fix ownership of the paddocks directory before starting in production"
+    quit(1)
 
   ringInit()            ## enable log ring buffer before the first Logger is created
   initReliability()     ## enable circuit breaker and reliability tracking

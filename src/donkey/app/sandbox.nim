@@ -19,6 +19,9 @@
 ## Call sandboxLogLevel once at daemon startup to surface the active mode.
 
 import std/[osproc, os, streams, strtabs, strutils]
+when defined(posix):
+  import std/posix
+import results
 import ../config/types
 import ../core/log
 import ../core/pipeops
@@ -36,6 +39,7 @@ type
     ensureWorkDir*:  bool
 
   SandboxRunner* = proc(plan: SandboxPlan): string {.gcsafe, raises: [].}
+  PathOwnerFn* = proc(path: string): Result[int, string] {.gcsafe, raises: [].}
 
 const
   SandboxExecCommand* = "__sandbox_exec"
@@ -49,6 +53,68 @@ proc findExeSafe(name: string): string {.gcsafe, raises: [].} =
     findExe(name)
   except CatchableError:
     ""
+
+proc effectiveUid*(): int {.gcsafe, raises: [].} =
+  when defined(posix):
+    getuid().int
+  else:
+    -1
+
+proc pathOwnerUid*(path: string): Result[int, string] {.gcsafe, raises: [].} =
+  when defined(posix):
+    var st: Stat
+    if stat(path.cstring, st) != 0'i32:
+      return err(osErrorMsg(osLastError()))
+    ok(st.st_uid.int)
+  else:
+    discard path
+    ok(-1)
+
+proc collectOwnershipViolations*(root: string;
+                                 expectedUid: int;
+                                 ownerFn: PathOwnerFn = pathOwnerUid): seq[string]
+                                 {.gcsafe, raises: [].} =
+  if root.len == 0 or not dirExists(root) or ownerFn == nil or expectedUid < 0:
+    return
+  var pending = @[root]
+  while pending.len > 0:
+    let current = pending.pop()
+    let ownerUid = ownerFn(current).valueOr:
+      result.add(current & " (owner lookup failed: " & error & ")")
+      continue
+    if ownerUid != expectedUid:
+      result.add(current)
+      continue
+    try:
+      for kind, child in walkDir(current, relative = false):
+        case kind
+        of pcDir:
+          pending.add(child)
+        of pcFile, pcLinkToFile, pcLinkToDir:
+          let childOwner = ownerFn(child).valueOr:
+            result.add(child & " (owner lookup failed: " & error & ")")
+            continue
+          if childOwner != expectedUid:
+            result.add(child)
+    except OSError as e:
+      result.add(current & " (walk failed: " & e.msg & ")")
+
+proc validatePaddockOwnership*(cfg: DonkeyConfig;
+                               devMode: bool;
+                               ownerFn: PathOwnerFn = pathOwnerUid;
+                               uid = effectiveUid()): Result[void, string]
+                               {.gcsafe, raises: [].} =
+  if devMode or uid < 0:
+    return ok()
+  let violations = collectOwnershipViolations(cfg.paddocks, uid, ownerFn)
+  if violations.len == 0:
+    return ok()
+  let shown = violations[0 ..< min(violations.len, 3)].join(", ")
+  let suffix =
+    if violations.len > 3: " (+" & $(violations.len - 3) & " more)"
+    else: ""
+  err("Security Error: paddock ownership mismatch under " & cfg.paddocks &
+      ". Expected UID " & $uid & ". Offending paths: " & shown & suffix)
 
 proc buildHostSandboxEnv*(paddock: string): StringTableRef {.gcsafe, raises: [].} =
   result = newStringTable(mode = modeCaseSensitive)
