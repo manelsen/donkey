@@ -12,6 +12,7 @@ import donkey/domain/message
 import donkey/domain/personality
 import donkey/domain/more_tools
 import donkey/core/log
+import donkey/core/outbound/outbound
 import donkey/core/pipeops
 import donkey/core/tooling/tool_loop
 import donkey/adapters/http/std_http
@@ -388,7 +389,7 @@ suite "OrchestratorAgent":
     check resetReply.text.contains("Bootstrap reiniciado")
     check resetReply.text.contains("Como quer definir minha personalidade?")
     check resetReply.keyboard.len > 0
-    check onboardingReply.text.contains("Use os botões acima para escolher")
+    check onboardingReply.text.contains(interactiveSelectionFallbackText())
     check logMessages.anyIt(it.contains("reset bootstrap: started"))
     check logMessages.anyIt(it.contains("reset bootstrap: completed; onboarding ready"))
     check not fileExists(tmpDir / "u-reset" / "USER.md")

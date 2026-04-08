@@ -110,8 +110,8 @@
         "nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim passes."
       ],
       "priority": 5,
-      "passes": false,
-      "notes": "Open-question resolution: the shared boundary owns fallback copy.",
+      "passes": true,
+      "notes": "Branch: us/us-005-presentation-fallback-ownership\nStatus: complete\nFiles: src/donkey/core/outbound/outbound.nim; src/donkey/core/onboarding/onboarding.nim; src/donkey/app/orchestrator.nim; tests/core/t_outbound.nim; tests/app/t_orchestrator.nim\nTests: added coverage for declarative presentation capabilities, replacement-slot projection, and shared interactive fallback copy\nValidation: nim c --mm:orc src/donkey.nim ✅; nim c --mm:orc -r tests/adapters/channel/t_telegram_runtime.nim ✅; nim c --mm:orc -r tests/channel/t_discord.nim ✅; nim c --mm:orc -r tests/app/t_outbound_runtime.nim ✅; nim c --mm:orc -r tests/app/t_orchestrator.nim emitted all green test cases but the runner stayed alive after completion; nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim ✅\nRisks: channel projection still happens inside outbound runtime and adapters, but fallback wording and capability semantics now have a single core-owned source.\nCarry forward: core/outbound now owns capability checks, replacement-slot projection, and shared fallback text, which is the foundation needed for the final architecture docs and boundary hardening.",
       "dependsOn": [
         "US-004"
       ]

@@ -338,9 +338,6 @@ proc safeHasCompletedBootstrap(memory: MemoryRuntimePort;
   except Exception:
     false
 
-func bootstrapReplacementSlot(channel: ChannelKind): string =
-  if supportsEditableReplacement(channel): "bootstrap" else: ""
-
 proc safeSaveSession(memory: MemoryRuntimePort;
                      uid: UserId;
                      sessionId: string;
@@ -916,7 +913,7 @@ proc handleGuidedPersonalityChoice(globalOutbox: AsyncQueue[OutboundMessage];
 
   let guidedCtx = guidedOpt.get()
   result = guidedCtx.onboarding
-  let replacementSlot = bootstrapReplacementSlot(channel)
+  let replacementSlot = replacementSlotFor(channel, "bootstrap")
 
   if guidedCtx.keyboard.len > 0:
     await sendReplyKeyboard(globalOutbox, uid, channel, replyTo,
@@ -959,7 +956,7 @@ proc handleFreeConvoOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
     await sendReplyText(globalOutbox, uid, channel, replyTo, freeCtx.visibleText)
 
   if freeCtx.parsedTraits.isSome:
-    let replacementSlot = bootstrapReplacementSlot(channel)
+    let replacementSlot = replacementSlotFor(channel, "bootstrap")
     await sendNameChoiceOrPrompt(
       globalOutbox, uid, channel, replyTo,
       freeCtx.onboarding.names,
@@ -985,7 +982,7 @@ proc advanceUserProfileOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
   result = (profileCtx.onboarding, profileCtx.identity)
   persistUserProfile(memory, uid, profileCtx)
   if profileCtx.replyText.len > 0:
-    let replacementSlot = bootstrapReplacementSlot(channel)
+    let replacementSlot = replacementSlotFor(channel, "bootstrap")
     await sendReplyText(globalOutbox, uid, channel, replyTo, profileCtx.replyText,
       replacementSlot = replacementSlot)
 
@@ -1015,7 +1012,7 @@ proc handleResetControlTask(globalOutbox: AsyncQueue[OutboundMessage];
   let wakeup = decideOnboardingTurn(nextOnboarding, "")
   nextOnboarding = wakeup.onboarding
   log.info($uid & " (" & $channel & ") reset bootstrap: completed; onboarding ready")
-  let replacementSlot = bootstrapReplacementSlot(channel)
+  let replacementSlot = replacementSlotFor(channel, "bootstrap")
   if wakeup.kind == oekWakeUp and wakeup.keyboard.len > 0:
     await sendReplyKeyboard(globalOutbox, uid, channel, replyTo,
       "✅ Bootstrap reiniciado.\n\n" & wakeup.replyText,
@@ -1217,14 +1214,14 @@ proc handleOnboardingTurn(globalOutbox: AsyncQueue[OutboundMessage];
 
   case decision.kind
   of oekWakeUp:
-    let replacementSlot = bootstrapReplacementSlot(channel)
+    let replacementSlot = replacementSlotFor(channel, "bootstrap")
     await sendReplyKeyboard(
       globalOutbox, uid, channel, replyTo,
       decision.replyText, decision.keyboard,
       replacementSlot = replacementSlot)
 
   of oekButtonOnly:
-    if bootstrapReplacementSlot(channel).len == 0:
+    if replacementSlotFor(channel, "bootstrap").len == 0:
       await sendReplyText(globalOutbox, uid, channel, replyTo, decision.replyText)
 
   of oekFreeConvoText:

@@ -2,6 +2,7 @@
 
 import std/[options, strutils]
 import ../pipeops
+import ../outbound/outbound
 import ../../domain/agent_message
 import ../../domain/message
 import ../../domain/personality
@@ -299,7 +300,7 @@ func decideOnboardingTurn*(onboarding: OnboardingRuntime;
     OnboardingDecision(
       kind: oekButtonOnly,
       onboarding: onboarding,
-      replyText: "Use os botões acima para escolher.",
+      replyText: interactiveSelectionFallbackText(),
       handled: true,
     )
   of opFreeConvo:

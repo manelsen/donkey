@@ -62,6 +62,19 @@ suite "core outbound decisions":
     check not supportsEditableStreams(ckQQ)
     check not supportsEditableStreams(ckFeishu)
 
+  test "presentation capabilities expose replacement stream and component support declaratively":
+    let tgCaps = presentationCapabilities(ckTelegram)
+    let qqCaps = presentationCapabilities(ckQQ)
+    check tgCaps.editableReplacement
+    check tgCaps.editableStreams
+    check tgCaps.interactiveComponents
+    check not qqCaps.editableReplacement
+    check not qqCaps.editableStreams
+    check not qqCaps.interactiveComponents
+    check replacementSlotFor(ckTelegram, "bootstrap") == "bootstrap"
+    check replacementSlotFor(ckQQ, "bootstrap") == ""
+    check interactiveSelectionFallbackText() == SharedButtonSelectionFallbackText
+
   test "isImplementedOutboundChannel matches supported channels":
     check isImplementedOutboundChannel(ckTelegram)
     check isImplementedOutboundChannel(ckDiscord)

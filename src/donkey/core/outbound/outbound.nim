@@ -4,6 +4,11 @@ import std/tables
 import ../../domain/message
 
 type
+  PresentationCapabilities* = object
+    editableReplacement*: bool
+    editableStreams*: bool
+    interactiveComponents*: bool
+
   PresentationSurfaceKind* = enum
     pskReplaceable
     pskStreaming
@@ -48,6 +53,9 @@ type
     streamId*:      string
     existingMsgId*: string
     shouldCleanup*: bool
+
+const
+  SharedButtonSelectionFallbackText* = "Use os botões acima para escolher."
 
 func buildReplacementSurface*(slot: string;
                               text: string;
@@ -172,11 +180,36 @@ proc clearStatus*(state: var PresentationState;
     return
   state.statusMsgIds.del(statusSurfaceKey(channel, userId, slot))
 
+func presentationCapabilities*(channel: ChannelKind): PresentationCapabilities =
+  case channel
+  of ckTelegram, ckDiscord:
+    PresentationCapabilities(
+      editableReplacement: true,
+      editableStreams: true,
+      interactiveComponents: true,
+    )
+  else:
+    PresentationCapabilities(
+      editableReplacement: false,
+      editableStreams: false,
+      interactiveComponents: false,
+    )
+
 func supportsEditableStreams*(channel: ChannelKind): bool =
-  channel in {ckTelegram, ckDiscord}
+  presentationCapabilities(channel).editableStreams
 
 func supportsEditableReplacement*(channel: ChannelKind): bool =
-  channel in {ckTelegram, ckDiscord}
+  presentationCapabilities(channel).editableReplacement
+
+func supportsInteractiveComponents*(channel: ChannelKind): bool =
+  presentationCapabilities(channel).interactiveComponents
+
+func replacementSlotFor*(channel: ChannelKind;
+                         slot: string): string =
+  if presentationCapabilities(channel).editableReplacement: slot else: ""
+
+func interactiveSelectionFallbackText*(): string =
+  SharedButtonSelectionFallbackText
 
 func classifyOutbound*(msg: OutboundMessage;
                        state: PresentationState): OutboundKind =
