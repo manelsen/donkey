@@ -60,6 +60,9 @@ proc checkContainerRuntime*(runtimeCmd = "docker"): DiagResult =
       checkRuntimeCompose(runtimeCmd, version)
   ) |>-> toDiagResult("container runtime")
 
+proc checkSandboxRuntime*(cfg: DonkeyConfig): DiagResult =
+  sandboxAvailabilityResult(cfg) |>-> toDiagResult("sandbox runtime")
+
 proc checkApiKey*(name: string; envVar: string): DiagResult =
   ## Checks whether an API key environment variable is set.
   ##   checkApiKey("OpenRouter", "OPENROUTER_API_KEY") |> markWarn
@@ -107,10 +110,12 @@ const ApiKeyChecks = [
 proc runDoctorChecks*(cfg: DonkeyConfig;
                       devMode = false): seq[DiagResult] =
   ## Runs all dependency checks and returns the result list.
-  ## Required checks (dsErr on failure): sandbox policy, container runtime
-  ## Advisory checks (dsWarn on failure): pgvector, API keys, relaxed sandbox knobs
+  ## Required checks (dsErr on failure): sandbox policy, selected sandbox runtime
+  ## Advisory checks (dsWarn on failure): pgvector, API keys, relaxed sandbox knobs in dev mode
   result.add checkSandboxPolicy(cfg, devMode)
-  result.add checkContainerRuntime(cfg.sandboxRuntimeCmd)
+  result.add checkSandboxRuntime(cfg)
+  if cfg.sandboxMode == smOci:
+    result.add checkContainerRuntime(cfg.sandboxRuntimeCmd)
   result.add checkPgvector()
   for (name, envVar) in ApiKeyChecks:
     result.add checkApiKey(name, envVar) |> markWarn

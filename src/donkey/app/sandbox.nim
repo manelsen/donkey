@@ -44,6 +44,12 @@ func canReenterViaHelper(appPath: string): bool {.gcsafe, raises: [].} =
   let base = extractFilename(appPath).toLowerAscii()
   base == AppSlug or base == AppSlug & ".out"
 
+proc findExeSafe(name: string): string {.gcsafe, raises: [].} =
+  try:
+    findExe(name)
+  except CatchableError:
+    ""
+
 proc buildHostSandboxEnv*(paddock: string): StringTableRef {.gcsafe, raises: [].} =
   result = newStringTable(mode = modeCaseSensitive)
   let homeDir =
@@ -245,6 +251,25 @@ proc validateSandboxPolicy*(cfg: DonkeyConfig;
   if not devMode and cfg.sandboxMode == smOci and not cfg.sandboxReadOnlyRootfs:
     return err("Security Error: sandbox.read_only_rootfs=false is only allowed in --dev-mode")
   ok()
+
+proc sandboxAvailabilityResult*(cfg: DonkeyConfig): Result[string, string] {.gcsafe, raises: [].} =
+  case cfg.sandboxMode
+  of smNone:
+    ok("mode=none")
+  of smOci:
+    let runtimePath = findExeSafe(cfg.sandboxRuntimeCmd)
+    if runtimePath.len == 0:
+      err("OCI runtime '" & cfg.sandboxRuntimeCmd & "' not found in PATH")
+    else:
+      ok("runtime=" & cfg.sandboxRuntimeCmd)
+  of smWasm:
+    let wasmtimePath = findExeSafe("wasmtime")
+    if wasmtimePath.len == 0:
+      return err("wasmtime not found in PATH")
+    let shellPath = resolveShellWasmPath()
+    if not shellPath.fileExists:
+      return err("shell.wasm not found at " & shellPath)
+    ok("wasmtime=" & wasmtimePath & ", shell=" & shellPath)
 
 # ── Executor ──────────────────────────────────────────────────────────────────
 

@@ -1905,6 +1905,11 @@ proc main =
     stderr.writeLine sandboxPolicy.error
     stderr.writeLine "Use --dev-mode only for local development, or tighten the [sandbox] policy in donkey.toml"
     quit(1)
+  let sandboxAvailability = sandboxAvailabilityResult(cfg)
+  if not devMode and sandboxAvailability.isErr:
+    stderr.writeLine "Security Error: " & sandboxAvailability.error
+    stderr.writeLine "Install the configured sandbox runtime, or switch to a supported [sandbox] mode before starting in production"
+    quit(1)
 
   ringInit()            ## enable log ring buffer before the first Logger is created
   initReliability()     ## enable circuit breaker and reliability tracking

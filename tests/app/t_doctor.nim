@@ -70,6 +70,19 @@ suite "doctor — checkContainerRuntime":
     let r = checkContainerRuntime()
     check r.status in {dsOk, dsErr}
 
+suite "doctor — checkSandboxRuntime":
+
+  test "oci sandbox runtime check returns a DiagResult":
+    let cfg = DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker")
+    let r = checkSandboxRuntime(cfg)
+    check r.name == "sandbox runtime"
+    check r.status in {dsOk, dsErr}
+
+  test "none sandbox runtime is trivially ok":
+    let cfg = DonkeyConfig(sandboxMode: smNone)
+    let r = checkSandboxRuntime(cfg)
+    check r.status == dsOk
+
 suite "doctor — checkSandboxPolicy":
 
   test "sandbox policy is err for none in production":
@@ -114,13 +127,20 @@ suite "doctor — runDoctorChecks":
 
   test "returns at least runtime + pgvector + API key checks":
     let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
-    check results.len >= 3    # sandbox policy + runtime + pgvector
+    check results.len >= 4    # sandbox policy + sandbox runtime + runtime + pgvector
 
   test "result contains runtime check":
     let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
     var found = false
     for r in results:
       if r.name == "container runtime": found = true
+    check found
+
+  test "result contains sandbox runtime check":
+    let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
+    var found = false
+    for r in results:
+      if r.name == "sandbox runtime": found = true
     check found
 
   test "result contains pgvector check":
