@@ -10,6 +10,19 @@ import donkey/ports/ipc
 
 suite "http_gateway request parsing":
 
+  test "resolveGatewayPort uses default when unset":
+    check resolveGatewayPort("") == GatewayDefaultPort
+
+  test "resolveGatewayPort disables gateway for zero or negative values":
+    check resolveGatewayPort("0") == 0
+    check resolveGatewayPort("-1") == 0
+
+  test "resolveGatewayPort keeps explicit positive value":
+    check resolveGatewayPort("18080") == 18080
+
+  test "resolveGatewayPort falls back on invalid values":
+    check resolveGatewayPort("nope") == GatewayDefaultPort
+
   test "parseGatewayRequest extracts GET /api/status":
     let r = parseGatewayRequest("GET /api/status HTTP/1.1")
     check r.meth == "GET"

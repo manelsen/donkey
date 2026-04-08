@@ -1214,19 +1214,18 @@ proc setupIpcServer(cfg: DonkeyConfig;
     handleGatewayFallback(gatewayInboundCtx, cfg, gatewayInboundMemory, msg, gatewayInboundLog)
   startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
   log.info("IPC socket: " & sockPath)
-  let httpPortStr = getEnv("DONKEY_HTTP_PORT")
-  let httpPort = if httpPortStr.len > 0:
-    try: parseInt(httpPortStr) except ValueError: GatewayDefaultPort
-  else:
-    GatewayDefaultPort
+  let httpPort = resolveGatewayPort(getEnv("DONKEY_HTTP_PORT"))
   let gwStatusFn: GatewayStatusFn = proc(): DaemonStatus {.gcsafe.} =
     ipcStatusFn()
   let gwLogFn: GatewayLogFn = proc(n: int): seq[IpcLogEntry] {.gcsafe.} =
     ipcLogFn(n)
   let gwEventFn: GatewayEventFn = proc(n: int): seq[AgentEvent] {.gcsafe.} =
     agentEventSnapshot(n)
-  startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn)
-  log.info("HTTP gateway: http://0.0.0.0:" & $httpPort & " (bidirectional SSE enabled)")
+  if httpPort > 0:
+    startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn)
+    log.info("HTTP gateway: http://0.0.0.0:" & $httpPort & " (bidirectional SSE enabled)")
+  else:
+    log.info("HTTP gateway: disabled")
 
 type EnsureSessionPlan = object
   uid*:      string

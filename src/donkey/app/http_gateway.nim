@@ -24,6 +24,18 @@ const
   SseHeartbeatIntervalMs = 5000   ## ms between SSE heartbeat/push cycles
   SseMaxPollCycles = 3600         ## ~5 hours at 5s intervals
 
+func resolveGatewayPort*(raw: string): int =
+  ## Parses DONKEY_HTTP_PORT semantics.
+  ## Empty or invalid values fall back to GatewayDefaultPort.
+  ## Zero or negative values disable the HTTP gateway entirely.
+  if raw.len == 0:
+    return GatewayDefaultPort
+  try:
+    let parsed = parseInt(raw)
+    if parsed <= 0: 0 else: parsed
+  except ValueError:
+    GatewayDefaultPort
+
 type
   GatewayRequest* = object
     meth*: string

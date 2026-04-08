@@ -14,14 +14,18 @@ switch("define", "wasm3HasWasi")
 # Required for Discord gateway thread (Channel[T] cross-thread communication).
 switch("threads", "on")
 
+# SQLite backend enabled by default on the sqlite branch.
+# Opt out with: nim c -u:withSqlite ...
+switch("define", "withSqlite")
+
 # PostgreSQL backend disabled by default on the sqlite branch.
 # Re-enable explicitly with: nim c -d:withPostgres ...
 
 when defined(withPostgres):
   switch("passL", "-lpq")
 
-# SQLite fast-cache backend (opt-in).
-# Build with: nimble build -d:withSqlite
+# SQLite backend and embedded runtime.
+# Build with: nimble build
 # Uses embedded SQLite amalgamation in self-contained builds.
 when defined(withSqlite):
   switch("define", "staticSqlite")
