@@ -62,8 +62,8 @@
         "nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim passes."
       ],
       "priority": 3,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Branch: us/us-003-migrate-ui-surfaces-to-presentation-runtime\nStatus: complete\nFiles: src/donkey.nim; src/donkey/adapters/channel/common_runtime.nim; src/donkey/adapters/channel/telegram_runtime.nim; src/donkey/adapters/channel/discord_runtime.nim; tests/adapters/channel/t_telegram_runtime.nim\nTests: updated telegram runtime tests to use PresentationState; broader compile coverage proved Telegram and Discord now consume the shared presentation state boundary\nValidation: nim c --mm:orc src/donkey.nim ✅; nim c --mm:orc -r tests/adapters/channel/t_telegram_runtime.nim ✅; nim c --mm:orc -r tests/channel/t_discord.nim ✅; nim c --mm:orc -r tests/app/t_outbound_runtime.nim ✅; nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim ✅; nim c --mm:orc -r tests/app/t_orchestrator.nim emitted all green test cases but the runner stayed alive after completion\nRisks: Discord still lacks dedicated runtime unit tests for multi-surface scenarios; current confidence there comes from compile coverage and shared path behavior.\nCarry forward: menu/config/models/think/help no longer depend on daemon-local kbd tables; Telegram and Discord now share PresentationState, which clears the path for status/streaming migration in the next story.",
       "dependsOn": ["US-002"]
     },
     {

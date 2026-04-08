@@ -1,8 +1,9 @@
-import std/[strutils, tables]
+import std/strutils
 import chronos/asyncsync
 import results
 import ../../core/commands/command_routing
 import ../../core/log as core_log
+import ../../core/outbound/outbound
 import ../../core/pipeops
 import ../../adapters/memory/md_file
 import ../../app/session_manager
@@ -17,7 +18,7 @@ import ./telegram
 proc handleTelegramModels*(msg: InboundMessage;
                            command: CommandDecision;
                            tgAdapter: var TelegramAdapter;
-                           kbdMsgIds: var Table[string, string];
+                           presentationState: var PresentationState;
                            memory: MdFileAdapter;
                            modelCatalogLoader: ModelCatalogLoader;
                            logger: Logger): bool {.gcsafe.}
@@ -25,7 +26,7 @@ proc handleTelegramModels*(msg: InboundMessage;
 proc handleTelegramThink*(msg: InboundMessage;
                           command: CommandDecision;
                           tgAdapter: var TelegramAdapter;
-                          kbdMsgIds: var Table[string, string];
+                          presentationState: var PresentationState;
                           memory: MdFileAdapter): bool {.gcsafe.}
 
 proc handleTelegramBudget*(msg: InboundMessage;
@@ -37,7 +38,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
                                 msg: InboundMessage;
                                 command: CommandDecision;
                                 tgAdapter: var TelegramAdapter;
-                                kbdMsgIds: var Table[string, string];
+                                presentationState: var PresentationState;
                                 memory: MdFileAdapter;
                                 completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
                                 toolsCount: int;
@@ -95,19 +96,19 @@ proc saveTelegramPreference*(memory: MdFileAdapter;
   saveChannelPreference(memory, userId, key, value)
 
 proc clearTelegramKeyboard*(tgAdapter: var TelegramAdapter;
-                            kbdMsgIds: var Table[string, string];
+                            presentationState: var PresentationState;
                             userId: UserId;
                             slot = UiSlotModels) =
-  let kbdId = common_runtime.getUiMsgId(kbdMsgIds, userId, slot)
+  let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, userId, slot)
   if kbdId.len > 0:
     tgAdapter.editKeyboard(userId, kbdId, @[]).isOkOr:
       discard
-    common_runtime.clearUiMsgId(kbdMsgIds, userId, slot)
+    common_runtime.clearUiMsgId(presentationState, ckTelegram, userId, slot)
 
 proc handleTelegramModels*(msg: InboundMessage;
                            command: CommandDecision;
                            tgAdapter: var TelegramAdapter;
-                           kbdMsgIds: var Table[string, string];
+                           presentationState: var PresentationState;
                            memory: MdFileAdapter;
                            modelCatalogLoader: ModelCatalogLoader;
                            logger: Logger): bool =
@@ -117,7 +118,7 @@ proc handleTelegramModels*(msg: InboundMessage;
     if command.value.strip.len > 0: parseModelsProviderArg(command.value).valueOr: ""
     else: ""
   if providerOnly.len > 0:
-    let currentKbdId = common_runtime.getUiMsgId(kbdMsgIds, msg.userId, UiSlotModels)
+    let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
     let catalog = modelCatalogLoader(providerOnly).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(providerOnly, catalog.entries))
     let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
@@ -130,7 +131,7 @@ proc handleTelegramModels*(msg: InboundMessage;
       let sentId = tgAdapter.sendKeyboard(msg.userId, title, buttons, replyTo = msg.channelId).valueOr:
         core_log.log(logger, core_log.lvlError, "tg send keyboard error: " & error)
         return true
-      common_runtime.setUiMsgId(kbdMsgIds, msg.userId, UiSlotModels, sentId)
+      common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels, sentId)
     return true
   if command.value.strip.len > 0:
     let reply = memory.applyModelsTextCommand(msg.userId, command.value, modelCatalogLoader).valueOr: error
@@ -142,7 +143,7 @@ proc handleTelegramModels*(msg: InboundMessage;
     )).isOkOr:
       discard
     return true
-  let currentKbdId = common_runtime.getUiMsgId(kbdMsgIds, msg.userId, UiSlotModels)
+  let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
   if currentKbdId.len > 0:
     tgAdapter.editKeyboardText(
       msg.userId, currentKbdId,
@@ -155,13 +156,13 @@ proc handleTelegramModels*(msg: InboundMessage;
       replyTo = msg.channelId).valueOr:
         core_log.log(logger, core_log.lvlError, "tg send provider keyboard error: " & error)
         return true
-    common_runtime.setUiMsgId(kbdMsgIds, msg.userId, UiSlotModels, sentId)
+    common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels, sentId)
   true
 
 proc handleTelegramModelCallback*(msg: InboundMessage;
                                   callback: CallbackDecision;
                                   tgAdapter: var TelegramAdapter;
-                                  kbdMsgIds: var Table[string, string];
+                                  presentationState: var PresentationState;
                                   memory: MdFileAdapter;
                                   modelCatalogLoader: ModelCatalogLoader;
                                   logger: Logger): bool =
@@ -171,7 +172,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
   case callback.kind
   of cbkModelsProvider:
     logger.info("tg callback models:provider:" & callback.provider)
-    let kbdId = common_runtime.getUiMsgId(kbdMsgIds, msg.userId, UiSlotModels)
+    let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
     let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
@@ -187,14 +188,14 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
     logger.info("tg callback models:set:" & callback.provider & ":" & callback.model)
     memory.saveTelegramPreference(msg.userId, "provider", callback.provider)
     memory.saveTelegramPreference(msg.userId, "model", callback.model)
-    let kbdId = common_runtime.getUiMsgId(kbdMsgIds, msg.userId, UiSlotModels)
+    let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
     if kbdId.len > 0:
       tgAdapter.editKeyboardText(
         msg.userId, kbdId,
         "✅ Modelo definido: " & callback.provider & " / " & callback.model,
         @[]).isOkOr:
           core_log.log(logger, core_log.lvlError, "tg editKeyboard models:set error: " & error)
-      common_runtime.clearUiMsgId(kbdMsgIds, msg.userId, UiSlotModels)
+      common_runtime.clearUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
     else:
       tgAdapter.send(OutboundMessage(
         userId:  msg.userId,
@@ -207,7 +208,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
 
   of cbkModelsPage:
     logger.info("tg callback models:page:" & callback.provider & ":" & $callback.page)
-    let kbdId = common_runtime.getUiMsgId(kbdMsgIds, msg.userId, UiSlotModels)
+    let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
     let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
@@ -220,7 +221,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
     return true
 
   of cbkModelsBack:
-    let kbdId = common_runtime.getUiMsgId(kbdMsgIds, msg.userId, UiSlotModels)
+    let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
     if kbdId.len > 0:
       tgAdapter.editKeyboard(msg.userId, kbdId,
                              memory.buildProviderButtons(msg.userId)).isOkOr:
@@ -233,7 +234,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
 proc handleTelegramThinkingCallback*(msg: InboundMessage;
                                      callback: CallbackDecision;
                                      tgAdapter: var TelegramAdapter;
-                                     kbdMsgIds: var Table[string, string];
+                                     presentationState: var PresentationState;
                                      memory: MdFileAdapter): bool =
   if callback.kind != cbkThinkSet:
     return false
@@ -244,14 +245,14 @@ proc handleTelegramThinkingCallback*(msg: InboundMessage;
   let level = callback.value
   if level in ThinkLevels:
     memory.saveTelegramPreference(msg.userId, "thinking", level)
-    let kbdId = common_runtime.getUiMsgId(kbdMsgIds, msg.userId, UiSlotThink)
+    let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotThink)
     if kbdId.len > 0:
       tgAdapter.editKeyboardText(
         msg.userId, kbdId,
         "🧠 Thinking: " & level,
         @[]).isOkOr:
           discard
-      common_runtime.clearUiMsgId(kbdMsgIds, msg.userId, UiSlotThink)
+      common_runtime.clearUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotThink)
     else:
       tgAdapter.send(OutboundMessage(
         userId:  msg.userId,
@@ -265,7 +266,7 @@ proc handleTelegramThinkingCallback*(msg: InboundMessage;
 proc handleTelegramThink*(msg: InboundMessage;
                           command: CommandDecision;
                           tgAdapter: var TelegramAdapter;
-                          kbdMsgIds: var Table[string, string];
+                          presentationState: var PresentationState;
                           memory: MdFileAdapter): bool =
   if command.kind != cmdThink:
     return false
@@ -279,7 +280,7 @@ proc handleTelegramThink*(msg: InboundMessage;
     )).isOkOr:
       discard
     return true
-  let currentKbdId = common_runtime.getUiMsgId(kbdMsgIds, msg.userId, UiSlotThink)
+  let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotThink)
   if currentKbdId.len > 0:
     tgAdapter.editKeyboardText(
       msg.userId, currentKbdId,
@@ -291,7 +292,7 @@ proc handleTelegramThink*(msg: InboundMessage;
       "Nível de raciocínio:", memory.buildThinkButtons(msg.userId),
       replyTo = msg.channelId).valueOr:
         return true
-    common_runtime.setUiMsgId(kbdMsgIds, msg.userId, UiSlotThink, sentId)
+    common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotThink, sentId)
   true
 
 proc handleTelegramBudget*(msg: InboundMessage;
@@ -313,7 +314,7 @@ proc handleTelegramBudget*(msg: InboundMessage;
 proc handleTelegramUiCommand*(msg: InboundMessage;
                               command: CommandDecision;
                               tgAdapter: var TelegramAdapter;
-                              kbdMsgIds: var Table[string, string];
+                              presentationState: var PresentationState;
                               memory: MdFileAdapter;
                               modelCatalogLoader: ModelCatalogLoader;
                               toolClientsCount: int;
@@ -321,7 +322,7 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
                               logger: Logger): bool =
   case command.kind
   of cmdConfig:
-    let currentKbdId = common_runtime.getUiMsgId(kbdMsgIds, msg.userId, UiSlotConfig)
+    let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
     if currentKbdId.len > 0:
       discard tgAdapter.editKeyboardText(
         msg.userId, currentKbdId, memory.buildConfigText(msg.userId), buildConfigButtons())
@@ -329,7 +330,7 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
       let sentId = tgAdapter.sendKeyboard(
         msg.userId, memory.buildConfigText(msg.userId), buildConfigButtons(), replyTo = msg.channelId).valueOr:
           return true
-      common_runtime.setUiMsgId(kbdMsgIds, msg.userId, UiSlotConfig, sentId)
+      common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig, sentId)
     true
   of cmdTasks:
     tgAdapter.send(OutboundMessage(
@@ -359,9 +360,9 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
       discard
     true
   of cmdModels:
-    handleTelegramModels(msg, command, tgAdapter, kbdMsgIds, memory, modelCatalogLoader, logger)
+    handleTelegramModels(msg, command, tgAdapter, presentationState, memory, modelCatalogLoader, logger)
   of cmdThink:
-    handleTelegramThink(msg, command, tgAdapter, kbdMsgIds, memory)
+    handleTelegramThink(msg, command, tgAdapter, presentationState, memory)
   of cmdBudget:
     handleTelegramBudget(msg, command, tgAdapter, memory)
   of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
@@ -381,7 +382,7 @@ proc handleTelegramUiCallback*(msg: InboundMessage;
                                 callback: CallbackDecision;
                                 sm: var SessionManager;
                                 tgAdapter: var TelegramAdapter;
-                                kbdMsgIds: var Table[string, string];
+                                presentationState: var PresentationState;
                                 memory: MdFileAdapter;
                                 completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
                                 modelCatalogLoader: ModelCatalogLoader;
@@ -396,49 +397,49 @@ proc handleTelegramUiCallback*(msg: InboundMessage;
 
   case callback.kind
   of cbkModelsProvider, cbkModelsSet, cbkModelsPage, cbkModelsBack:
-    return handleTelegramModelCallback(msg, callback, tgAdapter, kbdMsgIds, memory, modelCatalogLoader, logger)
+    return handleTelegramModelCallback(msg, callback, tgAdapter, presentationState, memory, modelCatalogLoader, logger)
   of cbkThinkSet:
-    return handleTelegramThinkingCallback(msg, callback, tgAdapter, kbdMsgIds, memory)
+    return handleTelegramThinkingCallback(msg, callback, tgAdapter, presentationState, memory)
   of cbkHelpPage:
     let pages = buildHelpPages()
     let page  = min(max(callback.page, 0), pages.len - 1)
     let (pTitle, pBody) = pages[page]
     let helpText = "📖 Ajuda — " & pTitle & " (" & $(page + 1) & "/" & $pages.len & ")\n\n" & pBody
     let buttons = buildHelpNavButtons(page, pages.len)
-    let kbdId = common_runtime.getUiMsgId(kbdMsgIds, msg.userId, UiSlotHelp)
+    let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotHelp)
     if kbdId.len > 0:
       tgAdapter.editKeyboardText(msg.userId, kbdId, helpText, buttons).isOkOr:
         core_log.log(logger, core_log.lvlError, "tg help page error: " & error)
     else:
       let sentId = tgAdapter.sendKeyboard(msg.userId, helpText, buttons, replyTo = msg.channelId).valueOr:
         return true
-      common_runtime.setUiMsgId(kbdMsgIds, msg.userId, UiSlotHelp, sentId)
+      common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotHelp, sentId)
     return true
 
   of cbkModels:
-    return handleTelegramModels(msg, newCommandDecision(cmdModels), tgAdapter, kbdMsgIds, memory, modelCatalogLoader, logger)
+    return handleTelegramModels(msg, newCommandDecision(cmdModels), tgAdapter, presentationState, memory, modelCatalogLoader, logger)
   of cbkThink:
-    return handleTelegramThink(msg, newCommandDecision(cmdThink), tgAdapter, kbdMsgIds, memory)
+    return handleTelegramThink(msg, newCommandDecision(cmdThink), tgAdapter, presentationState, memory)
   of cbkBudget:
     return handleTelegramBudget(msg, newCommandDecision(cmdBudget), tgAdapter, memory)
   of cbkHelp:
-    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdHelp), tgAdapter, kbdMsgIds, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdHelp), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
   of cbkStatus:
     return handleTelegramStatus(msg, newCommandDecision(cmdStatus), tgAdapter, memory, toolsCount, sm.sessionCount(), daemonStartMs)
   of cbkDoctor:
-    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdDoctor), tgAdapter, kbdMsgIds, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdDoctor), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
   of cbkForget:
-    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdForget), tgAdapter, kbdMsgIds, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdForget), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
   of cbkReset:
     return handleTelegramTaskCommand(sm, msg, newCommandDecision(cmdReset), tgAdapter, msgSeq, ensureTaskSession)
   of cbkMyCode:
-    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdMyCode), tgAdapter, kbdMsgIds, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdMyCode), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
   of cbkReasoning:
-    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdReasoning), tgAdapter, kbdMsgIds, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdReasoning), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
   of cbkMenu:
-    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdMenu), tgAdapter, kbdMsgIds, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdMenu), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
   of cbkConfig:
-    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdConfig), tgAdapter, kbdMsgIds, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdConfig), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
 
   else:
     false
@@ -510,7 +511,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
                                 msg: InboundMessage;
                                 command: CommandDecision;
                                 tgAdapter: var TelegramAdapter;
-                                kbdMsgIds: var Table[string, string];
+                                presentationState: var PresentationState;
                                 memory: MdFileAdapter;
                                 completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
                                 toolsCount: int;
@@ -527,7 +528,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       discard
     return true
   of lcaShowMenu:
-    let currentKbdId = common_runtime.getUiMsgId(kbdMsgIds, msg.userId, UiSlotMenu)
+    let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotMenu)
     if currentKbdId.len > 0:
       discard tgAdapter.editKeyboardText(
         msg.userId, currentKbdId, buildMenuText(), buildMenuButtons())
@@ -535,7 +536,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       let sentId = tgAdapter.sendKeyboard(
         msg.userId, buildMenuText(), buildMenuButtons(), replyTo = msg.channelId).valueOr:
           return true
-      common_runtime.setUiMsgId(kbdMsgIds, msg.userId, UiSlotMenu, sentId)
+      common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotMenu, sentId)
     return true
   of lcaShowWhoami:
     let sessId = if sm.hasSession(msg.userId): "active" else: "" # SessionManager doesn't expose sessionId easily here, using placeholder
@@ -641,7 +642,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
     saveChannelPreference(memory, msg.userId, "reasoning", next)
     
     # Update current keyboard if it was a menu/config
-    let kbdId = common_runtime.getUiMsgId(kbdMsgIds, msg.userId, UiSlotConfig)
+    let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
     if kbdId.len > 0:
       # If we are in the config menu, refresh it
       discard tgAdapter.editKeyboardText(msg.userId, kbdId, memory.buildConfigText(msg.userId), buildConfigButtons())
@@ -720,7 +721,7 @@ proc handleTelegramCoreCallback*(sm: var SessionManager;
 proc handleTelegramMessage*(msg: InboundMessage;
                             sm: var SessionManager;
                             tgAdapter: var TelegramAdapter;
-                            kbdMsgIds: var Table[string, string];
+                            presentationState: var PresentationState;
                             memory: MdFileAdapter;
                             completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
                             modelCatalogLoader: ModelCatalogLoader;
@@ -733,17 +734,17 @@ proc handleTelegramMessage*(msg: InboundMessage;
   let command = decideCommandRequest(CommandRequest(channel: msg.channel, text: msg.text))
   case command.route
   of crLocal:
-    return handleTelegramCoreCommand(sm, msg, command, tgAdapter, kbdMsgIds, memory,
+    return handleTelegramCoreCommand(sm, msg, command, tgAdapter, presentationState, memory,
                                      completeBuilder, toolsCount, toolClientsCount, msgSeq)
   of crSessionTask:
     return handleTelegramTaskCommand(sm, msg, command, tgAdapter, msgSeq, ensureTaskSession)
   of crUi:
-    return handleTelegramUiCommand(msg, command, tgAdapter, kbdMsgIds, memory, modelCatalogLoader, toolClientsCount, toolsCount, logger)
+    return handleTelegramUiCommand(msg, command, tgAdapter, presentationState, memory, modelCatalogLoader, toolClientsCount, toolsCount, logger)
   of crCallback:
     let callback = decideCallbackRequest(CallbackRequest(channel: msg.channel, data: command.value))
     case callback.route
     of cbrUi:
-      handleTelegramUiCallback(msg, callback, sm, tgAdapter, kbdMsgIds, memory, completeBuilder, modelCatalogLoader, toolClientsCount, toolsCount, msgSeq, daemonStartMs, logger, ensureTaskSession)
+      handleTelegramUiCallback(msg, callback, sm, tgAdapter, presentationState, memory, completeBuilder, modelCatalogLoader, toolClientsCount, toolsCount, msgSeq, daemonStartMs, logger, ensureTaskSession)
     of cbrSessionTask:
       handleTelegramCoreCallback(sm, msg, callback, tgAdapter, msgSeq, ensureTaskSession)
     of cbrNone:

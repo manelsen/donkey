@@ -579,8 +579,6 @@ type DaemonRuntime = ref object
   streamMsgIds:         Table[string, string]
   presentationState:    PresentationState
   statusMsgIds:         Table[string, string]
-  kbdMsgIds:            Table[string, string]
-  dcKbdMsgIds:          Table[string, string]
   routeCounts:          Table[string, int]
   routeCallCounts:      Table[string, int]
   routeOkCounts:        Table[string, int]
@@ -1540,7 +1538,7 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
 
   for msg in tgMsgs:
     if not telegram_runtime.handleTelegramMessage(
-      msg, runtime.sm, tgAdapter, runtime.kbdMsgIds, services.memory, completeBuilder,
+      msg, runtime.sm, tgAdapter, runtime.presentationState, services.memory, completeBuilder,
       modelCatalogLoader,
       services.toolClients.len, services.tools.len + nativeSessionTools().len, runtime.msgSeq, runtime.daemonStartMs, log,
       proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} =
@@ -1657,7 +1655,7 @@ proc drainDiscordGateway(ctx: DaemonContext;
     buildCompleteFn(preferencesMd, buildProviderBundle)
   let modelCatalogLoader = buildModelCatalogLoader()
   discord_runtime.drainDiscordEvents(
-    ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.dcKbdMsgIds, memory, completeBuilder, modelCatalogLoader,
+    ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, memory, completeBuilder, modelCatalogLoader,
     ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
     ctx.runtime.msgSeq, log,
     proc(msg: InboundMessage) =
@@ -1850,7 +1848,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       buildCompleteFn(preferencesMd, buildProviderBundle)
     let modelCatalogLoader = buildModelCatalogLoader()
     discord_runtime.checkDiscordOfflineMessages(
-      ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.dcKbdMsgIds, memory,
+      ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, memory,
       completeBuilder, modelCatalogLoader,
       ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
       ctx.runtime.msgSeq, log,

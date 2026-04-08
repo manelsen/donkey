@@ -1,7 +1,8 @@
-import std/[os, sequtils, strutils, tables, unittest]
+import std/[os, sequtils, strutils, unittest]
 import results
 import donkey/core/commands/command_routing
 import donkey/core/log
+import donkey/core/outbound/outbound
 import donkey/adapters/channel/telegram
 import donkey/adapters/channel/telegram_runtime
 import donkey/app/session_manager
@@ -104,7 +105,7 @@ thinking = "high"
     var tgAdapter = TelegramAdapter(
       resolver: newIdentityResolver(getTempDir() / "donkey_tg_runtime_resolver_reset_callback_test"),
     )
-    var kbdMsgIds = initTable[string, string]()
+    var presentationState = initPresentationState()
     let tmpDir = getTempDir() / "donkey_tg_runtime_reset_callback"
     let memory = MdFileAdapter(paddocksDir: tmpDir)
     defer:
@@ -134,7 +135,7 @@ thinking = "high"
           check $seenMsg.userId == $msg.userId
           check payload == ""
     check handleTelegramUiCallback(
-      msg, parseCallbackData("reset"), sm, tgAdapter, kbdMsgIds, memory,
+      msg, parseCallbackData("reset"), sm, tgAdapter, presentationState, memory,
       completeBuilder, modelCatalogLoader, 0, 0, msgSeq, 0, logger, ensureTaskSession)
     check called
     check seenTask == tkReset
@@ -146,7 +147,7 @@ thinking = "high"
     var tgAdapter = TelegramAdapter(
       resolver: newIdentityResolver(getTempDir() / "donkey_tg_runtime_resolver_reasoning_callback_test"),
     )
-    var kbdMsgIds = initTable[string, string]()
+    var presentationState = initPresentationState()
     let tmpDir = getTempDir() / "donkey_tg_runtime_reasoning_callback"
     let memory = MdFileAdapter(paddocksDir: tmpDir)
     let userId = UserId("u-tg-reasoning-callback")
@@ -169,7 +170,7 @@ thinking = "high"
         ok(ModelCatalogResult())
     let logger = newLogger("test.telegram")
     check handleTelegramUiCallback(
-      msg, parseCallbackData("reasoning"), sm, tgAdapter, kbdMsgIds, memory,
+      msg, parseCallbackData("reasoning"), sm, tgAdapter, presentationState, memory,
       completeBuilder, modelCatalogLoader, 0, 0, msgSeq, 0, logger)
     check memory.loadContext(userId).preferencesMd.contains("reasoning = \"on\"")
 
@@ -177,7 +178,7 @@ thinking = "high"
     var tgAdapter = TelegramAdapter(
       resolver: newIdentityResolver(getTempDir() / "donkey_tg_runtime_resolver_deferred_ui_test"),
     )
-    var kbdMsgIds = initTable[string, string]()
+    var presentationState = initPresentationState()
     let tmpDir = getTempDir() / "donkey_tg_runtime_deferred_ui"
     let memory = MdFileAdapter(paddocksDir: tmpDir)
     defer:
@@ -196,7 +197,7 @@ thinking = "high"
         text: "/" & $kind,
       )
       check handleTelegramUiCommand(
-        msg, newCommandDecision(kind), tgAdapter, kbdMsgIds, memory,
+        msg, newCommandDecision(kind), tgAdapter, presentationState, memory,
         modelCatalogLoader, 0, 0, logger)
 
   test "buildProviderButtons marks current provider":
@@ -229,7 +230,7 @@ thinking = "high"
     var tgAdapter = TelegramAdapter(
       resolver: newIdentityResolver(getTempDir() / "donkey_tg_runtime_resolver_skill_test"),
     )
-    var kbdMsgIds = initTable[string, string]()
+    var presentationState = initPresentationState()
     let tmpDir = getTempDir() / "donkey_tg_runtime_skill"
     let memory = MdFileAdapter(paddocksDir: tmpDir)
     defer:
@@ -245,7 +246,7 @@ thinking = "high"
       proc(preferencesMd: string): CompleteFn {.gcsafe.} = nil
     var msgSeq = 0
     check handleTelegramCoreCommand(
-      sm, msg, newCommandDecision(cmdSkill), tgAdapter, kbdMsgIds, memory,
+      sm, msg, newCommandDecision(cmdSkill), tgAdapter, presentationState, memory,
       completeBuilder, 0, 0, msgSeq)
 
   test "buildTelegramStatusText includes provider and thinking":

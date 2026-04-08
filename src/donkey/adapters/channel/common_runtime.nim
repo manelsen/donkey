@@ -4,6 +4,7 @@ import results
 import ../../core/pipeops
 import ../../core/commands/command_catalog
 import ../../core/commands/command_routing
+import ../../core/outbound/outbound
 import ../../core/providers/smart_routing
 import ../../adapters/memory/md_file
 import ../../domain/message
@@ -36,21 +37,24 @@ const ModelMenu* = [
 func uiSlotKey*(userId: UserId; slot: string): string =
   $userId & "|" & slot
 
-proc getUiMsgId*(uiMsgIds: var Table[string, string];
+proc getUiMsgId*(state: PresentationState;
+                 channel: ChannelKind;
                  userId: UserId;
                  slot: string): string =
-  uiMsgIds.getOrDefault(uiSlotKey(userId, slot))
+  state.replacementMsgIds.getOrDefault(replacementSurfaceKey(channel, userId, slot))
 
-proc setUiMsgId*(uiMsgIds: var Table[string, string];
+proc setUiMsgId*(state: var PresentationState;
+                 channel: ChannelKind;
                  userId: UserId;
                  slot, msgId: string) =
   if msgId.len > 0:
-    uiMsgIds[uiSlotKey(userId, slot)] = msgId
+    state.replacementMsgIds[replacementSurfaceKey(channel, userId, slot)] = msgId
 
-proc clearUiMsgId*(uiMsgIds: var Table[string, string];
+proc clearUiMsgId*(state: var PresentationState;
+                   channel: ChannelKind;
                    userId: UserId;
                    slot: string) =
-  uiMsgIds.del(uiSlotKey(userId, slot))
+  state.replacementMsgIds.del(replacementSurfaceKey(channel, userId, slot))
 
 
 func emptyCatalogResult*(): ModelCatalogResult =
