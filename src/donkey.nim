@@ -152,6 +152,8 @@ BRAVE_API_KEY=
 #   docker compose up -d postgres
 #   if 5432 is busy: DONKEY_PG_PORT=5433 docker compose up -d postgres
 # DONKEY_PG_DSN=host=127.0.0.1 user=postgres password=donkey_pass dbname=donkey port=5432
+# DONKEY_MAGMA_SQLITE_PATH=/path/to/donkey-magma.sqlite
+# DONKEY_SQLITE_VEC_PATH=/absolute/path/to/vec0
 """
 
 const TomlTemplate = """# """ & AppName & """ configuration
@@ -166,7 +168,7 @@ const TomlTemplate = """# """ & AppName & """ configuration
 # must stay within these public hosts/subdomains.
 
 [sandbox]
-# mode  = "none"        # "none" or "docker"
+# mode  = "none"        # "none", "docker" or "wasm"
 # image = "alpine"
 """
 
@@ -226,7 +228,8 @@ proc ctlServiceInstall =
     "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
     "GEMINI_API_KEY", "MINIMAX_API_KEY",
     "OPENCODE_API_KEY",
-    "BRAVE_API_KEY", "DONKEY_PG_DSN",
+    "BRAVE_API_KEY", "DONKEY_PG_DSN", "DONKEY_SQLITE_VEC_PATH",
+    "DONKEY_SQLITE_VECTOR_PATH",
   ]
   var envContent = readFile(envPath)
   var injected: seq[string]
@@ -686,8 +689,8 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.qqOfficialApiBase = getEnv("QQ_OFFICIAL_API_BASE")
   let pgDsn = getEnv("DONKEY_PG_DSN")
   result.memory = MdFileAdapter(
-    paddocksDir: cfg.paddocks,
-    magmaDsn: pgDsn,
+    paddocksDir:     cfg.paddocks,
+    magmaDsn:       pgDsn,
     magmaSqlitePath: configuredMagmaSqlitePath(cfg.home),
     magmaSqliteVectorPath:
       block:
@@ -1193,7 +1196,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
       recentProviderMetrics: runtime.topRecentProviderMetrics(),
       providerCooldowns: runtime.activeProviderCooldowns(),
       toolsCount:    toolsCount,
-      memoryBackend:
+      memoryBackend: block:
         when defined(withPostgres) or defined(withSqlite):
           if gatewayInboundMemory.hasMagmaBackend:
             "md+" & gatewayInboundMemory.magmaBackendName
@@ -1456,8 +1459,13 @@ proc startSessionIngress*(sm: var SessionManager;
         result.msgId, taskKind, $msg.userId, taskPayload,
         msg.channel, sessionReplyTo(msg)))
   of sitAskInbox:
-    result.plan.entry[].awaitingAsk = false
-    result.plan.entry[].askInbox.addLastNoWait(msg.text)
+    if taskKind == tkUserMsg:
+      result.plan.entry[].awaitingAsk = false
+      result.plan.entry[].askInbox.addLastNoWait(msg.text)
+    else:
+      result.plan.entry[].inbox.addLastNoWait(newTaskMsg(
+        result.msgId, taskKind, $msg.userId, taskPayload,
+        msg.channel, sessionReplyTo(msg)))
   startSessionOrchestrator(result.plan, services.cfg,
                            services.memory,
                            services.streamFn, bootstrap,
@@ -1775,6 +1783,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let memory = bootstrap.memory
   let ctx = bootstrap.ctx
   activateDaemonBootstrap(ctx, cfg, memory, log)
+  let sessionServices = buildDaemonSessionServices(ctx, cfg, memory, log)
 
   ## Heartbeat: periodic maintenance (reminder delivery, etc.)
   var hbReg = newHeartbeatRegistry()
@@ -1788,12 +1797,40 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     ))
   hbReg.registerTask("reminders", proc() {.gcsafe.} =
     deliverDueReminders(memPort, reminderOutboxFn))
-  let hbIntervalStr = getEnv("DONKEY_HEARTBEAT_SEC")
-  let hbInterval = if hbIntervalStr.len > 0:
-    try: parseInt(hbIntervalStr) except ValueError: 60
-  else: 60
-  startHeartbeat(hbReg, intervalSec = hbInterval)
-  log.info("heartbeat: every " & $hbInterval & "s")
+  let heartbeatOutboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
+    let uid = UserId(userId)
+    let ck = parseEnum[ChannelKind](channel, ckTelegram)
+    ensureSessionTask(
+      ctx.runtime.sm,
+      InboundMessage(
+        userId: uid,
+        channelId: "",
+        callbackId: "",
+        text: "",
+        mediaUrl: "",
+        channel: ck,
+      ),
+      sessionServices,
+      ctx.runtime.msgSeq,
+      tkHeartbeat,
+      taskPayload,
+    )
+  hbReg.registerTask("heartbeat", proc() {.gcsafe.} =
+    deliverHeartbeats(cfg.paddocks, heartbeatOutboxFn))
+  let hbCronExpr = getEnv("DONKEY_HEARTBEAT_CRON").strip()
+  if hbCronExpr.len > 0:
+    let hbCronStart = startHeartbeatCron(hbReg, hbCronExpr)
+    if hbCronStart.isErr:
+      log.error("heartbeat cron: " & hbCronStart.error)
+      quit(1)
+    log.info("heartbeat cron: " & hbCronExpr)
+  else:
+    let hbIntervalStr = getEnv("DONKEY_HEARTBEAT_SEC")
+    let hbInterval = if hbIntervalStr.len > 0:
+      try: parseInt(hbIntervalStr) except ValueError: 60
+    else: 60
+    startHeartbeat(hbReg, intervalSec = hbInterval)
+    log.info("heartbeat: every " & $hbInterval & "s")
 
   ## One-time startup: recover messages received while bot was offline.
   block:
@@ -1856,7 +1893,7 @@ proc main =
 
   if not devMode and cfg.sandboxMode == smNone:
     stderr.writeLine "Security Error: Sandbox mode 'none' is only allowed in --dev-mode"
-    stderr.writeLine "Enable --dev-mode if you are in development, or set sandbox.mode = \"docker\" in donkey.toml"
+    stderr.writeLine "Enable --dev-mode if you are in development, or set sandbox.mode = \"docker\" or \"wasm\" in donkey.toml"
     quit(1)
 
   ringInit()            ## enable log ring buffer before the first Logger is created

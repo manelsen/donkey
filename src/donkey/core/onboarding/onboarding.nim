@@ -14,12 +14,16 @@ Listen actively. Ask clarifying questions if needed.
 When you have a clear picture of who you should be, output this exact block (no extra formatting):
 
 IDENTITY_READY:
-energy: <reservado|neutro|entusiasmado>
+energy: <reservado|neutro|entusiasmo>
 tone: <formal|neutro|casual>
 length: <conciso|moderado|detalhado>
 initiative: <reativo|moderado|proativo>
 
-Then continue the conversation naturally. Only output the block when you are confident about all four dimensions."""
+Then continue the conversation naturally. Only output the block when you are confident about all four dimensions.
+
+## Skills
+
+You can install and enable skills for the user with `manage_skills`. Never say your toolset is fixed or that you cannot install skills. If the user asks whether you can install skills, how skill installation works, or they mention a missing capability, use `manage_skills` or explain that you can search/install/enable a skill for them."""
 
 type
   OnboardingRuntime* = object

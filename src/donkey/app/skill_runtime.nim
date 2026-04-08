@@ -4,6 +4,7 @@ import std/[os, sequtils, strutils]
 import results
 import ../config/skills_registry
 import ../config/clawhub_registry
+import ../core/commands/command_catalog
 
 type
   SkillSearchBackend* = proc(registry, query: string; limit: int):
@@ -132,14 +133,10 @@ proc resolveRemoteSkillManifests(home, slug: string): Result[seq[SkillManifest],
 func formatSkillManifestLine(manifest: SkillManifest): string =
   "- `" & manifest.name & "` v" & manifest.version & " — `" & manifest.script & "`"
 
+const SkillCommandHelpLines* = SkillCommandMenuDetails
+
 func buildSkillHelpText*(): string =
-  "Skills:\n" &
-  "/skill list — mostra skills habilitadas para você e bundles remotos instalados\n" &
-  "/skill search <query> — busca skills remotas no ClawHub\n" &
-  "/skill install <slug> — baixa e habilita uma skill remota para você\n" &
-  "/skill enable <slug> — habilita para você uma skill remota já instalada\n" &
-  "/skill disable <name> — desabilita uma skill do seu runtime\n" &
-  "/skill read <slug> — lê o SKILL.md de uma skill instalada"
+  "Skills:\n" & SkillCommandHelpLines.join("\n")
 
 proc buildSkillListText(userPaddockDir, home: string): string =
   let enabled = loadSkillRegistry(userSkillsPath(userPaddockDir))

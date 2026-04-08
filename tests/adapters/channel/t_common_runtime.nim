@@ -13,6 +13,18 @@ when defined(withPostgres):
 
 suite "common_runtime":
 
+  test "buildMenuText lists /skill and its subcommands":
+    let text = buildMenuText()
+    check text.contains("/skill — busca, instala e habilita skills")
+    check text.contains("/skill list — mostra skills habilitadas")
+    check text.contains("/skill install <slug> — baixa e habilita")
+
+  test "buildHelpText expands /skill subcommands":
+    let text = buildHelpText(false)
+    check text.contains("/skill — busca, instala e habilita skills")
+    check text.contains("/skill search <query> — busca skills remotas")
+    check text.contains("/skill read <slug> — lê o SKILL.md")
+
   test "parseModelsArgs validates provider and model":
     let parsed = parseModelsArgs("gemini gemini-2.5-pro").get()
     check parsed[0] == "gemini"

@@ -55,6 +55,7 @@ suite "core command routing":
   test "parseCommandText parses ui and status commands":
     check parseCommandText("/models").kind == cmdModels
     check parseCommandText("/models").route == crUi
+    check parseCommandText("/model").kind == cmdModels
     check parseCommandText("/models gemini gemini-2.5-pro").value == "gemini gemini-2.5-pro"
     check parseCommandText("/think").kind == cmdThink
     check parseCommandText("/think medium").value == "medium"
@@ -89,6 +90,26 @@ suite "core command routing":
     let decision = decideCommandRequest(CommandRequest(channel: ckTelegram, text: "/help"))
     check decision.kind == cmdHelp
     check decision.route == crLocal
+
+  test "primary command names are canonical and aliases parse":
+    check primaryCommandName(cmdModels) == "/models"
+    check commandAliases(cmdModels) == @["/model"]
+    check commandAcceptsValue(cmdModels)
+    check commandAllowsBare(cmdModels)
+    check not commandAllowsBare(cmdContinue)
+    check parseCommandKind("/models") == cmdModels
+    check parseCommandKind("/model") == cmdModels
+    check parseCommandKind("/missing") == cmdNone
+
+  test "all canonical command names parse back to their kinds":
+    for kind in low(CommandKind) .. high(CommandKind):
+      if kind == cmdNone:
+        continue
+      let name = primaryCommandName(kind)
+      check name.len > 0
+      if commandAllowsBare(kind):
+        let decision = parseCommandText(name)
+        check decision.kind == kind
 
   test "decideCommandRoute classifies key command families":
     check decideCommandRoute(cmdHelp) == crLocal

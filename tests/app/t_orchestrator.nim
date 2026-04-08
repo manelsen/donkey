@@ -215,6 +215,34 @@ suite "OrchestratorAgent":
 
     check reply.text == "pong"
 
+  test "heartbeat task is processed as an agent turn":
+    let tmpDir = getTempDir() / "donkey_test_orch_heartbeat"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[OutboundMessage] {.async.} =
+      let userDir = dir / "u-heartbeat"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Bob")
+      let mem      = MdFileAdapter(paddocksDir: dir)
+      let inbox    = newAsyncQueue[AgentMessage]()
+      let outbox   = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 dir / "u-heartbeat", state))
+      await inbox.put(newTaskMsg("req-hb", tkHeartbeat, "u-heartbeat",
+        "Heartbeat automático.\nTarefas pendentes:\n- [ ] Review the logs"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      return reply
+
+    let reply = waitFor doTest(tmpDir)
+
+    check reply.text == "pong"
+
   test "empty LLM text triggers re-prompt — second call returns real answer":
     let tmpDir = getTempDir() / "donkey_test_retry"
     removeDir(tmpDir)

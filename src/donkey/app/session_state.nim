@@ -23,15 +23,17 @@ type
     result*: string
 
   SessionState* = ref object
-    todos*:       seq[TodoItem]
-    checkpoints*: seq[ConversationHistory]   ## history snapshots
-    jobs*:        Table[string, JobState]
-    jobCounter*:  int
+    todos*:           seq[TodoItem]
+    checkpoints*:     seq[ConversationHistory]   ## history snapshots
+    jobs*:            Table[string, JobState]
+    jobCounter*:       int
+    lastHeartbeatAtMs*: int64                    ## monotonic ms of last heartbeat turn
 
 proc newSessionState*(): SessionState =
   SessionState(
-    todos:           @[],
-    checkpoints:     @[],
-    jobs:            initTable[string, JobState](),
-    jobCounter:      0,
+    todos:            @[],
+    checkpoints:      @[],
+    jobs:             initTable[string, JobState](),
+    jobCounter:       0,
+    lastHeartbeatAtMs: 0,
   )

@@ -63,6 +63,8 @@ proc recordChannel*(sm: var SessionManager;
                     kind:   ChannelKind;
                     rawId:  string) =
   ## Records that userId has used (kind, rawId). Idempotent.
+  if rawId.len == 0:
+    return
   let uid = $userId
   if uid notin sm.entries: return
   let pair = (kind, rawId)

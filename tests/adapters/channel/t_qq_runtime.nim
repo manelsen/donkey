@@ -7,8 +7,9 @@ import donkey/adapters/channel/qq_channel
 suite "qq_runtime":
 
   test "qqHelpText reflects backend UX level":
-    check qqHelpText(qbkOfficial).contains("- `/models` seletor de modelo")
-    check qqHelpText(qbkOfficial).contains("- `/budget` policy de custo/qualidade")
+    check qqHelpText(qbkOfficial).contains("- `/models` seleciona o modelo de IA")
+    check qqHelpText(qbkOfficial).contains("- `/budget` controla a policy de custo/qualidade")
+    check qqHelpText(qbkOfficial).contains("- `/skill` busca, instala e habilita skills")
     check qqHelpText(qbkOneBot).contains("/models [provider model] — vê ou troca o modelo de IA")
 
   test "qqDirectModelProvider opens rich picker only for official provider-only command":
@@ -35,8 +36,8 @@ suite "qq_runtime":
     let help = qqHelpText(qbkOfficial)
     let status = qqStatusText("Provider: groq / llama-3.1-8b-instant", "high", 7, 2, "15m")
     check help.contains("## Donkey")
-    check help.contains("- `/models` seletor de modelo")
-    check help.contains("- `/budget` policy de custo/qualidade")
+    check help.contains("- `/models` seleciona o modelo de IA")
+    check help.contains("- `/budget` controla a policy de custo/qualidade")
     check status.contains("## Status")
     check status.contains("**groq / llama-3.1-8b-instant**")
     check status.contains("**15m**")

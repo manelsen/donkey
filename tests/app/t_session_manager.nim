@@ -53,6 +53,14 @@ suite "SessionManager":
     sm.recordChannel(uid, ckTelegram, "42")
     check sm.get(uid).channels.len == 1
 
+  test "recordChannel ignores blank raw ids":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("test-uuid-blank")
+    discard sm.getOrCreate(uid)
+    sm.recordChannel(uid, ckTelegram, "")
+    check sm.get(uid).channels.len == 0
+
   test "listSessions returns all sessions":
     var sm: SessionManager
     sm.init()

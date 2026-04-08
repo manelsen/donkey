@@ -2,13 +2,14 @@ import std/[algorithm, os, sequtils, strutils, times]
 import parsetoml
 import results
 import ../../core/pipeops
+import ../../core/commands/command_catalog
 import ../../core/commands/command_routing
 import ../../core/providers/smart_routing
 import ../../adapters/memory/md_file
 import ../../domain/message
 import ../../ports/provider
 import ../../app/skill_runtime
-when defined(withPostgres):
+when defined(withPostgres) or defined(withSqlite):
   import ../../adapters/memory/magma_memory_adapter
 
 const ThinkLevels* = ["off", "low", "medium", "high"]
@@ -54,7 +55,7 @@ func availableProvidersFromEnv(): ProviderAvailability =
     zaiCoding: getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")).len > 0,
   )
 
-when defined(withPostgres):
+when defined(withPostgres) or defined(withSqlite):
   proc noopDoctorEmbedFn(text: string): seq[float32] {.gcsafe.} = @[]
 
 proc parseChannelPrefs*(preferencesMd: string): ChannelPrefs =
@@ -464,6 +465,36 @@ func buildWhoamiText*(userId: UserId; sessionId, channelId: string): string =
   "*Session ID:* " & (if sessionId.len > 0: "`" & sessionId & "`" else: "_nenhuma_") & "\n" &
   "*Channel ID:* `" & channelId & "`"
 
+func formatHelpCommandLine(line: string; withBackticks: bool): string =
+  if not withBackticks:
+    return line
+  let sep = line.find(" — ")
+  if sep < 0:
+    return "`" & line & "`"
+  "`" & line[0 ..< sep] & "`" & line[sep .. ^1]
+
+func appendCatalogLines(lines: var seq[string];
+                        catalog: CommandCatalog;
+                        categories: openArray[CommandCategory];
+                        surface: CommandSurface;
+                        interactiveUi: bool;
+                        withBackticks: bool;
+                        indent = "";
+                        includeCategoryTitle = false) =
+  for category in categories:
+    let commands = catalog.commandsForCategories([category], surface)
+    if commands.len == 0:
+      continue
+    if includeCategoryTitle:
+      lines.add(indent & "*" & categoryNamePt(category) & "*")
+    for cmd in commands:
+      let line = cmd.usageFor(interactiveUi) & " — " & cmd.helpSummaryFor(interactiveUi)
+      lines.add(indent & formatHelpCommandLine(line, withBackticks))
+      for detail in cmd.menuDetails:
+        lines.add(indent & "  " & formatHelpCommandLine(detail, withBackticks))
+    if includeCategoryTitle:
+      lines.add("")
+
 proc buildMenuButtons*(): seq[seq[(string, string)]] =
   ## Main menu buttons grouped by category.
   @[
@@ -474,8 +505,23 @@ proc buildMenuButtons*(): seq[seq[(string, string)]] =
   ]
 
 func buildMenuText*(): string =
-  "🫏 *Donkey Menu*\n\n" &
-  "Selecione uma categoria ou comando abaixo para configurar sua sessão ou obter informações."
+  let catalog = newCommandCatalog()
+  var lines = @[
+    "🫏 *Donkey Menu*",
+    "",
+    "Selecione uma categoria ou comando abaixo para configurar sua sessão ou obter informações.",
+    "",
+  ]
+  appendCatalogLines(
+    lines,
+    catalog,
+    defaultMenuCategories(),
+    csMenu,
+    interactiveUi = true,
+    withBackticks = false,
+    includeCategoryTitle = true,
+  )
+  lines.join("\n").strip()
 
 proc buildConfigButtons*(): seq[seq[(string, string)]] =
   ## Configuration menu buttons.
@@ -521,27 +567,12 @@ func buildStartIntroText*(): string =
 
 func buildHelpPages*(): seq[(string, string)] =
   ## Returns (title, body) per page for paginated help embeds (Discord).
-  @[
-    ("Conversa",
-      "`/start` — apresentação\n" &
-      "`/help` — esta mensagem\n" &
-      "`/new` — arquiva a conversa atual e começa outra\n" &
-      "`/reset` — reinicia o bootstrap e roda onboarding de novo\n" &
-      "`/memory` — exibe memórias salvas\n" &
-      "`/forget` — apaga as memórias salvas"),
-    ("Modelos & Config",
-      "`/models` — seleciona o modelo de IA\n" &
-      "`/think` — nível de raciocínio\n" &
-      "`/budget` — policy de custo/qualidade\n" &
-      "`/ping` — latência do provider"),
-    ("Sistema",
-      "`/status` — snapshot da sessão atual\n" &
-      "`/debug` — ativa/desativa modo verbose\n" &
-      "`/skill` — busca, instala e habilita skills\n" &
-      "`/doctor` — diagnóstico do sistema\n" &
-      "`/mycode` — gera código de linkagem cross-channel\n" &
-      "`/continue <code>` — conecta a outra sessão"),
-  ]
+  let catalog = newCommandCatalog()
+  for section in defaultHelpSections():
+    var sectionLines: seq[string]
+    appendCatalogLines(sectionLines, catalog,
+      section.categories, csHelp, interactiveUi = true, withBackticks = true)
+    result.add((section.title, sectionLines.join("\n")))
 
 func buildHelpNavButtons*(page, total: int): seq[seq[(string, string)]] =
   var row: seq[(string, string)]
@@ -552,30 +583,18 @@ func buildHelpNavButtons*(page, total: int): seq[seq[(string, string)]] =
   if row.len > 0: @[row] else: @[]
 
 func buildHelpText*(interactiveUi: bool): string =
-  "Donkey — comandos disponíveis:\n\n" &
-    "/start — apresentação\n" &
-    "/help — esta mensagem\n" &
-    "/new — arquiva a conversa atual e começa outra\n" &
-    "/reset — reinicia o bootstrap e roda onboarding de novo\n" &
-    (if interactiveUi:
-       "/models — seleciona o modelo de IA\n" &
-       "/think — controla o nível de raciocínio\n" &
-       "/reasoning — exibe o pensamento do modelo\n" &
-       "/budget — controla a policy de custo/qualidade\n"
-     else:
-       "/models [provider model] — vê ou troca o modelo de IA\n" &
-       "/think [level] — vê ou troca o nível de raciocínio\n" &
-       "/reasoning [on/off] — vê ou troca a exibição do pensamento\n" &
-       "/budget [policy] — vê ou troca a policy de custo/qualidade\n") &
-    "/memory — exibe memórias salvas\n" &
-    "/forget — apaga as memórias salvas\n" &
-    "/skill — busca, instala e habilita skills\n" &
-    "/status — snapshot da sessão atual\n" &
-    "/ping — testa latência do provider\n" &
-    "/debug — ativa/desativa modo verbose (tokens, tool calls)\n" &
-    "/doctor — diagnóstico do sistema\n" &
-    "/mycode — gera código de linkagem cross-channel\n" &
-    "/continue <code> — conecta este canal a outra sessão"
+  let catalog = newCommandCatalog()
+  var lines = @["Donkey — comandos disponíveis:", ""]
+  appendCatalogLines(
+    lines,
+    catalog,
+    defaultMenuCategories(),
+    csHelp,
+    interactiveUi,
+    withBackticks = false,
+    includeCategoryTitle = true,
+  )
+  lines.join("\n").strip()
 
 proc buildDoctorReport*(memory: MdFileAdapter;
                         completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
@@ -602,10 +621,10 @@ proc buildDoctorReport*(memory: MdFileAdapter;
   let (prov, mdl) = memory.getCurrentProviderModel(userId)
   report.add("📦 Modelo: " & prov & " / " & mdl & "\n")
 
-  when defined(withPostgres):
-    if memory.magmaDsn.len > 0:
+  when defined(withPostgres) or defined(withSqlite):
+    if memory.hasMagmaBackend:
       try:
-        let magma = newMagmaMemoryAdapter(memory.magmaDsn, noopDoctorEmbedFn)
+        let magma = memory.newMagmaAdapter()
         let stats = magma.stats()
         report.add(
           "🧠 Multigraph Memory: nodes=" & $stats.totalNodes &
@@ -688,10 +707,10 @@ proc buildMemoryViewText*(memory: MdFileAdapter; userId: UserId): string =
   let markdownPrefsText =
     if fileExists(memory.preferencesMdPath(userId)): readFile(memory.preferencesMdPath(userId)).strip
     else: ""
-  when defined(withPostgres):
-    if memory.magmaDsn.len > 0:
+  when defined(withPostgres) or defined(withSqlite):
+    if memory.hasMagmaBackend:
       try:
-        let magma = newMagmaMemoryAdapter(memory.magmaDsn, noopDoctorEmbedFn)
+        let magma = memory.newMagmaAdapter()
         let graphCtx = magma.loadContext(userId)
         let graphText = graphCtx.memoryMd.strip
         if graphText.len > 0:

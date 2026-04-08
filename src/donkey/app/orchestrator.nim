@@ -1431,7 +1431,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
     withControlResult(controlResult)
   if controlResult.handled and msg.taskKind == tkUserMsg:
     safeSaveSession(memory, uid, sessionId, result.history)
-  if controlResult.handled or msg.taskKind notin {tkUserMsg}:
+  if controlResult.handled or msg.taskKind notin {tkUserMsg, tkHeartbeat}:
     return
 
   result = await handleUserTurn(

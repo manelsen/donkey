@@ -113,6 +113,70 @@ type
     value*:    string
     page*:     int
 
+func primaryCommandName*(kind: CommandKind): string =
+  case kind
+  of cmdStart: "/start"
+  of cmdMenu: "/menu"
+  of cmdWhoami: "/whoami"
+  of cmdSkill: "/skill"
+  of cmdForget: "/forget"
+  of cmdDoctor: "/doctor"
+  of cmdHelp: "/help"
+  of cmdMemory: "/memory"
+  of cmdDebug: "/debug"
+  of cmdReset: "/reset"
+  of cmdMyCode: "/mycode"
+  of cmdContinue: "/continue"
+  of cmdConfig: "/config"
+  of cmdVerbose: "/verbose"
+  of cmdReasoning: "/reasoning"
+  of cmdModels: "/models"
+  of cmdThink: "/think"
+  of cmdBudget: "/budget"
+  of cmdPing: "/ping"
+  of cmdStatus: "/status"
+  of cmdCallback: "/callback"
+  of cmdCompact: "/compact"
+  of cmdNew: "/new"
+  of cmdExec: "/exec"
+  of cmdAllowlist: "/allowlist"
+  of cmdQueue: "/queue"
+  of cmdUsage: "/usage"
+  of cmdTasks: "/tasks"
+  of cmdAgents: "/agents"
+  of cmdPoll: "/poll"
+  of cmdStop: "/stop"
+  of cmdRestart: "/restart"
+  of cmdBind: "/bind"
+  of cmdTts: "/tts"
+  of cmdNone: ""
+
+func commandAliases*(kind: CommandKind): seq[string] =
+  case kind
+  of cmdModels:
+    @["/model"]
+  else:
+    @[]
+
+func commandAcceptsValue*(kind: CommandKind): bool =
+  kind in {cmdModels, cmdThink, cmdBudget, cmdSkill, cmdContinue, cmdCallback}
+
+func commandAllowsBare*(kind: CommandKind): bool =
+  kind != cmdNone and kind notin {cmdContinue, cmdCallback}
+
+func parseCommandKind*(token: string): CommandKind =
+  if token.len == 0:
+    return cmdNone
+  for kind in low(CommandKind) .. high(CommandKind):
+    if kind == cmdNone:
+      continue
+    if token == primaryCommandName(kind):
+      return kind
+    for alias in commandAliases(kind):
+      if token == alias:
+        return kind
+  cmdNone
+
 func decideCommandRoute*(kind: CommandKind): CommandRoute =
   case kind
   of cmdStart, cmdMenu, cmdWhoami, cmdSkill, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
@@ -156,57 +220,22 @@ func stripBotMention*(text: string): string =
 
 func parseCommandText*(text: string): CommandDecision =
   let cmd = stripBotMention(text.strip)
-  case cmd
-  of "/start": newCommandDecision(cmdStart)
-  of "/menu": newCommandDecision(cmdMenu)
-  of "/whoami": newCommandDecision(cmdWhoami)
-  of "/skill": newCommandDecision(cmdSkill)
-  of "/forget": newCommandDecision(cmdForget)
-  of "/doctor": newCommandDecision(cmdDoctor)
-  of "/help": newCommandDecision(cmdHelp)
-  of "/memory": newCommandDecision(cmdMemory)
-  of "/debug": newCommandDecision(cmdDebug)
-  of "/reset": newCommandDecision(cmdReset)
-  of "/mycode": newCommandDecision(cmdMyCode)
-  of "/ping": newCommandDecision(cmdPing)
-  of "/status": newCommandDecision(cmdStatus)
-  of "/compact": newCommandDecision(cmdCompact)
-  of "/new": newCommandDecision(cmdNew)
-  of "/config": newCommandDecision(cmdConfig)
-  of "/verbose": newCommandDecision(cmdVerbose)
-  of "/reasoning": newCommandDecision(cmdReasoning)
-  of "/exec": newCommandDecision(cmdExec)
-  of "/allowlist": newCommandDecision(cmdAllowlist)
-  of "/queue": newCommandDecision(cmdQueue)
-  of "/usage": newCommandDecision(cmdUsage)
-  of "/tasks": newCommandDecision(cmdTasks)
-  of "/agents": newCommandDecision(cmdAgents)
-  of "/poll": newCommandDecision(cmdPoll)
-  of "/stop": newCommandDecision(cmdStop)
-  of "/restart": newCommandDecision(cmdRestart)
-  of "/bind": newCommandDecision(cmdBind)
-  of "/tts": newCommandDecision(cmdTts)
-  else:
-    if cmd.startsWith("/models "):
-      newCommandDecision(cmdModels, cmd[8 .. ^1].strip)
-    elif cmd.startsWith("/think "):
-      newCommandDecision(cmdThink, cmd[7 .. ^1].strip)
-    elif cmd.startsWith("/budget "):
-      newCommandDecision(cmdBudget, cmd[8 .. ^1].strip)
-    elif cmd == "/models":
-      newCommandDecision(cmdModels)
-    elif cmd == "/think":
-      newCommandDecision(cmdThink)
-    elif cmd == "/budget":
-      newCommandDecision(cmdBudget)
-    elif cmd.startsWith("/skill "):
-      newCommandDecision(cmdSkill, cmd[7 .. ^1].strip)
-    elif cmd.startsWith("/continue "):
-      newCommandDecision(cmdContinue, cmd[10 .. ^1].strip)
-    elif cmd.startsWith("/callback "):
-      newCommandDecision(cmdCallback, cmd[10 .. ^1].strip)
-    else:
-      newCommandDecision(cmdNone)
+  if cmd.len == 0 or cmd[0] != '/':
+    return newCommandDecision(cmdNone)
+
+  let spaceIdx = cmd.find(' ')
+  let token = if spaceIdx >= 0: cmd[0 ..< spaceIdx] else: cmd
+  let value = if spaceIdx >= 0: cmd[spaceIdx + 1 .. ^1].strip else: ""
+  let kind = parseCommandKind(token)
+
+  if kind == cmdNone:
+    return newCommandDecision(cmdNone)
+  if value.len == 0:
+    return if commandAllowsBare(kind): newCommandDecision(kind)
+           else: newCommandDecision(cmdNone)
+  if commandAcceptsValue(kind):
+    return newCommandDecision(kind, value)
+  newCommandDecision(cmdNone)
 
 func decideCommandRequest*(request: CommandRequest): CommandDecision =
   parseCommandText(request.text)

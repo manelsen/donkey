@@ -13,6 +13,7 @@
 import std/[json, sequtils, strutils]
 import ../../core/types
 import ../../core/pipeops
+import ../../core/commands/command_catalog
 import ../../core/telegram_format
 import ../../domain/message
 import ../../domain/channels/telegram_pure
@@ -279,22 +280,7 @@ proc setMessageReaction*(a: TelegramAdapter; userId: UserId;
 
 proc registerBotCommands*(a: TelegramAdapter): Result[void, string] =
   ## Registers bot commands in the Telegram menu (the / hint list).
-  let cmds = %* [
-    {"command": "help",    "description": "Ajuda e lista de comandos"},
-    {"command": "reset",   "description": "Reinicia a conversa atual"},
-    {"command": "mycode",  "description": "Gera código de linkagem cross-channel"},
-    {"command": "models",  "description": "Seleciona modelo de IA"},
-    {"command": "think",   "description": "Controla o nível de raciocínio"},
-    {"command": "reasoning", "description": "Exibe o pensamento do modelo (blockquote)"},
-    {"command": "memory",  "description": "Exibe memórias salvas"},
-    {"command": "forget",  "description": "Apaga as memórias salvas"},
-    {"command": "status",  "description": "Snapshot da sessão atual"},
-    {"command": "ping",    "description": "Testa latência do provider"},
-    {"command": "debug",    "description": "Ativa/desativa modo verbose"},
-    {"command": "doctor",  "description": "Diagnóstico do sistema"},
-    {"command": "continue", "description": "Continua sessão de outro canal"},
-    {"command": "start",   "description": "Inicia ou recomeça a conversa"},
-  ]
+  let cmds = newCommandCatalog().toTelegramCommandsJson()
   discard ? a.post("setMyCommands", %* {"commands": cmds})
   ok()
 

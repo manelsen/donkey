@@ -18,6 +18,7 @@
 import std/[json, net, os, random, strutils, tables, times]
 import ../../core/log
 import ../../core/app_meta
+import ../../core/commands/command_catalog
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
@@ -631,80 +632,7 @@ proc getAppId*(a: DiscordAdapter): Result[string, string] =
 
 proc registerSlashCommands*(a: DiscordAdapter; appId: string; guildId = ""): Result[void, string] =
   ## Registers the operational command surface as global or guild application commands.
-  let commands = %* [
-    {"name": "start",   "type": 1, "description": "Show the intro text"},
-    {"name": "help",    "type": 1, "description": "Show available commands"},
-    {"name": "memory",  "type": 1, "description": "Show saved memories"},
-    {"name": "forget",  "type": 1, "description": "Clear saved memories"},
-    {"name": "doctor",  "type": 1, "description": "Run a runtime diagnostic"},
-    {"name": "reset",   "type": 1, "description": "Reset the active session"},
-    {"name": "debug",   "type": 1, "description": "Toggle verbose tool/debug mode"},
-    {
-      "name":        "continue",
-      "type":        1,
-      "description": "Continue your session from another channel (opens dialog)",
-      "options": [
-        {
-          "name": "code",
-          "description": "Link code from /mycode on another channel",
-          "type": 3,
-          "required": false,
-        }
-      ],
-    },
-    {
-      "name":        "mycode",
-      "type":        1,
-      "description": "Generate a link code to reconnect from another channel",
-    },
-    {
-      "name":        "models",
-      "type":        1,
-      "description": "Show or change the active provider/model",
-      "options": [
-        {
-          "name": "provider",
-          "description": "Provider name",
-          "type": 3,
-          "required": false,
-        },
-        {
-          "name": "model",
-          "description": "Model name",
-          "type": 3,
-          "required": false,
-        }
-      ],
-    },
-    {
-      "name":        "think",
-      "type":        1,
-      "description": "Show or change the reasoning level",
-      "options": [
-        {
-          "name": "level",
-          "description": "off, low, medium, or high",
-          "type": 3,
-          "required": false,
-        }
-      ],
-    },
-    {
-      "name":        "budget",
-      "type":        1,
-      "description": "Show or change the cost/quality policy",
-      "options": [
-        {
-          "name": "policy",
-          "description": "cheap-first, balanced, or quality-first",
-          "type": 3,
-          "required": false,
-        }
-      ],
-    },
-    {"name": "ping",   "type": 1, "description": "Measure provider latency"},
-    {"name": "status", "type": 1, "description": "Show session/runtime status"},
-  ]
+  let commands = newCommandCatalog().toDiscordSlashCommandsJson()
   ## Add DM support: integration_types [GUILD_INSTALL, USER_INSTALL] + contexts [GUILD, BOT_DM, PRIVATE_CHANNEL]
   for i in 0 ..< commands.len:
     commands[i]["integration_types"] = %* [0, 1]

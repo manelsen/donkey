@@ -25,6 +25,7 @@ type
     tkRestart            ## alias for reset/new
     tkBind               ## associate chat with personality
     tkReasoningToggle    ## toggle chain-of-thought visibility
+    tkHeartbeat          ## periodic proactive task from HEARTBEAT.md
 
   AgentMessage* = object
     kind*:     AgentMessageKind

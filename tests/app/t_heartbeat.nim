@@ -2,9 +2,11 @@
 ## Tests: task registration, tick counting, reminder delivery logic.
 
 import std/[os, strutils, times, unittest, options, sequtils]
+import donkey/core/pipeops
 import donkey/app/heartbeat
 import donkey/app/contemplation
 import donkey/core/types
+import donkey/core/cron
 import donkey/adapters/memory/md_file
 import donkey/domain/memory/commitment_pure
 import donkey/domain/memory/episode_pure
@@ -130,6 +132,99 @@ suite "heartbeat commitment accountability":
     check reviews[0].status == csOpen
     check not reviews[0].overdue
     check reviews[0].score > 0.5'f32
+
+suite "heartbeat parseHeartbeatMd":
+
+  test "parses unchecked task items":
+    let entries = parseHeartbeatMd("- [ ] Fix the bug\n- [ ] Review PR")
+    check entries.len == 2
+    check entries[0].title == "Fix the bug"
+    check not entries[0].checked
+    check entries[1].title == "Review PR"
+    check not entries[1].checked
+
+  test "parses checked task items":
+    let entries = parseHeartbeatMd("- [x] Done task\n- [x] Another done")
+    check entries.len == 2
+    check entries[0].checked
+    check entries[1].checked
+
+  test "parses mixed checked/unchecked":
+    let entries = parseHeartbeatMd("- [ ] Active task\n- [x] Completed\n- [ ] Another active")
+    check entries.len == 3
+    check not entries[0].checked
+    check entries[1].checked
+    check not entries[2].checked
+
+  test "skips empty lines":
+    let entries = parseHeartbeatMd("\n\n- [ ] Task\n\n\n")
+    check entries.len == 1
+    check entries[0].title == "Task"
+
+  test "parses bullet points without checkbox":
+    let entries = parseHeartbeatMd("- Regular bullet without checkbox")
+    check entries.len == 1
+    check entries[0].title == "Regular bullet without checkbox"
+
+suite "heartbeat prompt helpers":
+
+  test "buildHeartbeatPrompt instructs the agent to act and update the file":
+    let prompt = buildHeartbeatPrompt(@[
+      HeartbeatTaskEntry(title: "Review the logs", checked: false),
+      HeartbeatTaskEntry(title: "Fix the retry loop", checked: false),
+    ])
+    check prompt.contains("Execute agora o que for viável")
+    check prompt.contains("HEARTBEAT.md")
+    check prompt.contains("Review the logs")
+    check prompt.contains("Fix the retry loop")
+
+  test "millisUntilNextRun returns a positive delay":
+    let current = dateTime(2026, mApr, 7, 10, 3, 15, 0, local())
+    let waitMs = millisUntilNextRun(everyMinute(), current)
+    check waitMs > 0
+    check waitMs <= 60_000
+
+suite "heartbeat deliverHeartbeats":
+
+  test "delivers heartbeat tasks from HEARTBEAT.md in paddock":
+    let tmp = getTempDir() / "donkey_hb_dispatch"
+    try: removeDir(tmp) except: discard
+    createDir(tmp / "user-uuid")
+    writeFile(tmp / "user-uuid" / "HEARTBEAT.md",
+      "- [ ] Review the logs\n- [ ] Check email\n- [x] Done already")
+    var dispatched: seq[string] = @[]
+    let outboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
+      {.cast(gcsafe).}: dispatched.add(userId & "|" & taskPayload)
+    deliverHeartbeats(tmp, outboxFn)
+    check dispatched.len == 1
+    check "user-uuid" in dispatched[0]
+    check "Review the logs" in dispatched[0]
+    check "Check email" in dispatched[0]
+
+  test "skips already dispatched users within cooldown":
+    let tmp = getTempDir() / "donkey_hb_cooldown"
+    try: removeDir(tmp) except: discard
+    createDir(tmp / "user-cool" / "memory")
+    writeFile(tmp / "user-cool" / "HEARTBEAT.md", "- [ ] Do this")
+    writeFile(tmp / "user-cool" / "memory" / "heartbeat-state.json",
+      $ %* {"last_dispatch_ms": nowMs()})
+    var dispatched: seq[string] = @[]
+    let outboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
+      {.cast(gcsafe).}: dispatched.add(userId)
+    deliverHeartbeats(tmp, outboxFn)
+    check dispatched.len == 0
+    try: removeDir(tmp) except: discard
+
+  test "skips users with no HEARTBEAT.md":
+    let tmp = getTempDir() / "donkey_hb_no_hb"
+    try: removeDir(tmp) except: discard
+    createDir(tmp / "user-no-hb")
+    var dispatched2: seq[string] = @[]
+    let outboxFn2: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
+      {.cast(gcsafe).}: dispatched2.add(userId)
+    deliverHeartbeats(tmp, outboxFn2)
+    check dispatched2.len == 0
+    try: removeDir(tmp) except: discard
 
 suite "contemplation runtime":
 

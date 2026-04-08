@@ -1,5 +1,6 @@
 import std/strutils
 import chronos/asyncsync
+import ../../core/commands/command_catalog
 import ../../core/commands/command_routing
 import ../../core/pipeops
 import ../../adapters/memory/md_file
@@ -16,22 +17,12 @@ func qqSupportsRichUi*(kind: QQBackendKind): bool =
 func qqHelpText*(kind: QQBackendKind): string =
   if not qqSupportsRichUi(kind):
     return buildHelpText(false)
-  "## Donkey\n\n" &
-    "- `/start` apresentação\n" &
-    "- `/help` esta ajuda\n" &
-    "- `/models` seletor de modelo\n" &
-    "- `/think` seletor de raciocínio\n" &
-    "- `/budget` policy de custo/qualidade\n" &
-    "- `/memory` mostra memórias\n" &
-    "- `/forget` apaga memórias\n" &
-    "- `/status` visão geral da sessão\n" &
-    "- `/ping` testa o provider\n" &
-    "- `/debug` alterna modo verbose\n" &
-    "- `/doctor` diagnóstico do sistema\n" &
-    "- `/mycode` gera código de linkagem\n" &
-    "- `/continue <code>` conecta este QQ a outra sessão\n" &
-    "- `/new` arquiva a conversa atual e começa outra\n" &
-    "- `/reset` reinicia o bootstrap e roda onboarding de novo"
+  let catalog = newCommandCatalog()
+  var lines = @["## Donkey", ""]
+  for section in defaultHelpSections():
+    for cmd in catalog.commandsForCategories(section.categories, csHelp):
+      lines.add("- `" & cmd.usageFor(true) & "` " & cmd.helpSummaryFor(true))
+  lines.join("\n")
 
 func qqDirectModelProvider*(kind: QQBackendKind;
                             command: CommandDecision): string =
@@ -53,7 +44,10 @@ proc qqModelPickerTitle*(provider: string;
                          page: int;
                          entries: seq[ModelCatalogEntry];
                          catalog: ModelCatalogResult): string =
-  buildModelPageText(provider, page, entries, catalog)
+  var body = buildCatalogSourceText(catalog)
+  if entries.len == 0:
+    body.add("\n\nNenhum modelo disponível para este provider no catálogo atual.")
+  qqPickerText(buildModelPageTitle(provider, page, entries), body)
 
 func qqProviderPickerTitle*(): string =
   qqPickerText("Escolha o provider", "Selecione a família de modelos para abrir o catálogo.")
