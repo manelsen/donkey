@@ -25,7 +25,9 @@ suite "Sandbox Enforcement":
 
   test "allows sandbox 'oci' in production mode":
     let cfg = DonkeyConfig(
-      sandboxMode: smOci
+      sandboxMode: smOci,
+      sandboxAllowNetwork: false,
+      sandboxReadOnlyRootfs: true
     )
     let res = validateSandboxPolicy(cfg, devMode = false)
     check res.isOk
@@ -46,3 +48,23 @@ suite "Sandbox Enforcement":
     )
     let res = validateSandboxPolicy(cfg, devMode = true)
     check res.isOk
+
+  test "refuses oci network egress in production mode":
+    let cfg = DonkeyConfig(
+      sandboxMode: smOci,
+      sandboxAllowNetwork: true,
+      sandboxReadOnlyRootfs: true
+    )
+    let res = validateSandboxPolicy(cfg, devMode = false)
+    check res.isErr
+    check "allow_network" in res.error
+
+  test "refuses writable oci rootfs in production mode":
+    let cfg = DonkeyConfig(
+      sandboxMode: smOci,
+      sandboxAllowNetwork: false,
+      sandboxReadOnlyRootfs: false
+    )
+    let res = validateSandboxPolicy(cfg, devMode = false)
+    check res.isErr
+    check "read_only_rootfs" in res.error

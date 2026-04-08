@@ -240,6 +240,10 @@ proc validateSandboxPolicy*(cfg: DonkeyConfig;
     return err("Security Error: Sandbox mode 'none' is only allowed in --dev-mode")
   if not devMode and cfg.sandboxAllowHostFallback:
     return err("Security Error: sandbox.allow_host_fallback=true is only allowed in --dev-mode")
+  if not devMode and cfg.sandboxMode == smOci and cfg.sandboxAllowNetwork:
+    return err("Security Error: sandbox.allow_network=true is only allowed in --dev-mode")
+  if not devMode and cfg.sandboxMode == smOci and not cfg.sandboxReadOnlyRootfs:
+    return err("Security Error: sandbox.read_only_rootfs=false is only allowed in --dev-mode")
   ok()
 
 # ── Executor ──────────────────────────────────────────────────────────────────
@@ -261,6 +265,8 @@ proc sandboxBash*(cmd, paddock: string;
   of smWasm:
     let shellPath = resolveShellWasmPath()
     if not shellPath.fileExists:
+      if not allowHostFallback:
+        return "Error: wasm sandbox unavailable; host fallback is disabled by configuration."
       return runSandboxHelper(cmd, paddock)
     # Use ShellComposer for pipes — composes applet chain in Nim
     if "|" in cmd:

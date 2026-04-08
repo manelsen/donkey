@@ -89,7 +89,7 @@ proc sandboxPolicyResult*(cfg: DonkeyConfig;
 proc checkSandboxPolicy*(cfg: DonkeyConfig;
                          devMode: bool): DiagResult =
   result = sandboxPolicyResult(cfg, devMode) |>-> toDiagResult("sandbox policy")
-  if result.status == dsOk and (cfg.sandboxAllowNetwork or not cfg.sandboxReadOnlyRootfs):
+  if result.status == dsOk and devMode and (cfg.sandboxAllowNetwork or not cfg.sandboxReadOnlyRootfs or cfg.sandboxAllowHostFallback):
     result.status = dsWarn
     result.detail &= " | relaxed isolation"
 

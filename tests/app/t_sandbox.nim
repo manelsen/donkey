@@ -176,6 +176,18 @@ suite "sandboxBash — smNone":
     let r = sandboxBash("printf %s \"$OPENAI_API_KEY\"", paddock, smNone, "alpine")
     check r == "[exit 0]"
 
+suite "sandboxBash — smWasm":
+
+  test "missing wasm shell does not fall back to host when fallback is disabled":
+    if resolveShellWasmPath().fileExists:
+      check true
+    else:
+      let paddock = getTempDir() / "donkey_sb_wasm_missing"
+      createDir(paddock)
+      defer: removeDir(paddock)
+      let r = sandboxBash("echo ok", paddock, smWasm, "alpine", "docker", false)
+      check "ok" notin r
+
 suite "SandboxMode values":
 
   test "smNone string value":

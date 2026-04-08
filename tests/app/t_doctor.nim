@@ -78,7 +78,7 @@ suite "doctor — checkSandboxPolicy":
     check r.name == "sandbox policy"
     check r.status == dsErr
 
-  test "sandbox policy warns when oci network is enabled":
+  test "sandbox policy is err when oci network is enabled in production":
     let cfg = DonkeyConfig(
       sandboxMode: smOci,
       sandboxRuntimeCmd: "docker",
@@ -86,6 +86,16 @@ suite "doctor — checkSandboxPolicy":
       sandboxReadOnlyRootfs: true
     )
     let r = checkSandboxPolicy(cfg, devMode = false)
+    check r.status == dsErr
+
+  test "sandbox policy warns when oci network is enabled in dev mode":
+    let cfg = DonkeyConfig(
+      sandboxMode: smOci,
+      sandboxRuntimeCmd: "docker",
+      sandboxAllowNetwork: true,
+      sandboxReadOnlyRootfs: true
+    )
+    let r = checkSandboxPolicy(cfg, devMode = true)
     check r.status == dsWarn
 
   test "sandbox policy is ok for hardened oci config":
