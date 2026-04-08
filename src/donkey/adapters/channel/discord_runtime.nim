@@ -12,6 +12,31 @@ import ../identity/identity_resolver
 import ./common_runtime
 import ./discord
 
+const
+  uiSlotMenu = "menu"
+  uiSlotConfig = "config"
+  uiSlotModels = "models"
+  uiSlotThink = "think"
+
+func uiSlotKey(userId: UserId; slot: string): string =
+  $userId & "|" & slot
+
+proc getUiMsgId(uiMsgIds: var Table[string, string];
+                userId: UserId;
+                slot: string): string =
+  uiMsgIds.getOrDefault(uiSlotKey(userId, slot))
+
+proc setUiMsgId(uiMsgIds: var Table[string, string];
+                userId: UserId;
+                slot, msgId: string) =
+  if msgId.len > 0:
+    uiMsgIds[uiSlotKey(userId, slot)] = msgId
+
+proc clearUiMsgId(uiMsgIds: var Table[string, string];
+                  userId: UserId;
+                  slot: string) =
+  uiMsgIds.del(uiSlotKey(userId, slot))
+
 proc sendDiscordReply(event: DiscordRawEvent;
                       dcAdapter: DiscordAdapter;
                       userId: UserId;
@@ -49,6 +74,7 @@ proc sendDiscordKeyboard(dcAdapter: DiscordAdapter;
                          event: DiscordRawEvent;
                          kbdMsgIds: var Table[string, string];
                          userId: UserId;
+                         slot: string;
                          title: string;
                          buttons: seq[seq[(string, string)]];
                          ackText: string;
@@ -57,7 +83,7 @@ proc sendDiscordKeyboard(dcAdapter: DiscordAdapter;
     let r = dcAdapter.sendInteractionKeyboard(
       event.interactionId, event.interactionToken, title, buttons)
     if r.isOk:
-      kbdMsgIds[$userId] = "interaction"
+      kbdMsgIds.setUiMsgId(userId, slot, "interaction")
       return
     ## Interaction expired or already used — fall back to a regular DM keyboard
     core_log.log(logger, core_log.lvlWarn,
@@ -66,7 +92,7 @@ proc sendDiscordKeyboard(dcAdapter: DiscordAdapter;
   let msgId = dcAdapter.sendKeyboard(userId, title, buttons).valueOr:
     core_log.log(logger, core_log.lvlError, "dc send keyboard: " & error)
     return
-  kbdMsgIds[$userId] = msgId
+  kbdMsgIds.setUiMsgId(userId, slot, msgId)
 
 proc smartEditKeyboard(dcAdapter: DiscordAdapter;
                        event: DiscordRawEvent;
@@ -93,12 +119,17 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
                             logger: Logger): bool =
   case command.kind
   of cmdConfig:
-    dcAdapter.sendInteractionKeyboard(
-      event.interactionId, event.interactionToken,
-      memory.buildConfigText(userId), buildConfigButtons()).isOkOr:
-        core_log.log(logger, core_log.lvlWarn, "dc config keyboard: " & error)
-        sendDiscordEmbed(event, dcAdapter, userId,
-          "⚙️ Config", memory.buildConfigText(userId), 0x5865F2, logger)
+    let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotConfig)
+    if kbdId.len > 0 and event.interactionId.len == 0:
+      dcAdapter.smartEditKeyboard(
+        event, userId, kbdId, memory.buildConfigText(userId), buildConfigButtons()).isOkOr:
+          core_log.log(logger, core_log.lvlWarn, "dc config keyboard: " & error)
+    else:
+      sendDiscordKeyboard(
+        dcAdapter, event, kbdMsgIds, userId, uiSlotConfig,
+        memory.buildConfigText(userId), buildConfigButtons(),
+        "Abri a configuração na sua DM.", logger,
+      )
     true
   of cmdTasks:
     sendDiscordEmbed(event, dcAdapter, userId,
@@ -117,7 +148,7 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
       if command.value.strip.len > 0: parseModelsProviderArg(command.value).valueOr: ""
       else: ""
     if providerOnly.len > 0:
-      let kbdId = kbdMsgIds.getOrDefault($userId)
+      let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotModels)
       let (currProv, currModel) = memory.getCurrentProviderModel(userId)
       let catalog = modelCatalogLoader(providerOnly).valueOr: emptyCatalogResult()
       let entries = sortModelCatalog(normalizeModelCatalog(providerOnly, catalog.entries))
@@ -128,20 +159,20 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
           core_log.log(logger, core_log.lvlError, "dc provider direct menu: " & error)
       else:
         sendDiscordKeyboard(
-          dcAdapter, event, kbdMsgIds, userId, title, buttons,
+          dcAdapter, event, kbdMsgIds, userId, uiSlotModels, title, buttons,
           "Abri o catálogo de " & providerOnly & " na sua DM.", logger,
         )
     elif command.value.strip.len > 0:
       let reply = memory.applyModelsTextCommand(userId, command.value, modelCatalogLoader).valueOr: error
       sendDiscordReply(event, dcAdapter, userId, reply, logger)
     else:
-      let kbdId = kbdMsgIds.getOrDefault($userId)
+      let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotModels)
       if kbdId.len > 0 and event.interactionId.len == 0:
         dcAdapter.smartEditKeyboard(event, userId, kbdId, "Escolha o provider:", memory.buildProviderButtons(userId)).isOkOr:
             core_log.log(logger, core_log.lvlError, "dc provider reopen: " & error)
       else:
         sendDiscordKeyboard(
-          dcAdapter, event, kbdMsgIds, userId,
+          dcAdapter, event, kbdMsgIds, userId, uiSlotModels,
           "Escolha o provider:",
           memory.buildProviderButtons(userId),
           "Abri o seletor de modelo na sua DM.",
@@ -153,13 +184,13 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
       let reply = memory.applyThinkTextCommand(userId, command.value).valueOr: error
       sendDiscordReply(event, dcAdapter, userId, reply, logger)
     else:
-      let kbdId = kbdMsgIds.getOrDefault($userId)
+      let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotThink)
       if kbdId.len > 0 and event.interactionId.len == 0:
         dcAdapter.smartEditKeyboard(event, userId, kbdId, "Nível de raciocínio:", memory.buildThinkButtons(userId)).isOkOr:
             core_log.log(logger, core_log.lvlError, "dc think reopen: " & error)
       else:
         sendDiscordKeyboard(
-          dcAdapter, event, kbdMsgIds, userId,
+          dcAdapter, event, kbdMsgIds, userId, uiSlotThink,
           "Nível de raciocínio:",
           memory.buildThinkButtons(userId),
           "Abri o seletor de thinking na sua DM.",
@@ -194,7 +225,7 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
     let (currProv, currModel) = memory.getCurrentProviderModel(userId)
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
-    let kbdId = kbdMsgIds.getOrDefault($userId)
+    let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotModels)
     if kbdId.len > 0:
       dcAdapter.smartEditKeyboard(
         event, userId, kbdId,
@@ -205,13 +236,13 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
   of cbkModelsSet:
     memory.saveChannelPreference(userId, "provider", callback.provider)
     memory.saveChannelPreference(userId, "model", callback.model)
-    let kbdId = kbdMsgIds.getOrDefault($userId)
+    let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotModels)
     if kbdId.len > 0:
       dcAdapter.smartEditKeyboard(event, userId, kbdId,
         "Modelo definido: " & callback.provider & " / " & callback.model,
         @[]).isOkOr:
           core_log.log(logger, core_log.lvlError, "dc model confirm: " & error)
-      kbdMsgIds.del($userId)
+      kbdMsgIds.clearUiMsgId(userId, uiSlotModels)
     else:
       dcAdapter.send(OutboundMessage(
         userId: userId,
@@ -224,7 +255,7 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
     let (currProv, currModel) = memory.getCurrentProviderModel(userId)
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
-    let kbdId = kbdMsgIds.getOrDefault($userId)
+    let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotModels)
     if kbdId.len > 0:
       dcAdapter.smartEditKeyboard(
         event, userId, kbdId,
@@ -233,7 +264,7 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
           core_log.log(logger, core_log.lvlError, "dc model page: " & error)
     true
   of cbkModelsBack:
-    let kbdId = kbdMsgIds.getOrDefault($userId)
+    let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotModels)
     if kbdId.len > 0:
       dcAdapter.smartEditKeyboard(
         event, userId, kbdId, "Escolha o provider:", memory.buildProviderButtons(userId)).isOkOr:
@@ -254,11 +285,11 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
     let level = callback.value
     if level in ThinkLevels:
       memory.saveChannelPreference(userId, "thinking", level)
-      let kbdId = kbdMsgIds.getOrDefault($userId)
+      let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotThink)
       if kbdId.len > 0:
         dcAdapter.smartEditKeyboard(event, userId, kbdId, "Thinking definido: " & level, @[]).isOkOr:
           core_log.log(logger, core_log.lvlError, "dc think confirm: " & error)
-        kbdMsgIds.del($userId)
+        kbdMsgIds.clearUiMsgId(userId, uiSlotThink)
       else:
         dcAdapter.send(OutboundMessage(
           userId: userId,
@@ -312,12 +343,17 @@ proc handleDiscordEvent*(sm: var SessionManager;
           logger,
         )
       of lcaShowMenu:
-        dcAdapter.sendInteractionKeyboard(
-          event.interactionId, event.interactionToken,
-          buildMenuText(), buildMenuButtons()).isOkOr:
-            core_log.log(logger, core_log.lvlWarn, "dc menu keyboard: " & error)
-            sendDiscordEmbed(event, dcAdapter, userId,
-              "🫏 Menu", buildMenuText(), 0x5865F2, logger)
+        let kbdId = kbdMsgIds.getUiMsgId(userId, uiSlotMenu)
+        if kbdId.len > 0 and event.interactionId.len == 0:
+          dcAdapter.smartEditKeyboard(
+            event, userId, kbdId, buildMenuText(), buildMenuButtons()).isOkOr:
+              core_log.log(logger, core_log.lvlWarn, "dc menu keyboard: " & error)
+        else:
+          sendDiscordKeyboard(
+            dcAdapter, event, kbdMsgIds, userId, uiSlotMenu,
+            buildMenuText(), buildMenuButtons(),
+            "Abri o menu na sua DM.", logger,
+          )
       of lcaShowWhoami:
         let sessId = if sm.hasSession(userId): "active" else: ""
         sendDiscordEmbed(event, dcAdapter, userId,

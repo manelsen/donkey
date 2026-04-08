@@ -64,10 +64,36 @@ proc handleTelegramTaskCommand*(sm: var SessionManager;
 type
   TelegramPrefs* = ChannelPrefs
 
+const
+  uiSlotMenu* = "menu"
+  uiSlotConfig* = "config"
+  uiSlotModels* = "models"
+  uiSlotThink* = "think"
+  uiSlotHelp* = "help"
+
 proc defaultTelegramPrefs*(): TelegramPrefs = defaultChannelPrefs()
 proc parseTelegramPrefs*(preferencesMd: string): TelegramPrefs = parseChannelPrefs(preferencesMd)
 proc loadTelegramPrefs*(memory: MdFileAdapter; userId: UserId): TelegramPrefs =
   loadChannelPrefs(memory, userId)
+
+func uiSlotKey(userId: UserId; slot: string): string =
+  $userId & "|" & slot
+
+proc getUiMsgId(uiMsgIds: var Table[string, string];
+                userId: UserId;
+                slot: string): string =
+  uiMsgIds.getOrDefault(uiSlotKey(userId, slot))
+
+proc setUiMsgId(uiMsgIds: var Table[string, string];
+                userId: UserId;
+                slot, msgId: string) =
+  if msgId.len > 0:
+    uiMsgIds[uiSlotKey(userId, slot)] = msgId
+
+proc clearUiMsgId(uiMsgIds: var Table[string, string];
+                  userId: UserId;
+                  slot: string) =
+  uiMsgIds.del(uiSlotKey(userId, slot))
 
 proc getCurrentThinkLevel*(memory: MdFileAdapter; userId: UserId): string =
   common_runtime.getCurrentThinkLevel(memory, userId)
@@ -96,12 +122,13 @@ proc saveTelegramPreference*(memory: MdFileAdapter;
 
 proc clearTelegramKeyboard*(tgAdapter: var TelegramAdapter;
                             kbdMsgIds: var Table[string, string];
-                            userId: UserId) =
-  let kbdId = kbdMsgIds.getOrDefault($userId)
+                            userId: UserId;
+                            slot = uiSlotModels) =
+  let kbdId = kbdMsgIds.getUiMsgId(userId, slot)
   if kbdId.len > 0:
     tgAdapter.editKeyboard(userId, kbdId, @[]).isOkOr:
       discard
-    kbdMsgIds.del($userId)
+    kbdMsgIds.clearUiMsgId(userId, slot)
 
 proc handleTelegramModels*(msg: InboundMessage;
                            command: CommandDecision;
@@ -116,7 +143,7 @@ proc handleTelegramModels*(msg: InboundMessage;
     if command.value.strip.len > 0: parseModelsProviderArg(command.value).valueOr: ""
     else: ""
   if providerOnly.len > 0:
-    let currentKbdId = kbdMsgIds.getOrDefault($msg.userId)
+    let currentKbdId = kbdMsgIds.getUiMsgId(msg.userId, uiSlotModels)
     let catalog = modelCatalogLoader(providerOnly).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(providerOnly, catalog.entries))
     let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
@@ -129,7 +156,7 @@ proc handleTelegramModels*(msg: InboundMessage;
       let sentId = tgAdapter.sendKeyboard(msg.userId, title, buttons, replyTo = msg.channelId).valueOr:
         core_log.log(logger, core_log.lvlError, "tg send keyboard error: " & error)
         return true
-      kbdMsgIds[$msg.userId] = sentId
+      kbdMsgIds.setUiMsgId(msg.userId, uiSlotModels, sentId)
     return true
   if command.value.strip.len > 0:
     let reply = memory.applyModelsTextCommand(msg.userId, command.value, modelCatalogLoader).valueOr: error
@@ -141,7 +168,7 @@ proc handleTelegramModels*(msg: InboundMessage;
     )).isOkOr:
       discard
     return true
-  let currentKbdId = kbdMsgIds.getOrDefault($msg.userId)
+  let currentKbdId = kbdMsgIds.getUiMsgId(msg.userId, uiSlotModels)
   if currentKbdId.len > 0:
     tgAdapter.editKeyboardText(
       msg.userId, currentKbdId,
@@ -154,7 +181,7 @@ proc handleTelegramModels*(msg: InboundMessage;
       replyTo = msg.channelId).valueOr:
         core_log.log(logger, core_log.lvlError, "tg send provider keyboard error: " & error)
         return true
-    kbdMsgIds[$msg.userId] = sentId
+    kbdMsgIds.setUiMsgId(msg.userId, uiSlotModels, sentId)
   true
 
 proc handleTelegramModelCallback*(msg: InboundMessage;
@@ -170,7 +197,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
   case callback.kind
   of cbkModelsProvider:
     logger.info("tg callback models:provider:" & callback.provider)
-    let kbdId = kbdMsgIds.getOrDefault($msg.userId)
+    let kbdId = kbdMsgIds.getUiMsgId(msg.userId, uiSlotModels)
     let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
@@ -186,14 +213,14 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
     logger.info("tg callback models:set:" & callback.provider & ":" & callback.model)
     memory.saveTelegramPreference(msg.userId, "provider", callback.provider)
     memory.saveTelegramPreference(msg.userId, "model", callback.model)
-    let kbdId = kbdMsgIds.getOrDefault($msg.userId)
+    let kbdId = kbdMsgIds.getUiMsgId(msg.userId, uiSlotModels)
     if kbdId.len > 0:
       tgAdapter.editKeyboardText(
         msg.userId, kbdId,
         "✅ Modelo definido: " & callback.provider & " / " & callback.model,
         @[]).isOkOr:
           core_log.log(logger, core_log.lvlError, "tg editKeyboard models:set error: " & error)
-      kbdMsgIds.del($msg.userId)
+      kbdMsgIds.clearUiMsgId(msg.userId, uiSlotModels)
     else:
       tgAdapter.send(OutboundMessage(
         userId:  msg.userId,
@@ -206,7 +233,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
 
   of cbkModelsPage:
     logger.info("tg callback models:page:" & callback.provider & ":" & $callback.page)
-    let kbdId = kbdMsgIds.getOrDefault($msg.userId)
+    let kbdId = kbdMsgIds.getUiMsgId(msg.userId, uiSlotModels)
     let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
@@ -219,7 +246,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
     return true
 
   of cbkModelsBack:
-    let kbdId = kbdMsgIds.getOrDefault($msg.userId)
+    let kbdId = kbdMsgIds.getUiMsgId(msg.userId, uiSlotModels)
     if kbdId.len > 0:
       tgAdapter.editKeyboard(msg.userId, kbdId,
                              memory.buildProviderButtons(msg.userId)).isOkOr:
@@ -243,14 +270,14 @@ proc handleTelegramThinkingCallback*(msg: InboundMessage;
   let level = callback.value
   if level in ThinkLevels:
     memory.saveTelegramPreference(msg.userId, "thinking", level)
-    let kbdId = kbdMsgIds.getOrDefault($msg.userId)
+    let kbdId = kbdMsgIds.getUiMsgId(msg.userId, uiSlotThink)
     if kbdId.len > 0:
       tgAdapter.editKeyboardText(
         msg.userId, kbdId,
         "🧠 Thinking: " & level,
         @[]).isOkOr:
           discard
-      kbdMsgIds.del($msg.userId)
+      kbdMsgIds.clearUiMsgId(msg.userId, uiSlotThink)
     else:
       tgAdapter.send(OutboundMessage(
         userId:  msg.userId,
@@ -278,7 +305,7 @@ proc handleTelegramThink*(msg: InboundMessage;
     )).isOkOr:
       discard
     return true
-  let currentKbdId = kbdMsgIds.getOrDefault($msg.userId)
+  let currentKbdId = kbdMsgIds.getUiMsgId(msg.userId, uiSlotThink)
   if currentKbdId.len > 0:
     tgAdapter.editKeyboardText(
       msg.userId, currentKbdId,
@@ -290,7 +317,7 @@ proc handleTelegramThink*(msg: InboundMessage;
       "Nível de raciocínio:", memory.buildThinkButtons(msg.userId),
       replyTo = msg.channelId).valueOr:
         return true
-    kbdMsgIds[$msg.userId] = sentId
+    kbdMsgIds.setUiMsgId(msg.userId, uiSlotThink, sentId)
   true
 
 proc handleTelegramBudget*(msg: InboundMessage;
@@ -320,8 +347,15 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
                               logger: Logger): bool =
   case command.kind
   of cmdConfig:
-    discard tgAdapter.sendKeyboard(
-      msg.userId, memory.buildConfigText(msg.userId), buildConfigButtons(), replyTo = msg.channelId)
+    let currentKbdId = kbdMsgIds.getUiMsgId(msg.userId, uiSlotConfig)
+    if currentKbdId.len > 0:
+      discard tgAdapter.editKeyboardText(
+        msg.userId, currentKbdId, memory.buildConfigText(msg.userId), buildConfigButtons())
+    else:
+      let sentId = tgAdapter.sendKeyboard(
+        msg.userId, memory.buildConfigText(msg.userId), buildConfigButtons(), replyTo = msg.channelId).valueOr:
+          return true
+      kbdMsgIds.setUiMsgId(msg.userId, uiSlotConfig, sentId)
     true
   of cmdTasks:
     tgAdapter.send(OutboundMessage(
@@ -397,14 +431,14 @@ proc handleTelegramUiCallback*(msg: InboundMessage;
     let (pTitle, pBody) = pages[page]
     let helpText = "📖 Ajuda — " & pTitle & " (" & $(page + 1) & "/" & $pages.len & ")\n\n" & pBody
     let buttons = buildHelpNavButtons(page, pages.len)
-    let kbdId = kbdMsgIds.getOrDefault($msg.userId)
+    let kbdId = kbdMsgIds.getUiMsgId(msg.userId, uiSlotHelp)
     if kbdId.len > 0:
       tgAdapter.editKeyboardText(msg.userId, kbdId, helpText, buttons).isOkOr:
         core_log.log(logger, core_log.lvlError, "tg help page error: " & error)
     else:
       let sentId = tgAdapter.sendKeyboard(msg.userId, helpText, buttons, replyTo = msg.channelId).valueOr:
         return true
-      if sentId.len > 0: kbdMsgIds[$msg.userId] = sentId
+      kbdMsgIds.setUiMsgId(msg.userId, uiSlotHelp, sentId)
     return true
 
   of cbkModels:
@@ -519,8 +553,15 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       discard
     return true
   of lcaShowMenu:
-    discard tgAdapter.sendKeyboard(
-      msg.userId, buildMenuText(), buildMenuButtons(), replyTo = msg.channelId)
+    let currentKbdId = kbdMsgIds.getUiMsgId(msg.userId, uiSlotMenu)
+    if currentKbdId.len > 0:
+      discard tgAdapter.editKeyboardText(
+        msg.userId, currentKbdId, buildMenuText(), buildMenuButtons())
+    else:
+      let sentId = tgAdapter.sendKeyboard(
+        msg.userId, buildMenuText(), buildMenuButtons(), replyTo = msg.channelId).valueOr:
+          return true
+      kbdMsgIds.setUiMsgId(msg.userId, uiSlotMenu, sentId)
     return true
   of lcaShowWhoami:
     let sessId = if sm.hasSession(msg.userId): "active" else: "" # SessionManager doesn't expose sessionId easily here, using placeholder
@@ -626,7 +667,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
     saveChannelPreference(memory, msg.userId, "reasoning", next)
     
     # Update current keyboard if it was a menu/config
-    let kbdId = kbdMsgIds.getOrDefault($msg.userId)
+    let kbdId = kbdMsgIds.getUiMsgId(msg.userId, uiSlotConfig)
     if kbdId.len > 0:
       # If we are in the config menu, refresh it
       discard tgAdapter.editKeyboardText(msg.userId, kbdId, memory.buildConfigText(msg.userId), buildConfigButtons())
