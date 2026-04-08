@@ -23,6 +23,8 @@ type
 
   PresentationState* = object
     replacementMsgIds*: Table[string, string]
+    streamMsgIds*: Table[string, string]
+    statusMsgIds*: Table[string, string]
 
   OutboundKind* = enum
     okImmediate
@@ -86,7 +88,11 @@ func toOutboundMessage*(surface: PresentationSurface;
   result.isPartial = surface.msg.isPartial
 
 func initPresentationState*(): PresentationState =
-  PresentationState(replacementMsgIds: initTable[string, string]())
+  PresentationState(
+    replacementMsgIds: initTable[string, string](),
+    streamMsgIds: initTable[string, string](),
+    statusMsgIds: initTable[string, string](),
+  )
 
 func replacementSurfaceKey*(channel: ChannelKind;
                             userId: UserId;
@@ -96,11 +102,38 @@ func replacementSurfaceKey*(channel: ChannelKind;
 func replacementSurfaceKey*(msg: OutboundMessage): string =
   replacementSurfaceKey(msg.channel, msg.userId, msg.replacementSlot)
 
+func streamSurfaceKey*(channel: ChannelKind;
+                       userId: UserId;
+                       streamId: string): string =
+  $channel & "|" & $userId & "|" & streamId
+
+func streamSurfaceKey*(msg: OutboundMessage): string =
+  streamSurfaceKey(msg.channel, msg.userId, msg.streamId)
+
+func statusSurfaceKey*(channel: ChannelKind;
+                       userId: UserId;
+                       slot: string): string =
+  $channel & "|" & $userId & "|" & slot
+
 proc lookupReplacement*(state: PresentationState;
                         msg: OutboundMessage): string =
   if msg.replacementSlot.len == 0:
     return ""
   state.replacementMsgIds.getOrDefault(replacementSurfaceKey(msg))
+
+proc lookupStream*(state: PresentationState;
+                   msg: OutboundMessage): string =
+  if msg.streamId.len == 0:
+    return ""
+  state.streamMsgIds.getOrDefault(streamSurfaceKey(msg))
+
+proc lookupStatus*(state: PresentationState;
+                   channel: ChannelKind;
+                   userId: UserId;
+                   slot: string): string =
+  if slot.len == 0:
+    return ""
+  state.statusMsgIds.getOrDefault(statusSurfaceKey(channel, userId, slot))
 
 proc rememberReplacement*(state: var PresentationState;
                           msg: OutboundMessage;
@@ -109,6 +142,36 @@ proc rememberReplacement*(state: var PresentationState;
     return
   state.replacementMsgIds[replacementSurfaceKey(msg)] = channelMsgId
 
+proc rememberStream*(state: var PresentationState;
+                     msg: OutboundMessage;
+                     channelMsgId: string) =
+  if msg.streamId.len == 0 or channelMsgId.len == 0:
+    return
+  state.streamMsgIds[streamSurfaceKey(msg)] = channelMsgId
+
+proc clearStream*(state: var PresentationState;
+                  msg: OutboundMessage) =
+  if msg.streamId.len == 0:
+    return
+  state.streamMsgIds.del(streamSurfaceKey(msg))
+
+proc rememberStatus*(state: var PresentationState;
+                     channel: ChannelKind;
+                     userId: UserId;
+                     slot: string;
+                     channelMsgId: string) =
+  if slot.len == 0 or channelMsgId.len == 0:
+    return
+  state.statusMsgIds[statusSurfaceKey(channel, userId, slot)] = channelMsgId
+
+proc clearStatus*(state: var PresentationState;
+                  channel: ChannelKind;
+                  userId: UserId;
+                  slot: string) =
+  if slot.len == 0:
+    return
+  state.statusMsgIds.del(statusSurfaceKey(channel, userId, slot))
+
 func supportsEditableStreams*(channel: ChannelKind): bool =
   channel in {ckTelegram, ckDiscord}
 
@@ -116,22 +179,22 @@ func supportsEditableReplacement*(channel: ChannelKind): bool =
   channel in {ckTelegram, ckDiscord}
 
 func classifyOutbound*(msg: OutboundMessage;
-                       streamMsgIds: Table[string, string]): OutboundKind =
+                       state: PresentationState): OutboundKind =
   if msg.streamId.len == 0:
     return okImmediate
   if not supportsEditableStreams(msg.channel):
     return (if msg.isPartial: okSuppress else: okImmediate)
-  if msg.streamId in streamMsgIds:
+  if state.lookupStream(msg).len > 0:
     return okStreamUpdate
   okStreamCreate
 
 func decideStreamAction*(msg: OutboundMessage;
-                         streamMsgIds: Table[string, string]): StreamAction =
-  let kind = classifyOutbound(msg, streamMsgIds)
+                         state: PresentationState): StreamAction =
+  let kind = classifyOutbound(msg, state)
   StreamAction(
     kind: kind,
     streamId: msg.streamId,
-    existingMsgId: if kind == okStreamUpdate: streamMsgIds[msg.streamId] else: "",
+    existingMsgId: if kind == okStreamUpdate: state.lookupStream(msg) else: "",
   )
 
 func isImplementedOutboundChannel*(channel: ChannelKind): bool =
@@ -152,8 +215,8 @@ func toOutboundIntent*(kind: OutboundKind): OutboundIntent =
     oiSuppress
 
 func decideOutbound*(msg: OutboundMessage;
-                     streamMsgIds: Table[string, string]): OutboundDecision =
-  let stream = decideStreamAction(msg, streamMsgIds)
+                     state: PresentationState): OutboundDecision =
+  let stream = decideStreamAction(msg, state)
   OutboundDecision(
     intent: toOutboundIntent(stream.kind),
     streamId: stream.streamId,
@@ -162,7 +225,7 @@ func decideOutbound*(msg: OutboundMessage;
   )
 
 func withStreamCleanup*(msg: OutboundMessage;
-                        streamMsgIds: Table[string, string]): Table[string, string] =
-  result = streamMsgIds
+                        state: PresentationState): PresentationState =
+  result = state
   if shouldClearStream(msg):
-    result.del(msg.streamId)
+    result.clearStream(msg)

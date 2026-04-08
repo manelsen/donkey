@@ -1,4 +1,4 @@
-import std/[tables, unittest]
+import std/unittest
 import results
 import donkey/app/outbound_runtime
 import donkey/core/log
@@ -9,33 +9,33 @@ suite "outbound_runtime":
 
   test "classifyOutbound returns immediate without stream id":
     let msg = OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "hi")
-    check classifyOutbound(msg, initTable[string, string]()) == okImmediate
+    check classifyOutbound(msg, initPresentationState()) == okImmediate
 
   test "classifyOutbound returns stream create when stream id is new":
     let msg = OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "hi", streamId: "s1")
-    check classifyOutbound(msg, initTable[string, string]()) == okStreamCreate
+    check classifyOutbound(msg, initPresentationState()) == okStreamCreate
 
   test "classifyOutbound returns stream update when stream id exists":
-    var streamIds = initTable[string, string]()
-    streamIds["s1"] = "m42"
+    var presentationState = initPresentationState()
     let msg = OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "hi", streamId: "s1")
-    check classifyOutbound(msg, streamIds) == okStreamUpdate
+    presentationState.rememberStream(msg, "m42")
+    check classifyOutbound(msg, presentationState) == okStreamUpdate
 
   test "classifyOutbound suppresses partial stream on non-editable channels":
     let msg = OutboundMessage(userId: UserId("u1"), channel: ckWeChat, text: "hi",
                               streamId: "s1", isPartial: true)
-    check classifyOutbound(msg, initTable[string, string]()) == okSuppress
+    check classifyOutbound(msg, initPresentationState()) == okSuppress
 
   test "classifyOutbound falls back to immediate final on non-editable channels":
     let msg = OutboundMessage(userId: UserId("u1"), channel: ckWeChat, text: "done",
                               streamId: "s1", isPartial: false)
-    check classifyOutbound(msg, initTable[string, string]()) == okImmediate
+    check classifyOutbound(msg, initPresentationState()) == okImmediate
 
   test "decideStreamAction includes existing message id":
-    var streamIds = initTable[string, string]()
-    streamIds["s1"] = "m42"
+    var presentationState = initPresentationState()
     let msg = OutboundMessage(userId: UserId("u1"), channel: ckDiscord, text: "hi", streamId: "s1")
-    let action = decideStreamAction(msg, streamIds)
+    presentationState.rememberStream(msg, "m42")
+    let action = decideStreamAction(msg, presentationState)
     check action.kind == okStreamUpdate
     check action.existingMsgId == "m42"
 
@@ -50,8 +50,8 @@ suite "outbound_runtime":
                                   streamId: "s1", isPartial: true)
     let final = OutboundMessage(userId: UserId("u1"), channel: ckFeishu, text: "done",
                                 streamId: "s1", isPartial: false)
-    let partialDecision = decideOutbound(partial, initTable[string, string]())
-    let finalDecision = decideOutbound(final, initTable[string, string]())
+    let partialDecision = decideOutbound(partial, initPresentationState())
+    let finalDecision = decideOutbound(final, initPresentationState())
     check partialDecision.intent == oiSuppress
     check not partialDecision.shouldCleanup
     check finalDecision.intent == oiSend
@@ -84,12 +84,12 @@ suite "outbound_runtime":
     check not shouldClearStream(immediate)
 
   test "withStreamCleanup removes final stream id":
-    var streamIds = initTable[string, string]()
-    streamIds["s1"] = "m42"
+    var presentationState = initPresentationState()
     let msg = OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "done",
                               streamId: "s1", isPartial: false)
-    streamIds = withStreamCleanup(msg, streamIds)
-    check "s1" notin streamIds
+    presentationState.rememberStream(msg, "m42")
+    presentationState = withStreamCleanup(msg, presentationState)
+    check presentationState.lookupStream(msg) == ""
 
   test "routeOutbound edits immediate message when edit target is provided":
     var sentCount = 0
@@ -116,13 +116,11 @@ suite "outbound_runtime":
         setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
       )
     )
-    var streamIds = initTable[string, string]()
     var presentationState = initPresentationState()
     routeOutbound(
       OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "edit me", editTargetId: "42"),
       ports,
       newLogger("test.outbound"),
-      streamIds,
       presentationState)
     check sentCount == 0
     check editedText == "edit me"
@@ -148,7 +146,6 @@ suite "outbound_runtime":
         setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
       )
     )
-    var streamIds = initTable[string, string]()
     var presentationState = initPresentationState()
     routeOutbound(
       OutboundMessage(
@@ -161,7 +158,6 @@ suite "outbound_runtime":
       ),
       ports,
       newLogger("test.outbound"),
-      streamIds,
       presentationState)
     check editedText == "pick one"
     check editedKeyboardCount == 1
@@ -186,13 +182,11 @@ suite "outbound_runtime":
         setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
       )
     )
-    var streamIds = initTable[string, string]()
     var presentationState = initPresentationState()
     routeOutbound(
       OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "first", replacementSlot: "bootstrap"),
       ports,
       newLogger("test.outbound"),
-      streamIds,
       presentationState)
     check presentationState.lookupReplacement(
       OutboundMessage(userId: UserId("u1"), channel: ckTelegram, replacementSlot: "bootstrap")) == "m-slot"
@@ -200,7 +194,48 @@ suite "outbound_runtime":
       OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "second", replacementSlot: "bootstrap"),
       ports,
       newLogger("test.outbound"),
-      streamIds,
       presentationState)
     check sentCount == 0
     check editedText == "m-slot:second"
+
+  test "routeOutbound stores and clears streaming bindings in presentation state":
+    var createdTexts: seq[string] = @[]
+    var editedText = ""
+    let ports = OutboundChannelPorts(
+      telegram: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} = ok(),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
+          {.cast(gcsafe).}: createdTexts.add(msg.text)
+          ok("m-stream"),
+        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}: editedText = msgId & ":" & text
+          ok(),
+        sendKeyboard: proc(userId: UserId; text: string;
+                           buttons: seq[seq[(string, string)]];
+                           replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
+        editKeyboard: proc(userId: UserId; msgId, text: string;
+                           buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+      )
+    )
+    var presentationState = initPresentationState()
+    let partial = OutboundMessage(
+      userId: UserId("u1"),
+      channel: ckTelegram,
+      text: "partial",
+      streamId: "stream-1",
+      isPartial: true,
+    )
+    let final = OutboundMessage(
+      userId: UserId("u1"),
+      channel: ckTelegram,
+      text: "final",
+      streamId: "stream-1",
+      isPartial: false,
+    )
+    routeOutbound(partial, ports, newLogger("test.outbound"), presentationState)
+    check createdTexts == @["partial"]
+    check presentationState.lookupStream(partial) == "m-stream"
+    routeOutbound(final, ports, newLogger("test.outbound"), presentationState)
+    check editedText == "m-stream:final"
+    check presentationState.lookupStream(final) == ""

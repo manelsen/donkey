@@ -43,7 +43,9 @@
       "priority": 2,
       "passes": true,
       "notes": "Branch: us/us-002-presentation-state-boundary\nStatus: complete\nFiles: src/donkey/core/outbound/outbound.nim; src/donkey/app/outbound_runtime.nim; src/donkey.nim; tests/core/t_outbound.nim; tests/app/t_outbound_runtime.nim\nTests: added coverage for PresentationState binding lookup and isolation; updated outbound runtime tests to use the new shared state boundary\nValidation: nim c --mm:orc -r tests/core/t_outbound.nim ✅; nim c --mm:orc -r tests/app/t_outbound_runtime.nim ✅; nim c --mm:orc src/donkey.nim ✅; nim c --mm:orc -r tests/adapters/channel/t_telegram_runtime.nim ✅; nim c --mm:orc -r tests/channel/t_discord.nim ✅; nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim ✅; nim c --mm:orc -r tests/app/t_orchestrator.nim emitted all green test cases but the runner stayed alive after completion\nRisks: outbound replacement state is now encapsulated, but menu slot state in channel runtimes still lives outside this boundary and is the next integration step.\nCarry forward: routeOutbound now depends on PresentationState instead of a raw replacement-id table, so the next story can migrate concrete UI surfaces onto that shared state path cleanly.",
-      "dependsOn": ["US-001"]
+      "dependsOn": [
+        "US-001"
+      ]
     },
     {
       "id": "US-003",
@@ -64,7 +66,9 @@
       "priority": 3,
       "passes": true,
       "notes": "Branch: us/us-003-migrate-ui-surfaces-to-presentation-runtime\nStatus: complete\nFiles: src/donkey.nim; src/donkey/adapters/channel/common_runtime.nim; src/donkey/adapters/channel/telegram_runtime.nim; src/donkey/adapters/channel/discord_runtime.nim; tests/adapters/channel/t_telegram_runtime.nim\nTests: updated telegram runtime tests to use PresentationState; broader compile coverage proved Telegram and Discord now consume the shared presentation state boundary\nValidation: nim c --mm:orc src/donkey.nim ✅; nim c --mm:orc -r tests/adapters/channel/t_telegram_runtime.nim ✅; nim c --mm:orc -r tests/channel/t_discord.nim ✅; nim c --mm:orc -r tests/app/t_outbound_runtime.nim ✅; nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim ✅; nim c --mm:orc -r tests/app/t_orchestrator.nim emitted all green test cases but the runner stayed alive after completion\nRisks: Discord still lacks dedicated runtime unit tests for multi-surface scenarios; current confidence there comes from compile coverage and shared path behavior.\nCarry forward: menu/config/models/think/help no longer depend on daemon-local kbd tables; Telegram and Discord now share PresentationState, which clears the path for status/streaming migration in the next story.",
-      "dependsOn": ["US-002"]
+      "dependsOn": [
+        "US-002"
+      ]
     },
     {
       "id": "US-004",
@@ -83,9 +87,11 @@
         "nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim passes."
       ],
       "priority": 4,
-      "passes": false,
-      "notes": "Open-question resolution: scope is complete implementation, including status and streaming rather than stopping at menus.",
-      "dependsOn": ["US-003"]
+      "passes": true,
+      "notes": "Branch: us/us-004-status-streaming-presentation\nStatus: complete\nFiles: src/donkey/core/outbound/outbound.nim; src/donkey/app/outbound_runtime.nim; src/donkey.nim; tests/core/t_outbound.nim; tests/app/t_outbound_runtime.nim\nTests: added coverage for PresentationState stream/status bindings and runtime stream create-update-cleanup behavior\nValidation: nim c --mm:orc src/donkey.nim ✅; nim c --mm:orc -r tests/adapters/channel/t_telegram_runtime.nim ✅; nim c --mm:orc -r tests/channel/t_discord.nim ✅; nim c --mm:orc -r tests/app/t_outbound_runtime.nim ✅; nim c --mm:orc -r tests/app/t_orchestrator.nim emitted all green test cases but the runner stayed alive after completion; nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim ✅\nRisks: Telegram fallback status is now tracked in PresentationState, but richer status/stream UX still shares outward behavior with existing channel adapters and can be unified further in later stories.\nCarry forward: PresentationState now owns replaceable, streaming, and status message bindings, so fallback semantics and capability checks can move fully into the presentation boundary next.",
+      "dependsOn": [
+        "US-003"
+      ]
     },
     {
       "id": "US-005",
@@ -106,7 +112,9 @@
       "priority": 5,
       "passes": false,
       "notes": "Open-question resolution: the shared boundary owns fallback copy.",
-      "dependsOn": ["US-004"]
+      "dependsOn": [
+        "US-004"
+      ]
     },
     {
       "id": "US-006",
@@ -127,7 +135,9 @@
       "priority": 6,
       "passes": false,
       "notes": "",
-      "dependsOn": ["US-005"]
+      "dependsOn": [
+        "US-005"
+      ]
     }
   ]
 }

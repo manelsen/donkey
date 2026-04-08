@@ -1,4 +1,3 @@
-import std/tables
 import results
 import ../core/log
 import ../core/outbound/outbound
@@ -117,7 +116,6 @@ proc createReplacementOutbound*(msg: OutboundMessage;
 proc routeOutbound*(msg: OutboundMessage;
                     ports: OutboundChannelPorts;
                     log: Logger;
-                    streamMsgIds: var Table[string, string];
                     presentationState: var PresentationState) {.gcsafe.} =
   if msg.editTargetId.len > 0:
     if not editImmediateOutbound(msg, ports, log):
@@ -137,7 +135,7 @@ proc routeOutbound*(msg: OutboundMessage;
       return
     sendImmediateOutbound(msg, ports, log)
     return
-  let decision = decideOutbound(msg, streamMsgIds)
+  let decision = decideOutbound(msg, presentationState)
   case decision.intent
   of oiSend:
     sendImmediateOutbound(msg, ports, log)
@@ -146,8 +144,8 @@ proc routeOutbound*(msg: OutboundMessage;
   of oiStreamCreate:
     let channelMsgId = createStreamOutbound(msg, ports, log)
     if channelMsgId.len > 0:
-      streamMsgIds[msg.streamId] = channelMsgId
+      presentationState.rememberStream(msg, channelMsgId)
   of oiSuppress:
     discard
   if decision.shouldCleanup:
-    streamMsgIds.del(msg.streamId)
+    presentationState.clearStream(msg)

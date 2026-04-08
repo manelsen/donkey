@@ -1,4 +1,4 @@
-import std/[tables, unittest]
+import std/unittest
 import donkey/core/outbound/outbound
 import donkey/domain/message
 
@@ -6,33 +6,33 @@ suite "core outbound decisions":
 
   test "classifyOutbound returns immediate without stream id":
     let msg = OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "hi")
-    check classifyOutbound(msg, initTable[string, string]()) == okImmediate
+    check classifyOutbound(msg, initPresentationState()) == okImmediate
 
   test "classifyOutbound returns stream create when stream id is new":
     let msg = OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "hi", streamId: "s1")
-    check classifyOutbound(msg, initTable[string, string]()) == okStreamCreate
+    check classifyOutbound(msg, initPresentationState()) == okStreamCreate
 
   test "classifyOutbound returns stream update when stream id exists":
-    var streamIds = initTable[string, string]()
-    streamIds["s1"] = "m42"
+    var state = initPresentationState()
     let msg = OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "hi", streamId: "s1")
-    check classifyOutbound(msg, streamIds) == okStreamUpdate
+    state.rememberStream(msg, "m42")
+    check classifyOutbound(msg, state) == okStreamUpdate
 
   test "classifyOutbound suppresses partial stream on non-editable channels":
     let msg = OutboundMessage(userId: UserId("u1"), channel: ckWeCom, text: "hi",
                               streamId: "s1", isPartial: true)
-    check classifyOutbound(msg, initTable[string, string]()) == okSuppress
+    check classifyOutbound(msg, initPresentationState()) == okSuppress
 
   test "classifyOutbound falls back to immediate final on non-editable channels":
     let msg = OutboundMessage(userId: UserId("u1"), channel: ckWeCom, text: "done",
                               streamId: "s1", isPartial: false)
-    check classifyOutbound(msg, initTable[string, string]()) == okImmediate
+    check classifyOutbound(msg, initPresentationState()) == okImmediate
 
   test "decideStreamAction includes existing message id":
-    var streamIds = initTable[string, string]()
-    streamIds["s1"] = "m42"
+    var state = initPresentationState()
     let msg = OutboundMessage(userId: UserId("u1"), channel: ckDiscord, text: "hi", streamId: "s1")
-    let action = decideStreamAction(msg, streamIds)
+    state.rememberStream(msg, "m42")
+    let action = decideStreamAction(msg, state)
     check action.kind == okStreamUpdate
     check action.existingMsgId == "m42"
 
@@ -47,8 +47,8 @@ suite "core outbound decisions":
                                   streamId: "s1", isPartial: true)
     let final = OutboundMessage(userId: UserId("u1"), channel: ckQQ, text: "done",
                                 streamId: "s1", isPartial: false)
-    let partialDecision = decideOutbound(partial, initTable[string, string]())
-    let finalDecision = decideOutbound(final, initTable[string, string]())
+    let partialDecision = decideOutbound(partial, initPresentationState())
+    let finalDecision = decideOutbound(final, initPresentationState())
     check partialDecision.intent == oiSuppress
     check not partialDecision.shouldCleanup
     check finalDecision.intent == oiSend
@@ -71,12 +71,12 @@ suite "core outbound decisions":
     check isImplementedOutboundChannel(ckFeishu)
 
   test "withStreamCleanup removes final stream id":
-    var streamIds = initTable[string, string]()
-    streamIds["s1"] = "m42"
+    var state = initPresentationState()
     let msg = OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "done",
                               streamId: "s1", isPartial: false)
-    streamIds = withStreamCleanup(msg, streamIds)
-    check "s1" notin streamIds
+    state.rememberStream(msg, "m42")
+    state = withStreamCleanup(msg, state)
+    check state.lookupStream(msg) == ""
 
   test "buildReplacementSurface models reusable outbound UI without channel specifics":
     let surface = buildReplacementSurface(
@@ -158,3 +158,41 @@ suite "core outbound decisions":
     state.rememberReplacement(help, "m-help")
     check state.lookupReplacement(bootstrap) == "m-bootstrap"
     check state.lookupReplacement(help) == "m-help"
+
+  test "presentation state stores stream bindings and cleans them up independently":
+    var state = initPresentationState()
+    let partial = OutboundMessage(
+      userId: UserId("u1"),
+      channel: ckTelegram,
+      text: "partial",
+      streamId: "stream-1",
+      isPartial: true,
+    )
+    let final = OutboundMessage(
+      userId: UserId("u1"),
+      channel: ckTelegram,
+      text: "final",
+      streamId: "stream-1",
+      isPartial: false,
+    )
+    state.rememberStream(partial, "m-stream")
+    check state.lookupStream(partial) == "m-stream"
+    check state.lookupStream(final) == "m-stream"
+    state.clearStream(final)
+    check state.lookupStream(partial) == ""
+
+  test "presentation state stores status bindings separately from menus":
+    var state = initPresentationState()
+    let menu = OutboundMessage(
+      userId: UserId("u1"),
+      channel: ckTelegram,
+      text: "Bootstrap",
+      replacementSlot: "bootstrap",
+    )
+    state.rememberReplacement(menu, "m-menu")
+    state.rememberStatus(ckTelegram, UserId("u1"), "fallback", "m-status")
+    check state.lookupReplacement(menu) == "m-menu"
+    check state.lookupStatus(ckTelegram, UserId("u1"), "fallback") == "m-status"
+    state.clearStatus(ckTelegram, UserId("u1"), "fallback")
+    check state.lookupReplacement(menu) == "m-menu"
+    check state.lookupStatus(ckTelegram, UserId("u1"), "fallback") == ""

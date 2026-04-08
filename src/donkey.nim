@@ -500,10 +500,10 @@ proc ctlProviderTest(name: string) =
 ##
 ## Stream routing:
 ##   OutboundMessage.streamId non-empty → streaming turn.
-##   streamMsgIds[streamId] = (channel, channelMsgId):
+##   presentationState.streamMsgIds[channel|user|stream] = channelMsgId:
 ##     - first partial: send new message, store id
 ##     - subsequent partials: editMessage
-##     - isPartial=false: editMessage + delete from streamMsgIds
+##     - isPartial=false: editMessage + delete from presentationState
 
 proc makeTgTypingFn(token: string; identityPath: string): TypingFn =
   ## Returns a TypingFn that sends typing indicators to Telegram users.
@@ -576,9 +576,7 @@ type DaemonServices = object
 type DaemonRuntime = ref object
   globalOutbox:         AsyncQueue[OutboundMessage]
   sm:                   SessionManager
-  streamMsgIds:         Table[string, string]
   presentationState:    PresentationState
-  statusMsgIds:         Table[string, string]
   routeCounts:          Table[string, int]
   routeCallCounts:      Table[string, int]
   routeOkCounts:        Table[string, int]
@@ -1515,7 +1513,7 @@ proc stageTelegramFallbackStatus(runtime: var DaemonRuntime;
                                  msg: InboundMessage) =
   tgAdapter.sendTyping(msg.userId).isOkOr: discard
   tgAdapter.setMessageReaction(msg.userId, msg.channelId, "⚙️").isOkOr: discard
-  runtime.statusMsgIds[$msg.userId] = msg.channelId
+  runtime.presentationState.rememberStatus(msg.channel, msg.userId, "fallback", msg.channelId)
 
 proc handleTelegramFallback(runtime:      var DaemonRuntime;
                             tgAdapter:    var TelegramAdapter;
@@ -1573,12 +1571,11 @@ proc publishDueReminders(runtime: var DaemonRuntime;
 proc clearTelegramStatus(runtime:   var DaemonRuntime;
                          tgAdapter: var TelegramAdapter;
                          outMsg:    OutboundMessage) =
-  let uidStr = $outMsg.userId
-  if outMsg.channel != ckTelegram or outMsg.isPartial or uidStr notin runtime.statusMsgIds:
+  let msgId = runtime.presentationState.lookupStatus(outMsg.channel, outMsg.userId, "fallback")
+  if outMsg.channel != ckTelegram or outMsg.isPartial or msgId.len == 0:
     return
 
-  let msgId = runtime.statusMsgIds[uidStr]
-  runtime.statusMsgIds.del(uidStr)
+  runtime.presentationState.clearStatus(outMsg.channel, outMsg.userId, "fallback")
 
   let isError = outMsg.text.startsWith("Desculpe") or
                 outMsg.text.startsWith("Tool call loop")
@@ -1603,7 +1600,7 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
   while runtime.globalOutbox.len > 0:
     let outMsg = runtime.globalOutbox.getNoWait()
     clearTelegramStatus(runtime, adapters.tg, outMsg)
-    routeOutbound(outMsg, outboundPorts, log, runtime.streamMsgIds, runtime.presentationState)
+    routeOutbound(outMsg, outboundPorts, log, runtime.presentationState)
 
 proc startDaemonIngress(ctx: DaemonContext;
                         log: Logger) =
