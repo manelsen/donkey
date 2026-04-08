@@ -133,8 +133,8 @@
         "nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim passes."
       ],
       "priority": 6,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Branch: us/us-006-document-presentation-architecture\nStatus: complete\nFiles: docs/architecture.md; docs/ARCHITECTURE.md; docs/index.md; tasks/prd-outbound-ui-decoupling.json\nTests: no new behavior tests; documentation story validated against the same outbound quality gates to ensure no regressions while documenting the boundary\nValidation: nim c --mm:orc src/donkey.nim ✅; nim c --mm:orc -r tests/adapters/channel/t_telegram_runtime.nim ✅; nim c --mm:orc -r tests/channel/t_discord.nim ✅; nim c --mm:orc -r tests/app/t_outbound_runtime.nim ✅; nim c --mm:orc -r tests/app/t_orchestrator.nim emitted all green test cases but the runner stayed alive after completion; nim c --mm:orc -r tests/adapters/channel/t_common_runtime.nim ✅\nRisks: the presentation boundary is now documented, but a future dedicated presentation port could still tighten the split between runtime projection and adapter mechanics.\nCarry forward: the repo now has an explicit architectural reference for shared presentation semantics, fallback ownership, slot/state ownership, and status/stream modeling under core/outbound.",
       "dependsOn": [
         "US-005"
       ]
