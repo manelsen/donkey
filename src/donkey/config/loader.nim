@@ -32,8 +32,9 @@ type
     skillNetPolicy*: Option[seq[SkillNetPolicy]]
 
   SandboxConfigPatch* = object
-    sandboxMode*:  Option[SandboxMode]
-    sandboxImage*: Option[string]
+    sandboxMode*:       Option[SandboxMode]
+    sandboxRuntimeCmd*: Option[string]
+    sandboxImage*:      Option[string]
 
 proc resolveHomeFromEnv*(homeEnv: string): string =
   if homeEnv.len > 0:
@@ -45,7 +46,7 @@ proc resolveHome*(): string =
 
 proc parseSandboxMode*(rawMode: string): SandboxMode =
   case rawMode.strip().toLowerAscii()
-  of "docker": smDocker
+  of "docker", "oci": smOci
   of "wasm":   smWasm
   else:        smNone
 
@@ -190,6 +191,11 @@ proc parseSandboxConfigPatch*(doc: TomlValueRef): SandboxConfigPatch =
   if sandboxSection.hasKey("mode"):
     result.sandboxMode = some(parseSandboxMode(sandboxSection["mode"].getStr()))
 
+  if sandboxSection.hasKey("runtime"):
+    let sandboxRuntime = sandboxSection["runtime"].getStr().strip()
+    if sandboxRuntime.len > 0:
+      result.sandboxRuntimeCmd = some(sandboxRuntime)
+
   if sandboxSection.hasKey("image"):
     let sandboxImage = sandboxSection["image"].getStr().strip()
     if sandboxImage.len > 0:
@@ -212,6 +218,8 @@ proc applySandboxConfigPatch*(patch: SandboxConfigPatch; cfg: DonkeyConfig): Don
   result = cfg
   if patch.sandboxMode.isSome:
     result.sandboxMode = patch.sandboxMode.get()
+  if patch.sandboxRuntimeCmd.isSome:
+    result.sandboxRuntimeCmd = patch.sandboxRuntimeCmd.get()
   if patch.sandboxImage.isSome:
     result.sandboxImage = patch.sandboxImage.get()
 

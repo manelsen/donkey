@@ -1,12 +1,12 @@
-## sandbox.nim — bash tool execution with optional Docker/Wasm isolation.
+## sandbox.nim — bash tool execution with optional OCI/Wasm isolation.
 ##
 ## Modes (SandboxMode from config/types):
 ##   smNone   — direct exec in paddock dir; no OS-level isolation
-##   smDocker — ephemeral container with bind-mounted paddock
+##   smOci    — ephemeral container with bind-mounted paddock
 ##   smWasm   — wasmtime CLI executing go-busybox shell.wasm
 ##
-## Docker mode:
-##   docker run --rm -v {paddock}:/workspace -w /workspace {image} sh -c {cmd}
+## OCI mode:
+##   {runtime} run --rm -v {paddock}:/workspace -w /workspace {image} sh -c {cmd}
 ##
 ## Wasm mode:
 ##   wasmtime run --dir={paddock} --dir=/tmp {busybox} {applet} {args}
@@ -34,6 +34,8 @@ type
     workingDir*:     string
     ensureWorkDir*:  bool
 
+  SandboxRunner* = proc(plan: SandboxPlan): string {.gcsafe, raises: [].}
+
 # ── Shell.wasm path resolution ────────────────────────────────────────────────
 
 proc resolveShellWasmPath*(): string {.gcsafe, raises: [].} =
@@ -46,12 +48,15 @@ proc resolveShellWasmPath*(): string {.gcsafe, raises: [].} =
 
 # ── Command builder (pure — exported for unit tests) ─────────────────────────
 
-proc buildDockerCmd*(cmd, paddock, image: string): string {.gcsafe, raises: [].} =
-  ## Returns the docker run invocation string without executing it.
-  "docker run --rm " &
+proc buildOciCmd*(cmd, paddock, image: string; runtimeCmd = "docker"): string {.gcsafe, raises: [].} =
+  ## Returns the OCI runtime invocation string without executing it.
+  runtimeCmd & " run --rm " &
   "-v " & paddock & ":/workspace " &
   "-w /workspace " &
   image & " sh -c " & quoteShell(cmd)
+
+func buildDirectPlan*(cmd, paddock: string): SandboxPlan {.gcsafe, raises: [].} =
+  SandboxPlan(command: cmd, workingDir: paddock, ensureWorkDir: true)
 
 proc buildWasmCmd*(cmd, paddock, shellPath: string): string {.gcsafe, raises: [].} =
   ## Returns the wasmtime invocation string for go-busybox applets.
@@ -66,12 +71,13 @@ proc buildWasmCmd*(cmd, paddock, shellPath: string): string {.gcsafe, raises: []
 
 proc buildSandboxPlan*(cmd, paddock: string;
                        mode: SandboxMode;
-                       image: string): SandboxPlan {.gcsafe, raises: [].} =
+                       image: string;
+                       runtimeCmd = "docker"): SandboxPlan {.gcsafe, raises: [].} =
   case mode
   of smNone:
-    SandboxPlan(command: cmd, workingDir: paddock, ensureWorkDir: true)
-  of smDocker:
-    SandboxPlan(command: buildDockerCmd(cmd, paddock, image),
+    buildDirectPlan(cmd, paddock)
+  of smOci:
+    SandboxPlan(command: buildOciCmd(cmd, paddock, image, runtimeCmd),
                 workingDir: "",
                 ensureWorkDir: false)
   of smWasm:
@@ -102,14 +108,36 @@ proc runSandboxPlan*(plan: SandboxPlan): string {.gcsafe, raises: [].} =
   except CatchableError as e:
     "Error: " & e.msg
 
-proc sandboxStatusMessage*(mode: SandboxMode; image: string): (LogLevel, string) {.gcsafe, raises: [].} =
+func shouldFallbackOci*(output: string; runtimeCmd = "docker"): bool {.gcsafe, raises: [].} =
+  let normalized = output.toLowerAscii()
+  let runtime = runtimeCmd.toLowerAscii()
+  ("unable to find image" in normalized) or
+  ("pull access denied" in normalized) or
+  ("error response from daemon" in normalized) or
+  ("cannot connect to the " & runtime & " daemon" in normalized) or
+  ("permission denied while trying to connect to the " & runtime & " daemon socket" in normalized) or
+  ("error: could not find command: " & runtime in normalized) or
+  ("error: " in normalized and runtime in normalized and "no such file or directory" in normalized)
+
+proc executeOciPlan*(cmd, paddock, image: string;
+                     runtimeCmd = "docker";
+                     runPlan: SandboxRunner = runSandboxPlan): string {.gcsafe, raises: [].} =
+  let ociResult = runPlan(buildSandboxPlan(cmd, paddock, smOci, image, runtimeCmd))
+  if not shouldFallbackOci(ociResult, runtimeCmd):
+    return ociResult
+
+  let directResult = runPlan(buildDirectPlan(cmd, paddock))
+  "Warning: " & runtimeCmd & " sandbox unavailable; executed without container isolation.\n" &
+    directResult
+
+proc sandboxStatusMessage*(mode: SandboxMode; image: string; runtimeCmd = "docker"): (LogLevel, string) {.gcsafe, raises: [].} =
   case mode
   of smNone:
     (lvlWarn,
      "bash sandbox: none — workingDir isolation only. " &
-     "Set [sandbox] mode = \"docker\" or \"wasm\" in " & ConfigFileName & " for full isolation.")
-  of smDocker:
-    (lvlInfo, "bash sandbox: docker (image: " & image & ")")
+     "Set [sandbox] mode = \"oci\" or \"wasm\" in " & ConfigFileName & " for full isolation.")
+  of smOci:
+    (lvlInfo, "bash sandbox: oci (" & runtimeCmd & ", image: " & image & ")")
   of smWasm:
     let shellPath = resolveShellWasmPath()
     if shellPath.fileExists:
@@ -123,10 +151,11 @@ proc sandboxStatusMessage*(mode: SandboxMode; image: string): (LogLevel, string)
 
 proc sandboxBash*(cmd, paddock: string;
                   mode:  SandboxMode;
-                  image: string): string {.gcsafe, raises: [].} =
+                  image: string;
+                  runtimeCmd = "docker"): string {.gcsafe, raises: [].} =
   ## Executes cmd in the appropriate sandbox for `mode`.
   ## For smNone: runs directly with paddock as CWD.
-  ## For smDocker: wraps cmd in an ephemeral container with paddock bind-mounted.
+  ## For smOci: wraps cmd in an ephemeral container with paddock bind-mounted.
   ## For smWasm: runs via wasmtime + go-busybox. Pipes are composed in Nim
   ## (ShellComposer) since WASI lacks fork/exec.
   ## Falls back to direct exec if shell.wasm is missing.
@@ -142,14 +171,16 @@ proc sandboxBash*(cmd, paddock: string;
       let adapter = newWasmToolAdapter(shellPath)
       return adapter.composeFormatted(cmd, paddock)
     # Single command — use wasmtime directly
-    runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image))
-  of smNone, smDocker:
-    runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image))
+    runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd))
+  of smNone:
+    runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd))
+  of smOci:
+    executeOciPlan(cmd, paddock, image, runtimeCmd)
 
 # ── Startup log ───────────────────────────────────────────────────────────────
 
-proc sandboxLogLevel*(mode: SandboxMode; image: string; log: Logger) =
-  let (level, message) = sandboxStatusMessage(mode, image)
+proc sandboxLogLevel*(mode: SandboxMode; image: string; runtimeCmd: string; log: Logger) =
+  let (level, message) = sandboxStatusMessage(mode, image, runtimeCmd)
   case level
   of lvlWarn: log.warn(message)
   of lvlInfo: log.info(message)

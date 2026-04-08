@@ -465,7 +465,7 @@ proc cycleConfigValue*(st: var AdminState; index: int) =
     st.config.logLevel = parseLogLevel(levels[next])
     st.showToast("log_level -> " & levels[next], tkSuccess)
   of "sandbox_mode":
-    const modes = ["none", "docker"]
+    const modes = ["none", "oci"]
     let cur = st.items[index].description
     var next = 0
     for i, m in modes:

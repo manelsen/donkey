@@ -19,7 +19,7 @@ type
 
   SandboxMode* = enum
     smNone   = "none"    ## workingDir only — no OS-level isolation
-    smDocker = "docker"  ## ephemeral container with bind-mounted paddock
+    smOci    = "oci"     ## ephemeral OCI container with bind-mounted paddock
     smWasm   = "wasm"    ## embedded wasm3 runtime with WASI
 
   DonkeyConfig* = object
@@ -31,7 +31,8 @@ type
     toolWebPolicy*: seq[ToolWebPolicy]
     skillNetPolicy*: seq[SkillNetPolicy]
     sandboxMode*:   SandboxMode  ## bash tool isolation; default: smNone
-    sandboxImage*:  string       ## Docker image for smDocker; default: "alpine"
+    sandboxRuntimeCmd*: string   ## OCI runtime CLI; default: "docker"
+    sandboxImage*:  string       ## Container image for smOci; default: "alpine"
     wasmShellPath*: string       ## path to .wasm shell for smWasm; default: {home}/shell.wasm
     dmPolicy*:      DmPolicy     ## DM security policy; default: DmPolicyOpen
     wiring*:        bool         ## Enable advanced session wiring; default: false
@@ -46,6 +47,7 @@ func defaultConfig*(home: string): DonkeyConfig =
     toolWebPolicy: @[],
     skillNetPolicy: @[],
     sandboxMode:  smNone,
+    sandboxRuntimeCmd: "docker",
     sandboxImage: "alpine",
     wasmShellPath: home & "/shell.wasm",
     wiring:       false,

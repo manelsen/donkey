@@ -162,7 +162,8 @@ type
     log*:          Logger
     paddockDir*:   string       ## agent workspace root; empty = unconstrained (tests only)
     sandboxMode*:  SandboxMode  ## bash isolation mode
-    sandboxImage*: string       ## Docker image when sandboxMode = smDocker
+    sandboxRuntimeCmd*: string  ## OCI runtime CLI when sandboxMode = smOci
+    sandboxImage*: string       ## Container image when sandboxMode = smOci
 
   NativeToolCategoryHandler = proc(tc: ToolCallRequest;
                                    ctx: NativeCtx;
@@ -1170,7 +1171,7 @@ proc executeShellNativeTool(tc: ToolCallRequest;
     let bashCtx = parseBashContext(j).valueOr:
       return handledError(error)
     let r = sandboxBash(bashCtx.command, ctx.paddockDir,
-                        ctx.sandboxMode, ctx.sandboxImage)
+                        ctx.sandboxMode, ctx.sandboxImage, ctx.sandboxRuntimeCmd)
     return handledOutcome(r)
 
   of ReadFileToolName:

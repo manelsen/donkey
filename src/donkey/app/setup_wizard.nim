@@ -36,7 +36,8 @@ func buildTomlContent*(home: string; logLevel = "info"): string =
   "log_level = \"" & logLevel & "\"\n" &
   "wiring    = true\n\n" &
   "[sandbox]\n" &
-  "mode  = \"docker\"\n" &
+  "mode    = \"oci\"\n" &
+  "runtime = \"docker\"\n" &
   "image = \"alpine\"\n"
 
 func channelToken(channels: seq[(string, string)]; name: string): string =

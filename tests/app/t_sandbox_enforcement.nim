@@ -32,9 +32,9 @@ suite "Sandbox Enforcement":
     let res = validateSandboxConfig(cfg, devMode = true)
     check res.isOk
 
-  test "allows sandbox 'docker' in production mode":
+  test "allows sandbox 'oci' in production mode":
     let cfg = DonkeyConfig(
-      sandboxMode: smDocker
+      sandboxMode: smOci
     )
     let res = validateSandboxConfig(cfg, devMode = false)
     check res.isOk

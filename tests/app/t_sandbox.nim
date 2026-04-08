@@ -1,39 +1,43 @@
-## sandbox.nim unit tests — no live Docker required.
-## Tests: buildDockerCmd shape, sandboxBash with smNone.
-## smDocker tests require Docker and are skipped here (integration concern).
+## sandbox.nim unit tests — no live container runtime required.
+## Tests: buildOciCmd shape, sandboxBash with smNone.
+## smOci tests require a runtime and are skipped here (integration concern).
 
 import std/[os, strutils, unittest]
 import donkey/config/types
 import donkey/app/sandbox
 import donkey/core/types
 
-suite "buildDockerCmd":
+suite "buildOciCmd":
 
-  test "contains docker run --rm":
-    let cmd = buildDockerCmd("ls", "/home/u/paddock", "alpine")
+  test "contains runtime run --rm":
+    let cmd = buildOciCmd("ls", "/home/u/paddock", "alpine")
     check cmd.startsWith("docker run --rm")
 
   test "bind-mounts paddock to /workspace":
-    let cmd = buildDockerCmd("ls", "/home/u/paddock", "alpine")
+    let cmd = buildOciCmd("ls", "/home/u/paddock", "alpine")
     check cmd.contains("-v /home/u/paddock:/workspace")
 
   test "sets working dir to /workspace":
-    let cmd = buildDockerCmd("ls", "/home/u/paddock", "alpine")
+    let cmd = buildOciCmd("ls", "/home/u/paddock", "alpine")
     check cmd.contains("-w /workspace")
 
   test "includes the image name":
-    let cmd = buildDockerCmd("ls", "/home/u/paddock", "debian:bookworm-slim")
+    let cmd = buildOciCmd("ls", "/home/u/paddock", "debian:bookworm-slim")
     check cmd.contains("debian:bookworm-slim")
 
   test "wraps command with sh -c":
-    let cmd = buildDockerCmd("echo hello", "/home/u/paddock", "alpine")
+    let cmd = buildOciCmd("echo hello", "/home/u/paddock", "alpine")
     check cmd.contains("sh -c")
     check cmd.contains("echo hello")
 
   test "spaces in command are quoted":
-    let cmd = buildDockerCmd("echo hello world", "/home/u/paddock", "alpine")
+    let cmd = buildOciCmd("echo hello world", "/home/u/paddock", "alpine")
     ## quoteShell wraps in single quotes or escapes — either way it's present
     check cmd.contains("echo hello world")
+
+  test "supports non-docker runtimes":
+    let cmd = buildOciCmd("ls", "/home/u/paddock", "alpine", "podman")
+    check cmd.startsWith("podman run --rm")
 
 suite "buildSandboxPlan":
 
@@ -43,11 +47,55 @@ suite "buildSandboxPlan":
     check plan.workingDir == "/tmp/p1"
     check plan.ensureWorkDir
 
-  test "smDocker wraps command through docker":
-    let plan = buildSandboxPlan("pwd", "/tmp/p1", smDocker, "alpine")
+  test "smOci wraps command through runtime":
+    let plan = buildSandboxPlan("pwd", "/tmp/p1", smOci, "alpine")
     check plan.command.startsWith("docker run --rm")
     check plan.workingDir == ""
     check not plan.ensureWorkDir
+
+suite "oci fallback":
+
+  test "shouldFallbackOci detects image pull errors":
+    let output =
+      "Unable to find image 'donkey-sandbox:alpine-git' locally\n" &
+      "docker: Error response from daemon: pull access denied.\n[exit 125]"
+    check shouldFallbackOci(output)
+
+  test "shouldFallbackOci ignores command-not-found inside container":
+    let output = "sh: foo: not found\n[exit 127]"
+    check not shouldFallbackOci(output)
+
+  test "executeOciPlan falls back to direct exec when runtime is unavailable":
+    var plans: seq[SandboxPlan] = @[]
+    let runner: SandboxRunner =
+      proc(plan: SandboxPlan): string {.closure, gcsafe.} =
+        {.cast(gcsafe).}: plans.add(plan)
+        if plan.command.startsWith("docker run --rm"):
+          "Unable to find image 'donkey-sandbox:alpine-git' locally\n" &
+            "docker: Error response from daemon: pull access denied.\n[exit 125]"
+        else:
+          "ok"
+
+    let result = executeOciPlan("echo ok", "/tmp/p1", "alpine", "docker", runner)
+
+    check plans.len == 2
+    check plans[0].command.startsWith("docker run --rm")
+    check plans[1].command == "echo ok"
+    check plans[1].ensureWorkDir
+    check result.contains("docker sandbox unavailable")
+    check result.endsWith("ok")
+
+  test "executeOciPlan preserves runtime command failures that are not runtime issues":
+    var plans: seq[SandboxPlan] = @[]
+    let runner: SandboxRunner =
+      proc(plan: SandboxPlan): string {.closure, gcsafe.} =
+        {.cast(gcsafe).}: plans.add(plan)
+        "sh: foo: not found\n[exit 127]"
+
+    let result = executeOciPlan("foo", "/tmp/p1", "alpine", "docker", runner)
+
+    check plans.len == 1
+    check result == "sh: foo: not found\n[exit 127]"
 
 suite "formatSandboxResult":
 
@@ -98,8 +146,8 @@ suite "SandboxMode values":
   test "smNone string value":
     check $smNone == "none"
 
-  test "smDocker string value":
-    check $smDocker == "docker"
+  test "smOci string value":
+    check $smOci == "oci"
 
 suite "sandboxStatusMessage":
 
@@ -108,7 +156,8 @@ suite "sandboxStatusMessage":
     check level == lvlWarn
     check msg.contains("workingDir isolation only")
 
-  test "smDocker informs image":
-    let (level, msg) = sandboxStatusMessage(smDocker, "debian:bookworm-slim")
+  test "smOci informs runtime and image":
+    let (level, msg) = sandboxStatusMessage(smOci, "debian:bookworm-slim", "podman")
     check level == lvlInfo
+    check msg.contains("podman")
     check msg.contains("debian:bookworm-slim")

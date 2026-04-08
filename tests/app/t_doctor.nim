@@ -57,31 +57,31 @@ suite "doctor — checkPgvector":
     check r.status == dsOk      # DSN is set — configuration looks ok
     putEnv("DONKEY_PG_DSN", "")
 
-# ── checkDocker ────────────────────────────────────────────────────────────────
+# ── checkContainerRuntime ─────────────────────────────────────────────────────
 
-suite "doctor — checkDocker":
+suite "doctor — checkContainerRuntime":
 
-  test "check returns a DiagResult with name 'docker'":
-    let r = checkDocker()
-    check r.name == "docker"
+  test "check returns a DiagResult with runtime label":
+    let r = checkContainerRuntime()
+    check r.name == "container runtime"
 
   test "check result is either dsOk or dsErr (no crash)":
-    let r = checkDocker()
+    let r = checkContainerRuntime()
     check r.status in {dsOk, dsErr}
 
 # ── runDoctorChecks ────────────────────────────────────────────────────────────
 
 suite "doctor — runDoctorChecks":
 
-  test "returns at least docker + pgvector + API key checks":
+  test "returns at least runtime + pgvector + API key checks":
     let results = runDoctorChecks()
-    check results.len >= 2    # at least docker + pgvector
+    check results.len >= 2    # at least runtime + pgvector
 
-  test "result contains docker check":
+  test "result contains runtime check":
     let results = runDoctorChecks()
     var found = false
     for r in results:
-      if r.name == "docker": found = true
+      if r.name == "container runtime": found = true
     check found
 
   test "result contains pgvector check":
@@ -115,17 +115,19 @@ suite "doctor — runDoctorChecks":
     check "Donkey Doctor" in report
     check report.len > 0
 
-# ── >>= chaining with runDockerCmd ────────────────────────────────────────────
+# ── >>= chaining with runRuntimeCmd ───────────────────────────────────────────
 
 suite "doctor — >>= chaining":
 
-  test "checkDockerCompose is chainable via >>=":
-    # runDockerCmd either succeeds or fails; either way >>= handles it cleanly.
-    let r = runDockerCmd() >>= checkDockerCompose
+  test "checkRuntimeCompose is chainable via >>=":
+    # runRuntimeCmd either succeeds or fails; either way >>= handles it cleanly.
+    let r = runRuntimeCmd() >>= proc(version: string): Result[string, string] =
+      checkRuntimeCompose("docker", version)
     # Result is Ok or Err — no crash either way.
     check r.isOk or r.isErr
 
-  test "failed docker short-circuits compose check":
-    let r = Result[string, string].err("no docker") >>= checkDockerCompose
+  test "failed runtime short-circuits compose check":
+    let r = Result[string, string].err("no runtime") >>= proc(version: string): Result[string, string] =
+      checkRuntimeCompose("docker", version)
     check r.isErr
-    check "no docker" in r.error
+    check "no runtime" in r.error

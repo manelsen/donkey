@@ -7,5 +7,6 @@
 # paddocks  = ""        # defaults to $DONKEY_HOME/paddocks
 
 [sandbox]
-# mode  = "none"        # "none" (workdir only) or "docker" (ephemeral container)
-# image = "alpine"      # Docker image used when mode = "docker"
+# mode    = "none"      # "none" (workdir only), "oci" (ephemeral container) or "wasm"
+# runtime = "docker"    # OCI runtime CLI used when mode = "oci"
+# image   = "alpine"    # Container image used when mode = "oci"

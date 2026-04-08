@@ -34,6 +34,11 @@ suite "buildEnvContent":
     check "docker compose up -d postgres" in env
     check "DONKEY_PG_DSN=host=127.0.0.1" in env
 
+  test "generated toml uses oci mode with docker runtime":
+    let toml = buildTomlContent(home = "/tmp/x")
+    check "mode    = \"oci\"" in toml
+    check "runtime = \"docker\"" in toml
+
   test "discord token appears when provided":
     let env = buildEnvContent(
       providers = @[("openrouter", "or_key")],

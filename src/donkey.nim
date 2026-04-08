@@ -109,7 +109,7 @@ Commands:
   service stop                   systemctl --user stop """ & AppSlug & """
   service restart                systemctl --user restart """ & AppSlug & """
   service logs [-f] [--cat]      Show service logs (follow with -f, clean output with --cat)
-  doctor                         Check external dependencies (docker, pgvector, API keys)
+  doctor                         Check external dependencies (container runtime, pgvector, API keys)
 """
 
 # ── service commands ───────────────────────────────────────────────────────────
@@ -168,7 +168,8 @@ const TomlTemplate = """# """ & AppName & """ configuration
 # must stay within these public hosts/subdomains.
 
 [sandbox]
-# mode  = "none"        # "none", "docker" or "wasm"
+# mode  = "none"        # "none", "oci" or "wasm"
+# runtime = "docker"    # OCI runtime CLI when mode = "oci"
 # image = "alpine"
 """
 
@@ -1248,6 +1249,7 @@ type SessionIngressServices = object
   globalOutbox: AsyncQueue[OutboundMessage]
   log:          Logger
   sandboxMode:  SandboxMode
+  sandboxRuntimeCmd: string
   sandboxImage: string
   typingFn:     TypingFn
   searchFn:     SearchFn
@@ -1311,6 +1313,7 @@ func buildSessionIngressServices*(memory: MdFileAdapter;
                                   globalOutbox: AsyncQueue[OutboundMessage];
                                   log: Logger;
                                   sandboxMode: SandboxMode;
+                                  sandboxRuntimeCmd: string;
                                   sandboxImage: string;
                                   typingFn: TypingFn;
                                   searchFn: SearchFn;
@@ -1329,6 +1332,7 @@ func buildSessionIngressServices*(memory: MdFileAdapter;
     globalOutbox: globalOutbox,
     log: log,
     sandboxMode: sandboxMode,
+    sandboxRuntimeCmd: sandboxRuntimeCmd,
     sandboxImage: sandboxImage,
     typingFn: typingFn,
     searchFn: searchFn,
@@ -1358,6 +1362,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     ctx.runtime.globalOutbox,
     log,
     cfg.sandboxMode,
+    cfg.sandboxRuntimeCmd,
     cfg.sandboxImage,
     nil,
     ctx.services.globalSearchFn,
@@ -1382,6 +1387,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                                globalOutbox: AsyncQueue[OutboundMessage];
                                log: Logger;
                                sandboxMode: SandboxMode;
+                               sandboxRuntimeCmd: string;
                                sandboxImage: string;
                                typingFn: TypingFn;
                                searchFn: SearchFn) {.gcsafe.} =
@@ -1398,7 +1404,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              bootstrap.paddockDir, state,
                              typingFn, searchFn, log.child("orch"), bootstrap.providerLabel,
                              bootstrap.skillPrompt,
-                             sandboxMode, sandboxImage,
+                             sandboxMode, sandboxRuntimeCmd, sandboxImage,
                              cfg.webAllowlist, cfg.toolWebPolicy)
 
 proc enqueueSessionMessage*(entry: var SessionEntry;
@@ -1470,7 +1476,7 @@ proc startSessionIngress*(sm: var SessionManager;
                            services.memory,
                            services.streamFn, bootstrap,
                            services.globalOutbox, services.log,
-                           services.sandboxMode, services.sandboxImage,
+                           services.sandboxMode, services.sandboxRuntimeCmd, services.sandboxImage,
                            services.typingFn, services.searchFn)
   if result.plan.decision.startsNewSession:
     services.log.info("new session: " & result.plan.uid)
@@ -1893,7 +1899,7 @@ proc main =
 
   if not devMode and cfg.sandboxMode == smNone:
     stderr.writeLine "Security Error: Sandbox mode 'none' is only allowed in --dev-mode"
-    stderr.writeLine "Enable --dev-mode if you are in development, or set sandbox.mode = \"docker\" or \"wasm\" in donkey.toml"
+    stderr.writeLine "Enable --dev-mode if you are in development, or set sandbox.mode = \"oci\" or \"wasm\" in donkey.toml"
     quit(1)
 
   ringInit()            ## enable log ring buffer before the first Logger is created
@@ -2017,7 +2023,7 @@ proc main =
     quit(0)
 
   if args.len >= 1 and args[0] == "doctor":
-    quit(runDoctor())
+    quit(runDoctor(cfg.sandboxRuntimeCmd))
 
   log.info(AppSlug & " " & Version & " starting")
   log.info("home: " & cfg.home)

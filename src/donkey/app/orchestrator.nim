@@ -847,6 +847,7 @@ proc buildNativeCtx*(uid: UserId;
                      log: Logger;
                      paddockDir: string;
                      sandboxMode: SandboxMode;
+                     sandboxRuntimeCmd: string;
                      sandboxImage: string): NativeCtx =
   NativeCtx(
     uid:          uid,
@@ -863,6 +864,7 @@ proc buildNativeCtx*(uid: UserId;
     log:          log,
     paddockDir:   paddockDir,
     sandboxMode:  sandboxMode,
+    sandboxRuntimeCmd: sandboxRuntimeCmd,
     sandboxImage: sandboxImage,
   )
 
@@ -1075,6 +1077,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
                           typingFn: TypingFn;
                           log: Logger;
                           sandboxMode: SandboxMode;
+                          sandboxRuntimeCmd: string;
                           sandboxImage: string;
                           msg: AgentMessage;
                           stateRuntime: OrchestratorState): UserTurnSetup =
@@ -1086,7 +1089,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
     result.uid, msg.channel, globalOutbox, session, memory, completeFn, http,
     cfgTypes.DonkeyConfig(webAllowlist: webAllowlist, toolWebPolicy: toolWebPolicy),
     tools, log,
-    paddockDir, sandboxMode, sandboxImage)
+    paddockDir, sandboxMode, sandboxRuntimeCmd, sandboxImage)
   createDir(paddockDir)
   result.typingLoop = startTypingLoop(typingFn, result.uid, msg.channel)
 
@@ -1332,6 +1335,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     log: Logger;
                     providerLabel: string;
                     sandboxMode: SandboxMode;
+                    sandboxRuntimeCmd: string;
                     sandboxImage: string;
                     toolsSuffix: string;
                     state: SessionState;
@@ -1341,7 +1345,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   let turnSetup = prepareUserTurnSetup(
     globalOutbox, session, memory, completeFn, http, tools, webAllowlist, toolWebPolicy,
     paddockDir, typingFn, log,
-    sandboxMode, sandboxImage, msg, result)
+    sandboxMode, sandboxRuntimeCmd, sandboxImage, msg, result)
 
   if turnSetup.isNewUser:
     let onboardingResult = await handleOnboardingTurn(
@@ -1410,6 +1414,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
                      log: Logger;
                      providerLabel: string;
                      sandboxMode: SandboxMode;
+                     sandboxRuntimeCmd: string;
                      sandboxImage: string;
                      sessionId: string;
                      toolsSuffix: string;
@@ -1437,7 +1442,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
   result = await handleUserTurn(
     globalOutbox, memInbox, toolInbox, memOut, toolOut, session, memory,
     completeFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
-    providerLabel, sandboxMode, sandboxImage, toolsSuffix,
+    providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, toolsSuffix,
     state, msg, result)
   safeSaveSession(memory, uid, sessionId, result.history)
 
@@ -1460,6 +1465,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
                         log: Logger;
                         providerLabel: string;
                         sandboxMode: SandboxMode;
+                        sandboxRuntimeCmd: string;
                         sandboxImage: string;
                         sessionId: string;
                         toolsSuffix: string;
@@ -1476,7 +1482,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
     result.stateRuntime = await handleActorTask(
       globalOutbox, session, memInbox, toolInbox, memOut, toolOut, memory,
       completeFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
-      providerLabel, sandboxMode, sandboxImage, sessionId,
+      providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
       toolsSuffix, state, msg, stateRuntime)
 
   else:
@@ -1501,6 +1507,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       providerLabel:  string      = "?";
                       skillPrompt:    string      = "";
                       sandboxMode:    SandboxMode = smNone;
+                      sandboxRuntimeCmd: string   = "docker";
                       sandboxImage:   string      = "alpine";
                       webAllowlist:   seq[string] = @[];
                       toolWebPolicy:  seq[cfgTypes.ToolWebPolicy] = @[]): Future[void] {.async.} =
@@ -1512,7 +1519,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
 
   asyncSpawn(runMemoryAgent(memInbox, memOut, memory, searchFn))
   asyncSpawn(runToolAgent(toolInbox, toolOut, clients))
-  sandboxLogLevel(sandboxMode, sandboxImage, log)
+  sandboxLogLevel(sandboxMode, sandboxImage, sandboxRuntimeCmd, log)
 
   var stateRuntime = newOrchestratorState()
   let sessionId   = $nowMs()
@@ -1526,7 +1533,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
     let actorResult = await handleActorMessage(
       inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
       completeFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
-      providerLabel, sandboxMode, sandboxImage, sessionId,
+      providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
       toolsSuffix, state, msg, stateRuntime)
     stateRuntime = actorResult.stateRuntime
     if actorResult.shouldStop:

@@ -10,8 +10,9 @@ suite "Config Loader":
   test "resolveHomeFromEnv prefers explicit env value":
     check resolveHomeFromEnv("/tmp/donkey_home_x") == "/tmp/donkey_home_x"
 
-  test "parseSandboxMode maps docker and defaults unknown to none":
-    check parseSandboxMode("docker") == smDocker
+  test "parseSandboxMode maps docker/oci and defaults unknown to none":
+    check parseSandboxMode("docker") == smOci
+    check parseSandboxMode("oci") == smOci
     check parseSandboxMode("weird") == smNone
 
   test "loadTomlConfig returns none for missing file":
@@ -93,29 +94,31 @@ paddocks = "/srv/donkey/paddocks"
     let cfg = loadConfig("/tmp/donkey_nonexistent_12345.toml")
     check cfg.sandboxMode == smNone
 
-  test "reads sandbox mode docker":
+  test "reads sandbox mode oci":
     let tmp = getTempDir() / "t_loader_sandbox.toml"
     writeFile(tmp, """
 [donkey]
 log_level = "info"
 
 [sandbox]
-mode = "docker"
+mode = "oci"
 """)
     defer: removeFile(tmp)
     let cfg = loadConfig(tmp)
-    check cfg.sandboxMode == smDocker
+    check cfg.sandboxMode == smOci
 
   test "reads custom sandbox image":
     let tmp = getTempDir() / "t_loader_sbimage.toml"
     writeFile(tmp, """
 [sandbox]
 mode = "docker"
+runtime = "podman"
 image = "debian:bookworm-slim"
 """)
     defer: removeFile(tmp)
     let cfg = loadConfig(tmp)
-    check cfg.sandboxMode  == smDocker
+    check cfg.sandboxMode  == smOci
+    check cfg.sandboxRuntimeCmd == "podman"
     check cfg.sandboxImage == "debian:bookworm-slim"
 
   test "unknown sandbox mode falls back to none":
@@ -137,6 +140,7 @@ mode = "docker"
     defer: removeFile(tmp)
     let cfg = loadConfig(tmp)
     check cfg.sandboxImage == "alpine"
+    check cfg.sandboxRuntimeCmd == "docker"
 
   test "blank log_file and paddocks keep defaults":
     let tmp = getTempDir() / "t_loader_blank_paths.toml"
@@ -159,7 +163,7 @@ image = "   "
 """)
     defer: removeFile(tmp)
     let cfg = loadConfig(tmp)
-    check cfg.sandboxMode == smDocker
+    check cfg.sandboxMode == smOci
     check cfg.sandboxImage == "alpine"
 
   test "reads security web_allowlist from toml":

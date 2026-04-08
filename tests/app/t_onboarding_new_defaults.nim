@@ -6,7 +6,7 @@ import donkey/core/app_meta
 
 suite "setup wizard onboarding defaults":
 
-  test "generated onboarding config loads docker sandbox and wiring defaults":
+  test "generated onboarding config loads oci sandbox and wiring defaults":
     let testDir = getTempDir() / "donkey_test_new_defaults"
     if dirExists(testDir):
       removeDir(testDir)
@@ -22,5 +22,6 @@ suite "setup wizard onboarding defaults":
     let cfg = loadConfig(tomlPath)
     check cfg.home == testDir
     check cfg.logLevel == lvlDebug
-    check cfg.sandboxMode == smDocker
+    check cfg.sandboxMode == smOci
+    check cfg.sandboxRuntimeCmd == "docker"
     check cfg.wiring == true

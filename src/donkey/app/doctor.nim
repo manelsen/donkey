@@ -4,8 +4,8 @@
 ## Pure types and formatting live in core/diagnostics; this module owns the I/O.
 ##
 ## Pipeline usage:
-##   runDockerCmd()      |>->  toDiagResult("docker")
-##   runDockerCmd()      >>=   checkDockerCompose     -- chained binary checks
+##   runRuntimeCmd()     |>->  toDiagResult("container runtime")
+##   runRuntimeCmd()     >>=   checkRuntimeCompose    -- chained binary checks
 ##   results             |>    countFailed             -- count hard failures
 ##   results             |>->  formatReport("Doctor")  -- full formatted report
 
@@ -15,26 +15,25 @@ import ../core/diagnostics
 
 # ── raw Result-returning procs (for >>= chaining) ─────────────────────────────
 
-proc runDockerCmd*(): Result[string, string] =
-  ## Checks Docker binary presence and returns version string or error.
+proc runRuntimeCmd*(runtimeCmd = "docker"): Result[string, string] =
+  ## Checks OCI runtime binary presence and returns version string or error.
   try:
-    let (output, code) = execCmdEx("docker --version")
+    let (output, code) = execCmdEx(runtimeCmd.quoteShell & " --version")
     if code == 0: ok(output.strip())
-    else: err("docker not found (exit " & $code & ")")
+    else: err(runtimeCmd & " not found (exit " & $code & ")")
   except CatchableError as e:
     err(e.msg)
 
-proc checkDockerCompose*(dockerVersion: string): Result[string, string]
-                         {.gcsafe, raises: [].} =
-  ## Given docker is available, checks for the compose plugin.
-  ## Designed for >>= chaining after runDockerCmd().
-  ##   runDockerCmd() >>= checkDockerCompose
+proc checkRuntimeCompose*(runtimeCmd: string;
+                          runtimeVersion: string): Result[string, string]
+                          {.gcsafe, raises: [].} =
+  ## Given an OCI runtime is available, checks for the compose subcommand.
   try:
-    let (output, code) = execCmdEx("docker compose version")
-    if code == 0: ok(dockerVersion & " | compose: " & output.strip())
-    else: err("docker compose plugin not available")
+    let (output, code) = execCmdEx(runtimeCmd.quoteShell & " compose version")
+    if code == 0: ok(runtimeVersion & " | compose: " & output.strip())
+    else: err(runtimeCmd & " compose plugin not available")
   except:
-    err("docker compose check failed")
+    err(runtimeCmd & " compose check failed")
 
 proc apiKeyResult(v: string; envVar: string): Result[string, string] =
   if v.len > 0: ok("set (" & $v.len & " chars)")
@@ -51,10 +50,12 @@ proc pgvectorResult(dsn: string): Result[string, string] =
 
 # ── public named checks ────────────────────────────────────────────────────────
 
-proc checkDocker*(): DiagResult =
-  ## Checks Docker binary + compose plugin via >>= chaining.
-  ##   runDockerCmd() >>= checkDockerCompose  |>->  toDiagResult("docker")
-  (runDockerCmd() >>= checkDockerCompose) |>-> toDiagResult("docker")
+proc checkContainerRuntime*(runtimeCmd = "docker"): DiagResult =
+  ## Checks OCI runtime binary + compose plugin via >>= chaining.
+  (runRuntimeCmd(runtimeCmd) >>=
+    proc(version: string): Result[string, string] {.gcsafe, raises: [].} =
+      checkRuntimeCompose(runtimeCmd, version)
+  ) |>-> toDiagResult("container runtime")
 
 proc checkApiKey*(name: string; envVar: string): DiagResult =
   ## Checks whether an API key environment variable is set.
@@ -77,11 +78,11 @@ const ApiKeyChecks = [
   ("MiniMax",    "MINIMAX_API_KEY"),
 ]
 
-proc runDoctorChecks*(): seq[DiagResult] =
+proc runDoctorChecks*(runtimeCmd = "docker"): seq[DiagResult] =
   ## Runs all dependency checks and returns the result list.
-  ## Required checks (dsErr on failure): docker
+  ## Required checks (dsErr on failure): container runtime
   ## Advisory checks (dsWarn on failure): pgvector, API keys
-  result.add checkDocker()
+  result.add checkContainerRuntime(runtimeCmd)
   result.add checkPgvector()
   for (name, envVar) in ApiKeyChecks:
     result.add checkApiKey(name, envVar) |> markWarn
@@ -95,8 +96,8 @@ proc printDoctorReport*(results: seq[DiagResult]) =
   else:
     echo "All required checks passed."
 
-proc runDoctor*(): int =
+proc runDoctor*(runtimeCmd = "docker"): int =
   ## Runs all checks, prints the report, returns 0 if all passed else 1.
-  let results = runDoctorChecks()
+  let results = runDoctorChecks(runtimeCmd)
   printDoctorReport(results)
   if results |> allPassed: 0 else: 1
