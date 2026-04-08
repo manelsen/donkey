@@ -1559,8 +1559,8 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
   let memOut    = newAsyncQueue[AgentMessage]()
   let toolOut   = newAsyncQueue[AgentMessage]()
 
-  asyncSpawn(runMemoryAgent(memInbox, memOut, memory, searchFn))
-  asyncSpawn(runToolAgent(toolInbox, toolOut, clients))
+  let memAgentFut = runMemoryAgent(memInbox, memOut, memory, searchFn)
+  let toolAgentFut = runToolAgent(toolInbox, toolOut, clients)
   sandboxLogLevel(sandboxMode, sandboxImage, sandboxRuntimeCmd, log)
 
   var stateRuntime = newOrchestratorState()
@@ -1580,3 +1580,5 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
     stateRuntime = actorResult.stateRuntime
     if actorResult.shouldStop:
       break
+  await memAgentFut
+  await toolAgentFut

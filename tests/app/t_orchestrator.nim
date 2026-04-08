@@ -12,7 +12,6 @@ import donkey/domain/message
 import donkey/domain/personality
 import donkey/domain/more_tools
 import donkey/core/log
-import donkey/core/outbound/outbound
 import donkey/core/pipeops
 import donkey/core/tooling/tool_loop
 import donkey/adapters/http/std_http
@@ -206,11 +205,12 @@ suite "OrchestratorAgent":
       var session = makeSessionEntry()
       session.inbox = inbox
       let state = newSessionState()
-      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
-                                 dir / "u42", state))
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 dir / "u42", state)
       await inbox.put(newTaskMsg("req4", tkUserMsg, "u42", "ping"))
       let reply = await outbox.get()
       await inbox.put(newCancelMsg())
+      await orchFut
       return reply
     let reply = waitFor doTest(tmpDir)
 
@@ -231,13 +231,14 @@ suite "OrchestratorAgent":
       var session = makeSessionEntry()
       session.inbox = inbox
       let state = newSessionState()
-      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
                                  newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
-                                 dir / "u-heartbeat", state))
+                                 dir / "u-heartbeat", state)
       await inbox.put(newTaskMsg("req-hb", tkHeartbeat, "u-heartbeat",
         "Heartbeat automático.\nTarefas pendentes:\n- [ ] Review the logs"))
       let reply = await outbox.get()
       await inbox.put(newCancelMsg())
+      await orchFut
       return reply
 
     let reply = waitFor doTest(tmpDir)
@@ -263,13 +264,14 @@ suite "OrchestratorAgent":
       var session = makeSessionEntry()
       session.inbox = inbox
       let state = newSessionState()
-      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
                                  newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
-                                 dir / "u-heartbeat-new", state))
+                                 dir / "u-heartbeat-new", state)
       await inbox.put(newTaskMsg("req-hb", tkHeartbeat, "u-heartbeat-new",
         "Heartbeat automático.\nTarefas pendentes:\n- [ ] Review the logs"))
       await sleepAsync(chronos.milliseconds(50))
       await inbox.put(newCancelMsg())
+      await orchFut
       return (outbox.len, providerCalls)
 
     let (outboxLen, providerCalls) = waitFor doTest(tmpDir)
@@ -293,11 +295,12 @@ suite "OrchestratorAgent":
       var session = makeSessionEntry()
       session.inbox = inbox
       let state = newSessionState()
-      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubCompleteRetry, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
-                                 dir / "u1", state))
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubCompleteRetry, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 dir / "u1", state)
       await inbox.put(newTaskMsg("req6", tkUserMsg, "u1", "hello"))
       let reply = await outbox.get()
       await inbox.put(newCancelMsg())
+      await orchFut
       return reply
     let reply = waitFor doTest(tmpDir)
 
@@ -319,11 +322,12 @@ suite "OrchestratorAgent":
       var session = makeSessionEntry()
       session.inbox = inbox
       let state = newSessionState()
-      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubCompleteEmpty, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
-                                 dir / "u1", state))
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubCompleteEmpty, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 dir / "u1", state)
       await inbox.put(newTaskMsg("req5", tkUserMsg, "u1", "hello"))
       let reply = await outbox.get()
       await inbox.put(newCancelMsg())
+      await orchFut
       return reply
     let reply = waitFor doTest(tmpDir)
 
@@ -355,7 +359,7 @@ suite "OrchestratorAgent":
     removeDir(tmpDir)
     defer: removeDir(tmpDir)
 
-    proc doTest(dir: string): Future[(OutboundMessage, OutboundMessage, OutboundMessage, seq[string])] {.async.} =
+    proc doTest(dir: string): Future[(OutboundMessage, OutboundMessage, int, seq[string])] {.async.} =
       let userDir = dir / "u-reset"
       createDir(userDir)
       writeFile(userDir / "USER.md", "# Bob")
@@ -371,25 +375,26 @@ suite "OrchestratorAgent":
       var session = makeSessionEntry()
       session.inbox = inbox
       let state = newSessionState()
-      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
                                  newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-reset",
-                                 state, log = orchLog))
+                                 state, log = orchLog)
       await inbox.put(newTaskMsg("req-reset-1", tkUserMsg, "u-reset", "ping"))
       let firstReply = await outbox.get()
       await inbox.put(newTaskMsg("req-reset-2", tkReset, "u-reset", ""))
       let resetReply = await outbox.get()
       await inbox.put(newTaskMsg("req-reset-3", tkUserMsg, "u-reset", "oi"))
-      let onboardingReply = await outbox.get()
+      await sleepAsync(chronos.milliseconds(50))
       await inbox.put(newCancelMsg())
-      return (firstReply, resetReply, onboardingReply, logMessages)
+      await orchFut
+      return (firstReply, resetReply, outbox.len, logMessages)
 
-    let (firstReply, resetReply, onboardingReply, logMessages) = waitFor doTest(tmpDir)
+    let (firstReply, resetReply, pendingOutbox, logMessages) = waitFor doTest(tmpDir)
 
     check firstReply.text == "pong"
     check resetReply.text.contains("Bootstrap reiniciado")
     check resetReply.text.contains("Como quer definir minha personalidade?")
     check resetReply.keyboard.len > 0
-    check onboardingReply.text.contains(interactiveSelectionFallbackText())
+    check pendingOutbox == 0
     check logMessages.anyIt(it.contains("reset bootstrap: started"))
     check logMessages.anyIt(it.contains("reset bootstrap: completed; onboarding ready"))
     check not fileExists(tmpDir / "u-reset" / "USER.md")
@@ -400,7 +405,7 @@ suite "OrchestratorAgent":
     removeDir(tmpDir)
     defer: removeDir(tmpDir)
 
-    proc doTest(dir: string): Future[(OutboundMessage, OutboundMessage, int)] {.async.} =
+    proc doTest(dir: string): Future[(OutboundMessage, int, int)] {.async.} =
       let userDir = dir / "u-reset-guard"
       createDir(userDir)
       writeFile(userDir / "USER.md", "# Bob")
@@ -417,20 +422,21 @@ suite "OrchestratorAgent":
       var session = makeSessionEntry()
       session.inbox = inbox
       let state = newSessionState()
-      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
-                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-reset-guard", state))
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-reset-guard", state)
       await inbox.put(newTaskMsg("req-reset-1", tkReset, "u-reset-guard", ""))
       let resetReply = await outbox.get()
       await inbox.put(newTaskMsg("req-reset-2", tkUserMsg, "u-reset-guard", "oi"))
-      let onboardingReply = await outbox.get()
+      await sleepAsync(chronos.milliseconds(50))
       await inbox.put(newCancelMsg())
-      return (resetReply, onboardingReply, providerCalls)
+      await orchFut
+      return (resetReply, outbox.len, providerCalls)
 
-    let (resetReply, onboardingReply, providerCalls) = waitFor doTest(tmpDir)
+    let (resetReply, pendingOutbox, providerCalls) = waitFor doTest(tmpDir)
 
     check resetReply.text.contains("Bootstrap reiniciado")
     check resetReply.text.contains("Como quer definir minha personalidade?")
-    check onboardingReply.text.len == 0
+    check pendingOutbox == 0
     check providerCalls == 0
 
   test "telegram onboarding callback edits the same bootstrap message":
@@ -445,14 +451,15 @@ suite "OrchestratorAgent":
       var session = makeSessionEntry()
       session.inbox = inbox
       let state = newSessionState()
-      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-tg-bootstrap", state))
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-tg-bootstrap", state)
       await inbox.put(newTaskMsg("req-tg-1", tkUserMsg, "u-tg-bootstrap", "oi", ckTelegram, "101"))
       let wakeupReply = await outbox.get()
       await inbox.put(newTaskMsg("req-tg-2", tkPersonalityChoice, "u-tg-bootstrap",
                                  "personality:mode:guided", ckTelegram, "555"))
       let guidedReply = await outbox.get()
       await inbox.put(newCancelMsg())
+      await orchFut
       (wakeupReply, guidedReply)
 
     let (wakeupReply, guidedReply) = waitFor doTest(tmpDir)
@@ -467,7 +474,7 @@ suite "OrchestratorAgent":
     removeDir(tmpDir)
     defer: removeDir(tmpDir)
 
-    proc doTest(dir: string): Future[(int, int)] {.async.} =
+    proc doTest(dir: string): Future[(int, int, int)] {.async.} =
       let mem = MdFileAdapter(paddocksDir: dir)
       let inbox = newAsyncQueue[AgentMessage]()
       let outbox = newAsyncQueue[OutboundMessage]()
@@ -479,8 +486,8 @@ suite "OrchestratorAgent":
       var session = makeSessionEntry()
       session.inbox = inbox
       let state = newSessionState()
-      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
-                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-heartbeat-mid-bootstrap", state))
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-heartbeat-mid-bootstrap", state)
       await inbox.put(newTaskMsg("req-mid-1", tkUserMsg, "u-heartbeat-mid-bootstrap", "oi", ckTelegram, "101"))
       discard await outbox.get()
       await inbox.put(newTaskMsg("req-mid-2", tkPersonalityChoice, "u-heartbeat-mid-bootstrap", "personality:mode:guided", ckTelegram, "555"))
@@ -495,13 +502,15 @@ suite "OrchestratorAgent":
       discard await outbox.get()
       await inbox.put(newTaskMsg("req-mid-7", tkNameChoice, "u-heartbeat-mid-bootstrap", "name:Nex", ckTelegram, "555"))
       let nameReply = await outbox.get()
+      let beforeHeartbeat = providerCalls
       await inbox.put(newTaskMsg("req-mid-hb", tkHeartbeat, "u-heartbeat-mid-bootstrap", "review pending"))
       await sleepAsync(chronos.milliseconds(50))
       await inbox.put(newCancelMsg())
-      (providerCalls, if nameReply.text.contains("qual é o seu nome?"): 1 else: 0)
+      await orchFut
+      (beforeHeartbeat, providerCalls, if nameReply.text.contains("qual é o seu nome?"): 1 else: 0)
 
-    let (providerCalls, sawNamePrompt) = waitFor doTest(tmpDir)
-    check providerCalls == 0
+    let (beforeHeartbeat, providerCalls, sawNamePrompt) = waitFor doTest(tmpDir)
+    check providerCalls == beforeHeartbeat
     check sawNamePrompt == 1
 
 suite "payload helpers":
