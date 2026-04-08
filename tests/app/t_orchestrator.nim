@@ -456,10 +456,10 @@ suite "OrchestratorAgent":
 
     let (wakeupReply, guidedReply) = waitFor doTest(tmpDir)
     check wakeupReply.keyboard.len > 0
-    check wakeupReply.editTargetId.len == 0
+    check wakeupReply.replacementSlot == "bootstrap"
     check guidedReply.text.contains("energia e entusiasmo")
     check guidedReply.keyboard.len > 0
-    check guidedReply.editTargetId == "555"
+    check guidedReply.replacementSlot == "bootstrap"
 
   test "heartbeat remains blocked after agent name choice until user profile completes":
     let tmpDir = getTempDir() / "donkey_test_orch_heartbeat_name_guard"

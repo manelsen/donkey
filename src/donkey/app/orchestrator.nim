@@ -277,7 +277,8 @@ proc sendReplyText*(globalOutbox: AsyncQueue[OutboundMessage];
                     replyTo: string;
                     text: string;
                     editTargetId = "";
-                    replaceKeyboard = false): Future[void] {.async.} =
+                    replaceKeyboard = false;
+                    replacementSlot = ""): Future[void] {.async.} =
   await globalOutbox.put(OutboundMessage(
     userId: uid,
     channel: channel,
@@ -285,6 +286,7 @@ proc sendReplyText*(globalOutbox: AsyncQueue[OutboundMessage];
     replyTo: replyTo,
     editTargetId: editTargetId,
     replaceKeyboard: replaceKeyboard,
+    replacementSlot: replacementSlot,
   ))
 
 proc sendReplyKeyboard*(globalOutbox: AsyncQueue[OutboundMessage];
@@ -293,7 +295,8 @@ proc sendReplyKeyboard*(globalOutbox: AsyncQueue[OutboundMessage];
                         replyTo: string;
                         text: string;
                         keyboard: seq[seq[(string, string)]];
-                        editTargetId = ""): Future[void] {.async.} =
+                        editTargetId = "";
+                        replacementSlot = ""): Future[void] {.async.} =
   await globalOutbox.put(OutboundMessage(
     userId: uid,
     channel: channel,
@@ -302,6 +305,7 @@ proc sendReplyKeyboard*(globalOutbox: AsyncQueue[OutboundMessage];
     keyboard: keyboard,
     editTargetId: editTargetId,
     replaceKeyboard: editTargetId.len > 0,
+    replacementSlot: replacementSlot,
   ))
 
 proc sendPipelineError(globalOutbox: AsyncQueue[OutboundMessage];
@@ -334,8 +338,8 @@ proc safeHasCompletedBootstrap(memory: MemoryRuntimePort;
   except Exception:
     false
 
-func shouldEditBootstrapPrompt(channel: ChannelKind; editTargetId: string): bool =
-  editTargetId.len > 0 and supportsEditableReplacement(channel)
+func bootstrapReplacementSlot(channel: ChannelKind): string =
+  if supportsEditableReplacement(channel): "bootstrap" else: ""
 
 proc safeSaveSession(memory: MemoryRuntimePort;
                      uid: UserId;
@@ -401,16 +405,16 @@ proc sendNameChoiceOrPrompt(globalOutbox: AsyncQueue[OutboundMessage];
                             replyTo: string;
                             names: seq[string];
                             keyboardText: string;
-                            editTargetId = ""): Future[void] {.async.} =
+                            replacementSlot = ""): Future[void] {.async.} =
   if names.len > 0:
     await sendReplyKeyboard(
       globalOutbox, uid, channel, replyTo,
       keyboardText,
       buildNameChoiceKeyboard(names),
-      editTargetId)
+      replacementSlot = replacementSlot)
   else:
     await sendReplyText(globalOutbox, uid, channel, replyTo, "Que nome você quer me dar?",
-      editTargetId = editTargetId, replaceKeyboard = editTargetId.len > 0)
+      replacementSlot = replacementSlot)
 
 proc persistUserProfile(memory: MemoryRuntimePort;
                         uid: UserId;
@@ -912,20 +916,21 @@ proc handleGuidedPersonalityChoice(globalOutbox: AsyncQueue[OutboundMessage];
 
   let guidedCtx = guidedOpt.get()
   result = guidedCtx.onboarding
-  let editTargetId = if shouldEditBootstrapPrompt(channel, replyTo): replyTo else: ""
+  let replacementSlot = bootstrapReplacementSlot(channel)
 
   if guidedCtx.keyboard.len > 0:
     await sendReplyKeyboard(globalOutbox, uid, channel, replyTo,
-      guidedCtx.replyText, guidedCtx.keyboard, editTargetId)
+      guidedCtx.replyText, guidedCtx.keyboard,
+      replacementSlot = replacementSlot)
   elif guidedCtx.needsNames:
     await sendNameChoiceOrPrompt(
       globalOutbox, uid, channel, replyTo,
       guidedCtx.onboarding.names,
       "Aqui estão alguns nomes que combinam com essa personalidade. Qual prefere?",
-      editTargetId)
+      replacementSlot)
   elif guidedCtx.replyText.len > 0:
     await sendReplyText(globalOutbox, uid, channel, replyTo, guidedCtx.replyText,
-      editTargetId = editTargetId, replaceKeyboard = editTargetId.len > 0)
+      replacementSlot = replacementSlot)
 
 proc handleFreeConvoOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
                                completeFn: CompleteFn;
@@ -954,12 +959,12 @@ proc handleFreeConvoOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
     await sendReplyText(globalOutbox, uid, channel, replyTo, freeCtx.visibleText)
 
   if freeCtx.parsedTraits.isSome:
-    let editTargetId = if shouldEditBootstrapPrompt(channel, replyTo): replyTo else: ""
+    let replacementSlot = bootstrapReplacementSlot(channel)
     await sendNameChoiceOrPrompt(
       globalOutbox, uid, channel, replyTo,
       freeCtx.onboarding.names,
       "Com base em quem você quer que eu seja, aqui estão alguns nomes:",
-      editTargetId)
+      replacementSlot)
 
 proc advanceUserProfileOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
                                   memory: MemoryRuntimePort;
@@ -980,9 +985,9 @@ proc advanceUserProfileOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
   result = (profileCtx.onboarding, profileCtx.identity)
   persistUserProfile(memory, uid, profileCtx)
   if profileCtx.replyText.len > 0:
-    let editTargetId = if shouldEditBootstrapPrompt(channel, replyTo): replyTo else: ""
+    let replacementSlot = bootstrapReplacementSlot(channel)
     await sendReplyText(globalOutbox, uid, channel, replyTo, profileCtx.replyText,
-      editTargetId = editTargetId, replaceKeyboard = editTargetId.len > 0)
+      replacementSlot = replacementSlot)
 
 proc handleResetControlTask(globalOutbox: AsyncQueue[OutboundMessage];
                             memory: MemoryRuntimePort;
@@ -1010,16 +1015,16 @@ proc handleResetControlTask(globalOutbox: AsyncQueue[OutboundMessage];
   let wakeup = decideOnboardingTurn(nextOnboarding, "")
   nextOnboarding = wakeup.onboarding
   log.info($uid & " (" & $channel & ") reset bootstrap: completed; onboarding ready")
-  let editTargetId = if shouldEditBootstrapPrompt(channel, replyTo): replyTo else: ""
+  let replacementSlot = bootstrapReplacementSlot(channel)
   if wakeup.kind == oekWakeUp and wakeup.keyboard.len > 0:
     await sendReplyKeyboard(globalOutbox, uid, channel, replyTo,
       "✅ Bootstrap reiniciado.\n\n" & wakeup.replyText,
       wakeup.keyboard,
-      editTargetId)
+      replacementSlot = replacementSlot)
   else:
     await sendReplyText(globalOutbox, uid, channel, replyTo,
       "✅ Bootstrap reiniciado. Pronto para recomeçar.",
-      editTargetId = editTargetId, replaceKeyboard = editTargetId.len > 0)
+      replacementSlot = replacementSlot)
   (resetCtx.history, nextOnboarding, true)
 
 proc handleDebugToggleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
@@ -1212,12 +1217,14 @@ proc handleOnboardingTurn(globalOutbox: AsyncQueue[OutboundMessage];
 
   case decision.kind
   of oekWakeUp:
+    let replacementSlot = bootstrapReplacementSlot(channel)
     await sendReplyKeyboard(
       globalOutbox, uid, channel, replyTo,
-      decision.replyText, decision.keyboard)
+      decision.replyText, decision.keyboard,
+      replacementSlot = replacementSlot)
 
   of oekButtonOnly:
-    if not shouldEditBootstrapPrompt(channel, replyTo):
+    if bootstrapReplacementSlot(channel).len == 0:
       await sendReplyText(globalOutbox, uid, channel, replyTo, decision.replyText)
 
   of oekFreeConvoText:

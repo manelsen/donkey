@@ -44,6 +44,7 @@ type
     text*:      string
     replyTo*:   string       ## channel-specific id to reply to (optional)
     editTargetId*: string    ## channel-specific message id to edit in place (optional)
+    replacementSlot*: string ## logical UI slot for reusable/editable messages
     channel*:   ChannelKind
     streamId*:  string       ## non-empty for streaming turns
     isPartial*: bool         ## true for streaming partial edits

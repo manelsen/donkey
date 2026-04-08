@@ -579,7 +579,9 @@ proc sendReturnId*(a: DiscordAdapter; msg: OutboundMessage): Result[string, stri
   let chId = ? a.dmChannelFor(discordId)
   let txt  = if msg.text.len > DiscordMaxChars: msg.text[0 ..< DiscordMaxChars]
              else: msg.text
-  let body    = %* {"content": txt}
+  var body    = %* {"content": txt}
+  if msg.keyboard.len > 0:
+    body.add("components", %makeComponentRows(msg.keyboard))
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   a.http.post(a.base() & "/channels/" & chId & "/messages", $body, headers) >>= extractId
 

@@ -117,11 +117,13 @@ suite "outbound_runtime":
       )
     )
     var streamIds = initTable[string, string]()
+    var replacementIds = initTable[string, string]()
     routeOutbound(
       OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "edit me", editTargetId: "42"),
       ports,
       newLogger("test.outbound"),
-      streamIds)
+      streamIds,
+      replacementIds)
     check sentCount == 0
     check editedText == "edit me"
     check editedKeyboardCount == -1
@@ -147,6 +149,7 @@ suite "outbound_runtime":
       )
     )
     var streamIds = initTable[string, string]()
+    var replacementIds = initTable[string, string]()
     routeOutbound(
       OutboundMessage(
         userId: UserId("u1"),
@@ -158,6 +161,45 @@ suite "outbound_runtime":
       ),
       ports,
       newLogger("test.outbound"),
-      streamIds)
+      streamIds,
+      replacementIds)
     check editedText == "pick one"
     check editedKeyboardCount == 1
+
+  test "routeOutbound reuses replacement slot for editable channels":
+    var sentCount = 0
+    var editedText = ""
+    let ports = OutboundChannelPorts(
+      telegram: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}: inc sentCount
+          ok(),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m-slot"),
+        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}: editedText = msgId & ":" & text
+          ok(),
+        sendKeyboard: proc(userId: UserId; text: string;
+                           buttons: seq[seq[(string, string)]];
+                           replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
+        editKeyboard: proc(userId: UserId; msgId, text: string;
+                           buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+      )
+    )
+    var streamIds = initTable[string, string]()
+    var replacementIds = initTable[string, string]()
+    routeOutbound(
+      OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "first", replacementSlot: "bootstrap"),
+      ports,
+      newLogger("test.outbound"),
+      streamIds,
+      replacementIds)
+    check replacementIds["telegram|u1|bootstrap"] == "m-slot"
+    routeOutbound(
+      OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "second", replacementSlot: "bootstrap"),
+      ports,
+      newLogger("test.outbound"),
+      streamIds,
+      replacementIds)
+    check sentCount == 0
+    check editedText == "m-slot:second"
