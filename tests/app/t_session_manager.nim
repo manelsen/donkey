@@ -53,6 +53,17 @@ suite "SessionManager":
     sm.recordChannel(uid, ckTelegram, "42")
     check sm.get(uid).channels.len == 1
 
+  test "latestChannel returns most recently seen channel":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("test-uuid-latest")
+    discard sm.getOrCreate(uid)
+    sm.recordChannel(uid, ckTelegram, "42")
+    sm.recordChannel(uid, ckDiscord, "99")
+    check sm.latestChannel(uid) == "discord"
+    sm.recordChannel(uid, ckTelegram, "42")
+    check sm.latestChannel(uid) == "telegram"
+
   test "recordChannel ignores blank raw ids":
     var sm: SessionManager
     sm.init()

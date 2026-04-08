@@ -193,11 +193,14 @@ suite "heartbeat deliverHeartbeats":
     writeFile(tmp / "user-uuid" / "HEARTBEAT.md",
       "- [ ] Review the logs\n- [ ] Check email\n- [x] Done already")
     var dispatched: seq[string] = @[]
+    let resolveChannel: HeartbeatChannelResolver = proc(userId: UserId): string {.gcsafe.} =
+      "discord"
     let outboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
-      {.cast(gcsafe).}: dispatched.add(userId & "|" & taskPayload)
-    deliverHeartbeats(tmp, outboxFn)
+      {.cast(gcsafe).}: dispatched.add(userId & "|" & channel & "|" & taskPayload)
+    deliverHeartbeats(tmp, resolveChannel, outboxFn)
     check dispatched.len == 1
     check "user-uuid" in dispatched[0]
+    check "|discord|" in dispatched[0]
     check "Review the logs" in dispatched[0]
     check "Check email" in dispatched[0]
 
@@ -209,9 +212,11 @@ suite "heartbeat deliverHeartbeats":
     writeFile(tmp / "user-cool" / "memory" / "heartbeat-state.json",
       $ %* {"last_dispatch_ms": nowMs()})
     var dispatched: seq[string] = @[]
+    let resolveChannel: HeartbeatChannelResolver = proc(userId: UserId): string {.gcsafe.} =
+      "telegram"
     let outboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
       {.cast(gcsafe).}: dispatched.add(userId)
-    deliverHeartbeats(tmp, outboxFn)
+    deliverHeartbeats(tmp, resolveChannel, outboxFn)
     check dispatched.len == 0
     try: removeDir(tmp) except: discard
 
@@ -220,10 +225,26 @@ suite "heartbeat deliverHeartbeats":
     try: removeDir(tmp) except: discard
     createDir(tmp / "user-no-hb")
     var dispatched2: seq[string] = @[]
+    let resolveChannel2: HeartbeatChannelResolver = proc(userId: UserId): string {.gcsafe.} =
+      "telegram"
     let outboxFn2: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
       {.cast(gcsafe).}: dispatched2.add(userId)
-    deliverHeartbeats(tmp, outboxFn2)
+    deliverHeartbeats(tmp, resolveChannel2, outboxFn2)
     check dispatched2.len == 0
+    try: removeDir(tmp) except: discard
+
+  test "skips heartbeat dispatch when no session channel is known":
+    let tmp = getTempDir() / "donkey_hb_no_channel"
+    try: removeDir(tmp) except: discard
+    createDir(tmp / "user-no-channel")
+    writeFile(tmp / "user-no-channel" / "HEARTBEAT.md", "- [ ] Do this")
+    var dispatched: seq[string] = @[]
+    let resolveChannel: HeartbeatChannelResolver = proc(userId: UserId): string {.gcsafe.} =
+      ""
+    let outboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
+      {.cast(gcsafe).}: dispatched.add(userId & "|" & channel)
+    deliverHeartbeats(tmp, resolveChannel, outboxFn)
+    check dispatched.len == 0
     try: removeDir(tmp) except: discard
 
 suite "contemplation runtime":

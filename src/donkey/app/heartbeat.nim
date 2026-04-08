@@ -28,6 +28,7 @@ type
 
   ## Heartbeat task outbox: enqueues a heartbeat task into a user's session inbox.
   HeartbeatOutboxFn* = proc(userId, channel, taskPayload: string) {.gcsafe.}
+  HeartbeatChannelResolver* = proc(userId: UserId): string {.gcsafe.}
 
   CommitmentSnapshot* = object
     userId*:      UserId
@@ -178,6 +179,7 @@ proc saveHeartbeatState(paddockDir: string; state: HeartbeatState) =
     discard
 
 proc deliverHeartbeats*(paddocksDir: string;
+                        resolveChannel: HeartbeatChannelResolver;
                         outboxFn: HeartbeatOutboxFn) =
   ## Scans all paddock directories for HEARTBEAT.md, selects unchecked tasks,
   ## and dispatches them as heartbeat task messages via outboxFn.
@@ -197,7 +199,12 @@ proc deliverHeartbeats*(paddocksDir: string;
     let unchecked = entries.filterIt(not it.checked)
     if unchecked.len == 0: continue
     let selected = unchecked[0 ..< min(unchecked.len, MaxHeartbeatTasksPerUser)]
-    outboxFn(userId, "telegram", buildHeartbeatPrompt(selected))
+    let channel =
+      if resolveChannel != nil: resolveChannel(UserId(userId))
+      else: ""
+    if channel.len == 0:
+      continue
+    outboxFn(userId, channel, buildHeartbeatPrompt(selected))
     var newState = state
     newState.lastDispatchMs = nowMs
     saveHeartbeatState(dir, newState)

@@ -1797,6 +1797,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     ))
   hbReg.registerTask("reminders", proc() {.gcsafe.} =
     deliverDueReminders(memPort, reminderOutboxFn))
+  let heartbeatChannelResolver: HeartbeatChannelResolver = proc(userId: UserId): string {.gcsafe.} =
+    ctx.runtime.sm.latestChannel(userId)
   let heartbeatOutboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
     let uid = UserId(userId)
     let ck = parseEnum[ChannelKind](channel, ckTelegram)
@@ -1816,7 +1818,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       taskPayload,
     )
   hbReg.registerTask("heartbeat", proc() {.gcsafe.} =
-    deliverHeartbeats(cfg.paddocks, heartbeatOutboxFn))
+    deliverHeartbeats(cfg.paddocks, heartbeatChannelResolver, heartbeatOutboxFn))
   let hbCronExpr = getEnv("DONKEY_HEARTBEAT_CRON").strip()
   if hbCronExpr.len > 0:
     let hbCronStart = startHeartbeatCron(hbReg, hbCronExpr)

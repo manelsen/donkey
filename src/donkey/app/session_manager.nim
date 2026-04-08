@@ -62,14 +62,27 @@ proc recordChannel*(sm: var SessionManager;
                     userId: UserId;
                     kind:   ChannelKind;
                     rawId:  string) =
-  ## Records that userId has used (kind, rawId). Idempotent.
+  ## Records that userId has used (kind, rawId), keeping most-recent use last.
   if rawId.len == 0:
     return
   let uid = $userId
   if uid notin sm.entries: return
   let pair = (kind, rawId)
-  if pair notin sm.entries[uid].channels:
-    sm.entries[uid].channels.add(pair)
+  var existing = -1
+  for i, seen in sm.entries[uid].channels:
+    if seen == pair:
+      existing = i
+      break
+  if existing >= 0:
+    sm.entries[uid].channels.delete(existing)
+  sm.entries[uid].channels.add(pair)
+
+func latestChannel*(sm: SessionManager; userId: UserId): string =
+  let uid = $userId
+  if uid notin sm.entries or sm.entries[uid].channels.len == 0:
+    return ""
+  let (kind, _) = sm.entries[uid].channels[^1]
+  $kind
 
 func listSessions*(sm: SessionManager): seq[(UserId, seq[(ChannelKind, string)])] =
   for uid, entry in sm.entries:
