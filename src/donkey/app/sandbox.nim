@@ -18,7 +18,7 @@
 ##
 ## Call sandboxLogLevel once at daemon startup to surface the active mode.
 
-import std/[osproc, os, strtabs, strutils]
+import std/[osproc, os, streams, strtabs, strutils]
 import ../config/types
 import ../core/log
 import ../core/types
@@ -35,6 +35,13 @@ type
     ensureWorkDir*:  bool
 
   SandboxRunner* = proc(plan: SandboxPlan): string {.gcsafe, raises: [].}
+
+const
+  SandboxExecCommand* = "__sandbox_exec"
+
+func canReenterViaHelper(appPath: string): bool {.gcsafe, raises: [].} =
+  let base = extractFilename(appPath).toLowerAscii()
+  base == AppSlug or base == AppSlug & ".out"
 
 proc buildHostSandboxEnv*(paddock: string): StringTableRef {.gcsafe, raises: [].} =
   result = newStringTable(mode = modeCaseSensitive)
@@ -124,15 +131,56 @@ proc formatSandboxResult*(output: string; code: int): string {.gcsafe, raises: [
   if result.len == 0:
     result = "[exit " & $code & "]"
 
+proc runSandboxPlanRaw(plan: SandboxPlan;
+                       env: StringTableRef = nil): tuple[output: string, exitCode: int]
+                       {.gcsafe, raises: [CatchableError].} =
+  if plan.ensureWorkDir and plan.workingDir.len > 0:
+    createDir(plan.workingDir)
+  execCmdEx(plan.command,
+            options = {poEvalCommand, poStdErrToStdOut},
+            workingDir = plan.workingDir,
+            env = env)
+
 proc runSandboxPlan*(plan: SandboxPlan;
                      env: StringTableRef = nil): string {.gcsafe, raises: [].} =
   try:
-    if plan.ensureWorkDir and plan.workingDir.len > 0:
-      createDir(plan.workingDir)
-    let (output, code) = execCmdEx(plan.command,
-                                   options = {poEvalCommand, poStdErrToStdOut},
-                                   workingDir = plan.workingDir,
-                                   env = env)
+    let (output, code) = runSandboxPlanRaw(plan, env)
+    formatSandboxResult(output, code)
+  except CatchableError as e:
+    "Error: " & e.msg
+
+proc runSandboxWorker*(paddock, cmd: string): int {.gcsafe, raises: [].} =
+  try:
+    let (output, code) = runSandboxPlanRaw(buildDirectPlan(cmd, paddock), buildHostSandboxEnv(paddock))
+    stdout.write(output)
+    code
+  except CatchableError as e:
+    discard e
+    1
+
+proc runSandboxHelper*(cmd, paddock: string): string {.gcsafe, raises: [].} =
+  try:
+    createDir(paddock)
+    let appPath = getAppFilename()
+    if not canReenterViaHelper(appPath):
+      return runSandboxPlan(buildDirectPlan(cmd, paddock), buildHostSandboxEnv(paddock))
+    var p = startProcess(
+      appPath,
+      args = [SandboxExecCommand, paddock, cmd],
+      env = buildHostSandboxEnv(paddock),
+      options = {poStdErrToStdOut},
+    )
+    let outp = outputStream(p)
+    var output = ""
+    var line = newStringOfCap(120)
+    while true:
+      if outp.readLine(line):
+        output.add(line)
+        output.add("\n")
+      elif not running(p):
+        break
+    let code = waitForExit(p)
+    close(p)
     formatSandboxResult(output, code)
   except CatchableError as e:
     "Error: " & e.msg
@@ -164,7 +212,7 @@ proc executeOciPlan*(cmd, paddock, image: string;
   if not allowHostFallback:
     return "Error: " & runtimeCmd & " sandbox unavailable; host fallback is disabled by configuration."
 
-  let directResult = runSandboxPlan(buildDirectPlan(cmd, paddock), buildHostSandboxEnv(paddock))
+  let directResult = runSandboxHelper(cmd, paddock)
   "Warning: " & runtimeCmd & " sandbox unavailable; executed without container isolation.\n" &
     directResult
 
@@ -204,9 +252,7 @@ proc sandboxBash*(cmd, paddock: string;
   of smWasm:
     let shellPath = resolveShellWasmPath()
     if not shellPath.fileExists:
-      # Graceful fallback
-      let plan = SandboxPlan(command: cmd, workingDir: paddock, ensureWorkDir: true)
-      return runSandboxPlan(plan, buildHostSandboxEnv(paddock))
+      return runSandboxHelper(cmd, paddock)
     # Use ShellComposer for pipes — composes applet chain in Nim
     if "|" in cmd:
       let adapter = newWasmToolAdapter(shellPath)
@@ -215,8 +261,7 @@ proc sandboxBash*(cmd, paddock: string;
     runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd, allowNetwork, readOnlyRootfs),
                    buildHostSandboxEnv(paddock))
   of smNone:
-    runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd, allowNetwork, readOnlyRootfs),
-                   buildHostSandboxEnv(paddock))
+    runSandboxHelper(cmd, paddock)
   of smOci:
     executeOciPlan(cmd, paddock, image, runtimeCmd, allowHostFallback, allowNetwork, readOnlyRootfs)
 

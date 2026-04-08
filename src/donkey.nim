@@ -49,6 +49,7 @@ import donkey/domain/agent_message
 import donkey/ports/provider
 import donkey/ports/tool
 import donkey/app/orchestrator
+import donkey/app/sandbox
 import donkey/app/ipc_server
 import donkey/app/http_gateway
 import donkey/app/heartbeat
@@ -1884,6 +1885,9 @@ proc main =
       args.add key
     of cmdEnd:
       break
+
+  if args.len >= 3 and args[0] == SandboxExecCommand:
+    quit(runSandboxWorker(args[1], args[2]))
 
   if configPath.len == 0:
     let home = resolveHome()
