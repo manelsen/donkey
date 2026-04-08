@@ -1,7 +1,7 @@
 ## SessionManager unit tests.
 ## Verifies session creation, channel tracking, and listing.
 
-import std/unittest
+import std/[options, unittest]
 import donkey/app/session_manager
 import donkey/domain/message
 import donkey/core/types
@@ -52,6 +52,27 @@ suite "SessionManager":
     sm.recordChannel(uid, ckTelegram, "42")
     sm.recordChannel(uid, ckTelegram, "42")
     check sm.get(uid).channels.len == 1
+
+  test "recordChannel moves repeated pair to most recent position":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("test-uuid-recent")
+    discard sm.getOrCreate(uid)
+    sm.recordChannel(uid, ckTelegram, "42")
+    sm.recordChannel(uid, ckDiscord, "99")
+    sm.recordChannel(uid, ckTelegram, "42")
+    check sm.get(uid).channels.len == 2
+    check sm.get(uid).channels[^1] == (ckTelegram, "42")
+
+  test "latestChannel returns most recently seen channel":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("test-uuid-latest")
+    discard sm.getOrCreate(uid)
+    check sm.latestChannel(uid).isNone
+    sm.recordChannel(uid, ckTelegram, "42")
+    sm.recordChannel(uid, ckDiscord, "99")
+    check sm.latestChannel(uid).get == ckDiscord
 
   test "recordChannel ignores blank raw ids":
     var sm: SessionManager

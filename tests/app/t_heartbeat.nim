@@ -194,10 +194,11 @@ suite "heartbeat deliverHeartbeats":
       "- [ ] Review the logs\n- [ ] Check email\n- [x] Done already")
     var dispatched: seq[string] = @[]
     let outboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
-      {.cast(gcsafe).}: dispatched.add(userId & "|" & taskPayload)
+      {.cast(gcsafe).}: dispatched.add(userId & "|" & channel & "|" & taskPayload)
     deliverHeartbeats(tmp, outboxFn)
     check dispatched.len == 1
     check "user-uuid" in dispatched[0]
+    check "||" in dispatched[0]
     check "Review the logs" in dispatched[0]
     check "Check email" in dispatched[0]
 

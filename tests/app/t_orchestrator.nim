@@ -243,6 +243,39 @@ suite "OrchestratorAgent":
 
     check reply.text == "pong"
 
+  test "heartbeat is ignored while onboarding is still pending":
+    let tmpDir = getTempDir() / "donkey_test_orch_heartbeat_onboarding_guard"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[(int, int)] {.async.} =
+      let userDir = dir / "u-heartbeat-new"
+      createDir(userDir)
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var providerCalls = 0
+      let countingComplete =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+          {.cast(gcsafe).}: inc providerCalls
+          ok(CompletionResponse(text: "pong", inputTokens: 1, outputTokens: 1))
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      asyncSpawn(runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 dir / "u-heartbeat-new", state))
+      await inbox.put(newTaskMsg("req-hb", tkHeartbeat, "u-heartbeat-new",
+        "Heartbeat automático.\nTarefas pendentes:\n- [ ] Review the logs"))
+      await sleepAsync(chronos.milliseconds(50))
+      await inbox.put(newCancelMsg())
+      return (outbox.len, providerCalls)
+
+    let (outboxLen, providerCalls) = waitFor doTest(tmpDir)
+
+    check outboxLen == 0
+    check providerCalls == 0
+
   test "empty LLM text triggers re-prompt — second call returns real answer":
     let tmpDir = getTempDir() / "donkey_test_retry"
     removeDir(tmpDir)

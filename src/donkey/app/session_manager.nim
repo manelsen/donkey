@@ -5,7 +5,7 @@
 ## `channels` tracks which (ChannelKind, raw_id) pairs are associated with
 ## this session — used for `ctl session list`.
 
-import std/tables
+import std/[options, tables]
 import chronos
 import chronos/asyncsync
 import ../domain/agent_message
@@ -68,8 +68,16 @@ proc recordChannel*(sm: var SessionManager;
   let uid = $userId
   if uid notin sm.entries: return
   let pair = (kind, rawId)
-  if pair notin sm.entries[uid].channels:
-    sm.entries[uid].channels.add(pair)
+  let existingIdx = sm.entries[uid].channels.find(pair)
+  if existingIdx >= 0:
+    sm.entries[uid].channels.delete(existingIdx)
+  sm.entries[uid].channels.add(pair)
+
+func latestChannel*(sm: SessionManager; userId: UserId): Option[ChannelKind] =
+  let uid = $userId
+  if uid notin sm.entries or sm.entries[uid].channels.len == 0:
+    return none(ChannelKind)
+  some(sm.entries[uid].channels[^1][0])
 
 func listSessions*(sm: SessionManager): seq[(UserId, seq[(ChannelKind, string)])] =
   for uid, entry in sm.entries:

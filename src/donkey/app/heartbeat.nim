@@ -197,7 +197,7 @@ proc deliverHeartbeats*(paddocksDir: string;
     let unchecked = entries.filterIt(not it.checked)
     if unchecked.len == 0: continue
     let selected = unchecked[0 ..< min(unchecked.len, MaxHeartbeatTasksPerUser)]
-    outboxFn(userId, "telegram", buildHeartbeatPrompt(selected))
+    outboxFn(userId, "", buildHeartbeatPrompt(selected))
     var newState = state
     newState.lastDispatchMs = nowMs
     saveHeartbeatState(dir, newState)

@@ -1805,7 +1805,11 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     deliverDueReminders(memPort, reminderOutboxFn))
   let heartbeatOutboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
     let uid = UserId(userId)
-    let ck = parseEnum[ChannelKind](channel, ckTelegram)
+    let ck =
+      if channel.len > 0:
+        parseEnum[ChannelKind](channel, ckTelegram)
+      else:
+        ctx.runtime.sm.latestChannel(uid).get(ckTelegram)
     ensureSessionTask(
       ctx.runtime.sm,
       InboundMessage(
