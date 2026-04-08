@@ -11,7 +11,7 @@ import ../../core/types
 import ../../ports/memory
 import ../../domain/message
 import ../../domain/personality
-when defined(withPostgres):
+when defined(withPostgres) or defined(withSqlite):
   import ../../ports/embedding
   import ../embedding/openrouter_embed
   import ./magma_memory_adapter
@@ -20,8 +20,10 @@ export memory
 
 type
   MdFileAdapter* = object
-    paddocksDir*: string  ## base directory, e.g. ~/.donkey/paddocks
-    magmaDsn*:   string   ## optional MAGMA shadow backend DSN
+    paddocksDir*:    string  ## base directory, e.g. ~/.donkey/paddocks
+    magmaDsn*:      string   ## optional MAGMA shadow backend DSN
+    magmaSqlitePath*: string ## optional MAGMA SQLite backend path
+    magmaSqliteVectorPath*: string ## optional sqlite-vec extension path
 
   UserSummary* = object
     userId*:      UserId
@@ -48,7 +50,7 @@ proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
 proc loadDueReminders*(a: MdFileAdapter): seq[JsonNode] {.gcsafe.}
 proc deleteReminder*(a: MdFileAdapter; userId: UserId; reminderId: string) {.gcsafe.}
 
-when defined(withPostgres):
+when defined(withPostgres) or defined(withSqlite):
   proc buildMagmaEmbedFn(): EmbedFn =
     let embedKey = getEnv("OPENROUTER_API_KEY")
     if embedKey.len == 0:
@@ -57,13 +59,44 @@ when defined(withPostgres):
     result = proc(text: string): seq[float32] {.gcsafe.} =
       embedAdapter.embed(text)
 
+  func hasMagmaBackend*(a: MdFileAdapter): bool =
+    a.magmaDsn.len > 0 or a.magmaSqlitePath.len > 0
+
+  func magmaBackendName*(a: MdFileAdapter): string =
+    if a.magmaSqlitePath.len > 0:
+      "magma-sqlite"
+    elif a.magmaDsn.len > 0:
+      "magma"
+    else:
+      ""
+
+  proc newMagmaAdapter*(a: MdFileAdapter): MagmaMemoryAdapter {.gcsafe, raises: [].} =
+    try:
+      when defined(withSqlite):
+        if a.magmaSqlitePath.len > 0:
+          let dbDir = parentDir(a.magmaSqlitePath)
+          if dbDir.len > 0:
+            createDir(dbDir)
+          return newSqliteMagmaMemoryAdapter(
+            a.magmaSqlitePath,
+            buildMagmaEmbedFn(),
+            vectorExtensionPath = a.magmaSqliteVectorPath,
+          )
+      when defined(withPostgres):
+        if a.magmaDsn.len > 0:
+          return newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+      nil
+    except Exception:
+      nil
+
   template withMagmaShadow(a: MdFileAdapter; body: untyped) =
-    if a.magmaDsn.len == 0:
+    if not a.hasMagmaBackend:
       discard
     else:
       try:
-        let magma {.inject.} = newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
-        body
+        let magma {.inject.} = a.newMagmaAdapter()
+        if magma != nil:
+          body
       except CatchableError:
         discard
 
@@ -139,20 +172,20 @@ proc parseIdentityPrefs(content: string): (string, PersonalityTraits) =
     else: discard
   (name, traits)
 
-when defined(withPostgres):
+when defined(withPostgres) or defined(withSqlite):
   proc runtimeHasProfile(a: MdFileAdapter; userId: UserId): bool =
-    if a.magmaDsn.len > 0:
+    if a.hasMagmaBackend:
       try:
-        let magma = newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+        let magma = a.newMagmaAdapter()
         return magma.hasProfile(userId) or a.hasProfile(userId)
       except CatchableError:
         discard
     a.hasProfile(userId)
 
   proc runtimeSaveUserMd(a: MdFileAdapter; userId: UserId; content: string) =
-    if a.magmaDsn.len > 0:
+    if a.hasMagmaBackend:
       try:
-        let magma = newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+        let magma = a.newMagmaAdapter()
         magma.saveUserMd(userId, content)
         return
       except CatchableError:
@@ -160,9 +193,9 @@ when defined(withPostgres):
     a.saveUserMd(userId, content)
 
   proc runtimeAppendMemory(a: MdFileAdapter; userId: UserId; text: string) =
-    if a.magmaDsn.len > 0:
+    if a.hasMagmaBackend:
       try:
-        let magma = newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+        let magma = a.newMagmaAdapter()
         magma.appendMemory(userId, text)
         return
       except CatchableError:
@@ -170,9 +203,9 @@ when defined(withPostgres):
     a.appendMemory(userId, text)
 
   proc runtimeSavePreferences(a: MdFileAdapter; userId: UserId; content: string) =
-    if a.magmaDsn.len > 0:
+    if a.hasMagmaBackend:
       try:
-        let magma = newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+        let magma = a.newMagmaAdapter()
         magma.savePreferences(userId, content)
         return
       except CatchableError:
@@ -180,9 +213,9 @@ when defined(withPostgres):
     a.savePreferences(userId, content)
 
   proc runtimeClearMemory(a: MdFileAdapter; userId: UserId) =
-    if a.magmaDsn.len > 0:
+    if a.hasMagmaBackend:
       try:
-        let magma = newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+        let magma = a.newMagmaAdapter()
         magma.clearMemory(userId)
         return
       except CatchableError:
@@ -194,7 +227,7 @@ when defined(withPostgres):
 
   proc runtimeSaveIdentity(a: MdFileAdapter; userId: UserId;
                            traits: PersonalityTraits; name: string) =
-    if a.magmaDsn.len > 0:
+    if a.hasMagmaBackend:
       try:
         let current = a.loadContext(userId).preferencesMd
         a.runtimeSavePreferences(userId, mergeIdentityPrefs(current, traits, name))
@@ -204,7 +237,7 @@ when defined(withPostgres):
     a.saveIdentity(userId, traits, name)
 
   proc runtimeLoadIdentity(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits) =
-    if a.magmaDsn.len > 0:
+    if a.hasMagmaBackend:
       try:
         let current = a.loadContext(userId).preferencesMd
         return parseIdentityPrefs(current)
@@ -213,8 +246,8 @@ when defined(withPostgres):
     a.loadIdentity(userId)
 
 proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
-  when defined(withPostgres):
-    if a.magmaDsn.len > 0:
+  when defined(withPostgres) or defined(withSqlite):
+    if a.hasMagmaBackend:
       return MemoryRuntimePort(
         hasProfile:       proc(userId: UserId): bool {.gcsafe.} = a.runtimeHasProfile(userId),
         loadContext:      proc(userId: UserId): UserContext {.gcsafe.} = a.loadContext(userId),
@@ -289,10 +322,10 @@ proc hasProfile*(a: MdFileAdapter; userId: UserId): bool =
   fileExists(a.userMdPath(userId))
 
 proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext =
-  when defined(withPostgres):
-    if a.magmaDsn.len > 0:
+  when defined(withPostgres) or defined(withSqlite):
+    if a.hasMagmaBackend:
       try:
-        let magma = newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+        let magma = a.newMagmaAdapter()
         let graphCtx = magma.loadContext(userId)
         if graphCtx.hasContextContent:
           return graphCtx

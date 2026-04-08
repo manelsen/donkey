@@ -19,7 +19,7 @@ import donkey/core/app_meta
 import donkey/core/providers/smart_routing
 import donkey/core/session/session_ingress
 import donkey/adapters/memory/md_file
-when defined(withPostgres):
+when defined(withPostgres) or defined(withSqlite):
   import donkey/app/multigraph_runtime
 import donkey/adapters/provider/openrouter
 import donkey/adapters/provider/runtime_builder
@@ -638,7 +638,17 @@ proc buildGlobalProviderBundle(): GlobalProviderBundle =
   result.completeFn = if orKey.len > 0: makeProviderFn(orAdapter) else: nil
   result.streamFn = if orKey.len > 0: orAdapter.makeStreamFn() else: nil
 
-proc buildGlobalSearchFn(paddocksDir: string): SearchFn {.gcsafe.}
+proc buildGlobalSearchFn(memory: MdFileAdapter): SearchFn {.gcsafe.}
+
+func defaultMagmaSqlitePath(home: string): string =
+  home / "state" / "magma.sqlite"
+
+func configuredMagmaSqlitePath(home: string): string =
+  when defined(withSqlite):
+    let configured = getEnv("DONKEY_MAGMA_SQLITE_PATH")
+    if configured.len > 0: configured else: defaultMagmaSqlitePath(home)
+  else:
+    getEnv("DONKEY_MAGMA_SQLITE_PATH")
 
 proc initDaemonServices(cfg: DonkeyConfig;
                         env: DaemonEnv;
@@ -651,8 +661,8 @@ proc initDaemonServices(cfg: DonkeyConfig;
   result.globalCompleteFn = providerBundle.completeFn
   result.globalStreamFn = providerBundle.streamFn
   result.tgTypingFn = makeTgTypingFn(env.telegramToken, env.identityPath)
-  result.globalSearchFn = buildGlobalSearchFn(cfg.paddocks)
-  when defined(withPostgres):
+  result.globalSearchFn = buildGlobalSearchFn(env.memory)
+  when defined(withPostgres) or defined(withSqlite):
     if result.globalSearchFn != nil:
       log.info("MAGMA semantic search enabled")
 
@@ -674,9 +684,15 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.qqApiBase = getEnv("QQ_ONEBOT_URL")
   result.qqOfficialAppId = getEnv("QQ_OFFICIAL_APP_ID")
   result.qqOfficialApiBase = getEnv("QQ_OFFICIAL_API_BASE")
+  let pgDsn = getEnv("DONKEY_PG_DSN")
   result.memory = MdFileAdapter(
     paddocksDir: cfg.paddocks,
-    magmaDsn: getEnv("DONKEY_PG_DSN"),
+    magmaDsn: pgDsn,
+    magmaSqlitePath: configuredMagmaSqlitePath(cfg.home),
+    magmaSqliteVectorPath:
+      block:
+        let vecPath = getEnv("DONKEY_SQLITE_VEC_PATH")
+        if vecPath.len > 0: vecPath else: getEnv("DONKEY_SQLITE_VECTOR_PATH"),
   )
   result.identityPath = cfg.home / "identities.tsv"
   let wecomAgentIdStr = getEnv("WECOM_AGENT_ID")
@@ -1117,9 +1133,9 @@ proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
   of qbkNone:
     discard
 
-proc buildGlobalSearchFn(paddocksDir: string): SearchFn {.gcsafe.} =
-  when defined(withPostgres):
-    result = buildGlobalMagmaSearchFn(paddocksDir)
+proc buildGlobalSearchFn(memory: MdFileAdapter): SearchFn {.gcsafe.} =
+  when defined(withPostgres) or defined(withSqlite):
+    result = buildGlobalMagmaSearchFn(memory)
   else:
     discard
 
@@ -1159,10 +1175,10 @@ proc setupIpcServer(cfg: DonkeyConfig;
     if feishuAppId.len > 0: activeChannels.add("feishu")
     if qqEnabled: activeChannels.add("qq")
     var memoryStats: MemoryStats
-    when defined(withPostgres):
-      if gatewayInboundMemory.magmaDsn.len > 0:
+    when defined(withPostgres) or defined(withSqlite):
+      if gatewayInboundMemory.hasMagmaBackend:
         try:
-          memoryStats = loadMagmaMemoryStats(gatewayInboundMemory.magmaDsn)
+          memoryStats = loadMagmaMemoryStats(gatewayInboundMemory)
         except CatchableError:
           discard
     DaemonStatus(
@@ -1177,7 +1193,14 @@ proc setupIpcServer(cfg: DonkeyConfig;
       recentProviderMetrics: runtime.topRecentProviderMetrics(),
       providerCooldowns: runtime.activeProviderCooldowns(),
       toolsCount:    toolsCount,
-      memoryBackend: if gatewayInboundMemory.magmaDsn.len > 0: "md+magma" else: "md",
+      memoryBackend:
+        when defined(withPostgres) or defined(withSqlite):
+          if gatewayInboundMemory.hasMagmaBackend:
+            "md+" & gatewayInboundMemory.magmaBackendName
+          else:
+            "md"
+        else:
+          "md",
       memoryStats:   memoryStats,
     )
   let ipcLogFn: LogProvider = proc(n: int): seq[IpcLogEntry] {.gcsafe, raises: [].} =
@@ -1883,27 +1906,48 @@ proc main =
     elif args.len >= 4 and args[1] == "provider" and args[2] == "test":
       ctlProviderTest(args[3]); quit(0)
     elif args.len >= 5 and args[1] == "memory" and args[2] == "search":
-      when defined(withPostgres):
-        let pgDsn = getEnv("DONKEY_PG_DSN")
-        if pgDsn.len == 0: echo "DONKEY_PG_DSN not set"; quit(1)
-        ctlMemorySearch(pgDsn, cfg.paddocks, args[3], args[4]); quit(0)
+      when defined(withPostgres) or defined(withSqlite):
+        let memory = MdFileAdapter(
+          paddocksDir: cfg.paddocks,
+          magmaDsn: getEnv("DONKEY_PG_DSN"),
+          magmaSqlitePath: configuredMagmaSqlitePath(cfg.home),
+          magmaSqliteVectorPath:
+            block:
+              let vecPath = getEnv("DONKEY_SQLITE_VEC_PATH")
+              if vecPath.len > 0: vecPath else: getEnv("DONKEY_SQLITE_VECTOR_PATH"),
+        )
+        ctlMemorySearch(memory, args[3], args[4]); quit(0)
       else:
-        echo "This build disabled PostgreSQL support; rebuild without -u:withPostgres to use memory search"; quit(1)
+        echo "This build disabled MAGMA support; rebuild with -d:withPostgres or -d:withSqlite"; quit(1)
     elif args.len >= 4 and args[1] == "memory" and args[2] == "import":
-      when defined(withPostgres):
-        let pgDsn = getEnv("DONKEY_PG_DSN")
-        if pgDsn.len == 0: echo "DONKEY_PG_DSN not set"; quit(1)
-        ctlMemoryImport(pgDsn, cfg.paddocks, args[3]); quit(0)
+      when defined(withPostgres) or defined(withSqlite):
+        let memory = MdFileAdapter(
+          paddocksDir: cfg.paddocks,
+          magmaDsn: getEnv("DONKEY_PG_DSN"),
+          magmaSqlitePath: configuredMagmaSqlitePath(cfg.home),
+          magmaSqliteVectorPath:
+            block:
+              let vecPath = getEnv("DONKEY_SQLITE_VEC_PATH")
+              if vecPath.len > 0: vecPath else: getEnv("DONKEY_SQLITE_VECTOR_PATH"),
+        )
+        ctlMemoryImport(memory, args[3]); quit(0)
       else:
-        echo "This build disabled PostgreSQL support; rebuild without -u:withPostgres to use memory import"; quit(1)
+        echo "This build disabled MAGMA support; rebuild with -d:withPostgres or -d:withSqlite"; quit(1)
     elif args.len >= 4 and args[1] == "memory" and args[2] == "export":
-      when defined(withPostgres):
-        let pgDsn = getEnv("DONKEY_PG_DSN")
-        if pgDsn.len == 0: echo "DONKEY_PG_DSN not set"; quit(1)
+      when defined(withPostgres) or defined(withSqlite):
+        let memory = MdFileAdapter(
+          paddocksDir: cfg.paddocks,
+          magmaDsn: getEnv("DONKEY_PG_DSN"),
+          magmaSqlitePath: configuredMagmaSqlitePath(cfg.home),
+          magmaSqliteVectorPath:
+            block:
+              let vecPath = getEnv("DONKEY_SQLITE_VEC_PATH")
+              if vecPath.len > 0: vecPath else: getEnv("DONKEY_SQLITE_VECTOR_PATH"),
+        )
         let outDir = if args.len >= 5: args[4] else: ""
-        ctlMemoryExport(pgDsn, args[3], outDir); quit(0)
+        ctlMemoryExport(memory, args[3], outDir); quit(0)
       else:
-        echo "This build disabled PostgreSQL support; rebuild without -u:withPostgres to use memory export"; quit(1)
+        echo "This build disabled MAGMA support; rebuild with -d:withPostgres or -d:withSqlite"; quit(1)
     elif args.len >= 2 and args[1] == "status":
       let sockPath = cfg.home / SockFileName
       let sr = ipcClient.queryStatus(sockPath)

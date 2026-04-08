@@ -9,16 +9,18 @@
 import ../../core/types
 import ../../ports/memory
 import ../../ports/embedding
+import ../../ports/multigraph_store
 import ../../ports/reranking
 import ../../domain/memory/commitment_pure
 import ../../domain/memory/episode_pure
 import ../../domain/memory/lessons_pure
 
-when defined(withPostgres):
+when defined(withPostgres) or defined(withSqlite):
   import std/[json, strutils, times, algorithm, options, tables]
-  import db_connector/db_postgres
-  import ./magma_graph
-  import ./pgvector_store
+  when defined(withPostgres):
+    import ./magma_graph
+  when defined(withSqlite):
+    import ./sqlite_magma_store
   import ../../domain/memory/graph_pure
   import ../../domain/memory/rrf
 
@@ -30,7 +32,6 @@ when defined(withPostgres):
     NtCommitment  = "commitment"
     NtEpisode     = "episode"
     NtLesson      = "lesson"
-    MagmaNodesTable = "magma_nodes"
 
   type
     QueryIntent* = enum
@@ -162,23 +163,45 @@ when defined(withPostgres):
 
   type
     MagmaMemoryAdapter* = ref object
-      graph*:        MagmaGraph
+      graph*:        MultigraphStorePort
       embedFn*:      EmbedFn
       rerankFn*:     RerankFn
       searchConfig*: SearchConfig
 
-  proc newMagmaMemoryAdapter*(dsn: string;
+  proc newMagmaMemoryAdapter*(graph: MultigraphStorePort;
                               embedFn: EmbedFn;
                               rerankFn: RerankFn = nil;
                               searchConfig = defaultSearchConfig()): MagmaMemoryAdapter =
-    let g = newMagmaGraph(dsn)
-    g.migrate()
+    graph.migrate()
     MagmaMemoryAdapter(
-      graph: g,
+      graph: graph,
       embedFn: embedFn,
       rerankFn: rerankFn,
       searchConfig: searchConfig,
     )
+
+  when defined(withPostgres):
+    proc newMagmaMemoryAdapter*(dsn: string;
+                                embedFn: EmbedFn;
+                                rerankFn: RerankFn = nil;
+                                searchConfig = defaultSearchConfig()): MagmaMemoryAdapter =
+      newMagmaMemoryAdapter(newMagmaGraph(dsn).toStorePort(), embedFn, rerankFn, searchConfig)
+
+  when defined(withSqlite):
+    proc newSqliteMagmaMemoryAdapter*(dbPath: string;
+                                      embedFn: EmbedFn;
+                                      rerankFn: RerankFn = nil;
+                                      searchConfig = defaultSearchConfig();
+                                      vectorExtensionPath = ""): MagmaMemoryAdapter =
+      newMagmaMemoryAdapter(
+        newSqliteMagmaStoreAdapter(
+          dbPath,
+          vectorExtensionPath = vectorExtensionPath,
+        ).toStorePort(),
+        embedFn,
+        rerankFn,
+        searchConfig,
+      )
 
   proc profileId*(userId: UserId): string =
     $userId & "_profile"
@@ -187,24 +210,15 @@ when defined(withPostgres):
     $userId & "_prefs"
 
   proc memId*(a: MagmaMemoryAdapter; userId: UserId): string =
-    let db = a.graph.openDb()
-    defer: db.close()
     var maxIdx = -1
-    try:
-      let rows = db.getAllRows(sql(
-        "SELECT id FROM " & MagmaNodesTable & " WHERE user_id = ? AND node_type = ?"
-      ), $userId, NtMemory)
-      for row in rows:
-        let nodeId = row[0]
-        let marker = nodeId.rfind("_m")
-        if marker < 0:
-          continue
-        try:
-          maxIdx = max(maxIdx, parseInt(nodeId[marker + 2 .. ^1]))
-        except ValueError:
-          discard
-    except CatchableError:
-      discard
+    for node in a.graph.listNodes($userId, NtMemory):
+      let marker = node.id.rfind("_m")
+      if marker < 0:
+        continue
+      try:
+        maxIdx = max(maxIdx, parseInt(node.id[marker + 2 .. ^1]))
+      except ValueError:
+        discard
     result = $userId & "_m" & $(maxIdx + 1)
 
   proc entId*(userId: UserId; name: string): string =
@@ -356,36 +370,25 @@ when defined(withPostgres):
     )
 
   proc stats*(a: MagmaMemoryAdapter; userId: UserId): MagmaStats =
-    a.graph.stats($userId)
+    a.graph.statsForUser($userId)
 
   proc stats*(a: MagmaMemoryAdapter): MagmaStats =
-    a.graph.stats()
+    a.graph.statsGlobal()
 
   proc upsertNode(a: MagmaMemoryAdapter;
                   nid, userId, nodeType, content: string;
                   emb: seq[float32];
                   ts: int64;
                   meta: JsonNode = nil) =
-    let vecStr = buildVectorLiteral(emb)
-    let metaStr = if meta != nil: $meta else: "{}"
-    let db = a.graph.openDb()
-    try:
-      if vecStr.len > 0:
-        db.exec(sql(
-          "INSERT INTO " & MagmaNodesTable & " (id, user_id, node_type, content, embedding, ts, meta) " &
-          "VALUES (?, ?, ?, ?, ?::vector, ?, ?::jsonb) " &
-          "ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, embedding = EXCLUDED.embedding, ts = EXCLUDED.ts, meta = EXCLUDED.meta"
-        ), nid, userId, nodeType, content, vecStr, $ts, metaStr)
-      else:
-        db.exec(sql(
-          "INSERT INTO " & MagmaNodesTable & " (id, user_id, node_type, content, ts, meta) " &
-          "VALUES (?, ?, ?, ?, ?, ?::jsonb) " &
-          "ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, ts = EXCLUDED.ts, meta = EXCLUDED.meta"
-        ), nid, userId, nodeType, content, $ts, metaStr)
-    except CatchableError as e:
-      echo "upsertNode error: ", e.msg
-    finally:
-      db.close()
+    a.graph.upsertNode(MagmaNode(
+      id: nid,
+      userId: userId,
+      nodeType: nodeType,
+      content: content,
+      embedding: emb,
+      timestamp: ts,
+      meta: if meta != nil: meta else: %*{},
+    ))
 
   proc saveUserMd*(a: MagmaMemoryAdapter; userId: UserId; content: string) =
     let nid = profileId(userId)
@@ -408,24 +411,10 @@ when defined(withPostgres):
     )
 
   proc loadCommitments*(a: MagmaMemoryAdapter; userId: UserId): seq[Commitment] =
-    let db = a.graph.openDb()
-    defer: db.close()
-    try:
-      let rows = db.getAllRows(sql(
-        "SELECT id, user_id, node_type, content, ts, meta FROM " & MagmaNodesTable &
-        " WHERE user_id = ? AND node_type = ? ORDER BY ts DESC"
-      ), $userId, NtCommitment)
-      for row in rows:
-        result.add(parseCommitment(MagmaNode(
-          id: row[0],
-          userId: row[1],
-          nodeType: row[2],
-          content: row[3],
-          timestamp: parseBiggestInt(row[4]),
-          meta: if row[5].len > 0: parseJson(row[5]) else: newJObject(),
-        )))
-    except CatchableError:
-      discard
+    let nodes = a.graph.listNodes($userId, NtCommitment)
+    if nodes.len > 0:
+      for idx in countdown(nodes.high, 0):
+        result.add(parseCommitment(nodes[idx]))
 
   proc updateCommitmentStatus*(a: MagmaMemoryAdapter;
                                userId: UserId;
@@ -464,24 +453,10 @@ when defined(withPostgres):
     )
 
   proc loadEpisodes*(a: MagmaMemoryAdapter; userId: UserId): seq[EpisodeJournal] =
-    let db = a.graph.openDb()
-    defer: db.close()
-    try:
-      let rows = db.getAllRows(sql(
-        "SELECT id, user_id, node_type, content, ts, meta FROM " & MagmaNodesTable &
-        " WHERE user_id = ? AND node_type = ? ORDER BY ts DESC"
-      ), $userId, NtEpisode)
-      for row in rows:
-        result.add(parseEpisode(MagmaNode(
-          id: row[0],
-          userId: row[1],
-          nodeType: row[2],
-          content: row[3],
-          timestamp: parseBiggestInt(row[4]),
-          meta: if row[5].len > 0: parseJson(row[5]) else: newJObject(),
-        )))
-    except CatchableError:
-      discard
+    let nodes = a.graph.listNodes($userId, NtEpisode)
+    if nodes.len > 0:
+      for idx in countdown(nodes.high, 0):
+        result.add(parseEpisode(nodes[idx]))
 
   proc saveLesson*(a: MagmaMemoryAdapter; userId: UserId; lesson: Lesson) =
     let nid = lessonNodeId(userId, lesson.id)
@@ -496,24 +471,10 @@ when defined(withPostgres):
     )
 
   proc loadLessons*(a: MagmaMemoryAdapter; userId: UserId): seq[Lesson] =
-    let db = a.graph.openDb()
-    defer: db.close()
-    try:
-      let rows = db.getAllRows(sql(
-        "SELECT id, user_id, node_type, content, ts, meta FROM " & MagmaNodesTable &
-        " WHERE user_id = ? AND node_type = ? ORDER BY ts DESC"
-      ), $userId, NtLesson)
-      for row in rows:
-        result.add(parseLesson(MagmaNode(
-          id: row[0],
-          userId: row[1],
-          nodeType: row[2],
-          content: row[3],
-          timestamp: parseBiggestInt(row[4]),
-          meta: if row[5].len > 0: parseJson(row[5]) else: newJObject(),
-        )))
-    except CatchableError:
-      discard
+    let nodes = a.graph.listNodes($userId, NtLesson)
+    if nodes.len > 0:
+      for idx in countdown(nodes.high, 0):
+        result.add(parseLesson(nodes[idx]))
 
   proc extractAndSaveLessons*(a: MagmaMemoryAdapter;
                               userId: UserId;
@@ -771,29 +732,15 @@ when defined(withPostgres):
         result = @[]
 
   proc deleteUser*(a: MagmaMemoryAdapter; userId: UserId) =
-    let db = a.graph.openDb()
-    defer: db.close()
-    try:
-      db.exec(sql(
-        "DELETE FROM " & MagmaNodesTable & " WHERE user_id = ?"
-      ), $userId)
-    except CatchableError:
-      discard
+    for node in a.graph.listNodes($userId):
+      discard a.graph.deleteNode(node.id)
 
   proc clearMemory*(a: MagmaMemoryAdapter; userId: UserId) =
-    let db = a.graph.openDb()
-    defer: db.close()
-    try:
-      db.exec(sql(
-        "DELETE FROM " & MagmaNodesTable & " WHERE user_id = ? AND node_type = ?"
-      ), $userId, NtMemory)
-      db.exec(sql(
-        "DELETE FROM " & MagmaNodesTable & " n " &
-        "WHERE n.user_id = ? AND n.node_type = ? " &
-        "AND NOT EXISTS (SELECT 1 FROM magma_edges e WHERE e.from_id = n.id OR e.to_id = n.id)"
-      ), $userId, NtEntity)
-    except CatchableError:
-      discard
+    for node in a.graph.listNodes($userId, NtMemory):
+      discard a.graph.deleteNode(node.id)
+    for node in a.graph.listNodes($userId, NtEntity):
+      if a.graph.getEdges(node.id, direction = "both").len == 0:
+        discard a.graph.deleteNode(node.id)
 
   proc resetBootstrap*(a: MagmaMemoryAdapter; userId: UserId) =
     discard a.graph.deleteNode(profileId(userId))
@@ -832,6 +779,16 @@ else:
                               embedFn: EmbedFn;
                               rerankFn: RerankFn = nil;
                               searchConfig = defaultSearchConfig()): MagmaMemoryAdapter =
+    MagmaMemoryAdapter()
+  proc newMagmaMemoryAdapter*(graph: MultigraphStorePort;
+                              embedFn: EmbedFn;
+                              rerankFn: RerankFn = nil;
+                              searchConfig = defaultSearchConfig()): MagmaMemoryAdapter =
+    MagmaMemoryAdapter()
+  proc newSqliteMagmaMemoryAdapter*(dbPath: string;
+                                    embedFn: EmbedFn;
+                                    rerankFn: RerankFn = nil;
+                                    searchConfig = defaultSearchConfig()): MagmaMemoryAdapter =
     MagmaMemoryAdapter()
   proc hasProfile*(a: MagmaMemoryAdapter; userId: UserId): bool = false
   proc loadContext*(a: MagmaMemoryAdapter; userId: UserId): UserContext =

@@ -1,6 +1,6 @@
-## multigraph_runtime — PostgreSQL-backed Multigraph Memory wiring for the app entrypoint.
+## multigraph_runtime — MAGMA wiring for the app entrypoint.
 
-when defined(withPostgres):
+when defined(withPostgres) or defined(withSqlite):
   import std/[os, strutils]
   import ../core/types
   import ../core/providers/smart_routing
@@ -196,13 +196,25 @@ when defined(withPostgres):
     else:
       discard
 
-  proc newCtlMagmaAdapter(pgDsn: string): MagmaMemoryAdapter =
-    newMagmaMemoryAdapter(
-      pgDsn,
-      buildMagmaEmbedFn(),
-      nil,
-      buildMagmaSearchConfig(),
-    )
+  proc newCtlMagmaAdapter(memory: MdFileAdapter): MagmaMemoryAdapter =
+    when defined(withSqlite):
+      if memory.magmaSqlitePath.len > 0:
+        return newSqliteMagmaMemoryAdapter(
+          memory.magmaSqlitePath,
+          buildMagmaEmbedFn(),
+          nil,
+          buildMagmaSearchConfig(),
+          vectorExtensionPath = memory.magmaSqliteVectorPath,
+        )
+    when defined(withPostgres):
+      if memory.magmaDsn.len > 0:
+        return newMagmaMemoryAdapter(
+          memory.magmaDsn,
+          buildMagmaEmbedFn(),
+          nil,
+          buildMagmaSearchConfig(),
+        )
+    nil
 
   proc buildMemoryExportEntries(ctx: UserContext): seq[MemoryExportEntry] =
     @[
@@ -236,11 +248,13 @@ when defined(withPostgres):
       echo ""
       echo entry.content
 
-  proc ctlMemorySearch*(pgDsn, paddocksDir: string; uuid, query: string; limit = 10) =
-    let magma = newCtlMagmaAdapter(pgDsn)
+  proc ctlMemorySearch*(memory: MdFileAdapter; uuid, query: string; limit = 10) =
+    let magma = newCtlMagmaAdapter(memory)
+    if magma == nil:
+      echo "MAGMA backend not configured"
+      return
     let uid = UserId(uuid)
-    let md = MdFileAdapter(paddocksDir: paddocksDir)
-    let prefsMd = md.loadContext(uid).preferencesMd
+    let prefsMd = memory.loadContext(uid).preferencesMd
     let hits = magma.searchWithRerank(uid, query, limit, buildMagmaRerankFn(prefsMd))
     if hits.len == 0:
       echo "(no results)"
@@ -250,17 +264,22 @@ when defined(withPostgres):
       echo h.content
       echo "---"
 
-  proc ctlMemoryImport*(pgDsn, paddocksDir: string; uuid: string) =
+  proc ctlMemoryImport*(memory: MdFileAdapter; uuid: string) =
     let uid = UserId(uuid)
-    let md = MdFileAdapter(paddocksDir: paddocksDir)
-    let ctx = md.loadContext(uid)
-    let magma = newCtlMagmaAdapter(pgDsn)
+    let ctx = memory.loadContext(uid)
+    let magma = newCtlMagmaAdapter(memory)
+    if magma == nil:
+      echo "MAGMA backend not configured"
+      return
     magma.deleteUser(uid)
     magma.importContextToMagma(uid, ctx)
     echo "Imported " & uuid & " from .md files"
 
-  proc ctlMemoryExport*(pgDsn: string; uuid: string; outDir = "") =
-    let magma = newCtlMagmaAdapter(pgDsn)
+  proc ctlMemoryExport*(memory: MdFileAdapter; uuid: string; outDir = "") =
+    let magma = newCtlMagmaAdapter(memory)
+    if magma == nil:
+      echo "MAGMA backend not configured"
+      return
     let ctx = magma.loadContext(UserId(uuid))
     let entries = buildMemoryExportEntries(ctx)
     if outDir.len == 0:
@@ -269,37 +288,33 @@ when defined(withPostgres):
     exportContextToDir(ctx, outDir)
     echo "Exported " & uuid & " to " & outDir
 
-  proc buildGlobalMagmaSearchFn*(paddocksDir: string): SearchFn {.gcsafe.} =
-    let pgDsnRuntime = getEnv("DONKEY_PG_DSN")
-    if pgDsnRuntime.len == 0:
+  proc buildGlobalMagmaSearchFn*(memory: MdFileAdapter): SearchFn {.gcsafe, raises: [].} =
+    if not memory.hasMagmaBackend:
       return nil
-    let magmaSearch = newMagmaMemoryAdapter(
-      pgDsnRuntime,
-      buildMagmaEmbedFn(),
-      nil,
-      buildMagmaSearchConfig(),
-    )
-    let md = MdFileAdapter(paddocksDir: paddocksDir, magmaDsn: pgDsnRuntime)
+    let magmaSearch = memory.newMagmaAdapter()
     result = proc(userId: UserId; query: string; limit: int): seq[MemoryHit]
                   {.gcsafe, raises: [].} =
       try:
-        let ctx = md.loadContext(userId)
+        let ctx = memory.loadContext(userId)
         let rerankFn = buildMagmaRerankFn(ctx.preferencesMd)
         magmaSearch.searchWithRerank(userId, query, limit, rerankFn)
       except Exception:
         @[]
 
-  proc loadMagmaMemoryStats*(pgDsn: string): MemoryStats =
-    if pgDsn.len == 0:
+  proc loadMagmaMemoryStats*(memory: MdFileAdapter): MemoryStats {.gcsafe, raises: [].} =
+    if not memory.hasMagmaBackend:
       return MemoryStats()
-    let magma = newMagmaMemoryAdapter(pgDsn, buildMagmaEmbedFn())
-    let stats = magma.stats()
-    MemoryStats(
-      totalNodes: stats.totalNodes,
-      memoryNodes: stats.memoryNodes,
-      profileNodes: stats.profileNodes,
-      preferenceNodes: stats.preferenceNodes,
-      entityNodes: stats.entityNodes,
-      embeddingNodes: stats.embeddingNodes,
-      totalEdges: stats.totalEdges,
-    )
+    try:
+      let magma = memory.newMagmaAdapter()
+      let stats = magma.stats()
+      MemoryStats(
+        totalNodes: stats.totalNodes,
+        memoryNodes: stats.memoryNodes,
+        profileNodes: stats.profileNodes,
+        preferenceNodes: stats.preferenceNodes,
+        entityNodes: stats.entityNodes,
+        embeddingNodes: stats.embeddingNodes,
+        totalEdges: stats.totalEdges,
+      )
+    except Exception:
+      MemoryStats()

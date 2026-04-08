@@ -13,6 +13,9 @@
 ## Compile with -d:withPostgres to activate.
 ## Without the flag the module exports only stub types.
 
+import ../../ports/multigraph_store
+export multigraph_store
+
 when defined(withPostgres):
   import db_connector/db_postgres
   import std/[hashes, json, locks, options, strutils]
@@ -23,14 +26,6 @@ when defined(withPostgres):
     EmbeddingDim = 4096
     MagmaSchemaCacheSlots = 16
 
-  # ── Edge types ─────────────────────────────────────────────────────────────
-
-  const
-    EdgeTemporal* = "TEMPORAL"
-    EdgeCausal*   = "CAUSAL"
-    EdgeMentions* = "MENTIONS"
-    EdgeAbout*    = "ABOUT"
-
   # ── Types ───────────────────────────────────────────────────────────────────
 
   type
@@ -38,36 +33,6 @@ when defined(withPostgres):
       hashA: Hash
       hashB: Hash
       length: int
-
-    MagmaNode* = object
-      id*:        string
-      userId*:    string
-      nodeType*:  string
-      content*:   string
-      embedding*: seq[float32]
-      timestamp*: int64
-      meta*:      JsonNode
-
-    MagmaEdge* = object
-      fromId*:   string
-      toId*:     string
-      edgeType*: string
-      weight*:   float64
-      meta*:     JsonNode
-
-    MagmaHit* = object
-      node*:   MagmaNode
-      score*:  float32
-      path*:   seq[string]  # node IDs traversed to reach this hit
-
-    MagmaStats* = object
-      totalNodes*:      int
-      memoryNodes*:     int
-      profileNodes*:    int
-      preferenceNodes*: int
-      entityNodes*:     int
-      embeddingNodes*:  int
-      totalEdges*:      int
 
     MagmaGraph* = ref object
       dsn: string
@@ -192,6 +157,31 @@ when defined(withPostgres):
     except CatchableError:
       false
 
+  proc upsertNode*(g: MagmaGraph; node: MagmaNode) =
+    let db = g.openDb()
+    defer: db.close()
+    try:
+      let metaStr = if node.meta != nil: $node.meta else: "{}"
+      if node.embedding.len > 0:
+        let emb = "[" & node.embedding.join(",") & "]"
+        db.exec(sql(
+          "INSERT INTO " & MagmaNodesTable & " (id, user_id, node_type, content, embedding, ts, meta) " &
+          "VALUES (?, ?, ?, ?, ?::vector, ?, ?::jsonb) " &
+          "ON CONFLICT (id) DO UPDATE SET " &
+          "user_id = excluded.user_id, node_type = excluded.node_type, content = excluded.content, " &
+          "embedding = excluded.embedding, ts = excluded.ts, meta = excluded.meta"
+        ), node.id, node.userId, node.nodeType, node.content, emb, $node.timestamp, metaStr)
+      else:
+        db.exec(sql(
+          "INSERT INTO " & MagmaNodesTable & " (id, user_id, node_type, content, ts, meta) " &
+          "VALUES (?, ?, ?, ?, ?, ?::jsonb) " &
+          "ON CONFLICT (id) DO UPDATE SET " &
+          "user_id = excluded.user_id, node_type = excluded.node_type, content = excluded.content, " &
+          "embedding = NULL, ts = excluded.ts, meta = excluded.meta"
+        ), node.id, node.userId, node.nodeType, node.content, $node.timestamp, metaStr)
+    except CatchableError:
+      discard
+
   proc getNode*(g: MagmaGraph; nodeId: string): Option[MagmaNode] =
     let db = g.openDb()
     defer: db.close()
@@ -213,6 +203,33 @@ when defined(withPostgres):
         none(MagmaNode)
     except CatchableError:
       none(MagmaNode)
+
+  proc listNodes*(g: MagmaGraph; userId: string; nodeType: string = ""): seq[MagmaNode] =
+    let db = g.openDb()
+    defer: db.close()
+    try:
+      let rows =
+        if nodeType.len > 0:
+          db.getAllRows(sql(
+            "SELECT id, user_id, node_type, content, ts, meta FROM " & MagmaNodesTable &
+            " WHERE user_id = ? AND node_type = ? ORDER BY ts ASC, id ASC"
+          ), userId, nodeType)
+        else:
+          db.getAllRows(sql(
+            "SELECT id, user_id, node_type, content, ts, meta FROM " & MagmaNodesTable &
+            " WHERE user_id = ? ORDER BY ts ASC, id ASC"
+          ), userId)
+      for row in rows:
+        result.add(MagmaNode(
+          id: row[0],
+          userId: row[1],
+          nodeType: row[2],
+          content: row[3],
+          timestamp: parseBiggestInt(row[4]),
+          meta: if row[5].len > 0: parseJson(row[5]) else: newJObject(),
+        ))
+    except CatchableError:
+      discard
 
   proc deleteNode*(g: MagmaGraph; nodeId: string): bool =
     let db = g.openDb()
@@ -502,11 +519,35 @@ when defined(withPostgres):
     except CatchableError:
       discard
 
+  proc toStorePort*(g: MagmaGraph): MultigraphStorePort =
+    MultigraphStorePort(
+      migrate: proc() {.gcsafe.} = g.migrate(),
+      insertNode: proc(node: MagmaNode): bool {.gcsafe.} = g.insertNode(node),
+      upsertNode: proc(node: MagmaNode) {.gcsafe.} = g.upsertNode(node),
+      getNode: proc(nodeId: string): Option[MagmaNode] {.gcsafe.} = g.getNode(nodeId),
+      listNodes: proc(userId: string; nodeType: string = ""): seq[MagmaNode] {.gcsafe.} =
+        g.listNodes(userId, nodeType),
+      deleteNode: proc(nodeId: string): bool {.gcsafe.} = g.deleteNode(nodeId),
+      insertEdge: proc(edge: MagmaEdge): bool {.gcsafe.} = g.insertEdge(edge),
+      getEdges: proc(nodeId: string; edgeType: string = ""; direction: string = "out"): seq[MagmaEdge] {.gcsafe.} =
+        g.getEdges(nodeId, edgeType = edgeType, direction = direction),
+      deleteEdges: proc(nodeId: string; edgeType: string = ""): int {.gcsafe.} = g.deleteEdges(nodeId, edgeType),
+      getLastNode: proc(userId: string; nodeType: string = ""): Option[MagmaNode] {.gcsafe.} =
+        g.getLastNode(userId, nodeType),
+      linkTemporal: proc(fromId, toId: string) {.gcsafe.} = g.linkTemporal(fromId, toId),
+      searchSimilar: proc(userId: string; embedding: seq[float32]; topK: int = 10; minScore: float32 = 0.0): seq[MagmaHit] {.gcsafe.} =
+        g.searchSimilar(userId, embedding, topK = topK, minScore = minScore),
+      queryByTimeRange: proc(userId: string; tsStart, tsEnd: int64; limit: int = 50): seq[MagmaNode] {.gcsafe.} =
+        g.queryByTimeRange(userId, tsStart, tsEnd, limit = limit),
+      traverseNeighbors: proc(nodeId: string; edgeTypes: seq[string] = @[]; maxDepth: int = 2): seq[MagmaNode] {.gcsafe.} =
+        g.traverseNeighbors(nodeId, edgeTypes = edgeTypes, maxDepth = maxDepth),
+      statsForUser: proc(userId: string): MagmaStats {.gcsafe.} = g.stats(userId),
+      statsGlobal: proc(): MagmaStats {.gcsafe.} = g.stats(),
+    )
+
 else:
   ## Stub types when -d:withPostgres is not set.
   type
-    MagmaNode* = object
-    MagmaEdge* = object
-    MagmaHit* = object
-    MagmaStats* = object
     MagmaGraph* = ref object
+
+  proc toStorePort*(g: MagmaGraph): MultigraphStorePort = MultigraphStorePort()

@@ -23,11 +23,11 @@ switch("define", "withPostgres")
 when defined(withPostgres):
   switch("passL", "-lpq")
 
-# SQLite fast-cache backend (opt-in).
+# SQLite backend (opt-in).
 # Build with: nimble build -d:withSqlite
-# Requires libsqlite3 installed: apt install libsqlite3-dev  (Debian/Ubuntu)
+# Uses the embedded SQLite amalgamation in self-contained builds.
 when defined(withSqlite):
-  switch("passL", "-lsqlite3")
+  switch("define", "staticSqlite")
 
 # Nimble package paths (chronos, parsetoml, results, nimcrypto).
 import std/os
