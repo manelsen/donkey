@@ -1030,9 +1030,10 @@ proc advanceUserProfileOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
   result = (profileCtx.onboarding, profileCtx.identity)
   persistUserProfile(memory, uid, profileCtx)
   if profileCtx.replyText.len > 0:
-    let replacementSlot = replacementSlotFor(channel, "bootstrap")
-    await sendReplyText(globalOutbox, uid, channel, replyTo, profileCtx.replyText,
-      replacementSlot = replacementSlot)
+    # Once onboarding enters free-text profile collection, each prompt should
+    # be a normal conversational turn. Re-editing the original bootstrap
+    # surface here proved brittle in Telegram after resets and text replies.
+    await sendReplyText(globalOutbox, uid, channel, replyTo, profileCtx.replyText)
 
 proc handleResetControlTask(globalOutbox: AsyncQueue[OutboundMessage];
                             memory: MemoryRuntimePort;

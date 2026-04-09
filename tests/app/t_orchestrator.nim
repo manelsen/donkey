@@ -829,3 +829,45 @@ suite "agent name onboarding":
     check discussReply.replacementSlot == ""
     check userPrompt.text.contains("qual é o seu nome?")
     check userPrompt.replacementSlot == ""
+
+  test "user profile prompts after naming are sent as new messages":
+    let tmpDir = getTempDir() / "donkey_test_orch_user_profile_messages"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[(OutboundMessage, OutboundMessage, OutboundMessage)] {.async.} =
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-profile-msgs", state)
+      await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-profile-msgs", "oi", ckTelegram, "101"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-profile-msgs", "personality:mode:guided", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-3", tkPersonalityChoice, "u-profile-msgs", "personality:energy:neutro", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-4", tkPersonalityChoice, "u-profile-msgs", "personality:tone:casual", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-5", tkPersonalityChoice, "u-profile-msgs", "personality:length:moderado", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-6", tkPersonalityChoice, "u-profile-msgs", "personality:initiative:proativo", ckTelegram, "555"))
+      let askAgentName = await outbox.get()
+      await inbox.put(newTaskMsg("req-7", tkUserMsg, "u-profile-msgs", "Node", ckTelegram, "101"))
+      let askUserName = await outbox.get()
+      await inbox.put(newTaskMsg("req-8", tkUserMsg, "u-profile-msgs", "Void", ckTelegram, "101"))
+      let askTimezone = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      (askAgentName, askUserName, askTimezone)
+
+    let (askAgentName, askUserName, askTimezone) = waitFor doTest(tmpDir)
+    check askAgentName.text.contains("Qual será meu nome?")
+    check askAgentName.replacementSlot == "bootstrap"
+    check askUserName.text.contains("qual é o seu nome?")
+    check askUserName.replacementSlot == ""
+    check askTimezone.text.contains("Em que fuso horário você está?")
+    check askTimezone.replacementSlot == ""
