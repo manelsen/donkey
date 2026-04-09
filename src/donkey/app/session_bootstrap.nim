@@ -274,7 +274,6 @@ func nativeSessionTools*(): seq[ToolDescription] =
     (RmToolName,            RmToolDescription,            RmToolSchema),
     (MkdirToolName,         MkdirToolDescription,         MkdirToolSchema),
     (FetchToolName,         FetchToolDescription,         FetchToolSchema),
-    (WebSearchToolName,     WebSearchToolDescription,     WebSearchToolSchema),
     (CalcToolName,          CalcToolDescription,          CalcToolSchema),
     (RenderMermaidToolName, RenderMermaidToolDescription, RenderMermaidToolSchema),
     (InspectImageToolName,  InspectImageToolDescription,  InspectImageToolSchema),
@@ -290,6 +289,12 @@ func nativeSessionTools*(): seq[ToolDescription] =
     (AwaitToolName,         AwaitToolDescription,         AwaitToolSchema),
   ]:
     result.add(ToolDescription(name: n, description: d, schemaJson: s))
+  if getEnv("BRAVE_API_KEY").len > 0:
+    result.add(ToolDescription(
+      name: WebSearchToolName,
+      description: WebSearchToolDescription,
+      schemaJson: WebSearchToolSchema,
+    ))
 
 func addNativeSessionTools*(tools: seq[ToolDescription]): seq[ToolDescription] =
   result = tools

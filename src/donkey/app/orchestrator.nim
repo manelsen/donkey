@@ -399,6 +399,47 @@ proc safeAppendMemory(memory: MemoryRuntimePort;
   except Exception:
     discard
 
+const
+  AutoMemoryCaptureMaxChars = 4000
+  AutoMemorySkipNeedles = [
+    "não consigo acessar a web",
+    "search isn't working",
+    "ferramentas indisponíveis",
+    "docker sandbox unavailable",
+    "wasmtime not found",
+    "não consigo criar arquivos",
+    "limitations de escrita",
+    "limitações de escrita",
+    "the workspace appears to be empty",
+    "no heartbeat.md found",
+    "tool result's tool id",
+  ]
+
+func containsNeedle(text: string; needles: openArray[string]): bool =
+  let lowered = text.toLowerAscii()
+  for needle in needles:
+    if lowered.contains(needle):
+      return true
+  false
+
+func clipAutoMemoryCapture(text: string): string =
+  let trimmed = text.strip
+  if trimmed.len <= AutoMemoryCaptureMaxChars:
+    return trimmed
+  if AutoMemoryCaptureMaxChars <= 16:
+    return trimmed[0 ..< min(trimmed.len, AutoMemoryCaptureMaxChars)]
+  trimmed[0 ..< min(trimmed.len, AutoMemoryCaptureMaxChars - 16)] & "\n[…truncated]"
+
+func shouldSkipAutoMemoryCapture(userText: string; responseText: string): bool =
+  if userText.strip.len <= 30 or responseText.strip.len == 0:
+    return true
+  let lowered = responseText.toLowerAscii().strip()
+  if lowered.startsWith("desculpe, ocorreu um erro:"):
+    return true
+  if lowered.startsWith("error: "):
+    return true
+  containsNeedle(responseText, AutoMemorySkipNeedles)
+
 proc safeResetBootstrap(memory: MemoryRuntimePort;
                         uid: UserId): bool {.gcsafe, raises: [].} =
   try:
@@ -1476,10 +1517,11 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   await finalizeNormalTurn(
     globalOutbox, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.streamId, streamFn, result.showReasoning, loopResult)
 
-  # Capture memory from substantive user messages
-  if turnSetup.userText.len > 30 and loopResult.finalText.len > 0:
-    let memEntry = "- **User:** " & turnSetup.userText[0 ..< min(turnSetup.userText.len, 500)] & "\n" &
-      "  **Response:** " & loopResult.finalText[0 ..< min(loopResult.finalText.len, 500)] & "\n"
+  # Capture memory from substantive user messages, but avoid persisting
+  # operational/provider failures as autobiographical memory.
+  if not shouldSkipAutoMemoryCapture(turnSetup.userText, loopResult.finalText):
+    let memEntry = "- **User:** " & clipAutoMemoryCapture(turnSetup.userText) & "\n" &
+      "  **Response:** " & clipAutoMemoryCapture(loopResult.finalText) & "\n"
     safeAppendMemory(memory, turnSetup.uid, memEntry)
 
 proc handleActorCancel(memory:          MemoryRuntimePort;

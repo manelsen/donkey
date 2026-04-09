@@ -123,6 +123,21 @@ model = "gemini-2.5-flash"
     check bundled.tools.len >= nativeSessionTools().len
     check bundled.tools.anyIt(it.name == BashToolName)
 
+  test "nativeSessionTools only exposes web_search when Brave is configured":
+    let hadBrave = existsEnv("BRAVE_API_KEY")
+    let previous = getEnv("BRAVE_API_KEY")
+    defer:
+      if hadBrave:
+        putEnv("BRAVE_API_KEY", previous)
+      else:
+        delEnv("BRAVE_API_KEY")
+
+    delEnv("BRAVE_API_KEY")
+    check not nativeSessionTools().anyIt(it.name == WebSearchToolName)
+
+    putEnv("BRAVE_API_KEY", "test-brave-key")
+    check nativeSessionTools().anyIt(it.name == WebSearchToolName)
+
   test "loadSessionBootstrapPlan maps context fields":
     let plan = loadSessionBootstrapPlan(SessionContext(
       preferencesMd: "provider = \"zai-coding\"",

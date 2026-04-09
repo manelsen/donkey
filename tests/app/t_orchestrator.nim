@@ -81,6 +81,18 @@ Gostei. Nex combina comigo.""",
     outputTokens: 1,
   ))
 
+proc stubOperationalMemoryFailure(req: CompletionRequest): Result[CompletionResponse, string] =
+  ok(CompletionResponse(
+    text: "Não consigo acessar a web agora, e as ferramentas estão indisponíveis.",
+    inputTokens: 1,
+    outputTokens: 1,
+  ))
+
+proc longText(prefix: string; targetLen: int): string =
+  result = prefix
+  while result.len < targetLen:
+    result &= " bloco_de_texto"
+
 # ── AsyncQueue round-trip ──────────────────────────────────────────────────────
 
 suite "AsyncQueue round-trip":
@@ -353,6 +365,68 @@ suite "OrchestratorAgent":
 
     ## Re-prompting exhausts MaxToolRoundsOrch → error message in reply text.
     check reply.text.contains("exceeded")
+
+  test "auto memory capture stores long turns without the old 500-char truncation":
+    let tmpDir = getTempDir() / "donkey_test_memory_capture_long"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc longComplete(req: CompletionRequest): Result[CompletionResponse, string] =
+      ok(CompletionResponse(
+        text: longText("Resposta longa:", 900),
+        inputTokens: 1,
+        outputTokens: 1,
+      ))
+
+    proc doTest(dir: string): Future[string] {.async.} =
+      let userDir = dir / "u-long-memory"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Test")
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), longComplete,
+        newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-long-memory", state)
+      await inbox.put(newTaskMsg("req-long", tkUserMsg, "u-long-memory", longText("Pergunta longa:", 900)))
+      discard await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      readFile(userDir / "MEMORY.md")
+
+    let saved = waitFor doTest(tmpDir)
+    check saved.contains("Resposta longa:")
+    check saved.contains("bloco_de_texto bloco_de_texto bloco_de_texto")
+    check not saved.contains("[…truncated]")
+
+  test "auto memory capture skips operational self-reports":
+    let tmpDir = getTempDir() / "donkey_test_memory_capture_skip_operational"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[bool] {.async.} =
+      let userDir = dir / "u-skip-memory"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Test")
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubOperationalMemoryFailure,
+        newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-skip-memory", state)
+      await inbox.put(newTaskMsg("req-skip", tkUserMsg, "u-skip-memory",
+        "Pesquise online por Mythos e registre na memória tudo o que descobriu."))
+      discard await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      fileExists(userDir / "MEMORY.md")
+
+    let hasMemory = waitFor doTest(tmpDir)
+    check not hasMemory
 
   test "provider errors are explained without leaking raw payloads":
     let tmpDir = getTempDir() / "donkey_test_provider_error_explain"
