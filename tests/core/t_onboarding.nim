@@ -2,6 +2,7 @@ import std/unittest
 import donkey/core/onboarding/onboarding
 import donkey/core/pipeops
 import donkey/domain/agent_message
+import donkey/domain/personality
 
 suite "core onboarding decisions":
 
@@ -46,3 +47,25 @@ suite "core onboarding decisions":
     let decision = res.get()
     check decision.kind == oekNameChoice
     check decision.name == "Donkey"
+
+  test "final profile step re-saves agent identity":
+    let onboarding = OnboardingRuntime(
+      phase: opUserLanguage,
+      userName: "Void",
+      timezone: "America/Sao_Paulo",
+    )
+    let identity = IdentityRuntime(
+      name: "Ostervalt",
+      traits: PersonalityTraits(
+        energy: "neutro",
+        tone: "casual",
+        length: "moderado",
+        initiative: "proativo",
+      ),
+      identityLoaded: true,
+    )
+    let ctx = startUserProfileContext(onboarding, identity, "Português brasileiro").get()
+    check ctx.onboarding.phase == opDone
+    check ctx.saveUserMd
+    check ctx.saveIdentity
+    check ctx.replyText.contains("Serei Ostervalt")

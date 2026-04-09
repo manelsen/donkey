@@ -5,6 +5,7 @@ import donkey/adapters/memory/md_file
 import donkey/config/clawhub_registry
 import donkey/config/skills_registry
 import donkey/domain/message
+import donkey/domain/personality
 import donkey/ports/provider
 when defined(withPostgres):
   import db_connector/db_postgres
@@ -49,6 +50,30 @@ suite "common_runtime":
     let text = applyModelsTextCommand(memory, userId, "gemini gemini-2.5-pro").get()
     check text.contains("gemini / gemini-2.5-pro")
     check getCurrentProviderModel(memory, userId) == ("gemini", "gemini-2.5-pro")
+
+  when defined(withSqlite):
+    test "applyModelsTextCommand preserves agent identity in magma sqlite preferences":
+      let tmpDir = getTempDir() / "donkey_common_runtime_models_magma"
+      let dbPath = tmpDir / "magma.sqlite"
+      let memory = MdFileAdapter(paddocksDir: tmpDir / "paddocks", magmaSqlitePath: dbPath)
+      let userId = UserId("u-common-models-magma")
+      defer:
+        if dirExists(tmpDir):
+          removeDir(tmpDir)
+
+      memory.toRuntimePort().saveIdentity(userId, PersonalityTraits(
+        energy: "neutro",
+        tone: "casual",
+        length: "moderado",
+        initiative: "proativo",
+      ), "Ostervalt")
+
+      let text = applyModelsTextCommand(memory, userId, "minimax MiniMax-M2").get()
+      check text.contains("minimax / MiniMax-M2")
+
+      let prefsMd = memory.loadContext(userId).preferencesMd
+      check prefsMd.contains("agent_name = \"Ostervalt\"")
+      check prefsMd.contains("model = \"MiniMax-M2\"")
 
   test "applyModelsTextCommand shows provider catalog with single arg":
     let tmpDir = getTempDir() / "donkey_common_runtime_provider_catalog"

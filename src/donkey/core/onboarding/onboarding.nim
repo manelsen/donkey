@@ -301,6 +301,7 @@ func startUserProfileContext*(onboarding: OnboardingRuntime;
         "Tudo certo! Serei " & id.name & " e você é " & ob.userName &
         ".\n\nPronto para conversar. Como posso ajudar?",
       userMd: userMd,
+      saveIdentity: id.name.len > 0,
       saveUserMd: true,
       advanced: true,
     ))

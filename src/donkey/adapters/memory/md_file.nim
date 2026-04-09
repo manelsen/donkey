@@ -103,6 +103,15 @@ when defined(withPostgres) or defined(withSqlite):
   func hasContextContent(ctx: UserContext): bool =
     ctx.userMd.len > 0 or ctx.memoryMd.len > 0 or ctx.preferencesMd.len > 0
 
+  func mergeContextMissing(graphCtx, markdownCtx: UserContext): UserContext =
+    result = graphCtx
+    if result.userMd.strip.len == 0:
+      result.userMd = markdownCtx.userMd
+    if result.preferencesMd.strip.len == 0:
+      result.preferencesMd = markdownCtx.preferencesMd
+    if result.memoryMd.strip.len == 0:
+      result.memoryMd = markdownCtx.memoryMd
+
   proc importMarkdownContext(magma: MagmaMemoryAdapter; ctx: UserContext) =
     if ctx.userMd.strip.len > 0:
       magma.saveUserMd(ctx.userId, ctx.userMd)
@@ -327,9 +336,18 @@ proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext =
       try:
         let magma = a.newMagmaAdapter()
         let graphCtx = magma.loadContext(userId)
-        if graphCtx.hasContextContent:
-          return graphCtx
         let markdownCtx = a.loadMarkdownContext(userId)
+        if graphCtx.hasContextContent:
+          if graphCtx.userMd.strip.len == 0 and markdownCtx.userMd.strip.len > 0:
+            magma.saveUserMd(userId, markdownCtx.userMd)
+          if graphCtx.preferencesMd.strip.len == 0 and markdownCtx.preferencesMd.strip.len > 0:
+            magma.savePreferences(userId, markdownCtx.preferencesMd)
+          if graphCtx.memoryMd.strip.len == 0 and markdownCtx.memoryMd.strip.len > 0:
+            for chunk in markdownCtx.memoryMd.split("\n\n"):
+              let trimmed = chunk.strip
+              if trimmed.len > 0:
+                magma.appendMemory(userId, trimmed)
+          return mergeContextMissing(graphCtx, markdownCtx)
         if markdownCtx.hasContextContent:
           magma.importMarkdownContext(markdownCtx)
           return markdownCtx
@@ -340,7 +358,7 @@ proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext =
 proc saveUserMd*(a: MdFileAdapter; userId: UserId; content: string) =
   a.ensurePaddock(userId)
   writeFile(a.userMdPath(userId), content)
-  when defined(withPostgres):
+  when defined(withPostgres) or defined(withSqlite):
     a.withMagmaShadow:
       magma.saveUserMd(userId, content)
 
@@ -378,14 +396,14 @@ proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) =
   let existing = readOrEmpty(path)
   let sep = if existing.len > 0 and not existing.endsWith("\n"): "\n" else: ""
   writeFile(path, existing & sep & text)
-  when defined(withPostgres):
+  when defined(withPostgres) or defined(withSqlite):
     a.withMagmaShadow:
       magma.appendMemory(userId, text)
 
 proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) =
   a.ensurePaddock(userId)
   writeFile(a.preferencesMdPath(userId), content)
-  when defined(withPostgres):
+  when defined(withPostgres) or defined(withSqlite):
     a.withMagmaShadow:
       magma.savePreferences(userId, content)
 
@@ -393,6 +411,9 @@ proc clearMemory*(a: MdFileAdapter; userId: UserId) =
   ## Clears MEMORY.md for this user (irreversible).
   let path = a.memoryMdPath(userId)
   if fileExists(path): writeFile(path, "")
+  when defined(withPostgres) or defined(withSqlite):
+    a.withMagmaShadow:
+      magma.clearMemory(userId)
 
 proc resetBootstrap*(a: MdFileAdapter; userId: UserId) =
   for path in [a.userMdPath(userId), a.preferencesMdPath(userId)]:
@@ -401,7 +422,7 @@ proc resetBootstrap*(a: MdFileAdapter; userId: UserId) =
         removeFile(path)
       except CatchableError:
         discard
-  when defined(withPostgres):
+  when defined(withPostgres) or defined(withSqlite):
     a.withMagmaShadow:
       magma.resetBootstrap(userId)
 
