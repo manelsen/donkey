@@ -29,6 +29,7 @@ type
 
   SessionBootstrap* = object
     completeFn*:    CompleteFn
+    errorExplainFn*: CompleteFn
     paddockDir*:    string
     clients*:       seq[ToolRuntimePort]
     tools*:         seq[ToolDescription]
@@ -39,6 +40,7 @@ type
     preferencesMd*: string
     paddockDir*:    string
     completeFn*:    CompleteFn
+    errorExplainFn*: CompleteFn
     clients*:       seq[ToolRuntimePort]
     tools*:         seq[ToolDescription]
     providerLabel*: string
@@ -386,6 +388,7 @@ proc withSessionCompleteFn*(fallbackCompleteFn: CompleteFn;
     memory, userId, fallbackCompleteFn, providerRuntimeBuilder, providerDefaults,
     routingHook, routingResultHook, routingFeedbackHook, routingCostHook,
     routingProviderCooldownHook)
+  result.errorExplainFn = fallbackCompleteFn
 
 func withSessionToolBundle*(toolBundle: SessionToolBundle;
                             plan: SessionBootstrapPlan): SessionBootstrapPlan =
@@ -396,6 +399,7 @@ func withSessionToolBundle*(toolBundle: SessionToolBundle;
 func finalizeSessionBootstrap*(plan: SessionBootstrapPlan): SessionBootstrap =
   SessionBootstrap(
     completeFn: plan.completeFn,
+    errorExplainFn: plan.errorExplainFn,
     paddockDir: plan.paddockDir,
     clients: plan.clients,
     tools: plan.tools,

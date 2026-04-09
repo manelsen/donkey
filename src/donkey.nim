@@ -1397,13 +1397,15 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
   if plan.decision.rebuildsSessionRuntime and not plan.oldInbox.isNil:
     plan.oldInbox.addLastNoWait(newCancelMsg())
   asyncSpawn runOrchestrator(plan.entry[].inbox, plan.entry, globalOutbox, memory.toRuntimePort(),
-                             bootstrap.completeFn, newStdHttpAdapter(allowlist = cfg.webAllowlist).toRuntimePort(), streamFn,
+                             bootstrap.completeFn,
+                             newStdHttpAdapter(allowlist = cfg.webAllowlist).toRuntimePort(), streamFn,
                              bootstrap.clients, bootstrap.tools,
                              bootstrap.paddockDir, state,
                              typingFn, searchFn, log.child("orch"), bootstrap.providerLabel,
                              bootstrap.skillPrompt,
                              sandboxMode, sandboxRuntimeCmd, sandboxImage,
-                             cfg.webAllowlist, cfg.toolWebPolicy)
+                             cfg.webAllowlist, cfg.toolWebPolicy,
+                             errorExplainFn = bootstrap.errorExplainFn)
 
 proc enqueueSessionMessage*(entry: var SessionEntry;
                             msg: InboundMessage;

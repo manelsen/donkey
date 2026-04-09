@@ -48,6 +48,16 @@ proc stubCompleteRetry(req: CompletionRequest): Result[CompletionResponse, strin
   else:
     ok(CompletionResponse(text: "pong", inputTokens: 1, outputTokens: 1))
 
+proc stubProvider500(req: CompletionRequest): Result[CompletionResponse, string] =
+  err("""MiniMax API error 500 Internal Server Error: {"type":"error","error":{"type":"server_error","message":"unknown error, 520 (1000)","http_code":"500"},"request_id":"abc"}""")
+
+proc stubErrorExplainer(req: CompletionRequest): Result[CompletionResponse, string] =
+  ok(CompletionResponse(
+    text: "Desculpe, o provedor falhou temporariamente. Tente novamente em instantes.",
+    inputTokens: 1,
+    outputTokens: 1,
+  ))
+
 proc stubFreeConvoReady(req: CompletionRequest): Result[CompletionResponse, string] =
   ok(CompletionResponse(
     text: """IDENTITY_READY:
@@ -343,6 +353,37 @@ suite "OrchestratorAgent":
 
     ## Re-prompting exhausts MaxToolRoundsOrch → error message in reply text.
     check reply.text.contains("exceeded")
+
+  test "provider errors are explained without leaking raw payloads":
+    let tmpDir = getTempDir() / "donkey_test_provider_error_explain"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[OutboundMessage] {.async.} =
+      let userDir = dir / "u1"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Test")
+      writeFile(userDir / "PREFERENCES.md", "provider = \"minimax\"\nmodel = \"MiniMax-M2\"\n")
+      let mem    = MdFileAdapter(paddocksDir: dir)
+      let inbox  = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(
+        inbox, addr session, outbox, mem.toRuntimePort(),
+        stubProvider500, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+        dir / "u1", state, errorExplainFn = stubErrorExplainer)
+      await inbox.put(newTaskMsg("req-err", tkUserMsg, "u1", "hello"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      reply
+
+    let reply = waitFor doTest(tmpDir)
+    check reply.text.contains("falhou temporariamente")
+    check not reply.text.contains("request_id")
+    check not reply.text.contains("server_error")
 
   test "cancel shuts down orchestrator cleanly":
     let tmpDir = getTempDir() / "donkey_test_cancel"

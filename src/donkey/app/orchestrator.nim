@@ -199,6 +199,37 @@ proc addUserTurn*(history: ConversationHistory;
 proc buildToolLoopDoneText*(toolCallCount: int): string =
   "✅ " & $toolCallCount & " tool call(s)"
 
+proc genericProviderErrorText(errMsg: string): string =
+  let lower = errMsg.toLowerAscii()
+  if lower.contains("401") or lower.contains("403") or lower.contains("unauthorized") or lower.contains("api key"):
+    return "Desculpe, houve um problema de autenticação com o provedor configurado."
+  if lower.contains("400") or lower.contains("bad request") or lower.contains("invalid"):
+    return "Desculpe, o provedor rejeitou esta solicitação."
+  if lower.contains("429") or lower.contains("rate limit") or lower.contains("500") or
+     lower.contains("502") or lower.contains("503") or lower.contains("504") or
+     lower.contains("timeout") or lower.contains("server_error") or lower.contains("network"):
+    return "Desculpe, o provedor falhou temporariamente. Tente novamente em instantes."
+  "Desculpe, ocorreu um erro ao falar com o provedor configurado."
+
+proc explainProviderError(errorExplainFn: CompleteFn;
+                          providerErr: string): string {.gcsafe, raises: [].} =
+  if errorExplainFn.isNil:
+    return genericProviderErrorText(providerErr)
+  var h = newHistory()
+  h.addUser(
+    "Explique este erro de provedor para um usuário final em português do Brasil, " &
+    "em no máximo duas frases, sem jargão desnecessário, sem request id, sem JSON cru, " &
+    "e com uma orientação prática curta.\n\nErro bruto:\n" & providerErr
+  )
+  let req = buildPrompt(
+    "Você é um explicador de erros de infraestrutura para usuários finais. " &
+    "Resuma o problema com linguagem humana, curta e útil.",
+    h, "")
+  let resp = safeComplete(errorExplainFn, req)
+  if resp.isOk and resp.value.text.strip.len > 0:
+    return resp.value.text.strip
+  genericProviderErrorText(providerErr)
+
 proc completeFreeConvo*(completeFn: CompleteFn): proc(ctx: FreeConvoContext): Result[FreeConvoContext, string] {.gcsafe, raises: [].} =
   result =
     proc(ctx: FreeConvoContext): Result[FreeConvoContext, string] {.gcsafe, raises: [].} =
@@ -1274,6 +1305,7 @@ proc runToolLoop(globalOutbox: AsyncQueue[OutboundMessage];
                  toolOut: AsyncQueue[AgentMessage];
                  memory: MemoryRuntimePort;
                  completeFn: CompleteFn;
+                 errorExplainFn: CompleteFn;
                  streamFn: StreamFn;
                  nativeCtx: NativeCtx;
                  state: SessionState;
@@ -1325,7 +1357,7 @@ proc runToolLoop(globalOutbox: AsyncQueue[OutboundMessage];
       await globalOutbox.put(OutboundMessage(
         userId: uid,
         channel: channel,
-        text: buildProviderErrorText(resp.error),
+        text: explainProviderError(errorExplainFn, resp.error),
         replyTo: replyTo,
       ))
       loopState.done = true
@@ -1387,6 +1419,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     session: ptr SessionEntry;
                     memory: MemoryRuntimePort;
                     completeFn: CompleteFn;
+                    errorExplainFn: CompleteFn;
                     http: HttpRuntimePort;
                     streamFn: StreamFn;
                     tools: seq[ToolDescription];
@@ -1430,7 +1463,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   log.info($turnSetup.uid & " (" & $msg.channel & ") -> [" & providerLabel & "] |" &
            $turnSetup.userText.len & "|")
   let loopResult = await runToolLoop(
-    globalOutbox, toolInbox, toolOut, memory, completeFn, streamFn, turnSetup.nativeCtx,
+    globalOutbox, toolInbox, toolOut, memory, completeFn, errorExplainFn, streamFn, turnSetup.nativeCtx,
     state, result.history, turnSetup.uid, msg.channel, msg.replyTo, msg.id, turnSetup.streamId,
     turnPrep.systemBase, turnPrep.context, tools, providerLabel,
     result.debugMode, result.showReasoning, log)
@@ -1466,6 +1499,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
                      toolOut: AsyncQueue[AgentMessage];
                      memory: MemoryRuntimePort;
                      completeFn: CompleteFn;
+                     errorExplainFn: CompleteFn;
                      http: HttpRuntimePort;
                      streamFn: StreamFn;
                      tools: seq[ToolDescription];
@@ -1505,7 +1539,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
 
   result = await handleUserTurn(
     globalOutbox, memInbox, toolInbox, memOut, toolOut, session, memory,
-    completeFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
+    completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
     providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, toolsSuffix,
     state, msg, result)
   safeSaveSession(memory, uid, sessionId, result.history)
@@ -1519,6 +1553,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
                         toolOut: AsyncQueue[AgentMessage];
                         memory: MemoryRuntimePort;
                         completeFn: CompleteFn;
+                        errorExplainFn: CompleteFn;
                         http: HttpRuntimePort;
                         streamFn: StreamFn;
                         tools: seq[ToolDescription];
@@ -1545,7 +1580,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
   of amkTask:
     result.stateRuntime = await handleActorTask(
       globalOutbox, session, memInbox, toolInbox, memOut, toolOut, memory,
-      completeFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
+      completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
       providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
       toolsSuffix, state, msg, stateRuntime)
 
@@ -1574,7 +1609,8 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       sandboxRuntimeCmd: string   = "docker";
                       sandboxImage:   string      = "alpine";
                       webAllowlist:   seq[string] = @[];
-                      toolWebPolicy:  seq[cfgTypes.ToolWebPolicy] = @[]): Future[void] {.async.} =
+                      toolWebPolicy:  seq[cfgTypes.ToolWebPolicy] = @[];
+                      errorExplainFn: CompleteFn = nil): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
   let memInbox  = newAsyncQueue[AgentMessage]()
   let toolInbox = newAsyncQueue[AgentMessage]()
@@ -1596,7 +1632,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
     let msg = await collectWithDebounce(inbox, DebounceWindowMs)
     let actorResult = await handleActorMessage(
       inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
-      completeFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
+      completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
       providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
       toolsSuffix, state, msg, stateRuntime)
     stateRuntime = actorResult.stateRuntime
