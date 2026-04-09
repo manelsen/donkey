@@ -92,22 +92,24 @@ proc buildBody*(a: MiniMaxAdapter; req: CompletionRequest): JsonNode =
 proc parseMiniMaxResponse*(j: JsonNode): Result[CompletionResponse, string] =
   ## Exported for unit testing.
   ## MiniMax uses OpenAI-compatible format, so we reuse the OpenAI parser.
+  try:
+    # Check for error responses
+    let errNode = j{"error"}
+    if not errNode.isNil:
+      let errMsg = errNode{"message"}.getStr("")
+      let errCode = errNode{"code"}.getStr("")
+      if errMsg.len > 0:
+        return err("MiniMax error: " & errMsg & " (code " & errCode & ")")
 
-  # Check for error responses
-  let errNode = j{"error"}
-  if not errNode.isNil:
-    let errMsg = errNode{"message"}.getStr("")
-    let errCode = errNode{"code"}.getStr("")
-    if errMsg.len > 0:
-      return err("MiniMax error: " & errMsg & " (code " & errCode & ")")
+    # Check for missing choices before delegating
+    let choices = j{"choices"}
+    if choices.isNil or choices.kind != JArray or choices.len == 0:
+      return err("Invalid MiniMax response: missing 'choices'")
 
-  # Check for missing choices before delegating
-  let choices = j{"choices"}
-  if choices.isNil or choices.kind != JArray or choices.len == 0:
-    return err("Invalid MiniMax response: missing 'choices'")
-
-  # Use OpenAI parser for the standard format
-  openai_pure.parseResponseFrom(j)
+    # Use OpenAI parser for the standard format
+    openai_pure.parseResponseFrom(j)
+  except CatchableError as e:
+    err("Invalid MiniMax response: " & e.msg)
 
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 

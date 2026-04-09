@@ -94,3 +94,9 @@ suite "MiniMaxAdapter parseResponse":
     let j = %* {}
     let r = parseMiniMaxResponse(j)
     check r.isErr
+
+  test "returns error instead of raising on malformed response":
+    let j = newJArray()
+    let r = parseMiniMaxResponse(j)
+    check r.isErr
+    check "Invalid MiniMax response" in r.error
