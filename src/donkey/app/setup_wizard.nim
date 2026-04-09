@@ -61,7 +61,8 @@ func channelToken(channels: seq[(string, string)]; name: string): string =
   ""
 
 func buildEnvContent*(providers: seq[(string, string)];
-                      channels: seq[(string, string)]): string =
+                      channels: seq[(string, string)];
+                      braveApiKey = ""): string =
   ## Generates donkey.env content from wizard answers.
   ## providers: seq of (provider_name, api_key)
   ## channels: seq of (channel_name, token)
@@ -79,6 +80,9 @@ func buildEnvContent*(providers: seq[(string, string)];
     let envVar = providerEnvVar(provName)
     if envVar.len > 0:
       result &= envVar & "=" & provKey & "\n"
+  result &= "\n# Optional web search\n"
+  result &= "# Used by the `web_search` tool (Brave Search API)\n"
+  result &= "BRAVE_API_KEY=" & braveApiKey & "\n"
   result &= "\n# Channels\n"
   result &= "TELEGRAM_BOT_TOKEN="   & channelToken(channels, "telegram") & "\n"
   result &= "DISCORD_BOT_TOKEN="    & channelToken(channels, "discord")  & "\n"
@@ -236,6 +240,19 @@ proc runSetupWizard*(home: string) =
     echo "  Nenhum provider foi configurado ainda; pulando o default do heartbeat."
   echo ""
 
+  # ── [1.6/3] Web search ─────────────────────────────────────────────────────
+  echo "Busca web opcional"
+  echo "  O tool `web_search` usa a Brave Search API."
+  echo "  Se você preencher `BRAVE_API_KEY`, o agente poderá pesquisar na web."
+  let existingBrave = getEnv("BRAVE_API_KEY")
+  let braveApiKey =
+    if existingBrave.len > 0:
+      echo "    (usando BRAVE_API_KEY do ambiente)"
+      existingBrave
+    else:
+      askSecret("  Brave Search API key  (enter para pular)")
+  echo ""
+
   # ── [2/3] Canais ────────────────────────────────────────────────────────────
   echo "[2/3] Canais de mensagem  (enter para pular)"
   echo ""
@@ -310,7 +327,7 @@ proc runSetupWizard*(home: string) =
     echo "  ✗ " & tomlPath & ": " & e.msg
     return
 
-  let envContent = buildEnvContent(providers, channels)
+  let envContent = buildEnvContent(providers, channels, braveApiKey)
   try:
     writeFile(envPath, envContent)
     when not defined(windows):

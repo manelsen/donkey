@@ -65,6 +65,7 @@ read_only_rootfs = true
 | `ANTHROPIC_API_KEY` | For Anthropic | claude-* models |
 | `GEMINI_API_KEY` | For Gemini | gemini-* models |
 | `MINIMAX_API_KEY` | For MiniMax | MiniMax-M2 |
+| `BRAVE_API_KEY` | Optional | Enables the `web_search` tool via Brave Search API |
 | `DONKEY_MAGMA_SQLITE_PATH` | Optional | SQLite file used by the default MAGMA backend |
 | `DONKEY_SQLITE_VEC_PATH` | Optional | Override path for a non-embedded `sqlite-vec` deployment |
 | `DONKEY_PG_DSN` | For Multigraph Memory | PostgreSQL DSN used by the graph-backed memory runtime |
@@ -141,7 +142,8 @@ nimble build
 
 `setup` now writes both files into `~/.config/donkey/`, creates the local
 state directories under `~/.donkey/`, auto-picks an OCI runtime when one is
-available, and prints the exact `doctor`/`start` commands at the end.
+available, offers optional Brave Search setup for `web_search`, and prints the
+exact `doctor`/`start` commands at the end.
 
 If you prefer to edit templates manually, the example files live at:
 

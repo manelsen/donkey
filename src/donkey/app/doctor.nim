@@ -110,6 +110,7 @@ const ApiKeyChecks = [
   ("DeepSeek",       "DEEPSEEK_API_KEY"),
   ("Gemini",         "GEMINI_API_KEY"),
   ("MiniMax",        "MINIMAX_API_KEY"),
+  ("Brave Search",   "BRAVE_API_KEY"),
 ]
 
 proc runDoctorChecks*(cfg: DonkeyConfig;

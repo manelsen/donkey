@@ -50,6 +50,7 @@ suite "buildEnvContent":
     check "docker compose up -d postgres" in env
     check "DONKEY_PG_DSN=host=127.0.0.1" in env
     check "DONKEY_SQLITE_VEC_PATH=/absolute/path/to/vec0" in env
+    check "BRAVE_API_KEY=" in env
 
   test "generated toml uses oci mode with docker runtime":
     let toml = buildTomlContent(home = "/tmp/x")
@@ -103,6 +104,10 @@ suite "buildEnvContent":
     )
     check "TELEGRAM_BOT_TOKEN=tg" in env
     check "DISCORD_BOT_TOKEN=dc" in env
+
+  test "brave web search key appears when provided":
+    let env = buildEnvContent(@[], @[], "brave-key")
+    check "BRAVE_API_KEY=brave-key" in env
 
 suite "providerEnvVar":
 
