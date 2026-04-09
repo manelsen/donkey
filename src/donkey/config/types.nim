@@ -27,6 +27,8 @@ type
     logLevel*:      LogLevel     ## default: info
     logFile*:       string       ## Absolute path; empty = stderr only
     paddocks*:      string       ## User workspaces: {home}/paddocks/{uuid}/
+    defaultProvider*: string     ## Instance-wide default provider for users without prefs
+    defaultModel*:    string     ## Instance-wide default model for users without prefs
     webAllowlist*:  seq[string]  ## Allowed public hosts for native web tools / skill net perms
     toolWebPolicy*: seq[ToolWebPolicy]
     skillNetPolicy*: seq[SkillNetPolicy]
@@ -46,6 +48,8 @@ func defaultConfig*(home: string): DonkeyConfig =
     logLevel:     lvlInfo,
     logFile:      home & "/" & LogFileName,
     paddocks:     home & "/paddocks",
+    defaultProvider: "",
+    defaultModel: "",
     webAllowlist: @[],
     toolWebPolicy: @[],
     skillNetPolicy: @[],

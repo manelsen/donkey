@@ -157,9 +157,6 @@ proc safeComplete(fn: CompleteFn; req: CompletionRequest
   try: fn(req)
   except Exception as e: err(e.msg)
 
-proc generateNames(completeFn: CompleteFn;
-                   traits: PersonalityTraits): seq[string] {.gcsafe, raises: [].}
-
 func orchToolsSuffix*(tools: seq[ToolDescription]): string =
   if tools.len == 0: return ""
   result = "\n\n## Available tools\n\n"
@@ -215,23 +212,22 @@ proc completeFreeConvo*(completeFn: CompleteFn): proc(ctx: FreeConvoContext): Re
 proc finalizeFreeConvoIdentity*(completeFn: CompleteFn): proc(ctx: FreeConvoContext): Result[FreeConvoContext, string] {.gcsafe, raises: [].} =
   result =
     proc(ctx: FreeConvoContext): Result[FreeConvoContext, string] {.gcsafe, raises: [].} =
+      if completeFn.isNil:
+        discard
       if ctx.parsedTraits.isNone:
         return ok(ctx)
       var nextCtx = ctx
-      let names = generateNames(completeFn, nextCtx.onboarding.traits)
-      nextCtx.onboarding.names = names
       nextCtx.onboarding.phase = opNameChoice
       ok(nextCtx)
 
 proc finalizeGuidedChoice*(completeFn: CompleteFn): proc(ctx: GuidedChoiceContext): Result[GuidedChoiceContext, string] {.gcsafe, raises: [].} =
   result =
     proc(ctx: GuidedChoiceContext): Result[GuidedChoiceContext, string] {.gcsafe, raises: [].} =
+      if completeFn.isNil:
+        discard
       if not ctx.needsNames:
         return ok(ctx)
-      var nextCtx = ctx
-      let names = generateNames(completeFn, nextCtx.onboarding.traits)
-      nextCtx.onboarding.names = names
-      ok(nextCtx)
+      ok(ctx)
 
 proc startResetControlContext*(history: ConversationHistory;
                                sessionId: string): Result[ResetControlContext, string] =
@@ -380,12 +376,6 @@ proc safeResetBootstrap(memory: MemoryRuntimePort;
   except Exception:
     false
 
-func buildNameChoiceKeyboard*(names: seq[string]): seq[seq[(string, string)]] =
-  var nameRow: seq[(string, string)] = @[]
-  for n in names:
-    nameRow.add((n, "name:" & n))
-  @[nameRow]
-
 proc unwrapOrReplyError*[T](globalOutbox: AsyncQueue[OutboundMessage];
                             uid: UserId;
                             channel: ChannelKind;
@@ -396,22 +386,13 @@ proc unwrapOrReplyError*[T](globalOutbox: AsyncQueue[OutboundMessage];
     return none(T)
   some(pipelineResult.get())
 
-proc sendNameChoiceOrPrompt(globalOutbox: AsyncQueue[OutboundMessage];
-                            uid: UserId;
-                            channel: ChannelKind;
-                            replyTo: string;
-                            names: seq[string];
-                            keyboardText: string;
-                            replacementSlot = ""): Future[void] {.async.} =
-  if names.len > 0:
-    await sendReplyKeyboard(
-      globalOutbox, uid, channel, replyTo,
-      keyboardText,
-      buildNameChoiceKeyboard(names),
-      replacementSlot = replacementSlot)
-  else:
-    await sendReplyText(globalOutbox, uid, channel, replyTo, "Que nome você quer me dar?",
-      replacementSlot = replacementSlot)
+proc sendNamePrompt(globalOutbox: AsyncQueue[OutboundMessage];
+                    uid: UserId;
+                    channel: ChannelKind;
+                    replyTo: string;
+                    replacementSlot = ""): Future[void] {.async.} =
+  await sendReplyText(globalOutbox, uid, channel, replyTo, "Qual será meu nome?",
+    replacementSlot = replacementSlot)
 
 proc persistUserProfile(memory: MemoryRuntimePort;
                         uid: UserId;
@@ -615,19 +596,6 @@ proc streamToOutbox(fn:        StreamFn;
   return (finalResponse.text, finalResponse.reasoning)
 
 # ── Name generation helper ─────────────────────────────────────────────────────
-
-proc generateNames(completeFn: CompleteFn;
-                   traits: PersonalityTraits): seq[string] {.gcsafe, raises: [].} =
-  ## Asks LLM to suggest 5 names matching the given traits.
-  ## Returns whatever names are parsed; empty seq on failure.
-  var h = newHistory()
-  h.addUser(buildNameGenPrompt(traits))
-  let req  = buildPrompt(
-    "You are a creative naming assistant. Output exactly 5 names, one per line, no numbering, no explanation.",
-    h, "")
-  let resp = safeComplete(completeFn, req)
-  if resp.isErr: return @[]
-  parseNameOptions(resp.value.text)
 
 proc awaitExpectedReply(outbox: AsyncQueue[AgentMessage];
                         expectedId: string;
@@ -920,11 +888,7 @@ proc handleGuidedPersonalityChoice(globalOutbox: AsyncQueue[OutboundMessage];
       guidedCtx.replyText, guidedCtx.keyboard,
       replacementSlot = replacementSlot)
   elif guidedCtx.needsNames:
-    await sendNameChoiceOrPrompt(
-      globalOutbox, uid, channel, replyTo,
-      guidedCtx.onboarding.names,
-      "Aqui estão alguns nomes que combinam com essa personalidade. Qual prefere?",
-      replacementSlot)
+    await sendNamePrompt(globalOutbox, uid, channel, replyTo, replacementSlot)
   elif guidedCtx.replyText.len > 0:
     await sendReplyText(globalOutbox, uid, channel, replyTo, guidedCtx.replyText,
       replacementSlot = replacementSlot)
@@ -957,11 +921,64 @@ proc handleFreeConvoOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
 
   if freeCtx.parsedTraits.isSome:
     let replacementSlot = replacementSlotFor(channel, "bootstrap")
-    await sendNameChoiceOrPrompt(
-      globalOutbox, uid, channel, replyTo,
-      freeCtx.onboarding.names,
-      "Com base em quem você quer que eu seja, aqui estão alguns nomes:",
-      replacementSlot)
+    await sendNamePrompt(globalOutbox, uid, channel, replyTo, replacementSlot)
+
+proc handleAgentNameOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
+                               memory: MemoryRuntimePort;
+                               completeFn: CompleteFn;
+                               uid: UserId;
+                               channel: ChannelKind;
+                               replyTo: string;
+                               userText: string;
+                               history: ConversationHistory;
+                               onboarding: OnboardingRuntime;
+                               identity: IdentityRuntime): Future[(ConversationHistory, OnboardingRuntime, IdentityRuntime)] {.async.} =
+  result = (history, onboarding, identity)
+
+  let directName = extractAgentName(userText)
+  if directName.len > 0:
+    let pipelineResult = startUserProfileContext(onboarding, identity, directName)
+    let profileOpt = await unwrapOrReplyError(globalOutbox, uid, channel, replyTo, pipelineResult)
+    if profileOpt.isNone:
+      return
+    let profileCtx = profileOpt.get()
+    persistUserProfile(memory, uid, profileCtx)
+    result = (history, profileCtx.onboarding, profileCtx.identity)
+    if profileCtx.replyText.len > 0:
+      await sendReplyText(globalOutbox, uid, channel, replyTo, profileCtx.replyText)
+    return
+
+  var nextHistory = addUserTurn(history, userText, "")
+  let req = buildPrompt(
+    NameChoiceSystemPrompt & "\n\n" & buildPersonalityPrompt(onboarding.traits, ""),
+    nextHistory, "")
+  let resp = safeComplete(completeFn, req)
+  if resp.isErr:
+    await sendPipelineError(globalOutbox, uid, channel, replyTo, resp.error)
+    return
+
+  nextHistory.addAssistant(resp.value.text)
+  nextHistory.trimTo(20)
+  let visibleText = stripNameReady(resp.value.text)
+  let parsedName = parseNameReady(resp.value.text)
+
+  if visibleText.len > 0:
+    await sendReplyText(globalOutbox, uid, channel, replyTo, visibleText)
+
+  if parsedName.isSome:
+    let profileResult = startUserProfileContext(onboarding, identity, parsedName.get())
+    let profileOpt = await unwrapOrReplyError(globalOutbox, uid, channel, replyTo, profileResult)
+    if profileOpt.isNone:
+      result = (nextHistory, onboarding, identity)
+      return
+    let profileCtx = profileOpt.get()
+    persistUserProfile(memory, uid, profileCtx)
+    result = (nextHistory, profileCtx.onboarding, profileCtx.identity)
+    if profileCtx.replyText.len > 0:
+      await sendReplyText(globalOutbox, uid, channel, replyTo, profileCtx.replyText)
+    return
+
+  result = (nextHistory, onboarding, identity)
 
 proc advanceUserProfileOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
                                   memory: MemoryRuntimePort;
@@ -1230,9 +1247,14 @@ proc handleOnboardingTurn(globalOutbox: AsyncQueue[OutboundMessage];
       userText |> strutils.strip, result.history, result.onboarding)
 
   of oekUserProfileText:
-    (result.onboarding, result.identity) = await advanceUserProfileOnboarding(
-      globalOutbox, memory, uid, channel, replyTo,
-      userText |> strutils.strip, result.onboarding, result.identity)
+    if result.onboarding.phase == opNameChoice:
+      (result.history, result.onboarding, result.identity) = await handleAgentNameOnboarding(
+        globalOutbox, memory, completeFn, uid, channel, replyTo,
+        userText |> strutils.strip, result.history, result.onboarding, result.identity)
+    else:
+      (result.onboarding, result.identity) = await advanceUserProfileOnboarding(
+        globalOutbox, memory, uid, channel, replyTo,
+        userText |> strutils.strip, result.onboarding, result.identity)
 
   of oekDone:
     return OnboardingTurnResult(

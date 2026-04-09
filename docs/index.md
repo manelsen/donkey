@@ -3,7 +3,7 @@ An AI agent daemon for multi-channel messaging
 
 ## Overview
 
-Donkey connects multiple messaging channels (Telegram, Discord, Slack, WeChat...) to various LLM providers (OpenAI, Anthropic, Claude...). It uses a hexagonal architecture where the core domain is isolated from infrastructure concerns.
+Donkey connects multiple messaging channels (Telegram, Discord, Slack, WeChat...) to various LLM providers. It uses a hexagonal architecture where the core domain is isolated from infrastructure concerns, ships SQLite-first by default, and treats outbound UI as a core presentation concern rather than adapter-local state.
 
 ## Features
 
@@ -15,14 +15,10 @@ Donkey connects multiple messaging channels (Telegram, Discord, Slack, WeChat...
 
 ## Quick Example
 
-```nim
-import donkey
-
-# Configuration
-let config = loadConfig("~/.config/donkey/donkey.toml")
-
-# Start the daemon
-runDonkey(config)
+```bash
+nimble build
+./donkey setup
+./donkey start
 ```
 
 ## Installation
@@ -30,7 +26,7 @@ runDonkey(config)
 ```bash
 git clone https://github.com/manelsen/donkey.git
 cd donkey
-nim c src/donkey
+nimble build
 ```
 
 See [Installation Guide](getting_started/installation.md) for detailed setup.
@@ -78,10 +74,14 @@ See [Installation Guide](getting_started/installation.md) for detailed setup.
 
 ```bash
 # Start daemon
-./donkey --config ~/.config/donkey/donkey.toml
+./donkey start
 
-# CLI mode
-./donkey --cli
+# Validate install
+./donkey doctor
+
+# User service
+./donkey service install
+./donkey service start
 
 # Version
 ./donkey --version
@@ -93,15 +93,16 @@ See [Installation Guide](getting_started/installation.md) for detailed setup.
 [donkey]
 home = "~/.donkey"
 paddocks = "~/.donkey/paddocks"
+log_level = "info"
+log_file = "~/.donkey/donkey.log"
 
-[telegram]
-enabled = true
-bot_token = "YOUR_TOKEN"
-
-[providers.anthropic]
-enabled = true
-api_key = "YOUR_KEY"
-model = "claude-sonnet-4-20250514"
+[sandbox]
+mode = "oci"
+runtime = "docker"
+image = "alpine"
+allow_host_fallback = false
+allow_network = false
+read_only_rootfs = true
 ```
 
 ## Slash Commands

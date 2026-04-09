@@ -78,7 +78,7 @@ Usage:
 Options:
   --version        Print version and exit
   --help           Show this help
-  --config <path>  Path to """ & ConfigFileName & """  (default: ~/""" & HomeDirName & "/" & ConfigFileName & """)
+  --config <path>  Path to """ & ConfigFileName & """  (default: ~/.config/""" & ConfigDirName & "/" & ConfigFileName & """)
   --dev-mode       Enable development mode (allows sandbox=none)
 
 Commands:
@@ -1442,6 +1442,7 @@ proc startSessionIngress*(sm: var SessionManager;
                           " chars=" & $requestApproxChars(req))
   let bootstrap = buildSessionBootstrap(
     services.memory.toRuntimePort(), msg.userId, services.completeFn, buildProviderBundle,
+    normalizeProviderDefaults(services.cfg.defaultProvider, services.cfg.defaultModel),
     buildDenoSkillRuntime, buildSkillRuntimePolicyResolver(services.cfg),
     services.toolClients, services.tools,
     routingHook, services.routeResultHook, services.routeFeedbackHook,
@@ -1890,9 +1891,13 @@ proc main =
   if args.len >= 3 and args[0] == SandboxExecCommand:
     quit(runSandboxWorker(args[1], args[2]))
 
-  if configPath.len == 0:
+  if args.len >= 1 and args[0] == "setup":
     let home = resolveHome()
-    configPath = home / ConfigFileName
+    runSetupWizard(home)
+    quit(0)
+
+  if configPath.len == 0:
+    configPath = getConfigDir() / ConfigDirName / ConfigFileName
 
   let home = resolveHome()
 
@@ -2027,10 +2032,6 @@ proc main =
     of "logs":
       ctlServiceLogs(logsFollow); quit(0)
     else: printHelp(); quit(1)
-
-  if args.len >= 1 and args[0] == "setup":
-    runSetupWizard(cfg.home)
-    quit(0)
 
   if args.len >= 1 and args[0] == "tui":
     let sockPath = cfg.home / SockFileName

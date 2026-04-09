@@ -6,8 +6,9 @@ Designed to run on a VPS and scale down to a Raspberry Pi Zero.
 ## Requirements
 
 - Nim 2.2+ with Nimble (`choosenim` recommended)
-- A Telegram bot token (`TELEGRAM_BOT_TOKEN`)
+- At least one channel token, such as `TELEGRAM_BOT_TOKEN` or `DISCORD_BOT_TOKEN`
 - At least one provider API key (see [Configuration](#configuration))
+- `docker` or `podman` if you want the recommended hardened shell sandbox
 
 ## Build
 
@@ -34,29 +35,41 @@ nimble build -u:withPostgres
 
 ## Configuration
 
-Donkey reads `~/.donkey/donkey.toml` by default. Override with `--config <path>`.
+The recommended explicit config path is `~/.config/donkey/donkey.toml`.
+Keep tokens and keys in `~/.config/donkey/donkey.env`.
 
 ```toml
-# donkey.toml
-home     = "~/.donkey"          # base directory
-paddocks = "~/.donkey/paddocks" # user workspaces
-logLevel = "info"
+[donkey]
+home = "~/.donkey"
+paddocks = "~/.donkey/paddocks"
+log_level = "info"
+log_file = "~/.donkey/donkey.log"
+
+[sandbox]
+mode = "oci"
+runtime = "docker"
+image = "alpine"
+allow_host_fallback = false
+allow_network = false
+read_only_rootfs = true
 ```
 
 ### Environment variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Yes | Telegram bot token |
+| `TELEGRAM_BOT_TOKEN` | For Telegram | Telegram bot token |
+| `DISCORD_BOT_TOKEN` | For Discord | Discord bot token |
 | `ZHIPU_API_KEY` | For Zhipu | API key from api.z.ai |
 | `OPENROUTER_API_KEY` | For OpenRouter | Fallback provider |
 | `ANTHROPIC_API_KEY` | For Anthropic | claude-* models |
 | `GEMINI_API_KEY` | For Gemini | gemini-* models |
 | `MINIMAX_API_KEY` | For MiniMax | MiniMax-M2 |
 | `DONKEY_MAGMA_SQLITE_PATH` | Optional | SQLite file used by the default MAGMA backend |
-| `DONKEY_SQLITE_VEC_PATH` | Optional | Path to the `sqlite-vec` extension binary for SQLite vector search |
+| `DONKEY_SQLITE_VEC_PATH` | Optional | Override path for a non-embedded `sqlite-vec` deployment |
 | `DONKEY_PG_DSN` | For Multigraph Memory | PostgreSQL DSN used by the graph-backed memory runtime |
 | `DONKEY_MASTER_KEY` | If using secrets | Master key for encrypted secrets |
+| `DONKEY_HTTP_PORT` | Optional | HTTP gateway port. Set to `0` to disable it |
 
 ### SQLite default
 
@@ -118,10 +131,40 @@ provider = "anthropic"
 model    = "claude-haiku-4-5"
 ```
 
+### Happy path
+
+```bash
+nimble build
+./donkey setup
+./donkey start
+```
+
+`setup` now writes both files into `~/.config/donkey/`, creates the local
+state directories under `~/.donkey/`, auto-picks an OCI runtime when one is
+available, and prints the exact `doctor`/`start` commands at the end.
+
+If you prefer to edit templates manually, the example files live at:
+
+- [deploy/donkey.toml.example](/home/micelio/git/donkey/deploy/donkey.toml.example)
+- [deploy/donkey.env.example](/home/micelio/git/donkey/deploy/donkey.env.example)
+
+If you do not want the HTTP gateway:
+
+```bash
+DONKEY_HTTP_PORT=0 ./donkey start
+```
+
+To run as a user service:
+
+```bash
+./donkey service install
+./donkey service start
+```
+
 ## Running
 
 ```bash
-# Start daemon (Telegram long-polling)
+# Start daemon
 export TELEGRAM_BOT_TOKEN=...
 export ZHIPU_API_KEY=...
 ./donkey start

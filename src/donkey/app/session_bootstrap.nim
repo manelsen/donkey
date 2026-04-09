@@ -3,7 +3,7 @@
 ## Concentrates provider selection, fallback composition, per-user skill merge
 ## and native tool exposure so the daemon entrypoint only coordinates lifecycle.
 
-import std/[json, os]
+import std/[json, os, strutils]
 import ../config/skills_registry
 import ../config/clawhub_registry
 import ../core/pipeops
@@ -19,6 +19,10 @@ import ../ports/tool
 export provider
 
 type
+  ProviderDefaults* = object
+    providerName*: string
+    modelName*: string
+
   SessionToolBundle* = object
     clients*: seq[ToolRuntimePort]
     tools*:   seq[ToolDescription]
@@ -49,9 +53,31 @@ type
 proc defaultProviderPrefs*(): ProviderPrefs =
   ProviderPrefs(providerName: "zai-coding", modelName: "")
 
+func normalizeProviderDefaults*(providerName, modelName: string): ProviderDefaults =
+  ProviderDefaults(
+    providerName: providerName.strip(),
+    modelName: modelName.strip(),
+  )
+
+func applyProviderDefaults*(preferencesMd: string;
+                            defaults: ProviderDefaults): string =
+  let prefs = parseSmartRoutingPrefs(preferencesMd)
+  result = preferencesMd
+  if defaults.providerName.len == 0 or prefs.providerExplicit:
+    return
+  if result.strip.len > 0 and not result.endsWith("\n"):
+    result &= "\n"
+  result &= "provider = \"" & defaults.providerName & "\"\n"
+  if defaults.modelName.len > 0:
+    result &= "model = \"" & defaults.modelName & "\"\n"
+
 proc parseProviderPrefs*(preferencesMd: string): ProviderPrefs {.gcsafe, raises: [].} =
   let prefs = parseSmartRoutingPrefs(preferencesMd)
   ProviderPrefs(providerName: prefs.providerName, modelName: prefs.modelName)
+
+proc parseProviderPrefs*(preferencesMd: string;
+                         defaults: ProviderDefaults): ProviderPrefs {.gcsafe, raises: [].} =
+  parseProviderPrefs(applyProviderDefaults(preferencesMd, defaults))
 
 proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: [].} =
   case prefs.providerName
@@ -107,6 +133,14 @@ proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: []
 proc buildProviderBundle*(preferencesMd: string;
                           providerRuntimeBuilder: ProviderRuntimeBuilder): ProviderBundle {.gcsafe.} =
   preferencesMd |> parseProviderPrefs |> buildProviderSpec |> providerRuntimeBuilder
+
+proc buildProviderBundle*(preferencesMd: string;
+                          defaults: ProviderDefaults;
+                          providerRuntimeBuilder: ProviderRuntimeBuilder): ProviderBundle {.gcsafe.} =
+  applyProviderDefaults(preferencesMd, defaults) |>
+    parseProviderPrefs |>
+    buildProviderSpec |>
+    providerRuntimeBuilder
 
 func detectProviderAvailability*(): ProviderAvailability =
   ProviderAvailability(
@@ -197,6 +231,10 @@ proc buildFallbackFn*(primary: CompleteFn; fallbacks: seq[CompleteFn]): Complete
 func providerLabelFromPrefs*(prefs: string): string =
   parseSmartRoutingPrefs(prefs).routingLabel
 
+func providerLabelFromPrefs*(prefs: string;
+                             defaults: ProviderDefaults): string =
+  parseSmartRoutingPrefs(applyProviderDefaults(prefs, defaults)).routingLabel
+
 func encodeSessionPayload*(msg: InboundMessage): string =
   if msg.mediaUrl.len == 0:
     return msg.text
@@ -261,13 +299,15 @@ proc mergeUserSkillsIntoSession*(skillsDir: string;
                                  sessionClients: var seq[ToolRuntimePort];
                                  sessionTools:   var seq[ToolDescription]) {.gcsafe.}
 
-proc loadSessionContext*(memory: MemoryRuntimePort; userId: UserId): SessionContext {.gcsafe.} =
+proc loadSessionContext*(memory: MemoryRuntimePort;
+                         userId: UserId;
+                         defaults = ProviderDefaults()): SessionContext {.gcsafe.} =
   let ctx = memory.loadContext(userId)
   let homeDir = parentDir(parentDir(memory.paddockDir(userId)))
   SessionContext(
     preferencesMd: ctx.preferencesMd,
     paddockDir: memory.paddockDir(userId),
-    providerLabel: providerLabelFromPrefs(ctx.preferencesMd),
+    providerLabel: providerLabelFromPrefs(ctx.preferencesMd, defaults),
     skillPrompt: buildInstalledRemoteSkillPrompt(loadInstalledRemoteSkills(homeDir)),
   )
 
@@ -306,6 +346,7 @@ proc buildSessionCompleteFn*(memory: MemoryRuntimePort;
                              userId: UserId;
                              fallbackCompleteFn: CompleteFn;
                              providerRuntimeBuilder: ProviderRuntimeBuilder;
+                             providerDefaults = ProviderDefaults();
                              routingHook: RoutingTelemetryHook = nil;
                              routingResultHook: RoutingResultHook = nil;
                              routingFeedbackHook: RoutingFeedbackHook = nil;
@@ -314,7 +355,8 @@ proc buildSessionCompleteFn*(memory: MemoryRuntimePort;
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
     let preferencesMd = memory.loadContext(userId).preferencesMd
     let primary = buildCompleteFn(
-      preferencesMd, providerRuntimeBuilder, routingHook, routingResultHook,
+      applyProviderDefaults(preferencesMd, providerDefaults),
+      providerRuntimeBuilder, routingHook, routingResultHook,
       routingFeedbackHook, routingCostHook, routingProviderCooldownHook)
     let fallbacks = if fallbackCompleteFn != nil: @[fallbackCompleteFn] else: @[]
     buildFallbackFn(primary, fallbacks)(req)
@@ -332,6 +374,7 @@ proc withSessionCompleteFn*(fallbackCompleteFn: CompleteFn;
                             providerRuntimeBuilder: ProviderRuntimeBuilder;
                             memory: MemoryRuntimePort;
                             userId: UserId;
+                            providerDefaults: ProviderDefaults;
                             routingHook: RoutingTelemetryHook;
                             routingResultHook: RoutingResultHook;
                             routingFeedbackHook: RoutingFeedbackHook;
@@ -340,7 +383,7 @@ proc withSessionCompleteFn*(fallbackCompleteFn: CompleteFn;
                             plan: SessionBootstrapPlan): SessionBootstrapPlan {.gcsafe.} =
   result = plan
   result.completeFn = buildSessionCompleteFn(
-    memory, userId, fallbackCompleteFn, providerRuntimeBuilder,
+    memory, userId, fallbackCompleteFn, providerRuntimeBuilder, providerDefaults,
     routingHook, routingResultHook, routingFeedbackHook, routingCostHook,
     routingProviderCooldownHook)
 
@@ -376,6 +419,7 @@ proc buildSessionBootstrap*(memory:      MemoryRuntimePort;
                             userId:      UserId;
                             completeFn:  CompleteFn;
                             providerRuntimeBuilder: ProviderRuntimeBuilder;
+                            providerDefaults = ProviderDefaults();
                             skillRuntimeBuilder: SkillRuntimeBuilder;
                             skillRuntimePolicyResolver: SkillRuntimePolicyResolver;
                             toolClients: seq[ToolRuntimePort];
@@ -388,10 +432,10 @@ proc buildSessionBootstrap*(memory:      MemoryRuntimePort;
   let toolBundle = buildSessionToolBundle(
     memory, userId, skillRuntimeBuilder, skillRuntimePolicyResolver, toolClients, tools)
   result =
-    (((loadSessionContext(memory, userId) |>
+    (((loadSessionContext(memory, userId, providerDefaults) |>
        loadSessionBootstrapPlan) |>->
        withSessionCompleteFn(
-         completeFn, providerRuntimeBuilder, memory, userId,
+         completeFn, providerRuntimeBuilder, memory, userId, providerDefaults,
          routingHook, routingResultHook, routingFeedbackHook, routingCostHook,
          routingProviderCooldownHook)) |>->
        withSessionToolBundle(toolBundle)) |>

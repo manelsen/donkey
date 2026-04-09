@@ -61,6 +61,16 @@ Beleza, já entendi quem devo ser.""",
     outputTokens: 1,
   ))
 
+proc stubNameChoiceReady(req: CompletionRequest): Result[CompletionResponse, string] =
+  ok(CompletionResponse(
+    text: """NAME_READY:
+name: Nex
+
+Gostei. Nex combina comigo.""",
+    inputTokens: 1,
+    outputTokens: 1,
+  ))
+
 # ── AsyncQueue round-trip ──────────────────────────────────────────────────────
 
 suite "AsyncQueue round-trip":
@@ -500,7 +510,7 @@ suite "OrchestratorAgent":
       discard await outbox.get()
       await inbox.put(newTaskMsg("req-mid-6", tkPersonalityChoice, "u-heartbeat-mid-bootstrap", "personality:initiative:proativo", ckTelegram, "555"))
       discard await outbox.get()
-      await inbox.put(newTaskMsg("req-mid-7", tkNameChoice, "u-heartbeat-mid-bootstrap", "name:Nex", ckTelegram, "555"))
+      await inbox.put(newTaskMsg("req-mid-7", tkUserMsg, "u-heartbeat-mid-bootstrap", "Seu nome será Nex", ckTelegram, "555"))
       let nameReply = await outbox.get()
       let beforeHeartbeat = providerCalls
       await inbox.put(newTaskMsg("req-mid-hb", tkHeartbeat, "u-heartbeat-mid-bootstrap", "review pending"))
@@ -640,7 +650,7 @@ suite "guided onboarding pipeline":
     check ctx.onboarding.phase == opGuidedEnergy
     check ctx.keyboard.len > 0
 
-  test "guided pipeline reaches name choice and generates names":
+  test "guided pipeline reaches name choice without generating suggestions":
     let res =
       startGuidedChoiceContext(
         OnboardingRuntime(
@@ -659,14 +669,7 @@ suite "guided onboarding pipeline":
     check res.isOk
     let ctx = res.get()
     check ctx.onboarding.phase == opNameChoice
-    check ctx.onboarding.names.len > 0
-
-  test "buildNameChoiceKeyboard maps labels and callbacks":
-    let kb = buildNameChoiceKeyboard(@["Ada", "Linus"])
-    check kb.len == 1
-    check kb[0].len == 2
-    check kb[0][0] == ("Ada", "name:Ada")
-    check kb[0][1] == ("Linus", "name:Linus")
+    check ctx.onboarding.names.len == 0
 
 suite "user profile pipeline":
 
@@ -677,7 +680,7 @@ suite "user profile pipeline":
         traits: PersonalityTraits(tone: "casual"),
       ),
       IdentityRuntime(),
-      "Donkey",
+      "Seu nome será Donkey",
     )
     check res.isOk
     let ctx = res.get()
@@ -742,3 +745,46 @@ suite "control task pipeline":
     let ctx = res.get()
     check ctx.handled
     check ctx.name == "Donkey"
+
+suite "agent name onboarding":
+
+  test "agent name can be settled through short dialogue":
+    let tmpDir = getTempDir() / "donkey_test_orch_name_dialogue"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[(OutboundMessage, OutboundMessage, OutboundMessage)] {.async.} =
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubNameChoiceReady,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-name-dialogue", state)
+      await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-name-dialogue", "oi", ckTelegram, "101"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-name-dialogue", "personality:mode:guided", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-3", tkPersonalityChoice, "u-name-dialogue", "personality:energy:neutro", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-4", tkPersonalityChoice, "u-name-dialogue", "personality:tone:casual", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-5", tkPersonalityChoice, "u-name-dialogue", "personality:length:moderado", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-6", tkPersonalityChoice, "u-name-dialogue", "personality:initiative:proativo", ckTelegram, "555"))
+      let askName = await outbox.get()
+      await inbox.put(newTaskMsg("req-7", tkUserMsg, "u-name-dialogue", "Não sei se você precisa de um nome.", ckTelegram, "101"))
+      let discussReply = await outbox.get()
+      let userPrompt = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      (askName, discussReply, userPrompt)
+
+    let (askName, discussReply, userPrompt) = waitFor doTest(tmpDir)
+    check askName.text.contains("Qual será meu nome?")
+    check askName.replacementSlot == "bootstrap"
+    check discussReply.text.contains("Nex")
+    check discussReply.replacementSlot == ""
+    check userPrompt.text.contains("qual é o seu nome?")
+    check userPrompt.replacementSlot == ""

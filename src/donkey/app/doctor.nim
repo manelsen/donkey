@@ -99,12 +99,17 @@ proc checkSandboxPolicy*(cfg: DonkeyConfig;
 # ── orchestration ──────────────────────────────────────────────────────────────
 
 const ApiKeyChecks = [
-  ("Telegram",   "TELEGRAM_BOT_TOKEN"),
-  ("OpenRouter", "OPENROUTER_API_KEY"),
-  ("Zhipu/ZAI",  "ZAI_API_KEY"),
-  ("Anthropic",  "ANTHROPIC_API_KEY"),
-  ("Gemini",     "GEMINI_API_KEY"),
-  ("MiniMax",    "MINIMAX_API_KEY"),
+  ("Telegram",       "TELEGRAM_BOT_TOKEN"),
+  ("Discord",        "DISCORD_BOT_TOKEN"),
+  ("Zhipu/ZAI",      "ZAI_API_KEY"),
+  ("ZAI Coding",     "ZAI_CODING_API_KEY"),
+  ("ZAI Anthropic",  "ZAI_ANTHROPIC_API_KEY"),
+  ("OpenRouter",     "OPENROUTER_API_KEY"),
+  ("Anthropic",      "ANTHROPIC_API_KEY"),
+  ("OpenAI",         "OPENAI_API_KEY"),
+  ("DeepSeek",       "DEEPSEEK_API_KEY"),
+  ("Gemini",         "GEMINI_API_KEY"),
+  ("MiniMax",        "MINIMAX_API_KEY"),
 ]
 
 proc runDoctorChecks*(cfg: DonkeyConfig;

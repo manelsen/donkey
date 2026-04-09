@@ -57,6 +57,17 @@ suite "parseNameOptions":
   test "resposta vazia retorna seq vazia":
     check parseNameOptions("").len == 0
 
+suite "extractAgentName":
+
+  test "aceita nome simples":
+    check extractAgentName("Nex") == "Nex"
+
+  test "extrai frase natural em português":
+    check extractAgentName("Seu nome será João") == "João"
+
+  test "extrai nome citado entre aspas":
+    check extractAgentName("Vou te chamar de \"Nex\"") == "Nex"
+
 suite "parseIdentityReady":
 
   test "extrai traits de bloco IDENTITY_READY":

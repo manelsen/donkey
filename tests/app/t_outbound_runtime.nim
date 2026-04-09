@@ -165,6 +165,7 @@ suite "outbound_runtime":
   test "routeOutbound reuses replacement slot for editable channels":
     var sentCount = 0
     var editedText = ""
+    var editedKeyboardCount = -1
     let ports = OutboundChannelPorts(
       telegram: OutboundChannelPort(
         send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
@@ -178,7 +179,11 @@ suite "outbound_runtime":
                            buttons: seq[seq[(string, string)]];
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
         editKeyboard: proc(userId: UserId; msgId, text: string;
-                           buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
+                           buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}:
+            editedText = msgId & ":" & text
+            editedKeyboardCount = buttons.len
+          ok(),
         setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
       )
     )
@@ -197,6 +202,7 @@ suite "outbound_runtime":
       presentationState)
     check sentCount == 0
     check editedText == "m-slot:second"
+    check editedKeyboardCount == 0
 
   test "routeOutbound stores and clears streaming bindings in presentation state":
     var createdTexts: seq[string] = @[]

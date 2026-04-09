@@ -126,7 +126,10 @@ proc routeOutbound*(msg: OutboundMessage;
     if existingMsgId.len > 0:
       var editMsg = msg
       editMsg.editTargetId = existingMsgId
-      editMsg.replaceKeyboard = editMsg.replaceKeyboard or editMsg.keyboard.len > 0
+      # Replacement surfaces are a single evolving UI artifact. When a surface
+      # transitions from buttons to plain text, editable channels must clear the
+      # previous components instead of preserving them.
+      editMsg.replaceKeyboard = true
       if editImmediateOutbound(editMsg, ports, log):
         return
     let channelMsgId = createReplacementOutbound(msg, ports, log)

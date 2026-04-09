@@ -11,6 +11,8 @@ suite "buildTomlContent":
   test "contains home dir":
     let toml = buildTomlContent(home = "/tmp/donkey_test")
     check toml.contains("/tmp/donkey_test")
+    check toml.contains("/tmp/donkey_test/paddocks")
+    check toml.contains("/tmp/donkey_test/donkey.log")
 
   test "contains log_level key":
     let toml = buildTomlContent(home = "/tmp/x")
@@ -19,6 +21,20 @@ suite "buildTomlContent":
   test "default log_level is info":
     let toml = buildTomlContent(home = "/tmp/x")
     check toml.contains("log_level = \"info\"")
+
+  test "default runtime is docker":
+    let toml = buildTomlContent(home = "/tmp/x")
+    check toml.contains("runtime = \"docker\"")
+
+  test "runtime can be overridden":
+    let toml = buildTomlContent(home = "/tmp/x", runtime = "podman")
+    check toml.contains("runtime = \"podman\"")
+
+  test "default provider and model are rendered when provided":
+    let toml = buildTomlContent(home = "/tmp/x", defaultProvider = "zai-coding",
+                                defaultModel = "glm-4.7")
+    check toml.contains("default_provider = \"zai-coding\"")
+    check toml.contains("default_model = \"glm-4.7\"")
 
 suite "buildEnvContent":
 
@@ -104,11 +120,22 @@ suite "providerEnvVar":
 suite "setupAlreadyDone":
 
   test "returns false when toml missing":
-    check not setupAlreadyDone("/tmp/donkey_nonexistent_xyz")
+    let tmpHome = getTempDir() / "donkey_cfg_missing_xyz"
+    if dirExists(tmpHome): removeDir(tmpHome)
+    createDir(tmpHome)
+    putEnv("XDG_CONFIG_HOME", tmpHome)
+    defer:
+      delEnv("XDG_CONFIG_HOME")
+      if dirExists(tmpHome): removeDir(tmpHome)
+    check not setupAlreadyDone()
 
   test "returns true when toml exists":
-    let dir = "/tmp/donkey_test_setup_done"
-    createDir(dir)
-    writeFile(dir / "donkey.toml", "home = \"" & dir & "\"\n")
-    check setupAlreadyDone(dir)
-    removeDir(dir)
+    let tmpHome = getTempDir() / "donkey_test_setup_done_cfg"
+    if dirExists(tmpHome): removeDir(tmpHome)
+    createDir(tmpHome / "donkey")
+    putEnv("XDG_CONFIG_HOME", tmpHome)
+    defer:
+      delEnv("XDG_CONFIG_HOME")
+      if dirExists(tmpHome): removeDir(tmpHome)
+    writeFile(tmpHome / "donkey" / "donkey.toml", "home = \"/tmp/x\"\n")
+    check setupAlreadyDone()

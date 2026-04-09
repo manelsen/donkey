@@ -50,6 +50,19 @@ model = "claude-opus"
   test "providerLabelFromPrefs returns auto when prefs do not pin provider":
     check providerLabelFromPrefs("thinking = \"medium\"") == "auto"
 
+  test "providerLabelFromPrefs uses installation defaults when prefs are empty":
+    let label = providerLabelFromPrefs(
+      "", ProviderDefaults(providerName: "minimax", modelName: "MiniMax-M2"))
+    check label == "minimax/MiniMax-M2"
+
+  test "applyProviderDefaults leaves explicit user prefs untouched":
+    let effective = applyProviderDefaults("""
+provider = "gemini"
+thinking = "medium"
+""", ProviderDefaults(providerName: "zai-coding", modelName: "glm-4.7"))
+    check effective.contains("provider = \"gemini\"")
+    check not effective.contains("provider = \"zai-coding\"")
+
   test "encodeSessionPayload keeps plain text when no media":
     let msg = InboundMessage(userId: UserId("u1"), text: "hello")
     check encodeSessionPayload(msg) == "hello"
@@ -91,6 +104,18 @@ model = "gemini-2.5-flash"
     check ctx.preferencesMd.contains("provider = \"gemini\"")
     check ctx.paddockDir == memory.paddockDir(userId)
     check ctx.providerLabel == "gemini/gemini-2.5-flash"
+
+  test "loadSessionContext applies provider defaults when prefs are empty":
+    let tmpDir = getTempDir() / "donkey_session_bootstrap_ctx_defaults"
+    let memory = MdFileAdapter(paddocksDir: tmpDir)
+    let userId = UserId("u-session-bootstrap-defaults")
+    defer:
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+    let ctx = loadSessionContext(
+      memory.toRuntimePort(), userId,
+      ProviderDefaults(providerName: "zai-coding", modelName: "glm-4.7"))
+    check ctx.providerLabel == "zai-coding/glm-4.7"
 
   test "withNativeTools appends native tool descriptions":
     let base = startSessionToolBundle(@[], @[])

@@ -24,6 +24,8 @@ type
     logLevel*: Option[LogLevel]
     logFile*:  Option[string]
     paddocks*: Option[string]
+    defaultProvider*: Option[string]
+    defaultModel*: Option[string]
     wiring*:   Option[bool]
 
   SecurityConfigPatch* = object
@@ -183,6 +185,16 @@ proc parseMainConfigPatch*(doc: TomlValueRef): MainConfigPatch =
     if paddocks.len > 0:
       result.paddocks = some(expandTilde(paddocks))
 
+  if mainSection.hasKey("default_provider"):
+    let defaultProvider = mainSection["default_provider"].getStr().strip()
+    if defaultProvider.len > 0:
+      result.defaultProvider = some(defaultProvider)
+
+  if mainSection.hasKey("default_model"):
+    let defaultModel = mainSection["default_model"].getStr().strip()
+    if defaultModel.len > 0:
+      result.defaultModel = some(defaultModel)
+
   if mainSection.hasKey("wiring"):
     result.wiring = some(mainSection["wiring"].getBool())
 
@@ -221,6 +233,10 @@ proc applyMainConfigPatch*(patch: MainConfigPatch; cfg: DonkeyConfig): DonkeyCon
     result.logFile = patch.logFile.get()
   if patch.paddocks.isSome:
     result.paddocks = patch.paddocks.get()
+  if patch.defaultProvider.isSome:
+    result.defaultProvider = patch.defaultProvider.get()
+  if patch.defaultModel.isSome:
+    result.defaultModel = patch.defaultModel.get()
   if patch.wiring.isSome:
     result.wiring = patch.wiring.get()
 

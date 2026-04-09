@@ -119,6 +119,92 @@ func parseNameOptions*(resp: string): seq[string] =
       .mapIt(it.strip)
       .filterIt(it.len > 0)
 
+func stripTrailingPunctuation(s: string): string =
+  result = s.strip
+  while result.len > 0 and result[^1] in {'.', ',', ';', ':', '!', '?', ')', ']', '}', '"', '\''}:
+    result.setLen(result.len - 1)
+  result = result.strip
+
+func extractQuotedName(s: string): string =
+  for quote in ['"', '\'']:
+    let a = s.find($quote)
+    if a >= 0:
+      let b = s.find($quote, a + 1)
+      if b > a + 1:
+        let candidate = stripTrailingPunctuation(s[a + 1 ..< b])
+        if candidate.len > 0:
+          return candidate
+  ""
+
+func extractAgentName*(raw: string): string =
+  ## Extracts a likely agent name from a natural-language user answer.
+  var candidate = raw.strip
+  if candidate.len == 0:
+    return ""
+
+  let quoted = extractQuotedName(candidate)
+  if quoted.len > 0:
+    return quoted
+
+  let lowered = candidate.toLowerAscii()
+  var matchedPrefix = false
+  let prefixes = [
+    "name:",
+    "nome:",
+    "seu nome será ",
+    "seu nome vai ser ",
+    "se chamará ",
+    "vai se chamar ",
+    "quero te chamar de ",
+    "vou te chamar de ",
+    "te chamarei de ",
+    "pode ser ",
+    "será ",
+    "vai ser ",
+    "your name will be ",
+    "i'll call you ",
+    "i will call you ",
+    "you will be ",
+    "call yourself ",
+  ]
+  for prefix in prefixes:
+    if lowered.startsWith(prefix):
+      candidate = candidate[prefix.len .. ^1].strip
+      matchedPrefix = true
+      break
+
+  candidate = stripTrailingPunctuation(candidate)
+  if candidate.len == 0:
+    return ""
+
+  let stopWords = [
+    "é", "eh", "is", "será", "vai", "be", "called", "nome", "name", "ser",
+    "the", "an", "o", "a", "um", "uma", "de", "do", "da"
+  ]
+  var words = candidate.splitWhitespace().filterIt(it.len > 0)
+  while words.len > 0 and words[0].toLowerAscii() in stopWords:
+    words.delete(0)
+  if words.len == 0:
+    return ""
+  if not matchedPrefix:
+    if raw.contains(".") or raw.contains("!") or raw.contains("?") or raw.contains(","):
+      return ""
+    if words.len > 3:
+      return ""
+    if words.len > 1:
+      let connectors = ["da", "de", "do", "dos", "das", "e"]
+      var significant = 0
+      var capitalized = 0
+      for word in words:
+        if word.toLowerAscii() in connectors:
+          continue
+        inc significant
+        if word.len > 0 and word[0].isUpperAscii:
+          inc capitalized
+      if significant == 0 or capitalized == 0:
+        return ""
+  stripTrailingPunctuation(words.join(" "))
+
 # ── parseIdentityReady / stripIdentityReady ────────────────────────────────────
 
 const IdentityMarker = "IDENTITY_READY:"

@@ -26,6 +26,19 @@ Then continue the conversation naturally. Only output the block when you are con
 
 You can install and enable skills for the user with `manage_skills`. Never say your toolset is fixed or that you cannot install skills. If the user asks whether you can install skills, how skill installation works, or they mention a missing capability, use `manage_skills` or explain that you can search/install/enable a skill for them."""
 
+const NameChoiceSystemPrompt* = """You are discussing your own name with the user.
+The question on the table is: "Qual será meu nome?"
+The user may answer directly, may suggest multiple names, or may want a short conversation first about whether you should have a name and what it should mean.
+
+When the user has clearly chosen a single name for you, output this exact block (no extra formatting):
+
+NAME_READY:
+name: <chosen name>
+
+Then continue naturally.
+
+If the user has not settled on a single clear name yet, do not output the block. Continue the conversation naturally and help them decide."""
+
 type
   OnboardingRuntime* = object
     phase*:       OnboardingPhase
@@ -128,6 +141,49 @@ func parseFreeConvoReply*(ctx: FreeConvoContext): Result[FreeConvoContext, strin
     nextCtx.onboarding.traits = nextCtx.parsedTraits.get()
   ok(nextCtx)
 
+func parseNameReady*(text: string): Option[string] =
+  let lines = text.splitLines
+  var idx = -1
+  for i, l in lines:
+    if l.strip == "NAME_READY:":
+      idx = i
+      break
+  if idx < 0:
+    return none(string)
+  for i in (idx + 1) ..< lines.len:
+    let l = lines[i].strip
+    if l.len == 0:
+      break
+    let parts = l.split(':', 1)
+    if parts.len == 2 and parts[0].strip == "name":
+      let extracted = extractAgentName(parts[1].strip)
+      if extracted.len > 0:
+        return some(extracted)
+  none(string)
+
+func stripNameReady*(text: string): string =
+  let lines = text.splitLines
+  var markerIdx = -1
+  for i, l in lines:
+    if l.strip == "NAME_READY:":
+      markerIdx = i
+      break
+  if markerIdx < 0:
+    return text
+
+  var blockEnd = markerIdx + 1
+  while blockEnd < lines.len and lines[blockEnd].strip.len > 0:
+    inc blockEnd
+  if blockEnd < lines.len and lines[blockEnd].strip.len == 0:
+    inc blockEnd
+
+  var kept: seq[string]
+  for i, l in lines:
+    if i >= markerIdx and i < blockEnd:
+      continue
+    kept.add(l)
+  kept.join("\n").strip
+
 func startGuidedChoiceContext*(onboarding: OnboardingRuntime;
                                dim: string;
                                valor: string): Result[GuidedChoiceContext, string] {.gcsafe, raises: [].} =
@@ -189,7 +245,14 @@ func startUserProfileContext*(onboarding: OnboardingRuntime;
   of opNameChoice:
     if txt.len == 0:
       return ok(UserProfileContext(onboarding: ob, identity: id))
-    id.name = txt
+    let chosenName = extractAgentName(txt)
+    if chosenName.len == 0:
+      return ok(UserProfileContext(
+        onboarding: ob,
+        identity: id,
+        replyText: "Qual será meu nome?",
+      ))
+    id.name = chosenName
     id.traits = ob.traits
     id.identityLoaded = true
     ob.phase = opUserName

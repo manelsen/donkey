@@ -161,9 +161,22 @@ suite "doctor — runDoctorChecks":
     let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
     var found = false
     for r in results:
-      if r.name in ["Telegram", "OpenRouter", "Zhipu/ZAI", "Anthropic"]:
+      if r.name in ["Telegram", "Discord", "ZAI Coding", "ZAI Anthropic", "OpenRouter", "Zhipu/ZAI", "Anthropic"]:
         found = true
     check found
+
+  test "result contains discord and zai compatibility checks":
+    let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
+    var foundDiscord = false
+    var foundZaiCoding = false
+    var foundZaiAnthropic = false
+    for r in results:
+      if r.name == "Discord": foundDiscord = true
+      if r.name == "ZAI Coding": foundZaiCoding = true
+      if r.name == "ZAI Anthropic": foundZaiAnthropic = true
+    check foundDiscord
+    check foundZaiCoding
+    check foundZaiAnthropic
 
   test "allPassed pipeline works on doctor results":
     let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
