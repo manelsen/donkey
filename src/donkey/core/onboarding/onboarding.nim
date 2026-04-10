@@ -39,6 +39,28 @@ Then continue naturally.
 
 If the user has not settled on a single clear name yet, do not output the block. Continue the conversation naturally and help them decide."""
 
+const UserProfileSystemPrompt* = """You are getting to know your user through a short conversational onboarding.
+The goals are:
+- understand who they are in broad terms, if they want to say
+- learn how they would like to be called
+- learn how they would like you to address or treat them
+- optionally learn language and timezone if they mention them
+
+When you have enough to proceed, output this exact block (no extra formatting):
+
+USER_PROFILE_READY:
+name: <their actual name or short self-identifier, or empty if unknown>
+call_me: <how they want to be called>
+timezone: <their timezone, or empty if unknown>
+language: <their preferred language, or empty if unknown>
+treatment: <how they want you to address/treat them, or empty if unknown>
+about: <brief one-line summary of who they are, or empty if unknown>
+
+Then continue naturally.
+
+It is acceptable to finish with timezone/language unknown. The critical thing is having a stable way to address the user.
+If you still do not know how they want to be called, do not output the block yet."""
+
 type
   OnboardingRuntime* = object
     phase*:       OnboardingPhase
@@ -47,6 +69,8 @@ type
     userName*:    string
     timezone*:    string
     language*:    string
+    userTreatment*: string
+    userAbout*:     string
 
   IdentityRuntime* = object
     name*:           string
@@ -106,12 +130,79 @@ type
     value*:     string
     name*:      string
 
-func buildUserMd(name, callMe, timezone, language: string): string =
-  "# User\n\n" &
-  "**Name:** " & name & "\n" &
-  "**Call me:** " & callMe & "\n" &
-  "**Timezone:** " & timezone & "\n" &
-  "**Language:** " & language & "\n"
+func buildUserMd*(name, callMe, timezone, language: string;
+                  treatment = "";
+                  about = ""): string =
+  result = "# User\n\n" &
+    "**Name:** " & name & "\n" &
+    "**Call me:** " & callMe & "\n" &
+    "**Timezone:** " & timezone & "\n" &
+    "**Language:** " & language & "\n"
+  if treatment.len > 0:
+    result &= "**Interaction preferences:** " & treatment & "\n"
+  if about.len > 0:
+    result &= "**About:** " & about & "\n"
+
+type UserProfileReady* = object
+  name*: string
+  callMe*: string
+  timezone*: string
+  language*: string
+  treatment*: string
+  about*: string
+
+func parseProfileField(line, field: string): string =
+  let parts = line.split(':', 1)
+  if parts.len == 2 and parts[0].strip == field:
+    parts[1].strip
+  else:
+    ""
+
+func parseUserProfileReady*(text: string): Option[UserProfileReady] =
+  let lines = text.splitLines
+  var idx = -1
+  for i, l in lines:
+    if l.strip == "USER_PROFILE_READY:":
+      idx = i
+      break
+  if idx < 0:
+    return none(UserProfileReady)
+
+  var profile: UserProfileReady
+  for i in (idx + 1) ..< lines.len:
+    let l = lines[i].strip
+    if l.len == 0:
+      break
+    if profile.name.len == 0: profile.name = parseProfileField(l, "name")
+    if profile.callMe.len == 0: profile.callMe = parseProfileField(l, "call_me")
+    if profile.timezone.len == 0: profile.timezone = parseProfileField(l, "timezone")
+    if profile.language.len == 0: profile.language = parseProfileField(l, "language")
+    if profile.treatment.len == 0: profile.treatment = parseProfileField(l, "treatment")
+    if profile.about.len == 0: profile.about = parseProfileField(l, "about")
+  if profile.callMe.len == 0:
+    return none(UserProfileReady)
+  some(profile)
+
+func stripUserProfileReady*(text: string): string =
+  let lines = text.splitLines
+  var markerIdx = -1
+  for i, l in lines:
+    if l.strip == "USER_PROFILE_READY:":
+      markerIdx = i
+      break
+  if markerIdx < 0:
+    return text
+  var blockEnd = markerIdx + 1
+  while blockEnd < lines.len and lines[blockEnd].strip.len > 0:
+    inc blockEnd
+  if blockEnd < lines.len and lines[blockEnd].strip.len == 0:
+    inc blockEnd
+  var kept: seq[string]
+  for i, l in lines:
+    if i >= markerIdx and i < blockEnd:
+      continue
+    kept.add(l)
+  kept.join("\n").strip
 
 func startFreeConvoContext*(history: ConversationHistory;
                             onboarding: OnboardingRuntime;
@@ -261,7 +352,7 @@ func startUserProfileContext*(onboarding: OnboardingRuntime;
       identity: id,
       replyText:
         "Perfeito. Serei " & id.name &
-        ".\n\nAgora me conta sobre você — qual é o seu nome?",
+        ".\n\nAgora me conta um pouco sobre você: quem é você, como gostaria de ser chamado e como prefere que eu te trate. Se quiser, já diga também seu idioma e fuso horário.",
       saveIdentity: true,
       advanced: true,
     ))

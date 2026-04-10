@@ -81,6 +81,21 @@ Gostei. Nex combina comigo.""",
     outputTokens: 1,
   ))
 
+proc stubUserProfileReady(req: CompletionRequest): Result[CompletionResponse, string] =
+  ok(CompletionResponse(
+    text: """USER_PROFILE_READY:
+name: Manel Moura
+call_me: Void
+timezone: UTC-3
+language: Português brasileiro
+treatment: com franqueza e profundidade
+about: criador do Donkey
+
+Entendi bem quem você é.""",
+    inputTokens: 1,
+    outputTokens: 1,
+  ))
+
 proc stubOperationalMemoryFailure(req: CompletionRequest): Result[CompletionResponse, string] =
   ok(CompletionResponse(
     text: "Não consigo acessar a web agora, e as ferramentas estão indisponíveis.",
@@ -632,7 +647,7 @@ suite "OrchestratorAgent":
       await sleepAsync(chronos.milliseconds(50))
       await inbox.put(newCancelMsg())
       await orchFut
-      (beforeHeartbeat, providerCalls, if nameReply.text.contains("qual é o seu nome?"): 1 else: 0)
+      (beforeHeartbeat, providerCalls, if nameReply.text.contains("me conta um pouco sobre você"): 1 else: 0)
 
     let (beforeHeartbeat, providerCalls, sawNamePrompt) = waitFor doTest(tmpDir)
     check providerCalls == beforeHeartbeat
@@ -788,7 +803,7 @@ suite "guided onboarding pipeline":
 
 suite "user profile pipeline":
 
-  test "name choice updates identity and requests user name":
+  test "name choice updates identity and opens conversational user profile onboarding":
     let res = startUserProfileContext(
       OnboardingRuntime(
         phase: opNameChoice,
@@ -802,6 +817,7 @@ suite "user profile pipeline":
     check ctx.identity.name == "Donkey"
     check ctx.saveIdentity
     check ctx.onboarding.phase == opUserName
+    check ctx.replyText.contains("me conta um pouco sobre você")
 
   test "language step finalizes profile and prepares USER.md":
     let res = startUserProfileContext(
@@ -901,15 +917,15 @@ suite "agent name onboarding":
     check askName.replacementSlot == "bootstrap"
     check discussReply.text.contains("Nex")
     check discussReply.replacementSlot == ""
-    check userPrompt.text.contains("qual é o seu nome?")
+    check userPrompt.text.contains("me conta um pouco sobre você")
     check userPrompt.replacementSlot == ""
 
-  test "user profile prompts after naming are sent as new messages":
+  test "user profile onboarding starts with an open conversational prompt":
     let tmpDir = getTempDir() / "donkey_test_orch_user_profile_messages"
     removeDir(tmpDir)
     defer: removeDir(tmpDir)
 
-    proc doTest(dir: string): Future[(OutboundMessage, OutboundMessage, OutboundMessage)] {.async.} =
+    proc doTest(dir: string): Future[(OutboundMessage, OutboundMessage)] {.async.} =
       let mem = MdFileAdapter(paddocksDir: dir)
       let inbox = newAsyncQueue[AgentMessage]()
       let outbox = newAsyncQueue[OutboundMessage]()
@@ -931,20 +947,56 @@ suite "agent name onboarding":
       await inbox.put(newTaskMsg("req-6", tkPersonalityChoice, "u-profile-msgs", "personality:initiative:proativo", ckTelegram, "555"))
       let askAgentName = await outbox.get()
       await inbox.put(newTaskMsg("req-7", tkUserMsg, "u-profile-msgs", "Node", ckTelegram, "101"))
-      let askUserName = await outbox.get()
-      await inbox.put(newTaskMsg("req-8", tkUserMsg, "u-profile-msgs", "Void", ckTelegram, "101"))
-      let askTimezone = await outbox.get()
+      let askProfile = await outbox.get()
       await inbox.put(newCancelMsg())
       await orchFut
-      (askAgentName, askUserName, askTimezone)
+      (askAgentName, askProfile)
 
-    let (askAgentName, askUserName, askTimezone) = waitFor doTest(tmpDir)
+    let (askAgentName, askProfile) = waitFor doTest(tmpDir)
     check askAgentName.text.contains("Qual será meu nome?")
     check askAgentName.replacementSlot == "bootstrap"
-    check askUserName.text.contains("qual é o seu nome?")
-    check askUserName.replacementSlot == ""
-    check askTimezone.text.contains("Em que fuso horário você está?")
-    check askTimezone.replacementSlot == ""
+    check askProfile.text.contains("me conta um pouco sobre você")
+    check askProfile.text.contains("como gostaria de ser chamado")
+    check askProfile.replacementSlot == ""
+
+  test "micro-onboarding can conclude user profile conversationally":
+    let tmpDir = getTempDir() / "donkey_test_orch_micro_profile"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[(OutboundMessage, OutboundMessage)] {.async.} =
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubUserProfileReady,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-micro-profile", state)
+      await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-micro-profile", "oi", ckTelegram, "101"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-micro-profile", "personality:mode:guided", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-3", tkPersonalityChoice, "u-micro-profile", "personality:energy:neutro", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-4", tkPersonalityChoice, "u-micro-profile", "personality:tone:casual", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-5", tkPersonalityChoice, "u-micro-profile", "personality:length:moderado", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-6", tkPersonalityChoice, "u-micro-profile", "personality:initiative:proativo", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-7", tkUserMsg, "u-micro-profile", "Node", ckTelegram, "101"))
+      let askProfile = await outbox.get()
+      await inbox.put(newTaskMsg("req-8", tkUserMsg, "u-micro-profile", "Sou Manel, pode me chamar de Void. Gosto de franqueza. UTC-3. Português brasileiro.", ckTelegram, "101"))
+      let visible = await outbox.get()
+      let finalReply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      (visible, finalReply)
+
+    let (visible, finalReply) = waitFor doTest(tmpDir)
+    check visible.text.contains("Entendi bem quem você é.")
+    check finalReply.text.contains("vou te chamar de Void")
 
   test "completed bootstrap does not reopen on the same channel target":
     let tmpDir = getTempDir() / "donkey_test_orch_bootstrap_target_latch"

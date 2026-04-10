@@ -69,3 +69,18 @@ suite "core onboarding decisions":
     check ctx.saveUserMd
     check ctx.saveIdentity
     check ctx.replyText.contains("Serei Ostervalt")
+
+  test "parse user profile ready extracts conversational profile":
+    let parsed = parseUserProfileReady("""USER_PROFILE_READY:
+name: Manel Moura
+call_me: Void
+timezone: UTC-3
+language: Português
+treatment: com franqueza
+about: criador do Donkey
+""")
+    check parsed.isSome
+    let profile = parsed.get()
+    check profile.callMe == "Void"
+    check profile.timezone == "UTC-3"
+    check profile.treatment == "com franqueza"

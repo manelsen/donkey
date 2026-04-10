@@ -1081,27 +1081,80 @@ proc handleAgentNameOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
 
 proc advanceUserProfileOnboarding(globalOutbox: AsyncQueue[OutboundMessage];
                                   memory: MemoryRuntimePort;
+                                  completeFn: CompleteFn;
                                   uid: UserId;
                                   channel: ChannelKind;
                                   replyTo: string;
                                   userText: string;
+                                  history: ConversationHistory;
                                   onboarding: OnboardingRuntime;
-                                  identity: IdentityRuntime): Future[(OnboardingRuntime, IdentityRuntime)] {.async.} =
-  result = (onboarding, identity)
-  let pipelineResult = startUserProfileContext(onboarding, identity, userText)
-  let profileOpt = await unwrapOrReplyError(
-    globalOutbox, uid, channel, replyTo, pipelineResult)
-  if profileOpt.isNone:
+                                  identity: IdentityRuntime): Future[(ConversationHistory, OnboardingRuntime, IdentityRuntime)] {.async.} =
+  result = (history, onboarding, identity)
+
+  if onboarding.phase != opUserName:
+    let pipelineResult = startUserProfileContext(onboarding, identity, userText)
+    let profileOpt = await unwrapOrReplyError(
+      globalOutbox, uid, channel, replyTo, pipelineResult)
+    if profileOpt.isNone:
+      return
+
+    let profileCtx = profileOpt.get()
+    result = (history, profileCtx.onboarding, profileCtx.identity)
+    persistUserProfile(memory, uid, profileCtx)
+    if profileCtx.replyText.len > 0:
+      await sendReplyText(globalOutbox, uid, channel, replyTo, profileCtx.replyText)
     return
 
-  let profileCtx = profileOpt.get()
-  result = (profileCtx.onboarding, profileCtx.identity)
+  var nextHistory = addUserTurn(history, userText, "")
+  let req = buildPrompt(UserProfileSystemPrompt, nextHistory, "")
+  let resp = safeComplete(completeFn, req)
+  if resp.isErr:
+    await sendPipelineError(globalOutbox, uid, channel, replyTo, resp.error)
+    return
+
+  nextHistory.addAssistant(resp.value.text)
+  nextHistory.trimTo(20)
+  let visibleText = stripUserProfileReady(resp.value.text)
+  let parsedProfile = parseUserProfileReady(resp.value.text)
+
+  if visibleText.len > 0:
+    await sendReplyText(globalOutbox, uid, channel, replyTo, visibleText)
+
+  if parsedProfile.isNone:
+    result = (nextHistory, onboarding, identity)
+    return
+
+  let profile = parsedProfile.get()
+  var nextOnboarding = onboarding
+  nextOnboarding.userName = if profile.name.len > 0: profile.name else: profile.callMe
+  nextOnboarding.timezone = profile.timezone
+  nextOnboarding.language = profile.language
+  nextOnboarding.userTreatment = profile.treatment
+  nextOnboarding.userAbout = profile.about
+  nextOnboarding.phase = opDone
+
+  let profileCtx = UserProfileContext(
+    onboarding: nextOnboarding,
+    identity: identity,
+    replyText:
+      "Tudo certo! Serei " & identity.name & " e vou te chamar de " & profile.callMe &
+      ".\n\nPronto para conversar. Como posso ajudar?",
+    userMd: buildUserMd(
+      nextOnboarding.userName,
+      profile.callMe,
+      nextOnboarding.timezone,
+      nextOnboarding.language,
+      treatment = nextOnboarding.userTreatment,
+      about = nextOnboarding.userAbout,
+    ),
+    saveIdentity: identity.name.len > 0,
+    saveUserMd: true,
+    advanced: true,
+  )
   persistUserProfile(memory, uid, profileCtx)
   if profileCtx.replyText.len > 0:
-    # Once onboarding enters free-text profile collection, each prompt should
-    # be a normal conversational turn. Re-editing the original bootstrap
-    # surface here proved brittle in Telegram after resets and text replies.
     await sendReplyText(globalOutbox, uid, channel, replyTo, profileCtx.replyText)
+  result = (nextHistory, nextOnboarding, identity)
 
 proc handleResetControlTask(globalOutbox: AsyncQueue[OutboundMessage];
                             memory: MemoryRuntimePort;
@@ -1211,9 +1264,15 @@ proc handleOnboardingControlTask(globalOutbox: AsyncQueue[OutboundMessage];
     result[2] = decision.handled
 
   of oekNameChoice:
-    (result[0], result[1]) = await advanceUserProfileOnboarding(
-      globalOutbox, memory, uid, channel, replyTo,
-      decision.name, decision.onboarding, decision.identity)
+    let profileResult = startUserProfileContext(decision.onboarding, decision.identity, decision.name)
+    let profileOpt = await unwrapOrReplyError(globalOutbox, uid, channel, replyTo, profileResult)
+    if profileOpt.isSome:
+      let profileCtx = profileOpt.get()
+      persistUserProfile(memory, uid, profileCtx)
+      result[0] = profileCtx.onboarding
+      result[1] = profileCtx.identity
+      if profileCtx.replyText.len > 0:
+        await sendReplyText(globalOutbox, uid, channel, replyTo, profileCtx.replyText)
     result[2] = decision.handled
 
   else:
@@ -1354,9 +1413,9 @@ proc handleOnboardingTurn(globalOutbox: AsyncQueue[OutboundMessage];
         globalOutbox, memory, completeFn, uid, channel, replyTo,
         userText |> strutils.strip, result.history, result.onboarding, result.identity)
     else:
-      (result.onboarding, result.identity) = await advanceUserProfileOnboarding(
-        globalOutbox, memory, uid, channel, replyTo,
-        userText |> strutils.strip, result.onboarding, result.identity)
+      (result.history, result.onboarding, result.identity) = await advanceUserProfileOnboarding(
+        globalOutbox, memory, completeFn, uid, channel, replyTo,
+        userText |> strutils.strip, result.history, result.onboarding, result.identity)
 
   of oekDone:
     return OnboardingTurnResult(
