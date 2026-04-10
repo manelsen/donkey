@@ -23,6 +23,25 @@ proc channelPortFor(ports: OutboundChannelPorts;
   of ckEmail:     ports.email
   of ckCli:       ports.cli
 
+proc setOutboundReaction*(channel: ChannelKind;
+                          userId: UserId;
+                          msgId, emoji: string;
+                          ports: OutboundChannelPorts;
+                          log: Logger): bool {.gcsafe.} =
+  if not supportsMessageReactions(channel) or msgId.len == 0:
+    return false
+  let port = ports.channelPortFor(channel)
+  let res = port.setMessageReaction(userId, msgId, emoji)
+  if res.isOk:
+    return true
+  let error = res.error
+  case channel
+  of ckTelegram: log.warn("tg setMessageReaction: " & error)
+  of ckDiscord:  log.warn("dc setMessageReaction: " & error)
+  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli:
+    discard
+  false
+
 proc sendImmediateOutbound*(msg: OutboundMessage;
                             ports: OutboundChannelPorts;
                             log: Logger) {.gcsafe.} =

@@ -47,6 +47,7 @@ import donkey/adapters/tool/mcp_client
 import donkey/domain/message
 import donkey/domain/agent_message
 import donkey/ports/provider
+import donkey/ports/channel
 import donkey/ports/tool
 import donkey/app/orchestrator
 import donkey/app/sandbox
@@ -554,6 +555,12 @@ type DaemonAdapters = object
   mx: MatrixAdapter
   em: EmailAdapter
   cli: CliAdapter
+
+proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPorts =
+  buildOutboundPorts(
+    addr adapters.tg, addr adapters.dc, addr adapters.wc,
+    addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx,
+    addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.cli)
 
 const
   RecentRouteSampleLimit = 32
@@ -1511,22 +1518,39 @@ proc handleSessionFallback(runtime:      var DaemonRuntime;
     return
   ensureSession(runtime.sm, msg, services, runtime.msgSeq)
 
-proc stageTelegramFallbackStatus(runtime: var DaemonRuntime;
-                                 tgAdapter: var TelegramAdapter;
-                                 msg: InboundMessage) =
-  tgAdapter.sendTyping(msg.userId).isOkOr: discard
-  tgAdapter.setMessageReaction(msg.userId, msg.channelId, "⚙️").isOkOr: discard
-  runtime.presentationState.rememberStatus(msg.channel, msg.userId, "fallback", msg.channelId)
+func shouldStageInboundReaction(msg: InboundMessage): bool =
+  supportsMessageReactions(msg.channel) and
+    msg.callbackId.len == 0 and
+    msg.channelId.len > 0
+
+proc stageInboundReactionStatus(runtime: var DaemonRuntime;
+                                outboundPorts: OutboundChannelPorts;
+                                msg: InboundMessage) =
+  if not shouldStageInboundReaction(msg):
+    return
+  discard setOutboundReaction(msg.channel, msg.userId, msg.channelId, "⏳", outboundPorts, newLogger("status.reaction"))
+  runtime.presentationState.rememberStatus(msg.channel, msg.userId, "turn", msg.channelId)
+
+proc completeInboundReactionStatus(runtime: var DaemonRuntime;
+                                   outboundPorts: OutboundChannelPorts;
+                                   channel: ChannelKind;
+                                   userId: UserId;
+                                   msgId: string;
+                                   isError: bool) =
+  if not supportsMessageReactions(channel) or msgId.len == 0:
+    return
+  runtime.presentationState.clearStatus(channel, userId, "turn")
+  let finalEmoji = if isError: "❌" else: "✅"
+  discard setOutboundReaction(channel, userId, msgId, finalEmoji, outboundPorts, newLogger("status.reaction"))
 
 proc handleTelegramFallback(runtime:      var DaemonRuntime;
-                            tgAdapter:    var TelegramAdapter;
                             msg:          InboundMessage;
                             services:     SessionIngressServices) =
-  stageTelegramFallbackStatus(runtime, tgAdapter, msg)
   handleSessionFallback(runtime, msg, services)
 
 proc drainTelegramEvents(runtime:      var DaemonRuntime;
                          tgAdapter:    var TelegramAdapter;
+                         outboundPorts: OutboundChannelPorts;
                          services:     SessionIngressServices;
                          log:          Logger): bool =
   let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
@@ -1538,13 +1562,20 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
     return false
 
   for msg in tgMsgs:
-    if not telegram_runtime.handleTelegramMessage(
+    let stagedReaction = shouldStageInboundReaction(msg)
+    if stagedReaction:
+      tgAdapter.sendTyping(msg.userId).isOkOr: discard
+      stageInboundReactionStatus(runtime, outboundPorts, msg)
+    if telegram_runtime.handleTelegramMessage(
       msg, runtime.sm, tgAdapter, runtime.presentationState, services.memory, completeBuilder,
       modelCatalogLoader,
       services.toolClients.len, services.tools.len + nativeSessionTools().len, runtime.msgSeq, runtime.daemonStartMs, log,
       proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} =
         ensureSessionTask(runtimePtr[].sm, msg, services, runtimePtr[].msgSeq, taskKind, payload)):
-      handleTelegramFallback(runtime, tgAdapter, msg, services)
+      if stagedReaction:
+        completeInboundReactionStatus(runtime, outboundPorts, msg.channel, msg.userId, msg.channelId, false)
+    else:
+      handleTelegramFallback(runtime, msg, services)
   true
 
 proc publishDueReminders(runtime: var DaemonRuntime;
@@ -1571,38 +1602,24 @@ proc publishDueReminders(runtime: var DaemonRuntime;
     memory.deleteReminder(rUid, rId)
     log.info("reminder fired " & $rUid)
 
-proc clearTelegramStatus(runtime:   var DaemonRuntime;
-                         tgAdapter: var TelegramAdapter;
-                         outMsg:    OutboundMessage) =
-  let msgId = runtime.presentationState.lookupStatus(outMsg.channel, outMsg.userId, "fallback")
-  if outMsg.channel != ckTelegram or outMsg.isPartial or msgId.len == 0:
+proc completeInboundReactionStatus(runtime:   var DaemonRuntime;
+                                   outboundPorts: OutboundChannelPorts;
+                                   outMsg:    OutboundMessage) =
+  let msgId = runtime.presentationState.lookupStatus(outMsg.channel, outMsg.userId, "turn")
+  if not supportsMessageReactions(outMsg.channel) or outMsg.isPartial or msgId.len == 0:
     return
-
-  runtime.presentationState.clearStatus(outMsg.channel, outMsg.userId, "fallback")
 
   let isError = outMsg.text.startsWith("Desculpe") or
                 outMsg.text.startsWith("Tool call loop")
-  if isError:
-    tgAdapter.setMessageReaction(outMsg.userId, msgId, "❌").isOkOr: discard
-    # Remove error reaction after 3 seconds
-    let tgPtr = addr tgAdapter
-    proc cleanup() {.async.} =
-      await sleepAsync(ctimer.milliseconds(3000))
-      tgPtr[].setMessageReaction(outMsg.userId, msgId, "").isOkOr: discard
-    asyncSpawn cleanup()
-  else:
-    tgAdapter.setMessageReaction(outMsg.userId, msgId, "").isOkOr: discard
+  completeInboundReactionStatus(runtime, outboundPorts, outMsg.channel, outMsg.userId, msgId, isError)
 
 proc drainGlobalOutbox(runtime:  var DaemonRuntime;
                        adapters: var DaemonAdapters;
                        log:      Logger) =
-  let outboundPorts = buildOutboundPorts(
-    addr adapters.tg, addr adapters.dc, addr adapters.wc,
-    addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx,
-    addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.cli)
+  let outboundPorts = buildRuntimeOutboundPorts(adapters)
   while runtime.globalOutbox.len > 0:
     let outMsg = runtime.globalOutbox.getNoWait()
-    clearTelegramStatus(runtime, adapters.tg, outMsg)
+    completeInboundReactionStatus(runtime, outboundPorts, outMsg)
     routeOutbound(outMsg, outboundPorts, log, runtime.presentationState)
 
 proc startDaemonIngress(ctx: DaemonContext;
@@ -1654,10 +1671,15 @@ proc drainDiscordGateway(ctx: DaemonContext;
   let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
     buildCompleteFn(preferencesMd, buildProviderBundle)
   let modelCatalogLoader = buildModelCatalogLoader()
+  let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
   discord_runtime.drainDiscordEvents(
     ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, memory, completeBuilder, modelCatalogLoader,
     ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
     ctx.runtime.msgSeq, log,
+    proc(msg: InboundMessage) =
+      stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),
+    proc(msg: InboundMessage) =
+      completeInboundReactionStatus(ctx.runtime, outboundPorts, msg.channel, msg.userId, msg.channelId, false),
     proc(msg: InboundMessage) =
       handleGatewayFallback(ctx, cfg, memory, msg, log))
 
@@ -1724,7 +1746,7 @@ proc drainTelegramGateway(ctx: DaemonContext;
   let services =
     buildDaemonSessionServices(ctx, cfg, memory, log) |>->
     withTypingFn(ctx.services.tgTypingFn)
-  drainTelegramEvents(ctx.runtime, ctx.adapters.tg, services, log)
+  drainTelegramEvents(ctx.runtime, ctx.adapters.tg, buildRuntimeOutboundPorts(ctx.adapters), services, log)
 
 proc drainGatewayEvents(ctx: DaemonContext;
                         cfg: DonkeyConfig;
@@ -1847,11 +1869,16 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
       buildCompleteFn(preferencesMd, buildProviderBundle)
     let modelCatalogLoader = buildModelCatalogLoader()
+    let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
     discord_runtime.checkDiscordOfflineMessages(
       ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, memory,
       completeBuilder, modelCatalogLoader,
       ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
       ctx.runtime.msgSeq, log,
+      proc(msg: InboundMessage) {.gcsafe.} =
+        stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),
+      proc(msg: InboundMessage) {.gcsafe.} =
+        completeInboundReactionStatus(ctx.runtime, outboundPorts, msg.channel, msg.userId, msg.channelId, false),
       proc(msg: InboundMessage) {.gcsafe.} =
         handleGatewayFallback(ctx, cfg, memory, msg, log))
 

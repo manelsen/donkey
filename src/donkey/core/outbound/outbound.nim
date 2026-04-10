@@ -8,6 +8,7 @@ type
     editableReplacement*: bool
     editableStreams*: bool
     interactiveComponents*: bool
+    messageReactions*: bool
 
   PresentationSurfaceKind* = enum
     pskReplaceable
@@ -187,12 +188,14 @@ func presentationCapabilities*(channel: ChannelKind): PresentationCapabilities =
       editableReplacement: true,
       editableStreams: true,
       interactiveComponents: true,
+      messageReactions: true,
     )
   else:
     PresentationCapabilities(
       editableReplacement: false,
       editableStreams: false,
       interactiveComponents: false,
+      messageReactions: false,
     )
 
 func supportsEditableStreams*(channel: ChannelKind): bool =
@@ -203,6 +206,9 @@ func supportsEditableReplacement*(channel: ChannelKind): bool =
 
 func supportsInteractiveComponents*(channel: ChannelKind): bool =
   presentationCapabilities(channel).interactiveComponents
+
+func supportsMessageReactions*(channel: ChannelKind): bool =
+  presentationCapabilities(channel).messageReactions
 
 func replacementSlotFor*(channel: ChannelKind;
                          slot: string): string =

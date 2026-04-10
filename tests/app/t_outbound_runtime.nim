@@ -245,3 +245,26 @@ suite "outbound_runtime":
     routeOutbound(final, ports, newLogger("test.outbound"), presentationState)
     check editedText == "m-stream:final"
     check presentationState.lookupStream(final) == ""
+
+  test "setOutboundReaction dispatches to reaction-capable channels only":
+    var seen = ""
+    let ports = OutboundChannelPorts(
+      telegram: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} = ok(),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m1"),
+        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} = ok(),
+        sendKeyboard: proc(userId: UserId; text: string;
+                           buttons: seq[seq[(string, string)]];
+                           replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
+        editKeyboard: proc(userId: UserId; msgId, text: string;
+                           buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}: seen = $userId & ":" & msgId & ":" & emoji
+          ok(),
+      )
+    )
+    check setOutboundReaction(
+      ckTelegram, UserId("u1"), "42", "⏳", ports, newLogger("test.outbound"))
+    check seen == "u1:42:⏳"
+    check not setOutboundReaction(
+      ckQQ, UserId("u1"), "42", "⏳", ports, newLogger("test.outbound"))

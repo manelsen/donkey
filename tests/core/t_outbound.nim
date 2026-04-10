@@ -68,12 +68,17 @@ suite "core outbound decisions":
     check tgCaps.editableReplacement
     check tgCaps.editableStreams
     check tgCaps.interactiveComponents
+    check tgCaps.messageReactions
     check not qqCaps.editableReplacement
     check not qqCaps.editableStreams
     check not qqCaps.interactiveComponents
+    check not qqCaps.messageReactions
     check replacementSlotFor(ckTelegram, "bootstrap") == "bootstrap"
     check replacementSlotFor(ckQQ, "bootstrap") == ""
     check interactiveSelectionFallbackText() == SharedButtonSelectionFallbackText
+    check supportsMessageReactions(ckTelegram)
+    check supportsMessageReactions(ckDiscord)
+    check not supportsMessageReactions(ckQQ)
 
   test "isImplementedOutboundChannel matches supported channels":
     check isImplementedOutboundChannel(ckTelegram)

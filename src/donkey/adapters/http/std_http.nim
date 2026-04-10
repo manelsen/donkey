@@ -70,6 +70,10 @@ proc patch*(a: StdHttpAdapter; url, body: string;
             headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
   a.requestWithRetry(HttpPatch, url, body, headers)
 
+proc delete*(a: StdHttpAdapter; url: string;
+             headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+  a.requestWithRetry(HttpDelete, url, "", headers)
+
 proc toRuntimePort*(a: StdHttpAdapter): HttpRuntimePort =
   HttpRuntimePort(
     get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
@@ -83,5 +87,8 @@ proc toRuntimePort*(a: StdHttpAdapter): HttpRuntimePort =
     ,
     patch: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
       result = a.patch(url, body, headers)
+    ,
+    delete: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      result = a.delete(url, headers)
     ,
   )

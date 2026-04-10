@@ -90,7 +90,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     editKeyboard: proc(userId: UserId; msgId, text: string;
                         buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} =
       dcAdapter[].editKeyboard(userId, msgId, text, buttons),
-    setMessageReaction: unsupportedSetMessageReaction,
+    setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} =
+      dcAdapter[].setMessageReaction(userId, msgId, emoji),
   )
   result.wecom = OutboundChannelPort(
     send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =

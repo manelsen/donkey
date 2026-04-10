@@ -289,10 +289,19 @@ proc handleDiscordEvent*(sm: var SessionManager;
                          daemonStartMs: int64;
                          msgSeq: var int;
                          logger: Logger;
+                         handleInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
+                         completeInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
                          handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.}) =
   case event.kind
   of deMessage:
     let userId = dcAdapter.resolver.resolve(ckDiscord, event.discordUserId)
+    let inbound = InboundMessage(
+      userId:    userId,
+      channel:   ckDiscord,
+      channelId: event.messageId,
+      text:      event.content,
+    )
+    handleInboundStatus(inbound)
     ## Save last processed message_id for offline recovery
     if event.messageId.len > 0:
       memory.saveChannelPreference(userId, "discord_last_msg_id", event.messageId)
@@ -370,35 +379,36 @@ proc handleDiscordEvent*(sm: var SessionManager;
           if linked: 0x57F287 else: 0xED4245, logger)
       else:
         discard
+      completeInboundStatus(inbound)
     of crSessionTask:
       if sm.hasSession(userId):
         let entry = sm.getOrCreate(userId)
         inc msgSeq
         entry.inbox.addLastNoWait(
           newTaskMsg($msgSeq, commandTaskKind(command), $userId, "", ckDiscord, ""))
+        completeInboundStatus(inbound)
       else:
         let errText =
           if command.kind == cmdDebug: "Nenhuma sessão ativa. Envie uma mensagem primeiro."
           else: "Nenhuma conversa ativa para reiniciar."
         sendDiscordEmbed(event, dcAdapter, userId, "ℹ️ Info", errText, 0xED4245, logger)
+        completeInboundStatus(inbound)
     of crUi:
       discard handleDiscordUiCommand(event, dcAdapter, presentationState, memory, userId, command, modelCatalogLoader, toolsCount, toolClientsCount, daemonStartMs, msgSeq, logger)
+      completeInboundStatus(inbound)
     of crPing:
       let pingText = buildPingText(memory, userId, completeBuilder)
       let pingColor = if "error" in pingText: 0xED4245 else: 0x57F287
       sendDiscordEmbed(event, dcAdapter, userId, "🏓 Ping", pingText, pingColor, logger)
+      completeInboundStatus(inbound)
     of crStatus:
       sendDiscordEmbed(event, dcAdapter, userId,
         "📊 Status",
         buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs),
         0x57F287, logger)
+      completeInboundStatus(inbound)
     of crCallback, crNone:
-      handleSessionFallback(InboundMessage(
-        userId:    userId,
-        channel:   ckDiscord,
-        channelId: event.messageId,
-        text:      event.content,
-      ))
+      handleSessionFallback(inbound)
 
   of deInteraction:
     let code = event.content |> strip
@@ -446,6 +456,8 @@ proc checkDiscordOfflineMessages*(sm: var SessionManager;
                                    daemonStartMs: int64;
                                    msgSeq: var int;
                                    logger: Logger;
+                                   handleInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
+                                   completeInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
                                    handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.}) =
   ## One-time startup check for messages received while the bot was down.
   ## NOTE: Discord does NOT deliver DMs sent while bot was offline.
@@ -483,6 +495,7 @@ proc checkDiscordOfflineMessages*(sm: var SessionManager;
         messageId:     msgId,
       ), dcAdapter, presentationState, memory, completeBuilder,
          modelCatalogLoader, toolsCount, toolClientsCount, daemonStartMs, msgSeq, logger,
+         handleInboundStatus, completeInboundStatus,
          handleSessionFallback)
       memory.saveChannelPreference(userId, "discord_last_msg_id", msgId)
     if newMsgCount > 0:
@@ -500,6 +513,8 @@ proc drainDiscordEvents*(sm: var SessionManager;
                          daemonStartMs: int64;
                          msgSeq: var int;
                          logger: Logger;
+                         handleInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
+                         completeInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
                          handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.}) =
   if discordToken.len == 0:
     return
@@ -509,5 +524,7 @@ proc drainDiscordEvents*(sm: var SessionManager;
     logger.info("discord event: " & $event.kind & " from " & event.discordUserId)
     handleDiscordEvent(sm, event, dcAdapter, presentationState, memory, completeBuilder,
                        modelCatalogLoader, toolsCount, toolClientsCount, daemonStartMs, msgSeq, logger,
+                       handleInboundStatus,
+                       completeInboundStatus,
                        handleSessionFallback)
     (hasEvent, event) = dcAdapter.tryRecvEvent()

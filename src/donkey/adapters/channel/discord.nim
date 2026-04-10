@@ -15,7 +15,7 @@
 ##   Provider LLM calls (max ~10 s) block the event loop but not this thread.
 ##   Discord heartbeat interval is ~41 s; occasional missed beats are tolerated.
 
-import std/[json, net, os, random, strutils, tables, times]
+import std/[json, net, os, random, strutils, tables, times, uri]
 import ../../core/log
 import ../../core/app_meta
 import ../../core/commands/command_catalog
@@ -599,6 +599,35 @@ proc editMessage*(a: DiscordAdapter; userId: UserId;
   let resp = ? a.http.patch(url, $body, headers)
   if resp.status < 200 or resp.status >= 300:
     return err("Discord editMessage error " & $resp.status)
+  ok()
+
+proc setMessageReaction*(a: DiscordAdapter; userId: UserId;
+                         msgId, emoji: string): Result[void, string] =
+  ## Adds or removes a status reaction on an existing DM message.
+  ## Discord does not have a "set reaction" endpoint, so we remove known status
+  ## reactions first, then add the desired one when non-empty.
+  const StatusReactionSet = ["⏳", "✅", "❌"]
+  let discordId = a.resolver.reverseChannel(userId, ckDiscord)
+  if discordId.len == 0:
+    return err("DiscordAdapter.setMessageReaction: no Discord ID for " & $userId)
+  let chId = ? a.dmChannelFor(discordId)
+  let headers = @[a.authHeader()]
+  for prior in StatusReactionSet:
+    let encoded = encodeUrl(prior, usePlus = false)
+    let removeUrl = a.base() & "/channels/" & chId &
+      "/messages/" & msgId & "/reactions/" & encoded & "/@me"
+    let resp = ? a.http.delete(removeUrl, headers)
+    if resp.status != 204 and resp.status != 404:
+      return err("Discord remove reaction error " & $resp.status & ": " & resp.body)
+
+  if emoji.len == 0:
+    return ok()
+
+  let addUrl = a.base() & "/channels/" & chId &
+    "/messages/" & msgId & "/reactions/" & encodeUrl(emoji, usePlus = false) & "/@me"
+  let addResp = ? a.http.put(addUrl, "", headers)
+  if addResp.status != 204 and addResp.status != 200:
+    return err("Discord add reaction error " & $addResp.status & ": " & addResp.body)
   ok()
 
 proc ack*(a: DiscordAdapter; channelId: string) =
