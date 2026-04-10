@@ -5,6 +5,8 @@
 
 import std/[os, strutils, unittest]
 import donkey/app/setup_wizard
+import donkey/app/doctor
+import donkey/config/loader
 
 suite "buildTomlContent":
 
@@ -144,3 +146,37 @@ suite "setupAlreadyDone":
       if dirExists(tmpHome): removeDir(tmpHome)
     writeFile(tmpHome / "donkey" / "donkey.toml", "home = \"/tmp/x\"\n")
     check setupAlreadyDone()
+
+suite "setup paths and snapshot":
+
+  test "config and env paths resolve inside XDG config home":
+    let tmpHome = getTempDir() / "donkey_cfg_paths_xyz"
+    if dirExists(tmpHome): removeDir(tmpHome)
+    createDir(tmpHome)
+    putEnv("XDG_CONFIG_HOME", tmpHome)
+    defer:
+      delEnv("XDG_CONFIG_HOME")
+      if dirExists(tmpHome): removeDir(tmpHome)
+    check configFilePath() == tmpHome / "donkey" / "donkey.toml"
+    check envFilePath() == tmpHome / "donkey" / "donkey.env"
+
+  test "generated config produces coherent runtime snapshot":
+    let testDir = getTempDir() / "donkey_setup_snapshot"
+    if dirExists(testDir): removeDir(testDir)
+    createDir(testDir)
+    defer:
+      if dirExists(testDir): removeDir(testDir)
+    let tomlContent = buildTomlContent(
+      home = testDir,
+      logLevel = "info",
+      runtime = "docker",
+      defaultProvider = "zai-coding",
+      defaultModel = "glm-4.7",
+    )
+    let tomlPath = testDir / "donkey.toml"
+    writeFile(tomlPath, tomlContent)
+    let cfg = loadConfig(tomlPath)
+    let summary = buildDoctorSummary(cfg)
+    check "SQLite-first MAGMA" in summary
+    check "zai-coding / glm-4.7" in summary
+    check "mode=oci, runtime=docker" in summary
