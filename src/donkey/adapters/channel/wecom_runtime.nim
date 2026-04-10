@@ -83,6 +83,9 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
       case command.route
       of crLocal:
         case decideLocalCommandAction(command)
+        of lcaShowAbout:
+          wcMd(wcAdapter, userId, buildWeComDoctorMd(
+            buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount())))
         of lcaStartIntro:
           wcReply(wcAdapter, userId, buildStartIntroText())
         of lcaSkillCommand:

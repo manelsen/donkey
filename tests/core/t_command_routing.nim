@@ -53,6 +53,8 @@ suite "core command routing":
     check decision.route == cbrSessionTask
 
   test "parseCommandText parses ui and status commands":
+    check parseCommandText("/about").kind == cmdAbout
+    check parseCommandText("/about").route == crLocal
     check parseCommandText("/models").kind == cmdModels
     check parseCommandText("/models").route == crUi
     check parseCommandText("/model").kind == cmdModels
@@ -112,6 +114,7 @@ suite "core command routing":
         check decision.kind == kind
 
   test "decideCommandRoute classifies key command families":
+    check decideCommandRoute(cmdAbout) == crLocal
     check decideCommandRoute(cmdHelp) == crLocal
     check decideCommandRoute(cmdDebug) == crSessionTask
     check decideCommandRoute(cmdVerbose) == crUi
@@ -130,6 +133,7 @@ suite "core command routing":
     check commandTaskKind(CommandDecision(kind: cmdReset)) == tkReset
 
   test "decideLocalCommandAction maps local command semantics":
+    check decideLocalCommandAction(CommandDecision(kind: cmdAbout)) == lcaShowAbout
     check decideLocalCommandAction(CommandDecision(kind: cmdStart)) == lcaStartIntro
     check decideLocalCommandAction(CommandDecision(kind: cmdMyCode)) == lcaGenerateLinkCode
     check decideLocalCommandAction(CommandDecision(kind: cmdForget)) == lcaClearMemory

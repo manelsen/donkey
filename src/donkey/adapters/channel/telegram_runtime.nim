@@ -518,6 +518,15 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
                                 toolClientsCount: int;
                                 msgSeq: var int): bool =
   case decideLocalCommandAction(command)
+  of lcaShowAbout:
+    tgAdapter.send(OutboundMessage(
+      userId:  msg.userId,
+      channel: ckTelegram,
+      text:    buildAboutText(memory, msg.userId, toolsCount, toolClientsCount, sm.sessionCount()),
+      replyTo: msg.channelId,
+    )).isOkOr:
+      discard
+    return true
   of lcaStartIntro:
     tgAdapter.send(OutboundMessage(
       userId:  msg.userId,

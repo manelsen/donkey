@@ -187,6 +187,10 @@ func newCommandMetadata(kind: CommandKind;
 
 func commandCatalogItems(): seq[CommandMetadata] =
   @[
+    newCommandMetadata(cmdAbout, "Show runtime overview",
+      "visão geral do runtime atual", "Visão geral do runtime atual",
+      "Show a concise runtime overview", ccStatus),
+
     # Navigation
     newCommandMetadata(cmdStart, "Start a conversation",
       "apresentação", "Inicia ou recomeça a conversa", "Show the intro text",

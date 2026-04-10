@@ -47,6 +47,7 @@ Donkey supports slash commands with semantic routing. Commands start with `/` an
 
 | Command | Description | Route |
 |---------|-------------|-------|
+| `/about` | Runtime overview | `crLocal` |
 | `/status` | Show model and stats | `crStatus` |
 | `/tasks` | List background tasks | `crUi` |
 | `/agents` | Show active agents | `crUi` |

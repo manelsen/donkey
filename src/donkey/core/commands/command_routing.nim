@@ -7,6 +7,7 @@ import ../../domain/message
 type
   CommandKind* = enum
     cmdNone
+    cmdAbout
     cmdStart
     cmdMenu
     cmdWhoami
@@ -61,6 +62,7 @@ type
 
   LocalCommandAction* = enum
     lcaNone
+    lcaShowAbout
     lcaStartIntro
     lcaShowMenu
     lcaShowWhoami
@@ -115,6 +117,7 @@ type
 
 func primaryCommandName*(kind: CommandKind): string =
   case kind
+  of cmdAbout: "/about"
   of cmdStart: "/start"
   of cmdMenu: "/menu"
   of cmdWhoami: "/whoami"
@@ -179,7 +182,7 @@ func parseCommandKind*(token: string): CommandKind =
 
 func decideCommandRoute*(kind: CommandKind): CommandRoute =
   case kind
-  of cmdStart, cmdMenu, cmdWhoami, cmdSkill, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
+  of cmdAbout, cmdStart, cmdMenu, cmdWhoami, cmdSkill, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
      cmdMyCode, cmdContinue, cmdReasoning:
     crLocal
   of cmdDebug, cmdReset, cmdCompact, cmdNew,
@@ -242,6 +245,8 @@ func decideCommandRequest*(request: CommandRequest): CommandDecision =
 
 func decideLocalCommandAction*(decision: CommandDecision): LocalCommandAction =
   case decision.kind
+  of cmdAbout:
+    lcaShowAbout
   of cmdStart:
     lcaStartIntro
   of cmdMenu:
@@ -375,7 +380,7 @@ func commandTaskKind*(decision: CommandDecision): TaskKind =
 
 func isCoreCommand*(kind: CommandKind): bool =
   kind in {
-    cmdStart, cmdMenu, cmdWhoami, cmdSkill, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
+    cmdAbout, cmdStart, cmdMenu, cmdWhoami, cmdSkill, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
     cmdDebug, cmdReset, cmdMyCode, cmdContinue
   }
 

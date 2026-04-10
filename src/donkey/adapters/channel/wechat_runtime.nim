@@ -49,6 +49,10 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
       case command.route
       of crLocal:
         case decideLocalCommandAction(command)
+        of lcaShowAbout:
+          wchAdapter.sendWeChatReply(
+            userId,
+            buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount()))
         of lcaStartIntro:
           wchAdapter.sendWeChatReply(userId, buildStartIntroText())
         of lcaSkillCommand:

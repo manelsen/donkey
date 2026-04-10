@@ -309,6 +309,11 @@ proc handleDiscordEvent*(sm: var SessionManager;
     case command.route
     of crLocal:
       case decideLocalCommandAction(command)
+      of lcaShowAbout:
+        sendDiscordEmbed(event, dcAdapter, userId,
+          "🫏 Donkey",
+          buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount()),
+          0x5865F2, logger)
       of lcaStartIntro:
         sendDiscordEmbed(event, dcAdapter, userId,
           "👋 Donkey", buildStartIntroText(), 0x5865F2, logger)

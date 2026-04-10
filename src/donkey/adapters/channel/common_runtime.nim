@@ -487,6 +487,38 @@ proc buildTextStatusText*(memory: MdFileAdapter;
     "Memórias: " & $memLines & " linhas\n" &
     "Uptime: " & uptimeStr
 
+proc buildAboutText*(memory: MdFileAdapter;
+                     userId: UserId;
+                     toolsCount: int;
+                     toolClientsCount: int;
+                     sessionCount: int): string =
+  let (prov, mdl) = memory.getCurrentProviderModel(userId)
+  let storage =
+    if getEnv("DONKEY_PG_DSN").strip.len > 0 or memory.magmaDsn.len > 0:
+      "PostgreSQL-backed MAGMA"
+    elif memory.magmaSqlitePath.len > 0:
+      "SQLite-first MAGMA (" & memory.magmaSqlitePath & ")"
+    else:
+      "Markdown paddocks"
+  let webSearch =
+    if getEnv("BRAVE_API_KEY").len > 0: "enabled"
+    else: "disabled"
+  var channels: seq[string] = @[]
+  if getEnv("TELEGRAM_BOT_TOKEN").len > 0: channels.add("Telegram")
+  if getEnv("DISCORD_BOT_TOKEN").len > 0: channels.add("Discord")
+  if getEnv("WECOM_CORP_ID").len > 0: channels.add("WeCom")
+  if getEnv("WECHAT_APP_ID").len > 0 or getEnv("WECHAT_CALLBACK_TOKEN").len > 0: channels.add("WeChat")
+  if getEnv("FEISHU_APP_ID").len > 0: channels.add("Feishu")
+  if getEnv("QQ_ONEBOT_URL").len > 0 or getEnv("QQ_OFFICIAL_APP_ID").len > 0: channels.add("QQ")
+  "🫏 *Donkey*\n\n" &
+    "*Provider atual:* `" & prov & " / " & mdl & "`\n" &
+    "*Storage:* " & storage & "\n" &
+    "*Web search:* " & webSearch & "\n" &
+    "*Channels ativos:* " & (if channels.len > 0: channels.join(", ") else: "nenhum") & "\n" &
+    "*Ferramentas:* " & $toolsCount & " nativas, " & $toolClientsCount & " clientes MCP\n" &
+    "*Sessões ativas:* " & $sessionCount & "\n\n" &
+    "Use `/doctor` para checagem completa, `/status` para a sessão atual e `/memory` para ver memória."
+
 func buildWhoamiText*(userId: UserId; sessionId, channelId: string): string =
   "🆔 *Identity*\n\n" &
   "*Donkey ID:* `" & $userId & "`\n" &

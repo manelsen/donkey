@@ -68,7 +68,7 @@ suite "Command Catalog":
   test "all direct commands from routing are in catalog":
     let catalog = newCommandCatalog()
     # Direct commands from parseCommandText (without prefix variants like /models xxx)
-    let expectedCmds = @["/start", "/forget", "/doctor", "/help", "/memory",
+    let expectedCmds = @["/about", "/start", "/forget", "/doctor", "/help", "/memory",
                          "/debug", "/reset", "/mycode", "/continue",
                          "/ping", "/status", "/compact", "/new"]
     for cmd in expectedCmds:

@@ -84,6 +84,7 @@ Options:
 
 Commands:
   setup                          Interactive first-run configuration wizard
+  about                          Show a concise runtime overview
   start                          Start the daemon
   ctl user list                  List registered users
   ctl user show <uuid>           Show user profile
@@ -111,7 +112,7 @@ Commands:
   service stop                   systemctl --user stop """ & AppSlug & """
   service restart                systemctl --user restart """ & AppSlug & """
   service logs [-f] [--cat]      Show service logs (follow with -f, clean output with --cat)
-  doctor                         Check external dependencies (container runtime, pgvector, API keys)
+  doctor                         Run the full runtime diagnostic
 """
 
 # ── service commands ───────────────────────────────────────────────────────────
@@ -2073,6 +2074,10 @@ proc main =
 
   if args.len >= 1 and args[0] == "doctor":
     quit(runDoctor(cfg, devMode))
+
+  if args.len >= 1 and args[0] == "about":
+    echo buildDoctorSummary(cfg, devMode)
+    quit(0)
 
   log.info(AppSlug & " " & Version & " starting")
   log.info("home: " & cfg.home)

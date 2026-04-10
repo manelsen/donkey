@@ -40,6 +40,8 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
       of crLocal:
         let reply =
           case decideLocalCommandAction(command)
+          of lcaShowAbout:
+            buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount())
           of lcaStartIntro:
             buildStartIntroText()
           of lcaSkillCommand:

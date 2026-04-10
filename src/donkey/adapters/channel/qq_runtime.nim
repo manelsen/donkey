@@ -238,6 +238,12 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
       case command.route
       of crLocal:
         case decideLocalCommandAction(command)
+        of lcaShowAbout:
+          qqAdapter.send(OutboundMessage(
+            userId: userId,
+            channel: ckQQ,
+            text: buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount()),
+          )).isOkOr: discard
         of lcaStartIntro:
           qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: buildStartIntroText())).isOkOr: discard
         of lcaSkillCommand:
