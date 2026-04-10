@@ -7,6 +7,12 @@ The ChannelPort provides a unified interface for all messaging channels. This ab
 
 **Architecture:** Channels are Adapters that implement the ChannelPort concept.
 
+The current operational model is:
+- channel tokens and secrets come from env vars, not per-channel TOML blocks
+- outbound capabilities such as editable UI, streaming edits, components, and
+  reactions are declared in `src/donkey/core/outbound/outbound.nim`
+- `setup`, `doctor`, and `about` are the primary operational entry points
+
 ---
 
 ## ChannelPort Concept
@@ -245,10 +251,8 @@ Located in `src/donkey/adapters/channel/telegram.nim`
 
 **Configuration:**
 
-```toml
-[telegram]
-enabled = true
-bot_token = "YOUR_TOKEN"
+```bash
+export TELEGRAM_BOT_TOKEN=YOUR_TOKEN
 ```
 
 ---
@@ -265,10 +269,8 @@ Located in `src/donkey/adapters/channel/discord.nim`
 
 **Configuration:**
 
-```toml
-[discord]
-enabled = true
-bot_token = "YOUR_TOKEN"
+```bash
+export DISCORD_BOT_TOKEN=YOUR_TOKEN
 ```
 
 ---
@@ -278,17 +280,13 @@ bot_token = "YOUR_TOKEN"
 Located in `src/donkey/adapters/channel/slack.nim`
 
 **Features:**
-- Send/receive messages
-- Interactive components
-- Block Kit
+- Adapter-level send/edit support
+- No shared editable UI or reaction capability in the current runtime matrix
 
 **Configuration:**
 
-```toml
-[slack]
-enabled = true
-bot_token = "xoxb-..."
-signing_secret = "..."
+```bash
+# Configure Slack adapter credentials in the runtime env if you enable Slack.
 ```
 
 ---
@@ -324,7 +322,7 @@ The runtime projects outbound behavior through a shared capability matrix owned 
 import donkey/domain/message
 import donkey/adapters/channel/telegram
 
-let adapter = newTelegramAdapter(config)
+let adapter = newTelegramAdapter(token = getEnv("TELEGRAM_BOT_TOKEN"))
 let msg = OutboundMessage(
   userId: UserId("user_123"),
   text: "Hello!",
@@ -354,7 +352,7 @@ let result = adapter.sendKeyboard(
 ### Receive Messages
 
 ```nim
-var adapter = newTelegramAdapter(config)
+var adapter = newTelegramAdapter(token = getEnv("TELEGRAM_BOT_TOKEN"))
 let messages = adapter.receive()
 
 for msg in messages:

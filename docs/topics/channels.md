@@ -3,7 +3,10 @@ Messaging platform integrations
 
 ## Overview
 
-Donkey supports 13 messaging platforms through a unified ChannelPort interface. Each platform has its own adapter that translates between the platform's API and Donkey's internal message format.
+Donkey exposes a unified channel abstraction over the messaging adapters it ships.
+The adapters translate between platform-specific APIs and Donkey's internal
+message format, while outbound UI behavior is governed by the shared capability
+model in `core/outbound`.
 
 ## Supported Channels
 
@@ -39,10 +42,8 @@ This matrix reflects the current `core/outbound` capability model used by the ru
 
 ### Configuration
 
-```toml
-[telegram]
-enabled = true
-bot_token = "YOUR_BOT_TOKEN"
+```bash
+export TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN
 ```
 
 ### Bot Commands
@@ -78,20 +79,15 @@ adapter.sendKeyboard(userId, "Continue?", buttons)
 
 ### Configuration
 
-```toml
-[discord]
-enabled = true
-bot_token = "YOUR_DISCORD_TOKEN"
-application_id = "YOUR_APP_ID"
-guild_id = "YOUR_GUILD_ID"  # Optional
+```bash
+export DISCORD_BOT_TOKEN=YOUR_DISCORD_TOKEN
 ```
 
 ### Required Intents
 
 Enable these in Discord Developer Portal:
 - `MESSAGE CONTENT INTENT` - Required for reading messages
-- `GUILD MESSAGES` - For guild channels
-- `DIRECT MESSAGES` - For DMs
+- direct messages / message create events for DM use
 
 ### Slash Commands
 
@@ -107,12 +103,10 @@ Register in your server or globally via API.
 
 ### Configuration
 
-```toml
-[slack]
-enabled = true
-bot_token = "xoxb-..."
-signing_secret = "YOUR_SIGNING_SECRET"
-app_token = "xapp-..."  # Optional, for socket mode
+```bash
+# Slack support is adapter-level today and not part of the recommended
+# quickstart path. Configure the corresponding adapter tokens in the env
+# used to start Donkey.
 ```
 
 ### Required Scopes
@@ -125,28 +119,26 @@ app_token = "xapp-..."  # Optional, for socket mode
 
 ## CLI
 
-The command-line interface provides direct access without a messaging platform.
+The CLI is not part of the outbound capability matrix. It is an operational
+surface for `setup`, `doctor`, `about`, `service`, and local daemon control.
 
 ### Usage
 
 ```bash
-./donkey --cli
+./donkey about
+./donkey doctor
+./donkey service start
 ```
 
 ### Example Session
 
 ```
-> Hello!
-Hello! How can I help you today?
-
-> What time is it?
-It's currently 3:45 PM.
-
-> /reset
-Session reset. How can I help you?
-
-> /exit
-Goodbye!
+Snapshot
+--------
+- storage: SQLite-first MAGMA (/home/user/.donkey/state/magma.sqlite)
+- default model: smart routing
+- web search: disabled (set BRAVE_API_KEY to enable web_search)
+- sandbox: mode=oci, runtime=docker, network=off, rootfs=ro, host-fallback=off
 ```
 
 ---
@@ -171,16 +163,17 @@ of ckCli:
 
 ## Multi-Channel Sessions
 
-A user can have sessions across multiple channels:
+A user can be reached across multiple channels:
 
 ```
 User: alice
-├── Session: telegram_123 (Telegram)
-├── Session: discord_456 (Discord)
-└── Session: cli_789 (CLI)
+├── telegram
+├── discord
+└── qq
 ```
 
-Each channel maintains its own session history.
+The runtime keeps channel identity mappings while the session/memory layer owns
+the actual conversational state.
 
 ---
 
@@ -188,18 +181,8 @@ Each channel maintains its own session history.
 
 Control who can send direct messages:
 
-```toml
-[donkey.security]
-dm_policy = "allow"  # allow, block, whitelist
-```
-
-### Whitelist Mode
-
-```toml
-[donkey.security]
-dm_policy = "whitelist"
-dm_whitelist = ["user_id_1", "user_id_2"]
-```
+See `docs/reference/configuration.md` for the active DM policy fields and the
+current config shape.
 
 ---
 
