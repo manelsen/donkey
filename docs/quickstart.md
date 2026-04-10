@@ -5,7 +5,7 @@ Get Donkey running in a few minutes with the current SQLite-first setup.
 
 - Nim 2.2 or higher
 - One channel token, such as `TELEGRAM_BOT_TOKEN` or `DISCORD_BOT_TOKEN`
-- One provider API key, such as `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, or `MINIMAX_API_KEY`
+- One provider API key, such as `ZAI_CODING_API_KEY`, `OPENROUTER_API_KEY`, or `MINIMAX_API_KEY`
 - `docker` or `podman` if you want the recommended hardened shell sandbox
 
 ## 1. Build
@@ -35,6 +35,7 @@ It also:
 - detects a usable OCI runtime and writes it into `[sandbox].runtime`
 - keeps the hardened sandbox defaults
 - offers optional Brave Search setup for the `web_search` tool
+- asks for the instance-wide default provider/model used before a user picks one
 - prints the exact `doctor` and `start` commands at the end
 
 If you want to override the generated config, the resulting `donkey.toml` looks like this:
@@ -59,7 +60,7 @@ Your generated `donkey.env` will contain only the tokens and keys you supplied. 
 
 ```bash
 TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN_HERE
-OPENROUTER_API_KEY=YOUR_PROVIDER_KEY_HERE
+ZAI_CODING_API_KEY=YOUR_PROVIDER_KEY_HERE
 BRAVE_API_KEY=YOUR_BRAVE_SEARCH_KEY   # optional, enables web_search
 ```
 
@@ -90,6 +91,7 @@ This checks:
 
 - config parsing
 - SQLite-first runtime wiring
+- the active storage path and default provider/model
 - sandbox policy
 - availability of the configured OCI runtime
 - provider, channel, and optional Brave Search credentials

@@ -142,20 +142,24 @@ QQ_OFFICIAL_CLIENT_SECRET=
 
 ZAI_API_KEY=
 ZAI_CODING_API_KEY=
-ZHIPU_API_KEY=
+ZAI_ANTHROPIC_API_KEY=
 OPENROUTER_API_KEY=
+OPENAI_API_KEY=
+DEEPSEEK_API_KEY=
 ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
 MINIMAX_API_KEY=
 OPENCODE_API_KEY=
 
 BRAVE_API_KEY=
-# Recommended PostgreSQL for Multigraph Memory:
+# SQLite-first runtime (default):
+# DONKEY_MAGMA_SQLITE_PATH=/path/to/donkey-magma.sqlite
+# DONKEY_SQLITE_VEC_PATH=/absolute/path/to/vec0
+#
+# Optional PostgreSQL for larger Multigraph Memory installs:
 #   docker compose up -d postgres
 #   if 5432 is busy: DONKEY_PG_PORT=5433 docker compose up -d postgres
 # DONKEY_PG_DSN=host=127.0.0.1 user=postgres password=donkey_pass dbname=donkey port=5432
-# DONKEY_MAGMA_SQLITE_PATH=/path/to/donkey-magma.sqlite
-# DONKEY_SQLITE_VEC_PATH=/absolute/path/to/vec0
 """
 
 const TomlTemplate = """# """ & AppName & """ configuration

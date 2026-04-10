@@ -3,6 +3,8 @@ home = "~/.donkey"
 paddocks = "~/.donkey/paddocks"
 log_level = "info"
 log_file = "~/.donkey/donkey.log"
+default_provider = "zai-coding"
+default_model = "glm-4.7"
 
 [sandbox]
 mode = "oci"

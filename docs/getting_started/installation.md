@@ -17,7 +17,7 @@ How to install and configure Donkey with the current SQLite-first runtime.
 | Dependency | Purpose | Install |
 |------------|---------|---------|
 | OCI runtime | Hardened shell sandbox | `docker` or `podman` |
-| PostgreSQL | Optional graph-backed MAGMA runtime | `libpq-dev` |
+| PostgreSQL | Optional graph-backed MAGMA runtime | `libpq-dev` or a running PostgreSQL service |
 
 In the normal SQLite-first build, SQLite base and `sqlite-vec` are embedded in
 the Donkey binary. You do not need `libsqlite3-dev` or a separate vector
@@ -33,9 +33,6 @@ cd donkey
 
 # Standard build (SQLite-first)
 nimble build
-
-# Optional PostgreSQL-capable build
-nimble build -d:withPostgres
 
 # Production build
 nim c -d:release --mm:orc --warningAsError:on src/donkey.nim
@@ -80,6 +77,8 @@ That command now:
 - creates local state directories under `~/.donkey/`
 - auto-selects a usable OCI runtime when available
 - keeps the hardened sandbox defaults
+- asks for the instance-wide default provider/model
+- offers optional Brave Search setup for `web_search`
 
 If you prefer a manual setup, copy the example files:
 
@@ -113,7 +112,7 @@ read_only_rootfs = true
 
 ```bash
 TELEGRAM_BOT_TOKEN=YOUR_TELEGRAM_BOT_TOKEN
-OPENROUTER_API_KEY=YOUR_PROVIDER_KEY
+ZAI_CODING_API_KEY=YOUR_PROVIDER_KEY
 BRAVE_API_KEY=YOUR_BRAVE_SEARCH_KEY   # optional, enables web_search
 ```
 
@@ -138,8 +137,8 @@ Fill in only the tokens and keys you actually use.
 ```
 
 `doctor` verifies config parsing, storage wiring, sandbox policy, runtime
-availability, and optional credentials such as `BRAVE_API_KEY` when you want
-the `web_search` tool to work.
+availability, the effective default provider/model, and optional credentials
+such as `BRAVE_API_KEY` when you want the `web_search` tool to work.
 
 ## Running
 
@@ -175,6 +174,15 @@ docker run -d \
 ```
 
 Use a non-root runtime setup so host-mounted state does not become `root`-owned.
+
+This is primarily a packaging path. The default operational story on a Linux
+host is still:
+
+```bash
+nimble build
+./donkey setup
+./donkey start
+```
 
 ## Troubleshooting
 

@@ -3,15 +3,15 @@ An AI agent daemon for multi-channel messaging
 
 ## Overview
 
-Donkey connects multiple messaging channels (Telegram, Discord, Slack, WeChat...) to various LLM providers. It uses a hexagonal architecture where the core domain is isolated from infrastructure concerns, ships SQLite-first by default, and treats outbound UI as a core presentation concern rather than adapter-local state.
+Donkey connects multiple messaging channels to various LLM providers. It uses a hexagonal architecture where the core domain is isolated from infrastructure concerns, ships SQLite-first by default, and treats outbound UI as a shared presentation concern rather than adapter-local state.
 
 ## Features
 
-- **Multi-Channel**: 12+ channel integrations (Telegram, Discord, Slack, WeChat, QQ, WhatsApp...)
-- **Multi-Provider**: Connect to any LLM provider (Anthropic, OpenAI, OpenRouter, Gemini...)
-- **Hooks System**: Intercept and modify message flow at any phase
-- **Memory**: Persistent workspace memory with optional semantic retrieval
+- **Multi-Channel**: Telegram, Discord, QQ, Slack, WeChat, Feishu, Matrix, and more
+- **Multi-Provider**: ZAI, OpenRouter, Anthropic, OpenAI, Gemini, DeepSeek, MiniMax, Ollama
+- **SQLite-first Memory**: Embedded SQLite + `sqlite-vec` in the normal build
 - **Pure Core**: Hexagonal architecture with pure functional cores
+- **Operational Surface**: `setup`, `doctor`, `service`, TUI dashboard, and heartbeat automation
 
 ## Quick Example
 
@@ -21,12 +21,13 @@ nimble build
 ./donkey start
 ```
 
-## Installation
+## Happy Path
 
 ```bash
-git clone https://github.com/manelsen/donkey.git
-cd donkey
 nimble build
+./donkey setup
+./donkey doctor
+./donkey start
 ```
 
 See [Installation Guide](getting_started/installation.md) for detailed setup.
@@ -35,20 +36,20 @@ See [Installation Guide](getting_started/installation.md) for detailed setup.
 
 ```
 ┌─────────────────────────────────────────┐
-│              Channels                     │
-│  (Telegram, Discord, Slack...)          │
+│            Channels + UI                  │
+│ (Telegram, Discord, QQ, Slack...)        │
 └──────────────────┬──────────────────────┘
                    │
                    ▼
 ┌─────────────────────────────────────────┐
-│              Core                        │
-│  Session, Orchestrator, Hooks            │
+│       Core / Sessions / Outbound         │
+│  Orchestrator, routing, presentation     │
 └──────────────────┬──────────────────────┘
                    │
                    ▼
 ┌─────────────────────────────────────────┐
-│              Providers                   │
-│  (Anthropic, OpenAI, Gemini...)         │
+│    Providers / Memory / Tool Runtimes    │
+│ SQLite-first MAGMA, tools, providers     │
 └─────────────────────────────────────────┘
 ```
 
@@ -73,18 +74,11 @@ See [Installation Guide](getting_started/installation.md) for detailed setup.
 ## Command Line
 
 ```bash
-# Start daemon
-./donkey start
-
-# Validate install
+./donkey setup
 ./donkey doctor
-
-# User service
+./donkey start
 ./donkey service install
 ./donkey service start
-
-# Version
-./donkey --version
 ```
 
 ## Configuration
@@ -103,6 +97,14 @@ image = "alpine"
 allow_host_fallback = false
 allow_network = false
 read_only_rootfs = true
+```
+
+Optional instance defaults:
+
+```toml
+[donkey]
+default_provider = "zai-coding"
+default_model = "glm-4.7"
 ```
 
 ## Slash Commands

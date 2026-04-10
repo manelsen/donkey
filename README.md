@@ -1,7 +1,7 @@
 # Donkey
 
 AI agent system written in Nim. Self-hosted, multi-channel, multi-provider.
-Designed to run on a VPS and scale down to a Raspberry Pi Zero.
+Designed to run on a VPS, a laptop, or a small Linux box with a SQLite-first local runtime.
 
 ## Requirements
 
@@ -13,10 +13,10 @@ Designed to run on a VPS and scale down to a Raspberry Pi Zero.
 ## Build
 
 ```bash
-# Development build (fast, Multigraph Memory enabled by default)
+# Development build (SQLite-first, fast path enabled by default)
 nimble build
 
-# Release build (stripped, ~550KB)
+# Release build
 nim c -d:release --opt:size \
   --passC:"-ffunction-sections -fdata-sections" \
   --passL:"-Wl,--gc-sections" \
@@ -27,10 +27,10 @@ strip donkey_release
 nimble test
 ```
 
-To build a Markdown-only binary without PostgreSQL support:
+To build without SQLite support:
 
 ```bash
-nimble build -u:withPostgres
+nimble build -u:withSqlite
 ```
 
 ## Configuration
@@ -60,8 +60,12 @@ read_only_rootfs = true
 |----------|----------|-------------|
 | `TELEGRAM_BOT_TOKEN` | For Telegram | Telegram bot token |
 | `DISCORD_BOT_TOKEN` | For Discord | Discord bot token |
-| `ZHIPU_API_KEY` | For Zhipu | API key from api.z.ai |
+| `ZAI_API_KEY` | Optional | ZAI generic provider |
+| `ZAI_CODING_API_KEY` | Optional | Default tool-heavy provider path |
+| `ZAI_ANTHROPIC_API_KEY` | Optional | Anthropic-compatible ZAI provider |
 | `OPENROUTER_API_KEY` | For OpenRouter | Fallback provider |
+| `OPENAI_API_KEY` | Optional | OpenAI provider |
+| `DEEPSEEK_API_KEY` | Optional | DeepSeek provider |
 | `ANTHROPIC_API_KEY` | For Anthropic | claude-* models |
 | `GEMINI_API_KEY` | For Gemini | gemini-* models |
 | `MINIMAX_API_KEY` | For MiniMax | MiniMax-M2 |
@@ -72,12 +76,11 @@ read_only_rootfs = true
 | `DONKEY_MASTER_KEY` | If using secrets | Master key for encrypted secrets |
 | `DONKEY_HTTP_PORT` | Optional | HTTP gateway port. Set to `0` to disable it |
 
-### SQLite default
+### SQLite-first default
 
-SQLite-backed MAGMA is now the default local path. If Donkey is built with
-`-d:withSqlite`, it will use `~/.donkey/state/magma.sqlite` automatically unless
-you override it. In this mode the build is self-contained: SQLite base and
-`sqlite-vec` are compiled into the Donkey binary.
+The normal build is SQLite-first. It uses `~/.donkey/state/magma.sqlite`
+automatically unless you override it. In this mode the build is self-contained:
+SQLite base and `sqlite-vec` are compiled into the Donkey binary.
 
 ```bash
 export DONKEY_MAGMA_SQLITE_PATH="$HOME/.donkey/state/magma.sqlite"
@@ -90,37 +93,13 @@ nim c -d:withSqlite src/donkey.nim
 deployments. In the normal `withSqlite` build, no system `libsqlite3` or
 external vector extension is required at runtime.
 
-### PostgreSQL via Docker
+### PostgreSQL for larger installs
 
-The recommended path for `Multigraph Memory` is to run PostgreSQL + `pgvector`
-in Docker instead of installing PostgreSQL on the host.
+If `DONKEY_PG_DSN` is set, Donkey can use PostgreSQL-backed MAGMA instead.
+Keep this off unless you explicitly want the PostgreSQL runtime.
 
 ```bash
-# Start only the database service
-docker compose up -d postgres
-
-# Donkey running on the host
 export DONKEY_PG_DSN='host=127.0.0.1 user=postgres password=donkey_pass dbname=donkey port=5432'
-
-# Build with Multigraph Memory enabled (default)
-nim c src/donkey.nim
-```
-
-If Donkey itself is running inside the same compose network, keep using:
-
-```bash
-export DONKEY_PG_DSN='host=postgres user=postgres password=donkey_pass dbname=donkey port=5432'
-```
-
-The bundled compose file persists database state in the named volume
-`donkey_pgdata`.
-
-If `5432` is already occupied on the host, override the published port:
-
-```bash
-export DONKEY_PG_PORT=5433
-docker compose up -d postgres
-export DONKEY_PG_DSN='host=127.0.0.1 user=postgres password=donkey_pass dbname=donkey port=5433'
 ```
 
 ### Per-user provider selection
@@ -140,10 +119,11 @@ nimble build
 ./donkey start
 ```
 
-`setup` now writes both files into `~/.config/donkey/`, creates the local
+`setup` writes both files into `~/.config/donkey/`, creates the local
 state directories under `~/.donkey/`, auto-picks an OCI runtime when one is
-available, offers optional Brave Search setup for `web_search`, and prints the
-exact `doctor`/`start` commands at the end.
+available, offers optional Brave Search setup for `web_search`, asks for the
+instance-wide default provider/model, and prints the exact `doctor`/`start`
+commands at the end.
 
 If you prefer to edit templates manually, the example files live at:
 
@@ -168,7 +148,7 @@ To run as a user service:
 ```bash
 # Start daemon
 export TELEGRAM_BOT_TOKEN=...
-export ZHIPU_API_KEY=...
+export ZAI_CODING_API_KEY=...
 ./donkey start
 
 # Admin commands
@@ -211,7 +191,16 @@ preferences, and episodic memory. In that mode:
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full technical overview.
 
 Brief summary: hexagonal architecture, ports as Nim `concept` (structural typing),
-Chronos for async I/O, one `OrchestratorAgent` per user session.
+Chronos for async I/O, one `OrchestratorAgent` per user session, and outbound
+presentation treated as a shared core concern instead of adapter-local state.
+
+## Current Runtime
+
+- SQLite-first local runtime by default
+- Embedded SQLite + `sqlite-vec` in the normal build
+- Hardened OCI shell sandbox for production
+- `doctor`, `setup`, `service install`, and `service start` as the primary ops path
+- Multi-channel UI with shared outbound presentation surfaces, streaming, and reactions
 
 ## Development
 

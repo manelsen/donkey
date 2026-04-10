@@ -115,7 +115,7 @@ proc setupAlreadyDone*(): bool =
 # ── Interactive wizard ────────────────────────────────────────────────────────
 
 const Providers = [
-  ("1", "zai-coding", "Zhipu Coding  (ZAI)           [recomendado]"),
+  ("1", "zai-coding", "ZAI Coding    (GLM)           [recomendado]"),
   ("2", "zai-anthropic", "Z.AI Anthropic compat        [Claude-compatible]"),
   ("3", "openrouter", "OpenRouter    (300+ modelos)"),
   ("4", "anthropic",  "Anthropic     (Claude)"),
