@@ -301,6 +301,7 @@ type
     appId*:     ref string   ## cached application ID
     resolver*:  IdentityResolver
     dmChannels: ref Table[string, string]  ## discord_user_id → dm_channel_id (ref allows value receiver)
+    statusReactions: ref Table[string, string] ## channel_id:message_id -> emoji
     http*:      StdHttpAdapter
 
 func authHeader(a: DiscordAdapter): (string, string) =
@@ -470,6 +471,8 @@ proc sendDeferredUpdate*(a: DiscordAdapter;
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url = a.base() & "/interactions/" & interactionId & "/" & interactionToken & "/callback"
   let resp = ? a.http.post(url, $body, headers)
+  if resp.status == 404:
+    return ok() ## benign: interaction already acknowledged/expired
   if resp.status < 200 or resp.status >= 300:
     return err("Discord deferred update error " & $resp.status)
   ok()
@@ -616,28 +619,37 @@ proc setMessageReaction*(a: DiscordAdapter; userId: UserId;
   ## Adds or removes a status reaction on an existing DM message.
   ## Discord does not have a "set reaction" endpoint, so we remove known status
   ## reactions first, then add the desired one when non-empty.
-  const StatusReactionSet = ["⏳", "✅", "❌"]
   let discordId = a.resolver.reverseChannel(userId, ckDiscord)
   if discordId.len == 0:
     return err("DiscordAdapter.setMessageReaction: no Discord ID for " & $userId)
   let chId = ? a.dmChannelFor(discordId)
+  let cacheKey = chId & ":" & msgId
+  let previous = a.statusReactions[].getOrDefault(cacheKey)
+  if previous == emoji:
+    return ok()
   let headers = @[a.authHeader()]
-  for prior in StatusReactionSet:
-    let encoded = encodeUrl(prior, usePlus = false)
+  if previous.len > 0:
+    let encoded = encodeUrl(previous, usePlus = false)
     let removeUrl = a.base() & "/channels/" & chId &
       "/messages/" & msgId & "/reactions/" & encoded & "/@me"
     let resp = ? a.http.delete(removeUrl, headers)
+    if resp.status == 429:
+      return ok() ## cosmetic only; avoid noisy logs and extra pressure
     if resp.status != 204 and resp.status != 404:
       return err("Discord remove reaction error " & $resp.status & ": " & resp.body)
 
   if emoji.len == 0:
+    a.statusReactions[][cacheKey] = ""
     return ok()
 
   let addUrl = a.base() & "/channels/" & chId &
     "/messages/" & msgId & "/reactions/" & encodeUrl(emoji, usePlus = false) & "/@me"
   let addResp = ? a.http.put(addUrl, "", headers)
+  if addResp.status == 429:
+    return ok() ## cosmetic only; avoid noisy logs and extra pressure
   if addResp.status != 204 and addResp.status != 200:
     return err("Discord add reaction error " & $addResp.status & ": " & addResp.body)
+  a.statusReactions[][cacheKey] = emoji
   ok()
 
 proc ack*(a: DiscordAdapter; channelId: string) =
@@ -703,6 +715,8 @@ proc newDiscordAdapter*(token:        string;
                         apiBase       = ""): DiscordAdapter =
   var t = new(Table[string, string])
   t[] = initTable[string, string]()
+  var sr = new(Table[string, string])
+  sr[] = initTable[string, string]()
   var appId = new(string)
   appId[] = ""
   DiscordAdapter(
@@ -711,5 +725,6 @@ proc newDiscordAdapter*(token:        string;
     appId:      appId,
     resolver:   newIdentityResolver(identityPath),
     dmChannels: t,
+    statusReactions: sr,
     http:       newStdHttpAdapter(),
   )
