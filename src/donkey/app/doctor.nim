@@ -89,6 +89,44 @@ proc sandboxPolicyResult*(cfg: DonkeyConfig;
       details.join(", ")
   )
 
+proc storageSummary*(cfg: DonkeyConfig): string =
+  let pgDsn = getEnv("DONKEY_PG_DSN").strip()
+  if pgDsn.len > 0:
+    return "PostgreSQL-backed MAGMA (DONKEY_PG_DSN set)"
+  when defined(withSqlite):
+    let sqlitePath = getEnv("DONKEY_MAGMA_SQLITE_PATH").strip()
+    if sqlitePath.len > 0:
+      return "SQLite-first MAGMA (" & sqlitePath & ")"
+    return "SQLite-first MAGMA (" & cfg.home / "state" / "magma.sqlite" & ")"
+  else:
+    "Markdown-first runtime (build without withSqlite)"
+
+proc defaultModelSummary*(cfg: DonkeyConfig): string =
+  if cfg.defaultProvider.len > 0 and cfg.defaultModel.len > 0:
+    cfg.defaultProvider & " / " & cfg.defaultModel
+  elif cfg.defaultProvider.len > 0:
+    cfg.defaultProvider
+  elif cfg.defaultModel.len > 0:
+    cfg.defaultModel
+  else:
+    "smart routing"
+
+proc webSearchSummary*(): string =
+  if getEnv("BRAVE_API_KEY").len > 0:
+    "enabled via Brave Search"
+  else:
+    "disabled (set BRAVE_API_KEY to enable web_search)"
+
+proc buildDoctorSummary*(cfg: DonkeyConfig;
+                         devMode = false): string =
+  let sandboxLine = sandboxPolicyResult(cfg, devMode).valueOr: error
+  result = "Snapshot\n"
+  result &= "--------\n"
+  result &= "- storage: " & storageSummary(cfg) & "\n"
+  result &= "- default model: " & defaultModelSummary(cfg) & "\n"
+  result &= "- web search: " & webSearchSummary() & "\n"
+  result &= "- sandbox: " & sandboxLine & "\n"
+
 proc checkSandboxPolicy*(cfg: DonkeyConfig;
                          devMode: bool): DiagResult =
   result = sandboxPolicyResult(cfg, devMode) |>-> toDiagResult("sandbox policy")
@@ -138,6 +176,8 @@ proc printDoctorReport*(results: seq[DiagResult]) =
 proc runDoctor*(cfg: DonkeyConfig;
                 devMode = false): int =
   ## Runs all checks, prints the report, returns 0 if all passed else 1.
+  echo buildDoctorSummary(cfg, devMode)
+  echo ""
   let results = runDoctorChecks(cfg, devMode)
   printDoctorReport(results)
   if results |> allPassed: 0 else: 1

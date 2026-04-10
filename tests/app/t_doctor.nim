@@ -194,6 +194,45 @@ suite "doctor — runDoctorChecks":
     check "Donkey Doctor" in report
     check report.len > 0
 
+suite "doctor — summary":
+
+  test "doctor summary reflects sqlite-first defaults and smart routing":
+    putEnv("DONKEY_PG_DSN", "")
+    putEnv("DONKEY_MAGMA_SQLITE_PATH", "")
+    putEnv("BRAVE_API_KEY", "")
+    let cfg = DonkeyConfig(
+      home: "/tmp/donkey-home",
+      sandboxMode: smOci,
+      sandboxRuntimeCmd: "docker",
+      sandboxAllowNetwork: false,
+      sandboxReadOnlyRootfs: true,
+      sandboxAllowHostFallback: false,
+    )
+    let summary = buildDoctorSummary(cfg)
+    check "Snapshot" in summary
+    check "SQLite-first MAGMA" in summary
+    check "smart routing" in summary
+    check "disabled (set BRAVE_API_KEY" in summary
+    check "mode=oci" in summary
+
+  test "doctor summary reflects configured defaults and pg runtime":
+    putEnv("DONKEY_PG_DSN", "postgres://localhost/test")
+    putEnv("BRAVE_API_KEY", "brave-key")
+    let cfg = DonkeyConfig(
+      home: "/tmp/donkey-home",
+      defaultProvider: "zai-coding",
+      defaultModel: "glm-4.7",
+      sandboxMode: smOci,
+      sandboxRuntimeCmd: "docker",
+      sandboxAllowNetwork: false,
+      sandboxReadOnlyRootfs: true,
+      sandboxAllowHostFallback: false,
+    )
+    let summary = buildDoctorSummary(cfg)
+    check "PostgreSQL-backed MAGMA" in summary
+    check "zai-coding / glm-4.7" in summary
+    check "enabled via Brave Search" in summary
+
 # ── >>= chaining with runRuntimeCmd ───────────────────────────────────────────
 
 suite "doctor — >>= chaining":

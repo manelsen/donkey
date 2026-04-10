@@ -279,7 +279,7 @@ func commandCatalogItems(): seq[CommandMetadata] =
     newCommandMetadata(cmdMemory, "Memory tools",
       "exibe memórias salvas", "Exibe memórias salvas",
       "Show saved memories", ccMemory),
-    newCommandMetadata(cmdDoctor, "Memory diagnostics",
+    newCommandMetadata(cmdDoctor, "Runtime diagnostics",
       "diagnóstico do sistema", "Diagnóstico do sistema",
       "Run a runtime diagnostic", ccMemory),
 
