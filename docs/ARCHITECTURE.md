@@ -31,7 +31,7 @@ replaceable menus, non-editable fallbacks, and streaming/status state.
 │ OUTBOUND ADAPTERS                                           │
 │   ProviderPort → Zhipu / OpenRouter / Anthropic / Gemini    │
 │   ChannelPort  → TelegramAdapter                            │
-│   MemoryPort   → MdFileAdapter (F1) / PostgresAdapter (F2+) │
+│   MemoryPort   → MdFileAdapter (F1) / SQLite MAGMA / Postgres MAGMA │
 │   HttpPort     → StdHttpAdapter (VPS) / ChronosHttp (IoT)  │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -45,7 +45,7 @@ Adapters do not declare conformance; the compiler verifies it.
 |------|----------------|----------|
 | `ProviderPort` | `complete(CompletionRequest) → Result[CompletionResponse, string]`, `caps()` | Zhipu, OpenRouter, Anthropic, Gemini, MiniMax |
 | `ChannelPort` | `send(OutboundMessage) → Result[void, string]`, `receive() → Result[seq[InboundMessage], string]`, `ack(string)` | TelegramAdapter |
-| `MemoryPort` | `hasProfile`, `loadContext`, `saveUserMd`, `appendMemory`, `savePreferences` | MdFileAdapter, PostgresAdapter (F2+) |
+| `MemoryPort` | `hasProfile`, `loadContext`, `saveUserMd`, `appendMemory`, `savePreferences` | MdFileAdapter, SQLite MAGMA runtime, Postgres MAGMA runtime |
 | `ToolPort` | `listTools() → Result[seq[ToolSchema], string]`, `invoke(ToolCall) → Result[ToolResult, string]` | McpClientAdapter |
 | `HttpPort` | `get(url, headers) → Result[HttpResponse, string]`, `post(url, body, headers) → Result[HttpResponse, string]` | StdHttpAdapter, ChronosHttpAdapter (IoT, planned) |
 
@@ -123,9 +123,9 @@ To target Raspberry Pi Zero (or any musl/static build):
    # Result: ~1MB static binary, zero runtime dependencies
    ```
 
-## Memory — two phases
+## Memory — two cooperating layers
 
-**F1 (current):** Markdown files in the user paddock.
+**F1:** Markdown files in the user paddock.
 
 ```
 ~/.donkey/paddocks/<uuid>/
@@ -135,12 +135,16 @@ To target Raspberry Pi Zero (or any musl/static build):
   sessions/<id>.md # per-session summary
 ```
 
-Files are human-editable and reread at each conversation start.
+Files remain human-editable and useful for inspection/debugging.
 
-**F2+ (Postgreyskull):** PostgreSQL with pgvector + Apache AGE.
-- Embeddings via `qwen3-embedding-8b` (4096 dimensions, OpenRouter)
-- Hybrid search: vector (semantic) + graph traversal (relational)
-- `.md` files become generated views of the graph
+**F2 (current default):** MAGMA graph state backed by SQLite.
+- default database path: `~/.donkey/state/magma.sqlite`
+- SQLite base and `sqlite-vec` are embedded in the binary
+- Markdown and MAGMA are kept in sync by the runtime
+
+**F2 optional:** PostgreSQL-backed MAGMA for larger installs.
+- enabled only when `DONKEY_PG_DSN` is set
+- no longer the default installation path
 
 ## Provider quirks
 
