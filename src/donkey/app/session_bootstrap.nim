@@ -243,7 +243,13 @@ func encodeSessionPayload*(msg: InboundMessage): string =
   $(%* {"text": msg.text, "mediaUrl": msg.mediaUrl})
 
 func sessionReplyTo*(msg: InboundMessage): string =
-  if msg.channel == ckTelegram: msg.channelId else: ""
+  case msg.channel
+  of ckTelegram:
+    msg.channelId
+  of ckDiscord:
+    if msg.channelId.len > 0: "channel:" & msg.channelId else: ""
+  else:
+    ""
 
 proc buildSessionTaskMsg*(msg: InboundMessage; msgId: string): AgentMessage =
   newTaskMsg(msgId, tkUserMsg, $msg.userId, encodeSessionPayload(msg),

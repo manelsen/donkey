@@ -398,6 +398,21 @@ proc sendChunk(a: DiscordAdapter; chId, text: string): Result[void, string] =
     return err("Discord send error " & $resp.status & ": " & resp.body)
   ok()
 
+func outboundChannelId(msg: OutboundMessage): string =
+  if msg.replyTo.startsWith("channel:"):
+    msg.replyTo["channel:".len .. ^1]
+  else:
+    ""
+
+proc resolveOutboundChannelId(a: DiscordAdapter; msg: OutboundMessage): Result[string, string] =
+  let explicit = outboundChannelId(msg)
+  if explicit.len > 0:
+    return ok(explicit)
+  let discordId = a.resolver.reverseChannel(msg.userId, ckDiscord)
+  if discordId.len == 0:
+    return err("DiscordAdapter: no Discord ID for user " & $msg.userId)
+  a.dmChannelFor(discordId)
+
 proc sendKeyboard*(a: DiscordAdapter; userId: UserId;
                    text: string;
                    buttons: seq[seq[(string, string)]]): Result[string, string] =
@@ -460,16 +475,14 @@ proc sendDeferredUpdate*(a: DiscordAdapter;
   ok()
 
 proc send*(a: DiscordAdapter; msg: OutboundMessage): Result[void, string] =
-  ## Sends a message to the user's DM channel on Discord.
+  ## Sends a message either to an explicit Discord channel target or to the
+  ## user's DM channel when no channel target is provided.
   ## If msg.keyboard is non-empty, sends with component buttons.
   ## Splits messages longer than 2000 characters into multiple sends.
   if msg.keyboard.len > 0:
     discard a.sendKeyboard(msg.userId, msg.text, msg.keyboard)
     return ok()
-  let discordId = a.resolver.reverseChannel(msg.userId, ckDiscord)
-  if discordId.len == 0:
-    return err("DiscordAdapter.send: no Discord ID for user " & $msg.userId)
-  let chId = ? a.dmChannelFor(discordId)
+  let chId = ? a.resolveOutboundChannelId(msg)
   for chunk in splitChunks(msg.text, DiscordMaxChars):
     ? a.sendChunk(chId, chunk)
   ok()
@@ -573,10 +586,7 @@ proc sendReturnId*(a: DiscordAdapter; msg: OutboundMessage): Result[string, stri
   ## Sends a single chunk (first DiscordMaxChars) and returns the Discord message id.
   ## Used by the streaming machinery to obtain the id for subsequent editMessage calls.
   ## Uses >>= to chain HTTP response → JSON parse → id extraction.
-  let discordId = a.resolver.reverseChannel(msg.userId, ckDiscord)
-  if discordId.len == 0:
-    return err("DiscordAdapter.sendReturnId: no Discord ID for " & $msg.userId)
-  let chId = ? a.dmChannelFor(discordId)
+  let chId = ? a.resolveOutboundChannelId(msg)
   let txt  = if msg.text.len > DiscordMaxChars: msg.text[0 ..< DiscordMaxChars]
              else: msg.text
   var body    = %* {"content": txt}

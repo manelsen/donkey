@@ -27,6 +27,7 @@ proc sendDiscordReply(event: DiscordRawEvent;
     userId: userId,
     channel: ckDiscord,
     text: text,
+    replyTo: if event.channelId.len > 0: "channel:" & event.channelId else: "",
   )).isOkOr:
     core_log.log(logger, core_log.lvlError, "dc send reply: " & error)
 
@@ -298,7 +299,8 @@ proc handleDiscordEvent*(sm: var SessionManager;
     let inbound = InboundMessage(
       userId:    userId,
       channel:   ckDiscord,
-      channelId: event.messageId,
+      channelId: event.channelId,
+      messageId: event.messageId,
       text:      event.content,
     )
     handleInboundStatus(inbound)

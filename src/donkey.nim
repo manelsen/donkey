@@ -1517,24 +1517,28 @@ proc handleSessionFallback(runtime:      var DaemonRuntime;
     runtime.globalOutbox.putNoWait(OutboundMessage(
       userId: msg.userId,
       channel: msg.channel,
-      replyTo: if msg.channel == ckTelegram: msg.channelId else: "",
+      replyTo: sessionReplyTo(msg),
       text: "Acesso revogado pelo administrador.",
     ))
     return
   ensureSession(runtime.sm, msg, services, runtime.msgSeq)
 
+func inboundStatusMessageId(msg: InboundMessage): string =
+  if msg.messageId.len > 0: msg.messageId else: msg.channelId
+
 func shouldStageInboundReaction(msg: InboundMessage): bool =
   supportsMessageReactions(msg.channel) and
     msg.callbackId.len == 0 and
-    msg.channelId.len > 0
+    inboundStatusMessageId(msg).len > 0
 
 proc stageInboundReactionStatus(runtime: var DaemonRuntime;
                                 outboundPorts: OutboundChannelPorts;
                                 msg: InboundMessage) =
   if not shouldStageInboundReaction(msg):
     return
-  discard setOutboundReaction(msg.channel, msg.userId, msg.channelId, "⏳", outboundPorts, newLogger("status.reaction"))
-  runtime.presentationState.rememberStatus(msg.channel, msg.userId, "turn", msg.channelId)
+  let statusMsgId = inboundStatusMessageId(msg)
+  discard setOutboundReaction(msg.channel, msg.userId, statusMsgId, "⏳", outboundPorts, newLogger("status.reaction"))
+  runtime.presentationState.rememberStatus(msg.channel, msg.userId, "turn", statusMsgId)
 
 proc completeInboundReactionStatus(runtime: var DaemonRuntime;
                                    outboundPorts: OutboundChannelPorts;
@@ -1883,7 +1887,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       proc(msg: InboundMessage) {.gcsafe.} =
         stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),
       proc(msg: InboundMessage) {.gcsafe.} =
-        completeInboundReactionStatus(ctx.runtime, outboundPorts, msg.channel, msg.userId, msg.channelId, false),
+        completeInboundReactionStatus(ctx.runtime, outboundPorts, msg.channel, msg.userId,
+          inboundStatusMessageId(msg), false),
       proc(msg: InboundMessage) {.gcsafe.} =
         handleGatewayFallback(ctx, cfg, memory, msg, log))
 

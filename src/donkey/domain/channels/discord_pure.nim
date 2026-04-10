@@ -188,7 +188,8 @@ func toInbound*(r: DsParseResult; userId: UserId): InboundMessage =
   InboundMessage(
     userId:    userId,
     channel:   ckDiscord,
-    channelId: r.messageId,
+    channelId: r.channelId,
+    messageId: r.messageId,
     text:      r.content,
   )
 

@@ -117,7 +117,8 @@ suite "discord_pure.parseDispatch — gateway_message_create fixture":
     check msg.userId == uid
     check msg.channel == ckDiscord
     check msg.text == "content_3"
-    check msg.channelId == "900000000000000089"
+    check msg.channelId == "900000000000000009"
+    check msg.messageId == "900000000000000089"
 
   test "sample 2: sticker message is still parsed as dekMessage":
     let arr = parseJson(readFile(FixturesDir / "gateway_message_create.json"))
@@ -509,7 +510,8 @@ suite "discord_pure.toInbound — conversion":
     check msg.userId == uid
     check msg.channel == ckDiscord
     check msg.text == "hello world"
-    check msg.channelId == "msg-10"
+    check msg.channelId == "ch1"
+    check msg.messageId == "msg-10"
     check msg.mediaUrl == ""
 
   test "slash command converts with interaction content":

@@ -33,7 +33,8 @@ type
 
   InboundMessage* = object
     userId*:     UserId
-    channelId*:  string       ## channel-specific message id (for ack/dedup)
+    channelId*:  string       ## channel-specific reply/conversation target
+    messageId*:  string       ## original inbound message id when distinct from channelId
     callbackId*: string       ## non-empty for callback queries that need ack
     text*:       string
     mediaUrl*:   string       ## non-empty when message has attachment

@@ -77,7 +77,7 @@ thinking = "medium"
     let tgMsg = InboundMessage(userId: UserId("u1"), channel: ckTelegram, channelId: "123")
     let dcMsg = InboundMessage(userId: UserId("u1"), channel: ckDiscord, channelId: "abc")
     check sessionReplyTo(tgMsg) == "123"
-    check sessionReplyTo(dcMsg) == ""
+    check sessionReplyTo(dcMsg) == "channel:abc"
 
   test "buildSessionTaskMsg preserves encoded payload":
     let msg = InboundMessage(userId: UserId("u1"), channel: ckTelegram, channelId: "42",
