@@ -1,9 +1,17 @@
 ## Pure outbound routing decisions.
 
-import std/tables
+import std/[strutils, tables]
 import ../../domain/message
 
 type
+  ChannelCapabilityRow* = object
+    channel*: ChannelKind
+    implemented*: bool
+    editableReplacement*: bool
+    editableStreams*: bool
+    interactiveComponents*: bool
+    messageReactions*: bool
+
   PresentationCapabilities* = object
     editableReplacement*: bool
     editableStreams*: bool
@@ -238,6 +246,40 @@ func decideStreamAction*(msg: OutboundMessage;
 
 func isImplementedOutboundChannel*(channel: ChannelKind): bool =
   channel in {ckTelegram, ckDiscord, ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk}
+
+func channelCapabilityRow*(channel: ChannelKind): ChannelCapabilityRow =
+  let caps = presentationCapabilities(channel)
+  ChannelCapabilityRow(
+    channel: channel,
+    implemented: isImplementedOutboundChannel(channel),
+    editableReplacement: caps.editableReplacement,
+    editableStreams: caps.editableStreams,
+    interactiveComponents: caps.interactiveComponents,
+    messageReactions: caps.messageReactions,
+  )
+
+func allChannelCapabilityRows*(): seq[ChannelCapabilityRow] =
+  for channel in low(ChannelKind) .. high(ChannelKind):
+    result.add(channelCapabilityRow(channel))
+
+func boolMark(value: bool): string =
+  if value: "yes" else: "no"
+
+func formatChannelCapabilityMatrix*(): string =
+  var lines = @[
+    "| Channel | Implemented | Editable UI | Stream updates | Components | Reactions |",
+    "|---------|-------------|-------------|----------------|------------|-----------|",
+  ]
+  for row in allChannelCapabilityRows():
+    lines.add(
+      "| " & $row.channel &
+      " | " & boolMark(row.implemented) &
+      " | " & boolMark(row.editableReplacement) &
+      " | " & boolMark(row.editableStreams) &
+      " | " & boolMark(row.interactiveComponents) &
+      " | " & boolMark(row.messageReactions) & " |"
+    )
+  lines.join("\n")
 
 func shouldClearStream*(msg: OutboundMessage): bool =
   msg.streamId.len > 0 and not msg.isPartial

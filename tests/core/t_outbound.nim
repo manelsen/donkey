@@ -1,4 +1,4 @@
-import std/unittest
+import std/[strutils, unittest]
 import donkey/core/outbound/outbound
 import donkey/domain/message
 
@@ -79,6 +79,26 @@ suite "core outbound decisions":
     check supportsMessageReactions(ckTelegram)
     check supportsMessageReactions(ckDiscord)
     check not supportsMessageReactions(ckQQ)
+
+  test "channel capability matrix is derived from the core source of truth":
+    let rows = allChannelCapabilityRows()
+    check rows.len > 5
+    let tg = channelCapabilityRow(ckTelegram)
+    let dc = channelCapabilityRow(ckDiscord)
+    let qq = channelCapabilityRow(ckQQ)
+    check tg.implemented
+    check tg.editableReplacement
+    check tg.editableStreams
+    check tg.interactiveComponents
+    check tg.messageReactions
+    check dc.implemented
+    check dc.messageReactions
+    check qq.implemented
+    check not qq.editableReplacement
+    check not qq.messageReactions
+    let matrix = formatChannelCapabilityMatrix()
+    check "| telegram | yes | yes | yes | yes | yes |" in matrix
+    check "| qq | yes | no | no | no | no |" in matrix
 
   test "isImplementedOutboundChannel matches supported channels":
     check isImplementedOutboundChannel(ckTelegram)
