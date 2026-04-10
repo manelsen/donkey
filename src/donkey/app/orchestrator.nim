@@ -26,6 +26,7 @@
 import std/json
 import std/options
 import std/os
+import std/sequtils
 import std/strutils except strip
 import std/strformat
 import chronos
@@ -105,6 +106,7 @@ type OrchestratorState = object
   lastUserId:    UserId
   onboarding:    OnboardingRuntime
   identity:    IdentityRuntime
+  completedBootstrapTargets: seq[string]
   turnSeq:     int
 
 type ResetControlContext* = object
@@ -474,6 +476,10 @@ proc persistUserProfile(memory: MemoryRuntimePort;
   if profileCtx.saveUserMd:
     safeSaveUserMd(memory, uid, profileCtx.userMd)
 
+func bootstrapTargetKey(channel: ChannelKind;
+                        replyTo: string): string =
+  $channel & ":" & (if replyTo.len > 0: replyTo else: "_default")
+
 func newOrchestratorState*(): OrchestratorState =
   OrchestratorState(
     history: newHistory(),
@@ -481,6 +487,7 @@ func newOrchestratorState*(): OrchestratorState =
     showReasoning: true,
     onboarding: OnboardingRuntime(phase: opWakeUp),
     identity: IdentityRuntime(),
+    completedBootstrapTargets: @[],
   )
 
 func nextTurn*(state: OrchestratorState): OrchestratorState =
@@ -509,6 +516,26 @@ func withOnboardingResult*(onboardingResult: OnboardingTurnResult;
   result.history = onboardingResult.history
   result.onboarding = onboardingResult.onboarding
   result.identity = onboardingResult.identity
+
+func withCompletedBootstrapTarget*(channel: ChannelKind;
+                                   replyTo: string;
+                                   state: OrchestratorState): OrchestratorState =
+  result = state
+  let key = bootstrapTargetKey(channel, replyTo)
+  if key notin result.completedBootstrapTargets:
+    result.completedBootstrapTargets.add(key)
+
+func withoutCompletedBootstrapTarget*(channel: ChannelKind;
+                                      replyTo: string;
+                                      state: OrchestratorState): OrchestratorState =
+  result = state
+  let key = bootstrapTargetKey(channel, replyTo)
+  result.completedBootstrapTargets = result.completedBootstrapTargets.filterIt(it != key)
+
+func hasCompletedBootstrapTarget*(state: OrchestratorState;
+                                  channel: ChannelKind;
+                                  replyTo: string): bool =
+  bootstrapTargetKey(channel, replyTo) in state.completedBootstrapTargets
 
 func withTurnPrep*(turnPrep: NormalTurnPrep;
                    state: OrchestratorState): OrchestratorState =
@@ -1211,7 +1238,9 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
   result.uid = UserId(msg.userId)
   result.streamId = stateRuntime.streamIdFor(msg.userId)
   (result.userText, _) = msg.payload |> decodeUserPayload
-  result.isNewUser = not safeHasProfile(memory, result.uid)
+  result.isNewUser =
+    not safeHasProfile(memory, result.uid) and
+    not stateRuntime.hasCompletedBootstrapTarget(msg.channel, msg.replyTo)
   result.nativeCtx = buildNativeCtx(
     result.uid, msg.channel, globalOutbox, session, memory, completeFn, http,
     cfgTypes.DonkeyConfig(webAllowlist: webAllowlist, toolWebPolicy: toolWebPolicy),
@@ -1573,6 +1602,10 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
   result =
     result |>->
     withControlResult(controlResult)
+  if controlResult.handled and msg.taskKind == tkReset:
+    result =
+      result |>->
+      withoutCompletedBootstrapTarget(msg.channel, msg.replyTo)
   if controlResult.handled and msg.taskKind == tkUserMsg:
     safeSaveSession(memory, uid, sessionId, result.history)
   if controlResult.handled or msg.taskKind notin {tkUserMsg, tkHeartbeat}:
@@ -1585,6 +1618,10 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
     completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
     providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, toolsSuffix,
     state, msg, result)
+  if result.onboarding.phase == opDone:
+    result =
+      result |>->
+      withCompletedBootstrapTarget(msg.channel, msg.replyTo)
   safeSaveSession(memory, uid, sessionId, result.history)
 
 proc handleActorMessage(inbox: AsyncQueue[AgentMessage];

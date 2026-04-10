@@ -945,3 +945,51 @@ suite "agent name onboarding":
     check askUserName.replacementSlot == ""
     check askTimezone.text.contains("Em que fuso horário você está?")
     check askTimezone.replacementSlot == ""
+
+  test "completed bootstrap does not reopen on the same channel target":
+    let tmpDir = getTempDir() / "donkey_test_orch_bootstrap_target_latch"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[OutboundMessage] {.async.} =
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-bootstrap-latch", state)
+      await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-bootstrap-latch", "oi", ckTelegram, "101"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-bootstrap-latch", "personality:mode:guided", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-3", tkPersonalityChoice, "u-bootstrap-latch", "personality:energy:neutro", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-4", tkPersonalityChoice, "u-bootstrap-latch", "personality:tone:casual", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-5", tkPersonalityChoice, "u-bootstrap-latch", "personality:length:moderado", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-6", tkPersonalityChoice, "u-bootstrap-latch", "personality:initiative:proativo", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-7", tkUserMsg, "u-bootstrap-latch", "Node", ckTelegram, "101"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-8", tkUserMsg, "u-bootstrap-latch", "Void", ckTelegram, "101"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-9", tkUserMsg, "u-bootstrap-latch", "UTC-3", ckTelegram, "101"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-10", tkUserMsg, "u-bootstrap-latch", "Português", ckTelegram, "101"))
+      discard await outbox.get()
+
+      removeFile(dir / "u-bootstrap-latch" / "USER.md")
+
+      await inbox.put(newTaskMsg("req-11", tkUserMsg, "u-bootstrap-latch", "olá de novo", ckTelegram, "101"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      reply
+
+    let reply = waitFor doTest(tmpDir)
+    check reply.text == "pong"
+    check not reply.text.contains("Como quer definir minha personalidade")
+    check not reply.text.contains("Qual será meu nome?")
