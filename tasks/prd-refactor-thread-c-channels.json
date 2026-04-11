@@ -1,0 +1,58 @@
+{
+  "name": "Refatoração — Thread C: Channel Capabilities",
+  "branchName": "ralph/refactor-channel-capabilities",
+  "description": "Criar ChannelCapabilityDescriptor e migrar outbound_builder para resolução declarativa. Criar branch APÓS merge da Thread B.",
+  "userStories": [
+    {
+      "id": "US-004",
+      "title": "[STUB] Extrair dispatcher de comandos do main — já feito pela Thread B",
+      "description": "Esta story já foi completada pela Thread B e merged em main. Não implementar — apenas garante que US-008 não fica bloqueada.",
+      "acceptanceCriteria": [
+        "Stub — não implementar"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Completada pela Thread B (branch ralph/refactor-command-dispatch). Merge em main antes de iniciar esta thread.",
+      "dependsOn": []
+    },
+    {
+      "id": "US-008",
+      "title": "Criar ChannelCapabilityDescriptor",
+      "description": "As a developer, I want each channel to declare its capabilities (send, sendReturnId, editMessage, sendKeyboard, editKeyboard, setMessageReaction) in a structured contract so that capability resolution is data-driven.",
+      "acceptanceCriteria": [
+        "Definir tipo ChannelCapabilityDescriptor com capacidades booleanas por canal",
+        "Criar registry de capacidades por canal (Telegram, Discord, WeCom, etc.)",
+        "Cada canal implementa apenas o que suporta, sem funções unsupported* como mecanismo principal",
+        "Adicionar testes unitários de resolução de capability por canal",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Implemented: ChannelCapabilityDescriptor type, registry, and lookup helpers. 28 tests added.",
+      "dependsOn": [
+        "US-004"
+      ]
+    },
+    {
+      "id": "US-009",
+      "title": "Migrar outbound_builder para resolução por capability",
+      "description": "As a maintainer, I want outbound_builder.nim to resolve channel capabilities via the declarative contract so manual unsupported* patching is no longer the central compatibility mechanism.",
+      "acceptanceCriteria": [
+        "outbound_builder.nim consulta ChannelCapabilityDescriptor em vez de preencher manualmente",
+        "Funções unsupported* deixam de ser o mecanismo principal de compatibilidade",
+        "Adaptadores implementam explicitamente apenas capacidades que suportam",
+        "Comportamento externo de envio de mensagens permanece compatível",
+        "Adicionar testes de capability resolution em contexto de outbound",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-008"
+      ]
+    }
+  ]
+}
