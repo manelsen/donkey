@@ -26,6 +26,7 @@ import ../../domain/message
 import ../../domain/channels/wechat_pure
 import ../http/std_http
 import ../identity/identity_resolver
+import ../../app/metrics
 
 const WeComApiBase = "https://qyapi.weixin.qq.com"
 
@@ -244,6 +245,7 @@ proc handleWeComConn(client: Socket; token: string; logger: Logger) =
       ))
   except CatchableError as e:
     logger.warn("wecom: conn error: " & e.msg)
+    recordWebhookFailure("wecom", e.msg)
 
 type WeComWebhookArgs = object
   token:  string
@@ -264,6 +266,7 @@ proc webhookThread(args: WeComWebhookArgs) {.thread.} =
         handleWeComConn(client, args.token, args.logger)
       except CatchableError as e:
         args.logger.warn("wecom: accept error: " & e.msg)
+        recordWebhookFailure("wecom", "accept: " & e.msg)
         try: client.close() except CatchableError: discard
 
 var gWeComThread: Thread[WeComWebhookArgs]
