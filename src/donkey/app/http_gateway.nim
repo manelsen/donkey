@@ -18,6 +18,7 @@ import ../core/types
 import ../ports/ipc
 import ../core/agent_events
 import ../domain/message
+import ./metrics
 
 const
   GatewayDefaultPort* = 8080
@@ -304,7 +305,9 @@ proc handleGatewayConn(client: Socket;
       client.sendResponse("405 Method Not Allowed", "text/plain", "")
 
   except CatchableError:
-    discard
+    let errMsg = getCurrentExceptionMsg()
+    stderr.writeLine("[WRN] [http_gateway] connection handler error: " & errMsg)
+    recordWebhookFailure("http_gateway", errMsg)
   client.close()
 
 # ── Gateway thread ────────────────────────────────────────────────────────────

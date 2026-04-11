@@ -19,6 +19,7 @@ import ../core/cron as core_cron
 import ../ports/memory
 import ../core/types
 import ../domain/memory/commitment_pure
+import ./metrics
 
 # ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -111,7 +112,7 @@ proc deliverDueReminders*(memory: MemoryRuntimePort;
                           log: Logger = newLogger("heartbeat.reminder")) =
   ## Fetches due reminders from memory, delivers them via outboxFn,
   ## and deletes them so they are not delivered twice.
-  ## Errors from outboxFn are logged (never silently discarded).
+  ## Errors from outboxFn are logged and recorded as metrics (never silently discarded).
   if memory.loadDueReminders == nil: return
   let due = memory.loadDueReminders()
   for j in due:
@@ -125,6 +126,7 @@ proc deliverDueReminders*(memory: MemoryRuntimePort;
     except CatchableError:
       let errMsg = getCurrentExceptionMsg()
       log.error("reminder delivery failed for user=" & userId & " channel=" & channel & " reason=" & errMsg)
+      recordReminderFailure(errMsg)
     if remId.len > 0 and memory.deleteReminder != nil:
       memory.deleteReminder(UserId(userId), remId)
 
