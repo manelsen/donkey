@@ -257,7 +257,10 @@ when defined(withPostgres):
             let content = stripAgeValue(gr[0])
             if content.len > 0 and content != "null":
               result.add MemoryHit(content: content, kind: "graph", score: 0.5)
-        except CatchableError: discard
+        except CatchableError:
+          let errMsg = getCurrentExceptionMsg()
+          stderr.writeLine("WARN memory.search: AGE graph enrichment failed for user=" &
+                           $userId & " reason=" & errMsg)
     else:
       let rows = db.getAllRows(sql(
         "SELECT content, kind FROM " & PgMemoryTableName & " " &

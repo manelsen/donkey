@@ -49,4 +49,7 @@ proc embed*(a: OpenRouterEmbeddingAdapter; text: string): seq[float32] {.gcsafe.
     for i in 0 ..< vec.len:
       buf[i] = vec[i].getFloat(0.0).float32
     return buf
-  except CatchableError: discard
+  except CatchableError:
+    let errMsg = getCurrentExceptionMsg()
+    stderr.writeLine("WARN embedding.parse: failed to parse embedding response reason=" & errMsg)
+    return @[]
