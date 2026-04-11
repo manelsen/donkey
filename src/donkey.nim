@@ -145,7 +145,7 @@ func buildSkillRuntimePolicyResolver(cfg: DonkeyConfig): SkillRuntimePolicyResol
   result = proc(skillName: string): SkillRuntimePolicy =
     buildSkillRuntimePolicy(cfg, skillName)
 
-proc makeTgTypingFn(token: string; identityPath: string): TypingFn =
+proc makeTgTypingFn(token: string; identityPath: string; log: Logger): TypingFn =
   ## Returns a TypingFn that sends typing indicators to Telegram users.
   ## Uses its own TelegramAdapter instance (token + resolver shared via ref).
   let tg = new TelegramAdapter
@@ -153,7 +153,8 @@ proc makeTgTypingFn(token: string; identityPath: string): TypingFn =
   result = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: [].} =
     if channel == ckTelegram:
       try:
-        tg[].sendTyping(userId).isOkOr: discard
+        tg[].sendTyping(userId).isOkOr:
+          log.warn("tg sendTyping failed for user=" & $userId & " reason=" & error)
       except CatchableError: discard
 
 type DaemonToolBundle = object
@@ -308,7 +309,7 @@ proc initDaemonServices(cfg: DonkeyConfig;
   let providerBundle = buildGlobalProviderBundle()
   result.globalCompleteFn = providerBundle.completeFn
   result.globalStreamFn = providerBundle.streamFn
-  result.tgTypingFn = makeTgTypingFn(env.telegramToken, env.identityPath)
+  result.tgTypingFn = makeTgTypingFn(env.telegramToken, env.identityPath, log)
   result.globalSearchFn = buildGlobalSearchFn(env.memory)
   when defined(withPostgres) or defined(withSqlite):
     if result.globalSearchFn != nil:
@@ -1207,7 +1208,8 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
   for msg in tgMsgs:
     let stagedReaction = shouldStageInboundReaction(msg)
     if stagedReaction:
-      tgAdapter.sendTyping(msg.userId).isOkOr: discard
+      tgAdapter.sendTyping(msg.userId).isOkOr:
+        log.warn("tg sendTyping (staged) failed for user=" & $msg.userId & " reason=" & error)
       stageInboundReactionStatus(runtime, outboundPorts, msg)
     if telegram_runtime.handleTelegramMessage(
       msg, runtime.sm, tgAdapter, runtime.presentationState, services.memory, completeBuilder,
@@ -1381,7 +1383,8 @@ proc drainFeishuGateway(ctx: DaemonContext;
     ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
     ctx.runtime.msgSeq,
     proc(msg: InboundMessage) =
-      handleGatewayFallback(ctx, cfg, memory, msg, log))
+      handleGatewayFallback(ctx, cfg, memory, msg, log),
+    log)
 
 proc drainTelegramGateway(ctx: DaemonContext;
                           cfg: DonkeyConfig;

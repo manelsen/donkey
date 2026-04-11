@@ -127,7 +127,8 @@ proc sendResponse(s: Socket; status, contentType, body: string) =
              "Content-Type: " & contentType & "; charset=utf-8\r\n" &
              "Content-Length: " & $body.len & "\r\n" &
              "Connection: close\r\n\r\n" & body
-  try: s.send(resp) except CatchableError: discard
+  try: s.send(resp) except CatchableError:
+    stderr.writeLine("[WRN] [http_gateway.sendResponse] failed: " & getCurrentExceptionMsg())
 
 proc sendJson(s: Socket; body: string) =
   s.sendResponse("200 OK", "application/json", body)
@@ -139,7 +140,8 @@ proc sendSseHeaders(s: Socket) =
                 "Content-Type: text/event-stream\r\n" &
                 "Cache-Control: no-cache\r\n" &
                 "Connection: keep-alive\r\n\r\n"
-  try: s.send(headers) except CatchableError: discard
+  try: s.send(headers) except CatchableError:
+    stderr.writeLine("[WRN] [http_gateway.sendSseHeaders] failed: " & getCurrentExceptionMsg())
 
 proc sendSseData(s: Socket; event, data: string): bool =
   ## Returns false if the connection is broken.

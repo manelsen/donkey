@@ -43,7 +43,8 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
                                 completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
                                 toolsCount: int;
                                 toolClientsCount: int;
-                                msgSeq: var int): bool {.gcsafe.}
+                                msgSeq: var int;
+                                logger: Logger): bool {.gcsafe.}
 
 proc handleTelegramStatus*(msg: InboundMessage;
                            command: CommandDecision;
@@ -58,6 +59,7 @@ proc handleTelegramTaskCommand*(sm: var SessionManager;
                                  command: CommandDecision;
                                  tgAdapter: var TelegramAdapter;
                                  msgSeq: var int;
+                                 logger: Logger;
                                  ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool {.gcsafe.}
 
 # ── Implementation ────────────────────────────────────────────────────────────
@@ -423,23 +425,23 @@ proc handleTelegramUiCallback*(msg: InboundMessage;
   of cbkBudget:
     return handleTelegramBudget(msg, newCommandDecision(cmdBudget), tgAdapter, memory)
   of cbkHelp:
-    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdHelp), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdHelp), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq, logger)
   of cbkStatus:
     return handleTelegramStatus(msg, newCommandDecision(cmdStatus), tgAdapter, memory, toolsCount, sm.sessionCount(), daemonStartMs)
   of cbkDoctor:
-    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdDoctor), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdDoctor), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq, logger)
   of cbkForget:
-    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdForget), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdForget), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq, logger)
   of cbkReset:
-    return handleTelegramTaskCommand(sm, msg, newCommandDecision(cmdReset), tgAdapter, msgSeq, ensureTaskSession)
+    return handleTelegramTaskCommand(sm, msg, newCommandDecision(cmdReset), tgAdapter, msgSeq, logger, ensureTaskSession)
   of cbkMyCode:
-    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdMyCode), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdMyCode), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq, logger)
   of cbkReasoning:
-    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdReasoning), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdReasoning), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq, logger)
   of cbkMenu:
-    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdMenu), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdMenu), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq, logger)
   of cbkConfig:
-    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdConfig), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq)
+    return handleTelegramCoreCommand(sm, msg, newCommandDecision(cmdConfig), tgAdapter, presentationState, memory, completeBuilder, toolsCount, toolClientsCount, msgSeq, logger)
 
   else:
     false
@@ -516,7 +518,8 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
                                 completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
                                 toolsCount: int;
                                 toolClientsCount: int;
-                                msgSeq: var int): bool =
+                                msgSeq: var int;
+                                logger: Logger): bool =
   case decideLocalCommandAction(command)
   of lcaShowAbout:
     tgAdapter.send(OutboundMessage(
@@ -649,7 +652,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
     let prefs = loadChannelPrefs(memory, msg.userId)
     let next = if prefs.reasoning == "on": "off" else: "on"
     saveChannelPreference(memory, msg.userId, "reasoning", next)
-    
+
     # Update current keyboard if it was a menu/config
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
     if kbdId.len > 0:
@@ -661,7 +664,8 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
         channel: ckTelegram,
         text:    "✅ Reasoning " & (if next == "on": "ativado" else: "desativado") & ".",
         replyTo: msg.channelId,
-      )).isOkOr: discard
+      )).isOkOr:
+        logger.error("tg send lcaReasoningToggle failed for user=" & $msg.userId & " reason=" & error)
     return true
   else:
     discard
@@ -672,6 +676,7 @@ proc handleTelegramTaskCommand*(sm: var SessionManager;
                                  command: CommandDecision;
                                  tgAdapter: var TelegramAdapter;
                                  msgSeq: var int;
+                                 logger: Logger;
                                  ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
   if not isSessionTaskCommand(command.kind):
     return false
@@ -703,7 +708,8 @@ proc handleTelegramTaskCommand*(sm: var SessionManager;
         channel: ckTelegram,
         text:    feedback,
         replyTo: msg.channelId,
-      )).isOkOr: discard
+      )).isOkOr:
+        logger.error("tg send taskCommand feedback failed for user=" & $msg.userId & " reason=" & error)
     return true
 
   false
@@ -744,9 +750,9 @@ proc handleTelegramMessage*(msg: InboundMessage;
   case command.route
   of crLocal:
     return handleTelegramCoreCommand(sm, msg, command, tgAdapter, presentationState, memory,
-                                     completeBuilder, toolsCount, toolClientsCount, msgSeq)
+                                     completeBuilder, toolsCount, toolClientsCount, msgSeq, logger)
   of crSessionTask:
-    return handleTelegramTaskCommand(sm, msg, command, tgAdapter, msgSeq, ensureTaskSession)
+    return handleTelegramTaskCommand(sm, msg, command, tgAdapter, msgSeq, logger, ensureTaskSession)
   of crUi:
     return handleTelegramUiCommand(msg, command, tgAdapter, presentationState, memory, modelCatalogLoader, toolClientsCount, toolsCount, logger)
   of crCallback:

@@ -262,7 +262,8 @@ proc wechatWebhookThread(args: WeChatWebhookArgs) {.thread.} =
   proc respond(s: Socket; status, body: string) =
     let resp = "HTTP/1.1 " & status & "\r\nContent-Length: " &
                $body.len & "\r\nConnection: close\r\n\r\n" & body
-    try: s.send(resp) except CatchableError: discard
+    try: s.send(resp) except CatchableError:
+      stderr.writeLine("[WRN] [wechat.respond] failed to send response: " & getCurrentExceptionMsg())
 
   var server = newSocket()
   server.setSockOpt(OptReuseAddr, true)
@@ -319,7 +320,7 @@ proc wechatWebhookThread(args: WeChatWebhookArgs) {.thread.} =
       else:
         client.respond("405 Method Not Allowed", "")
     except CatchableError:
-      discard
+      stderr.writeLine("[WRN] [wechat webhook] connection handler error: " & getCurrentExceptionMsg())
     try: client.close() except CatchableError: discard
 
 proc startWebhook*(a: WeChatAdapter; port: Port) {.gcsafe.} =
