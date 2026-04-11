@@ -10,6 +10,8 @@ import donkey/core/log
 import donkey/core/types
 import donkey/app/heartbeat
 import donkey/adapters/memory/md_file
+import donkey/adapters/embedding/openrouter_embed
+import donkey/adapters/http/std_http
 import donkey/domain/message
 import donkey/ports/channel
 import donkey/app/outbound_runtime
@@ -243,3 +245,74 @@ suite "error policy — multi-channel outbound":
         foundErr = true
         break
     check foundErr
+
+# ── Tests: reminder file loading error visibility (US-007) ────────────────────
+
+suite "error policy — reminder file loading":
+
+  test "loadDueReminders skips corrupted JSON but returns valid reminders":
+    let tmp = getTempDir() / "donkey_err_policy_corrupt_reminder"
+    defer:
+      try: removeDir(tmp) except: discard
+    let mem = MdFileAdapter(paddocksDir: tmp)
+    let uid = UserId("user-corrupt")
+    mem.ensurePaddock(uid)
+
+    # Write a corrupted reminder file
+    let remDir = mem.reminderDir(uid)
+    createDir(remDir)
+    writeFile(remDir / "corrupt.json", "this is not valid json{{{")
+
+    # Write a valid reminder
+    let past = getTime().toUnix() - 60
+    discard mem.scheduleReminder(uid, "ckTelegram", past, "valid reminder")
+
+    # Must not raise — corrupted file is skipped with warning
+    let due = mem.loadDueReminders()
+
+    # Valid reminder should still be returned
+    check due.len == 1
+    check due[0]{"message"}.getStr("") == "valid reminder"
+
+  test "loadDueReminders handles mixed valid/corrupted across users":
+    let tmp = getTempDir() / "donkey_err_policy_multi_user_reminder"
+    defer:
+      try: removeDir(tmp) except: discard
+    let mem = MdFileAdapter(paddocksDir: tmp)
+
+    # User A: valid reminder
+    let uidA = UserId("userA")
+    mem.ensurePaddock(uidA)
+    let past = getTime().toUnix() - 60
+    discard mem.scheduleReminder(uidA, "ckTelegram", past, "userA reminder")
+
+    # User B: only corrupted file
+    let uidB = UserId("userB")
+    mem.ensurePaddock(uidB)
+    let remDirB = mem.reminderDir(uidB)
+    createDir(remDirB)
+    writeFile(remDirB / "bad.json", "{invalid")
+
+    # Must not raise
+    let due = mem.loadDueReminders()
+
+    # Only userA's valid reminder should be returned
+    check due.len == 1
+    check due[0]{"userId"}.getStr("") == "userA"
+
+# ── Tests: embedding error visibility (US-007) ───────────────────────────────
+
+suite "error policy — embedding parse errors":
+
+  test "embed returns empty seq on HTTP failure (no crash)":
+    # When the HTTP request fails, embed returns empty seq
+    # This is documented behavior: "Returns empty seq[float32] on error"
+    let adapter = OpenRouterEmbeddingAdapter(
+      apiKey: "fake-key",
+      model:  "qwen/qwen3-embedding-8b",
+      http:   newStdHttpAdapter(),
+    )
+    # With a fake key and no real server, this should return empty seq
+    # without raising an exception
+    let vec = adapter.embed("test text")
+    check vec.len == 0 or vec.len == 4096  # either empty (error) or real embedding

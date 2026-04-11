@@ -509,7 +509,10 @@ proc loadDueReminders*(a: MdFileAdapter): seq[JsonNode] =
         let j = parseJson(readFile(rPath))
         if j["scheduledAt"].getBiggestInt() <= now:
           result.add(j)
-      except CatchableError: discard
+      except CatchableError:
+        let errMsg = getCurrentExceptionMsg()
+        stderr.writeLine("WARN reminder.parse: failed to parse reminder file " &
+                         rPath & " reason=" & errMsg)
 
 proc deleteReminder*(a: MdFileAdapter; userId: UserId; reminderId: string) =
   ## Deletes a reminder file by id.
