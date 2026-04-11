@@ -113,13 +113,12 @@ except CatchableError:
 - [x] `qq_runtime.nim:lcaStartIntro` — `isOkOr: discard` substituido por log de erro
 - [x] Testes unitarios para politica de erro adicionados em `tests/app/t_error_policy.nim`
 
-### Pendente (US-006, US-007)
-- [ ] 10x `isOkOr: discard` restantes em `qq_runtime.nim`
-- [ ] 5x `isOkOr: discard` em `feishu_runtime.nim`
-- [ ] 2x `isOkOr: discard` em `wecom_runtime.nim`
-- [ ] 19x `isOkOr: discard` restantes em `telegram_runtime.nim`
-- [ ] 3x `except CatchableError: discard` em `heartbeat.nim` (runAllTasks, runCommitmentReview)
-- [ ] 5x `except CatchableError: discard` em `postgres_memory.nim`
-- [ ] 5x `except CatchableError: discard` em `native_tools.nim`
-- [ ] 11x `except CatchableError: discard` em webhook/channel servers
-- [ ] 1x `except CatchableError: discard` em `openrouter_embed.nim`
+### US-006 (concluida)
+- [x] 10x `isOkOr: discard` restantes em `qq_runtime.nim` — substituidos por `log.error()`
+- [x] 5x `isOkOr: discard` em `feishu_runtime.nim` — substituidos por `log.error()`, logger adicionado ao drain
+- [x] 2x `isOkOr: discard` em `wecom_runtime.nim` — helpers `wcReply`/`wcMd` receberam parametro logger
+- [x] 2x `isOkOr: discard` em `telegram_runtime.nim` — `handleTelegramCoreCommand` e `handleTelegramTaskCommand` receberam logger
+- [x] 2x `isOkOr: discard` em `donkey.nim` sendTyping — `makeTgTypingFn` recebeu logger
+- [x] Webhook `except:discard` em `wechat.nim`, `qq.nim`, `wecom.nim`, `http_gateway.nim` — substituidos por `stderr.writeLine` warnings
+
+### Pendente (US-007)
