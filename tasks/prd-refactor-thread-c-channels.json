@@ -48,8 +48,8 @@
         "bash scripts/run_tests.sh passes"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Migrated outbound_builder to capability-driven resolution. Removed manual unsupported* as central mechanism. 11 new tests added.",
       "dependsOn": [
         "US-008"
       ]
