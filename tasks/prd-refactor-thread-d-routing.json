@@ -1,0 +1,75 @@
+{
+  "name": "Refatoração — Thread D: Provider Routing",
+  "branchName": "ralph/refactor-provider-routing",
+  "description": "Criar ProviderCatalog, migrar smart routing para catálogo declarativo, e escrever guia de contribuição. Criar branch APÓS merge da Thread B.",
+  "userStories": [
+    {
+      "id": "US-004",
+      "title": "[STUB] Extrair dispatcher de comandos do main — já feito pela Thread B",
+      "description": "Esta story já foi completada pela Thread B e merged em main. Não implementar — apenas garante que US-010 não fica bloqueada.",
+      "acceptanceCriteria": [
+        "Stub — não implementar"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Completada pela Thread B (branch ralph/refactor-command-dispatch). Merge em main antes de iniciar esta thread.",
+      "dependsOn": []
+    },
+    {
+      "id": "US-010",
+      "title": "Criar ProviderCatalog",
+      "description": "As a developer, I want a declarative catalog of providers and models with canonical names, aliases, capabilities, relative cost, tool/image/thinking support, and budget-based priority so routing is data-driven.",
+      "acceptanceCriteria": [
+        "Definir tipo ProviderModelEntry com: nome canônico, aliases, capacidades, custo relativo, suporte a tools/imagem/thinking, prioridade",
+        "Implementar ProviderCatalog com register(), query(), e orderByCost() ou orderByPriority()",
+        "Popular o catálogo com os modelos atualmente hardcoded (MiniMax-M2, gpt-4o-mini, glm-4.7, gemini-2.5-flash, etc.)",
+        "Adicionar testes unitários de consulta e ordenação do catálogo",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "",
+      "dependsOn": [
+        "US-004"
+      ]
+    },
+    {
+      "id": "US-011",
+      "title": "Migrar smart routing para catálogo declarativo",
+      "description": "As a developer, I want smart routing to consume the ProviderCatalog so hardcoded model strings are removed from the core selection policy.",
+      "acceptanceCriteria": [
+        "A seleção de provider/modelo consulta o catálogo em vez de strings hardcoded dispersas",
+        "Regras declarativas substituem heurísticas rígidas de nome de modelo",
+        "Fallback declarativo quando nenhum candidato atende critérios",
+        "Adicionar test harness dedicado para routing policy",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-010"
+      ]
+    },
+    {
+      "id": "US-013",
+      "title": "Guia de contribuição para novo canal/provider",
+      "description": "As a contributor, I want clear documentation for adding new channels and providers so onboarding cost is reduced.",
+      "acceptanceCriteria": [
+        "Documentar passo a passo para registrar novo canal via ChannelCapabilityDescriptor",
+        "Documentar passo a passo para registrar novo provider/model via ProviderCatalog",
+        "Incluir exemplos mínimos funcionais",
+        "Atualizar README.md e/ou docs com novo fluxo de extensão",
+        "nim c src/donkey.nim passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-011"
+      ]
+    }
+  ]
+}
