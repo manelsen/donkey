@@ -70,8 +70,8 @@
         "bash scripts/run_tests.sh passes"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Substituidos 3x except CatchableError:discard por warnings com stderr.writeLine: md_file.nim:loadDueReminders (parse de reminder JSON corrompido), openrouter_embed.nim:embed (parse de resposta de embedding), postgres_memory.nim:search (enriquecimento via AGE graph). Adicionados 3 testes em t_error_policy.nim: loading de reminders corrompidos, mistura multi-usuario, resiliencia de embedding. 165 testes passam, 6 falhas pre-existentes inalteradas.",
       "dependsOn": [
         "US-005"
       ]
