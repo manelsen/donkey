@@ -1,6 +1,7 @@
 import std/strutils
 import chronos/asyncsync
 import ../../core/commands/command_routing
+import ../../core/log
 import ../../core/pipeops
 import ../../adapters/memory/md_file
 import ../../app/session_manager
@@ -21,7 +22,8 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
                         toolClientsCount: int;
                         daemonStartMs: int64;
                         msgSeq: var int;
-                        handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.}) =
+                        handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
+                        log: Logger = newLogger("fs.outbound")) =
   if feishuAppId.len == 0:
     return
 
@@ -69,7 +71,8 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
           else:
             ""
         if reply.len > 0:
-          fsAdapter.send(OutboundMessage(userId: userId, channel: ckFeishu, text: reply)).isOkOr: discard
+          fsAdapter.send(OutboundMessage(userId: userId, channel: ckFeishu, text: reply)).isOkOr:
+            log.error("fs send failed for user=" & $userId & " reason=" & error)
       of crSessionTask:
         if sm.hasSession(userId):
           let entry = sm.getOrCreate(userId)
@@ -82,7 +85,8 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
               "Nenhuma sessão ativa. Envie uma mensagem primeiro."
             else:
               "Nenhuma conversa ativa para reiniciar."
-          fsAdapter.send(OutboundMessage(userId: userId, channel: ckFeishu, text: text)).isOkOr: discard
+          fsAdapter.send(OutboundMessage(userId: userId, channel: ckFeishu, text: text)).isOkOr:
+            log.error("fs send sessionTask feedback failed for user=" & $userId & " reason=" & error)
       of crUi:
         let reply =
           case command.kind
@@ -97,19 +101,22 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
           else:
             ""
         if reply.len > 0:
-          fsAdapter.send(OutboundMessage(userId: userId, channel: ckFeishu, text: reply)).isOkOr: discard
+          fsAdapter.send(OutboundMessage(userId: userId, channel: ckFeishu, text: reply)).isOkOr:
+            log.error("fs send crUi failed for user=" & $userId & " reason=" & error)
       of crPing:
         fsAdapter.send(OutboundMessage(
           userId: userId,
           channel: ckFeishu,
           text: buildPingText(memory, userId, completeBuilder),
-        )).isOkOr: discard
+        )).isOkOr:
+          log.error("fs send crPing failed for user=" & $userId & " reason=" & error)
       of crStatus:
         fsAdapter.send(OutboundMessage(
           userId: userId,
           channel: ckFeishu,
           text: buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs),
-        )).isOkOr: discard
+        )).isOkOr:
+          log.error("fs send crStatus failed for user=" & $userId & " reason=" & error)
       of crCallback, crNone:
         handleSessionFallback(msg)
     (hasEvent, event) = fsAdapter.tryRecvEvent()

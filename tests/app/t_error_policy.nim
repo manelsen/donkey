@@ -152,3 +152,94 @@ suite "error policy — outbound send":
     # No error log on success
     for e in cap.entries:
       check e.level != lvlError
+
+# ── Tests: multi-channel outbound error visibility ────────────────────────────
+
+suite "error policy — multi-channel outbound":
+
+  test "sendImmediateOutbound logs Feishu send failure":
+    let cap = newLogCapture()
+    let logger = newLogger("test.fs_outbound", lvlDebug, makeSink(cap))
+
+    let ports = OutboundChannelPorts(
+      feishu: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+          err("api rate limited"),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = err("nope"),
+        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} = ok(),
+        sendKeyboard: proc(userId: UserId; text: string;
+                           buttons: seq[seq[(string, string)]];
+                           replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
+        editKeyboard: proc(userId: UserId; msgId, text: string;
+                           buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+      )
+    )
+
+    let msg = OutboundMessage(userId: UserId("u2"), channel: ckFeishu, text: "status report")
+    sendImmediateOutbound(msg, ports, logger)
+
+    var foundErr = false
+    for e in cap.entries:
+      if e.level == lvlError and "fs" in e.message.toLowerAscii():
+        foundErr = true
+        break
+    check foundErr
+
+  test "sendImmediateOutbound logs WeCom send failure":
+    let cap = newLogCapture()
+    let logger = newLogger("test.wc_outbound", lvlDebug, makeSink(cap))
+
+    let ports = OutboundChannelPorts(
+      wecom: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+          err("token expired"),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = err("nope"),
+        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} = ok(),
+        sendKeyboard: proc(userId: UserId; text: string;
+                           buttons: seq[seq[(string, string)]];
+                           replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
+        editKeyboard: proc(userId: UserId; msgId, text: string;
+                           buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+      )
+    )
+
+    let msg = OutboundMessage(userId: UserId("u3"), channel: ckWeCom, text: "reply")
+    sendImmediateOutbound(msg, ports, logger)
+
+    var foundErr = false
+    for e in cap.entries:
+      if e.level == lvlError and "wc" in e.message.toLowerAscii():
+        foundErr = true
+        break
+    check foundErr
+
+  test "sendImmediateOutbound logs Telegram send failure":
+    let cap = newLogCapture()
+    let logger = newLogger("test.tg_outbound", lvlDebug, makeSink(cap))
+
+    let ports = OutboundChannelPorts(
+      telegram: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+          err("network unreachable"),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = err("nope"),
+        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} = ok(),
+        sendKeyboard: proc(userId: UserId; text: string;
+                           buttons: seq[seq[(string, string)]];
+                           replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
+        editKeyboard: proc(userId: UserId; msgId, text: string;
+                           buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+      )
+    )
+
+    let msg = OutboundMessage(userId: UserId("u4"), channel: ckTelegram, text: "typing feedback")
+    sendImmediateOutbound(msg, ports, logger)
+
+    var foundErr = false
+    for e in cap.entries:
+      if e.level == lvlError and "tg" in e.message.toLowerAscii():
+        foundErr = true
+        break
+    check foundErr

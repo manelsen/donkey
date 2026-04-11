@@ -262,41 +262,48 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
             userId: userId,
             channel: ckQQ,
             text: reply,
-          )).isOkOr: discard
+          )).isOkOr:
+            log.error("qq send lcaSkillCommand failed for user=" & $userId & " reason=" & error)
         of lcaGenerateLinkCode:
           qqAdapter.send(OutboundMessage(
             userId: userId,
             channel: ckQQ,
             text: buildLinkCodeText(qqAdapter.generateLinkCode(userId)),
-          )).isOkOr: discard
+          )).isOkOr:
+            log.error("qq send lcaGenerateLinkCode failed for user=" & $userId & " reason=" & error)
         of lcaClearMemory:
           memory.clearMemory(userId)
-          qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: "Memórias apagadas.")).isOkOr: discard
+          qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: "Memórias apagadas.")).isOkOr:
+            log.error("qq send lcaClearMemory failed for user=" & $userId & " reason=" & error)
         of lcaDoctorReport:
           qqAdapter.send(OutboundMessage(
             userId: userId,
             channel: ckQQ,
             text: buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount()),
-          )).isOkOr: discard
+          )).isOkOr:
+            log.error("qq send lcaDoctorReport failed for user=" & $userId & " reason=" & error)
         of lcaHelpText:
           qqAdapter.send(OutboundMessage(
             userId: userId,
             channel: ckQQ,
             text: qqHelpText(qqAdapter.kind),
-          )).isOkOr: discard
+          )).isOkOr:
+            log.error("qq send lcaHelpText failed for user=" & $userId & " reason=" & error)
         of lcaShowMemory:
           qqAdapter.send(OutboundMessage(
             userId: userId,
             channel: ckQQ,
             text: buildMemoryViewText(memory, userId),
-          )).isOkOr: discard
+          )).isOkOr:
+            log.error("qq send lcaShowMemory failed for user=" & $userId & " reason=" & error)
         of lcaContinueLink:
           let linked = qqAdapter.consumeLinkCode(command.value, qqRawIdentity(event))
           qqAdapter.send(OutboundMessage(
             userId: userId,
             channel: ckQQ,
             text: buildContinueResultText(linked),
-          )).isOkOr: discard
+          )).isOkOr:
+            log.error("qq send lcaContinueLink failed for user=" & $userId & " reason=" & error)
         else:
           discard
       of crSessionTask:
@@ -311,7 +318,8 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
               "Nenhuma sessão ativa. Envie uma mensagem primeiro."
             else:
               "Nenhuma conversa ativa para reiniciar."
-          qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: text)).isOkOr: discard
+          qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: text)).isOkOr:
+            log.error("qq send sessionTask feedback failed for user=" & $userId & " reason=" & error)
       of crUi:
         discard handleQQUiCommand(msg, command, qqAdapter, memory, modelCatalogLoader, event.userId)
       of crPing:
@@ -319,7 +327,8 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
           userId: userId,
           channel: ckQQ,
           text: buildPingText(memory, userId, completeBuilder),
-        )).isOkOr: discard
+        )).isOkOr:
+          log.error("qq send crPing failed for user=" & $userId & " reason=" & error)
       of crStatus:
         let providerLine = buildProviderStatusLine(memory, userId)
         let thinking = memory.getCurrentThinkLevel(userId)
@@ -336,7 +345,8 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
               qqStatusText(providerLine, thinking, toolsCount, sm.sessionCount(), uptimeStr)
             else:
               buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs),
-        )).isOkOr: discard
+        )).isOkOr:
+          log.error("qq send crStatus failed for user=" & $userId & " reason=" & error)
       of crCallback:
         let callback = decideCallbackRequest(CallbackRequest(channel: ckQQ, data: command.value))
         case callback.route

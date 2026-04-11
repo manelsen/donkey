@@ -44,13 +44,16 @@ func buildWeComMemoryMd*(memText: string): string =
 
 # ── Reply helpers ─────────────────────────────────────────────────────────────
 
-proc wcReply(wcAdapter: var WeComAdapter; userId: UserId; text: string) =
-  wcAdapter.send(OutboundMessage(userId: userId, channel: ckWeCom, text: text)).isOkOr: discard
+proc wcReply(wcAdapter: var WeComAdapter; userId: UserId; text: string; logger: Logger) =
+  wcAdapter.send(OutboundMessage(userId: userId, channel: ckWeCom, text: text)).isOkOr:
+    logger.error("wc send failed for user=" & $userId & " reason=" & error)
 
-proc wcMd(wcAdapter: var WeComAdapter; userId: UserId; md: string) =
+proc wcMd(wcAdapter: var WeComAdapter; userId: UserId; md: string; logger: Logger) =
   wcAdapter.sendMarkdown(userId, md).isOkOr:
+    logger.warn("wc sendMarkdown failed for user=" & $userId & " reason=" & error & " — falling back to text")
     ## Fallback to plain text if markdown fails
-    wcAdapter.send(OutboundMessage(userId: userId, channel: ckWeCom, text: md)).isOkOr: discard
+    wcAdapter.send(OutboundMessage(userId: userId, channel: ckWeCom, text: md)).isOkOr:
+      logger.error("wc send text fallback failed for user=" & $userId & " reason=" & error)
 
 # ── Main drain ────────────────────────────────────────────────────────────────
 
@@ -85,9 +88,9 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
         case decideLocalCommandAction(command)
         of lcaShowAbout:
           wcMd(wcAdapter, userId, buildWeComDoctorMd(
-            buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount())))
+            buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount())), logger)
         of lcaStartIntro:
-          wcReply(wcAdapter, userId, buildStartIntroText())
+          wcReply(wcAdapter, userId, buildStartIntroText(), logger)
         of lcaSkillCommand:
           let reply = applySkillTextCommand(
             memory,
@@ -100,24 +103,25 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
             wcAdapter,
             userId,
             reply,
+            logger,
           )
         of lcaGenerateLinkCode:
           wcMd(wcAdapter, userId, buildWeComMycodeM(
-            buildLinkCodeText(wcAdapter.resolver.generateLinkCode(userId))))
+            buildLinkCodeText(wcAdapter.resolver.generateLinkCode(userId))), logger)
         of lcaClearMemory:
           memory.clearMemory(userId)
-          wcReply(wcAdapter, userId, "Memórias apagadas.")
+          wcReply(wcAdapter, userId, "Memórias apagadas.", logger)
         of lcaDoctorReport:
           wcMd(wcAdapter, userId, buildWeComDoctorMd(
-            buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount())))
+            buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount())), logger)
         of lcaHelpText:
-          wcMd(wcAdapter, userId, buildWeComHelpMd())
+          wcMd(wcAdapter, userId, buildWeComHelpMd(), logger)
         of lcaShowMemory:
           wcMd(wcAdapter, userId, buildWeComMemoryMd(
-            buildMemoryViewText(memory, userId)))
+            buildMemoryViewText(memory, userId)), logger)
         of lcaContinueLink:
           let linked = wcAdapter.resolver.consumeLinkCode(command.value, ckWeCom, event.fromUser)
-          wcReply(wcAdapter, userId, buildContinueResultText(linked))
+          wcReply(wcAdapter, userId, buildContinueResultText(linked), logger)
         else:
           discard
       of crSessionTask:
@@ -130,7 +134,7 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
           let errText =
             if command.kind == cmdDebug: "Nenhuma sessão ativa. Envie uma mensagem primeiro."
             else: "Nenhuma conversa ativa para reiniciar."
-          wcReply(wcAdapter, userId, errText)
+          wcReply(wcAdapter, userId, errText, logger)
       of crUi:
         let reply =
           case command.kind
@@ -144,12 +148,12 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
             buildDeferredUiCommandText(command.kind)
           else: ""
         if reply.len > 0:
-          wcReply(wcAdapter, userId, reply)
+          wcReply(wcAdapter, userId, reply, logger)
       of crPing:
-        wcMd(wcAdapter, userId, buildWeComPingMd(buildPingText(memory, userId, completeBuilder)))
+        wcMd(wcAdapter, userId, buildWeComPingMd(buildPingText(memory, userId, completeBuilder)), logger)
       of crStatus:
         wcMd(wcAdapter, userId, buildWeComStatusMd(
-          buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs)))
+          buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs)), logger)
       of crCallback, crNone:
         handleSessionFallback(inbound)
     (hasEvent, event) = wcAdapter.tryRecvEvent()

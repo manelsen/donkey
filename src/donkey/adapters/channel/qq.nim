@@ -97,7 +97,8 @@ proc qqOneBotWebhookThread(args: QQOneBotWebhookArgs) {.thread.} =
 
   proc respond(s: Socket; status: string) =
     let resp = "HTTP/1.1 " & status & "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-    try: s.send(resp) except CatchableError: discard
+    try: s.send(resp) except CatchableError:
+      stderr.writeLine("[WRN] [qq.respond] failed to send response: " & getCurrentExceptionMsg())
 
   var server = newSocket()
   server.setSockOpt(OptReuseAddr, true)
@@ -140,7 +141,7 @@ proc qqOneBotWebhookThread(args: QQOneBotWebhookArgs) {.thread.} =
       else:
         client.respond("405 Method Not Allowed")
     except CatchableError:
-      discard
+      stderr.writeLine("[WRN] [qq webhook] connection handler error: " & getCurrentExceptionMsg())
     try: client.close() except CatchableError: discard
 
 proc startWebhook*(a: QQAdapter; port: Port) =

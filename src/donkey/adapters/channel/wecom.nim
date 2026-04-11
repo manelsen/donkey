@@ -164,7 +164,8 @@ proc sendHttpReply(s: Socket; status, body: string) =
           "Content-Type: text/plain; charset=utf-8\r\n" &
           "Content-Length: " & $body.len & "\r\n" &
           "Connection: close\r\n\r\n" & body
-  try: s.send(r) except CatchableError: discard
+  try: s.send(r) except CatchableError:
+    stderr.writeLine("[WRN] [wecom.sendHttpReply] failed to send response: " & getCurrentExceptionMsg())
 
 proc parseQueryParams(requestLine: string): Table[string, string] =
   let q = requestLine.find('?')

@@ -91,8 +91,9 @@ thinking = "high"
             seenTask = taskKind
             seenUserId = $seenMsg.userId
             seenPayload = payload
+      let logger = newLogger("test.tg_task")
       check handleTelegramTaskCommand(
-        sm, msg, newCommandDecision(kind), tgAdapter, msgSeq, ensureTaskSession)
+        sm, msg, newCommandDecision(kind), tgAdapter, msgSeq, logger, ensureTaskSession)
       check called
       check seenTask == expectedTask
       check seenUserId == $msg.userId
@@ -245,9 +246,10 @@ thinking = "high"
     let completeBuilder =
       proc(preferencesMd: string): CompleteFn {.gcsafe.} = nil
     var msgSeq = 0
+    let logger = newLogger("test.tg_core")
     check handleTelegramCoreCommand(
       sm, msg, newCommandDecision(cmdSkill), tgAdapter, presentationState, memory,
-      completeBuilder, 0, 0, msgSeq)
+      completeBuilder, 0, 0, msgSeq, logger)
 
   test "buildTelegramStatusText includes provider and thinking":
     let tmpDir = getTempDir() / "donkey_tg_runtime_status"
