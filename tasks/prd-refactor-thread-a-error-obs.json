@@ -33,8 +33,8 @@
         "bash scripts/run_tests.sh passes"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Error policy documentada em tasks/error-policy.md. Substituidos 1x except CatchableError:discard (heartbeat.nim:deliverDueReminders) e 2x isOkOr:discard (qq_runtime.nim lcaShowAbout/lcaStartIntro). Logger injetado em drainQQEvents. 4 testes unitarios adicionados em tests/app/t_error_policy.nim.",
       "dependsOn": [
         "US-001"
       ]

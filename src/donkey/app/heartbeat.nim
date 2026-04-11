@@ -14,6 +14,7 @@
 import std/[json, options, os, sequtils, strutils, times]
 import chronos
 import ../core/pipeops
+import ../core/log
 import ../core/cron as core_cron
 import ../ports/memory
 import ../core/types
@@ -106,9 +107,11 @@ proc registerCommitmentReviewTask*(reg: var HeartbeatRegistry;
 # ── Concrete task: reminder delivery ─────────────────────────────────────────
 
 proc deliverDueReminders*(memory: MemoryRuntimePort;
-                          outboxFn: ReminderOutboxFn) =
+                          outboxFn: ReminderOutboxFn;
+                          log: Logger = newLogger("heartbeat.reminder")) =
   ## Fetches due reminders from memory, delivers them via outboxFn,
   ## and deletes them so they are not delivered twice.
+  ## Errors from outboxFn are logged (never silently discarded).
   if memory.loadDueReminders == nil: return
   let due = memory.loadDueReminders()
   for j in due:
@@ -117,7 +120,11 @@ proc deliverDueReminders*(memory: MemoryRuntimePort;
     let message = j{"message"}.getStr("")
     let remId   = j{"id"}.getStr("")
     if userId.len == 0 or message.len == 0: continue
-    try: outboxFn(userId, channel, message) except CatchableError: discard
+    try:
+      outboxFn(userId, channel, message)
+    except CatchableError:
+      let errMsg = getCurrentExceptionMsg()
+      log.error("reminder delivery failed for user=" & userId & " channel=" & channel & " reason=" & errMsg)
     if remId.len > 0 and memory.deleteReminder != nil:
       memory.deleteReminder(UserId(userId), remId)
 
