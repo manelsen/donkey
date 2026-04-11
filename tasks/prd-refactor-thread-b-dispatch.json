@@ -1,0 +1,65 @@
+{
+  "name": "Refatoração — Thread B: Command Dispatch",
+  "branchName": "ralph/refactor-command-dispatch",
+  "description": "Extrair handlers de comandos, criar CommandRegistry, e extrair dispatcher do main. Esta thread DEVE rodar e mergear PRIMEIRO — as demais dependem de US-004.",
+  "userStories": [
+    {
+      "id": "US-002",
+      "title": "Extrair handlers de ctl, service, tui, doctor e daemon start",
+      "description": "As a maintainer, I want each top-level command (ctl, service, tui, doctor, daemon start) to have its own handler module so the entrypoint is no longer a cascade of branches.",
+      "acceptanceCriteria": [
+        "Criar módulo handler para `ctl` commands",
+        "Criar módulo handler para `service` commands",
+        "Criar módulo handler para `tui` startup",
+        "Criar módulo handler para `doctor` execution",
+        "Criar módulo handler para daemon `start`",
+        "O main() delega a esses handlers sem conter a lógica de cada um",
+        "Comportamento externo dos comandos permanece idêntico",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-003",
+      "title": "Criar CommandHandler e CommandRegistry",
+      "description": "As a developer, I want a central command registry where each command declares its name, expected arguments, handler, required context, and exit code so that dispatching is data-driven.",
+      "acceptanceCriteria": [
+        "Definir tipo CommandHandler com campos: name, args, handler proc, required context, exit code",
+        "Implementar CommandRegistry com register(), resolve(), e dispatch()",
+        "Migrar pelo menos um comando existente (ex: ctl) para usar o registry",
+        "Adicionar testes unitários para register e resolve",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Extrair dispatcher de comandos do main",
+      "description": "As a maintainer, I want the main file to no longer contain the long cascade of command branches so that composition root is lean.",
+      "acceptanceCriteria": [
+        "O main() apenas: carrega config, valida pré-condições, monta dependências, delega ao dispatcher",
+        "Todos os comandos ctl, service, tui, doctor, start são roteados via CommandRegistry",
+        "Exit codes são padronizados por comando",
+        "Adicionar testes de despacho de comandos sem boot do daemon",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-003"
+      ]
+    }
+  ]
+}

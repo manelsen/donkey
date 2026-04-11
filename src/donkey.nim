@@ -16,6 +16,7 @@ import donkey/core/pipeops
 import donkey/core/reliability
 import donkey/core/agent_events
 import donkey/core/app_meta
+import donkey/core/command_registry
 import donkey/core/providers/smart_routing
 import donkey/core/session/session_ingress
 import donkey/adapters/memory/md_file
@@ -60,6 +61,10 @@ import donkey/app/session_state
 import donkey/app/session_bootstrap
 import donkey/app/doctor
 import donkey/app/setup_wizard
+import donkey/app/service_handler
+import donkey/app/tui_handler
+import donkey/app/daemon_start_handler
+import donkey/ctl_handler
 import donkey/ports/memory
 import donkey/adapters/ipc/types    as ipcTypes
 import donkey/adapters/ipc/client   as ipcClient
@@ -115,385 +120,6 @@ Commands:
   doctor                         Run the full runtime diagnostic
 """
 
-# ── service commands ───────────────────────────────────────────────────────────
-
-
-const EnvFileTemplate = """# """ & AppName & """ environment — fill in the values you need.
-# Permissions: chmod 600 ~/.config/""" & ConfigDirName & "/" & EnvFileName & """
-
-TELEGRAM_BOT_TOKEN=
-DISCORD_BOT_TOKEN=
-WECOM_CORP_ID=
-WECOM_CORP_SECRET=
-WECOM_AGENT_ID=
-WECOM_CALLBACK_TOKEN=
-WECHAT_APP_ID=
-WECHAT_APP_SECRET=
-WECHAT_CALLBACK_TOKEN=
-WECHAT_TEMPLATE_ID=
-FEISHU_APP_ID=
-FEISHU_APP_SECRET=
-FEISHU_VERIFICATION_TOKEN=
-QQ_ONEBOT_URL=
-QQ_ONEBOT_TOKEN=
-QQ_OFFICIAL_APP_ID=
-QQ_OFFICIAL_CLIENT_SECRET=
-# QQ_OFFICIAL_API_BASE=https://api.sgroup.qq.com
-# QQ_OFFICIAL_TOKEN_BASE=https://bots.qq.com
-
-ZAI_API_KEY=
-ZAI_CODING_API_KEY=
-ZAI_ANTHROPIC_API_KEY=
-OPENROUTER_API_KEY=
-OPENAI_API_KEY=
-DEEPSEEK_API_KEY=
-ANTHROPIC_API_KEY=
-GEMINI_API_KEY=
-MINIMAX_API_KEY=
-OPENCODE_API_KEY=
-
-BRAVE_API_KEY=
-# SQLite-first runtime (default):
-# DONKEY_MAGMA_SQLITE_PATH=/path/to/donkey-magma.sqlite
-# DONKEY_SQLITE_VEC_PATH=/absolute/path/to/vec0
-#
-# Optional PostgreSQL for larger Multigraph Memory installs:
-#   docker compose up -d postgres
-#   if 5432 is busy: DONKEY_PG_PORT=5433 docker compose up -d postgres
-# DONKEY_PG_DSN=host=127.0.0.1 user=postgres password=donkey_pass dbname=donkey port=5432
-"""
-
-const TomlTemplate = """# """ & AppName & """ configuration
-
-[""" & ConfigSectionName & """]
-# log_level = "info"    # debug | info | warn | error
-# log_file  = ""        # leave empty to log to stderr (journald)
-
-[security]
-# web_allowlist = ["docs.nim-lang.org", "api.github.com"]
-# When non-empty, native web tools and Deno skill --allow-net permissions
-# must stay within these public hosts/subdomains.
-
-[sandbox]
-# mode  = "none"        # "none", "oci" or "wasm"
-# runtime = "docker"    # OCI runtime CLI when mode = "oci"
-# image = "alpine"
-"""
-
-proc svcUnitDir(): string = getHomeDir() / ".config" / "systemd" / "user"
-proc svcUnitFile(): string = svcUnitDir() / ServiceUnitName
-proc svcCfgDir(): string  = getHomeDir() / ".config" / ConfigDirName
-
-proc svcRun(cmd: string): bool =
-  execShellCmd(cmd) == 0
-
-proc buildServiceFileContent(binPath: string): string =
-  ## Generates the systemd unit file pointing at the actual binary path.
-  ## nimble build takes effect on next service restart — no reinstall needed.
-  "[Unit]\n" &
-  "Description=Donkey AI Agent Daemon\n" &
-  "After=network.target\n" &
-  "Wants=network.target\n" &
-  "\n[Service]\n" &
-  "Type=simple\n" &
-  "EnvironmentFile=" & svcCfgDir() / EnvFileName & "\n" &
-  "ExecStart=" & binPath & " start --config " & svcCfgDir() / ConfigFileName & "\n" &
-  "Restart=on-failure\n" &
-  "RestartSec=5s\n" &
-  "TimeoutStopSec=10s\n" &
-  "\n[Install]\n" &
-  "WantedBy=default.target\n"
-
-proc ctlServiceInstall =
-  # Directories
-  createDir(svcUnitDir())
-  createDir(svcCfgDir())
-
-  # Service unit file — points at the actual binary so nimble build takes
-  # effect on next restart without reinstalling.
-  let binPath = getAppFilename()
-  writeFile(svcUnitFile(), buildServiceFileContent(binPath))
-  echo "  binary  → " & binPath & " (in-place, no copy)"
-  echo "  service → " & svcUnitFile()
-
-  # Env file — create if missing, then inject any keys found in current env
-  let envPath = svcCfgDir() / EnvFileName
-  if not fileExists(envPath):
-    writeFile(envPath, EnvFileTemplate)
-    discard svcRun("chmod 600 " & envPath)
-
-  const knownKeys = [
-    "TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN",
-    "WECOM_CORP_ID", "WECOM_CORP_SECRET", "WECOM_AGENT_ID",
-    "WECOM_CALLBACK_TOKEN", "WECHAT_APP_ID", "WECHAT_APP_SECRET",
-    "WECHAT_CALLBACK_TOKEN", "WECHAT_TEMPLATE_ID",
-    "FEISHU_APP_ID", "FEISHU_APP_SECRET",
-    "FEISHU_VERIFICATION_TOKEN",
-    "QQ_ONEBOT_URL", "QQ_ONEBOT_TOKEN",
-    "QQ_OFFICIAL_APP_ID", "QQ_OFFICIAL_CLIENT_SECRET",
-    "QQ_OFFICIAL_API_BASE", "QQ_OFFICIAL_TOKEN_BASE",
-    "ZAI_API_KEY", "ZAI_CODING_API_KEY", "ZHIPU_API_KEY",
-    "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
-    "GEMINI_API_KEY", "MINIMAX_API_KEY",
-    "OPENCODE_API_KEY",
-    "BRAVE_API_KEY", "DONKEY_PG_DSN", "DONKEY_SQLITE_VEC_PATH",
-    "DONKEY_SQLITE_VECTOR_PATH",
-  ]
-  var envContent = readFile(envPath)
-  var injected: seq[string]
-  for k in knownKeys:
-    let v = getEnv(k)
-    if v.len == 0: continue
-    var lines = envContent.splitLines()
-    var found = false
-    for i in 0 ..< lines.len:
-      if lines[i].startsWith(k & "="):
-        lines[i] = k & "=" & v
-        found = true
-        break
-    if not found:
-      lines.add(k & "=" & v)
-    envContent = lines.join("\n")
-    injected.add(k)
-  writeFile(envPath, envContent)
-
-  if injected.len > 0:
-    echo "  env     → " & envPath & " (injected: " & injected.join(", ") & ")"
-  else:
-    echo "  env     → " & envPath & " (no keys in current env — fill in manually)"
-
-  # Toml config — create if missing
-  let tomlPath = svcCfgDir() / ConfigFileName
-  if not fileExists(tomlPath):
-    writeFile(tomlPath, TomlTemplate)
-    echo "  config  → " & tomlPath
-  else:
-    echo "  config  → " & tomlPath & " (already exists — kept)"
-
-  # Register with systemd
-  discard svcRun("systemctl --user daemon-reload")
-  if svcRun("systemctl --user enable " & AppSlug):
-    echo ""
-    echo "✓ Installed. Run: " & AppSlug & " service start"
-    echo "  Logs:         " & AppSlug & " service logs -f"
-    echo "  Auto-start:   loginctl enable-linger " & getEnv("USER", "your-user")
-  else:
-    echo "Warning: systemctl enable failed — is systemd --user running?"
-
-proc ctlServiceRemove =
-  discard svcRun("systemctl --user stop " & AppSlug)
-  discard svcRun("systemctl --user disable " & AppSlug)
-  if fileExists(svcUnitFile()):
-    removeFile(svcUnitFile())
-    echo "Removed " & svcUnitFile()
-  discard svcRun("systemctl --user daemon-reload")
-  echo "✓ Service removed. Config preserved at " & svcCfgDir()
-
-proc ctlServiceStart =
-  if not svcRun("systemctl --user start " & AppSlug):
-    echo "Failed. Check: " & AppSlug & " service logs -f"
-  else:
-    echo "✓ Started. Logs: " & AppSlug & " service logs -f"
-
-proc ctlServiceStop =
-  if not svcRun("systemctl --user stop " & AppSlug):
-    echo "Failed."
-  else:
-    echo "✓ Stopped."
-
-proc ctlServiceRestart =
-  if not svcRun("systemctl --user restart " & AppSlug):
-    echo "Failed. Check: " & AppSlug & " service logs -f"
-  else:
-    echo "✓ Restarted. Logs: " & AppSlug & " service logs -f"
-
-proc ctlServiceLogs(follow: bool) =
-  var cmd = "journalctl --user -u " & AppSlug & " --no-pager -o cat"
-  if follow: cmd.add(" -f")
-  discard execShellCmd(cmd)
-
-# ── ctl user commands ──────────────────────────────────────────────────────────
-
-proc ctlUserList(memory: MdFileAdapter) =
-  if not dirExists(memory.paddocksDir):
-    echo "(no paddocks directory — no users yet)"
-    return
-  var found = false
-  for kind, name in walkDir(memory.paddocksDir):
-    if kind == pcDir:
-      found = true
-      let userMdPath = name / "USER.md"
-      if fileExists(userMdPath):
-        echo name.extractFilename() & " (profile)"
-      else:
-        echo name.extractFilename() & " (no profile)"
-  if not found:
-    echo "(no users registered)"
-
-proc ctlUserShow(memory: MdFileAdapter; uuid: string) =
-  let userId = UserId(uuid)
-  if not memory.hasProfile(userId):
-    echo "User not found: " & uuid
-    quit(1)
-  let ctx = memory.loadContext(userId)
-  echo "=== USER.md ==="
-  echo ctx.userMd
-  if ctx.preferencesMd.len > 0:
-    echo "=== PREFERENCES.md ==="
-    echo ctx.preferencesMd
-  if ctx.memoryMd.len > 0:
-    echo "=== MEMORY.md (first 500 chars) ==="
-    echo ctx.memoryMd[0 .. min(500, ctx.memoryMd.len - 1)]
-
-proc ctlUserEdit(memory: MdFileAdapter; uuid, field, value: string) =
-  memory.updateUserField(UserId(uuid), field, value)
-  echo "Updated " & uuid & ": " & field & " = " & value
-
-proc ctlUserRevoke(memory: MdFileAdapter; uuid: string; revoked: bool) =
-  memory.updateUserField(UserId(uuid), "Access", if revoked: "revoked" else: "active")
-  echo (if revoked: "Revoked " else: "Restored ") & uuid
-
-# ── ctl session commands ───────────────────────────────────────────────────────
-
-proc ctlSessionList(sm: SessionManager; uuid: string) =
-  ## Lists channels recorded for the user's active session.
-  ## Sessions are in-memory only — this shows data from a running daemon
-  ## by reading the sessions table (useful if called within the same process).
-  ## For a separate CLI invocation, this shows nothing (daemon runs separately).
-  let uid = UserId(uuid)
-  var found = false
-  for (userId, channels) in sm.listSessions():
-    if userId == uid:
-      found = true
-      echo "Session for " & uuid & ":"
-      for (kind, rawId) in channels:
-        echo "  " & $kind & " : " & rawId
-  if not found:
-    echo "No active session for " & uuid
-
-# ── ctl tool/skill commands ────────────────────────────────────────────────────
-
-proc ctlToolInstall(registryPath: string; command: string; args: seq[string]) =
-  let entry = ToolEntry(kind: tkMcp, command: command, args: args)
-  saveToolEntry(registryPath, entry)
-  echo "Registered MCP server: " & command
-
-func buildSkillRuntimePolicy(cfg: DonkeyConfig;
-                             skillName: string): SkillRuntimePolicy =
-  SkillRuntimePolicy(allowNetHosts: cfg.effectiveSkillAllowNetHosts(skillName))
-
-func buildSkillRuntimePolicyResolver(cfg: DonkeyConfig): SkillRuntimePolicyResolver =
-  result = proc(skillName: string): SkillRuntimePolicy =
-    buildSkillRuntimePolicy(cfg, skillName)
-
-proc ctlSkillInstall(cfg: DonkeyConfig; skillsPath: string; name, scriptPath: string;
-                     permissions: seq[string]) =
-  discard validateSkillPermissions(permissions, cfg.webAllowlist).valueOr:
-    echo error
-    quit(1)
-  let saveRes = saveSkillEntry(skillsPath, SkillManifest(
-    name:        name,
-    version:     "0.1.0",
-    script:      scriptPath,
-    permissions: permissions,
-  ))
-  if saveRes.isErr:
-    echo saveRes.error
-    quit(1)
-  echo "Registered skill: " & name & " (" & scriptPath & ")"
-
-proc ctlSkillList(skillsPath: string) =
-  proc echoRemoteSkillInstalls(home: string) =
-    let lock = readRemoteSkillLockfile(home)
-    if lock.skills.len == 0:
-      echo "(no remote installs)"
-      return
-    for slug, entry in lock.skills.pairs:
-      echo slug & " v" & entry.version & "  [remote]"
-
-  let skills = loadSkillRegistry(skillsPath)
-  if skills.len == 0:
-    echo "(no local skills registered)"
-  else:
-    for s in skills:
-      echo s.name & " v" & s.version & "  " & s.script
-      if s.tools.len > 0:       echo "  tools:       " & s.tools.join(", ")
-      if s.permissions.len > 0: echo "  permissions: " & s.permissions.join(", ")
-  echoRemoteSkillInstalls(parentDir(skillsPath))
-
-proc ctlSkillUpdate(cfg: DonkeyConfig; skillsPath, name, scriptPath: string;
-                    permissions: seq[string]) =
-  ## Replaces the named skill entry in the registry (re-writes the file).
-  discard validateSkillPermissions(permissions, cfg.webAllowlist).valueOr:
-    echo error
-    quit(1)
-  var skills = loadSkillRegistry(skillsPath)
-  var found  = false
-  for i in 0 ..< skills.len:
-    if skills[i].name == name:
-      skills[i].script      = scriptPath
-      skills[i].permissions = permissions
-      found = true; break
-  if not found:
-    skills.add(SkillManifest(name: name, script: scriptPath,
-                             permissions: permissions))
-  if fileExists(skillsPath): removeFile(skillsPath)
-  for s in skills:
-    let sr = saveSkillEntry(skillsPath, s)
-    if sr.isErr:
-      echo sr.error
-      quit(1)
-  echo "Updated skill: " & name
-
-proc ctlSkillSearchRemote(registry: string; query: string; limit = 10) =
-  let hits = searchRemoteSkills(registry, query, limit).valueOr:
-    echo "Error: " & error
-    quit(1)
-  if hits.len == 0:
-    echo "(no results)"
-    return
-  for hit in hits:
-    let version = if hit.version.len > 0: " v" & hit.version else: ""
-    let summary = if hit.summary.len > 0: "  " & hit.summary else: ""
-    echo hit.slug & version & summary
-
-proc ctlSkillInstallRemote(home, registry, slug: string) =
-  let origin = installRemoteSkill(home, registry, slug).valueOr:
-    echo "Error: " & error
-    quit(1)
-  echo "Installed " & origin.slug & "@" & origin.installedVersion
-
-proc ctlSkillUpdateRemote(home, registry, slug: string) =
-  if slug.len > 0:
-    let version = updateRemoteSkill(home, registry, slug).valueOr:
-      echo "Error: " & error
-      quit(1)
-    echo "Updated " & slug & " -> " & version
-    return
-  let lock = readRemoteSkillLockfile(home)
-  if lock.skills.len == 0:
-    echo "(no remote installs)"
-    return
-  for installedSlug, _ in lock.skills.pairs:
-    let version = updateRemoteSkill(home, registry, installedSlug).valueOr:
-      echo "Error updating " & installedSlug & ": " & error
-      quit(1)
-    echo "Updated " & installedSlug & " -> " & version
-
-# ── ctl provider test ──────────────────────────────────────────────────────────
-
-proc ctlProviderTest(name: string) =
-  let fn = buildCompleteFn("provider = \"" & name & "\"", buildProviderBundle)
-  var h = newHistory()
-  h.addUser("ping")
-  let req  = buildPrompt("Reply with one word: pong", h, "")
-  let resp = fn(req)
-  if resp.isOk:
-    echo "OK — " & name & " responded: " & resp.value.text
-  else:
-    echo "FAIL — " & name & ": " & resp.error
-    quit(1)
-
 # ── daemon ─────────────────────────────────────────────────────────────────────
 ##
 ## Architecture (post-refactor):
@@ -510,6 +136,14 @@ proc ctlProviderTest(name: string) =
 ##     - first partial: send new message, store id
 ##     - subsequent partials: editMessage
 ##     - isPartial=false: editMessage + delete from presentationState
+
+func buildSkillRuntimePolicy(cfg: DonkeyConfig;
+                             skillName: string): SkillRuntimePolicy =
+  SkillRuntimePolicy(allowNetHosts: cfg.effectiveSkillAllowNetHosts(skillName))
+
+func buildSkillRuntimePolicyResolver(cfg: DonkeyConfig): SkillRuntimePolicyResolver =
+  result = proc(skillName: string): SkillRuntimePolicy =
+    buildSkillRuntimePolicy(cfg, skillName)
 
 proc makeTgTypingFn(token: string; identityPath: string): TypingFn =
   ## Returns a TypingFn that sends typing indicators to Telegram users.
@@ -1930,9 +1564,9 @@ proc main =
   if args.len >= 3 and args[0] == SandboxExecCommand:
     quit(runSandboxWorker(args[1], args[2]))
 
+  # setup doesn't need config — handle it early
   if args.len >= 1 and args[0] == "setup":
-    let home = resolveHome()
-    runSetupWizard(home)
+    runSetupWizard(resolveHome())
     quit(0)
 
   if configPath.len == 0:
@@ -1971,122 +1605,60 @@ proc main =
   let registryPath = cfg.home / "tools.toml"
   let memory       = MdFileAdapter(paddocksDir: cfg.paddocks)
 
-  if args.len >= 1 and args[0] == "ctl":
-    if args.len >= 3 and args[1] == "user" and args[2] == "list":
-      ctlUserList(memory); quit(0)
-    elif args.len >= 4 and args[1] == "user" and args[2] == "show":
-      ctlUserShow(memory, args[3]); quit(0)
-    elif args.len >= 6 and args[1] == "user" and args[2] == "edit":
-      ctlUserEdit(memory, args[3], args[4], args[5 .. ^1].join(" ")); quit(0)
-    elif args.len >= 4 and args[1] == "user" and args[2] == "revoke":
-      ctlUserRevoke(memory, args[3], true); quit(0)
-    elif args.len >= 4 and args[1] == "user" and args[2] == "allow":
-      ctlUserRevoke(memory, args[3], false); quit(0)
-    elif args.len >= 4 and args[1] == "session" and args[2] == "list":
-      ## Sessions are in-memory; this is only useful when called from within
-      ## the daemon process. For an external CLI, it shows nothing.
-      var sm: SessionManager
-      sm.init()
-      ctlSessionList(sm, args[3]); quit(0)
-    elif args.len >= 4 and args[1] == "tool" and args[2] == "install":
-      ctlToolInstall(registryPath, args[3], args[4 ..^ 1]); quit(0)
-    elif args.len >= 5 and args[1] == "skill" and args[2] == "install":
-      let skillsPath = cfg.home / "skills.toml"
-      ctlSkillInstall(cfg, skillsPath, args[3], args[4], args[5 ..^ 1]); quit(0)
-    elif args.len >= 4 and args[1] == "skill" and args[2] == "search":
-      ctlSkillSearchRemote(getEnv("CLAWHUB_REGISTRY", ClawhubDefaultRegistry), args[3]); quit(0)
-    elif args.len == 4 and args[1] == "skill" and args[2] == "install":
-      ctlSkillInstallRemote(cfg.home, getEnv("CLAWHUB_REGISTRY", ClawhubDefaultRegistry), args[3]); quit(0)
-    elif args.len >= 3 and args[1] == "skill" and args[2] == "list":
-      ctlSkillList(cfg.home / "skills.toml"); quit(0)
-    elif args.len >= 5 and args[1] == "skill" and args[2] == "update":
-      let skillsPath = cfg.home / "skills.toml"
-      ctlSkillUpdate(cfg, skillsPath, args[3], args[4], args[5 ..^ 1]); quit(0)
-    elif args.len >= 3 and args[1] == "skill" and args[2] == "update":
-      let slug = if args.len >= 4: args[3] else: ""
-      ctlSkillUpdateRemote(cfg.home, getEnv("CLAWHUB_REGISTRY", ClawhubDefaultRegistry), slug); quit(0)
-    elif args.len >= 4 and args[1] == "provider" and args[2] == "test":
-      ctlProviderTest(args[3]); quit(0)
-    elif args.len >= 5 and args[1] == "memory" and args[2] == "search":
-      when defined(withPostgres) or defined(withSqlite):
-        let memory = MdFileAdapter(
-          paddocksDir: cfg.paddocks,
-          magmaDsn: getEnv("DONKEY_PG_DSN"),
-          magmaSqlitePath: configuredMagmaSqlitePath(cfg.home),
-          magmaSqliteVectorPath:
-            block:
-              let vecPath = getEnv("DONKEY_SQLITE_VEC_PATH")
-              if vecPath.len > 0: vecPath else: getEnv("DONKEY_SQLITE_VECTOR_PATH"),
-        )
-        ctlMemorySearch(memory, args[3], args[4]); quit(0)
-      else:
-        echo "This build disabled MAGMA support; rebuild with -d:withPostgres or -d:withSqlite"; quit(1)
-    elif args.len >= 4 and args[1] == "memory" and args[2] == "import":
-      when defined(withPostgres) or defined(withSqlite):
-        let memory = MdFileAdapter(
-          paddocksDir: cfg.paddocks,
-          magmaDsn: getEnv("DONKEY_PG_DSN"),
-          magmaSqlitePath: configuredMagmaSqlitePath(cfg.home),
-          magmaSqliteVectorPath:
-            block:
-              let vecPath = getEnv("DONKEY_SQLITE_VEC_PATH")
-              if vecPath.len > 0: vecPath else: getEnv("DONKEY_SQLITE_VECTOR_PATH"),
-        )
-        ctlMemoryImport(memory, args[3]); quit(0)
-      else:
-        echo "This build disabled MAGMA support; rebuild with -d:withPostgres or -d:withSqlite"; quit(1)
-    elif args.len >= 4 and args[1] == "memory" and args[2] == "export":
-      when defined(withPostgres) or defined(withSqlite):
-        let memory = MdFileAdapter(
-          paddocksDir: cfg.paddocks,
-          magmaDsn: getEnv("DONKEY_PG_DSN"),
-          magmaSqlitePath: configuredMagmaSqlitePath(cfg.home),
-          magmaSqliteVectorPath:
-            block:
-              let vecPath = getEnv("DONKEY_SQLITE_VEC_PATH")
-              if vecPath.len > 0: vecPath else: getEnv("DONKEY_SQLITE_VECTOR_PATH"),
-        )
-        let outDir = if args.len >= 5: args[4] else: ""
-        ctlMemoryExport(memory, args[3], outDir); quit(0)
-      else:
-        echo "This build disabled MAGMA support; rebuild with -d:withPostgres or -d:withSqlite"; quit(1)
-    elif args.len >= 2 and args[1] == "status":
-      let sockPath = cfg.home / SockFileName
-      let sr = ipcClient.queryStatus(sockPath)
-      if sr.isErr:
-        echo "Error: " & sr.error; quit(1)
-      let st = sr.value
-      echo formatDaemonStatus(st)
-      quit(0)
-    else:
-      printHelp(); quit(1)
+  # ── command registry ────────────────────────────────────────────────────────
+  let cmdReg = newCommandRegistry()
 
-  if args.len >= 2 and args[0] == "service":
-    case args[1]
-    of "install": ctlServiceInstall(); quit(0)
-    of "remove":  ctlServiceRemove();  quit(0)
-    of "start":   ctlServiceStart();   quit(0)
-    of "stop":    ctlServiceStop();    quit(0)
-    of "restart": ctlServiceRestart(); quit(0)
-    of "logs":
-      ctlServiceLogs(logsFollow); quit(0)
-    else: printHelp(); quit(1)
+  # Pre-bootstrap commands (no config needed)
+  cmdReg.register(CommandEntry(
+    name: "setup", minArgs: 1,
+    handler: proc(a: seq[string]): int {.gcsafe.} =
+      runSetupWizard(resolveHome()); 0,
+    context: ccNone, description: "Interactive first-run configuration wizard"))
 
-  if args.len >= 1 and args[0] == "tui":
-    let sockPath = cfg.home / SockFileName
-    runTui(sockPath)
-    quit(0)
+  # Post-bootstrap commands
+  cmdReg.register(CommandEntry(
+    name: "ctl", minArgs: 2,
+    handler: proc(a: seq[string]): int {.gcsafe.} =
+      dispatchCtl(cfg, memory, registryPath, a,
+                  proc(preferencesMd: string): CompleteFn =
+                    buildCompleteFn(preferencesMd, buildProviderBundle)),
+    context: ccConfigLoaded, description: "Admin commands (user, skill, tool, memory, status)"))
+  cmdReg.register(CommandEntry(
+    name: "service", minArgs: 2,
+    handler: proc(a: seq[string]): int {.gcsafe.} =
+      dispatchService(a, logsFollow),
+    context: ccNone, description: "Systemd --user service management"))
+  cmdReg.register(CommandEntry(
+    name: "tui", minArgs: 1,
+    handler: proc(a: seq[string]): int {.gcsafe.} =
+      dispatchTui(cfg.home / SockFileName),
+    context: ccConfigLoaded, description: "Open live TUI dashboard"))
+  cmdReg.register(CommandEntry(
+    name: "doctor", minArgs: 1,
+    handler: proc(a: seq[string]): int {.gcsafe.} =
+      runDoctor(cfg, devMode),
+    context: ccConfigLoaded, description: "Run full runtime diagnostic"))
+  cmdReg.register(CommandEntry(
+    name: "about", minArgs: 1,
+    handler: proc(a: seq[string]): int {.gcsafe.} =
+      echo buildDoctorSummary(cfg, devMode); 0,
+    context: ccConfigLoaded, description: "Show concise runtime overview"))
+  cmdReg.register(CommandEntry(
+    name: "start", minArgs: 1,
+    handler: proc(a: seq[string]): int {.gcsafe.} =
+      logDaemonStart(log, cfg)
+      waitFor startDaemon(cfg, log)
+      0,
+    context: ccConfigLoaded, description: "Start the daemon"))
 
-  if args.len >= 1 and args[0] == "doctor":
-    quit(runDoctor(cfg, devMode))
+  # ── dispatch ────────────────────────────────────────────────────────────────
+  if args.len >= 1:
+    let exitCode = cmdReg.dispatch(args)
+    if exitCode == 2: printHelp()
+    quit(if exitCode < 0: 1 else: exitCode)
 
-  if args.len >= 1 and args[0] == "about":
-    echo buildDoctorSummary(cfg, devMode)
-    quit(0)
-
-  log.info(AppSlug & " " & Version & " starting")
-  log.info("home: " & cfg.home)
-
+  # No command given → default to start daemon
+  logDaemonStart(log, cfg)
   waitFor startDaemon(cfg, log)
 
 when isMainModule:
