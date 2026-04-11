@@ -3,6 +3,7 @@ import chronos/asyncsync
 import ../../core/commands/command_catalog
 import ../../core/commands/command_routing
 import ../../core/pipeops
+import ../../core/log
 import ../../adapters/memory/md_file
 import ../../app/session_manager
 import ../../domain/agent_message
@@ -220,7 +221,8 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
                     toolClientsCount: int;
                     daemonStartMs: int64;
                     msgSeq: var int;
-                    handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.}) =
+                    handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
+                    log: Logger = newLogger("qq.outbound")) =
   if not qqAdapter.enabled():
     return
 
@@ -243,9 +245,11 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
             userId: userId,
             channel: ckQQ,
             text: buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount()),
-          )).isOkOr: discard
+          )).isOkOr:
+            log.error("qq send lcaShowAbout failed for user=" & $userId & " reason=" & error)
         of lcaStartIntro:
-          qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: buildStartIntroText())).isOkOr: discard
+          qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: buildStartIntroText())).isOkOr:
+            log.error("qq send lcaStartIntro failed for user=" & $userId & " reason=" & error)
         of lcaSkillCommand:
           let reply = applySkillTextCommand(
             memory,

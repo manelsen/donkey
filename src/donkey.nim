@@ -1366,7 +1366,8 @@ proc drainQQGateway(ctx: DaemonContext;
     ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
     ctx.runtime.msgSeq,
     proc(msg: InboundMessage) =
-      handleGatewayFallback(ctx, cfg, memory, msg, log))
+      handleGatewayFallback(ctx, cfg, memory, msg, log),
+    log)
 
 proc drainFeishuGateway(ctx: DaemonContext;
                         cfg: DonkeyConfig;
