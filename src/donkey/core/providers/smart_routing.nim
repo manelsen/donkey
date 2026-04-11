@@ -3,9 +3,13 @@
 ## This module never talks to providers or the filesystem. It only turns
 ## persisted prefs plus request shape into an ordered list of provider/model
 ## candidates for the shell to try.
+##
+## Model selection is driven by ProviderCatalog — no hardcoded model strings
+## for routing decisions.
 
 import std/[algorithm, strutils]
 import ../../domain/message
+import ./provider_catalog
 
 const
   AutoProviderLabel* = "auto"
@@ -76,6 +80,12 @@ type
     approxInputChars*: int
     thinking*: string
 
+  ## Catalog-aware routing helpers.
+  ## Wraps ProviderCatalog + availability for clean routing logic.
+  RoutingCatalog* = object
+    catalog*: ProviderCatalog
+    availability*: ProviderAvailability
+
 func defaultSmartRoutingPrefs*(): SmartRoutingPrefs =
   SmartRoutingPrefs(
     providerName: "zai-coding",
@@ -132,15 +142,23 @@ func routingLabel*(prefs: SmartRoutingPrefs): string =
   else:
     prefs.providerName
 
-func defaultModelForProvider*(providerName: string): string =
-  case providerName
-  of "openrouter": "openai/gpt-4o-mini"
-  of "anthropic": "claude-opus-4-6"
-  of "zai-anthropic": "glm-4.7"
-  of "gemini": "gemini-2.5-flash"
-  of "minimax": "MiniMax-M2"
-  of "zai": "glm-4.7"
-  else: "glm-4.7"
+func defaultModelForProvider*(providerName: string;
+                               catalog: ProviderCatalog = buildDefaultCatalog()): string =
+  ## Look up the default model for a provider from the catalog.
+  ## Uses the first model returned by getByProvider (ordered by registration).
+  let models = catalog.getByProvider(providerName)
+  if models.len > 0:
+    models[0].canonicalName
+  else:
+    # Fallback for unknown providers
+    case providerName
+    of "openrouter": "openai/gpt-4o-mini"
+    of "anthropic": "claude-opus-4-6"
+    of "zai-anthropic": "glm-4.7"
+    of "gemini": "gemini-2.5-flash"
+    of "minimax": "MiniMax-M2"
+    of "zai": "glm-4.7"
+    else: "glm-4.7"
 
 func selection(providerName: string; modelName = ""): ProviderSelection =
   ProviderSelection(
@@ -181,6 +199,75 @@ func isAvailable(availability: ProviderAvailability; providerName: string): bool
   of "zai": availability.zai
   of "zai-coding": availability.zaiCoding
   else: false
+
+# ── Catalog-driven routing helpers ────────────────────────────────────────────
+
+func availableProviders(rc: RoutingCatalog): seq[string] =
+  ## Return list of provider names that are currently available.
+  let avail = rc.availability
+  if avail.openrouter: result.add("openrouter")
+  if avail.anthropic: result.add("anthropic")
+  if avail.zaiAnthropic: result.add("zai-anthropic")
+  if avail.gemini: result.add("gemini")
+  if avail.minimax: result.add("minimax")
+  if avail.zai: result.add("zai")
+  if avail.zaiCoding: result.add("zai-coding")
+
+func queryModels*(rc: RoutingCatalog; providerName: string;
+                 hasTools = false; hasImage = false;
+                 hasThinking = false): seq[ProviderModelEntry] =
+  ## Query catalog for models from a specific provider with given capabilities.
+  let q = ModelQuery(
+    provider: providerName,
+    hasTools: hasTools,
+    hasImage: hasImage,
+    hasThinking: hasThinking,
+  )
+  let all = rc.catalog.query(q)
+  # Filter by availability (already handled by provider filter, but sort by budget priority)
+  orderByPriority(all, "quality-first")
+
+func selectBestModel*(rc: RoutingCatalog; providerName: string;
+                     hasTools = false; hasImage = false;
+                     hasThinking = false): ProviderSelection =
+  ## Select the best available model from a provider based on catalog.
+  if not isAvailable(rc.availability, providerName):
+    return ProviderSelection()  # empty
+  let models = rc.queryModels(providerName, hasTools, hasImage, hasThinking)
+  if models.len == 0:
+    # Fallback: use any model from the provider
+    let allModels = rc.catalog.getByProvider(providerName)
+    if allModels.len > 0:
+      return ProviderSelection(
+        providerName: providerName,
+        modelName: allModels[0].canonicalName,
+      )
+    return ProviderSelection()  # empty
+  ProviderSelection(
+    providerName: providerName,
+    modelName: models[0].canonicalName,
+  )
+
+func addSelectionIfAvailable*(selections: var seq[ProviderSelection];
+                             rc: RoutingCatalog; providerName: string;
+                             hasTools = false; hasImage = false;
+                             hasThinking = false) =
+  ## Add the best model from a provider if the provider is available.
+  let sel = rc.selectBestModel(providerName, hasTools, hasImage, hasThinking)
+  if sel.providerName.len > 0:
+    selections.add(sel)
+
+func addAnthropicWithFallback*(selections: var seq[ProviderSelection];
+                              rc: RoutingCatalog;
+                              hasTools = false; hasThinking = false) =
+  ## Add anthropic model, with zai-anthropic fallback.
+  let direct = rc.selectBestModel("anthropic", hasTools, false, hasThinking)
+  if direct.providerName.len > 0:
+    selections.add(direct)
+  elif rc.availability.zaiAnthropic:
+    let fallback = rc.selectBestModel("zai-anthropic", hasTools, false, hasThinking)
+    if fallback.providerName.len > 0:
+      selections.add(fallback)
 
 func addAnthropicCompatible(selections: var seq[ProviderSelection];
                             availability: ProviderAvailability;
@@ -433,66 +520,76 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
     return @[prefs.explicitSelection]
 
   let signals = buildRoutingSignals(prefs, req)
+  let rc = RoutingCatalog(
+    catalog: buildDefaultCatalog(),
+    availability: availability,
+  )
 
+  # Image requests: prefer multimodal providers
   if signals.hasImage:
-    result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
-    result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
+    addSelectionIfAvailable(result, rc, "openrouter", hasImage = true)
+    addSelectionIfAvailable(result, rc, "gemini", hasImage = true)
 
+  # Long context: prefer models with large context windows
   if signals.approxInputChars >= LongContextChars:
-    result.addIfAvailable(availability, "gemini", "gemini-2.5-pro")
-    result.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
-    result.addIfAvailable(availability, "openrouter", "openai/gpt-4o")
+    addSelectionIfAvailable(result, rc, "gemini", hasImage = true)
+    addAnthropicWithFallback(result, rc, hasTools = false, hasThinking = false)
+    addSelectionIfAvailable(result, rc, "openrouter", hasThinking = true)
 
+  # Thinking-based routing
   case signals.thinking
   of "high":
     if signals.hasTools:
-      result.addAnthropicCompatible(availability, "claude-opus-4-6", "glm-4.7")
-      result.addIfAvailable(availability, "zai-coding", "glm-5")
-      result.addIfAvailable(availability, "gemini", "gemini-2.5-pro")
-      result.addIfAvailable(availability, "openrouter", "openai/gpt-4o")
+      addAnthropicWithFallback(result, rc, hasTools = true, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "zai-coding", hasTools = true, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "gemini", hasTools = true, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "openrouter", hasTools = true, hasThinking = true)
     else:
-      result.addAnthropicCompatible(availability, "claude-opus-4-6", "glm-4.7")
-      result.addIfAvailable(availability, "gemini", "gemini-2.5-pro")
-      result.addIfAvailable(availability, "zai", "glm-5")
-      result.addIfAvailable(availability, "openrouter", "openai/gpt-4o")
+      addAnthropicWithFallback(result, rc, hasTools = false, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "gemini", hasTools = false, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "zai", hasTools = false, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "openrouter", hasTools = false, hasThinking = true)
   of "medium":
     if signals.hasTools:
-      result.addIfAvailable(availability, "zai-coding", "glm-5")
-      result.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
-      result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
-      result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
+      addSelectionIfAvailable(result, rc, "zai-coding", hasTools = true)
+      addAnthropicWithFallback(result, rc, hasTools = true)
+      addSelectionIfAvailable(result, rc, "openrouter", hasTools = true)
+      addSelectionIfAvailable(result, rc, "gemini", hasTools = true)
     else:
-      result.addIfAvailable(availability, "zai", "glm-5")
-      result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
-      result.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
-      result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
-      result.addIfAvailable(availability, "minimax", "MiniMax-M2")
+      addSelectionIfAvailable(result, rc, "zai", hasTools = false, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "openrouter")
+      addAnthropicWithFallback(result, rc)
+      addSelectionIfAvailable(result, rc, "gemini")
+      addSelectionIfAvailable(result, rc, "minimax")
   else:
     if signals.hasTools:
-      result.addIfAvailable(availability, "zai-coding", "glm-4.7")
-      result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
-      result.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
-      result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
+      addSelectionIfAvailable(result, rc, "zai-coding", hasTools = true)
+      addSelectionIfAvailable(result, rc, "openrouter", hasTools = true)
+      addAnthropicWithFallback(result, rc, hasTools = true)
+      addSelectionIfAvailable(result, rc, "gemini", hasTools = true)
+      addSelectionIfAvailable(result, rc, "zai", hasTools = true)
     else:
-      result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
-      result.addIfAvailable(availability, "zai", "glm-4.7")
-      result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
-      result.addIfAvailable(availability, "minimax", "MiniMax-M2")
-      result.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
+      addSelectionIfAvailable(result, rc, "openrouter")
+      addSelectionIfAvailable(result, rc, "zai")
+      addSelectionIfAvailable(result, rc, "gemini")
+      addAnthropicWithFallback(result, rc)
+      addSelectionIfAvailable(result, rc, "minimax")
+      addSelectionIfAvailable(result, rc, "zai-coding")
 
+  # Fallback: add general-purpose models
   if signals.hasTools:
-    result.addIfAvailable(availability, "zai-coding", "glm-4.7")
-    result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
-    result.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
-    result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
-    result.addIfAvailable(availability, "zai", "glm-4.7")
+    addSelectionIfAvailable(result, rc, "zai-coding", hasTools = true)
+    addSelectionIfAvailable(result, rc, "openrouter", hasTools = true)
+    addAnthropicWithFallback(result, rc, hasTools = true)
+    addSelectionIfAvailable(result, rc, "gemini", hasTools = true)
+    addSelectionIfAvailable(result, rc, "zai", hasTools = true)
   else:
-    result.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
-    result.addIfAvailable(availability, "zai", "glm-4.7")
-    result.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
-    result.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
-    result.addIfAvailable(availability, "minimax", "MiniMax-M2")
-    result.addIfAvailable(availability, "zai-coding", "glm-4.7")
+    addSelectionIfAvailable(result, rc, "openrouter")
+    addSelectionIfAvailable(result, rc, "zai")
+    addSelectionIfAvailable(result, rc, "gemini")
+    addAnthropicWithFallback(result, rc)
+    addSelectionIfAvailable(result, rc, "minimax")
+    addSelectionIfAvailable(result, rc, "zai-coding")
 
   result = dedupeSelections(result)
 
