@@ -210,11 +210,13 @@ testament r tests/app/t_orchestrator.nim
 
 # Run a category
 testament cat app
-
-# Add a provider: implement ProviderPort, add to buildCompleteFn in src/donkey.nim
-# Add a channel:  implement ChannelPort, add to startDaemon in src/donkey.nim
-# Add an MCP tool: donkey ctl tool install <command>
 ```
+
+### Extending Donkey
+
+- **Add a channel**: See [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-channel) for the step-by-step guide using `ChannelCapabilityDescriptor`.
+- **Add a provider**: See [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-provider) for registering models via `ProviderCatalog` and implementing the adapter.
+- **Add an MCP tool**: `donkey ctl tool install <command>`
 
 See [CLAUDE.md](CLAUDE.md) for AI-assistant guidance and architectural decisions.
 See [TODO.md](TODO.md) for the centralized backlog, including the Multigraph Memory-first migration plan.

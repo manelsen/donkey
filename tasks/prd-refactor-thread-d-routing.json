@@ -65,7 +65,7 @@
         "nim c src/donkey.nim passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "dependsOn": [
         "US-011"
