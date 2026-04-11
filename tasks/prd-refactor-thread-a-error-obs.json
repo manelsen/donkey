@@ -1,0 +1,100 @@
+{
+  "name": "Refatoração — Thread A: Error & Observability",
+  "branchName": "ralph/refactor-error-observability",
+  "description": "Inventariar falhas silenciosas, definir política de erro, aplicá-la a outbound/reminders, e adicionar métricas estruturadas. Rodar APÓS merge da Thread B (dispatch).",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Inventariar discard silencioso em caminhos críticos",
+      "description": "As a maintainer, I want a complete inventory of all `isOkOr: discard` and `except CatchableError: discard` patterns so that I know exactly which code paths are silently failing.",
+      "acceptanceCriteria": [
+        "Listar todos os arquivos e linhas com `isOkOr: discard` em envio de mensagens, reminders e webhooks",
+        "Listar todos os arquivos e linhas com `except CatchableError: discard` em caminhos operacionais",
+        "Classificar cada ocorrência por camada (outbound, reminder, webhook, outros)",
+        "Documentar o inventário em tasks/silent-failures.md",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Inventariados 23 isOkOr:discard e 26 except CatchableError:discard em 49 ocorrencias totais. 6 falhas pre-existentes nos testes nao relacionadas a esta mudanca.",
+      "dependsOn": []
+    },
+    {
+      "id": "US-005",
+      "title": "Definir política de erro por camada",
+      "description": "As an operator, I want a formal error policy so that every operational failure results in at least an explicit return, structured log, metric, or observability event.",
+      "acceptanceCriteria": [
+        "Documentar error policy: onde erro sobe, onde vira warning, onde silêncio é permitido",
+        "Definir formato de log estruturado para erros de envio de mensagens, reminders e webhooks",
+        "Substituir pelo menos um `isOkOr: discard` por retorno explícito + log",
+        "Substituir pelo menos um `except CatchableError: discard` por retorno explícito + log",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-001"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Aplicar error policy a caminhos de outbound",
+      "description": "As an operator, I want outbound message failures to be visible so they don't disappear silently.",
+      "acceptanceCriteria": [
+        "Todos os `isOkOr: discard` em envio de mensagens passam a emitir retorno explícito ou log",
+        "Todos os `except CatchableError: discard` em webhooks passam a emitir retorno explícito ou log",
+        "Adicionar métrica ou evento de observabilidade para falhas de outbound",
+        "Adicionar testes de falha operacional crítica em outbound",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-005"
+      ]
+    },
+    {
+      "id": "US-007",
+      "title": "Aplicar error policy a reminders e busca",
+      "description": "As an operator, I want reminder and search failures to be visible so they don't disappear silently.",
+      "acceptanceCriteria": [
+        "Todos os `isOkOr: discard` em leitura de reminders passam a emitir retorno explícito ou log",
+        "Todos os `except CatchableError: discard` em buscas passam a emitir retorno explícito ou log",
+        "Adicionar testes de falha operacional em reminders",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-005"
+      ]
+    },
+    {
+      "id": "US-012",
+      "title": "Adicionar métricas estruturadas para falhas de outbound/webhook/reminder",
+      "description": "As an operator, I want structured metrics for operational failures so I can monitor and alert on reliability issues.",
+      "acceptanceCriteria": [
+        "Falhas de outbound emitem métrica estruturada",
+        "Falhas de webhook emitem métrica estruturada",
+        "Falhas de reminder emitem métrica estruturada",
+        "Métricas são rastreáveis sem poluir UX final do usuário",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-006",
+        "US-007"
+      ]
+    }
+  ]
+}
