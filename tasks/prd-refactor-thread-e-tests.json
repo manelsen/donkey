@@ -1,0 +1,38 @@
+{
+  "name": "Refatoração — Thread E: Test Coverage",
+  "branchName": "ralph/refactor-test-coverage",
+  "description": "Adicionar cobertura de testes para command dispatch. Criar branch APÓS merge da Thread B.",
+  "userStories": [
+    {
+      "id": "US-004",
+      "title": "[STUB] Extrair dispatcher de comandos do main — já feito pela Thread B",
+      "description": "Esta story já foi completada pela Thread B e merged em main. Não implementar — apenas garante que US-014 não fica bloqueada.",
+      "acceptanceCriteria": [
+        "Stub — não implementar"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Completada pela Thread B (branch ralph/refactor-command-dispatch). Merge em main antes de iniciar esta thread.",
+      "dependsOn": []
+    },
+    {
+      "id": "US-014",
+      "title": "Cobertura de testes para command dispatch",
+      "description": "As a maintainer, I want tests covering command dispatch so regression risk is reduced.",
+      "acceptanceCriteria": [
+        "Testes de despacho para cada comando registrado (ctl, service, tui, doctor, start)",
+        "Testes de validação de argumentos do handler",
+        "Testes de exit codes padronizados",
+        "Testes rodam sem boot completo do daemon",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "",
+      "dependsOn": [
+        "US-004"
+      ]
+    }
+  ]
+}
