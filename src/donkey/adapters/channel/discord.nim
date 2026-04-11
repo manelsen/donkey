@@ -615,22 +615,19 @@ proc editMessage*(a: DiscordAdapter; userId: UserId;
   ok()
 
 proc setMessageReaction*(a: DiscordAdapter; userId: UserId;
-                         msgId, emoji: string): Result[void, string] =
-  ## Adds or removes a status reaction on an existing DM message.
-  ## Discord does not have a "set reaction" endpoint, so we remove known status
-  ## reactions first, then add the desired one when non-empty.
-  let discordId = a.resolver.reverseChannel(userId, ckDiscord)
-  if discordId.len == 0:
-    return err("DiscordAdapter.setMessageReaction: no Discord ID for " & $userId)
-  let chId = ? a.dmChannelFor(discordId)
-  let cacheKey = chId & ":" & msgId
+                         channelId, msgId, emoji: string): Result[void, string] =
+  ## Adds or removes a status reaction on an existing message.
+  ## channelId is the Discord channel where the target message lives (DM or guild).
+  if channelId.len == 0 or msgId.len == 0:
+    return ok()
+  let cacheKey = channelId & ":" & msgId
   let previous = a.statusReactions[].getOrDefault(cacheKey)
   if previous == emoji:
     return ok()
   let headers = @[a.authHeader()]
   if previous.len > 0:
     let encoded = encodeUrl(previous, usePlus = false)
-    let removeUrl = a.base() & "/channels/" & chId &
+    let removeUrl = a.base() & "/channels/" & channelId &
       "/messages/" & msgId & "/reactions/" & encoded & "/@me"
     let resp = ? a.http.delete(removeUrl, headers)
     if resp.status == 429:
@@ -642,7 +639,7 @@ proc setMessageReaction*(a: DiscordAdapter; userId: UserId;
     a.statusReactions[][cacheKey] = ""
     return ok()
 
-  let addUrl = a.base() & "/channels/" & chId &
+  let addUrl = a.base() & "/channels/" & channelId &
     "/messages/" & msgId & "/reactions/" & encodeUrl(emoji, usePlus = false) & "/@me"
   let addResp = ? a.http.put(addUrl, "", headers)
   if addResp.status == 429:

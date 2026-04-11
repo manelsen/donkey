@@ -29,7 +29,7 @@ type
                         replyTo = ""): Result[void, string] {.gcsafe.}
     editKeyboard*: proc(userId: UserId; msgId, text: string;
                         buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.}
-    setMessageReaction*: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.}
+    setMessageReaction*: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.}
 
   OutboundChannelPorts* = object
     telegram*: OutboundChannelPort

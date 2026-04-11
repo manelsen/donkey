@@ -113,7 +113,7 @@ suite "outbound_runtime":
             editedText = text
             editedKeyboardCount = buttons.len
           ok(),
-        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
       )
     )
     var presentationState = initPresentationState()
@@ -143,7 +143,7 @@ suite "outbound_runtime":
             editedText = text
             editedKeyboardCount = buttons.len
           ok(),
-        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
       )
     )
     var presentationState = initPresentationState()
@@ -184,7 +184,7 @@ suite "outbound_runtime":
             editedText = msgId & ":" & text
             editedKeyboardCount = buttons.len
           ok(),
-        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
       )
     )
     var presentationState = initPresentationState()
@@ -221,7 +221,7 @@ suite "outbound_runtime":
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
         editKeyboard: proc(userId: UserId; msgId, text: string;
                            buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
-        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
       )
     )
     var presentationState = initPresentationState()
@@ -258,13 +258,13 @@ suite "outbound_runtime":
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
         editKeyboard: proc(userId: UserId; msgId, text: string;
                            buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
-        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} =
-          {.cast(gcsafe).}: seen = $userId & ":" & msgId & ":" & emoji
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}: seen = $userId & ":" & channelId & ":" & msgId & ":" & emoji
           ok(),
       )
     )
     check setOutboundReaction(
-      ckTelegram, UserId("u1"), "42", "⏳", ports, newLogger("test.outbound"))
-    check seen == "u1:42:⏳"
+      ckTelegram, UserId("u1"), "ch1", "42", "⏳", ports, newLogger("test.outbound"))
+    check seen == "u1:ch1:42:⏳"
     check not setOutboundReaction(
-      ckQQ, UserId("u1"), "42", "⏳", ports, newLogger("test.outbound"))
+      ckQQ, UserId("u1"), "ch1", "42", "⏳", ports, newLogger("test.outbound"))

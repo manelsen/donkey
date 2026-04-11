@@ -42,8 +42,8 @@ proc unsupportedEditKeyboard(userId: UserId; msgId, text: string;
   discard userId; discard msgId; discard text; discard buttons
   err("editKeyboard unsupported")
 
-proc unsupportedSetMessageReaction(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} =
-  discard userId; discard msgId; discard emoji
+proc unsupportedSetMessageReaction(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} =
+  discard userId; discard channelId; discard msgId; discard emoji
   err("setMessageReaction unsupported")
 
 # ── builder ──────────────────────────────────────────────────────────────────
@@ -80,8 +80,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     editKeyboard: proc(userId: UserId; msgId, text: string;
                         buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} =
       tgAdapter[].editKeyboardText(userId, msgId, text, buttons),
-    setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} =
-      tgAdapter[].setMessageReaction(userId, msgId, emoji),
+    setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} =
+      tgAdapter[].setMessageReaction(userId, channelId, msgId, emoji),
   )
 
   # ── Discord (full capability) ─────────────────────────────────────────────
@@ -100,8 +100,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     editKeyboard: proc(userId: UserId; msgId, text: string;
                         buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} =
       dcAdapter[].editKeyboard(userId, msgId, text, buttons),
-    setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} =
-      dcAdapter[].setMessageReaction(userId, msgId, emoji),
+    setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} =
+      dcAdapter[].setMessageReaction(userId, channelId, msgId, emoji),
   )
 
   # ── WeCom — capability descriptor says: send only ─────────────────────────

@@ -1171,20 +1171,20 @@ proc stageInboundReactionStatus(runtime: var DaemonRuntime;
   if not shouldStageInboundReaction(msg):
     return
   let statusMsgId = inboundStatusMessageId(msg)
-  discard setOutboundReaction(msg.channel, msg.userId, statusMsgId, "⏳", outboundPorts, newLogger("status.reaction"))
-  runtime.presentationState.rememberStatus(msg.channel, msg.userId, "turn", statusMsgId)
+  discard setOutboundReaction(msg.channel, msg.userId, msg.channelId, statusMsgId, "⏳", outboundPorts, newLogger("status.reaction"))
+  runtime.presentationState.rememberStatus(msg.channel, msg.userId, "turn", statusMsgId, msg.channelId)
 
 proc completeInboundReactionStatus(runtime: var DaemonRuntime;
                                    outboundPorts: OutboundChannelPorts;
                                    channel: ChannelKind;
                                    userId: UserId;
-                                   msgId: string;
+                                   channelId, msgId: string;
                                    isError: bool) =
   if not supportsMessageReactions(channel) or msgId.len == 0:
     return
   runtime.presentationState.clearStatus(channel, userId, "turn")
   let finalEmoji = if isError: "❌" else: "✅"
-  discard setOutboundReaction(channel, userId, msgId, finalEmoji, outboundPorts, newLogger("status.reaction"))
+  discard setOutboundReaction(channel, userId, channelId, msgId, finalEmoji, outboundPorts, newLogger("status.reaction"))
 
 proc handleTelegramFallback(runtime:      var DaemonRuntime;
                             msg:          InboundMessage;
@@ -1216,7 +1216,7 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
       proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} =
         ensureSessionTask(runtimePtr[].sm, msg, services, runtimePtr[].msgSeq, taskKind, payload)):
       if stagedReaction:
-        completeInboundReactionStatus(runtime, outboundPorts, msg.channel, msg.userId, msg.channelId, false)
+        completeInboundReactionStatus(runtime, outboundPorts, msg.channel, msg.userId, msg.channelId, msg.channelId, false)
     else:
       handleTelegramFallback(runtime, msg, services)
   true
@@ -1252,9 +1252,10 @@ proc completeInboundReactionStatus(runtime:   var DaemonRuntime;
   if not supportsMessageReactions(outMsg.channel) or outMsg.isPartial or msgId.len == 0:
     return
 
+  let channelId = runtime.presentationState.lookupStatusChannelId(outMsg.channel, outMsg.userId, "turn")
   let isError = outMsg.text.startsWith("Desculpe") or
                 outMsg.text.startsWith("Tool call loop")
-  completeInboundReactionStatus(runtime, outboundPorts, outMsg.channel, outMsg.userId, msgId, isError)
+  completeInboundReactionStatus(runtime, outboundPorts, outMsg.channel, outMsg.userId, channelId, msgId, isError)
 
 proc drainGlobalOutbox(runtime:  var DaemonRuntime;
                        adapters: var DaemonAdapters;
@@ -1322,7 +1323,7 @@ proc drainDiscordGateway(ctx: DaemonContext;
     proc(msg: InboundMessage) =
       stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),
     proc(msg: InboundMessage) =
-      completeInboundReactionStatus(ctx.runtime, outboundPorts, msg.channel, msg.userId, msg.channelId, false),
+      completeInboundReactionStatus(ctx.runtime, outboundPorts, msg.channel, msg.userId, msg.channelId, msg.channelId, false),
     proc(msg: InboundMessage) =
       handleGatewayFallback(ctx, cfg, memory, msg, log))
 
@@ -1522,7 +1523,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
         stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),
       proc(msg: InboundMessage) {.gcsafe.} =
         completeInboundReactionStatus(ctx.runtime, outboundPorts, msg.channel, msg.userId,
-          inboundStatusMessageId(msg), false),
+          msg.channelId, inboundStatusMessageId(msg), false),
       proc(msg: InboundMessage) {.gcsafe.} =
         handleGatewayFallback(ctx, cfg, memory, msg, log))
 

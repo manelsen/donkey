@@ -260,8 +260,9 @@ proc editKeyboardText*(a: TelegramAdapter; userId: UserId;
   ok()
 
 proc setMessageReaction*(a: TelegramAdapter; userId: UserId;
-                          msgId, emoji: string): Result[void, string] =
+                          channelId, msgId, emoji: string): Result[void, string] =
   ## Sets a reaction (emoji) on a message.
+  discard channelId
   let rawId = a.resolver.reverseChannel(userId, ckTelegram)
   if rawId.len == 0: return err("setMessageReaction: no id for " & $userId)
   try:

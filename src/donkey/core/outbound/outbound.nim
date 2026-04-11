@@ -39,6 +39,7 @@ type
     replacementMsgIds*: Table[string, string]
     streamMsgIds*: Table[string, string]
     statusMsgIds*: Table[string, string]
+    statusChannelIds*: Table[string, string]
 
   OutboundKind* = enum
     okImmediate
@@ -109,6 +110,7 @@ func initPresentationState*(): PresentationState =
     replacementMsgIds: initTable[string, string](),
     streamMsgIds: initTable[string, string](),
     statusMsgIds: initTable[string, string](),
+    statusChannelIds: initTable[string, string](),
   )
 
 func replacementSurfaceKey*(channel: ChannelKind;
@@ -152,6 +154,14 @@ proc lookupStatus*(state: PresentationState;
     return ""
   state.statusMsgIds.getOrDefault(statusSurfaceKey(channel, userId, slot))
 
+proc lookupStatusChannelId*(state: PresentationState;
+                             channel: ChannelKind;
+                             userId: UserId;
+                             slot: string): string =
+  if slot.len == 0:
+    return ""
+  state.statusChannelIds.getOrDefault(statusSurfaceKey(channel, userId, slot))
+
 proc rememberReplacement*(state: var PresentationState;
                           msg: OutboundMessage;
                           channelMsgId: string) =
@@ -176,10 +186,14 @@ proc rememberStatus*(state: var PresentationState;
                      channel: ChannelKind;
                      userId: UserId;
                      slot: string;
-                     channelMsgId: string) =
+                     channelMsgId: string;
+                     channelId: string = "") =
   if slot.len == 0 or channelMsgId.len == 0:
     return
-  state.statusMsgIds[statusSurfaceKey(channel, userId, slot)] = channelMsgId
+  let key = statusSurfaceKey(channel, userId, slot)
+  state.statusMsgIds[key] = channelMsgId
+  if channelId.len > 0:
+    state.statusChannelIds[key] = channelId
 
 proc clearStatus*(state: var PresentationState;
                   channel: ChannelKind;
@@ -187,7 +201,9 @@ proc clearStatus*(state: var PresentationState;
                   slot: string) =
   if slot.len == 0:
     return
-  state.statusMsgIds.del(statusSurfaceKey(channel, userId, slot))
+  let key = statusSurfaceKey(channel, userId, slot)
+  state.statusMsgIds.del(key)
+  state.statusChannelIds.del(key)
 
 func presentationCapabilities*(channel: ChannelKind): PresentationCapabilities =
   case channel
