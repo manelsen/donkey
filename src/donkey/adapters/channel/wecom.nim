@@ -18,7 +18,7 @@
 ##   WECOM_CORP_ID, WECOM_CORP_SECRET, WECOM_AGENT_ID,
 ##   WECOM_CALLBACK_TOKEN, WECOM_WEBHOOK_PORT (default 8081)
 
-import std/[algorithm, json, net, strutils, tables, times]
+import std/[algorithm, json, locks, net, strutils, tables, times]
 import checksums/sha1
 import ../../core/log
 import ../../core/pipeops
@@ -50,6 +50,7 @@ type
     tokenExpiry:    int64   ## epoch ms; 0 = not yet fetched
 
 ## Module-level channel — opened once, valid for daemon lifetime.
+## Thread-safe: chronos Channel uses internal synchronization.
 var gWeComEvents* {.global.}: Channel[WeComEvent]
 
 # ── Token management ──────────────────────────────────────────────────────────
@@ -131,13 +132,20 @@ proc sendMarkdown*(a: var WeComAdapter; userId: UserId; md: string): Result[void
 # ── Webhook HTTP server ────────────────────────────────────────────────────────
 
 ## Simple dedup table: msgId → timestamp.  Prevents processing WeCom retries.
+## Protected by gWeComSeenLock — accessed from the webhook OS thread in
+## handleWeComConn via dedupCheck(). The lock ensures table mutation
+## (add/del) is atomic and prevents iterator invalidation during prune.
 var gWeComSeen   {.global.}: Table[string, int64]
 var gWeComSeenTs {.global.}: int64  ## last prune epoch ms
+var gWeComSeenLock {.global.}: Lock
 
 const DedupWindowMs = 5 * 60 * 1000  ## 5 minutes
 
 proc dedupCheck(msgId: string): bool =
   ## Returns true if this msgId was recently seen (duplicate).
+  ## Protected by gWeComSeenLock.
+  acquire(gWeComSeenLock)
+  defer: release(gWeComSeenLock)
   {.cast(gcsafe).}:
     let now = epochMs()
     if now - gWeComSeenTs > DedupWindowMs:
@@ -269,10 +277,13 @@ proc webhookThread(args: WeComWebhookArgs) {.thread.} =
         recordWebhookFailure("wecom", "accept: " & e.msg)
         try: client.close() except CatchableError: discard
 
+## Thread handle for the WeCom webhook OS thread.
+## Safe: only assigned once via createThread in startWebhook.
 var gWeComThread: Thread[WeComWebhookArgs]
 
 proc startWebhook*(a: WeComAdapter; port: Port; logger: Logger) =
   ## Starts the webhook listener on a dedicated OS thread.
+  initLock(gWeComSeenLock)
   gWeComEvents.open()
   {.cast(gcsafe).}:
     let args = WeComWebhookArgs(token: a.callbackToken, port: port.int, logger: logger)

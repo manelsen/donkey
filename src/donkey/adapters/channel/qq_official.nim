@@ -65,8 +65,16 @@ type
     tokenBase:    string
     intents:      int
 
+## Thread-safe: chronos Channel uses internal synchronization.
+## Opened once at daemon startup via startGateway().
 var gQQOfficialEvents* {.global.}: Channel[QQOfficialEvent]
+
+## Thread handle for the QQ official gateway OS thread.
+## Safe: only assigned once via createThread in startGateway.
 var gQQOfficialGatewayThread {.global.}: Thread[QQOfficialGatewayArgs]
+
+## Startup guard — set to true once in startGateway.
+## Safe: only written from main thread before any gateway activity begins.
 var gQQOfficialGatewayStarted {.global.}: bool
 
 func apiBase(a: QQOfficialAdapter): string =

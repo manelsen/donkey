@@ -80,6 +80,9 @@ proc ringSnapshot*(n: int): seq[RingEntry] {.gcsafe.} =
 
 # ── human-friendly mode (TTY) ────────────────────────────────────────────────
 
+## Log format flags — set once at daemon startup from CLI args.
+## Safe: only written during initialization before any Logger is created.
+## Read-only during normal operation; no concurrent writes.
 var gHumanLog   {.global.}: bool = false
 var gColorLog   {.global.}: bool = false
 var gJsonLog    {.global.}: bool = false

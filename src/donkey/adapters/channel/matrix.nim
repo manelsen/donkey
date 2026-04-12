@@ -21,7 +21,7 @@
 ##   |>    — payload |> parseEvent
 ##   >>=   — http.put(...) >>= parseMxBody >>= extractEventId
 
-import std/[json, strutils]
+import std/[json, locks, strutils]
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
@@ -50,15 +50,23 @@ type
 
 # ── Module-level event queue ──────────────────────────────────────────────────
 
+## Thread-safe: chronos Channel uses internal synchronization.
 var gMxEvents* {.global.}: Channel[MatrixEvent]
 
 # ── Transaction ID counter ────────────────────────────────────────────────────
 
+## Monotonic counter used to generate unique transaction IDs for Matrix send
+## events. Protected by gMxTxnLock — incremented from async context in
+## nextTxnId() which is called by sendChunk, sendReturnId, and editMessage.
 var gMxTxnSeq {.global.}: int
+var gMxTxnLock {.global.}: Lock
 
 proc nextTxnId(): string =
+  acquire(gMxTxnLock)
   inc gMxTxnSeq
-  $nowMs() & $gMxTxnSeq
+  let seq = gMxTxnSeq
+  release(gMxTxnLock)
+  $nowMs() & $seq
 
 # ── Inbound helpers (called by HTTP layer) ────────────────────────────────────
 
@@ -228,6 +236,7 @@ proc ack*(a: MatrixAdapter; msgId: string) =
 
 proc openQueue*(a: MatrixAdapter) =
   ## Opens the module-level event queue. Call once at daemon startup.
+  initLock(gMxTxnLock)
   {.cast(gcsafe).}:
     gMxEvents.open()
 

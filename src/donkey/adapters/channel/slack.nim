@@ -47,6 +47,8 @@ type
 
 # ── Module-level event queue ──────────────────────────────────────────────────
 
+## Thread-safe: chronos Channel uses internal synchronization.
+## Opened once at daemon startup via openQueue().
 var gSlackEvents* {.global.}: Channel[SlackRawEvent]
 
 # ── Inbound helpers (called by HTTP layer) ────────────────────────────────────

@@ -48,6 +48,8 @@ type
 
 # ── Module-level event queue ───────────────────────────────────────────────────
 
+## Thread-safe: chronos Channel uses internal synchronization.
+## Opened once at daemon startup via openQueue().
 var gWaEvents* {.global.}: Channel[WaRawEvent]
 
 # ── Inbound helpers (called by HTTP layer) ─────────────────────────────────────

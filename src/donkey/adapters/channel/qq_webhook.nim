@@ -43,6 +43,8 @@ type
 
 # ── Module-level event queue ──────────────────────────────────────────────────
 
+## Thread-safe: chronos Channel uses internal synchronization.
+## Opened once at daemon startup via openQueue().
 var gQQWbEvents* {.global.}: Channel[QQWebhookEvent]
 
 # ── Inbound helpers (called by HTTP layer) ────────────────────────────────────

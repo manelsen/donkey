@@ -48,6 +48,8 @@ type
 
 # ── Module-level event queue ──────────────────────────────────────────────────
 
+## Thread-safe: chronos Channel uses internal synchronization.
+## Opened once at daemon startup via openQueue().
 var gDtEvents* {.global.}: Channel[DingTalkEvent]
 
 # ── Inbound helpers (called by HTTP layer) ────────────────────────────────────

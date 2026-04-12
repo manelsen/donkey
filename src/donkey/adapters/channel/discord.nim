@@ -15,7 +15,7 @@
 ##   Provider LLM calls (max ~10 s) block the event loop but not this thread.
 ##   Discord heartbeat interval is ~41 s; occasional missed beats are tolerated.
 
-import std/[json, net, os, random, strutils, tables, times, uri]
+import std/[json, locks, net, os, random, strutils, tables, times, uri]
 import ../../core/log
 import ../../core/app_meta
 import ../../core/commands/command_catalog
@@ -51,11 +51,28 @@ type
 # ── Gateway thread ─────────────────────────────────────────────────────────────
 
 ## Module-level channel — opened once, valid for daemon lifetime.
+## Thread-safe: chronos Channel uses internal synchronization.
 var gDiscordEvents* {.global.}: Channel[DiscordRawEvent]
 
-## Buffer for messages received before gateway is ready.
+## Buffer for messages received before gateway is ready (READY dispatch).
+## Protected by gDiscordBufLock — written from gateway OS thread in
+## handleDispatch/runGatewaySession, read in the same thread AND flushed
+## to gDiscordEvents when READY arrives. The lock prevents corruption if
+## handleDispatch is called concurrently with the flush loop.
 var gDiscordPending* {.global.}: seq[DiscordRawEvent] = @[]
+
+## Set to true once the gateway receives the READY dispatch.
+## Protected by gDiscordBufLock — written from gateway thread, read in
+## handleDispatch to decide whether to buffer or send directly.
 var gDiscordReady* {.global.}: bool = false
+
+## Lock protecting gDiscordPending and gDiscordReady.
+## Initialized by initDiscordGlobals() called at daemon startup.
+var gDiscordBufLock {.global.}: Lock
+
+proc initDiscordGlobals*() =
+  ## Call once at daemon startup before any Discord gateway activity.
+  initLock(gDiscordBufLock)
 
 const
   DiscordApiBase*   = "https://discord.com/api/v10"
@@ -90,6 +107,7 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
   ##   dekSlashCommand with needsModal → deModalRequest
   ##   dekSlashCommand with "/" content → deMessage  (regular slash cmd)
   ##   dekSlashCommand without "/" → deInteraction  (/continue code)
+  ## All gDiscordReady/gDiscordPending accesses protected by gDiscordBufLock.
   let r = parseDispatch(t, d)
   case r.kind
   of dekUnknown: return
@@ -102,11 +120,16 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
       channelId:     r.channelId,
       messageId:     r.messageId,
     )
-    if gDiscordReady:
+    acquire(gDiscordBufLock)
+    let ready = gDiscordReady
+    release(gDiscordBufLock)
+    if ready:
       gDiscordEvents.send(event)
     else:
       {.cast(gcsafe).}:
+        acquire(gDiscordBufLock)
         gDiscordPending.add(event)
+        release(gDiscordBufLock)
   of dekSlashCommand:
     logger.debug("discord: slash command from " & r.rawId)
     let event =
@@ -133,11 +156,16 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
           interactionId:    r.interactionId,
           interactionToken: r.interactionToken,
         )
-    if gDiscordReady:
+    acquire(gDiscordBufLock)
+    let ready = gDiscordReady
+    release(gDiscordBufLock)
+    if ready:
       gDiscordEvents.send(event)
     else:
       {.cast(gcsafe).}:
+        acquire(gDiscordBufLock)
         gDiscordPending.add(event)
+        release(gDiscordBufLock)
   of dekButtonClick:
     logger.debug("discord: button click from " & r.rawId)
     let event = DiscordRawEvent(
@@ -148,11 +176,16 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
       interactionId:    r.interactionId,
       interactionToken: r.interactionToken,
     )
-    if gDiscordReady:
+    acquire(gDiscordBufLock)
+    let ready = gDiscordReady
+    release(gDiscordBufLock)
+    if ready:
       gDiscordEvents.send(event)
     else:
       {.cast(gcsafe).}:
+        acquire(gDiscordBufLock)
         gDiscordPending.add(event)
+        release(gDiscordBufLock)
   of dekModalSubmit:
     ## Modal submit always carries a code from the link_code text input.
     logger.debug("discord: modal submit from " & r.rawId)
@@ -163,11 +196,16 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
       interactionId:    r.interactionId,
       interactionToken: r.interactionToken,
     )
-    if gDiscordReady:
+    acquire(gDiscordBufLock)
+    let ready = gDiscordReady
+    release(gDiscordBufLock)
+    if ready:
       gDiscordEvents.send(event)
     else:
       {.cast(gcsafe).}:
+        acquire(gDiscordBufLock)
         gDiscordPending.add(event)
+        release(gDiscordBufLock)
 
 proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
   ## Single gateway session: connect, identify/resume, loop until error.
@@ -238,13 +276,17 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
               let rgu = d.getOrDefault("resume_gateway_url")
               if rgu != nil: state.resumeUrl = rgu.getStr()
               logger.info("discord: ready, session=" & state.sessionId)
-              ## Gateway is now ready — flush buffered messages
+              ## Gateway is now ready — flush buffered messages.
+              ## Protected by gDiscordBufLock.
+              acquire(gDiscordBufLock)
               gDiscordReady = true
-              if gDiscordPending.len > 0:
-                logger.info("discord: flushing " & $gDiscordPending.len & " buffered message(s)")
+              let pendingCount = gDiscordPending.len
+              if pendingCount > 0:
+                logger.info("discord: flushing " & $pendingCount & " buffered message(s)")
                 for event in gDiscordPending:
                   gDiscordEvents.send(event)
                 gDiscordPending = @[]
+              release(gDiscordBufLock)
             else:
               handleDispatch(t, d, logger)
 
@@ -290,6 +332,8 @@ proc discordGatewayThread(arg: GatewayArgs) {.thread.} =
       sleep(backoffMs)
       backoffMs = min(backoffMs * 2, 60_000)
 
+## Thread handle for the Discord gateway OS thread.
+## Safe: only assigned once via createThread, never mutated concurrently.
 var gGatewayThread {.global.}: Thread[GatewayArgs]
 
 # ── DiscordAdapter ─────────────────────────────────────────────────────────────

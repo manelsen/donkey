@@ -42,6 +42,8 @@ type
 
 # ── Module-level event queue ──────────────────────────────────────────────────
 
+## Thread-safe: chronos Channel uses internal synchronization.
+## Opened once at daemon startup via openQueue().
 var gFsEvents* {.global.}: Channel[FeishuEvent]
 
 # ── Inbound helpers (called by HTTP layer) ────────────────────────────────────
