@@ -1,10 +1,10 @@
 ## sqlite_embedded — embedded SQLite/sqlite-vec runtime registration.
 
 when defined(withSqlite):
-  import db_connector/sqlite3
-  import std/locks
-
   when defined(staticSqlite):
+    import db_connector/sqlite3
+    import std/locks
+
     {.compile("sqlite-vec.c", "-O3").}
 
     var gEmbeddedVecLock {.global.}: Lock

@@ -3,7 +3,6 @@
 ## Thin wrapper around runTui; extracted so the entrypoint delegates cleanly
 ## instead of containing the call inline.
 
-import std/os
 import ../tui/dashboard
 
 proc dispatchTui*(sockPath: string): int =

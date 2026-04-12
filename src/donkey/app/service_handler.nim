@@ -3,7 +3,7 @@
 ## Owns systemd --user service install/remove/start/stop/restart/logs.
 ## Extracted from main() so the entrypoint stays lean.
 
-import std/[os, osproc, strutils]
+import std/[os, strutils]
 import ../core/app_meta
 
 # ── templates & constants ──────────────────────────────────────────────────────
@@ -208,7 +208,7 @@ proc ctlServiceLogs*(follow: bool) =
 
 # ── dispatch ───────────────────────────────────────────────────────────────────
 
-proc dispatchService*(args: seq[string]; logsFollow: bool): int {.gcsafe.} =
+proc dispatchService*(args: seq[string]; logsFollow: bool): int =
   ## Routes service subcommands. Returns exit code (0=ok, 2=unrecognized).
   if args.len < 2: return 2
   case args[1]

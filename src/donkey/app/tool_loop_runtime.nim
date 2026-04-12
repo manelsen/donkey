@@ -13,7 +13,6 @@ import ../core/agent_events
 import ../core/security/secret_scan
 import ../domain/agent_message
 import ../domain/message
-import ../domain/more_tools
 import ../ports/memory
 import ../ports/provider
 import ../app/session_state

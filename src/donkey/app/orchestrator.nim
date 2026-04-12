@@ -28,14 +28,12 @@ import chronos
 import chronos/asyncsync
 import ../core/pipeops
 import ../core/log
-import ../core/outbound/outbound
 import ../core/onboarding/onboarding
 import ../core/agent_events
 import ../core/tooling/tool_loop
 import ../domain/agent_message
 import ../domain/message
 import ../domain/personality
-import ../domain/more_tools
 import ../config/types as cfgTypes
 import ./session_manager
 import ./sandbox

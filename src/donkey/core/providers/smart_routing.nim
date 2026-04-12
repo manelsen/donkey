@@ -202,7 +202,7 @@ func isAvailable(availability: ProviderAvailability; providerName: string): bool
 
 # ── Catalog-driven routing helpers ────────────────────────────────────────────
 
-func availableProviders(rc: RoutingCatalog): seq[string] =
+func availableProviders(rc: RoutingCatalog): seq[string] {.used.} =
   ## Return list of provider names that are currently available.
   let avail = rc.availability
   if avail.openrouter: result.add("openrouter")
@@ -272,7 +272,7 @@ func addAnthropicWithFallback*(selections: var seq[ProviderSelection];
 func addAnthropicCompatible(selections: var seq[ProviderSelection];
                             availability: ProviderAvailability;
                             anthropicModel: string;
-                            zaiModel = "") =
+                            zaiModel = "") {.used.} =
   if availability.anthropic:
     selections.add(selection("anthropic", anthropicModel))
   elif availability.zaiAnthropic:
@@ -282,7 +282,7 @@ func addAnthropicCompatible(selections: var seq[ProviderSelection];
 func addIfAvailable(selections: var seq[ProviderSelection];
                     availability: ProviderAvailability;
                     providerName: string;
-                    modelName = "") =
+                    modelName = "") {.used.} =
   if availability.isAvailable(providerName):
     selections.add(selection(providerName, modelName))
 

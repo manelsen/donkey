@@ -4,7 +4,6 @@
 ## entrypoint (it depends on all the daemon types defined there); main() calls
 ## this handler first, then invokes startDaemon directly.
 
-import std/strutils
 import ../core/log
 import ../core/app_meta
 import ../config/types

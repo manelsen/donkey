@@ -38,11 +38,10 @@ proc ctlUserList*(memory: MdFileAdapter) =
   if not found:
     echo "(no users registered)"
 
-proc ctlUserShow*(memory: MdFileAdapter; uuid: string) =
+proc ctlUserShow*(memory: MdFileAdapter; uuid: string): Result[void, string] =
   let userId = UserId(uuid)
   if not memory.hasProfile(userId):
-    echo "User not found: " & uuid
-    quit(1)
+    return err("User not found: " & uuid)
   let ctx = memory.loadContext(userId)
   echo "=== USER.md ==="
   echo ctx.userMd
@@ -52,6 +51,7 @@ proc ctlUserShow*(memory: MdFileAdapter; uuid: string) =
   if ctx.memoryMd.len > 0:
     echo "=== MEMORY.md (first 500 chars) ==="
     echo ctx.memoryMd[0 .. min(500, ctx.memoryMd.len - 1)]
+  ok()
 
 proc ctlUserEdit*(memory: MdFileAdapter; uuid, field, value: string) =
   memory.updateUserField(UserId(uuid), field, value)
@@ -84,10 +84,11 @@ proc ctlToolInstall*(registryPath: string; command: string; args: seq[string]) =
   echo "Registered MCP server: " & command
 
 proc ctlSkillInstall*(cfg: DonkeyConfig; skillsPath: string; name, scriptPath: string;
-                      permissions: seq[string]) =
-  discard validateSkillPermissions(permissions, cfg.webAllowlist).valueOr:
-    echo error
-    quit(1)
+                      permissions: seq[string]): Result[void, string] =
+  let valRes = validateSkillPermissions(permissions, cfg.webAllowlist)
+  if valRes.isErr:
+    echo valRes.error
+    return err(valRes.error)
   let saveRes = saveSkillEntry(skillsPath, SkillManifest(
     name:        name,
     version:     "0.1.0",
@@ -96,8 +97,9 @@ proc ctlSkillInstall*(cfg: DonkeyConfig; skillsPath: string; name, scriptPath: s
   ))
   if saveRes.isErr:
     echo saveRes.error
-    quit(1)
+    return err(saveRes.error)
   echo "Registered skill: " & name & " (" & scriptPath & ")"
+  ok()
 
 proc ctlSkillList*(skillsPath: string) =
   proc echoRemoteSkillInstalls(home: string) =
@@ -119,10 +121,11 @@ proc ctlSkillList*(skillsPath: string) =
   echoRemoteSkillInstalls(parentDir(skillsPath))
 
 proc ctlSkillUpdate*(cfg: DonkeyConfig; skillsPath, name, scriptPath: string;
-                     permissions: seq[string]) =
-  discard validateSkillPermissions(permissions, cfg.webAllowlist).valueOr:
-    echo error
-    quit(1)
+                     permissions: seq[string]): Result[void, string] =
+  let valRes = validateSkillPermissions(permissions, cfg.webAllowlist)
+  if valRes.isErr:
+    echo valRes.error
+    return err(valRes.error)
   var skills = loadSkillRegistry(skillsPath)
   var found  = false
   for i in 0 ..< skills.len:
@@ -138,48 +141,56 @@ proc ctlSkillUpdate*(cfg: DonkeyConfig; skillsPath, name, scriptPath: string;
     let sr = saveSkillEntry(skillsPath, s)
     if sr.isErr:
       echo sr.error
-      quit(1)
+      return err(sr.error)
   echo "Updated skill: " & name
+  ok()
 
-proc ctlSkillSearchRemote*(registry: string; query: string; limit = 10) =
-  let hits = searchRemoteSkills(registry, query, limit).valueOr:
-    echo "Error: " & error
-    quit(1)
-  if hits.len == 0:
+proc ctlSkillSearchRemote*(registry: string; query: string; limit = 10): Result[void, string] =
+  let hits = searchRemoteSkills(registry, query, limit)
+  if hits.isErr:
+    echo "Error: " & hits.error
+    return err(hits.error)
+  if hits.value.len == 0:
     echo "(no results)"
-    return
-  for hit in hits:
+    return ok()
+  for hit in hits.value:
     let version = if hit.version.len > 0: " v" & hit.version else: ""
     let summary = if hit.summary.len > 0: "  " & hit.summary else: ""
     echo hit.slug & version & summary
+  ok()
 
-proc ctlSkillInstallRemote*(home, registry, slug: string) =
-  let origin = installRemoteSkill(home, registry, slug).valueOr:
-    echo "Error: " & error
-    quit(1)
-  echo "Installed " & origin.slug & "@" & origin.installedVersion
+proc ctlSkillInstallRemote*(home, registry, slug: string): Result[void, string] =
+  let origin = installRemoteSkill(home, registry, slug)
+  if origin.isErr:
+    echo "Error: " & origin.error
+    return err(origin.error)
+  echo "Installed " & origin.value.slug & "@" & origin.value.installedVersion
+  ok()
 
-proc ctlSkillUpdateRemote*(home, registry, slug: string) =
+proc ctlSkillUpdateRemote*(home, registry, slug: string): Result[void, string] =
   if slug.len > 0:
-    let version = updateRemoteSkill(home, registry, slug).valueOr:
-      echo "Error: " & error
-      quit(1)
-    echo "Updated " & slug & " -> " & version
-    return
+    let version = updateRemoteSkill(home, registry, slug)
+    if version.isErr:
+      echo "Error: " & version.error
+      return err(version.error)
+    echo "Updated " & slug & " -> " & version.value
+    return ok()
   let lock = readRemoteSkillLockfile(home)
   if lock.skills.len == 0:
     echo "(no remote installs)"
-    return
+    return ok()
   for installedSlug, _ in lock.skills.pairs:
-    let version = updateRemoteSkill(home, registry, installedSlug).valueOr:
-      echo "Error updating " & installedSlug & ": " & error
-      quit(1)
-    echo "Updated " & installedSlug & " -> " & version
+    let version = updateRemoteSkill(home, registry, installedSlug)
+    if version.isErr:
+      echo "Error updating " & installedSlug & ": " & version.error
+      return err(version.error)
+    echo "Updated " & installedSlug & " -> " & version.value
+  ok()
 
 # ── ctl provider test ──────────────────────────────────────────────────────────
 
 proc ctlProviderTest*(name: string;
-                      buildCompleteFnRef: proc(preferencesMd: string): CompleteFn {.gcsafe.}) {.gcsafe.} =
+                      buildCompleteFnRef: proc(preferencesMd: string): CompleteFn): Result[void, string] =
   let fn = buildCompleteFnRef("provider = \"" & name & "\"")
   var h = message.newHistory()
   h.addUser("ping")
@@ -187,22 +198,24 @@ proc ctlProviderTest*(name: string;
   let resp = fn(req)
   if resp.isOk:
     echo "OK — " & name & " responded: " & resp.value.text
+    ok()
   else:
     echo "FAIL — " & name & ": " & resp.error
-    quit(1)
+    err(resp.error)
 
 # ── ctl memory commands ────────────────────────────────────────────────────────
 ## Delegated to multigraph_runtime (already has correct MAGMA-aware impls).
 
 # ── ctl status ─────────────────────────────────────────────────────────────────
 
-proc ctlStatus*(cfg: DonkeyConfig) =
+proc ctlStatus*(cfg: DonkeyConfig): Result[void, string] =
   let sockPath = cfg.home / SockFileName
   let sr = ipcClient.queryStatus(sockPath)
   if sr.isErr:
-    echo "Error: " & sr.error; quit(1)
+    return err(sr.error)
   let st = sr.value
   echo formatDaemonStatus(st)
+  ok()
 
 # ── dispatch ───────────────────────────────────────────────────────────────────
 
@@ -210,7 +223,7 @@ proc dispatchCtl*(cfg: DonkeyConfig;
                   memory: MdFileAdapter;
                   registryPath: string;
                   args: seq[string];
-                  buildCompleteFnRef: proc(preferencesMd: string): CompleteFn {.gcsafe.}): int {.gcsafe.} =
+                  buildCompleteFnRef: proc(preferencesMd: string): CompleteFn): int =
   ## Routes ctl subcommands. Returns exit code (0=ok, 1=error, 2=unrecognized).
   if args.len < 2: return 2  # unrecognized — show help in caller
 
@@ -218,7 +231,9 @@ proc dispatchCtl*(cfg: DonkeyConfig;
   if args[1] == "user" and args.len >= 3 and args[2] == "list":
     ctlUserList(memory); return 0
   if args[1] == "user" and args.len >= 4 and args[2] == "show":
-    ctlUserShow(memory, args[3]); return 0
+    let r = ctlUserShow(memory, args[3])
+    if r.isErr: echo r.error; return 1
+    return 0
   if args[1] == "user" and args.len >= 6 and args[2] == "edit":
     ctlUserEdit(memory, args[3], args[4], args[5 .. ^1].join(" ")); return 0
   if args[1] == "user" and args.len >= 4 and args[2] == "revoke":
@@ -239,27 +254,39 @@ proc dispatchCtl*(cfg: DonkeyConfig;
   # ── skill ──
   let skillsPath = cfg.home / "skills.toml"
   if args[1] == "skill" and args[2] == "install" and args.len >= 5:
-    ctlSkillInstall(cfg, skillsPath, args[3], args[4], args[5 ..^ 1]); return 0
+    let r = ctlSkillInstall(cfg, skillsPath, args[3], args[4], args[5 ..^ 1])
+    if r.isErr: return 1
+    return 0
   if args[1] == "skill" and args[2] == "install" and args.len == 4:
     ## Remote install (slug only)
-    ctlSkillInstallRemote(cfg.home,
+    let r = ctlSkillInstallRemote(cfg.home,
                           getEnv("CLAWHUB_REGISTRY", ClawhubDefaultRegistry),
-                          args[3]); return 0
+                          args[3])
+    if r.isErr: return 1
+    return 0
   if args[1] == "skill" and args[2] == "search" and args.len >= 4:
-    ctlSkillSearchRemote(getEnv("CLAWHUB_REGISTRY", ClawhubDefaultRegistry), args[3]); return 0
+    let r = ctlSkillSearchRemote(getEnv("CLAWHUB_REGISTRY", ClawhubDefaultRegistry), args[3])
+    if r.isErr: return 1
+    return 0
   if args[1] == "skill" and args[2] == "list" and args.len >= 3:
     ctlSkillList(skillsPath); return 0
   if args[1] == "skill" and args[2] == "update" and args.len >= 5:
-    ctlSkillUpdate(cfg, skillsPath, args[3], args[4], args[5 ..^ 1]); return 0
+    let r = ctlSkillUpdate(cfg, skillsPath, args[3], args[4], args[5 ..^ 1])
+    if r.isErr: return 1
+    return 0
   if args[1] == "skill" and args[2] == "update" and args.len >= 3:
     let slug = if args.len >= 4: args[3] else: ""
-    ctlSkillUpdateRemote(cfg.home,
+    let r = ctlSkillUpdateRemote(cfg.home,
                          getEnv("CLAWHUB_REGISTRY", ClawhubDefaultRegistry),
-                         slug); return 0
+                         slug)
+    if r.isErr: return 1
+    return 0
 
   # ── provider ──
   if args[1] == "provider" and args.len >= 4 and args[2] == "test":
-    ctlProviderTest(args[3], buildCompleteFnRef); return 0
+    let r = ctlProviderTest(args[3], buildCompleteFnRef)
+    if r.isErr: return 1
+    return 0
 
   # ── memory ──
   when defined(withPostgres) or defined(withSqlite):
@@ -291,7 +318,9 @@ proc dispatchCtl*(cfg: DonkeyConfig;
 
   # ── status ──
   if args[1] == "status" and args.len >= 2:
-    ctlStatus(cfg); return 0
+    let r = ctlStatus(cfg)
+    if r.isErr: echo r.error; return 1
+    return 0
 
   # ── unrecognized ──
   2

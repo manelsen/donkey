@@ -28,43 +28,43 @@ proc makeProductionLikeRegistry*(): CommandRegistry =
   # setup — pre-bootstrap, no config needed
   result.register(CommandEntry(
     name: "setup", minArgs: 1,
-    handler: proc(args: seq[string]): int {.gcsafe.} = 0,
+    handler: proc(args: seq[string]): int = 0,
     context: ccNone, description: "Interactive first-run configuration wizard"))
 
   # ctl — post-bootstrap, needs config
   result.register(CommandEntry(
     name: "ctl", minArgs: 2,
-    handler: proc(args: seq[string]): int {.gcsafe.} = 0,
+    handler: proc(args: seq[string]): int = 0,
     context: ccConfigLoaded, description: "Admin commands (user, skill, tool, memory, status)"))
 
   # service — pre-bootstrap
   result.register(CommandEntry(
     name: "service", minArgs: 2,
-    handler: proc(args: seq[string]): int {.gcsafe.} = 0,
+    handler: proc(args: seq[string]): int = 0,
     context: ccNone, description: "Systemd --user service management"))
 
   # tui — post-bootstrap
   result.register(CommandEntry(
     name: "tui", minArgs: 1,
-    handler: proc(args: seq[string]): int {.gcsafe.} = 0,
+    handler: proc(args: seq[string]): int = 0,
     context: ccConfigLoaded, description: "Open live TUI dashboard"))
 
   # doctor — post-bootstrap
   result.register(CommandEntry(
     name: "doctor", minArgs: 1,
-    handler: proc(args: seq[string]): int {.gcsafe.} = 0,
+    handler: proc(args: seq[string]): int = 0,
     context: ccConfigLoaded, description: "Run full runtime diagnostic"))
 
   # about — post-bootstrap
   result.register(CommandEntry(
     name: "about", minArgs: 1,
-    handler: proc(args: seq[string]): int {.gcsafe.} = 0,
+    handler: proc(args: seq[string]): int = 0,
     context: ccConfigLoaded, description: "Show concise runtime overview"))
 
   # start — post-bootstrap
   result.register(CommandEntry(
     name: "start", minArgs: 1,
-    handler: proc(args: seq[string]): int {.gcsafe.} = 0,
+    handler: proc(args: seq[string]): int = 0,
     context: ccConfigLoaded, description: "Start the daemon"))
 
 # ── all command names are registered ──────────────────────────────────────────
@@ -224,7 +224,7 @@ suite "command dispatch — standardized exit codes":
     let r = newCommandRegistry()
     r.register(CommandEntry(
       name: "failing", minArgs: 1,
-      handler: proc(args: seq[string]): int {.gcsafe.} = 1,
+      handler: proc(args: seq[string]): int = 1,
       context: ccNone, description: "always fails"))
     check r.dispatch(@["failing"]) == 1
 
@@ -234,7 +234,7 @@ suite "command dispatch — standardized exit codes":
     let r = newCommandRegistry()
     r.register(CommandEntry(
       name: "subcmd", minArgs: 2,
-      handler: proc(args: seq[string]): int {.gcsafe.} =
+      handler: proc(args: seq[string]): int =
         if args.len >= 2 and args[1] in ["install", "remove", "start"]: 0
         else: 2,
       context: ccNone, description: "subcommand router"))
@@ -245,15 +245,15 @@ suite "command dispatch — standardized exit codes":
     let r = newCommandRegistry()
     r.register(CommandEntry(
       name: "ok", minArgs: 1,
-      handler: proc(args: seq[string]): int {.gcsafe.} = 0,
+      handler: proc(args: seq[string]): int = 0,
       context: ccNone, description: "ok"))
     r.register(CommandEntry(
       name: "err", minArgs: 1,
-      handler: proc(args: seq[string]): int {.gcsafe.} = 1,
+      handler: proc(args: seq[string]): int = 1,
       context: ccNone, description: "err"))
     r.register(CommandEntry(
       name: "help", minArgs: 1,
-      handler: proc(args: seq[string]): int {.gcsafe.} = 2,
+      handler: proc(args: seq[string]): int = 2,
       context: ccNone, description: "help"))
     check r.dispatch(@["ok"]) == 0
     check r.dispatch(@["err"]) == 1

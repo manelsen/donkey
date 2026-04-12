@@ -9,7 +9,6 @@ import donkey/config/types
 import donkey/config/dotenv
 import donkey/config/tools_registry
 import donkey/config/skills_registry
-import donkey/config/clawhub_registry
 import donkey/adapters/tool/runtime_builder
 import donkey/core/log
 import donkey/core/pipeops
@@ -67,8 +66,6 @@ import donkey/app/daemon_start_handler
 import donkey/ctl_handler
 import donkey/ports/memory
 import donkey/adapters/ipc/types    as ipcTypes
-import donkey/adapters/ipc/client   as ipcClient
-import donkey/tui/dashboard
 
 const Version* = AppVersion
 
@@ -1616,41 +1613,41 @@ proc main =
   # Pre-bootstrap commands (no config needed)
   cmdReg.register(CommandEntry(
     name: "setup", minArgs: 1,
-    handler: proc(a: seq[string]): int {.gcsafe.} =
+    handler: proc(a: seq[string]): int =
       runSetupWizard(resolveHome()); 0,
     context: ccNone, description: "Interactive first-run configuration wizard"))
 
   # Post-bootstrap commands
   cmdReg.register(CommandEntry(
     name: "ctl", minArgs: 2,
-    handler: proc(a: seq[string]): int {.gcsafe.} =
+    handler: proc(a: seq[string]): int =
       dispatchCtl(cfg, memory, registryPath, a,
                   proc(preferencesMd: string): CompleteFn =
                     buildCompleteFn(preferencesMd, buildProviderBundle)),
     context: ccConfigLoaded, description: "Admin commands (user, skill, tool, memory, status)"))
   cmdReg.register(CommandEntry(
     name: "service", minArgs: 2,
-    handler: proc(a: seq[string]): int {.gcsafe.} =
+    handler: proc(a: seq[string]): int =
       dispatchService(a, logsFollow),
     context: ccNone, description: "Systemd --user service management"))
   cmdReg.register(CommandEntry(
     name: "tui", minArgs: 1,
-    handler: proc(a: seq[string]): int {.gcsafe.} =
+    handler: proc(a: seq[string]): int =
       dispatchTui(cfg.home / SockFileName),
     context: ccConfigLoaded, description: "Open live TUI dashboard"))
   cmdReg.register(CommandEntry(
     name: "doctor", minArgs: 1,
-    handler: proc(a: seq[string]): int {.gcsafe.} =
+    handler: proc(a: seq[string]): int =
       runDoctor(cfg, devMode),
     context: ccConfigLoaded, description: "Run full runtime diagnostic"))
   cmdReg.register(CommandEntry(
     name: "about", minArgs: 1,
-    handler: proc(a: seq[string]): int {.gcsafe.} =
+    handler: proc(a: seq[string]): int =
       echo buildDoctorSummary(cfg, devMode); 0,
     context: ccConfigLoaded, description: "Show concise runtime overview"))
   cmdReg.register(CommandEntry(
     name: "start", minArgs: 1,
-    handler: proc(a: seq[string]): int {.gcsafe.} =
+    handler: proc(a: seq[string]): int =
       logDaemonStart(log, cfg)
       waitFor startDaemon(cfg, log)
       0,

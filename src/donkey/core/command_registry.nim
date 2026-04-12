@@ -14,10 +14,13 @@ type
     ccConfigLoaded  ## --config parsed, DonkeyConfig available
     ccDaemonReady   ## bootstrap complete, logger and memory ready
 
-  CommandHandler* = proc(args: seq[string]): int {.gcsafe.}
+  CommandHandler* = proc(args: seq[string]): int
     ## Handler proc. Receives the full args list (including the command
     ## name at index 0). Returns an exit code: 0 = ok, 1 = error,
     ## 2 = show help (unrecognized subcommand).
+    ## NOTE: intentionally NOT {.gcsafe.} — handlers may capture config
+    ## objects that live for the duration of main(). The registry stores
+    ## the handler reference, so the GC tracks captured values correctly.
 
   CommandEntry* = object
     name*:         string           ## command name, e.g. "ctl", "service"

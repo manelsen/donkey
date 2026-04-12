@@ -103,7 +103,7 @@ func availableProvidersFromEnv(): ProviderAvailability =
   )
 
 when defined(withPostgres) or defined(withSqlite):
-  proc noopDoctorEmbedFn(text: string): seq[float32] {.gcsafe.} = @[]
+  proc noopDoctorEmbedFn(text: string): seq[float32] {.gcsafe, used.} = @[]
 
 proc parseChannelPrefs*(preferencesMd: string): ChannelPrefs =
   result = defaultChannelPrefs()
