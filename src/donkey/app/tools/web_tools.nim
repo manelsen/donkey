@@ -1,0 +1,82 @@
+## web_tools.nim — HTTP fetch and Brave web search.
+##
+## performFetch retrieves and sanitises text from public URLs.
+## performWebSearch queries the Brave Search API.
+
+import std/[json, math, strutils, uri]
+import results
+import ../../config/types as cfgTypes
+import ../../ports/http as httpPort
+import ../../domain/builtin_tools
+import ./text_tools  # stripHtml
+
+# ── fetch ─────────────────────────────────────────────────────────────────────
+
+const FetchHardMax* = 20_000
+const FetchDefaultMax* = 5_000
+
+proc performFetch*(http: httpPort.HttpRuntimePort;
+                   url: string;
+                   maxCh: int;
+                   allowRules: seq[cfgTypes.WebAccessRule] = @[];
+                   fallbackAllowlist: seq[string] = @[];
+                   policyLabel = "web access"): string {.gcsafe, raises: [].} =
+  try:
+    if not isAllowedPublicUrl(url, allowRules, fallbackAllowlist):
+      return buildUrlAccessError(url, allowRules, fallbackAllowlist, policyLabel)
+    let resp = http.get(url, @[])
+    if resp.isErr: return "Error: " & resp.error
+    let r = resp.value
+    if r.status < 200 or r.status >= 300:
+      return "HTTP error " & $r.status
+    let cap  = min(maxCh, FetchHardMax)
+    var body = r.body.strip()
+    if body.startsWith("{") or body.startsWith("["):
+      try:
+        let jj = parseJson(body)
+        body = jj.pretty()
+      except CatchableError: discard
+    elif body.startsWith("<"):
+      body = stripHtml(body)
+    truncateBody(body, cap)
+  except Exception as e:
+    "Error: " & e.msg
+
+# ── web_search (Brave) ────────────────────────────────────────────────────────
+
+const BraveSearchUrl = "https://api.search.brave.com/res/v1/web/search"
+
+proc performWebSearch*(query: string; count: int;
+                       apiKey: string;
+                       http: httpPort.HttpRuntimePort;
+                       allowRules: seq[cfgTypes.WebAccessRule] = @[];
+                       fallbackAllowlist: seq[string] = @[]): string {.gcsafe, raises: [].} =
+  if apiKey.len == 0:
+    return "Error: BRAVE_API_KEY not configured. Set the environment variable."
+  try:
+    let url     = BraveSearchUrl & "?q=" & encodeUrl(query) & "&count=" & $min(count, 20)
+    if not isAllowedPublicUrl(url, allowRules, fallbackAllowlist):
+      return buildUrlAccessError(url, allowRules, fallbackAllowlist, "web_search")
+    let headers = @[
+      ("X-Subscription-Token", apiKey),
+      ("Accept",               "application/json"),
+    ]
+    var resp: Result[HttpResponse, string]
+    try: resp = http.get(url, headers)
+    except Exception as e: return "Error: " & e.msg
+    if resp.isErr: return "Error: " & resp.error
+    if resp.value.status != 200:
+      return "Brave API error " & $resp.value.status
+    let j = parseJson(resp.value.body)
+    let webResults = j.getOrDefault("web").getOrDefault("results")
+    if webResults.kind != JArray or webResults.len == 0:
+      return "(no results)"
+    var lines: seq[string] = @[]
+    for item in webResults:
+      let title = item.getOrDefault("title").getStr("(no title)")
+      let url2  = item.getOrDefault("url").getStr("")
+      let desc  = item.getOrDefault("description").getStr("")
+      lines.add(title & "\n" & url2 & "\n" & desc)
+    lines.join("\n\n")
+  except CatchableError as e:
+    "Error: " & e.msg
