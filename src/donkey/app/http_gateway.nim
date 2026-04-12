@@ -15,6 +15,7 @@
 import std/[json, net, os, strutils]
 import ../core/pipeops
 import ../core/types
+import ../core/log
 import ../ports/ipc
 import ../core/agent_events
 import ../domain/message
@@ -122,19 +123,19 @@ proc readHttpLine(s: Socket): string =
     buf.add(c)
   buf
 
-proc sendResponse(s: Socket; status, contentType, body: string) =
+proc sendResponse(s: Socket; status, contentType, body: string; log: Logger) =
   let resp = "HTTP/1.1 " & status & "\r\n" &
              CorsHeaders &
              "Content-Type: " & contentType & "; charset=utf-8\r\n" &
              "Content-Length: " & $body.len & "\r\n" &
              "Connection: close\r\n\r\n" & body
   try: s.send(resp) except CatchableError:
-    stderr.writeLine("[WRN] [http_gateway.sendResponse] failed: " & getCurrentExceptionMsg())
+    log.warn("http_gateway: sendResponse failed: " & getCurrentExceptionMsg())
 
-proc sendJson(s: Socket; body: string) =
-  s.sendResponse("200 OK", "application/json", body)
+proc sendJson(s: Socket; body: string; log: Logger) =
+  s.sendResponse("200 OK", "application/json", body, log)
 
-proc sendSseHeaders(s: Socket) =
+proc sendSseHeaders(s: Socket; log: Logger) =
   ## Sends SSE-specific response headers, keeps connection open.
   let headers = "HTTP/1.1 200 OK\r\n" &
                 CorsHeaders &
@@ -142,7 +143,7 @@ proc sendSseHeaders(s: Socket) =
                 "Cache-Control: no-cache\r\n" &
                 "Connection: keep-alive\r\n\r\n"
   try: s.send(headers) except CatchableError:
-    stderr.writeLine("[WRN] [http_gateway.sendSseHeaders] failed: " & getCurrentExceptionMsg())
+    log.warn("http_gateway: sendSseHeaders failed: " & getCurrentExceptionMsg())
 
 proc sendSseData(s: Socket; event, data: string): bool =
   ## Returns false if the connection is broken.
@@ -207,7 +208,8 @@ proc handleGatewayConn(client: Socket;
                         statusFn: GatewayStatusFn;
                         logFn:    GatewayLogFn;
                         eventFn:  GatewayEventFn;
-                        inboundFn: GatewayInboundFn) =
+                        inboundFn: GatewayInboundFn;
+                        log:      Logger) =
   try:
     let requestLine = client.readHttpLine()
     if requestLine.len == 0:
@@ -231,19 +233,19 @@ proc handleGatewayConn(client: Socket;
     case action
     of "index":
       client.sendResponse("200 OK", "text/plain",
-        "Donkey HTTP gateway\nEndpoints: /api/status /api/logs /api/events /api/chat\n")
+        "Donkey HTTP gateway\nEndpoints: /api/status /api/logs /api/events /api/chat\n", log)
 
     of "status":
       let st = statusFn()
-      client.sendJson(buildStatusBody(st))
+      client.sendJson(buildStatusBody(st), log)
 
     of "logs":
       let n = parseQueryInt(rawPath, "n", 50)
       let entries = logFn(n)
-      client.sendJson(buildLogsBody(entries))
+      client.sendJson(buildLogsBody(entries), log)
 
     of "events":
-      client.sendSseHeaders()
+      client.sendSseHeaders(log)
       ## Push a heartbeat comment immediately to confirm stream started.
       try: client.send(": connected\n\n") except CatchableError: discard
       ## Poll loop: push log + agent event snapshots every SseHeartbeatIntervalMs.
@@ -272,7 +274,7 @@ proc handleGatewayConn(client: Socket;
       of "chat":
         if inboundFn == nil:
           client.sendResponse("503 Service Unavailable", "application/json",
-                             "{\"error\":\"inbound handler not configured\"}\n")
+                             "{\"error\":\"inbound handler not configured\"}\n", log)
         else:
           var body = ""
           if contentLength > 0 and contentLength < 1024 * 1024:  # max 1MB
@@ -282,31 +284,31 @@ proc handleGatewayConn(client: Socket;
               body = buf[0 ..< received]
           if body.len == 0:
             client.sendResponse("400 Bad Request", "application/json",
-                               "{\"error\":\"empty body\"}\n")
+                               "{\"error\":\"empty body\"}\n", log)
           else:
             let msgResult = parseChatPost(body)
             if msgResult.isErr:
               client.sendResponse("400 Bad Request", "application/json",
-                                 "{\"error\":\"" & msgResult.error & "\"}\n")
+                                 "{\"error\":\"" & msgResult.error & "\"}\n", log)
             else:
               inboundFn(msgResult.get())
               client.sendResponse("202 Accepted", "application/json",
-                                 "{\"status\":\"accepted\"}\n")
+                                 "{\"status\":\"accepted\"}\n", log)
       of "chat_get":
         client.sendResponse("200 OK", "application/json",
-                           "{\"info\":\"POST to /api/chat to send messages\"}\n")
+                           "{\"info\":\"POST to /api/chat to send messages\"}\n", log)
       else:
-        client.sendResponse("405 Method Not Allowed", "text/plain", "")
+        client.sendResponse("405 Method Not Allowed", "text/plain", "", log)
 
     of "notfound":
-      client.sendResponse("404 Not Found", "text/plain", "Not found\n")
+      client.sendResponse("404 Not Found", "text/plain", "Not found\n", log)
 
     else:
-      client.sendResponse("405 Method Not Allowed", "text/plain", "")
+      client.sendResponse("405 Method Not Allowed", "text/plain", "", log)
 
   except CatchableError:
     let errMsg = getCurrentExceptionMsg()
-    stderr.writeLine("[WRN] [http_gateway] connection handler error: " & errMsg)
+    log.warn("http_gateway: connection handler error: " & errMsg)
     recordWebhookFailure("http_gateway", errMsg)
   client.close()
 
@@ -318,11 +320,13 @@ type GatewayArgs = object
   logFn:     GatewayLogFn
   eventFn:   GatewayEventFn
   inboundFn: GatewayInboundFn
+  log:       Logger
 
 var gGatewayStatusFn: GatewayStatusFn
 var gGatewayLogFn:    GatewayLogFn
 var gGatewayEventFn:  GatewayEventFn
 var gGatewayInboundFn: GatewayInboundFn
+var gGatewayLog:      Logger
 
 proc gatewayThread(args: GatewayArgs) {.thread.} =
   {.cast(gcsafe).}:
@@ -333,7 +337,7 @@ proc gatewayThread(args: GatewayArgs) {.thread.} =
     while true:
       var client: Socket
       server.accept(client)
-      handleGatewayConn(client, args.statusFn, args.logFn, args.eventFn, args.inboundFn)
+      handleGatewayConn(client, args.statusFn, args.logFn, args.eventFn, args.inboundFn, args.log)
 
 var gGatewayThread: Thread[GatewayArgs]
 
@@ -341,7 +345,8 @@ proc startHttpGateway*(port: int;
                        statusFn: GatewayStatusFn;
                        logFn:    GatewayLogFn;
                        eventFn:  GatewayEventFn = nil;
-                       inboundFn: GatewayInboundFn = nil) =
+                       inboundFn: GatewayInboundFn = nil;
+                       log:       Logger = newLogger("http_gateway")) =
   ## Starts the HTTP gateway on a dedicated OS thread.
   ## statusFn, logFn, and eventFn are called on each request; they must be gcsafe.
   ## inboundFn is called when POST /api/chat is received; may be nil.
@@ -350,6 +355,7 @@ proc startHttpGateway*(port: int;
     gGatewayLogFn     = logFn
     gGatewayEventFn   = eventFn
     gGatewayInboundFn = inboundFn
+    gGatewayLog       = log
     let args = GatewayArgs(port: port, statusFn: statusFn, logFn: logFn,
-                           eventFn: eventFn, inboundFn: inboundFn)
+                           eventFn: eventFn, inboundFn: inboundFn, log: log)
     createThread(gGatewayThread, gatewayThread, args)

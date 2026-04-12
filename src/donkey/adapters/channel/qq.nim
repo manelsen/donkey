@@ -12,6 +12,7 @@
 ##   Uses OneBot HTTP APIs with Bearer token authentication.
 
 import std/[json, net, strutils]
+import ../../core/log
 import ../../core/pipeops
 import ../../domain/message
 import ../http/std_http
@@ -37,7 +38,8 @@ type
     events:       seq[QQEvent]   ## direct-injection queue (tests / external)
 
   QQOneBotWebhookArgs = object
-    port: int
+    port:   int
+    logger: Logger
 
 var gQQOneBotEvents: Channel[QQEvent]
 var gQQOneBotEventsOpen    = false
@@ -142,11 +144,11 @@ proc qqOneBotWebhookThread(args: QQOneBotWebhookArgs) {.thread.} =
         client.respond("405 Method Not Allowed")
     except CatchableError:
       let errMsg = getCurrentExceptionMsg()
-      stderr.writeLine("[WRN] [qq webhook] connection handler error: " & errMsg)
+      args.logger.warn("qq webhook: connection handler error: " & errMsg)
       recordWebhookFailure("qq", errMsg)
     try: client.close() except CatchableError: discard
 
-proc startWebhook*(a: QQAdapter; port: Port) =
+proc startWebhook*(a: QQAdapter; port: Port; logger: Logger) =
   ## Starts the embedded OneBot webhook HTTP server on the given port.
   ## Safe to call multiple times — only the first call has effect.
   if gQQOneBotWebhookStarted:
@@ -154,8 +156,9 @@ proc startWebhook*(a: QQAdapter; port: Port) =
   gQQOneBotEvents.open()
   gQQOneBotEventsOpen     = true
   gQQOneBotWebhookStarted = true
-  createThread(gQQOneBotWebhookThread, qqOneBotWebhookThread,
-               QQOneBotWebhookArgs(port: port.int))
+  {.cast(gcsafe).}:
+    createThread(gQQOneBotWebhookThread, qqOneBotWebhookThread,
+                 QQOneBotWebhookArgs(port: port.int, logger: logger))
 
 proc enqueueEventJson*(a: var QQAdapter; payload: string): Result[void, string] =
   let event = ? parseEventJson(payload)

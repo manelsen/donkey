@@ -15,6 +15,7 @@
 
 import std/[algorithm, json, nativesockets, net, strutils, tables, uri]
 import checksums/sha1
+import ../../core/log
 import ../../core/pipeops
 import ../../domain/message
 import ../http/std_http
@@ -52,8 +53,9 @@ type
     events:         seq[WeChatEvent]   ## direct-injection queue (tests / external)
 
   WeChatWebhookArgs = object
-    port:  int
-    token: string
+    port:   int
+    token:  string
+    logger: Logger
 
 var gWeChatEvents: Channel[WeChatEvent]
 var gWeChatEventsOpen  = false
@@ -321,11 +323,11 @@ proc wechatWebhookThread(args: WeChatWebhookArgs) {.thread.} =
         client.respond("405 Method Not Allowed", "")
     except CatchableError:
       let errMsg = getCurrentExceptionMsg()
-      stderr.writeLine("[WRN] [wechat webhook] connection handler error: " & errMsg)
+      args.logger.warn("wechat webhook: connection handler error: " & errMsg)
       recordWebhookFailure("wechat", errMsg)
     try: client.close() except CatchableError: discard
 
-proc startWebhook*(a: WeChatAdapter; port: Port) {.gcsafe.} =
+proc startWebhook*(a: WeChatAdapter; port: Port; logger: Logger) {.gcsafe.} =
   ## Starts the embedded WeChat webhook HTTP server on the given port.
   ## Safe to call multiple times — only the first call has effect.
   {.cast(gcsafe).}:
@@ -335,7 +337,7 @@ proc startWebhook*(a: WeChatAdapter; port: Port) {.gcsafe.} =
     gWeChatEventsOpen    = true
     gWeChatWebhookStarted = true
     createThread(gWeChatWebhookThread, wechatWebhookThread,
-                 WeChatWebhookArgs(port: port.int, token: a.callbackToken))
+                 WeChatWebhookArgs(port: port.int, token: a.callbackToken, logger: logger))
 
 proc tryRecvEvent*(a: var WeChatAdapter): (bool, WeChatEvent) =
   if gWeChatEventsOpen:

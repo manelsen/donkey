@@ -8,6 +8,7 @@
 import std/json
 import ../../core/pipeops
 import ../../core/app_meta
+import ../../core/log
 import ../http/std_http
 
 const
@@ -19,13 +20,16 @@ type
     apiKey*: string
     model*:  string
     http*:   StdHttpAdapter
+    log*:    Logger
 
 proc newOpenRouterEmbeddingAdapter*(apiKey: string;
-                                    model = DefaultEmbedModel): OpenRouterEmbeddingAdapter =
+                                    model = DefaultEmbedModel;
+                                    log = newLogger("embedding")): OpenRouterEmbeddingAdapter =
   OpenRouterEmbeddingAdapter(
     apiKey: apiKey,
     model:  model,
     http:   newStdHttpAdapter(),
+    log:    log,
   )
 
 proc embed*(a: OpenRouterEmbeddingAdapter; text: string): seq[float32] {.gcsafe.} =
@@ -51,5 +55,5 @@ proc embed*(a: OpenRouterEmbeddingAdapter; text: string): seq[float32] {.gcsafe.
     return buf
   except CatchableError:
     let errMsg = getCurrentExceptionMsg()
-    stderr.writeLine("WARN embedding.parse: failed to parse embedding response reason=" & errMsg)
+    a.log.warn("embedding.parse: failed to parse embedding response reason=" & errMsg)
     return @[]

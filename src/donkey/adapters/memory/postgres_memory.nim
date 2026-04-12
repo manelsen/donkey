@@ -23,6 +23,7 @@ when defined(withPostgres):
   import std/[os, strutils, json, tables]
   import ../../core/app_meta
   import ../../core/pipeops
+  import ../../core/log
   import ./pgvector_store
 
   const PgMemoryTableName = "donkey_memories"
@@ -58,13 +59,15 @@ when defined(withPostgres):
     PostgresMemoryAdapter* = ref object
       dsn*:    string
       embedFn: EmbedFn
+      log*:    Logger
 
     MemoryExportEntry* = object
       fileName*: string
       content*:  string
 
-  proc newPostgresMemoryAdapter*(dsn: string; embedFn: EmbedFn): PostgresMemoryAdapter =
-    PostgresMemoryAdapter(dsn: dsn, embedFn: embedFn)
+  proc newPostgresMemoryAdapter*(dsn: string; embedFn: EmbedFn;
+                                 log = newLogger("memory.postgres")): PostgresMemoryAdapter =
+    PostgresMemoryAdapter(dsn: dsn, embedFn: embedFn, log: log)
 
   proc open(a: PostgresMemoryAdapter): DbConn =
     ## Opens a fresh connection. Caller must close().
@@ -200,7 +203,7 @@ when defined(withPostgres):
         sanitizeAgeText(content) & "' RETURN p")
     except CatchableError:
       let errMsg = getCurrentExceptionMsg()
-      stderr.writeLine("ERROR saveUserMd: AGE MERGE failed for user=" & $userId & " reason=" & errMsg)
+      a.log.error("saveUserMd: AGE MERGE failed for user=" & $userId & " reason=" & errMsg)
 
   proc appendMemory*(a: PostgresMemoryAdapter; userId: UserId; text: string) =
     let db = a.open()
@@ -225,7 +228,7 @@ when defined(withPostgres):
         "CREATE (u)-[:HAS_MEMORY]->(m) RETURN id(m)", @["id"])
     except CatchableError:
       let errMsg = getCurrentExceptionMsg()
-      stderr.writeLine("ERROR appendMemory: AGE MERGE failed for user=" & $userId & " reason=" & errMsg)
+      a.log.error("appendMemory: AGE MERGE failed for user=" & $userId & " reason=" & errMsg)
 
   proc savePreferences*(a: PostgresMemoryAdapter; userId: UserId; content: string) =
     let db = a.open()
@@ -263,8 +266,8 @@ when defined(withPostgres):
               result.add MemoryHit(content: content, kind: "graph", score: 0.5)
         except CatchableError:
           let errMsg = getCurrentExceptionMsg()
-          stderr.writeLine("WARN memory.search: AGE graph enrichment failed for user=" &
-                           $userId & " reason=" & errMsg)
+          a.log.warn("memory.search: AGE graph enrichment failed for user=" &
+                     $userId & " reason=" & errMsg)
     else:
       let rows = db.getAllRows(sql(
         "SELECT content, kind FROM " & PgMemoryTableName & " " &
@@ -282,7 +285,7 @@ when defined(withPostgres):
         "MATCH (n {user_id: '" & $userId & "'}) DETACH DELETE n")
     except CatchableError:
       let errMsg = getCurrentExceptionMsg()
-      stderr.writeLine("ERROR deleteUser: AGE DELETE failed for user=" & $userId & " reason=" & errMsg)
+      a.log.error("deleteUser: AGE DELETE failed for user=" & $userId & " reason=" & errMsg)
 
 else:
   type

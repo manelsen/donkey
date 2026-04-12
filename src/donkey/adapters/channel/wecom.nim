@@ -168,13 +168,13 @@ proc readHttpLine(s: Socket): string =
       break
     result.add(c)
 
-proc sendHttpReply(s: Socket; status, body: string) =
+proc sendHttpReply(s: Socket; status, body: string; logger: Logger) =
   let r = "HTTP/1.1 " & status & "\r\n" &
           "Content-Type: text/plain; charset=utf-8\r\n" &
           "Content-Length: " & $body.len & "\r\n" &
           "Connection: close\r\n\r\n" & body
   try: s.send(r) except CatchableError:
-    stderr.writeLine("[WRN] [wecom.sendHttpReply] failed to send response: " & getCurrentExceptionMsg())
+    logger.warn("wecom: failed to send response: " & getCurrentExceptionMsg())
 
 proc parseQueryParams(requestLine: string): Table[string, string] =
   let q = requestLine.find('?')
@@ -213,9 +213,9 @@ proc handleWeComConn(client: Socket; token: string; logger: Logger) =
       let expected = wecomSignature(token, ts, nonce)
       if sig.len > 0 and sig != expected:
         logger.warn("wecom: URL verify sig mismatch")
-        client.sendHttpReply("403 Forbidden", "invalid signature")
+        client.sendHttpReply("403 Forbidden", "invalid signature", logger)
         return
-      client.sendHttpReply("200 OK", echostr)
+      client.sendHttpReply("200 OK", echostr, logger)
       logger.info("wecom: URL verification OK")
       return
 
@@ -224,7 +224,7 @@ proc handleWeComConn(client: Socket; token: string; logger: Logger) =
     if contentLen > 0:
       body = newString(contentLen)
       discard client.recv(body, contentLen)
-    client.sendHttpReply("200 OK", "")  ## respond fast before processing
+    client.sendHttpReply("200 OK", "", logger)  ## respond fast before processing
 
     if body.len == 0: return
 

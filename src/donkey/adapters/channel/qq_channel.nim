@@ -3,6 +3,7 @@
 import std/net
 import ../../core/pipeops
 import ../../core/types
+import ../../core/log
 import ../../domain/message
 import ../identity/identity_resolver
 import ../http/std_http
@@ -147,9 +148,9 @@ proc startGateway*(a: var QQChannelAdapter) =
   else:
     discard
 
-proc startWebhook*(a: QQChannelAdapter; port: Port) =
+proc startWebhook*(a: QQChannelAdapter; port: Port; log: Logger) =
   case a.kind
   of qbkOneBot:
-    a.onebot.startWebhook(port)
+    a.onebot.startWebhook(port, log)
   else:
     discard

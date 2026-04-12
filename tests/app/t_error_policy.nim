@@ -311,6 +311,7 @@ suite "error policy — embedding parse errors":
       apiKey: "fake-key",
       model:  "qwen/qwen3-embedding-8b",
       http:   newStdHttpAdapter(),
+      log:    newLogger("test.embedding"),
     )
     # With a fake key and no real server, this should return empty seq
     # without raising an exception
