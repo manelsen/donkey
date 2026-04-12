@@ -5,6 +5,17 @@ import std/tables
 import chronos
 import ../domain/message
 
+## Job system (issue #8 — documented):
+## `jobs`, `jobCounter`, `TaskToolName`, `SubmitResultToolName`, `CancelJobToolName`,
+## `AwaitToolName` are NOT dead code. They implement parallel job execution:
+##   - `task`    — spawns an async background job, returns job_id
+##   - `await`   — polls job futures until all complete (with timeout)
+##   - `cancel_job` — cancels a running job
+##   - `submit_result` — sets the result string for a completed job
+## These are registered as native tools in session_bootstrap.nim and dispatched
+## in native_tools.nim's executeNativeTool. The orchestrator passes SessionState
+## to executeNativeTool, which populates state.jobs when `task` is called.
+
 type
   TodoPhase* = enum
     phBacklog     = "backlog"
