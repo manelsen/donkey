@@ -178,6 +178,15 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
     let reply = memory.applyBudgetTextCommand(userId, command.value).valueOr: error
     sendDiscordReply(event, dcAdapter, userId, reply, logger)
     true
+  of cmdReasoning:
+    let prefs = common_runtime.loadChannelPrefs(memory, userId)
+    let next = if prefs.reasoning == "on": "off" else: "on"
+    common_runtime.saveChannelPreference(memory, userId, "reasoning", next)
+    sendDiscordEmbed(event, dcAdapter, userId,
+      "🧠 Reasoning",
+      if next == "on": "Reasoning ativado." else: "Reasoning desativado.",
+      0x57F287, logger)
+    true
   of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
     sendDiscordReply(event, dcAdapter, userId, buildDeferredUiCommandText(command.kind), logger)
     true
@@ -274,6 +283,17 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
           text: "Thinking definido: " & level,
         )).isOkOr:
           core_log.log(logger, core_log.lvlError, "dc think confirm: " & error)
+    true
+  of cbkReasoning:
+    let prefs = common_runtime.loadChannelPrefs(memory, userId)
+    let next = if prefs.reasoning == "on": "off" else: "on"
+    common_runtime.saveChannelPreference(memory, userId, "reasoning", next)
+    dcAdapter.send(OutboundMessage(
+      userId: userId,
+      channel: ckDiscord,
+      text: "🧠 Reasoning " & (if next == "on": "ativado." else: "desativado."),
+    )).isOkOr:
+      core_log.log(logger, core_log.lvlError, "dc reasoning toggle: " & error)
     true
   else:
     false
