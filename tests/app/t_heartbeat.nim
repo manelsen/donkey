@@ -3,6 +3,7 @@
 
 import std/[os, strutils, times, unittest, options, sequtils]
 import donkey/core/pipeops
+import donkey/core/log
 import donkey/app/heartbeat
 import donkey/app/contemplation
 import donkey/core/types
@@ -36,6 +37,44 @@ suite "heartbeat task registry":
     reg.runAllTasks()
     check "x" in called
     check "y" in called
+
+  test "runAllTasks logs error when a task fails instead of silently discarding":
+    var logEntries: seq[LogEntry] = @[]
+    let testSink: LogSink = proc(entry: LogEntry) {.gcsafe.} =
+      {.cast(gcsafe).}: logEntries.add(entry)
+    let log = newLogger("test.heartbeat", sink = testSink)
+    var reg = newHeartbeatRegistry()
+    reg.registerTask("good", proc() {.gcsafe.} = discard)
+    reg.registerTask("bad", proc() {.gcsafe.} = raise newException(CatchableError, "simulated failure"))
+    reg.runAllTasks(log = log)
+    ## The good task should have run, the bad task should have logged an error.
+    check logEntries.len == 1
+    check logEntries[0].level == lvlError
+    check "bad" in logEntries[0].message
+    check "simulated failure" in logEntries[0].message
+
+  test "runCommitmentReview logs error when sink fails instead of silently discarding":
+    var logEntries: seq[LogEntry] = @[]
+    let testSink: LogSink = proc(entry: LogEntry) {.gcsafe.} =
+      {.cast(gcsafe).}: logEntries.add(entry)
+    let log = newLogger("test.commitment", sink = testSink)
+    var callCount = 0
+    var capturedUserId = ""
+    let failingSink: CommitmentReviewSink = proc(review: CommitmentReview) {.gcsafe.} =
+      {.cast(gcsafe).}:
+        inc callCount
+        capturedUserId = $review.userId
+        if callCount == 1:
+          raise newException(CatchableError, "sink failure")
+    let loadSnapshots: CommitmentSnapshotLoader = proc(): seq[CommitmentSnapshot] {.gcsafe.} =
+      let c = newCommitment(coAgent, "test commitment", nowSec = 100'i64, dueAt = some(200'i64))
+      @[CommitmentSnapshot(userId: UserId("u-fail"), commitment: c)]
+    runCommitmentReview(loadSnapshots, failingSink, 200'i64, log = log)
+    check callCount == 1
+    check logEntries.len == 1
+    check logEntries[0].level == lvlError
+    check "u-fail" in logEntries[0].message
+    check "sink failure" in logEntries[0].message
 
 suite "heartbeat reminder delivery":
 

@@ -65,10 +65,13 @@ func taskCount*(reg: HeartbeatRegistry): int =
 proc registerTask*(reg: var HeartbeatRegistry; name: string; task: HeartbeatTask) =
   reg.entries.add HeartbeatEntry(name: name, task: task)
 
-proc runAllTasks*(reg: HeartbeatRegistry) =
+proc runAllTasks*(reg: HeartbeatRegistry;
+                  log: Logger = newLogger("heartbeat.tasks")) =
   for e in reg.entries:
     try: e.task()
-    except CatchableError: discard
+    except CatchableError:
+      let errMsg = getCurrentExceptionMsg()
+      log.error("task failed name=" & e.name & " reason=" & errMsg)
 
 proc reviewCommitments*(snapshots: seq[CommitmentSnapshot];
                         nowSec: int64): seq[CommitmentReview] =
@@ -86,12 +89,15 @@ proc reviewCommitments*(snapshots: seq[CommitmentSnapshot];
 
 proc runCommitmentReview*(loadSnapshots: CommitmentSnapshotLoader;
                           sink: CommitmentReviewSink;
-                          nowSec: int64) =
+                          nowSec: int64;
+                          log: Logger = newLogger("heartbeat.commitment")) =
   if loadSnapshots == nil or sink == nil:
     return
   for review in reviewCommitments(loadSnapshots(), nowSec):
     try: sink(review)
-    except CatchableError: discard
+    except CatchableError:
+      let errMsg = getCurrentExceptionMsg()
+      log.error("commitment review failed userId=" & $review.userId & " reason=" & errMsg)
 
 proc registerCommitmentReviewTask*(reg: var HeartbeatRegistry;
                                    loadSnapshots: CommitmentSnapshotLoader;
