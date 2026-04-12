@@ -36,8 +36,8 @@ suite "common_runtime":
     check zaiAnthropic[1] == "glm-4.7"
 
   test "parseModelsProviderArg validates provider-only route":
-    check parseModelsProviderArg("groq").get() == "groq"
-    check parseModelsProviderArg("groq llama").isErr
+    check parseModelsProviderArg("anthropic").get() == "anthropic"
+    check parseModelsProviderArg("anthropic claude").isErr
     check parseModelsProviderArg("nope").isErr
 
   test "applyModelsTextCommand persists selection":
@@ -92,8 +92,8 @@ suite "common_runtime":
           source: mcsLive,
           fetchedAtUnix: getTime().toUnix(),
         ))
-    let text = applyModelsTextCommand(memory, userId, "groq", loader).get()
-    check text.contains("Provider: groq")
+    let text = applyModelsTextCommand(memory, userId, "anthropic", loader).get()
+    check text.contains("Provider: anthropic")
     check text.contains("`free-model` [free]")
     check text.contains("Fonte: live")
 

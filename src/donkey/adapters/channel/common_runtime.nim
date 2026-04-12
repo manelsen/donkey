@@ -6,6 +6,7 @@ import ../../core/commands/command_catalog
 import ../../core/commands/command_routing
 import ../../core/outbound/outbound
 import ../../core/providers/smart_routing
+import ../../core/providers/provider_catalog
 import ../../adapters/memory/md_file
 import ../../domain/message
 import ../../ports/provider
@@ -22,17 +23,35 @@ const UiSlotModels* = "models"
 const UiSlotThink* = "think"
 const UiSlotHelp* = "help"
 
-const ModelMenu* = [
-  ("zai",        @["glm-5",      "glm-4.7",      "glm-4.6"]),
-  ("zai-coding", @["glm-5",      "glm-4.7",      "glm-4.6"]),
-  ("zen",        @[]),
-  ("groq",       @["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b"]),
-  ("openrouter", @["openai/gpt-4o-mini", "openai/gpt-4o", "anthropic/claude-opus-4-6"]),
-  ("anthropic",  @["claude-opus-4-6",   "claude-sonnet-4-6"]),
-  ("zai-anthropic", @["glm-4.7", "glm-4.6", "glm-4.5", "glm-4.5-air"]),
-  ("gemini",     @["gemini-2.5-flash",  "gemini-2.5-pro"]),
-  ("minimax",    @["MiniMax-M2",        "MiniMax-Text-01"]),
-]
+type ModelMenuEntry* = tuple[provider: string, models: seq[string]]
+
+var modelMenuCache: seq[ModelMenuEntry]
+
+proc buildModelMenu*(): seq[ModelMenuEntry] =
+  ## Derives the model menu from the ProviderCatalog, so the UI always
+  ## reflects what is actually registered as the source of truth.
+  ##
+  ## Providers with no catalog entries (e.g. "zen", a meta-provider that
+  ## fetches models dynamically) still appear with an empty model list to
+  ## keep the menu backwards-compatible.
+  {.cast(gcsafe).}:
+    if modelMenuCache.len > 0:
+      return modelMenuCache
+  let cat = buildDefaultCatalog()
+  var providers = cat.allProviders()
+  providers.sort()  # deterministic ordering
+  for provider in providers:
+    let entries = cat.getByProvider(provider)
+    let models = entries.mapIt(it.canonicalName)
+    result.add((provider, models))
+  # Providers not in the catalog but still referenced in routing:
+  result.add(("zen", @[]))
+  {.cast(gcsafe).}:
+    modelMenuCache = result
+
+proc modelMenu*(): seq[ModelMenuEntry] =
+  ## Returns the model menu derived from the ProviderCatalog.
+  buildModelMenu()
 
 func uiSlotKey*(userId: UserId; slot: string): string =
   $userId & "|" & slot
@@ -143,12 +162,12 @@ proc buildThinkButtons*(memory: MdFileAdapter;
     row.add((label, "think:set:" & lvl))
   @[row]
 
-func supportedProviders*(): seq[string] =
-  for (provider, _) in ModelMenu:
+proc supportedProviders*(): seq[string] =
+  for (provider, _) in modelMenu():
     result.add(provider)
 
-func supportedModels*(provider: string): seq[string] =
-  for (candidate, models) in ModelMenu:
+proc supportedModels*(provider: string): seq[string] =
+  for (candidate, models) in modelMenu():
     if candidate == provider:
       return models
   @[]
@@ -158,7 +177,7 @@ proc buildProviderButtons*(memory: MdFileAdapter;
   let (currProv, _) = memory.getCurrentProviderModel(userId)
   result = @[]
   var row: seq[(string, string)]
-  for (prov, _) in ModelMenu:
+  for (prov, _) in modelMenu():
     let label = if prov == currProv: "✓ " & prov else: prov
     row.add((label, "models:provider:" & prov))
     if row.len == 3:
@@ -172,7 +191,7 @@ proc buildModelButtons*(memory: MdFileAdapter;
                         userId: UserId): seq[seq[(string, string)]] =
   let (currProv, currModel) = memory.getCurrentProviderModel(userId)
   result = @[]
-  for (prov, models) in ModelMenu:
+  for (prov, models) in modelMenu():
     if prov != provider:
       continue
     var row: seq[(string, string)]
@@ -277,7 +296,7 @@ func buildModelPageButtons*(provider: string;
   navRow.add(("← voltar", "models:back"))
   result.add(navRow)
 
-func parseModelsArgs*(value: string): Result[(string, string), string] =
+proc parseModelsArgs*(value: string): Result[(string, string), string] =
   let parts = value.splitWhitespace()
   if parts.len != 2:
     return err("Use `/models <provider> <model>`.")
@@ -290,7 +309,7 @@ func parseModelsArgs*(value: string): Result[(string, string), string] =
     return err("Modelo inválido para `" & provider & "`: `" & model & "`.")
   ok((provider, model))
 
-func parseModelsProviderArg*(value: string): Result[string, string] =
+proc parseModelsProviderArg*(value: string): Result[string, string] =
   let parts = value.splitWhitespace()
   if parts.len != 1:
     return err("Use `/models <provider>`.")

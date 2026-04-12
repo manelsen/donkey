@@ -25,7 +25,7 @@ func qqHelpText*(kind: QQBackendKind): string =
       lines.add("- `" & cmd.usageFor(true) & "` " & cmd.helpSummaryFor(true))
   lines.join("\n")
 
-func qqDirectModelProvider*(kind: QQBackendKind;
+proc qqDirectModelProvider*(kind: QQBackendKind;
                             command: CommandDecision): string =
   if kind != qbkOfficial or command.kind != cmdModels or command.value.strip.len == 0:
     return ""

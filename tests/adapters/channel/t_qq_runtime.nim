@@ -13,9 +13,9 @@ suite "qq_runtime":
     check qqHelpText(qbkOneBot).contains("/models [provider model] — vê ou troca o modelo de IA")
 
   test "qqDirectModelProvider opens rich picker only for official provider-only command":
-    let providerCmd = parseCommandText("/models groq")
-    let fullCmd = parseCommandText("/models groq llama-3.1-8b-instant")
-    check qqDirectModelProvider(qbkOfficial, providerCmd) == "groq"
+    let providerCmd = parseCommandText("/models anthropic")
+    let fullCmd = parseCommandText("/models anthropic claude-sonnet-4-6")
+    check qqDirectModelProvider(qbkOfficial, providerCmd) == "anthropic"
     check qqDirectModelProvider(qbkOfficial, fullCmd) == ""
     check qqDirectModelProvider(qbkOneBot, providerCmd) == ""
 
