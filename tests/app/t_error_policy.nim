@@ -112,7 +112,7 @@ suite "error policy — outbound send":
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
         editKeyboard: proc(userId: UserId; msgId, text: string;
                            buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
-        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
       )
     )
 
@@ -143,7 +143,7 @@ suite "error policy — outbound send":
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
         editKeyboard: proc(userId: UserId; msgId, text: string;
                            buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
-        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
       )
     )
 
@@ -174,7 +174,7 @@ suite "error policy — multi-channel outbound":
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
         editKeyboard: proc(userId: UserId; msgId, text: string;
                            buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
-        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
       )
     )
 
@@ -203,7 +203,7 @@ suite "error policy — multi-channel outbound":
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
         editKeyboard: proc(userId: UserId; msgId, text: string;
                            buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
-        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
       )
     )
 
@@ -232,7 +232,7 @@ suite "error policy — multi-channel outbound":
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
         editKeyboard: proc(userId: UserId; msgId, text: string;
                            buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
-        setMessageReaction: proc(userId: UserId; msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
       )
     )
 

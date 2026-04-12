@@ -1,0 +1,296 @@
+{
+  "name": "Refatoração Estrutural do Donkey",
+  "branchName": "ralph/structural-refactoring",
+  "description": "Criar uma nova fundação interna para o Donkey: desacoplar entrypoint, declarativizar capacidades de canais, padronizar política de erro, e substituir roteamento stringly-typed por registry orientado a dados.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Inventariar discard silencioso em caminhos críticos",
+      "description": "As a maintainer, I want a complete inventory of all `isOkOr: discard` and `except CatchableError: discard` patterns so that I know exactly which code paths are silently failing.",
+      "acceptanceCriteria": [
+        "Listar todos os arquivos e linhas com `isOkOr: discard` em envio de mensagens, reminders e webhooks",
+        "Listar todos os arquivos e linhas com `except CatchableError: discard` em caminhos operacionais",
+        "Classificar cada ocorrência por camada (outbound, reminder, webhook, outros)",
+        "Documentar o inventário em tasks/silent-failures.md",
+        "nim c src/donkey.nim passes",
+        "nim c -r tests/run_tests.sh passes (bash scripts/run_tests.sh passes)"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-002",
+      "title": "Extrair handlers de ctl, service, tui, doctor e daemon start",
+      "description": "As a maintainer, I want each top-level command (ctl, service, tui, doctor, daemon start) to have its own handler module so the entrypoint is no longer a cascade of branches.",
+      "acceptanceCriteria": [
+        "Criar módulo handler para `ctl` commands",
+        "Criar módulo handler para `service` commands",
+        "Criar módulo handler para `tui` startup",
+        "Criar módulo handler para `doctor` execution",
+        "Criar módulo handler para daemon `start`",
+        "O main() delega a esses handlers sem conter a lógica de cada um",
+        "Comportamento externo dos comandos permanece idêntico",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "dependsOn": []
+    },
+    {
+      "id": "US-003",
+      "title": "Criar CommandHandler e CommandRegistry",
+      "description": "As a developer, I want a central command registry where each command declares its name, expected arguments, handler, required context, and exit code so that dispatching is data-driven.",
+      "acceptanceCriteria": [
+        "Definir tipo CommandHandler com campos: name, args, handler proc, required context, exit code",
+        "Implementar CommandRegistry com register(), resolve(), e dispatch()",
+        "Migrar pelo menos um comando existente (ex: ctl) para usar o registry",
+        "Adicionar testes unitários para register e resolve",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Extrair dispatcher de comandos do main",
+      "description": "As a maintainer, I want the main file to no longer contain the long cascade of command branches so that composition root is lean.",
+      "acceptanceCriteria": [
+        "O main() apenas: carrega config, valida pré-condições, monta dependências, delega ao dispatcher",
+        "Todos os comandos ctl, service, tui, doctor, start são roteados via CommandRegistry",
+        "Exit codes são padronizados por comando",
+        "Adicionar testes de despacho de comandos sem boot do daemon",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-003"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Definir política de erro por camada",
+      "description": "As an operator, I want a formal error policy so that every operational failure results in at least an explicit return, structured log, metric, or observability event.",
+      "acceptanceCriteria": [
+        "Documentar error policy: onde erro sobe, onde vira warning, onde silêncio é permitido",
+        "Definir formato de log estruturado para erros de envio de mensagens, reminders e webhooks",
+        "Substituir pelo menos um `isOkOr: discard` por retorno explícito + log",
+        "Substituir pelo menos um `except CatchableError: discard` por retorno explícito + log",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-001"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Aplicar error policy a caminhos de outbound",
+      "description": "As an operator, I want outbound message failures to be visible so they don't disappear silently.",
+      "acceptanceCriteria": [
+        "Todos os `isOkOr: discard` em envio de mensagens passam a emitir retorno explícito ou log",
+        "Todos os `except CatchableError: discard` em webhooks passam a emitir retorno explícito ou log",
+        "Adicionar métrica ou evento de observabilidade para falhas de outbound",
+        "Adicionar testes de falha operacional crítica em outbound",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-005"
+      ]
+    },
+    {
+      "id": "US-007",
+      "title": "Aplicar error policy a reminders e busca",
+      "description": "As an operator, I want reminder and search failures to be visible so they don't disappear silently.",
+      "acceptanceCriteria": [
+        "Todos os `isOkOr: discard` em leitura de reminders passam a emitir retorno explícito ou log",
+        "Todos os `except CatchableError: discard` em buscas passam a emitir retorno explícito ou log",
+        "Adicionar testes de falha operacional em reminders",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-005"
+      ]
+    },
+    {
+      "id": "US-008",
+      "title": "Criar ChannelCapabilityDescriptor",
+      "description": "As a developer, I want each channel to declare its capabilities (send, sendReturnId, editMessage, sendKeyboard, editKeyboard, setMessageReaction) in a structured contract so that capability resolution is data-driven.",
+      "acceptanceCriteria": [
+        "Definir tipo ChannelCapabilityDescriptor com capacidades booleanas por canal",
+        "Criar registry de capacidades por canal (Telegram, Discord, WeCom, etc.)",
+        "Cada canal implementa apenas o que suporta, sem funções unsupported* como mecanismo principal",
+        "Adicionar testes unitários de resolução de capability por canal",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-004"
+      ]
+    },
+    {
+      "id": "US-009",
+      "title": "Migrar outbound_builder para resolução por capability",
+      "description": "As a maintainer, I want outbound_builder.nim to resolve channel capabilities via the declarative contract so manual unsupported* patching is no longer the central compatibility mechanism.",
+      "acceptanceCriteria": [
+        "outbound_builder.nim consulta ChannelCapabilityDescriptor em vez de preencher manualmente",
+        "Funções unsupported* deixam de ser o mecanismo principal de compatibilidade",
+        "Adaptadores implementam explicitamente apenas capacidades que suportam",
+        "Comportamento externo de envio de mensagens permanece compatível",
+        "Adicionar testes de capability resolution em contexto de outbound",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-008"
+      ]
+    },
+    {
+      "id": "US-010",
+      "title": "Criar ProviderCatalog",
+      "description": "As a developer, I want a declarative catalog of providers and models with canonical names, aliases, capabilities, relative cost, tool/image/thinking support, and budget-based priority so routing is data-driven.",
+      "acceptanceCriteria": [
+        "Definir tipo ProviderModelEntry com: nome canônico, aliases, capacidades, custo relativo, suporte a tools/imagem/thinking, prioridade",
+        "Implementar ProviderCatalog com register(), query(), e orderByCost() ou orderByPriority()",
+        "Popular o catálogo com os modelos atualmente hardcoded (MiniMax-M2, gpt-4o-mini, glm-4.7, gemini-2.5-flash, etc.)",
+        "Adicionar testes unitários de consulta e ordenação do catálogo",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-004"
+      ]
+    },
+    {
+      "id": "US-011",
+      "title": "Migrar smart routing para catálogo declarativo",
+      "description": "As a developer, I want smart routing to consume the ProviderCatalog so hardcoded model strings are removed from the core selection policy.",
+      "acceptanceCriteria": [
+        "A seleção de provider/modelo consulta o catálogo em vez de strings hardcoded dispersas",
+        "Regras declarativas substituem heurísticas rígidas de nome de modelo",
+        "Fallback declarativo quando nenhum candidato atende critérios",
+        "Adicionar test harness dedicado para routing policy",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-010"
+      ]
+    },
+    {
+      "id": "US-012",
+      "title": "Adicionar métricas estruturadas para falhas de outbound/webhook/reminder",
+      "description": "As an operator, I want structured metrics for operational failures so I can monitor and alert on reliability issues.",
+      "acceptanceCriteria": [
+        "Falhas de outbound emitem métrica estruturada",
+        "Falhas de webhook emitem métrica estruturada",
+        "Falhas de reminder emitem métrica estruturada",
+        "Métricas são rastreáveis sem poluir UX final do usuário",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-006",
+        "US-007"
+      ]
+    },
+    {
+      "id": "US-013",
+      "title": "Guia de contribuição para novo canal/provider",
+      "description": "As a contributor, I want clear documentation for adding new channels and providers so onboarding cost is reduced.",
+      "acceptanceCriteria": [
+        "Documentar passo a passo para registrar novo canal via ChannelCapabilityDescriptor",
+        "Documentar passo a passo para registrar novo provider/model via ProviderCatalog",
+        "Incluir exemplos mínimos funcionais",
+        "Atualizar README.md e/ou docs com novo fluxo de extensão",
+        "nim c src/donkey.nim passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-009",
+        "US-011"
+      ]
+    },
+    {
+      "id": "US-014",
+      "title": "Cobertura de testes para command dispatch",
+      "description": "As a maintainer, I want tests covering command dispatch so regression risk is reduced.",
+      "acceptanceCriteria": [
+        "Testes de despacho para cada comando registrado (ctl, service, tui, doctor, start)",
+        "Testes de validação de argumentos do handler",
+        "Testes de exit codes padronizados",
+        "Testes rodam sem boot completo do daemon",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-004"
+      ]
+    },
+    {
+      "id": "US-015",
+      "title": "Hardening e documentação final",
+      "description": "As a maintainer, I want the refactoring to be fully tested and documented so the codebase is ready for ongoing contributions.",
+      "acceptanceCriteria": [
+        "Suíte de testes cobre: command dispatch, capability resolution, routing policy, error policy",
+        "Playbook de contribuição disponível em docs/",
+        "Redução mensurável de complexidade ciclomática no entrypoint vs. baseline",
+        "Redução mensurável de branches manuais no dispatcher",
+        "Redução mensurável de discard silencioso em caminhos críticos",
+        "Comportamento externo dos comandos e canais permanece compatível",
+        "nim c src/donkey.nim passes",
+        "bash scripts/run_tests.sh passes"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": "",
+      "dependsOn": [
+        "US-012",
+        "US-013",
+        "US-014"
+      ]
+    }
+  ]
+}

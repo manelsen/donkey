@@ -174,7 +174,7 @@ suite "parseGeminiResponse":
         "candidatesTokenCount": 6
       }
     }
-    let resp = parseGeminiResponse(j)
+    let resp = parseGeminiResponse(j).value
     check resp.text == "Hello from Gemini"
     check resp.inputTokens == 10
     check resp.outputTokens == 6
@@ -183,7 +183,7 @@ suite "parseGeminiResponse":
     let j = %* {
       "candidates": [{"content": {"parts": [{"text": "hi"}]}}]
     }
-    let resp = parseGeminiResponse(j)
+    let resp = parseGeminiResponse(j).value
     check resp.text == "hi"
     check resp.inputTokens == 0
     check resp.outputTokens == 0
@@ -198,7 +198,7 @@ suite "parseGeminiResponse":
       }],
       "usageMetadata": {"promptTokenCount": 12, "candidatesTokenCount": 5}
     }
-    let resp = parseGeminiResponse(j)
+    let resp = parseGeminiResponse(j).value
     check resp.text == "Using calc"
     check resp.toolCalls.len == 1
     check resp.toolCalls[0].id == "call_1"

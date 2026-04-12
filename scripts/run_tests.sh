@@ -18,6 +18,7 @@ while IFS= read -r f; do
   case "$f" in
     *t_sqlite_store*) continue ;;   # requires -d:withSqlite
     *t_postgres*|*t_pgvector*|*t_age_store*) continue ;; # requires -d:withPostgres + live DB
+    *t_wasm.nim) continue ;;        # requires wasm3 nimble package (not installed by default)
   esac
 
   if nim c --mm:orc -u:withPostgres -r "$f" > /tmp/donkey_test_out.txt 2>&1; then

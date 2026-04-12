@@ -133,7 +133,7 @@ suite "core tool loop decisions":
 
   test "withStreamFinalText sets wasStreamed = true":
     let state = newToolLoopState(newHistory())
-    let next = withStreamFinalText("pong", state)
+    let next = withStreamFinalText("pong", "", state)
     check next.finalText == "pong"
     check next.wasStreamed
     check next.done

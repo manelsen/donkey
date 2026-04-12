@@ -1,5 +1,6 @@
 import unittest
 import donkey/core/telegram_format
+import donkey/domain/text_format
 
 suite "Telegram Formatting":
 
