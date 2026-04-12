@@ -14,7 +14,7 @@ import config/skills_registry
 import config/clawhub_registry
 import adapters/memory/md_file
 import app/session_manager
-import app/multigraph_runtime
+import adapters/memory/multigraph_runtime
 import ports/ipc
 import ports/provider
 import adapters/ipc/client as ipcClient

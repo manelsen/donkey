@@ -21,7 +21,7 @@ import donkey/core/providers/smart_routing
 import donkey/core/session/session_ingress
 import donkey/adapters/memory/md_file
 when defined(withPostgres) or defined(withSqlite):
-  import donkey/app/multigraph_runtime
+  import donkey/adapters/memory/multigraph_runtime
 import donkey/adapters/provider/openrouter
 import donkey/adapters/provider/runtime_builder
 import donkey/adapters/provider/model_catalog

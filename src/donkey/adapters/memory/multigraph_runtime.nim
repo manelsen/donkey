@@ -2,19 +2,19 @@
 
 when defined(withPostgres) or defined(withSqlite):
   import std/[os, strutils]
-  import ../core/types
-  import ../core/providers/smart_routing
-  import ../core/memory_rerank_prefs
-  import ../ports/memory
-  import ../ports/embedding
-  import ../ports/reranking
-  import ../ports/ipc
-  import ../adapters/embedding/openrouter_embed
-  import ../adapters/reranking/zai_rerank
-  import ../adapters/reranking/minimax_rerank
-  import ../adapters/reranking/openrouter_rerank
-  import ../adapters/memory/md_file
-  import ../adapters/memory/magma_memory_adapter
+  import ../../core/types
+  import ../../core/providers/smart_routing
+  import ../../core/memory_rerank_prefs
+  import ../../ports/memory
+  import ../../ports/embedding
+  import ../../ports/reranking
+  import ../../ports/ipc
+  import ../embedding/openrouter_embed
+  import ../reranking/zai_rerank
+  import ../reranking/minimax_rerank
+  import ../reranking/openrouter_rerank
+  import ./md_file
+  import ./magma_memory_adapter
 
   type
     MemoryExportEntry = object

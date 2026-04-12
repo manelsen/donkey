@@ -198,7 +198,9 @@ when defined(withPostgres):
       discard db.ageCypher(
         "MERGE (p:Person {user_id: '" & $userId & "'}) SET p.profile = '" &
         sanitizeAgeText(content) & "' RETURN p")
-    except CatchableError: discard
+    except CatchableError:
+      let errMsg = getCurrentExceptionMsg()
+      stderr.writeLine("ERROR saveUserMd: AGE MERGE failed for user=" & $userId & " reason=" & errMsg)
 
   proc appendMemory*(a: PostgresMemoryAdapter; userId: UserId; text: string) =
     let db = a.open()
@@ -221,7 +223,9 @@ when defined(withPostgres):
         "CREATE (m:Memory {node_id: '" & nodeId & "', user_id: '" & $userId &
         "', content: '" & safeText & "'}) " &
         "CREATE (u)-[:HAS_MEMORY]->(m) RETURN id(m)", @["id"])
-    except CatchableError: discard
+    except CatchableError:
+      let errMsg = getCurrentExceptionMsg()
+      stderr.writeLine("ERROR appendMemory: AGE MERGE failed for user=" & $userId & " reason=" & errMsg)
 
   proc savePreferences*(a: PostgresMemoryAdapter; userId: UserId; content: string) =
     let db = a.open()
@@ -276,7 +280,9 @@ when defined(withPostgres):
       db.exec(sql"LOAD 'age'")
       discard db.ageCypher(
         "MATCH (n {user_id: '" & $userId & "'}) DETACH DELETE n")
-    except CatchableError: discard
+    except CatchableError:
+      let errMsg = getCurrentExceptionMsg()
+      stderr.writeLine("ERROR deleteUser: AGE DELETE failed for user=" & $userId & " reason=" & errMsg)
 
 else:
   type
