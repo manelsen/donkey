@@ -178,15 +178,6 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
     let reply = memory.applyBudgetTextCommand(userId, command.value).valueOr: error
     sendDiscordReply(event, dcAdapter, userId, reply, logger)
     true
-  of cmdReasoning:
-    let prefs = common_runtime.loadChannelPrefs(memory, userId)
-    let next = if prefs.reasoning == "on": "off" else: "on"
-    common_runtime.saveChannelPreference(memory, userId, "reasoning", next)
-    sendDiscordEmbed(event, dcAdapter, userId,
-      "🧠 Reasoning",
-      if next == "on": "Reasoning ativado." else: "Reasoning desativado.",
-      0x57F287, logger)
-    true
   of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
     sendDiscordReply(event, dcAdapter, userId, buildDeferredUiCommandText(command.kind), logger)
     true
@@ -404,6 +395,14 @@ proc handleDiscordEvent*(sm: var SessionManager;
         sendDiscordEmbed(event, dcAdapter, userId,
           "🔗 Continue", buildContinueResultText(linked),
           if linked: 0x57F287 else: 0xED4245, logger)
+      of lcaReasoningToggle:
+        let prefs = common_runtime.loadChannelPrefs(memory, userId)
+        let next = if prefs.reasoning == "on": "off" else: "on"
+        common_runtime.saveChannelPreference(memory, userId, "reasoning", next)
+        sendDiscordEmbed(event, dcAdapter, userId,
+          "🧠 Reasoning",
+          if next == "on": "Reasoning ativado." else: "Reasoning desativado.",
+          0x57F287, logger)
       else:
         discard
       completeInboundStatus(inbound)
