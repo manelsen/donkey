@@ -1,7 +1,7 @@
 ## StdHttpAdapter — HttpPort backed by std/httpclient + system OpenSSL.
 ## For IoT targets swap for ChronosHttpAdapter (chronos + bearssl, no system deps).
 
-import std/[httpclient, strutils, os]
+import std/[httpclient, strutils, os, json]
 import ../../ports/http
 import ../../core/pipeops
 import ../../core/reliability
@@ -9,18 +9,18 @@ import ../../core/security/net_boundary
 import ./helpers
 
 type StdHttpAdapter* = object
-  timeout*: int  ## Timeout in seconds.
+  timeout*: int ## Timeout in seconds.
   maxRetries*: int ## Maximum number of retries.
   allowlist*: seq[string] ## Allowed hosts.
 
 proc newStdHttpAdapter*(timeout = 60, maxRetries = 3, allowlist: seq[string] = @[]): StdHttpAdapter =
   StdHttpAdapter(timeout: timeout, maxRetries: maxRetries, allowlist: allowlist)
 
-proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string; 
+proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
                       headers: seq[HttpHeader]): Result[HttpResponse, string] {.gcsafe.} =
   # Extract host for circuit breaker and allowlist
   let host = if url.contains("//"): url.split("//")[1].split("/")[0] else: url
-  
+
   if a.allowlist.len > 0 and not isHostAllowed(host, a.allowlist):
     return err("Network egress BLOCKED: host '" & host & "' not in allowlist")
 
@@ -37,9 +37,24 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
           client.headers = h
         let resp = client.request(url, httpMethod = meth, body = body)
         ok(HttpResponse(status: resp.code.int, body: resp.body))
-    
+
     if res.isOk:
       let val = res.get()
+      # HTTP 429 Too Many Requests: respeita retry-after se presente
+      if val.status == 429:
+        var retryAfterMs = 5000 # default 5s
+        try:
+          let j = parseJson(val.body)
+          if j.hasKey("parameters") and j["parameters"].hasKey("retry_after"):
+            retryAfterMs = j["parameters"]["retry_after"].getInt(5) * 1000
+        except JsonParsingError:
+          discard # usa default
+        lastError = "HTTP 429 (rate limited)"
+        if attempt < a.maxRetries:
+          sleep(retryAfterMs)
+          continue
+        recordFailure(host)
+        return err("HTTP 429 rate limited after " & $a.maxRetries & " attempts. Last error: " & lastError)
       if val.status < 500: # Success or client error, don't retry
         recordSuccess(host)
         return ok(val)
@@ -47,11 +62,11 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
         lastError = "HTTP " & $val.status
     else:
       lastError = res.error
-    
+
     recordFailure(host)
     if attempt < a.maxRetries:
       sleep(getBackoffMs(attempt))
-  
+
   err("HTTP " & $meth & " failed after " & $a.maxRetries & " attempts. Last error: " & lastError)
 
 proc get*(a: StdHttpAdapter; url: string;

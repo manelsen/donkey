@@ -24,6 +24,7 @@ import ../../core/pipeops
 import ../../domain/message
 import ../../domain/channels/discord_pure
 import ../../ports/http
+import ../../core/media_download
 import ../http/std_http
 import ../identity/identity_resolver
 import ./ws_client
@@ -87,6 +88,7 @@ type
     lastSeq:      int     ## last dispatch sequence number
     sessionId:    string
     resumeUrl:    string  ## provided in READY for resume
+  DiscordReconnect = object of IOError  ## OP=7 is normal, not an error
 
 proc epochMs(): int64 =
   let t = getTime()
@@ -292,7 +294,7 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
 
           of 7:  ## Reconnect
             logger.info("discord: reconnect requested (op=7)")
-            raise newException(IOError, "Discord requested reconnect (op=7)")
+            raise newException(DiscordReconnect, "Discord requested reconnect (op=7)")
 
           of 9:  ## Invalid Session
             logger.warn("discord: invalid session (op=9)")
@@ -327,6 +329,11 @@ proc discordGatewayThread(arg: GatewayArgs) {.thread.} =
   while true:
     try:
       runGatewaySession(arg.token, state, arg.logger)
+      backoffMs = 1000 # Reset backoff on successful session
+    except DiscordReconnect:
+      # OP=7 is normal - Discord requests reconnect for load balancing
+      arg.logger.info("discord: reconnecting…")
+      sleep(1000) # Brief pause before reconnect
     except Exception as e:
       arg.logger.error("discord: gateway error: " & e.msg & " — reconnecting in " & $backoffMs & " ms")
       sleep(backoffMs)
@@ -692,6 +699,30 @@ proc setMessageReaction*(a: DiscordAdapter; userId: UserId;
     return err("Discord add reaction error " & $addResp.status & ": " & addResp.body)
   a.statusReactions[][cacheKey] = emoji
   ok()
+
+proc downloadFile*(a: DiscordAdapter; fileId: string): Result[FileDownload, string] =
+  ## Downloads an attachment from Discord CDN.
+  ## fileId is the attachment URL (proxy_url or url from gateway event).
+  if fileId.len == 0:
+    return err("Discord downloadFile: empty fileId")
+  try:
+    let headers: seq[(string, string)] = @[]
+    let resp = ? a.http.get(fileId, headers)
+    if resp.status != 200:
+      return err("Discord downloadFile error " & $resp.status & ": " & resp.body)
+    var data = newSeq[byte](resp.body.len)
+    for i in 0 ..< resp.body.len:
+      data[i] = cast[byte](resp.body[i])
+    let fileName = fileId.split("/")[^1].split("?")[0]
+    ok(FileDownload(
+      fileName: fileName,
+      fileSize: data.len.int64,
+      mimeType: extractMimeType(fileId),
+      localPath: "",
+      data: data,
+    ))
+  except CatchableError as e:
+    err(e.msg)
 
 proc ack*(a: DiscordAdapter; channelId: string) =
   ## No-op — Discord has no explicit acknowledgement step.
