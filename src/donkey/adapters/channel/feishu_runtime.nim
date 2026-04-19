@@ -29,94 +29,99 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
 
   var (hasEvent, event) = fsAdapter.tryRecvEvent()
   while hasEvent:
-    if event.msgType == "text" and (event.content |> strip).len > 0:
+    if (event.msgType == "text" and (event.content |> strip).len > 0) or
+       event.fileKey.len > 0:
       let userId = fsAdapter.resolver.resolve(ckFeishu, event.openId)
       let msg = InboundMessage(
         userId:    userId,
         channel:   ckFeishu,
         channelId: event.msgId,
         text:      event.content,
+        mediaUrl:  event.fileKey,
       )
-      let command = decideCommandRequest(CommandRequest(channel: ckFeishu, text: event.content))
-      case command.route
-      of crLocal:
-        let reply =
-          case decideLocalCommandAction(command)
-          of lcaShowAbout:
-            buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount())
-          of lcaStartIntro:
-            buildStartIntroText()
-          of lcaSkillCommand:
-            let reply = applySkillTextCommand(
-              memory,
-              userId,
-              command.value,
-              homeDir = memory.donkeyHomeDir(),
-            ).valueOr:
-              error
-            reply
-          of lcaGenerateLinkCode:
-            buildLinkCodeText(fsAdapter.resolver.generateLinkCode(userId))
-          of lcaClearMemory:
-            memory.clearMemory(userId)
-            "Memórias apagadas."
-          of lcaDoctorReport:
-            buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount())
-          of lcaHelpText:
-            buildHelpText(false)
-          of lcaShowMemory:
-            buildMemoryViewText(memory, userId)
-          of lcaContinueLink:
-            buildContinueResultText(fsAdapter.resolver.consumeLinkCode(command.value, ckFeishu, event.openId))
-          else:
-            ""
-        if reply.len > 0:
-          fsAdapter.send(OutboundMessage(userId: userId, channel: ckFeishu, text: reply)).isOkOr:
-            log.error("fs send failed for user=" & $userId & " reason=" & error)
-      of crSessionTask:
-        if sm.hasSession(userId):
-          let entry = sm.getOrCreate(userId)
-          inc msgSeq
-          entry.inbox.addLastNoWait(
-            newTaskMsg($msgSeq, commandTaskKind(command), $userId, "", ckFeishu, event.msgId))
-        else:
-          let text =
-            if command.kind == cmdDebug:
-              "Nenhuma sessão ativa. Envie uma mensagem primeiro."
+      if event.msgType == "text" and (event.content |> strip).len > 0:
+        let command = decideCommandRequest(CommandRequest(channel: ckFeishu, text: event.content))
+        case command.route
+        of crLocal:
+          let reply =
+            case decideLocalCommandAction(command)
+            of lcaShowAbout:
+              buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount())
+            of lcaStartIntro:
+              buildStartIntroText()
+            of lcaSkillCommand:
+              let reply = applySkillTextCommand(
+                memory,
+                userId,
+                command.value,
+                homeDir = memory.donkeyHomeDir(),
+              ).valueOr:
+                error
+              reply
+            of lcaGenerateLinkCode:
+              buildLinkCodeText(fsAdapter.resolver.generateLinkCode(userId))
+            of lcaClearMemory:
+              memory.clearMemory(userId)
+              "Memórias apagadas."
+            of lcaDoctorReport:
+              buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount())
+            of lcaHelpText:
+              buildHelpText(false)
+            of lcaShowMemory:
+              buildMemoryViewText(memory, userId)
+            of lcaContinueLink:
+              buildContinueResultText(fsAdapter.resolver.consumeLinkCode(command.value, ckFeishu, event.openId))
             else:
-              "Nenhuma conversa ativa para reiniciar."
-          fsAdapter.send(OutboundMessage(userId: userId, channel: ckFeishu, text: text)).isOkOr:
-            log.error("fs send sessionTask feedback failed for user=" & $userId & " reason=" & error)
-      of crUi:
-        let reply =
-          case command.kind
-          of cmdModels:
-            memory.applyModelsTextCommand(userId, command.value, modelCatalogLoader).valueOr: error
-          of cmdThink:
-            memory.applyThinkTextCommand(userId, command.value).valueOr: error
-          of cmdBudget:
-            memory.applyBudgetTextCommand(userId, command.value).valueOr: error
-          of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
-            buildDeferredUiCommandText(command.kind)
+              ""
+          if reply.len > 0:
+            fsAdapter.send(OutboundMessage(userId: userId, channel: ckFeishu, text: reply)).isOkOr:
+              log.error("fs send failed for user=" & $userId & " reason=" & error)
+        of crSessionTask:
+          if sm.hasSession(userId):
+            let entry = sm.getOrCreate(userId)
+            inc msgSeq
+            entry.inbox.addLastNoWait(
+              newTaskMsg($msgSeq, commandTaskKind(command), $userId, "", ckFeishu, event.msgId))
           else:
-            ""
-        if reply.len > 0:
-          fsAdapter.send(OutboundMessage(userId: userId, channel: ckFeishu, text: reply)).isOkOr:
-            log.error("fs send crUi failed for user=" & $userId & " reason=" & error)
-      of crPing:
-        fsAdapter.send(OutboundMessage(
-          userId: userId,
-          channel: ckFeishu,
-          text: buildPingText(memory, userId, completeBuilder),
-        )).isOkOr:
-          log.error("fs send crPing failed for user=" & $userId & " reason=" & error)
-      of crStatus:
-        fsAdapter.send(OutboundMessage(
-          userId: userId,
-          channel: ckFeishu,
-          text: buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs),
-        )).isOkOr:
-          log.error("fs send crStatus failed for user=" & $userId & " reason=" & error)
-      of crCallback, crNone:
+            let text =
+              if command.kind == cmdDebug:
+                "Nenhuma sessão ativa. Envie uma mensagem primeiro."
+              else:
+                "Nenhuma conversa ativa para reiniciar."
+            fsAdapter.send(OutboundMessage(userId: userId, channel: ckFeishu, text: text)).isOkOr:
+              log.error("fs send sessionTask feedback failed for user=" & $userId & " reason=" & error)
+        of crUi:
+          let reply =
+            case command.kind
+            of cmdModels:
+              memory.applyModelsTextCommand(userId, command.value, modelCatalogLoader).valueOr: error
+            of cmdThink:
+              memory.applyThinkTextCommand(userId, command.value).valueOr: error
+            of cmdBudget:
+              memory.applyBudgetTextCommand(userId, command.value).valueOr: error
+            of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
+              buildDeferredUiCommandText(command.kind)
+            else:
+              ""
+          if reply.len > 0:
+            fsAdapter.send(OutboundMessage(userId: userId, channel: ckFeishu, text: reply)).isOkOr:
+              log.error("fs send crUi failed for user=" & $userId & " reason=" & error)
+        of crPing:
+          fsAdapter.send(OutboundMessage(
+            userId: userId,
+            channel: ckFeishu,
+            text: buildPingText(memory, userId, completeBuilder),
+          )).isOkOr:
+            log.error("fs send crPing failed for user=" & $userId & " reason=" & error)
+        of crStatus:
+          fsAdapter.send(OutboundMessage(
+            userId: userId,
+            channel: ckFeishu,
+            text: buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs),
+          )).isOkOr:
+            log.error("fs send crStatus failed for user=" & $userId & " reason=" & error)
+        of crCallback, crNone:
+          handleSessionFallback(msg)
+      else:
         handleSessionFallback(msg)
     (hasEvent, event) = fsAdapter.tryRecvEvent()

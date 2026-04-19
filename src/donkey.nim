@@ -38,6 +38,8 @@ import donkey/adapters/channel/qq_channel
 import donkey/adapters/channel/qq_runtime
 import donkey/adapters/channel/feishu
 import donkey/adapters/channel/feishu_runtime
+import donkey/adapters/channel/whatsapp
+import donkey/adapters/channel/whatsapp_runtime
 import donkey/adapters/channel/matrix
 import donkey/adapters/channel/email
 import donkey/adapters/channel/slack
@@ -48,6 +50,7 @@ import donkey/domain/message
 import donkey/domain/agent_message
 import donkey/ports/provider
 import donkey/ports/channel
+import donkey/core/media_download
 import donkey/ports/tool
 import donkey/app/orchestrator
 import donkey/app/sandbox
@@ -179,6 +182,8 @@ type DaemonEnv = object
   memory:        MdFileAdapter
   identityPath:  string
   wecomAgentId:  int
+  whatsappAccessToken: string
+  whatsappPhoneNumberId: string
 
 type DaemonAdapters = object
   tg: TelegramAdapter
@@ -191,13 +196,15 @@ type DaemonAdapters = object
   dt: DingTalkAdapter
   mx: MatrixAdapter
   em: EmailAdapter
+  wa: WhatsAppAdapter
   cli: CliAdapter
 
 proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPorts =
   buildOutboundPorts(
     addr adapters.tg, addr adapters.dc, addr adapters.wc,
     addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx,
-    addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.cli)
+    addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
+    addr adapters.cli)
 
 const
   RecentRouteSampleLimit = 32
@@ -232,6 +239,7 @@ type DaemonRuntime = ref object
   lastReminderCheckMs:  int64
   msgSeq:               int
   daemonStartMs:        int64
+  downloadDir:          string  ## directory for downloaded files from channels
 
 type DaemonContext = ref object
   env:      DaemonEnv
@@ -344,6 +352,10 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   let wecomAgentIdStr = getEnv("WECOM_AGENT_ID")
   result.wecomAgentId =
     if wecomAgentIdStr.len > 0: parseInt(wecomAgentIdStr) else: 0
+  
+  # WhatsApp Cloud API
+  result.whatsappAccessToken = getEnv("WHATSAPP_ACCESS_TOKEN")
+  result.whatsappPhoneNumberId = getEnv("WHATSAPP_PHONE_NUMBER_ID")
 
 proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
   result.tg = newTelegramAdapter(env.telegramToken, env.identityPath, pollTimeout = 0)
@@ -379,6 +391,11 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
                               getEnv("EMAIL_USER"), getEnv("EMAIL_PASSWORD"),
                               env.identityPath)
   result.cli = newCliAdapter()
+  
+  # WhatsApp (optional - only if credentials are set)
+  if env.whatsappAccessToken.len > 0 and env.whatsappPhoneNumberId.len > 0:
+    result.wa = newWhatsAppAdapter(env.whatsappAccessToken, env.whatsappPhoneNumberId,
+                                   env.identityPath)
 
 func recentRouteSampleTtlSec(): int64 =
   let raw = getEnv("DONKEY_ROUTE_HEALTH_TTL_SEC")
@@ -760,6 +777,28 @@ proc startOptionalDingTalkGateway(dtAdapter: var DingTalkAdapter;
 
   dtAdapter.openQueue()
   log.info("DingTalk gateway started")
+
+proc startOptionalMatrixGateway(mxAdapter: var MatrixAdapter;
+                                log: Logger) =
+  if getEnv("MATRIX_HOMESERVER").len == 0 or
+     getEnv("MATRIX_BOT_USER_ID").len == 0 or
+     getEnv("MATRIX_ACCESS_TOKEN").len == 0:
+    log.info("MATRIX_HOMESERVER/MATRIX_BOT_USER_ID/MATRIX_ACCESS_TOKEN not set — Matrix disabled")
+    return
+
+  mxAdapter.startGateway()
+  log.info("Matrix gateway started")
+
+proc startOptionalWhatsAppGateway(waAdapter: var WhatsAppAdapter;
+                                  accessToken: string;
+                                  phoneNumberId: string;
+                                  log: Logger) =
+  if accessToken.len == 0 or phoneNumberId.len == 0:
+    log.info("WHATSAPP_ACCESS_TOKEN/WHATSAPP_PHONE_NUMBER_ID not set — WhatsApp disabled")
+    return
+
+  waAdapter.openQueue()
+  log.info("WhatsApp webhook queue started")
 
 proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
                              log: Logger) =
@@ -1189,6 +1228,62 @@ proc handleTelegramFallback(runtime:      var DaemonRuntime;
                             services:     SessionIngressServices) =
   handleSessionFallback(runtime, msg, services)
 
+proc processInboundMediaDownload(runtime: var DaemonRuntime;
+                                 msg: InboundMessage;
+                                 channelPort: OutboundChannelPort;
+                                 log: Logger) =
+  ## Downloads and saves files from inbound messages if mediaUrl is present.
+  ## Uses the channel port interface - respects hexagonal architecture.
+  if msg.mediaUrl.len == 0:
+    return
+  
+  # Create download directory if it doesn't exist
+  if runtime.downloadDir.len == 0:
+    runtime.downloadDir = getAppDir() / "downloads"
+  
+  let userDir = runtime.downloadDir / $msg.userId
+  if not dirExists(userDir):
+    createDir(userDir)
+  
+  # Try to download file using the port interface
+  # The fileId format is channel-specific:
+  #   Telegram: file_id
+  #   WhatsApp: mediaId
+  #   Discord: HTTP URL (already resolved)
+  let fileId = msg.mediaUrl
+  
+  let downloadResult = channelPort.downloadFile(fileId)
+  if downloadResult.isOk:
+    var fileDownload = downloadResult.value
+    
+    # Save to disk using generic media_download helper
+    let saveResult = fileDownload.saveFileToDisk(userDir)
+    if saveResult.isOk:
+      log.info($msg.channel & ": downloaded file " & fileDownload.fileName & " -> " & saveResult.value)
+    else:
+      log.warn($msg.channel & ": failed to save file: " & saveResult.error)
+  else:
+    # Not an error - some channels don't support downloadFile
+    # Just log for debugging
+    log.debug($msg.channel & ": downloadFile not available for " & fileId)
+
+func outboundPortForChannel(ports: OutboundChannelPorts;
+                            channel: ChannelKind): OutboundChannelPort =
+  case channel
+  of ckTelegram: ports.telegram
+  of ckDiscord: ports.discord
+  of ckWeCom: ports.wecom
+  of ckWeChat: ports.wechat
+  of ckQQ: ports.qq
+  of ckFeishu: ports.feishu
+  of ckSlack: ports.slack
+  of ckWhatsApp: ports.whatsapp
+  of ckSignal: ports.signal
+  of ckDingTalk: ports.dingtalk
+  of ckMatrix: ports.matrix
+  of ckEmail: ports.email
+  of ckCli: ports.cli
+
 proc drainTelegramEvents(runtime:      var DaemonRuntime;
                          tgAdapter:    var TelegramAdapter;
                          outboundPorts: OutboundChannelPorts;
@@ -1208,6 +1303,10 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
       tgAdapter.sendTyping(msg.userId).isOkOr:
         log.warn("tg sendTyping (staged) failed for user=" & $msg.userId & " reason=" & error)
       stageInboundReactionStatus(runtime, outboundPorts, msg)
+    
+    # Download media if present
+    processInboundMediaDownload(runtime, msg, outboundPorts.telegram, log)
+    
     if telegram_runtime.handleTelegramMessage(
       msg, runtime.sm, tgAdapter, runtime.presentationState, services.memory, completeBuilder,
       modelCatalogLoader,
@@ -1273,6 +1372,9 @@ proc startDaemonIngress(ctx: DaemonContext;
   startOptionalFeishuGateway(ctx.adapters.fs, ctx.env.feishuAppId, log)
   startOptionalSlackGateway(ctx.adapters.sl, ctx.env.slackBotToken, log)
   startOptionalDingTalkGateway(ctx.adapters.dt, ctx.env.dingTalkAppKey, log)
+  startOptionalMatrixGateway(ctx.adapters.mx, log)
+  startOptionalWhatsAppGateway(ctx.adapters.wa, ctx.env.whatsappAccessToken,
+                               ctx.env.whatsappPhoneNumberId, log)
   startOptionalQQGateway(ctx.adapters.qq, log)
   if ctx.env.telegramToken.len > 0:
     log.info("Telegram bot starting (token len=" & $ctx.env.telegramToken.len & ")")
@@ -1301,6 +1403,13 @@ proc handleGatewayFallback(ctx: DaemonContext;
                            memory: MdFileAdapter;
                            msg: InboundMessage;
                            log: Logger) {.gcsafe.} =
+  let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
+  processInboundMediaDownload(
+    ctx.runtime,
+    msg,
+    outboundPortForChannel(outboundPorts, msg.channel),
+    log,
+  )
   handleSessionFallback(
     ctx.runtime,
     msg,
@@ -1384,6 +1493,62 @@ proc drainFeishuGateway(ctx: DaemonContext;
       handleGatewayFallback(ctx, cfg, memory, msg, log),
     log)
 
+proc drainDingTalkGateway(ctx: DaemonContext;
+                          cfg: DonkeyConfig;
+                          memory: MdFileAdapter;
+                          log: Logger) =
+  if ctx.env.dingTalkAppKey.len == 0:
+    return
+
+  var (hasEvent, event) = ctx.adapters.dt.tryRecvEvent()
+  while hasEvent:
+    if event.content.strip.len > 0 or event.downloadCode.len > 0:
+      let userId = ctx.adapters.dt.resolver.resolve(ckDingTalk, event.rawId)
+      handleGatewayFallback(
+        ctx,
+        cfg,
+        memory,
+        InboundMessage(
+          userId: userId,
+          channel: ckDingTalk,
+          channelId: event.messageId,
+          messageId: event.messageId,
+          text: event.content,
+          mediaUrl: event.downloadCode,
+        ),
+        log,
+      )
+    (hasEvent, event) = ctx.adapters.dt.tryRecvEvent()
+
+proc drainMatrixGateway(ctx: DaemonContext;
+                        cfg: DonkeyConfig;
+                        memory: MdFileAdapter;
+                        log: Logger) =
+  if getEnv("MATRIX_HOMESERVER").len == 0 or
+     getEnv("MATRIX_BOT_USER_ID").len == 0 or
+     getEnv("MATRIX_ACCESS_TOKEN").len == 0:
+    return
+
+  var (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
+  while hasEvent:
+    if event.content.strip.len > 0 or event.mediaUrl.len > 0:
+      let userId = ctx.adapters.mx.resolver.resolve(ckMatrix, event.roomId)
+      handleGatewayFallback(
+        ctx,
+        cfg,
+        memory,
+        InboundMessage(
+          userId: userId,
+          channel: ckMatrix,
+          channelId: event.eventId,
+          messageId: event.eventId,
+          text: event.content,
+          mediaUrl: event.mediaUrl,
+        ),
+        log,
+      )
+    (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
+
 proc drainTelegramGateway(ctx: DaemonContext;
                           cfg: DonkeyConfig;
                           memory: MdFileAdapter;
@@ -1393,16 +1558,40 @@ proc drainTelegramGateway(ctx: DaemonContext;
     withTypingFn(ctx.services.tgTypingFn)
   drainTelegramEvents(ctx.runtime, ctx.adapters.tg, buildRuntimeOutboundPorts(ctx.adapters), services, log)
 
+proc drainWhatsAppGateway(ctx: DaemonContext;
+                          cfg: DonkeyConfig;
+                          memory: MdFileAdapter;
+                          log: Logger): bool =
+  ## Drains WhatsApp webhook events and processes them.
+  if ctx.env.whatsappAccessToken.len == 0:
+    return false  # WhatsApp not configured
+
+  let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+    buildCompleteFn(preferencesMd, buildProviderBundle)
+  let modelCatalogLoader = buildModelCatalogLoader()
+  whatsapp_runtime.drainWhatsAppEvents(
+    ctx.adapters.wa, ctx.env.whatsappPhoneNumberId, ctx.runtime.sm, memory,
+    completeBuilder, modelCatalogLoader,
+    ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len,
+    ctx.runtime.daemonStartMs, ctx.runtime.msgSeq,
+    proc(msg: InboundMessage) =
+      handleGatewayFallback(ctx, cfg, memory, msg, log),
+    log)
+  true
+
 proc drainGatewayEvents(ctx: DaemonContext;
                         cfg: DonkeyConfig;
                         memory: MdFileAdapter;
-                        log: Logger): bool =
+                        log: Logger) =
   drainDiscordGateway(ctx, cfg, memory, log)
   drainWeComGateway(ctx, cfg, memory, log)
   drainWeChatGateway(ctx, cfg, memory, log)
   drainFeishuGateway(ctx, cfg, memory, log)
   drainQQGateway(ctx, cfg, memory, log)
-  drainTelegramGateway(ctx, cfg, memory, log)
+  drainDingTalkGateway(ctx, cfg, memory, log)
+  drainMatrixGateway(ctx, cfg, memory, log)
+  discard drainTelegramGateway(ctx, cfg, memory, log)
+  discard drainWhatsAppGateway(ctx, cfg, memory, log)
 
 proc withOutboxDrain(ctx: DaemonContext;
                      log: Logger;
@@ -1416,7 +1605,8 @@ proc withGatewayDrain(ctx: DaemonContext;
                       log: Logger;
                       tick: DaemonTickResult): DaemonTickResult =
   result = tick
-  result.ok = drainGatewayEvents(ctx, cfg, memory, log)
+  drainGatewayEvents(ctx, cfg, memory, log)
+  result.ok = true  # Always ok, gateways drained
 
 proc withReminderCheck(ctx: DaemonContext;
                        memory: MdFileAdapter;
