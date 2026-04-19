@@ -301,9 +301,16 @@ proc setMessageReaction*(a: TelegramAdapter; userId: UserId;
     if emoji.len > 0:
       reaction.add(%* {"type": "emoji", "emoji": emoji})
 
-    discard ? a.post("setMessageReaction",
+    let res = a.post("setMessageReaction",
                      %* {"chat_id": chatId, "message_id": msgIdInt,
                          "reaction": reaction})
+    if res.isErr:
+      let errMsg = res.error
+      if "REACTION_INVALID" in errMsg or
+         "message can't be reacted" in errMsg or
+         "reactions are unavailable" in errMsg:
+        return ok()
+      return err(errMsg)
     ok()
   except CatchableError as e:
     err(e.msg)

@@ -52,6 +52,22 @@ proc save(r: IdentityResolver) =
     buf.add(k & '\t' & $v & '\n')
   writeFile(r.path, buf)
 
+proc loadPersistedMappings(r: IdentityResolver) =
+  r.store = initTable[string, UserId]()
+  r.reverseMap = initTable[string, seq[string]]()
+  if not fileExists(r.path):
+    return
+  for line in lines(r.path):
+    let parts = line.split('\t')
+    if parts.len == 2:
+      let key = parts[0]
+      let uid = UserId(parts[1])
+      r.store[key] = uid
+      let us = $uid
+      if us notin r.reverseMap:
+        r.reverseMap[us] = @[]
+      r.reverseMap[us].add(key)
+
 proc newIdentityResolver*(path: string): IdentityResolver =
   result = IdentityResolver(
     path:         path,
@@ -59,17 +75,7 @@ proc newIdentityResolver*(path: string): IdentityResolver =
     reverseMap:   initTable[string, seq[string]](),
     pendingLinks: initTable[string, LinkEntry](),
   )
-  if fileExists(path):
-    for line in lines(path):
-      let parts = line.split('\t')
-      if parts.len == 2:
-        let key = parts[0]
-        let uid = UserId(parts[1])
-        result.store[key] = uid
-        let us = $uid
-        if us notin result.reverseMap:
-          result.reverseMap[us] = @[]
-        result.reverseMap[us].add(key)
+  result.loadPersistedMappings()
 
 proc resolve*(r: IdentityResolver; kind: ChannelKind; rawId: string): UserId =
   ## Returns the stable UserId for (kind, rawId), minting a new UUID on first contact.
@@ -89,7 +95,10 @@ proc reverseChannel*(r: IdentityResolver; userId: UserId; kind: ChannelKind): st
   ## Reverse lookup: UserId + channel kind → raw channel user ID.
   ## Returns "" if not found.
   let us = $userId
-  if us notin r.reverseMap: return ""
+  if us notin r.reverseMap:
+    r.loadPersistedMappings()
+    if us notin r.reverseMap:
+      return ""
   let prefix = $kind & ":"
   for key in r.reverseMap[us]:
     if key.startsWith(prefix):
