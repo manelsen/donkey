@@ -1,3 +1,9 @@
+---
+title: Donkey
+sdk: docker
+app_port: 8080
+---
+
 # Donkey
 
 AI agent system written in Nim. Self-hosted, multi-channel, multi-provider.
