@@ -1,0 +1,13 @@
+[donkey]
+home = "/root/.donkey"
+paddocks = "/root/.donkey/paddocks"
+log_level = "info"
+log_file = "/root/.donkey/donkey.log"
+
+[sandbox]
+mode = "oci"
+runtime = "docker"
+image = "alpine"
+allow_host_fallback = false
+allow_network = false
+read_only_rootfs = true
