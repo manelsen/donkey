@@ -894,8 +894,11 @@ proc setupIpcServer(cfg: DonkeyConfig;
       result.add(IpcLogEntry(ts: e.ts, level: e.level, subsys: e.sub, msg: e.msg))
   let gwInboundFn: GatewayInboundFn = proc(msg: InboundMessage) {.gcsafe.} =
     handleGatewayFallback(gatewayInboundCtx, cfg, gatewayInboundMemory, msg, gatewayInboundLog)
-  startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
-  log.info("IPC socket: " & sockPath)
+  try:
+    startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
+    log.info("IPC socket: " & sockPath)
+  except CatchableError as e:
+    log.warn("IPC socket disabled: " & e.msg)
   let httpPort = resolveGatewayPort(getEnv("DONKEY_HTTP_PORT"))
   let gwStatusFn: GatewayStatusFn = proc(): DaemonStatus {.gcsafe.} =
     ipcStatusFn()
