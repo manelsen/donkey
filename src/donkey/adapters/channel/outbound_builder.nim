@@ -19,6 +19,7 @@ import email
 import slack
 import dingtalk
 import cli_repl
+import whatsapp
 
 # ── generic unsupported stubs (capability-driven) ───────────────────────────
 ## These are used for any (channel, operation) pair where the capability
@@ -46,6 +47,10 @@ proc unsupportedSetMessageReaction(userId: UserId; channelId, msgId, emoji: stri
   discard userId; discard channelId; discard msgId; discard emoji
   err("setMessageReaction unsupported")
 
+proc unsupportedDownloadFile(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+  discard fileId
+  err("downloadFile unsupported")
+
 # ── builder ──────────────────────────────────────────────────────────────────
 ## Each channel's OutboundChannelPort is assembled using the capability
 ## descriptor to decide whether to wire the real adapter method or fall back
@@ -63,6 +68,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          emAdapter: ptr EmailAdapter;
                          slAdapter: ptr SlackAdapter;
                          dtAdapter: ptr DingTalkAdapter;
+                         waAdapter: ptr WhatsAppAdapter;
                          cliAdapter: ptr CliAdapter): OutboundChannelPorts =
 
   # ── Telegram (full capability) ────────────────────────────────────────────
@@ -82,6 +88,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
       tgAdapter[].editKeyboardText(userId, msgId, text, buttons),
     setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} =
       tgAdapter[].setMessageReaction(userId, channelId, msgId, emoji),
+    downloadFile: proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+      tgAdapter[].downloadFile(fileId),
   )
 
   # ── Discord (full capability) ─────────────────────────────────────────────
@@ -102,6 +110,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
       dcAdapter[].editKeyboard(userId, msgId, text, buttons),
     setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} =
       dcAdapter[].setMessageReaction(userId, channelId, msgId, emoji),
+    downloadFile: proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+      dcAdapter[].downloadFile(fileId),
   )
 
   # ── WeCom — capability descriptor says: send only ─────────────────────────
@@ -113,6 +123,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     sendKeyboard: unsupportedSendKeyboard,
     editKeyboard: unsupportedEditKeyboard,
     setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: unsupportedDownloadFile,
   )
 
   # ── WeChat — capability descriptor says: send only ────────────────────────
@@ -124,6 +135,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     sendKeyboard: unsupportedSendKeyboard,
     editKeyboard: unsupportedEditKeyboard,
     setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+      wchAdapter[].downloadFile(fileId),
   )
 
   # ── QQ — capability descriptor says: send + sendKeyboard ──────────────────
@@ -138,6 +151,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
       qqAdapter[].sendKeyboard(userId, text, buttons, replyTo),
     editKeyboard: unsupportedEditKeyboard,
     setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: unsupportedDownloadFile,
   )
 
   # ── Feishu — capability descriptor says: send only ────────────────────────
@@ -149,6 +163,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     sendKeyboard: unsupportedSendKeyboard,
     editKeyboard: unsupportedEditKeyboard,
     setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+      fsAdapter[].downloadFile(fileId),
   )
 
   # ── Slack — capability descriptor says: all except setMessageReaction ─────
@@ -167,6 +183,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                         buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} =
       slAdapter[].editKeyboard(userId, msgId, text, buttons),
     setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: unsupportedDownloadFile,
   )
 
   # ── DingTalk — capability descriptor says: send, sendReturnId, editMessage,
@@ -184,6 +201,22 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
       dtAdapter[].sendKeyboard(userId, text, buttons),
     editKeyboard: unsupportedEditKeyboard,
     setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+      dtAdapter[].downloadFile(fileId),
+  )
+
+  # ── WhatsApp — capability descriptor says: send + sendMedia + downloadFile ──
+  result.whatsapp = OutboundChannelPort(
+    send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+      waAdapter[].send(msg),
+    sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
+      waAdapter[].sendReturnId(msg),
+    editMessage: unsupportedEditMessage,
+    sendKeyboard: unsupportedSendKeyboard,
+    editKeyboard: unsupportedEditKeyboard,
+    setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+      waAdapter[].downloadFile(fileId),
   )
 
   # ── Matrix — capability descriptor says: send, sendReturnId, editMessage ──
@@ -197,6 +230,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     sendKeyboard: unsupportedSendKeyboard,
     editKeyboard: unsupportedEditKeyboard,
     setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+      mxAdapter[].downloadFile(fileId),
   )
 
   # ── Email — capability descriptor says: send only ─────────────────────────
@@ -208,6 +243,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     sendKeyboard: unsupportedSendKeyboard,
     editKeyboard: unsupportedEditKeyboard,
     setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: unsupportedDownloadFile,
   )
 
   # ── CLI — capability descriptor says: send, sendReturnId, editMessage ─────
@@ -221,4 +257,5 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     sendKeyboard: unsupportedSendKeyboard,
     editKeyboard: unsupportedEditKeyboard,
     setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: unsupportedDownloadFile,
   )

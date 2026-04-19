@@ -14,6 +14,8 @@ type
     cfSendKeyboard      ## send message with inline keyboard
     cfEditKeyboard      ## edit keyboard of an existing message
     cfSetMessageReaction ## react to a message
+    cfDownloadFile      ## download files/media from messages
+    cfSendMedia         ## send media/files as messages
 
   ChannelCapabilityDescriptor* = object
     send*:               bool
@@ -22,6 +24,8 @@ type
     sendKeyboard*:       bool
     editKeyboard*:       bool
     setMessageReaction*: bool
+    downloadFile*:       bool
+    sendMedia*:          bool
 
   ChannelCapabilityRegistry* = array[ChannelKind, ChannelCapabilityDescriptor]
 
@@ -32,42 +36,51 @@ type
 const
   FullCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: true, editMessage: true,
-    sendKeyboard: true, editKeyboard: true, setMessageReaction: true)
+    sendKeyboard: true, editKeyboard: true, setMessageReaction: true,
+    downloadFile: true, sendMedia: true)
 
   NoReactionCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: true, editMessage: true,
-    sendKeyboard: true, editKeyboard: true, setMessageReaction: false)
+    sendKeyboard: true, editKeyboard: true, setMessageReaction: false,
+    downloadFile: false, sendMedia: true)
 
   BasicCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
-    sendKeyboard: false, editKeyboard: false, setMessageReaction: false)
+    sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
+    downloadFile: false, sendMedia: false)
 
   SendOnlyCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
-    sendKeyboard: false, editKeyboard: false, setMessageReaction: false)
+    sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
+    downloadFile: true, sendMedia: true)
 
   EmailCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
-    sendKeyboard: false, editKeyboard: false, setMessageReaction: false)
+    sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
+    downloadFile: false, sendMedia: false)
 
   CliCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: true, editMessage: true,
-    sendKeyboard: false, editKeyboard: false, setMessageReaction: false)
+    sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
+    downloadFile: false, sendMedia: false)
 
   # QQ supports sendKeyboard but not editKeyboard
   QQCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
-    sendKeyboard: true, editKeyboard: false, setMessageReaction: false)
+    sendKeyboard: true, editKeyboard: false, setMessageReaction: false,
+    downloadFile: false, sendMedia: false)
 
   # Matrix: no keyboard support
   MatrixCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: true, editMessage: true,
-    sendKeyboard: false, editKeyboard: false, setMessageReaction: false)
+    sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
+    downloadFile: true, sendMedia: false)
 
   # DingTalk: editKeyboard reuses editMessage (text-only) — treated as no editKeyboard
   DingTalkCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: true, editMessage: true,
-    sendKeyboard: true, editKeyboard: false, setMessageReaction: false)
+    sendKeyboard: true, editKeyboard: false, setMessageReaction: false,
+    downloadFile: false, sendMedia: false)
 
 proc channelCapabilityRegistry*(): ChannelCapabilityRegistry =
   result[ckTelegram]   = FullCapability
@@ -101,3 +114,5 @@ func supports*(kind: ChannelKind; flag: ChannelCapabilityFlag): bool =
   of cfSendKeyboard:      caps.sendKeyboard
   of cfEditKeyboard:      caps.editKeyboard
   of cfSetMessageReaction: caps.setMessageReaction
+  of cfDownloadFile:      caps.downloadFile
+  of cfSendMedia:         caps.sendMedia

@@ -15,10 +15,20 @@ import ../domain/message
 import ../core/pipeops
 
 type
+  ## File download result type (channel-agnostic)
+  FileDownload* = object
+    fileName*: string
+    fileSize*: int64
+    mimeType*: string
+    localPath*: string  ## empty if not saved to disk yet
+    data*: seq[byte]
+
   ChannelPort* = concept c, var vc
     c.send(OutboundMessage) is Result[void, string]
     vc.receive() is Result[seq[InboundMessage], string]
     c.ack(string)
+    ## Media operations (optional - adapters may return "unsupported" error)
+    c.downloadFile(string) is Result[FileDownload, string]
 
   OutboundChannelPort* = object
     send*:         proc(msg: OutboundMessage): Result[void, string] {.gcsafe.}
@@ -30,6 +40,7 @@ type
     editKeyboard*: proc(userId: UserId; msgId, text: string;
                         buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.}
     setMessageReaction*: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.}
+    downloadFile*: proc(fileId: string): Result[FileDownload, string] {.gcsafe.}
 
   OutboundChannelPorts* = object
     telegram*: OutboundChannelPort
