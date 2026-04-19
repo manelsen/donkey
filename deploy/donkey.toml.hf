@@ -1,8 +1,8 @@
 [donkey]
-home = "/root/.donkey"
-paddocks = "/root/.donkey/paddocks"
+home = "/data/.donkey"
+paddocks = "/data/.donkey/paddocks"
 log_level = "info"
-log_file = "/root/.donkey/donkey.log"
+log_file = "/data/.donkey/donkey.log"
 
 [sandbox]
 mode = "oci"
