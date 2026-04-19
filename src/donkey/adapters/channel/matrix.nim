@@ -24,13 +24,16 @@
 import std/[json, locks, strutils]
 import ../../core/types
 import ../../core/pipeops
+import ../../core/media_download
 import ../../domain/message
 import ../../domain/channels/matrix_pure
+import ../../ports/channel
 import ../../ports/http
 import ../http/std_http
 import ../identity/identity_resolver
 
 export identity_resolver
+export channel.FileDownload
 
 const
   MxDefaultApiBase* = ""  ## Must be provided; no sensible global default.
@@ -191,6 +194,43 @@ proc sendToRoom*(a: MatrixAdapter; roomId: string;
   for chunk in splitChunks(msg.text, MxMaxChars):
     ? a.sendChunk(roomId, chunk)
   ok()
+
+proc downloadFile*(a: MatrixAdapter; mxcUrl: string): Result[FileDownload, string] =
+  ## Downloads a Matrix media file by its mxc:// URL.
+  ## MXC URLs have the format: mxc://homeserver/mediaId
+  ## Download endpoint: GET /_matrix/media/v3/download/{serverName}/{mediaId}
+  if not mxcUrl.startsWith("mxc://"):
+    return err("Matrix downloadFile: invalid MXC URL " & mxcUrl)
+  
+  try:
+    # Parse mxc://server/mediaId
+    let mxcPart = mxcUrl[6 ..^ 1]  # Remove "mxc://"
+    let parts = mxcPart.split('/', 1)
+    if parts.len != 2:
+      return err("Matrix downloadFile: cannot parse MXC URL " & mxcUrl)
+    
+    let serverName = parts[0]
+    let mediaId = parts[1]
+    
+    # Build download URL
+    let baseUrl = if a.apiBase.len > 0: a.apiBase else: a.homeserver
+    let downloadUrl = baseUrl.strip(chars = {'/'}) & "/_matrix/media/v3/download/" & serverName & "/" & mediaId
+    let headers = @[a.authHeader()]
+    let resp = ? a.http.get(downloadUrl, headers)
+    
+    var data = newSeq[byte](resp.body.len)
+    for i in 0 ..< resp.body.len:
+      data[i] = cast[byte](resp.body[i])
+    
+    ok(FileDownload(
+      fileName: "matrix_" & mediaId,
+      fileSize: data.len.int64,
+      mimeType: "application/octet-stream",
+      localPath: "",
+      data: data,
+    ))
+  except CatchableError as e:
+    err("Matrix downloadFile: " & e.msg)
 
 proc send*(a: MatrixAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message to the room resolved from the identity store.

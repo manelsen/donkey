@@ -7,8 +7,47 @@
 ##
 ## This module converts common Markdown to these tags and escapes <, > and &.
 
-import std/[strutils, options]
+import std/[strutils, options, unicode]
 import ../domain/text_format
+
+func sanitizeForTelegram*(text: string): string =
+  ## Sanitizes text for Telegram API by ensuring valid UTF-8 encoding
+  ## and removing invalid byte sequences that cause "strings must be encoded in UTF-8" errors.
+  result = ""
+  var i = 0
+  while i < text.len:
+    let c = ord(text[i])
+    # Check for valid UTF-8 start byte
+    if (c and 0x80) == 0:
+      # ASCII character
+      result.add(text[i])
+      inc(i)
+    elif (c and 0xE0) == 0xC0:
+      # 2-byte sequence
+      if i + 1 < text.len and (ord(text[i + 1]) and 0xC0) == 0x80:
+        result.add(text[i .. i + 1])
+        inc(i, 2)
+      else:
+        inc(i)  # Invalid sequence, skip
+    elif (c and 0xF0) == 0xE0:
+      # 3-byte sequence
+      if i + 2 < text.len and (ord(text[i + 1]) and 0xC0) == 0x80 and (ord(text[i + 2]) and 0xC0) == 0x80:
+        result.add(text[i .. i + 2])
+        inc(i, 3)
+      else:
+        inc(i)  # Invalid sequence, skip
+    elif (c and 0xF8) == 0xF0:
+      # 4-byte sequence
+      if i + 3 < text.len and (ord(text[i + 1]) and 0xC0) == 0x80 and (ord(text[i + 2]) and 0xC0) == 0x80 and (ord(text[i + 3]) and 0xC0) == 0x80:
+        result.add(text[i .. i + 3])
+        inc(i, 4)
+      else:
+        inc(i)  # Invalid sequence, skip
+    else:
+      inc(i)  # Invalid start byte, skip
+  
+  # Replace any remaining invalid characters (like replacement character)
+  result = result.replace("\uFFFD", "")
 
 func findTripleBacktick(md: string, start: int): Option[int] =
   let idx = md.find("```", start)

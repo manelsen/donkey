@@ -15,18 +15,34 @@ import ../../core/types
 import ../../core/pipeops
 import ../../core/commands/command_catalog
 import ../../core/telegram_format
+import ../../core/media_download
 import ../../domain/message
 import ../../domain/channels/telegram_pure
 import ../../ports/http
+import ../../ports/channel
 import ../http/std_http
 import ../identity/identity_resolver
 
 export identity_resolver
+export sanitizeForTelegram
+export FileDownload
 
 const
   TelegramApiBase*   = "https://api.telegram.org"
   DefaultPollTimeout = 1    ## 1 s: short enough for multi-channel fairness
   TelegramMaxChars*  = 4096 ## Telegram sendMessage hard limit
+
+## Emoji de reação válidos para o Telegram (lista de 2024)
+const TelegramValidReactions* = [
+  "👍", "👎", "❤️", "🔥", "🥰", "👏", "😁", "🤔",
+  "🤯", "😱", "🤬", "😢", "🎉", "🤩", "🤮", "💩",
+  "🙏", "👌", "🕊", "🤡", "🥱", "🥭", "😍", "🤓",
+  "😴", "🤓", "🤗", "🤭", "👻", "🤖", "🎃", "⚡",
+  "💋", "💘", "💅", "👀", "🍌", "🏆", "🍾", "💯",
+  "🤨", "😐", "🌚", "🌭", "🍓", "🍕", "🐳", "👾",
+  "🎭", "🙈", "🐝", "🦭", "👺", "🧅", "🍄", "🫣",
+  "⏳", "✅", "❌",
+]
 
 type
   TelegramAdapter* = object
@@ -199,13 +215,14 @@ proc editMessage*(a: TelegramAdapter; userId: UserId;
   let rawId = a.resolver.reverseChannel(userId, ckTelegram)
   if rawId.len == 0: return err("editMessage: no id for " & $userId)
   let chatId = parseBiggestInt(rawId).int64
-  let html = markdownToTelegramHtml(text)
+  let sanitizedText = sanitizeForTelegram(text)
+  let html = markdownToTelegramHtml(sanitizedText)
   var body = %* {"chat_id": chatId, "message_id": parseBiggestInt(msgId), "text": html, "parse_mode": "HTML"}
   let res = a.post("editMessageText", body)
   if res.isOk: return ok()
   # Fallback
   body.delete("parse_mode")
-  body["text"] = %text
+  body["text"] = %sanitizedText
   discard ? a.post("editMessageText", body)
   ok()
 
@@ -243,7 +260,8 @@ proc editKeyboardText*(a: TelegramAdapter; userId: UserId;
   if rawId.len == 0: return err("editKeyboardText: no id for " & $userId)
   let chatId = parseBiggestInt(rawId).int64
   let markup = %* {"inline_keyboard": buttons.mapIt(it.mapIt(%* {"text": it[0], "callback_data": it[1]}))}
-  let html = markdownToTelegramHtml(text)
+  let sanitizedText = sanitizeForTelegram(text)
+  let html = markdownToTelegramHtml(sanitizedText)
   var body = %* {
     "chat_id":    chatId,
     "message_id": parseBiggestInt(msgId),
@@ -255,7 +273,7 @@ proc editKeyboardText*(a: TelegramAdapter; userId: UserId;
   if res.isOk: return ok()
   # Fallback
   body.delete("parse_mode")
-  body["text"] = %text
+  body["text"] = %sanitizedText
   discard ? a.post("editMessageText", body)
   ok()
 
@@ -265,6 +283,17 @@ proc setMessageReaction*(a: TelegramAdapter; userId: UserId;
   discard channelId
   let rawId = a.resolver.reverseChannel(userId, ckTelegram)
   if rawId.len == 0: return err("setMessageReaction: no id for " & $userId)
+  
+  # Valida se o emoji é aceito pelo Telegram
+  if emoji.len > 0 and emoji notin TelegramValidReactions:
+    # Mapeia emojis comuns para equivalentes válidos
+    let mappedEmoji = case emoji
+      of "⏳": "⏳"  # já está na lista
+      of "✅": "✅"  # já está na lista
+      of "❌": "❌"  # já está na lista
+      else: "👍"    # fallback para emoji válido
+    return setMessageReaction(a, userId, channelId, msgId, mappedEmoji)
+  
   try:
     let chatId = parseBiggestInt(rawId).int64
     let msgIdInt = parseBiggestInt(msgId).int64
@@ -279,6 +308,56 @@ proc setMessageReaction*(a: TelegramAdapter; userId: UserId;
   except CatchableError as e:
     err(e.msg)
 
+proc getFile*(a: TelegramAdapter; fileId: string): Result[string, string] =
+  ## Gets file path from Telegram API using file_id.
+  ## Returns the file_path that can be used to download the file.
+  let res = a.post("getFile", %* {"file_id": fileId})
+  if res.isOk:
+    let resultNode = res.value["result"]
+    let filePath = resultNode.getOrDefault("file_path").getStr("")
+    if filePath.len == 0:
+      return err("getFile: empty file_path for id=" & fileId)
+    ok(filePath)
+  else:
+    err(res.error)
+
+proc downloadFileBytes*(a: TelegramAdapter; filePath: string): Result[seq[byte], string] =
+  ## Downloads file content from Telegram servers.
+  ## filePath should be obtained from getFile() first.
+  try:
+    let url = "https://api.telegram.org/file/bot" & a.token & "/" & filePath
+    let headers: seq[(string, string)] = @[]
+    let resp = ? a.http.get(url, headers)
+    
+    # Convert string body to seq[byte]
+    var data = newSeq[byte](resp.body.len)
+    for i in 0 ..< resp.body.len:
+      data[i] = cast[byte](resp.body[i])
+    ok(data)
+  except CatchableError as e:
+    err(e.msg)
+
+proc downloadFile*(a: TelegramAdapter; fileId: string): Result[FileDownload, string] =
+  ## Complete file download: gets file info and downloads content.
+  ## Returns FileDownload with path, name, size and data.
+  let filePath =
+    if fileId.startsWith("tg://"):
+      fileId["tg://".len .. ^1]
+    else:
+      ? a.getFile(fileId)
+  let data = ? a.downloadFileBytes(filePath)
+  
+  # Extract file name from path
+  let fileName = filePath.split('/')[^1]
+  
+  ok(FileDownload(
+    fileName: fileName,
+    fileSize: data.len.int64,
+    mimeType: extractMimeType(filePath),
+    localPath: "",
+    data: data
+  ))
+
 proc registerBotCommands*(a: TelegramAdapter): Result[void, string] =
   ## Registers bot commands in the Telegram menu (the / hint list).
   let cmds = newCommandCatalog().toTelegramCommandsJson()
@@ -288,6 +367,7 @@ proc registerBotCommands*(a: TelegramAdapter): Result[void, string] =
 proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
   ## Long-polls getUpdates and returns new user messages.
   ## Advances update offset.
+  ## Preserves Telegram file_id for later download via getFile.
   try:
     let url = a.apiUrl("getUpdates") & "?offset=" & $a.offset &
               "&timeout=" & $a.pollTimeout &
@@ -302,7 +382,11 @@ proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
       let parsed = parseUpdate(u)
       if parsed.kind == tukUnknown: continue
       let uid = a.resolver.resolve(ckTelegram, parsed.rawId)
-      msgs.add(parsed.toInbound(uid))
+      
+      var msg = parsed.toInbound(uid)
+      if parsed.hasMedia and parsed.mediaFileId.len > 0:
+        msg.mediaUrl = parsed.mediaFileId
+      msgs.add(msg)
     ok(msgs)
   except CatchableError as e:
     err("TelegramAdapter.receive: " & e.msg)

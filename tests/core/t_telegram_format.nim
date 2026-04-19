@@ -40,3 +40,15 @@ suite "Telegram Formatting":
     let md = "> Step 1: Thinking...\n> Step 2: More thinking.\n\nFinal answer is **42**."
     let expected = "<blockquote>Step 1: Thinking...\nStep 2: More thinking.</blockquote>\n\nFinal answer is <b>42</b>."
     check markdownToTelegramHtml(md) == expected
+
+  test "sanitizeForTelegram preserves valid UTF-8":
+    check sanitizeForTelegram("Hello World") == "Hello World"
+    check sanitizeForTelegram("🎉 🚀 ✅") == "🎉 🚀 ✅"
+    check sanitizeForTelegram("Café ☕") == "Café ☕"
+
+  test "sanitizeForTelegram removes invalid bytes":
+    # Test with invalid continuation bytes
+    let invalidText = "Hello\xFFWorld"
+    let result = sanitizeForTelegram(invalidText)
+    check result == "HelloWorld"
+

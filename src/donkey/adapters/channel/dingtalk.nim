@@ -24,13 +24,16 @@
 import std/[json, strutils, times]
 import ../../core/types
 import ../../core/pipeops
+import ../../core/media_download
 import ../../domain/message
 import ../../domain/channels/dingtalk_pure
+import ../../ports/channel
 import ../../ports/http
 import ../http/std_http
 import ../identity/identity_resolver
 
 export identity_resolver
+export channel.FileDownload
 
 const
   DtDefaultApiBase* = "https://api.dingtalk.com"
@@ -208,6 +211,47 @@ proc sendToRawId*(a: var DingTalkAdapter;
   if resp.status < 200 or resp.status >= 300:
     return err("DingTalk send error " & $resp.status & ": " & resp.body)
   ok()
+
+proc downloadFile*(a: var DingTalkAdapter; downloadCode: string): Result[FileDownload, string] =
+  ## Downloads a DingTalk media file by its downloadCode.
+  ## Requires access_token which is fetched via ensureAccessToken.
+  if downloadCode.len == 0:
+    return err("DingTalk downloadFile: empty downloadCode")
+  
+  try:
+    let token = ? a.ensureAccessToken()
+    # DingTalk media download endpoint
+    let downloadUrl = a.resolvedApiBase().strip(chars = {'/'}) & "/v1.0/robot/messageFiles/download"
+    let body = %* {
+      "robotCode": a.robotCode,
+      "downloadCode": downloadCode
+    }
+    let headers = @[dtTokenHeader(token), ("Content-Type", "application/json")]
+    let resp = ? a.http.post(downloadUrl, $body, headers)
+    
+    # DingTalk returns a JSON with download URL, not the file directly
+    let j = parseJson(resp.body)
+    let fileUrl = j.getOrDefault("downloadUrl").getStr("")
+    if fileUrl.len == 0:
+      return err("DingTalk downloadFile: no downloadUrl in response")
+    
+    # Now fetch the actual file
+    let fileHeaders: seq[(string, string)] = @[]
+    let fileResp = ? a.http.get(fileUrl, fileHeaders)
+    
+    var data = newSeq[byte](fileResp.body.len)
+    for i in 0 ..< fileResp.body.len:
+      data[i] = cast[byte](fileResp.body[i])
+    
+    ok(FileDownload(
+      fileName: "dingtalk_" & downloadCode,
+      fileSize: data.len.int64,
+      mimeType: "application/octet-stream",
+      localPath: "",
+      data: data,
+    ))
+  except CatchableError as e:
+    err("DingTalk downloadFile: " & e.msg)
 
 proc send*(a: var DingTalkAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message to the user resolved from the identity store.

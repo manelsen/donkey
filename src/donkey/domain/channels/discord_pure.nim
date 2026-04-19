@@ -35,6 +35,8 @@ type
     interactionId*:    string   ## interaction ID (non-empty for interactions)
     interactionToken*: string   ## interaction token (non-empty for interactions)
     needsModal*:       bool     ## /continue without code → caller must send modal
+    hasMedia*:         bool     ## true when message has attachments
+    attachmentUrls*:   seq[string]  ## list of attachment URLs (proxy_url or url)
 
 # ── Internal pure helpers ─────────────────────────────────────────────────────
 
@@ -74,13 +76,32 @@ func parseMessageCreate(d: JsonNode): DsParseResult =
   if author == nil: return DsParseResult(kind: dekUnknown)
   if author.getOrDefault("bot").getBool(false): return DsParseResult(kind: dekUnknown)
   let content = d.getOrDefault("content").getStr("")
-  if content.len == 0: return DsParseResult(kind: dekUnknown)
+  
+  # Extract attachments if present
+  var hasMedia = false
+  var attachmentUrls: seq[string] = @[]
+  if d.hasKey("attachments"):
+    let attachments = d["attachments"]
+    if attachments.kind == JArray and attachments.len > 0:
+      hasMedia = true
+      for att in attachments:
+        # Use proxy_url if available, fallback to url
+        let url = att.getOrDefault("proxy_url").getStr(att.getOrDefault("url").getStr(""))
+        if url.len > 0:
+          attachmentUrls.add(url)
+  
+  # Allow messages with attachments even if content is empty
+  if content.len == 0 and not hasMedia:
+    return DsParseResult(kind: dekUnknown)
+  
   DsParseResult(
     kind:      dekMessage,
     rawId:     author.getOrDefault("id").getStr(""),
     content:   content,
     channelId: d.getOrDefault("channel_id").getStr(""),
     messageId: d.getOrDefault("id").getStr(""),
+    hasMedia:  hasMedia,
+    attachmentUrls: attachmentUrls,
   )
 
 func buildSlashContent(cmdName: string; iData: JsonNode): string =
@@ -185,12 +206,18 @@ func parseDispatch*(t: string; d: JsonNode): DsParseResult =
 
 func toInbound*(r: DsParseResult; userId: UserId): InboundMessage =
   ## Converts a DsParseResult + resolved UserId into an InboundMessage.
+  ## If hasMedia is true, first attachment URL is placed in mediaUrl.
+  var mediaUrl = ""
+  if r.hasMedia and r.attachmentUrls.len > 0:
+    mediaUrl = r.attachmentUrls[0]
+  
   InboundMessage(
     userId:    userId,
     channel:   ckDiscord,
     channelId: r.channelId,
     messageId: r.messageId,
     text:      r.content,
+    mediaUrl:  mediaUrl,
   )
 
 func hasInteraction*(r: DsParseResult): bool =

@@ -17,7 +17,9 @@ import std/[algorithm, json, nativesockets, net, strutils, tables, uri]
 import checksums/sha1
 import ../../core/log
 import ../../core/pipeops
+import ../../core/media_download
 import ../../domain/message
+import ../../ports/channel
 import ../http/std_http
 import ../identity/identity_resolver
 import ../../app/metrics
@@ -35,6 +37,7 @@ type
     fromUser*: string
     msgId*:    string
     content*:  string
+    mediaId*:  string
 
   WeChatProfile* = object
     openId*:    string
@@ -121,6 +124,7 @@ proc parseWebhookXml*(xml: string): Result[WeChatEvent, string] =
     fromUser: fromUser,
     msgId:    extractXmlTag(xml, "MsgId").strip(),
     content:  extractXmlTag(xml, "Content").strip(),
+    mediaId:  extractXmlTag(xml, "MediaId").strip(),
   ))
 
 proc verifyWebhookSignature*(token, timestamp, nonce, signature: string): bool =
@@ -349,6 +353,40 @@ proc tryRecvEvent*(a: var WeChatAdapter): (bool, WeChatEvent) =
   let event = a.events[0]
   a.events.delete(0)
   (true, event)
+
+proc downloadFile*(a: var WeChatAdapter; mediaId: string): Result[FileDownload, string] =
+  ## Downloads a WeChat media file by its media_id.
+  ## Requires access_token which is fetched via WeChat OA API.
+  if mediaId.len == 0:
+    return err("WeChat downloadFile: empty mediaId")
+  
+  try:
+    # Fetch access_token
+    let tokenUrl = "https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=" & a.appId & "&secret=" & a.appSecret
+    let headers: seq[(string, string)] = @[]
+    let tokenResp = ? a.http.get(tokenUrl, headers)
+    let tokenJson = parseJson(tokenResp.body)
+    let accessToken = tokenJson.getOrDefault("access_token").getStr("")
+    if accessToken.len == 0:
+      return err("WeChat downloadFile: no access_token in response")
+    
+    # Download media
+    let mediaUrl = "https://api.weixin.qq.com/cgi-bin/media/get?access_token=" & accessToken & "&media_id=" & mediaId
+    let mediaResp = ? a.http.get(mediaUrl, headers)
+    
+    var data = newSeq[byte](mediaResp.body.len)
+    for i in 0 ..< mediaResp.body.len:
+      data[i] = cast[byte](mediaResp.body[i])
+    
+    ok(FileDownload(
+      fileName: "wechat_" & mediaId,
+      fileSize: data.len.int64,
+      mimeType: "application/octet-stream",
+      localPath: "",
+      data: data,
+    ))
+  except CatchableError as e:
+    err("WeChat downloadFile: " & e.msg)
 
 proc send*(a: var WeChatAdapter; msg: OutboundMessage): Result[void, string] =
   let rawId = a.resolver.reverseChannel(msg.userId, ckWeChat)

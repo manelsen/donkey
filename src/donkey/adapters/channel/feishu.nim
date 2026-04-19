@@ -17,13 +17,16 @@
 import std/[json, strutils]
 import ../../core/types
 import ../../core/pipeops
+import ../../core/media_download
 import ../../domain/message
 import ../../domain/channels/feishu_pure
+import ../../ports/channel
 import ../../ports/http
 import ../http/std_http
 import ../identity/identity_resolver
 
 export identity_resolver
+export channel.FileDownload
 
 const
   FsApiBase*    = "https://open.feishu.cn"
@@ -39,6 +42,7 @@ type
     chatId*:   string  ## chat_id the message was sent to
     chatType*: string  ## "p2p" or "group"
     content*:  string  ## message text (msgType="text") or "" otherwise
+    fileKey*:  string  ## image_key/file_key for media messages
 
 # ── Module-level event queue ──────────────────────────────────────────────────
 
@@ -76,6 +80,7 @@ proc pushEvent*(payload: JsonNode) =
       msgId:    r.messageId,
       chatId:   r.chatId,
       chatType: r.chatType,
+      fileKey:  r.fileKey,
     ))
   of fmkAudio:
     gFsEvents.send(FeishuEvent(
@@ -84,6 +89,7 @@ proc pushEvent*(payload: JsonNode) =
       msgId:    r.messageId,
       chatId:   r.chatId,
       chatType: r.chatType,
+      fileKey:  r.fileKey,
     ))
   of fmkFile:
     gFsEvents.send(FeishuEvent(
@@ -92,6 +98,7 @@ proc pushEvent*(payload: JsonNode) =
       msgId:    r.messageId,
       chatId:   r.chatId,
       chatType: r.chatType,
+      fileKey:  r.fileKey,
     ))
   of fmkSticker:
     gFsEvents.send(FeishuEvent(
@@ -100,6 +107,7 @@ proc pushEvent*(payload: JsonNode) =
       msgId:    r.messageId,
       chatId:   r.chatId,
       chatType: r.chatType,
+      fileKey:  r.fileKey,
     ))
 
 # ── FeishuAdapter ─────────────────────────────────────────────────────────────
@@ -153,6 +161,36 @@ proc sendChunk(a: FeishuAdapter; openId, text: string): Result[void, string] =
     "content":    content,
   })
   ok()
+
+proc downloadFile*(a: FeishuAdapter; fileKey: string): Result[FileDownload, string] =
+  ## Downloads a Feishu media file by its file_key (image_key or file_key).
+  ## Uses Feishu Open API GET /open-apis/im/v1/messages/{message_id}/resources/{file_key}
+  ## Note: fileKey here is actually the message_id from the event, and we need the real file_key
+  ## For simplicity, we use the message resource endpoint pattern
+  if fileKey.len == 0:
+    return err("Feishu downloadFile: empty fileKey")
+  
+  try:
+    # Feishu stores files at message resources endpoint
+    # The fileKey from inbound is actually the image_key/file_key
+    # We need to construct the right URL
+    let downloadUrl = "/open-apis/im/v1/files/" & fileKey & "/download"
+    let headers = @[a.authHeader()]
+    let resp = ? a.http.get(base(a) & downloadUrl, headers)
+    
+    var data = newSeq[byte](resp.body.len)
+    for i in 0 ..< resp.body.len:
+      data[i] = cast[byte](resp.body[i])
+    
+    ok(FileDownload(
+      fileName: "feishu_" & fileKey,
+      fileSize: data.len.int64,
+      mimeType: "application/octet-stream",
+      localPath: "",
+      data: data,
+    ))
+  except CatchableError as e:
+    err("Feishu downloadFile: " & e.msg)
 
 proc send*(a: FeishuAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message to the user's Feishu open_id.

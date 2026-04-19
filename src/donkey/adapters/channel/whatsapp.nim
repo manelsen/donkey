@@ -15,16 +15,18 @@
 ## Media: The adapter must resolve a media ID to a URL via the Media API
 ##   (GET /{media-id}) before the InboundMessage mediaUrl is useful.
 
-import std/json
+import std/[json, strutils]
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
 import ../../domain/channels/whatsapp_pure
 import ../../ports/http
+import ../../ports/channel
 import ../http/std_http
 import ../identity/identity_resolver
 
 export identity_resolver
+export FileDownload
 
 const
   WaApiBase*    = "https://graph.facebook.com/v19.0"
@@ -137,7 +139,7 @@ proc getJson(a: WhatsAppAdapter; path: string): Result[JsonNode, string] =
   let headers = @[a.authHeader()]
   a.http.get(a.base() & "/" & path, headers) >>= parseWaBody
 
-# ── Media URL resolution ────────────────────────────────────────────────────────
+# ── Media URL resolution and download ──────────────────────────────────────────
 
 proc resolveMediaUrl*(a: WhatsAppAdapter; mediaId: string): Result[string, string] =
   ## Resolves a WhatsApp media ID to a download URL via the Media API.
@@ -151,6 +153,47 @@ proc resolveMediaUrl*(a: WhatsAppAdapter; mediaId: string): Result[string, strin
   except CatchableError as e:
     err(e.msg)
 
+proc downloadMediaFile*(a: WhatsAppAdapter; mediaId: string): Result[seq[byte], string] =
+  ## Resolves media ID and downloads the file content.
+  ## Combines resolveMediaUrl with binary download.
+  let url = ? a.resolveMediaUrl(mediaId)
+  try:
+    # WhatsApp media URLs need authorization header
+    let authHeaders = @[a.authHeader()]
+    let resp = ? a.http.get(url, authHeaders)
+
+    var data = newSeq[byte](resp.body.len)
+    for i in 0 ..< resp.body.len:
+      data[i] = cast[byte](resp.body[i])
+    ok(data)
+  except CatchableError as e:
+    err("downloadMediaFile: " & e.msg)
+
+proc downloadFile*(a: WhatsAppAdapter; mediaId: string): Result[FileDownload, string] =
+  ## Downloads a WhatsApp media file by its media ID.
+  ## Returns FileDownload with metadata and content.
+  let data = ? a.downloadMediaFile(mediaId)
+  
+  # Try to get file metadata from Media API
+  let infoResult = a.getJson(mediaId)
+  var fileName = "whatsapp_" & mediaId
+  var fileSize = data.len.int64
+  var mimeType = "application/octet-stream"
+  
+  if infoResult.isOk:
+    let info = infoResult.value
+    fileName = info.getOrDefault("filename").getStr(fileName)
+    fileSize = info.getOrDefault("file_size").getInt(fileSize).int64
+    mimeType = info.getOrDefault("mime_type").getStr(mimeType)
+  
+  ok(FileDownload(
+    fileName: fileName,
+    fileSize: fileSize,
+    mimeType: mimeType,
+    localPath: "",
+    data: data,
+  ))
+
 # ── ChannelPort procs ──────────────────────────────────────────────────────────
 
 proc sendChunk(a: WhatsAppAdapter; toPhone, text: string): Result[void, string] =
@@ -162,12 +205,51 @@ proc sendChunk(a: WhatsAppAdapter; toPhone, text: string): Result[void, string] 
   })
   ok()
 
+proc sendMedia*(a: WhatsAppAdapter; toPhone, url, caption: string): Result[void, string] =
+  ## Sends media (image, video, document, audio) to a WhatsApp user.
+  ## URL can be HTTP(S) link or local file path.
+  ## WhatsApp Cloud API supports sending media by URL or by uploading directly.
+  let isImage = url.endsWith(".jpg") or url.endsWith(".jpeg") or
+                url.endsWith(".png") or url.endsWith(".gif") or
+                url.endsWith(".webp")
+  let isVideo = url.endsWith(".mp4") or url.endsWith(".webm")
+  let isAudio = url.endsWith(".mp3") or url.endsWith(".ogg") or url.endsWith(".wav")
+  
+  let mediaType = 
+    if isImage: "image"
+    elif isVideo: "video"
+    elif isAudio: "audio"
+    else: "document"
+  
+  var body = %* {
+    "messaging_product": "whatsapp",
+    "to": toPhone,
+    "type": mediaType,
+  }
+  
+  # Check if URL is HTTP(S) or local file path
+  if url.startsWith("http://") or url.startsWith("https://"):
+    body[mediaType] = %* {"link": url, "caption": caption}
+  else:
+    # For local files, we'd need to upload via Media API first
+    # For now, fall back to sending URL as text
+    return err("WhatsApp sendMedia: local file paths not yet supported, use HTTP URL: " & url)
+  
+  discard ? a.postJson(a.phoneNumberId & "/messages", body)
+  ok()
+
 proc send*(a: WhatsAppAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message to the user's WhatsApp phone number.
   ## Splits messages longer than WaMaxChars into multiple sends.
+  ## If msg.mediaUrl is set, sends as media instead of text.
   let waPhone = a.resolver.reverseChannel(msg.userId, ckWhatsApp)
   if waPhone.len == 0:
     return err("WhatsAppAdapter.send: no WhatsApp ID for user " & $msg.userId)
+  
+  # Send media if URL is provided
+  if msg.mediaUrl.len > 0:
+    return a.sendMedia(waPhone, msg.mediaUrl, msg.text)
+  
   for chunk in splitChunks(msg.text, WaMaxChars):
     ? a.sendChunk(waPhone, chunk)
   ok()
