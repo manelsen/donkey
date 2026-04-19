@@ -34,4 +34,4 @@ if [ ! -f "$CFG_PATH" ]; then
 fi
 
 echo "donkey entrypoint: config=$CFG_PATH state=$STATE_DIR"
-exec /app/donkey --config "$CFG_PATH" start
+exec /app/donkey "--config=$CFG_PATH" start

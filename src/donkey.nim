@@ -1734,6 +1734,7 @@ proc main =
   var logsFollow = false
   var logsCat    = false
   var devMode    = false
+  var configPathPending = false
 
   for kind, key, val in getopt():
     case kind
@@ -1741,7 +1742,12 @@ proc main =
       case key
       of "version": printVersion(); quit(0)
       of "help":    printHelp();    quit(0)
-      of "config":  configPath = val
+      of "config":
+        if val.len > 0:
+          configPath = val
+          configPathPending = false
+        else:
+          configPathPending = true
       of "cat":     logsCat    = true
       of "dev-mode": devMode   = true
       else: discard
@@ -1752,7 +1758,11 @@ proc main =
       of "f": logsFollow = true
       else: discard
     of cmdArgument:
-      args.add key
+      if configPathPending:
+        configPath = key
+        configPathPending = false
+      else:
+        args.add key
     of cmdEnd:
       break
 
