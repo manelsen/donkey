@@ -28,11 +28,9 @@ RUN apk add --no-cache \
 WORKDIR /app
 COPY --from=builder /app/donkey /app/donkey
 COPY --from=builder /app/deploy /app/deploy
-RUN mkdir -p /root/.config/donkey /root/.donkey/paddocks && \
-    cp /app/deploy/donkey.toml.hf /root/.config/donkey/donkey.toml
+RUN chmod +x /app/deploy/entrypoint.sh
 
 # Expose metrics port
 EXPOSE 8080
 
-ENTRYPOINT ["/app/donkey"]
-CMD ["start", "--config", "/root/.config/donkey/donkey.toml"]
+ENTRYPOINT ["/app/deploy/entrypoint.sh"]
