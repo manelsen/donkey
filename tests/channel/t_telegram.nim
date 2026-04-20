@@ -1,7 +1,7 @@
 ## TelegramAdapter unit tests.
 ## HTTP calls are not made; tests cover IdentityResolver and pure logic.
 
-import std/[os, strutils, unittest]
+import std/[json, os, strutils, unittest]
 import donkey/adapters/channel/telegram
 import donkey/adapters/identity/identity_resolver
 import donkey/core/pipeops
@@ -133,6 +133,36 @@ suite "TelegramAdapter sendTyping compiles":
     ## Verify the proc exists and accepts the right types.
     ## We don't call it (would fail with connection refused).
     check a.token == "tok"   ## stand-in for "compiled OK"
+
+suite "Telegram reaction selection":
+
+  test "available_reactions omitted means all emoji reactions are allowed":
+    let chatInfo = parseJson("""{"id":1,"type":"private"}""")
+    let parsed = chatAllowedReactionEmojis(chatInfo)
+    check not parsed.restricted
+    check parsed.emojis.len == 0
+    check pickTelegramReactionEmoji("⏳", chatInfo) == "⏳"
+
+  test "pickTelegramReactionEmoji keeps desired emoji when chat allows it":
+    let chatInfo = parseJson("""{"available_reactions":[
+      {"type":"emoji","emoji":"👍"},
+      {"type":"emoji","emoji":"⏳"},
+      {"type":"emoji","emoji":"✅"}
+    ]}""")
+    check pickTelegramReactionEmoji("⏳", chatInfo) == "⏳"
+
+  test "pickTelegramReactionEmoji falls back to allowed default emoji":
+    let chatInfo = parseJson("""{"available_reactions":[
+      {"type":"emoji","emoji":"👍"},
+      {"type":"emoji","emoji":"✅"}
+    ]}""")
+    check pickTelegramReactionEmoji("⏳", chatInfo) == "👍"
+
+  test "pickTelegramReactionEmoji returns empty when no normal emoji reactions are allowed":
+    let chatInfo = parseJson("""{"available_reactions":[
+      {"type":"custom_emoji","custom_emoji_id":"123"}
+    ]}""")
+    check pickTelegramReactionEmoji("⏳", chatInfo) == ""
 
 suite "splitChunks — Telegram 4096 limit":
 

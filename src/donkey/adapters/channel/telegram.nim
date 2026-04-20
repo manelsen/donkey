@@ -32,17 +32,7 @@ const
   DefaultPollTimeout = 1    ## 1 s: short enough for multi-channel fairness
   TelegramMaxChars*  = 4096 ## Telegram sendMessage hard limit
 
-## Emoji de reação válidos para o Telegram (lista de 2024)
-const TelegramValidReactions* = [
-  "👍", "👎", "❤️", "🔥", "🥰", "👏", "😁", "🤔",
-  "🤯", "😱", "🤬", "😢", "🎉", "🤩", "🤮", "💩",
-  "🙏", "👌", "🕊", "🤡", "🥱", "🥭", "😍", "🤓",
-  "😴", "🤓", "🤗", "🤭", "👻", "🤖", "🎃", "⚡",
-  "💋", "💘", "💅", "👀", "🍌", "🏆", "🍾", "💯",
-  "🤨", "😐", "🌚", "🌭", "🍓", "🍕", "🐳", "👾",
-  "🎭", "🙈", "🐝", "🦭", "👺", "🧅", "🍄", "🫣",
-  "⏳", "✅", "❌",
-]
+const TelegramReactionFallbacks* = ["👍", "👌", "✅", "🔥", "👏"]
 
 type
   TelegramAdapter* = object
@@ -79,6 +69,35 @@ proc post(a: TelegramAdapter; meth: string;
         parseTgResp(meth, resp)
   except Exception as e:
     err(e.msg)
+
+func chatAllowedReactionEmojis*(chatInfo: JsonNode): tuple[restricted: bool, emojis: seq[string]]
+                               {.gcsafe, raises: [].} =
+  let available = chatInfo{"available_reactions"}
+  if available.isNil or available.kind != JArray:
+    return (false, @[])
+  result.restricted = true
+  for item in available:
+    if item.getOrDefault("type").getStr("") != "emoji":
+      continue
+    let emoji = item.getOrDefault("emoji").getStr("")
+    if emoji.len > 0:
+      result.emojis.add(emoji)
+
+func pickTelegramReactionEmoji*(desired: string; chatInfo: JsonNode): string
+                               {.gcsafe, raises: [].} =
+  if desired.len == 0:
+    return ""
+  let (restricted, emojis) = chatAllowedReactionEmojis(chatInfo)
+  if not restricted:
+    return desired
+  if desired in emojis:
+    return desired
+  for fallback in TelegramReactionFallbacks:
+    if fallback in emojis:
+      return fallback
+  if emojis.len > 0:
+    return emojis[0]
+  ""
 
 # ── ChannelPort implementation ────────────────────────────────────────────────
 
@@ -283,23 +302,20 @@ proc setMessageReaction*(a: TelegramAdapter; userId: UserId;
   discard channelId
   let rawId = a.resolver.reverseChannel(userId, ckTelegram)
   if rawId.len == 0: return err("setMessageReaction: no id for " & $userId)
-  
-  # Valida se o emoji é aceito pelo Telegram
-  if emoji.len > 0 and emoji notin TelegramValidReactions:
-    # Mapeia emojis comuns para equivalentes válidos
-    let mappedEmoji = case emoji
-      of "⏳": "⏳"  # já está na lista
-      of "✅": "✅"  # já está na lista
-      of "❌": "❌"  # já está na lista
-      else: "👍"    # fallback para emoji válido
-    return setMessageReaction(a, userId, channelId, msgId, mappedEmoji)
-  
+
   try:
     let chatId = parseBiggestInt(rawId).int64
     let msgIdInt = parseBiggestInt(msgId).int64
-    var reaction = newJArray()
+    var selectedEmoji = emoji
     if emoji.len > 0:
-      reaction.add(%* {"type": "emoji", "emoji": emoji})
+      let chatRes = a.post("getChat", %* {"chat_id": chatId})
+      if chatRes.isOk:
+        selectedEmoji = pickTelegramReactionEmoji(emoji, chatRes.value.getOrDefault("result"))
+        if selectedEmoji.len == 0:
+          return ok()
+    var reaction = newJArray()
+    if selectedEmoji.len > 0:
+      reaction.add(%* {"type": "emoji", "emoji": selectedEmoji})
 
     let res = a.post("setMessageReaction",
                      %* {"chat_id": chatId, "message_id": msgIdInt,
