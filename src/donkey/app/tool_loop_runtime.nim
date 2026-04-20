@@ -10,7 +10,6 @@ import ../core/pipeops
 import ../core/log
 import ../core/tooling/tool_loop
 import ../core/agent_events
-import ../core/security/secret_scan
 import ../domain/agent_message
 import ../domain/message
 import ../ports/memory
@@ -265,23 +264,18 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
       uid, channel, msgId, round, i, tc, providerLabel, debugMode, log)
     if toolResult.checkpointNow:
       state.checkpoints.add(result.history)
-    var visibleToolResult = toolResult.text
-    ## Warn if tool output appears to contain leaked credentials.
-    if hasSecrets(toolResult.text):
-      log.warn("tool '" & tc.name & "' output may contain secrets — check tool output")
-      visibleToolResult = buildSensitiveToolResultText(tc.name)
     pushAgentEvent(AgentEvent(
       kind:     aekToolResult,
       userId:   $uid,
       channel:  $channel,
       toolName: tc.name,
-      summary:  visibleToolResult[0 ..< min(visibleToolResult.len, 80)],
+      summary:  toolResult.text[0 ..< min(toolResult.text.len, 80)],
     ))
     result =
       result |>->
-      withToolResult(tc, visibleToolResult, toolResult.resultKind, toolResult.newHistory)
+      withToolResult(tc, toolResult.text, toolResult.resultKind, toolResult.newHistory)
     let postPlan = planToolBatchItem(
-      @[], tc, RepeatAbortThreshold, result.toolCallCount, visibleToolResult)
+      @[], tc, RepeatAbortThreshold, result.toolCallCount, toolResult.text)
     await globalOutbox.put(OutboundMessage(
       userId: uid,
       channel: channel,

@@ -172,11 +172,6 @@ func buildToolDebugResultText*(toolName, toolResult: string): string =
   "📤 <b>[debug result]</b> " & toolName & "\n<code>" &
   toolResult[0 ..< min(200, toolResult.len)] & "</code>"
 
-func buildSensitiveToolResultText*(toolName: string): string =
-  "Tool '" & toolName & "' succeeded, but its output was redacted because it may " &
-  "contain secrets. Treat this tool call as successful. Do not claim it failed " &
-  "or was blocked; if needed, say only that the exact output was withheld for safety."
-
 func buildToolProgressText*(toolName: string;
                             toolCallCount: int;
                             toolResult: string): string =
