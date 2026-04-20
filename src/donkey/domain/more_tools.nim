@@ -21,7 +21,8 @@ const
   ReadFileToolDescription* =
     "Read a local file and return each line prefixed with a stable hashline anchor " &
     "in the form LINE#ID:text. Use this before edit_file. " &
-    "The anchors act as both addresses and stale-read checks."
+    "The anchors act as both addresses and stale-read checks. " &
+    "Local file tools are restricted to the current workspace; use relative paths, `.` or `/workspace`, not `/`."
   ReadFileToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
     "\"path\":{\"type\":\"string\",\"description\":\"File path to read\"}," &
@@ -56,10 +57,11 @@ const
   FindToolDescription* =
     "Find files or directories by glob pattern. " &
     "Pattern supports * (any sequence) and ? (one char). " &
-    "Example: pattern='*.nim', type='file'."
+    "Example: pattern='*.nim', type='file'. " &
+    "Search only inside the current workspace; use `.` or `/workspace` for the workspace root, never `/`."
   FindToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
-    "\"path\":{\"type\":\"string\",\"description\":\"Directory to search\"}," &
+    "\"path\":{\"type\":\"string\",\"description\":\"Directory to search inside the current workspace; use . or /workspace for workspace root\"}," &
     "\"pattern\":{\"type\":\"string\",\"description\":\"Glob pattern (default: *)\"}," &
     "\"type\":{\"type\":\"string\",\"enum\":[\"file\",\"dir\",\"any\"]," &
     "\"description\":\"Filter by type (default: file)\"}," &
@@ -73,11 +75,12 @@ const
     "Search file contents for a literal string pattern. " &
     "Returns matching lines as 'file:linenum:content'. " &
     "Recursively searches directories by default. " &
-    "For regex, use bash(\"grep -rn 'pattern' /path\")."
+    "For regex, use bash(\"grep -rn 'pattern' /workspace\"). " &
+    "Search only inside the current workspace; use relative paths, `.` or `/workspace`, not `/`."
   GrepToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
     "\"pattern\":{\"type\":\"string\",\"description\":\"Literal string pattern to search for\"}," &
-    "\"path\":{\"type\":\"string\",\"description\":\"File or directory to search\"}," &
+    "\"path\":{\"type\":\"string\",\"description\":\"File or directory to search inside the current workspace; use . or /workspace for workspace root\"}," &
     "\"recursive\":{\"type\":\"boolean\",\"description\":\"Recurse into subdirectories (default: true)\"}," &
     "\"max\":{\"type\":\"integer\",\"description\":\"Max matches (default: 50)\"}" &
     "},\"required\":[\"pattern\",\"path\"]}"
