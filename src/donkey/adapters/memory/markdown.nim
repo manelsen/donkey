@@ -46,6 +46,9 @@ func memoryMdPath*(a: MarkdownMemoryAdapter; userId: UserId): string =
 func preferencesMdPath*(a: MarkdownMemoryAdapter; userId: UserId): string =
   a.paddockDir(userId) / "PREFERENCES.md"
 
+func heartbeatMdPath*(a: MarkdownMemoryAdapter; userId: UserId): string =
+  a.paddockDir(userId) / HeartbeatFileName
+
 func sessionsDir*(a: MarkdownMemoryAdapter; userId: UserId): string =
   a.paddockDir(userId) / "sessions"
 
@@ -59,6 +62,8 @@ proc ensurePaddock*(a: MarkdownMemoryAdapter; userId: UserId): Result[void, stri
   try:
     createDir(a.paddockDir(userId))
     createDir(a.sessionsDir(userId))
+    if not fileExists(a.heartbeatMdPath(userId)):
+      writeFile(a.heartbeatMdPath(userId), defaultHeartbeatMd())
     ok()
   except CatchableError as e:
     err("ensurePaddock: " & e.msg)

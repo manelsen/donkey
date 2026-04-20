@@ -15,6 +15,9 @@ import ../core/types
 import ../domain/message
 import ../domain/personality
 
+const
+  HeartbeatFileName* = "HEARTBEAT.md"
+
 type
   UserContext* = object
     ## Aggregated context loaded from a paddock for LLM injection.
@@ -91,3 +94,8 @@ read_when: every conversation
 **Timezone:** """ & timezone & """
 **Language:** """ & language & """
 """
+
+proc defaultHeartbeatMd*(): string =
+  ## New paddocks get an empty HEARTBEAT.md so the file is always present
+  ## without scheduling any task by default.
+  ""

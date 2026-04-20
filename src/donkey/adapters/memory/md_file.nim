@@ -136,6 +136,9 @@ func memoryMdPath*(a: MdFileAdapter; userId: UserId): string =
 func preferencesMdPath*(a: MdFileAdapter; userId: UserId): string =
   a.paddockDir(userId) / "PREFERENCES.md"
 
+func heartbeatMdPath*(a: MdFileAdapter; userId: UserId): string =
+  a.paddockDir(userId) / HeartbeatFileName
+
 proc loadMarkdownContext(a: MdFileAdapter; userId: UserId): UserContext =
   UserContext(
     userId:        userId,
@@ -324,6 +327,8 @@ proc ensurePaddock*(a: MdFileAdapter; userId: UserId) =
   ## Creates the paddock directory tree if it does not exist.
   createDir(a.paddockDir(userId))
   createDir(a.paddockDir(userId) / "sessions")
+  if not fileExists(a.heartbeatMdPath(userId)):
+    writeFile(a.heartbeatMdPath(userId), defaultHeartbeatMd())
 
 # ── MemoryPort implementation ─────────────────────────────────────────────────
 

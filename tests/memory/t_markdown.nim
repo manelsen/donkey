@@ -92,6 +92,12 @@ proc runContractTests(adapter: MarkdownMemoryAdapter) =
       check result.isOk
       check dirExists(adapter.paddockDir(uid) / "sessions")
 
+    test "ensurePaddock: creates HEARTBEAT.md":
+      let result = adapter.ensurePaddock(uid)
+      check result.isOk
+      check fileExists(adapter.heartbeatMdPath(uid))
+      check readFile(adapter.heartbeatMdPath(uid)) == ""
+
     test "updateUserField: stores preferred name and access":
       discard adapter.updateUserField(uid, "Preferred name", "Ada")
       discard adapter.updateUserField(uid, "Access", "revoked")

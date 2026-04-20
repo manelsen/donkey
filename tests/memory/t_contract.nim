@@ -88,6 +88,11 @@ proc runContractTests(adapter: MdFileAdapter) =
       adapter.ensurePaddock(uid)
       check dirExists(adapter.paddockDir(uid) / "sessions")
 
+    test "ensurePaddock: creates HEARTBEAT.md":
+      adapter.ensurePaddock(uid)
+      check fileExists(adapter.heartbeatMdPath(uid))
+      check readFile(adapter.heartbeatMdPath(uid)) == ""
+
     test "updateUserField: stores preferred name and access":
       adapter.updateUserField(uid, "Preferred name", "Ada")
       adapter.updateUserField(uid, "Access", "revoked")
