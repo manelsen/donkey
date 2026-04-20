@@ -306,9 +306,11 @@ proc setMessageReaction*(a: TelegramAdapter; userId: UserId;
                          "reaction": reaction})
     if res.isErr:
       let errMsg = res.error
-      if "REACTION_INVALID" in errMsg or
-         "message can't be reacted" in errMsg or
-         "reactions are unavailable" in errMsg:
+      let lowerErr = errMsg.toLowerAscii()
+      if "reaction_invalid" in lowerErr or
+         "message can't be reacted" in lowerErr or
+         "reactions are unavailable" in lowerErr or
+         "message reactions are not supported" in lowerErr:
         return ok()
       return err(errMsg)
     ok()

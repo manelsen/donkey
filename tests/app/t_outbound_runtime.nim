@@ -268,3 +268,21 @@ suite "outbound_runtime":
     check seen == "u1:ch1:42:⏳"
     check not setOutboundReaction(
       ckQQ, UserId("u1"), "ch1", "42", "⏳", ports, newLogger("test.outbound"))
+
+  test "setOutboundReaction ignores Telegram REACTION_INVALID errors":
+    let ports = OutboundChannelPorts(
+      telegram: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} = ok(),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m1"),
+        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} = ok(),
+        sendKeyboard: proc(userId: UserId; text: string;
+                           buttons: seq[seq[(string, string)]];
+                           replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
+        editKeyboard: proc(userId: UserId; msgId, text: string;
+                           buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} =
+          err("""Telegram API error [setMessageReaction]: {"ok":false,"error_code":400,"description":"Bad Request: REACTION_INVALID"}"""),
+      )
+    )
+    check setOutboundReaction(
+      ckTelegram, UserId("u1"), "ch1", "42", "⏳", ports, newLogger("test.outbound"))

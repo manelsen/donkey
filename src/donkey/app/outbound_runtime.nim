@@ -1,3 +1,4 @@
+import std/strutils
 import results
 import ../core/log
 import ../core/outbound/outbound
@@ -52,6 +53,13 @@ proc setOutboundReaction*(channel: ChannelKind;
   if res.isOk:
     return true
   let error = res.error
+  let lowerError = error.toLowerAscii()
+  if channel == ckTelegram and
+     ("reaction_invalid" in lowerError or
+      "message can't be reacted" in lowerError or
+      "reactions are unavailable" in lowerError or
+      "message reactions are not supported" in lowerError):
+    return true
   case channel
   of ckTelegram: log.warn("tg setMessageReaction: " & error)
   of ckDiscord:  log.warn("dc setMessageReaction: " & error)
