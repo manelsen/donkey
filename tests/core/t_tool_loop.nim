@@ -131,6 +131,24 @@ suite "core tool loop decisions":
     check plan.progressText.contains("search")
     check plan.progressText.contains("[3]")
 
+  test "buildSensitiveToolResultText keeps tool success explicit":
+    let redacted = buildSensitiveToolResultText("read_file")
+    check redacted.contains("Tool 'read_file' succeeded")
+    check redacted.contains("Do not claim it failed")
+
+  test "planToolBatchItem uses redacted success text in progress":
+    let tc = ToolCallRequest(id: "1", name: "read_file", inputJson: """{"path":"PREFERENCES.md"}""")
+    let plan = planToolBatchItem(
+      recentCalls = @[],
+      tc = tc,
+      repeatAbortThreshold = 2,
+      nextToolCallCount = 1,
+      toolResultText = buildSensitiveToolResultText("read_file"),
+    )
+    check not plan.shouldAbort
+    check plan.progressText.contains("read_file")
+    check plan.progressText.contains("succeeded")
+
   test "withStreamFinalText sets wasStreamed = true":
     let state = newToolLoopState(newHistory())
     let next = withStreamFinalText("pong", "", state)
