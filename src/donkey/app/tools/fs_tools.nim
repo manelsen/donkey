@@ -7,10 +7,22 @@ import std/[osproc, os, strutils]
 
 # ── Paddock path helpers ─────────────────────────────────────────────────────
 
+proc remapWorkspaceAlias(path, paddock: string): string =
+  ## Maps container-visible /workspace paths back to the host paddock path so
+  ## native file tools can accept paths copied from sandbox/bash output.
+  if paddock.len == 0:
+    return path
+  if path == "/workspace":
+    return paddock
+  if path.startsWith("/workspace/"):
+    return paddock / path["/workspace/".len .. ^1]
+  path
+
 proc resolveInPaddock*(path, paddock: string): string =
   ## Returns an absolute path by resolving `path` relative to `paddock`,
   ## collapsing any `..` segments without following symlinks.
-  let base = if isAbsolute(path): path else: paddock / path
+  let logicalPath = remapWorkspaceAlias(path, paddock)
+  let base = if isAbsolute(logicalPath): logicalPath else: paddock / logicalPath
   var parts: seq[string] = @[]
   for seg in base.split('/'):
     case seg

@@ -76,6 +76,13 @@ suite "resolveInPaddock":
   test "absolute path returned as-is (normalized)":
     check resolveInPaddock("/etc/passwd", "/home/u/paddock") == "/etc/passwd"
 
+  test "workspace alias maps to paddock root":
+    check resolveInPaddock("/workspace", "/home/u/paddock") == "/home/u/paddock"
+
+  test "workspace alias maps nested path into paddock":
+    check resolveInPaddock("/workspace/src/app.nim", "/home/u/paddock") ==
+      "/home/u/paddock/src/app.nim"
+
   test "dot segments collapsed":
     check resolveInPaddock("./foo/./bar", "/home/u/paddock") == "/home/u/paddock/foo/bar"
 
@@ -97,6 +104,9 @@ suite "inPaddock":
 
   test "path outside paddock rejected":
     check not inPaddock("/etc/passwd", "/home/u/paddock")
+
+  test "workspace alias recognized as inside paddock":
+    check inPaddock("/workspace/src/app.nim", "/home/u/paddock")
 
   test "traversal attempt rejected":
     check not inPaddock("/home/u/paddock/../secret", "/home/u/paddock")
@@ -416,6 +426,11 @@ suite "native_tools pure contexts":
     check parsed.isOk
     check parsed.value.path == "/tmp/paddock/src"
     check parsed.value.pattern == "*.nim"
+
+  test "parseReadFileContext accepts workspace alias":
+    let parsed = parseReadFileContext(parseJson("""{"path":"/workspace/PREFERENCES.md"}"""), "/tmp/paddock")
+    check parsed.isOk
+    check parsed.value.path == "/tmp/paddock/PREFERENCES.md"
 
   test "parseGrepContext rejects path outside paddock":
     let parsed = parseGrepContext(parseJson("""{"pattern":"x","path":"../../etc/passwd"}"""), "/tmp/paddock")

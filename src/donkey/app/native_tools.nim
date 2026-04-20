@@ -599,8 +599,52 @@ proc executeShellNativeTool(tc: ToolCallRequest;
       return handledError(error)
     return handledOutcome(runWasmApplet("sed", @[sedCtx.expression, sedCtx.path],
       if sedCtx.path.parentDir.len > 0: sedCtx.path.parentDir else: "/"))
-  of WcToolName, HeadToolName, TailToolName, SortToolName, CpToolName, MvToolName, RmToolName, MkdirToolName:
-    return handledError("Error: " & tc.name & " dispatched via WASM — check sandbox config")
+  of WcToolName:
+    let wcCtx = parseWcContext(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    var args: seq[string] = @[]
+    if wcCtx.flags.len > 0:
+      args.add(wcCtx.flags)
+    args.add(wcCtx.path)
+    return handledOutcome(runWasmApplet("wc", args, wcCtx.path))
+  of HeadToolName:
+    let headCtx = parseHeadTailContext(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    return handledOutcome(runWasmApplet("head", @["-n", $headCtx.lines, headCtx.path], headCtx.path))
+  of TailToolName:
+    let tailCtx = parseHeadTailContext(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    return handledOutcome(runWasmApplet("tail", @["-n", $tailCtx.lines, tailCtx.path], tailCtx.path))
+  of SortToolName:
+    let sortCtx = parseSortContext(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    var args: seq[string] = @[]
+    if sortCtx.flags.len > 0:
+      args.add(sortCtx.flags)
+    args.add(sortCtx.path)
+    return handledOutcome(runWasmApplet("sort", args, sortCtx.path))
+  of CpToolName:
+    let cpCtx = parseCpMvContext(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    let parent = cpCtx.source.parentDir
+    return handledOutcome(runWasmApplet("cp", @[cpCtx.source, cpCtx.dest],
+      if parent.len > 0: parent else: "/"))
+  of MvToolName:
+    let mvCtx = parseCpMvContext(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    let parent = mvCtx.source.parentDir
+    return handledOutcome(runWasmApplet("mv", @[mvCtx.source, mvCtx.dest],
+      if parent.len > 0: parent else: "/"))
+  of RmToolName:
+    let rmCtx = parsePathOnly(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    let parent = rmCtx.parentDir
+    return handledOutcome(runWasmApplet("rm", @[rmCtx], if parent.len > 0: parent else: "/"))
+  of MkdirToolName:
+    let mkdirCtx = parsePathOnly(j, ctx.paddockDir).valueOr:
+      return handledError(error)
+    let parent = mkdirCtx.parentDir
+    return handledOutcome(runWasmApplet("mkdir", @[mkdirCtx], if parent.len > 0: parent else: "/"))
   else:
     return NativeToolResult(handled: false)
 
