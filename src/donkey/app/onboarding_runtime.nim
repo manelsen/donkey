@@ -166,6 +166,72 @@ proc safeLoadIdentity*(memory: MemoryRuntimePort;
     ("", PersonalityTraits())
 
 proc safeHasProfile*(memory: MemoryRuntimePort;
+                    uid: UserId): bool {.gcsafe, raises: [].}
+
+proc safeLoadPreferences(memory: MemoryRuntimePort;
+                         uid: UserId): string {.gcsafe, raises: [].} =
+  try:
+    memory.loadContext(uid).preferencesMd
+  except Exception:
+    ""
+
+proc safeSavePreferences(memory: MemoryRuntimePort;
+                         uid: UserId;
+                         content: string) {.gcsafe, raises: [].} =
+  try:
+    memory.savePreferences(uid, content)
+  except Exception:
+    discard
+
+func mergeTraits(primary, fallback: PersonalityTraits): PersonalityTraits =
+  result = primary
+  if result.energy.len == 0:
+    result.energy = fallback.energy
+  if result.tone.len == 0:
+    result.tone = fallback.tone
+  if result.length.len == 0:
+    result.length = fallback.length
+  if result.initiative.len == 0:
+    result.initiative = fallback.initiative
+
+proc persistOnboardingSnapshot(memory: MemoryRuntimePort;
+                               uid: UserId;
+                               onboarding: OnboardingRuntime;
+                               identity: IdentityRuntime) {.gcsafe, raises: [].} =
+  let traits = mergeTraits(onboarding.traits, identity.traits)
+  if identity.name.len > 0 or traits.hasTraitValues:
+    safeSaveIdentity(memory, uid, traits, identity.name)
+  let currentPrefs = safeLoadPreferences(memory, uid)
+  let nextPrefs =
+    if onboarding.phase == opDone:
+      clearOnboardingPrefs(currentPrefs)
+    else:
+      mergeOnboardingPrefs(currentPrefs, onboarding)
+  safeSavePreferences(memory, uid, nextPrefs)
+
+proc safeRestoreOnboardingState*(memory: MemoryRuntimePort;
+                                 uid: UserId): (OnboardingRuntime, IdentityRuntime)
+                                 {.gcsafe, raises: [].} =
+  let prefs = safeLoadPreferences(memory, uid)
+  var onboarding = parseOnboardingPrefs(prefs)
+  let (name, storedTraits) = safeLoadIdentity(memory, uid)
+  onboarding.traits = mergeTraits(onboarding.traits, storedTraits)
+  if onboarding.phase == opWakeUp and not safeHasProfile(memory, uid):
+    if name.len > 0:
+      onboarding.phase = opUserName
+    elif onboarding.traits.hasTraitValues:
+      onboarding.phase = opNameChoice
+  let identityTraits = mergeTraits(storedTraits, onboarding.traits)
+  (
+    onboarding,
+    IdentityRuntime(
+      name: name,
+      traits: identityTraits,
+      identityLoaded: name.len > 0 or identityTraits.hasTraitValues,
+    )
+  )
+
+proc safeHasProfile*(memory: MemoryRuntimePort;
                     uid: UserId): bool {.gcsafe, raises: [].} =
   try:
     memory.hasProfile(uid)
@@ -258,10 +324,12 @@ proc persistUserProfile*(memory: MemoryRuntimePort;
     safeSaveIdentity(memory, uid, profileCtx.identity.traits, profileCtx.identity.name)
   if profileCtx.saveUserMd:
     safeSaveUserMd(memory, uid, profileCtx.userMd)
+  persistOnboardingSnapshot(memory, uid, profileCtx.onboarding, profileCtx.identity)
 
 # ── Guided personality choice ─────────────────────────────────────────────────
 
 proc handleGuidedPersonalityChoice*(globalOutbox: AsyncQueue[OutboundMessage];
+                                   memory: MemoryRuntimePort;
                                    completeFn: CompleteFn;
                                    uid: UserId;
                                    channel: ChannelKind;
@@ -280,6 +348,8 @@ proc handleGuidedPersonalityChoice*(globalOutbox: AsyncQueue[OutboundMessage];
 
   let guidedCtx = guidedOpt.get()
   result = guidedCtx.onboarding
+  persistOnboardingSnapshot(memory, uid, result,
+    IdentityRuntime(traits: result.traits, identityLoaded: result.traits.hasTraitValues))
   let replacementSlot = replacementSlotFor(channel, "bootstrap")
 
   if guidedCtx.keyboard.len > 0:
@@ -295,6 +365,7 @@ proc handleGuidedPersonalityChoice*(globalOutbox: AsyncQueue[OutboundMessage];
 # ── Free conversation onboarding ──────────────────────────────────────────────
 
 proc handleFreeConvoOnboarding*(globalOutbox: AsyncQueue[OutboundMessage];
+                               memory: MemoryRuntimePort;
                                completeFn: CompleteFn;
                                uid: UserId;
                                channel: ChannelKind;
@@ -316,6 +387,9 @@ proc handleFreeConvoOnboarding*(globalOutbox: AsyncQueue[OutboundMessage];
 
   let freeCtx = freeOpt.get()
   result = (freeCtx.history, freeCtx.onboarding)
+  persistOnboardingSnapshot(memory, uid, freeCtx.onboarding,
+    IdentityRuntime(traits: freeCtx.onboarding.traits,
+                    identityLoaded: freeCtx.onboarding.traits.hasTraitValues))
 
   if freeCtx.visibleText.len > 0:
     await sendReplyText(globalOutbox, uid, channel, replyTo, freeCtx.visibleText)
@@ -567,7 +641,7 @@ proc handleOnboardingControlTask*(globalOutbox: AsyncQueue[OutboundMessage];
   case decision.kind
   of oekGuidedChoice:
     result[0] = await handleGuidedPersonalityChoice(
-      globalOutbox, completeFn, uid, channel, replyTo,
+      globalOutbox, memory, completeFn, uid, channel, replyTo,
       decision.onboarding, decision.dim, decision.value)
     result[2] = decision.handled
 
@@ -624,7 +698,7 @@ proc handleOnboardingTurn*(globalOutbox: AsyncQueue[OutboundMessage];
 
   of oekFreeConvoText:
     (result.history, result.onboarding) = await handleFreeConvoOnboarding(
-      globalOutbox, completeFn, uid, channel, replyTo,
+      globalOutbox, memory, completeFn, uid, channel, replyTo,
       userText |> strutils.strip, result.history, result.onboarding)
 
   of oekUserProfileText:

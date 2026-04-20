@@ -248,9 +248,16 @@ proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
                        showReasoning: bool;
                        log: Logger;
                        sessionId: string): Future[onboarding_runtime.ControlTaskResult] {.async.} =
+  var currentOnboarding = onboarding
+  var currentIdentity = identity
+  if msg.taskKind in {tkPersonalityChoice, tkNameChoice} and
+     currentOnboarding.phase == opWakeUp and
+     not onboarding_runtime.safeHasCompletedBootstrap(memory, uid):
+    (currentOnboarding, currentIdentity) =
+      onboarding_runtime.safeRestoreOnboardingState(memory, uid)
   result.history = history
-  result.onboarding = onboarding
-  result.identity = identity
+  result.onboarding = currentOnboarding
+  result.identity = currentIdentity
   result.debugMode = debugMode
   result.showReasoning = showReasoning
 
@@ -334,6 +341,9 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     sandboxMode, sandboxRuntimeCmd, sandboxImage, msg, result)
 
   if turnSetup.isNewUser:
+    if result.onboarding.phase == opWakeUp and not result.identity.identityLoaded:
+      (result.onboarding, result.identity) =
+        onboarding_runtime.safeRestoreOnboardingState(memory, turnSetup.uid)
     let onboardingResult = await onboarding_runtime.handleOnboardingTurn(
       globalOutbox, memory, completeFn, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.userText,
       result.history, result.onboarding, result.identity)

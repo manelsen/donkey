@@ -36,6 +36,12 @@ type
     traits*: PersonalityTraits
     names*:  seq[string]   ## generated name candidates
 
+func hasTraitValues*(traits: PersonalityTraits): bool =
+  traits.energy.len > 0 or
+  traits.tone.len > 0 or
+  traits.length.len > 0 or
+  traits.initiative.len > 0
+
 # ── Dimension metadata ─────────────────────────────────────────────────────────
 
 const

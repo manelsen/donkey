@@ -84,3 +84,30 @@ about: criador do Donkey
     check profile.callMe == "Void"
     check profile.timezone == "UTC-3"
     check profile.treatment == "com franqueza"
+
+  test "merge and parse onboarding prefs preserve conversational progress":
+    let prefs = mergeOnboardingPrefs(
+      "provider = \"zai-coding\"",
+      OnboardingRuntime(
+        phase: opUserTimezone,
+        userName: "Void",
+        timezone: "",
+        language: "",
+        userTreatment: "com franqueza",
+      ),
+    )
+    let parsed = parseOnboardingPrefs(prefs)
+    check parsed.phase == opUserTimezone
+    check parsed.userName == "Void"
+    check parsed.userTreatment == "com franqueza"
+    check prefs.contains("provider = \"zai-coding\"")
+
+  test "clear onboarding prefs removes snapshot keys only":
+    let cleared = clearOnboardingPrefs("""
+provider = "zai-coding"
+onboarding_phase = "opNameChoice"
+onboarding_user_name = "Void"
+""")
+    check cleared.contains("provider = \"zai-coding\"")
+    check not cleared.contains("onboarding_phase")
+    check not cleared.contains("onboarding_user_name")

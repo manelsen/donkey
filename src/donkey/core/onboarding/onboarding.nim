@@ -61,6 +61,14 @@ Then continue naturally.
 It is acceptable to finish with timezone/language unknown. The critical thing is having a stable way to address the user.
 If you still do not know how they want to be called, do not output the block yet."""
 
+const
+  OnboardingPhasePrefKey* = "onboarding_phase"
+  OnboardingUserNamePrefKey* = "onboarding_user_name"
+  OnboardingTimezonePrefKey* = "onboarding_timezone"
+  OnboardingLanguagePrefKey* = "onboarding_language"
+  OnboardingTreatmentPrefKey* = "onboarding_treatment"
+  OnboardingAboutPrefKey* = "onboarding_about"
+
 type
   OnboardingRuntime* = object
     phase*:       OnboardingPhase
@@ -182,6 +190,115 @@ func parseUserProfileReady*(text: string): Option[UserProfileReady] =
   if profile.callMe.len == 0:
     return none(UserProfileReady)
   some(profile)
+
+func parseOnboardingPhase*(raw: string): Option[OnboardingPhase] =
+  case raw.strip
+  of "opWakeUp": some(opWakeUp)
+  of "opModeChoice": some(opModeChoice)
+  of "opGuidedEnergy": some(opGuidedEnergy)
+  of "opGuidedTone": some(opGuidedTone)
+  of "opGuidedLength": some(opGuidedLength)
+  of "opGuidedInitiative": some(opGuidedInitiative)
+  of "opFreeConvo": some(opFreeConvo)
+  of "opNameChoice": some(opNameChoice)
+  of "opUserName": some(opUserName)
+  of "opUserTimezone": some(opUserTimezone)
+  of "opUserLanguage": some(opUserLanguage)
+  of "opDone": some(opDone)
+  else: none(OnboardingPhase)
+
+func parseTomlValue(line, key: string): string =
+  let parts = line.split('=', 1)
+  if parts.len != 2:
+    return ""
+  if parts[0].strip != key:
+    return ""
+  parts[1].strip.strip(chars = {'"'})
+
+proc setTomlKey(lines: var seq[string]; key, val: string) =
+  for i in 0 ..< lines.len:
+    if lines[i].startsWith(key & " ") or lines[i].startsWith(key & "="):
+      lines[i] = key & " = \"" & val & "\""
+      return
+  lines.add(key & " = \"" & val & "\"")
+
+func lineStartsWithTomlKey(line, key: string): bool =
+  let stripped = line.strip
+  stripped.startsWith(key & " ") or stripped.startsWith(key & "=")
+
+proc removeTomlKeys(lines: var seq[string]; keys: openArray[string]) =
+  var kept: seq[string] = @[]
+  for line in lines:
+    var drop = false
+    for key in keys:
+      if key.len > 0 and lineStartsWithTomlKey(line, key):
+        drop = true
+        break
+    if not drop:
+      kept.add(line)
+  lines = kept
+
+func mergeOnboardingPrefs*(content: string;
+                           onboarding: OnboardingRuntime): string =
+  var lines = content.splitLines()
+  lines.removeTomlKeys([
+    OnboardingPhasePrefKey,
+    OnboardingUserNamePrefKey,
+    OnboardingTimezonePrefKey,
+    OnboardingLanguagePrefKey,
+    OnboardingTreatmentPrefKey,
+    OnboardingAboutPrefKey,
+  ])
+  lines.setTomlKey(OnboardingPhasePrefKey, $onboarding.phase)
+  lines.setTomlKey(OnboardingUserNamePrefKey, onboarding.userName)
+  lines.setTomlKey(OnboardingTimezonePrefKey, onboarding.timezone)
+  lines.setTomlKey(OnboardingLanguagePrefKey, onboarding.language)
+  lines.setTomlKey(OnboardingTreatmentPrefKey, onboarding.userTreatment)
+  lines.setTomlKey(OnboardingAboutPrefKey, onboarding.userAbout)
+  lines.join("\n")
+
+func clearOnboardingPrefs*(content: string): string =
+  var lines = content.splitLines()
+  lines.removeTomlKeys([
+    OnboardingPhasePrefKey,
+    OnboardingUserNamePrefKey,
+    OnboardingTimezonePrefKey,
+    OnboardingLanguagePrefKey,
+    OnboardingTreatmentPrefKey,
+    OnboardingAboutPrefKey,
+  ])
+  lines.join("\n")
+
+func parseOnboardingPrefs*(content: string): OnboardingRuntime =
+  result = OnboardingRuntime(phase: opWakeUp)
+  for line in content.splitLines():
+    let stripped = line.strip
+    if stripped.len == 0 or stripped.startsWith("#"):
+      continue
+    if result.phase == opWakeUp:
+      let phase = parseOnboardingPhase(parseTomlValue(stripped, OnboardingPhasePrefKey))
+      if phase.isSome:
+        result.phase = phase.get()
+        continue
+    let userName = parseTomlValue(stripped, OnboardingUserNamePrefKey)
+    if userName.len > 0 or stripped.startsWith(OnboardingUserNamePrefKey):
+      result.userName = userName
+      continue
+    let timezone = parseTomlValue(stripped, OnboardingTimezonePrefKey)
+    if timezone.len > 0 or stripped.startsWith(OnboardingTimezonePrefKey):
+      result.timezone = timezone
+      continue
+    let language = parseTomlValue(stripped, OnboardingLanguagePrefKey)
+    if language.len > 0 or stripped.startsWith(OnboardingLanguagePrefKey):
+      result.language = language
+      continue
+    let treatment = parseTomlValue(stripped, OnboardingTreatmentPrefKey)
+    if treatment.len > 0 or stripped.startsWith(OnboardingTreatmentPrefKey):
+      result.userTreatment = treatment
+      continue
+    let about = parseTomlValue(stripped, OnboardingAboutPrefKey)
+    if about.len > 0 or stripped.startsWith(OnboardingAboutPrefKey):
+      result.userAbout = about
 
 func stripUserProfileReady*(text: string): string =
   let lines = text.splitLines

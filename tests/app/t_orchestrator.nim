@@ -998,6 +998,82 @@ suite "agent name onboarding":
     check visible.text.contains("Entendi bem quem você é.")
     check finalReply.text.contains("vou te chamar de Void")
 
+  test "conversational onboarding resumes across restarts before USER.md exists":
+    let tmpDir = getTempDir() / "donkey_test_orch_resume_conversational_bootstrap"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc bootIdentityPhase(dir: string) {.async.} =
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubFreeConvoReady,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-resume-convo", state)
+      await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-resume-convo", "oi", ckTelegram, "101"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-resume-convo", "personality:mode:free", ckTelegram, "555"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-3", tkUserMsg, "u-resume-convo", "Seja curioso e direto.", ckTelegram, "101"))
+      discard await outbox.get()
+      discard await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+
+    proc bootNamePhase(dir: string): Future[OutboundMessage] {.async.} =
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-resume-convo", state)
+      await inbox.put(newTaskMsg("req-4", tkUserMsg, "u-resume-convo", "Nex", ckTelegram, "101"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      reply
+
+    proc bootProfilePhase(dir: string): Future[OutboundMessage] {.async.} =
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubUserProfileReady,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-resume-convo", state)
+      await inbox.put(newTaskMsg("req-5", tkUserMsg, "u-resume-convo",
+        "Sou Manel, pode me chamar de Void. Gosto de franqueza. UTC-3. Português brasileiro.",
+        ckTelegram, "101"))
+      discard await outbox.get()
+      let finalReply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      finalReply
+
+    waitFor bootIdentityPhase(tmpDir)
+    let prefsAfterIdentity = readFile(tmpDir / "u-resume-convo" / "PREFERENCES.md")
+    check prefsAfterIdentity.contains("agent_energy = \"neutro\"")
+    check prefsAfterIdentity.contains("onboarding_phase = \"opNameChoice\"")
+    check not fileExists(tmpDir / "u-resume-convo" / "USER.md")
+
+    let nameReply = waitFor bootNamePhase(tmpDir)
+    check nameReply.text.contains("me conta um pouco sobre você")
+    check not nameReply.text.contains("Qual será meu nome?")
+    let prefsAfterName = readFile(tmpDir / "u-resume-convo" / "PREFERENCES.md")
+    check prefsAfterName.contains("agent_name = \"Nex\"")
+    check prefsAfterName.contains("onboarding_phase = \"opUserName\"")
+
+    let finalReply = waitFor bootProfilePhase(tmpDir)
+    check finalReply.text.contains("vou te chamar de Void")
+    check fileExists(tmpDir / "u-resume-convo" / "USER.md")
+    let finalPrefs = readFile(tmpDir / "u-resume-convo" / "PREFERENCES.md")
+    check not finalPrefs.contains("onboarding_phase")
+
   test "completed bootstrap does not reopen on the same channel target":
     let tmpDir = getTempDir() / "donkey_test_orch_bootstrap_target_latch"
     removeDir(tmpDir)
