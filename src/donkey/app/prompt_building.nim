@@ -25,6 +25,11 @@ type NormalTurnPrep* = object
   obPhase*:        OnboardingPhase
   showReasoning*:  bool
 
+type UserPayload* = object
+  text*:          string
+  mediaUrl*:      string
+  recentContext*: string
+
 func providerLabelFromPrefs*(prefs: string): string =
   ## Extracts "provider/model" label from PREFERENCES.md TOML content.
   ## Returns "zai-coding" (default) when not set.
@@ -75,18 +80,44 @@ func buildSystemBase*(agentTraits: PersonalityTraits;
   "Respond in the user's preferred language." &
   toolsSuffix
 
-proc decodeUserPayload*(payload: string): (string, string) =
+proc decodeUserPayload*(payload: string): UserPayload =
   ## Decodes the session payload envelope produced by ensureSession.
-  ## Returns (text, mediaUrl). Plain text payloads pass through unchanged.
-  result = (payload, "")
+  ## Plain text payloads pass through unchanged.
+  result = UserPayload(text: payload)
   if payload.len == 0 or payload[0] != '{':
     return
   try:
     let j = parseJson(payload)
-    result[0] = j.getOrDefault("text").getStr(payload)
-    result[1] = j.getOrDefault("mediaUrl").getStr("")
+    result.text = j.getOrDefault("text").getStr(payload)
+    result.mediaUrl = j.getOrDefault("mediaUrl").getStr("")
+    result.recentContext = j.getOrDefault("recentContext").getStr("")
   except CatchableError:
     discard
+
+proc mergeUserPayloads*(payloads: openArray[string]): string =
+  if payloads.len == 0:
+    return ""
+  if payloads.len == 1:
+    return payloads[0]
+  var mergedText: seq[string] = @[]
+  var mediaUrl = ""
+  var recentContext = ""
+  for raw in payloads:
+    let decoded = decodeUserPayload(raw)
+    if decoded.text.strip.len > 0:
+      mergedText.add(decoded.text)
+    if decoded.mediaUrl.len > 0:
+      mediaUrl = decoded.mediaUrl
+    if recentContext.len == 0 and decoded.recentContext.len > 0:
+      recentContext = decoded.recentContext
+  let text = mergedText.join("\n\n")
+  if mediaUrl.len == 0 and recentContext.len == 0:
+    return text
+  $(%* {
+    "text": text,
+    "mediaUrl": mediaUrl,
+    "recentContext": recentContext,
+  })
 
 func addUserTurn*(history: ConversationHistory;
                   userText: string;

@@ -656,14 +656,25 @@ suite "OrchestratorAgent":
 suite "payload helpers":
 
   test "decodeUserPayload keeps plain text unchanged":
-    let (text, mediaUrl) = decodeUserPayload("hello")
-    check text == "hello"
-    check mediaUrl == ""
+    let payload = decodeUserPayload("hello")
+    check payload.text == "hello"
+    check payload.mediaUrl == ""
+    check payload.recentContext == ""
 
   test "decodeUserPayload extracts JSON envelope":
-    let (text, mediaUrl) = decodeUserPayload("""{"text":"hello","mediaUrl":"https://x/y.png"}""")
-    check text == "hello"
-    check mediaUrl == "https://x/y.png"
+    let payload = decodeUserPayload("""{"text":"hello","mediaUrl":"https://x/y.png","recentContext":"User: oi"}""")
+    check payload.text == "hello"
+    check payload.mediaUrl == "https://x/y.png"
+    check payload.recentContext == "User: oi"
+
+  test "mergeUserPayloads keeps first recent context and merges text":
+    let merged = mergeUserPayloads([
+      """{"text":"hello","recentContext":"User: oi"}""",
+      "world",
+    ])
+    let payload = decodeUserPayload(merged)
+    check payload.text == "hello\n\nworld"
+    check payload.recentContext == "User: oi"
 
 suite "tool loop helpers":
 

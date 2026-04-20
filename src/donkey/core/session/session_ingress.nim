@@ -9,6 +9,7 @@ type
   SessionIngressState* = object
     hasSession*:       bool
     awaitingAsk*:      bool
+    lastInboundAtMs*:  int64
     currentSignature*: SessionRuntimeSignature
 
   SessionIngressRequest* = object

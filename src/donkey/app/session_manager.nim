@@ -17,6 +17,7 @@ type
     inbox*:                AsyncQueue[AgentMessage]
     askInbox*:             AsyncQueue[string]
     awaitingAsk*:          bool
+    lastInboundAtMs*:      int64
     ## outbox removed: orchestrators write replies to the global outbox directly.
     channels*:             seq[(ChannelKind, string)]  ## (channel, raw_channel_user_id)
     toolCatalogSignature*: string
@@ -36,6 +37,7 @@ proc newSessionEntry(toolCatalogSignature: SessionRuntimeSignature): SessionEntr
     inbox: newAsyncQueue[AgentMessage](),
     askInbox: newAsyncQueue[string](),
     awaitingAsk: false,
+    lastInboundAtMs: 0,
     channels: @[],
     toolCatalogSignature: $toolCatalogSignature,
   )
@@ -97,6 +99,7 @@ func snapshot*(sm: SessionManager; userId: UserId): SessionIngressState =
   SessionIngressState(
     hasSession: true,
     awaitingAsk: entry.awaitingAsk,
+    lastInboundAtMs: entry.lastInboundAtMs,
     currentSignature: SessionRuntimeSignature(entry.toolCatalogSignature),
   )
 

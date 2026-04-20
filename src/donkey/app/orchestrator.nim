@@ -212,7 +212,8 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
                           stateRuntime: OrchestratorState): UserTurnSetup =
   result.uid = UserId(msg.userId)
   result.streamId = stateRuntime.streamIdFor(msg.userId)
-  (result.userText, _) = msg.payload |> decodeUserPayload
+  let payload = msg.payload |> decodeUserPayload
+  result.userText = payload.text
   result.isNewUser =
     not onboarding_runtime.safeHasProfile(memory, result.uid) and
     not stateRuntime.hasCompletedBootstrapTarget(msg.channel, msg.replyTo)
@@ -369,12 +370,20 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
 
   let systemBase = buildSystemBase(agentTraits, agentName, toolsSuffix)
 
-  await memInbox.put(newTaskMsg(msg.id, tkLoadCtx, msg.userId, msg.payload))
+  let userPayload = decodeUserPayload(msg.payload)
+  await memInbox.put(newTaskMsg(msg.id, tkLoadCtx, msg.userId, userPayload.text))
   let ctxReply = await awaitExpectedReply(memOut, msg.id, "MemoryAgent")
-  let context = if ctxReply.kind == amkResult: ctxReply.text else: ""
+  var context = if ctxReply.kind == amkResult: ctxReply.text else: ""
+  if userPayload.recentContext.len > 0:
+    let recentBlock =
+      "## Recent Context\n" &
+      "These messages happened immediately before the current message and may be missing from live session memory due to restart, rebuild, or long idle time.\n\n" &
+      userPayload.recentContext
+    context =
+      if context.len > 0: context & "\n\n" & recentBlock
+      else: recentBlock
 
-  let (userText, userImageUrl) = decodeUserPayload(msg.payload)
-  let history = addUserTurn(result.history, userText, userImageUrl)
+  let history = addUserTurn(result.history, userPayload.text, userPayload.mediaUrl)
 
   result =
     result |>->
@@ -598,7 +607,7 @@ proc collectWithDebounce(inbox: AsyncQueue[AgentMessage];
     else: discard
 
   result         = latest
-  result.payload = strutils.join(texts, "\n\n")
+  result.payload = mergeUserPayloads(texts)
 
 # ── Main orchestrator ──────────────────────────────────────────────────────────
 

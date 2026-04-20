@@ -73,6 +73,12 @@ thinking = "medium"
     check payload["text"].getStr() == "hello"
     check payload["mediaUrl"].getStr() == "https://x/y.png"
 
+  test "encodeSessionPayload includes recent context when present":
+    let msg = InboundMessage(userId: UserId("u1"), text: "hello")
+    let payload = parseJson(encodeSessionPayload(msg, "User: oi"))
+    check payload["text"].getStr() == "hello"
+    check payload["recentContext"].getStr() == "User: oi"
+
   test "sessionReplyTo only returns telegram channel id":
     let tgMsg = InboundMessage(userId: UserId("u1"), channel: ckTelegram, channelId: "123")
     let dcMsg = InboundMessage(userId: UserId("u1"), channel: ckDiscord, channelId: "abc")
@@ -88,6 +94,32 @@ thinking = "medium"
     check payload["text"].getStr() == "hi"
     check payload["mediaUrl"].getStr() == "https://x/z.png"
     check task.replyTo == "42"
+
+  test "loadRecentContext reads latest user and assistant messages":
+    let tmpDir = getTempDir() / "donkey_recent_context"
+    let memory = MdFileAdapter(paddocksDir: tmpDir)
+    let userId = UserId("u-recent")
+    defer:
+      if dirExists(tmpDir):
+        removeDir(tmpDir)
+    var history = newHistory()
+    history.addUser("primeira")
+    history.addAssistant("resposta 1")
+    history.addToolResult("t1", "bash", "pwd")
+    history.addUser("segunda")
+    history.addAssistant("resposta 2")
+    memory.saveSession(userId, "100", history)
+    var history2 = newHistory()
+    history2.addUser("terceira")
+    history2.addAssistant("resposta 3")
+    memory.saveSession(userId, "200", history2)
+    let recent = loadRecentContext(memory.toRuntimePort(), userId)
+    check "User: resposta" notin recent
+    check recent.contains("User: resposta 3") == false
+    check recent.contains("User: terceira")
+    check recent.contains("Assistant: resposta 3")
+    check recent.contains("User: segunda")
+    check recent.contains("Assistant: resposta 2")
 
   test "loadSessionContext reads prefs and paddock":
     let tmpDir = getTempDir() / "donkey_session_bootstrap_ctx"

@@ -3,7 +3,7 @@
 ## Concentrates provider selection, fallback composition, per-user skill merge
 ## and native tool exposure so the daemon entrypoint only coordinates lifecycle.
 
-import std/[json, os, strutils]
+import std/[algorithm, json, os, strutils]
 import ../config/skills_registry
 import ../config/clawhub_registry
 import ../core/pipeops
@@ -17,6 +17,9 @@ import ../ports/memory
 import ../ports/provider
 import ../ports/tool
 export provider
+
+const
+  RecentContextMessageLimit* = 5
 
 type
   ProviderDefaults* = object
@@ -237,10 +240,11 @@ func providerLabelFromPrefs*(prefs: string;
                              defaults: ProviderDefaults): string =
   parseSmartRoutingPrefs(applyProviderDefaults(prefs, defaults)).routingLabel
 
-func encodeSessionPayload*(msg: InboundMessage): string =
-  if msg.mediaUrl.len == 0:
+func encodeSessionPayload*(msg: InboundMessage;
+                           recentContext = ""): string =
+  if msg.mediaUrl.len == 0 and recentContext.len == 0:
     return msg.text
-  $(%* {"text": msg.text, "mediaUrl": msg.mediaUrl})
+  $(%* {"text": msg.text, "mediaUrl": msg.mediaUrl, "recentContext": recentContext})
 
 func sessionReplyTo*(msg: InboundMessage): string =
   case msg.channel
@@ -251,9 +255,65 @@ func sessionReplyTo*(msg: InboundMessage): string =
   else:
     ""
 
-proc buildSessionTaskMsg*(msg: InboundMessage; msgId: string): AgentMessage =
-  newTaskMsg(msgId, tkUserMsg, $msg.userId, encodeSessionPayload(msg),
+proc buildSessionTaskMsg*(msg: InboundMessage;
+                          msgId: string;
+                          recentContext = ""): AgentMessage =
+  newTaskMsg(msgId, tkUserMsg, $msg.userId, encodeSessionPayload(msg, recentContext),
              msg.channel, sessionReplyTo(msg))
+
+proc loadRecentContext*(memory: MemoryRuntimePort;
+                        userId: UserId;
+                        limit = RecentContextMessageLimit): string {.gcsafe.} =
+  if limit <= 0:
+    return ""
+  let sessionsDir = memory.paddockDir(userId) / "sessions"
+  if not dirExists(sessionsDir):
+    return ""
+  var sessionIds: seq[string] = @[]
+  try:
+    for kind, path in walkDir(sessionsDir):
+      if kind == pcFile and path.endsWith(".jsonl"):
+        sessionIds.add(path.extractFilename().changeFileExt(""))
+  except CatchableError:
+    return ""
+  sessionIds.sort(proc(a, b: string): int = cmp(b, a))
+  var lines: seq[string] = @[]
+  for sid in sessionIds:
+    if lines.len >= limit:
+      break
+    let path = sessionsDir / (sid & ".jsonl")
+    let content = try: readFile(path) except CatchableError: ""
+    if content.len == 0:
+      continue
+    let rawLines = content.splitLines()
+    for i in countdown(rawLines.high, 0):
+      let raw = rawLines[i].strip()
+      if raw.len == 0:
+        continue
+      try:
+        let j = parseJson(raw)
+        let role = j.getOrDefault("role").getStr("").toLowerAscii()
+        if role notin ["user", "assistant"]:
+          continue
+        let text = j.getOrDefault("text").getStr("").strip()
+        let imageUrl = j.getOrDefault("imageUrl").getStr("").strip()
+        if text.len == 0 and imageUrl.len == 0:
+          continue
+        let label = if role == "user": "User" else: "Assistant"
+        let body =
+          if text.len > 0 and imageUrl.len > 0:
+            text & "\n[image attachment]"
+          elif text.len > 0:
+            text
+          else:
+            "[image attachment]"
+        lines.add(label & ": " & body)
+        if lines.len >= limit:
+          break
+      except CatchableError:
+        discard
+  lines.reverse()
+  lines.join("\n\n")
 
 proc userSkillsDir*(memory: MemoryRuntimePort; userId: UserId): string {.gcsafe.} =
   memory.paddockDir(userId) / "skills"

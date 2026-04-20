@@ -915,6 +915,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
 type EnsureSessionPlan = object
   uid*:      string
   decision*: SessionIngressDecision
+  injectRecentContext*: bool
   oldInbox*: AsyncQueue[AgentMessage]
   oldAskInbox*: AsyncQueue[string]
   entry*:    ptr SessionEntry
@@ -966,15 +967,23 @@ func toolCatalogSignature*(tools: seq[ToolDescription];
 proc buildEnsureSessionPlan*(sm: var SessionManager;
                              userId: UserId;
                              toolCatalogSignature: SessionRuntimeSignature): EnsureSessionPlan =
+  const ColdSessionThresholdMs = 60'i64 * 60 * 1000
+  let ingressState = sm.snapshot(userId)
   let decision = decideSessionIngress(SessionIngressRequest(
     userId: userId,
-    state: sm.snapshot(userId),
+    state: ingressState,
     nextSignature: toolCatalogSignature,
   ))
+  let now = nowMs()
+  let wasCold =
+    ingressState.lastInboundAtMs > 0 and
+    now - ingressState.lastInboundAtMs >= ColdSessionThresholdMs
   let lease = sm.applyIngressDecision(userId, decision, toolCatalogSignature)
+  lease.entry[].lastInboundAtMs = now
   EnsureSessionPlan(
     uid: $userId,
     decision: decision,
+    injectRecentContext: decision.startsNewSession or decision.rebuildsSessionRuntime or wasCold,
     oldInbox: lease.oldInbox,
     oldAskInbox: lease.oldAskInbox,
     entry: lease.entry,
@@ -1140,13 +1149,18 @@ proc startSessionIngress*(sm: var SessionManager;
   result = sm.buildSessionIngressContext(msg, signature, msgSeq)
   if result.plan.decision.shouldRecordChannel:
     sm.recordChannel(msg.userId, msg.channel, msg.channelId)
+  let recentContext =
+    if result.plan.injectRecentContext:
+      loadRecentContext(services.memory.toRuntimePort(), msg.userId)
+    else:
+      ""
   ## Enqueue task message BEFORE starting the new orchestrator.
   ## This prevents the orchestrator from receiving a cancel message
   ## (from the old orchestrator's inbox) before the task.
   case result.plan.decision.target
   of sitActorInbox:
     if taskKind == tkUserMsg:
-      result.plan.entry[].inbox.addLastNoWait(buildSessionTaskMsg(msg, result.msgId))
+      result.plan.entry[].inbox.addLastNoWait(buildSessionTaskMsg(msg, result.msgId, recentContext))
     else:
       result.plan.entry[].inbox.addLastNoWait(newTaskMsg(
         result.msgId, taskKind, $msg.userId, taskPayload,
