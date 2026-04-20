@@ -179,11 +179,27 @@ type
 
 # ── Context parsers ───────────────────────────────────────────────────────────
 
-proc resolvedToolPath(path, paddockDir: string): Result[string, string] {.gcsafe, raises: [].} =
+proc logToolPathFailure(log: Logger;
+                        toolName, rawPath, paddockDir, resolvedPath, reason: string) {.gcsafe, raises: [].} =
+  if log.sink == nil:
+    return
+  log.warn("native tool path rejected" &
+           " tool=" & toolName &
+           " raw=" & rawPath &
+           " paddock=" & (if paddockDir.len > 0: paddockDir else: "<empty>") &
+           " resolved=" & (if resolvedPath.len > 0: resolvedPath else: "<empty>") &
+           " reason=" & reason)
+
+proc resolvedToolPath(path, paddockDir: string;
+                      log: Logger = Logger();
+                      toolName = ""): Result[string, string] {.gcsafe, raises: [].} =
   if path.len == 0 or paddockDir.len == 0:
+    if path.len > 0 and paddockDir.len == 0:
+      logToolPathFailure(log, toolName, path, paddockDir, path, "empty_paddock")
     return ok(path)
   let resolvedPath = resolveInPaddock(path, paddockDir)
   if not inPaddock(resolvedPath, paddockDir):
+    logToolPathFailure(log, toolName, path, paddockDir, resolvedPath, "outside_paddock")
     return err("Error: path outside paddock: " & path)
   ok(resolvedPath)
 
@@ -204,10 +220,12 @@ proc parseBashContext*(j: JsonNode): Result[BashContext, string] {.gcsafe, raise
       ok(BashContext(command: command))
 
 proc parseReadFileContext*(j: JsonNode;
-                           paddockDir: string): Result[ReadFileContext, string] {.gcsafe, raises: [].} =
+                           paddockDir: string;
+                           log: Logger = Logger();
+                           toolName = ReadFileToolName): Result[ReadFileContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("path") >>=
     proc(p: string): Result[ReadFileContext, string] =
-      resolvedToolPath(p, paddockDir) >>=
+      resolvedToolPath(p, paddockDir, log, toolName) >>=
         proc(rp: string): Result[ReadFileContext, string] =
           ok(ReadFileContext(
             path: rp,
@@ -215,10 +233,12 @@ proc parseReadFileContext*(j: JsonNode;
             maxLines: max(1, j.getOrDefault("max_lines").getInt(200)),
           ))
 
-proc parseFindContext*(j: JsonNode; paddockDir: string): Result[FindContext, string] {.gcsafe, raises: [].} =
+proc parseFindContext*(j: JsonNode; paddockDir: string;
+                       log: Logger = Logger();
+                       toolName = FindToolName): Result[FindContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("path") >>=
     proc(p: string): Result[FindContext, string] =
-      resolvedToolPath(p, paddockDir) >>=
+      resolvedToolPath(p, paddockDir, log, toolName) >>=
         proc(rp: string): Result[FindContext, string] =
           ok(FindContext(
             path: rp,
@@ -227,12 +247,14 @@ proc parseFindContext*(j: JsonNode; paddockDir: string): Result[FindContext, str
             max: j.getOrDefault("max").getInt(50),
           ))
 
-proc parseGrepContext*(j: JsonNode; paddockDir: string): Result[GrepContext, string] {.gcsafe, raises: [].} =
+proc parseGrepContext*(j: JsonNode; paddockDir: string;
+                       log: Logger = Logger();
+                       toolName = GrepToolName): Result[GrepContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("pattern") >>=
     proc(pat: string): Result[GrepContext, string] =
       j.requireStringField("path") >>=
         proc(p: string): Result[GrepContext, string] =
-          resolvedToolPath(p, paddockDir) >>=
+          resolvedToolPath(p, paddockDir, log, toolName) >>=
             proc(rp: string): Result[GrepContext, string] =
               ok(GrepContext(
                 pattern: pat,
@@ -241,42 +263,54 @@ proc parseGrepContext*(j: JsonNode; paddockDir: string): Result[GrepContext, str
                 max: j.getOrDefault("max").getInt(50),
               ))
 
-proc parseSedContext*(j: JsonNode; paddockDir: string): Result[SedContext, string] {.gcsafe, raises: [].} =
+proc parseSedContext*(j: JsonNode; paddockDir: string;
+                      log: Logger = Logger();
+                      toolName = SedToolName): Result[SedContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("expression") >>=
     proc(expr: string): Result[SedContext, string] =
       j.requireStringField("path") >>=
         proc(p: string): Result[SedContext, string] =
-          resolvedToolPath(p, paddockDir) >>=
+          resolvedToolPath(p, paddockDir, log, toolName) >>=
             proc(rp: string): Result[SedContext, string] =
               ok(SedContext(expression: expr, path: rp))
 
-proc parsePathOnly*(j: JsonNode; paddockDir: string): Result[string, string] {.gcsafe, raises: [].} =
+proc parsePathOnly*(j: JsonNode; paddockDir: string;
+                    log: Logger = Logger();
+                    toolName = ""): Result[string, string] {.gcsafe, raises: [].} =
   j.requireStringField("path") >>=
-    proc(p: string): Result[string, string] = resolvedToolPath(p, paddockDir)
+    proc(p: string): Result[string, string] = resolvedToolPath(p, paddockDir, log, toolName)
 
-proc parseWcContext*(j: JsonNode; paddockDir: string): Result[WcContext, string] {.gcsafe, raises: [].} =
-  parsePathOnly(j, paddockDir) >>=
+proc parseWcContext*(j: JsonNode; paddockDir: string;
+                     log: Logger = Logger();
+                     toolName = WcToolName): Result[WcContext, string] {.gcsafe, raises: [].} =
+  parsePathOnly(j, paddockDir, log, toolName) >>=
     proc(p: string): Result[WcContext, string] =
       ok(WcContext(path: p, flags: j.getOrDefault("flags").getStr("")))
 
-proc parseHeadTailContext*(j: JsonNode; paddockDir: string): Result[HeadTailContext, string] {.gcsafe, raises: [].} =
-  parsePathOnly(j, paddockDir) >>=
+proc parseHeadTailContext*(j: JsonNode; paddockDir: string;
+                           log: Logger = Logger();
+                           toolName = ""): Result[HeadTailContext, string] {.gcsafe, raises: [].} =
+  parsePathOnly(j, paddockDir, log, toolName) >>=
     proc(p: string): Result[HeadTailContext, string] =
       ok(HeadTailContext(path: p, lines: j.getOrDefault("lines").getInt(10)))
 
-proc parseSortContext*(j: JsonNode; paddockDir: string): Result[SortContext, string] {.gcsafe, raises: [].} =
-  parsePathOnly(j, paddockDir) >>=
+proc parseSortContext*(j: JsonNode; paddockDir: string;
+                       log: Logger = Logger();
+                       toolName = SortToolName): Result[SortContext, string] {.gcsafe, raises: [].} =
+  parsePathOnly(j, paddockDir, log, toolName) >>=
     proc(p: string): Result[SortContext, string] =
       ok(SortContext(path: p, flags: j.getOrDefault("flags").getStr("")))
 
-proc parseCpMvContext*(j: JsonNode; paddockDir: string): Result[CpMvContext, string] {.gcsafe, raises: [].} =
+proc parseCpMvContext*(j: JsonNode; paddockDir: string;
+                       log: Logger = Logger();
+                       toolName = ""): Result[CpMvContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("source") >>=
     proc(s: string): Result[CpMvContext, string] =
       j.requireStringField("dest") >>=
         proc(d: string): Result[CpMvContext, string] =
-          let rs = resolvedToolPath(s, paddockDir)
+          let rs = resolvedToolPath(s, paddockDir, log, toolName)
           if rs.isErr: return err(rs.error)
-          let rd = resolvedToolPath(d, paddockDir)
+          let rd = resolvedToolPath(d, paddockDir, log, toolName)
           if rd.isErr: return err(rd.error)
           ok(CpMvContext(source: rs.value, dest: rd.value))
 
@@ -365,10 +399,12 @@ proc parseTodoOps*(j: JsonNode): Result[JsonNode, string] {.gcsafe, raises: [].}
   ok(ops)
 
 proc parseEditFileContext*(j: JsonNode;
-                           paddockDir: string): Result[EditFileContext, string] {.gcsafe, raises: [].} =
+                           paddockDir: string;
+                           log: Logger = Logger();
+                           toolName = EditFileToolName): Result[EditFileContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("path") >>=
     proc(p: string): Result[EditFileContext, string] =
-      resolvedToolPath(p, paddockDir) >>=
+      resolvedToolPath(p, paddockDir, log, toolName) >>=
         proc(rp: string): Result[EditFileContext, string] =
           let editsNode = j.getOrDefault("edits")
           if editsNode.kind != JArray:
@@ -560,14 +596,14 @@ proc executeShellNativeTool(tc: ToolCallRequest;
                         ctx.sandboxAllowHostFallback, ctx.sandboxAllowNetwork,
                         ctx.sandboxReadOnlyRootfs))
   of ReadFileToolName:
-    let readCtx = parseReadFileContext(j, ctx.paddockDir).valueOr:
+    let readCtx = parseReadFileContext(j, ctx.paddockDir, ctx.log, ReadFileToolName).valueOr:
       return handledError(error)
     try:
       return handledText(renderHashlineSlice(readFile(readCtx.path), readCtx.startLine, readCtx.maxLines))
     except CatchableError as e:
       return handledError("Error: " & e.msg)
   of EditFileToolName:
-    let editCtx = parseEditFileContext(j, ctx.paddockDir).valueOr:
+    let editCtx = parseEditFileContext(j, ctx.paddockDir, ctx.log, EditFileToolName).valueOr:
       return handledError(error)
     try:
       let original = readFile(editCtx.path)
@@ -579,7 +615,7 @@ proc executeShellNativeTool(tc: ToolCallRequest;
     except CatchableError as e:
       return handledError("Error: " & e.msg)
   of FindToolName:
-    let findCtx = parseFindContext(j, ctx.paddockDir).valueOr:
+    let findCtx = parseFindContext(j, ctx.paddockDir, ctx.log, FindToolName).valueOr:
       return handledError(error)
     let r = if ctx.sandboxMode == smWasm:
       performFindWasm(findCtx.path, findCtx.pattern, findCtx.kind, findCtx.max)
@@ -587,7 +623,7 @@ proc executeShellNativeTool(tc: ToolCallRequest;
       performFind(findCtx.path, findCtx.pattern, findCtx.kind, findCtx.max)
     return handledOutcome(r)
   of GrepToolName:
-    let grepCtx = parseGrepContext(j, ctx.paddockDir).valueOr:
+    let grepCtx = parseGrepContext(j, ctx.paddockDir, ctx.log, GrepToolName).valueOr:
       return handledError(error)
     let r = if ctx.sandboxMode == smWasm:
       performGrepWasm(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max)
@@ -595,12 +631,12 @@ proc executeShellNativeTool(tc: ToolCallRequest;
       performGrep(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max)
     return handledOutcome(r)
   of SedToolName:
-    let sedCtx = parseSedContext(j, ctx.paddockDir).valueOr:
+    let sedCtx = parseSedContext(j, ctx.paddockDir, ctx.log, SedToolName).valueOr:
       return handledError(error)
     return handledOutcome(runWasmApplet("sed", @[sedCtx.expression, sedCtx.path],
       if sedCtx.path.parentDir.len > 0: sedCtx.path.parentDir else: "/"))
   of WcToolName:
-    let wcCtx = parseWcContext(j, ctx.paddockDir).valueOr:
+    let wcCtx = parseWcContext(j, ctx.paddockDir, ctx.log, WcToolName).valueOr:
       return handledError(error)
     var args: seq[string] = @[]
     if wcCtx.flags.len > 0:
@@ -608,15 +644,15 @@ proc executeShellNativeTool(tc: ToolCallRequest;
     args.add(wcCtx.path)
     return handledOutcome(runWasmApplet("wc", args, wcCtx.path))
   of HeadToolName:
-    let headCtx = parseHeadTailContext(j, ctx.paddockDir).valueOr:
+    let headCtx = parseHeadTailContext(j, ctx.paddockDir, ctx.log, HeadToolName).valueOr:
       return handledError(error)
     return handledOutcome(runWasmApplet("head", @["-n", $headCtx.lines, headCtx.path], headCtx.path))
   of TailToolName:
-    let tailCtx = parseHeadTailContext(j, ctx.paddockDir).valueOr:
+    let tailCtx = parseHeadTailContext(j, ctx.paddockDir, ctx.log, TailToolName).valueOr:
       return handledError(error)
     return handledOutcome(runWasmApplet("tail", @["-n", $tailCtx.lines, tailCtx.path], tailCtx.path))
   of SortToolName:
-    let sortCtx = parseSortContext(j, ctx.paddockDir).valueOr:
+    let sortCtx = parseSortContext(j, ctx.paddockDir, ctx.log, SortToolName).valueOr:
       return handledError(error)
     var args: seq[string] = @[]
     if sortCtx.flags.len > 0:
@@ -624,24 +660,24 @@ proc executeShellNativeTool(tc: ToolCallRequest;
     args.add(sortCtx.path)
     return handledOutcome(runWasmApplet("sort", args, sortCtx.path))
   of CpToolName:
-    let cpCtx = parseCpMvContext(j, ctx.paddockDir).valueOr:
+    let cpCtx = parseCpMvContext(j, ctx.paddockDir, ctx.log, CpToolName).valueOr:
       return handledError(error)
     let parent = cpCtx.source.parentDir
     return handledOutcome(runWasmApplet("cp", @[cpCtx.source, cpCtx.dest],
       if parent.len > 0: parent else: "/"))
   of MvToolName:
-    let mvCtx = parseCpMvContext(j, ctx.paddockDir).valueOr:
+    let mvCtx = parseCpMvContext(j, ctx.paddockDir, ctx.log, MvToolName).valueOr:
       return handledError(error)
     let parent = mvCtx.source.parentDir
     return handledOutcome(runWasmApplet("mv", @[mvCtx.source, mvCtx.dest],
       if parent.len > 0: parent else: "/"))
   of RmToolName:
-    let rmCtx = parsePathOnly(j, ctx.paddockDir).valueOr:
+    let rmCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, RmToolName).valueOr:
       return handledError(error)
     let parent = rmCtx.parentDir
     return handledOutcome(runWasmApplet("rm", @[rmCtx], if parent.len > 0: parent else: "/"))
   of MkdirToolName:
-    let mkdirCtx = parsePathOnly(j, ctx.paddockDir).valueOr:
+    let mkdirCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, MkdirToolName).valueOr:
       return handledError(error)
     let parent = mkdirCtx.parentDir
     return handledOutcome(runWasmApplet("mkdir", @[mkdirCtx], if parent.len > 0: parent else: "/"))
