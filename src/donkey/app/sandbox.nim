@@ -39,10 +39,14 @@ type
     ensureWorkDir*:  bool
 
   SandboxRunner* = proc(plan: SandboxPlan): string {.gcsafe, raises: [].}
+  SandboxRunnerRaw* = proc(plan: SandboxPlan;
+                           env: StringTableRef): tuple[output: string, exitCode: int]
+                           {.gcsafe, raises: [CatchableError].}
   PathOwnerFn* = proc(path: string): Result[int, string] {.gcsafe, raises: [].}
 
 const
   SandboxExecCommand* = "__sandbox_exec"
+  SandboxWriteProbeFile* = ".donkey-write-probe"
 
 func canReenterViaHelper(appPath: string): bool {.gcsafe, raises: [].} =
   let base = extractFilename(appPath).toLowerAscii()
@@ -222,6 +226,36 @@ proc runSandboxPlan*(plan: SandboxPlan;
   except CatchableError as e:
     "Error: " & e.msg
 
+func buildSandboxWriteProbeCmd*(): string {.gcsafe, raises: [].} =
+  "touch " & SandboxWriteProbeFile & " && rm -f " & SandboxWriteProbeFile
+
+proc probeSandboxWorkspaceWritable*(mode: SandboxMode;
+                                    paddock: string;
+                                    image: string;
+                                    runtimeCmd = "docker";
+                                    allowNetwork = false;
+                                    readOnlyRootfs = true;
+                                    runPlanRaw: SandboxRunnerRaw = nil): Result[void, string]
+                                    {.gcsafe, raises: [].} =
+  let runner =
+    if runPlanRaw != nil: runPlanRaw
+    else: (proc(plan: SandboxPlan; env: StringTableRef): tuple[output: string, exitCode: int]
+           {.closure, gcsafe, raises: [CatchableError].} =
+      runSandboxPlanRaw(plan, env))
+  let plan = buildSandboxPlan(
+    buildSandboxWriteProbeCmd(), paddock, mode, image, runtimeCmd,
+    allowNetwork, readOnlyRootfs)
+  let env =
+    if mode == smOci: nil
+    else: buildHostSandboxEnv(paddock)
+  try:
+    let (output, code) = runner(plan, env)
+    if code == 0:
+      return ok()
+    err(formatSandboxResult(output, code))
+  except CatchableError as e:
+    err("Error: " & e.msg)
+
 proc runSandboxWorker*(paddock, cmd: string): int {.gcsafe, raises: [].} =
   try:
     let (output, code) = runSandboxPlanRaw(buildDirectPlan(cmd, paddock), buildHostSandboxEnv(paddock))
@@ -381,3 +415,17 @@ proc sandboxLogLevel*(mode: SandboxMode; image: string; runtimeCmd: string; log:
   of lvlDebug: log.debug(message)
   of lvlError: log.error(message)
   of lvlFatal: log.fatal(message)
+
+proc logSandboxWorkspaceProbe*(mode: SandboxMode;
+                               paddock: string;
+                               image: string;
+                               runtimeCmd: string;
+                               allowNetwork: bool;
+                               readOnlyRootfs: bool;
+                               log: Logger) =
+  let probe = probeSandboxWorkspaceWritable(
+    mode, paddock, image, runtimeCmd, allowNetwork, readOnlyRootfs)
+  if probe.isOk:
+    log.info("bash sandbox workspace: writable")
+  else:
+    log.warn("bash sandbox workspace: write probe failed: " & probe.error)

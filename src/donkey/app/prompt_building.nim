@@ -55,6 +55,9 @@ func orchToolsSuffix*(tools: seq[ToolDescription]): string =
                "If the user has not provided a specific skill slug or capability yet, ask what they want to add " &
                "or offer to search the registry. " &
                "After installing or enabling a skill, tell the user it becomes available on their next message.\n\n"
+  if tools.anyIt(it.name == ReadFileToolName) and tools.anyIt(it.name == EditFileToolName):
+    result.add "For `edit_file`, first call `read_file` on the same file and reuse the exact `LINE#ID` anchors it returned. " &
+               "Never invent anchors, reuse stale anchors from an older read, or substitute plain line numbers/text snippets.\n\n"
   for td in tools:
     result.add &"- **{td.name}**: {td.description}\n"
 

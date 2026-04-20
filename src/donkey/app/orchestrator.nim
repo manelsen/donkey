@@ -633,6 +633,10 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
   let memAgentFut = runMemoryAgent(memInbox, memOut, memory, searchFn)
   let toolAgentFut = runToolAgent(toolInbox, toolOut, clients)
   sandboxLogLevel(sandboxMode, sandboxImage, sandboxRuntimeCmd, log)
+  if paddockDir.len > 0:
+    logSandboxWorkspaceProbe(
+      sandboxMode, paddockDir, sandboxImage, sandboxRuntimeCmd,
+      false, true, log)
 
   var stateRuntime = newOrchestratorState()
   let sessionId   = $nowMs()

@@ -1,6 +1,6 @@
 ## Test sandbox enforcement rules.
 
-import std/[os, strutils, unittest]
+import std/[os, strtabs, strutils, unittest]
 import donkey/core/pipeops
 import donkey/config/types
 import donkey/app/sandbox
@@ -104,3 +104,33 @@ suite "Sandbox Enforcement":
     let cfg = DonkeyConfig(paddocks: root)
     let res = validatePaddockOwnership(cfg, devMode = true, ownerFn = ownerFn, uid = 1000)
     check res.isOk
+
+  test "workspace write probe succeeds on zero exit":
+    let runner: SandboxRunnerRaw =
+      proc(plan: SandboxPlan; env: StringTableRef): tuple[output: string, exitCode: int]
+           {.closure, gcsafe, raises: [CatchableError].} =
+        discard plan
+        discard env
+        ("", 0)
+    let res = probeSandboxWorkspaceWritable(
+      smOci, "/tmp/paddock", "alpine", runPlanRaw = runner)
+    check res.isOk
+
+  test "workspace write probe command uses create and cleanup":
+    let cmd = buildSandboxWriteProbeCmd()
+    check "touch " in cmd
+    check "rm -f " in cmd
+    check SandboxWriteProbeFile in cmd
+
+  test "workspace write probe returns formatted failure":
+    let runner: SandboxRunnerRaw =
+      proc(plan: SandboxPlan; env: StringTableRef): tuple[output: string, exitCode: int]
+           {.closure, gcsafe, raises: [CatchableError].} =
+        discard plan
+        discard env
+        ("touch: permission denied\n", 1)
+    let res = probeSandboxWorkspaceWritable(
+      smOci, "/tmp/paddock", "alpine", runPlanRaw = runner)
+    check res.isErr
+    check "permission denied" in res.error
+    check "[exit 1]" in res.error

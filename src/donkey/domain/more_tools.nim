@@ -34,6 +34,8 @@ const
   EditFileToolName* = "edit_file"
   EditFileToolDescription* =
     "Apply precise in-place file edits using hashline anchors from read_file. " &
+    "You must call read_file first and reuse the exact LINE#ID anchors it returned. " &
+    "Never invent anchors or substitute plain line numbers/text snippets. " &
     "Supports replace, prepend, and append operations. " &
     "If the file changed since the last read, stale anchors are rejected."
   EditFileToolSchema* =
@@ -41,8 +43,8 @@ const
     "\"path\":{\"type\":\"string\",\"description\":\"File path to edit\"}," &
     "\"edits\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{" &
     "\"op\":{\"type\":\"string\",\"enum\":[\"replace\",\"prepend\",\"append\"]}," &
-    "\"pos\":{\"type\":\"string\",\"description\":\"Anchor LINE#ID for the target line\"}," &
-    "\"end\":{\"type\":\"string\",\"description\":\"Inclusive end anchor for replace ranges\"}," &
+    "\"pos\":{\"type\":\"string\",\"description\":\"Exact LINE#ID anchor returned by read_file for the target line\"}," &
+    "\"end\":{\"type\":\"string\",\"description\":\"Exact inclusive end LINE#ID anchor from read_file for replace ranges\"}," &
     "\"lines\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}," &
     "\"description\":\"Literal replacement or inserted lines; empty array deletes for replace\"}" &
     "}},\"description\":\"Edits applied bottom-up\"}" &
