@@ -69,6 +69,14 @@ suite "buildSandboxPlan":
     check plan.workingDir == ""
     check not plan.ensureWorkDir
 
+  test "smWasmer wraps command through wasmer":
+    let plan = buildSandboxPlan("pwd", "/tmp/p1", smWasmer, "alpine")
+    check plan.command.startsWith("wasmer run ")
+    check plan.command.contains("--mapdir")
+    check plan.command.contains("/workspace:/tmp/p1")
+    check plan.workingDir == ""
+    check not plan.ensureWorkDir
+
 suite "oci fallback":
 
   test "shouldFallbackOci detects image pull errors":
@@ -196,6 +204,9 @@ suite "SandboxMode values":
   test "smOci string value":
     check $smOci == "oci"
 
+  test "smWasmer string value":
+    check $smWasmer == "wasmer"
+
 suite "sandboxStatusMessage":
 
   test "smNone warns":
@@ -208,3 +219,9 @@ suite "sandboxStatusMessage":
     check level == lvlInfo
     check msg.contains("podman")
     check msg.contains("debian:bookworm-slim")
+
+  test "smWasmer mentions package":
+    let (level, msg) = sandboxStatusMessage(smWasmer, "ignored")
+    check level == lvlInfo
+    check msg.contains("wasmer")
+    check msg.contains("amin/bash")

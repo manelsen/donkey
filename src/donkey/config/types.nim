@@ -21,6 +21,7 @@ type
     smNone   = "none"    ## workingDir only — no OS-level isolation
     smOci    = "oci"     ## ephemeral OCI container with bind-mounted paddock
     smWasm   = "wasm"    ## embedded wasm3 runtime with WASI
+    smWasmer = "wasmer"  ## Wasmer runtime executing a packaged shell with mounted paddock
 
   DonkeyConfig* = object
     home*:          string       ## Base dir; default: ~/.donkey

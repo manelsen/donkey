@@ -13,6 +13,7 @@ suite "Config Loader":
   test "parseSandboxMode maps docker/oci and defaults unknown to none":
     check parseSandboxMode("docker") == smOci
     check parseSandboxMode("oci") == smOci
+    check parseSandboxMode("wasmer") == smWasmer
     check parseSandboxMode("weird") == smNone
 
   test "loadTomlConfig returns none for missing file":
@@ -109,6 +110,16 @@ mode = "oci"
     defer: removeFile(tmp)
     let cfg = loadConfig(tmp)
     check cfg.sandboxMode == smOci
+
+  test "reads sandbox mode wasmer":
+    let tmp = getTempDir() / "t_loader_sandbox_wasmer.toml"
+    writeFile(tmp, """
+[sandbox]
+mode = "wasmer"
+""")
+    defer: removeFile(tmp)
+    let cfg = loadConfig(tmp)
+    check cfg.sandboxMode == smWasmer
 
   test "reads custom sandbox image":
     let tmp = getTempDir() / "t_loader_sbimage.toml"

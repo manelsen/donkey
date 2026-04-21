@@ -53,6 +53,7 @@ proc parseSandboxMode*(rawMode: string): SandboxMode =
   case rawMode.strip().toLowerAscii()
   of "docker", "oci": smOci
   of "wasm":   smWasm
+  of "wasmer": smWasmer
   else:        smNone
 
 proc parseHostList*(raw: string): seq[string] =
