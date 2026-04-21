@@ -14,7 +14,7 @@ if [ -n "${DONKEY_CONFIG_PATH:-}" ]; then
 elif [ "$DEFAULT_STATE_DIR" = "/data/.donkey" ]; then
   CFG_PATH="/app/deploy/donkey.toml.hf"
 else
-  CFG_PATH="/app/deploy/donkey.toml.example"
+  CFG_PATH="/app/deploy/donkey.toml.container"
 fi
 
 STATE_DIR="${DONKEY_STATE_DIR:-$DEFAULT_STATE_DIR}"
