@@ -64,6 +64,10 @@ func orchToolsSuffix*(tools: seq[ToolDescription]): string =
     result.add "For `edit_file`, first call `read_file` on the same file and reuse the exact `LINE#ID` anchors it returned. " &
                "Never invent anchors, reuse stale anchors from an older read, or substitute plain line numbers/text snippets. " &
                "`read_file` and `edit_file` operate on the same workspace as `bash`; do not claim they use a different filesystem just because errors show host paddock paths.\n\n"
+  if tools.len > 0:
+    result.add "When the user asks you to test, audit, or list tool status, ground the answer in the actual tool results from this turn. " &
+               "Report status per tool, and if a tool failed, cite the exact tool name and error text. " &
+               "Do not collapse mixed results into a generic request-error message when some tool calls succeeded.\n\n"
   if tools.anyIt(it.name == ReadFileToolName) or tools.anyIt(it.name == FindToolName) or tools.anyIt(it.name == GrepToolName):
     result.add "Local file tools are restricted to the current workspace. Use relative paths, `.` or `/workspace` for workspace root. Do not use `/` unless you literally mean the container root, which will usually be rejected.\n\n"
   for td in tools:
