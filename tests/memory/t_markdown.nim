@@ -57,6 +57,13 @@ proc runContractTests(adapter: MarkdownMemoryAdapter) =
       check ctx.get().memoryMd      == "memory content"
       check ctx.get().preferencesMd == "prefs content"
 
+    test "loadContext: ensures paddock and HEARTBEAT.md exist":
+      let ctx = adapter.loadContext(uid)
+      check ctx.isOk
+      check dirExists(adapter.paddockDir(uid))
+      check fileExists(adapter.heartbeatMdPath(uid))
+      check readFile(adapter.heartbeatMdPath(uid)) == ""
+
     test "saveUserMd: creates paddock automatically":
       let result = adapter.saveUserMd(uid, "# Bob\n")
       check result.isOk

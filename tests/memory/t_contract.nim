@@ -49,6 +49,13 @@ proc runContractTests(adapter: MdFileAdapter) =
       check ctx.memoryMd      == "memory content"
       check ctx.preferencesMd == "prefs content"
 
+    test "loadContext: ensures paddock and HEARTBEAT.md exist":
+      let ctx = adapter.loadContext(uid)
+      discard ctx
+      check dirExists(adapter.paddockDir(uid))
+      check fileExists(adapter.heartbeatMdPath(uid))
+      check readFile(adapter.heartbeatMdPath(uid)) == ""
+
     test "saveUserMd: creates paddock automatically":
       adapter.saveUserMd(uid, "# Bob\n")
       check fileExists(adapter.userMdPath(uid))

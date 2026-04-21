@@ -97,6 +97,9 @@ proc writeFileResult*(path, content: string): Result[void, string] =
 proc loadContext*(a: MarkdownMemoryAdapter; userId: UserId): Result[UserContext, string] {.gcsafe.} =
   ## Loads USER.md + MEMORY.md + PREFERENCES.md into a UserContext.
   ## Chains three read operations via >>=.
+  let ensureResult = a.ensurePaddock(userId)
+  if ensureResult.isErr:
+    return err(ensureResult.error)
   let userMdPath = a.userMdPath(userId)
   let memoryMdPath = a.memoryMdPath(userId)
   let preferencesMdPath = a.preferencesMdPath(userId)

@@ -336,6 +336,7 @@ proc hasProfile*(a: MdFileAdapter; userId: UserId): bool =
   fileExists(a.userMdPath(userId))
 
 proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext =
+  a.ensurePaddock(userId)
   when defined(withPostgres) or defined(withSqlite):
     if a.hasMagmaBackend:
       try:

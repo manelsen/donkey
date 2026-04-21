@@ -22,7 +22,8 @@ const
     "Read a local file and return each line prefixed with a stable hashline anchor " &
     "in the form LINE#ID:text. Use this before edit_file. " &
     "The anchors act as both addresses and stale-read checks. " &
-    "Local file tools are restricted to the current workspace; use relative paths, `.` or `/workspace`, not `/`."
+    "Local file tools are restricted to the current workspace; use relative paths, `.` or `/workspace`, not `/`. " &
+    "`read_file` accesses the same workspace as `bash`, but directly on the host paddock path rather than through the sandbox container."
   ReadFileToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
     "\"path\":{\"type\":\"string\",\"description\":\"File path to read\"}," &
@@ -38,7 +39,8 @@ const
     "You must call read_file first and reuse the exact LINE#ID anchors it returned. " &
     "Never invent anchors or substitute plain line numbers/text snippets. " &
     "Supports replace, prepend, and append operations. " &
-    "If the file changed since the last read, stale anchors are rejected."
+    "If the file changed since the last read, stale anchors are rejected. " &
+    "`edit_file` writes to the same workspace as `bash`; it is not a separate WASM-only filesystem."
   EditFileToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
     "\"path\":{\"type\":\"string\",\"description\":\"File path to edit\"}," &
