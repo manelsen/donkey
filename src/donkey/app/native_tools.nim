@@ -418,12 +418,26 @@ proc parseEditFileContext*(j: JsonNode;
               else: return err("Error: unsupported edit op '" & item.getOrDefault("op").getStr("") & "'.")
             var pos = none(HashlineAnchor)
             var stop = none(HashlineAnchor)
-            let posRaw = item.getOrDefault("pos").getStr("")
+            let posRaw =
+              block:
+                let primary = item.getOrDefault("pos").getStr("")
+                if primary.len > 0: primary
+                else:
+                  let alias = item.getOrDefault("anchor").getStr("")
+                  if alias.len > 0: alias
+                  else: item.getOrDefault("start").getStr("")
             if posRaw.len > 0:
               let pa = parseHashlineAnchor(posRaw)
               if pa.isErr: return err(pa.error)
               pos = some(pa.value)
-            let stopRaw = item.getOrDefault("end").getStr("")
+            let stopRaw =
+              block:
+                let primary = item.getOrDefault("end").getStr("")
+                if primary.len > 0: primary
+                else:
+                  let alias = item.getOrDefault("stop").getStr("")
+                  if alias.len > 0: alias
+                  else: item.getOrDefault("to").getStr("")
             if stopRaw.len > 0:
               let sa = parseHashlineAnchor(stopRaw)
               if sa.isErr: return err(sa.error)

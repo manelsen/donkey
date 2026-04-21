@@ -170,6 +170,12 @@ suite "hashline file helpers":
     check parsed.value.line == 12
     check parsed.value.hash == "abc123"
 
+  test "parseHashlineAnchor accepts full hashline line":
+    let parsed = parseHashlineAnchor("12#abc123:let x = 1")
+    check parsed.isOk
+    check parsed.value.line == 12
+    check parsed.value.hash == "abc123"
+
   test "renderHashlineSlice formats file lines":
     let rendered = renderHashlineSlice("alpha\nbeta", 1, 10)
     check rendered.contains(":alpha")
@@ -742,6 +748,22 @@ suite "executeNativeTool — read_file and edit_file":
     check editResult.handled
     check editResult.text.startsWith("Error: stale anchor")
     check editResult.resultKind == trkOperationalError
+
+  test "edit_file accepts full hashline line via anchor alias":
+    let ctx = ctxWithEditPaddock(paddock)
+    let readTc = makeTc("read_file", """{"path":"sample.txt"}""")
+    let readResult = waitFor executeNativeTool(readTc, ctx, newSessionState(), newHistory())
+    let secondLine = readResult.text.splitLines()[1]
+    let editJson = $(%*{
+      "path": "sample.txt",
+      "edits": [
+        {"op": "replace", "anchor": secondLine, "lines": ["gamma"]}
+      ]
+    })
+    let editTc = makeTc("edit_file", editJson)
+    let editResult = waitFor executeNativeTool(editTc, ctx, newSessionState(), newHistory())
+    check editResult.handled
+    check readFile(target).strip() == "alpha\ngamma"
 
 suite "executeNativeTool — schedule_reminder":
 

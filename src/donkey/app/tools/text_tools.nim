@@ -76,7 +76,11 @@ proc renderHashlineSlice*(content: string; startLine, maxLines: int): string {.g
       result.add('\n')
 
 proc parseHashlineAnchor*(raw: string): Result[HashlineAnchor, string] {.gcsafe, raises: [].} =
-  let parts = raw.split("#", maxsplit = 1)
+  let trimmed = raw.strip()
+  let anchorOnly =
+    if ":" in trimmed: trimmed.split(":", maxsplit = 1)[0].strip()
+    else: trimmed
+  let parts = anchorOnly.split("#", maxsplit = 1)
   if parts.len != 2 or parts[0].len == 0 or parts[1].len == 0:
     return err("Error: invalid anchor '" & raw & "'. Expected LINE#ID.")
   try:
