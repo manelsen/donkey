@@ -73,6 +73,7 @@ suite "buildSandboxPlan":
     let plan = buildSandboxPlan("pwd", "/tmp/p1", smWasmer, "alpine")
     check plan.command.startsWith("wasmer run ")
     check plan.command.contains("--mapdir")
+    check plan.command.contains("--command-name=bash")
     check plan.command.contains("/workspace:/tmp/p1")
     check plan.workingDir == ""
     check not plan.ensureWorkDir

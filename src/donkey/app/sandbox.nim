@@ -201,7 +201,8 @@ proc buildWasmerCmd*(cmd, paddock: string;
   "--env TMPDIR=/tmp " &
   "--env TMP=/tmp " &
   "--env TEMP=/tmp " &
-  packageName & " -- -c " & quoteShell("cd /workspace && " & cmd)
+  packageName & " --command-name=bash -- -c " &
+  quoteShell("cd /workspace && " & cmd)
 
 proc buildSandboxPlan*(cmd, paddock: string;
                        mode: SandboxMode;
