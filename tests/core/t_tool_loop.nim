@@ -5,7 +5,7 @@ import donkey/domain/message
 
 suite "core tool loop decisions":
 
-  test "recentRepeatCount counts matching tool and args only":
+  test "recentRepeatCount counts trailing matching tool and args only":
     let tc = ToolCallRequest(id: "1", name: "search", inputJson: """{"q":"nim"}""")
     let recent = @[
       ("search", """{"q":"nim"}"""),
@@ -13,7 +13,16 @@ suite "core tool loop decisions":
       ("bash", """{"command":"pwd"}"""),
       ("search", """{"q":"nim"}"""),
     ]
-    check recentRepeatCount(recent, tc) == 2
+    check recentRepeatCount(recent, tc) == 1
+
+  test "recentRepeatCount resets after a different tool call":
+    let tc = ToolCallRequest(id: "1", name: "read_file", inputJson: """{"path":"PREFERENCES.md"}""")
+    let recent = @[
+      ("read_file", """{"path":"PREFERENCES.md"}"""),
+      ("edit_file", """{"path":"PREFERENCES.md","edits":[]}"""),
+      ("read_file", """{"path":"PREFERENCES.md"}"""),
+    ]
+    check recentRepeatCount(recent, tc) == 1
 
   test "withRegisteredToolCall keeps only the last 30 entries":
     var recent: seq[(string, string)] = @[]

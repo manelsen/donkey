@@ -85,9 +85,12 @@ func newToolLoopState*(history: ConversationHistory): ToolLoopRunResult =
 func recentRepeatCount*(recentCalls: seq[(string, string)];
                         tc: ToolCallRequest): int =
   let callKey = (tc.name, tc.inputJson)
-  for rc in recentCalls:
-    if rc == callKey:
-      inc result
+  var i = recentCalls.len - 1
+  while i >= 0:
+    if recentCalls[i] != callKey:
+      break
+    inc result
+    dec i
 
 func withRegisteredToolCall*(recentCalls: seq[(string, string)];
                              tc: ToolCallRequest): seq[(string, string)] =
