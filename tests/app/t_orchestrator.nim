@@ -678,7 +678,7 @@ suite "payload helpers":
 
 suite "tool loop helpers":
 
-  test "recentRepeatCount counts matching tool and args only":
+  test "recentRepeatCount counts trailing matching tool and args only":
     let tc = ToolCallRequest(id: "1", name: "search", inputJson: """{"q":"nim"}""")
     let recent = @[
       ("search", """{"q":"nim"}"""),
@@ -686,7 +686,7 @@ suite "tool loop helpers":
       ("bash", """{"command":"pwd"}"""),
       ("search", """{"q":"nim"}"""),
     ]
-    check recentRepeatCount(recent, tc) == 2
+    check recentRepeatCount(recent, tc) == 1
 
   test "withRegisteredToolCall keeps only the last 30 entries":
     var recent: seq[(string, string)] = @[]
