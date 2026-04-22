@@ -185,17 +185,28 @@ proc routeOutbound*(msg: OutboundMessage;
       return
     sendImmediateOutbound(msg, ports, log)
     return
-  let decision = decideOutbound(msg, presentationState)
+  var effectiveMsg = msg
+  if msg.streamId.len > 0 and supportsEditableStreams(msg.channel):
+    let mergedText = appendStreamDelta(presentationState.lookupStreamText(msg), msg.text)
+    if presentationState.lookupStream(msg).len > 0 and
+       mergedText.len > streamMessageCharLimit(msg.channel):
+      presentationState.clearStream(msg)
+      effectiveMsg.text = msg.text
+    else:
+      effectiveMsg.text = mergedText
+  let decision = decideOutbound(effectiveMsg, presentationState)
   case decision.intent
   of oiSend:
-    sendImmediateOutbound(msg, ports, log)
+    sendImmediateOutbound(effectiveMsg, ports, log)
   of oiStreamUpdate:
-    editStreamOutbound(msg, decision.existingMsgId, ports, log)
+    editStreamOutbound(effectiveMsg, decision.existingMsgId, ports, log)
+    presentationState.rememberStreamText(effectiveMsg, effectiveMsg.text)
   of oiStreamCreate:
-    let channelMsgId = createStreamOutbound(msg, ports, log)
+    let channelMsgId = createStreamOutbound(effectiveMsg, ports, log)
     if channelMsgId.len > 0:
-      presentationState.rememberStream(msg, channelMsgId)
+      presentationState.rememberStream(effectiveMsg, channelMsgId)
+      presentationState.rememberStreamText(effectiveMsg, effectiveMsg.text)
   of oiSuppress:
     discard
   if decision.shouldCleanup:
-    presentationState.clearStream(msg)
+    presentationState.clearStream(effectiveMsg)

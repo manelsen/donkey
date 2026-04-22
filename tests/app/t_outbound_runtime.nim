@@ -1,4 +1,4 @@
-import std/unittest
+import std/[strutils, unittest]
 import results
 import donkey/app/outbound_runtime
 import donkey/core/log
@@ -243,8 +243,71 @@ suite "outbound_runtime":
     check createdTexts == @["partial"]
     check presentationState.lookupStream(partial) == "m-stream"
     routeOutbound(final, ports, newLogger("test.outbound"), presentationState)
-    check editedText == "m-stream:final"
+    check editedText == "m-stream:partial\nfinal"
     check presentationState.lookupStream(final) == ""
+    check presentationState.lookupStreamText(final) == ""
+
+  test "routeOutbound appends delta stream updates instead of replacing them":
+    var createdTexts: seq[string] = @[]
+    var editedText = ""
+    let ports = OutboundChannelPorts(
+      telegram: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} = ok(),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
+          {.cast(gcsafe).}: createdTexts.add(msg.text)
+          ok("m-stream"),
+        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}: editedText = msgId & ":" & text
+          ok(),
+        sendKeyboard: proc(userId: UserId; text: string;
+                           buttons: seq[seq[(string, string)]];
+                           replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
+        editKeyboard: proc(userId: UserId; msgId, text: string;
+                           buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+      )
+    )
+    var presentationState = initPresentationState()
+    let first = OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "tool A", streamId: "stream-2", isPartial: true)
+    let second = OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "tool B", streamId: "stream-2", isPartial: true)
+    routeOutbound(first, ports, newLogger("test.outbound"), presentationState)
+    routeOutbound(second, ports, newLogger("test.outbound"), presentationState)
+    check createdTexts == @["tool A"]
+    check editedText == "m-stream:tool A\ntool B"
+    check presentationState.lookupStreamText(second) == "tool A\ntool B"
+
+  test "routeOutbound rolls over long delta streams into a new message":
+    var createdTexts: seq[string] = @[]
+    var editedText = ""
+    let ports = OutboundChannelPorts(
+      discord: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} = ok(),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
+          {.cast(gcsafe).}:
+            createdTexts.add(msg.text)
+            ok("m-stream-" & $createdTexts.len),
+        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}: editedText = msgId & ":" & text
+          ok(),
+        sendKeyboard: proc(userId: UserId; text: string;
+                           buttons: seq[seq[(string, string)]];
+                           replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
+        editKeyboard: proc(userId: UserId; msgId, text: string;
+                           buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+      )
+    )
+    var presentationState = initPresentationState()
+    let first = OutboundMessage(userId: UserId("u1"), channel: ckDiscord,
+      text: repeat("a", 1700), streamId: "stream-3", isPartial: true)
+    let second = OutboundMessage(userId: UserId("u1"), channel: ckDiscord,
+      text: repeat("b", 200), streamId: "stream-3", isPartial: true)
+    routeOutbound(first, ports, newLogger("test.outbound"), presentationState)
+    routeOutbound(second, ports, newLogger("test.outbound"), presentationState)
+    check createdTexts.len == 2
+    check createdTexts[0].len == 1700
+    check createdTexts[1].len == 200
+    check editedText.len == 0
 
   test "setOutboundReaction dispatches to reaction-capable channels only":
     var seen = ""

@@ -38,6 +38,7 @@ type
   PresentationState* = object
     replacementMsgIds*: Table[string, string]
     streamMsgIds*: Table[string, string]
+    streamTexts*: Table[string, string]
     statusMsgIds*: Table[string, string]
     statusChannelIds*: Table[string, string]
 
@@ -109,6 +110,7 @@ func initPresentationState*(): PresentationState =
   PresentationState(
     replacementMsgIds: initTable[string, string](),
     streamMsgIds: initTable[string, string](),
+    streamTexts: initTable[string, string](),
     statusMsgIds: initTable[string, string](),
     statusChannelIds: initTable[string, string](),
   )
@@ -146,6 +148,12 @@ proc lookupStream*(state: PresentationState;
     return ""
   state.streamMsgIds.getOrDefault(streamSurfaceKey(msg))
 
+proc lookupStreamText*(state: PresentationState;
+                       msg: OutboundMessage): string =
+  if msg.streamId.len == 0:
+    return ""
+  state.streamTexts.getOrDefault(streamSurfaceKey(msg))
+
 proc lookupStatus*(state: PresentationState;
                    channel: ChannelKind;
                    userId: UserId;
@@ -176,11 +184,20 @@ proc rememberStream*(state: var PresentationState;
     return
   state.streamMsgIds[streamSurfaceKey(msg)] = channelMsgId
 
+proc rememberStreamText*(state: var PresentationState;
+                         msg: OutboundMessage;
+                         text: string) =
+  if msg.streamId.len == 0:
+    return
+  state.streamTexts[streamSurfaceKey(msg)] = text
+
 proc clearStream*(state: var PresentationState;
                   msg: OutboundMessage) =
   if msg.streamId.len == 0:
     return
-  state.streamMsgIds.del(streamSurfaceKey(msg))
+  let key = streamSurfaceKey(msg)
+  state.streamMsgIds.del(key)
+  state.streamTexts.del(key)
 
 proc rememberStatus*(state: var PresentationState;
                      channel: ChannelKind;
@@ -233,6 +250,22 @@ func supportsInteractiveComponents*(channel: ChannelKind): bool =
 
 func supportsMessageReactions*(channel: ChannelKind): bool =
   presentationCapabilities(channel).messageReactions
+
+func streamMessageCharLimit*(channel: ChannelKind): int =
+  case channel
+  of ckTelegram: 3500
+  of ckDiscord: 1800
+  else: 1800
+
+func appendStreamDelta*(existingText: string;
+                        nextText: string): string =
+  if existingText.len == 0:
+    return nextText
+  if nextText.startsWith(existingText):
+    return nextText
+  if nextText.len == 0:
+    return existingText
+  existingText & "\n" & nextText
 
 func replacementSlotFor*(channel: ChannelKind;
                          slot: string): string =

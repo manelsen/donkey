@@ -218,6 +218,12 @@ suite "core outbound decisions":
     check state.lookupStream(final) == "m-stream"
     state.clearStream(final)
     check state.lookupStream(partial) == ""
+    check state.lookupStreamText(partial) == ""
+
+  test "appendStreamDelta appends deltas but preserves cumulative replacements":
+    check appendStreamDelta("", "one") == "one"
+    check appendStreamDelta("one", "two") == "one\ntwo"
+    check appendStreamDelta("one", "one\ntwo") == "one\ntwo"
 
   test "presentation state stores status bindings separately from menus":
     var state = initPresentationState()
