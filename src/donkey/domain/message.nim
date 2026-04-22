@@ -19,6 +19,7 @@ const
 type
   ToolResultKind* = enum
     trkOutput
+    trkUsageError
     trkOperationalError
 
   ChatMessage* = object
@@ -93,6 +94,7 @@ func addAssistant*(h: var ConversationHistory; text: string; reasoning = "") =
 func toolResultKindLabel*(kind: ToolResultKind): string =
   case kind
   of trkOutput: "output"
+  of trkUsageError: "usage_error"
   of trkOperationalError: "operational_error"
 
 func formatToolResultForHistory*(name, output: string;

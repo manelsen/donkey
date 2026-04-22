@@ -142,6 +142,11 @@ suite "ChatMessage tool result":
     check "search" in h[0].text
     check "results here" in h[0].text
 
+suite "ToolResultKind":
+
+  test "usage error label is stable":
+    check toolResultKindLabel(trkUsageError) == "usage_error"
+
 suite "CompletionResponse toolCalls":
 
   test "toolCalls defaults to empty seq":
