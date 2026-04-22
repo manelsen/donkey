@@ -100,7 +100,7 @@ proc editImmediateOutbound*(msg: OutboundMessage;
     else:
       port.editMessage(msg.userId, msg.editTargetId, msg.text)
   if res.isOk:
-    log.info("sent " & $msg.channel & " (edit immediate) -> " & $msg.userId & " (" & $msg.text.len & " chars)")
+    log.debug("sent " & $msg.channel & " (edit immediate) -> " & $msg.userId & " (" & $msg.text.len & " chars)")
     return true
   let error = res.error
   case msg.channel
@@ -117,7 +117,7 @@ proc editStreamOutbound*(msg: OutboundMessage;
   let port = ports.channelPortFor(msg.channel)
   let res = port.editMessage(msg.userId, channelMsgId, msg.text)
   if res.isOk:
-    log.info("sent " & $msg.channel & " (edit) -> " & $msg.userId & " (" & $msg.text.len & " chars)")
+    log.debug("sent " & $msg.channel & " (edit) -> " & $msg.userId & " (" & $msg.text.len & " chars)")
     return
   let error = res.error
   case msg.channel
