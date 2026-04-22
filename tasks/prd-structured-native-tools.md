@@ -106,7 +106,7 @@ For tool and prompt stories, also include:
 - [ ] Os envelopes JSON produzidos por FS e busca permanecem compatíveis com o contrato `donkey.native_tool/v1`
 - [ ] A integração não introduz `value_id` nem estado intermediário implícito
 
-### [ ] US-005: Criar tools estruturadas de arquivos compactados e HTTP
+### [x] US-005: Criar tools estruturadas de arquivos compactados e HTTP
 **Description:** Como agente, eu quero manipular arquivos compactados e requisições HTTP comuns sem cair em shell para tarefas repetitivas.
 
 **Acceptance Criteria:**

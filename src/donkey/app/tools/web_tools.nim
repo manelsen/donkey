@@ -8,6 +8,7 @@ import results
 import ../../config/types as cfgTypes
 import ../../ports/http as httpPort
 import ../../domain/builtin_tools
+import ../../core/tooling/structured_tool_result
 import ./text_tools  # stripHtml
 
 # ── fetch ─────────────────────────────────────────────────────────────────────
@@ -24,7 +25,10 @@ proc performFetch*(http: httpPort.HttpRuntimePort;
   try:
     if not isAllowedPublicUrl(url, allowRules, fallbackAllowlist):
       return buildUrlAccessError(url, allowRules, fallbackAllowlist, policyLabel)
-    let resp = http.get(url, @[])
+    let resp = try:
+      http.get(url, @[])
+    except Exception as e:
+      return "Error: " & e.msg
     if resp.isErr: return "Error: " & resp.error
     let r = resp.value
     if r.status < 200 or r.status >= 300:
@@ -41,6 +45,54 @@ proc performFetch*(http: httpPort.HttpRuntimePort;
     truncateBody(body, cap)
   except Exception as e:
     "Error: " & e.msg
+
+proc performFetchStructured*(http: httpPort.HttpRuntimePort;
+                             url: string;
+                             expect = "text";
+                             maxCh = FetchDefaultMax;
+                             allowRules: seq[cfgTypes.WebAccessRule] = @[];
+                             fallbackAllowlist: seq[string] = @[];
+                             policyLabel = "web access"): StructuredToolResult {.gcsafe, raises: [].} =
+  if url.strip().len == 0:
+    return usageErrorToolResult("url is required")
+
+  let normalizedExpect = expect.strip().toLowerAscii()
+  if normalizedExpect notin ["text", "json"]:
+    return usageErrorToolResult("unsupported expect format: " & expect)
+
+  try:
+    if not isAllowedPublicUrl(url, allowRules, fallbackAllowlist):
+      return operationalErrorToolResult(
+        buildUrlAccessError(url, allowRules, fallbackAllowlist, policyLabel)
+      )
+
+    let r = http.get(url, @[]).valueOr:
+      return operationalErrorToolResult(error)
+    if r.status < 200 or r.status >= 300:
+      return operationalErrorToolResult("HTTP error " & $r.status)
+
+    var data = %*{
+      "url": url,
+      "status": r.status,
+      "headers": [],
+      "body_format": normalizedExpect,
+    }
+
+    if normalizedExpect == "json":
+      try:
+        data["body"] = parseJson(r.body)
+      except CatchableError:
+        return operationalErrorToolResult("response was not valid JSON")
+    else:
+      let cap = min(maxCh, FetchHardMax)
+      var body = r.body.strip()
+      if body.startsWith("<"):
+        body = stripHtml(body)
+      data["body"] = %truncateBody(body, cap)
+
+    successToolResult(data)
+  except Exception as e:
+    operationalErrorToolResult(e.msg)
 
 # ── web_search (Brave) ────────────────────────────────────────────────────────
 
