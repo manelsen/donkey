@@ -65,28 +65,40 @@ For tool and prompt stories, also include:
 - `US-007` is the first prompting story allowed to touch `src/donkey/app/prompt_building.nim` for structured-tool preference
 - `US-008` is the cleanup/removal phase and should run last
 
-### [ ] US-002: Criar a nova família de tools de filesystem
+### [x] US-002: Criar a nova família de tools de filesystem
 **Description:** Como agente, eu quero ferramentas nativas de filesystem orientadas a dados para listar, ler, escrever, copiar, mover, criar e remover sem depender de shell.
 
 **Acceptance Criteria:**
-- [ ] Existe uma tool estruturada para listar diretórios e arquivos com metadados (`path`, `kind`, `size`, `mtime`)
-- [ ] Existe uma tool estruturada para ler arquivos em formatos `text`, `lines`, `json` e metadados de bytes
-- [ ] Existe uma tool estruturada para escrever arquivos com modos `create`, `replace` e `append`
-- [ ] Existe uma tool estruturada para criar diretórios
-- [ ] Existe uma tool estruturada para copiar arquivo ou árvore
-- [ ] Existe uma tool estruturada para mover/renomear arquivo ou árvore
-- [ ] Existe uma tool estruturada para remover arquivo ou árvore
-- [ ] Todas respeitam o paddock/workspace atual e rejeitam paths fora do escopo permitido
+- [x] Existe uma tool estruturada para listar diretórios e arquivos com metadados (`path`, `kind`, `size`, `mtime`)
+- [x] Existe uma tool estruturada para ler arquivos em formatos `text`, `lines`, `json` e metadados de bytes
+- [x] Existe uma tool estruturada para escrever arquivos com modos `create`, `replace` e `append`
+- [x] Existe uma tool estruturada para criar diretórios
+- [x] Existe uma tool estruturada para copiar arquivo ou árvore
+- [x] Existe uma tool estruturada para mover/renomear arquivo ou árvore
+- [x] Existe uma tool estruturada para remover arquivo ou árvore
+- [x] Todas respeitam o paddock/workspace atual e rejeitam paths fora do escopo permitido
 
-### [ ] US-003: Criar a nova família de tools de busca e transformação textual
+**Story Snapshot:**
+- Introduzido o núcleo estruturado de filesystem em `src/donkey/app/tools/fs_tools.nim`
+- Cobertos `fs_list`, `fs_read`, `fs_write`, `fs_mkdir`, `fs_copy`, `fs_move` e `fs_remove`
+- Paths da superfície estruturada passaram a ser relativos ao paddock, com raiz representada por `.`
+- Gated green após integração com `t_fs_tools_structured`, `t_native_tools` e `nimble build`
+
+### [x] US-003: Criar a nova família de tools de busca e transformação textual
 **Description:** Como agente, eu quero buscar e transformar texto de forma estruturada para evitar parsing textual frágil e dependência de `grep`/`sed`.
 
 **Acceptance Criteria:**
-- [ ] Existe uma tool estruturada de busca textual que retorna `path`, `line`, `text` e contexto relevante quando aplicável
-- [ ] Existe uma tool estruturada de substituição textual declarativa para casos simples e frequentes
-- [ ] Existe uma tool estruturada para leitura parcial/resumo de arquivo sem exigir shell
-- [ ] A nova superfície cobre os casos mais comuns hoje resolvidos com `grep`, `head`, `tail`, `wc`, `sort` e `sed`
-- [ ] Casos que não caibam nessa superfície permanecem explicitamente fora de escopo da tool, em vez de recriar shell disfarçada
+- [x] Existe uma tool estruturada de busca textual que retorna `path`, `line`, `text` e contexto relevante quando aplicável
+- [x] Existe uma tool estruturada de substituição textual declarativa para casos simples e frequentes
+- [x] Existe uma tool estruturada para leitura parcial/resumo de arquivo sem exigir shell
+- [x] A nova superfície cobre os casos mais comuns hoje resolvidos com `grep`, `head`, `tail`, `wc`, `sort` e `sed`
+- [x] Casos que não caibam nessa superfície permanecem explicitamente fora de escopo da tool, em vez de recriar shell disfarçada
+
+**Story Snapshot:**
+- Adicionados `performFindStructured` e `performGrepStructured` para busca estruturada em `search_tools.nim`
+- Adicionados `readStructuredTextSlice` e `replaceStructuredText` em `text_tools.nim`
+- A leitura parcial passou a retornar linhas ancoradas e o replace textual ficou deliberadamente literal nesta fase
+- Gated green após integração com `t_structured_search_text_tools`, `t_native_tools` e `nimble build`
 
 ### [x] US-004A: Criar o núcleo estruturado para JSON e tabelas
 **Description:** Como agente, eu quero operar diretamente sobre JSON e coleções genéricas para compor fluxos no estilo Nu sem depender de `jq` ou parsing manual.
