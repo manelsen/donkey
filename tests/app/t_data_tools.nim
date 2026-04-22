@@ -1,6 +1,8 @@
-import std/[json, unittest]
+import std/[json, os, times, unittest]
 
 import donkey/app/tools/data_tools
+import donkey/app/tools/fs_tools
+import donkey/app/tools/search_tools
 
 suite "runJsonQuery":
 
@@ -163,3 +165,75 @@ suite "runTableQuery":
     check not result["ok"].getBool()
     check result["status"].getStr() == "usage_error"
     check result["error"]["message"].getStr().len > 0
+
+  test "accepts fs_list envelope without manual extraction":
+    let paddock = getTempDir() / ("donkey_table_fs_" & $epochTime())
+    createDir(paddock)
+    defer:
+      if dirExists(paddock):
+        removeDir(paddock)
+
+    createDir(paddock / "docs")
+    writeFile(paddock / "b.txt", "bbb\n")
+    writeFile(paddock / "a.txt", "a\n")
+
+    let fsEnvelope = performFsList(".", paddock, recursive = true).toNode()
+    let result = runTableQuery(%*{
+      "input": fsEnvelope,
+      "where": [{"field": "kind", "op": "eq", "value": "file"}],
+      "select": ["path", "size"],
+      "sort": [{"field": "path", "order": "asc"}]
+    }).toNode()
+
+    check result["ok"].getBool()
+    check result["data"]["rows"].len == 2
+    check result["data"]["rows"][0]["path"].getStr() == "a.txt"
+    check result["data"]["rows"][1]["path"].getStr() == "b.txt"
+
+  test "accepts grep envelope without manual extraction":
+    let paddock = getTempDir() / ("donkey_table_grep_" & $epochTime())
+    createDir(paddock)
+    defer:
+      if dirExists(paddock):
+        removeDir(paddock)
+
+    let target = paddock / "notes.txt"
+    writeFile(target, "alpha\nneedle beta\nneedle gamma\n")
+
+    let grepEnvelope = performGrepStructured("needle", target, false, 20).toNode()
+    let result = runTableQuery(%*{
+      "input": grepEnvelope,
+      "select": ["line", "text"],
+      "sort": [{"field": "line", "order": "desc"}],
+      "limit": 1
+    }).toNode()
+
+    check result["ok"].getBool()
+    check result["data"]["rows"].len == 1
+    check result["data"]["rows"][0]["line"].getInt() == 3
+    check result["data"]["rows"][0]["text"].getStr() == "needle gamma"
+
+  test "rows_path can override automatic array detection":
+    let request = %*{
+      "input": {
+        "data": {
+          "nested": {
+            "records": [
+              {"name": "a", "score": 1},
+              {"name": "b", "score": 2}
+            ]
+          },
+          "rows": [
+            {"name": "wrong", "score": 999}
+          ]
+        }
+      },
+      "rows_path": ["data", "nested", "records"],
+      "sort": [{"field": "score", "order": "desc"}]
+    }
+
+    let result = runTableQuery(request).toNode()
+
+    check result["ok"].getBool()
+    check result["data"]["rows"].len == 2
+    check result["data"]["rows"][0]["name"].getStr() == "b"

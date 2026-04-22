@@ -109,14 +109,20 @@ For tool and prompt stories, also include:
 - [ ] Há testes cobrindo filtros, ordenação e projeção em arrays/objetos genéricos
 - [ ] A documentação das tools deixa claro como compor resultados entre elas
 
-### [ ] US-004B: Integrar JSON e tabelas com as saídas estruturadas de FS e busca
+### [x] US-004B: Integrar JSON e tabelas com as saídas estruturadas de FS e busca
 **Description:** Como agente, eu quero consumir naturalmente as saídas estruturadas de filesystem e busca com `table_query` para compor fluxos sem transformação textual ad hoc.
 
 **Acceptance Criteria:**
-- [ ] As saídas de listagem e busca podem ser consumidas por `table_query` sem transformação textual ad hoc
-- [ ] Há testes cobrindo filtros, ordenação e projeção em coleções reais de saída de tools
-- [ ] Os envelopes JSON produzidos por FS e busca permanecem compatíveis com o contrato `donkey.native_tool/v1`
-- [ ] A integração não introduz `value_id` nem estado intermediário implícito
+- [x] As saídas de listagem e busca podem ser consumidas por `table_query` sem transformação textual ad hoc
+- [x] Há testes cobrindo filtros, ordenação e projeção em coleções reais de saída de tools
+- [x] Os envelopes JSON produzidos por FS e busca permanecem compatíveis com o contrato `donkey.native_tool/v1`
+- [x] A integração não introduz `value_id` nem estado intermediário implícito
+
+**Story Snapshot:**
+- `table_query` passou a aceitar envelopes estruturados completos via `input`, sem exigir extração manual prévia de arrays
+- Entrou autodetecção de coleções em `data.rows`, `data.items`, `data.matches` e `data.lines`
+- `rows_path` foi adicionado como override explícito quando a coleção desejada está em um caminho diferente
+- Gated green com `t_data_tools`, `t_fs_tools_structured`, `t_structured_search_text_tools`, `t_native_tools` e `nimble build`
 
 ### [x] US-005: Criar tools estruturadas de arquivos compactados e HTTP
 **Description:** Como agente, eu quero manipular arquivos compactados e requisições HTTP comuns sem cair em shell para tarefas repetitivas.

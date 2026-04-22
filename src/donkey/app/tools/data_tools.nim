@@ -346,6 +346,30 @@ proc projectRow(row: JsonNode; selectFields: seq[JsonNode]): JsonNode =
     if not value.isNil:
       result[fieldAlias(field)] = value.copy()
 
+proc detectRowsArray(inputNode: JsonNode): tuple[ok: bool, rows: JsonNode, message: string] =
+  if inputNode.isNil:
+    return (false, nil, "input is required")
+  if inputNode.kind == JArray:
+    return (true, inputNode, "")
+  if inputNode.kind != JObject:
+    return (false, nil, "input must be an array or object")
+
+  let candidatePaths = [
+    @[%*"data", %*"rows"],
+    @[%*"data", %*"items"],
+    @[%*"data", %*"matches"],
+    @[%*"data", %*"lines"],
+    @[%*"rows"],
+    @[%*"items"],
+    @[%*"matches"],
+    @[%*"lines"],
+  ]
+  for path in candidatePaths:
+    let value = tryGetAtPath(inputNode, path)
+    if not value.isNil and value.kind == JArray:
+      return (true, value, "")
+  (false, nil, "could not detect rows array in input")
+
 proc runJsonQuery*(request: JsonNode): StructuredToolResult =
   if request.isNil or request.kind != JObject:
     return usageErrorToolResult("json_query request must be an object")
@@ -394,13 +418,31 @@ proc runJsonQuery*(request: JsonNode): StructuredToolResult =
 proc runTableQuery*(request: JsonNode): StructuredToolResult =
   if request.isNil or request.kind != JObject:
     return usageErrorToolResult("table_query request must be an object")
-  if not request.hasKey("rows"):
-    return usageErrorToolResult("rows is required")
-  if request["rows"].kind != JArray:
-    return usageErrorToolResult("rows must be an array")
+  let rowsSource: tuple[ok: bool, rows: JsonNode, message: string] =
+    if request.hasKey("rows"):
+      if request["rows"].kind != JArray:
+        return usageErrorToolResult("rows must be an array")
+      (true, request["rows"], "")
+    elif request.hasKey("input"):
+      if request.hasKey("rows_path"):
+        let pathInfo = parsePathNode(request["rows_path"], "rows_path")
+        if not pathInfo.ok:
+          return usageErrorToolResult(pathInfo.message)
+        let rowsNode = tryGetAtPath(request["input"], pathInfo.path)
+        if rowsNode.isNil:
+          return usageErrorToolResult("rows_path not found")
+        if rowsNode.kind != JArray:
+          return usageErrorToolResult("rows_path must resolve to an array")
+        (true, rowsNode, "")
+      else:
+        detectRowsArray(request["input"])
+    else:
+      (false, nil, "rows or input is required")
+  if not rowsSource.ok:
+    return usageErrorToolResult(rowsSource.message)
 
   var rows: seq[JsonNode] = @[]
-  for row in request["rows"]:
+  for row in rowsSource.rows:
     rows.add(row.copy())
 
   if request.hasKey("where"):
