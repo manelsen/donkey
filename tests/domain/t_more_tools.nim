@@ -25,6 +25,27 @@ suite "tool metadata — non-empty":
   test "cancel_job": check CancelJobToolName.len > 0 and CancelJobToolDescription.len > 0
   test "await": check AwaitToolName.len > 0 and AwaitToolDescription.len > 0
 
+  test "structured tools":
+    for (name, description) in [
+      (FsListToolName, FsListToolDescription),
+      (FsReadToolName, FsReadToolDescription),
+      (FsWriteToolName, FsWriteToolDescription),
+      (FsMkdirToolName, FsMkdirToolDescription),
+      (FsCopyToolName, FsCopyToolDescription),
+      (FsMoveToolName, FsMoveToolDescription),
+      (FsRemoveToolName, FsRemoveToolDescription),
+      (TextSearchToolName, TextSearchToolDescription),
+      (TextReadToolName, TextReadToolDescription),
+      (TextReplaceToolName, TextReplaceToolDescription),
+      (JsonQueryToolName, JsonQueryToolDescription),
+      (TableQueryToolName, TableQueryToolDescription),
+      (HttpFetchToolName, HttpFetchToolDescription),
+      (ArchiveExtractToolName, ArchiveExtractToolDescription),
+      (ArchiveCreateToolName, ArchiveCreateToolDescription),
+    ]:
+      check name.len > 0
+      check description.len > 0
+
 suite "tool schemas — valid JSON with type=object":
   proc checkSchema(schema: string) =
     let j = parseJson(schema)
@@ -50,6 +71,26 @@ suite "tool schemas — valid JSON with type=object":
   test "report_finding": checkSchema(ReportFindingToolSchema)
   test "cancel_job":   checkSchema(CancelJobToolSchema)
   test "await":        checkSchema(AwaitToolSchema)
+
+  test "structured tools":
+    for schema in [
+      FsListToolSchema,
+      FsReadToolSchema,
+      FsWriteToolSchema,
+      FsMkdirToolSchema,
+      FsCopyToolSchema,
+      FsMoveToolSchema,
+      FsRemoveToolSchema,
+      TextSearchToolSchema,
+      TextReadToolSchema,
+      TextReplaceToolSchema,
+      JsonQueryToolSchema,
+      TableQueryToolSchema,
+      HttpFetchToolSchema,
+      ArchiveExtractToolSchema,
+      ArchiveCreateToolSchema,
+    ]:
+      checkSchema(schema)
 
 suite "required fields present in schemas":
   test "bash requires command":
@@ -80,6 +121,22 @@ suite "required fields present in schemas":
     let j = parseJson(CalcToolSchema)
     check j["required"][0].getStr() == "expression"
 
+  test "structured required fields are present":
+    check parseJson(FsListToolSchema)["required"][0].getStr() == "path"
+    check parseJson(FsReadToolSchema)["required"][0].getStr() == "path"
+    check parseJson(FsWriteToolSchema)["required"][0].getStr() == "path"
+    check parseJson(FsWriteToolSchema)["required"][1].getStr() == "content"
+    check parseJson(TextSearchToolSchema)["required"][0].getStr() == "pattern"
+    check parseJson(TextSearchToolSchema)["required"][1].getStr() == "path"
+    check parseJson(TextReadToolSchema)["required"][0].getStr() == "path"
+    check parseJson(TextReplaceToolSchema)["required"][0].getStr() == "path"
+    check parseJson(TextReplaceToolSchema)["required"][1].getStr() == "find"
+    check parseJson(JsonQueryToolSchema)["required"][0].getStr() == "op"
+    check parseJson(JsonQueryToolSchema)["required"][1].getStr() == "input"
+    check parseJson(HttpFetchToolSchema)["required"][0].getStr() == "url"
+    check parseJson(ArchiveExtractToolSchema)["required"][0].getStr() == "archive_path"
+    check parseJson(ArchiveCreateToolSchema)["required"][0].getStr() == "archive_path"
+
 suite "tool metadata matches runtime contracts":
 
   test "bash description reflects paddock execution":
@@ -102,3 +159,8 @@ suite "tool metadata matches runtime contracts":
 
   test "inspect_image description mentions default describe behavior":
     check InspectImageToolDescription.contains("detailed description")
+
+  test "structured descriptions mention composable intent":
+    check FsListToolDescription.contains("structured JSON")
+    check TextSearchToolDescription.contains("structured matches")
+    check TableQueryToolDescription.contains("structured tool envelope")

@@ -134,15 +134,21 @@ For tool and prompt stories, also include:
 - [ ] A tool HTTP respeita as políticas de allowlist e bloqueio de endereços privados já existentes
 - [ ] Há smoke tests cobrindo respostas de sucesso, erro HTTP e bloqueio de URL
 
-### [ ] US-006: Alinhar dispatch, categorias e registro das novas tools
+### [x] US-006: Alinhar dispatch, categorias e registro das novas tools
 **Description:** Como mantenedor do runtime, eu quero que a nova família estruturada seja registrada e despachada como camada principal para manter o sistema coerente.
 
 **Acceptance Criteria:**
-- [ ] As novas tools aparecem no registro nativo com descrições e schemas completos
-- [ ] A classificação de categorias nativas reflete a nova família estruturada
-- [ ] O dispatcher nativo reconhece e executa todas as novas tools
-- [ ] Outputs estruturados são serializados de forma consistente na história da conversa
-- [ ] Não há conflito nominal ambíguo entre tools novas e antigas
+- [x] As novas tools aparecem no registro nativo com descrições e schemas completos
+- [x] A classificação de categorias nativas reflete a nova família estruturada
+- [x] O dispatcher nativo reconhece e executa todas as novas tools
+- [x] Outputs estruturados são serializados de forma consistente na história da conversa
+- [x] Não há conflito nominal ambíguo entre tools novas e antigas
+
+**Story Snapshot:**
+- Registrada a família estruturada em `more_tools.nim` e `session_bootstrap.nim`
+- Introduzida a categoria `ntckStructured` em `native_tool_dispatch.nim`
+- Ligado o dispatcher nativo para `fs_*`, `text_*`, `json_query`, `table_query`, `http_fetch` e archive tools
+- Validado ponta a ponta com `t_more_tools`, `t_native_tool_dispatch`, `t_session_bootstrap`, `t_native_tools` e `nimble build`
 
 ### [ ] US-007: Ensinar o agente a preferir a nova superfície
 **Description:** Como operador do Donkey, eu quero que o agente escolha as novas tools estruturadas antes de `bash` para reduzir comportamento frágil e improvisado.

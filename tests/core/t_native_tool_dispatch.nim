@@ -7,6 +7,7 @@ suite "core native tool dispatch":
     check nativeToolCategoryOrder() == @[
       ntckLegacy,
       ntckShell,
+      ntckStructured,
       ntckWeb,
       ntckUtility,
       ntckSession,
@@ -18,6 +19,9 @@ suite "core native tool dispatch":
 
   test "classify agent tool":
     check classifyNativeTool("await") == @[ntckAgent]
+
+  test "classify structured tool":
+    check classifyNativeTool("json_query") == @[ntckStructured]
 
   test "classify session tool":
     check classifyNativeTool("manage_skills") == @[ntckSession]

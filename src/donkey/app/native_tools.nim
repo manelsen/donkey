@@ -20,6 +20,8 @@ import ./tools/fs_tools
 import ./tools/text_tools
 import ./tools/search_tools
 import ./tools/web_tools
+import ./tools/archive_tools
+import ./tools/data_tools
 import ./tools/utility_tools
 import ./tools/task_tools
 
@@ -28,6 +30,8 @@ export text_tools      # HashlineAnchor, EditFileOpKind, EditFileOp, hashline
                        # helpers, stripHtml, applyTodoOps
 export search_tools    # performFind, performFindWasm, performGrep, performGrepWasm
 export web_tools       # FetchHardMax, FetchDefaultMax, performFetch, performWebSearch
+export archive_tools   # performArchiveCreate, performArchiveExtract
+export data_tools      # runJsonQuery, runTableQuery
 export utility_tools   # performCalc, performRenderMermaid, performInspectImage,
                        # MermaidTempPrefix
 export task_tools      # performTask, nextJobId, buildTaskStartedText,
@@ -461,6 +465,13 @@ proc handledText(text: string): NativeToolResult {.gcsafe, raises: [].} =
 proc handledError(text: string): NativeToolResult {.gcsafe, raises: [].} =
   NativeToolResult(handled: true, text: text, resultKind: trkOperationalError)
 
+proc handledStructured(value: StructuredToolResult): NativeToolResult {.gcsafe, raises: [].} =
+  NativeToolResult(handled: true, text: value.toJson(), resultKind: value.kind)
+
+proc normalizedErrorMessage(text: string): string =
+  if text.startsWith("Error: "): text["Error: ".len .. ^1]
+  else: text
+
 func isOperationalErrorText(text: string): bool =
   text.startsWith("Error:") or
   text.startsWith("HTTP error ") or
@@ -719,6 +730,110 @@ proc executeWebNativeTool(tc: ToolCallRequest;
   else:
     return NativeToolResult(handled: false)
 
+proc executeStructuredNativeTool(tc: ToolCallRequest;
+                                 ctx: NativeCtx;
+                                 state: SessionState;
+                                 history: ConversationHistory;
+                                 j: JsonNode;
+                                ): Future[NativeToolResult] {.async.} =
+  discard state
+  discard history
+  case tc.name
+  of FsListToolName:
+    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsListToolName).valueOr:
+      return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
+    return handledStructured(performFsList(
+      pathCtx,
+      ctx.paddockDir,
+      recursive = j.getOrDefault("recursive").getBool(false),
+      pattern = j.getOrDefault("pattern").getStr("*"),
+      includeHidden = j.getOrDefault("include_hidden").getBool(false),
+    ))
+  of FsReadToolName:
+    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsReadToolName).valueOr:
+      return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
+    return handledStructured(performFsRead(
+      pathCtx,
+      ctx.paddockDir,
+      j.getOrDefault("format").getStr("text"),
+    ))
+  of FsWriteToolName:
+    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsWriteToolName).valueOr:
+      return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
+    if not j.hasKey("content"):
+      return handledStructured(usageErrorToolResult("content is required"))
+    return handledStructured(performFsWrite(
+      pathCtx,
+      ctx.paddockDir,
+      j.getOrDefault("mode").getStr("replace"),
+      j["content"],
+      j.getOrDefault("format").getStr("text"),
+    ))
+  of FsMkdirToolName:
+    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsMkdirToolName).valueOr:
+      return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
+    return handledStructured(performFsMkdir(pathCtx, ctx.paddockDir, j.getOrDefault("parents").getBool(false)))
+  of FsCopyToolName:
+    let cpCtx = parseCpMvContext(j, ctx.paddockDir, ctx.log, FsCopyToolName).valueOr:
+      return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
+    return handledStructured(performFsCopy(cpCtx.source, cpCtx.dest, ctx.paddockDir, j.getOrDefault("recursive").getBool(false)))
+  of FsMoveToolName:
+    let mvCtx = parseCpMvContext(j, ctx.paddockDir, ctx.log, FsMoveToolName).valueOr:
+      return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
+    return handledStructured(performFsMove(mvCtx.source, mvCtx.dest, ctx.paddockDir))
+  of FsRemoveToolName:
+    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsRemoveToolName).valueOr:
+      return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
+    return handledStructured(performFsRemove(pathCtx, ctx.paddockDir, j.getOrDefault("recursive").getBool(false)))
+  of TextSearchToolName:
+    let grepCtx = parseGrepContext(j, ctx.paddockDir, ctx.log, TextSearchToolName).valueOr:
+      return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
+    return handledStructured(performGrepStructured(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max))
+  of TextReadToolName:
+    let readCtx = parseReadFileContext(j, ctx.paddockDir, ctx.log, TextReadToolName).valueOr:
+      return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
+    return handledStructured(readStructuredTextSlice(readCtx.path, readCtx.startLine, readCtx.maxLines))
+  of TextReplaceToolName:
+    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, TextReplaceToolName).valueOr:
+      return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
+    let findText = j.getOrDefault("find").getStr("")
+    let replaceText = j.getOrDefault("replace").getStr("")
+    let count = j.getOrDefault("count").getInt(0)
+    return handledStructured(replaceStructuredText(pathCtx, findText, replaceText, count))
+  of JsonQueryToolName:
+    return handledStructured(runJsonQuery(j))
+  of TableQueryToolName:
+    return handledStructured(runTableQuery(j))
+  of HttpFetchToolName:
+    let fetchCtx = parseFetchContext(j, FetchDefaultMax).valueOr:
+      return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
+    let rules = toolWebRules(ctx, HttpFetchToolName)
+    return handledStructured(performFetchStructured(
+      ctx.http, fetchCtx.url,
+      expect = j.getOrDefault("expect").getStr("text"),
+      maxCh = fetchCtx.maxCh,
+      allowRules = rules,
+      fallbackAllowlist = ctx.webAllowlist,
+      policyLabel = HttpFetchToolName,
+    ))
+  of ArchiveExtractToolName:
+    let archivePath = j.getOrDefault("archive_path").getStr("")
+    let destination = j.getOrDefault("destination").getStr("")
+    return handledStructured(performArchiveExtract(archivePath, destination, ctx.paddockDir))
+  of ArchiveCreateToolName:
+    let archivePath = j.getOrDefault("archive_path").getStr("")
+    let inputsNode = j.getOrDefault("inputs")
+    if inputsNode.kind != JArray:
+      return handledStructured(usageErrorToolResult("inputs must be an array of strings"))
+    var inputs: seq[string] = @[]
+    for item in inputsNode:
+      if item.kind != JString:
+        return handledStructured(usageErrorToolResult("inputs must be an array of strings"))
+      inputs.add(item.getStr())
+    return handledStructured(performArchiveCreate(archivePath, inputs, ctx.paddockDir))
+  else:
+    return NativeToolResult(handled: false)
+
 proc executeUtilityNativeTool(tc: ToolCallRequest;
                               ctx: NativeCtx;
                               state: SessionState;
@@ -823,6 +938,7 @@ func categoryHandler(kind: NativeToolCategoryKind): NativeToolCategoryHandler =
   case kind
   of ntckLegacy: executeLegacyNativeTool
   of ntckShell: executeShellNativeTool
+  of ntckStructured: executeStructuredNativeTool
   of ntckWeb: executeWebNativeTool
   of ntckUtility: executeUtilityNativeTool
   of ntckSession: executeSessionNativeTool
