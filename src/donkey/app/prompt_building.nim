@@ -152,6 +152,9 @@ func buildToolLoopDoneText*(toolCallCount: int): string =
 
 func genericProviderErrorText*(errMsg: string): string =
   let lower = errMsg.toLowerAscii()
+  if lower.contains("tool_call_id") or lower.contains("tool result's tool id") or
+     lower.contains("tool call id"):
+    return "Desculpe, houve uma inconsistência interna ao continuar uma sequência longa de ferramentas. Tente pedir novamente em uma nova mensagem."
   if lower.contains("401") or lower.contains("403") or lower.contains("unauthorized") or lower.contains("api key"):
     return "Desculpe, houve um problema de autenticação com o provedor configurado."
   if lower.contains("400") or lower.contains("bad request") or lower.contains("invalid"):
@@ -164,8 +167,11 @@ func genericProviderErrorText*(errMsg: string): string =
 
 proc explainProviderError*(errorExplainFn: CompleteFn;
                           providerErr: string): string {.gcsafe, raises: [].} =
+  let fallback = genericProviderErrorText(providerErr)
+  if fallback.contains("sequência longa de ferramentas"):
+    return fallback
   if errorExplainFn.isNil:
-    return genericProviderErrorText(providerErr)
+    return fallback
   var h = newHistory()
   h.addUser(
     "Explique este erro de provedor para um usuário final em português do Brasil, " &
@@ -179,7 +185,7 @@ proc explainProviderError*(errorExplainFn: CompleteFn;
   let resp = safeComplete(errorExplainFn, req)
   if resp.isOk and resp.value.text.strip.len > 0:
     return resp.value.text.strip
-  genericProviderErrorText(providerErr)
+  fallback
 
 func filterThinking*(text: string): string =
   ## Removes completed <thinking>...</thinking> blocks.

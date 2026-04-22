@@ -1,4 +1,5 @@
 import std/unittest
+import results
 
 import donkey/domain/message
 import donkey/domain/more_tools
@@ -70,3 +71,13 @@ suite "prompt building":
     check suffix.contains("Use `bash` only when the task truly needs open-ended shell behavior")
     check suffix.contains("instead of `find`, `grep`, `sed`, `sort`, or `bash`")
 
+  test "explainProviderError bypasses LLM paraphrase for tool_call_id errors":
+    proc noisyExplainer(req: CompletionRequest): Result[CompletionResponse, string] =
+      ok(CompletionResponse(text: "mensagem ruim", inputTokens: 1, outputTokens: 1))
+
+    let explained = explainProviderError(
+      noisyExplainer,
+      """MiniMax API error 400 Bad Request: {"message":"invalid tool_call_id"}""",
+    )
+    check explained.contains("sequência longa de ferramentas")
+    check not explained.contains("mensagem ruim")

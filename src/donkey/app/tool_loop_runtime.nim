@@ -286,7 +286,7 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
 
 # ── Tool loop runner ──────────────────────────────────────────────────────────
 
-const MaxToolRoundsOrch* = 50   ## hard safety cap; loop ends earlier on repeated calls
+const MaxToolRoundsOrch* = 100  ## hard safety cap; loop ends earlier on repeated calls
 
 proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
                  toolInbox: AsyncQueue[AgentMessage];
