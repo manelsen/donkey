@@ -42,6 +42,29 @@ For tool and prompt stories, also include:
 - Promovido `trkUsageError` ao domínio para estabilizar o vocabulário do contrato
 - Cobertura adicionada em `tests/core/t_structured_tool_result.nim` e reforço em `tests/domain/t_message.nim`
 
+## Execution Plan
+
+### Parallel-safe now
+- `US-002`: structured filesystem tools
+- `US-003`: structured search and text tools
+- `US-005`: structured archive and HTTP tools
+- `US-004A`: core `json_query` and `table_query`
+
+### Integrate later
+- `US-004B`: make FS/search outputs flow naturally into `table_query`
+- `US-006`: register and dispatch the new family
+- `US-007`: teach the agent to prefer the new family
+- `US-008`: remove the legacy Unix-like family
+
+### Ownership boundaries
+- `US-002` owns `src/donkey/app/tools/fs_tools.nim`
+- `US-003` owns `src/donkey/app/tools/search_tools.nim` and `src/donkey/app/tools/text_tools.nim`
+- `US-005` owns `src/donkey/app/tools/web_tools.nim` and any new archive helper module
+- `US-004A` owns a new structured data module, e.g. `src/donkey/app/tools/data_tools.nim`
+- `US-006` is the first integration story allowed to touch `src/donkey/domain/more_tools.nim`, `src/donkey/app/native_tools.nim`, and `src/donkey/core/tooling/native_tool_dispatch.nim`
+- `US-007` is the first prompting story allowed to touch `src/donkey/app/prompt_building.nim` for structured-tool preference
+- `US-008` is the cleanup/removal phase and should run last
+
 ### [ ] US-002: Criar a nova família de tools de filesystem
 **Description:** Como agente, eu quero ferramentas nativas de filesystem orientadas a dados para listar, ler, escrever, copiar, mover, criar e remover sem depender de shell.
 
@@ -65,15 +88,23 @@ For tool and prompt stories, also include:
 - [ ] A nova superfície cobre os casos mais comuns hoje resolvidos com `grep`, `head`, `tail`, `wc`, `sort` e `sed`
 - [ ] Casos que não caibam nessa superfície permanecem explicitamente fora de escopo da tool, em vez de recriar shell disfarçada
 
-### [ ] US-004: Criar tools estruturadas para JSON e tabelas
-**Description:** Como agente, eu quero operar diretamente sobre JSON e coleções de linhas para compor fluxos no estilo Nu sem depender de `jq` ou parsing manual.
+### [ ] US-004A: Criar o núcleo estruturado para JSON e tabelas
+**Description:** Como agente, eu quero operar diretamente sobre JSON e coleções genéricas para compor fluxos no estilo Nu sem depender de `jq` ou parsing manual.
 
 **Acceptance Criteria:**
 - [ ] Existe uma tool `json_query` com operações como `get`, `set`, `delete` e `merge`
 - [ ] Existe uma tool `table_query` com operações como `select`, `where`, `sort` e `limit`
+- [ ] Há testes cobrindo filtros, ordenação e projeção em arrays/objetos genéricos
+- [ ] A documentação das tools deixa claro como compor resultados entre elas
+
+### [ ] US-004B: Integrar JSON e tabelas com as saídas estruturadas de FS e busca
+**Description:** Como agente, eu quero consumir naturalmente as saídas estruturadas de filesystem e busca com `table_query` para compor fluxos sem transformação textual ad hoc.
+
+**Acceptance Criteria:**
 - [ ] As saídas de listagem e busca podem ser consumidas por `table_query` sem transformação textual ad hoc
 - [ ] Há testes cobrindo filtros, ordenação e projeção em coleções reais de saída de tools
-- [ ] A documentação das tools deixa claro como compor resultados entre elas
+- [ ] Os envelopes JSON produzidos por FS e busca permanecem compatíveis com o contrato `donkey.native_tool/v1`
+- [ ] A integração não introduz `value_id` nem estado intermediário implícito
 
 ### [ ] US-005: Criar tools estruturadas de arquivos compactados e HTTP
 **Description:** Como agente, eu quero manipular arquivos compactados e requisições HTTP comuns sem cair em shell para tarefas repetitivas.
