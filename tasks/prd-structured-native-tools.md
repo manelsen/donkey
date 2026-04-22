@@ -88,7 +88,7 @@ For tool and prompt stories, also include:
 - [ ] A nova superfície cobre os casos mais comuns hoje resolvidos com `grep`, `head`, `tail`, `wc`, `sort` e `sed`
 - [ ] Casos que não caibam nessa superfície permanecem explicitamente fora de escopo da tool, em vez de recriar shell disfarçada
 
-### [ ] US-004A: Criar o núcleo estruturado para JSON e tabelas
+### [x] US-004A: Criar o núcleo estruturado para JSON e tabelas
 **Description:** Como agente, eu quero operar diretamente sobre JSON e coleções genéricas para compor fluxos no estilo Nu sem depender de `jq` ou parsing manual.
 
 **Acceptance Criteria:**
