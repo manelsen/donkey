@@ -11,14 +11,17 @@
 import std/[json, options, os, strutils, tables, times, unittest]
 import chronos
 import chronos/asyncsync
+import results
 import donkey/core/pipeops
 import donkey/core/log
 import donkey/domain/message
+import donkey/domain/more_tools
 import donkey/adapters/memory/md_file
 import donkey/config/clawhub_registry
 import donkey/config/skills_registry
 import donkey/app/session_state
 import donkey/app/native_tools
+import donkey/ports/http
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -45,6 +48,14 @@ proc makeCtxWithMemory(memory: MemoryRuntimePort; uid = UserId("test-user")): Na
 
 proc makeTc(name, inputJson: string): ToolCallRequest =
   ToolCallRequest(id: "call-1", name: name, inputJson: inputJson)
+
+proc mockHttp(status: int; body: string; errMsg = ""): HttpRuntimePort =
+  HttpRuntimePort(
+    get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      if errMsg.len > 0:
+        return err(errMsg)
+      ok(HttpResponse(status: status, body: body))
+  )
 
 proc setupInstalledRemoteSkill(home, slug: string;
                                scriptsToml = "";
@@ -875,40 +886,106 @@ suite "executeNativeTool — paddock path enforcement":
     check r.handled
     check r.text.contains(paddock)
 
-  test "find inside paddock works":
+  test "legacy unix-like tools are no longer dispatched":
     let ctx = ctxWithPaddock(paddock)
-    let tc  = makeTc("find", """{"path":".","pattern":"*.txt"}""")
-    let r   = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
-    check r.handled
-    check r.text.contains("safe.txt")
+    for tc in [
+      makeTc("find", """{"path":".","pattern":"*.txt"}"""),
+      makeTc("grep", """{"pattern":"safe","path":"safe.txt"}"""),
+      makeTc("sed", """{"expression":"s/a/b/","path":"safe.txt"}"""),
+      makeTc("wc", """{"path":"safe.txt"}"""),
+      makeTc("head", """{"path":"safe.txt"}"""),
+      makeTc("tail", """{"path":"safe.txt"}"""),
+      makeTc("sort", """{"path":"safe.txt"}"""),
+      makeTc("cp", """{"src":"safe.txt","dst":"copy.txt"}"""),
+      makeTc("mv", """{"src":"safe.txt","dst":"moved.txt"}"""),
+      makeTc("rm", """{"path":"safe.txt"}"""),
+      makeTc("mkdir", """{"path":"newdir"}"""),
+    ]:
+      let r = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
+      check not r.handled
 
-  test "find with absolute escape rejected":
-    let ctx = ctxWithPaddock(paddock)
-    let tc  = makeTc("find", """{"path":"/etc","pattern":"*"}""")
-    let r   = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
-    check r.handled
-    check r.text.startsWith("Error:")
-    check r.text.contains("outside paddock")
-    check r.resultKind == trkOperationalError
+suite "executeNativeTool — structured tools":
 
-  test "find with .. traversal rejected":
-    let ctx = ctxWithPaddock(paddock)
-    let tc  = makeTc("find", """{"path":"../../etc","pattern":"*"}""")
-    let r   = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
+  test "fs_list returns structured envelope":
+    let paddock = getTempDir() / ("donkey_struct_exec_fs_" & $epochTime().int)
+    createDir(paddock)
+    defer:
+      if dirExists(paddock): removeDir(paddock)
+    writeFile(paddock / "alpha.txt", "alpha\n")
+    var ctx = makeCtx()
+    ctx.paddockDir = paddock
+    let tc = makeTc(FsListToolName, """{"path":".","recursive":true}""")
+    let r = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
+    let parsed = parseJson(r.text)
     check r.handled
-    check r.text.startsWith("Error:")
+    check r.resultKind == trkOutput
+    check parsed["data"]["items"].len == 1
+    check parsed["data"]["items"][0]["path"].getStr() == "alpha.txt"
 
-  test "grep inside paddock works":
-    let ctx = ctxWithPaddock(paddock)
-    let tc  = makeTc("grep", """{"pattern":"safe","path":"safe.txt"}""")
-    let r   = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
+  test "text_search returns structured matches":
+    let paddock = getTempDir() / ("donkey_struct_exec_search_" & $epochTime().int)
+    createDir(paddock)
+    defer:
+      if dirExists(paddock): removeDir(paddock)
+    let target = paddock / "notes.txt"
+    writeFile(target, "alpha\nneedle beta\n")
+    var ctx = makeCtx()
+    ctx.paddockDir = paddock
+    let tc = makeTc(TextSearchToolName, """{"pattern":"needle","path":"notes.txt"}""")
+    let r = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
+    let parsed = parseJson(r.text)
     check r.handled
-    check r.text.contains("safe content")
+    check r.resultKind == trkOutput
+    check parsed["data"]["matches"][0]["line"].getInt() == 2
 
-  test "grep with absolute escape rejected":
-    let ctx = ctxWithPaddock(paddock)
-    let tc  = makeTc("grep", """{"pattern":"root","path":"/etc/passwd"}""")
-    let r   = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
+  test "json_query and table_query are dispatched natively":
+    let jq = waitFor executeNativeTool(
+      makeTc(JsonQueryToolName, """{"op":"get","input":{"user":{"name":"Ana"}},"path":["user","name"]}"""),
+      makeCtx(), newSessionState(), newHistory())
+    let jqParsed = parseJson(jq.text)
+    check jq.handled
+    check jq.resultKind == trkOutput
+    check jqParsed["data"]["value"].getStr() == "Ana"
+
+    let tq = waitFor executeNativeTool(
+      makeTc(TableQueryToolName, """{"rows":[{"name":"b","score":2},{"name":"a","score":1}],"sort":[{"field":"name","order":"asc"}]}"""),
+      makeCtx(), newSessionState(), newHistory())
+    let tqParsed = parseJson(tq.text)
+    check tq.handled
+    check tq.resultKind == trkOutput
+    check tqParsed["data"]["rows"][0]["name"].getStr() == "a"
+
+  test "http_fetch uses structured web result":
+    var ctx = makeCtx()
+    ctx.http = mockHttp(200, """{"ok":true}""")
+    let tc = makeTc(HttpFetchToolName, """{"url":"https://example.com/api","expect":"json"}""")
+    let r = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
+    let parsed = parseJson(r.text)
     check r.handled
-    check r.text.startsWith("Error:")
-    check r.text.contains("outside paddock")
+    check r.resultKind == trkOutput
+    check parsed["data"]["body"]["ok"].getBool()
+
+  test "archive_create and archive_extract are dispatched natively":
+    let paddock = getTempDir() / ("donkey_struct_exec_archive_" & $epochTime().int)
+    createDir(paddock)
+    createDir(paddock / "docs")
+    writeFile(paddock / "docs" / "notes.txt", "archive me\n")
+    defer:
+      if dirExists(paddock): removeDir(paddock)
+    var ctx = makeCtx()
+    ctx.paddockDir = paddock
+
+    let createTc = makeTc(ArchiveCreateToolName, """{"archive_path":"bundle.tgz","inputs":["docs"]}""")
+    let created = waitFor executeNativeTool(createTc, ctx, newSessionState(), newHistory())
+    let createdParsed = parseJson(created.text)
+    check created.handled
+    check created.resultKind == trkOutput
+    check createdParsed["data"]["entry_count"].getInt() == 1
+
+    let extractTc = makeTc(ArchiveExtractToolName, """{"archive_path":"bundle.tgz","destination":"restored"}""")
+    let extracted = waitFor executeNativeTool(extractTc, ctx, newSessionState(), newHistory())
+    let extractedParsed = parseJson(extracted.text)
+    check extracted.handled
+    check extracted.resultKind == trkOutput
+    check extractedParsed["data"]["entry_count"].getInt() > 0
+    check readFile(paddock / "restored" / "docs" / "notes.txt") == "archive me\n"

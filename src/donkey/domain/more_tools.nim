@@ -7,7 +7,9 @@ const
   BashToolName* = "bash"
   BashToolDescription* =
     "Execute a shell command and return stdout+stderr. " &
-    "Use for system operations, running scripts, git commands, and build tools. " &
+    "Use only when the structured fs_, text_, json_, table_, http_fetch, or archive tools do not cover the task. " &
+    "Prefer those tools for composable file and data work. " &
+    "Use bash for system operations, running scripts, git commands, and build tools. " &
     "Commands run inside the agent paddock when available."
   BashToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
@@ -257,6 +259,182 @@ const
     "\"prompt\":{\"type\":\"string\"," &
     "\"description\":\"What to analyze (default: describe this image)\"}}" &
     ",\"required\":[\"path\"]}"
+
+# ── structured native tools ──────────────────────────────────────────────────
+const
+  FsListToolName* = "fs_list"
+  FsListToolDescription* =
+    "List files or directories as structured JSON records with path, kind, size, and mtime. " &
+    "Use this instead of find when you want composable metadata."
+  FsListToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"Directory to list inside the current workspace\"}," &
+    "\"recursive\":{\"type\":\"boolean\",\"description\":\"Recurse into subdirectories (default: false)\"}," &
+    "\"pattern\":{\"type\":\"string\",\"description\":\"Glob pattern filter (default: *)\"}," &
+    "\"include_hidden\":{\"type\":\"boolean\",\"description\":\"Include dotfiles and dot-directories (default: false)\"}" &
+    "},\"required\":[\"path\"]}"
+
+  FsReadToolName* = "fs_read"
+  FsReadToolDescription* =
+    "Read a file as structured data. " &
+    "Formats: text, lines, json, bytes_meta. " &
+    "Use this instead of bash/cat when you need composable output."
+  FsReadToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"File path to read inside the current workspace\"}," &
+    "\"format\":{\"type\":\"string\",\"enum\":[\"text\",\"lines\",\"json\",\"bytes_meta\"]," &
+    "\"description\":\"How to interpret the file contents (default: text)\"}" &
+    "},\"required\":[\"path\"]}"
+
+  FsWriteToolName* = "fs_write"
+  FsWriteToolDescription* =
+    "Write structured content to a file. " &
+    "Modes: create, replace, append. " &
+    "Formats: text, lines, json."
+  FsWriteToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"File path to write inside the current workspace\"}," &
+    "\"mode\":{\"type\":\"string\",\"enum\":[\"create\",\"replace\",\"append\"]," &
+    "\"description\":\"Write mode (default: replace)\"}," &
+    "\"format\":{\"type\":\"string\",\"enum\":[\"text\",\"lines\",\"json\"]," &
+    "\"description\":\"How to serialize content (default: text)\"}," &
+    "\"content\":{\"description\":\"Structured content payload\"}" &
+    "},\"required\":[\"path\",\"content\"]}"
+
+  FsMkdirToolName* = "fs_mkdir"
+  FsMkdirToolDescription* =
+    "Create a directory inside the current workspace. " &
+    "Set parents=true to create intermediate directories."
+  FsMkdirToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"Directory path to create\"}," &
+    "\"parents\":{\"type\":\"boolean\",\"description\":\"Create intermediate directories (default: false)\"}" &
+    "},\"required\":[\"path\"]}"
+
+  FsCopyToolName* = "fs_copy"
+  FsCopyToolDescription* =
+    "Copy a file or directory tree inside the current workspace. " &
+    "Set recursive=true when copying directories."
+  FsCopyToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"source\":{\"type\":\"string\",\"description\":\"Source path inside the current workspace\"}," &
+    "\"dest\":{\"type\":\"string\",\"description\":\"Destination path inside the current workspace\"}," &
+    "\"recursive\":{\"type\":\"boolean\",\"description\":\"Required for directory copies\"}" &
+    "},\"required\":[\"source\",\"dest\"]}"
+
+  FsMoveToolName* = "fs_move"
+  FsMoveToolDescription* =
+    "Move or rename a file or directory inside the current workspace."
+  FsMoveToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"source\":{\"type\":\"string\",\"description\":\"Source path inside the current workspace\"}," &
+    "\"dest\":{\"type\":\"string\",\"description\":\"Destination path inside the current workspace\"}" &
+    "},\"required\":[\"source\",\"dest\"]}"
+
+  FsRemoveToolName* = "fs_remove"
+  FsRemoveToolDescription* =
+    "Remove a file or directory inside the current workspace. " &
+    "Set recursive=true when removing directories."
+  FsRemoveToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"Path to remove inside the current workspace\"}," &
+    "\"recursive\":{\"type\":\"boolean\",\"description\":\"Required for directory removal\"}" &
+    "},\"required\":[\"path\"]}"
+
+  TextSearchToolName* = "text_search"
+  TextSearchToolDescription* =
+    "Search for a literal string in a file or directory and return structured matches. " &
+    "Use this instead of grep when you want composable rows."
+  TextSearchToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"pattern\":{\"type\":\"string\",\"description\":\"Literal string pattern to search for\"}," &
+    "\"path\":{\"type\":\"string\",\"description\":\"File or directory to search inside the current workspace\"}," &
+    "\"recursive\":{\"type\":\"boolean\",\"description\":\"Recurse into subdirectories (default: true)\"}," &
+    "\"max\":{\"type\":\"integer\",\"description\":\"Max matches (default: 50)\"}" &
+    "},\"required\":[\"pattern\",\"path\"]}"
+
+  TextReadToolName* = "text_read"
+  TextReadToolDescription* =
+    "Read a slice of text as structured line objects with stable anchors. " &
+    "Use this for partial reads and follow-up composition."
+  TextReadToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"File path to read\"}," &
+    "\"start_line\":{\"type\":\"integer\",\"description\":\"First line to return (default: 1)\"}," &
+    "\"max_lines\":{\"type\":\"integer\",\"description\":\"Maximum lines to return (default: 200)\"}" &
+    "},\"required\":[\"path\"]}"
+
+  TextReplaceToolName* = "text_replace"
+  TextReplaceToolDescription* =
+    "Apply a literal text replacement and return a structured summary. " &
+    "This is for simple declarative replacements, not regex."
+  TextReplaceToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"File path to update\"}," &
+    "\"find\":{\"type\":\"string\",\"description\":\"Literal text to find\"}," &
+    "\"replace\":{\"type\":\"string\",\"description\":\"Replacement text\"}," &
+    "\"count\":{\"type\":\"integer\",\"description\":\"Max replacements; 0 means unlimited\"}" &
+    "},\"required\":[\"path\",\"find\"]}"
+
+  JsonQueryToolName* = "json_query"
+  JsonQueryToolDescription* =
+    "Query or transform JSON with structured operations. " &
+    "Supports get, set, delete, and merge."
+  JsonQueryToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"op\":{\"type\":\"string\",\"enum\":[\"get\",\"set\",\"delete\",\"merge\"]," &
+    "\"description\":\"JSON operation to run\"}," &
+    "\"input\":{\"description\":\"Input JSON value\"}," &
+    "\"path\":{\"description\":\"Path as string, integer, or array of segments for get/set/delete\"}," &
+    "\"value\":{\"description\":\"Replacement value for set\"}," &
+    "\"patch\":{\"description\":\"Patch object for merge\"}" &
+    "},\"required\":[\"op\",\"input\"]}"
+
+  TableQueryToolName* = "table_query"
+  TableQueryToolDescription* =
+    "Filter, sort, project, and limit structured row collections. " &
+    "Accepts either rows directly or a full structured tool envelope via input."
+  TableQueryToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"rows\":{\"type\":\"array\",\"description\":\"Direct row array input\"}," &
+    "\"input\":{\"description\":\"Structured tool envelope or raw object/array containing rows\"}," &
+    "\"rows_path\":{\"description\":\"Optional explicit path to the row array inside input\"}," &
+    "\"where\":{\"type\":\"array\",\"description\":\"Filter clauses with field, op, and value\"}," &
+    "\"select\":{\"type\":\"array\",\"description\":\"Fields or field paths to project\"}," &
+    "\"sort\":{\"type\":\"array\",\"description\":\"Sort specs with field and order\"}," &
+    "\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of output rows\"}" &
+    "},\"required\":[]}"
+
+  HttpFetchToolName* = "http_fetch"
+  HttpFetchToolDescription* =
+    "Fetch a URL and return structured HTTP data including status and parsed body. " &
+    "Respects the same public-URL restrictions as fetch."
+  HttpFetchToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"url\":{\"type\":\"string\",\"description\":\"Public URL to fetch\"}," &
+    "\"expect\":{\"type\":\"string\",\"enum\":[\"text\",\"json\"]," &
+    "\"description\":\"Expected body format (default: text)\"}," &
+    "\"max_chars\":{\"type\":\"integer\",\"description\":\"Max characters to keep for text responses\"}" &
+    "},\"required\":[\"url\"]}"
+
+  ArchiveExtractToolName* = "archive_extract"
+  ArchiveExtractToolDescription* =
+    "Extract a zip or tar archive into a destination directory inside the current workspace."
+  ArchiveExtractToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"archive_path\":{\"type\":\"string\",\"description\":\"Archive path inside the current workspace\"}," &
+    "\"destination\":{\"type\":\"string\",\"description\":\"Destination directory inside the current workspace\"}" &
+    "},\"required\":[\"archive_path\",\"destination\"]}"
+
+  ArchiveCreateToolName* = "archive_create"
+  ArchiveCreateToolDescription* =
+    "Create a zip or tar archive from files or directories inside the current workspace."
+  ArchiveCreateToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"archive_path\":{\"type\":\"string\",\"description\":\"Archive output path inside the current workspace\"}," &
+    "\"inputs\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}," &
+    "\"description\":\"Files or directories to include\"}" &
+    "},\"required\":[\"archive_path\",\"inputs\"]}"
 
 # ── ask ───────────────────────────────────────────────────────────────────────
 const

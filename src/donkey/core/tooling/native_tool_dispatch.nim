@@ -4,6 +4,7 @@ type
   NativeToolCategoryKind* = enum
     ntckLegacy
     ntckShell
+    ntckStructured
     ntckWeb
     ntckUtility
     ntckSession
@@ -20,17 +21,24 @@ const
     "bash",
     "read_file",
     "edit_file",
-    "find",
-    "grep",
-    "sed",
-    "wc",
-    "head",
-    "tail",
-    "sort",
-    "cp",
-    "mv",
-    "rm",
-    "mkdir",
+  ]
+
+  StructuredNativeTools* = [
+    "fs_list",
+    "fs_read",
+    "fs_write",
+    "fs_mkdir",
+    "fs_copy",
+    "fs_move",
+    "fs_remove",
+    "text_search",
+    "text_read",
+    "text_replace",
+    "json_query",
+    "table_query",
+    "http_fetch",
+    "archive_extract",
+    "archive_create",
   ]
 
   WebNativeTools* = [
@@ -64,13 +72,14 @@ func categoryTools(kind: NativeToolCategoryKind): seq[string] =
   case kind
   of ntckLegacy: @LegacyNativeTools
   of ntckShell: @ShellNativeTools
+  of ntckStructured: @StructuredNativeTools
   of ntckWeb: @WebNativeTools
   of ntckUtility: @UtilityNativeTools
   of ntckSession: @SessionNativeTools
   of ntckAgent: @AgentNativeTools
 
 func nativeToolCategoryOrder*(): seq[NativeToolCategoryKind] =
-  @[ntckLegacy, ntckShell, ntckWeb, ntckUtility, ntckSession, ntckAgent]
+  @[ntckLegacy, ntckShell, ntckStructured, ntckWeb, ntckUtility, ntckSession, ntckAgent]
 
 func classifyNativeTool*(name: string): seq[NativeToolCategoryKind] =
   for kind in nativeToolCategoryOrder():

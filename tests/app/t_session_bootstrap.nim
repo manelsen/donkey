@@ -154,6 +154,34 @@ model = "gemini-2.5-flash"
     let bundled = withNativeTools(base)
     check bundled.tools.len >= nativeSessionTools().len
     check bundled.tools.anyIt(it.name == BashToolName)
+    for legacyName in [
+      FindToolName,
+      GrepToolName,
+      SedToolName,
+      WcToolName,
+      HeadToolName,
+      TailToolName,
+      SortToolName,
+      CpToolName,
+      MvToolName,
+      RmToolName,
+      MkdirToolName,
+    ]:
+      check not bundled.tools.anyIt(it.name == legacyName)
+    for name in [
+      FsListToolName,
+      FsReadToolName,
+      FsWriteToolName,
+      TextSearchToolName,
+      TextReadToolName,
+      TextReplaceToolName,
+      JsonQueryToolName,
+      TableQueryToolName,
+      HttpFetchToolName,
+      ArchiveExtractToolName,
+      ArchiveCreateToolName,
+    ]:
+      check bundled.tools.anyIt(it.name == name)
 
   test "nativeSessionTools only exposes web_search when Brave is configured":
     let hadBrave = existsEnv("BRAVE_API_KEY")

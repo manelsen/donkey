@@ -4,9 +4,10 @@
 ## the edit_file tool.  stripHtml is used by the fetch tool.
 ## applyTodoOps manages the session todo list.
 
-import std/[algorithm, json, strutils, options, sequtils]
+import std/[algorithm, json, options, os, sequtils, strutils]
 import nimcrypto/sha2
 import results
+import ../../core/tooling/structured_tool_result
 import ../session_state
 
 # ── Hashline types ────────────────────────────────────────────────────────────
@@ -74,6 +75,87 @@ proc renderHashlineSlice*(content: string; startLine, maxLines: int): string {.g
     result.add(formatHashlineLine(idx, lines[idx - 1]))
     if idx < lastLine:
       result.add('\n')
+
+proc readStructuredTextSlice*(path: string; startLine, maxLines: int): StructuredToolResult {.gcsafe, raises: [].} =
+  if path.strip().len == 0:
+    return usageErrorToolResult("path is required")
+  if startLine < 1:
+    return usageErrorToolResult("start_line must be >= 1")
+  if maxLines < 1:
+    return usageErrorToolResult("max_lines must be >= 1")
+  if not fileExists(path):
+    return operationalErrorToolResult("path not found: " & path)
+  try:
+    let content = readFile(path)
+    let lines = splitEditableLines(content)
+    if lines.len == 0 or startLine > lines.len:
+      return successToolResult(%*{
+        "path": path,
+        "start_line": startLine,
+        "end_line": startLine - 1,
+        "count": 0,
+        "lines": newJArray(),
+      })
+
+    let endLine = min(lines.len, startLine + maxLines - 1)
+    var lineItems = newJArray()
+    for idx in startLine .. endLine:
+      lineItems.add(%*{
+        "line": idx,
+        "text": lines[idx - 1],
+        "anchor": formatHashlineRef(idx, lines[idx - 1]),
+      })
+    successToolResult(%*{
+      "path": path,
+      "start_line": startLine,
+      "end_line": endLine,
+      "count": lineItems.len,
+      "lines": lineItems,
+    })
+  except CatchableError as e:
+    operationalErrorToolResult(e.msg)
+
+proc replaceLiteralLimit(content, needle, replacement: string; maxCount: int): tuple[text: string, replacements: int] {.gcsafe, raises: [].} =
+  if needle.len == 0:
+    return (content, 0)
+  var cursor = 0
+  while cursor < content.len:
+    if maxCount > 0 and result.replacements >= maxCount:
+      break
+    let foundAt = content.find(needle, cursor)
+    if foundAt < 0:
+      break
+    result.text.add(content[cursor ..< foundAt])
+    result.text.add(replacement)
+    cursor = foundAt + needle.len
+    inc result.replacements
+  if cursor < content.len:
+    result.text.add(content[cursor .. ^1])
+  elif result.replacements == 0:
+    result.text = content
+
+proc replaceStructuredText*(path, findText, replaceText: string; count: int): StructuredToolResult {.gcsafe, raises: [].} =
+  if path.strip().len == 0:
+    return usageErrorToolResult("path is required")
+  if findText.len == 0:
+    return usageErrorToolResult("find text is required")
+  if count < 0:
+    return usageErrorToolResult("count must be >= 0")
+  if not fileExists(path):
+    return operationalErrorToolResult("path not found: " & path)
+  try:
+    let original = readFile(path)
+    let replaced = replaceLiteralLimit(original, findText, replaceText, count)
+    let changed = replaced.replacements > 0
+    if changed:
+      writeFile(path, replaced.text)
+    successToolResult(%*{
+      "path": path,
+      "changed": changed,
+      "replacements": replaced.replacements,
+    })
+  except CatchableError as e:
+    operationalErrorToolResult(e.msg)
 
 proc parseHashlineAnchor*(raw: string): Result[HashlineAnchor, string] {.gcsafe, raises: [].} =
   let trimmed = raw.strip()

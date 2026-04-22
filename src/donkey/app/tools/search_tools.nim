@@ -6,8 +6,9 @@
 ## All three internal traversal procs (walkFind, grepFile, grepDir) log
 ## warnings on CatchableError instead of silently discarding them.
 
-import std/[os, strutils, sequtils]
+import std/[json, os, strutils, sequtils]
 import ../../core/log
+import ../../core/tooling/structured_tool_result
 import ../../domain/calc  # globMatch
 import ../../infra/sandbox/wasm_tools
 
@@ -42,6 +43,63 @@ proc performFind*(path, pattern, kind: string; max: int): string {.gcsafe, raise
   walkFind(path, pattern, kind, max, results)
   if results.len == 0: return "(no matches)"
   results.join("\n")
+
+proc addFindItem(path: string; kind: string; max: int; items: var seq[JsonNode]) {.gcsafe, raises: [].} =
+  if items.len < max:
+    items.add(%*{"path": path, "kind": kind})
+
+proc walkFindStructured(path, pattern, kind: string; max: int;
+                        items: var seq[JsonNode]) {.gcsafe, raises: [].} =
+  if items.len >= max: return
+  try:
+    for entry in walkDir(path):
+      let name = splitPath(entry.path).tail
+      case entry.kind
+      of pcFile:
+        if kind != "dir" and globMatch(pattern, name):
+          addFindItem(entry.path, "file", max, items)
+          if items.len >= max: return
+      of pcDir:
+        if kind != "file" and globMatch(pattern, name):
+          addFindItem(entry.path & "/", "dir", max, items)
+          if items.len >= max: return
+        walkFindStructured(entry.path, pattern, kind, max, items)
+      of pcLinkToFile, pcLinkToDir:
+        discard
+  except CatchableError as e:
+    {.cast(gcsafe).}:
+      searchLog.warn("walkFindStructured error at " & path & ": " & e.msg)
+
+proc performFindStructured*(path, pattern, kind: string; max: int): StructuredToolResult {.gcsafe, raises: [].} =
+  if path.strip().len == 0:
+    return usageErrorToolResult("path is required")
+  if pattern.strip().len == 0:
+    return usageErrorToolResult("pattern is required")
+  if max < 1:
+    return usageErrorToolResult("max must be >= 1")
+  let normalizedKind = if kind.len == 0: "any" else: kind
+  if normalizedKind notin ["any", "file", "dir"]:
+    return usageErrorToolResult("kind must be one of: any, file, dir")
+  if not dirExists(path) and not fileExists(path):
+    return operationalErrorToolResult("path not found: " & path)
+
+  var items: seq[JsonNode] = @[]
+  if fileExists(path):
+    let fileKind =
+      if normalizedKind == "dir": ""
+      else: "file"
+    if fileKind.len > 0 and globMatch(pattern, splitPath(path).tail):
+      addFindItem(path, fileKind, max, items)
+  else:
+    walkFindStructured(path, pattern, if normalizedKind == "any": "" else: normalizedKind, max, items)
+
+  successToolResult(%*{
+    "path": path,
+    "pattern": pattern,
+    "kind": normalizedKind,
+    "count": items.len,
+    "items": items,
+  })
 
 proc performFindWasm*(path, pattern, kind: string; max: int): string {.gcsafe, raises: [].} =
   ## Find via WASM (go-busybox) — sandboxed execution.
@@ -112,6 +170,65 @@ proc performGrep*(pattern, path: string; recursive: bool;
     return "Error: path not found: " & path
   if results.len == 0: return "(no matches)"
   results.join("\n")
+
+proc grepFileStructured(path, pattern: string; max: int;
+                        matches: var seq[JsonNode]) {.gcsafe, raises: [].} =
+  try:
+    var lineNum = 0
+    for line in lines(path):
+      inc lineNum
+      if line.find(pattern) >= 0:
+        matches.add(%*{
+          "path": path,
+          "line": lineNum,
+          "text": line,
+        })
+        if matches.len >= max: return
+  except CatchableError as e:
+    {.cast(gcsafe).}:
+      searchLog.warn("grepFileStructured error on " & path & ": " & e.msg)
+
+proc grepDirStructured(path, pattern: string; recursive: bool; max: int;
+                       matches: var seq[JsonNode]) {.gcsafe, raises: [].} =
+  try:
+    for entry in walkDir(path):
+      if matches.len >= max: return
+      case entry.kind
+      of pcFile:
+        grepFileStructured(entry.path, pattern, max, matches)
+      of pcDir:
+        if recursive:
+          grepDirStructured(entry.path, pattern, recursive, max, matches)
+      of pcLinkToFile, pcLinkToDir:
+        discard
+  except CatchableError as e:
+    {.cast(gcsafe).}:
+      searchLog.warn("grepDirStructured error at " & path & ": " & e.msg)
+
+proc performGrepStructured*(pattern, path: string; recursive: bool;
+                            max: int): StructuredToolResult {.gcsafe, raises: [].} =
+  if pattern.len == 0:
+    return usageErrorToolResult("empty pattern")
+  if path.strip().len == 0:
+    return usageErrorToolResult("path is required")
+  if max < 1:
+    return usageErrorToolResult("max must be >= 1")
+  if not fileExists(path) and not dirExists(path):
+    return operationalErrorToolResult("path not found: " & path)
+
+  var matches: seq[JsonNode] = @[]
+  if fileExists(path):
+    grepFileStructured(path, pattern, max, matches)
+  else:
+    grepDirStructured(path, pattern, recursive, max, matches)
+
+  successToolResult(%*{
+    "path": path,
+    "pattern": pattern,
+    "recursive": recursive,
+    "count": matches.len,
+    "matches": matches,
+  })
 
 proc performGrepWasm*(pattern, path: string; recursive: bool;
                       max: int): string {.gcsafe, raises: [].} =
