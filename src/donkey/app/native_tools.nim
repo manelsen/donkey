@@ -964,7 +964,7 @@ proc executeNativeTool*(tc:      ToolCallRequest;
                        ): Future[NativeToolResult] {.async.} =
   let j = try: parseJson(tc.inputJson)
           except: newJObject()
-  for category in nativeToolCategoryOrder():
+  for category in classifyNativeTool(tc.name):
     let categoryResult = await executeNativeCategory(tc, ctx, state, history, j, category)
     if categoryResult.handled:
       return categoryResult

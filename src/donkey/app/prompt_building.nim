@@ -78,7 +78,10 @@ func orchToolsSuffix*(tools: seq[ToolDescription]): string =
     result.add "When the user asks you to test, audit, or list tool status, ground the answer in the actual tool results from this turn. " &
                "Report status per tool, and if a tool failed, cite the exact tool name and error text. " &
                "Do not collapse mixed results into a generic request-error message when some tool calls succeeded.\n\n"
-  if tools.anyIt(it.name == ReadFileToolName) or tools.anyIt(it.name == FindToolName) or tools.anyIt(it.name == GrepToolName):
+  if tools.anyIt(it.name == ReadFileToolName) or tools.anyIt(it.name == FsListToolName) or
+      tools.anyIt(it.name == FsReadToolName) or tools.anyIt(it.name == FsWriteToolName) or
+      tools.anyIt(it.name == TextSearchToolName) or tools.anyIt(it.name == TextReadToolName) or
+      tools.anyIt(it.name == TextReplaceToolName):
     result.add "Local file tools are restricted to the current workspace. Use relative paths, `.` or `/workspace` for workspace root. Do not use `/` unless you literally mean the container root, which will usually be rejected.\n\n"
   for td in tools:
     result.add &"- **{td.name}**: {td.description}\n"

@@ -160,15 +160,15 @@ For tool and prompt stories, also include:
 - [x] O agente consegue realizar um fluxo comum de FS + busca + JSON sem usar `bash`
 - [x] Os testes/smokes de tool loop confirmam adoção da trilha estruturada em casos representativos
 
-### [ ] US-008: Remover a família antiga de tools Unix-like
+### [x] US-008: Remover a família antiga de tools Unix-like
 **Description:** Como mantenedor do Donkey, eu quero eliminar a superfície antiga para evitar duplicidade, ambiguidade e manutenção em paralelo.
 
 **Acceptance Criteria:**
-- [ ] Existe uma lista explícita das tools antigas que serão removidas
-- [ ] `find`, `grep`, `sed`, `wc`, `head`, `tail`, `sort`, `cp`, `mv`, `rm` e `mkdir` deixam de ser a superfície primária
-- [ ] O código morto ou legado relacionado a essa família é removido ou isolado de forma clara
-- [ ] A documentação e o prompting não fazem mais referência às tools antigas como trilha principal
-- [ ] Há testes cobrindo os fluxos substitutos com a nova família estruturada
+- [x] Existe uma lista explícita das tools antigas que serão removidas
+- [x] `find`, `grep`, `sed`, `wc`, `head`, `tail`, `sort`, `cp`, `mv`, `rm` e `mkdir` deixam de ser a superfície primária
+- [x] O código morto ou legado relacionado a essa família é removido ou isolado de forma clara
+- [x] A documentação e o prompting não fazem mais referência às tools antigas como trilha principal
+- [x] Há testes cobrindo os fluxos substitutos com a nova família estruturada
 
 ## Functional Requirements
 1. FR-1: O sistema deve expor uma nova família de tools nativas orientadas a dados com entrada e saída em JSON textual estável.

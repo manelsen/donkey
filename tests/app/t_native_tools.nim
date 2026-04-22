@@ -886,43 +886,23 @@ suite "executeNativeTool — paddock path enforcement":
     check r.handled
     check r.text.contains(paddock)
 
-  test "find inside paddock works":
+  test "legacy unix-like tools are no longer dispatched":
     let ctx = ctxWithPaddock(paddock)
-    let tc  = makeTc("find", """{"path":".","pattern":"*.txt"}""")
-    let r   = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
-    check r.handled
-    check r.text.contains("safe.txt")
-
-  test "find with absolute escape rejected":
-    let ctx = ctxWithPaddock(paddock)
-    let tc  = makeTc("find", """{"path":"/etc","pattern":"*"}""")
-    let r   = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
-    check r.handled
-    check r.text.startsWith("Error:")
-    check r.text.contains("outside paddock")
-    check r.resultKind == trkOperationalError
-
-  test "find with .. traversal rejected":
-    let ctx = ctxWithPaddock(paddock)
-    let tc  = makeTc("find", """{"path":"../../etc","pattern":"*"}""")
-    let r   = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
-    check r.handled
-    check r.text.startsWith("Error:")
-
-  test "grep inside paddock works":
-    let ctx = ctxWithPaddock(paddock)
-    let tc  = makeTc("grep", """{"pattern":"safe","path":"safe.txt"}""")
-    let r   = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
-    check r.handled
-    check r.text.contains("safe content")
-
-  test "grep with absolute escape rejected":
-    let ctx = ctxWithPaddock(paddock)
-    let tc  = makeTc("grep", """{"pattern":"root","path":"/etc/passwd"}""")
-    let r   = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
-    check r.handled
-    check r.text.startsWith("Error:")
-    check r.text.contains("outside paddock")
+    for tc in [
+      makeTc("find", """{"path":".","pattern":"*.txt"}"""),
+      makeTc("grep", """{"pattern":"safe","path":"safe.txt"}"""),
+      makeTc("sed", """{"expression":"s/a/b/","path":"safe.txt"}"""),
+      makeTc("wc", """{"path":"safe.txt"}"""),
+      makeTc("head", """{"path":"safe.txt"}"""),
+      makeTc("tail", """{"path":"safe.txt"}"""),
+      makeTc("sort", """{"path":"safe.txt"}"""),
+      makeTc("cp", """{"src":"safe.txt","dst":"copy.txt"}"""),
+      makeTc("mv", """{"src":"safe.txt","dst":"moved.txt"}"""),
+      makeTc("rm", """{"path":"safe.txt"}"""),
+      makeTc("mkdir", """{"path":"newdir"}"""),
+    ]:
+      let r = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
+      check not r.handled
 
 suite "executeNativeTool — structured tools":
 

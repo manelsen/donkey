@@ -23,6 +23,11 @@ suite "core native tool dispatch":
   test "classify structured tool":
     check classifyNativeTool("json_query") == @[ntckStructured]
 
+  test "legacy unix-like tools are no longer classified":
+    for name in ["find", "grep", "sed", "wc", "head", "tail", "sort", "cp", "mv", "rm", "mkdir"]:
+      check classifyNativeTool(name).len == 0
+      check not isKnownNativeTool(name)
+
   test "classify session tool":
     check classifyNativeTool("manage_skills") == @[ntckSession]
 

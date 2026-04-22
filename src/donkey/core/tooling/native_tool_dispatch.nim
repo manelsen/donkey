@@ -21,17 +21,6 @@ const
     "bash",
     "read_file",
     "edit_file",
-    "find",
-    "grep",
-    "sed",
-    "wc",
-    "head",
-    "tail",
-    "sort",
-    "cp",
-    "mv",
-    "rm",
-    "mkdir",
   ]
 
   StructuredNativeTools* = [
