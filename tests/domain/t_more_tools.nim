@@ -141,6 +141,7 @@ suite "tool metadata matches runtime contracts":
 
   test "bash description reflects paddock execution":
     check BashToolDescription.contains("paddock")
+    check BashToolDescription.contains("Prefer those tools")
 
   test "grep schema declares literal search":
     let j = parseJson(GrepToolSchema)

@@ -150,15 +150,15 @@ For tool and prompt stories, also include:
 - Ligado o dispatcher nativo para `fs_*`, `text_*`, `json_query`, `table_query`, `http_fetch` e archive tools
 - Validado ponta a ponta com `t_more_tools`, `t_native_tool_dispatch`, `t_session_bootstrap`, `t_native_tools` e `nimble build`
 
-### [ ] US-007: Ensinar o agente a preferir a nova superfície
+### [x] US-007: Ensinar o agente a preferir a nova superfície
 **Description:** Como operador do Donkey, eu quero que o agente escolha as novas tools estruturadas antes de `bash` para reduzir comportamento frágil e improvisado.
 
 **Acceptance Criteria:**
-- [ ] O prompt e/ou descrições de tools instruem explicitamente o agente a preferir as tools estruturadas a `bash`
-- [ ] Há orientação explícita para preferir JSON estruturado a parsing textual
-- [ ] Há orientação explícita sobre quando ainda usar `bash`
-- [ ] O agente consegue realizar um fluxo comum de FS + busca + JSON sem usar `bash`
-- [ ] Os testes/smokes de tool loop confirmam adoção da trilha estruturada em casos representativos
+- [x] O prompt e/ou descrições de tools instruem explicitamente o agente a preferir as tools estruturadas a `bash`
+- [x] Há orientação explícita para preferir JSON estruturado a parsing textual
+- [x] Há orientação explícita sobre quando ainda usar `bash`
+- [x] O agente consegue realizar um fluxo comum de FS + busca + JSON sem usar `bash`
+- [x] Os testes/smokes de tool loop confirmam adoção da trilha estruturada em casos representativos
 
 ### [ ] US-008: Remover a família antiga de tools Unix-like
 **Description:** Como mantenedor do Donkey, eu quero eliminar a superfície antiga para evitar duplicidade, ambiguidade e manutenção em paralelo.

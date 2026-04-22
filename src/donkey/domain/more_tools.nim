@@ -7,7 +7,9 @@ const
   BashToolName* = "bash"
   BashToolDescription* =
     "Execute a shell command and return stdout+stderr. " &
-    "Use for system operations, running scripts, git commands, and build tools. " &
+    "Use only when the structured fs_, text_, json_, table_, http_fetch, or archive tools do not cover the task. " &
+    "Prefer those tools for composable file and data work. " &
+    "Use bash for system operations, running scripts, git commands, and build tools. " &
     "Commands run inside the agent paddock when available."
   BashToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
