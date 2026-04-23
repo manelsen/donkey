@@ -989,3 +989,17 @@ suite "executeNativeTool — structured tools":
     check extracted.resultKind == trkOutput
     check extractedParsed["data"]["entry_count"].getInt() > 0
     check readFile(paddock / "restored" / "docs" / "notes.txt") == "archive me\n"
+
+  test "inspect_image resolves relative paths inside the paddock":
+    let paddock = getTempDir() / ("donkey_struct_exec_inspect_" & $epochTime().int)
+    createDir(paddock)
+    defer:
+      if dirExists(paddock): removeDir(paddock)
+    writeFile(paddock / "sample.png", "not really a png but enough for path resolution")
+    var ctx = makeCtx()
+    ctx.paddockDir = paddock
+    let tc = makeTc(InspectImageToolName, """{"path":"sample.png","prompt":"describe"}""")
+    let r = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
+    check r.handled
+    check r.resultKind == trkOutput
+    check r.text == "stub"

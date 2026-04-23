@@ -338,10 +338,15 @@ proc parseMermaidContext*(j: JsonNode): Result[MermaidContext, string] {.gcsafe,
     proc(d: string): Result[MermaidContext, string] =
       ok(MermaidContext(diagram: d))
 
-proc parseInspectImageContext*(j: JsonNode): Result[InspectImageContext, string] {.gcsafe, raises: [].} =
+proc parseInspectImageContext*(j: JsonNode;
+                               paddockDir: string;
+                               log: Logger = Logger();
+                               toolName = InspectImageToolName): Result[InspectImageContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("path") >>=
     proc(p: string): Result[InspectImageContext, string] =
-      ok(InspectImageContext(path: p, prompt: j.getOrDefault("prompt").getStr("")))
+      resolvedToolPath(p, paddockDir, log, toolName) >>=
+        proc(rp: string): Result[InspectImageContext, string] =
+          ok(InspectImageContext(path: rp, prompt: j.getOrDefault("prompt").getStr("")))
 
 proc parseTaskContext*(j: JsonNode): Result[TaskContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("prompt") >>=
@@ -851,7 +856,7 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
       return handledError(error)
     return handledOutcome(performRenderMermaid(mermaidCtx.diagram))
   of InspectImageToolName:
-    let inspectCtx = parseInspectImageContext(j).valueOr:
+    let inspectCtx = parseInspectImageContext(j, ctx.paddockDir, ctx.log, InspectImageToolName).valueOr:
       return handledError(error)
     return handledOutcome(performInspectImage(inspectCtx.path, inspectCtx.prompt, ctx.completeFn))
   else:

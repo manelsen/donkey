@@ -252,7 +252,8 @@ const
     "Analyze a local image file using a vision-capable AI model. " &
     "Reads the file, encodes it, and sends it to the active provider. " &
     "Returns the model's description or answer to your prompt. " &
-    "If prompt is omitted, it asks for a detailed description."
+    "If prompt is omitted, it asks for a detailed description. " &
+    "The path is resolved inside the current workspace like the other local file tools."
   InspectImageToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
     "\"path\":{\"type\":\"string\",\"description\":\"Local image file path\"}," &
