@@ -193,7 +193,7 @@ proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
                      log: Logger): Future[ToolCallResult] {.async.} =
   if debugMode:
     await globalOutbox.put(OutboundMessage(
-      userId: uid, channel: channel, text: buildToolDebugCallText(tc), isHtml: channel == ckTelegram))
+      userId: uid, channel: channel, text: buildToolDebugCallText(tc)))
 
   log.info("[tool] (" & tc.name & ") <- [" & providerLabel & "] |" &
            $tc.inputJson.len & "|")
@@ -219,7 +219,7 @@ proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
   if debugMode:
     await globalOutbox.put(OutboundMessage(
       userId: uid, channel: channel,
-      text: buildToolDebugResultText(tc.name, toolResult.text), isHtml: channel == ckTelegram))
+      text: buildToolDebugResultText(tc.name, toolResult.text)))
   toolResult
 
 proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
@@ -280,7 +280,6 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
       userId: uid,
       channel: channel,
       text: postPlan.progressText,
-      isHtml: channel == ckTelegram,
       streamId: toolStatusId,
       isPartial: true,
     ))
