@@ -936,6 +936,8 @@ suite "executeNativeTool — structured tools":
     let parsed = parseJson(r.text)
     check r.handled
     check r.resultKind == trkOutput
+    check parsed["data"]["path"].getStr() == "notes.txt"
+    check parsed["data"]["matches"][0]["path"].getStr() == "notes.txt"
     check parsed["data"]["matches"][0]["line"].getInt() == 2
 
   test "json_query and table_query are dispatched natively":
@@ -980,6 +982,7 @@ suite "executeNativeTool — structured tools":
     let createdParsed = parseJson(created.text)
     check created.handled
     check created.resultKind == trkOutput
+    check createdParsed["data"]["archive_path"].getStr() == "bundle.tgz"
     check createdParsed["data"]["entry_count"].getInt() == 1
 
     let extractTc = makeTc(ArchiveExtractToolName, """{"archive_path":"bundle.tgz","destination":"restored"}""")
@@ -987,6 +990,7 @@ suite "executeNativeTool — structured tools":
     let extractedParsed = parseJson(extracted.text)
     check extracted.handled
     check extracted.resultKind == trkOutput
+    check extractedParsed["data"]["destination"].getStr() == "restored"
     check extractedParsed["data"]["entry_count"].getInt() > 0
     check readFile(paddock / "restored" / "docs" / "notes.txt") == "archive me\n"
 

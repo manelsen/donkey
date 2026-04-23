@@ -19,11 +19,12 @@ suite "structured search tools":
     createDir(tmpDir / "nested")
     writeFile(tmpDir / "nested" / "beta.txt", "hello\n")
 
-    let parsed = parseJson(performFindStructured(tmpDir, "*", "any", 20).toJson())
+    let parsed = parseJson(performFindStructured(tmpDir, "*", "any", 20, tmpDir).toJson())
 
     check parsed["ok"].getBool()
     check parsed["status"].getStr() == "output"
     check parsed["data"]["count"].getInt() == 3
+    check parsed["data"]["path"].getStr() == "."
     check parsed["data"]["items"][0].hasKey("path")
     check parsed["data"]["items"][0].hasKey("kind")
 
@@ -34,11 +35,13 @@ suite "structured search tools":
       if fileExists(tmpFile):
         removeFile(tmpFile)
 
-    let parsed = parseJson(performGrepStructured("needle", tmpFile, false, 20).toJson())
+    let parsed = parseJson(performGrepStructured("needle", tmpFile, false, 20, parentDir(tmpFile)).toJson())
 
     check parsed["ok"].getBool()
     check parsed["status"].getStr() == "output"
+    check parsed["data"]["path"].getStr() == extractFilename(tmpFile)
     check parsed["data"]["count"].getInt() == 2
+    check parsed["data"]["matches"][0]["path"].getStr() == extractFilename(tmpFile)
     check parsed["data"]["matches"][0]["line"].getInt() == 2
     check parsed["data"]["matches"][0]["text"].getStr() == "beta needle"
     check parsed["data"]["matches"][1]["line"].getInt() == 3
@@ -59,10 +62,10 @@ suite "structured text tools":
       if fileExists(tmpFile):
         removeFile(tmpFile)
 
-    let parsed = parseJson(readStructuredTextSlice(tmpFile, 2, 2).toJson())
+    let parsed = parseJson(readStructuredTextSlice(tmpFile, 2, 2, parentDir(tmpFile)).toJson())
 
     check parsed["ok"].getBool()
-    check parsed["data"]["path"].getStr() == tmpFile
+    check parsed["data"]["path"].getStr() == extractFilename(tmpFile)
     check parsed["data"]["start_line"].getInt() == 2
     check parsed["data"]["end_line"].getInt() == 3
     check parsed["data"]["count"].getInt() == 2
@@ -77,9 +80,10 @@ suite "structured text tools":
       if fileExists(tmpFile):
         removeFile(tmpFile)
 
-    let parsed = parseJson(replaceStructuredText(tmpFile, "beta", "delta", 1).toJson())
+    let parsed = parseJson(replaceStructuredText(tmpFile, "beta", "delta", 1, parentDir(tmpFile)).toJson())
 
     check parsed["ok"].getBool()
+    check parsed["data"]["path"].getStr() == extractFilename(tmpFile)
     check parsed["data"]["replacements"].getInt() == 1
     check parsed["data"]["changed"].getBool()
     check readFile(tmpFile) == "alpha delta beta\n"

@@ -52,13 +52,6 @@ proc resolveWorkspacePath(path, paddockDir, field: string): Result[string, strin
     return err(field & " outside paddock: " & path)
   ok(resolved)
 
-proc relativeToPaddock(resolvedPath, paddockDir: string): string {.gcsafe, raises: [].} =
-  let paddock = resolveInPaddock(paddockDir, paddockDir)
-  if resolvedPath == paddock:
-    "."
-  else:
-    resolvedPath[paddock.len + 1 .. ^1]
-
 proc hasTool(name: string): bool {.gcsafe, raises: [].} =
   try:
     findExe(name).len > 0
@@ -166,8 +159,8 @@ proc performArchiveExtract*(archivePath, destinationDir, paddockDir: string): St
     return operationalErrorToolResult(outp.strip())
 
   successToolResult(%*{
-    "archive_path": resolvedArchive,
-    "destination": resolvedDestination,
+    "archive_path": relativeToPaddock(resolvedArchive, paddockDir),
+    "destination": relativeToPaddock(resolvedDestination, paddockDir),
     "format": $format,
     "entry_count": entries.len,
     "entries": entries,
@@ -205,7 +198,7 @@ proc performArchiveCreate*(archivePath: string; inputs: seq[string]; paddockDir:
     return operationalErrorToolResult(outp.strip())
 
   successToolResult(%*{
-    "archive_path": resolvedArchive,
+    "archive_path": relativeToPaddock(resolvedArchive, paddockDir),
     "format": $format,
     "entry_count": relativeInputs.len,
     "entries": relativeInputs,

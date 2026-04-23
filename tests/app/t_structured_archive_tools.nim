@@ -25,14 +25,14 @@ suite "structured archive tools":
                                              @["alpha.txt", "docs"],
                                              paddock))
     check created["ok"].getBool()
-    check created["data"]["archive_path"].getStr().endsWith("bundle.tgz")
+    check created["data"]["archive_path"].getStr() == "bundle.tgz"
     check fileExists(paddock / "bundle.tgz")
 
     let extracted = parse(performArchiveExtract("bundle.tgz",
                                                 "restored",
                                                 paddock))
     check extracted["ok"].getBool()
-    check extracted["data"]["destination"].getStr().endsWith("restored")
+    check extracted["data"]["destination"].getStr() == "restored"
     check fileExists(paddock / "restored" / "alpha.txt")
     check fileExists(paddock / "restored" / "docs" / "notes.txt")
     check readFile(paddock / "restored" / "docs" / "notes.txt") == "structured archive\n"

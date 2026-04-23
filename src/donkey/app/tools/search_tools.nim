@@ -11,6 +11,7 @@ import ../../core/log
 import ../../core/tooling/structured_tool_result
 import ../../domain/calc  # globMatch
 import ../../infra/sandbox/wasm_tools
+import ./fs_tools
 
 let searchLog = newLogger("donkey.tools.search")
 
@@ -44,11 +45,12 @@ proc performFind*(path, pattern, kind: string; max: int): string {.gcsafe, raise
   if results.len == 0: return "(no matches)"
   results.join("\n")
 
-proc addFindItem(path: string; kind: string; max: int; items: var seq[JsonNode]) {.gcsafe, raises: [].} =
+proc addFindItem(path, paddock: string; kind: string; max: int; items: var seq[JsonNode]) {.gcsafe, raises: [].} =
   if items.len < max:
-    items.add(%*{"path": path, "kind": kind})
+    items.add(%*{"path": relativeToPaddock(path, paddock), "kind": kind})
 
 proc walkFindStructured(path, pattern, kind: string; max: int;
+                        paddock: string;
                         items: var seq[JsonNode]) {.gcsafe, raises: [].} =
   if items.len >= max: return
   try:
@@ -57,20 +59,21 @@ proc walkFindStructured(path, pattern, kind: string; max: int;
       case entry.kind
       of pcFile:
         if kind != "dir" and globMatch(pattern, name):
-          addFindItem(entry.path, "file", max, items)
+          addFindItem(entry.path, paddock, "file", max, items)
           if items.len >= max: return
       of pcDir:
         if kind != "file" and globMatch(pattern, name):
-          addFindItem(entry.path & "/", "dir", max, items)
+          addFindItem(entry.path & "/", paddock, "dir", max, items)
           if items.len >= max: return
-        walkFindStructured(entry.path, pattern, kind, max, items)
+        walkFindStructured(entry.path, pattern, kind, max, paddock, items)
       of pcLinkToFile, pcLinkToDir:
         discard
   except CatchableError as e:
     {.cast(gcsafe).}:
       searchLog.warn("walkFindStructured error at " & path & ": " & e.msg)
 
-proc performFindStructured*(path, pattern, kind: string; max: int): StructuredToolResult {.gcsafe, raises: [].} =
+proc performFindStructured*(path, pattern, kind: string; max: int;
+                            paddock = ""): StructuredToolResult {.gcsafe, raises: [].} =
   if path.strip().len == 0:
     return usageErrorToolResult("path is required")
   if pattern.strip().len == 0:
@@ -89,12 +92,13 @@ proc performFindStructured*(path, pattern, kind: string; max: int): StructuredTo
       if normalizedKind == "dir": ""
       else: "file"
     if fileKind.len > 0 and globMatch(pattern, splitPath(path).tail):
-      addFindItem(path, fileKind, max, items)
+      addFindItem(path, if paddock.len > 0: paddock else: parentDir(path), fileKind, max, items)
   else:
-    walkFindStructured(path, pattern, if normalizedKind == "any": "" else: normalizedKind, max, items)
+    walkFindStructured(path, pattern, if normalizedKind == "any": "" else: normalizedKind, max,
+                       if paddock.len > 0: paddock else: path, items)
 
   successToolResult(%*{
-    "path": path,
+    "path": if paddock.len > 0: relativeToPaddock(path, paddock) else: path,
     "pattern": pattern,
     "kind": normalizedKind,
     "count": items.len,
@@ -171,7 +175,7 @@ proc performGrep*(pattern, path: string; recursive: bool;
   if results.len == 0: return "(no matches)"
   results.join("\n")
 
-proc grepFileStructured(path, pattern: string; max: int;
+proc grepFileStructured(path, pattern, paddock: string; max: int;
                         matches: var seq[JsonNode]) {.gcsafe, raises: [].} =
   try:
     var lineNum = 0
@@ -179,7 +183,7 @@ proc grepFileStructured(path, pattern: string; max: int;
       inc lineNum
       if line.find(pattern) >= 0:
         matches.add(%*{
-          "path": path,
+          "path": relativeToPaddock(path, paddock),
           "line": lineNum,
           "text": line,
         })
@@ -188,17 +192,17 @@ proc grepFileStructured(path, pattern: string; max: int;
     {.cast(gcsafe).}:
       searchLog.warn("grepFileStructured error on " & path & ": " & e.msg)
 
-proc grepDirStructured(path, pattern: string; recursive: bool; max: int;
+proc grepDirStructured(path, pattern, paddock: string; recursive: bool; max: int;
                        matches: var seq[JsonNode]) {.gcsafe, raises: [].} =
   try:
     for entry in walkDir(path):
       if matches.len >= max: return
       case entry.kind
       of pcFile:
-        grepFileStructured(entry.path, pattern, max, matches)
+        grepFileStructured(entry.path, pattern, paddock, max, matches)
       of pcDir:
         if recursive:
-          grepDirStructured(entry.path, pattern, recursive, max, matches)
+          grepDirStructured(entry.path, pattern, paddock, recursive, max, matches)
       of pcLinkToFile, pcLinkToDir:
         discard
   except CatchableError as e:
@@ -206,7 +210,7 @@ proc grepDirStructured(path, pattern: string; recursive: bool; max: int;
       searchLog.warn("grepDirStructured error at " & path & ": " & e.msg)
 
 proc performGrepStructured*(pattern, path: string; recursive: bool;
-                            max: int): StructuredToolResult {.gcsafe, raises: [].} =
+                            max: int; paddock = ""): StructuredToolResult {.gcsafe, raises: [].} =
   if pattern.len == 0:
     return usageErrorToolResult("empty pattern")
   if path.strip().len == 0:
@@ -218,12 +222,12 @@ proc performGrepStructured*(pattern, path: string; recursive: bool;
 
   var matches: seq[JsonNode] = @[]
   if fileExists(path):
-    grepFileStructured(path, pattern, max, matches)
+    grepFileStructured(path, pattern, if paddock.len > 0: paddock else: parentDir(path), max, matches)
   else:
-    grepDirStructured(path, pattern, recursive, max, matches)
+    grepDirStructured(path, pattern, if paddock.len > 0: paddock else: path, recursive, max, matches)
 
   successToolResult(%*{
-    "path": path,
+    "path": if paddock.len > 0: relativeToPaddock(path, paddock) else: path,
     "pattern": pattern,
     "recursive": recursive,
     "count": matches.len,

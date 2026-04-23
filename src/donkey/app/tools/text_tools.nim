@@ -9,6 +9,7 @@ import nimcrypto/sha2
 import results
 import ../../core/tooling/structured_tool_result
 import ../session_state
+import ./fs_tools
 
 # ── Hashline types ────────────────────────────────────────────────────────────
 
@@ -76,7 +77,8 @@ proc renderHashlineSlice*(content: string; startLine, maxLines: int): string {.g
     if idx < lastLine:
       result.add('\n')
 
-proc readStructuredTextSlice*(path: string; startLine, maxLines: int): StructuredToolResult {.gcsafe, raises: [].} =
+proc readStructuredTextSlice*(path: string; startLine, maxLines: int;
+                              paddock = ""): StructuredToolResult {.gcsafe, raises: [].} =
   if path.strip().len == 0:
     return usageErrorToolResult("path is required")
   if startLine < 1:
@@ -90,7 +92,7 @@ proc readStructuredTextSlice*(path: string; startLine, maxLines: int): Structure
     let lines = splitEditableLines(content)
     if lines.len == 0 or startLine > lines.len:
       return successToolResult(%*{
-        "path": path,
+        "path": if paddock.len > 0: relativeToPaddock(path, paddock) else: path,
         "start_line": startLine,
         "end_line": startLine - 1,
         "count": 0,
@@ -106,7 +108,7 @@ proc readStructuredTextSlice*(path: string; startLine, maxLines: int): Structure
         "anchor": formatHashlineRef(idx, lines[idx - 1]),
       })
     successToolResult(%*{
-      "path": path,
+      "path": if paddock.len > 0: relativeToPaddock(path, paddock) else: path,
       "start_line": startLine,
       "end_line": endLine,
       "count": lineItems.len,
@@ -134,7 +136,8 @@ proc replaceLiteralLimit(content, needle, replacement: string; maxCount: int): t
   elif result.replacements == 0:
     result.text = content
 
-proc replaceStructuredText*(path, findText, replaceText: string; count: int): StructuredToolResult {.gcsafe, raises: [].} =
+proc replaceStructuredText*(path, findText, replaceText: string; count: int;
+                            paddock = ""): StructuredToolResult {.gcsafe, raises: [].} =
   if path.strip().len == 0:
     return usageErrorToolResult("path is required")
   if findText.len == 0:
@@ -150,7 +153,7 @@ proc replaceStructuredText*(path, findText, replaceText: string; count: int): St
     if changed:
       writeFile(path, replaced.text)
     successToolResult(%*{
-      "path": path,
+      "path": if paddock.len > 0: relativeToPaddock(path, paddock) else: path,
       "changed": changed,
       "replacements": replaced.replacements,
     })

@@ -793,18 +793,18 @@ proc executeStructuredNativeTool(tc: ToolCallRequest;
   of TextSearchToolName:
     let grepCtx = parseGrepContext(j, ctx.paddockDir, ctx.log, TextSearchToolName).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
-    return handledStructured(performGrepStructured(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max))
+    return handledStructured(performGrepStructured(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max, ctx.paddockDir))
   of TextReadToolName:
     let readCtx = parseReadFileContext(j, ctx.paddockDir, ctx.log, TextReadToolName).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
-    return handledStructured(readStructuredTextSlice(readCtx.path, readCtx.startLine, readCtx.maxLines))
+    return handledStructured(readStructuredTextSlice(readCtx.path, readCtx.startLine, readCtx.maxLines, ctx.paddockDir))
   of TextReplaceToolName:
     let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, TextReplaceToolName).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
     let findText = j.getOrDefault("find").getStr("")
     let replaceText = j.getOrDefault("replace").getStr("")
     let count = j.getOrDefault("count").getInt(0)
-    return handledStructured(replaceStructuredText(pathCtx, findText, replaceText, count))
+    return handledStructured(replaceStructuredText(pathCtx, findText, replaceText, count, ctx.paddockDir))
   of JsonQueryToolName:
     return handledStructured(runJsonQuery(j))
   of TableQueryToolName:
