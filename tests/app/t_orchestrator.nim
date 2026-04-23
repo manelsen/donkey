@@ -706,6 +706,26 @@ suite "tool loop helpers":
     check not text.contains("l1")
     check text.contains("l2\nl3\nl4\nl5\nl6")
 
+  test "isQuietHeartbeatText recognizes no-op heartbeat summaries":
+    check isQuietHeartbeatText("Tudo quiet. Apenas atualizei o timestamp de Last memory review.\n\nSem ação necessária.")
+    check isQuietHeartbeatText("Heartbeat 2026-04-23T13:46:12Z — Tudo quiet. Sem alterações.")
+    check not isQuietHeartbeatText("Há tarefa pendente no HEARTBEAT.md.")
+
+  test "finalizeNormalTurn suppresses quiet heartbeat replies and progress":
+    proc doTest() {.async.} =
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let loopResult = ToolLoopRunResult(
+        finalText: "Tudo quiet. Apenas atualizei o timestamp de Last memory review.\n\nSem ação necessária.",
+        done: true,
+        toolCallCount: 2,
+      )
+      await finalizeNormalTurn(
+        outbox, UserId("u1"), ckTelegram, "", "stream-1", nil,
+        suppressProgress = true, suppressQuietFinal = true,
+        showReasoning = false, loopResult = loopResult)
+      doAssert not (await withTimeout(outbox.get(), 100.milliseconds))
+    waitFor doTest()
+
 suite "normal turn helpers":
 
   test "addUserTurn appends plain text and trims history":

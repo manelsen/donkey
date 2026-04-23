@@ -236,6 +236,7 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
                       toolStatusId: string;
                       toolCalls: seq[ToolCallRequest];
                       providerLabel: string;
+                      suppressProgress: bool;
                       debugMode: bool;
                       toolCallCount: int;
                       recentCalls: seq[(string, string)];
@@ -276,13 +277,14 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
       withToolResult(tc, toolResult.text, toolResult.resultKind, toolResult.newHistory)
     let postPlan = planToolBatchItem(
       @[], tc, RepeatAbortThreshold, result.toolCallCount, toolResult.text)
-    await globalOutbox.put(OutboundMessage(
-      userId: uid,
-      channel: channel,
-      text: postPlan.progressText,
-      streamId: toolStatusId,
-      isPartial: true,
-    ))
+    if not suppressProgress:
+      await globalOutbox.put(OutboundMessage(
+        userId: uid,
+        channel: channel,
+        text: postPlan.progressText,
+        streamId: toolStatusId,
+        isPartial: true,
+      ))
 
 # ── Tool loop runner ──────────────────────────────────────────────────────────
 
@@ -307,6 +309,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
                  context: string;
                  tools: seq[ToolDescription];
                  providerLabel: string;
+                 suppressProgress: bool;
                  debugMode: bool;
                  showReasoning: bool;
                  log: Logger): Future[ToolLoopRunResult] {.async.} =
@@ -385,7 +388,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       let batchResult = await processToolCalls(
         globalOutbox, toolInbox, toolOut, nativeCtx, state, loopState.history,
         uid, channel, replyTo, msgId, round, toolStatusId, r.toolCalls,
-        providerLabel, debugMode, loopState.toolCallCount, recentCalls, log)
+        providerLabel, suppressProgress, debugMode, loopState.toolCallCount, recentCalls, log)
       loopState =
         loopState |>->
         withToolBatchState(batchResult)
@@ -399,15 +402,27 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
     loopState.finalText = termination.replyText
   loopState
 
+func isQuietHeartbeatText*(text: string): bool =
+  let lowered = text.toLowerAscii()
+  (lowered.contains("tudo quiet") or
+   lowered.contains("sem ação necessária") or
+   lowered.contains("sem alterações")) and
+  not lowered.contains("pendente") and
+  not lowered.contains("próximos passos") and
+  not lowered.contains("falh") and
+  not lowered.contains("erro")
+
 proc finalizeNormalTurn*(globalOutbox: AsyncQueue[OutboundMessage];
                         uid: UserId;
                         channel: ChannelKind;
                         replyTo: string;
                         streamId: string;
                         streamFn: StreamFn;
+                        suppressProgress: bool;
+                        suppressQuietFinal: bool;
                         showReasoning: bool;
                         loopResult: ToolLoopRunResult): Future[void] {.async.} =
-  if loopResult.toolCallCount > 0:
+  if not suppressProgress and loopResult.toolCallCount > 0:
     await globalOutbox.put(OutboundMessage(
       userId: uid,
       channel: channel,
@@ -418,6 +433,8 @@ proc finalizeNormalTurn*(globalOutbox: AsyncQueue[OutboundMessage];
 
   if not loopResult.done or not loopResult.wasStreamed:
     if loopResult.finalText.len > 0:
+      if suppressQuietFinal and isQuietHeartbeatText(loopResult.finalText):
+        return
       var fullText = ""
       if showReasoning and loopResult.reasoning.len > 0:
         let cleanReasoning = loopResult.reasoning.strip()

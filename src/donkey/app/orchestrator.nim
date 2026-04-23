@@ -400,18 +400,21 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
 
   log.info($turnSetup.uid & " (" & $msg.channel & ") -> [" & providerLabel & "] |" &
            $turnSetup.userText.len & "|")
+  let suppressHeartbeatProgress = msg.taskKind == tkHeartbeat
+  let suppressQuietHeartbeatFinal = msg.taskKind == tkHeartbeat
   let loopResult = await runToolLoop(
     globalOutbox, toolInbox, toolOut, memory, completeFn, errorExplainFn, streamFn, turnSetup.nativeCtx,
     state, history, turnSetup.uid, msg.channel, msg.replyTo, msg.id, turnSetup.streamId,
     systemBase, context, tools, providerLabel,
-    result.debugMode, result.showReasoning, log)
+    suppressHeartbeatProgress, result.debugMode, result.showReasoning, log)
   result =
     result |>->
     withLoopResult(loopResult)
 
   stopTypingLoop(turnSetup.typingLoop)
   await finalizeNormalTurn(
-    globalOutbox, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.streamId, streamFn, result.showReasoning, loopResult)
+    globalOutbox, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.streamId, streamFn,
+    suppressHeartbeatProgress, suppressQuietHeartbeatFinal, result.showReasoning, loopResult)
 
   # Capture memory from substantive user messages, but avoid persisting
   # operational/provider failures as autobiographical memory.
