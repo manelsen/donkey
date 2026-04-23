@@ -49,7 +49,7 @@ proc resolveGuarded(path, paddock: string): tuple[ok: bool, resolved: string, er
     return (false, resolved, usageErrorToolResult("path outside paddock: " & path))
   (true, resolved, StructuredToolResult())
 
-proc relativeToPaddock(path, paddock: string): string =
+proc relativeToPaddock*(path, paddock: string): string =
   let resolved = resolveInPaddock(path, paddock)
   let padNorm = resolveInPaddock(paddock, paddock)
   if resolved == padNorm:

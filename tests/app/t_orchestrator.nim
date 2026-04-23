@@ -700,8 +700,9 @@ suite "tool loop helpers":
   test "buildToolProgressText keeps only the last five lines and truncates":
     let toolResult = "l1\nl2\nl3\nl4\nl5\nl6"
     let text = buildToolProgressText("search", 3, toolResult)
-    check text.contains("search")
+    check text.contains("`search`")
     check text.contains("[3]")
+    check text.contains("```")
     check not text.contains("l1")
     check text.contains("l2\nl3\nl4\nl5\nl6")
 

@@ -168,12 +168,15 @@ func decideToolCall*(recentCalls: seq[(string, string)];
     )
   ToolCallDecision(kind: tcdExecute, repeatCount: repeatCount)
 
+func markdownCodeFenceSafe(text: string): string =
+  text.replace("```", "'''")
+
 func buildToolDebugCallText*(tc: ToolCallRequest): string =
-  "🔧 <b>[debug tool]</b> " & tc.name & "\n<code>" & tc.inputJson & "</code>"
+  "🔧 **[debug tool]** " & tc.name & "\n```\n" & markdownCodeFenceSafe(tc.inputJson) & "\n```"
 
 func buildToolDebugResultText*(toolName, toolResult: string): string =
-  "📤 <b>[debug result]</b> " & toolName & "\n<code>" &
-  toolResult[0 ..< min(200, toolResult.len)] & "</code>"
+  "📤 **[debug result]** " & toolName & "\n```\n" &
+  markdownCodeFenceSafe(toolResult[0 ..< min(200, toolResult.len)]) & "\n```"
 
 func buildToolProgressText*(toolName: string;
                             toolCallCount: int;
@@ -181,8 +184,8 @@ func buildToolProgressText*(toolName: string;
   let resultLines = toolResult.splitLines()
   let tail = resultLines[max(0, resultLines.len - 5) .. ^1].join("\n")
   let tailTrunc = if tail.len > 400: tail[0 ..< 400] & "…" else: tail
-  "🔧 <code>" & toolName & "</code> [" & $toolCallCount & "]\n<code>" &
-    tailTrunc & "</code>"
+  "🔧 `" & toolName & "` [" & $toolCallCount & "]\n```\n" &
+    markdownCodeFenceSafe(tailTrunc) & "\n```"
 
 func planToolBatchItem*(recentCalls: seq[(string, string)];
                         tc: ToolCallRequest;
