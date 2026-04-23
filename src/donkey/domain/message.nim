@@ -44,6 +44,7 @@ type
   OutboundMessage* = object
     userId*:    UserId
     text*:      string
+    isHtml*:    bool         ## text is already Telegram-compatible HTML; adapters should not reconvert it
     replyTo*:   string       ## channel-specific id to reply to (optional)
     editTargetId*: string    ## channel-specific message id to edit in place (optional)
     replacementSlot*: string ## logical UI slot for reusable/editable messages

@@ -2,6 +2,7 @@
 
 import std/[options, strutils]
 import ../../domain/message
+import ../../domain/text_format
 
 type
   ToolLoopRunResult* = object
@@ -168,15 +169,13 @@ func decideToolCall*(recentCalls: seq[(string, string)];
     )
   ToolCallDecision(kind: tcdExecute, repeatCount: repeatCount)
 
-func markdownCodeFenceSafe(text: string): string =
-  text.replace("```", "'''")
-
 func buildToolDebugCallText*(tc: ToolCallRequest): string =
-  "🔧 **[debug tool]** " & tc.name & "\n```\n" & markdownCodeFenceSafe(tc.inputJson) & "\n```"
+  "🔧 <b>[debug tool]</b> " & escapeHtml(tc.name) & "\n<pre>" &
+    escapeHtml(tc.inputJson) & "</pre>"
 
 func buildToolDebugResultText*(toolName, toolResult: string): string =
-  "📤 **[debug result]** " & toolName & "\n```\n" &
-  markdownCodeFenceSafe(toolResult[0 ..< min(200, toolResult.len)]) & "\n```"
+  "📤 <b>[debug result]</b> " & escapeHtml(toolName) & "\n<pre>" &
+    escapeHtml(toolResult[0 ..< min(200, toolResult.len)]) & "</pre>"
 
 func buildToolProgressText*(toolName: string;
                             toolCallCount: int;
@@ -184,8 +183,8 @@ func buildToolProgressText*(toolName: string;
   let resultLines = toolResult.splitLines()
   let tail = resultLines[max(0, resultLines.len - 5) .. ^1].join("\n")
   let tailTrunc = if tail.len > 400: tail[0 ..< 400] & "…" else: tail
-  "🔧 `" & toolName & "` [" & $toolCallCount & "]\n```\n" &
-    markdownCodeFenceSafe(tailTrunc) & "\n```"
+  "🔧 <code>" & escapeHtml(toolName) & "</code> [" & $toolCallCount & "]\n<pre>" &
+    escapeHtml(tailTrunc) & "</pre>"
 
 func planToolBatchItem*(recentCalls: seq[(string, string)];
                         tc: ToolCallRequest;

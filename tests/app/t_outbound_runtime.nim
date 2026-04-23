@@ -94,6 +94,7 @@ suite "outbound_runtime":
   test "routeOutbound edits immediate message when edit target is provided":
     var sentCount = 0
     var editedText = ""
+    var editedIsHtml = false
     var editedKeyboardCount = -1
     let ports = OutboundChannelPorts(
       telegram: OutboundChannelPort(
@@ -101,8 +102,10 @@ suite "outbound_runtime":
           {.cast(gcsafe).}: inc sentCount
           ok(),
         sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m1"),
-        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
-          {.cast(gcsafe).}: editedText = text
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}:
+            editedText = text
+            editedIsHtml = isHtml
           ok(),
         sendKeyboard: proc(userId: UserId; text: string;
                            buttons: seq[seq[(string, string)]];
@@ -124,7 +127,37 @@ suite "outbound_runtime":
       presentationState)
     check sentCount == 0
     check editedText == "edit me"
+    check not editedIsHtml
     check editedKeyboardCount == -1
+
+  test "routeOutbound preserves html flag on immediate edit":
+    var editedText = ""
+    var editedIsHtml = false
+    let ports = OutboundChannelPorts(
+      telegram: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} = ok(),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m1"),
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}:
+            editedText = text
+            editedIsHtml = isHtml
+          ok(),
+        sendKeyboard: proc(userId: UserId; text: string;
+                           buttons: seq[seq[(string, string)]];
+                           replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
+        editKeyboard: proc(userId: UserId; msgId, text: string;
+                           buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} = ok(),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+      )
+    )
+    var presentationState = initPresentationState()
+    routeOutbound(
+      OutboundMessage(userId: UserId("u1"), channel: ckTelegram, text: "<pre>x</pre>", isHtml: true, editTargetId: "42"),
+      ports,
+      newLogger("test.outbound"),
+      presentationState)
+    check editedText == "<pre>x</pre>"
+    check editedIsHtml
 
   test "routeOutbound can replace keyboard while editing immediate message":
     var editedText = ""
@@ -133,7 +166,9 @@ suite "outbound_runtime":
       telegram: OutboundChannelPort(
         send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} = ok(),
         sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m1"),
-        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} = ok(),
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          discard isHtml
+          ok(),
         sendKeyboard: proc(userId: UserId; text: string;
                            buttons: seq[seq[(string, string)]];
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
@@ -172,7 +207,8 @@ suite "outbound_runtime":
           {.cast(gcsafe).}: inc sentCount
           ok(),
         sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m-slot"),
-        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          discard isHtml
           {.cast(gcsafe).}: editedText = msgId & ":" & text
           ok(),
         sendKeyboard: proc(userId: UserId; text: string;
@@ -213,7 +249,8 @@ suite "outbound_runtime":
         sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
           {.cast(gcsafe).}: createdTexts.add(msg.text)
           ok("m-stream"),
-        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          discard isHtml
           {.cast(gcsafe).}: editedText = msgId & ":" & text
           ok(),
         sendKeyboard: proc(userId: UserId; text: string;
@@ -256,7 +293,8 @@ suite "outbound_runtime":
         sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
           {.cast(gcsafe).}: createdTexts.add(msg.text)
           ok("m-stream"),
-        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          discard isHtml
           {.cast(gcsafe).}: editedText = msgId & ":" & text
           ok(),
         sendKeyboard: proc(userId: UserId; text: string;
@@ -286,7 +324,8 @@ suite "outbound_runtime":
           {.cast(gcsafe).}:
             createdTexts.add(msg.text)
             ok("m-stream-" & $createdTexts.len),
-        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          discard isHtml
           {.cast(gcsafe).}: editedText = msgId & ":" & text
           ok(),
         sendKeyboard: proc(userId: UserId; text: string;
@@ -315,7 +354,9 @@ suite "outbound_runtime":
       telegram: OutboundChannelPort(
         send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} = ok(),
         sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m1"),
-        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} = ok(),
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          discard isHtml
+          ok(),
         sendKeyboard: proc(userId: UserId; text: string;
                            buttons: seq[seq[(string, string)]];
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
@@ -337,7 +378,9 @@ suite "outbound_runtime":
       telegram: OutboundChannelPort(
         send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} = ok(),
         sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m1"),
-        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} = ok(),
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          discard isHtml
+          ok(),
         sendKeyboard: proc(userId: UserId; text: string;
                            buttons: seq[seq[(string, string)]];
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),

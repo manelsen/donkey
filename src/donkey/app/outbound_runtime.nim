@@ -98,7 +98,7 @@ proc editImmediateOutbound*(msg: OutboundMessage;
     if msg.replaceKeyboard or msg.keyboard.len > 0:
       port.editKeyboard(msg.userId, msg.editTargetId, msg.text, msg.keyboard)
     else:
-      port.editMessage(msg.userId, msg.editTargetId, msg.text)
+      port.editMessage(msg.userId, msg.editTargetId, msg.text, msg.isHtml)
   if res.isOk:
     log.debug("sent " & $msg.channel & " (edit immediate) -> " & $msg.userId & " (" & $msg.text.len & " chars)")
     return true
@@ -115,7 +115,7 @@ proc editStreamOutbound*(msg: OutboundMessage;
                          ports: OutboundChannelPorts;
                          log: Logger) {.gcsafe.} =
   let port = ports.channelPortFor(msg.channel)
-  let res = port.editMessage(msg.userId, channelMsgId, msg.text)
+  let res = port.editMessage(msg.userId, channelMsgId, msg.text, msg.isHtml)
   if res.isOk:
     log.debug("sent " & $msg.channel & " (edit) -> " & $msg.userId & " (" & $msg.text.len & " chars)")
     return

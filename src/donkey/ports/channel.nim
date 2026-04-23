@@ -33,7 +33,7 @@ type
   OutboundChannelPort* = object
     send*:         proc(msg: OutboundMessage): Result[void, string] {.gcsafe.}
     sendReturnId*: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.}
-    editMessage*:  proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.}
+    editMessage*:  proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.}
     sendKeyboard*: proc(userId: UserId; text: string;
                         buttons: seq[seq[(string, string)]];
                         replyTo = ""): Result[void, string] {.gcsafe.}

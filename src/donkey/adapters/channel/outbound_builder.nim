@@ -28,8 +28,8 @@ import whatsapp
 proc unsupportedSendReturnId(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
   err("sendReturnId unsupported for channel " & $msg.channel)
 
-proc unsupportedEditMessage(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
-  discard userId; discard msgId; discard text
+proc unsupportedEditMessage(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+  discard userId; discard msgId; discard text; discard isHtml
   err("editMessage unsupported")
 
 proc unsupportedSendKeyboard(userId: UserId; text: string;
@@ -77,8 +77,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
       tgAdapter[].send(msg),
     sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
       tgAdapter[].sendReturnId(msg),
-    editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
-      tgAdapter[].editMessage(userId, msgId, text),
+    editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+      tgAdapter[].editMessage(userId, msgId, text, isHtml),
     sendKeyboard: proc(userId: UserId; text: string;
                         buttons: seq[seq[(string, string)]];
                         replyTo = ""): Result[void, string] {.gcsafe.} =
@@ -98,7 +98,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
       dcAdapter[].send(msg),
     sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
       dcAdapter[].sendReturnId(msg),
-    editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+    editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+      discard isHtml
       dcAdapter[].editMessage(userId, msgId, text),
     sendKeyboard: proc(userId: UserId; text: string;
                         buttons: seq[seq[(string, string)]];
@@ -173,7 +174,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
       slAdapter[].send(msg),
     sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
       slAdapter[].sendReturnId(msg),
-    editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+    editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+      discard isHtml
       slAdapter[].editMessage(userId, msgId, text),
     sendKeyboard: proc(userId: UserId; text: string;
                         buttons: seq[seq[(string, string)]];
@@ -193,7 +195,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
       dtAdapter[].send(msg),
     sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
       dtAdapter[].sendReturnId(msg),
-    editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+    editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+      discard isHtml
       dtAdapter[].editMessage(userId, msgId, text),
     sendKeyboard: proc(userId: UserId; text: string;
                         buttons: seq[seq[(string, string)]];
@@ -225,7 +228,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
       mxAdapter[].send(msg),
     sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
       mxAdapter[].sendReturnId(msg),
-    editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+    editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+      discard isHtml
       mxAdapter[].editMessage(userId, msgId, text),
     sendKeyboard: unsupportedSendKeyboard,
     editKeyboard: unsupportedEditKeyboard,
@@ -252,7 +256,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
       cliAdapter[].send(msg),
     sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
       cliAdapter[].sendReturnId(msg),
-    editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} =
+    editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+      discard isHtml
       cliAdapter[].editMessage(userId, msgId, text),
     sendKeyboard: unsupportedSendKeyboard,
     editKeyboard: unsupportedEditKeyboard,

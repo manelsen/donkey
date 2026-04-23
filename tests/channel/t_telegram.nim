@@ -175,3 +175,15 @@ suite "splitChunks — Telegram 4096 limit":
     let chunks = splitChunks(text, 4096)
     check chunks.len == 2
     check chunks.join("") == text
+
+suite "renderTelegramHtml":
+
+  test "markdown text is converted to telegram html by default":
+    let rendered = renderTelegramHtml("Use `code` here")
+    check rendered.contains("<code>code</code>")
+
+  test "prebuilt html is preserved when isHtml is true":
+    let rendered = renderTelegramHtml("🔧 <code>fs_list</code>\n<pre>{\"ok\":true}</pre>", true)
+    check rendered.contains("<code>fs_list</code>")
+    check rendered.contains("<pre>{\"ok\":true}</pre>")
+    check not rendered.contains("&lt;code&gt;")

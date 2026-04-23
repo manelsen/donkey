@@ -106,7 +106,9 @@ suite "error policy — outbound send":
         send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
           err("network unreachable"),
         sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = err("nope"),
-        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} = ok(),
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          discard isHtml
+          ok(),
         sendKeyboard: proc(userId: UserId; text: string;
                            buttons: seq[seq[(string, string)]];
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
@@ -137,7 +139,9 @@ suite "error policy — outbound send":
           {.cast(gcsafe).}: inc sentCount
           ok(),
         sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m1"),
-        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} = ok(),
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          discard isHtml
+          ok(),
         sendKeyboard: proc(userId: UserId; text: string;
                            buttons: seq[seq[(string, string)]];
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
@@ -168,7 +172,9 @@ suite "error policy — multi-channel outbound":
         send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
           err("api rate limited"),
         sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = err("nope"),
-        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} = ok(),
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          discard isHtml
+          ok(),
         sendKeyboard: proc(userId: UserId; text: string;
                            buttons: seq[seq[(string, string)]];
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
@@ -197,7 +203,9 @@ suite "error policy — multi-channel outbound":
         send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
           err("token expired"),
         sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = err("nope"),
-        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} = ok(),
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          discard isHtml
+          ok(),
         sendKeyboard: proc(userId: UserId; text: string;
                            buttons: seq[seq[(string, string)]];
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
@@ -226,7 +234,9 @@ suite "error policy — multi-channel outbound":
         send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
           err("network unreachable"),
         sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = err("nope"),
-        editMessage: proc(userId: UserId; msgId, text: string): Result[void, string] {.gcsafe.} = ok(),
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          discard isHtml
+          ok(),
         sendKeyboard: proc(userId: UserId; text: string;
                            buttons: seq[seq[(string, string)]];
                            replyTo = ""): Result[void, string] {.gcsafe.} = ok(),
