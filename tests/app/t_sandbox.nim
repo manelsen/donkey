@@ -2,7 +2,8 @@
 ## Tests: buildOciCmd shape, sandboxBash with smNone.
 ## smOci tests require a runtime and are skipped here (integration concern).
 
-import std/[os, strutils, unittest]
+import std/[os, strtabs, strutils, unittest]
+import results
 import donkey/config/types
 import donkey/app/sandbox
 import donkey/core/types
@@ -72,7 +73,7 @@ suite "buildSandboxPlan":
   test "smWasmer wraps command through wasmer":
     let plan = buildSandboxPlan("pwd", "/tmp/p1", smWasmer, "alpine")
     check plan.command.startsWith("wasmer run ")
-    check plan.command.contains("--mapdir")
+    check plan.command.contains("--volume=")
     check plan.command.contains("--command-name=bash")
     check plan.command.contains("/workspace:/tmp/p1")
     check plan.workingDir == ""
@@ -89,6 +90,36 @@ suite "oci fallback":
   test "shouldFallbackOci ignores command-not-found inside container":
     let output = "sh: foo: not found\n[exit 127]"
     check not shouldFallbackOci(output)
+
+suite "wasmer fallback":
+
+  test "shouldFallbackWasmer detects registry timeout/package resolution errors":
+    let output =
+      "error: Unable to find \"amin/bash\" in the registry\n" &
+      "│   1: failed to query package 'amin/bash': error sending request for url (https://registry.wasmer.io/graphql)\n" &
+      "│   2: error sending request for url (https://registry.wasmer.io/graphql)\n" &
+      "│   3: client error (Connect)\n" &
+      "╰─▶ 4: operation timed out\n[exit 1]"
+    check shouldFallbackWasmer(output)
+
+  test "probeSandboxWorkspaceWritable normalizes wasmer registry failures":
+    let runner: SandboxRunnerRaw =
+      proc(plan: SandboxPlan; env: StringTableRef): tuple[output: string, exitCode: int]
+           {.closure, gcsafe, raises: [CatchableError].} =
+        discard plan
+        discard env
+        (
+          "error: Unable to find \"amin/bash\" in the registry\n" &
+          "│   1: failed to query package 'amin/bash': error sending request for url (https://registry.wasmer.io/graphql)\n" &
+          "│   2: error sending request for url (https://registry.wasmer.io/graphql)\n" &
+          "│   3: client error (Connect)\n" &
+          "╰─▶ 4: operation timed out\n",
+          1
+        )
+    let res = probeSandboxWorkspaceWritable(
+      smWasmer, "/tmp/p1", "ignored", "wasmer", false, true, runner)
+    check res.isErr
+    check res.error.contains("wasmer sandbox unavailable")
 
   test "executeOciPlan falls back to direct exec when runtime is unavailable":
     var plans: seq[SandboxPlan] = @[]

@@ -148,6 +148,8 @@ proc buildHostSandboxEnv*(paddock: string): StringTableRef {.gcsafe, raises: [].
   result["USER"] = user
   result["LOGNAME"] = getEnv("LOGNAME", user)
 
+func shouldFallbackWasmer*(output: string): bool {.gcsafe, raises: [].}
+
 # ── Shell.wasm path resolution ────────────────────────────────────────────────
 
 proc resolveShellWasmPath*(): string {.gcsafe, raises: [].} =
@@ -195,8 +197,8 @@ proc buildWasmerCmd*(cmd, paddock: string;
   ## explicitly enters /workspace before executing the user command.
   let runtime = effectiveWasmerCmd(runtimeCmd)
   runtime & " run " &
-  "--mapdir " & quoteShell("/workspace:" & paddock) & " " &
-  "--dir " & quoteShell("/tmp") & " " &
+  "--volume=" & quoteShell("/workspace:" & paddock) & " " &
+  "--volume=" & quoteShell("/tmp:/tmp") & " " &
   "--env HOME=/workspace " &
   "--env TMPDIR=/tmp " &
   "--env TMP=/tmp " &
@@ -282,6 +284,9 @@ proc probeSandboxWorkspaceWritable*(mode: SandboxMode;
     let (output, code) = runner(plan, env)
     if code == 0:
       return ok()
+    if mode == smWasmer and shouldFallbackWasmer(output):
+      return err("wasmer sandbox unavailable; package " & WasmerBashPackage &
+        " could not be resolved from the Wasmer registry")
     err(formatSandboxResult(output, code))
   except CatchableError as e:
     err("Error: " & e.msg)
@@ -332,6 +337,15 @@ func shouldFallbackOci*(output: string; runtimeCmd = "docker"): bool {.gcsafe, r
   ("permission denied while trying to connect to the " & runtime & " daemon socket" in normalized) or
   ("error: could not find command: " & runtime in normalized) or
   ("error: " in normalized and runtime in normalized and "no such file or directory" in normalized)
+
+func shouldFallbackWasmer*(output: string): bool {.gcsafe, raises: [].} =
+  let normalized = output.toLowerAscii()
+  ("unable to find \"" & WasmerBashPackage.toLowerAscii() & "\" in the registry" in normalized) or
+  ("failed to query package '" & WasmerBashPackage.toLowerAscii() in normalized) or
+  ("registry.wasmer.io" in normalized) or
+  ("operation timed out" in normalized) or
+  ("client error (connect)" in normalized) or
+  ("error sending request for url" in normalized)
 
 proc executeOciPlan*(cmd, paddock, image: string;
                      runtimeCmd = "docker";
@@ -448,8 +462,17 @@ proc sandboxBash*(cmd, paddock: string;
       if not allowHostFallback:
         return "Error: " & runtime & " sandbox unavailable; host fallback is disabled by configuration."
       return runSandboxHelper(cmd, paddock)
-    runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd, allowNetwork, readOnlyRootfs),
-                   buildHostSandboxEnv(paddock))
+    let wasmerResult = runSandboxPlan(
+      buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd, allowNetwork, readOnlyRootfs),
+      buildHostSandboxEnv(paddock))
+    if not shouldFallbackWasmer(wasmerResult):
+      return wasmerResult
+    if not allowHostFallback:
+      return "Error: " & runtime & " sandbox unavailable; package " & WasmerBashPackage &
+        " could not be resolved from the Wasmer registry."
+    let directResult = runSandboxHelper(cmd, paddock)
+    "Warning: " & runtime & " sandbox unavailable; executed without Wasmer isolation.\n" &
+      directResult
   of smNone:
     runSandboxHelper(cmd, paddock)
   of smOci:
