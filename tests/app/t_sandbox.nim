@@ -70,12 +70,9 @@ suite "buildSandboxPlan":
     check plan.workingDir == ""
     check not plan.ensureWorkDir
 
-  test "smWasmer wraps command through wasmer":
+  test "smWasmer no longer builds a runnable plan":
     let plan = buildSandboxPlan("pwd", "/tmp/p1", smWasmer, "alpine")
-    check plan.command.startsWith("wasmer run ")
-    check plan.command.contains("--volume=")
-    check plan.command.contains("--command-name=bash")
-    check plan.command.contains("/workspace:/tmp/p1")
+    check plan.command == ""
     check plan.workingDir == ""
     check not plan.ensureWorkDir
 
@@ -91,35 +88,23 @@ suite "oci fallback":
     let output = "sh: foo: not found\n[exit 127]"
     check not shouldFallbackOci(output)
 
-suite "wasmer fallback":
+suite "wasmer removal":
 
-  test "shouldFallbackWasmer detects registry timeout/package resolution errors":
-    let output =
-      "error: Unable to find \"amin/bash\" in the registry\n" &
-      "│   1: failed to query package 'amin/bash': error sending request for url (https://registry.wasmer.io/graphql)\n" &
-      "│   2: error sending request for url (https://registry.wasmer.io/graphql)\n" &
-      "│   3: client error (Connect)\n" &
-      "╰─▶ 4: operation timed out\n[exit 1]"
-    check shouldFallbackWasmer(output)
-
-  test "probeSandboxWorkspaceWritable normalizes wasmer registry failures":
+  test "probeSandboxWorkspaceWritable reports removed backend":
     let runner: SandboxRunnerRaw =
       proc(plan: SandboxPlan; env: StringTableRef): tuple[output: string, exitCode: int]
            {.closure, gcsafe, raises: [CatchableError].} =
         discard plan
         discard env
-        (
-          "error: Unable to find \"amin/bash\" in the registry\n" &
-          "│   1: failed to query package 'amin/bash': error sending request for url (https://registry.wasmer.io/graphql)\n" &
-          "│   2: error sending request for url (https://registry.wasmer.io/graphql)\n" &
-          "│   3: client error (Connect)\n" &
-          "╰─▶ 4: operation timed out\n",
-          1
-        )
+        ("", 0)
     let res = probeSandboxWorkspaceWritable(
       smWasmer, "/tmp/p1", "ignored", "wasmer", false, true, runner)
     check res.isErr
-    check res.error.contains("wasmer sandbox unavailable")
+    check res.error.contains("removed")
+
+  test "sandboxBash reports removed wasmer backend":
+    let r = sandboxBash("echo ok", "/tmp/p1", smWasmer, "alpine", "wasmer", false)
+    check r.contains("removed")
 
   test "executeOciPlan falls back to direct exec when runtime is unavailable":
     var plans: seq[SandboxPlan] = @[]
@@ -252,8 +237,8 @@ suite "sandboxStatusMessage":
     check msg.contains("podman")
     check msg.contains("debian:bookworm-slim")
 
-  test "smWasmer mentions package":
+  test "smWasmer reports removal":
     let (level, msg) = sandboxStatusMessage(smWasmer, "ignored")
-    check level == lvlInfo
+    check level == lvlWarn
     check msg.contains("wasmer")
-    check msg.contains("amin/bash")
+    check msg.contains("removed")

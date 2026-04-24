@@ -4,7 +4,7 @@
 ##   smNone   — direct exec in paddock dir; no OS-level isolation
 ##   smOci    — ephemeral container with bind-mounted paddock
 ##   smWasm   — wasmtime CLI executing go-busybox shell.wasm
-##   smWasmer — Wasmer CLI executing `amin/bash` with paddock mounted at /workspace
+##   smWasmer — removed/deprecated; kept only to report a clear config error
 ##
 ## OCI mode:
 ##   {runtime} run --rm -v {paddock}:/workspace -w /workspace {image} sh -c {cmd}
@@ -48,7 +48,6 @@ type
 const
   SandboxExecCommand* = "__sandbox_exec"
   SandboxWriteProbeFile* = ".donkey-write-probe"
-  WasmerBashPackage* = "amin/bash"
 
 func canReenterViaHelper(appPath: string): bool {.gcsafe, raises: [].} =
   let base = extractFilename(appPath).toLowerAscii()
@@ -59,13 +58,6 @@ proc findExeSafe(name: string): string {.gcsafe, raises: [].} =
     findExe(name)
   except CatchableError:
     ""
-
-func effectiveWasmerCmd*(runtimeCmd: string): string {.gcsafe, raises: [].} =
-  let normalized = runtimeCmd.strip()
-  if normalized.len == 0 or normalized.toLowerAscii() == "docker":
-    "wasmer"
-  else:
-    normalized
 
 proc effectiveUid*(): int {.gcsafe, raises: [].} =
   when defined(posix):
@@ -148,8 +140,6 @@ proc buildHostSandboxEnv*(paddock: string): StringTableRef {.gcsafe, raises: [].
   result["USER"] = user
   result["LOGNAME"] = getEnv("LOGNAME", user)
 
-func shouldFallbackWasmer*(output: string): bool {.gcsafe, raises: [].}
-
 # ── Shell.wasm path resolution ────────────────────────────────────────────────
 
 proc resolveShellWasmPath*(): string {.gcsafe, raises: [].} =
@@ -189,23 +179,6 @@ proc buildWasmCmd*(cmd, paddock, shellPath: string): string {.gcsafe, raises: []
   "--dir=/tmp " &
   shellPath & " " & cmd
 
-proc buildWasmerCmd*(cmd, paddock: string;
-                     runtimeCmd = "wasmer";
-                     packageName = WasmerBashPackage): string {.gcsafe, raises: [].} =
-  ## Returns the Wasmer CLI invocation for a packaged bash shell.
-  ## Wasmer does not expose a working-directory flag here, so the script
-  ## explicitly enters /workspace before executing the user command.
-  let runtime = effectiveWasmerCmd(runtimeCmd)
-  runtime & " run " &
-  "--volume=" & quoteShell("/workspace:" & paddock) & " " &
-  "--volume=" & quoteShell("/tmp:/tmp") & " " &
-  "--env HOME=/workspace " &
-  "--env TMPDIR=/tmp " &
-  "--env TMP=/tmp " &
-  "--env TEMP=/tmp " &
-  packageName & " --command-name=bash -- -c " &
-  quoteShell("cd /workspace && " & cmd)
-
 proc buildSandboxPlan*(cmd, paddock: string;
                        mode: SandboxMode;
                        image: string;
@@ -225,9 +198,7 @@ proc buildSandboxPlan*(cmd, paddock: string;
                 workingDir: "",
                 ensureWorkDir: false)
   of smWasmer:
-    SandboxPlan(command: buildWasmerCmd(cmd, paddock, runtimeCmd),
-                workingDir: "",
-                ensureWorkDir: false)
+    SandboxPlan(command: "", workingDir: "", ensureWorkDir: false)
 
 proc formatSandboxResult*(output: string; code: int): string {.gcsafe, raises: [].} =
   result = output
@@ -269,6 +240,8 @@ proc probeSandboxWorkspaceWritable*(mode: SandboxMode;
                                     readOnlyRootfs = true;
                                     runPlanRaw: SandboxRunnerRaw = nil): Result[void, string]
                                     {.gcsafe, raises: [].} =
+  if mode == smWasmer:
+    return err("sandbox mode 'wasmer' has been removed; use 'oci', 'wasm', or 'none'")
   let runner =
     if runPlanRaw != nil: runPlanRaw
     else: (proc(plan: SandboxPlan; env: StringTableRef): tuple[output: string, exitCode: int]
@@ -284,9 +257,8 @@ proc probeSandboxWorkspaceWritable*(mode: SandboxMode;
     let (output, code) = runner(plan, env)
     if code == 0:
       return ok()
-    if mode == smWasmer and shouldFallbackWasmer(output):
-      return err("wasmer sandbox unavailable; package " & WasmerBashPackage &
-        " could not be resolved from the Wasmer registry")
+    if mode == smWasmer:
+      return err("sandbox mode 'wasmer' has been removed; use 'oci', 'wasm', or 'none'")
     err(formatSandboxResult(output, code))
   except CatchableError as e:
     err("Error: " & e.msg)
@@ -338,15 +310,6 @@ func shouldFallbackOci*(output: string; runtimeCmd = "docker"): bool {.gcsafe, r
   ("error: could not find command: " & runtime in normalized) or
   ("error: " in normalized and runtime in normalized and "no such file or directory" in normalized)
 
-func shouldFallbackWasmer*(output: string): bool {.gcsafe, raises: [].} =
-  let normalized = output.toLowerAscii()
-  ("unable to find \"" & WasmerBashPackage.toLowerAscii() & "\" in the registry" in normalized) or
-  ("failed to query package '" & WasmerBashPackage.toLowerAscii() in normalized) or
-  ("registry.wasmer.io" in normalized) or
-  ("operation timed out" in normalized) or
-  ("client error (connect)" in normalized) or
-  ("error sending request for url" in normalized)
-
 proc executeOciPlan*(cmd, paddock, image: string;
                      runtimeCmd = "docker";
                      allowHostFallback = true;
@@ -384,8 +347,7 @@ proc sandboxStatusMessage*(mode: SandboxMode; image: string; runtimeCmd = "docke
        "bash sandbox: wasm mode enabled but shell.wasm not found at " & shellPath &
        ". Run scripts/setup_shell_wasm.sh to build it.")
   of smWasmer:
-    let runtime = effectiveWasmerCmd(runtimeCmd)
-    (lvlInfo, "bash sandbox: wasmer (" & runtime & ", package: " & WasmerBashPackage & ")")
+    (lvlWarn, "bash sandbox: wasmer backend removed. Use [sandbox] mode = \"oci\", \"wasm\", or \"none\".")
 
 proc validateSandboxPolicy*(cfg: DonkeyConfig;
                             devMode: bool): Result[void, string] {.gcsafe, raises: [].} =
@@ -418,11 +380,7 @@ proc sandboxAvailabilityResult*(cfg: DonkeyConfig): Result[string, string] {.gcs
       return err("shell.wasm not found at " & shellPath)
     ok("wasmtime=" & wasmtimePath & ", shell=" & shellPath)
   of smWasmer:
-    let runtime = effectiveWasmerCmd(cfg.sandboxRuntimeCmd)
-    let wasmerPath = findExeSafe(runtime)
-    if wasmerPath.len == 0:
-      return err(runtime & " not found in PATH")
-    ok("wasmer=" & wasmerPath & ", package=" & WasmerBashPackage)
+    err("sandbox mode 'wasmer' has been removed; use 'oci', 'wasm', or 'none'")
 
 # ── Executor ──────────────────────────────────────────────────────────────────
 
@@ -438,8 +396,7 @@ proc sandboxBash*(cmd, paddock: string;
   ## For smOci: wraps cmd in an ephemeral container with paddock bind-mounted.
   ## For smWasm: runs via wasmtime + go-busybox. Pipes are composed in Nim
   ## (ShellComposer) since WASI lacks fork/exec.
-  ## For smWasmer: runs `amin/bash` via Wasmer with the paddock mounted
-  ## at /workspace.
+  ## For smWasmer: returns an explicit removal error.
   ## Falls back to direct exec if shell.wasm is missing.
   case mode
   of smWasm:
@@ -456,23 +413,7 @@ proc sandboxBash*(cmd, paddock: string;
     runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd, allowNetwork, readOnlyRootfs),
                    buildHostSandboxEnv(paddock))
   of smWasmer:
-    let runtime = effectiveWasmerCmd(runtimeCmd)
-    let wasmerPath = findExeSafe(runtime)
-    if wasmerPath.len == 0:
-      if not allowHostFallback:
-        return "Error: " & runtime & " sandbox unavailable; host fallback is disabled by configuration."
-      return runSandboxHelper(cmd, paddock)
-    let wasmerResult = runSandboxPlan(
-      buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd, allowNetwork, readOnlyRootfs),
-      buildHostSandboxEnv(paddock))
-    if not shouldFallbackWasmer(wasmerResult):
-      return wasmerResult
-    if not allowHostFallback:
-      return "Error: " & runtime & " sandbox unavailable; package " & WasmerBashPackage &
-        " could not be resolved from the Wasmer registry."
-    let directResult = runSandboxHelper(cmd, paddock)
-    "Warning: " & runtime & " sandbox unavailable; executed without Wasmer isolation.\n" &
-      directResult
+    "Error: sandbox mode 'wasmer' has been removed; use 'oci', 'wasm', or 'none'."
   of smNone:
     runSandboxHelper(cmd, paddock)
   of smOci:
@@ -496,6 +437,8 @@ proc logSandboxWorkspaceProbe*(mode: SandboxMode;
                                allowNetwork: bool;
                                readOnlyRootfs: bool;
                                log: Logger) =
+  if mode == smWasmer:
+    return
   let probe = probeSandboxWorkspaceWritable(
     mode, paddock, image, runtimeCmd, allowNetwork, readOnlyRootfs)
   if probe.isOk:
