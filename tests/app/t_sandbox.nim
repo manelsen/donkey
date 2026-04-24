@@ -2,8 +2,7 @@
 ## Tests: buildOciCmd shape, sandboxBash with smNone.
 ## smOci tests require a runtime and are skipped here (integration concern).
 
-import std/[os, strtabs, strutils, unittest]
-import results
+import std/[os, strutils, unittest]
 import donkey/config/types
 import donkey/app/sandbox
 import donkey/core/types
@@ -70,12 +69,6 @@ suite "buildSandboxPlan":
     check plan.workingDir == ""
     check not plan.ensureWorkDir
 
-  test "smWasmer no longer builds a runnable plan":
-    let plan = buildSandboxPlan("pwd", "/tmp/p1", smWasmer, "alpine")
-    check plan.command == ""
-    check plan.workingDir == ""
-    check not plan.ensureWorkDir
-
 suite "oci fallback":
 
   test "shouldFallbackOci detects image pull errors":
@@ -87,24 +80,6 @@ suite "oci fallback":
   test "shouldFallbackOci ignores command-not-found inside container":
     let output = "sh: foo: not found\n[exit 127]"
     check not shouldFallbackOci(output)
-
-suite "wasmer removal":
-
-  test "probeSandboxWorkspaceWritable reports removed backend":
-    let runner: SandboxRunnerRaw =
-      proc(plan: SandboxPlan; env: StringTableRef): tuple[output: string, exitCode: int]
-           {.closure, gcsafe, raises: [CatchableError].} =
-        discard plan
-        discard env
-        ("", 0)
-    let res = probeSandboxWorkspaceWritable(
-      smWasmer, "/tmp/p1", "ignored", "wasmer", false, true, runner)
-    check res.isErr
-    check res.error.contains("removed")
-
-  test "sandboxBash reports removed wasmer backend":
-    let r = sandboxBash("echo ok", "/tmp/p1", smWasmer, "alpine", "wasmer", false)
-    check r.contains("removed")
 
   test "executeOciPlan falls back to direct exec when runtime is unavailable":
     var plans: seq[SandboxPlan] = @[]
@@ -221,9 +196,6 @@ suite "SandboxMode values":
   test "smOci string value":
     check $smOci == "oci"
 
-  test "smWasmer string value":
-    check $smWasmer == "wasmer"
-
 suite "sandboxStatusMessage":
 
   test "smNone warns":
@@ -236,9 +208,3 @@ suite "sandboxStatusMessage":
     check level == lvlInfo
     check msg.contains("podman")
     check msg.contains("debian:bookworm-slim")
-
-  test "smWasmer reports removal":
-    let (level, msg) = sandboxStatusMessage(smWasmer, "ignored")
-    check level == lvlWarn
-    check msg.contains("wasmer")
-    check msg.contains("removed")

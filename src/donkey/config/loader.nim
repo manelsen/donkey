@@ -34,6 +34,7 @@ type
     skillNetPolicy*: Option[seq[SkillNetPolicy]]
 
   SandboxConfigPatch* = object
+    invalidSandboxMode*: Option[string]
     sandboxMode*:       Option[SandboxMode]
     sandboxRuntimeCmd*: Option[string]
     sandboxImage*:      Option[string]
@@ -49,12 +50,11 @@ proc resolveHomeFromEnv*(homeEnv: string): string =
 proc resolveHome*(): string =
   resolveHomeFromEnv(getEnv(EnvHome))
 
-proc parseSandboxMode*(rawMode: string): SandboxMode =
+proc parseSandboxMode*(rawMode: string): Option[SandboxMode] =
   case rawMode.strip().toLowerAscii()
-  of "docker", "oci": smOci
-  of "wasm":   smWasm
-  of "wasmer": smWasmer
-  else:        smNone
+  of "docker", "oci": some(smOci)
+  of "wasm":   some(smWasm)
+  else:        none(SandboxMode)
 
 proc parseHostList*(raw: string): seq[string] =
   for item in raw.split(','):
@@ -205,7 +205,13 @@ proc parseSandboxConfigPatch*(doc: TomlValueRef): SandboxConfigPatch =
   let sandboxSection = doc["sandbox"]
 
   if sandboxSection.hasKey("mode"):
-    result.sandboxMode = some(parseSandboxMode(sandboxSection["mode"].getStr()))
+    let rawMode = sandboxSection["mode"].getStr().strip()
+    let modeOpt = parseSandboxMode(rawMode)
+    result.invalidSandboxMode = some("")
+    if modeOpt.isSome:
+      result.sandboxMode = modeOpt
+    else:
+      result.invalidSandboxMode = some(rawMode)
 
   if sandboxSection.hasKey("runtime"):
     let sandboxRuntime = sandboxSection["runtime"].getStr().strip()
@@ -243,6 +249,8 @@ proc applyMainConfigPatch*(patch: MainConfigPatch; cfg: DonkeyConfig): DonkeyCon
 
 proc applySandboxConfigPatch*(patch: SandboxConfigPatch; cfg: DonkeyConfig): DonkeyConfig =
   result = cfg
+  if patch.invalidSandboxMode.isSome:
+    result.invalidSandboxMode = patch.invalidSandboxMode.get()
   if patch.sandboxMode.isSome:
     result.sandboxMode = patch.sandboxMode.get()
   if patch.sandboxRuntimeCmd.isSome:

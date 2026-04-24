@@ -21,7 +21,6 @@ type
     smNone   = "none"    ## workingDir only — no OS-level isolation
     smOci    = "oci"     ## ephemeral OCI container with bind-mounted paddock
     smWasm   = "wasm"    ## embedded wasm3 runtime with WASI
-    smWasmer = "wasmer"  ## deprecated/removed; retained only for explicit config errors
 
   DonkeyConfig* = object
     home*:          string       ## Base dir; default: ~/.donkey
@@ -33,6 +32,7 @@ type
     webAllowlist*:  seq[string]  ## Allowed public hosts for native web tools / skill net perms
     toolWebPolicy*: seq[ToolWebPolicy]
     skillNetPolicy*: seq[SkillNetPolicy]
+    invalidSandboxMode*: string  ## Original invalid sandbox mode from config; empty when valid
     sandboxMode*:   SandboxMode  ## bash tool isolation; default: smNone
     sandboxRuntimeCmd*: string   ## OCI runtime CLI; default: "docker"
     sandboxImage*:  string       ## Container image for smOci; default: "alpine"
@@ -54,6 +54,7 @@ func defaultConfig*(home: string): DonkeyConfig =
     webAllowlist: @[],
     toolWebPolicy: @[],
     skillNetPolicy: @[],
+    invalidSandboxMode: "",
     sandboxMode:  smNone,
     sandboxRuntimeCmd: "docker",
     sandboxImage: "alpine",

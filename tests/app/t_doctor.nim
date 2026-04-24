@@ -83,11 +83,12 @@ suite "doctor — checkSandboxRuntime":
     let r = checkSandboxRuntime(cfg)
     check r.status == dsOk
 
-  test "wasmer sandbox runtime reports removed backend":
-    let cfg = DonkeyConfig(sandboxMode: smWasmer)
+  test "invalid sandbox runtime reports config error":
+    let cfg = DonkeyConfig(sandboxMode: smNone, invalidSandboxMode: "wasmer")
     let r = checkSandboxRuntime(cfg)
     check r.status == dsErr
-    check "removed" in r.detail
+    check "invalid" in r.detail
+    check "wasmer" in r.detail
 
 suite "doctor — checkSandboxPolicy":
 

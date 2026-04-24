@@ -11,10 +11,11 @@ suite "Config Loader":
     check resolveHomeFromEnv("/tmp/donkey_home_x") == "/tmp/donkey_home_x"
 
   test "parseSandboxMode maps docker/oci and defaults unknown to none":
-    check parseSandboxMode("docker") == smOci
-    check parseSandboxMode("oci") == smOci
-    check parseSandboxMode("wasmer") == smWasmer
-    check parseSandboxMode("weird") == smNone
+    check parseSandboxMode("docker").get() == smOci
+    check parseSandboxMode("oci").get() == smOci
+    check parseSandboxMode("wasm").get() == smWasm
+    check parseSandboxMode("wasmer").isNone
+    check parseSandboxMode("weird").isNone
 
   test "loadTomlConfig returns none for missing file":
     check loadTomlConfig("/tmp/donkey_nonexistent_12345.toml").isNone
@@ -111,7 +112,7 @@ mode = "oci"
     let cfg = loadConfig(tmp)
     check cfg.sandboxMode == smOci
 
-  test "reads sandbox mode wasmer":
+  test "tracks invalid removed sandbox mode":
     let tmp = getTempDir() / "t_loader_sandbox_wasmer.toml"
     writeFile(tmp, """
 [sandbox]
@@ -119,7 +120,8 @@ mode = "wasmer"
 """)
     defer: removeFile(tmp)
     let cfg = loadConfig(tmp)
-    check cfg.sandboxMode == smWasmer
+    check cfg.sandboxMode == smNone
+    check cfg.invalidSandboxMode == "wasmer"
 
   test "reads custom sandbox image":
     let tmp = getTempDir() / "t_loader_sbimage.toml"
@@ -150,6 +152,7 @@ mode = "kubernetes"
     defer: removeFile(tmp)
     let cfg = loadConfig(tmp)
     check cfg.sandboxMode == smNone
+    check cfg.invalidSandboxMode == "kubernetes"
 
   test "default sandbox image is alpine":
     let tmp = getTempDir() / "t_loader_sbdefimg.toml"

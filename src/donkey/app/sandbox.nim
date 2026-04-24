@@ -4,7 +4,6 @@
 ##   smNone   — direct exec in paddock dir; no OS-level isolation
 ##   smOci    — ephemeral container with bind-mounted paddock
 ##   smWasm   — wasmtime CLI executing go-busybox shell.wasm
-##   smWasmer — removed/deprecated; kept only to report a clear config error
 ##
 ## OCI mode:
 ##   {runtime} run --rm -v {paddock}:/workspace -w /workspace {image} sh -c {cmd}
@@ -197,8 +196,6 @@ proc buildSandboxPlan*(cmd, paddock: string;
     SandboxPlan(command: buildWasmCmd(cmd, paddock, shellPath),
                 workingDir: "",
                 ensureWorkDir: false)
-  of smWasmer:
-    SandboxPlan(command: "", workingDir: "", ensureWorkDir: false)
 
 proc formatSandboxResult*(output: string; code: int): string {.gcsafe, raises: [].} =
   result = output
@@ -240,8 +237,6 @@ proc probeSandboxWorkspaceWritable*(mode: SandboxMode;
                                     readOnlyRootfs = true;
                                     runPlanRaw: SandboxRunnerRaw = nil): Result[void, string]
                                     {.gcsafe, raises: [].} =
-  if mode == smWasmer:
-    return err("sandbox mode 'wasmer' has been removed; use 'oci', 'wasm', or 'none'")
   let runner =
     if runPlanRaw != nil: runPlanRaw
     else: (proc(plan: SandboxPlan; env: StringTableRef): tuple[output: string, exitCode: int]
@@ -257,8 +252,6 @@ proc probeSandboxWorkspaceWritable*(mode: SandboxMode;
     let (output, code) = runner(plan, env)
     if code == 0:
       return ok()
-    if mode == smWasmer:
-      return err("sandbox mode 'wasmer' has been removed; use 'oci', 'wasm', or 'none'")
     err(formatSandboxResult(output, code))
   except CatchableError as e:
     err("Error: " & e.msg)
@@ -346,11 +339,12 @@ proc sandboxStatusMessage*(mode: SandboxMode; image: string; runtimeCmd = "docke
       (lvlWarn,
        "bash sandbox: wasm mode enabled but shell.wasm not found at " & shellPath &
        ". Run scripts/setup_shell_wasm.sh to build it.")
-  of smWasmer:
-    (lvlWarn, "bash sandbox: wasmer backend removed. Use [sandbox] mode = \"oci\", \"wasm\", or \"none\".")
 
 proc validateSandboxPolicy*(cfg: DonkeyConfig;
                             devMode: bool): Result[void, string] {.gcsafe, raises: [].} =
+  if cfg.invalidSandboxMode.len > 0:
+    return err("Security Error: sandbox mode '" & cfg.invalidSandboxMode &
+               "' is invalid. Use 'oci', 'wasm', or 'none'")
   if not devMode and cfg.sandboxMode == smNone:
     return err("Security Error: Sandbox mode 'none' is only allowed in --dev-mode")
   if not devMode and cfg.sandboxAllowHostFallback:
@@ -362,6 +356,8 @@ proc validateSandboxPolicy*(cfg: DonkeyConfig;
   ok()
 
 proc sandboxAvailabilityResult*(cfg: DonkeyConfig): Result[string, string] {.gcsafe, raises: [].} =
+  if cfg.invalidSandboxMode.len > 0:
+    return err("sandbox mode '" & cfg.invalidSandboxMode & "' is invalid; use 'oci', 'wasm', or 'none'")
   case cfg.sandboxMode
   of smNone:
     ok("mode=none")
@@ -379,8 +375,6 @@ proc sandboxAvailabilityResult*(cfg: DonkeyConfig): Result[string, string] {.gcs
     if not shellPath.fileExists:
       return err("shell.wasm not found at " & shellPath)
     ok("wasmtime=" & wasmtimePath & ", shell=" & shellPath)
-  of smWasmer:
-    err("sandbox mode 'wasmer' has been removed; use 'oci', 'wasm', or 'none'")
 
 # ── Executor ──────────────────────────────────────────────────────────────────
 
@@ -396,7 +390,6 @@ proc sandboxBash*(cmd, paddock: string;
   ## For smOci: wraps cmd in an ephemeral container with paddock bind-mounted.
   ## For smWasm: runs via wasmtime + go-busybox. Pipes are composed in Nim
   ## (ShellComposer) since WASI lacks fork/exec.
-  ## For smWasmer: returns an explicit removal error.
   ## Falls back to direct exec if shell.wasm is missing.
   case mode
   of smWasm:
@@ -412,8 +405,6 @@ proc sandboxBash*(cmd, paddock: string;
     # Single command — use wasmtime directly
     runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd, allowNetwork, readOnlyRootfs),
                    buildHostSandboxEnv(paddock))
-  of smWasmer:
-    "Error: sandbox mode 'wasmer' has been removed; use 'oci', 'wasm', or 'none'."
   of smNone:
     runSandboxHelper(cmd, paddock)
   of smOci:
@@ -437,8 +428,6 @@ proc logSandboxWorkspaceProbe*(mode: SandboxMode;
                                allowNetwork: bool;
                                readOnlyRootfs: bool;
                                log: Logger) =
-  if mode == smWasmer:
-    return
   let probe = probeSandboxWorkspaceWritable(
     mode, paddock, image, runtimeCmd, allowNetwork, readOnlyRootfs)
   if probe.isOk:
