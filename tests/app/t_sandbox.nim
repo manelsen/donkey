@@ -26,7 +26,15 @@ suite "buildOciCmd":
 
   test "bind-mounts paddock to /workspace":
     let cmd = buildOciCmd("ls", "/home/u/paddock", "alpine")
-    check cmd.contains("-v /home/u/paddock:/workspace")
+    check cmd.contains("-v " & quoteShell("/home/u/paddock:/workspace:rw,z"))
+
+  test "runs container as daemon uid and gid":
+    let cmd = buildOciCmd("ls", "/home/u/paddock", "alpine")
+    check cmd.contains("--user " & $effectiveUid() & ":" & $effectiveGid())
+
+  test "bind mount is shell quoted when paddock contains spaces":
+    let cmd = buildOciCmd("ls", "/home/u/my paddock", "alpine")
+    check cmd.contains(quoteShell("/home/u/my paddock:/workspace:rw,z"))
 
   test "sets working dir to /workspace":
     let cmd = buildOciCmd("ls", "/home/u/paddock", "alpine")

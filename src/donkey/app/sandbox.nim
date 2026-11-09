@@ -64,6 +64,12 @@ proc effectiveUid*(): int {.gcsafe, raises: [].} =
   else:
     -1
 
+proc effectiveGid*(): int {.gcsafe, raises: [].} =
+  when defined(posix):
+    getgid().int
+  else:
+    -1
+
 proc pathOwnerUid*(path: string): Result[int, string] {.gcsafe, raises: [].} =
   when defined(posix):
     var st: Stat
@@ -156,11 +162,17 @@ proc buildOciCmd*(cmd, paddock, image: string;
                   allowNetwork = false;
                   readOnlyRootfs = true): string {.gcsafe, raises: [].} =
   ## Returns the OCI runtime invocation string without executing it.
+  let uid = effectiveUid()
+  let gid = effectiveGid()
+  let userArg =
+    if uid >= 0 and gid >= 0: "--user " & $uid & ":" & $gid & " "
+    else: ""
   runtimeCmd & " run --rm " &
   (if allowNetwork: "" else: "--network=none ") &
   (if readOnlyRootfs: "--read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m " else: "") &
+  userArg &
   "--cap-drop=ALL --security-opt no-new-privileges " &
-  "-v " & paddock & ":/workspace " &
+  "-v " & quoteShell(paddock & ":/workspace:rw,z") & " " &
   "-w /workspace " &
   image & " sh -c " & quoteShell(cmd)
 
