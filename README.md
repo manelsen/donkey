@@ -27,7 +27,7 @@ Most AI agent platforms are heavy, complex webs of Python interpreters, gigabyte
 - **Sovereign Dual-Layer Memory (MAGMA)**: Out-of-the-box SQLite with embedded `sqlite-vec` vector similarity search, alongside human-inspectable Markdown paddocks (`USER.md`, `MEMORY.md`, `HEARTBEAT.md`). Scales seamlessly to PostgreSQL + `pgvector` multigraph when required.
 - **Hardened Execution Sandbox**: Shell execution can be isolated via an OCI container runtime (Docker/Podman) running under the daemon UID/GID with read-only rootfs, plus in-process WASM applet dispatch for fast, secure file manipulation.
 - **Autonomous Heartbeat & Contemplation**: Runs background scheduling loops that inspect checklists in `HEARTBEAT.md`, digest conversation memories into episodic journals, and deliver pro-active reminders across connected channels.
-- **Multi-Channel & Multi-Provider**: Direct, first-class connectivity to Telegram, Discord, WeChat, Feishu, DingTalk, Slack, QQ, and Matrix, with support for Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, Ollama, ZAI, and OpenRouter. Smart routing can try eligible providers on failure. For users without provider preferences, the setup wizard selects a fixed provider; OpenRouter is a fallback only when its key is configured.
+- **Multi-Channel & Multi-Provider**: Direct, first-class connectivity to Telegram, Discord, WeChat, Feishu, DingTalk, Slack, QQ, and Matrix, with active session routing for Anthropic, Gemini, MiniMax, ZAI, and OpenRouter (sessions selecting OpenAI, DeepSeek, or Ollama are currently mapped to ZAI coding by `buildProviderSpec`). Smart routing can try eligible providers on failure. For users without provider preferences, the setup wizard selects a fixed provider; OpenRouter is a fallback only when its key is configured.
 
 ---
 
@@ -205,7 +205,8 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 | **ZAI / Zhipu** | ✅ | ❌ | `glm-4-plus`, `glm-4-flash` |
 | **OpenRouter** | ✅ | ✅ | Universal routing fallback |
 
-> Streaming indicates per-session `streamFn` availability in `buildProviderBundle` (`zai-anthropic` also provides streaming).
+> [!NOTE]
+> In the daemon runtime, sessions receive the global OpenRouter `streamFn` when `OPENROUTER_API_KEY` is configured. In addition, the orchestrator tool loop only engages streaming when zero tools are present; because sessions register native tools by default, responses are executed through complete turns rather than token streams. Adapter-level streaming flags in the table indicate `buildProviderBundle` support (`zai-anthropic` also provides streaming).
 
 ---
 
