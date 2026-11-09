@@ -22,7 +22,7 @@ app_port: 8080
 
 Most AI agent platforms are heavy, complex webs of Python interpreters, gigabyte-sized virtualenvs, and unpredictable Node runtimes. **Donkey takes the opposite path:**
 
-- **Native Binary & Low Footprint**: Compiles to a single, compact static binary with deterministic ARC/ORC memory management. Idles in single-digit megabytes of RAM.
+- **Native Binary & Low Footprint**: Compiles to a compact native binary with deterministic ARC/ORC memory management (requires host OpenSSL libraries for HTTPS). Idles in single-digit megabytes of RAM.
 - **Strict Hexagonal Architecture**: Business logic, planning, and memory algorithms remain 100% pure and decoupled from I/O through Nim structural typing (`concept`). Adapters can be plugged in or replaced without touching core code.
 - **Sovereign Dual-Layer Memory (MAGMA)**: Out-of-the-box SQLite with embedded `sqlite-vec` vector similarity search, alongside human-inspectable Markdown paddocks (`USER.md`, `MEMORY.md`, `HEARTBEAT.md`). Scales seamlessly to PostgreSQL + `pgvector` multigraph when required.
 - **Hardened Execution Sandbox**: Untrusted tool execution is safely isolated via an OCI container runtime (Docker/Podman) running under the daemon UID/GID with read-only rootfs, plus in-process WASM applet dispatch for fast, secure file manipulation.
@@ -65,7 +65,7 @@ flowchart TD
   subgraph Outbound["Outbound Adapters"]
     LLM["LLM Providers\nAnthropic · OpenAI · Gemini\nDeepSeek · MiniMax · Ollama · ZAI"]
     MAGMA["Dual Memory Runtime\nEmbedded SQLite-vec · Markdown\nPostgreSQL Multigraph"]
-    SANDBOX["Hardened Sandbox\nOCI Rootless Container · WASM Busybox"]
+    SANDBOX["Hardened Sandbox\nOCI Container (Daemon UID/GID) · WASM Busybox"]
   end
 
   Inbound --> InPorts --> Core --> OutPorts --> Outbound
@@ -82,7 +82,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete architectural 
 - [Nim 2.2+](https://nim-lang.org/install.html) with Nimble (`choosenim` recommended)
 - `ripgrep` (`rg`) for architectural boundary verification
 - `docker` or `podman` (required for default OCI shell sandbox)
-- `TELEGRAM_BOT_TOKEN` (required to start the daemon) and at least one provider API key
+- `TELEGRAM_BOT_TOKEN` (required to start the daemon) and at least one provider API key (or local Ollama, which requires no key)
 
 ### 1. Build the Binary
 
@@ -147,7 +147,7 @@ Every user interacting with Donkey receives an isolated, human-readable director
 
 ### The MAGMA Subsystem
 1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Episodic memories, user preferences, and knowledge nodes live in `~/.donkey/state/magma.sqlite` (vector search requires `OPENROUTER_API_KEY` for embedding generation). Raw conversation transcripts are preserved in JSONL session files under `paddocks/<uuid>/sessions/`.
-2. **Markdown Bootstrap & Export**: Markdown paddocks serve as the human-readable view, bootstrap source, and debug format. When MAGMA is active, runtime queries prioritize the graph store; use `./donkey ctl memory export <uuid> [output_dir]` to export the live MAGMA view into Markdown (overwriting existing files in the specified directory).
+2. **Markdown Bootstrap & Export**: Markdown paddocks serve as the human-readable view, bootstrap source, and debug format. When MAGMA is active, runtime writes go to the graph and do not automatically update paddock Markdown files; use `./donkey ctl memory export <uuid> [output_dir]` to export the current MAGMA view into Markdown files (overwriting existing files in the target directory, or omit `output_dir` to print to stdout).
 3. **PostgreSQL Multigraph Scaling**: For multi-agent graph querying at scale, Donkey supports PostgreSQL + `pgvector`. Compile with `nim c -d:withPostgres -u:withSqlite -o:donkey src/donkey.nim` and configure `DONKEY_PG_DSN`.
 
 ---
@@ -159,10 +159,10 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 - **OCI Hardened Sandbox**: Shell executions run inside ephemeral Docker or Podman containers configured with:
   - Host daemon UID and GID matching (prevents host file ownership pollution)
   - Read-only root filesystem (`read_only_rootfs = true`)
-  - Global network isolation (configurable in donkey.toml; enabled only in --dev-mode)
+  - Network access disabled by default (enabling network in donkey.toml requires --dev-mode)
   - Isolated temporary and paddock mounts
 - **WASM Applet Dispatch**: Fast execution of POSIX applets (cat, grep, sed, find) via `wasmtime` and `~/.donkey/busybox`.
-- **Model Context Protocol (MCP)**: Native client support for external MCP tool servers:
+- **Model Context Protocol (MCP)**: Native client support for external MCP tool servers (servers with option flags like `--port` can be configured directly in `tools.toml`):
   ```bash
   ./donkey ctl tool install <mcp-server-command> [args...]
   ```
