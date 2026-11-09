@@ -925,11 +925,11 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     cfg.sandboxImage,
     nil,
     ctx.services.globalSearchFn,
+    proc(userId: UserId): bool = memory.isRevoked(userId),
     newStdHttpAdapter(allowlist = cfg.webAllowlist).toRuntimePort(),
     buildProviderBundle,
     buildDenoSkillRuntime,
     buildSkillRuntimePolicyResolver(cfg),
-    isRevoked = proc(userId: UserId): bool = memory.isRevoked(userId),
     routeRecordHook = proc(selection: ProviderSelection) {.gcsafe.} =
       ctx.runtime.recordRouteChoice(selection),
     routeResultHook = proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.} =
