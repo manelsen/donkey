@@ -15,6 +15,7 @@ testresults/
 tests/**
 !tests/**/
 !tests/**/*.nim
+!tests/fixtures/**
 
 # Build artifacts
 donkey_release

@@ -1,0 +1,69 @@
+[
+    {
+        "t": "READY",
+        "op": 0,
+        "s": 1,
+        "d": {
+            "resume_gateway_url": "wss://gateway.discord.gg/?v=10&encoding=json",
+            "presences": [
+            ],
+            "private_channels": [
+            ],
+            "session_type": "normal",
+            "user": {
+                "username": "username_2",
+                "bot": true,
+                "global_name": null,
+                "primary_guild": null,
+                "id": "900000000000000018",
+                "clan": null,
+                "discriminator": "7281",
+                "email": null,
+                "flags": 0,
+                "mfa_enabled": true,
+                "verified": true,
+                "avatar": null
+            },
+            "session_id": "session_id_3",
+            "shard": [
+                0,
+                1
+            ],
+            "_trace": [
+                "[\"gateway-prd-arm-us-east1-d-41zj\",{\"micros\":115715,\"calls\":[\"id_created\",{\"micros\":557,\"calls\":[]},\"session_lookup_time\",{\"micros\":4236,\"calls\":[]},\"session_lookup_finished\",{\"micros\":10,\"calls\":[]},\"discord-sessions-prd-2-84\",{\"micros\":109593,\"calls\":[\"start_session\",{\"micros\":96186,\"calls\":[\"discord-api-rpc-5766dc644b-nj5n5\",{\"micros\":41060,\"calls\":[\"get_user\",{\"micros\":8874},\"get_guilds\",{\"micros\":6926},\"send_scheduled_deletion_message\",{\"micros\":19},\"guild_join_requests\",{\"micros\":3},\"authorized_ip_coro\",{\"micros\":13},\"pending_payments\",{\"micros\":1457},\"apex_experiments\",{\"micros\":41479},\"sessions_experiments\",{\"micros\":8},\"user_activities\",{\"micros\":5},\"played_application_ids\",{\"micros\":4},\"linked_users\",{\"micros\":5},\"ad_personalization_toggles_disabled\",{\"micros\":5},\"regional_feature_config\",{\"micros\":15}]}]},\"starting_guild_connect\",{\"micros\":39,\"calls\":[]},\"presence_started\",{\"micros\":8025,\"calls\":[]},\"guilds_started\",{\"micros\":92,\"calls\":[]},\"lobbies_started\",{\"micros\":1,\"calls\":[]},\"guilds_connect\",{\"micros\":1,\"calls\":[]},\"presence_connect\",{\"micros\":5188,\"calls\":[]},\"connect_finished\",{\"micros\":5236,\"calls\":[]},\"build_ready\",{\"micros\":12,\"calls\":[]},\"clean_ready\",{\"micros\":0,\"calls\":[]},\"optimize_ready\",{\"micros\":0,\"calls\":[]},\"split_ready\",{\"micros\":1,\"calls\":[]}]}]}]"
+            ],
+            "user_settings": {
+            },
+            "v": 10,
+            "guild_join_requests": [
+            ],
+            "auth": {
+            },
+            "relationships": [
+            ],
+            "guilds": [
+                {
+                    "unavailable": true,
+                    "id": "900000000000000034"
+                },
+                {
+                    "unavailable": true,
+                    "id": "900000000000000008"
+                }
+            ],
+            "application": {
+                "flags": 11051008,
+                "id": "900000000000000018"
+            },
+            "game_relationships": [
+            ],
+            "geo_ordered_rtc_regions": [
+                "frankfurt",
+                "brussels",
+                "milan",
+                "paris",
+                "rotterdam"
+            ]
+        }
+    }
+]

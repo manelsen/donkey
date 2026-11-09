@@ -1,0 +1,132 @@
+[
+    {
+        "items": [
+            {
+                "colors": {
+                    "secondary_color": null,
+                    "tertiary_color": null,
+                    "primary_color": 0
+                },
+                "name": "name_4",
+                "icon": null,
+                "id": "900000000000000008",
+                "position": 0,
+                "hoist": false,
+                "description": null,
+                "permissions": "2248473465835073",
+                "unicode_emoji": null,
+                "mentionable": false,
+                "managed": false,
+                "flags": 0,
+                "color": 0
+            },
+            {
+                "colors": {
+                    "secondary_color": null,
+                    "tertiary_color": null,
+                    "primary_color": 0
+                },
+                "name": "name_5",
+                "icon": null,
+                "id": "900000000000000011",
+                "position": 5,
+                "hoist": false,
+                "description": null,
+                "permissions": "6755692304264272",
+                "unicode_emoji": null,
+                "mentionable": false,
+                "managed": true,
+                "flags": 0,
+                "color": 0,
+                "tags": {
+                    "bot_id": "900000000000000012"
+                }
+            },
+            {
+                "colors": {
+                    "secondary_color": null,
+                    "tertiary_color": null,
+                    "primary_color": 3066993
+                },
+                "name": "name_6",
+                "icon": null,
+                "id": "900000000000000005",
+                "position": 1,
+                "hoist": true,
+                "description": null,
+                "permissions": "8",
+                "unicode_emoji": null,
+                "mentionable": true,
+                "managed": false,
+                "flags": 0,
+                "color": 3066993
+            },
+            {
+                "colors": {
+                    "secondary_color": null,
+                    "tertiary_color": null,
+                    "primary_color": 0
+                },
+                "name": "name_7",
+                "icon": null,
+                "id": "900000000000000013",
+                "position": 1,
+                "hoist": false,
+                "description": null,
+                "permissions": "274881121280",
+                "unicode_emoji": null,
+                "mentionable": false,
+                "managed": true,
+                "flags": 0,
+                "color": 0,
+                "tags": {
+                    "bot_id": "900000000000000014"
+                }
+            },
+            {
+                "colors": {
+                    "secondary_color": null,
+                    "tertiary_color": null,
+                    "primary_color": 0
+                },
+                "name": "name_8",
+                "icon": null,
+                "id": "900000000000000015",
+                "position": 1,
+                "hoist": false,
+                "description": null,
+                "permissions": "6755674319350848",
+                "unicode_emoji": null,
+                "mentionable": false,
+                "managed": true,
+                "flags": 0,
+                "color": 0,
+                "tags": {
+                    "bot_id": "900000000000000016"
+                }
+            },
+            {
+                "colors": {
+                    "secondary_color": null,
+                    "tertiary_color": null,
+                    "primary_color": 0
+                },
+                "name": "name_9",
+                "icon": null,
+                "id": "900000000000000017",
+                "position": 1,
+                "hoist": false,
+                "description": null,
+                "permissions": "36700160",
+                "unicode_emoji": null,
+                "mentionable": false,
+                "managed": true,
+                "flags": 0,
+                "color": 0,
+                "tags": {
+                    "bot_id": "900000000000000018"
+                }
+            }
+        ]
+    }
+]

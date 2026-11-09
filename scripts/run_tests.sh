@@ -29,6 +29,11 @@ run_one() {
     *t_sqlite_store*) return 0 ;;   # requires -d:withSqlite
     *t_postgres*|*t_pgvector*|*t_age_store*) return 0 ;; # requires -d:withPostgres + live DB
     *t_wasm.nim) return 0 ;;        # requires wasm3 nimble package (not installed by default)
+    *t_wasm*|*t_shell_composer*)
+      if [ ! -f "$HOME/.donkey/busybox" ] || ! command -v wasmtime >/dev/null 2>&1; then
+        return 0
+      fi
+      ;;
   esac
 
   local log="$tmp_dir/test_${id}.log"

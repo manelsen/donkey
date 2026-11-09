@@ -1,0 +1,23 @@
+[
+    {
+        "guild_id": "900000000000000008",
+        "topic": null,
+        "parent_id": "900000000000000020",
+        "theme_color": null,
+        "name": "name_13",
+        "last_pin_timestamp": "2025-12-30T21:05:57.113000+00:00",
+        "nsfw": false,
+        "id": "900000000000000009",
+        "last_message_id": "900000000000000006",
+        "position": 0,
+        "permission_overwrites": [
+        ],
+        "icon_emoji": {
+            "name": "name_14",
+            "id": null
+        },
+        "rate_limit_per_user": 0,
+        "flags": 0,
+        "type": 0
+    }
+]

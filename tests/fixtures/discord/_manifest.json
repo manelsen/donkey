@@ -1,0 +1,31 @@
+{
+  "captured_at": "2026-02-27T21:10:00",
+  "sanitized": true,
+  "sanitized_at": "2026-02-27T21:10:00",
+  "duration_seconds": 60,
+  "categories": [
+    "gateway_guild_create",
+    "gateway_guild_member_update",
+    "gateway_heartbeat_ack",
+    "gateway_hello",
+    "gateway_interaction_create",
+    "gateway_message_create",
+    "gateway_message_delete",
+    "gateway_message_reaction_add",
+    "gateway_message_update",
+    "gateway_ready",
+    "gateway_thread_create",
+    "gateway_voice_channel_start_time_update",
+    "gateway_voice_channel_status_update",
+    "gateway_voice_state_update",
+    "rest_create_message",
+    "rest_get_channel",
+    "rest_get_channels",
+    "rest_get_emojis",
+    "rest_get_gateway_bot",
+    "rest_get_guild",
+    "rest_get_me",
+    "rest_get_members",
+    "rest_get_roles"
+  ]
+}

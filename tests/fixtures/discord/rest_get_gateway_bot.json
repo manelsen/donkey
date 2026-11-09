@@ -1,0 +1,12 @@
+[
+    {
+        "shards": 1,
+        "session_start_limit": {
+            "max_concurrency": 1,
+            "remaining": 999,
+            "total": 1000,
+            "reset_after": 86215796
+        },
+        "url": "wss://gateway.discord.gg/?v=10&encoding=json"
+    }
+]

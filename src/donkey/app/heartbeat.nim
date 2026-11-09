@@ -206,7 +206,8 @@ proc deliverHeartbeats*(paddocksDir: string;
     if not fileExists(hbPath): continue
     let userId = extractFilename(dir)
     let state = loadHeartbeatState(dir)
-    if nowMs - state.lastDispatchMs < HeartbeatCooldownMs:
+    if state.lastDispatchMs > 0 and nowMs >= state.lastDispatchMs and
+        (nowMs - state.lastDispatchMs < HeartbeatCooldownMs):
       continue
     let content = try: readFile(hbPath) except CatchableError: ""
     let entries = parseHeartbeatMd(content)

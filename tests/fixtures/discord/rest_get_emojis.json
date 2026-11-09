@@ -1,0 +1,47 @@
+[
+    {
+        "items": [
+            {
+                "require_colons": true,
+                "name": "name_1",
+                "animated": false,
+                "managed": false,
+                "id": "900000000000000001",
+                "roles": [
+                ],
+                "available": true,
+                "user": {
+                    "collectibles": null,
+                    "username": "username_1",
+                    "accent_color": null,
+                    "display_name_styles": null,
+                    "global_name": "global_name_1",
+                    "id": "900000000000000002",
+                    "clan": {
+                        "identity_guild_id": "900000000000000003",
+                        "tag": "tag_1",
+                        "badge": "00000000000000000000000000000001",
+                        "identity_enabled": true
+                    },
+                    "primary_guild": {
+                        "identity_guild_id": "900000000000000003",
+                        "tag": "tag_1",
+                        "badge": "00000000000000000000000000000002",
+                        "identity_enabled": true
+                    },
+                    "discriminator": "0",
+                    "public_flags": 0,
+                    "banner_color": null,
+                    "banner": null,
+                    "flags": 0,
+                    "avatar_decoration_data": {
+                        "expires_at": null,
+                        "asset": "00000000000000000000000000000001",
+                        "sku_id": "900000000000000004"
+                    },
+                    "avatar": "00000000000000000000000000000001"
+                }
+            }
+        ]
+    }
+]

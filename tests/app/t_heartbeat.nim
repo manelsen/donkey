@@ -235,10 +235,11 @@ suite "heartbeat deliverHeartbeats":
       {.cast(gcsafe).}: dispatched.add(userId & "|" & channel & "|" & taskPayload)
     deliverHeartbeats(tmp, outboxFn)
     check dispatched.len == 1
-    check "user-uuid" in dispatched[0]
-    check "||" in dispatched[0]
-    check "Review the logs" in dispatched[0]
-    check "Check email" in dispatched[0]
+    if dispatched.len > 0:
+      check "user-uuid" in dispatched[0]
+      check "||" in dispatched[0]
+      check "Review the logs" in dispatched[0]
+      check "Check email" in dispatched[0]
 
   test "skips already dispatched users within cooldown":
     let tmp = getTempDir() / "donkey_hb_cooldown"

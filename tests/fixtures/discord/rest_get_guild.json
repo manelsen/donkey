@@ -1,0 +1,205 @@
+[
+    {
+        "mfa_level": 0,
+        "system_channel_id": "900000000000000009",
+        "max_stage_video_channel_users": 50,
+        "max_presences": null,
+        "banner": null,
+        "inventory_settings": null,
+        "home_header": null,
+        "stickers": [
+            {
+                "name": "name_3",
+                "guild_id": "900000000000000008",
+                "id": "900000000000000010",
+                "asset": "00000000000000000000000000000003",
+                "format_type": 1,
+                "tags": "coffee",
+                "type": 2,
+                "description": "description_1",
+                "available": true
+            }
+        ],
+        "roles": [
+            {
+                "colors": {
+                    "secondary_color": null,
+                    "tertiary_color": null,
+                    "primary_color": 0
+                },
+                "name": "name_4",
+                "icon": null,
+                "id": "900000000000000008",
+                "position": 0,
+                "hoist": false,
+                "description": null,
+                "permissions": "2248473465835073",
+                "unicode_emoji": null,
+                "mentionable": false,
+                "managed": false,
+                "flags": 0,
+                "color": 0
+            },
+            {
+                "colors": {
+                    "secondary_color": null,
+                    "tertiary_color": null,
+                    "primary_color": 0
+                },
+                "name": "name_5",
+                "icon": null,
+                "id": "900000000000000011",
+                "position": 5,
+                "hoist": false,
+                "description": null,
+                "permissions": "6755692304264272",
+                "unicode_emoji": null,
+                "mentionable": false,
+                "managed": true,
+                "flags": 0,
+                "color": 0,
+                "tags": {
+                    "bot_id": "900000000000000012"
+                }
+            },
+            {
+                "colors": {
+                    "secondary_color": null,
+                    "tertiary_color": null,
+                    "primary_color": 3066993
+                },
+                "name": "name_6",
+                "icon": null,
+                "id": "900000000000000005",
+                "position": 1,
+                "hoist": true,
+                "description": null,
+                "permissions": "8",
+                "unicode_emoji": null,
+                "mentionable": true,
+                "managed": false,
+                "flags": 0,
+                "color": 3066993
+            },
+            {
+                "colors": {
+                    "secondary_color": null,
+                    "tertiary_color": null,
+                    "primary_color": 0
+                },
+                "name": "name_7",
+                "icon": null,
+                "id": "900000000000000013",
+                "position": 1,
+                "hoist": false,
+                "description": null,
+                "permissions": "274881121280",
+                "unicode_emoji": null,
+                "mentionable": false,
+                "managed": true,
+                "flags": 0,
+                "color": 0,
+                "tags": {
+                    "bot_id": "900000000000000014"
+                }
+            },
+            {
+                "colors": {
+                    "secondary_color": null,
+                    "tertiary_color": null,
+                    "primary_color": 0
+                },
+                "name": "name_8",
+                "icon": null,
+                "id": "900000000000000015",
+                "position": 1,
+                "hoist": false,
+                "description": null,
+                "permissions": "6755674319350848",
+                "unicode_emoji": null,
+                "mentionable": false,
+                "managed": true,
+                "flags": 0,
+                "color": 0,
+                "tags": {
+                    "bot_id": "900000000000000016"
+                }
+            },
+            {
+                "colors": {
+                    "secondary_color": null,
+                    "tertiary_color": null,
+                    "primary_color": 0
+                },
+                "name": "name_9",
+                "icon": null,
+                "id": "900000000000000017",
+                "position": 1,
+                "hoist": false,
+                "description": null,
+                "permissions": "36700160",
+                "unicode_emoji": null,
+                "mentionable": false,
+                "managed": true,
+                "flags": 0,
+                "color": 0,
+                "tags": {
+                    "bot_id": "900000000000000018"
+                }
+            }
+        ],
+        "emojis": [
+            {
+                "name": "name_1",
+                "animated": false,
+                "managed": false,
+                "id": "900000000000000001",
+                "roles": [
+                ],
+                "available": true,
+                "require_colons": true
+            }
+        ],
+        "name": "name_10",
+        "nsfw": false,
+        "public_updates_channel_id": null,
+        "afk_timeout": 300,
+        "preferred_locale": "en-US",
+        "afk_channel_id": null,
+        "hub_type": null,
+        "owner_configured_content_level": 0,
+        "premium_progress_bar_enabled": false,
+        "explicit_content_filter": 0,
+        "default_message_notifications": 0,
+        "icon": null,
+        "id": "900000000000000008",
+        "nsfw_level": 0,
+        "discovery_splash": null,
+        "embed_enabled": false,
+        "verification_level": 0,
+        "incidents_data": null,
+        "application_id": null,
+        "max_members": 25000000,
+        "premium_tier": 0,
+        "embed_channel_id": null,
+        "owner_id": "900000000000000002",
+        "splash": null,
+        "latest_onboarding_question_id": null,
+        "vanity_url_code": null,
+        "premium_progress_bar_enabled_user_updated_at": null,
+        "description": null,
+        "safety_alerts_channel_id": null,
+        "rules_channel_id": null,
+        "widget_channel_id": null,
+        "region": "us-central",
+        "max_video_channel_users": 25,
+        "widget_enabled": false,
+        "premium_subscription_count": 0,
+        "features": [
+            "BYPASS_SLOWMODE_PERMISSION_MIGRATION_COMPLETE",
+            "AUTO_MODERATION",
+            "PIN_PERMISSION_MIGRATION_COMPLETE"
+        ],
+        "system_channel_flags": 0
+    }
+]
