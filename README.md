@@ -6,6 +6,10 @@ app_port: 8080
 
 # Donkey
 
+[![CI](https://github.com/manelsen/donkey/actions/workflows/ci.yml/badge.svg)](https://github.com/manelsen/donkey/actions/workflows/ci.yml)
+[![Sync to Hugging Face Hub](https://github.com/manelsen/donkey/actions/workflows/sync-to-hub.yml/badge.svg)](https://github.com/manelsen/donkey/actions/workflows/sync-to-hub.yml)
+[![CodeRabbit Reviews](https://img.shields.io/badge/CodeRabbit-Reviews-ff69b4?logo=coderabbit)](https://coderabbit.ai)
+
 AI agent system written in Nim. Self-hosted, multi-channel, multi-provider.
 Designed to run on a VPS, a laptop, or a small Linux box with a SQLite-first local runtime.
 
@@ -15,6 +19,7 @@ Designed to run on a VPS, a laptop, or a small Linux box with a SQLite-first loc
 - At least one channel token, such as `TELEGRAM_BOT_TOKEN` or `DISCORD_BOT_TOKEN`
 - At least one provider API key (see [Configuration](#configuration))
 - `docker` or `podman` if you want the recommended hardened shell sandbox
+- `ripgrep` (`rg`) for architectural boundary verification (`scripts/check_boundaries.sh`)
 
 ## Build
 
@@ -209,6 +214,27 @@ presentation treated as a shared core concern instead of adapter-local state.
 - Multi-channel UI with shared outbound presentation surfaces, streaming, and reactions
 
 ## Development
+
+### Running Tests and Verification
+
+```bash
+# Run the default test suite in parallel (default: all CPU cores)
+# Note: Live-DB backend suites (PostgreSQL/Age) are excluded by default.
+# WASM/shell suites run automatically when ~/.donkey/busybox and wasmtime are present.
+bash scripts/run_tests.sh
+
+# Or via Nimble task
+nimble test
+
+# Target a specific directory or single test file
+bash scripts/run_tests.sh tests/ports
+bash scripts/run_tests.sh tests/app/t_orchestrator.nim
+
+# Verify hexagonal architectural boundaries (requires ripgrep)
+bash scripts/check_boundaries.sh
+```
+
+### Testament (Alternative)
 
 ```bash
 # Run a single test file
