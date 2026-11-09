@@ -3,15 +3,26 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+if ! command -v rg >/dev/null 2>&1; then
+  echo "Error: ripgrep (rg) is required for boundary checks but was not found in PATH." >&2
+  exit 127
+fi
+
 check_absent() {
   local description="$1"
   local pattern="$2"
   shift 2
-  if rg -n "$pattern" "$@" > /tmp/donkey_boundary_check.txt; then
+  local status=0
+  rg -n "$pattern" "$@" > /tmp/donkey_boundary_check.txt || status=$?
+  if [ "$status" -eq 0 ]; then
     echo "Boundary check failed: $description" >&2
     cat /tmp/donkey_boundary_check.txt >&2
     rm -f /tmp/donkey_boundary_check.txt
     exit 1
+  elif [ "$status" -ne 1 ]; then
+    echo "Boundary check error running ripgrep (exit code $status): $description" >&2
+    rm -f /tmp/donkey_boundary_check.txt
+    exit "$status"
   fi
   rm -f /tmp/donkey_boundary_check.txt
 }

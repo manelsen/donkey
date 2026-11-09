@@ -19,6 +19,7 @@ Designed to run on a VPS, a laptop, or a small Linux box with a SQLite-first loc
 - At least one channel token, such as `TELEGRAM_BOT_TOKEN` or `DISCORD_BOT_TOKEN`
 - At least one provider API key (see [Configuration](#configuration))
 - `docker` or `podman` if you want the recommended hardened shell sandbox
+- `ripgrep` (`rg`) for architectural boundary verification (`scripts/check_boundaries.sh`)
 
 ## Build
 
@@ -217,7 +218,9 @@ presentation treated as a shared core concern instead of adapter-local state.
 ### Running Tests and Verification
 
 ```bash
-# Run all tests in parallel (default: all CPU cores)
+# Run the default test suite in parallel (default: all CPU cores)
+# Note: Live-DB backend suites (PostgreSQL/Age) are excluded by default.
+# WASM/shell suites run automatically when ~/.donkey/busybox and wasmtime are present.
 bash scripts/run_tests.sh
 
 # Or via Nimble task
@@ -227,7 +230,7 @@ nimble test
 bash scripts/run_tests.sh tests/ports
 bash scripts/run_tests.sh tests/app/t_orchestrator.nim
 
-# Verify hexagonal architectural boundaries
+# Verify hexagonal architectural boundaries (requires ripgrep)
 bash scripts/check_boundaries.sh
 ```
 
