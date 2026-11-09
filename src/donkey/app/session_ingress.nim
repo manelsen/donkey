@@ -11,7 +11,7 @@ import ../config/types
 import ../core/types
 import ../core/log
 import ../core/pipeops
-import ../core/session/session_ingress
+import ../core/session/session_ingress as coreSessionIngress
 import ../core/providers/smart_routing
 import ../domain/agent_message
 import ../domain/message
@@ -25,7 +25,7 @@ import ./session_bootstrap
 import ./orchestrator
 import ./sandbox
 
-export session_ingress
+export coreSessionIngress
 
 type
   EnsureSessionPlan* = object

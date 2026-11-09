@@ -161,5 +161,48 @@ suite "daemon session ingress":
     check outbox.len == 0
     let entry = sm.get(UserId("u-allowed-user"))
     check entry != nil
-    # Enqueue a cancel message so the spawned orchestrator cleanly terminates when polled
+    entry[].inbox.addLastNoWait(newCancelMsg())
+
+  test "handleSessionFallback proceeds with session creation when isRevoked is nil":
+    let dir = getTempDir() / "donkey_ingress_nil_revoked_" & $nowMs()
+    createDir(dir)
+    defer: removeDir(dir)
+    let memory = MdFileAdapter(paddocksDir: dir)
+    var sm: SessionManager
+    sm.init()
+    var msgSeq = 0
+    let outbox = newAsyncQueue[OutboundMessage]()
+    let stubComplete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] =
+      ok(CompletionResponse(text: "ok"))
+    let emptyClients: seq[ToolRuntimePort] = @[]
+    let emptyTools: seq[ToolDescription] = @[]
+    let services = buildSessionIngressServices(
+      memory = memory.toRuntimePort(),
+      cfg = DonkeyConfig(defaultProvider: "openai", defaultModel: "gpt-4o"),
+      completeFn = stubComplete,
+      streamFn = nil,
+      toolClients = emptyClients,
+      tools = emptyTools,
+      globalOutbox = outbox,
+      log = newLogger("test-ingress"),
+      sandboxMode = smNone,
+      sandboxRuntimeCmd = "",
+      sandboxImage = "",
+      typingFn = nil,
+      searchFn = nil,
+      isRevoked = nil,
+      http = HttpRuntimePort(),
+    )
+    let msg = InboundMessage(
+      userId: UserId("u-nil-revoked-user"),
+      channel: ckTelegram,
+      channelId: "123",
+      text: "hello unverified user",
+    )
+    handleSessionFallback(sm, msgSeq, msg, services)
+    check sm.hasSession(UserId("u-nil-revoked-user"))
+    check msgSeq == 1
+    check outbox.len == 0
+    let entry = sm.get(UserId("u-nil-revoked-user"))
+    check entry != nil
     entry[].inbox.addLastNoWait(newCancelMsg())
