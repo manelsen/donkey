@@ -94,8 +94,8 @@ nimble build
 nim c -d:release --opt:size \
   --passC:"-ffunction-sections -fdata-sections" \
   --passL:"-Wl,--gc-sections" \
-  -o:donkey_release src/donkey.nim
-strip donkey_release
+  -o:donkey src/donkey.nim
+strip donkey
 ```
 
 ### 2. Guided Setup
@@ -146,9 +146,9 @@ Every user interacting with Donkey receives an isolated, human-readable director
 ```
 
 ### The MAGMA Subsystem
-1. **SQLite-First (Default)**: SQLite and `sqlite-vec` vector embeddings are compiled directly into the Donkey binary. Zero external database daemon needed.
-2. **Markdown Bootstrap & Fallback**: Conversations continuously synchronize with Markdown files, providing direct visibility, git compatibility, and manual editing.
-3. **Multigraph Scaling**: When `DONKEY_PG_DSN` is configured, Donkey activates PostgreSQL + `pgvector` for enterprise multi-agent graph querying.
+1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Memory, preferences, and session context live in `~/.donkey/state/magma.sqlite`.
+2. **Markdown Bootstrap & View**: Markdown paddocks serve as the human-readable view, bootstrap source, and debug format. When MAGMA is active, runtime queries prioritize the graph store, and `./donkey ctl memory export <uuid>` regenerates the Markdown representation from the graph.
+3. **PostgreSQL Multigraph Scaling**: For multi-agent graph querying at scale, Donkey supports PostgreSQL + `pgvector`. Compile with `nim c -d:withPostgres -u:withSqlite src/donkey.nim` and configure `DONKEY_PG_DSN`.
 
 ---
 
@@ -160,7 +160,7 @@ Donkey never executes untrusted commands directly on your host:
   - Host daemon UID and GID matching (prevents host file ownership pollution)
   - Read-only root filesystem (`read_only_rootfs = true`)
   - Network isolation togglable per user/task
-  - Strict resource quotas (CPU limits, memory capping, timeout killswitches)
+  - Isolated temporary and paddock mounts
 - **WASM Applet Dispatch**: High-speed, in-process execution of POSIX applets (cat, grep, sed, find) via sandboxed WebAssembly execution.
 - **Model Context Protocol (MCP)**: Native client support for external MCP tool servers:
   ```bash
@@ -182,7 +182,7 @@ Donkey never executes untrusted commands directly on your host:
 | **DingTalk** | Stream / Webhook | Corporate notifications, card callbacks |
 | **QQ / OneBot** | WebSocket / HTTP | OneBot v11 protocol, group and private chat dispatch |
 | **Slack** | Socket Mode / Webhook | Channel mentions, thread continuation |
-| **Matrix** | Async sync engine | Decentralized rooms, end-to-end encrypted sessions |
+| **Matrix** | Async sync engine | Decentralized rooms, sync event protocol, channel mentions |
 | **HTTP Gateway**| REST / SSE | Local webhooks, chat completions endpoint |
 
 ### Providers (Outbound)
@@ -240,7 +240,7 @@ nimble test
 ```
 
 > [!NOTE]
-> Opt-in backends requiring active databases (PostgreSQL/Age) are excluded by default. WASM and shell suites run automatically when `~/.donkey/busybox` and `wasmtime` are present on the host.
+> Opt-in backends requiring active databases (PostgreSQL/Age) and in-process wasm3 (`t_wasm.nim`) are excluded by default. WASM applet and shell composer suites run automatically when `~/.donkey/busybox` and `wasmtime` are present on the host.
 
 ### Verifying Architectural Boundaries
 
