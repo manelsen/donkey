@@ -113,6 +113,8 @@ The wizard configures `~/.config/donkey/donkey.toml`, provisions the state store
 
 > [!IMPORTANT]
 > The embedded HTTP gateway listens on `0.0.0.0:8080` by default, exposing `/api/status`, `/api/logs`, `/api/events`, and `/api/chat` without authentication (`/api/chat` accepts inbound messages with an optional `userId` and dispatches them to active sessions if the user is not revoked, while `/api/events` streams live logs). Block direct external access to port 8080 with a firewall on any deployment where this port is accessible, and enforce authentication at the proxy layer if using a reverse proxy. On shared multi-user hosts, unprivileged local users can also connect directly to port 8080 and bypass proxy authentication; isolate network access strictly to the proxy process (e.g., via network namespaces) or disable the gateway entirely. Any `DONKEY_HTTP_PORT` variable already exported in the shell environment takes precedence over `.env` files; to reliably disable the gateway, run `DONKEY_HTTP_PORT=0 ./donkey start` or set `DONKEY_HTTP_PORT=0` in the environment file loaded by the daemon. Note that the daemon resolves `donkey.env` before loading `donkey.toml` by checking `$DONKEY_HOME/donkey.env` (defaulting to `~/.donkey/donkey.env`) and falling back to `~/.config/donkey/donkey.env`; placing `DONKEY_HTTP_PORT=0` only in a custom `home` path configured inside TOML will not take effect. Preserve existing credentials in the loaded file and unset any inherited shell variable (`unset DONKEY_HTTP_PORT`) before starting. For systemd, set it in the service's effective `EnvironmentFile` such as `~/.config/donkey/donkey.env` and restart.
+>
+> Even on a single-user host, a malicious web page can read `/api/logs` if the browser permits local network access, as the gateway does not authenticate requests and allows CORS from any origin. Isolate the gateway from the browser (e.g., via network namespaces) or disable it; blocking external access alone is not sufficient.
 
 ```bash
 ./donkey start
@@ -150,7 +152,7 @@ Every user interacting with Donkey receives an isolated, human-readable director
 ```
 
 ### The MAGMA Subsystem
-1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Episodic memories, user preferences, and knowledge nodes live in `~/.donkey/state/magma.sqlite`. When `OPENROUTER_API_KEY` is configured, profile texts, preferences, and memories are transmitted to OpenRouter to generate embeddings during writes and queries. Other configured services, such as Z.AI reranking, may also transmit queries and candidate memory texts externally. Raw conversation transcripts are preserved in JSONL session files under `paddocks/<uuid>/sessions/`.
+1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Episodic memories, user preferences, and knowledge nodes live in `~/.donkey/state/magma.sqlite`. Profile texts, preferences, and memories are transmitted to OpenRouter to generate embeddings during writes and queries when embedding generation is active (e.g. via `OPENROUTER_API_KEY`); CLI operations like `ctl memory search` and `ctl memory import` may also transmit queries and non-empty context externally. Other configured services, such as Z.AI or external rerankers, may also transmit queries and candidate memory texts. Raw conversation transcripts are preserved in JSONL session files under `paddocks/<uuid>/sessions/`.
 2. **Markdown Bootstrap & Export**: Markdown paddocks serve as the human-readable view, bootstrap source, and debug format. When MAGMA is active, runtime writes prioritize the graph. If a write propagates a catchable error, `MdFileAdapter` attempts to record the update in the paddock Markdown files. Some SQLite write errors are swallowed, so updates can be lost without a Markdown fallback. `loadContext` will prioritize graph content once MAGMA recovers. Before running `./donkey ctl memory export <uuid> [output_dir]`, back up and reconcile any paddock Markdown files that diverged during outages, as exporting will overwrite the target directory with the current MAGMA view (or omit `output_dir` to print to stdout).
 3. **PostgreSQL Multigraph Scaling**: For multi-agent graph querying at scale, Donkey supports PostgreSQL + `pgvector`. Compile with `nim c -d:withPostgres -u:withSqlite -o:donkey src/donkey.nim` and configure `DONKEY_PG_DSN`. Recompiling does not automatically transfer existing data from SQLite; operators must back up their database and migrate existing nodes and edges before switching backends (`./donkey ctl memory export <uuid>` exports only the three context Markdown files for an individual user, not the complete knowledge graph).
 
@@ -172,7 +174,7 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
   ./donkey ctl tool install <mcp-server-command> [positional-args...]
   ```
   > [!TIP]
-  > Server flags like `--port=8000` are filtered out by the CLI option parser; configure MCP servers requiring flags directly in `~/.donkey/tools.toml`.
+  > Server flags like `--port=8000` are filtered out by the CLI option parser; configure MCP servers requiring flags directly in `tools.toml` under your configured home directory (`cfg.home/tools.toml`, which defaults to `~/.donkey/tools.toml`).
 
 ---
 
