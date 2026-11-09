@@ -1,6 +1,7 @@
 import std/unittest
+import std/strutils
 import chronos/asyncsync
-import donkey
+import donkey/app/session_ingress
 import donkey/adapters/memory/md_file
 import donkey/app/session_manager
 import donkey/core/session/session_ingress
@@ -87,3 +88,23 @@ suite "daemon session ingress":
     let uid = UserId("u-revoked")
     memory.saveUserMd(uid, "# User\n\n**Access:** revoked\n")
     check memory.isRevoked(uid)
+
+  test "handleSessionFallback rejects revoked user into global outbox":
+    var sm: SessionManager
+    sm.init()
+    var msgSeq = 0
+    let outbox = newAsyncQueue[OutboundMessage]()
+    let services = SessionIngressServices(
+      isRevoked: proc(u: UserId): bool = u == UserId("u-revoked-user")
+    )
+    let msg = InboundMessage(
+      userId: UserId("u-revoked-user"),
+      channel: ckTelegram,
+      channelId: "123",
+      text: "hello",
+    )
+    handleSessionFallback(outbox, sm, msgSeq, msg, services)
+    check outbox.len == 1
+    let rejected = outbox.popFirstNoWait()
+    check rejected.userId == UserId("u-revoked-user")
+    check "revogado" in rejected.text
