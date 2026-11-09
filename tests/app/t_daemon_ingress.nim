@@ -15,6 +15,31 @@ import donkey/ports/http
 import donkey/ports/provider
 import donkey/ports/tool
 
+proc makeTestServices(memory: MdFileAdapter;
+                      outbox: AsyncQueue[OutboundMessage];
+                      isRevoked: proc(u: UserId): bool {.gcsafe.} = nil): SessionIngressServices =
+  let stubComplete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] =
+    ok(CompletionResponse(text: "ok"))
+  let emptyClients: seq[ToolRuntimePort] = @[]
+  let emptyTools: seq[ToolDescription] = @[]
+  buildSessionIngressServices(
+    memory = memory.toRuntimePort(),
+    cfg = DonkeyConfig(defaultProvider: "openai", defaultModel: "gpt-4o"),
+    completeFn = stubComplete,
+    streamFn = nil,
+    toolClients = emptyClients,
+    tools = emptyTools,
+    globalOutbox = outbox,
+    log = newLogger("test-ingress"),
+    sandboxMode = smNone,
+    sandboxRuntimeCmd = "",
+    sandboxImage = "",
+    typingFn = nil,
+    searchFn = nil,
+    isRevoked = isRevoked,
+    http = HttpRuntimePort(),
+  )
+
 suite "daemon session ingress":
 
   test "toolCatalogSignature changes with provider and tools":
@@ -128,27 +153,7 @@ suite "daemon session ingress":
     sm.init()
     var msgSeq = 0
     let outbox = newAsyncQueue[OutboundMessage]()
-    let stubComplete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] =
-      ok(CompletionResponse(text: "ok"))
-    let emptyClients: seq[ToolRuntimePort] = @[]
-    let emptyTools: seq[ToolDescription] = @[]
-    let services = buildSessionIngressServices(
-      memory = memory.toRuntimePort(),
-      cfg = DonkeyConfig(defaultProvider: "openai", defaultModel: "gpt-4o"),
-      completeFn = stubComplete,
-      streamFn = nil,
-      toolClients = emptyClients,
-      tools = emptyTools,
-      globalOutbox = outbox,
-      log = newLogger("test-ingress"),
-      sandboxMode = smNone,
-      sandboxRuntimeCmd = "",
-      sandboxImage = "",
-      typingFn = nil,
-      searchFn = nil,
-      isRevoked = proc(u: UserId): bool = false,
-      http = HttpRuntimePort(),
-    )
+    let services = makeTestServices(memory, outbox, proc(u: UserId): bool = false)
     let msg = InboundMessage(
       userId: UserId("u-allowed-user"),
       channel: ckTelegram,
@@ -159,9 +164,6 @@ suite "daemon session ingress":
     check sm.hasSession(UserId("u-allowed-user"))
     check msgSeq == 1
     check outbox.len == 0
-    let entry = sm.get(UserId("u-allowed-user"))
-    check entry != nil
-    entry[].inbox.addLastNoWait(newCancelMsg())
 
   test "handleSessionFallback proceeds with session creation when isRevoked is nil":
     let dir = getTempDir() / "donkey_ingress_nil_revoked_" & $nowMs()
@@ -172,27 +174,7 @@ suite "daemon session ingress":
     sm.init()
     var msgSeq = 0
     let outbox = newAsyncQueue[OutboundMessage]()
-    let stubComplete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] =
-      ok(CompletionResponse(text: "ok"))
-    let emptyClients: seq[ToolRuntimePort] = @[]
-    let emptyTools: seq[ToolDescription] = @[]
-    let services = buildSessionIngressServices(
-      memory = memory.toRuntimePort(),
-      cfg = DonkeyConfig(defaultProvider: "openai", defaultModel: "gpt-4o"),
-      completeFn = stubComplete,
-      streamFn = nil,
-      toolClients = emptyClients,
-      tools = emptyTools,
-      globalOutbox = outbox,
-      log = newLogger("test-ingress"),
-      sandboxMode = smNone,
-      sandboxRuntimeCmd = "",
-      sandboxImage = "",
-      typingFn = nil,
-      searchFn = nil,
-      isRevoked = nil,
-      http = HttpRuntimePort(),
-    )
+    let services = makeTestServices(memory, outbox, nil)
     let msg = InboundMessage(
       userId: UserId("u-nil-revoked-user"),
       channel: ckTelegram,
@@ -203,6 +185,33 @@ suite "daemon session ingress":
     check sm.hasSession(UserId("u-nil-revoked-user"))
     check msgSeq == 1
     check outbox.len == 0
-    let entry = sm.get(UserId("u-nil-revoked-user"))
-    check entry != nil
-    entry[].inbox.addLastNoWait(newCancelMsg())
+
+  test "handleSessionFallback rejects user revoked in real MdFileAdapter":
+    let dir = getTempDir() / "donkey_ingress_md_revoked_" & $nowMs()
+    createDir(dir)
+    defer: removeDir(dir)
+    let memory = MdFileAdapter(paddocksDir: dir)
+    let revokedUid = UserId("u-real-revoked")
+    memory.saveUserMd(revokedUid, "# User\n\n**Access:** revoked\n")
+    var sm: SessionManager
+    sm.init()
+    var msgSeq = 0
+    let outbox = newAsyncQueue[OutboundMessage]()
+    let isRevokedHook: proc(u: UserId): bool {.gcsafe.} =
+      proc(u: UserId): bool {.gcsafe.} =
+        {.gcsafe.}:
+          memory.isRevoked(u)
+    let services = makeTestServices(memory, outbox, isRevokedHook)
+    let msg = InboundMessage(
+      userId: revokedUid,
+      channel: ckTelegram,
+      channelId: "123",
+      text: "hello from revoked",
+    )
+    handleSessionFallback(sm, msgSeq, msg, services)
+    check outbox.len == 1
+    let rejected = outbox.popFirstNoWait()
+    check rejected.userId == revokedUid
+    check "revogado" in rejected.text
+    check msgSeq == 0
+    check not sm.hasSession(revokedUid)
