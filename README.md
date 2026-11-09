@@ -25,7 +25,7 @@ Most AI agent platforms are heavy, complex webs of Python interpreters, gigabyte
 - **Native Binary & Low Footprint**: Compiles to a compact native binary with deterministic ARC/ORC memory management (requires host OpenSSL libraries for HTTPS). Idles in single-digit megabytes of RAM.
 - **Strict Hexagonal Architecture**: Business logic, planning, and memory algorithms remain 100% pure and decoupled from I/O through Nim structural typing (`concept`). Adapters can be plugged in or replaced without touching core code.
 - **Sovereign Dual-Layer Memory (MAGMA)**: Out-of-the-box SQLite with embedded `sqlite-vec` vector similarity search, alongside human-inspectable Markdown paddocks (`USER.md`, `MEMORY.md`, `HEARTBEAT.md`). Scales seamlessly to PostgreSQL + `pgvector` multigraph when required.
-- **Hardened Execution Sandbox**: Untrusted tool execution is safely isolated via an OCI container runtime (Docker/Podman) running under the daemon UID/GID with read-only rootfs, plus in-process WASM applet dispatch for fast, secure file manipulation.
+- **Hardened Execution Sandbox**: Shell execution can be isolated via an OCI container runtime (Docker/Podman) running under the daemon UID/GID with read-only rootfs, plus in-process WASM applet dispatch for fast, secure file manipulation.
 - **Autonomous Heartbeat & Contemplation**: Runs background scheduling loops that inspect checklists in `HEARTBEAT.md`, digest conversation memories into episodic journals, and deliver pro-active reminders across connected channels.
 - **Multi-Channel & Multi-Provider**: Direct, first-class connectivity to Telegram, Discord, WeChat, Feishu, DingTalk, Slack, QQ, and Matrix, with resilient failover between Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, Ollama, ZAI, and OpenRouter.
 
@@ -158,9 +158,9 @@ Every user interacting with Donkey receives an isolated, human-readable director
 
 ## 🛡️ Sandboxing & Tool Security
 
-Donkey provides sandboxing for shell execution. MCP servers run directly on the host and inherit the daemon environment, which may contain credentials; install only trusted MCP servers, or isolate them externally.
+Donkey provides sandboxing for shell execution. MCP servers run directly on the host and inherit the daemon environment, which may contain credentials; install only trusted MCP servers, or isolate them externally. With `--dev-mode`, the default sandbox mode runs shell commands directly on the host. If `sandbox.allow_host_fallback = true` (allowed only in `--dev-mode`), certain OCI failures can also execute commands on the host; do not rely on container isolation in those configurations.
 
-- **OCI Hardened Sandbox**: Shell executions run inside ephemeral Docker or Podman containers configured with:
+- **OCI Hardened Sandbox**: Shell executions normally run inside ephemeral Docker or Podman containers configured with:
   - Host daemon UID and GID matching (prevents host file ownership pollution)
   - Read-only root filesystem (`read_only_rootfs = true`)
   - Network access disabled by default (enabling network in donkey.toml requires --dev-mode)
