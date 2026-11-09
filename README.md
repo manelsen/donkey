@@ -151,7 +151,7 @@ Every user interacting with Donkey receives an isolated, human-readable director
 
 ### The MAGMA Subsystem
 1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Episodic memories, user preferences, and knowledge nodes live in `~/.donkey/state/magma.sqlite`. When `OPENROUTER_API_KEY` is configured, profile texts, preferences, and memories are transmitted to OpenRouter to generate embeddings during writes and queries. Other configured services, such as Z.AI reranking, may also transmit queries and candidate memory texts externally. Raw conversation transcripts are preserved in JSONL session files under `paddocks/<uuid>/sessions/`.
-2. **Markdown Bootstrap & Export**: Markdown paddocks serve as the human-readable view, bootstrap source, and debug format. When MAGMA is active, runtime writes prioritize the graph; if a MAGMA write fails, `MdFileAdapter` records updates to the paddock Markdown files, but `loadContext` will prioritize graph content once MAGMA recovers. Before running `./donkey ctl memory export <uuid> [output_dir]`, back up and reconcile any paddock Markdown files that diverged during outages, as exporting will overwrite the target directory with the current MAGMA view (or omit `output_dir` to print to stdout).
+2. **Markdown Bootstrap & Export**: Markdown paddocks serve as the human-readable view, bootstrap source, and debug format. When MAGMA is active, runtime writes prioritize the graph. If a write propagates a catchable error, `MdFileAdapter` attempts to record the update in the paddock Markdown files. Some SQLite write errors are swallowed, so updates can be lost without a Markdown fallback. `loadContext` will prioritize graph content once MAGMA recovers. Before running `./donkey ctl memory export <uuid> [output_dir]`, back up and reconcile any paddock Markdown files that diverged during outages, as exporting will overwrite the target directory with the current MAGMA view (or omit `output_dir` to print to stdout).
 3. **PostgreSQL Multigraph Scaling**: For multi-agent graph querying at scale, Donkey supports PostgreSQL + `pgvector`. Compile with `nim c -d:withPostgres -u:withSqlite -o:donkey src/donkey.nim` and configure `DONKEY_PG_DSN`.
 
 ---
@@ -186,10 +186,10 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 | **Discord** | Gateway WebSockets | Slash commands, components, thread handling, bot mentions |
 | **WeChat / WeCom**| Webhook / Event loop | Enterprise WeChat & personal bridge support |
 | **Feishu / Lark** | Webhook / Event stream | Interactive cards, group chats, direct messages |
-| **DingTalk** | Stream / Webhook | Corporate notifications, card callbacks |
+| **DingTalk** | Outbound API | Inbound requires an integration that calls `pushEvent` |
 | **QQ / OneBot** | WebSocket / HTTP | OneBot v11 protocol, group and private chat dispatch |
 | **Slack** | Outbound only | Outbound messaging via Webhooks/API (inbound event loop integration pending) |
-| **Matrix** | Webhook / AS push | Inbound via Application Service / HTTP pushEvent callback; outbound PUT event |
+| **Matrix** | Outbound PUT | Inbound requires an integration that calls `pushEvent` |
 | **HTTP Gateway**| REST / SSE | Local webhooks; note: open `/api/events` streams occupy the single accept thread (blocking concurrent `/api/chat` or status calls for up to 5h until disconnected) |
 
 ### Providers (Outbound)
