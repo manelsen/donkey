@@ -25,11 +25,23 @@ jobs:
         with:
           nim-version: '2.2.8'
 
+      - name: Cache Nim & Nimble artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.nimble
+            ~/.cache/nim
+          key: ${{ runner.os }}-nim-cache-${{ hashFiles('donkey.nimble') }}
+          restore-keys: |
+            ${{ runner.os }}-nim-cache-
+
       - name: Install Nim dependencies
         run: |
-          git clone --recurse-submodules https://github.com/beef331/wasm3 /tmp/wasm3
-          rm -rf /tmp/wasm3/src/wasm3/wasm3c/platforms
-          (cd /tmp/wasm3 && nimble install -y)
+          if [ ! -d ~/.nimble/pkgs2/wasm3* ]; then
+            git clone --recurse-submodules https://github.com/beef331/wasm3 /tmp/wasm3
+            rm -rf /tmp/wasm3/src/wasm3/wasm3c/platforms
+            (cd /tmp/wasm3 && nimble install -y)
+          fi
           nimble install -y --depsOnly
 
       - name: Verify architectural boundaries
@@ -39,4 +51,6 @@ jobs:
         run: nimble build -y
 
       - name: Run test suite
+        env:
+          JOBS: 4
         run: nimble test
