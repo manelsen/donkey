@@ -943,9 +943,9 @@ func buildDaemonSessionServices(ctx: DaemonContext;
       ctx.runtime.currentProviderCooldowns(),
   )
 
-proc handleSessionFallback(runtime:  var DaemonRuntime;
-                           msg:      InboundMessage;
-                           services: SessionIngressServices) =
+proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
+                                  msg:      InboundMessage;
+                                  services: SessionIngressServices) =
   handleSessionFallback(runtime.globalOutbox, runtime.sm, runtime.msgSeq, msg, services)
 
 func inboundStatusMessageId(msg: InboundMessage): string =
@@ -980,7 +980,7 @@ proc completeInboundReactionStatus(runtime: var DaemonRuntime;
 proc handleTelegramFallback(runtime:      var DaemonRuntime;
                             msg:          InboundMessage;
                             services:     SessionIngressServices) =
-  handleSessionFallback(runtime, msg, services)
+  handleDaemonSessionFallback(runtime, msg, services)
 
 proc processInboundMediaDownload(runtime: var DaemonRuntime;
                                  msg: InboundMessage;
@@ -1168,7 +1168,7 @@ proc handleGatewayFallback(ctx: DaemonContext;
     outboundPortForChannel(outboundPorts, msg.channel),
     log,
   )
-  handleSessionFallback(
+  handleDaemonSessionFallback(
     ctx.runtime,
     msg,
     buildDaemonSessionServices(ctx, cfg, memory, log),

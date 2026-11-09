@@ -1,12 +1,18 @@
-import std/unittest
-import std/strutils
+import std/[os, strutils, unittest]
+import chronos
 import chronos/asyncsync
 import donkey/app/session_ingress
 import donkey/adapters/memory/md_file
 import donkey/app/session_manager
+import donkey/app/sandbox
+import donkey/config/types
+import donkey/core/log
+import donkey/core/pipeops
 import donkey/core/session/session_ingress
 import donkey/domain/agent_message
 import donkey/domain/message
+import donkey/ports/provider
+import donkey/ports/tool
 
 suite "daemon session ingress":
 
@@ -108,3 +114,45 @@ suite "daemon session ingress":
     let rejected = outbox.popFirstNoWait()
     check rejected.userId == UserId("u-revoked-user")
     check "revogado" in rejected.text
+
+  test "handleSessionFallback creates session and leaves outbox clear for non-revoked user":
+    let dir = getTempDir() / "donkey_ingress_non_revoked_" & $nowMs()
+    createDir(dir)
+    defer: removeDir(dir)
+    let memory = MdFileAdapter(paddocksDir: dir)
+    var sm: SessionManager
+    sm.init()
+    var msgSeq = 0
+    let outbox = newAsyncQueue[OutboundMessage]()
+    let stubComplete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] =
+      ok(CompletionResponse(text: "ok"))
+    let emptyClients: seq[ToolRuntimePort] = @[]
+    let emptyTools: seq[ToolDescription] = @[]
+    let services = buildSessionIngressServices(
+      memory = memory.toRuntimePort(),
+      cfg = DonkeyConfig(defaultProvider: "openai", defaultModel: "gpt-4o"),
+      completeFn = stubComplete,
+      streamFn = nil,
+      toolClients = emptyClients,
+      tools = emptyTools,
+      globalOutbox = outbox,
+      log = newLogger("test-ingress"),
+      sandboxMode = smNone,
+      sandboxRuntimeCmd = "",
+      sandboxImage = "",
+      typingFn = nil,
+      searchFn = nil,
+      isRevoked = proc(u: UserId): bool = false,
+    )
+    let msg = InboundMessage(
+      userId: UserId("u-allowed-user"),
+      channel: ckTelegram,
+      channelId: "123",
+      text: "hello allowed user",
+    )
+    handleSessionFallback(outbox, sm, msgSeq, msg, services)
+    check sm.hasSession(UserId("u-allowed-user"))
+    check msgSeq == 1
+    if outbox.len > 0:
+      let popped = outbox.popFirstNoWait()
+      check "revogado" notin popped.text
