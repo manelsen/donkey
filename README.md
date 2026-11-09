@@ -81,8 +81,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete architectural 
 
 - [Nim 2.2+](https://nim-lang.org/install.html) with Nimble (`choosenim` recommended)
 - `ripgrep` (`rg`) for architectural boundary verification
-- `docker` or `podman` (recommended for hardened OCI shell sandbox)
-- At least one channel token (e.g., `TELEGRAM_BOT_TOKEN`) and one provider key
+- `docker` or `podman` (required for default OCI shell sandbox)
+- `TELEGRAM_BOT_TOKEN` (required to start the daemon) and at least one provider API key
 
 ### 1. Build the Binary
 
@@ -106,7 +106,7 @@ Run the interactive setup wizard to initialize configuration templates and state
 ./donkey setup
 ```
 
-The wizard configures `~/.config/donkey/donkey.toml`, provisions the state store in `~/.donkey/`, selects the available OCI sandbox runtime, and verifies provider keys.
+The wizard configures `~/.config/donkey/donkey.toml`, provisions the state store in `~/.donkey/`, selects the available OCI sandbox runtime, and saves provider keys. Verify provider connectivity with `./donkey ctl provider test <name>`.
 
 ### 3. Start the Daemon
 
@@ -154,14 +154,14 @@ Every user interacting with Donkey receives an isolated, human-readable director
 
 ## 🛡️ Sandboxing & Tool Security
 
-Donkey never executes untrusted commands directly on your host:
+Donkey provides sandboxing for shell execution. MCP servers run directly on the host and inherit the daemon environment, which may contain credentials; install only trusted MCP servers, or isolate them externally.
 
 - **OCI Hardened Sandbox**: Shell executions run inside ephemeral Docker or Podman containers configured with:
   - Host daemon UID and GID matching (prevents host file ownership pollution)
   - Read-only root filesystem (`read_only_rootfs = true`)
   - Network isolation togglable per user/task
   - Isolated temporary and paddock mounts
-- **WASM Applet Dispatch**: High-speed, in-process execution of POSIX applets (cat, grep, sed, find) via sandboxed WebAssembly execution.
+- **WASM Applet Dispatch**: Fast execution of POSIX applets (cat, grep, sed, find) via `wasmtime` and `~/.donkey/busybox`.
 - **Model Context Protocol (MCP)**: Native client support for external MCP tool servers:
   ```bash
   ./donkey ctl tool install <mcp-server-command> [args...]
@@ -208,11 +208,11 @@ The `donkey ctl` utility provides complete instance governance:
 # User and Paddock management
 ./donkey ctl user list
 ./donkey ctl user show <uuid>
-./donkey ctl memory export <uuid>
+./donkey ctl memory export <uuid> [output_dir]
 
 # Tool and Extension management
 ./donkey ctl tool install <mcp-command> [args...]
-./donkey ctl skill install <deno-script.ts> [--allow-net ...]
+./donkey ctl skill install <name> <script.ts>
 
 # Provider Diagnostics
 ./donkey ctl provider test anthropic
@@ -240,7 +240,7 @@ nimble test
 ```
 
 > [!NOTE]
-> Opt-in backends requiring active databases (PostgreSQL/Age) and in-process wasm3 (`t_wasm.nim`) are excluded by default. WASM applet and shell composer suites run automatically when `~/.donkey/busybox` and `wasmtime` are present on the host.
+> Opt-in backends requiring special flags or active databases (SQLite store requiring `-d:withSqlite`, PostgreSQL/Age) and in-process wasm3 (`t_wasm.nim`) are excluded by default in `scripts/run_tests.sh`. WASM applet and shell composer suites run automatically when `~/.donkey/busybox` and `wasmtime` are present on the host.
 
 ### Verifying Architectural Boundaries
 
