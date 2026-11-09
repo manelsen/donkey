@@ -6,6 +6,10 @@ app_port: 8080
 
 # Donkey
 
+[![CI](https://github.com/manelsen/donkey/actions/workflows/ci.yml/badge.svg)](https://github.com/manelsen/donkey/actions/workflows/ci.yml)
+[![Sync to Hugging Face Hub](https://github.com/manelsen/donkey/actions/workflows/sync-to-hub.yml/badge.svg)](https://github.com/manelsen/donkey/actions/workflows/sync-to-hub.yml)
+[![CodeRabbit Reviews](https://img.shields.io/badge/CodeRabbit-Reviews-ff69b4?logo=coderabbit)](https://coderabbit.ai)
+
 AI agent system written in Nim. Self-hosted, multi-channel, multi-provider.
 Designed to run on a VPS, a laptop, or a small Linux box with a SQLite-first local runtime.
 
@@ -209,6 +213,25 @@ presentation treated as a shared core concern instead of adapter-local state.
 - Multi-channel UI with shared outbound presentation surfaces, streaming, and reactions
 
 ## Development
+
+### Running Tests and Verification
+
+```bash
+# Run all tests in parallel (default: all CPU cores)
+bash scripts/run_tests.sh
+
+# Or via Nimble task
+nimble test
+
+# Target a specific directory or single test file
+bash scripts/run_tests.sh tests/ports
+bash scripts/run_tests.sh tests/app/t_orchestrator.nim
+
+# Verify hexagonal architectural boundaries
+bash scripts/check_boundaries.sh
+```
+
+### Testament (Alternative)
 
 ```bash
 # Run a single test file
