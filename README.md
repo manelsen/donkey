@@ -111,7 +111,7 @@ The wizard configures `~/.config/donkey/donkey.toml`, provisions the state store
 ### 3. Start the Daemon
 
 > [!IMPORTANT]
-> The embedded HTTP gateway listens on `0.0.0.0:8080` by default, exposing `/api/status` and `/api/logs` without authentication. If you do not need the HTTP gateway or deploy without a reverse proxy, disable it before starting by setting `DONKEY_HTTP_PORT=0` in `~/.config/donkey/donkey.env` (or run `DONKEY_HTTP_PORT=0 ./donkey start`).
+> The embedded HTTP gateway listens on `0.0.0.0:8080` by default, exposing `/api/status` and `/api/logs` without authentication. If deployed behind a reverse proxy, block external direct access to port 8080 with a firewall and enforce authentication on the proxy. If you do not require the HTTP gateway, disable it before starting by setting `DONKEY_HTTP_PORT=0` in your loaded environment file (`~/.donkey/donkey.env` takes precedence over `~/.config/donkey/donkey.env`) or run `DONKEY_HTTP_PORT=0 ./donkey start`.
 
 ```bash
 ./donkey start
@@ -189,7 +189,7 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 | **QQ / OneBot** | WebSocket / HTTP | OneBot v11 protocol, group and private chat dispatch |
 | **Slack** | Outbound only | Outbound messaging via Webhooks/API (inbound event loop integration pending) |
 | **Matrix** | Webhook / AS push | Inbound via Application Service / HTTP pushEvent callback; outbound PUT event |
-| **HTTP Gateway**| REST / SSE | Local webhooks, chat completions endpoint |
+| **HTTP Gateway**| REST / SSE | Local webhooks, async `POST /api/chat` (202 Accepted) & SSE `/api/events` stream |
 
 ### Providers (Outbound)
 
