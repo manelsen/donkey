@@ -26,9 +26,7 @@ jobs:
           nim-version: '2.2.8'
 
       - name: Install Nim dependencies
-        run: |
-          nimble install -y https://github.com/beef331/wasm3
-          nimble install -y --depsOnly
+        run: nimble install -y --depsOnly
 
       - name: Verify architectural boundaries
         run: bash scripts/check_boundaries.sh
