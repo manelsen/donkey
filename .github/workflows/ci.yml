@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test-and-build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev ripgrep
+
+      - name: Set up Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.8'
+
+      - name: Install Nim dependencies
+        run: |
+          nimble install -y https://github.com/beef331/wasm3
+          nimble install -y --depsOnly
+
+      - name: Verify architectural boundaries
+        run: bash scripts/check_boundaries.sh
+
+      - name: Build Donkey binary
+        run: nimble build -y
+
+      - name: Run test suite
+        run: nimble test

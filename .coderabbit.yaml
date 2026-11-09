@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "pt-BR"
+early_access: false
+tone_instructions: "Seja conciso, direto, técnico e rigoroso com padrões de arquitetura de software."
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "master"
+
+  path_filters:
+    - "!vendor/**"
+    - "!docs/blueprint/**"
+    - "!htmldocs/**"
+    - "!testresults/**"
+    - "!deploy/**"
+
+  instructions: |
+    Você está revisando o código do projeto Donkey, um daemon de agentes autônomos em Nim.
+    Diretrizes inegociáveis que devem ser estritamente verificadas em toda revisão:
+    1. Arquitetura Hexagonal:
+       - O núcleo funcional (`src/donkey/core/` e `src/donkey/domain/`) NUNCA deve importar de `adapters/`.
+       - O núcleo de domínio deve ser puro (`func`) sem efeitos colaterais ou I/O direto.
+       - A camada de portas (`src/donkey/ports/`) não deve importar `adapters/` ou `app/`.
+    2. Railway-Oriented Programming (Error Policy):
+       - Nenhum I/O ou adapter pode lançar exceções não tratadas (`raise`).
+       - Todo retorno falível deve usar `Result[T, E]` via `pipeops` (`|>->`, `>>=`).
+       - Silenciamento cego (`isOkOr: discard` ou `except CatchableError: discard`) em caminhos operacionais é proibido. Falhas operacionais exigem log estruturado ou retorno explícito.
+    3. Concorrência com Chronos:
+       - O projeto usa Chronos (não asyncdispatch). Procs async devem respeitar constraints de GC-safety e regras de structured concurrency.
+    4. TDD e Testes:
+       - Toda nova funcionalidade ou correção de bug DEVE vir acompanhada de testes unitários/integração correspondentes sob `tests/`.
+       - Os testes devem ser independentes e sem dependências cíclicas.
