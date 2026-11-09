@@ -92,6 +92,7 @@ nimble build
 
 # Or compile optimized, stripped release binary (install dependencies first)
 nimble install -y -d
+# Linux (GNU linker with --gc-sections; on macOS, use -Wl,-dead_strip instead):
 nim c -d:release --opt:size \
   --passC:"-ffunction-sections -fdata-sections" \
   --passL:"-Wl,--gc-sections" \
