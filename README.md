@@ -4,251 +4,274 @@ sdk: docker
 app_port: 8080
 ---
 
-# Donkey
+# Donkey 🫏
 
 [![CI](https://github.com/manelsen/donkey/actions/workflows/ci.yml/badge.svg)](https://github.com/manelsen/donkey/actions/workflows/ci.yml)
 [![Sync to Hugging Face Hub](https://github.com/manelsen/donkey/actions/workflows/sync-to-hub.yml/badge.svg)](https://github.com/manelsen/donkey/actions/workflows/sync-to-hub.yml)
 [![CodeRabbit Reviews](https://img.shields.io/badge/CodeRabbit-Reviews-ff69b4?logo=coderabbit)](https://coderabbit.ai)
+[![Nim 2.2+](https://img.shields.io/badge/Nim-2.2%2B-FFE953?logo=nim)](https://nim-lang.org)
+[![Architecture: Hexagonal](https://img.shields.io/badge/Architecture-Hexagonal-blueviolet)](docs/ARCHITECTURE.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-AI agent system written in Nim. Self-hosted, multi-channel, multi-provider.
-Designed to run on a VPS, a laptop, or a small Linux box with a SQLite-first local runtime.
+> **A sovereign, ultra-lightweight autonomous AI agent daemon written in pure Nim.**  
+> Built for long-running deployments on a VPS, homelab, laptop, or container with Chronos async I/O, strict hexagonal boundaries, sovereign dual-layer memory, and hardened sandboxing.
 
-## Requirements
+---
 
-- Nim 2.2+ with Nimble (`choosenim` recommended)
-- At least one channel token, such as `TELEGRAM_BOT_TOKEN` or `DISCORD_BOT_TOKEN`
-- At least one provider API key (see [Configuration](#configuration))
-- `docker` or `podman` if you want the recommended hardened shell sandbox
-- `ripgrep` (`rg`) for architectural boundary verification (`scripts/check_boundaries.sh`)
+## ⚡ Why Donkey?
 
-## Build
+Most AI agent platforms are heavy, complex webs of Python interpreters, gigabyte-sized virtualenvs, and unpredictable Node runtimes. **Donkey takes the opposite path:**
+
+- **Native Binary & Low Footprint**: Compiles to a compact native binary with deterministic ARC/ORC memory management (requires host OpenSSL libraries for HTTPS). Idles in single-digit megabytes of RAM.
+- **Strict Hexagonal Architecture**: Business logic, planning, and memory algorithms remain 100% pure and decoupled from I/O through Nim structural typing (`concept`). Adapters can be plugged in or replaced without touching core code.
+- **Sovereign Dual-Layer Memory (MAGMA)**: Out-of-the-box SQLite with embedded `sqlite-vec` vector similarity search, alongside human-inspectable Markdown paddocks (`USER.md`, `MEMORY.md`, `HEARTBEAT.md`). Scales seamlessly to PostgreSQL + `pgvector` multigraph when required.
+- **Hardened Execution Sandbox**: Shell execution can be isolated via an OCI container runtime (Docker/Podman) running under the daemon UID/GID with read-only rootfs, plus fast POSIX file manipulation via `wasmtime` subprocess applet dispatch (requires host subprocess execution support).
+- **Autonomous Heartbeat & Contemplation**: Runs background scheduling loops that inspect checklists in `HEARTBEAT.md`, digest conversation memories into episodic journals, and deliver pro-active reminders across connected channels.
+- **Multi-Channel & Multi-Provider**: Direct, first-class connectivity to Telegram, Discord, WeChat, Feishu, DingTalk, Slack, QQ, and Matrix, with active session routing for Anthropic, Gemini, MiniMax, ZAI, and OpenRouter (sessions selecting OpenAI, DeepSeek, or Ollama are currently mapped to ZAI coding by `buildProviderSpec`). Smart routing can try eligible providers on failure. For users without provider preferences, the setup wizard selects a fixed provider; OpenRouter is a fallback only when its key is configured.
+
+---
+
+## 📐 Architecture
+
+Donkey is engineered according to strict **Hexagonal Architecture (Ports and Adapters)** principles. Dependencies only flow inwards toward pure domain models.
+
+```mermaid
+flowchart TD
+  subgraph Inbound["Inbound Channels (Adapters)"]
+    TG["Telegram (Long Polling)"]
+    DC["Discord Gateway"]
+    WC["WeChat / WeCom"]
+    FS["Feishu / DingTalk / QQ"]
+    HTTP["HTTP Gateway / CLI"]
+  end
+
+  subgraph InPorts["Inbound Ports"]
+    CP["ChannelCapabilityDescriptor\nChannelPort (concept)"]
+  end
+
+  subgraph Core["Pure Core & Domain Engine"]
+    ORCH["OrchestratorAgent\n(Stateful User Session)"]
+    ROUTER["Smart Routing & Failover\n(Quality-First Policy)"]
+    HB["Heartbeat Daemon\n& Contemplation Loop"]
+    TOOL["Tool Loop Runtime\n& AST Sanitizer"]
+  end
+
+  subgraph OutPorts["Outbound Ports"]
+    PP["ProviderPort (concept)"]
+    MP["MemoryRuntimePort (concept)"]
+    SP["SandboxPort (concept)"]
+  end
+
+  subgraph Outbound["Outbound Adapters"]
+    LLM["LLM Providers\nAnthropic · OpenAI · Gemini\nDeepSeek · MiniMax · Ollama · ZAI"]
+    MAGMA["Dual Memory Runtime\nEmbedded SQLite-vec · Markdown\nPostgreSQL Multigraph"]
+    SANDBOX["Hardened Sandbox\nOCI Container (Daemon UID/GID) · WASM Busybox"]
+  end
+
+  Inbound --> InPorts --> Core --> OutPorts --> Outbound
+```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete architectural specification.
+
+---
+
+## 🚀 Quickstart in 60 Seconds
+
+### Prerequisites
+
+- [Nim 2.2+](https://nim-lang.org/install.html) with Nimble (`choosenim` recommended)
+- `ripgrep` (`rg`) for architectural boundary verification
+- `docker` or `podman` (required for default OCI shell sandbox)
+- `TELEGRAM_BOT_TOKEN` (required to start the daemon) and at least one directly supported session provider key: Anthropic, Gemini, MiniMax, ZAI, or OpenRouter (OpenAI and DeepSeek keys alone are insufficient without `ZAI_CODING_API_KEY` or an OpenRouter fallback)
+
+### 1. Build the Binary
 
 ```bash
-# Development build (SQLite-first, fast path enabled by default)
+# Build development binary (embedded SQLite + sqlite-vec enabled by default)
 nimble build
 
-# Release build
+# Or compile optimized, stripped release binary (install dependencies first)
+nimble install -y -d
+# Linux (GNU linker with --gc-sections; on macOS, use -Wl,-dead_strip instead):
 nim c -d:release --opt:size \
   --passC:"-ffunction-sections -fdata-sections" \
   --passL:"-Wl,--gc-sections" \
-  -o:donkey_release src/donkey.nim
-strip donkey_release
-
-# Run tests
-nimble test
+  -o:donkey src/donkey.nim
+strip donkey
 ```
 
-To build without SQLite support:
+### 2. Guided Setup
+
+Run the interactive setup wizard to initialize configuration templates and state directories:
 
 ```bash
-nimble build -u:withSqlite
-```
-
-## Configuration
-
-The recommended explicit config path is `~/.config/donkey/donkey.toml`.
-Keep tokens and keys in `~/.config/donkey/donkey.env`.
-
-```toml
-[donkey]
-home = "~/.donkey"
-paddocks = "~/.donkey/paddocks"
-log_level = "info"
-log_file = "~/.donkey/donkey.log"
-
-[sandbox]
-mode = "oci"
-runtime = "docker"
-image = "alpine"
-allow_host_fallback = false
-allow_network = false
-read_only_rootfs = true
-```
-
-### Environment variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | For Telegram | Telegram bot token |
-| `DISCORD_BOT_TOKEN` | For Discord | Discord bot token |
-| `ZAI_API_KEY` | Optional | ZAI generic provider |
-| `ZAI_CODING_API_KEY` | Optional | Default tool-heavy provider path |
-| `ZAI_ANTHROPIC_API_KEY` | Optional | Anthropic-compatible ZAI provider |
-| `OPENROUTER_API_KEY` | For OpenRouter | Fallback provider |
-| `OPENAI_API_KEY` | Optional | OpenAI provider |
-| `DEEPSEEK_API_KEY` | Optional | DeepSeek provider |
-| `ANTHROPIC_API_KEY` | For Anthropic | claude-* models |
-| `GEMINI_API_KEY` | For Gemini | gemini-* models |
-| `MINIMAX_API_KEY` | For MiniMax | MiniMax-M2 |
-| `BRAVE_API_KEY` | Optional | Enables the `web_search` tool via Brave Search API |
-| `DONKEY_MAGMA_SQLITE_PATH` | Optional | SQLite file used by the default MAGMA backend |
-| `DONKEY_SQLITE_VEC_PATH` | Optional | Override path for a non-embedded `sqlite-vec` deployment |
-| `DONKEY_PG_DSN` | For Multigraph Memory | PostgreSQL DSN used by the graph-backed memory runtime |
-| `DONKEY_MASTER_KEY` | If using secrets | Master key for encrypted secrets |
-| `DONKEY_HTTP_PORT` | Optional | HTTP gateway port. Set to `0` to disable it |
-
-### SQLite-first default
-
-The normal build is SQLite-first. It uses `~/.donkey/state/magma.sqlite`
-automatically unless you override it. In this mode the build is self-contained:
-SQLite base and `sqlite-vec` are compiled into the Donkey binary.
-
-```bash
-export DONKEY_MAGMA_SQLITE_PATH="$HOME/.donkey/state/magma.sqlite"
-# Optional: enable sqlite-vec fast path
-export DONKEY_SQLITE_VEC_PATH=/absolute/path/to/vec0
-nim c -d:withSqlite src/donkey.nim
-```
-
-`DONKEY_SQLITE_VEC_PATH` is now mostly a fallback/override for non-embedded
-deployments. In the normal `withSqlite` build, no system `libsqlite3` or
-external vector extension is required at runtime.
-
-### PostgreSQL for larger installs
-
-If `DONKEY_PG_DSN` is set, Donkey can use PostgreSQL-backed MAGMA instead.
-Keep this off unless you explicitly want the PostgreSQL runtime.
-
-```bash
-export DONKEY_PG_DSN='host=127.0.0.1 user=postgres password=donkey_pass dbname=donkey port=5432'
-```
-
-### Per-user provider selection
-
-Each user can override the provider in their `PREFERENCES.md`:
-
-```toml
-provider = "anthropic"
-model    = "claude-haiku-4-5"
-```
-
-### Happy path
-
-```bash
-nimble build
 ./donkey setup
+```
+
+The wizard configures `~/.config/donkey/donkey.toml`, provisions the state store in `~/.donkey/`, selects the available OCI sandbox runtime, and saves provider keys. Verify provider connectivity with `./donkey ctl provider test <name>`. For `openai`, `deepseek`, and `ollama`, this command selects ZAI Coding instead of the named provider.
+
+### 3. Start the Daemon
+
+> [!IMPORTANT]
+> The embedded HTTP gateway listens on `0.0.0.0:8080` by default, exposing `/api/status`, `/api/logs`, `/api/events`, and `/api/chat` without authentication (`/api/chat` accepts inbound messages with an optional `userId` and can create or dispatch to sessions if the user is not revoked, while `/api/events` streams live logs). Block direct external access to port 8080 with a firewall on any deployment where this port is accessible, and enforce authentication at the proxy layer if using a reverse proxy. On shared multi-user hosts, unprivileged local users can also connect directly to port 8080 and bypass proxy authentication; isolate network access strictly to the proxy process (e.g., via network namespaces) or disable the gateway entirely. Any `DONKEY_HTTP_PORT` variable already exported in the shell environment takes precedence over `.env` files; to reliably disable the gateway, run `DONKEY_HTTP_PORT=0 ./donkey start` or set `DONKEY_HTTP_PORT=0` in the environment file loaded by the daemon. Note that the daemon resolves `donkey.env` before loading `donkey.toml` by checking `$DONKEY_HOME/donkey.env` (defaulting to `~/.donkey/donkey.env`) and falling back to `~/.config/donkey/donkey.env`; placing `DONKEY_HTTP_PORT=0` only in a custom `home` path configured inside TOML will not take effect. Preserve existing credentials in the loaded file and unset any inherited shell variable (`unset DONKEY_HTTP_PORT`) before starting. For systemd, set it in the service's effective `EnvironmentFile` such as `~/.config/donkey/donkey.env` and restart.
+>
+> Even on a single-user host, a malicious web page can read `/api/logs` or inject messages into `/api/chat` (including via simple `text/plain` requests without CORS preflight, creating or invoking sessions for arbitrary non-revoked users) if the browser permits local network access. Isolate the gateway from the browser (e.g., via network namespaces) or disable it; blocking external firewall access alone is not sufficient.
+
+```bash
 ./donkey start
 ```
 
-`setup` writes both files into `~/.config/donkey/`, creates the local
-state directories under `~/.donkey/`, auto-picks an OCI runtime when one is
-available, offers optional Brave Search setup for `web_search`, asks for the
-instance-wide default provider/model, and prints the exact `doctor`/`start`
-commands at the end.
-
-If you prefer to edit templates manually, the example files live at:
-
-- [deploy/donkey.toml.example](/home/micelio/git/donkey/deploy/donkey.toml.example)
-- [deploy/donkey.env.example](/home/micelio/git/donkey/deploy/donkey.env.example)
-
-If you do not want the HTTP gateway:
-
-```bash
-DONKEY_HTTP_PORT=0 ./donkey start
-```
-
-To run as a user service:
+Run as a systemd background user service:
 
 ```bash
 ./donkey service install
 ./donkey service start
 ```
 
-## Running
+Verify instance health anytime:
 
 ```bash
-# Start daemon
-export TELEGRAM_BOT_TOKEN=...
-export ZAI_CODING_API_KEY=...
-./donkey start
+./donkey doctor
+```
 
-# Admin commands
+---
+
+## 🧠 Sovereign Memory: The Paddock System
+
+Every user interacting with Donkey receives an isolated, human-readable directory called a **Paddock** located at `~/.donkey/paddocks/<user-id>/`:
+
+```text
+~/.donkey/paddocks/<uuid>/
+├── USER.md          # User profile & instructions (MAGMA graph profile takes precedence)
+├── PREFERENCES.md   # Model overrides, language, timezone (graph preferences take precedence; update via /models <provider> <model>)
+├── HEARTBEAT.md     # Active checklist of background autonomous tasks
+├── MEMORY.md        # Episodic reflections & long-term conversational memory
+├── CONTACTS.md      # Social graph, relations, and mentions
+├── solutions/       # Self-indexed technical solutions & code recipes
+├── sessions/        # Session transcripts & turn summaries
+└── .secrets/        # User-encrypted API keys & tokens (AES-GCM via nimcrypto)
+```
+
+### The MAGMA Subsystem
+1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Episodic memories, user preferences, and knowledge nodes live in `~/.donkey/state/magma.sqlite`. Profile texts, preferences, and memories are transmitted to OpenRouter to generate embeddings during writes and queries when embedding generation is active (e.g. via `OPENROUTER_API_KEY`); CLI operations like `ctl memory search` and `ctl memory import` may also transmit queries and non-empty context externally. Other configured services, such as Z.AI or external rerankers, may also transmit queries and candidate memory texts. Raw conversation transcripts are preserved in JSONL session files under `paddocks/<uuid>/sessions/`.
+2. **Markdown Bootstrap & Export**: Markdown paddocks serve as the human-readable view, bootstrap source, and debug format. When MAGMA is active, runtime writes prioritize the graph. If opening or migrating the database raises an exception, `newMagmaAdapter` returns `nil`, and runtime profile or preference writes can fail when accessing the adapter before the `MdFileAdapter` Markdown fallback takes place. If a write propagates a catchable error, `MdFileAdapter` attempts to record the update in the paddock Markdown files. Some SQLite write errors are swallowed, so updates can be lost without a Markdown fallback. `loadContext` will prioritize graph content once MAGMA recovers. Before running `./donkey ctl memory export <uuid> [output_dir]`, back up and reconcile any paddock Markdown files that diverged during outages, as exporting will overwrite the target directory with the current MAGMA view (or omit `output_dir` to print to stdout). Note that `./donkey ctl memory import <uuid>` reads context before calling `deleteUser`; non-empty graph fields take precedence over divergent edits in Markdown files (only empty graph fields are populated from Markdown), and unexported nodes or relation edges (episodes, solutions) are permanently purged without recovering divergent file edits. Always take a full database backup before importing.
+3. **PostgreSQL Multigraph Scaling**: For multi-agent graph querying at scale, Donkey supports PostgreSQL + `pgvector`. Ensure the `pgvector` extension is installed on your PostgreSQL server and that the database user configured in `DONKEY_PG_DSN` has permissions to execute `CREATE EXTENSION IF NOT EXISTS vector`. Install the `libpq` client development library on the build host first (for example, `libpq-dev` on Debian/Ubuntu). Compile with `nim c -d:withPostgres -u:withSqlite -o:donkey src/donkey.nim` and configure `DONKEY_PG_DSN`. Recompiling does not automatically transfer existing data from SQLite; operators must back up their database and migrate existing nodes and edges before switching backends (`./donkey ctl memory export <uuid>` exports only the three context Markdown files for an individual user, not the complete knowledge graph).
+
+---
+
+## 🛡️ Sandboxing & Tool Security
+
+Donkey provides sandboxing for shell execution. MCP servers run directly on the host and inherit the daemon environment, which may contain credentials; install only trusted MCP servers, or isolate them externally. With `--dev-mode`, the default sandbox mode runs shell commands directly on the host. If `sandbox.allow_host_fallback = true` (allowed only in `--dev-mode`), certain OCI failures can also execute commands on the host; do not rely on container isolation in those configurations.
+
+- **OCI Hardened Sandbox**: Shell executions normally run inside ephemeral Docker or Podman containers configured with:
+  - Host daemon UID and GID matching (prevents host file ownership pollution)
+  - Read-only root filesystem (`read_only_rootfs = true`)
+  - Network access disabled by default (enabling network in donkey.toml requires --dev-mode)
+  - Isolated temporary and paddock mounts
+- **WASM Applet Dispatch**: Fast execution of POSIX applets (cat, grep, sed, find) via `wasmtime` and `~/.donkey/busybox`.
+- **Model Context Protocol (MCP)**: Native client support for external MCP tool servers:
+  ```bash
+  # Positional arguments only via CLI
+  ./donkey ctl tool install <mcp-server-command> [positional-args...]
+  ```
+  > [!TIP]
+  > Server flags like `--port=8000` are filtered out by the CLI option parser; configure MCP servers requiring flags directly in `tools.toml` under your configured home directory (`cfg.home/tools.toml`, which defaults to `~/.donkey/tools.toml`).
+
+---
+
+## 🌐 Supported Ecosystem
+
+### Channels (Inbound)
+
+| Channel | Mode | Features |
+|:---|:---|:---|
+| **Telegram** | Long Polling | Streaming responses, markdown formatting, reactions, inline keyboards |
+| **Discord** | Gateway WebSockets | Slash commands, components, thread handling, bot mentions |
+| **WeChat / WeCom**| Webhook / Event loop | Enterprise WeChat & personal bridge support |
+| **Feishu / Lark** | Outbound API | Group chats, direct messages; inbound requires an integration that calls `pushEvent` (interactive cards not supported) |
+| **DingTalk** | Outbound API | Inbound requires an integration that calls `pushEvent` |
+| **QQ / OneBot** | WebSocket / HTTP | OneBot v11 protocol, group and private chat dispatch |
+| **Slack** | Outbound only | Outbound messaging via Webhooks/API (inbound event loop integration pending) |
+| **Matrix** | Outbound PUT | Inbound requires an integration that calls `pushEvent` |
+| **HTTP Gateway**| REST / SSE | Local webhooks; note: open `/api/events` streams occupy the single accept thread (blocking concurrent `/api/chat` or status calls for up to 5h until disconnected) |
+
+### Providers (Outbound)
+
+| Provider | Default Tool Support | Streaming | Recommended Models |
+|:---|:---:|:---:|:---|
+| **Anthropic** | ✅ | ✅ | `claude-opus-4-6`, `claude-sonnet-4-6` |
+| **OpenAI** | ✅ | ✅ | `gpt-4o`, `gpt-4o-mini` |
+| **DeepSeek** | ✅ | ✅ | `deepseek-chat`, `deepseek-reasoner` |
+| **Gemini** | ✅ | ❌ | `gemini-2.5-pro`, `gemini-2.5-flash` |
+| **Ollama** | ✅ | ✅ | `qwen2.5-coder:32b`, `llama3.3:70b` |
+| **MiniMax** | ✅ | ❌ | `MiniMax-Text-01`, `MiniMax-M2` |
+| **ZAI / Zhipu** | ✅ | ❌ | `glm-4-plus`, `glm-4-flash` |
+| **OpenRouter** | ✅ | ✅ | Universal routing fallback |
+
+> [!NOTE]
+> In the daemon runtime, sessions receive the global OpenRouter `streamFn` when `OPENROUTER_API_KEY` is configured. In addition, the orchestrator tool loop only engages streaming when zero tools are present; because sessions register native tools by default, responses are executed through complete turns rather than token streams. Adapter-level streaming flags in the table indicate `buildProviderBundle` support (`zai-anthropic` also provides streaming).
+
+---
+
+## 🛠️ CLI Reference
+
+The `donkey ctl` utility provides complete instance governance:
+
+```bash
+# User and Paddock management
 ./donkey ctl user list
 ./donkey ctl user show <uuid>
-./donkey ctl tool install <mcp-server-command> [args...]
-./donkey ctl skill install <deno-script.ts> [--allow-net ...]
-./donkey ctl provider test zhipu
+./donkey ctl memory export <uuid> [output_dir]
+
+# Tool and Extension management
+./donkey ctl tool install <mcp-command> [args...]
+./donkey ctl skill install <name> <script.ts>
+
+# Provider Diagnostics
+./donkey ctl provider test anthropic
+./donkey ctl provider test gemini
 ```
 
-## User workspace
+---
 
-Each user gets a paddock at `~/.donkey/paddocks/<uuid>/`:
+## 🧪 Development & Quality Assurance
 
-```
-<uuid>/
-  USER.md          # profile — editable directly, reread each conversation
-  PREFERENCES.md   # provider, language, timezone (TOML)
-  MEMORY.md        # episodic notes accumulated over sessions
-  CONTACTS.md      # known people and relations
-  SOLUTIONS.md     # indexed technical solutions
-  sessions/        # per-session summaries
-  .secrets/        # encrypted API keys (nimcrypto)
-```
+Donkey follows disciplined Test-Driven Development (TDD) with strict architectural boundaries.
 
-When neither `DONKEY_MAGMA_SQLITE_PATH` nor `DONKEY_PG_DSN` is configured,
-these files are the live memory backend.
-
-When `DONKEY_MAGMA_SQLITE_PATH` or `DONKEY_PG_DSN` is configured,
-`Multigraph Memory` becomes the authoritative runtime store for profile,
-preferences, and episodic memory. In that mode:
-
-- conversations load context from the graph first
-- runtime writes go to the graph, not to `USER.md`, `PREFERENCES.md`, or `MEMORY.md`
-- Markdown remains useful for bootstrap, export, inspection, and debug
-- `./donkey ctl memory export <uuid>` regenerates the Markdown view from the graph
-
-## Architecture
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full technical overview.
-
-Brief summary: hexagonal architecture, ports as Nim `concept` (structural typing),
-Chronos for async I/O, one `OrchestratorAgent` per user session, and outbound
-presentation treated as a shared core concern instead of adapter-local state.
-
-## Current Runtime
-
-- SQLite-first local runtime by default
-- Embedded SQLite + `sqlite-vec` in the normal build
-- Hardened OCI shell sandbox for production
-- `doctor`, `setup`, `service install`, and `service start` as the primary ops path
-- Multi-channel UI with shared outbound presentation surfaces, streaming, and reactions
-
-## Development
-
-### Running Tests and Verification
+### Running Tests
 
 ```bash
-# Run the default test suite in parallel (default: all CPU cores)
-# Note: Live-DB backend suites (PostgreSQL/Age) are excluded by default.
-# WASM/shell suites run automatically when ~/.donkey/busybox and wasmtime are present.
+# Run the default test suite in parallel across all CPU cores
 bash scripts/run_tests.sh
 
-# Or via Nimble task
-nimble test
-
-# Target a specific directory or single test file
+# Target a specific module or test file
 bash scripts/run_tests.sh tests/ports
 bash scripts/run_tests.sh tests/app/t_orchestrator.nim
 
-# Verify hexagonal architectural boundaries (requires ripgrep)
+# Execute via Nimble
+nimble test
+```
+
+> [!NOTE]
+> `scripts/run_tests.sh` always skips `t_sqlite_store`, even when targeted directly (`withSqlite` is enabled by default in `config.nims`). Run this suite directly:
+>
+> ```bash
+> nim c --hints:off --mm:orc -u:withPostgres -r tests/adapters/memory/t_sqlite_store.nim
+> ```
+>
+> PostgreSQL/Age tests and in-process wasm3 (`t_wasm.nim`) are excluded by default in `scripts/run_tests.sh`. WASM applet and shell composer suites run automatically when `~/.donkey/busybox` and `wasmtime` are present on the host.
+
+### Verifying Architectural Boundaries
+
+Core and Domain modules must never import Adapters. Run the automated boundary checker:
+
+```bash
+# Requires ripgrep (rg)
 bash scripts/check_boundaries.sh
 ```
 
-### Testament (Alternative)
+---
 
-```bash
-# Run a single test file
-testament r tests/app/t_orchestrator.nim
+## 📄 License
 
-# Run a category
-testament cat app
-```
-
-### Extending Donkey
-
-- **Add a channel**: See [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-channel) for the step-by-step guide using `ChannelCapabilityDescriptor`.
-- **Add a provider**: See [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-provider) for registering models via `ProviderCatalog` and implementing the adapter.
-- **Add an MCP tool**: `donkey ctl tool install <command>`
-
-See [CLAUDE.md](CLAUDE.md) for AI-assistant guidance and architectural decisions.
-See [TODO.md](TODO.md) for the centralized backlog, including the Multigraph Memory-first migration plan.
+Donkey is open-source software licensed under the [MIT License](LICENSE).
