@@ -58,6 +58,7 @@ import donkey/app/ipc_server
 import donkey/app/http_gateway
 import donkey/app/heartbeat
 import donkey/app/outbound_runtime
+import donkey/app/gateway_drainer
 import donkey/app/session_manager
 import donkey/app/session_state
 import donkey/app/session_bootstrap
@@ -778,11 +779,14 @@ proc startOptionalDingTalkGateway(dtAdapter: var DingTalkAdapter;
   dtAdapter.openQueue()
   log.info("DingTalk gateway started")
 
+func matrixConfigured(): bool =
+  getEnv("MATRIX_HOMESERVER").len > 0 and
+    getEnv("MATRIX_BOT_USER_ID").len > 0 and
+    getEnv("MATRIX_ACCESS_TOKEN").len > 0
+
 proc startOptionalMatrixGateway(mxAdapter: var MatrixAdapter;
                                 log: Logger) =
-  if getEnv("MATRIX_HOMESERVER").len == 0 or
-     getEnv("MATRIX_BOT_USER_ID").len == 0 or
-     getEnv("MATRIX_ACCESS_TOKEN").len == 0:
+  if not matrixConfigured():
     log.info("MATRIX_HOMESERVER/MATRIX_BOT_USER_ID/MATRIX_ACCESS_TOKEN not set — Matrix disabled")
     return
 
@@ -1301,13 +1305,16 @@ func outboundPortForChannel(ports: OutboundChannelPorts;
   of ckEmail: ports.email
   of ckCli: ports.cli
 
+proc makeCompleteBuilder(): proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+  result = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+    buildCompleteFn(preferencesMd, buildProviderBundle)
+
 proc drainTelegramEvents(runtime:      var DaemonRuntime;
                          tgAdapter:    var TelegramAdapter;
                          outboundPorts: OutboundChannelPorts;
                          services:     SessionIngressServices;
                          log:          Logger): bool =
-  let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-    buildCompleteFn(preferencesMd, buildProviderBundle)
+  let completeBuilder = makeCompleteBuilder()
   let modelCatalogLoader = buildModelCatalogLoader()
   let runtimePtr = addr runtime
   let tgMsgs = tgAdapter.receive().valueOr:
@@ -1331,7 +1338,7 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
       proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} =
         ensureSessionTask(runtimePtr[].sm, msg, services, runtimePtr[].msgSeq, taskKind, payload)):
       if stagedReaction:
-        completeInboundReactionStatus(runtime, outboundPorts, msg.channel, msg.userId, msg.channelId, msg.channelId, false)
+        completeInboundReactionStatus(runtime, outboundPorts, msg.channel, msg.userId, msg.channelId, inboundStatusMessageId(msg), false)
     else:
       handleTelegramFallback(runtime, msg, services)
   true
@@ -1433,182 +1440,124 @@ proc handleGatewayFallback(ctx: DaemonContext;
     buildDaemonSessionServices(ctx, cfg, memory, log),
   )
 
-proc drainDiscordGateway(ctx: DaemonContext;
-                         cfg: DonkeyConfig;
-                         memory: MdFileAdapter;
-                         log: Logger) =
-  let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-    buildCompleteFn(preferencesMd, buildProviderBundle)
+proc buildDaemonGatewayDrainer(ctx: DaemonContext;
+                               cfg: DonkeyConfig;
+                               memory: MdFileAdapter;
+                               log: Logger): GatewayDrainer =
+  let completeBuilder = makeCompleteBuilder()
   let modelCatalogLoader = buildModelCatalogLoader()
+  let toolsCount = ctx.services.tools.len + nativeSessionTools().len
+  let toolClientsCount = ctx.services.toolClients.len
   let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
-  discord_runtime.drainDiscordEvents(
-    ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, memory, completeBuilder, modelCatalogLoader,
-    ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
-    ctx.runtime.msgSeq, log,
-    proc(msg: InboundMessage) =
-      stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),
-    proc(msg: InboundMessage) =
-      completeInboundReactionStatus(ctx.runtime, outboundPorts, msg.channel, msg.userId, msg.channelId, msg.channelId, false),
-    proc(msg: InboundMessage) =
-      handleGatewayFallback(ctx, cfg, memory, msg, log))
+  let fallback = proc(msg: InboundMessage) {.gcsafe.} =
+    handleGatewayFallback(ctx, cfg, memory, msg, log)
 
-proc drainWeComGateway(ctx: DaemonContext;
-                       cfg: DonkeyConfig;
-                       memory: MdFileAdapter;
-                       log: Logger) =
-  let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-    buildCompleteFn(preferencesMd, buildProviderBundle)
-  let modelCatalogLoader = buildModelCatalogLoader()
-  wecom_runtime.drainWeComEvents(
-    ctx.adapters.wc, ctx.env.wecomCorpId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-    ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
-    ctx.runtime.msgSeq, log,
-    proc(msg: InboundMessage) =
-      handleGatewayFallback(ctx, cfg, memory, msg, log))
-
-proc drainWeChatGateway(ctx: DaemonContext;
-                        cfg: DonkeyConfig;
-                        memory: MdFileAdapter;
-                        log: Logger) =
-  let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-    buildCompleteFn(preferencesMd, buildProviderBundle)
-  let modelCatalogLoader = buildModelCatalogLoader()
-  wechat_runtime.drainWeChatEvents(
-    ctx.adapters.wch, ctx.env.wechatAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-    ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
-    ctx.runtime.msgSeq,
-    proc(msg: InboundMessage) =
-      handleGatewayFallback(ctx, cfg, memory, msg, log))
-
-proc drainQQGateway(ctx: DaemonContext;
-                    cfg: DonkeyConfig;
-                    memory: MdFileAdapter;
-                    log: Logger) =
-  let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-    buildCompleteFn(preferencesMd, buildProviderBundle)
-  let modelCatalogLoader = buildModelCatalogLoader()
-  qq_runtime.drainQQEvents(
-    ctx.adapters.qq, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-    ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
-    ctx.runtime.msgSeq,
-    proc(msg: InboundMessage) =
-      handleGatewayFallback(ctx, cfg, memory, msg, log),
-    log)
-
-proc drainFeishuGateway(ctx: DaemonContext;
-                        cfg: DonkeyConfig;
-                        memory: MdFileAdapter;
-                        log: Logger) =
-  let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-    buildCompleteFn(preferencesMd, buildProviderBundle)
-  let modelCatalogLoader = buildModelCatalogLoader()
-  feishu_runtime.drainFeishuEvents(
-    ctx.adapters.fs, ctx.env.feishuAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-    ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
-    ctx.runtime.msgSeq,
-    proc(msg: InboundMessage) =
-      handleGatewayFallback(ctx, cfg, memory, msg, log),
-    log)
-
-proc drainDingTalkGateway(ctx: DaemonContext;
-                          cfg: DonkeyConfig;
-                          memory: MdFileAdapter;
-                          log: Logger) =
-  if ctx.env.dingTalkAppKey.len == 0:
-    return
-
-  var (hasEvent, event) = ctx.adapters.dt.tryRecvEvent()
-  while hasEvent:
-    if event.content.strip.len > 0 or event.downloadCode.len > 0:
-      let userId = ctx.adapters.dt.resolver.resolve(ckDingTalk, event.rawId)
-      handleGatewayFallback(
-        ctx,
-        cfg,
-        memory,
-        InboundMessage(
-          userId: userId,
-          channel: ckDingTalk,
-          channelId: event.messageId,
-          messageId: event.messageId,
-          text: event.content,
-          mediaUrl: event.downloadCode,
-        ),
-        log,
+  initGatewayDrainer(
+    drainDiscord = proc(): bool =
+      drainDiscordGateway(ctx.env.discordToken.len > 0, proc(): bool =
+        discord_runtime.drainDiscordEvents(
+          ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, memory, completeBuilder, modelCatalogLoader,
+          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.runtime.msgSeq, log,
+          proc(msg: InboundMessage) =
+            stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),
+          proc(msg: InboundMessage) =
+            completeInboundReactionStatus(ctx.runtime, outboundPorts, msg.channel, msg.userId,
+              msg.channelId, inboundStatusMessageId(msg), false),
+          fallback)
+        true
+      ),
+    drainWeCom = proc(): bool =
+      drainWeComGateway(ctx.env.wecomCorpId.len > 0, proc(): bool =
+        wecom_runtime.drainWeComEvents(
+          ctx.adapters.wc, ctx.env.wecomCorpId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
+          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.runtime.msgSeq, log, fallback)
+        true
+      ),
+    drainWeChat = proc(): bool =
+      drainWeChatGateway(ctx.env.wechatAppId.len > 0, proc(): bool =
+        wechat_runtime.drainWeChatEvents(
+          ctx.adapters.wch, ctx.env.wechatAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
+          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.runtime.msgSeq, fallback)
+        true
+      ),
+    drainQQ = proc(): bool =
+      drainQQGateway(ctx.adapters.qq.enabled(), proc(): bool =
+        qq_runtime.drainQQEvents(
+          ctx.adapters.qq, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
+          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.runtime.msgSeq, fallback, log)
+        true
+      ),
+    drainFeishu = proc(): bool =
+      drainFeishuGateway(ctx.env.feishuAppId.len > 0, proc(): bool =
+        feishu_runtime.drainFeishuEvents(
+          ctx.adapters.fs, ctx.env.feishuAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
+          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.runtime.msgSeq, fallback, log)
+        true
+      ),
+    drainDingTalk = proc(): bool =
+      let count = drainDingTalkGateway(
+        ctx.env.dingTalkAppKey.len > 0,
+        proc(): (bool, InboundMessage) =
+          var (hasEvent, event) = ctx.adapters.dt.tryRecvEvent()
+          while hasEvent:
+            if event.content.strip.len > 0 or event.downloadCode.len > 0:
+              let userId = ctx.adapters.dt.resolver.resolve(ckDingTalk, event.rawId)
+              return (true, InboundMessage(
+                userId: userId,
+                channel: ckDingTalk,
+                channelId: event.messageId,
+                messageId: event.messageId,
+                text: event.content,
+                mediaUrl: event.downloadCode,
+              ))
+            (hasEvent, event) = ctx.adapters.dt.tryRecvEvent()
+          (false, InboundMessage()),
+        fallback,
+        log
       )
-    (hasEvent, event) = ctx.adapters.dt.tryRecvEvent()
-
-proc drainMatrixGateway(ctx: DaemonContext;
-                        cfg: DonkeyConfig;
-                        memory: MdFileAdapter;
-                        log: Logger) =
-  if getEnv("MATRIX_HOMESERVER").len == 0 or
-     getEnv("MATRIX_BOT_USER_ID").len == 0 or
-     getEnv("MATRIX_ACCESS_TOKEN").len == 0:
-    return
-
-  var (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
-  while hasEvent:
-    if event.content.strip.len > 0 or event.mediaUrl.len > 0:
-      let userId = ctx.adapters.mx.resolver.resolve(ckMatrix, event.roomId)
-      handleGatewayFallback(
-        ctx,
-        cfg,
-        memory,
-        InboundMessage(
-          userId: userId,
-          channel: ckMatrix,
-          channelId: event.eventId,
-          messageId: event.eventId,
-          text: event.content,
-          mediaUrl: event.mediaUrl,
-        ),
-        log,
+      count > 0,
+    drainMatrix = proc(): bool =
+      let count = drainMatrixGateway(
+        matrixConfigured(),
+        proc(): (bool, InboundMessage) =
+          var (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
+          while hasEvent:
+            if event.content.strip.len > 0 or event.mediaUrl.len > 0:
+              let userId = ctx.adapters.mx.resolver.resolve(ckMatrix, event.roomId)
+              return (true, InboundMessage(
+                userId: userId,
+                channel: ckMatrix,
+                channelId: event.eventId,
+                messageId: event.eventId,
+                text: event.content,
+                mediaUrl: event.mediaUrl,
+              ))
+            (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
+          (false, InboundMessage()),
+        fallback,
+        log
       )
-    (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
-
-proc drainTelegramGateway(ctx: DaemonContext;
-                          cfg: DonkeyConfig;
-                          memory: MdFileAdapter;
-                          log: Logger): bool =
-  let services =
-    buildDaemonSessionServices(ctx, cfg, memory, log) |>->
-    withTypingFn(ctx.services.tgTypingFn)
-  drainTelegramEvents(ctx.runtime, ctx.adapters.tg, buildRuntimeOutboundPorts(ctx.adapters), services, log)
-
-proc drainWhatsAppGateway(ctx: DaemonContext;
-                          cfg: DonkeyConfig;
-                          memory: MdFileAdapter;
-                          log: Logger): bool =
-  ## Drains WhatsApp webhook events and processes them.
-  if ctx.env.whatsappAccessToken.len == 0:
-    return false  # WhatsApp not configured
-
-  let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-    buildCompleteFn(preferencesMd, buildProviderBundle)
-  let modelCatalogLoader = buildModelCatalogLoader()
-  whatsapp_runtime.drainWhatsAppEvents(
-    ctx.adapters.wa, ctx.env.whatsappPhoneNumberId, ctx.runtime.sm, memory,
-    completeBuilder, modelCatalogLoader,
-    ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len,
-    ctx.runtime.daemonStartMs, ctx.runtime.msgSeq,
-    proc(msg: InboundMessage) =
-      handleGatewayFallback(ctx, cfg, memory, msg, log),
-    log)
-  true
-
-proc drainGatewayEvents(ctx: DaemonContext;
-                        cfg: DonkeyConfig;
-                        memory: MdFileAdapter;
-                        log: Logger) =
-  drainDiscordGateway(ctx, cfg, memory, log)
-  drainWeComGateway(ctx, cfg, memory, log)
-  drainWeChatGateway(ctx, cfg, memory, log)
-  drainFeishuGateway(ctx, cfg, memory, log)
-  drainQQGateway(ctx, cfg, memory, log)
-  drainDingTalkGateway(ctx, cfg, memory, log)
-  drainMatrixGateway(ctx, cfg, memory, log)
-  discard drainTelegramGateway(ctx, cfg, memory, log)
-  discard drainWhatsAppGateway(ctx, cfg, memory, log)
+      count > 0,
+    drainTelegram = proc(): bool =
+      let services =
+        buildDaemonSessionServices(ctx, cfg, memory, log) |>->
+        withTypingFn(ctx.services.tgTypingFn)
+      drainTelegramEvents(ctx.runtime, ctx.adapters.tg, outboundPorts, services, log),
+    drainWhatsApp = proc(): bool =
+      drainWhatsAppGateway(ctx.env.whatsappAccessToken.len > 0, proc(): bool =
+        whatsapp_runtime.drainWhatsAppEvents(
+          ctx.adapters.wa, ctx.env.whatsappPhoneNumberId, ctx.runtime.sm, memory,
+          completeBuilder, modelCatalogLoader,
+          toolsCount, toolClientsCount,
+          ctx.runtime.daemonStartMs, ctx.runtime.msgSeq, fallback, log)
+        true
+      ),
+  )
 
 proc withOutboxDrain(ctx: DaemonContext;
                      log: Logger;
@@ -1616,13 +1565,10 @@ proc withOutboxDrain(ctx: DaemonContext;
   result = tick
   drainGlobalOutbox(ctx.runtime, ctx.adapters, log)
 
-proc withGatewayDrain(ctx: DaemonContext;
-                      cfg: DonkeyConfig;
-                      memory: MdFileAdapter;
-                      log: Logger;
+proc withGatewayDrain(drainer: GatewayDrainer;
                       tick: DaemonTickResult): DaemonTickResult =
   result = tick
-  drainGatewayEvents(ctx, cfg, memory, log)
+  drainGatewayEvents(drainer)
   result.ok = true  # Always ok, gateways drained
 
 proc withReminderCheck(ctx: DaemonContext;
@@ -1636,20 +1582,20 @@ proc withReminderCheck(ctx: DaemonContext;
   result.remindersChecked = true
 
 proc runDaemonTick(ctx: DaemonContext;
-                   cfg: DonkeyConfig;
+                   drainer: GatewayDrainer;
                    memory: MdFileAdapter;
                    log: Logger): DaemonTickResult =
   result =
     DaemonTickResult(ok: true, remindersChecked: false) |>->
     withOutboxDrain(ctx, log) |>->
-    withGatewayDrain(ctx, cfg, memory, log) |>->
+    withGatewayDrain(drainer) |>->
     withReminderCheck(ctx, memory, log)
 
 proc runDaemonLoop(ctx: DaemonContext;
-                   cfg: DonkeyConfig;
+                   drainer: GatewayDrainer;
                    memory: MdFileAdapter;
                    log: Logger): DaemonLoopResult =
-  let tick = runDaemonTick(ctx, cfg, memory, log)
+  let tick = runDaemonTick(ctx, drainer, memory, log)
   DaemonLoopResult(
     sleepMs: if tick.ok: 100 else: 500,
   )
@@ -1664,6 +1610,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let ctx = bootstrap.ctx
   activateDaemonBootstrap(ctx, cfg, memory, log)
   let sessionServices = buildDaemonSessionServices(ctx, cfg, memory, log)
+  let drainer = buildDaemonGatewayDrainer(ctx, cfg, memory, log)
 
   ## Heartbeat: periodic maintenance (reminder delivery, etc.)
   var hbReg = newHeartbeatRegistry()
@@ -1718,8 +1665,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
 
   ## One-time startup: recover messages received while bot was offline.
   block:
-    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-      buildCompleteFn(preferencesMd, buildProviderBundle)
+    let completeBuilder = makeCompleteBuilder()
     let modelCatalogLoader = buildModelCatalogLoader()
     let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
     discord_runtime.checkDiscordOfflineMessages(
@@ -1737,7 +1683,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
 
   log.info("polling for messages…")
   while true:
-    let loopResult = runDaemonLoop(ctx, cfg, memory, log)
+    let loopResult = runDaemonLoop(ctx, drainer, memory, log)
     await sleepAsync(ctimer.milliseconds(loopResult.sleepMs.int64))
 
 # ── main ───────────────────────────────────────────────────────────────────────
