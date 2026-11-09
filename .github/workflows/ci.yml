@@ -26,7 +26,10 @@ jobs:
           nim-version: '2.2.8'
 
       - name: Install Nim dependencies
-        run: nimble install -y --depsOnly
+        run: |
+          git clone --recurse-submodules https://github.com/beef331/wasm3 /tmp/wasm3
+          (cd /tmp/wasm3 && nimble develop -y)
+          nimble install -y --depsOnly
 
       - name: Verify architectural boundaries
         run: bash scripts/check_boundaries.sh
