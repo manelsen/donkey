@@ -946,7 +946,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
 proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
                                   msg:      InboundMessage;
                                   services: SessionIngressServices) =
-  handleSessionFallback(runtime.globalOutbox, runtime.sm, runtime.msgSeq, msg, services)
+  handleSessionFallback(runtime.sm, runtime.msgSeq, msg, services)
 
 func inboundStatusMessageId(msg: InboundMessage): string =
   if msg.messageId.len > 0: msg.messageId else: msg.channelId

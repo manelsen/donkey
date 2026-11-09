@@ -101,7 +101,8 @@ suite "daemon session ingress":
     var msgSeq = 0
     let outbox = newAsyncQueue[OutboundMessage]()
     let services = SessionIngressServices(
-      isRevoked: proc(u: UserId): bool = u == UserId("u-revoked-user")
+      globalOutbox: outbox,
+      isRevoked: proc(u: UserId): bool = u == UserId("u-revoked-user"),
     )
     let msg = InboundMessage(
       userId: UserId("u-revoked-user"),
@@ -109,7 +110,7 @@ suite "daemon session ingress":
       channelId: "123",
       text: "hello",
     )
-    handleSessionFallback(outbox, sm, msgSeq, msg, services)
+    handleSessionFallback(sm, msgSeq, msg, services)
     check outbox.len == 1
     let rejected = outbox.popFirstNoWait()
     check rejected.userId == UserId("u-revoked-user")
@@ -150,9 +151,9 @@ suite "daemon session ingress":
       channelId: "123",
       text: "hello allowed user",
     )
-    handleSessionFallback(outbox, sm, msgSeq, msg, services)
+    handleSessionFallback(sm, msgSeq, msg, services)
     check sm.hasSession(UserId("u-allowed-user"))
     check msgSeq == 1
-    if outbox.len > 0:
+    while outbox.len > 0:
       let popped = outbox.popFirstNoWait()
       check "revogado" notin popped.text

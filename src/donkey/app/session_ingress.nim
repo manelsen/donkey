@@ -320,18 +320,18 @@ proc ensureSessionTask*(sm:       var SessionManager;
   ## Helper to ensure session ingress for background or system task.
   discard startSessionIngress(sm, msg, services, msgSeq, taskKind, payload)
 
-proc handleSessionFallback*(globalOutbox: AsyncQueue[OutboundMessage];
-                           sm:           var SessionManager;
+proc handleSessionFallback*(sm:           var SessionManager;
                            msgSeq:       var int;
                            msg:          InboundMessage;
                            services:     SessionIngressServices) {.gcsafe.} =
   ## Handles fallback message dispatch; rejects if user is revoked.
   if services.isRevoked != nil and services.isRevoked(msg.userId):
-    globalOutbox.putNoWait(OutboundMessage(
-      userId: msg.userId,
-      channel: msg.channel,
-      replyTo: sessionReplyTo(msg),
-      text: "Acesso revogado pelo administrador.",
-    ))
+    if services.globalOutbox != nil:
+      services.globalOutbox.putNoWait(OutboundMessage(
+        userId: msg.userId,
+        channel: msg.channel,
+        replyTo: sessionReplyTo(msg),
+        text: "Acesso revogado pelo administrador.",
+      ))
     return
   ensureSession(sm, msg, services, msgSeq)
