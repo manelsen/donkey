@@ -28,7 +28,8 @@ jobs:
       - name: Install Nim dependencies
         run: |
           git clone --recurse-submodules https://github.com/beef331/wasm3 /tmp/wasm3
-          (cd /tmp/wasm3 && nimble develop -y)
+          rm -rf /tmp/wasm3/src/wasm3/wasm3c/platforms
+          (cd /tmp/wasm3 && nimble install -y)
           nimble install -y --depsOnly
 
       - name: Verify architectural boundaries
