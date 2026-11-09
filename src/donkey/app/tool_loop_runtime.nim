@@ -403,11 +403,29 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
   loopState
 
 func isQuietHeartbeatText*(text: string): bool =
-  let lowered = text.toLowerAscii()
+  let lowered = text.toLowerAscii().strip()
+  if lowered.len == 0 or lowered in ["— 🫡", "- 🫡", "🫡"]:
+    return true
   (lowered.contains("tudo quiet") or
    lowered.contains("sem ação necessária") or
-   lowered.contains("sem alterações")) and
-  not lowered.contains("pendente") and
+   lowered.contains("sem alterações") or
+   lowered.contains("sem tarefas pendentes") or
+   lowered.contains("sem demandas pendentes") or
+   lowered.contains("checklist limpo") or
+   lowered.contains("checklist vazio") or
+   lowered.contains("checklist em dia") or
+   lowered.contains("checklist completo") or
+   lowered.contains("tudo em ordem") or
+   lowered.contains("tudo em dia") or
+   lowered.contains("tudo completo") or
+   lowered.contains("tudo limpo") or
+   lowered.contains("nada pendente") or
+   lowered.contains("nada a fazer") or
+   lowered.contains("sem ação")) and
+  not lowered.contains("há tarefa pendente") and
+  not lowered.contains("ha tarefa pendente") and
+  not lowered.contains("tarefa pendente no") and
+  not lowered.contains("tarefas pendentes:") and
   not lowered.contains("próximos passos") and
   not lowered.contains("falh") and
   not lowered.contains("erro")

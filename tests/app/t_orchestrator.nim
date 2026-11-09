@@ -709,6 +709,9 @@ suite "tool loop helpers":
   test "isQuietHeartbeatText recognizes no-op heartbeat summaries":
     check isQuietHeartbeatText("Tudo quiet. Apenas atualizei o timestamp de Last memory review.\n\nSem ação necessária.")
     check isQuietHeartbeatText("Heartbeat 2026-04-23T13:46:12Z — Tudo quiet. Sem alterações.")
+    check isQuietHeartbeatText("Heartbeat 2026-04-24T13:20:07Z — HEARTBEAT.md: tudo [x]. Sem tarefas pendentes.\n\n— 🫡")
+    check isQuietHeartbeatText("Heartbeat 2026-04-26T14:07:52Z — Checklist limpo, sem ação.\n\n— 🫡")
+    check isQuietHeartbeatText("— 🫡")
     check not isQuietHeartbeatText("Há tarefa pendente no HEARTBEAT.md.")
 
   test "finalizeNormalTurn suppresses quiet heartbeat replies and progress":

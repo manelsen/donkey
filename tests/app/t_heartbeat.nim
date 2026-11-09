@@ -200,10 +200,9 @@ suite "heartbeat parseHeartbeatMd":
     check entries.len == 1
     check entries[0].title == "Task"
 
-  test "parses bullet points without checkbox":
+  test "ignores bullet points without checkbox":
     let entries = parseHeartbeatMd("- Regular bullet without checkbox")
-    check entries.len == 1
-    check entries[0].title == "Regular bullet without checkbox"
+    check entries.len == 0
 
 suite "heartbeat prompt helpers":
 
@@ -264,6 +263,19 @@ suite "heartbeat deliverHeartbeats":
       {.cast(gcsafe).}: dispatched2.add(userId)
     deliverHeartbeats(tmp, outboxFn2)
     check dispatched2.len == 0
+    try: removeDir(tmp) except: discard
+
+  test "skips empty heartbeat checklists":
+    let tmp = getTempDir() / "donkey_hb_empty_checklist"
+    try: removeDir(tmp) except: discard
+    createDir(tmp / "user-empty")
+    writeFile(tmp / "user-empty" / "HEARTBEAT.md",
+      "- [x] Done already\n- [X] Also done\n\nPlain note, not a task")
+    var dispatched: seq[string] = @[]
+    let outboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
+      {.cast(gcsafe).}: dispatched.add(userId)
+    deliverHeartbeats(tmp, outboxFn)
+    check dispatched.len == 0
     try: removeDir(tmp) except: discard
 
 suite "contemplation runtime":

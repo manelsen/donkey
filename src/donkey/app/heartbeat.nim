@@ -165,12 +165,13 @@ func parseHeartbeatMd*(content: string): seq[HeartbeatTaskEntry] =
   for line in content.splitLines:
     let trimmed = line.strip()
     if trimmed.len == 0: continue
-    let isChecked = trimmed.startsWith("[x]") or trimmed.startsWith("- [x]")
     var title = trimmed
     if title.len > 0 and title[0] in {'-', '*'}:
       title = title[1..^1].strip
-    if title.len >= 4 and title[0] == '[' and title[2] == ']' and title[1] in {'x', ' '}:
-      title = title[3..^1].strip
+    if title.len < 4 or title[0] != '[' or title[2] != ']' or title[1] notin {'x', 'X', ' '}:
+      continue
+    let isChecked = title[1] in {'x', 'X'}
+    title = title[3..^1].strip
     if title.len > 0:
       result.add(HeartbeatTaskEntry(title: title, checked: isChecked))
 
