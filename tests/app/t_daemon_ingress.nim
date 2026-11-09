@@ -11,6 +11,7 @@ import donkey/core/pipeops
 import donkey/core/session/session_ingress
 import donkey/domain/agent_message
 import donkey/domain/message
+import donkey/ports/http
 import donkey/ports/provider
 import donkey/ports/tool
 
@@ -144,6 +145,7 @@ suite "daemon session ingress":
       typingFn = nil,
       searchFn = nil,
       isRevoked = proc(u: UserId): bool = false,
+      http = HttpRuntimePort(),
     )
     let msg = InboundMessage(
       userId: UserId("u-allowed-user"),
@@ -154,6 +156,7 @@ suite "daemon session ingress":
     handleSessionFallback(sm, msgSeq, msg, services)
     check sm.hasSession(UserId("u-allowed-user"))
     check msgSeq == 1
-    while outbox.len > 0:
-      let popped = outbox.popFirstNoWait()
-      check "revogado" notin popped.text
+    check outbox.len == 0
+    let entry = sm.get(UserId("u-allowed-user"))
+    if entry != nil:
+      entry[].inbox.addLastNoWait(newCancelMsg())

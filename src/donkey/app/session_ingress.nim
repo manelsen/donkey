@@ -145,7 +145,7 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
                                   typingFn: TypingFn;
                                   searchFn: SearchFn;
                                   isRevoked: proc(userId: UserId): bool {.gcsafe.};
-                                  http: HttpRuntimePort = HttpRuntimePort();
+                                  http: HttpRuntimePort;
                                   providerRuntimeBuilder: ProviderRuntimeBuilder = nil;
                                   skillRuntimeBuilder: SkillRuntimeBuilder = nil;
                                   skillRuntimePolicyResolver: SkillRuntimePolicyResolver = nil;
