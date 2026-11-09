@@ -17,7 +17,6 @@ import donkey/core/agent_events
 import donkey/core/app_meta
 import donkey/core/command_registry
 import donkey/core/providers/smart_routing
-import donkey/core/session/session_ingress
 import donkey/adapters/memory/md_file
 when defined(withPostgres) or defined(withSqlite):
   import donkey/adapters/memory/multigraph_runtime
@@ -60,8 +59,8 @@ import donkey/app/heartbeat
 import donkey/app/outbound_runtime
 import donkey/app/gateway_drainer
 import donkey/app/session_manager
-import donkey/app/session_state
 import donkey/app/session_bootstrap
+import donkey/app/session_ingress
 import donkey/app/doctor
 import donkey/app/setup_wizard
 import donkey/app/service_handler
@@ -137,14 +136,6 @@ Commands:
 ##     - first partial: send new message, store id
 ##     - subsequent partials: editMessage
 ##     - isPartial=false: editMessage + delete from presentationState
-
-func buildSkillRuntimePolicy(cfg: DonkeyConfig;
-                             skillName: string): SkillRuntimePolicy =
-  SkillRuntimePolicy(allowNetHosts: cfg.effectiveSkillAllowNetHosts(skillName))
-
-func buildSkillRuntimePolicyResolver(cfg: DonkeyConfig): SkillRuntimePolicyResolver =
-  result = proc(skillName: string): SkillRuntimePolicy =
-    buildSkillRuntimePolicy(cfg, skillName)
 
 proc makeTgTypingFn(token: string; identityPath: string; log: Logger): TypingFn =
   ## Returns a TypingFn that sends typing indicators to Telegram users.
@@ -916,141 +907,12 @@ proc setupIpcServer(cfg: DonkeyConfig;
   else:
     log.info("HTTP gateway: disabled")
 
-type EnsureSessionPlan = object
-  uid*:      string
-  decision*: SessionIngressDecision
-  injectRecentContext*: bool
-  oldInbox*: AsyncQueue[AgentMessage]
-  oldAskInbox*: AsyncQueue[string]
-  entry*:    ptr SessionEntry
-
-type SessionIngressContext* = object
-  plan*: EnsureSessionPlan
-  msgId*: string
-
-type SessionIngressServices = object
-  cfg:          DonkeyConfig
-  memory:       MdFileAdapter
-  completeFn:   CompleteFn
-  streamFn:     StreamFn
-  toolClients:  seq[ToolRuntimePort]
-  tools:        seq[ToolDescription]
-  globalOutbox: AsyncQueue[OutboundMessage]
-  log:          Logger
-  sandboxMode:  SandboxMode
-  sandboxRuntimeCmd: string
-  sandboxImage: string
-  typingFn:     TypingFn
-  searchFn:     SearchFn
-  routeRecordHook: proc(selection: ProviderSelection) {.gcsafe.}
-  routeResultHook: proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.}
-  routeFeedbackHook: proc(): seq[RouteFeedback] {.gcsafe.}
-  routeCostHook: proc(): seq[RouteCostHint] {.gcsafe.}
-  routeProviderCooldownHook: proc(): seq[ProviderCooldown] {.gcsafe.}
-
-func toolCatalogSignature*(tools: seq[ToolDescription];
-                           providerLabel: string;
-                           paddockDir: string;
-                           skillPrompt = ""): SessionRuntimeSignature =
-  var signature = newStringOfCap(256)
-  signature.add(providerLabel)
-  signature.add('\n')
-  signature.add(paddockDir)
-  signature.add('\n')
-  signature.add(skillPrompt)
-  signature.add('\n')
-  for tool in tools:
-    signature.add(tool.name)
-    signature.add('\t')
-    signature.add(tool.description)
-    signature.add('\t')
-    signature.add(tool.schemaJson)
-    signature.add('\n')
-  result = SessionRuntimeSignature(signature)
-
-proc buildEnsureSessionPlan*(sm: var SessionManager;
-                             userId: UserId;
-                             toolCatalogSignature: SessionRuntimeSignature): EnsureSessionPlan =
-  const ColdSessionThresholdMs = 60'i64 * 60 * 1000
-  let ingressState = sm.snapshot(userId)
-  let decision = decideSessionIngress(SessionIngressRequest(
-    userId: userId,
-    state: ingressState,
-    nextSignature: toolCatalogSignature,
-  ))
-  let now = nowMs()
-  let wasCold =
-    ingressState.lastInboundAtMs > 0 and
-    now - ingressState.lastInboundAtMs >= ColdSessionThresholdMs
-  let lease = sm.applyIngressDecision(userId, decision, toolCatalogSignature)
-  lease.entry[].lastInboundAtMs = now
-  EnsureSessionPlan(
-    uid: $userId,
-    decision: decision,
-    injectRecentContext: decision.startsNewSession or decision.rebuildsSessionRuntime or wasCold,
-    oldInbox: lease.oldInbox,
-    oldAskInbox: lease.oldAskInbox,
-    entry: lease.entry,
-  )
-
-proc buildSessionIngressContext*(sm: var SessionManager;
-                                 msg: InboundMessage;
-                                 toolCatalogSignature: SessionRuntimeSignature;
-                                 msgSeq: var int): SessionIngressContext =
-  result.plan = sm.buildEnsureSessionPlan(msg.userId, toolCatalogSignature)
-  inc msgSeq
-  result.msgId = $msg.userId & "-" & $msgSeq
-
-func buildSessionIngressServices*(memory: MdFileAdapter;
-                                  cfg: DonkeyConfig;
-                                  completeFn: CompleteFn;
-                                  streamFn: StreamFn;
-                                  toolClients: seq[ToolRuntimePort];
-                                  tools: seq[ToolDescription];
-                                  globalOutbox: AsyncQueue[OutboundMessage];
-                                  log: Logger;
-                                  sandboxMode: SandboxMode;
-                                  sandboxRuntimeCmd: string;
-                                  sandboxImage: string;
-                                  typingFn: TypingFn;
-                                  searchFn: SearchFn;
-                                  routeRecordHook: proc(selection: ProviderSelection) {.gcsafe.} = nil;
-                                  routeResultHook: proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.} = nil;
-                                  routeFeedbackHook: proc(): seq[RouteFeedback] {.gcsafe.} = nil;
-                                  routeCostHook: proc(): seq[RouteCostHint] {.gcsafe.} = nil;
-                                  routeProviderCooldownHook: proc(): seq[ProviderCooldown] {.gcsafe.} = nil): SessionIngressServices =
-  SessionIngressServices(
-    cfg: cfg,
-    memory: memory,
-    completeFn: completeFn,
-    streamFn: streamFn,
-    toolClients: toolClients,
-    tools: tools,
-    globalOutbox: globalOutbox,
-    log: log,
-    sandboxMode: sandboxMode,
-    sandboxRuntimeCmd: sandboxRuntimeCmd,
-    sandboxImage: sandboxImage,
-    typingFn: typingFn,
-    searchFn: searchFn,
-    routeRecordHook: routeRecordHook,
-    routeResultHook: routeResultHook,
-    routeFeedbackHook: routeFeedbackHook,
-    routeCostHook: routeCostHook,
-    routeProviderCooldownHook: routeProviderCooldownHook,
-  )
-
-func withTypingFn*(typingFn: TypingFn;
-                   services: SessionIngressServices): SessionIngressServices =
-  result = services
-  result.typingFn = typingFn
-
 func buildDaemonSessionServices(ctx: DaemonContext;
                                 cfg: DonkeyConfig;
                                 memory: MdFileAdapter;
                                 log: Logger): SessionIngressServices =
   buildSessionIngressServices(
-    memory,
+    memory.toRuntimePort(),
     cfg,
     ctx.services.globalCompleteFn,
     ctx.services.globalStreamFn,
@@ -1063,157 +925,28 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     cfg.sandboxImage,
     nil,
     ctx.services.globalSearchFn,
-    proc(selection: ProviderSelection) {.gcsafe.} =
+    proc(userId: UserId): bool = memory.isRevoked(userId),
+    newStdHttpAdapter(allowlist = cfg.webAllowlist).toRuntimePort(),
+    buildProviderBundle,
+    buildDenoSkillRuntime,
+    buildSkillRuntimePolicyResolver(cfg),
+    routeRecordHook = proc(selection: ProviderSelection) {.gcsafe.} =
       ctx.runtime.recordRouteChoice(selection),
-    proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.} =
+    routeResultHook = proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.} =
       ctx.runtime.recordRouteResult(selection, elapsedMs, ok),
-    proc(): seq[RouteFeedback] {.gcsafe.} =
+    routeFeedbackHook = proc(): seq[RouteFeedback] {.gcsafe.} =
       ctx.runtime.currentRouteFeedback(),
-    proc(): seq[RouteCostHint] {.gcsafe.} =
+    routeCostHook = proc(): seq[RouteCostHint] {.gcsafe.} =
       loadRouteCostHints(@["openrouter", "groq", "anthropic", "zai-anthropic", "gemini",
                            "minimax", "zai", "zai-coding", "zen"]),
-    proc(): seq[ProviderCooldown] {.gcsafe.} =
+    routeProviderCooldownHook = proc(): seq[ProviderCooldown] {.gcsafe.} =
       ctx.runtime.currentProviderCooldowns(),
   )
 
-proc startSessionOrchestrator*(plan: EnsureSessionPlan;
-                               cfg: DonkeyConfig;
-                               memory: MdFileAdapter;
-                               streamFn: StreamFn;
-                               bootstrap: SessionBootstrap;
-                               globalOutbox: AsyncQueue[OutboundMessage];
-                               log: Logger;
-                               sandboxMode: SandboxMode;
-                               sandboxRuntimeCmd: string;
-                               sandboxImage: string;
-                               typingFn: TypingFn;
-                               searchFn: SearchFn) {.gcsafe.} =
-  if not plan.decision.startsSessionRuntime:
-    return
-  let state = newSessionState()
-  if plan.decision.rebuildsSessionRuntime and not plan.oldAskInbox.isNil:
-    plan.oldAskInbox.addLastNoWait("__DONKEY_ASK_CANCELLED__")
-  if plan.decision.rebuildsSessionRuntime and not plan.oldInbox.isNil:
-    plan.oldInbox.addLastNoWait(newCancelMsg())
-  asyncSpawn runOrchestrator(plan.entry[].inbox, plan.entry, globalOutbox, memory.toRuntimePort(),
-                             bootstrap.completeFn,
-                             newStdHttpAdapter(allowlist = cfg.webAllowlist).toRuntimePort(), streamFn,
-                             bootstrap.clients, bootstrap.tools,
-                             bootstrap.paddockDir, state,
-                             typingFn, searchFn, log.child("orch"), bootstrap.providerLabel,
-                             bootstrap.skillPrompt,
-                             sandboxMode, sandboxRuntimeCmd, sandboxImage,
-                             cfg.webAllowlist, cfg.toolWebPolicy,
-                             errorExplainFn = bootstrap.errorExplainFn)
-
-proc enqueueSessionMessage*(entry: var SessionEntry;
-                            msg: InboundMessage;
-                            msgId: string;
-                            target: SessionIngressTarget) =
-  case target
-  of sitAskInbox:
-    entry.awaitingAsk = false
-    entry.askInbox.addLastNoWait(msg.text)
-  of sitActorInbox:
-    entry.inbox.addLastNoWait(buildSessionTaskMsg(msg, msgId))
-
-proc startSessionIngress*(sm: var SessionManager;
-                          msg: InboundMessage;
-                          services: SessionIngressServices;
-                          msgSeq: var int;
-                          taskKind: TaskKind = tkUserMsg;
-                          taskPayload: string = ""): SessionIngressContext {.gcsafe.} =
-  let routingHook: RoutingTelemetryHook =
-    proc(selection: ProviderSelection;
-         prefs: SmartRoutingPrefs;
-         req: CompletionRequest) {.gcsafe.} =
-      if prefs.usesSmartRouting:
-        if services.routeRecordHook != nil:
-          services.routeRecordHook(selection)
-        var hasImage = false
-        for turn in req.messages:
-          if turn.imageUrl.len > 0:
-            hasImage = true
-            break
-        services.log.info("[route] " & $msg.userId & " -> " &
-                          selection.formatSelection &
-                          " | thinking=" & prefs.thinking &
-                          " tools=" & $req.tools.len &
-                          " image=" & $hasImage &
-                          " chars=" & $requestApproxChars(req))
-  let bootstrap = buildSessionBootstrap(
-    services.memory.toRuntimePort(), msg.userId, services.completeFn, buildProviderBundle,
-    normalizeProviderDefaults(services.cfg.defaultProvider, services.cfg.defaultModel),
-    buildDenoSkillRuntime, buildSkillRuntimePolicyResolver(services.cfg),
-    services.toolClients, services.tools,
-    routingHook, services.routeResultHook, services.routeFeedbackHook,
-    services.routeCostHook, services.routeProviderCooldownHook)
-  let signature = toolCatalogSignature(
-    bootstrap.tools, bootstrap.providerLabel, bootstrap.paddockDir, bootstrap.skillPrompt)
-  result = sm.buildSessionIngressContext(msg, signature, msgSeq)
-  if result.plan.decision.shouldRecordChannel:
-    sm.recordChannel(msg.userId, msg.channel, msg.channelId)
-  let recentContext =
-    if result.plan.injectRecentContext:
-      loadRecentContext(services.memory.toRuntimePort(), msg.userId)
-    else:
-      ""
-  ## Enqueue task message BEFORE starting the new orchestrator.
-  ## This prevents the orchestrator from receiving a cancel message
-  ## (from the old orchestrator's inbox) before the task.
-  case result.plan.decision.target
-  of sitActorInbox:
-    if taskKind == tkUserMsg:
-      result.plan.entry[].inbox.addLastNoWait(buildSessionTaskMsg(msg, result.msgId, recentContext))
-    else:
-      result.plan.entry[].inbox.addLastNoWait(newTaskMsg(
-        result.msgId, taskKind, $msg.userId, taskPayload,
-        msg.channel, sessionReplyTo(msg)))
-  of sitAskInbox:
-    if taskKind == tkUserMsg:
-      result.plan.entry[].awaitingAsk = false
-      result.plan.entry[].askInbox.addLastNoWait(msg.text)
-    else:
-      result.plan.entry[].inbox.addLastNoWait(newTaskMsg(
-        result.msgId, taskKind, $msg.userId, taskPayload,
-        msg.channel, sessionReplyTo(msg)))
-  startSessionOrchestrator(result.plan, services.cfg,
-                           services.memory,
-                           services.streamFn, bootstrap,
-                           services.globalOutbox, services.log,
-                           services.sandboxMode, services.sandboxRuntimeCmd, services.sandboxImage,
-                           services.typingFn, services.searchFn)
-  if result.plan.decision.startsNewSession:
-    services.log.info("new session: " & result.plan.uid)
-  elif result.plan.decision.rebuildsSessionRuntime:
-    services.log.info("rebuilt session runtime after tool catalog change: " & result.plan.uid)
-
-proc ensureSession(sm:       var SessionManager;
-                   msg:      InboundMessage;
-                   services: SessionIngressServices;
-                   msgSeq:   var int) {.gcsafe.} =
-  discard startSessionIngress(sm, msg, services, msgSeq)
-
-proc ensureSessionTask(sm:       var SessionManager;
-                       msg:      InboundMessage;
-                       services: SessionIngressServices;
-                       msgSeq:   var int;
-                       taskKind: TaskKind;
-                       payload:  string) {.gcsafe.} =
-  discard startSessionIngress(sm, msg, services, msgSeq, taskKind, payload)
-
-proc handleSessionFallback(runtime:      var DaemonRuntime;
-                           msg:          InboundMessage;
-                           services:     SessionIngressServices) =
-  if services.memory.isRevoked(msg.userId):
-    runtime.globalOutbox.putNoWait(OutboundMessage(
-      userId: msg.userId,
-      channel: msg.channel,
-      replyTo: sessionReplyTo(msg),
-      text: "Acesso revogado pelo administrador.",
-    ))
-    return
-  ensureSession(runtime.sm, msg, services, runtime.msgSeq)
+proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
+                                  msg:      InboundMessage;
+                                  services: SessionIngressServices) =
+  handleSessionFallback(runtime.sm, runtime.msgSeq, msg, services)
 
 func inboundStatusMessageId(msg: InboundMessage): string =
   if msg.messageId.len > 0: msg.messageId else: msg.channelId
@@ -1247,7 +980,7 @@ proc completeInboundReactionStatus(runtime: var DaemonRuntime;
 proc handleTelegramFallback(runtime:      var DaemonRuntime;
                             msg:          InboundMessage;
                             services:     SessionIngressServices) =
-  handleSessionFallback(runtime, msg, services)
+  handleDaemonSessionFallback(runtime, msg, services)
 
 proc processInboundMediaDownload(runtime: var DaemonRuntime;
                                  msg: InboundMessage;
@@ -1313,6 +1046,7 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
                          tgAdapter:    var TelegramAdapter;
                          outboundPorts: OutboundChannelPorts;
                          services:     SessionIngressServices;
+                         memory:       MdFileAdapter;
                          log:          Logger): bool =
   let completeBuilder = makeCompleteBuilder()
   let modelCatalogLoader = buildModelCatalogLoader()
@@ -1332,7 +1066,7 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
     processInboundMediaDownload(runtime, msg, outboundPorts.telegram, log)
     
     if telegram_runtime.handleTelegramMessage(
-      msg, runtime.sm, tgAdapter, runtime.presentationState, services.memory, completeBuilder,
+      msg, runtime.sm, tgAdapter, runtime.presentationState, memory, completeBuilder,
       modelCatalogLoader,
       services.toolClients.len, services.tools.len + nativeSessionTools().len, runtime.msgSeq, runtime.daemonStartMs, log,
       proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} =
@@ -1434,7 +1168,7 @@ proc handleGatewayFallback(ctx: DaemonContext;
     outboundPortForChannel(outboundPorts, msg.channel),
     log,
   )
-  handleSessionFallback(
+  handleDaemonSessionFallback(
     ctx.runtime,
     msg,
     buildDaemonSessionServices(ctx, cfg, memory, log),
@@ -1547,7 +1281,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
       let services =
         buildDaemonSessionServices(ctx, cfg, memory, log) |>->
         withTypingFn(ctx.services.tgTypingFn)
-      drainTelegramEvents(ctx.runtime, ctx.adapters.tg, outboundPorts, services, log),
+      drainTelegramEvents(ctx.runtime, ctx.adapters.tg, outboundPorts, services, memory, log),
     drainWhatsApp = proc(): bool =
       drainWhatsAppGateway(ctx.env.whatsappAccessToken.len > 0, proc(): bool =
         whatsapp_runtime.drainWhatsAppEvents(
