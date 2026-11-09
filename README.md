@@ -90,7 +90,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete architectural 
 # Build development binary (embedded SQLite + sqlite-vec enabled by default)
 nimble build
 
-# Or compile optimized, stripped release binary
+# Or compile optimized, stripped release binary (install dependencies first)
+nimble install -y -d
 nim c -d:release --opt:size \
   --passC:"-ffunction-sections -fdata-sections" \
   --passL:"-Wl,--gc-sections" \
@@ -111,7 +112,7 @@ The wizard configures `~/.config/donkey/donkey.toml`, provisions the state store
 ### 3. Start the Daemon
 
 > [!IMPORTANT]
-> The embedded HTTP gateway listens on `0.0.0.0:8080` by default, exposing `/api/status`, `/api/logs`, `/api/events`, and `/api/chat` without authentication (`/api/chat` accepts inbound messages with an optional `userId` and dispatches them to active sessions if the user is not revoked, while `/api/events` streams live logs). Block direct external access to port 8080 with a firewall on any deployment where this port is accessible. If deployed behind a reverse proxy, enforce authentication at the proxy layer. If you do not require the HTTP gateway, disable it before starting by setting `DONKEY_HTTP_PORT=0` in your loaded environment file (`~/.donkey/donkey.env` takes precedence over `~/.config/donkey/donkey.env`) or run `DONKEY_HTTP_PORT=0 ./donkey start`.
+> The embedded HTTP gateway listens on `0.0.0.0:8080` by default, exposing `/api/status`, `/api/logs`, `/api/events`, and `/api/chat` without authentication (`/api/chat` accepts inbound messages with an optional `userId` and dispatches them to active sessions if the user is not revoked, while `/api/events` streams live logs). Block direct external access to port 8080 with a firewall on any deployment where this port is accessible. If deployed behind a reverse proxy, enforce authentication at the proxy layer. If you do not require the HTTP gateway, disable it before starting by setting `DONKEY_HTTP_PORT=0` in your loaded environment file (`~/.donkey/donkey.env` takes precedence for direct CLI runs, but the systemd service explicitly loads `EnvironmentFile=~/.config/donkey/donkey.env` unless changed via systemd overrides; set `DONKEY_HTTP_PORT=0` in the effective service environment file and restart) or run `DONKEY_HTTP_PORT=0 ./donkey start`.
 
 ```bash
 ./donkey start
@@ -149,7 +150,7 @@ Every user interacting with Donkey receives an isolated, human-readable director
 ```
 
 ### The MAGMA Subsystem
-1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Episodic memories, user preferences, and knowledge nodes live in `~/.donkey/state/magma.sqlite`. When `OPENROUTER_API_KEY` is configured, profile texts, preferences, and memories are transmitted to OpenRouter to generate embeddings during writes and queries; leaving this key unset avoids external data transfer and keeps all data strictly local (omitting vector embeddings). Raw conversation transcripts are preserved in JSONL session files under `paddocks/<uuid>/sessions/`.
+1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Episodic memories, user preferences, and knowledge nodes live in `~/.donkey/state/magma.sqlite`. When `OPENROUTER_API_KEY` is configured, profile texts, preferences, and memories are transmitted to OpenRouter to generate embeddings during writes and queries. Other configured services, such as Z.AI reranking, may also transmit queries and candidate memory texts externally. Raw conversation transcripts are preserved in JSONL session files under `paddocks/<uuid>/sessions/`.
 2. **Markdown Bootstrap & Export**: Markdown paddocks serve as the human-readable view, bootstrap source, and debug format. When MAGMA is active, runtime writes go to the graph and do not automatically update paddock Markdown files; use `./donkey ctl memory export <uuid> [output_dir]` to export the current MAGMA view into Markdown files (overwriting existing files in the target directory, or omit `output_dir` to print to stdout).
 3. **PostgreSQL Multigraph Scaling**: For multi-agent graph querying at scale, Donkey supports PostgreSQL + `pgvector`. Compile with `nim c -d:withPostgres -u:withSqlite -o:donkey src/donkey.nim` and configure `DONKEY_PG_DSN`.
 
