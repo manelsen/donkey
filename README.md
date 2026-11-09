@@ -135,7 +135,7 @@ Every user interacting with Donkey receives an isolated, human-readable director
 
 ```text
 ~/.donkey/paddocks/<uuid>/
-├── USER.md          # User profile & instructions (reread before every turn)
+├── USER.md          # User profile & instructions (MAGMA graph profile takes precedence)
 ├── PREFERENCES.md   # Model overrides, language, timezone, personality (TOML)
 ├── HEARTBEAT.md     # Active checklist of background autonomous tasks
 ├── MEMORY.md        # Episodic reflections & long-term conversational memory
@@ -146,7 +146,7 @@ Every user interacting with Donkey receives an isolated, human-readable director
 ```
 
 ### The MAGMA Subsystem
-1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Episodic memories, user preferences, and knowledge nodes live in `~/.donkey/state/magma.sqlite`, while conversation transcripts are preserved in JSONL session files under `paddocks/<uuid>/sessions/`.
+1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Episodic memories, user preferences, and knowledge nodes live in `~/.donkey/state/magma.sqlite` (vector search requires `OPENROUTER_API_KEY` for embedding generation). Raw conversation transcripts are preserved in JSONL session files under `paddocks/<uuid>/sessions/`.
 2. **Markdown Bootstrap & Export**: Markdown paddocks serve as the human-readable view, bootstrap source, and debug format. When MAGMA is active, runtime queries prioritize the graph store; use `./donkey ctl memory export <uuid> [output_dir]` to export the live MAGMA view into Markdown (overwriting existing files in the specified directory).
 3. **PostgreSQL Multigraph Scaling**: For multi-agent graph querying at scale, Donkey supports PostgreSQL + `pgvector`. Compile with `nim c -d:withPostgres -u:withSqlite -o:donkey src/donkey.nim` and configure `DONKEY_PG_DSN`.
 
@@ -159,7 +159,7 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 - **OCI Hardened Sandbox**: Shell executions run inside ephemeral Docker or Podman containers configured with:
   - Host daemon UID and GID matching (prevents host file ownership pollution)
   - Read-only root filesystem (`read_only_rootfs = true`)
-  - Network isolation togglable per user/task
+  - Global network isolation (configurable in donkey.toml; enabled only in --dev-mode)
   - Isolated temporary and paddock mounts
 - **WASM Applet Dispatch**: Fast execution of POSIX applets (cat, grep, sed, find) via `wasmtime` and `~/.donkey/busybox`.
 - **Model Context Protocol (MCP)**: Native client support for external MCP tool servers:
@@ -192,11 +192,13 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 | **Anthropic** | ✅ | ✅ | `claude-3-7-sonnet`, `claude-3-5-haiku` |
 | **OpenAI** | ✅ | ✅ | `gpt-4o`, `gpt-4o-mini`, `o3-mini` |
 | **DeepSeek** | ✅ | ✅ | `deepseek-chat`, `deepseek-reasoner` |
-| **Gemini** | ✅ | ✅ | `gemini-2.0-flash`, `gemini-2.5-pro` |
+| **Gemini** | ✅ | ❌ | `gemini-2.0-flash`, `gemini-2.5-pro` |
 | **Ollama** | ✅ | ✅ | `qwen2.5-coder:32b`, `llama3.3:70b` |
-| **MiniMax** | ✅ | ✅ | `MiniMax-Text-01`, `MiniMax-M2` |
-| **ZAI / Zhipu** | ✅ | ✅ | `glm-4-plus`, `glm-4-flash` |
+| **MiniMax** | ✅ | ❌ | `MiniMax-Text-01`, `MiniMax-M2` |
+| **ZAI / Zhipu** | ✅ | ❌ | `glm-4-plus`, `glm-4-flash` |
 | **OpenRouter** | ✅ | ✅ | Universal routing fallback |
+
+> Streaming indicates per-session `streamFn` availability in `buildProviderBundle` (`zai-anthropic` also provides streaming).
 
 ---
 
