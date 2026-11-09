@@ -27,7 +27,7 @@ Most AI agent platforms are heavy, complex webs of Python interpreters, gigabyte
 - **Sovereign Dual-Layer Memory (MAGMA)**: Out-of-the-box SQLite with embedded `sqlite-vec` vector similarity search, alongside human-inspectable Markdown paddocks (`USER.md`, `MEMORY.md`, `HEARTBEAT.md`). Scales seamlessly to PostgreSQL + `pgvector` multigraph when required.
 - **Hardened Execution Sandbox**: Shell execution can be isolated via an OCI container runtime (Docker/Podman) running under the daemon UID/GID with read-only rootfs, plus in-process WASM applet dispatch for fast, secure file manipulation.
 - **Autonomous Heartbeat & Contemplation**: Runs background scheduling loops that inspect checklists in `HEARTBEAT.md`, digest conversation memories into episodic journals, and deliver pro-active reminders across connected channels.
-- **Multi-Channel & Multi-Provider**: Direct, first-class connectivity to Telegram, Discord, WeChat, Feishu, DingTalk, Slack, QQ, and Matrix, with resilient failover between Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, Ollama, ZAI, and OpenRouter.
+- **Multi-Channel & Multi-Provider**: Direct, first-class connectivity to Telegram, Discord, WeChat, Feishu, DingTalk, Slack, QQ, and Matrix, with support for Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, Ollama, ZAI, and OpenRouter. Smart routing can try eligible providers on failure. For users without provider preferences, the setup wizard selects a fixed provider; OpenRouter is a fallback only when its key is configured.
 
 ---
 
@@ -82,7 +82,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete architectural 
 - [Nim 2.2+](https://nim-lang.org/install.html) with Nimble (`choosenim` recommended)
 - `ripgrep` (`rg`) for architectural boundary verification
 - `docker` or `podman` (required for default OCI shell sandbox)
-- `TELEGRAM_BOT_TOKEN` (required to start the daemon) and at least one provider API key (or local Ollama, which requires no key)
+- `TELEGRAM_BOT_TOKEN` (required to start the daemon) and at least one supported provider API key
 
 ### 1. Build the Binary
 
