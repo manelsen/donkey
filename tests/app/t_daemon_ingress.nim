@@ -116,6 +116,8 @@ suite "daemon session ingress":
     let rejected = outbox.popFirstNoWait()
     check rejected.userId == UserId("u-revoked-user")
     check "revogado" in rejected.text
+    check msgSeq == 0
+    check not sm.hasSession(UserId("u-revoked-user"))
 
   test "handleSessionFallback creates session and leaves outbox clear for non-revoked user":
     let dir = getTempDir() / "donkey_ingress_non_revoked_" & $nowMs()
@@ -158,5 +160,6 @@ suite "daemon session ingress":
     check msgSeq == 1
     check outbox.len == 0
     let entry = sm.get(UserId("u-allowed-user"))
-    if entry != nil:
-      entry[].inbox.addLastNoWait(newCancelMsg())
+    check entry != nil
+    # Enqueue a cancel message so the spawned orchestrator cleanly terminates when polled
+    entry[].inbox.addLastNoWait(newCancelMsg())
