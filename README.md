@@ -111,7 +111,7 @@ The wizard configures `~/.config/donkey/donkey.toml`, provisions the state store
 ### 3. Start the Daemon
 
 > [!IMPORTANT]
-> The embedded HTTP gateway listens on `0.0.0.0:8080` by default, exposing `/api/status` and `/api/logs` without authentication. If deployed behind a reverse proxy, block external direct access to port 8080 with a firewall and enforce authentication on the proxy. If you do not require the HTTP gateway, disable it before starting by setting `DONKEY_HTTP_PORT=0` in your loaded environment file (`~/.donkey/donkey.env` takes precedence over `~/.config/donkey/donkey.env`) or run `DONKEY_HTTP_PORT=0 ./donkey start`.
+> The embedded HTTP gateway listens on `0.0.0.0:8080` by default, exposing `/api/status`, `/api/logs`, `/api/events`, and `/api/chat` without authentication (`/api/chat` accepts inbound messages with an optional `userId` and dispatches them to active sessions if the user is not revoked, while `/api/events` streams live logs). Block direct external access to port 8080 with a firewall on any deployment where this port is accessible. If deployed behind a reverse proxy, enforce authentication at the proxy layer. If you do not require the HTTP gateway, disable it before starting by setting `DONKEY_HTTP_PORT=0` in your loaded environment file (`~/.donkey/donkey.env` takes precedence over `~/.config/donkey/donkey.env`) or run `DONKEY_HTTP_PORT=0 ./donkey start`.
 
 ```bash
 ./donkey start
@@ -149,7 +149,7 @@ Every user interacting with Donkey receives an isolated, human-readable director
 ```
 
 ### The MAGMA Subsystem
-1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Episodic memories, user preferences, and knowledge nodes live in `~/.donkey/state/magma.sqlite` (vector search requires `OPENROUTER_API_KEY` for embedding generation). Raw conversation transcripts are preserved in JSONL session files under `paddocks/<uuid>/sessions/`.
+1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Episodic memories, user preferences, and knowledge nodes live in `~/.donkey/state/magma.sqlite`. When `OPENROUTER_API_KEY` is configured, profile texts, preferences, and memories are transmitted to OpenRouter to generate embeddings during writes and queries; leaving this key unset avoids external data transfer and keeps all data strictly local (omitting vector embeddings). Raw conversation transcripts are preserved in JSONL session files under `paddocks/<uuid>/sessions/`.
 2. **Markdown Bootstrap & Export**: Markdown paddocks serve as the human-readable view, bootstrap source, and debug format. When MAGMA is active, runtime writes go to the graph and do not automatically update paddock Markdown files; use `./donkey ctl memory export <uuid> [output_dir]` to export the current MAGMA view into Markdown files (overwriting existing files in the target directory, or omit `output_dir` to print to stdout).
 3. **PostgreSQL Multigraph Scaling**: For multi-agent graph querying at scale, Donkey supports PostgreSQL + `pgvector`. Compile with `nim c -d:withPostgres -u:withSqlite -o:donkey src/donkey.nim` and configure `DONKEY_PG_DSN`.
 
@@ -248,7 +248,13 @@ nimble test
 ```
 
 > [!NOTE]
-> Opt-in backends requiring special flags or active databases (SQLite store requiring `-d:withSqlite`, PostgreSQL/Age) and in-process wasm3 (`t_wasm.nim`) are excluded by default in `scripts/run_tests.sh`. WASM applet and shell composer suites run automatically when `~/.donkey/busybox` and `wasmtime` are present on the host.
+> `scripts/run_tests.sh` always skips `t_sqlite_store`, even when targeted directly (`withSqlite` is enabled by default in `config.nims`). Run this suite directly:
+>
+> ```bash
+> nim c --hints:off --mm:orc -u:withPostgres -r tests/adapters/memory/t_sqlite_store.nim
+> ```
+>
+> PostgreSQL/Age tests and in-process wasm3 (`t_wasm.nim`) are excluded by default in `scripts/run_tests.sh`. WASM applet and shell composer suites run automatically when `~/.donkey/busybox` and `wasmtime` are present on the host.
 
 ### Verifying Architectural Boundaries
 
