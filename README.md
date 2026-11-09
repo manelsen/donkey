@@ -112,7 +112,7 @@ The wizard configures `~/.config/donkey/donkey.toml`, provisions the state store
 ### 3. Start the Daemon
 
 > [!IMPORTANT]
-> The embedded HTTP gateway listens on `0.0.0.0:8080` by default, exposing `/api/status`, `/api/logs`, `/api/events`, and `/api/chat` without authentication (`/api/chat` accepts inbound messages with an optional `userId` and dispatches them to active sessions if the user is not revoked, while `/api/events` streams live logs). Block direct external access to port 8080 with a firewall on any deployment where this port is accessible, and enforce authentication at the proxy layer if using a reverse proxy. On shared multi-user hosts, unprivileged local users can also connect directly to port 8080 and bypass proxy authentication; isolate network access strictly to the proxy process (e.g., via network namespaces) or disable the gateway entirely. If you do not require the HTTP gateway, disable it before starting by setting `DONKEY_HTTP_PORT=0` in your loaded environment file (`~/.donkey/donkey.env` takes precedence for direct CLI runs, but the systemd service explicitly loads `EnvironmentFile=~/.config/donkey/donkey.env` unless changed via systemd overrides; set `DONKEY_HTTP_PORT=0` in the effective service environment file and restart) or run `DONKEY_HTTP_PORT=0 ./donkey start`.
+> The embedded HTTP gateway listens on `0.0.0.0:8080` by default, exposing `/api/status`, `/api/logs`, `/api/events`, and `/api/chat` without authentication (`/api/chat` accepts inbound messages with an optional `userId` and dispatches them to active sessions if the user is not revoked, while `/api/events` streams live logs). Block direct external access to port 8080 with a firewall on any deployment where this port is accessible, and enforce authentication at the proxy layer if using a reverse proxy. On shared multi-user hosts, unprivileged local users can also connect directly to port 8080 and bypass proxy authentication; isolate network access strictly to the proxy process (e.g., via network namespaces) or disable the gateway entirely. Any `DONKEY_HTTP_PORT` variable already exported in the shell environment takes precedence over `.env` files; to reliably disable the gateway, unset any inherited variable (`unset DONKEY_HTTP_PORT`) or run `DONKEY_HTTP_PORT=0 ./donkey start` (or set `DONKEY_HTTP_PORT=0` in `~/.donkey/donkey.env` when starting without inherited environment variables; for systemd, set it in the service's effective `EnvironmentFile` such as `~/.config/donkey/donkey.env` and restart).
 
 ```bash
 ./donkey start
@@ -226,7 +226,7 @@ The `donkey ctl` utility provides complete instance governance:
 
 # Provider Diagnostics
 ./donkey ctl provider test anthropic
-./donkey ctl provider test deepseek
+./donkey ctl provider test gemini
 ```
 
 ---
