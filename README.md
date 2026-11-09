@@ -110,6 +110,9 @@ The wizard configures `~/.config/donkey/donkey.toml`, provisions the state store
 
 ### 3. Start the Daemon
 
+> [!IMPORTANT]
+> The embedded HTTP gateway listens on `0.0.0.0:8080` by default, exposing `/api/status` and `/api/logs` without authentication. If you do not need the HTTP gateway or deploy without a reverse proxy, disable it before starting by setting `DONKEY_HTTP_PORT=0` in `~/.config/donkey/donkey.env` (or run `DONKEY_HTTP_PORT=0 ./donkey start`).
+
 ```bash
 ./donkey start
 ```
@@ -162,10 +165,13 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
   - Network access disabled by default (enabling network in donkey.toml requires --dev-mode)
   - Isolated temporary and paddock mounts
 - **WASM Applet Dispatch**: Fast execution of POSIX applets (cat, grep, sed, find) via `wasmtime` and `~/.donkey/busybox`.
-- **Model Context Protocol (MCP)**: Native client support for external MCP tool servers (servers with option flags like `--port` can be configured directly in `tools.toml`):
+- **Model Context Protocol (MCP)**: Native client support for external MCP tool servers:
   ```bash
-  ./donkey ctl tool install <mcp-server-command> [args...]
+  # Positional arguments only via CLI
+  ./donkey ctl tool install <mcp-server-command> [positional-args...]
   ```
+  > [!TIP]
+  > Server flags like `--port=8000` are filtered out by the CLI option parser; configure MCP servers requiring flags directly in `~/.donkey/tools.toml`.
 
 ---
 
@@ -181,7 +187,7 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 | **Feishu / Lark** | Webhook / Event stream | Interactive cards, group chats, direct messages |
 | **DingTalk** | Stream / Webhook | Corporate notifications, card callbacks |
 | **QQ / OneBot** | WebSocket / HTTP | OneBot v11 protocol, group and private chat dispatch |
-| **Slack** | Socket Mode / Webhook | Channel mentions, thread continuation |
+| **Slack** | Outbound only | Outbound messaging via Webhooks/API (inbound event loop integration pending) |
 | **Matrix** | Webhook / AS push | Inbound via Application Service / HTTP pushEvent callback; outbound PUT event |
 | **HTTP Gateway**| REST / SSE | Local webhooks, chat completions endpoint |
 
@@ -189,10 +195,10 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 
 | Provider | Default Tool Support | Streaming | Recommended Models |
 |:---|:---:|:---:|:---|
-| **Anthropic** | ✅ | ✅ | `claude-3-7-sonnet`, `claude-3-5-haiku` |
-| **OpenAI** | ✅ | ✅ | `gpt-4o`, `gpt-4o-mini`, `o3-mini` |
+| **Anthropic** | ✅ | ✅ | `claude-opus-4-6`, `claude-sonnet-4-6` |
+| **OpenAI** | ✅ | ✅ | `gpt-4o`, `gpt-4o-mini` |
 | **DeepSeek** | ✅ | ✅ | `deepseek-chat`, `deepseek-reasoner` |
-| **Gemini** | ✅ | ❌ | `gemini-2.0-flash`, `gemini-2.5-pro` |
+| **Gemini** | ✅ | ❌ | `gemini-2.5-pro`, `gemini-2.5-flash` |
 | **Ollama** | ✅ | ✅ | `qwen2.5-coder:32b`, `llama3.3:70b` |
 | **MiniMax** | ✅ | ❌ | `MiniMax-Text-01`, `MiniMax-M2` |
 | **ZAI / Zhipu** | ✅ | ❌ | `glm-4-plus`, `glm-4-flash` |
