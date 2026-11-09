@@ -146,9 +146,9 @@ Every user interacting with Donkey receives an isolated, human-readable director
 ```
 
 ### The MAGMA Subsystem
-1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Memory, preferences, and session context live in `~/.donkey/state/magma.sqlite`.
-2. **Markdown Bootstrap & View**: Markdown paddocks serve as the human-readable view, bootstrap source, and debug format. When MAGMA is active, runtime queries prioritize the graph store, and `./donkey ctl memory export <uuid>` regenerates the Markdown representation from the graph.
-3. **PostgreSQL Multigraph Scaling**: For multi-agent graph querying at scale, Donkey supports PostgreSQL + `pgvector`. Compile with `nim c -d:withPostgres -u:withSqlite src/donkey.nim` and configure `DONKEY_PG_DSN`.
+1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Episodic memories, user preferences, and knowledge nodes live in `~/.donkey/state/magma.sqlite`, while conversation transcripts are preserved in JSONL session files under `paddocks/<uuid>/sessions/`.
+2. **Markdown Bootstrap & Export**: Markdown paddocks serve as the human-readable view, bootstrap source, and debug format. When MAGMA is active, runtime queries prioritize the graph store; use `./donkey ctl memory export <uuid> [output_dir]` to export the live MAGMA view into Markdown (overwriting existing files in the specified directory).
+3. **PostgreSQL Multigraph Scaling**: For multi-agent graph querying at scale, Donkey supports PostgreSQL + `pgvector`. Compile with `nim c -d:withPostgres -u:withSqlite -o:donkey src/donkey.nim` and configure `DONKEY_PG_DSN`.
 
 ---
 
@@ -182,7 +182,7 @@ Donkey never executes untrusted commands directly on your host:
 | **DingTalk** | Stream / Webhook | Corporate notifications, card callbacks |
 | **QQ / OneBot** | WebSocket / HTTP | OneBot v11 protocol, group and private chat dispatch |
 | **Slack** | Socket Mode / Webhook | Channel mentions, thread continuation |
-| **Matrix** | Async sync engine | Decentralized rooms, sync event protocol, channel mentions |
+| **Matrix** | Webhook / AS push | Inbound via Application Service / HTTP pushEvent callback; outbound PUT event |
 | **HTTP Gateway**| REST / SSE | Local webhooks, chat completions endpoint |
 
 ### Providers (Outbound)
