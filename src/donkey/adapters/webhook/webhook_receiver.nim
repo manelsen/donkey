@@ -15,7 +15,7 @@
 ## A channel route is only mounted when its secret is configured, so no
 ## unauthenticated endpoint is ever exposed.
 
-import std/[base64, json, net, strutils, tables, times]
+import std/[base64, json, monotimes, net, posix, strutils, tables, times]
 import nimcrypto/[hmac, sha2]
 import ../../core/log
 import ../../core/pipeops
@@ -32,8 +32,17 @@ const
   MatrixPath*   = "/webhook/matrix"
   WhatsAppPath* = "/webhook/whatsapp"
 
-  SlackReplayWindowSec* = 300
-  MaxWebhookBodyBytes*  = 2 * 1024 * 1024
+  SlackReplayWindowSec*      = 300
+  DingTalkTimestampWindowMs* = 3_600_000
+  MaxWebhookBodyBytes*       = 2 * 1024 * 1024
+
+  WebhookWorkerCount        = 4
+  WebhookQueueDepth         = 32
+  WebhookClientTimeoutSec   = 5
+  WebhookRequestDeadlineSec = 15
+  MaxWebhookHeaderLines     = 64
+  MaxWebhookHeaderBytes     = 64 * 1024
+  MaxWebhookLineBytes       = 8192
 
 type
   WebhookRequest* = object
@@ -68,6 +77,7 @@ func notFound(): WebhookResponse = plainResp(404, "not found")
 func forbidden(): WebhookResponse = plainResp(403, "forbidden")
 func badRequest(): WebhookResponse = plainResp(400, "bad request")
 func methodNotAllowed(): WebhookResponse = plainResp(405, "method not allowed")
+func serviceUnavailable(): WebhookResponse = plainResp(503, "server busy")
 
 # ── Crypto / comparison helpers ───────────────────────────────────────────────
 
@@ -159,7 +169,11 @@ proc handleSlack(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
     ts = parseInt(timestamp)
   except ValueError:
     return forbidden()
-  if abs(epochTime().int64 - ts) > SlackReplayWindowSec.int64:
+  ## Lower/upper bounds instead of `abs()`: a hostile timestamp near int64.low
+  ## would overflow the subtraction before the HMAC is ever checked.
+  let now = epochTime().int64
+  if ts < now - SlackReplayWindowSec.int64 or
+     ts > now + SlackReplayWindowSec.int64:
     return forbidden()
 
   let expected = "v0=" & hmacSha256Hex(cfg.slackSigningSecret,
@@ -219,6 +233,18 @@ proc handleDingTalk(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
   let timestamp = req.header("timestamp")
   let signature = req.header("sign")
   if timestamp.len == 0 or signature.len == 0:
+    return forbidden()
+
+  ## Timestamps are Unix milliseconds. Validate before the MAC so a hostile
+  ## value cannot reach the crypto path or overflow a window subtraction.
+  var tsMs: int64
+  try:
+    tsMs = parseInt(timestamp)
+  except ValueError:
+    return forbidden()
+  let nowMs = (epochTime() * 1000).int64
+  if tsMs < nowMs - DingTalkTimestampWindowMs.int64 or
+     tsMs > nowMs + DingTalkTimestampWindowMs.int64:
     return forbidden()
 
   let expected = hmacSha256Base64(cfg.dingtalkAppSecret,
@@ -321,21 +347,30 @@ func statusReason(status: int): string =
   of 403: "Forbidden"
   of 404: "Not Found"
   of 405: "Method Not Allowed"
+  of 503: "Service Unavailable"
   else:  "Error"
 
-proc readHttpLine(s: Socket): string =
-  ## Reads one CRLF/LF terminated line; bounded to avoid unbounded growth.
-  result = ""
-  while result.len < 8192:
+proc requestDeadline(): MonoTime =
+  ## Total time budget for one request, measured on the monotonic clock so a
+  ## wall-clock jump cannot extend or shorten it.
+  getMonoTime() + initDuration(seconds = WebhookRequestDeadlineSec)
+
+proc readHttpLine(s: Socket; deadline: MonoTime): Result[string, string] =
+  ## Reads one CRLF/LF terminated line; bounded in length and in time.
+  var line = ""
+  while line.len < MaxWebhookLineBytes:
+    if getMonoTime() > deadline:
+      return err("request deadline exceeded")
     var c: char
     let n = s.recv(c.addr, 1)
     if n <= 0:
-      return
+      return err("connection closed or read timed out")
     if c == '\r':
       continue
     if c == '\n':
-      return
-    result.add(c)
+      return ok(line)
+    line.add(c)
+  err("header line too long")
 
 proc parseQuery(query: string): Table[string, string] =
   result = initTable[string, string]()
@@ -350,7 +385,10 @@ proc parseQuery(query: string): Table[string, string] =
     result[key] = value
 
 proc readWebhookRequest(client: Socket): Result[WebhookRequest, string] =
-  let requestLine = readHttpLine(client)
+  let deadline = requestDeadline()
+
+  let requestLine = readHttpLine(client, deadline).valueOr:
+    return err(error)
   if requestLine.len == 0:
     return err("empty request line")
 
@@ -367,8 +405,17 @@ proc readWebhookRequest(client: Socket): Result[WebhookRequest, string] =
 
   var headers = initTable[string, string]()
   var contentLength = 0
+  var headerLines = 0
+  var headerBytes = 0
   while true:
-    let line = readHttpLine(client)
+    if headerLines >= MaxWebhookHeaderLines:
+      return err("too many headers")
+    let line = readHttpLine(client, deadline).valueOr:
+      return err(error)
+    inc headerLines
+    headerBytes += line.len
+    if headerBytes > MaxWebhookHeaderBytes:
+      return err("headers too large")
     if line.len == 0:
       break
     let colon = line.find(':')
@@ -390,6 +437,8 @@ proc readWebhookRequest(client: Socket): Result[WebhookRequest, string] =
     body = newString(contentLength)
     var received = 0
     while received < contentLength:
+      if getMonoTime() > deadline:
+        return err("request deadline exceeded")
       let n = client.recv(body[received].addr, contentLength - received)
       if n <= 0:
         break
@@ -415,6 +464,17 @@ proc sendResponse(client: Socket; resp: WebhookResponse) =
   except CatchableError:
     discard
 
+proc applyWebhookClientTimeouts(client: Socket;
+                                seconds = WebhookClientTimeoutSec) =
+  ## Bounds every blocking recv/send from a connected client.
+  var tv: posix.Timeval
+  tv.tv_sec = posix.Time(seconds)
+  tv.tv_usec = posix.Suseconds(0)
+  discard posix.setsockopt(client.getFd, posix.SOL_SOCKET, posix.SO_RCVTIMEO,
+                           addr tv, posix.SockLen(sizeof(tv)))
+  discard posix.setsockopt(client.getFd, posix.SOL_SOCKET, posix.SO_SNDTIMEO,
+                           addr tv, posix.SockLen(sizeof(tv)))
+
 proc handleConnection(client: Socket; cfg: WebhookConfig; logger: Logger) =
   defer:
     try: client.close() except CatchableError: discard
@@ -430,34 +490,113 @@ proc handleConnection(client: Socket; cfg: WebhookConfig; logger: Logger) =
 
 type
   WebhookServerArgs = object
-    port:   int
-    host:   string
+    port:      int
+    host:      string
+    cfg:       WebhookConfig
+    logger:    Logger
+    handshake: ptr Channel[string]
+
+  WebhookWorkerArg = object
     cfg:    WebhookConfig
     logger: Logger
 
-var gWebhookThread: Thread[WebhookServerArgs]
-var gWebhookStarted = false
+var
+  gWebhookThread: Thread[WebhookServerArgs]
+  gWebhookWorkers {.global.}: array[WebhookWorkerCount, Thread[WebhookWorkerArg]]
+  gWebhookQueue {.global.}: Channel[SocketHandle]
+  gWebhookPoolStarted {.global.} = false
+  gWebhookPoolAttempted {.global.} = false
+  gWebhookStarted = false
+
+proc webhookWorker(arg: WebhookWorkerArg) {.thread.} =
+  {.cast(gcsafe).}:
+    while true:
+      let fd = gWebhookQueue.recv()
+      if fd == SocketHandle(-1):
+        break
+      var client: Socket
+      try:
+        client = newSocket(fd, buffered = true)
+      except CatchableError:
+        discard posix.close(cint(fd))
+        continue
+      try:
+        applyWebhookClientTimeouts(client)
+        handleConnection(client, arg.cfg, arg.logger)
+      except CatchableError as e:
+        arg.logger.warn("webhook: connection error: " & e.msg)
+        try: client.close() except CatchableError: discard
+
+proc startWebhookPool(cfg: WebhookConfig; logger: Logger): Result[void, string] =
+  ## Opens the queue and starts every worker. A failed attempt is not retried:
+  ## the channel is already open and re-opening it would leave workers
+  ## pointing at stale storage.
+  if gWebhookPoolStarted:
+    return ok()
+  if gWebhookPoolAttempted:
+    return err("webhook: worker pool initialization already failed; not retrying")
+  gWebhookPoolAttempted = true
+  gWebhookQueue.open(WebhookQueueDepth)
+  try:
+    for i in 0 ..< WebhookWorkerCount:
+      createThread(gWebhookWorkers[i], webhookWorker,
+                   WebhookWorkerArg(cfg: cfg, logger: logger))
+  except CatchableError as e:
+    return err("cannot start webhook workers: " & e.msg)
+  gWebhookPoolStarted = true
+  ok()
+
+proc sendHandshake(args: WebhookServerArgs; message: string) =
+  ## Reports startup progress to `startWebhookReceiver`; never raises, so the
+  ## server thread can always finish.
+  try:
+    args.handshake[].send(message)
+  except CatchableError:
+    discard
 
 proc webhookServerThread(args: WebhookServerArgs) {.thread.} =
   {.cast(gcsafe).}:
-    var server = newSocket()
+    var server: Socket
+    var handshakeSent = false
     try:
+      server = newSocket()
       server.setSockOpt(OptReuseAddr, true)
       server.bindAddr(Port(args.port), args.host)
       server.listen()
+
+      let pool = startWebhookPool(args.cfg, args.logger)
+      if pool.isErr:
+        args.logger.error("webhook: " & pool.error)
+        args.sendHandshake(pool.error)
+        return
+
       args.logger.info("webhook receiver listening on " & args.host & ":" & $args.port)
+      args.sendHandshake("")
+      handshakeSent = true
+
       while true:
         var client: Socket
         try:
           server.accept(client)
-          handleConnection(client, args.cfg, args.logger)
         except CatchableError as e:
-          args.logger.warn("webhook: connection error: " & e.msg)
+          args.logger.warn("webhook: accept error: " & e.msg)
+          continue
+        applyWebhookClientTimeouts(client)
+        if not gWebhookQueue.trySend(client.getFd):
+          sendResponse(client, serviceUnavailable())
+          try: client.close() except CatchableError: discard
+          # Ownership of the fd transfers to a worker only on a successful send.
     except CatchableError as e:
-      args.logger.error("webhook: cannot bind " & args.host & ":" & $args.port &
-                        ": " & e.msg)
+      if handshakeSent:
+        args.logger.error("webhook: server error: " & e.msg)
+      else:
+        args.logger.error("webhook: cannot bind " & args.host & ":" & $args.port &
+                          ": " & e.msg)
+        args.sendHandshake("cannot bind " & args.host & ":" & $args.port &
+                           ": " & e.msg)
     finally:
-      try: server.close() except CatchableError: discard
+      if server != nil:
+        try: server.close() except CatchableError: discard
 
 proc startWebhookReceiver*(cfg: WebhookConfig;
                            port: int;
@@ -465,6 +604,7 @@ proc startWebhookReceiver*(cfg: WebhookConfig;
                            logger: Logger): Result[void, string] {.gcsafe.} =
   ## Starts the receiver on a dedicated OS thread. Refuses to start when no
   ## channel has authentication material — an open webhook is never exposed.
+  ## Blocks until the server thread reports a successful bind/listen.
   if not anyRouteConfigured(cfg):
     return err("no webhook channel has authentication configured")
   if port <= 0 or port > 65535:
@@ -474,11 +614,22 @@ proc startWebhookReceiver*(cfg: WebhookConfig;
   if gWebhookStarted:
     return err("webhook receiver already started")
 
+  var handshake: Channel[string]
+  handshake.open(1)
   try:
-    {.cast(gcsafe).}:
-      createThread(gWebhookThread, webhookServerThread,
-                   WebhookServerArgs(port: port, host: host, cfg: cfg, logger: logger))
-  except CatchableError as e:
-    return err("cannot start webhook thread: " & e.msg)
+    try:
+      {.cast(gcsafe).}:
+        createThread(gWebhookThread, webhookServerThread,
+                     WebhookServerArgs(port: port, host: host, cfg: cfg,
+                                       logger: logger, handshake: addr handshake))
+    except CatchableError as e:
+      return err("cannot start webhook thread: " & e.msg)
+
+    let report = handshake.recv()
+    if report.len > 0:
+      return err(report)
+  finally:
+    handshake.close()
+
   gWebhookStarted = true
   ok()

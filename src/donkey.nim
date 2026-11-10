@@ -424,9 +424,7 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.webhookHost = if webhookHost.len > 0: webhookHost else: "127.0.0.1"
   result.slackSigningSecret = getEnv("SLACK_SIGNING_SECRET")
   result.feishuVerificationToken = getEnv("FEISHU_VERIFICATION_TOKEN")
-  let matrixWebhookToken = getEnv("MATRIX_WEBHOOK_TOKEN")
-  result.matrixWebhookToken =
-    if matrixWebhookToken.len > 0: matrixWebhookToken else: getEnv("MATRIX_ACCESS_TOKEN")
+  result.matrixWebhookToken = getEnv("MATRIX_WEBHOOK_TOKEN")
   result.whatsappVerifyToken = getEnv("WHATSAPP_VERIFY_TOKEN")
   result.whatsappAppSecret = getEnv("WHATSAPP_APP_SECRET")
 
