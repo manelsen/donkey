@@ -2,6 +2,7 @@ import std/[json, os, sequtils, strutils, unittest]
 import donkey/adapters/memory/md_file
 import donkey/adapters/provider/runtime_builder
 import donkey/app/session_bootstrap
+import donkey/core/providers/smart_routing
 import donkey/domain/more_tools
 import donkey/domain/message
 import donkey/domain/personality
@@ -49,6 +50,16 @@ model = "gemini-2.5-pro"
     let spec = buildProviderSpec(ProviderPrefs(providerName: "groq", modelName: ""))
     check spec.providerName == "groq"
     check spec.modelName == "llama-3.3-70b-versatile"
+
+  test "buildProviderSpec supports opencode-go defaults":
+    let spec = buildProviderSpec(ProviderPrefs(providerName: "opencode-go", modelName: ""))
+    check spec.providerName == "opencode-go"
+    check spec.modelName == OpenCodeGoDefaultModel
+
+  test "buildProviderSpec supports zen defaults":
+    let spec = buildProviderSpec(ProviderPrefs(providerName: "zen", modelName: ""))
+    check spec.providerName == "zen"
+    check spec.modelName == ZenDefaultModel
 
   test "buildProviderSpec supports zai-anthropic defaults":
     let spec = buildProviderSpec(ProviderPrefs(providerName: "zai-anthropic", modelName: ""))
@@ -236,6 +247,8 @@ model = "gemini-2.5-flash"
     let deepseek = buildProviderBundle("provider = \"deepseek\"", runtime_builder.buildProviderBundle)
     let groq = buildProviderBundle("provider = \"groq\"", runtime_builder.buildProviderBundle)
     let ollama = buildProviderBundle("provider = \"ollama\"", runtime_builder.buildProviderBundle)
+    let opencodeGo = buildProviderBundle("provider = \"opencode-go\"", runtime_builder.buildProviderBundle)
+    let zen = buildProviderBundle("provider = \"zen\"", runtime_builder.buildProviderBundle)
     let gemini = buildProviderBundle("provider = \"gemini\"", runtime_builder.buildProviderBundle)
     let minimax = buildProviderBundle("provider = \"minimax\"", runtime_builder.buildProviderBundle)
     let zaiCoding = buildProviderBundle("provider = \"zai-coding\"", runtime_builder.buildProviderBundle)
@@ -246,6 +259,8 @@ model = "gemini-2.5-flash"
     check deepseek.streamFn != nil
     check groq.streamFn != nil
     check ollama.streamFn != nil
+    check opencodeGo.streamFn != nil
+    check zen.streamFn != nil
     check gemini.streamFn == nil
     check minimax.streamFn == nil
     check zaiCoding.streamFn == nil

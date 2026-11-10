@@ -116,6 +116,18 @@ proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: []
       modelName: if prefs.modelName.len > 0: prefs.modelName else: GroqDefaultModel,
       apiKey: getEnv("GROQ_API_KEY"),
     )
+  of "opencode-go", "opencode":
+    ProviderSpec(
+      providerName: "opencode-go",
+      modelName: if prefs.modelName.len > 0: prefs.modelName else: OpenCodeGoDefaultModel,
+      apiKey: getEnv("OPENCODE_API_KEY", getEnv("OPENCODE_GO_API_KEY")),
+    )
+  of "zen", "opencode-zen":
+    ProviderSpec(
+      providerName: "zen",
+      modelName: if prefs.modelName.len > 0: prefs.modelName else: ZenDefaultModel,
+      apiKey: getEnv("OPENCODE_API_KEY", getEnv("ZEN_API_KEY")),
+    )
   of "anthropic":
     ProviderSpec(
       providerName: "anthropic",
@@ -190,6 +202,8 @@ func detectProviderAvailability*(): ProviderAvailability =
     zaiCoding: getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")).len > 0,
     groq: getEnv("GROQ_API_KEY").len > 0,
     ollama: getEnv("OLLAMA_BASE_URL").len > 0,
+    opencodeGo: getEnv("OPENCODE_API_KEY", getEnv("OPENCODE_GO_API_KEY")).len > 0,
+    zen: getEnv("OPENCODE_API_KEY", getEnv("ZEN_API_KEY")).len > 0,
   )
 
 func toProviderSpec*(selection: ProviderSelection): ProviderSpec =

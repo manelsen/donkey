@@ -239,6 +239,22 @@ suite "smart_route classifier":
     check routes[1].providerName == "ollama"
     check routes[1].modelName == "llama3.3"
 
+  test "routeByComplexity includes opencode-go and zen candidates for simple route":
+    let score = ComplexityScore(
+      complexity: tcSimple,
+      inputScore: 5,
+      toolScore: 0,
+      contextScore: 5,
+      rawChars: 500,
+    )
+    let availability = ProviderAvailability(opencodeGo: true, zen: true)
+    let routes = score.routeByComplexity(availability, "balanced")
+    check routes.len == 2
+    check routes[0].providerName == "opencode-go"
+    check routes[0].modelName == "deepseek-4.1-flash"
+    check routes[1].providerName == "zen"
+    check routes[1].modelName == "deepseek-4.1-flash"
+
   test "routeByComplexity orders deepseek and openai candidates for moderate route":
     let score = ComplexityScore(
       complexity: tcModerate,

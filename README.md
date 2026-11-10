@@ -63,7 +63,7 @@ flowchart TD
   end
 
   subgraph Outbound["Outbound Adapters"]
-    LLM["LLM Providers\nAnthropic · OpenAI · Gemini\nDeepSeek · MiniMax · Ollama · ZAI"]
+    LLM["LLM Providers\nAnthropic · OpenAI · Gemini · DeepSeek\nMiniMax · Ollama · ZAI · OpenCode · Groq"]
     MAGMA["Dual Memory Runtime\nEmbedded SQLite-vec · Markdown\nPostgreSQL Multigraph"]
     SANDBOX["Hardened Sandbox\nOCI Container (Daemon UID/GID) · WASM Busybox"]
   end
@@ -82,7 +82,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete architectural 
 - [Nim 2.2+](https://nim-lang.org/install.html) with Nimble (`choosenim` recommended)
 - `ripgrep` (`rg`) for architectural boundary verification
 - `docker` or `podman` (required for default OCI shell sandbox)
-- `TELEGRAM_BOT_TOKEN` (required to start the daemon) and at least one directly supported session provider key: Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, ZAI, Groq, OpenRouter, or a local Ollama instance
+- `TELEGRAM_BOT_TOKEN` (required to start the daemon) and at least one directly supported session provider key: Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, ZAI, Groq, OpenCode (Go / Zen), OpenRouter, or a local Ollama instance
 
 ### 1. Build the Binary
 
@@ -202,6 +202,9 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 | **Anthropic** | ✅ | ✅ | `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-2` |
 | **OpenAI** | ✅ | ✅ | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-luna` |
 | **DeepSeek** | ✅ | ✅ | `deepseek-v4-pro`, `deepseek-4.1-flash` |
+| **OpenCode Go** | ✅ | ✅ | `deepseek-4.1-flash`, `deepseek-v4-pro`, `claude-sonnet-5-5`, `kimi-k3.1-pro` |
+| **OpenCode Zen** | ✅ | ✅ | `deepseek-4.1-flash`, `deepseek-v4-pro`, `gpt-6.1-sol`, `claude-opus-5-5` |
+| **Groq** | ✅ | ✅ | `llama-3.3-70b-versatile`, `llama-3.1-8b-instant` |
 | **Gemini** | ✅ | ❌ | `gemini-4-argon`, `gemini-3.1-pro`, `gemini-3.8-flash` |
 | **Ollama** | ✅ | ✅ | `llama4:scout`, `llama3.3:70b`, `qwen2.5-coder:32b` |
 | **MiniMax** | ✅ | ❌ | `MiniMax-Text-01`, `MiniMax-M2` |
