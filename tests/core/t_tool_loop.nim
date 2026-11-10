@@ -109,6 +109,10 @@ suite "core tool loop decisions":
     check not decideToolLoopStreaming(2, 0, true).useStreaming
     check not decideToolLoopStreaming(1, 1, true).useStreaming
 
+  test "decideToolLoopStreaming allows tools when streaming tool calls are supported":
+    check decideToolLoopStreaming(1, 3, true, streamingToolCalls = true).useStreaming
+    check not decideToolLoopStreaming(2, 3, true, streamingToolCalls = true).useStreaming
+
   test "provider and termination texts are centralized":
     check buildProviderErrorText("boom").contains("boom")
     check buildToolLoopExceededText(50).contains("50")

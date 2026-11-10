@@ -59,7 +59,7 @@ proc streamToOutbox*(fn:        StreamFn;
                     userId:    UserId;
                     ch:        ChannelKind;
                     replyTo:   string;
-                    streamId:  string): Future[(string, string)] {.async.} =
+                    streamId:  string): Future[CompletionResponse] {.async.} =
   var tokenChan: Channel[string]
   var finalResponse: CompletionResponse
   tokenChan.open(512)
@@ -76,28 +76,19 @@ proc streamToOutbox*(fn:        StreamFn;
     var (has, tok) = tokenChan.tryRecv()
     while has:
       if tok == doneSentinel:
-        let visible = cleanResponse(finalResponse.text)
-        if visible.strip.len > 0:
+        if finalResponse.toolCalls.len == 0:
+          let visible = cleanResponse(finalResponse.text)
           await outbox.put(OutboundMessage(
             userId:    userId,
             channel:   ch,
-            text:      visible,
-            replyTo:   replyTo,
-            streamId:  streamId,
-            isPartial: false,
-          ))
-        else:
-          await outbox.put(OutboundMessage(
-            userId:    userId,
-            channel:   ch,
-            text:      "...",
+            text:      if visible.strip.len > 0: visible else: "...",
             replyTo:   replyTo,
             streamId:  streamId,
             isPartial: false,
           ))
         tokenChan.close()
         joinThread(t)
-        return (finalResponse.text, finalResponse.reasoning)
+        return finalResponse
       accumulated.add(tok)
       (has, tok) = tokenChan.tryRecv()
 
@@ -119,7 +110,7 @@ proc streamToOutbox*(fn:        StreamFn;
 
   tokenChan.close()
   joinThread(t)
-  return (finalResponse.text, finalResponse.reasoning)
+  finalResponse
 
 # ── Typing loop ───────────────────────────────────────────────────────────────
 
@@ -336,15 +327,28 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       round = round,
       toolsCount = tools.len,
       streamingAvailable = streamFn != nil,
+      streamingToolCalls = streamFn != nil,
     ).useStreaming:
-      let (streamText, streamReasoning) = await streamToOutbox(
+      let streamed = await streamToOutbox(
         streamFn, req, globalOutbox, uid, channel, replyTo, streamId)
 
       log.info($uid & " (" & $channel & ") <- [" & providerLabel &
-               "] |" & $streamText.len & "| stream")
-      loopState =
-        loopState |>->
-        withStreamFinalText(streamText, streamReasoning)
+               "] |" & $streamed.text.len & "| stream")
+      if streamed.toolCalls.len > 0:
+        loopState.history.addAssistantWithToolCalls(streamed.text, streamed.toolCalls)
+        let batchResult = await processToolCalls(
+          globalOutbox, toolInbox, toolOut, nativeCtx, state, loopState.history,
+          uid, channel, replyTo, msgId, round, toolStatusId, streamed.toolCalls,
+          providerLabel, suppressProgress, debugMode, loopState.toolCallCount,
+          recentCalls, log)
+        loopState =
+          loopState |>->
+          withToolBatchState(batchResult)
+        recentCalls = batchResult.recentCalls
+      else:
+        loopState =
+          loopState |>->
+          withStreamFinalText(streamed.text, streamed.reasoning)
       continue
     let resp =
       if asyncCompleteFn != nil:
