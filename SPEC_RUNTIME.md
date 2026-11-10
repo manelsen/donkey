@@ -71,8 +71,13 @@ Responsabilidades:
 Contrato:
 
 - uma sessão é indexada por `string(UserId)`;
-- o `SessionManager` não persiste sessões;
-- a sessão vive apenas em memória do processo atual.
+- o `SessionManager` mantém o estado quente em memória; apenas metadados do
+  registro de sessão (canais, último inbound, session id, assinatura de runtime)
+  são persistidos de forma best-effort em `$DONKEY_HOME/state/sessions.json`;
+- o histórico da conversa continua owned pelo orquestrador e só é salvo nos
+  caminhos já existentes (`amkCancel`, `tkReset`);
+- após um restart, entradas restauradas forçam um rebuild do runtime no próximo
+  inbound (não existe ator vivo durante o boot).
 
 ### 2.3 Orquestrador
 
@@ -380,6 +385,16 @@ Não acontece:
 - ao final de cada turn;
 - em shutdown abrupto;
 - em crash do processo.
+
+Metadados de sessão e entrega:
+
+- `SessionManager` faz upsert best-effort de `user_id`, canais, último inbound,
+  `session_id` e assinatura de runtime em `state/sessions.json` (JSON atômico);
+- o roteador de saída grava um ledger append-only em
+  `state/delivery_ledger.jsonl`: `pending` antes do envio, `sent` ou `failed`
+  depois; falhas do ledger são logadas e nunca bloqueiam a entrega;
+- ambos são auxiliares de observabilidade/recuperação, não fonte de verdade do
+  histórico da conversa.
 
 ## 7. Semântica de Concorrência
 

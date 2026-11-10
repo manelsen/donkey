@@ -116,6 +116,8 @@ proc buildEnsureSessionPlan*(sm: var SessionManager;
     now - ingressState.lastInboundAtMs >= ColdSessionThresholdMs
   let lease = sm.applyIngressDecision(userId, decision, toolCatalogSignature)
   lease.entry[].lastInboundAtMs = now
+  lease.entry[].lastInboundEpochMs = epochMs()
+  sm.persistSession(userId)
   EnsureSessionPlan(
     uid: $userId,
     decision: decision,

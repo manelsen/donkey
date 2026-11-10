@@ -48,12 +48,14 @@ import donkey/adapters/channel/slack
 import donkey/adapters/channel/dingtalk
 import donkey/adapters/channel/cli_repl
 import donkey/adapters/tool/mcp_client
+import donkey/adapters/state/runtime_store
 import donkey/domain/message
 import donkey/domain/agent_message
 import donkey/ports/provider
 import donkey/ports/channel
 import donkey/core/media_download
 import donkey/ports/tool
+import donkey/ports/runtime_state
 import donkey/app/orchestrator
 import donkey/app/sandbox
 import donkey/app/ipc_server
@@ -269,6 +271,7 @@ proc signalPollThread(adapter: ptr SignalAdapter) {.thread.} =
 type DaemonRuntime = ref object
   globalOutbox:         AsyncQueue[OutboundMessage]
   sm:                   SessionManager
+  ledger:               DeliveryLedgerPort
   presentationState:    PresentationState
   routeCounts:          Table[string, int]
   routeCallCounts:      Table[string, int]
@@ -566,6 +569,9 @@ proc initDaemonRuntime(home: string): DaemonRuntime =
     gRoutingLockReady = true
   result.globalOutbox = newAsyncQueue[OutboundMessage]()
   result.sm.init()
+  let stateStore = newRuntimeStateStore(home / "state")
+  result.sm.setRegistryStore(stateStore.sessionRegistry())
+  result.ledger = stateStore.deliveryLedger()
   result.presentationState = initPresentationState()
   result.routeHealthPath = routeHealthPath(home)
   result.loadRecentRouteSamples()
@@ -1203,7 +1209,7 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
   while runtime.globalOutbox.len > 0:
     let outMsg = runtime.globalOutbox.getNoWait()
     completeInboundReactionStatus(runtime, outboundPorts, outMsg)
-    routeOutbound(outMsg, outboundPorts, log, runtime.presentationState)
+    routeOutbound(outMsg, outboundPorts, log, runtime.presentationState, runtime.ledger)
 
 proc startDaemonIngress(ctx: DaemonContext;
                         log: Logger) =
@@ -1488,6 +1494,14 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory
   let ctx = bootstrap.ctx
+  ctx.runtime.sm.setRegistryErrorHook(
+    proc(error: string) {.gcsafe, raises: [].} =
+      log.warn("session registry: " & error))
+  let restoredSessions = ctx.runtime.sm.restoreSessions()
+  if restoredSessions.isErr:
+    log.warn("session registry restore: " & restoredSessions.error)
+  elif restoredSessions.value > 0:
+    log.info("restored " & $restoredSessions.value & " sessions from registry")
   activateDaemonBootstrap(ctx, cfg, memory, log)
   let sessionServices = buildDaemonSessionServices(ctx, cfg, memory, log)
   let drainer = buildDaemonGatewayDrainer(ctx, cfg, memory, log)
