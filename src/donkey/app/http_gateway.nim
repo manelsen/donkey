@@ -14,7 +14,6 @@
 
 import std/[json, net, os, strutils]
 import locks
-import threadpool
 import std/posix
 import ../core/pipeops
 import ../core/types
@@ -434,6 +433,15 @@ var gGatewayLogFn:    GatewayLogFn
 var gGatewayEventFn:  GatewayEventFn
 var gGatewayInboundFn: GatewayInboundFn
 var gGatewayLog:      Logger
+var gGatewayAuthToken: string
+
+const GatewayWorkerCount = 8
+const GatewayQueueDepth = 64
+
+var
+  gGatewayQueue {.global.}: Channel[SocketHandle]
+  gGatewayWorkers {.global.}: array[GatewayWorkerCount, Thread[int]]
+  gGatewayPoolStarted = false
 
 proc applyClientTimeouts(sock: Socket; seconds: int = 10): Result[void, string] =
   ## Bounds header reads and sends from a connected client.
@@ -496,12 +504,24 @@ proc releaseSseConnection() =
   finally:
     release(gHttpConnLock)
 
-proc handleConnectionThread(args: HttpConnectionArgs) {.gcsafe.} =
-  try:
-    handleGatewayConn(args.client, args.statusFn, args.logFn, args.eventFn,
-                      args.inboundFn, args.authToken, args.log)
-  finally:
-    releaseHttpConnection()
+proc gatewayWorker(id: int) {.thread.} =
+  {.cast(gcsafe).}:
+    while true:
+      let fd = gGatewayQueue.recv()
+      if fd == SocketHandle(-1):
+        break
+      let client = newSocket(fd, buffered = true)
+      let timeoutResult = applyClientTimeouts(client)
+      if timeoutResult.isErr:
+        gGatewayLog.warn("http_gateway: " & timeoutResult.error)
+        client.close()
+        releaseHttpConnection()
+        continue
+      try:
+        handleGatewayConn(client, gGatewayStatusFn, gGatewayLogFn, gGatewayEventFn,
+                          gGatewayInboundFn, gGatewayAuthToken, gGatewayLog)
+      finally:
+        releaseHttpConnection()
 
 proc gatewayThread(args: GatewayArgs) {.thread.} =
   {.cast(gcsafe).}:
@@ -537,15 +557,13 @@ proc gatewayThread(args: GatewayArgs) {.thread.} =
                             "too many connections\n", args.log)
         client.close()
         continue
-      spawn handleConnectionThread(HttpConnectionArgs(
-        client: client,
-        statusFn: args.statusFn,
-        logFn: args.logFn,
-        eventFn: args.eventFn,
-        inboundFn: args.inboundFn,
-        authToken: args.authToken,
-        log: args.log,
-      ))
+      if not gGatewayQueue.trySend(client.getFd):
+        client.sendResponse("503 Service Unavailable", "text/plain",
+                            "too many connections\n", args.log)
+        client.close()
+        releaseHttpConnection()
+        continue
+      # Ownership of the fd transfers to the worker; do not close here.
 
 var gGatewayThread: Thread[GatewayArgs]
 
@@ -564,12 +582,17 @@ proc startHttpGateway*(port: int;
     if not gHttpConnLockReady:
       initLock(gHttpConnLock)
       gHttpConnLockReady = true
-    setMaxPoolSize(16)
     gGatewayStatusFn  = statusFn
     gGatewayLogFn     = logFn
     gGatewayEventFn   = eventFn
     gGatewayInboundFn = inboundFn
     gGatewayLog       = log
+    gGatewayAuthToken = authToken
+    if not gGatewayPoolStarted:
+      gGatewayPoolStarted = true
+      gGatewayQueue.open(GatewayQueueDepth)
+      for i in 0 ..< GatewayWorkerCount:
+        createThread(gGatewayWorkers[i], gatewayWorker, i)
     let args = GatewayArgs(port: port, bindAddr: bindAddr, authToken: authToken,
                            statusFn: statusFn, logFn: logFn,
                            eventFn: eventFn, inboundFn: inboundFn, log: log)
