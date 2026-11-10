@@ -13,6 +13,7 @@ import ../core/log
 import ../core/pipeops
 import ../core/session/session_ingress as coreSessionIngress
 import ../core/providers/smart_routing
+import ../core/security/dm_policy
 import ../domain/agent_message
 import ../domain/message
 import ../ports/memory
@@ -59,6 +60,8 @@ type
     skillRuntimeBuilder*:        SkillRuntimeBuilder
     skillRuntimePolicyResolver*: SkillRuntimePolicyResolver
     isRevoked*:                  proc(userId: UserId): bool {.gcsafe.}
+    isDmAllowed*:                proc(userId: UserId): bool {.gcsafe.}
+    dmPolicy*:                   DmPolicy
     routeRecordHook*:            proc(selection: ProviderSelection) {.gcsafe.}
     routeResultHook*:            proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.}
     routeFeedbackHook*:          proc(): seq[RouteFeedback] {.gcsafe.}
@@ -145,6 +148,8 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
                                   typingFn: TypingFn;
                                   searchFn: SearchFn;
                                   isRevoked: proc(userId: UserId): bool {.gcsafe.};
+                                  isDmAllowed: proc(userId: UserId): bool {.gcsafe.} = nil;
+                                  dmPolicy: DmPolicy = DmPolicyOpen;
                                   http: HttpRuntimePort;
                                   providerRuntimeBuilder: ProviderRuntimeBuilder = nil;
                                   skillRuntimeBuilder: SkillRuntimeBuilder = nil;
@@ -174,6 +179,8 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
     skillRuntimeBuilder: skillRuntimeBuilder,
     skillRuntimePolicyResolver: skillRuntimePolicyResolver,
     isRevoked: isRevoked,
+    isDmAllowed: isDmAllowed,
+    dmPolicy: dmPolicy,
     routeRecordHook: routeRecordHook,
     routeResultHook: routeResultHook,
     routeFeedbackHook: routeFeedbackHook,
@@ -217,7 +224,8 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              bootstrap.skillPrompt,
                              sandboxMode, sandboxRuntimeCmd, sandboxImage,
                              cfg.webAllowlist, cfg.toolWebPolicy,
-                             errorExplainFn = bootstrap.errorExplainFn)
+                             errorExplainFn = bootstrap.errorExplainFn,
+                             asyncCompleteFn = bootstrap.asyncCompleteFn)
 
 proc enqueueSessionMessage*(entry: var SessionEntry;
                             msg: InboundMessage;
@@ -238,6 +246,19 @@ proc startSessionIngress*(sm: var SessionManager;
                           taskKind: TaskKind = tkUserMsg;
                           taskPayload: string = ""): SessionIngressContext {.gcsafe.} =
   ## Full session ingress flow: builds bootstrap, plan, context, enqueues message, and spawns orchestrator.
+  if services.dmPolicy != DmPolicyOpen:
+    let allowed =
+      services.isDmAllowed != nil and services.isDmAllowed(msg.userId)
+    if not allowed:
+      if taskKind == tkUserMsg and services.globalOutbox != nil:
+        services.globalOutbox.putNoWait(OutboundMessage(
+          userId: msg.userId,
+          channel: msg.channel,
+          replyTo: sessionReplyTo(msg),
+          text: "Acesso não autorizado. Peça ao administrador para incluir seu usuário na allowlist.",
+        ))
+      return
+
   let routingHook: RoutingTelemetryHook =
     proc(selection: ProviderSelection;
          prefs: SmartRoutingPrefs;

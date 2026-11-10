@@ -49,6 +49,7 @@ import ./native_tools
 import ./onboarding_runtime
 import ./tool_loop_runtime
 import ./prompt_building
+import ./provider_executor
 import ../core/security/dm_policy
 
 # Re-export public API from extracted modules
@@ -334,7 +335,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     toolsSuffix: string;
                     state: SessionState;
                     msg: AgentMessage;
-                    stateRuntime: OrchestratorState): Future[OrchestratorState] {.async.} =
+                    stateRuntime: OrchestratorState;
+                    asyncCompleteFn: AsyncCompleteFn = nil): Future[OrchestratorState] {.async.} =
   result = stateRuntime |> nextTurn
   let turnSetup = prepareUserTurnSetup(
     globalOutbox, session, memory, completeFn, http, tools, webAllowlist, toolWebPolicy,
@@ -406,7 +408,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     globalOutbox, toolInbox, toolOut, memory, completeFn, errorExplainFn, streamFn, turnSetup.nativeCtx,
     state, history, turnSetup.uid, msg.channel, msg.replyTo, msg.id, turnSetup.streamId,
     systemBase, context, tools, providerLabel,
-    suppressHeartbeatProgress, result.debugMode, result.showReasoning, log)
+    suppressHeartbeatProgress, result.debugMode, result.showReasoning, log,
+    asyncCompleteFn)
   result =
     result |>->
     withLoopResult(loopResult)
@@ -505,7 +508,8 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
                      toolsSuffix: string;
                      state: SessionState;
                      msg: AgentMessage;
-                     stateRuntime: OrchestratorState): Future[OrchestratorState] {.async.} =
+                     stateRuntime: OrchestratorState;
+                     asyncCompleteFn: AsyncCompleteFn = nil): Future[OrchestratorState] {.async.} =
   result = stateRuntime
   let uid = UserId(msg.userId)
   result =
@@ -534,7 +538,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
     globalOutbox, memInbox, toolInbox, memOut, toolOut, session, memory,
     completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
     providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, toolsSuffix,
-    state, msg, result)
+    state, msg, result, asyncCompleteFn)
   if result.onboarding.phase == opDone:
     result =
       result |>->
@@ -567,7 +571,8 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
                         toolsSuffix: string;
                         state: SessionState;
                         msg: AgentMessage;
-                        stateRuntime: OrchestratorState): Future[ActorMessageResult] {.async.} =
+                        stateRuntime: OrchestratorState;
+                        asyncCompleteFn: AsyncCompleteFn = nil): Future[ActorMessageResult] {.async.} =
   result.stateRuntime = stateRuntime
   case msg.kind
   of amkCancel:
@@ -579,7 +584,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
       globalOutbox, session, memInbox, toolInbox, memOut, toolOut, memory,
       completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
       providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
-      toolsSuffix, state, msg, stateRuntime)
+      toolsSuffix, state, msg, stateRuntime, asyncCompleteFn)
 
   else:
     discard
@@ -635,7 +640,8 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       sandboxImage:   string      = "alpine";
                       webAllowlist:   seq[string] = @[];
                       toolWebPolicy:  seq[cfgTypes.ToolWebPolicy] = @[];
-                      errorExplainFn: CompleteFn = nil): Future[void] {.async.} =
+                      errorExplainFn: CompleteFn = nil;
+                      asyncCompleteFn: AsyncCompleteFn = nil): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
   let memInbox  = newAsyncQueue[AgentMessage]()
   let toolInbox = newAsyncQueue[AgentMessage]()
@@ -663,7 +669,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
       inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
       completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
       providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
-      toolsSuffix, state, msg, stateRuntime)
+      toolsSuffix, state, msg, stateRuntime, asyncCompleteFn)
     stateRuntime = actorResult.stateRuntime
     if actorResult.shouldStop:
       break

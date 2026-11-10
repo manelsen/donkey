@@ -2,6 +2,7 @@ import std/[json, os, sequtils, strutils, unittest]
 import donkey/adapters/memory/md_file
 import donkey/adapters/provider/runtime_builder
 import donkey/app/session_bootstrap
+import donkey/core/providers/smart_routing
 import donkey/domain/more_tools
 import donkey/domain/message
 import donkey/domain/personality
@@ -24,6 +25,18 @@ model = "gemini-2.5-pro"
 """)
     check prefs.providerName == "gemini"
     check prefs.modelName == "gemini-2.5-pro"
+
+  test "availableProviderNames reports only configured providers":
+    let names = availableProviderNames(ProviderAvailability(
+      openrouter: true,
+      gemini: true,
+      zaiCoding: true,
+      ollama: true,
+    ))
+    check names == @["openrouter", "gemini", "zai-coding", "ollama"]
+
+  test "availableProviderNames is empty without credentials":
+    check availableProviderNames(ProviderAvailability()).len == 0
 
   test "buildProviderSpec applies openrouter defaults":
     let spec = buildProviderSpec(ProviderPrefs(providerName: "openrouter", modelName: ""))

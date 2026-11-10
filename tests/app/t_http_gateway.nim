@@ -48,6 +48,41 @@ suite "http_gateway request parsing":
     check r.meth == "GET"
     check r.path == "/api/logs"
 
+suite "http_gateway auth":
+
+  test "empty token keeps local behavior":
+    check isAuthorized("", "")
+
+  test "bearer token matches case-insensitively on the scheme":
+    check isAuthorized("Bearer secret", "secret")
+    check isAuthorized("bearer secret", "secret")
+
+  test "wrong or missing token is rejected":
+    check not isAuthorized("Bearer nope", "secret")
+    check not isAuthorized("", "secret")
+
+  test "local origin validation requires an exact local host":
+    check isLocalOrigin("http://localhost:3000")
+    check isLocalOrigin("http://127.0.0.1:8080")
+    check not isLocalOrigin("http://localhost.evil.com")
+    check not isLocalOrigin("http://127.0.0.1.evil.com")
+    check not isLocalOrigin("https://localhost/path")
+
+  test "chat without a token requires a local origin and JSON body":
+    check chatRequestAllowed("", "application/json", "")
+    check chatRequestAllowed("http://localhost:3000", "application/json", "")
+    check not chatRequestAllowed("https://evil.example", "application/json", "")
+    check not chatRequestAllowed("", "text/plain", "")
+    check chatRequestAllowed("https://evil.example", "text/plain", "secret")
+
+  test "non-loopback bind requires a token and explicit insecure opt-in":
+    check gatewayBindIsAllowed("127.0.0.1", "")
+    check gatewayBindIsAllowed("localhost", "")
+    check not gatewayBindIsAllowed("0.0.0.0", "")
+    check not gatewayBindIsAllowed("192.168.1.10", "")
+    check not gatewayBindIsAllowed("0.0.0.0", "secret")
+    check gatewayBindIsAllowed("0.0.0.0", "secret", allowInsecure = true)
+
 suite "http_gateway SSE formatting":
 
   test "buildSseEvent produces correct SSE format":

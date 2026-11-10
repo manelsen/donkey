@@ -190,6 +190,17 @@ suite "OpenRouterAdapter streaming helpers":
     check chunk.inputTokens == 12
     check chunk.outputTokens == 5
 
+  test "parseOpenRouterSseLine extracts streaming tool call fragments":
+    let line = """data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":"}}]}}]}"""
+    let parsed = parseOpenRouterSseLine(line)
+    check not parsed.isErr
+    let chunk = parsed.value
+    check chunk.toolCalls.len == 1
+    check chunk.toolCalls[0].index == 0
+    check chunk.toolCalls[0].id == "call_1"
+    check chunk.toolCalls[0].name == "read_file"
+    check chunk.toolCalls[0].arguments == "{\"path\":"
+
   test "parseOpenRouterSseLine handles done sentinel":
     let parsed = parseOpenRouterSseLine("data: [DONE]")
     check not parsed.isErr

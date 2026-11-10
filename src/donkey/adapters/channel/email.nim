@@ -23,12 +23,13 @@
 ##   |>   — raw |> parseEmail
 ##   >>=  — (reserved for future chained IMAP command sequences)
 
-import std/[net, strutils, base64]
+import std/[net, strutils, base64, times]
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
 import ../../domain/channels/email_pure
 import ../identity/identity_resolver
+import ./socket_timeout
 
 export identity_resolver
 
@@ -55,12 +56,18 @@ proc imapSend(s: ImapSession; line: string): Result[void, string] =
   except CatchableError as e:
     err("IMAP send: " & e.msg)
 
+const MaxImapLiteralBytes* = 10 * 1024 * 1024
+const ImapResponseDeadlineSec* = 30
+
 proc imapReadResponse(s: ImapSession; tag: string): Result[seq[string], string] =
   ## Reads IMAP response lines until the tagged completion line (OK/NO/BAD).
   ## Handles IMAP string literals {n} by reading exactly n bytes.
   try:
+    let deadline = now() + initDuration(seconds = ImapResponseDeadlineSec)
     var lines: seq[string]
     while true:
+      if now() > deadline:
+        return err("IMAP response deadline exceeded")
       let line = s.sock.recvLine()
       # Detect IMAP literal: line ends with {n}
       if line.len > 2 and line[^1] == '}':
@@ -70,12 +77,16 @@ proc imapReadResponse(s: ImapSession; tag: string): Result[seq[string], string] 
           var litSize = 0
           try: litSize = parseInt(sizeStr)
           except ValueError: discard
+          if litSize > MaxImapLiteralBytes:
+            return err("IMAP literal exceeds size limit")
           lines.add(line)
           # Read exactly litSize bytes
           if litSize > 0:
             var buf = ""
             var remaining = litSize
             while remaining > 0:
+              if now() > deadline:
+                return err("IMAP literal deadline exceeded")
               var chunk = newString(min(remaining, 4096))
               let n = s.sock.recv(chunk, min(remaining, 4096))
               if n <= 0: return err("IMAP: connection closed reading literal")
@@ -109,8 +120,9 @@ proc imapClose(s: ImapSession) =
 proc newImapSession(host: string; port: int): Result[ImapSession, string] =
   try:
     let ctx  = newContext(verifyMode = CVerifyPeer)
-    let sock = newSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    let sock = newSocket(Domain.AF_INET, SockType.SOCK_STREAM, Protocol.IPPROTO_TCP)
     ctx.wrapSocket(sock)
+    ? applySocketTimeouts(sock, 15, "imap")
     sock.connect(host, Port(port))
     discard sock.recvLine()  ## read server greeting
     ok(ImapSession(sock: sock, ctx: ctx, tagSeq: 0))
@@ -194,10 +206,11 @@ proc newSmtpSession(host: string; port: int;
                     startTls: bool): Result[SmtpSession, string] =
   try:
     let ctx  = newContext(verifyMode = CVerifyPeer)
-    let sock = newSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    let sock = newSocket(Domain.AF_INET, SockType.SOCK_STREAM, Protocol.IPPROTO_TCP)
     if not startTls:
       ## Implicit TLS (port 465): wrap before connect
       ctx.wrapSocket(sock)
+    ? applySocketTimeouts(sock, 15, "smtp")
     sock.connect(host, Port(port))
     let s = SmtpSession(sock: sock, ctx: ctx)
     ? s.smtpCheckOk()  ## read server greeting

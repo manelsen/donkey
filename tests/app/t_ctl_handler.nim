@@ -103,23 +103,25 @@ suite "ctl_handler — ctlUserRevoke":
   test "revokes user access":
     let tmp = makeTestPaddock()
     try:
-      setupUserPaddock(tmp, "eve")
-      let mem = MdFileAdapter(paddocksDir: tmp)
-      ctlUserRevoke(mem, "eve", true)
+      setupUserPaddock(tmp / "paddocks", "eve")
+      let mem = MdFileAdapter(paddocksDir: tmp / "paddocks")
+      check ctlUserRevoke(mem, "eve", true).isOk
       let ctx = mem.loadContext(UserId("eve"))
       check "revoked" in ctx.userMd
+      check not mem.isDmAllowed(UserId("eve"))
     finally:
       cleanupPaddock(tmp)
 
   test "restores user access":
     let tmp = makeTestPaddock()
     try:
-      setupUserPaddock(tmp, "frank")
-      let mem = MdFileAdapter(paddocksDir: tmp)
-      ctlUserRevoke(mem, "frank", true)
-      ctlUserRevoke(mem, "frank", false)
+      setupUserPaddock(tmp / "paddocks", "frank")
+      let mem = MdFileAdapter(paddocksDir: tmp / "paddocks")
+      check ctlUserRevoke(mem, "frank", true).isOk
+      check ctlUserRevoke(mem, "frank", false).isOk
       let ctx = mem.loadContext(UserId("frank"))
       check "active" in ctx.userMd
+      check mem.isDmAllowed(UserId("frank"))
     finally:
       cleanupPaddock(tmp)
 

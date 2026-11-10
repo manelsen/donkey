@@ -4,6 +4,7 @@ import std/[options, os, strutils, unittest]
 import donkey/config/loader
 import donkey/config/types
 import donkey/core/types
+import donkey/core/security/dm_policy
 
 suite "Config Loader":
 
@@ -32,6 +33,76 @@ suite "Config Loader":
     delEnv("DONKEY_HOME")
     check cfg.home == "/tmp/donkey_test_home"
     check cfg.paddocks == "/tmp/donkey_test_home/paddocks"
+
+  test "parseDmPolicy accepts open/pairing/allowlist":
+    check parseDmPolicy("open").get() == DmPolicyOpen
+    check parseDmPolicy("pairing").get() == DmPolicyPairing
+    check parseDmPolicy("allowlist").get() == DmPolicyAllowlist
+    check parseDmPolicy("nonsense").isNone
+
+  test "malformed TOML does not silently fall back to open DM policy":
+    let tmp = getTempDir() / "t_loader_malformed.toml"
+    writeFile(tmp, "[security\ndm_policy = \"open\"\n")
+    defer: removeFile(tmp)
+    check loadConfig(tmp).invalidDmPolicy.len > 0
+
+  test "invalid dm_policy is recorded for startup rejection":
+    let tmp = getTempDir() / "t_loader_bad_dm_policy.toml"
+    writeFile(tmp, """
+[security]
+dm_policy = "nonsense"
+""")
+    defer: removeFile(tmp)
+    check loadConfig(tmp).invalidDmPolicy == "nonsense"
+
+  test "invalid DONKEY_DM_POLICY is recorded for startup rejection":
+    putEnv("DONKEY_DM_POLICY", "nonsense")
+    let cfg = loadConfig("/tmp/donkey_nonexistent_12345.toml")
+    delEnv("DONKEY_DM_POLICY")
+    check cfg.invalidDmPolicy == "nonsense"
+
+  test "valid env dm_policy clears an invalid TOML value":
+    let tmp = getTempDir() / "t_loader_dm_env_override.toml"
+    writeFile(tmp, """
+[security]
+dm_policy = "nonsense"
+""")
+    putEnv("DONKEY_DM_POLICY", "open")
+    let cfg = loadConfig(tmp)
+    delEnv("DONKEY_DM_POLICY")
+    removeFile(tmp)
+    check cfg.dmPolicy == DmPolicyOpen
+    check cfg.invalidDmPolicy.len == 0
+
+  test "empty dm_policy is rejected instead of fail-open":
+    let tmp = getTempDir() / "t_loader_empty_dm_policy.toml"
+    writeFile(tmp, """
+[security]
+dm_policy = ""
+""")
+    defer: removeFile(tmp)
+    check loadConfig(tmp).invalidDmPolicy.len > 0
+
+  test "reads dm_policy from the security section":
+    let tmp = getTempDir() / "t_loader_dm_policy.toml"
+    writeFile(tmp, """
+[security]
+dm_policy = "allowlist"
+""")
+    defer: removeFile(tmp)
+    check loadConfig(tmp).dmPolicy == DmPolicyAllowlist
+
+  test "DONKEY_DM_POLICY overrides the config file":
+    let tmp = getTempDir() / "t_loader_dm_env.toml"
+    writeFile(tmp, """
+[security]
+dm_policy = "open"
+""")
+    putEnv("DONKEY_DM_POLICY", "allowlist")
+    let cfg = loadConfig(tmp)
+    delEnv("DONKEY_DM_POLICY")
+    removeFile(tmp)
+    check cfg.dmPolicy == DmPolicyAllowlist
 
   test "reads log_level from toml":
     let tmp = getTempDir() / "t_loader_loglevel.toml"

@@ -1,11 +1,13 @@
 ## donkey — AI agent system entry point.
 
 import std/[algorithm, json, os, parseopt, strutils, tables, terminal, times]
+import locks
 import chronos
 import chronos/asyncsync
 import chronos/timer as ctimer
 import donkey/config/loader
 import donkey/config/types
+import donkey/core/security/dm_policy
 import donkey/config/dotenv
 import donkey/config/tools_registry
 import donkey/config/skills_registry
@@ -41,6 +43,7 @@ import donkey/adapters/channel/whatsapp
 import donkey/adapters/channel/whatsapp_runtime
 import donkey/adapters/channel/matrix
 import donkey/adapters/channel/email
+import donkey/adapters/channel/signal
 import donkey/adapters/channel/slack
 import donkey/adapters/channel/dingtalk
 import donkey/adapters/channel/cli_repl
@@ -56,6 +59,7 @@ import donkey/app/sandbox
 import donkey/app/ipc_server
 import donkey/app/http_gateway
 import donkey/app/heartbeat
+import donkey/app/metrics_server
 import donkey/app/outbound_runtime
 import donkey/app/gateway_drainer
 import donkey/app/session_manager
@@ -69,6 +73,16 @@ import donkey/app/daemon_start_handler
 import donkey/ctl_handler
 import donkey/ports/memory
 import donkey/adapters/ipc/types    as ipcTypes
+
+var gRoutingLock: Lock
+
+template withRouteLock(body: untyped): untyped =
+  block:
+    acquire(gRoutingLock)
+    try:
+      body
+    finally:
+      release(gRoutingLock)
 
 const Version* = AppVersion
 
@@ -190,13 +204,17 @@ type DaemonAdapters = object
   em: EmailAdapter
   wa: WhatsAppAdapter
   cli: CliAdapter
+  signal: SignalAdapter
 
 proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPorts =
+  let signalPtr =
+    if adapters.signal.account.len > 0: addr adapters.signal
+    else: nil
   buildOutboundPorts(
     addr adapters.tg, addr adapters.dc, addr adapters.wc,
     addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx,
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
-    addr adapters.cli)
+    addr adapters.cli, signalPtr)
 
 const
   RecentRouteSampleLimit = 32
@@ -216,6 +234,38 @@ type DaemonServices = object
   tgTypingFn:       TypingFn
   globalSearchFn:   SearchFn
 
+type
+  PollResult = Result[seq[InboundMessage], string]
+
+var
+  gEmailPollCh: Channel[PollResult]
+  gSignalPollCh: Channel[PollResult]
+  gEmailPollThread: Thread[ptr EmailAdapter]
+  gSignalPollThread: Thread[ptr SignalAdapter]
+  gEmailPollOpened = false
+  gSignalPollOpened = false
+  gEmailPollInFlight = false
+  gSignalPollInFlight = false
+
+func pollFailure(msg: string): PollResult {.gcsafe.} =
+  err(msg)
+
+proc emailPollThread(adapter: ptr EmailAdapter) {.thread.} =
+  var res: PollResult
+  try:
+    res = adapter[].pollInbox()
+  except Exception as e:
+    res = pollFailure(e.msg)
+  gEmailPollCh.send(res)
+
+proc signalPollThread(adapter: ptr SignalAdapter) {.thread.} =
+  var res: PollResult
+  try:
+    res = adapter[].receive()
+  except Exception as e:
+    res = pollFailure(e.msg)
+  gSignalPollCh.send(res)
+
 type DaemonRuntime = ref object
   globalOutbox:         AsyncQueue[OutboundMessage]
   sm:                   SessionManager
@@ -229,6 +279,8 @@ type DaemonRuntime = ref object
   providerCooldownUntil: Table[string, int64]
   routeHealthPath:      string
   lastReminderCheckMs:  int64
+  lastEmailPollMs:      int64
+  lastSignalPollMs:     int64
   msgSeq:               int
   daemonStartMs:        int64
   downloadDir:          string  ## directory for downloaded files from channels
@@ -389,6 +441,16 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
     result.wa = newWhatsAppAdapter(env.whatsappAccessToken, env.whatsappPhoneNumberId,
                                    env.identityPath)
 
+  # Signal (optional - requires a running signal-cli daemon socket)
+  let signalAccount = getEnv("SIGNAL_ACCOUNT").strip()
+  if signalAccount.len > 0:
+    let rawSock = getEnv("SIGNAL_SOCKET").strip()
+    result.signal = newSignalAdapter(
+      signalAccount,
+      env.identityPath,
+      sockPath = if rawSock.len > 0: rawSock else: SignalDefaultSock,
+    )
+
 func recentRouteSampleTtlSec(): int64 =
   let raw = getEnv("DONKEY_ROUTE_HEALTH_TTL_SEC")
   if raw.len == 0:
@@ -495,8 +557,13 @@ proc loadRecentRouteSamples(runtime: DaemonRuntime) =
   except CatchableError:
     discard
 
+var gRoutingLockReady = false
+
 proc initDaemonRuntime(home: string): DaemonRuntime =
   new(result)
+  if not gRoutingLockReady:
+    initLock(gRoutingLock)
+    gRoutingLockReady = true
   result.globalOutbox = newAsyncQueue[OutboundMessage]()
   result.sm.init()
   result.presentationState = initPresentationState()
@@ -867,12 +934,12 @@ proc setupIpcServer(cfg: DonkeyConfig;
       sessionCount:  sm.sessionCount(),
       sessions:      sessions,
       channels:      activeChannels,
-      providers:     @["openrouter"],
-      routeCounts:   runtime.topRouteCounts(),
-      routeMetrics:  runtime.topRouteMetrics(),
-      recentRouteMetrics: runtime.topRecentRouteMetrics(),
-      recentProviderMetrics: runtime.topRecentProviderMetrics(),
-      providerCooldowns: runtime.activeProviderCooldowns(),
+      providers:     availableProviderNames(detectProviderAvailability()),
+      routeCounts:   withRouteLock(runtime.topRouteCounts()),
+      routeMetrics:  withRouteLock(runtime.topRouteMetrics()),
+      recentRouteMetrics: withRouteLock(runtime.topRecentRouteMetrics()),
+      recentProviderMetrics: withRouteLock(runtime.topRecentProviderMetrics()),
+      providerCooldowns: withRouteLock(runtime.activeProviderCooldowns()),
       toolsCount:    toolsCount,
       memoryBackend: block:
         when defined(withPostgres) or defined(withSqlite):
@@ -901,9 +968,23 @@ proc setupIpcServer(cfg: DonkeyConfig;
     ipcLogFn(n)
   let gwEventFn: GatewayEventFn = proc(n: int): seq[AgentEvent] {.gcsafe.} =
     agentEventSnapshot(n)
+  let httpBind = block:
+    let raw = getEnv("DONKEY_HTTP_BIND").strip()
+    if raw.len > 0: raw else: "127.0.0.1"
+  let httpToken = getEnv("DONKEY_HTTP_TOKEN").strip()
+  let httpAllowInsecure = getEnv("DONKEY_HTTP_ALLOW_INSECURE").strip() == "1"
   if httpPort > 0:
-    startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn)
-    log.info("HTTP gateway: http://0.0.0.0:" & $httpPort & " (bidirectional SSE enabled)")
+    if not gatewayBindIsAllowed(httpBind, httpToken, httpAllowInsecure):
+      log.error("HTTP gateway disabled: non-loopback bind (" & httpBind &
+                ") requires DONKEY_HTTP_TOKEN and DONKEY_HTTP_ALLOW_INSECURE=1")
+    else:
+      startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
+                       bindAddr = httpBind, authToken = httpToken)
+      log.info("HTTP gateway: http://" & httpBind & ":" & $httpPort &
+               (if httpToken.len > 0: " (bearer auth enabled)" else: ""))
+      if httpToken.len > 0 and httpBind notin ["127.0.0.1", "localhost", "::1", "[::1]"]:
+        log.warn("HTTP gateway is not loopback and has no TLS; put it behind a " &
+                 "TLS-terminating reverse proxy — the Bearer token travels in cleartext")
   else:
     log.info("HTTP gateway: disabled")
 
@@ -926,21 +1007,23 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     nil,
     ctx.services.globalSearchFn,
     proc(userId: UserId): bool = memory.isRevoked(userId),
+    proc(userId: UserId): bool = memory.isDmAllowed(userId),
+    cfg.dmPolicy,
     newStdHttpAdapter(allowlist = cfg.webAllowlist).toRuntimePort(),
     buildProviderBundle,
     buildDenoSkillRuntime,
     buildSkillRuntimePolicyResolver(cfg),
     routeRecordHook = proc(selection: ProviderSelection) {.gcsafe.} =
-      ctx.runtime.recordRouteChoice(selection),
+      withRouteLock(ctx.runtime.recordRouteChoice(selection)),
     routeResultHook = proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.} =
-      ctx.runtime.recordRouteResult(selection, elapsedMs, ok),
+      withRouteLock(ctx.runtime.recordRouteResult(selection, elapsedMs, ok)),
     routeFeedbackHook = proc(): seq[RouteFeedback] {.gcsafe.} =
-      ctx.runtime.currentRouteFeedback(),
+      withRouteLock(ctx.runtime.currentRouteFeedback()),
     routeCostHook = proc(): seq[RouteCostHint] {.gcsafe.} =
       loadRouteCostHints(@["openrouter", "groq", "anthropic", "zai-anthropic", "gemini",
                            "minimax", "zai", "zai-coding", "zen"]),
     routeProviderCooldownHook = proc(): seq[ProviderCooldown] {.gcsafe.} =
-      ctx.runtime.currentProviderCooldowns(),
+      withRouteLock(ctx.runtime.currentProviderCooldowns()),
   )
 
 proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
@@ -1174,6 +1257,10 @@ proc handleGatewayFallback(ctx: DaemonContext;
     buildDaemonSessionServices(ctx, cfg, memory, log),
   )
 
+const
+  EmailPollIntervalMs*  = 15_000
+  SignalPollIntervalMs* = 2_000
+
 proc buildDaemonGatewayDrainer(ctx: DaemonContext;
                                cfg: DonkeyConfig;
                                memory: MdFileAdapter;
@@ -1291,6 +1378,56 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           ctx.runtime.daemonStartMs, ctx.runtime.msgSeq, fallback, log)
         true
       ),
+    drainEmail = proc(): bool =
+      if ctx.adapters.em.imapHost.len == 0:
+        return false
+      if gEmailPollInFlight:
+        let (hasResult, polled) = gEmailPollCh.tryRecv()
+        if hasResult:
+          gEmailPollInFlight = false
+          joinThread(gEmailPollThread)
+          if polled.isErr:
+            log.warn("email poll: " & polled.error)
+            return false
+          for msg in polled.value:
+            fallback(msg)
+          return polled.value.len > 0
+        return false
+      let now = nowMs()
+      if now - ctx.runtime.lastEmailPollMs < EmailPollIntervalMs:
+        return false
+      ctx.runtime.lastEmailPollMs = now
+      if not gEmailPollOpened:
+        gEmailPollCh.open(1)
+        gEmailPollOpened = true
+      gEmailPollInFlight = true
+      createThread(gEmailPollThread, emailPollThread, addr ctx.adapters.em)
+      false,
+    drainSignal = proc(): bool =
+      if ctx.adapters.signal.account.len == 0:
+        return false
+      if gSignalPollInFlight:
+        let (hasResult, polled) = gSignalPollCh.tryRecv()
+        if hasResult:
+          gSignalPollInFlight = false
+          joinThread(gSignalPollThread)
+          if polled.isErr:
+            log.warn("signal poll: " & polled.error)
+            return false
+          for msg in polled.value:
+            fallback(msg)
+          return polled.value.len > 0
+        return false
+      let now = nowMs()
+      if now - ctx.runtime.lastSignalPollMs < SignalPollIntervalMs:
+        return false
+      ctx.runtime.lastSignalPollMs = now
+      if not gSignalPollOpened:
+        gSignalPollCh.open(1)
+        gSignalPollOpened = true
+      gSignalPollInFlight = true
+      createThread(gSignalPollThread, signalPollThread, addr ctx.adapters.signal)
+      false,
   )
 
 proc withOutboxDrain(ctx: DaemonContext;
@@ -1337,7 +1474,16 @@ proc runDaemonLoop(ctx: DaemonContext;
 proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).} =
   ## Async daemon: Telegram (pollTimeout=0) + Discord (gateway thread) + WeCom (webhook thread).
   ## Loop: drain globalOutbox → drain Discord → drain WeCom → poll Telegram → sleepAsync(100ms)
+  if cfg.invalidDmPolicy.len > 0:
+    log.error("invalid dm_policy: " & cfg.invalidDmPolicy & " (use open|allowlist)")
+    quit(1)
+  if cfg.dmPolicy == DmPolicyPairing:
+    log.error("dm_policy=pairing is not implemented yet; use open or allowlist")
+    quit(1)
   log.info("daemon starting — Telegram + Discord + WeCom")
+  {.cast(gcsafe).}:
+    initMetrics()
+    startOptionalMetricsServer(log)
 
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory

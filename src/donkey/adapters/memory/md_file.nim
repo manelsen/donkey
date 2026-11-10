@@ -8,6 +8,7 @@
 
 import std/[json, os, strutils, times]
 import ../../core/types
+import ../../core/pipeops
 import ../../ports/memory
 import ../../domain/message
 import ../../domain/personality
@@ -395,6 +396,58 @@ proc updateUserField*(a: MdFileAdapter; userId: UserId; field, value: string) =
 
 proc isRevoked*(a: MdFileAdapter; userId: UserId): bool =
   isRevokedUserMd(readOrEmpty(a.userMdPath(userId)))
+
+# ── DM allowlist ──────────────────────────────────────────────────────────────
+
+func dmAllowlistPath*(a: MdFileAdapter): string =
+  ## Instance-level allowlist, stored outside the paddocks.
+  parentDir(a.paddocksDir) / "state" / "dm_allowlist.txt"
+
+proc isDmAllowed*(a: MdFileAdapter; userId: UserId): bool =
+  ## Returns true when the user id is explicitly present in the allowlist.
+  let path = a.dmAllowlistPath()
+  if not fileExists(path):
+    return false
+  try:
+    for line in lines(path):
+      if line.strip == $userId:
+        return true
+  except CatchableError:
+    discard
+  false
+
+proc addDmAllowed*(a: MdFileAdapter; userId: UserId): Result[void, string] =
+  let path = a.dmAllowlistPath()
+  let rawId = $userId
+  if rawId.len == 0 or rawId.strip != rawId or '\n' in rawId or '\r' in rawId:
+    return err("dm allowlist add failed: invalid user id")
+  if a.isDmAllowed(userId):
+    return ok()
+  try:
+    createDir(parentDir(path))
+    var f = open(path, fmAppend)
+    defer: f.close()
+    f.writeLine($userId)
+    ok()
+  except CatchableError as e:
+    err("dm allowlist add failed: " & e.msg)
+
+proc removeDmAllowed*(a: MdFileAdapter; userId: UserId): Result[void, string] =
+  let path = a.dmAllowlistPath()
+  if not fileExists(path):
+    return ok()
+  try:
+    var kept: seq[string] = @[]
+    for line in lines(path):
+      let value = line.strip
+      if value.len > 0 and value != $userId:
+        kept.add(value)
+    let tmp = path & ".tmp"
+    writeFile(tmp, if kept.len > 0: kept.join("\n") & "\n" else: "")
+    moveFile(tmp, path)
+    ok()
+  except CatchableError as e:
+    err("dm allowlist remove failed: " & e.msg)
 
 proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) =
   a.ensurePaddock(userId)

@@ -8,7 +8,25 @@
 ##   4. Métricas são rastreáveis sem poluir UX final do usuário
 
 import std/[strutils, unittest, tables]
+import donkey/core/pipeops
 import donkey/app/metrics
+import donkey/app/metrics_server
+
+suite "metrics — configuration validation":
+
+  test "parseMetricsPort rejects non-numeric, zero and out-of-range ports":
+    check parseMetricsPort("abc").isErr
+    check parseMetricsPort("0").isErr
+    check parseMetricsPort("65536").isErr
+    check parseMetricsPort("-1").isErr
+
+  test "parseMetricsPort accepts a valid port":
+    check parseMetricsPort("9090").isOk
+    check parseMetricsPort("9090").get() == 9090
+
+  test "validateMetricsBind rejects an invalid address":
+    check validateMetricsBind("127.0.0.1", 9090).isOk
+    check validateMetricsBind("not an address", 9090).isErr
 
 suite "metrics — operational failure counters":
 
@@ -51,6 +69,28 @@ suite "metrics — operational failure counters":
     recordReminderFailure("delivery timeout")
     check gMetrics.reminderFailures["delivery timeout"] == 2
 
+  test "provider latency and errors are rendered per provider":
+    initMetrics()
+    recordLatency("openrouter", 120.0)
+    recordLatency("openrouter", 80.0)
+    recordError("openrouter")
+    recordError("gemini")
+
+    let rendered = renderMetrics()
+    check "provider=\"openrouter\"" in rendered
+    check "donkey_provider_latency_ms_count{provider=\"openrouter\"} 2" in rendered
+    check "donkey_provider_latency_ms_sum{provider=\"openrouter\"} 200.0" in rendered
+    check "donkey_provider_errors_total{provider=\"openrouter\"} 1" in rendered
+    check "donkey_provider_errors_total{provider=\"gemini\"} 1" in rendered
+    check "donkey_provider_latency_ms_sum{provider=\"gemini\"}" notin rendered
+    check "donkey_provider_latency_ms_count{provider=\"gemini\"}" notin rendered
+
+  test "renderMetrics escapes quotes in label values":
+    initMetrics()
+    recordWebhookFailure("we\"ird", "boom")
+    let rendered = renderMetrics()
+    check "server=\"we\\\"ird\"" in rendered
+
   test "renderMetrics includes operational failure counters":
     initMetrics()
     recordOutboundFailure("qq", "network unreachable")
@@ -82,6 +122,7 @@ suite "metrics — operational failure counters":
     # Operational failure counters are only exposed on /metrics endpoint,
     # not in user-facing messages or responses.
     # This is a design invariant verified by architecture (separate module).
+    initMetrics()
     let rendered = renderMetrics()
     # Metrics output is machine-readable Prometheus format, not user-facing text
     check rendered.startsWith("# HELP donkey_")

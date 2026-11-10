@@ -184,3 +184,60 @@ suite "output_sanitizer — cleanResponse pipeops":
     let r = Result[string, string].ok(cleaned) >>= checkForSecrets
     ## After masking, [REDACTED] should not trigger secret detection
     check r.isOk
+
+suite "output_sanitizer — safeStreamPrefix":
+  test "holds back an unterminated credential prefix":
+    check safeStreamPrefix("hello sk-abc") == "hello "
+
+  test "emits complete text when the tail is not credential-like":
+    check safeStreamPrefix("hello world") == "hello world"
+
+  test "holds back a whole credential-looking chunk":
+    check safeStreamPrefix("sk-abc") == ""
+
+  test "does not hold back after a delimiter":
+    check safeStreamPrefix("hello sk-abc ") == "hello sk-abc "
+
+  test "empty input is empty":
+    check safeStreamPrefix("") == ""
+
+  test "holds back a partial thought tag":
+    check safeStreamPrefix("ok <thin") == "ok "
+
+  test "holds back an unterminated thought tag":
+    check safeStreamPrefix("ok <thinking>secret") == "ok "
+
+  test "holds back the value after Bearer":
+    check safeStreamPrefix("Bearer abc") == "Bearer "
+
+  test "holds back the value after Bearer with repeated delimiters":
+    check safeStreamPrefix("Bearer\n\nabc") == "Bearer\n\n"
+    check safeStreamPrefix("Bearer  abc") == "Bearer  "
+
+  test "holds back a credential after an assignment separator":
+    check safeStreamPrefix("api_key=sk-abcdefgh") == ""
+    check safeStreamPrefix("x api_key=sk-abcdefgh") == "x "
+
+  test "masks a short credential after an assignment separator":
+    check cleanResponse("api_key=sk-abcdefgh") == "[REDACTED]"
+    check cleanResponse("API_KEY=sk-abcdefgh") == "[REDACTED]"
+
+  test "preserves URLs and hex hashes":
+    check cleanResponse("https://github.com/manelsen/donkey") == "https://github.com/manelsen/donkey"
+    let hash = "57afdf4a15e4d7bb6cc2dd1d2908b78543269b39"
+    check cleanResponse(hash) == hash
+
+  test "keeps ordinary auth prose intact":
+    check cleanResponse("use Bearer auth") == "use Bearer auth"
+    check cleanResponse("Authorization: Bearer abc123") == "Authorization: Bearer abc123"
+
+  test "keeps locale-like assignments intact":
+    check cleanResponse("locale=sk-SK") == "locale=sk-SK"
+    check cleanResponse("lang:sk-SK") == "lang:sk-SK"
+    check cleanResponse("x=AKIAN") == "x=AKIAN"
+
+  test "short non-secret tokens are not held":
+    check safeStreamPrefix("sk") == "sk"
+
+  test "closed thought tags are removed by the caller's cleanResponse":
+    check cleanResponse("ok <thinking>secret</thinking>done") == "ok done"

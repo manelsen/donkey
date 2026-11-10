@@ -59,9 +59,44 @@ const MaskLabel = "[REDACTED]"
 const TokenDelimiters = {' ', '\t', '\n', '\r', '"', '\'', ',', ';',
                          '(', ')', '[', ']', '{', '}'}
 
+func looksLikeStreamSecretToken(token: string): bool =
+  ## True for a credential marker, including the value after `=` or `:`.
+  looksLikeSecretPrefix(token) or looksLikeSecretPrefix(assignedValue(token))
+
+func looksLikeAssignedSecret(token: string): bool =
+  ## Final-response heuristic: a complete known marker after `=` or `:` on a
+  ## credential-looking key. Avoids masking locale=sk-SK / x=AKIAN.
+  let eq = token.find('=')
+  let colon = token.find(':')
+  let sep = if eq > 0: eq elif colon > 0: colon else: -1
+  if sep <= 0:
+    return false
+  isContextKeyword(token[0 ..< sep].toLowerAscii()) and
+    startsWithKnownSecretPrefix(token[sep + 1 .. ^1])
+
+func isBenignToken(token: string): bool =
+  ## URLs and git-style hex hashes are common in legitimate answers.
+  let lower = token.toLowerAscii()
+  if lower.startsWith("http://") or lower.startsWith("https://"):
+    return true
+  if token.len in {40, 64}:
+    var allHex = true
+    for c in token:
+      if c notin {'0'..'9', 'a'..'f', 'A'..'F'}:
+        allHex = false
+        break
+    if allHex:
+      return true
+  false
+
 func isSecretToken(token: string): bool =
-  ## Returns true if `token` is flagged by the secret scanner.
-  (token |> scanForSecrets).len > 0
+  ## Returns true if `token` is flagged by the secret scanner or carries a
+  ## complete credential marker after an assignment separator.
+  if isBenignToken(token):
+    return false
+  if (token |> scanForSecrets).len > 0:
+    return true
+  looksLikeAssignedSecret(token)
 
 func maskSecrets*(text: string): string =
   ## Replaces secret-looking tokens in text with [REDACTED].
@@ -86,3 +121,64 @@ func cleanResponse*(text: string): string =
   ## Main entry point for sanitizing LLM responses before user delivery.
   ## Pipeline: text |> stripThoughtTags |> maskSecrets
   text |> stripThoughtTags |> maskSecrets
+
+# ── streaming ─────────────────────────────────────────────────────────────────
+
+func openThoughtTagIndex(text: string): int =
+  ## Index of an opening thought tag that has not been closed yet, or -1.
+  ## Also catches a partial opening tag at the very end (e.g. "<thin").
+  for pair in ThoughtTagPairs:
+    var searchFrom = 0
+    while true:
+      let open = text.find(pair[0], searchFrom)
+      if open < 0:
+        break
+      let close = text.find(pair[1], open + pair[0].len)
+      if close < 0:
+        return open
+      searchFrom = close + pair[1].len
+
+  let lt = text.rfind('<')
+  let gt = text.rfind('>')
+  if lt >= 0 and lt > gt:
+    let suffix = text[lt .. ^1]
+    for pair in ThoughtTagPairs:
+      if pair[0].startsWith(suffix):
+        return lt
+  -1
+
+func safeStreamPrefix*(text: string): string =
+  ## Returns the portion of a streaming response that is safe to emit before
+  ## the token/tag is complete. Holds back an unterminated thought tag and a
+  ## trailing token that could be a credential (including after "Bearer").
+  if text.len == 0:
+    return ""
+
+  let thoughtAt = openThoughtTagIndex(text)
+  let head = if thoughtAt >= 0: text[0 ..< thoughtAt] else: text
+  if head.len == 0:
+    return ""
+
+  var lastDelimiter = -1
+  for i, c in head:
+    if c in TokenDelimiters:
+      lastDelimiter = i
+
+  if lastDelimiter < 0:
+    return if looksLikeStreamSecretToken(head): "" else: head
+
+  let tail = head[lastDelimiter + 1 .. ^1]
+  if tail.len > 0:
+    var prevEnd = lastDelimiter
+    while prevEnd > 0 and head[prevEnd - 1] in TokenDelimiters:
+      dec prevEnd
+    var prevStart = prevEnd
+    while prevStart > 0 and head[prevStart - 1] notin TokenDelimiters:
+      dec prevStart
+    let previous = head[prevStart ..< prevEnd]
+    if previous.toLowerAscii() == "bearer":
+      return head[0 .. lastDelimiter]
+    if looksLikeStreamSecretToken(tail):
+      return head[0 .. lastDelimiter]
+
+  head

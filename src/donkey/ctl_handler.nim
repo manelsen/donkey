@@ -57,9 +57,20 @@ proc ctlUserEdit*(memory: MdFileAdapter; uuid, field, value: string) =
   memory.updateUserField(UserId(uuid), field, value)
   echo "Updated " & uuid & ": " & field & " = " & value
 
-proc ctlUserRevoke*(memory: MdFileAdapter; uuid: string; revoked: bool) =
-  memory.updateUserField(UserId(uuid), "Access", if revoked: "revoked" else: "active")
+proc ctlUserRevoke*(memory: MdFileAdapter; uuid: string; revoked: bool): Result[void, string] =
+  let userId = UserId(uuid)
+  # Allowlist first: a failure must not leave Access changed without the
+  # corresponding allowlist entry.
+  let allowlistResult =
+    if revoked: memory.removeDmAllowed(userId)
+    else: memory.addDmAllowed(userId)
+  if allowlistResult.isErr:
+    echo "Error: " & allowlistResult.error
+    return err(allowlistResult.error)
+  if memory.hasProfile(userId):
+    memory.updateUserField(userId, "Access", if revoked: "revoked" else: "active")
   echo (if revoked: "Revoked " else: "Restored ") & uuid
+  ok()
 
 # ── ctl session commands ───────────────────────────────────────────────────────
 
@@ -237,9 +248,13 @@ proc dispatchCtl*(cfg: DonkeyConfig;
   if args[1] == "user" and args.len >= 6 and args[2] == "edit":
     ctlUserEdit(memory, args[3], args[4], args[5 .. ^1].join(" ")); return 0
   if args[1] == "user" and args.len >= 4 and args[2] == "revoke":
-    ctlUserRevoke(memory, args[3], true); return 0
+    let res = ctlUserRevoke(memory, args[3], true)
+    if res.isErr: echo res.error; return 1
+    return 0
   if args[1] == "user" and args.len >= 4 and args[2] == "allow":
-    ctlUserRevoke(memory, args[3], false); return 0
+    let res = ctlUserRevoke(memory, args[3], false)
+    if res.isErr: echo res.error; return 1
+    return 0
 
   # ── session ──
   if args[1] == "session" and args.len >= 4 and args[2] == "list":

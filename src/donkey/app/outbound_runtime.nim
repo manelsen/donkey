@@ -71,6 +71,9 @@ proc sendImmediateOutbound*(msg: OutboundMessage;
                             ports: OutboundChannelPorts;
                             log: Logger) {.gcsafe.} =
   let port = ports.channelPortFor(msg.channel)
+  if port.send == nil:
+    log.error("outbound: channel " & $msg.channel & " is not configured")
+    return
   let sendResult = port.send(msg)
   if sendResult.isErr:
     let error = sendResult.error

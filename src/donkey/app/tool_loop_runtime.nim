@@ -8,6 +8,7 @@ import chronos
 import chronos/asyncsync
 import ../core/pipeops
 import ../core/log
+import ../core/output_sanitizer
 import ../core/tooling/tool_loop
 import ../core/agent_events
 import ../domain/agent_message
@@ -17,6 +18,7 @@ import ../ports/provider
 import ../app/session_state
 import ../app/native_tools
 import ../app/prompt_building
+import ../app/provider_executor
 
 export tool_loop
 
@@ -43,12 +45,15 @@ type StreamJob* = object
   req*: CompletionRequest
   ch*:  ptr Channel[string]
   res*: ptr CompletionResponse # Output
+  errOut*: ptr string
 
 proc doStreamJob*(job: StreamJob) {.thread, gcsafe.} =
   let res = job.fn(job.req,
                    proc(tok: string) {.gcsafe.} = job.ch[].send(tok))
   if res.isOk:
     job.res[] = res.value
+  else:
+    job.errOut[] = res.error
   job.ch[].send(doneSentinel)
 
 proc streamToOutbox*(fn:        StreamFn;
@@ -57,64 +62,62 @@ proc streamToOutbox*(fn:        StreamFn;
                     userId:    UserId;
                     ch:        ChannelKind;
                     replyTo:   string;
-                    streamId:  string): Future[(string, string)] {.async.} =
+                    streamId:  string): Future[Result[CompletionResponse, string]] {.async.} =
   var tokenChan: Channel[string]
   var finalResponse: CompletionResponse
+  var streamErr = ""
   tokenChan.open(512)
 
   var t: Thread[StreamJob]
   createThread(t, doStreamJob,
-               StreamJob(fn: fn, req: req, ch: addr tokenChan, res: addr finalResponse))
+               StreamJob(fn: fn, req: req, ch: addr tokenChan,
+                         res: addr finalResponse, errOut: addr streamErr))
 
   var accumulated = ""
   var lastFlush   = nowMs()
+  var lastSent    = ""
 
   while true:
     var (has, tok) = tokenChan.tryRecv()
     while has:
       if tok == doneSentinel:
-        let visible = filterThinking(finalResponse.text)
-        if visible.len > 0:
-          await outbox.put(OutboundMessage(
-            userId:    userId,
-            channel:   ch,
-            text:      visible,
-            replyTo:   replyTo,
-            streamId:  streamId,
-            isPartial: false,
-          ))
-        else:
-          await outbox.put(OutboundMessage(
-            userId:    userId,
-            channel:   ch,
-            text:      "...",
-            replyTo:   replyTo,
-            streamId:  streamId,
-            isPartial: false,
-          ))
         tokenChan.close()
         joinThread(t)
-        return (finalResponse.text, finalResponse.reasoning)
+        if streamErr.len > 0:
+          return err(streamErr)
+        if finalResponse.toolCalls.len == 0:
+          let visible = cleanResponse(finalResponse.text)
+          await outbox.put(OutboundMessage(
+            userId:    userId,
+            channel:   ch,
+            text:      if visible.strip.len > 0: visible else: "...",
+            replyTo:   replyTo,
+            streamId:  streamId,
+            isPartial: false,
+          ))
+        return ok(finalResponse)
       accumulated.add(tok)
       (has, tok) = tokenChan.tryRecv()
 
-    let visible = filterThinking(accumulated)
-    if visible.len > 0 and nowMs() - lastFlush >= StreamFlushMs:
+    if accumulated.len > 0 and nowMs() - lastFlush >= StreamFlushMs:
       lastFlush = nowMs()
-      await outbox.put(OutboundMessage(
-        userId:    userId,
-        channel:   ch,
-        text:      visible,
-        replyTo:   replyTo,
-        streamId:  streamId,
-        isPartial: true,
-      ))
+      let visible = cleanResponse(safeStreamPrefix(accumulated))
+      if visible.strip.len > 0 and visible != lastSent:
+        lastSent = visible
+        await outbox.put(OutboundMessage(
+          userId:    userId,
+          channel:   ch,
+          text:      visible,
+          replyTo:   replyTo,
+          streamId:  streamId,
+          isPartial: true,
+        ))
 
     await sleepAsync(milliseconds(30))
 
   tokenChan.close()
   joinThread(t)
-  return (finalResponse.text, finalResponse.reasoning)
+  if streamErr.len > 0: err(streamErr) else: ok(finalResponse)
 
 # ── Typing loop ───────────────────────────────────────────────────────────────
 
@@ -144,6 +147,9 @@ proc safeComplete(fn: CompleteFn; req: CompletionRequest
                  ): Result[CompletionResponse, string] {.gcsafe, raises: [].} =
   try: fn(req)
   except Exception as e: err(e.msg)
+
+func completionErr(msg: string): Result[CompletionResponse, string] {.gcsafe.} =
+  err(msg)
 
 proc awaitExpectedReply*(outbox: AsyncQueue[AgentMessage];
                         expectedId: string;
@@ -312,7 +318,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
                  suppressProgress: bool;
                  debugMode: bool;
                  showReasoning: bool;
-                 log: Logger): Future[ToolLoopRunResult] {.async.} =
+                 log: Logger;
+                 asyncCompleteFn: AsyncCompleteFn = nil): Future[ToolLoopRunResult] {.async.} =
   var loopState = history |> newToolLoopState
   var round = 0
   var recentCalls: seq[(string, string)] = @[]
@@ -323,21 +330,59 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
 
     let req = buildPrompt(systemBase, loopState.history, context, tools, reasoning = showReasoning)
 
+    let canStreamToolCalls =
+      streamFn != nil and providerLabel.toLowerAscii().startsWith("openrouter")
     if decideToolLoopStreaming(
       round = round,
       toolsCount = tools.len,
-      streamingAvailable = streamFn != nil,
+      streamingAvailable = streamFn != nil and not suppressProgress,
+      streamingToolCalls = canStreamToolCalls and not suppressProgress,
     ).useStreaming:
-      let (streamText, streamReasoning) = await streamToOutbox(
+      let streamedRes = await streamToOutbox(
         streamFn, req, globalOutbox, uid, channel, replyTo, streamId)
+      if streamedRes.isErr:
+        pushAgentEvent(AgentEvent(
+          kind:    aekError,
+          userId:  $uid,
+          channel: $channel,
+          summary: "stream provider: " & streamedRes.error[0 ..< min(streamedRes.error.len, 80)],
+        ))
+        await globalOutbox.put(OutboundMessage(
+          userId: uid,
+          channel: channel,
+          text: explainProviderError(errorExplainFn, streamedRes.error),
+          replyTo: replyTo,
+        ))
+        loopState.done = true
+        continue
+      let streamed = streamedRes.value
 
       log.info($uid & " (" & $channel & ") <- [" & providerLabel &
-               "] |" & $streamText.len & "| stream")
-      loopState =
-        loopState |>->
-        withStreamFinalText(streamText, streamReasoning)
+               "] |" & $streamed.text.len & "| stream")
+      if streamed.toolCalls.len > 0:
+        loopState.history.addAssistantWithToolCalls(streamed.text, streamed.toolCalls)
+        let batchResult = await processToolCalls(
+          globalOutbox, toolInbox, toolOut, nativeCtx, state, loopState.history,
+          uid, channel, replyTo, msgId, round, toolStatusId, streamed.toolCalls,
+          providerLabel, suppressProgress, debugMode, loopState.toolCallCount,
+          recentCalls, log)
+        loopState =
+          loopState |>->
+          withToolBatchState(batchResult)
+        recentCalls = batchResult.recentCalls
+      else:
+        loopState =
+          loopState |>->
+          withStreamFinalText(streamed.text, streamed.reasoning)
       continue
-    let resp = safeComplete(completeFn, req)
+    let resp =
+      if asyncCompleteFn != nil:
+        try:
+          await asyncCompleteFn(req)
+        except Exception as e:
+          completionErr(e.msg)
+      else:
+        safeComplete(completeFn, req)
     if resp.isErr:
       pushAgentEvent(AgentEvent(
         kind:    aekError,
@@ -451,14 +496,17 @@ proc finalizeNormalTurn*(globalOutbox: AsyncQueue[OutboundMessage];
 
   if not loopResult.done or not loopResult.wasStreamed:
     if loopResult.finalText.len > 0:
-      if suppressQuietFinal and isQuietHeartbeatText(loopResult.finalText):
+      let cleanFinal = cleanResponse(loopResult.finalText).strip()
+      if suppressQuietFinal and isQuietHeartbeatText(cleanFinal):
         return
       var fullText = ""
       if showReasoning and loopResult.reasoning.len > 0:
-        let cleanReasoning = loopResult.reasoning.strip()
+        let cleanReasoning = cleanResponse(loopResult.reasoning).strip()
         if cleanReasoning.len > 0:
           fullText = "> " & cleanReasoning.replace("\n", "\n> ") & "\n\n"
-      fullText &= loopResult.finalText
+      fullText &= cleanFinal
+      if fullText.strip.len == 0:
+        fullText = "..."
 
       await globalOutbox.put(OutboundMessage(
         userId: uid,

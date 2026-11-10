@@ -7,14 +7,13 @@
 ## Format: OpenAI-compatible (system as first message with role=system,
 ## messages array with role/content pairs).
 
-import std/[httpclient, json, streams, strutils]
+import std/[httpclient, json, streams, strutils, tables]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/app_meta
 import ../../core/json_helpers
 import ../http/helpers
-import ./sse
 
 const
   OpenRouterEndpoint*    = "https://openrouter.ai/api/v1/chat/completions"
@@ -30,8 +29,16 @@ type
     referer*:  string   ## HTTP-Referer header value
     xTitle*:   string   ## X-Title header value
 
+  OpenRouterToolDelta* = object
+    index*:     int
+    id*:        string
+    name*:      string
+    arguments*: string
+
   OpenRouterSseChunk* = object
     token*:        string
+    reasoning*:    string
+    toolCalls*:    seq[OpenRouterToolDelta]
     done*:         bool
     inputTokens*:  int
     outputTokens*: int
@@ -150,12 +157,29 @@ proc parseOpenRouterSseLine*(line: string): Result[OpenRouterSseChunk, string] =
   let usage = j.getOrDefault("usage")
   let choices = j.getOrDefault("choices")
   var token = ""
+  var reasoning = ""
+  var toolCalls: seq[OpenRouterToolDelta] = @[]
   if choices != nil and choices.kind == JArray and choices.len > 0:
     let delta = choices[0].getOrDefault("delta")
     if delta != nil:
       token = delta.getOrDefault("content").getStr("")
+      reasoning = delta.getOrDefault("reasoning").getStr("")
+      if reasoning.len == 0:
+        reasoning = delta.getOrDefault("reasoning_content").getStr("")
+      let tcs = delta.getOrDefault("tool_calls")
+      if tcs != nil and tcs.kind == JArray:
+        for tc in tcs:
+          let fn = tc.getOrDefault("function")
+          toolCalls.add OpenRouterToolDelta(
+            index:     tc.getOrDefault("index").getInt(0),
+            id:        tc.getOrDefault("id").getStr(""),
+            name:      if fn != nil: fn.getOrDefault("name").getStr("") else: "",
+            arguments: if fn != nil: fn.getOrDefault("arguments").getStr("") else: "",
+          )
   ok(OpenRouterSseChunk(
     token:        token,
+    reasoning:    reasoning,
+    toolCalls:    toolCalls,
     inputTokens:  usage.jInt("prompt_tokens"),
     outputTokens: usage.jInt("completion_tokens"),
   ))
@@ -198,11 +222,52 @@ proc makeStreamFn*(a: OpenRouterAdapter): StreamFn =
       let url  = if adapter.endpoint.len > 0: adapter.endpoint else: OpenRouterEndpoint
       let resp = client.request(url, httpMethod = HttpPost, body = body)
       checkApiStatus(resp, "OpenRouter")
-      sseAccumulate(resp.bodyStream, parseOpenRouterSseLine, onToken)
+
+      var accumulated = ""
+      var reasoning = ""
+      var inputTokens = 0
+      var outputTokens = 0
+      var toolAcc = initTable[int, ToolCallRequest]()
+      var toolOrder: seq[int] = @[]
+      var line = ""
+      while resp.bodyStream.readLine(line):
+        let chunk = parseOpenRouterSseLine(line).valueOr:
+          return err(error)
+        if chunk.done:
+          break
+        if chunk.token.len > 0:
+          accumulated.add(chunk.token)
+          onToken(chunk.token)
+        if chunk.reasoning.len > 0:
+          reasoning.add(chunk.reasoning)
+        if chunk.inputTokens > 0: inputTokens = chunk.inputTokens
+        if chunk.outputTokens > 0: outputTokens = chunk.outputTokens
+        for delta in chunk.toolCalls:
+          if delta.index notin toolAcc:
+            toolAcc[delta.index] = ToolCallRequest(
+              id: delta.id, name: delta.name, inputJson: delta.arguments)
+            toolOrder.add(delta.index)
+          else:
+            var current = toolAcc[delta.index]
+            if delta.id.len > 0: current.id = delta.id
+            if delta.name.len > 0: current.name = delta.name
+            current.inputJson.add(delta.arguments)
+            toolAcc[delta.index] = current
+
+      var toolCalls: seq[ToolCallRequest] = @[]
+      for idx in toolOrder:
+        var tc = toolAcc[idx]
+        if tc.name.len == 0:
+          continue
+        if tc.inputJson.strip.len == 0:
+          tc.inputJson = "{}"
+        toolCalls.add(tc)
       ok(CompletionResponse(
         text:         accumulated,
+        reasoning:    reasoning,
         inputTokens:  inputTokens,
         outputTokens: outputTokens,
+        toolCalls:    toolCalls,
       ))
 
 # ── Constructor ───────────────────────────────────────────────────────────────

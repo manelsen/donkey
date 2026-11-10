@@ -237,16 +237,20 @@ func withToolBatchState*(batch: ToolBatchState;
 
 func decideToolLoopStreaming*(round: int;
                               toolsCount: int;
-                              streamingAvailable: bool): ToolLoopStreamDecision =
+                              streamingAvailable: bool;
+                              streamingToolCalls = false): ToolLoopStreamDecision =
   ToolLoopStreamDecision(
-    useStreaming: streamingAvailable and round == 1 and toolsCount == 0
+    useStreaming: streamingAvailable and round == 1 and
+      (toolsCount == 0 or streamingToolCalls)
   )
 
 func decideToolLoopRound*(round: int;
                           toolsCount: int;
                           streamingAvailable: bool;
-                          completion: CompletionResponse): ToolLoopRoundDecision =
-  if decideToolLoopStreaming(round, toolsCount, streamingAvailable).useStreaming:
+                          completion: CompletionResponse;
+                          streamingToolCalls = false): ToolLoopRoundDecision =
+  if decideToolLoopStreaming(round, toolsCount, streamingAvailable,
+                             streamingToolCalls).useStreaming:
     return ToolLoopRoundDecision(kind: tlrkUseStreaming)
   let completionDecision = decideCompletion(completion, debugMode = false)
   case completionDecision.kind

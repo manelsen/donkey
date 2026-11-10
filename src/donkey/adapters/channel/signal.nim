@@ -18,6 +18,7 @@ import ../../core/pipeops
 import ../../domain/message
 import ../../domain/channels/signal_pure
 import ../identity/identity_resolver
+import ./socket_timeout
 
 export identity_resolver
 
@@ -38,6 +39,7 @@ proc rpcCall(sockPath, meth: string;
   try:
     let sock = newSocket(Domain.AF_UNIX, SockType.SOCK_STREAM, Protocol.IPPROTO_IP)
     defer: sock.close()
+    ? applySocketTimeouts(sock, 10, "signal")
     sock.connectUnix(sockPath)
     sock.send($req & "\n")
     let line = sock.recvLine(timeout = 10_000)

@@ -19,6 +19,7 @@ import donkey/adapters/memory/md_file
 import donkey/app/memory_agent
 import donkey/app/tool_agent
 import donkey/app/orchestrator
+import donkey/app/provider_executor
 import donkey/app/session_manager
 import donkey/app/session_state
 
@@ -262,6 +263,79 @@ suite "OrchestratorAgent":
     let reply = waitFor doTest(tmpDir)
 
     check reply.text == "pong"
+
+  test "final response strips thought tags and masks leaked secrets":
+    let tmpDir = getTempDir() / "donkey_test_orch_sanitize"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc leakyComplete(req: CompletionRequest): Result[CompletionResponse, string] =
+      ok(CompletionResponse(
+        text: "<thinking>internal plan</thinking>final key: sk-abcdefghijklmnopqrstuvwxyz1234",
+        inputTokens: 1,
+        outputTokens: 1,
+      ))
+
+    proc doTest(dir: string): Future[OutboundMessage] {.async.} =
+      let userDir = dir / "u-sanitize"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Bob")
+      let mem      = MdFileAdapter(paddocksDir: dir)
+      let inbox    = newAsyncQueue[AgentMessage]()
+      let outbox   = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), leakyComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 dir / "u-sanitize", state)
+      await inbox.put(newTaskMsg("req-sanitize", tkUserMsg, "u-sanitize", "ping"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      return reply
+
+    let reply = waitFor doTest(tmpDir)
+
+    check "<thinking>" notin reply.text
+    check "internal plan" notin reply.text
+    check "sk-abcdefghijklmnopqrstuvwxyz1234" notin reply.text
+    check "[REDACTED]" in reply.text
+    check "final key:" in reply.text
+
+  test "final response with only thought tags falls back to ellipsis":
+    let tmpDir = getTempDir() / "donkey_test_orch_only_thinking"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc thinkingOnly(req: CompletionRequest): Result[CompletionResponse, string] =
+      ok(CompletionResponse(
+        text: "<thinking>internal only</thinking>\n",
+        inputTokens: 1,
+        outputTokens: 1,
+      ))
+
+    proc doTest(dir: string): Future[OutboundMessage] {.async.} =
+      let userDir = dir / "u-thinking"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Bob")
+      let mem      = MdFileAdapter(paddocksDir: dir)
+      let inbox    = newAsyncQueue[AgentMessage]()
+      let outbox   = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), thinkingOnly,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 dir / "u-thinking", state)
+      await inbox.put(newTaskMsg("req-thinking", tkUserMsg, "u-thinking", "ping"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      return reply
+
+    let reply = waitFor doTest(tmpDir)
+    check reply.text == "..."
 
   test "heartbeat task is processed as an agent turn":
     let tmpDir = getTempDir() / "donkey_test_orch_heartbeat"

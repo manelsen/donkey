@@ -41,6 +41,7 @@ type
     sandboxReadOnlyRootfs*: bool ## Keep OCI rootfs read-only outside mounted workspace/tmp
     wasmShellPath*: string       ## path to .wasm shell for smWasm; default: {home}/shell.wasm
     dmPolicy*:      DmPolicy     ## DM security policy; default: DmPolicyOpen
+    invalidDmPolicy*: string     ## Raw invalid value from TOML/env; blocks startup
     wiring*:        bool         ## Enable advanced session wiring; default: false
 
 func defaultConfig*(home: string): DonkeyConfig =

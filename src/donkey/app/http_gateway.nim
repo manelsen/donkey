@@ -13,6 +13,9 @@
 ## CORS: Access-Control-Allow-Origin: * for local browser access.
 
 import std/[json, net, os, strutils]
+import locks
+import threadpool
+import std/posix
 import ../core/pipeops
 import ../core/types
 import ../core/log
@@ -24,7 +27,9 @@ import ./metrics
 const
   GatewayDefaultPort* = 8080
   SseHeartbeatIntervalMs = 5000   ## ms between SSE heartbeat/push cycles
-  SseMaxPollCycles = 3600         ## ~5 hours at 5s intervals
+  SseMaxPollCycles = 60           ## bounded to ~5 minutes at 5s intervals
+  MaxConcurrentHttpConnections = 32
+  MaxConcurrentSseConnections = 8
 
 func resolveGatewayPort*(raw: string): int =
   ## Parses DONKEY_HTTP_PORT semantics.
@@ -37,6 +42,68 @@ func resolveGatewayPort*(raw: string): int =
     if parsed <= 0: 0 else: parsed
   except ValueError:
     GatewayDefaultPort
+
+func parseBearerToken(header: string): string =
+  ## Extracts the token from an "Authorization: Bearer <token>" value.
+  let value = header.strip()
+  const prefix = "bearer "
+  if value.len > prefix.len and value.toLowerAscii().startsWith(prefix):
+    value[prefix.len .. ^1].strip()
+  else:
+    ""
+
+func constantTimeEq(a, b: string): bool =
+  if a.len != b.len:
+    return false
+  var diff = 0
+  for i in 0 ..< a.len:
+    diff = diff or (ord(a[i]) xor ord(b[i]))
+  diff == 0
+
+func isAuthorized*(authHeader, token: string): bool =
+  ## Empty token keeps the historical local-only behavior; otherwise a
+  ## matching Bearer token is required on every request.
+  if token.len == 0:
+    return true
+  constantTimeEq(parseBearerToken(authHeader), token)
+
+func gatewayBindIsAllowed*(bindAddr, token: string;
+                           allowInsecure = false): bool =
+  ## Loopback is always allowed. Non-loopback requires a token AND an explicit
+  ## opt-in because this gateway speaks cleartext HTTP.
+  let host = bindAddr.strip().toLowerAscii()
+  if host in ["127.0.0.1", "localhost", "::1", "[::1]"]:
+    return true
+  allowInsecure and token.len > 0
+
+func isLocalOrigin*(origin: string): bool =
+  let value = origin.strip().toLowerAscii()
+  if value.len == 0:
+    return true
+  for scheme in ["http://", "https://"]:
+    if value.startsWith(scheme):
+      let authority = value[scheme.len .. ^1]
+      if '/' in authority:
+        return false
+      var host = authority
+      if host.startsWith("["):
+        let close = host.find(']')
+        if close < 0:
+          return false
+        host = host[0 .. close]
+      else:
+        host = host.split(':')[0]
+      return host in ["localhost", "127.0.0.1", "[::1]"]
+  false
+
+func chatRequestAllowed*(origin, contentType, token: string): bool =
+  ## Blocks simple cross-origin form posts; with a token the bearer check is
+  ## the primary control. Without a token only local origins and JSON bodies.
+  if token.len > 0:
+    return true
+  if not isLocalOrigin(origin):
+    return false
+  contentType.toLowerAscii().strip.startsWith("application/json")
 
 type
   GatewayRequest* = object
@@ -110,7 +177,7 @@ func routeChatMethod*(meth: string): string =
 
 const CorsHeaders = "Access-Control-Allow-Origin: *\r\n" &
                     "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" &
-                    "Access-Control-Allow-Headers: Content-Type\r\n"
+                    "Access-Control-Allow-Headers: Content-Type, Authorization\r\n"
 
 proc readHttpLine(s: Socket): string =
   var buf = ""
@@ -204,12 +271,16 @@ proc parseChatPost*(body: string): Result[InboundMessage, string] =
 
 # ── Connection handler ────────────────────────────────────────────────────────
 
+proc tryAcquireSseConnection(): bool {.gcsafe.}
+proc releaseSseConnection() {.gcsafe.}
+
 proc handleGatewayConn(client: Socket;
                         statusFn: GatewayStatusFn;
                         logFn:    GatewayLogFn;
                         eventFn:  GatewayEventFn;
                         inboundFn: GatewayInboundFn;
-                        log:      Logger) =
+                        authToken: string;
+                        log:      Logger) {.gcsafe.} =
   try:
     let requestLine = client.readHttpLine()
     if requestLine.len == 0:
@@ -219,15 +290,38 @@ proc handleGatewayConn(client: Socket;
     ## Drain headers
     var rawPath = if requestLine.splitWhitespace().len >= 2: requestLine.splitWhitespace()[1] else: "/"
     var contentLength = 0
+    var authHeader = ""
+    var contentType = ""
+    var origin = ""
     while true:
       let h = client.readHttpLine()
       if h.len == 0: break
       let lc = h.toLowerAscii()
       if lc.startsWith("content-length:"):
-        let val = lc[14..^1].strip()
+        let val = lc[15..^1].strip()
         try: contentLength = parseInt(val) except ValueError: discard
+      elif lc.startsWith("authorization:"):
+        authHeader = h[14..^1].strip()
+      elif lc.startsWith("content-type:"):
+        contentType = h[13..^1].strip()
+      elif lc.startsWith("origin:"):
+        origin = h[7..^1].strip()
 
     let req = parseGatewayRequest(requestLine)
+    if req.meth == "OPTIONS":
+      client.sendResponse("204 No Content", "text/plain", "", log)
+      client.close()
+      return
+    if not isAuthorized(authHeader, authToken):
+      client.sendResponse("401 Unauthorized", "application/json",
+                          "{\"error\":\"unauthorized\"}\n", log)
+      client.close()
+      return
+    if authToken.len == 0 and origin.len > 0 and not isLocalOrigin(origin):
+      client.sendResponse("403 Forbidden", "application/json",
+                          "{\"error\":\"cross-origin access requires a token\"}\n", log)
+      client.close()
+      return
     let action = routeGatewayRequest(req)
 
     case action
@@ -245,34 +339,45 @@ proc handleGatewayConn(client: Socket;
       client.sendJson(buildLogsBody(entries), log)
 
     of "events":
-      client.sendSseHeaders(log)
-      ## Push a heartbeat comment immediately to confirm stream started.
-      try: client.send(": connected\n\n") except CatchableError: discard
-      ## Poll loop: push log + agent event snapshots every SseHeartbeatIntervalMs.
-      var lastLogCount   = 0
-      var lastEventCount = 0
-      for _ in 0 ..< SseMaxPollCycles:
-        os.sleep(SseHeartbeatIntervalMs)
-        let entries = logFn(100)
-        if entries.len > lastLogCount or entries.len > 0:
-          lastLogCount = entries.len
-          if not client.sendSseData("logs", buildLogsBody(entries)):
-            break
-        if eventFn != nil:
-          let evs = eventFn(100)
-          if evs.len > lastEventCount or evs.len > 0:
-            lastEventCount = evs.len
-            if not client.sendSseData("agent", buildAgentEventsBody(evs)):
+      if not tryAcquireSseConnection():
+        client.sendResponse("503 Service Unavailable", "text/plain",
+                            "too many event streams\n", log)
+        client.close()
+        return
+      try:
+        client.sendSseHeaders(log)
+        ## Push a heartbeat comment immediately to confirm stream started.
+        try: client.send(": connected\n\n") except CatchableError: discard
+        ## Poll loop: push log + agent event snapshots every SseHeartbeatIntervalMs.
+        var lastLogCount   = 0
+        var lastEventCount = 0
+        for _ in 0 ..< SseMaxPollCycles:
+          os.sleep(SseHeartbeatIntervalMs)
+          let entries = logFn(100)
+          if entries.len > lastLogCount or entries.len > 0:
+            lastLogCount = entries.len
+            if not client.sendSseData("logs", buildLogsBody(entries)):
               break
-        if entries.len == 0 and (eventFn == nil or eventFn(1).len == 0):
-          ## Heartbeat comment to keep connection alive.
-          try: client.send(": heartbeat\n\n") except CatchableError: break
+          if eventFn != nil:
+            let evs = eventFn(100)
+            if evs.len > lastEventCount or evs.len > 0:
+              lastEventCount = evs.len
+              if not client.sendSseData("agent", buildAgentEventsBody(evs)):
+                break
+          if entries.len == 0 and (eventFn == nil or eventFn(1).len == 0):
+            ## Heartbeat comment to keep connection alive.
+            try: client.send(": heartbeat\n\n") except CatchableError: break
+      finally:
+        releaseSseConnection()
 
     of "chat":
       let methAction = routeChatMethod(req.meth)
       case methAction
       of "chat":
-        if inboundFn == nil:
+        if not chatRequestAllowed(origin, contentType, authToken):
+          client.sendResponse("403 Forbidden", "application/json",
+                             "{\"error\":\"cross-origin chat requires a token\"}\n", log)
+        elif inboundFn == nil:
           client.sendResponse("503 Service Unavailable", "application/json",
                              "{\"error\":\"inbound handler not configured\"}\n", log)
         else:
@@ -316,6 +421,8 @@ proc handleGatewayConn(client: Socket;
 
 type GatewayArgs = object
   port:      int
+  bindAddr:  string
+  authToken: string
   statusFn:  GatewayStatusFn
   logFn:     GatewayLogFn
   eventFn:   GatewayEventFn
@@ -328,16 +435,117 @@ var gGatewayEventFn:  GatewayEventFn
 var gGatewayInboundFn: GatewayInboundFn
 var gGatewayLog:      Logger
 
+proc applyClientTimeouts(sock: Socket; seconds: int = 10): Result[void, string] =
+  ## Bounds header reads and sends from a connected client.
+  var tv: Timeval
+  tv.tv_sec = Time(seconds)
+  tv.tv_usec = Suseconds(0)
+  if setsockopt(sock.getFd, SOL_SOCKET, SO_RCVTIMEO, addr tv, SockLen(sizeof(tv))) != 0:
+    return err("SO_RCVTIMEO failed")
+  if setsockopt(sock.getFd, SOL_SOCKET, SO_SNDTIMEO, addr tv, SockLen(sizeof(tv))) != 0:
+    return err("SO_SNDTIMEO failed")
+  ok()
+
+type HttpConnectionArgs = object
+  client:    Socket
+  statusFn:  GatewayStatusFn
+  logFn:     GatewayLogFn
+  eventFn:   GatewayEventFn
+  inboundFn: GatewayInboundFn
+  authToken: string
+  log:       Logger
+
+var gActiveHttpConnections = 0
+var gActiveSseConnections = 0
+var gHttpConnLock: Lock
+var gHttpConnLockReady = false
+
+proc tryAcquireHttpConnection(): bool =
+  acquire(gHttpConnLock)
+  try:
+    if gActiveHttpConnections >= MaxConcurrentHttpConnections:
+      return false
+    inc gActiveHttpConnections
+    true
+  finally:
+    release(gHttpConnLock)
+
+proc releaseHttpConnection() =
+  acquire(gHttpConnLock)
+  try:
+    if gActiveHttpConnections > 0:
+      dec gActiveHttpConnections
+  finally:
+    release(gHttpConnLock)
+
+proc tryAcquireSseConnection(): bool =
+  acquire(gHttpConnLock)
+  try:
+    if gActiveSseConnections >= MaxConcurrentSseConnections:
+      return false
+    inc gActiveSseConnections
+    true
+  finally:
+    release(gHttpConnLock)
+
+proc releaseSseConnection() =
+  acquire(gHttpConnLock)
+  try:
+    if gActiveSseConnections > 0:
+      dec gActiveSseConnections
+  finally:
+    release(gHttpConnLock)
+
+proc handleConnectionThread(args: HttpConnectionArgs) {.gcsafe.} =
+  try:
+    handleGatewayConn(args.client, args.statusFn, args.logFn, args.eventFn,
+                      args.inboundFn, args.authToken, args.log)
+  finally:
+    releaseHttpConnection()
+
 proc gatewayThread(args: GatewayArgs) {.thread.} =
   {.cast(gcsafe).}:
-    var server = newSocket()
-    server.setSockOpt(OptReuseAddr, true)
-    server.bindAddr(Port(args.port))
-    server.listen()
+    let host =
+      if args.bindAddr.startsWith("[") and args.bindAddr.endsWith("]"):
+        args.bindAddr[1 .. ^2]
+      else:
+        args.bindAddr
+    let ipv6 = ':' in host
+    var server: Socket
+    try:
+      server =
+        if ipv6: newSocket(Domain.AF_INET6, SockType.SOCK_STREAM, Protocol.IPPROTO_TCP)
+        else: newSocket()
+      server.setSockOpt(OptReuseAddr, true)
+      server.bindAddr(Port(args.port), host)
+      server.listen()
+    except CatchableError as exc:
+      args.log.error("http_gateway: bind " & host & ":" & $args.port & " failed — " & exc.msg)
+      if server != nil:
+        server.close()
+      return
     while true:
       var client: Socket
       server.accept(client)
-      handleGatewayConn(client, args.statusFn, args.logFn, args.eventFn, args.inboundFn, args.log)
+      let timeoutResult = applyClientTimeouts(client)
+      if timeoutResult.isErr:
+        args.log.warn("http_gateway: " & timeoutResult.error)
+        client.close()
+        continue
+      if not tryAcquireHttpConnection():
+        client.sendResponse("503 Service Unavailable", "text/plain",
+                            "too many connections\n", args.log)
+        client.close()
+        continue
+      spawn handleConnectionThread(HttpConnectionArgs(
+        client: client,
+        statusFn: args.statusFn,
+        logFn: args.logFn,
+        eventFn: args.eventFn,
+        inboundFn: args.inboundFn,
+        authToken: args.authToken,
+        log: args.log,
+      ))
 
 var gGatewayThread: Thread[GatewayArgs]
 
@@ -346,16 +554,23 @@ proc startHttpGateway*(port: int;
                        logFn:    GatewayLogFn;
                        eventFn:  GatewayEventFn = nil;
                        inboundFn: GatewayInboundFn = nil;
+                       bindAddr = "127.0.0.1";
+                       authToken = "";
                        log:       Logger = newLogger("http_gateway")) =
   ## Starts the HTTP gateway on a dedicated OS thread.
   ## statusFn, logFn, and eventFn are called on each request; they must be gcsafe.
   ## inboundFn is called when POST /api/chat is received; may be nil.
   {.cast(gcsafe).}:
+    if not gHttpConnLockReady:
+      initLock(gHttpConnLock)
+      gHttpConnLockReady = true
+    setMaxPoolSize(16)
     gGatewayStatusFn  = statusFn
     gGatewayLogFn     = logFn
     gGatewayEventFn   = eventFn
     gGatewayInboundFn = inboundFn
     gGatewayLog       = log
-    let args = GatewayArgs(port: port, statusFn: statusFn, logFn: logFn,
+    let args = GatewayArgs(port: port, bindAddr: bindAddr, authToken: authToken,
+                           statusFn: statusFn, logFn: logFn,
                            eventFn: eventFn, inboundFn: inboundFn, log: log)
     createThread(gGatewayThread, gatewayThread, args)

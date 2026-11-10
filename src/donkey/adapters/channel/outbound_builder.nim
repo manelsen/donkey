@@ -16,6 +16,7 @@ import qq_channel
 import feishu
 import matrix
 import email
+import signal
 import slack
 import dingtalk
 import cli_repl
@@ -24,6 +25,9 @@ import whatsapp
 # ── generic unsupported stubs (capability-driven) ───────────────────────────
 ## These are used for any (channel, operation) pair where the capability
 ## descriptor declares the operation as unsupported.
+
+proc unsupportedSend(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+  err("send unsupported for channel " & $msg.channel)
 
 proc unsupportedSendReturnId(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
   err("sendReturnId unsupported for channel " & $msg.channel)
@@ -69,7 +73,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          slAdapter: ptr SlackAdapter;
                          dtAdapter: ptr DingTalkAdapter;
                          waAdapter: ptr WhatsAppAdapter;
-                         cliAdapter: ptr CliAdapter): OutboundChannelPorts =
+                         cliAdapter: ptr CliAdapter;
+                         signalAdapter: ptr SignalAdapter = nil): OutboundChannelPorts =
 
   # ── Telegram (full capability) ────────────────────────────────────────────
   result.telegram = OutboundChannelPort(
@@ -242,6 +247,21 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
   result.email = OutboundChannelPort(
     send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
       emAdapter[].send(msg),
+    sendReturnId: unsupportedSendReturnId,
+    editMessage: unsupportedEditMessage,
+    sendKeyboard: unsupportedSendKeyboard,
+    editKeyboard: unsupportedEditKeyboard,
+    setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: unsupportedDownloadFile,
+  )
+
+  # ── Signal — capability descriptor says: send only ───────────────────────
+  result.signal = OutboundChannelPort(
+    send: if signalAdapter != nil:
+            proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+              signalAdapter[].send(msg)
+          else:
+            unsupportedSend,
     sendReturnId: unsupportedSendReturnId,
     editMessage: unsupportedEditMessage,
     sendKeyboard: unsupportedSendKeyboard,

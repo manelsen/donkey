@@ -26,6 +26,8 @@ type
     drainMatrix*:    GatewayDrainProc
     drainTelegram*:  GatewayDrainProc
     drainWhatsApp*:  GatewayDrainProc
+    drainEmail*:     GatewayDrainProc
+    drainSignal*:    GatewayDrainProc
 
 func initGatewayDrainer*(
   drainDiscord:   GatewayDrainProc = nil,
@@ -37,6 +39,8 @@ func initGatewayDrainer*(
   drainMatrix:    GatewayDrainProc = nil,
   drainTelegram:  GatewayDrainProc = nil,
   drainWhatsApp:  GatewayDrainProc = nil,
+  drainEmail:     GatewayDrainProc = nil,
+  drainSignal:    GatewayDrainProc = nil,
 ): GatewayDrainer =
   ## Initializes a GatewayDrainer with channel drain callbacks.
   GatewayDrainer(
@@ -49,6 +53,8 @@ func initGatewayDrainer*(
     drainMatrix:    drainMatrix,
     drainTelegram:  drainTelegram,
     drainWhatsApp:  drainWhatsApp,
+    drainEmail:     drainEmail,
+    drainSignal:    drainSignal,
   )
 
 # ── Polling & Batch Draining Helpers ──────────────────────────────────────────
@@ -232,6 +238,14 @@ proc drainWhatsAppGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.
   if drainer.drainWhatsApp != nil:
     result = drainer.drainWhatsApp()
 
+proc drainEmailGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
+  if drainer.drainEmail != nil:
+    result = drainer.drainEmail()
+
+proc drainSignalGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
+  if drainer.drainSignal != nil:
+    result = drainer.drainSignal()
+
 proc drainGatewayEvents*(drainer: GatewayDrainer): int {.discardable, gcsafe.} =
   ## Drains all configured channel gateways in sequence.
   ## Returns the count of active gateways that executed.
@@ -244,3 +258,5 @@ proc drainGatewayEvents*(drainer: GatewayDrainer): int {.discardable, gcsafe.} =
   if drainMatrixGateway(drainer): result.inc
   if drainTelegramGateway(drainer): result.inc
   if drainWhatsAppGateway(drainer): result.inc
+  if drainEmailGateway(drainer): result.inc
+  if drainSignalGateway(drainer): result.inc
