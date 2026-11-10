@@ -55,6 +55,28 @@ dm_policy = "nonsense"
     delEnv("DONKEY_DM_POLICY")
     check cfg.invalidDmPolicy == "nonsense"
 
+  test "valid env dm_policy clears an invalid TOML value":
+    let tmp = getTempDir() / "t_loader_dm_env_override.toml"
+    writeFile(tmp, """
+[security]
+dm_policy = "nonsense"
+""")
+    putEnv("DONKEY_DM_POLICY", "open")
+    let cfg = loadConfig(tmp)
+    delEnv("DONKEY_DM_POLICY")
+    removeFile(tmp)
+    check cfg.dmPolicy == DmPolicyOpen
+    check cfg.invalidDmPolicy.len == 0
+
+  test "empty dm_policy is rejected instead of fail-open":
+    let tmp = getTempDir() / "t_loader_empty_dm_policy.toml"
+    writeFile(tmp, """
+[security]
+dm_policy = ""
+""")
+    defer: removeFile(tmp)
+    check loadConfig(tmp).invalidDmPolicy.len > 0
+
   test "reads dm_policy from the security section":
     let tmp = getTempDir() / "t_loader_dm_policy.toml"
     writeFile(tmp, """

@@ -13,12 +13,12 @@
 ## Sending: send() calls JSON-RPC "send" with recipient and message.
 
 import std/[json, net, os]
-import std/posix
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
 import ../../domain/channels/signal_pure
 import ../identity/identity_resolver
+import ./socket_timeout
 
 export identity_resolver
 
@@ -27,13 +27,6 @@ const
   SignalMaxChars*    = 2000  ## practical per-message length limit
 
 # ── JSON-RPC transport ─────────────────────────────────────────────────────────
-
-proc applySocketTimeouts(sock: Socket; seconds: int = 10) =
-  var tv: Timeval
-  tv.tv_sec = Time(seconds)
-  tv.tv_usec = Suseconds(0)
-  discard setsockopt(sock.getFd, SOL_SOCKET, SO_RCVTIMEO, addr tv, SockLen(sizeof(tv)))
-  discard setsockopt(sock.getFd, SOL_SOCKET, SO_SNDTIMEO, addr tv, SockLen(sizeof(tv)))
 
 proc rpcCall(sockPath, meth: string;
              params: JsonNode): Result[JsonNode, string] =
@@ -46,8 +39,8 @@ proc rpcCall(sockPath, meth: string;
   try:
     let sock = newSocket(Domain.AF_UNIX, SockType.SOCK_STREAM, Protocol.IPPROTO_IP)
     defer: sock.close()
+    ? applySocketTimeouts(sock, 10, "signal")
     sock.connectUnix(sockPath)
-    applySocketTimeouts(sock)
     sock.send($req & "\n")
     let line = sock.recvLine(timeout = 10_000)
     if line.len == 0:

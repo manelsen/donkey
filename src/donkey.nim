@@ -7,6 +7,7 @@ import chronos/asyncsync
 import chronos/timer as ctimer
 import donkey/config/loader
 import donkey/config/types
+import donkey/core/security/dm_policy
 import donkey/config/dotenv
 import donkey/config/tools_registry
 import donkey/config/skills_registry
@@ -1415,7 +1416,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ## Async daemon: Telegram (pollTimeout=0) + Discord (gateway thread) + WeCom (webhook thread).
   ## Loop: drain globalOutbox → drain Discord → drain WeCom → poll Telegram → sleepAsync(100ms)
   if cfg.invalidDmPolicy.len > 0:
-    log.error("invalid dm_policy: " & cfg.invalidDmPolicy & " (use open|pairing|allowlist)")
+    log.error("invalid dm_policy: " & cfg.invalidDmPolicy & " (use open|allowlist)")
+    quit(1)
+  if cfg.dmPolicy == DmPolicyPairing:
+    log.error("dm_policy=pairing is not implemented yet; use open or allowlist")
     quit(1)
   log.info("daemon starting — Telegram + Discord + WeCom")
   initMetrics()

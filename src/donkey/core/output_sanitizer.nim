@@ -71,7 +71,7 @@ func looksLikeAssignedSecret(token: string): bool =
   let sep = if eq > 0: eq elif colon > 0: colon else: -1
   if sep <= 0:
     return false
-  isContextKeyword(token[0 ..< sep]) and
+  isContextKeyword(token[0 ..< sep].toLowerAscii()) and
     startsWithKnownSecretPrefix(token[sep + 1 .. ^1])
 
 func isSecretToken(token: string): bool =

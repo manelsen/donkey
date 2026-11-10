@@ -13,6 +13,7 @@
 ## CORS: Access-Control-Allow-Origin: * for local browser access.
 
 import std/[json, net, os, strutils]
+import std/posix
 import ../core/pipeops
 import ../core/types
 import ../core/log
@@ -24,7 +25,7 @@ import ./metrics
 const
   GatewayDefaultPort* = 8080
   SseHeartbeatIntervalMs = 5000   ## ms between SSE heartbeat/push cycles
-  SseMaxPollCycles = 3600         ## ~5 hours at 5s intervals
+  SseMaxPollCycles = 60           ## bounded to ~5 minutes at 5s intervals
 
 func resolveGatewayPort*(raw: string): int =
   ## Parses DONKEY_HTTP_PORT semantics.
@@ -374,6 +375,14 @@ var gGatewayEventFn:  GatewayEventFn
 var gGatewayInboundFn: GatewayInboundFn
 var gGatewayLog:      Logger
 
+proc applyClientTimeouts(sock: Socket; seconds: int = 10) =
+  ## Bounds header reads and sends from a connected client.
+  var tv: Timeval
+  tv.tv_sec = Time(seconds)
+  tv.tv_usec = Suseconds(0)
+  discard setsockopt(sock.getFd, SOL_SOCKET, SO_RCVTIMEO, addr tv, SockLen(sizeof(tv)))
+  discard setsockopt(sock.getFd, SOL_SOCKET, SO_SNDTIMEO, addr tv, SockLen(sizeof(tv)))
+
 proc gatewayThread(args: GatewayArgs) {.thread.} =
   {.cast(gcsafe).}:
     let host =
@@ -398,6 +407,7 @@ proc gatewayThread(args: GatewayArgs) {.thread.} =
     while true:
       var client: Socket
       server.accept(client)
+      applyClientTimeouts(client)
       handleGatewayConn(client, args.statusFn, args.logFn, args.eventFn,
                         args.inboundFn, args.authToken, args.log)
 

@@ -220,6 +220,7 @@ suite "output_sanitizer — safeStreamPrefix":
 
   test "masks a short credential after an assignment separator":
     check cleanResponse("api_key=sk-abcdefgh") == "[REDACTED]"
+    check cleanResponse("API_KEY=sk-abcdefgh") == "[REDACTED]"
 
   test "keeps ordinary auth prose intact":
     check cleanResponse("use Bearer auth") == "use Bearer auth"

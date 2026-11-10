@@ -165,7 +165,8 @@ proc parseSecurityConfigPatch*(doc: TomlValueRef): SecurityConfigPatch =
     if parsed.isSome:
       result.dmPolicy = parsed
     else:
-      result.invalidDmPolicy = some(raw)
+      result.invalidDmPolicy = some(
+        if raw.strip().len > 0: raw else: "<vazio ou não-string>")
 
 proc applySecurityConfigPatch*(patch: SecurityConfigPatch; cfg: DonkeyConfig): DonkeyConfig =
   result = cfg
@@ -190,6 +191,7 @@ proc applyEnvOverrides*(cfg: DonkeyConfig): DonkeyConfig =
     let parsed = parseDmPolicy(rawDmPolicy)
     if parsed.isSome:
       result.dmPolicy = parsed.get()
+      result.invalidDmPolicy = ""
     else:
       result.invalidDmPolicy = rawDmPolicy
 
