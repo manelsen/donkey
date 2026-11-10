@@ -234,6 +234,38 @@ type DaemonServices = object
   tgTypingFn:       TypingFn
   globalSearchFn:   SearchFn
 
+type
+  PollResult = Result[seq[InboundMessage], string]
+
+var
+  gEmailPollCh: Channel[PollResult]
+  gSignalPollCh: Channel[PollResult]
+  gEmailPollThread: Thread[ptr EmailAdapter]
+  gSignalPollThread: Thread[ptr SignalAdapter]
+  gEmailPollOpened = false
+  gSignalPollOpened = false
+  gEmailPollInFlight = false
+  gSignalPollInFlight = false
+
+func pollFailure(msg: string): PollResult {.gcsafe.} =
+  err(msg)
+
+proc emailPollThread(adapter: ptr EmailAdapter) {.thread.} =
+  var res: PollResult
+  try:
+    res = adapter[].pollInbox()
+  except Exception as e:
+    res = pollFailure(e.msg)
+  gEmailPollCh.send(res)
+
+proc signalPollThread(adapter: ptr SignalAdapter) {.thread.} =
+  var res: PollResult
+  try:
+    res = adapter[].receive()
+  except Exception as e:
+    res = pollFailure(e.msg)
+  gSignalPollCh.send(res)
+
 type DaemonRuntime = ref object
   globalOutbox:         AsyncQueue[OutboundMessage]
   sm:                   SessionManager
@@ -1349,31 +1381,53 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
     drainEmail = proc(): bool =
       if ctx.adapters.em.imapHost.len == 0:
         return false
+      if gEmailPollInFlight:
+        let (hasResult, polled) = gEmailPollCh.tryRecv()
+        if hasResult:
+          gEmailPollInFlight = false
+          joinThread(gEmailPollThread)
+          if polled.isErr:
+            log.warn("email poll: " & polled.error)
+            return false
+          for msg in polled.value:
+            fallback(msg)
+          return polled.value.len > 0
+        return false
       let now = nowMs()
       if now - ctx.runtime.lastEmailPollMs < EmailPollIntervalMs:
         return false
       ctx.runtime.lastEmailPollMs = now
-      let polled = ctx.adapters.em.pollInbox()
-      if polled.isErr:
-        log.warn("email poll: " & polled.error)
-        return false
-      for msg in polled.value:
-        fallback(msg)
-      polled.value.len > 0,
+      if not gEmailPollOpened:
+        gEmailPollCh.open(1)
+        gEmailPollOpened = true
+      gEmailPollInFlight = true
+      createThread(gEmailPollThread, emailPollThread, addr ctx.adapters.em)
+      false,
     drainSignal = proc(): bool =
       if ctx.adapters.signal.account.len == 0:
+        return false
+      if gSignalPollInFlight:
+        let (hasResult, polled) = gSignalPollCh.tryRecv()
+        if hasResult:
+          gSignalPollInFlight = false
+          joinThread(gSignalPollThread)
+          if polled.isErr:
+            log.warn("signal poll: " & polled.error)
+            return false
+          for msg in polled.value:
+            fallback(msg)
+          return polled.value.len > 0
         return false
       let now = nowMs()
       if now - ctx.runtime.lastSignalPollMs < SignalPollIntervalMs:
         return false
       ctx.runtime.lastSignalPollMs = now
-      let polled = ctx.adapters.signal.receive()
-      if polled.isErr:
-        log.warn("signal poll: " & polled.error)
-        return false
-      for msg in polled.value:
-        fallback(msg)
-      polled.value.len > 0,
+      if not gSignalPollOpened:
+        gSignalPollCh.open(1)
+        gSignalPollOpened = true
+      gSignalPollInFlight = true
+      createThread(gSignalPollThread, signalPollThread, addr ctx.adapters.signal)
+      false,
   )
 
 proc withOutboxDrain(ctx: DaemonContext;
