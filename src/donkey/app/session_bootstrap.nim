@@ -89,13 +89,37 @@ proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: []
   of "openrouter":
     ProviderSpec(
       providerName: "openrouter",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: "openai/gpt-4o-mini",
+      modelName: if prefs.modelName.len > 0: prefs.modelName else: "openai/gpt-6.1-sol",
       apiKey: getEnv("OPENROUTER_API_KEY"),
+    )
+  of "openai":
+    ProviderSpec(
+      providerName: "openai",
+      modelName: if prefs.modelName.len > 0: prefs.modelName else: "gpt-6.1-sol",
+      apiKey: getEnv("OPENAI_API_KEY"),
+    )
+  of "deepseek":
+    ProviderSpec(
+      providerName: "deepseek",
+      modelName: if prefs.modelName.len > 0: prefs.modelName else: "deepseek-4.1-flash",
+      apiKey: getEnv("DEEPSEEK_API_KEY"),
+    )
+  of "ollama":
+    ProviderSpec(
+      providerName: "ollama",
+      modelName: if prefs.modelName.len > 0: prefs.modelName else: "llama3.3",
+      apiKey: getEnv("OLLAMA_BASE_URL", ""),
+    )
+  of "groq":
+    ProviderSpec(
+      providerName: "groq",
+      modelName: if prefs.modelName.len > 0: prefs.modelName else: GroqDefaultModel,
+      apiKey: getEnv("GROQ_API_KEY"),
     )
   of "anthropic":
     ProviderSpec(
       providerName: "anthropic",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: "claude-opus-4-6",
+      modelName: if prefs.modelName.len > 0: prefs.modelName else: "claude-sonnet-5-5",
       apiKey: getEnv("ANTHROPIC_API_KEY"),
     )
   of "zai-anthropic":
@@ -113,7 +137,7 @@ proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: []
   of "gemini":
     ProviderSpec(
       providerName: "gemini",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: "gemini-2.5-flash",
+      modelName: if prefs.modelName.len > 0: prefs.modelName else: "gemini-3.8-flash",
       apiKey: getEnv("GEMINI_API_KEY"),
     )
   of "minimax":
@@ -151,6 +175,8 @@ func detectProviderAvailability*(): ProviderAvailability =
   ProviderAvailability(
     openrouter: getEnv("OPENROUTER_API_KEY").len > 0,
     anthropic: getEnv("ANTHROPIC_API_KEY").len > 0,
+    openai: getEnv("OPENAI_API_KEY").len > 0,
+    deepseek: getEnv("DEEPSEEK_API_KEY").len > 0,
     zaiAnthropic: getEnv(
       "ZAI_ANTHROPIC_API_KEY",
       getEnv(
@@ -162,6 +188,8 @@ func detectProviderAvailability*(): ProviderAvailability =
     minimax: getEnv("MINIMAX_API_KEY").len > 0,
     zai: getEnv("ZAI_API_KEY").len > 0,
     zaiCoding: getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")).len > 0,
+    groq: getEnv("GROQ_API_KEY").len > 0,
+    ollama: getEnv("OLLAMA_BASE_URL").len > 0,
   )
 
 func toProviderSpec*(selection: ProviderSelection): ProviderSpec =

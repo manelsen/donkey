@@ -154,9 +154,9 @@ suite "deepseek parseDeepSeekResponse":
 # ── Constructor ────────────────────────────────────────────────────────────────
 
 suite "deepseek newDeepSeekAdapter":
-  test "defaults to deepseek-chat":
+  test "defaults to deepseek-4.1-flash":
     let a = newDeepSeekAdapter("key123")
-    check a.model == "deepseek-chat"
+    check a.model == "deepseek-4.1-flash"
     check a.apiKey == "key123"
     check a.endpoint == ""
 

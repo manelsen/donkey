@@ -82,7 +82,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete architectural 
 - [Nim 2.2+](https://nim-lang.org/install.html) with Nimble (`choosenim` recommended)
 - `ripgrep` (`rg`) for architectural boundary verification
 - `docker` or `podman` (required for default OCI shell sandbox)
-- `TELEGRAM_BOT_TOKEN` (required to start the daemon) and at least one directly supported session provider key: Anthropic, Gemini, MiniMax, ZAI, or OpenRouter (OpenAI and DeepSeek keys alone are insufficient without `ZAI_CODING_API_KEY` or an OpenRouter fallback)
+- `TELEGRAM_BOT_TOKEN` (required to start the daemon) and at least one directly supported session provider key: Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, ZAI, Groq, OpenRouter, or a local Ollama instance
 
 ### 1. Build the Binary
 
@@ -108,7 +108,7 @@ Run the interactive setup wizard to initialize configuration templates and state
 ./donkey setup
 ```
 
-The wizard configures `~/.config/donkey/donkey.toml`, provisions the state store in `~/.donkey/`, selects the available OCI sandbox runtime, and saves provider keys. Verify provider connectivity with `./donkey ctl provider test <name>`. For `openai`, `deepseek`, and `ollama`, this command selects ZAI Coding instead of the named provider.
+The wizard configures `~/.config/donkey/donkey.toml`, provisions the state store in `~/.donkey/`, selects the available OCI sandbox runtime, and saves provider keys. Verify provider connectivity with `./donkey ctl provider test <name>`.
 
 ### 3. Start the Daemon
 
@@ -199,13 +199,13 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 
 | Provider | Default Tool Support | Streaming | Recommended Models |
 |:---|:---:|:---:|:---|
-| **Anthropic** | ✅ | ✅ | `claude-opus-4-6`, `claude-sonnet-4-6` |
-| **OpenAI** | ✅ | ✅ | `gpt-4o`, `gpt-4o-mini` |
-| **DeepSeek** | ✅ | ✅ | `deepseek-chat`, `deepseek-reasoner` |
-| **Gemini** | ✅ | ❌ | `gemini-2.5-pro`, `gemini-2.5-flash` |
-| **Ollama** | ✅ | ✅ | `qwen2.5-coder:32b`, `llama3.3:70b` |
+| **Anthropic** | ✅ | ✅ | `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-2` |
+| **OpenAI** | ✅ | ✅ | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-luna` |
+| **DeepSeek** | ✅ | ✅ | `deepseek-v4-pro`, `deepseek-4.1-flash` |
+| **Gemini** | ✅ | ❌ | `gemini-4-argon`, `gemini-3.1-pro`, `gemini-3.8-flash` |
+| **Ollama** | ✅ | ✅ | `llama4:scout`, `llama3.3:70b`, `qwen2.5-coder:32b` |
 | **MiniMax** | ✅ | ❌ | `MiniMax-Text-01`, `MiniMax-M2` |
-| **ZAI / Zhipu** | ✅ | ❌ | `glm-4-plus`, `glm-4-flash` |
+| **ZAI / Zhipu** | ✅ | ❌ | `glm-5.1`, `glm-5`, `glm-4.7` |
 | **OpenRouter** | ✅ | ✅ | Universal routing fallback |
 
 > [!NOTE]

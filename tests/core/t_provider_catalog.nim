@@ -27,17 +27,34 @@ suite "provider_catalog":
 
   test "lookup finds model by canonical name":
     let catalog = buildDefaultCatalog()
-    let result = catalog.lookup("gemini-2.5-flash")
+    let result = catalog.lookup("gemini-3.8-flash")
     check result.isSome
-    check result.get().canonicalName == "gemini-2.5-flash"
+    check result.get().canonicalName == "gemini-3.8-flash"
     check result.get().providerName == "gemini"
     check result.get().supportsImage
 
   test "lookup finds model by alias":
     let catalog = buildDefaultCatalog()
-    let result = catalog.lookup("gpt-4o-mini")
+    let result = catalog.lookup("gpt-6-sol")
     check result.isSome
-    check result.get().canonicalName == "openai/gpt-4o-mini"
+    check result.get().canonicalName == "gpt-6.1-sol"
+    check result.get().providerName == "openai"
+
+    let opusAlias = catalog.lookup("opus-5.5")
+    check opusAlias.isSome
+    check opusAlias.get().providerName == "anthropic"
+
+    let flashAlias = catalog.lookup("deepseek-flash")
+    check flashAlias.isSome
+    check flashAlias.get().providerName == "deepseek"
+
+  test "lookup resolves alias uniquely without cross-provider collision":
+    let catalog = buildDefaultCatalog()
+    # "gpt-4o" is uniquely registered as an alias under openai direct
+    let result = catalog.lookup("gpt-4o")
+    check result.isSome
+    check result.get().canonicalName == "gpt-6.1-sol"
+    check result.get().providerName == "openai"
 
   test "lookup returns none for unknown model":
     let catalog = buildDefaultCatalog()
@@ -158,24 +175,43 @@ suite "provider_catalog":
     check "minimax" in providers
     check "anthropic" in providers
 
-  test "catalog contains all hardcoded models from smart_routing":
+  test "catalog contains all modern models from smart_routing":
     let catalog = buildDefaultCatalog()
-    # Verify key models referenced in smart_routing.nim exist
-    let modelsToCheck = @[
-      "openai/gpt-4o-mini",
-      "openai/gpt-4o",
-      "claude-opus-4-6",
-      "claude-sonnet-4-6",
+    let modernModels = @[
+      "claude-opus-5-5",
+      "claude-sonnet-5-5",
+      "gpt-6.1-sol",
+      "gpt-6-astra",
+      "gpt-6.1-terra",
+      "gpt-6-luna",
+      "deepseek-4.1-flash",
+      "deepseek-v4-pro",
+      "gemini-3.8-flash",
+      "gemini-4-argon",
+      "llama3.3",
+      "llama4:scout",
       "glm-4.7",
-      "glm-5",
-      "gemini-2.5-flash",
-      "gemini-2.5-pro",
+      "glm-5.1",
       "MiniMax-M2",
       "MiniMax-M2.5",
       "MiniMax-M2.7",
     ]
-    for model in modelsToCheck:
+    for model in modernModels:
       let result = catalog.lookup(model)
+      check result.isSome
+
+  test "catalog resolves all legacy aliases for backward compatibility":
+    let catalog = buildDefaultCatalog()
+    let legacyAliases = @[
+      "openai/gpt-4o-mini",
+      "openai/gpt-4o",
+      "claude-opus-4-6",
+      "claude-sonnet-4-6",
+      "gemini-2.5-flash",
+      "gemini-2.5-pro",
+    ]
+    for alias in legacyAliases:
+      let result = catalog.lookup(alias)
       check result.isSome
 
   test "register overwrites duplicate canonical name":

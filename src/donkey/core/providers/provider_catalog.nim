@@ -183,52 +183,170 @@ proc buildDefaultCatalog*(): ProviderCatalog =
 
   # ── OpenRouter ──
   result.register(makeEntry(
-    "openai/gpt-4o-mini", "openrouter",
-    aliases = @["gpt-4o-mini"],
-    capabilities = {mcTools, mcImage, mcStreaming},
-    costTier = ctCheap,
-    budgetPriority = bpLow,
-    contextWindow = 128_000,
-  ))
-  result.register(makeEntry(
-    "openai/gpt-4o", "openrouter",
-    aliases = @["gpt-4o"],
+    "openai/gpt-6.1-sol", "openrouter",
+    aliases = @["gpt-6.1-sol", "openai/gpt-4o"],
     capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
     costTier = ctModerate,
     budgetPriority = bpDefault,
-    contextWindow = 128_000,
+    contextWindow = 1_000_000,
   ))
   result.register(makeEntry(
-    "anthropic/claude-opus-4-6", "openrouter",
-    aliases = @["claude-opus-4-6", "opus-4"],
+    "openai/gpt-6-astra", "openrouter",
+    aliases = @["gpt-6-astra", "openai/gpt-6", "gpt-6"],
     capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
     costTier = ctExpensive,
     budgetPriority = bpHigh,
-    contextWindow = 200_000,
+    contextWindow = 1_000_000,
   ))
   result.register(makeEntry(
-    "anthropic/claude-sonnet-4-6", "openrouter",
-    aliases = @["claude-sonnet-4-6", "sonnet-4"],
+    "openai/gpt-6.1-terra", "openrouter",
+    aliases = @["gpt-6.1-terra", "gpt-6-terra"],
     capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
     costTier = ctModerate,
     budgetPriority = bpDefault,
-    contextWindow = 200_000,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "openai/gpt-6-luna", "openrouter",
+    aliases = @["gpt-6-luna", "luna", "openai/gpt-4o-mini", "gpt-4o-mini"],
+    capabilities = {mcTools, mcImage, mcStreaming},
+    costTier = ctVeryCheap,
+    budgetPriority = bpLow,
+    contextWindow = 256_000,
+  ))
+  result.register(makeEntry(
+    "anthropic/claude-opus-5-5", "openrouter",
+    aliases = @["claude-opus-5-5", "anthropic/claude-opus-4-6", "claude-opus-4-6", "opus-4"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctExpensive,
+    budgetPriority = bpHigh,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "anthropic/claude-sonnet-5-5", "openrouter",
+    aliases = @["claude-sonnet-5-5", "anthropic/claude-sonnet-4-6", "claude-sonnet-4-6", "sonnet-4"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "deepseek/deepseek-4.1-flash", "openrouter",
+    aliases = @["deepseek-4.1-flash", "deepseek/deepseek-v4.1-flash", "deepseek-flash", "deepseek/deepseek-chat"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctVeryCheap,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "deepseek/deepseek-v4-pro", "openrouter",
+    aliases = @["deepseek-v4-pro", "deepseek/deepseek-reasoner"],
+    capabilities = {mcTools, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpHigh,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "google/gemini-3.8-flash", "openrouter",
+    aliases = @["gemini-3.8-flash", "google/gemini-2.5-flash"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctVeryCheap,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "google/gemini-4-argon", "openrouter",
+    aliases = @["gemini-4-argon", "google/gemini-2.5-pro"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctExpensive,
+    budgetPriority = bpHigh,
+    contextWindow = 1_000_000,
+  ))
+
+  # ── OpenAI (direct) ──
+  result.register(makeEntry(
+    "gpt-6.1-sol", "openai",
+    aliases = @["gpt-6-sol", "sol", "gpt-4o", "gpt-5.4"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "gpt-6-astra", "openai",
+    aliases = @["gpt-6", "astra"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctExpensive,
+    budgetPriority = bpHigh,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "gpt-6.1-terra", "openai",
+    aliases = @["gpt-6-terra", "terra"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "gpt-6-luna", "openai",
+    aliases = @["luna", "gpt-4o-mini"],
+    capabilities = {mcTools, mcImage, mcStreaming},
+    costTier = ctVeryCheap,
+    budgetPriority = bpLow,
+    contextWindow = 256_000,
+  ))
+
+  # ── DeepSeek (direct) ──
+  result.register(makeEntry(
+    "deepseek-4.1-flash", "deepseek",
+    aliases = @["deepseek-v4.1-flash", "deepseek-flash", "deepseek-chat", "deepseek-reasoner"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctVeryCheap,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "deepseek-v4-pro", "deepseek",
+    aliases = @["v4-pro", "deepseek-pro"],
+    capabilities = {mcTools, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpHigh,
+    contextWindow = 1_000_000,
   ))
 
   # ── Anthropic (direct) ──
   result.register(makeEntry(
-    "claude-opus-4-6", "anthropic",
-    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
-    costTier = ctExpensive,
-    budgetPriority = bpHigh,
-    contextWindow = 200_000,
-  ))
-  result.register(makeEntry(
-    "claude-sonnet-4-6", "anthropic",
+    "claude-sonnet-5-5", "anthropic",
+    aliases = @["sonnet-5.5", "claude-sonnet-4-6", "sonnet-4"],
     capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
     costTier = ctModerate,
     budgetPriority = bpDefault,
-    contextWindow = 200_000,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "claude-opus-5-5", "anthropic",
+    aliases = @["opus-5.5", "claude-opus-4-6", "opus-4"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctExpensive,
+    budgetPriority = bpHigh,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "claude-fable-5-2", "anthropic",
+    aliases = @["fable-5.2", "fable"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctExpensive,
+    budgetPriority = bpHigh,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "claude-haiku-5-5", "anthropic",
+    aliases = @["haiku-5.5", "haiku"],
+    capabilities = {mcTools, mcImage, mcStreaming},
+    costTier = ctVeryCheap,
+    budgetPriority = bpLow,
+    contextWindow = 1_000_000,
   ))
 
   # ── Z.ai Anthropic (proxy) ──
@@ -264,20 +382,96 @@ proc buildDefaultCatalog*(): ProviderCatalog =
 
   # ── Gemini ──
   result.register(makeEntry(
-    "gemini-2.5-flash", "gemini",
+    "gemini-3.8-flash", "gemini",
     aliases = @["gemini-flash"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctVeryCheap,
+    budgetPriority = bpDefault,
+    contextWindow = 1_048_576,
+  ))
+  result.register(makeEntry(
+    "gemini-4-argon", "gemini",
+    aliases = @["gemini-argon", "argon"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctExpensive,
+    budgetPriority = bpHigh,
+    contextWindow = 1_048_576,
+  ))
+  result.register(makeEntry(
+    "gemini-3.1-pro", "gemini",
+    aliases = @["gemini-pro"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_048_576,
+  ))
+  result.register(makeEntry(
+    "gemini-2.5-pro", "gemini",
+    aliases = @[],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_048_576,
+  ))
+  result.register(makeEntry(
+    "gemini-2.5-flash", "gemini",
+    aliases = @[],
     capabilities = {mcTools, mcImage, mcStreaming},
     costTier = ctVeryCheap,
     budgetPriority = bpLow,
     contextWindow = 1_048_576,
   ))
   result.register(makeEntry(
-    "gemini-2.5-pro", "gemini",
-    aliases = @["gemini-pro"],
-    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
-    costTier = ctModerate,
-    budgetPriority = bpHigh,
+    "gemini-3.5-flash-lite", "gemini",
+    aliases = @["gemini-lite", "gemini-flash-lite"],
+    capabilities = {mcTools, mcImage, mcStreaming},
+    costTier = ctFree,
+    budgetPriority = bpLow,
     contextWindow = 1_048_576,
+  ))
+
+  # ── Groq ──
+  result.register(makeEntry(
+    "llama-3.3-70b-versatile", "groq",
+    aliases = @["llama-3.3-70b"],
+    capabilities = {mcTools, mcStreaming},
+    costTier = ctVeryCheap,
+    budgetPriority = bpDefault,
+    contextWindow = 128_000,
+  ))
+  result.register(makeEntry(
+    "llama-3.1-8b-instant", "groq",
+    aliases = @["llama-3.1-8b"],
+    capabilities = {mcTools, mcStreaming},
+    costTier = ctFree,
+    budgetPriority = bpLow,
+    contextWindow = 128_000,
+  ))
+
+  # ── Ollama ──
+  result.register(makeEntry(
+    "llama3.3", "ollama",
+    aliases = @["llama-3.3"],
+    capabilities = {mcTools, mcStreaming},
+    costTier = ctFree,
+    budgetPriority = bpDefault,
+    contextWindow = 128_000,
+  ))
+  result.register(makeEntry(
+    "llama4:scout", "ollama",
+    aliases = @["llama-4-scout", "scout"],
+    capabilities = {mcTools, mcImage, mcStreaming},
+    costTier = ctFree,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "qwen2.5-coder", "ollama",
+    aliases = @["qwen-coder"],
+    capabilities = {mcTools, mcStreaming},
+    costTier = ctFree,
+    budgetPriority = bpDefault,
+    contextWindow = 128_000,
   ))
 
   # ── MiniMax ──

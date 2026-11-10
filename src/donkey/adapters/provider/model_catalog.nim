@@ -32,9 +32,28 @@ func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
   case providerName
   of "openrouter":
     @[
-      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-4o-mini", label: "openai/gpt-4o-mini", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-4o", label: "openai/gpt-4o", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "anthropic/claude-opus-4-6", label: "anthropic/claude-opus-4-6", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-6.1-sol", label: "openai/gpt-6.1-sol", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-6-astra", label: "openai/gpt-6-astra", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-6.1-terra", label: "openai/gpt-6.1-terra", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-6-luna", label: "openai/gpt-6-luna", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "anthropic/claude-opus-5-5", label: "anthropic/claude-opus-5-5", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "anthropic/claude-sonnet-5-5", label: "anthropic/claude-sonnet-5-5", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "deepseek/deepseek-4.1-flash", label: "deepseek/deepseek-4.1-flash", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "deepseek/deepseek-v4-pro", label: "deepseek/deepseek-v4-pro", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "google/gemini-3.8-flash", label: "google/gemini-3.8-flash", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "google/gemini-4-argon", label: "google/gemini-4-argon", isFree: false, available: true),
+    ]
+  of "openai":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "gpt-6.1-sol", label: "gpt-6.1-sol", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gpt-6-astra", label: "gpt-6-astra", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gpt-6.1-terra", label: "gpt-6.1-terra", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gpt-6-luna", label: "gpt-6-luna", isFree: false, available: true),
+    ]
+  of "deepseek":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "deepseek-4.1-flash", label: "deepseek-4.1-flash", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "deepseek-v4-pro", label: "deepseek-v4-pro", isFree: false, available: true),
     ]
   of "groq":
     @[
@@ -43,19 +62,23 @@ func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
     ]
   of "zen":
     @[
-      ModelCatalogEntry(providerName: providerName, modelName: "gpt-5.4", label: "gpt-5.4", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "claude-sonnet-4-6", label: "claude-sonnet-4-6", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gpt-6.1-sol", label: "gpt-6.1-sol", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "claude-sonnet-5-5", label: "claude-sonnet-5-5", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "glm-5", label: "glm-5", isFree: false, available: true),
     ]
   of "anthropic":
     @[
-      ModelCatalogEntry(providerName: providerName, modelName: "claude-opus-4-6", label: "claude-opus-4-6", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "claude-sonnet-4-6", label: "claude-sonnet-4-6", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "claude-sonnet-5-5", label: "claude-sonnet-5-5", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "claude-opus-5-5", label: "claude-opus-5-5", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "claude-fable-5-2", label: "claude-fable-5-2", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "claude-haiku-5-5", label: "claude-haiku-5-5", isFree: false, available: true),
     ]
   of "gemini":
     @[
-      ModelCatalogEntry(providerName: providerName, modelName: "gemini-2.5-flash", label: "gemini-2.5-flash", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "gemini-2.5-pro", label: "gemini-2.5-pro", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gemini-3.8-flash", label: "gemini-3.8-flash", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gemini-4-argon", label: "gemini-4-argon", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gemini-3.1-pro", label: "gemini-3.1-pro", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gemini-3.5-flash-lite", label: "gemini-3.5-flash-lite", isFree: true, available: true),
     ]
   of "minimax":
     @[
@@ -80,8 +103,9 @@ func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
     ]
   of "ollama":
     @[
-      ModelCatalogEntry(providerName: providerName, modelName: "llama3", label: "llama3", isFree: true, available: true, hasPricing: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "mistral", label: "mistral", isFree: true, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "llama3.3", label: "llama3.3", isFree: true, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "llama4:scout", label: "llama4:scout", isFree: true, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "qwen2.5-coder", label: "qwen2.5-coder", isFree: true, available: true, hasPricing: true),
     ]
   else:
     @[]
@@ -506,15 +530,7 @@ proc loadMinimaxCatalog(apiKey: string): Result[ModelCatalogResult, string] =
   ## Retorna catálogo estático.
   if apiKey.len == 0:
     return ok(fallbackCatalog("minimax"))
-  
-  ## Lista fixa de modelos MiniMax conhecidos
-  let entries = @[
-    ModelCatalogEntry(providerName: "minimax", modelName: "MiniMax-M2", label: "MiniMax-M2", isFree: false, available: true),
-    ModelCatalogEntry(providerName: "minimax", modelName: "MiniMax-M2.5", label: "MiniMax-M2.5", isFree: false, available: true),
-    ModelCatalogEntry(providerName: "minimax", modelName: "MiniMax-M2.7", label: "MiniMax-M2.7", isFree: false, available: true),
-    ModelCatalogEntry(providerName: "minimax", modelName: "MiniMax-Text-01", label: "MiniMax-Text-01", isFree: false, available: true),
-  ]
-  ok(catalogResult(entries, mcsFallback, getTime().toUnix()))
+  ok(catalogResult(staticCatalog("minimax"), mcsFallback, getTime().toUnix()))
 
 proc buildModelCatalogLoader*(): ModelCatalogLoader {.gcsafe.} =
   ## Returns a closure that loads model catalogs with caching.

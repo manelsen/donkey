@@ -28,7 +28,27 @@ model = "gemini-2.5-pro"
   test "buildProviderSpec applies openrouter defaults":
     let spec = buildProviderSpec(ProviderPrefs(providerName: "openrouter", modelName: ""))
     check spec.providerName == "openrouter"
-    check spec.modelName == "openai/gpt-4o-mini"
+    check spec.modelName == "openai/gpt-6.1-sol"
+
+  test "buildProviderSpec supports openai defaults":
+    let spec = buildProviderSpec(ProviderPrefs(providerName: "openai", modelName: ""))
+    check spec.providerName == "openai"
+    check spec.modelName == "gpt-6.1-sol"
+
+  test "buildProviderSpec supports deepseek defaults":
+    let spec = buildProviderSpec(ProviderPrefs(providerName: "deepseek", modelName: ""))
+    check spec.providerName == "deepseek"
+    check spec.modelName == "deepseek-4.1-flash"
+
+  test "buildProviderSpec supports ollama defaults":
+    let spec = buildProviderSpec(ProviderPrefs(providerName: "ollama", modelName: ""))
+    check spec.providerName == "ollama"
+    check spec.modelName == "llama3.3"
+
+  test "buildProviderSpec supports groq defaults":
+    let spec = buildProviderSpec(ProviderPrefs(providerName: "groq", modelName: ""))
+    check spec.providerName == "groq"
+    check spec.modelName == "llama-3.3-70b-versatile"
 
   test "buildProviderSpec supports zai-anthropic defaults":
     let spec = buildProviderSpec(ProviderPrefs(providerName: "zai-anthropic", modelName: ""))
@@ -212,12 +232,20 @@ model = "gemini-2.5-flash"
     let openrouter = buildProviderBundle("provider = \"openrouter\"", runtime_builder.buildProviderBundle)
     let anthropic = buildProviderBundle("provider = \"anthropic\"", runtime_builder.buildProviderBundle)
     let zaiAnthropic = buildProviderBundle("provider = \"zai-anthropic\"", runtime_builder.buildProviderBundle)
+    let openai = buildProviderBundle("provider = \"openai\"", runtime_builder.buildProviderBundle)
+    let deepseek = buildProviderBundle("provider = \"deepseek\"", runtime_builder.buildProviderBundle)
+    let groq = buildProviderBundle("provider = \"groq\"", runtime_builder.buildProviderBundle)
+    let ollama = buildProviderBundle("provider = \"ollama\"", runtime_builder.buildProviderBundle)
     let gemini = buildProviderBundle("provider = \"gemini\"", runtime_builder.buildProviderBundle)
     let minimax = buildProviderBundle("provider = \"minimax\"", runtime_builder.buildProviderBundle)
     let zaiCoding = buildProviderBundle("provider = \"zai-coding\"", runtime_builder.buildProviderBundle)
     check openrouter.streamFn != nil
     check anthropic.streamFn != nil
     check zaiAnthropic.streamFn != nil
+    check openai.streamFn != nil
+    check deepseek.streamFn != nil
+    check groq.streamFn != nil
+    check ollama.streamFn != nil
     check gemini.streamFn == nil
     check minimax.streamFn == nil
     check zaiCoding.streamFn == nil

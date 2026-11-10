@@ -19,7 +19,7 @@ import ../http/helpers
 
 const
   DeepSeekEndpoint*    = "https://api.deepseek.com/v1/chat/completions"
-  DeepSeekDefaultModel* = "deepseek-chat"
+  DeepSeekDefaultModel* = "deepseek-4.1-flash"
 
 type
   DeepSeekAdapter* = object
