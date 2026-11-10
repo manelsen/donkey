@@ -1,18 +1,26 @@
 ## Provider executor — runs blocking provider calls on a fixed worker pool.
 ##
 ## A fixed set of worker threads consumes `ProviderJob` messages from a shared
-## `Channel`. Each job carries only plain data (`ProviderSpec` +
-## `CompletionRequest`), a gcsafe builder proc, and a pointer to a per-call
-## control block owned by the awaiting coroutine. The session closure and
-## routing state never cross the thread boundary; selection and routing hooks
-## stay on the Chronos event loop.
+## `Channel`. Each job carries only plain data (`ProviderBundle` built on the
+## event loop + `CompletionRequest`) plus a pointer to a shared, reference
+## counted control block owned jointly by the awaiting coroutine and the
+## worker. The session closure and routing state never cross the thread
+## boundary; selection and routing hooks stay on the Chronos event loop.
 ##
-## Ownership rule
-## --------------
+## Builder ownership rule
+## ----------------------
+## `ProviderRuntimeBuilder` is a closure and may capture event-loop state
+## (preferences, routing tables, the session context). It must therefore run
+## on the event loop thread, never on a worker: `asyncProviderComplete` calls
+## `builder(spec)` before enqueuing and sends only the resulting
+## `ProviderBundle`. The bundle's `completeFn`/`streamFn` closures are freshly
+## constructed by the builder and are owned exclusively by the job after the
+## channel transfer, so no builder environment is shared with the worker.
+##
 ## GC-managed values only cross the thread boundary through a Nim `Channel`:
 ##
-## 1. Job input (`ProviderSpec`, `CompletionRequest`, the builder closure)
-##    travels through `Channel[ProviderJob]`.
+## 1. Job input (`ProviderBundle`, `CompletionRequest`) travels through
+##    `Channel[ProviderJob]`.
 ## 2. The result (`Result[CompletionResponse, string]`, which owns strings and
 ##    sequences) travels through a per-job `Channel[Result[...]]`.
 ##
@@ -22,36 +30,37 @@
 ## consumer's side. That is Nim's supported mechanism for moving GC-managed
 ## values between threads.
 ##
-## `ProviderJobState` itself contains only a `Lock` and two booleans. These are
-## plain scalars and are read/written exclusively under the lock. The result is
-## deliberately *not* copied directly into this slot: ARC/ORC reference
-## counting is not atomic (the project does not build with `--mm:atomicArc`),
-## so a direct `=sink`/`=copy` of a GC-managed value into another thread's
-## frame is outside the documented memory model even when a lock serialises
-## access. The channel transfer avoids that question entirely.
+## Control block and cancellation
+## ------------------------------
+## `ProviderJobState` is allocated with `allocShared0` and is reference
+## counted:
+##
+## - The caller starts with one reference (`refs = 1`).
+## - Before a successful `trySend` the count is raised to 2 (caller + worker).
+##   If the send fails it stays at 1 and the caller frees the block.
+## - The worker drops its reference when the job finishes (result sent, or job
+##   skipped because it was cancelled).
+## - The caller drops its reference in its `finally` block.
+##
+## The reference that decrements `refs` to 0 is the last owner: it drains any
+## value left in the result channel (destroying it on its own thread), closes
+## the channel, deinitializes the lock and frees the block. Only the lock and
+## the plain scalar fields are touched under the lock; the result is never
+## copied directly into this slot because ARC/ORC reference counting is not
+## atomic (the project does not build with `--mm:atomicArc`).
+##
+## Cancellation is non-blocking. The caller sets `cancelled` under the lock
+## and returns immediately; the worker notices it (before calling the provider
+## or after it returns) and discards the result locally instead of sending it
+## into a channel whose consumer may be gone. The refcount guarantees the
+## block outlives every thread that still holds a reference, so there is no
+## use-after-free and no need to wait for the in-flight provider call.
 ##
 ## Ordering: the worker writes the result into the channel first and only then
 ## publishes `done` under the lock. A caller that observes `done` therefore
 ## knows the send completed, and is the only consumer of the channel.
-##
-## Ownership / cancellation
-## -------------------------
-## The control block lives in the caller's coroutine frame. The caller never
-## returns or unwinds before observing `done` (the `finally` block waits for
-## it), so a worker can never touch a freed control block or channel. On
-## cancellation the caller drains any result the worker already produced (its
-## strings are destroyed on the caller's thread rather than leaked inside
-## channel storage) and then closes the channel.
-##
-## Consequence: cancelling a call that a worker already started waits for that
-## provider call to finish, exactly like the previous thread-per-call design
-## (`joinThread` in `finally`). Cancelling a job that is still queued waits for
-## a worker to dequeue and acknowledge it; with all workers busy on long calls
-## that can take as long as the slowest in-flight call. This is a deliberate
-## trade-off: reclaiming the slot earlier would require heap-allocated slots
-## with cross-thread ownership, which is harder to prove safe under ORC.
 
-import std/[locks, os]
+import std/locks
 import chronos
 import ../core/pipeops
 import ../ports/provider
@@ -68,55 +77,82 @@ type
       Future[Result[CompletionResponse, string]] {.gcsafe.}
 
   ProviderJobState = object
-    ## One per call; owned by the awaiting coroutine's frame.
-    ## Only the lock and the flags are written directly across threads.
+    ## Shared-heap control block; see the module header.
     lock:      Lock
     cancelled: bool
     done:      bool
+    refs:      int
     results:   Channel[Result[CompletionResponse, string]]
 
   ProviderJob = object
-    builder: ProviderRuntimeBuilder
-    spec:    ProviderSpec
-    req:     CompletionRequest
-    state:   ptr ProviderJobState
+    bundle: ProviderBundle
+    req:    CompletionRequest
+    state:  ptr ProviderJobState
 
 var
   gProviderQueue {.global.}: Channel[ProviderJob]
   gProviderWorkers {.global.}: array[ProviderWorkerCount, Thread[void]]
   gProviderPoolStarted = false
 
-proc callProvider(builder: ProviderRuntimeBuilder; spec: ProviderSpec;
-                  req: CompletionRequest
+proc releaseJobState(state: ptr ProviderJobState) {.gcsafe.} =
+  ## Drops one reference to the control block. The owner that drops the last
+  ## reference drains any leftover result, closes the channel, destroys the
+  ## lock and frees the block. No other thread can touch `state` afterwards.
+  acquire(state[].lock)
+  dec state[].refs
+  let remaining = state[].refs
+  release(state[].lock)
+  if remaining > 0:
+    return
+
+  let leftover = state[].results.tryRecv()
+  if leftover.dataAvailable:
+    discard leftover.msg
+  state[].results.close()
+  deinitLock(state[].lock)
+  deallocShared(state)
+
+proc callProvider(bundle: sink ProviderBundle; req: sink CompletionRequest
                  ): Result[CompletionResponse, string] {.gcsafe, raises: [].} =
   try:
-    let bundle = builder(spec)
     if bundle.completeFn == nil:
-      return err("provider unavailable: " & spec.providerName)
+      return err("provider unavailable")
     bundle.completeFn(req)
   except Exception as e:
     err(e.msg)
 
-proc completeJob(job: ProviderJob) {.gcsafe.} =
-  acquire(job.state[].lock)
-  let cancelled = job.state[].cancelled
-  release(job.state[].lock)
+proc completeJob(job: sink ProviderJob) {.gcsafe.} =
+  let state = job.state
 
-  var value: Result[CompletionResponse, string]
+  acquire(state[].lock)
+  let cancelled = state[].cancelled
+  release(state[].lock)
   if cancelled:
-    value = err(Result[CompletionResponse, string], "provider job cancelled")
-  else:
-    value = callProvider(job.builder, job.spec, job.req)
+    # The caller is gone; nothing may be sent into its channel.
+    releaseJobState(state)
+    return
+
+  var value = callProvider(move(job.bundle), move(job.req))
+
+  acquire(state[].lock)
+  let cancelledAfter = state[].cancelled
+  release(state[].lock)
+  if cancelledAfter:
+    # Discard the GC-managed result on this thread; the channel has no
+    # consumer left.
+    releaseJobState(state)
+    return
 
   # Ownership of the GC-managed result moves into the channel's shared
   # storage; see the module header.
-  job.state[].results.send(value)
+  state[].results.send(value)
 
   # Published only after the send completed. The caller treats `done` as
-  # "the worker will not touch this slot again".
-  acquire(job.state[].lock)
-  job.state[].done = true
-  release(job.state[].lock)
+  # "the result is available in the channel".
+  acquire(state[].lock)
+  state[].done = true
+  release(state[].lock)
+  releaseJobState(state)
 
 proc providerWorker() {.thread.} =
   while true:
@@ -135,10 +171,10 @@ proc providerPoolReady*(): bool =
   ## True once the worker pool has been lazily started.
   gProviderPoolStarted
 
-proc takeResult(state: var ProviderJobState): Result[CompletionResponse, string] =
+proc takeResult(state: ptr ProviderJobState): Result[CompletionResponse, string] =
   ## Called only after `done` was observed, so the channel holds exactly one
-  ## result (the worker always sends one, including for cancelled jobs).
-  let received = state.results.tryRecv()
+  ## result for an uncancelled job.
+  let received = state[].results.tryRecv()
   if received.dataAvailable:
     return received.msg
   err(Result[CompletionResponse, string],
@@ -146,51 +182,78 @@ proc takeResult(state: var ProviderJobState): Result[CompletionResponse, string]
 
 proc asyncProviderComplete*(builder: ProviderRuntimeBuilder;
                             spec: ProviderSpec;
-                            req: CompletionRequest
+                            req: sink CompletionRequest
                            ): Future[Result[CompletionResponse, string]] {.async.} =
-  ## Enqueues one provider call for a worker thread and awaits its result.
-  ## On cancellation the slot is marked cancelled and the caller waits until
-  ## the worker acknowledges, so the slot cannot be freed under the thread.
+  ## Runs `builder` on the event loop, then enqueues the resulting bundle for
+  ## a worker thread and awaits its result. Cancellation marks the job
+  ## cancelled without waiting for the worker; see the module header.
   ensureProviderPool()
 
-  var state: ProviderJobState
-  initLock(state.lock)
-  state.results.open(ProviderResultChannelDepth)
-  let job = ProviderJob(builder: builder, spec: spec, req: req, state: addr state)
+  # The builder may capture event-loop state, so it must not run on a worker.
+  var bundle: ProviderBundle
+  try:
+    bundle = builder(spec)
+  except CatchableError as e:
+    return err(Result[CompletionResponse, string],
+               "provider executor: builder failed: " & e.msg)
+  except Exception as e:
+    return err(Result[CompletionResponse, string],
+               "provider executor: builder failed: " & e.msg)
+
+  if bundle.completeFn == nil:
+    return err(Result[CompletionResponse, string],
+               "provider unavailable: " & spec.providerName)
+
+  let state = cast[ptr ProviderJobState](allocShared0(sizeof(ProviderJobState)))
+  if state == nil:
+    return err(Result[CompletionResponse, string],
+               "provider executor: out of memory")
+  initLock(state[].lock)
+  state[].refs = 1
+  try:
+    state[].results.open(ProviderResultChannelDepth)
+  except CatchableError as e:
+    deinitLock(state[].lock)
+    deallocShared(state)
+    return err(Result[CompletionResponse, string],
+               "provider executor: cannot open result channel: " & e.msg)
+
+  # Caller + (future) worker. Set before the send so a worker that dequeues
+  # immediately already has its reference accounted for.
+  state[].refs = 2
+  var job = ProviderJob(bundle: move(bundle), req: move(req), state: state)
   if not gProviderQueue.trySend(job):
-    state.results.close()
-    deinitLock(state.lock)
+    state[].refs = 1
+    releaseJobState(state)
     return err(Result[CompletionResponse, string],
                "provider executor saturated: queue full (" &
                $ProviderQueueDepth & ")")
 
+  var completed = false
   try:
     while true:
-      acquire(state.lock)
-      let done = state.done
-      release(state.lock)
+      acquire(state[].lock)
+      let done = state[].done
+      release(state[].lock)
       if done:
-        return takeResult(state)
+        let value = takeResult(state)
+        completed = true
+        return value
       await sleepAsync(milliseconds(ProviderPollIntervalMs))
   finally:
-    acquire(state.lock)
-    var done = state.done
-    if not done:
-      state.cancelled = true
-    release(state.lock)
-
-    # Never leave the frame while a worker still references `state`.
-    # Blocking here matches the old joinThread() cancellation semantics.
-    while not done:
-      sleep(1)
-      acquire(state.lock)
-      done = state.done
-      release(state.lock)
-
-    # Destroy a result the worker produced but this coroutine never consumed;
-    # Channel.close() frees storage without running element destructors.
-    let leftover = state.results.tryRecv()
-    if leftover.dataAvailable:
-      discard leftover.msg
-    state.results.close()
-    deinitLock(state.lock)
+    if not completed:
+      acquire(state[].lock)
+      let done = state[].done
+      if not done:
+        # Do not wait for the worker: it holds its own reference and will
+        # notice the flag and clean up.
+        state[].cancelled = true
+      release(state[].lock)
+      if done:
+        # The worker published a result, but this coroutine never consumed
+        # it. Drain it here so the GC-managed payload is destroyed on the
+        # caller's thread instead of inside closed channel storage.
+        let leftover = state[].results.tryRecv()
+        if leftover.dataAvailable:
+          discard leftover.msg
+    releaseJobState(state)

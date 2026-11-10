@@ -2,9 +2,10 @@
 ##
 ## The executor is a fixed worker pool: jobs are queued on a shared channel and
 ## consumed by a bounded number of OS threads. These tests cover sequential and
-## concurrent calls, error propagation, and the documented cancellation
-## behaviour (a cancelled in-flight call waits for the worker to acknowledge
-## before the caller's result slot is released).
+## concurrent calls, error propagation, builder thread ownership, and the
+## documented non-blocking cancellation behaviour (a cancelled call returns
+## immediately and the reference-counted control block is reclaimed by
+## whichever thread drops the last reference).
 
 import std/[os, strutils, unittest]
 import chronos
@@ -100,7 +101,6 @@ proc collectTexts(futures: seq[Future[Result[CompletionResponse, string]]]): Fut
 suite "provider executor":
 
   test "runs a provider call on a worker and returns its result":
-    check not providerPoolReady()
     let builder = stubBuilder("from-worker", delayMs = 120)
     let res = waitFor asyncProviderComplete(
       builder, ProviderSpec(providerName: "stub"), CompletionRequest())
@@ -182,20 +182,47 @@ suite "provider executor":
       check text.len == prefix.len + payloadSize
 
   test "pool configuration is bounded and fixed":
-    check providerPoolReady()
     check ProviderWorkerCount == 4
     check ProviderQueueDepth > 0
 
-  test "cancelling an in-flight call raises CancelledError and waits for the worker":
+  test "capturing builder runs on the caller thread":
+    # A builder may capture event-loop state, so the executor must invoke it
+    # before enqueuing, never on a worker thread.
+    let callerThread = getThreadId()
+    let builder: ProviderRuntimeBuilder = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
+      if getThreadId() != callerThread:
+        raise newException(ValueError, "builder ran off the event loop thread")
+      let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+        ok(CompletionResponse(text: "event-loop-builder"))
+      ProviderBundle(completeFn: complete)
+    let res = waitFor asyncProviderComplete(
+      builder, ProviderSpec(providerName: "stub"), CompletionRequest())
+    check res.isOk
+    check res.value.text == "event-loop-builder"
+
+  test "builder exception becomes an error Result and the pool stays healthy":
+    let builder: ProviderRuntimeBuilder = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
+      raise newException(ValueError, "builder boom")
+    let res = waitFor asyncProviderComplete(
+      builder, ProviderSpec(providerName: "stub"), CompletionRequest())
+    check res.isErr
+    check "builder boom" in res.error
+
+    let after = waitFor asyncProviderComplete(
+      stubBuilder("after-builder-error"), ProviderSpec(providerName: "stub"), CompletionRequest())
+    check after.isOk
+    check after.value.text == "after-builder-error"
+
+  test "cancelling an in-flight call returns promptly without waiting for the worker":
     let builder = stubBuilder("slow", delayMs = 250)
     let start = Moment.now()
     let cancelled = waitFor waitAndCancel(builder, cancelAfterMs = 40)
     let elapsedMs = (Moment.now() - start).milliseconds
 
     check cancelled
-    # Documented limitation: the slot is not freed until the worker acknowledges,
-    # so cancellation waits for the in-flight provider call.
-    check elapsedMs >= 150
+    # Non-blocking cancellation: the caller must not wait for the 250ms
+    # provider call to return.
+    check elapsedMs < 200
 
     let after = waitFor asyncProviderComplete(
       stubBuilder("after-cancel"), ProviderSpec(providerName: "stub"), CompletionRequest())
@@ -220,11 +247,14 @@ suite "provider executor":
       check text == "busy" & $i
 
   test "repeated cancellation drains results and keeps the pool healthy":
-    # Large results are produced after cancellation; the caller must drain and
-    # destroy them instead of leaking them inside the closed channel.
+    # Large results may be produced after cancellation; the worker discards
+    # them locally (or the last reference drains them) instead of leaking them
+    # inside a channel whose consumer is gone.
     let slow = stubBuilder(repeat('y', 4096), delayMs = 250)
     for _ in 0 ..< 6:
+      let start = Moment.now()
       check waitFor waitAndCancel(slow, cancelAfterMs = 20)
+      check (Moment.now() - start).milliseconds < 200
 
     let after = waitFor asyncProviderComplete(
       stubBuilder("alive"), ProviderSpec(providerName: "stub"), CompletionRequest())

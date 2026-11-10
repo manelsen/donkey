@@ -1037,13 +1037,16 @@ proc setupIpcServer(cfg: DonkeyConfig;
       log.error("HTTP gateway disabled: non-loopback bind (" & httpBind &
                 ") requires DONKEY_HTTP_TOKEN and DONKEY_HTTP_ALLOW_INSECURE=1")
     else:
-      startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
-                       bindAddr = httpBind, authToken = httpToken)
-      log.info("HTTP gateway: http://" & httpBind & ":" & $httpPort &
-               (if httpToken.len > 0: " (bearer auth enabled)" else: ""))
-      if httpToken.len > 0 and httpBind notin ["127.0.0.1", "localhost", "::1", "[::1]"]:
-        log.warn("HTTP gateway is not loopback and has no TLS; put it behind a " &
-                 "TLS-terminating reverse proxy — the Bearer token travels in cleartext")
+      let gatewayStart = startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
+                                          bindAddr = httpBind, authToken = httpToken)
+      if gatewayStart.isErr:
+        log.error("HTTP gateway disabled: " & gatewayStart.error)
+      else:
+        log.info("HTTP gateway: http://" & httpBind & ":" & $httpPort &
+                 (if httpToken.len > 0: " (bearer auth enabled)" else: ""))
+        if httpToken.len > 0 and httpBind notin ["127.0.0.1", "localhost", "::1", "[::1]"]:
+          log.warn("HTTP gateway is not loopback and has no TLS; put it behind a " &
+                   "TLS-terminating reverse proxy — the Bearer token travels in cleartext")
   else:
     log.info("HTTP gateway: disabled")
 

@@ -28,7 +28,10 @@ const
   SseHeartbeatIntervalMs = 5000   ## ms between SSE heartbeat/push cycles
   SseMaxPollCycles = 60           ## bounded to ~5 minutes at 5s intervals
   MaxConcurrentHttpConnections = 32
-  MaxConcurrentSseConnections = 8
+  ## SSE streams occupy a worker for their whole lifetime (up to ~5 minutes),
+  ## so keep this well below GatewayWorkerCount: at least half of the workers
+  ## must stay available for normal requests and 503 responses.
+  MaxConcurrentSseConnections = 4
 
 func resolveGatewayPort*(raw: string): int =
   ## Parses DONKEY_HTTP_PORT semantics.
@@ -442,6 +445,7 @@ var
   gGatewayQueue {.global.}: Channel[SocketHandle]
   gGatewayWorkers {.global.}: array[GatewayWorkerCount, Thread[int]]
   gGatewayPoolStarted = false
+  gGatewayPoolAttempted = false
 
 proc applyClientTimeouts(sock: Socket; seconds: int = 10): Result[void, string] =
   ## Bounds header reads and sends from a connected client.
@@ -466,7 +470,7 @@ type HttpConnectionArgs = object
 var gActiveHttpConnections = 0
 var gActiveSseConnections = 0
 var gHttpConnLock: Lock
-var gHttpConnLockReady = false
+initLock(gHttpConnLock)  # Module init runs before any gateway thread starts.
 
 proc tryAcquireHttpConnection(): bool =
   acquire(gHttpConnLock)
@@ -510,7 +514,14 @@ proc gatewayWorker(id: int) {.thread.} =
       let fd = gGatewayQueue.recv()
       if fd == SocketHandle(-1):
         break
-      let client = newSocket(fd, buffered = true)
+      var client: Socket
+      try:
+        client = newSocket(fd, buffered = true)
+      except CatchableError as exc:
+        gGatewayLog.warn("http_gateway: cannot wrap accepted socket: " & exc.msg)
+        discard posix.close(fd)
+        releaseHttpConnection()
+        continue
       let timeoutResult = applyClientTimeouts(client)
       if timeoutResult.isErr:
         gGatewayLog.warn("http_gateway: " & timeoutResult.error)
@@ -567,6 +578,41 @@ proc gatewayThread(args: GatewayArgs) {.thread.} =
 
 var gGatewayThread: Thread[GatewayArgs]
 
+proc startGatewayPool(log: Logger): Result[void, string] =
+  ## Opens the queue and starts every worker. Must be called with
+  ## `gHttpConnLock` held so concurrent `startHttpGateway` calls cannot start
+  ## duplicate workers. The pool is only marked started once the queue is
+  ## open; a partial thread-start failure is reported but never retried into
+  ## duplicates because the queue cannot be reopened.
+  if gGatewayPoolStarted:
+    return ok()
+  if gGatewayPoolAttempted:
+    return err("http_gateway: worker pool initialization already failed; not retrying")
+  gGatewayPoolAttempted = true
+  try:
+    gGatewayQueue.open(GatewayQueueDepth)
+  except CatchableError as exc:
+    return err("http_gateway: cannot open worker queue — " & exc.msg)
+
+  var started = 0
+  var firstError = ""
+  for i in 0 ..< GatewayWorkerCount:
+    try:
+      createThread(gGatewayWorkers[i], gatewayWorker, i)
+      inc started
+    except CatchableError as exc:
+      if firstError.len == 0:
+        firstError = exc.msg
+
+  if started > 0:
+    gGatewayPoolStarted = true
+  if started < GatewayWorkerCount:
+    let msg = "http_gateway: started " & $started & "/" & $GatewayWorkerCount &
+              " workers — " & firstError
+    log.error(msg)
+    return err(msg)
+  ok()
+
 proc startHttpGateway*(port: int;
                        statusFn: GatewayStatusFn;
                        logFn:    GatewayLogFn;
@@ -574,26 +620,34 @@ proc startHttpGateway*(port: int;
                        inboundFn: GatewayInboundFn = nil;
                        bindAddr = "127.0.0.1";
                        authToken = "";
-                       log:       Logger = newLogger("http_gateway")) =
+                       log:       Logger = newLogger("http_gateway")
+                      ): Result[void, string] =
   ## Starts the HTTP gateway on a dedicated OS thread.
   ## statusFn, logFn, and eventFn are called on each request; they must be gcsafe.
   ## inboundFn is called when POST /api/chat is received; may be nil.
   {.cast(gcsafe).}:
-    if not gHttpConnLockReady:
-      initLock(gHttpConnLock)
-      gHttpConnLockReady = true
     gGatewayStatusFn  = statusFn
     gGatewayLogFn     = logFn
     gGatewayEventFn   = eventFn
     gGatewayInboundFn = inboundFn
     gGatewayLog       = log
     gGatewayAuthToken = authToken
-    if not gGatewayPoolStarted:
-      gGatewayPoolStarted = true
-      gGatewayQueue.open(GatewayQueueDepth)
-      for i in 0 ..< GatewayWorkerCount:
-        createThread(gGatewayWorkers[i], gatewayWorker, i)
+    acquire(gHttpConnLock)
+    let poolResult =
+      try:
+        startGatewayPool(log)
+      finally:
+        release(gHttpConnLock)
+    if poolResult.isErr:
+      # startGatewayPool already logged the detailed failure.
+      return err(poolResult.error)
     let args = GatewayArgs(port: port, bindAddr: bindAddr, authToken: authToken,
                            statusFn: statusFn, logFn: logFn,
                            eventFn: eventFn, inboundFn: inboundFn, log: log)
-    createThread(gGatewayThread, gatewayThread, args)
+    try:
+      createThread(gGatewayThread, gatewayThread, args)
+    except CatchableError as exc:
+      let msg = "http_gateway: cannot start server thread — " & exc.msg
+      log.error(msg)
+      return err(msg)
+    ok()
