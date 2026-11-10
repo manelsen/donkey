@@ -421,7 +421,7 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
     except ValueError:
       result.webhookPort = 0
   let webhookHost = getEnv("DONKEY_WEBHOOK_HOST")
-  result.webhookHost = if webhookHost.len > 0: webhookHost else: "0.0.0.0"
+  result.webhookHost = if webhookHost.len > 0: webhookHost else: "127.0.0.1"
   result.slackSigningSecret = getEnv("SLACK_SIGNING_SECRET")
   result.feishuVerificationToken = getEnv("FEISHU_VERIFICATION_TOKEN")
   let matrixWebhookToken = getEnv("MATRIX_WEBHOOK_TOKEN")
