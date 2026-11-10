@@ -18,6 +18,7 @@ import ../ports/provider
 import ../app/session_state
 import ../app/native_tools
 import ../app/prompt_building
+import ../app/provider_executor
 
 export tool_loop
 
@@ -148,6 +149,9 @@ proc safeComplete(fn: CompleteFn; req: CompletionRequest
                  ): Result[CompletionResponse, string] {.gcsafe, raises: [].} =
   try: fn(req)
   except Exception as e: err(e.msg)
+
+func completionErr(msg: string): Result[CompletionResponse, string] {.gcsafe.} =
+  err(msg)
 
 proc awaitExpectedReply*(outbox: AsyncQueue[AgentMessage];
                         expectedId: string;
@@ -316,7 +320,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
                  suppressProgress: bool;
                  debugMode: bool;
                  showReasoning: bool;
-                 log: Logger): Future[ToolLoopRunResult] {.async.} =
+                 log: Logger;
+                 asyncCompleteFn: AsyncCompleteFn = nil): Future[ToolLoopRunResult] {.async.} =
   var loopState = history |> newToolLoopState
   var round = 0
   var recentCalls: seq[(string, string)] = @[]
@@ -341,7 +346,14 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         loopState |>->
         withStreamFinalText(streamText, streamReasoning)
       continue
-    let resp = safeComplete(completeFn, req)
+    let resp =
+      if asyncCompleteFn != nil:
+        try:
+          await asyncCompleteFn(req)
+        except Exception as e:
+          completionErr(e.msg)
+      else:
+        safeComplete(completeFn, req)
     if resp.isErr:
       pushAgentEvent(AgentEvent(
         kind:    aekError,

@@ -1,51 +1,104 @@
-## metrics_server — Prometheus-style HTTP metrics exporter (Chronos based).
+## metrics_server — Prometheus-style HTTP metrics exporter.
 ##
-## Thin HTTP wrapper around the core metrics module.
-## Delegates all recording to metrics.nim (gcsafe, thread-safe).
+## Runs in its own OS thread so provider/email blocking calls in the daemon
+## cannot delay scrapes. The handler only reads the gcsafe metrics registry.
 
-import std/[os, strutils]
-import chronos, chronos/apps/http/httpserver
+import std/[net, os, strutils]
+import std/posix
 import ../core/pipeops
 import ../core/log
 import ./metrics
 
 export metrics  # re-export initMetrics*, record*, renderMetrics*, gMetrics
 
-proc startMetricsServer*(address: TransportAddress; label: string; port: int; log: Logger) {.async: (raises: []).} =
-  proc handler(req: RequestFence): Future[HttpResponseRef] {.
-      async: (raises: [CancelledError]).} =
-    if req.isErr:
-      return defaultResponse(req.error)
-    let request = req.get()
-    try:
-      if request.uri.path == "/metrics":
-        let body = renderMetrics()
-        if body.len == 0:
-          log.warn("metrics: /metrics requested before initMetrics()")
-          return await request.respond(Http503, "metrics not initialized")
-        var headers = HttpTable.init()
-        headers.set("Content-Type", "text/plain; version=0.0.4")
-        return await request.respond(Http200, body, headers)
-      else:
-        return await request.respond(Http404, "Not Found")
-    except CancelledError as exc:
-      raise exc
-    except CatchableError as exc:
-      log.warn("metrics: request failed — " & exc.msg)
-      return defaultResponse()
+const
+  MetricsMaxRequestLine = 8192
+  MetricsClientTimeoutSec = 10
 
-  let server = HttpServerRef.new(address, handler).valueOr:
-    log.error("metrics: failed to bind " & label & ":" & $port & " — " & error)
+type MetricsServerArgs = object
+  host: string
+  port: int
+  log:  Logger
+
+var gMetricsThread {.global.}: Thread[MetricsServerArgs]
+var gMetricsThreadStarted = false
+
+proc applyMetricsClientTimeouts(sock: Socket; seconds: int = MetricsClientTimeoutSec) =
+  var tv: Timeval
+  tv.tv_sec = Time(seconds)
+  tv.tv_usec = Suseconds(0)
+  discard setsockopt(sock.getFd, SOL_SOCKET, SO_RCVTIMEO, addr tv, SockLen(sizeof(tv)))
+  discard setsockopt(sock.getFd, SOL_SOCKET, SO_SNDTIMEO, addr tv, SockLen(sizeof(tv)))
+
+proc sendMetricsResponse(sock: Socket; status, contentType, body: string) =
+  let response = "HTTP/1.1 " & status & "\r\n" &
+                 "Content-Type: " & contentType & "\r\n" &
+                 "Content-Length: " & $body.len & "\r\n" &
+                 "Connection: close\r\n\r\n" & body
+  try: sock.send(response) except CatchableError: discard
+
+proc handleMetricsClient(client: Socket; log: Logger) =
+  var requestLine = ""
+  try:
+    while requestLine.len < MetricsMaxRequestLine:
+      let line = client.recvLine()
+      if line.len == 0:
+        break
+      requestLine = line
+      break
+    # Drain headers.
+    while true:
+      let line = client.recvLine()
+      if line.len == 0:
+        break
+  except CatchableError:
+    discard
+
+  let parts = requestLine.splitWhitespace()
+  let path =
+    if parts.len >= 2:
+      let raw = parts[1]
+      let qmark = raw.find('?')
+      if qmark >= 0: raw[0 ..< qmark] else: raw
+    else:
+      ""
+  if path == "/metrics":
+    let body = renderMetrics()
+    if body.len == 0:
+      log.warn("metrics: /metrics requested before initMetrics()")
+      sendMetricsResponse(client, "503 Service Unavailable", "text/plain", "metrics not initialized")
+    else:
+      sendMetricsResponse(client, "200 OK", "text/plain; version=0.0.4", body)
+  else:
+    sendMetricsResponse(client, "404 Not Found", "text/plain", "Not Found")
+
+proc metricsServerThread(args: MetricsServerArgs) {.thread.} =
+  discard pthread_detach(pthread_self())
+  var server: Socket
+  try:
+    server = newSocket(Domain.AF_INET, SockType.SOCK_STREAM, Protocol.IPPROTO_TCP)
+    server.setSockOpt(OptReuseAddr, true)
+    server.bindAddr(Port(args.port), args.host)
+    server.listen()
+  except CatchableError as exc:
+    args.log.error("metrics: failed to bind " & args.host & ":" & $args.port & " — " & exc.msg)
+    if server != nil:
+      server.close()
     return
 
-  server.start()
-  log.info("metrics: listening on " & label & ":" & $port & "/metrics")
-  try:
-    await server.join()
-  except CancelledError:
-    discard
-  except CatchableError as exc:
-    log.error("metrics: server stopped — " & exc.msg)
+  args.log.info("metrics: listening on " & args.host & ":" & $args.port & "/metrics")
+  while true:
+    var client: Socket
+    try:
+      server.accept(client)
+    except CatchableError as exc:
+      args.log.error("metrics: accept failed — " & exc.msg)
+      continue
+    applyMetricsClientTimeouts(client)
+    try:
+      handleMetricsClient(client, args.log)
+    finally:
+      client.close()
 
 func parseMetricsPort*(raw: string): Result[int, string] =
   ## Pure conversion; keeps the daemon free of exception-driven control flow.
@@ -58,12 +111,19 @@ func parseMetricsPort*(raw: string): Result[int, string] =
   except ValueError:
     err("porta não numérica")
 
-proc validateMetricsBind*(address: string; port: int): Result[TransportAddress, string] =
-  ## Converts initTAddress's exception into a Result at the adapter boundary.
-  try:
-    ok(initTAddress(address, port))
-  except TransportAddressError as exc:
-    err(exc.msg)
+proc validateMetricsBind*(address: string; port: int): Result[string, string] =
+  ## Rejects clearly invalid host strings; the bind itself is authoritative.
+  if address.strip.len == 0 or ' ' in address:
+    err("invalid bind address")
+  else:
+    ok(address)
+
+proc startMetricsServer*(host: string; port: int; log: Logger) =
+  if gMetricsThreadStarted:
+    return
+  gMetricsThreadStarted = true
+  createThread(gMetricsThread, metricsServerThread,
+               MetricsServerArgs(host: host, port: port, log: log))
 
 proc startOptionalMetricsServer*(log: Logger) =
   ## Starts the Prometheus exporter only when explicitly configured.
@@ -76,7 +136,7 @@ proc startOptionalMetricsServer*(log: Logger) =
     return
   let bindRaw = getEnv("DONKEY_METRICS_BIND").strip()
   let bindAddr = if bindRaw.len > 0: bindRaw else: "127.0.0.1"
-  let address = validateMetricsBind(bindAddr, port).valueOr:
+  let host = validateMetricsBind(bindAddr, port).valueOr:
     log.warn("metrics: DONKEY_METRICS_BIND inválido (" & bindAddr & ") — " & error)
     return
-  asyncSpawn startMetricsServer(address, bindAddr, port, log)
+  startMetricsServer(host, port, log)

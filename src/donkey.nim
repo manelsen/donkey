@@ -1427,8 +1427,9 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     log.error("dm_policy=pairing is not implemented yet; use open or allowlist")
     quit(1)
   log.info("daemon starting — Telegram + Discord + WeCom")
-  initMetrics()
-  startOptionalMetricsServer(log)
+  {.cast(gcsafe).}:
+    initMetrics()
+    startOptionalMetricsServer(log)
 
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory

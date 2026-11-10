@@ -19,6 +19,7 @@ import donkey/adapters/memory/md_file
 import donkey/app/memory_agent
 import donkey/app/tool_agent
 import donkey/app/orchestrator
+import donkey/app/provider_executor
 import donkey/app/session_manager
 import donkey/app/session_state
 

@@ -224,7 +224,8 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              bootstrap.skillPrompt,
                              sandboxMode, sandboxRuntimeCmd, sandboxImage,
                              cfg.webAllowlist, cfg.toolWebPolicy,
-                             errorExplainFn = bootstrap.errorExplainFn)
+                             errorExplainFn = bootstrap.errorExplainFn,
+                             asyncCompleteFn = bootstrap.asyncCompleteFn)
 
 proc enqueueSessionMessage*(entry: var SessionEntry;
                             msg: InboundMessage;

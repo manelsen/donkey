@@ -4,6 +4,7 @@
 ## and native tool exposure so the daemon entrypoint only coordinates lifecycle.
 
 import std/[algorithm, json, os, strutils]
+import chronos
 import ../config/skills_registry
 import ../config/clawhub_registry
 import ../core/pipeops
@@ -17,6 +18,7 @@ import ../ports/memory
 import ../ports/provider
 import ../ports/tool
 import ./metrics
+import ./provider_executor
 export provider
 
 const
@@ -33,6 +35,7 @@ type
 
   SessionBootstrap* = object
     completeFn*:    CompleteFn
+    asyncCompleteFn*: AsyncCompleteFn
     errorExplainFn*: CompleteFn
     paddockDir*:    string
     clients*:       seq[ToolRuntimePort]
@@ -44,6 +47,7 @@ type
     preferencesMd*: string
     paddockDir*:    string
     completeFn*:    CompleteFn
+    asyncCompleteFn*: AsyncCompleteFn
     errorExplainFn*: CompleteFn
     clients*:       seq[ToolRuntimePort]
     tools*:         seq[ToolDescription]
@@ -255,7 +259,8 @@ proc buildCompleteFn*(preferencesMd: string;
     var lastErr = "no provider available"
     for selection in costAwareSelections:
       if routingHook != nil:
-        routingHook(selection, prefs, req)
+        try: routingHook(selection, prefs, req)
+        except Exception: discard
       let startedAt = nowMs()
       let bundle = providerRuntimeBuilder(selection.toProviderSpec)
       if bundle.completeFn == nil:
@@ -266,11 +271,90 @@ proc buildCompleteFn*(preferencesMd: string;
       if response.isErr:
         recordError(selection.providerName)
       if routingResultHook != nil:
-        routingResultHook(selection, elapsedMs, response.isOk)
+        try: routingResultHook(selection, elapsedMs, response.isOk)
+        except Exception: discard
       if response.isOk:
         return response
       lastErr = response.error
     err(lastErr)
+
+func asyncCompleteErr(msg: string): Result[CompletionResponse, string] {.gcsafe.} =
+  err(msg)
+
+proc buildAsyncCompleteFn*(preferencesMd: string;
+                             providerRuntimeBuilder: ProviderRuntimeBuilder;
+                             routingHook: RoutingTelemetryHook = nil;
+                             routingResultHook: RoutingResultHook = nil;
+                             routingFeedbackHook: RoutingFeedbackHook = nil;
+                             routingCostHook: RoutingCostHook = nil;
+                             routingProviderCooldownHook: RoutingProviderCooldownHook = nil
+                            ): AsyncCompleteFn {.gcsafe.} =
+  ## Async twin of buildCompleteFn: selection/hooks run on the event loop,
+  ## while only the provider call itself runs on a worker.
+  let prefs = parseSmartRoutingPrefs(preferencesMd)
+  let availability = detectProviderAvailability()
+  result = proc(req: CompletionRequest): Future[Result[CompletionResponse, string]] {.async.} =
+    let baseSelections = smartRouteSelections(prefs, req, availability)
+    var feedback: seq[RouteFeedback] = @[]
+    if routingFeedbackHook != nil:
+      try: feedback = routingFeedbackHook()
+      except Exception: feedback = @[]
+    let rankedSelections =
+      if routingFeedbackHook != nil:
+        reorderSelectionsWithFeedback(baseSelections, feedback)
+      else:
+        baseSelections
+    let selections =
+      if routingHook != nil:
+        applyCircuitBreaker(rankedSelections, feedback)
+      else:
+        rankedSelections
+    let providerHealthySelections =
+      if routingFeedbackHook != nil:
+        applyProviderCircuitBreaker(selections, feedback)
+      else:
+        selections
+    var cooldowns: seq[ProviderCooldown] = @[]
+    if routingProviderCooldownHook != nil:
+      try: cooldowns = routingProviderCooldownHook()
+      except Exception: cooldowns = @[]
+    let cooldownFilteredSelections =
+      if routingProviderCooldownHook != nil:
+        applyProviderCooldowns(providerHealthySelections, cooldowns, nowMs() div 1000)
+      else:
+        providerHealthySelections
+    var costs: seq[RouteCostHint] = @[]
+    if routingCostHook != nil:
+      try: costs = routingCostHook()
+      except Exception: costs = @[]
+    let costAwareSelections =
+      if routingCostHook != nil:
+        reorderSelectionsWithCost(cooldownFilteredSelections, costs, prefs.budgetPolicy)
+      else:
+        cooldownFilteredSelections
+    var lastErr = "no provider available"
+    for selection in costAwareSelections:
+      if routingHook != nil:
+        try: routingHook(selection, prefs, req)
+        except Exception: discard
+      let startedAt = nowMs()
+      var response: Result[CompletionResponse, string]
+      try:
+        response = await asyncProviderComplete(
+          providerRuntimeBuilder, selection.toProviderSpec, req)
+      except Exception as e:
+        response = asyncCompleteErr(e.msg)
+      let elapsedMs = nowMs() - startedAt
+      recordLatency(selection.providerName, float(elapsedMs))
+      if response.isErr:
+        recordError(selection.providerName)
+      if routingResultHook != nil:
+        try: routingResultHook(selection, elapsedMs, response.isOk)
+        except Exception: discard
+      if response.isOk:
+        return response
+      lastErr = response.error
+    return err(lastErr)
 
 proc buildFallbackFn*(primary: CompleteFn; fallbacks: seq[CompleteFn]): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
@@ -511,6 +595,11 @@ proc withSessionCompleteFn*(fallbackCompleteFn: CompleteFn;
     memory, userId, fallbackCompleteFn, providerRuntimeBuilder, providerDefaults,
     routingHook, routingResultHook, routingFeedbackHook, routingCostHook,
     routingProviderCooldownHook)
+  if providerRuntimeBuilder != nil:
+    result.asyncCompleteFn = buildAsyncCompleteFn(
+      applyProviderDefaults(memory.loadContext(userId).preferencesMd, providerDefaults),
+      providerRuntimeBuilder, routingHook, routingResultHook,
+      routingFeedbackHook, routingCostHook, routingProviderCooldownHook)
   result.errorExplainFn = fallbackCompleteFn
 
 func withSessionToolBundle*(toolBundle: SessionToolBundle;
@@ -522,6 +611,7 @@ func withSessionToolBundle*(toolBundle: SessionToolBundle;
 func finalizeSessionBootstrap*(plan: SessionBootstrapPlan): SessionBootstrap =
   SessionBootstrap(
     completeFn: plan.completeFn,
+    asyncCompleteFn: plan.asyncCompleteFn,
     errorExplainFn: plan.errorExplainFn,
     paddockDir: plan.paddockDir,
     clients: plan.clients,

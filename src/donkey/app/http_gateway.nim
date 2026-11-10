@@ -13,6 +13,7 @@
 ## CORS: Access-Control-Allow-Origin: * for local browser access.
 
 import std/[json, net, os, strutils]
+import locks
 import std/posix
 import ../core/pipeops
 import ../core/types
@@ -26,6 +27,7 @@ const
   GatewayDefaultPort* = 8080
   SseHeartbeatIntervalMs = 5000   ## ms between SSE heartbeat/push cycles
   SseMaxPollCycles = 60           ## bounded to ~5 minutes at 5s intervals
+  MaxConcurrentHttpConnections = 32
 
 func resolveGatewayPort*(raw: string): int =
   ## Parses DONKEY_HTTP_PORT semantics.
@@ -244,7 +246,7 @@ proc handleGatewayConn(client: Socket;
                         eventFn:  GatewayEventFn;
                         inboundFn: GatewayInboundFn;
                         authToken: string;
-                        log:      Logger) =
+                        log:      Logger) {.gcsafe.} =
   try:
     let requestLine = client.readHttpLine()
     if requestLine.len == 0:
@@ -388,6 +390,45 @@ proc applyClientTimeouts(sock: Socket; seconds: int = 10): Result[void, string] 
     return err("SO_SNDTIMEO failed")
   ok()
 
+type HttpConnectionArgs = object
+  client:    Socket
+  statusFn:  GatewayStatusFn
+  logFn:     GatewayLogFn
+  eventFn:   GatewayEventFn
+  inboundFn: GatewayInboundFn
+  authToken: string
+  log:       Logger
+
+var gActiveHttpConnections = 0
+var gHttpConnLock: Lock
+var gHttpConnLockReady = false
+
+proc tryAcquireHttpConnection(): bool =
+  acquire(gHttpConnLock)
+  try:
+    if gActiveHttpConnections >= MaxConcurrentHttpConnections:
+      return false
+    inc gActiveHttpConnections
+    true
+  finally:
+    release(gHttpConnLock)
+
+proc releaseHttpConnection() =
+  acquire(gHttpConnLock)
+  try:
+    if gActiveHttpConnections > 0:
+      dec gActiveHttpConnections
+  finally:
+    release(gHttpConnLock)
+
+proc handleConnectionThread(args: HttpConnectionArgs) {.thread.} =
+  discard pthread_detach(pthread_self())
+  try:
+    handleGatewayConn(args.client, args.statusFn, args.logFn, args.eventFn,
+                      args.inboundFn, args.authToken, args.log)
+  finally:
+    releaseHttpConnection()
+
 proc gatewayThread(args: GatewayArgs) {.thread.} =
   {.cast(gcsafe).}:
     let host =
@@ -417,8 +458,21 @@ proc gatewayThread(args: GatewayArgs) {.thread.} =
         args.log.warn("http_gateway: " & timeoutResult.error)
         client.close()
         continue
-      handleGatewayConn(client, args.statusFn, args.logFn, args.eventFn,
-                        args.inboundFn, args.authToken, args.log)
+      if not tryAcquireHttpConnection():
+        client.sendResponse("503 Service Unavailable", "text/plain",
+                            "too many connections\n", args.log)
+        client.close()
+        continue
+      var worker: Thread[HttpConnectionArgs]
+      createThread(worker, handleConnectionThread, HttpConnectionArgs(
+        client: client,
+        statusFn: args.statusFn,
+        logFn: args.logFn,
+        eventFn: args.eventFn,
+        inboundFn: args.inboundFn,
+        authToken: args.authToken,
+        log: args.log,
+      ))
 
 var gGatewayThread: Thread[GatewayArgs]
 
@@ -434,6 +488,9 @@ proc startHttpGateway*(port: int;
   ## statusFn, logFn, and eventFn are called on each request; they must be gcsafe.
   ## inboundFn is called when POST /api/chat is received; may be nil.
   {.cast(gcsafe).}:
+    if not gHttpConnLockReady:
+      initLock(gHttpConnLock)
+      gHttpConnLockReady = true
     gGatewayStatusFn  = statusFn
     gGatewayLogFn     = logFn
     gGatewayEventFn   = eventFn
