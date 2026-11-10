@@ -547,6 +547,10 @@ proc drainDiscordEvents*(sm: var SessionManager;
   ## Process real-time events
   var (hasEvent, event) = dcAdapter.tryRecvEvent()
   while hasEvent:
+    if not sm.allows(UserId(event.discordUserId)):
+      logger.warn("discord: unauthorized event from " & event.discordUserId)
+      (hasEvent, event) = dcAdapter.tryRecvEvent()
+      continue
     logger.info("discord event: " & $event.kind & " from " & event.discordUserId)
     handleDiscordEvent(sm, event, dcAdapter, presentationState, memory, completeBuilder,
                        modelCatalogLoader, toolsCount, toolClientsCount, daemonStartMs, msgSeq, logger,

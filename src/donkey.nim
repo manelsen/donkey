@@ -47,6 +47,7 @@ import donkey/adapters/channel/signal
 import donkey/adapters/channel/slack
 import donkey/adapters/channel/dingtalk
 import donkey/adapters/channel/cli_repl
+import donkey/adapters/webhook/webhook_receiver
 import donkey/adapters/tool/mcp_client
 import donkey/domain/message
 import donkey/domain/agent_message
@@ -190,6 +191,13 @@ type DaemonEnv = object
   wecomAgentId:  int
   whatsappAccessToken: string
   whatsappPhoneNumberId: string
+  webhookPort: int
+  webhookHost: string
+  slackSigningSecret: string
+  feishuVerificationToken: string
+  matrixWebhookToken: string
+  whatsappVerifyToken: string
+  whatsappAppSecret: string
 
 type DaemonAdapters = object
   tg: TelegramAdapter
@@ -400,6 +408,24 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   # WhatsApp Cloud API
   result.whatsappAccessToken = getEnv("WHATSAPP_ACCESS_TOKEN")
   result.whatsappPhoneNumberId = getEnv("WHATSAPP_PHONE_NUMBER_ID")
+
+  # HTTP webhook receiver (Slack / Feishu / DingTalk / Matrix / WhatsApp)
+  let webhookPortStr = getEnv("DONKEY_WEBHOOK_PORT")
+  result.webhookPort = 0
+  if webhookPortStr.len > 0:
+    try:
+      result.webhookPort = parseInt(webhookPortStr)
+    except ValueError:
+      result.webhookPort = 0
+  let webhookHost = getEnv("DONKEY_WEBHOOK_HOST")
+  result.webhookHost = if webhookHost.len > 0: webhookHost else: "0.0.0.0"
+  result.slackSigningSecret = getEnv("SLACK_SIGNING_SECRET")
+  result.feishuVerificationToken = getEnv("FEISHU_VERIFICATION_TOKEN")
+  let matrixWebhookToken = getEnv("MATRIX_WEBHOOK_TOKEN")
+  result.matrixWebhookToken =
+    if matrixWebhookToken.len > 0: matrixWebhookToken else: getEnv("MATRIX_ACCESS_TOKEN")
+  result.whatsappVerifyToken = getEnv("WHATSAPP_VERIFY_TOKEN")
+  result.whatsappAppSecret = getEnv("WHATSAPP_APP_SECRET")
 
 proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
   result.tg = newTelegramAdapter(env.telegramToken, env.identityPath, pollTimeout = 0)
@@ -862,6 +888,33 @@ proc startOptionalWhatsAppGateway(waAdapter: var WhatsAppAdapter;
   waAdapter.openQueue()
   log.info("WhatsApp webhook queue started")
 
+proc startOptionalWebhookReceiver(env: DaemonEnv; log: Logger) =
+  ## Mounts only the routes whose channel is configured AND has a secret.
+  if env.webhookPort <= 0:
+    log.info("DONKEY_WEBHOOK_PORT not set — HTTP webhook receiver disabled")
+    return
+
+  let cfg = WebhookConfig(
+    slackSigningSecret:
+      if env.slackBotToken.len > 0: env.slackSigningSecret else: "",
+    feishuVerificationToken:
+      if env.feishuAppId.len > 0: env.feishuVerificationToken else: "",
+    dingtalkAppSecret:
+      if env.dingTalkAppKey.len > 0: env.dingTalkAppSecret else: "",
+    matrixToken:
+      if matrixConfigured(): env.matrixWebhookToken else: "",
+    whatsappVerifyToken:
+      if env.whatsappAccessToken.len > 0 and env.whatsappPhoneNumberId.len > 0:
+        env.whatsappVerifyToken
+      else: "",
+    whatsappAppSecret:
+      if env.whatsappVerifyToken.len > 0: env.whatsappAppSecret else: "",
+  )
+  startWebhookReceiver(cfg, env.webhookPort, env.webhookHost, log).isOkOr:
+    log.error("webhook receiver: " & error)
+    return
+  log.info("webhook receiver started on " & env.webhookHost & ":" & $env.webhookPort)
+
 proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
                              log: Logger) =
   if not qqAdapter.enabled():
@@ -992,6 +1045,8 @@ func buildDaemonSessionServices(ctx: DaemonContext;
                                 cfg: DonkeyConfig;
                                 memory: MdFileAdapter;
                                 log: Logger): SessionIngressServices =
+  ctx.runtime.sm.dmPolicy = cfg.dmPolicy
+  ctx.runtime.sm.isDmAllowed = proc(userId: UserId): bool = memory.isDmAllowed(userId)
   buildSessionIngressServices(
     memory.toRuntimePort(),
     cfg,
@@ -1216,6 +1271,7 @@ proc startDaemonIngress(ctx: DaemonContext;
   startOptionalMatrixGateway(ctx.adapters.mx, log)
   startOptionalWhatsAppGateway(ctx.adapters.wa, ctx.env.whatsappAccessToken,
                                ctx.env.whatsappPhoneNumberId, log)
+  startOptionalWebhookReceiver(ctx.env, log)
   startOptionalQQGateway(ctx.adapters.qq, log)
   if ctx.env.telegramToken.len > 0:
     log.info("Telegram bot starting (token len=" & $ctx.env.telegramToken.len & ")")
@@ -1272,6 +1328,8 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
   let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
   let fallback = proc(msg: InboundMessage) {.gcsafe.} =
     handleGatewayFallback(ctx, cfg, memory, msg, log)
+  let isAuthorized = proc(userId: UserId): bool {.gcsafe.} =
+    ctx.runtime.sm.allows(userId)
 
   initGatewayDrainer(
     drainDiscord = proc(): bool =
@@ -1301,7 +1359,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         wechat_runtime.drainWeChatEvents(
           ctx.adapters.wch, ctx.env.wechatAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
           toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
-          ctx.runtime.msgSeq, fallback)
+          ctx.runtime.msgSeq, fallback, log)
         true
       ),
     drainQQ = proc(): bool =
@@ -1339,7 +1397,8 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
             (hasEvent, event) = ctx.adapters.dt.tryRecvEvent()
           (false, InboundMessage()),
         fallback,
-        log
+        log,
+        isAuthorized
       )
       count > 0,
     drainMatrix = proc(): bool =
@@ -1361,7 +1420,8 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
             (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
           (false, InboundMessage()),
         fallback,
-        log
+        log,
+        isAuthorized
       )
       count > 0,
     drainTelegram = proc(): bool =

@@ -230,6 +230,10 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
   while hasEvent:
     if event.content.strip.len > 0:
       let userId = qqAdapter.resolveUser(event)
+      if not sm.allows(userId):
+        log.warn("qq: unauthorized message from " & event.userId)
+        (hasEvent, event) = qqAdapter.tryRecvEvent()
+        continue
       let msg = InboundMessage(
         userId: userId,
         channel: ckQQ,

@@ -81,6 +81,16 @@ suite "daemon session ingress":
     check second.msgId == "u-ingress-2"
     check first.plan.entry == second.plan.entry
 
+  test "SessionManager channel-level authorization follows the DM policy":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("u-auth")
+    check sm.allows(uid)
+    sm.dmPolicy = DmPolicyAllowlist
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = u == UserId("u-auth")
+    check sm.allows(uid)
+    check not sm.allows(UserId("other"))
+
   test "allowlist policy rejects an unknown user":
     let tmpDir = getTempDir() / "donkey_test_ingress_allowlist"
     removeDir(tmpDir)

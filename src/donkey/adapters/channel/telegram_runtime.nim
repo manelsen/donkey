@@ -746,6 +746,9 @@ proc handleTelegramMessage*(msg: InboundMessage;
                             daemonStartMs: int64;
                             logger: Logger;
                             ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
+  if not sm.allows(msg.userId):
+    logger.warn("telegram: unauthorized command/message from " & $msg.userId)
+    return true
   let command = decideCommandRequest(CommandRequest(channel: msg.channel, text: msg.text))
   case command.route
   of crLocal:

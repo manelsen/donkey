@@ -27,10 +27,15 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
 
   var (hasEvent, event) = waAdapter.tryRecvEvent()
   while hasEvent:
+    let userId = waAdapter.resolver.resolve(ckWhatsApp, event.waUserId)
+    if not sm.allows(userId):
+      log.warn("whatsapp: unauthorized message from " & event.waUserId)
+      (hasEvent, event) = waAdapter.tryRecvEvent()
+      continue
+
     if event.phoneNumberId.len > 0 and event.messageId.len > 0:
       waAdapter.ack(event.phoneNumberId, event.messageId)
 
-    let userId = waAdapter.resolver.resolve(ckWhatsApp, event.waUserId)
     let msg = InboundMessage(
       userId: userId,
       channel: ckWhatsApp,

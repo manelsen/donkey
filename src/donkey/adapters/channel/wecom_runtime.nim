@@ -76,6 +76,10 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
   while hasEvent:
     if event.msgType == "text" and (event.content |> strip).len > 0:
       let userId  = wcAdapter.resolver.resolve(ckWeCom, event.fromUser)
+      if not sm.allows(userId):
+        logger.warn("wecom: unauthorized message from " & event.fromUser)
+        (hasEvent, event) = wcAdapter.tryRecvEvent()
+        continue
       let inbound = InboundMessage(
         userId:    userId,
         channel:   ckWeCom,
