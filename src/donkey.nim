@@ -1051,8 +1051,6 @@ func buildDaemonSessionServices(ctx: DaemonContext;
                                 cfg: DonkeyConfig;
                                 memory: MdFileAdapter;
                                 log: Logger): SessionIngressServices =
-  ctx.runtime.sm.dmPolicy = cfg.dmPolicy
-  ctx.runtime.sm.isDmAllowed = proc(userId: UserId): bool = memory.isDmAllowed(userId)
   buildSessionIngressServices(
     memory.toRuntimePort(),
     cfg,
@@ -1554,6 +1552,11 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory
   let ctx = bootstrap.ctx
+  ## DM authorization is configured once, before any drainer/actor can consume
+  ## an inbound message. Service builders stay side-effect free.
+  ctx.runtime.sm.configureDmPolicy(
+    cfg.dmPolicy,
+    proc(userId: UserId): bool {.gcsafe.} = memory.isDmAllowed(userId))
   ctx.runtime.sm.setRegistryErrorHook(
     proc(error: string) {.gcsafe, raises: [].} =
       log.warn("session registry: " & error))

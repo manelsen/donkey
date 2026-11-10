@@ -14,7 +14,20 @@ import donkey/domain/agent_message
 import donkey/domain/message
 import donkey/ports/http
 import donkey/ports/provider
+import donkey/ports/runtime_state
 import donkey/ports/tool
+
+var gRegistryUpserts: seq[SessionRegistryRecord] = @[]
+
+proc countingRegistry(): SessionRegistryPort =
+  SessionRegistryPort(
+    loadAll: proc(): Result[seq[SessionRegistryRecord], string] {.gcsafe.} =
+      ok(newSeq[SessionRegistryRecord]()),
+    upsert: proc(record: SessionRegistryRecord): Result[void, string] {.gcsafe.} =
+      {.cast(gcsafe).}:
+        gRegistryUpserts.add(record)
+      ok(),
+  )
 
 proc makeTestServices(memory: MdFileAdapter;
                       outbox: AsyncQueue[OutboundMessage];
@@ -80,6 +93,29 @@ suite "daemon session ingress":
     check first.msgId == "u-ingress-1"
     check second.msgId == "u-ingress-2"
     check first.plan.entry == second.plan.entry
+
+  test "buildSessionIngressContext persists exactly one registry write per message":
+    gRegistryUpserts.setLen(0)
+    var sm: SessionManager
+    sm.init()
+    sm.setRegistryStore(countingRegistry())
+    var msgSeq = 0
+    let msg = InboundMessage(
+      userId: UserId("u-persist"),
+      channel: ckTelegram,
+      channelId: "900",
+      text: "hello",
+    )
+    discard sm.buildSessionIngressContext(msg, SessionRuntimeSignature("sig-p"), msgSeq)
+    check gRegistryUpserts.len == 1
+    ## The single write must include the channel recorded on this message.
+    check gRegistryUpserts[0].channels == @[(ckTelegram, "900")]
+    check gRegistryUpserts[0].lastInboundAtMs > 0
+
+    ## The reuse path is also a single write, still carrying the channel.
+    discard sm.buildSessionIngressContext(msg, SessionRuntimeSignature("sig-p"), msgSeq)
+    check gRegistryUpserts.len == 2
+    check gRegistryUpserts[1].channels == @[(ckTelegram, "900")]
 
   test "SessionManager channel-level authorization follows the DM policy":
     var sm: SessionManager
