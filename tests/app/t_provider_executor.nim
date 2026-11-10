@@ -31,6 +31,14 @@ proc taggedBuilder(delayMs = 0): ProviderRuntimeBuilder =
       ok(CompletionResponse(text: spec.modelName))
     ProviderBundle(completeFn: complete)
 
+proc payloadBuilder(payloadSize: int): ProviderRuntimeBuilder =
+  ## Returns a large, tagged GC-managed string to exercise the channel-based
+  ## ownership transfer of the result between worker and caller threads.
+  result = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
+    let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+      ok(CompletionResponse(text: spec.modelName & ":" & repeat('x', payloadSize)))
+    ProviderBundle(completeFn: complete)
+
 proc runSequential(builder: ProviderRuntimeBuilder; n: int): Future[seq[string]] {.async.} =
   var texts: seq[string]
   for i in 0 ..< n:
@@ -161,6 +169,17 @@ suite "provider executor":
     # A thread-per-call executor would finish in roughly one batch (~120ms).
     check elapsedMs >= 200
 
+  test "GC-managed result payloads survive the thread handoff":
+    const payloadSize = 4096
+    let builder = payloadBuilder(payloadSize)
+    let texts = waitFor runConcurrent(builder, 16)
+
+    check texts.len == 16
+    for i, text in texts:
+      let prefix = "m" & $i & ":"
+      check text.startsWith(prefix)
+      check text.len == prefix.len + payloadSize
+
   test "pool configuration is bounded and fixed":
     check providerPoolReady()
     check ProviderWorkerCount == 4
@@ -198,3 +217,15 @@ suite "provider executor":
     check busyTexts.len == ProviderWorkerCount
     for i, text in busyTexts:
       check text == "busy" & $i
+
+  test "repeated cancellation drains results and keeps the pool healthy":
+    # Large results are produced after cancellation; the caller must drain and
+    # destroy them instead of leaking them inside the closed channel.
+    let slow = stubBuilder(repeat('y', 4096), delayMs = 50)
+    for _ in 0 ..< 6:
+      check waitFor waitAndCancel(slow, cancelAfterMs = 5)
+
+    let after = waitFor asyncProviderComplete(
+      stubBuilder("alive"), ProviderSpec(providerName: "stub"), CompletionRequest())
+    check after.isOk
+    check after.value.text == "alive"
