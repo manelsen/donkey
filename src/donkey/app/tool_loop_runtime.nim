@@ -149,31 +149,6 @@ proc safeComplete(fn: CompleteFn; req: CompletionRequest
   try: fn(req)
   except Exception as e: err(e.msg)
 
-type CompleteJob = object
-  fn: CompleteFn
-  req: CompletionRequest
-  ch: ptr Channel[Result[CompletionResponse, string]]
-
-proc doCompleteJob(job: CompleteJob) {.thread, gcsafe.} =
-  job.ch[].send(safeComplete(job.fn, job.req))
-
-proc asyncComplete*(fn: CompleteFn;
-                    req: CompletionRequest
-                   ): Future[Result[CompletionResponse, string]] {.async.} =
-  ## Runs a blocking provider call on an OS thread so the Chronos event loop
-  ## keeps serving other sessions and the outbox while the provider is busy.
-  var ch: Channel[Result[CompletionResponse, string]]
-  ch.open(1)
-  var t: Thread[CompleteJob]
-  createThread(t, doCompleteJob, CompleteJob(fn: fn, req: req, ch: addr ch))
-  while true:
-    let (hasResult, res) = ch.tryRecv()
-    if hasResult:
-      ch.close()
-      joinThread(t)
-      return res
-    await sleepAsync(milliseconds(10))
-
 proc awaitExpectedReply*(outbox: AsyncQueue[AgentMessage];
                         expectedId: string;
                         workerName: string): Future[AgentMessage] {.async.} =
@@ -366,7 +341,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         loopState |>->
         withStreamFinalText(streamText, streamReasoning)
       continue
-    let resp = await asyncComplete(completeFn, req)
+    let resp = safeComplete(completeFn, req)
     if resp.isErr:
       pushAgentEvent(AgentEvent(
         kind:    aekError,
