@@ -505,6 +505,7 @@ var
   gWebhookWorkers {.global.}: array[WebhookWorkerCount, Thread[WebhookWorkerArg]]
   gWebhookQueue {.global.}: Channel[SocketHandle]
   gWebhookPoolStarted {.global.} = false
+  gWebhookPoolAttempted {.global.} = false
   gWebhookStarted = false
 
 proc webhookWorker(arg: WebhookWorkerArg) {.thread.} =
@@ -527,8 +528,14 @@ proc webhookWorker(arg: WebhookWorkerArg) {.thread.} =
         try: client.close() except CatchableError: discard
 
 proc startWebhookPool(cfg: WebhookConfig; logger: Logger): Result[void, string] =
+  ## Opens the queue and starts every worker. A failed attempt is not retried:
+  ## the channel is already open and re-opening it would leave workers
+  ## pointing at stale storage.
   if gWebhookPoolStarted:
     return ok()
+  if gWebhookPoolAttempted:
+    return err("webhook: worker pool initialization already failed; not retrying")
+  gWebhookPoolAttempted = true
   gWebhookQueue.open(WebhookQueueDepth)
   try:
     for i in 0 ..< WebhookWorkerCount:
