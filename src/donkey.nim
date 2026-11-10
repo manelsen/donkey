@@ -1200,6 +1200,10 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
     return false
 
   for msg in tgMsgs:
+    if not runtime.sm.allows(msg.userId):
+      log.warn("telegram: unauthorized message from " & $msg.userId)
+      continue
+
     let stagedReaction = shouldStageInboundReaction(msg)
     if stagedReaction:
       tgAdapter.sendTyping(msg.userId).isOkOr:

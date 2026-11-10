@@ -9,7 +9,7 @@
 ##   User on Discord calls /continue <code> → their Discord ID is mapped
 ##   to the same UUID as the Telegram user.
 
-import std/[os, random, strutils, tables, times]
+import std/[options, os, random, strutils, tables, times]
 import ../../core/types
 
 type
@@ -90,6 +90,16 @@ proc resolve*(r: IdentityResolver; kind: ChannelKind; rawId: string): UserId =
     r.reverseMap[us].add(key)
     r.save()
   r.store[key]
+
+proc lookup*(r: IdentityResolver; kind: ChannelKind; rawId: string): Option[UserId] =
+  ## Returns the stored mapping for (kind, rawId), if any, without minting a
+  ## new identity or touching the persisted store. Callers use this before
+  ## authorization so denied senders are never added to the identity table.
+  let key = channelKey(kind, rawId)
+  if key in r.store:
+    some(r.store[key])
+  else:
+    none(UserId)
 
 proc reverseChannel*(r: IdentityResolver; userId: UserId; kind: ChannelKind): string =
   ## Reverse lookup: UserId + channel kind → raw channel user ID.

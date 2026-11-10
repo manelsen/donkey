@@ -7,14 +7,17 @@
 ##     loop cannot spin forever;
 ##   - authorized senders keep flowing through unchanged.
 
-import std/[json, os, unittest]
+import std/[json, options, os, unittest]
 import donkey/core/log
 import donkey/core/pipeops
+import donkey/core/outbound/outbound
 import donkey/core/security/dm_policy
 import donkey/domain/message
 import donkey/ports/provider
 import donkey/adapters/memory/md_file
 import donkey/adapters/channel/common_runtime
+import donkey/adapters/channel/telegram
+import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/channel/wecom
 import donkey/adapters/channel/wecom_runtime
 import donkey/adapters/channel/wechat
@@ -37,6 +40,45 @@ proc gateLoader(): ModelCatalogLoader =
 let gateLog = newLogger("test.dm_gate", lvlError)
 
 suite "channel DM gate — runtime drains":
+
+  test "telegram denies unauthorized text before provider and session creation":
+    removeDir(GateTmp / "telegram")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyAllowlist
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+    var tg = TelegramAdapter(
+      resolver: newIdentityResolver(GateTmp / "telegram" / "ids.tsv"))
+    var presentationState = initPresentationState()
+    let memory = MdFileAdapter(paddocksDir: GateTmp / "telegram" / "paddocks")
+
+    var providerCalls = 0
+    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+      proc(req: CompletionRequest): Result[CompletionResponse, string] =
+        inc providerCalls
+        ok(CompletionResponse(text: "unexpected provider call"))
+    var msgSeq = 0
+
+    let msg = InboundMessage(
+      userId: UserId("tg-intruder"),
+      channel: ckTelegram,
+      channelId: "42",
+      text: "hello")
+
+    let handled = handleTelegramMessage(
+      msg, sm, tg, presentationState, memory, completeBuilder, gateLoader(),
+      0, 0, msgSeq, 0, gateLog)
+
+    check handled  ## denied message is consumed, no fallback dispatch
+    check providerCalls == 0
+    check sm.sessionCount() == 0
+
+  test "parsePreferenceString reads a cursor key from a preferences document":
+    let prefs = "discord_last_msg_id = \"123456789012345678\"\n" &
+                "provider = \"gemini\"\n"
+    check parsePreferenceString(prefs, "discord_last_msg_id") == "123456789012345678"
+    check parsePreferenceString(prefs, "provider") == "gemini"
+    check parsePreferenceString(prefs, "missing").len == 0
 
   test "wecom drops unauthorized text but keeps draining authorized traffic":
     removeDir(GateTmp / "wecom")
@@ -76,6 +118,8 @@ suite "channel DM gate — runtime drains":
     check fallbackMsgs[0].text == "hello"
     check sm.sessionCount() == 0
     check not wc.tryRecvEvent()[0]  ## denied event was consumed
+    check wc.resolver.lookup(ckWeCom, "intruder").isNone  ## denied sender not minted
+    check wc.resolver.lookup(ckWeCom, "allowed-user").isSome
 
   test "wechat drops unauthorized messages before command dispatch":
     removeDir(GateTmp / "wechat")
@@ -110,6 +154,7 @@ suite "channel DM gate — runtime drains":
     check fallbackCalls == 0
     check sm.sessionCount() == 0
     check not wch.tryRecvEvent()[0]
+    check wch.resolver.lookup(ckWeChat, "intruder").isNone  ## denied sender not minted
 
   test "qq drops unauthorized messages and consumes the event":
     removeDir(GateTmp / "qq")
@@ -143,6 +188,7 @@ suite "channel DM gate — runtime drains":
     check fallbackCalls == 0
     check sm.sessionCount() == 0
     check not qq.tryRecvEvent()[0]
+    check qq.resolver.lookup(ckQQ, "4242").isNone  ## denied sender not minted
 
   test "feishu drops unauthorized messages and consumes the event":
     removeDir(GateTmp / "feishu")
@@ -188,6 +234,7 @@ suite "channel DM gate — runtime drains":
     check fallbackCalls == 0
     check sm.sessionCount() == 0
     check not fs.tryRecvEvent()[0]
+    check fs.resolver.lookup(ckFeishu, "ou_intruder").isNone  ## denied sender not minted
 
   test "whatsapp drops unauthorized messages before ack and provider dispatch":
     removeDir(GateTmp / "whatsapp")
@@ -235,6 +282,7 @@ suite "channel DM gate — runtime drains":
     check fallbackCalls == 0
     check sm.sessionCount() == 0
     check not wa.tryRecvEvent()[0]
+    check wa.resolver.lookup(ckWhatsApp, "5511999990010").isNone  ## denied sender not minted
 
   test "dingtalk gateway drainer denies unauthorized and advances the queue":
     var queue: seq[InboundMessage] = @[

@@ -1,7 +1,8 @@
-import std/strutils
+import std/[options, strutils]
 import chronos/asyncsync
 import ../../core/commands/command_routing
 import ../../core/log
+import ../../core/security/dm_policy
 import ../../adapters/memory/md_file
 import ../../app/session_manager
 import ../../domain/agent_message
@@ -27,9 +28,18 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
 
   var (hasEvent, event) = waAdapter.tryRecvEvent()
   while hasEvent:
-    let userId = waAdapter.resolver.resolve(ckWhatsApp, event.waUserId)
+    let known = waAdapter.resolver.lookup(ckWhatsApp, event.waUserId)
+    var userId = UserId("")
+    if known.isSome:
+      userId = known.get
+    elif sm.dmPolicy == DmPolicyOpen:
+      userId = waAdapter.resolver.resolve(ckWhatsApp, event.waUserId)
+    else:
+      log.warn("whatsapp: unauthorized message from unidentified sender (policy=" & $sm.dmPolicy & ")")
+      (hasEvent, event) = waAdapter.tryRecvEvent()
+      continue
     if not sm.allows(userId):
-      log.warn("whatsapp: unauthorized message from " & event.waUserId)
+      log.warn("whatsapp: unauthorized message from " & $userId)
       (hasEvent, event) = waAdapter.tryRecvEvent()
       continue
 
@@ -83,7 +93,7 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
           waAdapter.send(OutboundMessage(userId: userId, channel: ckWhatsApp, text: reply)).isOkOr:
             log.error("wa send failed for user=" & $userId & " reason=" & error)
       of crSessionTask:
-        if sm.hasSession(userId):
+        if sm.hasLiveSession(userId):
           let entry = sm.getOrCreate(userId)
           inc msgSeq
           entry.inbox.addLastNoWait(

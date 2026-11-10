@@ -1,9 +1,10 @@
-import std/[strutils, tables]
+import std/[options, strutils, tables]
 import chronos/asyncsync
 import ../../core/commands/command_routing
 import ../../core/log as core_log
 import ../../core/outbound/outbound
 import ../../core/pipeops
+import ../../core/security/dm_policy
 import ../../adapters/memory/md_file
 import ../../app/session_manager
 import ../../domain/agent_message
@@ -358,7 +359,7 @@ proc handleDiscordEvent*(sm: var SessionManager;
             "Abri o menu na sua DM.", logger,
           )
       of lcaShowWhoami:
-        let sessId = if sm.hasSession(userId): "active" else: ""
+        let sessId = if sm.hasLiveSession(userId): "active" else: ""
         sendDiscordEmbed(event, dcAdapter, userId,
           "🆔 Identity", buildWhoamiText(userId, sessId, event.discordUserId), 0x5865F2, logger)
       of lcaGenerateLinkCode:
@@ -407,7 +408,7 @@ proc handleDiscordEvent*(sm: var SessionManager;
         discard
       completeInboundStatus(inbound)
     of crSessionTask:
-      if sm.hasSession(userId):
+      if sm.hasLiveSession(userId):
         let entry = sm.getOrCreate(userId)
         inc msgSeq
         entry.inbox.addLastNoWait(
@@ -493,11 +494,13 @@ proc checkDiscordOfflineMessages*(sm: var SessionManager;
   logger.info("discord: checking for offline messages...")
   for userIdStr, _ in sm.entries:
     let userId = UserId(userIdStr)
+    if not sm.allows(userId):
+      logger.warn("discord offline: skipping unauthorized session owner " & userIdStr)
+      continue
     let discordId = dcAdapter.resolver.reverseChannel(userId, ckDiscord)
     if discordId.len == 0:
       continue
-    let ctx = memory.loadContext(userId)
-    let lastMsgId = ctx.preferencesMd.strip
+    let lastMsgId = memory.loadChannelPreference(userId, "discord_last_msg_id")
     let chId = dcAdapter.dmChannelFor(discordId).valueOr:
       logger.warn("discord offline: cannot get DM channel for " & discordId)
       continue
@@ -547,11 +550,18 @@ proc drainDiscordEvents*(sm: var SessionManager;
   ## Process real-time events
   var (hasEvent, event) = dcAdapter.tryRecvEvent()
   while hasEvent:
-    if not sm.allows(UserId(event.discordUserId)):
-      logger.warn("discord: unauthorized event from " & event.discordUserId)
+    let rawId = event.discordUserId
+    var identity = dcAdapter.resolver.lookup(ckDiscord, rawId)
+    if identity.isNone and sm.dmPolicy == DmPolicyOpen:
+      ## Normal first-contact path: the open policy allows new identities to
+      ## be minted. For allowlist/pairing we never persist a denied sender.
+      identity = some(dcAdapter.resolver.resolve(ckDiscord, rawId))
+    if identity.isNone or not sm.allows(identity.get):
+      logger.warn("discord: unauthorized event from " &
+        (if identity.isSome: $identity.get else: "unidentified sender"))
       (hasEvent, event) = dcAdapter.tryRecvEvent()
       continue
-    logger.info("discord event: " & $event.kind & " from " & event.discordUserId)
+    logger.info("discord event: " & $event.kind & " from " & $identity.get)
     handleDiscordEvent(sm, event, dcAdapter, presentationState, memory, completeBuilder,
                        modelCatalogLoader, toolsCount, toolClientsCount, daemonStartMs, msgSeq, logger,
                        handleInboundStatus,
