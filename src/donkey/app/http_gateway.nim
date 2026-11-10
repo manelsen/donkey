@@ -12,9 +12,8 @@
 ##
 ## CORS: Access-Control-Allow-Origin: * for local browser access.
 
-import std/[json, net, os, strutils]
+import std/[json, monotimes, net, os, strutils, times]
 import locks
-import threadpool
 import std/posix
 import ../core/pipeops
 import ../core/types
@@ -29,7 +28,15 @@ const
   SseHeartbeatIntervalMs = 5000   ## ms between SSE heartbeat/push cycles
   SseMaxPollCycles = 60           ## bounded to ~5 minutes at 5s intervals
   MaxConcurrentHttpConnections = 32
-  MaxConcurrentSseConnections = 8
+  ## SSE streams occupy a worker for their whole lifetime (up to ~5 minutes),
+  ## so keep this well below GatewayWorkerCount: at least half of the workers
+  ## must stay available for normal requests and 503 responses.
+  MaxConcurrentSseConnections = 4
+  GatewayMaxRequestLine = 8192
+  GatewayMaxHeaderLines = 64
+  GatewayMaxHeaderBytes = 64 * 1024
+  GatewayRequestDeadlineSec = 15
+  GatewayMaxBodyBytes = 1024 * 1024
 
 func resolveGatewayPort*(raw: string): int =
   ## Parses DONKEY_HTTP_PORT semantics.
@@ -179,16 +186,25 @@ const CorsHeaders = "Access-Control-Allow-Origin: *\r\n" &
                     "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" &
                     "Access-Control-Allow-Headers: Content-Type, Authorization\r\n"
 
-proc readHttpLine(s: Socket): string =
-  var buf = ""
-  var c: char
-  while true:
-    if s.recv(c.addr, 1) != 1: return buf
+proc readHttpLine(s: Socket; deadline: MonoTime): Result[string, string] =
+  ## Reads one CRLF/LF line with a bounded length and a total request deadline.
+  ## `SO_RCVTIMEO` alone only bounds each blocking recv, not slowloris clients.
+  var line = ""
+  while line.len < GatewayMaxRequestLine:
+    if getMonoTime() > deadline:
+      return err("request deadline exceeded")
+    var c: char
+    let n = s.recv(c.addr, 1)
+    if n <= 0:
+      return err("connection closed or read timed out")
     if c == '\r':
-      discard s.recv(c.addr, 1)
-      break
-    buf.add(c)
-  buf
+      var lf: char
+      discard s.recv(lf.addr, 1)
+      return ok(line)
+    if c == '\n':
+      return ok(line)
+    line.add(c)
+  err("request line too long")
 
 proc sendResponse(s: Socket; status, contentType, body: string; log: Logger) =
   let resp = "HTTP/1.1 " & status & "\r\n" &
@@ -281,25 +297,55 @@ proc handleGatewayConn(client: Socket;
                         inboundFn: GatewayInboundFn;
                         authToken: string;
                         log:      Logger) {.gcsafe.} =
+  defer:
+    try: client.close() except CatchableError: discard
   try:
-    let requestLine = client.readHttpLine()
+    let deadline = getMonoTime() + initDuration(seconds = GatewayRequestDeadlineSec)
+    let requestLineResult = client.readHttpLine(deadline)
+    if requestLineResult.isErr:
+      client.sendResponse("400 Bad Request", "text/plain",
+                          requestLineResult.error & "\n", log)
+      return
+    let requestLine = requestLineResult.get
     if requestLine.len == 0:
-      client.close()
       return
 
-    ## Drain headers
+    ## Drain headers with bounded line count/bytes and a total deadline.
     var rawPath = if requestLine.splitWhitespace().len >= 2: requestLine.splitWhitespace()[1] else: "/"
     var contentLength = 0
     var authHeader = ""
     var contentType = ""
     var origin = ""
+    var headerLines = 0
+    var headerBytes = 0
     while true:
-      let h = client.readHttpLine()
+      if headerLines >= GatewayMaxHeaderLines:
+        client.sendResponse("400 Bad Request", "text/plain", "too many headers\n", log)
+        return
+      let headerResult = client.readHttpLine(deadline)
+      if headerResult.isErr:
+        client.sendResponse("400 Bad Request", "text/plain",
+                            headerResult.error & "\n", log)
+        return
+      inc headerLines
+      headerBytes += headerResult.value.len
+      if headerBytes > GatewayMaxHeaderBytes:
+        client.sendResponse("400 Bad Request", "text/plain", "headers too large\n", log)
+        return
+      let h = headerResult.value
       if h.len == 0: break
       let lc = h.toLowerAscii()
       if lc.startsWith("content-length:"):
         let val = lc[15..^1].strip()
-        try: contentLength = parseInt(val) except ValueError: discard
+        try:
+          let parsed = parseBiggestInt(val)
+          if parsed > GatewayMaxBodyBytes:
+            client.sendResponse("413 Payload Too Large", "text/plain",
+                                "body too large\n", log)
+            return
+          contentLength = parsed.int
+        except ValueError:
+          discard
       elif lc.startsWith("authorization:"):
         authHeader = h[14..^1].strip()
       elif lc.startsWith("content-type:"):
@@ -310,17 +356,14 @@ proc handleGatewayConn(client: Socket;
     let req = parseGatewayRequest(requestLine)
     if req.meth == "OPTIONS":
       client.sendResponse("204 No Content", "text/plain", "", log)
-      client.close()
       return
     if not isAuthorized(authHeader, authToken):
       client.sendResponse("401 Unauthorized", "application/json",
                           "{\"error\":\"unauthorized\"}\n", log)
-      client.close()
       return
     if authToken.len == 0 and origin.len > 0 and not isLocalOrigin(origin):
       client.sendResponse("403 Forbidden", "application/json",
                           "{\"error\":\"cross-origin access requires a token\"}\n", log)
-      client.close()
       return
     let action = routeGatewayRequest(req)
 
@@ -342,7 +385,6 @@ proc handleGatewayConn(client: Socket;
       if not tryAcquireSseConnection():
         client.sendResponse("503 Service Unavailable", "text/plain",
                             "too many event streams\n", log)
-        client.close()
         return
       try:
         client.sendSseHeaders(log)
@@ -382,9 +424,16 @@ proc handleGatewayConn(client: Socket;
                              "{\"error\":\"inbound handler not configured\"}\n", log)
         else:
           var body = ""
-          if contentLength > 0 and contentLength < 1024 * 1024:  # max 1MB
+          if contentLength > 0:
             var buf = newString(contentLength)
-            let received = client.recv(buf.addr, contentLength)
+            var received = 0
+            while received < contentLength:
+              if getMonoTime() > deadline:
+                break
+              let n = client.recv(buf[received].addr, contentLength - received)
+              if n <= 0:
+                break
+              received += n
             if received > 0:
               body = buf[0 ..< received]
           if body.len == 0:
@@ -415,7 +464,6 @@ proc handleGatewayConn(client: Socket;
     let errMsg = getCurrentExceptionMsg()
     log.warn("http_gateway: connection handler error: " & errMsg)
     recordWebhookFailure("http_gateway", errMsg)
-  client.close()
 
 # ── Gateway thread ────────────────────────────────────────────────────────────
 
@@ -434,12 +482,22 @@ var gGatewayLogFn:    GatewayLogFn
 var gGatewayEventFn:  GatewayEventFn
 var gGatewayInboundFn: GatewayInboundFn
 var gGatewayLog:      Logger
+var gGatewayAuthToken: string
+
+const GatewayWorkerCount = 8
+const GatewayQueueDepth = 64
+
+var
+  gGatewayQueue {.global.}: Channel[SocketHandle]
+  gGatewayWorkers {.global.}: array[GatewayWorkerCount, Thread[int]]
+  gGatewayPoolStarted = false
+  gGatewayPoolAttempted = false
 
 proc applyClientTimeouts(sock: Socket; seconds: int = 10): Result[void, string] =
   ## Bounds header reads and sends from a connected client.
-  var tv: Timeval
-  tv.tv_sec = Time(seconds)
-  tv.tv_usec = Suseconds(0)
+  var tv: posix.Timeval
+  tv.tv_sec = posix.Time(seconds)
+  tv.tv_usec = posix.Suseconds(0)
   if setsockopt(sock.getFd, SOL_SOCKET, SO_RCVTIMEO, addr tv, SockLen(sizeof(tv))) != 0:
     return err("SO_RCVTIMEO failed")
   if setsockopt(sock.getFd, SOL_SOCKET, SO_SNDTIMEO, addr tv, SockLen(sizeof(tv))) != 0:
@@ -458,7 +516,7 @@ type HttpConnectionArgs = object
 var gActiveHttpConnections = 0
 var gActiveSseConnections = 0
 var gHttpConnLock: Lock
-var gHttpConnLockReady = false
+initLock(gHttpConnLock)  # Module init runs before any gateway thread starts.
 
 proc tryAcquireHttpConnection(): bool =
   acquire(gHttpConnLock)
@@ -496,12 +554,31 @@ proc releaseSseConnection() =
   finally:
     release(gHttpConnLock)
 
-proc handleConnectionThread(args: HttpConnectionArgs) {.gcsafe.} =
-  try:
-    handleGatewayConn(args.client, args.statusFn, args.logFn, args.eventFn,
-                      args.inboundFn, args.authToken, args.log)
-  finally:
-    releaseHttpConnection()
+proc gatewayWorker(id: int) {.thread.} =
+  {.cast(gcsafe).}:
+    while true:
+      let fd = gGatewayQueue.recv()
+      if fd == SocketHandle(-1):
+        break
+      var client: Socket
+      try:
+        client = newSocket(fd, buffered = true)
+      except CatchableError as exc:
+        gGatewayLog.warn("http_gateway: cannot wrap accepted socket: " & exc.msg)
+        discard posix.close(fd)
+        releaseHttpConnection()
+        continue
+      let timeoutResult = applyClientTimeouts(client)
+      if timeoutResult.isErr:
+        gGatewayLog.warn("http_gateway: " & timeoutResult.error)
+        client.close()
+        releaseHttpConnection()
+        continue
+      try:
+        handleGatewayConn(client, gGatewayStatusFn, gGatewayLogFn, gGatewayEventFn,
+                          gGatewayInboundFn, gGatewayAuthToken, gGatewayLog)
+      finally:
+        releaseHttpConnection()
 
 proc gatewayThread(args: GatewayArgs) {.thread.} =
   {.cast(gcsafe).}:
@@ -537,17 +614,50 @@ proc gatewayThread(args: GatewayArgs) {.thread.} =
                             "too many connections\n", args.log)
         client.close()
         continue
-      spawn handleConnectionThread(HttpConnectionArgs(
-        client: client,
-        statusFn: args.statusFn,
-        logFn: args.logFn,
-        eventFn: args.eventFn,
-        inboundFn: args.inboundFn,
-        authToken: args.authToken,
-        log: args.log,
-      ))
+      if not gGatewayQueue.trySend(client.getFd):
+        client.sendResponse("503 Service Unavailable", "text/plain",
+                            "too many connections\n", args.log)
+        client.close()
+        releaseHttpConnection()
+        continue
+      # Ownership of the fd transfers to the worker; do not close here.
 
 var gGatewayThread: Thread[GatewayArgs]
+
+proc startGatewayPool(log: Logger): Result[void, string] =
+  ## Opens the queue and starts every worker. Must be called with
+  ## `gHttpConnLock` held so concurrent `startHttpGateway` calls cannot start
+  ## duplicate workers. The pool is only marked started once the queue is
+  ## open; a partial thread-start failure is reported but never retried into
+  ## duplicates because the queue cannot be reopened.
+  if gGatewayPoolStarted:
+    return ok()
+  if gGatewayPoolAttempted:
+    return err("http_gateway: worker pool initialization already failed; not retrying")
+  gGatewayPoolAttempted = true
+  try:
+    gGatewayQueue.open(GatewayQueueDepth)
+  except CatchableError as exc:
+    return err("http_gateway: cannot open worker queue — " & exc.msg)
+
+  var started = 0
+  var firstError = ""
+  for i in 0 ..< GatewayWorkerCount:
+    try:
+      createThread(gGatewayWorkers[i], gatewayWorker, i)
+      inc started
+    except CatchableError as exc:
+      if firstError.len == 0:
+        firstError = exc.msg
+
+  if started > 0:
+    gGatewayPoolStarted = true
+  if started < GatewayWorkerCount:
+    let msg = "http_gateway: started " & $started & "/" & $GatewayWorkerCount &
+              " workers — " & firstError
+    log.error(msg)
+    return err(msg)
+  ok()
 
 proc startHttpGateway*(port: int;
                        statusFn: GatewayStatusFn;
@@ -556,21 +666,34 @@ proc startHttpGateway*(port: int;
                        inboundFn: GatewayInboundFn = nil;
                        bindAddr = "127.0.0.1";
                        authToken = "";
-                       log:       Logger = newLogger("http_gateway")) =
+                       log:       Logger = newLogger("http_gateway")
+                      ): Result[void, string] =
   ## Starts the HTTP gateway on a dedicated OS thread.
   ## statusFn, logFn, and eventFn are called on each request; they must be gcsafe.
   ## inboundFn is called when POST /api/chat is received; may be nil.
   {.cast(gcsafe).}:
-    if not gHttpConnLockReady:
-      initLock(gHttpConnLock)
-      gHttpConnLockReady = true
-    setMaxPoolSize(16)
     gGatewayStatusFn  = statusFn
     gGatewayLogFn     = logFn
     gGatewayEventFn   = eventFn
     gGatewayInboundFn = inboundFn
     gGatewayLog       = log
+    gGatewayAuthToken = authToken
+    acquire(gHttpConnLock)
+    let poolResult =
+      try:
+        startGatewayPool(log)
+      finally:
+        release(gHttpConnLock)
+    if poolResult.isErr:
+      # startGatewayPool already logged the detailed failure.
+      return err(poolResult.error)
     let args = GatewayArgs(port: port, bindAddr: bindAddr, authToken: authToken,
                            statusFn: statusFn, logFn: logFn,
                            eventFn: eventFn, inboundFn: inboundFn, log: log)
-    createThread(gGatewayThread, gatewayThread, args)
+    try:
+      createThread(gGatewayThread, gatewayThread, args)
+    except CatchableError as exc:
+      let msg = "http_gateway: cannot start server thread — " & exc.msg
+      log.error(msg)
+      return err(msg)
+    ok()

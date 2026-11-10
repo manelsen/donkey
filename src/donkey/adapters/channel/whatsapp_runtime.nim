@@ -7,6 +7,8 @@ import ../../app/session_manager
 import ../../domain/agent_message
 import ../../domain/message
 import ../../ports/provider
+import ../identity/identity_resolver
+import ../../app/inbound_gate
 import ./common_runtime
 import whatsapp
 
@@ -27,10 +29,22 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
 
   var (hasEvent, event) = waAdapter.tryRecvEvent()
   while hasEvent:
+    ## Only text/interactive events run the command dispatcher; a media
+    ## caption containing `/continue <code>` must not mint an identity.
+    let gateText =
+      if event.kind in {wrkText, wrkInteractive}: event.text else: ""
+    let auth = authorizeInbound(sm, waAdapter.resolver.identityGate(), ckWhatsApp,
+                                event.waUserId, gateText)
+    if not auth.allowed:
+      log.warn("whatsapp: unauthorized message from " &
+               (if auth.identified: $auth.userId else: "unidentified sender"))
+      (hasEvent, event) = waAdapter.tryRecvEvent()
+      continue
+    let userId = auth.userId
+
     if event.phoneNumberId.len > 0 and event.messageId.len > 0:
       waAdapter.ack(event.phoneNumberId, event.messageId)
 
-    let userId = waAdapter.resolver.resolve(ckWhatsApp, event.waUserId)
     let msg = InboundMessage(
       userId: userId,
       channel: ckWhatsApp,
@@ -78,7 +92,7 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
           waAdapter.send(OutboundMessage(userId: userId, channel: ckWhatsApp, text: reply)).isOkOr:
             log.error("wa send failed for user=" & $userId & " reason=" & error)
       of crSessionTask:
-        if sm.hasSession(userId):
+        if sm.hasLiveSession(userId):
           let entry = sm.getOrCreate(userId)
           inc msgSeq
           entry.inbox.addLastNoWait(

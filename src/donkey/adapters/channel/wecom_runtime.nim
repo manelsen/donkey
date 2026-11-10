@@ -9,6 +9,7 @@ import ../../domain/agent_message
 import ../../domain/message
 import ../../ports/provider
 import ../identity/identity_resolver
+import ../../app/inbound_gate
 import ./common_runtime
 import ./wecom
 
@@ -75,7 +76,14 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
   var (hasEvent, event) = wcAdapter.tryRecvEvent()
   while hasEvent:
     if event.msgType == "text" and (event.content |> strip).len > 0:
-      let userId  = wcAdapter.resolver.resolve(ckWeCom, event.fromUser)
+      let auth = authorizeInbound(sm, wcAdapter.resolver.identityGate(), ckWeCom,
+                                  event.fromUser, event.content)
+      if not auth.allowed:
+        logger.warn("wecom: unauthorized message from " &
+                    (if auth.identified: $auth.userId else: "unidentified sender"))
+        (hasEvent, event) = wcAdapter.tryRecvEvent()
+        continue
+      let userId = auth.userId
       let inbound = InboundMessage(
         userId:    userId,
         channel:   ckWeCom,
@@ -125,7 +133,7 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
         else:
           discard
       of crSessionTask:
-        if sm.hasSession(userId):
+        if sm.hasLiveSession(userId):
           let entry = sm.getOrCreate(userId)
           inc msgSeq
           entry.inbox.addLastNoWait(

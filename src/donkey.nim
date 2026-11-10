@@ -28,6 +28,7 @@ import donkey/adapters/provider/model_catalog
 import donkey/adapters/http/std_http
 import donkey/adapters/channel/telegram
 import donkey/adapters/channel/outbound_builder
+import donkey/app/inbound_gate
 import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/channel/discord
 import donkey/adapters/channel/discord_runtime
@@ -47,13 +48,16 @@ import donkey/adapters/channel/signal
 import donkey/adapters/channel/slack
 import donkey/adapters/channel/dingtalk
 import donkey/adapters/channel/cli_repl
+import donkey/adapters/webhook/webhook_receiver
 import donkey/adapters/tool/mcp_client
+import donkey/adapters/state/runtime_store
 import donkey/domain/message
 import donkey/domain/agent_message
 import donkey/ports/provider
 import donkey/ports/channel
 import donkey/core/media_download
 import donkey/ports/tool
+import donkey/ports/runtime_state
 import donkey/app/orchestrator
 import donkey/app/sandbox
 import donkey/app/ipc_server
@@ -190,6 +194,13 @@ type DaemonEnv = object
   wecomAgentId:  int
   whatsappAccessToken: string
   whatsappPhoneNumberId: string
+  webhookPort: int
+  webhookHost: string
+  slackSigningSecret: string
+  feishuVerificationToken: string
+  matrixWebhookToken: string
+  whatsappVerifyToken: string
+  whatsappAppSecret: string
 
 type DaemonAdapters = object
   tg: TelegramAdapter
@@ -269,6 +280,7 @@ proc signalPollThread(adapter: ptr SignalAdapter) {.thread.} =
 type DaemonRuntime = ref object
   globalOutbox:         AsyncQueue[OutboundMessage]
   sm:                   SessionManager
+  ledger:               DeliveryLedgerPort
   presentationState:    PresentationState
   routeCounts:          Table[string, int]
   routeCallCounts:      Table[string, int]
@@ -400,6 +412,22 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   # WhatsApp Cloud API
   result.whatsappAccessToken = getEnv("WHATSAPP_ACCESS_TOKEN")
   result.whatsappPhoneNumberId = getEnv("WHATSAPP_PHONE_NUMBER_ID")
+
+  # HTTP webhook receiver (Slack / Feishu / DingTalk / Matrix / WhatsApp)
+  let webhookPortStr = getEnv("DONKEY_WEBHOOK_PORT")
+  result.webhookPort = 0
+  if webhookPortStr.len > 0:
+    try:
+      result.webhookPort = parseInt(webhookPortStr)
+    except ValueError:
+      result.webhookPort = 0
+  let webhookHost = getEnv("DONKEY_WEBHOOK_HOST")
+  result.webhookHost = if webhookHost.len > 0: webhookHost else: "127.0.0.1"
+  result.slackSigningSecret = getEnv("SLACK_SIGNING_SECRET")
+  result.feishuVerificationToken = getEnv("FEISHU_VERIFICATION_TOKEN")
+  result.matrixWebhookToken = getEnv("MATRIX_WEBHOOK_TOKEN")
+  result.whatsappVerifyToken = getEnv("WHATSAPP_VERIFY_TOKEN")
+  result.whatsappAppSecret = getEnv("WHATSAPP_APP_SECRET")
 
 proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
   result.tg = newTelegramAdapter(env.telegramToken, env.identityPath, pollTimeout = 0)
@@ -566,6 +594,9 @@ proc initDaemonRuntime(home: string): DaemonRuntime =
     gRoutingLockReady = true
   result.globalOutbox = newAsyncQueue[OutboundMessage]()
   result.sm.init()
+  let stateStore = newRuntimeStateStore(home / "state")
+  result.sm.setRegistryStore(stateStore.sessionRegistry())
+  result.ledger = stateStore.deliveryLedger()
   result.presentationState = initPresentationState()
   result.routeHealthPath = routeHealthPath(home)
   result.loadRecentRouteSamples()
@@ -862,6 +893,34 @@ proc startOptionalWhatsAppGateway(waAdapter: var WhatsAppAdapter;
   waAdapter.openQueue()
   log.info("WhatsApp webhook queue started")
 
+proc startOptionalWebhookReceiver(env: DaemonEnv; log: Logger) =
+  ## Mounts only the routes whose channel is configured AND has a secret.
+  if env.webhookPort <= 0:
+    log.info("DONKEY_WEBHOOK_PORT not set — HTTP webhook receiver disabled")
+    return
+
+  let cfg = WebhookConfig(
+    ## Slack events have no inbound drainer yet; do not accept events that
+    ## nobody consumes (and that would grow the queue without bound).
+    slackSigningSecret: "",
+    feishuVerificationToken:
+      if env.feishuAppId.len > 0: env.feishuVerificationToken else: "",
+    dingtalkAppSecret:
+      if env.dingTalkAppKey.len > 0: env.dingTalkAppSecret else: "",
+    matrixToken:
+      if matrixConfigured(): env.matrixWebhookToken else: "",
+    whatsappVerifyToken:
+      if env.whatsappAccessToken.len > 0 and env.whatsappPhoneNumberId.len > 0:
+        env.whatsappVerifyToken
+      else: "",
+    whatsappAppSecret:
+      if env.whatsappVerifyToken.len > 0: env.whatsappAppSecret else: "",
+  )
+  startWebhookReceiver(cfg, env.webhookPort, env.webhookHost, log).isOkOr:
+    log.error("webhook receiver: " & error)
+    return
+  log.info("webhook receiver started on " & env.webhookHost & ":" & $env.webhookPort)
+
 proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
                              log: Logger) =
   if not qqAdapter.enabled():
@@ -978,13 +1037,16 @@ proc setupIpcServer(cfg: DonkeyConfig;
       log.error("HTTP gateway disabled: non-loopback bind (" & httpBind &
                 ") requires DONKEY_HTTP_TOKEN and DONKEY_HTTP_ALLOW_INSECURE=1")
     else:
-      startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
-                       bindAddr = httpBind, authToken = httpToken)
-      log.info("HTTP gateway: http://" & httpBind & ":" & $httpPort &
-               (if httpToken.len > 0: " (bearer auth enabled)" else: ""))
-      if httpToken.len > 0 and httpBind notin ["127.0.0.1", "localhost", "::1", "[::1]"]:
-        log.warn("HTTP gateway is not loopback and has no TLS; put it behind a " &
-                 "TLS-terminating reverse proxy — the Bearer token travels in cleartext")
+      let gatewayStart = startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
+                                          bindAddr = httpBind, authToken = httpToken)
+      if gatewayStart.isErr:
+        log.error("HTTP gateway disabled: " & gatewayStart.error)
+      else:
+        log.info("HTTP gateway: http://" & httpBind & ":" & $httpPort &
+                 (if httpToken.len > 0: " (bearer auth enabled)" else: ""))
+        if httpToken.len > 0 and httpBind notin ["127.0.0.1", "localhost", "::1", "[::1]"]:
+          log.warn("HTTP gateway is not loopback and has no TLS; put it behind a " &
+                   "TLS-terminating reverse proxy — the Bearer token travels in cleartext")
   else:
     log.info("HTTP gateway: disabled")
 
@@ -1139,6 +1201,13 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
     return false
 
   for msg in tgMsgs:
+    let auth = authorizeResolvedInbound(
+      runtime.sm, tgAdapter.resolver.identityGate(), ckTelegram,
+      msg.userId, msg.text)
+    if not auth.allowed:
+      log.warn("telegram: unauthorized message from " & $msg.userId)
+      continue
+
     let stagedReaction = shouldStageInboundReaction(msg)
     if stagedReaction:
       tgAdapter.sendTyping(msg.userId).isOkOr:
@@ -1203,7 +1272,7 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
   while runtime.globalOutbox.len > 0:
     let outMsg = runtime.globalOutbox.getNoWait()
     completeInboundReactionStatus(runtime, outboundPorts, outMsg)
-    routeOutbound(outMsg, outboundPorts, log, runtime.presentationState)
+    routeOutbound(outMsg, outboundPorts, log, runtime.presentationState, runtime.ledger)
 
 proc startDaemonIngress(ctx: DaemonContext;
                         log: Logger) =
@@ -1216,6 +1285,7 @@ proc startDaemonIngress(ctx: DaemonContext;
   startOptionalMatrixGateway(ctx.adapters.mx, log)
   startOptionalWhatsAppGateway(ctx.adapters.wa, ctx.env.whatsappAccessToken,
                                ctx.env.whatsappPhoneNumberId, log)
+  startOptionalWebhookReceiver(ctx.env, log)
   startOptionalQQGateway(ctx.adapters.qq, log)
   if ctx.env.telegramToken.len > 0:
     log.info("Telegram bot starting (token len=" & $ctx.env.telegramToken.len & ")")
@@ -1301,7 +1371,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         wechat_runtime.drainWeChatEvents(
           ctx.adapters.wch, ctx.env.wechatAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
           toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
-          ctx.runtime.msgSeq, fallback)
+          ctx.runtime.msgSeq, fallback, log)
         true
       ),
     drainQQ = proc(): bool =
@@ -1327,9 +1397,19 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           var (hasEvent, event) = ctx.adapters.dt.tryRecvEvent()
           while hasEvent:
             if event.content.strip.len > 0 or event.downloadCode.len > 0:
-              let userId = ctx.adapters.dt.resolver.resolve(ckDingTalk, event.rawId)
+              ## The generic gateway fallback does not dispatch `/continue`;
+              ## do not admit link commands here until a DingTalk command
+              ## runtime exists.
+              let auth = authorizeInbound(
+                ctx.runtime.sm, ctx.adapters.dt.resolver.identityGate(),
+                ckDingTalk, event.rawId, event.content, ilsNone)
+              if not auth.allowed:
+                log.warn("dingtalk: unauthorized message from " &
+                         (if auth.identified: $auth.userId else: "unidentified sender"))
+                (hasEvent, event) = ctx.adapters.dt.tryRecvEvent()
+                continue
               return (true, InboundMessage(
-                userId: userId,
+                userId: auth.userId,
                 channel: ckDingTalk,
                 channelId: event.messageId,
                 messageId: event.messageId,
@@ -1349,9 +1429,19 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           var (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
           while hasEvent:
             if event.content.strip.len > 0 or event.mediaUrl.len > 0:
-              let userId = ctx.adapters.mx.resolver.resolve(ckMatrix, event.roomId)
+              ## The generic gateway fallback does not dispatch `/continue`;
+              ## do not admit link commands here until a Matrix command
+              ## runtime exists.
+              let auth = authorizeInbound(
+                ctx.runtime.sm, ctx.adapters.mx.resolver.identityGate(),
+                ckMatrix, event.roomId, event.content, ilsNone)
+              if not auth.allowed:
+                log.warn("matrix: unauthorized message from " &
+                         (if auth.identified: $auth.userId else: "unidentified sender"))
+                (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
+                continue
               return (true, InboundMessage(
-                userId: userId,
+                userId: auth.userId,
                 channel: ckMatrix,
                 channelId: event.eventId,
                 messageId: event.eventId,
@@ -1488,6 +1578,19 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory
   let ctx = bootstrap.ctx
+  ## DM authorization is configured once, before any drainer/actor can consume
+  ## an inbound message. Service builders stay side-effect free.
+  ctx.runtime.sm.configureDmPolicy(
+    cfg.dmPolicy,
+    proc(userId: UserId): bool {.gcsafe.} = memory.isDmAllowed(userId))
+  ctx.runtime.sm.setRegistryErrorHook(
+    proc(error: string) {.gcsafe, raises: [].} =
+      log.warn("session registry: " & error))
+  let restoredSessions = ctx.runtime.sm.restoreSessions()
+  if restoredSessions.isErr:
+    log.warn("session registry restore: " & restoredSessions.error)
+  elif restoredSessions.value > 0:
+    log.info("restored " & $restoredSessions.value & " sessions from registry")
   activateDaemonBootstrap(ctx, cfg, memory, log)
   let sessionServices = buildDaemonSessionServices(ctx, cfg, memory, log)
   let drainer = buildDaemonGatewayDrainer(ctx, cfg, memory, log)

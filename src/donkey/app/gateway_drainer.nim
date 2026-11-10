@@ -63,11 +63,14 @@ proc drainPolledGateway*(
   channel: ChannelKind;
   pollEvent: proc(): (bool, InboundMessage) {.gcsafe.};
   fallbackHandler: GatewayFallbackHandler;
-  log: Logger = Logger()
+  log: Logger = Logger();
+  authorize: proc(userId: UserId): bool {.gcsafe.} = nil
 ): int {.gcsafe.} =
   ## Drains an event queue channel (e.g. DingTalk, Matrix, or test mocks).
   ## Loops until pollEvent returns hasEvent=false.
   ## Dispatches valid messages (non-empty text or mediaUrl) to fallbackHandler.
+  ## Events rejected by `authorize` are consumed (queue advances) but never
+  ## dispatched, so an unauthorized sender cannot reach the application layer.
   ## Returns number of dispatched messages.
   if pollEvent == nil:
     return 0
@@ -75,9 +78,13 @@ proc drainPolledGateway*(
   var (hasEvent, msg) = pollEvent()
   while hasEvent:
     if msg.text.strip.len > 0 or msg.mediaUrl.len > 0:
-      if fallbackHandler != nil:
-        fallbackHandler(msg)
-      result.inc
+      if authorize != nil and not authorize(msg.userId):
+        log.warn("gateway drainer: unauthorized message on " & $channel &
+                 " from " & $msg.userId)
+      else:
+        if fallbackHandler != nil:
+          fallbackHandler(msg)
+        result.inc
     (hasEvent, msg) = pollEvent()
 
 proc drainBatchGateway*(
@@ -107,23 +114,25 @@ proc drainDingTalkGateway*(
   configured: bool;
   pollEvent: proc(): (bool, InboundMessage) {.gcsafe.};
   fallbackHandler: GatewayFallbackHandler;
-  log: Logger = Logger()
+  log: Logger = Logger();
+  authorize: proc(userId: UserId): bool {.gcsafe.} = nil
 ): int {.discardable, gcsafe.} =
   ## Drains DingTalk event queue if configured.
   if not configured or pollEvent == nil:
     return 0
-  drainPolledGateway(ckDingTalk, pollEvent, fallbackHandler, log)
+  drainPolledGateway(ckDingTalk, pollEvent, fallbackHandler, log, authorize)
 
 proc drainMatrixGateway*(
   configured: bool;
   pollEvent: proc(): (bool, InboundMessage) {.gcsafe.};
   fallbackHandler: GatewayFallbackHandler;
-  log: Logger = Logger()
+  log: Logger = Logger();
+  authorize: proc(userId: UserId): bool {.gcsafe.} = nil
 ): int {.discardable, gcsafe.} =
   ## Drains Matrix event queue if configured.
   if not configured or pollEvent == nil:
     return 0
-  drainPolledGateway(ckMatrix, pollEvent, fallbackHandler, log)
+  drainPolledGateway(ckMatrix, pollEvent, fallbackHandler, log, authorize)
 
 proc drainTelegramGateway*(
   configured: bool;

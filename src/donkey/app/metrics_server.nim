@@ -16,14 +16,25 @@ const
   MetricsClientTimeoutSec = 10
   MetricsMaxHeaderLines = 100
   MetricsConnectionDeadlineSec = 5
+  MetricsWorkerCount = 4
+  MetricsQueueDepth = 64
 
 type MetricsServerArgs = object
   host: string
   port: int
   log:  Logger
 
-var gMetricsThread {.global.}: Thread[MetricsServerArgs]
-var gMetricsThreadStarted = false
+type MetricsWorkerArg = object
+  id: int
+  log: Logger
+
+var
+  gMetricsThread {.global.}: Thread[MetricsServerArgs]
+  gMetricsWorkers {.global.}: array[MetricsWorkerCount, Thread[MetricsWorkerArg]]
+  gMetricsQueue {.global.}: Channel[SocketHandle]
+  gMetricsThreadStarted = false
+  gMetricsPoolStarted = false
+  gMetricsPoolAttempted = false
 
 proc applyMetricsClientTimeouts(sock: Socket; seconds: int = MetricsClientTimeoutSec) =
   var tv: Timeval
@@ -73,6 +84,57 @@ proc handleMetricsClient(client: Socket; log: Logger) =
   else:
     sendMetricsResponse(client, "404 Not Found", "text/plain", "Not Found")
 
+proc metricsWorker(arg: MetricsWorkerArg) {.thread.} =
+  while true:
+    let fd = gMetricsQueue.recv()
+    if fd == SocketHandle(-1):
+      break
+    var client: Socket
+    try:
+      client = newSocket(fd, buffered = true)
+    except CatchableError as e:
+      arg.log.warn("metrics: cannot wrap accepted socket: " & e.msg)
+      discard posix.close(cint(fd))
+      continue
+    try:
+      applyMetricsClientTimeouts(client)
+      handleMetricsClient(client, arg.log)
+    finally:
+      client.close()
+
+proc startMetricsPool(log: Logger): Result[void, string] =
+  ## Opens the queue and starts every worker before marking the pool ready.
+  ## A partial thread-start failure is reported and never retried into
+  ## duplicates: the queue is already open, so re-opening it would be a bug.
+  if gMetricsPoolStarted:
+    return ok()
+  if gMetricsPoolAttempted:
+    return err("metrics: worker pool initialization already failed; not retrying")
+  gMetricsPoolAttempted = true
+  try:
+    gMetricsQueue.open(MetricsQueueDepth)
+  except CatchableError as exc:
+    return err("metrics: cannot open worker queue — " & exc.msg)
+
+  var started = 0
+  var firstError = ""
+  for i in 0 ..< MetricsWorkerCount:
+    try:
+      createThread(gMetricsWorkers[i], metricsWorker, MetricsWorkerArg(id: i, log: log))
+      inc started
+    except CatchableError as exc:
+      if firstError.len == 0:
+        firstError = exc.msg
+
+  if started > 0:
+    gMetricsPoolStarted = true
+  if started < MetricsWorkerCount:
+    let msg = "metrics: started " & $started & "/" & $MetricsWorkerCount &
+              " workers — " & firstError
+    log.error(msg)
+    return err(msg)
+  ok()
+
 proc metricsServerThread(args: MetricsServerArgs) {.thread.} =
   discard pthread_detach(pthread_self())
   var server: Socket
@@ -95,10 +157,9 @@ proc metricsServerThread(args: MetricsServerArgs) {.thread.} =
     except CatchableError as exc:
       args.log.error("metrics: accept failed — " & exc.msg)
       continue
-    applyMetricsClientTimeouts(client)
-    try:
-      handleMetricsClient(client, args.log)
-    finally:
+    let fd = client.getFd
+    if not gMetricsQueue.trySend(fd):
+      sendMetricsResponse(client, "503 Service Unavailable", "text/plain", "metrics busy")
       client.close()
 
 func parseMetricsPort*(raw: string): Result[int, string] =
@@ -119,12 +180,21 @@ proc validateMetricsBind*(address: string; port: int): Result[string, string] =
   else:
     ok(address)
 
-proc startMetricsServer*(host: string; port: int; log: Logger) =
+proc startMetricsServer*(host: string; port: int; log: Logger): Result[void, string] =
   if gMetricsThreadStarted:
-    return
+    return ok()
+  let poolResult = startMetricsPool(log)
+  if poolResult.isErr:
+    return poolResult
+  try:
+    createThread(gMetricsThread, metricsServerThread,
+                 MetricsServerArgs(host: host, port: port, log: log))
+  except CatchableError as exc:
+    let msg = "metrics: cannot start server thread — " & exc.msg
+    log.error(msg)
+    return err(msg)
   gMetricsThreadStarted = true
-  createThread(gMetricsThread, metricsServerThread,
-               MetricsServerArgs(host: host, port: port, log: log))
+  ok()
 
 proc startOptionalMetricsServer*(log: Logger) =
   ## Starts the Prometheus exporter only when explicitly configured.
@@ -140,4 +210,6 @@ proc startOptionalMetricsServer*(log: Logger) =
   let host = validateMetricsBind(bindAddr, port).valueOr:
     log.warn("metrics: DONKEY_METRICS_BIND inválido (" & bindAddr & ") — " & error)
     return
-  startMetricsServer(host, port, log)
+  let started = startMetricsServer(host, port, log)
+  if started.isErr:
+    log.error(started.error)

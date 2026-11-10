@@ -6,10 +6,12 @@ import ../../core/log as core_log
 import ../../core/outbound/outbound
 import ../../core/pipeops
 import ../../adapters/memory/md_file
+import ../../app/inbound_gate
 import ../../app/session_manager
 import ../../domain/agent_message
 import ../../domain/message
 import ../../ports/provider
+import ../identity/identity_resolver
 import ./common_runtime
 import ./telegram
 
@@ -551,7 +553,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotMenu, sentId)
     return true
   of lcaShowWhoami:
-    let sessId = if sm.hasSession(msg.userId): "active" else: "" # SessionManager doesn't expose sessionId easily here, using placeholder
+    let sessId = if sm.hasLiveSession(msg.userId): "active" else: "" # SessionManager doesn't expose sessionId easily here, using placeholder
     tgAdapter.send(OutboundMessage(
       userId:  msg.userId,
       channel: ckTelegram,
@@ -746,6 +748,11 @@ proc handleTelegramMessage*(msg: InboundMessage;
                             daemonStartMs: int64;
                             logger: Logger;
                             ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
+  let auth = authorizeResolvedInbound(
+    sm, tgAdapter.resolver.identityGate(), ckTelegram, msg.userId, msg.text)
+  if not auth.allowed:
+    logger.warn("telegram: unauthorized command/message from " & $msg.userId)
+    return true
   let command = decideCommandRequest(CommandRequest(channel: msg.channel, text: msg.text))
   case command.route
   of crLocal:

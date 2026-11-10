@@ -1,7 +1,7 @@
 ## SessionManager unit tests.
 ## Verifies session creation, channel tracking, and listing.
 
-import std/[options, unittest]
+import std/[options, tables, unittest]
 import donkey/app/session_manager
 import donkey/domain/message
 import donkey/core/types
@@ -124,3 +124,21 @@ suite "SessionManager":
     check rebuilt.entry[].inbox != oldInbox
     check rebuilt.entry[].askInbox != oldAskInbox
     check not rebuilt.entry[].awaitingAsk
+
+  test "restored entry has metadata but no live session until rebuilt":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("restored-uuid-1")
+    discard sm.getOrCreate(uid)
+    check sm.hasSession(uid)
+    check sm.hasLiveSession(uid)
+
+    ## Simulate a process restart: metadata is present but no actor is attached.
+    sm.entries[$uid].restored = true
+    check sm.hasSession(uid)
+    check not sm.hasLiveSession(uid)
+
+    let lease = sm.prepareEntry(uid, "sig-restored")
+    check lease.rebuilt
+    check sm.hasLiveSession(uid)
+    check not sm.hasLiveSession(UserId("unknown-uuid-restored"))

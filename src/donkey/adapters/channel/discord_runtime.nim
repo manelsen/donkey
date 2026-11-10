@@ -5,6 +5,7 @@ import ../../core/log as core_log
 import ../../core/outbound/outbound
 import ../../core/pipeops
 import ../../adapters/memory/md_file
+import ../../app/inbound_gate
 import ../../app/session_manager
 import ../../domain/agent_message
 import ../../domain/message
@@ -358,7 +359,7 @@ proc handleDiscordEvent*(sm: var SessionManager;
             "Abri o menu na sua DM.", logger,
           )
       of lcaShowWhoami:
-        let sessId = if sm.hasSession(userId): "active" else: ""
+        let sessId = if sm.hasLiveSession(userId): "active" else: ""
         sendDiscordEmbed(event, dcAdapter, userId,
           "🆔 Identity", buildWhoamiText(userId, sessId, event.discordUserId), 0x5865F2, logger)
       of lcaGenerateLinkCode:
@@ -407,7 +408,7 @@ proc handleDiscordEvent*(sm: var SessionManager;
         discard
       completeInboundStatus(inbound)
     of crSessionTask:
-      if sm.hasSession(userId):
+      if sm.hasLiveSession(userId):
         let entry = sm.getOrCreate(userId)
         inc msgSeq
         entry.inbox.addLastNoWait(
@@ -470,6 +471,33 @@ proc handleDiscordEvent*(sm: var SessionManager;
     of cbrNone:
       discard
 
+const DiscordEpochMs = 1420070400000'i64
+
+func discordSnowflakeFloor*(epochMs: int64): int64 =
+  ## Converts a Unix-millisecond instant to the equivalent Discord snowflake
+  ## lower bound. Discord snowflakes encode `(ms - DiscordEpoch) << 22`.
+  if epochMs <= DiscordEpochMs:
+    0
+  else:
+    (epochMs - DiscordEpochMs) shl 22
+
+func discordMessageAfterCursor*(msgId, lastMsgId: string; floor: int64): bool =
+  ## Cursor-first ordering; when no cursor exists yet, fall back to the
+  ## session's persisted inbound clock so history is not replayed.
+  ## Snowflakes are 64-bit integers, not fixed-width strings: compare them
+  ## numerically so an 18-digit cursor does not hide a 19-digit message.
+  var id: int64
+  try:
+    id = parseBiggestInt(msgId)
+  except ValueError:
+    return false
+  if lastMsgId.len > 0:
+    try:
+      return id > parseBiggestInt(lastMsgId)
+    except ValueError:
+      return false
+  floor > 0 and id >= floor
+
 proc checkDiscordOfflineMessages*(sm: var SessionManager;
                                    dcAdapter: DiscordAdapter;
                                    discordToken: string;
@@ -491,24 +519,36 @@ proc checkDiscordOfflineMessages*(sm: var SessionManager;
   if discordToken.len == 0:
     return
   logger.info("discord: checking for offline messages...")
-  for userIdStr, _ in sm.entries:
+  for userIdStr, entry in sm.entries:
     let userId = UserId(userIdStr)
+    if not sm.allows(userId):
+      logger.warn("discord offline: skipping unauthorized session owner " & userIdStr)
+      continue
     let discordId = dcAdapter.resolver.reverseChannel(userId, ckDiscord)
     if discordId.len == 0:
       continue
-    let ctx = memory.loadContext(userId)
-    let lastMsgId = ctx.preferencesMd.strip
+    let lastMsgId = memory.loadChannelPreference(userId, "discord_last_msg_id")
+    let floorId = discordSnowflakeFloor(entry.lastInboundEpochMs)
     let chId = dcAdapter.dmChannelFor(discordId).valueOr:
       logger.warn("discord offline: cannot get DM channel for " & discordId)
       continue
     let msgs = dcAdapter.fetchUnreadMessages(chId, 50).valueOr:
       logger.warn("discord offline: cannot fetch messages for " & discordId)
       continue
+    if lastMsgId.len == 0 and floorId == 0 and msgs.len > 0:
+      ## No cursor and no session clock: mark the fetched history as seen
+      ## rather than replaying commands/tasks from before the link.
+      let newestId = msgs[0].getOrDefault("id").getStr("")
+      if newestId.len > 0:
+        memory.saveChannelPreference(userId, "discord_last_msg_id", newestId)
+      logger.warn("discord offline: no cursor/clock for " & userIdStr &
+                  "; skipping historical messages")
+      continue
     var newMsgCount = 0
     for i in countdown(msgs.len - 1, 0):
       let msg = msgs[i]
       let msgId = msg.getOrDefault("id").getStr("")
-      if lastMsgId.len > 0 and msgId <= lastMsgId:
+      if not discordMessageAfterCursor(msgId, lastMsgId, floorId):
         continue
       newMsgCount.inc
       let content = msg.getOrDefault("content").getStr("")
@@ -545,9 +585,25 @@ proc drainDiscordEvents*(sm: var SessionManager;
   if discordToken.len == 0:
     return
   ## Process real-time events
+  let gate = dcAdapter.resolver.identityGate()
   var (hasEvent, event) = dcAdapter.tryRecvEvent()
   while hasEvent:
-    logger.info("discord event: " & $event.kind & " from " & event.discordUserId)
+    let rawId = event.discordUserId
+    let linkSource =
+      case event.kind
+      of deMessage:       ilsCommandText
+      of deInteraction:   ilsBareCode
+      of deModalRequest:  ilsModalOnly
+      else:               ilsNone
+    let auth = authorizeInbound(
+      sm, gate, ckDiscord, rawId, event.content, linkSource)
+    if not auth.allowed:
+      logger.warn("discord: unauthorized event from " &
+        (if auth.identified: $auth.userId else: "unidentified sender"))
+      (hasEvent, event) = dcAdapter.tryRecvEvent()
+      continue
+    logger.info("discord event: " & $event.kind & " from " &
+      (if auth.identified: $auth.userId else: "unidentified sender"))
     handleDiscordEvent(sm, event, dcAdapter, presentationState, memory, completeBuilder,
                        modelCatalogLoader, toolsCount, toolClientsCount, daemonStartMs, msgSeq, logger,
                        handleInboundStatus,

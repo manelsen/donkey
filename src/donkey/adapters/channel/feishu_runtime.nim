@@ -9,6 +9,7 @@ import ../../domain/agent_message
 import ../../domain/message
 import ../../ports/provider
 import ../identity/identity_resolver
+import ../../app/inbound_gate
 import ./common_runtime
 import ./feishu
 
@@ -31,7 +32,18 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
   while hasEvent:
     if (event.msgType == "text" and (event.content |> strip).len > 0) or
        event.fileKey.len > 0:
-      let userId = fsAdapter.resolver.resolve(ckFeishu, event.openId)
+      ## Only a text event runs the command dispatcher; a media-only event
+      ## must not mint an identity just because its caption contains
+      ## `/continue <code>` (the code would never be consumed).
+      let gateText = if event.msgType == "text": event.content else: ""
+      let auth = authorizeInbound(sm, fsAdapter.resolver.identityGate(), ckFeishu,
+                                  event.openId, gateText)
+      if not auth.allowed:
+        log.warn("feishu: unauthorized message from " &
+                 (if auth.identified: $auth.userId else: "unidentified sender"))
+        (hasEvent, event) = fsAdapter.tryRecvEvent()
+        continue
+      let userId = auth.userId
       let msg = InboundMessage(
         userId:    userId,
         channel:   ckFeishu,
@@ -77,7 +89,7 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
             fsAdapter.send(OutboundMessage(userId: userId, channel: ckFeishu, text: reply)).isOkOr:
               log.error("fs send failed for user=" & $userId & " reason=" & error)
         of crSessionTask:
-          if sm.hasSession(userId):
+          if sm.hasLiveSession(userId):
             let entry = sm.getOrCreate(userId)
             inc msgSeq
             entry.inbox.addLastNoWait(

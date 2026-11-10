@@ -1,6 +1,7 @@
 import std/strutils
 import chronos/asyncsync
 import ../../core/commands/command_routing
+import ../../core/log
 import ../../core/pipeops
 import ../../adapters/memory/md_file
 import ../../app/session_manager
@@ -8,6 +9,7 @@ import ../../domain/agent_message
 import ../../domain/message
 import ../../ports/provider
 import ../identity/identity_resolver
+import ../../app/inbound_gate
 import ./common_runtime
 import ./wechat
 
@@ -31,7 +33,8 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
                         toolClientsCount: int;
                         daemonStartMs: int64;
                         msgSeq: var int;
-                        handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.}) =
+                        handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
+                        log: Logger = newLogger("wch.outbound")) =
   if wechatAppId.len == 0:
     return
 
@@ -39,7 +42,18 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
   while hasEvent:
     if (event.msgType == "text" and event.content.strip.len > 0) or
        event.mediaId.len > 0:
-      let userId = resolve(wchAdapter.resolver, ckWeChat, event.fromUser)
+      ## Only a text event runs the command dispatcher; a media-only event
+      ## must not mint an identity just because its caption contains
+      ## `/continue <code>` (the code would never be consumed).
+      let gateText = if event.msgType == "text": event.content else: ""
+      let auth = authorizeInbound(sm, wchAdapter.resolver.identityGate(), ckWeChat,
+                                  event.fromUser, gateText)
+      if not auth.allowed:
+        log.warn("wechat: unauthorized message from " &
+                 (if auth.identified: $auth.userId else: "unidentified sender"))
+        (hasEvent, event) = wchAdapter.tryRecvEvent()
+        continue
+      let userId = auth.userId
       let msg = InboundMessage(
         userId: userId,
         channel: ckWeChat,
@@ -89,7 +103,7 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
           else:
             discard
         of crSessionTask:
-          if sm.hasSession(userId):
+          if sm.hasLiveSession(userId):
             let entry = sm.getOrCreate(userId)
             inc msgSeq
             entry.inbox.addLastNoWait(

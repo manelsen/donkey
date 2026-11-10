@@ -1,12 +1,61 @@
-import std/strutils
-import results
+import std/[hashes, strutils]
 import ../core/log
+import ../core/pipeops
 import ../core/outbound/outbound
 import ../ports/channel
+import ../ports/runtime_state
 import ../domain/message
 import ./metrics
 
 export outbound
+
+func textDigest(text: string): string =
+  ## Stable-enough short reference; the ledger never stores message bodies.
+  let value = $hash(text)
+  if value.len > 12: value[0 ..< 12] else: value
+
+func newDeliveryId(msg: OutboundMessage; timestampMs: int64): string =
+  $timestampMs & "-" & textDigest(
+    $msg.userId & "|" & $msg.channel & "|" & msg.replyTo & "|" & msg.text)
+
+proc beginDelivery(ledger: DeliveryLedgerPort;
+                   msg: OutboundMessage;
+                   log: Logger): DeliveryRecord {.gcsafe.} =
+  let now = epochMs()
+  result = DeliveryRecord(
+    id: newDeliveryId(msg, now),
+    userId: $msg.userId,
+    channel: msg.channel,
+    channelId: msg.replyTo,
+    textHash: textDigest(msg.text),
+    state: dlsPending,
+    attempts: 1,
+    createdAtMs: now,
+    updatedAtMs: now,
+  )
+  if ledger.recordPending == nil:
+    return
+  let saved = ledger.recordPending(result)
+  if saved.isErr:
+    log.warn("delivery ledger pending: " & saved.error)
+
+proc finishDeliverySent(ledger: DeliveryLedgerPort;
+                        id: string;
+                        log: Logger) {.gcsafe.} =
+  if ledger.markSent == nil:
+    return
+  let saved = ledger.markSent(id, epochMs())
+  if saved.isErr:
+    log.warn("delivery ledger sent: " & saved.error)
+
+proc finishDeliveryFailed(ledger: DeliveryLedgerPort;
+                          id, error: string;
+                          log: Logger) {.gcsafe.} =
+  if ledger.markFailed == nil:
+    return
+  let saved = ledger.markFailed(id, epochMs(), error)
+  if saved.isErr:
+    log.warn("delivery ledger failed: " & saved.error)
 
 func channelTag(ch: ChannelKind): string {.gcsafe.} =
   case ch
@@ -69,10 +118,14 @@ proc setOutboundReaction*(channel: ChannelKind;
 
 proc sendImmediateOutbound*(msg: OutboundMessage;
                             ports: OutboundChannelPorts;
-                            log: Logger) {.gcsafe.} =
+                            log: Logger;
+                            ledger: DeliveryLedgerPort = DeliveryLedgerPort()) {.gcsafe.} =
+  let delivery = beginDelivery(ledger, msg, log)
   let port = ports.channelPortFor(msg.channel)
   if port.send == nil:
-    log.error("outbound: channel " & $msg.channel & " is not configured")
+    let error = "channel " & $msg.channel & " is not configured"
+    log.error("outbound: " & error)
+    finishDeliveryFailed(ledger, delivery.id, error, log)
     return
   let sendResult = port.send(msg)
   if sendResult.isErr:
@@ -92,6 +145,9 @@ proc sendImmediateOutbound*(msg: OutboundMessage;
     of ckMatrix:    log.error("mx send: " & error)
     of ckEmail:     log.error("em send: " & error)
     of ckCli:       log.error("cli send: " & error)
+    finishDeliveryFailed(ledger, delivery.id, error, log)
+  else:
+    finishDeliverySent(ledger, delivery.id, log)
 
 proc editImmediateOutbound*(msg: OutboundMessage;
                             ports: OutboundChannelPorts;
@@ -130,12 +186,15 @@ proc editStreamOutbound*(msg: OutboundMessage;
 
 proc createStreamOutbound*(msg: OutboundMessage;
                            ports: OutboundChannelPorts;
-                           log: Logger): string {.gcsafe.} =
+                           log: Logger;
+                           ledger: DeliveryLedgerPort = DeliveryLedgerPort()): string {.gcsafe.} =
+  let delivery = beginDelivery(ledger, msg, log)
   let port = ports.channelPortFor(msg.channel)
   let res = port.sendReturnId(msg)
   if res.isOk:
     let channelMsgId = res.value
     log.info("sent " & $msg.channel & " (new stream) -> " & $msg.userId & " (" & $msg.text.len & " chars)")
+    finishDeliverySent(ledger, delivery.id, log)
     return channelMsgId
   let error = res.error
   recordOutboundFailure(channelTag(msg.channel), error)
@@ -143,16 +202,20 @@ proc createStreamOutbound*(msg: OutboundMessage;
   of ckTelegram: log.error("tg sendReturnId: " & error)
   of ckDiscord:  log.error("dc sendReturnId: " & error)
   of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli: discard
+  finishDeliveryFailed(ledger, delivery.id, error, log)
   ""
 
 proc createReplacementOutbound*(msg: OutboundMessage;
                                 ports: OutboundChannelPorts;
-                                log: Logger): string {.gcsafe.} =
+                                log: Logger;
+                                ledger: DeliveryLedgerPort = DeliveryLedgerPort()): string {.gcsafe.} =
+  let delivery = beginDelivery(ledger, msg, log)
   let port = ports.channelPortFor(msg.channel)
   let res = port.sendReturnId(msg)
   if res.isOk:
     let channelMsgId = res.value
     log.info("sent " & $msg.channel & " (new replacement) -> " & $msg.userId & " slot=" & msg.replacementSlot)
+    finishDeliverySent(ledger, delivery.id, log)
     return channelMsgId
   let error = res.error
   recordOutboundFailure(channelTag(msg.channel), error)
@@ -161,15 +224,17 @@ proc createReplacementOutbound*(msg: OutboundMessage;
   of ckDiscord:  log.error("dc sendReturnId replacement: " & error)
   of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli:
     discard
+  finishDeliveryFailed(ledger, delivery.id, error, log)
   ""
 
 proc routeOutbound*(msg: OutboundMessage;
                     ports: OutboundChannelPorts;
                     log: Logger;
-                    presentationState: var PresentationState) {.gcsafe.} =
+                    presentationState: var PresentationState;
+                    ledger: DeliveryLedgerPort = DeliveryLedgerPort()) {.gcsafe.} =
   if msg.editTargetId.len > 0:
     if not editImmediateOutbound(msg, ports, log):
-      sendImmediateOutbound(msg, ports, log)
+      sendImmediateOutbound(msg, ports, log, ledger)
     return
   if msg.replacementSlot.len > 0 and supportsEditableReplacement(msg.channel):
     let existingMsgId = presentationState.lookupReplacement(msg)
@@ -182,11 +247,11 @@ proc routeOutbound*(msg: OutboundMessage;
       editMsg.replaceKeyboard = true
       if editImmediateOutbound(editMsg, ports, log):
         return
-    let channelMsgId = createReplacementOutbound(msg, ports, log)
+    let channelMsgId = createReplacementOutbound(msg, ports, log, ledger)
     if channelMsgId.len > 0:
       presentationState.rememberReplacement(msg, channelMsgId)
       return
-    sendImmediateOutbound(msg, ports, log)
+    sendImmediateOutbound(msg, ports, log, ledger)
     return
   var effectiveMsg = msg
   if msg.streamId.len > 0 and supportsEditableStreams(msg.channel):
@@ -200,12 +265,12 @@ proc routeOutbound*(msg: OutboundMessage;
   let decision = decideOutbound(effectiveMsg, presentationState)
   case decision.intent
   of oiSend:
-    sendImmediateOutbound(effectiveMsg, ports, log)
+    sendImmediateOutbound(effectiveMsg, ports, log, ledger)
   of oiStreamUpdate:
     editStreamOutbound(effectiveMsg, decision.existingMsgId, ports, log)
     presentationState.rememberStreamText(effectiveMsg, effectiveMsg.text)
   of oiStreamCreate:
-    let channelMsgId = createStreamOutbound(effectiveMsg, ports, log)
+    let channelMsgId = createStreamOutbound(effectiveMsg, ports, log, ledger)
     if channelMsgId.len > 0:
       presentationState.rememberStream(effectiveMsg, channelMsgId)
       presentationState.rememberStreamText(effectiveMsg, effectiveMsg.text)

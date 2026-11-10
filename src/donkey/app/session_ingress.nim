@@ -101,8 +101,11 @@ func toolCatalogSignature*(tools: seq[ToolDescription];
 
 proc buildEnsureSessionPlan*(sm: var SessionManager;
                              userId: UserId;
-                             toolCatalogSignature: SessionRuntimeSignature): EnsureSessionPlan =
+                             toolCatalogSignature: SessionRuntimeSignature;
+                             persist: bool = true): EnsureSessionPlan =
   ## Evaluates session ingress state and decides whether to reuse, rebuild, or create a session.
+  ## `persist = false` lets the ingress path batch the registry write after
+  ## channel bookkeeping.
   const ColdSessionThresholdMs = 60'i64 * 60 * 1000
   let ingressState = sm.snapshot(userId)
   let decision = decideSessionIngress(SessionIngressRequest(
@@ -116,6 +119,9 @@ proc buildEnsureSessionPlan*(sm: var SessionManager;
     now - ingressState.lastInboundAtMs >= ColdSessionThresholdMs
   let lease = sm.applyIngressDecision(userId, decision, toolCatalogSignature)
   lease.entry[].lastInboundAtMs = now
+  lease.entry[].lastInboundEpochMs = epochMs()
+  if persist:
+    sm.persistSession(userId)
   EnsureSessionPlan(
     uid: $userId,
     decision: decision,
@@ -129,10 +135,14 @@ proc buildSessionIngressContext*(sm: var SessionManager;
                                  msg: InboundMessage;
                                  toolCatalogSignature: SessionRuntimeSignature;
                                  msgSeq: var int): SessionIngressContext =
-  ## Builds ingress plan and advances message sequence.
-  result.plan = sm.buildEnsureSessionPlan(msg.userId, toolCatalogSignature)
+  ## Builds ingress plan, records the channel, and persists the session exactly
+  ## once per inbound message.
+  result.plan = sm.buildEnsureSessionPlan(msg.userId, toolCatalogSignature, persist = false)
   inc msgSeq
   result.msgId = $msg.userId & "-" & $msgSeq
+  if result.plan.decision.shouldRecordChannel:
+    sm.recordChannel(msg.userId, msg.channel, msg.channelId, persist = false)
+  sm.persistSession(msg.userId)
 
 func buildSessionIngressServices*(memory: MemoryRuntimePort;
                                   cfg: DonkeyConfig;
@@ -287,8 +297,6 @@ proc startSessionIngress*(sm: var SessionManager;
   let signature = toolCatalogSignature(
     bootstrap.tools, bootstrap.providerLabel, bootstrap.paddockDir, bootstrap.skillPrompt)
   result = sm.buildSessionIngressContext(msg, signature, msgSeq)
-  if result.plan.decision.shouldRecordChannel:
-    sm.recordChannel(msg.userId, msg.channel, msg.channelId)
   let recentContext =
     if result.plan.injectRecentContext:
       loadRecentContext(services.memory, msg.userId)

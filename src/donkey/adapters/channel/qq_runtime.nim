@@ -9,6 +9,8 @@ import ../../app/session_manager
 import ../../domain/agent_message
 import ../../domain/message
 import ../../ports/provider
+import ../identity/identity_resolver
+import ../../app/inbound_gate
 import ./common_runtime
 import ./qq_channel
 
@@ -229,7 +231,15 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
   var (hasEvent, event) = qqAdapter.tryRecvEvent()
   while hasEvent:
     if event.content.strip.len > 0:
-      let userId = qqAdapter.resolveUser(event)
+      let rawId = qqRawIdentity(event)
+      let auth = authorizeInbound(sm, qqAdapter.resolver.identityGate(), ckQQ,
+                                  rawId, event.content)
+      if not auth.allowed:
+        log.warn("qq: unauthorized message from " &
+                 (if auth.identified: $auth.userId else: "unidentified sender"))
+        (hasEvent, event) = qqAdapter.tryRecvEvent()
+        continue
+      let userId = auth.userId
       let msg = InboundMessage(
         userId: userId,
         channel: ckQQ,
@@ -307,7 +317,7 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
         else:
           discard
       of crSessionTask:
-        if sm.hasSession(userId):
+        if sm.hasLiveSession(userId):
           let entry = sm.getOrCreate(userId)
           inc msgSeq
           entry.inbox.addLastNoWait(
@@ -353,7 +363,7 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
         of cbrUi:
           discard handleQQUiCallback(msg, callback, qqAdapter, memory, modelCatalogLoader, event.userId)
         of cbrSessionTask:
-          if sm.hasSession(userId):
+          if sm.hasLiveSession(userId):
             let entry = sm.getOrCreate(userId)
             inc msgSeq
             entry.inbox.addLastNoWait(

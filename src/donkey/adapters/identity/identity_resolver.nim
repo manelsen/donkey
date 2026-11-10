@@ -9,7 +9,8 @@
 ##   User on Discord calls /continue <code> → their Discord ID is mapped
 ##   to the same UUID as the Telegram user.
 
-import std/[os, random, strutils, tables, times]
+import std/[options, os, random, strutils, tables, times]
+import ../../app/inbound_gate
 import ../../core/types
 
 type
@@ -91,6 +92,16 @@ proc resolve*(r: IdentityResolver; kind: ChannelKind; rawId: string): UserId =
     r.save()
   r.store[key]
 
+proc lookup*(r: IdentityResolver; kind: ChannelKind; rawId: string): Option[UserId] =
+  ## Returns the stored mapping for (kind, rawId), if any, without minting a
+  ## new identity or touching the persisted store. Callers use this before
+  ## authorization so denied senders are never added to the identity table.
+  let key = channelKey(kind, rawId)
+  if key in r.store:
+    some(r.store[key])
+  else:
+    none(UserId)
+
 proc reverseChannel*(r: IdentityResolver; userId: UserId; kind: ChannelKind): string =
   ## Reverse lookup: UserId + channel kind → raw channel user ID.
   ## Returns "" if not found.
@@ -115,6 +126,30 @@ proc generateLinkCode*(r: IdentityResolver; userId: UserId): string =
   r.pendingLinks[result] = LinkEntry(
     userId: userId,
     expiry: getTime() + initDuration(seconds = LinkCodeTtlSec),
+  )
+
+proc peekLinkCode*(r: IdentityResolver; code: string): Option[UserId] =
+  ## Returns the target UUID for a valid, unexpired link code without consuming
+  ## it. Used by the DM gate to admit `/continue` from an unknown identity only
+  ## when the code points at an already-authorized account.
+  if code notin r.pendingLinks:
+    return none(UserId)
+  let entry = r.pendingLinks[code]
+  if getTime() > entry.expiry:
+    r.pendingLinks.del(code)
+    return none(UserId)
+  some(entry.userId)
+
+proc identityGate*(r: IdentityResolver): IdentityGatePort {.gcsafe.} =
+  ## Adapter-side port used by the application inbound gate. The business
+  ## decision stays in `app/inbound_gate`; this only exposes resolver calls.
+  IdentityGatePort(
+    lookup: proc(kind: ChannelKind; rawId: string): Option[UserId] {.gcsafe.} =
+      r.lookup(kind, rawId),
+    resolve: proc(kind: ChannelKind; rawId: string): UserId {.gcsafe.} =
+      r.resolve(kind, rawId),
+    peekLinkCode: proc(code: string): Option[UserId] {.gcsafe.} =
+      r.peekLinkCode(code),
   )
 
 proc consumeLinkCode*(r: IdentityResolver; code: string;
