@@ -29,8 +29,12 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
 
   var (hasEvent, event) = waAdapter.tryRecvEvent()
   while hasEvent:
+    ## Only text/interactive events run the command dispatcher; a media
+    ## caption containing `/continue <code>` must not mint an identity.
+    let gateText =
+      if event.kind in {wrkText, wrkInteractive}: event.text else: ""
     let auth = authorizeInbound(sm, waAdapter.resolver.identityGate(), ckWhatsApp,
-                                event.waUserId, event.text)
+                                event.waUserId, gateText)
     if not auth.allowed:
       log.warn("whatsapp: unauthorized message from " &
                (if auth.identified: $auth.userId else: "unidentified sender"))

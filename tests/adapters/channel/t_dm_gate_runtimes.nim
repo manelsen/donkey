@@ -16,6 +16,7 @@ import donkey/domain/message
 import donkey/ports/provider
 import donkey/adapters/memory/md_file
 import donkey/adapters/channel/common_runtime
+import donkey/adapters/channel/discord_runtime
 import donkey/app/inbound_gate
 import donkey/adapters/channel/telegram
 import donkey/adapters/channel/telegram_runtime
@@ -493,3 +494,13 @@ suite "shared DM gate":
     check providerCalls == 0
     check sm.sessionCount() == 0
     check tg.resolver.lookup(ckTelegram, "900001").get == target
+
+  test "discord offline cursor falls back to the session snowflake floor":
+    let epochMs = 1_700_000_000_000'i64
+    let floor = discordSnowflakeFloor(epochMs)
+    check floor > 0
+    check discordMessageAfterCursor($(floor + 10), "", floor)
+    check not discordMessageAfterCursor($(floor - 10), "", floor)
+    check discordMessageAfterCursor("200", "100", 0)
+    check not discordMessageAfterCursor("100", "100", 0)
+    check not discordMessageAfterCursor("999", "", 0)

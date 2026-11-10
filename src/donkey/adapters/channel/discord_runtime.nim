@@ -471,6 +471,28 @@ proc handleDiscordEvent*(sm: var SessionManager;
     of cbrNone:
       discard
 
+const DiscordEpochMs = 1420070400000'i64
+
+func discordSnowflakeFloor*(epochMs: int64): int64 =
+  ## Converts a Unix-millisecond instant to the equivalent Discord snowflake
+  ## lower bound. Discord snowflakes encode `(ms - DiscordEpoch) << 22`.
+  if epochMs <= DiscordEpochMs:
+    0
+  else:
+    (epochMs - DiscordEpochMs) shl 22
+
+func discordMessageAfterCursor*(msgId, lastMsgId: string; floor: int64): bool =
+  ## Cursor-first ordering; when no cursor exists yet, fall back to the
+  ## session's persisted inbound clock so history is not replayed.
+  if lastMsgId.len > 0:
+    return msgId > lastMsgId
+  if floor > 0:
+    try:
+      return parseBiggestInt(msgId) >= floor
+    except ValueError:
+      return true
+  false
+
 proc checkDiscordOfflineMessages*(sm: var SessionManager;
                                    dcAdapter: DiscordAdapter;
                                    discordToken: string;
@@ -492,7 +514,7 @@ proc checkDiscordOfflineMessages*(sm: var SessionManager;
   if discordToken.len == 0:
     return
   logger.info("discord: checking for offline messages...")
-  for userIdStr, _ in sm.entries:
+  for userIdStr, entry in sm.entries:
     let userId = UserId(userIdStr)
     if not sm.allows(userId):
       logger.warn("discord offline: skipping unauthorized session owner " & userIdStr)
@@ -501,17 +523,27 @@ proc checkDiscordOfflineMessages*(sm: var SessionManager;
     if discordId.len == 0:
       continue
     let lastMsgId = memory.loadChannelPreference(userId, "discord_last_msg_id")
+    let floorId = discordSnowflakeFloor(entry.lastInboundEpochMs)
     let chId = dcAdapter.dmChannelFor(discordId).valueOr:
       logger.warn("discord offline: cannot get DM channel for " & discordId)
       continue
     let msgs = dcAdapter.fetchUnreadMessages(chId, 50).valueOr:
       logger.warn("discord offline: cannot fetch messages for " & discordId)
       continue
+    if lastMsgId.len == 0 and floorId == 0 and msgs.len > 0:
+      ## No cursor and no session clock: mark the fetched history as seen
+      ## rather than replaying commands/tasks from before the link.
+      let newestId = msgs[0].getOrDefault("id").getStr("")
+      if newestId.len > 0:
+        memory.saveChannelPreference(userId, "discord_last_msg_id", newestId)
+      logger.warn("discord offline: no cursor/clock for " & userIdStr &
+                  "; skipping historical messages")
+      continue
     var newMsgCount = 0
     for i in countdown(msgs.len - 1, 0):
       let msg = msgs[i]
       let msgId = msg.getOrDefault("id").getStr("")
-      if lastMsgId.len > 0 and msgId <= lastMsgId:
+      if not discordMessageAfterCursor(msgId, lastMsgId, floorId):
         continue
       newMsgCount.inc
       let content = msg.getOrDefault("content").getStr("")
