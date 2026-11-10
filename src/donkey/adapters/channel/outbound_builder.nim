@@ -26,6 +26,9 @@ import whatsapp
 ## These are used for any (channel, operation) pair where the capability
 ## descriptor declares the operation as unsupported.
 
+proc unsupportedSend(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+  err("send unsupported for channel " & $msg.channel)
+
 proc unsupportedSendReturnId(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
   err("sendReturnId unsupported for channel " & $msg.channel)
 
@@ -253,17 +256,19 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
   )
 
   # ── Signal — capability descriptor says: send only ───────────────────────
-  if signalAdapter != nil:
-    result.signal = OutboundChannelPort(
-      send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
-        signalAdapter[].send(msg),
-      sendReturnId: unsupportedSendReturnId,
-      editMessage: unsupportedEditMessage,
-      sendKeyboard: unsupportedSendKeyboard,
-      editKeyboard: unsupportedEditKeyboard,
-      setMessageReaction: unsupportedSetMessageReaction,
-      downloadFile: unsupportedDownloadFile,
-    )
+  result.signal = OutboundChannelPort(
+    send: if signalAdapter != nil:
+            proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+              signalAdapter[].send(msg)
+          else:
+            unsupportedSend,
+    sendReturnId: unsupportedSendReturnId,
+    editMessage: unsupportedEditMessage,
+    sendKeyboard: unsupportedSendKeyboard,
+    editKeyboard: unsupportedEditKeyboard,
+    setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: unsupportedDownloadFile,
+  )
 
   # ── CLI — capability descriptor says: send, sendReturnId, editMessage ─────
   result.cli = OutboundChannelPort(

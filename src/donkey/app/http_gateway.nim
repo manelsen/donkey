@@ -14,6 +14,7 @@
 
 import std/[json, net, os, strutils]
 import locks
+import threadpool
 import std/posix
 import ../core/pipeops
 import ../core/types
@@ -73,6 +74,23 @@ func gatewayBindIsAllowed*(bindAddr, token: string;
   if host in ["127.0.0.1", "localhost", "::1", "[::1]"]:
     return true
   allowInsecure and token.len > 0
+
+func isLocalOrigin*(origin: string): bool =
+  let value = origin.strip().toLowerAscii()
+  value.len == 0 or
+    value.startsWith("http://localhost") or
+    value.startsWith("http://127.0.0.1") or
+    value.startsWith("https://localhost") or
+    value.startsWith("https://127.0.0.1")
+
+func chatRequestAllowed*(origin, contentType, token: string): bool =
+  ## Blocks simple cross-origin form posts; with a token the bearer check is
+  ## the primary control. Without a token only local origins and JSON bodies.
+  if token.len > 0:
+    return true
+  if not isLocalOrigin(origin):
+    return false
+  contentType.toLowerAscii().strip.startsWith("application/json")
 
 type
   GatewayRequest* = object
@@ -257,6 +275,8 @@ proc handleGatewayConn(client: Socket;
     var rawPath = if requestLine.splitWhitespace().len >= 2: requestLine.splitWhitespace()[1] else: "/"
     var contentLength = 0
     var authHeader = ""
+    var contentType = ""
+    var origin = ""
     while true:
       let h = client.readHttpLine()
       if h.len == 0: break
@@ -266,6 +286,10 @@ proc handleGatewayConn(client: Socket;
         try: contentLength = parseInt(val) except ValueError: discard
       elif lc.startsWith("authorization:"):
         authHeader = h[14..^1].strip()
+      elif lc.startsWith("content-type:"):
+        contentType = h[13..^1].strip()
+      elif lc.startsWith("origin:"):
+        origin = h[7..^1].strip()
 
     let req = parseGatewayRequest(requestLine)
     if req.meth == "OPTIONS":
@@ -321,7 +345,10 @@ proc handleGatewayConn(client: Socket;
       let methAction = routeChatMethod(req.meth)
       case methAction
       of "chat":
-        if inboundFn == nil:
+        if not chatRequestAllowed(origin, contentType, authToken):
+          client.sendResponse("403 Forbidden", "application/json",
+                             "{\"error\":\"cross-origin chat requires a token\"}\n", log)
+        elif inboundFn == nil:
           client.sendResponse("503 Service Unavailable", "application/json",
                              "{\"error\":\"inbound handler not configured\"}\n", log)
         else:
@@ -421,8 +448,7 @@ proc releaseHttpConnection() =
   finally:
     release(gHttpConnLock)
 
-proc handleConnectionThread(args: HttpConnectionArgs) {.thread.} =
-  discard pthread_detach(pthread_self())
+proc handleConnectionThread(args: HttpConnectionArgs) {.gcsafe.} =
   try:
     handleGatewayConn(args.client, args.statusFn, args.logFn, args.eventFn,
                       args.inboundFn, args.authToken, args.log)
@@ -463,8 +489,7 @@ proc gatewayThread(args: GatewayArgs) {.thread.} =
                             "too many connections\n", args.log)
         client.close()
         continue
-      var worker: Thread[HttpConnectionArgs]
-      createThread(worker, handleConnectionThread, HttpConnectionArgs(
+      spawn handleConnectionThread(HttpConnectionArgs(
         client: client,
         statusFn: args.statusFn,
         logFn: args.logFn,
@@ -491,6 +516,7 @@ proc startHttpGateway*(port: int;
     if not gHttpConnLockReady:
       initLock(gHttpConnLock)
       gHttpConnLockReady = true
+    setMaxPoolSize(16)
     gGatewayStatusFn  = statusFn
     gGatewayLogFn     = logFn
     gGatewayEventFn   = eventFn

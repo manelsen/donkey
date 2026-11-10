@@ -61,6 +61,13 @@ suite "http_gateway auth":
     check not isAuthorized("Bearer nope", "secret")
     check not isAuthorized("", "secret")
 
+  test "chat without a token requires a local origin and JSON body":
+    check chatRequestAllowed("", "application/json", "")
+    check chatRequestAllowed("http://localhost:3000", "application/json", "")
+    check not chatRequestAllowed("https://evil.example", "application/json", "")
+    check not chatRequestAllowed("", "text/plain", "")
+    check chatRequestAllowed("https://evil.example", "text/plain", "secret")
+
   test "non-loopback bind requires a token and explicit insecure opt-in":
     check gatewayBindIsAllowed("127.0.0.1", "")
     check gatewayBindIsAllowed("localhost", "")

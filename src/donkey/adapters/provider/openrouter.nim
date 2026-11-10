@@ -256,7 +256,12 @@ proc makeStreamFn*(a: OpenRouterAdapter): StreamFn =
 
       var toolCalls: seq[ToolCallRequest] = @[]
       for idx in toolOrder:
-        toolCalls.add(toolAcc[idx])
+        var tc = toolAcc[idx]
+        if tc.name.len == 0:
+          continue
+        if tc.inputJson.strip.len == 0:
+          tc.inputJson = "{}"
+        toolCalls.add(tc)
       ok(CompletionResponse(
         text:         accumulated,
         reasoning:    reasoning,

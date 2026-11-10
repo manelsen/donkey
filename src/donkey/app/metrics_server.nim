@@ -3,7 +3,7 @@
 ## Runs in its own OS thread so provider/email blocking calls in the daemon
 ## cannot delay scrapes. The handler only reads the gcsafe metrics registry.
 
-import std/[net, os, strutils]
+import std/[net, os, strutils, times]
 import std/posix
 import ../core/pipeops
 import ../core/log
@@ -14,6 +14,8 @@ export metrics  # re-export initMetrics*, record*, renderMetrics*, gMetrics
 const
   MetricsMaxRequestLine = 8192
   MetricsClientTimeoutSec = 10
+  MetricsMaxHeaderLines = 100
+  MetricsConnectionDeadlineSec = 5
 
 type MetricsServerArgs = object
   host: string
@@ -25,7 +27,7 @@ var gMetricsThreadStarted = false
 
 proc applyMetricsClientTimeouts(sock: Socket; seconds: int = MetricsClientTimeoutSec) =
   var tv: Timeval
-  tv.tv_sec = Time(seconds)
+  tv.tv_sec = posix.Time(seconds)
   tv.tv_usec = Suseconds(0)
   discard setsockopt(sock.getFd, SOL_SOCKET, SO_RCVTIMEO, addr tv, SockLen(sizeof(tv)))
   discard setsockopt(sock.getFd, SOL_SOCKET, SO_SNDTIMEO, addr tv, SockLen(sizeof(tv)))
@@ -38,19 +40,18 @@ proc sendMetricsResponse(sock: Socket; status, contentType, body: string) =
   try: sock.send(response) except CatchableError: discard
 
 proc handleMetricsClient(client: Socket; log: Logger) =
+  let deadline = times.now() + initDuration(seconds = MetricsConnectionDeadlineSec)
   var requestLine = ""
   try:
-    while requestLine.len < MetricsMaxRequestLine:
+    requestLine = client.recvLine()
+    if requestLine.len > MetricsMaxRequestLine:
+      requestLine = requestLine[0 ..< MetricsMaxRequestLine]
+    var headerLines = 0
+    while headerLines < MetricsMaxHeaderLines and times.now() <= deadline:
       let line = client.recvLine()
       if line.len == 0:
         break
-      requestLine = line
-      break
-    # Drain headers.
-    while true:
-      let line = client.recvLine()
-      if line.len == 0:
-        break
+      inc headerLines
   except CatchableError:
     discard
 

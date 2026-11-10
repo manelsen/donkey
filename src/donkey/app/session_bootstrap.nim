@@ -287,7 +287,8 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
                              routingResultHook: RoutingResultHook = nil;
                              routingFeedbackHook: RoutingFeedbackHook = nil;
                              routingCostHook: RoutingCostHook = nil;
-                             routingProviderCooldownHook: RoutingProviderCooldownHook = nil
+                             routingProviderCooldownHook: RoutingProviderCooldownHook = nil;
+                             fallbackCompleteFn: CompleteFn = nil
                             ): AsyncCompleteFn {.gcsafe.} =
   ## Async twin of buildCompleteFn: selection/hooks run on the event loop,
   ## while only the provider call itself runs on a worker.
@@ -342,6 +343,8 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
       try:
         response = await asyncProviderComplete(
           providerRuntimeBuilder, selection.toProviderSpec, req)
+      except CancelledError:
+        raise
       except Exception as e:
         response = asyncCompleteErr(e.msg)
       let elapsedMs = nowMs() - startedAt
@@ -354,6 +357,11 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
       if response.isOk:
         return response
       lastErr = response.error
+    if fallbackCompleteFn != nil:
+      try:
+        return fallbackCompleteFn(req)
+      except Exception as e:
+        return asyncCompleteErr(e.msg)
     return err(lastErr)
 
 proc buildFallbackFn*(primary: CompleteFn; fallbacks: seq[CompleteFn]): CompleteFn =
@@ -599,7 +607,8 @@ proc withSessionCompleteFn*(fallbackCompleteFn: CompleteFn;
     result.asyncCompleteFn = buildAsyncCompleteFn(
       applyProviderDefaults(memory.loadContext(userId).preferencesMd, providerDefaults),
       providerRuntimeBuilder, routingHook, routingResultHook,
-      routingFeedbackHook, routingCostHook, routingProviderCooldownHook)
+      routingFeedbackHook, routingCostHook, routingProviderCooldownHook,
+      fallbackCompleteFn = fallbackCompleteFn)
   result.errorExplainFn = fallbackCompleteFn
 
 func withSessionToolBundle*(toolBundle: SessionToolBundle;

@@ -45,12 +45,15 @@ type StreamJob* = object
   req*: CompletionRequest
   ch*:  ptr Channel[string]
   res*: ptr CompletionResponse # Output
+  errOut*: ptr string
 
 proc doStreamJob*(job: StreamJob) {.thread, gcsafe.} =
   let res = job.fn(job.req,
                    proc(tok: string) {.gcsafe.} = job.ch[].send(tok))
   if res.isOk:
     job.res[] = res.value
+  else:
+    job.errOut[] = res.error
   job.ch[].send(doneSentinel)
 
 proc streamToOutbox*(fn:        StreamFn;
@@ -59,14 +62,16 @@ proc streamToOutbox*(fn:        StreamFn;
                     userId:    UserId;
                     ch:        ChannelKind;
                     replyTo:   string;
-                    streamId:  string): Future[CompletionResponse] {.async.} =
+                    streamId:  string): Future[Result[CompletionResponse, string]] {.async.} =
   var tokenChan: Channel[string]
   var finalResponse: CompletionResponse
+  var streamErr = ""
   tokenChan.open(512)
 
   var t: Thread[StreamJob]
   createThread(t, doStreamJob,
-               StreamJob(fn: fn, req: req, ch: addr tokenChan, res: addr finalResponse))
+               StreamJob(fn: fn, req: req, ch: addr tokenChan,
+                         res: addr finalResponse, errOut: addr streamErr))
 
   var accumulated = ""
   var lastFlush   = nowMs()
@@ -76,6 +81,10 @@ proc streamToOutbox*(fn:        StreamFn;
     var (has, tok) = tokenChan.tryRecv()
     while has:
       if tok == doneSentinel:
+        tokenChan.close()
+        joinThread(t)
+        if streamErr.len > 0:
+          return err(streamErr)
         if finalResponse.toolCalls.len == 0:
           let visible = cleanResponse(finalResponse.text)
           await outbox.put(OutboundMessage(
@@ -86,9 +95,7 @@ proc streamToOutbox*(fn:        StreamFn;
             streamId:  streamId,
             isPartial: false,
           ))
-        tokenChan.close()
-        joinThread(t)
-        return finalResponse
+        return ok(finalResponse)
       accumulated.add(tok)
       (has, tok) = tokenChan.tryRecv()
 
@@ -110,7 +117,7 @@ proc streamToOutbox*(fn:        StreamFn;
 
   tokenChan.close()
   joinThread(t)
-  finalResponse
+  if streamErr.len > 0: err(streamErr) else: ok(finalResponse)
 
 # ── Typing loop ───────────────────────────────────────────────────────────────
 
@@ -326,11 +333,27 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
     if decideToolLoopStreaming(
       round = round,
       toolsCount = tools.len,
-      streamingAvailable = streamFn != nil,
-      streamingToolCalls = streamFn != nil,
+      streamingAvailable = streamFn != nil and not suppressProgress,
+      streamingToolCalls = streamFn != nil and not suppressProgress,
     ).useStreaming:
-      let streamed = await streamToOutbox(
+      let streamedRes = await streamToOutbox(
         streamFn, req, globalOutbox, uid, channel, replyTo, streamId)
+      if streamedRes.isErr:
+        pushAgentEvent(AgentEvent(
+          kind:    aekError,
+          userId:  $uid,
+          channel: $channel,
+          summary: "stream provider: " & streamedRes.error[0 ..< min(streamedRes.error.len, 80)],
+        ))
+        await globalOutbox.put(OutboundMessage(
+          userId: uid,
+          channel: channel,
+          text: explainProviderError(errorExplainFn, streamedRes.error),
+          replyTo: replyTo,
+        ))
+        loopState.done = true
+        continue
+      let streamed = streamedRes.value
 
       log.info($uid & " (" & $channel & ") <- [" & providerLabel &
                "] |" & $streamed.text.len & "| stream")

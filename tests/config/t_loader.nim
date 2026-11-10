@@ -40,6 +40,12 @@ suite "Config Loader":
     check parseDmPolicy("allowlist").get() == DmPolicyAllowlist
     check parseDmPolicy("nonsense").isNone
 
+  test "malformed TOML does not silently fall back to open DM policy":
+    let tmp = getTempDir() / "t_loader_malformed.toml"
+    writeFile(tmp, "[security\ndm_policy = \"open\"\n")
+    defer: removeFile(tmp)
+    check loadConfig(tmp).invalidDmPolicy.len > 0
+
   test "invalid dm_policy is recorded for startup rejection":
     let tmp = getTempDir() / "t_loader_bad_dm_policy.toml"
     writeFile(tmp, """

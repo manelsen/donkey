@@ -85,6 +85,8 @@ proc imapReadResponse(s: ImapSession; tag: string): Result[seq[string], string] 
             var buf = ""
             var remaining = litSize
             while remaining > 0:
+              if now() > deadline:
+                return err("IMAP literal deadline exceeded")
               var chunk = newString(min(remaining, 4096))
               let n = s.sock.recv(chunk, min(remaining, 4096))
               if n <= 0: return err("IMAP: connection closed reading literal")

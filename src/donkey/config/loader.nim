@@ -308,7 +308,12 @@ proc loadConfig*(path: string): DonkeyConfig =
   let baseConfig = defaultConfig(resolveHome())
   let docOpt = loadTomlConfig(path)
   if docOpt.isNone:
-    return baseConfig |> applyEnvOverrides
+    var fallback = baseConfig |> applyEnvOverrides
+    if fileExists(path) and fallback.invalidDmPolicy.len == 0:
+      # A file that exists but cannot be parsed must not silently fall back to
+      # DmPolicyOpen; startup will reject it.
+      fallback.invalidDmPolicy = "<malformed TOML>"
+    return fallback
 
   let doc = docOpt.get()
   let mainPatch = parseMainConfigPatch(doc)

@@ -67,7 +67,8 @@ proc ctlUserRevoke*(memory: MdFileAdapter; uuid: string; revoked: bool): Result[
   if allowlistResult.isErr:
     echo "Error: " & allowlistResult.error
     return err(allowlistResult.error)
-  memory.updateUserField(userId, "Access", if revoked: "revoked" else: "active")
+  if memory.hasProfile(userId):
+    memory.updateUserField(userId, "Access", if revoked: "revoked" else: "active")
   echo (if revoked: "Revoked " else: "Restored ") & uuid
   ok()
 
