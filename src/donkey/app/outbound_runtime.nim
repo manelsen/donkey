@@ -35,36 +35,27 @@ proc beginDelivery(ledger: DeliveryLedgerPort;
   )
   if ledger.recordPending == nil:
     return
-  try:
-    let saved = ledger.recordPending(result)
-    if saved.isErr:
-      log.warn("delivery ledger pending: " & saved.error)
-  except CatchableError as e:
-    log.warn("delivery ledger pending: " & e.msg)
+  let saved = ledger.recordPending(result)
+  if saved.isErr:
+    log.warn("delivery ledger pending: " & saved.error)
 
 proc finishDeliverySent(ledger: DeliveryLedgerPort;
                         id: string;
                         log: Logger) {.gcsafe.} =
   if ledger.markSent == nil:
     return
-  try:
-    let saved = ledger.markSent(id, epochMs())
-    if saved.isErr:
-      log.warn("delivery ledger sent: " & saved.error)
-  except CatchableError as e:
-    log.warn("delivery ledger sent: " & e.msg)
+  let saved = ledger.markSent(id, epochMs())
+  if saved.isErr:
+    log.warn("delivery ledger sent: " & saved.error)
 
 proc finishDeliveryFailed(ledger: DeliveryLedgerPort;
                           id, error: string;
                           log: Logger) {.gcsafe.} =
   if ledger.markFailed == nil:
     return
-  try:
-    let saved = ledger.markFailed(id, epochMs(), error)
-    if saved.isErr:
-      log.warn("delivery ledger failed: " & saved.error)
-  except CatchableError as e:
-    log.warn("delivery ledger failed: " & e.msg)
+  let saved = ledger.markFailed(id, epochMs(), error)
+  if saved.isErr:
+    log.warn("delivery ledger failed: " & saved.error)
 
 func channelTag(ch: ChannelKind): string {.gcsafe.} =
   case ch

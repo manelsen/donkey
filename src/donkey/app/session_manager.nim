@@ -76,14 +76,11 @@ proc setRegistryErrorHook*(sm: var SessionManager;
 
 proc reportRegistryError(sm: SessionManager; error: string) =
   if sm.registryErrorHook != nil:
-    try:
-      sm.registryErrorHook(error)
-    except CatchableError:
-      discard
+    sm.registryErrorHook(error)
 
 proc persistSession*(sm: var SessionManager; userId: UserId) =
-  ## Best-effort upsert of one session's metadata. Never raises and never
-  ## propagates store errors into the message path.
+  ## Best-effort upsert of one session's metadata. Store failures are reported
+  ## through the registry error hook and never enter the message path.
   if not sm.registryStore.hasSessionRegistry:
     return
   let uid = $userId
@@ -97,12 +94,9 @@ proc persistSession*(sm: var SessionManager; userId: UserId) =
     sessionId: entry.sessionId,
     runtimeSignature: entry.toolCatalogSignature,
   )
-  try:
-    let saved = sm.registryStore.upsert(record)
-    if saved.isErr:
-      sm.reportRegistryError(saved.error)
-  except CatchableError as e:
-    sm.reportRegistryError(e.msg)
+  let saved = sm.registryStore.upsert(record)
+  if saved.isErr:
+    sm.reportRegistryError(saved.error)
 
 proc restoreSessions*(sm: var SessionManager): Result[int, string] =
   ## Loads persisted session metadata into the in-memory manager. Restored
@@ -110,11 +104,7 @@ proc restoreSessions*(sm: var SessionManager): Result[int, string] =
   ## orchestrator runtime instead of expecting a live actor.
   if not sm.registryStore.hasSessionRegistry:
     return ok(0)
-  let loaded =
-    try:
-      sm.registryStore.loadAll()
-    except CatchableError as e:
-      return err(e.msg)
+  let loaded = sm.registryStore.loadAll()
   if loaded.isErr:
     return err(loaded.error)
   var count = 0
@@ -137,6 +127,14 @@ proc init*(sm: var SessionManager) =
   sm.dmPolicy = DmPolicyOpen
   sm.isDmAllowed = nil
 
+proc configureDmPolicy*(sm: var SessionManager;
+                        policy: DmPolicy;
+                        isAllowed: proc(userId: UserId): bool {.gcsafe.}) =
+  ## Configures DM authorization once at daemon startup. Kept out of pure
+  ## `func` builders so service construction has no hidden side effects.
+  sm.dmPolicy = policy
+  sm.isDmAllowed = isAllowed
+
 proc allows*(sm: SessionManager; userId: UserId): bool =
   ## Channel-level authorization used before command/callback dispatch.
   if sm.dmPolicy == DmPolicyOpen:
@@ -145,6 +143,10 @@ proc allows*(sm: SessionManager; userId: UserId): bool =
 
 func hasSession*(sm: SessionManager; userId: UserId): bool =
   $userId in sm.entries
+
+func hasLiveSession*(sm: SessionManager; userId: UserId): bool =
+  ## A restored entry has metadata but no orchestrator actor yet.
+  sm.hasSession(userId) and not sm.entries[$userId].restored
 
 proc getOrCreate*(sm: var SessionManager; userId: UserId): ptr SessionEntry =
   ## Returns a pointer to the session entry, creating it if absent.
@@ -162,7 +164,8 @@ proc get*(sm: var SessionManager; userId: UserId): ptr SessionEntry =
 proc recordChannel*(sm: var SessionManager;
                     userId: UserId;
                     kind:   ChannelKind;
-                    rawId:  string) =
+                    rawId:  string;
+                    persist: bool = true) =
   ## Records that userId has used (kind, rawId). Idempotent.
   if rawId.len == 0:
     return
@@ -173,7 +176,8 @@ proc recordChannel*(sm: var SessionManager;
   if existingIdx >= 0:
     sm.entries[uid].channels.delete(existingIdx)
   sm.entries[uid].channels.add(pair)
-  sm.persistSession(userId)
+  if persist:
+    sm.persistSession(userId)
 
 func latestChannel*(sm: SessionManager; userId: UserId): Option[ChannelKind] =
   let uid = $userId
@@ -243,7 +247,8 @@ proc applyIngressDecision*(sm: var SessionManager;
     result.entry[].restored = false
     result.isNew = false
     result.rebuilt = true
-  sm.persistSession(userId)
+  ## Persistence is the caller's responsibility: the ingress path batches the
+  ## timestamp and channel updates into a single registry write per message.
 
 proc prepareEntry*(sm: var SessionManager;
                    userId: UserId;
