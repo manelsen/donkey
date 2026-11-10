@@ -6,6 +6,7 @@ import ../../core/outbound/outbound
 import ../../core/pipeops
 import ../../core/security/dm_policy
 import ../../adapters/memory/md_file
+import ../../app/inbound_gate
 import ../../app/session_manager
 import ../../domain/agent_message
 import ../../domain/message
@@ -548,6 +549,7 @@ proc drainDiscordEvents*(sm: var SessionManager;
   if discordToken.len == 0:
     return
   ## Process real-time events
+  let gate = dcAdapter.resolver.identityGate()
   var (hasEvent, event) = dcAdapter.tryRecvEvent()
   while hasEvent:
     let rawId = event.discordUserId
@@ -565,11 +567,11 @@ proc drainDiscordEvents*(sm: var SessionManager;
       ## when the code points at an already-authorized account.
       case event.kind
       of deMessage:
-        let target = linkTargetFor(dcAdapter.resolver, ckDiscord, event.content)
+        let target = linkTargetFor(gate, ckDiscord, event.content)
         if target.isSome and sm.allows(target.get):
           allowed = true
       of deInteraction:
-        let target = dcAdapter.resolver.peekLinkCode(event.content.strip)
+        let target = gate.peekLinkCode(event.content.strip)
         if target.isSome and sm.allows(target.get):
           allowed = true
       of deModalRequest:
@@ -577,14 +579,15 @@ proc drainDiscordEvents*(sm: var SessionManager;
         allowed = true
       else:
         discard
-      if allowed and identity.isNone:
+      if allowed and identity.isNone and event.kind != deModalRequest:
         identity = some(dcAdapter.resolver.resolve(ckDiscord, rawId))
     if not allowed:
       logger.warn("discord: unauthorized event from " &
         (if identity.isSome: $identity.get else: "unidentified sender"))
       (hasEvent, event) = dcAdapter.tryRecvEvent()
       continue
-    logger.info("discord event: " & $event.kind & " from " & $identity.get)
+    logger.info("discord event: " & $event.kind & " from " &
+      (if identity.isSome: $identity.get else: "unidentified sender"))
     handleDiscordEvent(sm, event, dcAdapter, presentationState, memory, completeBuilder,
                        modelCatalogLoader, toolsCount, toolClientsCount, daemonStartMs, msgSeq, logger,
                        handleInboundStatus,

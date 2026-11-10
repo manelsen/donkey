@@ -9,6 +9,7 @@ import ../../domain/agent_message
 import ../../domain/message
 import ../../ports/provider
 import ../identity/identity_resolver
+import ../../app/inbound_gate
 import ./common_runtime
 import ./wechat
 
@@ -41,7 +42,7 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
   while hasEvent:
     if (event.msgType == "text" and event.content.strip.len > 0) or
        event.mediaId.len > 0:
-      let auth = authorizeInbound(sm, wchAdapter.resolver, ckWeChat,
+      let auth = authorizeInbound(sm, wchAdapter.resolver.identityGate(), ckWeChat,
                                   event.fromUser, event.content)
       if not auth.allowed:
         log.warn("wechat: unauthorized message from " &

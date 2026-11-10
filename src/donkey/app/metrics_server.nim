@@ -89,7 +89,13 @@ proc metricsWorker(arg: MetricsWorkerArg) {.thread.} =
     let fd = gMetricsQueue.recv()
     if fd == SocketHandle(-1):
       break
-    let client = newSocket(fd, buffered = true)
+    var client: Socket
+    try:
+      client = newSocket(fd, buffered = true)
+    except CatchableError as e:
+      arg.log.warn("metrics: cannot wrap accepted socket: " & e.msg)
+      discard posix.close(cint(fd))
+      continue
     try:
       applyMetricsClientTimeouts(client)
       handleMetricsClient(client, arg.log)

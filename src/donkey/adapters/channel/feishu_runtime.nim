@@ -9,6 +9,7 @@ import ../../domain/agent_message
 import ../../domain/message
 import ../../ports/provider
 import ../identity/identity_resolver
+import ../../app/inbound_gate
 import ./common_runtime
 import ./feishu
 
@@ -31,7 +32,7 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
   while hasEvent:
     if (event.msgType == "text" and (event.content |> strip).len > 0) or
        event.fileKey.len > 0:
-      let auth = authorizeInbound(sm, fsAdapter.resolver, ckFeishu,
+      let auth = authorizeInbound(sm, fsAdapter.resolver.identityGate(), ckFeishu,
                                   event.openId, event.content)
       if not auth.allowed:
         log.warn("feishu: unauthorized message from " &

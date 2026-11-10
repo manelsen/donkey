@@ -10,6 +10,7 @@
 ##   to the same UUID as the Telegram user.
 
 import std/[options, os, random, strutils, tables, times]
+import ../../app/inbound_gate
 import ../../core/types
 
 type
@@ -138,6 +139,18 @@ proc peekLinkCode*(r: IdentityResolver; code: string): Option[UserId] =
     r.pendingLinks.del(code)
     return none(UserId)
   some(entry.userId)
+
+proc identityGate*(r: IdentityResolver): IdentityGatePort {.gcsafe.} =
+  ## Adapter-side port used by the application inbound gate. The business
+  ## decision stays in `app/inbound_gate`; this only exposes resolver calls.
+  IdentityGatePort(
+    lookup: proc(kind: ChannelKind; rawId: string): Option[UserId] {.gcsafe.} =
+      r.lookup(kind, rawId),
+    resolve: proc(kind: ChannelKind; rawId: string): UserId {.gcsafe.} =
+      r.resolve(kind, rawId),
+    peekLinkCode: proc(code: string): Option[UserId] {.gcsafe.} =
+      r.peekLinkCode(code),
+  )
 
 proc consumeLinkCode*(r: IdentityResolver; code: string;
                       kind: ChannelKind; rawId: string): bool =

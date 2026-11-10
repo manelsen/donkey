@@ -16,6 +16,7 @@ import donkey/domain/message
 import donkey/ports/provider
 import donkey/adapters/memory/md_file
 import donkey/adapters/channel/common_runtime
+import donkey/app/inbound_gate
 import donkey/adapters/channel/telegram
 import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/channel/wecom
@@ -355,11 +356,11 @@ suite "shared DM gate":
         u == target
 
     let code = resolver.generateLinkCode(target)
-    check linkTargetFor(resolver, ckWeCom, "/continue " & code) == some(target)
+    check linkTargetFor(resolver.identityGate(), ckWeCom, "/continue " & code) == some(target)
     check resolver.lookup(ckWeCom, "new-device").isNone
 
     let auth = authorizeInbound(
-      sm, resolver, ckWeCom, "new-device", "/continue " & code)
+      sm, resolver.identityGate(), ckWeCom, "new-device", "/continue " & code)
     check auth.allowed
     check auth.identified
     ## The gate minted a temporary identity; consuming the code rewrites it to
@@ -379,7 +380,7 @@ suite "shared DM gate":
     let code = resolver.generateLinkCode(UserId("not-authorized"))
 
     let auth = authorizeInbound(
-      sm, resolver, ckWeCom, "intruder", "/continue " & code)
+      sm, resolver.identityGate(), ckWeCom, "intruder", "/continue " & code)
     check not auth.allowed
     check not auth.identified
     check resolver.lookup(ckWeCom, "intruder").isNone
@@ -395,7 +396,7 @@ suite "shared DM gate":
     sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
 
     let auth = authorizeInbound(
-      sm, resolver, ckWeCom, "intruder", "/continue WRONG1")
+      sm, resolver.identityGate(), ckWeCom, "intruder", "/continue WRONG1")
     check not auth.allowed
     check not auth.identified
     check resolver.lookup(ckWeCom, "intruder").isNone
@@ -409,7 +410,49 @@ suite "shared DM gate":
     sm.init()
     sm.dmPolicy = DmPolicyOpen
 
-    let auth = authorizeInbound(sm, resolver, ckWeChat, "first-contact", "hello")
+    let auth = authorizeInbound(sm, resolver.identityGate(), ckWeChat, "first-contact", "hello")
     check auth.allowed
     check auth.identified
     check resolver.lookup(ckWeChat, "first-contact").isSome
+
+  test "telegram inner gate admits /continue for an authorized target":
+    let dir = GateTmp / "telegram-link"
+    removeDir(dir)
+    createDir(dir)
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyAllowlist
+    var tg = newTelegramAdapter(
+      "token", dir / "identities.tsv", apiBase = "http://127.0.0.1:1")
+    let target = tg.resolver.resolve(ckTelegram, "700001")
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} =
+      {.cast(gcsafe).}:
+        u == target
+    let code = tg.resolver.generateLinkCode(target)
+
+    # `receive()` normally mints the transient UUID before the gate runs.
+    let transient = tg.resolver.resolve(ckTelegram, "900001")
+    var presentation = initPresentationState()
+    let memory = MdFileAdapter(paddocksDir: dir / "paddocks")
+    var providerCalls = 0
+    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+      proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+        {.cast(gcsafe).}:
+          inc providerCalls
+        ok(CompletionResponse(text: "unexpected"))
+    var msgSeq = 0
+
+    let handled = handleTelegramMessage(
+      InboundMessage(
+        userId: transient,
+        channel: ckTelegram,
+        channelId: "chat-1",
+        text: "/continue " & code,
+      ),
+      sm, tg, presentation, memory, completeBuilder, gateLoader(),
+      0, 0, msgSeq, 0, gateLog)
+
+    check handled
+    check providerCalls == 0
+    check sm.sessionCount() == 0
+    check tg.resolver.lookup(ckTelegram, "900001").get == target

@@ -9,6 +9,8 @@ import ../../app/session_manager
 import ../../domain/agent_message
 import ../../domain/message
 import ../../ports/provider
+import ../identity/identity_resolver
+import ../../app/inbound_gate
 import ./common_runtime
 import ./qq_channel
 
@@ -230,7 +232,7 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
   while hasEvent:
     if event.content.strip.len > 0:
       let rawId = qqRawIdentity(event)
-      let auth = authorizeInbound(sm, qqAdapter.resolver, ckQQ,
+      let auth = authorizeInbound(sm, qqAdapter.resolver.identityGate(), ckQQ,
                                   rawId, event.content)
       if not auth.allowed:
         log.warn("qq: unauthorized message from " &

@@ -7,6 +7,8 @@ import ../../app/session_manager
 import ../../domain/agent_message
 import ../../domain/message
 import ../../ports/provider
+import ../identity/identity_resolver
+import ../../app/inbound_gate
 import ./common_runtime
 import whatsapp
 
@@ -27,7 +29,7 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
 
   var (hasEvent, event) = waAdapter.tryRecvEvent()
   while hasEvent:
-    let auth = authorizeInbound(sm, waAdapter.resolver, ckWhatsApp,
+    let auth = authorizeInbound(sm, waAdapter.resolver.identityGate(), ckWhatsApp,
                                 event.waUserId, event.text)
     if not auth.allowed:
       log.warn("whatsapp: unauthorized message from " &

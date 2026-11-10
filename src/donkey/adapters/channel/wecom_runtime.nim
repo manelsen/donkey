@@ -9,6 +9,7 @@ import ../../domain/agent_message
 import ../../domain/message
 import ../../ports/provider
 import ../identity/identity_resolver
+import ../../app/inbound_gate
 import ./common_runtime
 import ./wecom
 
@@ -75,7 +76,7 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
   var (hasEvent, event) = wcAdapter.tryRecvEvent()
   while hasEvent:
     if event.msgType == "text" and (event.content |> strip).len > 0:
-      let auth = authorizeInbound(sm, wcAdapter.resolver, ckWeCom,
+      let auth = authorizeInbound(sm, wcAdapter.resolver.identityGate(), ckWeCom,
                                   event.fromUser, event.content)
       if not auth.allowed:
         logger.warn("wecom: unauthorized message from " &
