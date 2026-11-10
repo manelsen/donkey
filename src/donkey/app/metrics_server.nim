@@ -16,14 +16,24 @@ const
   MetricsClientTimeoutSec = 10
   MetricsMaxHeaderLines = 100
   MetricsConnectionDeadlineSec = 5
+  MetricsWorkerCount = 4
+  MetricsQueueDepth = 64
 
 type MetricsServerArgs = object
   host: string
   port: int
   log:  Logger
 
-var gMetricsThread {.global.}: Thread[MetricsServerArgs]
-var gMetricsThreadStarted = false
+type MetricsWorkerArg = object
+  id: int
+  log: Logger
+
+var
+  gMetricsThread {.global.}: Thread[MetricsServerArgs]
+  gMetricsWorkers {.global.}: array[MetricsWorkerCount, Thread[MetricsWorkerArg]]
+  gMetricsQueue {.global.}: Channel[SocketHandle]
+  gMetricsThreadStarted = false
+  gMetricsPoolStarted = false
 
 proc applyMetricsClientTimeouts(sock: Socket; seconds: int = MetricsClientTimeoutSec) =
   var tv: Timeval
@@ -73,6 +83,26 @@ proc handleMetricsClient(client: Socket; log: Logger) =
   else:
     sendMetricsResponse(client, "404 Not Found", "text/plain", "Not Found")
 
+proc metricsWorker(arg: MetricsWorkerArg) {.thread.} =
+  while true:
+    let fd = gMetricsQueue.recv()
+    if fd == SocketHandle(-1):
+      break
+    let client = newSocket(fd, buffered = true)
+    try:
+      applyMetricsClientTimeouts(client)
+      handleMetricsClient(client, arg.log)
+    finally:
+      client.close()
+
+proc startMetricsPool(log: Logger) =
+  if gMetricsPoolStarted:
+    return
+  gMetricsPoolStarted = true
+  gMetricsQueue.open(MetricsQueueDepth)
+  for i in 0 ..< MetricsWorkerCount:
+    createThread(gMetricsWorkers[i], metricsWorker, MetricsWorkerArg(id: i, log: log))
+
 proc metricsServerThread(args: MetricsServerArgs) {.thread.} =
   discard pthread_detach(pthread_self())
   var server: Socket
@@ -95,10 +125,9 @@ proc metricsServerThread(args: MetricsServerArgs) {.thread.} =
     except CatchableError as exc:
       args.log.error("metrics: accept failed — " & exc.msg)
       continue
-    applyMetricsClientTimeouts(client)
-    try:
-      handleMetricsClient(client, args.log)
-    finally:
+    let fd = client.getFd
+    if not gMetricsQueue.trySend(fd):
+      sendMetricsResponse(client, "503 Service Unavailable", "text/plain", "metrics busy")
       client.close()
 
 func parseMetricsPort*(raw: string): Result[int, string] =
@@ -123,6 +152,7 @@ proc startMetricsServer*(host: string; port: int; log: Logger) =
   if gMetricsThreadStarted:
     return
   gMetricsThreadStarted = true
+  startMetricsPool(log)
   createThread(gMetricsThread, metricsServerThread,
                MetricsServerArgs(host: host, port: port, log: log))
 
