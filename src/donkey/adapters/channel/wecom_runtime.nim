@@ -1,9 +1,8 @@
-import std/[options, strutils]
+import std/strutils
 import chronos/asyncsync
 import ../../core/commands/command_routing
 import ../../core/log as core_log
 import ../../core/pipeops
-import ../../core/security/dm_policy
 import ../../adapters/memory/md_file
 import ../../app/session_manager
 import ../../domain/agent_message
@@ -76,20 +75,14 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
   var (hasEvent, event) = wcAdapter.tryRecvEvent()
   while hasEvent:
     if event.msgType == "text" and (event.content |> strip).len > 0:
-      let known = wcAdapter.resolver.lookup(ckWeCom, event.fromUser)
-      var userId = UserId("")
-      if known.isSome:
-        userId = known.get
-      elif sm.dmPolicy == DmPolicyOpen:
-        userId = wcAdapter.resolver.resolve(ckWeCom, event.fromUser)
-      else:
-        logger.warn("wecom: unauthorized message from unidentified sender (policy=" & $sm.dmPolicy & ")")
+      let auth = authorizeInbound(sm, wcAdapter.resolver, ckWeCom,
+                                  event.fromUser, event.content)
+      if not auth.allowed:
+        logger.warn("wecom: unauthorized message from " &
+                    (if auth.identified: $auth.userId else: "unidentified sender"))
         (hasEvent, event) = wcAdapter.tryRecvEvent()
         continue
-      if not sm.allows(userId):
-        logger.warn("wecom: unauthorized message from " & $userId)
-        (hasEvent, event) = wcAdapter.tryRecvEvent()
-        continue
+      let userId = auth.userId
       let inbound = InboundMessage(
         userId:    userId,
         channel:   ckWeCom,

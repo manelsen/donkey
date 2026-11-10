@@ -1,9 +1,8 @@
-import std/[options, strutils]
+import std/strutils
 import chronos/asyncsync
 import ../../core/commands/command_routing
 import ../../core/log
 import ../../core/pipeops
-import ../../core/security/dm_policy
 import ../../adapters/memory/md_file
 import ../../app/session_manager
 import ../../domain/agent_message
@@ -32,20 +31,14 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
   while hasEvent:
     if (event.msgType == "text" and (event.content |> strip).len > 0) or
        event.fileKey.len > 0:
-      let known = fsAdapter.resolver.lookup(ckFeishu, event.openId)
-      var userId = UserId("")
-      if known.isSome:
-        userId = known.get
-      elif sm.dmPolicy == DmPolicyOpen:
-        userId = fsAdapter.resolver.resolve(ckFeishu, event.openId)
-      else:
-        log.warn("feishu: unauthorized message from unidentified sender (policy=" & $sm.dmPolicy & ")")
+      let auth = authorizeInbound(sm, fsAdapter.resolver, ckFeishu,
+                                  event.openId, event.content)
+      if not auth.allowed:
+        log.warn("feishu: unauthorized message from " &
+                 (if auth.identified: $auth.userId else: "unidentified sender"))
         (hasEvent, event) = fsAdapter.tryRecvEvent()
         continue
-      if not sm.allows(userId):
-        log.warn("feishu: unauthorized message from " & $userId)
-        (hasEvent, event) = fsAdapter.tryRecvEvent()
-        continue
+      let userId = auth.userId
       let msg = InboundMessage(
         userId:    userId,
         channel:   ckFeishu,

@@ -93,6 +93,7 @@ var
   gProviderQueue {.global.}: Channel[ProviderJob]
   gProviderWorkers {.global.}: array[ProviderWorkerCount, Thread[void]]
   gProviderPoolStarted = false
+  gProviderPoolAttempted = false
 
 proc releaseJobState(state: ptr ProviderJobState) {.gcsafe.} =
   ## Drops one reference to the control block. The owner that drops the last
@@ -158,14 +159,35 @@ proc providerWorker() {.thread.} =
   while true:
     completeJob(gProviderQueue.recv())
 
-proc ensureProviderPool() =
-  ## Called from the Chronos event loop thread only.
+proc ensureProviderPool(): Result[void, string] =
+  ## Called from the Chronos event loop thread only. Marks the pool ready only
+  ## after at least one worker started; a failed attempt is not retried, so a
+  ## later call cannot enqueue into a queue with no consumers.
   if gProviderPoolStarted:
-    return
-  gProviderPoolStarted = true
-  gProviderQueue.open(ProviderQueueDepth)
+    return ok()
+  if gProviderPoolAttempted:
+    return err(Result[void, string],
+               "provider executor: worker pool initialization already failed")
+  gProviderPoolAttempted = true
+  try:
+    gProviderQueue.open(ProviderQueueDepth)
+  except CatchableError as e:
+    return err(Result[void, string],
+               "provider executor: cannot open queue: " & e.msg)
+  var started = 0
+  var firstError = ""
   for i in 0 ..< ProviderWorkerCount:
-    createThread(gProviderWorkers[i], providerWorker)
+    try:
+      createThread(gProviderWorkers[i], providerWorker)
+      inc started
+    except CatchableError as e:
+      if firstError.len == 0:
+        firstError = e.msg
+  if started == 0:
+    return err(Result[void, string],
+               "provider executor: no workers started: " & firstError)
+  gProviderPoolStarted = true
+  ok()
 
 proc providerPoolReady*(): bool =
   ## True once the worker pool has been lazily started.
@@ -187,7 +209,9 @@ proc asyncProviderComplete*(builder: ProviderRuntimeBuilder;
   ## Runs `builder` on the event loop, then enqueues the resulting bundle for
   ## a worker thread and awaits its result. Cancellation marks the job
   ## cancelled without waiting for the worker; see the module header.
-  ensureProviderPool()
+  let pool = ensureProviderPool()
+  if pool.isErr:
+    return err(Result[CompletionResponse, string], pool.error)
 
   # The builder may capture event-loop state, so it must not run on a worker.
   var bundle: ProviderBundle

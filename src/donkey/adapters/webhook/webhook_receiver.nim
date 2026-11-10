@@ -627,6 +627,10 @@ proc startWebhookReceiver*(cfg: WebhookConfig;
 
     let report = handshake.recv()
     if report.len > 0:
+      ## The server thread has already left its accept loop; join it before the
+      ## caller can retry and reuse the same global Thread object.
+      {.cast(gcsafe).}:
+        joinThread(gWebhookThread)
       return err(report)
   finally:
     handshake.close()

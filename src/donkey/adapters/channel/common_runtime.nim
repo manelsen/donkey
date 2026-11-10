@@ -1,4 +1,4 @@
-import std/[algorithm, os, sequtils, strutils, tables, times]
+import std/[algorithm, options, os, sequtils, strutils, tables, times]
 import parsetoml
 import results
 import ../../core/pipeops
@@ -6,9 +6,12 @@ import ../../core/commands/command_catalog
 import ../../core/commands/command_routing
 import ../../core/outbound/outbound
 import ../../core/providers/smart_routing
+import ../../core/security/dm_policy
 import ../../core/providers/provider_catalog
 import ../../adapters/memory/md_file
+import ../../app/session_manager
 import ../../domain/message
+import ../identity/identity_resolver
 import ../../ports/provider
 import ../../app/skill_runtime
 when defined(withPostgres) or defined(withSqlite):
@@ -152,6 +155,53 @@ proc loadChannelPreference*(memory: MdFileAdapter;
                             key: string): string =
   ## Reads one preference value by key, without parsing the whole document.
   parsePreferenceString(memory.loadContext(userId).preferencesMd, key)
+
+proc linkTargetFor*(resolver: IdentityResolver;
+                    kind: ChannelKind;
+                    text: string): Option[UserId] {.gcsafe.} =
+  ## Returns the authorized UUID behind a `/continue <code>` command without
+  ## consuming the code. The DM gate uses this to let an unknown identity link
+  ## itself to an already-authorized account, while still rejecting everyone
+  ## else before an identity is minted.
+  let command = decideCommandRequest(CommandRequest(channel: kind, text: text))
+  if command.route == crLocal and decideLocalCommandAction(command) == lcaContinueLink:
+    return resolver.peekLinkCode(command.value.strip)
+  none(UserId)
+
+type
+  InboundAuthorization* = object
+    allowed*:    bool
+    userId*:     UserId
+    identified*: bool   ## false only when an unknown sender was denied
+
+proc authorizeInbound*(sm: SessionManager;
+                       resolver: IdentityResolver;
+                       kind: ChannelKind;
+                       rawId: string;
+                       text: string): InboundAuthorization {.gcsafe.} =
+  ## Single DM gate shared by callback-style channels.
+  ##
+  ## Known identities are checked against the allowlist. New identities are
+  ## minted only under `DmPolicyOpen` or when the message is `/continue <code>`
+  ## and the code points at an already-authorized UUID (the handler consumes
+  ## the code and rewrites the mapping). A denied sender is never persisted.
+  let known = resolver.lookup(kind, rawId)
+  if known.isSome:
+    result.userId = known.get
+    result.identified = true
+    result.allowed = sm.allows(result.userId)
+  elif sm.dmPolicy == DmPolicyOpen:
+    result.userId = resolver.resolve(kind, rawId)
+    result.identified = true
+    result.allowed = sm.allows(result.userId)
+  if not result.allowed:
+    let target = linkTargetFor(resolver, kind, text)
+    if target.isSome and sm.allows(target.get):
+      result.userId =
+        if known.isSome: known.get
+        else: resolver.resolve(kind, rawId)
+      result.identified = true
+      result.allowed = true
 
 proc saveChannelPreference*(memory: MdFileAdapter;
                             userId: UserId;

@@ -8,7 +8,7 @@
 ## and owns at most a few sessions. I/O failures are returned as `Err`; callers
 ## on the hot path log and continue.
 
-import std/[json, options, os, strutils, tables]
+import std/[json, locks, options, os, strutils, tables]
 when defined(posix):
   import std/posix
 import ../../core/pipeops
@@ -19,6 +19,10 @@ const
   SessionsFileName*     = "sessions.json"
   DeliveryLedgerFileName* = "delivery_ledger.jsonl"
   RegistryVersion*      = 1
+  SessionsFlushIntervalMs = 1000
+    ## Timestamp-only updates are coalesced to at most one write per second.
+    ## Structural changes (channels, session id, runtime signature) flush
+    ## immediately. `flushSessions` forces a pending write.
 
 type
   RuntimeStateStore* = ref object
@@ -26,6 +30,16 @@ type
     ## Records still awaiting `sent`/`failed`. Loaded once at construction so
     ## the hot path does not replay the ledger file on every update.
     pending*: Table[string, DeliveryRecord]
+    ## Session registry cache. Loaded once and kept in memory so an upsert
+    ## never has to read/parse the whole file. Guarded by `lock`.
+    sessions: seq[SessionRegistryRecord]
+    sessionsLoaded: bool
+    sessionsDirty: bool
+    lastSessionsWriteMs: int64
+    ## Serializes session upserts, ledger appends and their in-memory caches.
+    ## Gateway workers can persist concurrently with the event loop.
+    lock: Lock
+    tmpCounter: int
 
   StoreError = object of CatchableError
 
@@ -116,10 +130,10 @@ proc renamePath(source, dest: string): Result[void, string] =
     except CatchableError as e:
       err("rename failed for " & source & ": " & e.msg)
 
-proc atomicWriteText(path, content: string): Result[void, string] =
-  ## Writes to a sibling temp file, fsyncs it, renames it over the destination
-  ## and fsyncs the parent directory.
-  let tmp = path & ".tmp"
+proc atomicWriteText(path, content, tmpSuffix: string): Result[void, string] =
+  ## Writes to a sibling temp file unique to this write, fsyncs it, renames it
+  ## over the destination and fsyncs the parent directory.
+  let tmp = path & ".tmp." & tmpSuffix
   try:
     let dir = parentDir(path)
     if dir.len > 0:
@@ -235,7 +249,7 @@ proc backupCorruptSessions(store: RuntimeStateStore;
     return err("session registry corrupt backup failed: " & renamed.error)
   ok()
 
-proc loadSessions(store: RuntimeStateStore): Result[seq[SessionRegistryRecord], string] {.raises: [].} =
+proc loadSessionsFromDisk(store: RuntimeStateStore): Result[seq[SessionRegistryRecord], string] {.raises: [].} =
   let path = store.sessionsPath()
   if not fileExists(path):
     return ok(newSeq[SessionRegistryRecord]())
@@ -273,6 +287,30 @@ proc loadSessions(store: RuntimeStateStore): Result[seq[SessionRegistryRecord], 
         records.add(parsedRecord.get)
   ok(records)
 
+proc ensureSessionsLoadedLocked(store: RuntimeStateStore): Result[void, string] {.raises: [].} =
+  ## Caller must hold `store.lock`.
+  if store.sessionsLoaded:
+    return ok()
+  let loaded = store.loadSessionsFromDisk()
+  if loaded.isErr:
+    return err(loaded.error)
+  store.sessions = loaded.value
+  store.sessionsLoaded = true
+  ok()
+
+proc loadSessions(store: RuntimeStateStore): Result[seq[SessionRegistryRecord], string] {.raises: [].} =
+  acquire(store.lock)
+  defer: release(store.lock)
+  let loaded = store.ensureSessionsLoadedLocked()
+  if loaded.isErr:
+    return err(loaded.error)
+  ## Return a shallow copy: the caller may iterate while another thread
+  ## upserts a different user.
+  var records = newSeq[SessionRegistryRecord](store.sessions.len)
+  for i, record in store.sessions:
+    records[i] = record
+  ok(records)
+
 proc saveSessions(store: RuntimeStateStore;
                   records: seq[SessionRegistryRecord]): Result[void, string] =
   var sessions = newJArray()
@@ -282,23 +320,54 @@ proc saveSessions(store: RuntimeStateStore;
     "version": RegistryVersion,
     "sessions": sessions,
   }
-  atomicWriteText(store.sessionsPath(), $payload)
+  inc store.tmpCounter
+  atomicWriteText(store.sessionsPath(), $payload,
+                  $getCurrentProcessId() & "-" & $store.tmpCounter)
+
+func sameStructuralFields(a, b: SessionRegistryRecord): bool =
+  a.channels == b.channels and
+    a.sessionId == b.sessionId and
+    a.runtimeSignature == b.runtimeSignature
+
+proc flushSessionsLocked(store: RuntimeStateStore;
+                         force: bool): Result[void, string] {.raises: [].} =
+  ## Caller must hold `store.lock`.
+  if not store.sessionsDirty and not force:
+    return ok()
+  let now = epochMs()
+  if not force and now - store.lastSessionsWriteMs < SessionsFlushIntervalMs:
+    return ok()
+  let saved = store.saveSessions(store.sessions)
+  if saved.isOk:
+    store.lastSessionsWriteMs = now
+    store.sessionsDirty = false
+  saved
+
+proc flushSessions*(store: RuntimeStateStore): Result[void, string] {.raises: [].} =
+  ## Forces a pending session-registry write. Called on shutdown/tests.
+  acquire(store.lock)
+  defer: release(store.lock)
+  store.flushSessionsLocked(force = true)
 
 proc upsertSession(store: RuntimeStateStore;
                    record: SessionRegistryRecord): Result[void, string] {.raises: [].} =
-  let loaded = store.loadSessions()
+  acquire(store.lock)
+  defer: release(store.lock)
+  let loaded = store.ensureSessionsLoadedLocked()
   if loaded.isErr:
     return err(loaded.error)
-  var records = loaded.value
   var replaced = false
-  for i in 0 ..< records.len:
-    if records[i].userId == record.userId:
-      records[i] = record
+  var structural = true
+  for i in 0 ..< store.sessions.len:
+    if store.sessions[i].userId == record.userId:
+      structural = not sameStructuralFields(store.sessions[i], record)
+      store.sessions[i] = record
       replaced = true
       break
   if not replaced:
-    records.add(record)
-  store.saveSessions(records)
+    store.sessions.add(record)
+  store.sessionsDirty = true
+  store.flushSessionsLocked(force = structural)
 
 proc deliveryToJson(record: DeliveryRecord): JsonNode =
   %* {
@@ -379,7 +448,7 @@ proc mergeEvent(records: var Table[string, DeliveryRecord];
     record.error = event.error.get
   records[event.id] = record
 
-proc loadLedger(store: RuntimeStateStore): Result[seq[DeliveryRecord], string] {.raises: [].} =
+proc loadLedgerFromDisk(store: RuntimeStateStore): Result[seq[DeliveryRecord], string] {.raises: [].} =
   let path = store.ledgerPath()
   if not fileExists(path):
     return ok(newSeq[DeliveryRecord]())
@@ -405,6 +474,11 @@ proc loadLedger(store: RuntimeStateStore): Result[seq[DeliveryRecord], string] {
   except CatchableError as e:
     err("delivery ledger read failed: " & e.msg)
 
+proc loadLedger(store: RuntimeStateStore): Result[seq[DeliveryRecord], string] {.raises: [].} =
+  acquire(store.lock)
+  defer: release(store.lock)
+  store.loadLedgerFromDisk()
+
 proc appendLedger(store: RuntimeStateStore;
                   record: DeliveryRecord): Result[void, string] =
   appendJsonLine(store.ledgerPath(), deliveryToJson(record))
@@ -423,12 +497,16 @@ proc appendMinimalEvent(store: RuntimeStateStore;
 
 proc recordPending(store: RuntimeStateStore;
                    record: DeliveryRecord): Result[void, string] {.raises: [].} =
+  acquire(store.lock)
+  defer: release(store.lock)
   store.pending[record.id] = record
   store.appendLedger(record)
 
 proc markSent(store: RuntimeStateStore;
               id: string;
               updatedAtMs: int64): Result[void, string] {.raises: [].} =
+  acquire(store.lock)
+  defer: release(store.lock)
   if id in store.pending:
     var record = store.pending.getOrDefault(id)
     record.state = dlsSent
@@ -447,6 +525,8 @@ proc markFailed(store: RuntimeStateStore;
                 id: string;
                 updatedAtMs: int64;
                 error: string): Result[void, string] {.raises: [].} =
+  acquire(store.lock)
+  defer: release(store.lock)
   if id in store.pending:
     var record = store.pending.getOrDefault(id)
     record.state = dlsFailed
@@ -463,10 +543,15 @@ proc newRuntimeStateStore*(stateDir: string): RuntimeStateStore =
   result = RuntimeStateStore(
     stateDir: stateDir,
     pending: initTable[string, DeliveryRecord](),
+    sessionsLoaded: false,
+    sessionsDirty: false,
+    lastSessionsWriteMs: 0,
+    tmpCounter: 0,
   )
+  initLock(result.lock)
   ## Load the ledger once: the hot path only touches the pending table.
   try:
-    let loaded = result.loadLedger()
+    let loaded = result.loadLedgerFromDisk()
     if loaded.isOk:
       for record in loaded.value:
         if record.state == dlsPending:

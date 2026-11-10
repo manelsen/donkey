@@ -1,8 +1,7 @@
-import std/[options, strutils]
+import std/strutils
 import chronos/asyncsync
 import ../../core/commands/command_routing
 import ../../core/log
-import ../../core/security/dm_policy
 import ../../adapters/memory/md_file
 import ../../app/session_manager
 import ../../domain/agent_message
@@ -28,20 +27,14 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
 
   var (hasEvent, event) = waAdapter.tryRecvEvent()
   while hasEvent:
-    let known = waAdapter.resolver.lookup(ckWhatsApp, event.waUserId)
-    var userId = UserId("")
-    if known.isSome:
-      userId = known.get
-    elif sm.dmPolicy == DmPolicyOpen:
-      userId = waAdapter.resolver.resolve(ckWhatsApp, event.waUserId)
-    else:
-      log.warn("whatsapp: unauthorized message from unidentified sender (policy=" & $sm.dmPolicy & ")")
+    let auth = authorizeInbound(sm, waAdapter.resolver, ckWhatsApp,
+                                event.waUserId, event.text)
+    if not auth.allowed:
+      log.warn("whatsapp: unauthorized message from " &
+               (if auth.identified: $auth.userId else: "unidentified sender"))
       (hasEvent, event) = waAdapter.tryRecvEvent()
       continue
-    if not sm.allows(userId):
-      log.warn("whatsapp: unauthorized message from " & $userId)
-      (hasEvent, event) = waAdapter.tryRecvEvent()
-      continue
+    let userId = auth.userId
 
     if event.phoneNumberId.len > 0 and event.messageId.len > 0:
       waAdapter.ack(event.phoneNumberId, event.messageId)

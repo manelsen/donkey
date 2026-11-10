@@ -1,9 +1,8 @@
-import std/[options, strutils]
+import std/strutils
 import chronos/asyncsync
 import ../../core/commands/command_routing
 import ../../core/log
 import ../../core/pipeops
-import ../../core/security/dm_policy
 import ../../adapters/memory/md_file
 import ../../app/session_manager
 import ../../domain/agent_message
@@ -42,20 +41,14 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
   while hasEvent:
     if (event.msgType == "text" and event.content.strip.len > 0) or
        event.mediaId.len > 0:
-      let known = wchAdapter.resolver.lookup(ckWeChat, event.fromUser)
-      var userId = UserId("")
-      if known.isSome:
-        userId = known.get
-      elif sm.dmPolicy == DmPolicyOpen:
-        userId = wchAdapter.resolver.resolve(ckWeChat, event.fromUser)
-      else:
-        log.warn("wechat: unauthorized message from unidentified sender (policy=" & $sm.dmPolicy & ")")
+      let auth = authorizeInbound(sm, wchAdapter.resolver, ckWeChat,
+                                  event.fromUser, event.content)
+      if not auth.allowed:
+        log.warn("wechat: unauthorized message from " &
+                 (if auth.identified: $auth.userId else: "unidentified sender"))
         (hasEvent, event) = wchAdapter.tryRecvEvent()
         continue
-      if not sm.allows(userId):
-        log.warn("wechat: unauthorized message from " & $userId)
-        (hasEvent, event) = wchAdapter.tryRecvEvent()
-        continue
+      let userId = auth.userId
       let msg = InboundMessage(
         userId: userId,
         channel: ckWeChat,

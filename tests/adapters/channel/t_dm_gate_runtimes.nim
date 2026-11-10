@@ -28,6 +28,7 @@ import donkey/adapters/channel/feishu
 import donkey/adapters/channel/feishu_runtime
 import donkey/adapters/channel/whatsapp
 import donkey/adapters/channel/whatsapp_runtime
+import donkey/adapters/identity/identity_resolver
 import donkey/app/gateway_drainer
 import donkey/app/session_manager
 
@@ -337,3 +338,78 @@ suite "channel DM gate — runtime drains":
     check count == 1
     check dispatched == @["hi"]
     check queue.len == 0
+
+suite "shared DM gate":
+
+  test "unknown sender may link a new identity with /continue for an authorized account":
+    let dir = GateTmp / "shared-link"
+    removeDir(dir)
+    createDir(dir)
+    let resolver = newIdentityResolver(dir / "identities.tsv")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyAllowlist
+    let target = resolver.resolve(ckWeCom, "existing-user")
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} =
+      {.cast(gcsafe).}:
+        u == target
+
+    let code = resolver.generateLinkCode(target)
+    check linkTargetFor(resolver, ckWeCom, "/continue " & code) == some(target)
+    check resolver.lookup(ckWeCom, "new-device").isNone
+
+    let auth = authorizeInbound(
+      sm, resolver, ckWeCom, "new-device", "/continue " & code)
+    check auth.allowed
+    check auth.identified
+    ## The gate minted a temporary identity; consuming the code rewrites it to
+    ## the authorized target.
+    check resolver.consumeLinkCode(code, ckWeCom, "new-device")
+    check resolver.lookup(ckWeCom, "new-device").get == target
+
+  test "unknown sender cannot link to a non-authorized target":
+    let dir = GateTmp / "shared-link-denied"
+    removeDir(dir)
+    createDir(dir)
+    let resolver = newIdentityResolver(dir / "identities.tsv")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyAllowlist
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+    let code = resolver.generateLinkCode(UserId("not-authorized"))
+
+    let auth = authorizeInbound(
+      sm, resolver, ckWeCom, "intruder", "/continue " & code)
+    check not auth.allowed
+    check not auth.identified
+    check resolver.lookup(ckWeCom, "intruder").isNone
+
+  test "unknown sender with a wrong code is denied without minting":
+    let dir = GateTmp / "shared-link-wrong"
+    removeDir(dir)
+    createDir(dir)
+    let resolver = newIdentityResolver(dir / "identities.tsv")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyAllowlist
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+
+    let auth = authorizeInbound(
+      sm, resolver, ckWeCom, "intruder", "/continue WRONG1")
+    check not auth.allowed
+    check not auth.identified
+    check resolver.lookup(ckWeCom, "intruder").isNone
+
+  test "open policy still mints a first-contact identity":
+    let dir = GateTmp / "shared-open"
+    removeDir(dir)
+    createDir(dir)
+    let resolver = newIdentityResolver(dir / "identities.tsv")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyOpen
+
+    let auth = authorizeInbound(sm, resolver, ckWeChat, "first-contact", "hello")
+    check auth.allowed
+    check auth.identified
+    check resolver.lookup(ckWeChat, "first-contact").isSome

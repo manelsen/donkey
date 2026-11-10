@@ -414,3 +414,61 @@ suite "durability":
     check sent.textHash == "hash-minimal"
     check sent.createdAtMs == now
     check sent.attempts == 2
+
+  test "registry cache keeps users written by successive upserts":
+    let dir = freshDir("sessions-cache")
+    defer: cleanup(dir)
+
+    let store = newRuntimeStateStore(dir)
+    let registry = store.sessionRegistry()
+    check registry.upsert(SessionRegistryRecord(
+      userId: "cache-a", channels: @[(ckTelegram, "1")],
+      lastInboundAtMs: 10, sessionId: "s-a", runtimeSignature: "sig")).isOk
+    check registry.upsert(SessionRegistryRecord(
+      userId: "cache-b", channels: @[(ckDiscord, "2")],
+      lastInboundAtMs: 20, sessionId: "s-b", runtimeSignature: "sig")).isOk
+
+    ## A new store must see both records: the cached read-modify-write cannot
+    ## overwrite the first user with the second.
+    let reopened = newRuntimeStateStore(dir).sessionRegistry()
+    let loaded = reopened.loadAll()
+    check loaded.isOk
+    check loaded.value.len == 2
+    var sawA, sawB = false
+    for record in loaded.value:
+      if record.userId == "cache-a": sawA = true
+      if record.userId == "cache-b": sawB = true
+    check sawA
+    check sawB
+
+  test "timestamp-only updates coalesce and flush explicitly":
+    let dir = freshDir("sessions-coalesce")
+    defer: cleanup(dir)
+
+    let store = newRuntimeStateStore(dir)
+    let registry = store.sessionRegistry()
+    var record = SessionRegistryRecord(
+      userId: "coalesce", channels: @[(ckTelegram, "1")],
+      lastInboundAtMs: 1, sessionId: "s", runtimeSignature: "sig")
+    check registry.upsert(record).isOk
+
+    record.lastInboundAtMs = 2
+    check registry.upsert(record).isOk
+    # The first write is structural; the timestamp-only update is deferred.
+    check store.flushSessions().isOk
+
+    let reopened = newRuntimeStateStore(dir).sessionRegistry()
+    let loaded = reopened.loadAll()
+    check loaded.isOk
+    check loaded.value.len == 1
+    check loaded.value[0].lastInboundAtMs == 2
+
+    # A structural change (new channel) flushes immediately without an
+    # explicit flush.
+    record.channels.add((ckDiscord, "2"))
+    record.lastInboundAtMs = 3
+    check registry.upsert(record).isOk
+    let reopened2 = newRuntimeStateStore(dir).sessionRegistry()
+    let loaded2 = reopened2.loadAll()
+    check loaded2.isOk
+    check (ckDiscord, "2") in loaded2.value[0].channels

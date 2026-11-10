@@ -28,6 +28,7 @@ import donkey/adapters/provider/model_catalog
 import donkey/adapters/http/std_http
 import donkey/adapters/channel/telegram
 import donkey/adapters/channel/outbound_builder
+import donkey/adapters/channel/common_runtime
 import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/channel/discord
 import donkey/adapters/channel/discord_runtime
@@ -1200,8 +1201,12 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
 
   for msg in tgMsgs:
     if not runtime.sm.allows(msg.userId):
-      log.warn("telegram: unauthorized message from " & $msg.userId)
-      continue
+      ## `/continue <code>` is the only command that may admit a new identity,
+      ## and only when the code points at an already-authorized account.
+      let target = linkTargetFor(tgAdapter.resolver, ckTelegram, msg.text)
+      if target.isNone or not runtime.sm.allows(target.get):
+        log.warn("telegram: unauthorized message from " & $msg.userId)
+        continue
 
     let stagedReaction = shouldStageInboundReaction(msg)
     if stagedReaction:
@@ -1337,8 +1342,6 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
   let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
   let fallback = proc(msg: InboundMessage) {.gcsafe.} =
     handleGatewayFallback(ctx, cfg, memory, msg, log)
-  let isAuthorized = proc(userId: UserId): bool {.gcsafe.} =
-    ctx.runtime.sm.allows(userId)
 
   initGatewayDrainer(
     drainDiscord = proc(): bool =
@@ -1394,7 +1397,27 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           var (hasEvent, event) = ctx.adapters.dt.tryRecvEvent()
           while hasEvent:
             if event.content.strip.len > 0 or event.downloadCode.len > 0:
-              let userId = ctx.adapters.dt.resolver.resolve(ckDingTalk, event.rawId)
+              let known = ctx.adapters.dt.resolver.lookup(ckDingTalk, event.rawId)
+              var userId = UserId("")
+              var allowed = false
+              if known.isSome:
+                userId = known.get
+                allowed = ctx.runtime.sm.allows(userId)
+              elif ctx.runtime.sm.dmPolicy == DmPolicyOpen:
+                userId = ctx.adapters.dt.resolver.resolve(ckDingTalk, event.rawId)
+                allowed = ctx.runtime.sm.allows(userId)
+              if not allowed:
+                let target = linkTargetFor(ctx.adapters.dt.resolver, ckDingTalk, event.content)
+                if target.isSome and ctx.runtime.sm.allows(target.get):
+                  userId =
+                    if known.isSome: known.get
+                    else: ctx.adapters.dt.resolver.resolve(ckDingTalk, event.rawId)
+                  allowed = true
+              if not allowed:
+                log.warn("dingtalk: unauthorized message from " &
+                         (if known.isSome: $known.get else: "unidentified sender"))
+                (hasEvent, event) = ctx.adapters.dt.tryRecvEvent()
+                continue
               return (true, InboundMessage(
                 userId: userId,
                 channel: ckDingTalk,
@@ -1406,8 +1429,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
             (hasEvent, event) = ctx.adapters.dt.tryRecvEvent()
           (false, InboundMessage()),
         fallback,
-        log,
-        isAuthorized
+        log
       )
       count > 0,
     drainMatrix = proc(): bool =
@@ -1417,7 +1439,27 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           var (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
           while hasEvent:
             if event.content.strip.len > 0 or event.mediaUrl.len > 0:
-              let userId = ctx.adapters.mx.resolver.resolve(ckMatrix, event.roomId)
+              let known = ctx.adapters.mx.resolver.lookup(ckMatrix, event.roomId)
+              var userId = UserId("")
+              var allowed = false
+              if known.isSome:
+                userId = known.get
+                allowed = ctx.runtime.sm.allows(userId)
+              elif ctx.runtime.sm.dmPolicy == DmPolicyOpen:
+                userId = ctx.adapters.mx.resolver.resolve(ckMatrix, event.roomId)
+                allowed = ctx.runtime.sm.allows(userId)
+              if not allowed:
+                let target = linkTargetFor(ctx.adapters.mx.resolver, ckMatrix, event.content)
+                if target.isSome and ctx.runtime.sm.allows(target.get):
+                  userId =
+                    if known.isSome: known.get
+                    else: ctx.adapters.mx.resolver.resolve(ckMatrix, event.roomId)
+                  allowed = true
+              if not allowed:
+                log.warn("matrix: unauthorized message from " &
+                         (if known.isSome: $known.get else: "unidentified sender"))
+                (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
+                continue
               return (true, InboundMessage(
                 userId: userId,
                 channel: ckMatrix,
@@ -1429,8 +1471,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
             (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
           (false, InboundMessage()),
         fallback,
-        log,
-        isAuthorized
+        log
       )
       count > 0,
     drainTelegram = proc(): bool =

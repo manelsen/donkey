@@ -390,6 +390,10 @@ Metadados de sessão e entrega:
 
 - `SessionManager` faz upsert best-effort de `user_id`, canais, último inbound,
   `session_id` e assinatura de runtime em `state/sessions.json` (JSON atômico);
+- o registro de sessões fica em memória após a primeira leitura; mudanças
+  estruturais (canais, `session_id`, assinatura) gravam imediatamente, enquanto
+  atualizações só de `last_inbound_at_ms` são coalescidas em no máximo uma
+  gravação por segundo (`flushSessions` força a gravação pendente);
 - o roteador de saída grava um ledger append-only em
   `state/delivery_ledger.jsonl`: `pending` antes do envio, `sent` ou `failed`
   depois; falhas do ledger são logadas e nunca bloqueiam a entrega;
@@ -400,7 +404,7 @@ Metadados de sessão e entrega:
 
 `state/sessions.json` é substituído atomicamente:
 
-1. escreve `sessions.json.tmp`;
+1. escreve um temporário exclusivo `sessions.json.tmp.<pid>-<seq>`;
 2. `flushFile` + `fsync` no arquivo (no macOS usa `fcntl(F_FULLFSYNC)` para
    pedir o flush do cache do disco; fallback para `fsync` quando o filesystem
    não implementa `F_FULLFSYNC`);
@@ -422,8 +426,11 @@ são mesclados por `id`: um evento mínimo posterior (`id`, `state`,
 `text_hash`, `created_at_ms` e `attempts` do evento completo anterior; apenas
 `state`/`updated_at_ms`/`error` são sobrescritos.
 
-O caminho quente não relê o ledger: `newRuntimeStateStore` carrega o arquivo
-uma única vez e mantém uma tabela em memória com os registros `pending`.
+O caminho quente não relê o ledger nem o registro de sessões:
+`newRuntimeStateStore` carrega o ledger uma única vez e mantém uma tabela em
+memória com os registros `pending`; `sessions.json` é lido uma única vez e
+mantido em cache. Upserts, appends e os caches são protegidos pelo mesmo mutex,
+porque workers HTTP e o event loop podem persistir concorrentemente.
 `recordPending` insere na tabela e faz append; `markSent`/`markFailed` atualizam
 a tabela e, quando o `id` não está mais nela (restart ou pending write que
 falhou), gravam apenas o evento mínimo.

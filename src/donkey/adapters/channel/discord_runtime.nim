@@ -552,11 +552,34 @@ proc drainDiscordEvents*(sm: var SessionManager;
   while hasEvent:
     let rawId = event.discordUserId
     var identity = dcAdapter.resolver.lookup(ckDiscord, rawId)
-    if identity.isNone and sm.dmPolicy == DmPolicyOpen:
+    var allowed = false
+    if identity.isSome:
+      allowed = sm.allows(identity.get)
+    elif sm.dmPolicy == DmPolicyOpen:
       ## Normal first-contact path: the open policy allows new identities to
       ## be minted. For allowlist/pairing we never persist a denied sender.
       identity = some(dcAdapter.resolver.resolve(ckDiscord, rawId))
-    if identity.isNone or not sm.allows(identity.get):
+      allowed = sm.allows(identity.get)
+    if not allowed:
+      ## Linking is the only path that may admit an unknown identity, and only
+      ## when the code points at an already-authorized account.
+      case event.kind
+      of deMessage:
+        let target = linkTargetFor(dcAdapter.resolver, ckDiscord, event.content)
+        if target.isSome and sm.allows(target.get):
+          allowed = true
+      of deInteraction:
+        let target = dcAdapter.resolver.peekLinkCode(event.content.strip)
+        if target.isSome and sm.allows(target.get):
+          allowed = true
+      of deModalRequest:
+        ## Opening the link modal neither mints identities nor touches state.
+        allowed = true
+      else:
+        discard
+      if allowed and identity.isNone:
+        identity = some(dcAdapter.resolver.resolve(ckDiscord, rawId))
+    if not allowed:
       logger.warn("discord: unauthorized event from " &
         (if identity.isSome: $identity.get else: "unidentified sender"))
       (hasEvent, event) = dcAdapter.tryRecvEvent()

@@ -127,6 +127,18 @@ proc generateLinkCode*(r: IdentityResolver; userId: UserId): string =
     expiry: getTime() + initDuration(seconds = LinkCodeTtlSec),
   )
 
+proc peekLinkCode*(r: IdentityResolver; code: string): Option[UserId] =
+  ## Returns the target UUID for a valid, unexpired link code without consuming
+  ## it. Used by the DM gate to admit `/continue` from an unknown identity only
+  ## when the code points at an already-authorized account.
+  if code notin r.pendingLinks:
+    return none(UserId)
+  let entry = r.pendingLinks[code]
+  if getTime() > entry.expiry:
+    r.pendingLinks.del(code)
+    return none(UserId)
+  some(entry.userId)
+
 proc consumeLinkCode*(r: IdentityResolver; code: string;
                       kind: ChannelKind; rawId: string): bool =
   ## Links (kind, rawId) to the userId stored under code. Single-use. Saves to disk.
