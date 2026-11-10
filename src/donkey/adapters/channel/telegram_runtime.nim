@@ -1,4 +1,4 @@
-import std/[options, strutils]
+import std/strutils
 import chronos/asyncsync
 import results
 import ../../core/commands/command_routing
@@ -748,13 +748,11 @@ proc handleTelegramMessage*(msg: InboundMessage;
                             daemonStartMs: int64;
                             logger: Logger;
                             ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
-  if not sm.allows(msg.userId):
-    ## `/continue <code>` may admit a new Telegram identity when the code
-    ## points at an already-authorized account.
-    let target = linkTargetFor(tgAdapter.resolver.identityGate(), ckTelegram, msg.text)
-    if target.isNone or not sm.allows(target.get):
-      logger.warn("telegram: unauthorized command/message from " & $msg.userId)
-      return true
+  let auth = authorizeResolvedInbound(
+    sm, tgAdapter.resolver.identityGate(), ckTelegram, msg.userId, msg.text)
+  if not auth.allowed:
+    logger.warn("telegram: unauthorized command/message from " & $msg.userId)
+    return true
   let command = decideCommandRequest(CommandRequest(channel: msg.channel, text: msg.text))
   case command.route
   of crLocal:

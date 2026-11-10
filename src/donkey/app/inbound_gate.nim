@@ -25,6 +25,12 @@ type
     userId*:     UserId
     identified*: bool   ## false only when an unknown sender was denied
 
+  InboundLinkSource* = enum
+    ilsNone          ## do not admit link commands (e.g. button clicks)
+    ilsCommandText   ## parse `/continue <code>` from the message text
+    ilsBareCode      ## the event text IS the link code (Discord interaction)
+    ilsModalOnly     ## UI-only event; no identity is needed or minted
+
 proc linkTargetFor*(gate: IdentityGatePort;
                     kind: ChannelKind;
                     text: string): Option[UserId] {.gcsafe.} =
@@ -37,17 +43,31 @@ proc linkTargetFor*(gate: IdentityGatePort;
     return gate.peekLinkCode(command.value.strip)
   none(UserId)
 
+proc linkTargetFrom(gate: IdentityGatePort;
+                    kind: ChannelKind;
+                    text: string;
+                    source: InboundLinkSource): Option[UserId] {.gcsafe.} =
+  case source
+  of ilsCommandText: linkTargetFor(gate, kind, text)
+  of ilsBareCode:    gate.peekLinkCode(text.strip)
+  of ilsNone, ilsModalOnly: none(UserId)
+
 proc authorizeInbound*(sm: SessionManager;
                        gate: IdentityGatePort;
                        kind: ChannelKind;
                        rawId: string;
-                       text: string): InboundAuthorization {.gcsafe.} =
+                       text: string;
+                       linkSource = ilsCommandText): InboundAuthorization {.gcsafe.} =
   ## Single DM gate shared by callback-style channels.
   ##
   ## Known identities are checked against the allowlist. New identities are
-  ## minted only under `DmPolicyOpen` or when the message is `/continue <code>`
-  ## and the code points at an already-authorized UUID (the handler consumes
-  ## the code and rewrites the mapping). A denied sender is never persisted.
+  ## minted only under `DmPolicyOpen` or when the event carries a valid link
+  ## code for an already-authorized UUID (the handler consumes the code and
+  ## rewrites the mapping). A denied sender is never persisted.
+  if linkSource == ilsModalOnly:
+    ## UI-only event: no identity lookup, mint or state mutation.
+    result.allowed = true
+    return
   let known = gate.lookup(kind, rawId)
   if known.isSome:
     result.userId = known.get
@@ -58,10 +78,29 @@ proc authorizeInbound*(sm: SessionManager;
     result.identified = true
     result.allowed = sm.allows(result.userId)
   if not result.allowed:
-    let target = linkTargetFor(gate, kind, text)
+    let target = linkTargetFrom(gate, kind, text, linkSource)
     if target.isSome and sm.allows(target.get):
       result.userId =
         if known.isSome: known.get
         else: gate.resolve(kind, rawId)
       result.identified = true
+      result.allowed = true
+
+proc authorizeResolvedInbound*(sm: SessionManager;
+                               gate: IdentityGatePort;
+                               kind: ChannelKind;
+                               userId: UserId;
+                               text: string;
+                               linkSource = ilsCommandText): InboundAuthorization {.gcsafe.} =
+  ## Variant for channels that already resolved the raw identity (Telegram
+  ## `receive()` does this). The policy decision still lives here.
+  result.userId = userId
+  result.identified = true
+  result.allowed = sm.allows(userId)
+  if not result.allowed:
+    if linkSource == ilsModalOnly:
+      result.allowed = true
+      return
+    let target = linkTargetFrom(gate, kind, text, linkSource)
+    if target.isSome and sm.allows(target.get):
       result.allowed = true

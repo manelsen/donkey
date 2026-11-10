@@ -170,6 +170,7 @@ proc appendJsonLine(path: string; node: JsonNode): Result[void, string] =
     let dir = parentDir(path)
     if dir.len > 0:
       createDir(dir)
+    let isNew = not fileExists(path)
     var f = open(path, fmAppend)
     try:
       f.write("\n" & $node & "\n")
@@ -178,6 +179,12 @@ proc appendJsonLine(path: string; node: JsonNode): Result[void, string] =
         return err(synced.error)
     finally:
       f.close()
+    if isNew and dir.len > 0:
+      ## The file's directory entry only exists after the first append; sync
+      ## the parent so a power loss cannot lose the whole ledger.
+      let dirSynced = syncDir(dir)
+      if dirSynced.isErr:
+        return err(dirSynced.error)
     ok()
   except CatchableError as e:
     err("append failed for " & path & ": " & e.msg)

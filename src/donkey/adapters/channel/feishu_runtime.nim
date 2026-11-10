@@ -32,8 +32,12 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
   while hasEvent:
     if (event.msgType == "text" and (event.content |> strip).len > 0) or
        event.fileKey.len > 0:
+      ## Only a text event runs the command dispatcher; a media-only event
+      ## must not mint an identity just because its caption contains
+      ## `/continue <code>` (the code would never be consumed).
+      let gateText = if event.msgType == "text": event.content else: ""
       let auth = authorizeInbound(sm, fsAdapter.resolver.identityGate(), ckFeishu,
-                                  event.openId, event.content)
+                                  event.openId, gateText)
       if not auth.allowed:
         log.warn("feishu: unauthorized message from " &
                  (if auth.identified: $auth.userId else: "unidentified sender"))

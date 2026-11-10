@@ -63,7 +63,12 @@ type
     completeFn*: CompleteFn
     streamFn*:   StreamFn
 
-  ProviderRuntimeBuilder* = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.}
+  ProviderRuntimeBuilder* = proc(spec: ProviderSpec): ProviderBundle
+    {.gcsafe, nimcall.}
+    ## `nimcall` is deliberate: the executor calls this builder on the event
+    ## loop and moves the resulting bundle to a worker. Forbidding closures
+    ## guarantees the builder cannot share an environment with the worker or
+    ## with another in-flight call.
   ModelCatalogLoader* = proc(providerName: string): Result[ModelCatalogResult, string] {.gcsafe.}
 
   ProviderPort* = concept p

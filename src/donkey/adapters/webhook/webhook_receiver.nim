@@ -15,7 +15,7 @@
 ## A channel route is only mounted when its secret is configured, so no
 ## unauthenticated endpoint is ever exposed.
 
-import std/[base64, json, monotimes, net, posix, strutils, tables, times]
+import std/[base64, json, monotimes, net, os, posix, strutils, tables, times]
 import nimcrypto/[hmac, sha2]
 import ../../core/log
 import ../../core/pipeops
@@ -239,7 +239,7 @@ proc handleDingTalk(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
   ## value cannot reach the crypto path or overflow a window subtraction.
   var tsMs: int64
   try:
-    tsMs = parseInt(timestamp)
+    tsMs = parseBiggestInt(timestamp)
   except ValueError:
     return forbidden()
   let nowMs = (epochTime() * 1000).int64
@@ -580,6 +580,8 @@ proc webhookServerThread(args: WebhookServerArgs) {.thread.} =
           server.accept(client)
         except CatchableError as e:
           args.logger.warn("webhook: accept error: " & e.msg)
+          ## Avoid a hot loop when accept fails persistently (e.g. EMFILE).
+          sleep(50)
           continue
         applyWebhookClientTimeouts(client)
         if not gWebhookQueue.trySend(client.getFd):

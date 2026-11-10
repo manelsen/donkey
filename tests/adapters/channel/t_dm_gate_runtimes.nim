@@ -158,6 +158,43 @@ suite "channel DM gate — runtime drains":
     check not wch.tryRecvEvent()[0]
     check wch.resolver.lookup(ckWeChat, "intruder").isNone  ## denied sender not minted
 
+  test "wechat media-only /continue does not mint an identity before binding":
+    removeDir(GateTmp / "wechat-media")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyAllowlist
+    var wch = newWeChatAdapter("app", "secret", "tok", "", GateTmp / "wechat-media" / "ids.tsv")
+    let target = wch.resolver.resolve(ckWeChat, "existing-wechat")
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} =
+      {.cast(gcsafe).}:
+        u == target
+    let code = wch.resolver.generateLinkCode(target)
+    let memory = MdFileAdapter(paddocksDir: GateTmp / "wechat-media" / "paddocks")
+    var providerCalls = 0
+    var fallbackCalls = 0
+    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+      proc(req: CompletionRequest): Result[CompletionResponse, string] =
+        inc providerCalls
+        ok(CompletionResponse(text: "unexpected provider call"))
+    var msgSeq = 0
+
+    let xml = "<xml><FromUserName>media-intruder</FromUserName>" &
+              "<MsgType>image</MsgType><MsgId>w-media</MsgId>" &
+              "<MediaId>media-1</MediaId>" &
+              "<Content>/continue " & code & "</Content></xml>"
+    check wch.enqueueWebhookXml(xml).isOk
+
+    let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+      {.cast(gcsafe).}:
+        inc fallbackCalls
+
+    drainWeChatEvents(wch, "app", sm, memory, completeBuilder, gateLoader(),
+                      0, 0, 0, msgSeq, onFallback, gateLog)
+
+    check providerCalls == 0
+    check fallbackCalls == 0
+    check wch.resolver.lookup(ckWeChat, "media-intruder").isNone
+
   test "qq drops unauthorized messages and consumes the event":
     removeDir(GateTmp / "qq")
     var sm: SessionManager

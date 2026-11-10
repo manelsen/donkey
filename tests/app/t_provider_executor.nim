@@ -14,31 +14,90 @@ import donkey/core/pipeops
 import donkey/domain/message
 import donkey/ports/provider
 
-proc stubBuilder(text: string; delayMs = 0): ProviderRuntimeBuilder =
-  result = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
-    let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
-      if delayMs > 0:
-        sleep(delayMs)
-      ok(CompletionResponse(text: text))
-    ProviderBundle(completeFn: complete)
+var
+  gStubText = ""
+  gStubDelayMs = 0
+  gTaggedDelayMs = 0
+  gPayloadSize = 0
+  gExpectedBuilderThreadId = 0
 
-proc taggedBuilder(delayMs = 0): ProviderRuntimeBuilder =
+proc stubBuilderImpl(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} =
+  var text: string
+  var delayMs: int
+  {.cast(gcsafe).}:
+    text = gStubText
+    delayMs = gStubDelayMs
+  let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+    if delayMs > 0:
+      sleep(delayMs)
+    ok(CompletionResponse(text: text))
+  ProviderBundle(completeFn: complete)
+
+proc useStub(text: string; delayMs = 0): ProviderRuntimeBuilder =
+  gStubText = text
+  gStubDelayMs = delayMs
+  stubBuilderImpl
+
+proc taggedBuilderImpl(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} =
   ## Returns the requested model name as the response text, so concurrent
   ## jobs can be checked for cross-talk.
-  result = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
-    let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
-      if delayMs > 0:
-        sleep(delayMs)
-      ok(CompletionResponse(text: spec.modelName))
-    ProviderBundle(completeFn: complete)
+  var delayMs: int
+  {.cast(gcsafe).}:
+    delayMs = gTaggedDelayMs
+  let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+    if delayMs > 0:
+      sleep(delayMs)
+    ok(CompletionResponse(text: spec.modelName))
+  ProviderBundle(completeFn: complete)
 
-proc payloadBuilder(payloadSize: int): ProviderRuntimeBuilder =
+proc taggedBuilder(delayMs = 0): ProviderRuntimeBuilder =
+  gTaggedDelayMs = delayMs
+  taggedBuilderImpl
+
+proc payloadBuilderImpl(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} =
   ## Returns a large, tagged GC-managed string to exercise the channel-based
   ## ownership transfer of the result between worker and caller threads.
-  result = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
-    let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
-      ok(CompletionResponse(text: spec.modelName & ":" & repeat('x', payloadSize)))
-    ProviderBundle(completeFn: complete)
+  var payloadSize: int
+  {.cast(gcsafe).}:
+    payloadSize = gPayloadSize
+  let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+    ok(CompletionResponse(text: spec.modelName & ":" & repeat('x', payloadSize)))
+  ProviderBundle(completeFn: complete)
+
+proc payloadBuilder(payloadSize: int): ProviderRuntimeBuilder =
+  gPayloadSize = payloadSize
+  payloadBuilderImpl
+
+proc raisingBuilder(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} =
+  let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+    raise newException(ValueError, "boom")
+  ProviderBundle(completeFn: complete)
+
+proc errorBuilder(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} =
+  let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+    err("upstream 429")
+  ProviderBundle(completeFn: complete)
+
+proc emptyBuilder(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} =
+  ProviderBundle()
+
+proc failingBuilder(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} =
+  let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+    err("nope")
+  ProviderBundle(completeFn: complete)
+
+proc threadCheckBuilder(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} =
+  var expected: int
+  {.cast(gcsafe).}:
+    expected = gExpectedBuilderThreadId
+  if getThreadId() != expected:
+    raise newException(ValueError, "builder ran off the event loop thread")
+  let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+    ok(CompletionResponse(text: "event-loop-builder"))
+  ProviderBundle(completeFn: complete)
+
+proc builderExceptionBuilder(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} =
+  raise newException(ValueError, "builder boom")
 
 proc runSequential(builder: ProviderRuntimeBuilder; n: int): Future[seq[string]] {.async.} =
   var texts: seq[string]
@@ -101,7 +160,7 @@ proc collectTexts(futures: seq[Future[Result[CompletionResponse, string]]]): Fut
 suite "provider executor":
 
   test "runs a provider call on a worker and returns its result":
-    let builder = stubBuilder("from-worker", delayMs = 120)
+    let builder = useStub("from-worker", delayMs = 120)
     let res = waitFor asyncProviderComplete(
       builder, ProviderSpec(providerName: "stub"), CompletionRequest())
     check providerPoolReady()
@@ -109,50 +168,40 @@ suite "provider executor":
     check res.value.text == "from-worker"
 
   test "worker exception becomes an error Result":
-    let builder: ProviderRuntimeBuilder = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
-      let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
-        raise newException(ValueError, "boom")
-      ProviderBundle(completeFn: complete)
+    let builder: ProviderRuntimeBuilder = raisingBuilder
     let res = waitFor asyncProviderComplete(
       builder, ProviderSpec(providerName: "stub"), CompletionRequest())
     check res.isErr
     check "boom" in res.error
 
   test "provider error Result passes through unchanged":
-    let builder: ProviderRuntimeBuilder = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
-      let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
-        err("upstream 429")
-      ProviderBundle(completeFn: complete)
+    let builder: ProviderRuntimeBuilder = errorBuilder
     let res = waitFor asyncProviderComplete(
       builder, ProviderSpec(providerName: "stub"), CompletionRequest())
     check res.isErr
     check res.error == "upstream 429"
 
   test "missing provider is reported without raising":
-    let builder: ProviderRuntimeBuilder = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
-      ProviderBundle()
+    let builder: ProviderRuntimeBuilder = emptyBuilder
     let res = waitFor asyncProviderComplete(
       builder, ProviderSpec(providerName: "ghost"), CompletionRequest())
     check res.isErr
     check "provider unavailable: ghost" in res.error
 
   test "multiple sequential calls reuse the pool":
-    let builder = stubBuilder("ok", delayMs = 5)
+    let builder = useStub("ok", delayMs = 5)
     let texts = waitFor runSequential(builder, 6)
     check texts.len == 6
     for i, text in texts:
       check text == "ok"
 
   test "pool stays healthy after an error":
-    let failing: ProviderRuntimeBuilder = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
-      let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
-        err("nope")
-      ProviderBundle(completeFn: complete)
+    let failing: ProviderRuntimeBuilder = failingBuilder
     let first = waitFor asyncProviderComplete(
       failing, ProviderSpec(providerName: "stub"), CompletionRequest())
     check first.isErr
     let second = waitFor asyncProviderComplete(
-      stubBuilder("recovered"), ProviderSpec(providerName: "stub"), CompletionRequest())
+      useStub("recovered"), ProviderSpec(providerName: "stub"), CompletionRequest())
     check second.isOk
     check second.value.text == "recovered"
 
@@ -185,36 +234,30 @@ suite "provider executor":
     check ProviderWorkerCount == 4
     check ProviderQueueDepth > 0
 
-  test "capturing builder runs on the caller thread":
-    # A builder may capture event-loop state, so the executor must invoke it
-    # before enqueuing, never on a worker thread.
-    let callerThread = getThreadId()
-    let builder: ProviderRuntimeBuilder = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
-      if getThreadId() != callerThread:
-        raise newException(ValueError, "builder ran off the event loop thread")
-      let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
-        ok(CompletionResponse(text: "event-loop-builder"))
-      ProviderBundle(completeFn: complete)
+  test "builder runs on the caller thread":
+    # The builder is `nimcall` (no shared environment), but the executor still
+    # invokes it on the event loop before enqueuing.
+    gExpectedBuilderThreadId = getThreadId()
+    let builder: ProviderRuntimeBuilder = threadCheckBuilder
     let res = waitFor asyncProviderComplete(
       builder, ProviderSpec(providerName: "stub"), CompletionRequest())
     check res.isOk
     check res.value.text == "event-loop-builder"
 
   test "builder exception becomes an error Result and the pool stays healthy":
-    let builder: ProviderRuntimeBuilder = proc(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
-      raise newException(ValueError, "builder boom")
+    let builder: ProviderRuntimeBuilder = builderExceptionBuilder
     let res = waitFor asyncProviderComplete(
       builder, ProviderSpec(providerName: "stub"), CompletionRequest())
     check res.isErr
     check "builder boom" in res.error
 
     let after = waitFor asyncProviderComplete(
-      stubBuilder("after-builder-error"), ProviderSpec(providerName: "stub"), CompletionRequest())
+      useStub("after-builder-error"), ProviderSpec(providerName: "stub"), CompletionRequest())
     check after.isOk
     check after.value.text == "after-builder-error"
 
   test "cancelling an in-flight call returns promptly without waiting for the worker":
-    let builder = stubBuilder("slow", delayMs = 250)
+    let builder = useStub("slow", delayMs = 250)
     let start = Moment.now()
     let cancelled = waitFor waitAndCancel(builder, cancelAfterMs = 40)
     let elapsedMs = (Moment.now() - start).milliseconds
@@ -225,7 +268,7 @@ suite "provider executor":
     check elapsedMs < 200
 
     let after = waitFor asyncProviderComplete(
-      stubBuilder("after-cancel"), ProviderSpec(providerName: "stub"), CompletionRequest())
+      useStub("after-cancel"), ProviderSpec(providerName: "stub"), CompletionRequest())
     check after.isOk
     check after.value.text == "after-cancel"
 
@@ -250,13 +293,13 @@ suite "provider executor":
     # Large results may be produced after cancellation; the worker discards
     # them locally (or the last reference drains them) instead of leaking them
     # inside a channel whose consumer is gone.
-    let slow = stubBuilder(repeat('y', 4096), delayMs = 250)
+    let slow = useStub(repeat('y', 4096), delayMs = 250)
     for _ in 0 ..< 6:
       let start = Moment.now()
       check waitFor waitAndCancel(slow, cancelAfterMs = 20)
       check (Moment.now() - start).milliseconds < 200
 
     let after = waitFor asyncProviderComplete(
-      stubBuilder("alive"), ProviderSpec(providerName: "stub"), CompletionRequest())
+      useStub("alive"), ProviderSpec(providerName: "stub"), CompletionRequest())
     check after.isOk
     check after.value.text == "alive"

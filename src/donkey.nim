@@ -900,8 +900,9 @@ proc startOptionalWebhookReceiver(env: DaemonEnv; log: Logger) =
     return
 
   let cfg = WebhookConfig(
-    slackSigningSecret:
-      if env.slackBotToken.len > 0: env.slackSigningSecret else: "",
+    ## Slack events have no inbound drainer yet; do not accept events that
+    ## nobody consumes (and that would grow the queue without bound).
+    slackSigningSecret: "",
     feishuVerificationToken:
       if env.feishuAppId.len > 0: env.feishuVerificationToken else: "",
     dingtalkAppSecret:
@@ -1200,13 +1201,12 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
     return false
 
   for msg in tgMsgs:
-    if not runtime.sm.allows(msg.userId):
-      ## `/continue <code>` is the only command that may admit a new identity,
-      ## and only when the code points at an already-authorized account.
-      let target = linkTargetFor(tgAdapter.resolver.identityGate(), ckTelegram, msg.text)
-      if target.isNone or not runtime.sm.allows(target.get):
-        log.warn("telegram: unauthorized message from " & $msg.userId)
-        continue
+    let auth = authorizeResolvedInbound(
+      runtime.sm, tgAdapter.resolver.identityGate(), ckTelegram,
+      msg.userId, msg.text)
+    if not auth.allowed:
+      log.warn("telegram: unauthorized message from " & $msg.userId)
+      continue
 
     let stagedReaction = shouldStageInboundReaction(msg)
     if stagedReaction:

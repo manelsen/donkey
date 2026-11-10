@@ -1,10 +1,9 @@
-import std/[options, strutils, tables]
+import std/[strutils, tables]
 import chronos/asyncsync
 import ../../core/commands/command_routing
 import ../../core/log as core_log
 import ../../core/outbound/outbound
 import ../../core/pipeops
-import ../../core/security/dm_policy
 import ../../adapters/memory/md_file
 import ../../app/inbound_gate
 import ../../app/session_manager
@@ -553,41 +552,21 @@ proc drainDiscordEvents*(sm: var SessionManager;
   var (hasEvent, event) = dcAdapter.tryRecvEvent()
   while hasEvent:
     let rawId = event.discordUserId
-    var identity = dcAdapter.resolver.lookup(ckDiscord, rawId)
-    var allowed = false
-    if identity.isSome:
-      allowed = sm.allows(identity.get)
-    elif sm.dmPolicy == DmPolicyOpen:
-      ## Normal first-contact path: the open policy allows new identities to
-      ## be minted. For allowlist/pairing we never persist a denied sender.
-      identity = some(dcAdapter.resolver.resolve(ckDiscord, rawId))
-      allowed = sm.allows(identity.get)
-    if not allowed:
-      ## Linking is the only path that may admit an unknown identity, and only
-      ## when the code points at an already-authorized account.
+    let linkSource =
       case event.kind
-      of deMessage:
-        let target = linkTargetFor(gate, ckDiscord, event.content)
-        if target.isSome and sm.allows(target.get):
-          allowed = true
-      of deInteraction:
-        let target = gate.peekLinkCode(event.content.strip)
-        if target.isSome and sm.allows(target.get):
-          allowed = true
-      of deModalRequest:
-        ## Opening the link modal neither mints identities nor touches state.
-        allowed = true
-      else:
-        discard
-      if allowed and identity.isNone and event.kind != deModalRequest:
-        identity = some(dcAdapter.resolver.resolve(ckDiscord, rawId))
-    if not allowed:
+      of deMessage:       ilsCommandText
+      of deInteraction:   ilsBareCode
+      of deModalRequest:  ilsModalOnly
+      else:               ilsNone
+    let auth = authorizeInbound(
+      sm, gate, ckDiscord, rawId, event.content, linkSource)
+    if not auth.allowed:
       logger.warn("discord: unauthorized event from " &
-        (if identity.isSome: $identity.get else: "unidentified sender"))
+        (if auth.identified: $auth.userId else: "unidentified sender"))
       (hasEvent, event) = dcAdapter.tryRecvEvent()
       continue
     logger.info("discord event: " & $event.kind & " from " &
-      (if identity.isSome: $identity.get else: "unidentified sender"))
+      (if auth.identified: $auth.userId else: "unidentified sender"))
     handleDiscordEvent(sm, event, dcAdapter, presentationState, memory, completeBuilder,
                        modelCatalogLoader, toolsCount, toolClientsCount, daemonStartMs, msgSeq, logger,
                        handleInboundStatus,

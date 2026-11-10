@@ -9,13 +9,12 @@
 ##
 ## Builder ownership rule
 ## ----------------------
-## `ProviderRuntimeBuilder` is a closure and may capture event-loop state
-## (preferences, routing tables, the session context). It must therefore run
-## on the event loop thread, never on a worker: `asyncProviderComplete` calls
-## `builder(spec)` before enqueuing and sends only the resulting
-## `ProviderBundle`. The bundle's `completeFn`/`streamFn` closures are freshly
-## constructed by the builder and are owned exclusively by the job after the
-## channel transfer, so no builder environment is shared with the worker.
+## `ProviderRuntimeBuilder` is declared `{.nimcall.}`, so it cannot capture an
+## environment. `asyncProviderComplete` still runs it on the event loop thread
+## before enqueuing and sends only the resulting `ProviderBundle`. The bundle's
+## `completeFn`/`streamFn` closures are freshly constructed by the builder and
+## are owned exclusively by the job after the channel transfer, so no builder
+## environment is shared with workers or with other in-flight calls.
 ##
 ## GC-managed values only cross the thread boundary through a Nim `Channel`:
 ##

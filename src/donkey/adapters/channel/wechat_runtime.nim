@@ -42,8 +42,12 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
   while hasEvent:
     if (event.msgType == "text" and event.content.strip.len > 0) or
        event.mediaId.len > 0:
+      ## Only a text event runs the command dispatcher; a media-only event
+      ## must not mint an identity just because its caption contains
+      ## `/continue <code>` (the code would never be consumed).
+      let gateText = if event.msgType == "text": event.content else: ""
       let auth = authorizeInbound(sm, wchAdapter.resolver.identityGate(), ckWeChat,
-                                  event.fromUser, event.content)
+                                  event.fromUser, gateText)
       if not auth.allowed:
         log.warn("wechat: unauthorized message from " &
                  (if auth.identified: $auth.userId else: "unidentified sender"))
