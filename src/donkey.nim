@@ -1397,9 +1397,12 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           var (hasEvent, event) = ctx.adapters.dt.tryRecvEvent()
           while hasEvent:
             if event.content.strip.len > 0 or event.downloadCode.len > 0:
+              ## The generic gateway fallback does not dispatch `/continue`;
+              ## do not admit link commands here until a DingTalk command
+              ## runtime exists.
               let auth = authorizeInbound(
                 ctx.runtime.sm, ctx.adapters.dt.resolver.identityGate(),
-                ckDingTalk, event.rawId, event.content)
+                ckDingTalk, event.rawId, event.content, ilsNone)
               if not auth.allowed:
                 log.warn("dingtalk: unauthorized message from " &
                          (if auth.identified: $auth.userId else: "unidentified sender"))
@@ -1426,9 +1429,12 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           var (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
           while hasEvent:
             if event.content.strip.len > 0 or event.mediaUrl.len > 0:
+              ## The generic gateway fallback does not dispatch `/continue`;
+              ## do not admit link commands here until a Matrix command
+              ## runtime exists.
               let auth = authorizeInbound(
                 ctx.runtime.sm, ctx.adapters.mx.resolver.identityGate(),
-                ckMatrix, event.roomId, event.content)
+                ckMatrix, event.roomId, event.content, ilsNone)
               if not auth.allowed:
                 log.warn("matrix: unauthorized message from " &
                          (if auth.identified: $auth.userId else: "unidentified sender"))
