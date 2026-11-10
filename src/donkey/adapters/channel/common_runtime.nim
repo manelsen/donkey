@@ -8,7 +8,6 @@ import ../../core/outbound/outbound
 import ../../core/providers/smart_routing
 import ../../core/providers/provider_catalog
 import ../../adapters/memory/md_file
-import ../../app/session_manager
 import ../../domain/message
 import ../../ports/provider
 import ../../app/skill_runtime
@@ -153,12 +152,6 @@ proc loadChannelPreference*(memory: MdFileAdapter;
                             key: string): string =
   ## Reads one preference value by key, without parsing the whole document.
   parsePreferenceString(memory.loadContext(userId).preferencesMd, key)
-
-func hasLiveSession*(sm: SessionManager; userId: UserId): bool =
-  ## True only when the user has a session entry with an attached runtime.
-  ## Restored entries have metadata but no consumer, so they are not live.
-  let uid = $userId
-  uid in sm.entries and not sm.entries[uid].restored
 
 proc saveChannelPreference*(memory: MdFileAdapter;
                             userId: UserId;
