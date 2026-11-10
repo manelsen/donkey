@@ -3,7 +3,7 @@
 ## Covers the file-backed session registry and outbound delivery ledger, plus
 ## the invariant that a broken persistence sink never blocks the hot path.
 
-import std/[os, unittest]
+import std/[os, strutils, tables, unittest]
 import donkey/adapters/state/runtime_store
 import donkey/app/outbound_runtime
 import donkey/app/session_manager
@@ -88,9 +88,9 @@ suite "durability":
     defer: cleanup(dir)
 
     let failing = SessionRegistryPort(
-      loadAll: proc(): Result[seq[SessionRegistryRecord], string] {.gcsafe.} =
+      loadAll: proc(): Result[seq[SessionRegistryRecord], string] {.gcsafe, raises: [].} =
         err("registry read down"),
-      upsert: proc(record: SessionRegistryRecord): Result[void, string] {.gcsafe.} =
+      upsert: proc(record: SessionRegistryRecord): Result[void, string] {.gcsafe, raises: [].} =
         err("registry write down"),
     )
 
@@ -179,13 +179,13 @@ suite "durability":
     defer: cleanup(dir)
 
     let brokenLedger = DeliveryLedgerPort(
-      recordPending: proc(record: DeliveryRecord): Result[void, string] {.gcsafe.} =
+      recordPending: proc(record: DeliveryRecord): Result[void, string] {.gcsafe, raises: [].} =
         err("ledger pending down"),
-      markSent: proc(id: string; updatedAtMs: int64): Result[void, string] {.gcsafe.} =
+      markSent: proc(id: string; updatedAtMs: int64): Result[void, string] {.gcsafe, raises: [].} =
         err("ledger sent down"),
-      markFailed: proc(id: string; updatedAtMs: int64; error: string): Result[void, string] {.gcsafe.} =
+      markFailed: proc(id: string; updatedAtMs: int64; error: string): Result[void, string] {.gcsafe, raises: [].} =
         err("ledger failed down"),
-      loadAll: proc(): Result[seq[DeliveryRecord], string] {.gcsafe.} =
+      loadAll: proc(): Result[seq[DeliveryRecord], string] {.gcsafe, raises: [].} =
         err("ledger read down"),
     )
 
@@ -251,3 +251,166 @@ suite "durability":
     check loaded.value[0].userId == "user-5"
     check loaded.value[0].channel == ckTelegram
     check loaded.value[0].textHash.len > 0
+
+  test "corrupt session registry is backed up and writes resume":
+    let dir = freshDir("sessions-corrupt")
+    defer: cleanup(dir)
+
+    writeFile(dir / SessionsFileName, "{not valid json")
+
+    let registry = newRuntimeStateStore(dir).sessionRegistry()
+    let loaded = registry.loadAll()
+    check loaded.isOk
+    check loaded.value.len == 0
+
+    var backups = 0
+    for kind, path in walkDir(dir):
+      if kind == pcFile and path.contains(".corrupt-"):
+        inc backups
+    check backups == 1
+    check not fileExists(dir / SessionsFileName)
+
+    let record = SessionRegistryRecord(
+      userId: "user-corrupt",
+      sessionId: "session-corrupt",
+    )
+    check registry.upsert(record).isOk
+    check fileExists(dir / SessionsFileName)
+
+    let reloaded = registry.loadAll()
+    check reloaded.isOk
+    check reloaded.value.len == 1
+    check reloaded.value[0].userId == "user-corrupt"
+
+  test "unsupported session registry version is preserved":
+    let dir = freshDir("sessions-version")
+    defer: cleanup(dir)
+
+    let original = """{"version": 99, "sessions": []}"""
+    writeFile(dir / SessionsFileName, original)
+
+    let registry = newRuntimeStateStore(dir).sessionRegistry()
+    let loaded = registry.loadAll()
+    check loaded.isErr
+    check "version" in loaded.error
+
+    ## Unsupported versions are not corruption: keep the file untouched and
+    ## refuse writes.
+    check registry.upsert(SessionRegistryRecord(userId: "user-version")).isErr
+    check readFile(dir / SessionsFileName) == original
+
+    var backups = 0
+    for kind, path in walkDir(dir):
+      if kind == pcFile and path.contains(".corrupt-"):
+        inc backups
+    check backups == 0
+
+  test "ledger torn line does not corrupt the next record":
+    let dir = freshDir("ledger-torn")
+    defer: cleanup(dir)
+
+    ## A crash mid-write leaves a partial line without a trailing newline.
+    writeFile(dir / DeliveryLedgerFileName, """{"id":"torn","state":"pen""")
+
+    let ledger = newRuntimeStateStore(dir).deliveryLedger()
+    let valid = DeliveryRecord(
+      id: "delivery-valid",
+      userId: "user-torn",
+      channel: ckDiscord,
+      channelId: "chat-torn",
+      textHash: "torn123",
+      state: dlsPending,
+      attempts: 1,
+      createdAtMs: 10,
+      updatedAtMs: 10,
+    )
+    check ledger.recordPending(valid).isOk
+
+    let loaded = ledger.loadAll()
+    check loaded.isOk
+    check loaded.value.len == 1
+    let record = findRecord(loaded.value, "delivery-valid")
+    check record.userId == "user-torn"
+    check record.channel == ckDiscord
+    check record.state == dlsPending
+
+  test "pending table after reopen preserves metadata on markSent":
+    let dir = freshDir("ledger-pending-reopen")
+    defer: cleanup(dir)
+
+    let now = 1_700_000_000_000
+    let pending = DeliveryRecord(
+      id: "delivery-reopen",
+      userId: "user-reopen",
+      channel: ckDiscord,
+      channelId: "chat-reopen",
+      textHash: "hash-reopen",
+      state: dlsPending,
+      attempts: 1,
+      createdAtMs: now,
+      updatedAtMs: now,
+    )
+    check newRuntimeStateStore(dir).deliveryLedger().recordPending(pending).isOk
+
+    ## Simulate a restart: the new store repopulates pending from the ledger.
+    let reopened = newRuntimeStateStore(dir)
+    check reopened.pending.len == 1
+    check reopened.deliveryLedger().markSent("delivery-reopen", now + 10).isOk
+
+    let loaded = newRuntimeStateStore(dir).deliveryLedger().loadAll()
+    check loaded.isOk
+    check loaded.value.len == 1
+    let sent = findRecord(loaded.value, "delivery-reopen")
+    check sent.state == dlsSent
+    check sent.updatedAtMs == now + 10
+    check sent.userId == "user-reopen"
+    check sent.channel == ckDiscord
+    check sent.channelId == "chat-reopen"
+    check sent.textHash == "hash-reopen"
+    check sent.createdAtMs == now
+    check sent.attempts == 1
+
+  test "minimal ledger event merges with full delivery metadata":
+    let dir = freshDir("ledger-minimal")
+    defer: cleanup(dir)
+
+    let now = 1_700_000_000_000
+    let pending = DeliveryRecord(
+      id: "delivery-minimal",
+      userId: "user-minimal",
+      channel: ckWeCom,
+      channelId: "chat-minimal",
+      textHash: "hash-minimal",
+      state: dlsPending,
+      attempts: 2,
+      createdAtMs: now,
+      updatedAtMs: now,
+    )
+    check newRuntimeStateStore(dir).deliveryLedger().recordPending(pending).isOk
+
+    ## Simulate a pending-table miss (restart/failed pending write): clearing
+    ## the cache forces markSent to append only the minimal event.
+    let restarted = newRuntimeStateStore(dir)
+    restarted.pending.clear()
+    check restarted.deliveryLedger().markSent("delivery-minimal", now + 7).isOk
+
+    let lines = (dir / DeliveryLedgerFileName).readFile.splitLines
+    var lastRecord = ""
+    for line in lines:
+      if line.strip.len > 0:
+        lastRecord = line
+    check "user_id" notin lastRecord
+    check "channel" notin lastRecord
+
+    let loaded = newRuntimeStateStore(dir).deliveryLedger().loadAll()
+    check loaded.isOk
+    check loaded.value.len == 1
+    let sent = findRecord(loaded.value, "delivery-minimal")
+    check sent.state == dlsSent
+    check sent.updatedAtMs == now + 7
+    check sent.userId == "user-minimal"
+    check sent.channel == ckWeCom
+    check sent.channelId == "chat-minimal"
+    check sent.textHash == "hash-minimal"
+    check sent.createdAtMs == now
+    check sent.attempts == 2
