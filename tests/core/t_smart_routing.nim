@@ -1,5 +1,6 @@
 import std/unittest
 import donkey/core/providers/smart_routing
+import donkey/core/providers/provider_catalog
 import donkey/domain/message
 
 suite "smart_routing":
@@ -44,7 +45,7 @@ thinking = "low"
     ))
     check selections.len > 0
     check selections[0].providerName == "anthropic"
-    check selections[0].modelName == "claude-opus-4-6"
+    check selections[0].modelName == "claude-opus-5-5"
 
   test "smartRouteSelections falls back to zai-anthropic when anthropic is unavailable":
     let prefs = parseSmartRoutingPrefs("thinking = \"high\"")
@@ -58,6 +59,68 @@ thinking = "low"
     check selections.len > 0
     check selections[0].providerName == "zai-anthropic"
     check selections[0].modelName == "glm-4.7"
+
+  test "selectBestModel respects ProviderAvailability for new providers":
+    let cat = buildDefaultCatalog()
+    let rc = RoutingCatalog(
+      catalog: cat,
+      availability: ProviderAvailability(openai: true, deepseek: true, groq: true, ollama: true),
+    )
+    let openaiSel = rc.selectBestModel("openai")
+    check openaiSel.providerName == "openai"
+    check openaiSel.modelName.len > 0
+
+    let deepseekSel = rc.selectBestModel("deepseek")
+    check deepseekSel.providerName == "deepseek"
+    check deepseekSel.modelName.len > 0
+
+    let unavailRc = RoutingCatalog(
+      catalog: cat,
+      availability: ProviderAvailability(),
+    )
+    check unavailRc.selectBestModel("openai").providerName.len == 0
+    check unavailRc.selectBestModel("deepseek").providerName.len == 0
+
+  test "smartRouteSelections returns candidates when only openai is available":
+    let prefs = parseSmartRoutingPrefs("")
+    let req = CompletionRequest(messages: @[ChatMessage(role: "user", text: "hello")])
+    let selections = smartRouteSelections(prefs, req, ProviderAvailability(openai: true))
+    check selections.len > 0
+    check selections[0].providerName == "openai"
+
+  test "smartRouteSelections returns candidates when only deepseek is available":
+    let prefs = parseSmartRoutingPrefs("")
+    let req = CompletionRequest(messages: @[ChatMessage(role: "user", text: "hello")])
+    let selections = smartRouteSelections(prefs, req, ProviderAvailability(deepseek: true))
+    check selections.len > 0
+    check selections[0].providerName == "deepseek"
+
+  test "smartRouteSelections returns candidates when only groq is available":
+    let prefs = parseSmartRoutingPrefs("")
+    let req = CompletionRequest(messages: @[ChatMessage(role: "user", text: "hello")])
+    let selections = smartRouteSelections(prefs, req, ProviderAvailability(groq: true))
+    check selections.len > 0
+    check selections[0].providerName == "groq"
+
+  test "smartRouteSelections returns candidates when only ollama is available":
+    let prefs = parseSmartRoutingPrefs("")
+    let req = CompletionRequest(messages: @[ChatMessage(role: "user", text: "hello")])
+    let selections = smartRouteSelections(prefs, req, ProviderAvailability(ollama: true))
+    check selections.len > 0
+    check selections[0].providerName == "ollama"
+
+  test "smartRouteSelections orders openai, deepseek, and zai-coding deterministically":
+    let prefs = parseSmartRoutingPrefs("")
+    let req = CompletionRequest(messages: @[ChatMessage(role: "user", text: "hello")])
+    let selections = smartRouteSelections(prefs, req, ProviderAvailability(
+      openai: true,
+      deepseek: true,
+      zaiCoding: true
+    ))
+    check selections.len >= 3
+    check selections[0].providerName == "openai"
+    check selections[1].providerName == "deepseek"
+    check selections[2].providerName == "zai-coding"
 
   test "smartRouteSelections keeps explicit provider selection untouched":
     let prefs = parseSmartRoutingPrefs("""

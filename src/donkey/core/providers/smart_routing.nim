@@ -14,6 +14,7 @@ import ./provider_catalog
 const
   AutoProviderLabel* = "auto"
   LongContextChars* = 60_000
+  GroqDefaultModel* = "llama-3.3-70b-versatile"
 
 type
   SmartRoutingPrefs* = object
@@ -27,11 +28,15 @@ type
   ProviderAvailability* = object
     openrouter*: bool
     anthropic*: bool
+    openai*: bool
+    deepseek*: bool
     zaiAnthropic*: bool
     gemini*: bool
     minimax*: bool
     zai*: bool
     zaiCoding*: bool
+    groq*: bool
+    ollama*: bool
 
   ProviderSelection* = object
     providerName*: string
@@ -152,12 +157,16 @@ func defaultModelForProvider*(providerName: string;
   else:
     # Fallback for unknown providers
     case providerName
-    of "openrouter": "openai/gpt-4o-mini"
-    of "anthropic": "claude-opus-4-6"
+    of "openrouter": "openai/gpt-6.1-sol"
+    of "anthropic": "claude-sonnet-5-5"
+    of "openai": "gpt-6.1-sol"
+    of "deepseek": "deepseek-4.1-flash"
+    of "gemini": "gemini-3.8-flash"
     of "zai-anthropic": "glm-4.7"
-    of "gemini": "gemini-2.5-flash"
     of "minimax": "MiniMax-M2"
     of "zai": "glm-4.7"
+    of "groq": GroqDefaultModel
+    of "ollama": "llama3.3"
     else: "glm-4.7"
 
 func selection(providerName: string; modelName = ""): ProviderSelection =
@@ -193,11 +202,15 @@ func isAvailable(availability: ProviderAvailability; providerName: string): bool
   case providerName
   of "openrouter": availability.openrouter
   of "anthropic": availability.anthropic
+  of "openai": availability.openai
+  of "deepseek": availability.deepseek
   of "zai-anthropic": availability.zaiAnthropic
   of "gemini": availability.gemini
   of "minimax": availability.minimax
   of "zai": availability.zai
   of "zai-coding": availability.zaiCoding
+  of "groq": availability.groq
+  of "ollama": availability.ollama
   else: false
 
 # ── Catalog-driven routing helpers ────────────────────────────────────────────
@@ -207,11 +220,15 @@ func availableProviders(rc: RoutingCatalog): seq[string] {.used.} =
   let avail = rc.availability
   if avail.openrouter: result.add("openrouter")
   if avail.anthropic: result.add("anthropic")
+  if avail.openai: result.add("openai")
+  if avail.deepseek: result.add("deepseek")
   if avail.zaiAnthropic: result.add("zai-anthropic")
   if avail.gemini: result.add("gemini")
   if avail.minimax: result.add("minimax")
   if avail.zai: result.add("zai")
   if avail.zaiCoding: result.add("zai-coding")
+  if avail.groq: result.add("groq")
+  if avail.ollama: result.add("ollama")
 
 func queryModels*(rc: RoutingCatalog; providerName: string;
                  hasTools = false; hasImage = false;
@@ -529,11 +546,14 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
   if signals.hasImage:
     addSelectionIfAvailable(result, rc, "openrouter", hasImage = true)
     addSelectionIfAvailable(result, rc, "gemini", hasImage = true)
+    addSelectionIfAvailable(result, rc, "openai", hasImage = true)
 
   # Long context: prefer models with large context windows
   if signals.approxInputChars >= LongContextChars:
     addSelectionIfAvailable(result, rc, "gemini", hasImage = true)
     addAnthropicWithFallback(result, rc, hasTools = false, hasThinking = false)
+    addSelectionIfAvailable(result, rc, "openai", hasThinking = true)
+    addSelectionIfAvailable(result, rc, "deepseek", hasThinking = true)
     addSelectionIfAvailable(result, rc, "openrouter", hasThinking = true)
 
   # Thinking-based routing
@@ -541,55 +561,87 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
   of "high":
     if signals.hasTools:
       addAnthropicWithFallback(result, rc, hasTools = true, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "openai", hasTools = true, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "deepseek", hasTools = true, hasThinking = true)
       addSelectionIfAvailable(result, rc, "zai-coding", hasTools = true, hasThinking = true)
       addSelectionIfAvailable(result, rc, "gemini", hasTools = true, hasThinking = true)
       addSelectionIfAvailable(result, rc, "openrouter", hasTools = true, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "groq", hasTools = true)
+      addSelectionIfAvailable(result, rc, "ollama", hasTools = true)
     else:
       addAnthropicWithFallback(result, rc, hasTools = false, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "openai", hasTools = false, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "deepseek", hasTools = false, hasThinking = true)
       addSelectionIfAvailable(result, rc, "gemini", hasTools = false, hasThinking = true)
       addSelectionIfAvailable(result, rc, "zai", hasTools = false, hasThinking = true)
       addSelectionIfAvailable(result, rc, "openrouter", hasTools = false, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "groq")
+      addSelectionIfAvailable(result, rc, "ollama")
   of "medium":
     if signals.hasTools:
+      addSelectionIfAvailable(result, rc, "openai", hasTools = true)
+      addSelectionIfAvailable(result, rc, "deepseek", hasTools = true)
       addSelectionIfAvailable(result, rc, "zai-coding", hasTools = true)
       addAnthropicWithFallback(result, rc, hasTools = true)
       addSelectionIfAvailable(result, rc, "openrouter", hasTools = true)
       addSelectionIfAvailable(result, rc, "gemini", hasTools = true)
+      addSelectionIfAvailable(result, rc, "groq", hasTools = true)
+      addSelectionIfAvailable(result, rc, "ollama", hasTools = true)
     else:
+      addSelectionIfAvailable(result, rc, "openai")
+      addSelectionIfAvailable(result, rc, "deepseek")
       addSelectionIfAvailable(result, rc, "zai", hasTools = false, hasThinking = true)
       addSelectionIfAvailable(result, rc, "openrouter")
       addAnthropicWithFallback(result, rc)
       addSelectionIfAvailable(result, rc, "gemini")
       addSelectionIfAvailable(result, rc, "minimax")
+      addSelectionIfAvailable(result, rc, "groq")
+      addSelectionIfAvailable(result, rc, "ollama")
   else:
     if signals.hasTools:
+      addSelectionIfAvailable(result, rc, "openai", hasTools = true)
+      addSelectionIfAvailable(result, rc, "deepseek", hasTools = true)
       addSelectionIfAvailable(result, rc, "zai-coding", hasTools = true)
       addSelectionIfAvailable(result, rc, "openrouter", hasTools = true)
       addAnthropicWithFallback(result, rc, hasTools = true)
       addSelectionIfAvailable(result, rc, "gemini", hasTools = true)
       addSelectionIfAvailable(result, rc, "zai", hasTools = true)
+      addSelectionIfAvailable(result, rc, "groq", hasTools = true)
+      addSelectionIfAvailable(result, rc, "ollama", hasTools = true)
     else:
+      addSelectionIfAvailable(result, rc, "openai")
+      addSelectionIfAvailable(result, rc, "deepseek")
       addSelectionIfAvailable(result, rc, "openrouter")
       addSelectionIfAvailable(result, rc, "zai")
       addSelectionIfAvailable(result, rc, "gemini")
       addAnthropicWithFallback(result, rc)
       addSelectionIfAvailable(result, rc, "minimax")
       addSelectionIfAvailable(result, rc, "zai-coding")
+      addSelectionIfAvailable(result, rc, "groq")
+      addSelectionIfAvailable(result, rc, "ollama")
 
   # Fallback: add general-purpose models
   if signals.hasTools:
+    addSelectionIfAvailable(result, rc, "openai", hasTools = true)
+    addSelectionIfAvailable(result, rc, "deepseek", hasTools = true)
     addSelectionIfAvailable(result, rc, "zai-coding", hasTools = true)
     addSelectionIfAvailable(result, rc, "openrouter", hasTools = true)
     addAnthropicWithFallback(result, rc, hasTools = true)
     addSelectionIfAvailable(result, rc, "gemini", hasTools = true)
     addSelectionIfAvailable(result, rc, "zai", hasTools = true)
+    addSelectionIfAvailable(result, rc, "groq", hasTools = true)
+    addSelectionIfAvailable(result, rc, "ollama", hasTools = true)
   else:
+    addSelectionIfAvailable(result, rc, "openai")
+    addSelectionIfAvailable(result, rc, "deepseek")
     addSelectionIfAvailable(result, rc, "openrouter")
     addSelectionIfAvailable(result, rc, "zai")
     addSelectionIfAvailable(result, rc, "gemini")
     addAnthropicWithFallback(result, rc)
     addSelectionIfAvailable(result, rc, "minimax")
     addSelectionIfAvailable(result, rc, "zai-coding")
+    addSelectionIfAvailable(result, rc, "groq")
+    addSelectionIfAvailable(result, rc, "ollama")
 
   result = dedupeSelections(result)
 

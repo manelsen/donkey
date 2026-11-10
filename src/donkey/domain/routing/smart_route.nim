@@ -81,11 +81,15 @@ func providerIsAvailable*(av: ProviderAvailability; name: string): bool =
   case name
   of "openrouter": av.openrouter
   of "anthropic": av.anthropic
+  of "openai": av.openai
+  of "deepseek": av.deepseek
   of "zai-anthropic": av.zaiAnthropic
   of "gemini": av.gemini
   of "minimax": av.minimax
   of "zai": av.zai
   of "zai-coding": av.zaiCoding
+  of "groq": av.groq
+  of "ollama": av.ollama
   else: false
 
 func addAnthropicCompatible*(candidates: var seq[ProviderSelection];
@@ -155,33 +159,43 @@ func routeByComplexity*(score: ComplexityScore;
   of tcSimple:
     # Prefer cheap/fast providers
     candidates.addIfAvailable(availability, "minimax", "MiniMax-M2")
-    candidates.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
+    candidates.addIfAvailable(availability, "deepseek", "deepseek-4.1-flash")
+    candidates.addIfAvailable(availability, "groq", "llama-3.1-8b-instant")
+    candidates.addIfAvailable(availability, "ollama", "llama3.3")
+    candidates.addIfAvailable(availability, "openrouter", "openai/gpt-6-luna")
+    candidates.addIfAvailable(availability, "openai", "gpt-6-luna")
+    candidates.addIfAvailable(availability, "gemini", "gemini-3.8-flash")
     candidates.addIfAvailable(availability, "zai", "glm-4.7")
-    candidates.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
     if normalizedBudget == "quality-first":
-      candidates.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
+      candidates.addAnthropicCompatible(availability, "claude-sonnet-5-5", "glm-4.7")
   of tcModerate:
     # Balanced providers
     candidates.addIfAvailable(availability, "zai-coding", "glm-4.7")
-    candidates.addIfAvailable(availability, "openrouter", "openai/gpt-4o-mini")
-    candidates.addIfAvailable(availability, "gemini", "gemini-2.5-flash")
-    candidates.addAnthropicCompatible(availability, "claude-sonnet-4-6", "glm-4.7")
+    candidates.addIfAvailable(availability, "deepseek", "deepseek-4.1-flash")
+    candidates.addIfAvailable(availability, "openai", "gpt-6.1-sol")
+    candidates.addIfAvailable(availability, "openrouter", "openai/gpt-6.1-sol")
+    candidates.addIfAvailable(availability, "gemini", "gemini-3.8-flash")
+    candidates.addAnthropicCompatible(availability, "claude-sonnet-5-5", "glm-4.7")
     if normalizedBudget == "cheap-first":
       candidates.addIfAvailable(availability, "minimax", "MiniMax-M2")
   of tcComplex:
     # Prefer capable providers
     if score.toolScore > 50 or score.contextScore > 60:
       # Tool-heavy or context-heavy -> use best tool providers
-      candidates.addAnthropicCompatible(availability, "claude-opus-4-6", "glm-4.7")
-      candidates.addIfAvailable(availability, "zai-coding", "glm-5")
-      candidates.addIfAvailable(availability, "gemini", "gemini-2.5-pro")
-      candidates.addIfAvailable(availability, "openrouter", "openai/gpt-4o")
+      candidates.addAnthropicCompatible(availability, "claude-opus-5-5", "glm-5.1")
+      candidates.addIfAvailable(availability, "openai", "gpt-6-astra")
+      candidates.addIfAvailable(availability, "deepseek", "deepseek-v4-pro")
+      candidates.addIfAvailable(availability, "gemini", "gemini-4-argon")
+      candidates.addIfAvailable(availability, "zai-coding", "glm-5.1")
+      candidates.addIfAvailable(availability, "openrouter", "openai/gpt-6-astra")
     else:
       # General complexity
-      candidates.addAnthropicCompatible(availability, "claude-opus-4-6", "glm-4.7")
-      candidates.addIfAvailable(availability, "gemini", "gemini-2.5-pro")
-      candidates.addIfAvailable(availability, "zai-coding", "glm-5")
-      candidates.addIfAvailable(availability, "openrouter", "openai/gpt-4o")
+      candidates.addAnthropicCompatible(availability, "claude-opus-5-5", "glm-5.1")
+      candidates.addIfAvailable(availability, "gemini", "gemini-4-argon")
+      candidates.addIfAvailable(availability, "openai", "gpt-6-astra")
+      candidates.addIfAvailable(availability, "deepseek", "deepseek-v4-pro")
+      candidates.addIfAvailable(availability, "zai-coding", "glm-5.1")
+      candidates.addIfAvailable(availability, "openrouter", "openai/gpt-6-astra")
 
   # Dedupe and return
   candidates.dedupeSelections

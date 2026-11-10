@@ -148,7 +148,7 @@ suite "smart_route classifier":
     let routes = score.routeByComplexity(availability, "balanced")
     check routes.len > 0
     check routes[0].providerName == "zai-anthropic"
-    check routes[0].modelName == "glm-4.7"
+    check routes[0].modelName == "glm-5.1"
 
   test "routeByComplexity respects cheap-first budget":
     let score = ComplexityScore(
@@ -206,6 +206,86 @@ suite "smart_route classifier":
     let availability = ProviderAvailability()
     let routes = score.routeByComplexity(availability, "balanced")
     check routes.len == 0
+
+  test "routeByComplexity orders deepseek and openai candidates for simple route":
+    let score = ComplexityScore(
+      complexity: tcSimple,
+      inputScore: 5,
+      toolScore: 0,
+      contextScore: 5,
+      rawChars: 500,
+    )
+    let availability = ProviderAvailability(openai: true, deepseek: true)
+    let routes = score.routeByComplexity(availability, "balanced")
+    check routes.len == 2
+    check routes[0].providerName == "deepseek"
+    check routes[0].modelName == "deepseek-4.1-flash"
+    check routes[1].providerName == "openai"
+    check routes[1].modelName == "gpt-6-luna"
+
+  test "routeByComplexity includes groq and ollama candidates for simple route":
+    let score = ComplexityScore(
+      complexity: tcSimple,
+      inputScore: 5,
+      toolScore: 0,
+      contextScore: 5,
+      rawChars: 500,
+    )
+    let availability = ProviderAvailability(groq: true, ollama: true)
+    let routes = score.routeByComplexity(availability, "balanced")
+    check routes.len == 2
+    check routes[0].providerName == "groq"
+    check routes[0].modelName == "llama-3.1-8b-instant"
+    check routes[1].providerName == "ollama"
+    check routes[1].modelName == "llama3.3"
+
+  test "routeByComplexity orders deepseek and openai candidates for moderate route":
+    let score = ComplexityScore(
+      complexity: tcModerate,
+      inputScore: 30,
+      toolScore: 50,
+      contextScore: 30,
+      rawChars: 5_000,
+    )
+    let availability = ProviderAvailability(openai: true, deepseek: true)
+    let routes = score.routeByComplexity(availability, "balanced")
+    check routes.len == 2
+    check routes[0].providerName == "deepseek"
+    check routes[0].modelName == "deepseek-4.1-flash"
+    check routes[1].providerName == "openai"
+    check routes[1].modelName == "gpt-6.1-sol"
+
+  test "routeByComplexity orders openai and deepseek in tool/context-heavy complex branch":
+    let score = ComplexityScore(
+      complexity: tcComplex,
+      inputScore: 40,
+      toolScore: 80,
+      contextScore: 70,
+      rawChars: 25_000,
+    )
+    let availability = ProviderAvailability(openai: true, deepseek: true)
+    let routes = score.routeByComplexity(availability, "balanced")
+    check routes.len == 2
+    check routes[0].providerName == "openai"
+    check routes[0].modelName == "gpt-6-astra"
+    check routes[1].providerName == "deepseek"
+    check routes[1].modelName == "deepseek-v4-pro"
+
+  test "routeByComplexity orders openai and deepseek in general complex branch":
+    let score = ComplexityScore(
+      complexity: tcComplex,
+      inputScore: 80,
+      toolScore: 40,
+      contextScore: 50,
+      rawChars: 50_000,
+    )
+    let availability = ProviderAvailability(openai: true, deepseek: true)
+    let routes = score.routeByComplexity(availability, "balanced")
+    check routes.len == 2
+    check routes[0].providerName == "openai"
+    check routes[0].modelName == "gpt-6-astra"
+    check routes[1].providerName == "deepseek"
+    check routes[1].modelName == "deepseek-v4-pro"
 
   test "complexityLabel produces readable string":
     let score = ComplexityScore(

@@ -17,13 +17,14 @@ import ../http/helpers
 
 const
   OpenAIEndpoint*    = "https://api.openai.com/v1/chat/completions"
-  OpenAIDefaultModel* = "gpt-4o-mini"
+  OpenAIDefaultModel* = "gpt-6.1-sol"
 
 type
   OpenAIAdapter* = object
     apiKey*:   string
     model*:    string
     endpoint*: string   ## override for testing
+    providerName*: string ## e.g. "OpenAI" or "Groq"
 
   OpenAISseChunk* = object
     token*:        string
@@ -34,9 +35,12 @@ type
 
 # ── Concept conformance ───────────────────────────────────────────────────────
 
+func displayName*(a: OpenAIAdapter): string =
+  if a.providerName.len > 0: a.providerName else: "OpenAI"
+
 proc caps*(a: OpenAIAdapter): ProviderCaps =
   ProviderCaps(
-    name:              "openai/" & a.model,
+    name:              a.displayName.toLowerAscii & "/" & a.model,
     streaming:         true,
     toolCalling:       true,
     nativeTools:       @[],
@@ -79,7 +83,7 @@ proc complete*(a: OpenAIAdapter;
     let body = buildRequestBody(a.model, req)
     let url  = if a.endpoint.len > 0: a.endpoint else: OpenAIEndpoint
     let resp = client.post(url, body = $body)
-    checkApiStatus(resp, "OpenAI")
+    checkApiStatus(resp, a.displayName)
     resp.body |> parseJson |> parseResponseFrom
 
 # ── Streaming ─────────────────────────────────────────────────────────────────
@@ -97,7 +101,7 @@ proc makeStreamFn*(a: OpenAIAdapter): StreamFn =
       let body = buildRequestBody(adapter.model, req, stream = true)
       let url  = if adapter.endpoint.len > 0: adapter.endpoint else: OpenAIEndpoint
       let resp = client.request(url, httpMethod = HttpPost, body = $body)
-      checkApiStatus(resp, "OpenAI")
+      checkApiStatus(resp, adapter.displayName)
       
       var accumulated = ""
       var reasoning = ""
@@ -128,9 +132,11 @@ proc makeStreamFn*(a: OpenAIAdapter): StreamFn =
 
 proc newOpenAIAdapter*(apiKey:   string;
                        model    = OpenAIDefaultModel;
-                       endpoint = ""): OpenAIAdapter =
+                       endpoint = "";
+                       providerName = "OpenAI"): OpenAIAdapter =
   OpenAIAdapter(
     apiKey:   apiKey,
     model:    model,
     endpoint: endpoint,
+    providerName: if providerName.len > 0: providerName else: "OpenAI",
   )

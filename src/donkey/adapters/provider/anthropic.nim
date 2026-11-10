@@ -5,7 +5,7 @@
 ## contract, e.g. https://api.z.ai/api/anthropic
 ## Auth: x-api-key header (NOT Bearer)
 ## Required header: anthropic-version: 2023-06-01
-## Default model: claude-opus-4-6
+## Default model: claude-sonnet-5-5
 ##
 ## Quirks absorbed here:
 ##   - `system` is a top-level field, not a message in the array
@@ -26,7 +26,7 @@ import ./sse
 const
   AnthropicEndpoint*     = "https://api.anthropic.com/v1/messages"
   AnthropicDefaultBaseUrl* = "https://api.anthropic.com"
-  AnthropicDefaultModel* = "claude-opus-4-6"
+  AnthropicDefaultModel* = "claude-sonnet-5-5"
   AnthropicVersion*      = "2023-06-01"
   AnthropicDefaultMaxTok = 4096
 

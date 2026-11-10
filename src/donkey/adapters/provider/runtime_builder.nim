@@ -3,6 +3,7 @@
 import ../../domain/message
 import ../../core/pipeops
 import ../../ports/provider
+import ../../core/providers/smart_routing
 import zhipu
 import openrouter
 import anthropic
@@ -14,6 +15,7 @@ import deepseek
 
 const
   ZaiAnthropicBaseUrl = "https://api.z.ai/api/anthropic"
+  GroqEndpoint        = "https://api.groq.com/openai/v1/chat/completions"
 
 proc makeFn[A](a: A): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
@@ -96,6 +98,17 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
     )
   of "deepseek":
     let adapter = newDeepSeekAdapter(spec.apiKey, model = spec.modelName)
+    ProviderBundle(
+      completeFn: makeFn(adapter),
+      streamFn:   adapter.makeStreamFn(),
+    )
+  of "groq":
+    let adapter = newOpenAIAdapter(
+      spec.apiKey,
+      model = if spec.modelName.len > 0: spec.modelName else: GroqDefaultModel,
+      endpoint = GroqEndpoint,
+      providerName = "Groq",
+    )
     ProviderBundle(
       completeFn: makeFn(adapter),
       streamFn:   adapter.makeStreamFn(),

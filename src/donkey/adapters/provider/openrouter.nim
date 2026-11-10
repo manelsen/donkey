@@ -18,7 +18,7 @@ import ./sse
 
 const
   OpenRouterEndpoint*    = "https://openrouter.ai/api/v1/chat/completions"
-  OpenRouterDefaultModel = "openai/gpt-4o-mini"
+  OpenRouterDefaultModel* = "openai/gpt-6.1-sol"
   OpenRouterReferer*     = OpenRouterRefererUrl
   OpenRouterTitle*       = AppName
 

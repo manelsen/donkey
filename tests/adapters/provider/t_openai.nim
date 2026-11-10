@@ -3,10 +3,9 @@
 ## Tests cover pure helpers and non-network functionality.
 ## Live HTTP tests require a valid OpenAI API key and are skipped in CI.
 
-import std/[json, unittest]
+import std/unittest
 import donkey/core/pipeops
 import donkey/adapters/provider/openai
-import donkey/domain/message
 
 # ── caps ───────────────────────────────────────────────────────────────────────
 
@@ -15,6 +14,13 @@ suite "openai caps":
     let a = newOpenAIAdapter("test-key", model = "gpt-4o")
     let c = caps(a)
     check c.name == "openai/gpt-4o"
+    check a.displayName == "OpenAI"
+
+  test "supports custom providerName such as Groq":
+    let a = newOpenAIAdapter("test-key", model = "llama-3.3-70b-versatile", providerName = "Groq")
+    let c = caps(a)
+    check c.name == "groq/llama-3.3-70b-versatile"
+    check a.displayName == "Groq"
 
   test "advertises streaming and tool calling":
     let a = newOpenAIAdapter("test-key")
@@ -68,9 +74,9 @@ suite "openai parseOpenAISseLine":
 # ── constructor ────────────────────────────────────────────────────────────────
 
 suite "openai newOpenAIAdapter":
-  test "defaults to gpt-4o-mini":
+  test "defaults to gpt-6.1-sol":
     let a = newOpenAIAdapter("key123")
-    check a.model == "gpt-4o-mini"
+    check a.model == "gpt-6.1-sol"
     check a.apiKey == "key123"
     check a.endpoint == ""
 
