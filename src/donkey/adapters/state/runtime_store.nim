@@ -431,11 +431,13 @@ proc markSent(store: RuntimeStateStore;
               updatedAtMs: int64): Result[void, string] {.raises: [].} =
   if id in store.pending:
     var record = store.pending.getOrDefault(id)
-    store.pending.del(id)
     record.state = dlsSent
     record.updatedAtMs = updatedAtMs
     record.error = ""
-    store.appendLedger(record)
+    let saved = store.appendLedger(record)
+    if saved.isOk:
+      store.pending.del(id)
+    saved
   else:
     ## Restart or failed pending write: emit a minimal event. Replay merges it
     ## with any earlier full event.
@@ -447,11 +449,13 @@ proc markFailed(store: RuntimeStateStore;
                 error: string): Result[void, string] {.raises: [].} =
   if id in store.pending:
     var record = store.pending.getOrDefault(id)
-    store.pending.del(id)
     record.state = dlsFailed
     record.updatedAtMs = updatedAtMs
     record.error = error
-    store.appendLedger(record)
+    let saved = store.appendLedger(record)
+    if saved.isOk:
+      store.pending.del(id)
+    saved
   else:
     store.appendMinimalEvent(id, dlsFailed, updatedAtMs, error)
 
