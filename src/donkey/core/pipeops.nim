@@ -10,7 +10,7 @@
 ## |>-> — pipe into last arg: a |>-> f(x) ≡ f(x, a)
 ## >>= — monadic bind:  r >>= f  ≡  r.andThen(f)  (fallible steps, Result chain)
 
-import std/[macros, monotimes]
+import std/[macros, monotimes, times]
 import results
 export results
 
@@ -42,6 +42,13 @@ proc nowMs*(): int64 =
   ## Returns current monotonic time in milliseconds.
   let t = getMonoTime()
   (t.ticks div 1_000_000).int64
+
+proc epochMs*(): int64 =
+  ## Returns current wall-clock time in milliseconds since the Unix epoch.
+  ## Use this for persisted timestamps; use `nowMs` for elapsed-time logic.
+  let t = getTime()
+  t.toUnix * 1000 + int64(t.nanosecond div 1_000_000)
+
 
 func splitChunks*(text: string; maxLen: int): seq[string] =
   ## Splits text into chunks of at most maxLen characters.

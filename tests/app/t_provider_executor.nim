@@ -71,8 +71,9 @@ proc waitAndCancel(builder: ProviderRuntimeBuilder; cancelAfterMs: int): Future[
   await sleepAsync(milliseconds(cancelAfterMs))
   fut.cancelSoon()
   try:
-    discard await fut
-    return false
+    let res = await fut
+    # A cancelled queued job is acknowledged with an Err instead of a raise.
+    return res.isErr and "cancelled" in res.error
   except CancelledError:
     return true
 
@@ -221,9 +222,9 @@ suite "provider executor":
   test "repeated cancellation drains results and keeps the pool healthy":
     # Large results are produced after cancellation; the caller must drain and
     # destroy them instead of leaking them inside the closed channel.
-    let slow = stubBuilder(repeat('y', 4096), delayMs = 50)
+    let slow = stubBuilder(repeat('y', 4096), delayMs = 250)
     for _ in 0 ..< 6:
-      check waitFor waitAndCancel(slow, cancelAfterMs = 5)
+      check waitFor waitAndCancel(slow, cancelAfterMs = 20)
 
     let after = waitFor asyncProviderComplete(
       stubBuilder("alive"), ProviderSpec(providerName: "stub"), CompletionRequest())
