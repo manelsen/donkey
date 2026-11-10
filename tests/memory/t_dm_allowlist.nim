@@ -7,6 +7,14 @@ import donkey/core/types
 
 suite "MdFileAdapter — DM allowlist":
 
+  test "ids with surrounding spaces are rejected":
+    let tmp = getTempDir() / "donkey_test_dm_allowlist_spaces"
+    removeDir(tmp)
+    defer: removeDir(tmp)
+    let memory = MdFileAdapter(paddocksDir: tmp / "paddocks")
+    check memory.addDmAllowed(UserId("u1 ")).isErr
+    check not memory.isDmAllowed(UserId("u1 "))
+
   test "unknown user is denied":
     let tmp = getTempDir() / "donkey_test_dm_allowlist_empty"
     removeDir(tmp)
