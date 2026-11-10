@@ -992,6 +992,8 @@ func buildDaemonSessionServices(ctx: DaemonContext;
                                 cfg: DonkeyConfig;
                                 memory: MdFileAdapter;
                                 log: Logger): SessionIngressServices =
+  ctx.runtime.sm.dmPolicy = cfg.dmPolicy
+  ctx.runtime.sm.isDmAllowed = proc(userId: UserId): bool = memory.isDmAllowed(userId)
   buildSessionIngressServices(
     memory.toRuntimePort(),
     cfg,

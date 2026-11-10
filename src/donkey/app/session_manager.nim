@@ -11,6 +11,7 @@ import chronos/asyncsync
 import ../domain/agent_message
 import ../domain/message
 import ../core/session/session_ingress
+import ../core/security/dm_policy
 
 type
   SessionEntry* = object
@@ -31,6 +32,8 @@ type
 
   SessionManager* = object
     entries*: Table[string, SessionEntry]  ## string(UserId) → entry
+    dmPolicy*: DmPolicy
+    isDmAllowed*: proc(userId: UserId): bool {.gcsafe.}
 
 proc newSessionEntry(toolCatalogSignature: SessionRuntimeSignature): SessionEntry =
   SessionEntry(
@@ -44,6 +47,14 @@ proc newSessionEntry(toolCatalogSignature: SessionRuntimeSignature): SessionEntr
 
 proc init*(sm: var SessionManager) =
   sm.entries = initTable[string, SessionEntry]()
+  sm.dmPolicy = DmPolicyOpen
+  sm.isDmAllowed = nil
+
+proc allows*(sm: SessionManager; userId: UserId): bool =
+  ## Channel-level authorization used before command/callback dispatch.
+  if sm.dmPolicy == DmPolicyOpen:
+    return true
+  sm.isDmAllowed != nil and sm.isDmAllowed(userId)
 
 func hasSession*(sm: SessionManager; userId: UserId): bool =
   $userId in sm.entries
