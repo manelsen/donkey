@@ -3,7 +3,7 @@
 ## No sockets are opened: the pure request→response handler is exercised
 ## directly, and dispatched payloads are observed through each adapter queue.
 
-import std/[json, os, strutils, tables, times, unittest]
+import std/[json, net, os, strutils, tables, times, unittest]
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/adapters/channel/slack
@@ -78,6 +78,26 @@ suite "webhook receiver — Slack":
     let secret = "slack-signing"
     let body = """{"type":"url_verification","challenge":"ch-1"}"""
     let ts = $(epochTime().int64 - 3600)
+    let cfg = WebhookConfig(slackSigningSecret: secret)
+    let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
+      headers = [("X-Slack-Request-Timestamp", ts),
+                 ("X-Slack-Signature", slackSig(secret, ts, body))]))
+    check resp.status == 403
+
+  test "extreme negative timestamp is rejected without overflowing":
+    let secret = "slack-signing"
+    let body = """{"type":"url_verification","challenge":"ch-1"}"""
+    let ts = "-9223372036854775000"
+    let cfg = WebhookConfig(slackSigningSecret: secret)
+    let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
+      headers = [("X-Slack-Request-Timestamp", ts),
+                 ("X-Slack-Signature", slackSig(secret, ts, body))]))
+    check resp.status == 403
+
+  test "extreme positive timestamp is rejected":
+    let secret = "slack-signing"
+    let body = """{"type":"url_verification","challenge":"ch-1"}"""
+    let ts = "9223372036854775807"
     let cfg = WebhookConfig(slackSigningSecret: secret)
     let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
       headers = [("X-Slack-Request-Timestamp", ts),
@@ -167,7 +187,7 @@ suite "webhook receiver — DingTalk":
     var dt = newDingTalkAdapter("key", "dt-secret", "robot", HookTmp / "dt.tsv")
     dt.openQueue()
     let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
-    let ts = $epochTime().int64
+    let ts = $((epochTime() * 1000).int64)
     let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
                    "text":{"content":"hi dt"}}"""
     let sign = hmacSha256Base64("dt-secret", ts & "\n" & "dt-secret")
@@ -186,12 +206,52 @@ suite "webhook receiver — DingTalk":
     let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
     let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
                    "text":{"content":"nope"}}"""
+    let ts = $((epochTime() * 1000).int64)
     let resp = handleWebhookRequest(cfg, mkReq("POST", DingTalkPath, body,
-      headers = [("timestamp", "1"), ("sign", "bogus")]))
+      headers = [("timestamp", ts), ("sign", "bogus")]))
     check resp.status == 403
 
     var dt = newDingTalkAdapter("key", "dt-secret", "robot", HookTmp / "dt.tsv")
     check not dt.tryRecvEvent()[0]
+
+  test "expired timestamp is rejected (replay window)":
+    clearQueues()
+    let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
+    let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
+                   "text":{"content":"old"}}"""
+    let ts = $((epochTime().int64 - 7200) * 1000)
+    let sign = hmacSha256Base64("dt-secret", ts & "\n" & "dt-secret")
+
+    let resp = handleWebhookRequest(cfg, mkReq("POST", DingTalkPath, body,
+      headers = [("timestamp", ts), ("sign", sign)]))
+
+    check resp.status == 403
+    var dt = newDingTalkAdapter("key", "dt-secret", "robot", HookTmp / "dt.tsv")
+    check not dt.tryRecvEvent()[0]
+
+  test "future timestamp is rejected (replay window)":
+    clearQueues()
+    let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
+    let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
+                   "text":{"content":"future"}}"""
+    let ts = $((epochTime().int64 + 7200) * 1000)
+    let sign = hmacSha256Base64("dt-secret", ts & "\n" & "dt-secret")
+
+    let resp = handleWebhookRequest(cfg, mkReq("POST", DingTalkPath, body,
+      headers = [("timestamp", ts), ("sign", sign)]))
+
+    check resp.status == 403
+
+  test "non-numeric and extreme timestamps are rejected without overflowing":
+    let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
+    let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
+                   "text":{"content":"x"}}"""
+
+    for ts in ["not-a-number", "-9223372036854775000"]:
+      let sign = hmacSha256Base64("dt-secret", ts & "\n" & "dt-secret")
+      let resp = handleWebhookRequest(cfg, mkReq("POST", DingTalkPath, body,
+        headers = [("timestamp", ts), ("sign", sign)]))
+      check resp.status == 403
 
 suite "webhook receiver — Matrix":
 
@@ -276,3 +336,32 @@ suite "webhook receiver — exposure guard":
   test "starting a receiver without any secret is refused":
     let r = startWebhookReceiver(WebhookConfig(), 9099, "127.0.0.1", hookLog)
     check r.isErr
+    check "no webhook channel" in r.error
+
+  test "invalid port is refused":
+    let cfg = WebhookConfig(slackSigningSecret: "x")
+    for port in [0, -1, 70000]:
+      let r = startWebhookReceiver(cfg, port, "127.0.0.1", hookLog)
+      check r.isErr
+      check "invalid webhook port" in r.error
+
+  test "bind failure is reported and does not mark the receiver started":
+    var blocker = newSocket()
+    blocker.setSockOpt(OptReuseAddr, true)
+    blocker.bindAddr(Port(0), "127.0.0.1")
+    blocker.listen()
+    let (_, busyPort) = blocker.getLocalAddr()
+
+    let cfg = WebhookConfig(slackSigningSecret: "x")
+    let first = startWebhookReceiver(cfg, int(busyPort), "127.0.0.1", hookLog)
+    check first.isErr
+    check "cannot bind" in first.error
+
+    ## A second attempt must reach the bind again instead of short-circuiting on
+    ## `gWebhookStarted`, proving the failed start did not set the flag.
+    let second = startWebhookReceiver(cfg, int(busyPort), "127.0.0.1", hookLog)
+    check second.isErr
+    check "cannot bind" in second.error
+    check not second.error.contains("already started")
+
+    blocker.close()
