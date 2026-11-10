@@ -108,6 +108,7 @@ suite "ctl_handler — ctlUserRevoke":
       ctlUserRevoke(mem, "eve", true)
       let ctx = mem.loadContext(UserId("eve"))
       check "revoked" in ctx.userMd
+      check not mem.isDmAllowed(UserId("eve"))
     finally:
       cleanupPaddock(tmp)
 
@@ -120,6 +121,7 @@ suite "ctl_handler — ctlUserRevoke":
       ctlUserRevoke(mem, "frank", false)
       let ctx = mem.loadContext(UserId("frank"))
       check "active" in ctx.userMd
+      check mem.isDmAllowed(UserId("frank"))
     finally:
       cleanupPaddock(tmp)
 

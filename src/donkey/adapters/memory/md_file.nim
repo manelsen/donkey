@@ -396,6 +396,48 @@ proc updateUserField*(a: MdFileAdapter; userId: UserId; field, value: string) =
 proc isRevoked*(a: MdFileAdapter; userId: UserId): bool =
   isRevokedUserMd(readOrEmpty(a.userMdPath(userId)))
 
+# ── DM allowlist ──────────────────────────────────────────────────────────────
+
+func dmAllowlistPath*(a: MdFileAdapter): string =
+  ## Instance-level allowlist, stored outside the paddocks.
+  parentDir(a.paddocksDir) / "state" / "dm_allowlist.txt"
+
+proc isDmAllowed*(a: MdFileAdapter; userId: UserId): bool =
+  ## Returns true when the user id is explicitly present in the allowlist.
+  let path = a.dmAllowlistPath()
+  if not fileExists(path):
+    return false
+  try:
+    for line in lines(path):
+      if line.strip == $userId:
+        return true
+  except CatchableError:
+    discard
+  false
+
+proc addDmAllowed*(a: MdFileAdapter; userId: UserId) =
+  let path = a.dmAllowlistPath()
+  if a.isDmAllowed(userId):
+    return
+  createDir(parentDir(path))
+  var f = open(path, fmAppend)
+  defer: f.close()
+  f.writeLine($userId)
+
+proc removeDmAllowed*(a: MdFileAdapter; userId: UserId) =
+  let path = a.dmAllowlistPath()
+  if not fileExists(path):
+    return
+  try:
+    var kept: seq[string] = @[]
+    for line in lines(path):
+      let value = line.strip
+      if value.len > 0 and value != $userId:
+        kept.add(value)
+    writeFile(path, if kept.len > 0: kept.join("\n") & "\n" else: "")
+  except CatchableError:
+    discard
+
 proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) =
   a.ensurePaddock(userId)
   let path = a.memoryMdPath(userId)

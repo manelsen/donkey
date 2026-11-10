@@ -48,6 +48,26 @@ suite "http_gateway request parsing":
     check r.meth == "GET"
     check r.path == "/api/logs"
 
+suite "http_gateway auth":
+
+  test "empty token keeps local behavior":
+    check isAuthorized("", "")
+
+  test "bearer token matches case-insensitively on the scheme":
+    check isAuthorized("Bearer secret", "secret")
+    check isAuthorized("bearer secret", "secret")
+
+  test "wrong or missing token is rejected":
+    check not isAuthorized("Bearer nope", "secret")
+    check not isAuthorized("", "secret")
+
+  test "non-loopback bind requires a token":
+    check gatewayBindIsAllowed("127.0.0.1", "")
+    check gatewayBindIsAllowed("localhost", "")
+    check not gatewayBindIsAllowed("0.0.0.0", "")
+    check not gatewayBindIsAllowed("192.168.1.10", "")
+    check gatewayBindIsAllowed("0.0.0.0", "secret")
+
 suite "http_gateway SSE formatting":
 
   test "buildSseEvent produces correct SSE format":

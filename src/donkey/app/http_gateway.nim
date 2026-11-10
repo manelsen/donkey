@@ -38,6 +38,29 @@ func resolveGatewayPort*(raw: string): int =
   except ValueError:
     GatewayDefaultPort
 
+func parseBearerToken(header: string): string =
+  ## Extracts the token from an "Authorization: Bearer <token>" value.
+  let value = header.strip()
+  const prefix = "bearer "
+  if value.len > prefix.len and value.toLowerAscii().startsWith(prefix):
+    value[prefix.len .. ^1].strip()
+  else:
+    ""
+
+func isAuthorized*(authHeader, token: string): bool =
+  ## Empty token keeps the historical local-only behavior; otherwise a
+  ## matching Bearer token is required on every request.
+  if token.len == 0:
+    return true
+  parseBearerToken(authHeader) == token
+
+func gatewayBindIsAllowed*(bindAddr, token: string): bool =
+  ## Non-loopback binds require a token; loopback binds do not.
+  if token.len > 0:
+    return true
+  let host = bindAddr.strip().toLowerAscii()
+  host in ["127.0.0.1", "localhost", "::1", "[::1]"]
+
 type
   GatewayRequest* = object
     meth*: string
@@ -209,6 +232,7 @@ proc handleGatewayConn(client: Socket;
                         logFn:    GatewayLogFn;
                         eventFn:  GatewayEventFn;
                         inboundFn: GatewayInboundFn;
+                        authToken: string;
                         log:      Logger) =
   try:
     let requestLine = client.readHttpLine()
@@ -219,6 +243,7 @@ proc handleGatewayConn(client: Socket;
     ## Drain headers
     var rawPath = if requestLine.splitWhitespace().len >= 2: requestLine.splitWhitespace()[1] else: "/"
     var contentLength = 0
+    var authHeader = ""
     while true:
       let h = client.readHttpLine()
       if h.len == 0: break
@@ -226,8 +251,19 @@ proc handleGatewayConn(client: Socket;
       if lc.startsWith("content-length:"):
         let val = lc[14..^1].strip()
         try: contentLength = parseInt(val) except ValueError: discard
+      elif lc.startsWith("authorization:"):
+        authHeader = h[14..^1].strip()
 
     let req = parseGatewayRequest(requestLine)
+    if req.meth == "OPTIONS":
+      client.sendResponse("204 No Content", "text/plain", "", log)
+      client.close()
+      return
+    if not isAuthorized(authHeader, authToken):
+      client.sendResponse("401 Unauthorized", "application/json",
+                          "{\"error\":\"unauthorized\"}\n", log)
+      client.close()
+      return
     let action = routeGatewayRequest(req)
 
     case action
@@ -316,6 +352,8 @@ proc handleGatewayConn(client: Socket;
 
 type GatewayArgs = object
   port:      int
+  bindAddr:  string
+  authToken: string
   statusFn:  GatewayStatusFn
   logFn:     GatewayLogFn
   eventFn:   GatewayEventFn
@@ -332,12 +370,13 @@ proc gatewayThread(args: GatewayArgs) {.thread.} =
   {.cast(gcsafe).}:
     var server = newSocket()
     server.setSockOpt(OptReuseAddr, true)
-    server.bindAddr(Port(args.port))
+    server.bindAddr(Port(args.port), args.bindAddr)
     server.listen()
     while true:
       var client: Socket
       server.accept(client)
-      handleGatewayConn(client, args.statusFn, args.logFn, args.eventFn, args.inboundFn, args.log)
+      handleGatewayConn(client, args.statusFn, args.logFn, args.eventFn,
+                        args.inboundFn, args.authToken, args.log)
 
 var gGatewayThread: Thread[GatewayArgs]
 
@@ -346,6 +385,8 @@ proc startHttpGateway*(port: int;
                        logFn:    GatewayLogFn;
                        eventFn:  GatewayEventFn = nil;
                        inboundFn: GatewayInboundFn = nil;
+                       bindAddr = "127.0.0.1";
+                       authToken = "";
                        log:       Logger = newLogger("http_gateway")) =
   ## Starts the HTTP gateway on a dedicated OS thread.
   ## statusFn, logFn, and eventFn are called on each request; they must be gcsafe.
@@ -356,6 +397,7 @@ proc startHttpGateway*(port: int;
     gGatewayEventFn   = eventFn
     gGatewayInboundFn = inboundFn
     gGatewayLog       = log
-    let args = GatewayArgs(port: port, statusFn: statusFn, logFn: logFn,
+    let args = GatewayArgs(port: port, bindAddr: bindAddr, authToken: authToken,
+                           statusFn: statusFn, logFn: logFn,
                            eventFn: eventFn, inboundFn: inboundFn, log: log)
     createThread(gGatewayThread, gatewayThread, args)

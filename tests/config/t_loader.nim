@@ -4,6 +4,7 @@ import std/[options, os, strutils, unittest]
 import donkey/config/loader
 import donkey/config/types
 import donkey/core/types
+import donkey/core/security/dm_policy
 
 suite "Config Loader":
 
@@ -32,6 +33,33 @@ suite "Config Loader":
     delEnv("DONKEY_HOME")
     check cfg.home == "/tmp/donkey_test_home"
     check cfg.paddocks == "/tmp/donkey_test_home/paddocks"
+
+  test "parseDmPolicy accepts open/pairing/allowlist":
+    check parseDmPolicy("open").get() == DmPolicyOpen
+    check parseDmPolicy("pairing").get() == DmPolicyPairing
+    check parseDmPolicy("allowlist").get() == DmPolicyAllowlist
+    check parseDmPolicy("nonsense").isNone
+
+  test "reads dm_policy from the security section":
+    let tmp = getTempDir() / "t_loader_dm_policy.toml"
+    writeFile(tmp, """
+[security]
+dm_policy = "allowlist"
+""")
+    defer: removeFile(tmp)
+    check loadConfig(tmp).dmPolicy == DmPolicyAllowlist
+
+  test "DONKEY_DM_POLICY overrides the config file":
+    let tmp = getTempDir() / "t_loader_dm_env.toml"
+    writeFile(tmp, """
+[security]
+dm_policy = "open"
+""")
+    putEnv("DONKEY_DM_POLICY", "allowlist")
+    let cfg = loadConfig(tmp)
+    delEnv("DONKEY_DM_POLICY")
+    removeFile(tmp)
+    check cfg.dmPolicy == DmPolicyAllowlist
 
   test "reads log_level from toml":
     let tmp = getTempDir() / "t_loader_loglevel.toml"

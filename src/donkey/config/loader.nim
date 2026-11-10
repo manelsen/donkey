@@ -12,11 +12,13 @@ import ./types
 import ../core/types
 import ../core/app_meta
 import ../core/pipeops
+import ../core/security/dm_policy
 
 export types
 
 const EnvHome* = "DONKEY_HOME"
 const EnvWebAllowlist* = "DONKEY_WEB_ALLOWLIST"
+const EnvDmPolicy* = "DONKEY_DM_POLICY"
 
 type
   MainConfigPatch* = object
@@ -32,6 +34,7 @@ type
     webAllowlist*: Option[seq[string]]
     toolWebPolicy*: Option[seq[ToolWebPolicy]]
     skillNetPolicy*: Option[seq[SkillNetPolicy]]
+    dmPolicy*: Option[DmPolicy]
 
   SandboxConfigPatch* = object
     invalidSandboxMode*: Option[string]
@@ -97,6 +100,13 @@ proc parseWebAccessRules*(node: TomlValueRef): seq[WebAccessRule] =
   else:
     discard
 
+func parseDmPolicy*(raw: string): Option[DmPolicy] =
+  case raw.strip().toLowerAscii()
+  of "open": some(DmPolicyOpen)
+  of "pairing": some(DmPolicyPairing)
+  of "allowlist", "allow_list": some(DmPolicyAllowlist)
+  else: none(DmPolicy)
+
 proc parseSecurityConfigPatch*(doc: TomlValueRef): SecurityConfigPatch =
   if not doc.hasKey("security"):
     return
@@ -148,6 +158,9 @@ proc parseSecurityConfigPatch*(doc: TomlValueRef): SecurityConfigPatch =
           ))
       result.skillNetPolicy = some(skillPolicy)
 
+  if securitySection.hasKey("dm_policy"):
+    result.dmPolicy = parseDmPolicy(securitySection["dm_policy"].getStr())
+
 proc applySecurityConfigPatch*(patch: SecurityConfigPatch; cfg: DonkeyConfig): DonkeyConfig =
   result = cfg
   if patch.webAllowlist.isSome:
@@ -156,12 +169,19 @@ proc applySecurityConfigPatch*(patch: SecurityConfigPatch; cfg: DonkeyConfig): D
     result.toolWebPolicy = patch.toolWebPolicy.get()
   if patch.skillNetPolicy.isSome:
     result.skillNetPolicy = patch.skillNetPolicy.get()
+  if patch.dmPolicy.isSome:
+    result.dmPolicy = patch.dmPolicy.get()
 
 proc applyEnvOverrides*(cfg: DonkeyConfig): DonkeyConfig =
   result = cfg
   let rawAllowlist = getEnv(EnvWebAllowlist).strip()
   if rawAllowlist.len > 0:
     result.webAllowlist = parseHostList(rawAllowlist)
+  let rawDmPolicy = getEnv(EnvDmPolicy).strip()
+  if rawDmPolicy.len > 0:
+    let parsed = parseDmPolicy(rawDmPolicy)
+    if parsed.isSome:
+      result.dmPolicy = parsed.get()
 
 proc parseMainConfigPatch*(doc: TomlValueRef): MainConfigPatch =
   if not doc.hasKey(ConfigSectionName):

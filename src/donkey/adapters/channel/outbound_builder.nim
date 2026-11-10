@@ -16,6 +16,7 @@ import qq_channel
 import feishu
 import matrix
 import email
+import signal
 import slack
 import dingtalk
 import cli_repl
@@ -69,7 +70,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          slAdapter: ptr SlackAdapter;
                          dtAdapter: ptr DingTalkAdapter;
                          waAdapter: ptr WhatsAppAdapter;
-                         cliAdapter: ptr CliAdapter): OutboundChannelPorts =
+                         cliAdapter: ptr CliAdapter;
+                         signalAdapter: ptr SignalAdapter = nil): OutboundChannelPorts =
 
   # ── Telegram (full capability) ────────────────────────────────────────────
   result.telegram = OutboundChannelPort(
@@ -249,6 +251,19 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     setMessageReaction: unsupportedSetMessageReaction,
     downloadFile: unsupportedDownloadFile,
   )
+
+  # ── Signal — capability descriptor says: send only ───────────────────────
+  if signalAdapter != nil:
+    result.signal = OutboundChannelPort(
+      send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+        signalAdapter[].send(msg),
+      sendReturnId: unsupportedSendReturnId,
+      editMessage: unsupportedEditMessage,
+      sendKeyboard: unsupportedSendKeyboard,
+      editKeyboard: unsupportedEditKeyboard,
+      setMessageReaction: unsupportedSetMessageReaction,
+      downloadFile: unsupportedDownloadFile,
+    )
 
   # ── CLI — capability descriptor says: send, sendReturnId, editMessage ─────
   result.cli = OutboundChannelPort(

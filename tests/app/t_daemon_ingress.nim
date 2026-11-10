@@ -8,6 +8,7 @@ import donkey/app/sandbox
 import donkey/config/types
 import donkey/core/log
 import donkey/core/pipeops
+import donkey/core/security/dm_policy
 import donkey/core/session/session_ingress
 import donkey/domain/agent_message
 import donkey/domain/message
@@ -17,7 +18,9 @@ import donkey/ports/tool
 
 proc makeTestServices(memory: MdFileAdapter;
                       outbox: AsyncQueue[OutboundMessage];
-                      isRevoked: proc(u: UserId): bool {.gcsafe.} = nil): SessionIngressServices =
+                      isRevoked: proc(u: UserId): bool {.gcsafe.} = nil;
+                      isDmAllowed: proc(u: UserId): bool {.gcsafe.} = nil;
+                      dmPolicy: DmPolicy = DmPolicyOpen): SessionIngressServices =
   let stubComplete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] =
     ok(CompletionResponse(text: "ok"))
   let emptyClients: seq[ToolRuntimePort] = @[]
@@ -37,6 +40,8 @@ proc makeTestServices(memory: MdFileAdapter;
     typingFn = nil,
     searchFn = nil,
     isRevoked = isRevoked,
+    isDmAllowed = isDmAllowed,
+    dmPolicy = dmPolicy,
     http = HttpRuntimePort(),
   )
 
@@ -75,6 +80,31 @@ suite "daemon session ingress":
     check first.msgId == "u-ingress-1"
     check second.msgId == "u-ingress-2"
     check first.plan.entry == second.plan.entry
+
+  test "allowlist policy rejects an unknown user":
+    let tmpDir = getTempDir() / "donkey_test_ingress_allowlist"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+    let memory = MdFileAdapter(paddocksDir: tmpDir / "paddocks")
+    let outbox = newAsyncQueue[OutboundMessage]()
+    let services = makeTestServices(
+      memory, outbox,
+      isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false,
+      dmPolicy = DmPolicyAllowlist,
+    )
+    var sm: SessionManager
+    sm.init()
+    var msgSeq = 0
+    let msg = InboundMessage(
+      userId: UserId("u-denied"),
+      channel: ckTelegram,
+      channelId: "42",
+      text: "hello",
+    )
+    discard startSessionIngress(sm, msg, services, msgSeq)
+    check outbox.len == 1
+    let reply = waitFor outbox.get()
+    check "não autorizado" in reply.text
 
   test "enqueueSessionMessage diverts next reply to askInbox":
     var entry = SessionEntry(

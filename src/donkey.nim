@@ -41,6 +41,7 @@ import donkey/adapters/channel/whatsapp
 import donkey/adapters/channel/whatsapp_runtime
 import donkey/adapters/channel/matrix
 import donkey/adapters/channel/email
+import donkey/adapters/channel/signal
 import donkey/adapters/channel/slack
 import donkey/adapters/channel/dingtalk
 import donkey/adapters/channel/cli_repl
@@ -191,13 +192,17 @@ type DaemonAdapters = object
   em: EmailAdapter
   wa: WhatsAppAdapter
   cli: CliAdapter
+  signal: SignalAdapter
 
 proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPorts =
+  let signalPtr =
+    if adapters.signal.account.len > 0: addr adapters.signal
+    else: nil
   buildOutboundPorts(
     addr adapters.tg, addr adapters.dc, addr adapters.wc,
     addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx,
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
-    addr adapters.cli)
+    addr adapters.cli, signalPtr)
 
 const
   RecentRouteSampleLimit = 32
@@ -230,6 +235,8 @@ type DaemonRuntime = ref object
   providerCooldownUntil: Table[string, int64]
   routeHealthPath:      string
   lastReminderCheckMs:  int64
+  lastEmailPollMs:      int64
+  lastSignalPollMs:     int64
   msgSeq:               int
   daemonStartMs:        int64
   downloadDir:          string  ## directory for downloaded files from channels
@@ -389,6 +396,15 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
   if env.whatsappAccessToken.len > 0 and env.whatsappPhoneNumberId.len > 0:
     result.wa = newWhatsAppAdapter(env.whatsappAccessToken, env.whatsappPhoneNumberId,
                                    env.identityPath)
+
+  # Signal (optional - requires a running signal-cli daemon socket)
+  let signalAccount = getEnv("SIGNAL_ACCOUNT").strip()
+  if signalAccount.len > 0:
+    result.signal = newSignalAdapter(
+      signalAccount,
+      env.identityPath,
+      sockPath = getEnv("SIGNAL_SOCKET", SignalDefaultSock),
+    )
 
 func recentRouteSampleTtlSec(): int64 =
   let raw = getEnv("DONKEY_ROUTE_HEALTH_TTL_SEC")
@@ -902,9 +918,19 @@ proc setupIpcServer(cfg: DonkeyConfig;
     ipcLogFn(n)
   let gwEventFn: GatewayEventFn = proc(n: int): seq[AgentEvent] {.gcsafe.} =
     agentEventSnapshot(n)
+  let httpBind = block:
+    let raw = getEnv("DONKEY_HTTP_BIND").strip()
+    if raw.len > 0: raw else: "127.0.0.1"
+  let httpToken = getEnv("DONKEY_HTTP_TOKEN").strip()
   if httpPort > 0:
-    startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn)
-    log.info("HTTP gateway: http://0.0.0.0:" & $httpPort & " (bidirectional SSE enabled)")
+    if not gatewayBindIsAllowed(httpBind, httpToken):
+      log.error("HTTP gateway disabled: non-loopback bind (" & httpBind &
+                ") requires DONKEY_HTTP_TOKEN")
+    else:
+      startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
+                       bindAddr = httpBind, authToken = httpToken)
+      log.info("HTTP gateway: http://" & httpBind & ":" & $httpPort &
+               (if httpToken.len > 0: " (bearer auth enabled)" else: ""))
   else:
     log.info("HTTP gateway: disabled")
 
@@ -927,6 +953,8 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     nil,
     ctx.services.globalSearchFn,
     proc(userId: UserId): bool = memory.isRevoked(userId),
+    proc(userId: UserId): bool = memory.isDmAllowed(userId),
+    cfg.dmPolicy,
     newStdHttpAdapter(allowlist = cfg.webAllowlist).toRuntimePort(),
     buildProviderBundle,
     buildDenoSkillRuntime,
@@ -1175,6 +1203,10 @@ proc handleGatewayFallback(ctx: DaemonContext;
     buildDaemonSessionServices(ctx, cfg, memory, log),
   )
 
+const
+  EmailPollIntervalMs*  = 15_000
+  SignalPollIntervalMs* = 2_000
+
 proc buildDaemonGatewayDrainer(ctx: DaemonContext;
                                cfg: DonkeyConfig;
                                memory: MdFileAdapter;
@@ -1292,6 +1324,34 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           ctx.runtime.daemonStartMs, ctx.runtime.msgSeq, fallback, log)
         true
       ),
+    drainEmail = proc(): bool =
+      if ctx.adapters.em.imapHost.len == 0:
+        return false
+      let now = nowMs()
+      if now - ctx.runtime.lastEmailPollMs < EmailPollIntervalMs:
+        return false
+      ctx.runtime.lastEmailPollMs = now
+      let polled = ctx.adapters.em.pollInbox()
+      if polled.isErr:
+        log.warn("email poll: " & polled.error)
+        return false
+      for msg in polled.value:
+        fallback(msg)
+      polled.value.len > 0,
+    drainSignal = proc(): bool =
+      if ctx.adapters.signal.account.len == 0:
+        return false
+      let now = nowMs()
+      if now - ctx.runtime.lastSignalPollMs < SignalPollIntervalMs:
+        return false
+      ctx.runtime.lastSignalPollMs = now
+      let polled = ctx.adapters.signal.receive()
+      if polled.isErr:
+        log.warn("signal poll: " & polled.error)
+        return false
+      for msg in polled.value:
+        fallback(msg)
+      polled.value.len > 0,
   )
 
 proc withOutboxDrain(ctx: DaemonContext;

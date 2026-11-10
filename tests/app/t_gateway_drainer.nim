@@ -257,6 +257,20 @@ suite "gateway drainer — GatewayDrainer sequencing":
     check total == 9
     check channelLog == @["dc", "wc", "wch", "fs", "qq", "dt", "mx", "tg", "wa"]
 
+  test "drainGatewayEvents includes email and signal when configured":
+    var channelLog: seq[string] = @[]
+    let drainer = initGatewayDrainer(
+      drainEmail  = proc(): bool {.gcsafe.} =
+        {.cast(gcsafe).}: channelLog.add("em")
+        true,
+      drainSignal = proc(): bool {.gcsafe.} =
+        {.cast(gcsafe).}: channelLog.add("sig")
+        true,
+    )
+    let total = drainGatewayEvents(drainer)
+    check total == 2
+    check channelLog == @["em", "sig"]
+
   test "drainGatewayEvents skips unconfigured (nil) channels safely":
     var channelLog: seq[string] = @[]
 
