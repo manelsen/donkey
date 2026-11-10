@@ -418,6 +418,8 @@ proc isDmAllowed*(a: MdFileAdapter; userId: UserId): bool =
 
 proc addDmAllowed*(a: MdFileAdapter; userId: UserId): Result[void, string] =
   let path = a.dmAllowlistPath()
+  if ($userId).strip.len == 0 or '\n' in $userId or '\r' in $userId:
+    return err("dm allowlist add failed: invalid user id")
   if a.isDmAllowed(userId):
     return ok()
   try:

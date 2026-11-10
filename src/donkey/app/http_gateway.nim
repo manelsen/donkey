@@ -63,12 +63,14 @@ func isAuthorized*(authHeader, token: string): bool =
     return true
   constantTimeEq(parseBearerToken(authHeader), token)
 
-func gatewayBindIsAllowed*(bindAddr, token: string): bool =
-  ## Non-loopback binds require a token; loopback binds do not.
-  if token.len > 0:
-    return true
+func gatewayBindIsAllowed*(bindAddr, token: string;
+                           allowInsecure = false): bool =
+  ## Loopback is always allowed. Non-loopback requires a token AND an explicit
+  ## opt-in because this gateway speaks cleartext HTTP.
   let host = bindAddr.strip().toLowerAscii()
-  host in ["127.0.0.1", "localhost", "::1", "[::1]"]
+  if host in ["127.0.0.1", "localhost", "::1", "[::1]"]:
+    return true
+  allowInsecure and token.len > 0
 
 type
   GatewayRequest* = object
@@ -258,7 +260,7 @@ proc handleGatewayConn(client: Socket;
       if h.len == 0: break
       let lc = h.toLowerAscii()
       if lc.startsWith("content-length:"):
-        let val = lc[14..^1].strip()
+        let val = lc[15..^1].strip()
         try: contentLength = parseInt(val) except ValueError: discard
       elif lc.startsWith("authorization:"):
         authHeader = h[14..^1].strip()
@@ -375,13 +377,16 @@ var gGatewayEventFn:  GatewayEventFn
 var gGatewayInboundFn: GatewayInboundFn
 var gGatewayLog:      Logger
 
-proc applyClientTimeouts(sock: Socket; seconds: int = 10) =
+proc applyClientTimeouts(sock: Socket; seconds: int = 10): Result[void, string] =
   ## Bounds header reads and sends from a connected client.
   var tv: Timeval
   tv.tv_sec = Time(seconds)
   tv.tv_usec = Suseconds(0)
-  discard setsockopt(sock.getFd, SOL_SOCKET, SO_RCVTIMEO, addr tv, SockLen(sizeof(tv)))
-  discard setsockopt(sock.getFd, SOL_SOCKET, SO_SNDTIMEO, addr tv, SockLen(sizeof(tv)))
+  if setsockopt(sock.getFd, SOL_SOCKET, SO_RCVTIMEO, addr tv, SockLen(sizeof(tv))) != 0:
+    return err("SO_RCVTIMEO failed")
+  if setsockopt(sock.getFd, SOL_SOCKET, SO_SNDTIMEO, addr tv, SockLen(sizeof(tv))) != 0:
+    return err("SO_SNDTIMEO failed")
+  ok()
 
 proc gatewayThread(args: GatewayArgs) {.thread.} =
   {.cast(gcsafe).}:
@@ -407,7 +412,11 @@ proc gatewayThread(args: GatewayArgs) {.thread.} =
     while true:
       var client: Socket
       server.accept(client)
-      applyClientTimeouts(client)
+      let timeoutResult = applyClientTimeouts(client)
+      if timeoutResult.isErr:
+        args.log.warn("http_gateway: " & timeoutResult.error)
+        client.close()
+        continue
       handleGatewayConn(client, args.statusFn, args.logFn, args.eventFn,
                         args.inboundFn, args.authToken, args.log)
 

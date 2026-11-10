@@ -23,7 +23,7 @@
 ##   |>   — raw |> parseEmail
 ##   >>=  — (reserved for future chained IMAP command sequences)
 
-import std/[net, strutils, base64]
+import std/[net, strutils, base64, times]
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
@@ -56,12 +56,18 @@ proc imapSend(s: ImapSession; line: string): Result[void, string] =
   except CatchableError as e:
     err("IMAP send: " & e.msg)
 
+const MaxImapLiteralBytes* = 10 * 1024 * 1024
+const ImapResponseDeadlineSec* = 30
+
 proc imapReadResponse(s: ImapSession; tag: string): Result[seq[string], string] =
   ## Reads IMAP response lines until the tagged completion line (OK/NO/BAD).
   ## Handles IMAP string literals {n} by reading exactly n bytes.
   try:
+    let deadline = now() + initDuration(seconds = ImapResponseDeadlineSec)
     var lines: seq[string]
     while true:
+      if now() > deadline:
+        return err("IMAP response deadline exceeded")
       let line = s.sock.recvLine()
       # Detect IMAP literal: line ends with {n}
       if line.len > 2 and line[^1] == '}':
@@ -71,6 +77,8 @@ proc imapReadResponse(s: ImapSession; tag: string): Result[seq[string], string] 
           var litSize = 0
           try: litSize = parseInt(sizeStr)
           except ValueError: discard
+          if litSize > MaxImapLiteralBytes:
+            return err("IMAP literal exceeds size limit")
           lines.add(line)
           # Read exactly litSize bytes
           if litSize > 0:

@@ -525,9 +525,13 @@ proc loadRecentRouteSamples(runtime: DaemonRuntime) =
   except CatchableError:
     discard
 
+var gRoutingLockReady = false
+
 proc initDaemonRuntime(home: string): DaemonRuntime =
   new(result)
-  initLock(gRoutingLock)
+  if not gRoutingLockReady:
+    initLock(gRoutingLock)
+    gRoutingLockReady = true
   result.globalOutbox = newAsyncQueue[OutboundMessage]()
   result.sm.init()
   result.presentationState = initPresentationState()
@@ -936,10 +940,11 @@ proc setupIpcServer(cfg: DonkeyConfig;
     let raw = getEnv("DONKEY_HTTP_BIND").strip()
     if raw.len > 0: raw else: "127.0.0.1"
   let httpToken = getEnv("DONKEY_HTTP_TOKEN").strip()
+  let httpAllowInsecure = getEnv("DONKEY_HTTP_ALLOW_INSECURE").strip() == "1"
   if httpPort > 0:
-    if not gatewayBindIsAllowed(httpBind, httpToken):
+    if not gatewayBindIsAllowed(httpBind, httpToken, httpAllowInsecure):
       log.error("HTTP gateway disabled: non-loopback bind (" & httpBind &
-                ") requires DONKEY_HTTP_TOKEN")
+                ") requires DONKEY_HTTP_TOKEN and DONKEY_HTTP_ALLOW_INSECURE=1")
     else:
       startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
                        bindAddr = httpBind, authToken = httpToken)

@@ -61,12 +61,13 @@ suite "http_gateway auth":
     check not isAuthorized("Bearer nope", "secret")
     check not isAuthorized("", "secret")
 
-  test "non-loopback bind requires a token":
+  test "non-loopback bind requires a token and explicit insecure opt-in":
     check gatewayBindIsAllowed("127.0.0.1", "")
     check gatewayBindIsAllowed("localhost", "")
     check not gatewayBindIsAllowed("0.0.0.0", "")
     check not gatewayBindIsAllowed("192.168.1.10", "")
-    check gatewayBindIsAllowed("0.0.0.0", "secret")
+    check not gatewayBindIsAllowed("0.0.0.0", "secret")
+    check gatewayBindIsAllowed("0.0.0.0", "secret", allowInsecure = true)
 
 suite "http_gateway SSE formatting":
 
