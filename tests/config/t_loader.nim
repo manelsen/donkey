@@ -40,6 +40,21 @@ suite "Config Loader":
     check parseDmPolicy("allowlist").get() == DmPolicyAllowlist
     check parseDmPolicy("nonsense").isNone
 
+  test "invalid dm_policy is recorded for startup rejection":
+    let tmp = getTempDir() / "t_loader_bad_dm_policy.toml"
+    writeFile(tmp, """
+[security]
+dm_policy = "nonsense"
+""")
+    defer: removeFile(tmp)
+    check loadConfig(tmp).invalidDmPolicy == "nonsense"
+
+  test "invalid DONKEY_DM_POLICY is recorded for startup rejection":
+    putEnv("DONKEY_DM_POLICY", "nonsense")
+    let cfg = loadConfig("/tmp/donkey_nonexistent_12345.toml")
+    delEnv("DONKEY_DM_POLICY")
+    check cfg.invalidDmPolicy == "nonsense"
+
   test "reads dm_policy from the security section":
     let tmp = getTempDir() / "t_loader_dm_policy.toml"
     writeFile(tmp, """

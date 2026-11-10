@@ -178,7 +178,7 @@ func looksLikePassword(s: string): bool =
     if c in {' ', '\t', '\n', '\r'}: return false
   true
 
-func isContextKeyword(keyPart: string): bool =
+func isContextKeyword*(keyPart: string): bool =
   ## Returns true if keyPart is (or ends with) a known context word.
   for cw in ContextWords:
     if keyPart == cw or

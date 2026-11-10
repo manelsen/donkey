@@ -1,6 +1,7 @@
 ## donkey — AI agent system entry point.
 
 import std/[algorithm, json, os, parseopt, strutils, tables, terminal, times]
+import locks
 import chronos
 import chronos/asyncsync
 import chronos/timer as ctimer
@@ -71,6 +72,16 @@ import donkey/app/daemon_start_handler
 import donkey/ctl_handler
 import donkey/ports/memory
 import donkey/adapters/ipc/types    as ipcTypes
+
+var gRoutingLock: Lock
+
+template withRouteLock(body: untyped): untyped =
+  block:
+    acquire(gRoutingLock)
+    try:
+      body
+    finally:
+      release(gRoutingLock)
 
 const Version* = AppVersion
 
@@ -400,10 +411,11 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
   # Signal (optional - requires a running signal-cli daemon socket)
   let signalAccount = getEnv("SIGNAL_ACCOUNT").strip()
   if signalAccount.len > 0:
+    let rawSock = getEnv("SIGNAL_SOCKET").strip()
     result.signal = newSignalAdapter(
       signalAccount,
       env.identityPath,
-      sockPath = getEnv("SIGNAL_SOCKET", SignalDefaultSock),
+      sockPath = if rawSock.len > 0: rawSock else: SignalDefaultSock,
     )
 
 func recentRouteSampleTtlSec(): int64 =
@@ -514,6 +526,7 @@ proc loadRecentRouteSamples(runtime: DaemonRuntime) =
 
 proc initDaemonRuntime(home: string): DaemonRuntime =
   new(result)
+  initLock(gRoutingLock)
   result.globalOutbox = newAsyncQueue[OutboundMessage]()
   result.sm.init()
   result.presentationState = initPresentationState()
@@ -885,11 +898,11 @@ proc setupIpcServer(cfg: DonkeyConfig;
       sessions:      sessions,
       channels:      activeChannels,
       providers:     availableProviderNames(detectProviderAvailability()),
-      routeCounts:   runtime.topRouteCounts(),
-      routeMetrics:  runtime.topRouteMetrics(),
-      recentRouteMetrics: runtime.topRecentRouteMetrics(),
-      recentProviderMetrics: runtime.topRecentProviderMetrics(),
-      providerCooldowns: runtime.activeProviderCooldowns(),
+      routeCounts:   withRouteLock(runtime.topRouteCounts()),
+      routeMetrics:  withRouteLock(runtime.topRouteMetrics()),
+      recentRouteMetrics: withRouteLock(runtime.topRecentRouteMetrics()),
+      recentProviderMetrics: withRouteLock(runtime.topRecentProviderMetrics()),
+      providerCooldowns: withRouteLock(runtime.activeProviderCooldowns()),
       toolsCount:    toolsCount,
       memoryBackend: block:
         when defined(withPostgres) or defined(withSqlite):
@@ -931,6 +944,9 @@ proc setupIpcServer(cfg: DonkeyConfig;
                        bindAddr = httpBind, authToken = httpToken)
       log.info("HTTP gateway: http://" & httpBind & ":" & $httpPort &
                (if httpToken.len > 0: " (bearer auth enabled)" else: ""))
+      if httpToken.len > 0 and httpBind notin ["127.0.0.1", "localhost", "::1", "[::1]"]:
+        log.warn("HTTP gateway is not loopback and has no TLS; put it behind a " &
+                 "TLS-terminating reverse proxy — the Bearer token travels in cleartext")
   else:
     log.info("HTTP gateway: disabled")
 
@@ -960,16 +976,16 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     buildDenoSkillRuntime,
     buildSkillRuntimePolicyResolver(cfg),
     routeRecordHook = proc(selection: ProviderSelection) {.gcsafe.} =
-      ctx.runtime.recordRouteChoice(selection),
+      withRouteLock(ctx.runtime.recordRouteChoice(selection)),
     routeResultHook = proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.} =
-      ctx.runtime.recordRouteResult(selection, elapsedMs, ok),
+      withRouteLock(ctx.runtime.recordRouteResult(selection, elapsedMs, ok)),
     routeFeedbackHook = proc(): seq[RouteFeedback] {.gcsafe.} =
-      ctx.runtime.currentRouteFeedback(),
+      withRouteLock(ctx.runtime.currentRouteFeedback()),
     routeCostHook = proc(): seq[RouteCostHint] {.gcsafe.} =
       loadRouteCostHints(@["openrouter", "groq", "anthropic", "zai-anthropic", "gemini",
                            "minimax", "zai", "zai-coding", "zen"]),
     routeProviderCooldownHook = proc(): seq[ProviderCooldown] {.gcsafe.} =
-      ctx.runtime.currentProviderCooldowns(),
+      withRouteLock(ctx.runtime.currentProviderCooldowns()),
   )
 
 proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
@@ -1398,6 +1414,9 @@ proc runDaemonLoop(ctx: DaemonContext;
 proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).} =
   ## Async daemon: Telegram (pollTimeout=0) + Discord (gateway thread) + WeCom (webhook thread).
   ## Loop: drain globalOutbox → drain Discord → drain WeCom → poll Telegram → sleepAsync(100ms)
+  if cfg.invalidDmPolicy.len > 0:
+    log.error("invalid dm_policy: " & cfg.invalidDmPolicy & " (use open|pairing|allowlist)")
+    quit(1)
   log.info("daemon starting — Telegram + Discord + WeCom")
   initMetrics()
   startOptionalMetricsServer(log)

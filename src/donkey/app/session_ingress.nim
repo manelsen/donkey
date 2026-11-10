@@ -249,7 +249,7 @@ proc startSessionIngress*(sm: var SessionManager;
     let allowed =
       services.isDmAllowed != nil and services.isDmAllowed(msg.userId)
     if not allowed:
-      if services.globalOutbox != nil:
+      if taskKind == tkUserMsg and services.globalOutbox != nil:
         services.globalOutbox.putNoWait(OutboundMessage(
           userId: msg.userId,
           channel: msg.channel,

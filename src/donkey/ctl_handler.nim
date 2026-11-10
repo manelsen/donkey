@@ -60,10 +60,11 @@ proc ctlUserEdit*(memory: MdFileAdapter; uuid, field, value: string) =
 proc ctlUserRevoke*(memory: MdFileAdapter; uuid: string; revoked: bool) =
   let userId = UserId(uuid)
   memory.updateUserField(userId, "Access", if revoked: "revoked" else: "active")
-  if revoked:
-    memory.removeDmAllowed(userId)
-  else:
-    memory.addDmAllowed(userId)
+  let allowlistResult =
+    if revoked: memory.removeDmAllowed(userId)
+    else: memory.addDmAllowed(userId)
+  if allowlistResult.isErr:
+    echo "Warning: " & allowlistResult.error
   echo (if revoked: "Revoked " else: "Restored ") & uuid
 
 # ── ctl session commands ───────────────────────────────────────────────────────

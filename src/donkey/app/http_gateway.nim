@@ -47,12 +47,20 @@ func parseBearerToken(header: string): string =
   else:
     ""
 
+func constantTimeEq(a, b: string): bool =
+  if a.len != b.len:
+    return false
+  var diff = 0
+  for i in 0 ..< a.len:
+    diff = diff or (ord(a[i]) xor ord(b[i]))
+  diff == 0
+
 func isAuthorized*(authHeader, token: string): bool =
   ## Empty token keeps the historical local-only behavior; otherwise a
   ## matching Bearer token is required on every request.
   if token.len == 0:
     return true
-  parseBearerToken(authHeader) == token
+  constantTimeEq(parseBearerToken(authHeader), token)
 
 func gatewayBindIsAllowed*(bindAddr, token: string): bool =
   ## Non-loopback binds require a token; loopback binds do not.
@@ -133,7 +141,7 @@ func routeChatMethod*(meth: string): string =
 
 const CorsHeaders = "Access-Control-Allow-Origin: *\r\n" &
                     "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" &
-                    "Access-Control-Allow-Headers: Content-Type\r\n"
+                    "Access-Control-Allow-Headers: Content-Type, Authorization\r\n"
 
 proc readHttpLine(s: Socket): string =
   var buf = ""
@@ -368,10 +376,25 @@ var gGatewayLog:      Logger
 
 proc gatewayThread(args: GatewayArgs) {.thread.} =
   {.cast(gcsafe).}:
-    var server = newSocket()
-    server.setSockOpt(OptReuseAddr, true)
-    server.bindAddr(Port(args.port), args.bindAddr)
-    server.listen()
+    let host =
+      if args.bindAddr.startsWith("[") and args.bindAddr.endsWith("]"):
+        args.bindAddr[1 .. ^2]
+      else:
+        args.bindAddr
+    let ipv6 = ':' in host
+    var server: Socket
+    try:
+      server =
+        if ipv6: newSocket(Domain.AF_INET6, SockType.SOCK_STREAM, Protocol.IPPROTO_TCP)
+        else: newSocket()
+      server.setSockOpt(OptReuseAddr, true)
+      server.bindAddr(Port(args.port), host)
+      server.listen()
+    except CatchableError as exc:
+      args.log.error("http_gateway: bind " & host & ":" & $args.port & " failed — " & exc.msg)
+      if server != nil:
+        server.close()
+      return
     while true:
       var client: Socket
       server.accept(client)

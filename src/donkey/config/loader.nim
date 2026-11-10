@@ -35,6 +35,7 @@ type
     toolWebPolicy*: Option[seq[ToolWebPolicy]]
     skillNetPolicy*: Option[seq[SkillNetPolicy]]
     dmPolicy*: Option[DmPolicy]
+    invalidDmPolicy*: Option[string]
 
   SandboxConfigPatch* = object
     invalidSandboxMode*: Option[string]
@@ -159,7 +160,12 @@ proc parseSecurityConfigPatch*(doc: TomlValueRef): SecurityConfigPatch =
       result.skillNetPolicy = some(skillPolicy)
 
   if securitySection.hasKey("dm_policy"):
-    result.dmPolicy = parseDmPolicy(securitySection["dm_policy"].getStr())
+    let raw = securitySection["dm_policy"].getStr()
+    let parsed = parseDmPolicy(raw)
+    if parsed.isSome:
+      result.dmPolicy = parsed
+    else:
+      result.invalidDmPolicy = some(raw)
 
 proc applySecurityConfigPatch*(patch: SecurityConfigPatch; cfg: DonkeyConfig): DonkeyConfig =
   result = cfg
@@ -171,6 +177,8 @@ proc applySecurityConfigPatch*(patch: SecurityConfigPatch; cfg: DonkeyConfig): D
     result.skillNetPolicy = patch.skillNetPolicy.get()
   if patch.dmPolicy.isSome:
     result.dmPolicy = patch.dmPolicy.get()
+  if patch.invalidDmPolicy.isSome:
+    result.invalidDmPolicy = patch.invalidDmPolicy.get()
 
 proc applyEnvOverrides*(cfg: DonkeyConfig): DonkeyConfig =
   result = cfg
@@ -182,6 +190,8 @@ proc applyEnvOverrides*(cfg: DonkeyConfig): DonkeyConfig =
     let parsed = parseDmPolicy(rawDmPolicy)
     if parsed.isSome:
       result.dmPolicy = parsed.get()
+    else:
+      result.invalidDmPolicy = rawDmPolicy
 
 proc parseMainConfigPatch*(doc: TomlValueRef): MainConfigPatch =
   if not doc.hasKey(ConfigSectionName):
@@ -296,7 +306,7 @@ proc loadConfig*(path: string): DonkeyConfig =
   let baseConfig = defaultConfig(resolveHome())
   let docOpt = loadTomlConfig(path)
   if docOpt.isNone:
-    return baseConfig
+    return baseConfig |> applyEnvOverrides
 
   let doc = docOpt.get()
   let mainPatch = parseMainConfigPatch(doc)

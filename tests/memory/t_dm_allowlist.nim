@@ -1,6 +1,7 @@
 ## DM allowlist persistence tests.
 
 import std/[os, strutils, unittest]
+import donkey/core/pipeops
 import donkey/adapters/memory/md_file
 import donkey/core/types
 
@@ -18,11 +19,11 @@ suite "MdFileAdapter — DM allowlist":
     removeDir(tmp)
     defer: removeDir(tmp)
     let memory = MdFileAdapter(paddocksDir: tmp / "paddocks")
-    memory.addDmAllowed(UserId("u1"))
-    memory.addDmAllowed(UserId("u2"))
+    check memory.addDmAllowed(UserId("u1")).isOk
+    check memory.addDmAllowed(UserId("u2")).isOk
     check memory.isDmAllowed(UserId("u1"))
     check memory.isDmAllowed(UserId("u2"))
-    memory.removeDmAllowed(UserId("u1"))
+    check memory.removeDmAllowed(UserId("u1")).isOk
     check not memory.isDmAllowed(UserId("u1"))
     check memory.isDmAllowed(UserId("u2"))
 
@@ -31,8 +32,8 @@ suite "MdFileAdapter — DM allowlist":
     removeDir(tmp)
     defer: removeDir(tmp)
     let memory = MdFileAdapter(paddocksDir: tmp / "paddocks")
-    memory.addDmAllowed(UserId("u1"))
-    memory.addDmAllowed(UserId("u1"))
+    check memory.addDmAllowed(UserId("u1")).isOk
+    check memory.addDmAllowed(UserId("u1")).isOk
     var count = 0
     for line in lines(memory.dmAllowlistPath()):
       if line.strip == "u1": inc count

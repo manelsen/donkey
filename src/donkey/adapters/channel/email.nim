@@ -24,6 +24,7 @@
 ##   >>=  — (reserved for future chained IMAP command sequences)
 
 import std/[net, strutils, base64]
+import std/posix
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
@@ -106,12 +107,21 @@ proc imapClose(s: ImapSession) =
   try: s.sock.close()
   except IOError: discard
 
+proc applySocketTimeouts(sock: Socket; seconds: int = 15) =
+  ## Bounds blocking IMAP/SMTP reads so a stuck server cannot freeze the daemon.
+  var tv: Timeval
+  tv.tv_sec = Time(seconds)
+  tv.tv_usec = Suseconds(0)
+  discard setsockopt(sock.getFd, SOL_SOCKET, SO_RCVTIMEO, addr tv, SockLen(sizeof(tv)))
+  discard setsockopt(sock.getFd, SOL_SOCKET, SO_SNDTIMEO, addr tv, SockLen(sizeof(tv)))
+
 proc newImapSession(host: string; port: int): Result[ImapSession, string] =
   try:
     let ctx  = newContext(verifyMode = CVerifyPeer)
-    let sock = newSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    let sock = newSocket(Domain.AF_INET, SockType.SOCK_STREAM, Protocol.IPPROTO_TCP)
     ctx.wrapSocket(sock)
     sock.connect(host, Port(port))
+    applySocketTimeouts(sock)
     discard sock.recvLine()  ## read server greeting
     ok(ImapSession(sock: sock, ctx: ctx, tagSeq: 0))
   except CatchableError as e:
@@ -194,11 +204,12 @@ proc newSmtpSession(host: string; port: int;
                     startTls: bool): Result[SmtpSession, string] =
   try:
     let ctx  = newContext(verifyMode = CVerifyPeer)
-    let sock = newSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    let sock = newSocket(Domain.AF_INET, SockType.SOCK_STREAM, Protocol.IPPROTO_TCP)
     if not startTls:
       ## Implicit TLS (port 465): wrap before connect
       ctx.wrapSocket(sock)
     sock.connect(host, Port(port))
+    applySocketTimeouts(sock)
     let s = SmtpSession(sock: sock, ctx: ctx)
     ? s.smtpCheckOk()  ## read server greeting
     if startTls:

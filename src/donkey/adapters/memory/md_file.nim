@@ -8,6 +8,7 @@
 
 import std/[json, os, strutils, times]
 import ../../core/types
+import ../../core/pipeops
 import ../../ports/memory
 import ../../domain/message
 import ../../domain/personality
@@ -415,28 +416,35 @@ proc isDmAllowed*(a: MdFileAdapter; userId: UserId): bool =
     discard
   false
 
-proc addDmAllowed*(a: MdFileAdapter; userId: UserId) =
+proc addDmAllowed*(a: MdFileAdapter; userId: UserId): Result[void, string] =
   let path = a.dmAllowlistPath()
   if a.isDmAllowed(userId):
-    return
-  createDir(parentDir(path))
-  var f = open(path, fmAppend)
-  defer: f.close()
-  f.writeLine($userId)
+    return ok()
+  try:
+    createDir(parentDir(path))
+    var f = open(path, fmAppend)
+    defer: f.close()
+    f.writeLine($userId)
+    ok()
+  except CatchableError as e:
+    err("dm allowlist add failed: " & e.msg)
 
-proc removeDmAllowed*(a: MdFileAdapter; userId: UserId) =
+proc removeDmAllowed*(a: MdFileAdapter; userId: UserId): Result[void, string] =
   let path = a.dmAllowlistPath()
   if not fileExists(path):
-    return
+    return ok()
   try:
     var kept: seq[string] = @[]
     for line in lines(path):
       let value = line.strip
       if value.len > 0 and value != $userId:
         kept.add(value)
-    writeFile(path, if kept.len > 0: kept.join("\n") & "\n" else: "")
-  except CatchableError:
-    discard
+    let tmp = path & ".tmp"
+    writeFile(tmp, if kept.len > 0: kept.join("\n") & "\n" else: "")
+    moveFile(tmp, path)
+    ok()
+  except CatchableError as e:
+    err("dm allowlist remove failed: " & e.msg)
 
 proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) =
   a.ensurePaddock(userId)

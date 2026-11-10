@@ -64,9 +64,15 @@ func looksLikeStreamSecretToken(token: string): bool =
   looksLikeSecretPrefix(token) or looksLikeSecretPrefix(assignedValue(token))
 
 func looksLikeAssignedSecret(token: string): bool =
-  ## Final-response heuristic: only a complete known marker after `=` or `:`.
-  ## Partial prefixes are intentionally streaming-only to avoid masking words.
-  startsWithKnownSecretPrefix(assignedValue(token))
+  ## Final-response heuristic: a complete known marker after `=` or `:` on a
+  ## credential-looking key. Avoids masking locale=sk-SK / x=AKIAN.
+  let eq = token.find('=')
+  let colon = token.find(':')
+  let sep = if eq > 0: eq elif colon > 0: colon else: -1
+  if sep <= 0:
+    return false
+  isContextKeyword(token[0 ..< sep]) and
+    startsWithKnownSecretPrefix(token[sep + 1 .. ^1])
 
 func isSecretToken(token: string): bool =
   ## Returns true if `token` is flagged by the secret scanner or carries a

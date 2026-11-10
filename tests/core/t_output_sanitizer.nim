@@ -225,6 +225,11 @@ suite "output_sanitizer — safeStreamPrefix":
     check cleanResponse("use Bearer auth") == "use Bearer auth"
     check cleanResponse("Authorization: Bearer abc123") == "Authorization: Bearer abc123"
 
+  test "keeps locale-like assignments intact":
+    check cleanResponse("locale=sk-SK") == "locale=sk-SK"
+    check cleanResponse("lang:sk-SK") == "lang:sk-SK"
+    check cleanResponse("x=AKIAN") == "x=AKIAN"
+
   test "short non-secret tokens are not held":
     check safeStreamPrefix("sk") == "sk"
 
