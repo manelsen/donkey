@@ -1,14 +1,16 @@
-import std/strutils
+import std/[options, strutils]
 import chronos/asyncsync
 import ../../core/commands/command_catalog
 import ../../core/commands/command_routing
 import ../../core/pipeops
 import ../../core/log
+import ../../core/security/dm_policy
 import ../../adapters/memory/md_file
 import ../../app/session_manager
 import ../../domain/agent_message
 import ../../domain/message
 import ../../ports/provider
+import ../identity/identity_resolver
 import ./common_runtime
 import ./qq_channel
 
@@ -229,9 +231,19 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
   var (hasEvent, event) = qqAdapter.tryRecvEvent()
   while hasEvent:
     if event.content.strip.len > 0:
-      let userId = qqAdapter.resolveUser(event)
+      let rawId = qqRawIdentity(event)
+      let known = qqAdapter.resolver.lookup(ckQQ, rawId)
+      var userId = UserId("")
+      if known.isSome:
+        userId = known.get
+      elif sm.dmPolicy == DmPolicyOpen:
+        userId = qqAdapter.resolver.resolve(ckQQ, rawId)
+      else:
+        log.warn("qq: unauthorized message from unidentified sender (policy=" & $sm.dmPolicy & ")")
+        (hasEvent, event) = qqAdapter.tryRecvEvent()
+        continue
       if not sm.allows(userId):
-        log.warn("qq: unauthorized message from " & event.userId)
+        log.warn("qq: unauthorized message from " & $userId)
         (hasEvent, event) = qqAdapter.tryRecvEvent()
         continue
       let msg = InboundMessage(
@@ -311,7 +323,7 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
         else:
           discard
       of crSessionTask:
-        if sm.hasSession(userId):
+        if sm.hasLiveSession(userId):
           let entry = sm.getOrCreate(userId)
           inc msgSeq
           entry.inbox.addLastNoWait(
@@ -357,7 +369,7 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
         of cbrUi:
           discard handleQQUiCallback(msg, callback, qqAdapter, memory, modelCatalogLoader, event.userId)
         of cbrSessionTask:
-          if sm.hasSession(userId):
+          if sm.hasLiveSession(userId):
             let entry = sm.getOrCreate(userId)
             inc msgSeq
             entry.inbox.addLastNoWait(

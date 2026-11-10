@@ -8,6 +8,7 @@ import ../../core/outbound/outbound
 import ../../core/providers/smart_routing
 import ../../core/providers/provider_catalog
 import ../../adapters/memory/md_file
+import ../../app/session_manager
 import ../../domain/message
 import ../../ports/provider
 import ../../app/skill_runtime
@@ -127,6 +128,37 @@ proc parseChannelPrefs*(preferencesMd: string): ChannelPrefs =
 
 proc loadChannelPrefs*(memory: MdFileAdapter; userId: UserId): ChannelPrefs =
   parseChannelPrefs(memory.loadContext(userId).preferencesMd)
+
+func parsePreferenceString*(preferencesMd: string; key: string): string =
+  ## Reads a single `key = "value"` (or `key = value`) entry from a
+  ## preferences document. Returns "" when the key is absent or malformed.
+  ## Used for values that are not part of ChannelPrefs (e.g. cursors).
+  for line in preferencesMd.splitLines():
+    let trimmed = line.strip
+    if trimmed.len == 0 or trimmed[0] == '#':
+      continue
+    let eq = trimmed.find('=')
+    if eq < 0:
+      continue
+    if trimmed[0 ..< eq].strip != key:
+      continue
+    var value = trimmed[eq + 1 .. ^1].strip
+    if value.len >= 2 and value[0] == '"' and value[^1] == '"':
+      value = value[1 .. ^2]
+    return value
+  ""
+
+proc loadChannelPreference*(memory: MdFileAdapter;
+                            userId: UserId;
+                            key: string): string =
+  ## Reads one preference value by key, without parsing the whole document.
+  parsePreferenceString(memory.loadContext(userId).preferencesMd, key)
+
+func hasLiveSession*(sm: SessionManager; userId: UserId): bool =
+  ## True only when the user has a session entry with an attached runtime.
+  ## Restored entries have metadata but no consumer, so they are not live.
+  let uid = $userId
+  uid in sm.entries and not sm.entries[uid].restored
 
 proc saveChannelPreference*(memory: MdFileAdapter;
                             userId: UserId;

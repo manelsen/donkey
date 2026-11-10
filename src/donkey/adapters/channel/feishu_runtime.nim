@@ -1,8 +1,9 @@
-import std/strutils
+import std/[options, strutils]
 import chronos/asyncsync
 import ../../core/commands/command_routing
 import ../../core/log
 import ../../core/pipeops
+import ../../core/security/dm_policy
 import ../../adapters/memory/md_file
 import ../../app/session_manager
 import ../../domain/agent_message
@@ -31,9 +32,18 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
   while hasEvent:
     if (event.msgType == "text" and (event.content |> strip).len > 0) or
        event.fileKey.len > 0:
-      let userId = fsAdapter.resolver.resolve(ckFeishu, event.openId)
+      let known = fsAdapter.resolver.lookup(ckFeishu, event.openId)
+      var userId = UserId("")
+      if known.isSome:
+        userId = known.get
+      elif sm.dmPolicy == DmPolicyOpen:
+        userId = fsAdapter.resolver.resolve(ckFeishu, event.openId)
+      else:
+        log.warn("feishu: unauthorized message from unidentified sender (policy=" & $sm.dmPolicy & ")")
+        (hasEvent, event) = fsAdapter.tryRecvEvent()
+        continue
       if not sm.allows(userId):
-        log.warn("feishu: unauthorized message from " & event.openId)
+        log.warn("feishu: unauthorized message from " & $userId)
         (hasEvent, event) = fsAdapter.tryRecvEvent()
         continue
       let msg = InboundMessage(
@@ -81,7 +91,7 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
             fsAdapter.send(OutboundMessage(userId: userId, channel: ckFeishu, text: reply)).isOkOr:
               log.error("fs send failed for user=" & $userId & " reason=" & error)
         of crSessionTask:
-          if sm.hasSession(userId):
+          if sm.hasLiveSession(userId):
             let entry = sm.getOrCreate(userId)
             inc msgSeq
             entry.inbox.addLastNoWait(
