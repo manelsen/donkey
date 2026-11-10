@@ -56,6 +56,7 @@ import donkey/app/sandbox
 import donkey/app/ipc_server
 import donkey/app/http_gateway
 import donkey/app/heartbeat
+import donkey/app/metrics_server
 import donkey/app/outbound_runtime
 import donkey/app/gateway_drainer
 import donkey/app/session_manager
@@ -867,7 +868,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
       sessionCount:  sm.sessionCount(),
       sessions:      sessions,
       channels:      activeChannels,
-      providers:     @["openrouter"],
+      providers:     availableProviderNames(detectProviderAvailability()),
       routeCounts:   runtime.topRouteCounts(),
       routeMetrics:  runtime.topRouteMetrics(),
       recentRouteMetrics: runtime.topRecentRouteMetrics(),
@@ -1338,6 +1339,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ## Async daemon: Telegram (pollTimeout=0) + Discord (gateway thread) + WeCom (webhook thread).
   ## Loop: drain globalOutbox → drain Discord → drain WeCom → poll Telegram → sleepAsync(100ms)
   log.info("daemon starting — Telegram + Discord + WeCom")
+  initMetrics()
+  startOptionalMetricsServer(log)
 
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory

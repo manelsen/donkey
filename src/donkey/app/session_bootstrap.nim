@@ -16,6 +16,7 @@ import ../domain/reminder
 import ../ports/memory
 import ../ports/provider
 import ../ports/tool
+import ./metrics
 export provider
 
 const
@@ -171,6 +172,21 @@ proc buildProviderBundle*(preferencesMd: string;
     buildProviderSpec |>
     providerRuntimeBuilder
 
+func availableProviderNames*(av: ProviderAvailability): seq[string] =
+  ## Names of providers that currently have credentials/endpoints configured.
+  ## Kept pure so the daemon can report status without leaking secrets.
+  if av.openrouter: result.add("openrouter")
+  if av.anthropic: result.add("anthropic")
+  if av.openai: result.add("openai")
+  if av.deepseek: result.add("deepseek")
+  if av.zaiAnthropic: result.add("zai-anthropic")
+  if av.gemini: result.add("gemini")
+  if av.minimax: result.add("minimax")
+  if av.zai: result.add("zai")
+  if av.zaiCoding: result.add("zai-coding")
+  if av.groq: result.add("groq")
+  if av.ollama: result.add("ollama")
+
 func detectProviderAvailability*(): ProviderAvailability =
   ProviderAvailability(
     openrouter: getEnv("OPENROUTER_API_KEY").len > 0,
@@ -245,8 +261,12 @@ proc buildCompleteFn*(preferencesMd: string;
       if bundle.completeFn == nil:
         continue
       let response = bundle.completeFn(req)
+      let elapsedMs = nowMs() - startedAt
+      recordLatency(selection.providerName, float(elapsedMs))
+      if response.isErr:
+        recordError(selection.providerName)
       if routingResultHook != nil:
-        routingResultHook(selection, nowMs() - startedAt, response.isOk)
+        routingResultHook(selection, elapsedMs, response.isOk)
       if response.isOk:
         return response
       lastErr = response.error

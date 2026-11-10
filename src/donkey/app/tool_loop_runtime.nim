@@ -8,6 +8,7 @@ import chronos
 import chronos/asyncsync
 import ../core/pipeops
 import ../core/log
+import ../core/output_sanitizer
 import ../core/tooling/tool_loop
 import ../core/agent_events
 import ../domain/agent_message
@@ -68,13 +69,14 @@ proc streamToOutbox*(fn:        StreamFn;
 
   var accumulated = ""
   var lastFlush   = nowMs()
+  var lastSent    = ""
 
   while true:
     var (has, tok) = tokenChan.tryRecv()
     while has:
       if tok == doneSentinel:
-        let visible = filterThinking(finalResponse.text)
-        if visible.len > 0:
+        let visible = cleanResponse(finalResponse.text)
+        if visible.strip.len > 0:
           await outbox.put(OutboundMessage(
             userId:    userId,
             channel:   ch,
@@ -98,17 +100,19 @@ proc streamToOutbox*(fn:        StreamFn;
       accumulated.add(tok)
       (has, tok) = tokenChan.tryRecv()
 
-    let visible = filterThinking(accumulated)
-    if visible.len > 0 and nowMs() - lastFlush >= StreamFlushMs:
+    if accumulated.len > 0 and nowMs() - lastFlush >= StreamFlushMs:
       lastFlush = nowMs()
-      await outbox.put(OutboundMessage(
-        userId:    userId,
-        channel:   ch,
-        text:      visible,
-        replyTo:   replyTo,
-        streamId:  streamId,
-        isPartial: true,
-      ))
+      let visible = cleanResponse(safeStreamPrefix(accumulated))
+      if visible.strip.len > 0 and visible != lastSent:
+        lastSent = visible
+        await outbox.put(OutboundMessage(
+          userId:    userId,
+          channel:   ch,
+          text:      visible,
+          replyTo:   replyTo,
+          streamId:  streamId,
+          isPartial: true,
+        ))
 
     await sleepAsync(milliseconds(30))
 
@@ -451,14 +455,17 @@ proc finalizeNormalTurn*(globalOutbox: AsyncQueue[OutboundMessage];
 
   if not loopResult.done or not loopResult.wasStreamed:
     if loopResult.finalText.len > 0:
-      if suppressQuietFinal and isQuietHeartbeatText(loopResult.finalText):
+      let cleanFinal = cleanResponse(loopResult.finalText).strip()
+      if suppressQuietFinal and isQuietHeartbeatText(cleanFinal):
         return
       var fullText = ""
       if showReasoning and loopResult.reasoning.len > 0:
-        let cleanReasoning = loopResult.reasoning.strip()
+        let cleanReasoning = cleanResponse(loopResult.reasoning).strip()
         if cleanReasoning.len > 0:
           fullText = "> " & cleanReasoning.replace("\n", "\n> ") & "\n\n"
-      fullText &= loopResult.finalText
+      fullText &= cleanFinal
+      if fullText.strip.len == 0:
+        fullText = "..."
 
       await globalOutbox.put(OutboundMessage(
         userId: uid,

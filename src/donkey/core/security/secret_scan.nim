@@ -112,16 +112,42 @@ func entropyAbove*(threshold: float; s: string): bool =
 
 # ── scanners ──────────────────────────────────────────────────────────────────
 
+func startsWithKnownSecretPrefix*(value: string): bool =
+  ## True when value begins with a complete known credential marker.
+  ## Used by final-response masking; partial matches are streaming-only.
+  for prefix in KnownPrefixes:
+    if value.startsWith(prefix):
+      return true
+  false
+
+func looksLikeSecretPrefix*(token: string): bool =
+  ## True when token is, or is a prefix of, a known credential marker.
+  ## Used by streaming sanitization to hold back a token split across chunks.
+  if token.len == 0:
+    return false
+  if token.toLowerAscii() == "bearer":
+    return true
+  for prefix in KnownPrefixes:
+    if token.startsWith(prefix):
+      return true
+    # Partial markers are held back only from 3 chars, so common short words
+    # ("AI", "ya", "gh") do not stall the stream.
+    if token.len >= 3 and prefix.startsWith(token):
+      return true
+  false
+
+func assignedValue*(token: string): string =
+  ## Value after the first `=` (preferred) or `:`; empty when absent.
+  let eq = token.find('=')
+  let colon = token.find(':')
+  let sep = if eq > 0: eq elif colon > 0: colon else: -1
+  if sep > 0: token[sep + 1 .. ^1] else: ""
+
 func scanKnownPrefixes(text: string): seq[SecretFinding] =
   for token in tokenSplit(text):
     ## Strip leading key=value prefix so "api_key=sk-abc…" catches the value.
-    let value =
-      block:
-        let eq = token.find('=')
-        let colon = token.find(':')
-        if eq > 0: token[eq + 1 .. ^1]
-        elif colon > 0: token[colon + 1 .. ^1]
-        else: token
+    let assigned = assignedValue(token)
+    let value = if assigned.len > 0: assigned else: token
     if value.len < MinTokenLen: continue
     for prefix in KnownPrefixes:
       if value.startsWith(prefix) and value.len >= prefix.len + 8:
