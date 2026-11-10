@@ -61,6 +61,13 @@ suite "http_gateway auth":
     check not isAuthorized("Bearer nope", "secret")
     check not isAuthorized("", "secret")
 
+  test "local origin validation requires an exact local host":
+    check isLocalOrigin("http://localhost:3000")
+    check isLocalOrigin("http://127.0.0.1:8080")
+    check not isLocalOrigin("http://localhost.evil.com")
+    check not isLocalOrigin("http://127.0.0.1.evil.com")
+    check not isLocalOrigin("https://localhost/path")
+
   test "chat without a token requires a local origin and JSON body":
     check chatRequestAllowed("", "application/json", "")
     check chatRequestAllowed("http://localhost:3000", "application/json", "")

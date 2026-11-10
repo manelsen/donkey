@@ -29,6 +29,7 @@ const
   SseHeartbeatIntervalMs = 5000   ## ms between SSE heartbeat/push cycles
   SseMaxPollCycles = 60           ## bounded to ~5 minutes at 5s intervals
   MaxConcurrentHttpConnections = 32
+  MaxConcurrentSseConnections = 8
 
 func resolveGatewayPort*(raw: string): int =
   ## Parses DONKEY_HTTP_PORT semantics.
@@ -77,11 +78,23 @@ func gatewayBindIsAllowed*(bindAddr, token: string;
 
 func isLocalOrigin*(origin: string): bool =
   let value = origin.strip().toLowerAscii()
-  value.len == 0 or
-    value.startsWith("http://localhost") or
-    value.startsWith("http://127.0.0.1") or
-    value.startsWith("https://localhost") or
-    value.startsWith("https://127.0.0.1")
+  if value.len == 0:
+    return true
+  for scheme in ["http://", "https://"]:
+    if value.startsWith(scheme):
+      let authority = value[scheme.len .. ^1]
+      if '/' in authority:
+        return false
+      var host = authority
+      if host.startsWith("["):
+        let close = host.find(']')
+        if close < 0:
+          return false
+        host = host[0 .. close]
+      else:
+        host = host.split(':')[0]
+      return host in ["localhost", "127.0.0.1", "[::1]"]
+  false
 
 func chatRequestAllowed*(origin, contentType, token: string): bool =
   ## Blocks simple cross-origin form posts; with a token the bearer check is
@@ -258,6 +271,9 @@ proc parseChatPost*(body: string): Result[InboundMessage, string] =
 
 # ── Connection handler ────────────────────────────────────────────────────────
 
+proc tryAcquireSseConnection(): bool {.gcsafe.}
+proc releaseSseConnection() {.gcsafe.}
+
 proc handleGatewayConn(client: Socket;
                         statusFn: GatewayStatusFn;
                         logFn:    GatewayLogFn;
@@ -301,6 +317,11 @@ proc handleGatewayConn(client: Socket;
                           "{\"error\":\"unauthorized\"}\n", log)
       client.close()
       return
+    if authToken.len == 0 and origin.len > 0 and not isLocalOrigin(origin):
+      client.sendResponse("403 Forbidden", "application/json",
+                          "{\"error\":\"cross-origin access requires a token\"}\n", log)
+      client.close()
+      return
     let action = routeGatewayRequest(req)
 
     case action
@@ -318,28 +339,36 @@ proc handleGatewayConn(client: Socket;
       client.sendJson(buildLogsBody(entries), log)
 
     of "events":
-      client.sendSseHeaders(log)
-      ## Push a heartbeat comment immediately to confirm stream started.
-      try: client.send(": connected\n\n") except CatchableError: discard
-      ## Poll loop: push log + agent event snapshots every SseHeartbeatIntervalMs.
-      var lastLogCount   = 0
-      var lastEventCount = 0
-      for _ in 0 ..< SseMaxPollCycles:
-        os.sleep(SseHeartbeatIntervalMs)
-        let entries = logFn(100)
-        if entries.len > lastLogCount or entries.len > 0:
-          lastLogCount = entries.len
-          if not client.sendSseData("logs", buildLogsBody(entries)):
-            break
-        if eventFn != nil:
-          let evs = eventFn(100)
-          if evs.len > lastEventCount or evs.len > 0:
-            lastEventCount = evs.len
-            if not client.sendSseData("agent", buildAgentEventsBody(evs)):
+      if not tryAcquireSseConnection():
+        client.sendResponse("503 Service Unavailable", "text/plain",
+                            "too many event streams\n", log)
+        client.close()
+        return
+      try:
+        client.sendSseHeaders(log)
+        ## Push a heartbeat comment immediately to confirm stream started.
+        try: client.send(": connected\n\n") except CatchableError: discard
+        ## Poll loop: push log + agent event snapshots every SseHeartbeatIntervalMs.
+        var lastLogCount   = 0
+        var lastEventCount = 0
+        for _ in 0 ..< SseMaxPollCycles:
+          os.sleep(SseHeartbeatIntervalMs)
+          let entries = logFn(100)
+          if entries.len > lastLogCount or entries.len > 0:
+            lastLogCount = entries.len
+            if not client.sendSseData("logs", buildLogsBody(entries)):
               break
-        if entries.len == 0 and (eventFn == nil or eventFn(1).len == 0):
-          ## Heartbeat comment to keep connection alive.
-          try: client.send(": heartbeat\n\n") except CatchableError: break
+          if eventFn != nil:
+            let evs = eventFn(100)
+            if evs.len > lastEventCount or evs.len > 0:
+              lastEventCount = evs.len
+              if not client.sendSseData("agent", buildAgentEventsBody(evs)):
+                break
+          if entries.len == 0 and (eventFn == nil or eventFn(1).len == 0):
+            ## Heartbeat comment to keep connection alive.
+            try: client.send(": heartbeat\n\n") except CatchableError: break
+      finally:
+        releaseSseConnection()
 
     of "chat":
       let methAction = routeChatMethod(req.meth)
@@ -427,6 +456,7 @@ type HttpConnectionArgs = object
   log:       Logger
 
 var gActiveHttpConnections = 0
+var gActiveSseConnections = 0
 var gHttpConnLock: Lock
 var gHttpConnLockReady = false
 
@@ -445,6 +475,24 @@ proc releaseHttpConnection() =
   try:
     if gActiveHttpConnections > 0:
       dec gActiveHttpConnections
+  finally:
+    release(gHttpConnLock)
+
+proc tryAcquireSseConnection(): bool =
+  acquire(gHttpConnLock)
+  try:
+    if gActiveSseConnections >= MaxConcurrentSseConnections:
+      return false
+    inc gActiveSseConnections
+    true
+  finally:
+    release(gHttpConnLock)
+
+proc releaseSseConnection() =
+  acquire(gHttpConnLock)
+  try:
+    if gActiveSseConnections > 0:
+      dec gActiveSseConnections
   finally:
     release(gHttpConnLock)
 

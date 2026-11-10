@@ -306,7 +306,7 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
       else:
         baseSelections
     let selections =
-      if routingHook != nil:
+      if routingFeedbackHook != nil:
         applyCircuitBreaker(rankedSelections, feedback)
       else:
         rankedSelections

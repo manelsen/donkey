@@ -49,7 +49,7 @@ proc handleMetricsClient(client: Socket; log: Logger) =
     var headerLines = 0
     while headerLines < MetricsMaxHeaderLines and times.now() <= deadline:
       let line = client.recvLine()
-      if line.len == 0:
+      if line.strip.len == 0:
         break
       inc headerLines
   except CatchableError:

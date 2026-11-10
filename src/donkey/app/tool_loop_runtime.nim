@@ -330,11 +330,13 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
 
     let req = buildPrompt(systemBase, loopState.history, context, tools, reasoning = showReasoning)
 
+    let canStreamToolCalls =
+      streamFn != nil and providerLabel.toLowerAscii().startsWith("openrouter")
     if decideToolLoopStreaming(
       round = round,
       toolsCount = tools.len,
       streamingAvailable = streamFn != nil and not suppressProgress,
-      streamingToolCalls = streamFn != nil and not suppressProgress,
+      streamingToolCalls = canStreamToolCalls and not suppressProgress,
     ).useStreaming:
       let streamedRes = await streamToOutbox(
         streamFn, req, globalOutbox, uid, channel, replyTo, streamId)

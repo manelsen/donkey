@@ -584,7 +584,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
       globalOutbox, session, memInbox, toolInbox, memOut, toolOut, memory,
       completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
       providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
-      toolsSuffix, state, msg, stateRuntime)
+      toolsSuffix, state, msg, stateRuntime, asyncCompleteFn)
 
   else:
     discard

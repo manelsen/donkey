@@ -74,9 +74,26 @@ func looksLikeAssignedSecret(token: string): bool =
   isContextKeyword(token[0 ..< sep].toLowerAscii()) and
     startsWithKnownSecretPrefix(token[sep + 1 .. ^1])
 
+func isBenignToken(token: string): bool =
+  ## URLs and git-style hex hashes are common in legitimate answers.
+  let lower = token.toLowerAscii()
+  if lower.startsWith("http://") or lower.startsWith("https://"):
+    return true
+  if token.len in {40, 64}:
+    var allHex = true
+    for c in token:
+      if c notin {'0'..'9', 'a'..'f', 'A'..'F'}:
+        allHex = false
+        break
+    if allHex:
+      return true
+  false
+
 func isSecretToken(token: string): bool =
   ## Returns true if `token` is flagged by the secret scanner or carries a
   ## complete credential marker after an assignment separator.
+  if isBenignToken(token):
+    return false
   if (token |> scanForSecrets).len > 0:
     return true
   looksLikeAssignedSecret(token)

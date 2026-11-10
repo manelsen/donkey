@@ -222,6 +222,11 @@ suite "output_sanitizer — safeStreamPrefix":
     check cleanResponse("api_key=sk-abcdefgh") == "[REDACTED]"
     check cleanResponse("API_KEY=sk-abcdefgh") == "[REDACTED]"
 
+  test "preserves URLs and hex hashes":
+    check cleanResponse("https://github.com/manelsen/donkey") == "https://github.com/manelsen/donkey"
+    let hash = "57afdf4a15e4d7bb6cc2dd1d2908b78543269b39"
+    check cleanResponse(hash) == hash
+
   test "keeps ordinary auth prose intact":
     check cleanResponse("use Bearer auth") == "use Bearer auth"
     check cleanResponse("Authorization: Bearer abc123") == "Authorization: Bearer abc123"
