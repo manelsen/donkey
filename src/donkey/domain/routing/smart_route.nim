@@ -90,6 +90,8 @@ func providerIsAvailable*(av: ProviderAvailability; name: string): bool =
   of "zai-coding": av.zaiCoding
   of "groq": av.groq
   of "ollama": av.ollama
+  of "opencode-go", "opencode": av.opencodeGo
+  of "zen", "opencode-zen": av.zen
   else: false
 
 func addAnthropicCompatible*(candidates: var seq[ProviderSelection];
@@ -160,6 +162,8 @@ func routeByComplexity*(score: ComplexityScore;
     # Prefer cheap/fast providers
     candidates.addIfAvailable(availability, "minimax", "MiniMax-M2")
     candidates.addIfAvailable(availability, "deepseek", "deepseek-4.1-flash")
+    candidates.addIfAvailable(availability, "opencode-go", "deepseek-4.1-flash")
+    candidates.addIfAvailable(availability, "zen", "deepseek-4.1-flash")
     candidates.addIfAvailable(availability, "groq", "llama-3.1-8b-instant")
     candidates.addIfAvailable(availability, "ollama", "llama3.3")
     candidates.addIfAvailable(availability, "openrouter", "openai/gpt-6-luna")
@@ -172,6 +176,8 @@ func routeByComplexity*(score: ComplexityScore;
     # Balanced providers
     candidates.addIfAvailable(availability, "zai-coding", "glm-4.7")
     candidates.addIfAvailable(availability, "deepseek", "deepseek-4.1-flash")
+    candidates.addIfAvailable(availability, "opencode-go", "deepseek-4.1-flash")
+    candidates.addIfAvailable(availability, "zen", "deepseek-4.1-flash")
     candidates.addIfAvailable(availability, "openai", "gpt-6.1-sol")
     candidates.addIfAvailable(availability, "openrouter", "openai/gpt-6.1-sol")
     candidates.addIfAvailable(availability, "gemini", "gemini-3.8-flash")
@@ -183,6 +189,8 @@ func routeByComplexity*(score: ComplexityScore;
     if score.toolScore > 50 or score.contextScore > 60:
       # Tool-heavy or context-heavy -> use best tool providers
       candidates.addAnthropicCompatible(availability, "claude-opus-5-5", "glm-5.1")
+      candidates.addIfAvailable(availability, "opencode-go", "deepseek-v4-pro")
+      candidates.addIfAvailable(availability, "zen", "deepseek-v4-pro")
       candidates.addIfAvailable(availability, "openai", "gpt-6-astra")
       candidates.addIfAvailable(availability, "deepseek", "deepseek-v4-pro")
       candidates.addIfAvailable(availability, "gemini", "gemini-4-argon")
@@ -192,6 +200,8 @@ func routeByComplexity*(score: ComplexityScore;
       # General complexity
       candidates.addAnthropicCompatible(availability, "claude-opus-5-5", "glm-5.1")
       candidates.addIfAvailable(availability, "gemini", "gemini-4-argon")
+      candidates.addIfAvailable(availability, "opencode-go", "deepseek-v4-pro")
+      candidates.addIfAvailable(availability, "zen", "deepseek-v4-pro")
       candidates.addIfAvailable(availability, "openai", "gpt-6-astra")
       candidates.addIfAvailable(availability, "deepseek", "deepseek-v4-pro")
       candidates.addIfAvailable(availability, "zai-coding", "glm-5.1")

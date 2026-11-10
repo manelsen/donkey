@@ -214,6 +214,16 @@ suite "provider_catalog":
       let result = catalog.lookup(alias)
       check result.isSome
 
+  test "catalog registers opencode-go and zen with deepseek-4.1-flash default":
+    let catalog = buildDefaultCatalog()
+    let goModels = catalog.getByProvider("opencode-go")
+    check goModels.len >= 4
+    check goModels[0].canonicalName == "opencode/deepseek-4.1-flash"
+
+    let zenModels = catalog.getByProvider("zen")
+    check zenModels.len >= 4
+    check zenModels[0].canonicalName == "zen/deepseek-4.1-flash"
+
   test "register overwrites duplicate canonical name":
     var cat = ProviderCatalog()
     cat.entries = initTable[string, ProviderModelEntry]()

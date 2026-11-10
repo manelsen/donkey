@@ -938,7 +938,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
       ctx.runtime.currentRouteFeedback(),
     routeCostHook = proc(): seq[RouteCostHint] {.gcsafe.} =
       loadRouteCostHints(@["openrouter", "groq", "anthropic", "zai-anthropic", "gemini",
-                           "minimax", "zai", "zai-coding", "zen"]),
+                           "minimax", "zai", "zai-coding", "zen", "opencode-go"]),
     routeProviderCooldownHook = proc(): seq[ProviderCooldown] {.gcsafe.} =
       ctx.runtime.currentProviderCooldowns(),
   )
