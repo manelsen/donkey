@@ -21,8 +21,8 @@ type
     runtimeSignature*: string
 
   SessionRegistryPort* = object
-    loadAll*: proc(): Result[seq[SessionRegistryRecord], string] {.gcsafe.}
-    upsert*:  proc(record: SessionRegistryRecord): Result[void, string] {.gcsafe.}
+    loadAll*: proc(): Result[seq[SessionRegistryRecord], string] {.gcsafe, raises: [].}
+    upsert*:  proc(record: SessionRegistryRecord): Result[void, string] {.gcsafe, raises: [].}
 
   DeliveryState* = enum
     dlsPending = "pending"
@@ -43,10 +43,10 @@ type
     error*:       string
 
   DeliveryLedgerPort* = object
-    recordPending*: proc(record: DeliveryRecord): Result[void, string] {.gcsafe.}
-    markSent*:      proc(id: string; updatedAtMs: int64): Result[void, string] {.gcsafe.}
-    markFailed*:    proc(id: string; updatedAtMs: int64; error: string): Result[void, string] {.gcsafe.}
-    loadAll*:       proc(): Result[seq[DeliveryRecord], string] {.gcsafe.}
+    recordPending*: proc(record: DeliveryRecord): Result[void, string] {.gcsafe, raises: [].}
+    markSent*:      proc(id: string; updatedAtMs: int64): Result[void, string] {.gcsafe, raises: [].}
+    markFailed*:    proc(id: string; updatedAtMs: int64; error: string): Result[void, string] {.gcsafe, raises: [].}
+    loadAll*:       proc(): Result[seq[DeliveryRecord], string] {.gcsafe, raises: [].}
 
 func hasSessionRegistry*(p: SessionRegistryPort): bool =
   p.loadAll != nil and p.upsert != nil

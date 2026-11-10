@@ -396,6 +396,49 @@ Metadados de sessão e entrega:
 - ambos são auxiliares de observabilidade/recuperação, não fonte de verdade do
   histórico da conversa.
 
+#### 6.3.1 Durabilidade de arquivos
+
+`state/sessions.json` é substituído atomicamente:
+
+1. escreve `sessions.json.tmp`;
+2. `flushFile` + `fsync` no arquivo (no macOS usa `fcntl(F_FULLFSYNC)` para
+   pedir o flush do cache do disco; fallback para `fsync` quando o filesystem
+   não implementa `F_FULLFSYNC`);
+3. `rename` sobre o destino;
+4. `fsync` no diretório pai para persistir a entrada de rename.
+
+Se `sessions.json` estiver inválido ou ilegível, o arquivo é movido para
+`sessions.json.corrupt-<epochMs>` (com sufixo numérico em caso de colisão) e o
+registro recomeça vazio, permitindo que o próximo upsert escreva novamente.
+Versões de schema maiores que `RegistryVersion` **não** são tratadas como
+corrupção: a leitura retorna `Err`, o arquivo original é preservado e escritas
+são recusadas.
+
+O ledger também é fsyncado a cada append e cada registro é enquadrado por
+quebras de linha nas duas pontas (`\n<json>\n`). Assim, uma escrita truncada
+(crash no meio da linha) não se funde com o próximo evento. No replay, eventos
+são mesclados por `id`: um evento mínimo posterior (`id`, `state`,
+`updated_at_ms`, `error`) preserva `user_id`, `channel`, `channel_id`,
+`text_hash`, `created_at_ms` e `attempts` do evento completo anterior; apenas
+`state`/`updated_at_ms`/`error` são sobrescritos.
+
+O caminho quente não relê o ledger: `newRuntimeStateStore` carrega o arquivo
+uma única vez e mantém uma tabela em memória com os registros `pending`.
+`recordPending` insere na tabela e faz append; `markSent`/`markFailed` atualizam
+a tabela e, quando o `id` não está mais nela (restart ou pending write que
+falhou), gravam apenas o evento mínimo.
+
+Limite conhecido — rotação/compaction do ledger: o arquivo cresce linearmente
+com o número de entregas (um evento `pending` + um evento terminal por entrega)
+e não há rotação/compaction implementada. Em daemons de longa duração com alto
+volume isso cresce sem limite; a rotação depende de replay seguro + reescrita
+atômica e é um follow-up conhecido (ver seção 14.4).
+
+Limite de `fsync`: em filesystems, mounts de rede ou discos que ignoram
+`fsync`, a persistência continua sendo best-effort — o processo não pode
+forçar hardware que não coopera. `F_FULLFSYNC` no macOS é usado quando
+disponível; caso contrário, `fsync` é o melhor esforço.
+
 ## 7. Semântica de Concorrência
 
 ### 7.1 Modelo efetivo
@@ -702,6 +745,11 @@ Sessões só persistem em cancel/reset.
 Risco:
 
 - perda de histórico em crash, kill, reboot ou exceção fatal.
+
+Ledger de entrega:
+
+- o arquivo append-only cresce linearmente com as entregas e ainda não tem
+  rotação/compaction; ver 6.3.1.
 
 ## 15. Recomendações de Leitura e Refatoração
 
