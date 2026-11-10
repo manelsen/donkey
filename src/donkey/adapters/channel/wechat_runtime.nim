@@ -1,6 +1,7 @@
 import std/strutils
 import chronos/asyncsync
 import ../../core/commands/command_routing
+import ../../core/log
 import ../../core/pipeops
 import ../../adapters/memory/md_file
 import ../../app/session_manager
@@ -31,7 +32,8 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
                         toolClientsCount: int;
                         daemonStartMs: int64;
                         msgSeq: var int;
-                        handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.}) =
+                        handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
+                        log: Logger = newLogger("wch.outbound")) =
   if wechatAppId.len == 0:
     return
 
@@ -40,6 +42,10 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
     if (event.msgType == "text" and event.content.strip.len > 0) or
        event.mediaId.len > 0:
       let userId = resolve(wchAdapter.resolver, ckWeChat, event.fromUser)
+      if not sm.allows(userId):
+        log.warn("wechat: unauthorized message from " & event.fromUser)
+        (hasEvent, event) = wchAdapter.tryRecvEvent()
+        continue
       let msg = InboundMessage(
         userId: userId,
         channel: ckWeChat,

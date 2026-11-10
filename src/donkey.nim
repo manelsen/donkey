@@ -1274,6 +1274,8 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
   let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
   let fallback = proc(msg: InboundMessage) {.gcsafe.} =
     handleGatewayFallback(ctx, cfg, memory, msg, log)
+  let isAuthorized = proc(userId: UserId): bool {.gcsafe.} =
+    ctx.runtime.sm.allows(userId)
 
   initGatewayDrainer(
     drainDiscord = proc(): bool =
@@ -1303,7 +1305,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         wechat_runtime.drainWeChatEvents(
           ctx.adapters.wch, ctx.env.wechatAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
           toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
-          ctx.runtime.msgSeq, fallback)
+          ctx.runtime.msgSeq, fallback, log)
         true
       ),
     drainQQ = proc(): bool =
@@ -1341,7 +1343,8 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
             (hasEvent, event) = ctx.adapters.dt.tryRecvEvent()
           (false, InboundMessage()),
         fallback,
-        log
+        log,
+        isAuthorized
       )
       count > 0,
     drainMatrix = proc(): bool =
@@ -1363,7 +1366,8 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
             (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
           (false, InboundMessage()),
         fallback,
-        log
+        log,
+        isAuthorized
       )
       count > 0,
     drainTelegram = proc(): bool =

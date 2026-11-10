@@ -32,6 +32,10 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
     if (event.msgType == "text" and (event.content |> strip).len > 0) or
        event.fileKey.len > 0:
       let userId = fsAdapter.resolver.resolve(ckFeishu, event.openId)
+      if not sm.allows(userId):
+        log.warn("feishu: unauthorized message from " & event.openId)
+        (hasEvent, event) = fsAdapter.tryRecvEvent()
+        continue
       let msg = InboundMessage(
         userId:    userId,
         channel:   ckFeishu,
