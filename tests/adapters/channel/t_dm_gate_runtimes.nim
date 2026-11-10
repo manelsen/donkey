@@ -504,3 +504,63 @@ suite "shared DM gate":
     check discordMessageAfterCursor("200", "100", 0)
     check not discordMessageAfterCursor("100", "100", 0)
     check not discordMessageAfterCursor("999", "", 0)
+    # 18-digit cursor vs 19-digit message: numeric, not lexicographic.
+    check discordMessageAfterCursor("1000000000000000000", "999999999999999999", 0)
+    check not discordMessageAfterCursor("not-a-snowflake", "100", 0)
+
+  test "discord unknown sender without a link code is denied without minting":
+    let dir = GateTmp / "discord-deny"
+    removeDir(dir)
+    createDir(dir)
+    let resolver = newIdentityResolver(dir / "identities.tsv")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyAllowlist
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+
+    let auth = authorizeInbound(
+      sm, resolver.identityGate(), ckDiscord, "discord-intruder", "hello", ilsNone)
+    check not auth.allowed
+    check not auth.identified
+    check resolver.lookup(ckDiscord, "discord-intruder").isNone
+
+  test "discord bare link code is admitted only for an authorized target":
+    let dir = GateTmp / "discord-code"
+    removeDir(dir)
+    createDir(dir)
+    let resolver = newIdentityResolver(dir / "identities.tsv")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyAllowlist
+    let target = resolver.resolve(ckDiscord, "discord-owner")
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} =
+      {.cast(gcsafe).}:
+        u == target
+    let code = resolver.generateLinkCode(target)
+
+    let auth = authorizeInbound(
+      sm, resolver.identityGate(), ckDiscord, "discord-new", code, ilsBareCode)
+    check auth.allowed
+    check resolver.consumeLinkCode(code, ckDiscord, "discord-new")
+    check resolver.lookup(ckDiscord, "discord-new").get == target
+
+    let wrong = authorizeInbound(
+      sm, resolver.identityGate(), ckDiscord, "discord-other", "WRONG1", ilsBareCode)
+    check not wrong.allowed
+    check resolver.lookup(ckDiscord, "discord-other").isNone
+
+  test "discord modal event is allowed without minting an identity":
+    let dir = GateTmp / "discord-modal"
+    removeDir(dir)
+    createDir(dir)
+    let resolver = newIdentityResolver(dir / "identities.tsv")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyAllowlist
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+
+    let auth = authorizeInbound(
+      sm, resolver.identityGate(), ckDiscord, "discord-modal-user", "", ilsModalOnly)
+    check auth.allowed
+    check not auth.identified
+    check resolver.lookup(ckDiscord, "discord-modal-user").isNone

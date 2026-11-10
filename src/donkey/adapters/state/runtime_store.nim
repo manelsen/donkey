@@ -36,6 +36,7 @@ type
     sessionsLoaded: bool
     sessionsDirty: bool
     lastSessionsWriteMs: int64
+    ledgerDirSynced: bool
     ## Serializes session upserts, ledger appends and their in-memory caches.
     ## Gateway workers can persist concurrently with the event loop.
     lock: Lock
@@ -163,9 +164,11 @@ proc atomicWriteText(path, content, tmpSuffix: string): Result[void, string] =
     removeQuietly(tmp)
     err("atomic write failed for " & path & ": " & e.msg)
 
-proc appendJsonLine(path: string; node: JsonNode): Result[void, string] =
-  ## Appends one newline-framed record and fsyncs it. Framing both sides means
-  ## a torn write can never merge with the following event.
+proc appendJsonLine(path: string; node: JsonNode;
+                    durable: bool; syncParent: bool): Result[void, string] =
+  ## Appends one newline-framed record. `durable` controls the file fsync;
+  ## pending events are best-effort, terminal sent/failed events are synced.
+  ## Framing both sides means a torn write can never merge with the next event.
   try:
     let dir = parentDir(path)
     if dir.len > 0:
@@ -174,12 +177,15 @@ proc appendJsonLine(path: string; node: JsonNode): Result[void, string] =
     var f = open(path, fmAppend)
     try:
       f.write("\n" & $node & "\n")
-      let synced = syncFile(f, path)
-      if synced.isErr:
-        return err(synced.error)
+      if durable:
+        let synced = syncFile(f, path)
+        if synced.isErr:
+          return err(synced.error)
+      else:
+        f.flushFile()
     finally:
       f.close()
-    if isNew and dir.len > 0:
+    if syncParent and dir.len > 0:
       ## The file's directory entry only exists after the first append; sync
       ## the parent so a power loss cannot lose the whole ledger.
       let dirSynced = syncDir(dir)
@@ -487,27 +493,38 @@ proc loadLedger(store: RuntimeStateStore): Result[seq[DeliveryRecord], string] {
   store.loadLedgerFromDisk()
 
 proc appendLedger(store: RuntimeStateStore;
-                  record: DeliveryRecord): Result[void, string] =
-  appendJsonLine(store.ledgerPath(), deliveryToJson(record))
+                  record: DeliveryRecord;
+                  durable: bool): Result[void, string] =
+  let syncParent = durable and not store.ledgerDirSynced
+  let saved = appendJsonLine(store.ledgerPath(), deliveryToJson(record),
+                             durable, syncParent)
+  if saved.isOk and syncParent:
+    store.ledgerDirSynced = true
+  saved
 
 proc appendMinimalEvent(store: RuntimeStateStore;
                         id: string;
                         state: DeliveryState;
                         updatedAtMs: int64;
                         error: string): Result[void, string] =
-  appendJsonLine(store.ledgerPath(), %* {
+  let syncParent = not store.ledgerDirSynced
+  let saved = appendJsonLine(store.ledgerPath(), %* {
     "id": id,
     "state": $state,
     "updated_at_ms": updatedAtMs,
     "error": error,
-  })
+  }, durable = true, syncParent = syncParent)
+  if saved.isOk and syncParent:
+    store.ledgerDirSynced = true
+  saved
 
 proc recordPending(store: RuntimeStateStore;
                    record: DeliveryRecord): Result[void, string] {.raises: [].} =
   acquire(store.lock)
   defer: release(store.lock)
   store.pending[record.id] = record
-  store.appendLedger(record)
+  ## Pending is best-effort: avoid a second synchronous fsync per delivery.
+  store.appendLedger(record, durable = false)
 
 proc markSent(store: RuntimeStateStore;
               id: string;
@@ -519,7 +536,7 @@ proc markSent(store: RuntimeStateStore;
     record.state = dlsSent
     record.updatedAtMs = updatedAtMs
     record.error = ""
-    let saved = store.appendLedger(record)
+    let saved = store.appendLedger(record, durable = true)
     if saved.isOk:
       store.pending.del(id)
     saved
@@ -539,7 +556,7 @@ proc markFailed(store: RuntimeStateStore;
     record.state = dlsFailed
     record.updatedAtMs = updatedAtMs
     record.error = error
-    let saved = store.appendLedger(record)
+    let saved = store.appendLedger(record, durable = true)
     if saved.isOk:
       store.pending.del(id)
     saved
@@ -551,11 +568,13 @@ proc newRuntimeStateStore*(stateDir: string): RuntimeStateStore =
     stateDir: stateDir,
     pending: initTable[string, DeliveryRecord](),
     sessionsLoaded: false,
+    ledgerDirSynced: false,
     sessionsDirty: false,
     lastSessionsWriteMs: 0,
     tmpCounter: 0,
   )
   initLock(result.lock)
+  result.ledgerDirSynced = fileExists(result.ledgerPath())
   ## Load the ledger once: the hot path only touches the pending table.
   try:
     let loaded = result.loadLedgerFromDisk()

@@ -516,7 +516,9 @@ proc webhookWorker(arg: WebhookWorkerArg) {.thread.} =
         break
       var client: Socket
       try:
-        client = newSocket(fd, buffered = true)
+        ## Unbuffered: every recv returns after the kernel read, so the body
+        ## loop observes the total request deadline even for trickle clients.
+        client = newSocket(fd, buffered = false)
       except CatchableError:
         discard posix.close(cint(fd))
         continue

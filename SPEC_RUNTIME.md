@@ -418,8 +418,10 @@ Versões de schema maiores que `RegistryVersion` **não** são tratadas como
 corrupção: a leitura retorna `Err`, o arquivo original é preservado e escritas
 são recusadas.
 
-O ledger também é fsyncado a cada append e cada registro é enquadrado por
-quebras de linha nas duas pontas (`\n<json>\n`). Assim, uma escrita truncada
+O ledger é enquadrado por quebras de linha nas duas pontas (`\n<json>\n`).
+O evento `pending` é best-effort (flush de userspace, sem fsync); os eventos
+terminais `sent`/`failed` fazem `fsync` do arquivo, e o diretório é sincronizado
+uma vez quando o ledger é criado. Assim, uma escrita truncada
 (crash no meio da linha) não se funde com o próximo evento. No replay, eventos
 são mesclados por `id`: um evento mínimo posterior (`id`, `state`,
 `updated_at_ms`, `error`) preserva `user_id`, `channel`, `channel_id`,

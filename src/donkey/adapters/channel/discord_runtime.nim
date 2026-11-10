@@ -484,14 +484,19 @@ func discordSnowflakeFloor*(epochMs: int64): int64 =
 func discordMessageAfterCursor*(msgId, lastMsgId: string; floor: int64): bool =
   ## Cursor-first ordering; when no cursor exists yet, fall back to the
   ## session's persisted inbound clock so history is not replayed.
+  ## Snowflakes are 64-bit integers, not fixed-width strings: compare them
+  ## numerically so an 18-digit cursor does not hide a 19-digit message.
+  var id: int64
+  try:
+    id = parseBiggestInt(msgId)
+  except ValueError:
+    return false
   if lastMsgId.len > 0:
-    return msgId > lastMsgId
-  if floor > 0:
     try:
-      return parseBiggestInt(msgId) >= floor
+      return id > parseBiggestInt(lastMsgId)
     except ValueError:
-      return true
-  false
+      return false
+  floor > 0 and id >= floor
 
 proc checkDiscordOfflineMessages*(sm: var SessionManager;
                                    dcAdapter: DiscordAdapter;
