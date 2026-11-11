@@ -172,6 +172,7 @@ proc makeTgTypingFn(token: string; identityPath: string; log: Logger): TypingFn 
 type DaemonToolBundle = object
   clients: seq[ToolRuntimePort]
   tools:   seq[ToolDescription]
+  browserRuntime: BrowserToolRuntime
 
 type GlobalProviderBundle = object
   completeFn: CompleteFn
@@ -242,6 +243,7 @@ type RouteSample = object
 type DaemonServices = object
   toolClients:      seq[ToolRuntimePort]
   tools:            seq[ToolDescription]
+  browserRuntime:   BrowserToolRuntime
   globalCompleteFn: CompleteFn
   globalStreamFn:   StreamFn
   tgTypingFn:       TypingFn
@@ -362,6 +364,7 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
       proxyServer = getEnv("DONKEY_BROWSER_PROXY"),
       http = discoveryHttp,
     )
+    result.browserRuntime = browserRuntime
     let browserSchemas = browserRuntime.listTools().valueOr:
       @[]
     for s in browserSchemas:
@@ -400,6 +403,7 @@ proc initDaemonServices(cfg: DonkeyConfig;
   let toolBundle = loadDaemonToolBundle(cfg, log)
   result.toolClients = toolBundle.clients
   result.tools = toolBundle.tools
+  result.browserRuntime = toolBundle.browserRuntime
 
   let providerBundle = buildGlobalProviderBundle()
   result.globalCompleteFn = providerBundle.completeFn
@@ -1631,6 +1635,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
 
   ## Heartbeat: periodic maintenance (reminder delivery, etc.)
   var hbReg = newHeartbeatRegistry()
+  if ctx.services.browserRuntime != nil:
+    let browserRuntime = ctx.services.browserRuntime
+    hbReg.registerTask("browser-idle", proc() {.gcsafe.} =
+      browserRuntime.evictIdle())
   let memPort = memory.toRuntimePort()
   let reminderOutboxFn: ReminderOutboxFn = proc(userId, channel, message: string) {.gcsafe.} =
     let uid = UserId(userId)

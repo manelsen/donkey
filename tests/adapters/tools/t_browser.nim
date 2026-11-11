@@ -295,6 +295,27 @@ suite "Browser backends":
     check runtime.byUser.hasKey("user-b")
     runtime.close()
 
+  test "idle eviction works without a new invocation":
+    let runtime = newBrowserToolRuntime(
+      backend = bbOff, port = 19550, idleTimeoutSeconds = 60)
+    discard runtime.invoke(ToolCall(id: "a", name: "browser_content",
+                                    input: %* {}, userId: "user-a"))
+    runtime.byUser["user-a"][].lastUsed = epochTime() - 120
+    runtime.evictIdle()
+    check not runtime.byUser.hasKey("user-a")
+    runtime.close()
+
+  test "runtime reuses ports released by closeUser":
+    let runtime = newBrowserToolRuntime(backend = bbOff, port = 19700)
+    discard runtime.invoke(ToolCall(id: "a", name: "browser_content",
+                                    input: %* {}, userId: "user-a"))
+    let firstPort = runtime.byUser["user-a"][].port
+    runtime.closeUser("user-a")
+    discard runtime.invoke(ToolCall(id: "b", name: "browser_content",
+                                    input: %* {}, userId: "user-b"))
+    check runtime.byUser["user-b"][].port == firstPort
+    runtime.close()
+
   test "runtime releases a single user":
     let runtime = newBrowserToolRuntime(backend = bbOff, port = 19600)
     for user in ["user-a", "user-b"]:

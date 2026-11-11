@@ -724,7 +724,6 @@ type
     profileBaseDir: string
     host: string
     port: int
-    nextPort: int
     proxyServer: string
     idleTimeoutSeconds: float
     http: HttpRuntimePort
@@ -760,7 +759,6 @@ proc newBrowserToolRuntime*(backend: BrowserBackendKind = bbAuto;
     profileBaseDir: profileBaseDir,
     host: host,
     port: port,
-    nextPort: port,
     proxyServer: proxyServer,
     idleTimeoutSeconds: idleTimeoutSeconds,
     http: http,
@@ -782,11 +780,14 @@ proc isPortAvailable(host: string; port: int): bool =
 
 proc allocatePort(rt: BrowserToolRuntime): int =
   ## Each user gets a distinct CDP endpoint; sharing one port would let a
-  ## second runtime attach to the first user's page.
-  var candidate = max(rt.nextPort, rt.port)
+  ## second runtime attach to the first user's page. Ports released by
+  ## closeUser/evictIdle become available again.
+  var used: Table[int, bool]
+  for _, bt in rt.byUser:
+    used[bt[].port] = true
+  var candidate = rt.port
   while candidate <= 65535:
-    if isPortAvailable(rt.host, candidate):
-      rt.nextPort = candidate + 1
+    if not used.hasKey(candidate) and isPortAvailable(rt.host, candidate):
       return candidate
     inc candidate
   0
@@ -808,8 +809,10 @@ proc closeUser*(rt: BrowserToolRuntime; userId: string) =
     rt.byUser[key][].close()
     rt.byUser.del(key)
 
-proc evictIdle(rt: BrowserToolRuntime) =
+proc evictIdle*(rt: BrowserToolRuntime) =
   ## Bounds resource accumulation when no session-end callback is available.
+  ## The daemon heartbeat calls this periodically, so idle browsers are closed
+  ## even when no further tool invocation arrives.
   if rt.idleTimeoutSeconds <= 0:
     return
   let now = epochTime()

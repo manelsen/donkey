@@ -594,7 +594,8 @@ Configuração:
 - `DONKEY_BROWSER_PROFILE_DIR` para o `--user-data-dir` do Edge/Chromium;
 - `DONKEY_BROWSER_PROXY` para um proxy de egress filtrante (Edge/Chromium);
 - usuários idle por 15 minutos têm browser, perfil temporário e porta
-  liberados.
+  liberados; a tarefa `browser-idle` do heartbeat faz a limpeza periodicamente,
+  sem depender de uma nova chamada.
 
 Comportamento:
 
@@ -615,6 +616,7 @@ Comportamento:
   validados contra faixas privadas;
 - a chave de usuário usa codificação reversível e sem colisões (`_XX` para
   caracteres fora de `[A-Za-z0-9-]`), isolando página e profile;
+- portas CDP liberadas por `closeUser`/`evictIdle` voltam a ser reutilizadas;
 - `DONKEY_BROWSER_PROXY` adiciona `--proxy-server` e desativa o bypass de
   loopback do Chromium, permitindo que um proxy filtrante veja todo o tráfego;
 - `auto` prefere Lightpanda, depois Edge, depois Chromium;
