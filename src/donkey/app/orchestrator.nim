@@ -30,11 +30,13 @@ import ../core/pipeops
 import ../core/log
 import ../core/onboarding/onboarding
 import ../core/agent_events
+import ../core/memory/blackboard
 import ../core/tooling/tool_loop
 import ../domain/agent_message
 import ../domain/message
 import ../domain/personality
 import ../config/types as cfgTypes
+import ./memory_consolidation
 import ./session_manager
 import ./sandbox
 import ../ports/provider
@@ -71,6 +73,7 @@ type OrchestratorState = object
   identity*:      IdentityRuntime
   completedBootstrapTargets*: seq[string]
   turnSeq*:       int
+  blackboard*:    Blackboard
 
 func newOrchestratorState*(): OrchestratorState =
   OrchestratorState(
@@ -80,6 +83,7 @@ func newOrchestratorState*(): OrchestratorState =
     onboarding: OnboardingRuntime(phase: opWakeUp),
     identity: IdentityRuntime(),
     completedBootstrapTargets: @[],
+    blackboard: newBlackboard(12),
   )
 
 func nextTurn*(state: OrchestratorState): OrchestratorState =
@@ -385,6 +389,15 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
       if context.len > 0: context & "\n\n" & recentBlock
       else: recentBlock
 
+  discard rememberCommitments(
+    result.blackboard, userPayload.text, "", epochMs())
+  let blackboardText = result.blackboard.renderForUser()
+  if blackboardText.len > 0:
+    let blackboardBlock = "## Session commitments\n" & blackboardText
+    context =
+      if context.len > 0: context & "\n\n" & blackboardBlock
+      else: blackboardBlock
+
   let history = addUserTurn(result.history, userPayload.text, userPayload.mediaUrl)
 
   result =
@@ -467,6 +480,10 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
       "  **Response:** " & clipAutoMemoryCapture(loopResult.finalText) & "\n"
     onboarding_runtime.safeAppendMemory(memory, turnSetup.uid, memEntry)
 
+  if loopResult.finalText.len > 0:
+    discard rememberCommitments(
+      result.blackboard, "", loopResult.finalText, epochMs())
+
 # ── Actor message handling ────────────────────────────────────────────────────
 
 type ActorMessageResult = object
@@ -516,6 +533,10 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
     result |>->
     withLastUser(uid)
 
+  if msg.taskKind in {tkCompact, tkReset, tkNew, tkRestart}:
+    discard consolidateSession(
+      memory, completeFn, uid, sessionId, result.history, log)
+
   let controlResult = await handleControlTask(
     globalOutbox, memory, completeFn, uid, msg.channel, msg.replyTo, msg,
     result.history, result.onboarding, result.identity,
@@ -523,6 +544,8 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
   result =
     result |>->
     withControlResult(controlResult)
+  if controlResult.handled and msg.taskKind in {tkReset, tkNew, tkRestart}:
+    result.blackboard.clear()
   if controlResult.handled and msg.taskKind == tkReset:
     result =
       result |>->

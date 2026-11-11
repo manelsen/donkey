@@ -194,3 +194,22 @@ suite "domain/memory/decay":
     test "negative original score handled safely":
       let item = DecayedItem[string](item: "test", originalScore: -1.0, decayedScore: -0.5, hoursElapsed: 0.0)
       check relevanceRatio(item) == 0.0
+
+  suite "decayedRelevance":
+    test "fresh memory keeps most of its score":
+      let now = 1_700_000_000'i64
+      let value = decayedRelevance(1.0'f32, now, now)
+      check value > 0.99'f32
+
+    test "old memory loses relevance":
+      let now = 1_700_000_000'i64
+      let thirtyDays = 30'i64 * 24 * 3600
+      let oldValue = decayedRelevance(1.0'f32, now - thirtyDays, now)
+      let freshValue = decayedRelevance(1.0'f32, now, now)
+      check oldValue < freshValue
+      check oldValue > 0.0'f32
+
+    test "future timestamps are treated as fresh":
+      let now = 1_700_000_000'i64
+      let value = decayedRelevance(1.0'f32, now + 3600, now)
+      check value > 0.99'f32

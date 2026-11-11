@@ -58,6 +58,15 @@ func defaultDecayConfig*: DecayConfig =
     minScore: DefaultMinScore
   )
 
+func decayedRelevance*(score: float32;
+                       timestampSec, nowSec: int64;
+                       config = defaultDecayConfig()): float32 =
+  ## Applies the configured decay to a stored relevance score. Future
+  ## timestamps are treated as fresh (no negative age).
+  let hoursElapsed = max(0.0, (nowSec - timestampSec).float / 3600.0)
+  (score.float * decayScore(1.0, hoursElapsed, config)).float32
+
+
 type
   ScoredItem*[T] = object
     item*: T

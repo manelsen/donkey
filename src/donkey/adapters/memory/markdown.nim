@@ -17,6 +17,8 @@ import std/[json, os, strutils, times]
 import ../../core/pipeops
 import ../../core/types
 import ../../ports/memory
+import ../../domain/memory/episode_pure
+import ../../domain/memory/lessons_pure
 import ../../domain/message
 import ../../domain/personality
 export json
@@ -409,6 +411,22 @@ proc deleteReminder*(a: MarkdownMemoryAdapter; userId: UserId; reminderId: strin
 
 ## ── RuntimePort conversion ──────────────────────────────────────────────────
 
+proc saveEpisodeMd(a: MarkdownMemoryAdapter; userId: UserId;
+                   episode: EpisodeJournal): Result[void, string] =
+  a.appendMemory(userId, "\n## Episode: " & episode.title & "\n" &
+                 episode.summary & "\n")
+
+proc extractLessonsMd(a: MarkdownMemoryAdapter; userId: UserId;
+                      episodes: seq[EpisodeJournal]): Result[int, string] =
+  var count = 0
+  for episode in episodes:
+    for lesson in extractLessonsFromEpisode(episode, maxLessons = 2):
+      let saved = a.appendMemory(userId, "- Lesson: " & lesson.text & "\n")
+      if saved.isErr:
+        return err(saved.error)
+      inc count
+  ok(count)
+
 proc toRuntimePort*(a: MarkdownMemoryAdapter): MemoryRuntimePort =
   MemoryRuntimePort(
     hasProfile:       proc(userId: UserId): bool {.gcsafe.} = a.hasProfile(userId).valueOr(false),
@@ -416,6 +434,15 @@ proc toRuntimePort*(a: MarkdownMemoryAdapter): MemoryRuntimePort =
                         a.loadContext(userId).valueOr(UserContext(userId: userId)),
     saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} = discard a.saveUserMd(userId, content),
     appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = discard a.appendMemory(userId, text),
+    appendExtractedMemory: proc(userId: UserId; text: string): Result[void, string]
+                              {.gcsafe, raises: [].} =
+                            a.appendMemory(userId, text),
+    saveEpisode: proc(userId: UserId; episode: EpisodeJournal): Result[void, string]
+                   {.gcsafe, raises: [].} =
+                   saveEpisodeMd(a, userId, episode),
+    extractLessons: proc(userId: UserId; episodes: seq[EpisodeJournal]): Result[int, string]
+                      {.gcsafe, raises: [].} =
+                      extractLessonsMd(a, userId, episodes),
     savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = discard a.savePreferences(userId, content),
     clearMemory:      proc(userId: UserId) {.gcsafe.} = discard a.clearMemory(userId),
     resetBootstrap:   proc(userId: UserId) {.gcsafe.} = discard a.resetBootstrap(userId),

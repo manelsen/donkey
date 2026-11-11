@@ -12,6 +12,7 @@ import ../../ports/embedding
 import ../../ports/multigraph_store
 import ../../ports/reranking
 import ../../domain/memory/commitment_pure
+import ../../domain/memory/decay
 import ../../domain/memory/episode_pure
 import ../../domain/memory/lessons_pure
 
@@ -701,6 +702,13 @@ when defined(withPostgres) or defined(withSqlite):
             rerankScores[i] * a.searchConfig.rerankWeight +
             rankedMemories[i].finalScore * (1.0'f32 - a.searchConfig.rerankWeight)
           )
+
+    let nowSec = getTime().toUnix()
+    for i in 0 ..< rankedMemories.len:
+      if rankedMemories[i].timestamp > 0:
+        rankedMemories[i].finalScore = clampUnit(
+          decayedRelevance(rankedMemories[i].finalScore,
+                           rankedMemories[i].timestamp, nowSec))
 
     rankedMemories.sort(proc(x, y: RankedMemory): int =
       let finalCmp = cmp(y.finalScore, x.finalScore)

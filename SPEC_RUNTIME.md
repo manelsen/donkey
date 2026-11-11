@@ -373,6 +373,28 @@ Limites:
 - não há lock de arquivo;
 - não há transação entre múltiplos arquivos do paddock.
 
+#### 6.2.1 Consolidação automática
+
+Disparada por comandos de manutenção (`/compact`, `/reset`, `/new`, `/restart`)
+quando o histórico tem pelo menos 4 mensagens. `DONKEY_MEMORY_CONSOLIDATE=0`
+desliga o pipeline.
+
+- um *silent turn* extrai fatos, preferências, conceitos e relações via LLM;
+- o bloco extraído é persistido como memória (Markdown ou MAGMA);
+- `contemplation` grava um `EpisodeJournal` da sessão;
+- lições são destiladas do episódio e persistidas quando o backend suporta;
+- o `OrchestratorState` mantém um blackboard de compromissos explícitos do
+  usuário/agente, injetado no contexto; ele é limpo em `/reset`, `/new` e
+  `/restart`;
+- a busca MAGMA aplica decay temporal (half-life de 30 dias por padrão) ao
+  score final antes do ranking.
+
+Limites:
+
+- não há consolidação periódica por padrão — só nas fronteiras de manutenção;
+- o silent turn incorre em uma chamada extra de LLM nesses comandos;
+- episódios/lições são best-effort e não têm deduplicação transacional.
+
 ### 6.3 Sessão
 
 Persistência de sessão:

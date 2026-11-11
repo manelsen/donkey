@@ -36,13 +36,12 @@ func usesLowCostOrLocalPath*(cfg: ContemplationConfig): bool =
 func shouldRunContemplation*(cfg: ContemplationConfig): bool =
   cfg.enabled and cfg.usesLowCostOrLocalPath
 
-proc runContemplationTurn*(cfg: ContemplationConfig;
-                           loadMemories: ContemplationLoader;
-                           buildEpisode: ContemplationBuilder;
-                           writeEpisode: EpisodeWriter;
-                           loadUserId: UserIdLoader) =
-  if not shouldRunContemplation(cfg):
-    return
+proc runContemplationNow*(loadMemories: ContemplationLoader;
+                          buildEpisode: ContemplationBuilder;
+                          writeEpisode: EpisodeWriter;
+                          loadUserId: UserIdLoader) =
+  ## Synchronous consolidation trigger. Callers decide when it is cheap enough
+  ## to run (heartbeat or an explicit maintenance boundary).
   if loadMemories == nil or buildEpisode == nil or writeEpisode == nil or loadUserId == nil:
     return
   let memories = loadMemories()
@@ -55,6 +54,15 @@ proc runContemplationTurn*(cfg: ContemplationConfig;
     writeEpisode(loadUserId(), episode)
   except CatchableError:
     discard
+
+proc runContemplationTurn*(cfg: ContemplationConfig;
+                           loadMemories: ContemplationLoader;
+                           buildEpisode: ContemplationBuilder;
+                           writeEpisode: EpisodeWriter;
+                           loadUserId: UserIdLoader) =
+  if not shouldRunContemplation(cfg):
+    return
+  runContemplationNow(loadMemories, buildEpisode, writeEpisode, loadUserId)
 
 proc registerContemplationTask*(reg: var HeartbeatRegistry;
                                 cfg: ContemplationConfig;

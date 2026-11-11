@@ -22,7 +22,7 @@
 ##   if result.isErr:
 ##     log.warn("silent turn: " & result.error)
 
-import std/[strutils, times, json, options]
+import std/[json, options]
 
 import ../../core/pipeops
 import ../../core/types
@@ -56,6 +56,10 @@ Conversation to analyze:"""
 
 type
   SilentMemoryResult* = object
+    triples*: seq[TripleText]
+    facts*: seq[string]
+    preferences*: seq[string]
+    concepts*: seq[string]
     triplesCount*: int
     factsCount*: int
     preferencesCount*: int
@@ -67,16 +71,26 @@ type
 
 func formatConversationForMemory*(history: ConversationHistory): string =
   ## Formats conversation history for the memory extraction prompt.
-  ## Truncates very long messages to avoid token limits.
-  const MaxMessageLen = 2000
+  ## Bounds both each message and the total prompt size.
+  const
+    MaxMessageLen = 2000
+    MaxHistoryMessages = 40
+    MaxConversationChars = 12_000
   result = ""
-  for msg in history:
+  let startIdx = max(0, history.len - MaxHistoryMessages)
+  for i in startIdx ..< history.len:
+    let msg = history[i]
     let role = msg.role
     var content = msg.text
     if content.len > MaxMessageLen:
       content = content[0 ..< MaxMessageLen] & "..."
     if result.len > 0:
       result.add("\n")
+    if result.len + role.len + content.len + 2 > MaxConversationChars:
+      let remaining = MaxConversationChars - result.len
+      if remaining > 3:
+        result.add(content[0 ..< min(content.len, remaining - 3)] & "...")
+      break
     result.add(role & ": " & content)
 
 proc parseMemoryExtractionResponse*(response: string): Result[SilentMemoryResult, string] =
@@ -84,6 +98,10 @@ proc parseMemoryExtractionResponse*(response: string): Result[SilentMemoryResult
   ## The response text is discarded (not shown to user) per the silent turn pattern.
   if response.len == 0:
     return ok(SilentMemoryResult(
+      triples: @[],
+      facts: @[],
+      preferences: @[],
+      concepts: @[],
       triplesCount: 0,
       factsCount: 0,
       preferencesCount: 0,
@@ -119,6 +137,10 @@ proc parseMemoryExtractionResponse*(response: string): Result[SilentMemoryResult
         concepts.add(item.getStr())
     
     ok(SilentMemoryResult(
+      triples: triples,
+      facts: facts,
+      preferences: preferences,
+      concepts: concepts,
       triplesCount: triples.len,
       factsCount: facts.len,
       preferencesCount: preferences.len,
@@ -144,6 +166,10 @@ proc runSilentMemoryTurn*(
 
   if history.len == 0:
     return ok(SilentMemoryResult(
+      triples: @[],
+      facts: @[],
+      preferences: @[],
+      concepts: @[],
       triplesCount: 0,
       factsCount: 0,
       preferencesCount: 0,
@@ -168,8 +194,7 @@ proc runSilentMemoryTurn*(
     return err("silent turn parse: " & parseResult.error)
 
   var memResult = parseResult.get()
-  # In F1 without postgres, we can't store the memories persistently
-  # The LLM's extraction is still performed and logged
-  memResult.filesWritten.add("memory:extraction_only")
+  ## Persistence is the caller's responsibility (see memory_consolidation).
+  memResult.filesWritten.add("memory:extracted")
 
   ok(memResult)

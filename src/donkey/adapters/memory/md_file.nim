@@ -10,6 +10,8 @@ import std/[json, os, strutils, times]
 import ../../core/types
 import ../../core/pipeops
 import ../../ports/memory
+import ../../domain/memory/episode_pure
+import ../../domain/memory/lessons_pure
 import ../../domain/message
 import ../../domain/personality
 when defined(withPostgres) or defined(withSqlite):
@@ -258,6 +260,35 @@ when defined(withPostgres) or defined(withSqlite):
         discard
     a.loadIdentity(userId)
 
+proc appendExtractedMemoryF1(a: MdFileAdapter; userId: UserId;
+                                text: string): Result[void, string] {.raises: [].} =
+  try:
+    a.appendMemory(userId, text)
+    ok()
+  except Exception as e:
+    err("append extracted memory: " & e.msg)
+
+proc saveEpisodeF1(a: MdFileAdapter; userId: UserId;
+                   episode: EpisodeJournal): Result[void, string] {.raises: [].} =
+  try:
+    a.appendMemory(userId, "\n## Episode: " & episode.title & "\n" &
+                   episode.summary & "\n")
+    ok()
+  except Exception as e:
+    err("save episode: " & e.msg)
+
+proc extractLessonsF1(a: MdFileAdapter; userId: UserId;
+                      episodes: seq[EpisodeJournal]): Result[int, string] {.raises: [].} =
+  var count = 0
+  try:
+    for episode in episodes:
+      for lesson in extractLessonsFromEpisode(episode, maxLessons = 2):
+        a.appendMemory(userId, "- Lesson: " & lesson.text & "\n")
+        inc count
+    ok(count)
+  except Exception as e:
+    err("extract lessons: " & e.msg)
+
 proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
   when defined(withPostgres) or defined(withSqlite):
     if a.hasMagmaBackend:
@@ -280,11 +311,50 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
                             a.scheduleReminder(userId, channel, scheduledAt, message),
         loadDueReminders: proc(): seq[JsonNode] {.gcsafe.} = a.loadDueReminders(),
         deleteReminder:   proc(userId: UserId; reminderId: string) {.gcsafe.} = a.deleteReminder(userId, reminderId),
+        appendExtractedMemory: proc(userId: UserId; text: string): Result[void, string]
+                                  {.gcsafe, raises: [].} =
+          try:
+            let magma = a.newMagmaAdapter()
+            if magma == nil:
+              return err("MAGMA backend unavailable")
+            magma.appendMemory(userId, text)
+            ok()
+          except Exception as e:
+            err("append extracted memory: " & e.msg),
+        saveEpisode: proc(userId: UserId; episode: EpisodeJournal): Result[void, string]
+                       {.gcsafe, raises: [].} =
+          try:
+            let magma = a.newMagmaAdapter()
+            if magma == nil:
+              return err("MAGMA backend unavailable")
+            magma.saveEpisode(userId, episode)
+            ok()
+          except Exception as e:
+            err("save episode: " & e.msg),
+        extractLessons: proc(userId: UserId; episodes: seq[EpisodeJournal]): Result[int, string]
+                          {.gcsafe, raises: [].} =
+          try:
+            let magma = a.newMagmaAdapter()
+            if magma == nil:
+              return err("MAGMA backend unavailable")
+            ok(magma.extractAndSaveLessons(userId, episodes, @[],
+                                           maxLessonsPerSource = 2))
+          except Exception as e:
+            err("extract lessons: " & e.msg),
       )
   MemoryRuntimePort(
     hasProfile:       proc(userId: UserId): bool {.gcsafe.} = a.hasProfile(userId),
     loadContext:      proc(userId: UserId): UserContext {.gcsafe.} = a.loadContext(userId),
     saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} = a.saveUserMd(userId, content),
+    appendExtractedMemory: proc(userId: UserId; text: string): Result[void, string]
+                              {.gcsafe, raises: [].} =
+                            appendExtractedMemoryF1(a, userId, text),
+    saveEpisode: proc(userId: UserId; episode: EpisodeJournal): Result[void, string]
+                   {.gcsafe, raises: [].} =
+                   saveEpisodeF1(a, userId, episode),
+    extractLessons: proc(userId: UserId; episodes: seq[EpisodeJournal]): Result[int, string]
+                      {.gcsafe, raises: [].} =
+                      extractLessonsF1(a, userId, episodes),
     appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = a.appendMemory(userId, text),
     savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = a.savePreferences(userId, content),
     clearMemory:      proc(userId: UserId) {.gcsafe.} = a.clearMemory(userId),
