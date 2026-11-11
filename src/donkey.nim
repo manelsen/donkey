@@ -1,6 +1,6 @@
 ## donkey — AI agent system entry point.
 
-import std/[algorithm, json, os, parseopt, strutils, tables, terminal, times]
+import std/[algorithm, json, options, os, parseopt, strutils, tables, terminal, times]
 import locks
 import chronos
 import chronos/asyncsync
@@ -316,7 +316,7 @@ type DaemonBootstrap = object
   memory: MdFileAdapter
   ctx:    DaemonContext
 
-proc loadDaemonToolBundle(cfg: DonkeyConfig): DaemonToolBundle =
+proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
   for entry in loadToolRegistry(cfg.home / "tools.toml"):
     var client = buildMcpClient(entry)
     let schemasRes = client.listTools()
@@ -342,13 +342,19 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig): DaemonToolBundle =
 
   ## Browser tools are opt-in: no process is spawned until the first
   ## browser_navigate call. Backend selection is pure/strategy-based.
-  let browserBackend = parseBrowserBackend(
-    getEnv("DONKEY_BROWSER_BACKEND")).valueOr(bbOff)
+  let parsedBackend = parseBrowserBackend(getEnv("DONKEY_BROWSER_BACKEND"))
+  var browserBackend = bbOff
+  if parsedBackend.isSome:
+    browserBackend = parsedBackend.get()
+  elif getEnv("DONKEY_BROWSER_BACKEND").strip.len > 0:
+    log.warn("browser: invalid DONKEY_BROWSER_BACKEND='" &
+             getEnv("DONKEY_BROWSER_BACKEND") & "'; tools disabled")
   if browserBackend != bbOff:
     var browser = newBrowserTools(
       backend = browserBackend,
       executablePath = getEnv("DONKEY_BROWSER_PATH"),
       profileDir = getEnv("DONKEY_BROWSER_PROFILE_DIR"),
+      http = newStdHttpAdapter().toRuntimePort(),
     )
     let browserSchemas = browser.listTools().valueOr:
       @[]
@@ -385,7 +391,7 @@ func configuredMagmaSqlitePath(home: string): string =
 proc initDaemonServices(cfg: DonkeyConfig;
                         env: DaemonEnv;
                         log: Logger): DaemonServices =
-  let toolBundle = loadDaemonToolBundle(cfg)
+  let toolBundle = loadDaemonToolBundle(cfg, log)
   result.toolClients = toolBundle.clients
   result.tools = toolBundle.tools
 

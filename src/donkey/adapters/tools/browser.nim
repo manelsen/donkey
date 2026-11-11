@@ -15,7 +15,8 @@
 ##   - CDP commands sent over WebSocket via ws_client.nim
 ##   - JSON-RPC 2.0 protocol for command/response correlation
 
-import std/[httpclient, json, net, os, osproc, times]
+import std/[json, net, options, os, osproc, times]
+import ../../ports/http
 import ../../ports/tool
 import ../../core/pipeops
 import ../../domain/tools/browser_pure
@@ -41,6 +42,9 @@ type
     ws*: WsClient                 ## CDP WebSocket connection
     pageTargetId*: string         ## active page target ID
     currentUrl*: string           ## URL of loaded page
+    inflightRequests*: int        ## Network.* events observed since navigation
+    lastNetworkActivity*: float   ## epochTime of the last Network event
+    http*: HttpRuntimePort        ## transport for Chromium /json/list
 
 # ── Tool Schemas ─────────────────────────────────────────────────────────────
 
@@ -146,6 +150,18 @@ proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode =
           if resp.hasKey("error"):
             return err("CDP error: " & resp["error"].pretty)
           return ok(resp.getOrDefault("result"))
+        elif resp.hasKey("method"):
+          let cdpMethod = resp["method"].getStr("")
+          case cdpMethod
+          of "Network.requestWillBeSent":
+            inc bt.inflightRequests
+            bt.lastNetworkActivity = epochTime()
+          of "Network.loadingFinished", "Network.loadingFailed":
+            if bt.inflightRequests > 0:
+              dec bt.inflightRequests
+            bt.lastNetworkActivity = epochTime()
+          else:
+            discard
 
 proc ensurePage*(bt: var BrowserTools): Result[string, string] =
   ## Ensure we have an active page target. Creates one if not.
@@ -186,9 +202,18 @@ proc activatePage*(bt: var BrowserTools): Result[void, string] =
 
 proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): Result[string, string] =
   ## Navigate to URL and wait for page load.
+  # Only HTTP(S): file://, data: and browser-internal schemes must never reach
+  # Page.navigate (isPrivateUrl alone treats "file" as a host).
+  if not url.isHttpUrl:
+    return err("only http/https URLs are allowed")
   # SSRF check
   if url.isPrivateUrl:
     return err("private/internal addresses not allowed")
+
+  bt.inflightRequests = 0
+  bt.lastNetworkActivity = epochTime()
+  if waitUntil == "networkidle":
+    discard bt.sendCdpCommand("Network.enable")
   
   # Ensure we have a page target
   let targetId = ? ensurePage(bt)
@@ -205,6 +230,10 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
   })
   if navResp.isErr:
     return err(navResp.error)
+  let navNode = navResp.get()
+  let navError = navNode{"errorText"}
+  if navError != nil and navError.kind == JString and navError.getStr("").len > 0:
+    return err("navigation failed: " & navError.getStr(""))
 
   bt.currentUrl = url
 
@@ -228,9 +257,13 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
           else: ""
         if state == "complete" or
            (targetReady == "interactive" and state == "interactive"):
-          if waitUntil == "networkidle":
-            sleep(200)
-          return ok(url)
+          if waitUntil != "networkidle":
+            return ok(url)
+          ## Real network-idle approximation: wait until Network.* events show
+          ## no in-flight requests and 500ms of silence.
+          if bt.inflightRequests == 0 and
+             epochTime() - bt.lastNetworkActivity >= 0.5:
+            return ok(url)
     sleep(100)
 
   return err("timeout waiting for page load")
@@ -296,6 +329,16 @@ proc resolveBrowserExecutable(bt: BrowserTools): Result[tuple[kind: BrowserBacke
   if kind == bbAuto and bt.lightpandaPath.len > 0:
     kind = bbLightpanda
 
+  if kind == bbAuto and bt.executablePath.len > 0:
+    let inferred = inferBrowserBackend(bt.executablePath)
+    if inferred.isNone:
+      return err("cannot infer browser backend from executable path: " &
+                 bt.executablePath)
+    kind = inferred.get()
+    if fileExists(bt.executablePath):
+      return ok((kind, bt.executablePath))
+    return err("browser executable not found: " & bt.executablePath)
+
   if kind == bbAuto:
     for candidateKind in [bbLightpanda, bbEdge, bbChromium]:
       for name in browserExecutableCandidates(candidateKind):
@@ -332,13 +375,16 @@ proc resolveBrowserExecutable(bt: BrowserTools): Result[tuple[kind: BrowserBacke
 proc waitForChromiumPage(bt: var BrowserTools;
                          deadline: float): Result[tuple[wsUrl: string, targetId: string, url: string], string] =
   ## Poll /json/list until a page target exposes its debugger WebSocket.
+  if bt.http.get == nil:
+    return err("HTTP port not configured for Chromium CDP discovery")
   let endpoint = "http://" & bt.host & ":" & $bt.port & "/json/list"
   while epochTime() < deadline:
     try:
-      let client = newHttpClient(timeout = 1000)
-      let body = client.getContent(endpoint)
-      client.close()
-      let pages = parseJson(body)
+      let response = bt.http.get(endpoint, @[])
+      if response.isErr or response.get().status != 200:
+        sleep(100)
+        continue
+      let pages = parseJson(response.get().body)
       if pages.kind == JArray:
         for page in pages:
           let typeNode = page{"type"}
@@ -383,12 +429,13 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
     bt.profileDir = profileDir
     bt.ownsProfileDir = true
 
-  let spec = buildLaunchSpec(kind, exe, bt.host, bt.port, profileDir)
-  if spec.isErr:
-    return err(spec.error)
+  let specOpt = buildLaunchSpec(kind, exe, bt.host, bt.port, profileDir)
+  if specOpt.isNone:
+    return err("invalid browser launch specification")
+  let spec = specOpt.get()
 
   let p = try:
-    startProcess(spec.get().exe, args = spec.get().args, options = {poUsePath})
+    startProcess(spec.exe, args = spec.args, options = {poUsePath})
   except CatchableError as e:
     if bt.ownsProfileDir:
       try: removeDir(bt.profileDir) except CatchableError: discard
@@ -418,15 +465,16 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
     return err(page.error)
 
   let (wsUrl, targetId, pageUrl) = page.get()
-  let endpoint = parseWsDebuggerUrl(wsUrl)
-  if endpoint.isErr:
+  let endpointOpt = parseWsDebuggerUrl(wsUrl)
+  if endpointOpt.isNone:
     bt.process.terminate()
     bt.process.close()
     bt.process = nil
-    return err(endpoint.error)
+    return err("invalid CDP websocket URL from Chromium")
+  let endpoint = endpointOpt.get()
   try:
-    bt.ws = wsConnect(endpoint.get().host, Port(endpoint.get().port),
-                      endpoint.get().path, useTls = endpoint.get().secure)
+    bt.ws = wsConnect(endpoint.host, Port(endpoint.port),
+                      endpoint.path, useTls = endpoint.secure)
   except IOError as e:
     bt.process.terminate()
     bt.process.close()
@@ -459,6 +507,8 @@ proc close*(bt: var BrowserTools) =
   bt.ownsProfileDir = false
   bt.pageTargetId = ""
   bt.currentUrl = ""
+  bt.inflightRequests = 0
+  bt.lastNetworkActivity = 0.0
 
 # ── invoke — ToolPort method ─────────────────────────────────────────────────
 
@@ -476,7 +526,9 @@ proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
     let waitNode = call.input.getOrDefault("waitUntil")
     let waitUntil = if waitNode.isNil or waitNode.kind != JString: "networkidle" else: waitNode.getStr("")
     
-    # SSRF check BEFORE spawning (fail fast on private URLs)
+    # Scheme and SSRF checks BEFORE spawning.
+    if not url.isHttpUrl:
+      return ok(browserError(call.id, "only http/https URLs are allowed"))
     if url.isPrivateUrl:
       return ok(browserError(call.id, "private/internal addresses not allowed"))
     
@@ -535,7 +587,8 @@ proc newBrowserTools*(
   port: int = DefaultLightpandaPort;
   backend: BrowserBackendKind = bbAuto;
   executablePath: string = "";
-  profileDir: string = ""
+  profileDir: string = "";
+  http: HttpRuntimePort = HttpRuntimePort()
 ): BrowserTools =
   var resolvedBackend = backend
   if lightpandaPath.len > 0 and backend == bbAuto:
@@ -548,6 +601,7 @@ proc newBrowserTools*(
     ownsProfileDir: false,
     host: host,
     port: port,
+    http: http,
     process: nil,
     pageTargetId: "",
     currentUrl: ""

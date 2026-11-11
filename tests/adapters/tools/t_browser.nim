@@ -98,6 +98,14 @@ suite "Input validation":
     check tr.isError
     check tr.output.contains("private") or tr.output.contains("not allowed")
 
+  test "browser_navigate rejects non-HTTP schemes":
+    var bt = BrowserTools(backend: bbOff)
+    for url in ["file:///etc/passwd", "data:text/html,hello", "chrome://settings"]:
+      let call = ToolCall(id: "test", name: "browser_navigate", input: %* {"url": url})
+      let tr = bt.invoke(call).get()
+      check tr.isError
+      check tr.output.contains("http/https") or tr.output.contains("not allowed")
+
   test "browser_navigate rejects localhost":
     var bt = BrowserTools()
     let call = ToolCall(id: "test", name: "browser_navigate", input: %* {"url": "http://localhost:8080/"})

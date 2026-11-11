@@ -5,8 +5,7 @@
 ## this module owns the policy so Edge/Chromium/Lightpanda do not leak into the
 ## tool invocation path.
 
-import std/[strutils]
-import ../../core/pipeops
+import std/[options, os, strutils]
 
 type
   BrowserBackendKind* = enum
@@ -36,21 +35,22 @@ const
   DefaultBrowserHost* = "127.0.0.1"
   DefaultBrowserPort* = 9222
 
-func parseBrowserBackend*(raw: string): Result[BrowserBackendKind, string] =
-  ## Accepts the env spelling and a few common aliases.
+func parseBrowserBackend*(raw: string): Option[BrowserBackendKind] =
+  ## Accepts the env spelling and a few common aliases. `none` means an
+  ## invalid value, not the explicit `off` option.
   case raw.strip.toLowerAscii()
   of "", "off", "disabled", "none", "0":
-    ok(bbOff)
+    some(bbOff)
   of "auto":
-    ok(bbAuto)
+    some(bbAuto)
   of "lightpanda":
-    ok(bbLightpanda)
+    some(bbLightpanda)
   of "edge", "microsoft-edge", "msedge":
-    ok(bbEdge)
+    some(bbEdge)
   of "chromium", "chrome", "google-chrome":
-    ok(bbChromium)
+    some(bbChromium)
   else:
-    err("unknown browser backend: " & raw)
+    none(BrowserBackendKind)
 
 func isChromiumBackend*(kind: BrowserBackendKind): bool =
   kind in {bbEdge, bbChromium}
@@ -72,21 +72,17 @@ func browserExecutableCandidates*(kind: BrowserBackendKind): seq[string] =
 func buildLaunchSpec*(kind: BrowserBackendKind;
                       exe, host: string;
                       port: int;
-                      profileDir: string): Result[BrowserLaunchSpec, string] =
+                      profileDir: string): Option[BrowserLaunchSpec] =
   ## Builds the launch argv for a concrete backend. `exe` must already be
   ## resolved by the adapter.
   if kind in {bbOff, bbAuto}:
-    return err("browser backend must be resolved before launch")
-  if exe.len == 0:
-    return err("empty browser executable")
-  if host.len == 0:
-    return err("empty browser host")
-  if port <= 0 or port > 65535:
-    return err("invalid browser port")
+    return none(BrowserLaunchSpec)
+  if exe.len == 0 or host.len == 0 or port <= 0 or port > 65535:
+    return none(BrowserLaunchSpec)
 
   case kind
   of bbLightpanda:
-    ok(BrowserLaunchSpec(
+    some(BrowserLaunchSpec(
       kind: kind,
       exe: exe,
       args: @["serve", "--host", host, "--port", $port],
@@ -104,16 +100,32 @@ func buildLaunchSpec*(kind: BrowserBackendKind;
     if profileDir.len > 0:
       args.add("--user-data-dir=" & profileDir)
     args.add("about:blank")
-    ok(BrowserLaunchSpec(
+    some(BrowserLaunchSpec(
       kind: kind,
       exe: exe,
       args: args,
       wsMode: wsmPageTarget,
     ))
   of bbOff, bbAuto:
-    err("unreachable browser backend")
+    none(BrowserLaunchSpec)
 
-func parseWsDebuggerUrl*(raw: string): Result[BrowserEndpoint, string] =
+func inferBrowserBackend*(exe: string): Option[BrowserBackendKind] =
+  ## Infers a backend from an explicit executable path/name.
+  let name = exe.extractFilename.toLowerAscii
+  if "lightpanda" in name:
+    some(bbLightpanda)
+  elif "edge" in name or "msedge" in name:
+    some(bbEdge)
+  elif "chrom" in name or "chrome" in name:
+    some(bbChromium)
+  else:
+    none(BrowserBackendKind)
+
+func isHttpUrl*(url: string): bool =
+  let value = url.strip.toLowerAscii
+  value.startsWith("http://") or value.startsWith("https://")
+
+func parseWsDebuggerUrl*(raw: string): Option[BrowserEndpoint] =
   ## Parses the `webSocketDebuggerUrl` returned by Chromium's /json/list.
   ## Accepts ws:// and wss://; only local CDP is used by the adapter.
   let value = raw.strip
@@ -125,22 +137,22 @@ func parseWsDebuggerUrl*(raw: string): Result[BrowserEndpoint, string] =
     rest = value["wss://".len .. ^1]
     secure = true
   else:
-    return err("unsupported CDP websocket URL: " & raw)
+    return none(BrowserEndpoint)
 
   let slash = rest.find('/')
   if slash <= 0:
-    return err("CDP websocket URL has no path: " & raw)
+    return none(BrowserEndpoint)
   let authority = rest[0 ..< slash]
   let path = rest[slash .. ^1]
   let colon = authority.rfind(':')
   if colon <= 0 or colon == authority.high:
-    return err("CDP websocket URL has no port: " & raw)
+    return none(BrowserEndpoint)
   let host = authority[0 ..< colon]
   var port: int
   try:
     port = parseInt(authority[colon + 1 .. ^1])
   except ValueError:
-    return err("CDP websocket URL has an invalid port: " & raw)
+    return none(BrowserEndpoint)
   if port <= 0 or port > 65535:
-    return err("CDP websocket URL has an invalid port: " & raw)
-  ok(BrowserEndpoint(host: host, port: port, path: path, secure: secure))
+    return none(BrowserEndpoint)
+  some(BrowserEndpoint(host: host, port: port, path: path, secure: secure))

@@ -1,6 +1,6 @@
 ## Tests for pure browser backend policy.
 
-import std/[sequtils, strutils, unittest]
+import std/[options, sequtils, strutils, unittest]
 import donkey/core/pipeops
 import donkey/domain/tools/browser_pure
 
@@ -15,7 +15,7 @@ suite "browser backend policy":
     check parseBrowserBackend("microsoft-edge").get() == bbEdge
     check parseBrowserBackend("chromium").get() == bbChromium
     check parseBrowserBackend("chrome").get() == bbChromium
-    check parseBrowserBackend("bogus").isErr
+    check parseBrowserBackend("bogus").isNone
 
   test "auto prefers Lightpanda, then Edge, then Chromium":
     let candidates = browserExecutableCandidates(bbAuto)
@@ -48,8 +48,8 @@ suite "browser backend policy":
     check not spec.args.anyIt(it.startsWith("--user-data-dir="))
 
   test "resolved backends are required for launch":
-    check buildLaunchSpec(bbAuto, "/bin/x", "127.0.0.1", 9222, "").isErr
-    check buildLaunchSpec(bbOff, "/bin/x", "127.0.0.1", 9222, "").isErr
+    check buildLaunchSpec(bbAuto, "/bin/x", "127.0.0.1", 9222, "").isNone
+    check buildLaunchSpec(bbOff, "/bin/x", "127.0.0.1", 9222, "").isNone
 
   test "parses Chromium page websocket URLs":
     let page = parseWsDebuggerUrl(
@@ -70,7 +70,20 @@ suite "browser backend policy":
     check secure.secure
 
   test "rejects malformed websocket URLs":
-    check parseWsDebuggerUrl("http://127.0.0.1:9222/json").isErr
-    check parseWsDebuggerUrl("ws://127.0.0.1/devtools/page/x").isErr
-    check parseWsDebuggerUrl("ws://127.0.0.1:notaport/x").isErr
+    check parseWsDebuggerUrl("http://127.0.0.1:9222/json").isNone
+    check parseWsDebuggerUrl("ws://127.0.0.1/devtools/page/x").isNone
+    check parseWsDebuggerUrl("ws://127.0.0.1:notaport/x").isNone
 
+
+  test "infers a backend from an explicit executable path":
+    check inferBrowserBackend("/usr/bin/microsoft-edge").get() == bbEdge
+    check inferBrowserBackend("/usr/bin/chromium").get() == bbChromium
+    check inferBrowserBackend("/opt/lightpanda").get() == bbLightpanda
+    check inferBrowserBackend("/usr/bin/firefox").isNone
+
+  test "accepts only HTTP(S) navigation schemes":
+    check isHttpUrl("https://example.com")
+    check isHttpUrl("http://example.com")
+    check not isHttpUrl("file:///etc/passwd")
+    check not isHttpUrl("data:text/html,hello")
+    check not isHttpUrl("chrome://settings")
