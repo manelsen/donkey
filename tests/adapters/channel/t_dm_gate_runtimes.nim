@@ -8,6 +8,7 @@
 ##   - authorized senders keep flowing through unchanged.
 
 import std/[json, options, os, unittest]
+import chronos/asyncsync
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/outbound/outbound
@@ -651,6 +652,46 @@ suite "shared DM gate":
     check dispatched[0].channelId == "C1"
     check dispatched[0].messageId == "1700000000.000002"
     check not sl.tryRecvEvent()[0]
+
+  test "slack forwards onboarding callbacks as session tasks":
+    removeDir(GateTmp / "slack-onboarding")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyOpen
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = true
+    var sl = newSlackAdapter("token", GateTmp / "slack-onboarding" / "ids.tsv")
+    sl.openQueue()
+    let memory = MdFileAdapter(paddocksDir: GateTmp / "slack-onboarding" / "paddocks")
+    var msgSeq = 0
+    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+      proc(req: CompletionRequest): Result[CompletionResponse, string] =
+        ok(CompletionResponse(text: "unexpected provider call"))
+
+    let uid = sl.resolver.resolve(ckSlack, "U_onboard")
+    let entry = sm.getOrCreate(uid)
+    check sm.hasLiveSession(uid)
+
+    slack.pushEvent(%* {
+      "type": "block_actions",
+      "user": {"id": "U_onboard"},
+      "actions": [
+        {"action_id": "personality:mode:guided",
+         "value": "personality:mode:guided"}
+      ],
+      "channel": {"id": "C1"},
+      "team_id": "T1",
+      "trigger_id": "tr-onboard",
+    })
+
+    var fallbackCalls = 0
+    let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+      {.cast(gcsafe).}:
+        inc fallbackCalls
+    drainSlackEvents(sl, "secret", sm, memory, completeBuilder, gateLoader(),
+                     0, 0, 0, msgSeq, onFallback, gateLog)
+
+    check fallbackCalls == 0       ## onboarding must not become user text
+    check entry[].inbox.len == 1   ## enqueued as tkPersonalityChoice
 
   test "slack drainer is disabled without a signing secret":
     removeDir(GateTmp / "slack-off")

@@ -183,11 +183,18 @@ proc handleSlack(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
 
   let contentType = req.header("content-type").toLowerAscii()
   if contentType.startsWith("application/x-www-form-urlencoded"):
+    let form = parseForm(req.body)
+    ## Interactive components (block actions) arrive as payload=<JSON>.
+    if form.hasKey("payload"):
+      let interactive = parsePayload(form["payload"]).valueOr:
+        return badRequest()
+      slack.pushEvent(interactive)
+      return plainResp(200)
     ## Slack slash commands arrive form-encoded; normalize to the JSON shape
     ## slack_pure expects and mark the event type explicitly.
     var payload = newJObject()
     payload["type"] = %"slash_command"
-    for key, value in parseForm(req.body):
+    for key, value in form:
       payload[key] = %value
     slack.pushEvent(payload)
     return plainResp(200)

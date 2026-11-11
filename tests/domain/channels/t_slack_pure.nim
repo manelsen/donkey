@@ -325,6 +325,10 @@ suite "slack_pure.blockActionCommand":
   test "model selection maps to /models <provider> <model>":
     check blockActionCommand("models:set:openai:gpt-4.1") == "/models openai gpt-4.1"
 
+  test "model identifiers with colons are preserved":
+    check blockActionCommand("models:set:openrouter:org/model:free") ==
+      "/models openrouter org/model:free"
+
   test "model pagination keeps the provider and drops the page":
     check blockActionCommand("models:page:anthropic:2") == "/models anthropic"
 

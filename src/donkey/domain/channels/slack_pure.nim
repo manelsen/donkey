@@ -201,8 +201,8 @@ func blockActionCommand*(data: string): string =
   if data.startsWith("models:provider:"):
     return "/models " & data[16 .. ^1]
   if data.startsWith("models:set:"):
-    let parts = data[11 .. ^1].split(':')
-    if parts.len >= 2 and parts[0].len > 0 and parts[1].len > 0:
+    let parts = data[11 .. ^1].split(':', 1)
+    if parts.len == 2 and parts[0].len > 0 and parts[1].len > 0:
       return "/models " & parts[0] & " " & parts[1]
     return "/models"
   if data.startsWith("models:page:"):

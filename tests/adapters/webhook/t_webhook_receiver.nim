@@ -3,7 +3,7 @@
 ## No sockets are opened: the pure request→response handler is exercised
 ## directly, and dispatched payloads are observed through each adapter queue.
 
-import std/[json, net, os, strutils, tables, times, unittest]
+import std/[json, net, os, strutils, tables, times, unittest, uri]
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/adapters/channel/slack
@@ -146,6 +146,36 @@ suite "webhook receiver — Slack":
     check event.kind == srSlashCommand
     check event.slackUserId == "U9"
     check event.text == "/help now"
+
+  test "form-encoded block action payload is decoded and dispatched":
+    clearQueues()
+    var sl = newSlackAdapter("tok", HookTmp / "slack.tsv")
+    sl.openQueue()
+    let secret = "slack-signing"
+    let interactive = %* {
+      "type": "block_actions",
+      "user": {"id": "U7"},
+      "actions": [{"action_id": "models", "value": "models"}],
+      "channel": {"id": "C7"},
+      "team_id": "T7",
+      "trigger_id": "tr7",
+    }
+    let body = "payload=" & encodeUrl($interactive, usePlus = false)
+    let ts = $epochTime().int64
+    let cfg = WebhookConfig(slackSigningSecret: secret)
+
+    let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
+      headers = [("X-Slack-Request-Timestamp", ts),
+                 ("X-Slack-Signature", slackSig(secret, ts, body)),
+                 ("Content-Type", "application/x-www-form-urlencoded")]))
+
+    check resp.status == 200
+    let (hasEvent, event) = sl.tryRecvEvent()
+    check hasEvent
+    check event.kind == srBlockAction
+    check event.slackUserId == "U7"
+    check event.text == "models"
+    check event.triggerId == "tr7"
 
 suite "webhook receiver — Feishu":
 
