@@ -108,6 +108,7 @@ type
     dmChannels: ref Table[string, string]  ## slackUserId → dm_channel_id (ref = value receiver ok)
     seenEvents: ref Table[string, float]   ## event_id → first-seen epoch
     http*:      StdHttpAdapter
+    respondHttp*: StdHttpAdapter           ## short-timeout transport for response_url
 
 func authHeader(a: SlackAdapter): (string, string) =
   ("Authorization", "Bearer " & a.botToken)
@@ -187,10 +188,12 @@ proc respondToUrl*(a: SlackAdapter; responseUrl, text: string): Result[void, str
   if responseUrl.len == 0 or not responseUrl.startsWith("https://"):
     return err("invalid Slack response_url")
   let body = $(%* {"text": text, "response_type": "ephemeral"})
-  let res = a.http.post(responseUrl, body,
-                        @[("Content-Type", "application/json")])
+  let res = a.respondHttp.post(responseUrl, body,
+                               @[("Content-Type", "application/json")])
   if res.isErr:
     return err(res.error)
+  if res.get().status < 200 or res.get().status >= 300:
+    return err("Slack response_url HTTP " & $res.get().status)
   ok()
 
 proc sendReturnId*(a: SlackAdapter; msg: OutboundMessage): Result[string, string] =
@@ -340,4 +343,5 @@ proc newSlackAdapter*(botToken:     string;
     dmChannels: t,
     seenEvents: seen,
     http:       newStdHttpAdapter(),
+    respondHttp: newStdHttpAdapter(timeout = 5, maxRetries = 1),
   )
