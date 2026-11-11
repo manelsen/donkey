@@ -316,7 +316,7 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
           try:
             let magma = a.newMagmaAdapter()
             if magma == nil:
-              return err("MAGMA backend unavailable")
+              return appendExtractedMemoryF1(a, userId, text)
             magma.appendMemory(userId, text)
             ok()
           except Exception as e:
@@ -326,7 +326,7 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
           try:
             let magma = a.newMagmaAdapter()
             if magma == nil:
-              return err("MAGMA backend unavailable")
+              return saveEpisodeF1(a, userId, episode)
             magma.saveEpisode(userId, episode)
             ok()
           except Exception as e:
@@ -336,7 +336,7 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
           try:
             let magma = a.newMagmaAdapter()
             if magma == nil:
-              return err("MAGMA backend unavailable")
+              return extractLessonsF1(a, userId, episodes)
             ok(magma.extractAndSaveLessons(userId, episodes, @[],
                                            maxLessonsPerSource = 2))
           except Exception as e:

@@ -39,20 +39,21 @@ func shouldRunContemplation*(cfg: ContemplationConfig): bool =
 proc runContemplationNow*(loadMemories: ContemplationLoader;
                           buildEpisode: ContemplationBuilder;
                           writeEpisode: EpisodeWriter;
-                          loadUserId: UserIdLoader) =
+                          loadUserId: UserIdLoader) {.raises: [].} =
   ## Synchronous consolidation trigger. Callers decide when it is cheap enough
-  ## to run (heartbeat or an explicit maintenance boundary).
+  ## to run (heartbeat or an explicit maintenance boundary). All callback
+  ## failures are contained at this boundary.
   if loadMemories == nil or buildEpisode == nil or writeEpisode == nil or loadUserId == nil:
     return
-  let memories = loadMemories()
-  if memories.len == 0:
-    return
-  let episode = buildEpisode(memories)
-  if episode.summary.len == 0 and episode.title.len == 0:
-    return
   try:
+    let memories = loadMemories()
+    if memories.len == 0:
+      return
+    let episode = buildEpisode(memories)
+    if episode.summary.len == 0 and episode.title.len == 0:
+      return
     writeEpisode(loadUserId(), episode)
-  except CatchableError:
+  except Exception:
     discard
 
 proc runContemplationTurn*(cfg: ContemplationConfig;

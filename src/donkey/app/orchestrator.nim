@@ -74,6 +74,7 @@ type OrchestratorState = object
   completedBootstrapTargets*: seq[string]
   turnSeq*:       int
   blackboard*:    Blackboard
+  lastConsolidatedFingerprint*: string
 
 func newOrchestratorState*(): OrchestratorState =
   OrchestratorState(
@@ -275,6 +276,7 @@ proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
     if resetApplied:
       result.onboarding = nextOnboarding
       result.identity = IdentityRuntime()
+    result.resetApplied = resetApplied
     result.handled = true
 
   of tkDebugToggle:
@@ -534,8 +536,12 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
     withLastUser(uid)
 
   if msg.taskKind in {tkCompact, tkReset, tkNew, tkRestart}:
-    discard await consolidateSessionAsync(
-      memory, completeFn, asyncCompleteFn, uid, sessionId, result.history, log)
+    let fingerprint = historyFingerprint(result.history)
+    if fingerprint != result.lastConsolidatedFingerprint:
+      let consolidation = await consolidateSessionAsync(
+        memory, completeFn, asyncCompleteFn, uid, sessionId, result.history, log)
+      if consolidation.completed:
+        result.lastConsolidatedFingerprint = fingerprint
 
   let controlResult = await handleControlTask(
     globalOutbox, memory, completeFn, uid, msg.channel, msg.replyTo, msg,
@@ -548,6 +554,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
      (msg.taskKind in {tkNew, tkRestart} or
       (msg.taskKind == tkReset and controlResult.resetApplied)):
     result.blackboard.clear()
+    result.lastConsolidatedFingerprint = ""
   if controlResult.handled and msg.taskKind == tkReset:
     result =
       result |>->

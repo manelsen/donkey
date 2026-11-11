@@ -393,7 +393,12 @@ Limites:
 
 - não há consolidação periódica por padrão — só nas fronteiras de manutenção;
 - o silent turn incorre em uma chamada extra de LLM nesses comandos;
-- episódios/lições são best-effort e não têm deduplicação transacional.
+- a chamada de LLM é assíncrona via provider pool, mas os hooks de persistência
+  (incluindo embedding do MAGMA) ainda são síncronos no event loop; um worker
+  dedicado de persistência é follow-up;
+- episódios/lições são best-effort; a consolidação é deduplicada por fingerprint
+  do histórico na mesma sessão, mas não há deduplicação transacional entre
+  processos/reinícios.
 
 ### 6.3 Sessão
 

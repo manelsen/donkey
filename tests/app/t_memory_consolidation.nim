@@ -74,8 +74,12 @@ suite "memory consolidation":
       facts: @["Deployment uses Docker", "Cache key is stale"],
       preferences: @["Prefers Portuguese"],
       concepts: @["CI pipeline"],
-      triples: @[buildTriple("user", "prefers", "Portuguese",
-                             "user prefers Portuguese", 0.9)],
+      triples: @[
+        buildTriple("user", "prefers", "Portuguese",
+                    "user prefers Portuguese", 0.9),
+        buildTriple("user", "maybe", "Rust",
+                    "user maybe Rust", 0.2),
+      ],
     )
     let rendered = formatExtractedMemory(extracted, 1234)
     check rendered.contains("## Consolidated memory (1234)")
@@ -83,6 +87,7 @@ suite "memory consolidation":
     check rendered.contains("- Preference: Prefers Portuguese")
     check rendered.contains("- Concept: CI pipeline")
     check rendered.contains("- Relation: user — prefers — portuguese")
+    check not rendered.contains("maybe")
 
   test "empty extraction produces no memory block":
     let rendered = formatExtractedMemory(SilentMemoryResult(), 1)
@@ -128,6 +133,7 @@ suite "memory consolidation":
     check res.conceptsSaved == 1
     check res.triplesSaved == 1
     check res.episodeSaved
+    check res.completed
     check res.lessonsSaved == 2
     check cap.appended.len == 1
     check cap.appended[0].contains("User works with embedded systems")
@@ -165,6 +171,16 @@ suite "memory consolidation":
     check res.episodeSaved
     check cap.appended.len == 1
     check cap.appended[0].contains("Cache key is stale")
+
+  test "history fingerprint is stable and changes with content":
+    var history = historyOf([
+      (roleUser, "first"),
+      (roleAssistant, "second"),
+    ])
+    let before = historyFingerprint(history)
+    check historyFingerprint(history) == before
+    history.addUser("third")
+    check historyFingerprint(history) != before
 
   test "short histories are skipped":
     let cap = Capture()

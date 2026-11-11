@@ -6,7 +6,7 @@
 ## episode; lessons are distilled from that episode. The same module also
 ## maintains a session-scoped blackboard of detected commitments.
 
-import std/[options, os, strutils]
+import std/[hashes, options, os, strutils]
 
 import chronos
 
@@ -40,6 +40,16 @@ type
     triplesSaved*:     int
     episodeSaved*:     bool
     lessonsSaved*:     int
+    completed*:        bool
+
+func historyFingerprint*(history: ConversationHistory): string =
+  ## Stable identity of the conversation content used to deduplicate repeated
+  ## maintenance commands on the same history.
+  var h: Hash = 0
+  for message in history:
+    h = h !& hash(message.role)
+    h = h !& hash(message.text)
+  $history.len & ":" & $h
 
 func clipText*(text: string; maxChars: int): string =
   if maxChars <= 0:
@@ -97,6 +107,8 @@ func formatExtractedMemory*(extracted: SilentMemoryResult;
       break
     lines.add("- Concept: " & clipText(item, MaxMemoryItemChars))
   for triple in extracted.triples:
+    if triple.confidence < 0.7:
+      continue
     if lines.len > MaxMemoryItems * 4:
       break
     lines.add("- Relation: " & clipText(triple.subject, 80) & " — " &
@@ -193,10 +205,7 @@ proc persistConsolidation(memory: MemoryRuntimePort;
         log.warn("memory consolidation: episode: " & saved.error)
   let loadUserId = proc(): UserId {.gcsafe.} = userId
 
-  try:
-    runContemplationNow(loadMemories, buildEpisode, writeEpisode, loadUserId)
-  except Exception as e:
-    log.warn("memory consolidation: contemplation: " & e.msg)
+  runContemplationNow(loadMemories, buildEpisode, writeEpisode, loadUserId)
   result.episodeSaved = episodeSaved
 
   if episodeSaved and memory.extractLessons != nil:
@@ -205,6 +214,10 @@ proc persistConsolidation(memory: MemoryRuntimePort;
       log.warn("memory consolidation: lessons: " & lessons.error)
     else:
       result.lessonsSaved = lessons.get()
+
+  result.completed = result.episodeSaved or result.factsSaved > 0 or
+    result.preferencesSaved > 0 or result.conceptsSaved > 0 or
+    result.triplesSaved > 0
 
 proc consolidateSession*(memory: MemoryRuntimePort;
                          completeFn: CompleteFn;
@@ -220,12 +233,10 @@ proc consolidateSession*(memory: MemoryRuntimePort;
 
   let nowMs = epochMs()
   let nowSec = nowMs div 1000
-  var extracted: Result[SilentMemoryResult, string]
+  var extracted = err(Result[SilentMemoryResult, string],
+                      "no completion available")
   if completeFn != nil:
-    try:
-      extracted = runSilentMemoryTurn(history, completeFn, userId)
-    except Exception as e:
-      extracted = err(Result[SilentMemoryResult, string], "silent turn raised: " & e.msg)
+    extracted = runSilentMemoryTurn(history, completeFn, userId)
   result = persistConsolidation(
     memory, userId, sessionId, history, nowMs, nowSec, extracted, log)
 
@@ -244,21 +255,14 @@ proc consolidateSessionAsync*(memory: MemoryRuntimePort;
 
   let nowMs = epochMs()
   let nowSec = nowMs div 1000
-  var extracted: Result[SilentMemoryResult, string]
+  var extracted = err(Result[SilentMemoryResult, string],
+                      "no async completion available")
   if asyncCompleteFn != nil:
-    try:
-      let response = await asyncCompleteFn(buildSilentMemoryRequest(history))
-      if response.isErr:
-        extracted = err(Result[SilentMemoryResult, string], response.error)
-      else:
-        extracted = parseMemoryExtractionResponse(response.get().text)
-    except Exception as e:
-      extracted = err(Result[SilentMemoryResult, string],
-                      "silent turn async raised: " & e.msg)
-  elif completeFn != nil:
-    try:
-      extracted = runSilentMemoryTurn(history, completeFn, userId)
-    except Exception as e:
-      extracted = err(Result[SilentMemoryResult, string], "silent turn raised: " & e.msg)
+    let response = await safeAsyncComplete(
+      asyncCompleteFn, buildSilentMemoryRequest(history))
+    if response.isErr:
+      extracted = err(Result[SilentMemoryResult, string], response.error)
+    else:
+      extracted = parseMemoryExtractionResponse(response.get().text)
   result = persistConsolidation(
     memory, userId, sessionId, history, nowMs, nowSec, extracted, log)
