@@ -2,6 +2,7 @@
 ## Pure functions only. No I/O.
 
 import std/[options, sequtils, strutils]
+from std/unicode import toLower
 import ../reminder
 
 type
@@ -38,8 +39,8 @@ func containsAny(text: string; patterns: openArray[string]): bool =
   false
 
 func extractDueAt*(sourceText: string; nowSec: int64): Option[int64] =
-  let lower = sourceText.toLowerAscii()
-  if "tomorrow" in lower:
+  let lower = toLower(sourceText)
+  if "tomorrow" in lower or "amanhã" in lower or "amanha" in lower:
     return some(nowSec + 86_400)
   let normalized = sourceText.multiReplace((",", " "), ("?", " "), (".", " "))
   for token in normalized.splitWhitespace():
@@ -86,7 +87,7 @@ func newCommitment*(owner: CommitmentOwner;
 
 func parseUserRequestedCommitment*(sourceText: string;
                                    nowSec: int64 = 0): Option[Commitment] =
-  let lower = sourceText.toLowerAscii()
+  let lower = toLower(sourceText)
   if lower.containsAny([
       "remind me",
       "can you remind",
@@ -116,7 +117,7 @@ func parseUserRequestedCommitment*(sourceText: string;
 
 func parseAgentPromisedCommitment*(sourceText: string;
                                    nowSec: int64 = 0): Option[Commitment] =
-  let lower = sourceText.toLowerAscii()
+  let lower = toLower(sourceText)
   if lower.containsAny([
       "i will",
       "i'll",

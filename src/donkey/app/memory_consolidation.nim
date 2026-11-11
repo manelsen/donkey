@@ -6,7 +6,7 @@
 ## episode; lessons are distilled from that episode. The same module also
 ## maintains a session-scoped blackboard of detected commitments.
 
-import std/[hashes, options, os, strutils]
+import std/[hashes, options, os, strutils, unicode]
 
 import chronos
 
@@ -87,8 +87,8 @@ func buildEpisodeFromHistory*(history: ConversationHistory;
       title = clipText(message.text, MaxEpisodeTitleChars)
     lines.add(message.role & ": " & clipText(message.text, 300))
   var hasAlnum = false
-  for c in title:
-    if c.isAlphaNumeric():
+  for rune in title.runes:
+    if rune.isAlpha() or rune.int in 48 .. 57:
       hasAlnum = true
       break
   if title.len == 0 or not hasAlnum:

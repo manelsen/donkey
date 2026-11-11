@@ -235,13 +235,8 @@ when defined(withPostgres) or defined(withSqlite):
     a.savePreferences(userId, content)
 
   proc runtimeClearMemory(a: MdFileAdapter; userId: UserId) =
-    if a.hasMagmaBackend:
-      try:
-        let magma = a.newMagmaAdapter()
-        magma.clearMemory(userId)
-        return
-      except CatchableError:
-        discard
+    ## Clear both stores: fallback writes may live in MEMORY.md after a MAGMA
+    ## outage, and clearing only MAGMA would resurrect them on next import.
     a.clearMemory(userId)
 
   proc runtimeResetBootstrap(a: MdFileAdapter; userId: UserId) =

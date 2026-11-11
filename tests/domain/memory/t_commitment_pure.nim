@@ -24,6 +24,7 @@ suite "commitment_pure":
     check parsed.isSome
     check parsed.get().owner == coUser
     check parsed.get().dueAt.isSome
+    check parsed.get().dueAt.isSome
 
   test "parseUserRequestedCommitment recognizes Portuguese requests":
     let parsed = parseUserRequestedCommitment(
@@ -33,7 +34,7 @@ suite "commitment_pure":
 
   test "parseAgentPromisedCommitment recognizes Portuguese promises":
     let parsed = parseAgentPromisedCommitment(
-      "Vou enviar o relatório amanhã", 1_700_000_000)
+      "NÃO ESQUEÇA: vou enviar o relatório amanhã", 1_700_000_000)
     check parsed.isSome
     check parsed.get().owner == coAgent
 
