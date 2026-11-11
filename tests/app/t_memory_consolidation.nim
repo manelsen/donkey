@@ -69,6 +69,17 @@ suite "memory consolidation":
     check episode.startTs == 1_700_000_000
     check episode.endTs == 1_700_000_100
 
+  test "punctuation-only titles fall back and episode ids are retry-stable":
+    let history = historyOf([
+      (roleUser, "!!!"),
+      (roleAssistant, "???"),
+    ])
+    let first = buildEpisodeFromHistory(history, "1", 100)
+    let second = buildEpisodeFromHistory(history, "1", 200)
+    check first.title.startsWith("Session 1")
+    check first.id == second.id
+    check first.id.startsWith("episode-")
+
   test "formats extracted memory with bounds and sections":
     let extracted = SilentMemoryResult(
       facts: @["Deployment uses Docker", "Cache key is stale"],
@@ -101,6 +112,13 @@ suite "memory consolidation":
     check bb.entries.len == 2
     # Re-detecting the same user commitment updates the entry, it does not add.
     check rememberCommitments(bb, "Remind me to buy milk tomorrow", "", nowMs) == 1
+    check bb.entries.len == 2
+
+  test "commitments with the same prefix remain distinct":
+    var bb = newBlackboard(12)
+    let nowMs = 1_700_000_000_000'i64
+    check rememberCommitments(bb, "Remind me to buy milk tomorrow", "", nowMs) == 1
+    check rememberCommitments(bb, "Remind me to buy eggs tomorrow", "", nowMs) == 1
     check bb.entries.len == 2
 
   test "consolidates extraction, episode and lessons end to end":

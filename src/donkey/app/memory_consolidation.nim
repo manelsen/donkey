@@ -86,7 +86,12 @@ func buildEpisodeFromHistory*(history: ConversationHistory;
     if title.len == 0 and message.role == roleUser:
       title = clipText(message.text, MaxEpisodeTitleChars)
     lines.add(message.role & ": " & clipText(message.text, 300))
-  if title.len == 0:
+  var hasAlnum = false
+  for c in title:
+    if c.isAlphaNumeric():
+      hasAlnum = true
+      break
+  if title.len == 0 or not hasAlnum:
     title = "Session " & sessionId
   let summary =
     if lines.len == 0: ""
@@ -100,7 +105,8 @@ func buildEpisodeFromHistory*(history: ConversationHistory;
         startSec = raw div 1000
     except ValueError:
       discard
-  newEpisodeJournal(title, summary, startSec, nowSec, @[])
+  result = newEpisodeJournal(title, summary, startSec, nowSec, @[])
+  result.id = "episode-" & $hash(sessionId & "|" & title & "|" & summary)
 
 func formatExtractedMemory*(extracted: SilentMemoryResult;
                             nowMs: int64): string =
@@ -133,7 +139,7 @@ func formatExtractedMemory*(extracted: SilentMemoryResult;
 proc addOrUpdateCommitment(bb: var Blackboard;
                            commitment: Commitment;
                            nowMs: int64): bool =
-  let key = "commitment:" & commitment.id
+  let key = "commitment:" & commitment.id & ":" & $hash(commitment.sourceText)
   let content = clipText(commitment.sourceText, MaxBlackboardContentChars)
   if bb.hasEntry(key):
     bb.updateEntry(key, content, PriorityHigh).isOk
@@ -185,6 +191,7 @@ proc persistConsolidation(memory: MemoryRuntimePort;
                           extracted: Result[SilentMemoryResult, string];
                           log: Logger): ConsolidationResult {.gcsafe, raises: [].} =
   result.attempted = true
+  var extractionPersisted = extracted.isOk
   if extracted.isErr:
     log.warn("memory consolidation: silent turn failed: " & extracted.error)
   else:
@@ -193,6 +200,7 @@ proc persistConsolidation(memory: MemoryRuntimePort;
       let saved = memory.appendExtractedMemory(userId, memoryBlock)
       if saved.isErr:
         log.warn("memory consolidation: append: " & saved.error)
+        extractionPersisted = false
       else:
         result.factsSaved = extracted.get().facts.len
         result.preferencesSaved = extracted.get().preferences.len
@@ -227,11 +235,10 @@ proc persistConsolidation(memory: MemoryRuntimePort;
     else:
       result.lessonsSaved = lessons.get()
 
-  result.extractionSucceeded = extracted.isOk
-  ## A successful empty extraction is still a completed extraction. Episodes
-  ## are best-effort/idempotent; retrying after an extraction failure must not
-  ## duplicate them.
-  result.completed = result.extractionSucceeded
+  result.extractionSucceeded = extractionPersisted
+  ## A successful empty extraction is still a completed extraction. An append
+  ## failure leaves it pending so the next maintenance command retries it.
+  result.completed = extractionPersisted
 
 proc consolidateSession*(memory: MemoryRuntimePort;
                          completeFn: CompleteFn;

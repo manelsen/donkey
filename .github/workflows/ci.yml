@@ -18,14 +18,18 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          missing=0
-          command -v rg >/dev/null 2>&1 || missing=1
-          dpkg -s libssl-dev >/dev/null 2>&1 || missing=1
-          if [ "$missing" -eq 1 ]; then
-            # The runner image usually ships both. Avoid the Ubuntu mirror when
-            # possible; it is a common transient CI failure point.
+          if ! dpkg -s libssl-dev >/dev/null 2>&1; then
             sudo apt-get update || true
-            sudo apt-get install -y libssl-dev ripgrep || true
+            sudo apt-get install -y libssl-dev || true
+          fi
+          if ! command -v rg >/dev/null 2>&1; then
+            # Ubuntu mirrors are a recurring transient failure in this runner.
+            # ripgrep ships a static musl binary on GitHub releases.
+            RG_VERSION=14.1.1
+            curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o /tmp/ripgrep.tar.gz
+            sudo mkdir -p /opt/ripgrep
+            sudo tar -xzf /tmp/ripgrep.tar.gz -C /opt/ripgrep --strip-components=1
+            sudo ln -sf /opt/ripgrep/rg /usr/local/bin/rg
           fi
           command -v rg >/dev/null 2>&1 || { echo "ripgrep is required"; exit 1; }
           dpkg -s libssl-dev >/dev/null 2>&1 || { echo "libssl-dev is required"; exit 1; }

@@ -99,6 +99,17 @@ func parseUserRequestedCommitment*(sourceText: string;
       "could you follow up",
       "can you check",
       "could you check",
+      "lembre-me",
+      "lembre de",
+      "lembra de",
+      "não esqueça",
+      "nao esqueca",
+      "pode lembrar",
+      "pode enviar",
+      "pode verificar",
+      "pode acompanhar",
+      "me avise",
+      "me avisa",
     ]):
     return some(newCommitment(coUser, sourceText, nowSec))
   none(Commitment)
@@ -117,6 +128,15 @@ func parseAgentPromisedCommitment*(sourceText: string;
       "i will send",
       "i will follow up",
       "i will check",
+      "vou enviar",
+      "vou lembrar",
+      "vou verificar",
+      "vou acompanhar",
+      "eu vou",
+      "prometo",
+      "posso enviar",
+      "posso verificar",
+      "posso acompanhar",
     ]):
     return some(newCommitment(coAgent, sourceText, nowSec))
   none(Commitment)

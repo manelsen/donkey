@@ -338,6 +338,8 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
               return appendExtractedMemoryF1(a, userId, text)
             magma.appendMemory(userId, text)
             ok()
+          except CatchableError:
+            appendExtractedMemoryF1(a, userId, text)
           except Exception as e:
             err("append extracted memory: " & e.msg),
         saveEpisode: proc(userId: UserId; episode: EpisodeJournal): Result[void, string]
@@ -348,6 +350,8 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
               return saveEpisodeF1(a, userId, episode)
             magma.saveEpisode(userId, episode)
             ok()
+          except CatchableError:
+            saveEpisodeF1(a, userId, episode)
           except Exception as e:
             err("save episode: " & e.msg),
         extractLessons: proc(userId: UserId; episodes: seq[EpisodeJournal]): Result[int, string]
@@ -358,6 +362,8 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
               return extractLessonsF1(a, userId, episodes)
             ok(magma.extractAndSaveLessons(userId, episodes, @[],
                                            maxLessonsPerSource = 2))
+          except CatchableError:
+            extractLessonsF1(a, userId, episodes)
           except Exception as e:
             err("extract lessons: " & e.msg),
       )
