@@ -350,13 +350,13 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
     log.warn("browser: invalid DONKEY_BROWSER_BACKEND='" &
              getEnv("DONKEY_BROWSER_BACKEND") & "'; tools disabled")
   if browserBackend != bbOff:
-    var browser = newBrowserTools(
+    let browserRuntime = newBrowserToolRuntime(
       backend = browserBackend,
       executablePath = getEnv("DONKEY_BROWSER_PATH"),
-      profileDir = getEnv("DONKEY_BROWSER_PROFILE_DIR"),
+      profileBaseDir = getEnv("DONKEY_BROWSER_PROFILE_DIR"),
       http = newStdHttpAdapter().toRuntimePort(),
     )
-    let browserSchemas = browser.listTools().valueOr:
+    let browserSchemas = browserRuntime.listTools().valueOr:
       @[]
     for s in browserSchemas:
       result.tools.add(ToolDescription(
@@ -364,7 +364,7 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
         description: s.description,
         schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
       ))
-    result.clients.add(browser.toRuntimePort())
+    result.clients.add(browserRuntime.toRuntimePort())
 
 proc makeProviderFn[A](a: A): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =

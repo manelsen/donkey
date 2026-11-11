@@ -17,9 +17,10 @@ type
 
   ToolCall* = object
     ## A request to invoke one tool.
-    id*:    string   ## caller-assigned correlation id
-    name*:  string   ## tool name as returned by listTools
-    input*: JsonNode ## arguments matching inputSchema
+    id*:     string    ## caller-assigned correlation id
+    name*:   string    ## tool name as returned by listTools
+    input*:  JsonNode  ## arguments matching inputSchema
+    userId*: string    ## session owner, for per-session tool state
 
   ToolResult* = object
     ## Result of a tool invocation.

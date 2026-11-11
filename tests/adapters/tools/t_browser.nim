@@ -29,7 +29,7 @@ suite "ToolPort conformance":
     # invoke returns Result - even errors are isOk=false, not exceptions
     let call = ToolCall(id: "test", name: "unknown_tool", input: %* {})
     let res = bt.invoke(call)
-    check res.isOk  # Result type is ok, even if the tool is unknown
+    check res.isErr  # lets the tool dispatcher try the next client
 
   test "listTools returns exactly three schemas":
     let bt = BrowserTools()
@@ -165,14 +165,12 @@ suite "Input validation":
     check tr.isError
     check tr.output.contains("not found") or tr.output.contains("Install")
 
-  test "unknown tool returns error":
+  test "unknown tool returns an Err for dispatcher fallback":
     var bt = BrowserTools()
     let call = ToolCall(id: "test", name: "nonexistent_tool", input: %* {})
     let res = bt.invoke(call)
-    check res.isOk
-    let tr = res.get()
-    check tr.isError
-    check tr.output.contains("unknown tool")
+    check res.isErr
+    check res.error.contains("unknown tool")
 
 suite "Constructor":
   test "newBrowserTools with default args":
@@ -215,6 +213,18 @@ suite "Browser backends":
     let tr = bt.invoke(call).get()
     check tr.isError
     check tr.output.contains("not found")
+
+  test "runtime port routes tool calls with a per-user key":
+    let runtime = newBrowserToolRuntime(backend = bbOff)
+    check runtime.listTools().get().len == 3
+    let port = runtime.toRuntimePort()
+    let recognized = ToolCall(id: "x", name: "browser_content",
+                              input: %* {}, userId: "user-a")
+    check port.invoke(recognized).isOk
+    let unknown = ToolCall(id: "y", name: "not_a_browser_tool",
+                           input: %* {}, userId: "user-a")
+    check port.invoke(unknown).isErr
+    port.close()
 
   test "toRuntimePort exposes the browser tools":
     let port = newBrowserTools(backend = bbOff).toRuntimePort()

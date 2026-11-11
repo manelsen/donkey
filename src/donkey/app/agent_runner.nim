@@ -77,13 +77,14 @@ func extractText*(resp: CompletionResponse): Result[string, string] =
 
 proc executeToolCalls*(clients: var seq[ToolRuntimePort];
                        calls:   seq[ToolCallRequest];
-                       logger:  Logger): seq[(ToolCallRequest, string)] =
+                       logger:  Logger;
+                       userId = ""): seq[(ToolCallRequest, string)] =
   ## Executes all tool calls. Returns (call, output) pairs.
   for tc in calls:
     let input =
       try: parseJson(tc.inputJson)
       except: newJObject()
-    let call = ToolCall(id: tc.id, name: tc.name, input: input)
+    let call = ToolCall(id: tc.id, name: tc.name, input: input, userId: userId)
 
     var invoked = false
     for i in 0 ..< clients.len:
@@ -185,7 +186,7 @@ proc runTurn*(runner: var AgentRunner;
     ## Tool call round — execute and feed results back.
     runner.logger.info("tool calls=" & $resp.toolCalls.len & " round=" & $round)
     runner.history.addAssistantWithToolCalls(resp.text, resp.toolCalls)
-    let results = executeToolCalls(runner.clients, resp.toolCalls, runner.logger)
+    let results = executeToolCalls(runner.clients, resp.toolCalls, runner.logger, $userId)
     for (tc, output) in results:
       runner.history.addToolResult(tc.id, tc.name, output)
     runner.history.trimTo(runner.maxHistory)

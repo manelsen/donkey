@@ -15,7 +15,7 @@
 ##   - CDP commands sent over WebSocket via ws_client.nim
 ##   - JSON-RPC 2.0 protocol for command/response correlation
 
-import std/[json, net, options, os, osproc, times]
+import std/[json, net, options, os, osproc, strutils, tables, times]
 import ../../ports/http
 import ../../ports/tool
 import ../../core/pipeops
@@ -43,7 +43,9 @@ type
     pageTargetId*: string         ## active page target ID
     currentUrl*: string           ## URL of loaded page
     inflightRequests*: int        ## Network.* events observed since navigation
+    pendingRequestIds*: seq[string] ## requestId set, redirects keep the same id
     lastNetworkActivity*: float   ## epochTime of the last Network event
+    fetchEnabled*: bool           ## Fetch.requestPaused interception is active
     http*: HttpRuntimePort        ## transport for Chromium /json/list
 
 # ── Tool Schemas ─────────────────────────────────────────────────────────────
@@ -116,6 +118,24 @@ proc nextId*(): int =
   inc cdpRequestCounter
   result = cdpRequestCounter
 
+proc fireCdpCommand(bt: var BrowserTools; cdpMethod: string; params: JsonNode) =
+  ## Sends a CDP command without waiting for its response. Used from inside the
+  ## receive loop to answer Fetch.requestPaused events.
+  let id = nextId()
+  bt.ws.sendFrame($(%*{"id": id, "method": cdpMethod, "params": params}))
+
+proc isAllowedBrowserRequest(url: string): bool =
+  ## Top-level navigation already requires HTTP(S). Subresources may be data/
+  ## blob/about, but network destinations must not be private/internal and
+  ## local file/chrome schemes are never allowed.
+  let value = url.strip.toLowerAscii
+  if value.startsWith("data:") or value.startsWith("blob:") or
+     value.startsWith("about:"):
+    return true
+  if not value.startsWith("http://") and not value.startsWith("https://"):
+    return false
+  not url.isPrivateUrl
+
 proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode = %*{}): Result[JsonNode, string] =
   ## Send a CDP command and wait for response.
   let id = nextId()
@@ -152,13 +172,37 @@ proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode =
           return ok(resp.getOrDefault("result"))
         elif resp.hasKey("method"):
           let cdpMethod = resp["method"].getStr("")
+          let params = resp{"params"}
           case cdpMethod
+          of "Fetch.requestPaused":
+            if bt.fetchEnabled:
+              let requestId = params{"requestId"}.getStr("")
+              let requestUrl = params{"request"}{"url"}.getStr("")
+              if requestId.len > 0:
+                if isAllowedBrowserRequest(requestUrl):
+                  bt.fireCdpCommand("Fetch.continueRequest",
+                                    %*{"requestId": requestId})
+                else:
+                  bt.fireCdpCommand("Fetch.failRequest", %*{
+                    "requestId": requestId,
+                    "errorReason": "BlockedByClient",
+                  })
+                bt.lastNetworkActivity = epochTime()
           of "Network.requestWillBeSent":
-            inc bt.inflightRequests
+            let requestId = params{"requestId"}.getStr("")
+            let redirect = params{"redirectResponse"}
+            if requestId.len > 0 and redirect == nil and
+               requestId notin bt.pendingRequestIds:
+              bt.pendingRequestIds.add(requestId)
+              inc bt.inflightRequests
             bt.lastNetworkActivity = epochTime()
           of "Network.loadingFinished", "Network.loadingFailed":
-            if bt.inflightRequests > 0:
-              dec bt.inflightRequests
+            let requestId = params{"requestId"}.getStr("")
+            let idx = bt.pendingRequestIds.find(requestId)
+            if idx >= 0:
+              bt.pendingRequestIds.delete(idx)
+              if bt.inflightRequests > 0:
+                dec bt.inflightRequests
             bt.lastNetworkActivity = epochTime()
           else:
             discard
@@ -211,9 +255,18 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
     return err("private/internal addresses not allowed")
 
   bt.inflightRequests = 0
+  bt.pendingRequestIds.setLen(0)
   bt.lastNetworkActivity = epochTime()
   if waitUntil == "networkidle":
     discard bt.sendCdpCommand("Network.enable")
+
+  ## Intercept every request before it leaves the browser. This covers
+  ## redirects and page subresources, not just the initial URL.
+  if not bt.fetchEnabled:
+    let fetchResult = bt.sendCdpCommand("Fetch.enable", %*{
+      "patterns": @[%*{"urlPattern": "*", "requestStage": "Request"}]
+    })
+    bt.fetchEnabled = fetchResult.isOk
   
   # Ensure we have a page target
   let targetId = ? ensurePage(bt)
@@ -435,7 +488,7 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
   let spec = specOpt.get()
 
   let p = try:
-    startProcess(spec.exe, args = spec.args, options = {poUsePath})
+    startProcess(spec.exe, args = spec.args, options = {poUsePath, poParentStreams})
   except CatchableError as e:
     if bt.ownsProfileDir:
       try: removeDir(bt.profileDir) except CatchableError: discard
@@ -508,7 +561,9 @@ proc close*(bt: var BrowserTools) =
   bt.pageTargetId = ""
   bt.currentUrl = ""
   bt.inflightRequests = 0
+  bt.pendingRequestIds.setLen(0)
   bt.lastNetworkActivity = 0.0
+  bt.fetchEnabled = false
 
 # ── invoke — ToolPort method ─────────────────────────────────────────────────
 
@@ -577,7 +632,7 @@ proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
       isError: false))
   
   else:
-    return ok(browserError(call.id, "unknown tool: '" & call.name & "'"))
+    return err("unknown tool: '" & call.name & "'")
 
 # ── Constructor ─────────────────────────────────────────────────────────────
 
@@ -605,6 +660,95 @@ proc newBrowserTools*(
     process: nil,
     pageTargetId: "",
     currentUrl: ""
+  )
+
+type
+  BrowserToolRuntime* = ref object
+    ## One browser process/page/profile per session owner. The global
+    ## ToolRuntimePort routes by ToolCall.userId.
+    backend: BrowserBackendKind
+    executablePath: string
+    lightpandaPath: string
+    profileBaseDir: string
+    host: string
+    port: int
+    http: HttpRuntimePort
+    byUser: Table[string, ref BrowserTools]
+
+func browserUserKey(raw: string): string =
+  if raw.len == 0:
+    return "__default__"
+  for c in raw:
+    if c.isAlphaNumeric() or c in {'-', '_'}:
+      result.add(c)
+    else:
+      result.add('_')
+  if result.len == 0:
+    "__default__"
+  else:
+    result
+
+proc newBrowserToolRuntime*(backend: BrowserBackendKind = bbAuto;
+                             executablePath = "";
+                             lightpandaPath = "";
+                             profileBaseDir = "";
+                             host = DefaultHost;
+                             port = DefaultLightpandaPort;
+                             http: HttpRuntimePort = HttpRuntimePort()
+                            ): BrowserToolRuntime =
+  BrowserToolRuntime(
+    backend: backend,
+    executablePath: executablePath,
+    lightpandaPath: lightpandaPath,
+    profileBaseDir: profileBaseDir,
+    host: host,
+    port: port,
+    http: http,
+    byUser: initTable[string, ref BrowserTools](),
+  )
+
+proc listTools*(rt: BrowserToolRuntime): Result[seq[ToolSchema], string] =
+  newBrowserTools(
+    backend = rt.backend,
+    executablePath = rt.executablePath,
+    lightpandaPath = rt.lightpandaPath,
+    host = rt.host,
+    port = rt.port,
+    http = rt.http,
+  ).listTools()
+
+proc invoke*(rt: BrowserToolRuntime; call: ToolCall): Result[ToolResult, string] =
+  let key = browserUserKey(call.userId)
+  if key notin rt.byUser:
+    var bt = newBrowserTools(
+      backend = rt.backend,
+      executablePath = rt.executablePath,
+      lightpandaPath = rt.lightpandaPath,
+      host = rt.host,
+      port = rt.port,
+      http = rt.http,
+    )
+    if rt.profileBaseDir.len > 0:
+      bt.profileDir = rt.profileBaseDir / key
+      bt.ownsProfileDir = true
+    let holder = new(BrowserTools)
+    holder[] = bt
+    rt.byUser[key] = holder
+  rt.byUser[key][].invoke(call)
+
+proc close*(rt: BrowserToolRuntime) =
+  for _, bt in rt.byUser.mpairs:
+    bt[].close()
+  rt.byUser.clear()
+
+proc toRuntimePort*(rt: BrowserToolRuntime): ToolRuntimePort =
+  ToolRuntimePort(
+    listTools: proc(): Result[seq[ToolSchema], string] {.gcsafe.} =
+      rt.listTools(),
+    invoke: proc(call: ToolCall): Result[ToolResult, string] {.gcsafe.} =
+      rt.invoke(call),
+    close: proc() {.gcsafe.} =
+      rt.close(),
   )
 
 proc toRuntimePort*(bt: BrowserTools): ToolRuntimePort =
