@@ -19,6 +19,19 @@ import ../../domain/channels/slack_pure
 import ./common_runtime
 import ./slack
 
+proc replyToEvent(slAdapter: var SlackAdapter;
+                  event: SlackRawEvent;
+                  userId: UserId;
+                  text: string;
+                  sensitive = false): Result[void, string] =
+  ## Slash commands reply through response_url (ephemeral) unless the content
+  ## is sensitive; everything else uses the adapter's DM path.
+  if not sensitive and event.kind == srSlashCommand and event.responseUrl.len > 0:
+    let viaUrl = slAdapter.respondToUrl(event.responseUrl, text)
+    if viaUrl.isOk:
+      return ok()
+  slAdapter.send(OutboundMessage(userId: userId, channel: ckSlack, text: text))
+
 proc drainSlackEvents*(slAdapter: var SlackAdapter;
                        slackSigningSecret: string;
                        sm: var SessionManager;
@@ -105,48 +118,64 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
         let command = decideCommandRequest(CommandRequest(channel: ckSlack, text: routedText))
         case command.route
         of crLocal:
-          let reply =
-            case decideLocalCommandAction(command)
-            of lcaShowAbout:
-              buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount())
-            of lcaStartIntro:
-              buildStartIntroText()
-            of lcaShowMenu:
-              buildMenuText()
-            of lcaShowWhoami:
-              buildWhoamiText(userId, "", event.channelId)
-            of lcaSkillCommand:
-              let reply = applySkillTextCommand(
-                memory,
-                userId,
-                command.value,
-                homeDir = memory.donkeyHomeDir(),
-              ).valueOr:
-                error
-              reply
-            of lcaGenerateLinkCode:
-              buildLinkCodeText(slAdapter.resolver.generateLinkCode(userId))
-            of lcaClearMemory:
-              memory.clearMemory(userId)
-              "Memórias apagadas."
-            of lcaDoctorReport:
-              buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount())
-            of lcaHelpText:
-              buildHelpText(false)
-            of lcaShowMemory:
-              buildMemoryViewText(memory, userId)
-            of lcaContinueLink:
-              buildContinueResultText(slAdapter.resolver.consumeLinkCode(
-                command.value, ckSlack, event.slackUserId))
-            of lcaReasoningToggle:
-              let prefs = loadChannelPrefs(memory, userId)
-              let next = if prefs.reasoning == "on": "off" else: "on"
-              saveChannelPreference(memory, userId, "reasoning", next)
-              "Reasoning: " & next
-            else:
-              "Comando indisponível neste canal. Use /help."
-          if reply.len > 0:
-            slAdapter.send(OutboundMessage(userId: userId, channel: ckSlack, text: reply)).isOkOr:
+          var reply = ""
+          var sensitive = false
+          var menuSent = false
+          try:
+            reply =
+              case decideLocalCommandAction(command)
+              of lcaShowAbout:
+                buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount())
+              of lcaStartIntro:
+                buildStartIntroText()
+              of lcaShowMenu:
+                let text = buildMenuText()
+                if slAdapter.sendKeyboard(userId, text, buildMenuButtons()).isOk:
+                  menuSent = true
+                  ""
+                else:
+                  text
+              of lcaShowWhoami:
+                sensitive = true
+                buildWhoamiText(userId, "", event.channelId)
+              of lcaSkillCommand:
+                let reply = applySkillTextCommand(
+                  memory,
+                  userId,
+                  command.value,
+                  homeDir = memory.donkeyHomeDir(),
+                ).valueOr:
+                  error
+                reply
+              of lcaGenerateLinkCode:
+                sensitive = true
+                buildLinkCodeText(slAdapter.resolver.generateLinkCode(userId))
+              of lcaClearMemory:
+                memory.clearMemory(userId)
+                "Memórias apagadas."
+              of lcaDoctorReport:
+                sensitive = true
+                buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount())
+              of lcaHelpText:
+                buildHelpText(false)
+              of lcaShowMemory:
+                sensitive = true
+                buildMemoryViewText(memory, userId)
+              of lcaContinueLink:
+                sensitive = true
+                buildContinueResultText(slAdapter.resolver.consumeLinkCode(
+                  command.value, ckSlack, event.slackUserId))
+              of lcaReasoningToggle:
+                let prefs = loadChannelPrefs(memory, userId)
+                let next = if prefs.reasoning == "on": "off" else: "on"
+                saveChannelPreference(memory, userId, "reasoning", next)
+                "Reasoning: " & next
+              else:
+                "Comando indisponível neste canal. Use /help."
+          except CatchableError as e:
+            reply = "Erro ao processar comando: " & e.msg
+          if not menuSent and reply.len > 0:
+            replyToEvent(slAdapter, event, userId, reply, sensitive).isOkOr:
               log.error("sl send failed for user=" & $userId & " reason=" & error)
         of crSessionTask:
           if sm.hasLiveSession(userId):
@@ -160,45 +189,51 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
                 "Nenhuma sessão ativa. Envie uma mensagem primeiro."
               else:
                 "Nenhuma conversa ativa para reiniciar."
-            slAdapter.send(OutboundMessage(userId: userId, channel: ckSlack, text: text)).isOkOr:
+            replyToEvent(slAdapter, event, userId, text).isOkOr:
               log.error("sl send sessionTask feedback failed for user=" & $userId & " reason=" & error)
         of crUi:
-          let reply =
-            case command.kind
-            of cmdModels:
-              memory.applyModelsTextCommand(userId, command.value, modelCatalogLoader).valueOr: error
-            of cmdThink:
-              memory.applyThinkTextCommand(userId, command.value).valueOr: error
-            of cmdBudget:
-              memory.applyBudgetTextCommand(userId, command.value).valueOr: error
-            of cmdConfig:
-              memory.buildConfigText(userId)
-            of cmdTasks:
-              buildTasksText()
-            of cmdAgents:
-              buildAgentsText(toolsCount, toolClientsCount)
-            of cmdPoll:
-              buildPollText()
-            of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
-              buildDeferredUiCommandText(command.kind)
-            else:
-              "Comando indisponível neste canal. Use /help."
-          if reply.len > 0:
-            slAdapter.send(OutboundMessage(userId: userId, channel: ckSlack, text: reply)).isOkOr:
+          var reply = ""
+          var configSent = false
+          try:
+            reply =
+              case command.kind
+              of cmdModels:
+                memory.applyModelsTextCommand(userId, command.value, modelCatalogLoader).valueOr: error
+              of cmdThink:
+                memory.applyThinkTextCommand(userId, command.value).valueOr: error
+              of cmdBudget:
+                memory.applyBudgetTextCommand(userId, command.value).valueOr: error
+              of cmdConfig:
+                let text = memory.buildConfigText(userId)
+                if slAdapter.sendKeyboard(userId, text, buildConfigButtons()).isOk:
+                  configSent = true
+                  ""
+                else:
+                  text
+              of cmdTasks:
+                buildTasksText()
+              of cmdAgents:
+                buildAgentsText(toolsCount, toolClientsCount)
+              of cmdPoll:
+                buildPollText()
+              of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
+                buildDeferredUiCommandText(command.kind)
+              else:
+                "Comando indisponível neste canal. Use /help."
+          except CatchableError as e:
+            reply = "Erro ao processar comando: " & e.msg
+          if not configSent and reply.len > 0:
+            replyToEvent(slAdapter, event, userId, reply).isOkOr:
               log.error("sl send crUi failed for user=" & $userId & " reason=" & error)
         of crPing:
-          slAdapter.send(OutboundMessage(
-            userId: userId,
-            channel: ckSlack,
-            text: buildPingText(memory, userId, completeBuilder),
-          )).isOkOr:
+          replyToEvent(slAdapter, event, userId,
+                       buildPingText(memory, userId, completeBuilder)).isOkOr:
             log.error("sl send crPing failed for user=" & $userId & " reason=" & error)
         of crStatus:
-          slAdapter.send(OutboundMessage(
-            userId: userId,
-            channel: ckSlack,
-            text: buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs),
-          )).isOkOr:
+          replyToEvent(slAdapter, event, userId,
+                       buildTextStatusText(memory, userId, toolsCount,
+                                           sm.sessionCount(),
+                                           daemonStartMs)).isOkOr:
             log.error("sl send crStatus failed for user=" & $userId & " reason=" & error)
         of crCallback, crNone:
           handleSessionFallback(msg)

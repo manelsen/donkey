@@ -5,6 +5,7 @@
 import std/[json, os, unittest]
 import donkey/adapters/channel/slack
 import donkey/adapters/identity/identity_resolver
+import donkey/core/pipeops
 import donkey/core/types
 import donkey/domain/channels/slack_pure
 
@@ -298,3 +299,10 @@ suite "SlackAdapter event deduplication":
     let event = SlackRawEvent(text: "hello")
     check not a.isDuplicate(event, now = 1000.0)
     check not a.isDuplicate(event, now = 1000.0)
+
+suite "SlackAdapter response_url":
+
+  test "rejects empty and non-https response URLs":
+    let a = newSlackAdapter("token", getTempDir() / "donkey_slack_resp.tsv")
+    check a.respondToUrl("", "hi").isErr
+    check a.respondToUrl("http://insecure.example", "hi").isErr

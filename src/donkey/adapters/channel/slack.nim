@@ -13,7 +13,7 @@
 ## Slash commands arrive form-encoded; the HTTP layer must JSON-encode them and
 ## set "type": "slash_command" before calling pushEvent().
 
-import std/[json, tables, times]
+import std/[json, strutils, tables, times]
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
@@ -178,6 +178,19 @@ proc sendToChannel*(a: SlackAdapter;
   ## Used by the runtime for event-context replies (slash commands, block actions).
   for chunk in splitChunks(text, SlackMaxChars):
     ? a.sendChunk(channelId, chunk)
+  ok()
+
+proc respondToUrl*(a: SlackAdapter; responseUrl, text: string): Result[void, string] =
+  ## Posts an ephemeral plain-text response to a slash command's response_url.
+  ## The URL itself is the credential and is only accepted from an
+  ## already-verified Slack webhook payload.
+  if responseUrl.len == 0 or not responseUrl.startsWith("https://"):
+    return err("invalid Slack response_url")
+  let body = $(%* {"text": text, "response_type": "ephemeral"})
+  let res = a.http.post(responseUrl, body,
+                        @[("Content-Type", "application/json")])
+  if res.isErr:
+    return err(res.error)
   ok()
 
 proc sendReturnId*(a: SlackAdapter; msg: OutboundMessage): Result[string, string] =
