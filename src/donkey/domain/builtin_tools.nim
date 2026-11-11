@@ -95,8 +95,11 @@ func isPrivateUrl*(rawUrl: string): bool =
   if host.startsWith("172."):
     let parts = host.split('.')
     if parts.len >= 2 and parts[1].len > 0 and parts[1].allCharsInSet({'0'..'9'}):
-      let second = parseInt(parts[1])
-      if second in 16 .. 31: return true
+      try:
+        let second = parseInt(parts[1])
+        if second in 16 .. 31: return true
+      except ValueError:
+        discard  # overflow/non-numeric label: not an IPv4 literal
 
   false
 

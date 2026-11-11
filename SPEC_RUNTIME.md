@@ -581,6 +581,75 @@ sequenceDiagram
 - streaming só ocorre na primeira rodada do turn;
 - se houver tool calls, o caminho normal usado é o blocking path.
 
+### 9.4 Browser tools
+
+O adapter `adapters/tools/browser.nim` expõe `browser_navigate`,
+`browser_content` e `browser_screenshot`. O backend é uma estratégia pura
+(`domain/tools/browser_pure.nim`), não um `if` espalhado pelas tools.
+
+Configuração:
+
+- `DONKEY_BROWSER_BACKEND=off|auto|lightpanda|edge|chromium` (default `off`);
+- `DONKEY_BROWSER_PATH` para um executável explícito;
+- `DONKEY_BROWSER_PROFILE_DIR` para o `--user-data-dir` do Edge/Chromium;
+- `DONKEY_BROWSER_PROXY` para um proxy de egress filtrante (Edge/Chromium);
+- usuários idle por 15 minutos têm browser, perfil temporário e porta
+  liberados; uma tarefa periódica própria (`browser-idle`, 60s) faz a limpeza,
+  independente de `DONKEY_HEARTBEAT_CRON`.
+
+Comportamento:
+
+- nenhum processo sobe no boot; o browser só é iniciado no primeiro
+  `browser_navigate`;
+- Lightpanda usa `/devtools/browser`; Edge/Chromium usam o page target de
+  `/json/list`;
+- `BrowserToolRuntime` mantém um browser, uma página, um profile e uma porta
+  CDP por `ToolCall.userId`; a porta é alocada dinamicamente e nunca é
+  compartilhada entre sessões;
+- URLs privadas/internas são rejeitadas por `isPrivateUrl` antes do spawn;
+- `Fetch.enable` intercepta cada requisição efetiva (redirecionamentos e
+  subrecursos); se a interceptação não puder ser ativada, a navegação é
+  abortada;
+- eventos CDP pendentes são drenados ao fim de cada chamada, para continuar
+  requisições pausadas após a navegação;
+- o host é resolvido antes da navegação e todos os endereços resolvidos são
+  validados contra faixas privadas;
+- a chave de usuário usa codificação reversível e sem colisões (`_XX` para
+  caracteres fora de `[A-Za-z0-9-]`), isolando página e profile;
+- portas CDP liberadas por `closeUser`/`evictIdle` voltam a ser reutilizadas;
+- `DONKEY_BROWSER_PROXY` adiciona `--proxy-server` e desativa o bypass de
+  loopback do Chromium, permitindo que um proxy filtrante veja todo o tráfego;
+  com proxy configurado, `auto` não escolhe Lightpanda e o uso explícito de
+  Lightpanda é rejeitado;
+- `auto` prefere Lightpanda, depois Edge, depois Chromium;
+- o processo e o profile temporário são encerrados em `close`; profiles
+  definidos em `DONKEY_BROWSER_PROFILE_DIR` são preservados;
+- a descoberta de `/json/list` usa um transporte sem circuit breaker, para
+  permitir retry enquanto o Chromium inicia.
+
+Limites:
+
+- Edge/Chromium exigem instalação externa e são pesados; Lightpanda é o default
+  recomendado para VPS;
+- `isPrivateUrl`/DNS são verificados antes da conexão, mas o browser resolve o
+  host novamente ao conectar. Fechar a janela de DNS rebinding exige uma
+  política de egress (proxy filtrante ou firewall) que amarre a conexão ao IP
+  validado; `DONKEY_BROWSER_PROXY` permite integrar esse proxy, mas a política
+  em si é responsabilidade da implantação; o `Fetch` domain também não
+  intercepta WebSocket nem a sessão própria de service workers, então esses
+  casos dependem do proxy/firewall de egress;
+- a descoberta do Chromium usa polling bloqueante (`sleep`) dentro do tool
+  loop Chronos; chamadas de browser são síncronas por arquitetura, como já
+  documentado em `tool_agent.nim`, e a migração para I/O assíncrono é
+  follow-up;
+- eventos CDP são drenados apenas durante comandos e por uma janela curta ao
+  fim de cada chamada; requisições iniciadas muito depois da chamada ficam
+  pausadas até a próxima tool de browser (um leitor de eventos permanente
+  exige o mesmo follow-up de I/O assíncrono);
+- não há approval gate específico para browser; a política é a mesma do tool
+  loop;
+- `browser_screenshot` retorna base64 e pode ser grande.
+
 ## 10. Semântica de Erro
 
 ### 10.1 Filosofia dominante
@@ -620,11 +689,14 @@ Limite importante:
 Controles existentes:
 
 - `fetch` e `web_fetch` bloqueiam URLs privadas via `isPrivateUrl`
+- browser tools validam o host resolvido e interceptam redirecionamentos e
+  subrecursos via CDP `Fetch`
 
 Limites:
 
-- a proteção é baseada em parsing de host e padrões privados;
-- não há resolução DNS/redirect hardening avançado visível aqui;
+- a proteção é baseada em parsing de host, padrões privados e resolução DNS;
+- DNS rebinding e protocolos não cobertos pelo `Fetch` (ex.: WebSocket) exigem
+  política de egress/firewall ou proxy filtrante;
 - Docker sandbox mantém rede habilitada.
 
 ### 11.3 IPC

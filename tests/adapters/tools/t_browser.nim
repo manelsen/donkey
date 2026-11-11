@@ -8,8 +8,9 @@
 ##   - Error handling when Lightpanda is not installed
 ##   - Error handling when browser is not running (call content/screenshot first)
 
-import std/[json, os, sequtils, strutils, unittest]
+import std/[json, os, sequtils, strutils, tables, times, unittest]
 import donkey/adapters/tools/browser
+import donkey/domain/tools/browser_pure
 import donkey/ports/tool
 import donkey/core/pipeops
 
@@ -28,7 +29,7 @@ suite "ToolPort conformance":
     # invoke returns Result - even errors are isOk=false, not exceptions
     let call = ToolCall(id: "test", name: "unknown_tool", input: %* {})
     let res = bt.invoke(call)
-    check res.isOk  # Result type is ok, even if the tool is unknown
+    check res.isErr  # lets the tool dispatcher try the next client
 
   test "listTools returns exactly three schemas":
     let bt = BrowserTools()
@@ -97,6 +98,14 @@ suite "Input validation":
     check tr.isError
     check tr.output.contains("private") or tr.output.contains("not allowed")
 
+  test "browser_navigate rejects non-HTTP schemes":
+    var bt = BrowserTools(backend: bbOff)
+    for url in ["file:///etc/passwd", "data:text/html,hello", "chrome://settings"]:
+      let call = ToolCall(id: "test", name: "browser_navigate", input: %* {"url": url})
+      let tr = bt.invoke(call).get()
+      check tr.isError
+      check tr.output.contains("http/https") or tr.output.contains("not allowed")
+
   test "browser_navigate rejects localhost":
     var bt = BrowserTools()
     let call = ToolCall(id: "test", name: "browser_navigate", input: %* {"url": "http://localhost:8080/"})
@@ -156,14 +165,31 @@ suite "Input validation":
     check tr.isError
     check tr.output.contains("not found") or tr.output.contains("Install")
 
-  test "unknown tool returns error":
+  test "unknown tool returns an Err for dispatcher fallback":
     var bt = BrowserTools()
     let call = ToolCall(id: "test", name: "nonexistent_tool", input: %* {})
     let res = bt.invoke(call)
-    check res.isOk
-    let tr = res.get()
-    check tr.isError
-    check tr.output.contains("unknown tool")
+    check res.isErr
+    check res.error.contains("unknown tool")
+
+suite "Browser request policy":
+  test "allows inline schemes used by pages":
+    check isAllowedBrowserRequest("data:text/html,hello")
+    check isAllowedBrowserRequest("blob:https://example.com/abc")
+    check isAllowedBrowserRequest("about:blank")
+
+  test "blocks local schemes and private destinations":
+    check not isAllowedBrowserRequest("file:///etc/passwd")
+    check not isAllowedBrowserRequest("chrome://settings")
+    check not isAllowedBrowserRequest("http://127.0.0.1:8080/")
+    check not isAllowedBrowserRequest("http://[::1]/")
+    check not isAllowedBrowserRequest("http://169.254.169.254/latest/meta-data/")
+
+  test "handles non-numeric 172 labels without raising":
+    check not isAllowedBrowserRequest("http://172.example.com/")
+
+  test "allows public literal addresses":
+    check isAllowedBrowserRequest("http://8.8.8.8/")
 
 suite "Constructor":
   test "newBrowserTools with default args":
@@ -180,3 +206,146 @@ suite "Constructor":
     let bt = newBrowserTools(host = "0.0.0.0", port = 9333)
     check bt.host == "0.0.0.0"
     check bt.port == 9333
+
+suite "Browser backends":
+
+  test "newBrowserTools selects Edge and stores its executable":
+    let bt = newBrowserTools(backend = bbEdge,
+                             executablePath = "/opt/microsoft-edge")
+    check bt.backend == bbEdge
+    check bt.executablePath == "/opt/microsoft-edge"
+    check bt.lightpandaPath == ""
+
+  test "navigate reports a disabled backend":
+    var bt = BrowserTools(backend: bbOff)
+    let call = ToolCall(id: "test", name: "browser_navigate",
+                        input: %* {"url": "https://example.com"})
+    let tr = bt.invoke(call).get()
+    check tr.isError
+    check tr.output.contains("disabled")
+
+  test "navigate reports a missing Edge executable":
+    var bt = BrowserTools(backend: bbEdge,
+                          executablePath: "/nonexistent/microsoft-edge")
+    let call = ToolCall(id: "test", name: "browser_navigate",
+                        input: %* {"url": "https://example.com"})
+    let tr = bt.invoke(call).get()
+    check tr.isError
+    check tr.output.contains("not found")
+
+  test "explicit Lightpanda is rejected when a proxy is configured":
+    var bt = BrowserTools(backend: bbLightpanda,
+                          proxyServer: "http://127.0.0.1:3128")
+    let call = ToolCall(id: "test", name: "browser_navigate",
+                        input: %* {"url": "https://example.com"})
+    let tr = bt.invoke(call).get()
+    check tr.isError
+    check tr.output.contains("DONKEY_BROWSER_PROXY")
+
+  test "auto skips Lightpanda when a proxy is configured":
+    var bt = BrowserTools(backend: bbAuto, lightpandaPath: "/nonexistent/lightpanda",
+                          proxyServer: "http://127.0.0.1:3128")
+    let call = ToolCall(id: "test", name: "browser_navigate",
+                        input: %* {"url": "https://example.com"})
+    let tr = bt.invoke(call).get()
+    check tr.isError
+    check tr.output.contains("Lightpanda does not support")
+
+  test "runtime port routes tool calls with a per-user key":
+    let runtime = newBrowserToolRuntime(backend = bbOff)
+    check runtime.listTools().get().len == 3
+    let port = runtime.toRuntimePort()
+    let recognized = ToolCall(id: "x", name: "browser_content",
+                              input: %* {}, userId: "user-a")
+    check port.invoke(recognized).isOk
+    let unknown = ToolCall(id: "y", name: "not_a_browser_tool",
+                           input: %* {}, userId: "user-a")
+    check port.invoke(unknown).isErr
+    port.close()
+
+  test "runtime allocates a distinct CDP port per user":
+    let runtime = newBrowserToolRuntime(backend = bbOff, port = 19400)
+    for user in ["user-a", "user-b"]:
+      discard runtime.invoke(ToolCall(id: user, name: "browser_content",
+                                      input: %* {}, userId: user))
+    check runtime.byUser.hasKey("user-a")
+    check runtime.byUser.hasKey("user-b")
+    check runtime.byUser["user-a"][].port >= 19400
+    check runtime.byUser["user-b"][].port >= 19400
+    check runtime.byUser["user-a"][].port != runtime.byUser["user-b"][].port
+    runtime.close()
+
+  test "configured profile directories are not adapter-owned":
+    let runtime = newBrowserToolRuntime(
+      backend = bbOff, profileBaseDir = "/tmp/donkey-test-profiles")
+    discard runtime.invoke(ToolCall(id: "x", name: "browser_content",
+                                    input: %* {}, userId: "user-a"))
+    check runtime.byUser["user-a"][].profileDir ==
+      "/tmp/donkey-test-profiles/user-a"
+    check not runtime.byUser["user-a"][].ownsProfileDir
+    runtime.close()
+
+  test "user keys are collision-free":
+    check browserUserKey("") == "__default__"
+    check browserUserKey("user-a") == "user-a"
+    check browserUserKey("alice:a") == "alice_3Aa"
+    check browserUserKey("alice:a") != browserUserKey("alice_a")
+    check browserUserKey("_default_") != "__default__"
+
+  test "runtime passes the filtering proxy to each browser":
+    let runtime = newBrowserToolRuntime(
+      backend = bbOff, proxyServer = "http://127.0.0.1:3128")
+    discard runtime.invoke(ToolCall(id: "x", name: "browser_content",
+                                    input: %* {}, userId: "user-a"))
+    check runtime.byUser["user-a"][].proxyServer == "http://127.0.0.1:3128"
+    runtime.close()
+
+  test "runtime evicts idle users":
+    let runtime = newBrowserToolRuntime(
+      backend = bbOff, port = 19500, idleTimeoutSeconds = 60)
+    discard runtime.invoke(ToolCall(id: "a", name: "browser_content",
+                                    input: %* {}, userId: "user-a"))
+    check runtime.byUser.hasKey("user-a")
+    runtime.byUser["user-a"][].lastUsed = epochTime() - 120
+    discard runtime.invoke(ToolCall(id: "b", name: "browser_content",
+                                    input: %* {}, userId: "user-b"))
+    check not runtime.byUser.hasKey("user-a")
+    check runtime.byUser.hasKey("user-b")
+    runtime.close()
+
+  test "idle eviction works without a new invocation":
+    let runtime = newBrowserToolRuntime(
+      backend = bbOff, port = 19550, idleTimeoutSeconds = 60)
+    discard runtime.invoke(ToolCall(id: "a", name: "browser_content",
+                                    input: %* {}, userId: "user-a"))
+    runtime.byUser["user-a"][].lastUsed = epochTime() - 120
+    runtime.evictIdle()
+    check not runtime.byUser.hasKey("user-a")
+    runtime.close()
+
+  test "runtime reuses ports released by closeUser":
+    let runtime = newBrowserToolRuntime(backend = bbOff, port = 19700)
+    discard runtime.invoke(ToolCall(id: "a", name: "browser_content",
+                                    input: %* {}, userId: "user-a"))
+    let firstPort = runtime.byUser["user-a"][].port
+    runtime.closeUser("user-a")
+    discard runtime.invoke(ToolCall(id: "b", name: "browser_content",
+                                    input: %* {}, userId: "user-b"))
+    check runtime.byUser["user-b"][].port == firstPort
+    runtime.close()
+
+  test "runtime releases a single user":
+    let runtime = newBrowserToolRuntime(backend = bbOff, port = 19600)
+    for user in ["user-a", "user-b"]:
+      discard runtime.invoke(ToolCall(id: user, name: "browser_content",
+                                      input: %* {}, userId: user))
+    runtime.closeUser("user-a")
+    check not runtime.byUser.hasKey("user-a")
+    check runtime.byUser.hasKey("user-b")
+    runtime.close()
+
+  test "toRuntimePort exposes the browser tools":
+    let port = newBrowserTools(backend = bbOff).toRuntimePort()
+    let tools = port.listTools().get()
+    check tools.len == 3
+    port.close()

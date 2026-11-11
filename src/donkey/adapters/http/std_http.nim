@@ -12,9 +12,12 @@ type StdHttpAdapter* = object
   timeout*: int ## Timeout in seconds.
   maxRetries*: int ## Maximum number of retries.
   allowlist*: seq[string] ## Allowed hosts.
+  circuitBreaker*: bool ## Record failures/check the global per-host breaker.
 
-proc newStdHttpAdapter*(timeout = 60, maxRetries = 3, allowlist: seq[string] = @[]): StdHttpAdapter =
-  StdHttpAdapter(timeout: timeout, maxRetries: maxRetries, allowlist: allowlist)
+proc newStdHttpAdapter*(timeout = 60, maxRetries = 3, allowlist: seq[string] = @[],
+                        circuitBreaker = true): StdHttpAdapter =
+  StdHttpAdapter(timeout: timeout, maxRetries: maxRetries, allowlist: allowlist,
+                 circuitBreaker: circuitBreaker)
 
 proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
                       headers: seq[HttpHeader]): Result[HttpResponse, string] {.gcsafe.} =
@@ -24,7 +27,7 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
   if a.allowlist.len > 0 and not isHostAllowed(host, a.allowlist):
     return err("Network egress BLOCKED: host '" & host & "' not in allowlist")
 
-  if not checkCircuit(host):
+  if a.circuitBreaker and not checkCircuit(host):
     return err("Circuit breaker OPEN for host: " & host)
 
   var lastError = ""
@@ -53,17 +56,20 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
         if attempt < a.maxRetries:
           sleep(retryAfterMs)
           continue
-        recordFailure(host)
+        if a.circuitBreaker:
+          recordFailure(host)
         return err("HTTP 429 rate limited after " & $a.maxRetries & " attempts. Last error: " & lastError)
       if val.status < 500: # Success or client error, don't retry
-        recordSuccess(host)
+        if a.circuitBreaker:
+          recordSuccess(host)
         return ok(val)
       else:
         lastError = "HTTP " & $val.status
     else:
       lastError = res.error
 
-    recordFailure(host)
+    if a.circuitBreaker:
+      recordFailure(host)
     if attempt < a.maxRetries:
       sleep(getBackoffMs(attempt))
 

@@ -65,10 +65,14 @@ func isPrivateUrl*(rawUrl: string): bool =
   # 172.16-31.x.x
   if host.startsWith("172."):
     let parts = host[4 .. ^1].split('.')
-    if parts.len >= 1:
-      let first = parseInt(parts[0])
-      if first >= 16 and first <= 31:
-        return true
+    if parts.len >= 1 and parts[0].len > 0 and
+       parts[0].allCharsInSet({'0'..'9'}):
+      try:
+        let first = parseInt(parts[0])
+        if first >= 16 and first <= 31:
+          return true
+      except ValueError:
+        discard  # overflow/non-numeric label: not an IPv4 literal
   
   # Check for IPv6 loopback and unique local addresses
   if host == "::1" or host.startsWith("fc") or host.startsWith("fd") or host.startsWith("fe80"):

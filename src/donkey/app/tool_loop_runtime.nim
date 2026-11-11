@@ -167,13 +167,14 @@ proc invokeToolAgent(toolInbox: AsyncQueue[AgentMessage];
                      round: int;
                      callIndex: int;
                      tc: ToolCallRequest;
+                     userId: string;
                      providerLabel: string;
                      log: Logger): Future[ToolCallResult] {.async.} =
   let payload = $ %* {
     "name": tc.name, "id": tc.id, "inputJson": tc.inputJson
   }
   let taskId = msgId & "-" & $round & "-" & $callIndex
-  await toolInbox.put(newTaskMsg(taskId, tkInvokeTool, "", payload))
+  await toolInbox.put(newTaskMsg(taskId, tkInvokeTool, userId, payload))
   let toolReply = await awaitExpectedReply(toolOut, taskId, "ToolAgent")
   log.info("[tool] (" & tc.name & ") -> [" & providerLabel & "] |" &
            $toolReply.text.len & "|")
@@ -221,7 +222,7 @@ proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
     )
 
   let toolResult = await invokeToolAgent(
-    toolInbox, toolOut, msgId, round, callIndex, tc, providerLabel, log)
+    toolInbox, toolOut, msgId, round, callIndex, tc, $uid, providerLabel, log)
   if debugMode:
     await globalOutbox.put(OutboundMessage(
       userId: uid, channel: channel,

@@ -1,6 +1,6 @@
 ## donkey — AI agent system entry point.
 
-import std/[algorithm, json, os, parseopt, strutils, tables, terminal, times]
+import std/[algorithm, json, options, os, parseopt, strutils, tables, terminal, times]
 import locks
 import chronos
 import chronos/asyncsync
@@ -50,6 +50,8 @@ import donkey/adapters/channel/dingtalk
 import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
 import donkey/adapters/tool/mcp_client
+import donkey/adapters/tools/browser
+import donkey/domain/tools/browser_pure
 import donkey/adapters/state/runtime_store
 import donkey/domain/message
 import donkey/domain/agent_message
@@ -170,6 +172,7 @@ proc makeTgTypingFn(token: string; identityPath: string; log: Logger): TypingFn 
 type DaemonToolBundle = object
   clients: seq[ToolRuntimePort]
   tools:   seq[ToolDescription]
+  browserRuntime: BrowserToolRuntime
 
 type GlobalProviderBundle = object
   completeFn: CompleteFn
@@ -240,6 +243,7 @@ type RouteSample = object
 type DaemonServices = object
   toolClients:      seq[ToolRuntimePort]
   tools:            seq[ToolDescription]
+  browserRuntime:   BrowserToolRuntime
   globalCompleteFn: CompleteFn
   globalStreamFn:   StreamFn
   tgTypingFn:       TypingFn
@@ -314,7 +318,7 @@ type DaemonBootstrap = object
   memory: MdFileAdapter
   ctx:    DaemonContext
 
-proc loadDaemonToolBundle(cfg: DonkeyConfig): DaemonToolBundle =
+proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
   for entry in loadToolRegistry(cfg.home / "tools.toml"):
     var client = buildMcpClient(entry)
     let schemasRes = client.listTools()
@@ -337,6 +341,39 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig): DaemonToolBundle =
           schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
         ))
       result.clients.add(runtimeRes.value.port)
+
+  ## Browser tools are opt-in: no process is spawned until the first
+  ## browser_navigate call. Backend selection is pure/strategy-based.
+  let parsedBackend = parseBrowserBackend(getEnv("DONKEY_BROWSER_BACKEND"))
+  var browserBackend = bbOff
+  if parsedBackend.isSome:
+    browserBackend = parsedBackend.get()
+  elif getEnv("DONKEY_BROWSER_BACKEND").strip.len > 0:
+    log.warn("browser: invalid DONKEY_BROWSER_BACKEND='" &
+             getEnv("DONKEY_BROWSER_BACKEND") & "'; tools disabled")
+  if browserBackend != bbOff:
+    ## CDP discovery polls a loopback endpoint while Chromium boots; a shared
+    ## circuit breaker would stay open for 60s after three connection refusals
+    ## and outlive the 30s discovery deadline.
+    let discoveryHttp = newStdHttpAdapter(
+      timeout = 2, maxRetries = 1, circuitBreaker = false).toRuntimePort()
+    let browserRuntime = newBrowserToolRuntime(
+      backend = browserBackend,
+      executablePath = getEnv("DONKEY_BROWSER_PATH"),
+      profileBaseDir = getEnv("DONKEY_BROWSER_PROFILE_DIR"),
+      proxyServer = getEnv("DONKEY_BROWSER_PROXY"),
+      http = discoveryHttp,
+    )
+    result.browserRuntime = browserRuntime
+    let browserSchemas = browserRuntime.listTools().valueOr:
+      @[]
+    for s in browserSchemas:
+      result.tools.add(ToolDescription(
+        name:        s.name,
+        description: s.description,
+        schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
+      ))
+    result.clients.add(browserRuntime.toRuntimePort())
 
 proc makeProviderFn[A](a: A): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
@@ -363,9 +400,10 @@ func configuredMagmaSqlitePath(home: string): string =
 proc initDaemonServices(cfg: DonkeyConfig;
                         env: DaemonEnv;
                         log: Logger): DaemonServices =
-  let toolBundle = loadDaemonToolBundle(cfg)
+  let toolBundle = loadDaemonToolBundle(cfg, log)
   result.toolClients = toolBundle.clients
   result.tools = toolBundle.tools
+  result.browserRuntime = toolBundle.browserRuntime
 
   let providerBundle = buildGlobalProviderBundle()
   result.globalCompleteFn = providerBundle.completeFn
@@ -1597,6 +1635,12 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
 
   ## Heartbeat: periodic maintenance (reminder delivery, etc.)
   var hbReg = newHeartbeatRegistry()
+  if ctx.services.browserRuntime != nil:
+    let browserRuntime = ctx.services.browserRuntime
+    ## Independent of DONKEY_HEARTBEAT_CRON: idle browsers must be reaped
+    ## within a bounded time even if the main heartbeat runs daily.
+    startPeriodicTask(proc() {.gcsafe.} = browserRuntime.evictIdle(),
+                      intervalSec = 60, name = "browser-idle")
   let memPort = memory.toRuntimePort()
   let reminderOutboxFn: ReminderOutboxFn = proc(userId, channel, message: string) {.gcsafe.} =
     let uid = UserId(userId)

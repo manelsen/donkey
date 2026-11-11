@@ -48,7 +48,8 @@ proc runToolAgent*(inbox:   AsyncQueue[AgentMessage];
         await outbox.put(newErrorMsg(msg.id, "ToolAgent: bad payload: " & e.msg))
         continue
 
-      let call = ToolCall(id: toolId, name: toolName, input: toolInput)
+      let call = ToolCall(id: toolId, name: toolName, input: toolInput,
+                            userId: msg.userId)
 
       var invoked = false
       for i in 0 ..< liveClients.len:

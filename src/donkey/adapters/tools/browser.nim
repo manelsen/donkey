@@ -15,11 +15,14 @@
 ##   - CDP commands sent over WebSocket via ws_client.nim
 ##   - JSON-RPC 2.0 protocol for command/response correlation
 
-import std/[json, net, os, osproc, times]
+import std/[json, net, options, os, osproc, strutils, tables, times]
+import ../../ports/http
 import ../../ports/tool
 import ../../core/pipeops
+import ../../domain/tools/browser_pure
 import ../../domain/tools/web_fetch_helpers
 import ../../adapters/channel/ws_client
+import ../network/dns_resolver
 
 const
   DefaultLightpandaPort* = 9222
@@ -29,13 +32,24 @@ const
 
 type
   BrowserTools* = object
-    lightpandaPath*: string   ## Path to lightpanda binary (empty = search PATH)
-    port*: int                ## CDP port
-    host*: string              ## CDP host
-    process*: Process          ## lightpanda serve subprocess
-    ws*: WsClient             ## CDP WebSocket connection
-    pageTargetId*: string      ## Active page target ID
-    currentUrl*: string       ## URL of loaded page
+    backend*: BrowserBackendKind  ## off/auto/lightpanda/edge/chromium
+    executablePath*: string       ## explicit browser executable
+    lightpandaPath*: string       ## legacy alias for executablePath
+    profileDir*: string           ## Chromium/Edge user-data-dir
+    ownsProfileDir*: bool         ## true when the adapter created it
+    port*: int                    ## CDP port
+    host*: string                 ## CDP host
+    process*: Process             ## browser subprocess
+    ws*: WsClient                 ## CDP WebSocket connection
+    pageTargetId*: string         ## active page target ID
+    currentUrl*: string           ## URL of loaded page
+    inflightRequests*: int        ## Network.* events observed since navigation
+    pendingRequestIds*: seq[string] ## requestId set, redirects keep the same id
+    lastNetworkActivity*: float   ## epochTime of the last Network event
+    lastUsed*: float              ## epochTime of the last tool invocation
+    fetchEnabled*: bool           ## Fetch.requestPaused interception is active
+    http*: HttpRuntimePort        ## transport for Chromium /json/list
+    proxyServer*: string          ## optional filtering egress proxy
 
 # ── Tool Schemas ─────────────────────────────────────────────────────────────
 
@@ -107,6 +121,94 @@ proc nextId*(): int =
   inc cdpRequestCounter
   result = cdpRequestCounter
 
+proc fireCdpCommand(bt: var BrowserTools; cdpMethod: string; params: JsonNode) =
+  ## Sends a CDP command without waiting for its response. Used from inside the
+  ## receive loop to answer Fetch.requestPaused events.
+  let id = nextId()
+  bt.ws.sendFrame($(%*{"id": id, "method": cdpMethod, "params": params}))
+
+proc isAllowedBrowserRequest*(url: string): bool =
+  ## Top-level navigation already requires HTTP(S). Subresources may be data/
+  ## blob/about, but network destinations must not be private/internal and
+  ## local file/chrome schemes are never allowed.
+  ##
+  ## The host is resolved here and every resolved address is validated. The
+  ## browser resolves again when connecting, so a DNS-rebinding window remains;
+  ## production deployments should route browser egress through a filtering
+  ## proxy/firewall that pins connections to validated addresses.
+  let value = url.strip.toLowerAscii
+  if value.startsWith("data:") or value.startsWith("blob:") or
+     value.startsWith("about:"):
+    return true
+  if not value.startsWith("http://") and not value.startsWith("https://"):
+    return false
+  if url.isPrivateUrl:
+    return false
+  let host = extractUrlHost(url)
+  if host.len == 0:
+    return false
+  safeResolve(host).isOk
+
+proc handleCdpEvent(bt: var BrowserTools; resp: JsonNode) =
+  ## Applies one asynchronous CDP event received while waiting for a response.
+  let cdpMethod = resp["method"].getStr("")
+  let params = resp{"params"}
+  case cdpMethod
+  of "Fetch.requestPaused":
+    if bt.fetchEnabled:
+      let requestId = params{"requestId"}.getStr("")
+      let requestUrl = params{"request"}{"url"}.getStr("")
+      if requestId.len > 0:
+        if isAllowedBrowserRequest(requestUrl):
+          bt.fireCdpCommand("Fetch.continueRequest",
+                            %*{"requestId": requestId})
+        else:
+          bt.fireCdpCommand("Fetch.failRequest", %*{
+            "requestId": requestId,
+            "errorReason": "BlockedByClient",
+          })
+        bt.lastNetworkActivity = epochTime()
+  of "Network.requestWillBeSent":
+    let requestId = params{"requestId"}.getStr("")
+    let redirect = params{"redirectResponse"}
+    if requestId.len > 0 and redirect == nil and
+       requestId notin bt.pendingRequestIds:
+      bt.pendingRequestIds.add(requestId)
+      inc bt.inflightRequests
+    bt.lastNetworkActivity = epochTime()
+  of "Network.loadingFinished", "Network.loadingFailed":
+    let requestId = params{"requestId"}.getStr("")
+    let idx = bt.pendingRequestIds.find(requestId)
+    if idx >= 0:
+      bt.pendingRequestIds.delete(idx)
+      if bt.inflightRequests > 0:
+        dec bt.inflightRequests
+    bt.lastNetworkActivity = epochTime()
+  else:
+    discard
+
+proc drainPendingEvents(bt: var BrowserTools; budgetMs = 50) =
+  ## Processes events that arrived after the last command response. Without
+  ## this, a request paused by Fetch after navigateTo returns would stay
+  ## blocked until the next tool call sends another CDP command.
+  let deadline = epochTime() + float(budgetMs) / 1000.0
+  while epochTime() < deadline:
+    let frame = try:
+      bt.ws.recvFrame(10)
+    except TimeoutError:
+      break
+    except CatchableError:
+      break
+    if frame.opcode == WsOpcodeClose:
+      break
+    if frame.opcode == WsOpcodeText or frame.opcode == WsOpcodeBin:
+      try:
+        let resp = parseJson(frame.data)
+        if resp.kind == JObject and resp.hasKey("method"):
+          bt.handleCdpEvent(resp)
+      except CatchableError:
+        discard
+
 proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode = %*{}): Result[JsonNode, string] =
   ## Send a CDP command and wait for response.
   let id = nextId()
@@ -141,13 +243,18 @@ proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode =
           if resp.hasKey("error"):
             return err("CDP error: " & resp["error"].pretty)
           return ok(resp.getOrDefault("result"))
+        elif resp.hasKey("method"):
+          bt.handleCdpEvent(resp)
 
 proc ensurePage*(bt: var BrowserTools): Result[string, string] =
   ## Ensure we have an active page target. Creates one if not.
   if bt.pageTargetId.len > 0:
     return ok(bt.pageTargetId)
-  
-  # Create a new page target
+
+  if bt.backend.isChromiumBackend():
+    return err("no page target available from Chromium /json/list")
+
+  # Lightpanda: create a new page target on the browser endpoint.
   let resp = bt.sendCdpCommand("Target.createTarget", %*{
     "url": "about:blank"
   })
@@ -165,7 +272,12 @@ proc activatePage*(bt: var BrowserTools): Result[void, string] =
   ## Activate the page target for sending commands.
   if bt.pageTargetId.len == 0:
     return err("no active page target")
-  
+
+  ## Chromium page endpoints do not expose Target.activateTarget; the page
+  ## target is already the one this WebSocket is attached to.
+  if bt.backend.isChromiumBackend():
+    return ok()
+
   discard bt.sendCdpCommand("Target.activateTarget", %*{
     "targetId": bt.pageTargetId
   })
@@ -173,9 +285,31 @@ proc activatePage*(bt: var BrowserTools): Result[void, string] =
 
 proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): Result[string, string] =
   ## Navigate to URL and wait for page load.
+  # Only HTTP(S): file://, data: and browser-internal schemes must never reach
+  # Page.navigate (isPrivateUrl alone treats "file" as a host).
+  if not url.isHttpUrl:
+    return err("only http/https URLs are allowed")
   # SSRF check
   if url.isPrivateUrl:
     return err("private/internal addresses not allowed")
+
+  bt.inflightRequests = 0
+  bt.pendingRequestIds.setLen(0)
+  bt.lastNetworkActivity = epochTime()
+  if waitUntil == "networkidle":
+    discard bt.sendCdpCommand("Network.enable")
+
+  ## Intercept every request before it leaves the browser. This covers
+  ## redirects and page subresources, not just the initial URL. Without
+  ## interception redirects and subresources would bypass the URL policy, so
+  ## navigation is aborted when it cannot be enabled.
+  if not bt.fetchEnabled:
+    let fetchResult = bt.sendCdpCommand("Fetch.enable", %*{
+      "patterns": @[%*{"urlPattern": "*", "requestStage": "Request"}]
+    })
+    if fetchResult.isErr:
+      return err("cannot enable request interception: " & fetchResult.error)
+    bt.fetchEnabled = true
   
   # Ensure we have a page target
   let targetId = ? ensurePage(bt)
@@ -185,23 +319,50 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
   
   # Enable Page domain events
   discard bt.sendCdpCommand("Page.enable")
-  
+
   # Navigate
   let navResp = bt.sendCdpCommand("Page.navigate", %*{
     "url": url
   })
   if navResp.isErr:
     return err(navResp.error)
-  
+  let navNode = navResp.get()
+  let navError = navNode{"errorText"}
+  if navError != nil and navError.kind == JString and navError.getStr("").len > 0:
+    return err("navigation failed: " & navError.getStr(""))
+
   bt.currentUrl = url
-  
-  # Wait for load event
-  let waitResp = bt.sendCdpCommand("Page.waitForLoadEvent", %*{})
-  if waitResp.isErr:
-    # Try Page.setDownloadBehavior or just return success if navigation succeeded
-    discard
-  
-  return ok(url)
+
+  # Poll document.readyState: supported by both Lightpanda and Chromium page
+  # endpoints (Chromium does not implement Lightpanda's non-standard
+  # Page.waitForLoadEvent).
+  let deadline = epochTime() + float(DefaultTimeoutMs) / 1000.0
+  let targetReady = if waitUntil == "domcontentloaded": "interactive"
+                    else: "complete"
+  while epochTime() < deadline:
+    let evalResp = bt.sendCdpCommand("Runtime.evaluate", %*{
+      "expression": "document.readyState",
+      "returnByValue": true
+    })
+    if evalResp.isOk:
+      let resultNode = evalResp.get(){"result"}
+      if resultNode != nil:
+        let valueNode = resultNode{"value"}
+        let state =
+          if valueNode != nil and valueNode.kind == JString: valueNode.getStr("")
+          else: ""
+        if state == "complete" or
+           (targetReady == "interactive" and state == "interactive"):
+          if waitUntil != "networkidle":
+            return ok(url)
+          ## Real network-idle approximation: wait until Network.* events show
+          ## no in-flight requests and 500ms of silence.
+          if bt.inflightRequests == 0 and
+             epochTime() - bt.lastNetworkActivity >= 0.5:
+            return ok(url)
+    sleep(100)
+
+  return err("timeout waiting for page load")
 
 proc getContent*(bt: var BrowserTools; maxChars: int; asHtml: bool): Result[string, string] =
   ## Get page content (HTML or text).
@@ -239,10 +400,12 @@ proc takeScreenshot*(bt: var BrowserTools; fullPage: bool): Result[string, strin
   
   ? activatePage(bt)
   
-  let captureResp = bt.sendCdpCommand("Page.captureScreenshot", %*{
-    "format": "png",
-    "fullPage": fullPage
-  })
+  let params =
+    if bt.backend.isChromiumBackend():
+      %*{"format": "png", "captureBeyondViewport": fullPage}
+    else:
+      %*{"format": "png", "fullPage": fullPage}
+  let captureResp = bt.sendCdpCommand("Page.captureScreenshot", params)
   if captureResp.isErr:
     return err(captureResp.error)
   
@@ -255,82 +418,244 @@ proc takeScreenshot*(bt: var BrowserTools; fullPage: bool): Result[string, strin
 
 # ── Lifecycle ───────────────────────────────────────────────────────────────
 
-proc spawnLightpanda*(bt: var BrowserTools): Result[string, string] =
-  ## Spawn lightpanda serve subprocess and connect via CDP WebSocket.
+proc resolveBrowserExecutable(bt: BrowserTools): Result[tuple[kind: BrowserBackendKind, exe: string], string] =
+  ## Resolve the concrete backend and executable. Explicit paths win; otherwise
+  ## search the candidate names in PATH.
+  var kind = bt.backend
+  if kind == bbAuto and bt.lightpandaPath.len > 0:
+    kind = bbLightpanda
+
+  ## A filtering proxy only applies to Edge/Chromium; selecting Lightpanda
+  ## would silently route traffic around it.
+  let proxySet = bt.proxyServer.len > 0
+  if proxySet and kind == bbLightpanda:
+    return err("Lightpanda does not support DONKEY_BROWSER_PROXY; " &
+               "use Edge or Chromium")
+
+  if kind == bbAuto and bt.executablePath.len > 0:
+    let inferred = inferBrowserBackend(bt.executablePath)
+    if inferred.isNone:
+      return err("cannot infer browser backend from executable path: " &
+                 bt.executablePath)
+    kind = inferred.get()
+    if proxySet and not kind.isChromiumBackend():
+      return err("configured browser does not support DONKEY_BROWSER_PROXY; " &
+                 "use Edge or Chromium")
+    if fileExists(bt.executablePath):
+      return ok((kind, bt.executablePath))
+    return err("browser executable not found: " & bt.executablePath)
+
+  if kind == bbAuto:
+    let candidates: seq[BrowserBackendKind] =
+      if proxySet: @[bbEdge, bbChromium]
+      else: @[bbLightpanda, bbEdge, bbChromium]
+    for candidateKind in candidates:
+      for name in browserExecutableCandidates(candidateKind):
+        let found = findExe(name)
+        if found.len > 0:
+          return ok((candidateKind, found))
+    return err("no browser executable found; install Lightpanda, Edge or Chromium, " &
+               "or set DONKEY_BROWSER_PATH")
+
+  if kind == bbOff:
+    return err("browser backend is disabled; set DONKEY_BROWSER_BACKEND")
+
+  let explicit =
+    if bt.executablePath.len > 0: bt.executablePath
+    elif kind == bbLightpanda and bt.lightpandaPath.len > 0: bt.lightpandaPath
+    else: ""
+  if explicit.len > 0:
+    if fileExists(explicit):
+      return ok((kind, explicit))
+    return err("browser executable not found: " & explicit)
+
+  for name in browserExecutableCandidates(kind):
+    let found = findExe(name)
+    if found.len > 0:
+      return ok((kind, found))
+
+  let hint = case kind
+    of bbLightpanda: "install Lightpanda or set DONKEY_BROWSER_PATH"
+    of bbEdge: "install Microsoft Edge or set DONKEY_BROWSER_PATH"
+    of bbChromium: "install Chromium/Chrome or set DONKEY_BROWSER_PATH"
+    else: "set DONKEY_BROWSER_PATH"
+  err("browser executable not found for " & $kind & "; " & hint)
+
+proc waitForChromiumPage(bt: var BrowserTools;
+                         deadline: float): Result[tuple[wsUrl: string, targetId: string, url: string], string] =
+  ## Poll /json/list until a page target exposes its debugger WebSocket.
+  if bt.http.get == nil:
+    return err("HTTP port not configured for Chromium CDP discovery")
+  let endpoint = "http://" & bt.host & ":" & $bt.port & "/json/list"
+  while epochTime() < deadline:
+    try:
+      let response = bt.http.get(endpoint, @[])
+      if response.isErr or response.get().status != 200:
+        sleep(100)
+        continue
+      let pages = parseJson(response.get().body)
+      if pages.kind == JArray:
+        for page in pages:
+          let typeNode = page{"type"}
+          if typeNode == nil or typeNode.kind != JString or
+             typeNode.getStr("") != "page":
+            continue
+          let wsNode = page{"webSocketDebuggerUrl"}
+          if wsNode == nil or wsNode.kind != JString:
+            continue
+          let wsUrl = wsNode.getStr("")
+          if wsUrl.len > 0:
+            let idNode = page{"id"}
+            let urlNode = page{"url"}
+            return ok((
+              wsUrl,
+              if idNode != nil and idNode.kind == JString: idNode.getStr("") else: "",
+              if urlNode != nil and urlNode.kind == JString: urlNode.getStr("") else: "",
+            ))
+    except CatchableError:
+      discard
+    sleep(100)
+  err("Chromium CDP endpoint did not expose a page target")
+
+proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
+  ## Spawn the configured browser backend and connect its CDP endpoint.
   if bt.process != nil:
     return ok("already running")
-  
-  let path = bt.lightpandaPath
-  let exe = if path.len > 0 and path.fileExists: path
-            elif "lightpanda".findExe.len > 0: "lightpanda"
-            else: ""
-  
-  if exe.len == 0:
-    return err("lightpanda binary not found in PATH. Install: https://github.com/lightpanda-io/browser")
-  
-  # Start lightpanda serve
+
+  let resolved = bt.resolveBrowserExecutable()
+  if resolved.isErr:
+    return err(resolved.error)
+  let (kind, exe) = resolved.get()
+
+  var profileDir = bt.profileDir
+  if kind.isChromiumBackend() and profileDir.len == 0:
+    profileDir = getTempDir() / ("donkey-browser-" & $getCurrentProcessId() &
+                                 "-" & $epochMs())
+    try:
+      createDir(profileDir)
+    except CatchableError as e:
+      return err("cannot create browser profile dir: " & e.msg)
+    bt.profileDir = profileDir
+    bt.ownsProfileDir = true
+
+  let specOpt = buildLaunchSpec(kind, exe, bt.host, bt.port, profileDir,
+                                bt.proxyServer)
+  if specOpt.isNone:
+    return err("invalid browser launch specification")
+  let spec = specOpt.get()
+
   let p = try:
-    startProcess(exe, args = ["serve", "--host", bt.host, "--port", $bt.port], options = {poUsePath})
+    startProcess(spec.exe, args = spec.args, options = {poUsePath, poParentStreams})
   except CatchableError as e:
-    return err("failed to spawn lightpanda: " & e.msg)
-  
+    if bt.ownsProfileDir:
+      try: removeDir(bt.profileDir) except CatchableError: discard
+    return err("failed to spawn " & $kind & ": " & e.msg)
   bt.process = p
-  
-  # Wait briefly for server to start
-  sleep(500)
-  
-  # Connect WebSocket to CDP
-  # Lightpanda CDP WebSocket path: /devtools/browser/<id>
-  let wsPath = "/devtools/browser"
+  bt.backend = kind
+
+  if kind == bbLightpanda:
+    sleep(500)
+    try:
+      bt.ws = wsConnect(bt.host, Port(bt.port), "/devtools/browser", useTls = false)
+    except IOError as e:
+      bt.process.terminate()
+      bt.process.close()
+      bt.process = nil
+      return err("WebSocket connect failed: " & e.msg)
+    return ok("connected")
+
+  let deadline = epochTime() + float(DefaultTimeoutMs) / 1000.0
+  let page = bt.waitForChromiumPage(deadline)
+  if page.isErr:
+    bt.process.terminate()
+    bt.process.close()
+    bt.process = nil
+    if bt.ownsProfileDir:
+      try: removeDir(bt.profileDir) except CatchableError: discard
+    return err(page.error)
+
+  let (wsUrl, targetId, pageUrl) = page.get()
+  let endpointOpt = parseWsDebuggerUrl(wsUrl)
+  if endpointOpt.isNone:
+    bt.process.terminate()
+    bt.process.close()
+    bt.process = nil
+    return err("invalid CDP websocket URL from Chromium")
+  let endpoint = endpointOpt.get()
   try:
-    bt.ws = wsConnect(bt.host, Port(bt.port), wsPath)
+    bt.ws = wsConnect(endpoint.host, Port(endpoint.port),
+                      endpoint.path, useTls = endpoint.secure)
   except IOError as e:
+    bt.process.terminate()
     bt.process.close()
     bt.process = nil
     return err("WebSocket connect failed: " & e.msg)
-  
-  return ok("connected")
+  bt.pageTargetId = targetId
+  bt.currentUrl = pageUrl
+  ok("connected")
+
+proc spawnLightpanda*(bt: var BrowserTools): Result[string, string] =
+  ## Backward-compatible alias.
+  bt.spawnBrowser()
 
 proc close*(bt: var BrowserTools) =
-  ## Clean up subprocess and WebSocket.
-  try:
-    bt.ws.wsClose()
-  except CatchableError: discard
+  ## Clean up subprocess, WebSocket and adapter-owned profile directory.
+  if bt.ws.sock != nil:
+    try:
+      bt.ws.wsClose()
+    except CatchableError: discard
   if bt.process != nil:
     bt.process.terminate()
     bt.process.close()
     bt.process = nil
+  if bt.ownsProfileDir and bt.profileDir.len > 0:
+    try:
+      removeDir(bt.profileDir)
+    except CatchableError:
+      discard
+  bt.profileDir = ""
+  bt.ownsProfileDir = false
   bt.pageTargetId = ""
   bt.currentUrl = ""
+  bt.inflightRequests = 0
+  bt.pendingRequestIds.setLen(0)
+  bt.lastNetworkActivity = 0.0
+  bt.fetchEnabled = false
 
 # ── invoke — ToolPort method ─────────────────────────────────────────────────
 
-proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
+func browserError(callId, message: string): ToolResult =
+  ToolResult(callId: callId, output: $(%*{"error": message}), isError: true)
+
+proc invokeCommand(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
   case call.name
   of "browser_navigate":
     let urlNode = call.input.getOrDefault("url")
     if urlNode.isNil or urlNode.kind != JString or urlNode.getStr("").len == 0:
-      return ok(ToolResult(callId: call.id, output: "{\"error\": \"missing required field: url\"}", isError: true))
+      return ok(browserError(call.id, "missing required field: url"))
     
     let url = urlNode.getStr("")
     let waitNode = call.input.getOrDefault("waitUntil")
     let waitUntil = if waitNode.isNil or waitNode.kind != JString: "networkidle" else: waitNode.getStr("")
     
-    # SSRF check BEFORE spawning (fail fast on private URLs)
+    # Scheme and SSRF checks BEFORE spawning.
+    if not url.isHttpUrl:
+      return ok(browserError(call.id, "only http/https URLs are allowed"))
     if url.isPrivateUrl:
-      return ok(ToolResult(callId: call.id, output: "{\"error\": \"private/internal addresses not allowed\"}", isError: true))
+      return ok(browserError(call.id, "private/internal addresses not allowed"))
     
     # Spawn/connect if needed
     if bt.process == nil:
-      let spawnResult = bt.spawnLightpanda()
+      let spawnResult = bt.spawnBrowser()
       if spawnResult.isErr:
-        return ok(ToolResult(callId: call.id, output: "{\"error\": \"" & spawnResult.error & "\"}", isError: true))
+        return ok(browserError(call.id, spawnResult.error))
     
     let navResult = bt.navigateTo(url, waitUntil)
     if navResult.isErr:
-      return ok(ToolResult(callId: call.id, output: "{\"error\": \"" & navResult.error & "\"}", isError: true))
+      return ok(browserError(call.id, navResult.error))
     
-    return ok(ToolResult(callId: call.id, output: "{\"url\": \"" & url & "\", \"status\": \"loaded\"}", isError: false))
+    return ok(ToolResult(callId: call.id,
+      output: $(%*{"url": url, "status": "loaded"}), isError: false))
   
   of "browser_content":
     let maxCharsNode = call.input.getOrDefault("max_chars")
@@ -340,11 +665,11 @@ proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
     let asHtml = not asHtmlNode.isNil and asHtmlNode.kind == JBool and asHtmlNode.getBool()
     
     if bt.process == nil:
-      return ok(ToolResult(callId: call.id, output: "{\"error\": \"browser not running - call browser_navigate first\"}", isError: true))
+      return ok(browserError(call.id, "browser not running - call browser_navigate first"))
     
     let contentResult = bt.getContent(maxChars, asHtml)
     if contentResult.isErr:
-      return ok(ToolResult(callId: call.id, output: "{\"error\": \"" & contentResult.error & "\"}", isError: true))
+      return ok(browserError(call.id, contentResult.error))
     
     return ok(ToolResult(callId: call.id, output: contentResult.get(), isError: false))
   
@@ -357,25 +682,209 @@ proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
     
     let screenshotResult = bt.takeScreenshot(fullPage)
     if screenshotResult.isErr:
-      return ok(ToolResult(callId: call.id, output: "{\"error\": \"" & screenshotResult.error & "\"}", isError: true))
+      return ok(browserError(call.id, screenshotResult.error))
     
-    return ok(ToolResult(callId: call.id, output: "{\"format\": \"png\", \"data\": \"" & screenshotResult.get() & "\"}", isError: false))
+    return ok(ToolResult(callId: call.id,
+      output: $(%*{"format": "png", "data": screenshotResult.get()}),
+      isError: false))
   
   else:
-    return ok(ToolResult(callId: call.id, output: "{\"error\": \"unknown tool: '" & call.name & "'\"}", isError: true))
+    return err("unknown tool: '" & call.name & "'")
+
+proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
+  result = bt.invokeCommand(call)
+  bt.lastUsed = epochTime()
+  if bt.process != nil and bt.ws.sock != nil:
+    bt.drainPendingEvents()
 
 # ── Constructor ─────────────────────────────────────────────────────────────
 
 proc newBrowserTools*(
   lightpandaPath: string = "";
   host: string = DefaultHost;
-  port: int = DefaultLightpandaPort
+  port: int = DefaultLightpandaPort;
+  backend: BrowserBackendKind = bbAuto;
+  executablePath: string = "";
+  profileDir: string = "";
+  http: HttpRuntimePort = HttpRuntimePort();
+  proxyServer: string = "";
 ): BrowserTools =
+  var resolvedBackend = backend
+  if lightpandaPath.len > 0 and backend == bbAuto:
+    resolvedBackend = bbLightpanda
   BrowserTools(
+    backend: resolvedBackend,
+    executablePath: executablePath,
     lightpandaPath: lightpandaPath,
+    profileDir: profileDir,
+    ownsProfileDir: false,
     host: host,
     port: port,
+    http: http,
+    proxyServer: proxyServer,
     process: nil,
     pageTargetId: "",
     currentUrl: ""
+  )
+
+type
+  BrowserToolRuntime* = ref object
+    ## One browser process/page/profile/CDP port per session owner. The global
+    ## ToolRuntimePort routes by ToolCall.userId.
+    backend: BrowserBackendKind
+    executablePath: string
+    lightpandaPath: string
+    profileBaseDir: string
+    host: string
+    port: int
+    proxyServer: string
+    idleTimeoutSeconds: float
+    http: HttpRuntimePort
+    byUser*: Table[string, ref BrowserTools]
+
+func browserUserKey*(raw: string): string =
+  ## Reversible, collision-free encoding safe for directory names. Characters
+  ## outside [A-Za-z0-9-] (including '_') become _XX, so "alice:a" and
+  ## "alice_a" map to different keys.
+  if raw.len == 0:
+    return "__default__"
+  for c in raw:
+    if c.isAlphaNumeric() or c == '-':
+      result.add(c)
+    else:
+      result.add('_')
+      result.add(toHex(ord(c), 2))
+
+proc newBrowserToolRuntime*(backend: BrowserBackendKind = bbAuto;
+                             executablePath = "";
+                             lightpandaPath = "";
+                             profileBaseDir = "";
+                             host = DefaultHost;
+                             port = DefaultLightpandaPort;
+                             http: HttpRuntimePort = HttpRuntimePort();
+                             proxyServer = "";
+                             idleTimeoutSeconds = 900.0
+                            ): BrowserToolRuntime =
+  BrowserToolRuntime(
+    backend: backend,
+    executablePath: executablePath,
+    lightpandaPath: lightpandaPath,
+    profileBaseDir: profileBaseDir,
+    host: host,
+    port: port,
+    proxyServer: proxyServer,
+    idleTimeoutSeconds: idleTimeoutSeconds,
+    http: http,
+    byUser: initTable[string, ref BrowserTools](),
+  )
+
+proc isPortAvailable(host: string; port: int): bool =
+  ## Best-effort check for a free loopback port before spawning a browser.
+  if port <= 0 or port > 65535:
+    return false
+  var sock = newSocket()
+  try:
+    sock.bindAddr(Port(port), host)
+    result = true
+  except CatchableError:
+    result = false
+  finally:
+    sock.close()
+
+proc allocatePort(rt: BrowserToolRuntime): int =
+  ## Each user gets a distinct CDP endpoint; sharing one port would let a
+  ## second runtime attach to the first user's page. Ports released by
+  ## closeUser/evictIdle become available again.
+  var used: Table[int, bool]
+  for _, bt in rt.byUser:
+    used[bt[].port] = true
+  var candidate = rt.port
+  while candidate <= 65535:
+    if not used.hasKey(candidate) and isPortAvailable(rt.host, candidate):
+      return candidate
+    inc candidate
+  0
+
+proc listTools*(rt: BrowserToolRuntime): Result[seq[ToolSchema], string] =
+  newBrowserTools(
+    backend = rt.backend,
+    executablePath = rt.executablePath,
+    lightpandaPath = rt.lightpandaPath,
+    host = rt.host,
+    port = rt.port,
+    http = rt.http,
+  ).listTools()
+
+proc closeUser*(rt: BrowserToolRuntime; userId: string) =
+  ## Releases one user's browser process, page, profile and CDP port.
+  let key = browserUserKey(userId)
+  if key in rt.byUser:
+    rt.byUser[key][].close()
+    rt.byUser.del(key)
+
+proc evictIdle*(rt: BrowserToolRuntime) =
+  ## Bounds resource accumulation when no session-end callback is available.
+  ## The daemon heartbeat calls this periodically, so idle browsers are closed
+  ## even when no further tool invocation arrives.
+  if rt.idleTimeoutSeconds <= 0:
+    return
+  let now = epochTime()
+  var stale: seq[string]
+  for key, bt in rt.byUser:
+    if now - bt[].lastUsed > rt.idleTimeoutSeconds:
+      stale.add(key)
+  for key in stale:
+    rt.byUser[key][].close()
+    rt.byUser.del(key)
+
+proc invoke*(rt: BrowserToolRuntime; call: ToolCall): Result[ToolResult, string] =
+  rt.evictIdle()
+  let key = browserUserKey(call.userId)
+  if key notin rt.byUser:
+    let userPort = rt.allocatePort()
+    if userPort == 0:
+      return err("no free CDP port available for browser session")
+    var bt = newBrowserTools(
+      backend = rt.backend,
+      executablePath = rt.executablePath,
+      lightpandaPath = rt.lightpandaPath,
+      host = rt.host,
+      port = userPort,
+      http = rt.http,
+      proxyServer = rt.proxyServer,
+    )
+    if rt.profileBaseDir.len > 0:
+      # Operator-provided profiles persist across runs; never delete them.
+      bt.profileDir = rt.profileBaseDir / key
+      bt.ownsProfileDir = false
+    let holder = new(BrowserTools)
+    holder[] = bt
+    rt.byUser[key] = holder
+  rt.byUser[key][].invoke(call)
+
+proc close*(rt: BrowserToolRuntime) =
+  for _, bt in rt.byUser.mpairs:
+    bt[].close()
+  rt.byUser.clear()
+
+proc toRuntimePort*(rt: BrowserToolRuntime): ToolRuntimePort =
+  ToolRuntimePort(
+    listTools: proc(): Result[seq[ToolSchema], string] {.gcsafe.} =
+      rt.listTools(),
+    invoke: proc(call: ToolCall): Result[ToolResult, string] {.gcsafe.} =
+      rt.invoke(call),
+    close: proc() {.gcsafe.} =
+      rt.close(),
+  )
+
+proc toRuntimePort*(bt: BrowserTools): ToolRuntimePort =
+  ## Each runtime port owns its BrowserTools state (process/WS/page).
+  var browser = bt
+  ToolRuntimePort(
+    listTools: proc(): Result[seq[ToolSchema], string] {.gcsafe.} =
+      browser.listTools(),
+    invoke: proc(call: ToolCall): Result[ToolResult, string] {.gcsafe.} =
+      browser.invoke(call),
+    close: proc() {.gcsafe.} =
+      browser.close(),
   )
