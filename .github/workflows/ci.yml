@@ -18,8 +18,17 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev ripgrep
+          missing=0
+          command -v rg >/dev/null 2>&1 || missing=1
+          dpkg -s libssl-dev >/dev/null 2>&1 || missing=1
+          if [ "$missing" -eq 1 ]; then
+            # The runner image usually ships both. Avoid the Ubuntu mirror when
+            # possible; it is a common transient CI failure point.
+            sudo apt-get update || true
+            sudo apt-get install -y libssl-dev ripgrep || true
+          fi
+          command -v rg >/dev/null 2>&1 || { echo "ripgrep is required"; exit 1; }
+          dpkg -s libssl-dev >/dev/null 2>&1 || { echo "libssl-dev is required"; exit 1; }
 
       - name: Set up Nim
         uses: jiro4989/setup-nim-action@v2
