@@ -114,6 +114,13 @@ when defined(withPostgres) or defined(withSqlite):
       result.preferencesMd = markdownCtx.preferencesMd
     if result.memoryMd.strip.len == 0:
       result.memoryMd = markdownCtx.memoryMd
+    elif markdownCtx.memoryMd.strip.len > 0:
+      ## Fallback writes may exist in MEMORY.md after a MAGMA outage. Return
+      ## them too, without duplicating chunks already in the graph context.
+      for chunk in markdownCtx.memoryMd.split("\n\n"):
+        let trimmed = chunk.strip
+        if trimmed.len > 0 and trimmed notin result.memoryMd:
+          result.memoryMd.add("\n\n" & trimmed)
 
   proc importMarkdownContext(magma: MagmaMemoryAdapter; ctx: UserContext) =
     if ctx.userMd.strip.len > 0:
@@ -271,8 +278,14 @@ proc appendExtractedMemoryF1(a: MdFileAdapter; userId: UserId;
 proc saveEpisodeF1(a: MdFileAdapter; userId: UserId;
                    episode: EpisodeJournal): Result[void, string] {.raises: [].} =
   try:
-    a.appendMemory(userId, "\n## Episode: " & episode.title & "\n" &
-                   episode.summary & "\n")
+    let marker = "<!-- episode:" & episode.id & " -->"
+    let existing =
+      if fileExists(a.memoryMdPath(userId)): readFile(a.memoryMdPath(userId))
+      else: ""
+    if marker in existing:
+      return ok()
+    a.appendMemory(userId, "\n" & marker & "\n## Episode: " & episode.title &
+                   "\n" & episode.summary & "\n")
     ok()
   except Exception as e:
     err("save episode: " & e.msg)
@@ -283,7 +296,13 @@ proc extractLessonsF1(a: MdFileAdapter; userId: UserId;
   try:
     for episode in episodes:
       for lesson in extractLessonsFromEpisode(episode, maxLessons = 2):
-        a.appendMemory(userId, "- Lesson: " & lesson.text & "\n")
+        let existing =
+          if fileExists(a.memoryMdPath(userId)): readFile(a.memoryMdPath(userId))
+          else: ""
+        let marker = "- Lesson: " & lesson.text
+        if marker in existing:
+          continue
+        a.appendMemory(userId, marker & "\n")
         inc count
     ok(count)
   except Exception as e:
@@ -419,10 +438,10 @@ proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext =
             magma.saveUserMd(userId, markdownCtx.userMd)
           if graphCtx.preferencesMd.strip.len == 0 and markdownCtx.preferencesMd.strip.len > 0:
             magma.savePreferences(userId, markdownCtx.preferencesMd)
-          if graphCtx.memoryMd.strip.len == 0 and markdownCtx.memoryMd.strip.len > 0:
+          if markdownCtx.memoryMd.strip.len > 0:
             for chunk in markdownCtx.memoryMd.split("\n\n"):
               let trimmed = chunk.strip
-              if trimmed.len > 0:
+              if trimmed.len > 0 and trimmed notin graphCtx.memoryMd:
                 magma.appendMemory(userId, trimmed)
           return mergeContextMissing(graphCtx, markdownCtx)
         if markdownCtx.hasContextContent:

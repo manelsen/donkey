@@ -41,6 +41,7 @@ type
     episodeSaved*:     bool
     lessonsSaved*:     int
     completed*:        bool
+    extractionSucceeded*: bool
 
 func historyFingerprint*(history: ConversationHistory): string =
   ## Stable identity of the conversation content used to deduplicate repeated
@@ -51,6 +52,13 @@ func historyFingerprint*(history: ConversationHistory): string =
     h = h !& hash(message.text)
   $history.len & ":" & $h
 
+func safeCut(text: string; limit: int): int =
+  ## Backs the byte cut up to the start of a UTF-8 code point.
+  result = min(limit, text.len)
+  while result > 0 and result < text.len and
+        (ord(text[result]) and 0xC0) == 0x80:
+    dec result
+
 func clipText*(text: string; maxChars: int): string =
   if maxChars <= 0:
     return ""
@@ -58,8 +66,12 @@ func clipText*(text: string; maxChars: int): string =
   if trimmed.len <= maxChars:
     return trimmed
   if maxChars <= 16:
-    return trimmed[0 ..< maxChars]
-  trimmed[0 ..< maxChars - 16] & "\n[…truncated]"
+    let cut = safeCut(trimmed, maxChars)
+    if cut <= 0: return ""
+    return trimmed[0 ..< cut]
+  let cut = safeCut(trimmed, maxChars - 16)
+  if cut <= 0: return ""
+  trimmed[0 ..< cut] & "\n[…truncated]"
 
 func buildEpisodeFromHistory*(history: ConversationHistory;
                               sessionId: string;
@@ -215,9 +227,11 @@ proc persistConsolidation(memory: MemoryRuntimePort;
     else:
       result.lessonsSaved = lessons.get()
 
-  result.completed = result.episodeSaved or result.factsSaved > 0 or
-    result.preferencesSaved > 0 or result.conceptsSaved > 0 or
-    result.triplesSaved > 0
+  result.extractionSucceeded = extracted.isOk
+  ## A successful empty extraction is still a completed extraction. Episodes
+  ## are best-effort/idempotent; retrying after an extraction failure must not
+  ## duplicate them.
+  result.completed = result.extractionSucceeded
 
 proc consolidateSession*(memory: MemoryRuntimePort;
                          completeFn: CompleteFn;
@@ -251,6 +265,11 @@ proc consolidateSessionAsync*(memory: MemoryRuntimePort;
   ## is awaited through the provider worker pool instead of blocking the loop.
   result.skippedReason = consolidationSkipReason(memory, history)
   if result.skippedReason.len > 0:
+    return
+  if asyncCompleteFn == nil:
+    ## Do not fall back to a blocking completion on the event loop. Leaving the
+    ## history unmarked lets a later call retry once an async executor exists.
+    result.skippedReason = "no async completion"
     return
 
   let nowMs = epochMs()

@@ -95,6 +95,8 @@ proc safeAsyncComplete*(fn: AsyncCompleteFn;
   ## into the same Result contract used by the synchronous path.
   try:
     return await fn(req)
+  except CancelledError:
+    raise
   except Exception as e:
     return err(Result[CompletionResponse, string],
                "async complete raised: " & e.msg)

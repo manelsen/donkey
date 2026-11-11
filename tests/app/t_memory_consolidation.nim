@@ -4,7 +4,7 @@
 ## session blackboard commitment detector and the end-to-end consolidation
 ## orchestration with a fake MemoryRuntimePort.
 
-import std/[os, strutils, unittest]
+import std/[os, strutils, unicode, unittest]
 import chronos
 
 import donkey/app/memory_consolidation
@@ -182,6 +182,50 @@ suite "memory consolidation":
     history.addUser("third")
     check historyFingerprint(history) != before
 
+  test "clipText does not split UTF-8 code points":
+    let text = "áéíóúãõç" & repeat("x", 40)
+    let clipped = clipText(text, 18)
+    check validateUtf8(clipped) == -1
+    check clipped.contains("truncated")
+
+  test "async consolidation without an executor stays pending":
+    let cap = Capture()
+    let port = capturePort(cap)
+    let history = historyOf([
+      (roleUser, "one"), (roleAssistant, "two"),
+      (roleUser, "three"), (roleAssistant, "four"),
+    ])
+    let res = waitFor consolidateSessionAsync(
+      port, nil, nil, UserId("u-pending"), "1", history,
+      newLogger("test.memory", lvlError))
+    check not res.attempted
+    check res.skippedReason == "no async completion"
+    check cap.episodes.len == 0
+
+  test "failed extraction can be retried while the episode stays idempotent":
+    let cap = Capture()
+    let port = capturePort(cap)
+    let history = historyOf([
+      (roleUser, "one"), (roleAssistant, "two"),
+      (roleUser, "three"), (roleAssistant, "four"),
+    ])
+    let invalid: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string]
+                                  {.gcsafe.} =
+      ok(CompletionResponse(text: "not json"))
+    let first = consolidateSession(
+      port, invalid, UserId("u-retry"), "1", history,
+      newLogger("test.memory", lvlError))
+    check not first.completed
+    check first.episodeSaved
+    let valid: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string]
+                                {.gcsafe.} =
+      ok(CompletionResponse(text: """{"facts":["retry works"],"triples":[],"preferences":[],"concepts":[]}"""))
+    let second = consolidateSession(
+      port, valid, UserId("u-retry"), "1", history,
+      newLogger("test.memory", lvlError))
+    check second.completed
+    check second.factsSaved == 1
+
   test "short histories are skipped":
     let cap = Capture()
     let port = capturePort(cap)
@@ -209,8 +253,12 @@ suite "memory consolidation":
       "Port episode", "The port persisted an episode.",
       1_700_000_000, 1_700_000_100, @[])
     check port.saveEpisode(uid, episode).isOk
+    check port.saveEpisode(uid, episode).isOk
+    check port.extractLessons(uid, @[episode]).isOk
     check port.extractLessons(uid, @[episode]).isOk
     let context = port.loadContext(uid)
     check context.memoryMd.contains("Fact: port works")
     check context.memoryMd.contains("Episode: Port episode")
     check context.memoryMd.contains("Lesson:")
+    check context.memoryMd.count("<!-- episode:") == 1
+    check context.memoryMd.count("- Lesson:") == 1
