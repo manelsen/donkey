@@ -13,10 +13,12 @@ type
     sourceMemoryIds*: seq[string]
 
 func episodeIdFromTitle(title: string): string =
-  let slug = title.toLowerAscii().mapIt(
+  var words = title.toLowerAscii().mapIt(
     if it.isAlphaNumeric(): it else: ' '
-  ).join("").splitWhitespace()[0 ..< min(title.splitWhitespace().len, 5)].join("-")
-  if slug.len > 0: slug else: "episode"
+  ).join("").splitWhitespace()
+  if words.len == 0:
+    return "episode"
+  words[0 ..< min(words.len, 5)].join("-")
 
 func episodeId*(title: string; startTs, endTs: int64): string =
   episodeIdFromTitle(title) & "-" & $startTs & "-" & $endTs

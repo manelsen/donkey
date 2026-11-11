@@ -2,6 +2,7 @@
 ## Pure functions only. No I/O.
 
 import std/[options, sequtils, strutils]
+from std/unicode import toLower
 import ../reminder
 
 type
@@ -38,8 +39,8 @@ func containsAny(text: string; patterns: openArray[string]): bool =
   false
 
 func extractDueAt*(sourceText: string; nowSec: int64): Option[int64] =
-  let lower = sourceText.toLowerAscii()
-  if "tomorrow" in lower:
+  let lower = toLower(sourceText)
+  if "tomorrow" in lower or "amanhã" in lower or "amanha" in lower:
     return some(nowSec + 86_400)
   let normalized = sourceText.multiReplace((",", " "), ("?", " "), (".", " "))
   for token in normalized.splitWhitespace():
@@ -86,7 +87,7 @@ func newCommitment*(owner: CommitmentOwner;
 
 func parseUserRequestedCommitment*(sourceText: string;
                                    nowSec: int64 = 0): Option[Commitment] =
-  let lower = sourceText.toLowerAscii()
+  let lower = toLower(sourceText)
   if lower.containsAny([
       "remind me",
       "can you remind",
@@ -99,13 +100,24 @@ func parseUserRequestedCommitment*(sourceText: string;
       "could you follow up",
       "can you check",
       "could you check",
+      "lembre-me",
+      "lembre de",
+      "lembra de",
+      "não esqueça",
+      "nao esqueca",
+      "pode lembrar",
+      "pode enviar",
+      "pode verificar",
+      "pode acompanhar",
+      "me avise",
+      "me avisa",
     ]):
     return some(newCommitment(coUser, sourceText, nowSec))
   none(Commitment)
 
 func parseAgentPromisedCommitment*(sourceText: string;
                                    nowSec: int64 = 0): Option[Commitment] =
-  let lower = sourceText.toLowerAscii()
+  let lower = toLower(sourceText)
   if lower.containsAny([
       "i will",
       "i'll",
@@ -117,6 +129,15 @@ func parseAgentPromisedCommitment*(sourceText: string;
       "i will send",
       "i will follow up",
       "i will check",
+      "vou enviar",
+      "vou lembrar",
+      "vou verificar",
+      "vou acompanhar",
+      "eu vou",
+      "prometo",
+      "posso enviar",
+      "posso verificar",
+      "posso acompanhar",
     ]):
     return some(newCommitment(coAgent, sourceText, nowSec))
   none(Commitment)

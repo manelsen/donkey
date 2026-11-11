@@ -30,11 +30,13 @@ import ../core/pipeops
 import ../core/log
 import ../core/onboarding/onboarding
 import ../core/agent_events
+import ../core/memory/blackboard
 import ../core/tooling/tool_loop
 import ../domain/agent_message
 import ../domain/message
 import ../domain/personality
 import ../config/types as cfgTypes
+import ./memory_consolidation
 import ./session_manager
 import ./sandbox
 import ../ports/provider
@@ -71,6 +73,8 @@ type OrchestratorState = object
   identity*:      IdentityRuntime
   completedBootstrapTargets*: seq[string]
   turnSeq*:       int
+  blackboard*:    Blackboard
+  lastConsolidatedFingerprint*: string
 
 func newOrchestratorState*(): OrchestratorState =
   OrchestratorState(
@@ -80,6 +84,7 @@ func newOrchestratorState*(): OrchestratorState =
     onboarding: OnboardingRuntime(phase: opWakeUp),
     identity: IdentityRuntime(),
     completedBootstrapTargets: @[],
+    blackboard: newBlackboard(12),
   )
 
 func nextTurn*(state: OrchestratorState): OrchestratorState =
@@ -271,6 +276,7 @@ proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
     if resetApplied:
       result.onboarding = nextOnboarding
       result.identity = IdentityRuntime()
+    result.resetApplied = resetApplied
     result.handled = true
 
   of tkDebugToggle:
@@ -385,6 +391,15 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
       if context.len > 0: context & "\n\n" & recentBlock
       else: recentBlock
 
+  discard rememberCommitments(
+    result.blackboard, userPayload.text, "", epochMs())
+  let blackboardText = result.blackboard.renderForUser()
+  if blackboardText.len > 0:
+    let blackboardBlock = "## Session commitments\n" & blackboardText
+    context =
+      if context.len > 0: context & "\n\n" & blackboardBlock
+      else: blackboardBlock
+
   let history = addUserTurn(result.history, userPayload.text, userPayload.mediaUrl)
 
   result =
@@ -467,6 +482,10 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
       "  **Response:** " & clipAutoMemoryCapture(loopResult.finalText) & "\n"
     onboarding_runtime.safeAppendMemory(memory, turnSetup.uid, memEntry)
 
+  if loopResult.finalText.len > 0:
+    discard rememberCommitments(
+      result.blackboard, "", loopResult.finalText, epochMs())
+
 # ── Actor message handling ────────────────────────────────────────────────────
 
 type ActorMessageResult = object
@@ -516,6 +535,14 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
     result |>->
     withLastUser(uid)
 
+  if msg.taskKind in {tkCompact, tkReset, tkNew, tkRestart}:
+    let fingerprint = historyFingerprint(result.history)
+    if fingerprint != result.lastConsolidatedFingerprint:
+      let consolidation = await consolidateSessionAsync(
+        memory, completeFn, asyncCompleteFn, uid, sessionId, result.history, log)
+      if consolidation.completed:
+        result.lastConsolidatedFingerprint = fingerprint
+
   let controlResult = await handleControlTask(
     globalOutbox, memory, completeFn, uid, msg.channel, msg.replyTo, msg,
     result.history, result.onboarding, result.identity,
@@ -523,6 +550,11 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
   result =
     result |>->
     withControlResult(controlResult)
+  if controlResult.handled and
+     (msg.taskKind in {tkNew, tkRestart} or
+      (msg.taskKind == tkReset and controlResult.resetApplied)):
+    result.blackboard.clear()
+    result.lastConsolidatedFingerprint = ""
   if controlResult.handled and msg.taskKind == tkReset:
     result =
       result |>->

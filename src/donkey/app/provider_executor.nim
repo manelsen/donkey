@@ -88,6 +88,20 @@ type
     req:    CompletionRequest
     state:  ptr ProviderJobState
 
+proc safeAsyncComplete*(fn: AsyncCompleteFn;
+                        req: CompletionRequest
+                       ): Future[Result[CompletionResponse, string]] {.async.} =
+  ## Provider boundary guard: converts a raising completion implementation
+  ## into the same Result contract used by the synchronous path.
+  try:
+    return await fn(req)
+  except CancelledError:
+    raise
+  except Exception as e:
+    return err(Result[CompletionResponse, string],
+               "async complete raised: " & e.msg)
+
+
 var
   gProviderQueue {.global.}: Channel[ProviderJob]
   gProviderWorkers {.global.}: array[ProviderWorkerCount, Thread[void]]

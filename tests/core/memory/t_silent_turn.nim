@@ -40,7 +40,34 @@ suite "silent_turn":
       let result = formatConversationForMemory(history)
       check result.len < longText.len
       check result.endsWith("...")
-    
+
+    test "bounds very long histories":
+      var history = newHistory()
+      for i in 0 ..< 100:
+        history.addUser("message " & $i)
+      let result = formatConversationForMemory(history)
+      check result.len <= 12_000
+      check result.contains("message 99")
+
+    test "bounds very long histories":
+      var history = newHistory()
+      for i in 0 ..< 100:
+        history.addUser("message " & $i)
+      let result = formatConversationForMemory(history)
+      check result.len <= 12_000
+      check result.contains("message 99")
+
+    test "preserves the newest messages under the total budget":
+      var history = newHistory()
+      for i in 0 ..< 8:
+        history.addUser(repeat('x', 2000))
+        history.addAssistant(repeat('y', 2000))
+      history.addUser("newest-marker")
+      let result = formatConversationForMemory(history)
+      check result.len <= 12_000
+      check result.contains("newest-marker")
+      check result.contains("user: xxxx")
+
     test "preserves short messages":
       var history = newHistory()
       history.addUser("Hi")

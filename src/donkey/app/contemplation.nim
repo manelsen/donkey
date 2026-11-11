@@ -36,6 +36,26 @@ func usesLowCostOrLocalPath*(cfg: ContemplationConfig): bool =
 func shouldRunContemplation*(cfg: ContemplationConfig): bool =
   cfg.enabled and cfg.usesLowCostOrLocalPath
 
+proc runContemplationNow*(loadMemories: ContemplationLoader;
+                          buildEpisode: ContemplationBuilder;
+                          writeEpisode: EpisodeWriter;
+                          loadUserId: UserIdLoader) {.raises: [].} =
+  ## Synchronous consolidation trigger. Callers decide when it is cheap enough
+  ## to run (heartbeat or an explicit maintenance boundary). All callback
+  ## failures are contained at this boundary.
+  if loadMemories == nil or buildEpisode == nil or writeEpisode == nil or loadUserId == nil:
+    return
+  try:
+    let memories = loadMemories()
+    if memories.len == 0:
+      return
+    let episode = buildEpisode(memories)
+    if episode.summary.len == 0 and episode.title.len == 0:
+      return
+    writeEpisode(loadUserId(), episode)
+  except Exception:
+    discard
+
 proc runContemplationTurn*(cfg: ContemplationConfig;
                            loadMemories: ContemplationLoader;
                            buildEpisode: ContemplationBuilder;
@@ -43,18 +63,7 @@ proc runContemplationTurn*(cfg: ContemplationConfig;
                            loadUserId: UserIdLoader) =
   if not shouldRunContemplation(cfg):
     return
-  if loadMemories == nil or buildEpisode == nil or writeEpisode == nil or loadUserId == nil:
-    return
-  let memories = loadMemories()
-  if memories.len == 0:
-    return
-  let episode = buildEpisode(memories)
-  if episode.summary.len == 0 and episode.title.len == 0:
-    return
-  try:
-    writeEpisode(loadUserId(), episode)
-  except CatchableError:
-    discard
+  runContemplationNow(loadMemories, buildEpisode, writeEpisode, loadUserId)
 
 proc registerContemplationTask*(reg: var HeartbeatRegistry;
                                 cfg: ContemplationConfig;

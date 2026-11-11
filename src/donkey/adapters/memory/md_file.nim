@@ -10,6 +10,8 @@ import std/[json, os, strutils, times]
 import ../../core/types
 import ../../core/pipeops
 import ../../ports/memory
+import ../../domain/memory/episode_pure
+import ../../domain/memory/lessons_pure
 import ../../domain/message
 import ../../domain/personality
 when defined(withPostgres) or defined(withSqlite):
@@ -112,6 +114,13 @@ when defined(withPostgres) or defined(withSqlite):
       result.preferencesMd = markdownCtx.preferencesMd
     if result.memoryMd.strip.len == 0:
       result.memoryMd = markdownCtx.memoryMd
+    elif markdownCtx.memoryMd.strip.len > 0:
+      ## Fallback writes may exist in MEMORY.md after a MAGMA outage. Return
+      ## them too, without duplicating chunks already in the graph context.
+      for chunk in markdownCtx.memoryMd.split("\n\n"):
+        let trimmed = chunk.strip
+        if trimmed.len > 0 and trimmed notin result.memoryMd:
+          result.memoryMd.add("\n\n" & trimmed)
 
   proc importMarkdownContext(magma: MagmaMemoryAdapter; ctx: UserContext) =
     if ctx.userMd.strip.len > 0:
@@ -226,13 +235,8 @@ when defined(withPostgres) or defined(withSqlite):
     a.savePreferences(userId, content)
 
   proc runtimeClearMemory(a: MdFileAdapter; userId: UserId) =
-    if a.hasMagmaBackend:
-      try:
-        let magma = a.newMagmaAdapter()
-        magma.clearMemory(userId)
-        return
-      except CatchableError:
-        discard
+    ## Clear both stores: fallback writes may live in MEMORY.md after a MAGMA
+    ## outage, and clearing only MAGMA would resurrect them on next import.
     a.clearMemory(userId)
 
   proc runtimeResetBootstrap(a: MdFileAdapter; userId: UserId) =
@@ -258,6 +262,47 @@ when defined(withPostgres) or defined(withSqlite):
         discard
     a.loadIdentity(userId)
 
+proc appendExtractedMemoryF1(a: MdFileAdapter; userId: UserId;
+                                text: string): Result[void, string] {.raises: [].} =
+  try:
+    a.appendMemory(userId, text)
+    ok()
+  except Exception as e:
+    err("append extracted memory: " & e.msg)
+
+proc saveEpisodeF1(a: MdFileAdapter; userId: UserId;
+                   episode: EpisodeJournal): Result[void, string] {.raises: [].} =
+  try:
+    let marker = "<!-- episode:" & episode.id & " -->"
+    let existing =
+      if fileExists(a.memoryMdPath(userId)): readFile(a.memoryMdPath(userId))
+      else: ""
+    if marker in existing:
+      return ok()
+    a.appendMemory(userId, "\n" & marker & "\n## Episode: " & episode.title &
+                   "\n" & episode.summary & "\n")
+    ok()
+  except Exception as e:
+    err("save episode: " & e.msg)
+
+proc extractLessonsF1(a: MdFileAdapter; userId: UserId;
+                      episodes: seq[EpisodeJournal]): Result[int, string] {.raises: [].} =
+  var count = 0
+  try:
+    for episode in episodes:
+      for lesson in extractLessonsFromEpisode(episode, maxLessons = 2):
+        let existing =
+          if fileExists(a.memoryMdPath(userId)): readFile(a.memoryMdPath(userId))
+          else: ""
+        let marker = "- Lesson: " & lesson.text
+        if marker in existing:
+          continue
+        a.appendMemory(userId, marker & "\n")
+        inc count
+    ok(count)
+  except Exception as e:
+    err("extract lessons: " & e.msg)
+
 proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
   when defined(withPostgres) or defined(withSqlite):
     if a.hasMagmaBackend:
@@ -280,11 +325,56 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
                             a.scheduleReminder(userId, channel, scheduledAt, message),
         loadDueReminders: proc(): seq[JsonNode] {.gcsafe.} = a.loadDueReminders(),
         deleteReminder:   proc(userId: UserId; reminderId: string) {.gcsafe.} = a.deleteReminder(userId, reminderId),
+        appendExtractedMemory: proc(userId: UserId; text: string): Result[void, string]
+                                  {.gcsafe, raises: [].} =
+          try:
+            let magma = a.newMagmaAdapter()
+            if magma == nil:
+              return appendExtractedMemoryF1(a, userId, text)
+            magma.appendMemory(userId, text)
+            ok()
+          except CatchableError:
+            appendExtractedMemoryF1(a, userId, text)
+          except Exception as e:
+            err("append extracted memory: " & e.msg),
+        saveEpisode: proc(userId: UserId; episode: EpisodeJournal): Result[void, string]
+                       {.gcsafe, raises: [].} =
+          try:
+            let magma = a.newMagmaAdapter()
+            if magma == nil:
+              return saveEpisodeF1(a, userId, episode)
+            magma.saveEpisode(userId, episode)
+            ok()
+          except CatchableError:
+            saveEpisodeF1(a, userId, episode)
+          except Exception as e:
+            err("save episode: " & e.msg),
+        extractLessons: proc(userId: UserId; episodes: seq[EpisodeJournal]): Result[int, string]
+                          {.gcsafe, raises: [].} =
+          try:
+            let magma = a.newMagmaAdapter()
+            if magma == nil:
+              return extractLessonsF1(a, userId, episodes)
+            ok(magma.extractAndSaveLessons(userId, episodes, @[],
+                                           maxLessonsPerSource = 2))
+          except CatchableError:
+            extractLessonsF1(a, userId, episodes)
+          except Exception as e:
+            err("extract lessons: " & e.msg),
       )
   MemoryRuntimePort(
     hasProfile:       proc(userId: UserId): bool {.gcsafe.} = a.hasProfile(userId),
     loadContext:      proc(userId: UserId): UserContext {.gcsafe.} = a.loadContext(userId),
     saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} = a.saveUserMd(userId, content),
+    appendExtractedMemory: proc(userId: UserId; text: string): Result[void, string]
+                              {.gcsafe, raises: [].} =
+                            appendExtractedMemoryF1(a, userId, text),
+    saveEpisode: proc(userId: UserId; episode: EpisodeJournal): Result[void, string]
+                   {.gcsafe, raises: [].} =
+                   saveEpisodeF1(a, userId, episode),
+    extractLessons: proc(userId: UserId; episodes: seq[EpisodeJournal]): Result[int, string]
+                      {.gcsafe, raises: [].} =
+                      extractLessonsF1(a, userId, episodes),
     appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = a.appendMemory(userId, text),
     savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = a.savePreferences(userId, content),
     clearMemory:      proc(userId: UserId) {.gcsafe.} = a.clearMemory(userId),
@@ -349,10 +439,10 @@ proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext =
             magma.saveUserMd(userId, markdownCtx.userMd)
           if graphCtx.preferencesMd.strip.len == 0 and markdownCtx.preferencesMd.strip.len > 0:
             magma.savePreferences(userId, markdownCtx.preferencesMd)
-          if graphCtx.memoryMd.strip.len == 0 and markdownCtx.memoryMd.strip.len > 0:
+          if markdownCtx.memoryMd.strip.len > 0:
             for chunk in markdownCtx.memoryMd.split("\n\n"):
               let trimmed = chunk.strip
-              if trimmed.len > 0:
+              if trimmed.len > 0 and trimmed notin graphCtx.memoryMd:
                 magma.appendMemory(userId, trimmed)
           return mergeContextMissing(graphCtx, markdownCtx)
         if markdownCtx.hasContextContent:

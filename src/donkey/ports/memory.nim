@@ -11,7 +11,9 @@
 ##     sessions/      — per-session conversation logs
 
 import std/json
+import ../core/pipeops
 import ../core/types
+import ../domain/memory/episode_pure
 import ../domain/message
 import ../domain/personality
 
@@ -80,6 +82,19 @@ type
                           {.gcsafe.}
     loadDueReminders*:  proc(): seq[JsonNode] {.gcsafe.}
     deleteReminder*:    proc(userId: UserId; reminderId: string) {.gcsafe.}
+    ## Optional consolidation hooks. Nil means the backend has no episode/
+    ## lesson storage and automatic consolidation is skipped.
+    appendExtractedMemory*: proc(userId: UserId; text: string): Result[void, string]
+                              {.gcsafe, raises: [].}
+    saveEpisode*:           proc(userId: UserId; episode: EpisodeJournal): Result[void, string]
+                              {.gcsafe, raises: [].}
+    extractLessons*:        proc(userId: UserId; episodes: seq[EpisodeJournal]): Result[int, string]
+                              {.gcsafe, raises: [].}
+
+func hasMemoryConsolidation*(p: MemoryRuntimePort): bool =
+  ## Lessons are optional: a backend that can store extracted memory and
+  ## episodes must still consolidate without the lesson hook.
+  p.appendExtractedMemory != nil and p.saveEpisode != nil
 
 proc bootstrapUserMd*(name, callMe, timezone, language: string): string =
   ## Generates the initial USER.md following the OpenClaw USER.md template.
