@@ -581,6 +581,36 @@ sequenceDiagram
 - streaming só ocorre na primeira rodada do turn;
 - se houver tool calls, o caminho normal usado é o blocking path.
 
+### 9.4 Browser tools
+
+O adapter `adapters/tools/browser.nim` expõe `browser_navigate`,
+`browser_content` e `browser_screenshot`. O backend é uma estratégia pura
+(`domain/tools/browser_pure.nim`), não um `if` espalhado pelas tools.
+
+Configuração:
+
+- `DONKEY_BROWSER_BACKEND=off|auto|lightpanda|edge|chromium` (default `off`);
+- `DONKEY_BROWSER_PATH` para um executável explícito;
+- `DONKEY_BROWSER_PROFILE_DIR` para o `--user-data-dir` do Edge/Chromium.
+
+Comportamento:
+
+- nenhum processo sobe no boot; o browser só é iniciado no primeiro
+  `browser_navigate`;
+- Lightpanda usa `/devtools/browser`; Edge/Chromium usam o page target de
+  `/json/list`;
+- URLs privadas/internas são rejeitadas por `isPrivateUrl` antes do spawn;
+- `auto` prefere Lightpanda, depois Edge, depois Chromium;
+- o processo e o profile temporário são encerrados em `close`.
+
+Limites:
+
+- Edge/Chromium exigem instalação externa e são pesados; Lightpanda é o default
+  recomendado para VPS;
+- não há approval gate específico para browser; a política é a mesma do tool
+  loop;
+- `browser_screenshot` retorna base64 e pode ser grande.
+
 ## 10. Semântica de Erro
 
 ### 10.1 Filosofia dominante

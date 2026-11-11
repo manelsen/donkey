@@ -10,6 +10,7 @@
 
 import std/[json, os, sequtils, strutils, unittest]
 import donkey/adapters/tools/browser
+import donkey/domain/tools/browser_pure
 import donkey/ports/tool
 import donkey/core/pipeops
 
@@ -180,3 +181,35 @@ suite "Constructor":
     let bt = newBrowserTools(host = "0.0.0.0", port = 9333)
     check bt.host == "0.0.0.0"
     check bt.port == 9333
+
+suite "Browser backends":
+
+  test "newBrowserTools selects Edge and stores its executable":
+    let bt = newBrowserTools(backend = bbEdge,
+                             executablePath = "/opt/microsoft-edge")
+    check bt.backend == bbEdge
+    check bt.executablePath == "/opt/microsoft-edge"
+    check bt.lightpandaPath == ""
+
+  test "navigate reports a disabled backend":
+    var bt = BrowserTools(backend: bbOff)
+    let call = ToolCall(id: "test", name: "browser_navigate",
+                        input: %* {"url": "https://example.com"})
+    let tr = bt.invoke(call).get()
+    check tr.isError
+    check tr.output.contains("disabled")
+
+  test "navigate reports a missing Edge executable":
+    var bt = BrowserTools(backend: bbEdge,
+                          executablePath: "/nonexistent/microsoft-edge")
+    let call = ToolCall(id: "test", name: "browser_navigate",
+                        input: %* {"url": "https://example.com"})
+    let tr = bt.invoke(call).get()
+    check tr.isError
+    check tr.output.contains("not found")
+
+  test "toRuntimePort exposes the browser tools":
+    let port = newBrowserTools(backend = bbOff).toRuntimePort()
+    let tools = port.listTools().get()
+    check tools.len == 3
+    port.close()

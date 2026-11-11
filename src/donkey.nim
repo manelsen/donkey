@@ -50,6 +50,8 @@ import donkey/adapters/channel/dingtalk
 import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
 import donkey/adapters/tool/mcp_client
+import donkey/adapters/tools/browser
+import donkey/domain/tools/browser_pure
 import donkey/adapters/state/runtime_store
 import donkey/domain/message
 import donkey/domain/agent_message
@@ -337,6 +339,26 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig): DaemonToolBundle =
           schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
         ))
       result.clients.add(runtimeRes.value.port)
+
+  ## Browser tools are opt-in: no process is spawned until the first
+  ## browser_navigate call. Backend selection is pure/strategy-based.
+  let browserBackend = parseBrowserBackend(
+    getEnv("DONKEY_BROWSER_BACKEND")).valueOr(bbOff)
+  if browserBackend != bbOff:
+    var browser = newBrowserTools(
+      backend = browserBackend,
+      executablePath = getEnv("DONKEY_BROWSER_PATH"),
+      profileDir = getEnv("DONKEY_BROWSER_PROFILE_DIR"),
+    )
+    let browserSchemas = browser.listTools().valueOr:
+      @[]
+    for s in browserSchemas:
+      result.tools.add(ToolDescription(
+        name:        s.name,
+        description: s.description,
+        schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
+      ))
+    result.clients.add(browser.toRuntimePort())
 
 proc makeProviderFn[A](a: A): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
