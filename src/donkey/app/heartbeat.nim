@@ -255,6 +255,14 @@ proc startHeartbeat*(reg: HeartbeatRegistry; intervalSec = 60) =
   ## Must be called after the Chronos event loop is running (i.e. inside waitFor).
   asyncSpawn heartbeatLoop(reg, intervalSec * 1000)
 
+proc startPeriodicTask*(task: HeartbeatTask; intervalSec = 60;
+                        name = "periodic") =
+  ## Runs one task on its own fixed interval, independent of the main
+  ## heartbeat registry/cron configuration.
+  var reg = newHeartbeatRegistry()
+  reg.registerTask(name, task)
+  startHeartbeat(reg, intervalSec)
+
 proc startHeartbeatCron*(reg: HeartbeatRegistry;
                          expr: string): Result[void, string] =
   let parsed = core_cron.parseCronExpr(expr).valueOr:

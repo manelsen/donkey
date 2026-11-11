@@ -233,6 +233,24 @@ suite "Browser backends":
     check tr.isError
     check tr.output.contains("not found")
 
+  test "explicit Lightpanda is rejected when a proxy is configured":
+    var bt = BrowserTools(backend: bbLightpanda,
+                          proxyServer: "http://127.0.0.1:3128")
+    let call = ToolCall(id: "test", name: "browser_navigate",
+                        input: %* {"url": "https://example.com"})
+    let tr = bt.invoke(call).get()
+    check tr.isError
+    check tr.output.contains("DONKEY_BROWSER_PROXY")
+
+  test "auto skips Lightpanda when a proxy is configured":
+    var bt = BrowserTools(backend: bbAuto, lightpandaPath: "/nonexistent/lightpanda",
+                          proxyServer: "http://127.0.0.1:3128")
+    let call = ToolCall(id: "test", name: "browser_navigate",
+                        input: %* {"url": "https://example.com"})
+    let tr = bt.invoke(call).get()
+    check tr.isError
+    check tr.output.contains("Lightpanda does not support")
+
   test "runtime port routes tool calls with a per-user key":
     let runtime = newBrowserToolRuntime(backend = bbOff)
     check runtime.listTools().get().len == 3

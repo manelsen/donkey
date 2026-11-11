@@ -1637,8 +1637,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   var hbReg = newHeartbeatRegistry()
   if ctx.services.browserRuntime != nil:
     let browserRuntime = ctx.services.browserRuntime
-    hbReg.registerTask("browser-idle", proc() {.gcsafe.} =
-      browserRuntime.evictIdle())
+    ## Independent of DONKEY_HEARTBEAT_CRON: idle browsers must be reaped
+    ## within a bounded time even if the main heartbeat runs daily.
+    startPeriodicTask(proc() {.gcsafe.} = browserRuntime.evictIdle(),
+                      intervalSec = 60, name = "browser-idle")
   let memPort = memory.toRuntimePort()
   let reminderOutboxFn: ReminderOutboxFn = proc(userId, channel, message: string) {.gcsafe.} =
     let uid = UserId(userId)

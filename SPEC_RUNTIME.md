@@ -594,8 +594,8 @@ Configuração:
 - `DONKEY_BROWSER_PROFILE_DIR` para o `--user-data-dir` do Edge/Chromium;
 - `DONKEY_BROWSER_PROXY` para um proxy de egress filtrante (Edge/Chromium);
 - usuários idle por 15 minutos têm browser, perfil temporário e porta
-  liberados; a tarefa `browser-idle` do heartbeat faz a limpeza periodicamente,
-  sem depender de uma nova chamada.
+  liberados; uma tarefa periódica própria (`browser-idle`, 60s) faz a limpeza,
+  independente de `DONKEY_HEARTBEAT_CRON`.
 
 Comportamento:
 
@@ -619,6 +619,8 @@ Comportamento:
 - portas CDP liberadas por `closeUser`/`evictIdle` voltam a ser reutilizadas;
 - `DONKEY_BROWSER_PROXY` adiciona `--proxy-server` e desativa o bypass de
   loopback do Chromium, permitindo que um proxy filtrante veja todo o tráfego;
+  com proxy configurado, `auto` não escolhe Lightpanda e o uso explícito de
+  Lightpanda é rejeitado;
 - `auto` prefere Lightpanda, depois Edge, depois Chromium;
 - o processo e o profile temporário são encerrados em `close`; profiles
   definidos em `DONKEY_BROWSER_PROFILE_DIR` são preservados;
@@ -634,7 +636,8 @@ Limites:
   política de egress (proxy filtrante ou firewall) que amarre a conexão ao IP
   validado; `DONKEY_BROWSER_PROXY` permite integrar esse proxy, mas a política
   em si é responsabilidade da implantação; o `Fetch` domain também não
-  intercepta WebSocket;
+  intercepta WebSocket nem a sessão própria de service workers, então esses
+  casos dependem do proxy/firewall de egress;
 - a descoberta do Chromium usa polling bloqueante (`sleep`) dentro do tool
   loop Chronos; chamadas de browser são síncronas por arquitetura, como já
   documentado em `tool_agent.nim`, e a migração para I/O assíncrono é

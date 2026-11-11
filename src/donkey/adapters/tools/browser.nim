@@ -425,18 +425,31 @@ proc resolveBrowserExecutable(bt: BrowserTools): Result[tuple[kind: BrowserBacke
   if kind == bbAuto and bt.lightpandaPath.len > 0:
     kind = bbLightpanda
 
+  ## A filtering proxy only applies to Edge/Chromium; selecting Lightpanda
+  ## would silently route traffic around it.
+  let proxySet = bt.proxyServer.len > 0
+  if proxySet and kind == bbLightpanda:
+    return err("Lightpanda does not support DONKEY_BROWSER_PROXY; " &
+               "use Edge or Chromium")
+
   if kind == bbAuto and bt.executablePath.len > 0:
     let inferred = inferBrowserBackend(bt.executablePath)
     if inferred.isNone:
       return err("cannot infer browser backend from executable path: " &
                  bt.executablePath)
     kind = inferred.get()
+    if proxySet and not kind.isChromiumBackend():
+      return err("configured browser does not support DONKEY_BROWSER_PROXY; " &
+                 "use Edge or Chromium")
     if fileExists(bt.executablePath):
       return ok((kind, bt.executablePath))
     return err("browser executable not found: " & bt.executablePath)
 
   if kind == bbAuto:
-    for candidateKind in [bbLightpanda, bbEdge, bbChromium]:
+    let candidates: seq[BrowserBackendKind] =
+      if proxySet: @[bbEdge, bbChromium]
+      else: @[bbLightpanda, bbEdge, bbChromium]
+    for candidateKind in candidates:
       for name in browserExecutableCandidates(candidateKind):
         let found = findExe(name)
         if found.len > 0:
