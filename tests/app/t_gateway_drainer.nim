@@ -218,6 +218,19 @@ suite "gateway drainer — channel configuration gates":
     check drainDiscordGateway(configured = true, drainFn = dummyDrain)
     check executed
 
+  test "drainSlackGateway respects configured flag":
+    var executed = false
+    let dummyDrain = proc(): bool {.gcsafe.} =
+      {.cast(gcsafe).}:
+        executed = true
+      true
+
+    check not drainSlackGateway(configured = false, drainFn = dummyDrain)
+    check not executed
+
+    check drainSlackGateway(configured = true, drainFn = dummyDrain)
+    check executed
+
 suite "gateway drainer — GatewayDrainer sequencing":
 
   test "drainGatewayEvents iterates across channels in order":

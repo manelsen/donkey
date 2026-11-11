@@ -8,6 +8,7 @@
 ##   - authorized senders keep flowing through unchanged.
 
 import std/[json, options, os, unittest]
+import chronos/asyncsync
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/outbound/outbound
@@ -30,6 +31,8 @@ import donkey/adapters/channel/feishu
 import donkey/adapters/channel/feishu_runtime
 import donkey/adapters/channel/whatsapp
 import donkey/adapters/channel/whatsapp_runtime
+import donkey/adapters/channel/slack
+import donkey/adapters/channel/slack_runtime
 import donkey/adapters/identity/identity_resolver
 import donkey/app/gateway_drainer
 import donkey/app/session_manager
@@ -564,3 +567,159 @@ suite "shared DM gate":
     check auth.allowed
     check not auth.identified
     check resolver.lookup(ckDiscord, "discord-modal-user").isNone
+
+  test "slack drops unauthorized messages and consumes the event":
+    removeDir(GateTmp / "slack")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyAllowlist
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+    var sl = newSlackAdapter("token", GateTmp / "slack" / "ids.tsv")
+    sl.openQueue()
+    let memory = MdFileAdapter(paddocksDir: GateTmp / "slack" / "paddocks")
+
+    var fallbackCalls = 0
+    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+      proc(req: CompletionRequest): Result[CompletionResponse, string] =
+        ok(CompletionResponse(text: "unexpected provider call"))
+    var msgSeq = 0
+
+    slack.pushEvent(%* {
+      "type": "event_callback",
+      "team_id": "T1",
+      "event": {
+        "type": "message",
+        "user": "U_intruder",
+        "text": "/status",
+        "channel": "C1",
+        "ts": "1700000000.000001",
+      },
+    })
+
+    let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+      {.cast(gcsafe).}:
+        inc fallbackCalls
+
+    drainSlackEvents(sl, "secret", sm, memory, completeBuilder, gateLoader(),
+                     0, 0, 0, msgSeq, onFallback, gateLog)
+
+    check fallbackCalls == 0
+    check sm.sessionCount() == 0
+    check not sl.tryRecvEvent()[0]
+    check sl.resolver.lookup(ckSlack, "U_intruder").isNone  ## denied sender not minted
+
+  test "slack dispatches authorized messages with event metadata":
+    removeDir(GateTmp / "slack-ok")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyOpen
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = true
+    var sl = newSlackAdapter("token", GateTmp / "slack-ok" / "ids.tsv")
+    sl.openQueue()
+    let memory = MdFileAdapter(paddocksDir: GateTmp / "slack-ok" / "paddocks")
+
+    var dispatched: seq[InboundMessage] = @[]
+    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+      proc(req: CompletionRequest): Result[CompletionResponse, string] =
+        ok(CompletionResponse(text: "unexpected provider call"))
+    var msgSeq = 0
+
+    let payload = %* {
+      "type": "event_callback",
+      "team_id": "T1",
+      "event_id": "Ev-dedupe",
+      "event": {
+        "type": "message",
+        "user": "U_owner",
+        "text": "hello",
+        "channel": "C1",
+        "ts": "1700000000.000002",
+      },
+    }
+    slack.pushEvent(payload)
+    slack.pushEvent(payload)  ## Slack redelivery must not start two turns
+
+    let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+      {.cast(gcsafe).}:
+        dispatched.add(msg)
+
+    drainSlackEvents(sl, "secret", sm, memory, completeBuilder, gateLoader(),
+                     0, 0, 0, msgSeq, onFallback, gateLog)
+
+    check dispatched.len == 1
+    check dispatched[0].channel == ckSlack
+    check dispatched[0].text == "hello"
+    check dispatched[0].channelId == "C1"
+    check dispatched[0].messageId == "1700000000.000002"
+    check not sl.tryRecvEvent()[0]
+
+  test "slack forwards onboarding callbacks as session tasks":
+    removeDir(GateTmp / "slack-onboarding")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyOpen
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = true
+    var sl = newSlackAdapter("token", GateTmp / "slack-onboarding" / "ids.tsv")
+    sl.openQueue()
+    let memory = MdFileAdapter(paddocksDir: GateTmp / "slack-onboarding" / "paddocks")
+    var msgSeq = 0
+    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+      proc(req: CompletionRequest): Result[CompletionResponse, string] =
+        ok(CompletionResponse(text: "unexpected provider call"))
+
+    let uid = sl.resolver.resolve(ckSlack, "U_onboard")
+    let entry = sm.getOrCreate(uid)
+    check sm.hasLiveSession(uid)
+
+    slack.pushEvent(%* {
+      "type": "block_actions",
+      "user": {"id": "U_onboard"},
+      "actions": [
+        {"action_id": "personality:mode:guided",
+         "value": "personality:mode:guided"}
+      ],
+      "channel": {"id": "C1"},
+      "team_id": "T1",
+      "trigger_id": "tr-onboard",
+    })
+
+    var fallbackCalls = 0
+    let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+      {.cast(gcsafe).}:
+        inc fallbackCalls
+    drainSlackEvents(sl, "secret", sm, memory, completeBuilder, gateLoader(),
+                     0, 0, 0, msgSeq, onFallback, gateLog)
+
+    check fallbackCalls == 0       ## onboarding must not become user text
+    check entry[].inbox.len == 1   ## enqueued as tkPersonalityChoice
+
+  test "slack drainer is disabled without a signing secret":
+    removeDir(GateTmp / "slack-off")
+    var sm: SessionManager
+    sm.init()
+    var sl = newSlackAdapter("token", GateTmp / "slack-off" / "ids.tsv")
+    sl.openQueue()
+    let memory = MdFileAdapter(paddocksDir: GateTmp / "slack-off" / "paddocks")
+    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+      proc(req: CompletionRequest): Result[CompletionResponse, string] =
+        ok(CompletionResponse(text: "unexpected provider call"))
+    var msgSeq = 0
+
+    slack.pushEvent(%* {
+      "type": "event_callback",
+      "team_id": "T1",
+      "event": {
+        "type": "message",
+        "user": "U_owner",
+        "text": "hello",
+        "channel": "C1",
+        "ts": "1700000000.000003",
+      },
+    })
+
+    drainSlackEvents(sl, "", sm, memory, completeBuilder, gateLoader(),
+                     0, 0, 0, msgSeq, proc(msg: InboundMessage) {.gcsafe.} = discard,
+                     gateLog)
+
+    check sl.tryRecvEvent()[0]  ## untouched while the receiver is disabled
+    discard sl.tryRecvEvent()   ## leave the global queue clean for other tests

@@ -191,9 +191,11 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 | **Feishu / Lark** | Outbound API | Group chats, direct messages; inbound requires an integration that calls `pushEvent` (interactive cards not supported) |
 | **DingTalk** | Outbound API | Inbound requires an integration that calls `pushEvent` |
 | **QQ / OneBot** | WebSocket / HTTP | OneBot v11 protocol, group and private chat dispatch |
-| **Slack** | Outbound only | Outbound messaging via Webhooks/API (inbound event loop integration pending) |
+| **Slack** | Webhook + API | Events API, Slash Commands and Interactivity at `/webhook/slack`; requires `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` and `DONKEY_WEBHOOK_PORT`. DM gate and outbound `chat.postMessage` |
 | **Matrix** | Outbound PUT | Inbound requires an integration that calls `pushEvent` |
 | **HTTP Gateway**| REST / SSE | Local webhooks; note: open `/api/events` streams occupy the single accept thread (blocking concurrent `/api/chat` or status calls for up to 5h until disconnected) |
+
+> **Slack inbound setup:** point Event Subscriptions, Slash Commands and Interactivity to the same `https://<public-host>/webhook/slack` URL. The receiver listens on `DONKEY_WEBHOOK_HOST:DONKEY_WEBHOOK_PORT` (default `127.0.0.1`) over HTTP, so expose it through an HTTPS reverse proxy; Slack does not call a loopback HTTP endpoint directly.
 
 ### Providers (Outbound)
 

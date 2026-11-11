@@ -22,6 +22,7 @@ type
     drainWeChat*:    GatewayDrainProc
     drainQQ*:        GatewayDrainProc
     drainFeishu*:    GatewayDrainProc
+    drainSlack*:     GatewayDrainProc
     drainDingTalk*:  GatewayDrainProc
     drainMatrix*:    GatewayDrainProc
     drainTelegram*:  GatewayDrainProc
@@ -35,6 +36,7 @@ func initGatewayDrainer*(
   drainWeChat:    GatewayDrainProc = nil,
   drainQQ:        GatewayDrainProc = nil,
   drainFeishu:    GatewayDrainProc = nil,
+  drainSlack:     GatewayDrainProc = nil,
   drainDingTalk:  GatewayDrainProc = nil,
   drainMatrix:    GatewayDrainProc = nil,
   drainTelegram:  GatewayDrainProc = nil,
@@ -49,6 +51,7 @@ func initGatewayDrainer*(
     drainWeChat:    drainWeChat,
     drainQQ:        drainQQ,
     drainFeishu:    drainFeishu,
+    drainSlack:     drainSlack,
     drainDingTalk:  drainDingTalk,
     drainMatrix:    drainMatrix,
     drainTelegram:  drainTelegram,
@@ -191,6 +194,15 @@ proc drainFeishuGateway*(
     return false
   drainFn()
 
+proc drainSlackGateway*(
+  configured: bool;
+  drainFn: proc(): bool {.gcsafe.}
+): bool {.discardable, gcsafe.} =
+  ## Drains the Slack webhook event queue if configured.
+  if not configured or drainFn == nil:
+    return false
+  drainFn()
+
 proc drainWhatsAppGateway*(
   configured: bool;
   drainFn: proc(): bool {.gcsafe.}
@@ -227,6 +239,11 @@ proc drainFeishuGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} 
   if drainer.drainFeishu != nil:
     result = drainer.drainFeishu()
 
+proc drainSlackGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
+  ## Drains the Slack gateway from the drainer callback.
+  if drainer.drainSlack != nil:
+    result = drainer.drainSlack()
+
 proc drainDingTalkGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains DingTalk gateway from drainer callback.
   if drainer.drainDingTalk != nil:
@@ -262,6 +279,7 @@ proc drainGatewayEvents*(drainer: GatewayDrainer): int {.discardable, gcsafe.} =
   if drainWeComGateway(drainer): result.inc
   if drainWeChatGateway(drainer): result.inc
   if drainFeishuGateway(drainer): result.inc
+  if drainSlackGateway(drainer): result.inc
   if drainQQGateway(drainer): result.inc
   if drainDingTalkGateway(drainer): result.inc
   if drainMatrixGateway(drainer): result.inc

@@ -123,6 +123,17 @@ suite "slack_pure.parseEvent — message events":
     let r  = parseEvent(makeEventCallback("T1", ev))
     check r.eventTs == "1234567890.000001"
 
+  test "eventId is captured from the envelope":
+    let ev = makeMessageEvent("U1", "C1", "hi", "1.0")
+    let payload = %* {
+      "type":     "event_callback",
+      "team_id":  "T1",
+      "event_id": "Ev123",
+      "event":    ev,
+    }
+    let r = parseEvent(payload)
+    check r.eventId == "Ev123"
+
   test "bot message with bot_id returns sekUnknown":
     let ev = makeMessageEvent("B001", "C1", "bot reply", "1.0", botId = "B001")
     let r  = parseEvent(makeEventCallback("T1", ev))
@@ -237,6 +248,11 @@ suite "slack_pure.parseEvent — block actions":
     let r = parseEvent(p)
     check r.text == "dismiss"
 
+  test "action_id == value is not duplicated":
+    let p = makeBlockActions("U1", "models", "models", "C1", "T1", "https://r.com", "t1")
+    let r = parseEvent(p)
+    check r.text == "models"
+
   test "channelId comes from channel.id":
     let p = makeBlockActions("U1", "a1", "v", "C-action", "T1", "https://r.com", "t1")
     let r = parseEvent(p)
@@ -295,3 +311,30 @@ suite "slack_pure.toInbound":
     let msg = r.toInbound(uid)
     check msg.channel == ckSlack
     check msg.text == "/help all"
+
+suite "slack_pure.blockActionCommand":
+
+  test "simple menu buttons map to their command":
+    check blockActionCommand("models") == "/models"
+    check blockActionCommand("reasoning") == "/reasoning"
+    check blockActionCommand("menu") == "/menu"
+
+  test "model provider selection maps to /models <provider>":
+    check blockActionCommand("models:provider:openrouter") == "/models openrouter"
+
+  test "model selection maps to /models <provider> <model>":
+    check blockActionCommand("models:set:openai:gpt-4.1") == "/models openai gpt-4.1"
+
+  test "model identifiers with colons are preserved":
+    check blockActionCommand("models:set:openrouter:org/model:free") ==
+      "/models openrouter org/model:free"
+
+  test "model pagination keeps the provider and drops the page":
+    check blockActionCommand("models:page:anthropic:2") == "/models anthropic"
+
+  test "think presets map to /think <level>":
+    check blockActionCommand("think:set:high") == "/think high"
+
+  test "unknown actions return an empty command":
+    check blockActionCommand("personality:pirate") == ""
+    check blockActionCommand("") == ""
