@@ -66,6 +66,11 @@ suite "isPrivateUrl":
     check not isPrivateUrl("http://172.32.0.1/")
     check not isPrivateUrl("http://172.15.0.1/")
 
+  test "non-numeric 172 labels do not raise":
+    check not isPrivateUrl("http://172.example.com/")
+    check not isPrivateUrl("http://172.99999999999999999999.example/")
+    check not isPrivateUrl("http://172./")
+
   test "public URLs are not private":
     check not isPrivateUrl("https://example.com/")
     check not isPrivateUrl("https://api.github.com/users")

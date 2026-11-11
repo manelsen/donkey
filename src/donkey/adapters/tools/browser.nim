@@ -22,6 +22,7 @@ import ../../core/pipeops
 import ../../domain/tools/browser_pure
 import ../../domain/tools/web_fetch_helpers
 import ../../adapters/channel/ws_client
+import ../network/dns_resolver
 
 const
   DefaultLightpandaPort* = 9222
@@ -124,17 +125,27 @@ proc fireCdpCommand(bt: var BrowserTools; cdpMethod: string; params: JsonNode) =
   let id = nextId()
   bt.ws.sendFrame($(%*{"id": id, "method": cdpMethod, "params": params}))
 
-proc isAllowedBrowserRequest(url: string): bool =
+proc isAllowedBrowserRequest*(url: string): bool =
   ## Top-level navigation already requires HTTP(S). Subresources may be data/
   ## blob/about, but network destinations must not be private/internal and
   ## local file/chrome schemes are never allowed.
+  ##
+  ## The host is resolved here and every resolved address is validated. The
+  ## browser resolves again when connecting, so a DNS-rebinding window remains;
+  ## production deployments should route browser egress through a filtering
+  ## proxy/firewall that pins connections to validated addresses.
   let value = url.strip.toLowerAscii
   if value.startsWith("data:") or value.startsWith("blob:") or
      value.startsWith("about:"):
     return true
   if not value.startsWith("http://") and not value.startsWith("https://"):
     return false
-  not url.isPrivateUrl
+  if url.isPrivateUrl:
+    return false
+  let host = extractUrlHost(url)
+  if host.len == 0:
+    return false
+  safeResolve(host).isOk
 
 proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode = %*{}): Result[JsonNode, string] =
   ## Send a CDP command and wait for response.
@@ -261,12 +272,16 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
     discard bt.sendCdpCommand("Network.enable")
 
   ## Intercept every request before it leaves the browser. This covers
-  ## redirects and page subresources, not just the initial URL.
+  ## redirects and page subresources, not just the initial URL. Without
+  ## interception redirects and subresources would bypass the URL policy, so
+  ## navigation is aborted when it cannot be enabled.
   if not bt.fetchEnabled:
     let fetchResult = bt.sendCdpCommand("Fetch.enable", %*{
       "patterns": @[%*{"urlPattern": "*", "requestStage": "Request"}]
     })
-    bt.fetchEnabled = fetchResult.isOk
+    if fetchResult.isErr:
+      return err("cannot enable request interception: " & fetchResult.error)
+    bt.fetchEnabled = true
   
   # Ensure we have a page target
   let targetId = ? ensurePage(bt)
@@ -664,7 +679,7 @@ proc newBrowserTools*(
 
 type
   BrowserToolRuntime* = ref object
-    ## One browser process/page/profile per session owner. The global
+    ## One browser process/page/profile/CDP port per session owner. The global
     ## ToolRuntimePort routes by ToolCall.userId.
     backend: BrowserBackendKind
     executablePath: string
@@ -672,8 +687,9 @@ type
     profileBaseDir: string
     host: string
     port: int
+    nextPort: int
     http: HttpRuntimePort
-    byUser: Table[string, ref BrowserTools]
+    byUser*: Table[string, ref BrowserTools]
 
 func browserUserKey(raw: string): string =
   if raw.len == 0:
@@ -703,9 +719,34 @@ proc newBrowserToolRuntime*(backend: BrowserBackendKind = bbAuto;
     profileBaseDir: profileBaseDir,
     host: host,
     port: port,
+    nextPort: port,
     http: http,
     byUser: initTable[string, ref BrowserTools](),
   )
+
+proc isPortAvailable(host: string; port: int): bool =
+  ## Best-effort check for a free loopback port before spawning a browser.
+  if port <= 0 or port > 65535:
+    return false
+  var sock = newSocket()
+  try:
+    sock.bindAddr(Port(port), host)
+    result = true
+  except CatchableError:
+    result = false
+  finally:
+    sock.close()
+
+proc allocatePort(rt: BrowserToolRuntime): int =
+  ## Each user gets a distinct CDP endpoint; sharing one port would let a
+  ## second runtime attach to the first user's page.
+  var candidate = max(rt.nextPort, rt.port)
+  while candidate <= 65535:
+    if isPortAvailable(rt.host, candidate):
+      rt.nextPort = candidate + 1
+      return candidate
+    inc candidate
+  0
 
 proc listTools*(rt: BrowserToolRuntime): Result[seq[ToolSchema], string] =
   newBrowserTools(
@@ -720,17 +761,21 @@ proc listTools*(rt: BrowserToolRuntime): Result[seq[ToolSchema], string] =
 proc invoke*(rt: BrowserToolRuntime; call: ToolCall): Result[ToolResult, string] =
   let key = browserUserKey(call.userId)
   if key notin rt.byUser:
+    let userPort = rt.allocatePort()
+    if userPort == 0:
+      return err("no free CDP port available for browser session")
     var bt = newBrowserTools(
       backend = rt.backend,
       executablePath = rt.executablePath,
       lightpandaPath = rt.lightpandaPath,
       host = rt.host,
-      port = rt.port,
+      port = userPort,
       http = rt.http,
     )
     if rt.profileBaseDir.len > 0:
+      # Operator-provided profiles persist across runs; never delete them.
       bt.profileDir = rt.profileBaseDir / key
-      bt.ownsProfileDir = true
+      bt.ownsProfileDir = false
     let holder = new(BrowserTools)
     holder[] = bt
     rt.byUser[key] = holder

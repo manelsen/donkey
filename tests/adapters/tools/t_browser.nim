@@ -8,7 +8,7 @@
 ##   - Error handling when Lightpanda is not installed
 ##   - Error handling when browser is not running (call content/screenshot first)
 
-import std/[json, os, sequtils, strutils, unittest]
+import std/[json, os, sequtils, strutils, tables, unittest]
 import donkey/adapters/tools/browser
 import donkey/domain/tools/browser_pure
 import donkey/ports/tool
@@ -172,6 +172,25 @@ suite "Input validation":
     check res.isErr
     check res.error.contains("unknown tool")
 
+suite "Browser request policy":
+  test "allows inline schemes used by pages":
+    check isAllowedBrowserRequest("data:text/html,hello")
+    check isAllowedBrowserRequest("blob:https://example.com/abc")
+    check isAllowedBrowserRequest("about:blank")
+
+  test "blocks local schemes and private destinations":
+    check not isAllowedBrowserRequest("file:///etc/passwd")
+    check not isAllowedBrowserRequest("chrome://settings")
+    check not isAllowedBrowserRequest("http://127.0.0.1:8080/")
+    check not isAllowedBrowserRequest("http://[::1]/")
+    check not isAllowedBrowserRequest("http://169.254.169.254/latest/meta-data/")
+
+  test "handles non-numeric 172 labels without raising":
+    check not isAllowedBrowserRequest("http://172.example.com/")
+
+  test "allows public literal addresses":
+    check isAllowedBrowserRequest("http://8.8.8.8/")
+
 suite "Constructor":
   test "newBrowserTools with default args":
     let bt = newBrowserTools()
@@ -225,6 +244,28 @@ suite "Browser backends":
                            input: %* {}, userId: "user-a")
     check port.invoke(unknown).isErr
     port.close()
+
+  test "runtime allocates a distinct CDP port per user":
+    let runtime = newBrowserToolRuntime(backend = bbOff, port = 19400)
+    for user in ["user-a", "user-b"]:
+      discard runtime.invoke(ToolCall(id: user, name: "browser_content",
+                                      input: %* {}, userId: user))
+    check runtime.byUser.hasKey("user-a")
+    check runtime.byUser.hasKey("user-b")
+    check runtime.byUser["user-a"][].port >= 19400
+    check runtime.byUser["user-b"][].port >= 19400
+    check runtime.byUser["user-a"][].port != runtime.byUser["user-b"][].port
+    runtime.close()
+
+  test "configured profile directories are not adapter-owned":
+    let runtime = newBrowserToolRuntime(
+      backend = bbOff, profileBaseDir = "/tmp/donkey-test-profiles")
+    discard runtime.invoke(ToolCall(id: "x", name: "browser_content",
+                                    input: %* {}, userId: "user-a"))
+    check runtime.byUser["user-a"][].profileDir ==
+      "/tmp/donkey-test-profiles/user-a"
+    check not runtime.byUser["user-a"][].ownsProfileDir
+    runtime.close()
 
   test "toRuntimePort exposes the browser tools":
     let port = newBrowserTools(backend = bbOff).toRuntimePort()

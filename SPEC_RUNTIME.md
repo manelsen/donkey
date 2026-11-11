@@ -599,14 +599,29 @@ Comportamento:
   `browser_navigate`;
 - Lightpanda usa `/devtools/browser`; Edge/Chromium usam o page target de
   `/json/list`;
+- `BrowserToolRuntime` mantém um browser, uma página, um profile e uma porta
+  CDP por `ToolCall.userId`; a porta é alocada dinamicamente e nunca é
+  compartilhada entre sessões;
 - URLs privadas/internas são rejeitadas por `isPrivateUrl` antes do spawn;
+- `Fetch.enable` intercepta cada requisição efetiva (redirecionamentos e
+  subrecursos); se a interceptação não puder ser ativada, a navegação é
+  abortada;
+- o host é resolvido antes da navegação e todos os endereços resolvidos são
+  validados contra faixas privadas;
 - `auto` prefere Lightpanda, depois Edge, depois Chromium;
-- o processo e o profile temporário são encerrados em `close`.
+- o processo e o profile temporário são encerrados em `close`; profiles
+  definidos em `DONKEY_BROWSER_PROFILE_DIR` são preservados;
+- a descoberta de `/json/list` usa um transporte sem circuit breaker, para
+  permitir retry enquanto o Chromium inicia.
 
 Limites:
 
 - Edge/Chromium exigem instalação externa e são pesados; Lightpanda é o default
   recomendado para VPS;
+- `isPrivateUrl`/DNS são verificados antes da conexão, mas o browser resolve o
+  host novamente ao conectar. Fechar a janela de DNS rebinding exige uma
+  política de egress (proxy filtrante ou firewall) que amarre a conexão ao IP
+  validado; o `Fetch` domain também não intercepta WebSocket;
 - não há approval gate específico para browser; a política é a mesma do tool
   loop;
 - `browser_screenshot` retorna base64 e pode ser grande.
@@ -650,11 +665,14 @@ Limite importante:
 Controles existentes:
 
 - `fetch` e `web_fetch` bloqueiam URLs privadas via `isPrivateUrl`
+- browser tools validam o host resolvido e interceptam redirecionamentos e
+  subrecursos via CDP `Fetch`
 
 Limites:
 
-- a proteção é baseada em parsing de host e padrões privados;
-- não há resolução DNS/redirect hardening avançado visível aqui;
+- a proteção é baseada em parsing de host, padrões privados e resolução DNS;
+- DNS rebinding e protocolos não cobertos pelo `Fetch` (ex.: WebSocket) exigem
+  política de egress/firewall ou proxy filtrante;
 - Docker sandbox mantém rede habilitada.
 
 ### 11.3 IPC

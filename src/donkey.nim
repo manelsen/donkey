@@ -350,11 +350,16 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
     log.warn("browser: invalid DONKEY_BROWSER_BACKEND='" &
              getEnv("DONKEY_BROWSER_BACKEND") & "'; tools disabled")
   if browserBackend != bbOff:
+    ## CDP discovery polls a loopback endpoint while Chromium boots; a shared
+    ## circuit breaker would stay open for 60s after three connection refusals
+    ## and outlive the 30s discovery deadline.
+    let discoveryHttp = newStdHttpAdapter(
+      timeout = 2, maxRetries = 1, circuitBreaker = false).toRuntimePort()
     let browserRuntime = newBrowserToolRuntime(
       backend = browserBackend,
       executablePath = getEnv("DONKEY_BROWSER_PATH"),
       profileBaseDir = getEnv("DONKEY_BROWSER_PROFILE_DIR"),
-      http = newStdHttpAdapter().toRuntimePort(),
+      http = discoveryHttp,
     )
     let browserSchemas = browserRuntime.listTools().valueOr:
       @[]
