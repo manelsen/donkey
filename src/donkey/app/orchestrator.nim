@@ -534,8 +534,8 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
     withLastUser(uid)
 
   if msg.taskKind in {tkCompact, tkReset, tkNew, tkRestart}:
-    discard consolidateSession(
-      memory, completeFn, uid, sessionId, result.history, log)
+    discard await consolidateSessionAsync(
+      memory, completeFn, asyncCompleteFn, uid, sessionId, result.history, log)
 
   let controlResult = await handleControlTask(
     globalOutbox, memory, completeFn, uid, msg.channel, msg.replyTo, msg,
@@ -544,7 +544,9 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
   result =
     result |>->
     withControlResult(controlResult)
-  if controlResult.handled and msg.taskKind in {tkReset, tkNew, tkRestart}:
+  if controlResult.handled and
+     (msg.taskKind in {tkNew, tkRestart} or
+      (msg.taskKind == tkReset and controlResult.resetApplied)):
     result.blackboard.clear()
   if controlResult.handled and msg.taskKind == tkReset:
     result =

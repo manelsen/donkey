@@ -208,6 +208,7 @@ suite "domain/memory/decay":
       let freshValue = decayedRelevance(1.0'f32, now, now)
       check oldValue < freshValue
       check oldValue > 0.0'f32
+      check abs(oldValue - 0.5'f32) < 0.001'f32
 
     test "future timestamps are treated as fresh":
       let now = 1_700_000_000'i64

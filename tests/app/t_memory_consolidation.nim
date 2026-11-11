@@ -5,8 +5,10 @@
 ## orchestration with a fake MemoryRuntimePort.
 
 import std/[os, strutils, unittest]
+import chronos
 
 import donkey/app/memory_consolidation
+import donkey/app/provider_executor
 import donkey/core/log
 import donkey/core/memory/blackboard
 import donkey/core/memory/silent_turn
@@ -133,6 +135,36 @@ suite "memory consolidation":
     check cap.episodes[0].summary.contains("pinout review")
     check cap.lessonsCalls == 1
     check cap.lastLessonCount == 1
+
+  test "async consolidation uses the provider worker completion":
+    let cap = Capture()
+    let port = capturePort(cap)
+    let history = historyOf([
+      (roleUser, "Remember that the cache key is stale"),
+      (roleAssistant, "Noted."),
+      (roleUser, "Keep the workaround documented"),
+      (roleAssistant, "I will document it."),
+    ])
+    let completionText = """{
+      "triples": [],
+      "facts": ["Cache key is stale"],
+      "preferences": [],
+      "concepts": []
+    }"""
+    let asyncFn: AsyncCompleteFn =
+      proc(req: CompletionRequest): Future[Result[CompletionResponse, string]] {.gcsafe.} =
+        {.cast(gcsafe).}:
+          let fut = newFuture[Result[CompletionResponse, string]]("memory-async")
+          fut.complete(ok(Result[CompletionResponse, string], CompletionResponse(text: completionText)))
+          fut
+    let res = waitFor consolidateSessionAsync(
+      port, nil, asyncFn, UserId("u-async"), "1700000000000", history,
+      newLogger("test.memory", lvlError))
+    check res.attempted
+    check res.factsSaved == 1
+    check res.episodeSaved
+    check cap.appended.len == 1
+    check cap.appended[0].contains("Cache key is stale")
 
   test "short histories are skipped":
     let cap = Capture()

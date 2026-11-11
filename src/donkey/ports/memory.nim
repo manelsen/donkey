@@ -92,8 +92,9 @@ type
                               {.gcsafe, raises: [].}
 
 func hasMemoryConsolidation*(p: MemoryRuntimePort): bool =
-  p.appendExtractedMemory != nil and p.saveEpisode != nil and
-    p.extractLessons != nil
+  ## Lessons are optional: a backend that can store extracted memory and
+  ## episodes must still consolidate without the lesson hook.
+  p.appendExtractedMemory != nil and p.saveEpisode != nil
 
 proc bootstrapUserMd*(name, callMe, timezone, language: string): string =
   ## Generates the initial USER.md following the OpenClaw USER.md template.

@@ -8,6 +8,8 @@
 
 import std/[options, os, strutils]
 
+import chronos
+
 import ../core/log
 import ../core/memory/blackboard
 import ../core/memory/silent_turn
@@ -18,6 +20,7 @@ import ../domain/message
 import ../ports/memory
 import ../ports/provider
 import ./contemplation
+import ./provider_executor
 
 const
   MinConsolidationMessages* = 4
@@ -139,48 +142,38 @@ func buildContemplationMemories(history: ConversationHistory;
         timestamp: nowSec,
       ))
 
-proc consolidateSession*(memory: MemoryRuntimePort;
-                         completeFn: CompleteFn;
-                         userId: UserId;
-                         sessionId: string;
-                         history: ConversationHistory;
-                         log: Logger): ConsolidationResult {.gcsafe, raises: [].} =
-  ## Extracts memory, writes an episode and distils lessons. Best-effort:
-  ## every failure is logged and never propagates to the caller.
+proc consolidationSkipReason(memory: MemoryRuntimePort;
+                             history: ConversationHistory): string =
   let mode = getEnv("DONKEY_MEMORY_CONSOLIDATE", "1").strip.toLowerAscii()
   if mode in ["0", "off", "false", "no"]:
-    result.skippedReason = "disabled"
-    return
+    return "disabled"
   if not memory.hasMemoryConsolidation:
-    result.skippedReason = "backend has no consolidation hooks"
-    return
+    return "backend has no consolidation hooks"
   if history.len < MinConsolidationMessages:
-    result.skippedReason = "history too short"
-    return
+    return "history too short"
+  ""
 
+proc persistConsolidation(memory: MemoryRuntimePort;
+                          userId: UserId;
+                          sessionId: string;
+                          history: ConversationHistory;
+                          nowMs, nowSec: int64;
+                          extracted: Result[SilentMemoryResult, string];
+                          log: Logger): ConsolidationResult {.gcsafe, raises: [].} =
   result.attempted = true
-  let nowMs = epochMs()
-  let nowSec = nowMs div 1000
-
-  if completeFn != nil:
-    var extracted: Result[SilentMemoryResult, string]
-    try:
-      extracted = runSilentMemoryTurn(history, completeFn, userId)
-    except Exception as e:
-      extracted = err(Result[SilentMemoryResult, string], "silent turn raised: " & e.msg)
-    if extracted.isErr:
-      log.warn("memory consolidation: silent turn failed: " & extracted.error)
-    else:
-      let memoryBlock = formatExtractedMemory(extracted.get(), nowMs)
-      if memoryBlock.len > 0:
-        let saved = memory.appendExtractedMemory(userId, memoryBlock)
-        if saved.isErr:
-          log.warn("memory consolidation: append: " & saved.error)
-        else:
-          result.factsSaved = extracted.get().facts.len
-          result.preferencesSaved = extracted.get().preferences.len
-          result.conceptsSaved = extracted.get().concepts.len
-          result.triplesSaved = extracted.get().triples.len
+  if extracted.isErr:
+    log.warn("memory consolidation: silent turn failed: " & extracted.error)
+  else:
+    let memoryBlock = formatExtractedMemory(extracted.get(), nowMs)
+    if memoryBlock.len > 0:
+      let saved = memory.appendExtractedMemory(userId, memoryBlock)
+      if saved.isErr:
+        log.warn("memory consolidation: append: " & saved.error)
+      else:
+        result.factsSaved = extracted.get().facts.len
+        result.preferencesSaved = extracted.get().preferences.len
+        result.conceptsSaved = extracted.get().concepts.len
+        result.triplesSaved = extracted.get().triples.len
 
   let episode = buildEpisodeFromHistory(history, sessionId, nowSec)
   let memories = buildContemplationMemories(history, sessionId, nowSec)
@@ -206,9 +199,66 @@ proc consolidateSession*(memory: MemoryRuntimePort;
     log.warn("memory consolidation: contemplation: " & e.msg)
   result.episodeSaved = episodeSaved
 
-  if memory.extractLessons != nil:
+  if episodeSaved and memory.extractLessons != nil:
     let lessons = memory.extractLessons(userId, @[episode])
     if lessons.isErr:
       log.warn("memory consolidation: lessons: " & lessons.error)
     else:
       result.lessonsSaved = lessons.get()
+
+proc consolidateSession*(memory: MemoryRuntimePort;
+                         completeFn: CompleteFn;
+                         userId: UserId;
+                         sessionId: string;
+                         history: ConversationHistory;
+                         log: Logger): ConsolidationResult {.gcsafe, raises: [].} =
+  ## Synchronous variant for tests and non-Chronos callers. The orchestrator
+  ## uses `consolidateSessionAsync` so the completion runs on a provider worker.
+  result.skippedReason = consolidationSkipReason(memory, history)
+  if result.skippedReason.len > 0:
+    return
+
+  let nowMs = epochMs()
+  let nowSec = nowMs div 1000
+  var extracted: Result[SilentMemoryResult, string]
+  if completeFn != nil:
+    try:
+      extracted = runSilentMemoryTurn(history, completeFn, userId)
+    except Exception as e:
+      extracted = err(Result[SilentMemoryResult, string], "silent turn raised: " & e.msg)
+  result = persistConsolidation(
+    memory, userId, sessionId, history, nowMs, nowSec, extracted, log)
+
+proc consolidateSessionAsync*(memory: MemoryRuntimePort;
+                              completeFn: CompleteFn;
+                              asyncCompleteFn: AsyncCompleteFn;
+                              userId: UserId;
+                              sessionId: string;
+                              history: ConversationHistory;
+                              log: Logger): Future[ConsolidationResult] {.async.} =
+  ## Production path for the Chronos orchestrator: the silent-turn completion
+  ## is awaited through the provider worker pool instead of blocking the loop.
+  result.skippedReason = consolidationSkipReason(memory, history)
+  if result.skippedReason.len > 0:
+    return
+
+  let nowMs = epochMs()
+  let nowSec = nowMs div 1000
+  var extracted: Result[SilentMemoryResult, string]
+  if asyncCompleteFn != nil:
+    try:
+      let response = await asyncCompleteFn(buildSilentMemoryRequest(history))
+      if response.isErr:
+        extracted = err(Result[SilentMemoryResult, string], response.error)
+      else:
+        extracted = parseMemoryExtractionResponse(response.get().text)
+    except Exception as e:
+      extracted = err(Result[SilentMemoryResult, string],
+                      "silent turn async raised: " & e.msg)
+  elif completeFn != nil:
+    try:
+      extracted = runSilentMemoryTurn(history, completeFn, userId)
+    except Exception as e:
+      extracted = err(Result[SilentMemoryResult, string], "silent turn raised: " & e.msg)
+  result = persistConsolidation(
+    memory, userId, sessionId, history, nowMs, nowSec, extracted, log)

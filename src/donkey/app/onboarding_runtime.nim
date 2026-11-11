@@ -91,6 +91,7 @@ type ControlTaskResult* = object
   debugMode*:     bool
   showReasoning*: bool
   handled*:       bool
+  resetApplied*:  bool
 
 proc startResetControlContext*(history: ConversationHistory;
                                sessionId: string): Result[ResetControlContext, string] =
