@@ -8,7 +8,7 @@
 ##   - Error handling when Lightpanda is not installed
 ##   - Error handling when browser is not running (call content/screenshot first)
 
-import std/[json, os, sequtils, strutils, tables, unittest]
+import std/[json, os, sequtils, strutils, tables, times, unittest]
 import donkey/adapters/tools/browser
 import donkey/domain/tools/browser_pure
 import donkey/ports/tool
@@ -265,6 +265,44 @@ suite "Browser backends":
     check runtime.byUser["user-a"][].profileDir ==
       "/tmp/donkey-test-profiles/user-a"
     check not runtime.byUser["user-a"][].ownsProfileDir
+    runtime.close()
+
+  test "user keys are collision-free":
+    check browserUserKey("") == "__default__"
+    check browserUserKey("user-a") == "user-a"
+    check browserUserKey("alice:a") == "alice_3Aa"
+    check browserUserKey("alice:a") != browserUserKey("alice_a")
+    check browserUserKey("_default_") != "__default__"
+
+  test "runtime passes the filtering proxy to each browser":
+    let runtime = newBrowserToolRuntime(
+      backend = bbOff, proxyServer = "http://127.0.0.1:3128")
+    discard runtime.invoke(ToolCall(id: "x", name: "browser_content",
+                                    input: %* {}, userId: "user-a"))
+    check runtime.byUser["user-a"][].proxyServer == "http://127.0.0.1:3128"
+    runtime.close()
+
+  test "runtime evicts idle users":
+    let runtime = newBrowserToolRuntime(
+      backend = bbOff, port = 19500, idleTimeoutSeconds = 60)
+    discard runtime.invoke(ToolCall(id: "a", name: "browser_content",
+                                    input: %* {}, userId: "user-a"))
+    check runtime.byUser.hasKey("user-a")
+    runtime.byUser["user-a"][].lastUsed = epochTime() - 120
+    discard runtime.invoke(ToolCall(id: "b", name: "browser_content",
+                                    input: %* {}, userId: "user-b"))
+    check not runtime.byUser.hasKey("user-a")
+    check runtime.byUser.hasKey("user-b")
+    runtime.close()
+
+  test "runtime releases a single user":
+    let runtime = newBrowserToolRuntime(backend = bbOff, port = 19600)
+    for user in ["user-a", "user-b"]:
+      discard runtime.invoke(ToolCall(id: user, name: "browser_content",
+                                      input: %* {}, userId: user))
+    runtime.closeUser("user-a")
+    check not runtime.byUser.hasKey("user-a")
+    check runtime.byUser.hasKey("user-b")
     runtime.close()
 
   test "toRuntimePort exposes the browser tools":

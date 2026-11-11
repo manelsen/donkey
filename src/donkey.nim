@@ -359,6 +359,7 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
       backend = browserBackend,
       executablePath = getEnv("DONKEY_BROWSER_PATH"),
       profileBaseDir = getEnv("DONKEY_BROWSER_PROFILE_DIR"),
+      proxyServer = getEnv("DONKEY_BROWSER_PROXY"),
       http = discoveryHttp,
     )
     let browserSchemas = browserRuntime.listTools().valueOr:

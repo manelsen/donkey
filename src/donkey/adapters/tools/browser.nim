@@ -46,8 +46,10 @@ type
     inflightRequests*: int        ## Network.* events observed since navigation
     pendingRequestIds*: seq[string] ## requestId set, redirects keep the same id
     lastNetworkActivity*: float   ## epochTime of the last Network event
+    lastUsed*: float              ## epochTime of the last tool invocation
     fetchEnabled*: bool           ## Fetch.requestPaused interception is active
     http*: HttpRuntimePort        ## transport for Chromium /json/list
+    proxyServer*: string          ## optional filtering egress proxy
 
 # ── Tool Schemas ─────────────────────────────────────────────────────────────
 
@@ -147,6 +149,66 @@ proc isAllowedBrowserRequest*(url: string): bool =
     return false
   safeResolve(host).isOk
 
+proc handleCdpEvent(bt: var BrowserTools; resp: JsonNode) =
+  ## Applies one asynchronous CDP event received while waiting for a response.
+  let cdpMethod = resp["method"].getStr("")
+  let params = resp{"params"}
+  case cdpMethod
+  of "Fetch.requestPaused":
+    if bt.fetchEnabled:
+      let requestId = params{"requestId"}.getStr("")
+      let requestUrl = params{"request"}{"url"}.getStr("")
+      if requestId.len > 0:
+        if isAllowedBrowserRequest(requestUrl):
+          bt.fireCdpCommand("Fetch.continueRequest",
+                            %*{"requestId": requestId})
+        else:
+          bt.fireCdpCommand("Fetch.failRequest", %*{
+            "requestId": requestId,
+            "errorReason": "BlockedByClient",
+          })
+        bt.lastNetworkActivity = epochTime()
+  of "Network.requestWillBeSent":
+    let requestId = params{"requestId"}.getStr("")
+    let redirect = params{"redirectResponse"}
+    if requestId.len > 0 and redirect == nil and
+       requestId notin bt.pendingRequestIds:
+      bt.pendingRequestIds.add(requestId)
+      inc bt.inflightRequests
+    bt.lastNetworkActivity = epochTime()
+  of "Network.loadingFinished", "Network.loadingFailed":
+    let requestId = params{"requestId"}.getStr("")
+    let idx = bt.pendingRequestIds.find(requestId)
+    if idx >= 0:
+      bt.pendingRequestIds.delete(idx)
+      if bt.inflightRequests > 0:
+        dec bt.inflightRequests
+    bt.lastNetworkActivity = epochTime()
+  else:
+    discard
+
+proc drainPendingEvents(bt: var BrowserTools; budgetMs = 50) =
+  ## Processes events that arrived after the last command response. Without
+  ## this, a request paused by Fetch after navigateTo returns would stay
+  ## blocked until the next tool call sends another CDP command.
+  let deadline = epochTime() + float(budgetMs) / 1000.0
+  while epochTime() < deadline:
+    let frame = try:
+      bt.ws.recvFrame(10)
+    except TimeoutError:
+      break
+    except CatchableError:
+      break
+    if frame.opcode == WsOpcodeClose:
+      break
+    if frame.opcode == WsOpcodeText or frame.opcode == WsOpcodeBin:
+      try:
+        let resp = parseJson(frame.data)
+        if resp.kind == JObject and resp.hasKey("method"):
+          bt.handleCdpEvent(resp)
+      except CatchableError:
+        discard
+
 proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode = %*{}): Result[JsonNode, string] =
   ## Send a CDP command and wait for response.
   let id = nextId()
@@ -182,41 +244,7 @@ proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode =
             return err("CDP error: " & resp["error"].pretty)
           return ok(resp.getOrDefault("result"))
         elif resp.hasKey("method"):
-          let cdpMethod = resp["method"].getStr("")
-          let params = resp{"params"}
-          case cdpMethod
-          of "Fetch.requestPaused":
-            if bt.fetchEnabled:
-              let requestId = params{"requestId"}.getStr("")
-              let requestUrl = params{"request"}{"url"}.getStr("")
-              if requestId.len > 0:
-                if isAllowedBrowserRequest(requestUrl):
-                  bt.fireCdpCommand("Fetch.continueRequest",
-                                    %*{"requestId": requestId})
-                else:
-                  bt.fireCdpCommand("Fetch.failRequest", %*{
-                    "requestId": requestId,
-                    "errorReason": "BlockedByClient",
-                  })
-                bt.lastNetworkActivity = epochTime()
-          of "Network.requestWillBeSent":
-            let requestId = params{"requestId"}.getStr("")
-            let redirect = params{"redirectResponse"}
-            if requestId.len > 0 and redirect == nil and
-               requestId notin bt.pendingRequestIds:
-              bt.pendingRequestIds.add(requestId)
-              inc bt.inflightRequests
-            bt.lastNetworkActivity = epochTime()
-          of "Network.loadingFinished", "Network.loadingFailed":
-            let requestId = params{"requestId"}.getStr("")
-            let idx = bt.pendingRequestIds.find(requestId)
-            if idx >= 0:
-              bt.pendingRequestIds.delete(idx)
-              if bt.inflightRequests > 0:
-                dec bt.inflightRequests
-            bt.lastNetworkActivity = epochTime()
-          else:
-            discard
+          bt.handleCdpEvent(resp)
 
 proc ensurePage*(bt: var BrowserTools): Result[string, string] =
   ## Ensure we have an active page target. Creates one if not.
@@ -497,7 +525,8 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
     bt.profileDir = profileDir
     bt.ownsProfileDir = true
 
-  let specOpt = buildLaunchSpec(kind, exe, bt.host, bt.port, profileDir)
+  let specOpt = buildLaunchSpec(kind, exe, bt.host, bt.port, profileDir,
+                                bt.proxyServer)
   if specOpt.isNone:
     return err("invalid browser launch specification")
   let spec = specOpt.get()
@@ -585,7 +614,7 @@ proc close*(bt: var BrowserTools) =
 func browserError(callId, message: string): ToolResult =
   ToolResult(callId: callId, output: $(%*{"error": message}), isError: true)
 
-proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
+proc invokeCommand(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
   case call.name
   of "browser_navigate":
     let urlNode = call.input.getOrDefault("url")
@@ -649,6 +678,12 @@ proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
   else:
     return err("unknown tool: '" & call.name & "'")
 
+proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
+  result = bt.invokeCommand(call)
+  bt.lastUsed = epochTime()
+  if bt.process != nil and bt.ws.sock != nil:
+    bt.drainPendingEvents()
+
 # ── Constructor ─────────────────────────────────────────────────────────────
 
 proc newBrowserTools*(
@@ -658,7 +693,8 @@ proc newBrowserTools*(
   backend: BrowserBackendKind = bbAuto;
   executablePath: string = "";
   profileDir: string = "";
-  http: HttpRuntimePort = HttpRuntimePort()
+  http: HttpRuntimePort = HttpRuntimePort();
+  proxyServer: string = "";
 ): BrowserTools =
   var resolvedBackend = backend
   if lightpandaPath.len > 0 and backend == bbAuto:
@@ -672,6 +708,7 @@ proc newBrowserTools*(
     host: host,
     port: port,
     http: http,
+    proxyServer: proxyServer,
     process: nil,
     pageTargetId: "",
     currentUrl: ""
@@ -688,21 +725,23 @@ type
     host: string
     port: int
     nextPort: int
+    proxyServer: string
+    idleTimeoutSeconds: float
     http: HttpRuntimePort
     byUser*: Table[string, ref BrowserTools]
 
-func browserUserKey(raw: string): string =
+func browserUserKey*(raw: string): string =
+  ## Reversible, collision-free encoding safe for directory names. Characters
+  ## outside [A-Za-z0-9-] (including '_') become _XX, so "alice:a" and
+  ## "alice_a" map to different keys.
   if raw.len == 0:
     return "__default__"
   for c in raw:
-    if c.isAlphaNumeric() or c in {'-', '_'}:
+    if c.isAlphaNumeric() or c == '-':
       result.add(c)
     else:
       result.add('_')
-  if result.len == 0:
-    "__default__"
-  else:
-    result
+      result.add(toHex(ord(c), 2))
 
 proc newBrowserToolRuntime*(backend: BrowserBackendKind = bbAuto;
                              executablePath = "";
@@ -710,7 +749,9 @@ proc newBrowserToolRuntime*(backend: BrowserBackendKind = bbAuto;
                              profileBaseDir = "";
                              host = DefaultHost;
                              port = DefaultLightpandaPort;
-                             http: HttpRuntimePort = HttpRuntimePort()
+                             http: HttpRuntimePort = HttpRuntimePort();
+                             proxyServer = "";
+                             idleTimeoutSeconds = 900.0
                             ): BrowserToolRuntime =
   BrowserToolRuntime(
     backend: backend,
@@ -720,6 +761,8 @@ proc newBrowserToolRuntime*(backend: BrowserBackendKind = bbAuto;
     host: host,
     port: port,
     nextPort: port,
+    proxyServer: proxyServer,
+    idleTimeoutSeconds: idleTimeoutSeconds,
     http: http,
     byUser: initTable[string, ref BrowserTools](),
   )
@@ -758,7 +801,28 @@ proc listTools*(rt: BrowserToolRuntime): Result[seq[ToolSchema], string] =
     http = rt.http,
   ).listTools()
 
+proc closeUser*(rt: BrowserToolRuntime; userId: string) =
+  ## Releases one user's browser process, page, profile and CDP port.
+  let key = browserUserKey(userId)
+  if key in rt.byUser:
+    rt.byUser[key][].close()
+    rt.byUser.del(key)
+
+proc evictIdle(rt: BrowserToolRuntime) =
+  ## Bounds resource accumulation when no session-end callback is available.
+  if rt.idleTimeoutSeconds <= 0:
+    return
+  let now = epochTime()
+  var stale: seq[string]
+  for key, bt in rt.byUser:
+    if now - bt[].lastUsed > rt.idleTimeoutSeconds:
+      stale.add(key)
+  for key in stale:
+    rt.byUser[key][].close()
+    rt.byUser.del(key)
+
 proc invoke*(rt: BrowserToolRuntime; call: ToolCall): Result[ToolResult, string] =
+  rt.evictIdle()
   let key = browserUserKey(call.userId)
   if key notin rt.byUser:
     let userPort = rt.allocatePort()
@@ -771,6 +835,7 @@ proc invoke*(rt: BrowserToolRuntime; call: ToolCall): Result[ToolResult, string]
       host = rt.host,
       port = userPort,
       http = rt.http,
+      proxyServer = rt.proxyServer,
     )
     if rt.profileBaseDir.len > 0:
       # Operator-provided profiles persist across runs; never delete them.

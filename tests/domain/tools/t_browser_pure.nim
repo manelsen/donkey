@@ -47,6 +47,17 @@ suite "browser backend policy":
     check spec.args.contains("--headless=new")
     check not spec.args.anyIt(it.startsWith("--user-data-dir="))
 
+  test "Chromium launch spec routes egress through a filtering proxy":
+    let spec = buildLaunchSpec(bbChromium, "/usr/bin/chromium",
+                               "127.0.0.1", 9222, "", "http://127.0.0.1:3128").get()
+    check spec.args.contains("--proxy-server=http://127.0.0.1:3128")
+    check spec.args.contains("--proxy-bypass-list=<-loopback>")
+
+  test "Lightpanda ignores proxy configuration":
+    let spec = buildLaunchSpec(bbLightpanda, "/usr/bin/lightpanda",
+                               "127.0.0.1", 9222, "", "http://127.0.0.1:3128").get()
+    check not spec.args.anyIt(it.startsWith("--proxy-server="))
+
   test "resolved backends are required for launch":
     check buildLaunchSpec(bbAuto, "/bin/x", "127.0.0.1", 9222, "").isNone
     check buildLaunchSpec(bbOff, "/bin/x", "127.0.0.1", 9222, "").isNone

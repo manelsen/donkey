@@ -72,7 +72,8 @@ func browserExecutableCandidates*(kind: BrowserBackendKind): seq[string] =
 func buildLaunchSpec*(kind: BrowserBackendKind;
                       exe, host: string;
                       port: int;
-                      profileDir: string): Option[BrowserLaunchSpec] =
+                      profileDir: string;
+                      proxy = ""): Option[BrowserLaunchSpec] =
   ## Builds the launch argv for a concrete backend. `exe` must already be
   ## resolved by the adapter.
   if kind in {bbOff, bbAuto}:
@@ -99,6 +100,11 @@ func buildLaunchSpec*(kind: BrowserBackendKind;
     ]
     if profileDir.len > 0:
       args.add("--user-data-dir=" & profileDir)
+    if proxy.len > 0:
+      args.add("--proxy-server=" & proxy)
+      # Chromium bypasses proxies for loopback by default; <-loopback> removes
+      # that bypass so the filtering proxy also sees internal destinations.
+      args.add("--proxy-bypass-list=<-loopback>")
     args.add("about:blank")
     some(BrowserLaunchSpec(
       kind: kind,

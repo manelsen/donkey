@@ -591,7 +591,10 @@ Configuração:
 
 - `DONKEY_BROWSER_BACKEND=off|auto|lightpanda|edge|chromium` (default `off`);
 - `DONKEY_BROWSER_PATH` para um executável explícito;
-- `DONKEY_BROWSER_PROFILE_DIR` para o `--user-data-dir` do Edge/Chromium.
+- `DONKEY_BROWSER_PROFILE_DIR` para o `--user-data-dir` do Edge/Chromium;
+- `DONKEY_BROWSER_PROXY` para um proxy de egress filtrante (Edge/Chromium);
+- usuários idle por 15 minutos têm browser, perfil temporário e porta
+  liberados.
 
 Comportamento:
 
@@ -606,8 +609,14 @@ Comportamento:
 - `Fetch.enable` intercepta cada requisição efetiva (redirecionamentos e
   subrecursos); se a interceptação não puder ser ativada, a navegação é
   abortada;
+- eventos CDP pendentes são drenados ao fim de cada chamada, para continuar
+  requisições pausadas após a navegação;
 - o host é resolvido antes da navegação e todos os endereços resolvidos são
   validados contra faixas privadas;
+- a chave de usuário usa codificação reversível e sem colisões (`_XX` para
+  caracteres fora de `[A-Za-z0-9-]`), isolando página e profile;
+- `DONKEY_BROWSER_PROXY` adiciona `--proxy-server` e desativa o bypass de
+  loopback do Chromium, permitindo que um proxy filtrante veja todo o tráfego;
 - `auto` prefere Lightpanda, depois Edge, depois Chromium;
 - o processo e o profile temporário são encerrados em `close`; profiles
   definidos em `DONKEY_BROWSER_PROFILE_DIR` são preservados;
@@ -621,7 +630,17 @@ Limites:
 - `isPrivateUrl`/DNS são verificados antes da conexão, mas o browser resolve o
   host novamente ao conectar. Fechar a janela de DNS rebinding exige uma
   política de egress (proxy filtrante ou firewall) que amarre a conexão ao IP
-  validado; o `Fetch` domain também não intercepta WebSocket;
+  validado; `DONKEY_BROWSER_PROXY` permite integrar esse proxy, mas a política
+  em si é responsabilidade da implantação; o `Fetch` domain também não
+  intercepta WebSocket;
+- a descoberta do Chromium usa polling bloqueante (`sleep`) dentro do tool
+  loop Chronos; chamadas de browser são síncronas por arquitetura, como já
+  documentado em `tool_agent.nim`, e a migração para I/O assíncrono é
+  follow-up;
+- eventos CDP são drenados apenas durante comandos e por uma janela curta ao
+  fim de cada chamada; requisições iniciadas muito depois da chamada ficam
+  pausadas até a próxima tool de browser (um leitor de eventos permanente
+  exige o mesmo follow-up de I/O assíncrono);
 - não há approval gate específico para browser; a política é a mesma do tool
   loop;
 - `browser_screenshot` retorna base64 e pode ser grande.
