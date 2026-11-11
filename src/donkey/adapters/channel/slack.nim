@@ -42,6 +42,7 @@ type
     text*:        string
     channelId*:   string
     teamId*:      string
+    eventTs*:     string  ## message timestamp, unique per event
     responseUrl*: string  ## non-empty for slash commands and block actions
     triggerId*:   string
 
@@ -72,6 +73,7 @@ proc pushEvent*(payload: JsonNode) =
       text:        r.text,
       channelId:   r.channelId,
       teamId:      r.teamId,
+      eventTs:     r.eventTs,
     ))
   of sekSlashCommand:
     gSlackEvents.send(SlackRawEvent(

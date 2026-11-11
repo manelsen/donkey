@@ -46,6 +46,7 @@ import donkey/adapters/channel/matrix
 import donkey/adapters/channel/email
 import donkey/adapters/channel/signal
 import donkey/adapters/channel/slack
+import donkey/adapters/channel/slack_runtime
 import donkey/adapters/channel/dingtalk
 import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
@@ -894,6 +895,8 @@ proc startOptionalSlackGateway(slAdapter: var SlackAdapter;
     return
 
   slAdapter.openQueue()
+  if getEnv("SLACK_SIGNING_SECRET").len == 0:
+    log.warn("SLACK_SIGNING_SECRET not set — Slack inbound webhook disabled")
   log.info("Slack gateway started")
 
 proc startOptionalDingTalkGateway(dtAdapter: var DingTalkAdapter;
@@ -938,9 +941,10 @@ proc startOptionalWebhookReceiver(env: DaemonEnv; log: Logger) =
     return
 
   let cfg = WebhookConfig(
-    ## Slack events have no inbound drainer yet; do not accept events that
-    ## nobody consumes (and that would grow the queue without bound).
-    slackSigningSecret: "",
+    ## Slack events are drained by slack_runtime; only accept them when the
+    ## bot token and signature secret are configured.
+    slackSigningSecret:
+      if env.slackBotToken.len > 0: env.slackSigningSecret else: "",
     feishuVerificationToken:
       if env.feishuAppId.len > 0: env.feishuVerificationToken else: "",
     dingtalkAppSecret:
@@ -999,6 +1003,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
                     wecomCorpId: string;
                     wechatAppId: string;
                     feishuAppId: string;
+                    slackBotToken: string;
                     qqEnabled: bool;
                     log: Logger;
                     gatewayInboundCtx: DaemonContext;
@@ -1018,6 +1023,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
     if wecomCorpId.len > 0: activeChannels.add("wecom")
     if wechatAppId.len > 0: activeChannels.add("wechat")
     if feishuAppId.len > 0: activeChannels.add("feishu")
+    if slackBotToken.len > 0: activeChannels.add("slack")
     if qqEnabled: activeChannels.add("qq")
     var memoryStats: MemoryStats
     when defined(withPostgres) or defined(withSqlite):
@@ -1337,7 +1343,8 @@ proc setupDaemonRuntime(ctx: DaemonContext;
                         log: Logger) =
   setupIpcServer(cfg, ctx.runtime, ctx.runtime.sm, ctx.services.tools.len + nativeSessionTools().len, ctx.runtime.daemonStartMs,
                  ctx.env.telegramToken, ctx.env.discordToken, ctx.env.wecomCorpId,
-                 ctx.env.wechatAppId, ctx.env.feishuAppId, ctx.adapters.qq.enabled(), log,
+                 ctx.env.wechatAppId, ctx.env.feishuAppId, ctx.env.slackBotToken,
+                 ctx.adapters.qq.enabled(), log,
                  ctx, memory, log)
 
 proc activateDaemonBootstrap(ctx: DaemonContext;
@@ -1425,6 +1432,15 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         feishu_runtime.drainFeishuEvents(
           ctx.adapters.fs, ctx.env.feishuAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
           toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.runtime.msgSeq, fallback, log)
+        true
+      ),
+    drainSlack = proc(): bool =
+      drainSlackGateway(ctx.env.slackBotToken.len > 0 and
+                        ctx.env.slackSigningSecret.len > 0, proc(): bool =
+        slack_runtime.drainSlackEvents(
+          ctx.adapters.sl, ctx.env.slackSigningSecret, ctx.runtime.sm, memory, completeBuilder,
+          modelCatalogLoader, toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
           ctx.runtime.msgSeq, fallback, log)
         true
       ),

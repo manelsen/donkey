@@ -191,7 +191,7 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 | **Feishu / Lark** | Outbound API | Group chats, direct messages; inbound requires an integration that calls `pushEvent` (interactive cards not supported) |
 | **DingTalk** | Outbound API | Inbound requires an integration that calls `pushEvent` |
 | **QQ / OneBot** | WebSocket / HTTP | OneBot v11 protocol, group and private chat dispatch |
-| **Slack** | Outbound only | Outbound messaging via Webhooks/API (inbound event loop integration pending) |
+| **Slack** | Webhook + API | Inbound Events API via signed webhook (`SLACK_SIGNING_SECRET`), DM gate, slash commands/block actions and outbound `chat.postMessage` |
 | **Matrix** | Outbound PUT | Inbound requires an integration that calls `pushEvent` |
 | **HTTP Gateway**| REST / SSE | Local webhooks; note: open `/api/events` streams occupy the single accept thread (blocking concurrent `/api/chat` or status calls for up to 5h until disconnected) |
 
