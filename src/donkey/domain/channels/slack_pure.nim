@@ -12,7 +12,7 @@
 ##   2. toInbound(r, userId)        → InboundMessage
 ##   3. isVerification(r)           → bool             (url_verification challenge)
 
-import std/json
+import std/[json, strutils]
 import ../../core/pipeops
 import ../../domain/message
 
@@ -32,6 +32,7 @@ type
     text*:        string   ## message text or command + args
     channelId*:   string   ## Slack channel id (C...)
     teamId*:      string   ## Slack workspace/team id (T...)
+    eventId*:     string   ## Events API event_id, used for deduplication
     eventTs*:     string   ## event timestamp (ts field, used as channelId dedup)
     responseUrl*: string   ## response_url for slash commands / block actions
     triggerId*:   string   ## trigger_id (non-empty when modal can be opened)
@@ -56,7 +57,7 @@ func extractUserId(event: JsonNode): string =
   of JObject: userField.getOrDefault("id").getStr("")
   else: ""
 
-func parseMessageEvent(teamId: string; event: JsonNode): SlkParseResult =
+func parseMessageEvent(teamId, eventId: string; event: JsonNode): SlkParseResult =
   ## Parses a "message" or "app_mention" event sub-object.
   ## Designed for  event |>-> parseMessageEvent(teamId)  (piped value is last arg).
   let userId = event |> extractUserId
@@ -75,6 +76,7 @@ func parseMessageEvent(teamId: string; event: JsonNode): SlkParseResult =
     text:      text,
     channelId: event |>-> extractField("channel"),
     teamId:    teamId,
+    eventId:   eventId,
     eventTs:   event |>-> extractField("ts"),
   )
 
@@ -110,7 +112,12 @@ func parseBlockActions(payload: JsonNode): SlkParseResult =
       let v = actions[0].getOrDefault("value")
       if v != nil: v.getStr("") else: ""
     else: ""
-  let content = if actionValue.len > 0: actionId & ":" & actionValue else: actionId
+  ## Adapters may set action_id == value (single data payload). Avoid
+  ## duplicating it as "data:data"; the runtime maps the data to a command.
+  let content =
+    if actionValue.len > 0 and actionValue != actionId: actionId & ":" & actionValue
+    elif actionValue.len > 0: actionValue
+    else: actionId
   let channel = payload.getOrDefault("channel")
   let channelId =
     if channel != nil and channel.kind == JObject:
@@ -144,8 +151,9 @@ func parseEvent*(payload: JsonNode): SlkParseResult =
     if event == nil: return SlkParseResult(kind: sekUnknown)
     let evType  = event |>-> extractField("type")
     let teamId  = payload |>-> extractField("team_id")
+    let eventId = payload |>-> extractField("event_id")
     if evType in ["message", "app_mention"]:
-      event |>-> parseMessageEvent(teamId)
+      event |>-> parseMessageEvent(teamId, eventId)
     else:
       SlkParseResult(kind: sekUnknown)
   of "slash_command":
@@ -167,3 +175,44 @@ func toInbound*(r: SlkParseResult; userId: UserId): InboundMessage =
 func isVerification*(r: SlkParseResult): bool =
   ## True when the payload is a url_verification challenge that needs echoing back.
   r.kind == sekVerification
+
+func blockActionCommand*(data: string): string =
+  ## Maps a Slack block action payload (`action_id:value` from
+  ## `parseBlockActions`) to the equivalent text command. Returns "" for
+  ## actions that have no textual command equivalent.
+  if data.len == 0:
+    return ""
+  case data
+  of "models":    return "/models"
+  of "think":     return "/think"
+  of "budget":    return "/budget"
+  of "help":      return "/help"
+  of "status":    return "/status"
+  of "doctor":    return "/doctor"
+  of "forget":    return "/forget"
+  of "reset":     return "/reset"
+  of "mycode":    return "/mycode"
+  of "reasoning": return "/reasoning"
+  of "menu":      return "/menu"
+  of "config":    return "/config"
+  of "models:back": return "/menu"
+  else: discard
+
+  if data.startsWith("models:provider:"):
+    return "/models " & data[16 .. ^1]
+  if data.startsWith("models:set:"):
+    let parts = data[11 .. ^1].split(':')
+    if parts.len >= 2 and parts[0].len > 0 and parts[1].len > 0:
+      return "/models " & parts[0] & " " & parts[1]
+    return "/models"
+  if data.startsWith("models:page:"):
+    let rest = data[12 .. ^1]
+    let idx = rest.rfind(':')
+    if idx > 0:
+      return "/models " & rest[0 ..< idx]
+    return "/models"
+  if data.startsWith("think:set:"):
+    return "/think " & data[10 .. ^1]
+  if data.startsWith("help:page:"):
+    return "/help"
+  ""

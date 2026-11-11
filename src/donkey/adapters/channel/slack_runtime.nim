@@ -15,6 +15,7 @@ import ../../domain/message
 import ../../ports/provider
 import ../identity/identity_resolver
 import ../../app/inbound_gate
+import ../../domain/channels/slack_pure
 import ./common_runtime
 import ./slack
 
@@ -36,6 +37,13 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
 
   var (hasEvent, event) = slAdapter.tryRecvEvent()
   while hasEvent:
+    ## Slack redelivers an authenticated event when the HTTP ack is lost.
+    ## Drop repeats before any command/session side effect.
+    if slAdapter.isDuplicate(event):
+      log.info("slack: duplicate event ignored")
+      (hasEvent, event) = slAdapter.tryRecvEvent()
+      continue
+
     ## A denied sender is consumed (so the queue advances) but never reaches
     ## the provider or session layer.
     let auth = authorizeInbound(sm, slAdapter.resolver.identityGate(), ckSlack,
@@ -47,6 +55,20 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
       continue
 
     let userId = auth.userId
+    ## Block actions are UI callbacks, not user text. Translate them to the
+    ## equivalent command; never feed "action:value" to the session fallback.
+    let routedText =
+      if event.kind == srBlockAction: blockActionCommand(event.text)
+      else: event.text
+    if event.kind == srBlockAction and routedText.len == 0:
+      slAdapter.send(OutboundMessage(
+        userId: userId, channel: ckSlack,
+        text: "Ação não reconhecida. Use /help para ver os comandos.")).isOkOr:
+        log.error("sl send unknown block action failed for user=" & $userId &
+                  " reason=" & error)
+      (hasEvent, event) = slAdapter.tryRecvEvent()
+      continue
+
     let messageId =
       if event.eventTs.len > 0: event.eventTs
       elif event.triggerId.len > 0: event.triggerId
@@ -56,11 +78,11 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
       channel:   ckSlack,
       channelId: event.channelId,
       messageId: messageId,
-      text:      event.text,
+      text:      routedText,
     )
 
-    if event.text.strip.len > 0:
-      let command = decideCommandRequest(CommandRequest(channel: ckSlack, text: event.text))
+    if routedText.strip.len > 0:
+      let command = decideCommandRequest(CommandRequest(channel: ckSlack, text: routedText))
       case command.route
       of crLocal:
         let reply =
@@ -69,6 +91,10 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
             buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount())
           of lcaStartIntro:
             buildStartIntroText()
+          of lcaShowMenu:
+            buildMenuText()
+          of lcaShowWhoami:
+            buildWhoamiText(userId, "", event.channelId)
           of lcaSkillCommand:
             let reply = applySkillTextCommand(
               memory,
@@ -92,8 +118,13 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
           of lcaContinueLink:
             buildContinueResultText(slAdapter.resolver.consumeLinkCode(
               command.value, ckSlack, event.slackUserId))
+          of lcaReasoningToggle:
+            let prefs = loadChannelPrefs(memory, userId)
+            let next = if prefs.reasoning == "on": "off" else: "on"
+            saveChannelPreference(memory, userId, "reasoning", next)
+            "Reasoning: " & next
           else:
-            ""
+            "Comando indisponível neste canal. Use /help."
         if reply.len > 0:
           slAdapter.send(OutboundMessage(userId: userId, channel: ckSlack, text: reply)).isOkOr:
             log.error("sl send failed for user=" & $userId & " reason=" & error)
@@ -120,10 +151,18 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
             memory.applyThinkTextCommand(userId, command.value).valueOr: error
           of cmdBudget:
             memory.applyBudgetTextCommand(userId, command.value).valueOr: error
+          of cmdConfig:
+            memory.buildConfigText(userId)
+          of cmdTasks:
+            buildTasksText()
+          of cmdAgents:
+            buildAgentsText(toolsCount, toolClientsCount)
+          of cmdPoll:
+            buildPollText()
           of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
             buildDeferredUiCommandText(command.kind)
           else:
-            ""
+            "Comando indisponível neste canal. Use /help."
         if reply.len > 0:
           slAdapter.send(OutboundMessage(userId: userId, channel: ckSlack, text: reply)).isOkOr:
             log.error("sl send crUi failed for user=" & $userId & " reason=" & error)

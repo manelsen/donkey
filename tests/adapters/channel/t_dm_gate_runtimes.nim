@@ -623,9 +623,10 @@ suite "shared DM gate":
         ok(CompletionResponse(text: "unexpected provider call"))
     var msgSeq = 0
 
-    slack.pushEvent(%* {
+    let payload = %* {
       "type": "event_callback",
       "team_id": "T1",
+      "event_id": "Ev-dedupe",
       "event": {
         "type": "message",
         "user": "U_owner",
@@ -633,7 +634,9 @@ suite "shared DM gate":
         "channel": "C1",
         "ts": "1700000000.000002",
       },
-    })
+    }
+    slack.pushEvent(payload)
+    slack.pushEvent(payload)  ## Slack redelivery must not start two turns
 
     let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
       {.cast(gcsafe).}:

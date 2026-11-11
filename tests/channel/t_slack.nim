@@ -267,3 +267,34 @@ suite "slack_pure.toInbound":
   test "isVerification is true for url_verification":
     let r = parseEvent(%* {"type": "url_verification", "challenge": "ch"})
     check r.isVerification
+
+suite "SlackAdapter event deduplication":
+
+  test "same event id is rejected after the first sight":
+    let a = newSlackAdapter("token", getTempDir() / "donkey_slack_dedupe1.tsv")
+    let event = SlackRawEvent(eventId: "Ev123", slackUserId: "U1", text: "hi")
+    check not a.isDuplicate(event, now = 1000.0)
+    check a.isDuplicate(event, now = 1001.0)
+
+  test "different event ids are accepted":
+    let a = newSlackAdapter("token", getTempDir() / "donkey_slack_dedupe2.tsv")
+    check not a.isDuplicate(SlackRawEvent(eventId: "Ev1"), now = 1000.0)
+    check not a.isDuplicate(SlackRawEvent(eventId: "Ev2"), now = 1000.0)
+
+  test "expired events are accepted again":
+    let a = newSlackAdapter("token", getTempDir() / "donkey_slack_dedupe3.tsv")
+    let event = SlackRawEvent(eventId: "Ev123")
+    check not a.isDuplicate(event, now = 1000.0)
+    check not a.isDuplicate(event, now = 1000.0 + SlackDedupeTtlSec + 1.0)
+
+  test "trigger id deduplicates interactive payloads":
+    let a = newSlackAdapter("token", getTempDir() / "donkey_slack_dedupe4.tsv")
+    let event = SlackRawEvent(triggerId: "T1", text: "models")
+    check not a.isDuplicate(event, now = 1000.0)
+    check a.isDuplicate(event, now = 1000.0)
+
+  test "events without ids are never deduplicated":
+    let a = newSlackAdapter("token", getTempDir() / "donkey_slack_dedupe5.tsv")
+    let event = SlackRawEvent(text: "hello")
+    check not a.isDuplicate(event, now = 1000.0)
+    check not a.isDuplicate(event, now = 1000.0)

@@ -13,7 +13,7 @@
 ## Slash commands arrive form-encoded; the HTTP layer must JSON-encode them and
 ## set "type": "slash_command" before calling pushEvent().
 
-import std/[json, tables]
+import std/[json, tables, times]
 import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
@@ -42,6 +42,7 @@ type
     text*:        string
     channelId*:   string
     teamId*:      string
+    eventId*:     string  ## Events API event_id, used for deduplication
     eventTs*:     string  ## message timestamp, unique per event
     responseUrl*: string  ## non-empty for slash commands and block actions
     triggerId*:   string
@@ -73,6 +74,7 @@ proc pushEvent*(payload: JsonNode) =
       text:        r.text,
       channelId:   r.channelId,
       teamId:      r.teamId,
+      eventId:     r.eventId,
       eventTs:     r.eventTs,
     ))
   of sekSlashCommand:
@@ -104,6 +106,7 @@ type
     apiBase*:   string                     ## override for testing
     resolver*:  IdentityResolver
     dmChannels: ref Table[string, string]  ## slackUserId → dm_channel_id (ref = value receiver ok)
+    seenEvents: ref Table[string, float]   ## event_id → first-seen epoch
     http*:      StdHttpAdapter
 
 func authHeader(a: SlackAdapter): (string, string) =
@@ -211,16 +214,15 @@ proc buildSlackBlocks(text: string; buttons: seq[seq[(string, string)]]): JsonNo
     "type": "section",
     "text": { "type": "mrkdwn", "text": text }
   })
-  if buttons.len > 0:
+  for row in buttons:
     var elements = newJArray()
-    for row in buttons:
-      for (label, data) in row:
-        elements.add(%* {
-          "type":      "button",
-          "text":      { "type": "plain_text", "text": label },
-          "value":     data,
-          "action_id": data,
-        })
+    for (label, data) in row:
+      elements.add(%* {
+        "type":      "button",
+        "text":      { "type": "plain_text", "text": label },
+        "value":     data,
+        "action_id": data,
+      })
     if elements.len > 0:
       result.add(%* {
         "type": "actions",
@@ -268,6 +270,47 @@ proc tryRecvEvent*(a: SlackAdapter): (bool, SlackRawEvent) =
   ## Non-blocking poll for webhook events. Returns (false, default) when empty.
   gSlackEvents.tryRecv()
 
+const
+  SlackDedupeTtlSec*   = 600.0   ## Slack retries are bounded; keep 10 minutes
+  SlackDedupeMaxEvents* = 2048
+
+proc eventDedupeKey(event: SlackRawEvent): string =
+  if event.eventId.len > 0: event.eventId
+  elif event.triggerId.len > 0: event.triggerId
+  else: ""
+
+proc isDuplicate*(a: SlackAdapter; event: SlackRawEvent;
+                  now = epochTime()): bool =
+  ## Returns true when this event was already processed. Slack may redeliver
+  ## an authenticated event when the HTTP ack is lost; commands and session
+  ## turns must not run twice. The cache is bounded and expires by TTL.
+  let key = eventDedupeKey(event)
+  if key.len == 0:
+    return false
+
+  var expired: seq[string]
+  for k, ts in a.seenEvents[]:
+    if now - ts > SlackDedupeTtlSec:
+      expired.add(k)
+  for k in expired:
+    a.seenEvents[].del(k)
+
+  if key in a.seenEvents[]:
+    return true
+
+  if a.seenEvents[].len >= SlackDedupeMaxEvents:
+    var oldestKey = ""
+    var oldestTs = now
+    for k, ts in a.seenEvents[]:
+      if ts <= oldestTs:
+        oldestTs = ts
+        oldestKey = k
+    if oldestKey.len > 0:
+      a.seenEvents[].del(oldestKey)
+
+  a.seenEvents[][key] = now
+  false
+
 # ── Constructor ───────────────────────────────────────────────────────────────
 
 proc newSlackAdapter*(botToken:     string;
@@ -275,10 +318,13 @@ proc newSlackAdapter*(botToken:     string;
                       apiBase       = ""): SlackAdapter =
   var t = new(Table[string, string])
   t[] = initTable[string, string]()
+  var seen = new(Table[string, float])
+  seen[] = initTable[string, float]()
   SlackAdapter(
     botToken:   botToken,
     apiBase:    apiBase,
     resolver:   newIdentityResolver(identityPath),
     dmChannels: t,
+    seenEvents: seen,
     http:       newStdHttpAdapter(),
   )
