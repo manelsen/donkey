@@ -468,15 +468,16 @@ Rotação/compaction do ledger:
 
 - o store compacta no startup e o daemon agenda uma tarefa periódica
   (`DONKEY_LEDGER_COMPACT_INTERVAL_SEC`, default 3600s);
-- quando o arquivo ultrapassa `DONKEY_LEDGER_MAX_BYTES` (default 16 MiB),
-  appends terminais também disparam compaction, limitada pelo mesmo intervalo;
 - a compaction faz replay, mantém **todos** os registros `pending` e os
   terminais dentro de `DONKEY_LEDGER_RETENTION_DAYS` (default 30), e reescreve
   o arquivo atomicamente (tmp + fsync + rename + fsync do diretório);
-- registros sem timestamp são mantidos por segurança; `pending` nunca expira.
+- registros sem timestamp são mantidos por segurança; `pending` nunca expira;
+- eventos que o replay não reconhece (formato de versão futura) impedem a
+  compactação, para que um rollback não perca dados.
 
-O arquivo, portanto, é limitado por retenção + tamanho, em vez de crescer
-linearmente sem limite.
+O tamanho do arquivo é, portanto, limitado pela retenção e pelo volume de
+entregas no intervalo de compactação — não por um teto rígido. Um ledger com
+muitos `pending` pode continuar acima de qualquer valor configurado.
 
 Limite de `fsync`: em filesystems, mounts de rede ou discos que ignoram
 `fsync`, a persistência continua sendo best-effort — o processo não pode
@@ -864,8 +865,9 @@ Risco:
 
 Ledger de entrega:
 
-- o arquivo append-only agora tem compaction com retenção e limite de tamanho
-  (ver 6.3.1); a compactação depende do replay seguro do JSONL.
+- o arquivo append-only agora tem compaction com retenção (ver 6.3.1), mas não
+  um teto rígido: `pending` e terminais recentes podem mantê-lo grande; a
+  compactação depende do replay seguro do JSONL.
 
 ## 15. Recomendações de Leitura e Refatoração
 

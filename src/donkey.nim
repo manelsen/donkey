@@ -639,15 +639,6 @@ proc envFloatValue(name: string; default: float): float =
   except ValueError:
     result = default
 
-proc envInt64Value(name: string; default: int64): int64 =
-  let raw = getEnv(name).strip()
-  if raw.len == 0:
-    return default
-  try:
-    result = parseBiggestInt(raw)
-  except ValueError:
-    result = default
-
 proc initDaemonRuntime(home: string): DaemonRuntime =
   new(result)
   if not gRoutingLockReady:
@@ -659,8 +650,6 @@ proc initDaemonRuntime(home: string): DaemonRuntime =
     home / "state",
     ledgerRetentionDays = envFloatValue("DONKEY_LEDGER_RETENTION_DAYS",
                                         LedgerRetentionDaysDefault),
-    ledgerMaxBytes = envInt64Value("DONKEY_LEDGER_MAX_BYTES",
-                                   LedgerMaxBytesDefault),
     ledgerCompactIntervalSec = envFloatValue("DONKEY_LEDGER_COMPACT_INTERVAL_SEC",
                                              LedgerCompactIntervalSecDefault),
   )
@@ -1661,6 +1650,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory
   let ctx = bootstrap.ctx
+  if ctx.runtime.stateStore != nil:
+    let ledgerErr = ctx.runtime.stateStore.ledgerLastCompactError()
+    if ledgerErr.len > 0:
+      log.warn("ledger compaction at startup: " & ledgerErr)
   ## DM authorization is configured once, before any drainer/actor can consume
   ## an inbound message. Service builders stay side-effect free.
   ctx.runtime.sm.configureDmPolicy(

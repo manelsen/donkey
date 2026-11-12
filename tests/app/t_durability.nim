@@ -183,7 +183,6 @@ suite "durability":
     let store = newRuntimeStateStore(
       dir,
       ledgerRetentionDays = 1.0,
-      ledgerMaxBytes = 0,
       ledgerCompactIntervalSec = 0.0,
     )
     let ledger = store.deliveryLedger()
@@ -238,13 +237,60 @@ suite "durability":
     let store = newRuntimeStateStore(
       dir,
       ledgerRetentionDays = 1.0,
-      ledgerMaxBytes = 0,
       ledgerCompactIntervalSec = 3600.0,
     )
     let loaded = store.deliveryLedger().loadAll()
     check loaded.isOk
     check loaded.value.len == 0
     check readFile(dir / DeliveryLedgerFileName).strip.len == 0
+
+  test "compaction keeps a disk terminal state over a stale pending entry":
+    let dir = freshDir("ledger-terminal-wins")
+    defer: cleanup(dir)
+
+    let now = epochMs()
+    let store = newRuntimeStateStore(
+      dir,
+      ledgerRetentionDays = 30.0,
+      ledgerCompactIntervalSec = 3600.0,
+    )
+    let ledger = store.deliveryLedger()
+    let pending = DeliveryRecord(
+      id: "terminal-wins", userId: "u", channel: ckTelegram,
+      channelId: "c", textHash: "h", state: dlsPending,
+      attempts: 1, createdAtMs: now, updatedAtMs: now,
+    )
+    check ledger.recordPending(pending).isOk
+    check ledger.markSent("terminal-wins", now + 10).isOk
+
+    ## Simulate a failed terminal fsync that left the pending entry in memory.
+    store.pending["terminal-wins"] = pending
+    check store.compactLedger(force = true, nowMs = now + 20).isOk
+
+    let loaded = ledger.loadAll()
+    check loaded.isOk
+    check findRecord(loaded.value, "terminal-wins").state == dlsSent
+
+  test "compaction skips a ledger with unrecognized future events":
+    let dir = freshDir("ledger-future")
+    defer: cleanup(dir)
+
+    let now = epochMs()
+    writeFile(dir / DeliveryLedgerFileName,
+      "\n" & $(%* {
+        "id": "future",
+        "channel": "future-channel",
+        "state": "sent",
+        "updated_at_ms": now,
+      }) & "\n")
+
+    let store = newRuntimeStateStore(
+      dir,
+      ledgerRetentionDays = 1.0,
+      ledgerCompactIntervalSec = 3600.0,
+    )
+    check store.ledgerLastCompactError().len > 0
+    check "future-channel" in readFile(dir / DeliveryLedgerFileName)
 
   test "compaction on a missing ledger is a no-op":
     let dir = freshDir("ledger-none")

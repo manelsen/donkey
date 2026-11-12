@@ -24,7 +24,6 @@ const
     ## Structural changes (channels, session id, runtime signature) flush
     ## immediately. `flushSessions` forces a pending write.
   LedgerRetentionDaysDefault*      = 30.0
-  LedgerMaxBytesDefault*           = 16'i64 * 1024 * 1024
   LedgerCompactIntervalSecDefault* = 3600.0
 
 type
@@ -41,9 +40,9 @@ type
     lastSessionsWriteMs: int64
     ledgerDirSynced: bool
     ledgerRetentionMs: int64
-    ledgerMaxBytes: int64
     ledgerCompactIntervalMs: int64
     lastLedgerCompactMs: int64
+    lastLedgerCompactError: string
     ## Serializes session upserts, ledger appends and their in-memory caches.
     ## Gateway workers can persist concurrently with the event loop.
     lock: Lock
@@ -499,6 +498,26 @@ proc loadLedger(store: RuntimeStateStore): Result[seq[DeliveryRecord], string] {
   defer: release(store.lock)
   store.loadLedgerFromDisk()
 
+proc hasForwardIncompatibleEvents(path: string): bool {.raises: [].} =
+  ## A valid JSON object that replay cannot interpret is treated as an event
+  ## from a newer version; compaction must not drop it. Torn/invalid JSON
+  ## lines are ignored because replay already ignores them.
+  try:
+    for line in lines(path):
+      let trimmed = line.strip
+      if trimmed.len == 0:
+        continue
+      try:
+        let parsed = parseJson(trimmed)
+        if parsed.kind == JObject and ledgerEventFromJson(parsed).isNone:
+          return true
+      except CatchableError:
+        continue
+  except CatchableError:
+    ## Be conservative: do not rewrite a file we cannot scan.
+    return true
+  false
+
 proc compactLedgerLocked(store: RuntimeStateStore;
                          force: bool;
                          nowMs: int64): Result[void, string] {.raises: [].} =
@@ -508,14 +527,22 @@ proc compactLedgerLocked(store: RuntimeStateStore;
   let path = store.ledgerPath()
   if not fileExists(path):
     store.lastLedgerCompactMs = nowMs
+    store.lastLedgerCompactError = ""
     return ok()
   if not force and store.ledgerCompactIntervalMs > 0 and
      nowMs - store.lastLedgerCompactMs < store.ledgerCompactIntervalMs:
     return ok()
 
+  if hasForwardIncompatibleEvents(path):
+    store.lastLedgerCompactMs = nowMs
+    store.lastLedgerCompactError =
+      "ledger contains unrecognized events; compaction skipped"
+    return err(store.lastLedgerCompactError)
+
   let loaded = store.loadLedgerFromDisk()
   if loaded.isErr:
     store.lastLedgerCompactMs = nowMs
+    store.lastLedgerCompactError = loaded.error
     return err(loaded.error)
 
   var byId = initTable[string, DeliveryRecord]()
@@ -525,12 +552,15 @@ proc compactLedgerLocked(store: RuntimeStateStore;
       order.add(record.id)
     byId[record.id] = record
 
-  ## The in-memory pending table is authoritative for unresolved deliveries:
-  ## its append may have failed, so it can be newer than or absent from disk.
+  ## Reconcile the in-memory pending table with disk. A missing disk entry is
+  ## added; a disk `pending` may be replaced by newer memory metadata; a disk
+  ## terminal state is never overwritten by a stale pending entry.
   for id, record in store.pending:
     if id notin byId:
       order.add(id)
-    byId[id] = record
+      byId[id] = record
+    elif byId.getOrDefault(id).state == dlsPending:
+      byId[id] = record
 
   let cutoff = nowMs - store.ledgerRetentionMs
   var kept: seq[DeliveryRecord] = @[]
@@ -555,6 +585,9 @@ proc compactLedgerLocked(store: RuntimeStateStore;
   store.lastLedgerCompactMs = nowMs
   if saved.isOk:
     store.ledgerDirSynced = true
+    store.lastLedgerCompactError = ""
+  else:
+    store.lastLedgerCompactError = saved.error
   saved
 
 proc compactLedger*(store: RuntimeStateStore; force = false;
@@ -569,24 +602,9 @@ func ledgerCompactIntervalSec*(store: RuntimeStateStore): float =
   ## Interval used by the daemon to schedule periodic compaction.
   float(store.ledgerCompactIntervalMs) / 1000.0
 
-proc maybeCompactLedgerLocked(store: RuntimeStateStore) =
-  ## Caller must hold `store.lock`. Size-triggered compaction is throttled by
-  ## the same interval to avoid rewriting the file on every delivery.
-  if store.ledgerMaxBytes <= 0 or store.ledgerCompactIntervalMs <= 0:
-    return
-  let now = epochMs()
-  if now - store.lastLedgerCompactMs < store.ledgerCompactIntervalMs:
-    return
-  let path = store.ledgerPath()
-  if not fileExists(path):
-    return
-  var size = 0'i64
-  try:
-    size = getFileSize(path)
-  except CatchableError:
-    return
-  if size >= store.ledgerMaxBytes:
-    discard store.compactLedgerLocked(force = true, nowMs = now)
+func ledgerLastCompactError*(store: RuntimeStateStore): string =
+  ## Last compaction failure, for the daemon to log after startup.
+  store.lastLedgerCompactError
 
 proc appendLedger(store: RuntimeStateStore;
                   record: DeliveryRecord;
@@ -620,10 +638,7 @@ proc recordPending(store: RuntimeStateStore;
   defer: release(store.lock)
   store.pending[record.id] = record
   ## Pending is best-effort: avoid a second synchronous fsync per delivery.
-  let saved = store.appendLedger(record, durable = false)
-  if saved.isOk:
-    store.maybeCompactLedgerLocked()
-  saved
+  store.appendLedger(record, durable = false)
 
 proc markSent(store: RuntimeStateStore;
               id: string;
@@ -638,15 +653,11 @@ proc markSent(store: RuntimeStateStore;
     let saved = store.appendLedger(record, durable = true)
     if saved.isOk:
       store.pending.del(id)
-      store.maybeCompactLedgerLocked()
     saved
   else:
     ## Restart or failed pending write: emit a minimal event. Replay merges it
     ## with any earlier full event.
-    let saved = store.appendMinimalEvent(id, dlsSent, updatedAtMs, "")
-    if saved.isOk:
-      store.maybeCompactLedgerLocked()
-    saved
+    store.appendMinimalEvent(id, dlsSent, updatedAtMs, "")
 
 proc markFailed(store: RuntimeStateStore;
                 id: string;
@@ -662,17 +673,12 @@ proc markFailed(store: RuntimeStateStore;
     let saved = store.appendLedger(record, durable = true)
     if saved.isOk:
       store.pending.del(id)
-      store.maybeCompactLedgerLocked()
     saved
   else:
-    let saved = store.appendMinimalEvent(id, dlsFailed, updatedAtMs, error)
-    if saved.isOk:
-      store.maybeCompactLedgerLocked()
-    saved
+    store.appendMinimalEvent(id, dlsFailed, updatedAtMs, error)
 
 proc newRuntimeStateStore*(stateDir: string;
                            ledgerRetentionDays = LedgerRetentionDaysDefault;
-                           ledgerMaxBytes = LedgerMaxBytesDefault;
                            ledgerCompactIntervalSec = LedgerCompactIntervalSecDefault
                           ): RuntimeStateStore =
   result = RuntimeStateStore(
@@ -683,9 +689,9 @@ proc newRuntimeStateStore*(stateDir: string;
     sessionsDirty: false,
     lastSessionsWriteMs: 0,
     ledgerRetentionMs: int64(max(0.0, ledgerRetentionDays) * 86_400_000.0),
-    ledgerMaxBytes: max(0'i64, ledgerMaxBytes),
     ledgerCompactIntervalMs: int64(max(0.0, ledgerCompactIntervalSec) * 1000.0),
     lastLedgerCompactMs: 0,
+    lastLedgerCompactError: "",
     tmpCounter: 0,
   )
   initLock(result.lock)
