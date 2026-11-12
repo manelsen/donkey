@@ -55,13 +55,17 @@ proc newSecretVault*(home: string): SecretVault =
     keyStore: newFileKeyStore(home / VaultKeyFileName),
   )
 
-proc hardenDirPermissions(dir: string) =
+proc hardenDirPermissions(dir: string): Result[void, string] {.raises: [].} =
   when defined(posix):
-    discard posix.chmod(dir.cstring, posix.Mode(0o700))
+    if posix.chmod(dir.cstring, posix.Mode(0o700)) != 0:
+      return err("cannot restrict permissions of " & dir)
+  ok()
 
-proc hardenFilePermissions(path: string) =
+proc hardenFilePermissions(path: string): Result[void, string] {.raises: [].} =
   when defined(posix):
-    discard posix.chmod(path.cstring, posix.Mode(0o600))
+    if posix.chmod(path.cstring, posix.Mode(0o600)) != 0:
+      return err("cannot restrict permissions of " & path)
+  ok()
 
 proc withVaultLock*[T](vault: SecretVault;
                        body: proc(): Result[T, string] {.gcsafe, raises: [].}):
@@ -71,9 +75,14 @@ proc withVaultLock*[T](vault: SecretVault;
     let lockPath = vault.path & ".lock"
     try:
       createDir(vault.dir)
-      hardenDirPermissions(vault.dir)
+      let dirHardened = hardenDirPermissions(vault.dir)
+      if dirHardened.isErr:
+        return err(dirHardened.error)
       var lockFile = open(lockPath, fmReadWrite)
-      hardenFilePermissions(lockPath)
+      let lockHardened = hardenFilePermissions(lockPath)
+      if lockHardened.isErr:
+        lockFile.close()
+        return err(lockHardened.error)
       let fd = cint(lockFile.getFileHandle())
       if cFlock(fd, VaultLockExclusive) != 0:
         lockFile.close()
@@ -125,10 +134,18 @@ proc writeStored(vault: SecretVault;
   var tmp = ""
   try:
     createDir(vault.dir)
-    hardenDirPermissions(vault.dir)
+    let dirHardened = hardenDirPermissions(vault.dir)
+    if dirHardened.isErr:
+      return err(dirHardened.error)
     tmp = vault.path & ".tmp." & $getCurrentProcessId() & "-" & $epochMs()
     writeFile(tmp, payload.pretty & "\n")
-    hardenFilePermissions(tmp)
+    let fileHardened = hardenFilePermissions(tmp)
+    if fileHardened.isErr:
+      try:
+        removeFile(tmp)
+      except CatchableError:
+        discard
+      return err(fileHardened.error)
     {.cast(raises: []).}:
       moveFile(tmp, vault.path)
     ok()

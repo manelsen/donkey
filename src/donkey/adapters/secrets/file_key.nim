@@ -67,8 +67,23 @@ proc createKeyFile(keyPath: string; key: Key): Result[void, string] {.raises: []
     except CatchableError as e:
       err("cannot create key file: " & e.msg)
 
+proc checkKeyPermissions(path: string): Result[void, string] {.raises: [].} =
+  ## Refuse to load a key that other local users can read. A restored key with
+  ## a permissive mode is corrected before use when possible.
+  when defined(posix):
+    try:
+      let allowed = {fpUserRead, fpUserWrite}
+      if getFilePermissions(path) - allowed != {}:
+        setFilePermissions(path, allowed)
+    except CatchableError as e:
+      return err("key file permissions are too open and cannot be fixed: " & e.msg)
+  ok()
+
 proc loadOrCreateKey(store: FileKeyStore): Result[Key, string] {.raises: [].} =
   if fileExists(store.keyPath):
+    let checked = checkKeyPermissions(store.keyPath)
+    if checked.isErr:
+      return err(checked.error)
     try:
       let raw = readFile(store.keyPath)
       if raw.len != KeyLen:

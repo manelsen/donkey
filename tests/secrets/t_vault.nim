@@ -186,3 +186,14 @@ suite "SecretVault":
       let keyPerms = getFilePermissions(vault.keyPath)
       check fpGroupRead notin keyPerms
       check fpOthersRead notin keyPerms
+
+      ## A restored key with a permissive mode is corrected before decrypting.
+      setFilePermissions(vault.keyPath,
+                         {fpUserRead, fpUserWrite, fpGroupRead})
+      let previous = getEnv("TOKEN")
+      putEnv("TOKEN", "")
+      defer: putEnv("TOKEN", previous)
+      check vault.applyToEnv().isOk
+      let fixedPerms = getFilePermissions(vault.keyPath)
+      check fpGroupRead notin fixedPerms
+      check fpOthersRead notin fixedPerms
