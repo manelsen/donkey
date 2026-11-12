@@ -7,7 +7,6 @@ import chronos/asyncsync
 import chronos/timer as ctimer
 import donkey/config/loader
 import donkey/config/types
-import donkey/core/security/dm_policy
 import donkey/config/dotenv
 import donkey/config/tools_registry
 import donkey/config/skills_registry
@@ -54,6 +53,7 @@ import donkey/adapters/tool/mcp_client
 import donkey/adapters/tools/browser
 import donkey/domain/tools/browser_pure
 import donkey/adapters/state/runtime_store
+import donkey/adapters/state/pairing_store
 import donkey/domain/message
 import donkey/domain/agent_message
 import donkey/ports/provider
@@ -118,6 +118,9 @@ Commands:
                                 Edit a USER.md field
   ctl user revoke <uuid>        Revoke user access
   ctl user allow <uuid>         Restore user access
+  ctl pair list                 List pending DM pairing requests
+  ctl pair approve <code>       Approve a pairing request and allow the user
+  ctl pair reject <code>        Discard a pairing request
   ctl session list <uuid>        List active sessions for a user
   ctl tool install <command>            Register an MCP server
   ctl skill search <query>              Search remote skills on ClawHub
@@ -1619,10 +1622,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ## Async daemon: Telegram (pollTimeout=0) + Discord (gateway thread) + WeCom (webhook thread).
   ## Loop: drain globalOutbox → drain Discord → drain WeCom → poll Telegram → sleepAsync(100ms)
   if cfg.invalidDmPolicy.len > 0:
-    log.error("invalid dm_policy: " & cfg.invalidDmPolicy & " (use open|allowlist)")
-    quit(1)
-  if cfg.dmPolicy == DmPolicyPairing:
-    log.error("dm_policy=pairing is not implemented yet; use open or allowlist")
+    log.error("invalid dm_policy: " & cfg.invalidDmPolicy &
+              " (use open|pairing|allowlist)")
     quit(1)
   log.info("daemon starting — Telegram + Discord + WeCom")
   {.cast(gcsafe).}:
@@ -1637,6 +1638,17 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ctx.runtime.sm.configureDmPolicy(
     cfg.dmPolicy,
     proc(userId: UserId): bool {.gcsafe.} = memory.isDmAllowed(userId))
+  let pairingStore = newPairingStore(cfg.home / "state" / "pairings.json")
+  ctx.runtime.sm.pairingRequest =
+    proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
+      let res = pairingStore.requestPairing(kind, rawId)
+      if res.isErr:
+        log.warn("pairing request rejected for " & $kind & " " & rawId &
+                 ": " & res.error)
+        return err(res.error)
+      log.info("pairing request created for " & $kind & " " & rawId &
+               " (approve with ctl pair list/approve)")
+      ok()
   ctx.runtime.sm.setRegistryErrorHook(
     proc(error: string) {.gcsafe, raises: [].} =
       log.warn("session registry: " & error))

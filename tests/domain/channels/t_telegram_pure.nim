@@ -214,6 +214,7 @@ suite "telegram_pure.toInbound":
     check msg.channel == ckTelegram
     check msg.text == "convert me"
     check msg.channelId == "42"
+    check msg.rawChannelId == "4001"
     check msg.mediaUrl == ""
 
   test "mediaUrl is forwarded":

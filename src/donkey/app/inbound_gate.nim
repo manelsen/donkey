@@ -7,10 +7,14 @@
 
 import std/[options, strutils]
 import ../core/commands/command_routing
+import ../core/log
+import ../core/pipeops
 import ../core/security/dm_policy
 import ../core/types
 import ../domain/message
 import ./session_manager
+
+let gateLog = newLogger("inbound.gate")
 
 type
   IdentityGatePort* = object
@@ -74,28 +78,48 @@ proc authorizeInbound*(sm: SessionManager;
     result.identified = true
     result.allowed = sm.allows(result.userId)
   elif sm.dmPolicy == DmPolicyOpen:
-    result.userId = gate.resolve(kind, rawId)
-    result.identified = true
-    result.allowed = sm.allows(result.userId)
+    let resolved = gate.resolve(kind, rawId)
+    if ($resolved).len > 0:
+      result.userId = resolved
+      result.identified = true
+      result.allowed = sm.allows(result.userId)
   if not result.allowed:
     let target = linkTargetFrom(gate, kind, text, linkSource)
     if target.isSome and sm.allows(target.get):
-      result.userId =
+      let resolved =
         if known.isSome: known.get
         else: gate.resolve(kind, rawId)
-      result.identified = true
-      result.allowed = true
+      if ($resolved).len > 0:
+        result.userId = resolved
+        result.identified = true
+        result.allowed = true
+
+  if not result.allowed and sm.dmPolicy == DmPolicyPairing and
+     sm.pairingRequest != nil and linkSource == ilsCommandText:
+    let pairing = decideCommandRequest(CommandRequest(channel: kind, text: text))
+    if pairing.kind == cmdPair:
+      ## The admin approves the request out-of-band; the sender stays denied
+      ## until the CLI adds the minted UUID to the allowlist.
+      let requested = sm.pairingRequest(kind, rawId)
+      if requested.isErr:
+        {.cast(gcsafe).}:
+          gateLog.warn("pairing request failed for " & $kind & " " & rawId &
+                       ": " & requested.error)
 
 proc authorizeResolvedInbound*(sm: SessionManager;
                                gate: IdentityGatePort;
                                kind: ChannelKind;
                                userId: UserId;
                                text: string;
+                               rawId = "";
                                linkSource = ilsCommandText): InboundAuthorization {.gcsafe.} =
   ## Variant for channels that already resolved the raw identity (Telegram
   ## `receive()` does this). The policy decision still lives here.
   result.userId = userId
   result.identified = true
+  if ($userId).len == 0:
+    ## Identity storage failed; never authorize an empty UUID.
+    return
   result.allowed = sm.allows(userId)
   if not result.allowed:
     if linkSource == ilsModalOnly:
@@ -104,3 +128,13 @@ proc authorizeResolvedInbound*(sm: SessionManager;
     let target = linkTargetFrom(gate, kind, text, linkSource)
     if target.isSome and sm.allows(target.get):
       result.allowed = true
+  if not result.allowed and sm.dmPolicy == DmPolicyPairing and
+     sm.pairingRequest != nil and rawId.len > 0 and
+     linkSource == ilsCommandText:
+    let pairing = decideCommandRequest(CommandRequest(channel: kind, text: text))
+    if pairing.kind == cmdPair:
+      let requested = sm.pairingRequest(kind, rawId)
+      if requested.isErr:
+        {.cast(gcsafe).}:
+          gateLog.warn("pairing request failed for " & $kind & " " & rawId &
+                       ": " & requested.error)

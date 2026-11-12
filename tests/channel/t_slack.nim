@@ -2,7 +2,7 @@
 ## HTTP calls are not made; tests cover adapter construction, identity
 ## resolution, event queue routing, and parseChallenge via slack_pure.
 
-import std/[json, os, unittest]
+import std/[json, options, os, unittest]
 import donkey/adapters/channel/slack
 import donkey/adapters/identity/identity_resolver
 import donkey/core/pipeops
@@ -57,6 +57,18 @@ suite "IdentityResolver (Slack)":
     check uid[13] == '-'
     check uid[18] == '-'
     check uid[23] == '-'
+
+  test "lookup and resolve reload mappings written by another process":
+    let path = getTempDir() / "donkey_test_ids_slack6.tsv"
+    removeFile(path)
+    defer: removeFile(path)
+    let staleLookup = newIdentityResolver(path)   ## loaded before the write
+    let staleResolve = newIdentityResolver(path)  ## loaded before the write
+    let writer = newIdentityResolver(path)
+    let uid = writer.resolve(ckSlack, "U-new")
+
+    check staleLookup.lookup(ckSlack, "U-new").get == uid
+    check staleResolve.resolve(ckSlack, "U-new") == uid  ## no new UUID minted
 
 # ── SlackAdapter construction ──────────────────────────────────────────────────
 

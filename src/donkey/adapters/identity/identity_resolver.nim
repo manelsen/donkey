@@ -11,6 +11,7 @@
 
 import std/[options, os, random, strutils, tables, times]
 import ../../app/inbound_gate
+import ../../core/pipeops
 import ../../core/types
 
 type
@@ -46,28 +47,41 @@ proc generateUUID*(): string =
     result.add(hex[v shr 4])
     result.add(hex[v and 0x0F])
 
-proc save(r: IdentityResolver) =
-  createDir(r.path.parentDir())
+proc save(r: IdentityResolver): Result[void, string] =
   var buf = ""
   for k, v in r.store:
     buf.add(k & '\t' & $v & '\n')
-  writeFile(r.path, buf)
+  try:
+    createDir(r.path.parentDir())
+    let tmp = r.path & ".tmp"
+    writeFile(tmp, buf)
+    moveFile(tmp, r.path)
+    ok()
+  except CatchableError as e:
+    err("identity store write failed: " & e.msg)
 
-proc loadPersistedMappings(r: IdentityResolver) =
-  r.store = initTable[string, UserId]()
-  r.reverseMap = initTable[string, seq[string]]()
-  if not fileExists(r.path):
-    return
-  for line in lines(r.path):
-    let parts = line.split('\t')
-    if parts.len == 2:
-      let key = parts[0]
-      let uid = UserId(parts[1])
-      r.store[key] = uid
-      let us = $uid
-      if us notin r.reverseMap:
-        r.reverseMap[us] = @[]
-      r.reverseMap[us].add(key)
+proc loadPersistedMappings(r: IdentityResolver): Result[void, string] =
+  ## Rebuilds the in-memory maps from disk. On a read failure the current maps
+  ## are kept intact and the error is returned so callers do not mint/save.
+  var store = initTable[string, UserId]()
+  var reverseMap = initTable[string, seq[string]]()
+  if fileExists(r.path):
+    try:
+      for line in lines(r.path):
+        let parts = line.split('\t')
+        if parts.len == 2:
+          let key = parts[0]
+          let uid = UserId(parts[1])
+          store[key] = uid
+          let us = $uid
+          if us notin reverseMap:
+            reverseMap[us] = @[]
+          reverseMap[us].add(key)
+    except CatchableError as e:
+      return err("identity store read failed: " & e.msg)
+  r.store = store
+  r.reverseMap = reverseMap
+  ok()
 
 proc newIdentityResolver*(path: string): IdentityResolver =
   result = IdentityResolver(
@@ -76,11 +90,30 @@ proc newIdentityResolver*(path: string): IdentityResolver =
     reverseMap:   initTable[string, seq[string]](),
     pendingLinks: initTable[string, LinkEntry](),
   )
-  result.loadPersistedMappings()
+  discard result.loadPersistedMappings()
+
+proc removeReverseEntry(r: IdentityResolver; us, key: string) =
+  if us in r.reverseMap:
+    var idx = -1
+    for i, existing in r.reverseMap[us]:
+      if existing == key:
+        idx = i
+        break
+    if idx >= 0:
+      r.reverseMap[us].delete(idx)
+    if r.reverseMap[us].len == 0:
+      r.reverseMap.del(us)
 
 proc resolve*(r: IdentityResolver; kind: ChannelKind; rawId: string): UserId =
-  ## Returns the stable UserId for (kind, rawId), minting a new UUID on first contact.
+  ## Returns the stable UserId for (kind, rawId), minting a new UUID on first
+  ## contact. Reloads the persisted map before minting so a UUID written by
+  ## another process (e.g. `ctl pair approve`) is not clobbered.
   let key = channelKey(kind, rawId)
+  if key notin r.store:
+    if r.loadPersistedMappings().isErr:
+      ## Do not mint or overwrite the file when the persisted map is
+      ## unreadable; an empty UserId is rejected by the ingress gates.
+      return UserId("")
   if key notin r.store:
     randomize()
     let uid = UserId(generateUUID())
@@ -89,14 +122,22 @@ proc resolve*(r: IdentityResolver; kind: ChannelKind; rawId: string): UserId =
     if us notin r.reverseMap:
       r.reverseMap[us] = @[]
     r.reverseMap[us].add(key)
-    r.save()
+    let saved = r.save()
+    if saved.isErr:
+      ## Keep memory consistent with disk: do not expose an unpersisted UUID.
+      r.store.del(key)
+      r.removeReverseEntry(us, key)
+      return UserId("")
   r.store[key]
 
 proc lookup*(r: IdentityResolver; kind: ChannelKind; rawId: string): Option[UserId] =
   ## Returns the stored mapping for (kind, rawId), if any, without minting a
-  ## new identity or touching the persisted store. Callers use this before
-  ## authorization so denied senders are never added to the identity table.
+  ## new identity. Reloads the persisted map first so approvals performed by
+  ## `ctl` are visible to a long-running daemon.
   let key = channelKey(kind, rawId)
+  if key notin r.store:
+    if r.loadPersistedMappings().isErr:
+      return none(UserId)
   if key in r.store:
     some(r.store[key])
   else:
@@ -107,7 +148,8 @@ proc reverseChannel*(r: IdentityResolver; userId: UserId; kind: ChannelKind): st
   ## Returns "" if not found.
   let us = $userId
   if us notin r.reverseMap:
-    r.loadPersistedMappings()
+    if r.loadPersistedMappings().isErr:
+      return ""
     if us notin r.reverseMap:
       return ""
   let prefix = $kind & ":"
@@ -168,5 +210,9 @@ proc consumeLinkCode*(r: IdentityResolver; code: string;
   if key notin r.reverseMap[us]:
     r.reverseMap[us].add(key)
   r.pendingLinks.del(code)
-  r.save()
+  let saved = r.save()
+  if saved.isErr:
+    r.store.del(key)
+    r.removeReverseEntry(us, key)
+    return false
   true

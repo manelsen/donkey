@@ -197,6 +197,16 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 
 > **Slack inbound setup:** point Event Subscriptions, Slash Commands and Interactivity to the same `https://<public-host>/webhook/slack` URL. The receiver listens on `DONKEY_WEBHOOK_HOST:DONKEY_WEBHOOK_PORT` (default `127.0.0.1`) over HTTP, so expose it through an HTTPS reverse proxy; Slack does not call a loopback HTTP endpoint directly.
 
+### DM pairing
+
+Set `dm_policy = "pairing"` under `[security]` (or `DONKEY_DM_POLICY=pairing`) to require operator approval for new DM senders:
+
+1. The unknown user sends `/pair`; the daemon stores a pending request with a 6-digit code.
+2. The operator lists requests with `./donkey ctl pair list`.
+3. The operator approves with `./donkey ctl pair approve <code>` (or rejects with `./donkey ctl pair reject <code>`).
+
+Approval mints the identity UUID and writes it to `state/dm_allowlist.txt`; the user's next message is accepted. Requests expire after 10 minutes and are rate-limited to one request per identity per minute.
+
 ### Providers (Outbound)
 
 | Provider | Default Tool Support | Streaming | Recommended Models |

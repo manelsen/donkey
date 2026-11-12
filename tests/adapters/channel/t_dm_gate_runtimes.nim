@@ -723,3 +723,66 @@ suite "shared DM gate":
 
     check sl.tryRecvEvent()[0]  ## untouched while the receiver is disabled
     discard sl.tryRecvEvent()   ## leave the global queue clean for other tests
+
+suite "DM pairing gate":
+
+  test "unknown sender /pair creates a pending request without minting":
+    removeDir(GateTmp / "pairing")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyPairing
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+    var requested: seq[(ChannelKind, string)] = @[]
+    sm.pairingRequest = proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
+      {.cast(gcsafe).}:
+        requested.add((kind, rawId))
+      ok()
+    let resolver = newIdentityResolver(GateTmp / "pairing" / "ids.tsv")
+
+    let auth = authorizeInbound(sm, resolver.identityGate(), ckTelegram,
+                                "999", "/pair")
+
+    check not auth.allowed
+    check requested.len == 1
+    check requested[0][0] == ckTelegram
+    check requested[0][1] == "999"
+    check resolver.lookup(ckTelegram, "999").isNone
+
+  test "ordinary text does not create a pairing request":
+    removeDir(GateTmp / "pairing-text")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyPairing
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+    var calls = 0
+    sm.pairingRequest = proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
+      {.cast(gcsafe).}:
+        inc calls
+      ok()
+    let resolver = newIdentityResolver(GateTmp / "pairing-text" / "ids.tsv")
+
+    let auth = authorizeInbound(sm, resolver.identityGate(), ckTelegram,
+                                "998", "hello")
+
+    check not auth.allowed
+    check calls == 0
+
+  test "resolved Telegram identities still forward the raw id":
+    removeDir(GateTmp / "pairing-resolved")
+    var sm: SessionManager
+    sm.init()
+    sm.dmPolicy = DmPolicyPairing
+    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+    var requestedRaw = ""
+    sm.pairingRequest = proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
+      {.cast(gcsafe).}:
+        requestedRaw = rawId
+      ok()
+    let resolver = newIdentityResolver(GateTmp / "pairing-resolved" / "ids.tsv")
+    let uid = resolver.resolve(ckTelegram, "chat-42")
+
+    let auth = authorizeResolvedInbound(sm, resolver.identityGate(), ckTelegram,
+                                        uid, "/pair", rawId = "chat-42")
+
+    check not auth.allowed
+    check requestedRaw == "chat-42"

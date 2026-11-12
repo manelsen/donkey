@@ -416,6 +416,9 @@ proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
       let parsed = parseUpdate(u)
       if parsed.kind == tukUnknown: continue
       let uid = a.resolver.resolve(ckTelegram, parsed.rawId)
+      if ($uid).len == 0:
+        ## Identity storage is unreadable; drop rather than create an empty user.
+        continue
       
       var msg = parsed.toInbound(uid)
       if parsed.hasMedia and parsed.mediaFileId.len > 0:
