@@ -1,6 +1,8 @@
 ## donkey — AI agent system entry point.
 
 import std/[algorithm, json, options, os, parseopt, strutils, tables, terminal, times]
+when defined(posix):
+  import std/posix
 import locks
 import chronos
 import chronos/asyncsync
@@ -205,6 +207,7 @@ type DaemonEnv = object
   webhookHost: string
   slackSigningSecret: string
   feishuVerificationToken: string
+  feishuEncryptKey: string
   matrixWebhookToken: string
   whatsappVerifyToken: string
   whatsappAppSecret: string
@@ -468,6 +471,7 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.webhookHost = if webhookHost.len > 0: webhookHost else: "127.0.0.1"
   result.slackSigningSecret = getEnv("SLACK_SIGNING_SECRET")
   result.feishuVerificationToken = getEnv("FEISHU_VERIFICATION_TOKEN")
+  result.feishuEncryptKey = getEnv("FEISHU_ENCRYPT_KEY")
   result.matrixWebhookToken = getEnv("MATRIX_WEBHOOK_TOKEN")
   result.whatsappVerifyToken = getEnv("WHATSAPP_VERIFY_TOKEN")
   result.whatsappAppSecret = getEnv("WHATSAPP_APP_SECRET")
@@ -967,6 +971,8 @@ proc startOptionalWebhookReceiver(env: DaemonEnv; log: Logger) =
       if env.slackBotToken.len > 0: env.slackSigningSecret else: "",
     feishuVerificationToken:
       if env.feishuAppId.len > 0: env.feishuVerificationToken else: "",
+    feishuEncryptKey:
+      if env.feishuAppId.len > 0: env.feishuEncryptKey else: "",
     dingtalkAppSecret:
       if env.dingTalkAppKey.len > 0: env.dingTalkAppSecret else: "",
     matrixToken:
@@ -1635,6 +1641,11 @@ proc runDaemonLoop(ctx: DaemonContext;
     sleepMs: if tick.ok: 100 else: 500,
   )
 
+var gShutdownRequested {.volatile.}: bool
+
+proc handleShutdownSignal(sig: cint) {.noconv.} =
+  gShutdownRequested = true
+
 proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).} =
   ## Async daemon: Telegram (pollTimeout=0) + Discord (gateway thread) + WeCom (webhook thread).
   ## Loop: drain globalOutbox → drain Discord → drain WeCom → poll Telegram → sleepAsync(100ms)
@@ -1643,6 +1654,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
               " (use open|pairing|allowlist)")
     quit(1)
   log.info("daemon starting — Telegram + Discord + WeCom")
+  gShutdownRequested = false
+  when defined(posix):
+    discard posix.signal(posix.SIGTERM, handleShutdownSignal)
+    discard posix.signal(posix.SIGINT, handleShutdownSignal)
   {.cast(gcsafe).}:
     initMetrics()
     startOptionalMetricsServer(log)
@@ -1767,9 +1782,15 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
         handleGatewayFallback(ctx, cfg, memory, msg, log))
 
   log.info("polling for messages…")
-  while true:
-    let loopResult = runDaemonLoop(ctx, drainer, memory, log)
-    await sleepAsync(ctimer.milliseconds(loopResult.sleepMs.int64))
+  try:
+    while not gShutdownRequested:
+      let loopResult = runDaemonLoop(ctx, drainer, memory, log)
+      await sleepAsync(ctimer.milliseconds(loopResult.sleepMs.int64))
+  finally:
+    log.info("daemon shutdown: stopping webhook receiver")
+    stopWebhookReceiver()
+    if ctx.runtime.stateStore != nil:
+      discard ctx.runtime.stateStore.flushSessions()
 
 # ── main ───────────────────────────────────────────────────────────────────────
 

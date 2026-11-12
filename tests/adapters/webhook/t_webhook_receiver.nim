@@ -3,7 +3,8 @@
 ## No sockets are opened: the pure request→response handler is exercised
 ## directly, and dispatched payloads are observed through each adapter queue.
 
-import std/[json, net, os, strutils, tables, times, unittest, uri]
+import std/[base64, json, net, os, strutils, tables, times, unittest, uri]
+import nimcrypto/[bcmode, rijndael, sha2]
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/adapters/channel/slack
@@ -30,6 +31,35 @@ proc mkReq(httpMethod, path: string;
 
 func slackSig(secret, timestamp, body: string): string =
   "v0=" & hmacSha256Hex(secret, "v0:" & timestamp & ":" & body)
+
+proc feishuEncrypt(encryptKey, plaintext: string): string =
+  ## Test-side implementation of Feishu's Encrypt Key envelope:
+  ## base64(iv[16] || AES-256-CBC(PKCS7(plaintext))), key = SHA256(encryptKey).
+  var sha: sha256
+  sha.init()
+  sha.update(encryptKey)
+  let digest = sha.finish()
+  var key: array[32, byte]
+  for i in 0 ..< key.len:
+    key[i] = digest.data[i]
+
+  var data = plaintext
+  let pad = 16 - (data.len mod 16)
+  for _ in 0 ..< pad:
+    data.add(char(pad))
+
+  var iv: array[16, byte]
+  var ivStr = ""
+  for i in 0 ..< iv.len:
+    iv[i] = byte(i + 1)
+    ivStr.add(char(iv[i]))
+
+  var ctx: CBC[aes256]
+  ctx.init(key, iv)
+  var cipher = newString(data.len)
+  ctx.encrypt(data, cipher)
+  ctx.clear()
+  base64.encode(ivStr & cipher)
 
 proc clearQueues() =
   ## Drains module-level queues so tests are independent.
@@ -190,6 +220,45 @@ suite "webhook receiver — Feishu":
     let cfg = WebhookConfig(feishuVerificationToken: "fs-token")
     let body = """{"type":"url_verification","challenge":"fs-ch","token":"nope"}"""
     check handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body)).status == 403
+
+  test "encrypted payload is decrypted and the challenge is echoed":
+    let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
+                            feishuEncryptKey: "enc-key")
+    let inner = %* {
+      "type": "url_verification",
+      "challenge": "enc-ch",
+      "token": "fs-token",
+    }
+    let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
+    let resp = handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body))
+    check resp.status == 200
+    check parseJson(resp.body)["challenge"].getStr() == "enc-ch"
+
+  test "encrypted payload with the wrong key is rejected":
+    let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
+                            feishuEncryptKey: "other-key")
+    let inner = %* {
+      "type": "url_verification",
+      "challenge": "enc-ch",
+      "token": "fs-token",
+    }
+    let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
+    check handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body)).status == 400
+
+  test "plaintext is rejected when an encrypt key is configured":
+    let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
+                            feishuEncryptKey: "enc-key")
+    let body = """{"type":"url_verification","challenge":"fs-ch","token":"fs-token"}"""
+    check handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body)).status == 400
+
+  test "encrypt key alone configures the Feishu route":
+    let cfg = WebhookConfig(feishuEncryptKey: "enc-key")
+    check anyRouteConfigured(cfg)
+    let inner = %* {"type": "url_verification", "challenge": "enc-only"}
+    let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
+    let resp = handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body))
+    check resp.status == 200
+    check parseJson(resp.body)["challenge"].getStr() == "enc-only"
 
   test "message payload is dispatched to the Feishu queue":
     clearQueues()
@@ -395,3 +464,19 @@ suite "webhook receiver — exposure guard":
     check not second.error.contains("already started")
 
     blocker.close()
+
+  test "receiver starts, stops and restarts cleanly":
+    var probe = newSocket()
+    probe.setSockOpt(OptReuseAddr, true)
+    probe.bindAddr(Port(0), "127.0.0.1")
+    let (_, port) = probe.getLocalAddr()
+    probe.close()
+
+    let cfg = WebhookConfig(feishuVerificationToken: "tok")
+    let first = startWebhookReceiver(cfg, int(port), "127.0.0.1", hookLog)
+    check first.isOk
+    stopWebhookReceiver()
+
+    let second = startWebhookReceiver(cfg, int(port), "127.0.0.1", hookLog)
+    check second.isOk
+    stopWebhookReceiver()
