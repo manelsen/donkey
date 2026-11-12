@@ -6,6 +6,7 @@ import ../../ports/http
 import ../../core/pipeops
 import ../../core/reliability
 import ../../core/security/net_boundary
+import ../network/dns_resolver
 import ./helpers
 
 type StdHttpAdapter* = object
@@ -13,14 +14,16 @@ type StdHttpAdapter* = object
   maxRetries*: int ## Maximum number of retries.
   allowlist*: seq[string] ## Allowed hosts.
   circuitBreaker*: bool ## Record failures/check the global per-host breaker.
+  proxy*: string ## Optional filtering egress proxy URL.
 
 proc newStdHttpAdapter*(timeout = 60, maxRetries = 3, allowlist: seq[string] = @[],
-                        circuitBreaker = true): StdHttpAdapter =
+                        circuitBreaker = true, proxy = ""): StdHttpAdapter =
   StdHttpAdapter(timeout: timeout, maxRetries: maxRetries, allowlist: allowlist,
-                 circuitBreaker: circuitBreaker)
+                 circuitBreaker: circuitBreaker, proxy: proxy)
 
 proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
-                      headers: seq[HttpHeader]): Result[HttpResponse, string] {.gcsafe.} =
+                      headers: seq[HttpHeader];
+                      maxRedirects = 5): Result[HttpResponse, string] {.gcsafe.} =
   # Extract host for circuit breaker and allowlist
   let host = if url.contains("//"): url.split("//")[1].split("/")[0] else: url
 
@@ -33,13 +36,17 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
   var lastError = ""
   for attempt in 1 .. a.maxRetries:
     let res = block:
-      withHttpClientTimeout(a.timeout):
+      withHttpClientTimeout(a.timeout, maxRedirects, a.proxy):
         if headers.len > 0:
           var h = newHttpHeaders()
           for (k, v) in headers: h[k] = v
           client.headers = h
         let resp = client.request(url, httpMethod = meth, body = body)
-        ok(HttpResponse(status: resp.code.int, body: resp.body))
+        var responseHeaders: seq[HttpHeader]
+        for key, value in resp.headers:
+          responseHeaders.add((key, value))
+        ok(HttpResponse(status: resp.code.int, body: resp.body,
+                        headers: responseHeaders))
 
     if res.isOk:
       let val = res.get()
@@ -95,6 +102,10 @@ proc delete*(a: StdHttpAdapter; url: string;
              headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
   a.requestWithRetry(HttpDelete, url, "", headers)
 
+proc getNoRedirect*(a: StdHttpAdapter; url: string;
+                    headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+  a.requestWithRetry(HttpGet, url, "", headers, maxRedirects = 0)
+
 proc toRuntimePort*(a: StdHttpAdapter): HttpRuntimePort =
   HttpRuntimePort(
     get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
@@ -111,5 +122,11 @@ proc toRuntimePort*(a: StdHttpAdapter): HttpRuntimePort =
     ,
     delete: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
       result = a.delete(url, headers)
+    ,
+    getNoRedirect: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      result = a.getNoRedirect(url, headers)
+    ,
+    resolveHost: proc(host: string): Result[string, string] {.gcsafe.} =
+      safeResolve(host)
     ,
   )

@@ -15,6 +15,51 @@ import ./text_tools  # stripHtml
 
 const FetchHardMax* = 20_000
 const FetchDefaultMax* = 5_000
+const MaxFetchRedirects = 5
+
+func responseHeader(resp: httpPort.HttpResponse; name: string): string =
+  for (key, value) in resp.headers:
+    if key.toLowerAscii() == name.toLowerAscii():
+      return value
+
+proc fetchWithRedirectPolicy(http: httpPort.HttpRuntimePort;
+                             url: string;
+                             headers: seq[httpPort.HttpHeader];
+                             allowRules: seq[cfgTypes.WebAccessRule];
+                             fallbackAllowlist: seq[string];
+                             policyLabel: string): Result[httpPort.HttpResponse, string] {.gcsafe.} =
+  ## Follows redirects manually so every hop is checked by the URL/DNS policy.
+  ## The production StdHttpAdapter supplies getNoRedirect; a custom port that
+  ## does not implement it falls back to its normal get (no per-hop validation).
+  var current = url
+  for _ in 0 .. MaxFetchRedirects:
+    if not isAllowedPublicUrl(current, allowRules, fallbackAllowlist):
+      return err(buildUrlAccessError(current, allowRules, fallbackAllowlist, policyLabel))
+    let host = extractUrlHost(current)
+    if host.len == 0:
+      return err("invalid URL: " & current)
+    if http.resolveHost != nil:
+      let resolved = http.resolveHost(host)
+      if resolved.isErr:
+        return err("URL blocked: " & resolved.error)
+    let resp =
+      if http.getNoRedirect != nil:
+        http.getNoRedirect(current, headers)
+      else:
+        http.get(current, headers)
+    if resp.isErr:
+      return resp
+    let r = resp.get()
+    if r.status in 300 .. 399:
+      let location = responseHeader(r, "location")
+      if location.len > 0:
+        let nextUrl = $combine(parseUri(current), parseUri(location))
+        if nextUrl == current:
+          return err("redirect loop at " & current)
+        current = nextUrl
+        continue
+    return ok(r)
+  err("too many redirects (max " & $MaxFetchRedirects & ")")
 
 proc performFetch*(http: httpPort.HttpRuntimePort;
                    url: string;
@@ -23,12 +68,8 @@ proc performFetch*(http: httpPort.HttpRuntimePort;
                    fallbackAllowlist: seq[string] = @[];
                    policyLabel = "web access"): string {.gcsafe, raises: [].} =
   try:
-    if not isAllowedPublicUrl(url, allowRules, fallbackAllowlist):
-      return buildUrlAccessError(url, allowRules, fallbackAllowlist, policyLabel)
-    let resp = try:
-      http.get(url, @[])
-    except Exception as e:
-      return "Error: " & e.msg
+    let resp = fetchWithRedirectPolicy(http, url, @[], allowRules,
+                                       fallbackAllowlist, policyLabel)
     if resp.isErr: return "Error: " & resp.error
     let r = resp.value
     if r.status < 200 or r.status >= 300:
@@ -61,12 +102,8 @@ proc performFetchStructured*(http: httpPort.HttpRuntimePort;
     return usageErrorToolResult("unsupported expect format: " & expect)
 
   try:
-    if not isAllowedPublicUrl(url, allowRules, fallbackAllowlist):
-      return operationalErrorToolResult(
-        buildUrlAccessError(url, allowRules, fallbackAllowlist, policyLabel)
-      )
-
-    let r = http.get(url, @[]).valueOr:
+    let r = fetchWithRedirectPolicy(http, url, @[], allowRules,
+                                    fallbackAllowlist, policyLabel).valueOr:
       return operationalErrorToolResult(error)
     if r.status < 200 or r.status >= 300:
       return operationalErrorToolResult("HTTP error " & $r.status)

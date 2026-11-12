@@ -4,11 +4,12 @@
 import ../core/pipeops
 
 type
-  HttpResponse* = object
-    status*: int
-    body*:   string
-
   HttpHeader* = tuple[name: string, value: string]
+
+  HttpResponse* = object
+    status*:  int
+    body*:    string
+    headers*: seq[HttpHeader]
 
   HttpPort* = concept h
     h.get(string, seq[HttpHeader]) is Result[HttpResponse, string]
@@ -23,3 +24,5 @@ type
     put*:   proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
     patch*: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
     delete*: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
+    getNoRedirect*: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
+    resolveHost*: proc(host: string): Result[string, string] {.gcsafe.}
