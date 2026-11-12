@@ -256,6 +256,9 @@ proc startSessionIngress*(sm: var SessionManager;
                           taskKind: TaskKind = tkUserMsg;
                           taskPayload: string = ""): SessionIngressContext {.gcsafe.} =
   ## Full session ingress flow: builds bootstrap, plan, context, enqueues message, and spawns orchestrator.
+  if ($msg.userId).len == 0:
+    ## Identity resolution failed (e.g. unreadable identities.tsv); deny.
+    return
   if services.dmPolicy != DmPolicyOpen:
     let allowed =
       services.isDmAllowed != nil and services.isDmAllowed(msg.userId)

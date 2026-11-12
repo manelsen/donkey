@@ -78,17 +78,21 @@ proc authorizeInbound*(sm: SessionManager;
     result.identified = true
     result.allowed = sm.allows(result.userId)
   elif sm.dmPolicy == DmPolicyOpen:
-    result.userId = gate.resolve(kind, rawId)
-    result.identified = true
-    result.allowed = sm.allows(result.userId)
+    let resolved = gate.resolve(kind, rawId)
+    if ($resolved).len > 0:
+      result.userId = resolved
+      result.identified = true
+      result.allowed = sm.allows(result.userId)
   if not result.allowed:
     let target = linkTargetFrom(gate, kind, text, linkSource)
     if target.isSome and sm.allows(target.get):
-      result.userId =
+      let resolved =
         if known.isSome: known.get
         else: gate.resolve(kind, rawId)
-      result.identified = true
-      result.allowed = true
+      if ($resolved).len > 0:
+        result.userId = resolved
+        result.identified = true
+        result.allowed = true
 
   if not result.allowed and sm.dmPolicy == DmPolicyPairing and
      sm.pairingRequest != nil and linkSource == ilsCommandText:
@@ -113,6 +117,9 @@ proc authorizeResolvedInbound*(sm: SessionManager;
   ## `receive()` does this). The policy decision still lives here.
   result.userId = userId
   result.identified = true
+  if ($userId).len == 0:
+    ## Identity storage failed; never authorize an empty UUID.
+    return
   result.allowed = sm.allows(userId)
   if not result.allowed:
     if linkSource == ilsModalOnly:

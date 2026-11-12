@@ -76,20 +76,20 @@ proc ctlUserRevoke*(memory: MdFileAdapter; uuid: string; revoked: bool): Result[
 
 # ── ctl pairing commands ───────────────────────────────────────────────────────
 
-proc ctlPairList*(store: PairingStore) =
+proc ctlPairList*(store: PairingStore): Result[void, string] =
   let loaded = store.load()
   if loaded.isErr:
-    echo "Error: " & loaded.error
-    return
+    return err(loaded.error)
   let requests = loaded.get()
   if requests.len == 0:
     echo "No pending pairing requests."
-    return
+    return ok()
   echo "code\tchannel\trawId\texpires_in"
   for request in requests:
     let remaining = int(max(0.0, request.expiresAt - epochTime()))
     echo request.code & "\t" & $request.channel & "\t" &
          request.rawId & "\t" & $remaining & "s"
+  ok()
 
 proc ctlPairApprove*(cfg: DonkeyConfig; memory: MdFileAdapter;
                      store: PairingStore; code: string): Result[void, string] =
@@ -102,7 +102,13 @@ proc ctlPairApprove*(cfg: DonkeyConfig; memory: MdFileAdapter;
   let userId = resolver.resolve(request.channel, request.rawId)
   ? memory.addDmAllowed(userId)
   requests.delete(idx)
-  ? store.save(requests)
+  let saved = store.save(requests)
+  if saved.isErr:
+    echo "Access granted to " & $request.channel & " " & request.rawId &
+         " -> " & $userId & ", but removing the pending request failed: " &
+         saved.error & ". Run `donkey ctl pair reject " & request.code &
+         "` to clean it up."
+    return err("access granted; pending request cleanup failed")
   echo "Paired " & $request.channel & " " & request.rawId & " -> " & $userId
   ok()
 
@@ -300,7 +306,9 @@ proc dispatchCtl*(cfg: DonkeyConfig;
   # ── pairing ──
   let pairingStore = newPairingStore(cfg.home / "state" / "pairings.json")
   if args[1] == "pair" and args.len >= 3 and args[2] == "list":
-    ctlPairList(pairingStore); return 0
+    let res = ctlPairList(pairingStore)
+    if res.isErr: echo res.error; return 1
+    return 0
   if args[1] == "pair" and args.len >= 4 and args[2] == "approve":
     let res = ctlPairApprove(cfg, memory, pairingStore, args[3])
     if res.isErr: echo res.error; return 1

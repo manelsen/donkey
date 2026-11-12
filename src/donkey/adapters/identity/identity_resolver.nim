@@ -11,6 +11,7 @@
 
 import std/[options, os, random, strutils, tables, times]
 import ../../app/inbound_gate
+import ../../core/pipeops
 import ../../core/types
 
 type
@@ -55,9 +56,9 @@ proc save(r: IdentityResolver) =
   writeFile(tmp, buf)
   moveFile(tmp, r.path)
 
-proc loadPersistedMappings(r: IdentityResolver) =
+proc loadPersistedMappings(r: IdentityResolver): Result[void, string] =
   ## Rebuilds the in-memory maps from disk. On a read failure the current maps
-  ## are kept intact instead of being replaced by an empty state.
+  ## are kept intact and the error is returned so callers do not mint/save.
   var store = initTable[string, UserId]()
   var reverseMap = initTable[string, seq[string]]()
   if fileExists(r.path):
@@ -72,10 +73,11 @@ proc loadPersistedMappings(r: IdentityResolver) =
           if us notin reverseMap:
             reverseMap[us] = @[]
           reverseMap[us].add(key)
-    except CatchableError:
-      return
+    except CatchableError as e:
+      return err("identity store read failed: " & e.msg)
   r.store = store
   r.reverseMap = reverseMap
+  ok()
 
 proc newIdentityResolver*(path: string): IdentityResolver =
   result = IdentityResolver(
@@ -84,7 +86,7 @@ proc newIdentityResolver*(path: string): IdentityResolver =
     reverseMap:   initTable[string, seq[string]](),
     pendingLinks: initTable[string, LinkEntry](),
   )
-  result.loadPersistedMappings()
+  discard result.loadPersistedMappings()
 
 proc resolve*(r: IdentityResolver; kind: ChannelKind; rawId: string): UserId =
   ## Returns the stable UserId for (kind, rawId), minting a new UUID on first
@@ -92,7 +94,10 @@ proc resolve*(r: IdentityResolver; kind: ChannelKind; rawId: string): UserId =
   ## another process (e.g. `ctl pair approve`) is not clobbered.
   let key = channelKey(kind, rawId)
   if key notin r.store:
-    r.loadPersistedMappings()
+    if r.loadPersistedMappings().isErr:
+      ## Do not mint or overwrite the file when the persisted map is
+      ## unreadable; an empty UserId is rejected by the ingress gates.
+      return UserId("")
   if key notin r.store:
     randomize()
     let uid = UserId(generateUUID())
@@ -110,7 +115,8 @@ proc lookup*(r: IdentityResolver; kind: ChannelKind; rawId: string): Option[User
   ## `ctl` are visible to a long-running daemon.
   let key = channelKey(kind, rawId)
   if key notin r.store:
-    r.loadPersistedMappings()
+    if r.loadPersistedMappings().isErr:
+      return none(UserId)
   if key in r.store:
     some(r.store[key])
   else:
@@ -121,7 +127,8 @@ proc reverseChannel*(r: IdentityResolver; userId: UserId; kind: ChannelKind): st
   ## Returns "" if not found.
   let us = $userId
   if us notin r.reverseMap:
-    r.loadPersistedMappings()
+    if r.loadPersistedMappings().isErr:
+      return ""
     if us notin r.reverseMap:
       return ""
   let prefix = $kind & ":"
