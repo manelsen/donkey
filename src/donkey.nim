@@ -63,6 +63,7 @@ import donkey/app/approval_runtime
 import donkey/domain/message
 import donkey/domain/agent_message
 import donkey/ports/provider
+import donkey/ports/http
 import donkey/ports/channel
 import donkey/core/media_download
 import donkey/ports/tool
@@ -932,6 +933,7 @@ proc startOptionalWeChatGateway(wchAdapter: var WeChatAdapter;
 proc startOptionalSlackGateway(slAdapter: var SlackAdapter;
                                slackBotToken: string;
                                slackAppToken: string;
+                               slackHttp: HttpRuntimePort;
                                log: Logger) =
   if slackBotToken.len == 0:
     log.info("SLACK_BOT_TOKEN not set — Slack disabled")
@@ -939,7 +941,7 @@ proc startOptionalSlackGateway(slAdapter: var SlackAdapter;
 
   slAdapter.openQueue()
   if slackAppToken.len > 0:
-    startSlackSocketMode(slackAppToken, log).isOkOr:
+    startSlackSocketMode(slackAppToken, slackHttp, log).isOkOr:
       log.error("slack socket: " & error)
   elif getEnv("SLACK_SIGNING_SECRET").len == 0:
     log.warn("SLACK_SIGNING_SECRET/SLACK_APP_TOKEN not set — Slack inbound disabled")
@@ -1381,7 +1383,10 @@ proc startDaemonIngress(ctx: DaemonContext;
   startOptionalWeChatGateway(ctx.adapters.wch, ctx.env.wechatAppId, log)
   startOptionalFeishuGateway(ctx.adapters.fs, ctx.env.feishuAppId, log)
   startOptionalSlackGateway(ctx.adapters.sl, ctx.env.slackBotToken,
-                            ctx.env.slackAppToken, log)
+                            ctx.env.slackAppToken,
+                            newStdHttpAdapter(timeout = 15, maxRetries = 2,
+                                              circuitBreaker = false).toRuntimePort(),
+                            log)
   startOptionalDingTalkGateway(ctx.adapters.dt, ctx.env.dingTalkAppKey, log)
   startOptionalMatrixGateway(ctx.adapters.mx, log)
   startOptionalWhatsAppGateway(ctx.adapters.wa, ctx.env.whatsappAccessToken,
@@ -1827,9 +1832,18 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     stopSlackSocketMode()
     stopWebhookReceiver()
     ## Connections accepted before the stop may have enqueued Feishu events;
-    ## consume them once before exiting.
+    ## consume them once before exiting. Slack envelopes were already acked
+    ## when queued, so give admitted turns a bounded chance to publish their
+    ## replies and flush the outbox before leaving.
     discard drainer.drainSlack()
+    let slackInbound = ctx.env.slackBotToken.len > 0 and
+      (ctx.env.slackSigningSecret.len > 0 or ctx.env.slackAppToken.len > 0)
+    if slackInbound:
+      await sleepAsync(ctimer.milliseconds(2000))
+    drainGlobalOutbox(ctx.runtime, ctx.adapters, log)
     discard drainer.drainFeishu()
+    await sleepAsync(ctimer.milliseconds(500))
+    drainGlobalOutbox(ctx.runtime, ctx.adapters, log)
     if ctx.runtime.stateStore != nil:
       discard ctx.runtime.stateStore.flushSessions()
 

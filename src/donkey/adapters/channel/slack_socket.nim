@@ -5,23 +5,24 @@
 ## messages. Envelopes are acked after the payload is queued, and the Slack
 ## runtime drains the same module-level queue used by the webhook receiver.
 
-import std/[atomics, json, locks, net, os, strutils, uri]
+import std/[atomics, json, locks, monotimes, net, os, strutils, times, uri]
 when defined(posix):
   import std/posix
 import ../../core/log
 import ../../core/pipeops
 import ../../ports/http
-import ../http/std_http
 import ./slack
 import ./ws_client
 
 const
   SlackSocketReconnectMinMs = 1_000
   SlackSocketReconnectMaxMs = 30_000
+  SlackSocketIdleTimeoutMs  = 120_000
 
 type
   SlackSocketMode* = ref object
     appToken: string
+    http:     HttpRuntimePort
     logger:   Logger
     stop:     Atomic[bool]
     stopped:  bool
@@ -73,11 +74,9 @@ proc handleSlackSocketEnvelope*(envelope: JsonNode): bool =
   true
 
 proc openSocketUrl(client: SlackSocketMode): Result[string, string] =
-  let http = newStdHttpAdapter(timeout = 15, maxRetries = 2,
-                               circuitBreaker = false)
   var resp: Result[HttpResponse, string]
   try:
-    resp = http.post(
+    resp = client.http.post(
       SlackApiBase & "/apps.connections.open", "",
       @[("Authorization", "Bearer " & client.appToken),
         ("Content-Type", "application/x-www-form-urlencoded")])
@@ -134,23 +133,31 @@ proc runSlackSocket(client: SlackSocketMode) {.thread.} =
 
       var ws: WsClient
       try:
-        ws = wsConnect(socketUrl.hostname, port, fullPath)
+        let onSocket = proc(sock: Socket) {.gcsafe.} =
+          {.cast(gcsafe).}:
+            acquire(client.fdLock)
+            client.activeFd = sock.getFd
+            release(client.fdLock)
+        ws = wsConnect(socketUrl.hostname, port, fullPath,
+                       timeoutMs = 10_000, onSocket = onSocket)
       except CatchableError as e:
+        acquire(client.fdLock)
+        client.activeFd = SocketHandle(-1)
+        release(client.fdLock)
         client.logger.warn("slack socket: connect failed: " & e.msg)
         if not client.sleepOrStop(backoff):
           break
         backoff = min(backoff * 2, SlackSocketReconnectMaxMs)
         continue
 
-      acquire(client.fdLock)
-      client.activeFd = ws.sock.getFd
-      release(client.fdLock)
       client.logger.info("slack socket: connected")
       backoff = SlackSocketReconnectMinMs
+      var lastActivity = getMonoTime()
       var reopen = false
       while not client.stop.load() and not reopen:
         try:
           let frame = ws.recvFrame(1000)
+          lastActivity = getMonoTime()
           case frame.opcode
           of WsOpcodeText:
             var envelope: JsonNode
@@ -176,7 +183,12 @@ proc runSlackSocket(client: SlackSocketMode) {.thread.} =
           else:
             discard
         except TimeoutError:
-          continue
+          if inMilliseconds(getMonoTime() - lastActivity) >=
+             SlackSocketIdleTimeoutMs:
+            client.logger.warn("slack socket: idle timeout; reconnecting")
+            reopen = true
+          else:
+            continue
         except CatchableError as e:
           client.logger.warn("slack socket: " & e.msg)
           reopen = true
@@ -190,6 +202,7 @@ proc runSlackSocket(client: SlackSocketMode) {.thread.} =
           break
 
 proc startSlackSocketMode*(appToken: string;
+                           http: HttpRuntimePort;
                            logger: Logger): Result[void, string] {.gcsafe, raises: [].} =
   ## Starts the Socket Mode reader thread. Requires the app-level token; the
   ## bot token is validated by the gateway caller because it is only needed
@@ -199,7 +212,7 @@ proc startSlackSocketMode*(appToken: string;
   if gSlackSocketStarted:
     return err("Slack Socket Mode is already started")
 
-  let client = SlackSocketMode(appToken: appToken, logger: logger)
+  let client = SlackSocketMode(appToken: appToken, http: http, logger: logger)
   client.stop.store(false)
   client.activeFd = SocketHandle(-1)
   initLock(client.fdLock)
