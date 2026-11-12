@@ -213,7 +213,7 @@ Approval mints the identity UUID and writes it to `state/dm_allowlist.txt`; the 
 
 Risky native tools pause and ask the requesting user before executing. The default list is `bash`, `edit_file`, `rm`, `mv` and `cp`; read-only tools run directly.
 
-- `DONKEY_APPROVAL_TOOLS=bash,edit_file` changes the list; `none` disables the gate.
+- `DONKEY_APPROVAL_TOOLS=bash,edit_file` changes the list; `*` covers every native/MCP/skill tool and `none` disables the gate.
 - `DONKEY_APPROVAL_TIMEOUT_SEC` controls the wait (default 300s); timeout means deny.
 - The request appears in the chat with `/approve <id>` and `/deny <id>`; Telegram, Discord and Slack also render inline **Aprovar/Negar** buttons.
 - The operator can use `./donkey ctl approval list [user]`, `./donkey ctl approval approve <id>` or `./donkey ctl approval deny <id>`.

@@ -9,6 +9,7 @@ import chronos/asyncsync
 import ../core/pipeops
 import ../core/log
 import ../core/output_sanitizer
+import ../core/security/approval
 import ../core/tooling/tool_loop
 import ../core/agent_events
 import ../domain/agent_message
@@ -17,6 +18,7 @@ import ../ports/memory
 import ../ports/provider
 import ../app/session_state
 import ../app/native_tools
+import ../app/approval_runtime
 import ../app/prompt_building
 import ../app/provider_executor
 
@@ -220,6 +222,32 @@ proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
       checkpointNow: nr.checkpointNow,
       newHistory: nr.newHistory,
     )
+
+  ## Native tools are gated inside executeNativeTool. Non-native tools (MCP,
+  ## skills) can be included through DONKEY_APPROVAL_TOOLS names or "*".
+  if requiresApproval(nativeCtx.approval, tc.name):
+    let summary = approvalInputSummary(tc.inputJson)
+    if summary.len == 0:
+      return ToolCallResult(
+        text: "Error: tool '" & tc.name &
+              "' is too large to display for approval; split the action.",
+        resultKind: trkOperationalError,
+      )
+    let decision = await requestAndWait(
+      nativeCtx.approval, uid, channel, nativeCtx.outbox, tc.name, summary, log)
+    case decision
+    of adApproved:
+      discard
+    of adDenied:
+      return ToolCallResult(
+        text: "Error: tool '" & tc.name & "' was denied by the user.",
+        resultKind: trkOperationalError,
+      )
+    of adTimeout:
+      return ToolCallResult(
+        text: "Error: approval for tool '" & tc.name & "' timed out.",
+        resultKind: trkOperationalError,
+      )
 
   let toolResult = await invokeToolAgent(
     toolInbox, toolOut, msgId, round, callIndex, tc, $uid, providerLabel, log)
