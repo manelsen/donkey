@@ -13,6 +13,10 @@ suite "StdHttpAdapter":
     verifyHttpPort(a)
     check true
 
+  test "runtime port exposes a no-redirect POST":
+    let port = newStdHttpAdapter().toRuntimePort()
+    check port.postNoRedirect != nil
+
   test "newStdHttpAdapter is stateless value type":
     let a = newStdHttpAdapter()
     let b = a   ## copy — no shared state

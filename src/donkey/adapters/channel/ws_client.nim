@@ -9,7 +9,9 @@
 ##   frame does not arrive within timeoutMs. Subsequent bytes of the same
 ##   frame are read without a timeout (data is already in flight).
 
-import std/[base64, net, random, strutils]
+import std/[base64, monotimes, net, random, strutils, times]
+when defined(posix):
+  import std/posix
 
 const
   WsOpcodeText*  = byte(0x1)
@@ -26,50 +28,84 @@ type
   WsClient* = object
     sock*: Socket
 
-proc recvExact(sock: Socket; n: int): string =
-  ## Reads exactly n bytes (blocking, no timeout). Raises IOError on close.
+proc frameRemainingMs(deadline: MonoTime): int =
+  let remaining = inMilliseconds(deadline - getMonoTime())
+  if remaining <= 0:
+    raise newException(IOError, "WebSocket: frame deadline exceeded")
+  remaining
+
+proc recvExact(sock: Socket; n: int; deadline: MonoTime): string =
+  ## Reads exactly n bytes before the frame deadline. Raises IOError on close.
   if n == 0: return ""
   result = newString(n)
   var pos = 0
   while pos < n:
     var tmp = newString(n - pos)
-    let got = sock.recv(tmp, n - pos)
+    var got: int
+    try:
+      got = sock.recv(tmp, n - pos, frameRemainingMs(deadline))
+    except TimeoutError:
+      raise newException(IOError, "WebSocket: truncated frame")
     if got <= 0:
       raise newException(IOError, "WebSocket: connection closed")
     copyMem(addr result[pos], unsafeAddr tmp[0], got)
     pos += got
 
-proc wsConnect*(host: string; port: Port; path: string; useTls = true): WsClient =
-  ## Opens a (TLS) WebSocket connection and completes HTTP upgrade.
+proc applySocketTimeout(sock: Socket; timeoutMs: int) =
+  ## Bounds TLS and HTTP upgrade I/O as well as frame reads.
+  when defined(posix):
+    var tv: posix.Timeval
+    tv.tv_sec = posix.Time(timeoutMs div 1000)
+    tv.tv_usec = posix.Suseconds((timeoutMs mod 1000) * 1000)
+    discard posix.setsockopt(sock.getFd, posix.SOL_SOCKET, posix.SO_RCVTIMEO,
+                             addr tv, posix.SockLen(sizeof(tv)))
+    discard posix.setsockopt(sock.getFd, posix.SOL_SOCKET, posix.SO_SNDTIMEO,
+                             addr tv, posix.SockLen(sizeof(tv)))
+
+proc wsConnect*(host: string; port: Port; path: string;
+                useTls = true; verifyTls = true;
+                timeoutMs = 10_000;
+                onSocket: proc(sock: Socket) {.gcsafe.} = nil): WsClient =
+  ## Opens a (TLS) WebSocket connection and completes the HTTP upgrade.
+  ## `verifyTls` checks the server certificate and sends SNI. The total
+  ## establishment time is bounded by `timeoutMs`.
   randomize()
   var sock = newSocket()
-  if useTls:
-    ## CVerifyNone for now. Switch to CVerifyPeer + caFile= for hardening.
-    var ctx = newContext(verifyMode = CVerifyNone)
-    ctx.wrapSocket(sock)
-  sock.connect(host, port)
+  if onSocket != nil:
+    onSocket(sock)
+  try:
+    sock.connect(host, port, timeoutMs)
+    applySocketTimeout(sock, timeoutMs)
+    if useTls:
+      let mode = if verifyTls: CVerifyPeer else: CVerifyNone
+      let ctx = newContext(verifyMode = mode)
+      ctx.wrapConnectedSocket(sock, handshakeAsClient, host)
 
-  var keyBytes: array[16, byte]
-  for i in 0..<16: keyBytes[i] = byte(rand(255))
-  let key = encode(keyBytes)
+    var keyBytes: array[16, byte]
+    for i in 0..<16: keyBytes[i] = byte(rand(255))
+    let key = encode(keyBytes)
 
-  let req = "GET " & path & " HTTP/1.1\r\n" &
-            "Host: " & host & "\r\n" &
-            "Upgrade: websocket\r\n" &
-            "Connection: Upgrade\r\n" &
-            "Sec-WebSocket-Key: " & key & "\r\n" &
-            "Sec-WebSocket-Version: 13\r\n" &
-            "\r\n"
-  sock.send(req)
+    let req = "GET " & path & " HTTP/1.1\r\n" &
+              "Host: " & host & "\r\n" &
+              "Upgrade: websocket\r\n" &
+              "Connection: Upgrade\r\n" &
+              "Sec-WebSocket-Key: " & key & "\r\n" &
+              "Sec-WebSocket-Version: 13\r\n" &
+              "\r\n"
+    sock.send(req)
 
-  let statusLine = sock.recvLine()
-  if "101" notin statusLine:
-    raise newException(IOError, "WebSocket upgrade rejected: " & statusLine)
-  var hline = sock.recvLine()
-  while hline.len > 2:
-    hline = sock.recvLine()
+    let deadline = getMonoTime() + initDuration(milliseconds = max(1, timeoutMs))
+    let statusLine = sock.recvLine(frameRemainingMs(deadline))
+    if "101" notin statusLine:
+      raise newException(IOError, "WebSocket upgrade rejected: " & statusLine)
+    var hline = sock.recvLine(frameRemainingMs(deadline))
+    while hline.len > 2:
+      hline = sock.recvLine(frameRemainingMs(deadline))
 
-  WsClient(sock: sock)
+    WsClient(sock: sock)
+  except CatchableError:
+    try: sock.close() except CatchableError: discard
+    raise
 
 proc sendFrame*(ws: WsClient; data: string; opcode = WsOpcodeText) =
   ## Sends one masked WebSocket frame (client → server MUST be masked per RFC 6455).
@@ -97,17 +133,24 @@ proc sendFrame*(ws: WsClient; data: string; opcode = WsOpcodeText) =
 
   ws.sock.send(frame)
 
-proc recvFrame*(ws: WsClient; timeoutMs = 1000): WsFrame =
+proc recvFrame*(ws: WsClient; timeoutMs = 1000;
+                frameTimeoutMs = 10_000): WsFrame =
   ## Receives one WebSocket frame (server → client, unmasked).
   ## Waits up to timeoutMs for the first byte; raises TimeoutError if none.
-  ## Subsequent bytes of the same frame are read without timeout.
+  ## Once a frame starts, it must finish within frameTimeoutMs.
   var firstByte = newString(1)
   let n0 = ws.sock.recv(firstByte, 1, timeoutMs)
   if n0 <= 0:
     raise newException(IOError, "WebSocket: connection closed on header byte 0")
+  let deadline = getMonoTime() +
+    initDuration(milliseconds = max(1, frameTimeoutMs))
 
   var secondByte = newString(1)
-  let n1 = ws.sock.recv(secondByte, 1)
+  var n1: int
+  try:
+    n1 = ws.sock.recv(secondByte, 1, frameRemainingMs(deadline))
+  except TimeoutError:
+    raise newException(IOError, "WebSocket: truncated frame")
   if n1 <= 0:
     raise newException(IOError, "WebSocket: connection closed on header byte 1")
 
@@ -118,20 +161,20 @@ proc recvFrame*(ws: WsClient; timeoutMs = 1000): WsFrame =
 
   var length = int(b1 and 0x7F)
   if length == 126:
-    let ext = ws.sock.recvExact(2)
+    let ext = ws.sock.recvExact(2, deadline)
     length = (int(byte(ext[0])) shl 8) or int(byte(ext[1]))
   elif length == 127:
-    let ext = ws.sock.recvExact(8)
+    let ext = ws.sock.recvExact(8, deadline)
     length = 0
     for i in 4..<8:
       length = (length shl 8) or int(byte(ext[i]))
 
   var maskKey: array[4, byte]
   if masked:
-    let mk = ws.sock.recvExact(4)
+    let mk = ws.sock.recvExact(4, deadline)
     for i in 0..<4: maskKey[i] = byte(mk[i])
 
-  var data = ws.sock.recvExact(length)
+  var data = ws.sock.recvExact(length, deadline)
   if masked:
     for i in 0..<data.len:
       data[i] = char(int(byte(data[i])) xor int(maskKey[i mod 4]))
