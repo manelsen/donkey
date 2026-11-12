@@ -317,7 +317,22 @@ suite "durability":
   test "dedicated worker compacts outside the event loop":
     let dir = freshDir("ledger-worker")
     defer: cleanup(dir)
-    let store = newRuntimeStateStore(dir, ledgerCompactIntervalSec = 1.0)
+
+    let now = epochMs()
+    let day = 86_400_000'i64
+    let store = newRuntimeStateStore(
+      dir, ledgerRetentionDays = 1.0, ledgerCompactIntervalSec = 1.0)
+    let ledger = store.deliveryLedger()
+    check ledger.recordPending(DeliveryRecord(
+      id: "worker-pending", userId: "u", channel: ckTelegram,
+      channelId: "c", textHash: "h", state: dlsPending,
+      createdAtMs: now - 10 * day, updatedAtMs: now - 10 * day)).isOk
+    check ledger.recordPending(DeliveryRecord(
+      id: "worker-expired", userId: "u", channel: ckSlack,
+      channelId: "c", textHash: "h", state: dlsPending,
+      createdAtMs: now - 2 * day, updatedAtMs: now - 2 * day)).isOk
+    check ledger.markSent("worker-expired", now - 2 * day).isOk
+
     let before = store.ledgerLastCompactMs()
     let worker = startLedgerCompactionWorker(
       store, 1.0, newLogger("test.ledger", lvlError))
@@ -327,6 +342,14 @@ suite "durability":
     sleep(2300)
     stopLedgerCompactionWorker(worker)
     check store.ledgerLastCompactMs() > before
+
+    let loaded = store.deliveryLedger().loadAll()
+    check loaded.isOk
+    check findRecord(loaded.value, "worker-pending").state == dlsPending
+    check findRecord(loaded.value, "worker-expired").id == ""
+    let raw = readFile(dir / DeliveryLedgerFileName)
+    check "worker-pending" in raw
+    check "worker-expired" notin raw
 
   test "compaction on a missing ledger is a no-op":
     let dir = freshDir("ledger-none")
