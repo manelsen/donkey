@@ -57,6 +57,7 @@ import donkey/domain/tools/browser_pure
 import donkey/adapters/state/runtime_store
 import donkey/adapters/state/pairing_store
 import donkey/adapters/state/approval_store
+import donkey/adapters/secrets/vault
 import donkey/app/approval_runtime
 import donkey/domain/message
 import donkey/domain/agent_message
@@ -128,6 +129,10 @@ Commands:
   ctl approval list [user]      List pending tool approvals
   ctl approval approve <id>     Approve a pending tool call
   ctl approval deny <id>        Deny a pending tool call
+  ctl secret set <name>         Encrypt a secret read from stdin
+  ctl secret list               List stored secret names (never values)
+  ctl secret remove <name>      Remove a stored secret
+  ctl secret import-env [path]  Encrypt KEY=VALUE pairs from donkey.env
   ctl session list <uuid>        List active sessions for a user
   ctl tool install <command>            Register an MCP server
   ctl skill search <query>              Search remote skills on ClawHub
@@ -1873,7 +1878,25 @@ proc main =
   ## Load .env file if present — checks {home}/donkey.env then ~/.config/donkey/donkey.env
   discard loadDonkeyEnv(home)
 
-  let cfg = loadConfig(configPath)
+  var cfg = loadConfig(configPath)
+  ## Decrypting the vault must not block administrative commands that do not
+  ## consume its variables (service stop/logs, secret recovery, user/pairing).
+  let needsVault =
+    args.len == 0 or
+    args[0] in ["start", "about", "doctor"] or
+    (args[0] == "ctl" and args.len >= 2 and
+     (args[1] in ["provider", "memory"] or
+      (args[1] == "skill" and args.len >= 3 and
+       args[2] in ["install", "update", "search"])))
+  if needsVault:
+    let vaultApplied = newSecretVault(cfg.home).applyToEnv()
+    if vaultApplied.isErr:
+      stderr.writeLine "Security Error: " & vaultApplied.error
+      quit(1)
+    if vaultApplied.get() > 0:
+      ## Reload env-backed policies (dm_policy, allowlist, ...) after the
+      ## vault populated variables that were absent from donkey.env.
+      cfg = loadConfig(configPath)
   configureApprovalServiceFromEnv(
     newApprovalStore(cfg.home / "state" / "approvals.json").toApprovalPort())
 

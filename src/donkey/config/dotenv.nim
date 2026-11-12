@@ -11,42 +11,45 @@
 
 import std/[os, strutils]
 
+proc parseEnvFile*(path: string): seq[(string, string)] =
+  ## Parses KEY=VALUE pairs without touching the process environment.
+  ## Returns an empty seq if the file doesn't exist; read errors propagate.
+  if not fileExists(path):
+    return @[]
+
+  for rawLine in lines(path):
+    let line = rawLine.strip()
+    if line.len == 0 or line[0] == '#':
+      continue
+
+    let eqIdx = line.find('=')
+    if eqIdx < 0:
+      continue
+
+    let key = line[0 ..< eqIdx].strip()
+    var value = line[eqIdx + 1 .. ^1].strip()
+
+    # Unquote
+    if value.len >= 2:
+      if (value[0] == '"' and value[^1] == '"') or
+         (value[0] == '\'' and value[^1] == '\''):
+        value = value[1 ..< value.len - 1]
+
+    if key.len > 0:
+      result.add((key, value))
+
 proc loadEnvFile*(path: string): int =
   ## Loads a .env file into the process environment.
   ## Returns the number of variables loaded.
   ## Silently returns 0 if the file doesn't exist.
-  if not fileExists(path):
-    return 0
-
-  var count = 0
   try:
-    for rawLine in lines(path):
-      let line = rawLine.strip()
-      if line.len == 0 or line[0] == '#':
-        continue
-
-      let eqIdx = line.find('=')
-      if eqIdx < 0:
-        continue
-
-      let key = line[0 ..< eqIdx].strip()
-      var value = line[eqIdx + 1 .. ^1].strip()
-
-      # Unquote
-      if value.len >= 2:
-        if (value[0] == '"' and value[^1] == '"') or
-           (value[0] == '\'' and value[^1] == '\''):
-          value = value[1 ..< value.len - 1]
-
-      if key.len > 0:
-        # Don't override existing env vars (explicit env takes precedence)
-        if getEnv(key).len == 0:
-          putEnv(key, value)
-          inc count
+    for (key, value) in parseEnvFile(path):
+      # Don't override existing env vars (explicit env takes precedence)
+      if getEnv(key).len == 0:
+        putEnv(key, value)
+        inc result
   except CatchableError:
     discard
-
-  count
 
 proc envFilePath*(home: string): string =
   ## Returns the path to the donkey.env file.
