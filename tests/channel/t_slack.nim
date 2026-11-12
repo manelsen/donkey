@@ -62,12 +62,13 @@ suite "IdentityResolver (Slack)":
     let path = getTempDir() / "donkey_test_ids_slack6.tsv"
     removeFile(path)
     defer: removeFile(path)
-    let stale = newIdentityResolver(path)  ## loaded before the external write
+    let staleLookup = newIdentityResolver(path)   ## loaded before the write
+    let staleResolve = newIdentityResolver(path)  ## loaded before the write
     let writer = newIdentityResolver(path)
     let uid = writer.resolve(ckSlack, "U-new")
 
-    check stale.lookup(ckSlack, "U-new").get == uid
-    check stale.resolve(ckSlack, "U-new") == uid  ## no new UUID minted
+    check staleLookup.lookup(ckSlack, "U-new").get == uid
+    check staleResolve.resolve(ckSlack, "U-new") == uid  ## no new UUID minted
 
 # ── SlackAdapter construction ──────────────────────────────────────────────────
 

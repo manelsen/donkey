@@ -47,14 +47,18 @@ proc generateUUID*(): string =
     result.add(hex[v shr 4])
     result.add(hex[v and 0x0F])
 
-proc save(r: IdentityResolver) =
-  createDir(r.path.parentDir())
+proc save(r: IdentityResolver): Result[void, string] =
   var buf = ""
   for k, v in r.store:
     buf.add(k & '\t' & $v & '\n')
-  let tmp = r.path & ".tmp"
-  writeFile(tmp, buf)
-  moveFile(tmp, r.path)
+  try:
+    createDir(r.path.parentDir())
+    let tmp = r.path & ".tmp"
+    writeFile(tmp, buf)
+    moveFile(tmp, r.path)
+    ok()
+  except CatchableError as e:
+    err("identity store write failed: " & e.msg)
 
 proc loadPersistedMappings(r: IdentityResolver): Result[void, string] =
   ## Rebuilds the in-memory maps from disk. On a read failure the current maps
@@ -88,6 +92,18 @@ proc newIdentityResolver*(path: string): IdentityResolver =
   )
   discard result.loadPersistedMappings()
 
+proc removeReverseEntry(r: IdentityResolver; us, key: string) =
+  if us in r.reverseMap:
+    var idx = -1
+    for i, existing in r.reverseMap[us]:
+      if existing == key:
+        idx = i
+        break
+    if idx >= 0:
+      r.reverseMap[us].delete(idx)
+    if r.reverseMap[us].len == 0:
+      r.reverseMap.del(us)
+
 proc resolve*(r: IdentityResolver; kind: ChannelKind; rawId: string): UserId =
   ## Returns the stable UserId for (kind, rawId), minting a new UUID on first
   ## contact. Reloads the persisted map before minting so a UUID written by
@@ -106,7 +122,12 @@ proc resolve*(r: IdentityResolver; kind: ChannelKind; rawId: string): UserId =
     if us notin r.reverseMap:
       r.reverseMap[us] = @[]
     r.reverseMap[us].add(key)
-    r.save()
+    let saved = r.save()
+    if saved.isErr:
+      ## Keep memory consistent with disk: do not expose an unpersisted UUID.
+      r.store.del(key)
+      r.removeReverseEntry(us, key)
+      return UserId("")
   r.store[key]
 
 proc lookup*(r: IdentityResolver; kind: ChannelKind; rawId: string): Option[UserId] =
@@ -189,5 +210,9 @@ proc consumeLinkCode*(r: IdentityResolver; code: string;
   if key notin r.reverseMap[us]:
     r.reverseMap[us].add(key)
   r.pendingLinks.del(code)
-  r.save()
+  let saved = r.save()
+  if saved.isErr:
+    r.store.del(key)
+    r.removeReverseEntry(us, key)
+    return false
   true
