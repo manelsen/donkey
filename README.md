@@ -188,7 +188,7 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 | **Telegram** | Long Polling | Streaming responses, markdown formatting, reactions, inline keyboards |
 | **Discord** | Gateway WebSockets | Slash commands, components, thread handling, bot mentions |
 | **WeChat / WeCom**| Webhook / Event loop | Enterprise WeChat & personal bridge support |
-| **Feishu / Lark** | Outbound API | Group chats, direct messages; inbound requires an integration that calls `pushEvent` (interactive cards not supported) |
+| **Feishu / Lark** | Webhook + API | Events API at `/webhook/feishu`, verification token + optional `FEISHU_ENCRYPT_KEY` (AES-256-CBC), DM gate; interactive cards not supported |
 | **DingTalk** | Outbound API | Inbound requires an integration that calls `pushEvent` |
 | **QQ / OneBot** | WebSocket / HTTP | OneBot v11 protocol, group and private chat dispatch |
 | **Slack** | Webhook + API | Events API, Slash Commands and Interactivity at `/webhook/slack`; requires `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` and `DONKEY_WEBHOOK_PORT`. DM gate and outbound `chat.postMessage` |
@@ -196,6 +196,8 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 | **HTTP Gateway**| REST / SSE | Local webhooks; note: open `/api/events` streams occupy the single accept thread (blocking concurrent `/api/chat` or status calls for up to 5h until disconnected) |
 
 > **Slack inbound setup:** point Event Subscriptions, Slash Commands and Interactivity to the same `https://<public-host>/webhook/slack` URL. The receiver listens on `DONKEY_WEBHOOK_HOST:DONKEY_WEBHOOK_PORT` (default `127.0.0.1`) over HTTP, so expose it through an HTTPS reverse proxy; Slack does not call a loopback HTTP endpoint directly.
+
+> **Feishu inbound setup:** set `FEISHU_APP_ID`, `FEISHU_VERIFICATION_TOKEN` and `DONKEY_WEBHOOK_PORT` (the receiver is disabled while the port is unset); optionally set `FEISHU_ENCRYPT_KEY` for AES-256-CBC payload encryption. Point Event Subscriptions to `https://<public-host>/webhook/feishu` and forward it through an HTTPS reverse proxy to `DONKEY_WEBHOOK_HOST:DONKEY_WEBHOOK_PORT` (default host `127.0.0.1`).
 
 ### DM pairing
 

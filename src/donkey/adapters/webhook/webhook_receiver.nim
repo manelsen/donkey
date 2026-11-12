@@ -15,8 +15,8 @@
 ## A channel route is only mounted when its secret is configured, so no
 ## unauthenticated endpoint is ever exposed.
 
-import std/[base64, json, monotimes, net, os, posix, strutils, tables, times]
-import nimcrypto/[hmac, sha2]
+import std/[atomics, base64, json, monotimes, net, os, posix, strutils, tables, times]
+import nimcrypto/[bcmode, hmac, rijndael, sha2]
 import ../../core/log
 import ../../core/pipeops
 import ../channel/slack
@@ -33,6 +33,7 @@ const
   WhatsAppPath* = "/webhook/whatsapp"
 
   SlackReplayWindowSec*      = 300
+  FeishuReplayWindowSec*     = 300
   DingTalkTimestampWindowMs* = 3_600_000
   MaxWebhookBodyBytes*       = 2 * 1024 * 1024
 
@@ -60,6 +61,7 @@ type
   WebhookConfig* = object
     slackSigningSecret*:      string
     feishuVerificationToken*: string
+    feishuEncryptKey*:        string
     dingtalkAppSecret*:       string
     matrixToken*:             string
     whatsappVerifyToken*:     string
@@ -210,16 +212,99 @@ proc handleSlack(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
 
 # ── Feishu ────────────────────────────────────────────────────────────────────
 
+func feishuSignature*(timestamp, nonce, encryptKey, body: string): string =
+  ## Feishu event signature: hex(SHA256(timestamp & nonce & encrypt_key & body)).
+  var ctx: sha256
+  ctx.init()
+  ctx.update(timestamp & nonce & encryptKey & body)
+  let digest = ctx.finish()
+  for b in digest.data:
+    result.add(b.toHex(2).toLowerAscii())
+
+proc decryptFeishuBody(encryptKey, body: string): Result[JsonNode, string] {.raises: [].} =
+  ## Decrypts Feishu's Encrypt Key envelope: base64(iv[16] || AES-256-CBC).
+  ## The key is SHA256(encrypt_key); padding is PKCS#7.
+  try:
+    let outer = parseJson(body)
+    let encrypted = outer.getOrDefault("encrypt").getStr("")
+    if encrypted.len == 0:
+      return err("missing encrypt field")
+    let decoded = base64.decode(encrypted)
+    if decoded.len <= 16 or (decoded.len - 16) mod 16 != 0:
+      return err("invalid encrypted payload length")
+
+    var key: array[32, byte]
+    var sha: sha256
+    sha.init()
+    sha.update(encryptKey)
+    let digest = sha.finish()
+    for i in 0 ..< key.len:
+      key[i] = digest.data[i]
+
+    var iv: array[16, byte]
+    for i in 0 ..< iv.len:
+      iv[i] = byte(decoded[i])
+
+    let cipherText = decoded[16 .. ^1]
+    var plainText = newString(cipherText.len)
+    var ctx: CBC[aes256]
+    ctx.init(key, iv)
+    ctx.decrypt(cipherText, plainText)
+    ctx.clear()
+
+    if plainText.len == 0:
+      return err("empty decrypted payload")
+    let pad = int(plainText[^1])
+    if pad <= 0 or pad > 16 or pad > plainText.len:
+      return err("invalid PKCS7 padding")
+    for i in 0 ..< pad:
+      if int(plainText[plainText.len - 1 - i]) != pad:
+        return err("invalid PKCS7 padding")
+    let jsonText = plainText[0 ..< plainText.len - pad]
+    let inner = parseJson(jsonText)
+    if inner.kind != JObject:
+      return err("decrypted payload is not an object")
+    ok(inner)
+  except CatchableError as e:
+    err("Feishu decrypt failed: " & e.msg)
+
 proc handleFeishu(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
-  if cfg.feishuVerificationToken.len == 0:
+  if cfg.feishuVerificationToken.len == 0 and cfg.feishuEncryptKey.len == 0:
     return notFound()
   if req.httpMethod != "POST":
     return methodNotAllowed()
 
-  let payload = parsePayload(req.body).valueOr:
+  ## With an Encrypt Key, Feishu signs the raw body before encryption. Validate
+  ## the signature and replay window before touching the ciphertext.
+  if cfg.feishuEncryptKey.len > 0:
+    let timestamp = req.header("x-lark-request-timestamp")
+    let nonce = req.header("x-lark-request-nonce")
+    let signature = req.header("x-lark-signature")
+    if timestamp.len == 0 or nonce.len == 0 or signature.len == 0:
+      return forbidden()
+    var ts: int64
+    try:
+      ts = parseBiggestInt(timestamp)
+    except ValueError:
+      return forbidden()
+    let now = epochTime().int64
+    if ts < now - FeishuReplayWindowSec.int64 or
+       ts > now + FeishuReplayWindowSec.int64:
+      return forbidden()
+    let expected = feishuSignature(timestamp, nonce, cfg.feishuEncryptKey,
+                                   req.body)
+    if not safeEquals(signature, expected):
+      return forbidden()
+
+  var payload = parsePayload(req.body).valueOr:
     return badRequest()
 
-  if not safeEquals(feishuToken(payload), cfg.feishuVerificationToken):
+  if cfg.feishuEncryptKey.len > 0:
+    payload = decryptFeishuBody(cfg.feishuEncryptKey, req.body).valueOr:
+      return badRequest()
+
+  if cfg.feishuVerificationToken.len > 0 and
+     not safeEquals(feishuToken(payload), cfg.feishuVerificationToken):
     return forbidden()
 
   let challenge = feishu.parseChallenge(payload)
@@ -341,6 +426,7 @@ proc handleWebhookRequest*(cfg: WebhookConfig; req: WebhookRequest): WebhookResp
 func anyRouteConfigured*(cfg: WebhookConfig): bool =
   cfg.slackSigningSecret.len > 0 or
     cfg.feishuVerificationToken.len > 0 or
+    cfg.feishuEncryptKey.len > 0 or
     cfg.dingtalkAppSecret.len > 0 or
     cfg.matrixToken.len > 0 or
     cfg.whatsappVerifyToken.len > 0
@@ -513,7 +599,9 @@ var
   gWebhookQueue {.global.}: Channel[SocketHandle]
   gWebhookPoolStarted {.global.} = false
   gWebhookPoolAttempted {.global.} = false
+  gWebhookWorkersStarted {.global.} = 0
   gWebhookStarted = false
+  gWebhookStop: Atomic[bool]
 
 proc webhookWorker(arg: WebhookWorkerArg) {.thread.} =
   {.cast(gcsafe).}:
@@ -550,7 +638,15 @@ proc startWebhookPool(cfg: WebhookConfig; logger: Logger): Result[void, string] 
     for i in 0 ..< WebhookWorkerCount:
       createThread(gWebhookWorkers[i], webhookWorker,
                    WebhookWorkerArg(cfg: cfg, logger: logger))
+      inc gWebhookWorkersStarted
   except CatchableError as e:
+    ## Stop the workers that were already created before reporting failure.
+    for _ in 0 ..< gWebhookWorkersStarted:
+      gWebhookQueue.send(SocketHandle(-1))
+    for i in 0 ..< gWebhookWorkersStarted:
+      joinThread(gWebhookWorkers[i])
+    gWebhookQueue.close()
+    gWebhookWorkersStarted = 0
     return err("cannot start webhook workers: " & e.msg)
   gWebhookPoolStarted = true
   ok()
@@ -573,6 +669,15 @@ proc webhookServerThread(args: WebhookServerArgs) {.thread.} =
       server.bindAddr(Port(args.port), args.host)
       server.listen()
 
+      ## Bound accept() so shutdown can be observed without closing the
+      ## listening socket from another thread.
+      var tv: posix.Timeval
+      tv.tv_sec = posix.Time(1)
+      tv.tv_usec = posix.Suseconds(0)
+      discard posix.setsockopt(server.getFd, posix.SOL_SOCKET,
+                               posix.SO_RCVTIMEO, addr tv,
+                               posix.SockLen(sizeof(tv)))
+
       let pool = startWebhookPool(args.cfg, args.logger)
       if pool.isErr:
         args.logger.error("webhook: " & pool.error)
@@ -583,13 +688,25 @@ proc webhookServerThread(args: WebhookServerArgs) {.thread.} =
       args.sendHandshake("")
       handshakeSent = true
 
-      while true:
+      while not gWebhookStop.load():
         var client: Socket
         try:
           server.accept(client)
-        except CatchableError as e:
+        except TimeoutError:
+          continue
+        except OSError as e:
+          if gWebhookStop.load():
+            break
+          if e.errorCode == EAGAIN or e.errorCode == EWOULDBLOCK:
+            continue
           args.logger.warn("webhook: accept error: " & e.msg)
           ## Avoid a hot loop when accept fails persistently (e.g. EMFILE).
+          sleep(50)
+          continue
+        except CatchableError as e:
+          if gWebhookStop.load():
+            break
+          args.logger.warn("webhook: accept error: " & e.msg)
           sleep(50)
           continue
         applyWebhookClientTimeouts(client)
@@ -625,6 +742,7 @@ proc startWebhookReceiver*(cfg: WebhookConfig;
   if gWebhookStarted:
     return err("webhook receiver already started")
 
+  gWebhookStop.store(false)
   var handshake: Channel[string]
   handshake.open(1)
   try:
@@ -648,3 +766,33 @@ proc startWebhookReceiver*(cfg: WebhookConfig;
 
   gWebhookStarted = true
   ok()
+
+proc stopWebhookReceiver*() {.gcsafe.} =
+  ## Stops the listener and joins its workers. Safe to call when nothing is
+  ## running. After this returns the receiver can be started again.
+  if not gWebhookStarted:
+    return
+  gWebhookStop.store(true)
+  {.cast(gcsafe).}:
+    joinThread(gWebhookThread)
+  ## The accept loop is the only producer and it has stopped. Close descriptors
+  ## still waiting in the queue so a slow client cannot delay shutdown; only
+  ## in-flight requests (at most one per worker) remain to be joined.
+  while true:
+    let (hasQueued, fd) = gWebhookQueue.tryRecv()
+    if not hasQueued:
+      break
+    if fd != SocketHandle(-1):
+      discard posix.close(cint(fd))
+  if gWebhookWorkersStarted > 0:
+    for _ in 0 ..< gWebhookWorkersStarted:
+      gWebhookQueue.send(SocketHandle(-1))
+    for i in 0 ..< gWebhookWorkersStarted:
+      {.cast(gcsafe).}:
+        joinThread(gWebhookWorkers[i])
+    gWebhookQueue.close()
+    gWebhookWorkersStarted = 0
+  gWebhookStarted = false
+  gWebhookPoolStarted = false
+  gWebhookPoolAttempted = false
+  gWebhookStop.store(false)
