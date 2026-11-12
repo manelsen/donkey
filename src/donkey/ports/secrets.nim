@@ -8,10 +8,12 @@
 ##
 ## Plaintext values (no prefix) are returned as-is by all implementations.
 
+import ../core/pipeops
+
 type
   SecretStore* = concept s
-    s.encrypt(string) is string    ## plaintext → "enc2:..." (or unchanged if disabled)
-    s.decrypt(string) is string    ## "enc2:..." → plaintext (or unchanged)
+    s.encrypt(string) is Result[string, string]    ## plaintext → "enc2:..." (or unchanged if disabled)
+    s.decrypt(string) is Result[string, string]    ## "enc2:..." → plaintext (or unchanged)
     s.isEncrypted(string) is bool  ## true iff value starts with "enc2:"
     s.enabled is bool              ## false = passthrough mode (dev/test)
     s.label is string              ## human-readable name for test output

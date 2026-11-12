@@ -157,10 +157,10 @@ proc setSecret*(vault: SecretVault;
       ## become unrecoverable while the new one silently used a different key.
       return err("secret vault key is missing; restore " & vault.keyPath &
                  " or reset the vault explicitly")
-    try:
-      stored[name] = vault.keyStore.encrypt(value)
-    except CatchableError as e:
-      return err("secret encryption failed: " & e.msg)
+    let encrypted = vault.keyStore.encrypt(value)
+    if encrypted.isErr:
+      return err("secret encryption failed: " & encrypted.error)
+    stored[name] = encrypted.get()
     vault.writeStored(stored))
 
 proc listSecretNames*(vault: SecretVault):
@@ -204,12 +204,15 @@ proc applyToEnv*(vault: SecretVault): Result[int, string] {.raises: [].} =
       continue
     if not fileExists(vault.keyPath):
       return err("secret vault key is missing: " & vault.keyPath)
+    let decrypted = vault.keyStore.decrypt(ciphertext)
+    if decrypted.isErr:
+      return err("could not decrypt secret '" & name & "': " & decrypted.error)
+    let plaintext = decrypted.get()
+    if plaintext.len == 0:
+      return err("secret '" & name & "' decrypted to an empty value")
     try:
-      let plaintext = vault.keyStore.decrypt(ciphertext)
-      if plaintext.len == 0:
-        return err("secret '" & name & "' decrypted to an empty value")
       putEnv(name, plaintext)
-      inc applied
     except CatchableError as e:
-      return err("could not decrypt secret '" & name & "': " & e.msg)
+      return err("could not set secret '" & name & "': " & e.msg)
+    inc applied
   ok(applied)
