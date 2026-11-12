@@ -25,4 +25,5 @@ type
     patch*: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
     delete*: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
     getNoRedirect*: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
+    postNoRedirect*: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.}
     resolveHost*: proc(host: string): Result[string, string] {.gcsafe.}

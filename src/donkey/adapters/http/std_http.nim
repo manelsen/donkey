@@ -106,6 +106,12 @@ proc getNoRedirect*(a: StdHttpAdapter; url: string;
                     headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
   a.requestWithRetry(HttpGet, url, "", headers, redirectLimit = 0)
 
+proc postNoRedirect*(a: StdHttpAdapter; url, body: string;
+                     headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+  ## POST without following redirects, so auth headers cannot be forwarded to
+  ## a different origin.
+  a.requestWithRetry(HttpPost, url, body, headers, redirectLimit = 0)
+
 proc toRuntimePort*(a: StdHttpAdapter): HttpRuntimePort =
   HttpRuntimePort(
     get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
@@ -125,6 +131,9 @@ proc toRuntimePort*(a: StdHttpAdapter): HttpRuntimePort =
     ,
     getNoRedirect: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
       result = a.getNoRedirect(url, headers)
+    ,
+    postNoRedirect: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      result = a.postNoRedirect(url, body, headers)
     ,
     resolveHost: proc(host: string): Result[string, string] {.gcsafe.} =
       safeResolve(host)

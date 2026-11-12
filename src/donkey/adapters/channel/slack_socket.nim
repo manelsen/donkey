@@ -74,9 +74,11 @@ proc handleSlackSocketEnvelope*(envelope: JsonNode): bool =
   true
 
 proc openSocketUrl(client: SlackSocketMode): Result[string, string] =
+  if client.http.postNoRedirect == nil:
+    return err("apps.connections.open needs an HTTP port with postNoRedirect")
   var resp: Result[HttpResponse, string]
   try:
-    resp = client.http.post(
+    resp = client.http.postNoRedirect(
       SlackApiBase & "/apps.connections.open", "",
       @[("Authorization", "Bearer " & client.appToken),
         ("Content-Type", "application/x-www-form-urlencoded")])

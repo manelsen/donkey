@@ -133,15 +133,17 @@ proc sendFrame*(ws: WsClient; data: string; opcode = WsOpcodeText) =
 
   ws.sock.send(frame)
 
-proc recvFrame*(ws: WsClient; timeoutMs = 1000): WsFrame =
+proc recvFrame*(ws: WsClient; timeoutMs = 1000;
+                frameTimeoutMs = 10_000): WsFrame =
   ## Receives one WebSocket frame (server → client, unmasked).
   ## Waits up to timeoutMs for the first byte; raises TimeoutError if none.
-  ## Subsequent bytes of the same frame are read without timeout.
-  let deadline = getMonoTime() + initDuration(milliseconds = max(1, timeoutMs))
+  ## Once a frame starts, it must finish within frameTimeoutMs.
   var firstByte = newString(1)
   let n0 = ws.sock.recv(firstByte, 1, timeoutMs)
   if n0 <= 0:
     raise newException(IOError, "WebSocket: connection closed on header byte 0")
+  let deadline = getMonoTime() +
+    initDuration(milliseconds = max(1, frameTimeoutMs))
 
   var secondByte = newString(1)
   var n1: int
