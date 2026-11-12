@@ -1887,9 +1887,9 @@ proc main =
     args.len == 0 or
     args[0] in ["start", "about", "doctor"] or
     (args[0] == "ctl" and args.len >= 2 and
-     (args[1] in ["provider", "memory", "status"] or
+     (args[1] in ["provider", "memory"] or
       (args[1] == "skill" and args.len >= 3 and
-       args[2] in ["install", "update"])))
+       args[2] in ["install", "update", "search"])))
   if needsVault:
     let vaultApplied = newSecretVault(cfg.home).applyToEnv()
     if vaultApplied.isErr:
