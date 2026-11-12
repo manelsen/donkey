@@ -3,7 +3,7 @@
 ## No sockets are opened: the pure request→response handler is exercised
 ## directly, and dispatched payloads are observed through each adapter queue.
 
-import std/[base64, json, net, os, strutils, tables, times, unittest, uri]
+import std/[base64, json, net, os, osproc, strutils, tables, times, unittest, uri]
 import nimcrypto/[bcmode, rijndael, sha2]
 import donkey/core/log
 import donkey/core/pipeops
@@ -69,6 +69,22 @@ proc feishuSignedHeaders(body, encryptKey: string;
     ("X-Lark-Request-Nonce", nonce),
     ("X-Lark-Signature", feishuSignature(timestamp, nonce, encryptKey, body)),
   ]
+
+proc generateTestTlsCert(prefix: string): tuple[cert: string, key: string] =
+  ## Generates a throwaway self-signed certificate in a unique directory.
+  ## Returns empty strings when openssl (or -addext) is unavailable, so the
+  ## test can skip.
+  let dir = prefix & "-" & $epochTime().int64 & "-" & $getCurrentProcessId()
+  createDir(dir)
+  let cert = dir / "cert.pem"
+  let key = dir / "key.pem"
+  let cmd = "openssl req -x509 -newkey rsa:2048 -nodes -keyout " & quoteShell(key) &
+            " -out " & quoteShell(cert) &
+            " -days 1 -subj /CN=localhost" &
+            " -addext subjectAltName=DNS:localhost,IP:127.0.0.1 2>/dev/null"
+  if execCmd(cmd) != 0:
+    return ("", "")
+  (cert, key)
 
 proc clearQueues() =
   ## Drains module-level queues so tests are independent.
@@ -515,3 +531,65 @@ suite "webhook receiver — exposure guard":
     let second = startWebhookReceiver(cfg, int(port), "127.0.0.1", hookLog)
     check second.isOk
     stopWebhookReceiver()
+
+  test "TLS requires both certificate and key":
+    let cfg = WebhookConfig(slackSigningSecret: "x",
+                            tlsCertFile: "/tmp/cert.pem")
+    let r = startWebhookReceiver(cfg, 9096, "127.0.0.1", hookLog)
+    check r.isErr
+    check "both" in r.error
+
+  test "invalid TLS files are refused":
+    let cfg = WebhookConfig(slackSigningSecret: "x",
+                            tlsCertFile: "/nonexistent/cert.pem",
+                            tlsKeyFile: "/nonexistent/key.pem")
+    let r = startWebhookReceiver(cfg, 9095, "127.0.0.1", hookLog)
+    check r.isErr
+    check "TLS certificate" in r.error
+
+  test "native TLS serves a signed Slack challenge":
+    let (cert, key) = generateTestTlsCert(HookTmp / "tls")
+    if cert.len == 0:
+      echo "skipping TLS integration test: openssl unavailable"
+    else:
+      var probe = newSocket()
+      probe.setSockOpt(OptReuseAddr, true)
+      probe.bindAddr(Port(0), "127.0.0.1")
+      let (_, port) = probe.getLocalAddr()
+      probe.close()
+
+      let secret = "tls-signing"
+      let cfg = WebhookConfig(slackSigningSecret: secret,
+                              tlsCertFile: cert, tlsKeyFile: key)
+      let started = startWebhookReceiver(cfg, int(port), "127.0.0.1", hookLog)
+      check started.isOk
+      defer: stopWebhookReceiver()
+
+      let body = """{"type":"url_verification","challenge":"tls-ch-1"}"""
+      let ts = $epochTime().int64
+      let sig = slackSig(secret, ts, body)
+      let request = "POST " & SlackPath & " HTTP/1.1\r\n" &
+                    "Host: localhost\r\n" &
+                    "Content-Type: application/json\r\n" &
+                    "Content-Length: " & $body.len & "\r\n" &
+                    "X-Slack-Request-Timestamp: " & ts & "\r\n" &
+                    "X-Slack-Signature: " & sig & "\r\n" &
+                    "Connection: close\r\n\r\n" & body
+
+      var client = newSocket()
+      client.connect("127.0.0.1", Port(int(port)))
+      let clientCtx = newContext(verifyMode = CVerifyNone)
+      clientCtx.wrapConnectedSocket(client, handshakeAsClient)
+      client.send(request)
+
+      var response = ""
+      while true:
+        var chunk = ""
+        let n = client.recv(chunk, 4096)
+        if n <= 0:
+          break
+        response.add(chunk)
+      client.close()
+
+      check "200 OK" in response
+      check "tls-ch-1" in response

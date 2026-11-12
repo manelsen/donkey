@@ -210,6 +210,8 @@ type DaemonEnv = object
   whatsappPhoneNumberId: string
   webhookPort: int
   webhookHost: string
+  webhookTlsCert: string
+  webhookTlsKey: string
   slackSigningSecret: string
   feishuVerificationToken: string
   feishuEncryptKey: string
@@ -474,6 +476,8 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
       result.webhookPort = 0
   let webhookHost = getEnv("DONKEY_WEBHOOK_HOST")
   result.webhookHost = if webhookHost.len > 0: webhookHost else: "127.0.0.1"
+  result.webhookTlsCert = getEnv("DONKEY_WEBHOOK_TLS_CERT").strip()
+  result.webhookTlsKey = getEnv("DONKEY_WEBHOOK_TLS_KEY").strip()
   result.slackSigningSecret = getEnv("SLACK_SIGNING_SECRET")
   result.feishuVerificationToken = getEnv("FEISHU_VERIFICATION_TOKEN")
   result.feishuEncryptKey = getEnv("FEISHU_ENCRYPT_KEY")
@@ -966,7 +970,10 @@ proc startOptionalWhatsAppGateway(waAdapter: var WhatsAppAdapter;
 proc startOptionalWebhookReceiver(env: DaemonEnv; log: Logger) =
   ## Mounts only the routes whose channel is configured AND has a secret.
   if env.webhookPort <= 0:
-    log.info("DONKEY_WEBHOOK_PORT not set — HTTP webhook receiver disabled")
+    log.info("DONKEY_WEBHOOK_PORT not set — webhook receiver disabled")
+    return
+  if (env.webhookTlsCert.len > 0) != (env.webhookTlsKey.len > 0):
+    log.error("DONKEY_WEBHOOK_TLS_CERT and DONKEY_WEBHOOK_TLS_KEY must be set together — webhook receiver disabled")
     return
 
   let cfg = WebhookConfig(
@@ -988,11 +995,15 @@ proc startOptionalWebhookReceiver(env: DaemonEnv; log: Logger) =
       else: "",
     whatsappAppSecret:
       if env.whatsappVerifyToken.len > 0: env.whatsappAppSecret else: "",
+    tlsCertFile: env.webhookTlsCert,
+    tlsKeyFile: env.webhookTlsKey,
   )
   startWebhookReceiver(cfg, env.webhookPort, env.webhookHost, log).isOkOr:
     log.error("webhook receiver: " & error)
     return
-  log.info("webhook receiver started on " & env.webhookHost & ":" & $env.webhookPort)
+  let scheme = if env.webhookTlsCert.len > 0: "https" else: "http"
+  log.info("webhook receiver started on " & scheme & "://" &
+           env.webhookHost & ":" & $env.webhookPort)
 
 proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
                              log: Logger) =
