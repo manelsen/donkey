@@ -1881,9 +1881,14 @@ proc main =
   discard loadDonkeyEnv(home)
 
   var cfg = loadConfig(configPath)
-  let isSecretAdmin =
-    args.len >= 2 and args[0] == "ctl" and args[1] == "secret"
-  if not isSecretAdmin:
+  ## Decrypting the vault must not block administrative commands that do not
+  ## consume its variables (service stop/logs, secret recovery, user/pairing).
+  let needsVault =
+    args.len == 0 or
+    args[0] in ["start", "about", "doctor"] or
+    (args[0] == "ctl" and args.len >= 2 and
+     args[1] in ["provider", "memory", "status"])
+  if needsVault:
     let vaultApplied = newSecretVault(cfg.home).applyToEnv()
     if vaultApplied.isErr:
       stderr.writeLine "Security Error: " & vaultApplied.error
