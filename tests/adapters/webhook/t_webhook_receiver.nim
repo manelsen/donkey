@@ -61,6 +61,15 @@ proc feishuEncrypt(encryptKey, plaintext: string): string =
   ctx.clear()
   base64.encode(ivStr & cipher)
 
+proc feishuSignedHeaders(body, encryptKey: string;
+                         nonce = "test-nonce"): seq[(string, string)] =
+  let timestamp = $epochTime().int64
+  @[
+    ("X-Lark-Request-Timestamp", timestamp),
+    ("X-Lark-Request-Nonce", nonce),
+    ("X-Lark-Signature", feishuSignature(timestamp, nonce, encryptKey, body)),
+  ]
+
 proc clearQueues() =
   ## Drains module-level queues so tests are independent.
   var sl = newSlackAdapter("tok", HookTmp / "slack.tsv")
@@ -230,9 +239,29 @@ suite "webhook receiver — Feishu":
       "token": "fs-token",
     }
     let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
-    let resp = handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body))
+    let resp = handleWebhookRequest(cfg,
+      mkReq("POST", FeishuPath, body,
+            headers = feishuSignedHeaders(body, "enc-key")))
     check resp.status == 200
     check parseJson(resp.body)["challenge"].getStr() == "enc-ch"
+
+  test "encrypted payload without a signature is rejected":
+    let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
+                            feishuEncryptKey: "enc-key")
+    let inner = %* {"type": "url_verification", "challenge": "enc-ch",
+                    "token": "fs-token"}
+    let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
+    check handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body)).status == 403
+
+  test "encrypted payload with a bad signature is rejected":
+    let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
+                            feishuEncryptKey: "enc-key")
+    let inner = %* {"type": "url_verification", "challenge": "enc-ch",
+                    "token": "fs-token"}
+    let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
+    check handleWebhookRequest(cfg,
+      mkReq("POST", FeishuPath, body,
+            headers = feishuSignedHeaders(body, "wrong-key"))).status == 403
 
   test "encrypted payload with the wrong key is rejected":
     let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
@@ -243,20 +272,26 @@ suite "webhook receiver — Feishu":
       "token": "fs-token",
     }
     let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
-    check handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body)).status == 400
+    check handleWebhookRequest(cfg,
+      mkReq("POST", FeishuPath, body,
+            headers = feishuSignedHeaders(body, "other-key"))).status == 400
 
   test "plaintext is rejected when an encrypt key is configured":
     let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
                             feishuEncryptKey: "enc-key")
     let body = """{"type":"url_verification","challenge":"fs-ch","token":"fs-token"}"""
-    check handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body)).status == 400
+    check handleWebhookRequest(cfg,
+      mkReq("POST", FeishuPath, body,
+            headers = feishuSignedHeaders(body, "enc-key"))).status == 400
 
   test "encrypt key alone configures the Feishu route":
     let cfg = WebhookConfig(feishuEncryptKey: "enc-key")
     check anyRouteConfigured(cfg)
     let inner = %* {"type": "url_verification", "challenge": "enc-only"}
     let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
-    let resp = handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body))
+    let resp = handleWebhookRequest(cfg,
+      mkReq("POST", FeishuPath, body,
+            headers = feishuSignedHeaders(body, "enc-key")))
     check resp.status == 200
     check parseJson(resp.body)["challenge"].getStr() == "enc-only"
 

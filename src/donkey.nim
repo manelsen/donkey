@@ -1656,8 +1656,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   log.info("daemon starting — Telegram + Discord + WeCom")
   gShutdownRequested = false
   when defined(posix):
-    discard posix.signal(posix.SIGTERM, handleShutdownSignal)
-    discard posix.signal(posix.SIGINT, handleShutdownSignal)
+    posix.signal(posix.SIGTERM, handleShutdownSignal)
+    posix.signal(posix.SIGINT, handleShutdownSignal)
   {.cast(gcsafe).}:
     initMetrics()
     startOptionalMetricsServer(log)
@@ -1789,6 +1789,9 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   finally:
     log.info("daemon shutdown: stopping webhook receiver")
     stopWebhookReceiver()
+    ## Connections accepted before the stop may have enqueued Feishu events;
+    ## consume them once before exiting.
+    discard drainer.drainFeishu()
     if ctx.runtime.stateStore != nil:
       discard ctx.runtime.stateStore.flushSessions()
 

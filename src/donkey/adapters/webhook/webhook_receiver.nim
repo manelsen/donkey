@@ -33,6 +33,7 @@ const
   WhatsAppPath* = "/webhook/whatsapp"
 
   SlackReplayWindowSec*      = 300
+  FeishuReplayWindowSec*     = 300
   DingTalkTimestampWindowMs* = 3_600_000
   MaxWebhookBodyBytes*       = 2 * 1024 * 1024
 
@@ -211,6 +212,15 @@ proc handleSlack(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
 
 # ── Feishu ────────────────────────────────────────────────────────────────────
 
+func feishuSignature*(timestamp, nonce, encryptKey, body: string): string =
+  ## Feishu event signature: hex(SHA256(timestamp & nonce & encrypt_key & body)).
+  var ctx: sha256
+  ctx.init()
+  ctx.update(timestamp & nonce & encryptKey & body)
+  let digest = ctx.finish()
+  for b in digest.data:
+    result.add(b.toHex(2).toLowerAscii())
+
 proc decryptFeishuBody(encryptKey, body: string): Result[JsonNode, string] {.raises: [].} =
   ## Decrypts Feishu's Encrypt Key envelope: base64(iv[16] || AES-256-CBC).
   ## The key is SHA256(encrypt_key); padding is PKCS#7.
@@ -263,6 +273,28 @@ proc handleFeishu(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
     return notFound()
   if req.httpMethod != "POST":
     return methodNotAllowed()
+
+  ## With an Encrypt Key, Feishu signs the raw body before encryption. Validate
+  ## the signature and replay window before touching the ciphertext.
+  if cfg.feishuEncryptKey.len > 0:
+    let timestamp = req.header("x-lark-request-timestamp")
+    let nonce = req.header("x-lark-request-nonce")
+    let signature = req.header("x-lark-signature")
+    if timestamp.len == 0 or nonce.len == 0 or signature.len == 0:
+      return forbidden()
+    var ts: int64
+    try:
+      ts = parseBiggestInt(timestamp)
+    except ValueError:
+      return forbidden()
+    let now = epochTime().int64
+    if ts < now - FeishuReplayWindowSec.int64 or
+       ts > now + FeishuReplayWindowSec.int64:
+      return forbidden()
+    let expected = feishuSignature(timestamp, nonce, cfg.feishuEncryptKey,
+                                   req.body)
+    if not safeEquals(signature, expected):
+      return forbidden()
 
   var payload = parsePayload(req.body).valueOr:
     return badRequest()
