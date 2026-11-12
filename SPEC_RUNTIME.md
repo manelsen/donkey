@@ -464,11 +464,19 @@ porque workers HTTP e o event loop podem persistir concorrentemente.
 a tabela e, quando o `id` não está mais nela (restart ou pending write que
 falhou), gravam apenas o evento mínimo.
 
-Limite conhecido — rotação/compaction do ledger: o arquivo cresce linearmente
-com o número de entregas (um evento `pending` + um evento terminal por entrega)
-e não há rotação/compaction implementada. Em daemons de longa duração com alto
-volume isso cresce sem limite; a rotação depende de replay seguro + reescrita
-atômica e é um follow-up conhecido (ver seção 14.4).
+Rotação/compaction do ledger:
+
+- o store compacta no startup e o daemon agenda uma tarefa periódica
+  (`DONKEY_LEDGER_COMPACT_INTERVAL_SEC`, default 3600s);
+- quando o arquivo ultrapassa `DONKEY_LEDGER_MAX_BYTES` (default 16 MiB),
+  appends terminais também disparam compaction, limitada pelo mesmo intervalo;
+- a compaction faz replay, mantém **todos** os registros `pending` e os
+  terminais dentro de `DONKEY_LEDGER_RETENTION_DAYS` (default 30), e reescreve
+  o arquivo atomicamente (tmp + fsync + rename + fsync do diretório);
+- registros sem timestamp são mantidos por segurança; `pending` nunca expira.
+
+O arquivo, portanto, é limitado por retenção + tamanho, em vez de crescer
+linearmente sem limite.
 
 Limite de `fsync`: em filesystems, mounts de rede ou discos que ignoram
 `fsync`, a persistência continua sendo best-effort — o processo não pode
@@ -856,8 +864,8 @@ Risco:
 
 Ledger de entrega:
 
-- o arquivo append-only cresce linearmente com as entregas e ainda não tem
-  rotação/compaction; ver 6.3.1.
+- o arquivo append-only agora tem compaction com retenção e limite de tamanho
+  (ver 6.3.1); a compactação depende do replay seguro do JSONL.
 
 ## 15. Recomendações de Leitura e Refatoração
 
