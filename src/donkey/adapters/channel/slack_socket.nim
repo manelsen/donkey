@@ -5,7 +5,9 @@
 ## messages. Envelopes are acked after the payload is queued, and the Slack
 ## runtime drains the same module-level queue used by the webhook receiver.
 
-import std/[atomics, json, net, os, strutils, uri]
+import std/[atomics, json, locks, net, os, strutils, uri]
+when defined(posix):
+  import std/posix
 import ../../core/log
 import ../../core/pipeops
 import ../../ports/http
@@ -23,6 +25,8 @@ type
     logger:   Logger
     stop:     Atomic[bool]
     stopped:  bool
+    fdLock:   Lock
+    activeFd: SocketHandle
     thread:   Thread[SlackSocketMode]
 
 var
@@ -138,6 +142,9 @@ proc runSlackSocket(client: SlackSocketMode) {.thread.} =
         backoff = min(backoff * 2, SlackSocketReconnectMaxMs)
         continue
 
+      acquire(client.fdLock)
+      client.activeFd = ws.sock.getFd
+      release(client.fdLock)
       client.logger.info("slack socket: connected")
       backoff = SlackSocketReconnectMinMs
       var reopen = false
@@ -174,6 +181,9 @@ proc runSlackSocket(client: SlackSocketMode) {.thread.} =
           client.logger.warn("slack socket: " & e.msg)
           reopen = true
 
+      acquire(client.fdLock)
+      client.activeFd = SocketHandle(-1)
+      release(client.fdLock)
       wsClose(ws)
       if not client.stop.load():
         if not client.sleepOrStop(1000):
@@ -191,8 +201,11 @@ proc startSlackSocketMode*(appToken: string;
 
   let client = SlackSocketMode(appToken: appToken, logger: logger)
   client.stop.store(false)
+  client.activeFd = SocketHandle(-1)
+  initLock(client.fdLock)
   try:
-    createThread(gSlackSocketThread, runSlackSocket, client)
+    {.cast(gcsafe).}:
+      createThread(gSlackSocketThread, runSlackSocket, client)
   except CatchableError as e:
     return err("cannot start Slack Socket Mode: " & e.msg)
 
@@ -206,7 +219,16 @@ proc stopSlackSocketMode*() =
   {.cast(gcsafe).}:
     if not gSlackSocketStarted:
       return
-    gSlackSocketClient.stop.store(true)
+    let client = gSlackSocketClient
+    client.stop.store(true)
+    when defined(posix):
+      ## Wake a blocked SSL_read so shutdown does not depend on frame timing.
+      acquire(client.fdLock)
+      if client.activeFd != SocketHandle(-1):
+        discard posix.shutdown(posix.SocketHandle(client.activeFd),
+                              posix.SHUT_RDWR)
+      release(client.fdLock)
     joinThread(gSlackSocketThread)
+    deinitLock(client.fdLock)
     gSlackSocketClient = nil
     gSlackSocketStarted = false

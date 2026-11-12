@@ -1828,6 +1828,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     stopWebhookReceiver()
     ## Connections accepted before the stop may have enqueued Feishu events;
     ## consume them once before exiting.
+    discard drainer.drainSlack()
     discard drainer.drainFeishu()
     if ctx.runtime.stateStore != nil:
       discard ctx.runtime.stateStore.flushSessions()
