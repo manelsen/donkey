@@ -109,6 +109,28 @@ suite "SecretVault":
     check applied.isErr
     check applied.error.contains("could not decrypt")
 
+  test "a single ciphertext byte flip is rejected without leaking":
+    removeDir(VaultTmp / "tamper-byte")
+    let vault = newSecretVault(VaultTmp / "tamper-byte")
+    check vault.setSecret("TOKEN", "value").isOk
+
+    var root = parseJson(readFile(vault.path))
+    var ciphertext = root["secrets"]["TOKEN"].getStr()
+    let firstCipherHex = "enc2:".len + 12 * 2  # skip IV
+    check ciphertext.len > firstCipherHex
+    ciphertext[firstCipherHex] =
+      if ciphertext[firstCipherHex] == '0': '1' else: '0'
+    root["secrets"]["TOKEN"] = %ciphertext
+    writeFile(vault.path, $root)
+
+    let previous = getEnv("TOKEN")
+    putEnv("TOKEN", "")
+    defer: putEnv("TOKEN", previous)
+    let applied = vault.applyToEnv()
+    check applied.isErr
+    check applied.error.contains("could not decrypt")
+    check getEnv("TOKEN") == ""
+
   test "plaintext entries in the vault are rejected":
     removeDir(VaultTmp / "plain")
     let vault = newSecretVault(VaultTmp / "plain")
