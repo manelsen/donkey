@@ -21,6 +21,17 @@ suite "approval runtime":
     check parseApprovalTools("none").len == 0
     check parseApprovalTools("bash, rm ,bash") == @["bash", "rm"]
 
+  test "wildcard policy covers native, MCP and skill tools":
+    configureApprovalService(ApprovalStorePort(), @["*"])
+    defer: resetApprovalService()
+    check requiresApproval("bash")
+    check requiresApproval("mcp_github_create_issue")
+    check requiresApproval(currentApprovalService(), "some_skill_tool")
+
+  test "MCP input summaries are full or rejected":
+    check approvalInputSummary("""{"query":"x"}""") == """{"query":"x"}"""
+    check approvalInputSummary(repeat("x", 1600)).len == 0
+
   test "chat commands decide and poll":
     removeDir(ApprovalRuntimeTmp / "chat")
     let store = newApprovalStore(ApprovalRuntimeTmp / "chat" / "approvals.json")

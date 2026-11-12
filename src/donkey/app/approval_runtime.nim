@@ -70,10 +70,24 @@ proc currentApprovalService*(): ApprovalService {.gcsafe.} =
     gApprovalService
 
 proc requiresApproval*(toolName: string): bool =
-  gApprovalService != nil and toolName in gApprovalService.tools
+  gApprovalService != nil and
+    ("*" in gApprovalService.tools or toolName in gApprovalService.tools)
 
 proc requiresApproval*(service: ApprovalService; toolName: string): bool =
-  service != nil and toolName in service.tools
+  service != nil and ("*" in service.tools or toolName in service.tools)
+
+func approvalInputSummary*(inputJson: string): string =
+  ## Full JSON input for an MCP/external tool; empty means it is too large to
+  ## display safely for approval.
+  const MaxApprovalSummaryChars = 1500
+  result = inputJson.replace("\r\n", "\\n")
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r")
+                    .strip
+  if result.len == 0:
+    result = "(sem detalhes)"
+  if result.len > MaxApprovalSummaryChars:
+    result = ""
 
 func approvalMessage*(request: ApprovalRequest): string =
   "⚠️ *Aprovação necessária*\n\n" &
