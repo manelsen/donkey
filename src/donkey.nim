@@ -56,6 +56,8 @@ import donkey/adapters/tools/browser
 import donkey/domain/tools/browser_pure
 import donkey/adapters/state/runtime_store
 import donkey/adapters/state/pairing_store
+import donkey/adapters/state/approval_store
+import donkey/app/approval_runtime
 import donkey/domain/message
 import donkey/domain/agent_message
 import donkey/ports/provider
@@ -123,6 +125,9 @@ Commands:
   ctl pair list                 List pending DM pairing requests
   ctl pair approve <code>       Approve a pairing request and allow the user
   ctl pair reject <code>        Discard a pairing request
+  ctl approval list [user]      List pending tool approvals
+  ctl approval approve <id>     Approve a pending tool call
+  ctl approval deny <id>        Deny a pending tool call
   ctl session list <uuid>        List active sessions for a user
   ctl tool install <command>            Register an MCP server
   ctl skill search <query>              Search remote skills on ClawHub
@@ -1386,6 +1391,13 @@ proc handleGatewayFallback(ctx: DaemonContext;
                            msg: InboundMessage;
                            log: Logger) {.gcsafe.} =
   let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
+  let approvalReply = tryHandleApprovalInput(msg.userId, msg.text)
+  if approvalReply.isSome:
+    let port = outboundPortForChannel(outboundPorts, msg.channel)
+    if port.send != nil:
+      discard port.send(OutboundMessage(
+        userId: msg.userId, channel: msg.channel, text: approvalReply.get))
+    return
   processInboundMediaDownload(
     ctx.runtime,
     msg,
@@ -1852,6 +1864,8 @@ proc main =
   discard loadDonkeyEnv(home)
 
   let cfg = loadConfig(configPath)
+  configureApprovalServiceFromEnv(
+    newApprovalStore(cfg.home / "state" / "approvals.json").toApprovalPort())
 
   let sandboxPolicy = validateSandboxPolicy(cfg, devMode)
   if sandboxPolicy.isErr:

@@ -10,6 +10,7 @@ import ../../domain/message
 import ../../ports/provider
 import ../identity/identity_resolver
 import ../../app/inbound_gate
+import ../../app/approval_runtime
 import ./common_runtime
 import ./feishu
 
@@ -44,6 +45,13 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
         (hasEvent, event) = fsAdapter.tryRecvEvent()
         continue
       let userId = auth.userId
+      let approvalReply = tryHandleApprovalInput(userId, event.content)
+      if approvalReply.isSome:
+        fsAdapter.send(OutboundMessage(
+          userId: userId, channel: ckFeishu, text: approvalReply.get)).isOkOr:
+          log.error("fs send approval reply failed: " & error)
+        (hasEvent, event) = fsAdapter.tryRecvEvent()
+        continue
       let msg = InboundMessage(
         userId:    userId,
         channel:   ckFeishu,

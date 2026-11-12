@@ -6,6 +6,7 @@ import ../../core/outbound/outbound
 import ../../core/pipeops
 import ../../adapters/memory/md_file
 import ../../app/inbound_gate
+import ../../app/approval_runtime
 import ../../app/session_manager
 import ../../domain/agent_message
 import ../../domain/message
@@ -315,6 +316,10 @@ proc handleDiscordEvent*(sm: var SessionManager;
       messageId: event.messageId,
       text:      event.content,
     )
+    let approvalReply = tryHandleApprovalInput(userId, event.content)
+    if approvalReply.isSome:
+      sendDiscordReply(event, dcAdapter, userId, approvalReply.get, logger)
+      return
     handleInboundStatus(inbound)
     ## Save last processed message_id for offline recovery
     if event.messageId.len > 0:
@@ -458,6 +463,12 @@ proc handleDiscordEvent*(sm: var SessionManager;
     dcAdapter.sendDeferredUpdate(
       event.interactionId, event.interactionToken).isOkOr:
         core_log.log(logger, core_log.lvlError, "dc deferred update: " & error)
+    let approvalReply = tryHandleApprovalInput(userId, event.content)
+    if approvalReply.isSome:
+      dcAdapter.send(OutboundMessage(
+        userId: userId, channel: ckDiscord, text: approvalReply.get)).isOkOr:
+        core_log.log(logger, core_log.lvlError, "dc approval reply: " & error)
+      return
     let callback = decideCallbackRequest(
       CallbackRequest(channel: ckDiscord, data: event.content))
     case callback.route

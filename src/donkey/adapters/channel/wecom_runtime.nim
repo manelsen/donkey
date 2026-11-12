@@ -10,6 +10,7 @@ import ../../domain/message
 import ../../ports/provider
 import ../identity/identity_resolver
 import ../../app/inbound_gate
+import ../../app/approval_runtime
 import ./common_runtime
 import ./wecom
 
@@ -84,6 +85,11 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
         (hasEvent, event) = wcAdapter.tryRecvEvent()
         continue
       let userId = auth.userId
+      let approvalReply = tryHandleApprovalInput(userId, event.content)
+      if approvalReply.isSome:
+        wcMd(wcAdapter, userId, approvalReply.get, logger)
+        (hasEvent, event) = wcAdapter.tryRecvEvent()
+        continue
       let inbound = InboundMessage(
         userId:    userId,
         channel:   ckWeCom,

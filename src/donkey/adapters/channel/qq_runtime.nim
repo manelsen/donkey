@@ -11,6 +11,7 @@ import ../../domain/message
 import ../../ports/provider
 import ../identity/identity_resolver
 import ../../app/inbound_gate
+import ../../app/approval_runtime
 import ./common_runtime
 import ./qq_channel
 
@@ -240,6 +241,14 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
         (hasEvent, event) = qqAdapter.tryRecvEvent()
         continue
       let userId = auth.userId
+      let approvalReply = tryHandleApprovalInput(userId, event.content)
+      if approvalReply.isSome:
+        qqAdapter.send(OutboundMessage(
+          userId: userId, channel: ckQQ, text: approvalReply.get,
+          replyTo: event.messageId)).isOkOr:
+          log.error("qq send approval reply failed: " & error)
+        (hasEvent, event) = qqAdapter.tryRecvEvent()
+        continue
       let msg = InboundMessage(
         userId: userId,
         channel: ckQQ,

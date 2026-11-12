@@ -10,6 +10,7 @@ import ../../domain/message
 import ../../ports/provider
 import ../identity/identity_resolver
 import ../../app/inbound_gate
+import ../../app/approval_runtime
 import ./common_runtime
 import ./wechat
 
@@ -54,6 +55,11 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
         (hasEvent, event) = wchAdapter.tryRecvEvent()
         continue
       let userId = auth.userId
+      let approvalReply = tryHandleApprovalInput(userId, event.content)
+      if approvalReply.isSome:
+        sendWeChatReply(wchAdapter, userId, approvalReply.get)
+        (hasEvent, event) = wchAdapter.tryRecvEvent()
+        continue
       let msg = InboundMessage(
         userId: userId,
         channel: ckWeChat,

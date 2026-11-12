@@ -7,6 +7,7 @@ import ../../core/outbound/outbound
 import ../../core/pipeops
 import ../../adapters/memory/md_file
 import ../../app/inbound_gate
+import ../../app/approval_runtime
 import ../../app/session_manager
 import ../../domain/agent_message
 import ../../domain/message
@@ -756,6 +757,13 @@ proc handleTelegramMessage*(msg: InboundMessage;
   if not auth.allowed:
     logger.warn("telegram: unauthorized command/message from " & $msg.userId)
     return true
+  let approvalReply = tryHandleApprovalInput(msg.userId, msg.text)
+  if approvalReply.isSome:
+    tgAdapter.send(OutboundMessage(
+      userId: msg.userId, channel: ckTelegram,
+      text: approvalReply.get, replyTo: msg.channelId)).isOkOr:
+      logger.error("tg send approval reply failed: " & error)
+    return true
   let command = decideCommandRequest(CommandRequest(channel: msg.channel, text: msg.text))
   case command.route
   of crLocal:
@@ -766,6 +774,14 @@ proc handleTelegramMessage*(msg: InboundMessage;
   of crUi:
     return handleTelegramUiCommand(msg, command, tgAdapter, presentationState, memory, modelCatalogLoader, toolClientsCount, toolsCount, logger)
   of crCallback:
+    let approvalReply = tryHandleApprovalInput(msg.userId, command.value)
+    if approvalReply.isSome:
+      discard tgAdapter.answerCallback(msg.callbackId)
+      tgAdapter.send(OutboundMessage(
+        userId: msg.userId, channel: ckTelegram,
+        text: approvalReply.get, replyTo: msg.channelId)).isOkOr:
+        logger.error("tg send approval callback failed: " & error)
+      return true
     let callback = decideCallbackRequest(CallbackRequest(channel: msg.channel, data: command.value))
     case callback.route
     of cbrUi:

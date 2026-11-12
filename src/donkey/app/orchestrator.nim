@@ -48,6 +48,7 @@ import ./tool_agent
 import ./session_state
 import ./channel_prefs_parse
 import ./native_tools
+import ./approval_runtime
 import ./onboarding_runtime
 import ./tool_loop_runtime
 import ./prompt_building
@@ -180,6 +181,7 @@ proc buildNativeCtx*(uid: UserId;
     webAllowlist: cfg.webAllowlist,
     toolWebPolicy: cfg.toolWebPolicy,
     tools:        tools,
+    approval:     currentApprovalService(),
     log:          log,
     paddockDir:   paddockDir,
     sandboxMode:  sandboxMode,

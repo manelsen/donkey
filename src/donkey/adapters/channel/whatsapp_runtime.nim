@@ -9,6 +9,7 @@ import ../../domain/message
 import ../../ports/provider
 import ../identity/identity_resolver
 import ../../app/inbound_gate
+import ../../app/approval_runtime
 import ./common_runtime
 import whatsapp
 
@@ -44,6 +45,14 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
 
     if event.phoneNumberId.len > 0 and event.messageId.len > 0:
       waAdapter.ack(event.phoneNumberId, event.messageId)
+
+    let approvalReply = tryHandleApprovalInput(userId, event.text)
+    if approvalReply.isSome:
+      waAdapter.send(OutboundMessage(
+        userId: userId, channel: ckWhatsApp, text: approvalReply.get)).isOkOr:
+        log.error("wa send approval reply failed: " & error)
+      (hasEvent, event) = waAdapter.tryRecvEvent()
+      continue
 
     let msg = InboundMessage(
       userId: userId,

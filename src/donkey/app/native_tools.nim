@@ -45,6 +45,7 @@ import chronos/asyncsync
 import ../core/tooling/native_tool_dispatch
 import ../core/pipeops
 import ../core/log
+import ../core/security/approval
 import ../domain/message
 import ../domain/more_tools
 import ../domain/builtin_tools
@@ -57,6 +58,7 @@ import ../infra/sandbox/wasm_tools
 import ./sandbox
 import ./session_state
 import ./session_manager
+import ./approval_runtime
 
 # ── Result type ───────────────────────────────────────────────────────────────
 
@@ -83,6 +85,7 @@ type
     webAllowlist*: seq[string]
     toolWebPolicy*: seq[cfgTypes.ToolWebPolicy]
     tools*:        seq[ToolDescription]
+    approval*:     ApprovalService
     log*:          Logger
     paddockDir*:   string
     sandboxMode*:  SandboxMode
@@ -962,6 +965,25 @@ proc executeNativeCategory(tc: ToolCallRequest;
     return categoryResult
   NativeToolResult(handled: false)
 
+func approvalSummary(toolName: string; j: JsonNode): string =
+  ## The approval must reflect the complete action. Oversized requests are
+  ## rejected instead of showing a truncated command/edit.
+  const MaxApprovalSummaryChars = 1500
+  if toolName == BashToolName:
+    result = j.getOrDefault("command").getStr("")
+    if result.len == 0:
+      result = $j
+  else:
+    result = $j
+  result = result.replace("\r\n", "\\n")
+                 .replace("\n", "\\n")
+                 .replace("\r", "\\r")
+                 .strip
+  if result.len == 0:
+    result = "(sem detalhes)"
+  if result.len > MaxApprovalSummaryChars:
+    result = ""
+
 proc executeNativeTool*(tc:      ToolCallRequest;
                         ctx:     NativeCtx;
                         state:   SessionState;
@@ -969,7 +991,32 @@ proc executeNativeTool*(tc:      ToolCallRequest;
                        ): Future[NativeToolResult] {.async.} =
   let j = try: parseJson(tc.inputJson)
           except: newJObject()
-  for category in classifyNativeTool(tc.name):
+  let categories = classifyNativeTool(tc.name)
+  if categories.len > 0 and requiresApproval(ctx.approval, tc.name):
+    let summary = approvalSummary(tc.name, j)
+    if summary.len == 0:
+      return NativeToolResult(
+        handled: true,
+        text: "Error: tool '" & tc.name &
+              "' is too large to display for approval; split the action.",
+        resultKind: trkOperationalError)
+    let decision = await requestAndWait(
+      ctx.approval, ctx.uid, ctx.channel, ctx.outbox, tc.name,
+      summary, ctx.log)
+    case decision
+    of adApproved:
+      discard
+    of adDenied:
+      return NativeToolResult(
+        handled: true,
+        text: "Error: tool '" & tc.name & "' was denied by the user.",
+        resultKind: trkOperationalError)
+    of adTimeout:
+      return NativeToolResult(
+        handled: true,
+        text: "Error: approval for tool '" & tc.name & "' timed out.",
+        resultKind: trkOperationalError)
+  for category in categories:
     let categoryResult = await executeNativeCategory(tc, ctx, state, history, j, category)
     if categoryResult.handled:
       return categoryResult
