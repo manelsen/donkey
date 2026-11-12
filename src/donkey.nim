@@ -300,6 +300,7 @@ type DaemonRuntime = ref object
   sm:                   SessionManager
   stateStore:           RuntimeStateStore
   ledger:               DeliveryLedgerPort
+  ledgerWorker:         LedgerCompactionWorker
   presentationState:    PresentationState
   routeCounts:          Table[string, int]
   routeCallCounts:      Table[string, int]
@@ -1730,14 +1731,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     startPeriodicTask(proc() {.gcsafe.} = browserRuntime.evictIdle(),
                       intervalSec = 60, name = "browser-idle")
   if ctx.runtime.stateStore != nil:
-    let stateStore = ctx.runtime.stateStore
-    let compactionSec = stateStore.ledgerCompactIntervalSec()
+    let compactionSec = ctx.runtime.stateStore.ledgerCompactIntervalSec()
     if compactionSec > 0:
-      startPeriodicTask(proc() {.gcsafe.} =
-        let res = stateStore.compactLedger()
-        if res.isErr:
-          log.warn("ledger compaction: " & res.error),
-        intervalSec = max(60, int(compactionSec)), name = "ledger-compact")
+      ctx.runtime.ledgerWorker = startLedgerCompactionWorker(
+        ctx.runtime.stateStore, max(1.0, compactionSec), log)
   let memPort = memory.toRuntimePort()
   let reminderOutboxFn: ReminderOutboxFn = proc(userId, channel, message: string) {.gcsafe.} =
     let uid = UserId(userId)
@@ -1811,7 +1808,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       let loopResult = runDaemonLoop(ctx, drainer, memory, log)
       await sleepAsync(ctimer.milliseconds(loopResult.sleepMs.int64))
   finally:
-    log.info("daemon shutdown: stopping webhook receiver")
+    log.info("daemon shutdown: stopping background workers")
+    stopLedgerCompactionWorker(ctx.runtime.ledgerWorker)
     stopWebhookReceiver()
     ## Connections accepted before the stop may have enqueued Feishu events;
     ## consume them once before exiting.

@@ -314,6 +314,20 @@ suite "durability":
     check store.ledgerLastCompactError().len > 0
     check "schema_version" in readFile(dir / DeliveryLedgerFileName)
 
+  test "dedicated worker compacts outside the event loop":
+    let dir = freshDir("ledger-worker")
+    defer: cleanup(dir)
+    let store = newRuntimeStateStore(dir, ledgerCompactIntervalSec = 1.0)
+    let before = store.ledgerLastCompactMs()
+    let worker = startLedgerCompactionWorker(
+      store, 1.0, newLogger("test.ledger", lvlError))
+    check worker != nil
+    defer: stopLedgerCompactionWorker(worker)
+
+    sleep(2300)
+    stopLedgerCompactionWorker(worker)
+    check store.ledgerLastCompactMs() > before
+
   test "compaction on a missing ledger is a no-op":
     let dir = freshDir("ledger-none")
     defer: cleanup(dir)
