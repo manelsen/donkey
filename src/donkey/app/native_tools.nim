@@ -966,27 +966,20 @@ proc executeNativeCategory(tc: ToolCallRequest;
   NativeToolResult(handled: false)
 
 func approvalSummary(toolName: string; j: JsonNode): string =
-  var value = ""
-  case toolName
-  of BashToolName:
-    value = j.getOrDefault("command").getStr("")
-  of EditFileToolName:
-    value = j.getOrDefault("path").getStr("")
-  of RmToolName, MvToolName, CpToolName:
-    value = j.getOrDefault("path").getStr("")
-    if value.len == 0:
-      value = j.getOrDefault("source").getStr("")
-    let destination = j.getOrDefault("destination").getStr("")
-    if destination.len > 0:
-      value.add(" -> " & destination)
+  ## The approval must reflect the complete action. Oversized requests are
+  ## rejected instead of showing a truncated command/edit.
+  const MaxApprovalSummaryChars = 1500
+  if toolName == BashToolName:
+    result = j.getOrDefault("command").getStr("")
+    if result.len == 0:
+      result = $j
   else:
-    value = $j
-  value = value.replace("\n", " ").replace("\r", " ").strip
-  if value.len > 240:
-    value = value[0 ..< 240] & "…"
-  if value.len == 0:
-    value = "(sem detalhes)"
-  value
+    result = $j
+  result = result.replace("\n", " ").replace("\r", " ").strip
+  if result.len == 0:
+    result = "(sem detalhes)"
+  if result.len > MaxApprovalSummaryChars:
+    result = ""
 
 proc executeNativeTool*(tc:      ToolCallRequest;
                         ctx:     NativeCtx;
@@ -997,9 +990,16 @@ proc executeNativeTool*(tc:      ToolCallRequest;
           except: newJObject()
   let categories = classifyNativeTool(tc.name)
   if categories.len > 0 and requiresApproval(ctx.approval, tc.name):
+    let summary = approvalSummary(tc.name, j)
+    if summary.len == 0:
+      return NativeToolResult(
+        handled: true,
+        text: "Error: tool '" & tc.name &
+              "' is too large to display for approval; split the action.",
+        resultKind: trkOperationalError)
     let decision = await requestAndWait(
       ctx.approval, ctx.uid, ctx.channel, ctx.outbox, tc.name,
-      approvalSummary(tc.name, j), ctx.log)
+      summary, ctx.log)
     case decision
     of adApproved:
       discard

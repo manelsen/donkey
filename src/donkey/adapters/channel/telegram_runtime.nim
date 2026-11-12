@@ -776,6 +776,7 @@ proc handleTelegramMessage*(msg: InboundMessage;
   of crCallback:
     let approvalReply = tryHandleApprovalInput(msg.userId, command.value)
     if approvalReply.isSome:
+      discard tgAdapter.answerCallback(msg.callbackId)
       tgAdapter.send(OutboundMessage(
         userId: msg.userId, channel: ckTelegram,
         text: approvalReply.get, replyTo: msg.channelId)).isOkOr:

@@ -4,7 +4,7 @@
 ## `tryHandleApprovalInput` with message text or inline callback data; the
 ## file-backed store is injected through `ApprovalStorePort`.
 
-import std/[options, os, strutils]
+import std/[options, os, parseutils, strutils]
 import chronos
 import chronos/asyncsync
 import ../core/log
@@ -27,7 +27,9 @@ var gApprovalService*: ApprovalService
 func defaultApprovalTools*(): seq[string] =
   ## High-risk tools that ask for confirmation by default. Set
   ## DONKEY_APPROVAL_TOOLS=none to disable the gate.
-  @["bash", "edit_file", "rm", "mv", "cp"]
+  @["bash", "edit_file", "fs_write", "fs_mkdir", "fs_copy", "fs_move",
+    "fs_remove", "text_replace", "cp", "mv", "rm", "mkdir",
+    "archive_extract", "archive_create"]
 
 proc parseApprovalTools*(raw: string): seq[string] =
   let value = raw.strip.toLowerAscii()
@@ -53,10 +55,10 @@ proc configureApprovalServiceFromEnv*(store: ApprovalStorePort) =
   var timeoutSec = 300.0
   let rawTimeout = getEnv("DONKEY_APPROVAL_TIMEOUT_SEC").strip()
   if rawTimeout.len > 0:
-    try:
-      timeoutSec = parseFloat(rawTimeout)
-    except ValueError:
-      discard
+    var parsed: float
+    let consumed = parseutils.parseFloat(rawTimeout, parsed)
+    if consumed > 0 and consumed == rawTimeout.len:
+      timeoutSec = parsed
   configureApprovalService(store, parseApprovalTools(getEnv("DONKEY_APPROVAL_TOOLS")),
                            timeoutSec)
 

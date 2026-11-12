@@ -1391,6 +1391,13 @@ proc handleGatewayFallback(ctx: DaemonContext;
                            msg: InboundMessage;
                            log: Logger) {.gcsafe.} =
   let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
+  let approvalReply = tryHandleApprovalInput(msg.userId, msg.text)
+  if approvalReply.isSome:
+    let port = outboundPortForChannel(outboundPorts, msg.channel)
+    if port.send != nil:
+      discard port.send(OutboundMessage(
+        userId: msg.userId, channel: msg.channel, text: approvalReply.get))
+    return
   processInboundMediaDownload(
     ctx.runtime,
     msg,

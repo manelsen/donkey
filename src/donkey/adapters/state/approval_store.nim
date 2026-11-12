@@ -4,6 +4,8 @@
 ## decides from another process. Writes are atomic (tmp + rename).
 
 import std/[json, options, os]
+when defined(posix):
+  import std/posix
 import ../../core/pipeops
 import ../../core/security/approval
 import ../../ports/approval
@@ -15,8 +17,37 @@ type
 const
   MaxPendingPerUser* = 8
 
+when defined(posix):
+  proc cFlock(fd: cint; operation: cint): cint {.
+    importc: "flock", header: "<sys/file.h>".}
+  const
+    ApprovalLockExclusive = cint(2)
+    ApprovalLockUnlock    = cint(8)
+
 func newApprovalStore*(path: string): ApprovalStore =
   ApprovalStore(path: path)
+
+proc withApprovalLock*[T](store: ApprovalStore;
+                          body: proc(): Result[T, string] {.gcsafe, raises: [].}): Result[T, string] {.gcsafe, raises: [].} =
+  ## Serializes read-modify-write cycles between the daemon and `ctl`.
+  when defined(posix):
+    let lockPath = store.path & ".lock"
+    try:
+      createDir(parentDir(lockPath))
+      var lockFile = open(lockPath, fmReadWrite)
+      let fd = cint(lockFile.getFileHandle())
+      if cFlock(fd, ApprovalLockExclusive) != 0:
+        lockFile.close()
+        return err("approval store lock failed")
+      try:
+        result = body()
+      finally:
+        discard cFlock(fd, ApprovalLockUnlock)
+        lockFile.close()
+    except CatchableError as e:
+      result = err("approval store lock failed: " & e.msg)
+  else:
+    result = body()
 
 func requestToJson(request: ApprovalRequest): JsonNode =
   %* {
@@ -88,7 +119,7 @@ proc save*(store: ApprovalStore;
     items.add(requestToJson(request))
   try:
     createDir(parentDir(store.path))
-    let tmp = store.path & ".tmp"
+    let tmp = store.path & ".tmp." & $getCurrentProcessId() & "-" & $epochMs()
     writeFile(tmp, $(%* {"requests": items}))
     {.cast(raises: []).}:
       moveFile(tmp, store.path)
@@ -96,12 +127,12 @@ proc save*(store: ApprovalStore;
   except CatchableError as e:
     err("approval store write failed: " & e.msg)
 
-proc create*(store: ApprovalStore;
-             userId: string;
-             channel: string;
-             toolName, summary: string;
-             ttlMs: int64;
-             nowMs = epochMs()): Result[ApprovalRequest, string] {.raises: [].} =
+proc createLocked(store: ApprovalStore;
+                  userId: string;
+                  channel: string;
+                  toolName, summary: string;
+                  ttlMs: int64;
+                  nowMs: int64): Result[ApprovalRequest, string] {.raises: [].} =
   if userId.len == 0:
     return err("approval request requires a user")
   var requests = ? store.load(nowMs)
@@ -140,11 +171,20 @@ proc create*(store: ApprovalStore;
   ? store.save(requests)
   ok(request)
 
-proc decide*(store: ApprovalStore;
-              id, userId: string;
-              approved: bool;
-              admin = false;
-              nowMs = epochMs()): Result[void, string] {.raises: [].} =
+proc create*(store: ApprovalStore;
+             userId: string;
+             channel: string;
+             toolName, summary: string;
+             ttlMs: int64;
+             nowMs = epochMs()): Result[ApprovalRequest, string] {.raises: [].} =
+  store.withApprovalLock(proc(): Result[ApprovalRequest, string] {.gcsafe, raises: [].} =
+    store.createLocked(userId, channel, toolName, summary, ttlMs, nowMs))
+
+proc decideLocked(store: ApprovalStore;
+                  id, userId: string;
+                  approved: bool;
+                  admin: bool;
+                  nowMs: int64): Result[void, string] {.raises: [].} =
   var requests = ? store.load(nowMs)
   for i in 0 ..< requests.len:
     if requests[i].id != id:
@@ -162,6 +202,14 @@ proc decide*(store: ApprovalStore;
     return ok()
   err("approval not found: " & id)
 
+proc decide*(store: ApprovalStore;
+              id, userId: string;
+              approved: bool;
+              admin = false;
+              nowMs = epochMs()): Result[void, string] {.raises: [].} =
+  store.withApprovalLock(proc(): Result[void, string] {.gcsafe, raises: [].} =
+    store.decideLocked(id, userId, approved, admin, nowMs))
+
 proc status*(store: ApprovalStore;
              id: string;
              nowMs = epochMs()): Result[ApprovalStatus, string] {.raises: [].} =
@@ -170,8 +218,6 @@ proc status*(store: ApprovalStore;
     if requests[i].id != id:
       continue
     if requests[i].status == apsPending and nowMs >= requests[i].expiresAtMs:
-      requests[i].status = apsExpired
-      discard store.save(requests)
       return ok(apsExpired)
     return ok(requests[i].status)
   err("approval not found: " & id)

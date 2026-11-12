@@ -123,19 +123,19 @@ proc ctlPairReject*(store: PairingStore; code: string): Result[void, string] =
 
 # ── ctl approval commands ──────────────────────────────────────────────────────
 
-proc ctlApprovalList*(store: ApprovalStore; userId = "") =
+proc ctlApprovalList*(store: ApprovalStore; userId = ""): Result[void, string] =
   let pending = store.listPending(userId)
   if pending.isErr:
-    echo "Error: " & pending.error
-    return
+    return err(pending.error)
   if pending.get().len == 0:
     echo "No pending approvals."
-    return
+    return ok()
   echo "id\tuser\ttool\tsummary\texpires_in"
   for request in pending.get():
     let remaining = int(max(0'i64, request.expiresAtMs - epochMs()) div 1000)
     echo request.id & "\t" & request.userId & "\t" & request.toolName & "\t" &
          request.summary & "\t" & $remaining & "s"
+  ok()
 
 proc ctlApprovalDecide*(store: ApprovalStore; id: string;
                         approved: bool): Result[void, string] =
@@ -347,7 +347,8 @@ proc dispatchCtl*(cfg: DonkeyConfig;
   # ── approval ──
   let approvalStore = newApprovalStore(cfg.home / "state" / "approvals.json")
   if args[1] == "approval" and args.len >= 3 and args[2] == "list":
-    ctlApprovalList(approvalStore, if args.len >= 4: args[3] else: "")
+    let res = ctlApprovalList(approvalStore, if args.len >= 4: args[3] else: "")
+    if res.isErr: echo res.error; return 1
     return 0
   if args[1] == "approval" and args.len >= 4 and args[2] == "approve":
     let res = ctlApprovalDecide(approvalStore, args[3], true)
