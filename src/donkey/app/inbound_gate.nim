@@ -86,11 +86,20 @@ proc authorizeInbound*(sm: SessionManager;
       result.identified = true
       result.allowed = true
 
+  if not result.allowed and sm.dmPolicy == DmPolicyPairing and
+     sm.pairingRequest != nil and linkSource == ilsCommandText:
+    let pairing = decideCommandRequest(CommandRequest(channel: kind, text: text))
+    if pairing.kind == cmdPair:
+      ## The admin approves the request out-of-band; the sender stays denied
+      ## until the CLI adds the minted UUID to the allowlist.
+      discard sm.pairingRequest(kind, rawId)
+
 proc authorizeResolvedInbound*(sm: SessionManager;
                                gate: IdentityGatePort;
                                kind: ChannelKind;
                                userId: UserId;
                                text: string;
+                               rawId = "";
                                linkSource = ilsCommandText): InboundAuthorization {.gcsafe.} =
   ## Variant for channels that already resolved the raw identity (Telegram
   ## `receive()` does this). The policy decision still lives here.
@@ -104,3 +113,9 @@ proc authorizeResolvedInbound*(sm: SessionManager;
     let target = linkTargetFrom(gate, kind, text, linkSource)
     if target.isSome and sm.allows(target.get):
       result.allowed = true
+  if not result.allowed and sm.dmPolicy == DmPolicyPairing and
+     sm.pairingRequest != nil and rawId.len > 0 and
+     linkSource == ilsCommandText:
+    let pairing = decideCommandRequest(CommandRequest(channel: kind, text: text))
+    if pairing.kind == cmdPair:
+      discard sm.pairingRequest(kind, rawId)

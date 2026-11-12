@@ -46,6 +46,8 @@ type
     entries*: Table[string, SessionEntry]  ## string(UserId) → entry
     dmPolicy*: DmPolicy
     isDmAllowed*: proc(userId: UserId): bool {.gcsafe.}
+    pairingRequest*: proc(kind: ChannelKind; rawId: string): bool {.gcsafe.}
+      ## Creates a pending pairing request; wired by the composition root.
     registryStore*: SessionRegistryPort
     registryErrorHook*: proc(error: string) {.gcsafe, raises: [].}
 
@@ -126,6 +128,7 @@ proc init*(sm: var SessionManager) =
   sm.entries = initTable[string, SessionEntry]()
   sm.dmPolicy = DmPolicyOpen
   sm.isDmAllowed = nil
+  sm.pairingRequest = nil
 
 proc configureDmPolicy*(sm: var SessionManager;
                         policy: DmPolicy;

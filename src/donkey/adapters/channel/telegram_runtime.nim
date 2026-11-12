@@ -749,7 +749,8 @@ proc handleTelegramMessage*(msg: InboundMessage;
                             logger: Logger;
                             ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
   let auth = authorizeResolvedInbound(
-    sm, tgAdapter.resolver.identityGate(), ckTelegram, msg.userId, msg.text)
+    sm, tgAdapter.resolver.identityGate(), ckTelegram, msg.userId, msg.text,
+    rawId = msg.channelId)
   if not auth.allowed:
     logger.warn("telegram: unauthorized command/message from " & $msg.userId)
     return true

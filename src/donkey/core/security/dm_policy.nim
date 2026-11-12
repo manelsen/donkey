@@ -6,10 +6,10 @@
 ## - Allowlist: only whitelisted users can DM
 ##
 ## Pairing flow:
-## 1. User sends /pair to get a 6-digit code
-## 2. Admin approves and shares code with user
-## 3. User sends /pair <code> to complete pairing
-## 4. User is added to allowlist
+## 1. An unknown user sends /pair; a pending request is persisted
+## 2. The operator runs `donkey ctl pair list` and approves it by code
+## 3. Approval mints the identity UUID and adds it to the DM allowlist
+## 4. The user's next message is authorized
 
 import std/[strutils, times, random]
 import ../../core/types
@@ -63,14 +63,16 @@ proc isValidByAttemptsAndExpiry*(attempts: int; expiresAt: float): bool =
   let now = epochTime()
   attempts < MaxPairingAttempts and now < expiresAt
 
-proc newPairingState*(): PairingState =
+proc generatePairingCode*(): string =
+  ## Generates a 6-digit numeric pairing code.
   randomize()
-  var code = ""
   for i in 0 ..< PairingCodeLength:
-    code.add($(rand(9)))
+    result.add($(rand(9)))
+
+proc newPairingState*(): PairingState =
   let now = epochTime()
   PairingState(
-    code: code,
+    code: generatePairingCode(),
     createdAt: now,
     attempts: 0,
     expiresAt: now + PairingExpirySeconds,

@@ -42,6 +42,7 @@ type
     cmdRestart
     cmdBind
     cmdTts
+    cmdPair
   CommandRoute* = enum
     crNone
     crLocal
@@ -152,6 +153,7 @@ func primaryCommandName*(kind: CommandKind): string =
   of cmdRestart: "/restart"
   of cmdBind: "/bind"
   of cmdTts: "/tts"
+  of cmdPair: "/pair"
   of cmdNone: ""
 
 func commandAliases*(kind: CommandKind): seq[string] =
@@ -183,7 +185,7 @@ func parseCommandKind*(token: string): CommandKind =
 func decideCommandRoute*(kind: CommandKind): CommandRoute =
   case kind
   of cmdAbout, cmdStart, cmdMenu, cmdWhoami, cmdSkill, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
-     cmdMyCode, cmdContinue, cmdReasoning:
+     cmdMyCode, cmdContinue, cmdReasoning, cmdPair:
     crLocal
   of cmdDebug, cmdReset, cmdCompact, cmdNew,
      cmdStop, cmdRestart, cmdBind:
