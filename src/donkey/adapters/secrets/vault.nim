@@ -138,16 +138,26 @@ proc writeStored(vault: SecretVault;
         discard
     err("secret vault write failed: " & e.msg)
 
-proc setSecret*(vault: SecretVault;
-                name, value: string): Result[void, string] {.raises: [].} =
-  if not isValidSecretName(name):
-    return err("invalid secret name: '" & name &
-               "' (use letters, digits and _, starting with a letter or _)")
-  if name in BootstrapEnvVars:
-    return err("'" & name & "' must stay in donkey.env: it locates the secret vault")
-  if value.len == 0:
-    return err("secret value is empty")
-  vault.withVaultLock(proc(): Result[void, string] {.gcsafe, raises: [].} =
+proc setSecrets*(vault: SecretVault;
+                 values: openArray[(string, string)]): Result[int, string] {.raises: [].} =
+  ## Validates every entry and encrypts the whole batch before a single write.
+  ## A bad name/value or a failed encryption leaves the vault untouched.
+  for (name, value) in values:
+    if not isValidSecretName(name):
+      return err("invalid secret name: '" & name &
+                 "' (use letters, digits and _, starting with a letter or _)")
+    if name in BootstrapEnvVars:
+      return err("'" & name & "' must stay in donkey.env: it locates the secret vault")
+    if value.len == 0:
+      return err("secret value is empty")
+  if values.len == 0:
+    return ok(0)
+
+  var batch = newSeq[(string, string)](values.len)
+  for i, item in values:
+    batch[i] = item
+
+  vault.withVaultLock(proc(): Result[int, string] {.gcsafe, raises: [].} =
     let loaded = vault.readStored()
     if loaded.isErr:
       return err(loaded.error)
@@ -157,11 +167,27 @@ proc setSecret*(vault: SecretVault;
       ## become unrecoverable while the new one silently used a different key.
       return err("secret vault key is missing; restore " & vault.keyPath &
                  " or reset the vault explicitly")
-    let encrypted = vault.keyStore.encrypt(value)
-    if encrypted.isErr:
-      return err("secret encryption failed: " & encrypted.error)
-    stored[name] = encrypted.get()
-    vault.writeStored(stored))
+
+    var encrypted: seq[(string, string)]
+    for (name, value) in batch:
+      let ciphertext = vault.keyStore.encrypt(value)
+      if ciphertext.isErr:
+        return err("secret encryption failed for " & name & ": " & ciphertext.error)
+      encrypted.add((name, ciphertext.get()))
+
+    for (name, ciphertext) in encrypted:
+      stored[name] = ciphertext
+    let saved = vault.writeStored(stored)
+    if saved.isErr:
+      return err(saved.error)
+    ok(encrypted.len))
+
+proc setSecret*(vault: SecretVault;
+                name, value: string): Result[void, string] {.raises: [].} =
+  let res = vault.setSecrets([(name, value)])
+  if res.isErr:
+    return err(res.error)
+  ok()
 
 proc listSecretNames*(vault: SecretVault):
                       Result[seq[string], string] {.raises: [].} =

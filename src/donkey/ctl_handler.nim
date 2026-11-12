@@ -14,6 +14,7 @@ import config/tools_registry
 import config/skills_registry
 import config/clawhub_registry
 import config/dotenv
+import config/loader
 import adapters/memory/md_file
 import adapters/identity/identity_resolver
 import adapters/state/pairing_store
@@ -193,7 +194,7 @@ proc ctlSecretImportEnv*(vault: SecretVault;
     entries = parseEnvFile(path)
   except CatchableError as e:
     return err("could not read " & path & ": " & e.msg)
-  var imported = 0
+  var prepared: seq[(string, string)]
   var seen = initHashSet[string]()
   var skipped: seq[string]
   for (name, value) in entries:
@@ -204,13 +205,14 @@ proc ctlSecretImportEnv*(vault: SecretVault;
     if name in BootstrapEnvVars:
       skipped.add(name)
       continue
-    let res = vault.setSecret(name, value)
-    if res.isErr:
-      return err("could not import " & name & ": " & res.error)
-    inc imported
+    prepared.add((name, value))
+
+  let imported = vault.setSecrets(prepared)
+  if imported.isErr:
+    return err("could not import " & path & ": " & imported.error)
   for name in skipped:
     echo "Skipped bootstrap variable " & name & " (keep it in donkey.env)."
-  echo "Imported " & $imported & " secret(s) from " & path & "."
+  echo "Imported " & $imported.get() & " secret(s) from " & path & "."
   ok()
 
 # ── ctl session commands ───────────────────────────────────────────────────────
@@ -445,7 +447,7 @@ proc dispatchCtl*(cfg: DonkeyConfig;
     if res.isErr: echo res.error; return 1
     return 0
   if args[1] == "secret" and args.len >= 3 and args[2] == "import-env":
-    let path = if args.len >= 4: args[3] else: envFilePath(cfg.home)
+    let path = if args.len >= 4: args[3] else: envFilePath(resolveHome())
     let res = ctlSecretImportEnv(secretVault, path)
     if res.isErr: echo res.error; return 1
     return 0

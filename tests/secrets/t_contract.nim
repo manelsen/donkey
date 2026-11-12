@@ -3,7 +3,7 @@
 ## Add new impls here; tests apply automatically.
 
 import std/[os, strutils, unittest]
-import results
+import donkey/core/pipeops
 import donkey/adapters/secrets/file_key
 import donkey/ports/secrets
 

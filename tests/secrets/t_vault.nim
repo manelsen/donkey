@@ -1,5 +1,5 @@
 import std/[json, os, strutils, unittest]
-import results
+import donkey/core/pipeops
 import donkey/adapters/secrets/vault
 
 const VaultTmp = "/tmp/donkey_secret_vault_tests"
@@ -32,6 +32,18 @@ suite "SecretVault":
     defer: putEnv("TOKEN", previous)
     check reopened.applyToEnv().get() == 1
     check getEnv("TOKEN") == "value"
+
+  test "batch validation leaves the vault untouched":
+    removeDir(VaultTmp / "batch")
+    let vault = newSecretVault(VaultTmp / "batch")
+    check vault.setSecret("KEEP", "old").isOk
+
+    let res = vault.setSecrets(@[
+      ("NEW", "new-value"),
+      ("bad-name", "x"),
+    ])
+    check res.isErr
+    check vault.listSecretNames().get() == @["KEEP"]
 
   test "does not mint a new key over an existing vault":
     removeDir(VaultTmp / "lostkey")
