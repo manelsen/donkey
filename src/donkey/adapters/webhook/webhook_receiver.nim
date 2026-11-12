@@ -36,6 +36,7 @@ const
   FeishuReplayWindowSec*     = 300
   DingTalkTimestampWindowMs* = 3_600_000
   MaxWebhookBodyBytes*       = 2 * 1024 * 1024
+  WebhookTlsReloadIntervalMs = 1000
 
   WebhookWorkerCount        = 4
   WebhookQueueDepth         = 32
@@ -66,6 +67,8 @@ type
     matrixToken*:             string
     whatsappVerifyToken*:     string
     whatsappAppSecret*:       string
+    tlsCertFile*:             string
+    tlsKeyFile*:              string
 
 # ── Response helpers ──────────────────────────────────────────────────────────
 
@@ -597,14 +600,42 @@ var
   gWebhookThread: Thread[WebhookServerArgs]
   gWebhookWorkers {.global.}: array[WebhookWorkerCount, Thread[WebhookWorkerArg]]
   gWebhookQueue {.global.}: Channel[SocketHandle]
+  gWebhookQueueOpened {.global.} = false
   gWebhookPoolStarted {.global.} = false
   gWebhookPoolAttempted {.global.} = false
   gWebhookWorkersStarted {.global.} = 0
   gWebhookStarted = false
   gWebhookStop: Atomic[bool]
 
+proc newWebhookTlsContext(cfg: WebhookConfig; logger: Logger): SslContext =
+  if cfg.tlsCertFile.len == 0:
+    return nil
+  try:
+    newContext(verifyMode = CVerifyNone,
+               certFile = cfg.tlsCertFile,
+               keyFile = cfg.tlsKeyFile)
+  except CatchableError as e:
+    logger.error("webhook: cannot load TLS certificate: " & e.msg)
+    nil
+
 proc webhookWorker(arg: WebhookWorkerArg) {.thread.} =
   {.cast(gcsafe).}:
+    var tlsContext: SslContext
+    var lastTlsCheck: MonoTime
+    var certMtime, keyMtime: times.Time
+    if arg.cfg.tlsCertFile.len > 0:
+      tlsContext = newWebhookTlsContext(arg.cfg, arg.logger)
+      if tlsContext == nil:
+        arg.logger.error("webhook: TLS worker stopped; certificate unavailable")
+        return
+      try:
+        certMtime = getLastModificationTime(arg.cfg.tlsCertFile)
+        keyMtime = getLastModificationTime(arg.cfg.tlsKeyFile)
+      except CatchableError as e:
+        arg.logger.error("webhook: cannot stat TLS certificate: " & e.msg)
+        return
+      lastTlsCheck = getMonoTime()
+
     while true:
       let fd = gWebhookQueue.recv()
       if fd == SocketHandle(-1):
@@ -619,6 +650,31 @@ proc webhookWorker(arg: WebhookWorkerArg) {.thread.} =
         continue
       try:
         applyWebhookClientTimeouts(client)
+        if arg.cfg.tlsCertFile.len > 0:
+          ## Reload the certificate when the files change, so rotation does
+          ## not require a daemon restart. A failed reload keeps the old
+          ## context and is retried on the next connection.
+          let now = getMonoTime()
+          if inMilliseconds(now - lastTlsCheck) >= WebhookTlsReloadIntervalMs:
+            lastTlsCheck = now
+            try:
+              let newCertMtime = getLastModificationTime(arg.cfg.tlsCertFile)
+              let newKeyMtime = getLastModificationTime(arg.cfg.tlsKeyFile)
+              if newCertMtime != certMtime or newKeyMtime != keyMtime:
+                let reloaded = newWebhookTlsContext(arg.cfg, arg.logger)
+                if reloaded != nil:
+                  tlsContext = reloaded
+                  certMtime = newCertMtime
+                  keyMtime = newKeyMtime
+                  arg.logger.info("webhook: TLS certificate reloaded")
+            except CatchableError as e:
+              arg.logger.warn("webhook: TLS reload failed: " & e.msg)
+          try:
+            tlsContext.wrapConnectedSocket(client, handshakeAsServer)
+          except CatchableError as e:
+            arg.logger.warn("webhook: TLS handshake failed: " & e.msg)
+            try: client.close() except CatchableError: discard
+            continue
         handleConnection(client, arg.cfg, arg.logger)
       except CatchableError as e:
         arg.logger.warn("webhook: connection error: " & e.msg)
@@ -633,7 +689,9 @@ proc startWebhookPool(cfg: WebhookConfig; logger: Logger): Result[void, string] 
   if gWebhookPoolAttempted:
     return err("webhook: worker pool initialization already failed; not retrying")
   gWebhookPoolAttempted = true
-  gWebhookQueue.open(WebhookQueueDepth)
+  if not gWebhookQueueOpened:
+    gWebhookQueue.open(WebhookQueueDepth)
+    gWebhookQueueOpened = true
   try:
     for i in 0 ..< WebhookWorkerCount:
       createThread(gWebhookWorkers[i], webhookWorker,
@@ -684,7 +742,9 @@ proc webhookServerThread(args: WebhookServerArgs) {.thread.} =
         args.sendHandshake(pool.error)
         return
 
-      args.logger.info("webhook receiver listening on " & args.host & ":" & $args.port)
+      let scheme = if args.cfg.tlsCertFile.len > 0: "https" else: "http"
+      args.logger.info("webhook receiver listening on " & scheme & "://" &
+                       args.host & ":" & $args.port)
       args.sendHandshake("")
       handshakeSent = true
 
@@ -739,6 +799,15 @@ proc startWebhookReceiver*(cfg: WebhookConfig;
     return err("invalid webhook port " & $port)
   if host.len == 0:
     return err("empty webhook bind host")
+  if (cfg.tlsCertFile.len > 0) != (cfg.tlsKeyFile.len > 0):
+    return err("webhook TLS requires both a certificate and a key file")
+  if cfg.tlsCertFile.len > 0:
+    try:
+      discard newContext(verifyMode = CVerifyNone,
+                         certFile = cfg.tlsCertFile,
+                         keyFile = cfg.tlsKeyFile)
+    except CatchableError as e:
+      return err("cannot load webhook TLS certificate: " & e.msg)
   if gWebhookStarted:
     return err("webhook receiver already started")
 
@@ -790,8 +859,15 @@ proc stopWebhookReceiver*() {.gcsafe.} =
     for i in 0 ..< gWebhookWorkersStarted:
       {.cast(gcsafe).}:
         joinThread(gWebhookWorkers[i])
-    gWebhookQueue.close()
     gWebhookWorkersStarted = 0
+    ## A worker may have exited before consuming its sentinel; drain any
+    ## leftovers so a later restart does not inherit a poison pill.
+    while true:
+      let (hasQueued, fd) = gWebhookQueue.tryRecv()
+      if not hasQueued:
+        break
+      if fd != SocketHandle(-1):
+        discard posix.close(cint(fd))
   gWebhookStarted = false
   gWebhookPoolStarted = false
   gWebhookPoolAttempted = false
