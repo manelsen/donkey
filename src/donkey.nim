@@ -1678,10 +1678,6 @@ proc handleShutdownSignal(sig: cint) {.noconv.} =
 proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).} =
   ## Async daemon: Telegram (pollTimeout=0) + Discord (gateway thread) + WeCom (webhook thread).
   ## Loop: drain globalOutbox → drain Discord → drain WeCom → poll Telegram → sleepAsync(100ms)
-  let vaultApplied = newSecretVault(cfg.home).applyToEnv()
-  if vaultApplied.isErr:
-    log.error("secret vault: " & vaultApplied.error)
-    quit(1)
   if cfg.invalidDmPolicy.len > 0:
     log.error("invalid dm_policy: " & cfg.invalidDmPolicy &
               " (use open|pairing|allowlist)")
@@ -1884,7 +1880,18 @@ proc main =
   ## Load .env file if present — checks {home}/donkey.env then ~/.config/donkey/donkey.env
   discard loadDonkeyEnv(home)
 
-  let cfg = loadConfig(configPath)
+  var cfg = loadConfig(configPath)
+  let isSecretAdmin =
+    args.len >= 2 and args[0] == "ctl" and args[1] == "secret"
+  if not isSecretAdmin:
+    let vaultApplied = newSecretVault(cfg.home).applyToEnv()
+    if vaultApplied.isErr:
+      stderr.writeLine "Security Error: " & vaultApplied.error
+      quit(1)
+    if vaultApplied.get() > 0:
+      ## Reload env-backed policies (dm_policy, allowlist, ...) after the
+      ## vault populated variables that were absent from donkey.env.
+      cfg = loadConfig(configPath)
   configureApprovalServiceFromEnv(
     newApprovalStore(cfg.home / "state" / "approvals.json").toApprovalPort())
 

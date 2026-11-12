@@ -146,6 +146,11 @@ proc setSecret*(vault: SecretVault;
     if loaded.isErr:
       return err(loaded.error)
     var stored = loaded.get()
+    if stored.len > 0 and not fileExists(vault.keyPath):
+      ## Never mint a new key over an existing vault: the old entries would
+      ## become unrecoverable while the new one silently used a different key.
+      return err("secret vault key is missing; restore " & vault.keyPath &
+                 " or reset the vault explicitly")
     try:
       stored[name] = vault.keyStore.encrypt(value)
     except CatchableError as e:

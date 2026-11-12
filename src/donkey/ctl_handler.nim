@@ -4,7 +4,7 @@
 ## Each subcommand group (user, session, tool, skill, provider, memory, status)
 ## has its own handler proc; `dispatchCtl` routes to the right one.
 
-import std/[os, strutils, tables, terminal, times]
+import std/[os, sets, strutils, tables, terminal, times]
 import results
 import core/types
 import core/pipeops
@@ -194,9 +194,12 @@ proc ctlSecretImportEnv*(vault: SecretVault;
   except CatchableError as e:
     return err("could not read " & path & ": " & e.msg)
   var imported = 0
+  var seen = initHashSet[string]()
   for (name, value) in entries:
-    if value.len == 0:
+    ## loadEnvFile keeps the first occurrence; import must do the same.
+    if value.len == 0 or name in seen:
       continue
+    seen.incl(name)
     let res = vault.setSecret(name, value)
     if res.isErr:
       return err("could not import " & name & ": " & res.error)

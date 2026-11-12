@@ -27,10 +27,22 @@ suite "SecretVault":
     check newSecretVault(home).setSecret("TOKEN", "value").isOk
     let reopened = newSecretVault(home)
     check reopened.listSecretNames().get() == @["TOKEN"]
+    let previous = getEnv("TOKEN")
     putEnv("TOKEN", "")
-    defer: putEnv("TOKEN", "")
+    defer: putEnv("TOKEN", previous)
     check reopened.applyToEnv().get() == 1
     check getEnv("TOKEN") == "value"
+
+  test "does not mint a new key over an existing vault":
+    removeDir(VaultTmp / "lostkey")
+    let vault = newSecretVault(VaultTmp / "lostkey")
+    check vault.setSecret("TOKEN_A", "alpha").isOk
+    removeFile(vault.keyPath)
+
+    let res = vault.setSecret("TOKEN_B", "beta")
+    check res.isErr
+    check res.error.contains("key is missing")
+    check vault.listSecretNames().get() == @["TOKEN_A"]
 
   test "rejects invalid names and empty values":
     removeDir(VaultTmp / "invalid")
@@ -44,10 +56,13 @@ suite "SecretVault":
     let vault = newSecretVault(VaultTmp / "env")
     check vault.setSecret("DONKEY_TEST_VAULT_A", "alpha").isOk
     check vault.setSecret("DONKEY_TEST_VAULT_B", "beta").isOk
+    let previousA = getEnv("DONKEY_TEST_VAULT_A")
+    let previousB = getEnv("DONKEY_TEST_VAULT_B")
+    putEnv("DONKEY_TEST_VAULT_A", "")
     putEnv("DONKEY_TEST_VAULT_B", "already-set")
     defer:
-      putEnv("DONKEY_TEST_VAULT_A", "")
-      putEnv("DONKEY_TEST_VAULT_B", "")
+      putEnv("DONKEY_TEST_VAULT_A", previousA)
+      putEnv("DONKEY_TEST_VAULT_B", previousB)
 
     let applied = vault.applyToEnv()
     check applied.isOk
@@ -60,8 +75,9 @@ suite "SecretVault":
     let vault = newSecretVault(VaultTmp / "nokey")
     check vault.setSecret("TOKEN", "value").isOk
     removeFile(vault.keyPath)
+    let previous = getEnv("TOKEN")
     putEnv("TOKEN", "")
-    defer: putEnv("TOKEN", "")
+    defer: putEnv("TOKEN", previous)
 
     let applied = vault.applyToEnv()
     check applied.isErr
@@ -72,8 +88,9 @@ suite "SecretVault":
     let vault = newSecretVault(VaultTmp / "nokey2")
     check vault.setSecret("TOKEN", "value").isOk
     removeFile(vault.keyPath)
+    let previous = getEnv("TOKEN")
     putEnv("TOKEN", "already-set")
-    defer: putEnv("TOKEN", "")
+    defer: putEnv("TOKEN", previous)
 
     let applied = vault.applyToEnv()
     check applied.isOk
@@ -84,8 +101,9 @@ suite "SecretVault":
     let vault = newSecretVault(VaultTmp / "tamper")
     check vault.setSecret("TOKEN", "value").isOk
     writeFile(vault.path, readFile(vault.path).replace("enc2:", "enc2:00"))
+    let previous = getEnv("TOKEN")
     putEnv("TOKEN", "")
-    defer: putEnv("TOKEN", "")
+    defer: putEnv("TOKEN", previous)
 
     let applied = vault.applyToEnv()
     check applied.isErr

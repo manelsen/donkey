@@ -99,6 +99,19 @@ BAR_Q='single quotes'
     check count == 1
     putEnv("FOO_NOEQ", "")
 
+suite "config/dotenv - duplicate keys":
+
+  test "loadEnvFile keeps the first occurrence":
+    putEnv("FOO_DUP", "")
+    let tmpFile = getTempDir() / "test_env_dup.env"
+    writeFile(tmpFile, "FOO_DUP=first\nFOO_DUP=second\n")
+    defer:
+      removeFile(tmpFile)
+      putEnv("FOO_DUP", "")
+
+    check loadEnvFile(tmpFile) == 1
+    check getEnv("FOO_DUP") == "first"
+
 suite "config/dotenv - parseEnvFile":
 
   test "parses pairs without mutating the environment":
