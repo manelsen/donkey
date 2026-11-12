@@ -1,14 +1,16 @@
 ## FileKeyStore — SecretStore implementation using a local key file.
 ##
 ## Cipher:    AES-256-GCM (AEAD, RFC 5116)
-## Key:       256-bit random, stored at the configured key path (chmod 600,
-##            auto-created; the vault uses {home}/.secrets/key)
+## Key:       256-bit random, stored at the configured key path (created with
+##            mode 0600; the vault uses {home}/.secret_key).
 ## Wire fmt:  enc2:<hex(iv[12] || ciphertext || tag[16])>
 ##
 ## Disabled mode (enable=false): encrypt/decrypt are identity functions.
 ## Used in tests and dev environments without a key file.
 
 import std/[os, strutils]
+when defined(posix):
+  import std/posix
 import nimcrypto/[rijndael, bcmode, sysrand, utils]
 
 const
@@ -38,6 +40,24 @@ proc newFileKeyStore*(keyPath: string; enable = true): FileKeyStore =
 
 # ── key management ────────────────────────────────────────────────────────────
 
+proc createKeyFile(keyPath: string; key: Key): bool =
+  ## Creates the key atomically with mode 0600. The umask must never get a
+  ## window where the key is readable by other local users.
+  when defined(posix):
+    let fd = posix.open(keyPath.cstring,
+                        posix.O_WRONLY or posix.O_CREAT or posix.O_EXCL,
+                        posix.Mode(0o600))
+    if fd < 0:
+      return false
+    defer: discard posix.close(fd)
+    posix.write(fd, unsafeAddr key[0], KeyLen) == KeyLen
+  else:
+    var keyStr = newString(KeyLen)
+    copyMem(addr keyStr[0], unsafeAddr key[0], KeyLen)
+    writeFile(keyPath, keyStr)
+    setFilePermissions(keyPath, {fpUserRead, fpUserWrite})
+    true
+
 proc loadOrCreateKey(store: FileKeyStore): Key =
   if fileExists(store.keyPath):
     let raw = readFile(store.keyPath)
@@ -45,14 +65,15 @@ proc loadOrCreateKey(store: FileKeyStore): Key =
       raise newException(IOError,
         "Corrupt key file (expected " & $KeyLen & " bytes): " & store.keyPath)
     copyMem(addr result[0], unsafeAddr raw[0], KeyLen)
+    when defined(posix):
+      setFilePermissions(store.keyPath, {fpUserRead, fpUserWrite})
   else:
     createDir(store.keyPath.parentDir)
     if randomBytes(result) != KeyLen:
       raise newException(OSError, "Failed to generate random key bytes")
-    var keyStr = newString(KeyLen)
-    copyMem(addr keyStr[0], addr result[0], KeyLen)
-    writeFile(store.keyPath, keyStr)
-    setFilePermissions(store.keyPath, {fpUserRead, fpUserWrite})
+    if not createKeyFile(store.keyPath, result):
+      raise newException(IOError,
+        "Failed to create key file atomically: " & store.keyPath)
 
 # ── AES-256-GCM AEAD ──────────────────────────────────────────────────────────
 

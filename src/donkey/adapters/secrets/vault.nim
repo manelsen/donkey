@@ -26,6 +26,10 @@ const
   VaultKeyFileName* = ".secret_key"
   VaultVersion*    = 1
 
+  ## Variables that must remain in the bootstrap environment: the vault is
+  ## located under DONKEY_HOME, so storing it in the vault creates a cycle.
+  BootstrapEnvVars* = ["DONKEY_HOME"]
+
 type
   SecretVault* = ref object
     dir*:      string
@@ -139,6 +143,8 @@ proc setSecret*(vault: SecretVault;
   if not isValidSecretName(name):
     return err("invalid secret name: '" & name &
                "' (use letters, digits and _, starting with a letter or _)")
+  if name in BootstrapEnvVars:
+    return err("'" & name & "' must stay in donkey.env: it locates the secret vault")
   if value.len == 0:
     return err("secret value is empty")
   vault.withVaultLock(proc(): Result[void, string] {.gcsafe, raises: [].} =

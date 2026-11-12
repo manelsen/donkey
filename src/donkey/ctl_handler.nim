@@ -195,15 +195,21 @@ proc ctlSecretImportEnv*(vault: SecretVault;
     return err("could not read " & path & ": " & e.msg)
   var imported = 0
   var seen = initHashSet[string]()
+  var skipped: seq[string]
   for (name, value) in entries:
     ## loadEnvFile keeps the first occurrence; import must do the same.
     if value.len == 0 or name in seen:
       continue
     seen.incl(name)
+    if name in BootstrapEnvVars:
+      skipped.add(name)
+      continue
     let res = vault.setSecret(name, value)
     if res.isErr:
       return err("could not import " & name & ": " & res.error)
     inc imported
+  for name in skipped:
+    echo "Skipped bootstrap variable " & name & " (keep it in donkey.env)."
   echo "Imported " & $imported & " secret(s) from " & path & "."
   ok()
 

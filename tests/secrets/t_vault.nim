@@ -44,6 +44,13 @@ suite "SecretVault":
     check res.error.contains("key is missing")
     check vault.listSecretNames().get() == @["TOKEN_A"]
 
+  test "bootstrap variables cannot be stored in the vault":
+    removeDir(VaultTmp / "bootstrap")
+    let vault = newSecretVault(VaultTmp / "bootstrap")
+    let res = vault.setSecret("DONKEY_HOME", "/srv/donkey")
+    check res.isErr
+    check res.error.contains("must stay")
+
   test "rejects invalid names and empty values":
     removeDir(VaultTmp / "invalid")
     let vault = newSecretVault(VaultTmp / "invalid")
