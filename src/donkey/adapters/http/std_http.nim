@@ -23,7 +23,7 @@ proc newStdHttpAdapter*(timeout = 60, maxRetries = 3, allowlist: seq[string] = @
 
 proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
                       headers: seq[HttpHeader];
-                      maxRedirects = 5): Result[HttpResponse, string] {.gcsafe.} =
+                      redirectLimit = 5): Result[HttpResponse, string] {.gcsafe.} =
   # Extract host for circuit breaker and allowlist
   let host = if url.contains("//"): url.split("//")[1].split("/")[0] else: url
 
@@ -36,7 +36,7 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
   var lastError = ""
   for attempt in 1 .. a.maxRetries:
     let res = block:
-      withHttpClientTimeout(a.timeout, maxRedirects, a.proxy):
+      withHttpClientTimeout(a.timeout, redirectLimit, a.proxy):
         if headers.len > 0:
           var h = newHttpHeaders()
           for (k, v) in headers: h[k] = v
@@ -104,7 +104,7 @@ proc delete*(a: StdHttpAdapter; url: string;
 
 proc getNoRedirect*(a: StdHttpAdapter; url: string;
                     headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
-  a.requestWithRetry(HttpGet, url, "", headers, maxRedirects = 0)
+  a.requestWithRetry(HttpGet, url, "", headers, redirectLimit = 0)
 
 proc toRuntimePort*(a: StdHttpAdapter): HttpRuntimePort =
   HttpRuntimePort(

@@ -3,6 +3,8 @@
 
 import std/[strutils, times]
 import ../config/types
+import ./url_policy
+export url_policy
 
 # ── web_fetch ─────────────────────────────────────────────────────────────────
 
@@ -47,102 +49,6 @@ func truncateBody*(body: string; maxChars: int): string =
   let cap = min(maxChars, HardMaxChars)
   if body.len <= cap: body
   else: body[0 ..< cap] & "\n[...truncated]"
-
-func isPrivateUrl*(rawUrl: string): bool =
-  ## Returns true when rawUrl points to a private/internal host.
-  ## Guards against SSRF — checks localhost, 127.x, 10.x, 192.168.x,
-  ## 169.254.x (link-local/cloud metadata), and 172.16-31.x.
-  let lower = rawUrl.toLowerAscii()
-
-  # Strip scheme.
-  let afterScheme =
-    if "://" in lower: lower[lower.find("://") + 3 .. ^1] else: lower
-
-  # Strip credentials (user:pass@host).
-  let afterAt =
-    if "@" in afterScheme:
-      afterScheme[afterScheme.rfind('@') + 1 .. ^1]
-    else:
-      afterScheme
-
-  # Isolate host (stop at first '/', '?', '#').
-  var hostPort = afterAt
-  for i, c in afterAt:
-    if c in {'/', '?', '#'}:
-      hostPort = afterAt[0 ..< i]
-      break
-
-  # Strip port (last ':NNN' where NNN is all digits).
-  let colon = hostPort.rfind(':')
-  var host  = hostPort
-  if colon > 0:
-    let afterColon = hostPort[colon + 1 .. ^1]
-    if afterColon.len > 0 and afterColon.allCharsInSet({'0'..'9'}):
-      host = hostPort[0 ..< colon]
-
-  # Match known private patterns.
-  if host in ["localhost", "0.0.0.0", "[::1]", "::1"]: return true
-  if host.startsWith("127.")    : return true
-  if host.startsWith("169.254."): return true
-  if host.startsWith("192.168."): return true
-
-  # 10.x.x.x — only when host looks like a dotted-quad.
-  if host.startsWith("10."):
-    let parts = host.split('.')
-    if parts.len == 4: return true
-
-  # 172.16.0.0 – 172.31.255.255.
-  if host.startsWith("172."):
-    let parts = host.split('.')
-    if parts.len >= 2 and parts[1].len > 0 and parts[1].allCharsInSet({'0'..'9'}):
-      try:
-        let second = parseInt(parts[1])
-        if second in 16 .. 31: return true
-      except ValueError:
-        discard  # overflow/non-numeric label: not an IPv4 literal
-
-  false
-
-func extractUrlHost*(rawUrl: string): string =
-  let lower = rawUrl.toLowerAscii()
-  let afterScheme =
-    if "://" in lower: lower[lower.find("://") + 3 .. ^1] else: lower
-  let afterAt =
-    if "@" in afterScheme:
-      afterScheme[afterScheme.rfind('@') + 1 .. ^1]
-    else:
-      afterScheme
-  var hostPort = afterAt
-  for i, c in afterAt:
-    if c in {'/', '?', '#'}:
-      hostPort = afterAt[0 ..< i]
-      break
-  let colon = hostPort.rfind(':')
-  result = hostPort
-  if colon > 0:
-    let afterColon = hostPort[colon + 1 .. ^1]
-    if afterColon.len > 0 and afterColon.allCharsInSet({'0'..'9'}):
-      result = hostPort[0 ..< colon]
-
-func extractUrlPath*(rawUrl: string): string =
-  let lower = rawUrl.toLowerAscii()
-  let afterScheme =
-    if "://" in lower: lower[lower.find("://") + 3 .. ^1] else: lower
-  let afterAt =
-    if "@" in afterScheme:
-      afterScheme[afterScheme.rfind('@') + 1 .. ^1]
-    else:
-      afterScheme
-  var start = afterAt.find('/')
-  if start < 0:
-    return "/"
-  result = afterAt[start .. ^1]
-  for i, c in result:
-    if c in {'?', '#'}:
-      result = result[0 ..< i]
-      break
-  if result.len == 0:
-    result = "/"
 
 func parseWebAllowlist*(raw: string): seq[string] =
   for item in raw.split(','):

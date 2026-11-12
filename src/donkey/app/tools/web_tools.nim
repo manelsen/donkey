@@ -29,8 +29,14 @@ proc fetchWithRedirectPolicy(http: httpPort.HttpRuntimePort;
                              fallbackAllowlist: seq[string];
                              policyLabel: string): Result[httpPort.HttpResponse, string] {.gcsafe.} =
   ## Follows redirects manually so every hop is checked by the URL/DNS policy.
-  ## The production StdHttpAdapter supplies getNoRedirect; a custom port that
-  ## does not implement it falls back to its normal get (no per-hop validation).
+  ## Ports without getNoRedirect are rejected: following redirects inside the
+  ## transport would bypass the per-hop policy.
+  ##
+  ## DNS is validated here, but std/httpclient resolves again when dialing.
+  ## Full connection pinning against DNS rebinding requires the filtering
+  ## egress proxy (DONKEY_WEB_PROXY) or a firewall.
+  if http.getNoRedirect == nil:
+    return err("redirect-safe fetch unavailable: port lacks getNoRedirect")
   var current = url
   for _ in 0 .. MaxFetchRedirects:
     if not isAllowedPublicUrl(current, allowRules, fallbackAllowlist):
@@ -42,11 +48,7 @@ proc fetchWithRedirectPolicy(http: httpPort.HttpRuntimePort;
       let resolved = http.resolveHost(host)
       if resolved.isErr:
         return err("URL blocked: " & resolved.error)
-    let resp =
-      if http.getNoRedirect != nil:
-        http.getNoRedirect(current, headers)
-      else:
-        http.get(current, headers)
+    let resp = http.getNoRedirect(current, headers)
     if resp.isErr:
       return resp
     let r = resp.get()

@@ -12,7 +12,11 @@ proc mockHttp(status: int; body: string; errMsg = ""): HttpRuntimePort =
     get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
       if errMsg.len > 0:
         return err(errMsg)
-      ok(HttpResponse(status: status, body: body))
+      ok(HttpResponse(status: status, body: body)),
+    getNoRedirect: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      if errMsg.len > 0:
+        return err(errMsg)
+      ok(HttpResponse(status: status, body: body)),
   )
 
 proc redirectHttp(location: string): HttpRuntimePort =
@@ -74,6 +78,27 @@ suite "structured web tools":
     check parsed["status"].getStr() == "operational_error"
     check parsed["error"]["message"].getStr().contains("private/internal")
 
+  test "redirect to a spoofed authority is blocked":
+    let parsed = parse(performFetchStructured(
+      redirectHttp("http://127.0.0.1:8080/admin@example.com"),
+      "https://example.com/start", expect = "text"))
+
+    check not parsed["ok"].getBool()
+    check parsed["status"].getStr() == "operational_error"
+    check parsed["error"]["message"].getStr().contains("private/internal")
+
+  test "port without getNoRedirect fails closed":
+    let getOnly = HttpRuntimePort(
+      get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+        ok(HttpResponse(status: 200, body: "must not be used"))
+    )
+    let parsed = parse(performFetchStructured(getOnly, "https://example.com",
+                                              expect = "text"))
+
+    check not parsed["ok"].getBool()
+    check parsed["status"].getStr() == "operational_error"
+    check parsed["error"]["message"].getStr().contains("redirect-safe fetch unavailable")
+
   test "relative redirect is resolved against the current URL":
     let parsed = parse(performFetchStructured(
       redirectHttp("/b"), "https://example.com/start", expect = "text"))
@@ -85,6 +110,8 @@ suite "structured web tools":
   test "DNS rejection blocks the fetch before the request":
     let dnsBlocked = HttpRuntimePort(
       get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+        ok(HttpResponse(status: 200, body: "must not be reached")),
+      getNoRedirect: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
         ok(HttpResponse(status: 200, body: "must not be reached")),
       resolveHost: proc(host: string): Result[string, string] {.gcsafe.} =
         err("private address blocked: " & host)
