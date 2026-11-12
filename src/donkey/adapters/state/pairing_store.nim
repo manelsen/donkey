@@ -59,22 +59,28 @@ proc pruneExpired(requests: seq[PairingRequest]; now: float): seq[PairingRequest
     if not request.isExpired(now):
       result.add(request)
 
-proc load*(store: PairingStore; now = epochTime()): seq[PairingRequest] =
-  ## Loads non-expired requests. Corrupt files are treated as empty so a bad
-  ## state file cannot block the daemon or the CLI.
-  if store.path.len == 0 or not fileExists(store.path):
-    return @[]
+proc load*(store: PairingStore;
+           now = epochTime()): Result[seq[PairingRequest], string] =
+  ## Loads non-expired requests. A missing file is an empty store; a read or
+  ## parse failure is returned so callers never overwrite unseen requests.
+  if store.path.len == 0:
+    return err("pairing store path is empty")
+  if not fileExists(store.path):
+    return ok(newSeq[PairingRequest]())
+  var requests: seq[PairingRequest]
   try:
     let root = parseJson(readFile(store.path))
     let items = root.getOrDefault("requests")
-    if items == nil or items.kind != JArray:
-      return @[]
+    if items == nil:
+      return ok(newSeq[PairingRequest]())
+    if items.kind != JArray:
+      return err("pairing store is not an array")
     for item in items:
       let channelName = item.getOrDefault("channel").getStr("")
       var kind: ChannelKind
       if not parseChannelName(channelName, kind):
         continue
-      result.add(PairingRequest(
+      requests.add(PairingRequest(
         code:      item.getOrDefault("code").getStr(""),
         channel:   kind,
         rawId:     item.getOrDefault("rawId").getStr(""),
@@ -82,9 +88,9 @@ proc load*(store: PairingStore; now = epochTime()): seq[PairingRequest] =
         expiresAt: item.getOrDefault("expiresAt").getFloat(0.0),
         attempts:  item.getOrDefault("attempts").getInt(0),
       ))
-  except CatchableError:
-    return @[]
-  result = pruneExpired(result, now)
+  except CatchableError as e:
+    return err("pairing store read failed: " & e.msg)
+  ok(pruneExpired(requests, now))
 
 proc save*(store: PairingStore;
            requests: seq[PairingRequest]): Result[void, string] =
@@ -117,7 +123,7 @@ proc requestPairing*(store: PairingStore;
   ## maximum number of pending requests.
   if rawId.len == 0:
     return err("empty pairing identity")
-  var requests = store.load(now)
+  var requests = ? store.load(now)
   let key = requestKey(kind, rawId)
   var pending = 0
   for request in requests:
@@ -128,18 +134,19 @@ proc requestPairing*(store: PairingStore;
   if pending >= MaxPendingPerRawId:
     return err("too many pending pairing requests")
 
-  var code = generatePairingCode()
-  var tries = 0
-  while tries < 10:
-    var collision = false
+  var code = ""
+  var unique = false
+  for _ in 0 ..< 10:
+    code = generatePairingCode()
+    unique = true
     for request in requests:
       if request.code == code:
-        collision = true
+        unique = false
         break
-    if not collision:
+    if unique:
       break
-    code = generatePairingCode()
-    inc tries
+  if not unique:
+    return err("could not generate a unique pairing code")
 
   let request = PairingRequest(
     code:      code,
@@ -159,7 +166,7 @@ func findIndexByCode*(requests: seq[PairingRequest]; code: string): int =
   -1
 
 proc removeByCode*(store: PairingStore; code: string): Result[bool, string] =
-  var requests = store.load()
+  var requests = ? store.load()
   let idx = findIndexByCode(requests, code)
   if idx < 0:
     return ok(false)

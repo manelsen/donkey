@@ -20,7 +20,7 @@ suite "ctl pairing":
 
     let res = ctlPairApprove(cfg, memory, store, request.code)
     check res.isOk
-    check store.load().len == 0
+    check store.load().get().len == 0
 
     let resolver = newIdentityResolver(cfg.home / "identities.tsv")
     let userId = resolver.lookup(ckTelegram, "777")
@@ -36,7 +36,7 @@ suite "ctl pairing":
 
     let res = ctlPairReject(store, request.code)
     check res.isOk
-    check store.load().len == 0
+    check store.load().get().len == 0
 
     let resolver = newIdentityResolver(cfg.home / "identities.tsv")
     check resolver.lookup(ckSlack, "U9").isNone

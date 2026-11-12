@@ -733,10 +733,10 @@ suite "DM pairing gate":
     sm.dmPolicy = DmPolicyPairing
     sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
     var requested: seq[(ChannelKind, string)] = @[]
-    sm.pairingRequest = proc(kind: ChannelKind; rawId: string): bool {.gcsafe.} =
+    sm.pairingRequest = proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
       {.cast(gcsafe).}:
         requested.add((kind, rawId))
-      true
+      ok()
     let resolver = newIdentityResolver(GateTmp / "pairing" / "ids.tsv")
 
     let auth = authorizeInbound(sm, resolver.identityGate(), ckTelegram,
@@ -755,10 +755,10 @@ suite "DM pairing gate":
     sm.dmPolicy = DmPolicyPairing
     sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
     var calls = 0
-    sm.pairingRequest = proc(kind: ChannelKind; rawId: string): bool {.gcsafe.} =
+    sm.pairingRequest = proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
       {.cast(gcsafe).}:
         inc calls
-      true
+      ok()
     let resolver = newIdentityResolver(GateTmp / "pairing-text" / "ids.tsv")
 
     let auth = authorizeInbound(sm, resolver.identityGate(), ckTelegram,
@@ -774,10 +774,10 @@ suite "DM pairing gate":
     sm.dmPolicy = DmPolicyPairing
     sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
     var requestedRaw = ""
-    sm.pairingRequest = proc(kind: ChannelKind; rawId: string): bool {.gcsafe.} =
+    sm.pairingRequest = proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
       {.cast(gcsafe).}:
         requestedRaw = rawId
-      true
+      ok()
     let resolver = newIdentityResolver(GateTmp / "pairing-resolved" / "ids.tsv")
     let uid = resolver.resolve(ckTelegram, "chat-42")
 

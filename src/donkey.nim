@@ -1640,8 +1640,15 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     proc(userId: UserId): bool {.gcsafe.} = memory.isDmAllowed(userId))
   let pairingStore = newPairingStore(cfg.home / "state" / "pairings.json")
   ctx.runtime.sm.pairingRequest =
-    proc(kind: ChannelKind; rawId: string): bool {.gcsafe.} =
-      pairingStore.requestPairing(kind, rawId).isOk
+    proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
+      let res = pairingStore.requestPairing(kind, rawId)
+      if res.isErr:
+        log.warn("pairing request rejected for " & $kind & " " & rawId &
+                 ": " & res.error)
+        return err(res.error)
+      log.info("pairing request created for " & $kind & " " & rawId &
+               " (approve with ctl pair list/approve)")
+      ok()
   ctx.runtime.sm.setRegistryErrorHook(
     proc(error: string) {.gcsafe, raises: [].} =
       log.warn("session registry: " & error))

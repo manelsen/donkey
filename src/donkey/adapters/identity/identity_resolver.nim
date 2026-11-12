@@ -51,23 +51,31 @@ proc save(r: IdentityResolver) =
   var buf = ""
   for k, v in r.store:
     buf.add(k & '\t' & $v & '\n')
-  writeFile(r.path, buf)
+  let tmp = r.path & ".tmp"
+  writeFile(tmp, buf)
+  moveFile(tmp, r.path)
 
 proc loadPersistedMappings(r: IdentityResolver) =
-  r.store = initTable[string, UserId]()
-  r.reverseMap = initTable[string, seq[string]]()
-  if not fileExists(r.path):
-    return
-  for line in lines(r.path):
-    let parts = line.split('\t')
-    if parts.len == 2:
-      let key = parts[0]
-      let uid = UserId(parts[1])
-      r.store[key] = uid
-      let us = $uid
-      if us notin r.reverseMap:
-        r.reverseMap[us] = @[]
-      r.reverseMap[us].add(key)
+  ## Rebuilds the in-memory maps from disk. On a read failure the current maps
+  ## are kept intact instead of being replaced by an empty state.
+  var store = initTable[string, UserId]()
+  var reverseMap = initTable[string, seq[string]]()
+  if fileExists(r.path):
+    try:
+      for line in lines(r.path):
+        let parts = line.split('\t')
+        if parts.len == 2:
+          let key = parts[0]
+          let uid = UserId(parts[1])
+          store[key] = uid
+          let us = $uid
+          if us notin reverseMap:
+            reverseMap[us] = @[]
+          reverseMap[us].add(key)
+    except CatchableError:
+      return
+  r.store = store
+  r.reverseMap = reverseMap
 
 proc newIdentityResolver*(path: string): IdentityResolver =
   result = IdentityResolver(
@@ -79,8 +87,12 @@ proc newIdentityResolver*(path: string): IdentityResolver =
   result.loadPersistedMappings()
 
 proc resolve*(r: IdentityResolver; kind: ChannelKind; rawId: string): UserId =
-  ## Returns the stable UserId for (kind, rawId), minting a new UUID on first contact.
+  ## Returns the stable UserId for (kind, rawId), minting a new UUID on first
+  ## contact. Reloads the persisted map before minting so a UUID written by
+  ## another process (e.g. `ctl pair approve`) is not clobbered.
   let key = channelKey(kind, rawId)
+  if key notin r.store:
+    r.loadPersistedMappings()
   if key notin r.store:
     randomize()
     let uid = UserId(generateUUID())
@@ -94,9 +106,11 @@ proc resolve*(r: IdentityResolver; kind: ChannelKind; rawId: string): UserId =
 
 proc lookup*(r: IdentityResolver; kind: ChannelKind; rawId: string): Option[UserId] =
   ## Returns the stored mapping for (kind, rawId), if any, without minting a
-  ## new identity or touching the persisted store. Callers use this before
-  ## authorization so denied senders are never added to the identity table.
+  ## new identity. Reloads the persisted map first so approvals performed by
+  ## `ctl` are visible to a long-running daemon.
   let key = channelKey(kind, rawId)
+  if key notin r.store:
+    r.loadPersistedMappings()
   if key in r.store:
     some(r.store[key])
   else:

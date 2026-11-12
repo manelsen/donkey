@@ -35,6 +35,7 @@ type
   InboundMessage* = object
     userId*:     UserId
     channelId*:  string       ## channel-specific reply/conversation target
+    rawChannelId*: string     ## raw sender id before identity resolution
     messageId*:  string       ## original inbound message id when distinct from channelId
     callbackId*: string       ## non-empty for callback queries that need ack
     text*:       string

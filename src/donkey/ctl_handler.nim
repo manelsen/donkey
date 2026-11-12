@@ -77,7 +77,11 @@ proc ctlUserRevoke*(memory: MdFileAdapter; uuid: string; revoked: bool): Result[
 # ── ctl pairing commands ───────────────────────────────────────────────────────
 
 proc ctlPairList*(store: PairingStore) =
-  let requests = store.load()
+  let loaded = store.load()
+  if loaded.isErr:
+    echo "Error: " & loaded.error
+    return
+  let requests = loaded.get()
   if requests.len == 0:
     echo "No pending pairing requests."
     return
@@ -89,7 +93,7 @@ proc ctlPairList*(store: PairingStore) =
 
 proc ctlPairApprove*(cfg: DonkeyConfig; memory: MdFileAdapter;
                      store: PairingStore; code: string): Result[void, string] =
-  var requests = store.load()
+  var requests = ? store.load()
   let idx = findIndexByCode(requests, code.strip)
   if idx < 0:
     return err("pairing request not found or expired: " & code)

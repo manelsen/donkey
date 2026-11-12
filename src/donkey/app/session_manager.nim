@@ -46,7 +46,7 @@ type
     entries*: Table[string, SessionEntry]  ## string(UserId) → entry
     dmPolicy*: DmPolicy
     isDmAllowed*: proc(userId: UserId): bool {.gcsafe.}
-    pairingRequest*: proc(kind: ChannelKind; rawId: string): bool {.gcsafe.}
+    pairingRequest*: proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.}
       ## Creates a pending pairing request; wired by the composition root.
     registryStore*: SessionRegistryPort
     registryErrorHook*: proc(error: string) {.gcsafe, raises: [].}

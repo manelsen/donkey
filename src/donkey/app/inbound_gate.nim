@@ -7,10 +7,14 @@
 
 import std/[options, strutils]
 import ../core/commands/command_routing
+import ../core/log
+import ../core/pipeops
 import ../core/security/dm_policy
 import ../core/types
 import ../domain/message
 import ./session_manager
+
+let gateLog = newLogger("inbound.gate")
 
 type
   IdentityGatePort* = object
@@ -92,7 +96,11 @@ proc authorizeInbound*(sm: SessionManager;
     if pairing.kind == cmdPair:
       ## The admin approves the request out-of-band; the sender stays denied
       ## until the CLI adds the minted UUID to the allowlist.
-      discard sm.pairingRequest(kind, rawId)
+      let requested = sm.pairingRequest(kind, rawId)
+      if requested.isErr:
+        {.cast(gcsafe).}:
+          gateLog.warn("pairing request failed for " & $kind & " " & rawId &
+                       ": " & requested.error)
 
 proc authorizeResolvedInbound*(sm: SessionManager;
                                gate: IdentityGatePort;
@@ -118,4 +126,8 @@ proc authorizeResolvedInbound*(sm: SessionManager;
      linkSource == ilsCommandText:
     let pairing = decideCommandRequest(CommandRequest(channel: kind, text: text))
     if pairing.kind == cmdPair:
-      discard sm.pairingRequest(kind, rawId)
+      let requested = sm.pairingRequest(kind, rawId)
+      if requested.isErr:
+        {.cast(gcsafe).}:
+          gateLog.warn("pairing request failed for " & $kind & " " & rawId &
+                       ": " & requested.error)
