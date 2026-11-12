@@ -179,7 +179,7 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
   ./donkey ctl secret import-env                    # encrypt current donkey.env
   ./donkey ctl secret remove BRAVE_API_KEY
   ```
-  Never pass the secret as a command-line argument: it would be visible to `ps` and shell history. At daemon startup the vault decrypts entries into the environment only for variables that are not already set. After `import-env`, remove the imported lines from `donkey.env` (plaintext precedence) and restart. Back up `{home}/.secret_key` separately from `.secrets/`: copying `.secrets/` alone does not expose the values, but losing the key makes them unrecoverable. The vault protects data at rest, not against a process running as the same Unix user.
+  Never pass the secret as a command-line argument: it would be visible to `ps` and shell history. At daemon startup the vault decrypts entries into the environment only for variables that are not already set. After `import-env`, remove the imported lines from `donkey.env` (plaintext precedence) and restart. Back up `{home}/.secret_key` separately from `.secrets/`: copying `.secrets/` alone does not expose the values, but losing the key makes them unrecoverable. A full-home backup includes both files and must be protected as a secret. The vault protects data at rest, not against a process running as the same Unix user.
 - **Model Context Protocol (MCP)**: Native client support for external MCP tool servers:
   ```bash
   # Positional arguments only via CLI

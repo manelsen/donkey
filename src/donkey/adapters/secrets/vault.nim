@@ -9,9 +9,11 @@
 ##
 ## `ctl secret` writes values; the daemon decrypts them into the process
 ## environment at startup only for variables that are not already set (shell
-## env and donkey.env keep precedence). The vault protects secrets at rest
-## (backups, accidental copies); it does not protect against another process
-## running as the same Unix user, which can read the key.
+## env and donkey.env keep precedence). The vault protects against accidental
+## copies of `.secrets/`; a backup of the entire home also contains
+## `.secret_key` and therefore exposes the values, so keep key backups separate
+## and protected. It does not protect against another process running as the
+## same Unix user, which can read the key.
 
 import std/[algorithm, json, os, strutils, tables]
 when defined(posix):
@@ -162,11 +164,20 @@ proc setSecrets*(vault: SecretVault;
     if loaded.isErr:
       return err(loaded.error)
     var stored = loaded.get()
-    if stored.len > 0 and not fileExists(vault.keyPath):
-      ## Never mint a new key over an existing vault: the old entries would
-      ## become unrecoverable while the new one silently used a different key.
-      return err("secret vault key is missing; restore " & vault.keyPath &
-                 " or reset the vault explicitly")
+    if stored.len > 0:
+      ## Never mint or accept a different key over an existing vault: the old
+      ## entries would become unrecoverable or the vault would mix keys.
+      if not fileExists(vault.keyPath):
+        return err("secret vault key is missing; restore " & vault.keyPath &
+                   " or reset the vault explicitly")
+      var probe = ""
+      for _, ciphertext in stored:
+        probe = ciphertext
+        break
+      let readable = vault.keyStore.decrypt(probe)
+      if readable.isErr:
+        return err("secret vault key does not match the existing entries; " &
+                   "restore the original key (" & readable.error & ")")
 
     var encrypted: seq[(string, string)]
     for (name, value) in batch:

@@ -3,8 +3,8 @@
 ## Any type satisfying this concept can be passed wherever SecretStore
 ## is expected. No explicit "implements" declaration needed.
 ##
-## The enc2: format (nullclaw-compatible):
-##   enc2:<hex(nonce || ciphertext || poly1305_tag)>
+## The enc2: format:
+##   enc2:<hex(iv[12] || ciphertext || gcm_tag[16])>  (AES-256-GCM)
 ##
 ## Plaintext values (no prefix) are returned as-is by all implementations.
 

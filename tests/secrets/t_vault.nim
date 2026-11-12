@@ -45,6 +45,18 @@ suite "SecretVault":
     check res.isErr
     check vault.listSecretNames().get() == @["KEEP"]
 
+  test "a substituted key cannot append to an existing vault":
+    removeDir(VaultTmp / "subkey")
+    let vault = newSecretVault(VaultTmp / "subkey")
+    check vault.setSecret("TOKEN_A", "alpha").isOk
+
+    ## Replace the key with another valid 32-byte key.
+    writeFile(vault.keyPath, newString(32))
+    let res = vault.setSecret("TOKEN_B", "beta")
+    check res.isErr
+    check res.error.contains("does not match")
+    check vault.listSecretNames().get() == @["TOKEN_A"]
+
   test "does not mint a new key over an existing vault":
     removeDir(VaultTmp / "lostkey")
     let vault = newSecretVault(VaultTmp / "lostkey")
