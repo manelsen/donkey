@@ -8,9 +8,10 @@
 ## and owns at most a few sessions. I/O failures are returned as `Err`; callers
 ## on the hot path log and continue.
 
-import std/[json, locks, options, os, strutils, tables]
+import std/[atomics, json, locks, options, os, strutils, tables]
 when defined(posix):
   import std/posix
+import ../../core/log
 import ../../core/pipeops
 import ../../core/types
 import ../../ports/runtime_state
@@ -621,6 +622,61 @@ proc compactLedger*(store: RuntimeStateStore; force = false;
 func ledgerCompactIntervalSec*(store: RuntimeStateStore): float =
   ## Interval used by the daemon to schedule periodic compaction.
   float(store.ledgerCompactIntervalMs) / 1000.0
+
+proc ledgerLastCompactMs*(store: RuntimeStateStore): int64 =
+  acquire(store.lock)
+  defer: release(store.lock)
+  store.lastLedgerCompactMs
+
+type
+  LedgerCompactionWorker* = ref object
+    store:      RuntimeStateStore
+    intervalMs: int64
+    logger:     Logger
+    stop:       Atomic[bool]
+    stopped:    bool
+    thread:     Thread[LedgerCompactionWorker]
+
+proc ledgerCompactionLoop(worker: LedgerCompactionWorker) {.thread.} =
+  {.cast(gcsafe).}:
+    while not worker.stop.load():
+      ## Sleep in bounded slices so shutdown does not wait for the whole
+      ## interval (default is one hour).
+      var waited = 0'i64
+      while waited < worker.intervalMs and not worker.stop.load():
+        sleep(1000)
+        waited += 1000
+      if worker.stop.load():
+        break
+      let res = worker.store.compactLedger()
+      if res.isErr and worker.logger.sink != nil:
+        worker.logger.warn("ledger compaction: " & res.error)
+
+proc startLedgerCompactionWorker*(store: RuntimeStateStore;
+                                  intervalSec: float;
+                                  logger: Logger): LedgerCompactionWorker =
+  ## Starts a dedicated OS thread for ledger compaction. Returns nil when the
+  ## interval is disabled or the thread cannot be created.
+  if store == nil or intervalSec <= 0.0:
+    return nil
+  let intervalMs = max(1000'i64, int64(max(1.0, intervalSec) * 1000.0))
+  result = LedgerCompactionWorker(
+    store: store, intervalMs: intervalMs, logger: logger)
+  result.stop.store(false)
+  try:
+    createThread(result.thread, ledgerCompactionLoop, result)
+  except CatchableError as e:
+    if logger.sink != nil:
+      logger.warn("ledger compaction worker not started: " & e.msg)
+    result = nil
+
+proc stopLedgerCompactionWorker*(worker: LedgerCompactionWorker) =
+  if worker == nil or worker.stopped:
+    return
+  worker.stopped = true
+  worker.stop.store(true)
+  {.cast(gcsafe).}:
+    joinThread(worker.thread)
 
 func ledgerLastCompactError*(store: RuntimeStateStore): string =
   ## Last compaction failure, for the daemon to log after startup.
