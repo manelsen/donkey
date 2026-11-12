@@ -292,6 +292,28 @@ suite "durability":
     check store.ledgerLastCompactError().len > 0
     check "future-channel" in readFile(dir / DeliveryLedgerFileName)
 
+  test "compaction skips events with unknown fields":
+    let dir = freshDir("ledger-future-field")
+    defer: cleanup(dir)
+
+    let now = epochMs()
+    writeFile(dir / DeliveryLedgerFileName,
+      "\n" & $(%* {
+        "id": "future-field",
+        "channel": "telegram",
+        "state": "sent",
+        "schema_version": 2,
+        "updated_at_ms": now,
+      }) & "\n")
+
+    let store = newRuntimeStateStore(
+      dir,
+      ledgerRetentionDays = 1.0,
+      ledgerCompactIntervalSec = 3600.0,
+    )
+    check store.ledgerLastCompactError().len > 0
+    check "schema_version" in readFile(dir / DeliveryLedgerFileName)
+
   test "compaction on a missing ledger is a no-op":
     let dir = freshDir("ledger-none")
     defer: cleanup(dir)

@@ -498,10 +498,26 @@ proc loadLedger(store: RuntimeStateStore): Result[seq[DeliveryRecord], string] {
   defer: release(store.lock)
   store.loadLedgerFromDisk()
 
-proc hasForwardIncompatibleEvents(path: string): bool {.raises: [].} =
-  ## A valid JSON object that replay cannot interpret is treated as an event
-  ## from a newer version; compaction must not drop it. Torn/invalid JSON
-  ## lines are ignored because replay already ignores them.
+const LedgerEventFields = [
+  "id", "user_id", "channel", "channel_id", "text_hash", "state",
+  "attempts", "created_at_ms", "updated_at_ms", "error",
+]
+
+func isKnownLedgerEvent(node: JsonNode): bool =
+  ## Rejects unknown fields as well as unknown channels/states: a future event
+  ## that adds a field must survive a rollback, so compaction skips it.
+  if node.kind != JObject:
+    return false
+  for key, _ in node:
+    if key notin LedgerEventFields:
+      return false
+  ledgerEventFromJson(node).isSome
+
+proc hasForwardIncompatibleEvents(path: string): Result[bool, string] {.raises: [].} =
+  ## A valid JSON object that replay cannot interpret, or that carries fields
+  ## this version does not know, is treated as a future event; compaction must
+  ## not drop it. Torn/invalid JSON lines are ignored because replay also
+  ## ignores them.
   try:
     for line in lines(path):
       let trimmed = line.strip
@@ -509,14 +525,13 @@ proc hasForwardIncompatibleEvents(path: string): bool {.raises: [].} =
         continue
       try:
         let parsed = parseJson(trimmed)
-        if parsed.kind == JObject and ledgerEventFromJson(parsed).isNone:
-          return true
+        if parsed.kind == JObject and not isKnownLedgerEvent(parsed):
+          return ok(true)
       except CatchableError:
         continue
-  except CatchableError:
-    ## Be conservative: do not rewrite a file we cannot scan.
-    return true
-  false
+  except CatchableError as e:
+    return err("ledger scan failed: " & e.msg)
+  ok(false)
 
 proc compactLedgerLocked(store: RuntimeStateStore;
                          force: bool;
@@ -533,7 +548,12 @@ proc compactLedgerLocked(store: RuntimeStateStore;
      nowMs - store.lastLedgerCompactMs < store.ledgerCompactIntervalMs:
     return ok()
 
-  if hasForwardIncompatibleEvents(path):
+  let scan = hasForwardIncompatibleEvents(path)
+  if scan.isErr:
+    store.lastLedgerCompactMs = nowMs
+    store.lastLedgerCompactError = scan.error
+    return err(scan.error)
+  if scan.get():
     store.lastLedgerCompactMs = nowMs
     store.lastLedgerCompactError =
       "ledger contains unrecognized events; compaction skipped"
@@ -681,6 +701,19 @@ proc newRuntimeStateStore*(stateDir: string;
                            ledgerRetentionDays = LedgerRetentionDaysDefault;
                            ledgerCompactIntervalSec = LedgerCompactIntervalSecDefault
                           ): RuntimeStateStore =
+  ## Sanitize the configurable windows before converting to integer
+  ## milliseconds; NaN/Inf and out-of-range values fall back to the defaults.
+  let retentionDays =
+    if ledgerRetentionDays >= 0.0 and ledgerRetentionDays <= 3650.0:
+      ledgerRetentionDays
+    else:
+      LedgerRetentionDaysDefault
+  let compactSec =
+    if ledgerCompactIntervalSec >= 0.0 and
+       ledgerCompactIntervalSec <= 7.0 * 24.0 * 3600.0:
+      ledgerCompactIntervalSec
+    else:
+      LedgerCompactIntervalSecDefault
   result = RuntimeStateStore(
     stateDir: stateDir,
     pending: initTable[string, DeliveryRecord](),
@@ -688,8 +721,8 @@ proc newRuntimeStateStore*(stateDir: string;
     ledgerDirSynced: false,
     sessionsDirty: false,
     lastSessionsWriteMs: 0,
-    ledgerRetentionMs: int64(max(0.0, ledgerRetentionDays) * 86_400_000.0),
-    ledgerCompactIntervalMs: int64(max(0.0, ledgerCompactIntervalSec) * 1000.0),
+    ledgerRetentionMs: int64(retentionDays * 86_400_000.0),
+    ledgerCompactIntervalMs: int64(compactSec * 1000.0),
     lastLedgerCompactMs: 0,
     lastLedgerCompactError: "",
     tmpCounter: 0,

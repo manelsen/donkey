@@ -472,12 +472,16 @@ Rotação/compaction do ledger:
   terminais dentro de `DONKEY_LEDGER_RETENTION_DAYS` (default 30), e reescreve
   o arquivo atomicamente (tmp + fsync + rename + fsync do diretório);
 - registros sem timestamp são mantidos por segurança; `pending` nunca expira;
-- eventos que o replay não reconhece (formato de versão futura) impedem a
-  compactação, para que um rollback não perca dados.
+- eventos que o replay não reconhece, incluindo campos de versão futura,
+  impedem a compactação, para que um rollback não perca dados.
 
 O tamanho do arquivo é, portanto, limitado pela retenção e pelo volume de
 entregas no intervalo de compactação — não por um teto rígido. Um ledger com
 muitos `pending` pode continuar acima de qualquer valor configurado.
+
+Limite: a compactação roda de forma síncrona no event loop do Chronos a cada
+intervalo; um ledger excepcionalmente grande pode causar uma pausa curta.
+Mover leitura/reescrita para um worker dedicado é follow-up.
 
 Limite de `fsync`: em filesystems, mounts de rede ou discos que ignoram
 `fsync`, a persistência continua sendo best-effort — o processo não pode
