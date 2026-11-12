@@ -3,7 +3,7 @@
 ## Covers the file-backed session registry and outbound delivery ledger, plus
 ## the invariant that a broken persistence sink never blocks the hot path.
 
-import std/[os, strutils, tables, unittest]
+import std/[json, os, strutils, tables, unittest]
 import donkey/adapters/state/runtime_store
 import donkey/app/outbound_runtime
 import donkey/app/session_manager
@@ -118,7 +118,7 @@ suite "durability":
     defer: cleanup(dir)
 
     let ledger = newRuntimeStateStore(dir).deliveryLedger()
-    let now = 1_700_000_000_000
+    let now = epochMs()
     let pending = DeliveryRecord(
       id: "delivery-1",
       userId: "user-1",
@@ -173,6 +173,153 @@ suite "durability":
     check failed.state == dlsFailed
     check failed.error == "network unreachable"
     check failed.updatedAtMs == 20
+
+  test "ledger compaction keeps pending and drops expired terminal records":
+    let dir = freshDir("ledger-compact")
+    defer: cleanup(dir)
+
+    let now = epochMs()
+    let day = 86_400_000'i64
+    let store = newRuntimeStateStore(
+      dir,
+      ledgerRetentionDays = 1.0,
+      ledgerCompactIntervalSec = 0.0,
+    )
+    let ledger = store.deliveryLedger()
+
+    ## Pending records are always kept, even when older than retention.
+    check ledger.recordPending(DeliveryRecord(
+      id: "pending-old", userId: "u-pending", channel: ckTelegram,
+      channelId: "c-pending", textHash: "h-pending", state: dlsPending,
+      createdAtMs: now - 10 * day, updatedAtMs: now - 10 * day)).isOk
+
+    ## Old terminal record must be dropped.
+    check ledger.recordPending(DeliveryRecord(
+      id: "sent-old", userId: "u-old", channel: ckDiscord,
+      channelId: "c-old", textHash: "h-old", state: dlsPending,
+      createdAtMs: now - 2 * day, updatedAtMs: now - 2 * day)).isOk
+    check ledger.markSent("sent-old", now - 2 * day).isOk
+
+    ## Recent terminal record must survive.
+    check ledger.recordPending(DeliveryRecord(
+      id: "sent-recent", userId: "u-recent", channel: ckSlack,
+      channelId: "c-recent", textHash: "h-recent", state: dlsPending,
+      createdAtMs: now, updatedAtMs: now)).isOk
+    check ledger.markSent("sent-recent", now).isOk
+
+    check store.compactLedger(force = true, nowMs = now).isOk
+
+    let loaded = store.deliveryLedger().loadAll()
+    check loaded.isOk
+    check findRecord(loaded.value, "pending-old").state == dlsPending
+    check findRecord(loaded.value, "sent-recent").state == dlsSent
+    check findRecord(loaded.value, "sent-old").id == ""
+
+    ## The rewritten file no longer contains the dropped id.
+    let raw = readFile(dir / DeliveryLedgerFileName)
+    check "sent-old" notin raw
+    check "pending-old" in raw
+    check "sent-recent" in raw
+
+  test "startup compaction drops expired terminal records":
+    let dir = freshDir("ledger-startup-compact")
+    defer: cleanup(dir)
+
+    let now = epochMs()
+    let day = 86_400_000'i64
+    writeFile(dir / DeliveryLedgerFileName,
+      "\n" & $(%* {
+        "id": "expired",
+        "state": "sent",
+        "updated_at_ms": now - 2 * day,
+      }) & "\n")
+
+    let store = newRuntimeStateStore(
+      dir,
+      ledgerRetentionDays = 1.0,
+      ledgerCompactIntervalSec = 3600.0,
+    )
+    let loaded = store.deliveryLedger().loadAll()
+    check loaded.isOk
+    check loaded.value.len == 0
+    check readFile(dir / DeliveryLedgerFileName).strip.len == 0
+
+  test "compaction keeps a disk terminal state over a stale pending entry":
+    let dir = freshDir("ledger-terminal-wins")
+    defer: cleanup(dir)
+
+    let now = epochMs()
+    let store = newRuntimeStateStore(
+      dir,
+      ledgerRetentionDays = 30.0,
+      ledgerCompactIntervalSec = 3600.0,
+    )
+    let ledger = store.deliveryLedger()
+    let pending = DeliveryRecord(
+      id: "terminal-wins", userId: "u", channel: ckTelegram,
+      channelId: "c", textHash: "h", state: dlsPending,
+      attempts: 1, createdAtMs: now, updatedAtMs: now,
+    )
+    check ledger.recordPending(pending).isOk
+    check ledger.markSent("terminal-wins", now + 10).isOk
+
+    ## Simulate a failed terminal fsync that left the pending entry in memory.
+    store.pending["terminal-wins"] = pending
+    check store.compactLedger(force = true, nowMs = now + 20).isOk
+
+    let loaded = ledger.loadAll()
+    check loaded.isOk
+    check findRecord(loaded.value, "terminal-wins").state == dlsSent
+
+  test "compaction skips a ledger with unrecognized future events":
+    let dir = freshDir("ledger-future")
+    defer: cleanup(dir)
+
+    let now = epochMs()
+    writeFile(dir / DeliveryLedgerFileName,
+      "\n" & $(%* {
+        "id": "future",
+        "channel": "future-channel",
+        "state": "sent",
+        "updated_at_ms": now,
+      }) & "\n")
+
+    let store = newRuntimeStateStore(
+      dir,
+      ledgerRetentionDays = 1.0,
+      ledgerCompactIntervalSec = 3600.0,
+    )
+    check store.ledgerLastCompactError().len > 0
+    check "future-channel" in readFile(dir / DeliveryLedgerFileName)
+
+  test "compaction skips events with unknown fields":
+    let dir = freshDir("ledger-future-field")
+    defer: cleanup(dir)
+
+    let now = epochMs()
+    writeFile(dir / DeliveryLedgerFileName,
+      "\n" & $(%* {
+        "id": "future-field",
+        "channel": "telegram",
+        "state": "sent",
+        "schema_version": 2,
+        "updated_at_ms": now,
+      }) & "\n")
+
+    let store = newRuntimeStateStore(
+      dir,
+      ledgerRetentionDays = 1.0,
+      ledgerCompactIntervalSec = 3600.0,
+    )
+    check store.ledgerLastCompactError().len > 0
+    check "schema_version" in readFile(dir / DeliveryLedgerFileName)
+
+  test "compaction on a missing ledger is a no-op":
+    let dir = freshDir("ledger-none")
+    defer: cleanup(dir)
+    let store = newRuntimeStateStore(dir, ledgerCompactIntervalSec = 3600.0)
+    check store.compactLedger(force = true).isOk
+    check not fileExists(dir / DeliveryLedgerFileName)
 
   test "failing delivery ledger does not prevent sending":
     let dir = freshDir("ledger-blocked")
@@ -338,7 +485,7 @@ suite "durability":
     let dir = freshDir("ledger-pending-reopen")
     defer: cleanup(dir)
 
-    let now = 1_700_000_000_000
+    let now = epochMs()
     let pending = DeliveryRecord(
       id: "delivery-reopen",
       userId: "user-reopen",
@@ -374,7 +521,7 @@ suite "durability":
     let dir = freshDir("ledger-minimal")
     defer: cleanup(dir)
 
-    let now = 1_700_000_000_000
+    let now = epochMs()
     let pending = DeliveryRecord(
       id: "delivery-minimal",
       userId: "user-minimal",

@@ -288,6 +288,7 @@ proc signalPollThread(adapter: ptr SignalAdapter) {.thread.} =
 type DaemonRuntime = ref object
   globalOutbox:         AsyncQueue[OutboundMessage]
   sm:                   SessionManager
+  stateStore:           RuntimeStateStore
   ledger:               DeliveryLedgerPort
   presentationState:    PresentationState
   routeCounts:          Table[string, int]
@@ -629,6 +630,15 @@ proc loadRecentRouteSamples(runtime: DaemonRuntime) =
 
 var gRoutingLockReady = false
 
+proc envFloatValue(name: string; default: float): float =
+  let raw = getEnv(name).strip()
+  if raw.len == 0:
+    return default
+  try:
+    result = parseFloat(raw)
+  except ValueError:
+    result = default
+
 proc initDaemonRuntime(home: string): DaemonRuntime =
   new(result)
   if not gRoutingLockReady:
@@ -636,7 +646,14 @@ proc initDaemonRuntime(home: string): DaemonRuntime =
     gRoutingLockReady = true
   result.globalOutbox = newAsyncQueue[OutboundMessage]()
   result.sm.init()
-  let stateStore = newRuntimeStateStore(home / "state")
+  let stateStore = newRuntimeStateStore(
+    home / "state",
+    ledgerRetentionDays = envFloatValue("DONKEY_LEDGER_RETENTION_DAYS",
+                                        LedgerRetentionDaysDefault),
+    ledgerCompactIntervalSec = envFloatValue("DONKEY_LEDGER_COMPACT_INTERVAL_SEC",
+                                             LedgerCompactIntervalSecDefault),
+  )
+  result.stateStore = stateStore
   result.sm.setRegistryStore(stateStore.sessionRegistry())
   result.ledger = stateStore.deliveryLedger()
   result.presentationState = initPresentationState()
@@ -1633,6 +1650,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory
   let ctx = bootstrap.ctx
+  if ctx.runtime.stateStore != nil:
+    let ledgerErr = ctx.runtime.stateStore.ledgerLastCompactError()
+    if ledgerErr.len > 0:
+      log.warn("ledger compaction at startup: " & ledgerErr)
   ## DM authorization is configured once, before any drainer/actor can consume
   ## an inbound message. Service builders stay side-effect free.
   ctx.runtime.sm.configureDmPolicy(
@@ -1669,6 +1690,15 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     ## within a bounded time even if the main heartbeat runs daily.
     startPeriodicTask(proc() {.gcsafe.} = browserRuntime.evictIdle(),
                       intervalSec = 60, name = "browser-idle")
+  if ctx.runtime.stateStore != nil:
+    let stateStore = ctx.runtime.stateStore
+    let compactionSec = stateStore.ledgerCompactIntervalSec()
+    if compactionSec > 0:
+      startPeriodicTask(proc() {.gcsafe.} =
+        let res = stateStore.compactLedger()
+        if res.isErr:
+          log.warn("ledger compaction: " & res.error),
+        intervalSec = max(60, int(compactionSec)), name = "ledger-compact")
   let memPort = memory.toRuntimePort()
   let reminderOutboxFn: ReminderOutboxFn = proc(userId, channel, message: string) {.gcsafe.} =
     let uid = UserId(userId)
