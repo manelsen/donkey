@@ -12,7 +12,25 @@ proc mockHttp(status: int; body: string; errMsg = ""): HttpRuntimePort =
     get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
       if errMsg.len > 0:
         return err(errMsg)
-      ok(HttpResponse(status: status, body: body))
+      ok(HttpResponse(status: status, body: body)),
+    getNoRedirect: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      if errMsg.len > 0:
+        return err(errMsg)
+      ok(HttpResponse(status: status, body: body)),
+  )
+
+proc redirectHttp(location: string): HttpRuntimePort =
+  ## First hop answers 302; only the expected rewritten URL gets a 200.
+  HttpRuntimePort(
+    get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      ok(HttpResponse(status: 500, body: "get must not follow redirects")),
+    getNoRedirect: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      if url == "https://example.com/start":
+        return ok(HttpResponse(status: 302, body: "",
+                               headers: @[("Location", location)]))
+      if url == "https://example.com/b":
+        return ok(HttpResponse(status: 200, body: "relative target"))
+      ok(HttpResponse(status: 404, body: "unexpected hop: " & url))
   )
 
 suite "structured web tools":
@@ -50,6 +68,61 @@ suite "structured web tools":
     check not parsed["ok"].getBool()
     check parsed["status"].getStr() == "operational_error"
     check parsed["error"]["message"].getStr().contains("private/internal")
+
+  test "redirect into a private address is blocked per hop":
+    let parsed = parse(performFetchStructured(
+      redirectHttp("http://127.0.0.1:8080/admin"),
+      "https://example.com/start", expect = "text"))
+
+    check not parsed["ok"].getBool()
+    check parsed["status"].getStr() == "operational_error"
+    check parsed["error"]["message"].getStr().contains("private/internal")
+
+  test "redirect to a spoofed authority is blocked":
+    let parsed = parse(performFetchStructured(
+      redirectHttp("http://127.0.0.1:8080/admin@example.com"),
+      "https://example.com/start", expect = "text"))
+
+    check not parsed["ok"].getBool()
+    check parsed["status"].getStr() == "operational_error"
+    check parsed["error"]["message"].getStr().contains("private/internal")
+
+  test "port without getNoRedirect fails closed":
+    let getOnly = HttpRuntimePort(
+      get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+        ok(HttpResponse(status: 200, body: "must not be used"))
+    )
+    let parsed = parse(performFetchStructured(getOnly, "https://example.com",
+                                              expect = "text"))
+
+    check not parsed["ok"].getBool()
+    check parsed["status"].getStr() == "operational_error"
+    check parsed["error"]["message"].getStr().contains("redirect-safe fetch unavailable")
+
+  test "relative redirect is resolved against the current URL":
+    let parsed = parse(performFetchStructured(
+      redirectHttp("/b"), "https://example.com/start", expect = "text"))
+
+    check parsed["ok"].getBool()
+    check parsed["data"]["status"].getInt() == 200
+    check parsed["data"]["body"].getStr() == "relative target"
+
+  test "DNS rejection blocks the fetch before the request":
+    let dnsBlocked = HttpRuntimePort(
+      get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+        ok(HttpResponse(status: 200, body: "must not be reached")),
+      getNoRedirect: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+        ok(HttpResponse(status: 200, body: "must not be reached")),
+      resolveHost: proc(host: string): Result[string, string] {.gcsafe.} =
+        err("private address blocked: " & host)
+    )
+    let parsed = parse(performFetchStructured(dnsBlocked, "https://evil.example",
+                                              expect = "text"))
+
+    check not parsed["ok"].getBool()
+    check parsed["status"].getStr() == "operational_error"
+    check parsed["error"]["message"].getStr().contains("URL blocked")
+    check parsed["error"]["message"].getStr().contains("private address blocked")
 
   test "performFetchStructured reports HTTP status failures":
     let parsed = parse(performFetchStructured(mockHttp(404, "missing"),

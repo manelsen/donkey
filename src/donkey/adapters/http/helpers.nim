@@ -13,10 +13,15 @@ template withHttpClient*(body: untyped): untyped =
   except CatchableError as e:
     err(e.msg)
 
-template withHttpClientTimeout*(timeoutSeconds: int; body: untyped): untyped =
-  ## Like withHttpClient but accepts a custom timeout in seconds.
+template withHttpClientTimeout*(timeoutSeconds: int; redirectLimit = 5;
+                                proxyUrl = ""; body: untyped): untyped =
+  ## Like withHttpClient but accepts a custom timeout, redirect policy and
+  ## optional proxy URL (e.g. a filtering egress proxy).
   try:
-    let client {.inject.} = newHttpClient(timeout = timeoutSeconds * 1000)
+    let client {.inject.} = newHttpClient(
+      timeout = timeoutSeconds * 1000,
+      maxRedirects = redirectLimit,
+      proxy = (if proxyUrl.len > 0: newProxy(proxyUrl) else: nil))
     defer: client.close()
     body
   except CatchableError as e:

@@ -169,6 +169,7 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
   - Network access disabled by default (enabling network in donkey.toml requires --dev-mode)
   - Isolated temporary and paddock mounts
 - **WASM Applet Dispatch**: Fast execution of POSIX applets (cat, grep, sed, find) via `wasmtime` and `~/.donkey/busybox`.
+- **Web Egress (SSRF)**: `fetch`/`http_fetch` validate every redirect hop against the private/reserved address policy and resolve DNS through the adapter. **Deployment requirement:** unless the host firewall already blocks private/reserved destinations, set `DONKEY_WEB_PROXY` to a filtering egress proxy. Connection pinning against DNS rebinding requires that proxy or the firewall (the browser uses `DONKEY_BROWSER_PROXY`).
 - **Model Context Protocol (MCP)**: Native client support for external MCP tool servers:
   ```bash
   # Positional arguments only via CLI

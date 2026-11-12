@@ -54,7 +54,11 @@ proc mockHttp(status: int; body: string; errMsg = ""): HttpRuntimePort =
     get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
       if errMsg.len > 0:
         return err(errMsg)
-      ok(HttpResponse(status: status, body: body))
+      ok(HttpResponse(status: status, body: body)),
+    getNoRedirect: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      if errMsg.len > 0:
+        return err(errMsg)
+      ok(HttpResponse(status: status, body: body)),
   )
 
 proc setupInstalledRemoteSkill(home, slug: string;

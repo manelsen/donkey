@@ -81,6 +81,23 @@ suite "isPrivateUrl":
   test "hostname containing '127' in path is not private":
     check not isPrivateUrl("https://example.com/ref/127")
 
+  test "userinfo and @ in path cannot spoof the authority":
+    check isPrivateUrl("http://127.0.0.1:8080/admin@example.com")
+    check isPrivateUrl("http://127.0.0.1:8080/admin?x=@example.com")
+    check isPrivateUrl("http://user:pass@127.0.0.1/")
+    check extractUrlHost("http://127.0.0.1:8080/admin@example.com") == "127.0.0.1"
+    check extractUrlHost("https://user:pass@example.com/x") == "example.com"
+    check not isPrivateUrl("https://example.com/@")
+
+  test "IPv6 loopback and mapped addresses are private":
+    check isPrivateUrl("http://[::1]/")
+    check isPrivateUrl("http://[::ffff:127.0.0.1]/")
+    check extractUrlHost("http://[::1]:8080/") == "::1"
+
+  test "extractUrlPath keeps @ in the path":
+    check extractUrlPath("https://example.com/admin@example.com?x=1") ==
+      "/admin@example.com"
+
 suite "web allowlist":
 
   test "parseWebAllowlist trims and normalizes hosts":

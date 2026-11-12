@@ -2,83 +2,8 @@
 ## No I/O - safe for use in adapters and domain logic.
 
 import std/[strutils, parseutils, unicode]
-
-func extractUrlHost*(rawUrl: string): string =
-  ## Extract host from URL string.
-  ## Returns empty string if URL is invalid or cannot parse.
-  if rawUrl.len == 0:
-    return ""
-  
-  # Strip protocol prefix
-  var withoutProtocol = rawUrl
-  for prefix in ["https://", "http://"]:
-    if withoutProtocol.toLowerAscii.startsWith(prefix):
-      withoutProtocol = withoutProtocol[prefix.len .. ^1]
-      break
-  
-  # Extract host (everything before the first / or :)
-  let slashIdx = withoutProtocol.find('/')
-  let colonIdx = withoutProtocol.find(':')
-  
-  var hostEnd: int
-  if slashIdx < 0 and colonIdx < 0:
-    hostEnd = withoutProtocol.len
-  elif slashIdx < 0:
-    hostEnd = colonIdx
-  elif colonIdx < 0:
-    hostEnd = slashIdx
-  else:
-    hostEnd = min(slashIdx, colonIdx)
-  
-  if hostEnd <= 0:
-    return ""
-  
-  withoutProtocol[0 ..< hostEnd]
-
-func isPrivateUrl*(rawUrl: string): bool =
-  ## Returns true when URL points to private/internal host.
-  ## Checks: localhost, 127.x, 10.x, 192.168.x, 169.254.x, 172.16-31.x
-  let host = extractUrlHost(rawUrl).toLowerAscii
-  if host.len == 0:
-    return false
-  
-  # localhost
-  if host == "localhost" or host == "localhost.localdomain":
-    return true
-  
-  # 127.x.x.x
-  if host.startsWith("127."):
-    return true
-  
-  # 10.x.x.x
-  if host.startsWith("10."):
-    return true
-  
-  # 192.168.x.x
-  if host.startsWith("192.168."):
-    return true
-  
-  # 169.254.x.x (link-local)
-  if host.startsWith("169.254."):
-    return true
-  
-  # 172.16-31.x.x
-  if host.startsWith("172."):
-    let parts = host[4 .. ^1].split('.')
-    if parts.len >= 1 and parts[0].len > 0 and
-       parts[0].allCharsInSet({'0'..'9'}):
-      try:
-        let first = parseInt(parts[0])
-        if first >= 16 and first <= 31:
-          return true
-      except ValueError:
-        discard  # overflow/non-numeric label: not an IPv4 literal
-  
-  # Check for IPv6 loopback and unique local addresses
-  if host == "::1" or host.startsWith("fc") or host.startsWith("fd") or host.startsWith("fe80"):
-    return true
-  
-  false
+import ../url_policy
+export url_policy
 
 func decodeHtmlEntities*(text: string): string =
   ## Decode common HTML entities.
