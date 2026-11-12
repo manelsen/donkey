@@ -48,6 +48,7 @@ import donkey/adapters/channel/email
 import donkey/adapters/channel/signal
 import donkey/adapters/channel/slack
 import donkey/adapters/channel/slack_runtime
+import donkey/adapters/channel/slack_socket
 import donkey/adapters/channel/dingtalk
 import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
@@ -202,6 +203,7 @@ type DaemonEnv = object
   wechatAppId:   string
   feishuAppId:   string
   slackBotToken: string
+  slackAppToken: string
   dingTalkAppKey: string
   dingTalkAppSecret: string
   dingTalkRobotCode: string
@@ -447,6 +449,7 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.wechatAppId = getEnv("WECHAT_APP_ID")
   result.feishuAppId = getEnv("FEISHU_APP_ID")
   result.slackBotToken = getEnv("SLACK_BOT_TOKEN")
+  result.slackAppToken = getEnv("SLACK_APP_TOKEN")
   result.dingTalkAppKey = getEnv("DINGTALK_APP_KEY")
   result.dingTalkAppSecret = getEnv("DINGTALK_APP_SECRET")
   result.dingTalkRobotCode = getEnv("DINGTALK_ROBOT_CODE")
@@ -928,14 +931,18 @@ proc startOptionalWeChatGateway(wchAdapter: var WeChatAdapter;
 
 proc startOptionalSlackGateway(slAdapter: var SlackAdapter;
                                slackBotToken: string;
+                               slackAppToken: string;
                                log: Logger) =
   if slackBotToken.len == 0:
     log.info("SLACK_BOT_TOKEN not set — Slack disabled")
     return
 
   slAdapter.openQueue()
-  if getEnv("SLACK_SIGNING_SECRET").len == 0:
-    log.warn("SLACK_SIGNING_SECRET not set — Slack inbound webhook disabled")
+  if slackAppToken.len > 0:
+    startSlackSocketMode(slackAppToken, log).isOkOr:
+      log.error("slack socket: " & error)
+  elif getEnv("SLACK_SIGNING_SECRET").len == 0:
+    log.warn("SLACK_SIGNING_SECRET/SLACK_APP_TOKEN not set — Slack inbound disabled")
   log.info("Slack gateway started")
 
 proc startOptionalDingTalkGateway(dtAdapter: var DingTalkAdapter;
@@ -1373,7 +1380,8 @@ proc startDaemonIngress(ctx: DaemonContext;
   startOptionalWeComGateway(ctx.adapters.wc, ctx.env.wecomCorpId, log)
   startOptionalWeChatGateway(ctx.adapters.wch, ctx.env.wechatAppId, log)
   startOptionalFeishuGateway(ctx.adapters.fs, ctx.env.feishuAppId, log)
-  startOptionalSlackGateway(ctx.adapters.sl, ctx.env.slackBotToken, log)
+  startOptionalSlackGateway(ctx.adapters.sl, ctx.env.slackBotToken,
+                            ctx.env.slackAppToken, log)
   startOptionalDingTalkGateway(ctx.adapters.dt, ctx.env.dingTalkAppKey, log)
   startOptionalMatrixGateway(ctx.adapters.mx, log)
   startOptionalWhatsAppGateway(ctx.adapters.wa, ctx.env.whatsappAccessToken,
@@ -1493,9 +1501,10 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
       ),
     drainSlack = proc(): bool =
       drainSlackGateway(ctx.env.slackBotToken.len > 0 and
-                        ctx.env.slackSigningSecret.len > 0, proc(): bool =
+                        (ctx.env.slackSigningSecret.len > 0 or
+                         ctx.env.slackAppToken.len > 0), proc(): bool =
         slack_runtime.drainSlackEvents(
-          ctx.adapters.sl, ctx.env.slackSigningSecret, ctx.runtime.sm, memory, completeBuilder,
+          ctx.adapters.sl, ctx.runtime.sm, memory, completeBuilder,
           modelCatalogLoader, toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
           ctx.runtime.msgSeq, fallback, log)
         true
@@ -1815,6 +1824,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   finally:
     log.info("daemon shutdown: stopping background workers")
     stopLedgerCompactionWorker(ctx.runtime.ledgerWorker)
+    stopSlackSocketMode()
     stopWebhookReceiver()
     ## Connections accepted before the stop may have enqueued Feishu events;
     ## consume them once before exiting.

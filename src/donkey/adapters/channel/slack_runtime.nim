@@ -34,7 +34,6 @@ proc replyToEvent(slAdapter: var SlackAdapter;
   slAdapter.send(OutboundMessage(userId: userId, channel: ckSlack, text: text))
 
 proc drainSlackEvents*(slAdapter: var SlackAdapter;
-                       slackSigningSecret: string;
                        sm: var SessionManager;
                        memory: MdFileAdapter;
                        completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
@@ -45,10 +44,7 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
                        msgSeq: var int;
                        handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
                        log: Logger = newLogger("sl.outbound")) =
-  ## Drains Slack webhook events while the receiver route is enabled.
-  if slackSigningSecret.len == 0:
-    return
-
+  ## Drains Slack events from webhook or Socket Mode.
   var (hasEvent, event) = slAdapter.tryRecvEvent()
   while hasEvent:
     try:

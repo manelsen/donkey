@@ -600,7 +600,7 @@ suite "shared DM gate":
       {.cast(gcsafe).}:
         inc fallbackCalls
 
-    drainSlackEvents(sl, "secret", sm, memory, completeBuilder, gateLoader(),
+    drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
                      0, 0, 0, msgSeq, onFallback, gateLog)
 
     check fallbackCalls == 0
@@ -643,7 +643,7 @@ suite "shared DM gate":
       {.cast(gcsafe).}:
         dispatched.add(msg)
 
-    drainSlackEvents(sl, "secret", sm, memory, completeBuilder, gateLoader(),
+    drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
                      0, 0, 0, msgSeq, onFallback, gateLog)
 
     check dispatched.len == 1
@@ -687,13 +687,13 @@ suite "shared DM gate":
     let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
       {.cast(gcsafe).}:
         inc fallbackCalls
-    drainSlackEvents(sl, "secret", sm, memory, completeBuilder, gateLoader(),
+    drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
                      0, 0, 0, msgSeq, onFallback, gateLog)
 
     check fallbackCalls == 0       ## onboarding must not become user text
     check entry[].inbox.len == 1   ## enqueued as tkPersonalityChoice
 
-  test "slack drainer is disabled without a signing secret":
+  test "slack drainer processes events without a signing secret":
     removeDir(GateTmp / "slack-off")
     var sm: SessionManager
     sm.init()
@@ -717,12 +717,11 @@ suite "shared DM gate":
       },
     })
 
-    drainSlackEvents(sl, "", sm, memory, completeBuilder, gateLoader(),
+    drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
                      0, 0, 0, msgSeq, proc(msg: InboundMessage) {.gcsafe.} = discard,
                      gateLog)
 
-    check sl.tryRecvEvent()[0]  ## untouched while the receiver is disabled
-    discard sl.tryRecvEvent()   ## leave the global queue clean for other tests
+    check not sl.tryRecvEvent()[0]  ## Socket Mode has no signing secret gate
 
 suite "DM pairing gate":
 

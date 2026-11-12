@@ -39,15 +39,21 @@ proc recvExact(sock: Socket; n: int): string =
     copyMem(addr result[pos], unsafeAddr tmp[0], got)
     pos += got
 
-proc wsConnect*(host: string; port: Port; path: string; useTls = true): WsClient =
+proc wsConnect*(host: string; port: Port; path: string;
+                useTls = true; verifyTls = true): WsClient =
   ## Opens a (TLS) WebSocket connection and completes HTTP upgrade.
+  ## `verifyTls` checks the server certificate and sends SNI.
   randomize()
   var sock = newSocket()
-  if useTls:
-    ## CVerifyNone for now. Switch to CVerifyPeer + caFile= for hardening.
-    var ctx = newContext(verifyMode = CVerifyNone)
-    ctx.wrapSocket(sock)
   sock.connect(host, port)
+  if useTls:
+    let mode = if verifyTls: CVerifyPeer else: CVerifyNone
+    let ctx = newContext(verifyMode = mode)
+    try:
+      ctx.wrapConnectedSocket(sock, handshakeAsClient, host)
+    except CatchableError:
+      try: sock.close() except CatchableError: discard
+      raise
 
   var keyBytes: array[16, byte]
   for i in 0..<16: keyBytes[i] = byte(rand(255))
