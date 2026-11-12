@@ -15,6 +15,7 @@ import ../../domain/message
 import ../../ports/provider
 import ../identity/identity_resolver
 import ../../app/inbound_gate
+import ../../app/approval_runtime
 import ../../domain/channels/slack_pure
 import ./common_runtime
 import ./slack
@@ -69,6 +70,13 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
         continue
 
       let userId = auth.userId
+      let approvalReply = tryHandleApprovalInput(userId, event.text)
+      if approvalReply.isSome:
+        replyToEvent(slAdapter, event, userId, approvalReply.get).isOkOr:
+          log.error("sl send approval reply failed: " & error)
+        (hasEvent, event) = slAdapter.tryRecvEvent()
+        continue
+
       let messageId =
         if event.eventTs.len > 0: event.eventTs
         elif event.triggerId.len > 0: event.triggerId

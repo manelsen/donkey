@@ -7,6 +7,7 @@
 import std/[os, strutils, tables, times]
 import results
 import core/types
+import core/pipeops
 import core/app_meta
 import config/types
 import config/tools_registry
@@ -15,6 +16,7 @@ import config/clawhub_registry
 import adapters/memory/md_file
 import adapters/identity/identity_resolver
 import adapters/state/pairing_store
+import adapters/state/approval_store
 import app/session_manager
 import adapters/memory/multigraph_runtime
 import ports/ipc
@@ -117,6 +119,30 @@ proc ctlPairReject*(store: PairingStore; code: string): Result[void, string] =
   if not removed:
     return err("pairing request not found or expired: " & code)
   echo "Pairing request " & code & " rejected."
+  ok()
+
+# ── ctl approval commands ──────────────────────────────────────────────────────
+
+proc ctlApprovalList*(store: ApprovalStore; userId = "") =
+  let pending = store.listPending(userId)
+  if pending.isErr:
+    echo "Error: " & pending.error
+    return
+  if pending.get().len == 0:
+    echo "No pending approvals."
+    return
+  echo "id\tuser\ttool\tsummary\texpires_in"
+  for request in pending.get():
+    let remaining = int(max(0'i64, request.expiresAtMs - epochMs()) div 1000)
+    echo request.id & "\t" & request.userId & "\t" & request.toolName & "\t" &
+         request.summary & "\t" & $remaining & "s"
+
+proc ctlApprovalDecide*(store: ApprovalStore; id: string;
+                        approved: bool): Result[void, string] =
+  let res = store.decide(id, "", approved, admin = true)
+  if res.isErr:
+    return err(res.error)
+  echo (if approved: "Approved " else: "Denied ") & id
   ok()
 
 # ── ctl session commands ───────────────────────────────────────────────────────
@@ -315,6 +341,20 @@ proc dispatchCtl*(cfg: DonkeyConfig;
     return 0
   if args[1] == "pair" and args.len >= 4 and args[2] == "reject":
     let res = ctlPairReject(pairingStore, args[3])
+    if res.isErr: echo res.error; return 1
+    return 0
+
+  # ── approval ──
+  let approvalStore = newApprovalStore(cfg.home / "state" / "approvals.json")
+  if args[1] == "approval" and args.len >= 3 and args[2] == "list":
+    ctlApprovalList(approvalStore, if args.len >= 4: args[3] else: "")
+    return 0
+  if args[1] == "approval" and args.len >= 4 and args[2] == "approve":
+    let res = ctlApprovalDecide(approvalStore, args[3], true)
+    if res.isErr: echo res.error; return 1
+    return 0
+  if args[1] == "approval" and args.len >= 4 and args[2] == "deny":
+    let res = ctlApprovalDecide(approvalStore, args[3], false)
     if res.isErr: echo res.error; return 1
     return 0
 

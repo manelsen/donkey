@@ -161,10 +161,16 @@ proc sendChunk(a: SlackAdapter; channelId, text: string): Result[void, string] =
                        %* {"channel": channelId, "text": text})
   ok()
 
+proc sendKeyboard*(a: SlackAdapter; userId: UserId;
+                   text: string;
+                   buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.}
+
 proc send*(a: SlackAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message to the user's Slack DM channel.
   ## Opens the DM channel on first send (conversations.open); caches the id.
   ## Splits messages longer than SlackMaxChars into multiple sends.
+  if msg.keyboard.len > 0:
+    return a.sendKeyboard(msg.userId, msg.text, msg.keyboard)
   let slackId = a.resolver.reverseChannel(msg.userId, ckSlack)
   if slackId.len == 0:
     return err("SlackAdapter.send: no Slack ID for user " & $msg.userId)
@@ -247,7 +253,7 @@ proc buildSlackBlocks(text: string; buttons: seq[seq[(string, string)]]): JsonNo
 
 proc sendKeyboard*(a: SlackAdapter; userId: UserId;
                    text: string;
-                   buttons: seq[seq[(string, string)]]): Result[void, string] =
+                   buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} =
   ## Sends a message with Block Kit buttons to the user's Slack DM.
   let slackId = a.resolver.reverseChannel(userId, ckSlack)
   if slackId.len == 0:
