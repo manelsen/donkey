@@ -14,6 +14,7 @@ suite "ApprovalStore":
     check created.isOk
     let request = created.get()
     check request.status == apsPending
+    check isValidApprovalId(request.id)
     check store.listPending("u1", 1000).get().len == 1
     check store.listPending("u2", 1000).get().len == 0
 

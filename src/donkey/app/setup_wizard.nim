@@ -9,6 +9,8 @@
 ##   ~/.config/donkey/donkey.env   — secrets (API keys, bot tokens); chmod 600
 
 import std/[os, strutils, terminal]
+when defined(posix):
+  import std/posix
 import ../core/app_meta
 import ../core/providers/smart_routing
 
@@ -303,6 +305,8 @@ proc runSetupWizard*(home: string) =
     createDir(chosenHome)
     createDir(chosenHome / "paddocks")
     createDir(chosenHome / "state")
+    when defined(posix):
+      discard posix.chmod((chosenHome / "state").cstring, posix.Mode(0o700))
   except CatchableError as e:
     echo "Erro ao criar " & chosenHome & ": " & e.msg
     return

@@ -3,7 +3,7 @@
 ## The daemon writes requests and polls decisions; `ctl approval` reads and
 ## decides from another process. Writes are atomic (tmp + rename).
 
-import std/[json, options, os]
+import std/[json, options, os, random]
 when defined(posix):
   import std/posix
 import ../../core/pipeops
@@ -48,6 +48,12 @@ proc withApprovalLock*[T](store: ApprovalStore;
       result = err("approval store lock failed: " & e.msg)
   else:
     result = body()
+
+proc newApprovalId(): string =
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+  randomize()
+  for _ in 0 ..< ApprovalIdLength:
+    result.add(alphabet[rand(alphabet.high)])
 
 func requestToJson(request: ApprovalRequest): JsonNode =
   %* {
@@ -118,9 +124,14 @@ proc save*(store: ApprovalStore;
   for request in requests:
     items.add(requestToJson(request))
   try:
-    createDir(parentDir(store.path))
+    let dir = parentDir(store.path)
+    createDir(dir)
+    when defined(posix):
+      discard posix.chmod(dir.cstring, posix.Mode(0o700))
     let tmp = store.path & ".tmp." & $getCurrentProcessId() & "-" & $epochMs()
     writeFile(tmp, $(%* {"requests": items}))
+    when defined(posix):
+      discard posix.chmod(tmp.cstring, posix.Mode(0o600))
     {.cast(raises: []).}:
       moveFile(tmp, store.path)
     ok()
@@ -146,7 +157,7 @@ proc createLocked(store: ApprovalStore;
   var id = ""
   var unique = false
   for _ in 0 ..< 10:
-    id = generateApprovalId()
+    id = newApprovalId()
     unique = true
     for request in requests:
       if request.id == id:

@@ -78,8 +78,8 @@ proc requiresApproval*(service: ApprovalService; toolName: string): bool =
 func approvalMessage*(request: ApprovalRequest): string =
   "⚠️ *Aprovação necessária*\n\n" &
   "*Ferramenta:* `" & request.toolName & "`\n" &
-  "*ID:* `" & request.id & "`\n" &
-  "*Resumo:* `" & request.summary & "`\n\n" &
+  "*ID:* `" & request.id & "`\n\n" &
+  request.summary & "\n\n" &
   "Use `/approve " & request.id & "` ou `/deny " & request.id & "`.\n" &
   "Expira em " & $((request.expiresAtMs - request.createdAtMs) div 1000) & "s."
 

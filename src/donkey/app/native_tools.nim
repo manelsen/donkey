@@ -975,7 +975,10 @@ func approvalSummary(toolName: string; j: JsonNode): string =
       result = $j
   else:
     result = $j
-  result = result.replace("\n", " ").replace("\r", " ").strip
+  result = result.replace("\r\n", "\\n")
+                 .replace("\n", "\\n")
+                 .replace("\r", "\\r")
+                 .strip
   if result.len == 0:
     result = "(sem detalhes)"
   if result.len > MaxApprovalSummaryChars:

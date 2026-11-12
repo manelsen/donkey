@@ -3,10 +3,8 @@ import donkey/core/security/approval
 
 suite "approval pure":
 
-  test "generated ids have the expected shape":
-    let id = generateApprovalId()
-    check id.len == ApprovalIdLength
-    check isValidApprovalId(id)
+  test "ids are validated by shape":
+    check isValidApprovalId("abcdefgh")
     check not isValidApprovalId("ABC")
     check not isValidApprovalId("abcdefgh!")
 

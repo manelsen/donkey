@@ -244,7 +244,8 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
       let approvalReply = tryHandleApprovalInput(userId, event.content)
       if approvalReply.isSome:
         qqAdapter.send(OutboundMessage(
-          userId: userId, channel: ckQQ, text: approvalReply.get)).isOkOr:
+          userId: userId, channel: ckQQ, text: approvalReply.get,
+          replyTo: event.messageId)).isOkOr:
           log.error("qq send approval reply failed: " & error)
         (hasEvent, event) = qqAdapter.tryRecvEvent()
         continue

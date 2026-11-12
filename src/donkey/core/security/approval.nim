@@ -4,7 +4,7 @@
 ## can approve or deny through an inline callback (`approval:<id>:allow|deny`),
 ## a chat command (`/approve <id>` / `/deny <id>`) or the `ctl` CLI.
 
-import std/[options, random, strutils]
+import std/[options, strutils]
 
 type
   ApprovalStatus* = enum
@@ -31,13 +31,6 @@ type
 const
   ApprovalIdLength* = 8
   ApprovalTerminalRetentionMs* = 3_600_000'i64 ## keep decisions for 1 hour
-
-proc generateApprovalId*(): string =
-  ## Short unguessable request id (lowercase alphanumeric).
-  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
-  randomize()
-  for _ in 0 ..< ApprovalIdLength:
-    result.add(alphabet[rand(alphabet.high)])
 
 func isValidApprovalId*(id: string): bool =
   if id.len != ApprovalIdLength:
