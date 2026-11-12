@@ -1,7 +1,8 @@
 ## FileKeyStore — SecretStore implementation using a local key file.
 ##
 ## Cipher:    AES-256-GCM (AEAD, RFC 5116)
-## Key:       256-bit random, stored at {home}/.secret_key (chmod 600, auto-created)
+## Key:       256-bit random, stored at the configured key path (chmod 600,
+##            auto-created; the vault uses {home}/.secrets/key)
 ## Wire fmt:  enc2:<hex(iv[12] || ciphertext || tag[16])>
 ##
 ## Disabled mode (enable=false): encrypt/decrypt are identity functions.

@@ -57,6 +57,7 @@ import donkey/domain/tools/browser_pure
 import donkey/adapters/state/runtime_store
 import donkey/adapters/state/pairing_store
 import donkey/adapters/state/approval_store
+import donkey/adapters/secrets/vault
 import donkey/app/approval_runtime
 import donkey/domain/message
 import donkey/domain/agent_message
@@ -128,6 +129,10 @@ Commands:
   ctl approval list [user]      List pending tool approvals
   ctl approval approve <id>     Approve a pending tool call
   ctl approval deny <id>        Deny a pending tool call
+  ctl secret set <name> [value] Encrypt a secret (omit value to read stdin)
+  ctl secret list               List stored secret names (never values)
+  ctl secret remove <name>      Remove a stored secret
+  ctl secret import-env [path]  Encrypt KEY=VALUE pairs from donkey.env
   ctl session list <uuid>        List active sessions for a user
   ctl tool install <command>            Register an MCP server
   ctl skill search <query>              Search remote skills on ClawHub
@@ -1876,6 +1881,10 @@ proc main =
   discard loadDonkeyEnv(home)
 
   let cfg = loadConfig(configPath)
+  let vaultApplied = newSecretVault(cfg.home).applyToEnv()
+  if vaultApplied.isErr:
+    stderr.writeLine "Security Error: " & vaultApplied.error
+    quit(1)
   configureApprovalServiceFromEnv(
     newApprovalStore(cfg.home / "state" / "approvals.json").toApprovalPort())
 

@@ -11,14 +11,12 @@
 
 import std/[os, strutils]
 
-proc loadEnvFile*(path: string): int =
-  ## Loads a .env file into the process environment.
-  ## Returns the number of variables loaded.
-  ## Silently returns 0 if the file doesn't exist.
+proc parseEnvFile*(path: string): seq[(string, string)] =
+  ## Parses KEY=VALUE pairs without touching the process environment.
+  ## Returns an empty seq if the file doesn't exist or cannot be read.
   if not fileExists(path):
-    return 0
+    return @[]
 
-  var count = 0
   try:
     for rawLine in lines(path):
       let line = rawLine.strip()
@@ -39,14 +37,22 @@ proc loadEnvFile*(path: string): int =
           value = value[1 ..< value.len - 1]
 
       if key.len > 0:
-        # Don't override existing env vars (explicit env takes precedence)
-        if getEnv(key).len == 0:
-          putEnv(key, value)
-          inc count
+        result.add((key, value))
   except CatchableError:
     discard
 
-  count
+proc loadEnvFile*(path: string): int =
+  ## Loads a .env file into the process environment.
+  ## Returns the number of variables loaded.
+  ## Silently returns 0 if the file doesn't exist.
+  try:
+    for (key, value) in parseEnvFile(path):
+      # Don't override existing env vars (explicit env takes precedence)
+      if getEnv(key).len == 0:
+        putEnv(key, value)
+        inc result
+  except CatchableError:
+    discard
 
 proc envFilePath*(home: string): string =
   ## Returns the path to the donkey.env file.

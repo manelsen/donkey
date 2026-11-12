@@ -13,10 +13,12 @@ import config/types
 import config/tools_registry
 import config/skills_registry
 import config/clawhub_registry
+import config/dotenv
 import adapters/memory/md_file
 import adapters/identity/identity_resolver
 import adapters/state/pairing_store
 import adapters/state/approval_store
+import adapters/secrets/vault
 import app/session_manager
 import adapters/memory/multigraph_runtime
 import ports/ipc
@@ -143,6 +145,60 @@ proc ctlApprovalDecide*(store: ApprovalStore; id: string;
   if res.isErr:
     return err(res.error)
   echo (if approved: "Approved " else: "Denied ") & id
+  ok()
+
+# ── ctl secret commands ──────────────────────────────────────────────────────
+
+proc ctlSecretSet*(vault: SecretVault; name: string;
+                   value = ""): Result[void, string] =
+  ## When `value` is empty, reads one line from stdin so the secret does not
+  ## end up in shell history.
+  var secret = value
+  if secret.len == 0:
+    stderr.writeLine "Enter value for " & name & ":"
+    try:
+      secret = stdin.readLine()
+    except CatchableError as e:
+      return err("could not read secret from stdin: " & e.msg)
+  let res = vault.setSecret(name, secret)
+  if res.isErr:
+    return err(res.error)
+  echo "Stored secret " & name & "."
+  ok()
+
+proc ctlSecretList*(vault: SecretVault): Result[void, string] =
+  let names = vault.listSecretNames()
+  if names.isErr:
+    return err(names.error)
+  if names.get().len == 0:
+    echo "No secrets stored."
+    return ok()
+  for name in names.get():
+    echo name
+  ok()
+
+proc ctlSecretRemove*(vault: SecretVault; name: string): Result[void, string] =
+  let res = vault.removeSecret(name)
+  if res.isErr:
+    return err(res.error)
+  if not res.get():
+    return err("secret not found: " & name)
+  echo "Removed secret " & name & "."
+  ok()
+
+proc ctlSecretImportEnv*(vault: SecretVault;
+                         path: string): Result[void, string] =
+  if not fileExists(path):
+    return err("env file not found: " & path)
+  var imported = 0
+  for (name, value) in parseEnvFile(path):
+    if value.len == 0:
+      continue
+    let res = vault.setSecret(name, value)
+    if res.isErr:
+      return err("could not import " & name & ": " & res.error)
+    inc imported
+  echo "Imported " & $imported & " secret(s) from " & path & "."
   ok()
 
 # ── ctl session commands ───────────────────────────────────────────────────────
@@ -356,6 +412,27 @@ proc dispatchCtl*(cfg: DonkeyConfig;
     return 0
   if args[1] == "approval" and args.len >= 4 and args[2] == "deny":
     let res = ctlApprovalDecide(approvalStore, args[3], false)
+    if res.isErr: echo res.error; return 1
+    return 0
+
+  # ── secret ──
+  let secretVault = newSecretVault(cfg.home)
+  if args[1] == "secret" and args.len >= 3 and args[2] == "list":
+    let res = ctlSecretList(secretVault)
+    if res.isErr: echo res.error; return 1
+    return 0
+  if args[1] == "secret" and args.len >= 4 and args[2] == "set":
+    let value = if args.len >= 5: args[4 ..^ 1].join(" ") else: ""
+    let res = ctlSecretSet(secretVault, args[3], value)
+    if res.isErr: echo res.error; return 1
+    return 0
+  if args[1] == "secret" and args.len >= 4 and args[2] == "remove":
+    let res = ctlSecretRemove(secretVault, args[3])
+    if res.isErr: echo res.error; return 1
+    return 0
+  if args[1] == "secret" and args.len >= 3 and args[2] == "import-env":
+    let path = if args.len >= 4: args[3] else: envFilePath(cfg.home)
+    let res = ctlSecretImportEnv(secretVault, path)
     if res.isErr: echo res.error; return 1
     return 0
 
