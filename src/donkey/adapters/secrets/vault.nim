@@ -1,8 +1,11 @@
 ## SecretVault — encrypted operator secrets stored under {home}/.secrets/.
 ##
 ## Cipher:   AES-256-GCM via FileKeyStore.
-## Layout:   {home}/.secrets/key           256-bit key, 0600
+## Layout:   {home}/.secret_key            256-bit key, 0600
 ##           {home}/.secrets/secrets.json  {"version":1,"secrets":{NAME:"enc2:..."}}
+##
+## The key is deliberately outside `.secrets/`: copying or backing up that
+## directory does not expose the values.
 ##
 ## `ctl secret` writes values; the daemon decrypts them into the process
 ## environment at startup only for variables that are not already set (shell
@@ -20,7 +23,7 @@ import ./file_key
 const
   VaultDirName*    = ".secrets"
   VaultFileName*   = "secrets.json"
-  VaultKeyFileName* = "key"
+  VaultKeyFileName* = ".secret_key"
   VaultVersion*    = 1
 
 type
@@ -42,8 +45,8 @@ proc newSecretVault*(home: string): SecretVault =
   SecretVault(
     dir:      dir,
     path:     dir / VaultFileName,
-    keyPath:  dir / VaultKeyFileName,
-    keyStore: newFileKeyStore(dir / VaultKeyFileName),
+    keyPath:  home / VaultKeyFileName,
+    keyStore: newFileKeyStore(home / VaultKeyFileName),
   )
 
 proc hardenDirPermissions(dir: string) =
@@ -184,14 +187,12 @@ proc applyToEnv*(vault: SecretVault): Result[int, string] {.raises: [].} =
   if loaded.isErr:
     return err(loaded.error)
   let stored = loaded.get()
-  if stored.len == 0:
-    return ok(0)
-  if not fileExists(vault.keyPath):
-    return err("secret vault key is missing: " & vault.keyPath)
   var applied = 0
   for name, ciphertext in stored:
     if getEnv(name).len > 0:
       continue
+    if not fileExists(vault.keyPath):
+      return err("secret vault key is missing: " & vault.keyPath)
     try:
       let plaintext = vault.keyStore.decrypt(ciphertext)
       if plaintext.len == 0:

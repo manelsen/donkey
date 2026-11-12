@@ -129,7 +129,7 @@ Commands:
   ctl approval list [user]      List pending tool approvals
   ctl approval approve <id>     Approve a pending tool call
   ctl approval deny <id>        Deny a pending tool call
-  ctl secret set <name> [value] Encrypt a secret (omit value to read stdin)
+  ctl secret set <name>         Encrypt a secret read from stdin
   ctl secret list               List stored secret names (never values)
   ctl secret remove <name>      Remove a stored secret
   ctl secret import-env [path]  Encrypt KEY=VALUE pairs from donkey.env
@@ -1678,6 +1678,10 @@ proc handleShutdownSignal(sig: cint) {.noconv.} =
 proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).} =
   ## Async daemon: Telegram (pollTimeout=0) + Discord (gateway thread) + WeCom (webhook thread).
   ## Loop: drain globalOutbox → drain Discord → drain WeCom → poll Telegram → sleepAsync(100ms)
+  let vaultApplied = newSecretVault(cfg.home).applyToEnv()
+  if vaultApplied.isErr:
+    log.error("secret vault: " & vaultApplied.error)
+    quit(1)
   if cfg.invalidDmPolicy.len > 0:
     log.error("invalid dm_policy: " & cfg.invalidDmPolicy &
               " (use open|pairing|allowlist)")
@@ -1881,10 +1885,6 @@ proc main =
   discard loadDonkeyEnv(home)
 
   let cfg = loadConfig(configPath)
-  let vaultApplied = newSecretVault(cfg.home).applyToEnv()
-  if vaultApplied.isErr:
-    stderr.writeLine "Security Error: " & vaultApplied.error
-    quit(1)
   configureApprovalServiceFromEnv(
     newApprovalStore(cfg.home / "state" / "approvals.json").toApprovalPort())
 

@@ -13,33 +13,30 @@ import std/[os, strutils]
 
 proc parseEnvFile*(path: string): seq[(string, string)] =
   ## Parses KEY=VALUE pairs without touching the process environment.
-  ## Returns an empty seq if the file doesn't exist or cannot be read.
+  ## Returns an empty seq if the file doesn't exist; read errors propagate.
   if not fileExists(path):
     return @[]
 
-  try:
-    for rawLine in lines(path):
-      let line = rawLine.strip()
-      if line.len == 0 or line[0] == '#':
-        continue
+  for rawLine in lines(path):
+    let line = rawLine.strip()
+    if line.len == 0 or line[0] == '#':
+      continue
 
-      let eqIdx = line.find('=')
-      if eqIdx < 0:
-        continue
+    let eqIdx = line.find('=')
+    if eqIdx < 0:
+      continue
 
-      let key = line[0 ..< eqIdx].strip()
-      var value = line[eqIdx + 1 .. ^1].strip()
+    let key = line[0 ..< eqIdx].strip()
+    var value = line[eqIdx + 1 .. ^1].strip()
 
-      # Unquote
-      if value.len >= 2:
-        if (value[0] == '"' and value[^1] == '"') or
-           (value[0] == '\'' and value[^1] == '\''):
-          value = value[1 ..< value.len - 1]
+    # Unquote
+    if value.len >= 2:
+      if (value[0] == '"' and value[^1] == '"') or
+         (value[0] == '\'' and value[^1] == '\''):
+        value = value[1 ..< value.len - 1]
 
-      if key.len > 0:
-        result.add((key, value))
-  except CatchableError:
-    discard
+    if key.len > 0:
+      result.add((key, value))
 
 proc loadEnvFile*(path: string): int =
   ## Loads a .env file into the process environment.

@@ -4,7 +4,7 @@
 ## Each subcommand group (user, session, tool, skill, provider, memory, status)
 ## has its own handler proc; `dispatchCtl` routes to the right one.
 
-import std/[os, strutils, tables, times]
+import std/[os, strutils, tables, terminal, times]
 import results
 import core/types
 import core/pipeops
@@ -149,17 +149,15 @@ proc ctlApprovalDecide*(store: ApprovalStore; id: string;
 
 # ── ctl secret commands ──────────────────────────────────────────────────────
 
-proc ctlSecretSet*(vault: SecretVault; name: string;
-                   value = ""): Result[void, string] =
-  ## When `value` is empty, reads one line from stdin so the secret does not
-  ## end up in shell history.
-  var secret = value
-  if secret.len == 0:
-    stderr.writeLine "Enter value for " & name & ":"
-    try:
-      secret = stdin.readLine()
-    except CatchableError as e:
-      return err("could not read secret from stdin: " & e.msg)
+proc ctlSecretSet*(vault: SecretVault; name: string): Result[void, string] =
+  ## Reads one line from stdin without echo so the secret never appears in
+  ## shell history or the process argument list.
+  stderr.writeLine "Enter value for " & name & ":"
+  var secret = ""
+  try:
+    secret = readPasswordFromStdin("")
+  except CatchableError as e:
+    return err("could not read secret from stdin: " & e.msg)
   let res = vault.setSecret(name, secret)
   if res.isErr:
     return err(res.error)
@@ -190,8 +188,13 @@ proc ctlSecretImportEnv*(vault: SecretVault;
                          path: string): Result[void, string] =
   if not fileExists(path):
     return err("env file not found: " & path)
+  var entries: seq[(string, string)]
+  try:
+    entries = parseEnvFile(path)
+  except CatchableError as e:
+    return err("could not read " & path & ": " & e.msg)
   var imported = 0
-  for (name, value) in parseEnvFile(path):
+  for (name, value) in entries:
     if value.len == 0:
       continue
     let res = vault.setSecret(name, value)
@@ -422,8 +425,10 @@ proc dispatchCtl*(cfg: DonkeyConfig;
     if res.isErr: echo res.error; return 1
     return 0
   if args[1] == "secret" and args.len >= 4 and args[2] == "set":
-    let value = if args.len >= 5: args[4 ..^ 1].join(" ") else: ""
-    let res = ctlSecretSet(secretVault, args[3], value)
+    if args.len > 4:
+      echo "Error: pass the secret on stdin, not as a command-line argument."
+      return 1
+    let res = ctlSecretSet(secretVault, args[3])
     if res.isErr: echo res.error; return 1
     return 0
   if args[1] == "secret" and args.len >= 4 and args[2] == "remove":

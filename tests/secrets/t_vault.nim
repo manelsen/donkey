@@ -10,6 +10,7 @@ suite "SecretVault":
     removeDir(VaultTmp / "basic")
     let vault = newSecretVault(VaultTmp / "basic")
 
+    check not vault.keyPath.startsWith(vault.dir)
     check vault.setSecret("OPENROUTER_API_KEY", "sk-super-secret").isOk
     let raw = readFile(vault.path)
     check raw.contains("enc2:")
@@ -54,15 +55,29 @@ suite "SecretVault":
     check getEnv("DONKEY_TEST_VAULT_A") == "alpha"
     check getEnv("DONKEY_TEST_VAULT_B") == "already-set"
 
-  test "vault without key fails closed":
+  test "vault without key fails closed when decryption is needed":
     removeDir(VaultTmp / "nokey")
     let vault = newSecretVault(VaultTmp / "nokey")
     check vault.setSecret("TOKEN", "value").isOk
     removeFile(vault.keyPath)
+    putEnv("TOKEN", "")
+    defer: putEnv("TOKEN", "")
 
     let applied = vault.applyToEnv()
     check applied.isErr
     check applied.error.contains("key is missing")
+
+  test "missing key is tolerated when every value is already in the environment":
+    removeDir(VaultTmp / "nokey2")
+    let vault = newSecretVault(VaultTmp / "nokey2")
+    check vault.setSecret("TOKEN", "value").isOk
+    removeFile(vault.keyPath)
+    putEnv("TOKEN", "already-set")
+    defer: putEnv("TOKEN", "")
+
+    let applied = vault.applyToEnv()
+    check applied.isOk
+    check applied.get() == 0
 
   test "tampered ciphertext is rejected":
     removeDir(VaultTmp / "tamper")
