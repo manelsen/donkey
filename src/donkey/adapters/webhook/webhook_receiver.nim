@@ -775,6 +775,15 @@ proc stopWebhookReceiver*() {.gcsafe.} =
   gWebhookStop.store(true)
   {.cast(gcsafe).}:
     joinThread(gWebhookThread)
+  ## The accept loop is the only producer and it has stopped. Close descriptors
+  ## still waiting in the queue so a slow client cannot delay shutdown; only
+  ## in-flight requests (at most one per worker) remain to be joined.
+  while true:
+    let (hasQueued, fd) = gWebhookQueue.tryRecv()
+    if not hasQueued:
+      break
+    if fd != SocketHandle(-1):
+      discard posix.close(cint(fd))
   if gWebhookWorkersStarted > 0:
     for _ in 0 ..< gWebhookWorkersStarted:
       gWebhookQueue.send(SocketHandle(-1))

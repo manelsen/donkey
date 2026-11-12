@@ -197,7 +197,7 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 
 > **Slack inbound setup:** point Event Subscriptions, Slash Commands and Interactivity to the same `https://<public-host>/webhook/slack` URL. The receiver listens on `DONKEY_WEBHOOK_HOST:DONKEY_WEBHOOK_PORT` (default `127.0.0.1`) over HTTP, so expose it through an HTTPS reverse proxy; Slack does not call a loopback HTTP endpoint directly.
 
-> **Feishu inbound setup:** point Event Subscriptions to `https://<public-host>/webhook/feishu`, set `FEISHU_VERIFICATION_TOKEN` and, optionally, `FEISHU_ENCRYPT_KEY` for AES-256-CBC payload encryption. The receiver is plain HTTP; terminate HTTPS at the same reverse proxy.
+> **Feishu inbound setup:** set `FEISHU_APP_ID`, `FEISHU_VERIFICATION_TOKEN` and `DONKEY_WEBHOOK_PORT` (the receiver is disabled while the port is unset); optionally set `FEISHU_ENCRYPT_KEY` for AES-256-CBC payload encryption. Point Event Subscriptions to `https://<public-host>/webhook/feishu` and forward it through an HTTPS reverse proxy to `DONKEY_WEBHOOK_HOST:DONKEY_WEBHOOK_PORT` (default host `127.0.0.1`).
 
 ### DM pairing
 
