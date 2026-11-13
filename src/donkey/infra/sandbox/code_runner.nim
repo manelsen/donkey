@@ -121,10 +121,14 @@ proc runBoundedProcess*(argv: seq[string]; timeoutSec: int;
     let durationMs = int64((epochTime() - started) * 1000.0)
     p.close()
     let capped = capExecutionOutput(output, cap)
+    ## 124/137 are the timeout wrapper's codes, but our own output-cap kill can
+    ## also surface as 137. The wall-clock check distinguishes the two.
+    let timedOut = exitCode in {124, 137} and
+      durationMs >= int64(seconds * 1000 - 250)
     result = ok(CodeRunResult(
       output: capped.text,
       exitCode: exitCode,
-      timedOut: exitCode in {124, 137},
+      timedOut: timedOut,
       truncated: truncated or capped.truncated,
       durationMs: durationMs,
     ))
