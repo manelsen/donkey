@@ -161,10 +161,18 @@ suite "browser request policy":
     check screenshotTooLarge("abcd", 3)
     check not screenshotTooLarge("", 3)
 
+  test "local content cap does not depend on page slice":
+    check capBrowserContent("abc", 3) == "abc"
+    let capped = capBrowserContent("abcdef", 3)
+    check capped.startsWith("abc")
+    check "[truncated]" in capped
+    check capBrowserContent("abcdef", 0).len <= BrowserDefaultMaxContentChars + 12
+
   test "policy script blocks side channels and service workers":
     let script = browserPolicyScript()
     for needle in ["deny('WebSocket')", "deny('WebTransport')",
-                   "deny('RTCPeerConnection')", "deny('Worker')",
-                   "deny('SharedWorker')", "sendBeacon", "serviceWorker",
-                   "unregister", "navigator.serviceWorker.register"]:
+                   "deny('RTCPeerConnection')", "deny('webkitRTCPeerConnection')",
+                   "deny('Worker')", "deny('SharedWorker')", "sendBeacon",
+                   "serviceWorker", "unregister",
+                   "navigator.serviceWorker.register"]:
       check needle in script

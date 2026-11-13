@@ -221,6 +221,16 @@ func browserContentExpression*(maxChars: int): string =
     "return h.length > " & $cap & " ? h.slice(0, " & $cap &
     ") + \"\\n[truncated]\" : h; })()"
 
+func capBrowserContent*(text: string; maxChars: int): string =
+  ## Local cap applied after CDP serialization. The in-page expression is the
+  ## first layer; a page can override String.prototype.slice, so this Nim-side
+  ## check is what actually bounds what reaches the tool consumer.
+  let cap = clampBrowserContentChars(maxChars)
+  if text.len > cap:
+    text[0 ..< cap] & "\n[truncated]"
+  else:
+    text
+
 func screenshotTooLarge*(data: string;
                          maxBytes = BrowserMaxScreenshotBytes): bool =
   maxBytes > 0 and data.len > maxBytes
@@ -249,6 +259,12 @@ func browserPolicyScript*(): string =
     Object.defineProperty(globalThis, 'RTCPeerConnection', {
       configurable: false, writable: false,
       value: function() { deny('RTCPeerConnection'); }
+    });
+  } catch (e) {}
+  try {
+    Object.defineProperty(globalThis, 'webkitRTCPeerConnection', {
+      configurable: false, writable: false,
+      value: function() { deny('webkitRTCPeerConnection'); }
     });
   } catch (e) {}
   try {

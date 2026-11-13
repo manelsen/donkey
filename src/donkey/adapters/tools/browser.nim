@@ -47,6 +47,7 @@ type
     process*: Process             ## browser subprocess
     ws*: WsClient                 ## CDP WebSocket connection
     pageTargetId*: string         ## active page target ID
+    mainFrameId*: string          ## main frame, used for isolated evaluation
     currentUrl*: string           ## URL of loaded page
     inflightRequests*: int        ## Network.* events observed since navigation
     pendingRequestIds*: seq[string] ## requestId set, redirects keep the same id
@@ -370,6 +371,40 @@ proc activatePage*(bt: var BrowserTools): Result[void, string] =
   })
   return ok()
 
+proc resolveMainFrameId(bt: var BrowserTools): string =
+  if bt.mainFrameId.len > 0:
+    return bt.mainFrameId
+  let tree = bt.sendCdpCommand("Page.getFrameTree")
+  if tree.isOk:
+    let frame = tree.get(){"frameTree"}{"frame"}
+    if frame != nil and frame.kind == JObject:
+      bt.mainFrameId = frame{"id"}.getStr("")
+  bt.mainFrameId
+
+proc evaluateWithIsolatedWorld(bt: var BrowserTools;
+                               expression: string): Result[JsonNode, string] =
+  ## Runs the content extraction in an isolated world on Chromium. Page code
+  ## cannot replace String.prototype.slice there. If the world is unavailable
+  ## (Lightpanda or an older engine), fall back to the main context; the
+  ## Nim-side cap still bounds the payload.
+  var contextId = 0
+  if bt.backend.isChromiumBackend():
+    let frameId = bt.resolveMainFrameId()
+    if frameId.len > 0:
+      let world = bt.sendCdpCommand("Page.createIsolatedWorld", %*{
+        "frameId": frameId,
+        "worldName": "donkey-browser-content",
+      })
+      if world.isOk:
+        contextId = world.get(){"executionContextId"}.getInt(0)
+  var params = %*{
+    "expression": expression,
+    "returnByValue": true,
+  }
+  if contextId > 0:
+    params["contextId"] = %contextId
+  bt.sendCdpCommand("Runtime.evaluate", params)
+
 proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): Result[string, string] =
   ## Navigate to URL and wait for page load.
   if waitUntil notin ["networkidle", "load", "domcontentloaded"]:
@@ -393,6 +428,7 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
   bt.policyViolation = ""
   bt.lastBlockedUrl = ""
   bt.hardeningWarnings.setLen(0)
+  bt.mainFrameId = ""
 
   ## Network monitoring is always enabled: it is the second layer for redirects,
   ## WebSockets and service workers, even when waitUntil is not networkidle.
@@ -501,6 +537,9 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
   let navError = navNode{"errorText"}
   if navError != nil and navError.kind == JString and navError.getStr("").len > 0:
     return err("navigation failed: " & navError.getStr(""))
+  let frameIdNode = navNode{"frameId"}
+  if frameIdNode != nil and frameIdNode.kind == JString:
+    bt.mainFrameId = frameIdNode.getStr("")
   if bt.policyViolation.len > 0:
     return err("browser policy violation: " & bt.policyViolation)
 
@@ -556,11 +595,10 @@ proc getContent*(bt: var BrowserTools; maxChars: int; asHtml: bool): Result[stri
   ? activatePage(bt)
   let cap = clampBrowserContentChars(maxChars)
   
-  # Get HTML via Runtime.evaluate
-  let evalResp = bt.sendCdpCommand("Runtime.evaluate", %*{
-    "expression": browserContentExpression(cap),
-    "returnByValue": true
-  })
+  # Get HTML via Runtime.evaluate. Chromium uses an isolated world; the local
+  # cap is the guarantee even if the page replaces slice or the isolated world
+  # is unavailable.
+  let evalResp = bt.evaluateWithIsolatedWorld(browserContentExpression(cap))
   if evalResp.isErr:
     return err(evalResp.error)
   
@@ -568,7 +606,7 @@ proc getContent*(bt: var BrowserTools; maxChars: int; asHtml: bool): Result[stri
   if not r.hasKey("result") or not r["result"].hasKey("value"):
     return err("no result in Runtime.evaluate response")
   
-  let html = r["result"]["value"].getStr()
+  let html = capBrowserContent(r["result"]["value"].getStr(), cap)
   
   if asHtml:
     return ok(html)
@@ -840,6 +878,7 @@ proc close*(bt: var BrowserTools) =
   bt.profileDir = ""
   bt.ownsProfileDir = false
   bt.pageTargetId = ""
+  bt.mainFrameId = ""
   bt.currentUrl = ""
   bt.inflightRequests = 0
   bt.pendingRequestIds.setLen(0)
@@ -886,8 +925,11 @@ proc invokeCommand(bt: var BrowserTools; call: ToolCall): Result[ToolResult, str
     if navResult.isErr:
       return ok(browserError(call.id, navResult.error))
     
+    var payload = %*{"url": url, "status": "loaded"}
+    if bt.hardeningWarnings.len > 0:
+      payload["warnings"] = %bt.hardeningWarnings
     return ok(ToolResult(callId: call.id,
-      output: $(%*{"url": url, "status": "loaded"}), isError: false))
+      output: $payload, isError: false))
   
   of "browser_content":
     let maxCharsNode = call.input.getOrDefault("max_chars")
