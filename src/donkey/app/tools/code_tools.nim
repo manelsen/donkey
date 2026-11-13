@@ -105,7 +105,12 @@ proc resolveWasmPath(workspace, rawPath: string): Result[string, string] =
 proc parseCodeRequest*(input: JsonNode; workspace: string;
                        maxSourceBytes = CodeDefaultMaxSourceBytes):
                        Result[CodeRequest, string] =
-  let rawLanguage = input.getOrDefault("language").getStr("").strip()
+  let languageNode = input.getOrDefault("language")
+  let rawLanguage =
+    if languageNode != nil and languageNode.kind == JString:
+      languageNode.getStr("").strip()
+    else:
+      ""
   let languageOpt = parseCodeLanguage(rawLanguage)
   if languageOpt.isNone:
     return err("invalid language; use python, javascript, shell or wasm")
@@ -118,7 +123,12 @@ proc parseCodeRequest*(input: JsonNode; workspace: string;
     req.timeoutSec = CodeDefaultTimeoutSec
 
   if req.language == clWasm:
-    let rawPath = input.getOrDefault("wasm_path").getStr("").strip()
+    let pathNode = input.getOrDefault("wasm_path")
+    let rawPath =
+      if pathNode != nil and pathNode.kind == JString:
+        pathNode.getStr("").strip()
+      else:
+        ""
     let resolved = resolveWasmPath(workspace, rawPath)
     if resolved.isErr:
       return err(resolved.error)

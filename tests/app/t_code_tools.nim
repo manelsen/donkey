@@ -51,6 +51,9 @@ suite "execute_code input validation":
     defer: removeDir(dir)
     check parseCodeRequest(%*{"language": "ruby", "code": "x"}, dir).isErr
     check parseCodeRequest(%*{"code": "x"}, dir).isErr
+    check parseCodeRequest(%*{"language": 42, "code": "x"}, dir).isErr
+    check parseCodeRequest(%*{"language": "python", "code": 42}, dir).isErr
+    check parseCodeRequest(%*{"language": "wasm", "wasm_path": 42}, dir).isErr
 
   test "requires source for text languages":
     let dir = freshPaddock("source")
