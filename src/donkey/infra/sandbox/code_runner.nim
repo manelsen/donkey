@@ -4,7 +4,7 @@
 ## `domain/tools/code_pure`; this module only enforces the wall-clock timeout,
 ## caps the output and cleans up the container.
 
-import std/[atomics, os, osproc, streams, times]
+import std/[atomics, os, osproc, streams, strtabs, times]
 import results
 when defined(posix):
   import std/posix
@@ -49,6 +49,23 @@ proc hardenScratchDir(path: string): bool =
   else:
     true
 
+proc codeProcessEnv(): StringTableRef =
+  ## Do not leak provider tokens into the container runtime CLI. Preserve the
+  ## Docker client configuration and basic process environment.
+  result = newStringTable(mode = modeCaseSensitive)
+  for name in ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL",
+               "USER", "LOGNAME", "DOCKER_HOST", "DOCKER_CONFIG",
+               "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY", "DOCKER_CONTEXT",
+               "XDG_RUNTIME_DIR", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"]:
+    let value = getEnv(name)
+    if value.len > 0:
+      result[name] = value
+  when defined(windows):
+    for name in ["SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"]:
+      let value = getEnv(name)
+      if value.len > 0:
+        result[name] = value
+
 proc cleanupContainer(runtimeCmd, name: string) =
   ## `timeout` already kills the CLI. This second call handles the case where
   ## the CLI died but the container process survived in the daemon.
@@ -60,6 +77,7 @@ proc cleanupContainer(runtimeCmd, name: string) =
   try:
     let p = startProcess(timeoutExe,
                          args = @["2s", runtimeCmd, "kill", name],
+                         env = codeProcessEnv(),
                          options = {poUsePath, poStdErrToStdOut})
     try:
       discard p.waitForExit()
@@ -86,6 +104,7 @@ proc runBoundedProcess*(argv: seq[string]; timeoutSec: int;
   let started = epochTime()
   try:
     p = startProcess(fullArgv[0], args = fullArgv[1 .. ^1],
+                     env = codeProcessEnv(),
                      options = {poUsePath, poStdErrToStdOut})
   except CatchableError as e:
     return err("cannot start execution: " & e.msg)
