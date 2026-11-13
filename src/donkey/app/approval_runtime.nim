@@ -29,7 +29,7 @@ func defaultApprovalTools*(): seq[string] =
   ## DONKEY_APPROVAL_TOOLS=none to disable the gate.
   @["bash", "edit_file", "fs_write", "fs_mkdir", "fs_copy", "fs_move",
     "fs_remove", "text_replace", "cp", "mv", "rm", "mkdir",
-    "archive_extract", "archive_create"]
+    "archive_extract", "archive_create", "execute_code"]
 
 proc parseApprovalTools*(raw: string): seq[string] =
   let value = raw.strip.toLowerAscii()

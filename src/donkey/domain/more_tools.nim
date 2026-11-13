@@ -567,3 +567,20 @@ const
     "\"job_ids\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}," &
     "\"description\":\"Job IDs to wait for\"}}" &
     ",\"required\":[\"job_ids\"]}"
+
+# ── execute_code ──────────────────────────────────────────────────────────────
+const
+  ExecuteCodeToolName* = "execute_code"
+  ExecuteCodeToolDescription* =
+    "Run a short Python, JavaScript, shell or WASI program inside an isolated sandbox. " &
+    "Network is disabled, the workspace is the only writable mount, output is capped and the " &
+    "run is killed on timeout. Requires sandbox.mode='oci' (python/javascript/shell) or " &
+    "sandbox.mode='wasm' (language='wasm'). This tool is approval-gated by default."
+  ExecuteCodeToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"language\":{\"type\":\"string\",\"enum\":[\"python\",\"javascript\",\"shell\",\"wasm\"]," &
+    "\"description\":\"Runtime to execute\"}," &
+    "\"code\":{\"type\":\"string\",\"description\":\"Source code (not used for wasm)\"}," &
+    "\"wasm_path\":{\"type\":\"string\",\"description\":\"Path to a .wasm module inside the workspace (wasm only)\"}," &
+    "\"timeout_sec\":{\"type\":\"integer\",\"description\":\"Wall-clock timeout in seconds (default: 10, max: 60)\"}" &
+    "},\"required\":[\"language\"]}"

@@ -24,6 +24,7 @@ import ./tools/archive_tools
 import ./tools/data_tools
 import ./tools/utility_tools
 import ./tools/task_tools
+import ./tools/code_tools
 
 export fs_tools        # resolveInPaddock, inPaddock, performBash
 export text_tools      # HashlineAnchor, EditFileOpKind, EditFileOp, hashline
@@ -36,6 +37,7 @@ export utility_tools   # performCalc, performRenderMermaid, performInspectImage,
                        # MermaidTempPrefix
 export task_tools      # performTask, nextJobId, buildTaskStartedText,
                        # spawnTaskJob, performManageSkills
+export code_tools      # parseCodeRequest, runCodeRequest, codeConfigFromEnv
 
 # ── Dispatcher-only imports ──────────────────────────────────────────────────
 
@@ -842,6 +844,27 @@ proc executeStructuredNativeTool(tc: ToolCallRequest;
   else:
     return NativeToolResult(handled: false)
 
+proc executeCodeNativeTool(tc: ToolCallRequest;
+                           ctx: NativeCtx;
+                           state: SessionState;
+                           history: ConversationHistory;
+                           j: JsonNode;
+                          ): Future[NativeToolResult] {.async.} =
+  discard state
+  discard history
+  if tc.name != ExecuteCodeToolName:
+    return NativeToolResult(handled: false)
+  let cfg = codeConfigFromEnv(ctx.sandboxMode,
+                              ctx.sandboxRuntimeCmd).valueOr:
+    return handledError(error)
+  let req = parseCodeRequest(j, ctx.paddockDir, cfg.maxSourceBytes).valueOr:
+    return handledError(error)
+  let executed = runCodeRequest(req, cfg, ctx.paddockDir, ctx.uid, ctx.channel,
+                                ctx.log)
+  if executed.isErr:
+    return handledError(executed.error)
+  handledText(executed.get().text)
+
 proc executeUtilityNativeTool(tc: ToolCallRequest;
                               ctx: NativeCtx;
                               state: SessionState;
@@ -947,6 +970,7 @@ func categoryHandler(kind: NativeToolCategoryKind): NativeToolCategoryHandler =
   of ntckLegacy: executeLegacyNativeTool
   of ntckShell: executeShellNativeTool
   of ntckStructured: executeStructuredNativeTool
+  of ntckCode: executeCodeNativeTool
   of ntckWeb: executeWebNativeTool
   of ntckUtility: executeUtilityNativeTool
   of ntckSession: executeSessionNativeTool
@@ -969,7 +993,30 @@ func approvalSummary(toolName: string; j: JsonNode): string =
   ## The approval must reflect the complete action. Oversized requests are
   ## rejected instead of showing a truncated command/edit.
   const MaxApprovalSummaryChars = 1500
-  if toolName == BashToolName:
+  if toolName == ExecuteCodeToolName:
+    let languageNode = j.getOrDefault("language")
+    let language =
+      if languageNode != nil and languageNode.kind == JString:
+        languageNode.getStr("")
+      else:
+        ""
+    let timeoutNode = j.getOrDefault("timeout_sec")
+    let timeout =
+      if timeoutNode != nil and timeoutNode.kind == JInt: $timeoutNode.getInt()
+      else: "10"
+    result = "language=" & language & " timeout=" & timeout & "s\n"
+    let codeNode = j.getOrDefault("code")
+    let code =
+      if codeNode != nil and codeNode.kind == JString: codeNode.getStr("")
+      else: ""
+    if code.len > 0:
+      result.add(code)
+    else:
+      let pathNode = j.getOrDefault("wasm_path")
+      result.add("wasm_path=" &
+        (if pathNode != nil and pathNode.kind == JString: pathNode.getStr("")
+         else: ""))
+  elif toolName == BashToolName:
     result = j.getOrDefault("command").getStr("")
     if result.len == 0:
       result = $j

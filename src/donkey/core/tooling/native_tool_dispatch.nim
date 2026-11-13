@@ -5,6 +5,7 @@ type
     ntckLegacy
     ntckShell
     ntckStructured
+    ntckCode
     ntckWeb
     ntckUtility
     ntckSession
@@ -41,6 +42,10 @@ const
     "archive_create",
   ]
 
+  CodeNativeTools* = [
+    "execute_code",
+  ]
+
   WebNativeTools* = [
     "fetch",
     "web_search",
@@ -73,13 +78,15 @@ func categoryTools(kind: NativeToolCategoryKind): seq[string] =
   of ntckLegacy: @LegacyNativeTools
   of ntckShell: @ShellNativeTools
   of ntckStructured: @StructuredNativeTools
+  of ntckCode: @CodeNativeTools
   of ntckWeb: @WebNativeTools
   of ntckUtility: @UtilityNativeTools
   of ntckSession: @SessionNativeTools
   of ntckAgent: @AgentNativeTools
 
 func nativeToolCategoryOrder*(): seq[NativeToolCategoryKind] =
-  @[ntckLegacy, ntckShell, ntckStructured, ntckWeb, ntckUtility, ntckSession, ntckAgent]
+  @[ntckLegacy, ntckShell, ntckStructured, ntckCode, ntckWeb,
+    ntckUtility, ntckSession, ntckAgent]
 
 func classifyNativeTool*(name: string): seq[NativeToolCategoryKind] =
   for kind in nativeToolCategoryOrder():

@@ -18,6 +18,7 @@ suite "approval runtime":
   test "policy defaults and opt-out":
     check "bash" in parseApprovalTools("")
     check "edit_file" in parseApprovalTools("")
+    check "execute_code" in parseApprovalTools("")
     check parseApprovalTools("none").len == 0
     check parseApprovalTools("bash, rm ,bash") == @["bash", "rm"]
 
