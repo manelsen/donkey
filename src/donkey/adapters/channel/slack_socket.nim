@@ -157,9 +157,22 @@ proc runSlackSocket(client: SlackSocketMode) {.thread.} =
       var lastActivity = getMonoTime()
       var reopen = false
       while not client.stop.load() and not reopen:
+        let frameRes = ws.recvFrame(1000)
+        if frameRes.isErr:
+          if frameRes.error == "timeout":
+            if inMilliseconds(getMonoTime() - lastActivity) >=
+               SlackSocketIdleTimeoutMs:
+              client.logger.warn("slack socket: idle timeout; reconnecting")
+              reopen = true
+            else:
+              continue
+          else:
+            client.logger.warn("slack socket: " & frameRes.error)
+            reopen = true
+          continue
+        let frame = frameRes.get()
+        lastActivity = getMonoTime()
         try:
-          let frame = ws.recvFrame(1000)
-          lastActivity = getMonoTime()
           case frame.opcode
           of WsOpcodeText:
             var envelope: JsonNode
@@ -184,13 +197,6 @@ proc runSlackSocket(client: SlackSocketMode) {.thread.} =
             reopen = true
           else:
             discard
-        except TimeoutError:
-          if inMilliseconds(getMonoTime() - lastActivity) >=
-             SlackSocketIdleTimeoutMs:
-            client.logger.warn("slack socket: idle timeout; reconnecting")
-            reopen = true
-          else:
-            continue
         except CatchableError as e:
           client.logger.warn("slack socket: " & e.msg)
           reopen = true

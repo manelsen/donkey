@@ -293,13 +293,13 @@ proc drainPendingEvents(bt: var BrowserTools; budgetMs = 50) =
   ## blocked until the next tool call sends another CDP command.
   let deadline = epochTime() + float(budgetMs) / 1000.0
   while epochTime() < deadline:
-    let frame = try:
-      bt.ws.recvFrame(10, maxPayloadBytes = BrowserMaxCdpFrameBytes)
-    except TimeoutError:
+    let frameRes = bt.ws.recvFrame(10, frameTimeoutMs = 10,
+                                   maxPayloadBytes = BrowserMaxCdpFrameBytes)
+    if frameRes.isErr:
+      if frameRes.error != "timeout":
+        bt.invalidateConnection()
       break
-    except CatchableError:
-      bt.invalidateConnection()
-      break
+    let frame = frameRes.get()
     if frame.opcode == WsOpcodeClose:
       bt.invalidateConnection()
       break
@@ -332,14 +332,14 @@ proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode =
       return err("CDP timeout waiting for " & cdpMethod & " response")
     
     let remainingMs = max(1, int((deadline - now) * 1000))
-    let frame = try:
-      bt.ws.recvFrame(remainingMs, maxPayloadBytes = BrowserMaxCdpFrameBytes)
-    except TimeoutError as e:
+    let frameRes = bt.ws.recvFrame(remainingMs, frameTimeoutMs = remainingMs,
+                                   maxPayloadBytes = BrowserMaxCdpFrameBytes)
+    if frameRes.isErr:
       bt.invalidateConnection()
-      return err("CDP timeout waiting for " & cdpMethod & " response: " & e.msg)
-    except IOError as e:
-      bt.invalidateConnection()
-      return err("WebSocket receive error: " & e.msg)
+      if frameRes.error == "timeout":
+        return err("CDP timeout waiting for " & cdpMethod & " response")
+      return err("WebSocket receive error: " & frameRes.error)
+    let frame = frameRes.get()
     
     if frame.opcode == WsOpcodeClose:
       bt.invalidateConnection()
@@ -810,12 +810,15 @@ proc waitForChromiumPage(bt: var BrowserTools;
   err("Chromium CDP endpoint did not expose a page target")
 
 proc cleanupOwnedProfile(bt: var BrowserTools) =
-  if bt.ownsProfileDir and bt.profileDir.len > 0:
-    try:
-      removeDir(bt.profileDir)
-    except CatchableError:
-      discard
-  bt.profileDir = ""
+  ## Only adapter-created profiles are removed. An operator-configured
+  ## `DONKEY_BROWSER_PROFILE_DIR` is persistent and must survive spawn errors.
+  if bt.ownsProfileDir:
+    if bt.profileDir.len > 0:
+      try:
+        removeDir(bt.profileDir)
+      except CatchableError:
+        discard
+    bt.profileDir = ""
   bt.ownsProfileDir = false
 
 proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =

@@ -124,12 +124,12 @@ suite "Slack Socket Mode stress":
       discard posix.close(peer)
 
     writeAll(peer, "\x81\x05hello")
-    let text = ws.recvFrame(100)
+    let text = ws.recvFrame(100).get()
     check text.opcode == WsOpcodeText
     check text.data == "hello"
 
     writeAll(peer, "\x89\x00")
-    let ping = ws.recvFrame(100)
+    let ping = ws.recvFrame(100).get()
     check ping.opcode == WsOpcodePing
     check ping.data.len == 0
 
@@ -141,7 +141,7 @@ suite "Slack Socket Mode stress":
 
     let payload = repeat("x", 126)
     writeAll(peer, "\x81\x7e\x00\x7e" & payload)
-    let frame = ws.recvFrame(100)
+    let frame = ws.recvFrame(100).get()
     check frame.opcode == WsOpcodeText
     check frame.data == payload
 
@@ -152,11 +152,6 @@ suite "Slack Socket Mode stress":
       discard posix.close(peer)
 
     writeAll(peer, "\x81\x05he")  # header promises 5 bytes, only 2 arrive
-    var raisedIo = false
-    try:
-      discard ws.recvFrame(100, 100)
-    except TimeoutError:
-      check false
-    except IOError:
-      raisedIo = true
-    check raisedIo
+    let truncated = ws.recvFrame(100, 100)
+    check truncated.isErr
+    check "truncated" in truncated.error

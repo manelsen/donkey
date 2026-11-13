@@ -222,8 +222,10 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
     state.ws = wsConnect(host, Port(443), "/?v=10&encoding=json", useTls = true)
 
     ## 1. Hello → get heartbeat interval.
-    let helloFrame = state.ws.recvFrame()
-    let hello = parseJson(helloFrame.data)
+    let helloRes = state.ws.recvFrame()
+    if helloRes.isErr:
+      raise newException(IOError, "Discord hello failed: " & helloRes.error)
+    let hello = parseJson(helloRes.get().data)
     state.heartbeatMs = hello["d"]["heartbeat_interval"].getInt(41250)
     logger.debug("discord: hello, heartbeat=" & $state.heartbeatMs)
 
@@ -260,7 +262,12 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
         state.sendHeartbeat()
 
       try:
-        let frame = state.ws.recvFrame()
+        let frameRes = state.ws.recvFrame()
+        if frameRes.isErr:
+          if frameRes.error == "timeout":
+            continue
+          raise newException(IOError, "Discord receive failed: " & frameRes.error)
+        let frame = frameRes.get()
         case frame.opcode
 
         of WsOpcodeText:

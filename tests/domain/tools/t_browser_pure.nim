@@ -188,6 +188,7 @@ suite "browser request policy":
     for needle in ["deny('WebSocket')", "deny('WebTransport')",
                    "deny('RTCPeerConnection')", "deny('webkitRTCPeerConnection')",
                    "deny('Worker')", "deny('SharedWorker')", "sendBeacon",
+                   "ServiceWorkerContainer.prototype", "blockRegister",
                    "serviceWorker", "unregister",
-                   "navigator.serviceWorker.register"]:
+                   "navigator.serviceWorker, 'register'"]:
       check needle in script

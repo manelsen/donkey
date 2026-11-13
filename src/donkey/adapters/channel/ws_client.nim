@@ -5,11 +5,12 @@
 ## Implements text, ping/pong, and close frames.
 ##
 ## Timeout model:
-##   recvFrame(ws, timeoutMs) raises TimeoutError if the first byte of a new
-##   frame does not arrive within timeoutMs. Subsequent bytes of the same
-##   frame are read without a timeout (data is already in flight).
+##   recvFrame returns `err("timeout")` if the first byte of a new frame does
+##   not arrive within timeoutMs. Subsequent bytes of the same frame must
+##   finish within frameTimeoutMs (usually the caller's remaining budget).
 
 import std/[base64, monotimes, net, random, strutils, times]
+import results
 when defined(posix):
   import std/posix
 
@@ -133,9 +134,9 @@ proc sendFrame*(ws: WsClient; data: string; opcode = WsOpcodeText) =
 
   ws.sock.send(frame)
 
-proc recvFrame*(ws: WsClient; timeoutMs = 1000;
-                frameTimeoutMs = 10_000;
-                maxPayloadBytes = 0): WsFrame =
+proc recvFrameRaw(ws: WsClient; timeoutMs = 1000;
+                  frameTimeoutMs = 10_000;
+                  maxPayloadBytes = 0): WsFrame =
   ## Receives one WebSocket frame (server → client, unmasked).
   ## Waits up to timeoutMs for the first byte; raises TimeoutError if none.
   ## Once a frame starts, it must finish within frameTimeoutMs.
@@ -189,6 +190,18 @@ proc recvFrame*(ws: WsClient; timeoutMs = 1000;
       data[i] = char(int(byte(data[i])) xor int(maskKey[i mod 4]))
 
   WsFrame(opcode: opcode, data: data)
+
+proc recvFrame*(ws: WsClient; timeoutMs = 1000;
+                frameTimeoutMs = 10_000;
+                maxPayloadBytes = 0): Result[WsFrame, string] =
+  ## Result-based receive API. `err("timeout")` means no first byte arrived
+  ## before `timeoutMs`; other errors are protocol/transport failures.
+  try:
+    ok(recvFrameRaw(ws, timeoutMs, frameTimeoutMs, maxPayloadBytes))
+  except TimeoutError:
+    err("timeout")
+  except CatchableError as e:
+    err(e.msg)
 
 proc wsClose*(ws: WsClient) =
   try: ws.sendFrame("", WsOpcodeClose)

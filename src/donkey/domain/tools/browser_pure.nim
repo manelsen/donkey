@@ -293,13 +293,35 @@ func browserPolicyScript*(): string =
       value: function() { deny('SharedWorker'); }
     });
   } catch (e) {}
-  try { globalThis.open = function() { return null; }; } catch (e) {}
-  try { navigator.sendBeacon = function() { return false; }; } catch (e) {}
   try {
+    Object.defineProperty(globalThis, 'open', {
+      configurable: false, writable: false,
+      value: function() { return null; }
+    });
+  } catch (e) {}
+  try {
+    Object.defineProperty(navigator, 'sendBeacon', {
+      configurable: false, writable: false,
+      value: function() { return false; }
+    });
+  } catch (e) {}
+  try {
+    const blockRegister = function() {
+      return Promise.reject(new Error('service worker blocked by Donkey browser policy'));
+    };
+    if (typeof ServiceWorkerContainer !== 'undefined') {
+      try {
+        Object.defineProperty(ServiceWorkerContainer.prototype, 'register', {
+          configurable: false, writable: false, value: blockRegister
+        });
+      } catch (e) {}
+    }
     if (navigator.serviceWorker) {
-      navigator.serviceWorker.register = function() {
-        return Promise.reject(new Error('service worker blocked by Donkey browser policy'));
-      };
+      try {
+        Object.defineProperty(navigator.serviceWorker, 'register', {
+          configurable: false, writable: false, value: blockRegister
+        });
+      } catch (e) {}
       navigator.serviceWorker.getRegistrations()
         .then(rs => rs.forEach(r => r.unregister()))
         .catch(() => {});
