@@ -12,6 +12,11 @@ when defined(linux):
       await sleepAsync(100)
       inc counter[]
 
+  proc cancelAfter(fut: Future[Result[CodeRunResult, string]];
+                   ms: int) {.async.} =
+    await sleepAsync(ms)
+    await fut.cancelAndWait()
+
   suite "execute_code bounded runner":
 
     test "captures output and exit code":
@@ -73,11 +78,23 @@ when defined(linux):
 
     test "async runner keeps the Chronos loop responsive":
       var counter = 0
+      let started = epochTime()
       let runFut = runBoundedProcessAsync(@["sh", "-c", "sleep 1"], 5, 1024)
       let tickFut = tick(addr counter)
-      waitFor allFutures(runFut, tickFut)
-      check runFut.read().isOk
+      waitFor tickFut
+      let tickElapsed = epochTime() - started
       check counter >= 3
+      check tickElapsed < 0.9
+      check not finished(runFut)
+      let run = waitFor runFut
+      check run.isOk
+
+    test "cancellation kills the child and propagates":
+      let started = epochTime()
+      let fut = runBoundedProcessAsync(@["sh", "-c", "sleep 30"], 60, 1024)
+      waitFor cancelAfter(fut, 200)
+      check cancelled(fut)
+      check epochTime() - started < 5.0
 
     test "missing container runtime fails closed without spawning":
       let res = runOciCode("/nonexistent/docker", "alpine", "/tmp", 1, 1,

@@ -181,6 +181,19 @@ proc runBoundedProcessAsync*(argv: seq[string]; timeoutSec: int;
         break
       for b in chunk:
         output.add(char(b))
+  except CancelledError:
+    ## Cancellation must not leave the child running or hide the cancellation.
+    discard p.terminate()
+    try:
+      discard await p.waitForExit(chronos.seconds(2))
+    except CatchableError:
+      discard p.kill()
+      try:
+        discard await p.waitForExit(chronos.seconds(2))
+      except CatchableError:
+        discard
+    await p.closeWait()
+    raise
   except CatchableError as e:
     readError = e.msg
 
@@ -229,21 +242,23 @@ proc runOciCodeAsync*(runtimeCmd, image, workspace: string;
                               language, code, name)
   if argv.len == 0:
     return err("invalid OCI execution request")
-  let run = await runBoundedProcessAsync(argv, timeoutSec, maxOutputBytes)
-  await cleanupContainerAsync(runtimeCmd, name)
-  if run.isErr:
-    return err(run.error)
-  var res = run.get()
-  res.sandbox = cskOci
-  res.containerName = name
-  res.image = image
-  res.artifactHash = stringSha256(code)
-  res.artifactBytes = int64(code.len)
-  if res.exitCode == 125 or
-     (res.exitCode != 0 and ociInfrastructureFailure(res.output)):
-    return err("container runtime failed: " & formatCodeResult(
-      res.output, res.exitCode, res.timedOut, res.truncated))
-  ok(res)
+  try:
+    let run = await runBoundedProcessAsync(argv, timeoutSec, maxOutputBytes)
+    if run.isErr:
+      return err(run.error)
+    var res = run.get()
+    res.sandbox = cskOci
+    res.containerName = name
+    res.image = image
+    res.artifactHash = stringSha256(code)
+    res.artifactBytes = int64(code.len)
+    if res.exitCode == 125 or
+       (res.exitCode != 0 and ociInfrastructureFailure(res.output)):
+      return err("container runtime failed: " & formatCodeResult(
+        res.output, res.exitCode, res.timedOut, res.truncated))
+    ok(res)
+  finally:
+    await cleanupContainerAsync(runtimeCmd, name)
 
 proc runWasmCodeAsync*(workspace, wasmPath: string;
                        timeoutSec: int;
