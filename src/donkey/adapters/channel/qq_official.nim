@@ -478,7 +478,7 @@ proc runGatewaySession(adapter: var QQOfficialAdapter;
       if frameRes.isErr:
         if frameRes.error == "timeout":
           continue
-        raise newException(IOError, "QQ official receive failed: " & frameRes.error)
+        break
       let frame = frameRes.get()
       case frame.opcode
       of WsOpcodeText:
@@ -497,10 +497,10 @@ proc runGatewaySession(adapter: var QQOfficialAdapter;
           else:
             handleGatewayDispatch(adapter, t, d)
         of 7:
-          raise newException(IOError, "QQ official requested reconnect (op=7)")
+          break
         of 9:
           state.sessionId = ""
-          raise newException(IOError, "QQ official invalid session (op=9)")
+          break
         of 10:
           discard
         of 11:
@@ -510,7 +510,7 @@ proc runGatewaySession(adapter: var QQOfficialAdapter;
       of WsOpcodePing:
         state.ws.sendFrame(frame.data, WsOpcodePong)
       of WsOpcodeClose:
-        raise newException(IOError, "QQ official gateway closed")
+        break
       else:
         discard
     except TimeoutError:

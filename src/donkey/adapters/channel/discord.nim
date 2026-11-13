@@ -266,7 +266,8 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
         if frameRes.isErr:
           if frameRes.error == "timeout":
             continue
-          raise newException(IOError, "Discord receive failed: " & frameRes.error)
+          logger.warn("discord: receive failed: " & frameRes.error)
+          break
         let frame = frameRes.get()
         case frame.opcode
 
@@ -301,13 +302,13 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
 
           of 7:  ## Reconnect
             logger.info("discord: reconnect requested (op=7)")
-            raise newException(DiscordReconnect, "Discord requested reconnect (op=7)")
+            break
 
           of 9:  ## Invalid Session
             logger.warn("discord: invalid session (op=9)")
             if not j["d"].getBool(false):
               state.sessionId = ""; state.resumeUrl = ""
-            raise newException(IOError, "Invalid session (op=9)")
+            break
 
           of 11: discard  ## Heartbeat ACK
           else:  discard
@@ -317,7 +318,7 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
 
         of WsOpcodeClose:
           logger.warn("discord: websocket closed")
-          raise newException(IOError, "Discord gateway closed (op=close)")
+          break
 
         else: discard
 
