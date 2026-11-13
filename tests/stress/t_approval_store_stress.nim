@@ -25,6 +25,8 @@ var
   gCreateOk:    array[32, bool]
   gDecideOk:    array[32, bool]
   gReadErrors:  Atomic[int]
+  gReadDuringWrites: Atomic[int]
+  gWriterWrote: Atomic[int]
   gReaderReady: Atomic[int]
   gWritersDone: Atomic[bool]
 
@@ -35,13 +37,18 @@ proc createWorker(arg: CreateArg) {.thread.} =
     gCreateOk[arg.index] = res.isOk
     if res.isOk:
       gCreateIds[arg.index] = res.get().id
+      discard gWriterWrote.fetchAdd(1)
+    sleep(50)
 
 proc readerWorker(path: string) {.thread.} =
   {.cast(gcsafe).}:
     discard gReaderReady.fetchAdd(1)
     while not gWritersDone.load():
-      if newApprovalStore(path).listPending().isErr:
-        discard gReadErrors.fetchAdd(1)
+      if gWriterWrote.load() > 0:
+        if newApprovalStore(path).listPending().isErr:
+          discard gReadErrors.fetchAdd(1)
+        else:
+          discard gReadDuringWrites.fetchAdd(1)
       sleep(1)
 
 proc decideWorker(arg: DecideArg) {.thread.} =
@@ -58,6 +65,8 @@ suite "approval store stress":
     let path = dir / "approvals.json"
 
     gReadErrors.store(0)
+    gReadDuringWrites.store(0)
+    gWriterWrote.store(0)
     gReaderReady.store(0)
     gWritersDone.store(false)
     var reader: Thread[string]
@@ -69,6 +78,11 @@ suite "approval store stress":
     for i in 0 ..< threads.len:
       createThread(threads[i], createWorker,
                    CreateArg(path: path, userId: "u" & $i, index: i))
+    var waited = 0
+    while gReadDuringWrites.load() == 0 and waited < 1000:
+      sleep(1)
+      waited += 1
+    check gReadDuringWrites.load() > 0
     for i in 0 ..< threads.len:
       joinThread(threads[i])
     gWritersDone.store(true)

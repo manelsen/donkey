@@ -59,17 +59,39 @@ run_one() {
 }
 export -f run_one
 
-# Determine targets
+normalize_target() {
+  local target="$1"
+  target="${target#./}"
+  while [[ "$target" == */ ]] || [[ "$target" == */. ]]; do
+    target="${target%/}"
+    target="${target%/.}"
+  done
+  if [[ "$target" == /* ]]; then
+    local root
+    root="$(pwd)"
+    if [[ "$target" == "$root" ]]; then
+      target="."
+    elif [[ "$target" == "$root/"* ]]; then
+      target="${target#"$root"/}"
+    fi
+  fi
+  printf '%s' "$target"
+}
+
+# Normalize targets once so filters, find and stress detection agree.
 TARGETS=("$@")
 if [ "${#TARGETS[@]}" -eq 0 ]; then
   TARGETS=("tests")
 fi
+normalized_targets=()
 for target in "${TARGETS[@]}"; do
-  target="${target#./}"
-  case "$target" in
+  normalized="$(normalize_target "$target")"
+  normalized_targets+=("$normalized")
+  case "$normalized" in
     tests/stress|tests/stress/*) export DONKEY_STRESS=1 ;;
   esac
 done
+TARGETS=("${normalized_targets[@]}")
 
 idx=0
 items=()

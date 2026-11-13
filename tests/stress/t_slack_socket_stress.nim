@@ -94,10 +94,11 @@ suite "Slack Socket Mode stress":
       try: ws.sock.close() except CatchableError: discard
       discard posix.close(peer)
 
-    writeAll(peer, "\x81\x7e\x00\x05hello")
+    let payload = repeat("x", 126)
+    writeAll(peer, "\x81\x7e\x00\x7e" & payload)
     let frame = ws.recvFrame(100)
     check frame.opcode == WsOpcodeText
-    check frame.data == "hello"
+    check frame.data == payload
 
   test "a truncated frame raises protocol error, not idle timeout":
     let (ws, peer) = makePair()

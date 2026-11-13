@@ -56,7 +56,7 @@ suite "ledger worker stress":
     for i in 0 ..< gAppendCount.len:
       gAppendCount[i] = 0
 
-    let beforeCompact = store.ledgerCompactCount()
+    let beforeCompact = store.ledgerCompactStarts()
     let logger = newLogger("stress.ledger", lvlError)
     let worker = startLedgerCompactionWorker(store, 1.0, logger)
     check worker != nil
@@ -68,10 +68,10 @@ suite "ledger worker stress":
 
     ## Keep writers active until the worker has actually started a compaction.
     var waited = 0
-    while store.ledgerCompactCount() <= beforeCompact and waited < 5000:
+    while store.ledgerCompactStarts() <= beforeCompact and waited < 5000:
       sleep(10)
       waited += 10
-    check store.ledgerCompactCount() > beforeCompact
+    check store.ledgerCompactStarts() > beforeCompact
     gStopAppenders.store(true)
 
     for i in 0 ..< threads.len:
@@ -81,6 +81,7 @@ suite "ledger worker stress":
     stopLedgerCompactionWorker(worker)
     stopLedgerCompactionWorker(worker)  # idempotent
     check inMilliseconds(getMonoTime() - started) < 2000
+    check store.ledgerLastCompactError().len == 0
 
     check gAppendErrors.load() == 0
     var expected = 0
@@ -113,16 +114,16 @@ suite "ledger worker stress":
 
     let store = newRuntimeStateStore(
       dir, ledgerRetentionDays = 1.0, ledgerCompactIntervalSec = 1.0)
-    let beforeCompact = store.ledgerCompactCount()
+    let beforeCompact = store.ledgerCompactStarts()
     let worker = startLedgerCompactionWorker(
       store, 1.0, newLogger("stress.ledger", lvlError))
     check worker != nil
 
     var waited = 0
-    while store.ledgerCompactCount() <= beforeCompact and waited < 5000:
+    while store.ledgerCompactStarts() <= beforeCompact and waited < 5000:
       sleep(10)
       waited += 10
-    check store.ledgerCompactCount() > beforeCompact
+    check store.ledgerCompactStarts() > beforeCompact
 
     let started = getMonoTime()
     stopLedgerCompactionWorker(worker)
