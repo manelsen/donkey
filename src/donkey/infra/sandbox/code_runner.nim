@@ -205,6 +205,14 @@ proc runBoundedProcessAsync*(argv: seq[string]; timeoutSec: int;
       exitCode = await p.waitForExit(chronos.seconds(2))
     else:
       exitCode = await p.waitForExit()
+  except CancelledError:
+    discard p.kill()
+    try:
+      discard await p.waitForExit(chronos.seconds(2))
+    except CatchableError:
+      discard
+    await p.closeWait()
+    raise
   except CatchableError:
     discard p.kill()
     try:
