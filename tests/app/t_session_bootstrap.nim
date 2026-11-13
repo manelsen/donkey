@@ -213,6 +213,7 @@ model = "gemini-2.5-flash"
       HttpFetchToolName,
       ArchiveExtractToolName,
       ArchiveCreateToolName,
+      ExecuteCodeToolName,
     ]:
       check bundled.tools.anyIt(it.name == name)
 

@@ -65,11 +65,51 @@ Variáveis:
 
 Em Chromium/Edge, falha ao instalar o script de política, ao bloquear URLs ou ao bypassar service worker aborta a navegação. Em Lightpanda, métodos CDP opcionais não suportados viram warning e a proteção remanescente é o `Fetch` + eventos + proxy/firewall.
 
+## `execute_code`
+
+`execute_code` só existe com sandbox declarado. Em `[sandbox] mode = "oci"` ele roda Python/JavaScript/shell em um container efêmero:
+
+- `--network=none` sempre (não há opção de rede);
+- rootfs read-only, `/tmp` tmpfs `noexec,nosuid` de 64 MiB;
+- `--cap-drop=ALL`, `no-new-privileges`, `--pids-limit=128`, `--memory=512m`, `--cpus=1`, `--ulimit nofile=256:256`;
+- bind mount apenas do paddock em `/workspace`, com o UID/GID do daemon;
+- código passado como argv separado, sem shell do host;
+- timeout externo com `timeout --kill-after`, cap de saída e `docker kill` de segurança;
+- nenhum fallback para execução no host.
+
+Em `[sandbox] mode = "wasm"`, `execute_code` aceita apenas `language = "wasm"` e um `wasm_path` dentro do paddock. O wasmtime recebe somente o workspace e um scratch isolado; nenhuma flag de socket/listener é adicionada. `prlimit` é obrigatório para WASI: sem ele a execução é recusada. O endereço virtual do processo é limitado a 10 GiB de espaço de endereço virtual (cobre a reserva de até 8 GiB do Wasmtime 20 para memória linear); o timeout externo limita o tempo de CPU.
+
+Variáveis:
+
+| Variável | Default | Efeito |
+|---|---:|---|
+| `DONKEY_CODE_RUNTIME` | `sandbox.runtime` ou `docker` | runtime OCI usado por `execute_code` |
+| `DONKEY_CODE_IMAGE` | `python:3.12-alpine` / `node:22-alpine` | imagem do container; deve conter o interpretador da linguagem |
+| `DONKEY_CODE_TIMEOUT_SEC` | `10` | timeout de parede; clamp `1..60` |
+| `DONKEY_CODE_MAX_OUTPUT_BYTES` | `65536` | cap de stdout+stderr; clamp `1024..1048576` |
+| `DONKEY_CODE_MAX_SOURCE_BYTES` | `131072` | cap do código; clamp `1024..1048576` |
+
+O tool é approval-gated por default (`DONKEY_APPROVAL_TOOLS` inclui `execute_code`) e a auditoria vai para o log do daemon com user, canal, linguagem, SHA-256 do código, duração, exit code, timeout/truncamento e imagem — nunca o código em si. Falha ao criar/consultar aprovação nega a execução.
+
+## Threading e `gcsafe`
+
+`gcsafe` é uma promessa estática do Nim, não um lock e não uma prova de thread-safety. `{.cast(gcsafe).}` desliga a checagem do compilador; usá-lo sem uma invariante real é “fazer de conta”.
+
+O Donkey segue três regras:
+
+- **Isolamento por thread:** os callbacks de `ToolRuntimePort` são declarados `gcsafe` por contrato. O `BrowserToolRuntime` guarda a thread dona e recusa `invoke`/`listTools` fora dela; `close`/`closeUser` retornam erro em vez de corridar. O callback `ToolRuntimePort.close` é `void` e descarta esse Result na fronteira, sem lançar exceção. A premissa é o event loop cooperativo do Chronos, não um lock.
+- **Atomicidade real:** contadores globais de execução usam `Atomic[int]`; não há incremento “gcsafe” de `int` global.
+- **Cast justificado:** quando um `{.cast(gcsafe).}` aparece, o escopo toca apenas estado local/thread-local ou está sob lock; o comentário no código diz qual é a invariante.
+
+Se ferramentas passarem a rodar em múltiplas threads OS, o browser e o estado de sessão precisam de serialização explícita (lock/fila) ou de uma instância por thread. A anotação sozinha não cobre isso.
+
 ## Limites conhecidos (não resolvidos aqui)
 
 - **Pinning de conexão do web fetch:** a resolução DNS é validada, mas o `std/httpclient` resolve novamente ao conectar. Em deployment exposto, use `DONKEY_WEB_PROXY` ou firewall de egress.
 - **Pinning de conexão do browser:** o `Fetch` valida a URL, mas o browser resolve o host novamente ao conectar. Use `DONKEY_BROWSER_PROXY` ou firewall para pinar o IP validado; DNS rebinding não é eliminado localmente.
-- **Browser:** WebSocket/service worker dependem do CDP do backend. O script injetado cobre páginas, não código já em execução antes da injeção; por isso o proxy/firewall continua sendo a garantia forte.
+- **Browser:** WebSocket/service worker dependem do CDP do backend. O script injetado cobre páginas, não código já em execução antes da injeção; por isso o proxy/firewall continua sendo a garantia forte. Em Chromium a extração de conteúdo roda em isolated world; em Lightpanda o cap local + limite de frame CDP de 16 MiB limitam a saída, mas uma página hostil ainda pode forçar um frame grande até esse limite — prefira Chromium para conteúdo não confiável.
+- **`execute_code`:** o isolamento é o do runtime OCI/WASI, não uma prova contra escape de kernel/container. A imagem é responsabilidade do operador; uma imagem sem o interpretador escolhido falha fechado. A execução é síncrona no actor de tools (como `bash`), então o timeout também limita o bloqueio do turno; mover para um worker/helper process é um follow-up arquitetural, não um cast `gcsafe`. O runner exige o comando GNU `timeout`; em macOS instale `coreutils` e garanta `timeout` no `PATH`.
+- **Aprovação de código:** o resumo de aprovação mostra o código completo até 1500 caracteres; fontes maiores são recusadas para não aprovar uma ação truncada. Divida o programa ou aumente a revisão operacional antes de relaxar esse limite.
 - **Vault:** um backup do home inteiro inclui `.secret_key` e `.secrets/`; trate o backup como secreto. O vault não protege contra outro processo do mesmo usuário Unix.
 - **Socket Mode:** o ack ocorre depois do enfileiramento, mas antes da resposta do usuário; o modelo é at-most-once para o turno. O shutdown dá uma janela de 2s para publicar respostas.
 - **Ledger:** a compactação de startup é síncrona; não há lease/WAL/resume transacional.

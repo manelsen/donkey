@@ -8,6 +8,7 @@ suite "core native tool dispatch":
       ntckLegacy,
       ntckShell,
       ntckStructured,
+      ntckCode,
       ntckWeb,
       ntckUtility,
       ntckSession,
@@ -22,6 +23,10 @@ suite "core native tool dispatch":
 
   test "classify structured tool":
     check classifyNativeTool("json_query") == @[ntckStructured]
+
+  test "classify execute_code":
+    check classifyNativeTool("execute_code") == @[ntckCode]
+    check isKnownNativeTool("execute_code")
 
   test "legacy unix-like tools are no longer classified":
     for name in ["find", "grep", "sed", "wc", "head", "tail", "sort", "cp", "mv", "rm", "mkdir"]:

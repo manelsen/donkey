@@ -483,6 +483,7 @@ func nativeSessionTools*(): seq[ToolDescription] =
     (HttpFetchToolName,     HttpFetchToolDescription,     HttpFetchToolSchema),
     (ArchiveExtractToolName, ArchiveExtractToolDescription, ArchiveExtractToolSchema),
     (ArchiveCreateToolName, ArchiveCreateToolDescription, ArchiveCreateToolSchema),
+    (ExecuteCodeToolName,   ExecuteCodeToolDescription,   ExecuteCodeToolSchema),
     (FetchToolName,         FetchToolDescription,         FetchToolSchema),
     (CalcToolName,          CalcToolDescription,          CalcToolSchema),
     (RenderMermaidToolName, RenderMermaidToolDescription, RenderMermaidToolSchema),
