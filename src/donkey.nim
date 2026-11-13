@@ -381,11 +381,21 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
     ## and outlive the 30s discovery deadline.
     let discoveryHttp = newStdHttpAdapter(
       timeout = 2, maxRetries = 1, circuitBreaker = false).toRuntimePort()
+    let rawBrowserTimeout = getEnv("DONKEY_BROWSER_TIMEOUT_MS").strip()
+    var browserTimeoutMs = BrowserDefaultTimeoutMs
+    if rawBrowserTimeout.len > 0:
+      try:
+        discard parseInt(rawBrowserTimeout)
+        browserTimeoutMs = parseBrowserTimeoutMs(rawBrowserTimeout)
+      except ValueError:
+        log.warn("browser: invalid DONKEY_BROWSER_TIMEOUT_MS='" &
+                 rawBrowserTimeout & "'; using " & $BrowserDefaultTimeoutMs)
     let browserRuntime = newBrowserToolRuntime(
       backend = browserBackend,
       executablePath = getEnv("DONKEY_BROWSER_PATH"),
       profileBaseDir = getEnv("DONKEY_BROWSER_PROFILE_DIR"),
       proxyServer = getEnv("DONKEY_BROWSER_PROXY"),
+      timeoutMs = browserTimeoutMs,
       http = discoveryHttp,
     )
     result.browserRuntime = browserRuntime

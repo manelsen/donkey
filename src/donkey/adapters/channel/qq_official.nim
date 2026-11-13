@@ -441,7 +441,10 @@ proc runGatewaySession(adapter: var QQOfficialAdapter;
   let path = if slashIdx >= 0: noScheme[slashIdx .. ^1] else: "/"
   state.ws = wsConnect(host, Port(443), path, useTls = true)
 
-  let hello = parseJson(state.ws.recvFrame().data)
+  let helloRes = state.ws.recvFrame()
+  if helloRes.isErr:
+    raise newException(IOError, "QQ official hello failed: " & helloRes.error)
+  let hello = parseJson(helloRes.get().data)
   state.heartbeatMs = hello["d"]["heartbeat_interval"].getInt(45000)
   state.sendHeartbeat()
 
@@ -471,7 +474,12 @@ proc runGatewaySession(adapter: var QQOfficialAdapter;
     if nowUnixSec() * 1000 - state.lastBeatMs >= int64(state.heartbeatMs):
       state.sendHeartbeat()
     try:
-      let frame = state.ws.recvFrame()
+      let frameRes = state.ws.recvFrame()
+      if frameRes.isErr:
+        if frameRes.error == "timeout":
+          continue
+        break
+      let frame = frameRes.get()
       case frame.opcode
       of WsOpcodeText:
         let j = parseJson(frame.data)
@@ -489,10 +497,10 @@ proc runGatewaySession(adapter: var QQOfficialAdapter;
           else:
             handleGatewayDispatch(adapter, t, d)
         of 7:
-          raise newException(IOError, "QQ official requested reconnect (op=7)")
+          break
         of 9:
           state.sessionId = ""
-          raise newException(IOError, "QQ official invalid session (op=9)")
+          break
         of 10:
           discard
         of 11:
@@ -502,7 +510,7 @@ proc runGatewaySession(adapter: var QQOfficialAdapter;
       of WsOpcodePing:
         state.ws.sendFrame(frame.data, WsOpcodePong)
       of WsOpcodeClose:
-        raise newException(IOError, "QQ official gateway closed")
+        break
       else:
         discard
     except TimeoutError:

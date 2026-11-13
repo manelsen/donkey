@@ -222,8 +222,10 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
     state.ws = wsConnect(host, Port(443), "/?v=10&encoding=json", useTls = true)
 
     ## 1. Hello → get heartbeat interval.
-    let helloFrame = state.ws.recvFrame()
-    let hello = parseJson(helloFrame.data)
+    let helloRes = state.ws.recvFrame()
+    if helloRes.isErr:
+      raise newException(IOError, "Discord hello failed: " & helloRes.error)
+    let hello = parseJson(helloRes.get().data)
     state.heartbeatMs = hello["d"]["heartbeat_interval"].getInt(41250)
     logger.debug("discord: hello, heartbeat=" & $state.heartbeatMs)
 
@@ -260,7 +262,13 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
         state.sendHeartbeat()
 
       try:
-        let frame = state.ws.recvFrame()
+        let frameRes = state.ws.recvFrame()
+        if frameRes.isErr:
+          if frameRes.error == "timeout":
+            continue
+          logger.warn("discord: receive failed: " & frameRes.error)
+          break
+        let frame = frameRes.get()
         case frame.opcode
 
         of WsOpcodeText:
@@ -294,13 +302,13 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
 
           of 7:  ## Reconnect
             logger.info("discord: reconnect requested (op=7)")
-            raise newException(DiscordReconnect, "Discord requested reconnect (op=7)")
+            break
 
           of 9:  ## Invalid Session
             logger.warn("discord: invalid session (op=9)")
             if not j["d"].getBool(false):
               state.sessionId = ""; state.resumeUrl = ""
-            raise newException(IOError, "Invalid session (op=9)")
+            break
 
           of 11: discard  ## Heartbeat ACK
           else:  discard
@@ -310,7 +318,7 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
 
         of WsOpcodeClose:
           logger.warn("discord: websocket closed")
-          raise newException(IOError, "Discord gateway closed (op=close)")
+          break
 
         else: discard
 

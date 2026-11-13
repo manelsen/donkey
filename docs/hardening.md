@@ -42,9 +42,34 @@ Tempo total esperado: **≤ 60s** de execução em runner Linux típico; o wrapp
 - O receiver TLS suporta 20 handshakes e 5 ciclos start/stop; um cliente TLS lento não impede o shutdown de terminar em < 10s.
 - Envelopes Slack inválidos não lançam; frames WebSocket truncados geram erro de protocolo/reconexão, não timeout de idle.
 
+## Browser hardening
+
+O adapter de browser aplica a política em camadas:
+
+- **Navegação:** só `http`/`https`, host público, todos os endereços DNS validados antes do `Page.navigate`.
+- **Subrecurso e redirect:** `Fetch.requestPaused` valida cada hop; `Network.requestWillBeSent` revalida o destino de redirects como segunda camada.
+- **Documento bloqueado:** navegação ou iframe para host privado aborta a sessão e fecha o browser.
+- **WebSocket/WebTransport:** `Network.setBlockedURLs` bloqueia `ws://`, `wss://`, `ftp://`, `file://` e `filesystem://`; eventos `Network.webSocketCreated`/`webTransportCreated` são fail-closed.
+- **Service worker:** `Network.setBypassServiceWorker`, script injetado que bloqueia registro/desregistra workers e eventos `ServiceWorker.*` que fecham a sessão.
+- **Downloads:** `Browser.setDownloadBehavior`/`Page.setDownloadBehavior` com `deny`; se o build não expuser o método, fica um warning explícito.
+- **Recursos:** `max_chars` é truncado dentro da página antes da serialização; screenshots acima de 8 MiB são recusados; `waitUntil` é validado.
+- **Processo:** o browser recebe um env sanitizado (sem chaves de provider), perfil `0700`, portas CDP por usuário e flags que reduzem egress de background.
+
+Variáveis:
+
+| Variável | Default | Efeito |
+|---|---:|---|
+| `DONKEY_BROWSER_TIMEOUT_MS` | `30000` | timeout por comando CDP e por navegação; clamp `1000..120000` |
+| `DONKEY_BROWSER_PROXY` | vazio | proxy filtrante para Edge/Chromium (Lightpanda é recusado) |
+| `DONKEY_BROWSER_PROFILE_DIR` | vazio | diretório base de perfis persistentes; cada usuário recebe um subdiretório `0700` |
+
+Em Chromium/Edge, falha ao instalar o script de política, ao bloquear URLs ou ao bypassar service worker aborta a navegação. Em Lightpanda, métodos CDP opcionais não suportados viram warning e a proteção remanescente é o `Fetch` + eventos + proxy/firewall.
+
 ## Limites conhecidos (não resolvidos aqui)
 
 - **Pinning de conexão do web fetch:** a resolução DNS é validada, mas o `std/httpclient` resolve novamente ao conectar. Em deployment exposto, use `DONKEY_WEB_PROXY` ou firewall de egress.
+- **Pinning de conexão do browser:** o `Fetch` valida a URL, mas o browser resolve o host novamente ao conectar. Use `DONKEY_BROWSER_PROXY` ou firewall para pinar o IP validado; DNS rebinding não é eliminado localmente.
+- **Browser:** WebSocket/service worker dependem do CDP do backend. O script injetado cobre páginas, não código já em execução antes da injeção; por isso o proxy/firewall continua sendo a garantia forte.
 - **Vault:** um backup do home inteiro inclui `.secret_key` e `.secrets/`; trate o backup como secreto. O vault não protege contra outro processo do mesmo usuário Unix.
 - **Socket Mode:** o ack ocorre depois do enfileiramento, mas antes da resposta do usuário; o modelo é at-most-once para o turno. O shutdown dá uma janela de 2s para publicar respostas.
 - **Ledger:** a compactação de startup é síncrona; não há lease/WAL/resume transacional.
@@ -102,8 +127,8 @@ Tempo total esperado: **≤ 60s** de execução em runner Linux típico; o wrapp
 ### Egress/SSRF
 
 1. Se o host não tem firewall bloqueando destinos privados, configure `DONKEY_WEB_PROXY` para um proxy filtrante.
-2. O browser usa `DONKEY_BROWSER_PROXY`.
-3. Service workers/WebSocket do browser e DNS rebinding continuam dependendo do proxy/firewall.
+2. O browser usa `DONKEY_BROWSER_PROXY`; sem proxy, mantenha `DONKEY_BROWSER_BACKEND` em `chromium`/`edge` com o hardening CDP ativo.
+3. Service workers/WebSocket do browser são bloqueados por CDP quando o backend suporta; DNS rebinding e pinning de conexão continuam dependendo do proxy/firewall.
 
 ## Drill operacional
 
