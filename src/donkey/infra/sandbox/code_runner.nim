@@ -160,7 +160,10 @@ proc cleanupContainerAsync(runtimeCmd, name: string): Future[void] {.async.} =
 
 proc killAfter(p: AsyncProcessRef; seconds: int) {.async.} =
   await sleepAsync(chronos.seconds(seconds))
-  killProcessGroup(p)
+  let alive = p.running().valueOr:
+    false
+  if alive:
+    killProcessGroup(p)
 
 proc runBoundedProcessAsync*(argv: seq[string]; timeoutSec: int;
                              maxOutputBytes: int):
