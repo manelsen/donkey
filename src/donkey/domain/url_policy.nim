@@ -28,12 +28,18 @@ func fallbackHost(rawUrl: string): string =
       result = hostPort[0 ..< colon]
   result = result.strip(chars = {'[', ']'})
 
+func normalizeHost(host: string): string =
+  result = host.toLowerAscii()
+  while result.len > 0 and result[^1] == '.':
+    result.setLen(result.len - 1)
+
 func extractUrlHost*(rawUrl: string): string =
-  ## Returns the authority hostname, lowercased, or "" when there is none.
+  ## Returns the authority hostname, lowercased and without a trailing dot,
+  ## or "" when there is none.
   let parsed = parseUri(rawUrl)
   if parsed.hostname.len > 0:
-    return parsed.hostname.toLowerAscii()
-  fallbackHost(rawUrl)
+    return normalizeHost(parsed.hostname)
+  normalizeHost(fallbackHost(rawUrl))
 
 func extractUrlPath*(rawUrl: string): string =
   ## Returns the path portion (without query/fragment), defaulting to "/".

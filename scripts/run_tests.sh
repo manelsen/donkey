@@ -24,6 +24,15 @@ run_one() {
   local tmp_dir="$2"
   local id="$3"
 
+  # Stress tests are opt-in; the normal suite stays fast and deterministic.
+  case "$f" in
+    tests/stress/*)
+      if [ "${DONKEY_STRESS:-0}" != "1" ]; then
+        return 0
+      fi
+      ;;
+  esac
+
   # Skip files that require special build flags (opt-in backends)
   case "$f" in
     *t_sqlite_store*) return 0 ;;   # requires -d:withSqlite
@@ -55,6 +64,11 @@ TARGETS=("$@")
 if [ "${#TARGETS[@]}" -eq 0 ]; then
   TARGETS=("tests")
 fi
+for target in "${TARGETS[@]}"; do
+  case "$target" in
+    tests/stress|tests/stress/*) export DONKEY_STRESS=1 ;;
+  esac
+done
 
 idx=0
 items=()
