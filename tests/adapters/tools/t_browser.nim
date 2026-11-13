@@ -165,6 +165,24 @@ suite "Input validation":
     check tr.isError
     check tr.output.contains("not found") or tr.output.contains("Install")
 
+  test "direct navigate recreates a closed session":
+    var bt = BrowserTools(backend: bbOff)
+    bt.needsRecreate = true
+    let call = ToolCall(id: "test", name: "browser_navigate",
+                        input: %* {"url": "https://8.8.8.8"})
+    let tr = bt.invoke(call).get()
+    check tr.isError
+    check "disabled" in tr.output
+    check not bt.needsRecreate
+
+  test "direct content refuses a closed session until navigate":
+    var bt = BrowserTools(backend: bbOff)
+    bt.needsRecreate = true
+    let call = ToolCall(id: "test", name: "browser_content", input: %* {})
+    let tr = bt.invoke(call).get()
+    check tr.isError
+    check "navigate again" in tr.output
+
   test "unknown tool returns an Err for dispatcher fallback":
     var bt = BrowserTools()
     let call = ToolCall(id: "test", name: "nonexistent_tool", input: %* {})

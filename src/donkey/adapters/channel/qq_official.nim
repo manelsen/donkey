@@ -525,6 +525,8 @@ proc qqOfficialGatewayThread(arg: QQOfficialGatewayArgs) {.thread.} =
   while true:
     try:
       runGatewaySession(adapter, arg.intents, state)
+      sleep(backoffMs)
+      backoffMs = min(backoffMs * 2, 60_000)
     except Exception as e:
       echo "[qq-official] gateway error: " & e.msg & " — reconnecting in " &
            $backoffMs & " ms"

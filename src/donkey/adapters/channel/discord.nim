@@ -308,6 +308,8 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
             logger.warn("discord: invalid session (op=9)")
             if not j["d"].getBool(false):
               state.sessionId = ""; state.resumeUrl = ""
+            ## Discord requires a 1-5s wait before a new IDENTIFY.
+            sleep(1000 + rand(4000))
             break
 
           of 11: discard  ## Heartbeat ACK
