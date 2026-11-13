@@ -183,9 +183,15 @@ proc runWasmCode*(workspace, wasmPath: string;
   if not hardenScratchDir(scratch):
     return err("cannot restrict execute_code scratch directory")
 
-  let argv = buildWasmCodeArgv(wasmtimeExe, workspace, wasmPath, scratch)
+  var argv = buildWasmCodeArgv(wasmtimeExe, workspace, wasmPath, scratch)
   if argv.len == 0:
     return err("invalid WASI execution request")
+  ## wasmtime's CLI does not expose a per-run memory cap. util-linux prlimit
+  ## bounds the host address space when available; otherwise the guest's own
+  ## declared memory is the limit and the outer timeout still bounds CPU time.
+  let prlimitExe = findExeSafe("prlimit")
+  if prlimitExe.len > 0:
+    argv = @[prlimitExe, "--as=536870912", "--"] & argv
   let run = runBoundedProcess(argv, timeoutSec, maxOutputBytes)
   if run.isErr:
     return err(run.error)
