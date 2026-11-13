@@ -4,6 +4,7 @@
 ## argv and process I/O live in `infra/sandbox/code_runner`.
 
 import std/[json, options, os, strutils]
+import chronos
 
 import ../../core/log
 import ../../core/pipeops
@@ -131,55 +132,47 @@ proc parseCodeRequest*(input: JsonNode; workspace: string;
     return err(validated.get())
   ok(req)
 
-proc runCodeRequest*(req: CodeRequest;
-                     cfg: CodeRuntimeConfig;
-                     workspace: string;
-                     uid: UserId;
-                     channel: ChannelKind;
-                     log: Logger): Result[CodeExecution, string] =
-  ## NOTE: this blocks the tool actor for up to `timeoutSec`, exactly like
-  ## `bash`. Moving it to a helper process/thread is an architectural follow-up;
-  ## it must not be hidden behind a `gcsafe` cast.
+func modeError(req: CodeRequest; cfg: CodeRuntimeConfig): string =
   if cfg.sandbox == cskWasm and req.language != clWasm:
-    return err("sandbox.mode='wasm' only supports language='wasm'")
-  if cfg.sandbox == cskOci and req.language == clWasm:
-    return err("wasm code requires sandbox.mode='wasm'")
-  ## Hash the artifact before execution. WASI additionally hashes a private
-  ## copy in runWasmCode, so the audit can describe exactly what was executed.
-  let preHash =
-    if req.language == clWasm:
-      fileSha256(req.wasmPath).valueOr: ""
-    else:
-      stringSha256(req.code)
-  let preBytes =
-    if req.language == clWasm:
-      regularFileSize(req.wasmPath).valueOr: 0'i64
-    else:
-      int64(req.code.len)
-  let run = executeCode(
-    cfg.sandbox, cfg.runtimeCmd, cfg.image, workspace,
-    effectiveUid(), effectiveGid(), req.language, req.code, req.wasmPath,
-    req.timeoutSec, cfg.maxOutputBytes)
-  if run.isErr:
-    ## The tool result still carries the diagnosis for the requester. The
-    ## audit log must not persist program stdout/stderr embedded in
-    ## run.error (CWE-532).
-    let failureAudit = %*{
-      "event": "execute_code",
-      "phase": "error",
-      "user": $uid,
-      "channel": $channel,
-      "language": $req.language,
-      "sandbox": $cfg.sandbox,
-      "code_sha256": preHash,
-      "code_bytes": preBytes,
-      "timeout_sec": req.timeoutSec,
-      "diagnostic": "execution failed; see tool result",
-      "network": false,
-    }
-    log.warn($failureAudit)
-    return err(run.error)
-  let res = run.get()
+    "sandbox.mode='wasm' only supports language='wasm'"
+  elif cfg.sandbox == cskOci and req.language == clWasm:
+    "wasm code requires sandbox.mode='wasm'"
+  else:
+    ""
+
+proc artifactFingerprint(req: CodeRequest): tuple[hash: string, bytes: int64] =
+  var hash = ""
+  var bytes = 0'i64
+  if req.language == clWasm:
+    hash = fileSha256(req.wasmPath).valueOr: ""
+    bytes = regularFileSize(req.wasmPath).valueOr: 0'i64
+  else:
+    hash = stringSha256(req.code)
+    bytes = int64(req.code.len)
+  (hash, bytes)
+
+proc logFailureAudit(req: CodeRequest; cfg: CodeRuntimeConfig;
+                     uid: UserId; channel: ChannelKind;
+                     preHash: string; preBytes: int64; log: Logger) =
+  let failureAudit = %*{
+    "event": "execute_code",
+    "phase": "error",
+    "user": $uid,
+    "channel": $channel,
+    "language": $req.language,
+    "sandbox": $cfg.sandbox,
+    "code_sha256": preHash,
+    "code_bytes": preBytes,
+    "timeout_sec": req.timeoutSec,
+    "diagnostic": "execution failed; see tool result",
+    "network": false,
+  }
+  log.warn($failureAudit)
+
+proc finishSuccess(req: CodeRequest; cfg: CodeRuntimeConfig;
+                   uid: UserId; channel: ChannelKind;
+                   preHash: string; preBytes: int64;
+                   res: CodeRunResult; log: Logger): CodeExecution =
   let artifactHash =
     if res.artifactHash.len > 0: res.artifactHash else: preHash
   let artifactBytes =
@@ -205,10 +198,51 @@ proc runCodeRequest*(req: CodeRequest;
     "network": false,
   }
   log.info($audit)
-  ok(CodeExecution(
+  CodeExecution(
     text: text,
     exitCode: res.exitCode,
     timedOut: res.timedOut,
     truncated: res.truncated,
     durationMs: res.durationMs,
-  ))
+  )
+
+proc runCodeRequestAsync*(req: CodeRequest;
+                          cfg: CodeRuntimeConfig;
+                          workspace: string;
+                          uid: UserId;
+                          channel: ChannelKind;
+                          log: Logger):
+                          Future[Result[CodeExecution, string]] {.async.} =
+  let modeErr = modeError(req, cfg)
+  if modeErr.len > 0:
+    return err(modeErr)
+  let (preHash, preBytes) = artifactFingerprint(req)
+  let run = await executeCodeAsync(
+    cfg.sandbox, cfg.runtimeCmd, cfg.image, workspace,
+    effectiveUid(), effectiveGid(), req.language, req.code, req.wasmPath,
+    req.timeoutSec, cfg.maxOutputBytes)
+  if run.isErr:
+    logFailureAudit(req, cfg, uid, channel, preHash, preBytes, log)
+    return err(run.error)
+  ok(finishSuccess(req, cfg, uid, channel, preHash, preBytes, run.get(), log))
+
+proc runCodeRequest*(req: CodeRequest;
+                     cfg: CodeRuntimeConfig;
+                     workspace: string;
+                     uid: UserId;
+                     channel: ChannelKind;
+                     log: Logger): Result[CodeExecution, string] =
+  ## Synchronous wrapper for tests/manual callers. The daemon uses
+  ## `runCodeRequestAsync` so the Chronos loop stays free.
+  let modeErr = modeError(req, cfg)
+  if modeErr.len > 0:
+    return err(modeErr)
+  let (preHash, preBytes) = artifactFingerprint(req)
+  let run = executeCode(
+    cfg.sandbox, cfg.runtimeCmd, cfg.image, workspace,
+    effectiveUid(), effectiveGid(), req.language, req.code, req.wasmPath,
+    req.timeoutSec, cfg.maxOutputBytes)
+  if run.isErr:
+    logFailureAudit(req, cfg, uid, channel, preHash, preBytes, log)
+    return err(run.error)
+  ok(finishSuccess(req, cfg, uid, channel, preHash, preBytes, run.get(), log))

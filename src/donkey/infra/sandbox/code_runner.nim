@@ -4,10 +4,13 @@
 ## `domain/tools/code_pure`; this module only enforces the wall-clock timeout,
 ## caps the output and cleans up the container.
 
-import std/[atomics, os, osproc, streams, strtabs, strutils, times]
+import std/[atomics, os, strtabs, strutils, times]
 when defined(posix):
   import std/posix
 
+import chronos
+import chronos/asyncproc as asyncproc
+import chronos/streams/asyncstream
 import nimcrypto/sha2
 import ../../core/pipeops
 import ../../domain/tools/code_pure
@@ -113,31 +116,32 @@ proc codeProcessEnv(): StringTableRef =
       if value.len > 0:
         result[name] = value
 
-proc cleanupContainer(runtimeCmd, name: string) =
-  ## `timeout` already kills the CLI. This second call handles the case where
-  ## the CLI died but the container process survived in the daemon.
+proc cleanupContainerAsync(runtimeCmd, name: string): Future[void] {.async.} =
   if runtimeCmd.len == 0 or name.len == 0:
     return
   let timeoutExe = timeoutCommand()
   if timeoutExe.len == 0:
     return
   try:
-    let p = startProcess(timeoutExe,
-                         args = @["--kill-after=2s", "2s", runtimeCmd, "kill", name],
-                         env = codeProcessEnv(),
-                         options = {poUsePath, poStdErrToStdOut})
+    let p = await asyncproc.startProcess(
+      timeoutExe,
+      arguments = @["--kill-after=2s", "2s", runtimeCmd, "kill", name],
+      environment = codeProcessEnv(),
+      options = {AsyncProcessOption.UsePath, AsyncProcessOption.StdErrToStdOut},
+      stdoutHandle = AsyncProcess.Pipe)
     try:
-      discard p.waitForExit()
+      discard await p.waitForExit()
     finally:
-      p.close()
+      await p.closeWait()
   except CatchableError:
     discard
 
-proc runBoundedProcess*(argv: seq[string]; timeoutSec: int;
-                        maxOutputBytes: int): Result[CodeRunResult, string] =
-  ## Runs argv with a hard wall-clock limit and a bounded read. The child is
-  ## killed as soon as the output cap is reached; otherwise it is drained to
-  ## EOF and the exit code is preserved.
+proc runBoundedProcessAsync*(argv: seq[string]; timeoutSec: int;
+                             maxOutputBytes: int):
+                             Future[Result[CodeRunResult, string]] {.async.} =
+  ## Asynchronous variant of the bounded runner. It never blocks the Chronos
+  ## loop while the child runs; stdout is read with async I/O and the cap is
+  ## enforced incrementally.
   if argv.len == 0:
     return err("empty execution argv")
   let timeoutExe = timeoutCommand()
@@ -147,12 +151,15 @@ proc runBoundedProcess*(argv: seq[string]; timeoutSec: int;
   let cap = clampCodeMaxOutputBytes(maxOutputBytes)
   let fullArgv = @[timeoutExe, "--kill-after=2s", $seconds & "s"] & argv
 
-  var p: Process
+  var p: AsyncProcessRef
   let started = epochTime()
   try:
-    p = startProcess(fullArgv[0], args = fullArgv[1 .. ^1],
-                     env = codeProcessEnv(),
-                     options = {poUsePath, poStdErrToStdOut})
+    p = await asyncproc.startProcess(
+      fullArgv[0],
+      arguments = fullArgv[1 .. ^1],
+      environment = codeProcessEnv(),
+      options = {AsyncProcessOption.UsePath, AsyncProcessOption.StdErrToStdOut},
+      stdoutHandle = AsyncProcess.Pipe)
   except CatchableError as e:
     return err("cannot start execution: " & e.msg)
 
@@ -160,60 +167,59 @@ proc runBoundedProcess*(argv: seq[string]; timeoutSec: int;
   var truncated = false
   var readError = ""
   try:
-    let stream = p.outputStream
-    var buffer = newString(8192)
+    let stream = p.stdoutStream
     while true:
-      ## Read at most one byte past the remaining budget. Waiting for a full
-      ## 8192-byte block would let a chatty program hit the wall-clock timeout
-      ## before the cap is even observed.
-      let want = min(buffer.len, cap - output.len + 1)
-      let n = try:
-        stream.readData(addr buffer[0], want)
-      except CatchableError as e:
-        readError = e.msg
+      let want = min(8192, cap - output.len + 1)
+      let chunk = await stream.read(want)
+      if chunk.len == 0:
         break
-      if n <= 0:
-        break
-      if output.len + n > cap:
+      if output.len + chunk.len > cap:
         let take = max(0, cap - output.len)
-        if take > 0:
-          output.add(buffer[0 ..< take])
+        for i in 0 ..< take:
+          output.add(char(chunk[i]))
         truncated = true
         break
-      output.add(buffer[0 ..< n])
-    if truncated:
-      p.terminate()
-  finally:
-    let exitCode = try:
-      p.waitForExit()
-    except CatchableError:
-      -1
-    let durationMs = int64((epochTime() - started) * 1000.0)
-    try:
-      p.close()
-    except CatchableError:
-      discard
-    let capped = capExecutionOutput(output, cap)
-    ## 124/137 are the timeout wrapper's codes, but our own output-cap kill can
-    ## also surface as 137. The wall-clock check distinguishes the two.
-    let timedOut = exitCode in {124, 137} and
-      durationMs >= int64(seconds * 1000 - 250)
-    result = ok(CodeRunResult(
-      output: capped.text,
-      exitCode: exitCode,
-      timedOut: timedOut,
-      truncated: truncated or capped.truncated,
-      durationMs: durationMs,
-    ))
-    if readError.len > 0 and output.len == 0:
-      result = err("cannot read execution output: " & readError)
+      for b in chunk:
+        output.add(char(b))
+  except CatchableError as e:
+    readError = e.msg
 
-proc runOciCode*(runtimeCmd, image, workspace: string;
-                 uid, gid: int;
-                 language: CodeLanguage;
-                 code: string;
-                 timeoutSec: int;
-                 maxOutputBytes: int): Result[CodeRunResult, string] =
+  if truncated:
+    discard p.terminate()
+  var exitCode = -1
+  try:
+    if truncated:
+      exitCode = await p.waitForExit(chronos.seconds(2))
+    else:
+      exitCode = await p.waitForExit()
+  except CatchableError:
+    discard p.kill()
+    try:
+      exitCode = await p.waitForExit(chronos.seconds(2))
+    except CatchableError:
+      exitCode = -1
+  let durationMs = int64((epochTime() - started) * 1000.0)
+  await p.closeWait()
+  let capped = capExecutionOutput(output, cap)
+  let timedOut = exitCode in {124, 137} and
+    durationMs >= int64(seconds * 1000 - 250)
+  result = ok(CodeRunResult(
+    output: capped.text,
+    exitCode: exitCode,
+    timedOut: timedOut,
+    truncated: truncated or capped.truncated,
+    durationMs: durationMs,
+  ))
+  if readError.len > 0 and output.len == 0:
+    result = err("cannot read execution output: " & readError)
+
+proc runOciCodeAsync*(runtimeCmd, image, workspace: string;
+                      uid, gid: int;
+                      language: CodeLanguage;
+                      code: string;
+                      timeoutSec: int;
+                      maxOutputBytes: int):
+                      Future[Result[CodeRunResult, string]] {.async.} =
   if language == clWasm:
     return err("wasm code requires sandbox.mode='wasm'")
   if not executableAvailable(runtimeCmd):
@@ -223,8 +229,8 @@ proc runOciCode*(runtimeCmd, image, workspace: string;
                               language, code, name)
   if argv.len == 0:
     return err("invalid OCI execution request")
-  defer: cleanupContainer(runtimeCmd, name)
-  let run = runBoundedProcess(argv, timeoutSec, maxOutputBytes)
+  let run = await runBoundedProcessAsync(argv, timeoutSec, maxOutputBytes)
+  await cleanupContainerAsync(runtimeCmd, name)
   if run.isErr:
     return err(run.error)
   var res = run.get()
@@ -239,9 +245,10 @@ proc runOciCode*(runtimeCmd, image, workspace: string;
       res.output, res.exitCode, res.timedOut, res.truncated))
   ok(res)
 
-proc runWasmCode*(workspace, wasmPath: string;
-                  timeoutSec: int;
-                  maxOutputBytes: int): Result[CodeRunResult, string] =
+proc runWasmCodeAsync*(workspace, wasmPath: string;
+                       timeoutSec: int;
+                       maxOutputBytes: int):
+                       Future[Result[CodeRunResult, string]] {.async.} =
   if workspace.len == 0 or ':' in workspace or '\0' in workspace:
     return err("invalid WASI workspace path")
   let wasmtimeExe = findExeSafe("wasmtime")
@@ -291,7 +298,7 @@ proc runWasmCode*(workspace, wasmPath: string;
   if prlimitExe.len == 0:
     return err("prlimit is required for WASI execute_code; refusing to run without a host memory bound")
   argv = @[prlimitExe, "--as=10737418240", "--"] & argv
-  let run = runBoundedProcess(argv, timeoutSec, maxOutputBytes)
+  let run = await runBoundedProcessAsync(argv, timeoutSec, maxOutputBytes)
   if run.isErr:
     return err(run.error)
   var res = run.get()
@@ -302,13 +309,14 @@ proc runWasmCode*(workspace, wasmPath: string;
   res.artifactBytes = moduleSize
   ok(res)
 
-proc executeCode*(sandbox: CodeSandboxKind;
-                  runtimeCmd, image, workspace: string;
-                  uid, gid: int;
-                  language: CodeLanguage;
-                  code, wasmPath: string;
-                  timeoutSec: int;
-                  maxOutputBytes: int): Result[CodeRunResult, string] =
+proc executeCodeAsync*(sandbox: CodeSandboxKind;
+                       runtimeCmd, image, workspace: string;
+                       uid, gid: int;
+                       language: CodeLanguage;
+                       code, wasmPath: string;
+                       timeoutSec: int;
+                       maxOutputBytes: int):
+                       Future[Result[CodeRunResult, string]] {.async.} =
   case sandbox
   of cskOci:
     let effectiveImage =
@@ -316,11 +324,44 @@ proc executeCode*(sandbox: CodeSandboxKind;
       else: defaultCodeImage(language)
     if effectiveImage.len == 0:
       return err("no container image configured for " & $language)
-    runOciCode(runtimeCmd, effectiveImage, workspace, uid, gid, language, code,
-               timeoutSec, maxOutputBytes)
+    return await runOciCodeAsync(runtimeCmd, effectiveImage, workspace, uid,
+                                 gid, language, code, timeoutSec,
+                                 maxOutputBytes)
   of cskWasm:
     if language != clWasm:
       return err("sandbox.mode='wasm' only supports language='wasm'")
     if wasmPath.len == 0:
       return err("wasm_path is required for language='wasm'")
-    runWasmCode(workspace, wasmPath, timeoutSec, maxOutputBytes)
+    return await runWasmCodeAsync(workspace, wasmPath, timeoutSec,
+                                  maxOutputBytes)
+
+# Synchronous wrappers keep the existing test/manual API. Production calls the
+# Async variants from the Chronos event loop.
+proc runBoundedProcess*(argv: seq[string]; timeoutSec: int;
+                        maxOutputBytes: int): Result[CodeRunResult, string] =
+  waitFor runBoundedProcessAsync(argv, timeoutSec, maxOutputBytes)
+
+proc runOciCode*(runtimeCmd, image, workspace: string;
+                 uid, gid: int;
+                 language: CodeLanguage;
+                 code: string;
+                 timeoutSec: int;
+                 maxOutputBytes: int): Result[CodeRunResult, string] =
+  waitFor runOciCodeAsync(runtimeCmd, image, workspace, uid, gid, language,
+                          code, timeoutSec, maxOutputBytes)
+
+proc runWasmCode*(workspace, wasmPath: string;
+                  timeoutSec: int;
+                  maxOutputBytes: int): Result[CodeRunResult, string] =
+  waitFor runWasmCodeAsync(workspace, wasmPath, timeoutSec, maxOutputBytes)
+
+proc executeCode*(sandbox: CodeSandboxKind;
+                  runtimeCmd, image, workspace: string;
+                  uid, gid: int;
+                  language: CodeLanguage;
+                  code, wasmPath: string;
+                  timeoutSec: int;
+                  maxOutputBytes: int): Result[CodeRunResult, string] =
+  waitFor executeCodeAsync(sandbox, runtimeCmd, image, workspace, uid, gid,
+                           language, code, wasmPath, timeoutSec,
+                           maxOutputBytes)

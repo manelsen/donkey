@@ -155,6 +155,5 @@ Cada PR deve ser mergeável sozinho, com CI verde e sem dependência do outro.
 
 ## 7. Follow-ups registrados
 
-- **Execução fora do event loop:** `execute_code` roda de forma síncrona no actor de tools (como `bash`), limitado pelo timeout. Mover para um worker de thread ou helper process com canal Chronos-safe é um trabalho arquitetural separado; a anotação `gcsafe` sozinha não resolve.
 - **Pinning de conexão do browser:** o `Fetch` valida a URL, mas a conexão ainda resolve DNS novamente. Proxy/firewall com pinning continua sendo a garantia forte; um teste de DNS rebinding real depende dessa infraestrutura.
 - **Service workers em engines sem CDP completo:** Chromium cobre bypass + script + eventos; Lightpanda depende do script injetado e do limite de frame, com proxy/firewall como fallback.

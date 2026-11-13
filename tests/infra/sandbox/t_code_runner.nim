@@ -1,11 +1,17 @@
 ## Tests for the bounded process runner used by execute_code.
 
 import std/[os, strutils, times, unittest]
+import chronos
 import donkey/core/pipeops
 import donkey/domain/tools/code_pure
 import donkey/infra/sandbox/code_runner
 
 when defined(linux):
+  proc tick(counter: ptr int) {.async.} =
+    for _ in 0 ..< 5:
+      await sleepAsync(100)
+      inc counter[]
+
   suite "execute_code bounded runner":
 
     test "captures output and exit code":
@@ -64,6 +70,14 @@ when defined(linux):
       defer: removeFile(path)
       check fileSha256(path).get() ==
         "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+    test "async runner keeps the Chronos loop responsive":
+      var counter = 0
+      let runFut = runBoundedProcessAsync(@["sh", "-c", "sleep 1"], 5, 1024)
+      let tickFut = tick(addr counter)
+      waitFor allFutures(runFut, tickFut)
+      check runFut.read().isOk
+      check counter >= 3
 
     test "missing container runtime fails closed without spawning":
       let res = runOciCode("/nonexistent/docker", "alpine", "/tmp", 1, 1,
