@@ -262,6 +262,10 @@ proc handleCdpEvent*(bt: var BrowserTools; resp: JsonNode) =
   of "ServiceWorker.workerErrorReported":
     inc bt.blockedServiceWorkers
     bt.policyViolation = "service worker activity blocked: " & cdpMethod
+  of "Runtime.executionContextDestroyed", "Runtime.executionContextsCleared":
+    ## The isolated world may be destroyed by a page-initiated navigation or
+    ## reload that never calls navigateTo. Do not reuse a stale context id.
+    bt.contentContextId = 0
   of "Network.loadingFinished", "Network.loadingFailed":
     let requestId = params{"requestId"}.getStr("")
     let idx = bt.pendingRequestIds.find(requestId)
@@ -309,6 +313,8 @@ proc drainPendingEvents(bt: var BrowserTools; budgetMs = 50) =
 
 proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode = %*{}): Result[JsonNode, string] =
   ## Send a CDP command and wait for response.
+  if bt.ws.sock == nil:
+    return err("CDP socket is closed")
   let id = nextId()
   let cmd = %*{
     "id": id,
@@ -423,7 +429,17 @@ proc evaluateWithIsolatedWorld(bt: var BrowserTools;
   }
   if contextId > 0:
     params["contextId"] = %contextId
-  bt.sendCdpCommand("Runtime.evaluate", params)
+  let first = bt.sendCdpCommand("Runtime.evaluate", params)
+  if first.isOk or contextId <= 0:
+    return first
+  ## The isolated world disappeared between calls (page reload/navigation that
+  ## did not go through navigateTo). Retry once in the main context; the next
+  ## call recreates the world.
+  bt.contentContextId = 0
+  bt.sendCdpCommand("Runtime.evaluate", %*{
+    "expression": expression,
+    "returnByValue": true,
+  })
 
 proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): Result[string, string] =
   ## Navigate to URL and wait for page load.

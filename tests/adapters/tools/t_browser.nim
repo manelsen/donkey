@@ -332,6 +332,20 @@ suite "CDP event policy":
     check bt.blockedRequests == 1
     check "redirect blocked" in bt.policyViolation
 
+  test "destroyed execution context invalidates the isolated world cache":
+    var bt = BrowserTools(contentContextId: 42)
+    bt.handleCdpEvent(%*{
+      "method": "Runtime.executionContextDestroyed",
+      "params": {"executionContextId": 42},
+    })
+    check bt.contentContextId == 0
+    bt.contentContextId = 43
+    bt.handleCdpEvent(%*{
+      "method": "Runtime.executionContextsCleared",
+      "params": {},
+    })
+    check bt.contentContextId == 0
+
   test "redirect to a private subresource does not abort the page":
     var bt = BrowserTools()
     bt.handleCdpEvent(%*{
