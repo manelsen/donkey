@@ -19,10 +19,16 @@ var i = 0
 while true:
   let now = epochMs()
   let id = "drill-" & $i
-  discard ledger.recordPending(DeliveryRecord(
+  let pending = ledger.recordPending(DeliveryRecord(
     id: id, userId: "drill", channel: ckSlack, channelId: "drill",
     textHash: "h", state: dlsPending, createdAtMs: now, updatedAtMs: now))
-  discard ledger.markSent(id, now)
+  if pending.isErr:
+    stderr.writeLine("recordPending failed: " & pending.error)
+    quit(1)
+  let sent = ledger.markSent(id, now)
+  if sent.isErr:
+    stderr.writeLine("markSent failed: " & sent.error)
+    quit(1)
   inc i
   if i mod 50 == 0:
     echo i

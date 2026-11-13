@@ -12,4 +12,7 @@ if loaded.isErr:
   stderr.writeLine("recovery failed: " & loaded.error)
   quit(1)
 echo "records=" & $loaded.get().len
-echo "compact_error=" & store.ledgerLastCompactError()
+let compactError = store.ledgerLastCompactError()
+echo "compact_error=" & compactError
+if compactError.len > 0:
+  quit(1)
