@@ -104,7 +104,9 @@ suite "ledger worker stress":
 
     store.onCompactStart = blockingHook
     store.onAppendStart = appendStartHook
-    let worker = startLedgerCompactionWorker(addr store, 1.0)
+    let workerRes = startLedgerCompactionWorker(addr store, 1.0)
+    check workerRes.isOk
+    let worker = workerRes.get()
     check worker != nil
     defer: stopLedgerCompactionWorker(worker)
 
@@ -178,7 +180,9 @@ suite "ledger worker stress":
     gHookEnabled.store(true)
     gStopReturned.store(false)
     store.onCompactStart = blockingHook
-    let worker = startLedgerCompactionWorker(addr store, 1.0)
+    let workerRes = startLedgerCompactionWorker(addr store, 1.0)
+    check workerRes.isOk
+    let worker = workerRes.get()
     check worker != nil
 
     discard gHookEntered.recv()

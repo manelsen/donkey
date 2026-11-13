@@ -1759,8 +1759,12 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   if ctx.runtime.stateStore != nil:
     let compactionSec = ctx.runtime.stateStore.ledgerCompactIntervalSec()
     if compactionSec > 0:
-      ctx.runtime.ledgerWorker = startLedgerCompactionWorker(
+      let workerRes = startLedgerCompactionWorker(
         addr ctx.runtime.stateStore, max(1.0, compactionSec))
+      if workerRes.isErr:
+        log.warn("ledger compaction worker: " & workerRes.error)
+      else:
+        ctx.runtime.ledgerWorker = workerRes.get()
   let memPort = memory.toRuntimePort()
   let reminderOutboxFn: ReminderOutboxFn = proc(userId, channel, message: string) {.gcsafe.} =
     let uid = UserId(userId)

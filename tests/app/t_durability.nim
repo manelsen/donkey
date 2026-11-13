@@ -334,7 +334,9 @@ suite "durability":
     check ledger.markSent("worker-expired", now - 2 * day).isOk
 
     let before = store.ledgerLastCompactMs()
-    let worker = startLedgerCompactionWorker(addr store, 1.0)
+    let workerRes = startLedgerCompactionWorker(addr store, 1.0)
+    check workerRes.isOk
+    let worker = workerRes.get()
     check worker != nil
     defer: stopLedgerCompactionWorker(worker)
 

@@ -666,27 +666,29 @@ proc ledgerCompactionLoop(_: int) {.thread.} =
       discard gLedgerWorker.store[].compactLedger()
 
 proc startLedgerCompactionWorker*(store: ptr RuntimeStateStore;
-                                  intervalSec: float): LedgerCompactionWorker {.gcsafe.} =
-  ## Starts a dedicated OS thread for ledger compaction. Returns nil when the
-  ## interval is disabled or the thread cannot be created. The caller must keep
-  ## the store alive until `stopLedgerCompactionWorker` returns.
+                                  intervalSec: float):
+                                  Result[LedgerCompactionWorker, string] {.gcsafe, raises: [].} =
+  ## Starts a dedicated OS thread for ledger compaction. Returns Ok(nil) when
+  ## the interval is disabled. The caller must keep the store alive until
+  ## `stopLedgerCompactionWorker` returns.
   if store == nil or intervalSec <= 0.0:
-    return nil
+    return ok(nil)
   {.cast(gcsafe).}:
     if gLedgerWorker != nil:
-      return nil
+      return err("ledger compaction worker is already running")
   let intervalMs = max(1000'i64, int64(max(1.0, intervalSec) * 1000.0))
-  result = LedgerCompactionWorker(store: store, intervalMs: intervalMs)
-  result.stop.store(false)
-  result.stopping.store(false)
+  let worker = LedgerCompactionWorker(store: store, intervalMs: intervalMs)
+  worker.stop.store(false)
+  worker.stopping.store(false)
   {.cast(gcsafe).}:
-    gLedgerWorker = result
+    gLedgerWorker = worker
   try:
-    createThread(result.thread, ledgerCompactionLoop, 0)
-  except CatchableError:
+    createThread(worker.thread, ledgerCompactionLoop, 0)
+  except CatchableError as e:
     {.cast(gcsafe).}:
       gLedgerWorker = nil
-    result = nil
+    return err("cannot start ledger compaction worker: " & e.msg)
+  ok(worker)
 
 proc stopLedgerCompactionWorker*(worker: LedgerCompactionWorker) =
   if worker == nil or worker.stopped:
@@ -698,8 +700,10 @@ proc stopLedgerCompactionWorker*(worker: LedgerCompactionWorker) =
     joinThread(worker.thread)
     gLedgerWorker = nil
 
-func ledgerLastCompactError*(store: RuntimeStateStore): string =
+proc ledgerLastCompactError*(store: RuntimeStateStore): string =
   ## Last compaction failure, for the daemon to log after startup.
+  acquire(store.lock)
+  defer: release(store.lock)
   store.lastLedgerCompactError
 
 proc appendLedger(store: RuntimeStateStore;
