@@ -24,6 +24,7 @@ var
   gRemoveOk: array[32, bool]
   gBlockedStarted: Atomic[bool]
   gBlockedOk:      Atomic[bool]
+  gBlockedCompleted: Atomic[bool]
   gLockHome:       string
   gBlockedWriter:  Thread[SetArg]
   gReaderOk:       bool
@@ -39,6 +40,7 @@ proc blockedSetWorker(arg: SetArg) {.thread.} =
     gBlockedStarted.store(true)
     gBlockedOk.store(
       newSecretVault(arg.home).setSecret(arg.name, arg.value).isOk)
+    gBlockedCompleted.store(true)
 
 proc removeWorker(arg: RemoveArg) {.thread.} =
   {.cast(gcsafe).}:
@@ -138,6 +140,7 @@ suite "secret vault stress":
 
     gBlockedStarted.store(false)
     gBlockedOk.store(false)
+    gBlockedCompleted.store(false)
     gLockHome = home
     gReaderOk = false
     gReaderNames = @[]
@@ -152,8 +155,10 @@ suite "secret vault stress":
           while not gBlockedStarted.load() and waited < 1000:
             sleep(1)
             waited += 1
-          ## Let the writer reach the flock wait before reading.
+          ## The writer must still be blocked while the main thread owns flock.
           sleep(5)
+          if gBlockedCompleted.load():
+            return err("blocked writer completed while the lock was held")
           let names = newSecretVault(gLockHome).listSecretNames()
           gReaderOk = names.isOk
           if names.isOk:

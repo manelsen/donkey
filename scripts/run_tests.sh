@@ -20,7 +20,10 @@ TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/donkey_tests_XXXXXX")
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 run_one() {
-  local f="${1#./}"
+  local f="$1"
+  while [[ "$f" == ./* ]]; do
+    f="${f#./}"
+  done
   local tmp_dir="$2"
   local id="$3"
 
@@ -62,7 +65,9 @@ export -f run_one
 
 normalize_target() {
   local target="$1"
-  target="${target#./}"
+  while [[ "$target" == ./* ]]; do
+    target="${target#./}"
+  done
   if [[ -z "$target" ]]; then
     target="."
   fi

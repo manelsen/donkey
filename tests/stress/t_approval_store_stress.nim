@@ -26,6 +26,7 @@ var
   gDecideOk:  array[32, bool]
   gBlockedStarted: Atomic[bool]
   gBlockedOk:      Atomic[bool]
+  gBlockedCompleted: Atomic[bool]
   gReadErrors:     Atomic[int]
   gReadCount:      Atomic[int]
   gReaderReady:    Atomic[bool]
@@ -48,6 +49,7 @@ proc blockedCreateWorker(arg: CreateArg) {.thread.} =
     gBlockedOk.store(
       newApprovalStore(arg.path).create(
         arg.userId, "telegram", "bash", "blocked", 60_000).isOk)
+    gBlockedCompleted.store(true)
 
 proc readerWorker(path: string) {.thread.} =
   {.cast(gcsafe).}:
@@ -167,6 +169,7 @@ suite "approval store stress":
 
     gBlockedStarted.store(false)
     gBlockedOk.store(false)
+    gBlockedCompleted.store(false)
     gLockPath = path
     gReaderOk = false
 
@@ -180,8 +183,10 @@ suite "approval store stress":
           while not gBlockedStarted.load() and waited < 1000:
             sleep(1)
             waited += 1
-          ## Let the writer reach the flock wait before reading.
+          ## The writer must still be blocked while the main thread owns flock.
           sleep(5)
+          if gBlockedCompleted.load():
+            return err("blocked writer completed while the lock was held")
           gReaderOk = newApprovalStore(gLockPath).listPending().isOk
           ok())
 

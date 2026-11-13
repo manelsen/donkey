@@ -16,6 +16,7 @@ type
 
 var
   gLedgerPorts:    array[4, DeliveryLedgerPort]
+  gProbePort:      DeliveryLedgerPort
   gAppendCount:    array[4, int]
   gAppendErrors:   Atomic[int]
   gStopAppenders:  Atomic[bool]
@@ -23,6 +24,7 @@ var
   gHookRelease:    Atomic[bool]
   gWriteAttemptsAfterHook: Atomic[int]
   gStopReturned:   Atomic[bool]
+  gProbeOk:        bool
 
 proc blockingHook() {.gcsafe, raises: [].} =
   gHookEntered.store(true)
@@ -39,8 +41,6 @@ proc appendWorker(arg: AppendArg) {.thread.} =
         id: id, userId: "u" & $arg.worker, channel: ckSlack,
         channelId: "c" & $arg.worker, textHash: "h", state: dlsPending,
         createdAtMs: now, updatedAtMs: now)
-      if gHookEntered.load():
-        discard gWriteAttemptsAfterHook.fetchAdd(1)
       let pending = gLedgerPorts[arg.worker].recordPending(record)
       if pending.isErr:
         discard gAppendErrors.fetchAdd(1)
@@ -50,6 +50,21 @@ proc appendWorker(arg: AppendArg) {.thread.} =
           discard gAppendErrors.fetchAdd(1)
       inc i
       sleep(10)
+
+proc probeWorker(_: int) {.thread.} =
+  {.cast(gcsafe).}:
+    while not gHookEntered.load():
+      sleep(1)
+    discard gWriteAttemptsAfterHook.fetchAdd(1)
+    let now = epochMs()
+    let record = DeliveryRecord(
+      id: "probe", userId: "probe", channel: ckSlack, channelId: "probe",
+      textHash: "h", state: dlsPending, createdAtMs: now, updatedAtMs: now)
+    let pending = gProbePort.recordPending(record)
+    if pending.isOk:
+      gProbeOk = gProbePort.markSent("probe", epochMs()).isOk
+    else:
+      gProbeOk = false
 
 proc stopWorker(worker: LedgerCompactionWorker) {.thread.} =
   {.cast(gcsafe).}:
@@ -67,6 +82,8 @@ suite "ledger worker stress":
       dir, ledgerRetentionDays = 1.0, ledgerCompactIntervalSec = 1.0)
     for i in 0 ..< gLedgerPorts.len:
       gLedgerPorts[i] = store.deliveryLedger()
+    gProbePort = store.deliveryLedger()
+    gProbeOk = false
     gAppendErrors.store(0)
     gStopAppenders.store(false)
     gHookEntered.store(false)
@@ -91,6 +108,8 @@ suite "ledger worker stress":
       waited += 10
     check gHookEntered.load()
 
+    var probe: Thread[int]
+    createThread(probe, probeWorker, 0)
     waited = 0
     while gWriteAttemptsAfterHook.load() == 0 and waited < 5000:
       sleep(10)
@@ -98,6 +117,8 @@ suite "ledger worker stress":
     check gWriteAttemptsAfterHook.load() > 0
 
     gHookRelease.store(true)
+    joinThread(probe)
+    check gProbeOk
     gStopAppenders.store(true)
     for i in 0 ..< threads.len:
       joinThread(threads[i])
@@ -113,13 +134,14 @@ suite "ledger worker stress":
     for i in 0 ..< gAppendCount.len:
       expected += gAppendCount[i]
     check expected > 0
+    inc expected  ## the probe record
 
     let loaded = store.deliveryLedger().loadAll()
     check loaded.isOk
     check loaded.get().len == expected
     for record in loaded.get():
       check record.state == dlsSent
-      check record.id.startsWith("w")
+      check record.id == "probe" or record.id.startsWith("w")
 
   test "stop waits for an actively running compaction":
     let dir = stressDir / "stop"
