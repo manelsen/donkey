@@ -10,10 +10,9 @@ let stressDir = getTempDir() / ("donkey_stress_approval_" & $getCurrentProcessId
 
 type
   CreateArg = object
-    path:             string
-    userId:           string
-    index:            int
-    coordinateReader: bool
+    path:   string
+    userId: string
+    index:  int
 
   DecideArg = object
     path:   string
@@ -22,47 +21,34 @@ type
     index:  int
 
 var
-  gCreateIds:   array[32, string]
-  gCreateOk:    array[32, bool]
-  gDecideOk:    array[32, bool]
-  gReadErrors:  Atomic[int]
-  gReadDuringWrites: Atomic[int]
-  gActiveWriters: Atomic[int]
-  gReaderReady: Atomic[int]
-  gWritersDone: Atomic[bool]
+  gCreateIds: array[32, string]
+  gCreateOk:  array[32, bool]
+  gDecideOk:  array[32, bool]
+  gBlockedStarted: Atomic[bool]
+  gBlockedOk:      Atomic[bool]
+  gLockPath:       string
+  gBlockedWriter:  Thread[CreateArg]
+  gReaderOk:       bool
 
 proc createWorker(arg: CreateArg) {.thread.} =
   {.cast(gcsafe).}:
-    if arg.coordinateReader:
-      discard gActiveWriters.fetchAdd(1)
     let store = newApprovalStore(arg.path)
     let res = store.create(arg.userId, "telegram", "bash", "stress", 60_000)
     gCreateOk[arg.index] = res.isOk
     if res.isOk:
       gCreateIds[arg.index] = res.get().id
-    if arg.coordinateReader:
-      ## Stay active until the reader confirms a concurrent listing.
-      var waited = 0
-      while gReadDuringWrites.load() == 0 and waited < 2000:
-        sleep(1)
-        waited += 1
-      discard gActiveWriters.fetchSub(1)
 
-proc readerWorker(path: string) {.thread.} =
+proc blockedCreateWorker(arg: CreateArg) {.thread.} =
   {.cast(gcsafe).}:
-    discard gReaderReady.fetchAdd(1)
-    while not gWritersDone.load():
-      if gActiveWriters.load() > 0:
-        if newApprovalStore(path).listPending().isErr:
-          discard gReadErrors.fetchAdd(1)
-        else:
-          discard gReadDuringWrites.fetchAdd(1)
-      sleep(1)
+    gBlockedStarted.store(true)
+    gBlockedOk.store(
+      newApprovalStore(arg.path).create(
+        arg.userId, "telegram", "bash", "blocked", 60_000).isOk)
 
 proc decideWorker(arg: DecideArg) {.thread.} =
   {.cast(gcsafe).}:
-    let store = newApprovalStore(arg.path)
-    gDecideOk[arg.index] = store.decide(arg.id, arg.userId, true).isOk
+    gDecideOk[arg.index] =
+      newApprovalStore(arg.path).decide(arg.id, arg.userId, true).isOk
 
 suite "approval store stress":
 
@@ -72,31 +58,12 @@ suite "approval store stress":
     defer: removeDir(dir)
     let path = dir / "approvals.json"
 
-    gReadErrors.store(0)
-    gReadDuringWrites.store(0)
-    gActiveWriters.store(0)
-    gReaderReady.store(0)
-    gWritersDone.store(false)
-    var reader: Thread[string]
-    createThread(reader, readerWorker, path)
-    while gReaderReady.load() == 0:
-      sleep(1)
-
     var threads: array[16, Thread[CreateArg]]
     for i in 0 ..< threads.len:
       createThread(threads[i], createWorker,
-                   CreateArg(path: path, userId: "u" & $i, index: i,
-                             coordinateReader: true))
-    var waited = 0
-    while gReadDuringWrites.load() == 0 and waited < 1000:
-      sleep(1)
-      waited += 1
-    check gReadDuringWrites.load() > 0
+                   CreateArg(path: path, userId: "u" & $i, index: i))
     for i in 0 ..< threads.len:
       joinThread(threads[i])
-    gWritersDone.store(true)
-    joinThread(reader)
-    check gReadErrors.load() == 0
 
     var ids = initHashSet[string]()
     for i in 0 ..< threads.len:
@@ -156,3 +123,37 @@ suite "approval store stress":
         inc winners
     check winners == 1
     check newApprovalStore(path).status(request.id).get() == apsApproved
+
+  test "reader sees a stable store while a create waits for the lock":
+    let dir = stressDir / "locked"
+    removeDir(dir)
+    defer: removeDir(dir)
+    let path = dir / "approvals.json"
+    let store = newApprovalStore(path)
+    check store.create("owner", "telegram", "bash", "first", 60_000).isOk
+
+    gBlockedStarted.store(false)
+    gBlockedOk.store(false)
+    gLockPath = path
+    gReaderOk = false
+
+    let held = store.withApprovalLock(
+      proc(): Result[void, string] {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}:
+          {.cast(raises: []).}:
+            createThread(gBlockedWriter, blockedCreateWorker,
+                         CreateArg(path: gLockPath, userId: "blocked", index: 0))
+          var waited = 0
+          while not gBlockedStarted.load() and waited < 1000:
+            sleep(1)
+            waited += 1
+          ## Let the writer reach the flock wait before reading.
+          sleep(5)
+          gReaderOk = newApprovalStore(gLockPath).listPending().isOk
+          ok())
+
+    check held.isOk
+    joinThread(gBlockedWriter)
+    check gBlockedOk.load()
+    check gReaderOk
+    check store.listPending().get().len == 2

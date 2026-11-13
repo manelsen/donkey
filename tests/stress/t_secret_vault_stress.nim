@@ -9,11 +9,10 @@ let stressDir = getTempDir() / ("donkey_stress_vault_" & $getCurrentProcessId())
 
 type
   SetArg = object
-    home:             string
-    name:             string
-    value:            string
-    index:            int
-    coordinateReader: bool
+    home:  string
+    name:  string
+    value: string
+    index: int
 
   RemoveArg = object
     home:  string
@@ -21,53 +20,34 @@ type
     index: int
 
 var
-  gSetOk:      array[32, bool]
-  gRemoveOk:   array[32, bool]
-  gReadErrors: Atomic[int]
-  gReadOk:     Atomic[int]
-  gReadDuringWrites: Atomic[int]
-  gActiveWriters: Atomic[int]
-  gReaderReady: Atomic[int]
-  gWritersDone: Atomic[bool]
+  gSetOk:    array[32, bool]
+  gRemoveOk: array[32, bool]
+  gBlockedStarted: Atomic[bool]
+  gBlockedOk:      Atomic[bool]
+  gLockHome:       string
+  gBlockedWriter:  Thread[SetArg]
+  gReaderOk:       bool
+  gReaderNames:    seq[string]
 
 proc setWorker(arg: SetArg) {.thread.} =
   {.cast(gcsafe).}:
-    if arg.coordinateReader:
-      discard gActiveWriters.fetchAdd(1)
     gSetOk[arg.index] =
       newSecretVault(arg.home).setSecret(arg.name, arg.value).isOk
-    if arg.coordinateReader:
-      var waited = 0
-      while gReadDuringWrites.load() == 0 and waited < 2000:
-        sleep(1)
-        waited += 1
-      discard gActiveWriters.fetchSub(1)
+
+proc blockedSetWorker(arg: SetArg) {.thread.} =
+  {.cast(gcsafe).}:
+    gBlockedStarted.store(true)
+    gBlockedOk.store(
+      newSecretVault(arg.home).setSecret(arg.name, arg.value).isOk)
 
 proc removeWorker(arg: RemoveArg) {.thread.} =
   {.cast(gcsafe).}:
     gRemoveOk[arg.index] =
       newSecretVault(arg.home).removeSecret(arg.name).isOk
 
-proc readerWorker(home: string) {.thread.} =
-  {.cast(gcsafe).}:
-    let first = newSecretVault(home).listSecretNames()
-    if first.isErr:
-      discard gReadErrors.fetchAdd(1)
-    else:
-      discard gReadOk.fetchAdd(1)
-    discard gReaderReady.fetchAdd(1)
-    while not gWritersDone.load():
-      if gActiveWriters.load() > 0:
-        let names = newSecretVault(home).listSecretNames()
-        if names.isErr:
-          discard gReadErrors.fetchAdd(1)
-        else:
-          discard gReadDuringWrites.fetchAdd(1)
-      sleep(1)
-
 suite "secret vault stress":
 
-  test "concurrent writers keep every entry and a valid vault":
+  test "concurrent writers keep every entry and decrypt every value":
     let home = stressDir / "writers"
     removeDir(home)
     defer: removeDir(home)
@@ -82,6 +62,7 @@ suite "secret vault stress":
 
     for i in 0 ..< threads.len:
       check gSetOk[i]
+
     let vault = newSecretVault(home)
     let names = vault.listSecretNames()
     check names.isOk
@@ -101,44 +82,8 @@ suite "secret vault stress":
 
     let raw = readFile(home / VaultDirName / VaultFileName)
     check raw.contains("enc2:")
-    check "value-0" notin raw
-
-  test "readers never see a truncated vault during writes":
-    let home = stressDir / "readers"
-    removeDir(home)
-    defer: removeDir(home)
-
-    gReadErrors.store(0)
-    gReadOk.store(0)
-    gReadDuringWrites.store(0)
-    gActiveWriters.store(0)
-    gReaderReady.store(0)
-    gWritersDone.store(false)
-    var reader: Thread[string]
-    createThread(reader, readerWorker, home)
-    while gReaderReady.load() == 0:
-      sleep(1)
-
-    var threads: array[12, Thread[SetArg]]
     for i in 0 ..< threads.len:
-      createThread(threads[i], setWorker,
-                   SetArg(home: home, name: "DONKEY_STRESS_R" & $i,
-                          value: "reader-" & $i, index: i,
-                          coordinateReader: true))
-    var waited = 0
-    while gReadDuringWrites.load() == 0 and waited < 1000:
-      sleep(1)
-      waited += 1
-    check gReadDuringWrites.load() > 0
-    for i in 0 ..< threads.len:
-      joinThread(threads[i])
-    gWritersDone.store(true)
-    joinThread(reader)
-
-    check gReadErrors.load() == 0
-    check gReadOk.load() > 0
-    check gReadDuringWrites.load() > 0
-    check newSecretVault(home).listSecretNames().get().len == threads.len
+      check "value-" & $i notin raw
 
   test "mixed set and remove operations serialize correctly":
     let home = stressDir / "mixed"
@@ -183,3 +128,41 @@ suite "secret vault stress":
     check vault.applyToEnv().isOk
     check getEnv("DONKEY_STRESS_BIG").len == value.len
     check getEnv("DONKEY_STRESS_BIG") == value
+
+  test "reader sees a stable vault while a write waits for the lock":
+    let home = stressDir / "locked"
+    removeDir(home)
+    defer: removeDir(home)
+    let vault = newSecretVault(home)
+    check vault.setSecret("KEEP", "old").isOk
+
+    gBlockedStarted.store(false)
+    gBlockedOk.store(false)
+    gLockHome = home
+    gReaderOk = false
+    gReaderNames = @[]
+
+    let held = vault.withVaultLock(
+      proc(): Result[void, string] {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}:
+          {.cast(raises: []).}:
+            createThread(gBlockedWriter, blockedSetWorker,
+                         SetArg(home: gLockHome, name: "NEW", value: "new", index: 0))
+          var waited = 0
+          while not gBlockedStarted.load() and waited < 1000:
+            sleep(1)
+            waited += 1
+          ## Let the writer reach the flock wait before reading.
+          sleep(5)
+          let names = newSecretVault(gLockHome).listSecretNames()
+          gReaderOk = names.isOk
+          if names.isOk:
+            gReaderNames = names.get()
+          ok())
+
+    check held.isOk
+    joinThread(gBlockedWriter)
+    check gBlockedOk.load()
+    check gReaderOk
+    check gReaderNames == @["KEEP"]
+    check vault.listSecretNames().get().len == 2

@@ -56,7 +56,7 @@ proc requestChallenge(port: int; secret, challenge: string): string =
     var response = ""
     while true:
       var chunk = ""
-      let n = client.recv(chunk, 4096)
+      let n = client.recv(chunk, 4096, 5000)
       if n <= 0:
         break
       response.add(chunk)
@@ -111,6 +111,7 @@ suite "webhook TLS stress":
                               tlsCertFile: cert, tlsKeyFile: key)
       let started = startWebhookReceiver(cfg, port, "127.0.0.1", stressLog)
       check started.isOk
+      defer: stopWebhookReceiver()
 
       var slow = newSocket()
       slow.connect("127.0.0.1", Port(port))

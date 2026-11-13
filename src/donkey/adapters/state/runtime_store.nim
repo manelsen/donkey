@@ -30,6 +30,9 @@ const
 type
   RuntimeStateStore* = ref object
     stateDir*: string
+    ## Optional instrumentation/fault-injection hook, called under `lock` when
+    ## a real ledger compaction starts. nil in production.
+    onCompactStart*: proc() {.gcsafe, raises: [].}
     ## Records still awaiting `sent`/`failed`. Loaded once at construction so
     ## the hot path does not replay the ledger file on every update.
     pending*: Table[string, DeliveryRecord]
@@ -551,6 +554,8 @@ proc compactLedgerLocked(store: RuntimeStateStore;
     return ok()
 
   discard store.compactStarts.fetchAdd(1)
+  if store.onCompactStart != nil:
+    store.onCompactStart()
   let scan = hasForwardIncompatibleEvents(path)
   if scan.isErr:
     store.lastLedgerCompactMs = nowMs

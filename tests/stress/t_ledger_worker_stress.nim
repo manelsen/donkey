@@ -1,6 +1,6 @@
 ## Stress: ledger compaction worker racing with delivery appends.
 
-import std/[atomics, json, monotimes, os, strutils, times, unittest]
+import std/[atomics, monotimes, os, strutils, times, unittest]
 import results
 import donkey/adapters/state/runtime_store
 import donkey/core/log
@@ -19,8 +19,15 @@ var
   gAppendCount:    array[4, int]
   gAppendErrors:   Atomic[int]
   gStopAppenders:  Atomic[bool]
-  gCompactionStarted: Atomic[bool]
-  gWritesAfterStart: Atomic[int]
+  gHookEntered:    Atomic[bool]
+  gHookRelease:    Atomic[bool]
+  gWriteAttemptsAfterHook: Atomic[int]
+  gStopReturned:   Atomic[bool]
+
+proc blockingHook() {.gcsafe, raises: [].} =
+  gHookEntered.store(true)
+  while not gHookRelease.load():
+    sleep(1)
 
 proc appendWorker(arg: AppendArg) {.thread.} =
   {.cast(gcsafe).}:
@@ -32,6 +39,8 @@ proc appendWorker(arg: AppendArg) {.thread.} =
         id: id, userId: "u" & $arg.worker, channel: ckSlack,
         channelId: "c" & $arg.worker, textHash: "h", state: dlsPending,
         createdAtMs: now, updatedAtMs: now)
+      if gHookEntered.load():
+        discard gWriteAttemptsAfterHook.fetchAdd(1)
       let pending = gLedgerPorts[arg.worker].recordPending(record)
       if pending.isErr:
         discard gAppendErrors.fetchAdd(1)
@@ -39,14 +48,17 @@ proc appendWorker(arg: AppendArg) {.thread.} =
         inc gAppendCount[arg.worker]
         if gLedgerPorts[arg.worker].markSent(id, now).isErr:
           discard gAppendErrors.fetchAdd(1)
-        elif gCompactionStarted.load():
-          discard gWritesAfterStart.fetchAdd(1)
       inc i
       sleep(10)
 
+proc stopWorker(worker: LedgerCompactionWorker) {.thread.} =
+  {.cast(gcsafe).}:
+    stopLedgerCompactionWorker(worker)
+    gStopReturned.store(true)
+
 suite "ledger worker stress":
 
-  test "concurrent appends overlap a real compaction":
+  test "writes submitted during active compaction complete safely":
     let dir = stressDir / "append"
     removeDir(dir)
     defer: removeDir(dir)
@@ -57,15 +69,15 @@ suite "ledger worker stress":
       gLedgerPorts[i] = store.deliveryLedger()
     gAppendErrors.store(0)
     gStopAppenders.store(false)
-    gCompactionStarted.store(false)
-    gWritesAfterStart.store(0)
-    let beforeLastCompact = store.ledgerLastCompactMs()
+    gHookEntered.store(false)
+    gHookRelease.store(false)
+    gWriteAttemptsAfterHook.store(0)
     for i in 0 ..< gAppendCount.len:
       gAppendCount[i] = 0
 
-    let beforeCompact = store.ledgerCompactStarts()
-    let logger = newLogger("stress.ledger", lvlError)
-    let worker = startLedgerCompactionWorker(store, 1.0, logger)
+    store.onCompactStart = blockingHook
+    let worker = startLedgerCompactionWorker(
+      store, 1.0, newLogger("stress.ledger", lvlError))
     check worker != nil
     defer: stopLedgerCompactionWorker(worker)
 
@@ -73,28 +85,20 @@ suite "ledger worker stress":
     for i in 0 ..< threads.len:
       createThread(threads[i], appendWorker, AppendArg(worker: i))
 
-    ## Keep writers active until the worker has actually started a compaction.
     var waited = 0
-    while store.ledgerCompactStarts() <= beforeCompact and waited < 5000:
+    while not gHookEntered.load() and waited < 5000:
       sleep(10)
       waited += 10
-    check store.ledgerCompactStarts() > beforeCompact
-    gCompactionStarted.store(true)
-
-    ## Confirm a write after the start signal and wait for compaction to finish.
-    waited = 0
-    while gWritesAfterStart.load() == 0 and waited < 5000:
-      sleep(10)
-      waited += 10
-    check gWritesAfterStart.load() > 0
+    check gHookEntered.load()
 
     waited = 0
-    while store.ledgerLastCompactMs() <= beforeLastCompact and waited < 5000:
+    while gWriteAttemptsAfterHook.load() == 0 and waited < 5000:
       sleep(10)
       waited += 10
-    check store.ledgerLastCompactMs() > beforeLastCompact
+    check gWriteAttemptsAfterHook.load() > 0
+
+    gHookRelease.store(true)
     gStopAppenders.store(true)
-
     for i in 0 ..< threads.len:
       joinThread(threads[i])
 
@@ -117,35 +121,40 @@ suite "ledger worker stress":
       check record.state == dlsSent
       check record.id.startsWith("w")
 
-  test "stop after a compaction started returns promptly":
+  test "stop waits for an actively running compaction":
     let dir = stressDir / "stop"
     removeDir(dir)
     defer: removeDir(dir)
-    createDir(dir)
-
-    let now = epochMs()
-    var content = ""
-    for i in 0 ..< 2000:
-      content.add("\n" & $(%* {
-        "id": "stop-" & $i,
-        "state": "sent",
-        "updated_at_ms": now,
-      }) & "\n")
-    writeFile(dir / DeliveryLedgerFileName, content)
 
     let store = newRuntimeStateStore(
       dir, ledgerRetentionDays = 1.0, ledgerCompactIntervalSec = 1.0)
-    let beforeCompact = store.ledgerCompactStarts()
+    let ledger = store.deliveryLedger()
+    check ledger.recordPending(DeliveryRecord(
+      id: "keep", userId: "u", channel: ckSlack, channelId: "c",
+      textHash: "h", state: dlsPending,
+      createdAtMs: epochMs(), updatedAtMs: epochMs())).isOk
+
+    gHookEntered.store(false)
+    gHookRelease.store(false)
+    gStopReturned.store(false)
+    store.onCompactStart = blockingHook
+
     let worker = startLedgerCompactionWorker(
       store, 1.0, newLogger("stress.ledger", lvlError))
     check worker != nil
 
     var waited = 0
-    while store.ledgerCompactStarts() <= beforeCompact and waited < 5000:
+    while not gHookEntered.load() and waited < 5000:
       sleep(10)
       waited += 10
-    check store.ledgerCompactStarts() > beforeCompact
+    check gHookEntered.load()
 
-    let started = getMonoTime()
-    stopLedgerCompactionWorker(worker)
-    check inMilliseconds(getMonoTime() - started) < 2000
+    var stopper: Thread[LedgerCompactionWorker]
+    createThread(stopper, stopWorker, worker)
+    sleep(20)
+    check not gStopReturned.load()
+
+    gHookRelease.store(true)
+    joinThread(stopper)
+    check gStopReturned.load()
+    check store.ledgerLastCompactError().len == 0
