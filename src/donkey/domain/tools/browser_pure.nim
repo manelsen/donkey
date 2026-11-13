@@ -47,6 +47,7 @@ const
   BrowserDefaultMaxContentChars* = 50_000
   BrowserMaxContentChars* = 500_000
   BrowserMaxScreenshotBytes* = 8 * 1024 * 1024
+  BrowserMaxCdpFrameBytes* = 16 * 1024 * 1024
 
 func parseBrowserBackend*(raw: string): Option[BrowserBackendKind] =
   ## Accepts the env spelling and a few common aliases. `none` means an

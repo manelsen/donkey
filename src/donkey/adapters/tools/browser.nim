@@ -277,7 +277,7 @@ proc drainPendingEvents(bt: var BrowserTools; budgetMs = 50) =
   let deadline = epochTime() + float(budgetMs) / 1000.0
   while epochTime() < deadline:
     let frame = try:
-      bt.ws.recvFrame(10)
+      bt.ws.recvFrame(10, maxPayloadBytes = BrowserMaxCdpFrameBytes)
     except TimeoutError:
       break
     except CatchableError:
@@ -312,7 +312,7 @@ proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode =
     
     let remainingMs = max(1, int((deadline - now) * 1000))
     let frame = try:
-      bt.ws.recvFrame(remainingMs)
+      bt.ws.recvFrame(remainingMs, maxPayloadBytes = BrowserMaxCdpFrameBytes)
     except TimeoutError as e:
       return err("CDP timeout waiting for " & cdpMethod & " response: " & e.msg)
     except IOError as e:

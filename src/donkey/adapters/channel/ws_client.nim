@@ -134,10 +134,12 @@ proc sendFrame*(ws: WsClient; data: string; opcode = WsOpcodeText) =
   ws.sock.send(frame)
 
 proc recvFrame*(ws: WsClient; timeoutMs = 1000;
-                frameTimeoutMs = 10_000): WsFrame =
+                frameTimeoutMs = 10_000;
+                maxPayloadBytes = 0): WsFrame =
   ## Receives one WebSocket frame (server → client, unmasked).
   ## Waits up to timeoutMs for the first byte; raises TimeoutError if none.
   ## Once a frame starts, it must finish within frameTimeoutMs.
+  ## `maxPayloadBytes > 0` rejects the frame before allocating its payload.
   var firstByte = newString(1)
   let n0 = ws.sock.recv(firstByte, 1, timeoutMs)
   if n0 <= 0:
@@ -165,9 +167,16 @@ proc recvFrame*(ws: WsClient; timeoutMs = 1000;
     length = (int(byte(ext[0])) shl 8) or int(byte(ext[1]))
   elif length == 127:
     let ext = ws.sock.recvExact(8, deadline)
+    for i in 0..<4:
+      if byte(ext[i]) != 0:
+        raise newException(IOError, "WebSocket: frame payload exceeds 4 GiB")
     length = 0
     for i in 4..<8:
       length = (length shl 8) or int(byte(ext[i]))
+
+  if length < 0 or (maxPayloadBytes > 0 and length > maxPayloadBytes):
+    raise newException(IOError,
+      "WebSocket: frame payload exceeds " & $maxPayloadBytes & " bytes")
 
   var maskKey: array[4, byte]
   if masked:
