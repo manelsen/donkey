@@ -793,6 +793,15 @@ proc waitForChromiumPage(bt: var BrowserTools;
     sleep(100)
   err("Chromium CDP endpoint did not expose a page target")
 
+proc cleanupOwnedProfile(bt: var BrowserTools) =
+  if bt.ownsProfileDir and bt.profileDir.len > 0:
+    try:
+      removeDir(bt.profileDir)
+    except CatchableError:
+      discard
+  bt.profileDir = ""
+  bt.ownsProfileDir = false
+
 proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
   ## Spawn the configured browser backend and connect its CDP endpoint.
   if bt.process != nil:
@@ -817,9 +826,7 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
     bt.ownsProfileDir = true
     let hardened = hardenProfileDir(profileDir)
     if hardened.isErr:
-      try: removeDir(profileDir) except CatchableError: discard
-      bt.profileDir = ""
-      bt.ownsProfileDir = false
+      bt.cleanupOwnedProfile()
       return err(hardened.error)
 
   let specOpt = buildLaunchSpec(kind, exe, bt.host, bt.port, profileDir,
@@ -832,8 +839,7 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
     startProcess(spec.exe, args = spec.args, env = browserProcessEnv(profileDir),
                  options = {poUsePath, poParentStreams})
   except CatchableError as e:
-    if bt.ownsProfileDir:
-      try: removeDir(bt.profileDir) except CatchableError: discard
+    bt.cleanupOwnedProfile()
     return err("failed to spawn " & $kind & ": " & e.msg)
   bt.process = p
   bt.backend = kind
@@ -856,8 +862,7 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
     bt.process.terminate()
     bt.process.close()
     bt.process = nil
-    if bt.ownsProfileDir:
-      try: removeDir(bt.profileDir) except CatchableError: discard
+    bt.cleanupOwnedProfile()
     return err(page.error)
 
   let (wsUrl, targetId, pageUrl) = page.get()
@@ -866,6 +871,7 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
     bt.process.terminate()
     bt.process.close()
     bt.process = nil
+    bt.cleanupOwnedProfile()
     return err("invalid CDP websocket URL from Chromium")
   let endpoint = endpointOpt.get()
   try:
@@ -876,6 +882,7 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
     bt.process.terminate()
     bt.process.close()
     bt.process = nil
+    bt.cleanupOwnedProfile()
     return err("WebSocket connect failed: " & e.msg)
   bt.pageTargetId = targetId
   bt.currentUrl = pageUrl
@@ -896,13 +903,7 @@ proc close*(bt: var BrowserTools) =
     bt.process.terminate()
     bt.process.close()
     bt.process = nil
-  if bt.ownsProfileDir and bt.profileDir.len > 0:
-    try:
-      removeDir(bt.profileDir)
-    except CatchableError:
-      discard
-  bt.profileDir = ""
-  bt.ownsProfileDir = false
+  bt.cleanupOwnedProfile()
   bt.pageTargetId = ""
   bt.mainFrameId = ""
   bt.contentContextId = 0
