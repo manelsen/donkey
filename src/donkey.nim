@@ -309,7 +309,6 @@ type DaemonRuntime = ref object
   stateStore:           RuntimeStateStore
   ledger:               DeliveryLedgerPort
   ledgerWorker:         LedgerCompactionWorker
-  lastLedgerCompactError: string
   presentationState:    PresentationState
   routeCounts:          Table[string, int]
   routeCallCounts:      Table[string, int]
@@ -1682,11 +1681,9 @@ proc runDaemonLoop(ctx: DaemonContext;
                    memory: MdFileAdapter;
                    log: Logger): DaemonLoopResult =
   if ctx.runtime.stateStore != nil:
-    let compactError = ctx.runtime.stateStore.ledgerLastCompactError()
-    if compactError != ctx.runtime.lastLedgerCompactError:
-      ctx.runtime.lastLedgerCompactError = compactError
-      if compactError.len > 0:
-        log.warn("ledger compaction: " & compactError)
+    let compactError = ctx.runtime.stateStore.tryCompactError()
+    if compactError.isSome:
+      log.warn("ledger compaction: " & compactError.get())
   let tick = runDaemonTick(ctx, drainer, memory, log)
   DaemonLoopResult(
     sleepMs: if tick.ok: 100 else: 500,

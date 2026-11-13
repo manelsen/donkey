@@ -1,7 +1,6 @@
 ## Stress: approval store concurrency and cap enforcement.
 
 import std/[atomics, os, sets, strutils, unittest]
-import results
 import donkey/adapters/state/approval_store
 import donkey/core/pipeops
 import donkey/core/security/approval

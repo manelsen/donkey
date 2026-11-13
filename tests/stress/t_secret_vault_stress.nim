@@ -124,6 +124,8 @@ suite "secret vault stress":
     for i in 0 ..< 6:
       joinThread(removers[i])
       joinThread(setters[i])
+      check gRemoveOk[i]
+      check gSetOk[i + 6]
 
     let names = newSecretVault(home).listSecretNames()
     check names.isOk

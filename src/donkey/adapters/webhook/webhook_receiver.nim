@@ -690,9 +690,9 @@ proc webhookWorker(arg: WebhookWorkerArg) {.thread.} =
         try: client.close() except CatchableError: discard
 
 proc startWebhookPool(cfg: WebhookConfig; logger: Logger): Result[void, string] =
-  ## Opens the queue and starts every worker. A failed attempt is not retried:
-  ## the channel is already open and re-opening it would leave workers
-  ## pointing at stale storage.
+  ## Opens the queue and starts every worker. After a failed worker
+  ## initialization the sentinels are drained and a later attempt can retry
+  ## without reopening the channel.
   if gWebhookPoolStarted:
     return ok()
   if gWebhookPoolAttempted:
@@ -717,6 +717,7 @@ proc startWebhookPool(cfg: WebhookConfig; logger: Logger): Result[void, string] 
       joinThread(gWebhookWorkers[i])
     gWebhookWorkersStarted = 0
     ready.close()
+    gWebhookPoolAttempted = false
     return err("cannot start webhook workers: " & e.msg)
 
   var initError = ""
@@ -731,6 +732,13 @@ proc startWebhookPool(cfg: WebhookConfig; logger: Logger): Result[void, string] 
     for i in 0 ..< gWebhookWorkersStarted:
       joinThread(gWebhookWorkers[i])
     gWebhookWorkersStarted = 0
+    while true:
+      let (hasQueued, fd) = gWebhookQueue.tryRecv()
+      if not hasQueued:
+        break
+      if fd != SocketHandle(-1):
+        discard posix.close(cint(fd))
+    gWebhookPoolAttempted = false
     return err("webhook worker initialization failed: " & initError)
   gWebhookPoolStarted = true
   ok()

@@ -43,6 +43,7 @@ type
     sessions: seq[SessionRegistryRecord]
     sessionsLoaded: bool
     sessionsDirty: bool
+    compactErrorChan: Channel[string]
     lastSessionsWriteMs: int64
     ledgerDirSynced: bool
     ledgerRetentionMs: int64
@@ -663,7 +664,10 @@ proc ledgerCompactionLoop(_: int) {.thread.} =
         waited += 1000
       if gLedgerWorker.stop.load():
         break
-      discard gLedgerWorker.store[].compactLedger()
+      let res = gLedgerWorker.store[].compactLedger()
+      if res.isErr:
+        {.cast(gcsafe).}:
+          discard gLedgerWorker.store[].compactErrorChan.trySend(res.error)
 
 proc startLedgerCompactionWorker*(store: ptr RuntimeStateStore;
                                   intervalSec: float):
@@ -701,10 +705,15 @@ proc stopLedgerCompactionWorker*(worker: LedgerCompactionWorker) =
     gLedgerWorker = nil
 
 proc ledgerLastCompactError*(store: RuntimeStateStore): string =
-  ## Last compaction failure, for the daemon to log after startup.
+  ## Last compaction failure, for startup diagnostics and tests.
   acquire(store.lock)
   defer: release(store.lock)
   store.lastLedgerCompactError
+
+proc tryCompactError*(store: RuntimeStateStore): Option[string] =
+  ## Lock-free, non-blocking publication for the daemon loop.
+  let (hasError, message) = store.compactErrorChan.tryRecv()
+  if hasError: some(message) else: none(string)
 
 proc appendLedger(store: RuntimeStateStore;
                   record: DeliveryRecord;
@@ -810,6 +819,7 @@ proc newRuntimeStateStore*(stateDir: string;
     tmpCounter: 0,
   )
   initLock(result.lock)
+  result.compactErrorChan.open(4)
   result.ledgerDirSynced = fileExists(result.ledgerPath())
   ## Load the ledger once: the hot path only touches the pending table.
   try:

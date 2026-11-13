@@ -1,7 +1,6 @@
 ## Stress: ledger compaction worker racing with delivery appends.
 
 import std/[atomics, monotimes, os, strutils, times, unittest]
-import results
 import donkey/adapters/state/runtime_store
 import donkey/core/pipeops
 import donkey/core/types
