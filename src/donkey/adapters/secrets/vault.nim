@@ -38,8 +38,9 @@ type
     path*:     string
     keyPath*:  string
     keyStore:  FileKeyStore
-    ## Optional instrumentation hook, called immediately before `flock`.
-    onLockWait*: proc() {.gcsafe, raises: [].}
+    ## Optional instrumentation hook, called under the lock just before the
+    ## atomic write starts.
+    onBeforeWrite*: proc() {.gcsafe, raises: [].}
 
 when defined(posix):
   proc cFlock(fd: cint; operation: cint): cint {.
@@ -86,8 +87,6 @@ proc withVaultLock*[T](vault: SecretVault;
         lockFile.close()
         return err(lockHardened.error)
       let fd = cint(lockFile.getFileHandle())
-      if vault.onLockWait != nil:
-        vault.onLockWait()
       if cFlock(fd, VaultLockExclusive) != 0:
         lockFile.close()
         return err("secret vault lock failed")
@@ -142,6 +141,8 @@ proc writeStored(vault: SecretVault;
     if dirHardened.isErr:
       return err(dirHardened.error)
     tmp = vault.path & ".tmp." & $getCurrentProcessId() & "-" & $epochMs()
+    if vault.onBeforeWrite != nil:
+      vault.onBeforeWrite()
     writeFile(tmp, payload.pretty & "\n")
     let fileHardened = hardenFilePermissions(tmp)
     if fileHardened.isErr:

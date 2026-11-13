@@ -12,8 +12,7 @@ type
   CreateArg = object
     path:       string
     userId:     string
-    index:      int
-    signalLock: bool
+    index:  int
 
   DecideArg = object
     path:   string
@@ -26,8 +25,9 @@ var
   gCreateOk:  array[32, bool]
   gDecideOk:  array[32, bool]
   gBlockedOk:      Atomic[bool]
-  gBlockedCompleted: Atomic[bool]
-  gLockWait:       Channel[bool]
+  gSaveCompleted:  Atomic[bool]
+  gSaveWait:       Channel[bool]
+  gSaveRelease:    Channel[bool]
   gBlockedWriter:  Thread[CreateArg]
   gReaderOk:       bool
 
@@ -42,14 +42,14 @@ proc createWorker(arg: CreateArg) {.thread.} =
 proc blockedCreateWorker(arg: CreateArg) {.thread.} =
   {.cast(gcsafe).}:
     let store = newApprovalStore(arg.path)
-    if arg.signalLock:
-      store.onLockWait = proc() {.gcsafe, raises: [].} =
-        {.cast(gcsafe).}:
-          {.cast(raises: []).}:
-            gLockWait.send(true)
+    store.onBeforeSave = proc() {.gcsafe, raises: [].} =
+      {.cast(gcsafe).}:
+        {.cast(raises: []).}:
+          gSaveWait.send(true)
+          discard gSaveRelease.recv()
     gBlockedOk.store(
       store.create(arg.userId, "telegram", "bash", "blocked", 60_000).isOk)
-    gBlockedCompleted.store(true)
+    gSaveCompleted.store(true)
 
 proc decideWorker(arg: DecideArg) {.thread.} =
   {.cast(gcsafe).}:
@@ -130,7 +130,7 @@ suite "approval store stress":
     check winners == 1
     check newApprovalStore(path).status(request.id).get() == apsApproved
 
-  test "reader sees a stable store while a create waits for the lock":
+  test "reader sees a stable store while a create is saving":
     let dir = stressDir / "locked"
     removeDir(dir)
     defer: removeDir(dir)
@@ -139,27 +139,26 @@ suite "approval store stress":
     check store.create("owner", "telegram", "bash", "first", 60_000).isOk
 
     gBlockedOk.store(false)
-    gBlockedCompleted.store(false)
+    gSaveCompleted.store(false)
     gReaderOk = false
-    gLockWait.open(1)
+    gSaveWait.open(1)
+    gSaveRelease.open(1)
 
-    let held = store.withApprovalLock(
-      proc(): Result[void, string] {.gcsafe, raises: [].} =
-        {.cast(gcsafe).}:
-          {.cast(raises: []).}:
-            createThread(gBlockedWriter, blockedCreateWorker,
-                         CreateArg(path: path, userId: "blocked", index: 0,
-                                   signalLock: true))
-          {.cast(raises: []).}:
-            discard gLockWait.recv()
-          if gBlockedCompleted.load():
-            return err("blocked writer completed while the lock was held")
-          gReaderOk = store.listPending().isOk
-          ok())
+    createThread(gBlockedWriter, blockedCreateWorker,
+                 CreateArg(path: path, userId: "blocked", index: 0))
+    discard gSaveWait.recv()
+    check not gSaveCompleted.load()
 
-    check held.isOk
+    ## The writer holds the lock and has not written yet; this reader runs on
+    ## a different thread and must see the previous complete file.
+    gReaderOk = store.listPending().isOk
+    check store.listPending().get().len == 1
+
+    gSaveRelease.send(true)
     joinThread(gBlockedWriter)
-    gLockWait.close()
+    gSaveWait.close()
+    gSaveRelease.close()
     check gBlockedOk.load()
+    check gSaveCompleted.load()
     check gReaderOk
     check store.listPending().get().len == 2

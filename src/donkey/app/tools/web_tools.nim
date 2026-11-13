@@ -8,6 +8,7 @@ import results
 import ../../config/types as cfgTypes
 import ../../ports/http as httpPort
 import ../../domain/builtin_tools
+import ../../core/dns
 import ../../core/tooling/structured_tool_result
 import ./text_tools  # stripHtml
 
@@ -48,6 +49,9 @@ proc fetchWithRedirectPolicy(http: httpPort.HttpRuntimePort;
       let resolved = http.resolveHost(host)
       if resolved.isErr:
         return err("URL blocked: " & resolved.error)
+      let checked = blockIfPrivate(resolved.get())
+      if checked.isErr:
+        return err("URL blocked: " & checked.error)
     let resp = http.getNoRedirect(current, headers)
     if resp.isErr:
       return resp

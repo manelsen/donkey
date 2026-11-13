@@ -643,53 +643,60 @@ proc ledgerCompactStarts*(store: RuntimeStateStore): int =
 
 type
   LedgerCompactionWorker* = ref object
-    store:      RuntimeStateStore
+    store:      ptr RuntimeStateStore
     intervalMs: int64
-    logger:     Logger
     stop:       Atomic[bool]
+    stopping*:  Atomic[bool]
     stopped:    bool
-    thread:     Thread[LedgerCompactionWorker]
+    thread:     Thread[int]
 
-proc ledgerCompactionLoop(worker: LedgerCompactionWorker) {.thread.} =
+var gLedgerWorker: LedgerCompactionWorker
+
+proc ledgerCompactionLoop(_: int) {.thread.} =
   {.cast(gcsafe).}:
-    while not worker.stop.load():
+    while not gLedgerWorker.stop.load():
       ## Sleep in bounded slices so shutdown does not wait for the whole
       ## interval (default is one hour).
       var waited = 0'i64
-      while waited < worker.intervalMs and not worker.stop.load():
+      while waited < gLedgerWorker.intervalMs and not gLedgerWorker.stop.load():
         sleep(1000)
         waited += 1000
-      if worker.stop.load():
+      if gLedgerWorker.stop.load():
         break
-      let res = worker.store.compactLedger()
-      if res.isErr and worker.logger.sink != nil:
-        worker.logger.warn("ledger compaction: " & res.error)
+      discard gLedgerWorker.store[].compactLedger()
 
-proc startLedgerCompactionWorker*(store: RuntimeStateStore;
-                                  intervalSec: float;
-                                  logger: Logger): LedgerCompactionWorker =
+proc startLedgerCompactionWorker*(store: ptr RuntimeStateStore;
+                                  intervalSec: float): LedgerCompactionWorker {.gcsafe.} =
   ## Starts a dedicated OS thread for ledger compaction. Returns nil when the
-  ## interval is disabled or the thread cannot be created.
+  ## interval is disabled or the thread cannot be created. The caller must keep
+  ## the store alive until `stopLedgerCompactionWorker` returns.
   if store == nil or intervalSec <= 0.0:
     return nil
+  {.cast(gcsafe).}:
+    if gLedgerWorker != nil:
+      return nil
   let intervalMs = max(1000'i64, int64(max(1.0, intervalSec) * 1000.0))
-  result = LedgerCompactionWorker(
-    store: store, intervalMs: intervalMs, logger: logger)
+  result = LedgerCompactionWorker(store: store, intervalMs: intervalMs)
   result.stop.store(false)
+  result.stopping.store(false)
+  {.cast(gcsafe).}:
+    gLedgerWorker = result
   try:
-    createThread(result.thread, ledgerCompactionLoop, result)
-  except CatchableError as e:
-    if logger.sink != nil:
-      logger.warn("ledger compaction worker not started: " & e.msg)
+    createThread(result.thread, ledgerCompactionLoop, 0)
+  except CatchableError:
+    {.cast(gcsafe).}:
+      gLedgerWorker = nil
     result = nil
 
 proc stopLedgerCompactionWorker*(worker: LedgerCompactionWorker) =
   if worker == nil or worker.stopped:
     return
   worker.stopped = true
+  worker.stopping.store(true)
   worker.stop.store(true)
   {.cast(gcsafe).}:
     joinThread(worker.thread)
+    gLedgerWorker = nil
 
 func ledgerLastCompactError*(store: RuntimeStateStore): string =
   ## Last compaction failure, for the daemon to log after startup.

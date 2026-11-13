@@ -3,7 +3,6 @@
 import std/[atomics, monotimes, os, strutils, times, unittest]
 import results
 import donkey/adapters/state/runtime_store
-import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/types
 import donkey/ports/runtime_state
@@ -24,9 +23,9 @@ var
   gHookEntered:    Channel[bool]
   gHookRelease:    Channel[bool]
   gProbeStarted:   Channel[bool]
-  gStopStarted:    Channel[bool]
   gStopReturned:   Atomic[bool]
   gProbeOk:        bool
+  gWorkerToStop:   LedgerCompactionWorker
 
 proc blockingHook() {.gcsafe, raises: [].} =
   if not gHookEnabled.load():
@@ -74,23 +73,15 @@ proc probeWorker(_: int) {.thread.} =
     else:
       gProbeOk = false
 
-proc stopWorker(worker: LedgerCompactionWorker) {.thread.} =
+proc stopWorker(_: int) {.thread.} =
   {.cast(gcsafe).}:
-    gStopStarted.send(true)
-    stopLedgerCompactionWorker(worker)
+    stopLedgerCompactionWorker(gWorkerToStop)
     gStopReturned.store(true)
 
-proc openChannels() =
-  gHookEntered.open(1)
-  gHookRelease.open(1)
-  gProbeStarted.open(1)
-  gStopStarted.open(1)
 
-proc closeChannels() =
-  gHookEntered.close()
-  gHookRelease.close()
-  gProbeStarted.close()
-  gStopStarted.close()
+gHookEntered.open(1)
+gHookRelease.open(1)
+gProbeStarted.open(1)
 
 suite "ledger worker stress":
 
@@ -99,7 +90,7 @@ suite "ledger worker stress":
     removeDir(dir)
     defer: removeDir(dir)
 
-    let store = newRuntimeStateStore(
+    var store = newRuntimeStateStore(
       dir, ledgerRetentionDays = 1.0, ledgerCompactIntervalSec = 1.0)
     for i in 0 ..< gLedgerPorts.len:
       gLedgerPorts[i] = store.deliveryLedger()
@@ -110,16 +101,12 @@ suite "ledger worker stress":
     gHookEnabled.store(true)
     for i in 0 ..< gAppendCount.len:
       gAppendCount[i] = 0
-    openChannels()
 
     store.onCompactStart = blockingHook
     store.onAppendStart = appendStartHook
-    let worker = startLedgerCompactionWorker(
-      store, 1.0, newLogger("stress.ledger", lvlError))
+    let worker = startLedgerCompactionWorker(addr store, 1.0)
     check worker != nil
-    defer:
-      stopLedgerCompactionWorker(worker)
-      closeChannels()
+    defer: stopLedgerCompactionWorker(worker)
 
     var threads: array[4, Thread[AppendArg]]
     for i in 0 ..< threads.len:
@@ -150,8 +137,9 @@ suite "ledger worker stress":
     check gAppendErrors.load() == 0
     var expected = 0
     for i in 0 ..< gAppendCount.len:
+      check gAppendCount[i] >= 20
       expected += gAppendCount[i]
-    check expected > 0
+    check expected >= 80
     inc expected  ## the probe record
 
     let loaded = store.deliveryLedger().loadAll()
@@ -166,32 +154,45 @@ suite "ledger worker stress":
     removeDir(dir)
     defer: removeDir(dir)
 
-    let store = newRuntimeStateStore(
+    var store = newRuntimeStateStore(
       dir, ledgerRetentionDays = 1.0, ledgerCompactIntervalSec = 1.0)
     let ledger = store.deliveryLedger()
+    let old = epochMs() - 10 * 86_400_000'i64
     check ledger.recordPending(DeliveryRecord(
       id: "keep", userId: "u", channel: ckSlack, channelId: "c",
       textHash: "h", state: dlsPending,
-      createdAtMs: epochMs(), updatedAtMs: epochMs())).isOk
+      createdAtMs: old, updatedAtMs: old)).isOk
 
     gHookEnabled.store(true)
     gStopReturned.store(false)
-    openChannels()
     store.onCompactStart = blockingHook
-    let worker = startLedgerCompactionWorker(
-      store, 1.0, newLogger("stress.ledger", lvlError))
+    let worker = startLedgerCompactionWorker(addr store, 1.0)
     check worker != nil
-    defer: closeChannels()
 
     discard gHookEntered.recv()
 
-    var stopper: Thread[LedgerCompactionWorker]
-    createThread(stopper, stopWorker, worker)
-    discard gStopStarted.recv()
+    gWorkerToStop = worker
+    var stopper: Thread[int]
+    createThread(stopper, stopWorker, 0)
+    var waited = 0
+    while not worker.stopping.load() and waited < 2000:
+      sleep(1)
+      waited += 1
+    check worker.stopping.load()
     check not gStopReturned.load()
 
     gHookEnabled.store(false)
     gHookRelease.send(true)
     joinThread(stopper)
+    gWorkerToStop = nil
     check gStopReturned.load()
     check store.ledgerLastCompactError().len == 0
+
+    let loaded = store.deliveryLedger().loadAll()
+    check loaded.isOk
+    var kept = false
+    for record in loaded.get():
+      if record.id == "keep":
+        kept = true
+        check record.state == dlsPending
+    check kept

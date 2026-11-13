@@ -13,8 +13,9 @@ import ../../ports/approval
 type
   ApprovalStore* = ref object
     path*: string
-    ## Optional instrumentation hook, called immediately before `flock`.
-    onLockWait*: proc() {.gcsafe, raises: [].}
+    ## Optional instrumentation hook, called under the lock just before the
+    ## atomic write starts.
+    onBeforeSave*: proc() {.gcsafe, raises: [].}
 
 const
   MaxPendingPerUser* = 8
@@ -38,8 +39,6 @@ proc withApprovalLock*[T](store: ApprovalStore;
       createDir(parentDir(lockPath))
       var lockFile = open(lockPath, fmReadWrite)
       let fd = cint(lockFile.getFileHandle())
-      if store.onLockWait != nil:
-        store.onLockWait()
       if cFlock(fd, ApprovalLockExclusive) != 0:
         lockFile.close()
         return err("approval store lock failed")
@@ -133,6 +132,8 @@ proc save*(store: ApprovalStore;
     when defined(posix):
       discard posix.chmod(dir.cstring, posix.Mode(0o700))
     let tmp = store.path & ".tmp." & $getCurrentProcessId() & "-" & $epochMs()
+    if store.onBeforeSave != nil:
+      store.onBeforeSave()
     writeFile(tmp, $(%* {"requests": items}))
     when defined(posix):
       discard posix.chmod(tmp.cstring, posix.Mode(0o600))
