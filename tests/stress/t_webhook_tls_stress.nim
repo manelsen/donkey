@@ -100,6 +100,36 @@ suite "webhook TLS stress":
         check "200 OK" in response
         stopWebhookReceiver()
 
+      let badCfg = WebhookConfig(
+        slackSigningSecret: secret,
+        tlsCertFile: cert & ".missing",
+        tlsKeyFile: key & ".missing")
+      let badStart = startWebhookReceiver(
+        badCfg, freePort(), "127.0.0.1", stressLog)
+      check badStart.isErr
+      check "TLS certificate" in badStart.error
+
+  test "invalid TLS rotation keeps serving with the old context":
+    let (cert, key) = generateCert(stressDir / "rotation")
+    if cert.len == 0:
+      echo "skipping TLS rotation stress: openssl unavailable"
+    else:
+      let port = freePort()
+      let secret = "rotation-secret"
+      let cfg = WebhookConfig(slackSigningSecret: secret,
+                              tlsCertFile: cert, tlsKeyFile: key)
+      let started = startWebhookReceiver(cfg, port, "127.0.0.1", stressLog)
+      check started.isOk
+      defer: stopWebhookReceiver()
+
+      ## Break the files on disk. The worker must keep the previous context.
+      writeFile(cert, "not a certificate")
+      writeFile(key, "not a key")
+      sleep(1100)
+      let response = requestChallenge(port, secret, "rotation-ok")
+      check "200 OK" in response
+      check "rotation-ok" in response
+
   test "a slow TLS client does not block shutdown forever":
     let (cert, key) = generateCert(stressDir / "slow")
     if cert.len == 0:

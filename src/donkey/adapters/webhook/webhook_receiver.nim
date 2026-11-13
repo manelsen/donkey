@@ -595,6 +595,7 @@ type
   WebhookWorkerArg = object
     cfg:    WebhookConfig
     logger: Logger
+    ready:  ptr Channel[string]
 
 var
   gWebhookThread: Thread[WebhookServerArgs]
@@ -623,18 +624,26 @@ proc webhookWorker(arg: WebhookWorkerArg) {.thread.} =
     var tlsContext: SslContext
     var lastTlsCheck: MonoTime
     var certMtime, keyMtime: times.Time
+    var initError = ""
     if arg.cfg.tlsCertFile.len > 0:
-      tlsContext = newWebhookTlsContext(arg.cfg, arg.logger)
-      if tlsContext == nil:
-        arg.logger.error("webhook: TLS worker stopped; certificate unavailable")
-        return
       try:
-        certMtime = getLastModificationTime(arg.cfg.tlsCertFile)
-        keyMtime = getLastModificationTime(arg.cfg.tlsKeyFile)
+        tlsContext = newWebhookTlsContext(arg.cfg, arg.logger)
+        if tlsContext == nil:
+          initError = "TLS certificate unavailable"
+        else:
+          certMtime = getLastModificationTime(arg.cfg.tlsCertFile)
+          keyMtime = getLastModificationTime(arg.cfg.tlsKeyFile)
+          lastTlsCheck = getMonoTime()
       except CatchableError as e:
-        arg.logger.error("webhook: cannot stat TLS certificate: " & e.msg)
-        return
-      lastTlsCheck = getMonoTime()
+        initError = "cannot stat TLS certificate: " & e.msg
+    if arg.ready != nil:
+      try:
+        arg.ready[].send(initError)
+      except CatchableError:
+        discard
+    if initError.len > 0:
+      arg.logger.error("webhook: TLS worker stopped: " & initError)
+      return
 
     while true:
       let fd = gWebhookQueue.recv()
@@ -692,10 +701,13 @@ proc startWebhookPool(cfg: WebhookConfig; logger: Logger): Result[void, string] 
   if not gWebhookQueueOpened:
     gWebhookQueue.open(WebhookQueueDepth)
     gWebhookQueueOpened = true
+  var ready: Channel[string]
+  ready.open(WebhookWorkerCount)
   try:
     for i in 0 ..< WebhookWorkerCount:
       createThread(gWebhookWorkers[i], webhookWorker,
-                   WebhookWorkerArg(cfg: cfg, logger: logger))
+                   WebhookWorkerArg(cfg: cfg, logger: logger,
+                                    ready: addr ready))
       inc gWebhookWorkersStarted
   except CatchableError as e:
     ## Stop the workers that were already created before reporting failure.
@@ -703,9 +715,23 @@ proc startWebhookPool(cfg: WebhookConfig; logger: Logger): Result[void, string] 
       gWebhookQueue.send(SocketHandle(-1))
     for i in 0 ..< gWebhookWorkersStarted:
       joinThread(gWebhookWorkers[i])
-    gWebhookQueue.close()
     gWebhookWorkersStarted = 0
+    ready.close()
     return err("cannot start webhook workers: " & e.msg)
+
+  var initError = ""
+  for _ in 0 ..< gWebhookWorkersStarted:
+    let status = ready.recv()
+    if status.len > 0 and initError.len == 0:
+      initError = status
+  ready.close()
+  if initError.len > 0:
+    for _ in 0 ..< gWebhookWorkersStarted:
+      gWebhookQueue.send(SocketHandle(-1))
+    for i in 0 ..< gWebhookWorkersStarted:
+      joinThread(gWebhookWorkers[i])
+    gWebhookWorkersStarted = 0
+    return err("webhook worker initialization failed: " & initError)
   gWebhookPoolStarted = true
   ok()
 

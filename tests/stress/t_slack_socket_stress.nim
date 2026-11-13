@@ -72,6 +72,51 @@ suite "Slack Socket Mode stress":
     check event.slackUserId == "U9"
     check event.text == "stress-action"
 
+  test "events_api, slash_commands and object interactive enqueue":
+    drainAll(slackStress)
+
+    check handleSlackSocketEnvelope(%* {
+      "type": "events_api", "envelope_id": "ea1",
+      "payload": {
+        "type": "event_callback", "team_id": "T1", "event_id": "Ev1",
+        "event": {
+          "type": "message", "user": "U1", "text": "socket message",
+          "channel": "C1", "ts": "1.1",
+        },
+      },
+    })
+    let (hasMessage, messageEvent) = slackStress.tryRecvEvent()
+    check hasMessage
+    check messageEvent.kind == srMessage
+    check messageEvent.text == "socket message"
+    check messageEvent.eventId == "Ev1"
+
+    check handleSlackSocketEnvelope(%* {
+      "type": "slash_commands", "envelope_id": "ea2",
+      "payload": {
+        "user_id": "U2", "command": "/models", "text": "openrouter",
+        "channel_id": "C2", "team_id": "T2",
+        "response_url": "https://hooks.slack.com/rsp", "trigger_id": "tr1",
+      },
+    })
+    let (hasSlash, slashEvent) = slackStress.tryRecvEvent()
+    check hasSlash
+    check slashEvent.kind == srSlashCommand
+    check slashEvent.text == "/models openrouter"
+
+    check handleSlackSocketEnvelope(%* {
+      "type": "interactive", "envelope_id": "ea3",
+      "payload": {
+        "type": "block_actions", "user": {"id": "U3"},
+        "actions": [{"action_id": "object-action"}],
+        "channel": {"id": "C3"}, "team_id": "T3",
+      },
+    })
+    let (hasAction, actionEvent) = slackStress.tryRecvEvent()
+    check hasAction
+    check actionEvent.kind == srBlockAction
+    check actionEvent.text == "object-action"
+
   test "valid WebSocket text and ping frames parse":
     let (ws, peer) = makePair()
     defer:
