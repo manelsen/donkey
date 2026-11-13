@@ -65,7 +65,11 @@ proc stringSha256*(data: string): string =
 
 proc fileSha256*(path: string): Result[string, string] =
   ## Hash the artifact that will actually be executed (WASI module bytes).
+  ## The size check bounds the daemon's own read to the same cap as the guest.
   try:
+    let size = getFileSize(path)
+    if size <= 0 or size > CodeMaxWasmBytes:
+      return err("wasm module size is invalid: " & path)
     let data = readFile(path)
     ok(stringSha256(data))
   except CatchableError as e:
