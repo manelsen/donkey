@@ -15,6 +15,7 @@ type
 var
   gLedgerPorts:    array[4, DeliveryLedgerPort]
   gProbePort:      DeliveryLedgerPort
+  gReaderPort:     DeliveryLedgerPort
   gAppendCount:    array[4, Atomic[int]]
   gAppendErrors:   Atomic[int]
   gStopAppenders:  Atomic[bool]
@@ -23,6 +24,8 @@ var
   gHookRelease:    Channel[bool]
   gProbeStarted:   Channel[bool]
   gStopReturned:   Atomic[bool]
+  gReaderErrors:   Atomic[int]
+  gStopReader:     Atomic[bool]
   gProbeOk:        bool
   gWorkerToStop:   LedgerCompactionWorker
 
@@ -72,6 +75,13 @@ proc probeWorker(_: int) {.thread.} =
     else:
       gProbeOk = false
 
+proc readerWorker(_: int) {.thread.} =
+  {.cast(gcsafe).}:
+    while not gStopReader.load():
+      if gReaderPort.loadAll().isErr:
+        discard gReaderErrors.fetchAdd(1)
+      sleep(1)
+
 proc stopWorker(_: int) {.thread.} =
   {.cast(gcsafe).}:
     stopLedgerCompactionWorker(gWorkerToStop)
@@ -94,8 +104,11 @@ suite "ledger worker stress":
     for i in 0 ..< gLedgerPorts.len:
       gLedgerPorts[i] = store.deliveryLedger()
     gProbePort = store.deliveryLedger()
+    gReaderPort = store.deliveryLedger()
     gProbeOk = false
     gAppendErrors.store(0)
+    gReaderErrors.store(0)
+    gStopReader.store(false)
     gStopAppenders.store(false)
     gHookEnabled.store(true)
     for i in 0 ..< gAppendCount.len:
@@ -108,6 +121,9 @@ suite "ledger worker stress":
     let worker = workerRes.get()
     check worker != nil
     defer: stopLedgerCompactionWorker(worker)
+
+    var reader: Thread[int]
+    createThread(reader, readerWorker, 0)
 
     var threads: array[4, Thread[AppendArg]]
     for i in 0 ..< threads.len:
@@ -147,6 +163,10 @@ suite "ledger worker stress":
     stopLedgerCompactionWorker(worker)  # idempotent
     check inMilliseconds(getMonoTime() - started) < 2000
     check store.ledgerLastCompactError().len == 0
+
+    gStopReader.store(true)
+    joinThread(reader)
+    check gReaderErrors.load() == 0
 
     check gAppendErrors.load() == 0
     var expected = 0

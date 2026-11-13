@@ -41,7 +41,7 @@ proc createWorker(arg: CreateArg) {.thread.} =
 proc blockedCreateWorker(arg: CreateArg) {.thread.} =
   {.cast(gcsafe).}:
     let store = newApprovalStore(arg.path)
-    store.onBeforeSave = proc() {.gcsafe, raises: [].} =
+    store.onAfterTempWrite = proc() {.gcsafe, raises: [].} =
       {.cast(gcsafe).}:
         {.cast(raises: []).}:
           gSaveWait.send(true)

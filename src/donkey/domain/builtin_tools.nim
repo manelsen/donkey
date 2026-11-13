@@ -52,7 +52,7 @@ func truncateBody*(body: string; maxChars: int): string =
 
 func parseWebAllowlist*(raw: string): seq[string] =
   for item in raw.split(','):
-    let host = item.strip().toLowerAscii()
+    let host = normalizeHost(item.strip())
     if host.len > 0:
       result.add(host)
 

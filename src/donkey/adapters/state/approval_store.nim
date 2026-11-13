@@ -13,9 +13,9 @@ import ../../ports/approval
 type
   ApprovalStore* = ref object
     path*: string
-    ## Optional instrumentation hook, called under the lock just before the
-    ## atomic write starts.
-    onBeforeSave*: proc() {.gcsafe, raises: [].}
+    ## Optional instrumentation hook, called under the lock after the temp
+    ## file is written and before the atomic rename.
+    onAfterTempWrite*: proc() {.gcsafe, raises: [].}
 
 const
   MaxPendingPerUser* = 8
@@ -132,11 +132,11 @@ proc save*(store: ApprovalStore;
     when defined(posix):
       discard posix.chmod(dir.cstring, posix.Mode(0o700))
     let tmp = store.path & ".tmp." & $getCurrentProcessId() & "-" & $epochMs()
-    if store.onBeforeSave != nil:
-      store.onBeforeSave()
     writeFile(tmp, $(%* {"requests": items}))
     when defined(posix):
       discard posix.chmod(tmp.cstring, posix.Mode(0o600))
+    if store.onAfterTempWrite != nil:
+      store.onAfterTempWrite()
     {.cast(raises: []).}:
       moveFile(tmp, store.path)
     ok()

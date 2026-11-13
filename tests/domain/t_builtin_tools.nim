@@ -107,6 +107,11 @@ suite "web allowlist":
   test "isAllowedPublicUrl allows public URLs when allowlist empty":
     check isAllowedPublicUrl("https://example.com/docs", @[])
 
+  test "allowlist entries normalize trailing dots":
+    check parseWebAllowlist(" example.com. , api.github.com ") ==
+      @["example.com", "api.github.com"]
+    check isAllowedPublicUrl("https://example.com./docs", @["example.com"])
+
   test "isAllowedPublicUrl blocks public URL outside allowlist":
     check not isAllowedPublicUrl("https://example.com/docs", @["api.github.com"])
 

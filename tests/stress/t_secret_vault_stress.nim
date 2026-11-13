@@ -38,7 +38,7 @@ proc setWorker(arg: SetArg) {.thread.} =
 proc blockedSetWorker(arg: SetArg) {.thread.} =
   {.cast(gcsafe).}:
     let vault = newSecretVault(arg.home)
-    vault.onBeforeWrite = proc() {.gcsafe, raises: [].} =
+    vault.onAfterTempWrite = proc() {.gcsafe, raises: [].} =
       {.cast(gcsafe).}:
         {.cast(raises: []).}:
           gSaveWait.send(true)

@@ -38,9 +38,9 @@ type
     path*:     string
     keyPath*:  string
     keyStore:  FileKeyStore
-    ## Optional instrumentation hook, called under the lock just before the
-    ## atomic write starts.
-    onBeforeWrite*: proc() {.gcsafe, raises: [].}
+    ## Optional instrumentation hook, called under the lock after the temp
+    ## file is written and before the atomic rename.
+    onAfterTempWrite*: proc() {.gcsafe, raises: [].}
 
 when defined(posix):
   proc cFlock(fd: cint; operation: cint): cint {.
@@ -141,8 +141,6 @@ proc writeStored(vault: SecretVault;
     if dirHardened.isErr:
       return err(dirHardened.error)
     tmp = vault.path & ".tmp." & $getCurrentProcessId() & "-" & $epochMs()
-    if vault.onBeforeWrite != nil:
-      vault.onBeforeWrite()
     writeFile(tmp, payload.pretty & "\n")
     let fileHardened = hardenFilePermissions(tmp)
     if fileHardened.isErr:
@@ -151,6 +149,8 @@ proc writeStored(vault: SecretVault;
       except CatchableError:
         discard
       return err(fileHardened.error)
+    if vault.onAfterTempWrite != nil:
+      vault.onAfterTempWrite()
     {.cast(raises: []).}:
       moveFile(tmp, vault.path)
     ok()
