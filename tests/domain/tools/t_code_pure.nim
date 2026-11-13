@@ -48,6 +48,14 @@ suite "execute_code pure policy":
     check not codeWorkspaceMountAllowed("/home/u/pad:dock")
     check not codeWorkspaceMountAllowed("/home/u/pad\0dock")
 
+  test "rejects image values that look like options":
+    check validCodeImage("python:3.12-alpine")
+    check validCodeImage("registry.example.com/team/code:1")
+    check not validCodeImage("")
+    check not validCodeImage("--privileged")
+    check not validCodeImage("alpine --privileged")
+    check not validCodeImage("alpine\n--privileged")
+
   test "OCI argv carries every isolation flag":
     let argv = buildOciCodeArgv(
       "docker", "python:3.12-alpine", "/home/u/paddock", 1000, 1000,

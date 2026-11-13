@@ -113,6 +113,13 @@ func validateCodeSource*(language: CodeLanguage; code: string;
     return err("code exceeds " & $cap & " bytes")
   ok()
 
+func validCodeImage*(image: string): bool =
+  ## The image is an operator setting, but it is also an argv entry before the
+  ## container command. Reject values that Docker would parse as an option or
+  ## that would smuggle whitespace/control bytes.
+  image.len > 0 and image[0] != '-' and
+    not image.contains({' ', '\t', '\n', '\r', '\0'})
+
 func codeWorkspaceMountAllowed*(workspace: string): bool =
   ## Docker bind mounts cannot represent a colon in the host path safely and a
   ## NUL would truncate the option. The workspace is daemon-generated, but a
@@ -137,7 +144,8 @@ func buildOciCodeArgv*(runtimeCmd, image, workspace: string;
                        containerName: string): seq[string] =
   ## Builds a dedicated, locked-down container invocation. The command is
   ## passed as separate argv entries; the host never evaluates a shell string.
-  if runtimeCmd.len == 0 or image.len == 0 or containerName.len == 0:
+  if runtimeCmd.len == 0 or containerName.len == 0 or
+     not validCodeImage(image):
     return @[]
   if not codeWorkspaceMountAllowed(workspace):
     return @[]
