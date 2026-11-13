@@ -1006,17 +1006,19 @@ func approvalSummary(toolName: string; j: JsonNode): string =
       if timeoutNode != nil and timeoutNode.kind == JInt: $timeoutNode.getInt()
       else: $parseCodeTimeoutSec(getEnv("DONKEY_CODE_TIMEOUT_SEC"))
     result = "language=" & language & " timeout=" & timeout & "s\n"
+    let languageOpt = parseCodeLanguage(language)
+    let isWasm = languageOpt.isSome and languageOpt.get() == clWasm
     let codeNode = j.getOrDefault("code")
     let code =
       if codeNode != nil and codeNode.kind == JString: codeNode.getStr("")
       else: ""
-    if code.len > 0:
-      result.add(code)
-    else:
+    if isWasm or code.len == 0:
       let pathNode = j.getOrDefault("wasm_path")
       result.add("wasm_path=" &
         (if pathNode != nil and pathNode.kind == JString: pathNode.getStr("")
          else: ""))
+    else:
+      result.add(code)
   elif toolName == BashToolName:
     result = j.getOrDefault("command").getStr("")
     if result.len == 0:

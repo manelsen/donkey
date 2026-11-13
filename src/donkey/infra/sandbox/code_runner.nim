@@ -140,8 +140,12 @@ proc runBoundedProcess*(argv: seq[string]; timeoutSec: int;
     let stream = p.outputStream
     var buffer = newString(8192)
     while true:
+      ## Read at most one byte past the remaining budget. Waiting for a full
+      ## 8192-byte block would let a chatty program hit the wall-clock timeout
+      ## before the cap is even observed.
+      let want = min(buffer.len, cap - output.len + 1)
       let n = try:
-        stream.readData(addr buffer[0], buffer.len)
+        stream.readData(addr buffer[0], want)
       except CatchableError as e:
         readError = e.msg
         break
@@ -232,12 +236,13 @@ proc runWasmCode*(workspace, wasmPath: string;
   var argv = buildWasmCodeArgv(wasmtimeExe, workspace, wasmPath, scratch)
   if argv.len == 0:
     return err("invalid WASI execution request")
-  ## wasmtime's CLI does not expose a per-run memory cap. util-linux prlimit
-  ## bounds the host address space when available; otherwise the guest's own
-  ## declared memory is the limit and the outer timeout still bounds CPU time.
+  ## wasmtime's CLI does not expose a per-run memory cap. util-linux prlimit is
+  ## therefore required for WASI: without a host address-space bound, a module
+  ## could exhaust host memory before the wall-clock timeout.
   let prlimitExe = findExeSafe("prlimit")
-  if prlimitExe.len > 0:
-    argv = @[prlimitExe, "--as=6442450944", "--"] & argv
+  if prlimitExe.len == 0:
+    return err("prlimit is required for WASI execute_code; refusing to run without a host memory bound")
+  argv = @[prlimitExe, "--as=6442450944", "--"] & argv
   let run = runBoundedProcess(argv, timeoutSec, maxOutputBytes)
   if run.isErr:
     return err(run.error)

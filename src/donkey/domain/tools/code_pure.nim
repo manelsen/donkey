@@ -4,8 +4,7 @@
 ## the workspace and resolves paths; the runner executes the argv. Keeping the
 ## argv construction pure makes the security flags testable without Docker.
 
-import std/[options, strutils]
-import results
+import std/[options, strutils, unicode]
 
 type
   CodeLanguage* = enum
@@ -99,19 +98,20 @@ func defaultCodeImage*(language: CodeLanguage): string =
   of clWasm: ""
 
 func validateCodeSource*(language: CodeLanguage; code: string;
-                         maxSourceBytes: int): Result[void, string] =
+                         maxSourceBytes: int): Option[string] =
+  ## `none` means valid; `some(message)` is the pure rejection reason.
   if language == clWasm:
     if code.len > 0:
-      return err("wasm language uses wasm_path, not code")
-    return ok()
+      return some("wasm language uses wasm_path, not code")
+    return none(string)
   if code.len == 0:
-    return err("code is required for language '" & $language & "'")
+    return some("code is required for language '" & $language & "'")
   if '\0' in code:
-    return err("code contains a NUL byte")
+    return some("code contains a NUL byte")
   let cap = clampCodeMaxSourceBytes(maxSourceBytes)
   if code.len > cap:
-    return err("code exceeds " & $cap & " bytes")
-  ok()
+    return some("code exceeds " & $cap & " bytes")
+  none(string)
 
 func validCodeImage*(image: string): bool =
   ## The image is an operator setting, but it is also an argv entry before the
@@ -194,20 +194,24 @@ func buildWasmCodeArgv*(wasmtimePath, workspace, wasmPath,
   ]
 
 func capUtf8Bytes*(text: string; maxBytes: int): string =
-  ## Cuts at a UTF-8 boundary so a byte cap never emits a partial rune.
-  if maxBytes <= 0 or text.len <= maxBytes:
-    return text
-  var cut = maxBytes
-  while cut > 0 and (ord(text[cut]) and 0xC0) == 0x80:
-    dec cut
-  text[0 ..< cut]
+  ## Cuts at a UTF-8 boundary, including when the input already ends with a
+  ## partial rune at the cap. A byte cap never emits a partial sequence.
+  if maxBytes <= 0:
+    return ""
+  var i = 0
+  while i < text.len:
+    let n = runeLenAt(text, i)
+    if n <= 0 or i + n > text.len or i + n > maxBytes:
+      break
+    i += n
+  text[0 ..< i]
 
 func capExecutionOutput*(output: string; maxBytes: int): CodeOutput =
   let cap = clampCodeMaxOutputBytes(maxBytes)
-  if output.len <= cap:
+  let cappedText = capUtf8Bytes(output, cap)
+  if output.len <= cap and cappedText.len == output.len:
     return CodeOutput(text: output, truncated: false)
-  CodeOutput(text: capUtf8Bytes(output, cap) & "\n[output truncated]",
-             truncated: true)
+  CodeOutput(text: cappedText & "\n[output truncated]", truncated: true)
 
 func ociInfrastructureFailure*(output: string): bool =
   ## Distinguishes a broken daemon/image from code that exited non-zero.

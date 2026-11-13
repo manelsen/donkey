@@ -35,12 +35,12 @@ suite "execute_code pure policy":
     check parseCodeMaxSourceBytes("4096") == 4096
 
   test "validates source size and wasm shape":
-    check validateCodeSource(clPython, "", 1024).isErr
-    check validateCodeSource(clPython, "print(1)", 1024).isOk
-    check validateCodeSource(clPython, "a\0b", 1024).isErr
-    check validateCodeSource(clPython, repeat("x", 2048), 1024).isErr
-    check validateCodeSource(clWasm, "", 1024).isOk
-    check validateCodeSource(clWasm, "ignored", 1024).isErr
+    check validateCodeSource(clPython, "", 1024).isSome
+    check validateCodeSource(clPython, "print(1)", 1024).isNone
+    check validateCodeSource(clPython, "a\0b", 1024).isSome
+    check validateCodeSource(clPython, repeat("x", 2048), 1024).isSome
+    check validateCodeSource(clWasm, "", 1024).isNone
+    check validateCodeSource(clWasm, "ignored", 1024).isSome
 
   test "rejects unsafe workspace mounts":
     check codeWorkspaceMountAllowed("/home/u/paddock")
@@ -114,6 +114,11 @@ suite "execute_code pure policy":
     check capUtf8Bytes("é", 1) == ""
     check validateUtf8(capUtf8Bytes("a😀b", 2)) == -1
     check capUtf8Bytes("a😀b", 2) == "a"
+    check capUtf8Bytes("a\xC3", 2) == "a"
+    let exactCut = capExecutionOutput(repeat("a", CodeMinMaxOutputBytes - 1) & "\xC3",
+                                      CodeMinMaxOutputBytes)
+    check exactCut.truncated
+    check validateUtf8(exactCut.text) == -1
 
   test "output cap is byte-exact and marks truncation":
     let exactText = repeat("a", CodeMinMaxOutputBytes)

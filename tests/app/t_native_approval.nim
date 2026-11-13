@@ -224,6 +224,47 @@ suite "native tool approval gate":
     check "echo hello" in captured
     check "requires sandbox.mode" in res.text
 
+  test "execute_code wasm approval shows the module path, not code":
+    var captured = ""
+    let approveStore = ApprovalStorePort(
+      create: proc(userId: string; channel: string; toolName, summary: string;
+                   ttlMs: int64): Result[ApprovalRequest, string] {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}:
+          captured = summary
+        ok(ApprovalRequest(id: "code0003", userId: userId, channel: channel,
+                           toolName: toolName, summary: summary,
+                           createdAtMs: 0, expiresAtMs: 60_000,
+                           status: apsPending)),
+      status: proc(id: string): Result[ApprovalStatus, string] {.gcsafe, raises: [].} =
+        ok(apsApproved),
+      decide: proc(id, userId: string; approved: bool;
+                   admin: bool): Result[void, string] {.gcsafe, raises: [].} =
+        ok(),
+      listPending: proc(userId: string): Result[seq[ApprovalRequest], string] {.gcsafe, raises: [].} =
+        ok(newSeq[ApprovalRequest]()),
+    )
+    configureApprovalService(approveStore, @["execute_code"])
+    defer: resetApprovalService()
+    let outbox = newAsyncQueue[OutboundMessage](4)
+    var ctx = NativeCtx(
+      uid: UserId("u1"),
+      channel: ckTelegram,
+      outbox: outbox,
+      approval: currentApprovalService(),
+      log: nativeApprovalLog,
+      paddockDir: "/tmp",
+      sandboxMode: cfgTypes.smWasm,
+    )
+    let call = ToolCallRequest(
+      id: "t7",
+      name: "execute_code",
+      inputJson: """{"language":"wasm","code":"not the module","wasm_path":"missing.wasm"}""",
+    )
+    let res = waitFor executeNativeTool(call, ctx, SessionState(), @[])
+    check res.handled
+    check "wasm_path=missing.wasm" in captured
+    check "not the module" notin captured
+
   test "oversized execute_code source is blocked before approval":
     var created = 0
     let dummyStore = ApprovalStorePort(

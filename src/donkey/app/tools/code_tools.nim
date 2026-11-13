@@ -137,8 +137,8 @@ proc parseCodeRequest*(input: JsonNode; workspace: string;
     return err("code is required for language '" & $req.language & "'")
   req.code = codeNode.getStr("")
   let validated = validateCodeSource(req.language, req.code, maxSourceBytes)
-  if validated.isErr:
-    return err(validated.error)
+  if validated.isSome:
+    return err(validated.get())
   ok(req)
 
 proc runCodeRequest*(req: CodeRequest;
