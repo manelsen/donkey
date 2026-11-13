@@ -857,7 +857,8 @@ proc executeCodeNativeTool(tc: ToolCallRequest;
   let cfg = codeConfigFromEnv(ctx.sandboxMode,
                               ctx.sandboxRuntimeCmd).valueOr:
     return handledError(error)
-  let req = parseCodeRequest(j, ctx.paddockDir, cfg.maxSourceBytes).valueOr:
+  let req = parseCodeRequest(j, ctx.paddockDir, cfg.maxSourceBytes,
+                             cfg.timeoutSec).valueOr:
     return handledError(error)
   let executed = runCodeRequest(req, cfg, ctx.paddockDir, ctx.uid, ctx.channel,
                                 ctx.log)
@@ -1003,7 +1004,7 @@ func approvalSummary(toolName: string; j: JsonNode): string =
     let timeoutNode = j.getOrDefault("timeout_sec")
     let timeout =
       if timeoutNode != nil and timeoutNode.kind == JInt: $timeoutNode.getInt()
-      else: "10"
+      else: $parseCodeTimeoutSec(getEnv("DONKEY_CODE_TIMEOUT_SEC"))
     result = "language=" & language & " timeout=" & timeout & "s\n"
     let codeNode = j.getOrDefault("code")
     let code =

@@ -4,7 +4,6 @@
 ## argv and process I/O live in `infra/sandbox/code_runner`.
 
 import std/[json, options, os, strutils]
-import results
 
 import nimcrypto/sha2
 import ../../core/log
@@ -83,19 +82,16 @@ proc resolveWasmPath(workspace, rawPath: string): Result[string, string] =
   let logical = resolveInPaddock(rawPath, workspace)
   if not inPaddock(logical, workspace):
     return err("wasm_path outside paddock: " & rawPath)
-  let canonicalWorkspace = try:
-    expandFilename(workspace)
-  except CatchableError:
+  let canonicalWorkspace = canonicalPath(workspace).valueOr:
     workspace
-  let canonical = try:
-    expandFilename(logical)
-  except CatchableError:
-    logical
+  let canonical = canonicalPath(logical).valueOr:
+    return err(error)
   if not inPaddock(canonical, canonicalWorkspace):
     return err("wasm_path resolves outside paddock: " & rawPath)
   if not fileExists(canonical):
     return err("wasm module not found: " & rawPath)
-  let size = try: getFileSize(canonical) except CatchableError: 0'i64
+  let size = regularFileSize(canonical).valueOr:
+    return err(error)
   if size <= 0:
     return err("wasm module is empty: " & rawPath)
   if size > CodeMaxWasmBytes:
@@ -103,7 +99,8 @@ proc resolveWasmPath(workspace, rawPath: string): Result[string, string] =
   ok(canonical)
 
 proc parseCodeRequest*(input: JsonNode; workspace: string;
-                       maxSourceBytes = CodeDefaultMaxSourceBytes):
+                       maxSourceBytes = CodeDefaultMaxSourceBytes;
+                       defaultTimeoutSec = CodeDefaultTimeoutSec):
                        Result[CodeRequest, string] =
   let languageNode = input.getOrDefault("language")
   let rawLanguage =
@@ -120,7 +117,7 @@ proc parseCodeRequest*(input: JsonNode; workspace: string;
   if timeoutNode != nil and timeoutNode.kind == JInt:
     req.timeoutSec = clampCodeTimeoutSec(timeoutNode.getInt())
   else:
-    req.timeoutSec = CodeDefaultTimeoutSec
+    req.timeoutSec = clampCodeTimeoutSec(defaultTimeoutSec)
 
   if req.language == clWasm:
     let pathNode = input.getOrDefault("wasm_path")
@@ -150,6 +147,9 @@ proc runCodeRequest*(req: CodeRequest;
                      uid: UserId;
                      channel: ChannelKind;
                      log: Logger): Result[CodeExecution, string] =
+  ## NOTE: this blocks the tool actor for up to `timeoutSec`, exactly like
+  ## `bash`. Moving it to a helper process/thread is an architectural follow-up;
+  ## it must not be hidden behind a `gcsafe` cast.
   if cfg.sandbox == cskWasm and req.language != clWasm:
     return err("sandbox.mode='wasm' only supports language='wasm'")
   if cfg.sandbox == cskOci and req.language == clWasm:

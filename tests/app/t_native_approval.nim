@@ -179,6 +179,8 @@ suite "native tool approval gate":
     check not fileExists(marker)
 
   test "execute_code approval summary shows language and code":
+    putEnv("DONKEY_CODE_TIMEOUT_SEC", "30")
+    defer: delEnv("DONKEY_CODE_TIMEOUT_SEC")
     var captured = ""
     let approveStore = ApprovalStorePort(
       create: proc(userId: string; channel: string; toolName, summary: string;
@@ -218,6 +220,7 @@ suite "native tool approval gate":
     let res = waitFor executeNativeTool(call, ctx, SessionState(), @[])
     check res.handled
     check "language=shell" in captured
+    check "timeout=30s" in captured
     check "echo hello" in captured
     check "requires sandbox.mode" in res.text
 

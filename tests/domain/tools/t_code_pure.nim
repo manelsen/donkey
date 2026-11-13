@@ -1,7 +1,7 @@
 ## Tests for pure execute_code policy and argv construction.
 
 import std/[options, strutils, unicode, unittest]
-import results
+import donkey/core/pipeops
 import donkey/domain/tools/code_pure
 
 suite "execute_code pure policy":

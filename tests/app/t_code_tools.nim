@@ -1,7 +1,6 @@
 ## Tests for execute_code input validation and fail-closed policy.
 
 import std/[json, os, strutils, unittest]
-import results
 import donkey/app/tools/code_tools
 import donkey/app/sandbox
 import donkey/core/log
@@ -106,6 +105,17 @@ suite "execute_code input validation":
     let small = parseCodeRequest(%*{"language": "shell", "code": "echo hi",
                                     "timeout_sec": 0}, dir).get()
     check small.timeoutSec == CodeDefaultTimeoutSec
+
+  test "configured default timeout is used when omitted":
+    let dir = freshPaddock("timeout-default")
+    defer: removeDir(dir)
+    let req = parseCodeRequest(%*{"language": "shell", "code": "echo hi"},
+                               dir, defaultTimeoutSec = 30).get()
+    check req.timeoutSec == 30
+    let explicit = parseCodeRequest(%*{"language": "shell", "code": "echo hi",
+                                       "timeout_sec": 5}, dir,
+                                    defaultTimeoutSec = 30).get()
+    check explicit.timeoutSec == 5
 
   test "mode and language mismatch fails without spawning":
     let dir = freshPaddock("mismatch")

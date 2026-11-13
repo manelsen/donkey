@@ -5,7 +5,6 @@
 ## caps the output and cleans up the container.
 
 import std/[atomics, os, osproc, streams, strtabs, times]
-import results
 when defined(posix):
   import std/posix
 
@@ -45,6 +44,24 @@ proc timeoutCommand(): string =
   result = findExeSafe("timeout")
   if result.len == 0:
     result = findExeSafe("gtimeout")
+
+proc canonicalPath*(path: string): Result[string, string] =
+  ## Filesystem I/O stays in infra; the app layer only interprets the Result.
+  try:
+    ok(expandFilename(path))
+  except CatchableError as e:
+    err("cannot canonicalize path: " & e.msg)
+
+proc regularFileSize*(path: string): Result[int64, string] =
+  try:
+    if not fileExists(path):
+      return err("file not found: " & path)
+    let size = getFileSize(path)
+    if size < 0:
+      return err("cannot read file size: " & path)
+    ok(size)
+  except CatchableError as e:
+    err("cannot read file size: " & path & ": " & e.msg)
 
 proc nextContainerName(): string =
   buildContainerName(getCurrentProcessId().int, epochMs(),
@@ -220,7 +237,7 @@ proc runWasmCode*(workspace, wasmPath: string;
   ## declared memory is the limit and the outer timeout still bounds CPU time.
   let prlimitExe = findExeSafe("prlimit")
   if prlimitExe.len > 0:
-    argv = @[prlimitExe, "--as=536870912", "--"] & argv
+    argv = @[prlimitExe, "--as=6442450944", "--"] & argv
   let run = runBoundedProcess(argv, timeoutSec, maxOutputBytes)
   if run.isErr:
     return err(run.error)
