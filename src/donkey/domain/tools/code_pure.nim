@@ -106,6 +106,8 @@ func validateCodeSource*(language: CodeLanguage; code: string;
     return ok()
   if code.len == 0:
     return err("code is required for language '" & $language & "'")
+  if '\0' in code:
+    return err("code contains a NUL byte")
   let cap = clampCodeMaxSourceBytes(maxSourceBytes)
   if code.len > cap:
     return err("code exceeds " & $cap & " bytes")

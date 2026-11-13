@@ -37,6 +37,7 @@ suite "execute_code pure policy":
   test "validates source size and wasm shape":
     check validateCodeSource(clPython, "", 1024).isErr
     check validateCodeSource(clPython, "print(1)", 1024).isOk
+    check validateCodeSource(clPython, "a\0b", 1024).isErr
     check validateCodeSource(clPython, repeat("x", 2048), 1024).isErr
     check validateCodeSource(clWasm, "", 1024).isOk
     check validateCodeSource(clWasm, "ignored", 1024).isErr
