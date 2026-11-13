@@ -21,8 +21,24 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 run_one() {
   local f="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    f="$(realpath -m --relative-to=. "$f")"
+  else
+    while [[ "$f" == ./* ]]; do
+      f="${f#./}"
+    done
+  fi
   local tmp_dir="$2"
   local id="$3"
+
+  # Stress tests are opt-in; the normal suite stays fast and deterministic.
+  case "$f" in
+    tests/stress/*)
+      if [ "${DONKEY_STRESS:-0}" != "1" ]; then
+        return 0
+      fi
+      ;;
+  esac
 
   # Skip files that require special build flags (opt-in backends)
   case "$f" in
@@ -37,6 +53,7 @@ run_one() {
   esac
 
   local log="$tmp_dir/test_${id}.log"
+  printf "RUN   %s\n" "$f"
   if nim c --hints:off --mm:orc -u:withPostgres -r "$f" > "$log" 2>&1; then
     touch "$tmp_dir/pass_${id}"
     local summary
@@ -50,11 +67,48 @@ run_one() {
 }
 export -f run_one
 
-# Determine targets
+normalize_target() {
+  local target="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    target="$(realpath -m --relative-to=. "$target")"
+  else
+    while [[ "$target" == ./* ]]; do
+      target="${target#./}"
+    done
+    if [[ -z "$target" ]]; then
+      target="."
+    fi
+  fi
+  while [[ "$target" == */ ]] || [[ "$target" == */. ]]; do
+    target="${target%/}"
+    target="${target%/.}"
+  done
+  if [[ "$target" == /* ]]; then
+    local root
+    root="$(pwd)"
+    if [[ "$target" == "$root" ]]; then
+      target="."
+    elif [[ "$target" == "$root/"* ]]; then
+      target="${target#"$root"/}"
+    fi
+  fi
+  printf '%s' "$target"
+}
+
+# Normalize targets once so filters, find and stress detection agree.
 TARGETS=("$@")
 if [ "${#TARGETS[@]}" -eq 0 ]; then
   TARGETS=("tests")
 fi
+normalized_targets=()
+for target in "${TARGETS[@]}"; do
+  normalized="$(normalize_target "$target")"
+  normalized_targets+=("$normalized")
+  case "$normalized" in
+    tests/stress|tests/stress/*) export DONKEY_STRESS=1 ;;
+  esac
+done
+TARGETS=("${normalized_targets[@]}")
 
 idx=0
 items=()

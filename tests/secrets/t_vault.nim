@@ -45,6 +45,26 @@ suite "SecretVault":
     check res.isErr
     check vault.listSecretNames().get() == @["KEEP"]
 
+  test "batch validation rejects any tampered existing entry":
+    removeDir(VaultTmp / "batch-tamper")
+    let vault = newSecretVault(VaultTmp / "batch-tamper")
+    check vault.setSecret("A", "alpha").isOk
+    check vault.setSecret("B", "beta").isOk
+
+    var root = parseJson(readFile(vault.path))
+    var ciphertext = root["secrets"]["B"].getStr()
+    let firstCipherHex = "enc2:".len + 12 * 2
+    ciphertext[firstCipherHex] =
+      if ciphertext[firstCipherHex] == '0': '1' else: '0'
+    root["secrets"]["B"] = %ciphertext
+    writeFile(vault.path, $root)
+    let before = readFile(vault.path)
+
+    let res = vault.setSecret("C", "gamma")
+    check res.isErr
+    check "does not match" in res.error
+    check readFile(vault.path) == before
+
   test "a substituted key cannot append to an existing vault":
     removeDir(VaultTmp / "subkey")
     let vault = newSecretVault(VaultTmp / "subkey")

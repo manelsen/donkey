@@ -38,6 +38,9 @@ type
     path*:     string
     keyPath*:  string
     keyStore:  FileKeyStore
+    ## Optional instrumentation hook, called under the lock just before the
+    ## atomic write starts.
+    onBeforeWrite*: proc() {.gcsafe, raises: [].}
 
 when defined(posix):
   proc cFlock(fd: cint; operation: cint): cint {.
@@ -138,6 +141,8 @@ proc writeStored(vault: SecretVault;
     if dirHardened.isErr:
       return err(dirHardened.error)
     tmp = vault.path & ".tmp." & $getCurrentProcessId() & "-" & $epochMs()
+    if vault.onBeforeWrite != nil:
+      vault.onBeforeWrite()
     writeFile(tmp, payload.pretty & "\n")
     let fileHardened = hardenFilePermissions(tmp)
     if fileHardened.isErr:
@@ -187,14 +192,14 @@ proc setSecrets*(vault: SecretVault;
       if not fileExists(vault.keyPath):
         return err("secret vault key is missing; restore " & vault.keyPath &
                    " or reset the vault explicitly")
-      var probe = ""
-      for _, ciphertext in stored:
-        probe = ciphertext
-        break
-      let readable = vault.keyStore.decrypt(probe)
-      if readable.isErr:
-        return err("secret vault key does not match the existing entries; " &
-                   "restore the original key (" & readable.error & ")")
+      ## Validate every existing ciphertext before adding anything: a mixed
+      ## vault (wrong key or tampered entry) must not accept new writes.
+      for name, ciphertext in stored:
+        let readable = vault.keyStore.decrypt(ciphertext)
+        if readable.isErr:
+          return err("secret vault key does not match the existing entries " &
+                     "(entry '" & name & "'); restore the original key (" &
+                     readable.error & ")")
 
     var encrypted: seq[(string, string)]
     for (name, value) in batch:

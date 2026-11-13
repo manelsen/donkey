@@ -30,6 +30,11 @@ const
 type
   RuntimeStateStore* = ref object
     stateDir*: string
+    ## Optional instrumentation/fault-injection hooks. nil in production.
+    ## `onCompactStart` runs under `lock` when real compaction starts;
+    ## `onAppendStart` runs before the append lock is acquired.
+    onCompactStart*: proc() {.gcsafe, raises: [].}
+    onAppendStart*: proc(record: DeliveryRecord) {.gcsafe, raises: [].}
     ## Records still awaiting `sent`/`failed`. Loaded once at construction so
     ## the hot path does not replay the ledger file on every update.
     pending*: Table[string, DeliveryRecord]
@@ -38,12 +43,14 @@ type
     sessions: seq[SessionRegistryRecord]
     sessionsLoaded: bool
     sessionsDirty: bool
+    compactErrorChan: Channel[string]
     lastSessionsWriteMs: int64
     ledgerDirSynced: bool
     ledgerRetentionMs: int64
     ledgerCompactIntervalMs: int64
     lastLedgerCompactMs: int64
     lastLedgerCompactError: string
+    compactStarts: Atomic[int]
     ## Serializes session upserts, ledger appends and their in-memory caches.
     ## Gateway workers can persist concurrently with the event loop.
     lock: Lock
@@ -549,6 +556,9 @@ proc compactLedgerLocked(store: RuntimeStateStore;
      nowMs - store.lastLedgerCompactMs < store.ledgerCompactIntervalMs:
     return ok()
 
+  discard store.compactStarts.fetchAdd(1)
+  if store.onCompactStart != nil:
+    store.onCompactStart()
   let scan = hasForwardIncompatibleEvents(path)
   if scan.isErr:
     store.lastLedgerCompactMs = nowMs
@@ -628,59 +638,82 @@ proc ledgerLastCompactMs*(store: RuntimeStateStore): int64 =
   defer: release(store.lock)
   store.lastLedgerCompactMs
 
+proc ledgerCompactStarts*(store: RuntimeStateStore): int =
+  ## Lock-free start signal: visible while compaction still holds the lock.
+  store.compactStarts.load()
+
 type
   LedgerCompactionWorker* = ref object
-    store:      RuntimeStateStore
+    store:      ptr RuntimeStateStore
     intervalMs: int64
-    logger:     Logger
     stop:       Atomic[bool]
+    stopping*:  Atomic[bool]
     stopped:    bool
-    thread:     Thread[LedgerCompactionWorker]
+    thread:     Thread[int]
 
-proc ledgerCompactionLoop(worker: LedgerCompactionWorker) {.thread.} =
+var gLedgerWorker: LedgerCompactionWorker
+
+proc ledgerCompactionLoop(_: int) {.thread.} =
   {.cast(gcsafe).}:
-    while not worker.stop.load():
+    while not gLedgerWorker.stop.load():
       ## Sleep in bounded slices so shutdown does not wait for the whole
       ## interval (default is one hour).
       var waited = 0'i64
-      while waited < worker.intervalMs and not worker.stop.load():
+      while waited < gLedgerWorker.intervalMs and not gLedgerWorker.stop.load():
         sleep(1000)
         waited += 1000
-      if worker.stop.load():
+      if gLedgerWorker.stop.load():
         break
-      let res = worker.store.compactLedger()
-      if res.isErr and worker.logger.sink != nil:
-        worker.logger.warn("ledger compaction: " & res.error)
+      let res = gLedgerWorker.store[].compactLedger()
+      if res.isErr:
+        {.cast(gcsafe).}:
+          discard gLedgerWorker.store[].compactErrorChan.trySend(res.error)
 
-proc startLedgerCompactionWorker*(store: RuntimeStateStore;
-                                  intervalSec: float;
-                                  logger: Logger): LedgerCompactionWorker =
-  ## Starts a dedicated OS thread for ledger compaction. Returns nil when the
-  ## interval is disabled or the thread cannot be created.
+proc startLedgerCompactionWorker*(store: ptr RuntimeStateStore;
+                                  intervalSec: float):
+                                  Result[LedgerCompactionWorker, string] {.gcsafe, raises: [].} =
+  ## Starts a dedicated OS thread for ledger compaction. Returns Ok(nil) when
+  ## the interval is disabled. The caller must keep the store alive until
+  ## `stopLedgerCompactionWorker` returns.
   if store == nil or intervalSec <= 0.0:
-    return nil
+    return ok(nil)
+  {.cast(gcsafe).}:
+    if gLedgerWorker != nil:
+      return err("ledger compaction worker is already running")
   let intervalMs = max(1000'i64, int64(max(1.0, intervalSec) * 1000.0))
-  result = LedgerCompactionWorker(
-    store: store, intervalMs: intervalMs, logger: logger)
-  result.stop.store(false)
+  let worker = LedgerCompactionWorker(store: store, intervalMs: intervalMs)
+  worker.stop.store(false)
+  worker.stopping.store(false)
+  {.cast(gcsafe).}:
+    gLedgerWorker = worker
   try:
-    createThread(result.thread, ledgerCompactionLoop, result)
+    createThread(worker.thread, ledgerCompactionLoop, 0)
   except CatchableError as e:
-    if logger.sink != nil:
-      logger.warn("ledger compaction worker not started: " & e.msg)
-    result = nil
+    {.cast(gcsafe).}:
+      gLedgerWorker = nil
+    return err("cannot start ledger compaction worker: " & e.msg)
+  ok(worker)
 
 proc stopLedgerCompactionWorker*(worker: LedgerCompactionWorker) =
   if worker == nil or worker.stopped:
     return
   worker.stopped = true
+  worker.stopping.store(true)
   worker.stop.store(true)
   {.cast(gcsafe).}:
     joinThread(worker.thread)
+    gLedgerWorker = nil
 
-func ledgerLastCompactError*(store: RuntimeStateStore): string =
-  ## Last compaction failure, for the daemon to log after startup.
+proc ledgerLastCompactError*(store: RuntimeStateStore): string =
+  ## Last compaction failure, for startup diagnostics and tests.
+  acquire(store.lock)
+  defer: release(store.lock)
   store.lastLedgerCompactError
+
+proc tryCompactError*(store: RuntimeStateStore): Option[string] =
+  ## Lock-free, non-blocking publication for the daemon loop.
+  let (hasError, message) = store.compactErrorChan.tryRecv()
+  if hasError: some(message) else: none(string)
 
 proc appendLedger(store: RuntimeStateStore;
                   record: DeliveryRecord;
@@ -710,6 +743,8 @@ proc appendMinimalEvent(store: RuntimeStateStore;
 
 proc recordPending(store: RuntimeStateStore;
                    record: DeliveryRecord): Result[void, string] {.raises: [].} =
+  if store.onAppendStart != nil:
+    store.onAppendStart(record)
   acquire(store.lock)
   defer: release(store.lock)
   store.pending[record.id] = record
@@ -784,6 +819,7 @@ proc newRuntimeStateStore*(stateDir: string;
     tmpCounter: 0,
   )
   initLock(result.lock)
+  result.compactErrorChan.open(4)
   result.ledgerDirSynced = fileExists(result.ledgerPath())
   ## Load the ledger once: the hot path only touches the pending table.
   try:

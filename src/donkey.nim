@@ -1680,6 +1680,10 @@ proc runDaemonLoop(ctx: DaemonContext;
                    drainer: GatewayDrainer;
                    memory: MdFileAdapter;
                    log: Logger): DaemonLoopResult =
+  if ctx.runtime.stateStore != nil:
+    let compactError = ctx.runtime.stateStore.tryCompactError()
+    if compactError.isSome:
+      log.warn("ledger compaction: " & compactError.get())
   let tick = runDaemonTick(ctx, drainer, memory, log)
   DaemonLoopResult(
     sleepMs: if tick.ok: 100 else: 500,
@@ -1752,8 +1756,12 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   if ctx.runtime.stateStore != nil:
     let compactionSec = ctx.runtime.stateStore.ledgerCompactIntervalSec()
     if compactionSec > 0:
-      ctx.runtime.ledgerWorker = startLedgerCompactionWorker(
-        ctx.runtime.stateStore, max(1.0, compactionSec), log)
+      let workerRes = startLedgerCompactionWorker(
+        addr ctx.runtime.stateStore, max(1.0, compactionSec))
+      if workerRes.isErr:
+        log.warn("ledger compaction worker: " & workerRes.error)
+      else:
+        ctx.runtime.ledgerWorker = workerRes.get()
   let memPort = memory.toRuntimePort()
   let reminderOutboxFn: ReminderOutboxFn = proc(userId, channel, message: string) {.gcsafe.} =
     let uid = UserId(userId)

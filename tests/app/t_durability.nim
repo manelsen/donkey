@@ -320,7 +320,7 @@ suite "durability":
 
     let now = epochMs()
     let day = 86_400_000'i64
-    let store = newRuntimeStateStore(
+    var store = newRuntimeStateStore(
       dir, ledgerRetentionDays = 1.0, ledgerCompactIntervalSec = 1.0)
     let ledger = store.deliveryLedger()
     check ledger.recordPending(DeliveryRecord(
@@ -334,8 +334,9 @@ suite "durability":
     check ledger.markSent("worker-expired", now - 2 * day).isOk
 
     let before = store.ledgerLastCompactMs()
-    let worker = startLedgerCompactionWorker(
-      store, 1.0, newLogger("test.ledger", lvlError))
+    let workerRes = startLedgerCompactionWorker(addr store, 1.0)
+    check workerRes.isOk
+    let worker = workerRes.get()
     check worker != nil
     defer: stopLedgerCompactionWorker(worker)
 
