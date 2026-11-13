@@ -5,7 +5,7 @@ import results
 import donkey/adapters/secrets/vault
 import donkey/core/pipeops
 
-const StressDir = "/tmp/donkey_stress_vault"
+let stressDir = getTempDir() / ("donkey_stress_vault_" & $getCurrentProcessId())
 
 type
   SetArg = object
@@ -20,9 +20,11 @@ type
     index: int
 
 var
-  gSetOk:    array[32, bool]
-  gRemoveOk: array[32, bool]
+  gSetOk:      array[32, bool]
+  gRemoveOk:   array[32, bool]
   gReadErrors: Atomic[int]
+  gReaderReady: Atomic[int]
+  gWritersDone: Atomic[bool]
 
 proc setWorker(arg: SetArg) {.thread.} =
   {.cast(gcsafe).}:
@@ -36,15 +38,17 @@ proc removeWorker(arg: RemoveArg) {.thread.} =
 
 proc readerWorker(home: string) {.thread.} =
   {.cast(gcsafe).}:
-    for _ in 0 ..< 200:
+    discard gReaderReady.fetchAdd(1)
+    while not gWritersDone.load():
       let names = newSecretVault(home).listSecretNames()
       if names.isErr:
         discard gReadErrors.fetchAdd(1)
+      sleep(1)
 
 suite "secret vault stress":
 
   test "concurrent writers keep every entry and a valid vault":
-    let home = StressDir / "writers"
+    let home = stressDir / "writers"
     removeDir(home)
     defer: removeDir(home)
 
@@ -67,13 +71,17 @@ suite "secret vault stress":
     check "value-0" notin raw
 
   test "readers never see a truncated vault during writes":
-    let home = StressDir / "readers"
+    let home = stressDir / "readers"
     removeDir(home)
     defer: removeDir(home)
 
     gReadErrors.store(0)
+    gReaderReady.store(0)
+    gWritersDone.store(false)
     var reader: Thread[string]
     createThread(reader, readerWorker, home)
+    while gReaderReady.load() == 0:
+      sleep(1)
 
     var threads: array[12, Thread[SetArg]]
     for i in 0 ..< threads.len:
@@ -82,13 +90,14 @@ suite "secret vault stress":
                           value: "reader-" & $i, index: i))
     for i in 0 ..< threads.len:
       joinThread(threads[i])
+    gWritersDone.store(true)
     joinThread(reader)
 
     check gReadErrors.load() == 0
     check newSecretVault(home).listSecretNames().get().len == threads.len
 
   test "mixed set and remove operations serialize correctly":
-    let home = StressDir / "mixed"
+    let home = stressDir / "mixed"
     removeDir(home)
     defer: removeDir(home)
 
@@ -116,7 +125,7 @@ suite "secret vault stress":
       check name.startsWith("DONKEY_STRESS_N")
 
   test "large values roundtrip without truncation":
-    let home = StressDir / "large"
+    let home = stressDir / "large"
     removeDir(home)
     defer: removeDir(home)
 

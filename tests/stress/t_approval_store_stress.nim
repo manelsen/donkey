@@ -6,7 +6,7 @@ import donkey/adapters/state/approval_store
 import donkey/core/pipeops
 import donkey/core/security/approval
 
-const StressDir = "/tmp/donkey_stress_approval"
+let stressDir = getTempDir() / ("donkey_stress_approval_" & $getCurrentProcessId())
 
 type
   CreateArg = object
@@ -25,6 +25,8 @@ var
   gCreateOk:    array[32, bool]
   gDecideOk:    array[32, bool]
   gReadErrors:  Atomic[int]
+  gReaderReady: Atomic[int]
+  gWritersDone: Atomic[bool]
 
 proc createWorker(arg: CreateArg) {.thread.} =
   {.cast(gcsafe).}:
@@ -36,9 +38,11 @@ proc createWorker(arg: CreateArg) {.thread.} =
 
 proc readerWorker(path: string) {.thread.} =
   {.cast(gcsafe).}:
-    for _ in 0 ..< 200:
+    discard gReaderReady.fetchAdd(1)
+    while not gWritersDone.load():
       if newApprovalStore(path).listPending().isErr:
         discard gReadErrors.fetchAdd(1)
+      sleep(1)
 
 proc decideWorker(arg: DecideArg) {.thread.} =
   {.cast(gcsafe).}:
@@ -48,14 +52,18 @@ proc decideWorker(arg: DecideArg) {.thread.} =
 suite "approval store stress":
 
   test "concurrent creates use unique ids and are all listable":
-    let dir = StressDir / "create"
+    let dir = stressDir / "create"
     removeDir(dir)
     defer: removeDir(dir)
     let path = dir / "approvals.json"
 
     gReadErrors.store(0)
+    gReaderReady.store(0)
+    gWritersDone.store(false)
     var reader: Thread[string]
     createThread(reader, readerWorker, path)
+    while gReaderReady.load() == 0:
+      sleep(1)
 
     var threads: array[16, Thread[CreateArg]]
     for i in 0 ..< threads.len:
@@ -63,6 +71,7 @@ suite "approval store stress":
                    CreateArg(path: path, userId: "u" & $i, index: i))
     for i in 0 ..< threads.len:
       joinThread(threads[i])
+    gWritersDone.store(true)
     joinThread(reader)
     check gReadErrors.load() == 0
 
@@ -78,7 +87,7 @@ suite "approval store stress":
     check pending.get().len == threads.len
 
   test "concurrent creates respect the per-user cap":
-    let dir = StressDir / "cap"
+    let dir = stressDir / "cap"
     removeDir(dir)
     defer: removeDir(dir)
     let path = dir / "approvals.json"
@@ -101,7 +110,7 @@ suite "approval store stress":
     check pending.get().len == MaxPendingPerUser
 
   test "concurrent decisions allow exactly one winner":
-    let dir = StressDir / "decide"
+    let dir = stressDir / "decide"
     removeDir(dir)
     defer: removeDir(dir)
     let path = dir / "approvals.json"

@@ -28,7 +28,7 @@ O CI roda a suíte normal e, em seguida, a suíte de stress. Os testes de stress
 | `t_webhook_tls_stress.nim` | 20 handshakes, 5 restarts, cliente TLS lento | < 15s |
 | `t_slack_socket_stress.nim` | envelopes malformados, frame WebSocket, frame truncado | < 5s |
 
-Tempo total esperado: **≤ 60s** em runner Linux típico.
+Tempo total esperado: **≤ 60s** de execução em runner Linux típico; o wrapper aplica `timeout` de 300s (configurável em `STRESS_TIMEOUT_SEC`) para cobrir compilação.
 
 ## O que foi provado
 

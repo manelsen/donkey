@@ -31,7 +31,7 @@ Critérios adicionais para histórias de concorrência:
 
 - cada teste de stress roda pelo menos 20 iterações ou 10 threads;
 - nenhum teste pode depender de ordem de scheduling;
-- timeout total do harness de stress ≤ 120s;
+- timeout total do harness de stress ≤ 300s (execução ≤ 120s);
 - falhas devem reproduzir e ser corrigidas, não marcadas como flaky.
 
 ## 4. Histórias de usuário
@@ -166,7 +166,7 @@ Critérios adicionais para histórias de concorrência:
 ## 8. Métricas de sucesso
 
 - 0 falhas no harness de stress em 10 execuções consecutivas locais.
-- Nenhum deadlock ou timeout > 120s.
+- Nenhum deadlock ou timeout > 300s no harness.
 - Nenhuma perda de pedido/decisão/entrega nos cenários testados.
 - Corpus SSRF com 100% dos vetores privados bloqueados.
 - CI normal continua abaixo de ~8 min; stress adiciona ≤ 2 min.

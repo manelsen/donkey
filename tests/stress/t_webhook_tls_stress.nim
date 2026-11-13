@@ -5,10 +5,12 @@ import results
 import donkey/core/log
 import donkey/adapters/webhook/webhook_receiver
 
-const StressDir = "/tmp/donkey_stress_tls"
+let stressDir = getTempDir() / ("donkey_stress_tls_" & $getCurrentProcessId())
 let stressLog = newLogger("stress.tls", lvlError)
 
 proc generateCert(prefix: string): tuple[cert: string, key: string] =
+  if findExe("openssl").len == 0:
+    return ("", "")
   let dir = prefix & "-" & $epochTime().int64 & "-" & $getCurrentProcessId()
   createDir(dir)
   let cert = dir / "cert.pem"
@@ -16,8 +18,10 @@ proc generateCert(prefix: string): tuple[cert: string, key: string] =
   let cmd = "openssl req -x509 -newkey rsa:2048 -nodes -keyout " & quoteShell(key) &
             " -out " & quoteShell(cert) & " -days 1 -subj /CN=localhost" &
             " -addext subjectAltName=DNS:localhost,IP:127.0.0.1 2>/dev/null"
-  if execCmd(cmd) != 0:
-    return ("", "")
+  let exitCode = execCmd(cmd)
+  if exitCode != 0:
+    raise newException(OSError,
+      "openssl req failed with exit code " & $exitCode & " (see cert dir " & dir & ")")
   (cert, key)
 
 proc freePort(): int =
@@ -63,7 +67,7 @@ proc requestChallenge(port: int; secret, challenge: string): string =
 suite "webhook TLS stress":
 
   test "twenty sequential TLS handshakes are served":
-    let (cert, key) = generateCert(StressDir / "sequential")
+    let (cert, key) = generateCert(stressDir / "sequential")
     if cert.len == 0:
       echo "skipping TLS stress: openssl unavailable"
     else:
@@ -81,7 +85,7 @@ suite "webhook TLS stress":
         check "ch-" & $i in response
 
   test "five TLS start/stop cycles remain clean":
-    let (cert, key) = generateCert(StressDir / "restart")
+    let (cert, key) = generateCert(stressDir / "restart")
     if cert.len == 0:
       echo "skipping TLS restart stress: openssl unavailable"
     else:
@@ -97,7 +101,7 @@ suite "webhook TLS stress":
         stopWebhookReceiver()
 
   test "a slow TLS client does not block shutdown forever":
-    let (cert, key) = generateCert(StressDir / "slow")
+    let (cert, key) = generateCert(stressDir / "slow")
     if cert.len == 0:
       echo "skipping TLS slow-client stress: openssl unavailable"
     else:

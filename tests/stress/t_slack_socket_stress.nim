@@ -6,8 +6,8 @@ import donkey/adapters/channel/slack
 import donkey/adapters/channel/slack_socket
 import donkey/adapters/channel/ws_client
 
-const StressDir = "/tmp/donkey_stress_slack"
-let slackStress = newSlackAdapter("tok", StressDir / "identity.tsv")
+let stressDir = getTempDir() / ("donkey_stress_slack_" & $getCurrentProcessId())
+let slackStress = newSlackAdapter("tok", stressDir / "identity.tsv")
 
 proc makePair(): tuple[ws: WsClient, peer: cint] =
   var fds: array[2, cint]

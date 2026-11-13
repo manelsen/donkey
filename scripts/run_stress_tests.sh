@@ -12,5 +12,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 export DONKEY_STRESS=1
-JOBS="${JOBS:-1}"
-exec bash scripts/run_tests.sh tests/stress
+export JOBS="${JOBS:-1}"
+STRESS_TIMEOUT_SEC="${STRESS_TIMEOUT_SEC:-300}"
+exec timeout --signal=TERM --kill-after=10 "$STRESS_TIMEOUT_SEC" \
+  bash scripts/run_tests.sh tests/stress

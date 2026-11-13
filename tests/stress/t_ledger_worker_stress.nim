@@ -8,7 +8,7 @@ import donkey/core/pipeops
 import donkey/core/types
 import donkey/ports/runtime_state
 
-const StressDir = "/tmp/donkey_stress_ledger"
+let stressDir = getTempDir() / ("donkey_stress_ledger_" & $getCurrentProcessId())
 
 type
   AppendArg = object
@@ -38,13 +38,14 @@ proc appendWorker(arg: AppendArg) {.thread.} =
 suite "ledger worker stress":
 
   test "concurrent appends stay valid while compaction runs":
-    let dir = StressDir / "append"
+    let dir = stressDir / "append"
     removeDir(dir)
     defer: removeDir(dir)
 
     gAppendErrors.store(0)
     let store = newRuntimeStateStore(
       dir, ledgerRetentionDays = 1.0, ledgerCompactIntervalSec = 1.0)
+    let beforeCompact = store.ledgerLastCompactMs()
     let logger = newLogger("stress.ledger", lvlError)
     let worker = startLedgerCompactionWorker(store, 1.0, logger)
     check worker != nil
@@ -57,8 +58,13 @@ suite "ledger worker stress":
     for i in 0 ..< threads.len:
       joinThread(threads[i])
 
-    ## Let the worker run at least one compaction cycle after the writes.
-    sleep(1500)
+    ## Wait for an observable compaction instead of a fixed sleep.
+    var waited = 0
+    while store.ledgerLastCompactMs() <= beforeCompact and waited < 5000:
+      sleep(50)
+      waited += 50
+    check store.ledgerLastCompactMs() > beforeCompact
+
     let started = getMonoTime()
     stopLedgerCompactionWorker(worker)
     stopLedgerCompactionWorker(worker)  # idempotent
@@ -73,7 +79,7 @@ suite "ledger worker stress":
       check record.id.startsWith("w")
 
   test "stop while the worker is running returns promptly":
-    let dir = StressDir / "stop"
+    let dir = stressDir / "stop"
     removeDir(dir)
     defer: removeDir(dir)
     let store = newRuntimeStateStore(
