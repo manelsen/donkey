@@ -33,6 +33,13 @@ proc findExeSafe(name: string): string =
   except CatchableError:
     ""
 
+proc executableAvailable(name: string): bool =
+  if name.len == 0:
+    return false
+  if '/' in name or '\\' in name:
+    return fileExists(name)
+  findExeSafe(name).len > 0
+
 proc timeoutCommand(): string =
   ## GNU coreutils `timeout`; Homebrew installs it as `gtimeout`.
   result = findExeSafe("timeout")
@@ -162,7 +169,7 @@ proc runOciCode*(runtimeCmd, image, workspace: string;
                  maxOutputBytes: int): Result[CodeRunResult, string] =
   if language == clWasm:
     return err("wasm code requires sandbox.mode='wasm'")
-  if findExeSafe(runtimeCmd).len == 0:
+  if not executableAvailable(runtimeCmd):
     return err("container runtime not found: " & runtimeCmd)
   let name = nextContainerName()
   let argv = buildOciCodeArgv(runtimeCmd, image, workspace, uid, gid,
