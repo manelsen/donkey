@@ -193,11 +193,21 @@ func buildWasmCodeArgv*(wasmtimePath, workspace, wasmPath,
     wasmPath,
   ]
 
+func capUtf8Bytes*(text: string; maxBytes: int): string =
+  ## Cuts at a UTF-8 boundary so a byte cap never emits a partial rune.
+  if maxBytes <= 0 or text.len <= maxBytes:
+    return text
+  var cut = maxBytes
+  while cut > 0 and (ord(text[cut]) and 0xC0) == 0x80:
+    dec cut
+  text[0 ..< cut]
+
 func capExecutionOutput*(output: string; maxBytes: int): CodeOutput =
   let cap = clampCodeMaxOutputBytes(maxBytes)
   if output.len <= cap:
     return CodeOutput(text: output, truncated: false)
-  CodeOutput(text: output[0 ..< cap] & "\n[output truncated]", truncated: true)
+  CodeOutput(text: capUtf8Bytes(output, cap) & "\n[output truncated]",
+             truncated: true)
 
 func ociInfrastructureFailure*(output: string): bool =
   ## Distinguishes a broken daemon/image from code that exited non-zero.

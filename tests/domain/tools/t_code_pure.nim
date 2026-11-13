@@ -1,6 +1,6 @@
 ## Tests for pure execute_code policy and argv construction.
 
-import std/[options, strutils, unittest]
+import std/[options, strutils, unicode, unittest]
 import results
 import donkey/domain/tools/code_pure
 
@@ -107,6 +107,13 @@ suite "execute_code pure policy":
     ]
     check "--tcplisten" notin argv
     check "--udp" notin argv
+
+  test "byte cap preserves UTF-8 boundaries":
+    check capUtf8Bytes("é", 2) == "é"
+    check validateUtf8(capUtf8Bytes("é", 1)) == -1
+    check capUtf8Bytes("é", 1) == ""
+    check validateUtf8(capUtf8Bytes("a😀b", 2)) == -1
+    check capUtf8Bytes("a😀b", 2) == "a"
 
   test "output cap is byte-exact and marks truncation":
     let exactText = repeat("a", CodeMinMaxOutputBytes)
