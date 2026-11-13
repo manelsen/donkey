@@ -8,7 +8,7 @@
 ##   - Error handling when Lightpanda is not installed
 ##   - Error handling when browser is not running (call content/screenshot first)
 
-import std/[json, os, sequtils, strutils, tables, times, unittest]
+import std/[json, os, sequtils, strtabs, strutils, tables, times, unittest]
 import donkey/adapters/tools/browser
 import donkey/domain/tools/browser_pure
 import donkey/ports/tool
@@ -185,11 +185,133 @@ suite "Browser request policy":
     check not isAllowedBrowserRequest("http://[::1]/")
     check not isAllowedBrowserRequest("http://169.254.169.254/latest/meta-data/")
 
+  test "blocks private hosts disguised by IPv6, userinfo or port":
+    check not isAllowedBrowserRequest("http://[::ffff:127.0.0.1]/")
+    check not isAllowedBrowserRequest("http://user:pass@127.0.0.1:8080/")
+    check not isAllowedBrowserRequest("http://localhost.:8080/")
+    check not isAllowedBrowserRequest("http://0.0.0.0:8080/")
+
+  test "documents cannot use inline content even when subresources can":
+    check isAllowedBrowserRequest("data:text/html,hello", brkSubresource)
+    check isAllowedBrowserRequest("blob:https://example.com/x", brkSubresource)
+    check not isAllowedBrowserRequest("data:text/html,hello", brkDocument)
+    check not isAllowedBrowserRequest("blob:https://example.com/x", brkDocument)
+
+  test "WebSocket and service worker requests are denied":
+    check not isAllowedBrowserRequest("wss://example.com/socket", brkWebSocket)
+    check not isAllowedBrowserRequest("ws://example.com/socket", brkWebSocket)
+    check not isAllowedBrowserRequest("https://example.com/sw.js", brkServiceWorker)
+    check not isAllowedBrowserRequest("ftp://example.com/x", brkSubresource)
+
+  test "the redirect second layer avoids blocking DNS":
+    check isAllowedBrowserRequest("https://example.invalid/x", brkSubresource,
+                                  resolveDns = false)
+    check not isAllowedBrowserRequest("http://127.0.0.1/x", brkSubresource,
+                                      resolveDns = false)
+
   test "handles non-numeric 172 labels without raising":
     check not isAllowedBrowserRequest("http://172.example.com/")
 
   test "allows public literal addresses":
     check isAllowedBrowserRequest("http://8.8.8.8/")
+
+suite "CDP event policy":
+
+  test "blocked document request aborts the browser session":
+    var bt = BrowserTools(fetchEnabled: true)
+    bt.handleCdpEvent(%*{
+      "method": "Fetch.requestPaused",
+      "params": {
+        "requestId": "r1",
+        "resourceType": "Document",
+        "request": {"url": "http://127.0.0.1/admin"},
+      },
+    })
+    check bt.blockedRequests == 1
+    check bt.lastBlockedUrl == "http://127.0.0.1/admin"
+    check "document blocked" in bt.policyViolation
+
+  test "blocked subresource is denied without aborting the page":
+    var bt = BrowserTools(fetchEnabled: true)
+    bt.handleCdpEvent(%*{
+      "method": "Fetch.requestPaused",
+      "params": {
+        "requestId": "r2",
+        "resourceType": "Script",
+        "request": {"url": "http://127.0.0.1/secret.js"},
+      },
+    })
+    check bt.blockedRequests == 1
+    check bt.policyViolation.len == 0
+
+  test "paused requests are ignored when interception is disabled":
+    var bt = BrowserTools(fetchEnabled: false)
+    bt.handleCdpEvent(%*{
+      "method": "Fetch.requestPaused",
+      "params": {
+        "requestId": "r3",
+        "resourceType": "Document",
+        "request": {"url": "http://127.0.0.1/"},
+      },
+    })
+    check bt.blockedRequests == 0
+    check bt.policyViolation.len == 0
+
+  test "WebSocket creation is a fail-closed violation":
+    var bt = BrowserTools()
+    bt.handleCdpEvent(%*{
+      "method": "Network.webSocketCreated",
+      "params": {"url": "wss://example.com/socket"},
+    })
+    check bt.blockedWebSockets == 1
+    check bt.lastBlockedUrl == "wss://example.com/socket"
+    check "websocket blocked" in bt.policyViolation
+
+  test "WebTransport creation is a fail-closed violation":
+    var bt = BrowserTools()
+    bt.handleCdpEvent(%*{
+      "method": "Network.webTransportCreated",
+      "params": {"url": "https://example.com/transport"},
+    })
+    check bt.blockedWebSockets == 1
+    check "webtransport blocked" in bt.policyViolation
+
+  test "service worker activity is a fail-closed violation":
+    var bt = BrowserTools()
+    bt.handleCdpEvent(%*{
+      "method": "ServiceWorker.workerVersionUpdated",
+      "params": {},
+    })
+    check bt.blockedServiceWorkers == 1
+    check "service worker" in bt.policyViolation
+
+  test "redirect to a private document is recorded and denied":
+    var bt = BrowserTools()
+    bt.handleCdpEvent(%*{
+      "method": "Network.requestWillBeSent",
+      "params": {
+        "requestId": "r4",
+        "type": "Document",
+        "redirectResponse": {"url": "https://example.com/start"},
+        "request": {"url": "http://10.0.0.1/internal"},
+      },
+    })
+    check bt.blockedRequests == 1
+    check "redirect blocked" in bt.policyViolation
+
+  test "redirect to a private subresource does not abort the page":
+    var bt = BrowserTools()
+    bt.handleCdpEvent(%*{
+      "method": "Network.requestWillBeSent",
+      "params": {
+        "requestId": "r5",
+        "type": "Script",
+        "redirectResponse": {"url": "https://example.com/start.js"},
+        "request": {"url": "http://10.0.0.1/secret.js"},
+      },
+    })
+    check bt.blockedRequests == 1
+    check bt.policyViolation.len == 0
 
 suite "Constructor":
   test "newBrowserTools with default args":
@@ -206,6 +328,21 @@ suite "Constructor":
     let bt = newBrowserTools(host = "0.0.0.0", port = 9333)
     check bt.host == "0.0.0.0"
     check bt.port == 9333
+
+  test "newBrowserTools clamps the CDP timeout":
+    check newBrowserTools().cdpTimeoutMs() == BrowserDefaultTimeoutMs
+    check newBrowserTools(timeoutMs = 0).cdpTimeoutMs() == BrowserDefaultTimeoutMs
+    check newBrowserTools(timeoutMs = 1).cdpTimeoutMs() == BrowserMinTimeoutMs
+    check newBrowserTools(timeoutMs = 45_000).cdpTimeoutMs() == 45_000
+    check newBrowserTools(timeoutMs = 999_999).cdpTimeoutMs() == BrowserMaxTimeoutMs
+
+  test "browser process env excludes daemon secrets":
+    putEnv("DONKEY_TEST_PROVIDER_KEY", "super-secret")
+    defer: delEnv("DONKEY_TEST_PROVIDER_KEY")
+    let env = browserProcessEnv("/tmp/donkey-profile")
+    check env.hasKey("PATH")
+    check env["HOME"] == "/tmp/donkey-profile"
+    check not env.hasKey("DONKEY_TEST_PROVIDER_KEY")
 
 suite "Browser backends":
 
@@ -276,13 +413,20 @@ suite "Browser backends":
     runtime.close()
 
   test "configured profile directories are not adapter-owned":
+    let base = getTempDir() / ("donkey-test-profiles-" & $getCurrentProcessId())
+    defer: removeDir(base)
     let runtime = newBrowserToolRuntime(
-      backend = bbOff, profileBaseDir = "/tmp/donkey-test-profiles")
+      backend = bbOff, profileBaseDir = base)
     discard runtime.invoke(ToolCall(id: "x", name: "browser_content",
                                     input: %* {}, userId: "user-a"))
-    check runtime.byUser["user-a"][].profileDir ==
-      "/tmp/donkey-test-profiles/user-a"
+    check runtime.byUser["user-a"][].profileDir == base / "user-a"
     check not runtime.byUser["user-a"][].ownsProfileDir
+    when not defined(windows):
+      let perms = getFilePermissions(base / "user-a")
+      check fpGroupRead notin perms
+      check fpGroupWrite notin perms
+      check fpOthersRead notin perms
+      check fpOthersWrite notin perms
     runtime.close()
 
   test "user keys are collision-free":

@@ -15,6 +15,13 @@ type
     bbEdge
     bbChromium
 
+  BrowserRequestKind* = enum
+    brkUnknown
+    brkDocument
+    brkSubresource
+    brkWebSocket
+    brkServiceWorker
+
   BrowserWsMode* = enum
     wsmBrowserPath   ## Lightpanda: /devtools/browser
     wsmPageTarget    ## Chromium/Edge: page webSocketDebuggerUrl from /json/list
@@ -34,6 +41,12 @@ type
 const
   DefaultBrowserHost* = "127.0.0.1"
   DefaultBrowserPort* = 9222
+  BrowserDefaultTimeoutMs* = 30_000
+  BrowserMinTimeoutMs* = 1_000
+  BrowserMaxTimeoutMs* = 120_000
+  BrowserDefaultMaxContentChars* = 50_000
+  BrowserMaxContentChars* = 500_000
+  BrowserMaxScreenshotBytes* = 8 * 1024 * 1024
 
 func parseBrowserBackend*(raw: string): Option[BrowserBackendKind] =
   ## Accepts the env spelling and a few common aliases. `none` means an
@@ -95,6 +108,15 @@ func buildLaunchSpec*(kind: BrowserBackendKind;
       "--disable-gpu",
       "--no-first-run",
       "--no-default-browser-check",
+      "--disable-background-networking",
+      "--disable-component-update",
+      "--disable-default-apps",
+      "--disable-domain-reliability",
+      "--disable-extensions",
+      "--disable-sync",
+      "--dns-prefetch-disable",
+      "--metrics-recording-only",
+      "--no-pings",
       "--remote-allow-origins=*",
       "--remote-debugging-port=" & $port,
     ]
@@ -130,6 +152,125 @@ func inferBrowserBackend*(exe: string): Option[BrowserBackendKind] =
 func isHttpUrl*(url: string): bool =
   let value = url.strip.toLowerAscii
   value.startsWith("http://") or value.startsWith("https://")
+
+func browserResourceKind*(resourceType: string): BrowserRequestKind =
+  ## Maps the CDP `resourceType`/event family to the policy bucket. Unknown
+  ## values are treated as subresources so they still get URL/DNS validation.
+  case resourceType.strip.toLowerAscii
+  of "document": brkDocument
+  of "websocket": brkWebSocket
+  of "serviceworker", "service_worker": brkServiceWorker
+  of "": brkUnknown
+  else: brkSubresource
+
+func isInlineBrowserUrl*(url: string): bool =
+  ## Inline content never reaches the network. It is allowed as a subresource
+  ## but never as a top-level document.
+  let value = url.strip.toLowerAscii
+  value.startsWith("data:") or value.startsWith("blob:") or
+    value.startsWith("about:")
+
+func isNetworkBrowserUrl*(url: string): bool =
+  isHttpUrl(url)
+
+func browserSchemeAllowedFor*(url: string; kind: BrowserRequestKind): bool =
+  ## Pure scheme gate. DNS/private-address checks live in the adapter because
+  ## they perform I/O; this function is the single source of truth for which
+  ## schemes may leave the browser at all.
+  if kind in {brkWebSocket, brkServiceWorker}:
+    return false
+  if isInlineBrowserUrl(url):
+    return kind != brkDocument
+  if not isNetworkBrowserUrl(url):
+    return false
+  kind in {brkUnknown, brkDocument, brkSubresource}
+
+func clampBrowserTimeoutMs*(raw: int): int =
+  if raw <= 0:
+    BrowserDefaultTimeoutMs
+  elif raw < BrowserMinTimeoutMs:
+    BrowserMinTimeoutMs
+  elif raw > BrowserMaxTimeoutMs:
+    BrowserMaxTimeoutMs
+  else:
+    raw
+
+func parseBrowserTimeoutMs*(raw: string): int =
+  let value = raw.strip
+  if value.len == 0:
+    return BrowserDefaultTimeoutMs
+  try:
+    clampBrowserTimeoutMs(parseInt(value))
+  except ValueError:
+    BrowserDefaultTimeoutMs
+
+func clampBrowserContentChars*(requested: int): int =
+  if requested <= 0:
+    BrowserDefaultMaxContentChars
+  elif requested > BrowserMaxContentChars:
+    BrowserMaxContentChars
+  else:
+    requested
+
+func browserContentExpression*(maxChars: int): string =
+  ## Truncates inside the page before CDP serializes the DOM. A multi-megabyte
+  ## document therefore never crosses the WebSocket just to be cut afterwards.
+  let cap = clampBrowserContentChars(maxChars)
+  "(() => { const h = document.documentElement ? " &
+    "document.documentElement.outerHTML : ''; " &
+    "return h.length > " & $cap & " ? h.slice(0, " & $cap &
+    ") + \"\\n[truncated]\" : h; })()"
+
+func screenshotTooLarge*(data: string;
+                         maxBytes = BrowserMaxScreenshotBytes): bool =
+  maxBytes > 0 and data.len > maxBytes
+
+func browserPolicyScript*(): string =
+  ## Installed before every document. CDP Fetch covers HTTP(S) requests, but
+  ## WebSockets, WebRTC and service worker registration need an in-page gate.
+  ## The Network domain remains a second layer for engines that ignore the
+  ## script or create sockets from workers.
+  result = """
+(() => {
+  const deny = (name) => { throw new Error(name + ' blocked by Donkey browser policy'); };
+  try {
+    Object.defineProperty(globalThis, 'WebSocket', {
+      configurable: false, writable: false,
+      value: function() { deny('WebSocket'); }
+    });
+  } catch (e) {}
+  try {
+    Object.defineProperty(globalThis, 'WebTransport', {
+      configurable: false, writable: false,
+      value: function() { deny('WebTransport'); }
+    });
+  } catch (e) {}
+  try {
+    Object.defineProperty(globalThis, 'RTCPeerConnection', {
+      configurable: false, writable: false,
+      value: function() { deny('RTCPeerConnection'); }
+    });
+  } catch (e) {}
+  try {
+    Object.defineProperty(globalThis, 'SharedWorker', {
+      configurable: false, writable: false,
+      value: function() { deny('SharedWorker'); }
+    });
+  } catch (e) {}
+  try { globalThis.open = function() { return null; }; } catch (e) {}
+  try { navigator.sendBeacon = function() { return false; }; } catch (e) {}
+  try {
+    if (navigator.serviceWorker) {
+      navigator.serviceWorker.register = function() {
+        return Promise.reject(new Error('service worker blocked by Donkey browser policy'));
+      };
+      navigator.serviceWorker.getRegistrations()
+        .then(rs => rs.forEach(r => r.unregister()))
+        .catch(() => {});
+    }
+  } catch (e) {}
+})();
+"""
 
 func parseWsDebuggerUrl*(raw: string): Option[BrowserEndpoint] =
   ## Parses the `webSocketDebuggerUrl` returned by Chromium's /json/list.

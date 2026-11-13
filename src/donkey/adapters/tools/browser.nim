@@ -15,7 +15,9 @@
 ##   - CDP commands sent over WebSocket via ws_client.nim
 ##   - JSON-RPC 2.0 protocol for command/response correlation
 
-import std/[json, net, options, os, osproc, strutils, tables, times]
+import std/[json, net, options, os, osproc, strtabs, strutils, tables, times]
+when defined(posix):
+  import std/posix
 import ../../ports/http
 import ../../ports/tool
 import ../../core/pipeops
@@ -27,8 +29,11 @@ import ../network/dns_resolver
 const
   DefaultLightpandaPort* = 9222
   DefaultHost* = "127.0.0.1"
-  DefaultTimeoutMs* = 30000
-  DefaultMaxChars* = 50000
+  DefaultTimeoutMs* = BrowserDefaultTimeoutMs
+  DefaultMaxChars* = BrowserDefaultMaxContentChars
+  BrowserBlockedUrlPatterns* = @[
+    "ws://*", "wss://*", "ftp://*", "file://*", "filesystem://*",
+  ]
 
 type
   BrowserTools* = object
@@ -50,6 +55,13 @@ type
     fetchEnabled*: bool           ## Fetch.requestPaused interception is active
     http*: HttpRuntimePort        ## transport for Chromium /json/list
     proxyServer*: string          ## optional filtering egress proxy
+    timeoutMs*: int               ## per-CDP-command and navigation budget
+    blockedRequests*: int         ## requests denied by URL/DNS policy
+    blockedWebSockets*: int       ## WebSocket creations observed and denied
+    blockedServiceWorkers*: int   ## service worker events observed and denied
+    policyViolation*: string      ## non-empty closes the browser session
+    lastBlockedUrl*: string       ## most recent denied destination
+    hardeningWarnings*: seq[string] ## unsupported optional CDP hardening
 
 # ── Tool Schemas ─────────────────────────────────────────────────────────────
 
@@ -121,13 +133,21 @@ proc nextId*(): int =
   inc cdpRequestCounter
   result = cdpRequestCounter
 
+proc cdpTimeoutMs*(bt: BrowserTools): int =
+  clampBrowserTimeoutMs(bt.timeoutMs)
+
 proc fireCdpCommand(bt: var BrowserTools; cdpMethod: string; params: JsonNode) =
   ## Sends a CDP command without waiting for its response. Used from inside the
-  ## receive loop to answer Fetch.requestPaused events.
+  ## receive loop to answer Fetch.requestPaused events. A missing socket is
+  ## possible only in unit tests that exercise event handling without a browser.
+  if bt.ws.sock == nil:
+    return
   let id = nextId()
   bt.ws.sendFrame($(%*{"id": id, "method": cdpMethod, "params": params}))
 
-proc isAllowedBrowserRequest*(url: string): bool =
+proc isAllowedBrowserRequest*(url: string;
+                              kind = brkUnknown;
+                              resolveDns = true): bool =
   ## Top-level navigation already requires HTTP(S). Subresources may be data/
   ## blob/about, but network destinations must not be private/internal and
   ## local file/chrome schemes are never allowed.
@@ -136,20 +156,30 @@ proc isAllowedBrowserRequest*(url: string): bool =
   ## browser resolves again when connecting, so a DNS-rebinding window remains;
   ## production deployments should route browser egress through a filtering
   ## proxy/firewall that pins connections to validated addresses.
-  let value = url.strip.toLowerAscii
-  if value.startsWith("data:") or value.startsWith("blob:") or
-     value.startsWith("about:"):
-    return true
-  if not value.startsWith("http://") and not value.startsWith("https://"):
+  if not browserSchemeAllowedFor(url, kind):
     return false
+  if isInlineBrowserUrl(url):
+    return true
   if url.isPrivateUrl:
     return false
   let host = extractUrlHost(url)
   if host.len == 0:
     return false
+  if not resolveDns:
+    return true
   safeResolve(host).isOk
 
-proc handleCdpEvent(bt: var BrowserTools; resp: JsonNode) =
+proc addHardeningWarning(bt: var BrowserTools; message: string) =
+  if message.len > 0 and message notin bt.hardeningWarnings:
+    bt.hardeningWarnings.add(message)
+
+proc hardenProfileDir(path: string): Result[void, string] =
+  when defined(posix):
+    if path.len > 0 and posix.chmod(path.cstring, posix.Mode(0o700)) != 0:
+      return err("cannot restrict browser profile permissions: " & path)
+  ok()
+
+proc handleCdpEvent*(bt: var BrowserTools; resp: JsonNode) =
   ## Applies one asynchronous CDP event received while waiting for a response.
   let cdpMethod = resp["method"].getStr("")
   let params = resp{"params"}
@@ -157,9 +187,15 @@ proc handleCdpEvent(bt: var BrowserTools; resp: JsonNode) =
   of "Fetch.requestPaused":
     if bt.fetchEnabled:
       let requestId = params{"requestId"}.getStr("")
-      let requestUrl = params{"request"}{"url"}.getStr("")
+      let requestNode = params{"request"}
+      let requestUrl =
+        if requestNode != nil and requestNode.kind == JObject:
+          requestNode{"url"}.getStr("")
+        else:
+          ""
+      let kind = browserResourceKind(params{"resourceType"}.getStr(""))
       if requestId.len > 0:
-        if isAllowedBrowserRequest(requestUrl):
+        if isAllowedBrowserRequest(requestUrl, kind):
           bt.fireCdpCommand("Fetch.continueRequest",
                             %*{"requestId": requestId})
         else:
@@ -167,15 +203,49 @@ proc handleCdpEvent(bt: var BrowserTools; resp: JsonNode) =
             "requestId": requestId,
             "errorReason": "BlockedByClient",
           })
+          inc bt.blockedRequests
+          bt.lastBlockedUrl = requestUrl
+          ## A blocked document means the navigation itself was redirected to
+          ## an internal destination. Abort the whole browser session instead
+          ## of leaving a partially loaded page alive.
+          if kind == brkDocument:
+            bt.policyViolation = "document blocked: " & requestUrl
+          elif kind == brkServiceWorker:
+            bt.policyViolation = "service worker script blocked: " & requestUrl
         bt.lastNetworkActivity = epochTime()
   of "Network.requestWillBeSent":
     let requestId = params{"requestId"}.getStr("")
     let redirect = params{"redirectResponse"}
+    let requestNode = params{"request"}
+    let targetUrl =
+      if requestNode != nil and requestNode.kind == JObject:
+        requestNode{"url"}.getStr("")
+      else:
+        ""
+    let requestKind = browserResourceKind(params{"type"}.getStr(""))
+    if redirect != nil and targetUrl.len > 0 and
+       not isAllowedBrowserRequest(targetUrl, requestKind, resolveDns = false):
+      inc bt.blockedRequests
+      bt.lastBlockedUrl = targetUrl
+      if requestKind == brkDocument:
+        bt.policyViolation = "redirect blocked: " & targetUrl
     if requestId.len > 0 and redirect == nil and
        requestId notin bt.pendingRequestIds:
       bt.pendingRequestIds.add(requestId)
       inc bt.inflightRequests
     bt.lastNetworkActivity = epochTime()
+  of "Network.webSocketCreated":
+    inc bt.blockedWebSockets
+    bt.lastBlockedUrl = params{"url"}.getStr("")
+    bt.policyViolation = "websocket blocked: " & bt.lastBlockedUrl
+  of "Network.webTransportCreated":
+    inc bt.blockedWebSockets
+    bt.lastBlockedUrl = params{"url"}.getStr("")
+    bt.policyViolation = "webtransport blocked: " & bt.lastBlockedUrl
+  of "ServiceWorker.workerVersionUpdated", "ServiceWorker.workerRegistrationUpdated",
+     "ServiceWorker.workerErrorReported":
+    inc bt.blockedServiceWorkers
+    bt.policyViolation = "service worker activity blocked: " & cdpMethod
   of "Network.loadingFinished", "Network.loadingFailed":
     let requestId = params{"requestId"}.getStr("")
     let idx = bt.pendingRequestIds.find(requestId)
@@ -221,15 +291,17 @@ proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode =
   bt.ws.sendFrame($cmd)
   
   # Receive responses until we get our matching ID
-  var deadline = epochTime() + float(DefaultTimeoutMs) / 1000.0
+  var deadline = epochTime() + float(bt.cdpTimeoutMs()) / 1000.0
   while true:
     let now = epochTime()
     if now >= deadline:
       return err("CDP timeout waiting for " & cdpMethod & " response")
     
-    let remainingMs = int((deadline - now) * 1000)
+    let remainingMs = max(1, int((deadline - now) * 1000))
     let frame = try:
       bt.ws.recvFrame(remainingMs)
+    except TimeoutError as e:
+      return err("CDP timeout waiting for " & cdpMethod & " response: " & e.msg)
     except IOError as e:
       return err("WebSocket receive error: " & e.msg)
     
@@ -237,7 +309,10 @@ proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode =
       return err("WebSocket closed during CDP command")
     
     if frame.opcode == WsOpcodeText or frame.opcode == WsOpcodeBin:
-      let resp = parseJson(frame.data)
+      let resp = try:
+        parseJson(frame.data)
+      except JsonParsingError as e:
+        return err("malformed CDP frame: " & e.msg)
       if resp.kind == JObject:
         if resp.hasKey("id") and resp["id"].getInt() == id:
           if resp.hasKey("error"):
@@ -285,19 +360,62 @@ proc activatePage*(bt: var BrowserTools): Result[void, string] =
 
 proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): Result[string, string] =
   ## Navigate to URL and wait for page load.
+  if waitUntil notin ["networkidle", "load", "domcontentloaded"]:
+    return err("invalid waitUntil; use networkidle, load or domcontentloaded")
   # Only HTTP(S): file://, data: and browser-internal schemes must never reach
   # Page.navigate (isPrivateUrl alone treats "file" as a host).
   if not url.isHttpUrl:
     return err("only http/https URLs are allowed")
-  # SSRF check
+  # SSRF check. The adapter resolves every address before the browser sees it.
   if url.isPrivateUrl:
     return err("private/internal addresses not allowed")
+  if not isAllowedBrowserRequest(url, brkDocument):
+    return err("URL blocked by browser policy")
 
   bt.inflightRequests = 0
   bt.pendingRequestIds.setLen(0)
   bt.lastNetworkActivity = epochTime()
-  if waitUntil == "networkidle":
-    discard bt.sendCdpCommand("Network.enable")
+  bt.blockedRequests = 0
+  bt.blockedWebSockets = 0
+  bt.blockedServiceWorkers = 0
+  bt.policyViolation = ""
+  bt.lastBlockedUrl = ""
+  bt.hardeningWarnings.setLen(0)
+
+  ## Network monitoring is always enabled: it is the second layer for redirects,
+  ## WebSockets and service workers, even when waitUntil is not networkidle.
+  let netResult = bt.sendCdpCommand("Network.enable")
+  if netResult.isErr:
+    return err("cannot enable network monitoring: " & netResult.error)
+  let cacheDisabled = bt.sendCdpCommand("Network.setCacheDisabled",
+                                        %*{"cacheDisabled": true})
+  if cacheDisabled.isErr:
+    bt.addHardeningWarning("cache disabling unsupported: " & cacheDisabled.error)
+
+  ## Ask Chromium to bypass service workers. This is a required control on
+  ## Chromium/Edge; Lightpanda may not implement the method, so it falls back to
+  ## the injected script and event monitoring.
+  let swBypass = bt.sendCdpCommand("Network.setBypassServiceWorker",
+                                   %*{"bypass": true})
+  if swBypass.isErr:
+    bt.addHardeningWarning("service worker bypass unsupported: " & swBypass.error)
+    if bt.backend.isChromiumBackend():
+      return err("cannot bypass service workers: " & swBypass.error)
+
+  ## Block non-HTTP channels at the network layer too. Fetch does not see
+  ## WebSocket/WebTransport handshakes.
+  let blockedUrls = bt.sendCdpCommand("Network.setBlockedURLs", %*{
+    "urls": BrowserBlockedUrlPatterns
+  })
+  if blockedUrls.isErr:
+    let legacyBlocked = bt.sendCdpCommand("Network.setBlockedURLs", %*{
+      "urlPatterns": BrowserBlockedUrlPatterns
+    })
+    if legacyBlocked.isErr:
+      bt.addHardeningWarning("URL blocking unsupported: " & legacyBlocked.error)
+      if bt.backend.isChromiumBackend():
+        return err("cannot block WebSocket/WebTransport URLs: " &
+                   legacyBlocked.error)
 
   ## Intercept every request before it leaves the browser. This covers
   ## redirects and page subresources, not just the initial URL. Without
@@ -317,8 +435,49 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
     return err("empty targetId from ensurePage")
   ? activatePage(bt)
   
-  # Enable Page domain events
-  discard bt.sendCdpCommand("Page.enable")
+  # Enable Page domain events before installing the per-document policy.
+  let pageEnable = bt.sendCdpCommand("Page.enable")
+  if pageEnable.isErr:
+    return err("cannot enable Page domain: " & pageEnable.error)
+
+  ## Inject the policy before any page script runs. Chromium supports
+  ## `runImmediately`; older engines get the plain variant.
+  var injection = bt.sendCdpCommand("Page.addScriptToEvaluateOnNewDocument", %*{
+    "source": browserPolicyScript(),
+    "runImmediately": true,
+  })
+  if injection.isErr:
+    injection = bt.sendCdpCommand("Page.addScriptToEvaluateOnNewDocument", %*{
+      "source": browserPolicyScript(),
+    })
+  if injection.isErr:
+    bt.addHardeningWarning("policy script injection unsupported: " & injection.error)
+    if bt.backend.isChromiumBackend():
+      return err("cannot install browser policy script: " & injection.error)
+
+  ## Downloads are never allowed. Chromium exposes Browser.setDownloadBehavior;
+  ## older builds use the Page-domain variant.
+  let downloadDenied = bt.sendCdpCommand("Browser.setDownloadBehavior", %*{
+    "behavior": "deny",
+    "eventsEnabled": false,
+  })
+  if downloadDenied.isErr:
+    let pageDownloadDenied = bt.sendCdpCommand("Page.setDownloadBehavior", %*{
+      "behavior": "deny",
+    })
+    if pageDownloadDenied.isErr:
+      ## Download denial is best-effort: the CDP surface varies across
+      ## Chromium/Edge builds. A download cannot execute scripts, so the
+      ## absence of the method is a warning, not a navigation abort.
+      bt.addHardeningWarning("download denial unsupported: " & pageDownloadDenied.error)
+
+  ## ServiceWorker events feed the fail-closed monitor. A failure to enable the
+  ## domain is not fatal because the bypass and injected unregister already
+  ## cover registration on Chromium.
+  if bt.backend.isChromiumBackend():
+    let swEnable = bt.sendCdpCommand("ServiceWorker.enable")
+    if swEnable.isErr:
+      bt.addHardeningWarning("service worker events unavailable: " & swEnable.error)
 
   # Navigate
   let navResp = bt.sendCdpCommand("Page.navigate", %*{
@@ -330,16 +489,20 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
   let navError = navNode{"errorText"}
   if navError != nil and navError.kind == JString and navError.getStr("").len > 0:
     return err("navigation failed: " & navError.getStr(""))
+  if bt.policyViolation.len > 0:
+    return err("browser policy violation: " & bt.policyViolation)
 
   bt.currentUrl = url
 
   # Poll document.readyState: supported by both Lightpanda and Chromium page
   # endpoints (Chromium does not implement Lightpanda's non-standard
   # Page.waitForLoadEvent).
-  let deadline = epochTime() + float(DefaultTimeoutMs) / 1000.0
+  let deadline = epochTime() + float(bt.cdpTimeoutMs()) / 1000.0
   let targetReady = if waitUntil == "domcontentloaded": "interactive"
                     else: "complete"
   while epochTime() < deadline:
+    if bt.policyViolation.len > 0:
+      return err("browser policy violation: " & bt.policyViolation)
     let evalResp = bt.sendCdpCommand("Runtime.evaluate", %*{
       "expression": "document.readyState",
       "returnByValue": true
@@ -354,26 +517,36 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
         if state == "complete" or
            (targetReady == "interactive" and state == "interactive"):
           if waitUntil != "networkidle":
+            if bt.policyViolation.len > 0:
+              return err("browser policy violation: " & bt.policyViolation)
             return ok(url)
           ## Real network-idle approximation: wait until Network.* events show
           ## no in-flight requests and 500ms of silence.
           if bt.inflightRequests == 0 and
              epochTime() - bt.lastNetworkActivity >= 0.5:
+            if bt.policyViolation.len > 0:
+              return err("browser policy violation: " & bt.policyViolation)
             return ok(url)
     sleep(100)
 
+  if bt.policyViolation.len > 0:
+    return err("browser policy violation: " & bt.policyViolation)
   return err("timeout waiting for page load")
 
 proc getContent*(bt: var BrowserTools; maxChars: int; asHtml: bool): Result[string, string] =
-  ## Get page content (HTML or text).
+  ## Get page content (HTML or text). The browser truncates before serializing
+  ## so a hostile DOM cannot force an unbounded CDP payload.
   if bt.pageTargetId.len == 0:
     return err("no page loaded - use browser_navigate first")
+  if bt.policyViolation.len > 0:
+    return err("browser policy violation: " & bt.policyViolation)
   
   ? activatePage(bt)
+  let cap = clampBrowserContentChars(maxChars)
   
   # Get HTML via Runtime.evaluate
   let evalResp = bt.sendCdpCommand("Runtime.evaluate", %*{
-    "expression": "document.documentElement.outerHTML",
+    "expression": browserContentExpression(cap),
     "returnByValue": true
   })
   if evalResp.isErr:
@@ -383,20 +556,20 @@ proc getContent*(bt: var BrowserTools; maxChars: int; asHtml: bool): Result[stri
   if not r.hasKey("result") or not r["result"].hasKey("value"):
     return err("no result in Runtime.evaluate response")
   
-  var html = r["result"]["value"].getStr()
+  let html = r["result"]["value"].getStr()
   
   if asHtml:
-    if maxChars > 0 and html.len > maxChars:
-      html = html[0 ..< maxChars] & "..."
     return ok(html)
   else:
-    let text = htmlToText(html, maxChars)
+    let text = htmlToText(html, cap)
     return ok(text)
 
 proc takeScreenshot*(bt: var BrowserTools; fullPage: bool): Result[string, string] =
   ## Take screenshot and return base64-encoded PNG.
   if bt.pageTargetId.len == 0:
     return err("no page loaded - use browser_navigate first")
+  if bt.policyViolation.len > 0:
+    return err("browser policy violation: " & bt.policyViolation)
   
   ? activatePage(bt)
   
@@ -414,6 +587,9 @@ proc takeScreenshot*(bt: var BrowserTools; fullPage: bool): Result[string, strin
     return err("no data in Page.captureScreenshot response")
   
   let pngData = r["data"].getStr()
+  if screenshotTooLarge(pngData):
+    return err("screenshot exceeds " & $BrowserMaxScreenshotBytes &
+               " bytes; retry with fullPage=false or a smaller viewport")
   return ok(pngData)
 
 # ── Lifecycle ───────────────────────────────────────────────────────────────
@@ -481,6 +657,33 @@ proc resolveBrowserExecutable(bt: BrowserTools): Result[tuple[kind: BrowserBacke
     else: "set DONKEY_BROWSER_PATH"
   err("browser executable not found for " & $kind & "; " & hint)
 
+proc browserProcessEnv*(profileDir: string): StringTableRef =
+  ## Do not leak daemon secrets (provider keys, web proxy credentials, tokens)
+  ## into the browser process. Chromium does not need them and a renderer
+  ## compromise should not inherit them.
+  let homeDir =
+    if profileDir.len > 0: profileDir
+    else: getTempDir()
+  result = newStringTable(mode = modeCaseSensitive)
+  result["PATH"] = getEnv("PATH")
+  result["HOME"] = homeDir
+  result["TMPDIR"] = getEnv("TMPDIR", getTempDir())
+  result["TMP"] = getEnv("TMP", getEnv("TMPDIR", getTempDir()))
+  result["TEMP"] = getEnv("TEMP", getEnv("TMPDIR", getTempDir()))
+  result["LANG"] = getEnv("LANG", "C.UTF-8")
+  result["LC_ALL"] = getEnv("LC_ALL", getEnv("LANG", "C.UTF-8"))
+  result["USER"] = getEnv("USER", "donkey")
+  result["LOGNAME"] = getEnv("LOGNAME", getEnv("USER", "donkey"))
+  for name in ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"]:
+    let value = getEnv(name)
+    if value.len > 0:
+      result[name] = value
+  when defined(windows):
+    for name in ["SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"]:
+      let value = getEnv(name)
+      if value.len > 0:
+        result[name] = value
+
 proc waitForChromiumPage(bt: var BrowserTools;
                          deadline: float): Result[tuple[wsUrl: string, targetId: string, url: string], string] =
   ## Poll /json/list until a page target exposes its debugger WebSocket.
@@ -537,6 +740,12 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
       return err("cannot create browser profile dir: " & e.msg)
     bt.profileDir = profileDir
     bt.ownsProfileDir = true
+    let hardened = hardenProfileDir(profileDir)
+    if hardened.isErr:
+      try: removeDir(profileDir) except CatchableError: discard
+      bt.profileDir = ""
+      bt.ownsProfileDir = false
+      return err(hardened.error)
 
   let specOpt = buildLaunchSpec(kind, exe, bt.host, bt.port, profileDir,
                                 bt.proxyServer)
@@ -545,7 +754,8 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
   let spec = specOpt.get()
 
   let p = try:
-    startProcess(spec.exe, args = spec.args, options = {poUsePath, poParentStreams})
+    startProcess(spec.exe, args = spec.args, env = browserProcessEnv(profileDir),
+                 options = {poUsePath, poParentStreams})
   except CatchableError as e:
     if bt.ownsProfileDir:
       try: removeDir(bt.profileDir) except CatchableError: discard
@@ -556,7 +766,8 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
   if kind == bbLightpanda:
     sleep(500)
     try:
-      bt.ws = wsConnect(bt.host, Port(bt.port), "/devtools/browser", useTls = false)
+      bt.ws = wsConnect(bt.host, Port(bt.port), "/devtools/browser",
+                        useTls = false, timeoutMs = min(bt.cdpTimeoutMs(), 15_000))
     except IOError as e:
       bt.process.terminate()
       bt.process.close()
@@ -564,7 +775,7 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
       return err("WebSocket connect failed: " & e.msg)
     return ok("connected")
 
-  let deadline = epochTime() + float(DefaultTimeoutMs) / 1000.0
+  let deadline = epochTime() + float(bt.cdpTimeoutMs()) / 1000.0
   let page = bt.waitForChromiumPage(deadline)
   if page.isErr:
     bt.process.terminate()
@@ -584,7 +795,8 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
   let endpoint = endpointOpt.get()
   try:
     bt.ws = wsConnect(endpoint.host, Port(endpoint.port),
-                      endpoint.path, useTls = endpoint.secure)
+                      endpoint.path, useTls = endpoint.secure,
+                      timeoutMs = min(bt.cdpTimeoutMs(), 15_000))
   except IOError as e:
     bt.process.terminate()
     bt.process.close()
@@ -621,6 +833,12 @@ proc close*(bt: var BrowserTools) =
   bt.pendingRequestIds.setLen(0)
   bt.lastNetworkActivity = 0.0
   bt.fetchEnabled = false
+  bt.blockedRequests = 0
+  bt.blockedWebSockets = 0
+  bt.blockedServiceWorkers = 0
+  bt.policyViolation = ""
+  bt.lastBlockedUrl = ""
+  bt.hardeningWarnings.setLen(0)
 
 # ── invoke — ToolPort method ─────────────────────────────────────────────────
 
@@ -643,6 +861,8 @@ proc invokeCommand(bt: var BrowserTools; call: ToolCall): Result[ToolResult, str
       return ok(browserError(call.id, "only http/https URLs are allowed"))
     if url.isPrivateUrl:
       return ok(browserError(call.id, "private/internal addresses not allowed"))
+    if not isAllowedBrowserRequest(url, brkDocument):
+      return ok(browserError(call.id, "URL blocked by browser policy"))
     
     # Spawn/connect if needed
     if bt.process == nil:
@@ -696,6 +916,13 @@ proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
   bt.lastUsed = epochTime()
   if bt.process != nil and bt.ws.sock != nil:
     bt.drainPendingEvents()
+  ## A WebSocket, service worker or blocked document violation means the page
+  ## may already have an egress channel. Tear the whole browser down instead of
+  ## returning a partially trusted page.
+  if bt.policyViolation.len > 0:
+    let violation = bt.policyViolation
+    bt.close()
+    return ok(browserError(call.id, "blocked by browser policy: " & violation))
 
 # ── Constructor ─────────────────────────────────────────────────────────────
 
@@ -708,6 +935,7 @@ proc newBrowserTools*(
   profileDir: string = "";
   http: HttpRuntimePort = HttpRuntimePort();
   proxyServer: string = "";
+  timeoutMs: int = BrowserDefaultTimeoutMs;
 ): BrowserTools =
   var resolvedBackend = backend
   if lightpandaPath.len > 0 and backend == bbAuto:
@@ -722,6 +950,7 @@ proc newBrowserTools*(
     port: port,
     http: http,
     proxyServer: proxyServer,
+    timeoutMs: clampBrowserTimeoutMs(timeoutMs),
     process: nil,
     pageTargetId: "",
     currentUrl: ""
@@ -739,6 +968,7 @@ type
     port: int
     proxyServer: string
     idleTimeoutSeconds: float
+    timeoutMs: int
     http: HttpRuntimePort
     byUser*: Table[string, ref BrowserTools]
 
@@ -763,7 +993,8 @@ proc newBrowserToolRuntime*(backend: BrowserBackendKind = bbAuto;
                              port = DefaultLightpandaPort;
                              http: HttpRuntimePort = HttpRuntimePort();
                              proxyServer = "";
-                             idleTimeoutSeconds = 900.0
+                             idleTimeoutSeconds = 900.0;
+                             timeoutMs = BrowserDefaultTimeoutMs
                             ): BrowserToolRuntime =
   BrowserToolRuntime(
     backend: backend,
@@ -774,6 +1005,7 @@ proc newBrowserToolRuntime*(backend: BrowserBackendKind = bbAuto;
     port: port,
     proxyServer: proxyServer,
     idleTimeoutSeconds: idleTimeoutSeconds,
+    timeoutMs: clampBrowserTimeoutMs(timeoutMs),
     http: http,
     byUser: initTable[string, ref BrowserTools](),
   )
@@ -852,10 +1084,19 @@ proc invoke*(rt: BrowserToolRuntime; call: ToolCall): Result[ToolResult, string]
       port = userPort,
       http = rt.http,
       proxyServer = rt.proxyServer,
+      timeoutMs = rt.timeoutMs,
     )
     if rt.profileBaseDir.len > 0:
-      # Operator-provided profiles persist across runs; never delete them.
+      # Operator-provided profiles persist across runs; never delete them, but
+      # keep cookies and local storage private to the daemon user.
       bt.profileDir = rt.profileBaseDir / key
+      try:
+        createDir(bt.profileDir)
+      except CatchableError as e:
+        return err("cannot prepare browser profile dir: " & e.msg)
+      let hardened = hardenProfileDir(bt.profileDir)
+      if hardened.isErr:
+        return err(hardened.error)
       bt.ownsProfileDir = false
     let holder = new(BrowserTools)
     holder[] = bt

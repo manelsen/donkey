@@ -47,6 +47,14 @@ suite "browser backend policy":
     check spec.args.contains("--headless=new")
     check not spec.args.anyIt(it.startsWith("--user-data-dir="))
 
+  test "Chromium launch spec disables background egress":
+    let spec = buildLaunchSpec(bbChromium, "/usr/bin/chromium",
+                               "127.0.0.1", 9222, "").get()
+    for flag in ["--disable-background-networking", "--disable-component-update",
+                 "--disable-default-apps", "--disable-extensions", "--disable-sync",
+                 "--dns-prefetch-disable", "--no-pings", "--metrics-recording-only"]:
+      check spec.args.contains(flag)
+
   test "Chromium launch spec routes egress through a filtering proxy":
     let spec = buildLaunchSpec(bbChromium, "/usr/bin/chromium",
                                "127.0.0.1", 9222, "", "http://127.0.0.1:3128").get()
@@ -98,3 +106,64 @@ suite "browser backend policy":
     check not isHttpUrl("file:///etc/passwd")
     check not isHttpUrl("data:text/html,hello")
     check not isHttpUrl("chrome://settings")
+
+suite "browser request policy":
+
+  test "classifies CDP resource types":
+    check browserResourceKind("Document") == brkDocument
+    check browserResourceKind("document") == brkDocument
+    check browserResourceKind("WebSocket") == brkWebSocket
+    check browserResourceKind("ServiceWorker") == brkServiceWorker
+    check browserResourceKind("Script") == brkSubresource
+    check browserResourceKind("") == brkUnknown
+
+  test "documents never use inline schemes":
+    for url in ["data:text/html,hello", "blob:https://example.com/x", "about:blank"]:
+      check not browserSchemeAllowedFor(url, brkDocument)
+      check browserSchemeAllowedFor(url, brkSubresource)
+
+  test "network subresources require HTTP(S)":
+    check browserSchemeAllowedFor("https://example.com/a.js", brkSubresource)
+    check browserSchemeAllowedFor("http://example.com/", brkDocument)
+    for url in ["file:///etc/passwd", "chrome://settings", "ftp://example.com/x",
+                "filesystem:https://example.com/temporary/x", "javascript:alert(1)"]:
+      check not browserSchemeAllowedFor(url, brkSubresource)
+      check not browserSchemeAllowedFor(url, brkDocument)
+
+  test "WebSocket and service worker are always denied by the pure gate":
+    check not browserSchemeAllowedFor("wss://example.com/socket", brkWebSocket)
+    check not browserSchemeAllowedFor("ws://example.com/socket", brkWebSocket)
+    check not browserSchemeAllowedFor("https://example.com/sw.js", brkServiceWorker)
+
+  test "clamps browser timeouts at the documented bounds":
+    check clampBrowserTimeoutMs(0) == BrowserDefaultTimeoutMs
+    check clampBrowserTimeoutMs(-1) == BrowserDefaultTimeoutMs
+    check clampBrowserTimeoutMs(1) == BrowserMinTimeoutMs
+    check clampBrowserTimeoutMs(45_000) == 45_000
+    check clampBrowserTimeoutMs(999_999) == BrowserMaxTimeoutMs
+    check parseBrowserTimeoutMs("") == BrowserDefaultTimeoutMs
+    check parseBrowserTimeoutMs("bogus") == BrowserDefaultTimeoutMs
+    check parseBrowserTimeoutMs("15000") == 15_000
+
+  test "clamps content requests and truncates before serialization":
+    check clampBrowserContentChars(0) == BrowserDefaultMaxContentChars
+    check clampBrowserContentChars(-1) == BrowserDefaultMaxContentChars
+    check clampBrowserContentChars(10) == 10
+    check clampBrowserContentChars(10_000_000) == BrowserMaxContentChars
+    let expr = browserContentExpression(1234)
+    check "document.documentElement.outerHTML" in expr
+    check "slice(0, 1234)" in expr
+    check "[truncated]" in expr
+    check "slice(0, 1234)" notin browserContentExpression(BrowserMaxContentChars + 1)
+
+  test "screenshot payload cap is inclusive":
+    check not screenshotTooLarge("abc", 3)
+    check screenshotTooLarge("abcd", 3)
+    check not screenshotTooLarge("", 3)
+
+  test "policy script blocks side channels and service workers":
+    let script = browserPolicyScript()
+    for needle in ["WebSocket", "WebTransport", "RTCPeerConnection",
+                   "SharedWorker", "sendBeacon", "serviceWorker",
+                   "unregister", "navigator.serviceWorker.register"]:
+      check needle in script
