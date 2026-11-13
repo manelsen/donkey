@@ -4,7 +4,8 @@
 ## the workspace and resolves paths; the runner executes the argv. Keeping the
 ## argv construction pure makes the security flags testable without Docker.
 
-import std/[options, strutils, unicode]
+import std/[options, strutils]
+from std/unicode import runeLenAt
 
 type
   CodeLanguage* = enum

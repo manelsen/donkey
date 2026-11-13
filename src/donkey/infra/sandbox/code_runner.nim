@@ -123,7 +123,7 @@ proc cleanupContainer(runtimeCmd, name: string) =
     return
   try:
     let p = startProcess(timeoutExe,
-                         args = @["2s", runtimeCmd, "kill", name],
+                         args = @["--kill-after=2s", "2s", runtimeCmd, "kill", name],
                          env = codeProcessEnv(),
                          options = {poUsePath, poStdErrToStdOut})
     try:
