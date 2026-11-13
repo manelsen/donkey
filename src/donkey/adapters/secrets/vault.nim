@@ -38,6 +38,8 @@ type
     path*:     string
     keyPath*:  string
     keyStore:  FileKeyStore
+    ## Optional instrumentation hook, called immediately before `flock`.
+    onLockWait*: proc() {.gcsafe, raises: [].}
 
 when defined(posix):
   proc cFlock(fd: cint; operation: cint): cint {.
@@ -84,6 +86,8 @@ proc withVaultLock*[T](vault: SecretVault;
         lockFile.close()
         return err(lockHardened.error)
       let fd = cint(lockFile.getFileHandle())
+      if vault.onLockWait != nil:
+        vault.onLockWait()
       if cFlock(fd, VaultLockExclusive) != 0:
         lockFile.close()
         return err("secret vault lock failed")

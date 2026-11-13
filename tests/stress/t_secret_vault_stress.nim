@@ -9,10 +9,11 @@ let stressDir = getTempDir() / ("donkey_stress_vault_" & $getCurrentProcessId())
 
 type
   SetArg = object
-    home:  string
-    name:  string
-    value: string
-    index: int
+    home:       string
+    name:       string
+    value:      string
+    index:      int
+    signalLock: bool
 
   RemoveArg = object
     home:  string
@@ -22,10 +23,9 @@ type
 var
   gSetOk:    array[32, bool]
   gRemoveOk: array[32, bool]
-  gBlockedStarted: Atomic[bool]
   gBlockedOk:      Atomic[bool]
   gBlockedCompleted: Atomic[bool]
-  gLockHome:       string
+  gLockWait:       Channel[bool]
   gBlockedWriter:  Thread[SetArg]
   gReaderOk:       bool
   gReaderNames:    seq[string]
@@ -37,9 +37,13 @@ proc setWorker(arg: SetArg) {.thread.} =
 
 proc blockedSetWorker(arg: SetArg) {.thread.} =
   {.cast(gcsafe).}:
-    gBlockedStarted.store(true)
-    gBlockedOk.store(
-      newSecretVault(arg.home).setSecret(arg.name, arg.value).isOk)
+    let vault = newSecretVault(arg.home)
+    if arg.signalLock:
+      vault.onLockWait = proc() {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}:
+          {.cast(raises: []).}:
+            gLockWait.send(true)
+    gBlockedOk.store(vault.setSecret(arg.name, arg.value).isOk)
     gBlockedCompleted.store(true)
 
 proc removeWorker(arg: RemoveArg) {.thread.} =
@@ -138,28 +142,24 @@ suite "secret vault stress":
     let vault = newSecretVault(home)
     check vault.setSecret("KEEP", "old").isOk
 
-    gBlockedStarted.store(false)
     gBlockedOk.store(false)
     gBlockedCompleted.store(false)
-    gLockHome = home
     gReaderOk = false
     gReaderNames = @[]
+    gLockWait.open(1)
 
     let held = vault.withVaultLock(
       proc(): Result[void, string] {.gcsafe, raises: [].} =
         {.cast(gcsafe).}:
           {.cast(raises: []).}:
             createThread(gBlockedWriter, blockedSetWorker,
-                         SetArg(home: gLockHome, name: "NEW", value: "new", index: 0))
-          var waited = 0
-          while not gBlockedStarted.load() and waited < 1000:
-            sleep(1)
-            waited += 1
-          ## The writer must still be blocked while the main thread owns flock.
-          sleep(5)
+                         SetArg(home: home, name: "NEW", value: "new", index: 0,
+                                signalLock: true))
+          {.cast(raises: []).}:
+            discard gLockWait.recv()
           if gBlockedCompleted.load():
             return err("blocked writer completed while the lock was held")
-          let names = newSecretVault(gLockHome).listSecretNames()
+          let names = vault.listSecretNames()
           gReaderOk = names.isOk
           if names.isOk:
             gReaderNames = names.get()
@@ -167,6 +167,7 @@ suite "secret vault stress":
 
     check held.isOk
     joinThread(gBlockedWriter)
+    gLockWait.close()
     check gBlockedOk.load()
     check gReaderOk
     check gReaderNames == @["KEEP"]

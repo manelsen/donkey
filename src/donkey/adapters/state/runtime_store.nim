@@ -30,9 +30,11 @@ const
 type
   RuntimeStateStore* = ref object
     stateDir*: string
-    ## Optional instrumentation/fault-injection hook, called under `lock` when
-    ## a real ledger compaction starts. nil in production.
+    ## Optional instrumentation/fault-injection hooks. nil in production.
+    ## `onCompactStart` runs under `lock` when real compaction starts;
+    ## `onAppendStart` runs before the append lock is acquired.
     onCompactStart*: proc() {.gcsafe, raises: [].}
+    onAppendStart*: proc(record: DeliveryRecord) {.gcsafe, raises: [].}
     ## Records still awaiting `sent`/`failed`. Loaded once at construction so
     ## the hot path does not replay the ledger file on every update.
     pending*: Table[string, DeliveryRecord]
@@ -721,6 +723,8 @@ proc appendMinimalEvent(store: RuntimeStateStore;
 
 proc recordPending(store: RuntimeStateStore;
                    record: DeliveryRecord): Result[void, string] {.raises: [].} =
+  if store.onAppendStart != nil:
+    store.onAppendStart(record)
   acquire(store.lock)
   defer: release(store.lock)
   store.pending[record.id] = record

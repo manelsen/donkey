@@ -20,16 +20,27 @@ var
   gAppendCount:    array[4, int]
   gAppendErrors:   Atomic[int]
   gStopAppenders:  Atomic[bool]
-  gHookEntered:    Atomic[bool]
-  gHookRelease:    Atomic[bool]
-  gWriteAttemptsAfterHook: Atomic[int]
+  gHookEnabled:    Atomic[bool]
+  gHookEntered:    Channel[bool]
+  gHookRelease:    Channel[bool]
+  gProbeStarted:   Channel[bool]
+  gStopStarted:    Channel[bool]
   gStopReturned:   Atomic[bool]
   gProbeOk:        bool
 
 proc blockingHook() {.gcsafe, raises: [].} =
-  gHookEntered.store(true)
-  while not gHookRelease.load():
-    sleep(1)
+  if not gHookEnabled.load():
+    return
+  {.cast(gcsafe).}:
+    {.cast(raises: []).}:
+      gHookEntered.send(true)
+      discard gHookRelease.recv()
+
+proc appendStartHook(record: DeliveryRecord) {.gcsafe, raises: [].} =
+  if record.id == "probe":
+    {.cast(gcsafe).}:
+      {.cast(raises: []).}:
+        gProbeStarted.send(true)
 
 proc appendWorker(arg: AppendArg) {.thread.} =
   {.cast(gcsafe).}:
@@ -53,9 +64,6 @@ proc appendWorker(arg: AppendArg) {.thread.} =
 
 proc probeWorker(_: int) {.thread.} =
   {.cast(gcsafe).}:
-    while not gHookEntered.load():
-      sleep(1)
-    discard gWriteAttemptsAfterHook.fetchAdd(1)
     let now = epochMs()
     let record = DeliveryRecord(
       id: "probe", userId: "probe", channel: ckSlack, channelId: "probe",
@@ -68,8 +76,21 @@ proc probeWorker(_: int) {.thread.} =
 
 proc stopWorker(worker: LedgerCompactionWorker) {.thread.} =
   {.cast(gcsafe).}:
+    gStopStarted.send(true)
     stopLedgerCompactionWorker(worker)
     gStopReturned.store(true)
+
+proc openChannels() =
+  gHookEntered.open(1)
+  gHookRelease.open(1)
+  gProbeStarted.open(1)
+  gStopStarted.open(1)
+
+proc closeChannels() =
+  gHookEntered.close()
+  gHookRelease.close()
+  gProbeStarted.close()
+  gStopStarted.close()
 
 suite "ledger worker stress":
 
@@ -86,39 +107,36 @@ suite "ledger worker stress":
     gProbeOk = false
     gAppendErrors.store(0)
     gStopAppenders.store(false)
-    gHookEntered.store(false)
-    gHookRelease.store(false)
-    gWriteAttemptsAfterHook.store(0)
+    gHookEnabled.store(true)
     for i in 0 ..< gAppendCount.len:
       gAppendCount[i] = 0
+    openChannels()
 
     store.onCompactStart = blockingHook
+    store.onAppendStart = appendStartHook
     let worker = startLedgerCompactionWorker(
       store, 1.0, newLogger("stress.ledger", lvlError))
     check worker != nil
-    defer: stopLedgerCompactionWorker(worker)
+    defer:
+      stopLedgerCompactionWorker(worker)
+      closeChannels()
 
     var threads: array[4, Thread[AppendArg]]
     for i in 0 ..< threads.len:
       createThread(threads[i], appendWorker, AppendArg(worker: i))
 
-    var waited = 0
-    while not gHookEntered.load() and waited < 5000:
-      sleep(10)
-      waited += 10
-    check gHookEntered.load()
+    discard gHookEntered.recv()
+    check gHookEnabled.load()
 
     var probe: Thread[int]
     createThread(probe, probeWorker, 0)
-    waited = 0
-    while gWriteAttemptsAfterHook.load() == 0 and waited < 5000:
-      sleep(10)
-      waited += 10
-    check gWriteAttemptsAfterHook.load() > 0
+    discard gProbeStarted.recv()
 
-    gHookRelease.store(true)
+    gHookEnabled.store(false)
+    gHookRelease.send(true)
     joinThread(probe)
     check gProbeOk
+
     gStopAppenders.store(true)
     for i in 0 ..< threads.len:
       joinThread(threads[i])
@@ -156,27 +174,24 @@ suite "ledger worker stress":
       textHash: "h", state: dlsPending,
       createdAtMs: epochMs(), updatedAtMs: epochMs())).isOk
 
-    gHookEntered.store(false)
-    gHookRelease.store(false)
+    gHookEnabled.store(true)
     gStopReturned.store(false)
+    openChannels()
     store.onCompactStart = blockingHook
-
     let worker = startLedgerCompactionWorker(
       store, 1.0, newLogger("stress.ledger", lvlError))
     check worker != nil
+    defer: closeChannels()
 
-    var waited = 0
-    while not gHookEntered.load() and waited < 5000:
-      sleep(10)
-      waited += 10
-    check gHookEntered.load()
+    discard gHookEntered.recv()
 
     var stopper: Thread[LedgerCompactionWorker]
     createThread(stopper, stopWorker, worker)
-    sleep(20)
+    discard gStopStarted.recv()
     check not gStopReturned.load()
 
-    gHookRelease.store(true)
+    gHookEnabled.store(false)
+    gHookRelease.send(true)
     joinThread(stopper)
     check gStopReturned.load()
     check store.ledgerLastCompactError().len == 0

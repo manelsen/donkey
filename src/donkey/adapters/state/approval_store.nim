@@ -13,6 +13,8 @@ import ../../ports/approval
 type
   ApprovalStore* = ref object
     path*: string
+    ## Optional instrumentation hook, called immediately before `flock`.
+    onLockWait*: proc() {.gcsafe, raises: [].}
 
 const
   MaxPendingPerUser* = 8
@@ -36,6 +38,8 @@ proc withApprovalLock*[T](store: ApprovalStore;
       createDir(parentDir(lockPath))
       var lockFile = open(lockPath, fmReadWrite)
       let fd = cint(lockFile.getFileHandle())
+      if store.onLockWait != nil:
+        store.onLockWait()
       if cFlock(fd, ApprovalLockExclusive) != 0:
         lockFile.close()
         return err("approval store lock failed")

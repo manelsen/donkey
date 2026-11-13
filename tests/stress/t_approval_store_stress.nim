@@ -10,9 +10,10 @@ let stressDir = getTempDir() / ("donkey_stress_approval_" & $getCurrentProcessId
 
 type
   CreateArg = object
-    path:   string
-    userId: string
-    index:  int
+    path:       string
+    userId:     string
+    index:      int
+    signalLock: bool
 
   DecideArg = object
     path:   string
@@ -24,14 +25,13 @@ var
   gCreateIds: array[32, string]
   gCreateOk:  array[32, bool]
   gDecideOk:  array[32, bool]
-  gBlockedStarted: Atomic[bool]
   gBlockedOk:      Atomic[bool]
   gBlockedCompleted: Atomic[bool]
   gReadErrors:     Atomic[int]
   gReadCount:      Atomic[int]
   gReaderReady:    Atomic[bool]
   gWritersDone:    Atomic[bool]
-  gLockPath:       string
+  gLockWait:       Channel[bool]
   gBlockedWriter:  Thread[CreateArg]
   gReaderOk:       bool
 
@@ -45,10 +45,14 @@ proc createWorker(arg: CreateArg) {.thread.} =
 
 proc blockedCreateWorker(arg: CreateArg) {.thread.} =
   {.cast(gcsafe).}:
-    gBlockedStarted.store(true)
+    let store = newApprovalStore(arg.path)
+    if arg.signalLock:
+      store.onLockWait = proc() {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}:
+          {.cast(raises: []).}:
+            gLockWait.send(true)
     gBlockedOk.store(
-      newApprovalStore(arg.path).create(
-        arg.userId, "telegram", "bash", "blocked", 60_000).isOk)
+      store.create(arg.userId, "telegram", "bash", "blocked", 60_000).isOk)
     gBlockedCompleted.store(true)
 
 proc readerWorker(path: string) {.thread.} =
@@ -167,31 +171,28 @@ suite "approval store stress":
     let store = newApprovalStore(path)
     check store.create("owner", "telegram", "bash", "first", 60_000).isOk
 
-    gBlockedStarted.store(false)
     gBlockedOk.store(false)
     gBlockedCompleted.store(false)
-    gLockPath = path
     gReaderOk = false
+    gLockWait.open(1)
 
     let held = store.withApprovalLock(
       proc(): Result[void, string] {.gcsafe, raises: [].} =
         {.cast(gcsafe).}:
           {.cast(raises: []).}:
             createThread(gBlockedWriter, blockedCreateWorker,
-                         CreateArg(path: gLockPath, userId: "blocked", index: 0))
-          var waited = 0
-          while not gBlockedStarted.load() and waited < 1000:
-            sleep(1)
-            waited += 1
-          ## The writer must still be blocked while the main thread owns flock.
-          sleep(5)
+                         CreateArg(path: path, userId: "blocked", index: 0,
+                                   signalLock: true))
+          {.cast(raises: []).}:
+            discard gLockWait.recv()
           if gBlockedCompleted.load():
             return err("blocked writer completed while the lock was held")
-          gReaderOk = newApprovalStore(gLockPath).listPending().isOk
+          gReaderOk = store.listPending().isOk
           ok())
 
     check held.isOk
     joinThread(gBlockedWriter)
+    gLockWait.close()
     check gBlockedOk.load()
     check gReaderOk
     check store.listPending().get().len == 2

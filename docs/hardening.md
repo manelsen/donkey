@@ -113,3 +113,13 @@ Rode `bash scripts/run_stress_tests.sh` antes de release e depois de qualquer mu
 - shutdown, filas ou workers.
 
 Falha de stress bloqueia release. Testes que viram flaky devem ser corrigidos, não ignorados.
+
+## Instrumentação de teste
+
+Os testes de contenção usam hooks opcionais, `nil` em produção:
+
+- `ApprovalStore.onLockWait` / `SecretVault.onLockWait`: chamados imediatamente antes do `flock`;
+- `RuntimeStateStore.onCompactStart`: chamado sob o lock no início de uma compactação real;
+- `RuntimeStateStore.onAppendStart`: chamado antes de `recordPending` adquirir o lock.
+
+Eles permitem provar contenção sem depender de sleeps ou ordem de scheduling; nenhum caminho de produção os define.
