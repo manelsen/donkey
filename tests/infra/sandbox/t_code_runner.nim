@@ -1,6 +1,8 @@
 ## Tests for the bounded process runner used by execute_code.
 
 import std/[os, strutils, times, unittest]
+when defined(linux):
+  import std/posix
 import chronos
 import donkey/core/pipeops
 import donkey/domain/tools/code_pure
@@ -103,6 +105,30 @@ when defined(linux):
       waitFor cancelAfter(fut, 500)
       check cancelled(fut)
       check epochTime() - started < 5.0
+
+    test "cancellation kills descendants in the timeout group":
+      let pidFile = getTempDir() / ("donkey-child-" & $getCurrentProcessId())
+      removeFile(pidFile)
+      defer: removeFile(pidFile)
+      let code = "echo $$ > " & quoteShell(pidFile) & "; exec sleep 30"
+      let fut = runBoundedProcessAsync(@["sh", "-c", code], 60, 1024)
+      var found = false
+      for _ in 0 ..< 40:
+        if fileExists(pidFile):
+          found = true
+          break
+        sleep(25)
+      check found
+      let childPid = parseInt(readFile(pidFile).strip())
+      waitFor cancelAfter(fut, 200)
+      check cancelled(fut)
+      var alive = true
+      for _ in 0 ..< 40:
+        if posix.kill(Pid(childPid), 0.cint) != 0:
+          alive = false
+          break
+        sleep(25)
+      check not alive
 
     test "missing container runtime fails closed without spawning":
       let res = runOciCode("/nonexistent/docker", "alpine", "/tmp", 1, 1,

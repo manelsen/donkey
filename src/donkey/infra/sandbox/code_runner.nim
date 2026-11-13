@@ -89,6 +89,14 @@ proc regularFileSize*(path: string): Result[int64, string] =
   except CatchableError as e:
     err("cannot read file size: " & path & ": " & e.msg)
 
+proc killProcessGroup(p: AsyncProcessRef) =
+  ## timeout is started with ProcessGroup, so a hard kill must target the whole
+  ## group; otherwise a child that ignores SIGTERM survives as an orphan.
+  when defined(posix):
+    if p.pid > 0:
+      discard posix.kill(Pid(-p.pid), SIGKILL)
+  discard p.kill()
+
 proc nextContainerName(): string =
   buildContainerName(getCurrentProcessId().int, epochMs(),
                      codeRunCounter.fetchAdd(1))
@@ -122,47 +130,64 @@ proc cleanupContainerAsync(runtimeCmd, name: string): Future[void] {.async.} =
   let timeoutExe = timeoutCommand()
   if timeoutExe.len == 0:
     return
+  var p: AsyncProcessRef
   try:
-    let p = await asyncproc.startProcess(
+    p = await asyncproc.startProcess(
       timeoutExe,
       arguments = @["--kill-after=2s", "2s", runtimeCmd, "kill", name],
       environment = codeProcessEnv(),
-      options = {AsyncProcessOption.UsePath, AsyncProcessOption.StdErrToStdOut},
+      options = {AsyncProcessOption.UsePath, AsyncProcessOption.StdErrToStdOut,
+                 AsyncProcessOption.ProcessGroup},
       stdoutHandle = AsyncProcess.Pipe)
+  except CancelledError:
+    raise
+  except CatchableError:
+    return
+  try:
     try:
       discard await p.waitForExit()
-    finally:
-      await p.closeWait()
-  except CatchableError:
-    discard
+    except CancelledError:
+      killProcessGroup(p)
+      try:
+        discard await p.waitForExit(chronos.seconds(2))
+      except CatchableError:
+        discard
+      raise
+    except CatchableError:
+      discard
+  finally:
+    await p.closeWait()
+
+proc killAfter(p: AsyncProcessRef; seconds: int) {.async.} =
+  await sleepAsync(chronos.seconds(seconds))
+  killProcessGroup(p)
 
 proc runBoundedProcessAsync*(argv: seq[string]; timeoutSec: int;
                              maxOutputBytes: int):
                              Future[Result[CodeRunResult, string]] {.async.} =
   ## Asynchronous variant of the bounded runner. It never blocks the Chronos
-  ## loop while the child runs; stdout is read with async I/O and the cap is
-  ## enforced incrementally.
+  ## loop while the child runs; stdout is read with async I/O, the output cap
+  ## is enforced incrementally, and a timer kills the whole process group at
+  ## the wall-clock deadline.
   if argv.len == 0:
     return err("empty execution argv")
-  let timeoutExe = timeoutCommand()
-  if timeoutExe.len == 0:
-    return err("GNU timeout (or gtimeout) is required for execute_code")
   let seconds = clampCodeTimeoutSec(timeoutSec)
   let cap = clampCodeMaxOutputBytes(maxOutputBytes)
-  let fullArgv = @[timeoutExe, "--kill-after=2s", $seconds & "s"] & argv
 
   var p: AsyncProcessRef
   let started = epochTime()
   try:
     p = await asyncproc.startProcess(
-      fullArgv[0],
-      arguments = fullArgv[1 .. ^1],
+      argv[0],
+      arguments = argv[1 .. ^1],
       environment = codeProcessEnv(),
-      options = {AsyncProcessOption.UsePath, AsyncProcessOption.StdErrToStdOut},
+      options = {AsyncProcessOption.UsePath, AsyncProcessOption.StdErrToStdOut,
+                 AsyncProcessOption.ProcessGroup},
       stdoutHandle = AsyncProcess.Pipe)
   except CatchableError as e:
     return err("cannot start execution: " & e.msg)
 
+  let killerFut = killAfter(p, seconds)
   var output = ""
   var truncated = false
   var readError = ""
@@ -182,31 +207,28 @@ proc runBoundedProcessAsync*(argv: seq[string]; timeoutSec: int;
       for b in chunk:
         output.add(char(b))
   except CancelledError:
-    ## Cancellation must not leave the child running or hide the cancellation.
-    discard p.terminate()
+    ## Cancellation must not leave the child or its descendants running.
+    if not finished(killerFut):
+      await killerFut.cancelAndWait()
+    killProcessGroup(p)
     try:
       discard await p.waitForExit(chronos.seconds(2))
     except CatchableError:
-      discard p.kill()
-      try:
-        discard await p.waitForExit(chronos.seconds(2))
-      except CatchableError:
-        discard
+      discard
     await p.closeWait()
     raise
   except CatchableError as e:
     readError = e.msg
 
   if truncated:
-    discard p.terminate()
+    killProcessGroup(p)
+  if not finished(killerFut):
+    await killerFut.cancelAndWait()
   var exitCode = -1
   try:
-    if truncated:
-      exitCode = await p.waitForExit(chronos.seconds(2))
-    else:
-      exitCode = await p.waitForExit()
+    exitCode = await p.waitForExit(chronos.seconds(2))
   except CancelledError:
-    discard p.kill()
+    killProcessGroup(p)
     try:
       discard await p.waitForExit(chronos.seconds(2))
     except CatchableError:
@@ -214,7 +236,7 @@ proc runBoundedProcessAsync*(argv: seq[string]; timeoutSec: int;
     await p.closeWait()
     raise
   except CatchableError:
-    discard p.kill()
+    killProcessGroup(p)
     try:
       exitCode = await p.waitForExit(chronos.seconds(2))
     except CatchableError:
@@ -222,7 +244,7 @@ proc runBoundedProcessAsync*(argv: seq[string]; timeoutSec: int;
   let durationMs = int64((epochTime() - started) * 1000.0)
   await p.closeWait()
   let capped = capExecutionOutput(output, cap)
-  let timedOut = exitCode in {124, 137} and
+  let timedOut = exitCode in {137, 143} and
     durationMs >= int64(seconds * 1000 - 250)
   result = ok(CodeRunResult(
     output: capped.text,
