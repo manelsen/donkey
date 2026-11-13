@@ -1,6 +1,6 @@
 ## Tests for pure browser backend policy.
 
-import std/[options, sequtils, strutils, unittest]
+import std/[options, sequtils, strutils, unicode, unittest]
 import donkey/core/pipeops
 import donkey/domain/tools/browser_pure
 
@@ -167,6 +167,21 @@ suite "browser request policy":
     check capped.startsWith("abc")
     check "[truncated]" in capped
     check capBrowserContent("abcdef", 0).len <= BrowserDefaultMaxContentChars + 12
+
+  test "local content cap preserves UTF-8 boundaries":
+    check capBrowserContent("é", 2) == "é"
+    check validateUtf8(capBrowserContent("é", 1)) == -1
+    check validateUtf8(capBrowserContent("a😀b", 2)) == -1
+    check capBrowserContent("a😀b", 2).startsWith("a")
+    check validateUtf8(capBrowserContent("ação", 4)) == -1
+
+  test "text extraction avoids outerHTML and skips markup":
+    let expr = browserTextExpression(1234)
+    check "document.body" in expr
+    check "innerText" in expr
+    check "textContent" in expr
+    check "slice(0, 1234)" in expr
+    check "outerHTML" notin expr
 
   test "policy script blocks side channels and service workers":
     let script = browserPolicyScript()

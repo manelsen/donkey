@@ -595,10 +595,13 @@ proc getContent*(bt: var BrowserTools; maxChars: int; asHtml: bool): Result[stri
   ? activatePage(bt)
   let cap = clampBrowserContentChars(maxChars)
   
-  # Get HTML via Runtime.evaluate. Chromium uses an isolated world; the local
-  # cap is the guarantee even if the page replaces slice or the isolated world
-  # is unavailable.
-  let evalResp = bt.evaluateWithIsolatedWorld(browserContentExpression(cap))
+  # Get HTML/text via Runtime.evaluate. Chromium uses an isolated world; the
+  # local cap is the guarantee even if the page replaces slice or the isolated
+  # world is unavailable.
+  let expression =
+    if asHtml: browserContentExpression(cap)
+    else: browserTextExpression(cap)
+  let evalResp = bt.evaluateWithIsolatedWorld(expression)
   if evalResp.isErr:
     return err(evalResp.error)
   
@@ -606,13 +609,12 @@ proc getContent*(bt: var BrowserTools; maxChars: int; asHtml: bool): Result[stri
   if not r.hasKey("result") or not r["result"].hasKey("value"):
     return err("no result in Runtime.evaluate response")
   
-  let html = capBrowserContent(r["result"]["value"].getStr(), cap)
-  
+  let value = capBrowserContent(r["result"]["value"].getStr(), cap)
   if asHtml:
-    return ok(html)
+    return ok(value)
   else:
-    let text = htmlToText(html, cap)
-    return ok(text)
+    let text = normalizeWhitespace(value)
+    return ok(capBrowserContent(text, cap))
 
 proc takeScreenshot*(bt: var BrowserTools; fullPage: bool): Result[string, string] =
   ## Take screenshot and return base64-encoded PNG.
@@ -1115,15 +1117,15 @@ proc listTools*(rt: BrowserToolRuntime): Result[seq[ToolSchema], string] =
     http = rt.http,
   ).listTools()
 
-proc closeUser*(rt: BrowserToolRuntime; userId: string) =
+proc closeUser*(rt: BrowserToolRuntime; userId: string): Result[void, string] =
   ## Releases one user's browser process, page, profile and CDP port.
   if not rt.onOwnerThread():
-    raise newException(ValueError,
-      "browser runtime closeUser must run on its owner thread")
+    return err("browser runtime closeUser called from a non-owner thread")
   let key = browserUserKey(userId)
   if key in rt.byUser:
     rt.byUser[key][].close()
     rt.byUser.del(key)
+  ok()
 
 proc evictIdle*(rt: BrowserToolRuntime) =
   ## Bounds resource accumulation when no session-end callback is available.
@@ -1176,13 +1178,13 @@ proc invoke*(rt: BrowserToolRuntime; call: ToolCall): Result[ToolResult, string]
     rt.byUser[key] = holder
   rt.byUser[key][].invoke(call)
 
-proc close*(rt: BrowserToolRuntime) =
+proc close*(rt: BrowserToolRuntime): Result[void, string] =
   if not rt.onOwnerThread():
-    raise newException(ValueError,
-      "browser runtime close must run on its owner thread")
+    return err("browser runtime close called from a non-owner thread")
   for _, bt in rt.byUser.mpairs:
     bt[].close()
   rt.byUser.clear()
+  ok()
 
 proc toRuntimePort*(rt: BrowserToolRuntime): ToolRuntimePort =
   ToolRuntimePort(
@@ -1191,7 +1193,9 @@ proc toRuntimePort*(rt: BrowserToolRuntime): ToolRuntimePort =
     invoke: proc(call: ToolCall): Result[ToolResult, string] {.gcsafe.} =
       rt.invoke(call),
     close: proc() {.gcsafe.} =
-      rt.close(),
+      ## ToolRuntimePort.close is void; the Result is deliberately swallowed
+      ## at this boundary. Wrong-thread refusal still happens without throwing.
+      discard rt.close(),
   )
 
 proc toRuntimePort*(bt: BrowserTools): ToolRuntimePort =

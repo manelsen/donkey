@@ -222,15 +222,28 @@ func browserContentExpression*(maxChars: int): string =
     "return h.length > " & $cap & " ? h.slice(0, " & $cap &
     ") + \"\\n[truncated]\" : h; })()"
 
+func browserTextExpression*(maxChars: int): string =
+  ## Extracts visible text before serialization. This avoids losing body text
+  ## behind long attributes/comments in outerHTML and skips script/style.
+  let cap = clampBrowserContentChars(maxChars)
+  "(() => { const root = document.body || document.documentElement; " &
+    "if (!root) return ''; " &
+    "const t = (root.innerText !== undefined ? root.innerText : root.textContent) || ''; " &
+    "return t.length > " & $cap & " ? t.slice(0, " & $cap &
+    ") + \"\\n[truncated]\" : t; })()"
+
 func capBrowserContent*(text: string; maxChars: int): string =
   ## Local cap applied after CDP serialization. The in-page expression is the
   ## first layer; a page can override String.prototype.slice, so this Nim-side
-  ## check is what actually bounds what reaches the tool consumer.
+  ## check is what actually bounds what reaches the tool consumer. The cut is
+  ## moved back to a UTF-8 boundary so truncation never emits invalid bytes.
   let cap = clampBrowserContentChars(maxChars)
-  if text.len > cap:
-    text[0 ..< cap] & "\n[truncated]"
-  else:
-    text
+  if text.len <= cap:
+    return text
+  var cut = cap
+  while cut > 0 and (ord(text[cut]) and 0xC0) == 0x80:
+    dec cut
+  text[0 ..< cut] & "\n[truncated]"
 
 func screenshotTooLarge*(data: string;
                          maxBytes = BrowserMaxScreenshotBytes): bool =

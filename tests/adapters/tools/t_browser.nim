@@ -443,7 +443,7 @@ suite "Browser backends":
     check runtime.byUser["user-a"][].port >= 19400
     check runtime.byUser["user-b"][].port >= 19400
     check runtime.byUser["user-a"][].port != runtime.byUser["user-b"][].port
-    runtime.close()
+    discard runtime.close()
 
   test "configured profile directories are not adapter-owned":
     let base = getTempDir() / ("donkey-test-profiles-" & $getCurrentProcessId())
@@ -460,7 +460,7 @@ suite "Browser backends":
       check fpGroupWrite notin perms
       check fpOthersRead notin perms
       check fpOthersWrite notin perms
-    runtime.close()
+    discard runtime.close()
 
   test "user keys are collision-free":
     check browserUserKey("") == "__default__"
@@ -475,7 +475,7 @@ suite "Browser backends":
     discard runtime.invoke(ToolCall(id: "x", name: "browser_content",
                                     input: %* {}, userId: "user-a"))
     check runtime.byUser["user-a"][].proxyServer == "http://127.0.0.1:3128"
-    runtime.close()
+    discard runtime.close()
 
   test "runtime evicts idle users":
     let runtime = newBrowserToolRuntime(
@@ -488,7 +488,7 @@ suite "Browser backends":
                                     input: %* {}, userId: "user-b"))
     check not runtime.byUser.hasKey("user-a")
     check runtime.byUser.hasKey("user-b")
-    runtime.close()
+    discard runtime.close()
 
   test "idle eviction works without a new invocation":
     let runtime = newBrowserToolRuntime(
@@ -498,28 +498,28 @@ suite "Browser backends":
     runtime.byUser["user-a"][].lastUsed = epochTime() - 120
     runtime.evictIdle()
     check not runtime.byUser.hasKey("user-a")
-    runtime.close()
+    discard runtime.close()
 
   test "runtime reuses ports released by closeUser":
     let runtime = newBrowserToolRuntime(backend = bbOff, port = 19700)
     discard runtime.invoke(ToolCall(id: "a", name: "browser_content",
                                     input: %* {}, userId: "user-a"))
     let firstPort = runtime.byUser["user-a"][].port
-    runtime.closeUser("user-a")
+    check runtime.closeUser("user-a").isOk
     discard runtime.invoke(ToolCall(id: "b", name: "browser_content",
                                     input: %* {}, userId: "user-b"))
     check runtime.byUser["user-b"][].port == firstPort
-    runtime.close()
+    discard runtime.close()
 
   test "runtime releases a single user":
     let runtime = newBrowserToolRuntime(backend = bbOff, port = 19600)
     for user in ["user-a", "user-b"]:
       discard runtime.invoke(ToolCall(id: user, name: "browser_content",
                                       input: %* {}, userId: user))
-    runtime.closeUser("user-a")
+    check runtime.closeUser("user-a").isOk
     check not runtime.byUser.hasKey("user-a")
     check runtime.byUser.hasKey("user-b")
-    runtime.close()
+    discard runtime.close()
 
   test "toRuntimePort exposes the browser tools":
     let port = newBrowserTools(backend = bbOff).toRuntimePort()
