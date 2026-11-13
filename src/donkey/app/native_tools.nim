@@ -37,7 +37,7 @@ export utility_tools   # performCalc, performRenderMermaid, performInspectImage,
                        # MermaidTempPrefix
 export task_tools      # performTask, nextJobId, buildTaskStartedText,
                        # spawnTaskJob, performManageSkills
-export code_tools      # parseCodeRequest, runCodeRequest, codeConfigFromEnv
+export code_tools      # parseCodeRequest, runCodeRequestAsync, codeConfigFromEnv
 
 # ── Dispatcher-only imports ──────────────────────────────────────────────────
 
@@ -860,8 +860,8 @@ proc executeCodeNativeTool(tc: ToolCallRequest;
   let req = parseCodeRequest(j, ctx.paddockDir, cfg.maxSourceBytes,
                              cfg.timeoutSec).valueOr:
     return handledError(error)
-  let executed = runCodeRequest(req, cfg, ctx.paddockDir, ctx.uid, ctx.channel,
-                                ctx.log)
+  let executed = await runCodeRequestAsync(req, cfg, ctx.paddockDir, ctx.uid,
+                                           ctx.channel, ctx.log)
   if executed.isErr:
     return handledError(executed.error)
   handledText(executed.get().text)

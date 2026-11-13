@@ -1,11 +1,24 @@
 ## Tests for the bounded process runner used by execute_code.
 
 import std/[os, strutils, times, unittest]
+when defined(linux):
+  import std/posix
+import chronos
 import donkey/core/pipeops
 import donkey/domain/tools/code_pure
 import donkey/infra/sandbox/code_runner
 
 when defined(linux):
+  proc tick(counter: ptr int) {.async.} =
+    for _ in 0 ..< 5:
+      await sleepAsync(100)
+      inc counter[]
+
+  proc cancelAfter(fut: Future[Result[CodeRunResult, string]];
+                   ms: int) {.async.} =
+    await sleepAsync(ms)
+    await fut.cancelAndWait()
+
   suite "execute_code bounded runner":
 
     test "captures output and exit code":
@@ -64,6 +77,67 @@ when defined(linux):
       defer: removeFile(path)
       check fileSha256(path).get() ==
         "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+    test "async runner keeps the Chronos loop responsive":
+      var counter = 0
+      let started = epochTime()
+      let runFut = runBoundedProcessAsync(@["sh", "-c", "sleep 1"], 5, 1024)
+      let tickFut = tick(addr counter)
+      waitFor tickFut
+      let tickElapsed = epochTime() - started
+      check counter >= 3
+      check tickElapsed < 0.9
+      check not finished(runFut)
+      let run = waitFor runFut
+      check run.isOk
+
+    test "cancellation kills the child and propagates":
+      let started = epochTime()
+      let fut = runBoundedProcessAsync(@["sh", "-c", "sleep 30"], 60, 1024)
+      waitFor cancelAfter(fut, 200)
+      check cancelled(fut)
+      check epochTime() - started < 5.0
+
+    test "cancellation after EOF still propagates":
+      let started = epochTime()
+      let fut = runBoundedProcessAsync(
+        @["sh", "-c", "exec 1>&- 2>&-; sleep 30"], 60, 1024)
+      waitFor cancelAfter(fut, 500)
+      check cancelled(fut)
+      check epochTime() - started < 5.0
+
+    test "closing stdout does not bypass the configured timeout":
+      let started = epochTime()
+      let res = runBoundedProcess(
+        @["sh", "-c", "exec 1>&- 2>&-; sleep 3"], 10, 1024).get()
+      let elapsed = epochTime() - started
+      check res.exitCode == 0
+      check elapsed >= 2.5
+      check elapsed < 6.0
+
+    test "cancellation kills descendants in the timeout group":
+      let pidFile = getTempDir() / ("donkey-child-" & $getCurrentProcessId())
+      removeFile(pidFile)
+      defer: removeFile(pidFile)
+      let code = "echo $$ > " & quoteShell(pidFile) & "; exec sleep 30"
+      let fut = runBoundedProcessAsync(@["sh", "-c", code], 60, 1024)
+      var found = false
+      for _ in 0 ..< 40:
+        if fileExists(pidFile):
+          found = true
+          break
+        sleep(25)
+      check found
+      let childPid = parseInt(readFile(pidFile).strip())
+      waitFor cancelAfter(fut, 200)
+      check cancelled(fut)
+      var alive = true
+      for _ in 0 ..< 40:
+        if posix.kill(Pid(childPid), 0.cint) != 0:
+          alive = false
+          break
+        sleep(25)
+      check not alive
 
     test "missing container runtime fails closed without spawning":
       let res = runOciCode("/nonexistent/docker", "alpine", "/tmp", 1, 1,
