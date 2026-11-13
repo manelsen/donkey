@@ -88,6 +88,18 @@ when defined(macosx):
   ## with `F_FULLFSYNC` asks the drive to flush its own cache as well.
   var F_FULLFSYNC {.importc, header: "<fcntl.h>".}: cint
 
+proc hardenStateDir(dir: string): Result[void, string] =
+  when defined(posix):
+    if dir.len > 0 and posix.chmod(dir.cstring, posix.Mode(0o700)) != 0:
+      return err("cannot restrict permissions of " & dir)
+  ok()
+
+proc hardenStateFile(path: string): Result[void, string] =
+  when defined(posix):
+    if posix.chmod(path.cstring, posix.Mode(0o600)) != 0:
+      return err("cannot restrict permissions of " & path)
+  ok()
+
 proc syncFile(f: File; path: string): Result[void, string] =
   ## Flush userspace buffers, then ask the OS to persist the file contents.
   ## Best effort on filesystems that ignore `fsync` (documented in
@@ -153,8 +165,16 @@ proc atomicWriteText(path, content, tmpSuffix: string): Result[void, string] =
     let dir = parentDir(path)
     if dir.len > 0:
       createDir(dir)
+      let dirHardened = hardenStateDir(dir)
+      if dirHardened.isErr:
+        return err(dirHardened.error)
     var syncError = ""
     var f = open(tmp, fmWrite)
+    let fileHardened = hardenStateFile(tmp)
+    if fileHardened.isErr:
+      f.close()
+      removeQuietly(tmp)
+      return err(fileHardened.error)
     try:
       f.write(content)
       let synced = syncFile(f, tmp)
@@ -187,8 +207,15 @@ proc appendJsonLine(path: string; node: JsonNode;
     let dir = parentDir(path)
     if dir.len > 0:
       createDir(dir)
+      let dirHardened = hardenStateDir(dir)
+      if dirHardened.isErr:
+        return err(dirHardened.error)
     let isNew = not fileExists(path)
     var f = open(path, fmAppend)
+    let fileHardened = hardenStateFile(path)
+    if fileHardened.isErr:
+      f.close()
+      return err(fileHardened.error)
     try:
       f.write("\n" & $node & "\n")
       if durable:

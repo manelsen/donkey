@@ -11,6 +11,9 @@ JOBS=6 bash scripts/run_tests.sh
 # Suíte de stress (serial por padrão)
 bash scripts/run_stress_tests.sh
 
+# Soak por tempo (repete a suíte de stress)
+SOAK_DURATION_SEC=600 bash scripts/run_soak.sh
+
 # Stress paralelo (use com cautela: testes compartilham /tmp)
 JOBS=4 bash scripts/run_stress_tests.sh
 ```
@@ -101,6 +104,10 @@ Tempo total esperado: **≤ 60s** de execução em runner Linux típico; o wrapp
 1. Se o host não tem firewall bloqueando destinos privados, configure `DONKEY_WEB_PROXY` para um proxy filtrante.
 2. O browser usa `DONKEY_BROWSER_PROXY`.
 3. Service workers/WebSocket do browser e DNS rebinding continuam dependendo do proxy/firewall.
+
+## Drill operacional
+
+O drill executado em 13/11/2026 está em `docs/ops-drill.md`: soak de 600s (24 execuções, 0 falhas), backup/restore do vault, corrupção/lost key, kill -9 no ledger e TLS. Ele também revelou e corrigiu permissões de `state/` (`0700`) e dos arquivos (`0600`).
 
 ## Política de release
 

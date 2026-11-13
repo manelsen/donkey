@@ -174,6 +174,30 @@ suite "durability":
     check failed.error == "network unreachable"
     check failed.updatedAtMs == 20
 
+  test "state directory and ledger files are private on POSIX":
+    let dir = freshDir("state-perms")
+    defer: cleanup(dir)
+    let ledger = newRuntimeStateStore(dir).deliveryLedger()
+    let now = epochMs()
+    check ledger.recordPending(DeliveryRecord(
+      id: "perms", userId: "u", channel: ckTelegram, channelId: "c",
+      textHash: "h", state: dlsPending,
+      createdAtMs: now, updatedAtMs: now)).isOk
+
+    when not defined(windows):
+      let dirPerms = getFilePermissions(dir)
+      check fpGroupRead notin dirPerms
+      check fpGroupWrite notin dirPerms
+      check fpOthersRead notin dirPerms
+      check fpOthersWrite notin dirPerms
+      let ledgerPerms = getFilePermissions(dir / DeliveryLedgerFileName)
+      check fpUserRead in ledgerPerms
+      check fpUserWrite in ledgerPerms
+      check fpGroupRead notin ledgerPerms
+      check fpGroupWrite notin ledgerPerms
+      check fpOthersRead notin ledgerPerms
+      check fpOthersWrite notin ledgerPerms
+
   test "ledger compaction keeps pending and drops expired terminal records":
     let dir = freshDir("ledger-compact")
     defer: cleanup(dir)
