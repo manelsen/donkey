@@ -8,6 +8,7 @@ import donkey/adapters/channel/ws_client
 
 let stressDir = getTempDir() / ("donkey_stress_slack_" & $getCurrentProcessId())
 let slackStress = newSlackAdapter("tok", stressDir / "identity.tsv")
+slackStress.openQueue()
 
 proc makePair(): tuple[ws: WsClient, peer: cint] =
   var fds: array[2, cint]
@@ -32,7 +33,6 @@ proc drainAll(sl: SlackAdapter) =
 suite "Slack Socket Mode stress":
 
   test "malformed and unknown envelopes do not raise":
-    slackStress.openQueue()
     drainAll(slackStress)
 
     let envelopes = @[

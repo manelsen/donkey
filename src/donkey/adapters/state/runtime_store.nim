@@ -44,6 +44,7 @@ type
     ledgerCompactIntervalMs: int64
     lastLedgerCompactMs: int64
     lastLedgerCompactError: string
+    compactCount: int
     ## Serializes session upserts, ledger appends and their in-memory caches.
     ## Gateway workers can persist concurrently with the event loop.
     lock: Lock
@@ -549,6 +550,7 @@ proc compactLedgerLocked(store: RuntimeStateStore;
      nowMs - store.lastLedgerCompactMs < store.ledgerCompactIntervalMs:
     return ok()
 
+  inc store.compactCount
   let scan = hasForwardIncompatibleEvents(path)
   if scan.isErr:
     store.lastLedgerCompactMs = nowMs
@@ -627,6 +629,11 @@ proc ledgerLastCompactMs*(store: RuntimeStateStore): int64 =
   acquire(store.lock)
   defer: release(store.lock)
   store.lastLedgerCompactMs
+
+proc ledgerCompactCount*(store: RuntimeStateStore): int =
+  acquire(store.lock)
+  defer: release(store.lock)
+  store.compactCount
 
 type
   LedgerCompactionWorker* = ref object

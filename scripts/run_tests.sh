@@ -20,7 +20,7 @@ TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/donkey_tests_XXXXXX")
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 run_one() {
-  local f="$1"
+  local f="${1#./}"
   local tmp_dir="$2"
   local id="$3"
 
@@ -65,6 +65,7 @@ if [ "${#TARGETS[@]}" -eq 0 ]; then
   TARGETS=("tests")
 fi
 for target in "${TARGETS[@]}"; do
+  target="${target#./}"
   case "$target" in
     tests/stress|tests/stress/*) export DONKEY_STRESS=1 ;;
   esac

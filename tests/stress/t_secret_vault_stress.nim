@@ -23,6 +23,7 @@ var
   gSetOk:      array[32, bool]
   gRemoveOk:   array[32, bool]
   gReadErrors: Atomic[int]
+  gReadOk:     Atomic[int]
   gReaderReady: Atomic[int]
   gWritersDone: Atomic[bool]
 
@@ -38,6 +39,11 @@ proc removeWorker(arg: RemoveArg) {.thread.} =
 
 proc readerWorker(home: string) {.thread.} =
   {.cast(gcsafe).}:
+    let first = newSecretVault(home).listSecretNames()
+    if first.isErr:
+      discard gReadErrors.fetchAdd(1)
+    else:
+      discard gReadOk.fetchAdd(1)
     discard gReaderReady.fetchAdd(1)
     while not gWritersDone.load():
       let names = newSecretVault(home).listSecretNames()
@@ -76,6 +82,7 @@ suite "secret vault stress":
     defer: removeDir(home)
 
     gReadErrors.store(0)
+    gReadOk.store(0)
     gReaderReady.store(0)
     gWritersDone.store(false)
     var reader: Thread[string]
@@ -94,6 +101,7 @@ suite "secret vault stress":
     joinThread(reader)
 
     check gReadErrors.load() == 0
+    check gReadOk.load() > 0
     check newSecretVault(home).listSecretNames().get().len == threads.len
 
   test "mixed set and remove operations serialize correctly":

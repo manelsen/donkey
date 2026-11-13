@@ -1,6 +1,6 @@
 ## Stress: ledger compaction worker racing with delivery appends.
 
-import std/[atomics, monotimes, os, strutils, times, unittest]
+import std/[atomics, json, monotimes, os, strutils, times, unittest]
 import results
 import donkey/adapters/state/runtime_store
 import donkey/core/log
@@ -12,40 +12,51 @@ let stressDir = getTempDir() / ("donkey_stress_ledger_" & $getCurrentProcessId()
 
 type
   AppendArg = object
-    store:  RuntimeStateStore
     worker: int
 
-var gAppendErrors: Atomic[int]
+var
+  gLedgerPorts:    array[4, DeliveryLedgerPort]
+  gAppendCount:    array[4, int]
+  gAppendErrors:   Atomic[int]
+  gStopAppenders:  Atomic[bool]
 
 proc appendWorker(arg: AppendArg) {.thread.} =
   {.cast(gcsafe).}:
-    let ledger = arg.store.deliveryLedger()
-    for i in 0 ..< 100:
+    var i = 0
+    while not gStopAppenders.load():
       let id = "w" & $arg.worker & "-" & $i
       let now = epochMs()
       let record = DeliveryRecord(
         id: id, userId: "u" & $arg.worker, channel: ckSlack,
         channelId: "c" & $arg.worker, textHash: "h", state: dlsPending,
         createdAtMs: now, updatedAtMs: now)
-      let pending = ledger.recordPending(record)
+      let pending = gLedgerPorts[arg.worker].recordPending(record)
       if pending.isErr:
         discard gAppendErrors.fetchAdd(1)
-        continue
-      if ledger.markSent(id, now).isErr:
-        discard gAppendErrors.fetchAdd(1)
+      else:
+        inc gAppendCount[arg.worker]
+        if gLedgerPorts[arg.worker].markSent(id, now).isErr:
+          discard gAppendErrors.fetchAdd(1)
+      inc i
       sleep(10)
 
 suite "ledger worker stress":
 
-  test "concurrent appends stay valid while compaction runs":
+  test "concurrent appends overlap a real compaction":
     let dir = stressDir / "append"
     removeDir(dir)
     defer: removeDir(dir)
 
-    gAppendErrors.store(0)
     let store = newRuntimeStateStore(
       dir, ledgerRetentionDays = 1.0, ledgerCompactIntervalSec = 1.0)
-    let beforeCompact = store.ledgerLastCompactMs()
+    for i in 0 ..< gLedgerPorts.len:
+      gLedgerPorts[i] = store.deliveryLedger()
+    gAppendErrors.store(0)
+    gStopAppenders.store(false)
+    for i in 0 ..< gAppendCount.len:
+      gAppendCount[i] = 0
+
+    let beforeCompact = store.ledgerCompactCount()
     let logger = newLogger("stress.ledger", lvlError)
     let worker = startLedgerCompactionWorker(store, 1.0, logger)
     check worker != nil
@@ -53,17 +64,18 @@ suite "ledger worker stress":
 
     var threads: array[4, Thread[AppendArg]]
     for i in 0 ..< threads.len:
-      createThread(threads[i], appendWorker,
-                   AppendArg(store: store, worker: i))
+      createThread(threads[i], appendWorker, AppendArg(worker: i))
+
+    ## Keep writers active until the worker has actually started a compaction.
+    var waited = 0
+    while store.ledgerCompactCount() <= beforeCompact and waited < 5000:
+      sleep(10)
+      waited += 10
+    check store.ledgerCompactCount() > beforeCompact
+    gStopAppenders.store(true)
+
     for i in 0 ..< threads.len:
       joinThread(threads[i])
-
-    ## Wait for an observable compaction instead of a fixed sleep.
-    var waited = 0
-    while store.ledgerLastCompactMs() <= beforeCompact and waited < 5000:
-      sleep(50)
-      waited += 50
-    check store.ledgerLastCompactMs() > beforeCompact
 
     let started = getMonoTime()
     stopLedgerCompactionWorker(worker)
@@ -71,24 +83,47 @@ suite "ledger worker stress":
     check inMilliseconds(getMonoTime() - started) < 2000
 
     check gAppendErrors.load() == 0
+    var expected = 0
+    for i in 0 ..< gAppendCount.len:
+      expected += gAppendCount[i]
+    check expected > 0
+
     let loaded = store.deliveryLedger().loadAll()
     check loaded.isOk
-    check loaded.get().len == 400
+    check loaded.get().len == expected
     for record in loaded.get():
       check record.state == dlsSent
       check record.id.startsWith("w")
 
-  test "stop while the worker is running returns promptly":
+  test "stop after a compaction started returns promptly":
     let dir = stressDir / "stop"
     removeDir(dir)
     defer: removeDir(dir)
+    createDir(dir)
+
+    let now = epochMs()
+    var content = ""
+    for i in 0 ..< 2000:
+      content.add("\n" & $(%* {
+        "id": "stop-" & $i,
+        "state": "sent",
+        "updated_at_ms": now,
+      }) & "\n")
+    writeFile(dir / DeliveryLedgerFileName, content)
+
     let store = newRuntimeStateStore(
       dir, ledgerRetentionDays = 1.0, ledgerCompactIntervalSec = 1.0)
+    let beforeCompact = store.ledgerCompactCount()
+    let worker = startLedgerCompactionWorker(
+      store, 1.0, newLogger("stress.ledger", lvlError))
+    check worker != nil
 
-    for _ in 0 ..< 10:
-      let worker = startLedgerCompactionWorker(
-        store, 1.0, newLogger("stress.ledger", lvlError))
-      check worker != nil
-      let started = getMonoTime()
-      stopLedgerCompactionWorker(worker)
-      check inMilliseconds(getMonoTime() - started) < 2000
+    var waited = 0
+    while store.ledgerCompactCount() <= beforeCompact and waited < 5000:
+      sleep(10)
+      waited += 10
+    check store.ledgerCompactCount() > beforeCompact
+
+    let started = getMonoTime()
+    stopLedgerCompactionWorker(worker)
+    check inMilliseconds(getMonoTime() - started) < 2000

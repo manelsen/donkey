@@ -69,7 +69,7 @@ Tempo total esperado: **≤ 60s** de execução em runner Linux típico; o wrapp
 
 1. Pare o daemon.
 2. Copie `state/delivery_ledger.jsonl` para inspeção.
-3. Linhas truncadas no final são ignoradas no replay; se houver JSON inválido no meio, o compaction pode recusar o arquivo.
+3. O replay ignora JSON inválido em qualquer posição, então o histórico carregado pode omitir registros. Inspecione a cópia antes de considerá-lo recuperado. O compaction só recusa eventos futuros reconhecíveis por schema, não linhas inválidas.
 4. Restaure o backup ou remova o arquivo (perde o histórico de entregas; sessões em `sessions.json` não são afetadas).
 5. Reinicie; a compactação de startup recria o estado.
 

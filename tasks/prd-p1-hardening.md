@@ -178,3 +178,12 @@ Critérios adicionais para histórias de concorrência:
 - Incluir `-d:release` no stress? Decisão inicial: não, para manter checks/panics.
 - Cobrir DNS rebinding real? Não neste PR; simular via mock de `resolveHost`.
 [/PRD]
+
+## 10. Status de execução
+
+- Histórias US-001 a US-008 implementadas no PR #29.
+- Achado real: `http://localhost./` passava por `isPrivateUrl`; corrigido com normalização de host no `url_policy`.
+- Suíte normal: 197 arquivos, 0 falhas.
+- Suíte de stress: 6/6, ~30s incluindo compilação.
+- `run_stress_tests.sh` aplica `timeout` de 300s (`STRESS_TIMEOUT_SEC`).
+- US-009 fica condicionada ao CI/CodeRabbit verdes no merge.
