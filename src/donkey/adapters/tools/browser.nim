@@ -1075,8 +1075,9 @@ proc listTools*(rt: BrowserToolRuntime): Result[seq[ToolSchema], string] =
 
 proc closeUser*(rt: BrowserToolRuntime; userId: string) =
   ## Releases one user's browser process, page, profile and CDP port.
-  doAssert rt.onOwnerThread(),
-    "browser runtime closeUser must run on its owner thread"
+  if not rt.onOwnerThread():
+    raise newException(ValueError,
+      "browser runtime closeUser must run on its owner thread")
   let key = browserUserKey(userId)
   if key in rt.byUser:
     rt.byUser[key][].close()
@@ -1134,8 +1135,9 @@ proc invoke*(rt: BrowserToolRuntime; call: ToolCall): Result[ToolResult, string]
   rt.byUser[key][].invoke(call)
 
 proc close*(rt: BrowserToolRuntime) =
-  doAssert rt.onOwnerThread(),
-    "browser runtime close must run on its owner thread"
+  if not rt.onOwnerThread():
+    raise newException(ValueError,
+      "browser runtime close must run on its owner thread")
   for _, bt in rt.byUser.mpairs:
     bt[].close()
   rt.byUser.clear()
