@@ -9,10 +9,11 @@ let stressDir = getTempDir() / ("donkey_stress_vault_" & $getCurrentProcessId())
 
 type
   SetArg = object
-    home:  string
-    name:  string
-    value: string
-    index: int
+    home:             string
+    name:             string
+    value:            string
+    index:            int
+    coordinateReader: bool
 
   RemoveArg = object
     home:  string
@@ -25,17 +26,22 @@ var
   gReadErrors: Atomic[int]
   gReadOk:     Atomic[int]
   gReadDuringWrites: Atomic[int]
-  gWriterWrote: Atomic[int]
+  gActiveWriters: Atomic[int]
   gReaderReady: Atomic[int]
   gWritersDone: Atomic[bool]
 
 proc setWorker(arg: SetArg) {.thread.} =
   {.cast(gcsafe).}:
+    if arg.coordinateReader:
+      discard gActiveWriters.fetchAdd(1)
     gSetOk[arg.index] =
       newSecretVault(arg.home).setSecret(arg.name, arg.value).isOk
-    if gSetOk[arg.index]:
-      discard gWriterWrote.fetchAdd(1)
-    sleep(50)
+    if arg.coordinateReader:
+      var waited = 0
+      while gReadDuringWrites.load() == 0 and waited < 2000:
+        sleep(1)
+        waited += 1
+      discard gActiveWriters.fetchSub(1)
 
 proc removeWorker(arg: RemoveArg) {.thread.} =
   {.cast(gcsafe).}:
@@ -51,7 +57,7 @@ proc readerWorker(home: string) {.thread.} =
       discard gReadOk.fetchAdd(1)
     discard gReaderReady.fetchAdd(1)
     while not gWritersDone.load():
-      if gWriterWrote.load() > 0:
+      if gActiveWriters.load() > 0:
         let names = newSecretVault(home).listSecretNames()
         if names.isErr:
           discard gReadErrors.fetchAdd(1)
@@ -76,9 +82,22 @@ suite "secret vault stress":
 
     for i in 0 ..< threads.len:
       check gSetOk[i]
-    let names = newSecretVault(home).listSecretNames()
+    let vault = newSecretVault(home)
+    let names = vault.listSecretNames()
     check names.isOk
     check names.get().len == threads.len
+
+    var previous: array[12, string]
+    for i in 0 ..< threads.len:
+      let envName = "DONKEY_STRESS_V" & $i
+      previous[i] = getEnv(envName)
+      putEnv(envName, "")
+    let applied = vault.applyToEnv()
+    check applied.isOk
+    for i in 0 ..< threads.len:
+      let envName = "DONKEY_STRESS_V" & $i
+      check getEnv(envName) == "value-" & $i
+      putEnv(envName, previous[i])
 
     let raw = readFile(home / VaultDirName / VaultFileName)
     check raw.contains("enc2:")
@@ -92,7 +111,7 @@ suite "secret vault stress":
     gReadErrors.store(0)
     gReadOk.store(0)
     gReadDuringWrites.store(0)
-    gWriterWrote.store(0)
+    gActiveWriters.store(0)
     gReaderReady.store(0)
     gWritersDone.store(false)
     var reader: Thread[string]
@@ -104,7 +123,8 @@ suite "secret vault stress":
     for i in 0 ..< threads.len:
       createThread(threads[i], setWorker,
                    SetArg(home: home, name: "DONKEY_STRESS_R" & $i,
-                          value: "reader-" & $i, index: i))
+                          value: "reader-" & $i, index: i,
+                          coordinateReader: true))
     var waited = 0
     while gReadDuringWrites.load() == 0 and waited < 1000:
       sleep(1)

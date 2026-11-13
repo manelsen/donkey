@@ -70,6 +70,4 @@ jobs:
         run: nimble test
 
       - name: Run stress suite
-        env:
-          JOBS: 1
         run: bash scripts/run_stress_tests.sh

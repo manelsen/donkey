@@ -62,6 +62,9 @@ export -f run_one
 normalize_target() {
   local target="$1"
   target="${target#./}"
+  if [[ -z "$target" ]]; then
+    target="."
+  fi
   while [[ "$target" == */ ]] || [[ "$target" == */. ]]; do
     target="${target%/}"
     target="${target%/.}"

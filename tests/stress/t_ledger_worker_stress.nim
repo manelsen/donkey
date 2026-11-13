@@ -19,6 +19,8 @@ var
   gAppendCount:    array[4, int]
   gAppendErrors:   Atomic[int]
   gStopAppenders:  Atomic[bool]
+  gCompactionStarted: Atomic[bool]
+  gWritesAfterStart: Atomic[int]
 
 proc appendWorker(arg: AppendArg) {.thread.} =
   {.cast(gcsafe).}:
@@ -37,6 +39,8 @@ proc appendWorker(arg: AppendArg) {.thread.} =
         inc gAppendCount[arg.worker]
         if gLedgerPorts[arg.worker].markSent(id, now).isErr:
           discard gAppendErrors.fetchAdd(1)
+        elif gCompactionStarted.load():
+          discard gWritesAfterStart.fetchAdd(1)
       inc i
       sleep(10)
 
@@ -53,6 +57,9 @@ suite "ledger worker stress":
       gLedgerPorts[i] = store.deliveryLedger()
     gAppendErrors.store(0)
     gStopAppenders.store(false)
+    gCompactionStarted.store(false)
+    gWritesAfterStart.store(0)
+    let beforeLastCompact = store.ledgerLastCompactMs()
     for i in 0 ..< gAppendCount.len:
       gAppendCount[i] = 0
 
@@ -72,6 +79,20 @@ suite "ledger worker stress":
       sleep(10)
       waited += 10
     check store.ledgerCompactStarts() > beforeCompact
+    gCompactionStarted.store(true)
+
+    ## Confirm a write after the start signal and wait for compaction to finish.
+    waited = 0
+    while gWritesAfterStart.load() == 0 and waited < 5000:
+      sleep(10)
+      waited += 10
+    check gWritesAfterStart.load() > 0
+
+    waited = 0
+    while store.ledgerLastCompactMs() <= beforeLastCompact and waited < 5000:
+      sleep(10)
+      waited += 10
+    check store.ledgerLastCompactMs() > beforeLastCompact
     gStopAppenders.store(true)
 
     for i in 0 ..< threads.len:

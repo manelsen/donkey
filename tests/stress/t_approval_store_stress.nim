@@ -10,9 +10,10 @@ let stressDir = getTempDir() / ("donkey_stress_approval_" & $getCurrentProcessId
 
 type
   CreateArg = object
-    path:   string
-    userId: string
-    index:  int
+    path:             string
+    userId:           string
+    index:            int
+    coordinateReader: bool
 
   DecideArg = object
     path:   string
@@ -26,25 +27,32 @@ var
   gDecideOk:    array[32, bool]
   gReadErrors:  Atomic[int]
   gReadDuringWrites: Atomic[int]
-  gWriterWrote: Atomic[int]
+  gActiveWriters: Atomic[int]
   gReaderReady: Atomic[int]
   gWritersDone: Atomic[bool]
 
 proc createWorker(arg: CreateArg) {.thread.} =
   {.cast(gcsafe).}:
+    if arg.coordinateReader:
+      discard gActiveWriters.fetchAdd(1)
     let store = newApprovalStore(arg.path)
     let res = store.create(arg.userId, "telegram", "bash", "stress", 60_000)
     gCreateOk[arg.index] = res.isOk
     if res.isOk:
       gCreateIds[arg.index] = res.get().id
-      discard gWriterWrote.fetchAdd(1)
-    sleep(50)
+    if arg.coordinateReader:
+      ## Stay active until the reader confirms a concurrent listing.
+      var waited = 0
+      while gReadDuringWrites.load() == 0 and waited < 2000:
+        sleep(1)
+        waited += 1
+      discard gActiveWriters.fetchSub(1)
 
 proc readerWorker(path: string) {.thread.} =
   {.cast(gcsafe).}:
     discard gReaderReady.fetchAdd(1)
     while not gWritersDone.load():
-      if gWriterWrote.load() > 0:
+      if gActiveWriters.load() > 0:
         if newApprovalStore(path).listPending().isErr:
           discard gReadErrors.fetchAdd(1)
         else:
@@ -66,7 +74,7 @@ suite "approval store stress":
 
     gReadErrors.store(0)
     gReadDuringWrites.store(0)
-    gWriterWrote.store(0)
+    gActiveWriters.store(0)
     gReaderReady.store(0)
     gWritersDone.store(false)
     var reader: Thread[string]
@@ -77,7 +85,8 @@ suite "approval store stress":
     var threads: array[16, Thread[CreateArg]]
     for i in 0 ..< threads.len:
       createThread(threads[i], createWorker,
-                   CreateArg(path: path, userId: "u" & $i, index: i))
+                   CreateArg(path: path, userId: "u" & $i, index: i,
+                             coordinateReader: true))
     var waited = 0
     while gReadDuringWrites.load() == 0 and waited < 1000:
       sleep(1)
