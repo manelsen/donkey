@@ -145,7 +145,10 @@ proc runBoundedProcess*(argv: seq[string]; timeoutSec: int;
     except CatchableError:
       -1
     let durationMs = int64((epochTime() - started) * 1000.0)
-    p.close()
+    try:
+      p.close()
+    except CatchableError:
+      discard
     let capped = capExecutionOutput(output, cap)
     ## 124/137 are the timeout wrapper's codes, but our own output-cap kill can
     ## also surface as 137. The wall-clock check distinguishes the two.
