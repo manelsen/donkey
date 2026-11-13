@@ -96,6 +96,14 @@ when defined(linux):
       check cancelled(fut)
       check epochTime() - started < 5.0
 
+    test "cancellation after EOF still propagates":
+      let started = epochTime()
+      let fut = runBoundedProcessAsync(
+        @["sh", "-c", "exec 1>&- 2>&-; sleep 30"], 60, 1024)
+      waitFor cancelAfter(fut, 500)
+      check cancelled(fut)
+      check epochTime() - started < 5.0
+
     test "missing container runtime fails closed without spawning":
       let res = runOciCode("/nonexistent/docker", "alpine", "/tmp", 1, 1,
                            clShell, "echo hi", 1, 1024)
