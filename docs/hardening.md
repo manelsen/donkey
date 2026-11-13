@@ -91,6 +91,18 @@ Variáveis:
 
 O tool é approval-gated por default (`DONKEY_APPROVAL_TOOLS` inclui `execute_code`) e a auditoria vai para o log do daemon com user, canal, linguagem, SHA-256 do código, duração, exit code, timeout/truncamento e imagem — nunca o código em si. Falha ao criar/consultar aprovação nega a execução.
 
+## Threading e `gcsafe`
+
+`gcsafe` é uma promessa estática do Nim, não um lock e não uma prova de thread-safety. `{.cast(gcsafe).}` desliga a checagem do compilador; usá-lo sem uma invariante real é “fazer de conta”.
+
+O Donkey segue três regras:
+
+- **Isolamento por thread:** os callbacks de `ToolRuntimePort` são declarados `gcsafe` por contrato. O `BrowserToolRuntime` guarda a thread dona e recusa `invoke`/`listTools` fora dela; `close`/`closeUser` levantam erro em vez de corridar. A premissa é o event loop cooperativo do Chronos, não um lock.
+- **Atomicidade real:** contadores globais de execução usam `Atomic[int]`; não há incremento “gcsafe” de `int` global.
+- **Cast justificado:** quando um `{.cast(gcsafe).}` aparece, o escopo toca apenas estado local/thread-local ou está sob lock; o comentário no código diz qual é a invariante.
+
+Se ferramentas passarem a rodar em múltiplas threads OS, o browser e o estado de sessão precisam de serialização explícita (lock/fila) ou de uma instância por thread. A anotação sozinha não cobre isso.
+
 ## Limites conhecidos (não resolvidos aqui)
 
 - **Pinning de conexão do web fetch:** a resolução DNS é validada, mas o `std/httpclient` resolve novamente ao conectar. Em deployment exposto, use `DONKEY_WEB_PROXY` ou firewall de egress.
