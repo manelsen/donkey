@@ -149,6 +149,19 @@ suite "SSRF corpus":
     check not parsed["ok"].getBool()
     check parsed["error"]["message"].getStr().contains("302")
 
+  test "a public host resolving to a private IP is blocked":
+    let privateResolution = HttpRuntimePort(
+      getNoRedirect: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+        err("must not fetch"),
+      resolveHost: proc(host: string): Result[string, string] {.gcsafe.} =
+        ok("127.0.0.1")
+    )
+    let parsed = parse(performFetchStructured(
+      privateResolution, "https://public.example", expect = "text"))
+    check not parsed["ok"].getBool()
+    check parsed["error"]["message"].getStr().contains("URL blocked")
+    check not parsed["error"]["message"].getStr().contains("must not fetch")
+
   test "DNS rejection blocks before the request":
     let dnsBlocked = HttpRuntimePort(
       getNoRedirect: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =

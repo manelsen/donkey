@@ -175,8 +175,8 @@ suite "secret vault stress":
       if names.isOk:
         gReaderNames = names.get()
       check gReaderNames == @["KEEP"]
-      gSaveRelease.send(true)
 
+    gSaveRelease.send(true)
     joinThread(gBlockedWriter)
     gSaveWait.close()
     gSaveRelease.close()

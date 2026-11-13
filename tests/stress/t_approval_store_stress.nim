@@ -167,8 +167,8 @@ suite "approval store stress":
       ## on a different thread and must see the previous complete file.
       gReaderOk = store.listPending().isOk
       check store.listPending().get().len == 1
-      gSaveRelease.send(true)
 
+    gSaveRelease.send(true)
     joinThread(gBlockedWriter)
     gSaveWait.close()
     gSaveRelease.close()
