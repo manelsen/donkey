@@ -97,7 +97,7 @@ O tool é approval-gated por default (`DONKEY_APPROVAL_TOOLS` inclui `execute_co
 
 O Donkey segue três regras:
 
-- **Isolamento por thread:** os callbacks de `ToolRuntimePort` são declarados `gcsafe` por contrato. O `BrowserToolRuntime` guarda a thread dona e recusa `invoke`/`listTools` fora dela; `close`/`closeUser` levantam erro em vez de corridar. A premissa é o event loop cooperativo do Chronos, não um lock.
+- **Isolamento por thread:** os callbacks de `ToolRuntimePort` são declarados `gcsafe` por contrato. O `BrowserToolRuntime` guarda a thread dona e recusa `invoke`/`listTools` fora dela; `close`/`closeUser` retornam erro em vez de corridar. O callback `ToolRuntimePort.close` é `void` e descarta esse Result na fronteira, sem lançar exceção. A premissa é o event loop cooperativo do Chronos, não um lock.
 - **Atomicidade real:** contadores globais de execução usam `Atomic[int]`; não há incremento “gcsafe” de `int` global.
 - **Cast justificado:** quando um `{.cast(gcsafe).}` aparece, o escopo toca apenas estado local/thread-local ou está sob lock; o comentário no código diz qual é a invariante.
 
