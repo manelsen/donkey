@@ -469,6 +469,23 @@ suite "Browser backends":
     check browserUserKey("alice:a") != browserUserKey("alice_a")
     check browserUserKey("_default_") != "__default__"
 
+  test "a closed session is rebuilt with the configured profile":
+    let base = getTempDir() / ("donkey-test-rebuild-" & $getCurrentProcessId())
+    defer: removeDir(base)
+    let runtime = newBrowserToolRuntime(
+      backend = bbOff, profileBaseDir = base)
+    discard runtime.invoke(ToolCall(id: "a", name: "browser_content",
+                                    input: %* {}, userId: "user-a"))
+    check runtime.byUser["user-a"][].profileDir == base / "user-a"
+    runtime.byUser["user-a"][].close()
+    check runtime.byUser["user-a"][].needsRecreate
+    discard runtime.invoke(ToolCall(id: "b", name: "browser_content",
+                                    input: %* {}, userId: "user-a"))
+    check runtime.byUser.hasKey("user-a")
+    check runtime.byUser["user-a"][].profileDir == base / "user-a"
+    check not runtime.byUser["user-a"][].needsRecreate
+    discard runtime.close()
+
   test "runtime passes the filtering proxy to each browser":
     let runtime = newBrowserToolRuntime(
       backend = bbOff, proxyServer = "http://127.0.0.1:3128")

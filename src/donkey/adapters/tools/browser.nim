@@ -48,6 +48,7 @@ type
     ws*: WsClient                 ## CDP WebSocket connection
     pageTargetId*: string         ## active page target ID
     mainFrameId*: string          ## main frame, used for isolated evaluation
+    contentContextId*: int        ## reused isolated world for content reads
     currentUrl*: string           ## URL of loaded page
     inflightRequests*: int        ## Network.* events observed since navigation
     pendingRequestIds*: seq[string] ## requestId set, redirects keep the same id
@@ -63,6 +64,8 @@ type
     policyViolation*: string      ## non-empty closes the browser session
     lastBlockedUrl*: string       ## most recent denied destination
     hardeningWarnings*: seq[string] ## unsupported optional CDP hardening
+    connectionLost*: bool         ## CDP socket is desynchronized/closed
+    needsRecreate*: bool          ## runtime must rebuild this session
 
 # ── Tool Schemas ─────────────────────────────────────────────────────────────
 
@@ -270,6 +273,16 @@ proc handleCdpEvent*(bt: var BrowserTools; resp: JsonNode) =
   else:
     discard
 
+proc invalidateConnection(bt: var BrowserTools) =
+  ## A frame that cannot be consumed leaves the CDP stream desynchronized.
+  ## Close the socket; the runtime rebuilds the session on the next call.
+  bt.connectionLost = true
+  try:
+    bt.ws.wsClose()
+  except CatchableError:
+    discard
+  bt.ws.sock = nil
+
 proc drainPendingEvents(bt: var BrowserTools; budgetMs = 50) =
   ## Processes events that arrived after the last command response. Without
   ## this, a request paused by Fetch after navigateTo returns would stay
@@ -281,8 +294,10 @@ proc drainPendingEvents(bt: var BrowserTools; budgetMs = 50) =
     except TimeoutError:
       break
     except CatchableError:
+      bt.invalidateConnection()
       break
     if frame.opcode == WsOpcodeClose:
+      bt.invalidateConnection()
       break
     if frame.opcode == WsOpcodeText or frame.opcode == WsOpcodeBin:
       try:
@@ -314,17 +329,21 @@ proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode =
     let frame = try:
       bt.ws.recvFrame(remainingMs, maxPayloadBytes = BrowserMaxCdpFrameBytes)
     except TimeoutError as e:
+      bt.invalidateConnection()
       return err("CDP timeout waiting for " & cdpMethod & " response: " & e.msg)
     except IOError as e:
+      bt.invalidateConnection()
       return err("WebSocket receive error: " & e.msg)
     
     if frame.opcode == WsOpcodeClose:
+      bt.invalidateConnection()
       return err("WebSocket closed during CDP command")
     
     if frame.opcode == WsOpcodeText or frame.opcode == WsOpcodeBin:
       let resp = try:
         parseJson(frame.data)
       except JsonParsingError as e:
+        bt.invalidateConnection()
         return err("malformed CDP frame: " & e.msg)
       if resp.kind == JObject:
         if resp.hasKey("id") and resp["id"].getInt() == id:
@@ -387,8 +406,8 @@ proc evaluateWithIsolatedWorld(bt: var BrowserTools;
   ## cannot replace String.prototype.slice there. If the world is unavailable
   ## (Lightpanda or an older engine), fall back to the main context; the
   ## Nim-side cap still bounds the payload.
-  var contextId = 0
-  if bt.backend.isChromiumBackend():
+  var contextId = bt.contentContextId
+  if contextId <= 0 and bt.backend.isChromiumBackend():
     let frameId = bt.resolveMainFrameId()
     if frameId.len > 0:
       let world = bt.sendCdpCommand("Page.createIsolatedWorld", %*{
@@ -397,6 +416,7 @@ proc evaluateWithIsolatedWorld(bt: var BrowserTools;
       })
       if world.isOk:
         contextId = world.get(){"executionContextId"}.getInt(0)
+        bt.contentContextId = contextId
   var params = %*{
     "expression": expression,
     "returnByValue": true,
@@ -429,6 +449,7 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
   bt.lastBlockedUrl = ""
   bt.hardeningWarnings.setLen(0)
   bt.mainFrameId = ""
+  bt.contentContextId = 0
 
   ## Network monitoring is always enabled: it is the second layer for redirects,
   ## WebSockets and service workers, even when waitUntil is not networkidle.
@@ -776,6 +797,8 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
   ## Spawn the configured browser backend and connect its CDP endpoint.
   if bt.process != nil:
     return ok("already running")
+  bt.needsRecreate = false
+  bt.connectionLost = false
 
   let resolved = bt.resolveBrowserExecutable()
   if resolved.isErr:
@@ -868,6 +891,7 @@ proc close*(bt: var BrowserTools) =
     try:
       bt.ws.wsClose()
     except CatchableError: discard
+    bt.ws.sock = nil
   if bt.process != nil:
     bt.process.terminate()
     bt.process.close()
@@ -881,6 +905,7 @@ proc close*(bt: var BrowserTools) =
   bt.ownsProfileDir = false
   bt.pageTargetId = ""
   bt.mainFrameId = ""
+  bt.contentContextId = 0
   bt.currentUrl = ""
   bt.inflightRequests = 0
   bt.pendingRequestIds.setLen(0)
@@ -892,6 +917,8 @@ proc close*(bt: var BrowserTools) =
   bt.policyViolation = ""
   bt.lastBlockedUrl = ""
   bt.hardeningWarnings.setLen(0)
+  bt.connectionLost = false
+  bt.needsRecreate = true
 
 # ── invoke — ToolPort method ─────────────────────────────────────────────────
 
@@ -968,10 +995,17 @@ proc invokeCommand(bt: var BrowserTools; call: ToolCall): Result[ToolResult, str
     return err("unknown tool: '" & call.name & "'")
 
 proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
+  if bt.needsRecreate:
+    return ok(browserError(call.id,
+      "browser session closed; the next call recreates it"))
   result = bt.invokeCommand(call)
   bt.lastUsed = epochTime()
   if bt.process != nil and bt.ws.sock != nil:
     bt.drainPendingEvents()
+  if bt.connectionLost:
+    bt.close()
+    return ok(browserError(call.id,
+      "browser connection lost; the next call recreates the session"))
   ## A WebSocket, service worker or blocked document violation means the page
   ## may already have an egress channel. Tear the whole browser down instead of
   ## returning a partially trusted page.
@@ -1147,6 +1181,8 @@ proc invoke*(rt: BrowserToolRuntime; call: ToolCall): Result[ToolResult, string]
     return err("browser runtime used from a non-owner thread")
   rt.evictIdle()
   let key = browserUserKey(call.userId)
+  if key in rt.byUser and rt.byUser[key][].needsRecreate:
+    rt.byUser.del(key)
   if key notin rt.byUser:
     let userPort = rt.allocatePort()
     if userPort == 0:
@@ -1176,7 +1212,12 @@ proc invoke*(rt: BrowserToolRuntime; call: ToolCall): Result[ToolResult, string]
     let holder = new(BrowserTools)
     holder[] = bt
     rt.byUser[key] = holder
-  rt.byUser[key][].invoke(call)
+  let res = rt.byUser[key][].invoke(call)
+  ## A policy violation or a lost CDP stream closes the session. Drop it so the
+  ## next call rebuilds with the original configured profile and limits.
+  if rt.byUser[key][].needsRecreate:
+    rt.byUser.del(key)
+  res
 
 proc close*(rt: BrowserToolRuntime): Result[void, string] =
   if not rt.onOwnerThread():
