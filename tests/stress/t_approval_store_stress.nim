@@ -51,6 +51,18 @@ proc blockedCreateWorker(arg: CreateArg) {.thread.} =
       store.create(arg.userId, "telegram", "bash", "blocked", 60_000).isOk)
     gSaveCompleted.store(true)
 
+proc waitSave(): bool =
+  var waited = 0
+  while waited < 5000:
+    let (hasSignal, value) = gSaveWait.tryRecv()
+    if hasSignal:
+      return value
+    if gSaveCompleted.load():
+      return false
+    sleep(1)
+    waited += 1
+  false
+
 proc decideWorker(arg: DecideArg) {.thread.} =
   {.cast(gcsafe).}:
     gDecideOk[arg.index] =
@@ -146,15 +158,17 @@ suite "approval store stress":
 
     createThread(gBlockedWriter, blockedCreateWorker,
                  CreateArg(path: path, userId: "blocked", index: 0))
-    discard gSaveWait.recv()
-    check not gSaveCompleted.load()
+    let hooked = waitSave()
+    check hooked
+    if hooked:
+      check not gSaveCompleted.load()
 
-    ## The writer holds the lock and has not written yet; this reader runs on
-    ## a different thread and must see the previous complete file.
-    gReaderOk = store.listPending().isOk
-    check store.listPending().get().len == 1
+      ## The writer holds the lock and has not written yet; this reader runs
+      ## on a different thread and must see the previous complete file.
+      gReaderOk = store.listPending().isOk
+      check store.listPending().get().len == 1
+      gSaveRelease.send(true)
 
-    gSaveRelease.send(true)
     joinThread(gBlockedWriter)
     gSaveWait.close()
     gSaveRelease.close()

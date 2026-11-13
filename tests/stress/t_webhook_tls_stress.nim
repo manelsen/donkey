@@ -118,7 +118,14 @@ suite "webhook TLS stress":
       let secret = "rotation-secret"
       let cfg = WebhookConfig(slackSigningSecret: secret,
                               tlsCertFile: cert, tlsKeyFile: key)
-      let started = startWebhookReceiver(cfg, port, "127.0.0.1", stressLog)
+      var logChan: Channel[string]
+      logChan.open(16)
+      let rotationLog = newLogger("stress.tls.rotation", lvlError,
+        proc(entry: LogEntry) {.gcsafe.} =
+          {.cast(gcsafe).}:
+            {.cast(raises: []).}:
+              logChan.send(entry.message))
+      let started = startWebhookReceiver(cfg, port, "127.0.0.1", rotationLog)
       check started.isOk
       defer: stopWebhookReceiver()
 
@@ -129,6 +136,16 @@ suite "webhook TLS stress":
       let response = requestChallenge(port, secret, "rotation-ok")
       check "200 OK" in response
       check "rotation-ok" in response
+
+      var sawReloadError = false
+      while true:
+        let (hasMessage, message) = logChan.tryRecv()
+        if not hasMessage:
+          break
+        if "cannot load TLS certificate" in message:
+          sawReloadError = true
+      logChan.close()
+      check sawReloadError
 
   test "a slow TLS client does not block shutdown forever":
     let (cert, key) = generateCert(stressDir / "slow")

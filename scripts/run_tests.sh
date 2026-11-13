@@ -21,9 +21,13 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 run_one() {
   local f="$1"
-  while [[ "$f" == ./* ]]; do
-    f="${f#./}"
-  done
+  if command -v realpath >/dev/null 2>&1; then
+    f="$(realpath -m --relative-to=. "$f")"
+  else
+    while [[ "$f" == ./* ]]; do
+      f="${f#./}"
+    done
+  fi
   local tmp_dir="$2"
   local id="$3"
 
@@ -65,11 +69,15 @@ export -f run_one
 
 normalize_target() {
   local target="$1"
-  while [[ "$target" == ./* ]]; do
-    target="${target#./}"
-  done
-  if [[ -z "$target" ]]; then
-    target="."
+  if command -v realpath >/dev/null 2>&1; then
+    target="$(realpath -m --relative-to=. "$target")"
+  else
+    while [[ "$target" == ./* ]]; do
+      target="${target#./}"
+    done
+    if [[ -z "$target" ]]; then
+      target="."
+    fi
   fi
   while [[ "$target" == */ ]] || [[ "$target" == */. ]]; do
     target="${target%/}"

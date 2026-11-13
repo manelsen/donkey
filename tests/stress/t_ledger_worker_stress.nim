@@ -16,7 +16,7 @@ type
 var
   gLedgerPorts:    array[4, DeliveryLedgerPort]
   gProbePort:      DeliveryLedgerPort
-  gAppendCount:    array[4, int]
+  gAppendCount:    array[4, Atomic[int]]
   gAppendErrors:   Atomic[int]
   gStopAppenders:  Atomic[bool]
   gHookEnabled:    Atomic[bool]
@@ -55,7 +55,7 @@ proc appendWorker(arg: AppendArg) {.thread.} =
       if pending.isErr:
         discard gAppendErrors.fetchAdd(1)
       else:
-        inc gAppendCount[arg.worker]
+        discard gAppendCount[arg.worker].fetchAdd(1)
         if gLedgerPorts[arg.worker].markSent(id, now).isErr:
           discard gAppendErrors.fetchAdd(1)
       inc i
@@ -100,7 +100,7 @@ suite "ledger worker stress":
     gStopAppenders.store(false)
     gHookEnabled.store(true)
     for i in 0 ..< gAppendCount.len:
-      gAppendCount[i] = 0
+      gAppendCount[i].store(0)
 
     store.onCompactStart = blockingHook
     store.onAppendStart = appendStartHook
@@ -124,6 +124,19 @@ suite "ledger worker stress":
     joinThread(probe)
     check gProbeOk
 
+    var waited = 0
+    while waited < 5000:
+      var allReady = true
+      for i in 0 ..< gAppendCount.len:
+        if gAppendCount[i].load() < 20:
+          allReady = false
+      if allReady:
+        break
+      sleep(10)
+      waited += 10
+    for i in 0 ..< gAppendCount.len:
+      check gAppendCount[i].load() >= 20
+
     gStopAppenders.store(true)
     for i in 0 ..< threads.len:
       joinThread(threads[i])
@@ -137,8 +150,7 @@ suite "ledger worker stress":
     check gAppendErrors.load() == 0
     var expected = 0
     for i in 0 ..< gAppendCount.len:
-      check gAppendCount[i] >= 20
-      expected += gAppendCount[i]
+      expected += gAppendCount[i].load()
     check expected >= 80
     inc expected  ## the probe record
 
