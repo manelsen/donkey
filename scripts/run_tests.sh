@@ -46,6 +46,7 @@ run_one() {
   esac
 
   local log="$tmp_dir/test_${id}.log"
+  printf "RUN   %s\n" "$f"
   if nim c --hints:off --mm:orc -u:withPostgres -r "$f" > "$log" 2>&1; then
     touch "$tmp_dir/pass_${id}"
     local summary

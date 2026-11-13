@@ -26,6 +26,10 @@ var
   gDecideOk:  array[32, bool]
   gBlockedStarted: Atomic[bool]
   gBlockedOk:      Atomic[bool]
+  gReadErrors:     Atomic[int]
+  gReadCount:      Atomic[int]
+  gReaderReady:    Atomic[bool]
+  gWritersDone:    Atomic[bool]
   gLockPath:       string
   gBlockedWriter:  Thread[CreateArg]
   gReaderOk:       bool
@@ -45,6 +49,22 @@ proc blockedCreateWorker(arg: CreateArg) {.thread.} =
       newApprovalStore(arg.path).create(
         arg.userId, "telegram", "bash", "blocked", 60_000).isOk)
 
+proc readerWorker(path: string) {.thread.} =
+  {.cast(gcsafe).}:
+    let first = newApprovalStore(path).listPending()
+    if first.isErr:
+      discard gReadErrors.fetchAdd(1)
+    else:
+      discard gReadCount.fetchAdd(1)
+    gReaderReady.store(true)
+    while not gWritersDone.load():
+      let pending = newApprovalStore(path).listPending()
+      if pending.isErr:
+        discard gReadErrors.fetchAdd(1)
+      else:
+        discard gReadCount.fetchAdd(1)
+      sleep(1)
+
 proc decideWorker(arg: DecideArg) {.thread.} =
   {.cast(gcsafe).}:
     gDecideOk[arg.index] =
@@ -58,12 +78,25 @@ suite "approval store stress":
     defer: removeDir(dir)
     let path = dir / "approvals.json"
 
+    gReadErrors.store(0)
+    gReadCount.store(0)
+    gReaderReady.store(false)
+    gWritersDone.store(false)
+    var reader: Thread[string]
+    createThread(reader, readerWorker, path)
+    while not gReaderReady.load():
+      sleep(1)
+
     var threads: array[16, Thread[CreateArg]]
     for i in 0 ..< threads.len:
       createThread(threads[i], createWorker,
                    CreateArg(path: path, userId: "u" & $i, index: i))
     for i in 0 ..< threads.len:
       joinThread(threads[i])
+    gWritersDone.store(true)
+    joinThread(reader)
+    check gReadErrors.load() == 0
+    check gReadCount.load() > 0
 
     var ids = initHashSet[string]()
     for i in 0 ..< threads.len:
