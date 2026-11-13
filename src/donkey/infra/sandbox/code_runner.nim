@@ -4,10 +4,11 @@
 ## `domain/tools/code_pure`; this module only enforces the wall-clock timeout,
 ## caps the output and cleans up the container.
 
-import std/[atomics, os, osproc, streams, strtabs, times]
+import std/[atomics, os, osproc, streams, strtabs, strutils, times]
 when defined(posix):
   import std/posix
 
+import nimcrypto/sha2
 import ../../core/pipeops
 import ../../domain/tools/code_pure
 
@@ -51,6 +52,21 @@ proc canonicalPath*(path: string): Result[string, string] =
     ok(expandFilename(path))
   except CatchableError as e:
     err("cannot canonicalize path: " & e.msg)
+
+proc fileSha256*(path: string): Result[string, string] =
+  ## Hash the artifact that will actually be executed (WASI module bytes).
+  try:
+    let data = readFile(path)
+    var ctx: sha256
+    ctx.init()
+    ctx.update(data)
+    let digest = ctx.finish()
+    var value = ""
+    for b in digest.data:
+      value.add(toHex(int(b), 2).toLowerAscii())
+    ok(value)
+  except CatchableError as e:
+    err("cannot hash file: " & path & ": " & e.msg)
 
 proc regularFileSize*(path: string): Result[int64, string] =
   try:
@@ -242,7 +258,7 @@ proc runWasmCode*(workspace, wasmPath: string;
   let prlimitExe = findExeSafe("prlimit")
   if prlimitExe.len == 0:
     return err("prlimit is required for WASI execute_code; refusing to run without a host memory bound")
-  argv = @[prlimitExe, "--as=6442450944", "--"] & argv
+  argv = @[prlimitExe, "--as=10737418240", "--"] & argv
   let run = runBoundedProcess(argv, timeoutSec, maxOutputBytes)
   if run.isErr:
     return err(run.error)

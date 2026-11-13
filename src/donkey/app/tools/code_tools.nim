@@ -158,7 +158,20 @@ proc runCodeRequest*(req: CodeRequest;
     cfg.sandbox, cfg.runtimeCmd, cfg.image, workspace,
     effectiveUid(), effectiveGid(), req.language, req.code, req.wasmPath,
     req.timeoutSec, cfg.maxOutputBytes)
+  let artifactHash =
+    if req.language == clWasm:
+      fileSha256(req.wasmPath).valueOr: ""
+    else:
+      sha256hex(req.code)
+  let artifactBytes =
+    if req.language == clWasm:
+      regularFileSize(req.wasmPath).valueOr: 0'i64
+    else:
+      int64(req.code.len)
   if run.isErr:
+    ## The tool result still carries the diagnosis for the requester. The
+    ## audit log must not persist program stdout/stderr embedded in
+    ## run.error (CWE-532).
     let failureAudit = %*{
       "event": "execute_code",
       "phase": "error",
@@ -166,10 +179,10 @@ proc runCodeRequest*(req: CodeRequest;
       "channel": $channel,
       "language": $req.language,
       "sandbox": $cfg.sandbox,
-      "code_sha256": sha256hex(req.code),
-      "code_bytes": req.code.len,
+      "code_sha256": artifactHash,
+      "code_bytes": artifactBytes,
       "timeout_sec": req.timeoutSec,
-      "error": run.error,
+      "diagnostic": "execution failed; see tool result",
       "network": false,
     }
     log.warn($failureAudit)
@@ -184,8 +197,8 @@ proc runCodeRequest*(req: CodeRequest;
     "language": $req.language,
     "sandbox": $res.sandbox,
     "image": res.image,
-    "code_sha256": sha256hex(req.code),
-    "code_bytes": req.code.len,
+    "code_sha256": artifactHash,
+    "code_bytes": artifactBytes,
     "wasm_path": req.wasmPath,
     "timeout_sec": req.timeoutSec,
     "duration_ms": res.durationMs,

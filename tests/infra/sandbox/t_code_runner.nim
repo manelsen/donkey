@@ -58,6 +58,13 @@ when defined(linux):
         check res.isOk
         check res.get().exitCode == 0
 
+    test "fileSha256 hashes the executed artifact":
+      let path = getTempDir() / ("donkey-sha-" & $getCurrentProcessId())
+      writeFile(path, "hello")
+      defer: removeFile(path)
+      check fileSha256(path).get() ==
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
     test "missing container runtime fails closed without spawning":
       let res = runOciCode("/nonexistent/docker", "alpine", "/tmp", 1, 1,
                            clShell, "echo hi", 1, 1024)

@@ -1002,10 +1002,12 @@ func approvalSummary(toolName: string; j: JsonNode): string =
       else:
         ""
     let timeoutNode = j.getOrDefault("timeout_sec")
-    let timeout =
-      if timeoutNode != nil and timeoutNode.kind == JInt: $timeoutNode.getInt()
-      else: $parseCodeTimeoutSec(getEnv("DONKEY_CODE_TIMEOUT_SEC"))
-    result = "language=" & language & " timeout=" & timeout & "s\n"
+    let timeoutSec =
+      if timeoutNode != nil and timeoutNode.kind == JInt:
+        clampCodeTimeoutSec(timeoutNode.getInt())
+      else:
+        parseCodeTimeoutSec(getEnv("DONKEY_CODE_TIMEOUT_SEC"))
+    result = "language=" & language & " timeout=" & $timeoutSec & "s\n"
     let languageOpt = parseCodeLanguage(language)
     let isWasm = languageOpt.isSome and languageOpt.get() == clWasm
     let codeNode = j.getOrDefault("code")

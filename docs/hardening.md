@@ -77,7 +77,7 @@ Em Chromium/Edge, falha ao instalar o script de política, ao bloquear URLs ou a
 - timeout externo com `timeout --kill-after`, cap de saída e `docker kill` de segurança;
 - nenhum fallback para execução no host.
 
-Em `[sandbox] mode = "wasm"`, `execute_code` aceita apenas `language = "wasm"` e um `wasm_path` dentro do paddock. O wasmtime recebe somente o workspace e um scratch isolado; nenhuma flag de socket/listener é adicionada. `prlimit` é obrigatório para WASI: sem ele a execução é recusada. O endereço virtual do processo é limitado a 6 GiB (as reservas de 4 GiB do Wasmtime para memória linear cabem no limite); o timeout externo limita o tempo de CPU.
+Em `[sandbox] mode = "wasm"`, `execute_code` aceita apenas `language = "wasm"` e um `wasm_path` dentro do paddock. O wasmtime recebe somente o workspace e um scratch isolado; nenhuma flag de socket/listener é adicionada. `prlimit` é obrigatório para WASI: sem ele a execução é recusada. O endereço virtual do processo é limitado a 10 GiB de espaço de endereço virtual (cobre a reserva de até 8 GiB do Wasmtime 20 para memória linear); o timeout externo limita o tempo de CPU.
 
 Variáveis:
 
