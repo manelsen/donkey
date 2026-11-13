@@ -2,6 +2,7 @@
 
 import std/[os, strutils, times, unittest]
 import results
+import donkey/domain/tools/code_pure
 import donkey/infra/sandbox/code_runner
 
 when defined(linux):
@@ -38,3 +39,9 @@ when defined(linux):
 
     test "empty argv fails closed":
       check runBoundedProcess(@[], 1, 1024).isErr
+
+    test "missing container runtime fails closed without spawning":
+      let res = runOciCode("/nonexistent/docker", "alpine", "/tmp", 1, 1,
+                           clShell, "echo hi", 1, 1024)
+      check res.isErr
+      check "not found" in res.error
