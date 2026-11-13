@@ -1016,8 +1016,14 @@ proc invokeCommand(bt: var BrowserTools; call: ToolCall): Result[ToolResult, str
 
 proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
   if bt.needsRecreate:
-    return ok(browserError(call.id,
-      "browser session closed; the next call recreates it"))
+    ## A direct BrowserTools/toRuntimePort caller has no runtime wrapper to
+    ## rebuild it. A new navigation is allowed to recreate the session; content
+    ## and screenshot calls still need a fresh navigate first.
+    if call.name != "browser_navigate":
+      return ok(browserError(call.id,
+        "browser session closed; navigate again to recreate it"))
+    bt.needsRecreate = false
+    bt.connectionLost = false
   result = bt.invokeCommand(call)
   bt.lastUsed = epochTime()
   if bt.process != nil and bt.ws.sock != nil:

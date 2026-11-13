@@ -429,7 +429,8 @@ proc handleGatewayDispatch(adapter: var QQOfficialAdapter;
 
 proc runGatewaySession(adapter: var QQOfficialAdapter;
                        intents: int;
-                       state: var QQOfficialGatewayState) =
+                       state: var QQOfficialGatewayState;
+                       backoffMs: var int) =
   let gateway = adapter.fetchGatewayInfo().valueOr:
     raise newException(IOError, "QQ official gateway lookup failed: " & error)
   var wsUrl = gateway.url
@@ -492,8 +493,9 @@ proc runGatewaySession(adapter: var QQOfficialAdapter;
           let d = j.getOrDefault("d")
           if t == "READY":
             state.sessionId = d.getOrDefault("session_id").getStr("")
+            backoffMs = 1000
           elif t == "RESUMED":
-            discard
+            backoffMs = 1000
           else:
             handleGatewayDispatch(adapter, t, d)
         of 7:
@@ -524,7 +526,9 @@ proc qqOfficialGatewayThread(arg: QQOfficialGatewayArgs) {.thread.} =
   var backoffMs = 1000
   while true:
     try:
-      runGatewaySession(adapter, arg.intents, state)
+      runGatewaySession(adapter, arg.intents, state, backoffMs)
+      sleep(backoffMs)
+      backoffMs = min(backoffMs * 2, 60_000)
     except Exception as e:
       echo "[qq-official] gateway error: " & e.msg & " — reconnecting in " &
            $backoffMs & " ms"
