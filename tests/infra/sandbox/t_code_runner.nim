@@ -106,6 +106,15 @@ when defined(linux):
       check cancelled(fut)
       check epochTime() - started < 5.0
 
+    test "closing stdout does not bypass the configured timeout":
+      let started = epochTime()
+      let res = runBoundedProcess(
+        @["sh", "-c", "exec 1>&- 2>&-; sleep 3"], 10, 1024).get()
+      let elapsed = epochTime() - started
+      check res.exitCode == 0
+      check elapsed >= 2.5
+      check elapsed < 6.0
+
     test "cancellation kills descendants in the timeout group":
       let pidFile = getTempDir() / ("donkey-child-" & $getCurrentProcessId())
       removeFile(pidFile)

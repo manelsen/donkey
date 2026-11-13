@@ -226,7 +226,12 @@ proc runBoundedProcessAsync*(argv: seq[string]; timeoutSec: int;
     await killerFut.cancelAndWait()
   var exitCode = -1
   try:
-    exitCode = await p.waitForExit(chronos.seconds(2))
+    if truncated:
+      exitCode = await p.waitForExit(chronos.seconds(2))
+    else:
+      ## The timer owns the wall-clock deadline. Waiting here with a short
+      ## grace period would kill a program that closes stdout but keeps working.
+      exitCode = await p.waitForExit()
   except CancelledError:
     killProcessGroup(p)
     try:
