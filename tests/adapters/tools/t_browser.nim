@@ -158,7 +158,7 @@ suite "Input validation":
 
   test "browser_navigate returns error when lightpanda not installed":
     var bt = BrowserTools(lightpandaPath: "/nonexistent/lightpanda")
-    let call = ToolCall(id: "test", name: "browser_navigate", input: %* {"url": "https://example.com"})
+    let call = ToolCall(id: "test", name: "browser_navigate", input: %* {"url": "https://8.8.8.8"})
     let res = bt.invoke(call)
     check res.isOk
     let tr = res.get()
@@ -280,7 +280,40 @@ suite "CDP event policy":
     var bt = BrowserTools()
     bt.handleCdpEvent(%*{
       "method": "ServiceWorker.workerVersionUpdated",
-      "params": {},
+      "params": {"versions": [{"versionId": "v1", "runningStatus": "running"}]},
+    })
+    check bt.blockedServiceWorkers == 1
+    check "service worker" in bt.policyViolation
+
+  test "empty service worker inventory does not abort navigation":
+    var bt = BrowserTools()
+    bt.handleCdpEvent(%*{
+      "method": "ServiceWorker.workerVersionUpdated",
+      "params": {"versions": []},
+    })
+    check bt.blockedServiceWorkers == 0
+    check bt.policyViolation.len == 0
+
+  test "service worker registration inventory is checked for entries":
+    var bt = BrowserTools()
+    bt.handleCdpEvent(%*{
+      "method": "ServiceWorker.workerRegistrationUpdated",
+      "params": {"registrations": []},
+    })
+    check bt.blockedServiceWorkers == 0
+    check bt.policyViolation.len == 0
+    bt.handleCdpEvent(%*{
+      "method": "ServiceWorker.workerRegistrationUpdated",
+      "params": {"registrations": [{"registrationId": "r1"}]},
+    })
+    check bt.blockedServiceWorkers == 1
+    check "service worker" in bt.policyViolation
+
+  test "service worker error report is always a violation":
+    var bt = BrowserTools()
+    bt.handleCdpEvent(%*{
+      "method": "ServiceWorker.workerErrorReported",
+      "params": {"errorMessage": "boom"},
     })
     check bt.blockedServiceWorkers == 1
     check "service worker" in bt.policyViolation
@@ -356,7 +389,7 @@ suite "Browser backends":
   test "navigate reports a disabled backend":
     var bt = BrowserTools(backend: bbOff)
     let call = ToolCall(id: "test", name: "browser_navigate",
-                        input: %* {"url": "https://example.com"})
+                        input: %* {"url": "https://8.8.8.8"})
     let tr = bt.invoke(call).get()
     check tr.isError
     check tr.output.contains("disabled")
@@ -365,7 +398,7 @@ suite "Browser backends":
     var bt = BrowserTools(backend: bbEdge,
                           executablePath: "/nonexistent/microsoft-edge")
     let call = ToolCall(id: "test", name: "browser_navigate",
-                        input: %* {"url": "https://example.com"})
+                        input: %* {"url": "https://8.8.8.8"})
     let tr = bt.invoke(call).get()
     check tr.isError
     check tr.output.contains("not found")
@@ -374,7 +407,7 @@ suite "Browser backends":
     var bt = BrowserTools(backend: bbLightpanda,
                           proxyServer: "http://127.0.0.1:3128")
     let call = ToolCall(id: "test", name: "browser_navigate",
-                        input: %* {"url": "https://example.com"})
+                        input: %* {"url": "https://8.8.8.8"})
     let tr = bt.invoke(call).get()
     check tr.isError
     check tr.output.contains("DONKEY_BROWSER_PROXY")
@@ -383,7 +416,7 @@ suite "Browser backends":
     var bt = BrowserTools(backend: bbAuto, lightpandaPath: "/nonexistent/lightpanda",
                           proxyServer: "http://127.0.0.1:3128")
     let call = ToolCall(id: "test", name: "browser_navigate",
-                        input: %* {"url": "https://example.com"})
+                        input: %* {"url": "https://8.8.8.8"})
     let tr = bt.invoke(call).get()
     check tr.isError
     check tr.output.contains("Lightpanda does not support")

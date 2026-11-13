@@ -252,6 +252,12 @@ func browserPolicyScript*(): string =
     });
   } catch (e) {}
   try {
+    Object.defineProperty(globalThis, 'Worker', {
+      configurable: false, writable: false,
+      value: function() { deny('Worker'); }
+    });
+  } catch (e) {}
+  try {
     Object.defineProperty(globalThis, 'SharedWorker', {
       configurable: false, writable: false,
       value: function() { deny('SharedWorker'); }

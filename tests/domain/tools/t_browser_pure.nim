@@ -163,7 +163,8 @@ suite "browser request policy":
 
   test "policy script blocks side channels and service workers":
     let script = browserPolicyScript()
-    for needle in ["WebSocket", "WebTransport", "RTCPeerConnection",
-                   "SharedWorker", "sendBeacon", "serviceWorker",
+    for needle in ["deny('WebSocket')", "deny('WebTransport')",
+                   "deny('RTCPeerConnection')", "deny('Worker')",
+                   "deny('SharedWorker')", "sendBeacon", "serviceWorker",
                    "unregister", "navigator.serviceWorker.register"]:
       check needle in script

@@ -242,8 +242,20 @@ proc handleCdpEvent*(bt: var BrowserTools; resp: JsonNode) =
     inc bt.blockedWebSockets
     bt.lastBlockedUrl = params{"url"}.getStr("")
     bt.policyViolation = "webtransport blocked: " & bt.lastBlockedUrl
-  of "ServiceWorker.workerVersionUpdated", "ServiceWorker.workerRegistrationUpdated",
-     "ServiceWorker.workerErrorReported":
+  of "ServiceWorker.workerVersionUpdated":
+    ## Enabling the domain emits an empty inventory notification on a fresh
+    ## profile. Only an actual version is activity worth failing closed.
+    let versions = params{"versions"}
+    if versions != nil and versions.kind == JArray and versions.len > 0:
+      inc bt.blockedServiceWorkers
+      bt.policyViolation = "service worker activity blocked: " & cdpMethod
+  of "ServiceWorker.workerRegistrationUpdated":
+    let registrations = params{"registrations"}
+    if registrations != nil and registrations.kind == JArray and
+       registrations.len > 0:
+      inc bt.blockedServiceWorkers
+      bt.policyViolation = "service worker activity blocked: " & cdpMethod
+  of "ServiceWorker.workerErrorReported":
     inc bt.blockedServiceWorkers
     bt.policyViolation = "service worker activity blocked: " & cdpMethod
   of "Network.loadingFinished", "Network.loadingFailed":
@@ -970,6 +982,7 @@ type
     idleTimeoutSeconds: float
     timeoutMs: int
     http: HttpRuntimePort
+    ownerThread: int
     byUser*: Table[string, ref BrowserTools]
 
 func browserUserKey*(raw: string): string =
@@ -1007,8 +1020,19 @@ proc newBrowserToolRuntime*(backend: BrowserBackendKind = bbAuto;
     idleTimeoutSeconds: idleTimeoutSeconds,
     timeoutMs: clampBrowserTimeoutMs(timeoutMs),
     http: http,
+    ownerThread: getThreadId(),
     byUser: initTable[string, ref BrowserTools](),
   )
+
+proc onOwnerThread(rt: BrowserToolRuntime): bool {.gcsafe, raises: [].} =
+  ## ToolRuntimePort callbacks are declared `gcsafe` because the port type
+  ## requires it. That annotation is only honest while the runtime is confined
+  ## to the daemon event-loop thread; this guard turns the invariant into a
+  ## check instead of a compiler promise.
+  {.cast(gcsafe).}:
+    ## `getThreadId` is a thread-local read and `ownerThread` is an int; this
+    ## scope touches no GC-managed global state.
+    getThreadId() == rt.ownerThread
 
 proc isPortAvailable(host: string; port: int): bool =
   ## Best-effort check for a free loopback port before spawning a browser.
@@ -1038,6 +1062,8 @@ proc allocatePort(rt: BrowserToolRuntime): int =
   0
 
 proc listTools*(rt: BrowserToolRuntime): Result[seq[ToolSchema], string] =
+  if not rt.onOwnerThread():
+    return err("browser runtime used from a non-owner thread")
   newBrowserTools(
     backend = rt.backend,
     executablePath = rt.executablePath,
@@ -1049,6 +1075,8 @@ proc listTools*(rt: BrowserToolRuntime): Result[seq[ToolSchema], string] =
 
 proc closeUser*(rt: BrowserToolRuntime; userId: string) =
   ## Releases one user's browser process, page, profile and CDP port.
+  doAssert rt.onOwnerThread(),
+    "browser runtime closeUser must run on its owner thread"
   let key = browserUserKey(userId)
   if key in rt.byUser:
     rt.byUser[key][].close()
@@ -1058,7 +1086,7 @@ proc evictIdle*(rt: BrowserToolRuntime) =
   ## Bounds resource accumulation when no session-end callback is available.
   ## The daemon heartbeat calls this periodically, so idle browsers are closed
   ## even when no further tool invocation arrives.
-  if rt.idleTimeoutSeconds <= 0:
+  if not rt.onOwnerThread() or rt.idleTimeoutSeconds <= 0:
     return
   let now = epochTime()
   var stale: seq[string]
@@ -1070,6 +1098,8 @@ proc evictIdle*(rt: BrowserToolRuntime) =
     rt.byUser.del(key)
 
 proc invoke*(rt: BrowserToolRuntime; call: ToolCall): Result[ToolResult, string] =
+  if not rt.onOwnerThread():
+    return err("browser runtime used from a non-owner thread")
   rt.evictIdle()
   let key = browserUserKey(call.userId)
   if key notin rt.byUser:
@@ -1104,6 +1134,8 @@ proc invoke*(rt: BrowserToolRuntime; call: ToolCall): Result[ToolResult, string]
   rt.byUser[key][].invoke(call)
 
 proc close*(rt: BrowserToolRuntime) =
+  doAssert rt.onOwnerThread(),
+    "browser runtime close must run on its owner thread"
   for _, bt in rt.byUser.mpairs:
     bt[].close()
   rt.byUser.clear()
