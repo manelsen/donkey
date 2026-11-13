@@ -19,10 +19,20 @@ JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/donkey_tests_XXXXXX")
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+HAVE_GNU_REALPATH=0
+if command -v realpath >/dev/null 2>&1 &&    [ -n "$(realpath -m --relative-to=. . 2>/dev/null)" ]; then
+  HAVE_GNU_REALPATH=1
+fi
+export HAVE_GNU_REALPATH
+
 run_one() {
   local f="$1"
-  if command -v realpath >/dev/null 2>&1; then
-    f="$(realpath -m --relative-to=. "$f")"
+  if [ "$HAVE_GNU_REALPATH" = "1" ]; then
+    local normalized_f
+    normalized_f="$(realpath -m --relative-to=. "$f" 2>/dev/null || true)"
+    if [ -n "$normalized_f" ]; then
+      f="$normalized_f"
+    fi
   else
     while [[ "$f" == ./* ]]; do
       f="${f#./}"
@@ -69,8 +79,12 @@ export -f run_one
 
 normalize_target() {
   local target="$1"
-  if command -v realpath >/dev/null 2>&1; then
-    target="$(realpath -m --relative-to=. "$target")"
+  if [ "$HAVE_GNU_REALPATH" = "1" ]; then
+    local normalized_target
+    normalized_target="$(realpath -m --relative-to=. "$target" 2>/dev/null || true)"
+    if [ -n "$normalized_target" ]; then
+      target="$normalized_target"
+    fi
   else
     while [[ "$target" == ./* ]]; do
       target="${target#./}"

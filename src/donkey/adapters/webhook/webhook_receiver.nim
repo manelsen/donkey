@@ -716,6 +716,12 @@ proc startWebhookPool(cfg: WebhookConfig; logger: Logger): Result[void, string] 
     for i in 0 ..< gWebhookWorkersStarted:
       joinThread(gWebhookWorkers[i])
     gWebhookWorkersStarted = 0
+    while true:
+      let (hasQueued, fd) = gWebhookQueue.tryRecv()
+      if not hasQueued:
+        break
+      if fd != SocketHandle(-1):
+        discard posix.close(cint(fd))
     ready.close()
     gWebhookPoolAttempted = false
     return err("cannot start webhook workers: " & e.msg)

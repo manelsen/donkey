@@ -118,7 +118,7 @@ Falha de stress bloqueia release. Testes que viram flaky devem ser corrigidos, n
 
 Os testes de contenção usam hooks opcionais, `nil` em produção:
 
-- `ApprovalStore.onBeforeSave` / `SecretVault.onBeforeWrite`: chamados sob o lock imediatamente antes da escrita atômica;
+- `ApprovalStore.onAfterTempWrite` / `SecretVault.onAfterTempWrite`: chamados sob o lock após gravar o temporário e antes do rename atômico;
 - `RuntimeStateStore.onCompactStart`: chamado sob o lock no início de uma compactação real;
 - `RuntimeStateStore.onAppendStart`: chamado antes de `recordPending` adquirir o lock.
 

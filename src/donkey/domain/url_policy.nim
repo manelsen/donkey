@@ -28,7 +28,7 @@ func fallbackHost(rawUrl: string): string =
       result = hostPort[0 ..< colon]
   result = result.strip(chars = {'[', ']'})
 
-func normalizeHost(host: string): string =
+func normalizeHost*(host: string): string =
   result = host.toLowerAscii()
   while result.len > 0 and result[^1] == '.':
     result.setLen(result.len - 1)
