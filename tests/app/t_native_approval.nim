@@ -115,7 +115,8 @@ suite "native tool approval gate":
     configureApprovalService(denyStore, @["execute_code"])
     defer: resetApprovalService()
 
-    let marker = "/tmp/donkey_execute_code_denied_" & $getCurrentProcessId()
+    let markerName = "donkey_execute_code_denied_" & $getCurrentProcessId()
+    let marker = "/tmp" / markerName
     removeFile(marker)
     defer: removeFile(marker)
     let outbox = newAsyncQueue[OutboundMessage](4)
@@ -131,7 +132,7 @@ suite "native tool approval gate":
     let call = ToolCallRequest(
       id: "t3",
       name: "execute_code",
-      inputJson: """{"language":"shell","code":"touch """ & marker & """"}""",
+      inputJson: """{"language":"shell","code":"touch """ & markerName & """"}""",
     )
     let res = waitFor executeNativeTool(call, ctx, SessionState(), @[])
     check res.handled
@@ -154,7 +155,8 @@ suite "native tool approval gate":
     )
     configureApprovalService(failingStore, @["execute_code"])
     defer: resetApprovalService()
-    let marker = "/tmp/donkey_execute_code_store_fail_" & $getCurrentProcessId()
+    let markerName = "donkey_execute_code_store_fail_" & $getCurrentProcessId()
+    let marker = "/tmp" / markerName
     removeFile(marker)
     defer: removeFile(marker)
     let outbox = newAsyncQueue[OutboundMessage](4)
@@ -170,7 +172,7 @@ suite "native tool approval gate":
     let call = ToolCallRequest(
       id: "t6",
       name: "execute_code",
-      inputJson: """{"language":"shell","code":"touch """ & marker & """"}""",
+      inputJson: """{"language":"shell","code":"touch """ & markerName & """"}""",
     )
     let res = waitFor executeNativeTool(call, ctx, SessionState(), @[])
     check res.handled

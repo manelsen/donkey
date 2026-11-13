@@ -22,6 +22,8 @@ type
     sandbox*:       CodeSandboxKind
     containerName*: string
     image*:         string
+    artifactHash*:  string
+    artifactBytes*: int64
 
 var codeRunCounter: Atomic[int]
 ## Atomic, not a gcsafe promise: container names must stay unique even if a
@@ -53,18 +55,19 @@ proc canonicalPath*(path: string): Result[string, string] =
   except CatchableError as e:
     err("cannot canonicalize path: " & e.msg)
 
+proc stringSha256*(data: string): string =
+  var ctx: sha256
+  ctx.init()
+  ctx.update(data)
+  let digest = ctx.finish()
+  for b in digest.data:
+    result.add(toHex(int(b), 2).toLowerAscii())
+
 proc fileSha256*(path: string): Result[string, string] =
   ## Hash the artifact that will actually be executed (WASI module bytes).
   try:
     let data = readFile(path)
-    var ctx: sha256
-    ctx.init()
-    ctx.update(data)
-    let digest = ctx.finish()
-    var value = ""
-    for b in digest.data:
-      value.add(toHex(int(b), 2).toLowerAscii())
-    ok(value)
+    ok(stringSha256(data))
   except CatchableError as e:
     err("cannot hash file: " & path & ": " & e.msg)
 
@@ -224,6 +227,8 @@ proc runOciCode*(runtimeCmd, image, workspace: string;
   res.sandbox = cskOci
   res.containerName = name
   res.image = image
+  res.artifactHash = stringSha256(code)
+  res.artifactBytes = int64(code.len)
   if res.exitCode == 125 or
      (res.exitCode != 0 and ociInfrastructureFailure(res.output)):
     return err("container runtime failed: " & formatCodeResult(
@@ -249,7 +254,30 @@ proc runWasmCode*(workspace, wasmPath: string;
   if not hardenScratchDir(scratch):
     return err("cannot restrict execute_code scratch directory")
 
-  var argv = buildWasmCodeArgv(wasmtimeExe, workspace, wasmPath, scratch)
+  ## Execute a private copy, not the guest-writable workspace file. The copy is
+  ## outside every --dir, so the module cannot grow/change after the hash.
+  let moduleDir = getTempDir() / ("donkey-code-module-" & name)
+  try:
+    createDir(moduleDir)
+  except CatchableError as e:
+    return err("cannot create execute_code module directory: " & e.msg)
+  defer:
+    try: removeDir(moduleDir) except CatchableError: discard
+  if not hardenScratchDir(moduleDir):
+    return err("cannot restrict execute_code module directory")
+  let moduleCopy = moduleDir / "module.wasm"
+  try:
+    copyFile(wasmPath, moduleCopy)
+  except CatchableError as e:
+    return err("cannot copy wasm module: " & e.msg)
+  let moduleSize = regularFileSize(moduleCopy).valueOr:
+    return err(error)
+  if moduleSize <= 0 or moduleSize > CodeMaxWasmBytes:
+    return err("wasm module size is invalid")
+  let moduleHash = fileSha256(moduleCopy).valueOr:
+    return err(error)
+
+  var argv = buildWasmCodeArgv(wasmtimeExe, workspace, moduleCopy, scratch)
   if argv.len == 0:
     return err("invalid WASI execution request")
   ## wasmtime's CLI does not expose a per-run memory cap. util-linux prlimit is
@@ -266,6 +294,8 @@ proc runWasmCode*(workspace, wasmPath: string;
   res.sandbox = cskWasm
   res.containerName = name
   res.image = "wasmtime"
+  res.artifactHash = moduleHash
+  res.artifactBytes = moduleSize
   ok(res)
 
 proc executeCode*(sandbox: CodeSandboxKind;

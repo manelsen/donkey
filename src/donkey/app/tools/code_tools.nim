@@ -5,7 +5,6 @@
 
 import std/[json, options, os, strutils]
 
-import nimcrypto/sha2
 import ../../core/log
 import ../../core/pipeops
 import ../../core/types
@@ -37,15 +36,6 @@ type
     timedOut*:   bool
     truncated*:  bool
     durationMs*: int64
-
-proc sha256hex(data: string): string =
-  var ctx: sha256
-  ctx.init()
-  ctx.update(data)
-  let digest = ctx.finish()
-  result = ""
-  for b in digest.data:
-    result.add(toHex(int(b), 2).toLowerAscii())
 
 func codeSandboxFromMode*(mode: SandboxMode): Result[CodeSandboxKind, string] =
   case mode
@@ -154,20 +144,22 @@ proc runCodeRequest*(req: CodeRequest;
     return err("sandbox.mode='wasm' only supports language='wasm'")
   if cfg.sandbox == cskOci and req.language == clWasm:
     return err("wasm code requires sandbox.mode='wasm'")
-  let run = executeCode(
-    cfg.sandbox, cfg.runtimeCmd, cfg.image, workspace,
-    effectiveUid(), effectiveGid(), req.language, req.code, req.wasmPath,
-    req.timeoutSec, cfg.maxOutputBytes)
-  let artifactHash =
+  ## Hash the artifact before execution. WASI additionally hashes a private
+  ## copy in runWasmCode, so the audit can describe exactly what was executed.
+  let preHash =
     if req.language == clWasm:
       fileSha256(req.wasmPath).valueOr: ""
     else:
-      sha256hex(req.code)
-  let artifactBytes =
+      stringSha256(req.code)
+  let preBytes =
     if req.language == clWasm:
       regularFileSize(req.wasmPath).valueOr: 0'i64
     else:
       int64(req.code.len)
+  let run = executeCode(
+    cfg.sandbox, cfg.runtimeCmd, cfg.image, workspace,
+    effectiveUid(), effectiveGid(), req.language, req.code, req.wasmPath,
+    req.timeoutSec, cfg.maxOutputBytes)
   if run.isErr:
     ## The tool result still carries the diagnosis for the requester. The
     ## audit log must not persist program stdout/stderr embedded in
@@ -179,8 +171,8 @@ proc runCodeRequest*(req: CodeRequest;
       "channel": $channel,
       "language": $req.language,
       "sandbox": $cfg.sandbox,
-      "code_sha256": artifactHash,
-      "code_bytes": artifactBytes,
+      "code_sha256": preHash,
+      "code_bytes": preBytes,
       "timeout_sec": req.timeoutSec,
       "diagnostic": "execution failed; see tool result",
       "network": false,
@@ -188,6 +180,10 @@ proc runCodeRequest*(req: CodeRequest;
     log.warn($failureAudit)
     return err(run.error)
   let res = run.get()
+  let artifactHash =
+    if res.artifactHash.len > 0: res.artifactHash else: preHash
+  let artifactBytes =
+    if res.artifactBytes > 0: res.artifactBytes else: preBytes
   let text = formatCodeResult(res.output, res.exitCode, res.timedOut,
                               res.truncated)
   let audit = %*{
