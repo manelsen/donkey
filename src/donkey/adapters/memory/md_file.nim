@@ -43,6 +43,7 @@ const
   SessionSearchMaxFileBytes* = 512 * 1024
   SessionSearchMaxTotalBytes* = 8 * 1024 * 1024
   SessionSearchMaxRecords* = 2000
+  SessionSearchMaxNodeContentBytes* = 4096
 
 proc hasProfile*(a: MdFileAdapter; userId: UserId): bool {.gcsafe.}
 proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext {.gcsafe.}
@@ -291,20 +292,25 @@ when defined(withPostgres) or defined(withSqlite):
       let magma = a.newMagmaAdapter()
       if magma == nil:
         return err("MAGMA backend unavailable for session search")
-      try:
-        for node in magma.graph.listNodesLimited(
-            $userId, "", SessionSearchMaxRecords):
-          if node.content.len == 0:
-            continue
-          records.add(SessionSearchRecord(
-            sessionId: "memory",
-            kind: shkMemory,
-            role: "memory",
-            text: node.content,
-            timestampMs: node.timestamp * 1000,
-          ))
-      except Exception as e:
-        return err("MAGMA search failed: " & e.msg)
+      let remaining = max(0, SessionSearchMaxRecords - records.len)
+      if remaining > 0:
+        try:
+          let nodes = magma.graph.listNodesLimited(
+            $userId, "", remaining, SessionSearchMaxNodeContentBytes)
+          if nodes.isErr:
+            return err(nodes.error)
+          for node in nodes.get():
+            if node.content.len == 0:
+              continue
+            records.add(SessionSearchRecord(
+              sessionId: "memory",
+              kind: shkMemory,
+              role: "memory",
+              text: node.content,
+              timestampMs: node.timestamp * 1000,
+            ))
+        except Exception as e:
+          return err("MAGMA search failed: " & e.msg)
     ok(rankSessionRecords(records, query, epochMs(), limit))
 
 proc appendExtractedMemoryF1(a: MdFileAdapter; userId: UserId;
@@ -657,10 +663,18 @@ proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
     if dirExists(dir):
       var files: seq[tuple[path: string, mtimeMs: int64]]
       for kind, path in walkDir(dir):
-        if kind == pcFile and path.endsWith(".jsonl"):
-          files.add((path, getLastModificationTime(path).toUnix() * 1000))
-      files.sort(proc(a, b: tuple[path: string, mtimeMs: int64]): int =
-        cmp(b.mtimeMs, a.mtimeMs))
+        if kind != pcFile or not path.endsWith(".jsonl"):
+          continue
+        let candidate: tuple[path: string, mtimeMs: int64] =
+          (path, getLastModificationTime(path).toUnix() * 1000)
+        if files.len < SessionSearchMaxFiles:
+          files.add(candidate)
+          files.sort(proc(a, b: tuple[path: string, mtimeMs: int64]): int =
+            cmp(b.mtimeMs, a.mtimeMs))
+        elif candidate.mtimeMs > files[^1].mtimeMs:
+          files[^1] = candidate
+          files.sort(proc(a, b: tuple[path: string, mtimeMs: int64]): int =
+            cmp(b.mtimeMs, a.mtimeMs))
       var loaded = 0
       var totalBytes = 0'i64
       for file in files:

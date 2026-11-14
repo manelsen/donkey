@@ -4,6 +4,7 @@
 ## such as PostgreSQL or SQLite.
 
 import std/[json, options]
+import ../core/pipeops
 
 const
   EdgeTemporal* = "TEMPORAL"
@@ -49,7 +50,8 @@ type
     getNode*: proc(nodeId: string): Option[MagmaNode] {.gcsafe.}
     listNodes*: proc(userId: string; nodeType: string = ""): seq[MagmaNode] {.gcsafe.}
     listNodesLimited*: proc(userId: string; nodeType: string = "";
-                            limit: int): seq[MagmaNode] {.gcsafe.}
+                            limit, maxContentBytes: int):
+                            Result[seq[MagmaNode], string] {.gcsafe.}
     deleteNode*: proc(nodeId: string): bool {.gcsafe.}
     insertEdge*: proc(edge: MagmaEdge): bool {.gcsafe.}
     getEdges*: proc(nodeId: string; edgeType: string = ""; direction: string = "out"): seq[MagmaEdge] {.gcsafe.}

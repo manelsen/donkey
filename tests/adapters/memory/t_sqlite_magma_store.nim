@@ -38,7 +38,7 @@ when defined(withSqlite):
         check store.insertNode(MagmaNode(
           id: "l" & $i, userId: "u1", nodeType: "memory",
           content: "node " & $i, timestamp: i))
-      let limited = store.listNodesLimited("u1", "", 2)
+      let limited = store.listNodesLimited("u1", "", 2, 4096).get()
       check limited.len == 2
       check limited[0].id == "l3"
       check limited[1].id == "l2"

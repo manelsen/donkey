@@ -138,3 +138,4 @@ Cada PR deve ser mergeável sozinho, com CI verde e sem dependência do outro.
 - Cancelamento: `cancel_subagent` envia `newCancelMsg` para o inbox do filho, aguarda o future com timeout e remove o diretório temporário.
 - O paddock do filho é um subdiretório `{paddock}/subagents/{id}` com `0700`; o filho não recebe o paddock do pai no `NativeCtx`.
 - `session_search` do filho continua escopado ao usuário, mas não vê o histórico do pai além do que for passado no contexto explícito.
+- **MAGMA `ensureSchema`/backfill por busca:** `newMagmaAdapter` + `listNodesLimited` chamam `ensureSchema`, que pode rodar backfill global do índice vetorial. É comportamento pré-existente do store; a correção correta exige marcador de versão persistido no banco e um PR de migração próprio. `session_search` já limita nodes/conteúdo; não execute backfill global no caminho de leitura.
