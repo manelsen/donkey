@@ -27,6 +27,18 @@ when defined(withSqlite):
       check store.listNodes("u1", "memory").len == 2
       check store.getEdges("n1", edgeType = EdgeTemporal).len == 1
 
+    test "listNodesLimited limits before materializing":
+      let store = newSqliteMagmaStoreAdapter(dbPath)
+      store.migrate()
+      for i in 1 .. 3:
+        check store.insertNode(MagmaNode(
+          id: "l" & $i, userId: "u1", nodeType: "memory",
+          content: "node " & $i, timestamp: i))
+      let limited = store.listNodesLimited("u1", "", 2)
+      check limited.len == 2
+      check limited[0].id == "l3"
+      check limited[1].id == "l2"
+
     test "searchSimilar ranks by in-process cosine similarity":
       let store = newSqliteMagmaStoreAdapter(dbPath)
       store.migrate()
