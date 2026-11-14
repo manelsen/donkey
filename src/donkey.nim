@@ -63,6 +63,7 @@ import donkey/app/approval_runtime
 import donkey/domain/message
 import donkey/domain/agent_message
 import donkey/ports/provider
+import donkey/ports/subagent_workspace
 import donkey/ports/http
 import donkey/ports/channel
 import donkey/core/media_download
@@ -1161,6 +1162,34 @@ proc setupIpcServer(cfg: DonkeyConfig;
   else:
     log.info("HTTP gateway: disabled")
 
+proc createSubagentPaddock(root, subagentId: string):
+                           Result[string, string] {.gcsafe, raises: [].} =
+  try:
+    let subagentsRoot = root / "subagents"
+    createDir(subagentsRoot)
+    setFilePermissions(subagentsRoot, {fpUserRead, fpUserWrite, fpUserExec})
+    let childDir = subagentsRoot / subagentId
+    createDir(childDir)
+    setFilePermissions(childDir, {fpUserRead, fpUserWrite, fpUserExec})
+    ok(childDir)
+  except CatchableError as e:
+    err("create subagent paddock: " & e.msg)
+
+proc removeSubagentPaddock(path: string): Result[void, string]
+                                           {.gcsafe, raises: [].} =
+  try:
+    if path.len > 0 and dirExists(path):
+      removeDir(path)
+    ok()
+  except CatchableError as e:
+    err("remove subagent paddock: " & e.msg)
+
+proc subagentWorkspacePort*(): SubagentWorkspacePort =
+  SubagentWorkspacePort(
+    create: createSubagentPaddock,
+    remove: removeSubagentPaddock,
+  )
+
 func buildDaemonSessionServices(ctx: DaemonContext;
                                 cfg: DonkeyConfig;
                                 memory: MdFileAdapter;
@@ -1198,6 +1227,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
                            "minimax", "zai", "zai-coding", "zen"]),
     routeProviderCooldownHook = proc(): seq[ProviderCooldown] {.gcsafe.} =
       withRouteLock(ctx.runtime.currentProviderCooldowns()),
+    subagentWorkspace = subagentWorkspacePort(),
   )
 
 proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
@@ -1846,8 +1876,11 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       await sleepAsync(ctimer.milliseconds(loopResult.sleepMs.int64))
   finally:
     log.info("daemon shutdown: stopping background workers")
-    ctx.runtime.sm.cancelAllActors()
-    await sleepAsync(ctimer.milliseconds(2_000))
+    let actorStop = ctx.runtime.sm.cancelAllActors()
+    let actorsStopped = await withTimeout(
+      actorStop, ctimer.milliseconds(2_000))
+    if not actorsStopped:
+      log.warn("daemon shutdown: actor stop deadline elapsed")
     stopLedgerCompactionWorker(ctx.runtime.ledgerWorker)
     stopSlackSocketMode()
     stopWebhookReceiver()

@@ -3,7 +3,6 @@
 import std/[json, os, strutils, unittest]
 import chronos
 import chronos/asyncsync
-import results
 import donkey/app/approval_runtime
 import donkey/app/native_tools
 import donkey/app/session_state
@@ -17,6 +16,7 @@ import donkey/domain/subagent_pure
 import donkey/ports/approval
 import donkey/ports/memory
 import donkey/ports/provider
+import donkey/ports/subagent_workspace
 
 let subagentBase = getTempDir() / ("donkey_subagent_tests_" & $getCurrentProcessId())
 let subagentLog = newLogger("test.subagent", lvlError)
@@ -50,6 +50,26 @@ proc toolLoopComplete(callCount: ref int; toolCalls: int): CompleteFn =
       ))
     else:
       ok(CompletionResponse(text: "finished", inputTokens: 3, outputTokens: 2))
+
+proc testWorkspace(): SubagentWorkspacePort =
+  SubagentWorkspacePort(
+    create: proc(root, subagentId: string): Result[string, string]
+                    {.gcsafe, raises: [].} =
+      try:
+        let dir = root / "subagents" / subagentId
+        createDir(dir)
+        setFilePermissions(dir, {fpUserRead, fpUserWrite, fpUserExec})
+        ok(dir)
+      except CatchableError as e:
+        err("create workspace: " & e.msg),
+    remove: proc(path: string): Result[void, string] {.gcsafe, raises: [].} =
+      try:
+        if dirExists(path):
+          removeDir(path)
+        ok()
+      except CatchableError as e:
+        err("remove workspace: " & e.msg),
+  )
 
 proc testTools(): seq[ToolDescription] =
   @[
@@ -97,7 +117,7 @@ suite "subagent runtime":
     removeDir(base)
     defer: removeDir(base)
     var parent = makeParent(base, textComplete)
-    let mgr = newSubagentManager()
+    let mgr = newSubagentManager(testWorkspace())
     attachSubagentRuntime(parent, mgr)
 
     let res = waitFor executeNativeTool(
@@ -119,7 +139,7 @@ suite "subagent runtime":
     defer: removeDir(base)
     var parent = makeParent(base, textComplete)
     parent.asyncCompleteFn = asyncTextComplete
-    let mgr = newSubagentManager()
+    let mgr = newSubagentManager(testWorkspace())
     attachSubagentRuntime(parent, mgr)
 
     let res = waitFor executeNativeTool(
@@ -136,7 +156,7 @@ suite "subagent runtime":
     removeDir(base)
     defer: removeDir(base)
     var parent = makeParent(base, textComplete)
-    let mgr = newSubagentManager()
+    let mgr = newSubagentManager(testWorkspace())
     attachSubagentRuntime(parent, mgr)
 
     let started = waitFor executeNativeTool(
@@ -158,7 +178,7 @@ suite "subagent runtime":
     removeDir(base)
     defer: removeDir(base)
     var parent = makeParent(base, textComplete)
-    let mgr = newSubagentManager()
+    let mgr = newSubagentManager(testWorkspace())
     attachSubagentRuntime(parent, mgr)
 
     let started = waitFor executeNativeTool(
@@ -198,7 +218,7 @@ suite "subagent runtime":
     defer: removeDir(base)
     let callCount = new(int)
     var parent = makeParent(base, toolLoopComplete(callCount, 100))
-    let mgr = newSubagentManager()
+    let mgr = newSubagentManager(testWorkspace())
     attachSubagentRuntime(parent, mgr)
 
     let started = waitFor executeNativeTool(
@@ -228,7 +248,7 @@ suite "subagent runtime":
     defer: removeDir(base)
     let callCount = new(int)
     var parent = makeParent(base, toolLoopComplete(callCount, 2))
-    let mgr = newSubagentManager()
+    let mgr = newSubagentManager(testWorkspace())
     attachSubagentRuntime(parent, mgr)
 
     let res = waitFor executeNativeTool(
@@ -251,7 +271,7 @@ suite "subagent runtime":
       ok(CompletionResponse(text: "too many tokens",
                             inputTokens: 2_000, outputTokens: 10))
     var parent = makeParent(base, hugeUsage)
-    let mgr = newSubagentManager()
+    let mgr = newSubagentManager(testWorkspace())
     attachSubagentRuntime(parent, mgr)
 
     let res = waitFor executeNativeTool(
@@ -269,7 +289,7 @@ suite "subagent runtime":
     removeDir(base)
     defer: removeDir(base)
     var parent = makeParent(base, textComplete)
-    let mgr = newSubagentManager()
+    let mgr = newSubagentManager(testWorkspace())
     attachSubagentRuntime(parent, mgr)
     var child = parent
     child.subagentDepth = 1
@@ -428,7 +448,7 @@ suite "subagent runtime":
     removeDir(base)
     defer: removeDir(base)
     var parent = makeParent(base, textComplete)
-    let mgr = newSubagentManager(maxConcurrent = 16)
+    let mgr = newSubagentManager(testWorkspace(), maxConcurrent = 16)
     attachSubagentRuntime(parent, mgr)
 
     var ids: seq[string]
@@ -452,7 +472,7 @@ suite "subagent runtime":
     defer: removeDir(base)
     let callCount = new(int)
     var parent = makeParent(base, toolLoopComplete(callCount, 100))
-    let mgr = newSubagentManager()
+    let mgr = newSubagentManager(testWorkspace())
     attachSubagentRuntime(parent, mgr)
 
     var ids: seq[string]

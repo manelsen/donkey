@@ -80,7 +80,7 @@ type
 type
   SpawnSubagentFn* = proc(request: SubagentRequest):
       Future[SubagentSpawnResult] {.gcsafe, raises: [].}
-  AwaitSubagentFn* = proc(subagentId: string):
+  AwaitSubagentFn* = proc(subagentId: string; stopGeneration: uint64):
       Future[SubagentResult] {.gcsafe, raises: [].}
   ListSubagentsFn* = proc(): seq[SubagentInfo] {.gcsafe, raises: [].}
   CancelSubagentFn* = proc(subagentId: string):
@@ -114,6 +114,7 @@ type
     allowedTools*: seq[string]
     subagentId*: string
     subagentDepth*: int
+    stopGeneration*: uint64
     budget*: SubagentUsage
     budgetLimits*: SubagentLimits
     spawnSubagent*: SpawnSubagentFn
@@ -334,10 +335,15 @@ proc parseSpawnSubagentContext*(j: JsonNode):
   let maxTokens = ?optionalIntField(j, "max_tokens")
   let maxDurationSec = ?optionalIntField(j, "max_duration_sec")
   let wait = ?optionalBoolField(j, "wait", true)
+  let maxDurationSecClamped =
+    if maxDurationSec <= 0:
+      0
+    else:
+      min(maxDurationSec, int(SubagentMaxDurationMs div 1000'i64))
   let limits = clampSubagentLimits(SubagentLimits(
     maxToolCalls: maxToolCalls,
     maxTokens: maxTokens,
-    maxDurationMs: int64(maxDurationSec) * 1000'i64,
+    maxDurationMs: int64(maxDurationSecClamped) * 1000'i64,
   ))
   ok(SpawnSubagentContext(
     request: SubagentRequest(
@@ -1139,6 +1145,8 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
       return handledError(error)
     return await awaitJobs(state, awaitCtx)
   of SpawnSubagentToolName:
+    if isSessionStopRequested(ctx.stopGeneration):
+      return handledError("Error: session is stopping.")
     if ctx.subagentDepth >= 1:
       return handledError("Error: subagents cannot spawn subagents (maximum depth is 1).")
     if ctx.spawnSubagent == nil:
@@ -1151,7 +1159,8 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
     if spawnCtx.wait:
       if ctx.awaitSubagent == nil:
         return handledError("Error: subagent runtime cannot await results.")
-      let subagentResult = await ctx.awaitSubagent(spawned.subagentId)
+      let subagentResult = await ctx.awaitSubagent(
+        spawned.subagentId, ctx.stopGeneration)
       return handledSubagentResult(subagentResult)
     return handledText($spawned.toJson())
   of AwaitSubagentToolName:
@@ -1159,7 +1168,8 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
       return handledError("Error: subagent runtime is unavailable.")
     let awaitCtx = parseAwaitSubagentContext(j).valueOr:
       return handledError(error)
-    let subagentResult = await ctx.awaitSubagent(awaitCtx.subagentId)
+    let subagentResult = await ctx.awaitSubagent(
+      awaitCtx.subagentId, ctx.stopGeneration)
     return handledSubagentResult(subagentResult)
   of ListSubagentsToolName:
     if ctx.listSubagents == nil:

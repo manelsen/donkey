@@ -40,6 +40,7 @@ import ./memory_consolidation
 import ./session_manager
 import ./sandbox
 import ../ports/provider
+import ../ports/subagent_workspace
 import ../ports/memory
 import ../ports/http
 import ../ports/tool
@@ -78,6 +79,7 @@ type OrchestratorState = object
   blackboard*:    Blackboard
   lastConsolidatedFingerprint*: string
   subagents*:     SubagentManager
+  stopGeneration*: uint64
 
 func newOrchestratorState*(): OrchestratorState =
   OrchestratorState(
@@ -171,7 +173,7 @@ proc buildNativeCtx*(uid: UserId;
                      sandboxMode: SandboxMode;
                      sandboxRuntimeCmd: string;
                      sandboxImage: string): NativeCtx =
-  NativeCtx(
+  result = NativeCtx(
     uid:          uid,
     channel:      channel,
     outbox:       globalOutbox,
@@ -240,6 +242,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
       dmPolicy: DmPolicyOpen, wiring: false),
     tools, log,
     paddockDir, sandboxMode, sandboxRuntimeCmd, sandboxImage)
+  result.nativeCtx.stopGeneration = stateRuntime.stopGeneration
   createDir(paddockDir)
   result.typingLoop = startTypingLoop(typingFn, result.uid, msg.channel)
 
@@ -681,8 +684,11 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       webAllowlist:   seq[string] = @[];
                       toolWebPolicy:  seq[cfgTypes.ToolWebPolicy] = @[];
                       errorExplainFn: CompleteFn = nil;
-                      asyncCompleteFn: AsyncCompleteFn = nil): Future[void] {.async.} =
+                      asyncCompleteFn: AsyncCompleteFn = nil;
+                      subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort()): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
+  if daemonShuttingDown():
+    return
   let memInbox  = newAsyncQueue[AgentMessage]()
   let toolInbox = newAsyncQueue[AgentMessage]()
   let memOut    = newAsyncQueue[AgentMessage]()
@@ -697,24 +703,39 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
       false, true, log)
 
   var stateRuntime = newOrchestratorState()
-  stateRuntime.subagents = newSubagentManager()
+  stateRuntime.subagents = newSubagentManager(subagentWorkspace)
+  stateRuntime.stopGeneration = currentSessionStopGeneration()
   let sessionId   = $nowMs()
+  registerActor()
   pushAgentEvent(AgentEvent(kind: aekSessionStart, summary: "session " & sessionId))
   let toolsSuffix =
     (tools |> orchToolsSuffix) &
     (if skillPrompt.len > 0: "\n\n" & skillPrompt else: "")
 
-  while true:
-    let msg = await collectWithDebounce(inbox, DebounceWindowMs)
-    let actorResult = await handleActorMessage(
-      inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
-      completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
-      providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
-      toolsSuffix, state, msg, stateRuntime, asyncCompleteFn)
-    stateRuntime = actorResult.stateRuntime
-    if actorResult.shouldStop:
-      break
-  if stateRuntime.subagents != nil:
-    await stateRuntime.subagents.cancelAll()
-  await memAgentFut
-  await toolAgentFut
+  try:
+    while true:
+      let msg = await collectWithDebounce(inbox, DebounceWindowMs)
+      let actorResult = await handleActorMessage(
+        inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
+        completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
+        providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
+        toolsSuffix, state, msg, stateRuntime, asyncCompleteFn)
+      stateRuntime = actorResult.stateRuntime
+      if actorResult.shouldStop:
+        break
+  finally:
+    if stateRuntime.subagents != nil:
+      await stateRuntime.subagents.cancelAll()
+    ## The stop path may interrupt a turn before handleActorCancel runs, so the
+    ## helper actors always receive their stop signal here.
+    try:
+      memInbox.addLastNoWait(newCancelMsg())
+    except AsyncQueueFullError:
+      discard
+    try:
+      toolInbox.addLastNoWait(newCancelMsg())
+    except AsyncQueueFullError:
+      discard
+    await memAgentFut
+    await toolAgentFut
+    unregisterActor()

@@ -109,10 +109,16 @@ suite "SessionManager":
     discard sm.getOrCreate(restoredUid)
     sm.entries[$restoredUid].restored = true
 
-    sm.cancelAllActors()
+    registerActor()
+    let startGeneration = currentSessionStopGeneration()
+    let stopFut = sm.cancelAllActors()
     check live.inbox.len == 1
     check sm.entries[$restoredUid].inbox.len == 0
     check live.inbox.getNoWait().kind == amkCancel
+    check isSessionStopRequested(startGeneration)
+    check not stopFut.finished()
+    unregisterActor()
+    check stopFut.finished()
 
   test "prepareEntry creates new session lease with signature":
     var sm: SessionManager

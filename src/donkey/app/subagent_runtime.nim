@@ -9,10 +9,9 @@
 ## The child never writes directly to the user channel: approval messages use
 ## the parent outbox, while progress/errors go to a drained child outbox.
 
-import std/[os, tables]
+import std/[strutils, tables]
 import chronos
 import chronos/asyncsync
-import results
 import ../core/log
 import ../core/agent_events
 import ../core/pipeops
@@ -20,8 +19,10 @@ import ../domain/agent_message
 import ../domain/message
 import ../domain/subagent_pure
 import ../ports/provider
+import ../ports/subagent_workspace
 import ./native_tools
 import ./provider_executor
+import ./session_manager
 import ./session_state
 import ./tool_agent
 import ./tool_loop_runtime
@@ -71,6 +72,7 @@ type
     counter:       int
     maxConcurrent: int
     closed:        bool
+    workspace:     SubagentWorkspacePort
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -103,17 +105,24 @@ func estimateRequestTokens(req: CompletionRequest): int =
 
 proc buildChildTools(parent: NativeCtx; requested: seq[string]):
                     Result[ChildTools, string] =
-  let resolved = ?resolveSubagentTools(requested)
+  let selection = resolveSubagentTools(requested)
+  if selection.error.len > 0:
+    return err(selection.error)
+  if selection.denied.len > 0:
+    return err("tools not allowed for subagents: " &
+               selection.denied.join(", "))
+  if selection.unknown.len > 0:
+    return err("unknown subagent tools: " & selection.unknown.join(", "))
   let explicitRequest = requested.len > 0
   var tools: ChildTools
-  for name in resolved:
+  for name in selection.tools:
     for description in parent.tools:
       if description.name == name:
         tools.names.add(name)
         tools.descriptions.add(description)
         break
   if explicitRequest:
-    for name in resolved:
+    for name in selection.tools:
       if name notin tools.names:
         return err("tool '" & name & "' is not available in the parent session")
   if tools.names.len == 0:
@@ -122,6 +131,14 @@ proc buildChildTools(parent: NativeCtx; requested: seq[string]):
 
 func failedSpawn(message: string): SubagentSpawnResult =
   SubagentSpawnResult(status: ssFailed, error: message)
+
+proc cleanupPaddock(mgr: SubagentManager; rt: SubagentRuntime) =
+  if rt.paddockDir.len == 0 or mgr.workspace.remove == nil:
+    return
+  let removed = mgr.workspace.remove(rt.paddockDir)
+  if removed.isErr:
+    rt.parent.log.warn("subagent paddock cleanup failed id=" & rt.id &
+                       " path=" & rt.paddockDir & " error=" & removed.error)
 
 proc makeBudgetedComplete(rt: SubagentRuntime;
                           parentComplete: CompleteFn): CompleteFn =
@@ -282,11 +299,7 @@ proc runChild(mgr: SubagentManager; rt: SubagentRuntime) {.async.} =
     rt.lastActivityMs = epochMs()
     rt.usage.lastActivityMs = rt.lastActivityMs
     rt.childOutbox.clear()
-    if rt.paddockDir.len > 0 and dirExists(rt.paddockDir):
-      try:
-        removeDir(rt.paddockDir)
-      except CatchableError:
-        discard
+    cleanupPaddock(mgr, rt)
     pushAgentEvent(AgentEvent(
       kind: aekSessionEnd,
       userId: $rt.parent.uid,
@@ -309,19 +322,21 @@ proc pruneChildren(mgr: SubagentManager) {.gcsafe, raises: [].} =
 
 # ── Public manager API ────────────────────────────────────────────────────────
 
-proc newSubagentManager*(maxConcurrent = SubagentMaxConcurrent): SubagentManager =
+proc newSubagentManager*(workspace: SubagentWorkspacePort = SubagentWorkspacePort();
+                         maxConcurrent = SubagentMaxConcurrent): SubagentManager =
   SubagentManager(
     children: initTable[string, SubagentRuntime](),
     maxConcurrent: max(1, maxConcurrent),
+    workspace: workspace,
   )
 
 proc spawn*(mgr: SubagentManager; parent: NativeCtx;
             request: SubagentRequest): Future[SubagentSpawnResult] {.async.} =
   if mgr.closed:
     return failedSpawn("subagent manager is shutting down")
-  let requestCheck = validateSubagentRequest(request, parent.subagentDepth)
-  if requestCheck.isErr:
-    return failedSpawn(requestCheck.error)
+  let requestError = subagentRequestError(request, parent.subagentDepth)
+  if requestError.len > 0:
+    return failedSpawn(requestError)
   if parent.completeFn == nil:
     return failedSpawn("subagent provider is unavailable")
   if parent.paddockDir.len == 0:
@@ -338,20 +353,19 @@ proc spawn*(mgr: SubagentManager; parent: NativeCtx;
 
   inc mgr.counter
   let id = "sub-" & $epochMs() & "-" & $mgr.counter
-  let subagentsRoot = parent.paddockDir / "subagents"
-  let childDir = subagentsRoot / id
+  if not mgr.workspace.hasSubagentWorkspace:
+    return failedSpawn("subagent workspace is unavailable")
+  let childDirRes = mgr.workspace.create(parent.paddockDir, id)
+  if childDirRes.isErr:
+    return failedSpawn("could not create the subagent paddock: " &
+                       childDirRes.error)
+  let childDir = childDirRes.get()
   if not inPaddock(childDir, parent.paddockDir):
+    let removed = mgr.workspace.remove(childDir)
+    if removed.isErr:
+      parent.log.warn("subagent paddock cleanup failed id=" & id &
+                      " path=" & childDir & " error=" & removed.error)
     return failedSpawn("subagent paddock escaped the parent paddock")
-  try:
-    createDir(subagentsRoot)
-    setFilePermissions(subagentsRoot, {fpUserRead, fpUserWrite, fpUserExec})
-    createDir(childDir)
-    setFilePermissions(childDir, {fpUserRead, fpUserWrite, fpUserExec})
-  except CatchableError as e:
-    if dirExists(childDir):
-      try: removeDir(childDir)
-      except CatchableError: discard
-    return failedSpawn("could not create the subagent paddock: " & e.msg)
 
   let limits = clampSubagentLimits(request.limits)
   let createdAt = epochMs()
@@ -419,8 +433,11 @@ proc spawn*(mgr: SubagentManager; parent: NativeCtx;
   rt.future = runChild(mgr, rt)
   SubagentSpawnResult(subagentId: id, status: ssRunning)
 
-proc awaitSubagent*(mgr: SubagentManager;
-                    subagentId: string): Future[SubagentResult] {.async.} =
+proc cancelSubagent*(mgr: SubagentManager;
+                     subagentId: string): Future[bool] {.gcsafe.}
+
+proc awaitSubagent*(mgr: SubagentManager; subagentId: string;
+                    stopGeneration: uint64): Future[SubagentResult] {.async.} =
   if subagentId notin mgr.children:
     return SubagentResult(
       subagentId: subagentId,
@@ -430,26 +447,39 @@ proc awaitSubagent*(mgr: SubagentManager;
   let rt = mgr.children[subagentId]
   if not rt.future.isNil and not rt.future.finished():
     let waitMs = max(1_000'i64, rt.limits.maxDurationMs + 5_000'i64)
-    let finished = await withTimeout(rt.future, milliseconds(int(waitMs)))
-    if not finished:
-      rt.usage.cancelled = true
-      rt.usage.budgetError = "subagent await timed out"
-      rt.status = ssTimedOut
-      rt.lastError = rt.usage.budgetError
-      rt.result.subagentId = rt.id
-      rt.result.status = ssTimedOut
-      rt.result.error = rt.lastError
-      rt.result.toolCalls = max(rt.result.toolCalls, rt.usage.toolCalls)
-      rt.result.inputTokens = rt.usage.inputTokens
-      rt.result.outputTokens = rt.usage.outputTokens
-      rt.result.durationMs = max(0'i64, epochMs() - rt.createdAtMs)
-      rt.usage.lastActivityMs = epochMs()
-      rt.future.cancelSoon()
-      asyncSpawn reapVoid(rt.future)
+    let deadline = nowMs() + waitMs
+    while not rt.future.finished():
+      if isSessionStopRequested(stopGeneration):
+        try:
+          discard await mgr.cancelSubagent(subagentId)
+        except CancelledError:
+          discard
+        except Exception:
+          discard
+        return rt.result
+      let remaining = deadline - nowMs()
+      if remaining <= 0:
+        rt.usage.cancelled = true
+        rt.usage.budgetError = "subagent await timed out"
+        rt.status = ssTimedOut
+        rt.lastError = rt.usage.budgetError
+        rt.result.subagentId = rt.id
+        rt.result.status = ssTimedOut
+        rt.result.error = rt.lastError
+        rt.result.toolCalls = max(rt.result.toolCalls, rt.usage.toolCalls)
+        rt.result.inputTokens = rt.usage.inputTokens
+        rt.result.outputTokens = rt.usage.outputTokens
+        rt.result.durationMs = max(0'i64, epochMs() - rt.createdAtMs)
+        rt.usage.lastActivityMs = epochMs()
+        rt.future.cancelSoon()
+        asyncSpawn reapVoid(rt.future)
+        return rt.result
+      discard await withTimeout(rt.future,
+                                milliseconds(int(min(remaining, 100'i64))))
   rt.result
 
 proc cancelSubagent*(mgr: SubagentManager;
-                     subagentId: string): Future[bool] {.async.} =
+                     subagentId: string): Future[bool] {.async, gcsafe.} =
   if subagentId notin mgr.children:
     return false
   let rt = mgr.children[subagentId]
@@ -469,11 +499,7 @@ proc cancelSubagent*(mgr: SubagentManager;
   rt.result.outputTokens = rt.usage.outputTokens
   rt.result.durationMs = max(0'i64, epochMs() - rt.createdAtMs)
   rt.usage.lastActivityMs = epochMs()
-  if rt.paddockDir.len > 0 and dirExists(rt.paddockDir):
-    try:
-      removeDir(rt.paddockDir)
-    except CatchableError:
-      discard
+  cleanupPaddock(mgr, rt)
   true
 
 proc listSubagents*(mgr: SubagentManager): seq[SubagentInfo] =
@@ -513,11 +539,7 @@ proc cancelAll*(mgr: SubagentManager): Future[void] {.async.} =
     if id notin mgr.children:
       continue
     let rt = mgr.children[id]
-    if rt.paddockDir.len > 0 and dirExists(rt.paddockDir):
-      try:
-        removeDir(rt.paddockDir)
-      except CatchableError:
-        discard
+    cleanupPaddock(mgr, rt)
 
 # ── Wiring helpers ────────────────────────────────────────────────────────────
 
@@ -533,9 +555,9 @@ proc attachSubagentRuntime*(ctx: var NativeCtx; mgr: SubagentManager) =
   ctx.spawnSubagent = proc(request: SubagentRequest):
       Future[SubagentSpawnResult] {.gcsafe, raises: [].} =
     mgr.spawn(parentCtx, request)
-  ctx.awaitSubagent = proc(subagentId: string):
+  ctx.awaitSubagent = proc(subagentId: string; stopGeneration: uint64):
       Future[SubagentResult] {.gcsafe, raises: [].} =
-    mgr.awaitSubagent(subagentId)
+    mgr.awaitSubagent(subagentId, stopGeneration)
   ctx.listSubagents = proc(): seq[SubagentInfo] {.gcsafe, raises: [].} =
     mgr.listSubagents()
   ctx.cancelSubagent = proc(subagentId: string):

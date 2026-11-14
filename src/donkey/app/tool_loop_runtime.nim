@@ -21,6 +21,7 @@ import ../ports/provider
 import ../app/session_state
 import ../app/native_tools
 import ../app/approval_runtime
+import ./session_manager
 import ../app/prompt_building
 import ../app/provider_executor
 
@@ -379,6 +380,9 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
   let toolStatusId = streamId & "-st"
 
   while not loopState.done and round < MaxToolRoundsOrch:
+    if isSessionStopRequested(nativeCtx.stopGeneration):
+      loopState.done = true
+      break
     inc round
 
     let req = buildPrompt(systemBase, loopState.history, context, tools, reasoning = showReasoning)

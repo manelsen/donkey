@@ -1,7 +1,6 @@
 ## Tests for pure subagent policy and budget logic.
 
 import std/[json, strutils, unittest]
-import results
 import donkey/domain/subagent_pure
 
 suite "subagent_pure":
@@ -18,17 +17,17 @@ suite "subagent_pure":
       check denied in SubagentHardDeniedTools
 
   test "explicit tool requests cannot escalate":
-    check resolveSubagentTools(@["session_search", "fs_read"]).get() ==
+    check resolveSubagentTools(@["session_search", "fs_read"]).tools ==
           @["session_search", "fs_read"]
-    check resolveSubagentTools(@["bash"]).isErr
-    check "not allowed" in resolveSubagentTools(@["execute_code"]).error
-    check resolveSubagentTools(@["mcp_unknown"]).isErr
-    check resolveSubagentTools(@["session_search", "session_search"]).get() ==
+    check "bash" in resolveSubagentTools(@["bash"]).denied
+    check "execute_code" in resolveSubagentTools(@["execute_code"]).denied
+    check "mcp_unknown" in resolveSubagentTools(@["mcp_unknown"]).unknown
+    check resolveSubagentTools(@["session_search", "session_search"]).tools ==
           @["session_search"]
     var tooMany: seq[string]
     for i in 0 .. SubagentMaxRequestedTools:
       tooMany.add("session_search")
-    check resolveSubagentTools(tooMany).isErr
+    check resolveSubagentTools(tooMany).error.len > 0
 
   test "limits are clamped and zero means default":
     let defaults = defaultSubagentLimits()
@@ -50,16 +49,15 @@ suite "subagent_pure":
     check zeros.maxDurationMs == SubagentDefaultMaxDurationMs
 
   test "task and depth validation fail closed":
-    check validateSpawnDepth(0).isOk
-    check validateSpawnDepth(1).isErr
-    check "depth" in validateSpawnDepth(1).error
+    check spawnDepthError(0).len == 0
+    check "depth" in spawnDepthError(1)
 
     let request = SubagentRequest(task: "summarize this")
-    check validateSubagentRequest(request, 0).isOk
-    check validateSubagentRequest(SubagentRequest(task: ""), 0).isErr
-    check validateSubagentRequest(
+    check subagentRequestError(request, 0).len == 0
+    check subagentRequestError(SubagentRequest(task: ""), 0).len > 0
+    check subagentRequestError(
       SubagentRequest(task: "x", context: repeat("c", SubagentMaxContextChars + 1)),
-      0).isErr
+      0).len > 0
 
   test "budget decisions cover time, tokens, calls and cancellation":
     let limits = SubagentLimits(maxToolCalls: 2, maxTokens: 10,

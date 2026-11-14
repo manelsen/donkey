@@ -5,7 +5,6 @@
 ## still has budget. Default policy is intentionally read-only.
 
 import std/[json, strutils]
-import results
 
 type
   SubagentStatus* = enum
@@ -36,6 +35,12 @@ type
     context*: string
     tools*:   seq[string]
     limits*:  SubagentLimits
+
+  SubagentToolSelection* = object
+    tools*:   seq[string]
+    denied*:  seq[string]
+    unknown*: seq[string]
+    error*:   string
 
   SubagentResult* = object
     subagentId*:   string
@@ -170,54 +175,55 @@ func subagentToolAllowed*(name: string): bool =
   name in SubagentReadTools or name in SubagentNetworkReadTools
 
 func resolveSubagentTools*(requested: openArray[string]):
-                           Result[seq[string], string] =
+                           SubagentToolSelection =
   ## Empty request means the read-only default. Explicit requests may only
   ## narrow or select from the safe union; denied/unknown names fail closed.
   if requested.len == 0:
-    return ok(defaultSubagentTools())
+    return SubagentToolSelection(tools: defaultSubagentTools())
   if requested.len > SubagentMaxRequestedTools:
-    return err("too many requested subagent tools (max " &
-               $SubagentMaxRequestedTools & ")")
-  var selected: seq[string]
-  var denied, unknown: seq[string]
+    return SubagentToolSelection(
+      error: "too many requested subagent tools (max " &
+             $SubagentMaxRequestedTools & ")")
   for raw in requested:
     let name = raw.strip()
     if name.len == 0:
       continue
     if name in SubagentHardDeniedTools:
-      if name notin denied:
-        denied.add(name)
+      if name notin result.denied:
+        result.denied.add(name)
     elif not subagentToolAllowed(name):
-      if name notin unknown:
-        unknown.add(name)
-    elif name notin selected:
-      selected.add(name)
-  if denied.len > 0:
-    return err("tools not allowed for subagents: " & denied.join(", "))
-  if unknown.len > 0:
-    return err("unknown subagent tools: " & unknown.join(", "))
-  if selected.len == 0:
-    return err("no valid tools requested")
-  ok(selected)
+      if name notin result.unknown:
+        result.unknown.add(name)
+    elif name notin result.tools:
+      result.tools.add(name)
 
-func validateSpawnDepth*(parentDepth: int): Result[void, string] =
+func spawnDepthError*(parentDepth: int): string =
   if parentDepth != 0:
-    return err("subagents cannot spawn subagents (maximum depth is 1)")
-  ok()
+    "subagents cannot spawn subagents (maximum depth is 1)"
+  else:
+    ""
 
-func validateSubagentRequest*(request: SubagentRequest;
-                              parentDepth: int): Result[void, string] =
-  ?validateSpawnDepth(parentDepth)
+func subagentRequestError*(request: SubagentRequest;
+                           parentDepth: int): string =
+  let depthError = spawnDepthError(parentDepth)
+  if depthError.len > 0:
+    return depthError
   if request.task.strip().len == 0:
-    return err("'task' is required")
+    return "'task' is required"
   if request.task.len > SubagentMaxTaskChars:
-    return err("task exceeds " & $SubagentMaxTaskChars & " characters")
+    return "task exceeds " & $SubagentMaxTaskChars & " characters"
   if request.context.len > SubagentMaxContextChars:
-    return err("context exceeds " & $SubagentMaxContextChars & " characters")
-  let tools = ?resolveSubagentTools(request.tools)
-  if tools.len == 0:
-    return err("no tools available for subagent")
-  ok()
+    return "context exceeds " & $SubagentMaxContextChars & " characters"
+  let selection = resolveSubagentTools(request.tools)
+  if selection.error.len > 0:
+    return selection.error
+  if selection.denied.len > 0:
+    return "tools not allowed for subagents: " & selection.denied.join(", ")
+  if selection.unknown.len > 0:
+    return "unknown subagent tools: " & selection.unknown.join(", ")
+  if selection.tools.len == 0:
+    return "no valid tools requested"
+  ""
 
 func totalTokens*(usage: SubagentUsage): int =
   if usage == nil:
