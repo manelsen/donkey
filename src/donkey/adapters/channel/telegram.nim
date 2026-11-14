@@ -45,9 +45,13 @@ type
 
 # ── API helpers ───────────────────────────────────────────────────────────────
 
+func apiBaseValue*(a: TelegramAdapter): string =
+  ## Base used for Bot API calls. Empty keeps the official endpoint; a proxy
+  ## can be supplied through DONKEY_TELEGRAM_API_BASE.
+  if a.apiBase.len > 0: a.apiBase else: TelegramApiBase
+
 func apiUrl(a: TelegramAdapter; meth: string): string =
-  let base = if a.apiBase.len > 0: a.apiBase else: TelegramApiBase
-  base & "/bot" & a.token & "/" & meth
+  a.apiBaseValue & "/bot" & a.token & "/" & meth
 
 proc parseTgResp(meth: string; resp: HttpResponse): Result[JsonNode, string]
                  {.gcsafe, raises: [].} =
@@ -359,7 +363,7 @@ proc downloadFileBytes*(a: TelegramAdapter; filePath: string): Result[seq[byte],
   ## Downloads file content from Telegram servers.
   ## filePath should be obtained from getFile() first.
   try:
-    let url = "https://api.telegram.org/file/bot" & a.token & "/" & filePath
+    let url = a.apiBaseValue & "/file/bot" & a.token & "/" & filePath
     let headers: seq[(string, string)] = @[]
     let resp = ? a.http.get(url, headers)
     

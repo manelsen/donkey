@@ -180,7 +180,9 @@ proc makeTgTypingFn(token: string; identityPath: string; log: Logger): TypingFn 
   ## Returns a TypingFn that sends typing indicators to Telegram users.
   ## Uses its own TelegramAdapter instance (token + resolver shared via ref).
   let tg = new TelegramAdapter
-  tg[] = newTelegramAdapter(token, identityPath, pollTimeout = 0)
+  tg[] = newTelegramAdapter(token, identityPath,
+                            apiBase = getEnv("DONKEY_TELEGRAM_API_BASE").strip(),
+                            pollTimeout = 0)
   result = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: [].} =
     if channel == ckTelegram:
       try:
@@ -507,7 +509,10 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.whatsappAppSecret = getEnv("WHATSAPP_APP_SECRET")
 
 proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
-  result.tg = newTelegramAdapter(env.telegramToken, env.identityPath, pollTimeout = 0)
+  result.tg = newTelegramAdapter(
+    env.telegramToken, env.identityPath,
+    apiBase = getEnv("DONKEY_TELEGRAM_API_BASE").strip(),
+    pollTimeout = 0)
   result.dc = newDiscordAdapter(env.discordToken, env.identityPath)
   result.wc = newWeComAdapter(env.wecomCorpId, getEnv("WECOM_CORP_SECRET"),
                               getEnv("WECOM_CALLBACK_TOKEN"), env.wecomAgentId,
