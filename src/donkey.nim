@@ -452,10 +452,9 @@ proc initDaemonServices(cfg: DonkeyConfig;
       log.info("MAGMA semantic search enabled")
 
 proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
-  result.telegramToken = getEnv("TELEGRAM_BOT_TOKEN")
+  result.telegramToken = getEnv("TELEGRAM_BOT_TOKEN").strip()
   if result.telegramToken.len == 0:
-    log.error("TELEGRAM_BOT_TOKEN not set")
-    quit(1)
+    log.warn("TELEGRAM_BOT_TOKEN not set — Telegram disabled")
 
   result.discordToken = getEnv("DISCORD_BOT_TOKEN")
   result.discordGuildId = getEnv("DISCORD_GUILD_ID")
@@ -1655,6 +1654,8 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
       )
       count > 0,
     drainTelegram = proc(): bool =
+      if ctx.env.telegramToken.len == 0:
+        return true
       let services =
         buildDaemonSessionServices(ctx, cfg, memory, log) |>->
         withTypingFn(ctx.services.tgTypingFn)
