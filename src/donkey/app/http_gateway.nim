@@ -4,7 +4,8 @@
 ## Port: DONKEY_HTTP_PORT env var, default 8080.
 ##
 ## Endpoints:
-##   GET /             → 200 OK, plain-text info
+##   GET /             → 200 OK, plain-text info (public health probe)
+##   GET /health       → 200 OK, plain-text "ok" (public health probe)
 ##   GET /api/status   → DaemonStatus JSON
 ##   GET /api/logs     → recent log entries JSON (?n=N, default 50)
 ##   GET /api/events    → SSE stream of log events (long-lived connection)
@@ -165,9 +166,15 @@ func buildAgentEventsBody*(events: seq[AgentEvent]): string =
     arr.add(e.toJson())
   $arr
 
+func isPublicGatewayAction*(action: string): bool =
+  ## Liveness/readiness probes must not require credentials. Only static text is
+  ## exposed here; every data-bearing endpoint stays behind the token.
+  action in ["index", "health"]
+
 func routeGatewayRequest*(req: GatewayRequest): string =
   case req.path
   of "/":              "index"
+  of "/health":        "health"
   of "/api/status":    "status"
   of "/api/logs":      "logs"
   of "/api/events":    "events"
@@ -357,20 +364,24 @@ proc handleGatewayConn(client: Socket;
     if req.meth == "OPTIONS":
       client.sendResponse("204 No Content", "text/plain", "", log)
       return
-    if not isAuthorized(authHeader, authToken):
+    let action = routeGatewayRequest(req)
+    if not isPublicGatewayAction(action) and not isAuthorized(authHeader, authToken):
       client.sendResponse("401 Unauthorized", "application/json",
                           "{\"error\":\"unauthorized\"}\n", log)
       return
-    if authToken.len == 0 and origin.len > 0 and not isLocalOrigin(origin):
+    if not isPublicGatewayAction(action) and authToken.len == 0 and origin.len > 0 and
+       not isLocalOrigin(origin):
       client.sendResponse("403 Forbidden", "application/json",
                           "{\"error\":\"cross-origin access requires a token\"}\n", log)
       return
-    let action = routeGatewayRequest(req)
 
     case action
     of "index":
       client.sendResponse("200 OK", "text/plain",
         "Donkey HTTP gateway\nEndpoints: /api/status /api/logs /api/events /api/chat\n", log)
+
+    of "health":
+      client.sendResponse("200 OK", "text/plain", "ok\n", log)
 
     of "status":
       let st = statusFn()
