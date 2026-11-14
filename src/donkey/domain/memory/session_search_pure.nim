@@ -61,8 +61,10 @@ func countOccurrences(haystack, needle: string): int =
     pos = idx + needle.len
 
 func safeSlice(text: string; start, stop: int): string =
-  var first = max(0, start)
+  var first = min(text.len, max(0, start))
   var last = min(text.len, stop)
+  if first > last:
+    return ""
   while first < last and first < text.len and
         (ord(text[first]) and 0xC0) == 0x80:
     inc first
@@ -84,9 +86,9 @@ func makeSnippet*(text: string; query: string;
     if found >= 0:
       pos = found
       break
-  let start =
+  let start = min(text.len,
     if pos >= 0: max(0, pos - maxChars div 3)
-    else: 0
+    else: 0)
   let stop = min(text.len, start + maxChars)
   result = safeSlice(text, start, stop)
   if start > 0:
