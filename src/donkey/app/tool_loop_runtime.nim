@@ -67,7 +67,9 @@ proc streamToOutbox*(fn:        StreamFn;
                     userId:    UserId;
                     ch:        ChannelKind;
                     replyTo:   string;
-                    streamId:  string): Future[Result[CompletionResponse, string]] {.async.} =
+                    streamId:  string;
+                    stopGeneration: uint64 = 0):
+                    Future[Result[CompletionResponse, string]] {.async.} =
   var tokenChan: Channel[string]
   var finalResponse: CompletionResponse
   var streamErr = ""
@@ -81,8 +83,12 @@ proc streamToOutbox*(fn:        StreamFn;
   var accumulated = ""
   var lastFlush   = nowMs()
   var lastSent    = ""
+  var stopSeen    = false
 
   while true:
+    if isSessionStopRequested(stopGeneration):
+      stopSeen = true
+      break
     var (has, tok) = tokenChan.tryRecv()
     while has:
       if tok == doneSentinel:
@@ -90,7 +96,8 @@ proc streamToOutbox*(fn:        StreamFn;
         joinThread(t)
         if streamErr.len > 0:
           return err(streamErr)
-        if finalResponse.toolCalls.len == 0:
+        if finalResponse.toolCalls.len == 0 and
+           not isSessionStopRequested(stopGeneration):
           let visible = cleanResponse(finalResponse.text)
           await outbox.put(OutboundMessage(
             userId:    userId,
@@ -108,6 +115,9 @@ proc streamToOutbox*(fn:        StreamFn;
       lastFlush = nowMs()
       let visible = cleanResponse(safeStreamPrefix(accumulated))
       if visible.strip.len > 0 and visible != lastSent:
+        if isSessionStopRequested(stopGeneration):
+          stopSeen = true
+          break
         lastSent = visible
         await outbox.put(OutboundMessage(
           userId:    userId,
@@ -122,6 +132,8 @@ proc streamToOutbox*(fn:        StreamFn;
 
   tokenChan.close()
   joinThread(t)
+  if stopSeen:
+    return ok(finalResponse)
   if streamErr.len > 0: err(streamErr) else: ok(finalResponse)
 
 # ── Typing loop ───────────────────────────────────────────────────────────────
@@ -304,6 +316,10 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
   result = newToolBatchState(history, toolCallCount, recentCalls)
   for i, tc in toolCalls:
     if isSessionStopRequested(nativeCtx.stopGeneration):
+      for j in i ..< toolCalls.len:
+        result = result |>->
+          withToolResult(toolCalls[j], "Error: session is stopping.",
+                         trkOperationalError, none(ConversationHistory))
       break
     let prePlan = planToolBatchItem(
       result.recentCalls, tc, RepeatAbortThreshold, result.toolCallCount + 1, "")
@@ -398,7 +414,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       streamingToolCalls = canStreamToolCalls and not suppressProgress,
     ).useStreaming:
       let streamedRes = await streamToOutbox(
-        streamFn, req, globalOutbox, uid, channel, replyTo, streamId)
+        streamFn, req, globalOutbox, uid, channel, replyTo, streamId,
+        nativeCtx.stopGeneration)
       if streamedRes.isErr:
         pushAgentEvent(AgentEvent(
           kind:    aekError,

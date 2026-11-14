@@ -11,6 +11,7 @@ import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/security/approval
 import donkey/core/types
+import donkey/domain/memory/session_search_pure
 import donkey/domain/message
 import donkey/domain/subagent_pure
 import donkey/ports/approval
@@ -98,7 +99,7 @@ proc testTools(): seq[ToolDescription] =
 proc makeParent(base: string; completeFn: CompleteFn;
                 tools = testTools()): NativeCtx =
   createDir(base / "paddock")
-  NativeCtx(
+  result = NativeCtx(
     uid: UserId("user-a"),
     channel: ckCli,
     outbox: newAsyncQueue[OutboundMessage](),
@@ -108,6 +109,14 @@ proc makeParent(base: string; completeFn: CompleteFn;
     paddockDir: base / "paddock",
     tools: tools,
   )
+  result.asyncCompleteFn = proc(req: CompletionRequest):
+      Future[Result[CompletionResponse, string]] {.async, gcsafe.} =
+    try:
+      return completeFn(req)
+    except CancelledError:
+      raise
+    except Exception as e:
+      return err(e.msg)
 
 proc spawnCall(task: string; extra = ""): ToolCallRequest =
   let suffix = if extra.len > 0: "," & extra else: ""
@@ -247,8 +256,11 @@ suite "subagent runtime":
     removeDir(base)
     defer: removeDir(base)
     let startedCount = new(int)
+    let finishedCount = new(int)
     let providerStarted = newAsyncEvent()
+    let providerFinished = newAsyncEvent()
     let releaseProvider = newAsyncEvent()
+    defer: releaseProvider.fire()
     let blockedComplete = proc(req: CompletionRequest):
                              Future[Result[CompletionResponse, string]]
                              {.async, gcsafe.} =
@@ -256,8 +268,13 @@ suite "subagent runtime":
       {.cast(gcsafe).}:
         inc startedCount[]
         providerStarted.fire()
-      {.cast(gcsafe).}:
-        await releaseProvider.wait()
+      try:
+        {.cast(gcsafe).}:
+          await releaseProvider.wait()
+      finally:
+        {.cast(gcsafe).}:
+          inc finishedCount[]
+          providerFinished.fire()
       return ok(CompletionResponse(text: "late"))
     var parent = makeParent(base, textComplete)
     parent.asyncCompleteFn = blockedComplete
@@ -280,7 +297,9 @@ suite "subagent runtime":
       parent, SessionState(), @[])
     check epochMs() - before < 2_000
     check parseJson(cancelled.text)["cancelled"].getBool()
-    releaseProvider.fire()
+    check waitFor withTimeout(providerFinished.wait(),
+                              chronos.milliseconds(2_000))
+    check finishedCount[] == 1
 
     let awaited = waitFor executeNativeTool(
       awaitCall(id), parent, SessionState(), @[])
@@ -330,6 +349,32 @@ suite "subagent runtime":
     check j["status"].getStr() == "failed"
     check "token budget exceeded" in j["error"].getStr()
     check j["input_tokens"].getInt() == 2_000
+
+  test "session_search excludes the parent session":
+    let base = subagentBase / "session-scope"
+    removeDir(base)
+    defer: removeDir(base)
+    let fakeSearch = MemoryRuntimePort(
+      searchSessions: proc(userId: UserId; query: string; limit: int;
+                           includeMemory: bool): Result[seq[SessionHit], string]
+                           {.gcsafe, raises: [].} =
+        ok(@[SessionHit(sessionId: "parent-session", kind: shkSession,
+                        role: "user", snippet: "parent secret", score: 1.0)])
+    )
+    var child = makeParent(base, textComplete)
+    child.memory = fakeSearch
+    child.scopeSessionId = "parent-session"
+    child.restrictTools = true
+    child.allowedTools = @["session_search"]
+    child.subagentId = "sub-scope"
+
+    let res = waitFor executeNativeTool(
+      ToolCallRequest(id: "search-1", name: "session_search",
+                      inputJson: "{\"query\":\"secret\"}"),
+      child, SessionState(), @[])
+    check res.handled
+    check "parent-session" notin res.text
+    check "No session matches" in res.text
 
   test "children cannot spawn children":
     let base = subagentBase / "nested"
@@ -518,15 +563,21 @@ suite "subagent runtime":
     removeDir(base)
     defer: removeDir(base)
     let startedCount = new(int)
+    let finishedCount = new(int)
     let releaseProvider = newAsyncEvent()
+    defer: releaseProvider.fire()
     let blockedComplete = proc(req: CompletionRequest):
                              Future[Result[CompletionResponse, string]]
                              {.async, gcsafe.} =
       discard req
       {.cast(gcsafe).}:
         inc startedCount[]
-      {.cast(gcsafe).}:
-        await releaseProvider.wait()
+      try:
+        {.cast(gcsafe).}:
+          await releaseProvider.wait()
+      finally:
+        {.cast(gcsafe).}:
+          inc finishedCount[]
       return ok(CompletionResponse(text: "late"))
     var parent = makeParent(base, textComplete)
     parent.asyncCompleteFn = blockedComplete
@@ -544,7 +595,8 @@ suite "subagent runtime":
     waitFor waitForCount(startedCount, 4)
     check startedCount[] == 4
     waitFor mgr.cancelAll()
-    releaseProvider.fire()
+    waitFor waitForCount(finishedCount, 4)
+    check finishedCount[] == 4
     for id in ids:
       check not dirExists(mgr.paddockDirFor(id))
     let infos = mgr.listSubagents()

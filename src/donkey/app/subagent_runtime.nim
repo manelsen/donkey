@@ -345,6 +345,8 @@ proc spawn*(mgr: SubagentManager; parent: NativeCtx;
     return failedSpawn(requestError)
   if parent.completeFn == nil:
     return failedSpawn("subagent provider is unavailable")
+  if parent.asyncCompleteFn == nil:
+    return failedSpawn("subagent provider must be asynchronous")
   if parent.paddockDir.len == 0:
     return failedSpawn("subagents require a paddock")
   let childTools = buildChildTools(parent, request.tools).valueOr:

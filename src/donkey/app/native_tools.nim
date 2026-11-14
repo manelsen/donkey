@@ -115,6 +115,7 @@ type
     subagentId*: string
     subagentDepth*: int
     stopGeneration*: uint64
+    scopeSessionId*: string
     budget*: SubagentUsage
     budgetLimits*: SubagentLimits
     spawnSubagent*: SpawnSubagentFn
@@ -1093,7 +1094,9 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
       ctx.uid, searchCtx.query, searchCtx.limit, searchCtx.includeMemory)
     if hitsRes.isErr:
       return handledError("Error: " & hitsRes.error)
-    let hits = hitsRes.get()
+    var hits = hitsRes.get()
+    if ctx.scopeSessionId.len > 0:
+      hits = hits.filterIt(it.sessionId != ctx.scopeSessionId)
     if hits.len == 0:
       return handledText("No session matches for '" & searchCtx.query & "'.")
     var arr = newJArray()

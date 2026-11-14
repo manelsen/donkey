@@ -80,6 +80,7 @@ type OrchestratorState = object
   lastConsolidatedFingerprint*: string
   subagents*:     SubagentManager
   stopGeneration*: uint64
+  sessionId*:     string
 
 func newOrchestratorState*(): OrchestratorState =
   OrchestratorState(
@@ -243,6 +244,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
     tools, log,
     paddockDir, sandboxMode, sandboxRuntimeCmd, sandboxImage)
   result.nativeCtx.stopGeneration = stateRuntime.stopGeneration
+  result.nativeCtx.scopeSessionId = stateRuntime.sessionId
   createDir(paddockDir)
   result.typingLoop = startTypingLoop(typingFn, result.uid, msg.channel)
 
@@ -706,6 +708,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
   stateRuntime.subagents = newSubagentManager(subagentWorkspace)
   stateRuntime.stopGeneration = currentSessionStopGeneration()
   let sessionId   = $nowMs()
+  stateRuntime.sessionId = sessionId
   registerActor()
   pushAgentEvent(AgentEvent(kind: aekSessionStart, summary: "session " & sessionId))
   let toolsSuffix =
