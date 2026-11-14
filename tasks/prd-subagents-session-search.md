@@ -54,71 +54,71 @@ Critérios adicionais:
 **Descrição:** Como mantenedor, quero que tokenização, score, snippet e corte de resultados sejam puros e testáveis.
 
 **Critérios de aceite:**
-- [ ] `domain/memory/session_search_pure.nim` não importa I/O, adapter ou chronos.
-- [ ] Busca é case-insensitive, com AND de termos e fallback para OR.
-- [ ] Score combina ocorrências, frase exata, papel da mensagem e recência.
-- [ ] Snippet é limitado e não corta UTF-8 no meio.
-- [ ] Testes cobrem query vazia, termos repetidos, acentos, emoji e limite zero.
+- [x] `domain/memory/session_search_pure.nim` não importa I/O, adapter ou chronos.
+- [x] Busca é case-insensitive, com AND de termos e fallback para OR.
+- [x] Score combina ocorrências, frase exata, papel da mensagem e recência.
+- [x] Snippet é limitado e não corta UTF-8 no meio.
+- [x] Testes cobrem query vazia, termos repetidos, acentos, emoji e limite zero.
 
 ### US-002: Leitura de transcripts por usuário
 
 **Descrição:** Como operador, quero buscar apenas nos arquivos do paddock do usuário, sem cruzar identidades.
 
 **Critérios de aceite:**
-- [ ] Adapter lê `{paddock}/sessions/*.jsonl` e `MEMORY.md`.
-- [ ] JSONL inválido é ignorado sem derrubar a busca.
-- [ ] Sessões/arquivos acima do cap são ignorados de forma determinística.
-- [ ] Resultados carregam `sessionId`, `kind`, `role`, `timestampMs`, `score` e `snippet`.
-- [ ] `searchSessions` no `MemoryRuntimePort` é opcional (`nil` = backend sem suporte).
-- [ ] Teste com dois usuários prova que A não vê B.
+- [x] Adapter lê `{paddock}/sessions/*.jsonl` e `MEMORY.md`.
+- [x] JSONL inválido é ignorado sem derrubar a busca.
+- [x] Sessões/arquivos acima do cap são ignorados de forma determinística.
+- [x] Resultados carregam `sessionId`, `kind`, `role`, `timestampMs`, `score` e `snippet`.
+- [x] `searchSessions` no `MemoryRuntimePort` é opcional (`nil` = backend sem suporte).
+- [x] Teste com dois usuários prova que A não vê B.
 
 ### US-003: Tool `session_search`
 
 **Descrição:** Como usuário, quero perguntar “o que decidimos sobre X?” e receber trechos do meu histórico.
 
 **Critérios de aceite:**
-- [ ] Tool nativa `session_search` com `query`, `limit` e `include_memory`.
-- [ ] `limit` default 10, clamp `1..50`.
-- [ ] Resultado em texto/JSON estável com sessão, papel, score e snippet.
-- [ ] Query vazia retorna erro de uso.
-- [ ] Tool é read-only e não passa pelo approval gate.
-- [ ] Teste de integração via `executeNativeTool`.
+- [x] Tool nativa `session_search` com `query`, `limit` e `include_memory`.
+- [x] `limit` default 10, clamp `1..50`.
+- [x] Resultado em texto/JSON estável com sessão, papel, score e snippet.
+- [x] Query vazia retorna erro de uso.
+- [x] Tool é read-only e não passa pelo approval gate.
+- [x] Teste de integração via `executeNativeTool`.
 
 ### US-004: Runtime de subagente
 
 **Descrição:** Como agente pai, quero delegar uma tarefa a um filho isolado e receber o resultado.
 
 **Critérios de aceite:**
-- [ ] `spawn_subagent` cria uma sessão filha com ID próprio e paddock/worktree isolado.
-- [ ] Filho herda provider/modelo, mas não herda histórico inteiro; recebe só a tarefa e contexto explícito.
-- [ ] Filho tem lista de tools permitidas configurável; por default, tools de leitura e `session_search`, sem `bash`/`execute_code`/escrita.
-- [ ] Filho não pode criar outro subagente (profundidade máxima 1).
-- [ ] Resultado inclui `subagent_id`, `status`, `text`, `error`, `tool_calls`, `duration_ms` e `cost` quando disponível.
-- [ ] Filho é cancelável por `cancel_subagent` e por timeout.
-- [ ] Teste com filho tentando escrever fora do paddock falha.
+- [x] `spawn_subagent` cria uma sessão filha com ID próprio e paddock/worktree isolado.
+- [x] Filho herda provider/modelo, mas não herda histórico inteiro; recebe só a tarefa e contexto explícito.
+- [x] Filho tem lista de tools permitidas configurável; por default, tools de leitura e `session_search`, sem `bash`/`execute_code`/escrita.
+- [x] Filho não pode criar outro subagente (profundidade máxima 1).
+- [x] Resultado inclui `subagent_id`, `status`, `text`, `error`, `tool_calls`, `duration_ms` e `cost` quando disponível.
+- [x] Filho é cancelável por `cancel_subagent` e por timeout.
+- [x] Teste com filho tentando escrever fora do paddock falha.
 
 ### US-005: Approval, rede e orçamento herdados
 
 **Descrição:** Como operador, quero que o subagente respeite as mesmas políticas do pai.
 
 **Critérios de aceite:**
-- [ ] Filho usa o mesmo `ApprovalService`; pedidos de approval vão ao usuário, não ao pai.
-- [ ] Filho não pode aprovar nem negar pedidos.
-- [ ] Política de rede/URL do filho é a mesma do pai.
-- [ ] Budget de tokens/tempo/tool calls é configurável e falha fechado ao estourar.
-- [ ] Filho não herda segredos que não estejam no seu escopo.
+- [x] Filho usa o mesmo `ApprovalService`; pedidos de approval vão ao usuário, não ao pai.
+- [x] Filho não pode aprovar nem negar pedidos.
+- [x] Política de rede/URL do filho é a mesma do pai.
+- [x] Budget de tokens/tempo/tool calls é configurável e falha fechado ao estourar.
+- [x] Filho não herda segredos que não estejam no seu escopo.
 
 ### US-006: Observabilidade e cancelamento
 
 **Descrição:** Como operador, quero ver e cancelar subagentes sem deixar processos/estado órfãos.
 
 **Critérios de aceite:**
-- [ ] `list_subagents` mostra id, status, idade, budget usado e última atividade.
-- [ ] `cancel_subagent` é idempotente e retorna em < 2s.
-- [ ] Shutdown do daemon cancela todos os filhos.
-- [ ] Nenhum worktree/paddock temporário fica para trás após falha/cancelamento.
-- [ ] Eventos de subagente aparecem no log estruturado/IPC.
-- [ ] Testes de concorrência com 8+ filhos e cancelamento no meio.
+- [x] `list_subagents` mostra id, status, idade, budget usado e última atividade.
+- [x] `cancel_subagent` é idempotente e retorna em < 2s.
+- [x] Shutdown do daemon cancela todos os filhos.
+- [x] Nenhum worktree/paddock temporário fica para trás após falha/cancelamento.
+- [x] Eventos de subagente aparecem no log estruturado/IPC.
+- [x] Testes de concorrência com 8+ filhos e cancelamento no meio.
 
 ## 6. Sequência de entrega
 

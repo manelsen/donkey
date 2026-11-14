@@ -598,3 +598,55 @@ const
     "\"limit\":{\"type\":\"integer\",\"description\":\"Max results (default: 10, max: 50)\"}," &
     "\"include_memory\":{\"type\":\"boolean\",\"description\":\"Include MEMORY.md (default: true)\"}" &
     "},\"required\":[\"query\"]}"
+
+# ── spawn_subagent ────────────────────────────────────────────────────────────
+const
+  SpawnSubagentToolName* = "spawn_subagent"
+  SpawnSubagentToolDescription* =
+    "Delegate a focused task to an isolated subagent. The child receives only " &
+    "the explicit task/context, a separate paddock, read-only tools by default " &
+    "and the inherited approval policy. It cannot spawn another subagent. " &
+    "With wait=true (default) returns the structured result; with wait=false " &
+    "returns a subagent_id for await_subagent."
+  SpawnSubagentToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"task\":{\"type\":\"string\",\"description\":\"Task for the child to complete\"}," &
+    "\"context\":{\"type\":\"string\",\"description\":\"Explicit context to pass; parent history is not inherited\"}," &
+    "\"tools\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}," &
+    "\"description\":\"Optional subset of allowed read-only tools\"}," &
+    "\"max_tool_calls\":{\"type\":\"integer\",\"description\":\"Tool-call budget (default: 24, max: 100)\"}," &
+    "\"max_tokens\":{\"type\":\"integer\",\"description\":\"Token budget (default: 32000, max: 128000)\"}," &
+    "\"max_duration_sec\":{\"type\":\"integer\",\"description\":\"Wall-clock budget in seconds (default: 120, max: 600)\"}," &
+    "\"wait\":{\"type\":\"boolean\",\"description\":\"Wait for the result (default: true)\"}" &
+    "},\"required\":[\"task\"]}"
+
+# ── await_subagent ────────────────────────────────────────────────────────────
+const
+  AwaitSubagentToolName* = "await_subagent"
+  AwaitSubagentToolDescription* =
+    "Wait for a background subagent created with wait=false and return its " &
+    "structured result, including status, text, error, tool_calls, duration_ms " &
+    "and token usage."
+  AwaitSubagentToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"subagent_id\":{\"type\":\"string\",\"description\":\"Subagent ID\"}}" &
+    ",\"required\":[\"subagent_id\"]}"
+
+# ── list_subagents ────────────────────────────────────────────────────────────
+const
+  ListSubagentsToolName* = "list_subagents"
+  ListSubagentsToolDescription* =
+    "List subagents in this session with status, age, last activity and budget usage."
+  ListSubagentsToolSchema* =
+    "{\"type\":\"object\",\"properties\":{}}"
+
+# ── cancel_subagent ───────────────────────────────────────────────────────────
+const
+  CancelSubagentToolName* = "cancel_subagent"
+  CancelSubagentToolDescription* =
+    "Cancel a running subagent by ID. Idempotent: completed or already " &
+    "cancelled subagents return cancelled=true without side effects."
+  CancelSubagentToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"subagent_id\":{\"type\":\"string\",\"description\":\"Subagent ID to cancel\"}}" &
+    ",\"required\":[\"subagent_id\"]}"

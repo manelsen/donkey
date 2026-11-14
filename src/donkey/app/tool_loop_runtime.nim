@@ -11,14 +11,17 @@ import ../core/log
 import ../core/output_sanitizer
 import ../core/security/approval
 import ../core/tooling/tool_loop
+import ../core/tooling/native_tool_dispatch
 import ../core/agent_events
 import ../domain/agent_message
 import ../domain/message
+import ../domain/subagent_pure
 import ../ports/memory
 import ../ports/provider
 import ../app/session_state
 import ../app/native_tools
 import ../app/approval_runtime
+import ./session_manager
 import ../app/prompt_building
 import ../app/provider_executor
 
@@ -64,7 +67,9 @@ proc streamToOutbox*(fn:        StreamFn;
                     userId:    UserId;
                     ch:        ChannelKind;
                     replyTo:   string;
-                    streamId:  string): Future[Result[CompletionResponse, string]] {.async.} =
+                    streamId:  string;
+                    stopGeneration: uint64 = 0):
+                    Future[Result[CompletionResponse, string]] {.async.} =
   var tokenChan: Channel[string]
   var finalResponse: CompletionResponse
   var streamErr = ""
@@ -78,8 +83,12 @@ proc streamToOutbox*(fn:        StreamFn;
   var accumulated = ""
   var lastFlush   = nowMs()
   var lastSent    = ""
+  var stopSeen    = false
 
   while true:
+    if isSessionStopRequested(stopGeneration):
+      stopSeen = true
+      break
     var (has, tok) = tokenChan.tryRecv()
     while has:
       if tok == doneSentinel:
@@ -87,7 +96,8 @@ proc streamToOutbox*(fn:        StreamFn;
         joinThread(t)
         if streamErr.len > 0:
           return err(streamErr)
-        if finalResponse.toolCalls.len == 0:
+        if finalResponse.toolCalls.len == 0 and
+           not isSessionStopRequested(stopGeneration):
           let visible = cleanResponse(finalResponse.text)
           await outbox.put(OutboundMessage(
             userId:    userId,
@@ -105,6 +115,9 @@ proc streamToOutbox*(fn:        StreamFn;
       lastFlush = nowMs()
       let visible = cleanResponse(safeStreamPrefix(accumulated))
       if visible.strip.len > 0 and visible != lastSent:
+        if isSessionStopRequested(stopGeneration):
+          stopSeen = true
+          break
         lastSent = visible
         await outbox.put(OutboundMessage(
           userId:    userId,
@@ -119,6 +132,8 @@ proc streamToOutbox*(fn:        StreamFn;
 
   tokenChan.close()
   joinThread(t)
+  if stopSeen:
+    return ok(finalResponse)
   if streamErr.len > 0: err(streamErr) else: ok(finalResponse)
 
 # ── Typing loop ───────────────────────────────────────────────────────────────
@@ -223,10 +238,32 @@ proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
       newHistory: nr.newHistory,
     )
 
+  ## Defense in depth: a restricted child must not reach MCP/skill clients,
+  ## even if a future native-tool category forgets to handle a name.
+  if nativeCtx.restrictTools and
+     (tc.name notin nativeCtx.allowedTools or tc.name in SubagentHardDeniedTools):
+    return ToolCallResult(
+      text: "Error: tool '" & tc.name & "' is not allowed for subagent '" &
+            (if nativeCtx.subagentId.len > 0: nativeCtx.subagentId else: "?") & "'.",
+      resultKind: trkOperationalError,
+    )
+  if nativeCtx.budget != nil and not isKnownNativeTool(tc.name):
+    let budgetDecision = checkBudget(nativeCtx.budget, nativeCtx.budgetLimits,
+                                     nowMs())
+    if budgetDecision != bdOk:
+      nativeCtx.budget.budgetError = budgetDecisionText(budgetDecision)
+      return ToolCallResult(
+        text: "Error: " & nativeCtx.budget.budgetError & ".",
+        resultKind: trkOperationalError,
+      )
+    nativeCtx.budget.recordToolCall(epochMs())
+
   ## Native tools are gated inside executeNativeTool. Non-native tools (MCP,
   ## skills) can be included through DONKEY_APPROVAL_TOOLS names or "*".
   if requiresApproval(nativeCtx.approval, tc.name):
-    let summary = approvalInputSummary(tc.inputJson)
+    var summary = approvalInputSummary(tc.inputJson)
+    if summary.len > 0 and nativeCtx.subagentId.len > 0:
+      summary = "[subagent " & nativeCtx.subagentId & "] " & summary
     if summary.len == 0:
       return ToolCallResult(
         text: "Error: tool '" & tc.name &
@@ -278,6 +315,12 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
                       log: Logger): Future[ToolBatchResult] {.async.} =
   result = newToolBatchState(history, toolCallCount, recentCalls)
   for i, tc in toolCalls:
+    if isSessionStopRequested(nativeCtx.stopGeneration):
+      for j in i ..< toolCalls.len:
+        result = result |>->
+          withToolResult(toolCalls[j], "Error: session is stopping.",
+                         trkOperationalError, none(ConversationHistory))
+      break
     let prePlan = planToolBatchItem(
       result.recentCalls, tc, RepeatAbortThreshold, result.toolCallCount + 1, "")
     if prePlan.shouldAbort:
@@ -355,6 +398,9 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
   let toolStatusId = streamId & "-st"
 
   while not loopState.done and round < MaxToolRoundsOrch:
+    if isSessionStopRequested(nativeCtx.stopGeneration):
+      loopState.done = true
+      break
     inc round
 
     let req = buildPrompt(systemBase, loopState.history, context, tools, reasoning = showReasoning)
@@ -368,7 +414,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       streamingToolCalls = canStreamToolCalls and not suppressProgress,
     ).useStreaming:
       let streamedRes = await streamToOutbox(
-        streamFn, req, globalOutbox, uid, channel, replyTo, streamId)
+        streamFn, req, globalOutbox, uid, channel, replyTo, streamId,
+        nativeCtx.stopGeneration)
       if streamedRes.isErr:
         pushAgentEvent(AgentEvent(
           kind:    aekError,
@@ -385,6 +432,9 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         loopState.done = true
         continue
       let streamed = streamedRes.value
+      if isSessionStopRequested(nativeCtx.stopGeneration):
+        loopState.done = true
+        break
 
       log.info($uid & " (" & $channel & ") <- [" & providerLabel &
                "] |" & $streamed.text.len & "| stream")
@@ -408,6 +458,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       if asyncCompleteFn != nil:
         try:
           await asyncCompleteFn(req)
+        except CancelledError:
+          raise
         except Exception as e:
           completionErr(e.msg)
       else:
@@ -429,6 +481,9 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       continue
 
     let r = resp.value
+    if isSessionStopRequested(nativeCtx.stopGeneration):
+      loopState.done = true
+      break
     case decideToolLoopRound(
       round = round,
       toolsCount = tools.len,

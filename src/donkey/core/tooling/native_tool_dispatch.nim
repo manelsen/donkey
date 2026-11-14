@@ -72,6 +72,10 @@ const
     "report_finding",
     "cancel_job",
     "await",
+    "spawn_subagent",
+    "await_subagent",
+    "list_subagents",
+    "cancel_subagent",
   ]
 
 func categoryTools(kind: NativeToolCategoryKind): seq[string] =

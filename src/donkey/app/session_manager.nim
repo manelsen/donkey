@@ -124,6 +124,70 @@ proc restoreSessions*(sm: var SessionManager): Result[int, string] =
     inc count
   ok(count)
 
+var gSessionStopGeneration: uint64 = 0
+var gShuttingDown = false
+var gLiveActors = 0
+var gAllActorsStopped: Future[void]
+
+proc requestSessionStop*() {.gcsafe, raises: [].} =
+  ## Process-wide shutdown signal. Actors compare the generation they started
+  ## with; a newer generation means "stop". Per-session `/stop` keeps using the
+  ## inbox cancel message.
+  {.cast(gcsafe).}:
+    gShuttingDown = true
+    inc gSessionStopGeneration
+
+proc daemonShuttingDown*(): bool {.gcsafe, raises: [].} =
+  {.cast(gcsafe).}:
+    gShuttingDown
+
+proc currentSessionStopGeneration*(): uint64 {.gcsafe, raises: [].} =
+  {.cast(gcsafe).}:
+    gSessionStopGeneration
+
+proc isSessionStopRequested*(startGeneration: uint64): bool
+                                           {.gcsafe, raises: [].} =
+  {.cast(gcsafe).}:
+    gSessionStopGeneration != startGeneration
+
+proc registerActor*() {.gcsafe, raises: [].} =
+  {.cast(gcsafe).}:
+    if gLiveActors == 0 or gAllActorsStopped.isNil or
+       gAllActorsStopped.finished():
+      gAllActorsStopped = newFuture[void]("session.allActorsStopped")
+    inc gLiveActors
+
+proc unregisterActor*() {.gcsafe, raises: [].} =
+  {.cast(gcsafe).}:
+    if gLiveActors > 0:
+      dec gLiveActors
+    if gLiveActors == 0 and not gAllActorsStopped.isNil and
+       not gAllActorsStopped.finished():
+      gAllActorsStopped.complete()
+
+proc allActorsStoppedFuture*(): Future[void] {.gcsafe, raises: [].} =
+  {.cast(gcsafe).}:
+    if gLiveActors == 0:
+      let done = newFuture[void]("session.allActorsStopped.done")
+      done.complete()
+      return done
+    if gAllActorsStopped.isNil or gAllActorsStopped.finished():
+      gAllActorsStopped = newFuture[void]("session.allActorsStopped")
+    gAllActorsStopped
+
+proc cancelAllActors*(sm: var SessionManager): Future[void] =
+  ## Signals live orchestrators and returns the shared stop future. The inbox
+  ## cancel message stops an idle actor; the generation bump and ask
+  ## cancellation wake a turn that is waiting on spawn_subagent or askInbox.
+  requestSessionStop()
+  for _, entry in sm.entries:
+    if entry.restored or entry.inbox == nil:
+      continue
+    entry.inbox.addLastNoWait(newCancelMsg())
+    if entry.askInbox != nil:
+      entry.askInbox.addLastNoWait("__DONKEY_ASK_CANCELLED__")
+  result = allActorsStoppedFuture()
+
 proc init*(sm: var SessionManager) =
   sm.entries = initTable[string, SessionEntry]()
   sm.dmPolicy = DmPolicyOpen

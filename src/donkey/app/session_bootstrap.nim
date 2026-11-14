@@ -16,6 +16,7 @@ import ../domain/more_tools
 import ../domain/reminder
 import ../ports/memory
 import ../ports/provider
+import ../ports/subagent_workspace
 import ../ports/tool
 import ./metrics
 import ./provider_executor
@@ -42,6 +43,7 @@ type
     tools*:         seq[ToolDescription]
     providerLabel*: string
     skillPrompt*:   string
+    subagentWorkspace*: SubagentWorkspacePort
 
   SessionBootstrapPlan* = object
     preferencesMd*: string
@@ -499,6 +501,10 @@ func nativeSessionTools*(): seq[ToolDescription] =
     (ReportFindingToolName, ReportFindingToolDescription, ReportFindingToolSchema),
     (CancelJobToolName,     CancelJobToolDescription,     CancelJobToolSchema),
     (AwaitToolName,         AwaitToolDescription,         AwaitToolSchema),
+    (SpawnSubagentToolName, SpawnSubagentToolDescription, SpawnSubagentToolSchema),
+    (AwaitSubagentToolName, AwaitSubagentToolDescription, AwaitSubagentToolSchema),
+    (ListSubagentsToolName, ListSubagentsToolDescription, ListSubagentsToolSchema),
+    (CancelSubagentToolName, CancelSubagentToolDescription, CancelSubagentToolSchema),
   ]:
     result.add(ToolDescription(name: n, description: d, schemaJson: s))
   if getEnv("BRAVE_API_KEY").len > 0:
@@ -656,7 +662,8 @@ proc buildSessionBootstrap*(memory:      MemoryRuntimePort;
                             routingResultHook: RoutingResultHook = nil;
                             routingFeedbackHook: RoutingFeedbackHook = nil;
                             routingCostHook: RoutingCostHook = nil;
-                            routingProviderCooldownHook: RoutingProviderCooldownHook = nil): SessionBootstrap {.gcsafe.} =
+                            routingProviderCooldownHook: RoutingProviderCooldownHook = nil;
+                            subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort()): SessionBootstrap {.gcsafe.} =
   let toolBundle = buildSessionToolBundle(
     memory, userId, skillRuntimeBuilder, skillRuntimePolicyResolver, toolClients, tools)
   result =
@@ -668,3 +675,4 @@ proc buildSessionBootstrap*(memory:      MemoryRuntimePort;
          routingProviderCooldownHook)) |>->
        withSessionToolBundle(toolBundle)) |>
        finalizeSessionBootstrap
+  result.subagentWorkspace = subagentWorkspace

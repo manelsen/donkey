@@ -31,6 +31,7 @@ This reference documents all public APIs in Donkey. Types and functions marked w
 |--------|-------------|
 | [message](message.md) | Message types |
 | [agent_message](agent_message.md) | Internal agent messages |
+| [subagents](subagents.md) | Subagent policy, budgets and runtime |
 
 ### Commands
 

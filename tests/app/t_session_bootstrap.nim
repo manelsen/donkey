@@ -215,6 +215,10 @@ model = "gemini-2.5-flash"
       ArchiveCreateToolName,
       ExecuteCodeToolName,
       SessionSearchToolName,
+      SpawnSubagentToolName,
+      AwaitSubagentToolName,
+      ListSubagentsToolName,
+      CancelSubagentToolName,
     ]:
       check bundled.tools.anyIt(it.name == name)
 

@@ -63,6 +63,7 @@ import donkey/app/approval_runtime
 import donkey/domain/message
 import donkey/domain/agent_message
 import donkey/ports/provider
+import donkey/ports/subagent_workspace
 import donkey/ports/http
 import donkey/ports/channel
 import donkey/core/media_download
@@ -1161,6 +1162,65 @@ proc setupIpcServer(cfg: DonkeyConfig;
   else:
     log.info("HTTP gateway: disabled")
 
+when defined(posix):
+  const
+    PosixODirectory = cint(0o200000)
+    PosixONoFollow = cint(0o400000)
+
+proc ensurePrivateDir(path: string): Result[void, string]
+                                      {.gcsafe, raises: [].} =
+  ## Creates or validates a real directory with 0700 permissions. The final
+  ## component is opened with O_NOFOLLOW so a symlink cannot redirect chmod or
+  ## the child paddock creation.
+  if path.len == 0:
+    return err("empty subagent paddock path")
+  when defined(posix):
+    if posix.mkdir(path.cstring, Mode(0o700)) != 0 and
+       osLastError() != OSErrorCode(posix.EEXIST):
+      return err("mkdir subagent paddock: " & osErrorMsg(osLastError()))
+    let fd = posix.open(path.cstring,
+                        O_RDONLY or PosixODirectory or PosixONoFollow)
+    if fd < 0:
+      return err("open subagent paddock: " & osErrorMsg(osLastError()))
+    defer: discard posix.close(fd)
+    if posix.fchmod(fd, Mode(0o700)) != 0:
+      return err("chmod subagent paddock: " & osErrorMsg(osLastError()))
+    ok()
+  else:
+    try:
+      createDir(path)
+      setFilePermissions(path, {fpUserRead, fpUserWrite, fpUserExec})
+      ok()
+    except CatchableError as e:
+      err("create subagent paddock: " & e.msg)
+
+proc createSubagentPaddock(root, subagentId: string):
+                           Result[string, string] {.gcsafe, raises: [].} =
+  let subagentsRoot = root / "subagents"
+  ?ensurePrivateDir(subagentsRoot)
+  let childDir = subagentsRoot / subagentId
+  ?ensurePrivateDir(childDir)
+  ok(childDir)
+
+proc removeSubagentPaddock(path: string): Result[void, string]
+                                           {.gcsafe, raises: [].} =
+  if path.len == 0:
+    return ok()
+  try:
+    if symlinkExists(path):
+      removeFile(path)
+    elif dirExists(path):
+      removeDir(path)
+    ok()
+  except CatchableError as e:
+    err("remove subagent paddock: " & e.msg)
+
+proc subagentWorkspacePort*(): SubagentWorkspacePort =
+  SubagentWorkspacePort(
+    create: createSubagentPaddock,
+    remove: removeSubagentPaddock,
+  )
+
 func buildDaemonSessionServices(ctx: DaemonContext;
                                 cfg: DonkeyConfig;
                                 memory: MdFileAdapter;
@@ -1198,6 +1258,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
                            "minimax", "zai", "zai-coding", "zen"]),
     routeProviderCooldownHook = proc(): seq[ProviderCooldown] {.gcsafe.} =
       withRouteLock(ctx.runtime.currentProviderCooldowns()),
+    subagentWorkspace = subagentWorkspacePort(),
   )
 
 proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
@@ -1849,10 +1910,11 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     stopLedgerCompactionWorker(ctx.runtime.ledgerWorker)
     stopSlackSocketMode()
     stopWebhookReceiver()
+    ## Stop ingress first, then let already-admitted turns publish their replies.
     ## Connections accepted before the stop may have enqueued Feishu events;
     ## consume them once before exiting. Slack envelopes were already acked
-    ## when queued, so give admitted turns a bounded chance to publish their
-    ## replies and flush the outbox before leaving.
+    ## when queued, so give admitted turns a bounded chance to finish before
+    ## cancelling actors and children.
     discard drainer.drainSlack()
     let slackInbound = ctx.env.slackBotToken.len > 0 and
       (ctx.env.slackSigningSecret.len > 0 or ctx.env.slackAppToken.len > 0)
@@ -1861,6 +1923,12 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     drainGlobalOutbox(ctx.runtime, ctx.adapters, log)
     discard drainer.drainFeishu()
     await sleepAsync(ctimer.milliseconds(500))
+    drainGlobalOutbox(ctx.runtime, ctx.adapters, log)
+    let actorStop = ctx.runtime.sm.cancelAllActors()
+    let actorsStopped = await withTimeout(
+      actorStop, ctimer.milliseconds(2_000))
+    if not actorsStopped:
+      log.warn("daemon shutdown: actor stop deadline elapsed")
     drainGlobalOutbox(ctx.runtime, ctx.adapters, log)
     if ctx.runtime.stateStore != nil:
       discard ctx.runtime.stateStore.flushSessions()

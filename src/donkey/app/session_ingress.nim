@@ -22,6 +22,7 @@ import ../ports/tool
 import ../ports/http
 import ./session_manager
 import ./session_state
+import ../ports/subagent_workspace
 import ./session_bootstrap
 import ./orchestrator
 import ./sandbox
@@ -67,6 +68,7 @@ type
     routeFeedbackHook*:          proc(): seq[RouteFeedback] {.gcsafe.}
     routeCostHook*:              proc(): seq[RouteCostHint] {.gcsafe.}
     routeProviderCooldownHook*:  proc(): seq[ProviderCooldown] {.gcsafe.}
+    subagentWorkspace*:          SubagentWorkspacePort
 
 func buildSkillRuntimePolicy*(cfg: DonkeyConfig;
                              skillName: string): SkillRuntimePolicy =
@@ -168,7 +170,8 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
                                   routeResultHook: proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.} = nil;
                                   routeFeedbackHook: proc(): seq[RouteFeedback] {.gcsafe.} = nil;
                                   routeCostHook: proc(): seq[RouteCostHint] {.gcsafe.} = nil;
-                                  routeProviderCooldownHook: proc(): seq[ProviderCooldown] {.gcsafe.} = nil): SessionIngressServices =
+                                  routeProviderCooldownHook: proc(): seq[ProviderCooldown] {.gcsafe.} = nil;
+                                  subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort()): SessionIngressServices =
   ## Constructs SessionIngressServices.
   SessionIngressServices(
     cfg: cfg,
@@ -196,6 +199,7 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
     routeFeedbackHook: routeFeedbackHook,
     routeCostHook: routeCostHook,
     routeProviderCooldownHook: routeProviderCooldownHook,
+    subagentWorkspace: subagentWorkspace,
   )
 
 func withTypingFn*(typingFn: TypingFn;
@@ -235,7 +239,8 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              sandboxMode, sandboxRuntimeCmd, sandboxImage,
                              cfg.webAllowlist, cfg.toolWebPolicy,
                              errorExplainFn = bootstrap.errorExplainFn,
-                             asyncCompleteFn = bootstrap.asyncCompleteFn)
+                             asyncCompleteFn = bootstrap.asyncCompleteFn,
+                             subagentWorkspace = bootstrap.subagentWorkspace)
 
 proc enqueueSessionMessage*(entry: var SessionEntry;
                             msg: InboundMessage;
@@ -296,7 +301,8 @@ proc startSessionIngress*(sm: var SessionManager;
     services.skillRuntimeBuilder, services.skillRuntimePolicyResolver,
     services.toolClients, services.tools,
     routingHook, services.routeResultHook, services.routeFeedbackHook,
-    services.routeCostHook, services.routeProviderCooldownHook)
+    services.routeCostHook, services.routeProviderCooldownHook,
+    subagentWorkspace = services.subagentWorkspace)
   let signature = toolCatalogSignature(
     bootstrap.tools, bootstrap.providerLabel, bootstrap.paddockDir, bootstrap.skillPrompt)
   result = sm.buildSessionIngressContext(msg, signature, msgSeq)

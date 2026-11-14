@@ -40,6 +40,7 @@ import ./memory_consolidation
 import ./session_manager
 import ./sandbox
 import ../ports/provider
+import ../ports/subagent_workspace
 import ../ports/memory
 import ../ports/http
 import ../ports/tool
@@ -51,6 +52,7 @@ import ./native_tools
 import ./approval_runtime
 import ./onboarding_runtime
 import ./tool_loop_runtime
+import ./subagent_runtime
 import ./prompt_building
 import ./provider_executor
 import ../core/security/dm_policy
@@ -76,6 +78,9 @@ type OrchestratorState = object
   turnSeq*:       int
   blackboard*:    Blackboard
   lastConsolidatedFingerprint*: string
+  subagents*:     SubagentManager
+  stopGeneration*: uint64
+  sessionId*:     string
 
 func newOrchestratorState*(): OrchestratorState =
   OrchestratorState(
@@ -169,7 +174,7 @@ proc buildNativeCtx*(uid: UserId;
                      sandboxMode: SandboxMode;
                      sandboxRuntimeCmd: string;
                      sandboxImage: string): NativeCtx =
-  NativeCtx(
+  result = NativeCtx(
     uid:          uid,
     channel:      channel,
     outbox:       globalOutbox,
@@ -238,6 +243,8 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
       dmPolicy: DmPolicyOpen, wiring: false),
     tools, log,
     paddockDir, sandboxMode, sandboxRuntimeCmd, sandboxImage)
+  result.nativeCtx.stopGeneration = stateRuntime.stopGeneration
+  result.nativeCtx.scopeSessionId = stateRuntime.sessionId
   createDir(paddockDir)
   result.typingLoop = startTypingLoop(typingFn, result.uid, msg.channel)
 
@@ -346,10 +353,12 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     stateRuntime: OrchestratorState;
                     asyncCompleteFn: AsyncCompleteFn = nil): Future[OrchestratorState] {.async.} =
   result = stateRuntime |> nextTurn
-  let turnSetup = prepareUserTurnSetup(
+  var turnSetup = prepareUserTurnSetup(
     globalOutbox, session, memory, completeFn, http, tools, webAllowlist, toolWebPolicy,
     paddockDir, typingFn, log,
     sandboxMode, sandboxRuntimeCmd, sandboxImage, msg, result)
+  turnSetup.nativeCtx.asyncCompleteFn = asyncCompleteFn
+  attachSubagentRuntime(turnSetup.nativeCtx, result.subagents)
 
   if turnSetup.isNewUser:
     if result.onboarding.phase == opWakeUp and not result.identity.identityLoaded:
@@ -610,6 +619,8 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
   result.stateRuntime = stateRuntime
   case msg.kind
   of amkCancel:
+    if stateRuntime.subagents != nil:
+      await stateRuntime.subagents.cancelAll()
     await handleActorCancel(memory, memInbox, toolInbox, sessionId, stateRuntime)
     result.shouldStop = true
 
@@ -675,8 +686,11 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       webAllowlist:   seq[string] = @[];
                       toolWebPolicy:  seq[cfgTypes.ToolWebPolicy] = @[];
                       errorExplainFn: CompleteFn = nil;
-                      asyncCompleteFn: AsyncCompleteFn = nil): Future[void] {.async.} =
+                      asyncCompleteFn: AsyncCompleteFn = nil;
+                      subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort()): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
+  if daemonShuttingDown():
+    return
   let memInbox  = newAsyncQueue[AgentMessage]()
   let toolInbox = newAsyncQueue[AgentMessage]()
   let memOut    = newAsyncQueue[AgentMessage]()
@@ -691,21 +705,34 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
       false, true, log)
 
   var stateRuntime = newOrchestratorState()
+  stateRuntime.subagents = newSubagentManager(subagentWorkspace)
+  stateRuntime.stopGeneration = currentSessionStopGeneration()
   let sessionId   = $nowMs()
+  stateRuntime.sessionId = sessionId
+  registerActor()
   pushAgentEvent(AgentEvent(kind: aekSessionStart, summary: "session " & sessionId))
   let toolsSuffix =
     (tools |> orchToolsSuffix) &
     (if skillPrompt.len > 0: "\n\n" & skillPrompt else: "")
 
-  while true:
-    let msg = await collectWithDebounce(inbox, DebounceWindowMs)
-    let actorResult = await handleActorMessage(
-      inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
-      completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
-      providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
-      toolsSuffix, state, msg, stateRuntime, asyncCompleteFn)
-    stateRuntime = actorResult.stateRuntime
-    if actorResult.shouldStop:
-      break
-  await memAgentFut
-  await toolAgentFut
+  try:
+    while true:
+      let msg = await collectWithDebounce(inbox, DebounceWindowMs)
+      let actorResult = await handleActorMessage(
+        inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
+        completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
+        providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
+        toolsSuffix, state, msg, stateRuntime, asyncCompleteFn)
+      stateRuntime = actorResult.stateRuntime
+      if actorResult.shouldStop:
+        break
+  finally:
+    if stateRuntime.subagents != nil:
+      await stateRuntime.subagents.cancelAll()
+    ## The stop path may interrupt a turn before handleActorCancel runs, so the
+    ## helper actors always receive their stop signal here.
+    memInbox.addLastNoWait(newCancelMsg())
+    toolInbox.addLastNoWait(newCancelMsg())
+    await memAgentFut
+    await toolAgentFut
+    unregisterActor()
