@@ -3,6 +3,7 @@
 ## Embeddings are stored as BLOBs so the store can use sqlite-vec when the
 ## extension is available. The graph layout remains relational for now.
 
+import ../../core/pipeops
 import ../../ports/multigraph_store
 
 when defined(withSqlite):
@@ -423,6 +424,42 @@ when defined(withSqlite):
     except CatchableError:
       discard
 
+  proc listNodesLimited*(a: SqliteMagmaStoreAdapter; userId: string;
+                         nodeType: string = ""; limit, maxContentBytes: int):
+                         Result[seq[MagmaNode], string] =
+    if limit <= 0 or maxContentBytes <= 0:
+      return ok(newSeq[MagmaNode]())
+    a.ensureSchema()
+    let db = a.openDb()
+    defer: db.close()
+    try:
+      let rows =
+        if nodeType.len > 0:
+          db.getAllRows(sql(
+            "SELECT id, user_id, node_type, substr(content, 1, ?), ts, '{}' FROM " &
+            SqliteNodesTable & " WHERE user_id = ? AND node_type = ? " &
+            "ORDER BY ts DESC, id DESC LIMIT ?"
+          ), maxContentBytes, userId, nodeType, limit)
+        else:
+          db.getAllRows(sql(
+            "SELECT id, user_id, node_type, substr(content, 1, ?), ts, '{}' FROM " &
+            SqliteNodesTable & " WHERE user_id = ? " &
+            "ORDER BY ts DESC, id DESC LIMIT ?"
+          ), maxContentBytes, userId, limit)
+      var nodes: seq[MagmaNode]
+      for row in rows:
+        nodes.add(MagmaNode(
+          id: row[0],
+          userId: row[1],
+          nodeType: row[2],
+          content: row[3],
+          timestamp: parseBiggestInt(row[4]),
+          meta: newJObject(),
+        ))
+      ok(nodes)
+    except CatchableError as e:
+      err("listNodesLimited failed: " & e.msg)
+
   proc deleteNode*(a: SqliteMagmaStoreAdapter; nodeId: string): bool =
     a.ensureSchema()
     let db = a.openDb()
@@ -666,6 +703,10 @@ when defined(withSqlite):
       upsertNode: proc(node: MagmaNode) {.gcsafe.} = a.upsertNode(node),
       getNode: proc(nodeId: string): Option[MagmaNode] {.gcsafe.} = a.getNode(nodeId),
       listNodes: proc(userId: string; nodeType: string = ""): seq[MagmaNode] {.gcsafe.} = a.listNodes(userId, nodeType),
+      listNodesLimited: proc(userId: string; nodeType: string = "";
+                             limit, maxContentBytes: int):
+                             Result[seq[MagmaNode], string] {.gcsafe.} =
+        a.listNodesLimited(userId, nodeType, limit, maxContentBytes),
       deleteNode: proc(nodeId: string): bool {.gcsafe.} = a.deleteNode(nodeId),
       insertEdge: proc(edge: MagmaEdge): bool {.gcsafe.} = a.insertEdge(edge),
       getEdges: proc(nodeId: string; edgeType: string = ""; direction: string = "out"): seq[MagmaEdge] {.gcsafe.} =

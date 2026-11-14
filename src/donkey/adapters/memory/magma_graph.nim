@@ -13,6 +13,7 @@
 ## Compile with -d:withPostgres to activate.
 ## Without the flag the module exports only stub types.
 
+import ../../core/pipeops
 import ../../ports/multigraph_store
 export multigraph_store
 
@@ -230,6 +231,41 @@ when defined(withPostgres):
         ))
     except CatchableError:
       discard
+
+  proc listNodesLimited*(g: MagmaGraph; userId: string;
+                         nodeType: string = ""; limit, maxContentBytes: int):
+                         Result[seq[MagmaNode], string] =
+    if limit <= 0 or maxContentBytes <= 0:
+      return ok(newSeq[MagmaNode]())
+    let db = g.openDb()
+    defer: db.close()
+    try:
+      let rows =
+        if nodeType.len > 0:
+          db.getAllRows(sql(
+            "SELECT id, user_id, node_type, substr(content, 1, ?), ts, '{}' FROM " &
+            MagmaNodesTable & " WHERE user_id = ? AND node_type = ? " &
+            "ORDER BY ts DESC, id DESC LIMIT ?"
+          ), maxContentBytes, userId, nodeType, limit)
+        else:
+          db.getAllRows(sql(
+            "SELECT id, user_id, node_type, substr(content, 1, ?), ts, '{}' FROM " &
+            MagmaNodesTable & " WHERE user_id = ? " &
+            "ORDER BY ts DESC, id DESC LIMIT ?"
+          ), maxContentBytes, userId, limit)
+      var nodes: seq[MagmaNode]
+      for row in rows:
+        nodes.add(MagmaNode(
+          id: row[0],
+          userId: row[1],
+          nodeType: row[2],
+          content: row[3],
+          timestamp: parseBiggestInt(row[4]),
+          meta: newJObject(),
+        ))
+      ok(nodes)
+    except CatchableError as e:
+      err("listNodesLimited failed: " & e.msg)
 
   proc deleteNode*(g: MagmaGraph; nodeId: string): bool =
     let db = g.openDb()
@@ -527,6 +563,10 @@ when defined(withPostgres):
       getNode: proc(nodeId: string): Option[MagmaNode] {.gcsafe.} = g.getNode(nodeId),
       listNodes: proc(userId: string; nodeType: string = ""): seq[MagmaNode] {.gcsafe.} =
         g.listNodes(userId, nodeType),
+      listNodesLimited: proc(userId: string; nodeType: string = "";
+                             limit, maxContentBytes: int):
+                             Result[seq[MagmaNode], string] {.gcsafe.} =
+        g.listNodesLimited(userId, nodeType, limit, maxContentBytes),
       deleteNode: proc(nodeId: string): bool {.gcsafe.} = g.deleteNode(nodeId),
       insertEdge: proc(edge: MagmaEdge): bool {.gcsafe.} = g.insertEdge(edge),
       getEdges: proc(nodeId: string; edgeType: string = ""; direction: string = "out"): seq[MagmaEdge] {.gcsafe.} =

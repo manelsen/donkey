@@ -35,6 +35,7 @@ suite "core native tool dispatch":
 
   test "classify session tool":
     check classifyNativeTool("manage_skills") == @[ntckSession]
+    check classifyNativeTool("session_search") == @[ntckSession]
 
   test "unknown tool is not known":
     check classifyNativeTool("not_a_tool").len == 0
