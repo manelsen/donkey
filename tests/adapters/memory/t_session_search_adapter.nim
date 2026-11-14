@@ -65,6 +65,21 @@ suite "MdFileAdapter session search":
     check withMemory.anyIt(it.kind == shkMemory)
     check not withoutMemory.anyIt(it.kind == shkMemory)
 
+  test "oversized session files are skipped, not read":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    let dir = adapter.paddockDir(uid) / "sessions"
+    createDir(dir)
+    writeFile(dir / "small.jsonl",
+      $(%*{"role": "user", "text": "deploy small"}) & "\n")
+    writeFile(dir / "big.jsonl",
+      repeat("x", SessionSearchMaxFileBytes + 10) & " deploy\n")
+    let hits = adapter.searchSessions(uid, "deploy", 10, true)
+    check hits.len == 1
+    check hits[0].sessionId == "small"
+
   test "empty and malformed inputs do not raise":
     resetBase()
     defer: removeDir(searchBase)

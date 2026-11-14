@@ -127,3 +127,14 @@ Critérios adicionais:
 3. PR C — US-006 (observabilidade/cancelamento) se não couber no PR B.
 
 Cada PR deve ser mergeável sozinho, com CI verde e sem dependência do outro.
+
+## 7. Restrições de desenho
+
+- O `SessionEntry` do filho precisa de alocação estável (`ref object` mantido pelo job pai), porque `runOrchestrator` recebe `ptr SessionEntry`.
+- O outbox do filho é drenado pelo pai; o filho não escreve direto no canal do usuário.
+- O filho recebe uma cópia filtrada dos `ToolRuntimePort`/`ToolDescription`; tools de escrita, `bash`, `execute_code` e `spawn_subagent` ficam fora do default.
+- O approval service é o global do daemon; o filho não pode decidir. Pedidos vão ao usuário com o nome do filho no resumo.
+- Budget: envolver `CompleteFn` e o dispatch de tools com contadores de tokens/tempo/tool calls; ao estourar, cancelar o filho e devolver erro tipado.
+- Cancelamento: `cancel_subagent` envia `newCancelMsg` para o inbox do filho, aguarda o future com timeout e remove o diretório temporário.
+- O paddock do filho é um subdiretório `{paddock}/subagents/{id}` com `0700`; o filho não recebe o paddock do pai no `NativeCtx`.
+- `session_search` do filho continua escopado ao usuário, mas não vê o histórico do pai além do que for passado no contexto explícito.
