@@ -303,6 +303,8 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
                       log: Logger): Future[ToolBatchResult] {.async.} =
   result = newToolBatchState(history, toolCallCount, recentCalls)
   for i, tc in toolCalls:
+    if isSessionStopRequested(nativeCtx.stopGeneration):
+      break
     let prePlan = planToolBatchItem(
       result.recentCalls, tc, RepeatAbortThreshold, result.toolCallCount + 1, "")
     if prePlan.shouldAbort:
@@ -413,6 +415,9 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         loopState.done = true
         continue
       let streamed = streamedRes.value
+      if isSessionStopRequested(nativeCtx.stopGeneration):
+        loopState.done = true
+        break
 
       log.info($uid & " (" & $channel & ") <- [" & providerLabel &
                "] |" & $streamed.text.len & "| stream")
@@ -436,6 +441,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       if asyncCompleteFn != nil:
         try:
           await asyncCompleteFn(req)
+        except CancelledError:
+          raise
         except Exception as e:
           completionErr(e.msg)
       else:
@@ -457,6 +464,9 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       continue
 
     let r = resp.value
+    if isSessionStopRequested(nativeCtx.stopGeneration):
+      loopState.done = true
+      break
     case decideToolLoopRound(
       round = round,
       toolsCount = tools.len,

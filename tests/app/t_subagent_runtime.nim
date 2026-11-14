@@ -34,6 +34,20 @@ proc asyncTextComplete(req: CompletionRequest):
   return ok(CompletionResponse(text: "async child", inputTokens: 7,
                                outputTokens: 3))
 
+proc slowAsyncComplete(req: CompletionRequest):
+                       Future[Result[CompletionResponse, string]]
+                       {.async, gcsafe.} =
+  discard req
+  await sleepAsync(chronos.milliseconds(250))
+  return ok(CompletionResponse(text: "slow child", inputTokens: 5,
+                               outputTokens: 4))
+
+proc waitForCount(counter: ref int; expected: int) {.async, gcsafe.} =
+  var attempts = 0
+  while counter[] < expected and attempts < 2_000:
+    await sleepAsync(chronos.milliseconds(1))
+    inc attempts
+
 proc toolLoopComplete(callCount: ref int; toolCalls: int): CompleteFn =
   result = proc(req: CompletionRequest):
                  Result[CompletionResponse, string] {.gcsafe.} =
@@ -151,6 +165,22 @@ suite "subagent runtime":
     check j["input_tokens"].getInt() == 7
     check j["output_tokens"].getInt() == 3
 
+  test "a provider taking longer than the poll interval is not cancelled":
+    let base = subagentBase / "slow-provider"
+    removeDir(base)
+    defer: removeDir(base)
+    var parent = makeParent(base, textComplete)
+    parent.asyncCompleteFn = slowAsyncComplete
+    let mgr = newSubagentManager(testWorkspace())
+    attachSubagentRuntime(parent, mgr)
+
+    let res = waitFor executeNativeTool(
+      spawnCall("take your time"), parent, SessionState(), @[])
+    check res.handled
+    let j = parseJson(res.text)
+    check j["status"].getStr() == "completed"
+    check j["text"].getStr() == "slow child"
+
   test "wait=false is collected by await_subagent":
     let base = subagentBase / "async"
     removeDir(base)
@@ -212,18 +242,34 @@ suite "subagent runtime":
       parent, SessionState(), @[])
     check parseJson(again.text)["cancelled"].getBool()
 
-  test "cancel_subagent stops a running child and removes its paddock":
+  test "cancel_subagent interrupts an in-flight provider":
     let base = subagentBase / "cancel"
     removeDir(base)
     defer: removeDir(base)
-    let callCount = new(int)
-    var parent = makeParent(base, toolLoopComplete(callCount, 100))
+    let startedCount = new(int)
+    let providerStarted = newAsyncEvent()
+    let releaseProvider = newAsyncEvent()
+    let blockedComplete = proc(req: CompletionRequest):
+                             Future[Result[CompletionResponse, string]]
+                             {.async, gcsafe.} =
+      discard req
+      {.cast(gcsafe).}:
+        inc startedCount[]
+        providerStarted.fire()
+      {.cast(gcsafe).}:
+        await releaseProvider.wait()
+      return ok(CompletionResponse(text: "late"))
+    var parent = makeParent(base, textComplete)
+    parent.asyncCompleteFn = blockedComplete
     let mgr = newSubagentManager(testWorkspace())
     attachSubagentRuntime(parent, mgr)
 
     let started = waitFor executeNativeTool(
       spawnCall("run forever", "\"wait\":false"), parent, SessionState(), @[])
     let id = parseJson(started.text)["subagent_id"].getStr()
+    check waitFor withTimeout(providerStarted.wait(),
+                              chronos.milliseconds(2_000))
+    check startedCount[] == 1
     let before = epochMs()
     let cancelled = waitFor executeNativeTool(
       ToolCallRequest(
@@ -234,6 +280,7 @@ suite "subagent runtime":
       parent, SessionState(), @[])
     check epochMs() - before < 2_000
     check parseJson(cancelled.text)["cancelled"].getBool()
+    releaseProvider.fire()
 
     let awaited = waitFor executeNativeTool(
       awaitCall(id), parent, SessionState(), @[])
@@ -466,12 +513,23 @@ suite "subagent runtime":
       check parseJson(awaited.text)["status"].getStr() == "completed"
       check not dirExists(mgr.paddockDirFor(id))
 
-  test "cancelAll stops running children on shutdown":
+  test "cancelAll stops in-flight children on shutdown":
     let base = subagentBase / "shutdown"
     removeDir(base)
     defer: removeDir(base)
-    let callCount = new(int)
-    var parent = makeParent(base, toolLoopComplete(callCount, 100))
+    let startedCount = new(int)
+    let releaseProvider = newAsyncEvent()
+    let blockedComplete = proc(req: CompletionRequest):
+                             Future[Result[CompletionResponse, string]]
+                             {.async, gcsafe.} =
+      discard req
+      {.cast(gcsafe).}:
+        inc startedCount[]
+      {.cast(gcsafe).}:
+        await releaseProvider.wait()
+      return ok(CompletionResponse(text: "late"))
+    var parent = makeParent(base, textComplete)
+    parent.asyncCompleteFn = blockedComplete
     let mgr = newSubagentManager(testWorkspace())
     attachSubagentRuntime(parent, mgr)
 
@@ -483,8 +541,11 @@ suite "subagent runtime":
       check started.handled
       ids.add(parseJson(started.text)["subagent_id"].getStr())
 
+    waitFor waitForCount(startedCount, 4)
+    check startedCount[] == 4
     waitFor mgr.cancelAll()
+    releaseProvider.fire()
     for id in ids:
       check not dirExists(mgr.paddockDirFor(id))
     for info in mgr.listSubagents():
-      check info.status in {ssCancelled, ssCompleted, ssFailed, ssTimedOut}
+      check info.status == ssCancelled

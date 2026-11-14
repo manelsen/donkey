@@ -1876,18 +1876,14 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       await sleepAsync(ctimer.milliseconds(loopResult.sleepMs.int64))
   finally:
     log.info("daemon shutdown: stopping background workers")
-    let actorStop = ctx.runtime.sm.cancelAllActors()
-    let actorsStopped = await withTimeout(
-      actorStop, ctimer.milliseconds(2_000))
-    if not actorsStopped:
-      log.warn("daemon shutdown: actor stop deadline elapsed")
     stopLedgerCompactionWorker(ctx.runtime.ledgerWorker)
     stopSlackSocketMode()
     stopWebhookReceiver()
+    ## Stop ingress first, then let already-admitted turns publish their replies.
     ## Connections accepted before the stop may have enqueued Feishu events;
     ## consume them once before exiting. Slack envelopes were already acked
-    ## when queued, so give admitted turns a bounded chance to publish their
-    ## replies and flush the outbox before leaving.
+    ## when queued, so give admitted turns a bounded chance to finish before
+    ## cancelling actors and children.
     discard drainer.drainSlack()
     let slackInbound = ctx.env.slackBotToken.len > 0 and
       (ctx.env.slackSigningSecret.len > 0 or ctx.env.slackAppToken.len > 0)
@@ -1896,6 +1892,12 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     drainGlobalOutbox(ctx.runtime, ctx.adapters, log)
     discard drainer.drainFeishu()
     await sleepAsync(ctimer.milliseconds(500))
+    drainGlobalOutbox(ctx.runtime, ctx.adapters, log)
+    let actorStop = ctx.runtime.sm.cancelAllActors()
+    let actorsStopped = await withTimeout(
+      actorStop, ctimer.milliseconds(2_000))
+    if not actorsStopped:
+      log.warn("daemon shutdown: actor stop deadline elapsed")
     drainGlobalOutbox(ctx.runtime, ctx.adapters, log)
     if ctx.runtime.stateStore != nil:
       discard ctx.runtime.stateStore.flushSessions()

@@ -183,15 +183,9 @@ proc cancelAllActors*(sm: var SessionManager): Future[void] =
   for _, entry in sm.entries:
     if entry.restored or entry.inbox == nil:
       continue
-    try:
-      entry.inbox.addLastNoWait(newCancelMsg())
-    except AsyncQueueFullError:
-      discard
+    entry.inbox.addLastNoWait(newCancelMsg())
     if entry.askInbox != nil:
-      try:
-        entry.askInbox.addLastNoWait("__DONKEY_ASK_CANCELLED__")
-      except AsyncQueueFullError:
-        discard
+      entry.askInbox.addLastNoWait("__DONKEY_ASK_CANCELLED__")
   result = allActorsStoppedFuture()
 
 proc init*(sm: var SessionManager) =

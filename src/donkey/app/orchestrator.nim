@@ -728,14 +728,8 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
       await stateRuntime.subagents.cancelAll()
     ## The stop path may interrupt a turn before handleActorCancel runs, so the
     ## helper actors always receive their stop signal here.
-    try:
-      memInbox.addLastNoWait(newCancelMsg())
-    except AsyncQueueFullError:
-      discard
-    try:
-      toolInbox.addLastNoWait(newCancelMsg())
-    except AsyncQueueFullError:
-      discard
+    memInbox.addLastNoWait(newCancelMsg())
+    toolInbox.addLastNoWait(newCancelMsg())
     await memAgentFut
     await toolAgentFut
     unregisterActor()

@@ -9,7 +9,7 @@
 ## The child never writes directly to the user channel: approval messages use
 ## the parent outbox, while progress/errors go to a drained child outbox.
 
-import std/[strutils, tables]
+import std/[algorithm, strutils, tables]
 import chronos
 import chronos/asyncsync
 import ../core/log
@@ -260,7 +260,11 @@ proc runChild(mgr: SubagentManager; rt: SubagentRuntime) {.async.} =
       let loopResult = rt.loopFuture.read()
       rt.result.text = loopResult.finalText
       rt.result.toolCalls = loopResult.toolCallCount
-      if rt.usage.budgetError.len > 0:
+      if rt.status == ssCancelled or rt.usage.cancelled:
+        rt.status = ssCancelled
+        if rt.lastError.len == 0:
+          rt.lastError = "subagent was cancelled"
+      elif rt.usage.budgetError.len > 0:
         rt.status = ssFailed
         rt.lastError = rt.usage.budgetError
       elif rt.lastError.len > 0:
@@ -311,14 +315,16 @@ proc runChild(mgr: SubagentManager; rt: SubagentRuntime) {.async.} =
 proc pruneChildren(mgr: SubagentManager) {.gcsafe, raises: [].} =
   if mgr.children.len <= SubagentCompletedRetention:
     return
-  var finished: seq[string]
-  for id, child in mgr.children:
+  var finished: seq[SubagentRuntime]
+  for _, child in mgr.children:
     if child.status notin {ssQueued, ssRunning}:
-      finished.add(id)
-  for id in finished:
+      finished.add(child)
+  finished.sort(proc(a, b: SubagentRuntime): int =
+    cmp(a.createdAtMs, b.createdAtMs))
+  for child in finished:
     if mgr.children.len <= SubagentCompletedRetention:
       break
-    mgr.children.del(id)
+    mgr.children.del(child.id)
 
 # ── Public manager API ────────────────────────────────────────────────────────
 
@@ -474,8 +480,7 @@ proc awaitSubagent*(mgr: SubagentManager; subagentId: string;
         rt.future.cancelSoon()
         asyncSpawn reapVoid(rt.future)
         return rt.result
-      discard await withTimeout(rt.future,
-                                milliseconds(int(min(remaining, 100'i64))))
+      await sleepAsync(milliseconds(int(min(remaining, 100'i64))))
   rt.result
 
 proc cancelSubagent*(mgr: SubagentManager;
