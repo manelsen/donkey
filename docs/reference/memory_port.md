@@ -144,7 +144,7 @@ type
 
 `MemoryRuntimePort.searchSessions` is optional (`nil` when the backend does not
 support it). The `session_search` tool uses it to search the current user's
-`MEMORY.md` and `sessions/*.jsonl` without loading the full history.
+`MEMORY.md` and `sessions/*.jsonl` without loading the full history. The adapter caps a search at 50 files, 512 KiB per file, 8 MiB total and 2000 records, keeping the read bounded for an interactive tool.
 
 ```nim
 let hits = memory.searchSessions(uid, "deploy production", 10, true)

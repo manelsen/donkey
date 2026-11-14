@@ -605,9 +605,13 @@ proc saveSession*(a: MdFileAdapter; userId: UserId;
   writeFile(path, buf)
 
 const
-  SessionSearchMaxFiles* = 200
-  SessionSearchMaxFileBytes* = 2 * 1024 * 1024
-  SessionSearchMaxRecords* = 5000
+  ## Search is a bounded synchronous read on purpose: 8 MiB total keeps it in
+  ## the low-millisecond range for an interactive tool. Raise these caps only
+  ## together with moving collection to a worker/helper process.
+  SessionSearchMaxFiles* = 50
+  SessionSearchMaxFileBytes* = 512 * 1024
+  SessionSearchMaxTotalBytes* = 8 * 1024 * 1024
+  SessionSearchMaxRecords* = 2000
 
 proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
                           includeMemory: bool): seq[SessionSearchRecord] =
@@ -626,16 +630,20 @@ proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
     files.sort(proc(a, b: tuple[path: string, mtimeMs: int64]): int =
       cmp(b.mtimeMs, a.mtimeMs))
     var loaded = 0
+    var totalBytes = 0'i64
     for file in files:
       if loaded >= SessionSearchMaxFiles or
-         result.len >= SessionSearchMaxRecords:
+         result.len >= SessionSearchMaxRecords or
+         totalBytes >= SessionSearchMaxTotalBytes:
         break
       inc loaded
       let size =
         try: getFileSize(file.path)
         except CatchableError: SessionSearchMaxFileBytes + 1
-      if size <= 0 or size > SessionSearchMaxFileBytes:
+      if size <= 0 or size > SessionSearchMaxFileBytes or
+         totalBytes + size > SessionSearchMaxTotalBytes:
         continue
+      totalBytes += size
       let sessionId = file.path.extractFilename.changeFileExt("")
       let content =
         try: readFile(file.path)
@@ -667,7 +675,8 @@ proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
       let size =
         try: getFileSize(memoryPath)
         except CatchableError: SessionSearchMaxFileBytes + 1
-      if size > 0 and size <= SessionSearchMaxFileBytes:
+      if size > 0 and size <= SessionSearchMaxFileBytes and
+         size <= SessionSearchMaxTotalBytes:
         let text =
           try: readFile(memoryPath)
           except CatchableError: ""
