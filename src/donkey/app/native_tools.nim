@@ -962,8 +962,11 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
       return handledError(error)
     if ctx.memory.searchSessions == nil:
       return handledError("Error: session search is unavailable for this backend.")
-    let hits = ctx.memory.searchSessions(
+    let hitsRes = ctx.memory.searchSessions(
       ctx.uid, searchCtx.query, searchCtx.limit, searchCtx.includeMemory)
+    if hitsRes.isErr:
+      return handledError("Error: " & hitsRes.error)
+    let hits = hitsRes.get()
     if hits.len == 0:
       return handledText("No session matches for '" & searchCtx.query & "'.")
     var arr = newJArray()

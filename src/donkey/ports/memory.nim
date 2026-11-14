@@ -65,7 +65,7 @@ type
   ## Closure form of the search operation. Nil = no semantic search (fall back to raw MEMORY.md).
 
   SearchSessionsFn* = proc(userId: UserId; query: string; limit: int;
-                           includeMemory: bool): seq[SessionHit]
+                           includeMemory: bool): Result[seq[SessionHit], string]
     {.gcsafe, raises: [].}
   ## Closure form of transcript/MEMORY search. Nil = backend without support.
 

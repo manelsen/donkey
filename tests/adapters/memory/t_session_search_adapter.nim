@@ -2,6 +2,7 @@
 
 import std/[json, os, sequtils, strutils, unittest]
 import donkey/adapters/memory/md_file
+import donkey/core/pipeops
 import donkey/core/types
 import donkey/domain/memory/session_search_pure
 
@@ -29,7 +30,7 @@ suite "MdFileAdapter session search":
     writeFile(paddock / "MEMORY.md",
       "# Memory\n\nThe production deploy uses blue-green.\n")
 
-    let hits = adapter.searchSessions(uid, "deploy production", 10, true)
+    let hits = adapter.searchSessions(uid, "deploy production", 10, true).get()
     check hits.len >= 2
     check hits.anyIt(it.kind == shkMemory)
     check hits.anyIt(it.kind == shkSession and it.sessionId == "s1")
@@ -45,8 +46,8 @@ suite "MdFileAdapter session search":
     createDir(adapter.paddockDir(a) / "sessions")
     writeFile(adapter.paddockDir(a) / "sessions" / "s1.jsonl",
       $(%*{"role": "user", "text": "deploy production"}) & "\n")
-    let hitsA = adapter.searchSessions(a, "deploy", 10, true)
-    let hitsB = adapter.searchSessions(b, "deploy", 10, true)
+    let hitsA = adapter.searchSessions(a, "deploy", 10, true).get()
+    let hitsB = adapter.searchSessions(b, "deploy", 10, true).get()
     check hitsA.len == 1
     check hitsB.len == 0
     check not fileExists(adapter.paddockDir(b) / "sessions" / "s1.jsonl")
@@ -60,8 +61,8 @@ suite "MdFileAdapter session search":
     writeFile(adapter.paddockDir(uid) / "sessions" / "s1.jsonl",
       $(%*{"role": "user", "text": "deploy"}) & "\n")
     writeFile(adapter.paddockDir(uid) / "MEMORY.md", "deploy memory\n")
-    let withMemory = adapter.searchSessions(uid, "deploy", 10, true)
-    let withoutMemory = adapter.searchSessions(uid, "deploy", 10, false)
+    let withMemory = adapter.searchSessions(uid, "deploy", 10, true).get()
+    let withoutMemory = adapter.searchSessions(uid, "deploy", 10, false).get()
     check withMemory.anyIt(it.kind == shkMemory)
     check not withoutMemory.anyIt(it.kind == shkMemory)
 
@@ -76,7 +77,7 @@ suite "MdFileAdapter session search":
       $(%*{"role": "user", "text": "deploy small"}) & "\n")
     writeFile(dir / "big.jsonl",
       repeat("x", SessionSearchMaxFileBytes + 10) & " deploy\n")
-    let hits = adapter.searchSessions(uid, "deploy", 10, true)
+    let hits = adapter.searchSessions(uid, "deploy", 10, true).get()
     check hits.len == 1
     check hits[0].sessionId == "small"
 
@@ -85,9 +86,9 @@ suite "MdFileAdapter session search":
     defer: removeDir(searchBase)
     let adapter = MdFileAdapter(paddocksDir: searchBase)
     let uid = UserId("user-a")
-    check adapter.searchSessions(uid, "", 10, true).len == 0
-    check adapter.searchSessions(uid, "deploy", 10, true).len == 0
+    check adapter.searchSessions(uid, "", 10, true).get().len == 0
+    check adapter.searchSessions(uid, "deploy", 10, true).get().len == 0
     createDir(adapter.paddockDir(uid) / "sessions")
     writeFile(adapter.paddockDir(uid) / "sessions" / "bad.jsonl",
       "{not json}\n[]\n\"scalar\"\n")
-    check adapter.searchSessions(uid, "deploy", 10, true).len == 0
+    check adapter.searchSessions(uid, "deploy", 10, true).get().len == 0

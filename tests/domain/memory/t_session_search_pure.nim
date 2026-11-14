@@ -63,5 +63,15 @@ suite "session_search_pure":
     check clampSessionSearchLimit(999) == SessionSearchMaxLimit
     check clampSessionSearchLimit(7) == 7
 
+  test "all-term matches win; OR is only a fallback":
+    let full = rec("full", "user", "deploy production")
+    let partial = rec("partial", "user", "deploy staging")
+    let both = rankSessionRecords(@[full, partial], "deploy production", 0, 10)
+    check both.len == 1
+    check both[0].sessionId == "full"
+    let fallback = rankSessionRecords(@[partial], "deploy production", 0, 10)
+    check fallback.len == 1
+    check fallback[0].sessionId == "partial"
+
   test "empty query returns no hits":
     check rankSessionRecords(@[rec("s1", "user", "deploy")], "", 0).len == 0

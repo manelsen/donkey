@@ -133,7 +133,8 @@ type
     saveIdentity*:    proc(userId: UserId; traits: PersonalityTraits; name: string)
     loadIdentity*:    proc(userId: UserId): (string, PersonalityTraits)
     searchSessions*:  proc(userId: UserId; query: string; limit: int;
-                           includeMemory: bool): seq[SessionHit]
+                           includeMemory: bool):
+                           Result[seq[SessionHit], string]
     paddockDir*:      proc(userId: UserId): string
     scheduleReminder*:  proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string
     loadDueReminders*: proc(): seq[JsonNode]
@@ -147,10 +148,11 @@ support it). The `session_search` tool uses it to search the current user's
 `MEMORY.md` and `sessions/*.jsonl` without loading the full history. The adapter caps a search at 50 files, 512 KiB per file, 8 MiB total and 2000 records, keeping the read bounded for an interactive tool.
 
 ```nim
-let hits = memory.searchSessions(uid, "deploy production", 10, true)
+let hits = memory.searchSessions(uid, "deploy production", 10, true).valueOr: @[]
 ```
 
-Each `SessionHit` carries `sessionId`, `kind` (`session`/`memory`), `role`,
+The operation returns `Result[seq[SessionHit], string]`; read failures are
+reported instead of being confused with "no matches". Each `SessionHit` carries `sessionId`, `kind` (`session`/`memory`), `role`,
 `score`, `timestampMs` and a bounded `snippet`. Search is per-user: there is no
 cross-paddock lookup.
 

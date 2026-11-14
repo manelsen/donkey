@@ -130,6 +130,16 @@ func scoreSessionRecord*(record: SessionSearchRecord; query: string;
     let ageDays = float64(nowMs - record.timestampMs) / 86_400_000.0
     result += float32(0.5 * exp(-ageDays / 30.0))
 
+func matchesAllTerms*(record: SessionSearchRecord; query: string): bool =
+  let terms = queryTerms(query)
+  if terms.len == 0 or record.text.len == 0:
+    return false
+  let folded = foldSearchText(record.text)
+  for term in terms:
+    if term notin folded:
+      return false
+  true
+
 func clampSessionSearchLimit*(limit: int): int =
   if limit <= 0: SessionSearchDefaultLimit
   elif limit > SessionSearchMaxLimit: SessionSearchMaxLimit
@@ -142,18 +152,25 @@ func rankSessionRecords*(records: seq[SessionSearchRecord]; query: string;
   if terms.len == 0:
     return
   let capped = clampSessionSearchLimit(limit)
+  var complete: seq[SessionHit]
+  var partial: seq[SessionHit]
   for record in records:
     let score = scoreSessionRecord(record, query, nowMs)
     if score <= 0:
       continue
-    result.add(SessionHit(
+    let hit = SessionHit(
       sessionId: record.sessionId,
       kind: record.kind,
       role: record.role,
       snippet: makeSnippet(record.text, query),
       score: score,
       timestampMs: record.timestampMs,
-    ))
+    )
+    if matchesAllTerms(record, query):
+      complete.add(hit)
+    else:
+      partial.add(hit)
+  result = if complete.len > 0: complete else: partial
   result.sort(proc(a, b: SessionHit): int =
     if a.score != b.score:
       cmp(b.score, a.score)
