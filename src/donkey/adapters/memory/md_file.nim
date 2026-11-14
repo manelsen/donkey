@@ -292,10 +292,8 @@ when defined(withPostgres) or defined(withSqlite):
       if magma == nil:
         return err("MAGMA backend unavailable for session search")
       try:
-        var count = 0
-        for node in magma.graph.listNodes($userId):
-          if count >= SessionSearchMaxRecords:
-            break
+        for node in magma.graph.listNodesLimited(
+            $userId, "", SessionSearchMaxRecords):
           if node.content.len == 0:
             continue
           records.add(SessionSearchRecord(
@@ -303,9 +301,8 @@ when defined(withPostgres) or defined(withSqlite):
             kind: shkMemory,
             role: "memory",
             text: node.content,
-            timestampMs: node.timestamp,
+            timestampMs: node.timestamp * 1000,
           ))
-          inc count
       except Exception as e:
         return err("MAGMA search failed: " & e.msg)
     ok(rankSessionRecords(records, query, epochMs(), limit))

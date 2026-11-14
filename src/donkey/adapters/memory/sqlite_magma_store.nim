@@ -423,6 +423,39 @@ when defined(withSqlite):
     except CatchableError:
       discard
 
+  proc listNodesLimited*(a: SqliteMagmaStoreAdapter; userId: string;
+                         nodeType: string = ""; limit: int): seq[MagmaNode] =
+    if limit <= 0:
+      return
+    a.ensureSchema()
+    let db = a.openDb()
+    defer: db.close()
+    try:
+      let rows =
+        if nodeType.len > 0:
+          db.getAllRows(sql(
+            "SELECT id, user_id, node_type, content, ts, meta FROM " &
+            SqliteNodesTable & " WHERE user_id = ? AND node_type = ? " &
+            "ORDER BY ts DESC, id DESC LIMIT ?"
+          ), userId, nodeType, limit)
+        else:
+          db.getAllRows(sql(
+            "SELECT id, user_id, node_type, content, ts, meta FROM " &
+            SqliteNodesTable & " WHERE user_id = ? " &
+            "ORDER BY ts DESC, id DESC LIMIT ?"
+          ), userId, limit)
+      for row in rows:
+        result.add(MagmaNode(
+          id: row[0],
+          userId: row[1],
+          nodeType: row[2],
+          content: row[3],
+          timestamp: parseBiggestInt(row[4]),
+          meta: if row[5].len > 0: parseJson(row[5]) else: newJObject(),
+        ))
+    except CatchableError:
+      discard
+
   proc deleteNode*(a: SqliteMagmaStoreAdapter; nodeId: string): bool =
     a.ensureSchema()
     let db = a.openDb()
@@ -666,6 +699,9 @@ when defined(withSqlite):
       upsertNode: proc(node: MagmaNode) {.gcsafe.} = a.upsertNode(node),
       getNode: proc(nodeId: string): Option[MagmaNode] {.gcsafe.} = a.getNode(nodeId),
       listNodes: proc(userId: string; nodeType: string = ""): seq[MagmaNode] {.gcsafe.} = a.listNodes(userId, nodeType),
+      listNodesLimited: proc(userId: string; nodeType: string = "";
+                             limit: int): seq[MagmaNode] {.gcsafe.} =
+        a.listNodesLimited(userId, nodeType, limit),
       deleteNode: proc(nodeId: string): bool {.gcsafe.} = a.deleteNode(nodeId),
       insertEdge: proc(edge: MagmaEdge): bool {.gcsafe.} = a.insertEdge(edge),
       getEdges: proc(nodeId: string; edgeType: string = ""; direction: string = "out"): seq[MagmaEdge] {.gcsafe.} =
