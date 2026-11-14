@@ -717,7 +717,7 @@ proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
               timestampMs: getLastModificationTime(memoryPath).toUnix() * 1000,
             ))
     ok(records)
-  except CatchableError as e:
+  except Exception as e:
     err("session search read failed: " & e.msg)
 
 proc searchSessions*(a: MdFileAdapter; userId: UserId;
