@@ -11,9 +11,11 @@ import ../core/log
 import ../core/output_sanitizer
 import ../core/security/approval
 import ../core/tooling/tool_loop
+import ../core/tooling/native_tool_dispatch
 import ../core/agent_events
 import ../domain/agent_message
 import ../domain/message
+import ../domain/subagent_pure
 import ../ports/memory
 import ../ports/provider
 import ../app/session_state
@@ -223,10 +225,32 @@ proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
       newHistory: nr.newHistory,
     )
 
+  ## Defense in depth: a restricted child must not reach MCP/skill clients,
+  ## even if a future native-tool category forgets to handle a name.
+  if nativeCtx.restrictTools and
+     (tc.name notin nativeCtx.allowedTools or tc.name in SubagentHardDeniedTools):
+    return ToolCallResult(
+      text: "Error: tool '" & tc.name & "' is not allowed for subagent '" &
+            (if nativeCtx.subagentId.len > 0: nativeCtx.subagentId else: "?") & "'.",
+      resultKind: trkOperationalError,
+    )
+  if nativeCtx.budget != nil and not isKnownNativeTool(tc.name):
+    let budgetDecision = checkBudget(nativeCtx.budget, nativeCtx.budgetLimits,
+                                     nowMs())
+    if budgetDecision != bdOk:
+      nativeCtx.budget.budgetError = budgetDecisionText(budgetDecision)
+      return ToolCallResult(
+        text: "Error: " & nativeCtx.budget.budgetError & ".",
+        resultKind: trkOperationalError,
+      )
+    nativeCtx.budget.recordToolCall(epochMs())
+
   ## Native tools are gated inside executeNativeTool. Non-native tools (MCP,
   ## skills) can be included through DONKEY_APPROVAL_TOOLS names or "*".
   if requiresApproval(nativeCtx.approval, tc.name):
-    let summary = approvalInputSummary(tc.inputJson)
+    var summary = approvalInputSummary(tc.inputJson)
+    if summary.len > 0 and nativeCtx.subagentId.len > 0:
+      summary = "[subagent " & nativeCtx.subagentId & "] " & summary
     if summary.len == 0:
       return ToolCallResult(
         text: "Error: tool '" & tc.name &

@@ -52,6 +52,7 @@ import ../domain/message
 import ../domain/more_tools
 import ../domain/builtin_tools
 import ../domain/memory/session_search_pure
+import ../domain/subagent_pure
 import ../domain/reminder
 import ../ports/http as httpPort
 import ../ports/provider
@@ -62,6 +63,7 @@ import ./sandbox
 import ./session_state
 import ./session_manager
 import ./approval_runtime
+import ./provider_executor
 
 # ── Result type ───────────────────────────────────────────────────────────────
 
@@ -76,6 +78,14 @@ type
 # ── Context types (parsing only — execution delegated to tool modules) ────────
 
 type
+  SpawnSubagentFn* = proc(request: SubagentRequest):
+      Future[SubagentSpawnResult] {.gcsafe, raises: [].}
+  AwaitSubagentFn* = proc(subagentId: string):
+      Future[SubagentResult] {.gcsafe, raises: [].}
+  ListSubagentsFn* = proc(): seq[SubagentInfo] {.gcsafe, raises: [].}
+  CancelSubagentFn* = proc(subagentId: string):
+      Future[bool] {.gcsafe, raises: [].}
+
   NativeCtx* = object
     uid*:          UserId
     channel*:      ChannelKind
@@ -83,6 +93,7 @@ type
     session*:      ptr SessionEntry
     memory*:       MemoryRuntimePort
     completeFn*:   CompleteFn
+    asyncCompleteFn*: AsyncCompleteFn
     http*:         httpPort.HttpRuntimePort
     braveApiKey*:  string
     webAllowlist*: seq[string]
@@ -97,6 +108,18 @@ type
     sandboxAllowHostFallback*: bool
     sandboxAllowNetwork*: bool
     sandboxReadOnlyRootfs*: bool
+    ## Subagent policy. `restrictTools=false` is the normal parent session;
+    ## a child sets it to true and only the listed names may execute.
+    restrictTools*: bool
+    allowedTools*: seq[string]
+    subagentId*: string
+    subagentDepth*: int
+    budget*: SubagentUsage
+    budgetLimits*: SubagentLimits
+    spawnSubagent*: SpawnSubagentFn
+    awaitSubagent*: AwaitSubagentFn
+    listSubagents*: ListSubagentsFn
+    cancelSubagent*: CancelSubagentFn
 
   AskContext* = object
     question*: string
@@ -105,6 +128,13 @@ type
     query*:         string
     limit*:         int
     includeMemory*: bool
+
+  SpawnSubagentContext* = object
+    request*: SubagentRequest
+    wait*:    bool
+
+  AwaitSubagentContext* = object
+    subagentId*: string
 
   BashContext* = object
     command*: string
@@ -248,6 +278,84 @@ proc parseSessionSearchContext*(j: JsonNode): Result[SessionSearchContext, strin
     else: true
   ok(SessionSearchContext(query: query, limit: limit,
                           includeMemory: includeMemory))
+
+proc optionalIntField(j: JsonNode; key: string): Result[int, string]
+                                                         {.gcsafe, raises: [].} =
+  let node = j.getOrDefault(key)
+  if node == nil or node.kind == JNull:
+    return ok(0)
+  if node.kind != JInt:
+    return err("'" & key & "' must be an integer")
+  ok(node.getInt())
+
+proc optionalBoolField(j: JsonNode; key: string; fallback: bool):
+                       Result[bool, string] {.gcsafe, raises: [].} =
+  let node = j.getOrDefault(key)
+  if node == nil or node.kind == JNull:
+    return ok(fallback)
+  if node.kind != JBool:
+    return err("'" & key & "' must be a boolean")
+  ok(node.getBool())
+
+proc optionalStringField(j: JsonNode; key: string): Result[string, string]
+                                                         {.gcsafe, raises: [].} =
+  let node = j.getOrDefault(key)
+  if node == nil or node.kind == JNull:
+    return ok("")
+  if node.kind != JString:
+    return err("'" & key & "' must be a string")
+  ok(node.getStr(""))
+
+proc stringArrayField(j: JsonNode; key: string): Result[seq[string], string]
+                                                         {.gcsafe, raises: [].} =
+  let node = j.getOrDefault(key)
+  if node == nil or node.kind == JNull:
+    return ok(newSeq[string]())
+  if node.kind != JArray:
+    return err("'" & key & "' must be an array of strings")
+  var values: seq[string]
+  for item in node.items:
+    if item.kind != JString:
+      return err("'" & key & "' must contain only strings")
+    let value = item.getStr("").strip()
+    if value.len > 0 and value notin values:
+      values.add(value)
+  ok(values)
+
+proc parseSpawnSubagentContext*(j: JsonNode):
+                                Result[SpawnSubagentContext, string]
+                                {.gcsafe, raises: [].} =
+  let task = j.getOrDefault("task").getStr("").strip()
+  if task.len == 0:
+    return err("'task' is required")
+  let context = ?optionalStringField(j, "context")
+  let tools = ?stringArrayField(j, "tools")
+  let maxToolCalls = ?optionalIntField(j, "max_tool_calls")
+  let maxTokens = ?optionalIntField(j, "max_tokens")
+  let maxDurationSec = ?optionalIntField(j, "max_duration_sec")
+  let wait = ?optionalBoolField(j, "wait", true)
+  let limits = clampSubagentLimits(SubagentLimits(
+    maxToolCalls: maxToolCalls,
+    maxTokens: maxTokens,
+    maxDurationMs: int64(maxDurationSec) * 1000'i64,
+  ))
+  ok(SpawnSubagentContext(
+    request: SubagentRequest(
+      task: task,
+      context: context,
+      tools: tools,
+      limits: limits,
+    ),
+    wait: wait,
+  ))
+
+proc parseAwaitSubagentContext*(j: JsonNode):
+                                Result[AwaitSubagentContext, string]
+                                {.gcsafe, raises: [].} =
+  let subagentId = j.getOrDefault("subagent_id").getStr("").strip()
+  if subagentId.len == 0:
+    return err("'subagent_id' is required")
+  ok(AwaitSubagentContext(subagentId: subagentId))
 
 proc parseAskContext*(j: JsonNode): Result[AskContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("question") >>=
@@ -505,6 +613,19 @@ proc handledText(text: string): NativeToolResult {.gcsafe, raises: [].} =
 
 proc handledError(text: string): NativeToolResult {.gcsafe, raises: [].} =
   NativeToolResult(handled: true, text: text, resultKind: trkOperationalError)
+
+proc handledSubagentResult(subagentResult: SubagentResult): NativeToolResult
+                                                       {.gcsafe, raises: [].} =
+  ## The JSON contract is stable even on failure; only the result kind marks
+  ## the operational error for the parent loop.
+  NativeToolResult(
+    handled: true,
+    text: $subagentResult.toJson(),
+    resultKind: if subagentResult.status in {ssFailed, ssTimedOut, ssCancelled}:
+                  trkOperationalError
+                else:
+                  trkOutput,
+  )
 
 proc handledStructured(value: StructuredToolResult): NativeToolResult {.gcsafe, raises: [].} =
   NativeToolResult(handled: true, text: value.toJson(), resultKind: value.kind)
@@ -1017,6 +1138,47 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
     let awaitCtx = parseAwaitContext(j).valueOr:
       return handledError(error)
     return await awaitJobs(state, awaitCtx)
+  of SpawnSubagentToolName:
+    if ctx.subagentDepth >= 1:
+      return handledError("Error: subagents cannot spawn subagents (maximum depth is 1).")
+    if ctx.spawnSubagent == nil:
+      return handledError("Error: subagent runtime is unavailable.")
+    let spawnCtx = parseSpawnSubagentContext(j).valueOr:
+      return handledError(error)
+    let spawned = await ctx.spawnSubagent(spawnCtx.request)
+    if spawned.error.len > 0:
+      return handledError("Error: " & spawned.error)
+    if spawnCtx.wait:
+      if ctx.awaitSubagent == nil:
+        return handledError("Error: subagent runtime cannot await results.")
+      let subagentResult = await ctx.awaitSubagent(spawned.subagentId)
+      return handledSubagentResult(subagentResult)
+    return handledText($spawned.toJson())
+  of AwaitSubagentToolName:
+    if ctx.awaitSubagent == nil:
+      return handledError("Error: subagent runtime is unavailable.")
+    let awaitCtx = parseAwaitSubagentContext(j).valueOr:
+      return handledError(error)
+    let subagentResult = await ctx.awaitSubagent(awaitCtx.subagentId)
+    return handledSubagentResult(subagentResult)
+  of ListSubagentsToolName:
+    if ctx.listSubagents == nil:
+      return handledError("Error: subagent runtime is unavailable.")
+    var arr = newJArray()
+    let nowMs = epochMs()
+    for info in ctx.listSubagents():
+      arr.add(info.toJson(nowMs))
+    return handledText($(%*{"subagents": arr}))
+  of CancelSubagentToolName:
+    if ctx.cancelSubagent == nil:
+      return handledError("Error: subagent runtime is unavailable.")
+    let cancelCtx = parseAwaitSubagentContext(j).valueOr:
+      return handledError(error)
+    let cancelled = await ctx.cancelSubagent(cancelCtx.subagentId)
+    return handledText($(%*{
+      "subagent_id": cancelCtx.subagentId,
+      "cancelled": cancelled,
+    }))
   else:
     return NativeToolResult(handled: false)
 
@@ -1097,9 +1259,27 @@ proc executeNativeTool*(tc:      ToolCallRequest;
                        ): Future[NativeToolResult] {.async.} =
   let j = try: parseJson(tc.inputJson)
           except: newJObject()
+  if ctx.restrictTools and
+     (tc.name notin ctx.allowedTools or tc.name in SubagentHardDeniedTools):
+    return NativeToolResult(
+      handled: true,
+      text: "Error: tool '" & tc.name & "' is not allowed for subagent '" &
+            (if ctx.subagentId.len > 0: ctx.subagentId else: "?") & "'.",
+      resultKind: trkOperationalError)
+  if ctx.budget != nil:
+    let budgetDecision = checkBudget(ctx.budget, ctx.budgetLimits, nowMs())
+    if budgetDecision != bdOk:
+      ctx.budget.budgetError = budgetDecisionText(budgetDecision)
+      return NativeToolResult(
+        handled: true,
+        text: "Error: " & ctx.budget.budgetError & ".",
+        resultKind: trkOperationalError)
+    ctx.budget.recordToolCall(epochMs())
   let categories = classifyNativeTool(tc.name)
   if categories.len > 0 and requiresApproval(ctx.approval, tc.name):
-    let summary = approvalSummary(tc.name, j)
+    var summary = approvalSummary(tc.name, j)
+    if summary.len > 0 and ctx.subagentId.len > 0:
+      summary = "[subagent " & ctx.subagentId & "] " & summary
     if summary.len == 0:
       return NativeToolResult(
         handled: true,

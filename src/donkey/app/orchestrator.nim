@@ -51,6 +51,7 @@ import ./native_tools
 import ./approval_runtime
 import ./onboarding_runtime
 import ./tool_loop_runtime
+import ./subagent_runtime
 import ./prompt_building
 import ./provider_executor
 import ../core/security/dm_policy
@@ -76,6 +77,7 @@ type OrchestratorState = object
   turnSeq*:       int
   blackboard*:    Blackboard
   lastConsolidatedFingerprint*: string
+  subagents*:     SubagentManager
 
 func newOrchestratorState*(): OrchestratorState =
   OrchestratorState(
@@ -346,10 +348,12 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     stateRuntime: OrchestratorState;
                     asyncCompleteFn: AsyncCompleteFn = nil): Future[OrchestratorState] {.async.} =
   result = stateRuntime |> nextTurn
-  let turnSetup = prepareUserTurnSetup(
+  var turnSetup = prepareUserTurnSetup(
     globalOutbox, session, memory, completeFn, http, tools, webAllowlist, toolWebPolicy,
     paddockDir, typingFn, log,
     sandboxMode, sandboxRuntimeCmd, sandboxImage, msg, result)
+  turnSetup.nativeCtx.asyncCompleteFn = asyncCompleteFn
+  attachSubagentRuntime(turnSetup.nativeCtx, result.subagents)
 
   if turnSetup.isNewUser:
     if result.onboarding.phase == opWakeUp and not result.identity.identityLoaded:
@@ -610,6 +614,8 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
   result.stateRuntime = stateRuntime
   case msg.kind
   of amkCancel:
+    if stateRuntime.subagents != nil:
+      await stateRuntime.subagents.cancelAll()
     await handleActorCancel(memory, memInbox, toolInbox, sessionId, stateRuntime)
     result.shouldStop = true
 
@@ -691,6 +697,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
       false, true, log)
 
   var stateRuntime = newOrchestratorState()
+  stateRuntime.subagents = newSubagentManager()
   let sessionId   = $nowMs()
   pushAgentEvent(AgentEvent(kind: aekSessionStart, summary: "session " & sessionId))
   let toolsSuffix =
@@ -707,5 +714,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
     stateRuntime = actorResult.stateRuntime
     if actorResult.shouldStop:
       break
+  if stateRuntime.subagents != nil:
+    await stateRuntime.subagents.cancelAll()
   await memAgentFut
   await toolAgentFut

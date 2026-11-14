@@ -20,6 +20,10 @@ suite "core native tool dispatch":
 
   test "classify agent tool":
     check classifyNativeTool("await") == @[ntckAgent]
+    check classifyNativeTool("spawn_subagent") == @[ntckAgent]
+    check classifyNativeTool("await_subagent") == @[ntckAgent]
+    check classifyNativeTool("list_subagents") == @[ntckAgent]
+    check classifyNativeTool("cancel_subagent") == @[ntckAgent]
 
   test "classify structured tool":
     check classifyNativeTool("json_query") == @[ntckStructured]

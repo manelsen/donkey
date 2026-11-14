@@ -499,6 +499,10 @@ func nativeSessionTools*(): seq[ToolDescription] =
     (ReportFindingToolName, ReportFindingToolDescription, ReportFindingToolSchema),
     (CancelJobToolName,     CancelJobToolDescription,     CancelJobToolSchema),
     (AwaitToolName,         AwaitToolDescription,         AwaitToolSchema),
+    (SpawnSubagentToolName, SpawnSubagentToolDescription, SpawnSubagentToolSchema),
+    (AwaitSubagentToolName, AwaitSubagentToolDescription, AwaitSubagentToolSchema),
+    (ListSubagentsToolName, ListSubagentsToolDescription, ListSubagentsToolSchema),
+    (CancelSubagentToolName, CancelSubagentToolDescription, CancelSubagentToolSchema),
   ]:
     result.add(ToolDescription(name: n, description: d, schemaJson: s))
   if getEnv("BRAVE_API_KEY").len > 0:
