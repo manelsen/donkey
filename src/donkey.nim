@@ -1846,6 +1846,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       await sleepAsync(ctimer.milliseconds(loopResult.sleepMs.int64))
   finally:
     log.info("daemon shutdown: stopping background workers")
+    ctx.runtime.sm.cancelAllActors()
+    await sleepAsync(ctimer.milliseconds(2_000))
     stopLedgerCompactionWorker(ctx.runtime.ledgerWorker)
     stopSlackSocketMode()
     stopWebhookReceiver()

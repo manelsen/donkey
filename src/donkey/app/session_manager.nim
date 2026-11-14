@@ -124,6 +124,17 @@ proc restoreSessions*(sm: var SessionManager): Result[int, string] =
     inc count
   ok(count)
 
+proc cancelAllActors*(sm: var SessionManager) =
+  ## Best-effort shutdown signal for live orchestrators. Restored entries have
+  ## no actor yet, so they are skipped. The actor itself cancels its children.
+  for _, entry in sm.entries:
+    if entry.restored or entry.inbox == nil:
+      continue
+    try:
+      entry.inbox.addLastNoWait(newCancelMsg())
+    except AsyncQueueFullError:
+      discard
+
 proc init*(sm: var SessionManager) =
   sm.entries = initTable[string, SessionEntry]()
   sm.dmPolicy = DmPolicyOpen

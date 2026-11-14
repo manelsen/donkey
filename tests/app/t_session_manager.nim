@@ -2,7 +2,9 @@
 ## Verifies session creation, channel tracking, and listing.
 
 import std/[options, tables, unittest]
+import chronos/asyncsync
 import donkey/app/session_manager
+import donkey/domain/agent_message
 import donkey/domain/message
 import donkey/core/types
 
@@ -98,6 +100,19 @@ suite "SessionManager":
       if uid == u1: foundU1 = true
       if uid == u2: foundU2 = true
     check foundU1 and foundU2
+
+  test "cancelAllActors signals live sessions only":
+    var sm: SessionManager
+    sm.init()
+    let live = sm.getOrCreate(UserId("cancel-live"))
+    let restoredUid = UserId("cancel-restored")
+    discard sm.getOrCreate(restoredUid)
+    sm.entries[$restoredUid].restored = true
+
+    sm.cancelAllActors()
+    check live.inbox.len == 1
+    check sm.entries[$restoredUid].inbox.len == 0
+    check live.inbox.getNoWait().kind == amkCancel
 
   test "prepareEntry creates new session lease with signature":
     var sm: SessionManager
