@@ -180,6 +180,16 @@ suite "http_gateway route dispatch":
     let req = GatewayRequest(meth: "GET", path: "/")
     check routeGatewayRequest(req) == "index"
 
+  test "routeGatewayRequest maps /health to health action":
+    let req = GatewayRequest(meth: "GET", path: "/health")
+    check routeGatewayRequest(req) == "health"
+
+  test "health and index are the only public gateway actions":
+    check isPublicGatewayAction("index")
+    check isPublicGatewayAction("health")
+    for action in ["status", "logs", "events", "chat", "notfound"]:
+      check not isPublicGatewayAction(action)
+
   test "routeGatewayRequest maps POST /api/chat to chat action":
     let req = GatewayRequest(meth: "POST", path: "/api/chat")
     check routeGatewayRequest(req) == "chat"
