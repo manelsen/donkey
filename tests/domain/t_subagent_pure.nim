@@ -65,19 +65,26 @@ suite "subagent_pure":
     let usage = SubagentUsage(startedAtMonoMs: 1_000)
     check checkBudget(usage, limits, 1_500) == bdOk
     usage.recordToolCall(1_500)
+    check checkBudget(usage, limits, 1_600) == bdOk
     usage.recordToolCall(1_600)
     check checkBudget(usage, limits, 1_700) == bdToolCallsExceeded
 
     let tokenUsage = SubagentUsage(startedAtMonoMs: 1_000)
-    tokenUsage.recordTokens(6, 5, 1_100)
-    check tokenUsage.totalTokens == 11
+    tokenUsage.recordTokens(5, 5, 1_100)
+    check tokenUsage.totalTokens == 10
     check checkBudget(tokenUsage, limits, 1_200) == bdTokensExceeded
+    tokenUsage.recordTokens(1, 0, 1_300)
+    check tokenUsage.totalTokens == 11
+    check checkBudget(tokenUsage, limits, 1_400) == bdTokensExceeded
 
     let lateUsage = SubagentUsage(startedAtMonoMs: 1_000)
+    check checkBudget(lateUsage, limits, 2_000) == bdOk
     check checkBudget(lateUsage, limits, 2_001) == bdTimeExceeded
 
-    let cancelled = SubagentUsage(startedAtMonoMs: 1_000, cancelled: true)
-    check checkBudget(cancelled, limits, 1_100) == bdCancelled
+    let cancelled = SubagentUsage(
+      startedAtMonoMs: 1_000, cancelled: true,
+      toolCalls: 99, inputTokens: 999, outputTokens: 999)
+    check checkBudget(cancelled, limits, 9_999) == bdCancelled
 
   test "structured results always carry the contract fields":
     let res = SubagentResult(

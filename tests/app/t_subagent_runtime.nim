@@ -547,5 +547,7 @@ suite "subagent runtime":
     releaseProvider.fire()
     for id in ids:
       check not dirExists(mgr.paddockDirFor(id))
-    for info in mgr.listSubagents():
+    let infos = mgr.listSubagents()
+    check infos.len == ids.len
+    for info in infos:
       check info.status == ssCancelled
