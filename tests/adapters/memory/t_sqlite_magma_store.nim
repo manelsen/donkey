@@ -2,8 +2,12 @@
 
 when defined(withSqlite):
   import db_connector/db_sqlite
-  import std/[os, unittest, options]
+  import std/[os, sequtils, strutils, unittest, options]
+  import donkey/adapters/memory/md_file
   import donkey/adapters/memory/sqlite_magma_store
+  import donkey/core/pipeops
+  import donkey/core/types
+  import donkey/domain/memory/session_search_pure
   import donkey/ports/multigraph_store
 
   suite "SqliteMagmaStoreAdapter":
@@ -38,6 +42,21 @@ when defined(withSqlite):
       check limited.len == 2
       check limited[0].id == "l3"
       check limited[1].id == "l2"
+
+    test "session search finds MAGMA-only memory":
+      let base = getTempDir() / "donkey_session_search_magma"
+      removeDir(base)
+      createDir(base)
+      defer: removeDir(base)
+      let adapter = MdFileAdapter(
+        paddocksDir: base,
+        magmaSqlitePath: dbPath,
+      )
+      let uid = UserId("u1")
+      let port = adapter.toRuntimePort()
+      port.appendMemory(uid, "magma-only deploy fact")
+      let hits = port.searchSessions(uid, "magma-only", 10, true).get()
+      check hits.anyIt(it.kind == shkMemory and "magma-only" in it.snippet)
 
     test "searchSimilar ranks by in-process cosine similarity":
       let store = newSqliteMagmaStoreAdapter(dbPath)
