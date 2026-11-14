@@ -86,3 +86,39 @@ suite "native session_search tool":
     let res = waitFor executeNativeTool(call, ctx, SessionState(), @[])
     check res.handled
     check res.text.contains("unavailable")
+
+  test "dispatcher forwards the correct user identity":
+    removeDir(toolBase)
+    createDir(toolBase)
+    defer: removeDir(toolBase)
+    let adapter = MdFileAdapter(paddocksDir: toolBase)
+    let a = UserId("user-a")
+    let b = UserId("user-b")
+    for (uid, marker) in [(a, "alpha-secret"), (b, "beta-secret")]:
+      let dir = adapter.paddockDir(uid) / "sessions"
+      createDir(dir)
+      writeFile(dir / "s1.jsonl",
+        $(%*{"role": "user", "text": "shared term " & marker}) & "\n")
+    let memory = adapter.toRuntimePort()
+    let outbox = newAsyncQueue[OutboundMessage](4)
+    for (uid, expected, forbidden) in [
+      (a, "alpha-secret", "beta-secret"),
+      (b, "beta-secret", "alpha-secret"),
+    ]:
+      var ctx = NativeCtx(
+        uid: uid,
+        channel: ckCli,
+        outbox: outbox,
+        memory: memory,
+        log: toolLog,
+        paddockDir: adapter.paddockDir(uid),
+      )
+      let call = ToolCallRequest(
+        id: "search-" & $uid,
+        name: "session_search",
+        inputJson: """{"query":"shared term"}""",
+      )
+      let res = waitFor executeNativeTool(call, ctx, SessionState(), @[])
+      check res.handled
+      check expected in res.text
+      check forbidden notin res.text

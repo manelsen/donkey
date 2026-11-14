@@ -76,7 +76,8 @@ suite "MdFileAdapter session search":
     writeFile(dir / "small.jsonl",
       $(%*{"role": "user", "text": "deploy small"}) & "\n")
     writeFile(dir / "big.jsonl",
-      repeat("x", SessionSearchMaxFileBytes + 10) & " deploy\n")
+      $(%*{"role": "user",
+           "text": repeat("x", SessionSearchMaxFileBytes + 10) & " deploy"}) & "\n")
     let hits = adapter.searchSessions(uid, "deploy", 10, true).get()
     check hits.len == 1
     check hits[0].sessionId == "small"

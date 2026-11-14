@@ -35,6 +35,15 @@ type
     preferredName*: string
     access*:      string
 
+const
+  ## Search is a bounded synchronous read on purpose: 8 MiB total keeps it in
+  ## the low-millisecond range for an interactive tool. Raise these caps only
+  ## together with moving collection to a worker/helper process.
+  SessionSearchMaxFiles* = 50
+  SessionSearchMaxFileBytes* = 512 * 1024
+  SessionSearchMaxTotalBytes* = 8 * 1024 * 1024
+  SessionSearchMaxRecords* = 2000
+
 proc hasProfile*(a: MdFileAdapter; userId: UserId): bool {.gcsafe.}
 proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext {.gcsafe.}
 proc saveUserMd*(a: MdFileAdapter; userId: UserId; content: string) {.gcsafe.}
@@ -57,6 +66,10 @@ proc searchSessions*(a: MdFileAdapter; userId: UserId;
                      query: string; limit: int;
                      includeMemory = true): Result[seq[SessionHit], string]
                      {.gcsafe, raises: [].}
+proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
+                          includeMemory: bool):
+                          Result[seq[SessionSearchRecord], string]
+                          {.gcsafe, raises: [].}
 
 when defined(withPostgres) or defined(withSqlite):
   proc buildMagmaEmbedFn(): EmbedFn =
@@ -272,39 +285,30 @@ when defined(withPostgres) or defined(withSqlite):
                                includeMemory = true):
                                Result[seq[SessionHit], string]
                                {.gcsafe, raises: [].} =
-    let base = ? a.searchSessions(userId, query, limit, includeMemory)
-    var hits = base
+    let baseRecords = ? a.sessionSearchRecords(userId, includeMemory)
+    var records = baseRecords
     if includeMemory and a.hasMagmaBackend:
+      let magma = a.newMagmaAdapter()
+      if magma == nil:
+        return err("MAGMA backend unavailable for session search")
       try:
-        let magma = a.newMagmaAdapter()
-        if magma != nil:
-          for m in magma.search(userId, query, max(limit, 1)):
-            let record = SessionSearchRecord(
-              sessionId: "memory", kind: shkMemory, role: "memory",
-              text: m.content)
-            let lexical = scoreSessionRecord(record, query, epochMs())
-            let semantic = m.score * 5.0'f32
-            hits.add(SessionHit(
-              sessionId: "memory",
-              kind: shkMemory,
-              role: "memory",
-              snippet: makeSnippet(m.content, query),
-              score: max(lexical, semantic),
-              timestampMs: 0,
-            ))
-      except Exception:
-        discard
-    hits.sort(proc(a, b: SessionHit): int =
-      if a.score != b.score:
-        cmp(b.score, a.score)
-      elif a.timestampMs != b.timestampMs:
-        cmp(b.timestampMs, a.timestampMs)
-      else:
-        cmp(a.sessionId, b.sessionId))
-    let capped = clampSessionSearchLimit(limit)
-    if hits.len > capped:
-      hits.setLen(capped)
-    ok(hits)
+        var count = 0
+        for node in magma.graph.listNodes($userId):
+          if count >= SessionSearchMaxRecords:
+            break
+          if node.content.len == 0:
+            continue
+          records.add(SessionSearchRecord(
+            sessionId: "memory",
+            kind: shkMemory,
+            role: "memory",
+            text: node.content,
+            timestampMs: node.timestamp,
+          ))
+          inc count
+      except Exception as e:
+        return err("MAGMA search failed: " & e.msg)
+    ok(rankSessionRecords(records, query, epochMs(), limit))
 
 proc appendExtractedMemoryF1(a: MdFileAdapter; userId: UserId;
                                 text: string): Result[void, string] {.raises: [].} =
@@ -646,18 +650,10 @@ proc saveSession*(a: MdFileAdapter; userId: UserId;
                   "imageUrl": msg.imageUrl}) & "\n")
   writeFile(path, buf)
 
-const
-  ## Search is a bounded synchronous read on purpose: 8 MiB total keeps it in
-  ## the low-millisecond range for an interactive tool. Raise these caps only
-  ## together with moving collection to a worker/helper process.
-  SessionSearchMaxFiles* = 50
-  SessionSearchMaxFileBytes* = 512 * 1024
-  SessionSearchMaxTotalBytes* = 8 * 1024 * 1024
-  SessionSearchMaxRecords* = 2000
-
 proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
                           includeMemory: bool):
-                          Result[seq[SessionSearchRecord], string] =
+                          Result[seq[SessionSearchRecord], string]
+                          {.gcsafe, raises: [].} =
   try:
     var records: seq[SessionSearchRecord]
     let dir = a.paddockDir(userId) / "sessions"
