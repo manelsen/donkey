@@ -6,12 +6,13 @@
 ## All I/O is synchronous (proc). The domain layer (func) uses the pure
 ## UserContext value; this adapter is the side-effectful shell.
 
-import std/[json, os, strutils, times]
+import std/[algorithm, json, os, strutils, times]
 import ../../core/types
 import ../../core/pipeops
 import ../../ports/memory
 import ../../domain/memory/episode_pure
 import ../../domain/memory/lessons_pure
+import ../../domain/memory/session_search_pure
 import ../../domain/message
 import ../../domain/personality
 when defined(withPostgres) or defined(withSqlite):
@@ -52,6 +53,10 @@ proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
                        message: string): string {.gcsafe.}
 proc loadDueReminders*(a: MdFileAdapter): seq[JsonNode] {.gcsafe.}
 proc deleteReminder*(a: MdFileAdapter; userId: UserId; reminderId: string) {.gcsafe.}
+proc searchSessions*(a: MdFileAdapter; userId: UserId;
+                     query: string; limit: int;
+                     includeMemory = true): seq[SessionHit]
+                     {.gcsafe, raises: [].}
 
 when defined(withPostgres) or defined(withSqlite):
   proc buildMagmaEmbedFn(): EmbedFn =
@@ -320,6 +325,10 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
                             a.runtimeSaveIdentity(userId, traits, name),
         loadIdentity:     proc(userId: UserId): (string, PersonalityTraits) {.gcsafe.} =
                             a.runtimeLoadIdentity(userId),
+        searchSessions:   proc(userId: UserId; query: string; limit: int;
+                               includeMemory: bool): seq[SessionHit]
+                               {.gcsafe, raises: [].} =
+                            a.searchSessions(userId, query, limit, includeMemory),
         paddockDir:       proc(userId: UserId): string {.gcsafe.} = a.paddockDir(userId),
         scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string {.gcsafe.} =
                             a.scheduleReminder(userId, channel, scheduledAt, message),
@@ -384,6 +393,10 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
     saveIdentity:     proc(userId: UserId; traits: PersonalityTraits; name: string) {.gcsafe.} =
                         a.saveIdentity(userId, traits, name),
     loadIdentity:     proc(userId: UserId): (string, PersonalityTraits) {.gcsafe.} = a.loadIdentity(userId),
+    searchSessions:   proc(userId: UserId; query: string; limit: int;
+                           includeMemory: bool): seq[SessionHit]
+                           {.gcsafe, raises: [].} =
+                        a.searchSessions(userId, query, limit, includeMemory),
     paddockDir:       proc(userId: UserId): string {.gcsafe.} = a.paddockDir(userId),
     scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string {.gcsafe.} =
                         a.scheduleReminder(userId, channel, scheduledAt, message),
@@ -590,6 +603,95 @@ proc saveSession*(a: MdFileAdapter; userId: UserId;
     buf.add($(%* {"role": msg.role, "text": msg.text,
                   "imageUrl": msg.imageUrl}) & "\n")
   writeFile(path, buf)
+
+const
+  SessionSearchMaxFiles* = 200
+  SessionSearchMaxFileBytes* = 2 * 1024 * 1024
+  SessionSearchMaxRecords* = 5000
+
+proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
+                          includeMemory: bool): seq[SessionSearchRecord] =
+  let dir = a.paddockDir(userId) / "sessions"
+  if dirExists(dir):
+    var files: seq[tuple[path: string, mtimeMs: int64]]
+    try:
+      for kind, path in walkDir(dir):
+        if kind == pcFile and path.endsWith(".jsonl"):
+          let mtime =
+            try: getLastModificationTime(path).toUnix() * 1000
+            except CatchableError: 0'i64
+          files.add((path, mtime))
+    except CatchableError:
+      discard
+    files.sort(proc(a, b: tuple[path: string, mtimeMs: int64]): int =
+      cmp(b.mtimeMs, a.mtimeMs))
+    var loaded = 0
+    for file in files:
+      if loaded >= SessionSearchMaxFiles or
+         result.len >= SessionSearchMaxRecords:
+        break
+      inc loaded
+      let size =
+        try: getFileSize(file.path)
+        except CatchableError: SessionSearchMaxFileBytes + 1
+      if size <= 0 or size > SessionSearchMaxFileBytes:
+        continue
+      let sessionId = file.path.extractFilename.changeFileExt("")
+      let content =
+        try: readFile(file.path)
+        except CatchableError: ""
+      for line in content.splitLines():
+        if result.len >= SessionSearchMaxRecords:
+          break
+        let trimmed = line.strip()
+        if trimmed.len == 0:
+          continue
+        try:
+          let j = parseJson(trimmed)
+          let text = j{"text"}.getStr("")
+          if text.len == 0:
+            continue
+          result.add(SessionSearchRecord(
+            sessionId: sessionId,
+            kind: shkSession,
+            role: j{"role"}.getStr(""),
+            text: text,
+            timestampMs: file.mtimeMs,
+          ))
+        except CatchableError:
+          discard
+
+  if includeMemory:
+    let memoryPath = a.memoryMdPath(userId)
+    if fileExists(memoryPath):
+      let size =
+        try: getFileSize(memoryPath)
+        except CatchableError: SessionSearchMaxFileBytes + 1
+      if size > 0 and size <= SessionSearchMaxFileBytes:
+        let text =
+          try: readFile(memoryPath)
+          except CatchableError: ""
+        if text.len > 0:
+          let mtime =
+            try: getLastModificationTime(memoryPath).toUnix() * 1000
+            except CatchableError: 0'i64
+          result.add(SessionSearchRecord(
+            sessionId: "memory",
+            kind: shkMemory,
+            role: "memory",
+            text: text,
+            timestampMs: mtime,
+          ))
+
+proc searchSessions*(a: MdFileAdapter; userId: UserId;
+                     query: string; limit: int;
+                     includeMemory = true): seq[SessionHit]
+                     {.gcsafe, raises: [].} =
+  try:
+    let records = a.sessionSearchRecords(userId, includeMemory)
+    rankSessionRecords(records, query, epochMs(), limit)
+  except Exception:
+    @[]
 
 proc listSessions*(a: MdFileAdapter; userId: UserId): seq[string] =
   ## Returns session file names (without extension) sorted newest-first.

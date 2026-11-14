@@ -63,6 +63,7 @@ const
     "checkpoint",
     "rewind",
     "manage_skills",
+    "session_search",
   ]
 
   AgentNativeTools* = [

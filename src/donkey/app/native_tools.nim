@@ -51,6 +51,7 @@ import ../core/security/approval
 import ../domain/message
 import ../domain/more_tools
 import ../domain/builtin_tools
+import ../domain/memory/session_search_pure
 import ../domain/reminder
 import ../ports/http as httpPort
 import ../ports/provider
@@ -99,6 +100,11 @@ type
 
   AskContext* = object
     question*: string
+
+  SessionSearchContext* = object
+    query*:         string
+    limit*:         int
+    includeMemory*: bool
 
   BashContext* = object
     command*: string
@@ -217,6 +223,31 @@ proc requireStringField(j: JsonNode; key: string): Result[string, string] {.gcsa
   if value.len == 0:
     return err("Error: '" & key & "' is required.")
   ok(value)
+
+proc parseSessionSearchContext*(j: JsonNode): Result[SessionSearchContext, string]
+                                                                  {.gcsafe, raises: [].} =
+  let queryNode = j.getOrDefault("query")
+  let query =
+    if queryNode != nil and queryNode.kind == JString:
+      queryNode.getStr("").strip()
+    else:
+      ""
+  if query.len == 0:
+    return err("'query' is required")
+  if query.len > SessionSearchMaxQueryChars:
+    return err("query exceeds " & $SessionSearchMaxQueryChars & " characters")
+  let limitNode = j.getOrDefault("limit")
+  let limit =
+    if limitNode != nil and limitNode.kind == JInt:
+      clampSessionSearchLimit(limitNode.getInt())
+    else:
+      SessionSearchDefaultLimit
+  let memoryNode = j.getOrDefault("include_memory")
+  let includeMemory =
+    if memoryNode != nil and memoryNode.kind == JBool: memoryNode.getBool()
+    else: true
+  ok(SessionSearchContext(query: query, limit: limit,
+                          includeMemory: includeMemory))
 
 proc parseAskContext*(j: JsonNode): Result[AskContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("question") >>=
@@ -926,6 +957,26 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
         buildRewindResult(state, idx)
     return rewindResult.valueOr:
       handledError(error)
+  of SessionSearchToolName:
+    let searchCtx = parseSessionSearchContext(j).valueOr:
+      return handledError(error)
+    if ctx.memory.searchSessions == nil:
+      return handledError("Error: session search is unavailable for this backend.")
+    let hits = ctx.memory.searchSessions(
+      ctx.uid, searchCtx.query, searchCtx.limit, searchCtx.includeMemory)
+    if hits.len == 0:
+      return handledText("No session matches for '" & searchCtx.query & "'.")
+    var arr = newJArray()
+    for hit in hits:
+      arr.add(%*{
+        "session_id": hit.sessionId,
+        "kind": $hit.kind,
+        "role": hit.role,
+        "score": hit.score,
+        "timestamp_ms": hit.timestampMs,
+        "snippet": hit.snippet,
+      })
+    return handledText($arr)
   of ManageSkillsToolName:
     let skillCtx = parseManageSkillsContext(j).valueOr:
       return handledError(error)

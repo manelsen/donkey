@@ -25,7 +25,7 @@ Each user has a paddock directory:
 ├── CONTACTS.md      # Known people
 ├── SOLUTIONS.md     # Reusable solutions
 └── sessions/
-    └── {session_id}.md  # Session conversation logs
+    └── {session_id}.jsonl  # Session conversation logs (one JSON object per turn)
 ```
 
 ---
@@ -132,11 +132,27 @@ type
     saveSession*:     proc(userId: UserId; sessionId: string; history: ConversationHistory)
     saveIdentity*:    proc(userId: UserId; traits: PersonalityTraits; name: string)
     loadIdentity*:    proc(userId: UserId): (string, PersonalityTraits)
+    searchSessions*:  proc(userId: UserId; query: string; limit: int;
+                           includeMemory: bool): seq[SessionHit]
     paddockDir*:      proc(userId: UserId): string
     scheduleReminder*:  proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string
     loadDueReminders*: proc(): seq[JsonNode]
     deleteReminder*:  proc(userId: UserId; reminderId: string)
 ```
+
+### Session search
+
+`MemoryRuntimePort.searchSessions` is optional (`nil` when the backend does not
+support it). The `session_search` tool uses it to search the current user's
+`MEMORY.md` and `sessions/*.jsonl` without loading the full history.
+
+```nim
+let hits = memory.searchSessions(uid, "deploy production", 10, true)
+```
+
+Each `SessionHit` carries `sessionId`, `kind` (`session`/`memory`), `role`,
+`score`, `timestampMs` and a bounded `snippet`. Search is per-user: there is no
+cross-paddock lookup.
 
 ---
 

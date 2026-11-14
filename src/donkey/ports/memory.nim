@@ -14,6 +14,7 @@ import std/json
 import ../core/pipeops
 import ../core/types
 import ../domain/memory/episode_pure
+import ../domain/memory/session_search_pure
 import ../domain/message
 import ../domain/personality
 
@@ -63,6 +64,11 @@ type
     {.gcsafe, raises: [].}
   ## Closure form of the search operation. Nil = no semantic search (fall back to raw MEMORY.md).
 
+  SearchSessionsFn* = proc(userId: UserId; query: string; limit: int;
+                           includeMemory: bool): seq[SessionHit]
+    {.gcsafe, raises: [].}
+  ## Closure form of transcript/MEMORY search. Nil = backend without support.
+
   MemoryRuntimePort* = object
     hasProfile*:      proc(userId: UserId): bool {.gcsafe.}
     loadContext*:     proc(userId: UserId): UserContext {.gcsafe.}
@@ -77,6 +83,7 @@ type
                         {.gcsafe.}
     loadIdentity*:    proc(userId: UserId): (string, PersonalityTraits)
                         {.gcsafe.}
+    searchSessions*:  SearchSessionsFn
     paddockDir*:      proc(userId: UserId): string {.gcsafe.}
     scheduleReminder*:  proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string
                           {.gcsafe.}

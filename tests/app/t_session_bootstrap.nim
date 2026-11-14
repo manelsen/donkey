@@ -214,6 +214,7 @@ model = "gemini-2.5-flash"
       ArchiveExtractToolName,
       ArchiveCreateToolName,
       ExecuteCodeToolName,
+      SessionSearchToolName,
     ]:
       check bundled.tools.anyIt(it.name == name)
 

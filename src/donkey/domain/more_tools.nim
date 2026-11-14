@@ -584,3 +584,17 @@ const
     "\"wasm_path\":{\"type\":\"string\",\"description\":\"Path to a .wasm module inside the workspace (wasm only)\"}," &
     "\"timeout_sec\":{\"type\":\"integer\",\"description\":\"Wall-clock timeout in seconds (default: 10, max: 60)\"}" &
     "},\"required\":[\"language\"]}"
+
+# ── session_search ────────────────────────────────────────────────────────────
+const
+  SessionSearchToolName* = "session_search"
+  SessionSearchToolDescription* =
+    "Search your own past session transcripts and MEMORY.md for decisions, preferences and " &
+    "facts. Results are isolated per user, read-only and ranked by lexical relevance and recency. " &
+    "Use this instead of loading the entire history into context."
+  SessionSearchToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"query\":{\"type\":\"string\",\"description\":\"Terms or phrase to search for\"}," &
+    "\"limit\":{\"type\":\"integer\",\"description\":\"Max results (default: 10, max: 50)\"}," &
+    "\"include_memory\":{\"type\":\"boolean\",\"description\":\"Include MEMORY.md (default: true)\"}" &
+    "},\"required\":[\"query\"]}"
