@@ -1,6 +1,7 @@
 import std/[json, os, sequtils, strutils, unittest]
 import donkey/adapters/memory/md_file
 import donkey/adapters/provider/runtime_builder
+import donkey/core/pipeops
 import donkey/app/session_bootstrap
 import donkey/core/providers/smart_routing
 import donkey/domain/more_tools
@@ -366,7 +367,7 @@ model = "gemini-2.5-flash"
       check graphCtx.memoryMd.contains("bootstrap memory A")
       check graphCtx.memoryMd.contains("bootstrap memory B")
 
-    test "runtime port writes to multigraph without shadow markdown files":
+    test "runtime port writes to multigraph and exports the markdown files":
       setupGraph()
       cleanGraph()
       let tmpDir = getTempDir() / "donkey_session_bootstrap_runtime_graph_only"
@@ -384,11 +385,12 @@ model = "gemini-2.5-flash"
 provider = "gemini"
 model = "gemini-2.5-flash"
 """)
-      port.appendMemory(userId, "graph-only memory")
+      check port.appendMemory(userId, "graph-only memory").isOk
 
-      check not fileExists(memory.userMdPath(userId))
-      check not fileExists(memory.preferencesMdPath(userId))
-      check not fileExists(memory.memoryMdPath(userId))
+      ## The graph is the store; the paddock files are its export.
+      check readFile(memory.userMdPath(userId)) == "# Graph User"
+      check readFile(memory.preferencesMdPath(userId)).contains("gemini-2.5-flash")
+      check readFile(memory.memoryMdPath(userId)).contains("graph-only memory")
 
       let graphCtx = newMagmaMemoryAdapter(testDsn, fakeEmbedFn).loadContext(userId)
       check graphCtx.userMd == "# Graph User"
@@ -409,7 +411,7 @@ model = "gemini-2.5-flash"
       let memory = MdFileAdapter(paddocksDir: tmpDir, magmaDsn: testDsn)
       let port = memory.toRuntimePort()
       port.savePreferences(userId, "provider = \"openrouter\"")
-      port.appendMemory(userId, "memory to clear")
+      check port.appendMemory(userId, "memory to clear").isOk
       port.saveIdentity(userId, PersonalityTraits(
         energy: "warm",
         tone: "direct",
@@ -420,7 +422,7 @@ model = "gemini-2.5-flash"
       let (name, traits) = port.loadIdentity(userId)
       check name == "Donkey"
       check traits.energy == "warm"
-      check not fileExists(memory.preferencesMdPath(userId))
+      check readFile(memory.preferencesMdPath(userId)).contains("agent_name = \"Donkey\"")
 
       port.clearMemory(userId)
       let graphCtx = newMagmaMemoryAdapter(testDsn, fakeEmbedFn).loadContext(userId)
