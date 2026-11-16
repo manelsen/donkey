@@ -213,12 +213,17 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
           core_log.log(logger, core_log.lvlError, "dc model menu: " & error)
     true
   of cbkModelsSet:
+    let model = common_runtime.resolveModelCallback(callback.provider, callback.model)
+    if model.len == 0:
+      core_log.log(logger, core_log.lvlWarn,
+        "dc model selection expired: " & callback.model)
+      return true
     memory.saveChannelPreference(userId, "provider", callback.provider)
-    memory.saveChannelPreference(userId, "model", callback.model)
+    memory.saveChannelPreference(userId, "model", model)
     let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotModels)
     if kbdId.len > 0:
       dcAdapter.smartEditKeyboard(event, userId, kbdId,
-        "Modelo definido: " & callback.provider & " / " & callback.model,
+        "Modelo definido: " & callback.provider & " / " & model,
         @[]).isOkOr:
           core_log.log(logger, core_log.lvlError, "dc model confirm: " & error)
       common_runtime.clearUiMsgId(presentationState, ckDiscord, userId, UiSlotModels)
@@ -226,7 +231,7 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
       dcAdapter.send(OutboundMessage(
         userId: userId,
         channel: ckDiscord,
-        text: "Modelo definido: " & callback.provider & " / " & callback.model,
+        text: "Modelo definido: " & callback.provider & " / " & model,
       )).isOkOr:
         core_log.log(logger, core_log.lvlError, "dc model confirm: " & error)
     true

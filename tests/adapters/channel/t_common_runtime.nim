@@ -425,3 +425,21 @@ when defined(withPostgres):
     check sorted[1].modelName == "free-z"
     check sorted[2].modelName == "paid-a"
     check sorted[3].modelName == "paid-b"
+
+  test "model page callbacks stay under Telegram's 64-byte limit":
+    let longModel = "baidu/ernie-5.5-flash-preview:free"
+    let entries = @[
+      ModelCatalogEntry(providerName: "openrouter", modelName: longModel,
+                        label: longModel, isFree: true, available: true),
+      ModelCatalogEntry(providerName: "openrouter", modelName: "openai/gpt-6.1-sol",
+                        label: "openai/gpt-6.1-sol", isFree: false, available: true),
+    ]
+    let buttons = buildModelPageButtons("openrouter", entries, "", "", 0)
+    var selected = ""
+    for row in buttons:
+      for (_, data) in row:
+        check data.len <= 64
+        if data.startsWith("models:set:openrouter:"):
+          let token = data.split(':')[^1]
+          selected = resolveModelCallback("openrouter", token)
+    check selected == longModel

@@ -1,6 +1,7 @@
 import std/[algorithm, os, sequtils, strutils, tables, times]
 import parsetoml
 import results
+import checksums/sha1
 import ../../core/pipeops
 import ../../core/commands/command_catalog
 import ../../core/commands/command_routing
@@ -53,6 +54,34 @@ proc buildModelMenu*(): seq[ModelMenuEntry] =
 proc modelMenu*(): seq[ModelMenuEntry] =
   ## Returns the model menu derived from the ProviderCatalog.
   buildModelMenu()
+
+type ModelCallbackTarget = object
+  provider: string
+  model: string
+
+var modelCallbackTargets: Table[string, ModelCallbackTarget]
+
+func modelCallbackToken(provider, model: string): string =
+  "mt" & ($secureHash(provider & "\0" & model)).toLowerAscii()[0 ..< 12]
+
+proc registerModelCallback*(provider, model: string): string {.gcsafe.} =
+  ## Telegram limits callback_data to 64 bytes; OpenRouter model ids routinely
+  ## exceed it. Register the full id and put a short stable token in the button.
+  let token = modelCallbackToken(provider, model)
+  {.cast(gcsafe).}:
+    modelCallbackTargets[token] = ModelCallbackTarget(
+      provider: provider, model: model)
+  token
+
+proc resolveModelCallback*(provider, value: string): string {.gcsafe, raises: [].} =
+  ## Resolves a compact model token. Legacy full model names still work.
+  {.cast(gcsafe).}:
+    let target = modelCallbackTargets.getOrDefault(value)
+    if target.model.len > 0:
+      return if target.provider == provider: target.model else: ""
+    if value.len == 14 and value.startsWith("mt"):
+      return ""
+  value
 
 func uiSlotKey*(userId: UserId; slot: string): string =
   $userId & "|" & slot
@@ -222,8 +251,9 @@ proc buildModelButtons*(memory: MdFileAdapter;
       continue
     var row: seq[(string, string)]
     for model in models:
-      let label = if prov == currProv and model == currModel: "✓ " & model else: model
-      row.add((label, "models:set:" & prov & ":" & model))
+      let rawLabel = if prov == currProv and model == currModel: "✓ " & model else: model
+      let label = clipUtf8(rawLabel, 60)
+      row.add((label, "models:set:" & prov & ":" & registerModelCallback(prov, model)))
       if row.len == 2:
         result.add(row)
         row = @[]
@@ -294,7 +324,7 @@ proc buildModelPageText*(provider: string;
   if entries.len == 0:
     result.add("\n\nNenhum modelo disponível para este provider no catálogo atual.")
 
-func buildModelPageButtons*(provider: string;
+proc buildModelPageButtons*(provider: string;
                             entries: seq[ModelCatalogEntry];
                             currentProvider: string;
                             currentModel: string;
@@ -305,8 +335,10 @@ func buildModelPageButtons*(provider: string;
     let selected = provider == currentProvider and entry.modelName == currentModel
     let alreadyTagged = entry.isFree and entry.label.toLowerAscii().contains("free")
     let freeTag = if entry.isFree and not alreadyTagged: " [free]" else: ""
-    let label = (if selected: "✓ " else: "") & entry.label & freeTag
-    row.add((label, "models:set:" & provider & ":" & entry.modelName))
+    let rawLabel = (if selected: "✓ " else: "") & entry.label & freeTag
+    let label = clipUtf8(rawLabel, 60)
+    row.add((label, "models:set:" & provider & ":" &
+             registerModelCallback(provider, entry.modelName)))
     if row.len == 2:
       result.add(row)
       row = @[]
