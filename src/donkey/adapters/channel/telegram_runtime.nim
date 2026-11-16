@@ -697,11 +697,10 @@ proc handleTelegramTaskCommand*(sm: var SessionManager;
 
   # Commands that should start a session if one doesn't exist
   if command.kind in {cmdDebug, cmdReset, cmdNew, cmdCompact, cmdStop, cmdRestart, cmdBind}:
-    if command.kind in {cmdStop, cmdNew, cmdRestart, cmdReset}:
-      ## The command is queued behind the busy actor; set the flag directly so
-      ## a running tool batch or approval wait aborts immediately.
-      requestUserStop($msg.userId)
-      cancelPendingApprovals(msg.userId)
+    if interruptsTurn(command.kind):
+      ## The command is queued behind the busy actor; the application policy
+      ## sets the stop flag and denies pending approvals immediately.
+      requestTurnInterrupt(msg.userId)
     if ensureTaskSession != nil:
       ensureTaskSession(msg, commandTaskKind(command), "")
     else:

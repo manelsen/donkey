@@ -2,6 +2,8 @@ import std/[options, os, strutils, unittest]
 import chronos
 import chronos/asyncsync
 import donkey/app/approval_runtime
+import donkey/app/session_manager
+import donkey/core/commands/command_routing
 import donkey/adapters/state/approval_store
 import donkey/core/log
 import donkey/core/pipeops
@@ -159,3 +161,37 @@ suite "approval runtime":
     defer: resetApprovalService()
     cancelPendingApprovals(UserId("u1"))
     check denied == 2
+
+  test "turn interrupt policy is reusable by channels":
+    check interruptsTurn(cmdStop)
+    check interruptsTurn(cmdNew)
+    check interruptsTurn(cmdRestart)
+    check interruptsTurn(cmdReset)
+    check not interruptsTurn(cmdDebug)
+    check not interruptsTurn(cmdCompact)
+
+    var denied = 0
+    let fake = ApprovalStorePort(
+      create: proc(userId: string; channel: string; toolName, summary: string;
+                   ttlMs: int64): Result[ApprovalRequest, string] {.gcsafe, raises: [].} =
+        err("must not be called"),
+      status: proc(id: string): Result[ApprovalStatus, string] {.gcsafe, raises: [].} =
+        err("must not be called"),
+      decide: proc(id, userId: string; approved: bool;
+                   admin: bool): Result[void, string] {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}:
+          if not approved:
+            inc denied
+        ok(),
+      listPending: proc(userId: string): Result[seq[ApprovalRequest], string] {.gcsafe, raises: [].} =
+        ok(@[ApprovalRequest(id: "i1", userId: userId, channel: "telegram",
+                             toolName: "bash", summary: "ls", createdAtMs: 0,
+                             expiresAtMs: 60_000, status: apsPending)]),
+    )
+    configureApprovalService(fake, @["bash"])
+    defer: resetApprovalService()
+    requestTurnInterrupt(UserId("interrupt-user"))
+    check isUserStopped("interrupt-user")
+    check denied == 1
+    clearUserStop("interrupt-user")
+    check not isUserStopped("interrupt-user")

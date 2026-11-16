@@ -335,8 +335,9 @@ proc buildModelPageButtons*(provider: string;
     let selected = provider == currentProvider and entry.modelName == currentModel
     let alreadyTagged = entry.isFree and entry.label.toLowerAscii().contains("free")
     let freeTag = if entry.isFree and not alreadyTagged: " [free]" else: ""
-    let rawLabel = (if selected: "✓ " else: "") & entry.label & freeTag
-    let label = clipUtf8(rawLabel, 60)
+    let prefix = if selected: "✓ " else: ""
+    let baseLabel = prefix & entry.label
+    let label = clipUtf8(baseLabel, max(0, 60 - freeTag.len)) & freeTag
     row.add((label, "models:set:" & provider & ":" &
              registerModelCallback(provider, entry.modelName)))
     if row.len == 2:

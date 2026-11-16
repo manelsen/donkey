@@ -9,11 +9,13 @@ import std/[options, sets, tables]
 import chronos
 import chronos/asyncsync
 import ../core/pipeops
+import ../core/commands/command_routing
 import ../domain/agent_message
 import ../domain/message
 import ../core/session/session_ingress
 import ../core/security/dm_policy
 import ../ports/runtime_state
+import ./approval_runtime
 
 const
   RestoredRuntimeSignature* = "__donkey_restored_runtime__"
@@ -157,6 +159,15 @@ proc isUserStopped*(userId: string): bool {.gcsafe, raises: [].} =
     return false
   {.cast(gcsafe).}:
     userId in gStoppedSessions
+
+func interruptsTurn*(kind: CommandKind): bool =
+  ## Cross-channel policy: these commands abort the current turn and deny
+  ## pending approvals before their control task is processed.
+  kind in {cmdStop, cmdNew, cmdRestart, cmdReset}
+
+proc requestTurnInterrupt*(userId: UserId) {.gcsafe, raises: [].} =
+  requestUserStop($userId)
+  cancelPendingApprovals(userId)
 
 proc daemonShuttingDown*(): bool {.gcsafe, raises: [].} =
   {.cast(gcsafe).}:
