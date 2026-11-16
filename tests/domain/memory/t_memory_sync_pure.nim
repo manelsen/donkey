@@ -29,9 +29,35 @@ suite "memory sync — chunks missing from the graph":
     check missingMemoryChunks(markdown, @["- antigo", "- outro antigo"]) ==
       @["- **User:** pergunta\n  **Response:** resposta"]
 
-  test "a known line in the middle splits the new content":
-    check missingMemoryChunks("novo um\nconhecido\nnovo dois", @["conhecido"]) ==
-      @["novo um", "novo dois"]
+  test "a known entry in the middle splits the new content":
+    check missingMemoryChunks("- novo um\n- conhecido\n- novo dois", @["- conhecido"]) ==
+      @["- novo um", "- novo dois"]
+
+  test "an entry keeps its answer even when that line is already stored":
+    ## Dropping the known line would store a question with no answer.
+    let known = "- **User:** Onde moro?\n  **Response:** Lisboa."
+    let markdown = known & "\n- **User:** Onde trabalho?\n  **Response:** Lisboa."
+    check missingMemoryChunks(markdown, @[known]) ==
+      @["- **User:** Onde trabalho?\n  **Response:** Lisboa."]
+
+  test "an entry with one new continuation line is reported whole":
+    let known = "- **User:** pergunta\n  **Response:** resposta antiga"
+    let markdown = "- **User:** pergunta\n  **Response:** resposta nova"
+    check missingMemoryChunks(markdown, @[known]) == @[markdown]
+
+  test "wrapped prose is one entry":
+    check missingMemoryChunks("linha conhecida\ncontinua com texto novo",
+                              @["linha conhecida"]) ==
+      @["linha conhecida\ncontinua com texto novo"]
+
+  test "prose before a list item is its own entry":
+    let markdown = "fim de uma resposta antiga\n- item novo"
+    check missingMemoryChunks(markdown, @["fim de uma resposta antiga"]) ==
+      @["- item novo"]
+
+  test "numbered and starred items start entries too":
+    check missingMemoryChunks("1. antigo\n2. novo\n* outro novo", @["1. antigo"]) ==
+      @["2. novo\n* outro novo"]
 
   test "one contiguous block returns only the lines the graph lacks":
     var lines: seq[string]
