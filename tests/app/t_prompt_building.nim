@@ -81,3 +81,10 @@ suite "prompt building":
     )
     check explained.contains("sequência longa de ferramentas")
     check not explained.contains("mensagem ruim")
+
+  test "provider errors distinguish attachment and auth/rate-limit failures":
+    check "anexo" in genericProviderErrorText(
+      """OpenRouter 400: invalid image_url: expected a URL, got file_id""")
+    check "autenticação" in genericProviderErrorText("401 Unauthorized")
+    check "temporariamente" in genericProviderErrorText("429 rate limit")
+    check "anexo" in genericProviderErrorText("unsupported image content")
