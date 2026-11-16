@@ -36,8 +36,6 @@ when defined(withPostgres) or defined(withSqlite):
 
     ContextMemoryNodeLimit = 200
       ## Memory nodes returned by loadContext, newest first.
-    KnownMemoryNodeLimit   = 1_000_000
-      ## Upper bound for the dedup read; effectively "all memory nodes".
     MemoryContentReadLimit = 16 * 1024 * 1024
       ## Per-node content cap for those reads; above any stored memory.
     LexicalCandidateLimit  = 2000
@@ -280,17 +278,22 @@ when defined(withPostgres) or defined(withSqlite):
       preferencesMd: prefMd,
     )
 
-  proc knownMemoryTexts*(a: MagmaMemoryAdapter;
-                         userId: UserId): Result[seq[string], string] =
-    ## Content of every memory node of the user, without embeddings. Used to
-    ## decide whether a MEMORY.md paragraph is already in the graph; the
-    ## context window of `loadContext` is too small for that question.
-    let nodes = ? a.graph.listNodesLimited(
-      $userId, NtMemory, KnownMemoryNodeLimit, MemoryContentReadLimit)
-    var texts = newSeqOfCap[string](nodes.len)
-    for node in nodes:
-      texts.add(node.content)
-    ok(texts)
+  proc loadUserMd*(a: MagmaMemoryAdapter; userId: UserId): string =
+    let node = a.graph.getNode(profileId(userId))
+    if node.isSome: node.get().content else: ""
+
+  proc loadPreferences*(a: MagmaMemoryAdapter; userId: UserId): string =
+    let node = a.graph.getNode(prefId(userId))
+    if node.isSome: node.get().content else: ""
+
+  proc hasContext*(a: MagmaMemoryAdapter; userId: UserId): bool =
+    ## True when the graph holds anything of this user: a profile,
+    ## preferences or at least one memory.
+    if a.graph.getNode(profileId(userId)).isSome or
+       a.graph.getNode(prefId(userId)).isSome:
+      return true
+    let one = a.graph.listNodesLimited($userId, NtMemory, 1, 1)
+    one.isOk and one.get().len > 0
 
   proc stats*(a: MagmaMemoryAdapter; userId: UserId): MagmaStats =
     a.graph.statsForUser($userId)
@@ -382,19 +385,20 @@ when defined(withPostgres) or defined(withSqlite):
         result.add(parseEpisode(nodes[idx]))
 
   proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string;
-                     origin = MemoryOrigin()) =
+                     origin = MemoryOrigin()): bool {.discardable.} =
+    ## Returns false when the store did not take the node.
     let nid = a.memId(userId)
     let emb = a.embedFn(text)
     let ts = getTime().toUnix()
     let prevMem = a.graph.getLastNode($userId, nodeType = NtMemory)
-    discard a.graph.insertNode(MagmaNode(
+    result = a.graph.insertNode(MagmaNode(
       id: nid, userId: $userId, nodeType: NtMemory,
       content: text, embedding: emb, timestamp: ts,
       meta: originToMeta(origin),
     ))
     ## The only structure kept between memories is their order. Entity and
     ## causal edges came from English sentence patterns and are not written.
-    if prevMem.isSome and prevMem.get().nodeType == NtMemory:
+    if result and prevMem.isSome and prevMem.get().nodeType == NtMemory:
       a.graph.linkTemporal(prevMem.get().id, nid)
 
   proc adjacentMemoryId(a: MagmaMemoryAdapter; nodeId, direction: string): string =
@@ -709,7 +713,10 @@ else:
   proc stats*(a: MagmaMemoryAdapter): MagmaStats = MagmaStats()
   proc saveUserMd*(a: MagmaMemoryAdapter; userId: UserId; content: string) = discard
   proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string;
-                     origin = MemoryOrigin()) = discard
+                     origin = MemoryOrigin()): bool {.discardable.} = false
+  proc loadUserMd*(a: MagmaMemoryAdapter; userId: UserId): string = ""
+  proc loadPreferences*(a: MagmaMemoryAdapter; userId: UserId): string = ""
+  proc hasContext*(a: MagmaMemoryAdapter; userId: UserId): bool = false
   proc savePreferences*(a: MagmaMemoryAdapter; userId: UserId; content: string) = discard
   proc saveCommitment*(a: MagmaMemoryAdapter; userId: UserId; commitment: Commitment) = discard
   proc loadCommitments*(a: MagmaMemoryAdapter; userId: UserId): seq[Commitment] = @[]

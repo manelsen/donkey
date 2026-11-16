@@ -1173,7 +1173,9 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
     for chunk in chunked.chunks:
       try:
         if ctx.memory.appendMemoryFrom != nil:
-          ctx.memory.appendMemoryFrom(ctx.uid, chunk, ingestOrigin)
+          let stored = ctx.memory.appendMemoryFrom(ctx.uid, chunk, ingestOrigin)
+          if stored.isErr:
+            return handledError("Error: memory ingest failed: " & stored.error)
         else:
           ctx.memory.appendMemory(ctx.uid, chunk)
       except Exception as e:

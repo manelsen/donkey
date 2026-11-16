@@ -73,11 +73,12 @@ type
     loadContext*:     proc(userId: UserId): UserContext {.gcsafe.}
     saveUserMd*:      proc(userId: UserId; content: string) {.gcsafe.}
     appendMemory*:    proc(userId: UserId; text: string) {.gcsafe.}
-    ## Optional. Same as appendMemory, recording where the text came from.
-    ## Nil means the backend keeps no origin; callers fall back to
-    ## appendMemory.
+    ## Optional. Same as appendMemory, recording where the text came from and
+    ## reporting whether it was stored. Nil means the backend keeps no
+    ## origin; callers fall back to appendMemory.
     appendMemoryFrom*: proc(userId: UserId; text: string;
-                            origin: MemoryOrigin) {.gcsafe.}
+                            origin: MemoryOrigin): Result[void, string]
+                            {.gcsafe, raises: [].}
     savePreferences*: proc(userId: UserId; content: string) {.gcsafe.}
     clearMemory*:     proc(userId: UserId) {.gcsafe.}
     resetBootstrap*:  proc(userId: UserId) {.gcsafe.}

@@ -1,4 +1,5 @@
-import std/unittest
+import std/[strutils, unittest]
+import donkey/core/pipeops
 import donkey/app/onboarding_runtime
 import donkey/core/types
 import donkey/domain/memory/provenance_pure
@@ -17,12 +18,14 @@ suite "safeAppendMemory with origin":
       appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
         {.cast(gcsafe).}: captured.plain.add(text),
       appendMemoryFrom: proc(userId: UserId; text: string;
-                             origin: MemoryOrigin) {.gcsafe.} =
+                             origin: MemoryOrigin): Result[void, string]
+                             {.gcsafe, raises: [].} =
         {.cast(gcsafe).}:
           captured.tagged.add(text)
-          captured.origins.add(origin),
+          captured.origins.add(origin)
+        ok(),
     )
-    safeAppendMemory(mem, UserId("u1"), "fato", turnOrigin("s1"))
+    check safeAppendMemory(mem, UserId("u1"), "fato", turnOrigin("s1")).isOk
     check captured.plain.len == 0
     check captured.tagged == @["fato"]
     check captured.origins == @[turnOrigin("s1")]
@@ -33,7 +36,7 @@ suite "safeAppendMemory with origin":
       appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
         {.cast(gcsafe).}: captured.plain.add(text),
     )
-    safeAppendMemory(mem, UserId("u1"), "fato", turnOrigin("s1"))
+    check safeAppendMemory(mem, UserId("u1"), "fato", turnOrigin("s1")).isOk
     check captured.plain == @["fato"]
 
   test "origin stays optional":
@@ -42,5 +45,25 @@ suite "safeAppendMemory with origin":
       appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
         {.cast(gcsafe).}: captured.plain.add(text),
     )
-    safeAppendMemory(mem, UserId("u1"), "fato")
+    check safeAppendMemory(mem, UserId("u1"), "fato").isOk
     check captured.plain == @["fato"]
+
+  test "a failed append is reported to the caller":
+    let failing = MemoryRuntimePort(
+      appendMemoryFrom: proc(userId: UserId; text: string;
+                             origin: MemoryOrigin): Result[void, string]
+                             {.gcsafe, raises: [].} =
+        err("graph unavailable"),
+    )
+    let res = safeAppendMemory(failing, UserId("u1"), "fato", turnOrigin("s1"))
+    check res.isErr
+    check res.error == "graph unavailable"
+
+  test "an exception in a plain backend is reported, not swallowed":
+    let raising = MemoryRuntimePort(
+      appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
+        raise newException(IOError, "disk full"),
+    )
+    let res = safeAppendMemory(raising, UserId("u1"), "fato")
+    check res.isErr
+    check "disk full" in res.error

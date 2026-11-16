@@ -453,7 +453,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     onboarding_runtime.safeAppendMemory(
       memory, turnSetup.uid,
       formatAutoMemoryEntry(turnSetup.userText, loopResult.finalText),
-      turnOrigin(result.sessionId))
+      turnOrigin(result.sessionId)).isOkOr:
+        log.warn("auto memory capture: " & error)
 
   if loopResult.finalText.len > 0:
     discard rememberCommitments(

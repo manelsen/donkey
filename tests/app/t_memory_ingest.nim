@@ -83,9 +83,11 @@ suite "memory_ingest tool":
         {.cast(gcsafe).}:
           captured.chunks.add("plain:" & text),
       appendMemoryFrom: proc(userId: UserId; text: string;
-                             origin: MemoryOrigin) {.gcsafe.} =
+                             origin: MemoryOrigin): Result[void, string]
+                             {.gcsafe, raises: [].} =
         {.cast(gcsafe).}:
-          captured.chunks.add($origin.source & ":" & origin.sessionId & ":" & text),
+          captured.chunks.add($origin.source & ":" & origin.sessionId & ":" & text)
+        ok(),
     )
     var ctx = NativeCtx(
       uid: UserId("u1"),
@@ -99,6 +101,26 @@ suite "memory_ingest tool":
     check res.handled
     check res.resultKind == trkOutput
     check captured.chunks == @["ingest:s42:uma nota curta"]
+
+  test "reports a backend that fails to store a chunk":
+    let mem = MemoryRuntimePort(
+      appendMemory: proc(userId: UserId; text: string) {.gcsafe.} = discard,
+      appendMemoryFrom: proc(userId: UserId; text: string;
+                             origin: MemoryOrigin): Result[void, string]
+                             {.gcsafe, raises: [].} =
+        err("graph unavailable"),
+    )
+    var ctx = NativeCtx(
+      uid: UserId("u1"),
+      channel: ckTelegram,
+      paddockDir: TestRoot,
+      memory: mem,
+      log: ingestLog,
+    )
+    let res = waitFor runIngest(ctx, """{"text":"uma nota curta"}""")
+    check res.handled
+    check res.resultKind == trkOperationalError
+    check "graph unavailable" in res.text
 
   test "rejects path traversal":
     let mem = MemoryRuntimePort()
