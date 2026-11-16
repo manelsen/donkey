@@ -5,6 +5,7 @@ when defined(withSqlite):
   import donkey/core/types
   import donkey/adapters/memory/magma_memory_adapter
   import donkey/domain/memory/commitment_pure
+  import donkey/ports/multigraph_store
 
   proc fakeEmbedFn(text: string): seq[float32] {.gcsafe.} =
     result = @[0.0'f32, 0.0'f32, 0.0'f32, 0.0'f32]
@@ -34,6 +35,16 @@ when defined(withSqlite):
       check ctx.memoryMd.contains("apple priority memory")
       let hits = a.search(UserId("u1"), "apple", 2)
       check hits.len > 0
+
+    test "burst of appends is chained in insertion order":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      for i in 0 .. 11:
+        a.appendMemory(UserId("u1"), "fato " & $i)
+      for i in 1 .. 11:
+        let incoming = a.graph.getEdges(
+          "u1_m" & $i, edgeType = EdgeTemporal, direction = "in")
+        check incoming.len == 1
+        check incoming[0].fromId == "u1_m" & $(i - 1)
 
     test "commitments round-trip":
       let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
