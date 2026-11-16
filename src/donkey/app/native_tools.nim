@@ -42,6 +42,7 @@ export code_tools      # parseCodeRequest, runCodeRequestAsync, codeConfigFromEn
 # ── Dispatcher-only imports ──────────────────────────────────────────────────
 
 import std/[json, options, tables, sequtils, strutils, times, os]
+import checksums/sha1
 import chronos
 import chronos/asyncsync
 import ../core/tooling/native_tool_dispatch
@@ -52,6 +53,7 @@ import ../domain/message
 import ../domain/more_tools
 import ../domain/builtin_tools
 import ../domain/memory/session_search_pure
+import ../domain/memory/ingest_pure
 import ../domain/subagent_pure
 import ../domain/reminder
 import ../ports/http as httpPort
@@ -130,6 +132,12 @@ type
     query*:         string
     limit*:         int
     includeMemory*: bool
+
+  MemoryIngestContext* = object
+    path*:       string
+    text*:       string
+    chunkChars*: int
+    maxChunks*:  int
 
   SpawnSubagentContext* = object
     request*: SubagentRequest
@@ -280,6 +288,29 @@ proc parseSessionSearchContext*(j: JsonNode): Result[SessionSearchContext, strin
     else: true
   ok(SessionSearchContext(query: query, limit: limit,
                           includeMemory: includeMemory))
+
+proc parseMemoryIngestContext*(j: JsonNode): Result[MemoryIngestContext, string]
+                                                                  {.gcsafe, raises: [].} =
+  let path = j.getOrDefault("path").getStr("").strip()
+  let text = j.getOrDefault("text").getStr("")
+  if path.len > 0 and text.strip.len > 0:
+    return err("use either 'path' or 'text', not both")
+  if path.len == 0 and text.strip.len == 0:
+    return err("'path' or 'text' is required")
+  let chunkNode = j.getOrDefault("chunk_chars")
+  let chunkChars =
+    if chunkNode != nil and chunkNode.kind == JInt:
+      clampChunkChars(chunkNode.getInt())
+    else:
+      DefaultIngestChunkChars
+  let maxNode = j.getOrDefault("max_chunks")
+  let maxChunks =
+    if maxNode != nil and maxNode.kind == JInt:
+      clampMaxChunks(maxNode.getInt())
+    else:
+      DefaultIngestMaxChunks
+  ok(MemoryIngestContext(path: path, text: text,
+                         chunkChars: chunkChars, maxChunks: maxChunks))
 
 proc optionalIntField(j: JsonNode; key: string): Result[int, string]
                                                          {.gcsafe, raises: [].} =
@@ -1110,6 +1141,44 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
         "snippet": hit.snippet,
       })
     return handledText($arr)
+  of MemoryIngestToolName:
+    let ingestCtx = parseMemoryIngestContext(j).valueOr:
+      return handledError(error)
+    var content = ingestCtx.text
+    var source = "text"
+    if ingestCtx.path.len > 0:
+      let absPath = resolvedToolPath(
+        ingestCtx.path, ctx.paddockDir, ctx.log, MemoryIngestToolName).valueOr:
+        return handledError(error)
+      if dirExists(absPath):
+        return handledError("Error: path is a directory: " & ingestCtx.path)
+      if not fileExists(absPath):
+        return handledError("Error: file not found: " & ingestCtx.path)
+      if getFileSize(absPath) > 2_000_000:
+        return handledError("Error: file exceeds the 2 MB ingest limit.")
+      content = readFile(absPath)
+      source = ingestCtx.path
+    if content.strip.len == 0:
+      return handledError("Error: no text to ingest.")
+    if '\0' in content:
+      return handledError("Error: binary file rejected.")
+    let chunked = chunkForMemory(content, ingestCtx.chunkChars, ingestCtx.maxChunks)
+    if chunked.chunks.len == 0:
+      return handledError("Error: no text to ingest.")
+    if ctx.memory.appendMemory == nil:
+      return handledError("Error: memory backend unavailable.")
+    for chunk in chunked.chunks:
+      try:
+        ctx.memory.appendMemory(ctx.uid, chunk)
+      except Exception as e:
+        return handledError("Error: memory ingest failed: " & e.msg)
+    return handledText($(%*{
+      "ok": true,
+      "chunks": chunked.chunks.len,
+      "bytes": content.len,
+      "truncated": chunked.truncated,
+      "source": source,
+    }))
   of ManageSkillsToolName:
     let skillCtx = parseManageSkillsContext(j).valueOr:
       return handledError(error)
@@ -1219,10 +1288,42 @@ proc executeNativeCategory(tc: ToolCallRequest;
     return categoryResult
   NativeToolResult(handled: false)
 
+func escapedApprovalPreview(text: string; maxChars: int): string =
+  let clipped = if text.len > maxChars: text[0 ..< maxChars] & "…" else: text
+  clipped.replace("\r\n", "\\n")
+         .replace("\n", "\\n")
+         .replace("\r", "\\r")
+
+func structuredWriteSummary(j: JsonNode): string =
+  let path = j.getOrDefault("path").getStr("")
+  let mode = j.getOrDefault("mode").getStr("replace")
+  let content = j.getOrDefault("content").getStr("")
+  let digest = ($secureHash(content)).toLowerAscii()
+  "path=" & path & " mode=" & mode & " bytes=" & $content.len &
+    " sha1=" & digest & "\npreview:\n" & escapedApprovalPreview(content, 800)
+
+func structuredReplaceSummary(j: JsonNode): string =
+  let path = j.getOrDefault("path").getStr("")
+  let find = j.getOrDefault("find").getStr("")
+  let replace = j.getOrDefault("replace").getStr("")
+  let digest = ($secureHash(find & "\0" & replace)).toLowerAscii()
+  "path=" & path & " find_bytes=" & $find.len & " replace_bytes=" & $replace.len &
+    " sha1=" & digest & "\npreview:\n" & escapedApprovalPreview(replace, 800)
+
+func largeWritesSummaryMode(): bool =
+  getEnv("DONKEY_APPROVAL_LARGE_WRITES").strip.toLowerAscii() == "summary"
+
 func approvalSummary(toolName: string; j: JsonNode): string =
   ## The approval must reflect the complete action. Oversized requests are
-  ## rejected instead of showing a truncated command/edit.
+  ## rejected instead of showing a truncated command/edit. A file-write
+  ## summary is available as an explicit opt-in for large fs_write/text_replace
+  ## payloads; bash/execute_code remain full-display-only.
   const MaxApprovalSummaryChars = 1500
+  if largeWritesSummaryMode():
+    if toolName == FsWriteToolName:
+      return structuredWriteSummary(j)
+    if toolName == TextReplaceToolName:
+      return structuredReplaceSummary(j)
   if toolName == ExecuteCodeToolName:
     let languageNode = j.getOrDefault("language")
     let language =
