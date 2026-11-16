@@ -21,6 +21,8 @@ type
     role*: string
     text*: string
     seq*:  int64   ## session number; 0 when the line or message has none
+    high*: int64   ## stored lines only: highest number in the file up to
+                   ## this line; 0 when the line does not record it
 
 func sameContent(a, b: TranscriptLine): bool =
   a.role == b.role and a.text == b.text
@@ -72,17 +74,23 @@ func resumeByContent(existing, history: openArray[TranscriptLine]): int =
   elif headRun > 0: headRun
   else: 0
 
+func highestNumber*(lines: openArray[TranscriptLine]): int64 =
+  ## Highest session number these lines know of. Each stored line records the
+  ## highest number written before it, because a rewind can leave a low
+  ## number at the very end of a file that holds much higher ones.
+  for line in lines:
+    result = max(result, max(line.seq, line.high))
+
 func needsWholeTranscript*(tail, history: openArray[TranscriptLine]): bool =
   ## True when the end of the transcript cannot tell whether a message of
   ## `history` is stored: its number is not in the tail and is not above it
   ## (a rewind to an old checkpoint), the tail holds no numbered record, or
   ## the message has no number at all. The caller then reads the whole file.
   var storedNumbers = initHashSet[int64]()
-  var highestStored = 0'i64
   for stored in tail:
     if stored.seq > 0:
       storedNumbers.incl(stored.seq)
-      highestStored = max(highestStored, stored.seq)
+  let highestStored = highestNumber(tail)
   for message in history:
     if message.seq == SyntheticMessageSeq:
       continue

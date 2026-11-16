@@ -344,3 +344,21 @@ suite "MdFileAdapter session transcript":
     adapter.saveSession(uid, "s1", rewound)
     check readFile(path).splitLines().filterIt(it.strip.len > 0).len == before
 
+  test "high numbers restored after a late low one are not written again":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    ## 1 to 8 stored; a rewind then stores a large message numbered 4.
+    adapter.saveSession(uid, "s1", numbered(1, 2) & numbered(5, 8))
+    var late = numbered(1, 2)
+    late.add(ChatMessage(role: roleUser, seq: 4,
+                         text: repeat("w", SessionTranscriptAlignBytes + 1024)))
+    adapter.saveSession(uid, "s1", late)
+    let path = adapter.paddockDir(uid) / "sessions" / "s1.jsonl"
+    let before = readFile(path).splitLines().filterIt(it.strip.len > 0).len
+    check before == 7
+    ## A later checkpoint restore brings 7 and 8 back.
+    adapter.saveSession(uid, "s1", numbered(7, 8))
+    check readFile(path).splitLines().filterIt(it.strip.len > 0).len == before
+
