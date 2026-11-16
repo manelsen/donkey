@@ -708,9 +708,10 @@ proc buildDoctorReport*(memory: MdFileAdapter;
                         sessionCount: int): string =
   var report = "🩺 Donkey Doctor\n\n"
   
-  ## Teste do provider
+  ## Teste do provider ativo do usuário (não o default da instância)
   let t0 = nowMs()
-  let testFn = completeBuilder("")
+  let userPrefs = memory.loadContext(userId).preferencesMd
+  let testFn = completeBuilder(userPrefs)
   var history = newHistory()
   history.addUser("ping")
   let req = buildPrompt("Reply with one word: pong", history, "")
@@ -719,7 +720,9 @@ proc buildDoctorReport*(memory: MdFileAdapter;
   if resp.isOk:
     report.add("✅ Provider: OK (" & $delta & "ms)\n")
   else:
-    report.add("❌ Provider: " & resp.error & "\n")
+    let detail = resp.error.strip
+    let clipped = if detail.len > 300: detail[0 ..< 300] & "…" else: detail
+    report.add("❌ Provider: " & clipped & "\n")
   
   ## Modelo atual
   let (prov, mdl) = memory.getCurrentProviderModel(userId)
@@ -775,6 +778,9 @@ proc buildDoctorReport*(memory: MdFileAdapter;
     ("OPENROUTER_API_KEY", "OpenRouter"),
     ("ZAI_API_KEY", "Zhipu"),
     ("ANTHROPIC_API_KEY", "Anthropic"),
+    ("OPENAI_API_KEY", "OpenAI"),
+    ("DEEPSEEK_API_KEY", "DeepSeek"),
+    ("GROQ_API_KEY", "Groq"),
     ("GEMINI_API_KEY", "Gemini"),
     ("MINIMAX_API_KEY", "MiniMax"),
   ]
