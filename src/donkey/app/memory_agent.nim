@@ -11,6 +11,7 @@ import std/strutils except strip
 import chronos
 import chronos/asyncsync
 import ../domain/agent_message
+import ../core/pipeops
 import ../core/types
 import ../ports/memory
 
@@ -50,11 +51,19 @@ proc runMemoryAgent*(inbox:     AsyncQueue[AgentMessage];
           await outbox.put(newErrorMsg(msg.id, "MemoryAgent loadCtx: " & e.msg))
 
       of tkSaveMem:
+        ## A memory that was not stored is an error for the caller, never a
+        ## silent success.
+        var failure = ""
         try:
-          memory.appendMemory(UserId(msg.userId), msg.payload)
-          await outbox.put(newResultMsg(msg.id, ""))
+          let stored = memory.appendMemory(UserId(msg.userId), msg.payload)
+          if stored.isErr:
+            failure = stored.error
         except Exception as e:
-          await outbox.put(newErrorMsg(msg.id, "MemoryAgent saveMem: " & e.msg))
+          failure = e.msg
+        if failure.len > 0:
+          await outbox.put(newErrorMsg(msg.id, "MemoryAgent saveMem: " & failure))
+        else:
+          await outbox.put(newResultMsg(msg.id, ""))
 
       of tkSavePrefs:
         try:

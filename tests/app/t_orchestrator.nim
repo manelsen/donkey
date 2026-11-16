@@ -180,6 +180,24 @@ suite "MemoryAgent":
     check fileExists(tmpDir / "u1" / "MEMORY.md")
     check readFile(tmpDir / "u1" / "MEMORY.md").contains("Likes Nim.")
 
+  test "saveMem answers with an error when the memory is not stored":
+    proc doTest(): Future[AgentMessage] {.async.} =
+      let port = MemoryRuntimePort(
+        appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                          {.gcsafe, raises: [].} =
+          err("memory graph did not store the entry"),
+      )
+      let inbox  = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[AgentMessage]()
+      asyncSpawn runMemoryAgent(inbox, outbox, port)
+      await inbox.put(newTaskMsg("req-fail", tkSaveMem, "u1", "Likes Nim."))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      return reply
+    let reply = waitFor doTest()
+    check reply.kind == amkError
+    check reply.text.contains("did not store")
+
   test "loadCtx puts recalled memory before preferences, with no lessons block":
     let tmpDir = getTempDir() / "donkey_test_mem_order"
     removeDir(tmpDir)

@@ -259,7 +259,6 @@ proc safeAppendMemory*(memory: MemoryRuntimePort;
       memory.appendMemoryFrom(uid, text, origin)
     else:
       memory.appendMemory(uid, text)
-      ok()
   except Exception as e:
     err("append memory: " & e.msg)
 

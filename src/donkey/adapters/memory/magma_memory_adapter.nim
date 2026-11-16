@@ -16,6 +16,9 @@ import ../../domain/memory/commitment_pure
 import ../../domain/memory/decay
 import ../../domain/memory/episode_pure
 import ../../domain/memory/provenance_pure
+import ../../domain/memory/query_policy_pure
+
+export query_policy_pure  ## the policy lives in the domain; kept visible here
 
 when defined(withPostgres) or defined(withSqlite):
   import std/[json, strutils, times, algorithm, options, tables]
@@ -44,28 +47,11 @@ when defined(withPostgres) or defined(withSqlite):
       ## Content read per candidate for that scan.
 
   type
-    QueryIntent* = enum
-      qiSemantic, qiTemporal
-
-    QueryPolicy* = object
-      ## Weights of the ranked lists fused by reciprocal rank.
-      intent*:         QueryIntent
-      semanticWeight*: float   ## nearest embeddings
-      lexicalWeight*:  float   ## literal query terms
-      temporalWeight*: float   ## most recent memories
-      neighborWeight*: float   ## memories next to a semantic hit in time
-
     SearchConfig* = object
       semanticTopKMultiplier*: int
       recentTopKMultiplier*:   int
       rerankPoolSize*:         int
       rerankWeight*:           float32
-
-  func defaultPolicy*(): QueryPolicy =
-    ## Meaning and literal terms weigh the same: names, error messages and
-    ## file names are found by their words, paraphrases by their embedding.
-    QueryPolicy(intent: qiSemantic, semanticWeight: 0.5, lexicalWeight: 0.5,
-                temporalWeight: 0.0, neighborWeight: 0.0)
 
   func defaultSearchConfig*(): SearchConfig =
     SearchConfig(
@@ -82,44 +68,6 @@ when defined(withPostgres) or defined(withSqlite):
       1.0'f32
     else:
       score
-
-  const
-    ## Whole words that make a query a question about time, in English and
-    ## Portuguese, the latter with and without accents.
-    TemporalWords = [
-      "when", "yesterday", "last", "before", "after", "earlier", "first",
-      "then", "ago", "today",
-      "quando", "ontem", "anteontem", "hoje", "antes", "depois",
-      "último", "ultimo", "última", "ultima",
-      "últimos", "ultimos", "últimas", "ultimas",
-      "primeiro", "primeira", "atrás", "atras", "passado", "passada",
-    ]
-    ## Word beginnings with the same meaning: recent, recently, recente,
-    ## recentemente; chronological, cronológica; anterior, anteriormente.
-    TemporalStems = ["recent", "chronolog", "cronol", "anterior"]
-
-  func asksAboutTime*(query: string): bool =
-    ## Matches whole words, not substrings: "contem" holds "ontem" and
-    ## "elastic" holds "last", and neither is about time.
-    for word in queryTerms(query):
-      if word in TemporalWords:
-        return true
-      for stem in TemporalStems:
-        if word.startsWith(stem):
-          return true
-    false
-
-  func classifyQuery*(query: string): QueryPolicy =
-    ## A query that asks about time also ranks by recency and pulls in the
-    ## memories next to its hits. Entity and causal intents are gone with the
-    ## entity and causal graphs.
-    result = defaultPolicy()
-    if asksAboutTime(query):
-      result.intent = qiTemporal
-      result.semanticWeight = 0.30
-      result.lexicalWeight  = 0.20
-      result.temporalWeight = 0.40
-      result.neighborWeight = 0.10
 
   type
     MagmaMemoryAdapter* = ref object
@@ -274,7 +222,10 @@ when defined(withPostgres) or defined(withSqlite):
   proc hasProfile*(a: MagmaMemoryAdapter; userId: UserId): bool =
     a.graph.getNode(profileId(userId)).isSome
 
-  proc loadContext*(a: MagmaMemoryAdapter; userId: UserId): UserContext =
+  proc readContext*(a: MagmaMemoryAdapter;
+                    userId: UserId): Result[UserContext, string] =
+    ## The user's context as the graph holds it. An error means the graph
+    ## could not be read, which is not the same as a graph with nothing in it.
     var userMd = ""
     var memLines: seq[string]
     var prefMd = ""
@@ -286,17 +237,20 @@ when defined(withPostgres) or defined(withSqlite):
       prefMd = prefNode.get().content
     ## Filter by type in the query: entity and episode nodes share the
     ## same table and would otherwise push memories out of the window.
-    let memNodes = a.graph.listNodesLimited(
+    let memNodes = ? a.graph.listNodesLimited(
       $userId, NtMemory, ContextMemoryNodeLimit, MemoryContentReadLimit)
-    if memNodes.isOk:
-      for m in memNodes.get():
-        memLines.add(m.content)
-    UserContext(
+    for m in memNodes:
+      memLines.add(m.content)
+    ok(UserContext(
       userId:        userId,
       userMd:        userMd,
       memoryMd:      memLines.join("\n\n"),
       preferencesMd: prefMd,
-    )
+    ))
+
+  proc loadContext*(a: MagmaMemoryAdapter; userId: UserId): UserContext =
+    ## readContext for callers that treat an unreadable graph as empty.
+    a.readContext(userId).valueOr(UserContext(userId: userId))
 
   proc loadUserMd*(a: MagmaMemoryAdapter; userId: UserId): string =
     let node = a.graph.getNode(profileId(userId))
@@ -306,14 +260,16 @@ when defined(withPostgres) or defined(withSqlite):
     let node = a.graph.getNode(prefId(userId))
     if node.isSome: node.get().content else: ""
 
-  proc hasContext*(a: MagmaMemoryAdapter; userId: UserId): bool =
-    ## True when the graph holds anything of this user: a profile,
-    ## preferences or at least one memory.
-    if a.graph.getNode(profileId(userId)).isSome or
-       a.graph.getNode(prefId(userId)).isSome:
-      return true
-    let one = a.graph.listNodesLimited($userId, NtMemory, 1, 1)
-    one.isOk and one.get().len > 0
+  proc hasContext*(a: MagmaMemoryAdapter;
+                   userId: UserId): Result[bool, string] =
+    ## Whether the graph holds anything of this user: a profile, preferences
+    ## or at least one memory. The memory read goes first because it is the
+    ## one that reports a graph that cannot be read; "nothing found" must
+    ## never be concluded from a failed read.
+    let one = ? a.graph.listNodesLimited($userId, NtMemory, 1, 1)
+    ok(one.len > 0 or
+       a.graph.getNode(profileId(userId)).isSome or
+       a.graph.getNode(prefId(userId)).isSome)
 
   proc stats*(a: MagmaMemoryAdapter; userId: UserId): MagmaStats =
     a.graph.statsForUser($userId)
@@ -405,21 +361,26 @@ when defined(withPostgres) or defined(withSqlite):
         result.add(parseEpisode(nodes[idx]))
 
   proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string;
-                     origin = MemoryOrigin()): bool {.discardable.} =
-    ## Returns false when the store did not take the node.
+                     origin = MemoryOrigin()): Result[void, string]
+                     {.discardable.} =
+    ## Errors when the store did not take the node. The store reports that
+    ## as a plain refusal, so the message is this adapter's.
     let nid = a.memId(userId)
     let emb = a.embedFn(text)
     let ts = getTime().toUnix()
     let prevMem = a.graph.getLastNode($userId, nodeType = NtMemory)
-    result = a.graph.insertNode(MagmaNode(
+    let stored = a.graph.insertNode(MagmaNode(
       id: nid, userId: $userId, nodeType: NtMemory,
       content: text, embedding: emb, timestamp: ts,
       meta: originToMeta(origin),
     ))
+    if not stored:
+      return err("memory graph did not store the entry " & nid)
     ## The only structure kept between memories is their order. Entity and
     ## causal edges came from English sentence patterns and are not written.
-    if result and prevMem.isSome and prevMem.get().nodeType == NtMemory:
+    if prevMem.isSome and prevMem.get().nodeType == NtMemory:
       a.graph.linkTemporal(prevMem.get().id, nid)
+    ok()
 
   proc adjacentMemoryId(a: MagmaMemoryAdapter; nodeId, direction: string): string =
     ## Id on the other end of the TEMPORAL edge closest to `nodeId`. Stores
@@ -686,23 +647,12 @@ when defined(withPostgres) or defined(withSqlite):
 else:
   type
     MagmaMemoryAdapter* = ref object
-    QueryIntent* = enum
-      qiSemantic, qiTemporal
-    QueryPolicy* = object
-      intent*:         QueryIntent
-      semanticWeight*: float
-      lexicalWeight*:  float
-      temporalWeight*: float
-      neighborWeight*: float
     SearchConfig* = object
       semanticTopKMultiplier*: int
       recentTopKMultiplier*:   int
       rerankPoolSize*:         int
       rerankWeight*:           float32
 
-  func defaultPolicy*(): QueryPolicy =
-    QueryPolicy(intent: qiSemantic, semanticWeight: 0.5, lexicalWeight: 0.5,
-                temporalWeight: 0.0, neighborWeight: 0.0)
   func defaultSearchConfig*(): SearchConfig =
     SearchConfig(
       semanticTopKMultiplier: 8,
@@ -710,7 +660,6 @@ else:
       rerankPoolSize: 24,
       rerankWeight: 0.85'f32,
     )
-  func classifyQuery*(query: string): QueryPolicy = defaultPolicy()
   proc newMagmaMemoryAdapter*(dsn: string;
                               embedFn: EmbedFn;
                               rerankFn: RerankFn = nil;
@@ -733,10 +682,16 @@ else:
   proc stats*(a: MagmaMemoryAdapter): MagmaStats = MagmaStats()
   proc saveUserMd*(a: MagmaMemoryAdapter; userId: UserId; content: string) = discard
   proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string;
-                     origin = MemoryOrigin()): bool {.discardable.} = false
+                     origin = MemoryOrigin()): Result[void, string]
+                     {.discardable.} = err("no memory graph backend in this build")
   proc loadUserMd*(a: MagmaMemoryAdapter; userId: UserId): string = ""
   proc loadPreferences*(a: MagmaMemoryAdapter; userId: UserId): string = ""
-  proc hasContext*(a: MagmaMemoryAdapter; userId: UserId): bool = false
+  proc readContext*(a: MagmaMemoryAdapter;
+                    userId: UserId): Result[UserContext, string] =
+    err("no memory graph backend in this build")
+  proc hasContext*(a: MagmaMemoryAdapter;
+                   userId: UserId): Result[bool, string] =
+    err("no memory graph backend in this build")
   proc savePreferences*(a: MagmaMemoryAdapter; userId: UserId; content: string) = discard
   proc saveCommitment*(a: MagmaMemoryAdapter; userId: UserId; commitment: Commitment) = discard
   proc loadCommitments*(a: MagmaMemoryAdapter; userId: UserId): seq[Commitment] = @[]

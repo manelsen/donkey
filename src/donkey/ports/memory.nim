@@ -72,7 +72,8 @@ type
     hasProfile*:      proc(userId: UserId): bool {.gcsafe.}
     loadContext*:     proc(userId: UserId): UserContext {.gcsafe.}
     saveUserMd*:      proc(userId: UserId; content: string) {.gcsafe.}
-    appendMemory*:    proc(userId: UserId; text: string) {.gcsafe.}
+    appendMemory*:    proc(userId: UserId; text: string): Result[void, string]
+                        {.gcsafe, raises: [].}
     ## Optional. Same as appendMemory, recording where the text came from and
     ## reporting whether it was stored. Nil means the backend keeps no
     ## origin; callers fall back to appendMemory.

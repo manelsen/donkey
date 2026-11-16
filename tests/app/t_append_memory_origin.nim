@@ -15,8 +15,10 @@ suite "safeAppendMemory with origin":
   test "uses the origin-aware hook when the backend has one":
     let captured = Capture()
     let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
-        {.cast(gcsafe).}: captured.plain.add(text),
+      appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}: captured.plain.add(text)
+        ok(),
       appendMemoryFrom: proc(userId: UserId; text: string;
                              origin: MemoryOrigin): Result[void, string]
                              {.gcsafe, raises: [].} =
@@ -33,8 +35,10 @@ suite "safeAppendMemory with origin":
   test "falls back to plain append when the backend has no hook":
     let captured = Capture()
     let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
-        {.cast(gcsafe).}: captured.plain.add(text),
+      appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}: captured.plain.add(text)
+        ok(),
     )
     check safeAppendMemory(mem, UserId("u1"), "fato", turnOrigin("s1")).isOk
     check captured.plain == @["fato"]
@@ -42,8 +46,10 @@ suite "safeAppendMemory with origin":
   test "origin stays optional":
     let captured = Capture()
     let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
-        {.cast(gcsafe).}: captured.plain.add(text),
+      appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}: captured.plain.add(text)
+        ok(),
     )
     check safeAppendMemory(mem, UserId("u1"), "fato").isOk
     check captured.plain == @["fato"]
@@ -59,11 +65,12 @@ suite "safeAppendMemory with origin":
     check res.isErr
     check res.error == "graph unavailable"
 
-  test "an exception in a plain backend is reported, not swallowed":
-    let raising = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
-        raise newException(IOError, "disk full"),
+  test "a failure in a backend without origins is reported, not swallowed":
+    let failing = MemoryRuntimePort(
+      appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
+        err("disk full"),
     )
-    let res = safeAppendMemory(raising, UserId("u1"), "fato")
+    let res = safeAppendMemory(failing, UserId("u1"), "fato")
     check res.isErr
     check "disk full" in res.error

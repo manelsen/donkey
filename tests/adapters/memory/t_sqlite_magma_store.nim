@@ -85,7 +85,7 @@ when defined(withSqlite):
       )
       let uid = UserId("u1")
       let port = adapter.toRuntimePort()
-      port.appendMemory(uid, "magma-only deploy fact")
+      check port.appendMemory(uid, "magma-only deploy fact").isOk
       let hits = port.searchSessions(uid, "magma-only", 10, true).get()
       check hits.anyIt(it.kind == shkMemory and "magma-only" in it.snippet)
 

@@ -36,9 +36,11 @@ suite "memory_ingest tool":
       repeat("terceira parte final. ", 20) & "\n")
     let captured = Capture()
     let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
+      appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
         {.cast(gcsafe).}:
           captured.chunks.add(text)
+        ok()
     )
     var ctx = NativeCtx(
       uid: UserId("u1"),
@@ -60,9 +62,11 @@ suite "memory_ingest tool":
   test "accepts inline text":
     let captured = Capture()
     let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
+      appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
         {.cast(gcsafe).}:
           captured.chunks.add(text)
+        ok()
     )
     var ctx = NativeCtx(
       uid: UserId("u1"),
@@ -79,9 +83,11 @@ suite "memory_ingest tool":
   test "tags chunks as ingest when the backend records origins":
     let captured = Capture()
     let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
+      appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
         {.cast(gcsafe).}:
-          captured.chunks.add("plain:" & text),
+          captured.chunks.add("plain:" & text)
+        ok(),
       appendMemoryFrom: proc(userId: UserId; text: string;
                              origin: MemoryOrigin): Result[void, string]
                              {.gcsafe, raises: [].} =
@@ -104,7 +110,8 @@ suite "memory_ingest tool":
 
   test "reports a backend that fails to store a chunk":
     let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string) {.gcsafe.} = discard,
+      appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                        {.gcsafe, raises: [].} = ok(),
       appendMemoryFrom: proc(userId: UserId; text: string;
                              origin: MemoryOrigin): Result[void, string]
                              {.gcsafe, raises: [].} =
@@ -121,6 +128,24 @@ suite "memory_ingest tool":
     check res.handled
     check res.resultKind == trkOperationalError
     check "graph unavailable" in res.text
+
+  test "reports a backend without origins that fails to store a chunk":
+    let mem = MemoryRuntimePort(
+      appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
+        err("disk full"),
+    )
+    var ctx = NativeCtx(
+      uid: UserId("u1"),
+      channel: ckTelegram,
+      paddockDir: TestRoot,
+      memory: mem,
+      log: ingestLog,
+    )
+    let res = waitFor runIngest(ctx, """{"text":"uma nota curta"}""")
+    check res.handled
+    check res.resultKind == trkOperationalError
+    check "disk full" in res.text
 
   test "rejects path traversal":
     let mem = MemoryRuntimePort()

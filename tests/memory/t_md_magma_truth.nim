@@ -154,12 +154,83 @@ when defined(withSqlite):
       check hits.len == 1
       check hits[0].kind == shkMemory
 
+    test "session search reads memory from the graph, not from the export":
+      let a = newAdapter()
+      a.saveUserMd(uid, "# Ada")
+      ## In the graph only: the export never saw it.
+      check a.newMagmaAdapter().appendMemory(uid, "o codinome e zarabatana").isOk
+      ## In the file only: written by hand.
+      writeFile(a.memoryMdPath(uid), "nota a mao sobre alcachofra\n")
+      let port = a.toRuntimePort()
+      check port.searchSessions(uid, "zarabatana", 10, true).get().len == 1
+      check port.searchSessions(uid, "alcachofra", 10, true).get().len == 0
+      check port.searchSessions(uid, "zarabatana", 10, false).get().len == 0
+      check a.searchSessions(uid, "zarabatana", 10, true).get().len == 1
+      check a.searchSessions(uid, "alcachofra", 10, true).get().len == 0
+
+    test "a write before the first load does not skip the import of an old paddock":
+      let a = newAdapter()
+      a.ensurePaddock(uid)
+      writeFile(a.userMdPath(uid), "# Ada")
+      writeFile(a.memoryMdPath(uid), "nota antiga um\n\nnota antiga dois\n")
+      a.savePreferences(uid, "language = \"pt-BR\"")
+      let ctx = a.loadContext(uid)
+      check ctx.userMd == "# Ada"
+      check ctx.preferencesMd == "language = \"pt-BR\""
+      check "nota antiga um" in ctx.memoryMd
+      check a.memoryNodes(uid).len == 2
+
+    test "an append before the first load keeps the old memories and their order":
+      let a = newAdapter()
+      a.ensurePaddock(uid)
+      writeFile(a.memoryMdPath(uid), "nota antiga\n")
+      check a.appendMemory(uid, "nota nova\n").isOk
+      check a.memoryNodes(uid).mapIt(it.content.strip) == @["nota antiga", "nota nova"]
+      check readFile(a.memoryMdPath(uid)) == "nota antiga\nnota nova\n"
+
+    test "a configured graph that cannot be opened fails the write and exports nothing":
+      ## The database path sits under a regular file, so it cannot be created.
+      writeFile(root / "blocker", "x")
+      let a = MdFileAdapter(
+        paddocksDir: root / "paddocks",
+        magmaSqlitePath: root / "blocker" / "magma.sqlite",
+      )
+      check a.newMagmaAdapter() == nil
+      let res = a.appendMemory(uid, "- gosta de Nim\n")
+      check res.isErr
+      check not fileExists(a.memoryMdPath(uid)) or
+            readFile(a.memoryMdPath(uid)) == ""
+      let port = a.toRuntimePort()
+      check port.appendMemory(uid, "outra").isErr
+      check port.appendMemoryFrom(uid, "outra", turnOrigin("s1")).isErr
+
+    test "a graph that cannot be opened is not replaced by the files on read":
+      let good = newAdapter()
+      good.saveUserMd(uid, "# Ada")
+      writeFile(root / "blocker", "x")
+      let broken = MdFileAdapter(
+        paddocksDir: root / "paddocks",
+        magmaSqlitePath: root / "blocker" / "magma.sqlite",
+      )
+      ## Degraded read: the last export is returned and nothing is written.
+      check broken.loadContext(uid).userMd == "# Ada"
+      check good.memoryNodes(uid).len == 0
+
+    test "a memory stored in the graph is a success even when the export fails":
+      let a = newAdapter()
+      a.saveUserMd(uid, "# Ada")
+      ## MEMORY.md is a directory: the export cannot be written.
+      createDir(a.memoryMdPath(uid))
+      check a.appendMemory(uid, "- gosta de Nim\n").isOk
+      check a.memoryNodes(uid).len == 1
+      check "gosta de Nim" in a.loadContext(uid).memoryMd
+
     test "runtime port and adapter share one write path":
       let a = newAdapter()
       let port = a.toRuntimePort()
       port.saveUserMd(uid, "# Ada")
       port.savePreferences(uid, "language = \"pt-BR\"")
-      port.appendMemory(uid, "sem origem")
+      check port.appendMemory(uid, "sem origem").isOk
       check readFile(a.userMdPath(uid)) == "# Ada"
       check readFile(a.preferencesMdPath(uid)) == "language = \"pt-BR\""
       check readFile(a.memoryMdPath(uid)).strip == "sem origem"
@@ -172,7 +243,7 @@ when defined(withSqlite):
       check port.appendMemoryFrom != nil
       check port.appendMemoryFrom(
         uid, "- **User:** a\n  **Response:** b\n", turnOrigin("s7")).isOk
-      port.appendMemory(uid, "sem origem")
+      check port.appendMemory(uid, "sem origem").isOk
       check a.memoryOrigins(uid) == @[turnOrigin("s7"), MemoryOrigin()]
 
     test "consolidated memory is tagged as consolidation":

@@ -421,7 +421,10 @@ proc toRuntimePort*(a: MarkdownMemoryAdapter): MemoryRuntimePort =
     loadContext:      proc(userId: UserId): UserContext {.gcsafe.} =
                         a.loadContext(userId).valueOr(UserContext(userId: userId)),
     saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} = discard a.saveUserMd(userId, content),
-    appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = discard a.appendMemory(userId, text),
+    appendMemory:     proc(userId: UserId; text: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
+                        try: a.appendMemory(userId, text)
+                        except Exception as e: err("append memory: " & e.msg),
     appendExtractedMemory: proc(userId: UserId; text: string): Result[void, string]
                               {.gcsafe, raises: [].} =
                             a.appendMemory(userId, text),

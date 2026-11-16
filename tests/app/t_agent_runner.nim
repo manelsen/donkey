@@ -15,7 +15,8 @@ proc fakeMemoryRuntime(): MemoryRuntimePort =
     loadContext: proc(userId: UserId): UserContext {.gcsafe.} =
       UserContext(userId: userId, userMd: "# User", memoryMd: "", preferencesMd: ""),
     saveUserMd: proc(userId: UserId; content: string) {.gcsafe.} = discard,
-    appendMemory: proc(userId: UserId; text: string) {.gcsafe.} = discard,
+    appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                      {.gcsafe, raises: [].} = ok(),
     savePreferences: proc(userId: UserId; content: string) {.gcsafe.} = discard,
     clearMemory: proc(userId: UserId) {.gcsafe.} = discard,
     resetBootstrap: proc(userId: UserId) {.gcsafe.} = discard,

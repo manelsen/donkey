@@ -2,6 +2,7 @@
 
 when defined(withSqlite):
   import std/[os, unittest, options, sequtils, strutils, times]
+  import donkey/core/pipeops
   import donkey/core/types
   import donkey/adapters/memory/magma_memory_adapter
   import donkey/domain/memory/commitment_pure
@@ -199,39 +200,30 @@ when defined(withSqlite):
       check hits[0].before.len == 1
       check hits[0].before[0].id == "u1_m0"
 
-    test "query policy knows only semantic and temporal intents":
-      let neutral = classifyQuery("programming languages")
-      check neutral.intent == qiSemantic
-      check neutral.semanticWeight == neutral.lexicalWeight
-      check neutral.temporalWeight == 0.0
-      let temporal = classifyQuery("when did I start the project?")
-      check temporal.intent == qiTemporal
-      check temporal.temporalWeight > 0.0
-      check classifyQuery("who is Alice?").intent == qiSemantic
-      check classifyQuery("why did the deployment roll back?").intent == qiSemantic
+    test "appendMemory reports success and failure as a Result":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      check a.appendMemory(UserId("u1"), "fato").isOk
+      var rejecting = a.graph
+      rejecting.insertNode = proc(node: MagmaNode): bool {.gcsafe.} = false
+      let failing = newMagmaMemoryAdapter(rejecting, fakeEmbedFn)
+      let res = failing.appendMemory(UserId("u1"), "outro fato")
+      check res.isErr
+      check res.error.len > 0
 
-    test "questions about time are recognised in Portuguese":
-      for query in ["quando comecei o projeto?", "o que falamos ontem?",
-                    "qual foi o Último deploy?", "o que decidimos antes disso?",
-                    "o que mudou recentemente?", "e depois da reunião?",
-                    "o que eu disse semana passada?", "isso foi dois dias atrás",
-                    "qual foi a primeira versão?", "o que combinamos hoje?",
-                    "mostre em ordem cronológica", "e na conversa anterior?"]:
-        check classifyQuery(query).intent == qiTemporal
-
-    test "questions about time are still recognised in English":
-      for query in ["when did I start the project?", "what did we say yesterday?",
-                    "the last deploy", "what changed recently?", "two days ago",
-                    "show it chronologically"]:
-        check classifyQuery(query).intent == qiTemporal
-
-    test "a time word inside another word does not count":
-      ## "contem" holds "ontem", "estudantes" holds "antes", "elastic" holds
-      ## "last", "authentication" holds "then".
-      for query in ["o arquivo contem o codinome", "lista de estudantes",
-                    "elastic search config", "authentication error",
-                    "linguagens de programação"]:
-        check classifyQuery(query).intent == qiSemantic
+    test "reading the context reports a graph that cannot be read":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      a.saveUserMd(UserId("u1"), "# Ada")
+      check a.readContext(UserId("u1")).get().userMd == "# Ada"
+      check a.hasContext(UserId("u1")).get()
+      check not a.hasContext(UserId("nobody")).get()
+      var broken = a.graph
+      broken.listNodesLimited = proc(userId: string; nodeType: string = "";
+                                     limit, maxContentBytes: int):
+                                     Result[seq[MagmaNode], string] {.gcsafe.} =
+        err("database is locked")
+      let failing = newMagmaMemoryAdapter(broken, fakeEmbedFn)
+      check failing.readContext(UserId("u1")).isErr
+      check failing.hasContext(UserId("u1")).isErr
 
     test "commitments round-trip":
       let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)

@@ -1171,15 +1171,16 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
     let ingestOrigin = MemoryOrigin(source: msIngest,
                                     sessionId: ctx.scopeSessionId)
     for chunk in chunked.chunks:
-      try:
-        if ctx.memory.appendMemoryFrom != nil:
-          let stored = ctx.memory.appendMemoryFrom(ctx.uid, chunk, ingestOrigin)
-          if stored.isErr:
-            return handledError("Error: memory ingest failed: " & stored.error)
-        else:
-          ctx.memory.appendMemory(ctx.uid, chunk)
-      except Exception as e:
-        return handledError("Error: memory ingest failed: " & e.msg)
+      let stored =
+        try:
+          if ctx.memory.appendMemoryFrom != nil:
+            ctx.memory.appendMemoryFrom(ctx.uid, chunk, ingestOrigin)
+          else:
+            ctx.memory.appendMemory(ctx.uid, chunk)
+        except Exception as e:
+          Result[void, string].err(e.msg)
+      if stored.isErr:
+        return handledError("Error: memory ingest failed: " & stored.error)
     return handledText($(%*{
       "ok": true,
       "chunks": chunked.chunks.len,
