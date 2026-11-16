@@ -13,6 +13,7 @@ import ../../ports/memory
 import ../../domain/memory/episode_pure
 import ../../domain/memory/lessons_pure
 import ../../domain/memory/session_search_pure
+import ../../domain/memory/memory_sync_pure
 import ../../domain/message
 import ../../domain/personality
 when defined(withPostgres) or defined(withSqlite):
@@ -135,11 +136,9 @@ when defined(withPostgres) or defined(withSqlite):
       result.memoryMd = markdownCtx.memoryMd
     elif markdownCtx.memoryMd.strip.len > 0:
       ## Fallback writes may exist in MEMORY.md after a MAGMA outage. Return
-      ## them too, without duplicating chunks already in the graph context.
-      for chunk in markdownCtx.memoryMd.split("\n\n"):
-        let trimmed = chunk.strip
-        if trimmed.len > 0 and trimmed notin result.memoryMd:
-          result.memoryMd.add("\n\n" & trimmed)
+      ## them too, without duplicating text already in the graph context.
+      for chunk in missingMemoryChunks(markdownCtx.memoryMd, [result.memoryMd]):
+        result.memoryMd.add("\n\n" & chunk)
 
   proc importMarkdownContext(magma: MagmaMemoryAdapter; ctx: UserContext) =
     if ctx.userMd.strip.len > 0:
@@ -534,10 +533,14 @@ proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext =
           if graphCtx.preferencesMd.strip.len == 0 and markdownCtx.preferencesMd.strip.len > 0:
             magma.savePreferences(userId, markdownCtx.preferencesMd)
           if markdownCtx.memoryMd.strip.len > 0:
-            for chunk in markdownCtx.memoryMd.split("\n\n"):
-              let trimmed = chunk.strip
-              if trimmed.len > 0 and trimmed notin graphCtx.memoryMd:
-                magma.appendMemory(userId, trimmed)
+            ## Import only paragraphs the graph has never stored. The check
+            ## runs against every memory node, not against the bounded
+            ## context window; if that read fails, import nothing rather
+            ## than duplicate.
+            let known = magma.knownMemoryTexts(userId)
+            if known.isOk:
+              for chunk in missingMemoryChunks(markdownCtx.memoryMd, known.get()):
+                magma.appendMemory(userId, chunk)
           return mergeContextMissing(graphCtx, markdownCtx)
         if markdownCtx.hasContextContent:
           magma.importMarkdownContext(markdownCtx)

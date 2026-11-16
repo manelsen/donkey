@@ -411,13 +411,13 @@ when defined(withSqlite):
           db.getAllRows(sql(
             "SELECT id, user_id, node_type, content, " & SqliteVectorEmbeddingColumn &
             ", ts, meta, " & SqliteLegacyEmbeddingColumn & " FROM " &
-            SqliteNodesTable & " WHERE user_id = ? AND node_type = ? ORDER BY ts ASC, id ASC"
+            SqliteNodesTable & " WHERE user_id = ? AND node_type = ? ORDER BY ts ASC, rowid ASC"
           ), userId, nodeType)
         else:
           db.getAllRows(sql(
             "SELECT id, user_id, node_type, content, " & SqliteVectorEmbeddingColumn &
             ", ts, meta, " & SqliteLegacyEmbeddingColumn & " FROM " &
-            SqliteNodesTable & " WHERE user_id = ? ORDER BY ts ASC, id ASC"
+            SqliteNodesTable & " WHERE user_id = ? ORDER BY ts ASC, rowid ASC"
           ), userId)
       for row in rows:
         result.add(rowToNode(row))
@@ -438,13 +438,13 @@ when defined(withSqlite):
           db.getAllRows(sql(
             "SELECT id, user_id, node_type, substr(content, 1, ?), ts, '{}' FROM " &
             SqliteNodesTable & " WHERE user_id = ? AND node_type = ? " &
-            "ORDER BY ts DESC, id DESC LIMIT ?"
+            "ORDER BY ts DESC, rowid DESC LIMIT ?"
           ), maxContentBytes, userId, nodeType, limit)
         else:
           db.getAllRows(sql(
             "SELECT id, user_id, node_type, substr(content, 1, ?), ts, '{}' FROM " &
             SqliteNodesTable & " WHERE user_id = ? " &
-            "ORDER BY ts DESC, id DESC LIMIT ?"
+            "ORDER BY ts DESC, rowid DESC LIMIT ?"
           ), maxContentBytes, userId, limit)
       var nodes: seq[MagmaNode]
       for row in rows:
@@ -544,8 +544,31 @@ when defined(withSqlite):
       0
 
   proc getLastNode*(a: SqliteMagmaStoreAdapter; userId: string; nodeType: string = ""): Option[MagmaNode] =
-    let nodes = a.listNodes(userId, nodeType)
-    if nodes.len > 0: some(nodes[^1]) else: none(MagmaNode)
+    ## Most recently inserted node for the user, optionally of one type.
+    ## `ts` has one-second resolution and ids sort as text ("m9" > "m10"), so
+    ## ties are broken by rowid, which follows insertion order.
+    a.ensureSchema()
+    let db = a.openDb()
+    defer: db.close()
+    try:
+      let rows =
+        if nodeType.len > 0:
+          db.getAllRows(sql(
+            "SELECT id, user_id, node_type, content, " & SqliteVectorEmbeddingColumn &
+            ", ts, meta, " & SqliteLegacyEmbeddingColumn & " FROM " &
+            SqliteNodesTable & " WHERE user_id = ? AND node_type = ? " &
+            "ORDER BY ts DESC, rowid DESC LIMIT 1"
+          ), userId, nodeType)
+        else:
+          db.getAllRows(sql(
+            "SELECT id, user_id, node_type, content, " & SqliteVectorEmbeddingColumn &
+            ", ts, meta, " & SqliteLegacyEmbeddingColumn & " FROM " &
+            SqliteNodesTable & " WHERE user_id = ? " &
+            "ORDER BY ts DESC, rowid DESC LIMIT 1"
+          ), userId)
+      if rows.len > 0: some(rowToNode(rows[0])) else: none(MagmaNode)
+    except CatchableError:
+      none(MagmaNode)
 
   proc linkTemporal*(a: SqliteMagmaStoreAdapter; fromId, toId: string) =
     discard a.insertEdge(MagmaEdge(fromId: fromId, toId: toId, edgeType: EdgeTemporal))
@@ -606,7 +629,7 @@ when defined(withSqlite):
       for row in db.getAllRows(sql(
         "SELECT id, user_id, node_type, content, " & SqliteVectorEmbeddingColumn &
         ", ts, meta, " & SqliteLegacyEmbeddingColumn & " FROM " &
-        SqliteNodesTable & " WHERE user_id = ? AND ts BETWEEN ? AND ? ORDER BY ts DESC LIMIT ?"
+        SqliteNodesTable & " WHERE user_id = ? AND ts BETWEEN ? AND ? ORDER BY ts DESC, rowid DESC LIMIT ?"
       ), userId, $tsStart, $tsEnd, $limit):
         result.add(rowToNode(row))
     except CatchableError:

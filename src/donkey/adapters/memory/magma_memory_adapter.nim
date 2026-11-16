@@ -7,6 +7,7 @@
 ## Compile with -d:withPostgres to activate.
 
 import ../../core/types
+import ../../core/pipeops
 import ../../ports/memory
 import ../../ports/embedding
 import ../../ports/multigraph_store
@@ -33,6 +34,13 @@ when defined(withPostgres) or defined(withSqlite):
     NtCommitment  = "commitment"
     NtEpisode     = "episode"
     NtLesson      = "lesson"
+
+    ContextMemoryNodeLimit = 200
+      ## Memory nodes returned by loadContext, newest first.
+    KnownMemoryNodeLimit   = 1_000_000
+      ## Upper bound for the dedup read; effectively "all memory nodes".
+    MemoryContentReadLimit = 16 * 1024 * 1024
+      ## Per-node content cap for those reads; above any stored memory.
 
   type
     QueryIntent* = enum
@@ -359,9 +367,12 @@ when defined(withPostgres) or defined(withSqlite):
     let prefNode = a.graph.getNode(prefId(userId))
     if prefNode.isSome:
       prefMd = prefNode.get().content
-    let memNodes = a.graph.queryByTimeRange($userId, 0, getTime().toUnix() + 1, limit = 200)
-    for m in memNodes:
-      if m.nodeType == NtMemory:
+    ## Filter by type in the query: entity, lesson and episode nodes share the
+    ## same table and would otherwise push memories out of the window.
+    let memNodes = a.graph.listNodesLimited(
+      $userId, NtMemory, ContextMemoryNodeLimit, MemoryContentReadLimit)
+    if memNodes.isOk:
+      for m in memNodes.get():
         memLines.add(m.content)
     UserContext(
       userId:        userId,
@@ -369,6 +380,18 @@ when defined(withPostgres) or defined(withSqlite):
       memoryMd:      memLines.join("\n\n"),
       preferencesMd: prefMd,
     )
+
+  proc knownMemoryTexts*(a: MagmaMemoryAdapter;
+                         userId: UserId): Result[seq[string], string] =
+    ## Content of every memory node of the user, without embeddings. Used to
+    ## decide whether a MEMORY.md paragraph is already in the graph; the
+    ## context window of `loadContext` is too small for that question.
+    let nodes = ? a.graph.listNodesLimited(
+      $userId, NtMemory, KnownMemoryNodeLimit, MemoryContentReadLimit)
+    var texts = newSeqOfCap[string](nodes.len)
+    for node in nodes:
+      texts.add(node.content)
+    ok(texts)
 
   proc stats*(a: MagmaMemoryAdapter; userId: UserId): MagmaStats =
     a.graph.statsForUser($userId)

@@ -33,6 +33,7 @@ import ../core/agent_events
 import ../core/memory/blackboard
 import ../core/tooling/tool_loop
 import ../domain/agent_message
+import ../domain/memory/capture_pure
 import ../domain/message
 import ../domain/personality
 import ../config/types as cfgTypes
@@ -445,53 +446,12 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     globalOutbox, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.streamId, streamFn,
     suppressHeartbeatProgress, suppressQuietHeartbeatFinal, result.showReasoning, loopResult)
 
-  # Capture memory from substantive user messages, but avoid persisting
-  # operational/provider failures as autobiographical memory.
-  const
-    AutoMemoryCaptureMaxChars = 4000
-    AutoMemorySkipNeedles = [
-      "não consigo acessar a web",
-      "search isn't working",
-      "ferramentas indisponíveis",
-      "docker sandbox unavailable",
-      "wasmtime not found",
-      "não consigo criar arquivos",
-      "limitations de escrita",
-      "limitações de escrita",
-      "the workspace appears to be empty",
-      "no heartbeat.md found",
-      "tool result's tool id",
-    ]
-
-  func containsNeedle(text: string; needles: openArray[string]): bool =
-    let lowered = text.toLowerAscii()
-    for needle in needles:
-      if lowered.contains(needle):
-        return true
-    false
-
-  func clipAutoMemoryCapture(text: string): string =
-    let trimmed = text.strip
-    if trimmed.len <= AutoMemoryCaptureMaxChars:
-      return trimmed
-    if AutoMemoryCaptureMaxChars <= 16:
-      return trimmed[0 ..< min(trimmed.len, AutoMemoryCaptureMaxChars)]
-    trimmed[0 ..< min(trimmed.len, AutoMemoryCaptureMaxChars - 16)] & "\n[…truncated]"
-
-  func shouldSkipAutoMemoryCapture(userText: string; responseText: string): bool =
-    if userText.strip.len <= 30 or responseText.strip.len == 0:
-      return true
-    let lowered = responseText.toLowerAscii().strip()
-    if lowered.startsWith("desculpe, ocorreu um erro:"):
-      return true
-    if lowered.startsWith("error: "):
-      return true
-    containsNeedle(responseText, AutoMemorySkipNeedles)
-
+  # Capture the turn into long-term memory. The policy (what counts as
+  # substantive, how each side is clipped) lives in domain/memory/capture_pure.
   if not shouldSkipAutoMemoryCapture(turnSetup.userText, loopResult.finalText):
-    let memEntry = "- **User:** " & clipAutoMemoryCapture(turnSetup.userText) & "\n" &
-      "  **Response:** " & clipAutoMemoryCapture(loopResult.finalText) & "\n"
-    onboarding_runtime.safeAppendMemory(memory, turnSetup.uid, memEntry)
+    onboarding_runtime.safeAppendMemory(
+      memory, turnSetup.uid,
+      formatAutoMemoryEntry(turnSetup.userText, loopResult.finalText))
 
   if loopResult.finalText.len > 0:
     discard rememberCommitments(
