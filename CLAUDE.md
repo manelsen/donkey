@@ -279,7 +279,7 @@ Mapeamento: `(channel_type, channel_user_id) → user UUID`.
 
 ## Workspace por usuário
 
-Os `.md` são vistas legíveis do conhecimento do agente sobre o usuário. Editáveis diretamente — o agente relê na próxima conversa. Em F2+ ficam sincronizados com o grafo.
+Os `.md` são vistas legíveis do conhecimento do agente sobre o usuário. Sem grafo (F1), são o armazenamento: editáveis diretamente, o agente relê na próxima conversa. Com MAGMA, o grafo é a fonte de verdade e os `.md` são só exportação: editar um arquivo não muda o que o agente sabe; para trazer arquivos editados ao grafo, use `donkey ctl memory import <uuid>`.
 
 O caminho dos paddocks é configurável via `donkey.toml` (`paddocks = "~/.donkey/paddocks"`), padrão `{home}/paddocks/`.
 
