@@ -134,6 +134,20 @@ Recent hardening in the runtime makes this safer:
 - operational failure text is no longer auto-captured as memory
 - turns are no longer truncated at tiny limits by default
 - identity and preference sync are preserved across SQLite-first flows
+- short user messages are captured too, because a short message is often a
+  correction; only greetings, bare acknowledgements and slash commands are
+  skipped (policy in `domain/memory/capture_pure.nim`)
+
+## Markdown ↔ MAGMA Sync
+
+`MEMORY.md` stays editable by hand. On each context load, paragraphs of
+`MEMORY.md` that the graph has never stored are imported once. The comparison
+is per line and runs against every memory node of the user, so entries the
+agent wrote itself are not imported a second time, however many nodes exist.
+
+Memory nodes are ordered by timestamp and then by insertion order. The
+`TEMPORAL` edge of a new memory always points from the memory inserted
+immediately before it, including bursts written within the same second.
 
 ## Ingesting Documents and Attachments
 
