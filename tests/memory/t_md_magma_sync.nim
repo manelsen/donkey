@@ -62,6 +62,29 @@ when defined(withSqlite):
         discard a.loadContext(uid)
       check a.memoryNodeCount(uid) == total
 
+    test "a line added right below a stored entry is imported alone":
+      let a = newAdapter()
+      a.appendMemory(uid, "- fato antigo\n")
+      let path = a.memoryMdPath(uid)
+      writeFile(path, readFile(path) & "- fato novo\n")
+      discard a.loadContext(uid)
+      let magma = a.newMagmaAdapter()
+      var contents: seq[string]
+      for node in magma.graph.listNodes($uid, "memory"):
+        contents.add(node.content.strip)
+      check contents == @["- fato antigo", "- fato novo"]
+
+    test "context lists each contiguous entry once beyond the recent window":
+      let a = newAdapter()
+      const total = 215
+      for i in 1 .. total:
+        a.appendMemory(uid, "- fato numero " & $i & "\n")
+      var seen = 0
+      for line in a.loadContext(uid).memoryMd.splitLines():
+        if line.startsWith("- fato numero "):
+          inc seen
+      check seen == total
+
     test "a paragraph written by hand into MEMORY.md is imported once":
       let a = newAdapter()
       a.appendMemory(uid, "- fato gravado pelo agente\n")

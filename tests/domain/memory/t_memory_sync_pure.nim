@@ -1,4 +1,4 @@
-import std/unittest
+import std/[strutils, unittest]
 import donkey/domain/memory/memory_sync_pure
 
 suite "memory sync — chunks missing from the graph":
@@ -19,11 +19,52 @@ suite "memory sync — chunks missing from the graph":
     let markdown = known & "\n\n  anotacao feita a mao  \n\n"
     check missingMemoryChunks(markdown, @[known]) == @["anotacao feita a mao"]
 
-  test "chunk with one new line among known lines is still reported":
-    let known = "linha conhecida"
-    let markdown = "linha conhecida\nlinha nova"
+  test "only the new line of a partially known paragraph is reported":
+    ## Fallback writes land in MEMORY.md with no blank line between entries.
+    check missingMemoryChunks("- antigo\n- novo", @["- antigo"]) == @["- novo"]
+    check missingMemoryChunks("- novo\n- antigo", @["- antigo"]) == @["- novo"]
+
+  test "consecutive new lines stay together as one chunk":
+    let markdown = "- antigo\n- **User:** pergunta\n  **Response:** resposta\n- outro antigo"
+    check missingMemoryChunks(markdown, @["- antigo", "- outro antigo"]) ==
+      @["- **User:** pergunta\n  **Response:** resposta"]
+
+  test "a known entry in the middle splits the new content":
+    check missingMemoryChunks("- novo um\n- conhecido\n- novo dois", @["- conhecido"]) ==
+      @["- novo um", "- novo dois"]
+
+  test "an entry keeps its answer even when that line is already stored":
+    ## Dropping the known line would store a question with no answer.
+    let known = "- **User:** Onde moro?\n  **Response:** Lisboa."
+    let markdown = known & "\n- **User:** Onde trabalho?\n  **Response:** Lisboa."
     check missingMemoryChunks(markdown, @[known]) ==
-      @["linha conhecida\nlinha nova"]
+      @["- **User:** Onde trabalho?\n  **Response:** Lisboa."]
+
+  test "an entry with one new continuation line is reported whole":
+    let known = "- **User:** pergunta\n  **Response:** resposta antiga"
+    let markdown = "- **User:** pergunta\n  **Response:** resposta nova"
+    check missingMemoryChunks(markdown, @[known]) == @[markdown]
+
+  test "wrapped prose is one entry":
+    check missingMemoryChunks("linha conhecida\ncontinua com texto novo",
+                              @["linha conhecida"]) ==
+      @["linha conhecida\ncontinua com texto novo"]
+
+  test "prose before a list item is its own entry":
+    let markdown = "fim de uma resposta antiga\n- item novo"
+    check missingMemoryChunks(markdown, @["fim de uma resposta antiga"]) ==
+      @["- item novo"]
+
+  test "numbered and starred items start entries too":
+    check missingMemoryChunks("1. antigo\n2. novo\n* outro novo", @["1. antigo"]) ==
+      @["2. novo\n* outro novo"]
+
+  test "one contiguous block returns only the lines the graph lacks":
+    var lines: seq[string]
+    for i in 1 .. 215:
+      lines.add("- fato " & $i)
+    let missing = missingMemoryChunks(lines.join("\n"), [lines[15 .. ^1].join("\n\n")])
+    check missing == @[lines[0 .. 14].join("\n")]
 
   test "whitespace and line-ending differences do not count as new":
     let known = "  - fato com espacos  \r\n"
