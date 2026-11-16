@@ -247,9 +247,14 @@ when defined(withPostgres) or defined(withSqlite):
                                  Result[void, string] {.gcsafe, raises: [].} =
     a.appendMemoryResult(userId, text, origin)
 
-  proc runtimeAppendMemory(a: MdFileAdapter; userId: UserId; text: string;
-                           origin: MemoryOrigin) =
-    discard a.runtimeAppendMemoryResult(userId, text, origin)
+  proc runtimeAppendMemoryFrom(a: MdFileAdapter; userId: UserId; text: string;
+                               origin: MemoryOrigin):
+                               Result[void, string] {.gcsafe, raises: [].} =
+    a.runtimeAppendMemoryResult(userId, text, origin)
+
+  proc runtimeAppendMemory(a: MdFileAdapter; userId: UserId; text: string) =
+    ## Legacy void hook: the port offers no way to report the failure.
+    discard a.runtimeAppendMemoryFrom(userId, text, MemoryOrigin())
 
   proc runtimeSavePreferences(a: MdFileAdapter; userId: UserId; content: string) =
     if a.hasMagmaBackend:
@@ -370,12 +375,13 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
         loadContext:      proc(userId: UserId): UserContext {.gcsafe.} = a.loadContext(userId),
         saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} = a.runtimeSaveUserMd(userId, content),
         appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} =
-                            a.runtimeAppendMemory(userId, text, MemoryOrigin()),
+                            a.runtimeAppendMemory(userId, text),
         appendMemoryResult: proc(userId: UserId; text: string):
                               Result[void, string] {.gcsafe.} =
                               a.runtimeAppendMemoryResult(userId, text, MemoryOrigin()),
-        appendMemoryFrom: proc(userId: UserId; text: string; origin: MemoryOrigin) {.gcsafe.} =
-                            a.runtimeAppendMemory(userId, text, origin),
+        appendMemoryFrom: proc(userId: UserId; text: string; origin: MemoryOrigin):
+                              Result[void, string] {.gcsafe.} =
+                            a.runtimeAppendMemoryFrom(userId, text, origin),
         savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = a.runtimeSavePreferences(userId, content),
         clearMemory:      proc(userId: UserId) {.gcsafe.} = a.runtimeClearMemory(userId),
         resetBootstrap:   proc(userId: UserId) {.gcsafe.} = a.runtimeResetBootstrap(userId),

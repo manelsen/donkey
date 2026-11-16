@@ -105,7 +105,8 @@ when defined(withSqlite):
       let a = newAdapter()
       let port = a.toRuntimePort()
       check port.appendMemoryFrom != nil
-      port.appendMemoryFrom(uid, "- **User:** a\n  **Response:** b\n", turnOrigin("s7"))
+      check port.appendMemoryFrom(uid, "- **User:** a\n  **Response:** b\n",
+                                  turnOrigin("s7")).isOk
       port.appendMemory(uid, "sem origem")
       check a.memoryOrigins(uid) == @[turnOrigin("s7"), MemoryOrigin()]
 

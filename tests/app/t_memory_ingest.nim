@@ -88,9 +88,11 @@ suite "memory_ingest tool":
         {.cast(gcsafe).}:
           captured.chunks.add("plain:" & text),
       appendMemoryFrom: proc(userId: UserId; text: string;
-                             origin: MemoryOrigin) {.gcsafe.} =
+                             origin: MemoryOrigin):
+                             Result[void, string] {.gcsafe.} =
         {.cast(gcsafe).}:
-          captured.chunks.add($origin.source & ":" & origin.sessionId & ":" & text),
+          captured.chunks.add($origin.source & ":" & origin.sessionId & ":" & text)
+        ok(),
     )
     var ctx = NativeCtx(
       uid: UserId("u1"),

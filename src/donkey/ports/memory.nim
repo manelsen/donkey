@@ -80,7 +80,8 @@ type
     ## Nil means the backend keeps no origin; callers fall back to
     ## appendMemoryResult/appendMemory.
     appendMemoryFrom*: proc(userId: UserId; text: string;
-                            origin: MemoryOrigin) {.gcsafe.}
+                            origin: MemoryOrigin):
+                            Result[void, string] {.gcsafe, raises: [].}
 
     savePreferences*: proc(userId: UserId; content: string) {.gcsafe.}
     clearMemory*:     proc(userId: UserId) {.gcsafe.}
@@ -149,13 +150,8 @@ proc appendMemoryWithOriginChecked*(p: MemoryRuntimePort; userId: UserId;
                                     text: string; origin: MemoryOrigin):
                                     Result[void, string] {.gcsafe, raises: [].} =
   ## Prefers the origin-aware hook when the backend records provenance;
-  ## otherwise falls back to the Result-based append. Exception translation
-  ## stays here at the port boundary so callers only handle Result.
+  ## otherwise falls back to the Result-based append. Both hooks report
+  ## failures through `Result`, so no exception crosses this boundary.
   if p.appendMemoryFrom != nil:
-    try:
-      {.cast(raises: []).}:
-        p.appendMemoryFrom(userId, text, origin)
-      return ok()
-    except CatchableError as e:
-      return err(e.msg)
+    return p.appendMemoryFrom(userId, text, origin)
   p.appendMemoryChecked(userId, text)
