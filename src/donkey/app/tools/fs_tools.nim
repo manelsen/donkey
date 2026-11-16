@@ -5,8 +5,10 @@
 ## performFs* expose the structured filesystem core used by the next tool family.
 
 import std/[algorithm, json, osproc, os, sequtils, strutils, times]
+import ../../core/pipeops
 import ../../core/tooling/structured_tool_result
 import ../../domain/calc
+import ../../infra/fs/copy as fsCopy
 
 export StructuredToolResult
 
@@ -95,31 +97,6 @@ proc appendToFile(path, content: string) =
     writeFile(path, readFile(path) & content)
   else:
     writeFile(path, content)
-
-proc copyTree(src, dst: string; errorOut: var string): bool =
-  ## Copies a directory tree. Every destination path is checked for a symlink
-  ## before it is created or written: `copyFile` would follow the link and
-  ## write outside the paddock. The check narrows, but does not close, the
-  ## race between validation and the write.
-  if symlinkExists(dst):
-    errorOut = "destination is a symlink: " & dst
-    return false
-  createDir(dst)
-  for kind, entry in walkDir(src):
-    let target = dst / entry.extractFilename
-    case kind
-    of pcDir:
-      if not copyTree(entry, target, errorOut):
-        return false
-    of pcFile:
-      if symlinkExists(target):
-        errorOut = "destination is a symlink: " & target
-        return false
-      ensureParentDir(target)
-      copyFile(entry, target)
-    of pcLinkToFile, pcLinkToDir:
-      discard
-  true
 
 proc listEntries(root, paddock, pattern: string; recursive, includeHidden: bool;
                  items: var seq[JsonNode]) =
@@ -288,9 +265,9 @@ proc performFsCopy*(src, dst, paddock: string; recursive = false): StructuredToo
     elif dirExists(srcGuard.resolved):
       if not recursive:
         return usageErrorToolResult("copying a directory requires recursive=true")
-      var copyError = ""
-      if not copyTree(srcGuard.resolved, dstGuard.resolved, copyError):
-        return operationalErrorToolResult(copyError)
+      let copied = fsCopy.copyTreeResult(srcGuard.resolved, dstGuard.resolved)
+      if copied.isErr:
+        return operationalErrorToolResult(copied.error)
     else:
       return operationalErrorToolResult("source not found: " & src)
     successToolResult(%*{
