@@ -115,6 +115,15 @@ suite "transcript — partial knowledge of what is stored":
     let grown = conversation(1, 8, numbered = true)
     check appended(log, grown) == conversation(7, 8, numbered = true)
 
+  test "a new message that repeats the words of an older line is still new":
+    ## "ok" is in the unnumbered part, and said again as message 5.
+    var log = @[line("user", "ok"), line("assistant", "certo")]
+    log.add(line("user", "pergunta", 3))
+    log.add(line("assistant", "resposta", 4))
+    let history = @[line("user", "pergunta", 3), line("assistant", "resposta", 4),
+                    line("user", "ok", 5)]
+    check appended(log, history) == @[line("user", "ok", 5)]
+
   test "beside older unnumbered lines, a low number with new content is new":
     ## Number 4 was given at a checkpoint and rewound before any save; the
     ## unnumbered lines do not hold its text.
@@ -145,9 +154,16 @@ suite "transcript — when the end of the file is not enough":
   test "a tail without any complete record calls for the whole file":
     check needsWholeTranscript(@[], conversation(1, 2, numbered = true))
 
-  test "unnumbered histories never call for the whole file":
-    check not needsWholeTranscript(conversation(101, 120, numbered = true),
-                                   conversation(1, 4))
+  test "a history without numbers calls for the whole file":
+    ## Content is all there is to compare, so every stored line matters.
+    check needsWholeTranscript(conversation(101, 120, numbered = true),
+                               conversation(1, 4))
+    check needsWholeTranscript(conversation(101, 120), conversation(1, 4))
+
+  test "only synthetic messages never call for the whole file":
+    check not needsWholeTranscript(
+      conversation(101, 120, numbered = true),
+      @[line("user", "resumo", SyntheticMessageSeq)])
 
   test "gap plus partial read: the missing number is written, the old ones are not":
     ## The file holds 1, 2 and 6 to 120; 4 was never saved. Only 101 to 120
