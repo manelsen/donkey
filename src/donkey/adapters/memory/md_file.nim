@@ -49,6 +49,8 @@ proc hasProfile*(a: MdFileAdapter; userId: UserId): bool {.gcsafe.}
 proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext {.gcsafe.}
 proc saveUserMd*(a: MdFileAdapter; userId: UserId; content: string) {.gcsafe.}
 proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) {.gcsafe.}
+proc appendMemoryResult*(a: MdFileAdapter; userId: UserId; text: string):
+                         Result[void, string] {.gcsafe, raises: [].}
 proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) {.gcsafe.}
 proc clearMemory*(a: MdFileAdapter; userId: UserId) {.gcsafe.}
 proc resetBootstrap*(a: MdFileAdapter; userId: UserId) {.gcsafe.}
@@ -233,15 +235,12 @@ when defined(withPostgres) or defined(withSqlite):
         discard
     a.saveUserMd(userId, content)
 
+  proc runtimeAppendMemoryResult(a: MdFileAdapter; userId: UserId; text: string):
+                                 Result[void, string] {.gcsafe, raises: [].} =
+    a.appendMemoryResult(userId, text)
+
   proc runtimeAppendMemory(a: MdFileAdapter; userId: UserId; text: string) =
-    if a.hasMagmaBackend:
-      try:
-        let magma = a.newMagmaAdapter()
-        magma.appendMemory(userId, text)
-        return
-      except CatchableError:
-        discard
-    a.appendMemory(userId, text)
+    discard a.runtimeAppendMemoryResult(userId, text)
 
   proc runtimeSavePreferences(a: MdFileAdapter; userId: UserId; content: string) =
     if a.hasMagmaBackend:
@@ -362,6 +361,9 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
         loadContext:      proc(userId: UserId): UserContext {.gcsafe.} = a.loadContext(userId),
         saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} = a.runtimeSaveUserMd(userId, content),
         appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = a.runtimeAppendMemory(userId, text),
+        appendMemoryResult: proc(userId: UserId; text: string):
+                              Result[void, string] {.gcsafe.} =
+                              a.runtimeAppendMemoryResult(userId, text),
         savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = a.runtimeSavePreferences(userId, content),
         clearMemory:      proc(userId: UserId) {.gcsafe.} = a.runtimeClearMemory(userId),
         resetBootstrap:   proc(userId: UserId) {.gcsafe.} = a.runtimeResetBootstrap(userId),
@@ -433,6 +435,9 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
                       {.gcsafe, raises: [].} =
                       extractLessonsF1(a, userId, episodes),
     appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = a.appendMemory(userId, text),
+    appendMemoryResult: proc(userId: UserId; text: string):
+                          Result[void, string] {.gcsafe.} =
+                          a.appendMemoryResult(userId, text),
     savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = a.savePreferences(userId, content),
     clearMemory:      proc(userId: UserId) {.gcsafe.} = a.clearMemory(userId),
     resetBootstrap:   proc(userId: UserId) {.gcsafe.} = a.resetBootstrap(userId),
@@ -654,22 +659,30 @@ proc removeDmAllowed*(a: MdFileAdapter; userId: UserId): Result[void, string] =
   except CatchableError as e:
     err("dm allowlist remove failed: " & e.msg)
 
-proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) =
-  a.ensurePaddock(userId)
-  let path = a.memoryMdPath(userId)
-  ## Append-only write: avoids the read-modify-write race where two concurrent
-  ## writers (daemon + ctl) overwrite each other's chunks.
-  var f = open(path, fmAppend)
+proc appendMemoryResult*(a: MdFileAdapter; userId: UserId; text: string):
+                         Result[void, string] =
   try:
-    if getFileSize(path) > 0:
-      f.write("\n")
-    f.write(text)
-  finally:
-    f.close()
-  discard secureFile(path)
-  when defined(withPostgres) or defined(withSqlite):
-    a.withMagmaShadow:
-      magma.appendMemory(userId, text)
+    a.ensurePaddock(userId)
+    let path = a.memoryMdPath(userId)
+    ## Append-only write: avoids the read-modify-write race where two concurrent
+    ## writers (daemon + ctl) overwrite each other's chunks.
+    var f = open(path, fmAppend)
+    try:
+      if getFileSize(path) > 0:
+        f.write("\n")
+      f.write(text)
+    finally:
+      f.close()
+    discard secureFile(path)
+    when defined(withPostgres) or defined(withSqlite):
+      a.withMagmaShadow:
+        magma.appendMemory(userId, text)
+    ok()
+  except Exception as e:
+    err(e.msg)
+
+proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) =
+  discard a.appendMemoryResult(userId, text)
 
 proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) =
   a.ensurePaddock(userId)

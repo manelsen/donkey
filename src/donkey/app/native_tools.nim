@@ -25,6 +25,7 @@ import ./tools/data_tools
 import ./tools/utility_tools
 import ./tools/task_tools
 import ./tools/code_tools
+import ./tools/memory_ingest_io
 
 export fs_tools        # resolveInPaddock, inPaddock, performBash
 export text_tools      # HashlineAnchor, EditFileOpKind, EditFileOp, hashline
@@ -49,7 +50,7 @@ import ../core/tooling/native_tool_dispatch
 import ../core/pipeops
 import ../core/log
 import ../core/utf8
-import ../core/fs_paths
+import ./tools/fs_paths
 import ../core/security/approval
 import ../domain/message
 import ../domain/more_tools
@@ -310,28 +311,6 @@ proc resolvedToolPath(path, paddockDir: string;
     logToolPathFailure(log, toolName, path, paddockDir, realTarget, "outside_paddock_symlink")
     return err("Error: path outside paddock (symlink): " & path)
   ok(resolvedPath)
-
-proc safeReadText(path: string): Result[string, string] {.gcsafe, raises: [].} =
-  try:
-    ok(readFile(path))
-  except CatchableError as e:
-    err(e.msg)
-
-proc safeFileSize(path: string): Result[int64, string] {.gcsafe, raises: [].} =
-  try:
-    ok(getFileSize(path))
-  except CatchableError as e:
-    err(e.msg)
-
-proc appendMemorySafe(memory: MemoryRuntimePort; uid: UserId;
-                      text: string): Result[void, string] {.gcsafe, raises: [].} =
-  try:
-    memory.appendMemory(uid, text)
-    ok()
-  except Exception as e:
-    ## The memory port predates typed errors; convert at this boundary so the
-    ## tool loop receives an operational error instead of aborting the batch.
-    err(e.msg)
 
 proc requireStringField(j: JsonNode; key: string): Result[string, string] {.gcsafe, raises: [].} =
   let value = j.getOrDefault(key).getStr("")
@@ -1219,45 +1198,22 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
   of MemoryIngestToolName:
     let ingestCtx = parseMemoryIngestContext(j).valueOr:
       return handledError(error)
-    var content = ingestCtx.text
-    var source = "text"
-    if ingestCtx.path.len > 0:
-      let absPath = resolvedToolPath(
-        ingestCtx.path, ctx.paddockDir, ctx.log, MemoryIngestToolName).valueOr:
-        return handledError(error)
-      if dirExists(absPath):
-        return handledError("Error: path is a directory: " & ingestCtx.path)
-      if not fileExists(absPath):
-        return handledError("Error: file not found: " & ingestCtx.path)
-      let sizeRes = safeFileSize(absPath)
-      if sizeRes.isErr:
-        return handledError("Error: cannot inspect file: " & sizeRes.error)
-      if sizeRes.get() > 2_000_000:
-        return handledError("Error: file exceeds the 2 MB ingest limit.")
-      let contentRes = safeReadText(absPath)
-      if contentRes.isErr:
-        return handledError("Error: cannot read file: " & contentRes.error)
-      content = contentRes.get()
-      source = ingestCtx.path
-    if content.strip.len == 0:
-      return handledError("Error: no text to ingest.")
-    if '\0' in content:
-      return handledError("Error: binary file rejected.")
-    let chunked = chunkForMemory(content, ingestCtx.chunkChars, ingestCtx.maxChunks)
-    if chunked.chunks.len == 0:
-      return handledError("Error: no text to ingest.")
-    if ctx.memory.appendMemory == nil:
-      return handledError("Error: memory backend unavailable.")
-    for chunk in chunked.chunks:
-      let appendRes = appendMemorySafe(ctx.memory, ctx.uid, chunk)
-      if appendRes.isErr:
-        return handledError("Error: memory ingest failed: " & appendRes.error)
+    let stats =
+      if ingestCtx.path.len > 0:
+        ingestMemoryFile(ctx.memory, ctx.uid, ctx.paddockDir, ingestCtx.path,
+                         ingestCtx.chunkChars, ingestCtx.maxChunks)
+      else:
+        ingestMemoryText(ctx.memory, ctx.uid, ingestCtx.text, "text",
+                         ingestCtx.chunkChars, ingestCtx.maxChunks)
+    if stats.isErr:
+      return handledError("Error: " & stats.error)
+    let ingested = stats.get()
     return handledText($(%*{
       "ok": true,
-      "chunks": chunked.chunks.len,
-      "bytes": content.len,
-      "truncated": chunked.truncated,
-      "source": source,
+      "chunks": ingested.chunks,
+      "bytes": ingested.bytes,
+      "truncated": ingested.truncated,
+      "source": ingested.source,
     }))
   of ManageSkillsToolName:
     let skillCtx = parseManageSkillsContext(j).valueOr:

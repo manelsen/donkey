@@ -21,6 +21,7 @@ import adapters/state/pairing_store
 import adapters/state/approval_store
 import adapters/secrets/vault
 import app/session_manager
+import app/tools/memory_ingest_io
 import adapters/memory/multigraph_runtime
 import ports/ipc
 import ports/provider
@@ -520,7 +521,17 @@ proc dispatchCtl*(cfg: DonkeyConfig;
     if args[1] == "memory" and args[2] == "import" and args.len >= 4:
       ctlMemoryImport(makeMagmaMemory(), args[3]); return 0
     if args[1] == "memory" and args[2] == "ingest" and args.len >= 5:
-      return (if ctlMemoryIngest(makeMagmaMemory(), args[3], args[4]): 0 else: 1)
+      let uid = UserId(args[3])
+      let mem = makeMagmaMemory()
+      let ingested = ingestMemoryFile(
+        mem.toRuntimePort(), uid, mem.paddockDir(uid), args[4])
+      if ingested.isErr:
+        echo "ingest error: " & ingested.error
+        return 1
+      let stats = ingested.get()
+      echo "Ingested " & $stats.chunks & " chunks (" & $stats.bytes &
+           " bytes) from " & args[4]
+      return 0
     if args[1] == "memory" and args[2] == "export" and args.len >= 4:
       let outDir = if args.len >= 5: args[4] else: ""
       ctlMemoryExport(makeMagmaMemory(), args[3], outDir); return 0

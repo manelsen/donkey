@@ -1,6 +1,7 @@
 import std/[os, strutils, unittest]
 import results
 import donkey/app/inbound_media
+import donkey/app/tools/attachment_store
 import donkey/domain/message
 import donkey/ports/channel
 
@@ -32,7 +33,7 @@ suite "inbound media":
     var msg = InboundMessage(text: "leia isso", mediaUrl: "telegram-file-id")
     let res = applyInboundAttachment(
       msg, downloadOf("file_1.md", "text/markdown", "# export\n"),
-      TestRoot, "Memory Export.md", "text/markdown")
+      TestRoot, newAttachmentStore(), "Memory Export.md", "text/markdown")
     check res.isOk
     let att = res.get()
     check att.relPath == "attachments/Memory Export.md"
@@ -48,7 +49,7 @@ suite "inbound media":
     var msg = InboundMessage()
     let res = applyInboundAttachment(
       msg, downloadOf("file_1.md", "text/markdown", "x"),
-      TestRoot, "../../etc/passwd", "text/markdown")
+      TestRoot, newAttachmentStore(), "../../etc/passwd", "text/markdown")
     check res.isOk
     let att = res.get()
     check att.relPath == "attachments/passwd"
@@ -59,7 +60,7 @@ suite "inbound media":
     var msg = InboundMessage()
     let res = applyInboundAttachment(
       msg, downloadOf("file_1.png", "image/png", "png"),
-      TestRoot, "photo.png", "image/png")
+      TestRoot, newAttachmentStore(), "photo.png", "image/png")
     check res.isOk
     check res.get().isImage
     check "inspect_image" in msg.text
@@ -69,7 +70,7 @@ suite "inbound media":
     var msg = InboundMessage()
     let res = applyInboundAttachment(
       msg, downloadOf("", "application/octet-stream", "x"),
-      TestRoot, "", "")
+      TestRoot, newAttachmentStore(), "", "")
     check res.isOk
     check res.get().relPath.startsWith("attachments/")
 
@@ -78,7 +79,7 @@ suite "inbound media":
       var msg = InboundMessage()
       let res = applyInboundAttachment(
         msg, downloadOf("file.md", "text/markdown", "secret"),
-        TestRoot, "notes.md", "text/markdown")
+        TestRoot, newAttachmentStore(), "notes.md", "text/markdown")
       check res.isOk
       check getFilePermissions(TestRoot / "attachments") ==
         {fpUserRead, fpUserWrite, fpUserExec}
@@ -93,7 +94,7 @@ suite "inbound media":
       var msg = InboundMessage()
       let res = applyInboundAttachment(
         msg, downloadOf("file.md", "text/markdown", "secret"),
-        TestRoot, "notes.md", "text/markdown")
+        TestRoot, newAttachmentStore(), "notes.md", "text/markdown")
       check res.isErr
       check not fileExists(outside / "notes.md")
 
@@ -107,7 +108,7 @@ suite "inbound media":
       var msg = InboundMessage()
       let res = applyInboundAttachment(
         msg, downloadOf("file.md", "text/markdown", "data"),
-        TestRoot, "notes.md", "text/markdown")
+        TestRoot, newAttachmentStore(), "notes.md", "text/markdown")
       check res.isOk
       check res.get().relPath == "attachments/notes_1.md"
       check fileExists(attachments / "notes_1.md")

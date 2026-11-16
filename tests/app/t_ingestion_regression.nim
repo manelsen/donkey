@@ -4,6 +4,7 @@
 import std/[json, os, strutils, unittest]
 import results
 import donkey/app/inbound_media
+import donkey/app/tools/attachment_store
 import donkey/app/session_bootstrap
 import donkey/app/prompt_building
 import donkey/core/pipeops
@@ -60,7 +61,8 @@ suite "telegram document ingestion regression":
       data: bytesOf(content),
     )
     let saved = applyInboundAttachment(
-      msg, download, TestRoot, msg.mediaFileName, msg.mediaMimeType)
+      msg, download, TestRoot, newAttachmentStore(),
+      msg.mediaFileName, msg.mediaMimeType)
     check saved.isOk
     check saved.get().relPath == "attachments/Memory Export.md"
     check fileExists(TestRoot / saved.get().relPath)

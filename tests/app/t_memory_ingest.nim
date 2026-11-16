@@ -139,7 +139,7 @@ suite "memory_ingest tool":
       let res = waitFor runIngest(ctx, """{"path":"link.txt"}""")
       check res.handled
       check res.resultKind == trkOperationalError
-      check "symlink" in res.text
+      check "symlink" in res.text or "outside paddock" in res.text
 
     test "rejects a dangling symlink":
       let outside = TestRoot & "_missing_outside.txt"

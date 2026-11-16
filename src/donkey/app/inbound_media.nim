@@ -1,19 +1,13 @@
-## inbound_media.nim — persist inbound attachments inside the user's paddock.
+## inbound_media.nim — orchestrate inbound attachment metadata and turn markers.
 ##
-## Channel adapters download bytes; this module decides where they live and
-## how the agent learns about them. The file always goes to
-## `{paddock}/attachments/`, so the existing fs_* and inspect_image tools can
-## reach it without guessing the daemon's working directory.
+## Filesystem writes live in `app/tools/attachment_store`; this module only
+## chooses the marker, updates the message and clears the channel file_id.
 
 import std/[os, strutils]
 import results
 import ../domain/message
 import ../ports/channel
-import ../core/media_download
-import ../core/fs_paths
-
-const
-  AttachmentDirName* = "attachments"
+import ../ports/attachment_store
 
 type
   InboundAttachment* = object
@@ -22,36 +16,6 @@ type
     mimeType*: string
     size*:     int64
     isImage*:  bool
-
-func sanitizeAttachmentName*(raw: string): string =
-  ## Keeps the user-facing name but removes anything that could escape the
-  ## attachments directory or confuse the filesystem.
-  var name = raw.strip
-  if name.len == 0:
-    return "attachment"
-  name = name.replace('\\', '/')
-  let slash = name.rfind('/')
-  if slash >= 0 and slash + 1 < name.len:
-    name = name[slash + 1 .. ^1]
-  var cleaned = ""
-  for ch in name:
-    if ch in {'/', '\\', ':', '*', '?', '"', '<', '>', '|'} or ord(ch) < 32:
-      cleaned.add('_')
-    else:
-      cleaned.add(ch)
-  cleaned = cleaned.strip(chars = {'.', ' '})
-  if cleaned.len == 0 or cleaned == "." or cleaned == "..":
-    return "attachment"
-  cleaned
-
-proc secureDir(path: string) =
-  createDir(path)
-  when defined(posix):
-    setFilePermissions(path, {fpUserRead, fpUserWrite, fpUserExec})
-
-proc secureFile(path: string) =
-  when defined(posix):
-    setFilePermissions(path, {fpUserRead, fpUserWrite})
 
 func isImageMime(mime: string): bool =
   mime.toLowerAscii().startsWith("image/")
@@ -67,64 +31,40 @@ func attachmentMarker(relPath, mime: string; size: int64; isImage: bool): string
 proc applyInboundAttachment*(msg: var InboundMessage;
                              download: FileDownload;
                              paddockDir: string;
+                             store: AttachmentStorePort;
                              preferredName = "";
                              preferredMime = ""): Result[InboundAttachment, string] =
-  ## Saves `download` under `{paddockDir}/attachments`, annotates `msg.text`,
-  ## clears `msg.mediaUrl` (so a channel file_id never reaches a provider), and
-  ## returns the saved attachment metadata.
-  try:
-    if symlinkExists(paddockDir):
-      return err("paddock path is a symlink: " & paddockDir)
-    createDir(paddockDir)
-    let attachmentsDir = paddockDir / AttachmentDirName
-    if symlinkExists(attachmentsDir):
-      return err("attachments path is a symlink: " & attachmentsDir)
-    secureDir(attachmentsDir)
+  ## Persists `download` under `{paddockDir}/attachments` via the store,
+  ## annotates `msg.text`, clears `msg.mediaUrl`, and returns the metadata.
+  let attachmentsDir = paddockDir / AttachmentDirName
+  let chosenName =
+    if preferredName.strip.len > 0: preferredName
+    else: download.fileName
+  let saved = store.save(attachmentsDir, chosenName, download.data)
+  if saved.isErr:
+    return err(saved.error)
 
-    var fileDownload = download
-    let chosenName =
-      if preferredName.strip.len > 0: preferredName
-      else: fileDownload.fileName
-    fileDownload.fileName = sanitizeAttachmentName(chosenName)
+  let relPath = AttachmentDirName / saved.get().fileName
+  let mimeType =
+    if preferredMime.strip.len > 0: preferredMime.strip
+    elif download.mimeType.strip.len > 0: download.mimeType.strip
+    else: "application/octet-stream"
+  let size =
+    if download.fileSize > 0: download.fileSize
+    else: download.data.len.int64
+  let image = isImageMime(mimeType)
 
-    let saveResult = fileDownload.saveFileToDisk(attachmentsDir)
-    if saveResult.isErr:
-      return err(saveResult.error)
-
-    let absPath = saveResult.value
-    let realAttachments = canonicalPath(attachmentsDir).valueOr:
-      return err("cannot resolve attachments directory: " & error)
-    let realSaved = canonicalPath(absPath).valueOr:
-      return err("cannot resolve saved attachment: " & error)
-    if realSaved != realAttachments and
-       not realSaved.startsWith(realAttachments & $DirSep):
-      return err("attachment escaped the paddock: " & absPath)
-    secureFile(absPath)
-    let slash = absPath.rfind('/')
-    let savedName = if slash >= 0: absPath[slash + 1 .. ^1] else: absPath
-    let relPath = AttachmentDirName / savedName
-    let mimeType =
-      if preferredMime.strip.len > 0: preferredMime.strip
-      elif fileDownload.mimeType.strip.len > 0: fileDownload.mimeType.strip
-      else: "application/octet-stream"
-    let size =
-      if fileDownload.fileSize > 0: fileDownload.fileSize
-      else: fileDownload.data.len.int64
-    let image = isImageMime(mimeType)
-
-    if msg.text.len > 0:
-      if not msg.text.endsWith("\n"):
-        msg.text.add("\n")
+  if msg.text.len > 0:
+    if not msg.text.endsWith("\n"):
       msg.text.add("\n")
-    msg.text.add(attachmentMarker(relPath, mimeType, size, image))
-    msg.mediaUrl = ""
+    msg.text.add("\n")
+  msg.text.add(attachmentMarker(relPath, mimeType, size, image))
+  msg.mediaUrl = ""
 
-    ok(InboundAttachment(
-      relPath: relPath,
-      absPath: absPath,
-      mimeType: mimeType,
-      size: size,
-      isImage: image,
-    ))
-  except CatchableError as e:
-    err("applyInboundAttachment: " & e.msg)
+  ok(InboundAttachment(
+    relPath: relPath,
+    absPath: saved.get().absPath,
+    mimeType: mimeType,
+    size: size,
+    isImage: image,
+  ))
