@@ -64,6 +64,7 @@ const
     "rewind",
     "manage_skills",
     "session_search",
+    "memory_ingest",
   ]
 
   AgentNativeTools* = [

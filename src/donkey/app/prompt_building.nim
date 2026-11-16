@@ -155,6 +155,10 @@ func genericProviderErrorText*(errMsg: string): string =
   if lower.contains("tool_call_id") or lower.contains("tool result's tool id") or
      lower.contains("tool call id"):
     return "Desculpe, houve uma inconsistência interna ao continuar uma sequência longa de ferramentas. Tente pedir novamente em uma nova mensagem."
+  if lower.contains("image_url") or lower.contains("image url") or
+     lower.contains("file_id") or lower.contains("attachment") or
+     lower.contains("invalid content") or lower.contains("unsupported image"):
+    return "Desculpe, o provedor rejeitou o anexo. O arquivo foi salvo no workspace; tente reenviar ou use um modelo com suporte a imagens/anexos."
   if lower.contains("401") or lower.contains("403") or lower.contains("unauthorized") or lower.contains("api key"):
     return "Desculpe, houve um problema de autenticação com o provedor configurado."
   if lower.contains("400") or lower.contains("bad request") or lower.contains("invalid"):

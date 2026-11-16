@@ -148,6 +148,7 @@ Every user interacting with Donkey receives an isolated, human-readable director
 ├── MEMORY.md        # Episodic reflections & long-term conversational memory
 ├── CONTACTS.md      # Social graph, relations, and mentions
 ├── solutions/       # Self-indexed technical solutions & code recipes
+├── attachments/     # Inbound Telegram/Discord files, 0700/0600
 ├── sessions/        # Session transcripts & turn summaries
 └── .secrets/        # User-encrypted API keys & tokens (AES-GCM via nimcrypto)
 ```
@@ -156,6 +157,12 @@ Every user interacting with Donkey receives an isolated, human-readable director
 1. **SQLite-First (Default)**: Embedded SQLite and `sqlite-vec` vector similarity search are compiled directly into the binary. Episodic memories, user preferences, and knowledge nodes live in `~/.donkey/state/magma.sqlite`. Profile texts, preferences, and memories are transmitted to OpenRouter to generate embeddings during writes and queries when embedding generation is active (e.g. via `OPENROUTER_API_KEY`); CLI operations like `ctl memory search` and `ctl memory import` may also transmit queries and non-empty context externally. Other configured services, such as Z.AI or external rerankers, may also transmit queries and candidate memory texts. Raw conversation transcripts are preserved in JSONL session files under `paddocks/<uuid>/sessions/`.
 2. **Markdown Bootstrap & Export**: Markdown paddocks serve as the human-readable view, bootstrap source, and debug format. When MAGMA is active, runtime writes prioritize the graph. If opening or migrating the database raises an exception, `newMagmaAdapter` returns `nil`, and runtime profile or preference writes can fail when accessing the adapter before the `MdFileAdapter` Markdown fallback takes place. If a write propagates a catchable error, `MdFileAdapter` attempts to record the update in the paddock Markdown files. Some SQLite write errors are swallowed, so updates can be lost without a Markdown fallback. `loadContext` will prioritize graph content once MAGMA recovers. Before running `./donkey ctl memory export <uuid> [output_dir]`, back up and reconcile any paddock Markdown files that diverged during outages, as exporting will overwrite the target directory with the current MAGMA view (or omit `output_dir` to print to stdout). Note that `./donkey ctl memory import <uuid>` reads context before calling `deleteUser`; non-empty graph fields take precedence over divergent edits in Markdown files (only empty graph fields are populated from Markdown), and unexported nodes or relation edges (episodes, solutions) are permanently purged without recovering divergent file edits. Always take a full database backup before importing.
 3. **PostgreSQL Multigraph Scaling**: For multi-agent graph querying at scale, Donkey supports PostgreSQL + `pgvector`. Ensure the `pgvector` extension is installed on your PostgreSQL server and that the database user configured in `DONKEY_PG_DSN` has permissions to execute `CREATE EXTENSION IF NOT EXISTS vector`. Install the `libpq` client development library on the build host first (for example, `libpq-dev` on Debian/Ubuntu). Compile with `nim c -d:withPostgres -u:withSqlite -o:donkey src/donkey.nim` and configure `DONKEY_PG_DSN`. Recompiling does not automatically transfer existing data from SQLite; operators must back up their database and migrate existing nodes and edges before switching backends (`./donkey ctl memory export <uuid>` exports only the three context Markdown files for an individual user, not the complete knowledge graph).
+
+### Attachments and Memory Ingestion
+
+Inbound files are downloaded into `{paddock}/attachments/` and referenced by relative path in the user turn. Documents are read with `fs_read`/`text_read`; images use `inspect_image`. Channel file IDs are never forwarded to providers as image URLs.
+
+The `memory_ingest` tool reads a workspace text file (or inline `text`) and appends it to memory in bounded chunks, so a large export does not need to fit in one model response. It appends memory; it does not overwrite `USER.md`. Paddocks, sessions, attachments, and known memory files are created with `0700`/`0600` on POSIX.
 
 ---
 
@@ -168,6 +175,8 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
   - Read-only root filesystem (`read_only_rootfs = true`)
   - Network access disabled by default (enabling network in donkey.toml requires --dev-mode)
   - Isolated temporary and paddock mounts
+
+`donkey doctor` checks the OCI runtime, the Docker/Podman socket and its permissions. If it reports `socket access denied`, add the service user to the `docker` group and restart the user service (or reboot): `sudo usermod -aG docker $USER`.
 - **WASM Applet Dispatch**: Fast execution of POSIX applets (cat, grep, sed, find) via `wasmtime` and `~/.donkey/busybox`.
 - **Webhook TLS**: set both `DONKEY_WEBHOOK_TLS_CERT` and `DONKEY_WEBHOOK_TLS_KEY` (PEM paths) to serve `https://` directly from the webhook receiver. The certificate and key are reloaded when their files change; otherwise terminate TLS at a reverse proxy.
 - **Web Egress (SSRF)**: `fetch`/`http_fetch` validate every redirect hop against the private/reserved address policy and resolve DNS through the adapter. **Deployment requirement:** unless the host firewall already blocks private/reserved destinations, set `DONKEY_WEB_PROXY` to a filtering egress proxy. Connection pinning against DNS rebinding requires that proxy or the firewall (the browser uses `DONKEY_BROWSER_PROXY`).
@@ -225,6 +234,7 @@ Approval mints the identity UUID and writes it to `state/dm_allowlist.txt`; the 
 Risky native tools pause and ask the requesting user before executing. The default list is `bash`, `edit_file`, `rm`, `mv` and `cp`; read-only tools run directly.
 
 - `DONKEY_APPROVAL_TOOLS=bash,edit_file` changes the list; `*` covers every native/MCP/skill tool and `none` disables the gate.
+- `DONKEY_APPROVAL_LARGE_WRITES=summary` lets large `fs_write`/`text_replace` actions show a `path`/bytes/sha1/preview summary instead of forcing the model to split the file. The default is `reject`; `bash`, `execute_code`, and `edit_file` remain full-display-only.
 - `DONKEY_APPROVAL_TIMEOUT_SEC` controls the wait (default 300s); timeout means deny.
 - The request appears in the chat with `/approve <id>` and `/deny <id>`; Telegram, Discord and Slack also render inline **Aprovar/Negar** buttons.
 - The operator can use `./donkey ctl approval list [user]`, `./donkey ctl approval approve <id>` or `./donkey ctl approval deny <id>`.

@@ -304,3 +304,100 @@ suite "native tool approval gate":
     check res.handled
     check "too large" in res.text
     check created == 0
+
+suite "large file write approval summary":
+
+  test "summary mode approves a large fs_write with path, bytes and sha1":
+    putEnv("DONKEY_APPROVAL_LARGE_WRITES", "summary")
+    defer: delEnv("DONKEY_APPROVAL_LARGE_WRITES")
+    let root = "/tmp/donkey_large_write_approval"
+    removeDir(root)
+    createDir(root)
+    defer: removeDir(root)
+
+    var created = 0
+    var captured = ""
+    let store = ApprovalStorePort(
+      create: proc(userId: string; channel: string; toolName, summary: string;
+                   ttlMs: int64): Result[ApprovalRequest, string] {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}:
+          inc created
+          captured = summary
+        ok(ApprovalRequest(id: "bigwrite", userId: userId, channel: channel,
+                           toolName: toolName, summary: summary,
+                           createdAtMs: 0, expiresAtMs: 60_000,
+                           status: apsPending)),
+      status: proc(id: string): Result[ApprovalStatus, string] {.gcsafe, raises: [].} =
+        ok(apsApproved),
+      decide: proc(id, userId: string; approved: bool;
+                   admin: bool): Result[void, string] {.gcsafe, raises: [].} =
+        ok(),
+      listPending: proc(userId: string): Result[seq[ApprovalRequest], string] {.gcsafe, raises: [].} =
+        ok(newSeq[ApprovalRequest]()),
+    )
+    configureApprovalService(store, @["fs_write"])
+    defer: resetApprovalService()
+
+    let outbox = newAsyncQueue[OutboundMessage](4)
+    var ctx = NativeCtx(
+      uid: UserId("u1"),
+      channel: ckTelegram,
+      outbox: outbox,
+      approval: currentApprovalService(),
+      log: nativeApprovalLog,
+      paddockDir: root,
+    )
+    let payload = repeat("x", 2600)
+    let call = ToolCallRequest(
+      id: "t8",
+      name: "fs_write",
+      inputJson: """{"path":"big.md","format":"text","mode":"replace","content":"""" & payload & """"}""",
+    )
+    let res = waitFor executeNativeTool(call, ctx, SessionState(), @[])
+    check res.handled
+    check res.resultKind == trkOutput
+    check created == 1
+    check "path=big.md" in captured
+    check "bytes=2600" in captured
+    check "sha1=" in captured
+    check fileExists(root / "big.md")
+
+  test "reject mode still blocks a large fs_write":
+    delEnv("DONKEY_APPROVAL_LARGE_WRITES")
+    var created = 0
+    let store = ApprovalStorePort(
+      create: proc(userId: string; channel: string; toolName, summary: string;
+                   ttlMs: int64): Result[ApprovalRequest, string] {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}:
+          inc created
+        err("must not be called"),
+      status: proc(id: string): Result[ApprovalStatus, string] {.gcsafe, raises: [].} =
+        err("must not be called"),
+      decide: proc(id, userId: string; approved: bool;
+                   admin: bool): Result[void, string] {.gcsafe, raises: [].} =
+        err("must not be called"),
+      listPending: proc(userId: string): Result[seq[ApprovalRequest], string] {.gcsafe, raises: [].} =
+        err("must not be called"),
+    )
+    configureApprovalService(store, @["fs_write"])
+    defer: resetApprovalService()
+
+    let outbox = newAsyncQueue[OutboundMessage](4)
+    var ctx = NativeCtx(
+      uid: UserId("u1"),
+      channel: ckTelegram,
+      outbox: outbox,
+      approval: currentApprovalService(),
+      log: nativeApprovalLog,
+      paddockDir: "/tmp",
+    )
+    let payload = repeat("x", 2600)
+    let call = ToolCallRequest(
+      id: "t9",
+      name: "fs_write",
+      inputJson: """{"path":"big.md","format":"text","mode":"replace","content":"""" & payload & """"}""",
+    )
+    let res = waitFor executeNativeTool(call, ctx, SessionState(), @[])
+    check res.handled
+    check "too large" in res.text
+    check created == 0

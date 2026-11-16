@@ -241,6 +241,22 @@ proc runSandboxPlan*(plan: SandboxPlan;
 func buildSandboxWriteProbeCmd*(): string {.gcsafe, raises: [].} =
   "touch " & SandboxWriteProbeFile & " && rm -f " & SandboxWriteProbeFile
 
+func isDockerPermissionError*(output: string; runtimeCmd = "docker"): bool {.gcsafe, raises: [].} =
+  let normalized = output.toLowerAscii()
+  let runtime = runtimeCmd.toLowerAscii()
+  ("permission denied" in normalized) and
+    (("docker.sock" in normalized) or
+     ("daemon socket" in normalized) or
+     (runtime & " api" in normalized) or
+     ("docker api" in normalized))
+
+func dockerPermissionHint*(runtimeCmd = "docker"): string {.gcsafe, raises: [].} =
+  "Error: " & runtimeCmd & " socket access denied. " &
+    "Add the service user to the '" & runtimeCmd & "' group and restart the user service:\n" &
+    "  sudo usermod -aG " & runtimeCmd & " $USER\n" &
+    "  systemctl --user restart donkey\n" &
+    "If the group is still missing, reboot or restart user@<uid>.service."
+
 proc probeSandboxWorkspaceWritable*(mode: SandboxMode;
                                     paddock: string;
                                     image: string;
@@ -264,7 +280,10 @@ proc probeSandboxWorkspaceWritable*(mode: SandboxMode;
     let (output, code) = runner(plan, env)
     if code == 0:
       return ok()
-    err(formatSandboxResult(output, code))
+    let formatted = formatSandboxResult(output, code)
+    if isDockerPermissionError(formatted, runtimeCmd):
+      return err(dockerPermissionHint(runtimeCmd))
+    err(formatted)
   except CatchableError as e:
     err("Error: " & e.msg)
 
@@ -326,6 +345,8 @@ proc executeOciPlan*(cmd, paddock, image: string;
     else: (proc(plan: SandboxPlan): string {.closure, gcsafe, raises: [].} =
       runSandboxPlan(plan))
   let ociResult = runner(buildSandboxPlan(cmd, paddock, smOci, image, runtimeCmd, allowNetwork, readOnlyRootfs))
+  if isDockerPermissionError(ociResult, runtimeCmd):
+    return dockerPermissionHint(runtimeCmd)
   if not shouldFallbackOci(ociResult, runtimeCmd):
     return ociResult
   if not allowHostFallback:
@@ -378,6 +399,18 @@ proc sandboxAvailabilityResult*(cfg: DonkeyConfig): Result[string, string] {.gcs
     if runtimePath.len == 0:
       err("OCI runtime '" & cfg.sandboxRuntimeCmd & "' not found in PATH")
     else:
+      let dockerHost = getEnv("DOCKER_HOST").strip()
+      if dockerHost.len == 0 or dockerHost.startsWith("unix://"):
+        let socketPath =
+          if dockerHost.startsWith("unix://"): dockerHost["unix://".len .. ^1]
+          else: "/var/run/docker.sock"
+        if not fileExists(socketPath):
+          return err("OCI runtime '" & cfg.sandboxRuntimeCmd &
+                     "' found, but the socket " & socketPath &
+                     " is not available. Is the Docker daemon running?")
+        when defined(posix):
+          if access(socketPath.cstring, W_OK) != 0:
+            return err(dockerPermissionHint(cfg.sandboxRuntimeCmd))
       ok("runtime=" & cfg.sandboxRuntimeCmd)
   of smWasm:
     let wasmtimePath = findExeSafe("wasmtime")

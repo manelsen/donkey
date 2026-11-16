@@ -34,6 +34,8 @@ type
     callbackId*:  string   ## callback_query.id (non-empty → must ack)
     hasMedia*:    bool     ## true when a photo/document/voice is attached
     mediaFileId*: string   ## Telegram file_id for download (if hasMedia)
+    mediaFileName*: string ## original document name, when provided
+    mediaMimeType*: string ## original MIME type, when provided
 
 # ── Internal pure helpers ─────────────────────────────────────────────────────
 
@@ -64,6 +66,30 @@ func extractMediaFileId(tgMsg: JsonNode): string =
     return tgMsg["voice"].getOrDefault("file_id").getStr("")
   ""
 
+func extractMediaFileName(tgMsg: JsonNode): string =
+  ## Returns the original document name, or a synthetic name for media.
+  if tgMsg.hasKey("document"):
+    let name = tgMsg["document"].getOrDefault("file_name").getStr("")
+    if name.len > 0:
+      return name
+  elif tgMsg.hasKey("photo"):
+    return "photo.jpg"
+  elif tgMsg.hasKey("voice"):
+    return "voice.ogg"
+  ""
+
+func extractMediaMimeType(tgMsg: JsonNode): string =
+  ## Returns the document MIME type, or a sensible media fallback.
+  if tgMsg.hasKey("document"):
+    let mime = tgMsg["document"].getOrDefault("mime_type").getStr("")
+    if mime.len > 0:
+      return mime
+  elif tgMsg.hasKey("photo"):
+    return "image/jpeg"
+  elif tgMsg.hasKey("voice"):
+    return "audio/ogg"
+  ""
+
 # ── Public pure API ───────────────────────────────────────────────────────────
 
 func parseUpdate*(upd: JsonNode): TgParseResult =
@@ -87,21 +113,25 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
   if upd.hasKey("message"):
     let tgMsg   = upd["message"]
     let fromId  = tgMsg["from"]["id"].getBiggestInt()
-    let text    = tgMsg |> extractTextFrom
-    let mediaId = tgMsg |> extractMediaFileId
-    let sessKey = tgMsg |> extractChatKey
-    let chanId  = $tgMsg["message_id"].getInt()
+    let text      = tgMsg |> extractTextFrom
+    let mediaId   = tgMsg |> extractMediaFileId
+    let mediaName = tgMsg |> extractMediaFileName
+    let mediaMime = tgMsg |> extractMediaMimeType
+    let sessKey   = tgMsg |> extractChatKey
+    let chanId    = $tgMsg["message_id"].getInt()
     ## Skip updates that carry neither text nor a recognisable attachment.
     if text.len == 0 and mediaId.len == 0:
       return TgParseResult(kind: tukUnknown)
     return TgParseResult(
-      kind:        tukMessage,
-      rawId:       $fromId,
-      sessionKey:  sessKey,
-      text:        text,
-      channelId:   chanId,
-      hasMedia:    mediaId.len > 0,
-      mediaFileId: mediaId,
+      kind:          tukMessage,
+      rawId:         $fromId,
+      sessionKey:    sessKey,
+      text:          text,
+      channelId:     chanId,
+      hasMedia:      mediaId.len > 0,
+      mediaFileId:   mediaId,
+      mediaFileName: mediaName,
+      mediaMimeType: mediaMime,
     )
 
   TgParseResult(kind: tukUnknown)
@@ -128,6 +158,8 @@ func toInbound*(r: TgParseResult; userId: UserId;
     callbackId:   r.callbackId,
     text:         r.text,
     mediaUrl:     mediaUrl,
+    mediaFileName: r.mediaFileName,
+    mediaMimeType: r.mediaMimeType,
   )
 
 func maxNextOffset*(currentOffset: int64; updates: JsonNode): int64 =

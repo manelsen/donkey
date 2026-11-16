@@ -31,6 +31,12 @@ type TypingFn* = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: []
 
 const RepeatAbortThreshold* = 2    ## abort if same (tool, args) seen ≥ this many times
 
+func clipProviderError(err: string; maxChars = 500): string =
+  let oneLine = err.replace("\r\n", "\\n")
+                   .replace("\n", "\\n")
+                   .replace("\r", "\\r")
+  if oneLine.len > maxChars: oneLine[0 ..< maxChars] & "…" else: oneLine
+
 type ToolCallResult* = object
   text*:          string
   resultKind*:    ToolResultKind
@@ -417,6 +423,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         streamFn, req, globalOutbox, uid, channel, replyTo, streamId,
         nativeCtx.stopGeneration)
       if streamedRes.isErr:
+        nativeCtx.log.warn("provider error: " & clipProviderError(streamedRes.error))
         pushAgentEvent(AgentEvent(
           kind:    aekError,
           userId:  $uid,
@@ -465,6 +472,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       else:
         safeComplete(completeFn, req)
     if resp.isErr:
+      nativeCtx.log.warn("provider error: " & clipProviderError(resp.error))
       pushAgentEvent(AgentEvent(
         kind:    aekError,
         userId:  $uid,

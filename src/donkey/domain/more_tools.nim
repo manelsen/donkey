@@ -599,6 +599,22 @@ const
     "\"include_memory\":{\"type\":\"boolean\",\"description\":\"Include MEMORY.md (default: true)\"}" &
     "},\"required\":[\"query\"]}"
 
+# ── memory_ingest ─────────────────────────────────────────────────────────────
+const
+  MemoryIngestToolName* = "memory_ingest"
+  MemoryIngestToolDescription* =
+    "Read a text file from the current workspace or a text blob and append it " &
+    "to the user's long-term memory in bounded chunks. Use this when the user " &
+    "asks to ingest a document, import notes, or save a substantial memory. " &
+    "The path must be inside the workspace; binary and oversized files are rejected."
+  MemoryIngestToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"Workspace-relative text file to ingest\"}," &
+    "\"text\":{\"type\":\"string\",\"description\":\"Inline text to ingest when no path is given\"}," &
+    "\"chunk_chars\":{\"type\":\"integer\",\"description\":\"Chunk size in characters (default: 2000, range: 500..8000)\"}," &
+    "\"max_chunks\":{\"type\":\"integer\",\"description\":\"Maximum chunks to ingest (default: 100, range: 1..500)\"}" &
+    "}}"
+
 # ── spawn_subagent ────────────────────────────────────────────────────────────
 const
   SpawnSubagentToolName* = "spawn_subagent"
