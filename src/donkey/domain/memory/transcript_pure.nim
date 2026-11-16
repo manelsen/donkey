@@ -72,10 +72,17 @@ func resumeByContent(existing, history: openArray[TranscriptLine]): int =
   elif headRun > 0: headRun
   else: 0
 
-func messagesToAppend*(existing, history: openArray[TranscriptLine]): seq[int] =
+func messagesToAppend*(existing, history: openArray[TranscriptLine];
+                       existingIsTail = false): seq[int] =
   ## Indexes of the messages in `history` that the stored transcript does not
   ## hold yet, in order. Synthetic messages (compaction summaries) are never
   ## returned.
+  ##
+  ## `existing` may be less than the whole transcript: only its end was read
+  ## (`existingIsTail`), or its first lines were written before numbering
+  ## existed. Numbers grow with time and the file is append-only, so a number
+  ## below the lowest one seen belongs to that unseen or unnumbered part and
+  ## is already stored.
   var said: seq[int]            ## indexes of real messages in `history`
   var allNumbered = true
   for i, message in history:
@@ -88,14 +95,24 @@ func messagesToAppend*(existing, history: openArray[TranscriptLine]): seq[int] =
     return
 
   var storedNumbers = initHashSet[int64]()
+  var lowestStored = high(int64)
+  var hasUnnumberedLines = false
   for stored in existing:
     if stored.seq > 0:
       storedNumbers.incl(stored.seq)
+      lowestStored = min(lowestStored, stored.seq)
+    else:
+      hasUnnumberedLines = true
 
   if allNumbered and (existing.len == 0 or storedNumbers.len > 0):
+    let olderPartIsStored = existingIsTail or hasUnnumberedLines
     for i in said:
-      if history[i].seq notin storedNumbers:
-        result.add(i)
+      let number = history[i].seq
+      if number in storedNumbers:
+        continue
+      if olderPartIsStored and number < lowestStored:
+        continue
+      result.add(i)
     return
 
   ## No numbers on one side: a caller that does not number its history, or the

@@ -101,3 +101,35 @@ suite "transcript — messages without numbers (older files and callers)":
 
   test "unrelated history is appended whole":
     check appended(conversation(1, 4), conversation(11, 12)) == conversation(11, 12)
+
+suite "transcript — partial knowledge of what is stored":
+
+  test "second save after an upgrade does not bring the old messages back":
+    ## The file starts with lines written before numbering. After the first
+    ## save it holds numbers 5 and 6 only; 1 to 4 are the unnumbered lines.
+    var log = conversation(1, 4)
+    let history = conversation(1, 6, numbered = true)
+    log.add(appended(log, history))
+    check log.len == 6
+    check appended(log, history).len == 0
+    let grown = conversation(1, 8, numbered = true)
+    check appended(log, grown) == conversation(7, 8, numbered = true)
+
+  test "numbers older than the part of the file that was read count as stored":
+    ## Only the end of a long transcript is read. A rewind can restore
+    ## messages numbered before that part; they are in the file already.
+    let tail = conversation(101, 120, numbered = true)
+    let restored = conversation(41, 44, numbered = true)
+    check messagesToAppend(tail, restored, existingIsTail = true).len == 0
+    let next = restored & @[line("user", "depois do rewind", 121)]
+    var indexes = messagesToAppend(tail, next, existingIsTail = true)
+    check indexes == @[4]
+
+  test "with the whole file read, a low number that is absent is new":
+    ## Numbered at a checkpoint, rewound before any save, restored later.
+    let log = @[line("user", "m1", 1), line("assistant", "m2", 2),
+                line("user", "m6", 6)]
+    let history = @[line("user", "m1", 1), line("assistant", "m2", 2),
+                    line("user", "m4", 4)]
+    check appended(log, history) == @[line("user", "m4", 4)]
+

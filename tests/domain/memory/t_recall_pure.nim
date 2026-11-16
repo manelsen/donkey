@@ -157,3 +157,22 @@ suite "recall — rendering":
       MemoryHit(content: "uma regra antiga", kind: "lesson"),
       MemoryHit(content: "fato", kind: "memory")])
     check rendered == "- [lesson] uma regra antiga\n- [memory] fato"
+
+  test "an excerpt mixing numbered and unnumbered ids has one consistent order":
+    ## Per-pair criteria would cycle here: A before B by number, B before C
+    ## and C before A by time.
+    var hit = MemoryHit(id: "u1_m3", content: "entrada A", kind: "memory",
+                        timestamp: 500, origin: turnOrigin("s1"))
+    hit.after = @[
+      MemoryHit(id: "u1_m4", content: "entrada B", kind: "memory",
+                timestamp: 400, origin: turnOrigin("s1")),
+      MemoryHit(id: "", content: "entrada C", kind: "memory",
+                timestamp: 450, origin: turnOrigin("s1"))]
+    let memory = renderRecall(@[hit])
+    let a = memory.find("entrada A")
+    let b = memory.find("entrada B")
+    let c = memory.find("entrada C")
+    check a >= 0 and b >= 0 and c >= 0
+    ## Without a number on every entry the whole block goes by timestamp.
+    check b < c and c < a
+

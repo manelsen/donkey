@@ -673,18 +673,23 @@ proc readFileTail(path: string; maxBytes: int): string =
   let firstBreak = tail.find('\n')
   if firstBreak < 0: "" else: tail[firstBreak + 1 .. ^1]
 
-proc fileEndsWithNewline(path: string): bool =
-  ## True for an empty file too: there is no open line to close.
-  let size = getFileSize(path)
-  if size <= 0:
-    return true
-  var f: File
-  if not open(f, path, fmRead):
-    return true
-  defer: f.close()
-  f.setFilePos(size - 1)
-  var last: array[1, char]
-  f.readChars(last) == 1 and last[0] == '\n'
+proc fileEndsWithNewline(path: string): bool {.raises: [].} =
+  ## True for an empty file too: there is no open line to close. When the
+  ## file cannot be read the answer is false, so the caller closes the line:
+  ## an extra blank line is harmless, a message glued to a fragment is lost.
+  try:
+    let size = getFileSize(path)
+    if size <= 0:
+      return true
+    var f: File
+    if not open(f, path, fmRead):
+      return false
+    defer: f.close()
+    f.setFilePos(size - 1)
+    var last: array[1, char]
+    f.readChars(last) == 1 and last[0] == '\n'
+  except CatchableError:
+    false
 
 proc readTranscriptLines(path: string): seq[TranscriptLine] =
   if not fileExists(path):
@@ -719,7 +724,10 @@ proc saveSession*(a: MdFileAdapter; userId: UserId;
   var current: seq[TranscriptLine]
   for msg in history:
     current.add(TranscriptLine(role: msg.role, text: msg.text, seq: msg.seq))
-  let fresh = messagesToAppend(readTranscriptLines(path), current)
+  let existingIsTail =
+    fileExists(path) and getFileSize(path) > SessionTranscriptAlignBytes
+  let fresh = messagesToAppend(readTranscriptLines(path), current,
+                               existingIsTail)
   if fresh.len == 0:
     return
   let nowMs = epochMs()
