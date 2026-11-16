@@ -122,6 +122,7 @@ type
     subagentId*: string
     subagentDepth*: int
     stopGeneration*: uint64
+    userInterrupt*: uint64   ## per-user /stop counter captured at turn start
     scopeSessionId*: string
     budget*: SubagentUsage
     budgetLimits*: SubagentLimits
@@ -238,11 +239,13 @@ type
                                   ): Future[NativeToolResult] {.nimcall, gcsafe, raises: [].}
 
 proc sessionStopRequested*(ctx: NativeCtx): bool {.gcsafe, raises: [].} =
-  ## True when the process is shutting down or the user sent /stop, even if
-  ## the actor is still inside a long tool batch or approval wait.
+  ## True when the process is shutting down or a `/stop` arrived after this
+  ## turn started, even if the actor is still inside a long tool batch or
+  ## approval wait. Comparing counters keeps a newer turn from inheriting an
+  ## older stop.
   if isSessionStopRequested(ctx.stopGeneration):
     return true
-  isUserStopped($ctx.uid)
+  isUserStoppedSince($ctx.uid, ctx.userInterrupt)
 
 # ── Context parsers ───────────────────────────────────────────────────────────
 

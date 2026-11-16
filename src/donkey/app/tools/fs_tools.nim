@@ -96,18 +96,30 @@ proc appendToFile(path, content: string) =
   else:
     writeFile(path, content)
 
-proc copyTree(src, dst: string) =
+proc copyTree(src, dst: string; errorOut: var string): bool =
+  ## Copies a directory tree. Every destination path is checked for a symlink
+  ## before it is created or written: `copyFile` would follow the link and
+  ## write outside the paddock. The check narrows, but does not close, the
+  ## race between validation and the write.
+  if symlinkExists(dst):
+    errorOut = "destination is a symlink: " & dst
+    return false
   createDir(dst)
   for kind, entry in walkDir(src):
     let target = dst / entry.extractFilename
     case kind
     of pcDir:
-      copyTree(entry, target)
+      if not copyTree(entry, target, errorOut):
+        return false
     of pcFile:
+      if symlinkExists(target):
+        errorOut = "destination is a symlink: " & target
+        return false
       ensureParentDir(target)
       copyFile(entry, target)
     of pcLinkToFile, pcLinkToDir:
       discard
+  true
 
 proc listEntries(root, paddock, pattern: string; recursive, includeHidden: bool;
                  items: var seq[JsonNode]) =
@@ -273,7 +285,9 @@ proc performFsCopy*(src, dst, paddock: string; recursive = false): StructuredToo
     elif dirExists(srcGuard.resolved):
       if not recursive:
         return usageErrorToolResult("copying a directory requires recursive=true")
-      copyTree(srcGuard.resolved, dstGuard.resolved)
+      var copyError = ""
+      if not copyTree(srcGuard.resolved, dstGuard.resolved, copyError):
+        return operationalErrorToolResult(copyError)
     else:
       return operationalErrorToolResult("source not found: " & src)
     successToolResult(%*{

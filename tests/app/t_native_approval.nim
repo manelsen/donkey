@@ -492,8 +492,8 @@ suite "native stop request":
     defer: resetApprovalService()
 
     let stoppedUser = "u1"
+    let turnInterrupt = currentUserInterrupt(stoppedUser)
     requestUserStop(stoppedUser)
-    defer: clearUserStop(stoppedUser)
     let outbox = newAsyncQueue[OutboundMessage](4)
     var ctx = NativeCtx(
       uid: UserId("u1"),
@@ -504,6 +504,7 @@ suite "native stop request":
       fs: newFsAdapter(),
       paddockDir: "/tmp",
       stopGeneration: currentSessionStopGeneration(),
+      userInterrupt: turnInterrupt,
     )
     let call = ToolCallRequest(
       id: "stop1",

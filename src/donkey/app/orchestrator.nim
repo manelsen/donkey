@@ -256,6 +256,9 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
     tools, log,
     paddockDir, sandboxMode, sandboxRuntimeCmd, sandboxImage)
   result.nativeCtx.stopGeneration = stateRuntime.stopGeneration
+  ## Recorded per turn: a `/stop` that arrives after this point aborts the
+  ## turn; one that arrived before it belongs to an earlier turn.
+  result.nativeCtx.userInterrupt = currentUserInterrupt($result.uid)
   result.nativeCtx.scopeSessionId = stateRuntime.sessionId
   createDir(paddockDir)
   result.typingLoop = startTypingLoop(typingFn, result.uid, msg.channel)
@@ -527,8 +530,6 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
                      asyncCompleteFn: AsyncCompleteFn = nil): Future[OrchestratorState] {.async.} =
   result = stateRuntime
   let uid = UserId(msg.userId)
-  if msg.taskKind == tkUserMsg:
-    clearUserStop($uid)
   result =
     result |>->
     withLastUser(uid)

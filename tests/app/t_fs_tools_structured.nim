@@ -108,3 +108,20 @@ suite "structured filesystem tool core":
     check not parsed["ok"].getBool()
     check parsed["status"].getStr() == "usage_error"
     check parsed["error"]["message"].getStr().contains("outside paddock")
+
+  when defined(posix):
+    test "recursive copy refuses a symlinked destination":
+      let outside = paddock & "_outside_copy"
+      removeDir(outside)
+      createDir(outside)
+      defer: removeDir(outside)
+
+      ## A symlink planted inside the destination tree must not be followed.
+      createDir(paddock / "tmp")
+      createSymlink(outside, paddock / "tmp" / "docs-copy")
+
+      let parsed = parseEnvelope(
+        performFsCopy("docs", "tmp/docs-copy", paddock, recursive = true))
+      check not parsed["ok"].getBool()
+      check parsed["error"]["message"].getStr().contains("symlink")
+      check not fileExists(outside / "notes.txt")

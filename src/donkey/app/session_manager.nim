@@ -5,7 +5,7 @@
 ## `channels` tracks which (ChannelKind, raw_id) pairs are associated with
 ## this session — used for `ctl session list`.
 
-import std/[options, sets, tables]
+import std/[options, tables]
 import chronos
 import chronos/asyncsync
 import ../core/pipeops
@@ -15,6 +15,7 @@ import ../domain/message
 import ../core/session/session_ingress
 import ../core/security/dm_policy
 import ../ports/runtime_state
+import ../infra/queue/nonblocking
 import ./approval_runtime
 
 const
@@ -127,7 +128,7 @@ proc restoreSessions*(sm: var SessionManager): Result[int, string] =
   ok(count)
 
 var gSessionStopGeneration: uint64 = 0
-var gStoppedSessions: HashSet[string]
+var gUserInterrupts: Table[string, uint64]
 var gShuttingDown = false
 var gLiveActors = 0
 var gAllActorsStopped: Future[void]
@@ -141,24 +142,29 @@ proc requestSessionStop*() {.gcsafe, raises: [].} =
     inc gSessionStopGeneration
 
 proc requestUserStop*(userId: string) {.gcsafe, raises: [].} =
-  ## Per-user stop flag. Safe to set from a channel handler while the
-  ## session actor is busy inside a tool batch or approval wait.
+  ## Bumps the per-user interrupt counter. Safe to set from a channel handler
+  ## while the session actor is busy inside a tool batch or approval wait.
+  ## Turns compare the counter they started with, so a turn started after the
+  ## interrupt is not stopped by it — no global flag has to be cleared, which
+  ## is what let a rebuilt actor un-stop an older in-flight turn.
   if userId.len == 0:
     return
   {.cast(gcsafe).}:
-    gStoppedSessions.incl(userId)
+    gUserInterrupts[userId] = gUserInterrupts.getOrDefault(userId) + 1
 
-proc clearUserStop*(userId: string) {.gcsafe, raises: [].} =
+proc currentUserInterrupt*(userId: string): uint64 {.gcsafe, raises: [].} =
   if userId.len == 0:
-    return
+    return 0
   {.cast(gcsafe).}:
-    gStoppedSessions.excl(userId)
+    gUserInterrupts.getOrDefault(userId)
 
-proc isUserStopped*(userId: string): bool {.gcsafe, raises: [].} =
+proc isUserStoppedSince*(userId: string; interrupt: uint64): bool
+                        {.gcsafe, raises: [].} =
+  ## True when a `/stop` arrived after the turn recorded `interrupt`.
   if userId.len == 0:
     return false
   {.cast(gcsafe).}:
-    userId in gStoppedSessions
+    gUserInterrupts.getOrDefault(userId) != interrupt
 
 func interruptsTurn*(kind: CommandKind): bool =
   ## Cross-channel policy: these commands abort the current turn and deny
@@ -172,10 +178,9 @@ proc requestTurnInterrupt*(sm: var SessionManager; userId: UserId)
   let uid = $userId
   sm.entries.withValue(uid, entry):
     if entry[].awaitingAsk and entry[].askInbox != nil:
-      try:
-        entry[].askInbox.addLastNoWait("__DONKEY_ASK_CANCELLED__")
-      except AsyncQueueFullError:
-        discard
+      ## A full ask queue already has a pending answer; dropping the cancel
+      ## marker is safe and must not abort the interrupt.
+      discard tryAddLastNoWait(entry[].askInbox, "__DONKEY_ASK_CANCELLED__")
       entry[].awaitingAsk = false
 
 proc daemonShuttingDown*(): bool {.gcsafe, raises: [].} =

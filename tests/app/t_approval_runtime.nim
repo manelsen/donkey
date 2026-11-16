@@ -192,8 +192,11 @@ suite "approval runtime":
     defer: resetApprovalService()
     var sm: SessionManager
     sm.init()
+    let before = currentUserInterrupt("interrupt-user")
     requestTurnInterrupt(sm, UserId("interrupt-user"))
-    check isUserStopped("interrupt-user")
+    check isUserStoppedSince("interrupt-user", before)
     check denied == 1
-    clearUserStop("interrupt-user")
-    check not isUserStopped("interrupt-user")
+    ## A turn that starts after the interrupt records the new counter and is
+    ## not stopped by it.
+    let after = currentUserInterrupt("interrupt-user")
+    check not isUserStoppedSince("interrupt-user", after)
