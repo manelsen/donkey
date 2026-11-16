@@ -1,7 +1,7 @@
 ## Tests for MagmaMemoryAdapter over SQLite-backed multigraph store.
 
 when defined(withSqlite):
-  import std/[os, unittest, options, strutils]
+  import std/[os, unittest, options, strutils, times]
   import donkey/core/types
   import donkey/adapters/memory/magma_memory_adapter
   import donkey/domain/memory/commitment_pure
@@ -45,6 +45,16 @@ when defined(withSqlite):
           "u1_m" & $i, edgeType = EdgeTemporal, direction = "in")
         check incoming.len == 1
         check incoming[0].fromId == "u1_m" & $(i - 1)
+
+    test "loadContext keeps memories when other node types crowd the window":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      a.appendMemory(UserId("u1"), "memoria que precisa sobreviver")
+      for i in 1 .. 250:
+        check a.graph.insertNode(MagmaNode(
+          id: "u1_filler_" & $i, userId: "u1", nodeType: "entity",
+          content: "entidade " & $i, timestamp: getTime().toUnix() + 1))
+      check a.loadContext(UserId("u1")).memoryMd.contains(
+        "memoria que precisa sobreviver")
 
     test "commitments round-trip":
       let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
