@@ -154,7 +154,9 @@ func preferencesMdPath*(a: MdFileAdapter; userId: UserId): string =
 func heartbeatMdPath*(a: MdFileAdapter; userId: UserId): string =
   a.paddockDir(userId) / HeartbeatFileName
 
-proc loadMarkdownContext(a: MdFileAdapter; userId: UserId): UserContext =
+proc loadMarkdownContext*(a: MdFileAdapter; userId: UserId): UserContext =
+  ## What the Markdown files of the paddock say, whatever the store is. With
+  ## MAGMA this is the export, or files edited for an explicit import.
   UserContext(
     userId:        userId,
     userMd:        if fileExists(a.userMdPath(userId)): readFile(a.userMdPath(userId)) else: "",

@@ -7,6 +7,7 @@ when defined(withSqlite):
   import donkey/core/types
   import donkey/adapters/memory/md_file
   import donkey/adapters/memory/magma_memory_adapter
+  import donkey/adapters/memory/multigraph_runtime
   import donkey/domain/memory/episode_pure
   import donkey/domain/memory/session_search_pure
   import donkey/domain/personality
@@ -188,6 +189,30 @@ when defined(withSqlite):
         1_700_000_000, 1_700_000_100, @[])
       check port.saveEpisode(uid, episode).isOk
       check a.newMagmaAdapter().loadEpisodes(uid).len == 1
+
+    test "the explicit import replaces the graph with the edited files":
+      let a = newAdapter()
+      a.saveUserMd(uid, "# Ada")
+      a.appendMemory(uid, "- gosta de Nim\n")
+      writeFile(a.userMdPath(uid), "# Ada Lovelace")
+      writeFile(a.memoryMdPath(uid), "- gosta de Nim\n\nnota escrita a mao\n")
+      check "nota escrita a mao" notin a.loadContext(uid).memoryMd
+      ctlMemoryImport(a, $uid)
+      let ctx = a.loadContext(uid)
+      check ctx.userMd == "# Ada Lovelace"
+      check "nota escrita a mao" in ctx.memoryMd
+      check a.memoryOrigins(uid) ==
+        @[MemoryOrigin(source: msMarkdown), MemoryOrigin(source: msMarkdown)]
+
+    test "the explicit import refuses to replace the graph with empty files":
+      let a = newAdapter()
+      a.saveUserMd(uid, "# Ada")
+      a.appendMemory(uid, "- gosta de Nim\n")
+      removeFile(a.userMdPath(uid))
+      removeFile(a.memoryMdPath(uid))
+      ctlMemoryImport(a, $uid)
+      check a.loadContext(uid).userMd == "# Ada"
+      check a.memoryNodes(uid).len == 1
 
     test "backend without MAGMA keeps Markdown as its only store":
       let plain = MdFileAdapter(paddocksDir: root / "paddocks")
