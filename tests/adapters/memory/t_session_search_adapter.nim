@@ -323,3 +323,24 @@ suite "MdFileAdapter session transcript":
     check lines.len == before + 1
     check parseJson(lines[^1])["seq"].getBiggestInt == 4
 
+  test "an unnumbered rewind over a file larger than the read window adds nothing":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    createDir(adapter.paddockDir(uid) / "sessions")
+    let path = adapter.paddockDir(uid) / "sessions" / "s1.jsonl"
+    var content = $(%*{"role": "user", "text": "pergunta A"}) & "\n" &
+                  $(%*{"role": "assistant", "text": "resposta B"}) & "\n"
+    var n = 0
+    while content.len <= SessionTranscriptAlignBytes + 4096:
+      content.add($(%*{"role": "user", "text": "enchimento " & $n & " " & repeat("z", 2000)}) & "\n")
+      inc n
+    writeFile(path, content)
+    let before = readFile(path).splitLines().filterIt(it.strip.len > 0).len
+    var rewound: ConversationHistory
+    rewound.addUser("pergunta A")
+    rewound.addAssistant("resposta B")
+    adapter.saveSession(uid, "s1", rewound)
+    check readFile(path).splitLines().filterIt(it.strip.len > 0).len == before
+
