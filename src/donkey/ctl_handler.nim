@@ -519,11 +519,13 @@ proc dispatchCtl*(cfg: DonkeyConfig;
       ctlMemorySearch(makeMagmaMemory(), args[3], args[4]); return 0
     if args[1] == "memory" and args[2] == "import" and args.len >= 4:
       ctlMemoryImport(makeMagmaMemory(), args[3]); return 0
+    if args[1] == "memory" and args[2] == "ingest" and args.len >= 5:
+      return (if ctlMemoryIngest(makeMagmaMemory(), args[3], args[4]): 0 else: 1)
     if args[1] == "memory" and args[2] == "export" and args.len >= 4:
       let outDir = if args.len >= 5: args[4] else: ""
       ctlMemoryExport(makeMagmaMemory(), args[3], outDir); return 0
   else:
-    if args[1] == "memory" and args[2] in ["search", "import", "export"]:
+    if args[1] == "memory" and args[2] in ["search", "import", "ingest", "export"]:
       echo "This build disabled MAGMA support; rebuild with -d:withPostgres or -d:withSqlite"
       return 1
 

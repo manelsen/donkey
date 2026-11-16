@@ -267,6 +267,7 @@ The `donkey ctl` utility provides complete instance governance:
 # User and Paddock management
 ./donkey ctl user list
 ./donkey ctl user show <uuid>
+./donkey ctl memory ingest <uuid> <path-inside-paddock>
 ./donkey ctl memory export <uuid> [output_dir]
 
 # Tool and Extension management

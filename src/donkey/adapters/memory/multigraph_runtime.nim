@@ -2,7 +2,10 @@
 
 when defined(withPostgres) or defined(withSqlite):
   import std/[os, strutils]
+  import results
   import ../../core/types
+  import ../../core/fs_paths
+  import ../../domain/memory/ingest_pure
   import ../../core/providers/smart_routing
   import ../../core/memory_rerank_prefs
   import ../../ports/memory
@@ -274,6 +277,51 @@ when defined(withPostgres) or defined(withSqlite):
     magma.deleteUser(uid)
     magma.importContextToMagma(uid, ctx)
     echo "Imported " & uuid & " from .md files"
+
+  proc ctlMemoryIngest*(memory: MdFileAdapter; uuid, path: string): bool =
+    ## Appends a workspace text file to the user's memory (Markdown + MAGMA)
+    ## without the destructive delete/import cycle.
+    let uid = UserId(uuid)
+    let paddock = memory.paddockDir(uid)
+    let candidate = if path.isAbsolute: path else: paddock / path
+    let realPaddock = canonicalPath(paddock).valueOr:
+      echo "ingest error: " & error
+      return false
+    let realFile = canonicalPath(candidate).valueOr:
+      echo "ingest error: " & error
+      return false
+    if realFile != realPaddock and
+       not realFile.startsWith(realPaddock & $DirSep):
+      echo "ingest error: path outside paddock: " & path
+      return false
+    if not fileExists(realFile) or dirExists(realFile):
+      echo "ingest error: file not found: " & path
+      return false
+    let size = try:
+      getFileSize(realFile)
+    except CatchableError as e:
+      echo "ingest error: " & e.msg
+      return false
+    if size > 2_000_000:
+      echo "ingest error: file exceeds 2 MB"
+      return false
+    let content = try:
+      readFile(realFile)
+    except CatchableError as e:
+      echo "ingest error: " & e.msg
+      return false
+    if '\0' in content:
+      echo "ingest error: binary file rejected"
+      return false
+    let chunked = chunkForMemory(content)
+    if chunked.chunks.len == 0:
+      echo "ingest error: no text to ingest"
+      return false
+    for chunk in chunked.chunks:
+      memory.appendMemory(uid, chunk)
+    echo "Ingested " & $chunked.chunks.len & " chunks (" & $content.len &
+         " bytes) from " & path
+    true
 
   proc ctlMemoryExport*(memory: MdFileAdapter; uuid: string; outDir = "") =
     let magma = newCtlMagmaAdapter(memory)
