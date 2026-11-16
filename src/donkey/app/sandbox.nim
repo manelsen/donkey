@@ -26,6 +26,7 @@ import ../config/types
 import ../core/log
 import ../core/pipeops
 import ../core/types
+import ../core/utf8
 import ../core/app_meta
 import ../infra/sandbox/wasm_tools
 import ../infra/sandbox/shell_composer
@@ -245,17 +246,21 @@ func isDockerPermissionError*(output: string; runtimeCmd = "docker"): bool {.gcs
   let normalized = output.toLowerAscii()
   let runtime = runtimeCmd.toLowerAscii()
   ("permission denied" in normalized) and
-    (("docker.sock" in normalized) or
+    ((runtime & ".sock" in normalized) or
      ("daemon socket" in normalized) or
      (runtime & " api" in normalized) or
      ("docker api" in normalized))
 
 func dockerPermissionHint*(runtimeCmd = "docker"): string {.gcsafe, raises: [].} =
-  "Error: " & runtimeCmd & " socket access denied. " &
-    "Add the service user to the '" & runtimeCmd & "' group and restart the user service:\n" &
-    "  sudo usermod -aG " & runtimeCmd & " $USER\n" &
+  let runtime = runtimeCmd.toLowerAscii()
+  let group = if runtime.contains("podman"): "podman" else: "docker"
+  result = "Error: " & runtimeCmd & " socket access denied. " &
+    "Add the service user to the '" & group & "' group and restart the user service:\n" &
+    "  sudo usermod -aG " & group & " $USER\n" &
     "  systemctl --user restart donkey\n" &
     "If the group is still missing, reboot or restart user@<uid>.service."
+  if runtime.contains("podman"):
+    result &= "\nFor rootless Podman, also export CONTAINER_HOST to the user socket."
 
 proc probeSandboxWorkspaceWritable*(mode: SandboxMode;
                                     paddock: string;
@@ -399,19 +404,20 @@ proc sandboxAvailabilityResult*(cfg: DonkeyConfig): Result[string, string] {.gcs
     if runtimePath.len == 0:
       err("OCI runtime '" & cfg.sandboxRuntimeCmd & "' not found in PATH")
     else:
-      let dockerHost = getEnv("DOCKER_HOST").strip()
-      if dockerHost.len == 0 or dockerHost.startsWith("unix://"):
-        let socketPath =
-          if dockerHost.startsWith("unix://"): dockerHost["unix://".len .. ^1]
-          else: "/var/run/docker.sock"
-        if not fileExists(socketPath):
-          return err("OCI runtime '" & cfg.sandboxRuntimeCmd &
-                     "' found, but the socket " & socketPath &
-                     " is not available. Is the Docker daemon running?")
-        when defined(posix):
-          if access(socketPath.cstring, W_OK) != 0:
-            return err(dockerPermissionHint(cfg.sandboxRuntimeCmd))
-      ok("runtime=" & cfg.sandboxRuntimeCmd)
+      try:
+        let (output, code) = execCmdEx(
+          runtimePath.quoteShell & " info",
+          options = {poStdErrToStdOut})
+        if code == 0:
+          ok("runtime=" & cfg.sandboxRuntimeCmd)
+        elif isDockerPermissionError(output, cfg.sandboxRuntimeCmd):
+          err(dockerPermissionHint(cfg.sandboxRuntimeCmd))
+        else:
+          let detail = clipUtf8(output.strip, 200)
+          err("OCI runtime '" & cfg.sandboxRuntimeCmd &
+              "' is installed but not reachable: " & detail)
+      except CatchableError as e:
+        err("OCI runtime probe failed: " & e.msg)
   of smWasm:
     let wasmtimePath = findExeSafe("wasmtime")
     if wasmtimePath.len == 0:

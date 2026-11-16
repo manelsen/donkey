@@ -476,43 +476,55 @@ proc setUserFieldText*(content, label, value: string): string =
 proc isRevokedUserMd*(content: string): bool =
   content.parseUserField("Access").toLowerAscii() == "revoked"
 
-proc secureDir(path: string) =
-  createDir(path)
-  when defined(posix):
-    setFilePermissions(path, {fpUserRead, fpUserWrite, fpUserExec})
+proc secureDir(path: string): bool =
+  try:
+    createDir(path)
+    when defined(posix):
+      setFilePermissions(path, {fpUserRead, fpUserWrite, fpUserExec})
+    true
+  except CatchableError:
+    false
 
-proc secureFile(path: string) =
-  when defined(posix):
-    if fileExists(path):
-      setFilePermissions(path, {fpUserRead, fpUserWrite})
+proc secureFile(path: string): bool =
+  try:
+    when defined(posix):
+      if fileExists(path):
+        setFilePermissions(path, {fpUserRead, fpUserWrite})
+    true
+  except CatchableError:
+    false
 
 proc securePaddockTree(a: MdFileAdapter; userId: UserId) =
   ## One-time migration for paddocks created before permissions were tightened.
+  ## Best effort: a permissions failure must not make the paddock unreadable.
   when defined(posix):
-    let marker = a.paddockDir(userId) / ".permissions_v1"
-    if fileExists(marker):
-      return
-    for path in [a.userMdPath(userId), a.memoryMdPath(userId),
-                 a.preferencesMdPath(userId), a.heartbeatMdPath(userId)]:
-      secureFile(path)
-    for dirName in ["sessions", "attachments"]:
-      let dir = a.paddockDir(userId) / dirName
-      if dirExists(dir):
-        for kind, path in walkDir(dir):
-          if kind == pcFile:
-            secureFile(path)
-    writeFile(marker, "permissions v1\n")
-    secureFile(marker)
+    try:
+      let marker = a.paddockDir(userId) / ".permissions_v1"
+      if fileExists(marker):
+        return
+      for path in [a.userMdPath(userId), a.memoryMdPath(userId),
+                   a.preferencesMdPath(userId), a.heartbeatMdPath(userId)]:
+        discard secureFile(path)
+      for dirName in ["sessions", "attachments"]:
+        let dir = a.paddockDir(userId) / dirName
+        if dirExists(dir):
+          for kind, path in walkDir(dir):
+            if kind == pcFile:
+              discard secureFile(path)
+      writeFile(marker, "permissions v1\n")
+      discard secureFile(marker)
+    except CatchableError:
+      discard
 
 proc ensurePaddock*(a: MdFileAdapter; userId: UserId) =
   ## Creates the paddock directory tree if it does not exist, and keeps
   ## memory/session/attachment files private to the service user.
-  secureDir(a.paddockDir(userId))
-  secureDir(a.paddockDir(userId) / "sessions")
-  secureDir(a.paddockDir(userId) / "attachments")
+  discard secureDir(a.paddockDir(userId))
+  discard secureDir(a.paddockDir(userId) / "sessions")
+  discard secureDir(a.paddockDir(userId) / "attachments")
   if not fileExists(a.heartbeatMdPath(userId)):
     writeFile(a.heartbeatMdPath(userId), defaultHeartbeatMd())
-  secureFile(a.heartbeatMdPath(userId))
+  discard secureFile(a.heartbeatMdPath(userId))
   securePaddockTree(a, userId)
 
 # ── MemoryPort implementation ─────────────────────────────────────────────────
@@ -549,7 +561,7 @@ proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext =
 proc saveUserMd*(a: MdFileAdapter; userId: UserId; content: string) =
   a.ensurePaddock(userId)
   writeFile(a.userMdPath(userId), content)
-  secureFile(a.userMdPath(userId))
+  discard secureFile(a.userMdPath(userId))
   when defined(withPostgres) or defined(withSqlite):
     a.withMagmaShadow:
       magma.saveUserMd(userId, content)
@@ -613,7 +625,7 @@ proc addDmAllowed*(a: MdFileAdapter; userId: UserId): Result[void, string] =
     var f = open(path, fmAppend)
     defer: f.close()
     f.writeLine($userId)
-    secureFile(path)
+    discard secureFile(path)
     ok()
   except CatchableError as e:
     err("dm allowlist add failed: " & e.msg)
@@ -641,7 +653,7 @@ proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) =
   let existing = readOrEmpty(path)
   let sep = if existing.len > 0 and not existing.endsWith("\n"): "\n" else: ""
   writeFile(path, existing & sep & text)
-  secureFile(path)
+  discard secureFile(path)
   when defined(withPostgres) or defined(withSqlite):
     a.withMagmaShadow:
       magma.appendMemory(userId, text)
@@ -649,7 +661,7 @@ proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) =
 proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) =
   a.ensurePaddock(userId)
   writeFile(a.preferencesMdPath(userId), content)
-  secureFile(a.preferencesMdPath(userId))
+  discard secureFile(a.preferencesMdPath(userId))
   when defined(withPostgres) or defined(withSqlite):
     a.withMagmaShadow:
       magma.savePreferences(userId, content)
@@ -659,7 +671,7 @@ proc clearMemory*(a: MdFileAdapter; userId: UserId) =
   let path = a.memoryMdPath(userId)
   if fileExists(path):
     writeFile(path, "")
-    secureFile(path)
+    discard secureFile(path)
   when defined(withPostgres) or defined(withSqlite):
     a.withMagmaShadow:
       magma.clearMemory(userId)
@@ -690,7 +702,7 @@ proc saveSession*(a: MdFileAdapter; userId: UserId;
     buf.add($(%* {"role": msg.role, "text": msg.text,
                   "imageUrl": msg.imageUrl}) & "\n")
   writeFile(path, buf)
-  secureFile(path)
+  discard secureFile(path)
 
 proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
                           includeMemory: bool):
@@ -804,7 +816,7 @@ proc saveIdentity*(a: MdFileAdapter; userId: UserId;
   a.ensurePaddock(userId)
   writeFile(a.preferencesMdPath(userId),
             mergeIdentityPrefs(readOrEmpty(a.preferencesMdPath(userId)), traits, name))
-  secureFile(a.preferencesMdPath(userId))
+  discard secureFile(a.preferencesMdPath(userId))
 
 proc loadIdentity*(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits) =
   ## Returns (agent_name, PersonalityTraits) from PREFERENCES.md.
@@ -823,7 +835,7 @@ proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
                        message: string): string =
   ## Writes a reminder JSON file. Returns the reminder id.
   a.ensurePaddock(userId)
-  secureDir(a.reminderDir(userId))
+  discard secureDir(a.reminderDir(userId))
   let id   = $getTime().toUnix() & "_" & $userId
   let data = %* {
     "id":          id,
@@ -834,7 +846,7 @@ proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
   }
   let reminderPath = a.reminderDir(userId) / id & ".json"
   writeFile(reminderPath, $data)
-  secureFile(reminderPath)
+  discard secureFile(reminderPath)
   id
 
 proc loadDueReminders*(a: MdFileAdapter): seq[JsonNode] =

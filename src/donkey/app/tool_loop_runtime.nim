@@ -9,6 +9,7 @@ import chronos/asyncsync
 import ../core/pipeops
 import ../core/log
 import ../core/output_sanitizer
+import ../core/utf8
 import ../core/security/approval
 import ../core/tooling/tool_loop
 import ../core/tooling/native_tool_dispatch
@@ -32,10 +33,10 @@ type TypingFn* = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: []
 const RepeatAbortThreshold* = 2    ## abort if same (tool, args) seen ≥ this many times
 
 func clipProviderError(err: string; maxChars = 500): string =
-  let oneLine = err.replace("\r\n", "\\n")
-                   .replace("\n", "\\n")
-                   .replace("\r", "\\r")
-  if oneLine.len > maxChars: oneLine[0 ..< maxChars] & "…" else: oneLine
+  clipUtf8(err, maxChars)
+    .replace("\r\n", "\\n")
+    .replace("\n", "\\n")
+    .replace("\r", "\\r")
 
 type ToolCallResult* = object
   text*:          string

@@ -48,6 +48,8 @@ import chronos/asyncsync
 import ../core/tooling/native_tool_dispatch
 import ../core/pipeops
 import ../core/log
+import ../core/utf8
+import ../core/fs_paths
 import ../core/security/approval
 import ../domain/message
 import ../domain/more_tools
@@ -245,6 +247,31 @@ proc logToolPathFailure(log: Logger;
            " resolved=" & (if resolvedPath.len > 0: resolvedPath else: "<empty>") &
            " reason=" & reason)
 
+proc canonicalExistingPath(path: string): string =
+  ## Resolves symlinks in the nearest existing ancestor and reattaches the
+  ## non-existing suffix. This prevents a workspace symlink from redirecting
+  ## a tool write/read outside the paddock.
+  try:
+    var current = absolutePath(path)
+    var suffix: seq[string] = @[]
+    while current.len > 0:
+      if fileExists(current) or dirExists(current) or symlinkExists(current):
+        var base = canonicalPath(current)
+        for i in countdown(suffix.high, 0):
+          base = base / suffix[i]
+        return base
+      let parent = parentDir(current)
+      if parent.len == 0 or parent == current:
+        break
+      suffix.add(extractFilename(current))
+      current = parent
+  except CatchableError:
+    discard
+  try:
+    absolutePath(path)
+  except CatchableError:
+    path
+
 proc resolvedToolPath(path, paddockDir: string;
                       log: Logger = Logger();
                       toolName = ""): Result[string, string] {.gcsafe, raises: [].} =
@@ -256,7 +283,35 @@ proc resolvedToolPath(path, paddockDir: string;
   if not inPaddock(resolvedPath, paddockDir):
     logToolPathFailure(log, toolName, path, paddockDir, resolvedPath, "outside_paddock")
     return err("Error: path outside paddock: " & path)
+  let realPaddock = canonicalExistingPath(paddockDir)
+  let realTarget = canonicalExistingPath(resolvedPath)
+  if realTarget != realPaddock and
+     not realTarget.startsWith(realPaddock & $DirSep):
+    logToolPathFailure(log, toolName, path, paddockDir, realTarget, "outside_paddock_symlink")
+    return err("Error: path outside paddock (symlink): " & path)
   ok(resolvedPath)
+
+proc safeReadText(path: string): Result[string, string] {.gcsafe, raises: [].} =
+  try:
+    ok(readFile(path))
+  except CatchableError as e:
+    err(e.msg)
+
+proc safeFileSize(path: string): Result[int64, string] {.gcsafe, raises: [].} =
+  try:
+    ok(getFileSize(path))
+  except CatchableError as e:
+    err(e.msg)
+
+proc appendMemorySafe(memory: MemoryRuntimePort; uid: UserId;
+                      text: string): Result[void, string] {.gcsafe, raises: [].} =
+  try:
+    memory.appendMemory(uid, text)
+    ok()
+  except Exception as e:
+    ## The memory port predates typed errors; convert at this boundary so the
+    ## tool loop receives an operational error instead of aborting the batch.
+    err(e.msg)
 
 proc requireStringField(j: JsonNode; key: string): Result[string, string] {.gcsafe, raises: [].} =
   let value = j.getOrDefault(key).getStr("")
@@ -1154,9 +1209,15 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
         return handledError("Error: path is a directory: " & ingestCtx.path)
       if not fileExists(absPath):
         return handledError("Error: file not found: " & ingestCtx.path)
-      if getFileSize(absPath) > 2_000_000:
+      let sizeRes = safeFileSize(absPath)
+      if sizeRes.isErr:
+        return handledError("Error: cannot inspect file: " & sizeRes.error)
+      if sizeRes.get() > 2_000_000:
         return handledError("Error: file exceeds the 2 MB ingest limit.")
-      content = readFile(absPath)
+      let contentRes = safeReadText(absPath)
+      if contentRes.isErr:
+        return handledError("Error: cannot read file: " & contentRes.error)
+      content = contentRes.get()
       source = ingestCtx.path
     if content.strip.len == 0:
       return handledError("Error: no text to ingest.")
@@ -1168,10 +1229,9 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
     if ctx.memory.appendMemory == nil:
       return handledError("Error: memory backend unavailable.")
     for chunk in chunked.chunks:
-      try:
-        ctx.memory.appendMemory(ctx.uid, chunk)
-      except Exception as e:
-        return handledError("Error: memory ingest failed: " & e.msg)
+      let appendRes = appendMemorySafe(ctx.memory, ctx.uid, chunk)
+      if appendRes.isErr:
+        return handledError("Error: memory ingest failed: " & appendRes.error)
     return handledText($(%*{
       "ok": true,
       "chunks": chunked.chunks.len,
@@ -1289,18 +1349,25 @@ proc executeNativeCategory(tc: ToolCallRequest;
   NativeToolResult(handled: false)
 
 func escapedApprovalPreview(text: string; maxChars: int): string =
-  let clipped = if text.len > maxChars: text[0 ..< maxChars] & "…" else: text
-  clipped.replace("\r\n", "\\n")
-         .replace("\n", "\\n")
-         .replace("\r", "\\r")
+  clipUtf8(text, maxChars)
+    .replace("\r\n", "\\n")
+    .replace("\n", "\\n")
+    .replace("\r", "\\r")
+
+func effectiveWriteContent(j: JsonNode): tuple[content: string, format: string] =
+  let format = j.getOrDefault("format").getStr("text")
+  let node = if j.hasKey("content"): j["content"] else: newJNull()
+  let rendered = contentToString(node, format)
+  ((if rendered.ok: rendered.text else: $node), format)
 
 func structuredWriteSummary(j: JsonNode): string =
   let path = j.getOrDefault("path").getStr("")
   let mode = j.getOrDefault("mode").getStr("replace")
-  let content = j.getOrDefault("content").getStr("")
-  let digest = ($secureHash(content)).toLowerAscii()
-  "path=" & path & " mode=" & mode & " bytes=" & $content.len &
-    " sha1=" & digest & "\npreview:\n" & escapedApprovalPreview(content, 800)
+  let effective = effectiveWriteContent(j)
+  let digest = ($secureHash(effective.content)).toLowerAscii()
+  "path=" & path & " mode=" & mode & " format=" & effective.format &
+    " bytes=" & $effective.content.len & " sha1=" & digest &
+    "\npreview:\n" & escapedApprovalPreview(effective.content, 800)
 
 func structuredReplaceSummary(j: JsonNode): string =
   let path = j.getOrDefault("path").getStr("")
@@ -1321,9 +1388,14 @@ func approvalSummary(toolName: string; j: JsonNode): string =
   const MaxApprovalSummaryChars = 1500
   if largeWritesSummaryMode():
     if toolName == FsWriteToolName:
-      return structuredWriteSummary(j)
+      let effective = effectiveWriteContent(j)
+      if effective.content.len > MaxApprovalSummaryChars:
+        return structuredWriteSummary(j)
     if toolName == TextReplaceToolName:
-      return structuredReplaceSummary(j)
+      let findLen = j.getOrDefault("find").getStr("").len
+      let replaceLen = j.getOrDefault("replace").getStr("").len
+      if findLen + replaceLen > MaxApprovalSummaryChars:
+        return structuredReplaceSummary(j)
   if toolName == ExecuteCodeToolName:
     let languageNode = j.getOrDefault("language")
     let language =

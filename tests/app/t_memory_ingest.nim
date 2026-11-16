@@ -117,3 +117,40 @@ suite "memory_ingest tool":
     check both.resultKind == trkOperationalError
     let neither = waitFor runIngest(ctx, """{}""")
     check neither.resultKind == trkOperationalError
+
+  when defined(posix):
+    test "rejects a symlink that escapes the paddock":
+      let outside = "/tmp/donkey_memory_ingest_outside.txt"
+      writeFile(outside, "secret")
+      defer: removeFile(outside)
+      createSymlink(outside, TestRoot / "link.txt")
+      let mem = MemoryRuntimePort()
+      var ctx = NativeCtx(
+        uid: UserId("u1"),
+        channel: ckTelegram,
+        paddockDir: TestRoot,
+        memory: mem,
+        log: ingestLog,
+      )
+      let res = waitFor runIngest(ctx, """{"path":"link.txt"}""")
+      check res.handled
+      check res.resultKind == trkOperationalError
+      check "symlink" in res.text
+
+  when defined(posix):
+    test "unreadable file returns an operational error":
+      let path = TestRoot / "secret.txt"
+      writeFile(path, "secret")
+      setFilePermissions(path, {})
+      let mem = MemoryRuntimePort()
+      var ctx = NativeCtx(
+        uid: UserId("u1"),
+        channel: ckTelegram,
+        paddockDir: TestRoot,
+        memory: mem,
+        log: ingestLog,
+      )
+      let res = waitFor runIngest(ctx, """{"path":"secret.txt"}""")
+      check res.handled
+      check res.resultKind == trkOperationalError
+      check "read" in res.text or "inspect" in res.text

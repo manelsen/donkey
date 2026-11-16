@@ -1,7 +1,16 @@
-import std/[strtabs, strutils, unittest]
+import std/[os, strtabs, strutils, unittest]
 import results
 import donkey/app/sandbox
 import donkey/config/types
+
+const FakeBin = "/tmp/donkey_fake_oci_bin"
+
+proc makeFakeRuntime(name, body: string) =
+  removeDir(FakeBin)
+  createDir(FakeBin)
+  let path = FakeBin / name
+  writeFile(path, "#!/bin/sh\n" & body & "\n")
+  setFilePermissions(path, {fpUserRead, fpUserWrite, fpUserExec})
 
 suite "sandbox docker permission hints":
 
@@ -23,3 +32,29 @@ suite "sandbox docker permission hints":
       "true", "/tmp", "alpine", "docker", false, false, true, fake)
     check "usermod -aG docker" in output
     check "systemctl --user restart donkey" in output
+
+  test "sandboxAvailabilityResult maps a denied docker probe":
+    makeFakeRuntime("docker",
+      "echo 'permission denied while trying to connect to the docker API at unix:///var/run/docker.sock' >&2\n" &
+      "exit 1")
+    let oldPath = getEnv("PATH")
+    putEnv("PATH", FakeBin & ":" & oldPath)
+    defer:
+      putEnv("PATH", oldPath)
+      removeDir(FakeBin)
+    let cfg = DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker")
+    let res = sandboxAvailabilityResult(cfg)
+    check res.isErr
+    check "usermod -aG docker" in res.error
+
+  test "sandboxAvailabilityResult accepts a reachable podman":
+    makeFakeRuntime("podman", "exit 0")
+    let oldPath = getEnv("PATH")
+    putEnv("PATH", FakeBin & ":" & oldPath)
+    defer:
+      putEnv("PATH", oldPath)
+      removeDir(FakeBin)
+    let cfg = DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "podman")
+    let res = sandboxAvailabilityResult(cfg)
+    check res.isOk
+    check "runtime=podman" in res.get()

@@ -5,6 +5,7 @@ import ../../core/pipeops
 import ../../core/commands/command_catalog
 import ../../core/commands/command_routing
 import ../../core/outbound/outbound
+import ../../core/utf8
 import ../../core/providers/smart_routing
 import ../../core/providers/provider_catalog
 import ../../adapters/memory/md_file
@@ -720,8 +721,7 @@ proc buildDoctorReport*(memory: MdFileAdapter;
   if resp.isOk:
     report.add("✅ Provider: OK (" & $delta & "ms)\n")
   else:
-    let detail = resp.error.strip
-    let clipped = if detail.len > 300: detail[0 ..< 300] & "…" else: detail
+    let clipped = clipUtf8(resp.error.strip, 300)
     report.add("❌ Provider: " & clipped & "\n")
   
   ## Modelo atual

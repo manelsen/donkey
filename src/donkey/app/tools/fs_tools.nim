@@ -195,7 +195,7 @@ proc performFsRead*(path, paddock: string; format = "text"): StructuredToolResul
   except Exception as e:
     operationalErrorToolResult(e.msg)
 
-proc contentToString(content: JsonNode; format: string): tuple[ok: bool, text: string, err: StructuredToolResult] =
+proc contentToString*(content: JsonNode; format: string): tuple[ok: bool, text: string, err: StructuredToolResult] =
   case format
   of "text":
     if content.kind != JString:

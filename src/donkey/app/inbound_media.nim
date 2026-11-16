@@ -10,6 +10,7 @@ import results
 import ../domain/message
 import ../ports/channel
 import ../core/media_download
+import ../core/fs_paths
 
 const
   AttachmentDirName* = "attachments"
@@ -72,8 +73,12 @@ proc applyInboundAttachment*(msg: var InboundMessage;
   ## clears `msg.mediaUrl` (so a channel file_id never reaches a provider), and
   ## returns the saved attachment metadata.
   try:
+    if symlinkExists(paddockDir):
+      return err("paddock path is a symlink: " & paddockDir)
     createDir(paddockDir)
     let attachmentsDir = paddockDir / AttachmentDirName
+    if symlinkExists(attachmentsDir):
+      return err("attachments path is a symlink: " & attachmentsDir)
     secureDir(attachmentsDir)
 
     var fileDownload = download
@@ -87,6 +92,11 @@ proc applyInboundAttachment*(msg: var InboundMessage;
       return err(saveResult.error)
 
     let absPath = saveResult.value
+    let realAttachments = canonicalPath(attachmentsDir)
+    let realSaved = canonicalPath(absPath)
+    if realSaved != realAttachments and
+       not realSaved.startsWith(realAttachments & $DirSep):
+      return err("attachment escaped the paddock: " & absPath)
     secureFile(absPath)
     let slash = absPath.rfind('/')
     let savedName = if slash >= 0: absPath[slash + 1 .. ^1] else: absPath

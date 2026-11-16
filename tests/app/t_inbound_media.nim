@@ -84,3 +84,15 @@ suite "inbound media":
         {fpUserRead, fpUserWrite, fpUserExec}
       check getFilePermissions(res.get().absPath) ==
         {fpUserRead, fpUserWrite}
+
+  when defined(posix):
+    test "rejects a symlinked attachments directory":
+      let outside = TestRoot / "outside"
+      createDir(outside)
+      createSymlink(outside, TestRoot / "attachments")
+      var msg = InboundMessage()
+      let res = applyInboundAttachment(
+        msg, downloadOf("file.md", "text/markdown", "secret"),
+        TestRoot, "notes.md", "text/markdown")
+      check res.isErr
+      check not fileExists(outside / "notes.md")
