@@ -278,7 +278,8 @@ proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
         resultKind: trkOperationalError,
       )
     let decision = await requestAndWait(
-      nativeCtx.approval, uid, channel, nativeCtx.outbox, tc.name, summary, log)
+      nativeCtx.approval, uid, channel, nativeCtx.outbox, tc.name, summary, log,
+      shouldStop = proc(): bool {.gcsafe, raises: [].} = sessionStopRequested(nativeCtx))
     case decision
     of adApproved:
       discard
@@ -322,7 +323,7 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
                       log: Logger): Future[ToolBatchResult] {.async.} =
   result = newToolBatchState(history, toolCallCount, recentCalls)
   for i, tc in toolCalls:
-    if isSessionStopRequested(nativeCtx.stopGeneration):
+    if sessionStopRequested(nativeCtx):
       for j in i ..< toolCalls.len:
         result = result |>->
           withToolResult(toolCalls[j], "Error: session is stopping.",
@@ -405,7 +406,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
   let toolStatusId = streamId & "-st"
 
   while not loopState.done and round < MaxToolRoundsOrch:
-    if isSessionStopRequested(nativeCtx.stopGeneration):
+    if sessionStopRequested(nativeCtx):
       loopState.done = true
       break
     inc round
@@ -440,7 +441,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         loopState.done = true
         continue
       let streamed = streamedRes.value
-      if isSessionStopRequested(nativeCtx.stopGeneration):
+      if sessionStopRequested(nativeCtx):
         loopState.done = true
         break
 
@@ -490,7 +491,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       continue
 
     let r = resp.value
-    if isSessionStopRequested(nativeCtx.stopGeneration):
+    if sessionStopRequested(nativeCtx):
       loopState.done = true
       break
     case decideToolLoopRound(

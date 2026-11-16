@@ -657,9 +657,15 @@ proc removeDmAllowed*(a: MdFileAdapter; userId: UserId): Result[void, string] =
 proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) =
   a.ensurePaddock(userId)
   let path = a.memoryMdPath(userId)
-  let existing = readOrEmpty(path)
-  let sep = if existing.len > 0 and not existing.endsWith("\n"): "\n" else: ""
-  writeFile(path, existing & sep & text)
+  ## Append-only write: avoids the read-modify-write race where two concurrent
+  ## writers (daemon + ctl) overwrite each other's chunks.
+  var f = open(path, fmAppend)
+  try:
+    if getFileSize(path) > 0:
+      f.write("\n")
+    f.write(text)
+  finally:
+    f.close()
   discard secureFile(path)
   when defined(withPostgres) or defined(withSqlite):
     a.withMagmaShadow:

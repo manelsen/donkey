@@ -313,12 +313,19 @@ when defined(withPostgres) or defined(withSqlite):
     if '\0' in content:
       echo "ingest error: binary file rejected"
       return false
-    let chunked = chunkForMemory(content)
+    let chunked = chunkForMemory(content, MaxIngestChunkChars, MaxIngestMaxChunks)
     if chunked.chunks.len == 0:
       echo "ingest error: no text to ingest"
       return false
+    if chunked.truncated:
+      echo "ingest error: file exceeds the chunk limit; split it before ingesting"
+      return false
     for chunk in chunked.chunks:
-      memory.appendMemory(uid, chunk)
+      try:
+        memory.appendMemory(uid, chunk)
+      except Exception as e:
+        echo "ingest error: " & e.msg
+        return false
     echo "Ingested " & $chunked.chunks.len & " chunks (" & $content.len &
          " bytes) from " & path
     true

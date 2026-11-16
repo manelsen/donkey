@@ -549,6 +549,8 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
                      asyncCompleteFn: AsyncCompleteFn = nil): Future[OrchestratorState] {.async.} =
   result = stateRuntime
   let uid = UserId(msg.userId)
+  if msg.taskKind == tkUserMsg:
+    clearUserStop($uid)
   result =
     result |>->
     withLastUser(uid)

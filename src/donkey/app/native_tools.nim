@@ -234,6 +234,13 @@ type
                                    j: JsonNode;
                                   ): Future[NativeToolResult] {.nimcall, gcsafe, raises: [].}
 
+proc sessionStopRequested*(ctx: NativeCtx): bool {.gcsafe, raises: [].} =
+  ## True when the process is shutting down or the user sent /stop, even if
+  ## the actor is still inside a long tool batch or approval wait.
+  if isSessionStopRequested(ctx.stopGeneration):
+    return true
+  isUserStopped($ctx.uid)
+
 # ── Context parsers ───────────────────────────────────────────────────────────
 
 proc logToolPathFailure(log: Logger;
@@ -1290,7 +1297,7 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
       return handledError(error)
     return await awaitJobs(state, awaitCtx)
   of SpawnSubagentToolName:
-    if isSessionStopRequested(ctx.stopGeneration):
+    if sessionStopRequested(ctx):
       return handledError("Error: session is stopping.")
     if ctx.subagentDepth >= 1:
       return handledError("Error: subagents cannot spawn subagents (maximum depth is 1).")
@@ -1454,6 +1461,11 @@ proc executeNativeTool*(tc:      ToolCallRequest;
                        ): Future[NativeToolResult] {.async.} =
   let j = try: parseJson(tc.inputJson)
           except: newJObject()
+  if sessionStopRequested(ctx):
+    return NativeToolResult(
+      handled: true,
+      text: "Error: session is stopping.",
+      resultKind: trkOperationalError)
   if ctx.restrictTools and
      (tc.name notin ctx.allowedTools or tc.name in SubagentHardDeniedTools):
     return NativeToolResult(
@@ -1483,7 +1495,8 @@ proc executeNativeTool*(tc:      ToolCallRequest;
         resultKind: trkOperationalError)
     let decision = await requestAndWait(
       ctx.approval, ctx.uid, ctx.channel, ctx.outbox, tc.name,
-      summary, ctx.log)
+      summary, ctx.log,
+      shouldStop = proc(): bool {.gcsafe, raises: [].} = sessionStopRequested(ctx))
     case decision
     of adApproved:
       discard

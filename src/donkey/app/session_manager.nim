@@ -5,7 +5,7 @@
 ## `channels` tracks which (ChannelKind, raw_id) pairs are associated with
 ## this session — used for `ctl session list`.
 
-import std/[options, tables]
+import std/[options, sets, tables]
 import chronos
 import chronos/asyncsync
 import ../core/pipeops
@@ -125,6 +125,7 @@ proc restoreSessions*(sm: var SessionManager): Result[int, string] =
   ok(count)
 
 var gSessionStopGeneration: uint64 = 0
+var gStoppedSessions: HashSet[string]
 var gShuttingDown = false
 var gLiveActors = 0
 var gAllActorsStopped: Future[void]
@@ -136,6 +137,26 @@ proc requestSessionStop*() {.gcsafe, raises: [].} =
   {.cast(gcsafe).}:
     gShuttingDown = true
     inc gSessionStopGeneration
+
+proc requestUserStop*(userId: string) {.gcsafe, raises: [].} =
+  ## Per-user stop flag. Safe to set from a channel handler while the
+  ## session actor is busy inside a tool batch or approval wait.
+  if userId.len == 0:
+    return
+  {.cast(gcsafe).}:
+    gStoppedSessions.incl(userId)
+
+proc clearUserStop*(userId: string) {.gcsafe, raises: [].} =
+  if userId.len == 0:
+    return
+  {.cast(gcsafe).}:
+    gStoppedSessions.excl(userId)
+
+proc isUserStopped*(userId: string): bool {.gcsafe, raises: [].} =
+  if userId.len == 0:
+    return false
+  {.cast(gcsafe).}:
+    userId in gStoppedSessions
 
 proc daemonShuttingDown*(): bool {.gcsafe, raises: [].} =
   {.cast(gcsafe).}:

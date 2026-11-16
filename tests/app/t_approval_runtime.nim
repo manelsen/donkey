@@ -102,3 +102,60 @@ suite "approval runtime":
     check decision == adApproved
     check outbox.len == 1
     check statusCalls >= 1
+
+  test "requestAndWait aborts before creating when stop is requested":
+    var created = 0
+    let fake = ApprovalStorePort(
+      create: proc(userId: string; channel: string; toolName, summary: string;
+                   ttlMs: int64): Result[ApprovalRequest, string] {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}:
+          inc created
+        err("must not be called"),
+      status: proc(id: string): Result[ApprovalStatus, string] {.gcsafe, raises: [].} =
+        err("must not be called"),
+      decide: proc(id, userId: string; approved: bool;
+                   admin: bool): Result[void, string] {.gcsafe, raises: [].} =
+        ok(),
+      listPending: proc(userId: string): Result[seq[ApprovalRequest], string] {.gcsafe, raises: [].} =
+        err("must not be called"),
+    )
+    configureApprovalService(fake, @["bash"])
+    defer: resetApprovalService()
+
+    let outbox = newAsyncQueue[OutboundMessage](4)
+    let stopCheck = proc(): bool {.gcsafe, raises: [].} = true
+    let decision = waitFor requestAndWait(
+      currentApprovalService(), UserId("u1"), ckTelegram, outbox,
+      "bash", "ls", approvalLog, shouldStop = stopCheck)
+    check decision == adDenied
+    check created == 0
+    check outbox.len == 0
+
+  test "cancelPendingApprovals denies every pending request for the user":
+    var denied = 0
+    let fake = ApprovalStorePort(
+      create: proc(userId: string; channel: string; toolName, summary: string;
+                   ttlMs: int64): Result[ApprovalRequest, string] {.gcsafe, raises: [].} =
+        err("must not be called"),
+      status: proc(id: string): Result[ApprovalStatus, string] {.gcsafe, raises: [].} =
+        err("must not be called"),
+      decide: proc(id, userId: string; approved: bool;
+                   admin: bool): Result[void, string] {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}:
+          if not approved:
+            inc denied
+        ok(),
+      listPending: proc(userId: string): Result[seq[ApprovalRequest], string] {.gcsafe, raises: [].} =
+        ok(@[
+          ApprovalRequest(id: "a1", userId: userId, channel: "telegram",
+                          toolName: "bash", summary: "ls", createdAtMs: 0,
+                          expiresAtMs: 60_000, status: apsPending),
+          ApprovalRequest(id: "a2", userId: userId, channel: "telegram",
+                          toolName: "bash", summary: "pwd", createdAtMs: 0,
+                          expiresAtMs: 60_000, status: apsPending),
+        ]),
+    )
+    configureApprovalService(fake, @["bash"])
+    defer: resetApprovalService()
+    cancelPendingApprovals(UserId("u1"))
+    check denied == 2
