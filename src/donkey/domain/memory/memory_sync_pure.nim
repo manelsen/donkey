@@ -6,8 +6,8 @@
 ## can be "tail of entry A + head of entry B". Comparing whole paragraphs
 ## against the graph therefore reports text that is already stored.
 ##
-## The comparison here is per line: a paragraph is missing only when at least
-## one of its lines exists nowhere in the graph. No I/O.
+## The comparison here is per line: only lines that exist nowhere in the graph
+## are missing, and consecutive missing lines are kept together. No I/O.
 
 import std/[sets, strutils]
 
@@ -24,23 +24,30 @@ func knownLineSet(knownTexts: openArray[string]): HashSet[string] =
 
 func missingMemoryChunks*(markdownMemory: string;
                           knownTexts: openArray[string]): seq[string] =
-  ## Returns the blank-line-separated paragraphs of `markdownMemory` that carry
-  ## at least one line absent from `knownTexts`. Paragraphs come back trimmed,
-  ## in file order, each one at most once.
+  ## Returns the text of `markdownMemory` that `knownTexts` lacks. Inside each
+  ## blank-line-separated paragraph, consecutive unknown lines form one chunk
+  ## and known lines are left out, so a partially stored paragraph never
+  ## brings its stored lines back. Chunks come trimmed, in file order, each
+  ## one at most once.
   if markdownMemory.strip.len == 0:
     return
   let known = knownLineSet(knownTexts)
   var reported = initHashSet[string]()
-  for chunk in markdownMemory.replace("\r\n", "\n").split("\n\n"):
-    let trimmed = chunk.strip
-    if trimmed.len == 0 or trimmed in reported:
-      continue
-    var hasNewLine = false
-    for line in trimmed.splitLines():
-      let normalized = normalizedLine(line)
-      if normalized.len > 0 and normalized notin known:
-        hasNewLine = true
-        break
-    if hasNewLine:
-      reported.incl(trimmed)
-      result.add(trimmed)
+  var run: seq[string]
+
+  template flushRun() =
+    if run.len > 0:
+      let chunk = run.join("\n").strip
+      run.setLen(0)
+      if chunk.len > 0 and chunk notin reported:
+        reported.incl(chunk)
+        result.add(chunk)
+
+  for line in markdownMemory.replace("\r\n", "\n").split('\n'):
+    let normalized = normalizedLine(line)
+    if normalized.len == 0 or normalized in known:
+      ## A blank line ends the paragraph; a known line ends the new run.
+      flushRun()
+    else:
+      run.add(line.strip(leading = false))
+  flushRun()

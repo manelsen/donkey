@@ -1,4 +1,4 @@
-import std/unittest
+import std/[strutils, unittest]
 import donkey/domain/memory/memory_sync_pure
 
 suite "memory sync — chunks missing from the graph":
@@ -19,11 +19,26 @@ suite "memory sync — chunks missing from the graph":
     let markdown = known & "\n\n  anotacao feita a mao  \n\n"
     check missingMemoryChunks(markdown, @[known]) == @["anotacao feita a mao"]
 
-  test "chunk with one new line among known lines is still reported":
-    let known = "linha conhecida"
-    let markdown = "linha conhecida\nlinha nova"
-    check missingMemoryChunks(markdown, @[known]) ==
-      @["linha conhecida\nlinha nova"]
+  test "only the new line of a partially known paragraph is reported":
+    ## Fallback writes land in MEMORY.md with no blank line between entries.
+    check missingMemoryChunks("- antigo\n- novo", @["- antigo"]) == @["- novo"]
+    check missingMemoryChunks("- novo\n- antigo", @["- antigo"]) == @["- novo"]
+
+  test "consecutive new lines stay together as one chunk":
+    let markdown = "- antigo\n- **User:** pergunta\n  **Response:** resposta\n- outro antigo"
+    check missingMemoryChunks(markdown, @["- antigo", "- outro antigo"]) ==
+      @["- **User:** pergunta\n  **Response:** resposta"]
+
+  test "a known line in the middle splits the new content":
+    check missingMemoryChunks("novo um\nconhecido\nnovo dois", @["conhecido"]) ==
+      @["novo um", "novo dois"]
+
+  test "one contiguous block returns only the lines the graph lacks":
+    var lines: seq[string]
+    for i in 1 .. 215:
+      lines.add("- fato " & $i)
+    let missing = missingMemoryChunks(lines.join("\n"), [lines[15 .. ^1].join("\n\n")])
+    check missing == @[lines[0 .. 14].join("\n")]
 
   test "whitespace and line-ending differences do not count as new":
     let known = "  - fato com espacos  \r\n"
