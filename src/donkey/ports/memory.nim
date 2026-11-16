@@ -15,11 +15,13 @@ import ../core/pipeops
 import ../core/types
 import ../domain/memory/episode_pure
 import ../domain/memory/provenance_pure
+import ../domain/memory/recall_pure
 import ../domain/memory/session_search_pure
 import ../domain/message
 import ../domain/personality
 
 export provenance_pure
+export recall_pure  ## MemoryHit and its rendering live in the domain
 
 const
   HeartbeatFileName* = "HEARTBEAT.md"
@@ -31,12 +33,6 @@ type
     userMd*:        string   ## contents of USER.md   (empty if absent)
     memoryMd*:      string   ## contents of MEMORY.md
     preferencesMd*: string   ## contents of PREFERENCES.md
-
-  MemoryHit* = object
-    ## Single result from a semantic search.
-    content*: string
-    score*:   float32  ## cosine similarity [0, 1]; higher = more similar
-    kind*:    string   ## node kind: "memory", "fact", "user_profile", etc.
 
   MemoryPort* = concept m
     m.hasProfile(UserId) is bool

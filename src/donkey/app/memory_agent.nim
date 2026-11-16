@@ -38,21 +38,13 @@ proc runMemoryAgent*(inbox:     AsyncQueue[AgentMessage];
           var lessonSection = ""
           ## Semantic search enrichment: if searchFn and a query are available,
           ## refine autobiographical memory hits and inject bounded lessons.
+          ## Dialogue hits arrive with their session neighbours and are
+          ## rendered as ordered excerpts (domain/memory/recall_pure).
           if searchFn != nil and msg.payload.len > 0:
-            let hits = searchFn(userId, msg.payload, 8)
-            if hits.len > 0:
-              var memoryLines: seq[string]
-              var lessonLines: seq[string]
-              for h in hits:
-                if h.kind == "lesson":
-                  if lessonLines.len < 3:
-                    lessonLines.add("- " & h.content)
-                else:
-                  memoryLines.add("- [" & h.kind & "] " & h.content)
-              if memoryLines.len > 0:
-                memSection = memoryLines.join("\n")
-              if lessonLines.len > 0:
-                lessonSection = "Relevant lessons:\n" & lessonLines.join("\n")
+            let recalled = renderRecall(searchFn(userId, msg.payload, 8))
+            if recalled.memory.len > 0:
+              memSection = recalled.memory
+            lessonSection = recalled.lessons
           var parts = @[ctx.userMd, memSection]
           if lessonSection.len > 0:
             parts.add(lessonSection)

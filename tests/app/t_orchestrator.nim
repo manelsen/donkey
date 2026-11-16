@@ -215,6 +215,46 @@ suite "MemoryAgent":
     check lessonsPos > memoryPos
     check prefsPos > lessonsPos
 
+  test "loadCtx renders a dialogue hit as an ordered, bordered excerpt":
+    let tmpDir = getTempDir() / "donkey_test_mem_excerpt"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[AgentMessage] {.async.} =
+      let userDir = dir / "u1"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Alice")
+      writeFile(userDir / "PREFERENCES.md", "language = \"pt-BR\"")
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[AgentMessage]()
+      let searchFn: SearchFn =
+        proc(userId: UserId; query: string; limit: int): seq[MemoryHit] {.gcsafe, raises: [].} =
+          var hit = MemoryHit(
+            id: "u1_m3", content: "- **User:** o prazo\n  **Response:** quinta",
+            score: 0.9'f32, kind: "memory", timestamp: 200,
+            origin: turnOrigin("s1"))
+          hit.after = @[MemoryHit(
+            id: "u1_m4", content: "- **User:** não, é sexta\n  **Response:** anotado",
+            kind: "memory", timestamp: 300, origin: turnOrigin("s1"))]
+          @[hit, MemoryHit(content: "gosta de Nim", score: 0.5'f32, kind: "memory")]
+      asyncSpawn runMemoryAgent(inbox, outbox, mem.toRuntimePort(), searchFn)
+      await inbox.put(newTaskMsg("req4", tkLoadCtx, "u1", "qual o prazo"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      return reply
+
+    let reply = waitFor doTest(tmpDir)
+    check reply.kind == amkResult
+    let open = reply.text.find("<conversation-excerpt session=\"s1\"")
+    let wrong = reply.text.find("**Response:** quinta")
+    let fix = reply.text.find("não, é sexta")
+    let close = reply.text.find("</conversation-excerpt>")
+    check open >= 0
+    check open < wrong and wrong < fix and fix < close
+    check reply.text.contains("- [memory] gosta de Nim")
+    check reply.text.find("language = \"pt-BR\"") > close
+
 # ── ToolAgent ─────────────────────────────────────────────────────────────────
 
 suite "ToolAgent":
