@@ -413,3 +413,15 @@ when defined(withPostgres):
       check view.contains("⚙️ Preferências")
       check view.contains("language = \"pt-BR\"")
       check view.contains("Nenhuma memória salva ainda.")
+
+  test "sortModelCatalog keeps free models before paid ones":
+    let sorted = sortModelCatalog(@[
+      ModelCatalogEntry(providerName: "openrouter", modelName: "paid-b", label: "paid-b", isFree: false, available: true),
+      ModelCatalogEntry(providerName: "openrouter", modelName: "free-z", label: "free-z", isFree: true, available: true),
+      ModelCatalogEntry(providerName: "openrouter", modelName: "paid-a", label: "paid-a", isFree: false, available: true),
+      ModelCatalogEntry(providerName: "openrouter", modelName: "free-a", label: "free-a", isFree: true, available: true),
+    ])
+    check sorted[0].modelName == "free-a"
+    check sorted[1].modelName == "free-z"
+    check sorted[2].modelName == "paid-a"
+    check sorted[3].modelName == "paid-b"

@@ -536,13 +536,24 @@ proc buildModelCatalogLoader*(): ModelCatalogLoader {.gcsafe.} =
   ## Returns a closure that loads model catalogs with caching.
   ## models.dev result is cached for 5 minutes to avoid re-fetching on every click.
   var cachedModelsDev: Option[ModelCatalogResult] = none(ModelCatalogResult)
+  var cachedOpenRouter: Option[ModelCatalogResult] = none(ModelCatalogResult)
   const CacheTtlSec = 300  # 5 minutes
 
   result = proc(providerName: string): Result[ModelCatalogResult, string] {.gcsafe.} =
-    ## Tenta buscar do models.dev primeiro (com cache), depois fallback para API específica
     let now = getTime().toUnix()
 
-    # Check cache freshness
+    ## OpenRouter's own API is the source of truth for the ':free' variants.
+    ## models.dev can omit those variants or report them without zero pricing.
+    if providerName == "openrouter":
+      if cachedOpenRouter.isSome and
+         (now - cachedOpenRouter.get().fetchedAtUnix) <= CacheTtlSec:
+        return ok(cachedOpenRouter.get())
+      let direct = loadOpenRouterCatalog(getEnv("OPENROUTER_API_KEY"))
+      if direct.isOk:
+        cachedOpenRouter = some(direct.get())
+        return direct
+
+    # Check models.dev cache freshness for the remaining providers.
     if cachedModelsDev.isNone or (now - cachedModelsDev.get().fetchedAtUnix) > CacheTtlSec:
       let modelsDevResult = loadModelsDevCatalog()
       if modelsDevResult.isOk:
