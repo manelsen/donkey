@@ -14,9 +14,14 @@ import std/json
 import ../core/pipeops
 import ../core/types
 import ../domain/memory/episode_pure
+import ../domain/memory/provenance_pure
+import ../domain/memory/recall_pure
 import ../domain/memory/session_search_pure
 import ../domain/message
 import ../domain/personality
+
+export provenance_pure
+export recall_pure  ## MemoryHit and its rendering live in the domain
 
 const
   HeartbeatFileName* = "HEARTBEAT.md"
@@ -28,12 +33,6 @@ type
     userMd*:        string   ## contents of USER.md   (empty if absent)
     memoryMd*:      string   ## contents of MEMORY.md
     preferencesMd*: string   ## contents of PREFERENCES.md
-
-  MemoryHit* = object
-    ## Single result from a semantic search.
-    content*: string
-    score*:   float32  ## cosine similarity [0, 1]; higher = more similar
-    kind*:    string   ## node kind: "memory", "fact", "user_profile", etc.
 
   MemoryPort* = concept m
     m.hasProfile(UserId) is bool
@@ -74,8 +73,15 @@ type
     loadContext*:     proc(userId: UserId): UserContext {.gcsafe.}
     saveUserMd*:      proc(userId: UserId; content: string) {.gcsafe.}
     appendMemory*:    proc(userId: UserId; text: string) {.gcsafe.}
+    ## Preferred Result-based hook; adapters own filesystem exception handling.
     appendMemoryResult*: proc(userId: UserId; text: string):
                             Result[void, string] {.gcsafe, raises: [].}
+    ## Optional. Same as appendMemory, recording where the text came from.
+    ## Nil means the backend keeps no origin; callers fall back to
+    ## appendMemoryResult/appendMemory.
+    appendMemoryFrom*: proc(userId: UserId; text: string;
+                            origin: MemoryOrigin) {.gcsafe.}
+
     savePreferences*: proc(userId: UserId; content: string) {.gcsafe.}
     clearMemory*:     proc(userId: UserId) {.gcsafe.}
     resetBootstrap*:  proc(userId: UserId) {.gcsafe.}
@@ -138,3 +144,18 @@ proc defaultHeartbeatMd*(): string =
   ## New paddocks get an empty HEARTBEAT.md so the file is always present
   ## without scheduling any task by default.
   ""
+
+proc appendMemoryWithOriginChecked*(p: MemoryRuntimePort; userId: UserId;
+                                    text: string; origin: MemoryOrigin):
+                                    Result[void, string] {.gcsafe, raises: [].} =
+  ## Prefers the origin-aware hook when the backend records provenance;
+  ## otherwise falls back to the Result-based append. Exception translation
+  ## stays here at the port boundary so callers only handle Result.
+  if p.appendMemoryFrom != nil:
+    try:
+      {.cast(raises: []).}:
+        p.appendMemoryFrom(userId, text, origin)
+      return ok()
+    except CatchableError as e:
+      return err(e.msg)
+  p.appendMemoryChecked(userId, text)

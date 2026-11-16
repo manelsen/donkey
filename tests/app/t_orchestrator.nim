@@ -4,7 +4,7 @@
 ##   globalOutbox: AsyncQueue[OutboundMessage]  (was AsyncQueue[AgentMessage])
 ##   streamFn:     StreamFn = nil for all non-streaming tests
 
-import std/[os, strutils, unittest]
+import std/[json, os, strutils, unittest]
 import chronos
 import chronos/asyncsync
 import donkey/domain/agent_message
@@ -214,6 +214,46 @@ suite "MemoryAgent":
     check memoryPos >= 0
     check lessonsPos > memoryPos
     check prefsPos > lessonsPos
+
+  test "loadCtx renders a dialogue hit as an ordered, bordered excerpt":
+    let tmpDir = getTempDir() / "donkey_test_mem_excerpt"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[AgentMessage] {.async.} =
+      let userDir = dir / "u1"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Alice")
+      writeFile(userDir / "PREFERENCES.md", "language = \"pt-BR\"")
+      let mem = MdFileAdapter(paddocksDir: dir)
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[AgentMessage]()
+      let searchFn: SearchFn =
+        proc(userId: UserId; query: string; limit: int): seq[MemoryHit] {.gcsafe, raises: [].} =
+          var hit = MemoryHit(
+            id: "u1_m3", content: "- **User:** o prazo\n  **Response:** quinta",
+            score: 0.9'f32, kind: "memory", timestamp: 200,
+            origin: turnOrigin("s1"))
+          hit.after = @[MemoryHit(
+            id: "u1_m4", content: "- **User:** não, é sexta\n  **Response:** anotado",
+            kind: "memory", timestamp: 300, origin: turnOrigin("s1"))]
+          @[hit, MemoryHit(content: "gosta de Nim", score: 0.5'f32, kind: "memory")]
+      asyncSpawn runMemoryAgent(inbox, outbox, mem.toRuntimePort(), searchFn)
+      await inbox.put(newTaskMsg("req4", tkLoadCtx, "u1", "qual o prazo"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      return reply
+
+    let reply = waitFor doTest(tmpDir)
+    check reply.kind == amkResult
+    let open = reply.text.find("<conversation-excerpt session=\"s1\"")
+    let wrong = reply.text.find("**Response:** quinta")
+    let fix = reply.text.find("não, é sexta")
+    let close = reply.text.find("</conversation-excerpt>")
+    check open >= 0
+    check open < wrong and wrong < fix and fix < close
+    check reply.text.contains("- [memory] gosta de Nim")
+    check reply.text.find("language = \"pt-BR\"") > close
 
 # ── ToolAgent ─────────────────────────────────────────────────────────────────
 
@@ -454,6 +494,45 @@ suite "OrchestratorAgent":
 
     ## Re-prompting exhausts MaxToolRoundsOrch → error message in reply text.
     check reply.text.contains("exceeded")
+
+  test "session transcript numbers each message once across saves":
+    let tmpDir = getTempDir() / "donkey_test_orch_transcript"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[seq[string]] {.async.} =
+      let userDir = dir / "u-seq"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Bob")
+      let mem      = MdFileAdapter(paddocksDir: dir)
+      let inbox    = newAsyncQueue[AgentMessage]()
+      let outbox   = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 dir / "u-seq", state)
+      await inbox.put(newTaskMsg("req-a", tkUserMsg, "u-seq", "ping"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-b", tkUserMsg, "u-seq", "ping"))
+      discard await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      var lines: seq[string]
+      for kind, path in walkDir(userDir / "sessions"):
+        if kind == pcFile and path.endsWith(".jsonl"):
+          for raw in readFile(path).splitLines():
+            if raw.strip.len > 0:
+              lines.add(raw)
+      return lines
+
+    let lines = waitFor doTest(tmpDir)
+    ## Two identical exchanges: by content the second looks already stored.
+    check lines.len == 4
+    var numbers: seq[int]
+    for raw in lines:
+      numbers.add(parseJson(raw){"seq"}.getInt(0))
+    check numbers == @[1, 2, 3, 4]
 
   test "auto memory capture stores long turns without the old 500-char truncation":
     let tmpDir = getTempDir() / "donkey_test_memory_capture_long"

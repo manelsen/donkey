@@ -14,6 +14,9 @@ import ../filesystem/paths
 import ../../domain/memory/episode_pure
 import ../../domain/memory/lessons_pure
 import ../../domain/memory/session_search_pure
+import ../../domain/memory/memory_sync_pure
+import ../../domain/memory/provenance_pure
+import ../../domain/memory/transcript_pure
 import ../../domain/message
 import ../../domain/personality
 when defined(withPostgres) or defined(withSqlite):
@@ -45,13 +48,17 @@ const
   SessionSearchMaxTotalBytes* = 8 * 1024 * 1024
   SessionSearchMaxRecords* = 2000
   SessionSearchMaxNodeContentBytes* = 4096
+  ## Part of an existing transcript compared against the live history when
+  ## saving. The history holds a few dozen messages; 2 MiB of tail covers it.
+  SessionTranscriptAlignBytes* = 2 * 1024 * 1024
 
 proc hasProfile*(a: MdFileAdapter; userId: UserId): bool {.gcsafe.}
 proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext {.gcsafe.}
 proc saveUserMd*(a: MdFileAdapter; userId: UserId; content: string) {.gcsafe.}
-proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) {.gcsafe.}
-proc appendMemoryResult*(a: MdFileAdapter; userId: UserId; text: string):
-                         Result[void, string] {.gcsafe, raises: [].}
+proc appendMemoryResult*(a: MdFileAdapter; userId: UserId; text: string;
+                         origin = MemoryOrigin()): Result[void, string] {.gcsafe, raises: [].}
+proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string;
+                   origin = MemoryOrigin()) {.gcsafe.}
 proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) {.gcsafe.}
 proc clearMemory*(a: MdFileAdapter; userId: UserId) {.gcsafe.}
 proc resetBootstrap*(a: MdFileAdapter; userId: UserId) {.gcsafe.}
@@ -138,11 +145,9 @@ when defined(withPostgres) or defined(withSqlite):
       result.memoryMd = markdownCtx.memoryMd
     elif markdownCtx.memoryMd.strip.len > 0:
       ## Fallback writes may exist in MEMORY.md after a MAGMA outage. Return
-      ## them too, without duplicating chunks already in the graph context.
-      for chunk in markdownCtx.memoryMd.split("\n\n"):
-        let trimmed = chunk.strip
-        if trimmed.len > 0 and trimmed notin result.memoryMd:
-          result.memoryMd.add("\n\n" & trimmed)
+      ## them too, without duplicating text already in the graph context.
+      for chunk in missingMemoryChunks(markdownCtx.memoryMd, [result.memoryMd]):
+        result.memoryMd.add("\n\n" & chunk)
 
   proc importMarkdownContext(magma: MagmaMemoryAdapter; ctx: UserContext) =
     if ctx.userMd.strip.len > 0:
@@ -152,7 +157,8 @@ when defined(withPostgres) or defined(withSqlite):
     for chunk in ctx.memoryMd.split("\n\n"):
       let trimmed = chunk.strip
       if trimmed.len > 0:
-        magma.appendMemory(ctx.userId, trimmed)
+        magma.appendMemory(ctx.userId, trimmed,
+                           MemoryOrigin(source: msMarkdown))
 
 # ── path helpers ──────────────────────────────────────────────────────────────
 
@@ -236,12 +242,14 @@ when defined(withPostgres) or defined(withSqlite):
         discard
     a.saveUserMd(userId, content)
 
-  proc runtimeAppendMemoryResult(a: MdFileAdapter; userId: UserId; text: string):
+  proc runtimeAppendMemoryResult(a: MdFileAdapter; userId: UserId; text: string;
+                                 origin: MemoryOrigin):
                                  Result[void, string] {.gcsafe, raises: [].} =
-    a.appendMemoryResult(userId, text)
+    a.appendMemoryResult(userId, text, origin)
 
-  proc runtimeAppendMemory(a: MdFileAdapter; userId: UserId; text: string) =
-    discard a.runtimeAppendMemoryResult(userId, text)
+  proc runtimeAppendMemory(a: MdFileAdapter; userId: UserId; text: string;
+                           origin: MemoryOrigin) =
+    discard a.runtimeAppendMemoryResult(userId, text, origin)
 
   proc runtimeSavePreferences(a: MdFileAdapter; userId: UserId; content: string) =
     if a.hasMagmaBackend:
@@ -361,10 +369,13 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
         hasProfile:       proc(userId: UserId): bool {.gcsafe.} = a.runtimeHasProfile(userId),
         loadContext:      proc(userId: UserId): UserContext {.gcsafe.} = a.loadContext(userId),
         saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} = a.runtimeSaveUserMd(userId, content),
-        appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = a.runtimeAppendMemory(userId, text),
+        appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} =
+                            a.runtimeAppendMemory(userId, text, MemoryOrigin()),
         appendMemoryResult: proc(userId: UserId; text: string):
                               Result[void, string] {.gcsafe.} =
-                              a.runtimeAppendMemoryResult(userId, text),
+                              a.runtimeAppendMemoryResult(userId, text, MemoryOrigin()),
+        appendMemoryFrom: proc(userId: UserId; text: string; origin: MemoryOrigin) {.gcsafe.} =
+                            a.runtimeAppendMemory(userId, text, origin),
         savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = a.runtimeSavePreferences(userId, content),
         clearMemory:      proc(userId: UserId) {.gcsafe.} = a.runtimeClearMemory(userId),
         resetBootstrap:   proc(userId: UserId) {.gcsafe.} = a.runtimeResetBootstrap(userId),
@@ -391,7 +402,8 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
             let magma = a.newMagmaAdapter()
             if magma == nil:
               return appendExtractedMemoryF1(a, userId, text)
-            magma.appendMemory(userId, text)
+            magma.appendMemory(userId, text,
+                               MemoryOrigin(source: msConsolidation))
             ok()
           except CatchableError:
             appendExtractedMemoryF1(a, userId, text)
@@ -541,10 +553,15 @@ proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext =
           if graphCtx.preferencesMd.strip.len == 0 and markdownCtx.preferencesMd.strip.len > 0:
             magma.savePreferences(userId, markdownCtx.preferencesMd)
           if markdownCtx.memoryMd.strip.len > 0:
-            for chunk in markdownCtx.memoryMd.split("\n\n"):
-              let trimmed = chunk.strip
-              if trimmed.len > 0 and trimmed notin graphCtx.memoryMd:
-                magma.appendMemory(userId, trimmed)
+            ## Import only paragraphs the graph has never stored. The check
+            ## runs against every memory node, not against the bounded
+            ## context window; if that read fails, import nothing rather
+            ## than duplicate.
+            let known = magma.knownMemoryTexts(userId)
+            if known.isOk:
+              for chunk in missingMemoryChunks(markdownCtx.memoryMd, known.get()):
+                magma.appendMemory(userId, chunk,
+                                   MemoryOrigin(source: msMarkdown))
           return mergeContextMissing(graphCtx, markdownCtx)
         if markdownCtx.hasContextContent:
           magma.importMarkdownContext(markdownCtx)
@@ -642,8 +659,9 @@ proc removeDmAllowed*(a: MdFileAdapter; userId: UserId): Result[void, string] =
   except CatchableError as e:
     err("dm allowlist remove failed: " & e.msg)
 
-proc appendMemoryResult*(a: MdFileAdapter; userId: UserId; text: string):
-                         Result[void, string] =
+proc appendMemoryResult*(a: MdFileAdapter; userId: UserId; text: string;
+                         origin = MemoryOrigin()): Result[void, string] =
+  ## MEMORY.md has no place for the origin; it is recorded in the graph only.
   try:
     a.ensurePaddock(userId)
     let path = a.memoryMdPath(userId)
@@ -659,13 +677,14 @@ proc appendMemoryResult*(a: MdFileAdapter; userId: UserId; text: string):
     discard secureFile(path)
     when defined(withPostgres) or defined(withSqlite):
       a.withMagmaShadow:
-        magma.appendMemory(userId, text)
+        magma.appendMemory(userId, text, origin)
     ok()
   except Exception as e:
     err(e.msg)
 
-proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) =
-  discard a.appendMemoryResult(userId, text)
+proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string;
+                   origin = MemoryOrigin()) =
+  discard a.appendMemoryResult(userId, text, origin)
 
 proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) =
   a.ensurePaddock(userId)
@@ -696,22 +715,112 @@ proc resetBootstrap*(a: MdFileAdapter; userId: UserId) =
     a.withMagmaShadow:
       magma.resetBootstrap(userId)
 
+proc readFileTail(path: string; maxBytes: int): string =
+  ## Whole file when it fits in `maxBytes`; otherwise its last `maxBytes`,
+  ## starting at the first complete line.
+  let size = getFileSize(path)
+  if size <= maxBytes:
+    return readFile(path)
+  var f: File
+  if not open(f, path, fmRead):
+    return ""
+  defer: f.close()
+  f.setFilePos(size - maxBytes)
+  let tail = f.readAll()
+  let firstBreak = tail.find('\n')
+  if firstBreak < 0: "" else: tail[firstBreak + 1 .. ^1]
+
+proc fileEndsWithNewline(path: string): bool {.raises: [].} =
+  ## True for an empty file too: there is no open line to close. When the
+  ## file cannot be read the answer is false, so the caller closes the line:
+  ## an extra blank line is harmless, a message glued to a fragment is lost.
+  try:
+    let size = getFileSize(path)
+    if size <= 0:
+      return true
+    var f: File
+    if not open(f, path, fmRead):
+      return false
+    defer: f.close()
+    f.setFilePos(size - 1)
+    var last: array[1, char]
+    f.readChars(last) == 1 and last[0] == '\n'
+  except CatchableError:
+    false
+
+proc readTranscriptLines(path: string;
+                         maxBytes = SessionTranscriptAlignBytes): seq[TranscriptLine] =
+  ## The records at the end of the transcript, within `maxBytes`.
+  if not fileExists(path):
+    return
+  for raw in readFileTail(path, maxBytes).splitLines():
+    let trimmed = raw.strip()
+    if trimmed.len == 0:
+      continue
+    try:
+      let j = parseJson(trimmed)
+      result.add(TranscriptLine(role: j{"role"}.getStr(""),
+                                text: j{"text"}.getStr(""),
+                                seq: j{"seq"}.getBiggestInt(0).int64,
+                                high: j{"hi"}.getBiggestInt(0).int64))
+    except CatchableError:
+      ## A malformed line is data; it stays in the file and is not compared.
+      discard
+
 proc saveSession*(a: MdFileAdapter; userId: UserId;
                   sessionId: string; history: ConversationHistory) =
-  ## Persists a conversation as JSONL: one JSON object per turn.
+  ## Appends to the session transcript the messages it does not hold yet.
+  ## JSONL, one message per line, each with the time it was first stored.
   ## Path: {paddock}/sessions/{sessionId}.jsonl
+  ##
+  ## `history` is the live window (trimmed, compacted or rewound); the file is
+  ## the full record, so it is extended and never rewritten.
   ## Skips sessions with fewer than 2 turns (empty/ping sessions).
   if history.len < 2: return
   a.ensurePaddock(userId)
   let dir  = a.paddockDir(userId) / "sessions"
   createDir(dir)
   let path = dir / sessionId & ".jsonl"
-  var buf  = ""
+  var current: seq[TranscriptLine]
   for msg in history:
-    buf.add($(%* {"role": msg.role, "text": msg.text,
-                  "imageUrl": msg.imageUrl}) & "\n")
-  writeFile(path, buf)
-  discard secureFile(path)
+    current.add(TranscriptLine(role: msg.role, text: msg.text, seq: msg.seq))
+  ## The end of the file answers almost every save. It does not when the
+  ## history holds a number from before that part (a rewind to an old
+  ## checkpoint) or when no complete record fits in it; then the whole file
+  ## is read, so that nothing is decided on what was not seen.
+  var existing = readTranscriptLines(path)
+  if fileExists(path) and getFileSize(path) > SessionTranscriptAlignBytes and
+     needsWholeTranscript(existing, current):
+    existing = readTranscriptLines(path, high(int))
+  let fresh = messagesToAppend(existing, current)
+  if fresh.len == 0:
+    return
+  let nowMs = epochMs()
+  var highest = highestNumber(existing)
+  var buf = ""
+  ## A write cut short leaves a line without its newline. Close it, so the
+  ## first new message starts on its own line; the fragment itself stays.
+  if fileExists(path) and not fileEndsWithNewline(path):
+    buf.add("\n")
+  for index in fresh:
+    let msg = history[index]
+    var record = %* {"role": msg.role, "text": msg.text,
+                     "imageUrl": msg.imageUrl, "ts": nowMs}
+    if msg.seq > 0:
+      ## `hi` is the highest number in the file up to this line: after a
+      ## rewind a low number can be the last line of a file that holds much
+      ## higher ones, and the next save must not take those for new.
+      highest = max(highest, msg.seq)
+      record["seq"] = %msg.seq
+      record["hi"] = %highest
+    buf.add($record & "\n")
+  let f = open(path, fmAppend)
+  try:
+    f.write(buf)
+  finally:
+    f.close()
+  secureFile(path)
+
 
 proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
                           includeMemory: bool):
@@ -743,17 +852,21 @@ proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
            totalBytes >= SessionSearchMaxTotalBytes:
           break
         inc loaded
-        let size = getFileSize(file.path)
-        if size <= 0 or size > SessionSearchMaxFileBytes or
-           totalBytes + size > SessionSearchMaxTotalBytes:
+        ## Transcripts are append-only and can outgrow the per-file cap; the
+        ## most recent part is read instead of skipping the session.
+        let size = min(getFileSize(file.path), SessionSearchMaxFileBytes.int64)
+        if size <= 0 or totalBytes + size > SessionSearchMaxTotalBytes:
           continue
         totalBytes += size
         let sessionId = file.path.extractFilename.changeFileExt("")
-        let content = readFile(file.path)
-        for line in content.splitLines():
+        let content = readFileTail(file.path, SessionSearchMaxFileBytes)
+        ## Newest lines first: when the record cap is reached, what is left
+        ## out is the oldest part of the oldest file, never the latest lines.
+        let lines = content.splitLines()
+        for lineIndex in countdown(lines.high, 0):
           if records.len >= SessionSearchMaxRecords:
             break
-          let trimmed = line.strip()
+          let trimmed = lines[lineIndex].strip()
           if trimmed.len == 0:
             continue
           try:
@@ -766,7 +879,11 @@ proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
               kind: shkSession,
               role: j{"role"}.getStr(""),
               text: text,
-              timestampMs: file.mtimeMs,
+              timestampMs: block:
+                ## Lines written before per-message timestamps fall back to
+                ## the file's modification time.
+                let ts = j{"ts"}.getBiggestInt(0)
+                if ts > 0: ts.int64 else: file.mtimeMs,
             ))
           except CatchableError:
             ## A malformed JSONL line is data, not an operational failure.

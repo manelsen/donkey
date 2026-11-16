@@ -31,6 +31,37 @@ when defined(withSqlite):
       check store.listNodes("u1", "memory").len == 2
       check store.getEdges("n1", edgeType = EdgeTemporal).len == 1
 
+    test "same-second inserts keep insertion order":
+      ## ts has one-second resolution and ids sort as text ("m9" > "m10"), so
+      ## ordering must fall back to insertion order, not to the id.
+      let store = newSqliteMagmaStoreAdapter(dbPath)
+      store.migrate()
+      for i in 0 .. 11:
+        check store.insertNode(MagmaNode(
+          id: "u1_m" & $i, userId: "u1", nodeType: "memory",
+          content: "node " & $i, timestamp: 100))
+      let last = store.getLastNode("u1", "memory")
+      check last.isSome()
+      check last.get().id == "u1_m11"
+      check store.listNodes("u1", "memory").mapIt(it.id) ==
+        (0 .. 11).toSeq.mapIt("u1_m" & $it)
+      let recent = store.queryByTimeRange("u1", 0, 200, limit = 3)
+      check recent.mapIt(it.id) == @["u1_m11", "u1_m10", "u1_m9"]
+      let limited = store.listNodesLimited("u1", "memory", 3, 64)
+      check limited.isOk
+      check limited.get().mapIt(it.id) == @["u1_m11", "u1_m10", "u1_m9"]
+
+    test "getLastNode respects the node type filter":
+      let store = newSqliteMagmaStoreAdapter(dbPath)
+      store.migrate()
+      check store.insertNode(MagmaNode(
+        id: "m0", userId: "u1", nodeType: "memory", content: "a", timestamp: 5))
+      check store.insertNode(MagmaNode(
+        id: "e0", userId: "u1", nodeType: "entity", content: "b", timestamp: 9))
+      check store.getLastNode("u1", "memory").get().id == "m0"
+      check store.getLastNode("u1").get().id == "e0"
+      check store.getLastNode("nobody").isNone()
+
     test "listNodesLimited limits before materializing":
       let store = newSqliteMagmaStoreAdapter(dbPath)
       store.migrate()

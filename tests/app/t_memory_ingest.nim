@@ -9,6 +9,7 @@ import donkey/app/native_tools
 import donkey/app/session_state
 import donkey/core/log
 import donkey/core/types
+import donkey/domain/memory/provenance_pure
 import donkey/domain/message
 import donkey/ports/memory
 
@@ -79,6 +80,30 @@ suite "memory_ingest tool":
     check res.handled
     check res.resultKind == trkOutput
     check captured.chunks == @["uma nota curta"]
+
+  test "tags chunks as ingest when the backend records origins":
+    let captured = Capture()
+    let mem = MemoryRuntimePort(
+      appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          captured.chunks.add("plain:" & text),
+      appendMemoryFrom: proc(userId: UserId; text: string;
+                             origin: MemoryOrigin) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          captured.chunks.add($origin.source & ":" & origin.sessionId & ":" & text),
+    )
+    var ctx = NativeCtx(
+      uid: UserId("u1"),
+      channel: ckTelegram,
+      paddockDir: TestRoot,
+      memory: mem,
+      log: ingestLog,
+      scopeSessionId: "s42",
+    )
+    let res = waitFor runIngest(ctx, """{"text":"uma nota curta","chunk_chars":1000}""")
+    check res.handled
+    check res.resultKind == trkOutput
+    check captured.chunks == @["ingest:s42:uma nota curta"]
 
   test "rejects path traversal":
     let mem = MemoryRuntimePort()

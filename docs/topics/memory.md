@@ -134,6 +134,69 @@ Recent hardening in the runtime makes this safer:
 - operational failure text is no longer auto-captured as memory
 - turns are no longer truncated at tiny limits by default
 - identity and preference sync are preserved across SQLite-first flows
+- short user messages are captured too, because a short message is often a
+  correction; only greetings, bare acknowledgements and slash commands are
+  skipped (policy in `domain/memory/capture_pure.nim`)
+
+## Markdown ↔ MAGMA Sync
+
+`MEMORY.md` stays editable by hand. On each context load, paragraphs of
+`MEMORY.md` that the graph has never stored are imported once. The comparison
+is per line and runs against every memory node of the user, so entries the
+agent wrote itself are not imported a second time, however many nodes exist.
+
+Memory nodes are ordered by timestamp and then by insertion order. The
+`TEMPORAL` edge of a new memory always points from the memory inserted
+immediately before it, including bursts written within the same second.
+
+## Memory Origin
+
+Each memory node records where it came from, in its `meta`:
+
+| `source` | Written by |
+|---|---|
+| `turn` | automatic capture of one user/assistant exchange, with `session_id` |
+| `ingest` | a chunk appended by `memory_ingest` |
+| `consolidation` | facts extracted at `/compact`, `/reset` or `/new` |
+| `markdown` | a paragraph imported from `MEMORY.md` |
+
+Nodes written before origins existed have empty `meta` and read as unknown.
+
+## Dialogue Recall
+
+When a search hit is a `turn`, it is delivered together with the previous and
+the next turn of the same session, oldest first, inside explicit borders:
+
+```text
+<conversation-excerpt session="…" from="2026-11-16 18:44 UTC" entries="3">
+[context]
+- **User:** …
+  **Response:** …
+[match]
+- **User:** …
+  **Response:** …
+[context]
+- **User:** …
+  **Response:** …
+</conversation-excerpt>
+```
+
+- Only the three best-ranked dialogue hits are expanded.
+- Neighbours are found on the `TEMPORAL` chain; nodes of another origin or
+  session are skipped.
+- A context entry longer than 2000 characters is clipped and ends in
+  `[…truncated]`. The matched entry is never clipped.
+- Excerpts that share an entry are merged, and no entry appears twice.
+- Hits of any other origin, and legacy nodes, are delivered alone.
+
+The policy and the rendering live in `domain/memory/recall_pure.nim`.
+
+## Session Transcripts
+
+`sessions/<id>.jsonl` is append-only: one message per line, each with the
+time it was first stored (`ts`, milliseconds). The live history is trimmed,
+compacted and rewound, but the transcript keeps every message that was said.
+`session_search` reads the most recent 512 KiB of each transcript.
 
 ## Ingesting Documents and Attachments
 

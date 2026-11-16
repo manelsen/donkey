@@ -7,6 +7,7 @@
 ## Compile with -d:withPostgres to activate.
 
 import ../../core/types
+import ../../core/pipeops
 import ../../ports/memory
 import ../../ports/embedding
 import ../../ports/multigraph_store
@@ -15,6 +16,7 @@ import ../../domain/memory/commitment_pure
 import ../../domain/memory/decay
 import ../../domain/memory/episode_pure
 import ../../domain/memory/lessons_pure
+import ../../domain/memory/provenance_pure
 
 when defined(withPostgres) or defined(withSqlite):
   import std/[json, strutils, times, algorithm, options, tables]
@@ -33,6 +35,13 @@ when defined(withPostgres) or defined(withSqlite):
     NtCommitment  = "commitment"
     NtEpisode     = "episode"
     NtLesson      = "lesson"
+
+    ContextMemoryNodeLimit = 200
+      ## Memory nodes returned by loadContext, newest first.
+    KnownMemoryNodeLimit   = 1_000_000
+      ## Upper bound for the dedup read; effectively "all memory nodes".
+    MemoryContentReadLimit = 16 * 1024 * 1024
+      ## Per-node content cap for those reads; above any stored memory.
 
   type
     QueryIntent* = enum
@@ -359,9 +368,12 @@ when defined(withPostgres) or defined(withSqlite):
     let prefNode = a.graph.getNode(prefId(userId))
     if prefNode.isSome:
       prefMd = prefNode.get().content
-    let memNodes = a.graph.queryByTimeRange($userId, 0, getTime().toUnix() + 1, limit = 200)
-    for m in memNodes:
-      if m.nodeType == NtMemory:
+    ## Filter by type in the query: entity, lesson and episode nodes share the
+    ## same table and would otherwise push memories out of the window.
+    let memNodes = a.graph.listNodesLimited(
+      $userId, NtMemory, ContextMemoryNodeLimit, MemoryContentReadLimit)
+    if memNodes.isOk:
+      for m in memNodes.get():
         memLines.add(m.content)
     UserContext(
       userId:        userId,
@@ -369,6 +381,18 @@ when defined(withPostgres) or defined(withSqlite):
       memoryMd:      memLines.join("\n\n"),
       preferencesMd: prefMd,
     )
+
+  proc knownMemoryTexts*(a: MagmaMemoryAdapter;
+                         userId: UserId): Result[seq[string], string] =
+    ## Content of every memory node of the user, without embeddings. Used to
+    ## decide whether a MEMORY.md paragraph is already in the graph; the
+    ## context window of `loadContext` is too small for that question.
+    let nodes = ? a.graph.listNodesLimited(
+      $userId, NtMemory, KnownMemoryNodeLimit, MemoryContentReadLimit)
+    var texts = newSeqOfCap[string](nodes.len)
+    for node in nodes:
+      texts.add(node.content)
+    ok(texts)
 
   proc stats*(a: MagmaMemoryAdapter; userId: UserId): MagmaStats =
     a.graph.statsForUser($userId)
@@ -492,7 +516,8 @@ when defined(withPostgres) or defined(withSqlite):
         a.saveLesson(userId, lesson)
         inc result
 
-  proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string) =
+  proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string;
+                     origin = MemoryOrigin()) =
     let nid = a.memId(userId)
     let emb = a.embedFn(text)
     let ts = getTime().toUnix()
@@ -500,7 +525,8 @@ when defined(withPostgres) or defined(withSqlite):
     let emptyMeta = %*{}
     discard a.graph.insertNode(MagmaNode(
       id: nid, userId: $userId, nodeType: NtMemory,
-      content: text, embedding: emb, timestamp: ts, meta: emptyMeta,
+      content: text, embedding: emb, timestamp: ts,
+      meta: originToMeta(origin),
     ))
     if prevMem.isSome and prevMem.get().nodeType == NtMemory:
       a.graph.linkTemporal(prevMem.get().id, nid)
@@ -532,6 +558,57 @@ when defined(withPostgres) or defined(withSqlite):
           weight: t.confidence.float64, meta: emptyMeta,
         ))
 
+  proc adjacentMemoryId(a: MagmaMemoryAdapter; nodeId, direction: string): string =
+    ## Id on the other end of the TEMPORAL edge closest to `nodeId`. Stores
+    ## written before insertion-order chaining can hold several edges on one
+    ## node; the nearest insertion number is the real neighbour.
+    let current = memorySequence(nodeId)
+    var bestGap = high(int)
+    for edge in a.graph.getEdges(nodeId, edgeType = EdgeTemporal,
+                                 direction = direction):
+      let otherId = if direction == "in": edge.fromId else: edge.toId
+      let other = memorySequence(otherId)
+      let gap =
+        if current < 0 or other < 0: high(int) - 1
+        else: abs(other - current)
+      if gap < bestGap:
+        bestGap = gap
+        result = otherId
+
+  proc dialogueNeighbours(a: MagmaMemoryAdapter; nodeId: string;
+                          origin: MemoryOrigin;
+                          direction: string): seq[MemoryHit] =
+    ## Up to RecallWindowRadius turns of the same session next to `nodeId`,
+    ## oldest first. `direction` is "in" for earlier turns, "out" for later
+    ## ones. Nodes of another origin or session sit on the same chain and are
+    ## skipped, within RecallWindowMaxHops.
+    var cursor = nodeId
+    var hops = 0
+    while result.len < RecallWindowRadius and hops < RecallWindowMaxHops:
+      inc hops
+      let nextId = a.adjacentMemoryId(cursor, direction)
+      if nextId.len == 0:
+        break
+      let node = a.graph.getNode(nextId)
+      if node.isNone:
+        break
+      cursor = nextId
+      let found = node.get()
+      let foundOrigin = originFromMeta(found.meta)
+      if found.nodeType != NtMemory or not sameDialogue(origin, foundOrigin):
+        continue
+      let neighbour = MemoryHit(
+        content: clipNeighbor(found.content),
+        kind: found.nodeType,
+        id: found.id,
+        timestamp: found.timestamp,
+        origin: foundOrigin,
+      )
+      if direction == "in":
+        result.insert(neighbour, 0)
+      else:
+        result.add(neighbour)
+
   proc searchWithRerank*(a: MagmaMemoryAdapter;
                          userId: UserId;
                          query: string;
@@ -551,6 +628,7 @@ when defined(withPostgres) or defined(withSqlite):
         rerankScore: float32
         finalScore:  float32
         kind:        string
+        origin:      MemoryOrigin
 
     let emb = a.embedFn(query)
     let policy = classifyQuery(query)
@@ -570,6 +648,7 @@ when defined(withPostgres) or defined(withSqlite):
           timestamp: n.timestamp,
           rerankScore: -1.0'f32,
           kind: n.nodeType,
+          origin: originFromMeta(n.meta),
         )
 
     proc addSignal(n: MagmaNode;
@@ -717,14 +796,24 @@ when defined(withPostgres) or defined(withSqlite):
       cmp(y.baseScore, x.baseScore))
 
     var hits: seq[MemoryHit]
+    var expanded = 0
     for entry in rankedMemories:
       if hits.len >= limit:
         break
-      hits.add(MemoryHit(
+      var hit = MemoryHit(
         content: entry.content,
         score: entry.finalScore,
         kind: entry.kind,
-      ))
+        id: entry.id,
+        timestamp: entry.timestamp,
+        origin: entry.origin,
+      )
+      if expanded < RecallWindowMaxHits and entry.kind == NtMemory and
+         entry.origin.source == msTurn and entry.origin.sessionId.len > 0:
+        hit.before = a.dialogueNeighbours(entry.id, entry.origin, "in")
+        hit.after = a.dialogueNeighbours(entry.id, entry.origin, "out")
+        inc expanded
+      hits.add(hit)
     hits
 
   proc search*(a: MagmaMemoryAdapter; userId: UserId;
@@ -804,7 +893,8 @@ else:
   proc stats*(a: MagmaMemoryAdapter; userId: UserId): MagmaStats = MagmaStats()
   proc stats*(a: MagmaMemoryAdapter): MagmaStats = MagmaStats()
   proc saveUserMd*(a: MagmaMemoryAdapter; userId: UserId; content: string) = discard
-  proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string) = discard
+  proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string;
+                     origin = MemoryOrigin()) = discard
   proc savePreferences*(a: MagmaMemoryAdapter; userId: UserId; content: string) = discard
   proc saveCommitment*(a: MagmaMemoryAdapter; userId: UserId; commitment: Commitment) = discard
   proc loadCommitments*(a: MagmaMemoryAdapter; userId: UserId): seq[Commitment] = @[]

@@ -7,6 +7,7 @@ import std/[os, strutils]
 import ../../core/pipeops
 import ../../core/types
 import ../../domain/memory/ingest_pure
+import ../../domain/memory/provenance_pure
 import ../../ports/memory
 import ../../ports/fs
 
@@ -20,7 +21,8 @@ type
 proc ingestMemoryText*(memory: MemoryRuntimePort; uid: UserId;
                        text, source: string;
                        chunkChars = MaxIngestChunkChars;
-                       maxChunks = MaxIngestMaxChunks):
+                       maxChunks = MaxIngestMaxChunks;
+                       origin = MemoryOrigin()):
                        Result[MemoryIngestStats, string] =
   if text.strip.len == 0:
     return err("no text to ingest")
@@ -32,7 +34,7 @@ proc ingestMemoryText*(memory: MemoryRuntimePort; uid: UserId;
   if chunked.truncated:
     return err("file exceeds the chunk limit; split it before ingesting")
   for chunk in chunked.chunks:
-    let saved = memory.appendMemoryChecked(uid, chunk)
+    let saved = memory.appendMemoryWithOriginChecked(uid, chunk, origin)
     if saved.isErr:
       return err(saved.error)
   ok(MemoryIngestStats(
@@ -46,7 +48,8 @@ proc ingestMemoryFile*(memory: MemoryRuntimePort; uid: UserId;
                        paddockDir, path: string;
                        chunkChars = MaxIngestChunkChars;
                        maxChunks = MaxIngestMaxChunks;
-                       fs: FsRuntimePort = unavailableFs()):
+                       fs: FsRuntimePort = unavailableFs();
+                       origin = MemoryOrigin()):
                        Result[MemoryIngestStats, string] =
   if paddockDir.len == 0:
     return err("memory workspace unavailable")
@@ -67,4 +70,4 @@ proc ingestMemoryFile*(memory: MemoryRuntimePort; uid: UserId;
     return err("file exceeds the 2 MB ingest limit")
   let text = fs.readFile(realFile).valueOr:
     return err(error)
-  ingestMemoryText(memory, uid, text, path, chunkChars, maxChunks)
+  ingestMemoryText(memory, uid, text, path, chunkChars, maxChunks, origin)

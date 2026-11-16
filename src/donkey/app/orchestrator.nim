@@ -33,6 +33,8 @@ import ../core/agent_events
 import ../core/memory/blackboard
 import ../core/tooling/tool_loop
 import ../domain/agent_message
+import ../domain/memory/capture_pure
+import ../domain/memory/provenance_pure
 import ../domain/message
 import ../domain/personality
 import ../config/types as cfgTypes
@@ -457,53 +459,13 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     globalOutbox, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.streamId, streamFn,
     suppressProgress, suppressQuietHeartbeatFinal, result.showReasoning, loopResult)
 
-  # Capture memory from substantive user messages, but avoid persisting
-  # operational/provider failures as autobiographical memory.
-  const
-    AutoMemoryCaptureMaxChars = 4000
-    AutoMemorySkipNeedles = [
-      "não consigo acessar a web",
-      "search isn't working",
-      "ferramentas indisponíveis",
-      "docker sandbox unavailable",
-      "wasmtime not found",
-      "não consigo criar arquivos",
-      "limitations de escrita",
-      "limitações de escrita",
-      "the workspace appears to be empty",
-      "no heartbeat.md found",
-      "tool result's tool id",
-    ]
-
-  func containsNeedle(text: string; needles: openArray[string]): bool =
-    let lowered = text.toLowerAscii()
-    for needle in needles:
-      if lowered.contains(needle):
-        return true
-    false
-
-  func clipAutoMemoryCapture(text: string): string =
-    let trimmed = text.strip
-    if trimmed.len <= AutoMemoryCaptureMaxChars:
-      return trimmed
-    if AutoMemoryCaptureMaxChars <= 16:
-      return trimmed[0 ..< min(trimmed.len, AutoMemoryCaptureMaxChars)]
-    trimmed[0 ..< min(trimmed.len, AutoMemoryCaptureMaxChars - 16)] & "\n[…truncated]"
-
-  func shouldSkipAutoMemoryCapture(userText: string; responseText: string): bool =
-    if userText.strip.len <= 30 or responseText.strip.len == 0:
-      return true
-    let lowered = responseText.toLowerAscii().strip()
-    if lowered.startsWith("desculpe, ocorreu um erro:"):
-      return true
-    if lowered.startsWith("error: "):
-      return true
-    containsNeedle(responseText, AutoMemorySkipNeedles)
-
+  # Capture the turn into long-term memory. The policy (what counts as
+  # substantive, how each side is clipped) lives in domain/memory/capture_pure.
   if not shouldSkipAutoMemoryCapture(turnSetup.userText, loopResult.finalText):
-    let memEntry = "- **User:** " & clipAutoMemoryCapture(turnSetup.userText) & "\n" &
-      "  **Response:** " & clipAutoMemoryCapture(loopResult.finalText) & "\n"
-    onboarding_runtime.safeAppendMemory(memory, turnSetup.uid, memEntry)
+    onboarding_runtime.safeAppendMemory(
+      memory, turnSetup.uid,
+      formatAutoMemoryEntry(turnSetup.userText, loopResult.finalText),
+      turnOrigin(result.sessionId))
 
   if loopResult.finalText.len > 0:
     discard rememberCommitments(
@@ -515,13 +477,23 @@ type ActorMessageResult = object
   stateRuntime: OrchestratorState
   shouldStop:   bool
 
+proc saveNumberedSession(memory: MemoryRuntimePort; uid: UserId;
+                         sessionId: string; state: SessionState;
+                         history: var ConversationHistory) {.gcsafe, raises: [].} =
+  ## Numbers the messages that have no number yet and saves the transcript.
+  ## The numbers stay in `history`, so later saves recognise what is stored.
+  numberMessages(history, state.messageSeq)
+  onboarding_runtime.safeSaveSession(memory, uid, sessionId, history)
+
 proc handleActorCancel(memory:          MemoryRuntimePort;
                        memInbox:         AsyncQueue[AgentMessage];
                        toolInbox:        AsyncQueue[AgentMessage];
                        sessionId:        string;
+                       state:            SessionState;
                        stateRuntime:     OrchestratorState): Future[void] {.async.} =
   ## Save history on cancel so mid-turn rebuilds don't lose context.
-  onboarding_runtime.safeSaveSession(memory, stateRuntime.lastUserId, sessionId, stateRuntime.history)
+  var history = stateRuntime.history
+  saveNumberedSession(memory, stateRuntime.lastUserId, sessionId, state, history)
   await memInbox.put(newCancelMsg())
   await toolInbox.put(newCancelMsg())
 
@@ -569,6 +541,8 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
       if consolidation.completed:
         result.lastConsolidatedFingerprint = fingerprint
 
+  ## /reset and /new save the transcript inside the control task.
+  numberMessages(result.history, state.messageSeq)
   let controlResult = await handleControlTask(
     globalOutbox, memory, completeFn, uid, msg.channel, msg.replyTo, msg,
     result.history, result.onboarding, result.identity,
@@ -586,7 +560,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
       result |>->
       withoutCompletedBootstrapTarget(msg.channel, msg.replyTo)
   if controlResult.handled and msg.taskKind == tkUserMsg:
-    onboarding_runtime.safeSaveSession(memory, uid, sessionId, result.history)
+    saveNumberedSession(memory, uid, sessionId, state, result.history)
   if controlResult.handled or msg.taskKind notin {tkUserMsg, tkHeartbeat}:
     return
   if msg.taskKind == tkHeartbeat and not onboarding_runtime.safeHasCompletedBootstrap(memory, uid):
@@ -601,7 +575,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
     result =
       result |>->
       withCompletedBootstrapTarget(msg.channel, msg.replyTo)
-  onboarding_runtime.safeSaveSession(memory, uid, sessionId, result.history)
+  saveNumberedSession(memory, uid, sessionId, state, result.history)
 
 proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
                         session: ptr SessionEntry;
@@ -637,7 +611,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
   of amkCancel:
     if stateRuntime.subagents != nil:
       await stateRuntime.subagents.cancelAll()
-    await handleActorCancel(memory, memInbox, toolInbox, sessionId, stateRuntime)
+    await handleActorCancel(memory, memInbox, toolInbox, sessionId, state, stateRuntime)
     result.shouldStop = true
 
   of amkTask:

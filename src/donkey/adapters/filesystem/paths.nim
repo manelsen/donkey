@@ -64,7 +64,7 @@ proc canonicalNearestExisting*(path: string): Result[string, string] {.gcsafe, r
   except CatchableError as e:
     err(e.msg)
 
-proc secureDir*(path: string): Result[void, string] =
+proc secureDir*(path: string): Result[void, string] {.discardable.} =
   try:
     createDir(path)
     when defined(posix):
@@ -73,7 +73,7 @@ proc secureDir*(path: string): Result[void, string] =
   except CatchableError as e:
     err(e.msg)
 
-proc secureFile*(path: string): Result[void, string] =
+proc secureFile*(path: string): Result[void, string] {.discardable.} =
   try:
     when defined(posix):
       if fileExists(path):

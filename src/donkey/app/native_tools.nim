@@ -55,6 +55,7 @@ import ../core/security/approval
 import ../domain/message
 import ../domain/more_tools
 import ../domain/builtin_tools
+import ../domain/memory/provenance_pure
 import ../domain/memory/session_search_pure
 import ../domain/memory/ingest_pure
 import ../domain/subagent_pure
@@ -1175,13 +1176,16 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
   of MemoryIngestToolName:
     let ingestCtx = parseMemoryIngestContext(j).valueOr:
       return handledError(error)
+    let ingestOrigin = MemoryOrigin(source: msIngest,
+                                    sessionId: ctx.scopeSessionId)
     let stats =
       if ingestCtx.path.len > 0:
         ingestMemoryFile(ctx.memory, ctx.uid, ctx.paddockDir, ingestCtx.path,
-                         ingestCtx.chunkChars, ingestCtx.maxChunks, ctx.fs)
+                         ingestCtx.chunkChars, ingestCtx.maxChunks, ctx.fs,
+                         ingestOrigin)
       else:
         ingestMemoryText(ctx.memory, ctx.uid, ingestCtx.text, "text",
-                         ingestCtx.chunkChars, ingestCtx.maxChunks)
+                         ingestCtx.chunkChars, ingestCtx.maxChunks, ingestOrigin)
     if stats.isErr:
       return handledError("Error: " & stats.error)
     let ingested = stats.get()

@@ -248,8 +248,9 @@ proc safeHasCompletedBootstrap*(memory: MemoryRuntimePort;
 
 proc safeAppendMemory*(memory: MemoryRuntimePort;
                       uid: UserId;
-                      text: string) {.gcsafe, raises: [].} =
-  discard memory.appendMemoryChecked(uid, text)
+                      text: string;
+                      origin = MemoryOrigin()) {.gcsafe, raises: [].} =
+  discard memory.appendMemoryWithOriginChecked(uid, text, origin)
 
 proc safeResetBootstrap*(memory: MemoryRuntimePort;
                         uid: UserId): bool {.gcsafe, raises: [].} =

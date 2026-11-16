@@ -117,7 +117,9 @@ func compactHistory*(history: ConversationHistory; cfg: CompactionConfig): Compa
     newHistory.add(msg)
   
   if summary.len > 0:
-    newHistory.add(ChatMessage(role: roleUser, text: summary))
+    ## Nobody said the summary: it must not reach the session transcript.
+    newHistory.add(ChatMessage(role: roleUser, text: summary,
+                               seq: SyntheticMessageSeq))
   
   for msg in recent:
     newHistory.add(msg)
