@@ -30,6 +30,7 @@ import donkey/adapters/http/std_http
 import donkey/adapters/channel/telegram
 import donkey/adapters/channel/outbound_builder
 import donkey/app/inbound_gate
+import donkey/app/inbound_media
 import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/channel/discord
 import donkey/adapters/channel/discord_runtime
@@ -66,7 +67,6 @@ import donkey/ports/provider
 import donkey/ports/subagent_workspace
 import donkey/ports/http
 import donkey/ports/channel
-import donkey/core/media_download
 import donkey/ports/tool
 import donkey/ports/runtime_state
 import donkey/app/orchestrator
@@ -326,7 +326,6 @@ type DaemonRuntime = ref object
   lastSignalPollMs:     int64
   msgSeq:               int
   daemonStartMs:        int64
-  downloadDir:          string  ## directory for downloaded files from channels
 
 type DaemonContext = ref object
   env:      DaemonEnv
@@ -1304,44 +1303,41 @@ proc handleTelegramFallback(runtime:      var DaemonRuntime;
                             services:     SessionIngressServices) =
   handleDaemonSessionFallback(runtime, msg, services)
 
-proc processInboundMediaDownload(runtime: var DaemonRuntime;
-                                 msg: InboundMessage;
+proc processInboundMediaDownload(msg: var InboundMessage;
                                  channelPort: OutboundChannelPort;
+                                 paddockDir: string;
                                  log: Logger) =
-  ## Downloads and saves files from inbound messages if mediaUrl is present.
-  ## Uses the channel port interface - respects hexagonal architecture.
+  ## Downloads an inbound attachment and stores it inside the paddock.
+  ## The channel file_id is never forwarded to the provider.
   if msg.mediaUrl.len == 0:
     return
-  
-  # Create download directory if it doesn't exist
-  if runtime.downloadDir.len == 0:
-    runtime.downloadDir = getAppDir() / "downloads"
-  
-  let userDir = runtime.downloadDir / $msg.userId
-  if not dirExists(userDir):
-    createDir(userDir)
-  
-  # Try to download file using the port interface
-  # The fileId format is channel-specific:
-  #   Telegram: file_id
-  #   WhatsApp: mediaId
-  #   Discord: HTTP URL (already resolved)
+
   let fileId = msg.mediaUrl
-  
   let downloadResult = channelPort.downloadFile(fileId)
   if downloadResult.isOk:
-    var fileDownload = downloadResult.value
-    
-    # Save to disk using generic media_download helper
-    let saveResult = fileDownload.saveFileToDisk(userDir)
+    let saveResult = applyInboundAttachment(
+      msg, downloadResult.value, paddockDir,
+      msg.mediaFileName, msg.mediaMimeType)
     if saveResult.isOk:
-      log.info($msg.channel & ": downloaded file " & fileDownload.fileName & " -> " & saveResult.value)
+      log.info($msg.channel & ": attached " & saveResult.value.relPath &
+               " (" & $saveResult.value.size & " bytes)")
     else:
-      log.warn($msg.channel & ": failed to save file: " & saveResult.error)
+      log.warn($msg.channel & ": failed to save attachment: " & saveResult.error)
+      if msg.text.len > 0:
+        msg.text.add("\n\n")
+      msg.text.add("[Falha ao salvar o anexo: " & saveResult.error & "]")
+      msg.mediaUrl = ""
   else:
-    # Not an error - some channels don't support downloadFile
-    # Just log for debugging
     log.debug($msg.channel & ": downloadFile not available for " & fileId)
+    ## Some channels already provide a public URL; leave it for the provider
+    ## instead of replacing a potentially valid image with an error marker.
+    let looksLikeUrl = msg.mediaUrl.startsWith("http://") or
+                       msg.mediaUrl.startsWith("https://")
+    if not looksLikeUrl:
+      if msg.text.len > 0:
+        msg.text.add("\n\n")
+      msg.text.add("[Falha ao baixar o anexo: " & downloadResult.error & "]")
+      msg.mediaUrl = ""
 
 func outboundPortForChannel(ports: OutboundChannelPorts;
                             channel: ChannelKind): OutboundChannelPort =
@@ -1373,11 +1369,11 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
   let completeBuilder = makeCompleteBuilder()
   let modelCatalogLoader = buildModelCatalogLoader()
   let runtimePtr = addr runtime
-  let tgMsgs = tgAdapter.receive().valueOr:
+  var tgMsgs = tgAdapter.receive().valueOr:
     log.error("telegram receive: " & error)
     return false
 
-  for msg in tgMsgs:
+  for msg in tgMsgs.mitems:
     let auth = authorizeResolvedInbound(
       runtime.sm, tgAdapter.resolver.identityGate(), ckTelegram,
       msg.userId, msg.text)
@@ -1392,7 +1388,8 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
       stageInboundReactionStatus(runtime, outboundPorts, msg)
     
     # Download media if present
-    processInboundMediaDownload(runtime, msg, outboundPorts.telegram, log)
+    processInboundMediaDownload(msg, outboundPorts.telegram,
+                                memory.paddockDir(msg.userId), log)
     
     if telegram_runtime.handleTelegramMessage(
       msg, runtime.sm, tgAdapter, runtime.presentationState, memory, completeBuilder,
@@ -1504,15 +1501,16 @@ proc handleGatewayFallback(ctx: DaemonContext;
       discard port.send(OutboundMessage(
         userId: msg.userId, channel: msg.channel, text: approvalReply.get))
     return
+  var resolvedMsg = msg
   processInboundMediaDownload(
-    ctx.runtime,
-    msg,
-    outboundPortForChannel(outboundPorts, msg.channel),
+    resolvedMsg,
+    outboundPortForChannel(outboundPorts, resolvedMsg.channel),
+    memory.paddockDir(resolvedMsg.userId),
     log,
   )
   handleDaemonSessionFallback(
     ctx.runtime,
-    msg,
+    resolvedMsg,
     buildDaemonSessionServices(ctx, cfg, memory, log),
   )
 

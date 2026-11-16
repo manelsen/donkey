@@ -35,7 +35,11 @@ func makeMediaUpdate(updateId: int; fromId: int64;
       {"file_id": "big_id",   "width": 800, "height": 600},
     ]
   of "document":
-    msg["document"] = %* {"file_id": "doc_id", "file_name": "file.pdf"}
+    msg["document"] = %* {
+      "file_id": "doc_id",
+      "file_name": "file.pdf",
+      "mime_type": "application/pdf",
+    }
   of "voice":
     msg["voice"] = %* {"file_id": "voice_id", "duration": 3}
   else: discard
@@ -126,6 +130,8 @@ suite "telegram_pure.parseUpdate — media":
     check r.kind == tukMessage
     check r.hasMedia
     check r.mediaFileId == "big_id"
+    check r.mediaFileName == "photo.jpg"
+    check r.mediaMimeType == "image/jpeg"
 
   test "photo: caption becomes text":
     let upd = makeMediaUpdate(11, 1002, "photo")
@@ -137,12 +143,16 @@ suite "telegram_pure.parseUpdate — media":
     let r = upd |> parseUpdate
     check r.hasMedia
     check r.mediaFileId == "doc_id"
+    check r.mediaFileName == "file.pdf"
+    check r.mediaMimeType == "application/pdf"
 
   test "voice: hasMedia is true":
     let upd = makeMediaUpdate(13, 1004, "voice")
     let r = upd |> parseUpdate
     check r.hasMedia
     check r.mediaFileId == "voice_id"
+    check r.mediaFileName == "voice.ogg"
+    check r.mediaMimeType == "audio/ogg"
 
 suite "telegram_pure.parseUpdate — callback_query":
 
@@ -223,6 +233,8 @@ suite "telegram_pure.toInbound":
     let uid = UserId("uuid-2")
     let msg = r.toInbound(uid, "https://cdn.example.com/photo.jpg")
     check msg.mediaUrl == "https://cdn.example.com/photo.jpg"
+    check msg.mediaFileName == "photo.jpg"
+    check msg.mediaMimeType == "image/jpeg"
 
 # ── maxNextOffset ─────────────────────────────────────────────────────────────
 

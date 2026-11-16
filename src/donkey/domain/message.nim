@@ -40,6 +40,8 @@ type
     callbackId*: string       ## non-empty for callback queries that need ack
     text*:       string
     mediaUrl*:   string       ## non-empty when message has attachment
+    mediaFileName*: string    ## original attachment name when known
+    mediaMimeType*: string    ## attachment MIME type when known
     channel*:    ChannelKind
 
   OutboundMessage* = object
