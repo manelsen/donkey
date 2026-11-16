@@ -132,16 +132,27 @@ func addEntry(entries: var seq[ExcerptEntry]; entry: ExcerptEntry) =
   else:
     entries.add(entry)
 
-func chronological(a, b: ExcerptEntry): int =
-  ## Insertion order when both ids carry it: the wall clock can step back
-  ## between two appends, the insertion number cannot. Timestamp otherwise.
-  let seqA = memorySequence(a.hit.id)
-  let seqB = memorySequence(b.hit.id)
-  if seqA >= 0 and seqB >= 0 and seqA != seqB:
-    return cmp(seqA, seqB)
+func byInsertion(a, b: ExcerptEntry): int =
+  cmp(memorySequence(a.hit.id), memorySequence(b.hit.id))
+
+func byTimestamp(a, b: ExcerptEntry): int =
   if a.hit.timestamp != b.hit.timestamp:
     return cmp(a.hit.timestamp, b.hit.timestamp)
-  cmp(seqA, seqB)
+  byInsertion(a, b)
+
+func sortChronologically(entries: var seq[ExcerptEntry]) =
+  ## One criterion for the whole block, so the order is always consistent.
+  ## Insertion number when every entry has one: the wall clock can step back
+  ## between two appends, the insertion number cannot. Timestamp otherwise.
+  var allNumbered = true
+  for entry in entries:
+    if memorySequence(entry.hit.id) < 0:
+      allNumbered = false
+      break
+  if allNumbered:
+    entries.sort(byInsertion)
+  else:
+    entries.sort(byTimestamp)
 
 func renderExcerpt(entries: seq[ExcerptEntry]): string =
   let first = entries[0].hit
@@ -226,7 +237,7 @@ func renderRecall*(hits: seq[MemoryHit]): RecallText =
       parts.add("- [" & hit.kind & "] " & hit.content)
     elif not rendered[index]:
       rendered[index] = true
-      blocks[index].sort(chronological)
+      sortChronologically(blocks[index])
       parts.add(renderExcerpt(blocks[index]))
   if blocks.len > 0:
     parts.insert(RecallExcerptNote, 0)
