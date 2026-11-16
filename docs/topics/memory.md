@@ -149,6 +149,55 @@ Memory nodes are ordered by timestamp and then by insertion order. The
 `TEMPORAL` edge of a new memory always points from the memory inserted
 immediately before it, including bursts written within the same second.
 
+## Memory Origin
+
+Each memory node records where it came from, in its `meta`:
+
+| `source` | Written by |
+|---|---|
+| `turn` | automatic capture of one user/assistant exchange, with `session_id` |
+| `ingest` | a chunk appended by `memory_ingest` |
+| `consolidation` | facts extracted at `/compact`, `/reset` or `/new` |
+| `markdown` | a paragraph imported from `MEMORY.md` |
+
+Nodes written before origins existed have empty `meta` and read as unknown.
+
+## Dialogue Recall
+
+When a search hit is a `turn`, it is delivered together with the previous and
+the next turn of the same session, oldest first, inside explicit borders:
+
+```text
+<conversation-excerpt session="…" from="2026-11-16 18:44 UTC" entries="3">
+[context]
+- **User:** …
+  **Response:** …
+[match]
+- **User:** …
+  **Response:** …
+[context]
+- **User:** …
+  **Response:** …
+</conversation-excerpt>
+```
+
+- Only the three best-ranked dialogue hits are expanded.
+- Neighbours are found on the `TEMPORAL` chain; nodes of another origin or
+  session are skipped.
+- A context entry longer than 2000 characters is clipped and ends in
+  `[…truncated]`. The matched entry is never clipped.
+- Excerpts that share an entry are merged, and no entry appears twice.
+- Hits of any other origin, and legacy nodes, are delivered alone.
+
+The policy and the rendering live in `domain/memory/recall_pure.nim`.
+
+## Session Transcripts
+
+`sessions/<id>.jsonl` is append-only: one message per line, each with the
+time it was first stored (`ts`, milliseconds). The live history is trimmed,
+compacted and rewound, but the transcript keeps every message that was said.
+`session_search` reads the most recent 512 KiB of each transcript.
+
 ## Ingesting Documents and Attachments
 
 When a channel sends a file, Donkey stores it under

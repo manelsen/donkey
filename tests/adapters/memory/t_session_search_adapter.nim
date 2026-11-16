@@ -5,6 +5,7 @@ import donkey/adapters/memory/md_file
 import donkey/core/pipeops
 import donkey/core/types
 import donkey/domain/memory/session_search_pure
+import donkey/domain/message
 
 let searchBase = getTempDir() / ("donkey_session_search_" & $getCurrentProcessId())
 
@@ -66,7 +67,7 @@ suite "MdFileAdapter session search":
     check withMemory.anyIt(it.kind == shkMemory)
     check not withoutMemory.anyIt(it.kind == shkMemory)
 
-  test "oversized session files are skipped, not read":
+  test "an oversized single line is not searched":
     resetBase()
     defer: removeDir(searchBase)
     let adapter = MdFileAdapter(paddocksDir: searchBase)
@@ -93,3 +94,104 @@ suite "MdFileAdapter session search":
     writeFile(adapter.paddockDir(uid) / "sessions" / "bad.jsonl",
       "{not json}\n[]\n\"scalar\"\n")
     check adapter.searchSessions(uid, "deploy", 10, true).get().len == 0
+
+suite "MdFileAdapter session transcript":
+
+  proc transcriptLines(adapter: MdFileAdapter; uid: UserId;
+                       sessionId: string): seq[JsonNode] =
+    let path = adapter.paddockDir(uid) / "sessions" / (sessionId & ".jsonl")
+    for raw in readFile(path).splitLines():
+      if raw.strip.len > 0:
+        result.add(parseJson(raw))
+
+  proc history(first, last: int): ConversationHistory =
+    for i in first .. last:
+      if i mod 2 == 1: result.addUser("mensagem " & $i)
+      else: result.addAssistant("resposta " & $i)
+
+  test "saving a trimmed history keeps the earlier messages":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    for last in countup(2, 40, 2):
+      adapter.saveSession(uid, "s1", history(max(1, last - 19), last))
+    let lines = adapter.transcriptLines(uid, "s1")
+    check lines.len == 40
+    check lines[0]["text"].getStr == "mensagem 1"
+    check lines[^1]["text"].getStr == "resposta 40"
+
+  test "saving the same history twice does not duplicate it":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    adapter.saveSession(uid, "s1", history(1, 6))
+    adapter.saveSession(uid, "s1", history(1, 6))
+    check adapter.transcriptLines(uid, "s1").len == 6
+
+  test "every stored message carries its own timestamp":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    adapter.saveSession(uid, "s1", history(1, 4))
+    for line in adapter.transcriptLines(uid, "s1"):
+      check line["ts"].getBiggestInt > 1_600_000_000_000
+
+  test "a file in the previous snapshot format is extended, not rewritten":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    createDir(adapter.paddockDir(uid) / "sessions")
+    writeFile(adapter.paddockDir(uid) / "sessions" / "s1.jsonl",
+      $(%*{"role": "user", "text": "mensagem 1", "imageUrl": ""}) & "\n" &
+      $(%*{"role": "assistant", "text": "resposta 2", "imageUrl": ""}) & "\n")
+    adapter.saveSession(uid, "s1", history(1, 4))
+    let lines = adapter.transcriptLines(uid, "s1")
+    check lines.len == 4
+    check not lines[0].hasKey("ts")
+    check lines[3].hasKey("ts")
+
+  test "search reaches the start of a long session":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    var first: ConversationHistory
+    first.addUser("o codinome do projeto é zarabatana")
+    first.addAssistant("anotado")
+    adapter.saveSession(uid, "s1", first)
+    for last in countup(4, 60, 2):
+      adapter.saveSession(uid, "s1", history(max(3, last - 19), last))
+    let hits = adapter.searchSessions(uid, "zarabatana", 5, false).get()
+    check hits.len == 1
+    check hits[0].sessionId == "s1"
+
+  test "search uses the per-message timestamp when the line has one":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    createDir(adapter.paddockDir(uid) / "sessions")
+    writeFile(adapter.paddockDir(uid) / "sessions" / "s1.jsonl",
+      $(%*{"role": "user", "text": "zarabatana antiga", "ts": 1_700_000_000_000}) & "\n")
+    let hits = adapter.searchSessions(uid, "zarabatana", 5, false).get()
+    check hits.len == 1
+    check hits[0].timestampMs == 1_700_000_000_000
+
+  test "an oversized transcript is searched through its most recent part":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    createDir(adapter.paddockDir(uid) / "sessions")
+    var content = $(%*{"role": "user", "text": "inicio distante alcachofra"}) & "\n"
+    let filler = $(%*{"role": "assistant", "text": repeat("x", 1000)}) & "\n"
+    while content.len <= SessionSearchMaxFileBytes + 4096:
+      content.add(filler)
+    content.add($(%*{"role": "user", "text": "recado recente zarabatana"}) & "\n")
+    writeFile(adapter.paddockDir(uid) / "sessions" / "big.jsonl", content)
+    check adapter.searchSessions(uid, "zarabatana", 5, false).get().len == 1
+    check adapter.searchSessions(uid, "alcachofra", 5, false).get().len == 0

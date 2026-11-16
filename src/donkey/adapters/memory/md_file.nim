@@ -15,6 +15,7 @@ import ../../domain/memory/lessons_pure
 import ../../domain/memory/session_search_pure
 import ../../domain/memory/memory_sync_pure
 import ../../domain/memory/provenance_pure
+import ../../domain/memory/transcript_pure
 import ../../domain/message
 import ../../domain/personality
 when defined(withPostgres) or defined(withSqlite):
@@ -46,6 +47,9 @@ const
   SessionSearchMaxTotalBytes* = 8 * 1024 * 1024
   SessionSearchMaxRecords* = 2000
   SessionSearchMaxNodeContentBytes* = 4096
+  ## Part of an existing transcript compared against the live history when
+  ## saving. The history holds a few dozen messages; 2 MiB of tail covers it.
+  SessionTranscriptAlignBytes* = 2 * 1024 * 1024
 
 proc hasProfile*(a: MdFileAdapter; userId: UserId): bool {.gcsafe.}
 proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext {.gcsafe.}
@@ -688,21 +692,70 @@ proc resetBootstrap*(a: MdFileAdapter; userId: UserId) =
     a.withMagmaShadow:
       magma.resetBootstrap(userId)
 
+proc readFileTail(path: string; maxBytes: int): string =
+  ## Whole file when it fits in `maxBytes`; otherwise its last `maxBytes`,
+  ## starting at the first complete line.
+  let size = getFileSize(path)
+  if size <= maxBytes:
+    return readFile(path)
+  var f: File
+  if not open(f, path, fmRead):
+    return ""
+  defer: f.close()
+  f.setFilePos(size - maxBytes)
+  let tail = f.readAll()
+  let firstBreak = tail.find('\n')
+  if firstBreak < 0: "" else: tail[firstBreak + 1 .. ^1]
+
+proc readTranscriptLines(path: string): seq[TranscriptLine] =
+  if not fileExists(path):
+    return
+  for raw in readFileTail(path, SessionTranscriptAlignBytes).splitLines():
+    let trimmed = raw.strip()
+    if trimmed.len == 0:
+      continue
+    try:
+      let j = parseJson(trimmed)
+      result.add(TranscriptLine(role: j{"role"}.getStr(""),
+                                text: j{"text"}.getStr("")))
+    except CatchableError:
+      ## A malformed line is data; it stays in the file and is not compared.
+      discard
+
 proc saveSession*(a: MdFileAdapter; userId: UserId;
                   sessionId: string; history: ConversationHistory) =
-  ## Persists a conversation as JSONL: one JSON object per turn.
+  ## Appends to the session transcript the messages it does not hold yet.
+  ## JSONL, one message per line, each with the time it was first stored.
   ## Path: {paddock}/sessions/{sessionId}.jsonl
+  ##
+  ## `history` is the live window (trimmed, compacted or rewound); the file is
+  ## the full record, so it is extended and never rewritten.
   ## Skips sessions with fewer than 2 turns (empty/ping sessions).
   if history.len < 2: return
   a.ensurePaddock(userId)
   let dir  = a.paddockDir(userId) / "sessions"
   createDir(dir)
   let path = dir / sessionId & ".jsonl"
-  var buf  = ""
+  var current: seq[TranscriptLine]
   for msg in history:
+    current.add(TranscriptLine(role: msg.role, text: msg.text))
+  let existing = readTranscriptLines(path)
+  let fresh = linesToAppend(existing, current)
+  if fresh.len == 0 and fileExists(path):
+    return
+  ## `fresh` is always a suffix of the history.
+  let firstFresh = history.len - fresh.len
+  let nowMs = epochMs()
+  var buf = ""
+  for i in firstFresh ..< history.len:
+    let msg = history[i]
     buf.add($(%* {"role": msg.role, "text": msg.text,
-                  "imageUrl": msg.imageUrl}) & "\n")
-  writeFile(path, buf)
+                  "imageUrl": msg.imageUrl, "ts": nowMs}) & "\n")
+  let f = open(path, fmAppend)
+  try:
+    f.write(buf)
+  finally:
+    f.close()
   secureFile(path)
 
 proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
@@ -735,13 +788,14 @@ proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
            totalBytes >= SessionSearchMaxTotalBytes:
           break
         inc loaded
-        let size = getFileSize(file.path)
-        if size <= 0 or size > SessionSearchMaxFileBytes or
-           totalBytes + size > SessionSearchMaxTotalBytes:
+        ## Transcripts are append-only and can outgrow the per-file cap; the
+        ## most recent part is read instead of skipping the session.
+        let size = min(getFileSize(file.path), SessionSearchMaxFileBytes.int64)
+        if size <= 0 or totalBytes + size > SessionSearchMaxTotalBytes:
           continue
         totalBytes += size
         let sessionId = file.path.extractFilename.changeFileExt("")
-        let content = readFile(file.path)
+        let content = readFileTail(file.path, SessionSearchMaxFileBytes)
         for line in content.splitLines():
           if records.len >= SessionSearchMaxRecords:
             break
@@ -758,7 +812,11 @@ proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
               kind: shkSession,
               role: j{"role"}.getStr(""),
               text: text,
-              timestampMs: file.mtimeMs,
+              timestampMs: block:
+                ## Lines written before per-message timestamps fall back to
+                ## the file's modification time.
+                let ts = j{"ts"}.getBiggestInt(0)
+                if ts > 0: ts.int64 else: file.mtimeMs,
             ))
           except CatchableError:
             ## A malformed JSONL line is data, not an operational failure.
