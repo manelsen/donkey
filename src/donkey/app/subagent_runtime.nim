@@ -445,7 +445,9 @@ proc cancelSubagent*(mgr: SubagentManager;
                      subagentId: string): Future[bool] {.gcsafe.}
 
 proc awaitSubagent*(mgr: SubagentManager; subagentId: string;
-                    stopGeneration: uint64): Future[SubagentResult] {.async.} =
+                    stopGeneration: uint64;
+                    userId: string; userInterrupt: uint64):
+                    Future[SubagentResult] {.async.} =
   if subagentId notin mgr.children:
     return SubagentResult(
       subagentId: subagentId,
@@ -457,7 +459,10 @@ proc awaitSubagent*(mgr: SubagentManager; subagentId: string;
     let waitMs = max(1_000'i64, rt.limits.maxDurationMs + 5_000'i64)
     let deadline = nowMs() + waitMs
     while not rt.future.finished():
-      if isSessionStopRequested(stopGeneration):
+      if isSessionStopRequested(stopGeneration) or
+         isUserStoppedSince(userId, userInterrupt):
+        ## Both process shutdown and a per-user /stop must free the parent
+        ## actor: cancel the child first, then return its partial result.
         try:
           discard await mgr.cancelSubagent(subagentId)
         except CancelledError:
@@ -562,9 +567,10 @@ proc attachSubagentRuntime*(ctx: var NativeCtx; mgr: SubagentManager) =
   ctx.spawnSubagent = proc(request: SubagentRequest):
       Future[SubagentSpawnResult] {.gcsafe, raises: [].} =
     mgr.spawn(parentCtx, request)
-  ctx.awaitSubagent = proc(subagentId: string; stopGeneration: uint64):
+  ctx.awaitSubagent = proc(subagentId: string; stopGeneration: uint64;
+                           userId: string; userInterrupt: uint64):
       Future[SubagentResult] {.gcsafe, raises: [].} =
-    mgr.awaitSubagent(subagentId, stopGeneration)
+    mgr.awaitSubagent(subagentId, stopGeneration, userId, userInterrupt)
   ctx.listSubagents = proc(): seq[SubagentInfo] {.gcsafe, raises: [].} =
     mgr.listSubagents()
   ctx.cancelSubagent = proc(subagentId: string):

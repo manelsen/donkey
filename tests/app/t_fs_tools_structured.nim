@@ -125,3 +125,36 @@ suite "structured filesystem tool core":
       check not parsed["ok"].getBool()
       check parsed["error"]["message"].getStr().contains("symlink")
       check not fileExists(outside / "notes.txt")
+
+  when defined(posix):
+    test "recursive copy refuses a symlinked nested destination":
+      let outside = paddock & "_outside_nested"
+      removeDir(outside)
+      createDir(outside)
+      defer: removeDir(outside)
+
+      let copied = paddock / "tmp" / "docs-copy"
+      createDir(paddock / "tmp")
+      createDir(copied)
+      createSymlink(outside, copied / "nested")
+
+      let parsed = parseEnvelope(
+        performFsCopy("docs", "tmp/docs-copy", paddock, recursive = true))
+      check not parsed["ok"].getBool()
+      check parsed["error"]["message"].getStr().contains("symlink")
+      check not fileExists(outside / "data.json")
+
+    test "file copy refuses a symlinked destination":
+      let outsideFile = paddock & "_outside_copy_file.txt"
+      removeFile(outsideFile)
+      writeFile(outsideFile, "untouched")
+      defer: removeFile(outsideFile)
+
+      createDir(paddock / "tmp")
+      createSymlink(outsideFile, paddock / "tmp" / "alpha-copy.txt")
+
+      let parsed = parseEnvelope(
+        performFsCopy("alpha.txt", "tmp/alpha-copy.txt", paddock))
+      check not parsed["ok"].getBool()
+      check parsed["error"]["message"].getStr().contains("symlink")
+      check readFile(outsideFile) == "untouched"

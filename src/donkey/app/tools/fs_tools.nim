@@ -280,6 +280,9 @@ proc performFsCopy*(src, dst, paddock: string; recursive = false): StructuredToo
     if not dstGuard.ok:
       return dstGuard.err
     if fileExists(srcGuard.resolved):
+      if symlinkExists(dstGuard.resolved):
+        return operationalErrorToolResult(
+          "destination is a symlink: " & dstGuard.resolved)
       ensureParentDir(dstGuard.resolved)
       copyFile(srcGuard.resolved, dstGuard.resolved)
     elif dirExists(srcGuard.resolved):

@@ -86,7 +86,8 @@ type
 type
   SpawnSubagentFn* = proc(request: SubagentRequest):
       Future[SubagentSpawnResult] {.gcsafe, raises: [].}
-  AwaitSubagentFn* = proc(subagentId: string; stopGeneration: uint64):
+  AwaitSubagentFn* = proc(subagentId: string; stopGeneration: uint64;
+                          userId: string; userInterrupt: uint64):
       Future[SubagentResult] {.gcsafe, raises: [].}
   ListSubagentsFn* = proc(): seq[SubagentInfo] {.gcsafe, raises: [].}
   CancelSubagentFn* = proc(subagentId: string):
@@ -1252,7 +1253,7 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
       if ctx.awaitSubagent == nil:
         return handledError("Error: subagent runtime cannot await results.")
       let subagentResult = await ctx.awaitSubagent(
-        spawned.subagentId, ctx.stopGeneration)
+        spawned.subagentId, ctx.stopGeneration, $ctx.uid, ctx.userInterrupt)
       return handledSubagentResult(subagentResult)
     return handledText($spawned.toJson())
   of AwaitSubagentToolName:
@@ -1261,7 +1262,7 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
     let awaitCtx = parseAwaitSubagentContext(j).valueOr:
       return handledError(error)
     let subagentResult = await ctx.awaitSubagent(
-      awaitCtx.subagentId, ctx.stopGeneration)
+      awaitCtx.subagentId, ctx.stopGeneration, $ctx.uid, ctx.userInterrupt)
     return handledSubagentResult(subagentResult)
   of ListSubagentsToolName:
     if ctx.listSubagents == nil:
