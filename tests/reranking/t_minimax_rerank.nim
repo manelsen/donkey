@@ -29,7 +29,7 @@ suite "MiniMaxRerankAdapter request body":
         timestamp: 123,
         baseScore: 0.5,
         semanticScore: 0.4,
-        entityScore: 0.0,
+        lexicalScore: 0.0,
         temporalScore: 0.0,
         neighborScore: 0.1,
       )

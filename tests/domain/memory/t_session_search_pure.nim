@@ -75,3 +75,42 @@ suite "session_search_pure":
 
   test "empty query returns no hits":
     check rankSessionRecords(@[rec("s1", "user", "deploy")], "", 0).len == 0
+
+suite "lexical ranking of plain texts":
+
+  test "ranks texts that hold every term before partial matches are dropped":
+    let texts = @["deploy de producao na sexta", "almoco", "deploy antigo"]
+    check rankTextsLexically(texts, "deploy producao", 5) == @[0]
+
+  test "falls back to partial matches when no text holds every term":
+    let texts = @["deploy antigo", "almoco", "producao parada"]
+    let ranked = rankTextsLexically(texts, "deploy producao", 5)
+    check ranked.len == 2
+    check 1 notin ranked
+
+  test "more occurrences rank higher":
+    let texts = @["zarabatana", "zarabatana zarabatana zarabatana"]
+    check rankTextsLexically(texts, "zarabatana", 5) == @[1, 0]
+
+  test "ties keep the input order":
+    let texts = @["nota zarabatana a", "nota zarabatana b"]
+    check rankTextsLexically(texts, "zarabatana", 5) == @[0, 1]
+
+  test "is case-insensitive and accent-aware like session search":
+    check rankTextsLexically(@["O CODINOME É Zarabatana"], "zarabatana", 5) == @[0]
+
+  test "respects the limit and ignores empty input":
+    let texts = @["a zarabatana", "b zarabatana", "c zarabatana"]
+    check rankTextsLexically(texts, "zarabatana", 2).len == 2
+    check rankTextsLexically(texts, "", 5).len == 0
+    check rankTextsLexically(newSeq[string](), "zarabatana", 5).len == 0
+    check rankTextsLexically(texts, "zarabatana", 0).len == 0
+
+  test "one- and two-letter terms do not decide the ranking":
+    ## "o" is inside almost every word; counting it would rank by letters.
+    let texts = @["ooooo oooo ooo", "o codinome e zarabatana"]
+    check rankTextsLexically(texts, "o codinome", 5) == @[1]
+
+  test "a query made only of short terms still matches":
+    check rankTextsLexically(@["id 42", "outra coisa"], "id 42", 5) == @[0]
+

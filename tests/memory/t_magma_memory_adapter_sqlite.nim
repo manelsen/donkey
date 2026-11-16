@@ -1,7 +1,7 @@
 ## Tests for MagmaMemoryAdapter over SQLite-backed multigraph store.
 
 when defined(withSqlite):
-  import std/[os, unittest, options, strutils, times]
+  import std/[os, unittest, options, sequtils, strutils, times]
   import donkey/core/types
   import donkey/adapters/memory/magma_memory_adapter
   import donkey/domain/memory/commitment_pure
@@ -150,6 +150,65 @@ when defined(withSqlite):
       let hits = a.search(uid, "aaaa", 5)
       check hits.len == 1
       check hits[0].kind == "memory"
+
+    test "appendMemory writes no entity nodes and no causal edges":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      let uid = UserId("u1")
+      a.appendMemory(uid, "Alice is a developer. The cache node crashed.")
+      a.appendMemory(uid, "Because of that, latency spiked for every request.")
+      check a.graph.listNodes("u1", "entity").len == 0
+      check a.graph.getEdges("u1_m0", edgeType = EdgeCausal).len == 0
+      check a.graph.getEdges("u1_m0", edgeType = EdgeMentions).len == 0
+      check a.graph.getEdges("u1_m0", edgeType = EdgeAbout).len == 0
+      check a.graph.getEdges("u1_m0", edgeType = EdgeTemporal).len == 1
+
+    test "a literal term finds a memory the embedding ranks last":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, letterEmbedFn)
+      let uid = UserId("u1")
+      ## The query embedding points at the routine notes (same initial);
+      ## only the words point at the memory that answers it.
+      for i in 1 .. 30:
+        a.appendMemory(uid, "abacaxi rotina numero " & $i)
+      a.appendMemory(uid, "zzzz o codinome do projeto e zarabatana")
+      ## Best-by-words and best-by-meaning weigh the same, so the memory
+      ## shares the top with the nearest note; embeddings alone leave it out.
+      let hits = a.search(uid, "aaaa codinome zarabatana", 3)
+      check hits.len == 3
+      check hits.anyIt(it.content.contains("zarabatana"))
+
+    test "search works when no embedding is available":
+      proc noEmbedFn(text: string): seq[float32] {.gcsafe.} = @[]
+      let a = newSqliteMagmaMemoryAdapter(dbPath, noEmbedFn)
+      let uid = UserId("u1")
+      a.appendMemory(uid, "o codinome do projeto e zarabatana")
+      for i in 1 .. 10:
+        a.appendMemory(uid, "anotacao de rotina numero " & $i)
+      let hits = a.search(uid, "zarabatana", 3)
+      check hits.len > 0
+      check hits[0].content.contains("zarabatana")
+
+    test "a hit found only by its words keeps origin and neighbours":
+      proc noEmbedFn(text: string): seq[float32] {.gcsafe.} = @[]
+      let a = newSqliteMagmaMemoryAdapter(dbPath, noEmbedFn)
+      let uid = UserId("u1")
+      a.appendMemory(uid, "o prazo e quinta", turnOrigin("s1"))
+      a.appendMemory(uid, "correcao zarabatana: o prazo e sexta", turnOrigin("s1"))
+      let hits = a.search(uid, "zarabatana", 3)
+      check hits[0].id == "u1_m1"
+      check hits[0].origin == turnOrigin("s1")
+      check hits[0].before.len == 1
+      check hits[0].before[0].id == "u1_m0"
+
+    test "query policy knows only semantic and temporal intents":
+      let neutral = classifyQuery("programming languages")
+      check neutral.intent == qiSemantic
+      check neutral.semanticWeight == neutral.lexicalWeight
+      check neutral.temporalWeight == 0.0
+      let temporal = classifyQuery("when did I start the project?")
+      check temporal.intent == qiTemporal
+      check temporal.temporalWeight > 0.0
+      check classifyQuery("who is Alice?").intent == qiSemantic
+      check classifyQuery("why did the deployment roll back?").intent == qiSemantic
 
     test "commitments round-trip":
       let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)

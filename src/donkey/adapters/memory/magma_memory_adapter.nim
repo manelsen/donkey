@@ -23,7 +23,7 @@ when defined(withPostgres) or defined(withSqlite):
     import ./magma_graph
   when defined(withSqlite):
     import ./sqlite_magma_store
-  import ../../domain/memory/graph_pure
+  import ../../domain/memory/session_search_pure
   import ../../domain/memory/rrf
 
   const
@@ -40,18 +40,22 @@ when defined(withPostgres) or defined(withSqlite):
       ## Upper bound for the dedup read; effectively "all memory nodes".
     MemoryContentReadLimit = 16 * 1024 * 1024
       ## Per-node content cap for those reads; above any stored memory.
+    LexicalCandidateLimit  = 2000
+      ## Most recent memory nodes scanned for literal query terms.
+    LexicalCandidateContentBytes = 4096
+      ## Content read per candidate for that scan.
 
   type
     QueryIntent* = enum
-      qiSemantic, qiEntity, qiTemporal, qiCausal, qiHybrid
+      qiSemantic, qiTemporal
 
     QueryPolicy* = object
+      ## Weights of the ranked lists fused by reciprocal rank.
       intent*:         QueryIntent
-      semanticWeight*: float
-      entityWeight*:   float
-      temporalWeight*: float
-      neighborWeight*: float
-      causalWeight*:   float
+      semanticWeight*: float   ## nearest embeddings
+      lexicalWeight*:  float   ## literal query terms
+      temporalWeight*: float   ## most recent memories
+      neighborWeight*: float   ## memories next to a semantic hit in time
 
     SearchConfig* = object
       semanticTopKMultiplier*: int
@@ -60,8 +64,10 @@ when defined(withPostgres) or defined(withSqlite):
       rerankWeight*:           float32
 
   func defaultPolicy*(): QueryPolicy =
-    QueryPolicy(intent: qiSemantic, semanticWeight: 0.4, entityWeight: 0.25,
-                temporalWeight: 0.25, neighborWeight: 0.1, causalWeight: 0.0)
+    ## Meaning and literal terms weigh the same: names, error messages and
+    ## file names are found by their words, paraphrases by their embedding.
+    QueryPolicy(intent: qiSemantic, semanticWeight: 0.5, lexicalWeight: 0.5,
+                temporalWeight: 0.0, neighborWeight: 0.0)
 
   func defaultSearchConfig*(): SearchConfig =
     SearchConfig(
@@ -80,94 +86,22 @@ when defined(withPostgres) or defined(withSqlite):
       score
 
   func classifyQuery*(query: string): QueryPolicy =
+    ## A query that asks about time also ranks by recency and pulls in the
+    ## memories next to its hits. Entity and causal intents are gone with the
+    ## entity and causal graphs.
     result = defaultPolicy()
     let q = query.toLowerAscii()
-    let temporalHints = ["when", "recent", "yesterday", "last",
-                         "before", "after", "earlier", "first", "then",
-                         "ago", "today", "chronolog"]
-    let entityHints = ["who", "what", "where", "which", "person",
-                       "people", "company", "team"]
-    let causalHints = ["why", "because", "cause", "caused", "causal",
-                       "led to", "lead to", "resulted in", "resulting in",
-                       "due to", "reason"]
-    var isTemporal = false
-    var isEntity = false
-    var isCausal = false
+    const temporalHints = ["when", "recent", "yesterday", "last",
+                           "before", "after", "earlier", "first", "then",
+                           "ago", "today", "chronolog"]
     for hint in temporalHints:
       if q.contains(hint):
-        isTemporal = true
-        break
-    for hint in entityHints:
-      if q.contains(hint):
-        isEntity = true
-        break
-    for hint in causalHints:
-      if q.contains(hint):
-        isCausal = true
-        break
-    if isCausal:
-      result.intent = qiCausal
-      result.semanticWeight = 0.20
-      result.entityWeight =
-        if isEntity: 0.20
-        else: 0.15
-      result.temporalWeight =
-        if isTemporal: 0.20
-        else: 0.10
-      result.neighborWeight = 0.10
-      result.causalWeight = 1.0 - (result.semanticWeight + result.entityWeight +
-                                   result.temporalWeight + result.neighborWeight)
-    elif isTemporal and not isEntity:
-      result.intent = qiTemporal
-      result.temporalWeight = 0.40
-      result.semanticWeight = 0.30
-      result.entityWeight   = 0.20
-      result.neighborWeight = 0.10
-      result.causalWeight   = 0.0
-    elif isEntity and not isTemporal:
-      result.intent = qiEntity
-      result.entityWeight   = 0.40
-      result.semanticWeight = 0.30
-      result.temporalWeight = 0.20
-      result.neighborWeight = 0.10
-      result.causalWeight   = 0.0
-    elif isTemporal and isEntity:
-      result.intent = qiHybrid
-      result.semanticWeight = 0.25
-      result.entityWeight   = 0.30
-      result.temporalWeight = 0.30
-      result.neighborWeight = 0.15
-      result.causalWeight   = 0.0
-
-  const
-    CausalCarryOverMarkers = [
-      "therefore", "thus", "consequently", "hence", "as a result",
-      "because of that", "because of this", "for that reason",
-      "this caused", "that caused", "which caused",
-      "this led to", "that led to", "which led to",
-      "this resulted in", "that resulted in", "which resulted in",
-      "so we", "so i", "so the", "that meant", "this meant",
-    ]
-
-  func impliesPreviousCause*(text: string): bool =
-    let normalized = text.toLowerAscii().replace('\n', ' ').strip()
-    if normalized.len == 0:
-      return false
-    for marker in CausalCarryOverMarkers:
-      if normalized.startsWith(marker) or normalized.contains(marker):
-        return true
-    false
-
-  func causalTraversalDirection*(query: string): string =
-    let normalized = query.toLowerAscii()
-    if normalized.contains("what caused") or normalized.contains("why") or
-       normalized.contains("because") or normalized.contains("reason"):
-      return "in"
-    if normalized.contains("led to") or normalized.contains("lead to") or
-       normalized.contains("resulted in") or normalized.contains("effect") or
-       normalized.contains("consequence"):
-      return "out"
-    "both"
+        result.intent = qiTemporal
+        result.semanticWeight = 0.30
+        result.lexicalWeight  = 0.20
+        result.temporalWeight = 0.40
+        result.neighborWeight = 0.10
+        return
 
   type
     MagmaMemoryAdapter* = ref object
@@ -228,9 +162,6 @@ when defined(withPostgres) or defined(withSqlite):
       except ValueError:
         discard
     result = $userId & "_m" & $(maxIdx + 1)
-
-  proc entId*(userId: UserId; name: string): string =
-    $userId & "_ent_" & normalizeEntity(name).replace(" ", "_")
 
   proc commitmentNodeId*(userId: UserId; commitmentId: string): string =
     $userId & "_commit_" & commitmentId
@@ -456,41 +387,15 @@ when defined(withPostgres) or defined(withSqlite):
     let emb = a.embedFn(text)
     let ts = getTime().toUnix()
     let prevMem = a.graph.getLastNode($userId, nodeType = NtMemory)
-    let emptyMeta = %*{}
     discard a.graph.insertNode(MagmaNode(
       id: nid, userId: $userId, nodeType: NtMemory,
       content: text, embedding: emb, timestamp: ts,
       meta: originToMeta(origin),
     ))
+    ## The only structure kept between memories is their order. Entity and
+    ## causal edges came from English sentence patterns and are not written.
     if prevMem.isSome and prevMem.get().nodeType == NtMemory:
       a.graph.linkTemporal(prevMem.get().id, nid)
-      if impliesPreviousCause(text):
-        discard a.graph.insertEdge(MagmaEdge(
-          fromId: prevMem.get().id, toId: nid, edgeType: EdgeCausal,
-          weight: 1.0, meta: emptyMeta,
-        ))
-    let triples = text.extractTriples().filterValidTriples()
-    for t in triples:
-      if t.subject.isValidEntity:
-        let sId = entId(userId, t.subject)
-        discard a.graph.insertNode(MagmaNode(
-          id: sId, userId: $userId, nodeType: NtEntity,
-          content: t.subject, timestamp: ts, meta: emptyMeta,
-        ))
-        discard a.graph.insertEdge(MagmaEdge(
-          fromId: nid, toId: sId, edgeType: EdgeMentions,
-          weight: t.confidence.float64, meta: emptyMeta,
-        ))
-      if t.obj.isValidEntity and t.obj != t.subject:
-        let oId = entId(userId, t.obj)
-        discard a.graph.insertNode(MagmaNode(
-          id: oId, userId: $userId, nodeType: NtEntity,
-          content: t.obj, timestamp: ts, meta: emptyMeta,
-        ))
-        discard a.graph.insertEdge(MagmaEdge(
-          fromId: nid, toId: oId, edgeType: EdgeAbout,
-          weight: t.confidence.float64, meta: emptyMeta,
-        ))
 
   proc adjacentMemoryId(a: MagmaMemoryAdapter; nodeId, direction: string): string =
     ## Id on the other end of the TEMPORAL edge closest to `nodeId`. Stores
@@ -548,16 +453,19 @@ when defined(withPostgres) or defined(withSqlite):
                          query: string;
                          limit: int;
                          rerankFnOverride: RerankFn = nil): seq[MemoryHit] =
+    ## Hybrid recall: ranked lists by embedding, by literal terms and, for
+    ## queries about time, by recency and temporal adjacency are fused by
+    ## reciprocal rank. With no embedding available the literal terms alone
+    ## still rank.
     type
       RankedMemory = object
         id:          string
         content:     string
         timestamp:   int64
         semanticScore: float
-        entityScore:   float
+        lexicalScore:  float
         temporalScore: float
         neighborScore: float
-        causalScore:   float
         baseScore:   float
         rerankScore: float32
         finalScore:  float32
@@ -587,20 +495,17 @@ when defined(withPostgres) or defined(withSqlite):
 
     proc addSignal(n: MagmaNode;
                    semantic = 0.0;
-                   entity = 0.0;
+                   lexical = 0.0;
                    temporal = 0.0;
-                   neighbor = 0.0;
-                   causal = 0.0) =
+                   neighbor = 0.0) =
       ensureNode(n)
       var entry = rankedById[n.id]
       entry.semanticScore += semantic
-      entry.entityScore += entity
+      entry.lexicalScore += lexical
       entry.temporalScore += temporal
       entry.neighborScore += neighbor
-      entry.causalScore += causal
-      entry.baseScore = entry.semanticScore + entry.entityScore +
-                        entry.temporalScore + entry.neighborScore +
-                        entry.causalScore
+      entry.baseScore = entry.semanticScore + entry.lexicalScore +
+                        entry.temporalScore + entry.neighborScore
       rankedById[n.id] = entry
 
     let semanticHits = a.graph.searchSimilar(uid, emb, topK = semanticTopK)
@@ -609,29 +514,27 @@ when defined(withPostgres) or defined(withSqlite):
         addSignal(hit.node, semantic = rrfScoreWeighted(
           rank, policy.semanticWeight))
 
-    if policy.intent in {qiEntity, qiHybrid}:
-      for hit in semanticHits:
-        if hit.node.nodeType != NtMemory:
-          continue
-        let entityNeighbors = a.graph.traverseNeighbors(
-          hit.node.id, edgeTypes = @[EdgeMentions, EdgeAbout], maxDepth = 1)
-        for rank, neighbor in entityNeighbors:
-          let score = rrfScoreWeighted(rank, policy.entityWeight)
-          addSignal(neighbor, entity = score)
-          let memNeighbors = a.graph.traverseNeighbors(
-            neighbor.id, edgeTypes = @[EdgeMentions, EdgeAbout], maxDepth = 1)
-          for memNode in memNeighbors:
-            if memNode.nodeType == NtMemory:
-              addSignal(memNode, entity = score * 0.5)
+    ## Literal terms, over the most recent memory nodes. The candidate read
+    ## carries no meta and may clip content, so each ranked node is fetched
+    ## whole before it joins the pool.
+    let lexicalCandidates = a.graph.listNodesLimited(
+      uid, NtMemory, LexicalCandidateLimit, LexicalCandidateContentBytes)
+    if lexicalCandidates.isOk:
+      var texts = newSeqOfCap[string](lexicalCandidates.get().len)
+      for candidate in lexicalCandidates.get():
+        texts.add(candidate.content)
+      for rank, index in rankTextsLexically(texts, query, semanticTopK):
+        let node = a.graph.getNode(lexicalCandidates.get()[index].id)
+        if node.isSome and node.get().nodeType == NtMemory:
+          addSignal(node.get(), lexical = rrfScoreWeighted(
+            rank, policy.lexicalWeight))
 
     let recentNodes = a.graph.queryByTimeRange(uid, 0, getTime().toUnix() + 1,
                                                limit = recentTopK)
-    if policy.intent in {qiTemporal, qiHybrid, qiCausal}:
+    if policy.intent == qiTemporal:
       for rank, node in recentNodes:
         if node.nodeType == NtMemory:
           addSignal(node, temporal = rrfScoreWeighted(rank, policy.temporalWeight))
-
-    if policy.intent in {qiTemporal, qiHybrid}:
       for hit in semanticHits:
         if hit.node.nodeType != NtMemory:
           continue
@@ -639,21 +542,6 @@ when defined(withPostgres) or defined(withSqlite):
           hit.node.id, edgeTypes = @[EdgeTemporal], maxDepth = 2)
         for rank, neighbor in temporalNeighbors:
           addSignal(neighbor, neighbor = rrfScoreWeighted(rank, policy.neighborWeight))
-
-    if policy.intent in {qiCausal, qiHybrid} and policy.causalWeight > 0.0:
-      let causalDirection = causalTraversalDirection(query)
-      for hit in semanticHits:
-        if hit.node.nodeType != NtMemory:
-          continue
-        let causalEdges = a.graph.getEdges(
-          hit.node.id, direction = causalDirection, edgeType = EdgeCausal)
-        for rank, edge in causalEdges:
-          let neighborId =
-            if edge.fromId == hit.node.id: edge.toId
-            else: edge.fromId
-          let neighbor = a.graph.getNode(neighborId)
-          if neighbor.isSome and neighbor.get().nodeType == NtMemory:
-            addSignal(neighbor.get(), causal = rrfScoreWeighted(rank, policy.causalWeight))
 
     if rankedById.len == 0:
       for m in recentNodes:
@@ -697,10 +585,9 @@ when defined(withPostgres) or defined(withSqlite):
           timestamp: entry.timestamp,
           baseScore: entry.finalScore,
           semanticScore: clampUnit(entry.semanticScore.float32),
-          entityScore: clampUnit(entry.entityScore.float32),
+          lexicalScore: clampUnit(entry.lexicalScore.float32),
           temporalScore: clampUnit(entry.temporalScore.float32),
           neighborScore: clampUnit(entry.neighborScore.float32),
-          causalScore: clampUnit(entry.causalScore.float32),
         )
       let rerankScores = rerankFn(query, candidates)
       if rerankScores.len == rerankCount:
@@ -776,14 +663,13 @@ else:
   type
     MagmaMemoryAdapter* = ref object
     QueryIntent* = enum
-      qiSemantic, qiEntity, qiTemporal, qiCausal, qiHybrid
+      qiSemantic, qiTemporal
     QueryPolicy* = object
       intent*:         QueryIntent
       semanticWeight*: float
-      entityWeight*:   float
+      lexicalWeight*:  float
       temporalWeight*: float
       neighborWeight*: float
-      causalWeight*:   float
     SearchConfig* = object
       semanticTopKMultiplier*: int
       recentTopKMultiplier*:   int
@@ -791,8 +677,8 @@ else:
       rerankWeight*:           float32
 
   func defaultPolicy*(): QueryPolicy =
-    QueryPolicy(intent: qiSemantic, semanticWeight: 0.4, entityWeight: 0.25,
-                temporalWeight: 0.25, neighborWeight: 0.1, causalWeight: 0.0)
+    QueryPolicy(intent: qiSemantic, semanticWeight: 0.5, lexicalWeight: 0.5,
+                temporalWeight: 0.0, neighborWeight: 0.0)
   func defaultSearchConfig*(): SearchConfig =
     SearchConfig(
       semanticTopKMultiplier: 8,

@@ -11,10 +11,9 @@ type
     timestamp*:     int64
     baseScore*:     float32
     semanticScore*: float32
-    entityScore*:   float32
+    lexicalScore*:  float32
     temporalScore*: float32
     neighborScore*: float32
-    causalScore*:   float32
 
   RerankFn* = proc(query: string; candidates: seq[RerankCandidate]): seq[float32] {.gcsafe.}
 
