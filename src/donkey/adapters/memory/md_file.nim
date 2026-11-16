@@ -11,7 +11,6 @@ import ../../core/types
 import ../../core/pipeops
 import ../../ports/memory
 import ../../domain/memory/episode_pure
-import ../../domain/memory/lessons_pure
 import ../../domain/memory/session_search_pure
 import ../../domain/memory/memory_sync_pure
 import ../../domain/memory/provenance_pure
@@ -343,24 +342,6 @@ proc saveEpisodeF1(a: MdFileAdapter; userId: UserId;
   except Exception as e:
     err("save episode: " & e.msg)
 
-proc extractLessonsF1(a: MdFileAdapter; userId: UserId;
-                      episodes: seq[EpisodeJournal]): Result[int, string] {.raises: [].} =
-  var count = 0
-  try:
-    for episode in episodes:
-      for lesson in extractLessonsFromEpisode(episode, maxLessons = 2):
-        let existing =
-          if fileExists(a.memoryMdPath(userId)): readFile(a.memoryMdPath(userId))
-          else: ""
-        let marker = "- Lesson: " & lesson.text
-        if marker in existing:
-          continue
-        a.appendMemory(userId, marker & "\n")
-        inc count
-    ok(count)
-  except Exception as e:
-    err("extract lessons: " & e.msg)
-
 proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
   when defined(withPostgres) or defined(withSqlite):
     if a.hasMagmaBackend:
@@ -416,18 +397,6 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
             saveEpisodeF1(a, userId, episode)
           except Exception as e:
             err("save episode: " & e.msg),
-        extractLessons: proc(userId: UserId; episodes: seq[EpisodeJournal]): Result[int, string]
-                          {.gcsafe, raises: [].} =
-          try:
-            let magma = a.newMagmaAdapter()
-            if magma == nil:
-              return extractLessonsF1(a, userId, episodes)
-            ok(magma.extractAndSaveLessons(userId, episodes, @[],
-                                           maxLessonsPerSource = 2))
-          except CatchableError:
-            extractLessonsF1(a, userId, episodes)
-          except Exception as e:
-            err("extract lessons: " & e.msg),
       )
   MemoryRuntimePort(
     hasProfile:       proc(userId: UserId): bool {.gcsafe.} = a.hasProfile(userId),
@@ -439,9 +408,6 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
     saveEpisode: proc(userId: UserId; episode: EpisodeJournal): Result[void, string]
                    {.gcsafe, raises: [].} =
                    saveEpisodeF1(a, userId, episode),
-    extractLessons: proc(userId: UserId; episodes: seq[EpisodeJournal]): Result[int, string]
-                      {.gcsafe, raises: [].} =
-                      extractLessonsF1(a, userId, episodes),
     appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = a.appendMemory(userId, text),
     savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = a.savePreferences(userId, content),
     clearMemory:      proc(userId: UserId) {.gcsafe.} = a.clearMemory(userId),

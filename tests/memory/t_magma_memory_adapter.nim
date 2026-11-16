@@ -17,7 +17,6 @@ when defined(withPostgres):
   import ../../src/donkey/adapters/memory/magma_memory_adapter
   import ../../src/donkey/domain/memory/commitment_pure
   import ../../src/donkey/domain/memory/episode_pure
-  import ../../src/donkey/domain/memory/lessons_pure
 
   const testDsn = "host=localhost port=5432 dbname=donkey_test"
 
@@ -258,56 +257,6 @@ when defined(withPostgres):
       check episodes[0].startTs == 100'i64
       check episodes[0].endTs == 200'i64
       check episodes[0].sourceMemoryIds == @["u1_m0", "u1_m1"]
-
-  suite "MagmaMemoryAdapter - lessons":
-
-    setup:
-      let a {.used.} = newTestAdapter()
-
-    test "saveLesson round-trips text confidence source episode and tags":
-      let lesson = newLesson(
-        text = "When latency spikes after retries, inspect retry amplification first.",
-        confidence = 1.2'f32,
-        sourceEpisodeId = "episode-retries",
-        retrievalTags = @["latency", "retry", "incident"],
-      )
-      a.saveLesson(UserId("u1"), lesson)
-      let lessons = a.loadLessons(UserId("u1"))
-      check lessons.len == 1
-      check lessons[0].text.contains("retry amplification")
-      check lessons[0].confidence == 1.0'f32
-      check lessons[0].sourceEpisodeId == "episode-retries"
-      check lessons[0].retrievalTags == @["latency", "retry", "incident"]
-
-    test "extractAndSaveLessons stores bounded lessons from episodes and commitment outcomes":
-      let episode = newEpisodeJournal(
-        title = "Retry loop investigation",
-        summary = "Inspect retry amplification before increasing timeouts.\nCapture graphs before patching.",
-        startTs = 100'i64,
-        endTs = 200'i64,
-        sourceMemoryIds = @["u1_m0", "u1_m1"],
-      )
-      let doneCommitment = markCompleted(newCommitment(
-        coAgent,
-        "I'll send the incident summary tomorrow.",
-        nowSec = 100'i64,
-      ), nowSec = 150'i64)
-      let brokenCommitment = markBroken(newCommitment(
-        coAgent,
-        "I'll send the incident summary tomorrow.",
-        nowSec = 100'i64,
-      ), nowSec = 300'i64)
-      check a.extractAndSaveLessons(
-        UserId("u1"),
-        @[episode],
-        @[doneCommitment, brokenCommitment],
-        maxLessonsPerSource = 1,
-      ) == 3
-      let lessons = a.loadLessons(UserId("u1"))
-      check lessons.len == 3
-      check lessons.anyIt(it.sourceEpisodeId == episode.id)
-      check lessons.anyIt(it.sourceEpisodeId == "commitment:" & doneCommitment.id)
-      check lessons.anyIt(it.sourceEpisodeId == "commitment:" & brokenCommitment.id)
 
   suite "MagmaMemoryAdapter - search":
 

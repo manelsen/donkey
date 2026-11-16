@@ -15,7 +15,6 @@ import ../../ports/reranking
 import ../../domain/memory/commitment_pure
 import ../../domain/memory/decay
 import ../../domain/memory/episode_pure
-import ../../domain/memory/lessons_pure
 import ../../domain/memory/provenance_pure
 
 when defined(withPostgres) or defined(withSqlite):
@@ -34,7 +33,6 @@ when defined(withPostgres) or defined(withSqlite):
     NtEntity      = "entity"
     NtCommitment  = "commitment"
     NtEpisode     = "episode"
-    NtLesson      = "lesson"
 
     ContextMemoryNodeLimit = 200
       ## Memory nodes returned by loadContext, newest first.
@@ -240,9 +238,6 @@ when defined(withPostgres) or defined(withSqlite):
   proc episodeNodeId*(userId: UserId; episodeId: string): string =
     $userId & "_episode_" & episodeId
 
-  proc lessonNodeId*(userId: UserId; lessonId: string): string =
-    $userId & "_lesson_" & lessonId
-
   func commitmentOwnerLabel(owner: CommitmentOwner): string =
     case owner
     of coUser: "user"
@@ -327,34 +322,6 @@ when defined(withPostgres) or defined(withSqlite):
       sourceMemoryIds: sourceMemoryIds,
     )
 
-  proc lessonMeta(lesson: Lesson): JsonNode =
-    %*{
-      "lessonId": lesson.id,
-      "confidence": lesson.confidence,
-      "sourceEpisodeId": lesson.sourceEpisodeId,
-      "retrievalTags": lesson.retrievalTags,
-    }
-
-  proc parseLesson(node: MagmaNode): Lesson =
-    let meta = if node.meta != nil: node.meta else: newJObject()
-    var retrievalTags: seq[string]
-    for item in meta{"retrievalTags"}:
-      if item.kind == JString:
-        retrievalTags.add(item.getStr())
-    result = Lesson(
-      id: meta{"lessonId"}.getStr(node.id),
-      text: node.content,
-      confidence: meta{"confidence"}.getFloat(0.0).float32,
-      sourceEpisodeId: meta{"sourceEpisodeId"}.getStr(""),
-      retrievalTags: retrievalTags,
-    )
-
-  func lessonConfidence(node: MagmaNode): float =
-    if node.meta != nil:
-      node.meta{"confidence"}.getFloat(0.0)
-    else:
-      0.0
-
   proc hasProfile*(a: MagmaMemoryAdapter; userId: UserId): bool =
     a.graph.getNode(profileId(userId)).isSome
 
@@ -368,7 +335,7 @@ when defined(withPostgres) or defined(withSqlite):
     let prefNode = a.graph.getNode(prefId(userId))
     if prefNode.isSome:
       prefMd = prefNode.get().content
-    ## Filter by type in the query: entity, lesson and episode nodes share the
+    ## Filter by type in the query: entity and episode nodes share the
     ## same table and would otherwise push memories out of the window.
     let memNodes = a.graph.listNodesLimited(
       $userId, NtMemory, ContextMemoryNodeLimit, MemoryContentReadLimit)
@@ -482,39 +449,6 @@ when defined(withPostgres) or defined(withSqlite):
     if nodes.len > 0:
       for idx in countdown(nodes.high, 0):
         result.add(parseEpisode(nodes[idx]))
-
-  proc saveLesson*(a: MagmaMemoryAdapter; userId: UserId; lesson: Lesson) =
-    let nid = lessonNodeId(userId, lesson.id)
-    a.upsertNode(
-      nid,
-      $userId,
-      NtLesson,
-      lesson.text,
-      a.embedFn(lesson.text),
-      getTime().toUnix(),
-      lessonMeta(lesson),
-    )
-
-  proc loadLessons*(a: MagmaMemoryAdapter; userId: UserId): seq[Lesson] =
-    let nodes = a.graph.listNodes($userId, NtLesson)
-    if nodes.len > 0:
-      for idx in countdown(nodes.high, 0):
-        result.add(parseLesson(nodes[idx]))
-
-  proc extractAndSaveLessons*(a: MagmaMemoryAdapter;
-                              userId: UserId;
-                              episodes: seq[EpisodeJournal];
-                              commitments: seq[Commitment];
-                              maxLessonsPerSource = 1): int =
-    for episode in episodes:
-      for lesson in extractLessonsFromEpisode(episode, maxLessons = maxLessonsPerSource):
-        a.saveLesson(userId, lesson)
-        inc result
-    for commitment in commitments:
-      for lesson in extractLessonsFromCommitmentOutcome(
-          commitment, maxLessons = maxLessonsPerSource):
-        a.saveLesson(userId, lesson)
-        inc result
 
   proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string;
                      origin = MemoryOrigin()) =
@@ -671,14 +605,9 @@ when defined(withPostgres) or defined(withSqlite):
 
     let semanticHits = a.graph.searchSimilar(uid, emb, topK = semanticTopK)
     for rank, hit in semanticHits:
-      if hit.node.nodeType in [NtMemory, NtLesson]:
-        let lessonBoost =
-          if hit.node.nodeType == NtLesson:
-            clamp(hit.node.lessonConfidence, 0.35, 1.0)
-          else:
-            1.0
+      if hit.node.nodeType == NtMemory:
         addSignal(hit.node, semantic = rrfScoreWeighted(
-          rank, policy.semanticWeight * lessonBoost))
+          rank, policy.semanticWeight))
 
     if policy.intent in {qiEntity, qiHybrid}:
       for hit in semanticHits:
@@ -733,7 +662,7 @@ when defined(withPostgres) or defined(withSqlite):
 
     var rankedMemories: seq[RankedMemory]
     for _, entry in rankedById:
-      if entry.kind in [NtMemory, NtLesson]:
+      if entry.kind == NtMemory:
         rankedMemories.add(entry)
     rankedMemories.sort(proc(x, y: RankedMemory): int =
       cmp(y.baseScore, x.baseScore))
@@ -900,13 +829,6 @@ else:
   proc loadCommitments*(a: MagmaMemoryAdapter; userId: UserId): seq[Commitment] = @[]
   proc saveEpisode*(a: MagmaMemoryAdapter; userId: UserId; episode: EpisodeJournal) = discard
   proc loadEpisodes*(a: MagmaMemoryAdapter; userId: UserId): seq[EpisodeJournal] = @[]
-  proc saveLesson*(a: MagmaMemoryAdapter; userId: UserId; lesson: Lesson) = discard
-  proc loadLessons*(a: MagmaMemoryAdapter; userId: UserId): seq[Lesson] = @[]
-  proc extractAndSaveLessons*(a: MagmaMemoryAdapter;
-                              userId: UserId;
-                              episodes: seq[EpisodeJournal];
-                              commitments: seq[Commitment];
-                              maxLessonsPerSource = 1): int = 0
   proc updateCommitmentStatus*(a: MagmaMemoryAdapter;
                                userId: UserId;
                                commitmentId: string;

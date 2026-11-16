@@ -1,10 +1,11 @@
-## memory_consolidation — automatic memory extraction, episodes and lessons.
+## memory_consolidation — automatic memory extraction and episodes.
 ##
 ## Runs on explicit maintenance boundaries (`/compact`, `/reset`, `/new`) so it
 ## never adds an LLM call to the hot user turn. The silent turn extracts facts,
 ## preferences, concepts and relations; `contemplation` builds/writes an
-## episode; lessons are distilled from that episode. The same module also
-## maintains a session-scoped blackboard of detected commitments.
+## episode. Nothing is distilled from the episode: lessons extracted from
+## episodes lost to the raw episodes in every comparison we ran. The same
+## module also maintains a session-scoped blackboard of detected commitments.
 
 import std/[hashes, options, os, strutils, unicode]
 
@@ -39,7 +40,6 @@ type
     conceptsSaved*:    int
     triplesSaved*:     int
     episodeSaved*:     bool
-    lessonsSaved*:     int
     completed*:        bool
     extractionSucceeded*: bool
 
@@ -227,13 +227,6 @@ proc persistConsolidation(memory: MemoryRuntimePort;
 
   runContemplationNow(loadMemories, buildEpisode, writeEpisode, loadUserId)
   result.episodeSaved = episodeSaved
-
-  if episodeSaved and memory.extractLessons != nil:
-    let lessons = memory.extractLessons(userId, @[episode])
-    if lessons.isErr:
-      log.warn("memory consolidation: lessons: " & lessons.error)
-    else:
-      result.lessonsSaved = lessons.get()
 
   result.extractionSucceeded = extractionPersisted
   ## A successful empty extraction is still a completed extraction. An append

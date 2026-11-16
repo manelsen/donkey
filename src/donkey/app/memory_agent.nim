@@ -35,20 +35,15 @@ proc runMemoryAgent*(inbox:     AsyncQueue[AgentMessage];
           let userId = UserId(msg.userId)
           let ctx    = memory.loadContext(userId)
           var memSection = ctx.memoryMd
-          var lessonSection = ""
           ## Semantic search enrichment: if searchFn and a query are available,
-          ## refine autobiographical memory hits and inject bounded lessons.
+          ## replace the raw memory dump with the hits for this query.
           ## Dialogue hits arrive with their session neighbours and are
           ## rendered as ordered excerpts (domain/memory/recall_pure).
           if searchFn != nil and msg.payload.len > 0:
             let recalled = renderRecall(searchFn(userId, msg.payload, 8))
-            if recalled.memory.len > 0:
-              memSection = recalled.memory
-            lessonSection = recalled.lessons
-          var parts = @[ctx.userMd, memSection]
-          if lessonSection.len > 0:
-            parts.add(lessonSection)
-          parts.add(ctx.preferencesMd)
+            if recalled.len > 0:
+              memSection = recalled
+          let parts = @[ctx.userMd, memSection, ctx.preferencesMd]
           let text = parts.join("\n")
           await outbox.put(newResultMsg(msg.id, text))
         except Exception as e:

@@ -139,6 +139,18 @@ when defined(withSqlite):
       check hits.len == 8
       check expanded == RecallWindowMaxHits
 
+    test "lesson nodes left by older versions are never recalled":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, letterEmbedFn)
+      let uid = UserId("u1")
+      a.appendMemory(uid, "aaaa episodio", turnOrigin("s1"))
+      check a.graph.insertNode(MagmaNode(
+        id: "u1_lesson_old", userId: "u1", nodeType: "lesson",
+        content: "aaaa regra destilada", embedding: letterEmbedFn("aaaa"),
+        timestamp: getTime().toUnix()))
+      let hits = a.search(uid, "aaaa", 5)
+      check hits.len == 1
+      check hits[0].kind == "memory"
+
     test "commitments round-trip":
       let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
       let c = newCommitment(

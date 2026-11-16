@@ -180,8 +180,8 @@ suite "MemoryAgent":
     check fileExists(tmpDir / "u1" / "MEMORY.md")
     check readFile(tmpDir / "u1" / "MEMORY.md").contains("Likes Nim.")
 
-  test "loadCtx injects relevant lessons after autobiographical memory and before preferences":
-    let tmpDir = getTempDir() / "donkey_test_mem_lessons"
+  test "loadCtx puts recalled memory before preferences, with no lessons block":
+    let tmpDir = getTempDir() / "donkey_test_mem_order"
     removeDir(tmpDir)
     defer: removeDir(tmpDir)
 
@@ -196,10 +196,7 @@ suite "MemoryAgent":
       let outbox = newAsyncQueue[AgentMessage]()
       let searchFn: SearchFn =
         proc(userId: UserId; query: string; limit: int): seq[MemoryHit] {.gcsafe, raises: [].} =
-          @[
-            MemoryHit(content: "Investigated retry amplification.", score: 0.9'f32, kind: "memory"),
-            MemoryHit(content: "Inspect retry amplification before raising timeouts.", score: 0.95'f32, kind: "lesson"),
-          ]
+          @[MemoryHit(content: "Investigated retry amplification.", score: 0.9'f32, kind: "memory")]
       asyncSpawn runMemoryAgent(inbox, outbox, mem.toRuntimePort(), searchFn)
       await inbox.put(newTaskMsg("req3", tkLoadCtx, "u1", "retry spike"))
       let reply = await outbox.get()
@@ -209,11 +206,10 @@ suite "MemoryAgent":
     let reply = waitFor doTest(tmpDir)
     check reply.kind == amkResult
     let memoryPos = reply.text.find("Investigated retry amplification.")
-    let lessonsPos = reply.text.find("Relevant lessons:")
     let prefsPos = reply.text.find("language = \"pt-BR\"")
     check memoryPos >= 0
-    check lessonsPos > memoryPos
-    check prefsPos > lessonsPos
+    check prefsPos > memoryPos
+    check "Relevant lessons" notin reply.text
 
   test "loadCtx renders a dialogue hit as an ordered, bordered excerpt":
     let tmpDir = getTempDir() / "donkey_test_mem_excerpt"
