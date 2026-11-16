@@ -133,9 +133,15 @@ func addEntry(entries: var seq[ExcerptEntry]; entry: ExcerptEntry) =
     entries.add(entry)
 
 func chronological(a, b: ExcerptEntry): int =
+  ## Insertion order when both ids carry it: the wall clock can step back
+  ## between two appends, the insertion number cannot. Timestamp otherwise.
+  let seqA = memorySequence(a.hit.id)
+  let seqB = memorySequence(b.hit.id)
+  if seqA >= 0 and seqB >= 0 and seqA != seqB:
+    return cmp(seqA, seqB)
   if a.hit.timestamp != b.hit.timestamp:
     return cmp(a.hit.timestamp, b.hit.timestamp)
-  cmp(memorySequence(a.hit.id), memorySequence(b.hit.id))
+  cmp(seqA, seqB)
 
 func renderExcerpt(entries: seq[ExcerptEntry]): string =
   let first = entries[0].hit
@@ -161,8 +167,21 @@ func renderRecall*(hits: seq[MemoryHit]): RecallText =
     else:
       ranked.add(hit)
 
+  ## `owner[i]` is the block that renders ranked hit `i`, or -1 for a single
+  ## line. Blocks are tracked by index, not by id, because a backend may
+  ## return hits without ids. A block absorbed by a merge is emptied and
+  ## forwards to the block that took its entries.
   var blocks: seq[seq[ExcerptEntry]]
-  for hit in ranked:
+  var forward: seq[int]
+  var owner = newSeq[int](ranked.len)
+
+  func resolve(forward: seq[int]; index: int): int =
+    result = index
+    while result >= 0 and forward[result] != result:
+      result = forward[result]
+
+  for i, hit in ranked:
+    owner[i] = -1
     if not hit.hasWindow:
       continue
     var window: seq[ExcerptEntry]
@@ -172,46 +191,43 @@ func renderRecall*(hits: seq[MemoryHit]): RecallText =
     for neighbour in hit.after:
       window.add(ExcerptEntry(hit: flat(neighbour)))
     var target = -1
-    var absorbed: seq[int]
     for entry in window:
       let found = blockWithId(blocks, entry.hit.id)
-      if found < 0 or found == target or found in absorbed:
+      if found < 0 or found == target:
         continue
       if target < 0:
         target = found
       else:
-        absorbed.add(found)
+        for moved in blocks[found]:
+          blocks[target].addEntry(moved)
+        blocks[found].setLen(0)
+        forward[found] = target
     if target < 0:
       blocks.add(newSeq[ExcerptEntry]())
+      forward.add(blocks.high)
       target = blocks.high
-    for index in absorbed:
-      for entry in blocks[index]:
-        blocks[target].addEntry(entry)
     for entry in window:
       blocks[target].addEntry(entry)
-    absorbed.sort(order = SortOrder.Descending)
-    for index in absorbed:
-      blocks.delete(index)
-      if index < target:
-        dec target
+    owner[i] = target
 
-  for hit in ranked:
+  for i, hit in ranked:
     if hit.hasWindow:
       continue
-    let owner = blockWithId(blocks, hit.id)
-    if owner >= 0:
-      blocks[owner].addEntry(ExcerptEntry(hit: flat(hit), isMatch: true))
+    let found = blockWithId(blocks, hit.id)
+    if found >= 0:
+      blocks[found].addEntry(ExcerptEntry(hit: flat(hit), isMatch: true))
+      owner[i] = found
 
   var parts: seq[string]
   var rendered = newSeq[bool](blocks.len)
-  for hit in ranked:
-    let owner = blockWithId(blocks, hit.id)
-    if owner < 0:
+  for i, hit in ranked:
+    let index = resolve(forward, owner[i])
+    if index < 0:
       parts.add("- [" & hit.kind & "] " & hit.content)
-    elif not rendered[owner]:
-      rendered[owner] = true
-      blocks[owner].sort(chronological)
-      parts.add(renderExcerpt(blocks[owner]))
+    elif not rendered[index]:
+      rendered[index] = true
+      blocks[index].sort(chronological)
+      parts.add(renderExcerpt(blocks[index]))
   if blocks.len > 0:
     parts.insert(RecallExcerptNote, 0)
   result.memory = parts.join("\n")

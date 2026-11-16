@@ -100,7 +100,60 @@ suite "recall — rendering":
     let fact = MemoryHit(id: "u1_m1", content: "fato solto", kind: "memory",
                          origin: MemoryOrigin(source: msIngest))
     let memory = renderRecall(@[fact, hit]).memory
-    check memory.find("- [memory] fato solto") < memory.find("<conversation-excerpt session=")
+    let factAt = memory.find("- [memory] fato solto")
+    let excerptAt = memory.find("<conversation-excerpt session=")
+    check factAt >= 0
+    check excerptAt >= 0
+    check factAt < excerptAt
+
+  test "insertion order wins over the clock inside an excerpt":
+    ## The wall clock can step back between two appends; the id cannot.
+    var hit = turn("u1_m3", "afirmacao original", 500)
+    hit.after = @[turn("u1_m4", "correcao posterior", 400)]
+    let memory = renderRecall(@[hit]).memory
+    let original = memory.find("afirmacao original")
+    let correction = memory.find("correcao posterior")
+    check original >= 0
+    check correction >= 0
+    check original < correction
+
+  test "entries without a sequence fall back to the timestamp":
+    var hit = MemoryHit(id: "b", content: "depois", kind: "memory",
+                        timestamp: 200, origin: turnOrigin("s1"))
+    hit.before = @[MemoryHit(id: "a", content: "antes", kind: "memory",
+                             timestamp: 100, origin: turnOrigin("s1"))]
+    let memory = renderRecall(@[hit]).memory
+    check memory.find("antes") >= 0
+    check memory.find("antes") < memory.find("depois")
+
+  test "a hit without an id keeps its window":
+    var hit = MemoryHit(content: "turno central", kind: "memory",
+                        timestamp: 200, origin: turnOrigin("s1"))
+    hit.before = @[MemoryHit(content: "turno anterior", kind: "memory",
+                             timestamp: 100, origin: turnOrigin("s1"))]
+    hit.after = @[MemoryHit(content: "turno seguinte", kind: "memory",
+                            timestamp: 300, origin: turnOrigin("s1"))]
+    let memory = renderRecall(@[hit]).memory
+    check memory.count("<conversation-excerpt session=") == 1
+    check "entries=\"3\"" in memory
+    let before = memory.find("turno anterior")
+    let centre = memory.find("turno central")
+    let after = memory.find("turno seguinte")
+    check before >= 0 and centre > before and after > centre
+    check "- [memory] turno central" notin memory
+
+  test "hits without ids are never merged with each other":
+    var first = MemoryHit(content: "A", kind: "memory", timestamp: 100,
+                          origin: turnOrigin("s1"))
+    first.after = @[MemoryHit(content: "B", kind: "memory", timestamp: 200,
+                              origin: turnOrigin("s1"))]
+    var second = MemoryHit(content: "X", kind: "memory", timestamp: 300,
+                           origin: turnOrigin("s2"))
+    second.after = @[MemoryHit(content: "Y", kind: "memory", timestamp: 400,
+                               origin: turnOrigin("s2"))]
+    let memory = renderRecall(@[first, second]).memory
+    check memory.count("<conversation-excerpt session=") == 2
+    check memory.count("entries=\"2\"") == 2
 
   test "lessons are separated and capped":
     var hits: seq[MemoryHit]
