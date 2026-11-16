@@ -83,23 +83,43 @@ when defined(withPostgres) or defined(withSqlite):
     else:
       score
 
+  const
+    ## Whole words that make a query a question about time, in English and
+    ## Portuguese, the latter with and without accents.
+    TemporalWords = [
+      "when", "yesterday", "last", "before", "after", "earlier", "first",
+      "then", "ago", "today",
+      "quando", "ontem", "anteontem", "hoje", "antes", "depois",
+      "último", "ultimo", "última", "ultima",
+      "últimos", "ultimos", "últimas", "ultimas",
+      "primeiro", "primeira", "atrás", "atras", "passado", "passada",
+    ]
+    ## Word beginnings with the same meaning: recent, recently, recente,
+    ## recentemente; chronological, cronológica; anterior, anteriormente.
+    TemporalStems = ["recent", "chronolog", "cronol", "anterior"]
+
+  func asksAboutTime*(query: string): bool =
+    ## Matches whole words, not substrings: "contem" holds "ontem" and
+    ## "elastic" holds "last", and neither is about time.
+    for word in queryTerms(query):
+      if word in TemporalWords:
+        return true
+      for stem in TemporalStems:
+        if word.startsWith(stem):
+          return true
+    false
+
   func classifyQuery*(query: string): QueryPolicy =
     ## A query that asks about time also ranks by recency and pulls in the
     ## memories next to its hits. Entity and causal intents are gone with the
     ## entity and causal graphs.
     result = defaultPolicy()
-    let q = query.toLowerAscii()
-    const temporalHints = ["when", "recent", "yesterday", "last",
-                           "before", "after", "earlier", "first", "then",
-                           "ago", "today", "chronolog"]
-    for hint in temporalHints:
-      if q.contains(hint):
-        result.intent = qiTemporal
-        result.semanticWeight = 0.30
-        result.lexicalWeight  = 0.20
-        result.temporalWeight = 0.40
-        result.neighborWeight = 0.10
-        return
+    if asksAboutTime(query):
+      result.intent = qiTemporal
+      result.semanticWeight = 0.30
+      result.lexicalWeight  = 0.20
+      result.temporalWeight = 0.40
+      result.neighborWeight = 0.10
 
   type
     MagmaMemoryAdapter* = ref object

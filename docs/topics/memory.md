@@ -170,8 +170,9 @@ by reciprocal rank, at equal weight:
 - **literal terms**: the words of the message, the same matching used by
   `session_search`. Names, error messages and file names are found here.
 
-A message that asks about time (`when`, `last`, `yesterday`, ...) also ranks
-by recency and pulls in the memories next to its hits. Relevance then decays
+A message that asks about time (`when`, `last`, `yesterday`; `quando`,
+`último`, `ontem`, ...) also ranks by recency and pulls in the memories next
+to its hits. The words are matched whole, in English and Portuguese. Relevance then decays
 with a 30-day half-life. Without an embedding provider the literal terms
 still rank.
 

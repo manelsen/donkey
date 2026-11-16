@@ -210,6 +210,29 @@ when defined(withSqlite):
       check classifyQuery("who is Alice?").intent == qiSemantic
       check classifyQuery("why did the deployment roll back?").intent == qiSemantic
 
+    test "questions about time are recognised in Portuguese":
+      for query in ["quando comecei o projeto?", "o que falamos ontem?",
+                    "qual foi o Último deploy?", "o que decidimos antes disso?",
+                    "o que mudou recentemente?", "e depois da reunião?",
+                    "o que eu disse semana passada?", "isso foi dois dias atrás",
+                    "qual foi a primeira versão?", "o que combinamos hoje?",
+                    "mostre em ordem cronológica", "e na conversa anterior?"]:
+        check classifyQuery(query).intent == qiTemporal
+
+    test "questions about time are still recognised in English":
+      for query in ["when did I start the project?", "what did we say yesterday?",
+                    "the last deploy", "what changed recently?", "two days ago",
+                    "show it chronologically"]:
+        check classifyQuery(query).intent == qiTemporal
+
+    test "a time word inside another word does not count":
+      ## "contem" holds "ontem", "estudantes" holds "antes", "elastic" holds
+      ## "last", "authentication" holds "then".
+      for query in ["o arquivo contem o codinome", "lista de estudantes",
+                    "elastic search config", "authentication error",
+                    "linguagens de programação"]:
+        check classifyQuery(query).intent == qiSemantic
+
     test "commitments round-trip":
       let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
       let c = newCommitment(
