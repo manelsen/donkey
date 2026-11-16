@@ -115,21 +115,47 @@ suite "transcript — partial knowledge of what is stored":
     let grown = conversation(1, 8, numbered = true)
     check appended(log, grown) == conversation(7, 8, numbered = true)
 
-  test "numbers older than the part of the file that was read count as stored":
-    ## Only the end of a long transcript is read. A rewind can restore
-    ## messages numbered before that part; they are in the file already.
-    let tail = conversation(101, 120, numbered = true)
-    let restored = conversation(41, 44, numbered = true)
-    check messagesToAppend(tail, restored, existingIsTail = true).len == 0
-    let next = restored & @[line("user", "depois do rewind", 121)]
-    var indexes = messagesToAppend(tail, next, existingIsTail = true)
-    check indexes == @[4]
+  test "beside older unnumbered lines, a low number with new content is new":
+    ## Number 4 was given at a checkpoint and rewound before any save; the
+    ## unnumbered lines do not hold its text.
+    var log = conversation(1, 2)
+    log.add(line("user", "m6", 6))
+    let history = @[line("user", "m1", 1), line("assistant", "m2", 2),
+                    line("user", "nunca gravada", 4)]
+    check appended(log, history) == @[line("user", "nunca gravada", 4)]
 
-  test "with the whole file read, a low number that is absent is new":
-    ## Numbered at a checkpoint, rewound before any save, restored later.
+  test "a low number that is absent from the whole file is new":
     let log = @[line("user", "m1", 1), line("assistant", "m2", 2),
                 line("user", "m6", 6)]
     let history = @[line("user", "m1", 1), line("assistant", "m2", 2),
                     line("user", "m4", 4)]
     check appended(log, history) == @[line("user", "m4", 4)]
 
+suite "transcript — when the end of the file is not enough":
+
+  test "the tail is enough while every unknown number is above it":
+    let tail = conversation(101, 120, numbered = true)
+    check not needsWholeTranscript(tail, conversation(111, 122, numbered = true))
+    check not needsWholeTranscript(tail, conversation(101, 120, numbered = true))
+
+  test "a number below the tail calls for the whole file":
+    let tail = conversation(101, 120, numbered = true)
+    check needsWholeTranscript(tail, conversation(41, 44, numbered = true))
+
+  test "a tail without any complete record calls for the whole file":
+    check needsWholeTranscript(@[], conversation(1, 2, numbered = true))
+
+  test "unnumbered histories never call for the whole file":
+    check not needsWholeTranscript(conversation(101, 120, numbered = true),
+                                   conversation(1, 4))
+
+  test "gap plus partial read: the missing number is written, the old ones are not":
+    ## The file holds 1, 2 and 6 to 120; 4 was never saved. Only 101 to 120
+    ## are in the tail. A restored checkpoint brings back 1, 2 and 4.
+    let whole = @[line("user", "m1", 1), line("assistant", "m2", 2)] &
+                conversation(6, 120, numbered = true)
+    let tail = whole[^20 .. ^1]
+    let restored = @[line("user", "m1", 1), line("assistant", "m2", 2),
+                     line("user", "m4", 4)]
+    check needsWholeTranscript(tail, restored)
+    check appended(whole, restored) == @[line("user", "m4", 4)]
