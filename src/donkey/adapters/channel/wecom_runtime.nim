@@ -123,8 +123,7 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
           wcMd(wcAdapter, userId, buildWeComMycodeM(
             buildLinkCodeText(wcAdapter.resolver.generateLinkCode(userId))), logger)
         of lcaClearMemory:
-          memory.clearMemory(userId)
-          wcReply(wcAdapter, userId, "Memórias apagadas.", logger)
+          wcReply(wcAdapter, userId, clearMemoryReply(memory, userId), logger)
         of lcaDoctorReport:
           wcMd(wcAdapter, userId, buildWeComDoctorMd(
             buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount())), logger)

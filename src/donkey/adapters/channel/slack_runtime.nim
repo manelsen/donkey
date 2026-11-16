@@ -155,8 +155,7 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
                 sensitive = true
                 buildLinkCodeText(slAdapter.resolver.generateLinkCode(userId))
               of lcaClearMemory:
-                memory.clearMemory(userId)
-                "Memórias apagadas."
+                clearMemoryReply(memory, userId)
               of lcaDoctorReport:
                 sensitive = true
                 buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount())

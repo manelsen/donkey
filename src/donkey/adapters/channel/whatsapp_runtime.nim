@@ -85,8 +85,7 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
           of lcaGenerateLinkCode:
             buildLinkCodeText(waAdapter.resolver.generateLinkCode(userId))
           of lcaClearMemory:
-            memory.clearMemory(userId)
-            "Memórias apagadas."
+            clearMemoryReply(memory, userId)
           of lcaDoctorReport:
             buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount())
           of lcaHelpText:

@@ -1171,14 +1171,12 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
     let ingestOrigin = MemoryOrigin(source: msIngest,
                                     sessionId: ctx.scopeSessionId)
     for chunk in chunked.chunks:
+      ## The port does not raise; the Result says whether the chunk is stored.
       let stored =
-        try:
-          if ctx.memory.appendMemoryFrom != nil:
-            ctx.memory.appendMemoryFrom(ctx.uid, chunk, ingestOrigin)
-          else:
-            ctx.memory.appendMemory(ctx.uid, chunk)
-        except Exception as e:
-          Result[void, string].err(e.msg)
+        if ctx.memory.appendMemoryFrom != nil:
+          ctx.memory.appendMemoryFrom(ctx.uid, chunk, ingestOrigin)
+        else:
+          ctx.memory.appendMemory(ctx.uid, chunk)
       if stored.isErr:
         return handledError("Error: memory ingest failed: " & stored.error)
     return handledText($(%*{

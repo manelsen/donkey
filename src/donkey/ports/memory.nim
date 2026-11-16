@@ -71,7 +71,10 @@ type
   MemoryRuntimePort* = object
     hasProfile*:      proc(userId: UserId): bool {.gcsafe.}
     loadContext*:     proc(userId: UserId): UserContext {.gcsafe.}
-    saveUserMd*:      proc(userId: UserId; content: string) {.gcsafe.}
+    ## Writes report whether they were stored: with a graph configured but
+    ## unavailable nothing is written, and the caller must be able to tell.
+    saveUserMd*:      proc(userId: UserId; content: string): Result[void, string]
+                        {.gcsafe, raises: [].}
     appendMemory*:    proc(userId: UserId; text: string): Result[void, string]
                         {.gcsafe, raises: [].}
     ## Optional. Same as appendMemory, recording where the text came from and
@@ -80,13 +83,17 @@ type
     appendMemoryFrom*: proc(userId: UserId; text: string;
                             origin: MemoryOrigin): Result[void, string]
                             {.gcsafe, raises: [].}
-    savePreferences*: proc(userId: UserId; content: string) {.gcsafe.}
-    clearMemory*:     proc(userId: UserId) {.gcsafe.}
-    resetBootstrap*:  proc(userId: UserId) {.gcsafe.}
+    savePreferences*: proc(userId: UserId; content: string): Result[void, string]
+                        {.gcsafe, raises: [].}
+    clearMemory*:     proc(userId: UserId): Result[void, string]
+                        {.gcsafe, raises: [].}
+    resetBootstrap*:  proc(userId: UserId): Result[void, string]
+                        {.gcsafe, raises: [].}
     saveSession*:     proc(userId: UserId; sessionId: string; history: ConversationHistory)
                         {.gcsafe.}
-    saveIdentity*:    proc(userId: UserId; traits: PersonalityTraits; name: string)
-                        {.gcsafe.}
+    saveIdentity*:    proc(userId: UserId; traits: PersonalityTraits;
+                           name: string): Result[void, string]
+                        {.gcsafe, raises: [].}
     loadIdentity*:    proc(userId: UserId): (string, PersonalityTraits)
                         {.gcsafe.}
     searchSessions*:  SearchSessionsFn

@@ -806,6 +806,14 @@ proc buildMemoryBootstrapSnapshot(userMd, preferencesMd, sourceLabel: string): s
   sections.add("📝 Memória episódica\nNenhuma memória salva ainda.")
   sections.join("\n\n")
 
+proc clearMemoryReply*(memory: MdFileAdapter; userId: UserId;
+                       cleared = "Memórias apagadas."): string =
+  ## Clears the user's memory and returns what to tell them. The reply only
+  ## confirms what happened: when nothing was cleared it says so.
+  let res = memory.clearMemory(userId)
+  if res.isOk: cleared
+  else: "Não foi possível apagar as memórias: " & res.error
+
 proc buildMemoryViewText*(memory: MdFileAdapter; userId: UserId): string =
   let markdownPath = memory.memoryMdPath(userId)
   let markdownText =

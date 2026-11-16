@@ -371,9 +371,8 @@ proc handleDiscordEvent*(sm: var SessionManager;
         sendDiscordEmbed(event, dcAdapter, userId,
           "🔗 Link Code", buildLinkCodeText(dcAdapter.resolver.generateLinkCode(userId)), 0x5865F2, logger)
       of lcaClearMemory:
-        memory.clearMemory(userId)
         sendDiscordEmbed(event, dcAdapter, userId,
-          "🗑️ Memórias", "Memórias apagadas.", 0xE67E22, logger)
+          "🗑️ Memórias", clearMemoryReply(memory, userId), 0xE67E22, logger)
       of lcaDoctorReport:
         sendDiscordEmbed(event, dcAdapter, userId,
           "🩺 Doctor",

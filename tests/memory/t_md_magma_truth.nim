@@ -5,6 +5,7 @@ when defined(withSqlite):
   import std/[os, sequtils, strutils, unittest]
   import donkey/core/pipeops
   import donkey/core/types
+  import donkey/adapters/channel/common_runtime
   import donkey/adapters/memory/md_file
   import donkey/adapters/memory/magma_memory_adapter
   import donkey/adapters/memory/multigraph_runtime
@@ -228,8 +229,8 @@ when defined(withSqlite):
     test "runtime port and adapter share one write path":
       let a = newAdapter()
       let port = a.toRuntimePort()
-      port.saveUserMd(uid, "# Ada")
-      port.savePreferences(uid, "language = \"pt-BR\"")
+      check port.saveUserMd(uid, "# Ada").isOk
+      check port.savePreferences(uid, "language = \"pt-BR\"").isOk
       check port.appendMemory(uid, "sem origem").isOk
       check readFile(a.userMdPath(uid)) == "# Ada"
       check readFile(a.preferencesMdPath(uid)) == "language = \"pt-BR\""
@@ -284,6 +285,78 @@ when defined(withSqlite):
       ctlMemoryImport(a, $uid)
       check a.loadContext(uid).userMd == "# Ada"
       check a.memoryNodes(uid).len == 1
+
+    test "an import that fails half way leaves the graph empty for a retry":
+      let a = newAdapter()
+      let real = a.newMagmaAdapter()
+      var calls = 0
+      var flaky = real.graph
+      let realInsert = real.graph.insertNode
+      flaky.insertNode = proc(node: MagmaNode): bool {.gcsafe.} =
+        {.cast(gcsafe).}:
+          if node.nodeType == "memory":
+            inc calls
+            if calls == 2: return false
+          return realInsert(node)
+      let failing = newMagmaMemoryAdapter(flaky, real.embedFn)
+      let ctx = UserContext(userId: uid, userMd: "# Ada",
+                            preferencesMd: "language = \"pt-BR\"",
+                            memoryMd: "nota um\n\nnota dois\n\nnota tres")
+      check importMarkdownInto(failing, ctx).isErr
+      check not real.hasContext(uid).get()
+      ## Nothing was left behind, so a second attempt imports everything.
+      check importMarkdownInto(real, ctx).isOk
+      check a.memoryNodes(uid).len == 3
+      check real.loadUserMd(uid) == "# Ada"
+
+    test "the first search imports a paddock that only has files":
+      let a = newAdapter()
+      a.ensurePaddock(uid)
+      writeFile(a.memoryMdPath(uid), "nota antiga sobre zarabatana\n")
+      let hits = a.toRuntimePort().searchSessions(uid, "zarabatana", 10, true).get()
+      check hits.len == 1
+      check hits[0].kind == shkMemory
+      check a.memoryNodes(uid).len == 1
+
+    test "nothing is confirmed while a configured graph is unavailable":
+      let good = newAdapter()
+      good.saveUserMd(uid, "# Ada")
+      good.savePreferences(uid, "language = \"pt-BR\"")
+      good.appendMemory(uid, "- gosta de Nim\n")
+      writeFile(root / "blocker", "x")
+      let broken = MdFileAdapter(
+        paddocksDir: root / "paddocks",
+        magmaSqlitePath: root / "blocker" / "magma.sqlite",
+      )
+      let port = broken.toRuntimePort()
+      check port.saveUserMd(uid, "# Outra").isErr
+      check port.savePreferences(uid, "language = \"en\"").isErr
+      check port.clearMemory(uid).isErr
+      check port.resetBootstrap(uid).isErr
+      check port.saveIdentity(uid, PersonalityTraits(tone: "seco"), "Guano").isErr
+      check port.searchSessions(uid, "nim", 10, true).isErr
+      ## The exports were not touched, and the graph still has everything.
+      check readFile(broken.userMdPath(uid)) == "# Ada"
+      check readFile(broken.preferencesMdPath(uid)) == "language = \"pt-BR\""
+      check readFile(broken.memoryMdPath(uid)) == "- gosta de Nim\n"
+      check good.memoryNodes(uid).len == 1
+      check good.hasProfile(uid)
+
+    test "the /clear reply says so when the memory could not be cleared":
+      let good = newAdapter()
+      good.appendMemory(uid, "- gosta de Nim\n")
+      check clearMemoryReply(good, uid) == "Memórias apagadas."
+      check good.memoryNodes(uid).len == 0
+      good.appendMemory(uid, "- gosta de Nim\n")
+      writeFile(root / "blocker", "x")
+      let broken = MdFileAdapter(
+        paddocksDir: root / "paddocks",
+        magmaSqlitePath: root / "blocker" / "magma.sqlite",
+      )
+      let reply = clearMemoryReply(broken, uid, "🗑️ Memórias apagadas.")
+      check "apagadas" notin reply
+      check "Não foi possível" in reply
+      check good.memoryNodes(uid).len == 1
 
     test "backend without MAGMA keeps Markdown as its only store":
       let plain = MdFileAdapter(paddocksDir: root / "paddocks")

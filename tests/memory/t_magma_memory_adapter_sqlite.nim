@@ -225,6 +225,29 @@ when defined(withSqlite):
       check failing.readContext(UserId("u1")).isErr
       check failing.hasContext(UserId("u1")).isErr
 
+    test "hasContext sees a user that only has a profile or only preferences":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      a.saveUserMd(UserId("p1"), "# Ada")
+      a.savePreferences(UserId("p2"), "language = \"pt-BR\"")
+      check a.hasContext(UserId("p1")).get()
+      check a.hasContext(UserId("p2")).get()
+
+    test "hasContext reports a failed profile read instead of an empty graph":
+      ## Memories read fine and there are none; the profile read fails. That
+      ## is not an empty graph.
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      a.saveUserMd(UserId("u1"), "# Ada")
+      var flaky = a.graph
+      let realList = a.graph.listNodesLimited
+      flaky.listNodesLimited = proc(userId: string; nodeType: string = "";
+                                    limit, maxContentBytes: int):
+                                    Result[seq[MagmaNode], string] {.gcsafe.} =
+        {.cast(gcsafe).}:
+          if nodeType == "memory":
+            return realList(userId, nodeType, limit, maxContentBytes)
+        err("database is locked")
+      check newMagmaMemoryAdapter(flaky, fakeEmbedFn).hasContext(UserId("u1")).isErr
+
     test "commitments round-trip":
       let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
       let c = newCommitment(

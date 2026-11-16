@@ -60,12 +60,15 @@ proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string;
 proc savePreferences*(a: MdFileAdapter; userId: UserId;
                       content: string): Result[void, string]
                       {.discardable, gcsafe, raises: [].}
-proc clearMemory*(a: MdFileAdapter; userId: UserId) {.gcsafe.}
-proc resetBootstrap*(a: MdFileAdapter; userId: UserId) {.gcsafe.}
+proc clearMemory*(a: MdFileAdapter; userId: UserId): Result[void, string]
+                  {.discardable, gcsafe, raises: [].}
+proc resetBootstrap*(a: MdFileAdapter; userId: UserId): Result[void, string]
+                     {.discardable, gcsafe, raises: [].}
 proc saveSession*(a: MdFileAdapter; userId: UserId;
                   sessionId: string; history: ConversationHistory) {.gcsafe.}
 proc saveIdentity*(a: MdFileAdapter; userId: UserId;
-                   traits: PersonalityTraits; name: string) {.gcsafe.}
+                   traits: PersonalityTraits; name: string): Result[void, string]
+                   {.discardable, gcsafe, raises: [].}
 proc loadIdentity*(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits) {.gcsafe.}
 func paddockDir*(a: MdFileAdapter; userId: UserId): string {.gcsafe.}
 proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
@@ -121,19 +124,33 @@ when defined(withPostgres) or defined(withSqlite):
     except Exception:
       nil
 
-  func hasContextContent(ctx: UserContext): bool =
-    ctx.userMd.len > 0 or ctx.memoryMd.len > 0 or ctx.preferencesMd.len > 0
+  type GraphHandle = MagmaMemoryAdapter
 
-  proc importMarkdownContext(magma: MagmaMemoryAdapter; ctx: UserContext) =
+  proc importMarkdownInto*(magma: MagmaMemoryAdapter;
+                           ctx: UserContext): Result[void, string] =
+    ## Imports the Markdown files of a paddock into an empty graph, all or
+    ## nothing. Memories go first, because their writes are the ones that
+    ## report failure; if one fails, what was written is removed, so the
+    ## graph is empty again and the next access retries the whole import. A
+    ## partial import left in place would make the graph look populated and
+    ## the rest of the paddock would never be read.
+    for chunk in ctx.memoryMd.split("\n\n"):
+      let trimmed = chunk.strip
+      if trimmed.len == 0:
+        continue
+      let stored = magma.appendMemory(ctx.userId, trimmed,
+                                      MemoryOrigin(source: msMarkdown))
+      if stored.isErr:
+        magma.clearMemory(ctx.userId)
+        return err("markdown import: " & stored.error)
     if ctx.userMd.strip.len > 0:
       magma.saveUserMd(ctx.userId, ctx.userMd)
     if ctx.preferencesMd.strip.len > 0:
       magma.savePreferences(ctx.userId, ctx.preferencesMd)
-    for chunk in ctx.memoryMd.split("\n\n"):
-      let trimmed = chunk.strip
-      if trimmed.len > 0:
-        magma.appendMemory(ctx.userId, trimmed,
-                           MemoryOrigin(source: msMarkdown))
+    ok()
+else:
+  type GraphHandle = ref object
+    ## Stand-in for the graph adapter in builds without a graph backend.
 
 # ── path helpers ──────────────────────────────────────────────────────────────
 
@@ -151,6 +168,9 @@ func preferencesMdPath*(a: MdFileAdapter; userId: UserId): string =
 
 func heartbeatMdPath*(a: MdFileAdapter; userId: UserId): string =
   a.paddockDir(userId) / HeartbeatFileName
+
+func hasContextContent(ctx: UserContext): bool =
+  ctx.userMd.len > 0 or ctx.memoryMd.len > 0 or ctx.preferencesMd.len > 0
 
 proc loadMarkdownContext*(a: MdFileAdapter; userId: UserId): UserContext =
   ## What the Markdown files of the paddock say, whatever the store is. With
@@ -172,17 +192,19 @@ type
 
 when defined(withPostgres) or defined(withSqlite):
   proc openGraph(a: MdFileAdapter; userId: UserId):
-                 tuple[access: GraphAccess, magma: MagmaMemoryAdapter]
+                 tuple[access: GraphAccess, magma: GraphHandle]
                  {.gcsafe, raises: [].} =
     ## The single way in to the graph. Every operation of this adapter goes
-    ## through here, so two rules hold everywhere:
+    ## through here, so three rules hold everywhere:
     ##
     ## - a paddock that predates the graph is imported before anything else
     ##   touches the graph. Otherwise a first write would make the graph look
     ##   populated and the rest of the old paddock would never be imported;
     ## - the import happens only after a read that succeeded and found
     ##   nothing. A graph that cannot be read is unavailable, never empty:
-    ##   importing then would lay an old export over newer data.
+    ##   importing then would lay an old export over newer data;
+    ## - an import that fails leaves the graph empty and the graph
+    ##   unavailable for this call, so nothing is built on half a paddock.
     if not a.hasMagmaBackend:
       return (gaNone, nil)
     try:
@@ -194,14 +216,15 @@ when defined(withPostgres) or defined(withSqlite):
         return (gaUnavailable, nil)
       if not populated.get():
         let markdownCtx = a.loadMarkdownContext(userId)
-        if markdownCtx.hasContextContent:
-          magma.importMarkdownContext(markdownCtx)
+        if markdownCtx.hasContextContent and
+           importMarkdownInto(magma, markdownCtx).isErr:
+          return (gaUnavailable, nil)
       (gaReady, magma)
     except Exception:
       (gaUnavailable, nil)
 else:
   proc openGraph(a: MdFileAdapter; userId: UserId):
-                 tuple[access: GraphAccess, magma: MagmaMemoryAdapter]
+                 tuple[access: GraphAccess, magma: GraphHandle]
                  {.gcsafe, raises: [].} =
     (gaNone, nil)
 
@@ -254,8 +277,10 @@ when defined(withPostgres) or defined(withSqlite):
     let baseRecords = ? a.sessionSearchRecords(userId, includeMemory = false)
     var records = baseRecords
     if includeMemory:
-      let magma = a.newMagmaAdapter()
-      if magma == nil:
+      ## Through openGraph, so a paddock that predates the graph is imported
+      ## before its first search, and an unavailable graph is an error.
+      let (access, magma) = a.openGraph(userId)
+      if access != gaReady:
         return err("MAGMA backend unavailable for session search")
       let remaining = max(0, SessionSearchMaxRecords - records.len)
       if remaining > 0:
@@ -301,11 +326,14 @@ proc saveEpisode(a: MdFileAdapter; userId: UserId;
   of gaUnavailable:
     err(GraphUnavailableError)
   of gaReady:
-    try:
-      magma.saveEpisode(userId, episode)
-      ok()
-    except Exception as e:
-      err("save episode: " & e.msg)
+    when defined(withPostgres) or defined(withSqlite):
+      try:
+        magma.saveEpisode(userId, episode)
+        ok()
+      except Exception as e:
+        err("save episode: " & e.msg)
+    else:
+      err(GraphUnavailableError)
 
 proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
   ## One set of operations for both modes: each of them decides between the
@@ -314,8 +342,9 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
   result = MemoryRuntimePort(
     hasProfile:       proc(userId: UserId): bool {.gcsafe.} = a.hasProfile(userId),
     loadContext:      proc(userId: UserId): UserContext {.gcsafe.} = a.loadContext(userId),
-    saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} =
-                        discard a.saveUserMd(userId, content),
+    saveUserMd:       proc(userId: UserId; content: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
+                        a.saveUserMd(userId, content),
     appendExtractedMemory: proc(userId: UserId; text: string): Result[void, string]
                               {.gcsafe, raises: [].} =
                             a.appendMemory(userId, text,
@@ -326,13 +355,18 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
     appendMemory:     proc(userId: UserId; text: string): Result[void, string]
                         {.gcsafe, raises: [].} =
                         a.appendMemory(userId, text),
-    savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} =
-                        discard a.savePreferences(userId, content),
-    clearMemory:      proc(userId: UserId) {.gcsafe.} = a.clearMemory(userId),
-    resetBootstrap:   proc(userId: UserId) {.gcsafe.} = a.resetBootstrap(userId),
+    savePreferences:  proc(userId: UserId; content: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
+                        a.savePreferences(userId, content),
+    clearMemory:      proc(userId: UserId): Result[void, string]
+                        {.gcsafe, raises: [].} = a.clearMemory(userId),
+    resetBootstrap:   proc(userId: UserId): Result[void, string]
+                        {.gcsafe, raises: [].} = a.resetBootstrap(userId),
     saveSession:      proc(userId: UserId; sessionId: string; history: ConversationHistory) {.gcsafe.} =
                         a.saveSession(userId, sessionId, history),
-    saveIdentity:     proc(userId: UserId; traits: PersonalityTraits; name: string) {.gcsafe.} =
+    saveIdentity:     proc(userId: UserId; traits: PersonalityTraits;
+                           name: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
                         a.saveIdentity(userId, traits, name),
     loadIdentity:     proc(userId: UserId): (string, PersonalityTraits) {.gcsafe.} = a.loadIdentity(userId),
     searchSessions:   proc(userId: UserId; query: string; limit: int;
@@ -625,28 +659,47 @@ proc savePreferences*(a: MdFileAdapter; userId: UserId;
   except Exception as e:
     err("save preferences: " & e.msg)
 
-proc clearMemory*(a: MdFileAdapter; userId: UserId) =
+proc clearMemory*(a: MdFileAdapter; userId: UserId): Result[void, string] =
   ## Clears the memory of this user (irreversible): the graph nodes when
-  ## there is a graph, and MEMORY.md.
-  let (access, magma) = a.openGraph(userId)
-  when defined(withPostgres) or defined(withSqlite):
-    if access == gaReady:
-      magma.clearMemory(userId)
-  let path = a.memoryMdPath(userId)
-  if fileExists(path):
-    exportFile(path, "")
+  ## there is a graph, and MEMORY.md. With the graph unavailable nothing is
+  ## cleared: emptying only the export would report a clean memory that
+  ## comes back as soon as the graph does.
+  try:
+    let (access, magma) = a.openGraph(userId)
+    case access
+    of gaUnavailable:
+      return err(GraphUnavailableError)
+    of gaReady:
+      when defined(withPostgres) or defined(withSqlite):
+        magma.clearMemory(userId)
+      if fileExists(a.memoryMdPath(userId)):
+        tryExport(a.memoryMdPath(userId), "")
+    of gaNone:
+      if fileExists(a.memoryMdPath(userId)):
+        exportFile(a.memoryMdPath(userId), "")
+    ok()
+  except Exception as e:
+    err("clear memory: " & e.msg)
 
-proc resetBootstrap*(a: MdFileAdapter; userId: UserId) =
-  let (access, magma) = a.openGraph(userId)
-  when defined(withPostgres) or defined(withSqlite):
-    if access == gaReady:
-      magma.resetBootstrap(userId)
-  for path in [a.userMdPath(userId), a.preferencesMdPath(userId)]:
-    if fileExists(path):
-      try:
+proc resetBootstrap*(a: MdFileAdapter; userId: UserId): Result[void, string] =
+  ## Removes profile and preferences. Same rule as clearMemory when the
+  ## graph is unavailable.
+  try:
+    let (access, magma) = a.openGraph(userId)
+    case access
+    of gaUnavailable:
+      return err(GraphUnavailableError)
+    of gaReady:
+      when defined(withPostgres) or defined(withSqlite):
+        magma.resetBootstrap(userId)
+    of gaNone:
+      discard
+    for path in [a.userMdPath(userId), a.preferencesMdPath(userId)]:
+      if fileExists(path):
         removeFile(path)
-      except CatchableError:
-        discard
+    ok()
+  except Exception as e:
+    err("reset bootstrap: " & e.msg)
 
 proc readFileTail(path: string; maxBytes: int): string =
   ## Whole file when it fits in `maxBytes`; otherwise its last `maxBytes`,
@@ -872,10 +925,13 @@ proc hasIdentity*(a: MdFileAdapter; userId: UserId): bool =
   false
 
 proc saveIdentity*(a: MdFileAdapter; userId: UserId;
-                   traits: PersonalityTraits; name: string) =
+                   traits: PersonalityTraits; name: string): Result[void, string] =
   ## Merges agent identity into the preferences (TOML key=value format).
-  a.savePreferences(userId,
-    mergeIdentityPrefs(a.currentPreferences(userId), traits, name))
+  try:
+    a.savePreferences(userId,
+      mergeIdentityPrefs(a.currentPreferences(userId), traits, name))
+  except Exception as e:
+    err("save identity: " & e.msg)
 
 proc loadIdentity*(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits) =
   ## Returns (agent_name, PersonalityTraits) from the stored preferences.

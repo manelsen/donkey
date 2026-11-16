@@ -262,14 +262,15 @@ when defined(withPostgres) or defined(withSqlite):
 
   proc hasContext*(a: MagmaMemoryAdapter;
                    userId: UserId): Result[bool, string] =
-    ## Whether the graph holds anything of this user: a profile, preferences
-    ## or at least one memory. The memory read goes first because it is the
-    ## one that reports a graph that cannot be read; "nothing found" must
-    ## never be concluded from a failed read.
-    let one = ? a.graph.listNodesLimited($userId, NtMemory, 1, 1)
-    ok(one.len > 0 or
-       a.graph.getNode(profileId(userId)).isSome or
-       a.graph.getNode(prefId(userId)).isSome)
+    ## Whether the graph holds anything of this user: a memory, a profile or
+    ## preferences. Each kind is read through the listing that reports a
+    ## failed read, never through getNode, which turns a failure into "not
+    ## found": "nothing there" must not be concluded from a read that failed.
+    for nodeType in [NtMemory, NtUserProfile, NtPreference]:
+      let found = ? a.graph.listNodesLimited($userId, nodeType, 1, 1)
+      if found.len > 0:
+        return ok(true)
+    ok(false)
 
   proc stats*(a: MagmaMemoryAdapter; userId: UserId): MagmaStats =
     a.graph.statsForUser($userId)

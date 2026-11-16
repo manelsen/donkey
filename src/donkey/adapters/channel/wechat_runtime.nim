@@ -93,8 +93,7 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
           of lcaGenerateLinkCode:
             wchAdapter.sendWeChatReply(userId, buildLinkCodeText(wchAdapter.resolver.generateLinkCode(userId)))
           of lcaClearMemory:
-            memory.clearMemory(userId)
-            wchAdapter.sendWeChatReply(userId, "Memórias apagadas.")
+            wchAdapter.sendWeChatReply(userId, clearMemoryReply(memory, userId))
           of lcaDoctorReport:
             wchAdapter.sendWeChatReply(
               userId,

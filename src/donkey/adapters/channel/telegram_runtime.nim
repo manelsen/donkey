@@ -590,11 +590,10 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       discard
     return true
   of lcaClearMemory:
-    memory.clearMemory(msg.userId)
     tgAdapter.send(OutboundMessage(
       userId:  msg.userId,
       channel: ckTelegram,
-      text:    "🗑️ Memórias apagadas.",
+      text:    clearMemoryReply(memory, msg.userId, "🗑️ Memórias apagadas."),
       replyTo: msg.channelId,
     )).isOkOr:
       discard

@@ -198,6 +198,26 @@ suite "MemoryAgent":
     check reply.kind == amkError
     check reply.text.contains("did not store")
 
+  test "saveMem and savePrefs answer with an error even when it has no text":
+    proc doTest(kind: TaskKind): Future[AgentMessage] {.async.} =
+      let port = MemoryRuntimePort(
+        appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                          {.gcsafe, raises: [].} = err(""),
+        savePreferences: proc(userId: UserId; content: string): Result[void, string]
+                             {.gcsafe, raises: [].} = err(""),
+      )
+      let inbox  = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[AgentMessage]()
+      asyncSpawn runMemoryAgent(inbox, outbox, port)
+      await inbox.put(newTaskMsg("req-empty", kind, "u1", "x"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      return reply
+    for kind in [tkSaveMem, tkSavePrefs]:
+      let reply = waitFor doTest(kind)
+      check reply.kind == amkError
+      check reply.text.len > 0
+
   test "loadCtx puts recalled memory before preferences, with no lessons block":
     let tmpDir = getTempDir() / "donkey_test_mem_order"
     removeDir(tmpDir)

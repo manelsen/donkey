@@ -15,6 +15,10 @@ import ../core/pipeops
 import ../core/types
 import ../ports/memory
 
+func errorText(error: string): string =
+  ## An error is an error even when the backend gave it no text.
+  if error.len > 0: error else: "not stored"
+
 proc runMemoryAgent*(inbox:     AsyncQueue[AgentMessage];
                      outbox:    AsyncQueue[AgentMessage];
                      memory:    MemoryRuntimePort;
@@ -52,25 +56,21 @@ proc runMemoryAgent*(inbox:     AsyncQueue[AgentMessage];
 
       of tkSaveMem:
         ## A memory that was not stored is an error for the caller, never a
-        ## silent success.
-        var failure = ""
-        try:
-          let stored = memory.appendMemory(UserId(msg.userId), msg.payload)
-          if stored.isErr:
-            failure = stored.error
-        except Exception as e:
-          failure = e.msg
-        if failure.len > 0:
-          await outbox.put(newErrorMsg(msg.id, "MemoryAgent saveMem: " & failure))
+        ## silent success. The port does not raise; the Result is the answer.
+        let stored = memory.appendMemory(UserId(msg.userId), msg.payload)
+        if stored.isErr:
+          await outbox.put(newErrorMsg(
+            msg.id, "MemoryAgent saveMem: " & errorText(stored.error)))
         else:
           await outbox.put(newResultMsg(msg.id, ""))
 
       of tkSavePrefs:
-        try:
-          memory.savePreferences(UserId(msg.userId), msg.payload)
+        let saved = memory.savePreferences(UserId(msg.userId), msg.payload)
+        if saved.isErr:
+          await outbox.put(newErrorMsg(
+            msg.id, "MemoryAgent savePrefs: " & errorText(saved.error)))
+        else:
           await outbox.put(newResultMsg(msg.id, ""))
-        except Exception as e:
-          await outbox.put(newErrorMsg(msg.id, "MemoryAgent savePrefs: " & e.msg))
 
       else:
         await outbox.put(newErrorMsg(msg.id, "MemoryAgent: unexpected task: " & $msg.taskKind))
