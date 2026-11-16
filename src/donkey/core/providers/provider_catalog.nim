@@ -107,9 +107,25 @@ proc query*(cat: ProviderCatalog; q: ModelQuery): seq[ProviderModelEntry] =
   # explicitly set to something other than ctFree by checking if the caller
   # actually wants cost filtering via a sentinel approach.
   let applyCostFilter = q.maxCostTier > ctFree
+  if q.provider.len > 0:
+    if q.provider in cat.providerIndex:
+      for canonicalName in cat.providerIndex[q.provider]:
+        if canonicalName in cat.entries:
+          let entry = cat.entries[canonicalName]
+          if q.hasTools and not entry.supportsTools:
+            continue
+          if q.hasImage and not entry.supportsImage:
+            continue
+          if q.hasThinking and not entry.supportsThinking:
+            continue
+          if applyCostFilter and ord(entry.costTier) > ord(q.maxCostTier):
+            continue
+          if q.minContextWindow > 0 and entry.contextWindow < q.minContextWindow:
+            continue
+          result.add(entry)
+    return result
+
   for k, entry in cat.entries:
-    if q.provider.len > 0 and entry.providerName != q.provider:
-      continue
     if q.hasTools and not entry.supportsTools:
       continue
     if q.hasImage and not entry.supportsImage:
@@ -565,4 +581,104 @@ proc buildDefaultCatalog*(): ProviderCatalog =
     costTier = ctCheap,
     budgetPriority = bpDefault,
     contextWindow = 128_000,
+  ))
+
+  # ── OpenCode Go ──
+  result.register(makeEntry(
+    "opencode/deepseek-4.1-flash", "opencode-go",
+    aliases = @["opencode-go/deepseek-4.1-flash", "opencode-go/deepseek-flash"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctVeryCheap,
+    budgetPriority = bpHigh,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "opencode/deepseek-v4-pro", "opencode-go",
+    aliases = @["opencode-go/deepseek-v4-pro", "opencode-go/deepseek-pro"],
+    capabilities = {mcTools, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "opencode/claude-sonnet-5-5", "opencode-go",
+    aliases = @["opencode-go/claude-sonnet-5-5"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "opencode/gpt-6.1-sol", "opencode-go",
+    aliases = @["opencode-go/gpt-6.1-sol"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "opencode/kimi-k3.1-pro", "opencode-go",
+    aliases = @["opencode-go/kimi-k3.1-pro"],
+    capabilities = {mcTools, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "opencode/glm-5.3", "opencode-go",
+    aliases = @["opencode-go/glm-5.3"],
+    capabilities = {mcTools, mcThinking, mcStreaming},
+    costTier = ctVeryCheap,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+
+  # ── OpenCode Zen ──
+  result.register(makeEntry(
+    "zen/deepseek-4.1-flash", "zen",
+    aliases = @["zen/deepseek-flash", "opencode-zen/deepseek-4.1-flash"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctVeryCheap,
+    budgetPriority = bpHigh,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "zen/deepseek-v4-pro", "zen",
+    aliases = @["zen/deepseek-pro"],
+    capabilities = {mcTools, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "zen/gpt-6.1-sol", "zen",
+    aliases = @["zen/sol"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "zen/claude-sonnet-5-5", "zen",
+    aliases = @["zen/sonnet"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "zen/claude-opus-5-5", "zen",
+    aliases = @["zen/opus"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctExpensive,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "zen/glm-5.1", "zen",
+    aliases = @["zen/glm"],
+    capabilities = {mcTools, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
   ))

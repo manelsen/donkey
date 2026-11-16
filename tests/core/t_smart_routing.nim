@@ -109,6 +109,22 @@ thinking = "low"
     check selections.len > 0
     check selections[0].providerName == "ollama"
 
+  test "smartRouteSelections returns candidates when only opencodeGo is available":
+    let prefs = parseSmartRoutingPrefs("")
+    let req = CompletionRequest(messages: @[ChatMessage(role: "user", text: "hello")])
+    let selections = smartRouteSelections(prefs, req, ProviderAvailability(opencodeGo: true))
+    check selections.len > 0
+    check selections[0].providerName == "opencode-go"
+    check selections[0].modelName == "opencode/deepseek-4.1-flash"
+
+  test "smartRouteSelections returns candidates when only zen is available":
+    let prefs = parseSmartRoutingPrefs("")
+    let req = CompletionRequest(messages: @[ChatMessage(role: "user", text: "hello")])
+    let selections = smartRouteSelections(prefs, req, ProviderAvailability(zen: true))
+    check selections.len > 0
+    check selections[0].providerName == "zen"
+    check selections[0].modelName == "zen/deepseek-4.1-flash"
+
   test "smartRouteSelections orders openai, deepseek, and zai-coding deterministically":
     let prefs = parseSmartRoutingPrefs("")
     let req = CompletionRequest(messages: @[ChatMessage(role: "user", text: "hello")])
