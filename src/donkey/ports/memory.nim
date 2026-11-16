@@ -14,9 +14,12 @@ import std/json
 import ../core/pipeops
 import ../core/types
 import ../domain/memory/episode_pure
+import ../domain/memory/provenance_pure
 import ../domain/memory/session_search_pure
 import ../domain/message
 import ../domain/personality
+
+export provenance_pure
 
 const
   HeartbeatFileName* = "HEARTBEAT.md"
@@ -74,6 +77,11 @@ type
     loadContext*:     proc(userId: UserId): UserContext {.gcsafe.}
     saveUserMd*:      proc(userId: UserId; content: string) {.gcsafe.}
     appendMemory*:    proc(userId: UserId; text: string) {.gcsafe.}
+    ## Optional. Same as appendMemory, recording where the text came from.
+    ## Nil means the backend keeps no origin; callers fall back to
+    ## appendMemory.
+    appendMemoryFrom*: proc(userId: UserId; text: string;
+                            origin: MemoryOrigin) {.gcsafe.}
     savePreferences*: proc(userId: UserId; content: string) {.gcsafe.}
     clearMemory*:     proc(userId: UserId) {.gcsafe.}
     resetBootstrap*:  proc(userId: UserId) {.gcsafe.}

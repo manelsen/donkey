@@ -14,6 +14,7 @@ import ../../domain/memory/episode_pure
 import ../../domain/memory/lessons_pure
 import ../../domain/memory/session_search_pure
 import ../../domain/memory/memory_sync_pure
+import ../../domain/memory/provenance_pure
 import ../../domain/message
 import ../../domain/personality
 when defined(withPostgres) or defined(withSqlite):
@@ -49,7 +50,8 @@ const
 proc hasProfile*(a: MdFileAdapter; userId: UserId): bool {.gcsafe.}
 proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext {.gcsafe.}
 proc saveUserMd*(a: MdFileAdapter; userId: UserId; content: string) {.gcsafe.}
-proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) {.gcsafe.}
+proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string;
+                   origin = MemoryOrigin()) {.gcsafe.}
 proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) {.gcsafe.}
 proc clearMemory*(a: MdFileAdapter; userId: UserId) {.gcsafe.}
 proc resetBootstrap*(a: MdFileAdapter; userId: UserId) {.gcsafe.}
@@ -148,7 +150,8 @@ when defined(withPostgres) or defined(withSqlite):
     for chunk in ctx.memoryMd.split("\n\n"):
       let trimmed = chunk.strip
       if trimmed.len > 0:
-        magma.appendMemory(ctx.userId, trimmed)
+        magma.appendMemory(ctx.userId, trimmed,
+                           MemoryOrigin(source: msMarkdown))
 
 # ── path helpers ──────────────────────────────────────────────────────────────
 
@@ -232,15 +235,16 @@ when defined(withPostgres) or defined(withSqlite):
         discard
     a.saveUserMd(userId, content)
 
-  proc runtimeAppendMemory(a: MdFileAdapter; userId: UserId; text: string) =
+  proc runtimeAppendMemory(a: MdFileAdapter; userId: UserId; text: string;
+                           origin = MemoryOrigin()) =
     if a.hasMagmaBackend:
       try:
         let magma = a.newMagmaAdapter()
-        magma.appendMemory(userId, text)
+        magma.appendMemory(userId, text, origin)
         return
       except CatchableError:
         discard
-    a.appendMemory(userId, text)
+    a.appendMemory(userId, text, origin)
 
   proc runtimeSavePreferences(a: MdFileAdapter; userId: UserId; content: string) =
     if a.hasMagmaBackend:
@@ -361,6 +365,8 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
         loadContext:      proc(userId: UserId): UserContext {.gcsafe.} = a.loadContext(userId),
         saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} = a.runtimeSaveUserMd(userId, content),
         appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = a.runtimeAppendMemory(userId, text),
+        appendMemoryFrom: proc(userId: UserId; text: string; origin: MemoryOrigin) {.gcsafe.} =
+                            a.runtimeAppendMemory(userId, text, origin),
         savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = a.runtimeSavePreferences(userId, content),
         clearMemory:      proc(userId: UserId) {.gcsafe.} = a.runtimeClearMemory(userId),
         resetBootstrap:   proc(userId: UserId) {.gcsafe.} = a.runtimeResetBootstrap(userId),
@@ -387,7 +393,8 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
             let magma = a.newMagmaAdapter()
             if magma == nil:
               return appendExtractedMemoryF1(a, userId, text)
-            magma.appendMemory(userId, text)
+            magma.appendMemory(userId, text,
+                               MemoryOrigin(source: msConsolidation))
             ok()
           except CatchableError:
             appendExtractedMemoryF1(a, userId, text)
@@ -540,7 +547,8 @@ proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext =
             let known = magma.knownMemoryTexts(userId)
             if known.isOk:
               for chunk in missingMemoryChunks(markdownCtx.memoryMd, known.get()):
-                magma.appendMemory(userId, chunk)
+                magma.appendMemory(userId, chunk,
+                                   MemoryOrigin(source: msMarkdown))
           return mergeContextMissing(graphCtx, markdownCtx)
         if markdownCtx.hasContextContent:
           magma.importMarkdownContext(markdownCtx)
@@ -638,7 +646,9 @@ proc removeDmAllowed*(a: MdFileAdapter; userId: UserId): Result[void, string] =
   except CatchableError as e:
     err("dm allowlist remove failed: " & e.msg)
 
-proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) =
+proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string;
+                   origin = MemoryOrigin()) =
+  ## MEMORY.md has no place for the origin; it is recorded in the graph only.
   a.ensurePaddock(userId)
   let path = a.memoryMdPath(userId)
   let existing = readOrEmpty(path)
@@ -647,7 +657,7 @@ proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string) =
   secureFile(path)
   when defined(withPostgres) or defined(withSqlite):
     a.withMagmaShadow:
-      magma.appendMemory(userId, text)
+      magma.appendMemory(userId, text, origin)
 
 proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) =
   a.ensurePaddock(userId)

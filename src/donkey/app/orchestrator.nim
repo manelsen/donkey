@@ -34,6 +34,7 @@ import ../core/memory/blackboard
 import ../core/tooling/tool_loop
 import ../domain/agent_message
 import ../domain/memory/capture_pure
+import ../domain/memory/provenance_pure
 import ../domain/message
 import ../domain/personality
 import ../config/types as cfgTypes
@@ -451,7 +452,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   if not shouldSkipAutoMemoryCapture(turnSetup.userText, loopResult.finalText):
     onboarding_runtime.safeAppendMemory(
       memory, turnSetup.uid,
-      formatAutoMemoryEntry(turnSetup.userText, loopResult.finalText))
+      formatAutoMemoryEntry(turnSetup.userText, loopResult.finalText),
+      turnOrigin(result.sessionId))
 
   if loopResult.finalText.len > 0:
     discard rememberCommitments(

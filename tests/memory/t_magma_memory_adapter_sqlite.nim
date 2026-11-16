@@ -5,6 +5,7 @@ when defined(withSqlite):
   import donkey/core/types
   import donkey/adapters/memory/magma_memory_adapter
   import donkey/domain/memory/commitment_pure
+  import donkey/domain/memory/provenance_pure
   import donkey/ports/multigraph_store
 
   proc fakeEmbedFn(text: string): seq[float32] {.gcsafe.} =
@@ -55,6 +56,18 @@ when defined(withSqlite):
           content: "entidade " & $i, timestamp: getTime().toUnix() + 1))
       check a.loadContext(UserId("u1")).memoryMd.contains(
         "memoria que precisa sobreviver")
+
+    test "appendMemory stores the origin in node meta":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      a.appendMemory(UserId("u1"), "- **User:** oi\n  **Response:** ola\n",
+                     turnOrigin("s1"))
+      a.appendMemory(UserId("u1"), "nota sem origem")
+      let tagged = a.graph.getNode("u1_m0")
+      check tagged.isSome
+      check originFromMeta(tagged.get().meta) == turnOrigin("s1")
+      let plain = a.graph.getNode("u1_m1")
+      check plain.isSome
+      check originFromMeta(plain.get().meta) == MemoryOrigin()
 
     test "commitments round-trip":
       let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)

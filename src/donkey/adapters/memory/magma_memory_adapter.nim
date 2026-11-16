@@ -16,6 +16,7 @@ import ../../domain/memory/commitment_pure
 import ../../domain/memory/decay
 import ../../domain/memory/episode_pure
 import ../../domain/memory/lessons_pure
+import ../../domain/memory/provenance_pure
 
 when defined(withPostgres) or defined(withSqlite):
   import std/[json, strutils, times, algorithm, options, tables]
@@ -515,7 +516,8 @@ when defined(withPostgres) or defined(withSqlite):
         a.saveLesson(userId, lesson)
         inc result
 
-  proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string) =
+  proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string;
+                     origin = MemoryOrigin()) =
     let nid = a.memId(userId)
     let emb = a.embedFn(text)
     let ts = getTime().toUnix()
@@ -523,7 +525,8 @@ when defined(withPostgres) or defined(withSqlite):
     let emptyMeta = %*{}
     discard a.graph.insertNode(MagmaNode(
       id: nid, userId: $userId, nodeType: NtMemory,
-      content: text, embedding: emb, timestamp: ts, meta: emptyMeta,
+      content: text, embedding: emb, timestamp: ts,
+      meta: originToMeta(origin),
     ))
     if prevMem.isSome and prevMem.get().nodeType == NtMemory:
       a.graph.linkTemporal(prevMem.get().id, nid)
@@ -827,7 +830,8 @@ else:
   proc stats*(a: MagmaMemoryAdapter; userId: UserId): MagmaStats = MagmaStats()
   proc stats*(a: MagmaMemoryAdapter): MagmaStats = MagmaStats()
   proc saveUserMd*(a: MagmaMemoryAdapter; userId: UserId; content: string) = discard
-  proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string) = discard
+  proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string;
+                     origin = MemoryOrigin()) = discard
   proc savePreferences*(a: MagmaMemoryAdapter; userId: UserId; content: string) = discard
   proc saveCommitment*(a: MagmaMemoryAdapter; userId: UserId; commitment: Commitment) = discard
   proc loadCommitments*(a: MagmaMemoryAdapter; userId: UserId): seq[Commitment] = @[]

@@ -52,6 +52,7 @@ import ../core/security/approval
 import ../domain/message
 import ../domain/more_tools
 import ../domain/builtin_tools
+import ../domain/memory/provenance_pure
 import ../domain/memory/session_search_pure
 import ../domain/memory/ingest_pure
 import ../domain/subagent_pure
@@ -1167,9 +1168,14 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
       return handledError("Error: no text to ingest.")
     if ctx.memory.appendMemory == nil:
       return handledError("Error: memory backend unavailable.")
+    let ingestOrigin = MemoryOrigin(source: msIngest,
+                                    sessionId: ctx.scopeSessionId)
     for chunk in chunked.chunks:
       try:
-        ctx.memory.appendMemory(ctx.uid, chunk)
+        if ctx.memory.appendMemoryFrom != nil:
+          ctx.memory.appendMemoryFrom(ctx.uid, chunk, ingestOrigin)
+        else:
+          ctx.memory.appendMemory(ctx.uid, chunk)
       except Exception as e:
         return handledError("Error: memory ingest failed: " & e.msg)
     return handledText($(%*{
