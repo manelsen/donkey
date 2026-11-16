@@ -220,8 +220,8 @@ The policy and the rendering live in `domain/memory/recall_pure.nim`.
 ## Session Transcripts
 
 `sessions/<id>.jsonl` is append-only: one message per line, each with the
-time it was first stored (`ts`, milliseconds) and its number in the session
-(`seq`). The live history is trimmed, compacted and rewound, but the
+time it was first stored (`ts`, milliseconds), its number in the session
+(`seq`) and the highest number in the file up to that line (`hi`). The live history is trimmed, compacted and rewound, but the
 transcript keeps every message that was said: a message is appended when its
 number is not in the file yet. Compaction summaries have no number and are
 never written. `session_search` reads the most recent 512 KiB of each
