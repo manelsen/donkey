@@ -277,3 +277,49 @@ suite "MdFileAdapter session transcript":
     check content.len < SessionSearchMaxFileBytes
     writeFile(adapter.paddockDir(uid) / "sessions" / "long.jsonl", content)
     check adapter.searchSessions(uid, "zarabatana", 5, false).get().len == 1
+
+  test "a last line larger than the read window does not block new messages":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    createDir(adapter.paddockDir(uid) / "sessions")
+    let path = adapter.paddockDir(uid) / "sessions" / "s1.jsonl"
+    writeFile(path, $(%*{"role": "user", "seq": 1,
+                         "text": repeat("x", SessionTranscriptAlignBytes + 1024)}) & "\n")
+    var next: ConversationHistory
+    next.add(ChatMessage(role: roleUser, text: "primeira", seq: 1))
+    next.add(ChatMessage(role: roleAssistant, text: "depois da linha enorme", seq: 2))
+    adapter.saveSession(uid, "s1", next)
+    adapter.saveSession(uid, "s1", next)
+    let lines = readFile(path).splitLines().filterIt(it.strip.len > 0)
+    check lines.len == 2
+    check parseJson(lines[1])["seq"].getBiggestInt == 2
+
+  test "a rewind to a checkpoint older than the read window stays exact":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    createDir(adapter.paddockDir(uid) / "sessions")
+    let path = adapter.paddockDir(uid) / "sessions" / "s1.jsonl"
+    ## Numbers 1, 2 and 6 onwards are stored; 4 was rewound before any save.
+    var content = $(%*{"role": "user", "text": "m1", "seq": 1}) & "\n" &
+                  $(%*{"role": "assistant", "text": "m2", "seq": 2}) & "\n"
+    var number = 6
+    while content.len <= SessionTranscriptAlignBytes + 4096:
+      content.add($(%*{"role": "user", "seq": number,
+                       "text": "m" & $number & " " & repeat("y", 2000)}) & "\n")
+      inc number
+    writeFile(path, content)
+    let before = readFile(path).splitLines().filterIt(it.strip.len > 0).len
+    var restored: ConversationHistory
+    restored.add(ChatMessage(role: roleUser, text: "m1", seq: 1))
+    restored.add(ChatMessage(role: roleAssistant, text: "m2", seq: 2))
+    restored.add(ChatMessage(role: roleUser, text: "m4 nunca gravada", seq: 4))
+    adapter.saveSession(uid, "s1", restored)
+    adapter.saveSession(uid, "s1", restored)
+    let lines = readFile(path).splitLines().filterIt(it.strip.len > 0)
+    check lines.len == before + 1
+    check parseJson(lines[^1])["seq"].getBiggestInt == 4
+

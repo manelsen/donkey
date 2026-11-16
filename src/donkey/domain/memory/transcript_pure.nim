@@ -72,17 +72,35 @@ func resumeByContent(existing, history: openArray[TranscriptLine]): int =
   elif headRun > 0: headRun
   else: 0
 
-func messagesToAppend*(existing, history: openArray[TranscriptLine];
-                       existingIsTail = false): seq[int] =
+func needsWholeTranscript*(tail, history: openArray[TranscriptLine]): bool =
+  ## True when the end of the transcript cannot tell whether a numbered
+  ## message of `history` is stored: its number is not in the tail and is not
+  ## above it. That happens after a rewind to an old checkpoint, or when the
+  ## tail holds no complete record. The caller then reads the whole file.
+  var storedNumbers = initHashSet[int64]()
+  var highestStored = 0'i64
+  for stored in tail:
+    if stored.seq > 0:
+      storedNumbers.incl(stored.seq)
+      highestStored = max(highestStored, stored.seq)
+  for message in history:
+    if message.seq > 0 and message.seq notin storedNumbers and
+       message.seq <= highestStored:
+      return true
+    if message.seq > 0 and storedNumbers.len == 0:
+      return true
+  false
+
+func messagesToAppend*(existing, history: openArray[TranscriptLine]): seq[int] =
   ## Indexes of the messages in `history` that the stored transcript does not
   ## hold yet, in order. Synthetic messages (compaction summaries) are never
   ## returned.
   ##
-  ## `existing` may be less than the whole transcript: only its end was read
-  ## (`existingIsTail`), or its first lines were written before numbering
-  ## existed. Numbers grow with time and the file is append-only, so a number
-  ## below the lowest one seen belongs to that unseen or unnumbered part and
-  ## is already stored.
+  ## A numbered message is stored when its number is in `existing`. Lines
+  ## written before numbering existed have no number; beside them, a numbered
+  ## message also counts as stored when one of those lines has its content.
+  ## `existing` must cover every number the history can hold: see
+  ## needsWholeTranscript.
   var said: seq[int]            ## indexes of real messages in `history`
   var allNumbered = true
   for i, message in history:
@@ -95,24 +113,24 @@ func messagesToAppend*(existing, history: openArray[TranscriptLine];
     return
 
   var storedNumbers = initHashSet[int64]()
-  var lowestStored = high(int64)
-  var hasUnnumberedLines = false
+  var unnumbered: seq[TranscriptLine]
   for stored in existing:
     if stored.seq > 0:
       storedNumbers.incl(stored.seq)
-      lowestStored = min(lowestStored, stored.seq)
     else:
-      hasUnnumberedLines = true
+      unnumbered.add(stored)
 
   if allNumbered and (existing.len == 0 or storedNumbers.len > 0):
-    let olderPartIsStored = existingIsTail or hasUnnumberedLines
     for i in said:
-      let number = history[i].seq
-      if number in storedNumbers:
+      if history[i].seq in storedNumbers:
         continue
-      if olderPartIsStored and number < lowestStored:
-        continue
-      result.add(i)
+      var inOlderLines = false
+      for older in unnumbered:
+        if sameContent(older, history[i]):
+          inOlderLines = true
+          break
+      if not inOlderLines:
+        result.add(i)
     return
 
   ## No numbers on one side: a caller that does not number its history, or the

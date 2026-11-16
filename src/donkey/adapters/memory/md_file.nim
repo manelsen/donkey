@@ -594,10 +594,12 @@ proc fileEndsWithNewline(path: string): bool {.raises: [].} =
   except CatchableError:
     false
 
-proc readTranscriptLines(path: string): seq[TranscriptLine] =
+proc readTranscriptLines(path: string;
+                         maxBytes = SessionTranscriptAlignBytes): seq[TranscriptLine] =
+  ## The records at the end of the transcript, within `maxBytes`.
   if not fileExists(path):
     return
-  for raw in readFileTail(path, SessionTranscriptAlignBytes).splitLines():
+  for raw in readFileTail(path, maxBytes).splitLines():
     let trimmed = raw.strip()
     if trimmed.len == 0:
       continue
@@ -627,10 +629,15 @@ proc saveSession*(a: MdFileAdapter; userId: UserId;
   var current: seq[TranscriptLine]
   for msg in history:
     current.add(TranscriptLine(role: msg.role, text: msg.text, seq: msg.seq))
-  let existingIsTail =
-    fileExists(path) and getFileSize(path) > SessionTranscriptAlignBytes
-  let fresh = messagesToAppend(readTranscriptLines(path), current,
-                               existingIsTail)
+  ## The end of the file answers almost every save. It does not when the
+  ## history holds a number from before that part (a rewind to an old
+  ## checkpoint) or when no complete record fits in it; then the whole file
+  ## is read, so that nothing is decided on what was not seen.
+  var existing = readTranscriptLines(path)
+  if fileExists(path) and getFileSize(path) > SessionTranscriptAlignBytes and
+     needsWholeTranscript(existing, current):
+    existing = readTranscriptLines(path, high(int))
+  let fresh = messagesToAppend(existing, current)
   if fresh.len == 0:
     return
   let nowMs = epochMs()
