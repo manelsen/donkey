@@ -15,6 +15,8 @@ const
   AutoProviderLabel* = "auto"
   LongContextChars* = 60_000
   GroqDefaultModel* = "llama-3.3-70b-versatile"
+  OpenCodeGoDefaultModel* = "opencode/deepseek-4.1-flash"
+  ZenDefaultModel* = "zen/deepseek-4.1-flash"
 
 type
   SmartRoutingPrefs* = object
@@ -37,6 +39,8 @@ type
     zaiCoding*: bool
     groq*: bool
     ollama*: bool
+    opencodeGo*: bool
+    zen*: bool
 
   ProviderSelection* = object
     providerName*: string
@@ -167,6 +171,8 @@ func defaultModelForProvider*(providerName: string;
     of "zai": "glm-4.7"
     of "groq": GroqDefaultModel
     of "ollama": "llama3.3"
+    of "opencode-go", "opencode": OpenCodeGoDefaultModel
+    of "zen", "opencode-zen": ZenDefaultModel
     else: "glm-4.7"
 
 func selection(providerName: string; modelName = ""): ProviderSelection =
@@ -211,6 +217,8 @@ func isAvailable(availability: ProviderAvailability; providerName: string): bool
   of "zai-coding": availability.zaiCoding
   of "groq": availability.groq
   of "ollama": availability.ollama
+  of "opencode-go", "opencode": availability.opencodeGo
+  of "zen", "opencode-zen": availability.zen
   else: false
 
 # ── Catalog-driven routing helpers ────────────────────────────────────────────
@@ -229,6 +237,8 @@ func availableProviders(rc: RoutingCatalog): seq[string] {.used.} =
   if avail.zaiCoding: result.add("zai-coding")
   if avail.groq: result.add("groq")
   if avail.ollama: result.add("ollama")
+  if avail.opencodeGo: result.add("opencode-go")
+  if avail.zen: result.add("zen")
 
 func queryModels*(rc: RoutingCatalog; providerName: string;
                  hasTools = false; hasImage = false;
@@ -547,6 +557,8 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
     addSelectionIfAvailable(result, rc, "openrouter", hasImage = true)
     addSelectionIfAvailable(result, rc, "gemini", hasImage = true)
     addSelectionIfAvailable(result, rc, "openai", hasImage = true)
+    addSelectionIfAvailable(result, rc, "opencode-go", hasImage = true)
+    addSelectionIfAvailable(result, rc, "zen", hasImage = true)
 
   # Long context: prefer models with large context windows
   if signals.approxInputChars >= LongContextChars:
@@ -554,6 +566,8 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
     addAnthropicWithFallback(result, rc, hasTools = false, hasThinking = false)
     addSelectionIfAvailable(result, rc, "openai", hasThinking = true)
     addSelectionIfAvailable(result, rc, "deepseek", hasThinking = true)
+    addSelectionIfAvailable(result, rc, "opencode-go", hasThinking = true)
+    addSelectionIfAvailable(result, rc, "zen", hasThinking = true)
     addSelectionIfAvailable(result, rc, "openrouter", hasThinking = true)
 
   # Thinking-based routing
@@ -563,6 +577,8 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
       addAnthropicWithFallback(result, rc, hasTools = true, hasThinking = true)
       addSelectionIfAvailable(result, rc, "openai", hasTools = true, hasThinking = true)
       addSelectionIfAvailable(result, rc, "deepseek", hasTools = true, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "opencode-go", hasTools = true, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "zen", hasTools = true, hasThinking = true)
       addSelectionIfAvailable(result, rc, "zai-coding", hasTools = true, hasThinking = true)
       addSelectionIfAvailable(result, rc, "gemini", hasTools = true, hasThinking = true)
       addSelectionIfAvailable(result, rc, "openrouter", hasTools = true, hasThinking = true)
@@ -572,6 +588,8 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
       addAnthropicWithFallback(result, rc, hasTools = false, hasThinking = true)
       addSelectionIfAvailable(result, rc, "openai", hasTools = false, hasThinking = true)
       addSelectionIfAvailable(result, rc, "deepseek", hasTools = false, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "opencode-go", hasTools = false, hasThinking = true)
+      addSelectionIfAvailable(result, rc, "zen", hasTools = false, hasThinking = true)
       addSelectionIfAvailable(result, rc, "gemini", hasTools = false, hasThinking = true)
       addSelectionIfAvailable(result, rc, "zai", hasTools = false, hasThinking = true)
       addSelectionIfAvailable(result, rc, "openrouter", hasTools = false, hasThinking = true)
@@ -581,6 +599,8 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
     if signals.hasTools:
       addSelectionIfAvailable(result, rc, "openai", hasTools = true)
       addSelectionIfAvailable(result, rc, "deepseek", hasTools = true)
+      addSelectionIfAvailable(result, rc, "opencode-go", hasTools = true)
+      addSelectionIfAvailable(result, rc, "zen", hasTools = true)
       addSelectionIfAvailable(result, rc, "zai-coding", hasTools = true)
       addAnthropicWithFallback(result, rc, hasTools = true)
       addSelectionIfAvailable(result, rc, "openrouter", hasTools = true)
@@ -590,6 +610,8 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
     else:
       addSelectionIfAvailable(result, rc, "openai")
       addSelectionIfAvailable(result, rc, "deepseek")
+      addSelectionIfAvailable(result, rc, "opencode-go")
+      addSelectionIfAvailable(result, rc, "zen")
       addSelectionIfAvailable(result, rc, "zai", hasTools = false, hasThinking = true)
       addSelectionIfAvailable(result, rc, "openrouter")
       addAnthropicWithFallback(result, rc)
@@ -601,6 +623,8 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
     if signals.hasTools:
       addSelectionIfAvailable(result, rc, "openai", hasTools = true)
       addSelectionIfAvailable(result, rc, "deepseek", hasTools = true)
+      addSelectionIfAvailable(result, rc, "opencode-go", hasTools = true)
+      addSelectionIfAvailable(result, rc, "zen", hasTools = true)
       addSelectionIfAvailable(result, rc, "zai-coding", hasTools = true)
       addSelectionIfAvailable(result, rc, "openrouter", hasTools = true)
       addAnthropicWithFallback(result, rc, hasTools = true)
@@ -611,6 +635,8 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
     else:
       addSelectionIfAvailable(result, rc, "openai")
       addSelectionIfAvailable(result, rc, "deepseek")
+      addSelectionIfAvailable(result, rc, "opencode-go")
+      addSelectionIfAvailable(result, rc, "zen")
       addSelectionIfAvailable(result, rc, "openrouter")
       addSelectionIfAvailable(result, rc, "zai")
       addSelectionIfAvailable(result, rc, "gemini")
@@ -624,6 +650,8 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
   if signals.hasTools:
     addSelectionIfAvailable(result, rc, "openai", hasTools = true)
     addSelectionIfAvailable(result, rc, "deepseek", hasTools = true)
+    addSelectionIfAvailable(result, rc, "opencode-go", hasTools = true)
+    addSelectionIfAvailable(result, rc, "zen", hasTools = true)
     addSelectionIfAvailable(result, rc, "zai-coding", hasTools = true)
     addSelectionIfAvailable(result, rc, "openrouter", hasTools = true)
     addAnthropicWithFallback(result, rc, hasTools = true)
@@ -634,6 +662,8 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
   else:
     addSelectionIfAvailable(result, rc, "openai")
     addSelectionIfAvailable(result, rc, "deepseek")
+    addSelectionIfAvailable(result, rc, "opencode-go")
+    addSelectionIfAvailable(result, rc, "zen")
     addSelectionIfAvailable(result, rc, "openrouter")
     addSelectionIfAvailable(result, rc, "zai")
     addSelectionIfAvailable(result, rc, "gemini")

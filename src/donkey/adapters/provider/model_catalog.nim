@@ -60,11 +60,23 @@ func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
       ModelCatalogEntry(providerName: providerName, modelName: "llama-3.3-70b-versatile", label: "llama-3.3-70b-versatile", isFree: true, available: true, hasPricing: true),
       ModelCatalogEntry(providerName: providerName, modelName: "llama-3.1-8b-instant", label: "llama-3.1-8b-instant", isFree: true, available: true, hasPricing: true),
     ]
-  of "zen":
+  of "opencode-go", "opencode":
     @[
-      ModelCatalogEntry(providerName: providerName, modelName: "gpt-6.1-sol", label: "gpt-6.1-sol", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "claude-sonnet-5-5", label: "claude-sonnet-5-5", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "glm-5", label: "glm-5", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "deepseek-4.1-flash", label: "deepseek-4.1-flash", isFree: true, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "deepseek-v4-pro", label: "deepseek-v4-pro", isFree: false, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "claude-sonnet-5-5", label: "claude-sonnet-5-5", isFree: false, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gpt-6.1-sol", label: "gpt-6.1-sol", isFree: false, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "kimi-k3.1-pro", label: "kimi-k3.1-pro", isFree: false, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-5.3", label: "glm-5.3", isFree: true, available: true, hasPricing: true),
+    ]
+  of "zen", "opencode-zen":
+    @[
+      ModelCatalogEntry(providerName: providerName, modelName: "deepseek-4.1-flash", label: "deepseek-4.1-flash", isFree: true, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "deepseek-v4-pro", label: "deepseek-v4-pro", isFree: false, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gpt-6.1-sol", label: "gpt-6.1-sol", isFree: false, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "claude-sonnet-5-5", label: "claude-sonnet-5-5", isFree: false, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "claude-opus-5-5", label: "claude-opus-5-5", isFree: false, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-5.1", label: "glm-5.1", isFree: false, available: true, hasPricing: true),
     ]
   of "anthropic":
     @[
@@ -485,11 +497,20 @@ proc loadZaiCatalog(apiKey: string;
   
   fetchWithApiKey(base, apiKey, parser)
 
-proc loadZenCatalog(): Result[ModelCatalogResult, string] =
+proc loadOpencodeGoCatalog(apiKey: string): Result[ModelCatalogResult, string] =
+  let parser: CatalogParser = proc(json: JsonNode): Result[seq[ModelCatalogEntry], string] {.gcsafe.} =
+    parseSimpleListCatalog("opencode-go", $json)
+  if apiKey.len == 0:
+    return ok(fallbackCatalog("opencode-go"))
+  fetchWithApiKey("https://opencode.ai/zen/go/v1/models", apiKey, parser)
+
+proc loadZenCatalog(apiKey = ""): Result[ModelCatalogResult, string] =
   let parser: CatalogParser = proc(json: JsonNode): Result[seq[ModelCatalogEntry], string] {.gcsafe.} =
     parseSimpleListCatalog("zen", $json)
-  
-  fetchHttpCatalog("https://opencode.ai/zen/v1/models", @[], parser)
+  if apiKey.len == 0:
+    fetchHttpCatalog("https://opencode.ai/zen/v1/models", @[], parser)
+  else:
+    fetchWithApiKey("https://opencode.ai/zen/v1/models", apiKey, parser)
 
 proc parseOllamaTagsCatalog*(body: string): Result[seq[ModelCatalogEntry], string] =
   try:
@@ -584,8 +605,10 @@ proc buildModelCatalogLoader*(): ModelCatalogLoader {.gcsafe.} =
         providerName,
         true,
       )
-    of "zen":
-      loadZenCatalog()
+    of "opencode-go", "opencode":
+      loadOpencodeGoCatalog(getEnv("OPENCODE_API_KEY", getEnv("OPENCODE_GO_API_KEY")))
+    of "zen", "opencode-zen":
+      loadZenCatalog(getEnv("OPENCODE_API_KEY", getEnv("ZEN_API_KEY")))
     of "ollama":
       loadOllamaCatalog(getEnv("OLLAMA_BASE_URL"))
     else:
