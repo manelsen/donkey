@@ -175,3 +175,18 @@ suite "transcript — when the end of the file is not enough":
                      line("user", "m4", 4)]
     check needsWholeTranscript(tail, restored)
     check appended(whole, restored) == @[line("user", "m4", 4)]
+
+  test "a low number written late does not hide the higher ones before it":
+    ## The file holds 1, 2, 6 to 120 and then 4, written after a rewind. Only
+    ## the line of 4 fits in the tail; it records that 120 is in the file.
+    let tail = @[TranscriptLine(role: "user", text: "m4", seq: 4, high: 120)]
+    let restored = conversation(119, 120, numbered = true)
+    check needsWholeTranscript(tail, restored)
+    check not needsWholeTranscript(
+      tail, @[line("user", "depois", 121)])
+
+  test "highestNumber reads the watermark as well as the numbers":
+    check highestNumber(@[TranscriptLine(seq: 4, high: 120)]) == 120
+    check highestNumber(conversation(1, 6, numbered = true)) == 6
+    check highestNumber(conversation(1, 6)) == 0
+

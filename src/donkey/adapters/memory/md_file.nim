@@ -607,7 +607,8 @@ proc readTranscriptLines(path: string;
       let j = parseJson(trimmed)
       result.add(TranscriptLine(role: j{"role"}.getStr(""),
                                 text: j{"text"}.getStr(""),
-                                seq: j{"seq"}.getBiggestInt(0).int64))
+                                seq: j{"seq"}.getBiggestInt(0).int64,
+                                high: j{"hi"}.getBiggestInt(0).int64))
     except CatchableError:
       ## A malformed line is data; it stays in the file and is not compared.
       discard
@@ -641,6 +642,7 @@ proc saveSession*(a: MdFileAdapter; userId: UserId;
   if fresh.len == 0:
     return
   let nowMs = epochMs()
+  var highest = highestNumber(existing)
   var buf = ""
   ## A write cut short leaves a line without its newline. Close it, so the
   ## first new message starts on its own line; the fragment itself stays.
@@ -651,7 +653,12 @@ proc saveSession*(a: MdFileAdapter; userId: UserId;
     var record = %* {"role": msg.role, "text": msg.text,
                      "imageUrl": msg.imageUrl, "ts": nowMs}
     if msg.seq > 0:
+      ## `hi` is the highest number in the file up to this line: after a
+      ## rewind a low number can be the last line of a file that holds much
+      ## higher ones, and the next save must not take those for new.
+      highest = max(highest, msg.seq)
       record["seq"] = %msg.seq
+      record["hi"] = %highest
     buf.add($record & "\n")
   let f = open(path, fmAppend)
   try:
