@@ -5,6 +5,9 @@ when defined(withSqlite):
   import donkey/core/types
   import donkey/adapters/memory/md_file
   import donkey/adapters/memory/magma_memory_adapter
+  import donkey/core/pipeops
+  import donkey/domain/memory/provenance_pure
+  import donkey/ports/memory
   import donkey/ports/multigraph_store
 
   proc memoryNodeCount(a: MdFileAdapter; uid: UserId): int =
@@ -91,3 +94,43 @@ when defined(withSqlite):
       check a.memoryNodeCount(uid) == 2
       discard a.loadContext(uid)
       check a.memoryNodeCount(uid) == 2
+
+    proc memoryOrigins(a: MdFileAdapter; uid: UserId): seq[MemoryOrigin] =
+      let magma = a.newMagmaAdapter()
+      doAssert magma != nil
+      for node in magma.graph.listNodes($uid, "memory"):
+        result.add(originFromMeta(node.meta))
+
+    test "runtime port tags appended memory with its origin":
+      let a = newAdapter()
+      let port = a.toRuntimePort()
+      check port.appendMemoryFrom != nil
+      port.appendMemoryFrom(uid, "- **User:** a\n  **Response:** b\n", turnOrigin("s7"))
+      port.appendMemory(uid, "sem origem")
+      check a.memoryOrigins(uid) == @[turnOrigin("s7"), MemoryOrigin()]
+
+    test "consolidated memory is tagged as consolidation":
+      let a = newAdapter()
+      let port = a.toRuntimePort()
+      check port.appendExtractedMemory(uid, "## Consolidated memory\n- Fact: x\n").isOk
+      check a.memoryOrigins(uid) == @[MemoryOrigin(source: msConsolidation)]
+
+    test "paragraphs imported from MEMORY.md are tagged as markdown":
+      let a = newAdapter()
+      a.ensurePaddock(uid)
+      writeFile(a.memoryMdPath(uid), "nota escrita a mao\n")
+      a.newMagmaAdapter().saveUserMd(uid, "# Ada")
+      discard a.loadContext(uid)
+      check a.memoryOrigins(uid) == @[MemoryOrigin(source: msMarkdown)]
+
+    test "first import of an existing MEMORY.md is tagged as markdown":
+      let a = newAdapter()
+      a.ensurePaddock(uid)
+      writeFile(a.memoryMdPath(uid), "nota antiga um\n\nnota antiga dois\n")
+      discard a.loadContext(uid)
+      check a.memoryOrigins(uid) ==
+        @[MemoryOrigin(source: msMarkdown), MemoryOrigin(source: msMarkdown)]
+
+    test "backend without MAGMA exposes no origin hook":
+      let plain = MdFileAdapter(paddocksDir: root / "paddocks")
+      check plain.toRuntimePort().appendMemoryFrom == nil

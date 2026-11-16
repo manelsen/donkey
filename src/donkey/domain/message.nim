@@ -29,6 +29,9 @@ type
     imageUrl*:   string        ## non-empty when message carries an image
     toolCalls*:  seq[ToolCallRequest]  ## non-empty: assistant issued pending calls
     toolCallId*: string        ## non-empty: this message is a tool result
+    seq*:        int64         ## position in the session, set by numberMessages:
+                               ## 0 = not numbered yet, SyntheticMessageSeq =
+                               ## written by the system, never part of a transcript
 
   ConversationHistory* = seq[ChatMessage]
 
@@ -84,7 +87,21 @@ type
 
 # ── history helpers ───────────────────────────────────────────────────────────
 
+const SyntheticMessageSeq* = -1'i64
+  ## Marks a message nobody said (a compaction summary). It is never numbered
+  ## and never written to the session transcript.
+
 func newHistory*(): ConversationHistory = @[]
+
+func numberMessages*(h: var ConversationHistory; lastSeq: var int64) =
+  ## Gives every message that has no number yet the next number of the
+  ## session. A number is the identity of one occurrence of a message: it
+  ## survives trimming and rewinds, and two messages with the same text never
+  ## share one. `lastSeq` is the session counter and only grows.
+  for msg in h.mitems:
+    if msg.seq == 0:
+      inc lastSeq
+      msg.seq = lastSeq
 
 func addUser*(h: var ConversationHistory; text: string) =
   h.add ChatMessage(role: roleUser, text: text)

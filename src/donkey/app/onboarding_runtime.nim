@@ -248,9 +248,15 @@ proc safeHasCompletedBootstrap*(memory: MemoryRuntimePort;
 
 proc safeAppendMemory*(memory: MemoryRuntimePort;
                       uid: UserId;
-                      text: string) {.gcsafe, raises: [].} =
+                      text: string;
+                      origin = MemoryOrigin()) {.gcsafe, raises: [].} =
+  ## Records the origin when the backend supports it; otherwise appends the
+  ## text alone.
   try:
-    memory.appendMemory(uid, text)
+    if memory.appendMemoryFrom != nil:
+      memory.appendMemoryFrom(uid, text, origin)
+    else:
+      memory.appendMemory(uid, text)
   except Exception:
     discard
 

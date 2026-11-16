@@ -348,6 +348,9 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
       globalOutbox, toolInbox, toolOut, nativeCtx, state, result.history,
       uid, channel, msgId, round, i, tc, providerLabel, debugMode, log)
     if toolResult.checkpointNow:
+      ## Number before the snapshot: a rewind restores these messages, and the
+      ## transcript must recognise them as already stored.
+      numberMessages(result.history, state.messageSeq)
       state.checkpoints.add(result.history)
     pushAgentEvent(AgentEvent(
       kind:     aekToolResult,

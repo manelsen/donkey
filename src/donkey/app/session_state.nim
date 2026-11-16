@@ -39,6 +39,7 @@ type
     jobs*:            Table[string, JobState]
     jobCounter*:       int
     lastHeartbeatAtMs*: int64                    ## monotonic ms of last heartbeat turn
+    messageSeq*:       int64                     ## last message number given in this session
 
 proc newSessionState*(): SessionState =
   SessionState(

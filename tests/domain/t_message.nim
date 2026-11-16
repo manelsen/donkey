@@ -211,3 +211,55 @@ suite "buildPrompt with tools":
   test "tools defaults to empty when not supplied":
     let req = buildPrompt(system = "s", history = newHistory(), context = "")
     check req.tools.len == 0
+
+suite "Message numbering":
+
+  test "numberMessages numbers unnumbered messages in order":
+    var h = newHistory()
+    h.addUser("a")
+    h.addAssistant("b")
+    var last = 0'i64
+    numberMessages(h, last)
+    check h[0].seq == 1
+    check h[1].seq == 2
+    check last == 2
+
+  test "numbered messages keep their number":
+    var h = newHistory()
+    h.addUser("a")
+    var last = 0'i64
+    numberMessages(h, last)
+    h.addAssistant("b")
+    numberMessages(h, last)
+    check h[0].seq == 1
+    check h[1].seq == 2
+
+  test "the counter never goes back after the history shrinks":
+    var h = newHistory()
+    h.addUser("a")
+    h.addAssistant("b")
+    h.addUser("c")
+    var last = 0'i64
+    numberMessages(h, last)
+    h.setLen(1)            # rewind
+    h.addAssistant("d")
+    numberMessages(h, last)
+    check h[1].seq == 4
+
+  test "trimming keeps the numbers of the retained messages":
+    var h = newHistory()
+    for i in 1 .. 6:
+      h.addUser("m" & $i)
+    var last = 0'i64
+    numberMessages(h, last)
+    h.trimTo(2)
+    check h[0].seq == 5
+    check h[1].seq == 6
+
+  test "synthetic messages are never numbered":
+    var h = @[ChatMessage(role: roleUser, text: "resumo", seq: SyntheticMessageSeq)]
+    h.addUser("a")
+    var last = 0'i64
+    numberMessages(h, last)
+    check h[0].seq == SyntheticMessageSeq
+    check h[1].seq == 1
