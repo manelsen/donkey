@@ -1,4 +1,4 @@
-import std/unittest
+import std/[strutils, unittest]
 import donkey/domain/compaction_pure
 import donkey/domain/message
 
@@ -90,3 +90,23 @@ suite "Compaction Pure":
     )
     let report = formatCompactionReport(compacted)
     check report.len > 10
+
+  test "compactHistory marks its summary as synthetic and keeps recent numbers":
+    var h: ConversationHistory
+    for i in 1 .. 40:
+      h.add(ChatMessage(role: (if i mod 2 == 1: roleUser else: roleAssistant),
+                        text: "mensagem " & $i & " " & repeat("x", 400),
+                        seq: i.int64))
+    var cfg = newCompactionConfig()
+    cfg.contextWindow = 1000
+    cfg.threshold = 0.1
+    let res = compactHistory(h, cfg)
+    check res.wasCompacted
+    var synthetic = 0
+    for msg in res.history:
+      if msg.seq == SyntheticMessageSeq:
+        inc synthetic
+      else:
+        check msg.seq > 0
+    check synthetic == 1
+    check res.history[^1].seq == 40

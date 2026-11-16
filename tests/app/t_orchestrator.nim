@@ -4,7 +4,7 @@
 ##   globalOutbox: AsyncQueue[OutboundMessage]  (was AsyncQueue[AgentMessage])
 ##   streamFn:     StreamFn = nil for all non-streaming tests
 
-import std/[os, strutils, unittest]
+import std/[json, os, strutils, unittest]
 import chronos
 import chronos/asyncsync
 import donkey/domain/agent_message
@@ -494,6 +494,45 @@ suite "OrchestratorAgent":
 
     ## Re-prompting exhausts MaxToolRoundsOrch → error message in reply text.
     check reply.text.contains("exceeded")
+
+  test "session transcript numbers each message once across saves":
+    let tmpDir = getTempDir() / "donkey_test_orch_transcript"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[seq[string]] {.async.} =
+      let userDir = dir / "u-seq"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Bob")
+      let mem      = MdFileAdapter(paddocksDir: dir)
+      let inbox    = newAsyncQueue[AgentMessage]()
+      let outbox   = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 dir / "u-seq", state)
+      await inbox.put(newTaskMsg("req-a", tkUserMsg, "u-seq", "ping"))
+      discard await outbox.get()
+      await inbox.put(newTaskMsg("req-b", tkUserMsg, "u-seq", "ping"))
+      discard await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      var lines: seq[string]
+      for kind, path in walkDir(userDir / "sessions"):
+        if kind == pcFile and path.endsWith(".jsonl"):
+          for raw in readFile(path).splitLines():
+            if raw.strip.len > 0:
+              lines.add(raw)
+      return lines
+
+    let lines = waitFor doTest(tmpDir)
+    ## Two identical exchanges: by content the second looks already stored.
+    check lines.len == 4
+    var numbers: seq[int]
+    for raw in lines:
+      numbers.add(parseJson(raw){"seq"}.getInt(0))
+    check numbers == @[1, 2, 3, 4]
 
   test "auto memory capture stores long turns without the old 500-char truncation":
     let tmpDir = getTempDir() / "donkey_test_memory_capture_long"

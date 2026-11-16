@@ -5,39 +5,51 @@
 ## for a summary, and a rewind drops its tail. Writing that window over the
 ## file on every save left each transcript holding only its last messages.
 ##
-## The transcript is now append-only. Given what the file already holds and
-## the current history, this module decides which messages are new. No I/O.
+## The transcript is append-only. Given what the file already holds and the
+## current history, this module decides which messages are new.
+##
+## Messages are identified by their session number (`ChatMessage.seq`), not by
+## their content: two exchanges with the same words are two messages, and a
+## message rewound and written again is a new one. Content is compared only
+## for histories or files that carry no numbers. No I/O.
+
+import std/sets
+import ../message
 
 type
   TranscriptLine* = object
     role*: string
     text*: string
+    seq*:  int64   ## session number; 0 when the line or message has none
+
+func sameContent(a, b: TranscriptLine): bool =
+  a.role == b.role and a.text == b.text
 
 func commonRun(existing: openArray[TranscriptLine]; existingStart: int;
                history: openArray[TranscriptLine]; historyStart: int): int =
-  ## Length of the identical run starting at the two positions.
+  ## Length of the run with the same content starting at the two positions.
   while existingStart + result < existing.len and
         historyStart + result < history.len and
-        existing[existingStart + result] == history[historyStart + result]:
+        sameContent(existing[existingStart + result],
+                    history[historyStart + result]):
     inc result
 
-func linesToAppend*(existing, history: openArray[TranscriptLine]): seq[TranscriptLine] =
-  ## Messages of `history` that the stored transcript does not hold yet.
-  ##
-  ## Two alignments are tried and the longer match wins:
+func resumeByContent(existing, history: openArray[TranscriptLine]): int =
+  ## Index in `history` of the first message the transcript lacks, judged by
+  ## content. Two alignments are tried and the longer match wins:
   ## - the end of the transcript matches a run of the history (the usual
-  ##   case, also after trimming). Anything before that run in the history
-  ##   was not said by anyone (a compaction summary) and is not logged;
+  ##   case, also after trimming);
   ## - the start of the history matches a run inside the transcript (after a
-  ##   rewind). The transcript keeps the rewound messages.
-  ## With no match at all the history is appended whole.
-  if history.len == 0:
-    return
+  ##   rewind; the transcript keeps the rewound messages).
+  ## With no match the whole history is new.
+  ##
+  ## Content cannot tell a repeated message from a stored one, so this is
+  ## only used when numbers are unavailable.
   if existing.len == 0:
-    return @history
+    return 0
 
   var tailRun = 0
-  var tailEnd = 0   ## index in history right after the matched run
+  var tailEnd = 0
   for offset in 0 ..< history.len:
     let maxRun = min(existing.len, history.len - offset)
     if maxRun <= tailRun:
@@ -56,9 +68,40 @@ func linesToAppend*(existing, history: openArray[TranscriptLine]): seq[Transcrip
     if run > headRun:
       headRun = run
 
-  let resumeAt =
-    if tailRun >= headRun and tailRun > 0: tailEnd
-    elif headRun > 0: headRun
-    else: 0
-  for i in resumeAt ..< history.len:
-    result.add(history[i])
+  if tailRun >= headRun and tailRun > 0: tailEnd
+  elif headRun > 0: headRun
+  else: 0
+
+func messagesToAppend*(existing, history: openArray[TranscriptLine]): seq[int] =
+  ## Indexes of the messages in `history` that the stored transcript does not
+  ## hold yet, in order. Synthetic messages (compaction summaries) are never
+  ## returned.
+  var said: seq[int]            ## indexes of real messages in `history`
+  var allNumbered = true
+  for i, message in history:
+    if message.seq == SyntheticMessageSeq:
+      continue
+    said.add(i)
+    if message.seq <= 0:
+      allNumbered = false
+  if said.len == 0:
+    return
+
+  var storedNumbers = initHashSet[int64]()
+  for stored in existing:
+    if stored.seq > 0:
+      storedNumbers.incl(stored.seq)
+
+  if allNumbered and (existing.len == 0 or storedNumbers.len > 0):
+    for i in said:
+      if history[i].seq notin storedNumbers:
+        result.add(i)
+    return
+
+  ## No numbers on one side: a caller that does not number its history, or the
+  ## first save over a file written before numbering existed.
+  var realHistory = newSeqOfCap[TranscriptLine](said.len)
+  for i in said:
+    realHistory.add(history[i])
+  for position in resumeByContent(existing, realHistory) ..< said.len:
+    result.add(said[position])

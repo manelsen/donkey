@@ -195,3 +195,85 @@ suite "MdFileAdapter session transcript":
     writeFile(adapter.paddockDir(uid) / "sessions" / "big.jsonl", content)
     check adapter.searchSessions(uid, "zarabatana", 5, false).get().len == 1
     check adapter.searchSessions(uid, "alcachofra", 5, false).get().len == 0
+
+  proc numbered(first, last: int): ConversationHistory =
+    result = history(first, last)
+    for i, msg in result.mpairs:
+      msg.seq = (first + i).int64
+
+  test "numbered messages with identical text are all stored":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    var all: ConversationHistory
+    for i in 1 .. 24:
+      all.add(ChatMessage(role: (if i mod 2 == 1: roleUser else: roleAssistant),
+                          text: (if i mod 2 == 1: "ok" else: "certo"),
+                          seq: i.int64))
+    for last in countup(2, 24, 2):
+      adapter.saveSession(uid, "s1", all[max(0, last - 20) ..< last])
+    let lines = adapter.transcriptLines(uid, "s1")
+    check lines.len == 24
+    check lines[^1]["seq"].getBiggestInt == 24
+
+  test "rewind followed by two saves stores each new message once":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    adapter.saveSession(uid, "s1", numbered(1, 6))
+    var branch = numbered(1, 4)
+    branch.add(ChatMessage(role: roleUser, text: "X", seq: 7))
+    adapter.saveSession(uid, "s1", branch)
+    adapter.saveSession(uid, "s1", branch)
+    branch.add(ChatMessage(role: roleAssistant, text: "Y", seq: 8))
+    adapter.saveSession(uid, "s1", branch)
+    let texts = adapter.transcriptLines(uid, "s1").mapIt(it["text"].getStr)
+    check texts.len == 8
+    check texts.count("X") == 1
+    check texts.count("Y") == 1
+
+  test "a compaction summary never reaches the transcript":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    adapter.saveSession(uid, "s1", numbered(1, 6))
+    var compacted = @[ChatMessage(role: roleUser, text: "resumo",
+                                  seq: SyntheticMessageSeq)]
+    compacted.add(numbered(5, 8))
+    adapter.saveSession(uid, "s1", compacted)
+    let texts = adapter.transcriptLines(uid, "s1").mapIt(it["text"].getStr)
+    check texts.len == 8
+    check "resumo" notin texts
+
+  test "a truncated last line does not swallow the next message":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    createDir(adapter.paddockDir(uid) / "sessions")
+    let path = adapter.paddockDir(uid) / "sessions" / "s1.jsonl"
+    writeFile(path,
+      $(%*{"role": "user", "text": "mensagem 1", "seq": 1}) & "\n" &
+      "{\"role\": \"assistant\", \"text\": \"cortad")
+    adapter.saveSession(uid, "s1", numbered(1, 4))
+    let raw = readFile(path).splitLines()
+    check raw[1] == "{\"role\": \"assistant\", \"text\": \"cortad"
+    check parseJson(raw[2])["text"].getStr == "resposta 2"
+    check adapter.searchSessions(uid, "resposta", 10, false).get().len == 2
+
+  test "search reaches the newest lines of a transcript above the record cap":
+    resetBase()
+    defer: removeDir(searchBase)
+    let adapter = MdFileAdapter(paddocksDir: searchBase)
+    let uid = UserId("user-a")
+    createDir(adapter.paddockDir(uid) / "sessions")
+    var content = ""
+    for i in 1 .. SessionSearchMaxRecords + 50:
+      content.add($(%*{"role": "user", "text": "n" & $i}) & "\n")
+    content.add($(%*{"role": "user", "text": "recado final zarabatana"}) & "\n")
+    check content.len < SessionSearchMaxFileBytes
+    writeFile(adapter.paddockDir(uid) / "sessions" / "long.jsonl", content)
+    check adapter.searchSessions(uid, "zarabatana", 5, false).get().len == 1

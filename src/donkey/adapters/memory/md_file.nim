@@ -707,6 +707,19 @@ proc readFileTail(path: string; maxBytes: int): string =
   let firstBreak = tail.find('\n')
   if firstBreak < 0: "" else: tail[firstBreak + 1 .. ^1]
 
+proc fileEndsWithNewline(path: string): bool =
+  ## True for an empty file too: there is no open line to close.
+  let size = getFileSize(path)
+  if size <= 0:
+    return true
+  var f: File
+  if not open(f, path, fmRead):
+    return true
+  defer: f.close()
+  f.setFilePos(size - 1)
+  var last: array[1, char]
+  f.readChars(last) == 1 and last[0] == '\n'
+
 proc readTranscriptLines(path: string): seq[TranscriptLine] =
   if not fileExists(path):
     return
@@ -717,7 +730,8 @@ proc readTranscriptLines(path: string): seq[TranscriptLine] =
     try:
       let j = parseJson(trimmed)
       result.add(TranscriptLine(role: j{"role"}.getStr(""),
-                                text: j{"text"}.getStr("")))
+                                text: j{"text"}.getStr(""),
+                                seq: j{"seq"}.getBiggestInt(0).int64))
     except CatchableError:
       ## A malformed line is data; it stays in the file and is not compared.
       discard
@@ -738,19 +752,23 @@ proc saveSession*(a: MdFileAdapter; userId: UserId;
   let path = dir / sessionId & ".jsonl"
   var current: seq[TranscriptLine]
   for msg in history:
-    current.add(TranscriptLine(role: msg.role, text: msg.text))
-  let existing = readTranscriptLines(path)
-  let fresh = linesToAppend(existing, current)
-  if fresh.len == 0 and fileExists(path):
+    current.add(TranscriptLine(role: msg.role, text: msg.text, seq: msg.seq))
+  let fresh = messagesToAppend(readTranscriptLines(path), current)
+  if fresh.len == 0:
     return
-  ## `fresh` is always a suffix of the history.
-  let firstFresh = history.len - fresh.len
   let nowMs = epochMs()
   var buf = ""
-  for i in firstFresh ..< history.len:
-    let msg = history[i]
-    buf.add($(%* {"role": msg.role, "text": msg.text,
-                  "imageUrl": msg.imageUrl, "ts": nowMs}) & "\n")
+  ## A write cut short leaves a line without its newline. Close it, so the
+  ## first new message starts on its own line; the fragment itself stays.
+  if fileExists(path) and not fileEndsWithNewline(path):
+    buf.add("\n")
+  for index in fresh:
+    let msg = history[index]
+    var record = %* {"role": msg.role, "text": msg.text,
+                     "imageUrl": msg.imageUrl, "ts": nowMs}
+    if msg.seq > 0:
+      record["seq"] = %msg.seq
+    buf.add($record & "\n")
   let f = open(path, fmAppend)
   try:
     f.write(buf)
@@ -796,10 +814,13 @@ proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
         totalBytes += size
         let sessionId = file.path.extractFilename.changeFileExt("")
         let content = readFileTail(file.path, SessionSearchMaxFileBytes)
-        for line in content.splitLines():
+        ## Newest lines first: when the record cap is reached, what is left
+        ## out is the oldest part of the oldest file, never the latest lines.
+        let lines = content.splitLines()
+        for lineIndex in countdown(lines.high, 0):
           if records.len >= SessionSearchMaxRecords:
             break
-          let trimmed = line.strip()
+          let trimmed = lines[lineIndex].strip()
           if trimmed.len == 0:
             continue
           try:
