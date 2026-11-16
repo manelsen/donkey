@@ -52,7 +52,9 @@ Each user still gets a paddock with Markdown documents:
 ├── USER.md
 ├── MEMORY.md
 ├── PREFERENCES.md
-└── NOTES.md
+├── NOTES.md
+├── attachments/     # inbound channel files
+└── sessions/        # JSONL transcripts
 ```
 
 These documents are useful because they are:
@@ -132,6 +134,24 @@ Recent hardening in the runtime makes this safer:
 - operational failure text is no longer auto-captured as memory
 - turns are no longer truncated at tiny limits by default
 - identity and preference sync are preserved across SQLite-first flows
+
+## Ingesting Documents and Attachments
+
+When a channel sends a file, Donkey stores it under
+`{paddock}/attachments/` and adds a relative-path marker to the user turn.
+The agent can then read it with `fs_read`/`text_read`; images use
+`inspect_image`. Channel file IDs are never sent to providers as image URLs.
+
+For long documents, use the `memory_ingest` tool instead of copying the whole
+file into a model response:
+
+- `path` reads a workspace text file (max 2 MB) and appends it in bounded,
+  UTF-8-safe chunks.
+- `text` ingests an inline note.
+- `chunk_chars`/`max_chunks` cap the work.
+
+`memory_ingest` appends to memory; it does not overwrite `USER.md`. To change
+the profile, use the normal identity/onboarding flow.
 
 ## Best Practices
 
