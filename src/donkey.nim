@@ -31,7 +31,8 @@ import donkey/adapters/channel/telegram
 import donkey/adapters/channel/outbound_builder
 import donkey/app/inbound_gate
 import donkey/app/inbound_media
-import donkey/app/tools/attachment_store
+import donkey/adapters/filesystem/attachment_store
+import donkey/adapters/filesystem/fs_adapter
 import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/channel/discord
 import donkey/adapters/channel/discord_runtime
@@ -1263,6 +1264,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     routeProviderCooldownHook = proc(): seq[ProviderCooldown] {.gcsafe.} =
       withRouteLock(ctx.runtime.currentProviderCooldowns()),
     subagentWorkspace = subagentWorkspacePort(),
+    fs = newFsAdapter(),
   )
 
 proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;

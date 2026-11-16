@@ -2,6 +2,7 @@ import std/[options, os, strutils, unittest]
 import chronos
 import chronos/asyncsync
 import donkey/app/native_tools
+import donkey/adapters/filesystem/fs_adapter
 import donkey/app/approval_runtime
 import donkey/app/session_state
 import donkey/app/session_manager
@@ -43,6 +44,7 @@ suite "native tool approval gate":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
     )
     let call = ToolCallRequest(
@@ -84,6 +86,7 @@ suite "native tool approval gate":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
     )
     let longEdits = repeat("x", 1600)
@@ -127,6 +130,7 @@ suite "native tool approval gate":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
       sandboxMode: cfgTypes.smOci,
     )
@@ -167,6 +171,7 @@ suite "native tool approval gate":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
       sandboxMode: cfgTypes.smOci,
     )
@@ -212,6 +217,7 @@ suite "native tool approval gate":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
       sandboxMode: cfgTypes.smNone,
     )
@@ -255,6 +261,7 @@ suite "native tool approval gate":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
       sandboxMode: cfgTypes.smWasm,
     )
@@ -293,6 +300,7 @@ suite "native tool approval gate":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
       sandboxMode: cfgTypes.smOci,
     )
@@ -346,6 +354,7 @@ suite "large file write approval summary":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: root,
     )
     let payload = repeat("x", 2600)
@@ -390,6 +399,7 @@ suite "large file write approval summary":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
     )
     let payload = repeat("x", 2600)
@@ -439,6 +449,7 @@ suite "large file write approval summary":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: root,
     )
     var items = newSeq[string]()
@@ -490,6 +501,7 @@ suite "native stop request":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
       stopGeneration: currentSessionStopGeneration(),
     )

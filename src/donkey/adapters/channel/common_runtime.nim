@@ -1,4 +1,4 @@
-import std/[algorithm, os, sequtils, strutils, tables, times]
+import std/[algorithm, locks, os, sequtils, strutils, tables, times]
 import parsetoml
 import results
 import checksums/sha1
@@ -60,6 +60,8 @@ type ModelCallbackTarget = object
   model: string
 
 var modelCallbackTargets: Table[string, ModelCallbackTarget]
+var modelCallbackLock: Lock
+initLock(modelCallbackLock)
 
 func modelCallbackToken(provider, model: string): string =
   "mt" & ($secureHash(provider & "\0" & model)).toLowerAscii()[0 ..< 12]
@@ -69,18 +71,21 @@ proc registerModelCallback*(provider, model: string): string {.gcsafe.} =
   ## exceed it. Register the full id and put a short stable token in the button.
   let token = modelCallbackToken(provider, model)
   {.cast(gcsafe).}:
-    modelCallbackTargets[token] = ModelCallbackTarget(
-      provider: provider, model: model)
+    withLock modelCallbackLock:
+      modelCallbackTargets[token] = ModelCallbackTarget(
+        provider: provider, model: model)
   token
 
 proc resolveModelCallback*(provider, value: string): string {.gcsafe, raises: [].} =
   ## Resolves a compact model token. Legacy full model names still work.
+  var target: ModelCallbackTarget
   {.cast(gcsafe).}:
-    let target = modelCallbackTargets.getOrDefault(value)
-    if target.model.len > 0:
-      return if target.provider == provider: target.model else: ""
-    if value.len == 14 and value.startsWith("mt"):
-      return ""
+    withLock modelCallbackLock:
+      target = modelCallbackTargets.getOrDefault(value)
+  if target.model.len > 0:
+    return if target.provider == provider: target.model else: ""
+  if value.len == 14 and value.startsWith("mt"):
+    return ""
   value
 
 func uiSlotKey*(userId: UserId; slot: string): string =

@@ -4,7 +4,8 @@
 import std/[json, os, strutils, unittest]
 import results
 import donkey/app/inbound_media
-import donkey/app/tools/attachment_store
+import donkey/adapters/filesystem/attachment_store
+import donkey/adapters/filesystem/fs_adapter
 import donkey/app/session_bootstrap
 import donkey/app/prompt_building
 import donkey/core/pipeops

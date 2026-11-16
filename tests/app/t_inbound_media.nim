@@ -1,7 +1,8 @@
 import std/[os, strutils, unittest]
 import results
 import donkey/app/inbound_media
-import donkey/app/tools/attachment_store
+import donkey/adapters/filesystem/attachment_store
+import donkey/adapters/filesystem/fs_adapter
 import donkey/domain/message
 import donkey/ports/channel
 

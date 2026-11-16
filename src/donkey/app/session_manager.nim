@@ -165,9 +165,18 @@ func interruptsTurn*(kind: CommandKind): bool =
   ## pending approvals before their control task is processed.
   kind in {cmdStop, cmdNew, cmdRestart, cmdReset}
 
-proc requestTurnInterrupt*(userId: UserId) {.gcsafe, raises: [].} =
+proc requestTurnInterrupt*(sm: var SessionManager; userId: UserId)
+                          {.gcsafe, raises: [].} =
   requestUserStop($userId)
   cancelPendingApprovals(userId)
+  let uid = $userId
+  sm.entries.withValue(uid, entry):
+    if entry[].awaitingAsk and entry[].askInbox != nil:
+      try:
+        entry[].askInbox.addLastNoWait("__DONKEY_ASK_CANCELLED__")
+      except AsyncQueueFullError:
+        discard
+      entry[].awaitingAsk = false
 
 proc daemonShuttingDown*(): bool {.gcsafe, raises: [].} =
   {.cast(gcsafe).}:

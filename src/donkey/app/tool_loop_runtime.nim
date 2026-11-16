@@ -415,10 +415,12 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
 
     let canStreamToolCalls =
       streamFn != nil and providerLabel.toLowerAscii().startsWith("openrouter")
+    ## Suppressing tool progress must not disable plain streaming on the
+    ## first round; only the tool-call stream channel stays hidden.
     if decideToolLoopStreaming(
       round = round,
       toolsCount = tools.len,
-      streamingAvailable = streamFn != nil and not suppressProgress,
+      streamingAvailable = streamFn != nil,
       streamingToolCalls = canStreamToolCalls and not suppressProgress,
     ).useStreaming:
       let streamedRes = await streamToOutbox(

@@ -50,7 +50,7 @@ import ../core/tooling/native_tool_dispatch
 import ../core/pipeops
 import ../core/log
 import ../core/utf8
-import ./tools/fs_paths
+import ../ports/fs
 import ../core/security/approval
 import ../domain/message
 import ../domain/more_tools
@@ -97,6 +97,7 @@ type
     outbox*:       AsyncQueue[OutboundMessage]
     session*:      ptr SessionEntry
     memory*:       MemoryRuntimePort
+    fs*:           FsRuntimePort
     completeFn*:   CompleteFn
     asyncCompleteFn*: AsyncCompleteFn
     http*:         httpPort.HttpRuntimePort
@@ -255,45 +256,10 @@ proc logToolPathFailure(log: Logger;
            " resolved=" & (if resolvedPath.len > 0: resolvedPath else: "<empty>") &
            " reason=" & reason)
 
-proc canonicalExistingPath(path: string): Result[string, string] {.gcsafe, raises: [].} =
-  ## Resolves symlinks in the nearest existing ancestor and reattaches the
-  ## non-existing suffix. A dangling or unresolvable symlink is an error: the
-  ## lexical fallback would let a write follow it outside the paddock.
-  try:
-    var current = absolutePath(path)
-    var suffix: seq[string] = @[]
-    while current.len > 0:
-      if symlinkExists(current):
-        let resolved = canonicalPath(current)
-        if resolved.isErr:
-          return err("unresolvable symlink: " & current)
-        var base = resolved.get()
-        for i in countdown(suffix.high, 0):
-          base = base / suffix[i]
-        return ok(base)
-      if fileExists(current) or dirExists(current):
-        let resolved = canonicalPath(current)
-        if resolved.isErr:
-          return err("cannot resolve path: " & current)
-        var base = resolved.get()
-        for i in countdown(suffix.high, 0):
-          base = base / suffix[i]
-        return ok(base)
-      let parent = parentDir(current)
-      if parent.len == 0 or parent == current:
-        break
-      suffix.add(extractFilename(current))
-      current = parent
-  except CatchableError as e:
-    return err(e.msg)
-  try:
-    ok(absolutePath(path))
-  except CatchableError as e:
-    err(e.msg)
-
 proc resolvedToolPath(path, paddockDir: string;
                       log: Logger = Logger();
-                      toolName = ""): Result[string, string] {.gcsafe, raises: [].} =
+                      toolName = "";
+                      fs: FsRuntimePort = unavailableFs()): Result[string, string] {.gcsafe, raises: [].} =
   if path.len == 0 or paddockDir.len == 0:
     if path.len > 0 and paddockDir.len == 0:
       logToolPathFailure(log, toolName, path, paddockDir, path, "empty_paddock")
@@ -302,9 +268,9 @@ proc resolvedToolPath(path, paddockDir: string;
   if not inPaddock(resolvedPath, paddockDir):
     logToolPathFailure(log, toolName, path, paddockDir, resolvedPath, "outside_paddock")
     return err("Error: path outside paddock: " & path)
-  let realPaddock = canonicalExistingPath(paddockDir).valueOr:
+  let realPaddock = fs.canonicalNearestExisting(paddockDir).valueOr:
     return err("Error: cannot resolve paddock path: " & error)
-  let realTarget = canonicalExistingPath(resolvedPath).valueOr:
+  let realTarget = fs.canonicalNearestExisting(resolvedPath).valueOr:
     return err("Error: cannot resolve path safely: " & error)
   if realTarget != realPaddock and
      not realTarget.startsWith(realPaddock & $DirSep):
@@ -462,10 +428,11 @@ proc parseBashContext*(j: JsonNode): Result[BashContext, string] {.gcsafe, raise
 proc parseReadFileContext*(j: JsonNode;
                            paddockDir: string;
                            log: Logger = Logger();
-                           toolName = ReadFileToolName): Result[ReadFileContext, string] {.gcsafe, raises: [].} =
+                           toolName = ReadFileToolName;
+                           fs: FsRuntimePort = unavailableFs()): Result[ReadFileContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("path") >>=
     proc(p: string): Result[ReadFileContext, string] =
-      resolvedToolPath(p, paddockDir, log, toolName) >>=
+      resolvedToolPath(p, paddockDir, log, toolName, fs) >>=
         proc(rp: string): Result[ReadFileContext, string] =
           ok(ReadFileContext(
             path: rp,
@@ -475,10 +442,11 @@ proc parseReadFileContext*(j: JsonNode;
 
 proc parseFindContext*(j: JsonNode; paddockDir: string;
                        log: Logger = Logger();
-                       toolName = FindToolName): Result[FindContext, string] {.gcsafe, raises: [].} =
+                       toolName = FindToolName;
+                       fs: FsRuntimePort = unavailableFs()): Result[FindContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("path") >>=
     proc(p: string): Result[FindContext, string] =
-      resolvedToolPath(p, paddockDir, log, toolName) >>=
+      resolvedToolPath(p, paddockDir, log, toolName, fs) >>=
         proc(rp: string): Result[FindContext, string] =
           ok(FindContext(
             path: rp,
@@ -489,12 +457,13 @@ proc parseFindContext*(j: JsonNode; paddockDir: string;
 
 proc parseGrepContext*(j: JsonNode; paddockDir: string;
                        log: Logger = Logger();
-                       toolName = GrepToolName): Result[GrepContext, string] {.gcsafe, raises: [].} =
+                       toolName = GrepToolName;
+                       fs: FsRuntimePort = unavailableFs()): Result[GrepContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("pattern") >>=
     proc(pat: string): Result[GrepContext, string] =
       j.requireStringField("path") >>=
         proc(p: string): Result[GrepContext, string] =
-          resolvedToolPath(p, paddockDir, log, toolName) >>=
+          resolvedToolPath(p, paddockDir, log, toolName, fs) >>=
             proc(rp: string): Result[GrepContext, string] =
               ok(GrepContext(
                 pattern: pat,
@@ -505,52 +474,58 @@ proc parseGrepContext*(j: JsonNode; paddockDir: string;
 
 proc parseSedContext*(j: JsonNode; paddockDir: string;
                       log: Logger = Logger();
-                      toolName = SedToolName): Result[SedContext, string] {.gcsafe, raises: [].} =
+                      toolName = SedToolName;
+                      fs: FsRuntimePort = unavailableFs()): Result[SedContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("expression") >>=
     proc(expr: string): Result[SedContext, string] =
       j.requireStringField("path") >>=
         proc(p: string): Result[SedContext, string] =
-          resolvedToolPath(p, paddockDir, log, toolName) >>=
+          resolvedToolPath(p, paddockDir, log, toolName, fs) >>=
             proc(rp: string): Result[SedContext, string] =
               ok(SedContext(expression: expr, path: rp))
 
 proc parsePathOnly*(j: JsonNode; paddockDir: string;
                     log: Logger = Logger();
-                    toolName = ""): Result[string, string] {.gcsafe, raises: [].} =
+                    toolName = "";
+                    fs: FsRuntimePort = unavailableFs()): Result[string, string] {.gcsafe, raises: [].} =
   j.requireStringField("path") >>=
-    proc(p: string): Result[string, string] = resolvedToolPath(p, paddockDir, log, toolName)
+    proc(p: string): Result[string, string] = resolvedToolPath(p, paddockDir, log, toolName, fs)
 
 proc parseWcContext*(j: JsonNode; paddockDir: string;
                      log: Logger = Logger();
-                     toolName = WcToolName): Result[WcContext, string] {.gcsafe, raises: [].} =
-  parsePathOnly(j, paddockDir, log, toolName) >>=
+                     toolName = WcToolName;
+                     fs: FsRuntimePort = unavailableFs()): Result[WcContext, string] {.gcsafe, raises: [].} =
+  parsePathOnly(j, paddockDir, log, toolName, fs) >>=
     proc(p: string): Result[WcContext, string] =
       ok(WcContext(path: p, flags: j.getOrDefault("flags").getStr("")))
 
 proc parseHeadTailContext*(j: JsonNode; paddockDir: string;
                            log: Logger = Logger();
-                           toolName = ""): Result[HeadTailContext, string] {.gcsafe, raises: [].} =
-  parsePathOnly(j, paddockDir, log, toolName) >>=
+                           toolName = "";
+                           fs: FsRuntimePort = unavailableFs()): Result[HeadTailContext, string] {.gcsafe, raises: [].} =
+  parsePathOnly(j, paddockDir, log, toolName, fs) >>=
     proc(p: string): Result[HeadTailContext, string] =
       ok(HeadTailContext(path: p, lines: j.getOrDefault("lines").getInt(10)))
 
 proc parseSortContext*(j: JsonNode; paddockDir: string;
                        log: Logger = Logger();
-                       toolName = SortToolName): Result[SortContext, string] {.gcsafe, raises: [].} =
-  parsePathOnly(j, paddockDir, log, toolName) >>=
+                       toolName = SortToolName;
+                       fs: FsRuntimePort = unavailableFs()): Result[SortContext, string] {.gcsafe, raises: [].} =
+  parsePathOnly(j, paddockDir, log, toolName, fs) >>=
     proc(p: string): Result[SortContext, string] =
       ok(SortContext(path: p, flags: j.getOrDefault("flags").getStr("")))
 
 proc parseCpMvContext*(j: JsonNode; paddockDir: string;
                        log: Logger = Logger();
-                       toolName = ""): Result[CpMvContext, string] {.gcsafe, raises: [].} =
+                       toolName = "";
+                       fs: FsRuntimePort = unavailableFs()): Result[CpMvContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("source") >>=
     proc(s: string): Result[CpMvContext, string] =
       j.requireStringField("dest") >>=
         proc(d: string): Result[CpMvContext, string] =
-          let rs = resolvedToolPath(s, paddockDir, log, toolName)
+          let rs = resolvedToolPath(s, paddockDir, log, toolName, fs)
           if rs.isErr: return err(rs.error)
-          let rd = resolvedToolPath(d, paddockDir, log, toolName)
+          let rd = resolvedToolPath(d, paddockDir, log, toolName, fs)
           if rd.isErr: return err(rd.error)
           ok(CpMvContext(source: rs.value, dest: rd.value))
 
@@ -577,10 +552,11 @@ proc parseMermaidContext*(j: JsonNode): Result[MermaidContext, string] {.gcsafe,
 proc parseInspectImageContext*(j: JsonNode;
                                paddockDir: string;
                                log: Logger = Logger();
-                               toolName = InspectImageToolName): Result[InspectImageContext, string] {.gcsafe, raises: [].} =
+                               toolName = InspectImageToolName;
+                               fs: FsRuntimePort = unavailableFs()): Result[InspectImageContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("path") >>=
     proc(p: string): Result[InspectImageContext, string] =
-      resolvedToolPath(p, paddockDir, log, toolName) >>=
+      resolvedToolPath(p, paddockDir, log, toolName, fs) >>=
         proc(rp: string): Result[InspectImageContext, string] =
           ok(InspectImageContext(path: rp, prompt: j.getOrDefault("prompt").getStr("")))
 
@@ -646,10 +622,11 @@ proc parseTodoOps*(j: JsonNode): Result[JsonNode, string] {.gcsafe, raises: [].}
 proc parseEditFileContext*(j: JsonNode;
                            paddockDir: string;
                            log: Logger = Logger();
-                           toolName = EditFileToolName): Result[EditFileContext, string] {.gcsafe, raises: [].} =
+                           toolName = EditFileToolName;
+                           fs: FsRuntimePort = unavailableFs()): Result[EditFileContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("path") >>=
     proc(p: string): Result[EditFileContext, string] =
-      resolvedToolPath(p, paddockDir, log, toolName) >>=
+      resolvedToolPath(p, paddockDir, log, toolName, fs) >>=
         proc(rp: string): Result[EditFileContext, string] =
           let editsNode = j.getOrDefault("edits")
           if editsNode.kind != JArray:
@@ -875,14 +852,14 @@ proc executeShellNativeTool(tc: ToolCallRequest;
                         ctx.sandboxAllowHostFallback, ctx.sandboxAllowNetwork,
                         ctx.sandboxReadOnlyRootfs))
   of ReadFileToolName:
-    let readCtx = parseReadFileContext(j, ctx.paddockDir, ctx.log, ReadFileToolName).valueOr:
+    let readCtx = parseReadFileContext(j, ctx.paddockDir, ctx.log, ReadFileToolName, ctx.fs).valueOr:
       return handledError(error)
     try:
       return handledText(renderHashlineSlice(readFile(readCtx.path), readCtx.startLine, readCtx.maxLines))
     except CatchableError as e:
       return handledError("Error: " & e.msg)
   of EditFileToolName:
-    let editCtx = parseEditFileContext(j, ctx.paddockDir, ctx.log, EditFileToolName).valueOr:
+    let editCtx = parseEditFileContext(j, ctx.paddockDir, ctx.log, EditFileToolName, ctx.fs).valueOr:
       return handledError(error)
     try:
       let original = readFile(editCtx.path)
@@ -894,7 +871,7 @@ proc executeShellNativeTool(tc: ToolCallRequest;
     except CatchableError as e:
       return handledError("Error: " & e.msg)
   of FindToolName:
-    let findCtx = parseFindContext(j, ctx.paddockDir, ctx.log, FindToolName).valueOr:
+    let findCtx = parseFindContext(j, ctx.paddockDir, ctx.log, FindToolName, ctx.fs).valueOr:
       return handledError(error)
     let r = if ctx.sandboxMode == smWasm:
       performFindWasm(findCtx.path, findCtx.pattern, findCtx.kind, findCtx.max)
@@ -902,7 +879,7 @@ proc executeShellNativeTool(tc: ToolCallRequest;
       performFind(findCtx.path, findCtx.pattern, findCtx.kind, findCtx.max)
     return handledOutcome(r)
   of GrepToolName:
-    let grepCtx = parseGrepContext(j, ctx.paddockDir, ctx.log, GrepToolName).valueOr:
+    let grepCtx = parseGrepContext(j, ctx.paddockDir, ctx.log, GrepToolName, ctx.fs).valueOr:
       return handledError(error)
     let r = if ctx.sandboxMode == smWasm:
       performGrepWasm(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max)
@@ -910,12 +887,12 @@ proc executeShellNativeTool(tc: ToolCallRequest;
       performGrep(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max)
     return handledOutcome(r)
   of SedToolName:
-    let sedCtx = parseSedContext(j, ctx.paddockDir, ctx.log, SedToolName).valueOr:
+    let sedCtx = parseSedContext(j, ctx.paddockDir, ctx.log, SedToolName, ctx.fs).valueOr:
       return handledError(error)
     return handledOutcome(runWasmApplet("sed", @[sedCtx.expression, sedCtx.path],
       if sedCtx.path.parentDir.len > 0: sedCtx.path.parentDir else: "/"))
   of WcToolName:
-    let wcCtx = parseWcContext(j, ctx.paddockDir, ctx.log, WcToolName).valueOr:
+    let wcCtx = parseWcContext(j, ctx.paddockDir, ctx.log, WcToolName, ctx.fs).valueOr:
       return handledError(error)
     var args: seq[string] = @[]
     if wcCtx.flags.len > 0:
@@ -923,15 +900,15 @@ proc executeShellNativeTool(tc: ToolCallRequest;
     args.add(wcCtx.path)
     return handledOutcome(runWasmApplet("wc", args, wcCtx.path))
   of HeadToolName:
-    let headCtx = parseHeadTailContext(j, ctx.paddockDir, ctx.log, HeadToolName).valueOr:
+    let headCtx = parseHeadTailContext(j, ctx.paddockDir, ctx.log, HeadToolName, ctx.fs).valueOr:
       return handledError(error)
     return handledOutcome(runWasmApplet("head", @["-n", $headCtx.lines, headCtx.path], headCtx.path))
   of TailToolName:
-    let tailCtx = parseHeadTailContext(j, ctx.paddockDir, ctx.log, TailToolName).valueOr:
+    let tailCtx = parseHeadTailContext(j, ctx.paddockDir, ctx.log, TailToolName, ctx.fs).valueOr:
       return handledError(error)
     return handledOutcome(runWasmApplet("tail", @["-n", $tailCtx.lines, tailCtx.path], tailCtx.path))
   of SortToolName:
-    let sortCtx = parseSortContext(j, ctx.paddockDir, ctx.log, SortToolName).valueOr:
+    let sortCtx = parseSortContext(j, ctx.paddockDir, ctx.log, SortToolName, ctx.fs).valueOr:
       return handledError(error)
     var args: seq[string] = @[]
     if sortCtx.flags.len > 0:
@@ -939,24 +916,24 @@ proc executeShellNativeTool(tc: ToolCallRequest;
     args.add(sortCtx.path)
     return handledOutcome(runWasmApplet("sort", args, sortCtx.path))
   of CpToolName:
-    let cpCtx = parseCpMvContext(j, ctx.paddockDir, ctx.log, CpToolName).valueOr:
+    let cpCtx = parseCpMvContext(j, ctx.paddockDir, ctx.log, CpToolName, ctx.fs).valueOr:
       return handledError(error)
     let parent = cpCtx.source.parentDir
     return handledOutcome(runWasmApplet("cp", @[cpCtx.source, cpCtx.dest],
       if parent.len > 0: parent else: "/"))
   of MvToolName:
-    let mvCtx = parseCpMvContext(j, ctx.paddockDir, ctx.log, MvToolName).valueOr:
+    let mvCtx = parseCpMvContext(j, ctx.paddockDir, ctx.log, MvToolName, ctx.fs).valueOr:
       return handledError(error)
     let parent = mvCtx.source.parentDir
     return handledOutcome(runWasmApplet("mv", @[mvCtx.source, mvCtx.dest],
       if parent.len > 0: parent else: "/"))
   of RmToolName:
-    let rmCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, RmToolName).valueOr:
+    let rmCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, RmToolName, ctx.fs).valueOr:
       return handledError(error)
     let parent = rmCtx.parentDir
     return handledOutcome(runWasmApplet("rm", @[rmCtx], if parent.len > 0: parent else: "/"))
   of MkdirToolName:
-    let mkdirCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, MkdirToolName).valueOr:
+    let mkdirCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, MkdirToolName, ctx.fs).valueOr:
       return handledError(error)
     let parent = mkdirCtx.parentDir
     return handledOutcome(runWasmApplet("mkdir", @[mkdirCtx], if parent.len > 0: parent else: "/"))
@@ -994,7 +971,7 @@ proc executeStructuredNativeTool(tc: ToolCallRequest;
   discard history
   case tc.name
   of FsListToolName:
-    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsListToolName).valueOr:
+    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsListToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
     return handledStructured(performFsList(
       pathCtx,
@@ -1004,7 +981,7 @@ proc executeStructuredNativeTool(tc: ToolCallRequest;
       includeHidden = j.getOrDefault("include_hidden").getBool(false),
     ))
   of FsReadToolName:
-    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsReadToolName).valueOr:
+    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsReadToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
     return handledStructured(performFsRead(
       pathCtx,
@@ -1012,7 +989,7 @@ proc executeStructuredNativeTool(tc: ToolCallRequest;
       j.getOrDefault("format").getStr("text"),
     ))
   of FsWriteToolName:
-    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsWriteToolName).valueOr:
+    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsWriteToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
     if not j.hasKey("content"):
       return handledStructured(usageErrorToolResult("content is required"))
@@ -1024,31 +1001,31 @@ proc executeStructuredNativeTool(tc: ToolCallRequest;
       j.getOrDefault("format").getStr("text"),
     ))
   of FsMkdirToolName:
-    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsMkdirToolName).valueOr:
+    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsMkdirToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
     return handledStructured(performFsMkdir(pathCtx, ctx.paddockDir, j.getOrDefault("parents").getBool(false)))
   of FsCopyToolName:
-    let cpCtx = parseCpMvContext(j, ctx.paddockDir, ctx.log, FsCopyToolName).valueOr:
+    let cpCtx = parseCpMvContext(j, ctx.paddockDir, ctx.log, FsCopyToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
     return handledStructured(performFsCopy(cpCtx.source, cpCtx.dest, ctx.paddockDir, j.getOrDefault("recursive").getBool(false)))
   of FsMoveToolName:
-    let mvCtx = parseCpMvContext(j, ctx.paddockDir, ctx.log, FsMoveToolName).valueOr:
+    let mvCtx = parseCpMvContext(j, ctx.paddockDir, ctx.log, FsMoveToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
     return handledStructured(performFsMove(mvCtx.source, mvCtx.dest, ctx.paddockDir))
   of FsRemoveToolName:
-    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsRemoveToolName).valueOr:
+    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsRemoveToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
     return handledStructured(performFsRemove(pathCtx, ctx.paddockDir, j.getOrDefault("recursive").getBool(false)))
   of TextSearchToolName:
-    let grepCtx = parseGrepContext(j, ctx.paddockDir, ctx.log, TextSearchToolName).valueOr:
+    let grepCtx = parseGrepContext(j, ctx.paddockDir, ctx.log, TextSearchToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
     return handledStructured(performGrepStructured(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max, ctx.paddockDir))
   of TextReadToolName:
-    let readCtx = parseReadFileContext(j, ctx.paddockDir, ctx.log, TextReadToolName).valueOr:
+    let readCtx = parseReadFileContext(j, ctx.paddockDir, ctx.log, TextReadToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
     return handledStructured(readStructuredTextSlice(readCtx.path, readCtx.startLine, readCtx.maxLines, ctx.paddockDir))
   of TextReplaceToolName:
-    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, TextReplaceToolName).valueOr:
+    let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, TextReplaceToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
     let findText = j.getOrDefault("find").getStr("")
     let replaceText = j.getOrDefault("replace").getStr("")
@@ -1102,7 +1079,7 @@ proc executeCodeNativeTool(tc: ToolCallRequest;
                               ctx.sandboxRuntimeCmd).valueOr:
     return handledError(error)
   let req = parseCodeRequest(j, ctx.paddockDir, cfg.maxSourceBytes,
-                             cfg.timeoutSec).valueOr:
+                             cfg.timeoutSec, ctx.fs).valueOr:
     return handledError(error)
   let executed = await runCodeRequestAsync(req, cfg, ctx.paddockDir, ctx.uid,
                                            ctx.channel, ctx.log)
@@ -1127,7 +1104,7 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
       return handledError(error)
     return handledOutcome(performRenderMermaid(mermaidCtx.diagram))
   of InspectImageToolName:
-    let inspectCtx = parseInspectImageContext(j, ctx.paddockDir, ctx.log, InspectImageToolName).valueOr:
+    let inspectCtx = parseInspectImageContext(j, ctx.paddockDir, ctx.log, InspectImageToolName, ctx.fs).valueOr:
       return handledError(error)
     return handledOutcome(performInspectImage(inspectCtx.path, inspectCtx.prompt, ctx.completeFn))
   else:
@@ -1201,7 +1178,7 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
     let stats =
       if ingestCtx.path.len > 0:
         ingestMemoryFile(ctx.memory, ctx.uid, ctx.paddockDir, ingestCtx.path,
-                         ingestCtx.chunkChars, ingestCtx.maxChunks)
+                         ingestCtx.chunkChars, ingestCtx.maxChunks, ctx.fs)
       else:
         ingestMemoryText(ctx.memory, ctx.uid, ingestCtx.text, "text",
                          ingestCtx.chunkChars, ingestCtx.maxChunks)

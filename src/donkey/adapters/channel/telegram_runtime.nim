@@ -700,7 +700,7 @@ proc handleTelegramTaskCommand*(sm: var SessionManager;
     if interruptsTurn(command.kind):
       ## The command is queued behind the busy actor; the application policy
       ## sets the stop flag and denies pending approvals immediately.
-      requestTurnInterrupt(msg.userId)
+      requestTurnInterrupt(sm, msg.userId)
     if ensureTaskSession != nil:
       ensureTaskSession(msg, commandTaskKind(command), "")
     else:

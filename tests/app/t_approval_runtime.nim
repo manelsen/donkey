@@ -190,7 +190,9 @@ suite "approval runtime":
     )
     configureApprovalService(fake, @["bash"])
     defer: resetApprovalService()
-    requestTurnInterrupt(UserId("interrupt-user"))
+    var sm: SessionManager
+    sm.init()
+    requestTurnInterrupt(sm, UserId("interrupt-user"))
     check isUserStopped("interrupt-user")
     check denied == 1
     clearUserStop("interrupt-user")

@@ -20,6 +20,7 @@ import donkey/adapters/memory/md_file
 import donkey/config/clawhub_registry
 import donkey/config/skills_registry
 import donkey/app/session_state
+import donkey/adapters/filesystem/fs_adapter
 import donkey/app/native_tools
 import donkey/ports/http
 
@@ -39,6 +40,7 @@ proc makeCtx(): NativeCtx =
     braveApiKey: "",
     tools:       @[],
     log:         newLogger("test"),
+    fs:          newFsAdapter(),
   )
 
 proc makeCtxWithMemory(memory: MemoryRuntimePort; uid = UserId("test-user")): NativeCtx =
@@ -424,7 +426,7 @@ suite "native_tools pure contexts":
     check parsed.value.command == "pwd"
 
   test "parseReadFileContext resolves file path inside paddock":
-    let parsed = parseReadFileContext(parseJson("""{"path":"src/app.nim","start_line":2}"""), "/tmp/paddock")
+    let parsed = parseReadFileContext(parseJson("""{"path":"src/app.nim","start_line":2}"""), "/tmp/paddock", fs = newFsAdapter())
     check parsed.isOk
     check parsed.value.path == "/tmp/paddock/src/app.nim"
     check parsed.value.startLine == 2
@@ -436,25 +438,25 @@ suite "native_tools pure contexts":
         {"op": "replace", "pos": "2#abc123", "lines": ["echo 1"]}
       ]
     })
-    let parsed = parseEditFileContext(parseJson(editJson), "/tmp/paddock")
+    let parsed = parseEditFileContext(parseJson(editJson), "/tmp/paddock", fs = newFsAdapter())
     check parsed.isOk
     check parsed.value.path == "/tmp/paddock/src/app.nim"
     check parsed.value.edits.len == 1
     check parsed.value.edits[0].kind == efokReplace
 
   test "parseFindContext resolves path inside paddock":
-    let parsed = parseFindContext(parseJson("""{"path":"src","pattern":"*.nim"}"""), "/tmp/paddock")
+    let parsed = parseFindContext(parseJson("""{"path":"src","pattern":"*.nim"}"""), "/tmp/paddock", fs = newFsAdapter())
     check parsed.isOk
     check parsed.value.path == "/tmp/paddock/src"
     check parsed.value.pattern == "*.nim"
 
   test "parseReadFileContext accepts workspace alias":
-    let parsed = parseReadFileContext(parseJson("""{"path":"/workspace/PREFERENCES.md"}"""), "/tmp/paddock")
+    let parsed = parseReadFileContext(parseJson("""{"path":"/workspace/PREFERENCES.md"}"""), "/tmp/paddock", fs = newFsAdapter())
     check parsed.isOk
     check parsed.value.path == "/tmp/paddock/PREFERENCES.md"
 
   test "parseGrepContext rejects path outside paddock":
-    let parsed = parseGrepContext(parseJson("""{"pattern":"x","path":"../../etc/passwd"}"""), "/tmp/paddock")
+    let parsed = parseGrepContext(parseJson("""{"pattern":"x","path":"../../etc/passwd"}"""), "/tmp/paddock", fs = newFsAdapter())
     check parsed.isErr
     check parsed.error.contains("outside paddock")
 
@@ -717,6 +719,7 @@ suite "executeNativeTool — read_file and edit_file":
       tools:       @[],
       log:         newLogger("test"),
       paddockDir:  pd,
+      fs:          newFsAdapter(),
     )
 
   test "read_file returns hashline-prefixed content":
@@ -881,6 +884,7 @@ suite "executeNativeTool — paddock path enforcement":
       tools:       @[],
       log:         newLogger("test"),
       paddockDir:  pd,
+      fs:          newFsAdapter(),
     )
 
   test "bash runs in paddock — pwd shows paddock path":

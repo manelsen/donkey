@@ -43,6 +43,7 @@ import ../ports/provider
 import ../ports/subagent_workspace
 import ../ports/memory
 import ../ports/http
+import ../ports/fs
 import ../ports/tool
 import ./memory_agent
 import ./tool_agent
@@ -173,6 +174,7 @@ proc buildNativeCtx*(uid: UserId;
                      memory: MemoryRuntimePort;
                      completeFn: CompleteFn;
                      http: HttpRuntimePort;
+                     fs: FsRuntimePort;
                      cfg: cfgTypes.DonkeyConfig;
                      tools: seq[ToolDescription];
                      log: Logger;
@@ -188,6 +190,7 @@ proc buildNativeCtx*(uid: UserId;
     memory:       memory,
     completeFn:   completeFn,
     http:         http,
+    fs:           fs,
     braveApiKey:  getEnv("BRAVE_API_KEY", ""),
     webAllowlist: cfg.webAllowlist,
     toolWebPolicy: cfg.toolWebPolicy,
@@ -218,6 +221,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
                           memory: MemoryRuntimePort;
                           completeFn: CompleteFn;
                           http: HttpRuntimePort;
+                          fs: FsRuntimePort;
                           tools: seq[ToolDescription];
                           webAllowlist: seq[string];
                           toolWebPolicy: seq[cfgTypes.ToolWebPolicy];
@@ -237,7 +241,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
     not onboarding_runtime.safeHasProfile(memory, result.uid) and
     not stateRuntime.hasCompletedBootstrapTarget(msg.channel, msg.replyTo)
   result.nativeCtx = buildNativeCtx(
-    result.uid, msg.channel, globalOutbox, session, memory, completeFn, http,
+    result.uid, msg.channel, globalOutbox, session, memory, completeFn, http, fs,
     cfgTypes.DonkeyConfig(
       home: "", paddocks: "", logLevel: log.minLevel, logFile: "",
       defaultProvider: "", defaultModel: "",
@@ -342,6 +346,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     completeFn: CompleteFn;
                     errorExplainFn: CompleteFn;
                     http: HttpRuntimePort;
+                    fs: FsRuntimePort;
                     streamFn: StreamFn;
                     tools: seq[ToolDescription];
                     webAllowlist: seq[string];
@@ -360,7 +365,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     asyncCompleteFn: AsyncCompleteFn = nil): Future[OrchestratorState] {.async.} =
   result = stateRuntime |> nextTurn
   var turnSetup = prepareUserTurnSetup(
-    globalOutbox, session, memory, completeFn, http, tools, webAllowlist, toolWebPolicy,
+    globalOutbox, session, memory, completeFn, http, fs, tools, webAllowlist, toolWebPolicy,
     paddockDir, typingFn, log,
     sandboxMode, sandboxRuntimeCmd, sandboxImage, msg, result)
   turnSetup.nativeCtx.asyncCompleteFn = asyncCompleteFn
@@ -450,7 +455,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   stopTypingLoop(turnSetup.typingLoop)
   await finalizeNormalTurn(
     globalOutbox, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.streamId, streamFn,
-    suppressHeartbeatProgress, suppressQuietHeartbeatFinal, result.showReasoning, loopResult)
+    suppressProgress, suppressQuietHeartbeatFinal, result.showReasoning, loopResult)
 
   # Capture memory from substantive user messages, but avoid persisting
   # operational/provider failures as autobiographical memory.
@@ -530,6 +535,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
                      completeFn: CompleteFn;
                      errorExplainFn: CompleteFn;
                      http: HttpRuntimePort;
+                     fs: FsRuntimePort;
                      streamFn: StreamFn;
                      tools: seq[ToolDescription];
                      webAllowlist: seq[string];
@@ -588,7 +594,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
 
   result = await handleUserTurn(
     globalOutbox, memInbox, toolInbox, memOut, toolOut, session, memory,
-    completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
+    completeFn, errorExplainFn, http, fs, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
     providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, toolsSuffix,
     state, msg, result, asyncCompleteFn)
   if result.onboarding.phase == opDone:
@@ -608,6 +614,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
                         completeFn: CompleteFn;
                         errorExplainFn: CompleteFn;
                         http: HttpRuntimePort;
+                        fs: FsRuntimePort;
                         streamFn: StreamFn;
                         tools: seq[ToolDescription];
                         webAllowlist: seq[string];
@@ -636,7 +643,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
   of amkTask:
     result.stateRuntime = await handleActorTask(
       globalOutbox, session, memInbox, toolInbox, memOut, toolOut, memory,
-      completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
+      completeFn, errorExplainFn, http, fs, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
       providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
       toolsSuffix, state, msg, stateRuntime, asyncCompleteFn)
 
@@ -696,7 +703,8 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       toolWebPolicy:  seq[cfgTypes.ToolWebPolicy] = @[];
                       errorExplainFn: CompleteFn = nil;
                       asyncCompleteFn: AsyncCompleteFn = nil;
-                      subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort()): Future[void] {.async.} =
+                      subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort();
+                      fs:             FsRuntimePort = unavailableFs()): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
   if daemonShuttingDown():
     return
@@ -729,7 +737,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
       let msg = await collectWithDebounce(inbox, DebounceWindowMs)
       let actorResult = await handleActorMessage(
         inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
-        completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
+        completeFn, errorExplainFn, http, fs, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
         providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
         toolsSuffix, state, msg, stateRuntime, asyncCompleteFn)
       stateRuntime = actorResult.stateRuntime

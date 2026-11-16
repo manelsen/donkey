@@ -10,6 +10,7 @@ import std/[algorithm, json, os, strutils, times]
 import ../../core/types
 import ../../core/pipeops
 import ../../ports/memory
+import ../filesystem/paths
 import ../../domain/memory/episode_pure
 import ../../domain/memory/lessons_pure
 import ../../domain/memory/session_search_pure
@@ -314,11 +315,7 @@ when defined(withPostgres) or defined(withSqlite):
 
 proc appendExtractedMemoryF1(a: MdFileAdapter; userId: UserId;
                                 text: string): Result[void, string] {.raises: [].} =
-  try:
-    a.appendMemory(userId, text)
-    ok()
-  except Exception as e:
-    err("append extracted memory: " & e.msg)
+  a.appendMemoryResult(userId, text)
 
 proc saveEpisodeF1(a: MdFileAdapter; userId: UserId;
                    episode: EpisodeJournal): Result[void, string] {.raises: [].} =
@@ -329,8 +326,10 @@ proc saveEpisodeF1(a: MdFileAdapter; userId: UserId;
       else: ""
     if marker in existing:
       return ok()
-    a.appendMemory(userId, "\n" & marker & "\n## Episode: " & episode.title &
-                   "\n" & episode.summary & "\n")
+    let saved = a.appendMemoryResult(userId, "\n" & marker & "\n## Episode: " &
+                   episode.title & "\n" & episode.summary & "\n")
+    if saved.isErr:
+      return err("save episode: " & saved.error)
     ok()
   except Exception as e:
     err("save episode: " & e.msg)
@@ -347,7 +346,9 @@ proc extractLessonsF1(a: MdFileAdapter; userId: UserId;
         let marker = "- Lesson: " & lesson.text
         if marker in existing:
           continue
-        a.appendMemory(userId, marker & "\n")
+        let saved = a.appendMemoryResult(userId, marker & "\n")
+        if saved.isErr:
+          return err("extract lessons: " & saved.error)
         inc count
     ok(count)
   except Exception as e:
@@ -481,24 +482,6 @@ proc setUserFieldText*(content, label, value: string): string =
 proc isRevokedUserMd*(content: string): bool =
   content.parseUserField("Access").toLowerAscii() == "revoked"
 
-proc secureDir(path: string): Result[void, string] =
-  try:
-    createDir(path)
-    when defined(posix):
-      setFilePermissions(path, {fpUserRead, fpUserWrite, fpUserExec})
-    ok()
-  except CatchableError as e:
-    err(e.msg)
-
-proc secureFile(path: string): Result[void, string] =
-  try:
-    when defined(posix):
-      if fileExists(path):
-        setFilePermissions(path, {fpUserRead, fpUserWrite})
-    ok()
-  except CatchableError as e:
-    err(e.msg)
-
 proc securePaddockTree(a: MdFileAdapter; userId: UserId) =
   ## One-time migration for paddocks created before permissions were tightened.
   ## Best effort: a permissions failure must not make the paddock unreadable.
@@ -517,7 +500,7 @@ proc securePaddockTree(a: MdFileAdapter; userId: UserId) =
       for dirName in ["sessions", "attachments"]:
         let dir = a.paddockDir(userId) / dirName
         if dirExists(dir):
-          for kind, path in walkDir(dir):
+          for kind, path in walkDir(dir, checkDir = true):
             if kind == pcFile:
               if secureFile(path).isErr:
                 allOk = false

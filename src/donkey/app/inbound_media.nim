@@ -1,6 +1,6 @@
 ## inbound_media.nim — orchestrate inbound attachment metadata and turn markers.
 ##
-## Filesystem writes live in `app/tools/attachment_store`; this module only
+## Filesystem writes live in `adapters/filesystem/attachment_store`; this module only
 ## chooses the marker, updates the message and clears the channel file_id.
 
 import std/[os, strutils]

@@ -567,6 +567,7 @@ proc buildModelCatalogLoader*(http: HttpRuntimePort = defaultCatalogHttp()): Mod
   ## models.dev result is cached for 5 minutes to avoid re-fetching on every click.
   var cachedModelsDev: Option[ModelCatalogResult] = none(ModelCatalogResult)
   var cachedOpenRouter: Option[ModelCatalogResult] = none(ModelCatalogResult)
+  var openRouterError = ""
   const CacheTtlSec = 300  # 5 minutes
 
   result = proc(providerName: string): Result[ModelCatalogResult, string] {.gcsafe.} =
@@ -582,6 +583,7 @@ proc buildModelCatalogLoader*(http: HttpRuntimePort = defaultCatalogHttp()): Mod
       if direct.isOk:
         cachedOpenRouter = some(direct.get())
         return direct
+      openRouterError = direct.error
 
     # Check models.dev cache freshness for the remaining providers.
     if cachedModelsDev.isNone or (now - cachedModelsDev.get().fetchedAtUnix) > CacheTtlSec:
@@ -602,7 +604,10 @@ proc buildModelCatalogLoader*(http: HttpRuntimePort = defaultCatalogHttp()): Mod
     ## Fallback para APIs específicas ou catálogo estático
     case providerName
     of "openrouter":
-      loadOpenRouterCatalog(getEnv("OPENROUTER_API_KEY"), http)
+      if openRouterError.len > 0:
+        err(openRouterError)
+      else:
+        loadOpenRouterCatalog(getEnv("OPENROUTER_API_KEY"), http)
     of "groq":
       loadGroqCatalog(getEnv("GROQ_API_KEY"), http)
     of "anthropic":

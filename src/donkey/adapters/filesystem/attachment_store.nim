@@ -4,11 +4,10 @@
 ## symlinked parents/final names are rejected, and files are private on POSIX.
 
 import std/[os, strutils]
-import results
+import ../../core/pipeops
 import ../../core/media_download
-import ../../ports/channel
 import ../../ports/attachment_store
-import ./fs_paths
+import ./paths as fsPaths
 
 func sanitizeAttachmentName*(raw: string): string =
   ## Keeps the user-facing name but removes anything that could escape the
@@ -31,34 +30,16 @@ func sanitizeAttachmentName*(raw: string): string =
     return "attachment"
   cleaned
 
-proc secureDir(path: string): Result[void, string] =
-  try:
-    createDir(path)
-    when defined(posix):
-      setFilePermissions(path, {fpUserRead, fpUserWrite, fpUserExec})
-    ok()
-  except CatchableError as e:
-    err(e.msg)
-
-proc secureFile(path: string): Result[void, string] =
-  try:
-    when defined(posix):
-      if fileExists(path):
-        setFilePermissions(path, {fpUserRead, fpUserWrite})
-    ok()
-  except CatchableError as e:
-    err(e.msg)
-
 proc saveAttachment(directory, fileName: string; data: seq[byte]):
                     Result[SavedAttachment, string] =
   let paddock = parentDir(directory)
   if paddock.len > 0:
     if symlinkExists(paddock):
       return err("paddock path is a symlink: " & paddock)
-    ? secureDir(paddock)
+    ? fsPaths.secureDir(paddock)
   if symlinkExists(directory):
     return err("attachments path is a symlink: " & directory)
-  ? secureDir(directory)
+  ? fsPaths.secureDir(directory)
   var download = FileDownload(
     fileName: sanitizeAttachmentName(fileName),
     fileSize: data.len.int64,
@@ -66,14 +47,14 @@ proc saveAttachment(directory, fileName: string; data: seq[byte]):
     data: data,
   )
   let saved = ? download.saveFileToDisk(directory)
-  let realDir = ? canonicalPath(directory)
-  let realFile = ? canonicalPath(saved)
+  let realDir = ? fsPaths.canonicalPath(directory)
+  let realFile = ? fsPaths.canonicalPath(saved)
   if realFile != realDir and not realFile.startsWith(realDir & $DirSep):
     return err("attachment escaped the paddock: " & saved)
-  ? secureFile(saved)
+  ? fsPaths.secureFile(saved)
   let slash = saved.rfind('/')
   let name = if slash >= 0: saved[slash + 1 .. ^1] else: saved
-  ok(SavedAttachment(fileName: name, absPath: saved))
+  ok(SavedAttachment(fileName: name, absPath: realFile))
 
 proc newAttachmentStore*(): AttachmentStorePort =
   AttachmentStorePort(

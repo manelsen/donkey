@@ -4,6 +4,7 @@ when defined(posix):
 import chronos
 import chronos/asyncsync
 import results
+import donkey/adapters/filesystem/fs_adapter
 import donkey/app/native_tools
 import donkey/app/session_state
 import donkey/core/log
@@ -45,6 +46,7 @@ suite "memory_ingest tool":
       uid: UserId("u1"),
       channel: ckTelegram,
       paddockDir: TestRoot,
+      fs: newFsAdapter(),
       memory: mem,
       log: ingestLog,
     )
@@ -69,6 +71,7 @@ suite "memory_ingest tool":
       uid: UserId("u1"),
       channel: ckTelegram,
       paddockDir: TestRoot,
+      fs: newFsAdapter(),
       memory: mem,
       log: ingestLog,
     )
@@ -83,6 +86,7 @@ suite "memory_ingest tool":
       uid: UserId("u1"),
       channel: ckTelegram,
       paddockDir: TestRoot,
+      fs: newFsAdapter(),
       memory: mem,
       log: ingestLog,
     )
@@ -98,6 +102,7 @@ suite "memory_ingest tool":
       uid: UserId("u1"),
       channel: ckTelegram,
       paddockDir: TestRoot,
+      fs: newFsAdapter(),
       memory: mem,
       log: ingestLog,
     )
@@ -112,6 +117,7 @@ suite "memory_ingest tool":
       uid: UserId("u1"),
       channel: ckTelegram,
       paddockDir: TestRoot,
+      fs: newFsAdapter(),
       memory: mem,
       log: ingestLog,
     )
@@ -133,6 +139,7 @@ suite "memory_ingest tool":
         uid: UserId("u1"),
         channel: ckTelegram,
         paddockDir: TestRoot,
+        fs: newFsAdapter(),
         memory: mem,
         log: ingestLog,
       )
@@ -150,6 +157,7 @@ suite "memory_ingest tool":
         uid: UserId("u1"),
         channel: ckTelegram,
         paddockDir: TestRoot,
+        fs: newFsAdapter(),
         memory: mem,
         log: ingestLog,
       )
@@ -170,6 +178,7 @@ suite "memory_ingest tool":
           uid: UserId("u1"),
           channel: ckTelegram,
           paddockDir: TestRoot,
+          fs: newFsAdapter(),
           memory: mem,
           log: ingestLog,
         )

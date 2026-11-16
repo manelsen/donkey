@@ -26,6 +26,7 @@ import adapters/memory/multigraph_runtime
 import ports/ipc
 import ports/provider
 import adapters/ipc/client as ipcClient
+import adapters/filesystem/fs_adapter
 import domain/message
 
 # ── ctl user commands ──────────────────────────────────────────────────────────
@@ -524,7 +525,8 @@ proc dispatchCtl*(cfg: DonkeyConfig;
       let uid = UserId(args[3])
       let mem = makeMagmaMemory()
       let ingested = ingestMemoryFile(
-        mem.toRuntimePort(), uid, mem.paddockDir(uid), args[4])
+        mem.toRuntimePort(), uid, mem.paddockDir(uid), args[4],
+        fs = newFsAdapter())
       if ingested.isErr:
         echo "ingest error: " & ingested.error
         return 1
