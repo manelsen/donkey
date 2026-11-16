@@ -23,7 +23,7 @@
 ##   orchestrator flushes accumulated tokens to the global outbox as an
 ##   OutboundMessage with isPartial=true. The final flush has isPartial=false.
 
-import std/os
+import std/[os, strutils]
 import chronos
 import chronos/asyncsync
 import ../core/pipeops
@@ -64,6 +64,12 @@ export tool_loop_runtime
 export prompt_building
 
 const DebounceWindowMs* = 1_200
+
+func suppressToolProgressFromEnv*(): bool =
+  ## Hides the `🔧 tool [n]` progress messages for deployments that only want
+  ## the final answer and approval prompts. Set DONKEY_SUPPRESS_TOOL_PROGRESS=1.
+  getEnv("DONKEY_SUPPRESS_TOOL_PROGRESS").strip.toLowerAscii() in
+    ["1", "true", "yes", "on"]
 
 # ── Orchestrator state and pipe ops ────────────────────────────────────────────
 
@@ -430,11 +436,12 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
            $turnSetup.userText.len & "|")
   let suppressHeartbeatProgress = msg.taskKind == tkHeartbeat
   let suppressQuietHeartbeatFinal = msg.taskKind == tkHeartbeat
+  let suppressProgress = suppressHeartbeatProgress or suppressToolProgressFromEnv()
   let loopResult = await runToolLoop(
     globalOutbox, toolInbox, toolOut, memory, completeFn, errorExplainFn, streamFn, turnSetup.nativeCtx,
     state, history, turnSetup.uid, msg.channel, msg.replyTo, msg.id, turnSetup.streamId,
     systemBase, context, tools, providerLabel,
-    suppressHeartbeatProgress, result.debugMode, result.showReasoning, log,
+    suppressProgress, result.debugMode, result.showReasoning, log,
     asyncCompleteFn)
   result =
     result |>->

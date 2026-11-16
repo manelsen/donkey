@@ -1230,3 +1230,15 @@ suite "agent name onboarding":
     check reply.text == "pong"
     check not reply.text.contains("Como quer definir minha personalidade")
     check not reply.text.contains("Qual será meu nome?")
+
+suite "tool progress preference":
+
+  test "suppress tool progress env values":
+    for value in ["1", "true", "YES", "on"]:
+      putEnv("DONKEY_SUPPRESS_TOOL_PROGRESS", value)
+      check suppressToolProgressFromEnv()
+    for value in ["0", "false", "off", ""]:
+      putEnv("DONKEY_SUPPRESS_TOOL_PROGRESS", value)
+      check not suppressToolProgressFromEnv()
+    delEnv("DONKEY_SUPPRESS_TOOL_PROGRESS")
+    check not suppressToolProgressFromEnv()
