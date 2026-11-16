@@ -393,7 +393,27 @@ proc validateSandboxPolicy*(cfg: DonkeyConfig;
     return err("Security Error: sandbox.read_only_rootfs=false is only allowed in --dev-mode")
   ok()
 
-proc sandboxAvailabilityResult*(cfg: DonkeyConfig): Result[string, string] {.gcsafe, raises: [].} =
+proc probeRuntimeInfo(runtimePath: string; timeoutMs: int):
+                     tuple[output: string, code: int] {.gcsafe, raises: [].} =
+  var p: Process
+  try:
+    p = startProcess(runtimePath, args = @["info"],
+                     options = {poStdErrToStdOut})
+    let code = p.waitForExit(timeout = timeoutMs)
+    let output = p.outputStream.readAll()
+    (output, code)
+  except CatchableError as e:
+    ("Error: " & e.msg, -1)
+  finally:
+    if p != nil:
+      try:
+        p.close()
+      except CatchableError:
+        discard
+
+proc sandboxAvailabilityResult*(cfg: DonkeyConfig;
+                                timeoutMs = 3000): Result[string, string]
+                                {.gcsafe, raises: [].} =
   if cfg.invalidSandboxMode.len > 0:
     return err("sandbox mode '" & cfg.invalidSandboxMode & "' is invalid; use 'oci', 'wasm', or 'none'")
   case cfg.sandboxMode
@@ -404,20 +424,17 @@ proc sandboxAvailabilityResult*(cfg: DonkeyConfig): Result[string, string] {.gcs
     if runtimePath.len == 0:
       err("OCI runtime '" & cfg.sandboxRuntimeCmd & "' not found in PATH")
     else:
-      try:
-        let (output, code) = execCmdEx(
-          runtimePath.quoteShell & " info",
-          options = {poStdErrToStdOut})
-        if code == 0:
-          ok("runtime=" & cfg.sandboxRuntimeCmd)
-        elif isDockerPermissionError(output, cfg.sandboxRuntimeCmd):
-          err(dockerPermissionHint(cfg.sandboxRuntimeCmd))
-        else:
-          let detail = clipUtf8(output.strip, 200)
-          err("OCI runtime '" & cfg.sandboxRuntimeCmd &
-              "' is installed but not reachable: " & detail)
-      except CatchableError as e:
-        err("OCI runtime probe failed: " & e.msg)
+      let (output, code) = probeRuntimeInfo(runtimePath, timeoutMs)
+      if code == 0:
+        ok("runtime=" & cfg.sandboxRuntimeCmd)
+      elif isDockerPermissionError(output, cfg.sandboxRuntimeCmd):
+        err(dockerPermissionHint(cfg.sandboxRuntimeCmd))
+      else:
+        let detail =
+          if output.strip.len > 0: clipUtf8(output.strip, 200)
+          else: "probe failed or timed out"
+        err("OCI runtime '" & cfg.sandboxRuntimeCmd &
+            "' is installed but not reachable: " & detail)
   of smWasm:
     let wasmtimePath = findExeSafe("wasmtime")
     if wasmtimePath.len == 0:

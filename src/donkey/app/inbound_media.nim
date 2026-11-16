@@ -92,8 +92,10 @@ proc applyInboundAttachment*(msg: var InboundMessage;
       return err(saveResult.error)
 
     let absPath = saveResult.value
-    let realAttachments = canonicalPath(attachmentsDir)
-    let realSaved = canonicalPath(absPath)
+    let realAttachments = canonicalPath(attachmentsDir).valueOr:
+      return err("cannot resolve attachments directory: " & error)
+    let realSaved = canonicalPath(absPath).valueOr:
+      return err("cannot resolve saved attachment: " & error)
     if realSaved != realAttachments and
        not realSaved.startsWith(realAttachments & $DirSep):
       return err("attachment escaped the paddock: " & absPath)

@@ -1,4 +1,4 @@
-import std/[os, strtabs, strutils, unittest]
+import std/[os, strtabs, strutils, times, unittest]
 import results
 import donkey/app/sandbox
 import donkey/config/types
@@ -58,3 +58,16 @@ suite "sandbox docker permission hints":
     let res = sandboxAvailabilityResult(cfg)
     check res.isOk
     check "runtime=podman" in res.get()
+
+  test "sandboxAvailabilityResult times out a hung probe":
+    makeFakeRuntime("docker", "exec sleep 10")
+    let oldPath = getEnv("PATH")
+    putEnv("PATH", FakeBin & ":" & oldPath)
+    defer:
+      putEnv("PATH", oldPath)
+      removeDir(FakeBin)
+    let cfg = DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker")
+    let started = epochTime()
+    let res = sandboxAvailabilityResult(cfg, timeoutMs = 50)
+    check res.isErr
+    check epochTime() - started < 2.0

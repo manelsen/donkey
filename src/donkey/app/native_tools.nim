@@ -247,30 +247,41 @@ proc logToolPathFailure(log: Logger;
            " resolved=" & (if resolvedPath.len > 0: resolvedPath else: "<empty>") &
            " reason=" & reason)
 
-proc canonicalExistingPath(path: string): string =
+proc canonicalExistingPath(path: string): Result[string, string] {.gcsafe, raises: [].} =
   ## Resolves symlinks in the nearest existing ancestor and reattaches the
-  ## non-existing suffix. This prevents a workspace symlink from redirecting
-  ## a tool write/read outside the paddock.
+  ## non-existing suffix. A dangling or unresolvable symlink is an error: the
+  ## lexical fallback would let a write follow it outside the paddock.
   try:
     var current = absolutePath(path)
     var suffix: seq[string] = @[]
     while current.len > 0:
-      if fileExists(current) or dirExists(current) or symlinkExists(current):
-        var base = canonicalPath(current)
+      if symlinkExists(current):
+        let resolved = canonicalPath(current)
+        if resolved.isErr:
+          return err("unresolvable symlink: " & current)
+        var base = resolved.get()
         for i in countdown(suffix.high, 0):
           base = base / suffix[i]
-        return base
+        return ok(base)
+      if fileExists(current) or dirExists(current):
+        let resolved = canonicalPath(current)
+        if resolved.isErr:
+          return err("cannot resolve path: " & current)
+        var base = resolved.get()
+        for i in countdown(suffix.high, 0):
+          base = base / suffix[i]
+        return ok(base)
       let parent = parentDir(current)
       if parent.len == 0 or parent == current:
         break
       suffix.add(extractFilename(current))
       current = parent
-  except CatchableError:
-    discard
+  except CatchableError as e:
+    return err(e.msg)
   try:
-    absolutePath(path)
-  except CatchableError:
-    path
+    ok(absolutePath(path))
+  except CatchableError as e:
+    err(e.msg)
 
 proc resolvedToolPath(path, paddockDir: string;
                       log: Logger = Logger();
@@ -283,8 +294,10 @@ proc resolvedToolPath(path, paddockDir: string;
   if not inPaddock(resolvedPath, paddockDir):
     logToolPathFailure(log, toolName, path, paddockDir, resolvedPath, "outside_paddock")
     return err("Error: path outside paddock: " & path)
-  let realPaddock = canonicalExistingPath(paddockDir)
-  let realTarget = canonicalExistingPath(resolvedPath)
+  let realPaddock = canonicalExistingPath(paddockDir).valueOr:
+    return err("Error: cannot resolve paddock path: " & error)
+  let realTarget = canonicalExistingPath(resolvedPath).valueOr:
+    return err("Error: cannot resolve path safely: " & error)
   if realTarget != realPaddock and
      not realTarget.startsWith(realPaddock & $DirSep):
     logToolPathFailure(log, toolName, path, paddockDir, realTarget, "outside_paddock_symlink")
@@ -1387,15 +1400,11 @@ func approvalSummary(toolName: string; j: JsonNode): string =
   ## payloads; bash/execute_code remain full-display-only.
   const MaxApprovalSummaryChars = 1500
   if largeWritesSummaryMode():
-    if toolName == FsWriteToolName:
-      let effective = effectiveWriteContent(j)
-      if effective.content.len > MaxApprovalSummaryChars:
-        return structuredWriteSummary(j)
-    if toolName == TextReplaceToolName:
-      let findLen = j.getOrDefault("find").getStr("").len
-      let replaceLen = j.getOrDefault("replace").getStr("").len
-      if findLen + replaceLen > MaxApprovalSummaryChars:
-        return structuredReplaceSummary(j)
+    let serializedLen = ($j).len
+    if toolName == FsWriteToolName and serializedLen > MaxApprovalSummaryChars:
+      return structuredWriteSummary(j)
+    if toolName == TextReplaceToolName and serializedLen > MaxApprovalSummaryChars:
+      return structuredReplaceSummary(j)
   if toolName == ExecuteCodeToolName:
     let languageNode = j.getOrDefault("language")
     let language =

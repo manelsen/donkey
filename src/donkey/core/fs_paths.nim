@@ -5,17 +5,22 @@
 ## logic when the target does not exist yet.
 
 import std/os
+import results
 when defined(posix):
   import std/posix
 
-proc canonicalPath*(path: string): string =
-  ## Resolves symlinks when `path` exists; otherwise returns an absolute path.
+proc canonicalPath*(path: string): Result[string, string] =
+  ## Resolves symlinks when `path` exists. Returns an error when the path
+  ## exists as an unresolvable/dangling symlink; callers must not fall back to
+  ## the lexical path in that case.
   when defined(posix):
     var buffer = newString(4096)
     let resolved = posix.realpath(path.cstring, buffer.cstring)
     if resolved != nil:
-      return $resolved
+      return ok($resolved)
+    if symlinkExists(path):
+      return err("cannot resolve symlink: " & path)
   try:
-    absolutePath(path)
-  except CatchableError:
-    path
+    ok(absolutePath(path))
+  except CatchableError as e:
+    err(e.msg)

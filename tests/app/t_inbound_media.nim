@@ -96,3 +96,19 @@ suite "inbound media":
         TestRoot, "notes.md", "text/markdown")
       check res.isErr
       check not fileExists(outside / "notes.md")
+
+  when defined(posix):
+    test "does not write through a dangling attachment filename":
+      let attachments = TestRoot / "attachments"
+      createDir(attachments)
+      let outside = TestRoot / "outside-target.md"
+      removeFile(outside)
+      createSymlink(outside, attachments / "notes.md")
+      var msg = InboundMessage()
+      let res = applyInboundAttachment(
+        msg, downloadOf("file.md", "text/markdown", "data"),
+        TestRoot, "notes.md", "text/markdown")
+      check res.isOk
+      check res.get().relPath == "attachments/notes_1.md"
+      check fileExists(attachments / "notes_1.md")
+      check not fileExists(outside)

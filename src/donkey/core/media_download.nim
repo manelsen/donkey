@@ -77,7 +77,9 @@ proc saveFileToDisk*(download: var FileDownload; directory: string): Result[stri
     # Ensure unique file name
     var finalPath = directory / download.fileName
     var counter = 1
-    while fileExists(finalPath):
+    ## A dangling symlink is not reported by fileExists, but writing through it
+    ## would follow the link target. Treat it as an occupied name.
+    while fileExists(finalPath) or symlinkExists(finalPath):
       let nameParts = download.fileName.split('.')
       if nameParts.len > 1:
         let ext = nameParts[^1]

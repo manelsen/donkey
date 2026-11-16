@@ -1,4 +1,6 @@
 import std/[json, os, strutils, unittest]
+when defined(posix):
+  import std/posix
 import chronos
 import chronos/asyncsync
 import results
@@ -120,9 +122,11 @@ suite "memory_ingest tool":
 
   when defined(posix):
     test "rejects a symlink that escapes the paddock":
-      let outside = "/tmp/donkey_memory_ingest_outside.txt"
+      let outsideDir = TestRoot & "_outside"
+      createDir(outsideDir)
+      let outside = outsideDir / "secret.txt"
       writeFile(outside, "secret")
-      defer: removeFile(outside)
+      defer: removeDir(outsideDir)
       createSymlink(outside, TestRoot / "link.txt")
       let mem = MemoryRuntimePort()
       var ctx = NativeCtx(
@@ -137,11 +141,10 @@ suite "memory_ingest tool":
       check res.resultKind == trkOperationalError
       check "symlink" in res.text
 
-  when defined(posix):
-    test "unreadable file returns an operational error":
-      let path = TestRoot / "secret.txt"
-      writeFile(path, "secret")
-      setFilePermissions(path, {})
+    test "rejects a dangling symlink":
+      let outside = TestRoot & "_missing_outside.txt"
+      removeFile(outside)
+      createSymlink(outside, TestRoot / "dangling.txt")
       let mem = MemoryRuntimePort()
       var ctx = NativeCtx(
         uid: UserId("u1"),
@@ -150,7 +153,27 @@ suite "memory_ingest tool":
         memory: mem,
         log: ingestLog,
       )
-      let res = waitFor runIngest(ctx, """{"path":"secret.txt"}""")
+      let res = waitFor runIngest(ctx, """{"path":"dangling.txt"}""")
       check res.handled
       check res.resultKind == trkOperationalError
-      check "read" in res.text or "inspect" in res.text
+      check "symlink" in res.text or "resolve" in res.text
+
+    test "unreadable file returns an operational error":
+      if getuid() == 0:
+        check true
+      else:
+        let path = TestRoot / "secret.txt"
+        writeFile(path, "secret")
+        setFilePermissions(path, {})
+        let mem = MemoryRuntimePort()
+        var ctx = NativeCtx(
+          uid: UserId("u1"),
+          channel: ckTelegram,
+          paddockDir: TestRoot,
+          memory: mem,
+          log: ingestLog,
+        )
+        let res = waitFor runIngest(ctx, """{"path":"secret.txt"}""")
+        check res.handled
+        check res.resultKind == trkOperationalError
+        check "read" in res.text or "inspect" in res.text

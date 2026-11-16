@@ -476,43 +476,50 @@ proc setUserFieldText*(content, label, value: string): string =
 proc isRevokedUserMd*(content: string): bool =
   content.parseUserField("Access").toLowerAscii() == "revoked"
 
-proc secureDir(path: string): bool =
+proc secureDir(path: string): Result[void, string] =
   try:
     createDir(path)
     when defined(posix):
       setFilePermissions(path, {fpUserRead, fpUserWrite, fpUserExec})
-    true
-  except CatchableError:
-    false
+    ok()
+  except CatchableError as e:
+    err(e.msg)
 
-proc secureFile(path: string): bool =
+proc secureFile(path: string): Result[void, string] =
   try:
     when defined(posix):
       if fileExists(path):
         setFilePermissions(path, {fpUserRead, fpUserWrite})
-    true
-  except CatchableError:
-    false
+    ok()
+  except CatchableError as e:
+    err(e.msg)
 
 proc securePaddockTree(a: MdFileAdapter; userId: UserId) =
   ## One-time migration for paddocks created before permissions were tightened.
   ## Best effort: a permissions failure must not make the paddock unreadable.
+  ## The marker is only written when every managed file was protected, so a
+  ## later load retries after a partial failure.
   when defined(posix):
     try:
-      let marker = a.paddockDir(userId) / ".permissions_v1"
+      let marker = a.paddockDir(userId) / ".permissions_v2"
       if fileExists(marker):
         return
+      var allOk = true
       for path in [a.userMdPath(userId), a.memoryMdPath(userId),
                    a.preferencesMdPath(userId), a.heartbeatMdPath(userId)]:
-        discard secureFile(path)
+        if secureFile(path).isErr:
+          allOk = false
       for dirName in ["sessions", "attachments"]:
         let dir = a.paddockDir(userId) / dirName
         if dirExists(dir):
           for kind, path in walkDir(dir):
             if kind == pcFile:
-              discard secureFile(path)
-      writeFile(marker, "permissions v1\n")
-      discard secureFile(marker)
+              if secureFile(path).isErr:
+                allOk = false
+      if allOk:
+        writeFile(marker, "permissions v1\n")
+        if secureFile(marker).isErr:
+          removeFile(marker)
     except CatchableError:
       discard
 
