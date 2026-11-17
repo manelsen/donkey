@@ -12,6 +12,7 @@ import donkey/domain/message
 import donkey/domain/personality
 import donkey/domain/more_tools
 import donkey/core/log
+import donkey/core/debounce
 import donkey/core/pipeops
 import donkey/core/tooling/tool_loop
 import donkey/adapters/http/std_http
@@ -1355,3 +1356,49 @@ suite "tool progress preference":
       check not suppressToolProgressFromEnv()
     delEnv("DONKEY_SUPPRESS_TOOL_PROGRESS")
     check not suppressToolProgressFromEnv()
+
+
+suite "adaptive debounce collector":
+
+  proc fastCfg(): DebounceConfig =
+    DebounceConfig(minWindowMs: 60, maxWindowMs: 400,
+                   perPartExtMs: 40, shortMsgThreshold: 40, shortExtMs: 40)
+
+  test "queued fragments merge into a single turn":
+    proc doTest(): Future[string] {.async.} =
+      let inbox = newAsyncQueue[AgentMessage]()
+      await inbox.put(newTaskMsg("a", tkUserMsg, "u", "parte um", ckTelegram, "1"))
+      await inbox.put(newTaskMsg("b", tkUserMsg, "u", "parte dois", ckTelegram, "1"))
+      await inbox.put(newTaskMsg("c", tkUserMsg, "u", "parte tres", ckTelegram, "1"))
+      let merged = await collectWithDebounce(inbox, fastCfg())
+      decodeUserPayload(merged.payload).text
+
+    let text = waitFor doTest()
+    check "parte um" in text
+    check "parte dois" in text
+    check "parte tres" in text
+
+  test "a fragment after the window becomes a separate turn":
+    proc doTest(): Future[(string, string)] {.async.} =
+      let inbox = newAsyncQueue[AgentMessage]()
+      await inbox.put(newTaskMsg("a", tkUserMsg, "u", "primeiro", ckTelegram, "1"))
+      let collectFut = collectWithDebounce(inbox, fastCfg())
+      await sleepAsync(chronos.milliseconds(120))
+      await inbox.put(newTaskMsg("b", tkUserMsg, "u", "segundo", ckTelegram, "1"))
+      let first = await collectFut
+      let second = await collectWithDebounce(inbox, fastCfg())
+      (decodeUserPayload(first.payload).text, decodeUserPayload(second.payload).text)
+
+    let (first, second) = waitFor doTest()
+    check first == "primeiro"
+    check second == "segundo"
+
+  test "cancel wins over buffered fragments":
+    proc doTest(): Future[AgentMessageKind] {.async.} =
+      let inbox = newAsyncQueue[AgentMessage]()
+      await inbox.put(newTaskMsg("a", tkUserMsg, "u", "ola", ckTelegram, "1"))
+      await inbox.put(newCancelMsg())
+      let msg = await collectWithDebounce(inbox, fastCfg())
+      msg.kind
+
+    check (waitFor doTest()) == amkCancel

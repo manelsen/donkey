@@ -27,6 +27,7 @@ import std/[os, strutils]
 import chronos
 import chronos/asyncsync
 import ../core/pipeops
+import ../core/debounce
 import ../core/log
 import ../core/onboarding/onboarding
 import ../core/agent_events
@@ -66,7 +67,31 @@ export onboarding_runtime
 export tool_loop_runtime
 export prompt_building
 
-const DebounceWindowMs* = 1_200
+const DebounceWindowMs* = MinWindowMs
+  ## Base window kept for callers that do not pass a `DebounceConfig`.
+
+proc debounceConfigFromEnv*(): DebounceConfig =
+  ## Reads DONKEY_DEBOUNCE_* overrides. Invalid or non-positive values fall
+  ## back to the compiled policy, so a bad env cannot disable debouncing.
+  proc posInt(name: string; fallback: int64): int64 =
+    let raw = getEnv(name).strip
+    if raw.len == 0:
+      return fallback
+    let parsed = try:
+      raw.parseInt
+    except ValueError:
+      return fallback
+    if parsed <= 0: fallback else: parsed
+
+  result = defaultDebounceConfig()
+  result.minWindowMs = posInt("DONKEY_DEBOUNCE_MIN_MS", result.minWindowMs)
+  result.maxWindowMs = posInt("DONKEY_DEBOUNCE_MAX_MS", result.maxWindowMs)
+  result.perPartExtMs = posInt("DONKEY_DEBOUNCE_PER_PART_MS", result.perPartExtMs)
+  result.shortMsgThreshold = posInt(
+    "DONKEY_DEBOUNCE_SHORT_MSG_CHARS", result.shortMsgThreshold.int64).int
+  result.shortExtMs = posInt("DONKEY_DEBOUNCE_SHORT_EXT_MS", result.shortExtMs)
+  if result.maxWindowMs < result.minWindowMs:
+    result.maxWindowMs = result.minWindowMs
 
 func suppressToolProgressFromEnv*(): bool =
   ## Hides the `🔧 tool [n]` progress messages for deployments that only want
@@ -628,25 +653,35 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
 
 # ── Debounce collector ─────────────────────────────────────────────────────────
 
-proc collectWithDebounce(inbox: AsyncQueue[AgentMessage];
-                         windowMs: int): Future[AgentMessage] {.async.} =
-  ## Waits for the first amkTask, then accumulates more within windowMs.
-  ## Returns a single AgentMessage with all payloads joined by "\n\n".
-  ## Returns amkCancel immediately if cancel arrives at any point.
+proc collectWithDebounce*(inbox: AsyncQueue[AgentMessage];
+                          cfg: DebounceConfig = debounceConfigFromEnv()):
+                          Future[AgentMessage] {.async.} =
+  ## Waits for the first amkTask, then accumulates fragments while they keep
+  ## arriving inside the adaptive window: more parts (or a short last part)
+  ## hold the window open longer, up to `maxWindowMs`. Returns one AgentMessage
+  ## with all payloads joined by `mergeUserPayloads`. `amkCancel` always wins.
   let first = await inbox.get()
   if first.kind != amkTask: return first   ## cancel / stray — pass through
 
-  var texts   = @[first.payload]
-  var latest  = first
+  var texts = @[first.payload]
+  var latest = first
+  var state = initDebounce(first.payload, nowMonoMs())
 
   while true:
+    ## Recompute the remaining wait after every part: the adaptive window can
+    ## grow mid-burst, so a fixed timeout would close too early.
+    let lastTextLen = decodeUserPayload(state.parts[^1]).text.len
+    let win = windowMs(state.parts.len, lastTextLen, cfg)
+    let elapsed = nowMonoMs() - state.lastMs
+    let waitMs = max(1'i64, win - elapsed)
     let nextFut = inbox.get()
-    if not (await withTimeout(nextFut, milliseconds(windowMs))):
-      break   ## timeout — debounce window closed
+    if not (await withTimeout(nextFut, milliseconds(waitMs.int))):
+      break   ## adaptive window closed
     let next = nextFut.read()
     case next.kind
     of amkCancel: return next          ## cancel wins
     of amkTask:
+      state = appendFragment(next.payload, nowMonoMs(), state)
       texts.add(next.payload)
       latest = next
     else: discard
@@ -710,7 +745,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
 
   try:
     while true:
-      let msg = await collectWithDebounce(inbox, DebounceWindowMs)
+      let msg = await collectWithDebounce(inbox)
       let actorResult = await handleActorMessage(
         inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
         completeFn, errorExplainFn, http, fs, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
