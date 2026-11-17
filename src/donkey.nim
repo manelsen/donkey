@@ -30,6 +30,7 @@ import donkey/adapters/http/std_http
 import donkey/adapters/channel/telegram
 import donkey/adapters/channel/outbound_builder
 import donkey/app/inbound_gate
+import donkey/core/security/dm_policy
 import donkey/app/inbound_media
 import donkey/adapters/filesystem/attachment_store
 import donkey/adapters/filesystem/fs_adapter
@@ -1800,6 +1801,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ctx.runtime.sm.configureDmPolicy(
     cfg.dmPolicy,
     proc(userId: UserId): bool {.gcsafe.} = memory.isDmAllowed(userId))
+  ctx.runtime.sm.configureGroupGate(GroupGate(
+    allowedChats: parseChatIdList(getEnv(EnvTelegramAllowedGroups))))
   let pairingStore = newPairingStore(cfg.home / "state" / "pairings.json")
   ctx.runtime.sm.pairingRequest =
     proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =

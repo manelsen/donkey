@@ -33,8 +33,8 @@ comportamento (não por commit).
 
 | Situação | Casos |
 |---|---|
-| COBERTO | 36 |
-| PARCIAL | 1 |
+| COBERTO | 37 |
+| PARCIAL | 0 |
 | AUSENTE | 0 |
 
 | Prioridade | Casos |
@@ -90,9 +90,9 @@ Nenhum.
 
 ## Casos pendentes
 
-Dos 37 casos, 36 estão COBERTO. Resta **1 caso PARCIAL**: TG-016 (recorte de
-allowlist por grupo), que pertence ao balde de diferenças de arquitetura e não
-aos baldes 1 e 3.
+Não há caso PARCIAL ou AUSENTE: os 37 estão COBERTO. O último era TG-016
+(allowlist por grupo), fechado com o `GroupGate` aplicado antes de qualquer
+mint de identidade, pedido de pairing ou redenção de link code.
 
 ## Quality gates finais
 

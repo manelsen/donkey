@@ -26,13 +26,13 @@ polimento ou já coberto.
 | Categoria | Commits no hermes | Casos | COBERTO | PARCIAL | AUSENTE |
 |---|---|---|---|---|---|
 | NET | 120 | 5 | 5 | 0 | 0 |
-| INBOUND | 118 | 9 | 8 | 1 | 0 |
+| INBOUND | 118 | 9 | 9 | 0 | 0 |
 | FORMAT | 106 | 8 | 8 | 0 | 0 |
 | TOPIC_API | 87 | 2 | 2 | 0 | 0 |
 | MEDIA | 65 | 5 | 5 | 0 | 0 |
 | RATE | 29 | 4 | 4 | 0 | 0 |
 | EDIT | 26 | 4 | 4 | 0 | 0 |
-| **Total** | **718** | **37** | **36** | **1** | **0** |
+| **Total** | **718** | **37** | **37** | **0** | **0** |
 
 ## Casos
 
@@ -223,8 +223,8 @@ polimento ou já coberto.
 - **Comportamento esperado do cliente:** Aplicar a política de DM/allowlist antes de criar sessão.
 - **Fontes no hermes:** `89d32052ed`, `db50af910b`, `c648ecdca5`
 - **Testes no hermes:** `tests/gateway/test_telegram_group_gating.py`
-- **Situação no Donkey:** PARCIAL
-- **Evidência no Donkey:** `src/donkey/core/security/dm_policy.nim:18` e `src/donkey/app/session_ingress.nim` (checagem no ingress)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/core/security/dm_policy.nim` (`GroupGate`), `src/donkey/app/inbound_gate.nim` (recusa antes de mint/pairing/link code), `src/donkey/adapters/channel/telegram_runtime.nim` (passa `isGroup`/`chatId`) e `tests/app/t_inbound_gate.nim`
 - **Prioridade:** P2
 
 
