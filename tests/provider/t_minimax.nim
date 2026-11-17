@@ -100,3 +100,14 @@ suite "MiniMaxAdapter parseResponse":
     let r = parseMiniMaxResponse(j)
     check r.isErr
     check "Invalid MiniMax response" in r.error
+
+suite "MiniMaxAdapter image content":
+
+  test "an image message becomes a content array":
+    var h = newHistory()
+    h.addUserWithImage("what is this?", "data:image/png;base64,QUJD")
+    let body = newMiniMaxAdapter("k").buildBody(
+      CompletionRequest(system: "", messages: h))
+    let content = body["messages"][0]["content"]
+    check content.kind == JArray
+    check content[1]["image_url"]["url"].getStr() == "data:image/png;base64,QUJD"

@@ -17,6 +17,7 @@
 
 import std/[httpclient, json, streams, strutils]
 import ../../domain/message
+import ../../domain/providers/media_pure
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/json_helpers
@@ -76,6 +77,20 @@ proc toolResultBlock(msg: ChatMessage): JsonNode =
     "content": msg.text,
   }
 
+func imageBlock(imageUrl: string): JsonNode =
+  ## Anthropic accepts a base64 image source or an http(s) URL source. A data
+  ## URL that does not parse is dropped so the turn keeps its text.
+  if imageUrl.isHttpUrl:
+    return %* {"type": "image", "source": {"type": "url", "url": imageUrl}}
+  let parsed = parseDataUrl(imageUrl)
+  if parsed.isOk:
+    return %* {"type": "image", "source": {
+      "type": "base64",
+      "media_type": parsed.get().mimeType,
+      "data": parsed.get().data,
+    }}
+  nil
+
 proc toJson(msg: ChatMessage): JsonNode =
   ## Anthropic tool results are represented as a user turn with tool_result blocks.
   if msg.role == "tool":
@@ -91,6 +106,15 @@ proc toJson(msg: ChatMessage): JsonNode =
     for tc in msg.toolCalls:
       content.add(toolUseBlock(tc))
     return %* {"role": msg.role, "content": content}
+
+  if msg.imageUrl.len > 0:
+    let image = imageBlock(msg.imageUrl)
+    if not image.isNil:
+      var content = newJArray()
+      if msg.text.len > 0:
+        content.add(textBlock(msg.text))
+      content.add(image)
+      return %* {"role": msg.role, "content": content}
 
   %* {"role": msg.role, "content": msg.text}
 

@@ -88,6 +88,22 @@ When a session has no explicit provider preference:
 This means you can keep one preferred provider and still configure secondary
 keys such as OpenRouter or Gemini for resilience.
 
+## Image Input
+
+`inspect_image` reads a local file, base64-encodes it as a data URL and sends
+it to the active provider. The same path serves any turn whose message carries
+an `imageUrl`.
+
+| Provider family | Envelope |
+|---|---|
+| Anthropic | `image` block with a `base64` source (data URL) or a `url` source (http/https) |
+| Gemini | `inlineData` part with `mimeType` + base64 `data` |
+| OpenRouter, OpenAI, DeepSeek, Zhipu, MiniMax | OpenAI-compatible `image_url` part |
+
+Only `image/jpeg`, `image/png`, `image/gif` and `image/webp` are accepted
+inline. A URL the provider cannot fetch (Gemini does not fetch arbitrary
+http URLs) or a malformed data URL is dropped so the turn keeps its text.
+
 ## Provider Notes
 
 ### ZAI Coding

@@ -24,6 +24,7 @@ type
   OpenAIMessage* = object
     role*:       string
     content*:    string
+    imageUrl*:   string    ## data URL or http(s) URL for a vision turn
     name*:       string    ## optional; for function responses
     toolCalls*:  seq[OpenAIToolCall]
     toolCallId*: string    ## for tool role messages
@@ -78,8 +79,9 @@ func toolCallToOpenAI*(tc: ToolCallRequest): OpenAIToolCall =
 
 func messageToOpenAI*(msg: ChatMessage): OpenAIMessage =
   var om = OpenAIMessage(
-    role:    msg.role,
-    content: msg.text,
+    role:     msg.role,
+    content:  msg.text,
+    imageUrl: msg.imageUrl,
   )
   if msg.toolCalls.len > 0:
     for tc in msg.toolCalls:
@@ -92,7 +94,15 @@ func messageToOpenAI*(msg: ChatMessage): OpenAIMessage =
 func openaiMessageToJson*(om: OpenAIMessage): JsonNode =
   result = newJObject()
   result["role"] = % om.role
-  if om.content.len > 0:
+  if om.imageUrl.len > 0:
+    ## Vision turns carry an array of parts; a data URL is passed through as
+    ## `image_url` (the OpenAI-compatible shape). The text part is optional.
+    var content = newJArray()
+    if om.content.len > 0:
+      content.add(%* {"type": "text", "text": om.content})
+    content.add(%* {"type": "image_url", "image_url": {"url": om.imageUrl}})
+    result["content"] = content
+  elif om.content.len > 0:
     result["content"] = % om.content
   if om.name.len > 0:
     result["name"] = % om.name

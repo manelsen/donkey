@@ -273,3 +273,36 @@ suite "openai_pure messageToOpenAI":
     )
     let om = msg |> messageToOpenAI
     check om.toolCallId == "call_123"
+
+suite "openai_pure image content":
+
+  test "an image message becomes a content array":
+    let req = CompletionRequest(messages: @[
+      ChatMessage(role: "user", text: "what is this?",
+                  imageUrl: "data:image/png;base64,QUJD")])
+    let body = buildRequestBody("gpt-4", req)
+    let msg = body["messages"][0]
+    check msg["role"].getStr() == "user"
+    check msg["content"].kind == JArray
+    check msg["content"][0]["type"].getStr() == "text"
+    check msg["content"][0]["text"].getStr() == "what is this?"
+    check msg["content"][1]["type"].getStr() == "image_url"
+    check msg["content"][1]["image_url"]["url"].getStr() ==
+          "data:image/png;base64,QUJD"
+
+  test "an image without text still carries the image":
+    let req = CompletionRequest(messages: @[
+      ChatMessage(role: "user", text: "",
+                  imageUrl: "data:image/jpeg;base64,QUJD")])
+    let body = buildRequestBody("gpt-4", req)
+    let content = body["messages"][0]["content"]
+    check content.kind == JArray
+    check content.len == 1
+    check content[0]["image_url"]["url"].getStr() ==
+          "data:image/jpeg;base64,QUJD"
+
+  test "a message without an image keeps string content":
+    let req = CompletionRequest(messages: @[
+      ChatMessage(role: "user", text: "hello")])
+    let body = buildRequestBody("gpt-4", req)
+    check body["messages"][0]["content"].kind == JString
