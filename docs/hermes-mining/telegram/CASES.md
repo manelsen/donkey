@@ -413,23 +413,25 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 
 ## Resumo
 
+
 | Categoria | Situação | Prioridade | Casos |
 |---|---|---|---|
-| EDIT | AUSENTE | P0 | 1 |
-| EDIT | AUSENTE | P1 | 1 |
+| EDIT | COBERTO | P0 | 1 |
+| EDIT | COBERTO | P1 | 1 |
 | EDIT | COBERTO | P2 | 1 |
 | EDIT | PARCIAL | P1 | 1 |
-| FORMAT | AUSENTE | P0 | 1 |
-| FORMAT | AUSENTE | P1 | 1 |
 | FORMAT | AUSENTE | P2 | 2 |
+| FORMAT | COBERTO | P0 | 1 |
+| FORMAT | COBERTO | P1 | 3 |
 | FORMAT | COBERTO | P2 | 1 |
-| FORMAT | PARCIAL | P1 | 3 |
-| INBOUND | AUSENTE | P0 | 3 |
+| FORMAT | PARCIAL | P1 | 1 |
 | INBOUND | AUSENTE | P1 | 1 |
+| INBOUND | COBERTO | P0 | 3 |
 | INBOUND | COBERTO | P2 | 4 |
 | INBOUND | PARCIAL | P2 | 1 |
-| MEDIA | AUSENTE | P1 | 2 |
+| MEDIA | AUSENTE | P1 | 1 |
 | MEDIA | AUSENTE | P2 | 1 |
+| MEDIA | COBERTO | P1 | 1 |
 | MEDIA | PARCIAL | P1 | 1 |
 | MEDIA | PARCIAL | P2 | 1 |
 | NET | AUSENTE | P0 | 1 |
@@ -444,9 +446,9 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 
 | Total de casos | 37 |
 |---|---|
-| COBERTO | 9 |
-| PARCIAL | 11 |
-| AUSENTE | 17 |
+| COBERTO | 19 |
+| PARCIAL | 9 |
+| AUSENTE | 9 |
 | P0 | 6 |
 | P1 | 15 |
 | P2 | 16 |
