@@ -13,12 +13,19 @@ proc copyTreeResult*(src, dst: string): Result[void, string] =
   ## narrows, but does not close, the race between validation and the write.
   if symlinkExists(dst):
     return err("destination is a symlink: " & dst)
+
+  ## Enumerate with `checkDir = true`: the default silently swallows a failed
+  ## `opendir`, which would let the copy report success after skipping a whole
+  ## subtree. Collect the entries so the iterator completes inside the `try`.
+  var entries: seq[(PathComponent, string)]
   try:
     createDir(dst)
+    for kind, entry in walkDir(src, checkDir = true):
+      entries.add((kind, entry))
   except CatchableError as e:
-    return err("cannot create directory " & dst & ": " & e.msg)
+    return err("cannot enumerate " & src & ": " & e.msg)
 
-  for kind, entry in walkDir(src):
+  for (kind, entry) in entries:
     let target = dst / entry.extractFilename
     case kind
     of pcDir:

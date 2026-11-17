@@ -1,4 +1,6 @@
 import std/[json, os, sequtils, sets, strutils, unittest]
+when defined(posix):
+  import std/posix
 import donkey/app/tools/fs_tools
 import donkey/core/tooling/structured_tool_result
 
@@ -158,3 +160,17 @@ suite "structured filesystem tool core":
       check not parsed["ok"].getBool()
       check parsed["error"]["message"].getStr().contains("symlink")
       check readFile(outsideFile) == "untouched"
+
+  when defined(posix):
+    test "recursive copy fails when a subdirectory cannot be enumerated":
+      if geteuid() == 0:
+        skip()
+      let restricted = paddock / "docs" / "nested"
+      setFilePermissions(restricted, {})
+      defer:
+        setFilePermissions(restricted, {fpUserRead, fpUserWrite, fpUserExec})
+
+      let parsed = parseEnvelope(
+        performFsCopy("docs", "tmp/docs-copy", paddock, recursive = true))
+      check not parsed["ok"].getBool()
+      check parsed["error"]["message"].getStr().contains("cannot enumerate")
