@@ -1,8 +1,40 @@
-# Casos — comportamento da Bot API extraído do histórico do hermes
+# Cobertura comparada — Donkey × hermes-agent (Telegram)
 
-Cada caso agrupa commits do hermes que descrevem o mesmo comportamento da
-API. A implementação no Donkey é escrita a partir desta descrição, não do
-código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
+Este documento compara o comportamento da Bot API do Telegram que o
+histórico do `hermes-agent` documenta com o que o Donkey já faz. Cada
+linha do hermes é classificada como **transferível** (comportamento da API)
+ou **interna** (recurso do próprio hermes, descartado), e os commits
+transferíveis são agrupados em **casos** por comportamento — não por commit.
+
+A implementação no Donkey é escrita a partir da descrição do comportamento,
+não do código do hermes. Atribuição MIT em `THIRD_PARTY_NOTICES.md`.
+
+## Como ler a comparação
+
+| Situação | Significado |
+|---|---|
+| **COBERTO** | O Donkey já implementa o comportamento esperado, com teste. |
+| **PARCIAL** | Implementa parte; falta um recorte documentado na evidência. |
+| **AUSENTE** | O Donkey não trata o caso. |
+
+A prioridade vem do impacto: **P0** perde ou corrompe mensagem, trava o
+envio ou expõe o bot a bloqueio; **P1** degrada a experiência; **P2** é
+polimento ou já coberto.
+
+## Cobertura por categoria
+
+| Categoria | Commits no hermes | Casos | COBERTO | PARCIAL | AUSENTE |
+|---|---|---|---|---|---|
+| NET | 120 | 5 | 5 | 0 | 0 |
+| INBOUND | 118 | 9 | 8 | 1 | 0 |
+| FORMAT | 106 | 8 | 8 | 0 | 0 |
+| TOPIC_API | 87 | 2 | 2 | 0 | 0 |
+| MEDIA | 65 | 5 | 5 | 0 | 0 |
+| RATE | 29 | 4 | 4 | 0 | 0 |
+| EDIT | 26 | 4 | 4 | 0 | 0 |
+| **Total** | **718** | **37** | **36** | **1** | **0** |
+
+## Casos
 
 ### TG-001: O limite de 4096 é contado em unidades UTF-16
 - **Categoria:** FORMAT
@@ -15,6 +47,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_split.nim:14` e `tests/domain/channels/t_telegram_split.nim`
 - **Prioridade:** P0
 
+
 ### TG-002: "message is not modified" não é falha de edição
 - **Categoria:** EDIT
 - **Comportamento da API:** editMessageText devolve erro 400 com descrição "message is not modified" quando o texto enviado é idêntico ao atual. A mensagem está correta.
@@ -25,6 +58,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:8` e `src/donkey/adapters/channel/telegram.nim:252`
 - **Prioridade:** P0
+
 
 ### TG-003: Updates de bots não são entrada de usuário
 - **Categoria:** INBOUND
@@ -37,6 +71,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_pure.nim:95` e `tests/domain/channels/t_telegram_pure.nim`
 - **Prioridade:** P0
 
+
 ### TG-004: Mensagem sem `from` não pode derrubar o parsing
 - **Categoria:** INBOUND
 - **Comportamento da API:** Mensagens de admin anônimo em grupos e posts de canal chegam sem o objeto `from`; o campo é opcional no update.
@@ -47,6 +82,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_pure.nim:48` e `tests/domain/channels/t_telegram_pure.nim`
 - **Prioridade:** P0
+
 
 ### TG-005: Âncora de resposta inexistente é descartada, não falha o envio
 - **Categoria:** INBOUND
@@ -59,6 +95,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:20` e `src/donkey/adapters/channel/telegram.nim:113`
 - **Prioridade:** P0
 
+
 ### TG-006: Texto vazio ou só espaços é recusado pela API
 - **Categoria:** FORMAT
 - **Comportamento da API:** sendMessage com `text` vazio ou apenas espaços devolve 400 "message text is empty".
@@ -69,6 +106,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:26` e `src/donkey/adapters/channel/telegram.nim:199`
 - **Prioridade:** P1
+
 
 ### TG-007: Legenda de mídia tem limite próprio de 1024 caracteres
 - **Categoria:** MEDIA
@@ -81,6 +119,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:80` (splitCaption) e `src/donkey/adapters/channel/telegram.nim:225`
 - **Prioridade:** P1
 
+
 ### TG-008: Edição também respeita o limite de 4096
 - **Categoria:** EDIT
 - **Comportamento da API:** editMessageText tem o mesmo limite de 4096 unidades UTF-16 do sendMessage; acima disso a API recusa a edição.
@@ -91,6 +130,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:56` e `src/donkey/adapters/channel/telegram.nim:248`
 - **Prioridade:** P1
+
 
 ### TG-009: callback_data é limitado a 64 bytes
 - **Categoria:** FORMAT
@@ -103,6 +143,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:62` e `src/donkey/adapters/channel/telegram.nim:169`
 - **Prioridade:** P1
 
+
 ### TG-010: A ação de digitação expira em cerca de 5 segundos
 - **Categoria:** RATE
 - **Comportamento da API:** sendChatAction('typing') tem efeito por aproximadamente 5 s; depois o indicador desaparece sem aviso.
@@ -113,6 +154,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/app/tool_loop_runtime.nim:150` e `tests/app/t_orchestrator.nim`
 - **Prioridade:** P2
+
 
 ### TG-011: 429 traz retry_after e deve ser respeitado
 - **Categoria:** RATE
@@ -125,6 +167,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/adapters/http/std_http.nim:54` (lê `parameters.retry_after`)
 - **Prioridade:** P2
 
+
 ### TG-012: O flood control é por chat, não global
 - **Categoria:** RATE
 - **Comportamento da API:** O limite de envio é aplicado por chat; uma penalidade em um chat não bloqueia os demais.
@@ -135,6 +178,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/core/channels/flood_gate.nim:21` e `src/donkey/adapters/channel/telegram.nim:146`
 - **Prioridade:** P1
+
 
 ### TG-013: Resposta dividida retoma da parte recusada
 - **Categoria:** RATE
@@ -147,6 +191,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/core/channels/flood_gate.nim:81` e `src/donkey/adapters/channel/telegram.nim:186`
 - **Prioridade:** P1
 
+
 ### TG-014: Mensagem dividida pelo cliente continua um único turno
 - **Categoria:** INBOUND
 - **Comportamento da API:** O cliente do Telegram divide textos longos em várias mensagens, que chegam como updates separados e em sequência.
@@ -157,6 +202,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/app/orchestrator.nim:662` (debounce adaptativo) e `tests/app/t_orchestrator.nim` (suite adaptive debounce collector)
 - **Prioridade:** P2
+
 
 ### TG-015: Menções e /cmd@bot em grupos
 - **Categoria:** INBOUND
@@ -169,6 +215,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:139` e `src/donkey/adapters/channel/telegram_runtime.nim`
 - **Prioridade:** P1
 
+
 ### TG-016: Remetente não autorizado é descartado antes do turno
 - **Categoria:** INBOUND
 - **Comportamento da API:** Updates de usuários fora da allowlist não devem gerar sessão nem resposta.
@@ -179,6 +226,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** PARCIAL
 - **Evidência no Donkey:** `src/donkey/core/security/dm_policy.nim:18` e `src/donkey/app/session_ingress.nim` (checagem no ingress)
 - **Prioridade:** P2
+
 
 ### TG-017: Todo toque em botão precisa de answerCallbackQuery
 - **Categoria:** INBOUND
@@ -191,6 +239,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/adapters/channel/telegram.nim:442` e chamadas em `src/donkey/adapters/channel/telegram_runtime.nim:176`
 - **Prioridade:** P2
 
+
 ### TG-018: Posts de canal e updates de negócio não são conversa
 - **Categoria:** INBOUND
 - **Comportamento da API:** `channel_post` e `business_message` chegam em campos diferentes de `message` e não representam uma DM do usuário.
@@ -201,6 +250,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_pure.nim:123` (retorna tukUnknown)
 - **Prioridade:** P2
+
 
 ### TG-019: Updates do mesmo chat mantêm a ordem
 - **Categoria:** INBOUND
@@ -213,6 +263,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_pure.nim:165` (maxNextOffset) e inbox única em `src/donkey/app/session_ingress.nim`
 - **Prioridade:** P2
 
+
 ### TG-020: 409 polling conflict exige nova tentativa com espera
 - **Categoria:** NET
 - **Comportamento da API:** Um segundo getUpdates simultâneo devolve 409 Conflict; o cliente deve parar o polling antigo e tentar de novo com espera.
@@ -223,6 +274,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/adapters/http/std_http.nim:37` e `tests/http/t_std_http.nim`
 - **Prioridade:** P1
+
 
 ### TG-021: Timeout de envio não pode duplicar a mensagem
 - **Categoria:** NET
@@ -235,6 +287,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/adapters/http/std_http.nim:34` e `src/donkey/adapters/channel/telegram.nim:562`
 - **Prioridade:** P0
 
+
 ### TG-022: Proxy do ambiente é usado no transporte
 - **Categoria:** NET
 - **Comportamento da API:** A Bot API pode exigir proxy; as variáveis de ambiente do proxy precisam chegar ao cliente HTTP.
@@ -245,6 +298,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/adapters/channel/telegram.nim:577`
 - **Prioridade:** P2
+
 
 ### TG-023: Fallback de DNS não pode apontar para IP privado
 - **Categoria:** NET
@@ -257,6 +311,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/core/security/net_boundary.nim:11` (allowlist de hosts; o Donkey não usa DoH)
 - **Prioridade:** P2
 
+
 ### TG-024: Webhook exige segredo
 - **Categoria:** NET
 - **Comportamento da API:** No modo webhook, a URL precisa de `secret_token` para validar a origem.
@@ -267,6 +322,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `rg -n "webhook" src/donkey` (sem resultados; o Donkey usa apenas long polling)
 - **Prioridade:** P2
+
 
 ### TG-025: Forum topics exigem message_thread_id
 - **Categoria:** TOPIC_API
@@ -279,6 +335,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_pure.nim:255` e `src/donkey/adapters/channel/telegram.nim`
 - **Prioridade:** P1
 
+
 ### TG-026: "Message thread not found" cai para o chat raiz
 - **Categoria:** TOPIC_API
 - **Comportamento da API:** Um thread id inválido ou apagado devolve 400 "message thread not found".
@@ -289,6 +346,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:164` e `src/donkey/adapters/channel/telegram.nim`
 - **Prioridade:** P1
+
 
 ### TG-027: Foto fora dos limites vira documento
 - **Categoria:** MEDIA
@@ -301,6 +359,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:110` e `src/donkey/adapters/channel/telegram.nim:215`
 - **Prioridade:** P1
 
+
 ### TG-028: Álbuns chegam como updates separados com media_group_id
 - **Categoria:** MEDIA
 - **Comportamento da API:** Um álbum é entregue como várias mensagens com o mesmo `media_group_id`, sem garantia de chegada em uma única chamada.
@@ -311,6 +370,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/app/prompt_building.nim:165` e `tests/app/t_orchestrator.nim`
 - **Prioridade:** P1
+
 
 ### TG-029: Voz e áudio têm metadados próprios
 - **Categoria:** MEDIA
@@ -323,6 +383,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:122` e `src/donkey/adapters/channel/telegram.nim`
 - **Prioridade:** P2
 
+
 ### TG-030: Upload de mídia precisa de prazo próprio
 - **Categoria:** MEDIA
 - **Comportamento da API:** Uploads grandes demoram mais que o timeout padrão de texto.
@@ -333,6 +394,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/adapters/channel/telegram.nim:64` e `src/donkey/adapters/http/std_http.nim:96`
 - **Prioridade:** P2
+
 
 ### TG-031: Finalização atrasada não pode suprimir a resposta final
 - **Categoria:** EDIT
@@ -345,6 +407,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/app/outbound_runtime.nim:271`
 - **Prioridade:** P1
 
+
 ### TG-032: Reação só aceita emojis permitidos pelo chat
 - **Categoria:** EDIT
 - **Comportamento da API:** setMessageReaction recusa emojis fora de `available_reactions` com "reaction_invalid".
@@ -355,6 +418,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/adapters/channel/telegram.nim:78` (pickTelegramReactionEmoji) e `:312`
 - **Prioridade:** P2
+
 
 ### TG-033: Code fences: CRLF, aninhamento e fences no meio da linha
 - **Categoria:** FORMAT
@@ -367,6 +431,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/core/telegram_format.nim:52` e `tests/core/t_telegram_format.nim`
 - **Prioridade:** P1
 
+
 ### TG-034: Tabelas não existem no HTML do Telegram
 - **Categoria:** FORMAT
 - **Comportamento da API:** O Telegram não renderiza tabelas HTML; a sintaxe precisa virar texto.
@@ -377,6 +442,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/core/telegram_format.nim:206` (converte tabela em linhas com " • ")
 - **Prioridade:** P2
+
 
 ### TG-035: Prévia de link pode ser desativada
 - **Categoria:** FORMAT
@@ -389,6 +455,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:95`
 - **Prioridade:** P2
 
+
 ### TG-036: Menu de comandos tem limites de quantidade e tamanho
 - **Categoria:** FORMAT
 - **Comportamento da API:** setMyCommands aceita até 100 comandos, com nomes de até 32 caracteres e descrições de até 40; acima do limite a chamada falha.
@@ -399,6 +466,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Situação no Donkey:** COBERTO
 - **Evidência no Donkey:** `src/donkey/core/commands/command_catalog.nim:133`
 - **Prioridade:** P2
+
 
 ### TG-037: Escape de MarkdownV2 e de HTML
 - **Categoria:** FORMAT
@@ -411,35 +479,24 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Evidência no Donkey:** `src/donkey/domain/text_format.nim:16` e `src/donkey/core/telegram_format.nim`
 - **Prioridade:** P1
 
+## O que não se aplica por arquitetura
+
+Parte do histórico do hermes descreve componentes que o Donkey não tem,
+por decisão de arquitetura — não por lacuna. Esses commits ficam em
+`INTERNAL` na classificação e não viram caso:
+
+| Componente do hermes | Escolha do Donkey |
+|---|---|
+| webhook e `secret_token` | long polling apenas (instância única) |
+| DoH e fallback de IP | DNS do sistema + allowlist + circuit breaker |
+| internos de PTB/HTTPX | transporte próprio (`StdHttpAdapter`) |
+| rich messages (Bot API 10.1) | Markdown convertido para HTML |
+| inline queries, business messages | modos que o Donkey não usa |
+| perfis, handoff, kanban, leases, dashboard | recursos internos do hermes |
+
 ## Resumo
 
-
-| Categoria | Situação | Prioridade | Casos |
-|---|---|---|---|
-| EDIT | COBERTO | P0 | 1 |
-| EDIT | COBERTO | P1 | 2 |
-| EDIT | COBERTO | P2 | 1 |
-| FORMAT | COBERTO | P0 | 1 |
-| FORMAT | COBERTO | P1 | 4 |
-| FORMAT | COBERTO | P2 | 3 |
-| INBOUND | COBERTO | P0 | 3 |
-| INBOUND | COBERTO | P1 | 1 |
-| INBOUND | COBERTO | P2 | 4 |
-| INBOUND | PARCIAL | P2 | 1 |
-| MEDIA | COBERTO | P1 | 3 |
-| MEDIA | COBERTO | P2 | 2 |
-| NET | COBERTO | P0 | 1 |
-| NET | COBERTO | P1 | 1 |
-| NET | COBERTO | P2 | 3 |
-| RATE | COBERTO | P1 | 2 |
-| RATE | COBERTO | P2 | 2 |
-| TOPIC_API | COBERTO | P1 | 2 |
-
-| Total de casos | 37 |
-|---|---|
-| COBERTO | 36 |
-| PARCIAL | 1 |
-| AUSENTE | 0 |
-| P0 | 6 |
-| P1 | 15 |
-| P2 | 16 |
+- 718 commits de correção extraídos da ref `b3746e35dd`.
+- 551 transferíveis, agrupados em 37 casos.
+- 36 casos cobertos no Donkey, 1 parcial, 0 ausente.
+- 6 casos P0, todos cobertos.
