@@ -65,3 +65,18 @@ suite "telegram_split — UTF-16 message length":
 
   test "TG-001: empty text yields one empty chunk":
     check splitForTelegram("", 4096) == @[""]
+
+
+  test "TG-001: a leading newline does not create a whitespace-only chunk":
+    let text = "\n" & strutils.repeat('a', 4096)
+    let chunks = splitForTelegram(text, 4096)
+    for chunk in chunks:
+      check chunk.strip.len > 0
+      check utf16Units(chunk) <= 4096
+    check chunks.join("") == text
+
+  test "TG-001: a newline after content is preserved":
+    let text = "a\n" & strutils.repeat('a', 4096)
+    let chunks = splitForTelegram(text, 4096)
+    check chunks[0] == "a\n"
+    check chunks.join("") == text

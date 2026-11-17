@@ -124,7 +124,14 @@ func isBotUpdate*(upd: JsonNode): bool =
     else: nil
   if sender.isNil or sender.kind != JObject:
     return false
-  sender.getOrDefault("is_bot").getBool(false)
+  if not sender.getOrDefault("is_bot").getBool(false):
+    return false
+  ## Anonymous admins arrive as a synthetic bot user (GroupAnonymousBot) but
+  ## carry `sender_chat`: the message is from a human admin, not from a bot.
+  let msgNode = if upd.hasKey("message"): upd.getOrDefault("message") else: nil
+  if msgNode != nil and msgNode.kind == JObject and msgNode.hasKey("sender_chat"):
+    return false
+  true
 
 func parseUpdate*(upd: JsonNode): TgParseResult =
   ## Parses a single Telegram update object into a TgParseResult.

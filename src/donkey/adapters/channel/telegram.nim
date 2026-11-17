@@ -176,6 +176,14 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
   discard ? a.post("sendMessage", %* {"chat_id": tgId, "text": url})
   ok()
 
+proc validateButtons(buttons: seq[seq[(string, string)]]): Result[void, string] =
+  for row in buttons:
+    for (_, data) in row:
+      let reason = callbackDataError(data)
+      if reason.len > 0:
+        return err(reason)
+  ok()
+
 proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
                      text: string;
                      buttons: seq[seq[(string, string)]];
@@ -183,11 +191,11 @@ proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
                      isHtml = false): Result[string, string] =
   ## Internal helper: sends a keyboard message to a known chatId.
   ## Returns the Telegram message_id of the sent message.
+  ? validateButtons(buttons)
   var rows: seq[JsonNode]
   for row in buttons:
     var cols: seq[JsonNode]
     for (label, data) in row:
-      ? validateCallbackData(data)
       cols.add(%* {"text": label, "callback_data": data})
     rows.add(%cols)
   let html = renderTelegramHtml(text, isHtml)
@@ -224,7 +232,12 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
     return ok()
 
   if msg.mediaUrl.len > 0:
-    return a.sendMedia(chatId, msg.mediaUrl, msg.text, msg.replyTo)
+    let (head, tail) = splitCaption(msg.text, TelegramCaptionLimit)
+    ? a.sendMedia(chatId, msg.mediaUrl, head, msg.replyTo)
+    if tail.strip.len > 0:
+      for i, chunk in splitForTelegram(tail, TelegramMaxChars):
+        ? a.sendChunk(chatId, chunk, "", i == 0, msg.isHtml)
+    return ok()
 
   for i, chunk in splitForTelegram(msg.text, TelegramMaxChars):
     ? a.sendChunk(chatId, chunk, msg.replyTo, i == 0, msg.isHtml)
@@ -240,7 +253,11 @@ proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, str
     return a.sendKeyboardRaw(chatId, msg.text, msg.keyboard, msg.replyTo, msg.isHtml)
 
   if msg.mediaUrl.len > 0:
-    ? a.sendMedia(chatId, msg.mediaUrl, msg.text, msg.replyTo)
+    let (head, tail) = splitCaption(msg.text, TelegramCaptionLimit)
+    ? a.sendMedia(chatId, msg.mediaUrl, head, msg.replyTo)
+    if tail.strip.len > 0:
+      for i, chunk in splitForTelegram(tail, TelegramMaxChars):
+        ? a.sendChunk(chatId, chunk, "", i == 0, msg.isHtml)
     return ok("")
 
   var lastId = ""
@@ -272,22 +289,20 @@ proc editMessage*(a: TelegramAdapter; userId: UserId;
   let html = renderTelegramHtml(chunks[0], isHtml)
   var body = %* {"chat_id": chatId, "message_id": parseBiggestInt(msgId), "text": html, "parse_mode": "HTML"}
   let res = a.post("editMessageText", body)
-  if res.isOk:
-    ## The tail of an oversized edit cannot fit in the edited message.
+  if res.isOk or isEditNoopError(res.error):
+    ## The tail of an oversized edit cannot fit in the edited message, and a
+    ## no-op edit still leaves the tail to deliver.
     for i in 1 ..< chunks.len:
-      discard a.sendChunk(chatId, chunks[i], "", false, isHtml)
+      ? a.sendChunk(chatId, chunks[i], "", false, isHtml)
     return ok()
-  ## The text is already what the caller asked for; retrying would fail again.
-  if isEditNoopError(res.error): return ok()
   # Fallback
   body.delete("parse_mode")
   body["text"] = %chunks[0]
   let plain = a.post("editMessageText", body)
-  if plain.isOk:
+  if plain.isOk or isEditNoopError(plain.error):
     for i in 1 ..< chunks.len:
-      discard a.sendChunk(chatId, chunks[i], "", false, isHtml)
+      ? a.sendChunk(chatId, chunks[i], "", false, isHtml)
     return ok()
-  if isEditNoopError(plain.error): return ok()
   err(plain.error)
 
 proc sendKeyboard*(a: TelegramAdapter; userId: UserId;
@@ -310,6 +325,7 @@ proc editKeyboard*(a: TelegramAdapter; userId: UserId;
   let rawId = a.resolver.reverseChannel(userId, ckTelegram)
   if rawId.len == 0: return err("editKeyboard: no id for " & $userId)
   let chatId = parseBiggestInt(rawId).int64
+  ? validateButtons(buttons)
   let markup = %* {"inline_keyboard": buttons.mapIt(it.mapIt(%* {"text": it[0], "callback_data": it[1]}))}
   discard ? a.post("editMessageReplyMarkup",
                    %* {"chat_id": chatId, "message_id": parseBiggestInt(msgId),
@@ -324,6 +340,7 @@ proc editKeyboardText*(a: TelegramAdapter; userId: UserId;
   let rawId = a.resolver.reverseChannel(userId, ckTelegram)
   if rawId.len == 0: return err("editKeyboardText: no id for " & $userId)
   let chatId = parseBiggestInt(rawId).int64
+  ? validateButtons(buttons)
   let markup = %* {"inline_keyboard": buttons.mapIt(it.mapIt(%* {"text": it[0], "callback_data": it[1]}))}
   let sanitizedText = sanitizeForTelegram(text)
   let html = renderTelegramHtml(sanitizedText, isHtml)

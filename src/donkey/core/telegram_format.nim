@@ -54,13 +54,34 @@ func backtickRun(md: string; start: int): int =
   while start + result < md.len and md[start + result] == '`':
     inc result
 
-func findBacktickRun(md: string; start, runLen: int): int =
-  ## Index of the next backtick run of at least `runLen`, or -1.
+func findBacktickRun(md: string; start, runLen: int; exact = false): int =
+  ## Index of the next backtick run of at least `runLen` (or exactly `runLen`
+  ## when `exact`), or -1.
   var i = start
   while i < md.len:
     if md[i] == '`':
       let n = backtickRun(md, i)
-      if n >= runLen:
+      if (if exact: n == runLen else: n >= runLen):
+        return i
+      i += n
+    else:
+      inc i
+  -1
+
+func isFenceCloseLine(md: string; pos: int): bool =
+  ## A closing fence sits at the start of a line and is followed only by
+  ## spaces or tabs until the line ends.
+  var j = pos
+  while j < md.len and md[j] == '`': inc j
+  while j < md.len and (md[j] == ' ' or md[j] == '\t'): inc j
+  j >= md.len or md[j] == '\n' or md[j] == '\r'
+
+func findFenceClose(md: string; start, runLen: int): int =
+  var i = start
+  while i < md.len:
+    if md[i] == '`' and (i == 0 or md[i - 1] == '\n'):
+      let n = backtickRun(md, i)
+      if n >= runLen and isFenceCloseLine(md, i):
         return i
       i += n
     else:
@@ -87,19 +108,19 @@ func markdownToTelegramHtml*(md: string): string =
         let langEnd = md.find('\n', contentStart)
         if langEnd >= 0:
           contentStart = langEnd + 1
-        let close = findBacktickRun(md, contentStart, runLen)
+        let close = findFenceClose(md, contentStart, runLen)
         if close >= 0:
           let content = md[contentStart ..< close].replace("\r\n", "\n")
           buf.add("<pre>")
           buf.add(escapeHtml(content))
           buf.add("</pre>")
-          i = close + runLen
+          i = close + backtickRun(md, close)
           if i < md.len and md[i] == '\r': inc i
           if i < md.len and md[i] == '\n': inc i
           lineStart = true
           continue
       else:
-        let close = findBacktickRun(md, i + runLen, runLen)
+        let close = findBacktickRun(md, i + runLen, runLen, exact = true)
         if close >= 0:
           buf.add("<code>")
           buf.add(escapeHtml(md[i + runLen ..< close]))

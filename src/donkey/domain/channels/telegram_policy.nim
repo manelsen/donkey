@@ -4,7 +4,6 @@
 ## decides what the API contract requires.
 
 import std/[strutils, unicode]
-import ../../core/pipeops
 import ./telegram_split
 
 func isEditNoopError*(message: string): bool =
@@ -65,13 +64,30 @@ func planEditChunks*(text: string; limit = 4096): seq[string] =
   ## messages, or the tail is silently lost.
   splitForTelegram(text, limit)
 
-func validateCallbackData*(data: string): Result[void, string] =
+func callbackDataError*(data: string): string =
   ## Behavior derived from hermes-agent (MIT) fix 6fb57bc9cf; see
   ## docs/hermes-mining/telegram/CASES.md#tg-009
   ##
-  ## Telegram rejects a button whose callback_data exceeds 64 bytes, and it
-  ## rejects the whole message. Failing here names the offending button instead
-  ## of surfacing an opaque 400.
+  ## Telegram rejects a button whose callback_data is empty or exceeds 64
+  ## bytes, and it rejects the whole message. Returning the reason keeps this
+  ## pure; the adapter turns it into its own error.
+  if data.len == 0:
+    return "callback_data is empty"
   if data.len > 64:
-    return err("callback_data exceeds 64 bytes (" & $data.len & ")")
-  ok()
+    return "callback_data exceeds 64 bytes (" & $data.len & ")"
+  ""
+
+func splitCaption*(text: string; limit = 1024): tuple[head, tail: string] =
+  ## Behavior derived from hermes-agent (MIT) fix f828b087e7; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-007
+  ##
+  ## The caption limit is 1024 characters. The head fits the media message; the
+  ## tail must be delivered separately so no text is lost.
+  var kept = 0
+  var bytePos = 0
+  for r in text.runes:
+    if kept >= limit:
+      break
+    bytePos += r.size
+    inc kept
+  (text[0 ..< bytePos], text[bytePos .. ^1])

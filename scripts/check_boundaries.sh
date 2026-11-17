@@ -47,5 +47,10 @@ check_absent \
   '^\s*(import|from)\s+.*(chronos|asyncsync|asyncdispatch|osproc|httpclient|parsetoml|adapters/|app/)' \
   src/donkey/domain
 
+check_absent \
+  "domain must stay pure (multi-line import lists)" \
+  '^\s+(chronos|asyncsync|asyncdispatch|osproc|httpclient|parsetoml)(,|\]|\s*$)' \
+  src/donkey/domain
+
 echo "Boundary checks passed."
 

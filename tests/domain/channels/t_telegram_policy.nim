@@ -3,7 +3,6 @@
 ## Each test starts with the case id from docs/hermes-mining/telegram/CASES.md.
 
 import std/[strutils, unicode, unittest]
-import donkey/core/pipeops
 import donkey/domain/channels/telegram_policy
 
 suite "telegram_policy — edit errors":
@@ -77,11 +76,28 @@ suite "telegram_policy — oversized edits":
 
 suite "telegram_policy — callback data":
 
-  test "TG-009: callback data up to 64 bytes is accepted":
-    check validateCallbackData("models:set:openrouter:abc").isOk
-    check validateCallbackData(strutils.repeat("a", 64)).isOk
+  test "TG-009: callback data from 1 to 64 bytes is accepted":
+    check callbackDataError("models:set:openrouter:abc").len == 0
+    check callbackDataError(strutils.repeat("a", 64)).len == 0
+
+  test "TG-009: empty callback data is rejected":
+    check callbackDataError("").len > 0
 
   test "TG-009: callback data above 64 bytes is rejected":
-    let res = validateCallbackData(strutils.repeat("a", 65))
-    check res.isErr
-    check "64" in res.error
+    let reason = callbackDataError(strutils.repeat("a", 65))
+    check reason.len > 0
+    check "64" in reason
+
+
+suite "telegram_policy — caption tail":
+
+  test "TG-007: a caption under the limit has no tail":
+    let (head, tail) = splitCaption("legenda", 1024)
+    check head == "legenda"
+    check tail == ""
+
+  test "TG-007: the overflow becomes a tail":
+    let text = strutils.repeat("a", 1500)
+    let (head, tail) = splitCaption(text, 1024)
+    check head.len == 1024
+    check head & tail == text

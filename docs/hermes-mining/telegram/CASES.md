@@ -78,7 +78,7 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Fontes no hermes:** `f828b087e7`, `fdf1f10fe2`
 - **Testes no hermes:** `tests/gateway/test_telegram_voice_caption_markdown.py`
 - **Situação no Donkey:** COBERTO
-- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:36` e `src/donkey/adapters/channel/telegram.nim:146`
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:80` (splitCaption) e `src/donkey/adapters/channel/telegram.nim:225`
 - **Prioridade:** P1
 
 ### TG-008: Edição também respeita o limite de 4096

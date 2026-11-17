@@ -48,18 +48,24 @@ if [ ! -d "$HERMES_DIR" ]; then
   echo "hermes directory not found: $HERMES_DIR" >&2
   exit 1
 fi
-if ! git -C "$HERMES_DIR" cat-file -e "$HERMES_REF" 2>/dev/null; then
-  echo "hermes ref not found: $HERMES_REF" >&2
+if [ "$(git -C "$HERMES_DIR" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+  echo "hermes repository is shallow: run 'git fetch --unshallow' there first" >&2
   exit 1
 fi
 
-range="$HERMES_REF"
+## Resolve once: ranges and LAST_SYNC always use the full commit id.
+resolved_ref="$(git -C "$HERMES_DIR" rev-parse --verify "$HERMES_REF^{commit}" 2>/dev/null)" || {
+  echo "hermes ref not found: $HERMES_REF" >&2
+  exit 1
+}
+
+range="$resolved_ref"
 if [ -n "$since" ]; then
-  if ! git -C "$HERMES_DIR" cat-file -e "$since" 2>/dev/null; then
+  resolved_since="$(git -C "$HERMES_DIR" rev-parse --verify "$since^{commit}" 2>/dev/null)" || {
     echo "since ref not found: $since" >&2
     exit 1
-  fi
-  range="$since..$HERMES_REF"
+  }
+  range="$resolved_since..$resolved_ref"
 fi
 
 ## One `case` block per component: the grep patterns and the paths that scope
@@ -121,7 +127,7 @@ trap 'rm -f "$tmp"' EXIT
   tail -n +2 "$tmp" | sort -t$'\t' -k2,2 -k1,1
 } > "$out_dir/commits.tsv"
 
-printf '%s\n' "$HERMES_REF" > "$out_dir/LAST_SYNC"
+printf '%s\n' "$resolved_ref" > "$out_dir/LAST_SYNC"
 
 lines=$(($(wc -l < "$out_dir/commits.tsv") - 1))
 echo "extracted $lines commits for $component into $out_dir/commits.tsv"

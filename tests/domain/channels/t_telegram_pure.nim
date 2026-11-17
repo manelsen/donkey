@@ -297,3 +297,14 @@ suite "telegram_pure — missing sender (TG-004)":
     let r = parseUpdate(upd)
     check r.kind == tukMessage
     check r.rawId == "4242"
+
+
+  test "TG-003: an anonymous admin is not filtered as a bot":
+    let upd = %*{"message": {"message_id": 7,
+                             "from": {"id": 1087968824, "is_bot": true,
+                                      "first_name": "GroupAnonymousBot"},
+                             "sender_chat": {"id": -1001234567890,
+                                             "type": "supergroup"},
+                             "chat": {"id": -1001234567890, "type": "supergroup"},
+                             "text": "aviso do admin"}}
+    check not isBotUpdate(upd)

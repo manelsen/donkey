@@ -2,7 +2,7 @@
 
 ## Escopo
 
-- `HERMES_REF`: `b3746e35dd`
+- `HERMES_REF`: `b3746e35dd` (o `LAST_SYNC` grava o SHA completo resolvido)
 - Commits extraídos: **718** (faixa esperada 700–730)
 - Repositório de origem lido apenas com `git log`, `git show` e `git cat-file`.
 - Nenhum teste novo usa rede, Telegram real ou Docker.
@@ -68,7 +68,8 @@ Dez casos, cada um com teste que falhava antes da implementação:
 
 ## Casos pendentes
 
-Os 26 casos restantes de `CASES.md` (P1/P2) ficam registrados com evidência e
+Dos 37 casos, 19 estão COBERTO e 1 está adiado (TG-021). Restam **17 casos
+PARCIAL ou AUSENTE** (9 PARCIAL + 8 AUSENTE) registrados com evidência e
 prioridade para as próximas rodadas. Os P1 com maior impacto são TG-012
 (janela de flood por chat), TG-013 (retomar da parte recusada), TG-015 (menções
 em grupo), TG-020 (409 no polling), TG-025/TG-026 (forum topics), TG-027

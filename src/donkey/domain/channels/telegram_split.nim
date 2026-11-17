@@ -33,14 +33,17 @@ func splitForTelegram*(text: string; limit = TelegramTextLimit): seq[string] =
 
   for r in text.runes:
     let units = if int(r) > 0xFFFF: 2 else: 1
-    if currentUnits + units > limit:
-      ## Close the chunk at the best break, or hard-cut on the boundary.
-      if lastBreak > 0:
-        chunks.add(current[0 ..< lastBreak])
-        let rest = current[lastBreak .. ^1]
-        current = rest
+    ## Repeat the cut: after moving the tail of a break, the remainder can
+    ## still exceed the limit when the limit is very small.
+    while currentUnits + units > limit and currentUnits > 0:
+      let prefix = if lastBreak > 0: current[0 ..< lastBreak] else: ""
+      if prefix.strip.len > 0:
+        chunks.add(prefix)
+        current = current[lastBreak .. ^1]
         currentUnits -= lastBreakUnits
       else:
+        ## A break with no content before it would create a whitespace-only
+        ## chunk; cut on the character boundary instead.
         chunks.add(current)
         current = ""
         currentUnits = 0
