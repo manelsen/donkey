@@ -149,7 +149,13 @@ type TypingFlag* = ref bool
 
 proc startTypingLoop*(typingFn: TypingFn;
                       uid: UserId;
-                      channel: ChannelKind): TypingFlag =
+                      channel: ChannelKind;
+                      intervalMs = 4_000): TypingFlag =
+  ## Behavior derived from hermes-agent (MIT) fix 5948ab52e2; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-010
+  ##
+  ## The typing action expires after about 5 s, so it is re-armed while the
+  ## turn is active instead of being sent once.
   var flag: TypingFlag
   new(flag)
   flag[] = true
@@ -157,7 +163,7 @@ proc startTypingLoop*(typingFn: TypingFn;
     while flag[]:
       if typingFn != nil:
         typingFn(uid, channel)
-      await sleepAsync(milliseconds(4_000))
+      await sleepAsync(milliseconds(intervalMs))
   asyncSpawn typingLoopProc()
   flag
 

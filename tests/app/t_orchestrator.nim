@@ -1439,3 +1439,20 @@ suite "adaptive debounce collector":
       msg.kind
 
     check (waitFor doTest()) == amkCancel
+
+suite "typing loop":
+
+  test "TG-010: the typing action is re-armed while the turn is active":
+    proc doTest(): Future[int] {.async.} =
+      var calls = 0
+      let fn: TypingFn = proc(userId: UserId; channel: ChannelKind) {.gcsafe.} =
+        {.cast(gcsafe).}: inc calls
+      let flag = startTypingLoop(fn, UserId("u"), ckTelegram, intervalMs = 10)
+      await sleepAsync(chronos.milliseconds(45))
+      stopTypingLoop(flag)
+      let after = calls
+      await sleepAsync(chronos.milliseconds(30))
+      doAssert calls == after   ## stopped
+      after
+
+    check (waitFor doTest()) >= 2
