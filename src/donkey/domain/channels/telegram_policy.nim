@@ -160,3 +160,13 @@ func isAddressedToBot*(text, botUsername: string): bool =
 func mentionRequiredFromEnv*(value: string): bool =
   ## Opt-in gate; anything but an explicit yes keeps the previous behaviour.
   value.strip.toLowerAscii in ["1", "true", "yes", "on"]
+
+func isMissingThreadError*(message: string): bool =
+  ## Behavior derived from hermes-agent (MIT) fix 41d9d08078; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-026
+  ##
+  ## A deleted or stale forum topic answers 400 "message thread not found".
+  ## The message is still valid for the chat root.
+  let lower = message.toLowerAscii()
+  lower.contains("thread not found") or
+    lower.contains("message thread not found")

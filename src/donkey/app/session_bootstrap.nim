@@ -11,6 +11,7 @@ import ../core/pipeops
 import ../core/providers/smart_routing
 import ../domain/agent_message
 import ../domain/message
+import ../domain/channels/telegram_pure
 import ../domain/builtin_tools
 import ../domain/more_tools
 import ../domain/reminder
@@ -400,12 +401,13 @@ func encodeSessionPayload*(msg: InboundMessage;
                            recentContext = ""): string =
   if msg.mediaUrl.len == 0 and recentContext.len == 0:
     return msg.text
-  $(%* {"text": msg.text, "mediaUrl": msg.mediaUrl, "recentContext": recentContext})
+  $(%* {"text": msg.text, "mediaUrl": msg.mediaUrl,
+        "mediaGroupId": msg.mediaGroupId, "recentContext": recentContext})
 
 func sessionReplyTo*(msg: InboundMessage): string =
   case msg.channel
   of ckTelegram:
-    msg.channelId
+    telegramReplyTarget(msg.channelId, msg.threadId)
   of ckDiscord:
     if msg.channelId.len > 0: "channel:" & msg.channelId else: ""
   else:

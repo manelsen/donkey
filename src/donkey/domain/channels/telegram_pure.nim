@@ -13,7 +13,7 @@
 ##   3. toInbound(r, userId, mediaUrl) → InboundMessage
 ##   4. maxNextOffset(JsonNode, int64) → int64        (next polling offset)
 
-import std/json
+import std/[json, strutils]
 import ../../core/pipeops
 import ../../domain/message
 
@@ -251,3 +251,24 @@ func maxNextOffset*(currentOffset: int64; updates: JsonNode): int64 =
 func hasCallbackId*(r: TgParseResult): bool =
   ## True when the update is a callback_query that requires an ack.
   r.kind == tukCallbackQuery and r.callbackId.len > 0
+
+func telegramReplyTarget*(messageId, threadId: string): string =
+  ## Behavior derived from hermes-agent (MIT) fix 928bb16da1; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-025
+  ##
+  ## A forum topic needs both the message to reply to and the thread the reply
+  ## belongs to. The pair travels as one opaque channel target, so the rest of
+  ## the app keeps treating `replyTo` as a single string.
+  if threadId.len == 0:
+    messageId
+  else:
+    messageId & "#t" & threadId
+
+func splitTelegramReplyTarget*(target: string):
+    tuple[messageId, threadId: string] =
+  ## Splits the composite produced by `telegramReplyTarget`.
+  let at = target.find("#t")
+  if at < 0:
+    (target, "")
+  else:
+    (target[0 ..< at], target[at + 2 .. ^1])

@@ -28,6 +28,7 @@ type NormalTurnPrep* = object
 type UserPayload* = object
   text*:          string
   mediaUrl*:      string
+  mediaUrls*:     seq[string]   ## every attachment of the turn (albums)
   recentContext*: string
 
 func providerLabelFromPrefs*(prefs: string): string =
@@ -109,6 +110,11 @@ proc decodeUserPayload*(payload: string): UserPayload =
     result.text = j.getOrDefault("text").getStr(payload)
     result.mediaUrl = j.getOrDefault("mediaUrl").getStr("")
     result.recentContext = j.getOrDefault("recentContext").getStr("")
+    let urls = j.getOrDefault("mediaUrls")
+    if urls != nil and urls.kind == JArray:
+      for item in urls:
+        if item.kind == JString and item.getStr.len > 0:
+          result.mediaUrls.add(item.getStr)
   except CatchableError:
     discard
 
@@ -119,6 +125,7 @@ proc mergeUserPayloads*(payloads: openArray[string]): string =
     return payloads[0]
   var mergedText: seq[string] = @[]
   var mediaUrl = ""
+  var mediaUrls: seq[string] = @[]
   var recentContext = ""
   for raw in payloads:
     let decoded = decodeUserPayload(raw)
@@ -126,14 +133,20 @@ proc mergeUserPayloads*(payloads: openArray[string]): string =
       mergedText.add(decoded.text)
     if decoded.mediaUrl.len > 0:
       mediaUrl = decoded.mediaUrl
+    for url in decoded.mediaUrls:
+      if url notin mediaUrls:
+        mediaUrls.add(url)
     if recentContext.len == 0 and decoded.recentContext.len > 0:
       recentContext = decoded.recentContext
   let text = mergedText.join("\n\n")
-  if mediaUrl.len == 0 and recentContext.len == 0:
+  if mediaUrl.len > 0 and mediaUrl notin mediaUrls:
+    mediaUrls.insert(mediaUrl, 0)
+  if mediaUrl.len == 0 and mediaUrls.len == 0 and recentContext.len == 0:
     return text
   $(%* {
     "text": text,
     "mediaUrl": mediaUrl,
+    "mediaUrls": mediaUrls,
     "recentContext": recentContext,
   })
 
@@ -145,6 +158,22 @@ func addUserTurn*(history: ConversationHistory;
     result.addUserWithImage(userText, userImageUrl)
   else:
     result.addUser(userText)
+  result.trimTo(20)
+
+func addUserTurnWithImages*(history: ConversationHistory;
+                            userText: string;
+                            imageUrls: seq[string]): ConversationHistory =
+  ## Behavior derived from hermes-agent (MIT) fix 8fb618234f; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-028
+  ##
+  ## An album arrives as several updates. The turn keeps every attachment
+  ## instead of only the last one: the first image carries the text and the
+  ## rest follow as image-only entries, so the model sees the whole set.
+  if imageUrls.len == 0:
+    return addUserTurn(history, userText, "")
+  result = addUserTurn(history, userText, imageUrls[0])
+  for i in 1 ..< imageUrls.len:
+    result.addUserWithImage("", imageUrls[i])
   result.trimTo(20)
 
 func buildToolLoopDoneText*(toolCallCount: int): string =

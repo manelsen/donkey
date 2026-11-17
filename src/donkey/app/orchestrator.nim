@@ -458,7 +458,11 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
       if context.len > 0: context & "\n\n" & blackboardBlock
       else: blackboardBlock
 
-  let history = addUserTurn(result.history, userPayload.text, userPayload.mediaUrl)
+  let history =
+    if userPayload.mediaUrls.len > 1:
+      addUserTurnWithImages(result.history, userPayload.text, userPayload.mediaUrls)
+    else:
+      addUserTurn(result.history, userPayload.text, userPayload.mediaUrl)
 
   result =
     result |>->

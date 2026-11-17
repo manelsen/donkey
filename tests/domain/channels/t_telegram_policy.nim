@@ -4,6 +4,7 @@
 
 import std/[json, strutils, unicode, unittest]
 import donkey/domain/channels/telegram_policy
+import donkey/domain/channels/telegram_pure
 
 suite "telegram_policy — edit errors":
 
@@ -168,3 +169,16 @@ suite "telegram_policy — group mentions":
       check mentionRequiredFromEnv(value)
     for value in ["0", "false", "", "off"]:
       check not mentionRequiredFromEnv(value)
+
+suite "telegram_policy — forum threads":
+
+  test "TG-025: the reply target carries the thread":
+    check telegramReplyTarget("42", "") == "42"
+    check telegramReplyTarget("42", "7") == "42#t7"
+    check splitTelegramReplyTarget("42#t7") == ("42", "7")
+    check splitTelegramReplyTarget("42") == ("42", "")
+
+  test "TG-026: a missing thread is recognised":
+    check isMissingThreadError("Bad Request: message thread not found")
+    check isMissingThreadError("MESSAGE THREAD NOT FOUND")
+    check not isMissingThreadError("message to be replied not found")

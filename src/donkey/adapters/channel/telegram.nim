@@ -149,6 +149,23 @@ func renderTelegramHtml*(text: string; isHtml = false): string =
 
 # ── ChannelPort implementation ────────────────────────────────────────────────
 
+proc applyReplyTarget(body: var JsonNode; replyTo: string; firstChunk: bool) =
+  ## Splits the composite reply target into the message id and the forum
+  ## thread, so a reply lands in the topic it came from.
+  if not firstChunk or replyTo.len == 0:
+    return
+  let (messageId, threadId) = splitTelegramReplyTarget(replyTo)
+  if messageId.len > 0:
+    try:
+      body["reply_to_message_id"] = %parseInt(messageId)
+    except ValueError:
+      discard
+  if threadId.len > 0:
+    try:
+      body["message_thread_id"] = %parseInt(threadId)
+    except ValueError:
+      discard
+
 proc sendMessageBody(a: TelegramAdapter; body: JsonNode; replyTo: string;
                      firstChunk: bool): Result[JsonNode, string] {.gcsafe.} =
   ## Posts a sendMessage payload. When the reply anchor no longer exists, the
@@ -168,6 +185,11 @@ proc sendMessageBody(a: TelegramAdapter; body: JsonNode; replyTo: string;
     var retry = body
     retry.delete("reply_to_message_id")
     return a.post("sendMessage", retry)
+  if body.hasKey("message_thread_id") and isMissingThreadError(res.error):
+    ## The topic is gone; deliver to the chat root instead of dropping it.
+    var retry = body
+    retry.delete("message_thread_id")
+    return a.post("sendMessage", retry)
   res
 
 proc sendChunkOnce(a: TelegramAdapter; chatId: int64; text, replyTo: string;
@@ -176,15 +198,13 @@ proc sendChunkOnce(a: TelegramAdapter; chatId: int64; text, replyTo: string;
   ## Sends one chunk with HTML (converted from MD), falling back to plain text.
   let html = renderTelegramHtml(text, isHtml)
   var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
-  if firstChunk and replyTo.len > 0:
-    body["reply_to_message_id"] = %replyTo
+  applyReplyTarget(body, replyTo, firstChunk)
   body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
   let res = a.sendMessageBody(body, replyTo, firstChunk)
   if res.isOk: return ok()
   ## Fallback: plain text
   var plain = %* {"chat_id": chatId, "text": text}
-  if firstChunk and replyTo.len > 0:
-    plain["reply_to_message_id"] = %replyTo
+  applyReplyTarget(plain, replyTo, firstChunk)
   plain = withLinkPreviewPolicy(plain, telegramLinkPreviewsEnabled())
   discard ? a.sendMessageBody(plain, replyTo, firstChunk)
   ok()
@@ -239,9 +259,7 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
   var body = %* {"chat_id": tgId, fileKey: url}
   if caption.len > 0:
     body["caption"] = %clipCaption(caption, TelegramCaptionLimit)
-  if replyTo.len > 0:
-    try: body["reply_to_message_id"] = %parseInt(replyTo)
-    except ValueError: discard
+  applyReplyTarget(body, replyTo, true)
   let mediaTimeout = telegramMediaTimeoutSec()
   let res = a.postWith(meth, body, mediaTimeout)
   if res.isOk: return ok()
@@ -283,9 +301,7 @@ proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
     "reply_markup": {"inline_keyboard": rows},
   }
   body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
-  if replyTo.len > 0:
-    try: body["reply_to_message_id"] = %parseInt(replyTo)
-    except ValueError: discard
+  applyReplyTarget(body, replyTo, true)
   let res = a.post("sendMessage", body)
   if res.isOk:
     return ok($res.value["result"]["message_id"].getInt())
@@ -346,8 +362,7 @@ proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, str
     let html = renderTelegramHtml(chunk, msg.isHtml)
     var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
     body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
-    if i == 0 and msg.replyTo.len > 0:
-      body["reply_to_message_id"] = %msg.replyTo
+    applyReplyTarget(body, msg.replyTo, i == 0)
     let res = a.sendMessageBody(body, msg.replyTo, i == 0)
     if res.isOk:
       lastId = $res.value["result"]["message_id"].getInt()
