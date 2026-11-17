@@ -11,7 +11,6 @@
 ##   |>-> — appendFragment, shouldFlush              (state/parts as last arg)
 ##   >>=  — validateState, toMergedText              (fallible Result chain)
 
-import std/monotimes
 import ./pipeops
 
 # ── constants ──────────────────────────────────────────────────────────────────
@@ -50,10 +49,6 @@ func defaultDebounceConfig*(): DebounceConfig =
     shortExtMs: ShortExtMs,
   )
 
-proc nowMonoMs*(): int64 =
-  ## Monotonic milliseconds, immune to wall-clock adjustments.
-  getMonoTime().ticks div 1_000_000
-
 # ── pure window computation ────────────────────────────────────────────────────
 
 func windowMs*(partCount: int; lastLen: int;
@@ -88,6 +83,11 @@ func shouldFlush*(nowMs: int64; state: DebounceState;
   let lastLen = state.parts[^1].len
   let win     = windowMs(state.parts.len, lastLen, cfg)
   nowMs - state.lastMs >= win
+
+func shouldFlush*(nowMs: int64; cfg: DebounceConfig;
+                  state: DebounceState): bool =
+  ## Convenience overload for callers that keep the config next to the clock.
+  shouldFlush(nowMs, state, cfg)
 
 func markFlushed*(state: DebounceState): DebounceState =
   ## Returns a copy of state with flushed = true.

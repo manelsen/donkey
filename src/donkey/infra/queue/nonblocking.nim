@@ -21,3 +21,18 @@ proc tryAddLastNoWait*[T](queue: AsyncQueue[T]; value: T):
     err("queue full")
   except CatchableError as e:
     err(e.msg)
+
+
+proc tryAddFirstNoWait*[T](queue: AsyncQueue[T]; value: T):
+                          Result[void, string] {.gcsafe, raises: [].} =
+  ## Same contract as `tryAddLastNoWait`, but puts the item at the front so a
+  ## control task interrupted mid-burst is processed before later fragments.
+  if queue.isNil:
+    return err("queue unavailable")
+  try:
+    queue.addFirstNoWait(value)
+    ok()
+  except AsyncQueueFullError:
+    err("queue full")
+  except CatchableError as e:
+    err(e.msg)

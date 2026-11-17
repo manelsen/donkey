@@ -23,7 +23,7 @@
 ##   orchestrator flushes accumulated tokens to the global outbox as an
 ##   OutboundMessage with isPartial=true. The final flush has isPartial=false.
 
-import std/[os, strutils]
+import std/[monotimes, os, strutils]
 import chronos
 import chronos/asyncsync
 import ../core/pipeops
@@ -60,6 +60,7 @@ import ./subagent_runtime
 import ./prompt_building
 import ./provider_executor
 import ../core/security/dm_policy
+import ../infra/queue/nonblocking
 
 # Re-export public API from extracted modules
 export onboarding
@@ -69,6 +70,11 @@ export prompt_building
 
 const DebounceWindowMs* = MinWindowMs
   ## Base window kept for callers that do not pass a `DebounceConfig`.
+
+proc nowMonoMs*(): int64 =
+  ## Monotonic milliseconds, immune to wall-clock adjustments. Kept in the app
+  ## layer so `core/debounce` stays effect-free.
+  getMonoTime().ticks div 1_000_000
 
 proc debounceConfigFromEnv*(): DebounceConfig =
   ## Reads DONKEY_DEBOUNCE_* overrides. Invalid or non-positive values fall
@@ -661,7 +667,8 @@ proc collectWithDebounce*(inbox: AsyncQueue[AgentMessage];
   ## hold the window open longer, up to `maxWindowMs`. Returns one AgentMessage
   ## with all payloads joined by `mergeUserPayloads`. `amkCancel` always wins.
   let first = await inbox.get()
-  if first.kind != amkTask: return first   ## cancel / stray — pass through
+  if first.kind != amkTask or first.taskKind != tkUserMsg:
+    return first   ## cancel / control task / stray — pass through untouched
 
   var texts = @[first.payload]
   var latest = first
@@ -681,6 +688,11 @@ proc collectWithDebounce*(inbox: AsyncQueue[AgentMessage];
     case next.kind
     of amkCancel: return next          ## cancel wins
     of amkTask:
+      if next.taskKind != tkUserMsg:
+        ## A control task must stay its own turn. Put it back at the front and
+        ## close the burst; the actor loop picks it up on the next iteration.
+        discard tryAddFirstNoWait(inbox, next)
+        break
       state = appendFragment(next.payload, nowMonoMs(), state)
       texts.add(next.payload)
       latest = next

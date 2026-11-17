@@ -1364,19 +1364,42 @@ suite "adaptive debounce collector":
     DebounceConfig(minWindowMs: 60, maxWindowMs: 400,
                    perPartExtMs: 40, shortMsgThreshold: 40, shortExtMs: 40)
 
-  test "queued fragments merge into a single turn":
+  test "a short burst extends the window and merges into one turn":
+    ## With fastCfg: one short part waits 100 ms; two parts wait 140 ms.
+    ## The third fragment arrives 90 ms after the second, inside that window.
+    check windowMs(2, 3, fastCfg()) == 140
+
     proc doTest(): Future[string] {.async.} =
       let inbox = newAsyncQueue[AgentMessage]()
-      await inbox.put(newTaskMsg("a", tkUserMsg, "u", "parte um", ckTelegram, "1"))
-      await inbox.put(newTaskMsg("b", tkUserMsg, "u", "parte dois", ckTelegram, "1"))
-      await inbox.put(newTaskMsg("c", tkUserMsg, "u", "parte tres", ckTelegram, "1"))
-      let merged = await collectWithDebounce(inbox, fastCfg())
+      await inbox.put(newTaskMsg("a", tkUserMsg, "u", "um", ckTelegram, "1"))
+      let collectFut = collectWithDebounce(inbox, fastCfg())
+      await sleepAsync(chronos.milliseconds(40))
+      await inbox.put(newTaskMsg("b", tkUserMsg, "u", "dois", ckTelegram, "1"))
+      await sleepAsync(chronos.milliseconds(90))
+      await inbox.put(newTaskMsg("c", tkUserMsg, "u", "tres", ckTelegram, "1"))
+      let merged = await collectFut
       decodeUserPayload(merged.payload).text
 
     let text = waitFor doTest()
-    check "parte um" in text
-    check "parte dois" in text
-    check "parte tres" in text
+    check "um" in text
+    check "dois" in text
+    check "tres" in text
+
+  test "a control task in a burst is preserved as a separate turn":
+    proc doTest(): Future[(string, AgentMessageKind, TaskKind)] {.async.} =
+      let inbox = newAsyncQueue[AgentMessage]()
+      await inbox.put(newTaskMsg("a", tkUserMsg, "u", "antes", ckTelegram, "1"))
+      let collectFut = collectWithDebounce(inbox, fastCfg())
+      await sleepAsync(chronos.milliseconds(40))
+      await inbox.put(newTaskMsg("ctrl", tkCompact, "u", "", ckTelegram, "1"))
+      let merged = await collectFut
+      let control = await collectWithDebounce(inbox, fastCfg())
+      (decodeUserPayload(merged.payload).text, control.kind, control.taskKind)
+
+    let (text, kind, taskKind) = waitFor doTest()
+    check text == "antes"
+    check kind == amkTask
+    check taskKind == tkCompact
 
   test "a fragment after the window becomes a separate turn":
     proc doTest(): Future[(string, string)] {.async.} =
