@@ -168,7 +168,12 @@ proc applyReplyTarget(body: var JsonNode; replyTo: string; firstChunk: bool) =
   ## to every chunk, or the continuation lands in the general topic.
   if replyTo.len == 0:
     return
-  let (messageId, threadId) = splitTelegramReplyTarget(replyTo)
+  let (chatId, messageId, threadId) = splitTelegramReplyTarget(replyTo)
+  if chatId.len > 0:
+    try:
+      body["chat_id"] = %parseInt(chatId)
+    except ValueError:
+      discard
   if firstChunk and messageId.len > 0:
     try:
       body["reply_to_message_id"] = %parseInt(messageId)
@@ -292,9 +297,13 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
     ## A photo outside the dimension/size limits is still a valid document.
     let docRes = a.postWith("sendDocument", asDocumentBody(body), mediaTimeout)
     if docRes.isOk: return ok()
-  ## Fallback: send URL as text
-  discard ? a.post("sendMessage", %* {"chat_id": tgId, "text": url})
-  ok()
+  ## Fallback: send URL as text, in the same chat and topic.
+  var textBody = %* {"chat_id": tgId, "text": url}
+  applyReplyTarget(textBody, replyTo, true)
+  textBody = withLinkPreviewPolicy(textBody, telegramLinkPreviewsEnabled())
+  let textRes = a.sendMessageBody(textBody, replyTo, true)
+  if textRes.isOk: return ok()
+  err(textRes.error)
 
 proc validateButtons(buttons: seq[seq[(string, string)]]): Result[void, string] =
   for row in buttons:

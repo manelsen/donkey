@@ -407,7 +407,7 @@ func encodeSessionPayload*(msg: InboundMessage;
 func sessionReplyTo*(msg: InboundMessage): string =
   case msg.channel
   of ckTelegram:
-    telegramReplyTarget(msg.channelId, msg.threadId)
+    telegramReplyTarget(msg.chatId, msg.channelId, msg.threadId)
   of ckDiscord:
     if msg.channelId.len > 0: "channel:" & msg.channelId else: ""
   else:

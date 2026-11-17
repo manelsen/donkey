@@ -172,11 +172,12 @@ suite "telegram_policy — group mentions":
 
 suite "telegram_policy — forum threads":
 
-  test "TG-025: the reply target carries the thread":
-    check telegramReplyTarget("42", "") == "42"
-    check telegramReplyTarget("42", "7") == "42#t7"
-    check splitTelegramReplyTarget("42#t7") == ("42", "7")
-    check splitTelegramReplyTarget("42") == ("42", "")
+  test "TG-025: the reply target carries chat, message and thread":
+    check telegramReplyTarget("-100", "42", "") == "-100#c42"
+    check telegramReplyTarget("-100", "42", "7") == "-100#c42#t7"
+    check splitTelegramReplyTarget("-100#c42#t7") == ("-100", "42", "7")
+    check splitTelegramReplyTarget("-100#c42") == ("-100", "42", "")
+    check splitTelegramReplyTarget("42") == ("", "42", "")
 
   test "TG-026: a missing thread is recognised":
     check isMissingThreadError("Bad Request: message thread not found")

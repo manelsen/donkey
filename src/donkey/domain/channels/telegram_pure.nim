@@ -166,8 +166,11 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
     let cq     = upd["callback_query"]
     let fromId = cq["from"]["id"].getBiggestInt()
     let cqMsg  = cq.getOrDefault("message")
-    let msgId  = cqMsg.getOrDefault("message_id").getStr("")
+    let msgId  = if cqMsg.isNil: "" else: cqMsg.idAsString("message_id")
     let threadId = if cqMsg.isNil: "" else: cqMsg.idAsString("message_thread_id")
+    let chatId =
+      if cqMsg.isNil: ""
+      else: cqMsg.getOrDefault("chat").idAsString("id")
     return TgParseResult(
       kind:       tukCallbackQuery,
       rawId:      $fromId,
@@ -176,6 +179,7 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
       channelId:  msgId,
       callbackId: cq["id"].getStr(""),
       threadId:   threadId,
+      chatId:     chatId,
     )
 
   if upd.hasKey("message"):
@@ -240,6 +244,7 @@ func toInbound*(r: TgParseResult; userId: UserId;
     isGroup:       r.isGroup,
     mediaGroupId:  r.mediaGroupId,
     threadId:      r.threadId,
+    chatId:        r.chatId,
   )
 
 func maxNextOffset*(currentOffset: int64; updates: JsonNode): int64 =
@@ -257,23 +262,29 @@ func hasCallbackId*(r: TgParseResult): bool =
   ## True when the update is a callback_query that requires an ack.
   r.kind == tukCallbackQuery and r.callbackId.len > 0
 
-func telegramReplyTarget*(messageId, threadId: string): string =
+func telegramReplyTarget*(chatId, messageId, threadId: string): string =
   ## Behavior derived from hermes-agent (MIT) fix 928bb16da1; see
   ## docs/hermes-mining/telegram/CASES.md#tg-025
   ##
-  ## A forum topic needs both the message to reply to and the thread the reply
-  ## belongs to. The pair travels as one opaque channel target, so the rest of
-  ## the app keeps treating `replyTo` as a single string.
-  if threadId.len == 0:
-    messageId
-  else:
-    messageId & "#t" & threadId
+  ## A reply needs the destination chat, the message to anchor on and, in a
+  ## forum topic, the thread. The three travel as one opaque channel target so
+  ## the rest of the app keeps treating `replyTo` as a single string — and the
+  ## chat travels with the message instead of being inferred from the user.
+  result = chatId & "#c" & messageId
+  if threadId.len > 0:
+    result.add("#t" & threadId)
 
 func splitTelegramReplyTarget*(target: string):
-    tuple[messageId, threadId: string] =
-  ## Splits the composite produced by `telegramReplyTarget`.
-  let at = target.find("#t")
-  if at < 0:
-    (target, "")
-  else:
-    (target[0 ..< at], target[at + 2 .. ^1])
+    tuple[chatId, messageId, threadId: string] =
+  ## Splits the composite produced by `telegramReplyTarget`. A legacy target
+  ## without the markers yields an empty chat id.
+  var rest = target
+  var threadId = ""
+  let threadAt = rest.find("#t")
+  if threadAt >= 0:
+    threadId = rest[threadAt + 2 .. ^1]
+    rest = rest[0 ..< threadAt]
+  let chatAt = rest.find("#c")
+  if chatAt < 0:
+    return ("", rest, threadId)
+  (rest[0 ..< chatAt], rest[chatAt + 2 .. ^1], threadId)

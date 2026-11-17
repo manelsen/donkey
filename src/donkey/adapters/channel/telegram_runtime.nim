@@ -25,7 +25,7 @@ var gAlbumMentions = newAlbumMentionGate()
 func replyTarget*(msg: InboundMessage): string =
   ## Carries the forum thread along with the message id, so command replies
   ## also land in the topic the user wrote in.
-  telegramReplyTarget(msg.channelId, msg.threadId)
+  telegramReplyTarget(msg.chatId, msg.channelId, msg.threadId)
 
 
 # ── Forward declarations ──────────────────────────────────────────────────────

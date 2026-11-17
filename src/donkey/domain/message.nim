@@ -48,6 +48,7 @@ type
     isGroup*:    bool         ## true for group/supergroup chats
     mediaGroupId*: string     ## album id when the update belongs to one
     threadId*:   string       ## forum topic / thread id when present
+    chatId*:     string       ## source chat id (group id in groups)
     channel*:    ChannelKind
 
   OutboundMessage* = object
