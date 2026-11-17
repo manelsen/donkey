@@ -6,6 +6,7 @@ when defined(withSqlite):
   import donkey/core/types
   import donkey/adapters/memory/magma_memory_adapter
   import donkey/domain/memory/commitment_pure
+  import donkey/domain/memory/episode_pure
   import donkey/domain/memory/provenance_pure
   import donkey/domain/memory/recall_pure
   import donkey/ports/memory
@@ -209,6 +210,65 @@ when defined(withSqlite):
       let res = failing.appendMemory(UserId("u1"), "outro fato")
       check res.isErr
       check res.error.len > 0
+
+    test "profile, preferences and episodes report a write the store refused":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      check a.saveUserMd(UserId("u1"), "# Ada").isOk
+      check a.savePreferences(UserId("u1"), "language = \"pt-BR\"").isOk
+      var rejecting = a.graph
+      rejecting.upsertNode = proc(node: MagmaNode): Result[void, string] {.gcsafe.} =
+        err("disk full")
+      let failing = newMagmaMemoryAdapter(rejecting, fakeEmbedFn)
+      check failing.saveUserMd(UserId("u1"), "# Outra").isErr
+      check failing.savePreferences(UserId("u1"), "language = \"en\"").isErr
+      let episode = newEpisodeJournal("Titulo", "Resumo", 1_700_000_000,
+                                      1_700_000_100, @[])
+      check failing.saveEpisode(UserId("u1"), episode).isErr
+      check a.loadUserMd(UserId("u1")) == "# Ada"
+
+    test "the store reports an upsert it could not make":
+      ## The database file gives way to a directory after the adapter is
+      ## built, so the next write cannot open it.
+      let lostPath = dbPath & ".lost"
+      let lost = newSqliteMagmaMemoryAdapter(lostPath, fakeEmbedFn)
+      check lost.saveUserMd(UserId("u1"), "# Ada").isOk
+      removeFile(lostPath)
+      createDir(lostPath)
+      check lost.saveUserMd(UserId("u1"), "# Outra").isErr
+      removeDir(lostPath)
+
+    test "clearMemory and resetBootstrap report what was not deleted":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      ## Nothing to delete is a success: the operations are idempotent.
+      check a.clearMemory(UserId("nobody")).isOk
+      check a.resetBootstrap(UserId("nobody")).isOk
+      a.saveUserMd(UserId("u1"), "# Ada")
+      a.appendMemory(UserId("u1"), "fato")
+      var stuck = a.graph
+      stuck.deleteNode = proc(nodeId: string): bool {.gcsafe.} = false
+      let failing = newMagmaMemoryAdapter(stuck, fakeEmbedFn)
+      check failing.clearMemory(UserId("u1")).isErr
+      check failing.resetBootstrap(UserId("u1")).isErr
+      check a.clearMemory(UserId("u1")).isOk
+      check a.resetBootstrap(UserId("u1")).isOk
+      check not a.hasContext(UserId("u1")).get()
+
+    test "the profile and preferences reads tell failure from absence":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      check a.readUserMd(UserId("u1")).get() == ""
+      a.saveUserMd(UserId("u1"), "# Ada")
+      a.savePreferences(UserId("u1"), "language = \"pt-BR\"")
+      check a.readUserMd(UserId("u1")).get() == "# Ada"
+      check a.readPreferences(UserId("u1")).get() == "language = \"pt-BR\""
+      var broken = a.graph
+      broken.listNodesLimited = proc(userId: string; nodeType: string = "";
+                                     limit, maxContentBytes: int):
+                                     Result[seq[MagmaNode], string] {.gcsafe.} =
+        err("database is locked")
+      let failing = newMagmaMemoryAdapter(broken, fakeEmbedFn)
+      check failing.readUserMd(UserId("u1")).isErr
+      check failing.readPreferences(UserId("u1")).isErr
+      check failing.readContext(UserId("u1")).isErr
 
     test "reading the context reports a graph that cannot be read":
       let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)

@@ -222,19 +222,32 @@ when defined(withPostgres) or defined(withSqlite):
   proc hasProfile*(a: MagmaMemoryAdapter; userId: UserId): bool =
     a.graph.getNode(profileId(userId)).isSome
 
+  proc readSingleNode(a: MagmaMemoryAdapter; userId: UserId;
+                      nodeType: string): Result[string, string] =
+    ## Content of the one node a user has of this type, or "" when there is
+    ## none. Read through the listing that reports a failed read: getNode
+    ## turns a failure into "not found".
+    let nodes = ? a.graph.listNodesLimited($userId, nodeType, 1,
+                                           MemoryContentReadLimit)
+    if nodes.len > 0: ok(nodes[0].content) else: ok("")
+
+  proc readUserMd*(a: MagmaMemoryAdapter;
+                   userId: UserId): Result[string, string] =
+    ## The stored profile, for callers that will write back what they read.
+    a.readSingleNode(userId, NtUserProfile)
+
+  proc readPreferences*(a: MagmaMemoryAdapter;
+                        userId: UserId): Result[string, string] =
+    ## The stored preferences, for callers that will write back what they read.
+    a.readSingleNode(userId, NtPreference)
+
   proc readContext*(a: MagmaMemoryAdapter;
                     userId: UserId): Result[UserContext, string] =
     ## The user's context as the graph holds it. An error means the graph
     ## could not be read, which is not the same as a graph with nothing in it.
-    var userMd = ""
     var memLines: seq[string]
-    var prefMd = ""
-    let profileNode = a.graph.getNode(profileId(userId))
-    if profileNode.isSome:
-      userMd = profileNode.get().content
-    let prefNode = a.graph.getNode(prefId(userId))
-    if prefNode.isSome:
-      prefMd = prefNode.get().content
+    let userMd = ? a.readUserMd(userId)
+    let prefMd = ? a.readPreferences(userId)
     ## Filter by type in the query: entity and episode nodes share the
     ## same table and would otherwise push memories out of the window.
     let memNodes = ? a.graph.listNodesLimited(
@@ -282,7 +295,7 @@ when defined(withPostgres) or defined(withSqlite):
                   nid, userId, nodeType, content: string;
                   emb: seq[float32];
                   ts: int64;
-                  meta: JsonNode = nil) =
+                  meta: JsonNode = nil): Result[void, string] {.discardable.} =
     a.graph.upsertNode(MagmaNode(
       id: nid,
       userId: userId,
@@ -293,15 +306,18 @@ when defined(withPostgres) or defined(withSqlite):
       meta: if meta != nil: meta else: %*{},
     ))
 
-  proc saveUserMd*(a: MagmaMemoryAdapter; userId: UserId; content: string) =
+  proc saveUserMd*(a: MagmaMemoryAdapter; userId: UserId;
+                   content: string): Result[void, string] {.discardable.} =
     let nid = profileId(userId)
     a.upsertNode(nid, $userId, NtUserProfile, content, a.embedFn(content), getTime().toUnix())
 
-  proc savePreferences*(a: MagmaMemoryAdapter; userId: UserId; content: string) =
+  proc savePreferences*(a: MagmaMemoryAdapter; userId: UserId;
+                        content: string): Result[void, string] {.discardable.} =
     let nid = prefId(userId)
     a.upsertNode(nid, $userId, NtPreference, content, a.embedFn(content), getTime().toUnix())
 
-  proc saveCommitment*(a: MagmaMemoryAdapter; userId: UserId; commitment: Commitment) =
+  proc saveCommitment*(a: MagmaMemoryAdapter; userId: UserId;
+                       commitment: Commitment): Result[void, string] {.discardable.} =
     let nid = commitmentNodeId(userId, commitment.id)
     a.upsertNode(
       nid,
@@ -341,7 +357,8 @@ when defined(withPostgres) or defined(withSqlite):
     )
     true
 
-  proc saveEpisode*(a: MagmaMemoryAdapter; userId: UserId; episode: EpisodeJournal) =
+  proc saveEpisode*(a: MagmaMemoryAdapter; userId: UserId;
+                    episode: EpisodeJournal): Result[void, string] {.discardable.} =
     let nid = episodeNodeId(userId, episode.id)
     var meta = episodeMeta(episode)
     meta["summary"] = %episode.summary
@@ -634,16 +651,31 @@ when defined(withPostgres) or defined(withSqlite):
     for node in a.graph.listNodes($userId):
       discard a.graph.deleteNode(node.id)
 
-  proc clearMemory*(a: MagmaMemoryAdapter; userId: UserId) =
+  proc clearMemory*(a: MagmaMemoryAdapter;
+                    userId: UserId): Result[void, string] {.discardable.} =
+    ## Deletes the user's memories. The store's delete answers false both for
+    ## "was not there" and for "failed", so the result is checked by reading
+    ## back: clearing nothing is a success, leaving a memory behind is not.
     for node in a.graph.listNodes($userId, NtMemory):
       discard a.graph.deleteNode(node.id)
     for node in a.graph.listNodes($userId, NtEntity):
       if a.graph.getEdges(node.id, direction = "both").len == 0:
         discard a.graph.deleteNode(node.id)
+    let left = ? a.graph.listNodesLimited($userId, NtMemory, 1, 1)
+    if left.len > 0:
+      return err("memories could not be deleted from the graph")
+    ok()
 
-  proc resetBootstrap*(a: MagmaMemoryAdapter; userId: UserId) =
+  proc resetBootstrap*(a: MagmaMemoryAdapter;
+                       userId: UserId): Result[void, string] {.discardable.} =
+    ## Deletes profile and preferences; checked by reading back, as above.
     discard a.graph.deleteNode(profileId(userId))
     discard a.graph.deleteNode(prefId(userId))
+    for nodeType in [NtUserProfile, NtPreference]:
+      let left = ? a.graph.listNodesLimited($userId, nodeType, 1, 1)
+      if left.len > 0:
+        return err("profile and preferences could not be deleted from the graph")
+    ok()
 
 else:
   type
@@ -681,7 +713,9 @@ else:
     UserContext(userId: userId)
   proc stats*(a: MagmaMemoryAdapter; userId: UserId): MagmaStats = MagmaStats()
   proc stats*(a: MagmaMemoryAdapter): MagmaStats = MagmaStats()
-  proc saveUserMd*(a: MagmaMemoryAdapter; userId: UserId; content: string) = discard
+  proc saveUserMd*(a: MagmaMemoryAdapter; userId: UserId;
+                   content: string): Result[void, string]
+                   {.discardable.} = err("no memory graph backend in this build")
   proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string;
                      origin = MemoryOrigin()): Result[void, string]
                      {.discardable.} = err("no memory graph backend in this build")
@@ -690,13 +724,25 @@ else:
   proc readContext*(a: MagmaMemoryAdapter;
                     userId: UserId): Result[UserContext, string] =
     err("no memory graph backend in this build")
+  proc readUserMd*(a: MagmaMemoryAdapter;
+                   userId: UserId): Result[string, string] =
+    err("no memory graph backend in this build")
+  proc readPreferences*(a: MagmaMemoryAdapter;
+                        userId: UserId): Result[string, string] =
+    err("no memory graph backend in this build")
   proc hasContext*(a: MagmaMemoryAdapter;
                    userId: UserId): Result[bool, string] =
     err("no memory graph backend in this build")
-  proc savePreferences*(a: MagmaMemoryAdapter; userId: UserId; content: string) = discard
-  proc saveCommitment*(a: MagmaMemoryAdapter; userId: UserId; commitment: Commitment) = discard
+  proc savePreferences*(a: MagmaMemoryAdapter; userId: UserId;
+                        content: string): Result[void, string]
+                        {.discardable.} = err("no memory graph backend in this build")
+  proc saveCommitment*(a: MagmaMemoryAdapter; userId: UserId;
+                       commitment: Commitment): Result[void, string]
+                       {.discardable.} = err("no memory graph backend in this build")
   proc loadCommitments*(a: MagmaMemoryAdapter; userId: UserId): seq[Commitment] = @[]
-  proc saveEpisode*(a: MagmaMemoryAdapter; userId: UserId; episode: EpisodeJournal) = discard
+  proc saveEpisode*(a: MagmaMemoryAdapter; userId: UserId;
+                    episode: EpisodeJournal): Result[void, string]
+                    {.discardable.} = err("no memory graph backend in this build")
   proc loadEpisodes*(a: MagmaMemoryAdapter; userId: UserId): seq[EpisodeJournal] = @[]
   proc updateCommitmentStatus*(a: MagmaMemoryAdapter;
                                userId: UserId;
@@ -705,5 +751,7 @@ else:
   proc search*(a: MagmaMemoryAdapter; userId: UserId; query: string; limit: int): seq[MemoryHit] = @[]
   proc toSearchFn*(a: MagmaMemoryAdapter): SearchFn = nil
   proc deleteUser*(a: MagmaMemoryAdapter; userId: UserId) = discard
-  proc clearMemory*(a: MagmaMemoryAdapter; userId: UserId) = discard
-  proc resetBootstrap*(a: MagmaMemoryAdapter; userId: UserId) = discard
+  proc clearMemory*(a: MagmaMemoryAdapter; userId: UserId): Result[void, string]
+                    {.discardable.} = err("no memory graph backend in this build")
+  proc resetBootstrap*(a: MagmaMemoryAdapter; userId: UserId): Result[void, string]
+                       {.discardable.} = err("no memory graph backend in this build")

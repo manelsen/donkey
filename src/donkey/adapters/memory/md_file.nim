@@ -131,7 +131,8 @@ when defined(withPostgres) or defined(withSqlite):
     ## Imports the Markdown files of a paddock into an empty graph, all or
     ## nothing. Memories go first, because their writes are the ones that
     ## report failure; if one fails, what was written is removed, so the
-    ## graph is empty again and the next access retries the whole import. A
+    ## graph is empty again and the next access retries the whole import. The
+    ## same holds for the profile and the preferences. A
     ## partial import left in place would make the graph look populated and
     ## the rest of the paddock would never be read.
     for chunk in ctx.memoryMd.split("\n\n"):
@@ -143,10 +144,15 @@ when defined(withPostgres) or defined(withSqlite):
       if stored.isErr:
         magma.clearMemory(ctx.userId)
         return err("markdown import: " & stored.error)
+    var written = Result[void, string].ok()
     if ctx.userMd.strip.len > 0:
-      magma.saveUserMd(ctx.userId, ctx.userMd)
-    if ctx.preferencesMd.strip.len > 0:
-      magma.savePreferences(ctx.userId, ctx.preferencesMd)
+      written = magma.saveUserMd(ctx.userId, ctx.userMd)
+    if written.isOk and ctx.preferencesMd.strip.len > 0:
+      written = magma.savePreferences(ctx.userId, ctx.preferencesMd)
+    if written.isErr:
+      magma.clearMemory(ctx.userId)
+      magma.resetBootstrap(ctx.userId)
+      return err("markdown import: " & written.error)
     ok()
 else:
   type GraphHandle = ref object
@@ -329,7 +335,6 @@ proc saveEpisode(a: MdFileAdapter; userId: UserId;
     when defined(withPostgres) or defined(withSqlite):
       try:
         magma.saveEpisode(userId, episode)
-        ok()
       except Exception as e:
         err("save episode: " & e.msg)
     else:
@@ -468,6 +473,37 @@ proc currentPreferences(a: MdFileAdapter; userId: UserId): string =
       return magma.loadPreferences(userId)
   readOrEmpty(a.preferencesMdPath(userId))
 
+proc storedUserMd(a: MdFileAdapter; userId: UserId): Result[string, string] =
+  ## USER.md for a caller that will write back what it read. Unlike
+  ## currentUserMd there is no fallback to the last export: merging over an
+  ## old export and saving the result would put stale data back in the graph.
+  let (access, magma) = a.openGraph(userId)
+  case access
+  of gaUnavailable:
+    err(GraphUnavailableError)
+  of gaReady:
+    when defined(withPostgres) or defined(withSqlite):
+      magma.readUserMd(userId)
+    else:
+      err(GraphUnavailableError)
+  of gaNone:
+    ok(readOrEmpty(a.userMdPath(userId)))
+
+proc storedPreferences(a: MdFileAdapter; userId: UserId): Result[string, string] =
+  ## PREFERENCES.md for a caller that will write back what it read; same
+  ## rule as storedUserMd.
+  let (access, magma) = a.openGraph(userId)
+  case access
+  of gaUnavailable:
+    err(GraphUnavailableError)
+  of gaReady:
+    when defined(withPostgres) or defined(withSqlite):
+      magma.readPreferences(userId)
+    else:
+      err(GraphUnavailableError)
+  of gaNone:
+    ok(readOrEmpty(a.preferencesMdPath(userId)))
+
 proc hasProfile*(a: MdFileAdapter; userId: UserId): bool =
   let (access, magma) = a.openGraph(userId)
   when defined(withPostgres) or defined(withSqlite):
@@ -514,7 +550,7 @@ proc saveUserMd*(a: MdFileAdapter; userId: UserId;
       return err(GraphUnavailableError)
     of gaReady:
       when defined(withPostgres) or defined(withSqlite):
-        magma.saveUserMd(userId, content)
+        ? magma.saveUserMd(userId, content)
       tryExport(a.userMdPath(userId), content)
     of gaNone:
       exportFile(a.userMdPath(userId), content)
@@ -539,13 +575,20 @@ proc listUsers*(a: MdFileAdapter): seq[UserSummary] =
         if access.len > 0: access else: "active",
     ))
 
-proc updateUserField*(a: MdFileAdapter; userId: UserId; field, value: string) =
-  let current = a.currentUserMd(userId)
-  let label =
-    if field.toLowerAscii() == "preferred_name": "Preferred name"
-    elif field.toLowerAscii() == "access": "Access"
-    else: field
-  a.saveUserMd(userId, current.setUserFieldText(label, value))
+proc updateUserField*(a: MdFileAdapter; userId: UserId;
+                      field, value: string): Result[void, string]
+                      {.discardable.} =
+  ## Rewrites one field of the stored profile. When the profile cannot be
+  ## read nothing is saved.
+  try:
+    let current = ? a.storedUserMd(userId)
+    let label =
+      if field.toLowerAscii() == "preferred_name": "Preferred name"
+      elif field.toLowerAscii() == "access": "Access"
+      else: field
+    a.saveUserMd(userId, current.setUserFieldText(label, value))
+  except Exception as e:
+    err("update user field: " & e.msg)
 
 proc isRevoked*(a: MdFileAdapter; userId: UserId): bool =
   isRevokedUserMd(a.currentUserMd(userId))
@@ -651,7 +694,7 @@ proc savePreferences*(a: MdFileAdapter; userId: UserId;
       return err(GraphUnavailableError)
     of gaReady:
       when defined(withPostgres) or defined(withSqlite):
-        magma.savePreferences(userId, content)
+        ? magma.savePreferences(userId, content)
       tryExport(a.preferencesMdPath(userId), content)
     of gaNone:
       exportFile(a.preferencesMdPath(userId), content)
@@ -661,42 +704,42 @@ proc savePreferences*(a: MdFileAdapter; userId: UserId;
 
 proc clearMemory*(a: MdFileAdapter; userId: UserId): Result[void, string] =
   ## Clears the memory of this user (irreversible): the graph nodes when
-  ## there is a graph, and MEMORY.md. With the graph unavailable nothing is
-  ## cleared: emptying only the export would report a clean memory that
-  ## comes back as soon as the graph does.
+  ## there is a graph, and MEMORY.md.
+  ##
+  ## With the graph unavailable nothing is cleared: emptying only the export
+  ## would report a clean memory that comes back as soon as the graph does.
+  ##
+  ## With a graph the export is emptied first, and the graph is cleared only
+  ## after that worked. In the other order a failed export would leave an
+  ## empty graph beside the old MEMORY.md, and the next access would import
+  ## the cleared memories again. An emptied export beside an intact graph is
+  ## harmless: the export is derived and can be rebuilt.
   try:
     let (access, magma) = a.openGraph(userId)
-    case access
-    of gaUnavailable:
+    if access == gaUnavailable:
       return err(GraphUnavailableError)
-    of gaReady:
+    if fileExists(a.memoryMdPath(userId)):
+      exportFile(a.memoryMdPath(userId), "")
+    if access == gaReady:
       when defined(withPostgres) or defined(withSqlite):
-        magma.clearMemory(userId)
-      if fileExists(a.memoryMdPath(userId)):
-        tryExport(a.memoryMdPath(userId), "")
-    of gaNone:
-      if fileExists(a.memoryMdPath(userId)):
-        exportFile(a.memoryMdPath(userId), "")
+        ? magma.clearMemory(userId)
     ok()
   except Exception as e:
     err("clear memory: " & e.msg)
 
 proc resetBootstrap*(a: MdFileAdapter; userId: UserId): Result[void, string] =
-  ## Removes profile and preferences. Same rule as clearMemory when the
-  ## graph is unavailable.
+  ## Removes profile and preferences. Same rules as clearMemory: nothing is
+  ## removed with the graph unavailable, and the files go before the graph.
   try:
     let (access, magma) = a.openGraph(userId)
-    case access
-    of gaUnavailable:
+    if access == gaUnavailable:
       return err(GraphUnavailableError)
-    of gaReady:
-      when defined(withPostgres) or defined(withSqlite):
-        magma.resetBootstrap(userId)
-    of gaNone:
-      discard
     for path in [a.userMdPath(userId), a.preferencesMdPath(userId)]:
       if fileExists(path):
         removeFile(path)
+    if access == gaReady:
+      when defined(withPostgres) or defined(withSqlite):
+        ? magma.resetBootstrap(userId)
     ok()
   except Exception as e:
     err("reset bootstrap: " & e.msg)
@@ -927,9 +970,10 @@ proc hasIdentity*(a: MdFileAdapter; userId: UserId): bool =
 proc saveIdentity*(a: MdFileAdapter; userId: UserId;
                    traits: PersonalityTraits; name: string): Result[void, string] =
   ## Merges agent identity into the preferences (TOML key=value format).
+  ## When the preferences cannot be read nothing is saved.
   try:
-    a.savePreferences(userId,
-      mergeIdentityPrefs(a.currentPreferences(userId), traits, name))
+    let current = ? a.storedPreferences(userId)
+    a.savePreferences(userId, mergeIdentityPrefs(current, traits, name))
   except Exception as e:
     err("save identity: " & e.msg)
 

@@ -158,10 +158,12 @@ when defined(withPostgres):
     except CatchableError:
       false
 
-  proc upsertNode*(g: MagmaGraph; node: MagmaNode) =
-    let db = g.openDb()
-    defer: db.close()
+  proc upsertNode*(g: MagmaGraph; node: MagmaNode): Result[void, string] =
+    ## Inserts or replaces a node. A refused write comes back as an error:
+    ## the caller must be able to tell a stored node from a lost one.
     try:
+      let db = g.openDb()
+      defer: db.close()
       let metaStr = if node.meta != nil: $node.meta else: "{}"
       if node.embedding.len > 0:
         let emb = "[" & node.embedding.join(",") & "]"
@@ -180,8 +182,9 @@ when defined(withPostgres):
           "user_id = excluded.user_id, node_type = excluded.node_type, content = excluded.content, " &
           "embedding = NULL, ts = excluded.ts, meta = excluded.meta"
         ), node.id, node.userId, node.nodeType, node.content, $node.timestamp, metaStr)
-    except CatchableError:
-      discard
+      ok()
+    except CatchableError as e:
+      err("upsert node: " & e.msg)
 
   proc getNode*(g: MagmaGraph; nodeId: string): Option[MagmaNode] =
     let db = g.openDb()
@@ -559,7 +562,8 @@ when defined(withPostgres):
     MultigraphStorePort(
       migrate: proc() {.gcsafe.} = g.migrate(),
       insertNode: proc(node: MagmaNode): bool {.gcsafe.} = g.insertNode(node),
-      upsertNode: proc(node: MagmaNode) {.gcsafe.} = g.upsertNode(node),
+      upsertNode: proc(node: MagmaNode): Result[void, string] {.gcsafe.} =
+        g.upsertNode(node),
       getNode: proc(nodeId: string): Option[MagmaNode] {.gcsafe.} = g.getNode(nodeId),
       listNodes: proc(userId: string; nodeType: string = ""): seq[MagmaNode] {.gcsafe.} =
         g.listNodes(userId, nodeType),

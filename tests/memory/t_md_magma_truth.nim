@@ -309,6 +309,52 @@ when defined(withSqlite):
       check a.memoryNodes(uid).len == 3
       check real.loadUserMd(uid) == "# Ada"
 
+    test "an import whose profile write fails leaves the graph empty":
+      let a = newAdapter()
+      let real = a.newMagmaAdapter()
+      var rejecting = real.graph
+      rejecting.upsertNode = proc(node: MagmaNode): Result[void, string] {.gcsafe.} =
+        err("disk full")
+      let failing = newMagmaMemoryAdapter(rejecting, real.embedFn)
+      let ctx = UserContext(userId: uid, userMd: "# Ada",
+                            memoryMd: "nota um\n\nnota dois")
+      check importMarkdownInto(failing, ctx).isErr
+      check not real.hasContext(uid).get()
+
+    test "a clear that cannot empty the export clears nothing":
+      ## Otherwise the graph would be empty with the old export still on
+      ## disk, and the next read would import the cleared memories again.
+      ## A link to a read-only kernel file stands in for an export that can
+      ## be read but not overwritten; it refuses writes even to root.
+      const unwritable = "/sys/kernel/uevent_seqnum"
+      if not fileExists(unwritable):
+        skip()
+      else:
+        let a = newAdapter()
+        a.appendMemory(uid, "- gosta de Nim\n")
+        removeFile(a.memoryMdPath(uid))
+        createSymlink(unwritable, a.memoryMdPath(uid))
+        check a.clearMemory(uid).isErr
+        check a.memoryNodes(uid).len == 1
+        removeFile(a.memoryMdPath(uid))
+        check a.clearMemory(uid).isOk
+        check a.memoryNodes(uid).len == 0
+        check a.loadContext(uid).memoryMd == ""
+
+    test "a field edit or an identity merge reports a store it could not read":
+      let good = newAdapter()
+      good.saveUserMd(uid, "# Ada\n- **Access:** active")
+      check good.updateUserField(uid, "Access", "revoked").isOk
+      check good.isRevoked(uid)
+      writeFile(root / "blocker", "x")
+      let broken = MdFileAdapter(
+        paddocksDir: root / "paddocks",
+        magmaSqlitePath: root / "blocker" / "magma.sqlite",
+      )
+      check broken.updateUserField(uid, "Access", "active").isErr
+      check broken.saveIdentity(uid, PersonalityTraits(tone: "seco"), "Guano").isErr
+      check good.isRevoked(uid)
+
     test "the first search imports a paddock that only has files":
       let a = newAdapter()
       a.ensurePaddock(uid)

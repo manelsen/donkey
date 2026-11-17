@@ -46,7 +46,7 @@ type
   MultigraphStorePort* = object
     migrate*: proc() {.gcsafe.}
     insertNode*: proc(node: MagmaNode): bool {.gcsafe.}
-    upsertNode*: proc(node: MagmaNode) {.gcsafe.}
+    upsertNode*: proc(node: MagmaNode): Result[void, string] {.gcsafe.}
     getNode*: proc(nodeId: string): Option[MagmaNode] {.gcsafe.}
     listNodes*: proc(userId: string; nodeType: string = ""): seq[MagmaNode] {.gcsafe.}
     listNodesLimited*: proc(userId: string; nodeType: string = "";

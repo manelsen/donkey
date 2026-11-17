@@ -343,11 +343,14 @@ when defined(withSqlite):
     except CatchableError:
       false
 
-  proc upsertNode*(a: SqliteMagmaStoreAdapter; node: MagmaNode) =
-    a.ensureSchema()
-    let db = a.openDb()
-    defer: db.close()
+  proc upsertNode*(a: SqliteMagmaStoreAdapter;
+                   node: MagmaNode): Result[void, string] =
+    ## Inserts or replaces a node. A refused write comes back as an error:
+    ## the caller must be able to tell a stored node from a lost one.
     try:
+      a.ensureSchema()
+      let db = a.openDb()
+      defer: db.close()
       let metaJson = if node.meta != nil: $node.meta else: "{}"
       let blob = encodeVectorBlob(node.embedding)
       if blob.len > 0:
@@ -384,8 +387,9 @@ when defined(withSqlite):
            $node.timestamp, metaJson)
         let rowid = db.getValue(sql("SELECT rowid FROM " & SqliteNodesTable & " WHERE id = ?"), node.id)
         db.syncVecRow(rowid, node.userId, "")
-    except CatchableError:
-      discard
+      ok()
+    except CatchableError as e:
+      err("upsert node: " & e.msg)
 
   proc getNode*(a: SqliteMagmaStoreAdapter; nodeId: string): Option[MagmaNode] =
     a.ensureSchema()
@@ -723,7 +727,8 @@ when defined(withSqlite):
     MultigraphStorePort(
       migrate: proc() {.gcsafe.} = a.migrate(),
       insertNode: proc(node: MagmaNode): bool {.gcsafe.} = a.insertNode(node),
-      upsertNode: proc(node: MagmaNode) {.gcsafe.} = a.upsertNode(node),
+      upsertNode: proc(node: MagmaNode): Result[void, string] {.gcsafe.} =
+        a.upsertNode(node),
       getNode: proc(nodeId: string): Option[MagmaNode] {.gcsafe.} = a.getNode(nodeId),
       listNodes: proc(userId: string; nodeType: string = ""): seq[MagmaNode] {.gcsafe.} = a.listNodes(userId, nodeType),
       listNodesLimited: proc(userId: string; nodeType: string = "";

@@ -145,12 +145,10 @@ proc safeSaveSession*(memory: MemoryRuntimePort;
 proc warnNotSaved(what: string; uid: UserId; saved: Result[void, string])
                  {.gcsafe, raises: [].} =
   ## The onboarding flow carries no logger; a write that was not stored is
-  ## still logged, never dropped in silence.
+  ## still logged, never dropped in silence. Logging itself does not raise.
   if saved.isErr:
-    try:
-      newLogger("onboarding").warn($uid & " " & what & " not saved: " & saved.error)
-    except Exception:
-      discard
+    newLogger("onboarding").warn(
+      string(uid) & " " & what & " not saved: " & saved.error)
 
 proc safeSaveIdentity*(memory: MemoryRuntimePort;
                       uid: UserId;

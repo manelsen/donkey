@@ -61,7 +61,10 @@ proc ctlUserShow*(memory: MdFileAdapter; uuid: string): Result[void, string] =
   ok()
 
 proc ctlUserEdit*(memory: MdFileAdapter; uuid, field, value: string) =
-  memory.updateUserField(UserId(uuid), field, value)
+  let updated = memory.updateUserField(UserId(uuid), field, value)
+  if updated.isErr:
+    echo "Error: " & updated.error
+    return
   echo "Updated " & uuid & ": " & field & " = " & value
 
 proc ctlUserRevoke*(memory: MdFileAdapter; uuid: string; revoked: bool): Result[void, string] =
@@ -75,7 +78,11 @@ proc ctlUserRevoke*(memory: MdFileAdapter; uuid: string; revoked: bool): Result[
     echo "Error: " & allowlistResult.error
     return err(allowlistResult.error)
   if memory.hasProfile(userId):
-    memory.updateUserField(userId, "Access", if revoked: "revoked" else: "active")
+    let updated = memory.updateUserField(
+      userId, "Access", if revoked: "revoked" else: "active")
+    if updated.isErr:
+      echo "Error: " & updated.error
+      return err(updated.error)
   echo (if revoked: "Revoked " else: "Restored ") & uuid
   ok()
 
