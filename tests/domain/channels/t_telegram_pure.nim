@@ -349,3 +349,16 @@ suite "telegram_pure — group and topic metadata":
                              "media_group_id": "g1",
                              "photo": [{"file_id": "f1"}]}}
     check parseUpdate(upd).mediaGroupId == "g1"
+
+  test "TG-015: the source chat id is exposed":
+    let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
+                             "chat": {"id": -100, "type": "supergroup"},
+                             "text": "oi"}}
+    check parseUpdate(upd).chatId == "-100"
+
+  test "TG-025: a callback carries its thread":
+    let upd = %*{"callback_query": {"id": "cb", "from": {"id": 7}, "data": "x",
+                                    "message": {"message_id": 3,
+                                                "chat": {"id": -100, "type": "supergroup"},
+                                                "message_thread_id": 9}}}
+    check parseUpdate(upd).threadId == "9"

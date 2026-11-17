@@ -39,6 +39,7 @@ type
     mediaGroupId*: string  ## album id, when the message belongs to one
     threadId*:    string   ## message_thread_id for forum topics
     isGroup*:     bool     ## true for group/supergroup chats
+    chatId*:      string   ## source chat id (group id in groups)
 
 # ── Internal pure helpers ─────────────────────────────────────────────────────
 
@@ -164,7 +165,9 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
   if upd.hasKey("callback_query"):
     let cq     = upd["callback_query"]
     let fromId = cq["from"]["id"].getBiggestInt()
-    let msgId  = cq.getOrDefault("message").getOrDefault("message_id").getStr("")
+    let cqMsg  = cq.getOrDefault("message")
+    let msgId  = cqMsg.getOrDefault("message_id").getStr("")
+    let threadId = if cqMsg.isNil: "" else: cqMsg.idAsString("message_thread_id")
     return TgParseResult(
       kind:       tukCallbackQuery,
       rawId:      $fromId,
@@ -172,6 +175,7 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
       text:       "/callback " & cq["data"].getStr(""),
       channelId:  msgId,
       callbackId: cq["id"].getStr(""),
+      threadId:   threadId,
     )
 
   if upd.hasKey("message"):
@@ -204,6 +208,7 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
       mediaGroupId:  groupId,
       threadId:      threadId,
       isGroup:       chatType in ["group", "supergroup"],
+      chatId:        $tgMsg["chat"]["id"].getBiggestInt(),
     )
 
   TgParseResult(kind: tukUnknown)

@@ -10,7 +10,7 @@
 ##
 ## IdentityResolver is now in adapters/identity — maps telegram_user_id → UserId.
 
-import std/[json, os, sequtils, strutils]
+import std/[json, os, sequtils, strutils, tables]
 import ../../core/types
 import ../../core/pipeops
 import ../../core/commands/command_catalog
@@ -46,6 +46,7 @@ type
     resolver*:    IdentityResolver
     http*:        StdHttpAdapter
     flood*:       FloodGate      ## per-chat penalty windows
+    chatIds*:     Table[string, string] ## userId → source chat id
     pollTimeout*: int           ## seconds; 1 for multi-channel, up to 30 for solo
 
 # ── API helpers ───────────────────────────────────────────────────────────────
@@ -54,6 +55,18 @@ func apiBaseValue*(a: TelegramAdapter): string =
   ## Base used for Bot API calls. Empty keeps the official endpoint; a proxy
   ## can be supplied through DONKEY_TELEGRAM_API_BASE.
   if a.apiBase.len > 0: a.apiBase else: TelegramApiBase
+
+proc chatIdFor(a: TelegramAdapter; userId: UserId): string =
+  ## Behavior derived from hermes-agent (MIT) fix 1a9a2d7fe8; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-015
+  ##
+  ## In a group the chat id is not the sender id. The adapter remembers the
+  ## chat each user last wrote from and uses it as the send target.
+  {.cast(gcsafe).}:
+    let remembered = a.chatIds.getOrDefault($userId, "")
+  if remembered.len > 0:
+    return remembered
+  a.resolver.reverseChannel(userId, ckTelegram)
 
 func apiUrl(a: TelegramAdapter; meth: string): string =
   a.apiBaseValue & "/bot" & a.token & "/" & meth
@@ -234,7 +247,7 @@ proc sendChunk(a: TelegramAdapter; chatId: int64; text, replyTo: string;
 proc sendTyping*(a: TelegramAdapter; userId: UserId): Result[void, string] {.gcsafe.} =
   ## Sends a "typing…" indicator to the user's chat.
   ## For DM bots the chat_id equals the Telegram user ID.
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  let rawId = a.chatIdFor(userId)
   if rawId.len == 0: return err("TelegramAdapter.sendTyping: no id for " & $userId)
   try:
     let tgId = parseBiggestInt(rawId).int64
@@ -332,7 +345,7 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message with Markdown (plain-text fallback), split at 4096 chars.
   ## If msg.keyboard is non-empty, sends with an inline keyboard.
   ## If msg.mediaUrl is set, sends as photo/document (caption = msg.text).
-  let rawId = a.resolver.reverseChannel(msg.userId, ckTelegram)
+  let rawId = a.chatIdFor(msg.userId)
   if rawId.len == 0: return err("TelegramAdapter.send: no id for " & $msg.userId)
   let chatId = parseBiggestInt(rawId).int64
 
@@ -357,7 +370,7 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
 
 proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, string] =
   ## Sends and returns the message_id.
-  let rawId = a.resolver.reverseChannel(msg.userId, ckTelegram)
+  let rawId = a.chatIdFor(msg.userId)
   if rawId.len == 0: return err("TelegramAdapter.sendReturnId: no id for " & $msg.userId)
   let chatId = parseBiggestInt(rawId).int64
 
@@ -396,7 +409,7 @@ proc editMessage*(a: TelegramAdapter; userId: UserId;
                   msgId, text: string;
                   isHtml = false): Result[void, string] =
   ## Edits an existing message's text.
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  let rawId = a.chatIdFor(userId)
   if rawId.len == 0: return err("editMessage: no id for " & $userId)
   let chatId = parseBiggestInt(rawId).int64
   let sanitizedText = sanitizeForTelegram(text)
@@ -426,7 +439,7 @@ proc sendKeyboard*(a: TelegramAdapter; userId: UserId;
                    replyTo = ""): Result[string, string] =
   ## Sends a message with an inline keyboard.
   ## Returns the Telegram message_id so the caller can later edit the message.
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  let rawId = a.chatIdFor(userId)
   if rawId.len == 0: return err("sendKeyboard: no id for " & $userId)
   var chatId: int64
   try: chatId = parseBiggestInt(rawId).int64
@@ -437,7 +450,7 @@ proc editKeyboard*(a: TelegramAdapter; userId: UserId;
                    msgId: string;
                    buttons: seq[seq[(string, string)]]): Result[void, string] =
   ## Replaces the inline keyboard of an existing message (e.g. to remove it after selection).
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  let rawId = a.chatIdFor(userId)
   if rawId.len == 0: return err("editKeyboard: no id for " & $userId)
   let chatId = parseBiggestInt(rawId).int64
   ? validateButtons(buttons)
@@ -452,7 +465,7 @@ proc editKeyboardText*(a: TelegramAdapter; userId: UserId;
                        buttons: seq[seq[(string, string)]];
                        isHtml = false): Result[void, string] =
   ## Edits both text AND keyboard.
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  let rawId = a.chatIdFor(userId)
   if rawId.len == 0: return err("editKeyboardText: no id for " & $userId)
   let chatId = parseBiggestInt(rawId).int64
   ? validateButtons(buttons)
@@ -478,7 +491,7 @@ proc setMessageReaction*(a: TelegramAdapter; userId: UserId;
                           channelId, msgId, emoji: string): Result[void, string] =
   ## Sets a reaction (emoji) on a message.
   discard channelId
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  let rawId = a.chatIdFor(userId)
   if rawId.len == 0: return err("setMessageReaction: no id for " & $userId)
 
   try:
@@ -590,6 +603,11 @@ proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
         continue
       
       var msg = parsed.toInbound(uid)
+      ## Remember where the update came from: in a group the chat id is not the
+      ## sender id, and replies must go to the chat.
+      if parsed.chatId.len > 0:
+        {.cast(gcsafe).}:
+          a.chatIds[$uid] = parsed.chatId
       if parsed.hasMedia and parsed.mediaFileId.len > 0:
         msg.mediaUrl = parsed.mediaFileId
       msgs.add(msg)
@@ -641,6 +659,7 @@ proc newTelegramAdapter*(token: string; identityPath: string;
     offset:      0,
     resolver:    newIdentityResolver(identityPath),
     flood:       newFloodGate(),
+    chatIds:     initTable[string, string](),
     http:        newStdHttpAdapter(
                    timeout = telegramHttpTimeoutSec(),
                    proxy = telegramProxyUrl(),
