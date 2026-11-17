@@ -119,3 +119,47 @@ Body line 2
     ])
     check prompt.contains("demo-skill v1.2.3")
     check prompt.contains("Use curl carefully.")
+
+  test "learned notes live next to SKILL.md, never inside it":
+    check learnedNotesPath("/skills/deploy") == "/skills/deploy/LEARNED.md"
+
+  test "appendLearnedNote is append-only and normalizes newlines":
+    let dir = getTempDir() / "donkey_clawhub_learned"
+    removeDir(dir)
+    defer:
+      if dirExists(dir):
+        removeDir(dir)
+    check appendLearnedNote(dir, "Rode o gate\nantes do push.").isOk
+    check appendLearnedNote(dir, "Outra lição.").isOk
+    let text = readFile(learnedNotesPath(dir))
+    check text.contains("- Rode o gate antes do push.")
+    check text.contains("- Outra lição.")
+    check text.count("- ") == 2
+
+  test "appendLearnedNote separates a file that had no trailing newline":
+    let dir = getTempDir() / "donkey_clawhub_learned_sep"
+    removeDir(dir)
+    defer:
+      if dirExists(dir):
+        removeDir(dir)
+    createDir(dir)
+    writeFile(learnedNotesPath(dir), "manual")
+    check appendLearnedNote(dir, "lição").isOk
+    check readFile(learnedNotesPath(dir)) == "manual\n- lição\n"
+
+  test "appendLearnedNote rejects an empty lesson":
+    let dir = getTempDir() / "donkey_clawhub_learned_empty"
+    defer:
+      if dirExists(dir):
+        removeDir(dir)
+    check appendLearnedNote(dir, "   ").isErr
+    check not fileExists(learnedNotesPath(dir))
+
+  test "the prompt carries a skill's learned notes":
+    let prompt = buildInstalledRemoteSkillPrompt(@[
+      InstalledRemoteSkill(slug: "demo-skill", version: "1.2.3",
+                           skillMd: "Use curl carefully.",
+                           learnedMd: "- Rode o gate antes do push."),
+    ])
+    check prompt.contains("Learned notes")
+    check prompt.contains("Rode o gate antes do push.")
