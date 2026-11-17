@@ -99,3 +99,53 @@ e2cea6eeba	INTERNAL	no	Incluir skills de external_dirs no menu é configuração
 86e64c1d3b	FORMAT	yes	Tocar um BotCommand no menu envia só /comando, sem argumentos.
 1381c89e56	TOPIC_API	yes	API de fórum usa CASCADE e General topic com message_thread_id=1.
 25065283b3	TOPIC_API	yes	Criar e fechar tópicos de fórum segue regras próprias da API de topics.
+69fc6d9c1e	MEDIA	yes	sendPhoto recusa dimensões ou arquivo fora do permitido e vira documento.
+a7683d04a9	TOPIC_API	yes	Tópicos de DM são criados por chat e o vínculo deve sobreviver à troca de sessão.
+f6aa1965d7	MEDIA	yes	Foto com dimensões acima do limite é recusada pelo sendPhoto.
+41545f7ec5	TOPIC_API	yes	send_chat_action precisa do thread_id certo para não vazar em outro tópico.
+6b76ea4707	INBOUND	yes	O modo reply define se a resposta cita a mensagem do usuário (reply anchor).
+f6b68f0f50	NET	yes	DoH pode devolver IP diferente do DNS do sistema e a conexão falha.
+2564132a1f	TOPIC_API	yes	General topic do fórum é thread_id=1; trocar por None quebra a digitação.
+bd0c54d171	MEDIA	yes	Imagem enviada como documento deve ser tratada como foto para exibição.
+448c11f16d	FORMAT	yes	disable_notification no sendMessage evita push a cada mensagem intermediária.
+854c2ce309	INBOUND	yes	message.quote traz o trecho citado da mensagem original no update.
+8fdaf4d3d6	FORMAT	yes	O Telegram exibe tabelas como texto; a coluna de rótulo vira lixo na lista.
+ae005ec588	TOPIC_API	yes	General topic é id 1 no fórum e a API espera None para o tópico padrão.
+aef297a45e	TOPIC_API	yes	send_chat_action aceita message_thread_id, mas o Bot API 10.0 o rejeita em DM topic.
+b3239572f0	TOPIC_API	yes	Lane de DM topic usa reply anchor quando o thread_id não é aceito no envio.
+2f00559d9e	TOPIC_API	yes	Aviso de reset precisa levar thread_id para não cair no tópico General.
+737314fe91	TOPIC_API	yes	DM threads precisam ser normalizadas antes do envio e o controle reenviado.
+bf1f40996f	EDIT	yes	editMessageText tem o mesmo limite de 4096 e a edição maior trunca em silêncio.
+c0da5d09a6	FORMAT	yes	O limite de 4096 conta unidades UTF-16 e corta mensagens por caractere.
+6f285efb80	EDIT	yes	Reação de processando fica presa quando o processamento é cancelado.
+9b2488af2a	FORMAT	yes	Tocar um BotCommand envia só /comando; a API não envia argumentos.
+e474130c48	TOPIC_API	yes	API só roteia para o tópico quando message_thread_id é válido; send sem thread cai no chat principal
+26deeea830	INBOUND	yes	callback_query: ao clicar, o bot deve editar a mensagem do picker e responder o callback
+a694040520	FORMAT	yes	MarkdownV2 exige escape de texto dinâmico; caracteres especiais no callback quebram o parse
+d44dafdb4e	EDIT	yes	editMessageText de finalização é a última edição do stream e precisa ser sinalizada
+5338250dab	TOPIC_API	yes	eventos sintéticos de DM precisam de direct_messages_topic_id para cair no tópico certo
+6f817e1447	TOPIC_API	yes	action de typing em DM topic só aparece com message_thread_id aceito pela API
+1856bd9cc8	RATE	yes	typing do Telegram expira em ~5s, precisa ser reenviado durante o processamento
+d87b27cff8	INTERNAL	no	alias de runtime codex no CLI, sem comportamento de API do Telegram
+16d8e44f7a	TOPIC_API	yes	API rejeita message_thread_id em DM topic; é preciso reenviar sem thread
+1891bee9d3	INBOUND	yes	callback_query com data "gt:" precisa ser despachado ao handler correspondente
+1b3c51bccc	RATE	yes	flood control 429 do Telegram bloqueia edições; o progresso precisa sobreviver ao limite
+21a15b6711	TOPIC_API	yes	envio em DM topic depende de anchor de reply e message_thread_id aceitos pela API
+3ec28f34ca	FORMAT	yes	limite de 4096 obriga dividir a mensagem; cada chunk novo precisa do contexto de tópico
+417a653d9e	INTERNAL	no	restart do gateway no Windows, fluxo interno do hermes
+434d508d0a	INTERNAL	no	propagação de config base_url do hermes, não é comportamento de API
+46ce3453c1	INBOUND	yes	mensagens de grupo só são processadas se o tópico estiver na allowlist
+4b6d35bed2	FORMAT	yes	preview do slash-confirm tem markdown dinâmico e precisa de escape MarkdownV2
+5c4b43ced7	NET	yes	falha de conexão/DNS com o Bot API exige retry e reset do IP de fallback
+6be579f626	NET	yes	erro transitório de rede não significa que a mensagem deixou de ser editável
+6fb57bc9cf	FORMAT	yes	limite de texto da mensagem e de rótulo de botão inline exigem rótulo curto
+704872a62f	INBOUND	yes	channel_post chega como update próprio e precisa ser parseado como mensagem
+7682198178	FORMAT	yes	comando só aparece no menu do grupo se registrado no escopo de chat correto
+77c4675a50	MEDIA	yes	imagens .png/.jpg/.webp chegam como documento, não como photo
+7b2bcba167	TOPIC_API	yes	Telegram põe message_thread_id também em replies comuns, não só em tópicos
+7fad501f08	EDIT	yes	transporte padrão do stream é editar a mesma mensagem em vez de reenviar
+89d32052ed	INBOUND	yes	allowlist de remetentes: sem TELEGRAM_ALLOWED_USERS a API deve negar por padrão
+95a0955e19	TOPIC_API	yes	thread_id de DM topic precisa ser restaurado para o send cair no tópico
+a4fb0a3ac3	INTERNAL	no	entrega de cron em tópico dedicado, recurso interno do hermes
+af381ef12c	NET	yes	connect timeout do Bot API exige nova tentativa em falha transitória
+b38140eb8f	INBOUND	yes	autorização por chat sem user_id do remetente (grupos e canais)
