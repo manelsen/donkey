@@ -100,8 +100,9 @@ texto dinâmico); os demais são P2.
   seis lotes independentes e revisadas; nenhuma linha ficou `UNCLEAR`.
 - **Casos por comportamento, não por commit**: 551 commits transferíveis
   viraram 37 casos. Commits do mesmo comportamento apontam para o mesmo caso.
-- **TG-021 adiado** em vez de alterar a política de retry do `HttpPort`, que
-  afetaria todos os canais.
+- **TG-021 resolvido sem mudar a porta**: o retry passou a ser decidido por
+  tipo de método no `StdHttpAdapter` (`retryNonIdempotent`), e só o adapter do
+  Telegram o desliga; os demais canais mantêm o comportamento anterior.
 - **Marcador de corte na legenda**: `clipCaption` acrescenta `…` para deixar
   visível que o texto foi cortado.
 - **Fences exigem início de linha**: uma sequência de três crases no meio de
