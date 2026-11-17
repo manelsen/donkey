@@ -3,7 +3,7 @@
 ## Pure functions only: the adapter decides when to call them, this module
 ## decides what the API contract requires.
 
-import std/[strutils, unicode]
+import std/[json, strutils, unicode]
 import ./telegram_split
 
 func isEditNoopError*(message: string): bool =
@@ -91,3 +91,18 @@ func splitCaption*(text: string; limit = 1024): tuple[head, tail: string] =
     bytePos += r.size
     inc kept
   (text[0 ..< bytePos], text[bytePos .. ^1])
+
+func withLinkPreviewPolicy*(body: JsonNode; previewsEnabled: bool): JsonNode =
+  ## Behavior derived from hermes-agent (MIT) fix 00ff9a26cd; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-035
+  ##
+  ## Bot answers are usually technical text with URLs; an automatic preview
+  ## card pushes the actual answer out of view. Previews stay off unless the
+  ## operator opts in.
+  result = body
+  if not previewsEnabled:
+    result["link_preview_options"] = %*{"is_disabled": true}
+
+func linkPreviewsFromEnv*(value: string): bool =
+  ## Parses the opt-in flag; anything but an explicit yes keeps previews off.
+  value.strip.toLowerAscii in ["1", "true", "yes", "on"]

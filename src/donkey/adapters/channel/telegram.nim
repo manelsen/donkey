@@ -56,6 +56,10 @@ func apiBaseValue*(a: TelegramAdapter): string =
 func apiUrl(a: TelegramAdapter; meth: string): string =
   a.apiBaseValue & "/bot" & a.token & "/" & meth
 
+func telegramLinkPreviewsEnabled*(): bool =
+  linkPreviewsFromEnv(getEnv("DONKEY_TELEGRAM_LINK_PREVIEW"))
+
+
 proc parseTgResp(meth: string; resp: HttpResponse): Result[JsonNode, string]
                  {.gcsafe, raises: [].} =
   ## Validates a Telegram API HTTP response; designed for >>= chaining.
@@ -134,12 +138,14 @@ proc sendChunk(a: TelegramAdapter; chatId: int64; text, replyTo: string;
   var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
   if firstChunk and replyTo.len > 0:
     body["reply_to_message_id"] = %replyTo
+  body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
   let res = a.sendMessageBody(body, replyTo, firstChunk)
   if res.isOk: return ok()
   ## Fallback: plain text
   var plain = %* {"chat_id": chatId, "text": text}
   if firstChunk and replyTo.len > 0:
     plain["reply_to_message_id"] = %replyTo
+  plain = withLinkPreviewPolicy(plain, telegramLinkPreviewsEnabled())
   discard ? a.sendMessageBody(plain, replyTo, firstChunk)
   ok()
 
@@ -205,6 +211,7 @@ proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
     "parse_mode": "HTML",
     "reply_markup": {"inline_keyboard": rows},
   }
+  body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
   if replyTo.len > 0:
     try: body["reply_to_message_id"] = %parseInt(replyTo)
     except ValueError: discard
@@ -267,6 +274,7 @@ proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, str
   for i, chunk in splitForTelegram(msg.text, TelegramMaxChars):
     let html = renderTelegramHtml(chunk, msg.isHtml)
     var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
+    body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
     if i == 0 and msg.replyTo.len > 0:
       body["reply_to_message_id"] = %msg.replyTo
     let res = a.sendMessageBody(body, msg.replyTo, i == 0)

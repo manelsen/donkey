@@ -2,7 +2,7 @@
 ##
 ## Each test starts with the case id from docs/hermes-mining/telegram/CASES.md.
 
-import std/[strutils, unicode, unittest]
+import std/[json, strutils, unicode, unittest]
 import donkey/domain/channels/telegram_policy
 
 suite "telegram_policy — edit errors":
@@ -101,3 +101,19 @@ suite "telegram_policy — caption tail":
     let (head, tail) = splitCaption(text, 1024)
     check head.len == 1024
     check head & tail == text
+
+suite "telegram_policy — link previews":
+
+  test "TG-035: previews are disabled by default":
+    let body = withLinkPreviewPolicy(%*{"chat_id": 1, "text": "https://x.test"}, false)
+    check body["link_preview_options"]["is_disabled"].getBool()
+
+  test "TG-035: the opt-in keeps previews enabled":
+    let body = withLinkPreviewPolicy(%*{"chat_id": 1, "text": "https://x.test"}, true)
+    check not body.hasKey("link_preview_options")
+
+  test "TG-035: the env flag only accepts an explicit yes":
+    for value in ["1", "true", "YES", "on"]:
+      check linkPreviewsFromEnv(value)
+    for value in ["0", "false", "", "off", "no"]:
+      check not linkPreviewsFromEnv(value)
