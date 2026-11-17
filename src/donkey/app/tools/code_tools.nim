@@ -11,6 +11,7 @@ import ../../core/pipeops
 import ../../core/types
 import ../../domain/tools/code_pure
 import ../../infra/sandbox/code_runner
+import ../../ports/fs
 import ../sandbox
 import ./fs_tools
 
@@ -67,15 +68,16 @@ proc codeConfigFromEnv*(mode: SandboxMode; runtimeCmd: string):
     parseCodeMaxSourceBytes(getEnv("DONKEY_CODE_MAX_SOURCE_BYTES"))
   ok(cfg)
 
-proc resolveWasmPath(workspace, rawPath: string): Result[string, string] =
+proc resolveWasmPath(workspace, rawPath: string;
+                     fs: FsRuntimePort = unavailableFs()): Result[string, string] =
   if rawPath.len == 0:
     return err("wasm_path is required for language='wasm'")
   let logical = resolveInPaddock(rawPath, workspace)
   if not inPaddock(logical, workspace):
     return err("wasm_path outside paddock: " & rawPath)
-  let canonicalWorkspace = canonicalPath(workspace).valueOr:
+  let canonicalWorkspace = fs.canonicalPath(workspace).valueOr:
     workspace
-  let canonical = canonicalPath(logical).valueOr:
+  let canonical = fs.canonicalPath(logical).valueOr:
     return err(error)
   if not inPaddock(canonical, canonicalWorkspace):
     return err("wasm_path resolves outside paddock: " & rawPath)
@@ -91,7 +93,8 @@ proc resolveWasmPath(workspace, rawPath: string): Result[string, string] =
 
 proc parseCodeRequest*(input: JsonNode; workspace: string;
                        maxSourceBytes = CodeDefaultMaxSourceBytes;
-                       defaultTimeoutSec = CodeDefaultTimeoutSec):
+                       defaultTimeoutSec = CodeDefaultTimeoutSec;
+                       fs: FsRuntimePort = unavailableFs()):
                        Result[CodeRequest, string] =
   let languageNode = input.getOrDefault("language")
   let rawLanguage =
@@ -117,7 +120,7 @@ proc parseCodeRequest*(input: JsonNode; workspace: string;
         pathNode.getStr("").strip()
       else:
         ""
-    let resolved = resolveWasmPath(workspace, rawPath)
+    let resolved = resolveWasmPath(workspace, rawPath, fs)
     if resolved.isErr:
       return err(resolved.error)
     req.wasmPath = resolved.get()

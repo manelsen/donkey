@@ -191,14 +191,25 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
     return true
 
   of cbkModelsSet:
-    logger.info("tg callback models:set:" & callback.provider & ":" & callback.model)
+    let model = resolveModelCallback(callback.provider, callback.model)
+    if model.len == 0:
+      logger.warn("tg callback models:set: unresolved token " & callback.model)
+      tgAdapter.send(OutboundMessage(
+        userId: msg.userId,
+        channel: ckTelegram,
+        text: "Essa seleção expirou. Abra /models novamente.",
+        replyTo: msg.channelId,
+      )).isOkOr:
+        discard
+      return true
+    logger.info("tg callback models:set:" & callback.provider & ":" & model)
     let saved = memory.saveChannelPreferences(
-      msg.userId, [("provider", callback.provider), ("model", callback.model)])
+      msg.userId, [("provider", callback.provider), ("model", model)])
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
     if kbdId.len > 0:
       tgAdapter.editKeyboardText(
         msg.userId, kbdId,
-        savedOrError(saved, "✅ Modelo definido: " & callback.provider & " / " & callback.model),
+        savedOrError(saved, "✅ Modelo definido: " & callback.provider & " / " & model),
         @[]).isOkOr:
           core_log.log(logger, core_log.lvlError, "tg editKeyboard models:set error: " & error)
       common_runtime.clearUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
@@ -206,7 +217,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
       tgAdapter.send(OutboundMessage(
         userId:  msg.userId,
         channel: ckTelegram,
-        text:    savedOrError(saved, "✅ Modelo definido: " & callback.provider & " / " & callback.model),
+        text:    savedOrError(saved, "✅ Modelo definido: " & callback.provider & " / " & model),
         replyTo: msg.channelId,
       )).isOkOr:
         core_log.log(logger, core_log.lvlError, "tg send models:set error: " & error)
@@ -686,6 +697,10 @@ proc handleTelegramTaskCommand*(sm: var SessionManager;
 
   # Commands that should start a session if one doesn't exist
   if command.kind in {cmdDebug, cmdReset, cmdNew, cmdCompact, cmdStop, cmdRestart, cmdBind}:
+    if interruptsTurn(command.kind):
+      ## The command is queued behind the busy actor; the application policy
+      ## sets the stop flag and denies pending approvals immediately.
+      requestTurnInterrupt(sm, msg.userId)
     if ensureTaskSession != nil:
       ensureTaskSession(msg, commandTaskKind(command), "")
     else:

@@ -1,5 +1,7 @@
-import std/[algorithm, httpclient, json, math, options, os, strutils, tables, times]
+import std/[algorithm, json, math, options, os, strutils, tables, times]
 import ../../ports/provider
+import ../../ports/http
+import ../http/std_http
 import ../../core/pipeops
 import ../../core/providers/smart_routing
 import openrouter
@@ -125,24 +127,29 @@ func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
 func fallbackCatalog(providerName: string): ModelCatalogResult =
   catalogResult(staticCatalog(providerName), mcsFallback, 0)
 
-proc httpGetCatalog(url: string; headers: seq[(string, string)]): Result[string, string] =
-  ## Makes HTTP GET request to fetch catalog JSON.
-  try:
-    var client = newHttpClient(userAgent = "donkey/1.0")
-    if headers.len > 0:
-      client.headers = newHttpHeaders(headers)
-    
-    let response = client.get(url)
-    if response.status[0] != '2':
-      return err("HTTP " & $response.status)
-    
-    ok(response.body)
-  except Exception as e:
-    err(e.msg)
+func defaultCatalogHttp(): HttpRuntimePort =
+  newStdHttpAdapter().toRuntimePort()
+
+proc httpGetCatalog(http: HttpRuntimePort; url: string;
+                    headers: seq[(string, string)]): Result[string, string] =
+  ## Fetches catalog JSON through the injected HTTP port.
+  var httpHeaders: seq[HttpHeader] = @[]
+  for (name, value) in headers:
+    httpHeaders.add((name: name, value: value))
+  let response = http.get(url, httpHeaders)
+  if response.isErr:
+    return err(response.error)
+  if response.get().status < 200 or response.get().status >= 300:
+    return err("HTTP " & $response.get().status)
+  ok(response.get().body)
 
 proc parseCatalogJson(body: string; parser: CatalogParser): Result[ModelCatalogResult, string] =
   ## Parses JSON body and wraps entries in ModelCatalogResult.
-  let parsed = parser(parseJson(body))
+  let root = try:
+    parseJson(body)
+  except CatchableError as e:
+    return err("invalid catalog JSON: " & e.msg)
+  let parsed = parser(root)
   if parsed.isErr:
     return err(parsed.error)
   
@@ -151,17 +158,18 @@ proc parseCatalogJson(body: string; parser: CatalogParser): Result[ModelCatalogR
   else:
     err("no models found")
 
-proc fetchHttpCatalog(url: string; headers: seq[(string, string)];
+proc fetchHttpCatalog(http: HttpRuntimePort; url: string;
+                      headers: seq[(string, string)];
                       parser: CatalogParser): Result[ModelCatalogResult, string] =
   ## Fetches model catalog from HTTP REST API.
   ## Composes: httpGetCatalog |> parseCatalogJson
-  let body = httpGetCatalog(url, headers)
+  let body = httpGetCatalog(http, url, headers)
   if body.isErr:
     return err(body.error)
   
   parseCatalogJson(body.get(), parser)
 
-proc fetchWithApiKey(url: string; apiKey: string;
+proc fetchWithApiKey(http: HttpRuntimePort; url: string; apiKey: string;
                      parser: CatalogParser;
                      headers: seq[(string, string)] = @[]): Result[ModelCatalogResult, string] =
   ## Helper para APIs que usam API Key no header Authorization.
@@ -172,25 +180,25 @@ proc fetchWithApiKey(url: string; apiKey: string;
   for h in headers:
     allHeaders.add(h)
   
-  fetchHttpCatalog(url, allHeaders, parser)
+  fetchHttpCatalog(http, url, allHeaders, parser)
 
-proc fetchWithQueryParam(url: string; queryParam: string; queryValue: string;
+proc fetchWithQueryParam(http: HttpRuntimePort; url: string;
+                         queryParam: string; queryValue: string;
                          parser: CatalogParser): Result[ModelCatalogResult, string] =
   ## Helper para APIs que usam chave como query param.
   let fullUrl = url & (if "?" in url: "&" else: "?") & queryParam & "=" & queryValue
-  fetchHttpCatalog(fullUrl, @[], parser)
+  fetchHttpCatalog(http, fullUrl, @[], parser)
 
-proc loadModelsDevCatalog(): Result[ModelCatalogResult, string] =
+proc loadModelsDevCatalog(http: HttpRuntimePort): Result[ModelCatalogResult, string] =
   ## Carrega catálogo do models.dev (catálogo aberto mantido pela comunidade).
   ## Formato: { "provider-id": { "name": "...", "models": { "model-id": { ... } } } }
+  let response = http.get(ModelsDevEndpoint, @[(name: "Accept", value: "application/json")])
+  if response.isErr:
+    return err(response.error)
+  if response.get().status < 200 or response.get().status >= 300:
+    return err("models.dev returned status " & $response.get().status)
   try:
-    var client = newHttpClient(userAgent = "donkey/1.0")
-    client.headers = newHttpHeaders([("Accept", "application/json")])
-    let response = client.get(ModelsDevEndpoint)
-    if response.status[0] != '2':
-      return err("models.dev returned status " & $response.status)
-
-    let root = parseJson(response.body)
+    let root = parseJson(response.get().body)
     if root.kind != JObject:
       return err("models.dev response is not an object")
 
@@ -438,7 +446,7 @@ proc parseGeminiCatalog(body: string): Result[seq[ModelCatalogEntry], string] =
   except CatchableError as e:
     err(e.msg)
 
-proc loadOpenRouterCatalog(apiKey: string): Result[ModelCatalogResult, string] =
+proc loadOpenRouterCatalog(apiKey: string; http: HttpRuntimePort): Result[ModelCatalogResult, string] =
   let headers =
     if apiKey.len > 0:
       @[("Authorization", "Bearer " & apiKey),
@@ -450,41 +458,42 @@ proc loadOpenRouterCatalog(apiKey: string): Result[ModelCatalogResult, string] =
   let parser: CatalogParser = proc(json: JsonNode): Result[seq[ModelCatalogEntry], string] {.gcsafe.} =
     parseOpenRouterCatalog($json)
   
-  fetchHttpCatalog(OpenRouterModelsEndpoint, headers, parser)
+  fetchHttpCatalog(http, OpenRouterModelsEndpoint, headers, parser)
 
-proc loadGroqCatalog(apiKey: string): Result[ModelCatalogResult, string] =
+proc loadGroqCatalog(apiKey: string; http: HttpRuntimePort): Result[ModelCatalogResult, string] =
   if apiKey.len == 0:
     return ok(fallbackCatalog("groq"))
   
   let parser: CatalogParser = proc(json: JsonNode): Result[seq[ModelCatalogEntry], string] {.gcsafe.} =
     parseSimpleListCatalog("groq", $json)
   
-  fetchWithApiKey(GroqModelsEndpoint, apiKey, parser)
+  fetchWithApiKey(http, GroqModelsEndpoint, apiKey, parser)
 
-proc loadAnthropicCatalog(apiKey: string): Result[ModelCatalogResult, string] =
+proc loadAnthropicCatalog(apiKey: string; http: HttpRuntimePort): Result[ModelCatalogResult, string] =
   if apiKey.len == 0:
     return ok(fallbackCatalog("anthropic"))
   
   let parser: CatalogParser = proc(json: JsonNode): Result[seq[ModelCatalogEntry], string] {.gcsafe.} =
     parseAnthropicCatalog($json)
   
-  fetchWithApiKey(AnthropicModelsEndpoint, apiKey, parser, @[
+  fetchWithApiKey(http, AnthropicModelsEndpoint, apiKey, parser, @[
     ("x-api-key", apiKey),
     ("anthropic-version", AnthropicVersion),
   ])
 
-proc loadGeminiCatalog(apiKey: string): Result[ModelCatalogResult, string] =
+proc loadGeminiCatalog(apiKey: string; http: HttpRuntimePort): Result[ModelCatalogResult, string] =
   if apiKey.len == 0:
     return ok(fallbackCatalog("gemini"))
   
   let parser: CatalogParser = proc(json: JsonNode): Result[seq[ModelCatalogEntry], string] {.gcsafe.} =
     parseGeminiCatalog($json)
   
-  fetchWithQueryParam(GeminiModelsEndpoint, "key", apiKey, parser)
+  fetchWithQueryParam(http, GeminiModelsEndpoint, "key", apiKey, parser)
 
 proc loadZaiCatalog(apiKey: string;
                     providerName: string;
-                    codingEndpoint: bool): Result[ModelCatalogResult, string] =
+                    codingEndpoint: bool;
+                    http: HttpRuntimePort): Result[ModelCatalogResult, string] =
   if apiKey.len == 0:
     return ok(fallbackCatalog(providerName))
   
@@ -495,22 +504,22 @@ proc loadZaiCatalog(apiKey: string;
     if codingEndpoint: "https://api.z.ai/api/coding/paas/v4/models"
     else: "https://api.z.ai/api/paas/v4/models"
   
-  fetchWithApiKey(base, apiKey, parser)
+  fetchWithApiKey(http, base, apiKey, parser)
 
-proc loadOpencodeGoCatalog(apiKey: string): Result[ModelCatalogResult, string] =
+proc loadOpencodeGoCatalog(apiKey: string; http: HttpRuntimePort): Result[ModelCatalogResult, string] =
   let parser: CatalogParser = proc(json: JsonNode): Result[seq[ModelCatalogEntry], string] {.gcsafe.} =
     parseSimpleListCatalog("opencode-go", $json)
   if apiKey.len == 0:
     return ok(fallbackCatalog("opencode-go"))
-  fetchWithApiKey("https://opencode.ai/zen/go/v1/models", apiKey, parser)
+  fetchWithApiKey(http, "https://opencode.ai/zen/go/v1/models", apiKey, parser)
 
-proc loadZenCatalog(apiKey = ""): Result[ModelCatalogResult, string] =
+proc loadZenCatalog(http: HttpRuntimePort; apiKey = ""): Result[ModelCatalogResult, string] =
   let parser: CatalogParser = proc(json: JsonNode): Result[seq[ModelCatalogEntry], string] {.gcsafe.} =
     parseSimpleListCatalog("zen", $json)
   if apiKey.len == 0:
-    fetchHttpCatalog("https://opencode.ai/zen/v1/models", @[], parser)
+    fetchHttpCatalog(http, "https://opencode.ai/zen/v1/models", @[], parser)
   else:
-    fetchWithApiKey("https://opencode.ai/zen/v1/models", apiKey, parser)
+    fetchWithApiKey(http, "https://opencode.ai/zen/v1/models", apiKey, parser)
 
 proc parseOllamaTagsCatalog*(body: string): Result[seq[ModelCatalogEntry], string] =
   try:
@@ -539,12 +548,12 @@ proc parseOllamaTagsCatalog*(body: string): Result[seq[ModelCatalogEntry], strin
   except CatchableError as e:
     err(e.msg)
 
-proc loadOllamaCatalog(baseUrl: string): Result[ModelCatalogResult, string] =
+proc loadOllamaCatalog(baseUrl: string; http: HttpRuntimePort): Result[ModelCatalogResult, string] =
   let parser: CatalogParser = proc(json: JsonNode): Result[seq[ModelCatalogEntry], string] {.gcsafe.} =
     parseOllamaTagsCatalog($json)
   
   let url = (if baseUrl.len > 0: baseUrl else: "http://localhost:11434") & "/api/tags"
-  fetchHttpCatalog(url, @[], parser)
+  fetchHttpCatalog(http, url, @[], parser)
 
 proc loadMinimaxCatalog(apiKey: string): Result[ModelCatalogResult, string] =
   ## MiniMax não tem endpoint de listagem de modelos.
@@ -553,19 +562,32 @@ proc loadMinimaxCatalog(apiKey: string): Result[ModelCatalogResult, string] =
     return ok(fallbackCatalog("minimax"))
   ok(catalogResult(staticCatalog("minimax"), mcsFallback, getTime().toUnix()))
 
-proc buildModelCatalogLoader*(): ModelCatalogLoader {.gcsafe.} =
+proc buildModelCatalogLoader*(http: HttpRuntimePort = defaultCatalogHttp()): ModelCatalogLoader {.gcsafe.} =
   ## Returns a closure that loads model catalogs with caching.
   ## models.dev result is cached for 5 minutes to avoid re-fetching on every click.
   var cachedModelsDev: Option[ModelCatalogResult] = none(ModelCatalogResult)
+  var cachedOpenRouter: Option[ModelCatalogResult] = none(ModelCatalogResult)
+  var openRouterError = ""
   const CacheTtlSec = 300  # 5 minutes
 
   result = proc(providerName: string): Result[ModelCatalogResult, string] {.gcsafe.} =
-    ## Tenta buscar do models.dev primeiro (com cache), depois fallback para API específica
     let now = getTime().toUnix()
 
-    # Check cache freshness
+    ## OpenRouter's own API is the source of truth for the ':free' variants.
+    ## models.dev can omit those variants or report them without zero pricing.
+    if providerName == "openrouter":
+      if cachedOpenRouter.isSome and
+         (now - cachedOpenRouter.get().fetchedAtUnix) <= CacheTtlSec:
+        return ok(cachedOpenRouter.get())
+      let direct = loadOpenRouterCatalog(getEnv("OPENROUTER_API_KEY"), http)
+      if direct.isOk:
+        cachedOpenRouter = some(direct.get())
+        return direct
+      openRouterError = direct.error
+
+    # Check models.dev cache freshness for the remaining providers.
     if cachedModelsDev.isNone or (now - cachedModelsDev.get().fetchedAtUnix) > CacheTtlSec:
-      let modelsDevResult = loadModelsDevCatalog()
+      let modelsDevResult = loadModelsDevCatalog(http)
       if modelsDevResult.isOk:
         cachedModelsDev = some(modelsDevResult.get())
 
@@ -582,17 +604,20 @@ proc buildModelCatalogLoader*(): ModelCatalogLoader {.gcsafe.} =
     ## Fallback para APIs específicas ou catálogo estático
     case providerName
     of "openrouter":
-      loadOpenRouterCatalog(getEnv("OPENROUTER_API_KEY"))
+      if openRouterError.len > 0:
+        err(openRouterError)
+      else:
+        loadOpenRouterCatalog(getEnv("OPENROUTER_API_KEY"), http)
     of "groq":
-      loadGroqCatalog(getEnv("GROQ_API_KEY"))
+      loadGroqCatalog(getEnv("GROQ_API_KEY"), http)
     of "anthropic":
-      loadAnthropicCatalog(getEnv("ANTHROPIC_API_KEY"))
+      loadAnthropicCatalog(getEnv("ANTHROPIC_API_KEY"), http)
     of "gemini":
-      loadGeminiCatalog(getEnv("GEMINI_API_KEY"))
+      loadGeminiCatalog(getEnv("GEMINI_API_KEY"), http)
     of "minimax":
       loadMinimaxCatalog(getEnv("MINIMAX_API_KEY"))
     of "zai", "zai-coding":
-      loadZaiCatalog(getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")), providerName, true)
+      loadZaiCatalog(getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")), providerName, true, http)
     of "zai-anthropic":
       loadZaiCatalog(
         getEnv(
@@ -604,12 +629,13 @@ proc buildModelCatalogLoader*(): ModelCatalogLoader {.gcsafe.} =
         ),
         providerName,
         true,
+        http,
       )
     of "opencode-go", "opencode":
-      loadOpencodeGoCatalog(getEnv("OPENCODE_API_KEY", getEnv("OPENCODE_GO_API_KEY")))
+      loadOpencodeGoCatalog(getEnv("OPENCODE_API_KEY", getEnv("OPENCODE_GO_API_KEY")), http)
     of "zen", "opencode-zen":
-      loadZenCatalog(getEnv("OPENCODE_API_KEY", getEnv("ZEN_API_KEY")))
+      loadZenCatalog(http, getEnv("OPENCODE_API_KEY", getEnv("ZEN_API_KEY")))
     of "ollama":
-      loadOllamaCatalog(getEnv("OLLAMA_BASE_URL"))
+      loadOllamaCatalog(getEnv("OLLAMA_BASE_URL"), http)
     else:
       ok(fallbackCatalog(providerName))

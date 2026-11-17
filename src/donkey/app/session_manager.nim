@@ -9,11 +9,14 @@ import std/[options, tables]
 import chronos
 import chronos/asyncsync
 import ../core/pipeops
+import ../core/commands/command_routing
 import ../domain/agent_message
 import ../domain/message
 import ../core/session/session_ingress
 import ../core/security/dm_policy
 import ../ports/runtime_state
+import ../infra/queue/nonblocking
+import ./approval_runtime
 
 const
   RestoredRuntimeSignature* = "__donkey_restored_runtime__"
@@ -125,6 +128,7 @@ proc restoreSessions*(sm: var SessionManager): Result[int, string] =
   ok(count)
 
 var gSessionStopGeneration: uint64 = 0
+var gUserInterrupts: Table[string, uint64]
 var gShuttingDown = false
 var gLiveActors = 0
 var gAllActorsStopped: Future[void]
@@ -136,6 +140,48 @@ proc requestSessionStop*() {.gcsafe, raises: [].} =
   {.cast(gcsafe).}:
     gShuttingDown = true
     inc gSessionStopGeneration
+
+proc requestUserStop*(userId: string) {.gcsafe, raises: [].} =
+  ## Bumps the per-user interrupt counter. Safe to set from a channel handler
+  ## while the session actor is busy inside a tool batch or approval wait.
+  ## Turns compare the counter they started with, so a turn started after the
+  ## interrupt is not stopped by it — no global flag has to be cleared, which
+  ## is what let a rebuilt actor un-stop an older in-flight turn.
+  if userId.len == 0:
+    return
+  {.cast(gcsafe).}:
+    gUserInterrupts[userId] = gUserInterrupts.getOrDefault(userId) + 1
+
+proc currentUserInterrupt*(userId: string): uint64 {.gcsafe, raises: [].} =
+  if userId.len == 0:
+    return 0
+  {.cast(gcsafe).}:
+    gUserInterrupts.getOrDefault(userId)
+
+proc isUserStoppedSince*(userId: string; interrupt: uint64): bool
+                        {.gcsafe, raises: [].} =
+  ## True when a `/stop` arrived after the turn recorded `interrupt`.
+  if userId.len == 0:
+    return false
+  {.cast(gcsafe).}:
+    gUserInterrupts.getOrDefault(userId) != interrupt
+
+func interruptsTurn*(kind: CommandKind): bool =
+  ## Cross-channel policy: these commands abort the current turn and deny
+  ## pending approvals before their control task is processed.
+  kind in {cmdStop, cmdNew, cmdRestart, cmdReset}
+
+proc requestTurnInterrupt*(sm: var SessionManager; userId: UserId)
+                          {.gcsafe, raises: [].} =
+  requestUserStop($userId)
+  cancelPendingApprovals(userId)
+  let uid = $userId
+  sm.entries.withValue(uid, entry):
+    if entry[].awaitingAsk and entry[].askInbox != nil:
+      ## A full ask queue already has a pending answer; dropping the cancel
+      ## marker is safe and must not abort the interrupt.
+      discard tryAddLastNoWait(entry[].askInbox, "__DONKEY_ASK_CANCELLED__")
+      entry[].awaitingAsk = false
 
 proc daemonShuttingDown*(): bool {.gcsafe, raises: [].} =
   {.cast(gcsafe).}:

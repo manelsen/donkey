@@ -1,7 +1,10 @@
 import std/[json, os, strutils, unittest]
+when defined(posix):
+  import std/posix
 import chronos
 import chronos/asyncsync
 import results
+import donkey/adapters/filesystem/fs_adapter
 import donkey/app/native_tools
 import donkey/app/session_state
 import donkey/core/log
@@ -46,6 +49,7 @@ suite "memory_ingest tool":
       uid: UserId("u1"),
       channel: ckTelegram,
       paddockDir: TestRoot,
+      fs: newFsAdapter(),
       memory: mem,
       log: ingestLog,
     )
@@ -72,6 +76,7 @@ suite "memory_ingest tool":
       uid: UserId("u1"),
       channel: ckTelegram,
       paddockDir: TestRoot,
+      fs: newFsAdapter(),
       memory: mem,
       log: ingestLog,
     )
@@ -153,6 +158,7 @@ suite "memory_ingest tool":
       uid: UserId("u1"),
       channel: ckTelegram,
       paddockDir: TestRoot,
+      fs: newFsAdapter(),
       memory: mem,
       log: ingestLog,
     )
@@ -168,6 +174,7 @@ suite "memory_ingest tool":
       uid: UserId("u1"),
       channel: ckTelegram,
       paddockDir: TestRoot,
+      fs: newFsAdapter(),
       memory: mem,
       log: ingestLog,
     )
@@ -182,6 +189,7 @@ suite "memory_ingest tool":
       uid: UserId("u1"),
       channel: ckTelegram,
       paddockDir: TestRoot,
+      fs: newFsAdapter(),
       memory: mem,
       log: ingestLog,
     )
@@ -189,3 +197,64 @@ suite "memory_ingest tool":
     check both.resultKind == trkOperationalError
     let neither = waitFor runIngest(ctx, """{}""")
     check neither.resultKind == trkOperationalError
+
+  when defined(posix):
+    test "rejects a symlink that escapes the paddock":
+      let outsideDir = TestRoot & "_outside"
+      createDir(outsideDir)
+      let outside = outsideDir / "secret.txt"
+      writeFile(outside, "secret")
+      defer: removeDir(outsideDir)
+      createSymlink(outside, TestRoot / "link.txt")
+      let mem = MemoryRuntimePort()
+      var ctx = NativeCtx(
+        uid: UserId("u1"),
+        channel: ckTelegram,
+        paddockDir: TestRoot,
+        fs: newFsAdapter(),
+        memory: mem,
+        log: ingestLog,
+      )
+      let res = waitFor runIngest(ctx, """{"path":"link.txt"}""")
+      check res.handled
+      check res.resultKind == trkOperationalError
+      check "symlink" in res.text or "outside paddock" in res.text
+
+    test "rejects a dangling symlink":
+      let outside = TestRoot & "_missing_outside.txt"
+      removeFile(outside)
+      createSymlink(outside, TestRoot / "dangling.txt")
+      let mem = MemoryRuntimePort()
+      var ctx = NativeCtx(
+        uid: UserId("u1"),
+        channel: ckTelegram,
+        paddockDir: TestRoot,
+        fs: newFsAdapter(),
+        memory: mem,
+        log: ingestLog,
+      )
+      let res = waitFor runIngest(ctx, """{"path":"dangling.txt"}""")
+      check res.handled
+      check res.resultKind == trkOperationalError
+      check "symlink" in res.text or "resolve" in res.text
+
+    test "unreadable file returns an operational error":
+      if getuid() == 0:
+        check true
+      else:
+        let path = TestRoot / "secret.txt"
+        writeFile(path, "secret")
+        setFilePermissions(path, {})
+        let mem = MemoryRuntimePort()
+        var ctx = NativeCtx(
+          uid: UserId("u1"),
+          channel: ckTelegram,
+          paddockDir: TestRoot,
+          fs: newFsAdapter(),
+          memory: mem,
+          log: ingestLog,
+        )
+        let res = waitFor runIngest(ctx, """{"path":"secret.txt"}""")
+        check res.handled
+        check res.resultKind == trkOperationalError
+        check "read" in res.text or "inspect" in res.text

@@ -26,6 +26,7 @@ import ../config/types
 import ../core/log
 import ../core/pipeops
 import ../core/types
+import ../core/utf8
 import ../core/app_meta
 import ../infra/sandbox/wasm_tools
 import ../infra/sandbox/shell_composer
@@ -245,17 +246,21 @@ func isDockerPermissionError*(output: string; runtimeCmd = "docker"): bool {.gcs
   let normalized = output.toLowerAscii()
   let runtime = runtimeCmd.toLowerAscii()
   ("permission denied" in normalized) and
-    (("docker.sock" in normalized) or
+    ((runtime & ".sock" in normalized) or
      ("daemon socket" in normalized) or
      (runtime & " api" in normalized) or
      ("docker api" in normalized))
 
 func dockerPermissionHint*(runtimeCmd = "docker"): string {.gcsafe, raises: [].} =
-  "Error: " & runtimeCmd & " socket access denied. " &
-    "Add the service user to the '" & runtimeCmd & "' group and restart the user service:\n" &
-    "  sudo usermod -aG " & runtimeCmd & " $USER\n" &
+  let runtime = runtimeCmd.toLowerAscii()
+  let group = if runtime.contains("podman"): "podman" else: "docker"
+  result = "Error: " & runtimeCmd & " socket access denied. " &
+    "Add the service user to the '" & group & "' group and restart the user service:\n" &
+    "  sudo usermod -aG " & group & " $USER\n" &
     "  systemctl --user restart donkey\n" &
     "If the group is still missing, reboot or restart user@<uid>.service."
+  if runtime.contains("podman"):
+    result &= "\nFor rootless Podman, also export CONTAINER_HOST to the user socket."
 
 proc probeSandboxWorkspaceWritable*(mode: SandboxMode;
                                     paddock: string;
@@ -388,7 +393,27 @@ proc validateSandboxPolicy*(cfg: DonkeyConfig;
     return err("Security Error: sandbox.read_only_rootfs=false is only allowed in --dev-mode")
   ok()
 
-proc sandboxAvailabilityResult*(cfg: DonkeyConfig): Result[string, string] {.gcsafe, raises: [].} =
+proc probeRuntimeInfo(runtimePath: string; timeoutMs: int):
+                     tuple[output: string, code: int] {.gcsafe, raises: [].} =
+  var p: Process
+  try:
+    p = startProcess(runtimePath, args = @["info"],
+                     options = {poStdErrToStdOut})
+    let code = p.waitForExit(timeout = timeoutMs)
+    let output = p.outputStream.readAll()
+    (output, code)
+  except CatchableError as e:
+    ("Error: " & e.msg, -1)
+  finally:
+    if p != nil:
+      try:
+        p.close()
+      except CatchableError:
+        discard
+
+proc sandboxAvailabilityResult*(cfg: DonkeyConfig;
+                                timeoutMs = 3000): Result[string, string]
+                                {.gcsafe, raises: [].} =
   if cfg.invalidSandboxMode.len > 0:
     return err("sandbox mode '" & cfg.invalidSandboxMode & "' is invalid; use 'oci', 'wasm', or 'none'")
   case cfg.sandboxMode
@@ -399,19 +424,17 @@ proc sandboxAvailabilityResult*(cfg: DonkeyConfig): Result[string, string] {.gcs
     if runtimePath.len == 0:
       err("OCI runtime '" & cfg.sandboxRuntimeCmd & "' not found in PATH")
     else:
-      let dockerHost = getEnv("DOCKER_HOST").strip()
-      if dockerHost.len == 0 or dockerHost.startsWith("unix://"):
-        let socketPath =
-          if dockerHost.startsWith("unix://"): dockerHost["unix://".len .. ^1]
-          else: "/var/run/docker.sock"
-        if not fileExists(socketPath):
-          return err("OCI runtime '" & cfg.sandboxRuntimeCmd &
-                     "' found, but the socket " & socketPath &
-                     " is not available. Is the Docker daemon running?")
-        when defined(posix):
-          if access(socketPath.cstring, W_OK) != 0:
-            return err(dockerPermissionHint(cfg.sandboxRuntimeCmd))
-      ok("runtime=" & cfg.sandboxRuntimeCmd)
+      let (output, code) = probeRuntimeInfo(runtimePath, timeoutMs)
+      if code == 0:
+        ok("runtime=" & cfg.sandboxRuntimeCmd)
+      elif isDockerPermissionError(output, cfg.sandboxRuntimeCmd):
+        err(dockerPermissionHint(cfg.sandboxRuntimeCmd))
+      else:
+        let detail =
+          if output.strip.len > 0: clipUtf8(output.strip, 200)
+          else: "probe failed or timed out"
+        err("OCI runtime '" & cfg.sandboxRuntimeCmd &
+            "' is installed but not reachable: " & detail)
   of smWasm:
     let wasmtimePath = findExeSafe("wasmtime")
     if wasmtimePath.len == 0:

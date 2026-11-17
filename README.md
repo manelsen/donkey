@@ -235,6 +235,7 @@ Risky native tools pause and ask the requesting user before executing. The defau
 
 - `DONKEY_APPROVAL_TOOLS=bash,edit_file` changes the list; `*` covers every native/MCP/skill tool and `none` disables the gate.
 - `DONKEY_APPROVAL_LARGE_WRITES=summary` lets large `fs_write`/`text_replace` actions show a `path`/bytes/sha1/preview summary instead of forcing the model to split the file. The default is `reject`; `bash`, `execute_code`, and `edit_file` remain full-display-only.
+- `DONKEY_SUPPRESS_TOOL_PROGRESS=1` hides the per-tool `🔧 tool [n]` messages; final answers and approval prompts are still sent.
 - `DONKEY_APPROVAL_TIMEOUT_SEC` controls the wait (default 300s); timeout means deny.
 - The request appears in the chat with `/approve <id>` and `/deny <id>`; Telegram, Discord and Slack also render inline **Aprovar/Negar** buttons.
 - The operator can use `./donkey ctl approval list [user]`, `./donkey ctl approval approve <id>` or `./donkey ctl approval deny <id>`.
@@ -269,6 +270,7 @@ The `donkey ctl` utility provides complete instance governance:
 # User and Paddock management
 ./donkey ctl user list
 ./donkey ctl user show <uuid>
+./donkey ctl memory ingest <uuid> <path-inside-paddock>
 ./donkey ctl memory export <uuid> [output_dir]
 
 # Tool and Extension management

@@ -113,6 +113,13 @@ type
 func hasMemoryConsolidation*(p: MemoryRuntimePort): bool =
   p.appendExtractedMemory != nil and p.saveEpisode != nil
 
+proc appendMemoryChecked*(p: MemoryRuntimePort; userId: UserId; text: string):
+                          Result[void, string] {.gcsafe, raises: [].} =
+  ## appendMemory for a port that may have been built without the hook.
+  if p.appendMemory == nil:
+    return err("memory backend unavailable")
+  p.appendMemory(userId, text)
+
 proc bootstrapUserMd*(name, callMe, timezone, language: string): string =
   ## Generates the initial USER.md following the OpenClaw USER.md template.
   """---
@@ -131,3 +138,13 @@ proc defaultHeartbeatMd*(): string =
   ## New paddocks get an empty HEARTBEAT.md so the file is always present
   ## without scheduling any task by default.
   ""
+
+proc appendMemoryWithOriginChecked*(p: MemoryRuntimePort; userId: UserId;
+                                    text: string; origin: MemoryOrigin):
+                                    Result[void, string] {.gcsafe, raises: [].} =
+  ## Prefers the origin-aware hook when the backend records provenance;
+  ## otherwise falls back to the plain append. Both hooks report
+  ## failures through `Result`, so no exception crosses this boundary.
+  if p.appendMemoryFrom != nil:
+    return p.appendMemoryFrom(userId, text, origin)
+  p.appendMemoryChecked(userId, text)

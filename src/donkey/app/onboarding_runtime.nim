@@ -252,10 +252,7 @@ proc safeAppendMemory*(memory: MemoryRuntimePort;
                       {.gcsafe, raises: [].} =
   ## Records the origin when the backend supports it; otherwise appends the
   ## text alone. A failed append comes back as an error for the caller to log.
-  if memory.appendMemoryFrom != nil:
-    memory.appendMemoryFrom(uid, text, origin)
-  else:
-    memory.appendMemory(uid, text)
+  memory.appendMemoryWithOriginChecked(uid, text, origin)
 
 proc safeResetBootstrap*(memory: MemoryRuntimePort;
                         uid: UserId): bool {.gcsafe, raises: [].} =

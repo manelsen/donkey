@@ -20,6 +20,7 @@ import ../ports/memory
 import ../ports/provider
 import ../ports/tool
 import ../ports/http
+import ../ports/fs
 import ./session_manager
 import ./session_state
 import ../ports/subagent_workspace
@@ -57,6 +58,7 @@ type
     typingFn*:                   TypingFn
     searchFn*:                   SearchFn
     http*:                       HttpRuntimePort
+    fs*:                         FsRuntimePort
     providerRuntimeBuilder*:     ProviderRuntimeBuilder
     skillRuntimeBuilder*:        SkillRuntimeBuilder
     skillRuntimePolicyResolver*: SkillRuntimePolicyResolver
@@ -171,7 +173,8 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
                                   routeFeedbackHook: proc(): seq[RouteFeedback] {.gcsafe.} = nil;
                                   routeCostHook: proc(): seq[RouteCostHint] {.gcsafe.} = nil;
                                   routeProviderCooldownHook: proc(): seq[ProviderCooldown] {.gcsafe.} = nil;
-                                  subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort()): SessionIngressServices =
+                                  subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort();
+                                  fs: FsRuntimePort = unavailableFs()): SessionIngressServices =
   ## Constructs SessionIngressServices.
   SessionIngressServices(
     cfg: cfg,
@@ -188,6 +191,7 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
     typingFn: typingFn,
     searchFn: searchFn,
     http: http,
+    fs: fs,
     providerRuntimeBuilder: providerRuntimeBuilder,
     skillRuntimeBuilder: skillRuntimeBuilder,
     skillRuntimePolicyResolver: skillRuntimePolicyResolver,
@@ -220,7 +224,8 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                                sandboxImage: string;
                                typingFn: TypingFn;
                                searchFn: SearchFn;
-                               http: HttpRuntimePort) {.gcsafe.} =
+                               http: HttpRuntimePort;
+                               fs: FsRuntimePort = unavailableFs()) {.gcsafe.} =
   ## Spawns an orchestrator actor if the ingress decision requires starting a session runtime.
   if not plan.decision.startsSessionRuntime:
     return
@@ -240,7 +245,8 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              cfg.webAllowlist, cfg.toolWebPolicy,
                              errorExplainFn = bootstrap.errorExplainFn,
                              asyncCompleteFn = bootstrap.asyncCompleteFn,
-                             subagentWorkspace = bootstrap.subagentWorkspace)
+                             subagentWorkspace = bootstrap.subagentWorkspace,
+                             fs = fs)
 
 proc enqueueSessionMessage*(entry: var SessionEntry;
                             msg: InboundMessage;
@@ -336,7 +342,7 @@ proc startSessionIngress*(sm: var SessionManager;
                            services.globalOutbox, services.log,
                            services.sandboxMode, services.sandboxRuntimeCmd, services.sandboxImage,
                            services.typingFn, services.searchFn,
-                           services.http)
+                           services.http, services.fs)
   if result.plan.decision.startsNewSession:
     services.log.info("new session: " & result.plan.uid)
   elif result.plan.decision.rebuildsSessionRuntime:

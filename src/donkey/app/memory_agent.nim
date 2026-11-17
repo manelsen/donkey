@@ -8,6 +8,7 @@
 ## Stops on amkCancel.
 
 import std/strutils except strip
+import ../core/pipeops
 import chronos
 import chronos/asyncsync
 import ../domain/agent_message

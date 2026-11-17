@@ -130,7 +130,7 @@ proc saveUserMd*(a: MarkdownMemoryAdapter; userId: UserId; content: string): Res
     return err(writeResult.error)
   ok()
 
-proc appendMemory*(a: MarkdownMemoryAdapter; userId: UserId; text: string): Result[void, string] {.gcsafe.} =
+proc appendMemory*(a: MarkdownMemoryAdapter; userId: UserId; text: string): Result[void, string] {.gcsafe, raises: [].} =
   ## Appends a block of text to MEMORY.md (creates if absent).
   let ensureResult = a.ensurePaddock(userId)
   if ensureResult.isErr:

@@ -10,6 +10,7 @@ import std/[algorithm, json, os, strutils, times]
 import ../../core/types
 import ../../core/pipeops
 import ../../ports/memory
+import ../filesystem/paths
 import ../../domain/memory/episode_pure
 import ../../domain/memory/session_search_pure
 import ../../domain/memory/provenance_pure
@@ -417,43 +418,44 @@ proc setUserFieldText*(content, label, value: string): string =
 proc isRevokedUserMd*(content: string): bool =
   content.parseUserField("Access").toLowerAscii() == "revoked"
 
-proc secureDir(path: string) =
-  createDir(path)
-  when defined(posix):
-    setFilePermissions(path, {fpUserRead, fpUserWrite, fpUserExec})
-
-proc secureFile(path: string) =
-  when defined(posix):
-    if fileExists(path):
-      setFilePermissions(path, {fpUserRead, fpUserWrite})
-
 proc securePaddockTree(a: MdFileAdapter; userId: UserId) =
   ## One-time migration for paddocks created before permissions were tightened.
+  ## Best effort: a permissions failure must not make the paddock unreadable.
+  ## The marker is only written when every managed file was protected, so a
+  ## later load retries after a partial failure.
   when defined(posix):
-    let marker = a.paddockDir(userId) / ".permissions_v1"
-    if fileExists(marker):
-      return
-    for path in [a.userMdPath(userId), a.memoryMdPath(userId),
-                 a.preferencesMdPath(userId), a.heartbeatMdPath(userId)]:
-      secureFile(path)
-    for dirName in ["sessions", "attachments"]:
-      let dir = a.paddockDir(userId) / dirName
-      if dirExists(dir):
-        for kind, path in walkDir(dir):
-          if kind == pcFile:
-            secureFile(path)
-    writeFile(marker, "permissions v1\n")
-    secureFile(marker)
+    try:
+      let marker = a.paddockDir(userId) / ".permissions_v2"
+      if fileExists(marker):
+        return
+      var allOk = true
+      for path in [a.userMdPath(userId), a.memoryMdPath(userId),
+                   a.preferencesMdPath(userId), a.heartbeatMdPath(userId)]:
+        if secureFile(path).isErr:
+          allOk = false
+      for dirName in ["sessions", "attachments"]:
+        let dir = a.paddockDir(userId) / dirName
+        if dirExists(dir):
+          for kind, path in walkDir(dir, checkDir = true):
+            if kind == pcFile:
+              if secureFile(path).isErr:
+                allOk = false
+      if allOk:
+        writeFile(marker, "permissions v1\n")
+        if secureFile(marker).isErr:
+          removeFile(marker)
+    except CatchableError:
+      discard
 
 proc ensurePaddock*(a: MdFileAdapter; userId: UserId) =
   ## Creates the paddock directory tree if it does not exist, and keeps
   ## memory/session/attachment files private to the service user.
-  secureDir(a.paddockDir(userId))
-  secureDir(a.paddockDir(userId) / "sessions")
-  secureDir(a.paddockDir(userId) / "attachments")
+  discard secureDir(a.paddockDir(userId))
+  discard secureDir(a.paddockDir(userId) / "sessions")
+  discard secureDir(a.paddockDir(userId) / "attachments")
   if not fileExists(a.heartbeatMdPath(userId)):
     writeFile(a.heartbeatMdPath(userId), defaultHeartbeatMd())
-  secureFile(a.heartbeatMdPath(userId))
+  discard secureFile(a.heartbeatMdPath(userId))
   securePaddockTree(a, userId)
 
 # ── MemoryPort implementation ─────────────────────────────────────────────────
@@ -522,7 +524,7 @@ proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext =
 
 proc exportFile(path, content: string) =
   writeFile(path, content)
-  secureFile(path)
+  discard secureFile(path)
 
 proc tryExport(path, content: string) {.raises: [].} =
   ## Refreshes one exported file after the graph took the write. The export
@@ -626,7 +628,7 @@ proc addDmAllowed*(a: MdFileAdapter; userId: UserId): Result[void, string] =
     var f = open(path, fmAppend)
     defer: f.close()
     f.writeLine($userId)
-    secureFile(path)
+    discard secureFile(path)
     ok()
   except CatchableError as e:
     err("dm allowlist add failed: " & e.msg)
@@ -649,10 +651,17 @@ proc removeDmAllowed*(a: MdFileAdapter; userId: UserId): Result[void, string] =
     err("dm allowlist remove failed: " & e.msg)
 
 proc appendToMemoryFile(a: MdFileAdapter; userId: UserId; text: string) =
+  ## Append-only write: avoids the read-modify-write race where two concurrent
+  ## writers (daemon + ctl) overwrite each other's chunks.
   let path = a.memoryMdPath(userId)
-  let existing = readOrEmpty(path)
-  let sep = if existing.len > 0 and not existing.endsWith("\n"): "\n" else: ""
-  exportFile(path, existing & sep & text)
+  var f = open(path, fmAppend)
+  try:
+    if getFileSize(path) > 0:
+      f.write("\n")
+    f.write(text)
+  finally:
+    f.close()
+  discard secureFile(path)
 
 proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string;
                    origin = MemoryOrigin()): Result[void, string] =
@@ -852,6 +861,7 @@ proc saveSession*(a: MdFileAdapter; userId: UserId;
     f.close()
   secureFile(path)
 
+
 proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
                           includeMemory: bool):
                           Result[seq[SessionSearchRecord], string]
@@ -994,7 +1004,7 @@ proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
                        message: string): string =
   ## Writes a reminder JSON file. Returns the reminder id.
   a.ensurePaddock(userId)
-  secureDir(a.reminderDir(userId))
+  discard secureDir(a.reminderDir(userId))
   let id   = $getTime().toUnix() & "_" & $userId
   let data = %* {
     "id":          id,
@@ -1005,7 +1015,7 @@ proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
   }
   let reminderPath = a.reminderDir(userId) / id & ".json"
   writeFile(reminderPath, $data)
-  secureFile(reminderPath)
+  discard secureFile(reminderPath)
   id
 
 proc loadDueReminders*(a: MdFileAdapter): seq[JsonNode] =

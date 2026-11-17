@@ -23,7 +23,7 @@
 ##   orchestrator flushes accumulated tokens to the global outbox as an
 ##   OutboundMessage with isPartial=true. The final flush has isPartial=false.
 
-import std/os
+import std/[os, strutils]
 import chronos
 import chronos/asyncsync
 import ../core/pipeops
@@ -45,6 +45,7 @@ import ../ports/provider
 import ../ports/subagent_workspace
 import ../ports/memory
 import ../ports/http
+import ../ports/fs
 import ../ports/tool
 import ./memory_agent
 import ./tool_agent
@@ -66,6 +67,12 @@ export tool_loop_runtime
 export prompt_building
 
 const DebounceWindowMs* = 1_200
+
+func suppressToolProgressFromEnv*(): bool =
+  ## Hides the `🔧 tool [n]` progress messages for deployments that only want
+  ## the final answer and approval prompts. Set DONKEY_SUPPRESS_TOOL_PROGRESS=1.
+  getEnv("DONKEY_SUPPRESS_TOOL_PROGRESS").strip.toLowerAscii() in
+    ["1", "true", "yes", "on"]
 
 # ── Orchestrator state and pipe ops ────────────────────────────────────────────
 
@@ -169,6 +176,7 @@ proc buildNativeCtx*(uid: UserId;
                      memory: MemoryRuntimePort;
                      completeFn: CompleteFn;
                      http: HttpRuntimePort;
+                     fs: FsRuntimePort;
                      cfg: cfgTypes.DonkeyConfig;
                      tools: seq[ToolDescription];
                      log: Logger;
@@ -184,6 +192,7 @@ proc buildNativeCtx*(uid: UserId;
     memory:       memory,
     completeFn:   completeFn,
     http:         http,
+    fs:           fs,
     braveApiKey:  getEnv("BRAVE_API_KEY", ""),
     webAllowlist: cfg.webAllowlist,
     toolWebPolicy: cfg.toolWebPolicy,
@@ -214,6 +223,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
                           memory: MemoryRuntimePort;
                           completeFn: CompleteFn;
                           http: HttpRuntimePort;
+                          fs: FsRuntimePort;
                           tools: seq[ToolDescription];
                           webAllowlist: seq[string];
                           toolWebPolicy: seq[cfgTypes.ToolWebPolicy];
@@ -233,7 +243,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
     not onboarding_runtime.safeHasProfile(memory, result.uid) and
     not stateRuntime.hasCompletedBootstrapTarget(msg.channel, msg.replyTo)
   result.nativeCtx = buildNativeCtx(
-    result.uid, msg.channel, globalOutbox, session, memory, completeFn, http,
+    result.uid, msg.channel, globalOutbox, session, memory, completeFn, http, fs,
     cfgTypes.DonkeyConfig(
       home: "", paddocks: "", logLevel: log.minLevel, logFile: "",
       defaultProvider: "", defaultModel: "",
@@ -246,6 +256,9 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
     tools, log,
     paddockDir, sandboxMode, sandboxRuntimeCmd, sandboxImage)
   result.nativeCtx.stopGeneration = stateRuntime.stopGeneration
+  ## Recorded per turn: a `/stop` that arrives after this point aborts the
+  ## turn; one that arrived before it belongs to an earlier turn.
+  result.nativeCtx.userInterrupt = currentUserInterrupt($result.uid)
   result.nativeCtx.scopeSessionId = stateRuntime.sessionId
   createDir(paddockDir)
   result.typingLoop = startTypingLoop(typingFn, result.uid, msg.channel)
@@ -338,6 +351,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     completeFn: CompleteFn;
                     errorExplainFn: CompleteFn;
                     http: HttpRuntimePort;
+                    fs: FsRuntimePort;
                     streamFn: StreamFn;
                     tools: seq[ToolDescription];
                     webAllowlist: seq[string];
@@ -356,7 +370,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     asyncCompleteFn: AsyncCompleteFn = nil): Future[OrchestratorState] {.async.} =
   result = stateRuntime |> nextTurn
   var turnSetup = prepareUserTurnSetup(
-    globalOutbox, session, memory, completeFn, http, tools, webAllowlist, toolWebPolicy,
+    globalOutbox, session, memory, completeFn, http, fs, tools, webAllowlist, toolWebPolicy,
     paddockDir, typingFn, log,
     sandboxMode, sandboxRuntimeCmd, sandboxImage, msg, result)
   turnSetup.nativeCtx.asyncCompleteFn = asyncCompleteFn
@@ -432,11 +446,12 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
            $turnSetup.userText.len & "|")
   let suppressHeartbeatProgress = msg.taskKind == tkHeartbeat
   let suppressQuietHeartbeatFinal = msg.taskKind == tkHeartbeat
+  let suppressProgress = suppressHeartbeatProgress or suppressToolProgressFromEnv()
   let loopResult = await runToolLoop(
     globalOutbox, toolInbox, toolOut, memory, completeFn, errorExplainFn, streamFn, turnSetup.nativeCtx,
     state, history, turnSetup.uid, msg.channel, msg.replyTo, msg.id, turnSetup.streamId,
     systemBase, context, tools, providerLabel,
-    suppressHeartbeatProgress, result.debugMode, result.showReasoning, log,
+    suppressProgress, result.debugMode, result.showReasoning, log,
     asyncCompleteFn)
   result =
     result |>->
@@ -445,7 +460,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   stopTypingLoop(turnSetup.typingLoop)
   await finalizeNormalTurn(
     globalOutbox, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.streamId, streamFn,
-    suppressHeartbeatProgress, suppressQuietHeartbeatFinal, result.showReasoning, loopResult)
+    suppressProgress, suppressQuietHeartbeatFinal, result.showReasoning, loopResult)
 
   # Capture the turn into long-term memory. The policy (what counts as
   # substantive, how each side is clipped) lives in domain/memory/capture_pure.
@@ -496,6 +511,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
                      completeFn: CompleteFn;
                      errorExplainFn: CompleteFn;
                      http: HttpRuntimePort;
+                     fs: FsRuntimePort;
                      streamFn: StreamFn;
                      tools: seq[ToolDescription];
                      webAllowlist: seq[string];
@@ -554,7 +570,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
 
   result = await handleUserTurn(
     globalOutbox, memInbox, toolInbox, memOut, toolOut, session, memory,
-    completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
+    completeFn, errorExplainFn, http, fs, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
     providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, toolsSuffix,
     state, msg, result, asyncCompleteFn)
   if result.onboarding.phase == opDone:
@@ -574,6 +590,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
                         completeFn: CompleteFn;
                         errorExplainFn: CompleteFn;
                         http: HttpRuntimePort;
+                        fs: FsRuntimePort;
                         streamFn: StreamFn;
                         tools: seq[ToolDescription];
                         webAllowlist: seq[string];
@@ -602,7 +619,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
   of amkTask:
     result.stateRuntime = await handleActorTask(
       globalOutbox, session, memInbox, toolInbox, memOut, toolOut, memory,
-      completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
+      completeFn, errorExplainFn, http, fs, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
       providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
       toolsSuffix, state, msg, stateRuntime, asyncCompleteFn)
 
@@ -662,7 +679,8 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       toolWebPolicy:  seq[cfgTypes.ToolWebPolicy] = @[];
                       errorExplainFn: CompleteFn = nil;
                       asyncCompleteFn: AsyncCompleteFn = nil;
-                      subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort()): Future[void] {.async.} =
+                      subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort();
+                      fs:             FsRuntimePort = unavailableFs()): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
   if daemonShuttingDown():
     return
@@ -695,7 +713,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
       let msg = await collectWithDebounce(inbox, DebounceWindowMs)
       let actorResult = await handleActorMessage(
         inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
-        completeFn, errorExplainFn, http, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
+        completeFn, errorExplainFn, http, fs, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
         providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
         toolsSuffix, state, msg, stateRuntime, asyncCompleteFn)
       stateRuntime = actorResult.stateRuntime

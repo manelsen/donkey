@@ -95,12 +95,15 @@ proc handleQQModelCallback(msg: InboundMessage;
         discard
     true
   of cbkModelsSet:
+    let model = resolveModelCallback(callback.provider, callback.model)
+    if model.len == 0:
+      return true
     let saved = memory.saveChannelPreferences(
-      msg.userId, [("provider", callback.provider), ("model", callback.model)])
+      msg.userId, [("provider", callback.provider), ("model", model)])
     qqAdapter.send(OutboundMessage(
       userId: msg.userId,
       channel: ckQQ,
-      text: savedOrError(saved, qqModelConfirmedText(callback.provider, callback.model)),
+      text: savedOrError(saved, qqModelConfirmedText(callback.provider, model)),
       replyTo: msg.channelId,
     )).isOkOr:
       discard

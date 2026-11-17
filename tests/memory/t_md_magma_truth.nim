@@ -55,7 +55,7 @@ when defined(withSqlite):
         @["- gosta de Nim", "- mora em BH"]
       check readFile(a.userMdPath(uid)) == "# Ada"
       check readFile(a.preferencesMdPath(uid)) == "language = \"pt-BR\""
-      check readFile(a.memoryMdPath(uid)) == "- gosta de Nim\n- mora em BH\n"
+      check readFile(a.memoryMdPath(uid)) == "- gosta de Nim\n\n- mora em BH\n"
 
     test "context comes from the graph even when the files say otherwise":
       let a = newAdapter()
@@ -187,7 +187,7 @@ when defined(withSqlite):
       writeFile(a.memoryMdPath(uid), "nota antiga\n")
       check a.appendMemory(uid, "nota nova\n").isOk
       check a.memoryNodes(uid).mapIt(it.content.strip) == @["nota antiga", "nota nova"]
-      check readFile(a.memoryMdPath(uid)) == "nota antiga\nnota nova\n"
+      check readFile(a.memoryMdPath(uid)) == "nota antiga\n\nnota nova\n"
 
     test "a configured graph that cannot be opened fails the write and exports nothing":
       ## The database path sits under a regular file, so it cannot be created.
