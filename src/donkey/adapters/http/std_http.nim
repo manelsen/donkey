@@ -82,8 +82,8 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
         if attemptLimit <= 1:
           ## The caller handles the penalty itself (per-chat window); hand the
           ## original response over so it can read `parameters.retry_after`.
-          if a.circuitBreaker:
-            recordFailure(host)
+          ## Flood control is not a transport failure, so it must not open the
+          ## circuit breaker for the host.
           return ok(val)
         var retryAfterMs = 5000 # default 5s
         try:
@@ -96,8 +96,7 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
         if attempt < attemptLimit:
           sleep(retryAfterMs)
           continue
-        if a.circuitBreaker:
-          recordFailure(host)
+        ## Rate limiting is not a host failure: keep the breaker closed.
         return err("HTTP 429 rate limited after " & $attemptLimit & " attempts. Last error: " & lastError)
       if val.status < 500: # Success or client error, don't retry
         if a.circuitBreaker:
