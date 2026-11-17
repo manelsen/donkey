@@ -649,3 +649,53 @@ dbca7016cb	INBOUND	yes	Midia com rich_message e sem legenda pertence ao handler 
 e0d75d35be	RATE	yes	Fora da janela de flood o Bot API recusa; um reenvio adiado nao pode ser forcado para dentro da janela.
 e2071e8f57	FORMAT	yes	Entidades de enfase aninhadas do mesmo tipo devem colapsar em uma unica entidade no MarkdownV2.
 e4ec5c2ce2	FORMAT	yes	Parenteses sao reservados no MarkdownV2 e quebram os indicadores de parte (1/3) quando nao escapados.
+e520b85086	INTERNAL	no	Resolucao/normalizacao de nomes de topicos na configuracao do hermes; nao e API do Telegram.
+e5ecded22a	INTERNAL	no	Limpeza de binding interno de topico quando a linha de destino sumiu do banco do hermes.
+e6a6d0df94	NET	yes	URL de proxy nos erros do Bot API inclui caminho com credenciais; o log deve cortar o path.
+e8907ae2b4	INTERNAL	no	Rotulo do recibo de entrega de aprovacao no hermes; observabilidade interna do gateway.
+ec092c80c1	INBOUND	yes	Todo callback_query precisa de answerCallbackQuery; taps desconhecidos ou sem dados tambem exigem resposta.
+f0ac114d2d	INTERNAL	no	Renderizadores de aprovacao do hermes; prompt apenas com Deny e fluxo interno, sem API do Telegram.
+f22490ccd9	FORMAT	yes	Math iniciado por digito com colchetes, barras e exclamacoes e literal no MarkdownV2, nao cifrao escapado.
+f228c919c6	INTERNAL	no	Retencao do ator do turno no contexto de sessao do gateway; estado interno, sem API do Telegram.
+f59a7e22a9	MEDIA	yes	Midia recebida carrega flags de anexo (album, cache); os caminhos de entrada devem preserva-las.
+f635dcdd83	NET	yes	So falha transitoria (rede, 5xx, 429) merece retry; erro de parse de entidade nao deve ser reenviado.
+f828b087e7	MEDIA	yes	Legenda de voz e limitada no Bot API; truncar com prefixo adequado mantem o voice bubble valido.
+f9de86c545	INBOUND	yes	answerCallbackQuery expira; quando o Telegram recusa a resposta expirada o tap ainda precisa ser tratado.
+fdf1f10fe2	MEDIA	yes	O limite de legenda do Bot API conta unidades UTF-16; emoji conta 2 e pode estourar a bolha de voz.
+fe54b16026	INTERNAL	no	Transferencia automatica de DM raiz para topico e feature do hermes; entrada de prompt interna.
+007d7e8b50	EDIT	yes	Editar ou apagar exige o bot dono da mensagem; apos reconexao o adapter substituto assume a operacao.
+0151c2f613	NET	yes	setWebhook pode falhar de forma transitoria no Bot API; um unico retry resolve sem trocar a configuracao.
+033b6c8530	FORMAT	yes	Dentro de code span com duplo backtick o Telegram mantem o texto literal; link nao vira entidade.
+039262515c	NET	yes	Com DoH, o IP de fallback descoberto deve preceder os IPs semente no transporte do Bot API.
+0e28218d19	INTERNAL	no	Mascaramento de token do Telegram em log do agente; redaction interna do hermes.
+2243a114d1	INBOUND	yes	Ordem de updates: follow-up encadeado por message_thread_id nao pode ultrapassar o opener do topico adotado.
+239609fdb1	FORMAT	yes	HTML do Bot API: tag inventada pelo modelo deve ser descartada sem perder a formatacao valida ao redor.
+2903e03e4a	FORMAT	yes	Parser HTML do Bot API: '>' dentro de atributo entre aspas nao fecha a tag.
+2af49ba3e2	INBOUND	yes	Updates de DM topics distintos sao independentes; cada thread precisa da sua propria faixa de processamento.
+37b58f4912	MEDIA	yes	Itens de album com mesmo nome ou sem nome precisam manter cada nota (tamanho/falha) no texto enviado.
+385ff1fe4a	FORMAT	yes	Tag dentro de code span e exemplo literal, nao HTML, e nao deve ser reescrita no payload do Bot API.
+3a9d3672c9	INTERNAL	no	Comando /topic do hermes criando topico System nao rastreado; feature interna, sem API do Telegram.
+3b42157858	RATE	yes	sendChatAction de typing expira em poucos segundos; a renovacao nao pode travar o preview de streaming do grupo.
+4161a6c4a1	INBOUND	yes	Mensagem de grupo entregue como rich_message deve ser enderecada igual ao mesmo texto plano.
+430d864cb0	RATE	yes	deleteMessage tambem entra na janela de flood; esperar ate o fim da janela ainda deve executar a exclusao.
+48d57b63f5	NET	yes	getUpdates em long polling abria um TCP por chamada; reaproveitar o socket evita latencia e portas esgotadas.
+4b5a85f99c	MEDIA	yes	Cada arquivo acima do limite de tamanho do Bot API falha isoladamente e precisa da sua propria nota.
+4bfa2ab642	INTERNAL	no	/resume do hermes recusando sessao presa a outro topico; fluxo interno de sessao.
+51ed48a8e3	INBOUND	yes	Contact card em grupo observado, sem mencao, ainda carrega dados de contato que devem ser preservados.
+541b948520	INTERNAL	no	Nota de arquivo grande recusada pela admissao interna de metadados do hermes, nao pela API do Telegram.
+5532919d31	INBOUND	yes	So mensagens realmente de topico (message_thread_id) devem ganhar faixa separada de processamento de updates.
+5948ab52e2	RATE	yes	sendChatAction e por chat e consome o orcamento de envio; keep-alive deve ser uma chamada por chat.
+642bb293db	INTERNAL	no	Escopo de status editavel por turno no gateway do hermes; estado interno de streaming.
+6b305c031d	TOPIC_API	yes	editForumTopic renomeia o topico; se o bot receptor desliga o auto-rename, o nome nao deve ser alterado.
+6c93005fe7	INTERNAL	no	Resolucao do adapter substituto dentro do proprio perfil; reconexao interna do hermes.
+7222595b82	RATE	yes	Rascunhos de streaming e deletes consomem a janela de flood do chat e precisam ser espacados.
+74dde239c8	NET	yes	A caminhada de IPs de fallback precisa caber no deadline do envio; senao o request estoura o timeout.
+761605f0d0	NET	yes	getUpdates com 502 degrada o caminho de envio; quando volta a responder, envios recusados devem ser reenviados.
+76ec660497	INTERNAL	no	Apenas ajusta sys.path na importacao; infraestrutura interna do hermes.
+81f2c6850c	NET	yes	Falha de envio registrada depois da recuperacao do polling ainda precisa ser reentregue ao chat.
+82bdce51ad	INTERNAL	no	/stop e /new do hermes descartando fotos em buffer; reset interno de comandos.
+82e0a7b4c1	INBOUND	yes	channel_post e um update proprio do Telegram e passa por allowed_chats e require_mention como post de canal.
+8c96f17457	INBOUND	yes	Adapter substituto deve assumir os lotes em buffer do anterior para nao perder a ordem de chegada.
+9111b89f89	INTERNAL	no	/topic restore renomeando topico para o titulo da sessao; feature interna do hermes.
+91582993ac	NET	yes	O Telegram guarda updates no servidor por ate 24h e os reentrega se o offset nao avancar.
+91c7c07b95	RATE	yes	A janela de flood pode ser reestendida por retry_after; a exclusao nao deve dormir dentro dela.
