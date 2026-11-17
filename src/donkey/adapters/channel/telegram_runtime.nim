@@ -604,6 +604,16 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       discard
     return true
   of lcaGenerateLinkCode:
+    if msg.isGroup:
+      ## A pairing code in a group would be visible to everyone there.
+      tgAdapter.send(OutboundMessage(
+        userId:  msg.userId,
+        channel: ckTelegram,
+        text:    "Use /mycode em um chat privado com o bot.",
+        replyTo: replyTarget(msg),
+      )).isOkOr:
+        discard
+      return true
     let code = tgAdapter.resolver.generateLinkCode(msg.userId)
     tgAdapter.send(OutboundMessage(
       userId:  msg.userId,

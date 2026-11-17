@@ -369,8 +369,8 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
     let (head, tail) = splitCaption(msg.text, TelegramCaptionLimit)
     ? a.sendMedia(chatId, msg.mediaUrl, head, msg.replyTo)
     if tail.strip.len > 0:
-      for i, chunk in splitForTelegram(tail, TelegramMaxChars):
-        ? a.sendChunk(chatId, chunk, "", i == 0, msg.isHtml)
+      for chunk in splitForTelegram(tail, TelegramMaxChars):
+        ? a.sendChunk(chatId, chunk, msg.replyTo, false, msg.isHtml)
     return ok()
 
   for i, chunk in splitForTelegram(msg.text, TelegramMaxChars):
@@ -390,8 +390,8 @@ proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, str
     let (head, tail) = splitCaption(msg.text, TelegramCaptionLimit)
     ? a.sendMedia(chatId, msg.mediaUrl, head, msg.replyTo)
     if tail.strip.len > 0:
-      for i, chunk in splitForTelegram(tail, TelegramMaxChars):
-        ? a.sendChunk(chatId, chunk, "", i == 0, msg.isHtml)
+      for chunk in splitForTelegram(tail, TelegramMaxChars):
+        ? a.sendChunk(chatId, chunk, msg.replyTo, false, msg.isHtml)
     return ok("")
 
   if shouldSkipOutboundText(msg.text):
