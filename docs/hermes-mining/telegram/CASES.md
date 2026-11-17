@@ -11,8 +11,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Dividir em partes de no máximo 4096 unidades UTF-16, sempre em fronteira de caractere; nunca cortar uma sequência UTF-8.
 - **Fontes no hermes:** `9e992df8ae`, `b7c4369ca0`, `c0da5d09a6`, `022d196f38`
 - **Testes no hermes:** `tests/gateway/test_discord_reply_mode.py;tests/gateway/test_platform_base.py`
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n "utf16|UTF-16" src/donkey` (sem resultados); o split atual é por bytes em `src/donkey/core/pipeops.nim:53`
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_split.nim:14` e `tests/domain/channels/t_telegram_split.nim`
 - **Prioridade:** P0
 
 ### TG-002: "message is not modified" não é falha de edição

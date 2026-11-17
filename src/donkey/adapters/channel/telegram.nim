@@ -18,6 +18,7 @@ import ../../core/telegram_format
 import ../../core/media_download
 import ../../domain/message
 import ../../domain/channels/telegram_pure
+import ../../domain/channels/telegram_split
 import ../../ports/http
 import ../../ports/channel
 import ../http/std_http
@@ -205,7 +206,7 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
   if msg.mediaUrl.len > 0:
     return a.sendMedia(chatId, msg.mediaUrl, msg.text, msg.replyTo)
 
-  for i, chunk in splitChunks(msg.text, TelegramMaxChars):
+  for i, chunk in splitForTelegram(msg.text, TelegramMaxChars):
     ? a.sendChunk(chatId, chunk, msg.replyTo, i == 0, msg.isHtml)
   ok()
 
@@ -223,7 +224,7 @@ proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, str
     return ok("")
 
   var lastId = ""
-  for i, chunk in splitChunks(msg.text, TelegramMaxChars):
+  for i, chunk in splitForTelegram(msg.text, TelegramMaxChars):
     let html = renderTelegramHtml(chunk, msg.isHtml)
     var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
     if i == 0 and msg.replyTo.len > 0:
