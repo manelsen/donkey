@@ -596,7 +596,7 @@ proc newTelegramAdapter*(token: string; identityPath: string;
     http:        newStdHttpAdapter(
                    timeout = telegramHttpTimeoutSec(),
                    proxy = telegramProxyUrl(),
-                   allowlist = @["api.telegram.org"],
+                   allowlist = (if apiBase.len == 0: @["api.telegram.org"] else: @[]),
                    retryNonIdempotent = false),
     pollTimeout: pollTimeout,
   )
