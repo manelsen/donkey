@@ -438,3 +438,38 @@ suite "outbound_runtime":
     presentationState.rememberStream(partial, "m42")
     routeOutbound(partial, ports, newLogger("test.outbound"), presentationState)
     check sentCount == 0
+
+
+  test "TG-031: a refused partial edit keeps its delta for the next edit":
+    var edits: seq[string] = @[]
+    var refuse = true
+    let ports = OutboundChannelPorts(
+      telegram: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} = ok(),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m1"),
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}:
+            edits.add(text)
+            if refuse:
+              refuse = false
+              return err("message to edit not found")
+          ok(),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+      )
+    )
+    var presentationState = initPresentationState()
+    let first = OutboundMessage(userId: UserId("u1"), channel: ckTelegram,
+                                text: "A", streamId: "s1", isPartial: true)
+    presentationState.rememberStream(first, "m42")
+    routeOutbound(first, ports, newLogger("test.outbound"), presentationState)
+    routeOutbound(
+      OutboundMessage(userId: UserId("u1"), channel: ckTelegram,
+                      text: "B", streamId: "s1", isPartial: true),
+      ports, newLogger("test.outbound"), presentationState)
+    routeOutbound(
+      OutboundMessage(userId: UserId("u1"), channel: ckTelegram,
+                      text: "C", streamId: "s1", isPartial: true),
+      ports, newLogger("test.outbound"), presentationState)
+    check "A" in edits[^1]
+    check "B" in edits[^1]
+    check "C" in edits[^1]

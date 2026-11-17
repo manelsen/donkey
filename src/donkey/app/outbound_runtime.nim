@@ -269,12 +269,14 @@ proc routeOutbound*(msg: OutboundMessage;
   of oiSend:
     sendImmediateOutbound(effectiveMsg, ports, log, ledger)
   of oiStreamUpdate:
-    if editStreamOutbound(effectiveMsg, decision.existingMsgId, ports, log):
-      presentationState.rememberStreamText(effectiveMsg, effectiveMsg.text)
-    elif not effectiveMsg.isPartial:
-      ## Behavior derived from hermes-agent (MIT) fix 30878411b8; see
-      ## docs/hermes-mining/telegram/CASES.md#tg-031
-      ##
+    let confirmed = editStreamOutbound(effectiveMsg, decision.existingMsgId, ports, log)
+    ## Behavior derived from hermes-agent (MIT) fix 30878411b8; see
+    ## docs/hermes-mining/telegram/CASES.md#tg-031
+    ##
+    ## The accumulated text is kept even when the edit was refused: the next
+    ## delta and the final fallback must not lose the refused fragment.
+    presentationState.rememberStreamText(effectiveMsg, effectiveMsg.text)
+    if not confirmed and not effectiveMsg.isPartial:
       ## A final edit that the channel refused must not swallow the answer:
       ## deliver it as a new message instead of trusting the stale stream.
       presentationState.clearStream(effectiveMsg)

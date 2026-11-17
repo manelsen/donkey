@@ -78,7 +78,8 @@ Nenhum.
 Dos 37 casos, 28 estão COBERTO. Restam **9 casos PARCIAL ou AUSENTE**
 (5 PARCIAL + 4 AUSENTE) registrados com evidência e prioridade para as
 próximas rodadas. Os P1 restantes são TG-015 (menções em grupo), TG-020 (409 no
-polling), TG-025/TG-026 (forum topics) e TG-028 (álbuns); os demais são P2.
+polling), TG-025/TG-026 (forum topics), TG-028 (álbuns) e TG-037 (escape de
+texto dinâmico); os demais são P2.
 
 ## Quality gates finais
 

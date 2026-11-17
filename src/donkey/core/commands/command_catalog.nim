@@ -1,6 +1,6 @@
 ## Unified command catalog with metadata for all command surfaces.
 
-import std/[json, options, sequtils, strutils]
+import std/[json, options, sequtils, strutils, unicode]
 import command_routing
 
 type
@@ -148,10 +148,16 @@ func fitTelegramDescription*(raw: string): string =
   ## Behavior derived from hermes-agent (MIT) fix 60ecde8ac7; see
   ## docs/hermes-mining/telegram/CASES.md#tg-036
   ##
-  ## Descriptions are limited to 40 characters.
-  if raw.len <= TelegramCommandDescMax:
-    return raw
-  raw[0 ..< TelegramCommandDescMax]
+  ## Descriptions are limited to 40 characters, counted as code points so a
+  ## multi-byte character is never split.
+  var kept = 0
+  var bytePos = 0
+  for r in raw.runes:
+    if kept >= TelegramCommandDescMax:
+      break
+    bytePos += r.size
+    inc kept
+  raw[0 ..< bytePos]
 
 func fitTelegramCommands*(commands: seq[(string, string)]):
                           seq[(string, string)] =

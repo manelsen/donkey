@@ -164,3 +164,10 @@ suite "telegram command menu limits (TG-036)":
     for i in 0 ..< 150:
       raw.add(("cmd" & $i, "d"))
     check fitTelegramCommands(raw).len == 100
+
+
+  test "TG-036: descriptions are truncated on a character boundary":
+    let text = strutils.repeat("a", 39) & "é" & strutils.repeat("b", 10)
+    let fitted = fitTelegramDescription(text)
+    check fitted == strutils.repeat("a", 39) & "é"
+    check fitted.len > 40   # bytes, but 40 code points

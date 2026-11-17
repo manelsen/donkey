@@ -57,7 +57,10 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
     return err("Circuit breaker OPEN for host: " & host)
 
   var lastError = ""
-  for attempt in 1 .. a.maxAttempts(retryKind(meth)):
+  ## One decision for the whole call: the loop, the waits and the messages all
+  ## use the same budget.
+  let attemptLimit = a.maxAttempts(retryKind(meth))
+  for attempt in 1 .. attemptLimit:
     let res = block:
       let effectiveTimeout = if timeoutSec > 0: timeoutSec else: a.timeout
       withHttpClientTimeout(effectiveTimeout, redirectLimit, a.proxy):
@@ -76,6 +79,12 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
       let val = res.get()
       # HTTP 429 Too Many Requests: respeita retry-after se presente
       if val.status == 429:
+        if attemptLimit <= 1:
+          ## The caller handles the penalty itself (per-chat window); hand the
+          ## original response over so it can read `parameters.retry_after`.
+          if a.circuitBreaker:
+            recordFailure(host)
+          return ok(val)
         var retryAfterMs = 5000 # default 5s
         try:
           let j = parseJson(val.body)
@@ -84,12 +93,12 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
         except JsonParsingError:
           discard # usa default
         lastError = "HTTP 429 (rate limited)"
-        if attempt < a.maxRetries:
+        if attempt < attemptLimit:
           sleep(retryAfterMs)
           continue
         if a.circuitBreaker:
           recordFailure(host)
-        return err("HTTP 429 rate limited after " & $a.maxRetries & " attempts. Last error: " & lastError)
+        return err("HTTP 429 rate limited after " & $attemptLimit & " attempts. Last error: " & lastError)
       if val.status < 500: # Success or client error, don't retry
         if a.circuitBreaker:
           recordSuccess(host)
@@ -101,10 +110,10 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
 
     if a.circuitBreaker:
       recordFailure(host)
-    if attempt < a.maxRetries:
+    if attempt < attemptLimit:
       sleep(getBackoffMs(attempt))
 
-  err("HTTP " & $meth & " failed after " & $a.maxRetries & " attempts. Last error: " & lastError)
+  err("HTTP " & $meth & " failed after " & $attemptLimit & " attempts. Last error: " & lastError)
 
 proc get*(a: StdHttpAdapter; url: string;
           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =

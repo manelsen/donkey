@@ -99,7 +99,7 @@ func withLinkPreviewPolicy*(body: JsonNode; previewsEnabled: bool): JsonNode =
   ## Bot answers are usually technical text with URLs; an automatic preview
   ## card pushes the actual answer out of view. Previews stay off unless the
   ## operator opts in.
-  result = body
+  result = body.copy()
   if not previewsEnabled:
     result["link_preview_options"] = %*{"is_disabled": true}
 
@@ -114,7 +114,7 @@ func asDocumentBody*(body: JsonNode): JsonNode =
   ## sendPhoto refuses images outside the dimension or size limits, while
   ## sendDocument accepts the same file. The fallback keeps the media instead
   ## of dropping it.
-  result = body
+  result = body.copy()
   if result.hasKey("photo"):
     result["document"] = result["photo"]
     result.delete("photo")
