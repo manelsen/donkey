@@ -118,3 +118,84 @@ func asDocumentBody*(body: JsonNode): JsonNode =
   if result.hasKey("photo"):
     result["document"] = result["photo"]
     result.delete("photo")
+
+func audioMethodFor*(url: string): string =
+  ## Behavior derived from hermes-agent (MIT) fix b93996c35e; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-029
+  ##
+  ## Voice notes are OGG/OPUS and render as a bubble only through sendVoice;
+  ## music files go through sendAudio so the client shows a player instead of
+  ## a generic document.
+  var lower = url.toLowerAscii()
+  let cut = min(
+    (if lower.find('?') >= 0: lower.find('?') else: lower.len),
+    (if lower.find('#') >= 0: lower.find('#') else: lower.len))
+  lower = lower[0 ..< cut]
+  let dot = lower.rfind('.')
+  if dot < 0:
+    return ""
+  let ext = lower[dot + 1 .. ^1]
+  case ext
+  of "ogg", "opus", "oga": "sendVoice"
+  of "mp3", "m4a": "sendAudio"
+  else: ""
+
+func isAddressedToBot*(text, botUsername: string): bool =
+  ## Behavior derived from hermes-agent (MIT) fix 1e18e0503f; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-015
+  ##
+  ## A group message addresses the bot when it mentions @username as a word.
+  ## Matching is case-insensitive and requires a boundary, so @mybot2 does not
+  ## wake @mybot.
+  if botUsername.len == 0 or text.len == 0:
+    return false
+  let needle = "@" & botUsername.toLowerAscii()
+  let lower = text.toLowerAscii()
+  ## Command form: `/cmd@bot` addresses the bot even though the mention is
+  ## glued to the command name.
+  if lower[0] == '/':
+    let space = lower.find(' ')
+    let token = if space < 0: lower else: lower[0 ..< space]
+    if token.endsWith(needle):
+      return true
+  var start = 0
+  while true:
+    let at = lower.find(needle, start)
+    if at < 0:
+      return false
+    let after = at + needle.len
+    let beforeOk = at == 0 or lower[at - 1] notin {'a' .. 'z', '0' .. '9', '_', '@'}
+    ## A trailing period ends the sentence; a period followed by a domain
+    ## character is part of an address and does not address the bot.
+    let afterOk =
+      if after >= lower.len: true
+      elif lower[after] == '.':
+        after + 1 >= lower.len or
+          lower[after + 1] notin {'a' .. 'z', '0' .. '9', '_'}
+      else:
+        lower[after] notin {'a' .. 'z', '0' .. '9', '_'}
+    if beforeOk and afterOk:
+      return true
+    start = after
+
+func mentionRequiredFromEnv*(value: string): bool =
+  ## Opt-in gate; anything but an explicit yes keeps the previous behaviour.
+  value.strip.toLowerAscii in ["1", "true", "yes", "on"]
+
+func isMissingThreadError*(message: string): bool =
+  ## Behavior derived from hermes-agent (MIT) fix 41d9d08078; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-026
+  ##
+  ## A deleted or stale forum topic answers 400 "message thread not found".
+  ## The message is still valid for the chat root.
+  let lower = message.toLowerAscii()
+  lower.contains("thread not found") or
+    lower.contains("message thread not found")
+
+func albumKey*(chatId, mediaGroupId: string): string =
+  ## Behavior derived from hermes-agent (MIT) fix 8fb618234f; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-028
+  ##
+  ## An album's caption lives on one item only. The key groups the siblings of
+  ## the same user action; the window that remembers them lives in the app.
+  if mediaGroupId.len == 0: "" else: chatId & "|" & mediaGroupId

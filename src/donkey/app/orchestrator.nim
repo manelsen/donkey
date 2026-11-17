@@ -458,7 +458,15 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
       if context.len > 0: context & "\n\n" & blackboardBlock
       else: blackboardBlock
 
-  let history = addUserTurn(result.history, userPayload.text, userPayload.mediaUrl)
+  const MaxAttachmentsPerTurn = 10
+  if userPayload.mediaUrls.len > MaxAttachmentsPerTurn:
+    log.warn("turn with " & $userPayload.mediaUrls.len & " attachments; keeping " &
+             $MaxAttachmentsPerTurn)
+  let history =
+    if userPayload.mediaUrls.len > 1:
+      addUserTurnWithImages(result.history, userPayload.text, userPayload.mediaUrls)
+    else:
+      addUserTurn(result.history, userPayload.text, userPayload.mediaUrl)
 
   result =
     result |>->

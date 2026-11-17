@@ -10,7 +10,7 @@
 ##
 ## IdentityResolver is now in adapters/identity — maps telegram_user_id → UserId.
 
-import std/[json, os, sequtils, strutils]
+import std/[json, os, sequtils, strutils, tables]
 import ../../core/types
 import ../../core/pipeops
 import ../../core/commands/command_catalog
@@ -46,6 +46,7 @@ type
     resolver*:    IdentityResolver
     http*:        StdHttpAdapter
     flood*:       FloodGate      ## per-chat penalty windows
+    chatIds*:     Table[string, string] ## userId → source chat id
     pollTimeout*: int           ## seconds; 1 for multi-channel, up to 30 for solo
 
 # ── API helpers ───────────────────────────────────────────────────────────────
@@ -55,8 +56,26 @@ func apiBaseValue*(a: TelegramAdapter): string =
   ## can be supplied through DONKEY_TELEGRAM_API_BASE.
   if a.apiBase.len > 0: a.apiBase else: TelegramApiBase
 
+proc chatIdFor(a: TelegramAdapter; userId: UserId): string =
+  ## Behavior derived from hermes-agent (MIT) fix 1a9a2d7fe8; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-015
+  ##
+  ## In a group the chat id is not the sender id. The adapter remembers the
+  ## chat each user last wrote from and uses it as the send target.
+  {.cast(gcsafe).}:
+    let remembered = a.chatIds.getOrDefault($userId, "")
+  if remembered.len > 0:
+    return remembered
+  a.resolver.reverseChannel(userId, ckTelegram)
+
 func apiUrl(a: TelegramAdapter; meth: string): string =
   a.apiBaseValue & "/bot" & a.token & "/" & meth
+
+func telegramBotUsername*(): string =
+  getEnv("DONKEY_TELEGRAM_BOT_USERNAME").strip.strip(chars = {'@'})
+
+func telegramRequireMention*(): bool =
+  mentionRequiredFromEnv(getEnv("DONKEY_TELEGRAM_REQUIRE_MENTION"))
 
 func telegramLinkPreviewsEnabled*(): bool =
   linkPreviewsFromEnv(getEnv("DONKEY_TELEGRAM_LINK_PREVIEW"))
@@ -143,6 +162,29 @@ func renderTelegramHtml*(text: string; isHtml = false): string =
 
 # ── ChannelPort implementation ────────────────────────────────────────────────
 
+proc applyReplyTarget(body: var JsonNode; replyTo: string; firstChunk: bool) =
+  ## Splits the composite reply target into the message id and the forum
+  ## thread. The anchor belongs to the first chunk only, but the thread belongs
+  ## to every chunk, or the continuation lands in the general topic.
+  if replyTo.len == 0:
+    return
+  let (chatId, messageId, threadId) = splitTelegramReplyTarget(replyTo)
+  if chatId.len > 0:
+    try:
+      body["chat_id"] = %parseInt(chatId)
+    except ValueError:
+      discard
+  if firstChunk and messageId.len > 0:
+    try:
+      body["reply_to_message_id"] = %parseInt(messageId)
+    except ValueError:
+      discard
+  if threadId.len > 0:
+    try:
+      body["message_thread_id"] = %parseInt(threadId)
+    except ValueError:
+      discard
+
 proc sendMessageBody(a: TelegramAdapter; body: JsonNode; replyTo: string;
                      firstChunk: bool): Result[JsonNode, string] {.gcsafe.} =
   ## Posts a sendMessage payload. When the reply anchor no longer exists, the
@@ -162,6 +204,15 @@ proc sendMessageBody(a: TelegramAdapter; body: JsonNode; replyTo: string;
     var retry = body
     retry.delete("reply_to_message_id")
     return a.post("sendMessage", retry)
+  if body.hasKey("message_thread_id") and isMissingThreadError(res.error):
+    ## The topic is gone; deliver to the chat root instead of dropping it.
+    var retry = body
+    retry.delete("message_thread_id")
+    let second = a.post("sendMessage", retry)
+    if second.isOk or not isMissingReplyAnchorError(second.error):
+      return second
+    retry.delete("reply_to_message_id")
+    return a.post("sendMessage", retry)
   res
 
 proc sendChunkOnce(a: TelegramAdapter; chatId: int64; text, replyTo: string;
@@ -170,15 +221,13 @@ proc sendChunkOnce(a: TelegramAdapter; chatId: int64; text, replyTo: string;
   ## Sends one chunk with HTML (converted from MD), falling back to plain text.
   let html = renderTelegramHtml(text, isHtml)
   var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
-  if firstChunk and replyTo.len > 0:
-    body["reply_to_message_id"] = %replyTo
+  applyReplyTarget(body, replyTo, firstChunk)
   body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
   let res = a.sendMessageBody(body, replyTo, firstChunk)
   if res.isOk: return ok()
   ## Fallback: plain text
   var plain = %* {"chat_id": chatId, "text": text}
-  if firstChunk and replyTo.len > 0:
-    plain["reply_to_message_id"] = %replyTo
+  applyReplyTarget(plain, replyTo, firstChunk)
   plain = withLinkPreviewPolicy(plain, telegramLinkPreviewsEnabled())
   discard ? a.sendMessageBody(plain, replyTo, firstChunk)
   ok()
@@ -203,7 +252,7 @@ proc sendChunk(a: TelegramAdapter; chatId: int64; text, replyTo: string;
 proc sendTyping*(a: TelegramAdapter; userId: UserId): Result[void, string] {.gcsafe.} =
   ## Sends a "typing…" indicator to the user's chat.
   ## For DM bots the chat_id equals the Telegram user ID.
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  let rawId = a.chatIdFor(userId)
   if rawId.len == 0: return err("TelegramAdapter.sendTyping: no id for " & $userId)
   try:
     let tgId = parseBiggestInt(rawId).int64
@@ -216,27 +265,45 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
                 url, caption, replyTo: string): Result[void, string] =
   ## Sends a photo (if URL looks like an image) or a document otherwise.
   ## Falls back to sending a plain URL as text if the API call fails.
+  let audioMethod = audioMethodFor(url)
   let isImage = url.endsWith(".jpg") or url.endsWith(".jpeg") or
                 url.endsWith(".png") or url.endsWith(".gif") or
                 url.endsWith(".webp")
-  let meth    = if isImage: "sendPhoto" else: "sendDocument"
-  let fileKey = if isImage: "photo"     else: "document"
+  let meth =
+    if audioMethod.len > 0: audioMethod
+    elif isImage: "sendPhoto"
+    else: "sendDocument"
+  let fileKey =
+    case meth
+    of "sendPhoto": "photo"
+    of "sendVoice": "voice"
+    of "sendAudio": "audio"
+    else: "document"
   var body = %* {"chat_id": tgId, fileKey: url}
   if caption.len > 0:
     body["caption"] = %clipCaption(caption, TelegramCaptionLimit)
-  if replyTo.len > 0:
-    try: body["reply_to_message_id"] = %parseInt(replyTo)
-    except ValueError: discard
+  applyReplyTarget(body, replyTo, true)
   let mediaTimeout = telegramMediaTimeoutSec()
   let res = a.postWith(meth, body, mediaTimeout)
   if res.isOk: return ok()
+  if body.hasKey("message_thread_id") and isMissingThreadError(res.error):
+    ## The topic is gone; retry the same media in the chat root.
+    var retry = body
+    retry.delete("message_thread_id")
+    retry.delete("reply_to_message_id")
+    let second = a.postWith(meth, retry, mediaTimeout)
+    if second.isOk: return ok()
   if meth == "sendPhoto":
     ## A photo outside the dimension/size limits is still a valid document.
     let docRes = a.postWith("sendDocument", asDocumentBody(body), mediaTimeout)
     if docRes.isOk: return ok()
-  ## Fallback: send URL as text
-  discard ? a.post("sendMessage", %* {"chat_id": tgId, "text": url})
-  ok()
+  ## Fallback: send URL as text, in the same chat and topic.
+  var textBody = %* {"chat_id": tgId, "text": url}
+  applyReplyTarget(textBody, replyTo, true)
+  textBody = withLinkPreviewPolicy(textBody, telegramLinkPreviewsEnabled())
+  let textRes = a.sendMessageBody(textBody, replyTo, true)
+  if textRes.isOk: return ok()
+  err(textRes.error)
 
 proc validateButtons(buttons: seq[seq[(string, string)]]): Result[void, string] =
   for row in buttons:
@@ -268,10 +335,14 @@ proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
     "reply_markup": {"inline_keyboard": rows},
   }
   body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
-  if replyTo.len > 0:
-    try: body["reply_to_message_id"] = %parseInt(replyTo)
-    except ValueError: discard
-  let res = a.post("sendMessage", body)
+  applyReplyTarget(body, replyTo, true)
+  var res = a.post("sendMessage", body)
+  if res.isErr and body.hasKey("message_thread_id") and
+     isMissingThreadError(res.error):
+    var retry = body
+    retry.delete("message_thread_id")
+    retry.delete("reply_to_message_id")
+    res = a.post("sendMessage", retry)
   if res.isOk:
     return ok($res.value["result"]["message_id"].getInt())
   body.delete("parse_mode")
@@ -283,7 +354,7 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message with Markdown (plain-text fallback), split at 4096 chars.
   ## If msg.keyboard is non-empty, sends with an inline keyboard.
   ## If msg.mediaUrl is set, sends as photo/document (caption = msg.text).
-  let rawId = a.resolver.reverseChannel(msg.userId, ckTelegram)
+  let rawId = a.chatIdFor(msg.userId)
   if rawId.len == 0: return err("TelegramAdapter.send: no id for " & $msg.userId)
   let chatId = parseBiggestInt(rawId).int64
 
@@ -298,8 +369,8 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
     let (head, tail) = splitCaption(msg.text, TelegramCaptionLimit)
     ? a.sendMedia(chatId, msg.mediaUrl, head, msg.replyTo)
     if tail.strip.len > 0:
-      for i, chunk in splitForTelegram(tail, TelegramMaxChars):
-        ? a.sendChunk(chatId, chunk, "", i == 0, msg.isHtml)
+      for chunk in splitForTelegram(tail, TelegramMaxChars):
+        ? a.sendChunk(chatId, chunk, msg.replyTo, false, msg.isHtml)
     return ok()
 
   for i, chunk in splitForTelegram(msg.text, TelegramMaxChars):
@@ -308,7 +379,7 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
 
 proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, string] =
   ## Sends and returns the message_id.
-  let rawId = a.resolver.reverseChannel(msg.userId, ckTelegram)
+  let rawId = a.chatIdFor(msg.userId)
   if rawId.len == 0: return err("TelegramAdapter.sendReturnId: no id for " & $msg.userId)
   let chatId = parseBiggestInt(rawId).int64
 
@@ -319,8 +390,8 @@ proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, str
     let (head, tail) = splitCaption(msg.text, TelegramCaptionLimit)
     ? a.sendMedia(chatId, msg.mediaUrl, head, msg.replyTo)
     if tail.strip.len > 0:
-      for i, chunk in splitForTelegram(tail, TelegramMaxChars):
-        ? a.sendChunk(chatId, chunk, "", i == 0, msg.isHtml)
+      for chunk in splitForTelegram(tail, TelegramMaxChars):
+        ? a.sendChunk(chatId, chunk, msg.replyTo, false, msg.isHtml)
     return ok("")
 
   if shouldSkipOutboundText(msg.text):
@@ -331,8 +402,7 @@ proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, str
     let html = renderTelegramHtml(chunk, msg.isHtml)
     var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
     body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
-    if i == 0 and msg.replyTo.len > 0:
-      body["reply_to_message_id"] = %msg.replyTo
+    applyReplyTarget(body, msg.replyTo, i == 0)
     let res = a.sendMessageBody(body, msg.replyTo, i == 0)
     if res.isOk:
       lastId = $res.value["result"]["message_id"].getInt()
@@ -348,7 +418,7 @@ proc editMessage*(a: TelegramAdapter; userId: UserId;
                   msgId, text: string;
                   isHtml = false): Result[void, string] =
   ## Edits an existing message's text.
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  let rawId = a.chatIdFor(userId)
   if rawId.len == 0: return err("editMessage: no id for " & $userId)
   let chatId = parseBiggestInt(rawId).int64
   let sanitizedText = sanitizeForTelegram(text)
@@ -378,7 +448,7 @@ proc sendKeyboard*(a: TelegramAdapter; userId: UserId;
                    replyTo = ""): Result[string, string] =
   ## Sends a message with an inline keyboard.
   ## Returns the Telegram message_id so the caller can later edit the message.
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  let rawId = a.chatIdFor(userId)
   if rawId.len == 0: return err("sendKeyboard: no id for " & $userId)
   var chatId: int64
   try: chatId = parseBiggestInt(rawId).int64
@@ -389,7 +459,7 @@ proc editKeyboard*(a: TelegramAdapter; userId: UserId;
                    msgId: string;
                    buttons: seq[seq[(string, string)]]): Result[void, string] =
   ## Replaces the inline keyboard of an existing message (e.g. to remove it after selection).
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  let rawId = a.chatIdFor(userId)
   if rawId.len == 0: return err("editKeyboard: no id for " & $userId)
   let chatId = parseBiggestInt(rawId).int64
   ? validateButtons(buttons)
@@ -404,7 +474,7 @@ proc editKeyboardText*(a: TelegramAdapter; userId: UserId;
                        buttons: seq[seq[(string, string)]];
                        isHtml = false): Result[void, string] =
   ## Edits both text AND keyboard.
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  let rawId = a.chatIdFor(userId)
   if rawId.len == 0: return err("editKeyboardText: no id for " & $userId)
   let chatId = parseBiggestInt(rawId).int64
   ? validateButtons(buttons)
@@ -430,7 +500,7 @@ proc setMessageReaction*(a: TelegramAdapter; userId: UserId;
                           channelId, msgId, emoji: string): Result[void, string] =
   ## Sets a reaction (emoji) on a message.
   discard channelId
-  let rawId = a.resolver.reverseChannel(userId, ckTelegram)
+  let rawId = a.chatIdFor(userId)
   if rawId.len == 0: return err("setMessageReaction: no id for " & $userId)
 
   try:
@@ -542,6 +612,11 @@ proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
         continue
       
       var msg = parsed.toInbound(uid)
+      ## Remember where the update came from: in a group the chat id is not the
+      ## sender id, and replies must go to the chat.
+      if parsed.chatId.len > 0:
+        {.cast(gcsafe).}:
+          a.chatIds[$uid] = parsed.chatId
       if parsed.hasMedia and parsed.mediaFileId.len > 0:
         msg.mediaUrl = parsed.mediaFileId
       msgs.add(msg)
@@ -556,7 +631,7 @@ proc ack*(a: TelegramAdapter; msgId: string) =
 proc answerCallback*(a: TelegramAdapter; callbackId: string): Result[void, string] =
   ## Acknowledges a callback query to remove the loading state in the client.
   if callbackId.len == 0: return ok()
-  discard ? a.post("answerCallbackQuery", %* {"callback_id": callbackId})
+  discard ? a.post("answerCallbackQuery", %* {"callback_query_id": callbackId})
   ok()
 
 func telegramHttpTimeoutSec*(): int =
@@ -593,10 +668,12 @@ proc newTelegramAdapter*(token: string; identityPath: string;
     offset:      0,
     resolver:    newIdentityResolver(identityPath),
     flood:       newFloodGate(),
+    chatIds:     initTable[string, string](),
     http:        newStdHttpAdapter(
                    timeout = telegramHttpTimeoutSec(),
                    proxy = telegramProxyUrl(),
                    allowlist = (if apiBase.len == 0: @["api.telegram.org"] else: @[]),
-                   retryNonIdempotent = false),
+                   retryNonIdempotent = false,
+                   retryConflict = true),
     pollTimeout: pollTimeout,
   )

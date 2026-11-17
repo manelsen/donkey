@@ -13,7 +13,7 @@
 ##   3. toInbound(r, userId, mediaUrl) → InboundMessage
 ##   4. maxNextOffset(JsonNode, int64) → int64        (next polling offset)
 
-import std/json
+import std/[json, strutils]
 import ../../core/pipeops
 import ../../domain/message
 
@@ -36,8 +36,22 @@ type
     mediaFileId*: string   ## Telegram file_id for download (if hasMedia)
     mediaFileName*: string ## original document name, when provided
     mediaMimeType*: string ## original MIME type, when provided
+    mediaGroupId*: string  ## album id, when the message belongs to one
+    threadId*:    string   ## message_thread_id for forum topics
+    isGroup*:     bool     ## true for group/supergroup chats
+    chatId*:      string   ## source chat id (group id in groups)
 
 # ── Internal pure helpers ─────────────────────────────────────────────────────
+
+func idAsString(node: JsonNode; key: string): string =
+  ## Telegram sends ids as numbers; some fields accept a string too.
+  let value = node.getOrDefault(key)
+  if value.isNil:
+    return ""
+  case value.kind
+  of JInt: $value.getInt
+  of JString: value.getStr
+  else: ""
 
 func extractTextFrom(node: JsonNode): string =
   ## Returns "text" field, or "caption" for media messages.
@@ -151,7 +165,15 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
   if upd.hasKey("callback_query"):
     let cq     = upd["callback_query"]
     let fromId = cq["from"]["id"].getBiggestInt()
-    let msgId  = cq.getOrDefault("message").getOrDefault("message_id").getStr("")
+    let cqMsg  = cq.getOrDefault("message")
+    let msgId  = if cqMsg.isNil: "" else: cqMsg.idAsString("message_id")
+    let threadId = if cqMsg.isNil: "" else: cqMsg.idAsString("message_thread_id")
+    let chatId =
+      if cqMsg.isNil: ""
+      else: cqMsg.getOrDefault("chat").idAsString("id")
+    let cqChatType =
+      if cqMsg.isNil: "private"
+      else: cqMsg.getOrDefault("chat").getOrDefault("type").getStr("private")
     return TgParseResult(
       kind:       tukCallbackQuery,
       rawId:      $fromId,
@@ -159,6 +181,9 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
       text:       "/callback " & cq["data"].getStr(""),
       channelId:  msgId,
       callbackId: cq["id"].getStr(""),
+      threadId:   threadId,
+      chatId:     chatId,
+      isGroup:    cqChatType in ["group", "supergroup"],
     )
 
   if upd.hasKey("message"):
@@ -172,6 +197,9 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
     let mediaMime = tgMsg |> extractMediaMimeType
     let sessKey   = tgMsg |> extractChatKey
     let chanId    = $tgMsg["message_id"].getInt()
+    let chatType  = tgMsg["chat"].getOrDefault("type").getStr("private")
+    let threadId  = tgMsg.idAsString("message_thread_id")
+    let groupId   = tgMsg.idAsString("media_group_id")
     ## Skip updates that carry neither text nor a recognisable attachment.
     if text.len == 0 and mediaId.len == 0:
       return TgParseResult(kind: tukUnknown)
@@ -185,6 +213,10 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
       mediaFileId:   mediaId,
       mediaFileName: mediaName,
       mediaMimeType: mediaMime,
+      mediaGroupId:  groupId,
+      threadId:      threadId,
+      isGroup:       chatType in ["group", "supergroup"],
+      chatId:        $tgMsg["chat"]["id"].getBiggestInt(),
     )
 
   TgParseResult(kind: tukUnknown)
@@ -213,6 +245,10 @@ func toInbound*(r: TgParseResult; userId: UserId;
     mediaUrl:     mediaUrl,
     mediaFileName: r.mediaFileName,
     mediaMimeType: r.mediaMimeType,
+    isGroup:       r.isGroup,
+    mediaGroupId:  r.mediaGroupId,
+    threadId:      r.threadId,
+    chatId:        r.chatId,
   )
 
 func maxNextOffset*(currentOffset: int64; updates: JsonNode): int64 =
@@ -229,3 +265,30 @@ func maxNextOffset*(currentOffset: int64; updates: JsonNode): int64 =
 func hasCallbackId*(r: TgParseResult): bool =
   ## True when the update is a callback_query that requires an ack.
   r.kind == tukCallbackQuery and r.callbackId.len > 0
+
+func telegramReplyTarget*(chatId, messageId, threadId: string): string =
+  ## Behavior derived from hermes-agent (MIT) fix 928bb16da1; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-025
+  ##
+  ## A reply needs the destination chat, the message to anchor on and, in a
+  ## forum topic, the thread. The three travel as one opaque channel target so
+  ## the rest of the app keeps treating `replyTo` as a single string — and the
+  ## chat travels with the message instead of being inferred from the user.
+  result = if chatId.len > 0: chatId & "#c" & messageId else: messageId
+  if threadId.len > 0:
+    result.add("#t" & threadId)
+
+func splitTelegramReplyTarget*(target: string):
+    tuple[chatId, messageId, threadId: string] =
+  ## Splits the composite produced by `telegramReplyTarget`. A legacy target
+  ## without the markers yields an empty chat id.
+  var rest = target
+  var threadId = ""
+  let threadAt = rest.find("#t")
+  if threadAt >= 0:
+    threadId = rest[threadAt + 2 .. ^1]
+    rest = rest[0 ..< threadAt]
+  let chatAt = rest.find("#c")
+  if chatAt < 0:
+    return ("", rest, threadId)
+  (rest[0 ..< chatAt], rest[chatAt + 2 .. ^1], threadId)

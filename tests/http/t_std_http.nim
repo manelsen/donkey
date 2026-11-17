@@ -37,3 +37,22 @@ suite "StdHttpAdapter — retry policy (TG-021)":
   test "TG-021: the default keeps the previous behaviour":
     let a = newStdHttpAdapter(maxRetries = 3)
     check a.maxAttempts(rkNonIdempotent) == 3
+
+suite "StdHttpAdapter — status retry policy (TG-020)":
+
+  test "TG-020: a 409 on an idempotent call is retryable when enabled":
+    check shouldRetryStatus(409, rkIdempotent, retryConflict = true)
+
+  test "TG-020: a 409 is not retried when disabled":
+    check not shouldRetryStatus(409, rkIdempotent, retryConflict = false)
+
+  test "TG-020: a 409 on a send is never retried":
+    check not shouldRetryStatus(409, rkNonIdempotent, retryConflict = true)
+
+  test "TG-020: server errors stay retryable":
+    check shouldRetryStatus(500, rkNonIdempotent, retryConflict = false)
+    check shouldRetryStatus(502, rkIdempotent, retryConflict = false)
+
+  test "TG-020: client errors are not retried":
+    check not shouldRetryStatus(400, rkIdempotent, retryConflict = true)
+    check not shouldRetryStatus(404, rkIdempotent, retryConflict = true)

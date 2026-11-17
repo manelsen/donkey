@@ -45,6 +45,10 @@ type
     mediaUrl*:   string       ## non-empty when message has attachment
     mediaFileName*: string    ## original attachment name when known
     mediaMimeType*: string    ## attachment MIME type when known
+    isGroup*:    bool         ## true for group/supergroup chats
+    mediaGroupId*: string     ## album id when the update belongs to one
+    threadId*:   string       ## forum topic / thread id when present
+    chatId*:     string       ## source chat id (group id in groups)
     channel*:    ChannelKind
 
   OutboundMessage* = object

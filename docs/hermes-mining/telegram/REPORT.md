@@ -33,9 +33,9 @@ comportamento (não por commit).
 
 | Situação | Casos |
 |---|---|
-| COBERTO | 28 |
-| PARCIAL | 5 |
-| AUSENTE | 4 |
+| COBERTO | 36 |
+| PARCIAL | 1 |
+| AUSENTE | 0 |
 
 | Prioridade | Casos |
 |---|---|
@@ -45,7 +45,7 @@ comportamento (não por commit).
 
 ## Casos portados nesta rodada
 
-Dezenove casos, cada um com teste que falhava antes da implementação:
+Vinte e sete casos, cada um com teste que falhava antes da implementação:
 
 | Caso | Comportamento | Teste |
 |---|---|---|
@@ -68,6 +68,21 @@ Dezenove casos, cada um com teste que falhava antes da implementação:
 | TG-012 | janela de flood por chat | `tests/core/t_flood_gate.nim` |
 | TG-013 | resposta dividida retoma da parte recusada | `tests/core/t_flood_gate.nim` |
 | TG-031 | edição final recusada entrega a resposta | `tests/app/t_outbound_runtime.nim` |
+| TG-010 | ação de digitação re-armada durante o turno | `tests/app/t_orchestrator.nim` |
+| TG-015 | gate de menção em grupos | `tests/domain/channels/t_telegram_policy.nim` |
+| TG-020 | 409 do polling repetido com backoff | `tests/http/t_std_http.nim` |
+| TG-025 | resposta dentro do forum topic | `tests/domain/channels/t_telegram_policy.nim` |
+| TG-026 | thread apagado cai para o chat raiz | `tests/domain/channels/t_telegram_policy.nim` |
+| TG-028 | álbum mantém todos os anexos que caem na mesma janela de debounce | `tests/app/t_orchestrator.nim` |
+| TG-029 | voz e áudio nos métodos próprios | `tests/domain/channels/t_telegram_policy.nim` |
+| TG-037 | escape de texto dinâmico em Markdown | `tests/core/t_telegram_format.nim` |
+
+Nota sobre TG-028: a união dos anexos depende da janela de
+`collectWithDebounce`. O teste cobre `mergeUserPayloads` e
+`addUserTurnWithImages`; a chegada real dos updates e o coletor não são
+exercitados por ele. Além disso, só o caminho OpenRouter serializa `imageUrl`
+hoje (`openrouter.nim:74`); Anthropic e Gemini exigiriam baixar e codificar a
+imagem, o que é uma mudança de provider fora dos casos de Telegram.
 
 ## Casos adiados
 
@@ -75,11 +90,9 @@ Nenhum.
 
 ## Casos pendentes
 
-Dos 37 casos, 28 estão COBERTO. Restam **9 casos PARCIAL ou AUSENTE**
-(5 PARCIAL + 4 AUSENTE) registrados com evidência e prioridade para as
-próximas rodadas. Os P1 restantes são TG-015 (menções em grupo), TG-020 (409 no
-polling), TG-025/TG-026 (forum topics), TG-028 (álbuns) e TG-037 (escape de
-texto dinâmico); os demais são P2.
+Dos 37 casos, 36 estão COBERTO. Resta **1 caso PARCIAL**: TG-016 (recorte de
+allowlist por grupo), que pertence ao balde de diferenças de arquitetura e não
+aos baldes 1 e 3.
 
 ## Quality gates finais
 

@@ -49,6 +49,23 @@ func sanitizeForTelegram*(text: string): string =
   # Replace any remaining invalid characters (like replacement character)
   result = result.replace("\uFFFD", "")
 
+func findUnescaped(md: string; needle: string; start: int): int =
+  ## Finds `needle` skipping occurrences escaped with a backslash.
+  var i = start
+  while i < md.len:
+    let at = md.find(needle, i)
+    if at < 0:
+      return -1
+    var backslashes = 0
+    var j = at - 1
+    while j >= 0 and md[j] == '\\':
+      inc backslashes
+      dec j
+    if backslashes mod 2 == 0:
+      return at
+    i = at + 1
+  -1
+
 func backtickRun(md: string; start: int): int =
   ## Length of the backtick run starting at `start`.
   while start + result < md.len and md[start + result] == '`':
@@ -96,6 +113,15 @@ func markdownToTelegramHtml*(md: string): string =
   var lineStart = true
 
   while i < md.len:
+    # ── Backslash escapes ──
+    ## `\*` and friends render as the literal character, so dynamic values can
+    ## be escaped before they are embedded in a formatted message.
+    if md[i] == '\\' and i + 1 < md.len and md[i + 1] in MarkdownInlineSpecials:
+      buf.add(escapeHtml($md[i + 1]))
+      i += 2
+      lineStart = false
+      continue
+
     # ── Code fences and inline code ──
     ## A fence is a run of three or more backticks at the start of a line; its
     ## closing run must be at least as long, so inner ``` stays literal. CRLF
@@ -173,7 +199,7 @@ func markdownToTelegramHtml*(md: string): string =
 
     # ── Bold **text** ──
     if i + 1 < md.len and md[i] == '*' and md[i + 1] == '*':
-      let close = md.find("**", i + 2)
+      let close = findUnescaped(md, "**", i + 2)
       if close >= 0:
         buf.add("<b>")
         buf.add(markdownToTelegramHtml(md[i + 2 ..< close]))
@@ -184,7 +210,7 @@ func markdownToTelegramHtml*(md: string): string =
 
     # ── Bold __text__ ──
     if i + 1 < md.len and md[i] == '_' and md[i + 1] == '_':
-      let close = md.find("__", i + 2)
+      let close = findUnescaped(md, "__", i + 2)
       if close >= 0:
         buf.add("<b>")
         buf.add(markdownToTelegramHtml(md[i + 2 ..< close]))
@@ -195,7 +221,7 @@ func markdownToTelegramHtml*(md: string): string =
 
     # ── Italic *text* ──
     if md[i] == '*' and (i == 0 or md[i - 1] in {' ', '\n', '('}):
-      let close = md.find('*', i + 1)
+      let close = findUnescaped(md, "*", i + 1)
       if close > i + 1:
         buf.add("<i>")
         buf.add(markdownToTelegramHtml(md[i + 1 ..< close]))
@@ -206,7 +232,7 @@ func markdownToTelegramHtml*(md: string): string =
 
     # ── Italic _text_ ──
     if md[i] == '_' and (i == 0 or md[i - 1] in {' ', '\n', '('}):
-      let close = md.find('_', i + 1)
+      let close = findUnescaped(md, "_", i + 1)
       if close > i + 1:
         buf.add("<i>")
         buf.add(markdownToTelegramHtml(md[i + 1 ..< close]))
@@ -217,7 +243,7 @@ func markdownToTelegramHtml*(md: string): string =
 
     # ── Strikethrough ~~text~~ ──
     if i + 1 < md.len and md[i] == '~' and md[i + 1] == '~':
-      let close = md.find("~~", i + 2)
+      let close = findUnescaped(md, "~~", i + 2)
       if close >= 0:
         buf.add("<s>")
         buf.add(markdownToTelegramHtml(md[i + 2 ..< close]))

@@ -1439,3 +1439,52 @@ suite "adaptive debounce collector":
       msg.kind
 
     check (waitFor doTest()) == amkCancel
+
+suite "typing loop":
+
+  test "TG-010: the typing action is re-armed while the turn is active":
+    proc doTest(): Future[int] {.async.} =
+      var calls = 0
+      let fn: TypingFn = proc(userId: UserId; channel: ChannelKind) {.gcsafe.} =
+        {.cast(gcsafe).}: inc calls
+      let flag = startTypingLoop(fn, UserId("u"), ckTelegram, intervalMs = 10)
+      await sleepAsync(chronos.milliseconds(45))
+      stopTypingLoop(flag)
+      let after = calls
+      await sleepAsync(chronos.milliseconds(30))
+      doAssert calls == after   ## stopped
+      after
+
+    check (waitFor doTest()) >= 2
+
+suite "album payloads":
+
+  test "TG-028: a merged album keeps every attachment":
+    let merged = mergeUserPayloads([
+      """{"text":"","mediaUrl":"a.jpg"}""",
+      """{"text":"","mediaUrl":"b.jpg"}""",
+      """{"text":"","mediaUrl":"c.jpg"}""",
+    ])
+    let payload = decodeUserPayload(merged)
+    check payload.mediaUrls == @["a.jpg", "b.jpg", "c.jpg"]
+
+  test "TG-028: the turn keeps one history entry per image":
+    let history = addUserTurnWithImages(newHistory(), "veja", @["a.jpg", "b.jpg"])
+    check history.len == 2
+    check history[0].imageUrl == "a.jpg"
+    check history[0].text == "veja"
+    check history[1].imageUrl == "b.jpg"
+
+  test "TG-028: a single image keeps the plain turn":
+    let history = addUserTurnWithImages(newHistory(), "veja", @["a.jpg"])
+    check history.len == 1
+    check history[0].imageUrl == "a.jpg"
+
+  test "TG-028: the attachment cap keeps the current turn":
+    var urls: seq[string] = @[]
+    for i in 0 ..< 25:
+      urls.add("img" & $i & ".jpg")
+    let history = addUserTurnWithImages(newHistory(), "veja", urls)
+    check history.len == 10
+    check history[0].text == "veja"
+    check history[0].imageUrl == "img0.jpg"

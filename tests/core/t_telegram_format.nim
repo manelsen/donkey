@@ -1,6 +1,7 @@
 import unittest
 import donkey/core/telegram_format
 import donkey/domain/text_format
+import donkey/domain/text_format
 
 suite "Telegram Formatting":
 
@@ -65,3 +66,33 @@ suite "telegram_format — code fences (TG-033)":
 
   test "TG-033: triple backticks mid-line are inline code, not a fence":
     check markdownToTelegramHtml("use ```x``` here") == "use <code>x</code> here"
+
+suite "telegram_format — backslash escapes (TG-037)":
+
+  test "TG-037: an escaped marker renders literally":
+    check markdownToTelegramHtml("\\*not bold\\*") == "*not bold*"
+    check markdownToTelegramHtml("\\`not code\\`") == "`not code`"
+
+  test "TG-037: HTML characters stay escaped":
+    check markdownToTelegramHtml("<tag>") == "&lt;tag&gt;"
+
+  test "TG-037: escapeMarkdownInline neutralises markup":
+    let escaped = escapeMarkdownInline("*bold* `code` [x](y)")
+    check escaped == "\\*bold\\* \\`code\\` \\[x\\]\\(y\\)"
+    check markdownToTelegramHtml(escaped) == "*bold* `code` [x](y)"
+
+  test "TG-037: a non-markup backslash stays literal":
+    check markdownToTelegramHtml("C:\\temp\\new") == "C:\\temp\\new"
+
+  test "TG-037: code-span text keeps the span closed":
+    check codeSpanText("a`b") == "a'b"
+    check codeSpanText("plain") == "plain"
+
+
+  test "TG-037: an escaped delimiter does not close the span":
+    check markdownToTelegramHtml("*a \\* b*") == "<i>a * b</i>"
+
+  test "TG-037: overlapping closings are still found":
+    check markdownToTelegramHtml("**a \\***") == "<b>a *</b>"
+    check markdownToTelegramHtml("__a \\___") == "<b>a _</b>"
+    check markdownToTelegramHtml("~~a \\~~~") == "<s>a ~</s>"

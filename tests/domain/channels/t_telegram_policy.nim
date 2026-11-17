@@ -4,6 +4,7 @@
 
 import std/[json, strutils, unicode, unittest]
 import donkey/domain/channels/telegram_policy
+import donkey/domain/channels/telegram_pure
 
 suite "telegram_policy — edit errors":
 
@@ -130,3 +131,77 @@ suite "telegram_policy — media fallback":
   test "TG-027: a document body is unchanged":
     let body = %*{"chat_id": 1, "document": "https://x.test/a.pdf"}
     check asDocumentBody(body) == body
+
+suite "telegram_policy — audio method":
+
+  test "TG-029: voice notes go through sendVoice":
+    check audioMethodFor("https://x.test/a.ogg") == "sendVoice"
+    check audioMethodFor("https://x.test/a.opus") == "sendVoice"
+
+  test "TG-029: music goes through sendAudio":
+    check audioMethodFor("https://x.test/a.mp3") == "sendAudio"
+    check audioMethodFor("https://x.test/a.m4a") == "sendAudio"
+
+  test "TG-029: other media keeps the photo/document path":
+    check audioMethodFor("https://x.test/a.jpg") == ""
+    check audioMethodFor("https://x.test/a.pdf") == ""
+    check audioMethodFor("https://x.test/noext") == ""
+
+suite "telegram_policy — group mentions":
+
+  test "TG-015: an exact mention addresses the bot":
+    check isAddressedToBot("hey @donkeybot help", "donkeybot")
+    check isAddressedToBot("@DonkeyBot", "donkeybot")
+
+  test "TG-015: a longer handle does not match":
+    check not isAddressedToBot("@donkeybot2 help", "donkeybot")
+    check not isAddressedToBot("@donkeybot_x", "donkeybot")
+
+  test "TG-015: a message without the mention is not addressed":
+    check not isAddressedToBot("bom dia", "donkeybot")
+    check not isAddressedToBot("email a@b.com", "donkeybot")
+
+  test "TG-015: an unknown username disables the gate":
+    check not isAddressedToBot("@donkeybot", "")
+
+  test "TG-015: the gate is opt-in":
+    for value in ["1", "true", "YES", "on"]:
+      check mentionRequiredFromEnv(value)
+    for value in ["0", "false", "", "off"]:
+      check not mentionRequiredFromEnv(value)
+
+suite "telegram_policy — forum threads":
+
+  test "TG-025: the reply target carries chat, message and thread":
+    check telegramReplyTarget("-100", "42", "") == "-100#c42"
+    check telegramReplyTarget("-100", "42", "7") == "-100#c42#t7"
+    check splitTelegramReplyTarget("-100#c42#t7") == ("-100", "42", "7")
+    check splitTelegramReplyTarget("-100#c42") == ("-100", "42", "")
+    check splitTelegramReplyTarget("42") == ("", "42", "")
+
+  test "TG-026: a missing thread is recognised":
+    check isMissingThreadError("Bad Request: message thread not found")
+    check isMissingThreadError("MESSAGE THREAD NOT FOUND")
+    check not isMissingThreadError("message to be replied not found")
+
+  test "TG-029: a query string does not confuse the extension":
+    check audioMethodFor("https://x.test/a.ogg?token=1") == "sendVoice"
+    check audioMethodFor("https://x.test/a.mp3#t=3") == "sendAudio"
+
+  test "TG-029: other audio formats stay documents":
+    check audioMethodFor("https://x.test/a.flac") == ""
+    check audioMethodFor("https://x.test/a.wav") == ""
+
+  test "TG-015: an email address is not a mention":
+    check not isAddressedToBot("escreva para contato@donkeybot.com", "donkeybot")
+    check isAddressedToBot("/status@donkeybot", "donkeybot")
+
+  test "TG-015: a trailing period still addresses the bot":
+    check isAddressedToBot("Obrigado, @donkeybot.", "donkeybot")
+
+
+suite "telegram_policy — album key":
+
+  test "TG-028: the album key groups chat and media group":
+    check albumKey("u1", "g1") == "u1|g1"
+    check albumKey("u1", "") == ""

@@ -1,20 +1,32 @@
-import std/strutils
+import std/[strutils, tables]
 import chronos/asyncsync
 import results
 import ../../core/commands/command_routing
 import ../../core/log as core_log
 import ../../core/outbound/outbound
 import ../../core/pipeops
+import ../../core/security/approval
 import ../../adapters/memory/md_file
 import ../../app/inbound_gate
 import ../../app/approval_runtime
 import ../../app/session_manager
+import ../../app/album_mention_gate
 import ../../domain/agent_message
 import ../../domain/message
+import ../../domain/channels/telegram_policy
+import ../../domain/channels/telegram_pure
 import ../../ports/provider
 import ../identity/identity_resolver
 import ./common_runtime
 import ./telegram
+
+var gAlbumMentions = newAlbumMentionGate()
+
+func replyTarget*(msg: InboundMessage): string =
+  ## Carries the forum thread along with the message id, so command replies
+  ## also land in the topic the user wrote in.
+  telegramReplyTarget(msg.chatId, msg.channelId, msg.threadId)
+
 
 # ── Forward declarations ──────────────────────────────────────────────────────
 
@@ -134,7 +146,7 @@ proc handleTelegramModels*(msg: InboundMessage;
       tgAdapter.editKeyboardText(msg.userId, currentKbdId, title, buttons).isOkOr:
         discard
     else:
-      let sentId = tgAdapter.sendKeyboard(msg.userId, title, buttons, replyTo = msg.channelId).valueOr:
+      let sentId = tgAdapter.sendKeyboard(msg.userId, title, buttons, replyTo = replyTarget(msg)).valueOr:
         core_log.log(logger, core_log.lvlError, "tg send keyboard error: " & error)
         return true
       common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels, sentId)
@@ -145,7 +157,7 @@ proc handleTelegramModels*(msg: InboundMessage;
       userId:  msg.userId,
       channel: ckTelegram,
       text:    reply,
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     return true
@@ -159,7 +171,7 @@ proc handleTelegramModels*(msg: InboundMessage;
   else:
     let sentId = tgAdapter.sendKeyboard(msg.userId,
       "Escolha o provider:", memory.buildProviderButtons(msg.userId),
-      replyTo = msg.channelId).valueOr:
+      replyTo = replyTarget(msg)).valueOr:
         core_log.log(logger, core_log.lvlError, "tg send provider keyboard error: " & error)
         return true
     common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels, sentId)
@@ -198,7 +210,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
         userId: msg.userId,
         channel: ckTelegram,
         text: "Essa seleção expirou. Abra /models novamente.",
-        replyTo: msg.channelId,
+        replyTo: replyTarget(msg),
       )).isOkOr:
         discard
       return true
@@ -218,7 +230,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
         userId:  msg.userId,
         channel: ckTelegram,
         text:    savedOrError(saved, "✅ Modelo definido: " & callback.provider & " / " & model),
-        replyTo: msg.channelId,
+        replyTo: replyTarget(msg),
       )).isOkOr:
         core_log.log(logger, core_log.lvlError, "tg send models:set error: " & error)
     return true
@@ -275,7 +287,7 @@ proc handleTelegramThinkingCallback*(msg: InboundMessage;
         userId:  msg.userId,
         channel: ckTelegram,
         text:    "🧠 Thinking: *" & level & "*",
-        replyTo: msg.channelId,
+        replyTo: replyTarget(msg),
       )).isOkOr:
         discard
   true
@@ -293,7 +305,7 @@ proc handleTelegramThink*(msg: InboundMessage;
       userId:  msg.userId,
       channel: ckTelegram,
       text:    reply,
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     return true
@@ -307,7 +319,7 @@ proc handleTelegramThink*(msg: InboundMessage;
   else:
     let sentId = tgAdapter.sendKeyboard(msg.userId,
       "Nível de raciocínio:", memory.buildThinkButtons(msg.userId),
-      replyTo = msg.channelId).valueOr:
+      replyTo = replyTarget(msg)).valueOr:
         return true
     common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotThink, sentId)
   true
@@ -323,7 +335,7 @@ proc handleTelegramBudget*(msg: InboundMessage;
     userId:  msg.userId,
     channel: ckTelegram,
     text:    reply,
-    replyTo: msg.channelId,
+    replyTo: replyTarget(msg),
   )).isOkOr:
     discard
   true
@@ -345,7 +357,7 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
         msg.userId, currentKbdId, memory.buildConfigText(msg.userId), buildConfigButtons())
     else:
       let sentId = tgAdapter.sendKeyboard(
-        msg.userId, memory.buildConfigText(msg.userId), buildConfigButtons(), replyTo = msg.channelId).valueOr:
+        msg.userId, memory.buildConfigText(msg.userId), buildConfigButtons(), replyTo = replyTarget(msg)).valueOr:
           return true
       common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig, sentId)
     true
@@ -354,7 +366,7 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
       userId:  msg.userId,
       channel: ckTelegram,
       text:    buildTasksText(),
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     true
@@ -363,7 +375,7 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
       userId:  msg.userId,
       channel: ckTelegram,
       text:    buildAgentsText(toolsCount, toolClientsCount),
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     true
@@ -372,7 +384,7 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
       userId:  msg.userId,
       channel: ckTelegram,
       text:    buildPollText(),
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     true
@@ -388,7 +400,7 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
       userId:  msg.userId,
       channel: ckTelegram,
       text:    reply,
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     true
@@ -428,7 +440,7 @@ proc handleTelegramUiCallback*(msg: InboundMessage;
       tgAdapter.editKeyboardText(msg.userId, kbdId, helpText, buttons).isOkOr:
         core_log.log(logger, core_log.lvlError, "tg help page error: " & error)
     else:
-      let sentId = tgAdapter.sendKeyboard(msg.userId, helpText, buttons, replyTo = msg.channelId).valueOr:
+      let sentId = tgAdapter.sendKeyboard(msg.userId, helpText, buttons, replyTo = replyTarget(msg)).valueOr:
         return true
       common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotHelp, sentId)
     return true
@@ -500,7 +512,7 @@ proc handleTelegramPing*(msg: InboundMessage;
     userId:  msg.userId,
     channel: ckTelegram,
     text:    text,
-    replyTo: msg.channelId,
+    replyTo: replyTarget(msg),
   )).isOkOr:
     discard
   true
@@ -519,7 +531,7 @@ proc handleTelegramStatus*(msg: InboundMessage;
     userId:  msg.userId,
     channel: ckTelegram,
     text:    memory.buildTelegramStatusText(msg.userId, toolsCount, sessionCount, daemonStartMs),
-    replyTo: msg.channelId,
+    replyTo: replyTarget(msg),
   )).isOkOr:
     discard
   true
@@ -541,7 +553,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       userId:  msg.userId,
       channel: ckTelegram,
       text:    buildAboutText(memory, msg.userId, toolsCount, toolClientsCount, sm.sessionCount()),
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     return true
@@ -550,7 +562,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       userId:  msg.userId,
       channel: ckTelegram,
       text:    buildStartIntroText(),
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     return true
@@ -561,7 +573,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
         msg.userId, currentKbdId, buildMenuText(), buildMenuButtons())
     else:
       let sentId = tgAdapter.sendKeyboard(
-        msg.userId, buildMenuText(), buildMenuButtons(), replyTo = msg.channelId).valueOr:
+        msg.userId, buildMenuText(), buildMenuButtons(), replyTo = replyTarget(msg)).valueOr:
           return true
       common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotMenu, sentId)
     return true
@@ -571,7 +583,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       userId:  msg.userId,
       channel: ckTelegram,
       text:    buildWhoamiText(msg.userId, sessId, msg.channelId),
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     return true
@@ -587,17 +599,27 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       userId:  msg.userId,
       channel: ckTelegram,
       text:    reply,
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     return true
   of lcaGenerateLinkCode:
+    if msg.isGroup:
+      ## A pairing code in a group would be visible to everyone there.
+      tgAdapter.send(OutboundMessage(
+        userId:  msg.userId,
+        channel: ckTelegram,
+        text:    "Use /mycode em um chat privado com o bot.",
+        replyTo: replyTarget(msg),
+      )).isOkOr:
+        discard
+      return true
     let code = tgAdapter.resolver.generateLinkCode(msg.userId)
     tgAdapter.send(OutboundMessage(
       userId:  msg.userId,
       channel: ckTelegram,
       text:    buildLinkCodeText(code),
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     return true
@@ -606,7 +628,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       userId:  msg.userId,
       channel: ckTelegram,
       text:    clearMemoryReply(memory, msg.userId, "🗑️ Memórias apagadas."),
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     return true
@@ -626,7 +648,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       userId:  msg.userId,
       channel: ckTelegram,
       text:    report,
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     return true
@@ -636,7 +658,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       channel: ckTelegram,
       text:    buildHelpText(true).replace("Donkey", "Donkey 🫏") & "\n\n" &
                "Envie qualquer mensagem para conversar. Imagens e documentos são aceitos.",
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     return true
@@ -645,7 +667,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       userId:  msg.userId,
       channel: ckTelegram,
       text:    buildMemoryViewText(memory, msg.userId),
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     return true
@@ -658,7 +680,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       userId:  msg.userId,
       channel: ckTelegram,
       text:    replyText,
-      replyTo: msg.channelId,
+      replyTo: replyTarget(msg),
     )).isOkOr:
       discard
     return true
@@ -677,7 +699,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
         userId:  msg.userId,
         channel: ckTelegram,
         text:    savedOrError(saved, "✅ Reasoning " & (if next == "on": "ativado" else: "desativado") & "."),
-        replyTo: msg.channelId,
+        replyTo: replyTarget(msg),
       )).isOkOr:
         logger.error("tg send lcaReasoningToggle failed for user=" & $msg.userId & " reason=" & error)
     return true
@@ -708,7 +730,7 @@ proc handleTelegramTaskCommand*(sm: var SessionManager;
       inc msgSeq
       entry.inbox.addLastNoWait(
         newTaskMsg($msgSeq, commandTaskKind(command), $msg.userId,
-                   "", ckTelegram, msg.channelId))
+                   "", ckTelegram, replyTarget(msg)))
 
     # Send feedback for non-silent commands
     let feedback = case command.kind
@@ -725,7 +747,7 @@ proc handleTelegramTaskCommand*(sm: var SessionManager;
         userId:  msg.userId,
         channel: ckTelegram,
         text:    feedback,
-        replyTo: msg.channelId,
+        replyTo: replyTarget(msg),
       )).isOkOr:
         logger.error("tg send taskCommand feedback failed for user=" & $msg.userId & " reason=" & error)
     return true
@@ -747,7 +769,7 @@ proc handleTelegramCoreCallback*(sm: var SessionManager;
       inc msgSeq
       entry.inbox.addLastNoWait(
         newTaskMsg($msgSeq, callbackTaskKind(callback), $msg.userId,
-                   callback.value, ckTelegram, msg.channelId))
+                   callback.value, ckTelegram, replyTarget(msg)))
     return true
   false
 
@@ -764,6 +786,31 @@ proc handleTelegramMessage*(msg: InboundMessage;
                             daemonStartMs: int64;
                             logger: Logger;
                             ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
+  ## Behavior derived from hermes-agent (MIT) fix 1e18e0503f; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-015
+  ##
+  ## In groups the bot may see every message. With the mention gate enabled,
+  ## only messages that mention the bot start a turn; `/cmd@bot` already works
+  ## because parseCommandText strips the suffix.
+  let botUsername = telegramBotUsername()
+  ## Callbacks are button taps, not free text: the mention gate does not apply.
+  if msg.isGroup and msg.callbackId.len == 0 and
+     telegramRequireMention() and botUsername.len > 0 and
+     not isApprovalCommandText(msg.text):
+    {.cast(gcsafe).}:
+      let nowMs = epochMs()
+      let key = albumKey($msg.userId, msg.mediaGroupId)
+      if isAddressedToBot(msg.text, botUsername):
+        rememberAddressedAlbum(gAlbumMentions, key, nowMs)
+      elif not albumAddressed(gAlbumMentions, key, nowMs):
+        logger.debug("telegram: group message not addressed to the bot, ignored")
+        ## A dropped button tap still needs its acknowledgement, or the client
+        ## keeps the spinner for half a minute.
+        if msg.callbackId.len > 0:
+          discard tgAdapter.answerCallback(msg.callbackId)
+        return true
+      if gAlbumMentions.untilMs.len > 64:
+        clearExpiredAlbums(gAlbumMentions, nowMs)
   let pairingRawId =
     if msg.rawChannelId.len > 0: msg.rawChannelId else: msg.channelId
   let auth = authorizeResolvedInbound(
@@ -776,7 +823,7 @@ proc handleTelegramMessage*(msg: InboundMessage;
   if approvalReply.isSome:
     tgAdapter.send(OutboundMessage(
       userId: msg.userId, channel: ckTelegram,
-      text: approvalReply.get, replyTo: msg.channelId)).isOkOr:
+      text: approvalReply.get, replyTo: replyTarget(msg))).isOkOr:
       logger.error("tg send approval reply failed: " & error)
     return true
   let command = decideCommandRequest(CommandRequest(channel: msg.channel, text: msg.text))
@@ -794,7 +841,7 @@ proc handleTelegramMessage*(msg: InboundMessage;
       discard tgAdapter.answerCallback(msg.callbackId)
       tgAdapter.send(OutboundMessage(
         userId: msg.userId, channel: ckTelegram,
-        text: approvalReply.get, replyTo: msg.channelId)).isOkOr:
+        text: approvalReply.get, replyTo: replyTarget(msg))).isOkOr:
         logger.error("tg send approval callback failed: " & error)
       return true
     let callback = decideCallbackRequest(CallbackRequest(channel: msg.channel, data: command.value))

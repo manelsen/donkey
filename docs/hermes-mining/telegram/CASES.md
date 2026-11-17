@@ -110,8 +110,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Reenviar a ação periodicamente enquanto o turno estiver ativo, sem exceder o flood control.
 - **Fontes no hermes:** `5948ab52e2`, `1856bd9cc8`
 - **Testes no hermes:** `tests/gateway/test_telegram_typing_backoff.py`
-- **Situação no Donkey:** PARCIAL
-- **Evidência no Donkey:** `src/donkey/adapters/channel/telegram.nim:130` (envio único, sem re-arme)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/app/tool_loop_runtime.nim:150` e `tests/app/t_orchestrator.nim`
 - **Prioridade:** P2
 
 ### TG-011: 429 traz retry_after e deve ser respeitado
@@ -165,8 +165,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Só agir quando mencionado (conforme configuração) e aceitar o sufixo @botname.
 - **Fontes no hermes:** `1e18e0503f`, `3ff3dfb5ac`, `b0939d9210`
 - **Testes no hermes:** `tests/gateway/test_telegram_mention_boundaries.py;tests/gateway/test_telegram_group_gating.py`
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n "require_mention|@bot|mention" src/donkey/adapters/channel/telegram_runtime.nim` (sem resultados)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:139` e `src/donkey/adapters/channel/telegram_runtime.nim`
 - **Prioridade:** P1
 
 ### TG-016: Remetente não autorizado é descartado antes do turno
@@ -220,8 +220,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Reconhecer o 409 e repetir com backoff, sem entrar em loop apertado.
 - **Fontes no hermes:** `488a30e879`, `5a2fcaab39`, `f260aa6dc0`
 - **Testes no hermes:** `tests/gateway/test_telegram_conflict.py`
-- **Situação no Donkey:** PARCIAL
-- **Evidência no Donkey:** `src/donkey/adapters/http/std_http.nim:70` (só status >= 500 são repetidos; 409 retorna direto)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/adapters/http/std_http.nim:37` e `tests/http/t_std_http.nim`
 - **Prioridade:** P1
 
 ### TG-021: Timeout de envio não pode duplicar a mensagem
@@ -275,8 +275,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Propagar o thread id do update até o envio e a edição.
 - **Fontes no hermes:** `928bb16da1`, `a630ca15de`, `2564132a1f`
 - **Testes no hermes:** `tests/gateway/test_telegram_thread_fallback.py`
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n "message_thread_id|thread_id" src/donkey` (sem resultados)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_pure.nim:255` e `src/donkey/adapters/channel/telegram.nim`
 - **Prioridade:** P1
 
 ### TG-026: "Message thread not found" cai para o chat raiz
@@ -286,8 +286,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Reenviar sem o thread id para não perder a mensagem.
 - **Fontes no hermes:** `41d9d08078`, `ae005ec588`, `d385936a97`
 - **Testes no hermes:** `tests/gateway/test_telegram_thread_fallback.py`
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n "thread not found" src/donkey` (sem resultados)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:164` e `src/donkey/adapters/channel/telegram.nim`
 - **Prioridade:** P1
 
 ### TG-027: Foto fora dos limites vira documento
@@ -308,8 +308,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Agrupar pelo media_group_id e tratar o conjunto como uma entrada.
 - **Fontes no hermes:** `8fb618234f`, `4ae1334287`, `c7af0fcadc`
 - **Testes no hermes:** `tests/gateway/test_telegram_documents.py`
-- **Situação no Donkey:** PARCIAL
-- **Evidência no Donkey:** `rg -n "media_group_id" src/donkey` (sem resultados); o debounce em `src/donkey/app/orchestrator.nim:662` preserva só a última mídia
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/app/prompt_building.nim:165` e `tests/app/t_orchestrator.nim`
 - **Prioridade:** P1
 
 ### TG-029: Voz e áudio têm metadados próprios
@@ -319,8 +319,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Enviar duração e formato adequados ao tipo.
 - **Fontes no hermes:** `27364b24fe`, `ae82eed2b1`, `b93996c35e`
 - **Testes no hermes:** `tests/gateway/test_telegram_audio_vs_voice.py;tests/gateway/test_auto_voice_reply_format.py`
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n "sendVoice|sendAudio|duration" src/donkey/adapters/channel/telegram.nim` (sem resultados)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:122` e `src/donkey/adapters/channel/telegram.nim`
 - **Prioridade:** P2
 
 ### TG-030: Upload de mídia precisa de prazo próprio
@@ -407,8 +407,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Escapar o texto dinâmico antes de montar a mensagem.
 - **Fontes no hermes:** `55c70f3508`, `a56937735e`, `a694040520`
 - **Testes no hermes:** -
-- **Situação no Donkey:** PARCIAL
-- **Evidência no Donkey:** `src/donkey/core/telegram_format.nim:13` (escapa HTML; o Donkey não usa MarkdownV2)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/text_format.nim:16` e `src/donkey/core/telegram_format.nim`
 - **Prioridade:** P1
 
 ## Resumo
@@ -420,30 +420,26 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 | EDIT | COBERTO | P1 | 2 |
 | EDIT | COBERTO | P2 | 1 |
 | FORMAT | COBERTO | P0 | 1 |
-| FORMAT | COBERTO | P1 | 3 |
+| FORMAT | COBERTO | P1 | 4 |
 | FORMAT | COBERTO | P2 | 3 |
-| FORMAT | PARCIAL | P1 | 1 |
-| INBOUND | AUSENTE | P1 | 1 |
 | INBOUND | COBERTO | P0 | 3 |
+| INBOUND | COBERTO | P1 | 1 |
 | INBOUND | COBERTO | P2 | 4 |
 | INBOUND | PARCIAL | P2 | 1 |
-| MEDIA | AUSENTE | P2 | 1 |
-| MEDIA | COBERTO | P1 | 2 |
-| MEDIA | COBERTO | P2 | 1 |
-| MEDIA | PARCIAL | P1 | 1 |
+| MEDIA | COBERTO | P1 | 3 |
+| MEDIA | COBERTO | P2 | 2 |
 | NET | COBERTO | P0 | 1 |
+| NET | COBERTO | P1 | 1 |
 | NET | COBERTO | P2 | 3 |
-| NET | PARCIAL | P1 | 1 |
 | RATE | COBERTO | P1 | 2 |
-| RATE | COBERTO | P2 | 1 |
-| RATE | PARCIAL | P2 | 1 |
-| TOPIC_API | AUSENTE | P1 | 2 |
+| RATE | COBERTO | P2 | 2 |
+| TOPIC_API | COBERTO | P1 | 2 |
 
 | Total de casos | 37 |
 |---|---|
-| COBERTO | 28 |
-| PARCIAL | 5 |
-| AUSENTE | 4 |
+| COBERTO | 36 |
+| PARCIAL | 1 |
+| AUSENTE | 0 |
 | P0 | 6 |
 | P1 | 15 |
 | P2 | 16 |

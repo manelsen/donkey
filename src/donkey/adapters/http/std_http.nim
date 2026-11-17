@@ -16,13 +16,16 @@ type StdHttpAdapter* = object
   circuitBreaker*: bool ## Record failures/check the global per-host breaker.
   proxy*: string ## Optional filtering egress proxy URL.
   retryNonIdempotent*: bool ## false → POST/PATCH make a single attempt.
+  retryConflict*: bool ## true → a 409 on an idempotent call is retried.
 
 proc newStdHttpAdapter*(timeout = 60, maxRetries = 3, allowlist: seq[string] = @[],
                         circuitBreaker = true, proxy = "",
-                        retryNonIdempotent = true): StdHttpAdapter =
+                        retryNonIdempotent = true,
+                        retryConflict = false): StdHttpAdapter =
   StdHttpAdapter(timeout: timeout, maxRetries: maxRetries, allowlist: allowlist,
                  circuitBreaker: circuitBreaker, proxy: proxy,
-                 retryNonIdempotent: retryNonIdempotent)
+                 retryNonIdempotent: retryNonIdempotent,
+                 retryConflict: retryConflict)
 
 type RetryKind* = enum
   rkIdempotent
@@ -30,6 +33,18 @@ type RetryKind* = enum
 
 func retryKind*(meth: HttpMethod): RetryKind =
   if meth in {HttpPost, HttpPatch}: rkNonIdempotent else: rkIdempotent
+
+func shouldRetryStatus*(status: int; kind: RetryKind;
+                        retryConflict: bool): bool =
+  ## Behavior derived from hermes-agent (MIT) fix 488a30e879; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-020
+  ##
+  ## A second getUpdates while another poller is active answers 409 Conflict.
+  ## The call is idempotent, so it is safe to retry with backoff; a send is
+  ## not, and a conflict there means something else is wrong.
+  if status >= 500:
+    return true
+  status == 409 and retryConflict and kind == rkIdempotent
 
 func maxAttempts*(a: StdHttpAdapter; kind: RetryKind): int =
   ## Behavior derived from hermes-agent (MIT) fix 85cefc7a5a; see
@@ -98,12 +113,19 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
           continue
         ## Rate limiting is not a host failure: keep the breaker closed.
         return err("HTTP 429 rate limited after " & $attemptLimit & " attempts. Last error: " & lastError)
-      if val.status < 500: # Success or client error, don't retry
+      if not shouldRetryStatus(val.status, retryKind(meth), a.retryConflict):
         if a.circuitBreaker:
           recordSuccess(host)
         return ok(val)
-      else:
-        lastError = "HTTP " & $val.status
+      if val.status == 409:
+        ## A polling conflict is not a host failure: retry with backoff
+        ## without counting it against the circuit breaker.
+        lastError = "HTTP 409 (conflict)"
+        if attempt < attemptLimit:
+          sleep(getBackoffMs(attempt))
+          continue
+        return err("HTTP 409 conflict after " & $attemptLimit & " attempts")
+      lastError = "HTTP " & $val.status
     else:
       lastError = res.error
 
