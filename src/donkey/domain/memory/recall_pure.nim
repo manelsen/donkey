@@ -24,9 +24,7 @@ const
     ## neighbouring turn of the same session.
   RecallNeighborMaxChars* = 2000
     ## Cap for a context entry. The retrieved entry itself is never clipped.
-  RecallMaxLessons* = 3
   RecallTruncationMarker* = "\n[…truncated]"
-  RecallLessonKind* = "lesson"
   RecallExcerptNote* =
     "Entries inside <conversation-excerpt> are consecutive exchanges of one " &
     "past session, oldest first. [match] marks a retrieved entry, [context] " &
@@ -38,16 +36,12 @@ type
     ## Single result from a memory search.
     content*:   string
     score*:     float32  ## relevance in [0, 1]; higher = more relevant
-    kind*:      string   ## node kind: "memory", "lesson", "fact", …
+    kind*:      string   ## node kind: "memory", "fact", …
     id*:        string   ## node id; empty when the backend has none
     timestamp*: int64    ## unix seconds; 0 when unknown
     origin*:    MemoryOrigin
     before*:    seq[MemoryHit]  ## same-session turns right before, oldest first
     after*:     seq[MemoryHit]  ## same-session turns right after, oldest first
-
-  RecallText* = object
-    memory*:  string  ## excerpts and single lines, in rank order
-    lessons*: string  ## "Relevant lessons:" block, or empty
 
   ExcerptEntry = object
     hit:     MemoryHit
@@ -165,18 +159,10 @@ func renderExcerpt(entries: seq[ExcerptEntry]): string =
     result.add(entry.hit.content.strip & "\n")
   result.add("</conversation-excerpt>")
 
-func renderRecall*(hits: seq[MemoryHit]): RecallText =
-  ## Renders ranked hits for the model. Lessons go to their own block.
-  ## Dialogue hits that carry neighbours become excerpts; windows that share
-  ## an entry merge into one excerpt, and no entry is rendered twice.
-  var lessonLines: seq[string]
-  var ranked: seq[MemoryHit]
-  for hit in hits:
-    if hit.kind == RecallLessonKind:
-      if lessonLines.len < RecallMaxLessons:
-        lessonLines.add("- " & hit.content)
-    else:
-      ranked.add(hit)
+func renderRecall*(ranked: seq[MemoryHit]): string =
+  ## Renders ranked hits for the model, in rank order. Dialogue hits that
+  ## carry neighbours become excerpts; windows that share an entry merge into
+  ## one excerpt, and no entry is rendered twice. Every other hit is one line.
 
   ## `owner[i]` is the block that renders ranked hit `i`, or -1 for a single
   ## line. Blocks are tracked by index, not by id, because a backend may
@@ -241,6 +227,4 @@ func renderRecall*(hits: seq[MemoryHit]): RecallText =
       parts.add(renderExcerpt(blocks[index]))
   if blocks.len > 0:
     parts.insert(RecallExcerptNote, 0)
-  result.memory = parts.join("\n")
-  if lessonLines.len > 0:
-    result.lessons = "Relevant lessons:\n" & lessonLines.join("\n")
+  parts.join("\n")

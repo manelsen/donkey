@@ -12,8 +12,13 @@ import ../core/pipeops
 import chronos
 import chronos/asyncsync
 import ../domain/agent_message
+import ../core/pipeops
 import ../core/types
 import ../ports/memory
+
+func errorText(error: string): string =
+  ## An error is an error even when the backend gave it no text.
+  if error.len > 0: error else: "not stored"
 
 proc runMemoryAgent*(inbox:     AsyncQueue[AgentMessage];
                      outbox:    AsyncQueue[AgentMessage];
@@ -36,38 +41,37 @@ proc runMemoryAgent*(inbox:     AsyncQueue[AgentMessage];
           let userId = UserId(msg.userId)
           let ctx    = memory.loadContext(userId)
           var memSection = ctx.memoryMd
-          var lessonSection = ""
           ## Semantic search enrichment: if searchFn and a query are available,
-          ## refine autobiographical memory hits and inject bounded lessons.
+          ## replace the raw memory dump with the hits for this query.
           ## Dialogue hits arrive with their session neighbours and are
           ## rendered as ordered excerpts (domain/memory/recall_pure).
           if searchFn != nil and msg.payload.len > 0:
             let recalled = renderRecall(searchFn(userId, msg.payload, 8))
-            if recalled.memory.len > 0:
-              memSection = recalled.memory
-            lessonSection = recalled.lessons
-          var parts = @[ctx.userMd, memSection]
-          if lessonSection.len > 0:
-            parts.add(lessonSection)
-          parts.add(ctx.preferencesMd)
+            if recalled.len > 0:
+              memSection = recalled
+          let parts = @[ctx.userMd, memSection, ctx.preferencesMd]
           let text = parts.join("\n")
           await outbox.put(newResultMsg(msg.id, text))
         except Exception as e:
           await outbox.put(newErrorMsg(msg.id, "MemoryAgent loadCtx: " & e.msg))
 
       of tkSaveMem:
-        let saved = memory.appendMemoryChecked(UserId(msg.userId), msg.payload)
-        if saved.isErr:
-          await outbox.put(newErrorMsg(msg.id, "MemoryAgent saveMem: " & saved.error))
+        ## A memory that was not stored is an error for the caller, never a
+        ## silent success. The port does not raise; the Result is the answer.
+        let stored = memory.appendMemory(UserId(msg.userId), msg.payload)
+        if stored.isErr:
+          await outbox.put(newErrorMsg(
+            msg.id, "MemoryAgent saveMem: " & errorText(stored.error)))
         else:
           await outbox.put(newResultMsg(msg.id, ""))
 
       of tkSavePrefs:
-        try:
-          memory.savePreferences(UserId(msg.userId), msg.payload)
+        let saved = memory.savePreferences(UserId(msg.userId), msg.payload)
+        if saved.isErr:
+          await outbox.put(newErrorMsg(
+            msg.id, "MemoryAgent savePrefs: " & errorText(saved.error)))
+        else:
           await outbox.put(newResultMsg(msg.id, ""))
-        except Exception as e:
-          await outbox.put(newErrorMsg(msg.id, "MemoryAgent savePrefs: " & e.msg))
 
       else:
         await outbox.put(newErrorMsg(msg.id, "MemoryAgent: unexpected task: " & $msg.taskKind))

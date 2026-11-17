@@ -62,9 +62,12 @@ proc ctlUserShow*(memory: MdFileAdapter; uuid: string): Result[void, string] =
     echo ctx.memoryMd[0 .. min(500, ctx.memoryMd.len - 1)]
   ok()
 
-proc ctlUserEdit*(memory: MdFileAdapter; uuid, field, value: string) =
-  memory.updateUserField(UserId(uuid), field, value)
+proc ctlUserEdit*(memory: MdFileAdapter;
+                  uuid, field, value: string): Result[void, string] =
+  ## An edit that was not saved is an error, so the command exits non-zero.
+  ? memory.updateUserField(UserId(uuid), field, value)
   echo "Updated " & uuid & ": " & field & " = " & value
+  ok()
 
 proc ctlUserRevoke*(memory: MdFileAdapter; uuid: string; revoked: bool): Result[void, string] =
   let userId = UserId(uuid)
@@ -77,7 +80,11 @@ proc ctlUserRevoke*(memory: MdFileAdapter; uuid: string; revoked: bool): Result[
     echo "Error: " & allowlistResult.error
     return err(allowlistResult.error)
   if memory.hasProfile(userId):
-    memory.updateUserField(userId, "Access", if revoked: "revoked" else: "active")
+    let updated = memory.updateUserField(
+      userId, "Access", if revoked: "revoked" else: "active")
+    if updated.isErr:
+      echo "Error: " & updated.error
+      return err(updated.error)
   echo (if revoked: "Revoked " else: "Restored ") & uuid
   ok()
 
@@ -391,7 +398,9 @@ proc dispatchCtl*(cfg: DonkeyConfig;
     if r.isErr: echo r.error; return 1
     return 0
   if args[1] == "user" and args.len >= 6 and args[2] == "edit":
-    ctlUserEdit(memory, args[3], args[4], args[5 .. ^1].join(" ")); return 0
+    let res = ctlUserEdit(memory, args[3], args[4], args[5 .. ^1].join(" "))
+    if res.isErr: echo "Error: " & res.error; return 1
+    return 0
   if args[1] == "user" and args.len >= 4 and args[2] == "revoke":
     let res = ctlUserRevoke(memory, args[3], true)
     if res.isErr: echo res.error; return 1

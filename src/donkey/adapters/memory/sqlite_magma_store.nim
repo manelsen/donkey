@@ -343,11 +343,14 @@ when defined(withSqlite):
     except CatchableError:
       false
 
-  proc upsertNode*(a: SqliteMagmaStoreAdapter; node: MagmaNode) =
-    a.ensureSchema()
-    let db = a.openDb()
-    defer: db.close()
+  proc upsertNode*(a: SqliteMagmaStoreAdapter;
+                   node: MagmaNode): Result[void, string] =
+    ## Inserts or replaces a node. A refused write comes back as an error:
+    ## the caller must be able to tell a stored node from a lost one.
     try:
+      a.ensureSchema()
+      let db = a.openDb()
+      defer: db.close()
       let metaJson = if node.meta != nil: $node.meta else: "{}"
       let blob = encodeVectorBlob(node.embedding)
       if blob.len > 0:
@@ -384,8 +387,9 @@ when defined(withSqlite):
            $node.timestamp, metaJson)
         let rowid = db.getValue(sql("SELECT rowid FROM " & SqliteNodesTable & " WHERE id = ?"), node.id)
         db.syncVecRow(rowid, node.userId, "")
-    except CatchableError:
-      discard
+      ok()
+    except CatchableError as e:
+      err("upsert node: " & e.msg)
 
   proc getNode*(a: SqliteMagmaStoreAdapter; nodeId: string): Option[MagmaNode] =
     a.ensureSchema()
@@ -573,42 +577,66 @@ when defined(withSqlite):
   proc linkTemporal*(a: SqliteMagmaStoreAdapter; fromId, toId: string) =
     discard a.insertEdge(MagmaEdge(fromId: fromId, toId: toId, edgeType: EdgeTemporal))
 
+  const VecKnnMaxK = 4096
+    ## Largest `k` the vector index accepts in one query.
+
   proc searchSimilar*(a: SqliteMagmaStoreAdapter; userId: string;
                       embedding: seq[float32];
                       topK: int = 10;
-                      minScore: float32 = 0.0): seq[MagmaHit] =
+                      minScore: float32 = 0.0;
+                      nodeType: string = ""): seq[MagmaHit] =
+    ## Nearest nodes by cosine similarity. With `nodeType`, only nodes of that
+    ## type count toward `topK`. The vector index knows nothing of types, so
+    ## the neighbourhood is widened until enough nodes of the type are found
+    ## or the index has no more to give; past its largest `k` the search
+    ## falls back to comparing every node of the type.
     a.ensureSchema()
     let db = a.openDb()
     defer: db.close()
-    if embedding.len == 0:
+    if embedding.len == 0 or topK <= 0:
       return @[]
     if a.tryInitVec(db):
       try:
-        let rows = db.getAllRows(sql(
-          "SELECT n.id, n.user_id, n.node_type, n.content, n." & SqliteVectorEmbeddingColumn &
-          ", n.ts, n.meta, n." & SqliteLegacyEmbeddingColumn &
-          ", (1.0 - v.distance) AS score " &
-          "FROM (" &
-          "  SELECT rowid, distance FROM " & SqliteVecTable &
-          " WHERE embedding MATCH ? AND k = ? AND user_id = ?" &
-          ") AS v " &
-          "JOIN " & SqliteNodesTable & " n ON n.rowid = v.rowid " &
-          "WHERE (1.0 - v.distance) >= ? " &
-          "ORDER BY v.distance LIMIT ?"
-        ), buildVectorJson(embedding), $topK, userId, $minScore, $topK)
-        for row in rows:
-          result.add(MagmaHit(
-            node: rowToNode(row[0 .. 7]),
-            score: clamp(try: parseFloat(row[8]) except: 0.0, 0.0, 1.0).float32,
-            path: @[row[0]],
-          ))
-        if result.len > 0:
+        var k = topK
+        var exhausted = false
+        while true:
+          let rows = db.getAllRows(sql(
+            "SELECT n.id, n.user_id, n.node_type, n.content, n." & SqliteVectorEmbeddingColumn &
+            ", n.ts, n.meta, n." & SqliteLegacyEmbeddingColumn &
+            ", (1.0 - v.distance) AS score " &
+            "FROM (" &
+            "  SELECT rowid, distance FROM " & SqliteVecTable &
+            " WHERE embedding MATCH ? AND k = ? AND user_id = ?" &
+            ") AS v " &
+            "JOIN " & SqliteNodesTable & " n ON n.rowid = v.rowid " &
+            "WHERE (1.0 - v.distance) >= ? " &
+            "ORDER BY v.distance LIMIT ?"
+          ), buildVectorJson(embedding), $k, userId, $minScore, $k)
+          result.setLen(0)
+          for row in rows:
+            if nodeType.len > 0 and row[2] != nodeType:
+              continue
+            if result.len >= topK:
+              break
+            result.add(MagmaHit(
+              node: rowToNode(row[0 .. 7]),
+              score: clamp(try: parseFloat(row[8]) except: 0.0, 0.0, 1.0).float32,
+              path: @[row[0]],
+            ))
+          if result.len >= topK or rows.len < k:
+            exhausted = true
+            break
+          if k >= VecKnnMaxK:
+            break
+          k = min(k * 4, VecKnnMaxK)
+        if exhausted and result.len > 0:
           return result
       except CatchableError:
         discard
+    result.setLen(0)
     type RankedHit = tuple[node: MagmaNode, score: float32]
     var ranked: seq[RankedHit]
-    for node in a.listNodes(userId):
+    for node in a.listNodes(userId, nodeType):
       if node.embedding.len == 0:
         continue
       let score = cosineSimilarity(node.embedding, embedding)
@@ -621,16 +649,28 @@ when defined(withSqlite):
       result.add(MagmaHit(node: hit.node, score: hit.score, path: @[hit.node.id]))
 
   proc queryByTimeRange*(a: SqliteMagmaStoreAdapter; userId: string;
-                         tsStart, tsEnd: int64; limit: int = 50): seq[MagmaNode] =
+                         tsStart, tsEnd: int64; limit: int = 50;
+                         nodeType: string = ""): seq[MagmaNode] =
+    ## Newest first. With `nodeType`, the filter is part of the query, so the
+    ## limit counts only nodes of that type.
     a.ensureSchema()
     let db = a.openDb()
     defer: db.close()
     try:
-      for row in db.getAllRows(sql(
+      let columns =
         "SELECT id, user_id, node_type, content, " & SqliteVectorEmbeddingColumn &
-        ", ts, meta, " & SqliteLegacyEmbeddingColumn & " FROM " &
-        SqliteNodesTable & " WHERE user_id = ? AND ts BETWEEN ? AND ? ORDER BY ts DESC, rowid DESC LIMIT ?"
-      ), userId, $tsStart, $tsEnd, $limit):
+        ", ts, meta, " & SqliteLegacyEmbeddingColumn & " FROM " & SqliteNodesTable
+      let order = " ORDER BY ts DESC, rowid DESC LIMIT ?"
+      let rows =
+        if nodeType.len > 0:
+          db.getAllRows(sql(
+            columns & " WHERE user_id = ? AND node_type = ? AND ts BETWEEN ? AND ?" & order
+          ), userId, nodeType, $tsStart, $tsEnd, $limit)
+        else:
+          db.getAllRows(sql(
+            columns & " WHERE user_id = ? AND ts BETWEEN ? AND ?" & order
+          ), userId, $tsStart, $tsEnd, $limit)
+      for row in rows:
         result.add(rowToNode(row))
     except CatchableError:
       discard
@@ -723,7 +763,8 @@ when defined(withSqlite):
     MultigraphStorePort(
       migrate: proc() {.gcsafe.} = a.migrate(),
       insertNode: proc(node: MagmaNode): bool {.gcsafe.} = a.insertNode(node),
-      upsertNode: proc(node: MagmaNode) {.gcsafe.} = a.upsertNode(node),
+      upsertNode: proc(node: MagmaNode): Result[void, string] {.gcsafe.} =
+        a.upsertNode(node),
       getNode: proc(nodeId: string): Option[MagmaNode] {.gcsafe.} = a.getNode(nodeId),
       listNodes: proc(userId: string; nodeType: string = ""): seq[MagmaNode] {.gcsafe.} = a.listNodes(userId, nodeType),
       listNodesLimited: proc(userId: string; nodeType: string = "";
@@ -737,10 +778,12 @@ when defined(withSqlite):
       deleteEdges: proc(nodeId: string; edgeType: string = ""): int {.gcsafe.} = a.deleteEdges(nodeId, edgeType),
       getLastNode: proc(userId: string; nodeType: string = ""): Option[MagmaNode] {.gcsafe.} = a.getLastNode(userId, nodeType),
       linkTemporal: proc(fromId, toId: string) {.gcsafe.} = a.linkTemporal(fromId, toId),
-      searchSimilar: proc(userId: string; embedding: seq[float32]; topK: int = 10; minScore: float32 = 0.0): seq[MagmaHit] {.gcsafe.} =
-        a.searchSimilar(userId, embedding, topK = topK, minScore = minScore),
-      queryByTimeRange: proc(userId: string; tsStart, tsEnd: int64; limit: int = 50): seq[MagmaNode] {.gcsafe.} =
-        a.queryByTimeRange(userId, tsStart, tsEnd, limit = limit),
+      searchSimilar: proc(userId: string; embedding: seq[float32]; topK: int = 10; minScore: float32 = 0.0; nodeType: string = ""): seq[MagmaHit] {.gcsafe.} =
+        a.searchSimilar(userId, embedding, topK = topK, minScore = minScore,
+                        nodeType = nodeType),
+      queryByTimeRange: proc(userId: string; tsStart, tsEnd: int64; limit: int = 50; nodeType: string = ""): seq[MagmaNode] {.gcsafe.} =
+        a.queryByTimeRange(userId, tsStart, tsEnd, limit = limit,
+                           nodeType = nodeType),
       traverseNeighbors: proc(nodeId: string; edgeTypes: seq[string] = @[]; maxDepth: int = 2): seq[MagmaNode] {.gcsafe.} =
         a.traverseNeighbors(nodeId, edgeTypes = edgeTypes, maxDepth = maxDepth),
       statsForUser: proc(userId: string): MagmaStats {.gcsafe.} = a.stats(userId),

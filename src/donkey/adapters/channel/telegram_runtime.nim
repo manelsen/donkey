@@ -97,7 +97,8 @@ proc buildModelButtons*(memory: MdFileAdapter;
 
 proc saveTelegramPreference*(memory: MdFileAdapter;
                              userId: UserId;
-                             key, value: string) =
+                             key, value: string): Result[void, string]
+                             {.discardable.} =
   saveChannelPreference(memory, userId, key, value)
 
 proc clearTelegramKeyboard*(tgAdapter: var TelegramAdapter;
@@ -202,13 +203,13 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
         discard
       return true
     logger.info("tg callback models:set:" & callback.provider & ":" & model)
-    memory.saveTelegramPreference(msg.userId, "provider", callback.provider)
-    memory.saveTelegramPreference(msg.userId, "model", model)
+    let saved = memory.saveChannelPreferences(
+      msg.userId, [("provider", callback.provider), ("model", model)])
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
     if kbdId.len > 0:
       tgAdapter.editKeyboardText(
         msg.userId, kbdId,
-        "✅ Modelo definido: " & callback.provider & " / " & model,
+        savedOrError(saved, "✅ Modelo definido: " & callback.provider & " / " & model),
         @[]).isOkOr:
           core_log.log(logger, core_log.lvlError, "tg editKeyboard models:set error: " & error)
       common_runtime.clearUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
@@ -216,7 +217,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
       tgAdapter.send(OutboundMessage(
         userId:  msg.userId,
         channel: ckTelegram,
-        text:    "✅ Modelo definido: " & callback.provider & " / " & model,
+        text:    savedOrError(saved, "✅ Modelo definido: " & callback.provider & " / " & model),
         replyTo: msg.channelId,
       )).isOkOr:
         core_log.log(logger, core_log.lvlError, "tg send models:set error: " & error)
@@ -260,12 +261,12 @@ proc handleTelegramThinkingCallback*(msg: InboundMessage;
 
   let level = callback.value
   if level in ThinkLevels:
-    memory.saveTelegramPreference(msg.userId, "thinking", level)
+    let saved = memory.saveTelegramPreference(msg.userId, "thinking", level)
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotThink)
     if kbdId.len > 0:
       tgAdapter.editKeyboardText(
         msg.userId, kbdId,
-        "🧠 Thinking: " & level,
+        savedOrError(saved, "🧠 Thinking: " & level),
         @[]).isOkOr:
           discard
       common_runtime.clearUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotThink)
@@ -601,11 +602,10 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       discard
     return true
   of lcaClearMemory:
-    memory.clearMemory(msg.userId)
     tgAdapter.send(OutboundMessage(
       userId:  msg.userId,
       channel: ckTelegram,
-      text:    "🗑️ Memórias apagadas.",
+      text:    clearMemoryReply(memory, msg.userId, "🗑️ Memórias apagadas."),
       replyTo: msg.channelId,
     )).isOkOr:
       discard
@@ -665,7 +665,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
   of lcaReasoningToggle:
     let prefs = loadChannelPrefs(memory, msg.userId)
     let next = if prefs.reasoning == "on": "off" else: "on"
-    saveChannelPreference(memory, msg.userId, "reasoning", next)
+    let saved = saveChannelPreference(memory, msg.userId, "reasoning", next)
 
     # Update current keyboard if it was a menu/config
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
@@ -676,7 +676,7 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
       tgAdapter.send(OutboundMessage(
         userId:  msg.userId,
         channel: ckTelegram,
-        text:    "✅ Reasoning " & (if next == "on": "ativado" else: "desativado") & ".",
+        text:    savedOrError(saved, "✅ Reasoning " & (if next == "on": "ativado" else: "desativado") & "."),
         replyTo: msg.channelId,
       )).isOkOr:
         logger.error("tg send lcaReasoningToggle failed for user=" & $msg.userId & " reason=" & error)

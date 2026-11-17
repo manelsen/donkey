@@ -1,10 +1,12 @@
 ## Tests for MagmaMemoryAdapter over SQLite-backed multigraph store.
 
 when defined(withSqlite):
-  import std/[os, unittest, options, strutils, times]
+  import std/[os, unittest, options, sequtils, strutils, times]
+  import donkey/core/pipeops
   import donkey/core/types
   import donkey/adapters/memory/magma_memory_adapter
   import donkey/domain/memory/commitment_pure
+  import donkey/domain/memory/episode_pure
   import donkey/domain/memory/provenance_pure
   import donkey/domain/memory/recall_pure
   import donkey/ports/memory
@@ -138,6 +140,198 @@ when defined(withSqlite):
           inc expanded
       check hits.len == 8
       check expanded == RecallWindowMaxHits
+
+    test "lesson nodes left by older versions are never recalled":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, letterEmbedFn)
+      let uid = UserId("u1")
+      a.appendMemory(uid, "aaaa episodio", turnOrigin("s1"))
+      check a.graph.insertNode(MagmaNode(
+        id: "u1_lesson_old", userId: "u1", nodeType: "lesson",
+        content: "aaaa regra destilada", embedding: letterEmbedFn("aaaa"),
+        timestamp: getTime().toUnix()))
+      let hits = a.search(uid, "aaaa", 5)
+      check hits.len == 1
+      check hits[0].kind == "memory"
+
+    test "appendMemory writes no entity nodes and no causal edges":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      let uid = UserId("u1")
+      a.appendMemory(uid, "Alice is a developer. The cache node crashed.")
+      a.appendMemory(uid, "Because of that, latency spiked for every request.")
+      check a.graph.listNodes("u1", "entity").len == 0
+      check a.graph.getEdges("u1_m0", edgeType = EdgeCausal).len == 0
+      check a.graph.getEdges("u1_m0", edgeType = EdgeMentions).len == 0
+      check a.graph.getEdges("u1_m0", edgeType = EdgeAbout).len == 0
+      check a.graph.getEdges("u1_m0", edgeType = EdgeTemporal).len == 1
+
+    test "a literal term finds a memory the embedding ranks last":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, letterEmbedFn)
+      let uid = UserId("u1")
+      ## The query embedding points at the routine notes (same initial);
+      ## only the words point at the memory that answers it.
+      for i in 1 .. 30:
+        a.appendMemory(uid, "abacaxi rotina numero " & $i)
+      a.appendMemory(uid, "zzzz o codinome do projeto e zarabatana")
+      ## Best-by-words and best-by-meaning weigh the same, so the memory
+      ## shares the top with the nearest note; embeddings alone leave it out.
+      let hits = a.search(uid, "aaaa codinome zarabatana", 3)
+      check hits.len == 3
+      check hits.anyIt(it.content.contains("zarabatana"))
+
+    test "search works when no embedding is available":
+      proc noEmbedFn(text: string): seq[float32] {.gcsafe.} = @[]
+      let a = newSqliteMagmaMemoryAdapter(dbPath, noEmbedFn)
+      let uid = UserId("u1")
+      a.appendMemory(uid, "o codinome do projeto e zarabatana")
+      for i in 1 .. 10:
+        a.appendMemory(uid, "anotacao de rotina numero " & $i)
+      let hits = a.search(uid, "zarabatana", 3)
+      check hits.len > 0
+      check hits[0].content.contains("zarabatana")
+
+    test "a hit found only by its words keeps origin and neighbours":
+      proc noEmbedFn(text: string): seq[float32] {.gcsafe.} = @[]
+      let a = newSqliteMagmaMemoryAdapter(dbPath, noEmbedFn)
+      let uid = UserId("u1")
+      a.appendMemory(uid, "o prazo e quinta", turnOrigin("s1"))
+      a.appendMemory(uid, "correcao zarabatana: o prazo e sexta", turnOrigin("s1"))
+      let hits = a.search(uid, "zarabatana", 3)
+      check hits[0].id == "u1_m1"
+      check hits[0].origin == turnOrigin("s1")
+      check hits[0].before.len == 1
+      check hits[0].before[0].id == "u1_m0"
+
+    test "appendMemory reports success and failure as a Result":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      check a.appendMemory(UserId("u1"), "fato").isOk
+      var rejecting = a.graph
+      rejecting.insertNode = proc(node: MagmaNode): bool {.gcsafe.} = false
+      let failing = newMagmaMemoryAdapter(rejecting, fakeEmbedFn)
+      let res = failing.appendMemory(UserId("u1"), "outro fato")
+      check res.isErr
+      check res.error.len > 0
+
+    test "profile, preferences and episodes report a write the store refused":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      check a.saveUserMd(UserId("u1"), "# Ada").isOk
+      check a.savePreferences(UserId("u1"), "language = \"pt-BR\"").isOk
+      var rejecting = a.graph
+      rejecting.upsertNode = proc(node: MagmaNode): Result[void, string] {.gcsafe.} =
+        err("disk full")
+      let failing = newMagmaMemoryAdapter(rejecting, fakeEmbedFn)
+      check failing.saveUserMd(UserId("u1"), "# Outra").isErr
+      check failing.savePreferences(UserId("u1"), "language = \"en\"").isErr
+      let episode = newEpisodeJournal("Titulo", "Resumo", 1_700_000_000,
+                                      1_700_000_100, @[])
+      check failing.saveEpisode(UserId("u1"), episode).isErr
+      check a.loadUserMd(UserId("u1")) == "# Ada"
+
+    test "the store reports an upsert it could not make":
+      ## The database file gives way to a directory after the adapter is
+      ## built, so the next write cannot open it.
+      let lostPath = dbPath & ".lost"
+      let lost = newSqliteMagmaMemoryAdapter(lostPath, fakeEmbedFn)
+      check lost.saveUserMd(UserId("u1"), "# Ada").isOk
+      removeFile(lostPath)
+      createDir(lostPath)
+      check lost.saveUserMd(UserId("u1"), "# Outra").isErr
+      removeDir(lostPath)
+
+    test "clearMemory and resetBootstrap report what was not deleted":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      ## Nothing to delete is a success: the operations are idempotent.
+      check a.clearMemory(UserId("nobody")).isOk
+      check a.resetBootstrap(UserId("nobody")).isOk
+      a.saveUserMd(UserId("u1"), "# Ada")
+      a.appendMemory(UserId("u1"), "fato")
+      var stuck = a.graph
+      stuck.deleteNode = proc(nodeId: string): bool {.gcsafe.} = false
+      let failing = newMagmaMemoryAdapter(stuck, fakeEmbedFn)
+      check failing.clearMemory(UserId("u1")).isErr
+      check failing.resetBootstrap(UserId("u1")).isErr
+      check a.clearMemory(UserId("u1")).isOk
+      check a.resetBootstrap(UserId("u1")).isOk
+      check not a.hasContext(UserId("u1")).get()
+
+    test "the profile and preferences reads tell failure from absence":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      check a.readUserMd(UserId("u1")).get() == ""
+      a.saveUserMd(UserId("u1"), "# Ada")
+      a.savePreferences(UserId("u1"), "language = \"pt-BR\"")
+      check a.readUserMd(UserId("u1")).get() == "# Ada"
+      check a.readPreferences(UserId("u1")).get() == "language = \"pt-BR\""
+      var broken = a.graph
+      broken.listNodesLimited = proc(userId: string; nodeType: string = "";
+                                     limit, maxContentBytes: int):
+                                     Result[seq[MagmaNode], string] {.gcsafe.} =
+        err("database is locked")
+      let failing = newMagmaMemoryAdapter(broken, fakeEmbedFn)
+      check failing.readUserMd(UserId("u1")).isErr
+      check failing.readPreferences(UserId("u1")).isErr
+      check failing.readContext(UserId("u1")).isErr
+
+    test "legacy nodes do not take the place of memories in the search":
+      ## Lessons and entities written before they were dropped are still in
+      ## the table. They must not fill the semantic or the recent window.
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      a.appendMemory(UserId("u1"), "passeio no parque")
+      for i in 0 ..< 40:
+        check a.graph.insertNode(MagmaNode(
+          id: "legacy" & $i, userId: "u1", nodeType: "lesson",
+          content: "licao antiga " & $i,
+          embedding: fakeEmbedFn("o que"), timestamp: getTime().toUnix()))
+      let hits = a.search(UserId("u1"), "o que aconteceu ontem", 1)
+      check hits.len == 1
+      check hits[0].content == "passeio no parque"
+
+    test "a refused commitment update is not reported as done":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      let c = newCommitment(sourceText = "ligar para a Ada", owner = coAgent)
+      check a.saveCommitment(UserId("u1"), c).isOk
+      var rejecting = a.graph
+      rejecting.upsertNode = proc(node: MagmaNode): Result[void, string] {.gcsafe.} =
+        err("disk full")
+      let failing = newMagmaMemoryAdapter(rejecting, fakeEmbedFn)
+      check not failing.updateCommitmentStatus(UserId("u1"), c.id, csDone)
+      check a.updateCommitmentStatus(UserId("u1"), c.id, csDone)
+
+    test "reading the context reports a graph that cannot be read":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      a.saveUserMd(UserId("u1"), "# Ada")
+      check a.readContext(UserId("u1")).get().userMd == "# Ada"
+      check a.hasContext(UserId("u1")).get()
+      check not a.hasContext(UserId("nobody")).get()
+      var broken = a.graph
+      broken.listNodesLimited = proc(userId: string; nodeType: string = "";
+                                     limit, maxContentBytes: int):
+                                     Result[seq[MagmaNode], string] {.gcsafe.} =
+        err("database is locked")
+      let failing = newMagmaMemoryAdapter(broken, fakeEmbedFn)
+      check failing.readContext(UserId("u1")).isErr
+      check failing.hasContext(UserId("u1")).isErr
+
+    test "hasContext sees a user that only has a profile or only preferences":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      a.saveUserMd(UserId("p1"), "# Ada")
+      a.savePreferences(UserId("p2"), "language = \"pt-BR\"")
+      check a.hasContext(UserId("p1")).get()
+      check a.hasContext(UserId("p2")).get()
+
+    test "hasContext reports a failed profile read instead of an empty graph":
+      ## Memories read fine and there are none; the profile read fails. That
+      ## is not an empty graph.
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      a.saveUserMd(UserId("u1"), "# Ada")
+      var flaky = a.graph
+      let realList = a.graph.listNodesLimited
+      flaky.listNodesLimited = proc(userId: string; nodeType: string = "";
+                                    limit, maxContentBytes: int):
+                                    Result[seq[MagmaNode], string] {.gcsafe.} =
+        {.cast(gcsafe).}:
+          if nodeType == "memory":
+            return realList(userId, nodeType, limit, maxContentBytes)
+        err("database is locked")
+      check newMagmaMemoryAdapter(flaky, fakeEmbedFn).hasContext(UserId("u1")).isErr
 
     test "commitments round-trip":
       let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)

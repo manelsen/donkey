@@ -158,10 +158,12 @@ when defined(withPostgres):
     except CatchableError:
       false
 
-  proc upsertNode*(g: MagmaGraph; node: MagmaNode) =
-    let db = g.openDb()
-    defer: db.close()
+  proc upsertNode*(g: MagmaGraph; node: MagmaNode): Result[void, string] =
+    ## Inserts or replaces a node. A refused write comes back as an error:
+    ## the caller must be able to tell a stored node from a lost one.
     try:
+      let db = g.openDb()
+      defer: db.close()
       let metaStr = if node.meta != nil: $node.meta else: "{}"
       if node.embedding.len > 0:
         let emb = "[" & node.embedding.join(",") & "]"
@@ -180,8 +182,9 @@ when defined(withPostgres):
           "user_id = excluded.user_id, node_type = excluded.node_type, content = excluded.content, " &
           "embedding = NULL, ts = excluded.ts, meta = excluded.meta"
         ), node.id, node.userId, node.nodeType, node.content, $node.timestamp, metaStr)
-    except CatchableError:
-      discard
+      ok()
+    except CatchableError as e:
+      err("upsert node: " & e.msg)
 
   proc getNode*(g: MagmaGraph; nodeId: string): Option[MagmaNode] =
     let db = g.openDb()
@@ -390,19 +393,29 @@ when defined(withPostgres):
   proc searchSimilar*(g: MagmaGraph; userId: string;
                       embedding: seq[float32];
                       topK: int = 10;
-                      minScore: float32 = 0.0): seq[MagmaHit] =
-    ## Vector similarity search using pgvector cosine distance.
+                      minScore: float32 = 0.0;
+                      nodeType: string = ""): seq[MagmaHit] =
+    ## Vector similarity search using pgvector cosine distance. With
+    ## `nodeType`, the filter is part of the query, so the limit counts only
+    ## nodes of that type.
     let db = g.openDb()
     defer: db.close()
     try:
       let emb = "[" & embedding.join(",") & "]"
-      let rows = db.getAllRows(sql(
+      let columns =
         "SELECT id, user_id, node_type, content, ts, meta, " &
         "1 - (embedding <=> ?::vector) AS score " &
-        "FROM " & MagmaNodesTable &
-        " WHERE user_id = ? AND embedding IS NOT NULL " &
-        "ORDER BY embedding <=> ?::vector LIMIT ?"
-      ), emb, userId, emb, $topK)
+        "FROM " & MagmaNodesTable
+      let order = " ORDER BY embedding <=> ?::vector LIMIT ?"
+      let rows =
+        if nodeType.len > 0:
+          db.getAllRows(sql(
+            columns & " WHERE user_id = ? AND node_type = ? AND embedding IS NOT NULL" & order
+          ), emb, userId, nodeType, emb, $topK)
+        else:
+          db.getAllRows(sql(
+            columns & " WHERE user_id = ? AND embedding IS NOT NULL" & order
+          ), emb, userId, emb, $topK)
       for row in rows:
         let score = try: parseFloat(row[6]).float32 except: 0.0
         if score >= minScore:
@@ -423,14 +436,25 @@ when defined(withPostgres):
 
   proc queryByTimeRange*(g: MagmaGraph; userId: string;
                          tsStart, tsEnd: int64;
-                         limit: int = 50): seq[MagmaNode] =
+                         limit: int = 50;
+                         nodeType: string = ""): seq[MagmaNode] =
+    ## Newest first. With `nodeType`, the filter is part of the query, so the
+    ## limit counts only nodes of that type.
     let db = g.openDb()
     defer: db.close()
     try:
-      let rows = db.getAllRows(sql(
-        "SELECT id, user_id, node_type, content, ts, meta FROM " & MagmaNodesTable &
-        " WHERE user_id = ? AND ts BETWEEN ? AND ? ORDER BY ts DESC LIMIT ?"
-      ), userId, $tsStart, $tsEnd, $limit)
+      let columns =
+        "SELECT id, user_id, node_type, content, ts, meta FROM " & MagmaNodesTable
+      let rows =
+        if nodeType.len > 0:
+          db.getAllRows(sql(
+            columns & " WHERE user_id = ? AND node_type = ? AND ts BETWEEN ? AND ?" &
+            " ORDER BY ts DESC LIMIT ?"
+          ), userId, nodeType, $tsStart, $tsEnd, $limit)
+        else:
+          db.getAllRows(sql(
+            columns & " WHERE user_id = ? AND ts BETWEEN ? AND ? ORDER BY ts DESC LIMIT ?"
+          ), userId, $tsStart, $tsEnd, $limit)
       for row in rows:
         result.add(MagmaNode(
           id: row[0], userId: row[1], nodeType: row[2],
@@ -559,7 +583,8 @@ when defined(withPostgres):
     MultigraphStorePort(
       migrate: proc() {.gcsafe.} = g.migrate(),
       insertNode: proc(node: MagmaNode): bool {.gcsafe.} = g.insertNode(node),
-      upsertNode: proc(node: MagmaNode) {.gcsafe.} = g.upsertNode(node),
+      upsertNode: proc(node: MagmaNode): Result[void, string] {.gcsafe.} =
+        g.upsertNode(node),
       getNode: proc(nodeId: string): Option[MagmaNode] {.gcsafe.} = g.getNode(nodeId),
       listNodes: proc(userId: string; nodeType: string = ""): seq[MagmaNode] {.gcsafe.} =
         g.listNodes(userId, nodeType),
@@ -575,10 +600,12 @@ when defined(withPostgres):
       getLastNode: proc(userId: string; nodeType: string = ""): Option[MagmaNode] {.gcsafe.} =
         g.getLastNode(userId, nodeType),
       linkTemporal: proc(fromId, toId: string) {.gcsafe.} = g.linkTemporal(fromId, toId),
-      searchSimilar: proc(userId: string; embedding: seq[float32]; topK: int = 10; minScore: float32 = 0.0): seq[MagmaHit] {.gcsafe.} =
-        g.searchSimilar(userId, embedding, topK = topK, minScore = minScore),
-      queryByTimeRange: proc(userId: string; tsStart, tsEnd: int64; limit: int = 50): seq[MagmaNode] {.gcsafe.} =
-        g.queryByTimeRange(userId, tsStart, tsEnd, limit = limit),
+      searchSimilar: proc(userId: string; embedding: seq[float32]; topK: int = 10; minScore: float32 = 0.0; nodeType: string = ""): seq[MagmaHit] {.gcsafe.} =
+        g.searchSimilar(userId, embedding, topK = topK, minScore = minScore,
+                        nodeType = nodeType),
+      queryByTimeRange: proc(userId: string; tsStart, tsEnd: int64; limit: int = 50; nodeType: string = ""): seq[MagmaNode] {.gcsafe.} =
+        g.queryByTimeRange(userId, tsStart, tsEnd, limit = limit,
+                           nodeType = nodeType),
       traverseNeighbors: proc(nodeId: string; edgeTypes: seq[string] = @[]; maxDepth: int = 2): seq[MagmaNode] {.gcsafe.} =
         g.traverseNeighbors(nodeId, edgeTypes = edgeTypes, maxDepth = maxDepth),
       statsForUser: proc(userId: string): MagmaStats {.gcsafe.} = g.stats(userId),

@@ -15,8 +15,10 @@ import ../../ports/reranking
 import ../../domain/memory/commitment_pure
 import ../../domain/memory/decay
 import ../../domain/memory/episode_pure
-import ../../domain/memory/lessons_pure
 import ../../domain/memory/provenance_pure
+import ../../domain/memory/query_policy_pure
+
+export query_policy_pure  ## the policy lives in the domain; kept visible here
 
 when defined(withPostgres) or defined(withSqlite):
   import std/[json, strutils, times, algorithm, options, tables]
@@ -24,46 +26,32 @@ when defined(withPostgres) or defined(withSqlite):
     import ./magma_graph
   when defined(withSqlite):
     import ./sqlite_magma_store
-  import ../../domain/memory/graph_pure
+  import ../../domain/memory/session_search_pure
   import ../../domain/memory/rrf
 
   const
     NtUserProfile = "user_profile"
     NtPreference  = "preference"
-    NtMemory      = "memory"
+    NtMemory*       = "memory"
     NtEntity      = "entity"
     NtCommitment  = "commitment"
     NtEpisode     = "episode"
-    NtLesson      = "lesson"
 
     ContextMemoryNodeLimit = 200
       ## Memory nodes returned by loadContext, newest first.
-    KnownMemoryNodeLimit   = 1_000_000
-      ## Upper bound for the dedup read; effectively "all memory nodes".
     MemoryContentReadLimit = 16 * 1024 * 1024
       ## Per-node content cap for those reads; above any stored memory.
+    LexicalCandidateLimit  = 2000
+      ## Most recent memory nodes scanned for literal query terms.
+    LexicalCandidateContentBytes = 4096
+      ## Content read per candidate for that scan.
 
   type
-    QueryIntent* = enum
-      qiSemantic, qiEntity, qiTemporal, qiCausal, qiHybrid
-
-    QueryPolicy* = object
-      intent*:         QueryIntent
-      semanticWeight*: float
-      entityWeight*:   float
-      temporalWeight*: float
-      neighborWeight*: float
-      causalWeight*:   float
-
     SearchConfig* = object
       semanticTopKMultiplier*: int
       recentTopKMultiplier*:   int
       rerankPoolSize*:         int
       rerankWeight*:           float32
-
-  func defaultPolicy*(): QueryPolicy =
-    QueryPolicy(intent: qiSemantic, semanticWeight: 0.4, entityWeight: 0.25,
-                temporalWeight: 0.25, neighborWeight: 0.1, causalWeight: 0.0)
 
   func defaultSearchConfig*(): SearchConfig =
     SearchConfig(
@@ -80,96 +68,6 @@ when defined(withPostgres) or defined(withSqlite):
       1.0'f32
     else:
       score
-
-  func classifyQuery*(query: string): QueryPolicy =
-    result = defaultPolicy()
-    let q = query.toLowerAscii()
-    let temporalHints = ["when", "recent", "yesterday", "last",
-                         "before", "after", "earlier", "first", "then",
-                         "ago", "today", "chronolog"]
-    let entityHints = ["who", "what", "where", "which", "person",
-                       "people", "company", "team"]
-    let causalHints = ["why", "because", "cause", "caused", "causal",
-                       "led to", "lead to", "resulted in", "resulting in",
-                       "due to", "reason"]
-    var isTemporal = false
-    var isEntity = false
-    var isCausal = false
-    for hint in temporalHints:
-      if q.contains(hint):
-        isTemporal = true
-        break
-    for hint in entityHints:
-      if q.contains(hint):
-        isEntity = true
-        break
-    for hint in causalHints:
-      if q.contains(hint):
-        isCausal = true
-        break
-    if isCausal:
-      result.intent = qiCausal
-      result.semanticWeight = 0.20
-      result.entityWeight =
-        if isEntity: 0.20
-        else: 0.15
-      result.temporalWeight =
-        if isTemporal: 0.20
-        else: 0.10
-      result.neighborWeight = 0.10
-      result.causalWeight = 1.0 - (result.semanticWeight + result.entityWeight +
-                                   result.temporalWeight + result.neighborWeight)
-    elif isTemporal and not isEntity:
-      result.intent = qiTemporal
-      result.temporalWeight = 0.40
-      result.semanticWeight = 0.30
-      result.entityWeight   = 0.20
-      result.neighborWeight = 0.10
-      result.causalWeight   = 0.0
-    elif isEntity and not isTemporal:
-      result.intent = qiEntity
-      result.entityWeight   = 0.40
-      result.semanticWeight = 0.30
-      result.temporalWeight = 0.20
-      result.neighborWeight = 0.10
-      result.causalWeight   = 0.0
-    elif isTemporal and isEntity:
-      result.intent = qiHybrid
-      result.semanticWeight = 0.25
-      result.entityWeight   = 0.30
-      result.temporalWeight = 0.30
-      result.neighborWeight = 0.15
-      result.causalWeight   = 0.0
-
-  const
-    CausalCarryOverMarkers = [
-      "therefore", "thus", "consequently", "hence", "as a result",
-      "because of that", "because of this", "for that reason",
-      "this caused", "that caused", "which caused",
-      "this led to", "that led to", "which led to",
-      "this resulted in", "that resulted in", "which resulted in",
-      "so we", "so i", "so the", "that meant", "this meant",
-    ]
-
-  func impliesPreviousCause*(text: string): bool =
-    let normalized = text.toLowerAscii().replace('\n', ' ').strip()
-    if normalized.len == 0:
-      return false
-    for marker in CausalCarryOverMarkers:
-      if normalized.startsWith(marker) or normalized.contains(marker):
-        return true
-    false
-
-  func causalTraversalDirection*(query: string): string =
-    let normalized = query.toLowerAscii()
-    if normalized.contains("what caused") or normalized.contains("why") or
-       normalized.contains("because") or normalized.contains("reason"):
-      return "in"
-    if normalized.contains("led to") or normalized.contains("lead to") or
-       normalized.contains("resulted in") or normalized.contains("effect") or
-       normalized.contains("consequence"):
-      return "out"
-    "both"
 
   type
     MagmaMemoryAdapter* = ref object
@@ -231,17 +129,11 @@ when defined(withPostgres) or defined(withSqlite):
         discard
     result = $userId & "_m" & $(maxIdx + 1)
 
-  proc entId*(userId: UserId; name: string): string =
-    $userId & "_ent_" & normalizeEntity(name).replace(" ", "_")
-
   proc commitmentNodeId*(userId: UserId; commitmentId: string): string =
     $userId & "_commit_" & commitmentId
 
   proc episodeNodeId*(userId: UserId; episodeId: string): string =
     $userId & "_episode_" & episodeId
-
-  proc lessonNodeId*(userId: UserId; lessonId: string): string =
-    $userId & "_lesson_" & lessonId
 
   func commitmentOwnerLabel(owner: CommitmentOwner): string =
     case owner
@@ -327,72 +219,71 @@ when defined(withPostgres) or defined(withSqlite):
       sourceMemoryIds: sourceMemoryIds,
     )
 
-  proc lessonMeta(lesson: Lesson): JsonNode =
-    %*{
-      "lessonId": lesson.id,
-      "confidence": lesson.confidence,
-      "sourceEpisodeId": lesson.sourceEpisodeId,
-      "retrievalTags": lesson.retrievalTags,
-    }
-
-  proc parseLesson(node: MagmaNode): Lesson =
-    let meta = if node.meta != nil: node.meta else: newJObject()
-    var retrievalTags: seq[string]
-    for item in meta{"retrievalTags"}:
-      if item.kind == JString:
-        retrievalTags.add(item.getStr())
-    result = Lesson(
-      id: meta{"lessonId"}.getStr(node.id),
-      text: node.content,
-      confidence: meta{"confidence"}.getFloat(0.0).float32,
-      sourceEpisodeId: meta{"sourceEpisodeId"}.getStr(""),
-      retrievalTags: retrievalTags,
-    )
-
-  func lessonConfidence(node: MagmaNode): float =
-    if node.meta != nil:
-      node.meta{"confidence"}.getFloat(0.0)
-    else:
-      0.0
-
   proc hasProfile*(a: MagmaMemoryAdapter; userId: UserId): bool =
     a.graph.getNode(profileId(userId)).isSome
 
-  proc loadContext*(a: MagmaMemoryAdapter; userId: UserId): UserContext =
-    var userMd = ""
+  proc readSingleNode(a: MagmaMemoryAdapter; userId: UserId;
+                      nodeType: string): Result[string, string] =
+    ## Content of the one node a user has of this type, or "" when there is
+    ## none. Read through the listing that reports a failed read: getNode
+    ## turns a failure into "not found".
+    let nodes = ? a.graph.listNodesLimited($userId, nodeType, 1,
+                                           MemoryContentReadLimit)
+    if nodes.len > 0: ok(nodes[0].content) else: ok("")
+
+  proc readUserMd*(a: MagmaMemoryAdapter;
+                   userId: UserId): Result[string, string] =
+    ## The stored profile, for callers that will write back what they read.
+    a.readSingleNode(userId, NtUserProfile)
+
+  proc readPreferences*(a: MagmaMemoryAdapter;
+                        userId: UserId): Result[string, string] =
+    ## The stored preferences, for callers that will write back what they read.
+    a.readSingleNode(userId, NtPreference)
+
+  proc readContext*(a: MagmaMemoryAdapter;
+                    userId: UserId): Result[UserContext, string] =
+    ## The user's context as the graph holds it. An error means the graph
+    ## could not be read, which is not the same as a graph with nothing in it.
     var memLines: seq[string]
-    var prefMd = ""
-    let profileNode = a.graph.getNode(profileId(userId))
-    if profileNode.isSome:
-      userMd = profileNode.get().content
-    let prefNode = a.graph.getNode(prefId(userId))
-    if prefNode.isSome:
-      prefMd = prefNode.get().content
-    ## Filter by type in the query: entity, lesson and episode nodes share the
+    let userMd = ? a.readUserMd(userId)
+    let prefMd = ? a.readPreferences(userId)
+    ## Filter by type in the query: entity and episode nodes share the
     ## same table and would otherwise push memories out of the window.
-    let memNodes = a.graph.listNodesLimited(
+    let memNodes = ? a.graph.listNodesLimited(
       $userId, NtMemory, ContextMemoryNodeLimit, MemoryContentReadLimit)
-    if memNodes.isOk:
-      for m in memNodes.get():
-        memLines.add(m.content)
-    UserContext(
+    for m in memNodes:
+      memLines.add(m.content)
+    ok(UserContext(
       userId:        userId,
       userMd:        userMd,
       memoryMd:      memLines.join("\n\n"),
       preferencesMd: prefMd,
-    )
+    ))
 
-  proc knownMemoryTexts*(a: MagmaMemoryAdapter;
-                         userId: UserId): Result[seq[string], string] =
-    ## Content of every memory node of the user, without embeddings. Used to
-    ## decide whether a MEMORY.md paragraph is already in the graph; the
-    ## context window of `loadContext` is too small for that question.
-    let nodes = ? a.graph.listNodesLimited(
-      $userId, NtMemory, KnownMemoryNodeLimit, MemoryContentReadLimit)
-    var texts = newSeqOfCap[string](nodes.len)
-    for node in nodes:
-      texts.add(node.content)
-    ok(texts)
+  proc loadContext*(a: MagmaMemoryAdapter; userId: UserId): UserContext =
+    ## readContext for callers that treat an unreadable graph as empty.
+    a.readContext(userId).valueOr(UserContext(userId: userId))
+
+  proc loadUserMd*(a: MagmaMemoryAdapter; userId: UserId): string =
+    let node = a.graph.getNode(profileId(userId))
+    if node.isSome: node.get().content else: ""
+
+  proc loadPreferences*(a: MagmaMemoryAdapter; userId: UserId): string =
+    let node = a.graph.getNode(prefId(userId))
+    if node.isSome: node.get().content else: ""
+
+  proc hasContext*(a: MagmaMemoryAdapter;
+                   userId: UserId): Result[bool, string] =
+    ## Whether the graph holds anything of this user: a memory, a profile or
+    ## preferences. Each kind is read through the listing that reports a
+    ## failed read, never through getNode, which turns a failure into "not
+    ## found": "nothing there" must not be concluded from a read that failed.
+    for nodeType in [NtMemory, NtUserProfile, NtPreference]:
+      let found = ? a.graph.listNodesLimited($userId, nodeType, 1, 1)
+      if found.len > 0:
+        return ok(true)
+    ok(false)
 
   proc stats*(a: MagmaMemoryAdapter; userId: UserId): MagmaStats =
     a.graph.statsForUser($userId)
@@ -404,7 +295,7 @@ when defined(withPostgres) or defined(withSqlite):
                   nid, userId, nodeType, content: string;
                   emb: seq[float32];
                   ts: int64;
-                  meta: JsonNode = nil) =
+                  meta: JsonNode = nil): Result[void, string] {.discardable.} =
     a.graph.upsertNode(MagmaNode(
       id: nid,
       userId: userId,
@@ -415,15 +306,18 @@ when defined(withPostgres) or defined(withSqlite):
       meta: if meta != nil: meta else: %*{},
     ))
 
-  proc saveUserMd*(a: MagmaMemoryAdapter; userId: UserId; content: string) =
+  proc saveUserMd*(a: MagmaMemoryAdapter; userId: UserId;
+                   content: string): Result[void, string] {.discardable.} =
     let nid = profileId(userId)
     a.upsertNode(nid, $userId, NtUserProfile, content, a.embedFn(content), getTime().toUnix())
 
-  proc savePreferences*(a: MagmaMemoryAdapter; userId: UserId; content: string) =
+  proc savePreferences*(a: MagmaMemoryAdapter; userId: UserId;
+                        content: string): Result[void, string] {.discardable.} =
     let nid = prefId(userId)
     a.upsertNode(nid, $userId, NtPreference, content, a.embedFn(content), getTime().toUnix())
 
-  proc saveCommitment*(a: MagmaMemoryAdapter; userId: UserId; commitment: Commitment) =
+  proc saveCommitment*(a: MagmaMemoryAdapter; userId: UserId;
+                       commitment: Commitment): Result[void, string] {.discardable.} =
     let nid = commitmentNodeId(userId, commitment.id)
     a.upsertNode(
       nid,
@@ -452,6 +346,7 @@ when defined(withPostgres) or defined(withSqlite):
     var commitment = parseCommitment(current.get())
     commitment.status = status
     commitment.score = commitmentScore(commitment, getTime().toUnix())
+    ## The status counts as updated only when the store took the write.
     a.upsertNode(
       nid,
       $userId,
@@ -460,10 +355,10 @@ when defined(withPostgres) or defined(withSqlite):
       a.embedFn(commitment.sourceText),
       current.get().timestamp,
       commitmentMeta(commitment),
-    )
-    true
+    ).isOk
 
-  proc saveEpisode*(a: MagmaMemoryAdapter; userId: UserId; episode: EpisodeJournal) =
+  proc saveEpisode*(a: MagmaMemoryAdapter; userId: UserId;
+                    episode: EpisodeJournal): Result[void, string] {.discardable.} =
     let nid = episodeNodeId(userId, episode.id)
     var meta = episodeMeta(episode)
     meta["summary"] = %episode.summary
@@ -483,80 +378,27 @@ when defined(withPostgres) or defined(withSqlite):
       for idx in countdown(nodes.high, 0):
         result.add(parseEpisode(nodes[idx]))
 
-  proc saveLesson*(a: MagmaMemoryAdapter; userId: UserId; lesson: Lesson) =
-    let nid = lessonNodeId(userId, lesson.id)
-    a.upsertNode(
-      nid,
-      $userId,
-      NtLesson,
-      lesson.text,
-      a.embedFn(lesson.text),
-      getTime().toUnix(),
-      lessonMeta(lesson),
-    )
-
-  proc loadLessons*(a: MagmaMemoryAdapter; userId: UserId): seq[Lesson] =
-    let nodes = a.graph.listNodes($userId, NtLesson)
-    if nodes.len > 0:
-      for idx in countdown(nodes.high, 0):
-        result.add(parseLesson(nodes[idx]))
-
-  proc extractAndSaveLessons*(a: MagmaMemoryAdapter;
-                              userId: UserId;
-                              episodes: seq[EpisodeJournal];
-                              commitments: seq[Commitment];
-                              maxLessonsPerSource = 1): int =
-    for episode in episodes:
-      for lesson in extractLessonsFromEpisode(episode, maxLessons = maxLessonsPerSource):
-        a.saveLesson(userId, lesson)
-        inc result
-    for commitment in commitments:
-      for lesson in extractLessonsFromCommitmentOutcome(
-          commitment, maxLessons = maxLessonsPerSource):
-        a.saveLesson(userId, lesson)
-        inc result
-
   proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string;
-                     origin = MemoryOrigin()) =
+                     origin = MemoryOrigin()): Result[void, string]
+                     {.discardable.} =
+    ## Errors when the store did not take the node. The store reports that
+    ## as a plain refusal, so the message is this adapter's.
     let nid = a.memId(userId)
     let emb = a.embedFn(text)
     let ts = getTime().toUnix()
     let prevMem = a.graph.getLastNode($userId, nodeType = NtMemory)
-    let emptyMeta = %*{}
-    discard a.graph.insertNode(MagmaNode(
+    let stored = a.graph.insertNode(MagmaNode(
       id: nid, userId: $userId, nodeType: NtMemory,
       content: text, embedding: emb, timestamp: ts,
       meta: originToMeta(origin),
     ))
+    if not stored:
+      return err("memory graph did not store the entry " & nid)
+    ## The only structure kept between memories is their order. Entity and
+    ## causal edges came from English sentence patterns and are not written.
     if prevMem.isSome and prevMem.get().nodeType == NtMemory:
       a.graph.linkTemporal(prevMem.get().id, nid)
-      if impliesPreviousCause(text):
-        discard a.graph.insertEdge(MagmaEdge(
-          fromId: prevMem.get().id, toId: nid, edgeType: EdgeCausal,
-          weight: 1.0, meta: emptyMeta,
-        ))
-    let triples = text.extractTriples().filterValidTriples()
-    for t in triples:
-      if t.subject.isValidEntity:
-        let sId = entId(userId, t.subject)
-        discard a.graph.insertNode(MagmaNode(
-          id: sId, userId: $userId, nodeType: NtEntity,
-          content: t.subject, timestamp: ts, meta: emptyMeta,
-        ))
-        discard a.graph.insertEdge(MagmaEdge(
-          fromId: nid, toId: sId, edgeType: EdgeMentions,
-          weight: t.confidence.float64, meta: emptyMeta,
-        ))
-      if t.obj.isValidEntity and t.obj != t.subject:
-        let oId = entId(userId, t.obj)
-        discard a.graph.insertNode(MagmaNode(
-          id: oId, userId: $userId, nodeType: NtEntity,
-          content: t.obj, timestamp: ts, meta: emptyMeta,
-        ))
-        discard a.graph.insertEdge(MagmaEdge(
-          fromId: nid, toId: oId, edgeType: EdgeAbout,
-          weight: t.confidence.float64, meta: emptyMeta,
-        ))
+    ok()
 
   proc adjacentMemoryId(a: MagmaMemoryAdapter; nodeId, direction: string): string =
     ## Id on the other end of the TEMPORAL edge closest to `nodeId`. Stores
@@ -614,16 +456,19 @@ when defined(withPostgres) or defined(withSqlite):
                          query: string;
                          limit: int;
                          rerankFnOverride: RerankFn = nil): seq[MemoryHit] =
+    ## Hybrid recall: ranked lists by embedding, by literal terms and, for
+    ## queries about time, by recency and temporal adjacency are fused by
+    ## reciprocal rank. With no embedding available the literal terms alone
+    ## still rank.
     type
       RankedMemory = object
         id:          string
         content:     string
         timestamp:   int64
         semanticScore: float
-        entityScore:   float
+        lexicalScore:  float
         temporalScore: float
         neighborScore: float
-        causalScore:   float
         baseScore:   float
         rerankScore: float32
         finalScore:  float32
@@ -653,56 +498,50 @@ when defined(withPostgres) or defined(withSqlite):
 
     proc addSignal(n: MagmaNode;
                    semantic = 0.0;
-                   entity = 0.0;
+                   lexical = 0.0;
                    temporal = 0.0;
-                   neighbor = 0.0;
-                   causal = 0.0) =
+                   neighbor = 0.0) =
       ensureNode(n)
       var entry = rankedById[n.id]
       entry.semanticScore += semantic
-      entry.entityScore += entity
+      entry.lexicalScore += lexical
       entry.temporalScore += temporal
       entry.neighborScore += neighbor
-      entry.causalScore += causal
-      entry.baseScore = entry.semanticScore + entry.entityScore +
-                        entry.temporalScore + entry.neighborScore +
-                        entry.causalScore
+      entry.baseScore = entry.semanticScore + entry.lexicalScore +
+                        entry.temporalScore + entry.neighborScore
       rankedById[n.id] = entry
 
-    let semanticHits = a.graph.searchSimilar(uid, emb, topK = semanticTopK)
+    ## Both windows are restricted to memories in the store, before the
+    ## limit: node types that are no longer written may still be in the table.
+    let semanticHits = a.graph.searchSimilar(uid, emb, topK = semanticTopK,
+                                             nodeType = NtMemory)
     for rank, hit in semanticHits:
-      if hit.node.nodeType in [NtMemory, NtLesson]:
-        let lessonBoost =
-          if hit.node.nodeType == NtLesson:
-            clamp(hit.node.lessonConfidence, 0.35, 1.0)
-          else:
-            1.0
+      if hit.node.nodeType == NtMemory:
         addSignal(hit.node, semantic = rrfScoreWeighted(
-          rank, policy.semanticWeight * lessonBoost))
+          rank, policy.semanticWeight))
 
-    if policy.intent in {qiEntity, qiHybrid}:
-      for hit in semanticHits:
-        if hit.node.nodeType != NtMemory:
-          continue
-        let entityNeighbors = a.graph.traverseNeighbors(
-          hit.node.id, edgeTypes = @[EdgeMentions, EdgeAbout], maxDepth = 1)
-        for rank, neighbor in entityNeighbors:
-          let score = rrfScoreWeighted(rank, policy.entityWeight)
-          addSignal(neighbor, entity = score)
-          let memNeighbors = a.graph.traverseNeighbors(
-            neighbor.id, edgeTypes = @[EdgeMentions, EdgeAbout], maxDepth = 1)
-          for memNode in memNeighbors:
-            if memNode.nodeType == NtMemory:
-              addSignal(memNode, entity = score * 0.5)
+    ## Literal terms, over the most recent memory nodes. The candidate read
+    ## carries no meta and may clip content, so each ranked node is fetched
+    ## whole before it joins the pool.
+    let lexicalCandidates = a.graph.listNodesLimited(
+      uid, NtMemory, LexicalCandidateLimit, LexicalCandidateContentBytes)
+    if lexicalCandidates.isOk:
+      var texts = newSeqOfCap[string](lexicalCandidates.get().len)
+      for candidate in lexicalCandidates.get():
+        texts.add(candidate.content)
+      for rank, index in rankTextsLexically(texts, query, semanticTopK):
+        let node = a.graph.getNode(lexicalCandidates.get()[index].id)
+        if node.isSome and node.get().nodeType == NtMemory:
+          addSignal(node.get(), lexical = rrfScoreWeighted(
+            rank, policy.lexicalWeight))
 
     let recentNodes = a.graph.queryByTimeRange(uid, 0, getTime().toUnix() + 1,
-                                               limit = recentTopK)
-    if policy.intent in {qiTemporal, qiHybrid, qiCausal}:
+                                               limit = recentTopK,
+                                               nodeType = NtMemory)
+    if policy.intent == qiTemporal:
       for rank, node in recentNodes:
         if node.nodeType == NtMemory:
           addSignal(node, temporal = rrfScoreWeighted(rank, policy.temporalWeight))
-
-    if policy.intent in {qiTemporal, qiHybrid}:
       for hit in semanticHits:
         if hit.node.nodeType != NtMemory:
           continue
@@ -711,21 +550,6 @@ when defined(withPostgres) or defined(withSqlite):
         for rank, neighbor in temporalNeighbors:
           addSignal(neighbor, neighbor = rrfScoreWeighted(rank, policy.neighborWeight))
 
-    if policy.intent in {qiCausal, qiHybrid} and policy.causalWeight > 0.0:
-      let causalDirection = causalTraversalDirection(query)
-      for hit in semanticHits:
-        if hit.node.nodeType != NtMemory:
-          continue
-        let causalEdges = a.graph.getEdges(
-          hit.node.id, direction = causalDirection, edgeType = EdgeCausal)
-        for rank, edge in causalEdges:
-          let neighborId =
-            if edge.fromId == hit.node.id: edge.toId
-            else: edge.fromId
-          let neighbor = a.graph.getNode(neighborId)
-          if neighbor.isSome and neighbor.get().nodeType == NtMemory:
-            addSignal(neighbor.get(), causal = rrfScoreWeighted(rank, policy.causalWeight))
-
     if rankedById.len == 0:
       for m in recentNodes:
         if m.nodeType == NtMemory:
@@ -733,7 +557,7 @@ when defined(withPostgres) or defined(withSqlite):
 
     var rankedMemories: seq[RankedMemory]
     for _, entry in rankedById:
-      if entry.kind in [NtMemory, NtLesson]:
+      if entry.kind == NtMemory:
         rankedMemories.add(entry)
     rankedMemories.sort(proc(x, y: RankedMemory): int =
       cmp(y.baseScore, x.baseScore))
@@ -768,10 +592,9 @@ when defined(withPostgres) or defined(withSqlite):
           timestamp: entry.timestamp,
           baseScore: entry.finalScore,
           semanticScore: clampUnit(entry.semanticScore.float32),
-          entityScore: clampUnit(entry.entityScore.float32),
+          lexicalScore: clampUnit(entry.lexicalScore.float32),
           temporalScore: clampUnit(entry.temporalScore.float32),
           neighborScore: clampUnit(entry.neighborScore.float32),
-          causalScore: clampUnit(entry.causalScore.float32),
         )
       let rerankScores = rerankFn(query, candidates)
       if rerankScores.len == rerankCount:
@@ -832,38 +655,41 @@ when defined(withPostgres) or defined(withSqlite):
     for node in a.graph.listNodes($userId):
       discard a.graph.deleteNode(node.id)
 
-  proc clearMemory*(a: MagmaMemoryAdapter; userId: UserId) =
+  proc clearMemory*(a: MagmaMemoryAdapter;
+                    userId: UserId): Result[void, string] {.discardable.} =
+    ## Deletes the user's memories. The store's delete answers false both for
+    ## "was not there" and for "failed", so the result is checked by reading
+    ## back: clearing nothing is a success, leaving a memory behind is not.
     for node in a.graph.listNodes($userId, NtMemory):
       discard a.graph.deleteNode(node.id)
     for node in a.graph.listNodes($userId, NtEntity):
       if a.graph.getEdges(node.id, direction = "both").len == 0:
         discard a.graph.deleteNode(node.id)
+    let left = ? a.graph.listNodesLimited($userId, NtMemory, 1, 1)
+    if left.len > 0:
+      return err("memories could not be deleted from the graph")
+    ok()
 
-  proc resetBootstrap*(a: MagmaMemoryAdapter; userId: UserId) =
+  proc resetBootstrap*(a: MagmaMemoryAdapter;
+                       userId: UserId): Result[void, string] {.discardable.} =
+    ## Deletes profile and preferences; checked by reading back, as above.
     discard a.graph.deleteNode(profileId(userId))
     discard a.graph.deleteNode(prefId(userId))
+    for nodeType in [NtUserProfile, NtPreference]:
+      let left = ? a.graph.listNodesLimited($userId, nodeType, 1, 1)
+      if left.len > 0:
+        return err("profile and preferences could not be deleted from the graph")
+    ok()
 
 else:
   type
     MagmaMemoryAdapter* = ref object
-    QueryIntent* = enum
-      qiSemantic, qiEntity, qiTemporal, qiCausal, qiHybrid
-    QueryPolicy* = object
-      intent*:         QueryIntent
-      semanticWeight*: float
-      entityWeight*:   float
-      temporalWeight*: float
-      neighborWeight*: float
-      causalWeight*:   float
     SearchConfig* = object
       semanticTopKMultiplier*: int
       recentTopKMultiplier*:   int
       rerankPoolSize*:         int
       rerankWeight*:           float32
 
-  func defaultPolicy*(): QueryPolicy =
-    QueryPolicy(intent: qiSemantic, semanticWeight: 0.4, entityWeight: 0.25,
-                temporalWeight: 0.25, neighborWeight: 0.1, causalWeight: 0.0)
   func defaultSearchConfig*(): SearchConfig =
     SearchConfig(
       semanticTopKMultiplier: 8,
@@ -871,7 +697,6 @@ else:
       rerankPoolSize: 24,
       rerankWeight: 0.85'f32,
     )
-  func classifyQuery*(query: string): QueryPolicy = defaultPolicy()
   proc newMagmaMemoryAdapter*(dsn: string;
                               embedFn: EmbedFn;
                               rerankFn: RerankFn = nil;
@@ -892,21 +717,37 @@ else:
     UserContext(userId: userId)
   proc stats*(a: MagmaMemoryAdapter; userId: UserId): MagmaStats = MagmaStats()
   proc stats*(a: MagmaMemoryAdapter): MagmaStats = MagmaStats()
-  proc saveUserMd*(a: MagmaMemoryAdapter; userId: UserId; content: string) = discard
+  proc saveUserMd*(a: MagmaMemoryAdapter; userId: UserId;
+                   content: string): Result[void, string]
+                   {.discardable.} = err("no memory graph backend in this build")
   proc appendMemory*(a: MagmaMemoryAdapter; userId: UserId; text: string;
-                     origin = MemoryOrigin()) = discard
-  proc savePreferences*(a: MagmaMemoryAdapter; userId: UserId; content: string) = discard
-  proc saveCommitment*(a: MagmaMemoryAdapter; userId: UserId; commitment: Commitment) = discard
+                     origin = MemoryOrigin()): Result[void, string]
+                     {.discardable.} = err("no memory graph backend in this build")
+  proc loadUserMd*(a: MagmaMemoryAdapter; userId: UserId): string = ""
+  proc loadPreferences*(a: MagmaMemoryAdapter; userId: UserId): string = ""
+  proc readContext*(a: MagmaMemoryAdapter;
+                    userId: UserId): Result[UserContext, string] =
+    err("no memory graph backend in this build")
+  proc readUserMd*(a: MagmaMemoryAdapter;
+                   userId: UserId): Result[string, string] =
+    err("no memory graph backend in this build")
+  proc readPreferences*(a: MagmaMemoryAdapter;
+                        userId: UserId): Result[string, string] =
+    err("no memory graph backend in this build")
+  proc hasContext*(a: MagmaMemoryAdapter;
+                   userId: UserId): Result[bool, string] =
+    err("no memory graph backend in this build")
+  proc savePreferences*(a: MagmaMemoryAdapter; userId: UserId;
+                        content: string): Result[void, string]
+                        {.discardable.} = err("no memory graph backend in this build")
+  proc saveCommitment*(a: MagmaMemoryAdapter; userId: UserId;
+                       commitment: Commitment): Result[void, string]
+                       {.discardable.} = err("no memory graph backend in this build")
   proc loadCommitments*(a: MagmaMemoryAdapter; userId: UserId): seq[Commitment] = @[]
-  proc saveEpisode*(a: MagmaMemoryAdapter; userId: UserId; episode: EpisodeJournal) = discard
+  proc saveEpisode*(a: MagmaMemoryAdapter; userId: UserId;
+                    episode: EpisodeJournal): Result[void, string]
+                    {.discardable.} = err("no memory graph backend in this build")
   proc loadEpisodes*(a: MagmaMemoryAdapter; userId: UserId): seq[EpisodeJournal] = @[]
-  proc saveLesson*(a: MagmaMemoryAdapter; userId: UserId; lesson: Lesson) = discard
-  proc loadLessons*(a: MagmaMemoryAdapter; userId: UserId): seq[Lesson] = @[]
-  proc extractAndSaveLessons*(a: MagmaMemoryAdapter;
-                              userId: UserId;
-                              episodes: seq[EpisodeJournal];
-                              commitments: seq[Commitment];
-                              maxLessonsPerSource = 1): int = 0
   proc updateCommitmentStatus*(a: MagmaMemoryAdapter;
                                userId: UserId;
                                commitmentId: string;
@@ -914,5 +755,7 @@ else:
   proc search*(a: MagmaMemoryAdapter; userId: UserId; query: string; limit: int): seq[MemoryHit] = @[]
   proc toSearchFn*(a: MagmaMemoryAdapter): SearchFn = nil
   proc deleteUser*(a: MagmaMemoryAdapter; userId: UserId) = discard
-  proc clearMemory*(a: MagmaMemoryAdapter; userId: UserId) = discard
-  proc resetBootstrap*(a: MagmaMemoryAdapter; userId: UserId) = discard
+  proc clearMemory*(a: MagmaMemoryAdapter; userId: UserId): Result[void, string]
+                    {.discardable.} = err("no memory graph backend in this build")
+  proc resetBootstrap*(a: MagmaMemoryAdapter; userId: UserId): Result[void, string]
+                       {.discardable.} = err("no memory graph backend in this build")

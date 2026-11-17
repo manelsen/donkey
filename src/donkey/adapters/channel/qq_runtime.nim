@@ -98,12 +98,12 @@ proc handleQQModelCallback(msg: InboundMessage;
     let model = resolveModelCallback(callback.provider, callback.model)
     if model.len == 0:
       return true
-    memory.saveChannelPreference(msg.userId, "provider", callback.provider)
-    memory.saveChannelPreference(msg.userId, "model", model)
+    let saved = memory.saveChannelPreferences(
+      msg.userId, [("provider", callback.provider), ("model", model)])
     qqAdapter.send(OutboundMessage(
       userId: msg.userId,
       channel: ckQQ,
-      text: qqModelConfirmedText(callback.provider, model),
+      text: savedOrError(saved, qqModelConfirmedText(callback.provider, model)),
       replyTo: msg.channelId,
     )).isOkOr:
       discard
@@ -140,11 +140,11 @@ proc handleQQThinkingCallback(msg: InboundMessage;
     return false
   let level = callback.value
   if level in ThinkLevels:
-    memory.saveChannelPreference(msg.userId, "thinking", level)
+    let saved = memory.saveChannelPreference(msg.userId, "thinking", level)
     qqAdapter.send(OutboundMessage(
       userId: msg.userId,
       channel: ckQQ,
-      text: qqThinkingConfirmedText(level),
+      text: savedOrError(saved, qqThinkingConfirmedText(level)),
       replyTo: msg.channelId,
     )).isOkOr:
       discard
@@ -294,8 +294,7 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
           )).isOkOr:
             log.error("qq send lcaGenerateLinkCode failed for user=" & $userId & " reason=" & error)
         of lcaClearMemory:
-          memory.clearMemory(userId)
-          qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: "Memórias apagadas.")).isOkOr:
+          qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: clearMemoryReply(memory, userId))).isOkOr:
             log.error("qq send lcaClearMemory failed for user=" & $userId & " reason=" & error)
         of lcaDoctorReport:
           qqAdapter.send(OutboundMessage(

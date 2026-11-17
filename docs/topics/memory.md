@@ -5,18 +5,18 @@ Current storage model for the SQLite-first runtime.
 
 Donkey now runs SQLite-first by default.
 
-The memory system has two cooperating layers:
+The memory system has one store per mode:
 
 ```text
-F1: Markdown paddock files per user
-F2: MAGMA graph state, backed by SQLite by default
+With MAGMA (default): the graph is the source of truth.
+                      The Markdown files in the paddock are an export of it.
+Without MAGMA (F1):   the Markdown files in the paddock are the store.
 ```
 
-Both matter:
-
-- Markdown remains the user-facing filesystem shape inside each paddock.
-- MAGMA is the structured runtime memory used for identity, preferences,
-  retrieval, and agent state.
+- MAGMA holds identity, preferences, memories, episodes and commitments.
+- The Markdown files stay inspectable by humans and easy to back up, but with
+  MAGMA they are written, not read: editing them does not change what the
+  agent knows.
 
 ## Default Storage Layout
 
@@ -79,18 +79,28 @@ This means the normal install no longer requires:
 - separate `libsqlite3`
 - separate `sqlite-vec`
 
-## Identity and Preferences
+## Source of Truth
 
-Identity and preferences are no longer "Markdown only".
+With MAGMA every operation has one path:
 
-The runtime keeps Markdown and MAGMA in sync so that:
+- writes go to the graph; `USER.md` and `PREFERENCES.md` are then rewritten
+  and `MEMORY.md` gets the new entry appended, as an export;
+- reads come from the graph, including profile, agent identity, user listing
+  and revocation.
 
-- onboarding identity persists across turns
-- provider/model preferences survive channel/runtime actions
-- partial state in one layer does not silently erase the other
+The Markdown files are read in two cases only:
 
-That is why the modern runtime treats Markdown plus MAGMA as one logical memory
-system rather than two disconnected stores.
+1. the graph holds nothing of the user yet: a paddock that predates the graph
+   is imported once, and its memories are tagged `markdown`;
+2. the graph cannot be read: the last export is returned instead of nothing.
+
+To bring edited files into the graph on purpose, use
+`donkey ctl memory import <uuid>`. It replaces what the graph holds for that
+user with the content of the files. `donkey ctl memory export <uuid> [dir]`
+writes the graph view as Markdown.
+
+If the graph does not take a memory, nothing is exported and the error is
+returned to the caller: auto-capture logs it and `memory_ingest` reports it.
 
 ## PostgreSQL-backed MAGMA
 
@@ -106,14 +116,9 @@ If `DONKEY_PG_DSN` is unset, Donkey remains on the SQLite-first path.
 
 ## Memory Port Shape
 
-At the storage boundary, the runtime still exposes a memory abstraction that
-loads and saves:
-
-- `USER.md`
-- `MEMORY.md`
-- `PREFERENCES.md`
-
-plus structured graph state behind the scenes.
+At the storage boundary, the runtime exposes one memory abstraction that
+loads and saves the user profile, the memories and the preferences. Whether
+they live in the graph or in the Markdown files is decided inside the adapter.
 
 ## Common Operations
 
@@ -133,21 +138,43 @@ Recent hardening in the runtime makes this safer:
 
 - operational failure text is no longer auto-captured as memory
 - turns are no longer truncated at tiny limits by default
-- identity and preference sync are preserved across SQLite-first flows
 - short user messages are captured too, because a short message is often a
   correction; only greetings, bare acknowledgements and slash commands are
   skipped (policy in `domain/memory/capture_pure.nim`)
 
-## Markdown ↔ MAGMA Sync
+## What Is Stored, and What Is Not
 
-`MEMORY.md` stays editable by hand. On each context load, paragraphs of
-`MEMORY.md` that the graph has never stored are imported once. The comparison
-is per line and runs against every memory node of the user, so entries the
-agent wrote itself are not imported a second time, however many nodes exist.
-
-Memory nodes are ordered by timestamp and then by insertion order. The
-`TEMPORAL` edge of a new memory always points from the memory inserted
+A memory is stored as it was said. The only structure kept between memories
+is their order: each new memory gets a `TEMPORAL` edge from the one inserted
 immediately before it, including bursts written within the same second.
+
+Three things earlier versions did are gone:
+
+- **Lessons.** No rule is distilled from an episode or from a commitment
+  outcome. In our own experiments, lessons distilled from episodes lost to the
+  raw episodes, including where a learnable rule existed.
+- **Entity graph.** No entity nodes or `MENTIONS`/`ABOUT` edges. They were
+  extracted with English sentence patterns.
+- **Causal graph.** No `CAUSAL` edges. They were inferred from English
+  markers.
+
+Nodes of those kinds written by earlier versions stay in the database and are
+no longer read.
+
+## Recall
+
+Each turn, the memories for the user's message are ranked by two lists fused
+by reciprocal rank, at equal weight:
+
+- **meaning**: nearest embeddings;
+- **literal terms**: the words of the message, the same matching used by
+  `session_search`. Names, error messages and file names are found here.
+
+A message that asks about time (`when`, `last`, `yesterday`; `quando`,
+`último`, `ontem`, ...) also ranks by recency and pulls in the memories next
+to its hits. The words are matched whole, in English and Portuguese. Relevance then decays
+with a 30-day half-life. Without an embedding provider the literal terms
+still rank.
 
 ## Memory Origin
 
@@ -194,9 +221,12 @@ The policy and the rendering live in `domain/memory/recall_pure.nim`.
 ## Session Transcripts
 
 `sessions/<id>.jsonl` is append-only: one message per line, each with the
-time it was first stored (`ts`, milliseconds). The live history is trimmed,
-compacted and rewound, but the transcript keeps every message that was said.
-`session_search` reads the most recent 512 KiB of each transcript.
+time it was first stored (`ts`, milliseconds), its number in the session
+(`seq`) and the highest number in the file up to that line (`hi`). The live history is trimmed, compacted and rewound, but the
+transcript keeps every message that was said: a message is appended when its
+number is not in the file yet. Compaction summaries have no number and are
+never written. `session_search` reads the most recent 512 KiB of each
+transcript, newest lines first.
 
 ## Ingesting Documents and Attachments
 
@@ -223,12 +253,12 @@ the profile, use the normal identity/onboarding flow.
 For a normal install, prefer the embedded SQLite path. Reach for PostgreSQL only
 when you have a concrete scale or operational reason.
 
-### 2. Inspect both layers when debugging
+### 2. Debug against the graph
 
-If something looks wrong, check:
-
-- the paddock files in `~/.donkey/paddocks/<user_id>/`
-- the active MAGMA backend reported by `donkey doctor` or `donkey about`
+If something looks wrong, check the active MAGMA backend reported by
+`donkey doctor` or `donkey about`, and export the graph view with
+`donkey ctl memory export <uuid>`. The paddock files in
+`~/.donkey/paddocks/<user_id>/` show the last export, not the live state.
 
 ### 3. Keep paddock ownership clean
 

@@ -18,7 +18,6 @@ import ../../core/pipeops
 import ../../core/types
 import ../../ports/memory
 import ../../domain/memory/episode_pure
-import ../../domain/memory/lessons_pure
 import ../../domain/message
 import ../../domain/personality
 export json
@@ -416,43 +415,47 @@ proc saveEpisodeMd(a: MarkdownMemoryAdapter; userId: UserId;
   a.appendMemory(userId, "\n## Episode: " & episode.title & "\n" &
                  episode.summary & "\n")
 
-proc extractLessonsMd(a: MarkdownMemoryAdapter; userId: UserId;
-                      episodes: seq[EpisodeJournal]): Result[int, string] =
-  var count = 0
-  for episode in episodes:
-    for lesson in extractLessonsFromEpisode(episode, maxLessons = 2):
-      let saved = a.appendMemory(userId, "- Lesson: " & lesson.text & "\n")
-      if saved.isErr:
-        return err(saved.error)
-      inc count
-  ok(count)
+template guarded(what: string; operation: untyped): Result[void, string] =
+  ## The runtime port promises not to raise. The operations of this adapter
+  ## return a Result but can still raise from the standard library; the
+  ## conversion belongs here, in the adapter.
+  try:
+    operation
+  except Exception as e:
+    Result[void, string].err(what & ": " & e.msg)
 
 proc toRuntimePort*(a: MarkdownMemoryAdapter): MemoryRuntimePort =
   MemoryRuntimePort(
     hasProfile:       proc(userId: UserId): bool {.gcsafe.} = a.hasProfile(userId).valueOr(false),
     loadContext:      proc(userId: UserId): UserContext {.gcsafe.} =
                         a.loadContext(userId).valueOr(UserContext(userId: userId)),
-    saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} = discard a.saveUserMd(userId, content),
-    appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = discard a.appendMemory(userId, text),
-    appendMemoryResult: proc(userId: UserId; text: string):
-                          Result[void, string] {.gcsafe.} =
-                          a.appendMemory(userId, text),
+    saveUserMd:       proc(userId: UserId; content: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
+                        guarded("save user profile", a.saveUserMd(userId, content)),
+    appendMemory:     proc(userId: UserId; text: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
+                        guarded("append memory", a.appendMemory(userId, text)),
     appendExtractedMemory: proc(userId: UserId; text: string): Result[void, string]
                               {.gcsafe, raises: [].} =
                             a.appendMemory(userId, text),
     saveEpisode: proc(userId: UserId; episode: EpisodeJournal): Result[void, string]
                    {.gcsafe, raises: [].} =
                    saveEpisodeMd(a, userId, episode),
-    extractLessons: proc(userId: UserId; episodes: seq[EpisodeJournal]): Result[int, string]
-                      {.gcsafe, raises: [].} =
-                      extractLessonsMd(a, userId, episodes),
-    savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = discard a.savePreferences(userId, content),
-    clearMemory:      proc(userId: UserId) {.gcsafe.} = discard a.clearMemory(userId),
-    resetBootstrap:   proc(userId: UserId) {.gcsafe.} = discard a.resetBootstrap(userId),
+    savePreferences:  proc(userId: UserId; content: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
+                        guarded("save preferences", a.savePreferences(userId, content)),
+    clearMemory:      proc(userId: UserId): Result[void, string]
+                        {.gcsafe, raises: [].} =
+                        guarded("clear memory", a.clearMemory(userId)),
+    resetBootstrap:   proc(userId: UserId): Result[void, string]
+                        {.gcsafe, raises: [].} =
+                        guarded("reset bootstrap", a.resetBootstrap(userId)),
     saveSession:      proc(userId: UserId; sessionId: string; history: ConversationHistory) {.gcsafe.} =
                         discard a.saveSession(userId, sessionId, history),
-    saveIdentity:     proc(userId: UserId; traits: PersonalityTraits; name: string) {.gcsafe.} =
-                        discard a.saveIdentity(userId, traits, name),
+    saveIdentity:     proc(userId: UserId; traits: PersonalityTraits;
+                           name: string): Result[void, string]
+                        {.gcsafe, raises: [].} =
+                        guarded("save identity", a.saveIdentity(userId, traits, name)),
     loadIdentity:     proc(userId: UserId): (string, PersonalityTraits) {.gcsafe.} =
                         a.loadIdentity(userId).valueOr(("", PersonalityTraits())),
     paddockDir:       proc(userId: UserId): string {.gcsafe.} = a.paddockDir(userId),

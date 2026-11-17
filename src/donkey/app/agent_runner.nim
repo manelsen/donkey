@@ -152,7 +152,8 @@ proc runOnboardingTurn*(runner: var AgentRunner;
   let parsed = parseOnboardingResponse(resp.text)
   if parsed.complete:
     runner.memory.saveUserMd(userId,
-      bootstrapUserMd(parsed.name, parsed.callMe, parsed.tz, parsed.lang))
+      bootstrapUserMd(parsed.name, parsed.callMe, parsed.tz, parsed.lang)).isOkOr:
+        return err("onboarding profile not saved: " & error)
     runner.logger.info("onboarding complete user=" & $userId)
 
   ok(resp.text)

@@ -180,3 +180,38 @@ func rankSessionRecords*(records: seq[SessionSearchRecord]; query: string;
       cmp(a.sessionId, b.sessionId))
   if result.len > capped:
     result.setLen(capped)
+
+func rankTextsLexically*(texts: openArray[string]; query: string;
+                         limit: int): seq[int] =
+  ## Indexes of the texts that match the query, best first. Same matching as
+  ## session search: every term must be present, and only when no text holds
+  ## them all do partial matches count. Role and recency play no part here;
+  ## ties keep the input order.
+  let allTerms = queryTerms(query)
+  if limit <= 0 or allTerms.len == 0:
+    return
+  ## Matching is by substring, so a one- or two-letter term ("o", "de") is
+  ## inside almost every text. Such terms are dropped when longer ones exist.
+  var terms: seq[string]
+  for term in allTerms:
+    if term.runeLen >= 3:
+      terms.add(term)
+  let query = if terms.len > 0: terms.join(" ") else: query
+  var complete: seq[tuple[score: float32, index: int]]
+  var partial: seq[tuple[score: float32, index: int]]
+  for index, text in texts:
+    let record = SessionSearchRecord(text: text)
+    let score = scoreSessionRecord(record, query, 0)
+    if score <= 0:
+      continue
+    if matchesAllTerms(record, query):
+      complete.add((score, index))
+    else:
+      partial.add((score, index))
+  var ranked = if complete.len > 0: complete else: partial
+  ranked.sort(proc(a, b: tuple[score: float32, index: int]): int =
+    if a.score != b.score: cmp(b.score, a.score)
+    else: cmp(a.index, b.index))
+  for i in 0 ..< min(limit, ranked.len):
+    result.add(ranked[i].index)
+

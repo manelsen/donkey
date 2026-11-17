@@ -218,12 +218,12 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
       core_log.log(logger, core_log.lvlWarn,
         "dc model selection expired: " & callback.model)
       return true
-    memory.saveChannelPreference(userId, "provider", callback.provider)
-    memory.saveChannelPreference(userId, "model", model)
+    let saved = memory.saveChannelPreferences(
+      userId, [("provider", callback.provider), ("model", model)])
     let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotModels)
     if kbdId.len > 0:
       dcAdapter.smartEditKeyboard(event, userId, kbdId,
-        "Modelo definido: " & callback.provider & " / " & model,
+        savedOrError(saved, "Modelo definido: " & callback.provider & " / " & model),
         @[]).isOkOr:
           core_log.log(logger, core_log.lvlError, "dc model confirm: " & error)
       common_runtime.clearUiMsgId(presentationState, ckDiscord, userId, UiSlotModels)
@@ -231,7 +231,7 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
       dcAdapter.send(OutboundMessage(
         userId: userId,
         channel: ckDiscord,
-        text: "Modelo definido: " & callback.provider & " / " & model,
+        text: savedOrError(saved, "Modelo definido: " & callback.provider & " / " & model),
       )).isOkOr:
         core_log.log(logger, core_log.lvlError, "dc model confirm: " & error)
     true
@@ -268,28 +268,28 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
   of cbkThinkSet:
     let level = callback.value
     if level in ThinkLevels:
-      memory.saveChannelPreference(userId, "thinking", level)
+      let saved = memory.saveChannelPreference(userId, "thinking", level)
       let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotThink)
       if kbdId.len > 0:
-        dcAdapter.smartEditKeyboard(event, userId, kbdId, "Thinking definido: " & level, @[]).isOkOr:
+        dcAdapter.smartEditKeyboard(event, userId, kbdId, savedOrError(saved, "Thinking definido: " & level), @[]).isOkOr:
           core_log.log(logger, core_log.lvlError, "dc think confirm: " & error)
         common_runtime.clearUiMsgId(presentationState, ckDiscord, userId, UiSlotThink)
       else:
         dcAdapter.send(OutboundMessage(
           userId: userId,
           channel: ckDiscord,
-          text: "Thinking definido: " & level,
+          text: savedOrError(saved, "Thinking definido: " & level),
         )).isOkOr:
           core_log.log(logger, core_log.lvlError, "dc think confirm: " & error)
     true
   of cbkReasoning:
     let prefs = common_runtime.loadChannelPrefs(memory, userId)
     let next = if prefs.reasoning == "on": "off" else: "on"
-    common_runtime.saveChannelPreference(memory, userId, "reasoning", next)
+    let saved = common_runtime.saveChannelPreference(memory, userId, "reasoning", next)
     dcAdapter.send(OutboundMessage(
       userId: userId,
       channel: ckDiscord,
-      text: "🧠 Reasoning " & (if next == "on": "ativado." else: "desativado."),
+      text: savedOrError(saved, "🧠 Reasoning " & (if next == "on": "ativado." else: "desativado.")),
     )).isOkOr:
       core_log.log(logger, core_log.lvlError, "dc reasoning toggle: " & error)
     true
@@ -376,9 +376,8 @@ proc handleDiscordEvent*(sm: var SessionManager;
         sendDiscordEmbed(event, dcAdapter, userId,
           "🔗 Link Code", buildLinkCodeText(dcAdapter.resolver.generateLinkCode(userId)), 0x5865F2, logger)
       of lcaClearMemory:
-        memory.clearMemory(userId)
         sendDiscordEmbed(event, dcAdapter, userId,
-          "🗑️ Memórias", "Memórias apagadas.", 0xE67E22, logger)
+          "🗑️ Memórias", clearMemoryReply(memory, userId), 0xE67E22, logger)
       of lcaDoctorReport:
         sendDiscordEmbed(event, dcAdapter, userId,
           "🩺 Doctor",
@@ -409,10 +408,10 @@ proc handleDiscordEvent*(sm: var SessionManager;
       of lcaReasoningToggle:
         let prefs = common_runtime.loadChannelPrefs(memory, userId)
         let next = if prefs.reasoning == "on": "off" else: "on"
-        common_runtime.saveChannelPreference(memory, userId, "reasoning", next)
+        let saved = common_runtime.saveChannelPreference(memory, userId, "reasoning", next)
         sendDiscordEmbed(event, dcAdapter, userId,
           "🧠 Reasoning",
-          if next == "on": "Reasoning ativado." else: "Reasoning desativado.",
+          savedOrError(saved, if next == "on": "Reasoning ativado." else: "Reasoning desativado."),
           0x57F287, logger)
       else:
         discard

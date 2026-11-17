@@ -71,25 +71,29 @@ type
   MemoryRuntimePort* = object
     hasProfile*:      proc(userId: UserId): bool {.gcsafe.}
     loadContext*:     proc(userId: UserId): UserContext {.gcsafe.}
-    saveUserMd*:      proc(userId: UserId; content: string) {.gcsafe.}
-    appendMemory*:    proc(userId: UserId; text: string) {.gcsafe.}
-    ## Preferred Result-based hook; adapters own filesystem exception handling.
-    appendMemoryResult*: proc(userId: UserId; text: string):
-                            Result[void, string] {.gcsafe, raises: [].}
-    ## Optional. Same as appendMemory, recording where the text came from.
-    ## Nil means the backend keeps no origin; callers fall back to
-    ## appendMemoryResult/appendMemory.
+    ## Writes report whether they were stored: with a graph configured but
+    ## unavailable nothing is written, and the caller must be able to tell.
+    saveUserMd*:      proc(userId: UserId; content: string): Result[void, string]
+                        {.gcsafe, raises: [].}
+    appendMemory*:    proc(userId: UserId; text: string): Result[void, string]
+                        {.gcsafe, raises: [].}
+    ## Optional. Same as appendMemory, recording where the text came from and
+    ## reporting whether it was stored. Nil means the backend keeps no
+    ## origin; callers fall back to appendMemory.
     appendMemoryFrom*: proc(userId: UserId; text: string;
-                            origin: MemoryOrigin):
-                            Result[void, string] {.gcsafe, raises: [].}
-
-    savePreferences*: proc(userId: UserId; content: string) {.gcsafe.}
-    clearMemory*:     proc(userId: UserId) {.gcsafe.}
-    resetBootstrap*:  proc(userId: UserId) {.gcsafe.}
+                            origin: MemoryOrigin): Result[void, string]
+                            {.gcsafe, raises: [].}
+    savePreferences*: proc(userId: UserId; content: string): Result[void, string]
+                        {.gcsafe, raises: [].}
+    clearMemory*:     proc(userId: UserId): Result[void, string]
+                        {.gcsafe, raises: [].}
+    resetBootstrap*:  proc(userId: UserId): Result[void, string]
+                        {.gcsafe, raises: [].}
     saveSession*:     proc(userId: UserId; sessionId: string; history: ConversationHistory)
                         {.gcsafe.}
-    saveIdentity*:    proc(userId: UserId; traits: PersonalityTraits; name: string)
-                        {.gcsafe.}
+    saveIdentity*:    proc(userId: UserId; traits: PersonalityTraits;
+                           name: string): Result[void, string]
+                        {.gcsafe, raises: [].}
     loadIdentity*:    proc(userId: UserId): (string, PersonalityTraits)
                         {.gcsafe.}
     searchSessions*:  SearchSessionsFn
@@ -98,34 +102,23 @@ type
                           {.gcsafe.}
     loadDueReminders*:  proc(): seq[JsonNode] {.gcsafe.}
     deleteReminder*:    proc(userId: UserId; reminderId: string) {.gcsafe.}
-    ## Optional consolidation hooks. Nil means the backend has no episode/
-    ## lesson storage and automatic consolidation is skipped.
+    ## Optional consolidation hooks. Nil means the backend has no episode
+    ## storage and automatic consolidation is skipped.
     appendExtractedMemory*: proc(userId: UserId; text: string): Result[void, string]
                               {.gcsafe, raises: [].}
     saveEpisode*:           proc(userId: UserId; episode: EpisodeJournal): Result[void, string]
                               {.gcsafe, raises: [].}
-    extractLessons*:        proc(userId: UserId; episodes: seq[EpisodeJournal]): Result[int, string]
-                              {.gcsafe, raises: [].}
+
 
 func hasMemoryConsolidation*(p: MemoryRuntimePort): bool =
-  ## Lessons are optional: a backend that can store extracted memory and
-  ## episodes must still consolidate without the lesson hook.
   p.appendExtractedMemory != nil and p.saveEpisode != nil
 
 proc appendMemoryChecked*(p: MemoryRuntimePort; userId: UserId; text: string):
                           Result[void, string] {.gcsafe, raises: [].} =
-  ## Prefers the Result-based adapter hook. Legacy in-memory fakes that only
-  ## provide the void callback are converted here, at the port boundary.
-  if p.appendMemoryResult != nil:
-    return p.appendMemoryResult(userId, text)
+  ## appendMemory for a port that may have been built without the hook.
   if p.appendMemory == nil:
     return err("memory backend unavailable")
-  try:
-    {.cast(raises: []).}:
-      p.appendMemory(userId, text)
-    ok()
-  except CatchableError as e:
-    err(e.msg)
+  p.appendMemory(userId, text)
 
 proc bootstrapUserMd*(name, callMe, timezone, language: string): string =
   ## Generates the initial USER.md following the OpenClaw USER.md template.
@@ -150,7 +143,7 @@ proc appendMemoryWithOriginChecked*(p: MemoryRuntimePort; userId: UserId;
                                     text: string; origin: MemoryOrigin):
                                     Result[void, string] {.gcsafe, raises: [].} =
   ## Prefers the origin-aware hook when the backend records provenance;
-  ## otherwise falls back to the Result-based append. Both hooks report
+  ## otherwise falls back to the plain append. Both hooks report
   ## failures through `Result`, so no exception crosses this boundary.
   if p.appendMemoryFrom != nil:
     return p.appendMemoryFrom(userId, text, origin)

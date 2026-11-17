@@ -142,22 +142,24 @@ proc safeSaveSession*(memory: MemoryRuntimePort;
   except Exception:
     discard
 
+proc warnNotSaved(what: string; uid: UserId; saved: Result[void, string])
+                 {.gcsafe, raises: [].} =
+  ## The onboarding flow carries no logger; a write that was not stored is
+  ## still logged, never dropped in silence. Logging itself does not raise.
+  if saved.isErr:
+    newLogger("onboarding").warn(
+      string(uid) & " " & what & " not saved: " & saved.error)
+
 proc safeSaveIdentity*(memory: MemoryRuntimePort;
                       uid: UserId;
                       traits: PersonalityTraits;
                       name: string) {.gcsafe, raises: [].} =
-  try:
-    memory.saveIdentity(uid, traits, name)
-  except Exception:
-    discard
+  warnNotSaved("identity", uid, memory.saveIdentity(uid, traits, name))
 
 proc safeSaveUserMd*(memory: MemoryRuntimePort;
                     uid: UserId;
                     content: string) {.gcsafe, raises: [].} =
-  try:
-    memory.saveUserMd(uid, content)
-  except Exception:
-    discard
+  warnNotSaved("user profile", uid, memory.saveUserMd(uid, content))
 
 proc safeLoadIdentity*(memory: MemoryRuntimePort;
                       uid: UserId): (string, PersonalityTraits) {.gcsafe, raises: [].} =
@@ -179,10 +181,7 @@ proc safeLoadPreferences(memory: MemoryRuntimePort;
 proc safeSavePreferences(memory: MemoryRuntimePort;
                          uid: UserId;
                          content: string) {.gcsafe, raises: [].} =
-  try:
-    memory.savePreferences(uid, content)
-  except Exception:
-    discard
+  warnNotSaved("preferences", uid, memory.savePreferences(uid, content))
 
 func mergeTraits(primary, fallback: PersonalityTraits): PersonalityTraits =
   result = primary
@@ -249,18 +248,17 @@ proc safeHasCompletedBootstrap*(memory: MemoryRuntimePort;
 proc safeAppendMemory*(memory: MemoryRuntimePort;
                       uid: UserId;
                       text: string;
-                      origin = MemoryOrigin()) {.gcsafe, raises: [].} =
-  discard memory.appendMemoryWithOriginChecked(uid, text, origin)
+                      origin = MemoryOrigin()): Result[void, string]
+                      {.gcsafe, raises: [].} =
+  ## Records the origin when the backend supports it; otherwise appends the
+  ## text alone. A failed append comes back as an error for the caller to log.
+  memory.appendMemoryWithOriginChecked(uid, text, origin)
 
 proc safeResetBootstrap*(memory: MemoryRuntimePort;
                         uid: UserId): bool {.gcsafe, raises: [].} =
-  try:
-    memory.resetBootstrap(uid)
-    true
-  except Exception:
-    false
-
-# ── Reply helpers ─────────────────────────────────────────────────────────────
+  let reset = memory.resetBootstrap(uid)
+  warnNotSaved("bootstrap reset", uid, reset)
+  reset.isOk
 
 proc sendReplyText*(globalOutbox: AsyncQueue[OutboundMessage];
                     uid: UserId;

@@ -92,12 +92,12 @@ suite "common_runtime":
         if dirExists(tmpDir):
           removeDir(tmpDir)
 
-      memory.toRuntimePort().saveIdentity(userId, PersonalityTraits(
+      check memory.toRuntimePort().saveIdentity(userId, PersonalityTraits(
         energy: "neutro",
         tone: "casual",
         length: "moderado",
         initiative: "proativo",
-      ), "Ostervalt")
+      ), "Ostervalt").isOk
 
       let text = applyModelsTextCommand(memory, userId, "minimax MiniMax-M2").get()
       check text.contains("minimax / MiniMax-M2")

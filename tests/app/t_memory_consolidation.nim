@@ -26,8 +26,6 @@ type
   Capture = ref object
     appended:      seq[string]
     episodes:      seq[EpisodeJournal]
-    lessonsCalls:  int
-    lastLessonCount: int
 
 proc capturePort(cap: Capture): MemoryRuntimePort =
   MemoryRuntimePort(
@@ -41,12 +39,6 @@ proc capturePort(cap: Capture): MemoryRuntimePort =
       {.cast(gcsafe).}:
         cap.episodes.add(episode)
       ok(),
-    extractLessons: proc(userId: UserId; episodes: seq[EpisodeJournal]): Result[int, string]
-                      {.gcsafe, raises: [].} =
-      {.cast(gcsafe).}:
-        inc cap.lessonsCalls
-        cap.lastLessonCount = episodes.len
-      ok(2),
   )
 
 proc historyOf(messages: openArray[(string, string)]): ConversationHistory =
@@ -121,7 +113,7 @@ suite "memory consolidation":
     check rememberCommitments(bb, "Remind me to buy eggs tomorrow", "", nowMs) == 1
     check bb.entries.len == 2
 
-  test "consolidates extraction, episode and lessons end to end":
+  test "consolidates extraction and episode end to end":
     let cap = Capture()
     let port = capturePort(cap)
     let history = historyOf([
@@ -152,13 +144,10 @@ suite "memory consolidation":
     check res.triplesSaved == 1
     check res.episodeSaved
     check res.completed
-    check res.lessonsSaved == 2
     check cap.appended.len == 1
     check cap.appended[0].contains("User works with embedded systems")
     check cap.episodes.len == 1
     check cap.episodes[0].summary.contains("pinout review")
-    check cap.lessonsCalls == 1
-    check cap.lastLessonCount == 1
 
   test "async consolidation uses the provider worker completion":
     let cap = Capture()
@@ -272,11 +261,10 @@ suite "memory consolidation":
       1_700_000_000, 1_700_000_100, @[])
     check port.saveEpisode(uid, episode).isOk
     check port.saveEpisode(uid, episode).isOk
-    check port.extractLessons(uid, @[episode]).isOk
-    check port.extractLessons(uid, @[episode]).isOk
     let context = port.loadContext(uid)
     check context.memoryMd.contains("Fact: port works")
     check context.memoryMd.contains("Episode: Port episode")
-    check context.memoryMd.contains("Lesson:")
+    ## Episodes are stored as told; no lesson is distilled from them.
+    check not context.memoryMd.contains("Lesson:")
     check context.memoryMd.count("<!-- episode:") == 1
-    check context.memoryMd.count("- Lesson:") == 1
+

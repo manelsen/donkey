@@ -31,21 +31,18 @@ suite "recall — helpers":
 suite "recall — rendering":
 
   test "hit without a window renders as a single tagged line":
-    let text = renderRecall(@[
-      MemoryHit(content: "gosta de Nim", kind: "memory", score: 0.9)])
-    check text.memory == "- [memory] gosta de Nim"
-    check text.lessons == ""
+    check renderRecall(@[
+      MemoryHit(content: "gosta de Nim", kind: "memory", score: 0.9)]) ==
+      "- [memory] gosta de Nim"
 
   test "no hits render nothing":
-    let text = renderRecall(newSeq[MemoryHit]())
-    check text.memory == ""
-    check text.lessons == ""
+    check renderRecall(newSeq[MemoryHit]()) == ""
 
   test "dialogue hit renders with its neighbours, in order, inside borders":
     var hit = turn("u1_m3", "- **User:** B\n  **Response:** rb", 200)
     hit.before = @[turn("u1_m0", "- **User:** A\n  **Response:** ra", 100)]
     hit.after = @[turn("u1_m4", "- **User:** C\n  **Response:** rc", 300)]
-    let memory = renderRecall(@[hit]).memory
+    let memory = renderRecall(@[hit])
     let open = memory.find("<conversation-excerpt session=\"s1\"")
     let a = memory.find("- **User:** A")
     let b = memory.find("- **User:** B")
@@ -64,11 +61,11 @@ suite "recall — rendering":
     hit.before = @[turn("u1_m2", "A", 100)]
     var other = turn("u1_m9", "Y", 900, session = "s2")
     other.before = @[turn("u1_m8", "X", 800, session = "s2")]
-    let memory = renderRecall(@[hit, other]).memory
+    let memory = renderRecall(@[hit, other])
     check memory.count(RecallExcerptNote) == 1
     check memory.count("<conversation-excerpt session=") == 2
     check RecallExcerptNote notin renderRecall(@[
-      MemoryHit(content: "x", kind: "memory")]).memory
+      MemoryHit(content: "x", kind: "memory")])
 
   test "overlapping windows merge into one excerpt without repeats":
     var first = turn("u1_m1", "B", 200, score = 0.9)
@@ -77,7 +74,7 @@ suite "recall — rendering":
     var second = turn("u1_m2", "C", 300, score = 0.8)
     second.before = @[turn("u1_m1", "B", 200)]
     second.after = @[turn("u1_m3", "D", 400)]
-    let memory = renderRecall(@[first, second]).memory
+    let memory = renderRecall(@[first, second])
     check memory.count("<conversation-excerpt session=") == 1
     check "entries=\"4\"" in memory
     check memory.count("[match]\n") == 2
@@ -89,7 +86,7 @@ suite "recall — rendering":
     var first = turn("u1_m1", "B", 200, score = 0.9)
     first.after = @[turn("u1_m2", "C", 300)]
     let plain = turn("u1_m2", "C", 300, score = 0.4)
-    let memory = renderRecall(@[first, plain]).memory
+    let memory = renderRecall(@[first, plain])
     check memory.count("\nC\n") == 1
     check memory.count("[match]\n") == 2
     check "- [memory] C" notin memory
@@ -99,7 +96,7 @@ suite "recall — rendering":
     hit.before = @[turn("u1_m4", "antes", 400)]
     let fact = MemoryHit(id: "u1_m1", content: "fato solto", kind: "memory",
                          origin: MemoryOrigin(source: msIngest))
-    let memory = renderRecall(@[fact, hit]).memory
+    let memory = renderRecall(@[fact, hit])
     let factAt = memory.find("- [memory] fato solto")
     let excerptAt = memory.find("<conversation-excerpt session=")
     check factAt >= 0
@@ -110,7 +107,7 @@ suite "recall — rendering":
     ## The wall clock can step back between two appends; the id cannot.
     var hit = turn("u1_m3", "afirmacao original", 500)
     hit.after = @[turn("u1_m4", "correcao posterior", 400)]
-    let memory = renderRecall(@[hit]).memory
+    let memory = renderRecall(@[hit])
     let original = memory.find("afirmacao original")
     let correction = memory.find("correcao posterior")
     check original >= 0
@@ -122,7 +119,7 @@ suite "recall — rendering":
                         timestamp: 200, origin: turnOrigin("s1"))
     hit.before = @[MemoryHit(id: "a", content: "antes", kind: "memory",
                              timestamp: 100, origin: turnOrigin("s1"))]
-    let memory = renderRecall(@[hit]).memory
+    let memory = renderRecall(@[hit])
     check memory.find("antes") >= 0
     check memory.find("antes") < memory.find("depois")
 
@@ -133,7 +130,7 @@ suite "recall — rendering":
                              timestamp: 100, origin: turnOrigin("s1"))]
     hit.after = @[MemoryHit(content: "turno seguinte", kind: "memory",
                             timestamp: 300, origin: turnOrigin("s1"))]
-    let memory = renderRecall(@[hit]).memory
+    let memory = renderRecall(@[hit])
     check memory.count("<conversation-excerpt session=") == 1
     check "entries=\"3\"" in memory
     let before = memory.find("turno anterior")
@@ -151,19 +148,15 @@ suite "recall — rendering":
                            origin: turnOrigin("s2"))
     second.after = @[MemoryHit(content: "Y", kind: "memory", timestamp: 400,
                                origin: turnOrigin("s2"))]
-    let memory = renderRecall(@[first, second]).memory
+    let memory = renderRecall(@[first, second])
     check memory.count("<conversation-excerpt session=") == 2
     check memory.count("entries=\"2\"") == 2
 
-  test "lessons are separated and capped":
-    var hits: seq[MemoryHit]
-    for i in 1 .. 5:
-      hits.add(MemoryHit(content: "licao " & $i, kind: "lesson"))
-    hits.add(MemoryHit(content: "fato", kind: "memory"))
-    let text = renderRecall(hits)
-    check text.memory == "- [memory] fato"
-    check text.lessons.startsWith("Relevant lessons:\n")
-    check text.lessons.count("- licao") == RecallMaxLessons
+  test "no kind of hit gets a block of its own":
+    let rendered = renderRecall(@[
+      MemoryHit(content: "uma regra antiga", kind: "lesson"),
+      MemoryHit(content: "fato", kind: "memory")])
+    check rendered == "- [lesson] uma regra antiga\n- [memory] fato"
 
   test "an excerpt mixing numbered and unnumbered ids has one consistent order":
     ## Per-pair criteria would cycle here: A before B by number, B before C
@@ -175,7 +168,7 @@ suite "recall — rendering":
                 timestamp: 400, origin: turnOrigin("s1")),
       MemoryHit(id: "", content: "entrada C", kind: "memory",
                 timestamp: 450, origin: turnOrigin("s1"))]
-    let memory = renderRecall(@[hit]).memory
+    let memory = renderRecall(@[hit])
     let a = memory.find("entrada A")
     let b = memory.find("entrada B")
     let c = memory.find("entrada C")

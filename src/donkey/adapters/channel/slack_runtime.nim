@@ -155,8 +155,7 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
                 sensitive = true
                 buildLinkCodeText(slAdapter.resolver.generateLinkCode(userId))
               of lcaClearMemory:
-                memory.clearMemory(userId)
-                "Memórias apagadas."
+                clearMemoryReply(memory, userId)
               of lcaDoctorReport:
                 sensitive = true
                 buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount())
@@ -172,8 +171,8 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
               of lcaReasoningToggle:
                 let prefs = loadChannelPrefs(memory, userId)
                 let next = if prefs.reasoning == "on": "off" else: "on"
-                saveChannelPreference(memory, userId, "reasoning", next)
-                "Reasoning: " & next
+                let saved = saveChannelPreference(memory, userId, "reasoning", next)
+                savedOrError(saved, "Reasoning: " & next)
               else:
                 "Comando indisponível neste canal. Use /help."
           except CatchableError as e:

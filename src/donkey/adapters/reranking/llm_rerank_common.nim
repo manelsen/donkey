@@ -37,10 +37,9 @@ proc buildPrompt*(query: string; candidates: seq[RerankCandidate]): string =
       "retrieval_scores": {
         "base": candidate.baseScore,
         "semantic": candidate.semanticScore,
-        "entity": candidate.entityScore,
+        "lexical": candidate.lexicalScore,
         "temporal": candidate.temporalScore,
         "neighbor": candidate.neighborScore,
-        "causal": candidate.causalScore,
       },
       "text": candidate.content,
     })

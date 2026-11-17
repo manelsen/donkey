@@ -14,13 +14,17 @@ proc fakeMemoryRuntime(): MemoryRuntimePort =
     hasProfile: proc(userId: UserId): bool {.gcsafe.} = true,
     loadContext: proc(userId: UserId): UserContext {.gcsafe.} =
       UserContext(userId: userId, userMd: "# User", memoryMd: "", preferencesMd: ""),
-    saveUserMd: proc(userId: UserId; content: string) {.gcsafe.} = discard,
-    appendMemory: proc(userId: UserId; text: string) {.gcsafe.} = discard,
-    savePreferences: proc(userId: UserId; content: string) {.gcsafe.} = discard,
-    clearMemory: proc(userId: UserId) {.gcsafe.} = discard,
-    resetBootstrap: proc(userId: UserId) {.gcsafe.} = discard,
+    saveUserMd: proc(userId: UserId; content: string): Result[void, string]
+                    {.gcsafe, raises: [].} = ok(),
+    appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                      {.gcsafe, raises: [].} = ok(),
+    savePreferences: proc(userId: UserId; content: string): Result[void, string]
+                         {.gcsafe, raises: [].} = ok(),
+    clearMemory: proc(userId: UserId): Result[void, string] {.gcsafe, raises: [].} = ok(),
+    resetBootstrap: proc(userId: UserId): Result[void, string] {.gcsafe, raises: [].} = ok(),
     saveSession: proc(userId: UserId; sessionId: string; history: ConversationHistory) {.gcsafe.} = discard,
-    saveIdentity: proc(userId: UserId; traits: PersonalityTraits; name: string) {.gcsafe.} = discard,
+    saveIdentity: proc(userId: UserId; traits: PersonalityTraits; name: string): Result[void, string]
+                      {.gcsafe, raises: [].} = ok(),
     loadIdentity: proc(userId: UserId): (string, PersonalityTraits) {.gcsafe.} = ("", PersonalityTraits()),
     paddockDir: proc(userId: UserId): string {.gcsafe.} = "",
     scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string {.gcsafe.} = "",

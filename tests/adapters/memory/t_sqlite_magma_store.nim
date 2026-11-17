@@ -85,7 +85,7 @@ when defined(withSqlite):
       )
       let uid = UserId("u1")
       let port = adapter.toRuntimePort()
-      port.appendMemory(uid, "magma-only deploy fact")
+      check port.appendMemory(uid, "magma-only deploy fact").isOk
       let hits = port.searchSessions(uid, "magma-only", 10, true).get()
       check hits.anyIt(it.kind == shkMemory and "magma-only" in it.snippet)
 
@@ -101,6 +101,38 @@ when defined(withSqlite):
       let hits = store.searchSimilar("u1", @[1.0'f32, 0.0'f32], topK = 2)
       check hits.len == 2
       check hits[0].node.id == "s1"
+
+    test "searchSimilar filters by node type before applying the limit":
+      let store = newSqliteMagmaStoreAdapter(dbPath)
+      store.migrate()
+      for i in 0 ..< 6:
+        check store.insertNode(MagmaNode(
+          id: "l" & $i, userId: "u1", nodeType: "lesson",
+          content: "legacy", embedding: @[1.0'f32, 0.0'f32], timestamp: 10 + i))
+      check store.insertNode(MagmaNode(
+        id: "m1", userId: "u1", nodeType: "memory",
+        content: "kept", embedding: @[0.6'f32, 0.8'f32], timestamp: 1))
+      let hits = store.searchSimilar("u1", @[1.0'f32, 0.0'f32], topK = 1,
+                                     nodeType = "memory")
+      check hits.len == 1
+      check hits[0].node.id == "m1"
+      check store.searchSimilar("u1", @[1.0'f32, 0.0'f32], topK = 1)[0]
+        .node.nodeType == "lesson"
+
+    test "queryByTimeRange filters by node type before applying the limit":
+      let store = newSqliteMagmaStoreAdapter(dbPath)
+      store.migrate()
+      check store.insertNode(MagmaNode(
+        id: "m1", userId: "u1", nodeType: "memory", content: "kept", timestamp: 1))
+      for i in 0 ..< 6:
+        check store.insertNode(MagmaNode(
+          id: "l" & $i, userId: "u1", nodeType: "lesson",
+          content: "legacy", timestamp: 10 + i))
+      let recent = store.queryByTimeRange("u1", 0, 100, limit = 2,
+                                          nodeType = "memory")
+      check recent.mapIt(it.id) == @["m1"]
+      check store.queryByTimeRange("u1", 0, 100, limit = 2).allIt(
+        it.nodeType == "lesson")
 
     test "stores embeddings as blobs":
       let store = newSqliteMagmaStoreAdapter(dbPath)

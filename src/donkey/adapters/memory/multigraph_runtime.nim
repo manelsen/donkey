@@ -238,7 +238,7 @@ when defined(withPostgres) or defined(withSqlite):
     for chunk in ctx.memoryMd.split("\n\n"):
       let trimmed = chunk.strip()
       if trimmed.len > 0:
-        magma.appendMemory(userId, trimmed)
+        magma.appendMemory(userId, trimmed, MemoryOrigin(source: msMarkdown))
 
   proc echoMemoryExport(entries: seq[MemoryExportEntry]) =
     for i, entry in entries:
@@ -265,11 +265,18 @@ when defined(withPostgres) or defined(withSqlite):
       echo "---"
 
   proc ctlMemoryImport*(memory: MdFileAdapter; uuid: string) =
+    ## Replaces what the graph holds for this user with the Markdown files of
+    ## the paddock. The files are read directly: loadContext answers from the
+    ## graph, which is what this command is about to replace.
     let uid = UserId(uuid)
-    let ctx = memory.loadContext(uid)
+    let ctx = memory.loadMarkdownContext(uid)
     let magma = newCtlMagmaAdapter(memory)
     if magma == nil:
       echo "MAGMA backend not configured"
+      return
+    if ctx.userMd.strip.len == 0 and ctx.memoryMd.strip.len == 0 and
+       ctx.preferencesMd.strip.len == 0:
+      echo "Nothing to import: the .md files of " & uuid & " are empty or missing"
       return
     magma.deleteUser(uid)
     magma.importContextToMagma(uid, ctx)
