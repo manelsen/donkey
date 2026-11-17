@@ -15,15 +15,38 @@ type StdHttpAdapter* = object
   allowlist*: seq[string] ## Allowed hosts.
   circuitBreaker*: bool ## Record failures/check the global per-host breaker.
   proxy*: string ## Optional filtering egress proxy URL.
+  retryNonIdempotent*: bool ## false → POST/PATCH make a single attempt.
 
 proc newStdHttpAdapter*(timeout = 60, maxRetries = 3, allowlist: seq[string] = @[],
-                        circuitBreaker = true, proxy = ""): StdHttpAdapter =
+                        circuitBreaker = true, proxy = "",
+                        retryNonIdempotent = true): StdHttpAdapter =
   StdHttpAdapter(timeout: timeout, maxRetries: maxRetries, allowlist: allowlist,
-                 circuitBreaker: circuitBreaker, proxy: proxy)
+                 circuitBreaker: circuitBreaker, proxy: proxy,
+                 retryNonIdempotent: retryNonIdempotent)
+
+type RetryKind* = enum
+  rkIdempotent
+  rkNonIdempotent
+
+func retryKind*(meth: HttpMethod): RetryKind =
+  if meth in {HttpPost, HttpPatch}: rkNonIdempotent else: rkIdempotent
+
+func maxAttempts*(a: StdHttpAdapter; kind: RetryKind): int =
+  ## Behavior derived from hermes-agent (MIT) fix 85cefc7a5a; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-021
+  ##
+  ## A POST that timed out may already have been accepted by the server.
+  ## Retrying it duplicates the side effect, so channels that send messages
+  ## disable retries for non-idempotent methods.
+  if not a.retryNonIdempotent and kind == rkNonIdempotent:
+    1
+  else:
+    a.maxRetries
 
 proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
                       headers: seq[HttpHeader];
-                      redirectLimit = 5): Result[HttpResponse, string] {.gcsafe.} =
+                      redirectLimit = 5;
+                      timeoutSec = 0): Result[HttpResponse, string] {.gcsafe.} =
   # Extract host for circuit breaker and allowlist
   let host = if url.contains("//"): url.split("//")[1].split("/")[0] else: url
 
@@ -34,9 +57,13 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
     return err("Circuit breaker OPEN for host: " & host)
 
   var lastError = ""
-  for attempt in 1 .. a.maxRetries:
+  ## One decision for the whole call: the loop, the waits and the messages all
+  ## use the same budget.
+  let attemptLimit = a.maxAttempts(retryKind(meth))
+  for attempt in 1 .. attemptLimit:
     let res = block:
-      withHttpClientTimeout(a.timeout, redirectLimit, a.proxy):
+      let effectiveTimeout = if timeoutSec > 0: timeoutSec else: a.timeout
+      withHttpClientTimeout(effectiveTimeout, redirectLimit, a.proxy):
         if headers.len > 0:
           var h = newHttpHeaders()
           for (k, v) in headers: h[k] = v
@@ -52,6 +79,12 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
       let val = res.get()
       # HTTP 429 Too Many Requests: respeita retry-after se presente
       if val.status == 429:
+        if attemptLimit <= 1:
+          ## The caller handles the penalty itself (per-chat window); hand the
+          ## original response over so it can read `parameters.retry_after`.
+          ## Flood control is not a transport failure, so it must not open the
+          ## circuit breaker for the host.
+          return ok(val)
         var retryAfterMs = 5000 # default 5s
         try:
           let j = parseJson(val.body)
@@ -60,12 +93,11 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
         except JsonParsingError:
           discard # usa default
         lastError = "HTTP 429 (rate limited)"
-        if attempt < a.maxRetries:
+        if attempt < attemptLimit:
           sleep(retryAfterMs)
           continue
-        if a.circuitBreaker:
-          recordFailure(host)
-        return err("HTTP 429 rate limited after " & $a.maxRetries & " attempts. Last error: " & lastError)
+        ## Rate limiting is not a host failure: keep the breaker closed.
+        return err("HTTP 429 rate limited after " & $attemptLimit & " attempts. Last error: " & lastError)
       if val.status < 500: # Success or client error, don't retry
         if a.circuitBreaker:
           recordSuccess(host)
@@ -77,10 +109,10 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
 
     if a.circuitBreaker:
       recordFailure(host)
-    if attempt < a.maxRetries:
+    if attempt < attemptLimit:
       sleep(getBackoffMs(attempt))
 
-  err("HTTP " & $meth & " failed after " & $a.maxRetries & " attempts. Last error: " & lastError)
+  err("HTTP " & $meth & " failed after " & $attemptLimit & " attempts. Last error: " & lastError)
 
 proc get*(a: StdHttpAdapter; url: string;
           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
@@ -89,6 +121,16 @@ proc get*(a: StdHttpAdapter; url: string;
 proc post*(a: StdHttpAdapter; url, body: string;
            headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
   a.requestWithRetry(HttpPost, url, body, headers)
+
+proc postWithTimeout*(a: StdHttpAdapter; url, body: string;
+                      headers: seq[HttpHeader] = @[];
+                      timeoutSec: int): Result[HttpResponse, string] {.gcsafe.} =
+  ## Behavior derived from hermes-agent (MIT) fix 85e673b4a5; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-030
+  ##
+  ## A media upload moves more bytes than a text call; it gets its own
+  ## wall-clock deadline instead of the shared text timeout.
+  a.requestWithRetry(HttpPost, url, body, headers, timeoutSec = timeoutSec)
 
 proc put*(a: StdHttpAdapter; url, body: string;
           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =

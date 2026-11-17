@@ -33,9 +33,9 @@ comportamento (não por commit).
 
 | Situação | Casos |
 |---|---|
-| COBERTO | 19 |
-| PARCIAL | 9 |
-| AUSENTE | 9 |
+| COBERTO | 28 |
+| PARCIAL | 5 |
+| AUSENTE | 4 |
 
 | Prioridade | Casos |
 |---|---|
@@ -45,7 +45,7 @@ comportamento (não por commit).
 
 ## Casos portados nesta rodada
 
-Dez casos, cada um com teste que falhava antes da implementação:
+Dezenove casos, cada um com teste que falhava antes da implementação:
 
 | Caso | Comportamento | Teste |
 |---|---|---|
@@ -59,22 +59,27 @@ Dez casos, cada um com teste que falhava antes da implementação:
 | TG-008 | edição acima de 4096 vira edição + cauda | `tests/domain/channels/t_telegram_policy.nim` |
 | TG-009 | `callback_data` limitado a 64 bytes | `tests/domain/channels/t_telegram_policy.nim` |
 | TG-033 | fences por tamanho da sequência e CRLF | `tests/core/t_telegram_format.nim` |
+| TG-021 | envio não idempotente não é repetido | `tests/http/t_std_http.nim` |
+| TG-022 | proxy, timeout e allowlist ligados no adapter | `tests/channel/t_telegram.nim` |
+| TG-027 | foto recusada cai para documento | `tests/domain/channels/t_telegram_policy.nim` |
+| TG-030 | upload de mídia com prazo próprio | `tests/channel/t_telegram.nim` |
+| TG-035 | prévia de link desativada por padrão | `tests/domain/channels/t_telegram_policy.nim` |
+| TG-036 | menu de comandos dentro dos limites da API | `tests/core/t_command_catalog.nim` |
+| TG-012 | janela de flood por chat | `tests/core/t_flood_gate.nim` |
+| TG-013 | resposta dividida retoma da parte recusada | `tests/core/t_flood_gate.nim` |
+| TG-031 | edição final recusada entrega a resposta | `tests/app/t_outbound_runtime.nim` |
 
 ## Casos adiados
 
-| Caso | Motivo |
-|---|---|
-| TG-021 | Evitar duplicata em timeout de envio exige distinguir POST idempotente no `HttpPort`, que é compartilhado por todos os canais. Fora do escopo desta rodada. |
+Nenhum.
 
 ## Casos pendentes
 
-Dos 37 casos, 19 estão COBERTO e 1 está adiado (TG-021). Restam **17 casos
-PARCIAL ou AUSENTE** (9 PARCIAL + 8 AUSENTE) registrados com evidência e
-prioridade para as próximas rodadas. Os P1 com maior impacto são TG-012
-(janela de flood por chat), TG-013 (retomar da parte recusada), TG-015 (menções
-em grupo), TG-020 (409 no polling), TG-025/TG-026 (forum topics), TG-027
-(foto grande vira documento), TG-028 (álbuns) e TG-031 (finalização de
-streaming).
+Dos 37 casos, 28 estão COBERTO. Restam **9 casos PARCIAL ou AUSENTE**
+(5 PARCIAL + 4 AUSENTE) registrados com evidência e prioridade para as
+próximas rodadas. Os P1 restantes são TG-015 (menções em grupo), TG-020 (409 no
+polling), TG-025/TG-026 (forum topics), TG-028 (álbuns) e TG-037 (escape de
+texto dinâmico); os demais são P2.
 
 ## Quality gates finais
 
@@ -95,8 +100,9 @@ streaming).
   seis lotes independentes e revisadas; nenhuma linha ficou `UNCLEAR`.
 - **Casos por comportamento, não por commit**: 551 commits transferíveis
   viraram 37 casos. Commits do mesmo comportamento apontam para o mesmo caso.
-- **TG-021 adiado** em vez de alterar a política de retry do `HttpPort`, que
-  afetaria todos os canais.
+- **TG-021 resolvido sem mudar a porta**: o retry passou a ser decidido por
+  tipo de método no `StdHttpAdapter` (`retryNonIdempotent`), e só o adapter do
+  Telegram o desliga; os demais canais mantêm o comportamento anterior.
 - **Marcador de corte na legenda**: `clipCaption` acrescenta `…` para deixar
   visível que o texto foi cortado.
 - **Fences exigem início de linha**: uma sequência de três crases no meio de

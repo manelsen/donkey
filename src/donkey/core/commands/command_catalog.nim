@@ -1,6 +1,6 @@
 ## Unified command catalog with metadata for all command surfaces.
 
-import std/[json, options, sequtils, strutils]
+import std/[json, options, sequtils, strutils, unicode]
 import command_routing
 
 type
@@ -125,12 +125,66 @@ func defaultHelpSections*(): seq[CommandSection] =
     CommandSection(title: "Sistema", categories: @[ccStatus, ccTools]),
   ]
 
+const
+  TelegramCommandNameMax* = 32
+  TelegramCommandDescMax* = 40
+  TelegramCommandCountMax* = 100
+
+func sanitizeTelegramCommandName*(raw: string): string =
+  ## Behavior derived from hermes-agent (MIT) fix 2ae50bdddd; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-036
+  ##
+  ## setMyCommands accepts lowercase a-z, 0-9 and underscore, up to 32 chars.
+  ## A single invalid entry makes the whole call fail, so names are normalised
+  ## before publication.
+  for ch in raw:
+    let lower = ch.toLowerAscii
+    if lower in {'a' .. 'z', '0' .. '9', '_'}:
+      result.add(lower)
+  if result.len > TelegramCommandNameMax:
+    result.setLen(TelegramCommandNameMax)
+
+func fitTelegramDescription*(raw: string): string =
+  ## Behavior derived from hermes-agent (MIT) fix 60ecde8ac7; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-036
+  ##
+  ## Descriptions are limited to 40 characters, counted as code points so a
+  ## multi-byte character is never split.
+  var kept = 0
+  var bytePos = 0
+  for r in raw.runes:
+    if kept >= TelegramCommandDescMax:
+      break
+    bytePos += r.size
+    inc kept
+  raw[0 ..< bytePos]
+
+func fitTelegramCommands*(commands: seq[(string, string)]):
+                          seq[(string, string)] =
+  ## Behavior derived from hermes-agent (MIT) fix da3e22bcfa; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-036
+  ##
+  ## The menu accepts at most 100 commands; duplicates and empty names are
+  ## dropped so one bad entry cannot reject the whole publication.
+  var seen: seq[string] = @[]
+  for (rawName, description) in commands:
+    if result.len >= TelegramCommandCountMax:
+      break
+    let name = sanitizeTelegramCommandName(rawName)
+    if name.len == 0 or name in seen:
+      continue
+    seen.add(name)
+    result.add((name, fitTelegramDescription(description)))
+
 func toTelegramCommandsJson*(catalog: CommandCatalog): JsonNode =
   result = newJArray()
+  var raw: seq[(string, string)] = @[]
   for cmd in catalog.getBySurface(csTelegram):
+    raw.add((commandToken(cmd), cmd.telegramDescription))
+  for (name, description) in fitTelegramCommands(raw):
     result.add(%*{
-      "command": commandToken(cmd),
-      "description": cmd.telegramDescription,
+      "command": name,
+      "description": description,
     })
 
 func toDiscordSlashCommandsJson*(catalog: CommandCatalog): JsonNode =

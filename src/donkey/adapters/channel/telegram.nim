@@ -10,11 +10,12 @@
 ##
 ## IdentityResolver is now in adapters/identity — maps telegram_user_id → UserId.
 
-import std/[json, sequtils, strutils]
+import std/[json, os, sequtils, strutils]
 import ../../core/types
 import ../../core/pipeops
 import ../../core/commands/command_catalog
 import ../../core/telegram_format
+import ../../core/channels/flood_gate
 import ../../core/media_download
 import ../../domain/message
 import ../../domain/channels/telegram_pure
@@ -44,6 +45,7 @@ type
     offset*:      int64         ## getUpdates offset (mutable via receive)
     resolver*:    IdentityResolver
     http*:        StdHttpAdapter
+    flood*:       FloodGate      ## per-chat penalty windows
     pollTimeout*: int           ## seconds; 1 for multi-channel, up to 30 for solo
 
 # ── API helpers ───────────────────────────────────────────────────────────────
@@ -56,6 +58,25 @@ func apiBaseValue*(a: TelegramAdapter): string =
 func apiUrl(a: TelegramAdapter; meth: string): string =
   a.apiBaseValue & "/bot" & a.token & "/" & meth
 
+func telegramLinkPreviewsEnabled*(): bool =
+  linkPreviewsFromEnv(getEnv("DONKEY_TELEGRAM_LINK_PREVIEW"))
+
+func telegramMediaTimeoutSec*(): int =
+  ## Behavior derived from hermes-agent (MIT) fix 85e673b4a5; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-030
+  ##
+  ## Uploads get a larger deadline than text calls.
+  let raw = getEnv("DONKEY_TELEGRAM_MEDIA_TIMEOUT_SEC").strip
+  if raw.len == 0:
+    return 300
+  let parsed = try:
+    raw.parseInt
+  except ValueError:
+    return 300
+  if parsed <= 0: 300 else: parsed
+
+
+
 proc parseTgResp(meth: string; resp: HttpResponse): Result[JsonNode, string]
                  {.gcsafe, raises: [].} =
   ## Validates a Telegram API HTTP response; designed for >>= chaining.
@@ -67,15 +88,24 @@ proc parseTgResp(meth: string; resp: HttpResponse): Result[JsonNode, string]
   except CatchableError as e:
     err(e.msg)
 
-proc post(a: TelegramAdapter; meth: string;
-          body: JsonNode): Result[JsonNode, string] {.gcsafe, raises: [].} =
+proc postWith(a: TelegramAdapter; meth: string; body: JsonNode;
+              timeoutSec: int): Result[JsonNode, string] {.gcsafe, raises: [].} =
   try:
     let headers = @[("Content-Type", "application/json")]
-    a.http.post(a.apiUrl(meth), $body, headers) >>=
+    let sent =
+      if timeoutSec > 0:
+        a.http.postWithTimeout(a.apiUrl(meth), $body, headers, timeoutSec)
+      else:
+        a.http.post(a.apiUrl(meth), $body, headers)
+    sent >>=
       proc(resp: HttpResponse): Result[JsonNode, string] {.gcsafe, raises: [].} =
         parseTgResp(meth, resp)
   except Exception as e:
     err(e.msg)
+
+proc post(a: TelegramAdapter; meth: string;
+          body: JsonNode): Result[JsonNode, string] {.gcsafe, raises: [].} =
+  a.postWith(meth, body, 0)
 
 func chatAllowedReactionEmojis*(chatInfo: JsonNode): tuple[restricted: bool, emojis: seq[string]]
                                {.gcsafe, raises: [].} =
@@ -117,8 +147,16 @@ proc sendMessageBody(a: TelegramAdapter; body: JsonNode; replyTo: string;
                      firstChunk: bool): Result[JsonNode, string] {.gcsafe.} =
   ## Posts a sendMessage payload. When the reply anchor no longer exists, the
   ## API refuses the whole message; retry once without the anchor so the text
-  ## still arrives.
+  ## still arrives. A per-chat flood window is respected before the call.
+  let chatId = body.getOrDefault("chat_id").getBiggestInt(0)
+  let waitMs = a.flood.remainingMs(chatId, epochMs())
+  if waitMs > 0:
+    sleep(int(min(waitMs, FloodMaxWaitMs)))
   let res = a.post("sendMessage", body)
+  if res.isErr:
+    let retryAfter = parseRetryAfterMs(res.error)
+    if retryAfter > 0:
+      a.flood.noteRetryAfter(chatId, retryAfter, epochMs())
   if res.isOk: return res
   if firstChunk and replyTo.len > 0 and isMissingReplyAnchorError(res.error):
     var retry = body
@@ -126,22 +164,41 @@ proc sendMessageBody(a: TelegramAdapter; body: JsonNode; replyTo: string;
     return a.post("sendMessage", retry)
   res
 
-proc sendChunk(a: TelegramAdapter; chatId: int64; text, replyTo: string;
-               firstChunk: bool;
-               isHtml = false): Result[void, string] =
+proc sendChunkOnce(a: TelegramAdapter; chatId: int64; text, replyTo: string;
+                   firstChunk: bool;
+                   isHtml = false): Result[void, string] =
   ## Sends one chunk with HTML (converted from MD), falling back to plain text.
   let html = renderTelegramHtml(text, isHtml)
   var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
   if firstChunk and replyTo.len > 0:
     body["reply_to_message_id"] = %replyTo
+  body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
   let res = a.sendMessageBody(body, replyTo, firstChunk)
   if res.isOk: return ok()
   ## Fallback: plain text
   var plain = %* {"chat_id": chatId, "text": text}
   if firstChunk and replyTo.len > 0:
     plain["reply_to_message_id"] = %replyTo
+  plain = withLinkPreviewPolicy(plain, telegramLinkPreviewsEnabled())
   discard ? a.sendMessageBody(plain, replyTo, firstChunk)
   ok()
+
+proc sendChunk(a: TelegramAdapter; chatId: int64; text, replyTo: string;
+               firstChunk: bool;
+               isHtml = false): Result[void, string] =
+  ## Behavior derived from hermes-agent (MIT) fix 595f3a289c; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-013
+  ##
+  ## Sends one chunk, retrying once when flood control refused it. The chunks
+  ## already delivered are not resent: the retry starts at the refused chunk.
+  var retried = false
+  while true:
+    let sent = a.sendChunkOnce(chatId, text, replyTo, firstChunk, isHtml)
+    if sent.isOk:
+      return ok()
+    if not shouldRetryChunk(sent.error, retried):
+      return sent
+    retried = true
 
 proc sendTyping*(a: TelegramAdapter; userId: UserId): Result[void, string] {.gcsafe.} =
   ## Sends a "typing…" indicator to the user's chat.
@@ -170,8 +227,13 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
   if replyTo.len > 0:
     try: body["reply_to_message_id"] = %parseInt(replyTo)
     except ValueError: discard
-  let res = a.post(meth, body)
+  let mediaTimeout = telegramMediaTimeoutSec()
+  let res = a.postWith(meth, body, mediaTimeout)
   if res.isOk: return ok()
+  if meth == "sendPhoto":
+    ## A photo outside the dimension/size limits is still a valid document.
+    let docRes = a.postWith("sendDocument", asDocumentBody(body), mediaTimeout)
+    if docRes.isOk: return ok()
   ## Fallback: send URL as text
   discard ? a.post("sendMessage", %* {"chat_id": tgId, "text": url})
   ok()
@@ -205,6 +267,7 @@ proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
     "parse_mode": "HTML",
     "reply_markup": {"inline_keyboard": rows},
   }
+  body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
   if replyTo.len > 0:
     try: body["reply_to_message_id"] = %parseInt(replyTo)
     except ValueError: discard
@@ -267,6 +330,7 @@ proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, str
   for i, chunk in splitForTelegram(msg.text, TelegramMaxChars):
     let html = renderTelegramHtml(chunk, msg.isHtml)
     var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
+    body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
     if i == 0 and msg.replyTo.len > 0:
       body["reply_to_message_id"] = %msg.replyTo
     let res = a.sendMessageBody(body, msg.replyTo, i == 0)
@@ -495,6 +559,32 @@ proc answerCallback*(a: TelegramAdapter; callbackId: string): Result[void, strin
   discard ? a.post("answerCallbackQuery", %* {"callback_id": callbackId})
   ok()
 
+func telegramHttpTimeoutSec*(): int =
+  ## Behavior derived from hermes-agent (MIT) fix 04057250a3; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-030
+  ##
+  ## Bot API calls are bounded by a wall-clock deadline; media uploads get a
+  ## larger one because the transfer itself is slower.
+  let raw = getEnv("DONKEY_TELEGRAM_TIMEOUT_SEC").strip
+  if raw.len == 0:
+    return 60
+  let parsed = try:
+    raw.parseInt
+  except ValueError:
+    return 60
+  if parsed <= 0: 60 else: parsed
+
+func telegramProxyUrl*(): string =
+  ## Behavior derived from hermes-agent (MIT) fix d7c41f3cef; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-022
+  ##
+  ## The Bot API may only be reachable through a proxy. The Telegram-specific
+  ## variable wins over the generic web proxy.
+  let specific = getEnv("DONKEY_TELEGRAM_PROXY").strip
+  if specific.len > 0:
+    return specific
+  getEnv("DONKEY_WEB_PROXY").strip
+
 proc newTelegramAdapter*(token: string; identityPath: string;
                          apiBase = ""; pollTimeout = DefaultPollTimeout): TelegramAdapter =
   TelegramAdapter(
@@ -502,6 +592,11 @@ proc newTelegramAdapter*(token: string; identityPath: string;
     apiBase:     apiBase,
     offset:      0,
     resolver:    newIdentityResolver(identityPath),
-    http:        newStdHttpAdapter(),
+    flood:       newFloodGate(),
+    http:        newStdHttpAdapter(
+                   timeout = telegramHttpTimeoutSec(),
+                   proxy = telegramProxyUrl(),
+                   allowlist = (if apiBase.len == 0: @["api.telegram.org"] else: @[]),
+                   retryNonIdempotent = false),
     pollTimeout: pollTimeout,
   )
