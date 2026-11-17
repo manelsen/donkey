@@ -2,8 +2,10 @@ import std/[options, os, strutils, unittest]
 import chronos
 import chronos/asyncsync
 import donkey/app/native_tools
+import donkey/adapters/filesystem/fs_adapter
 import donkey/app/approval_runtime
 import donkey/app/session_state
+import donkey/app/session_manager
 import donkey/config/types as cfgTypes
 import donkey/core/log
 import donkey/core/pipeops
@@ -42,6 +44,7 @@ suite "native tool approval gate":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
     )
     let call = ToolCallRequest(
@@ -83,6 +86,7 @@ suite "native tool approval gate":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
     )
     let longEdits = repeat("x", 1600)
@@ -126,6 +130,7 @@ suite "native tool approval gate":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
       sandboxMode: cfgTypes.smOci,
     )
@@ -166,6 +171,7 @@ suite "native tool approval gate":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
       sandboxMode: cfgTypes.smOci,
     )
@@ -211,6 +217,7 @@ suite "native tool approval gate":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
       sandboxMode: cfgTypes.smNone,
     )
@@ -254,6 +261,7 @@ suite "native tool approval gate":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
       sandboxMode: cfgTypes.smWasm,
     )
@@ -292,6 +300,7 @@ suite "native tool approval gate":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
       sandboxMode: cfgTypes.smOci,
     )
@@ -345,6 +354,7 @@ suite "large file write approval summary":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: root,
     )
     let payload = repeat("x", 2600)
@@ -389,6 +399,7 @@ suite "large file write approval summary":
       outbox: outbox,
       approval: currentApprovalService(),
       log: nativeApprovalLog,
+      fs: newFsAdapter(),
       paddockDir: "/tmp",
     )
     let payload = repeat("x", 2600)
@@ -401,3 +412,107 @@ suite "large file write approval summary":
     check res.handled
     check "too large" in res.text
     check created == 0
+
+  test "summary uses the serialized lines content, not getStr":
+    putEnv("DONKEY_APPROVAL_LARGE_WRITES", "summary")
+    defer: delEnv("DONKEY_APPROVAL_LARGE_WRITES")
+    let root = "/tmp/donkey_large_write_lines"
+    removeDir(root)
+    createDir(root)
+    defer: removeDir(root)
+
+    var captured = ""
+    let store = ApprovalStorePort(
+      create: proc(userId: string; channel: string; toolName, summary: string;
+                   ttlMs: int64): Result[ApprovalRequest, string] {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}:
+          captured = summary
+        ok(ApprovalRequest(id: "lineswrite", userId: userId, channel: channel,
+                           toolName: toolName, summary: summary,
+                           createdAtMs: 0, expiresAtMs: 60_000,
+                           status: apsPending)),
+      status: proc(id: string): Result[ApprovalStatus, string] {.gcsafe, raises: [].} =
+        ok(apsApproved),
+      decide: proc(id, userId: string; approved: bool;
+                   admin: bool): Result[void, string] {.gcsafe, raises: [].} =
+        ok(),
+      listPending: proc(userId: string): Result[seq[ApprovalRequest], string] {.gcsafe, raises: [].} =
+        ok(newSeq[ApprovalRequest]()),
+    )
+    configureApprovalService(store, @["fs_write"])
+    defer: resetApprovalService()
+
+    let outbox = newAsyncQueue[OutboundMessage](4)
+    var ctx = NativeCtx(
+      uid: UserId("u1"),
+      channel: ckTelegram,
+      outbox: outbox,
+      approval: currentApprovalService(),
+      log: nativeApprovalLog,
+      fs: newFsAdapter(),
+      paddockDir: root,
+    )
+    var items = newSeq[string]()
+    for _ in 0 ..< 300:
+      items.add("\"linha de teste\"")
+    let call = ToolCallRequest(
+      id: "t10",
+      name: "fs_write",
+      inputJson: """{"path":"big.txt","format":"lines","mode":"replace","content":[""" &
+        items.join(",") & "]}",
+    )
+    let res = waitFor executeNativeTool(call, ctx, SessionState(), @[])
+    check res.handled
+    check res.resultKind == trkOutput
+    check "format=lines" in captured
+    check "bytes=4500" in captured
+    check "bytes=0" notin captured
+    check fileExists(root / "big.txt")
+
+
+suite "native stop request":
+
+  test "a pending stop aborts before approval":
+    var created = 0
+    let store = ApprovalStorePort(
+      create: proc(userId: string; channel: string; toolName, summary: string;
+                   ttlMs: int64): Result[ApprovalRequest, string] {.gcsafe, raises: [].} =
+        {.cast(gcsafe).}:
+          inc created
+        err("must not be called"),
+      status: proc(id: string): Result[ApprovalStatus, string] {.gcsafe, raises: [].} =
+        err("must not be called"),
+      decide: proc(id, userId: string; approved: bool;
+                   admin: bool): Result[void, string] {.gcsafe, raises: [].} =
+        ok(),
+      listPending: proc(userId: string): Result[seq[ApprovalRequest], string] {.gcsafe, raises: [].} =
+        err("must not be called"),
+    )
+    configureApprovalService(store, @["bash"])
+    defer: resetApprovalService()
+
+    let stoppedUser = "u1"
+    let turnInterrupt = currentUserInterrupt(stoppedUser)
+    requestUserStop(stoppedUser)
+    let outbox = newAsyncQueue[OutboundMessage](4)
+    var ctx = NativeCtx(
+      uid: UserId("u1"),
+      channel: ckTelegram,
+      outbox: outbox,
+      approval: currentApprovalService(),
+      log: nativeApprovalLog,
+      fs: newFsAdapter(),
+      paddockDir: "/tmp",
+      stopGeneration: currentSessionStopGeneration(),
+      userInterrupt: turnInterrupt,
+    )
+    let call = ToolCallRequest(
+      id: "stop1",
+      name: "bash",
+      inputJson: """{"command":"touch /tmp/donkey_stop_should_not_exist"}""",
+    )
+    let res = waitFor executeNativeTool(call, ctx, SessionState(), @[])
+    check res.handled
+    check "stopping" in res.text
+    check created == 0
+    check not fileExists("/tmp/donkey_stop_should_not_exist")

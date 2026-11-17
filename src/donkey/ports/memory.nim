@@ -73,11 +73,16 @@ type
     loadContext*:     proc(userId: UserId): UserContext {.gcsafe.}
     saveUserMd*:      proc(userId: UserId; content: string) {.gcsafe.}
     appendMemory*:    proc(userId: UserId; text: string) {.gcsafe.}
+    ## Preferred Result-based hook; adapters own filesystem exception handling.
+    appendMemoryResult*: proc(userId: UserId; text: string):
+                            Result[void, string] {.gcsafe, raises: [].}
     ## Optional. Same as appendMemory, recording where the text came from.
     ## Nil means the backend keeps no origin; callers fall back to
-    ## appendMemory.
+    ## appendMemoryResult/appendMemory.
     appendMemoryFrom*: proc(userId: UserId; text: string;
-                            origin: MemoryOrigin) {.gcsafe.}
+                            origin: MemoryOrigin):
+                            Result[void, string] {.gcsafe, raises: [].}
+
     savePreferences*: proc(userId: UserId; content: string) {.gcsafe.}
     clearMemory*:     proc(userId: UserId) {.gcsafe.}
     resetBootstrap*:  proc(userId: UserId) {.gcsafe.}
@@ -107,6 +112,21 @@ func hasMemoryConsolidation*(p: MemoryRuntimePort): bool =
   ## episodes must still consolidate without the lesson hook.
   p.appendExtractedMemory != nil and p.saveEpisode != nil
 
+proc appendMemoryChecked*(p: MemoryRuntimePort; userId: UserId; text: string):
+                          Result[void, string] {.gcsafe, raises: [].} =
+  ## Prefers the Result-based adapter hook. Legacy in-memory fakes that only
+  ## provide the void callback are converted here, at the port boundary.
+  if p.appendMemoryResult != nil:
+    return p.appendMemoryResult(userId, text)
+  if p.appendMemory == nil:
+    return err("memory backend unavailable")
+  try:
+    {.cast(raises: []).}:
+      p.appendMemory(userId, text)
+    ok()
+  except CatchableError as e:
+    err(e.msg)
+
 proc bootstrapUserMd*(name, callMe, timezone, language: string): string =
   ## Generates the initial USER.md following the OpenClaw USER.md template.
   """---
@@ -125,3 +145,13 @@ proc defaultHeartbeatMd*(): string =
   ## New paddocks get an empty HEARTBEAT.md so the file is always present
   ## without scheduling any task by default.
   ""
+
+proc appendMemoryWithOriginChecked*(p: MemoryRuntimePort; userId: UserId;
+                                    text: string; origin: MemoryOrigin):
+                                    Result[void, string] {.gcsafe, raises: [].} =
+  ## Prefers the origin-aware hook when the backend records provenance;
+  ## otherwise falls back to the Result-based append. Both hooks report
+  ## failures through `Result`, so no exception crosses this boundary.
+  if p.appendMemoryFrom != nil:
+    return p.appendMemoryFrom(userId, text, origin)
+  p.appendMemoryChecked(userId, text)

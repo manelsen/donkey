@@ -14,6 +14,37 @@ when defined(withPostgres):
 
 suite "common_runtime":
 
+  test "sortModelCatalog keeps free models before paid ones":
+    let sorted = sortModelCatalog(@[
+      ModelCatalogEntry(providerName: "openrouter", modelName: "paid-b", label: "paid-b", isFree: false, available: true),
+      ModelCatalogEntry(providerName: "openrouter", modelName: "free-z", label: "free-z", isFree: true, available: true),
+      ModelCatalogEntry(providerName: "openrouter", modelName: "paid-a", label: "paid-a", isFree: false, available: true),
+      ModelCatalogEntry(providerName: "openrouter", modelName: "free-a", label: "free-a", isFree: true, available: true),
+    ])
+    check sorted[0].modelName == "free-a"
+    check sorted[1].modelName == "free-z"
+    check sorted[2].modelName == "paid-a"
+    check sorted[3].modelName == "paid-b"
+
+  test "model page callbacks stay under Telegram's 64-byte limit":
+    let longModel = "baidu/ernie-5.5-flash-preview:free"
+    let entries = @[
+      ModelCatalogEntry(providerName: "openrouter", modelName: longModel,
+                        label: longModel, isFree: true, available: true),
+      ModelCatalogEntry(providerName: "openrouter", modelName: "openai/gpt-6.1-sol",
+                        label: "openai/gpt-6.1-sol", isFree: false, available: true),
+    ]
+    let buttons = buildModelPageButtons("openrouter", entries, "", "", 0)
+    var foundLongModel = false
+    for row in buttons:
+      for (_, data) in row:
+        check data.len <= 64
+        if data.startsWith("models:set:openrouter:"):
+          let token = data.split(':')[^1]
+          if resolveModelCallback("openrouter", token) == longModel:
+            foundLongModel = true
+    check foundLongModel
+
   test "buildMenuText lists /skill and its subcommands":
     let text = buildMenuText()
     check text.contains("/skill — busca, instala e habilita skills")

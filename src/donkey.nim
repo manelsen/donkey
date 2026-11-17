@@ -31,6 +31,8 @@ import donkey/adapters/channel/telegram
 import donkey/adapters/channel/outbound_builder
 import donkey/app/inbound_gate
 import donkey/app/inbound_media
+import donkey/adapters/filesystem/attachment_store
+import donkey/adapters/filesystem/fs_adapter
 import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/channel/discord
 import donkey/adapters/channel/discord_runtime
@@ -1262,6 +1264,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     routeProviderCooldownHook = proc(): seq[ProviderCooldown] {.gcsafe.} =
       withRouteLock(ctx.runtime.currentProviderCooldowns()),
     subagentWorkspace = subagentWorkspacePort(),
+    fs = newFsAdapter(),
   )
 
 proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
@@ -1316,7 +1319,7 @@ proc processInboundMediaDownload(msg: var InboundMessage;
   let downloadResult = channelPort.downloadFile(fileId)
   if downloadResult.isOk:
     let saveResult = applyInboundAttachment(
-      msg, downloadResult.value, paddockDir,
+      msg, downloadResult.value, paddockDir, newAttachmentStore(),
       msg.mediaFileName, msg.mediaMimeType)
     if saveResult.isOk:
       log.info($msg.channel & ": attached " & saveResult.value.relPath &

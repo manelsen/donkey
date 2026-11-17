@@ -1,5 +1,6 @@
 import std/unittest
 import donkey/app/onboarding_runtime
+import donkey/core/pipeops
 import donkey/core/types
 import donkey/domain/memory/provenance_pure
 import donkey/ports/memory
@@ -17,10 +18,12 @@ suite "safeAppendMemory with origin":
       appendMemory: proc(userId: UserId; text: string) {.gcsafe.} =
         {.cast(gcsafe).}: captured.plain.add(text),
       appendMemoryFrom: proc(userId: UserId; text: string;
-                             origin: MemoryOrigin) {.gcsafe.} =
+                             origin: MemoryOrigin):
+                             Result[void, string] {.gcsafe.} =
         {.cast(gcsafe).}:
           captured.tagged.add(text)
-          captured.origins.add(origin),
+          captured.origins.add(origin)
+        ok(),
     )
     safeAppendMemory(mem, UserId("u1"), "fato", turnOrigin("s1"))
     check captured.plain.len == 0

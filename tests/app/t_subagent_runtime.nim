@@ -1,5 +1,6 @@
 ## Tests for the subagent runtime: isolation, budgets, cancellation, approvals.
 
+import donkey/adapters/filesystem/fs_adapter
 import std/[json, os, strutils, unittest]
 import chronos
 import chronos/asyncsync
@@ -106,6 +107,7 @@ proc makeParent(base: string; completeFn: CompleteFn;
     memory: MemoryRuntimePort(),
     completeFn: completeFn,
     log: subagentLog,
+    fs: newFsAdapter(),
     paddockDir: base / "paddock",
     tools: tools,
   )

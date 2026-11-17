@@ -1,6 +1,7 @@
 ## Tests for execute_code input validation and fail-closed policy.
 
 import std/[json, os, strutils, unittest]
+import donkey/adapters/filesystem/fs_adapter
 import donkey/app/tools/code_tools
 import donkey/app/sandbox
 import donkey/core/log
@@ -71,11 +72,12 @@ suite "execute_code input validation":
   test "wasm requires a path inside the paddock":
     let dir = freshPaddock("wasm")
     defer: removeDir(dir)
-    check parseCodeRequest(%*{"language": "wasm"}, dir).isErr
+    check parseCodeRequest(%*{"language": "wasm"}, dir, fs = newFsAdapter()).isErr
     check parseCodeRequest(%*{"language": "wasm", "wasm_path": "/etc/passwd"},
-                           dir).isErr
+                           dir, fs = newFsAdapter()).isErr
     check parseCodeRequest(%*{"language": "wasm",
-                              "wasm_path": "../outside.wasm"}, dir).isErr
+                              "wasm_path": "../outside.wasm"}, dir,
+                           fs = newFsAdapter()).isErr
 
   test "wasm symlink escape is rejected":
     let dir = freshPaddock("symlink")
@@ -85,7 +87,8 @@ suite "execute_code input validation":
     writeFile(outside, "not really wasm")
     createSymlink(outside, dir / "escape.wasm")
     let res = parseCodeRequest(%*{"language": "wasm",
-                                  "wasm_path": "escape.wasm"}, dir)
+                                  "wasm_path": "escape.wasm"}, dir,
+                               fs = newFsAdapter())
     check res.isErr
     check "outside paddock" in res.error
 
@@ -94,7 +97,8 @@ suite "execute_code input validation":
     defer: removeDir(dir)
     createDir(dir / "module.wasm")
     check parseCodeRequest(%*{"language": "wasm",
-                              "wasm_path": "module.wasm"}, dir).isErr
+                              "wasm_path": "module.wasm"}, dir,
+                           fs = newFsAdapter()).isErr
 
   test "timeout is clamped on input":
     let dir = freshPaddock("timeout")

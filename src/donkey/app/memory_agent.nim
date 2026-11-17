@@ -8,6 +8,7 @@
 ## Stops on amkCancel.
 
 import std/strutils except strip
+import ../core/pipeops
 import chronos
 import chronos/asyncsync
 import ../domain/agent_message
@@ -55,11 +56,11 @@ proc runMemoryAgent*(inbox:     AsyncQueue[AgentMessage];
           await outbox.put(newErrorMsg(msg.id, "MemoryAgent loadCtx: " & e.msg))
 
       of tkSaveMem:
-        try:
-          memory.appendMemory(UserId(msg.userId), msg.payload)
+        let saved = memory.appendMemoryChecked(UserId(msg.userId), msg.payload)
+        if saved.isErr:
+          await outbox.put(newErrorMsg(msg.id, "MemoryAgent saveMem: " & saved.error))
+        else:
           await outbox.put(newResultMsg(msg.id, ""))
-        except Exception as e:
-          await outbox.put(newErrorMsg(msg.id, "MemoryAgent saveMem: " & e.msg))
 
       of tkSavePrefs:
         try:

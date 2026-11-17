@@ -10,6 +10,7 @@ import std/[algorithm, json, os, strutils, times]
 import ../../core/types
 import ../../core/pipeops
 import ../../ports/memory
+import ../filesystem/paths
 import ../../domain/memory/episode_pure
 import ../../domain/memory/lessons_pure
 import ../../domain/memory/session_search_pure
@@ -54,6 +55,8 @@ const
 proc hasProfile*(a: MdFileAdapter; userId: UserId): bool {.gcsafe.}
 proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext {.gcsafe.}
 proc saveUserMd*(a: MdFileAdapter; userId: UserId; content: string) {.gcsafe.}
+proc appendMemoryResult*(a: MdFileAdapter; userId: UserId; text: string;
+                         origin = MemoryOrigin()): Result[void, string] {.gcsafe, raises: [].}
 proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string;
                    origin = MemoryOrigin()) {.gcsafe.}
 proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) {.gcsafe.}
@@ -239,16 +242,19 @@ when defined(withPostgres) or defined(withSqlite):
         discard
     a.saveUserMd(userId, content)
 
-  proc runtimeAppendMemory(a: MdFileAdapter; userId: UserId; text: string;
-                           origin = MemoryOrigin()) =
-    if a.hasMagmaBackend:
-      try:
-        let magma = a.newMagmaAdapter()
-        magma.appendMemory(userId, text, origin)
-        return
-      except CatchableError:
-        discard
-    a.appendMemory(userId, text, origin)
+  proc runtimeAppendMemoryResult(a: MdFileAdapter; userId: UserId; text: string;
+                                 origin: MemoryOrigin):
+                                 Result[void, string] {.gcsafe, raises: [].} =
+    a.appendMemoryResult(userId, text, origin)
+
+  proc runtimeAppendMemoryFrom(a: MdFileAdapter; userId: UserId; text: string;
+                               origin: MemoryOrigin):
+                               Result[void, string] {.gcsafe, raises: [].} =
+    a.runtimeAppendMemoryResult(userId, text, origin)
+
+  proc runtimeAppendMemory(a: MdFileAdapter; userId: UserId; text: string) =
+    ## Legacy void hook: the port offers no way to report the failure.
+    discard a.runtimeAppendMemoryFrom(userId, text, MemoryOrigin())
 
   proc runtimeSavePreferences(a: MdFileAdapter; userId: UserId; content: string) =
     if a.hasMagmaBackend:
@@ -322,11 +328,7 @@ when defined(withPostgres) or defined(withSqlite):
 
 proc appendExtractedMemoryF1(a: MdFileAdapter; userId: UserId;
                                 text: string): Result[void, string] {.raises: [].} =
-  try:
-    a.appendMemory(userId, text)
-    ok()
-  except Exception as e:
-    err("append extracted memory: " & e.msg)
+  a.appendMemoryResult(userId, text)
 
 proc saveEpisodeF1(a: MdFileAdapter; userId: UserId;
                    episode: EpisodeJournal): Result[void, string] {.raises: [].} =
@@ -337,8 +339,10 @@ proc saveEpisodeF1(a: MdFileAdapter; userId: UserId;
       else: ""
     if marker in existing:
       return ok()
-    a.appendMemory(userId, "\n" & marker & "\n## Episode: " & episode.title &
-                   "\n" & episode.summary & "\n")
+    let saved = a.appendMemoryResult(userId, "\n" & marker & "\n## Episode: " &
+                   episode.title & "\n" & episode.summary & "\n")
+    if saved.isErr:
+      return err("save episode: " & saved.error)
     ok()
   except Exception as e:
     err("save episode: " & e.msg)
@@ -355,7 +359,9 @@ proc extractLessonsF1(a: MdFileAdapter; userId: UserId;
         let marker = "- Lesson: " & lesson.text
         if marker in existing:
           continue
-        a.appendMemory(userId, marker & "\n")
+        let saved = a.appendMemoryResult(userId, marker & "\n")
+        if saved.isErr:
+          return err("extract lessons: " & saved.error)
         inc count
     ok(count)
   except Exception as e:
@@ -368,9 +374,14 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
         hasProfile:       proc(userId: UserId): bool {.gcsafe.} = a.runtimeHasProfile(userId),
         loadContext:      proc(userId: UserId): UserContext {.gcsafe.} = a.loadContext(userId),
         saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} = a.runtimeSaveUserMd(userId, content),
-        appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = a.runtimeAppendMemory(userId, text),
-        appendMemoryFrom: proc(userId: UserId; text: string; origin: MemoryOrigin) {.gcsafe.} =
-                            a.runtimeAppendMemory(userId, text, origin),
+        appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} =
+                            a.runtimeAppendMemory(userId, text),
+        appendMemoryResult: proc(userId: UserId; text: string):
+                              Result[void, string] {.gcsafe.} =
+                              a.runtimeAppendMemoryResult(userId, text, MemoryOrigin()),
+        appendMemoryFrom: proc(userId: UserId; text: string; origin: MemoryOrigin):
+                              Result[void, string] {.gcsafe.} =
+                            a.runtimeAppendMemoryFrom(userId, text, origin),
         savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = a.runtimeSavePreferences(userId, content),
         clearMemory:      proc(userId: UserId) {.gcsafe.} = a.runtimeClearMemory(userId),
         resetBootstrap:   proc(userId: UserId) {.gcsafe.} = a.runtimeResetBootstrap(userId),
@@ -443,6 +454,9 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
                       {.gcsafe, raises: [].} =
                       extractLessonsF1(a, userId, episodes),
     appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = a.appendMemory(userId, text),
+    appendMemoryResult: proc(userId: UserId; text: string):
+                          Result[void, string] {.gcsafe.} =
+                          a.appendMemoryResult(userId, text),
     savePreferences:  proc(userId: UserId; content: string) {.gcsafe.} = a.savePreferences(userId, content),
     clearMemory:      proc(userId: UserId) {.gcsafe.} = a.clearMemory(userId),
     resetBootstrap:   proc(userId: UserId) {.gcsafe.} = a.resetBootstrap(userId),
@@ -486,43 +500,44 @@ proc setUserFieldText*(content, label, value: string): string =
 proc isRevokedUserMd*(content: string): bool =
   content.parseUserField("Access").toLowerAscii() == "revoked"
 
-proc secureDir(path: string) =
-  createDir(path)
-  when defined(posix):
-    setFilePermissions(path, {fpUserRead, fpUserWrite, fpUserExec})
-
-proc secureFile(path: string) =
-  when defined(posix):
-    if fileExists(path):
-      setFilePermissions(path, {fpUserRead, fpUserWrite})
-
 proc securePaddockTree(a: MdFileAdapter; userId: UserId) =
   ## One-time migration for paddocks created before permissions were tightened.
+  ## Best effort: a permissions failure must not make the paddock unreadable.
+  ## The marker is only written when every managed file was protected, so a
+  ## later load retries after a partial failure.
   when defined(posix):
-    let marker = a.paddockDir(userId) / ".permissions_v1"
-    if fileExists(marker):
-      return
-    for path in [a.userMdPath(userId), a.memoryMdPath(userId),
-                 a.preferencesMdPath(userId), a.heartbeatMdPath(userId)]:
-      secureFile(path)
-    for dirName in ["sessions", "attachments"]:
-      let dir = a.paddockDir(userId) / dirName
-      if dirExists(dir):
-        for kind, path in walkDir(dir):
-          if kind == pcFile:
-            secureFile(path)
-    writeFile(marker, "permissions v1\n")
-    secureFile(marker)
+    try:
+      let marker = a.paddockDir(userId) / ".permissions_v2"
+      if fileExists(marker):
+        return
+      var allOk = true
+      for path in [a.userMdPath(userId), a.memoryMdPath(userId),
+                   a.preferencesMdPath(userId), a.heartbeatMdPath(userId)]:
+        if secureFile(path).isErr:
+          allOk = false
+      for dirName in ["sessions", "attachments"]:
+        let dir = a.paddockDir(userId) / dirName
+        if dirExists(dir):
+          for kind, path in walkDir(dir, checkDir = true):
+            if kind == pcFile:
+              if secureFile(path).isErr:
+                allOk = false
+      if allOk:
+        writeFile(marker, "permissions v1\n")
+        if secureFile(marker).isErr:
+          removeFile(marker)
+    except CatchableError:
+      discard
 
 proc ensurePaddock*(a: MdFileAdapter; userId: UserId) =
   ## Creates the paddock directory tree if it does not exist, and keeps
   ## memory/session/attachment files private to the service user.
-  secureDir(a.paddockDir(userId))
-  secureDir(a.paddockDir(userId) / "sessions")
-  secureDir(a.paddockDir(userId) / "attachments")
+  discard secureDir(a.paddockDir(userId))
+  discard secureDir(a.paddockDir(userId) / "sessions")
+  discard secureDir(a.paddockDir(userId) / "attachments")
   if not fileExists(a.heartbeatMdPath(userId)):
     writeFile(a.heartbeatMdPath(userId), defaultHeartbeatMd())
-  secureFile(a.heartbeatMdPath(userId))
+  discard secureFile(a.heartbeatMdPath(userId))
   securePaddockTree(a, userId)
 
 # ── MemoryPort implementation ─────────────────────────────────────────────────
@@ -564,7 +579,7 @@ proc loadContext*(a: MdFileAdapter; userId: UserId): UserContext =
 proc saveUserMd*(a: MdFileAdapter; userId: UserId; content: string) =
   a.ensurePaddock(userId)
   writeFile(a.userMdPath(userId), content)
-  secureFile(a.userMdPath(userId))
+  discard secureFile(a.userMdPath(userId))
   when defined(withPostgres) or defined(withSqlite):
     a.withMagmaShadow:
       magma.saveUserMd(userId, content)
@@ -628,7 +643,7 @@ proc addDmAllowed*(a: MdFileAdapter; userId: UserId): Result[void, string] =
     var f = open(path, fmAppend)
     defer: f.close()
     f.writeLine($userId)
-    secureFile(path)
+    discard secureFile(path)
     ok()
   except CatchableError as e:
     err("dm allowlist add failed: " & e.msg)
@@ -650,23 +665,37 @@ proc removeDmAllowed*(a: MdFileAdapter; userId: UserId): Result[void, string] =
   except CatchableError as e:
     err("dm allowlist remove failed: " & e.msg)
 
+proc appendMemoryResult*(a: MdFileAdapter; userId: UserId; text: string;
+                         origin = MemoryOrigin()): Result[void, string] =
+  ## MEMORY.md has no place for the origin; it is recorded in the graph only.
+  try:
+    a.ensurePaddock(userId)
+    let path = a.memoryMdPath(userId)
+    ## Append-only write: avoids the read-modify-write race where two concurrent
+    ## writers (daemon + ctl) overwrite each other's chunks.
+    var f = open(path, fmAppend)
+    try:
+      if getFileSize(path) > 0:
+        f.write("\n")
+      f.write(text)
+    finally:
+      f.close()
+    discard secureFile(path)
+    when defined(withPostgres) or defined(withSqlite):
+      a.withMagmaShadow:
+        magma.appendMemory(userId, text, origin)
+    ok()
+  except Exception as e:
+    err(e.msg)
+
 proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string;
                    origin = MemoryOrigin()) =
-  ## MEMORY.md has no place for the origin; it is recorded in the graph only.
-  a.ensurePaddock(userId)
-  let path = a.memoryMdPath(userId)
-  let existing = readOrEmpty(path)
-  let sep = if existing.len > 0 and not existing.endsWith("\n"): "\n" else: ""
-  writeFile(path, existing & sep & text)
-  secureFile(path)
-  when defined(withPostgres) or defined(withSqlite):
-    a.withMagmaShadow:
-      magma.appendMemory(userId, text, origin)
+  discard a.appendMemoryResult(userId, text, origin)
 
 proc savePreferences*(a: MdFileAdapter; userId: UserId; content: string) =
   a.ensurePaddock(userId)
   writeFile(a.preferencesMdPath(userId), content)
-  secureFile(a.preferencesMdPath(userId))
+  discard secureFile(a.preferencesMdPath(userId))
   when defined(withPostgres) or defined(withSqlite):
     a.withMagmaShadow:
       magma.savePreferences(userId, content)
@@ -676,7 +705,7 @@ proc clearMemory*(a: MdFileAdapter; userId: UserId) =
   let path = a.memoryMdPath(userId)
   if fileExists(path):
     writeFile(path, "")
-    secureFile(path)
+    discard secureFile(path)
   when defined(withPostgres) or defined(withSqlite):
     a.withMagmaShadow:
       magma.clearMemory(userId)
@@ -798,6 +827,7 @@ proc saveSession*(a: MdFileAdapter; userId: UserId;
     f.close()
   secureFile(path)
 
+
 proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
                           includeMemory: bool):
                           Result[seq[SessionSearchRecord], string]
@@ -918,7 +948,7 @@ proc saveIdentity*(a: MdFileAdapter; userId: UserId;
   a.ensurePaddock(userId)
   writeFile(a.preferencesMdPath(userId),
             mergeIdentityPrefs(readOrEmpty(a.preferencesMdPath(userId)), traits, name))
-  secureFile(a.preferencesMdPath(userId))
+  discard secureFile(a.preferencesMdPath(userId))
 
 proc loadIdentity*(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits) =
   ## Returns (agent_name, PersonalityTraits) from PREFERENCES.md.
@@ -937,7 +967,7 @@ proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
                        message: string): string =
   ## Writes a reminder JSON file. Returns the reminder id.
   a.ensurePaddock(userId)
-  secureDir(a.reminderDir(userId))
+  discard secureDir(a.reminderDir(userId))
   let id   = $getTime().toUnix() & "_" & $userId
   let data = %* {
     "id":          id,
@@ -948,7 +978,7 @@ proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
   }
   let reminderPath = a.reminderDir(userId) / id & ".json"
   writeFile(reminderPath, $data)
-  secureFile(reminderPath)
+  discard secureFile(reminderPath)
   id
 
 proc loadDueReminders*(a: MdFileAdapter): seq[JsonNode] =

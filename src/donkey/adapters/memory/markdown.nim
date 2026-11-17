@@ -131,7 +131,7 @@ proc saveUserMd*(a: MarkdownMemoryAdapter; userId: UserId; content: string): Res
     return err(writeResult.error)
   ok()
 
-proc appendMemory*(a: MarkdownMemoryAdapter; userId: UserId; text: string): Result[void, string] {.gcsafe.} =
+proc appendMemory*(a: MarkdownMemoryAdapter; userId: UserId; text: string): Result[void, string] {.gcsafe, raises: [].} =
   ## Appends a block of text to MEMORY.md (creates if absent).
   let ensureResult = a.ensurePaddock(userId)
   if ensureResult.isErr:
@@ -434,6 +434,9 @@ proc toRuntimePort*(a: MarkdownMemoryAdapter): MemoryRuntimePort =
                         a.loadContext(userId).valueOr(UserContext(userId: userId)),
     saveUserMd:       proc(userId: UserId; content: string) {.gcsafe.} = discard a.saveUserMd(userId, content),
     appendMemory:     proc(userId: UserId; text: string) {.gcsafe.} = discard a.appendMemory(userId, text),
+    appendMemoryResult: proc(userId: UserId; text: string):
+                          Result[void, string] {.gcsafe.} =
+                          a.appendMemory(userId, text),
     appendExtractedMemory: proc(userId: UserId; text: string): Result[void, string]
                               {.gcsafe, raises: [].} =
                             a.appendMemory(userId, text),

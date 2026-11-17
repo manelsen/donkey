@@ -9,6 +9,7 @@ import chronos/asyncsync
 import ../core/pipeops
 import ../core/log
 import ../core/output_sanitizer
+import ../core/utf8
 import ../core/security/approval
 import ../core/tooling/tool_loop
 import ../core/tooling/native_tool_dispatch
@@ -32,10 +33,10 @@ type TypingFn* = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: []
 const RepeatAbortThreshold* = 2    ## abort if same (tool, args) seen ≥ this many times
 
 func clipProviderError(err: string; maxChars = 500): string =
-  let oneLine = err.replace("\r\n", "\\n")
-                   .replace("\n", "\\n")
-                   .replace("\r", "\\r")
-  if oneLine.len > maxChars: oneLine[0 ..< maxChars] & "…" else: oneLine
+  clipUtf8(err, maxChars)
+    .replace("\r\n", "\\n")
+    .replace("\n", "\\n")
+    .replace("\r", "\\r")
 
 type ToolCallResult* = object
   text*:          string
@@ -277,7 +278,8 @@ proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
         resultKind: trkOperationalError,
       )
     let decision = await requestAndWait(
-      nativeCtx.approval, uid, channel, nativeCtx.outbox, tc.name, summary, log)
+      nativeCtx.approval, uid, channel, nativeCtx.outbox, tc.name, summary, log,
+      shouldStop = proc(): bool {.gcsafe, raises: [].} = sessionStopRequested(nativeCtx))
     case decision
     of adApproved:
       discard
@@ -321,7 +323,7 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
                       log: Logger): Future[ToolBatchResult] {.async.} =
   result = newToolBatchState(history, toolCallCount, recentCalls)
   for i, tc in toolCalls:
-    if isSessionStopRequested(nativeCtx.stopGeneration):
+    if sessionStopRequested(nativeCtx):
       for j in i ..< toolCalls.len:
         result = result |>->
           withToolResult(toolCalls[j], "Error: session is stopping.",
@@ -407,7 +409,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
   let toolStatusId = streamId & "-st"
 
   while not loopState.done and round < MaxToolRoundsOrch:
-    if isSessionStopRequested(nativeCtx.stopGeneration):
+    if sessionStopRequested(nativeCtx):
       loopState.done = true
       break
     inc round
@@ -416,10 +418,12 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
 
     let canStreamToolCalls =
       streamFn != nil and providerLabel.toLowerAscii().startsWith("openrouter")
+    ## Suppressing tool progress must not disable plain streaming on the
+    ## first round; only the tool-call stream channel stays hidden.
     if decideToolLoopStreaming(
       round = round,
       toolsCount = tools.len,
-      streamingAvailable = streamFn != nil and not suppressProgress,
+      streamingAvailable = streamFn != nil,
       streamingToolCalls = canStreamToolCalls and not suppressProgress,
     ).useStreaming:
       let streamedRes = await streamToOutbox(
@@ -442,7 +446,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         loopState.done = true
         continue
       let streamed = streamedRes.value
-      if isSessionStopRequested(nativeCtx.stopGeneration):
+      if sessionStopRequested(nativeCtx):
         loopState.done = true
         break
 
@@ -492,7 +496,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       continue
 
     let r = resp.value
-    if isSessionStopRequested(nativeCtx.stopGeneration):
+    if sessionStopRequested(nativeCtx):
       loopState.done = true
       break
     case decideToolLoopRound(

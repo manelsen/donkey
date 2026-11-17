@@ -5,8 +5,10 @@
 ## performFs* expose the structured filesystem core used by the next tool family.
 
 import std/[algorithm, json, osproc, os, sequtils, strutils, times]
+import ../../core/pipeops
 import ../../core/tooling/structured_tool_result
 import ../../domain/calc
+import ../../infra/fs/copy as fsCopy
 
 export StructuredToolResult
 
@@ -96,19 +98,6 @@ proc appendToFile(path, content: string) =
   else:
     writeFile(path, content)
 
-proc copyTree(src, dst: string) =
-  createDir(dst)
-  for kind, entry in walkDir(src):
-    let target = dst / entry.extractFilename
-    case kind
-    of pcDir:
-      copyTree(entry, target)
-    of pcFile:
-      ensureParentDir(target)
-      copyFile(entry, target)
-    of pcLinkToFile, pcLinkToDir:
-      discard
-
 proc listEntries(root, paddock, pattern: string; recursive, includeHidden: bool;
                  items: var seq[JsonNode]) =
   for kind, entry in walkDir(root):
@@ -195,7 +184,7 @@ proc performFsRead*(path, paddock: string; format = "text"): StructuredToolResul
   except Exception as e:
     operationalErrorToolResult(e.msg)
 
-proc contentToString(content: JsonNode; format: string): tuple[ok: bool, text: string, err: StructuredToolResult] =
+proc contentToString*(content: JsonNode; format: string): tuple[ok: bool, text: string, err: StructuredToolResult] =
   case format
   of "text":
     if content.kind != JString:
@@ -268,12 +257,17 @@ proc performFsCopy*(src, dst, paddock: string; recursive = false): StructuredToo
     if not dstGuard.ok:
       return dstGuard.err
     if fileExists(srcGuard.resolved):
+      if symlinkExists(dstGuard.resolved):
+        return operationalErrorToolResult(
+          "destination is a symlink: " & dstGuard.resolved)
       ensureParentDir(dstGuard.resolved)
       copyFile(srcGuard.resolved, dstGuard.resolved)
     elif dirExists(srcGuard.resolved):
       if not recursive:
         return usageErrorToolResult("copying a directory requires recursive=true")
-      copyTree(srcGuard.resolved, dstGuard.resolved)
+      let copied = fsCopy.copyTreeResult(srcGuard.resolved, dstGuard.resolved)
+      if copied.isErr:
+        return operationalErrorToolResult(copied.error)
     else:
       return operationalErrorToolResult("source not found: " & src)
     successToolResult(%*{

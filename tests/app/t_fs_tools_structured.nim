@@ -1,4 +1,6 @@
 import std/[json, os, sequtils, sets, strutils, unittest]
+when defined(posix):
+  import std/posix
 import donkey/app/tools/fs_tools
 import donkey/core/tooling/structured_tool_result
 
@@ -108,3 +110,71 @@ suite "structured filesystem tool core":
     check not parsed["ok"].getBool()
     check parsed["status"].getStr() == "usage_error"
     check parsed["error"]["message"].getStr().contains("outside paddock")
+
+  when defined(posix):
+    test "recursive copy refuses a symlinked destination":
+      let outside = paddock & "_outside_copy"
+      removeDir(outside)
+      createDir(outside)
+      defer: removeDir(outside)
+
+      ## A symlink planted inside the destination tree must not be followed.
+      createDir(paddock / "tmp")
+      createSymlink(outside, paddock / "tmp" / "docs-copy")
+
+      let parsed = parseEnvelope(
+        performFsCopy("docs", "tmp/docs-copy", paddock, recursive = true))
+      check not parsed["ok"].getBool()
+      check parsed["error"]["message"].getStr().contains("symlink")
+      check not fileExists(outside / "notes.txt")
+
+  when defined(posix):
+    test "recursive copy refuses a symlinked nested destination":
+      let outside = paddock & "_outside_nested"
+      removeDir(outside)
+      createDir(outside)
+      defer: removeDir(outside)
+
+      let copied = paddock / "tmp" / "docs-copy"
+      createDir(paddock / "tmp")
+      createDir(copied)
+      createSymlink(outside, copied / "nested")
+
+      let parsed = parseEnvelope(
+        performFsCopy("docs", "tmp/docs-copy", paddock, recursive = true))
+      check not parsed["ok"].getBool()
+      check parsed["error"]["message"].getStr().contains("symlink")
+      check not fileExists(outside / "data.json")
+
+    test "file copy refuses a symlinked destination":
+      let outsideFile = paddock & "_outside_copy_file.txt"
+      removeFile(outsideFile)
+      writeFile(outsideFile, "untouched")
+      defer: removeFile(outsideFile)
+
+      createDir(paddock / "tmp")
+      createSymlink(outsideFile, paddock / "tmp" / "alpha-copy.txt")
+
+      let parsed = parseEnvelope(
+        performFsCopy("alpha.txt", "tmp/alpha-copy.txt", paddock))
+      check not parsed["ok"].getBool()
+      check parsed["error"]["message"].getStr().contains("symlink")
+      check readFile(outsideFile) == "untouched"
+
+  when defined(posix):
+    test "recursive copy fails when a subdirectory cannot be enumerated":
+      if geteuid() == 0:
+        ## `skip()` only marks the test; it does not stop this body. Root can
+        ## enumerate directories without read permission, so keep the rest in
+        ## the else branch.
+        skip()
+      else:
+        let restricted = paddock / "docs" / "nested"
+        setFilePermissions(restricted, {})
+        defer:
+          setFilePermissions(restricted, {fpUserRead, fpUserWrite, fpUserExec})
+
+        let parsed = parseEnvelope(
+          performFsCopy("docs", "tmp/docs-copy", paddock, recursive = true))
+        check not parsed["ok"].getBool()
+        check parsed["error"]["message"].getStr().contains("cannot enumerate")

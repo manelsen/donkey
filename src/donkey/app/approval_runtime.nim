@@ -118,17 +118,32 @@ proc listPendingText*(userId = ""): string {.gcsafe.} =
                request.summary)
   result.add("\n\nUse `/approve <id>` ou `/deny <id>`.")
 
+proc cancelPendingApprovals*(userId: UserId) {.gcsafe, raises: [].} =
+  ## Denies every pending request for a user. Used by /stop and /new so an
+  ## approval cannot revive a turn that the user just aborted.
+  let service = currentApprovalService()
+  if service == nil:
+    return
+  let pending = service.store.listPending($userId)
+  if pending.isOk:
+    for request in pending.get():
+      discard service.store.decide(request.id, $userId, false, admin = true)
+
 proc requestAndWait*(service: ApprovalService;
                      userId: UserId;
                      channel: ChannelKind;
                      outbox: AsyncQueue[OutboundMessage];
                      toolName, summary: string;
-                     log: Logger): Future[ApprovalDecision] {.async.} =
+                     log: Logger;
+                     shouldStop: proc(): bool {.gcsafe, raises: [].} = nil):
+                     Future[ApprovalDecision] {.async.} =
   ## Creates a pending request, notifies the user and polls until a decision
   ## or timeout. Only channel adapters and `ctl` can decide; the requester can
   ## approve through `/approve` or an inline callback.
   if service == nil or not requiresApproval(service, toolName):
     return adApproved
+  if shouldStop != nil and shouldStop():
+    return adDenied
   let created = service.store.create(
     $userId, $channel, toolName, summary, service.timeoutMs)
   if created.isErr:
@@ -146,6 +161,11 @@ proc requestAndWait*(service: ApprovalService;
 
   let deadline = epochMs() + service.timeoutMs
   while epochMs() < deadline:
+    if shouldStop != nil and shouldStop():
+      log.info("approval cancelled by stop id=" & request.id)
+      discard service.store.decide(request.id, $userId, approved = false,
+                                   admin = true)
+      return adDenied
     let status = service.store.status(request.id)
     if status.isOk:
       case status.get()
