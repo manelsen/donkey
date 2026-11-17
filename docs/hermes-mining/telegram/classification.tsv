@@ -699,3 +699,21 @@ fe54b16026	INTERNAL	no	Transferencia automatica de DM raiz para topico e feature
 9111b89f89	INTERNAL	no	/topic restore renomeando topico para o titulo da sessao; feature interna do hermes.
 91582993ac	NET	yes	O Telegram guarda updates no servidor por ate 24h e os reentrega se o offset nao avancar.
 91c7c07b95	RATE	yes	A janela de flood pode ser reestendida por retry_after; a exclusao nao deve dormir dentro dela.
+93ba47b799	INTERNAL	no	Handoff para DM topic do hermes; rebinding interno de sessao e topico.
+98ba0238c2	INBOUND	yes	Rotulo de link em rich_message nao e comando; /texto em link nao deve virar bot command.
+a0d954f62d	FORMAT	yes	Links com esquema nao suportado pelo Telegram nao abrem; devem ser renderizados como o rotulo.
+a633070733	NET	yes	Keepalive de getUpdates depende da plataforma (Windows x POSIX) e nao de um nome do core.
+a6c4e29937	INBOUND	yes	Mensagem raiz que chega depois de um follow-up encadeado nao deve adotar o novo topico.
+adc5c561df	INTERNAL	no	/resume em grupo observado e posse da sessao por usuario; fluxo interno do hermes.
+b13e391042	INBOUND	yes	Codigo no inicio de rich_message conta como conteudo, como no texto plano, para o gatilho de mencao.
+b822c89fe0	INTERNAL	no	/branch --here e /resume mantendo o topico na sessao trocada; feature interna de sessao.
+b87cfd207e	INTERNAL	no	Catalogo de bundles de comando do hermes no menu; dispatch interno, nao e payload do Telegram.
+b8f7237477	TOPIC_API	yes	Topico privado morto: envio pelo id nativo falha; e preciso podar e cair no chat raiz.
+c437722653	INTERNAL	no	Parsing da variavel de ambiente HERMES_TELEGRAM_FOLLOWUP_GRACE_SECONDS; configuracao interna.
+cb37fe44b1	INTERNAL	no	Preservacao de identificadores nos limites de token do Telegram em log; redaction interna.
+cfb6f6e7b3	INBOUND	yes	Updates retidos devem ser reproduzidos na ordem de chegada ao chat.
+d1aed60ec1	INTERNAL	no	Confirmacoes de slash e perguntas de clarify respondendo so ao solicitante; fluxo interno.
+d2011903cc	TOPIC_API	yes	Topicos fora de allowed_topics sao descartados; identificar o topico pelo message_thread_id do update.
+d742bfddc6	INBOUND	yes	Contact cards chegam como update proprio do Telegram e devem virar evento do agente.
+e98a7006f8	NET	yes	Reset de conexao depois que a requisicao foi escrita: reenviar duplicaria a mensagem no chat.
+ed74264afe	INBOUND	yes	O cliente divide colagens longas em varias mensagens; elas devem formar um unico turno.
