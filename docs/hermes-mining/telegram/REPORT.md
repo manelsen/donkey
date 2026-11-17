@@ -80,7 +80,9 @@ Vinte e sete casos, cada um com teste que falhava antes da implementação:
 Nota sobre TG-028: a união dos anexos depende da janela de
 `collectWithDebounce`. O teste cobre `mergeUserPayloads` e
 `addUserTurnWithImages`; a chegada real dos updates e o coletor não são
-exercitados por ele.
+exercitados por ele. Além disso, só o caminho OpenRouter serializa `imageUrl`
+hoje (`openrouter.nim:74`); Anthropic e Gemini exigiriam baixar e codificar a
+imagem, o que é uma mudança de provider fora dos casos de Telegram.
 
 ## Casos adiados
 
