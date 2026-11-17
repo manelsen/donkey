@@ -299,3 +299,53 @@ a31a31826c	INTERNAL	no	Timeout e UX de aprovacao do gateway; feature interna do 
 54a0f07101	NET	yes	Plataforma nao configurada nao deve entrar em loop de reconexao infinita.
 7078430934	INBOUND	yes	Allowlist de grupo pode vir como string separada por virgulas; parsing afeta a autorizacao.
 9ecacd6bf4	INBOUND	yes	Split de group_allow_from muda a autorizacao de remetentes em grupos.
+0cd4afeafd	INTERNAL	no	Guarda SSRF em fetches HTTP pre-validados; hardening interno multi-plataforma.
+5b76ce169b	INTERNAL	no	Encoding utf-8 em leitura/escrita do update; correcao interna do updater.
+7338309807	NET	yes	connect sem watchdog pendura; app nova por tentativa evita estado quebrado.
+83e30e371f	NET	yes	Polling precisa estar realmente pronto no inicio; senao updates se perdem.
+9f8810a693	NET	yes	Orcamento de readiness para o polling do Telegram no startup do gateway.
+c8ff720508	NET	yes	Readiness de cold-start vinculado a sua geracao de polling; geracoes antigas nao valem.
+d4b867cf9f	INTERNAL	no	Subprocessos em modo texto no Windows; correcao interna multi-plataforma.
+fecceec11e	INTERNAL	no	Layout 2x2 dos botoes de aprovacao do hermes; UI interna.
+08130a26f6	INBOUND	yes	Username do bot pode ser renomeado e nao precisa terminar em "bot" para a mencao casar.
+1bdec6f065	INTERNAL	no	Kanban do hermes preserva metadados de DM topic no notifier; feature interna.
+ca2491f201	NET	yes	Falha de conexao deixa pools do transporte de fallback abertos e vazando.
+d7488a5579	INBOUND	yes	Checagem de identidade do bot em cache fica stale no boot e afeta mencoes em grupo.
+2c771be406	NET	yes	Bind dual-stack do webhook (IPv4/IPv6) no servidor local.
+4ae27548d6	MEDIA	yes	Anexos de audio m2a precisam ser reconhecidos como midia de audio.
+ee15e04803	FORMAT	yes	Legenda de mensagem de voz aceita Markdown e precisa ser renderizada no envio.
+ef274a4829	MEDIA	yes	Legenda da mensagem de voz deve manter o texto da resposta original (TTS).
+240afd0b70	FORMAT	yes	Limite de 4096 corta comandos longos; chunks proximos do limite precisam ser agrupados.
+6cf4bdd165	INTERNAL	no	Correcao de flake em mocks de teste do gateway; sem comportamento de API.
+703fe94174	INBOUND	yes	Compilacao de mencoes sem padroes deve retornar cedo sem quebrar o parsing.
+ab694586b2	INTERNAL	no	Sidebar do app desktop: secao Pinned de sessoes; UI interna.
+524ab53994	MEDIA	yes	Upload de midia usa read_timeout curto e expira em arquivos grandes.
+57a807373d	MEDIA	yes	send_image saia no read_timeout curto e falhava em upload demorado.
+30878411b8	EDIT	yes	Finalizacao de stream obsoleta suprimia a resposta completa do Telegram.
+81c0691e17	INBOUND	yes	Gates allow/deny por perfil para remetentes de Telegram no multiplex.
+dae4cf6bb6	INBOUND	yes	DM vinculada a pairing deve passar pela auth inicial com allowlist.
+359ff01c23	INTERNAL	no	Leitura de credenciais por escopo em envios standalone; interno.
+e05eba26a3	NET	yes	Loop de 409 Conflict no getUpdates e aviso enganoso de WAL.
+0d32607c62	INTERNAL	no	Separacao check_fn/ensure_deps_fn no registro de plataformas; interno.
+7141a6dc3a	NET	yes	Enfileirar reconexao antes que o disconnect fatal trave o barramento.
+e5e96e8bb5	NET	yes	Passo de disconnect cancelado por fora deixa a reconexao sem conclusao.
+022d196f38	FORMAT	yes	Offsets de entidades sao em UTF-16; emoji desloca os limites do texto formatado.
+95520b812f	INTERNAL	no	Trata config extra malformada no prompt; robustez interna de configuracao.
+9f582aca1d	FORMAT	yes	rich_messages lido do caminho errado impede o hint de rich Markdown (tabelas).
+3332ad4dbf	FORMAT	yes	Sem rich_drafts nao ha preview em MarkdownV2; deve usar o envio final.
+82255fa8ef	NET	yes	Pool do transporte primario falho nao e recriado e o envio continua falhando.
+1e46e09bbd	EDIT	yes	Update message_reaction traz chat, usuario e message_id sem thread; reagrupa por perfil.
+24e3aa180f	INTERNAL	no	Logs de erro do hook gateway_platform_event e grupos de handler; interno.
+91bc822330	NET	yes	Falhas terminais de conexao do adapter e retry loops de longa duracao.
+9994bc9ec9	EDIT	yes	Reacoes chegam pos-auth e precisam de origem normalizada (message_id) para rotear.
+c0a4535a26	INTERNAL	no	Revisao do hook gateway_platform_event; infraestrutura interna de plugins.
+547043a4d8	NET	yes	Desabilitar o fallback de transporte no connect deve ser respeitado.
+c22815fcaa	NET	yes	Cold start do connect do Telegram precisa terminar rapido para o gateway subir.
+42dc17ec97	INBOUND	yes	Updates retidos durante queda devem sobreviver ao disconnect sem se perder.
+b4da6b15e1	INBOUND	yes	Mensagens recebidas durante desconexao eram descartadas em vez de retidas.
+cb47f59ffa	MEDIA	yes	Flush de media group (album) cancelado deve propagar CancelledError corretamente.
+25fabcf8eb	TOPIC_API	yes	Envio sintetico deve carregar o message_thread_id do DM topic ativo.
+9ca11399c0	INBOUND	yes	group_allowed_chats na auth inicial de grupos sob multiplex profiles.
+a85e45da13	INTERNAL	no	Rebind de TypeHandler no import deferido do SDK; refatoracao interna.
+bd5565650d	NET	yes	Hostname dual-stack falha; tentar IPs IPv4 da API do Telegram antes.
+eb4bc1513f	NET	yes	Escolha de IP IPv4 como primeira opcao nao e erro; apenas nivel de log.
