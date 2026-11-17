@@ -91,3 +91,12 @@ Unknown components exit with code 2 and list what is supported.
 Every derived function starts its doc comment with the hermes fix hash and the
 case anchor, and `TRACEABILITY.md` maps case → hermes commits → Donkey test →
 Donkey implementation.
+
+## Checklist of one incremental round
+
+1. `git -C "$HERMES_DIR" fetch` (read-only; never a checkout).
+2. `HERMES_REF=<new head> bash scripts/hermes_mine.sh telegram --since "$(cat docs/hermes-mining/telegram/LAST_SYNC)"`.
+3. Classify the new rows and append them to `classification.tsv`.
+4. Fold new behaviors into `CASES.md` (one case per behavior, not per commit).
+5. Port the new P0 cases with TDD and update `TRACEABILITY.md`.
+6. Run the quality gates and record the round in `telegram/REPORT.md`.
