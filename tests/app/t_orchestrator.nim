@@ -1456,3 +1456,26 @@ suite "typing loop":
       after
 
     check (waitFor doTest()) >= 2
+
+suite "album payloads":
+
+  test "TG-028: a merged album keeps every attachment":
+    let merged = mergeUserPayloads([
+      """{"text":"","mediaUrl":"a.jpg"}""",
+      """{"text":"","mediaUrl":"b.jpg"}""",
+      """{"text":"","mediaUrl":"c.jpg"}""",
+    ])
+    let payload = decodeUserPayload(merged)
+    check payload.mediaUrls == @["a.jpg", "b.jpg", "c.jpg"]
+
+  test "TG-028: the turn keeps one history entry per image":
+    let history = addUserTurnWithImages(newHistory(), "veja", @["a.jpg", "b.jpg"])
+    check history.len == 2
+    check history[0].imageUrl == "a.jpg"
+    check history[0].text == "veja"
+    check history[1].imageUrl == "b.jpg"
+
+  test "TG-028: a single image keeps the plain turn":
+    let history = addUserTurnWithImages(newHistory(), "veja", @["a.jpg"])
+    check history.len == 1
+    check history[0].imageUrl == "a.jpg"

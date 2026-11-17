@@ -133,6 +133,8 @@ proc mergeUserPayloads*(payloads: openArray[string]): string =
       mergedText.add(decoded.text)
     if decoded.mediaUrl.len > 0:
       mediaUrl = decoded.mediaUrl
+      if decoded.mediaUrl notin mediaUrls:
+        mediaUrls.add(decoded.mediaUrl)
     for url in decoded.mediaUrls:
       if url notin mediaUrls:
         mediaUrls.add(url)
