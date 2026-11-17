@@ -15,6 +15,7 @@ import ../../core/types
 import ../../core/pipeops
 import ../../core/commands/command_catalog
 import ../../core/telegram_format
+import ../../core/channels/flood_gate
 import ../../core/media_download
 import ../../domain/message
 import ../../domain/channels/telegram_pure
@@ -44,6 +45,7 @@ type
     offset*:      int64         ## getUpdates offset (mutable via receive)
     resolver*:    IdentityResolver
     http*:        StdHttpAdapter
+    flood*:       FloodGate      ## per-chat penalty windows
     pollTimeout*: int           ## seconds; 1 for multi-channel, up to 30 for solo
 
 # ── API helpers ───────────────────────────────────────────────────────────────
@@ -145,8 +147,16 @@ proc sendMessageBody(a: TelegramAdapter; body: JsonNode; replyTo: string;
                      firstChunk: bool): Result[JsonNode, string] {.gcsafe.} =
   ## Posts a sendMessage payload. When the reply anchor no longer exists, the
   ## API refuses the whole message; retry once without the anchor so the text
-  ## still arrives.
+  ## still arrives. A per-chat flood window is respected before the call.
+  let chatId = body.getOrDefault("chat_id").getBiggestInt(0)
+  let waitMs = a.flood.remainingMs(chatId, epochMs())
+  if waitMs > 0:
+    sleep(int(min(waitMs, FloodMaxWaitMs)))
   let res = a.post("sendMessage", body)
+  if res.isErr:
+    let retryAfter = parseRetryAfterMs(res.error)
+    if retryAfter > 0:
+      a.flood.noteRetryAfter(chatId, retryAfter, epochMs())
   if res.isOk: return res
   if firstChunk and replyTo.len > 0 and isMissingReplyAnchorError(res.error):
     var retry = body
@@ -154,9 +164,9 @@ proc sendMessageBody(a: TelegramAdapter; body: JsonNode; replyTo: string;
     return a.post("sendMessage", retry)
   res
 
-proc sendChunk(a: TelegramAdapter; chatId: int64; text, replyTo: string;
-               firstChunk: bool;
-               isHtml = false): Result[void, string] =
+proc sendChunkOnce(a: TelegramAdapter; chatId: int64; text, replyTo: string;
+                   firstChunk: bool;
+                   isHtml = false): Result[void, string] =
   ## Sends one chunk with HTML (converted from MD), falling back to plain text.
   let html = renderTelegramHtml(text, isHtml)
   var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
@@ -172,6 +182,20 @@ proc sendChunk(a: TelegramAdapter; chatId: int64; text, replyTo: string;
   plain = withLinkPreviewPolicy(plain, telegramLinkPreviewsEnabled())
   discard ? a.sendMessageBody(plain, replyTo, firstChunk)
   ok()
+
+proc sendChunk(a: TelegramAdapter; chatId: int64; text, replyTo: string;
+               firstChunk: bool;
+               isHtml = false): Result[void, string] =
+  ## Sends one chunk, retrying once when flood control refused it. The chunks
+  ## already delivered are not resent: the retry starts at the refused chunk.
+  var retried = false
+  while true:
+    let sent = a.sendChunkOnce(chatId, text, replyTo, firstChunk, isHtml)
+    if sent.isOk:
+      return ok()
+    if not shouldRetryChunk(sent.error, retried):
+      return sent
+    retried = true
 
 proc sendTyping*(a: TelegramAdapter; userId: UserId): Result[void, string] {.gcsafe.} =
   ## Sends a "typing…" indicator to the user's chat.
@@ -565,6 +589,7 @@ proc newTelegramAdapter*(token: string; identityPath: string;
     apiBase:     apiBase,
     offset:      0,
     resolver:    newIdentityResolver(identityPath),
+    flood:       newFloodGate(),
     http:        newStdHttpAdapter(
                    timeout = telegramHttpTimeoutSec(),
                    proxy = telegramProxyUrl(),
