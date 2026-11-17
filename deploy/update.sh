@@ -6,6 +6,9 @@
 #   bash deploy/update.sh            # download, verify, install, restart
 #   bash deploy/update.sh --rollback # put the previous binary back
 #
+# The binary is installed where the user service runs it from. Without an
+# installed service it goes to ~/.local/bin; BINARY_DST overrides both.
+#
 # The binary comes from the rolling "nightly" pre-release of the repository.
 # It is built against glibc 2.28 and runs on x86_64 Linux only.
 
@@ -15,7 +18,22 @@ APP_SLUG="${APP_SLUG:-donkey}"
 APP_REPO_URL="${APP_REPO_URL:-https://github.com/manelsen/donkey}"
 RELEASE_TAG="${RELEASE_TAG:-nightly}"
 ASSET="${APP_SLUG}-linux-x86_64.tar.gz"
-BINARY_DST="${BINARY_DST:-$HOME/.local/bin/$APP_SLUG}"
+
+# Where the binary goes: an explicit BINARY_DST wins; otherwise the file the
+# installed service actually runs (its ExecStart), so the restart picks up
+# the new binary whether the unit came from deploy/install.sh or from
+# `donkey service install` in a checkout; otherwise ~/.local/bin.
+service_binary() {
+  systemctl --user show "$APP_SLUG" -p ExecStart --value 2>/dev/null |
+    sed -n 's/.*path=\([^ ;]*\).*/\1/p' | head -n 1
+}
+
+if [ -z "${BINARY_DST:-}" ]; then
+  BINARY_DST="$(service_binary || true)"
+  if [ -z "$BINARY_DST" ]; then
+    BINARY_DST="$HOME/.local/bin/$APP_SLUG"
+  fi
+fi
 BINARY_PREV="$BINARY_DST.prev"
 
 restart_service() {

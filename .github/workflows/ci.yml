@@ -7,6 +7,10 @@ on:
     branches: [master]
   workflow_dispatch:
 
+# Jobs get a read-only token; the one that publishes asks for more itself.
+permissions:
+  contents: read
+
 jobs:
   test-and-build:
     name: Build & Test
@@ -147,6 +151,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # One publication at a time, never cancelled half way through an upload.
+    concurrency:
+      group: publish-nightly
+      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -159,6 +167,13 @@ jobs:
 
       - name: Publish to the nightly pre-release
         run: |
+          # Runs wait in line here. One that waited while master moved on
+          # would put an older binary over a newer one, so it stands down.
+          head="$(gh api "repos/${GH_REPO}/commits/master" --jq .sha)"
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "master is at ${head}; not publishing the older ${GITHUB_SHA}"
+            exit 0
+          fi
           notes="Binary built from master at ${GITHUB_SHA}. Replaced on every push to master; install or update with deploy/update.sh."
           if gh release view nightly >/dev/null 2>&1; then
             gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/nightly" \

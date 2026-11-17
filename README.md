@@ -86,7 +86,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete architectural 
 
 ### 1. Build the Binary
 
-> On a small server you can skip the build: CI publishes the optimized x86_64 Linux binary of `master` (built against glibc 2.28) as the `nightly` pre-release. `bash deploy/update.sh` downloads it, verifies the checksum, keeps the previous binary as `donkey.prev`, installs it to `~/.local/bin/donkey` and restarts the user service; `bash deploy/update.sh --rollback` puts the previous one back.
+> On a small server you can skip the build: CI publishes the optimized x86_64 Linux binary of `master` (built against glibc 2.28) as the `nightly` pre-release. `bash deploy/update.sh` downloads it, verifies the checksum, keeps the previous binary beside it as `donkey.prev`, installs it and restarts the user service; `bash deploy/update.sh --rollback` puts the previous one back. The binary goes where the installed service runs it from (its `ExecStart`), so a service created with `./donkey service install` in a checkout is updated in place; with no service installed it goes to `~/.local/bin/donkey`, and the `./donkey ...` commands below become `~/.local/bin/donkey ...`. Set `BINARY_DST=/path/to/donkey` to choose another location.
 
 ```bash
 # Build development binary (embedded SQLite + sqlite-vec enabled by default)
