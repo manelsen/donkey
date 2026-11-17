@@ -1416,6 +1416,20 @@ suite "adaptive debounce collector":
     check first == "primeiro"
     check second == "segundo"
 
+  test "a queued cancel behind a control task wins over the burst":
+    proc doTest(): Future[(AgentMessageKind, TaskKind)] {.async.} =
+      let inbox = newAsyncQueue[AgentMessage]()
+      await inbox.put(newTaskMsg("a", tkUserMsg, "u", "nao devia rodar", ckTelegram, "1"))
+      await inbox.put(newTaskMsg("ctrl", tkCompact, "u", "", ckTelegram, "1"))
+      await inbox.put(newCancelMsg())
+      let collected = await collectWithDebounce(inbox, fastCfg())
+      let control = await collectWithDebounce(inbox, fastCfg())
+      (collected.kind, control.taskKind)
+
+    let (kind, taskKind) = waitFor doTest()
+    check kind == amkCancel
+    check taskKind == tkCompact
+
   test "cancel wins over buffered fragments":
     proc doTest(): Future[AgentMessageKind] {.async.} =
       let inbox = newAsyncQueue[AgentMessage]()

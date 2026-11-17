@@ -698,6 +698,28 @@ proc collectWithDebounce*(inbox: AsyncQueue[AgentMessage];
       latest = next
     else: discard
 
+  ## A cancel already sitting in the queue must win over the burst: starting
+  ## the user turn would run a request the user aborted. Drain, look for it,
+  ## and put everything else back in the original order.
+  var pending: seq[AgentMessage] = @[]
+  var cancelMsg: AgentMessage
+  var sawCancel = false
+  while true:
+    let item =
+      try:
+        inbox.popFirstNoWait()
+      except AsyncQueueEmptyError:
+        break
+    if item.kind == amkCancel and not sawCancel:
+      sawCancel = true
+      cancelMsg = item
+    else:
+      pending.add(item)
+  for item in pending:
+    discard tryAddLastNoWait(inbox, item)
+  if sawCancel:
+    return cancelMsg
+
   result         = latest
   result.payload = mergeUserPayloads(texts)
 
