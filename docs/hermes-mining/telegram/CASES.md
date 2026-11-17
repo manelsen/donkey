@@ -88,8 +88,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Dividir a edição ou finalizar a mensagem atual e continuar em outra.
 - **Fontes no hermes:** `bf1f40996f`, `d7607292d9`
 - **Testes no hermes:** -
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n "splitForTelegram|splitChunks" src/donkey/adapters/channel/telegram.nim` → só o caminho de envio; edição em `src/donkey/adapters/channel/telegram.nim:242`
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:56` e `src/donkey/adapters/channel/telegram.nim:248`
 - **Prioridade:** P1
 
 ### TG-009: callback_data é limitado a 64 bytes

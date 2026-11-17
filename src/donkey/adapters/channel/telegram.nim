@@ -267,17 +267,25 @@ proc editMessage*(a: TelegramAdapter; userId: UserId;
   if rawId.len == 0: return err("editMessage: no id for " & $userId)
   let chatId = parseBiggestInt(rawId).int64
   let sanitizedText = sanitizeForTelegram(text)
-  let html = renderTelegramHtml(sanitizedText, isHtml)
+  let chunks = planEditChunks(sanitizedText, TelegramMaxChars)
+  let html = renderTelegramHtml(chunks[0], isHtml)
   var body = %* {"chat_id": chatId, "message_id": parseBiggestInt(msgId), "text": html, "parse_mode": "HTML"}
   let res = a.post("editMessageText", body)
-  if res.isOk: return ok()
+  if res.isOk:
+    ## The tail of an oversized edit cannot fit in the edited message.
+    for i in 1 ..< chunks.len:
+      discard a.sendChunk(chatId, chunks[i], "", false, isHtml)
+    return ok()
   ## The text is already what the caller asked for; retrying would fail again.
   if isEditNoopError(res.error): return ok()
   # Fallback
   body.delete("parse_mode")
-  body["text"] = %sanitizedText
+  body["text"] = %chunks[0]
   let plain = a.post("editMessageText", body)
-  if plain.isOk: return ok()
+  if plain.isOk:
+    for i in 1 ..< chunks.len:
+      discard a.sendChunk(chatId, chunks[i], "", false, isHtml)
+    return ok()
   if isEditNoopError(plain.error): return ok()
   err(plain.error)
 

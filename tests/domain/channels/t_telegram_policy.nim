@@ -59,3 +59,16 @@ suite "telegram_policy — captions":
     let clipped = clipCaption(text, 1024)
     check runeCount(clipped) <= 1024
     check clipped.endsWith("…")
+
+
+suite "telegram_policy — oversized edits":
+
+  test "TG-008: an oversized edit becomes an edit plus follow-ups":
+    let text = strutils.repeat("x", 5000)
+    let plan = planEditChunks(text, 4096)
+    check plan.len == 2
+    check plan[0].len == 4096
+    check plan.join("") == text
+
+  test "TG-008: an edit under the limit stays a single chunk":
+    check planEditChunks("curto", 4096) == @["curto"]

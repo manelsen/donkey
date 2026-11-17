@@ -4,6 +4,7 @@
 ## decides what the API contract requires.
 
 import std/[strutils, unicode]
+import ./telegram_split
 
 func isEditNoopError*(message: string): bool =
   ## Behavior derived from hermes-agent (MIT) fix 7ac9088d5c; see
@@ -53,3 +54,12 @@ func clipCaption*(text: string; limit = 1024): string =
     clipped.add($r)
     inc kept
   clipped & "…"
+
+func planEditChunks*(text: string; limit = 4096): seq[string] =
+  ## Behavior derived from hermes-agent (MIT) fix bf1f40996f; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-008
+  ##
+  ## editMessageText has the same 4096-unit limit as sendMessage. The first
+  ## chunk replaces the current message; the rest must be delivered as new
+  ## messages, or the tail is silently lost.
+  splitForTelegram(text, limit)
