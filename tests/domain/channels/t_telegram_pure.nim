@@ -299,12 +299,14 @@ suite "telegram_pure — missing sender (TG-004)":
     check r.rawId == "4242"
 
 
-  test "TG-004: an anonymous admin is addressed by the group chat":
+  test "TG-004: an anonymous admin is addressed by the discussion chat":
+    ## In a discussion group the channel behind the admin (sender_chat) is not
+    ## the destination: replies must go to chat.id.
     let upd = %*{"message": {"message_id": 8,
                              "from": {"id": 1087968824, "is_bot": true,
                                       "first_name": "GroupAnonymousBot"},
-                             "sender_chat": {"id": -1001234567890,
-                                             "type": "supergroup"},
+                             "sender_chat": {"id": -1009999999999,
+                                             "type": "channel"},
                              "chat": {"id": -1001234567890, "type": "supergroup"},
                              "text": "aviso"}}
     let r = parseUpdate(upd)

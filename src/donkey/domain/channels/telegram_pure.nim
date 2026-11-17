@@ -52,13 +52,16 @@ func senderId(tgMsg: JsonNode): int64 =
   ## `from` is optional: anonymous admins in groups and channel posts arrive
   ## without it. Falling back to the chat id keeps the update addressable
   ## instead of raising on a missing key.
-  ## Anonymous admins carry `sender_chat` (the group) and a synthetic `from`
-  ## (GroupAnonymousBot). The chat is the addressable identity.
+  ## Anonymous admins carry `sender_chat` (the channel behind the admin) and a
+  ## synthetic `from` (GroupAnonymousBot). `sender_chat.id` is the author, not
+  ## the destination: in a discussion group the reply must go to `chat.id`.
   let senderChat = tgMsg.getOrDefault("sender_chat")
   if senderChat != nil and senderChat.kind == JObject:
-    let id = senderChat.getOrDefault("id")
-    if id != nil and id.kind == JInt:
-      return id.getBiggestInt
+    let chatNode = tgMsg.getOrDefault("chat")
+    if chatNode != nil and chatNode.kind == JObject:
+      let chatId = chatNode.getOrDefault("id")
+      if chatId != nil and chatId.kind == JInt:
+        return chatId.getBiggestInt
   let fromNode = tgMsg.getOrDefault("from")
   if fromNode != nil and fromNode.kind == JObject:
     let id = fromNode.getOrDefault("id")
