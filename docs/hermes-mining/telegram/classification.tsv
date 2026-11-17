@@ -199,3 +199,53 @@ d0e017bac8	MEDIA	yes	voice/áudio acima do limite de tamanho não deve ser baixa
 7c0605bf22	FORMAT	yes	formatação rich precisa sobreviver à edição final do stream
 9459057d7f	FORMAT	yes	rich details com expressão matemática quebra o render
 a1f51feb72	FORMAT	yes	rich final não pode gerar preview duplicado
+01ae9b853e	INBOUND	yes	reply_to_message de rich message vem sem text/caption
+4d470b3dbb	INTERNAL	no	paridade de comando no Slack, sem comportamento do Telegram
+a6364bfa08	EDIT	yes	preview do stream pode ser editado como rich (Bot API 10.1)
+29e5e127c6	INBOUND	yes	reply a rich message traz conteúdo em api_kwargs, não em text
+38f1a923af	TOPIC_API	yes	nome do tópico de fórum pode ser alterado via API a qualquer momento
+79f297834a	INTERNAL	no	colisão de namespace de cron nos adapters migrados
+c1f11f8c69	EDIT	yes	finals rich entram no índice de edição também via editMessageText
+09a96ba0f6	RATE	yes	typing precisa ser pausado antes da edição final para não ficar pendurado
+2f4f23fbfb	INTERNAL	no	bridge de eventos do codex app-server, integração interna
+31e59fe44d	FORMAT	yes	rich message colapsa newlines; quebras precisam ser preservadas
+4314d451ca	MEDIA	yes	qualquer tipo de arquivo recebido deve ser aceito como documento
+4cc28aa3bb	INTERNAL	no	entrega de cron em DM topic via DeliveryRouter, fluxo interno
+565b7c8d9d	RATE	yes	action de typing não pode continuar após a resposta final
+6183e8ce1b	FORMAT	yes	rich messages da Bot API 10.1 passam a ser opt-in
+796f618f99	FORMAT	yes	marcadores de chunk precisam ficar fora dos code fences
+a966932392	FORMAT	yes	tabelas não devem sofrer hard-break de newline do rich
+b5bd66eac9	MEDIA	yes	docs de grupo observado/respondido de qualquer tipo são cacheados
+ea056b0559	FORMAT	yes	texto CJK no rich message quebra o layout; evitar rich nesse caso
+6681f28d5b	TOPIC_API	yes	sem bindings restantes o modo DM topic deve ser desligado
+86e4521cb1	INTERNAL	no	truncamento de saída de cron configurável, fluxo interno
+d4be583d98	FORMAT	yes	menu de comandos tem limite de itens; subir o cap mantém skills visíveis
+d539cd9004	INTERNAL	no	gravação de config.yaml em UTF-8, configuração interna
+17beb55e3c	FORMAT	yes	preview draft rich tem gate separado do envio rich
+4b7f3826c2	NET	yes	limites do pool HTTPX do Bot API precisam valer no pool geral
+73a20a6ad6	FORMAT	yes	overflow no meio do stream deve ser cortado, não dividido
+0aea0c3654	INTERNAL	no	indentação de YAML nos writers de config, interno
+404b06ac4f	RATE	yes	o Bot API devolve retry_after no flood control e ele deve ser respeitado
+43b8ba4181	INBOUND	yes	fila de updates do Bot API não pode ser perdida na reconexão
+8501caf51f	NET	yes	sockets de polling em CLOSE-WAIT exigem detecção e reconexão
+9d225fbf4e	FORMAT	yes	pipe tables viram rich automaticamente e precisam de roteamento de tópico
+ce802e932c	NET	yes	heartbeat precisa encerrar quando o bot não tem get_me
+f284d85efa	INTERNAL	no	[SILENT] do cron e supressão de turno vazio, interno
+57864d07ed	INTERNAL	no	supressão de ruído operacional interno em todos os gateways
+6326d5c6f6	INTERNAL	no	remoção de renderer de tabela duplicado, refatoração interna
+6fb25f86ac	INBOUND	yes	mensagens do próprio bot não devem voltar para processamento
+ab1f9b94c5	INBOUND	yes	o Bot API aceita @username como chat_id além do id numérico
+db16854f34	MEDIA	yes	falha no download de mídia deve ser reportada, não virar turno vazio
+f03823014b	NET	yes	409 de polling conflitante precisa desarmar o retry do PTB
+2ecb6f7fe6	NET	yes	estado de send-path degradado só limpa em reconexão bem-sucedida
+3f543229f2	INBOUND	yes	callback de botão clarify expirado ainda chega como callback_query
+7b9ff310b6	INBOUND	yes	Updates de mensagens de outros bots chegam pelo getUpdates; allow_bots decide se o bot as processa.
+7e2ca7f68d	NET	yes	Pool de conexoes HTTP fica inutilizavel apos timeouts; novo envio falha ate o transporte ser recriado.
+c648ecdca5	INBOUND	yes	Updates de remetentes nao autorizados chegam pelo getUpdates e precisam ser descartados antes do evento.
+d5ba374c03	NET	yes	pending_update_count do getUpdates revela consumer travado mesmo com o processo vivo.
+fc70d023d8	INBOUND	yes	Politica de autorizacao de bots aplicada as origens de update vindas do Telegram.
+6735162531	INTERNAL	no	Apenas move trabalho de topico para thread/loop; refatoracao interna do gateway.
+8ad15ff7dd	INBOUND	yes	Updates em buffer reentregues apos queda geram mensagens duplicadas/obsoletas na sessao.
+b7c4369ca0	FORMAT	yes	O limite de 4096 caracteres e contado em UTF-16; emoji fora do BMP ocupa duas unidades.
+e55e9fad2c	NET	yes	Long polling pode parar sem o processo morrer; updates deixam de chegar ate novo getUpdates.
+3362bdb4e5	NET	yes	set_my_commands/status/topico DM travam por token e estouram o timeout de connect.
