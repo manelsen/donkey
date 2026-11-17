@@ -7,6 +7,10 @@ on:
     branches: [master]
   workflow_dispatch:
 
+# Jobs get a read-only token; the one that publishes asks for more itself.
+permissions:
+  contents: read
+
 jobs:
   test-and-build:
     name: Build & Test
@@ -71,3 +75,114 @@ jobs:
 
       - name: Run stress suite
         run: bash scripts/run_stress_tests.sh
+
+  package:
+    # Builds the optimized binary inside an image with glibc 2.28, so the
+    # same file runs on older distributions too (Oracle Linux 8+, Debian 10+,
+    # Ubuntu 20.04+). A binary built on the runner itself asks for the
+    # runner's newer glibc and does not start there.
+    name: Package binary
+    runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux_2_28_x86_64
+    env:
+      NIM_VERSION: '2.2.8'
+      MAX_GLIBC: '2.28'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Nim
+        run: |
+          curl -fsSL "https://nim-lang.org/download/nim-${NIM_VERSION}-linux_x64.tar.xz" -o /tmp/nim.tar.xz
+          mkdir -p /opt/nim
+          tar -xJf /tmp/nim.tar.xz -C /opt/nim --strip-components=1
+          echo "/opt/nim/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install Nim dependencies
+        run: |
+          git clone --recurse-submodules https://github.com/beef331/wasm3 /tmp/wasm3
+          rm -rf /tmp/wasm3/src/wasm3/wasm3c/platforms
+          (cd /tmp/wasm3 && nimble install -y)
+          nimble install -y --depsOnly
+
+      - name: Build optimized binary
+        run: |
+          nim c -d:release --opt:size \
+            --passC:"-ffunction-sections -fdata-sections" \
+            --passL:"-Wl,--gc-sections" \
+            -o:donkey src/donkey.nim
+          strip donkey
+
+      - name: Check the binary
+        run: |
+          ./donkey --version
+          needed="$(objdump -T donkey | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)"
+          echo "newest glibc symbol required: ${needed}"
+          newest="$(printf '%s\n%s\n' "$needed" "$MAX_GLIBC" | sort -V | tail -1)"
+          if [ "$newest" != "$MAX_GLIBC" ]; then
+            echo "binary requires glibc ${needed}, above the ${MAX_GLIBC} target"
+            exit 1
+          fi
+
+      - name: Pack
+        run: |
+          tar -czf donkey-linux-x86_64.tar.gz donkey
+          sha256sum donkey-linux-x86_64.tar.gz > donkey-linux-x86_64.tar.gz.sha256
+          cat donkey-linux-x86_64.tar.gz.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: donkey-linux-x86_64
+          path: |
+            donkey-linux-x86_64.tar.gz
+            donkey-linux-x86_64.tar.gz.sha256
+          if-no-files-found: error
+
+  publish:
+    # Master only, and only after the tests passed: replaces the files of the
+    # rolling "nightly" pre-release, which deploy/update.sh downloads.
+    name: Publish nightly binary
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: [test-and-build, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # One publication at a time, never cancelled half way through an upload.
+    concurrency:
+      group: publish-nightly
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: donkey-linux-x86_64
+
+      - name: Publish to the nightly pre-release
+        run: |
+          # Runs wait in line here. One that waited while master moved on
+          # would put an older binary over a newer one, so it stands down.
+          head="$(gh api "repos/${GH_REPO}/commits/master" --jq .sha)"
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "master is at ${head}; not publishing the older ${GITHUB_SHA}"
+            exit 0
+          fi
+          notes="Binary built from master at ${GITHUB_SHA}. Replaced on every push to master; install or update with deploy/update.sh."
+          if gh release view nightly >/dev/null 2>&1; then
+            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/nightly" \
+              -f sha="${GITHUB_SHA}" -F force=true >/dev/null
+            gh release edit nightly --notes "$notes"
+          else
+            gh release create nightly --prerelease --target "${GITHUB_SHA}" \
+              --title "Nightly (master)" --notes "$notes"
+          fi
+          gh release upload nightly --clobber \
+            donkey-linux-x86_64.tar.gz donkey-linux-x86_64.tar.gz.sha256
+
