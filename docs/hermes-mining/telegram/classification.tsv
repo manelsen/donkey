@@ -399,3 +399,53 @@ e253ea0233	INTERNAL	no	Credenciais de perfis secundarios vs host padrao; multipl
 178bf0436c	INTERNAL	no	Precedencia env -> YAML de ignored_threads e mention_patterns; configuracao
 333bf120a5	MEDIA	yes	Foto acima do limite do Bot API precisa pre-compressao antes do upload
 3dedb71f2f	INTERNAL	no	Resolucao env -> YAML -> default dos settings por perfil; configuracao
+44ddd117d2	MEDIA	yes	Foto e decodificada para JPEG antes do upload; handle da imagem de origem precisa fechar
+5cc9b31b7a	INBOUND	yes	Allowlist em JSON precisa ser decodificada antes do split por virgula na autorizacao
+78b98032c5	INBOUND	yes	Updates chegam mas nao sao despachados: medir progresso do dispatcher, nao idade do update
+7c9175f48c	NET	yes	proxy_url do perfil precisa chegar na construcao da requisicao HTTP ao Bot API
+aac36fd96f	INTERNAL	no	Refatoracao do flush de text-batch para o base e os 8 adapters
+d92490a4e4	EDIT	yes	Reactions: flag decide se o bot reage; dominio de reactions do Telegram
+db407dd078	INBOUND	yes	Transporte saudavel mas nenhum update chega ao handler: ingress surdo downstream
+f6cfbd2b16	FORMAT	yes	Link oculto: entidade text_link guarda a URL fora do texto visivel da mensagem
+fc73bb462e	MEDIA	yes	Fotos raster grandes acima do limite do Bot API: compressao para JPEG antes do upload
+0a5846d37f	FORMAT	yes	Menu de comandos montado e enviado ao Bot API; build fora do event loop
+1847ad2883	NET	yes	Heartbeat de liveness e logs de erro do callback de polling do Bot API
+23036e20a6	INTERNAL	no	Reescrita de mensagens de UX em todo o core; copia interna
+3250020b34	RATE	yes	typing action expira em poucos segundos; re-arm periodico do chat action
+660d4b8d87	FORMAT	yes	Build do menu de comandos fora do loop; mesmo menu enviado via setMyCommands
+7c10c249ce	RATE	yes	typing action tem validade curta e precisa re-arm apos cada envio
+9a41a8be66	INTERNAL	no	Chave de sessao de /handoff em forum; bookkeeping interno de sessao
+ab782a7685	INBOUND	yes	Inline picker responde a inline_query/callback; catalogo por tecla fora do loop
+e1e943a9df	NET	yes	Recuperacao do transporte de polling; getUpdates precisa voltar a responder
+fa12d7556c	FORMAT	yes	rich_message do Bot API: opt-in para conteudo CJK
+fd303c0137	INBOUND	yes	DM nao autorizada: comportamento decline precisa chegar ao prefilter de entrada
+ff307aea5e	INTERNAL	no	Nomear erros de transporte de string vazia nas linhas de log; log interno
+3c9431a876	INTERNAL	no	Seed de threads de cron em topicos de forum; chave de sessao interna
+4a7ed0029d	NET	yes	Polling travado confirmado exige reconstruir adapter e updater (getUpdates parado)
+5ca3e5546c	NET	yes	Stall confirmado deve disparar handoff antes do backoff de reconexao
+3e408dcc2a	TOPIC_API	yes	Forum topics: replies usam message_thread_id e heal nao pode re-fixar rota movida por /new
+595f3a289c	RATE	yes	Erro de flood no envio dividido: retry_after e cooldown por chat, sem reenviar o inicio
+7f2b64f7a2	MEDIA	yes	Documento: texto do arquivo e inlinado na mensagem e nos demais caminhos de midia
+b502504b74	FORMAT	yes	Limite de 4096 caracteres por mensagem; escape HTML consome o orcamento do card
+c07708671d	INTERNAL	no	Seam unico de session key em todos os adapters; refatoracao
+edd9fd66a4	FORMAT	yes	MarkdownV2 escapa caracteres e o orcamento do Bot API conta unidades UTF-16
+f2f0be898f	INTERNAL	no	Schemas legados de tabelas de topicos; migracao de estado interno
+1654575c6c	INBOUND	yes	Ingress precisa canonicalizar a identidade do remetente antes de rotear updates
+558cc3bd63	INTERNAL	no	Self-heal de tabelas de topicos pre-v3 na leitura; estado interno
+04057250a3	NET	yes	Todo envio ao Bot API (texto e midia) precisa de deadline de wall-clock
+0c872b611c	TOPIC_API	yes	DM topics exigem Threaded Mode no BotFather e message_thread_id na mensagem
+130b596f6f	INTERNAL	no	Delays de text-batch de WhatsApp/Weixin alinhados a cadencia do Telegram; outro canal
+536ce859c4	NET	yes	Envio com deadline nao deve armar o watchdog de loop bloqueado durante I/O de rede
+75d92e3d7b	RATE	yes	Edicao recusada por flood deve aguardar o retry_after informado pelo Telegram
+85e673b4a5	MEDIA	yes	Upload de midia ao Bot API tem deadline proprio de 300s
+97051e4194	MEDIA	yes	Video: width/height/duration e thumbnail definem a geometria exibida no Bot API
+a57a5f90d2	EDIT	yes	Edicao pulada por slot ocupado nao conta como texto exibido no stream
+d37f59af4c	INTERNAL	no	Rotulo de deadline enganoso em sites que nao sao de init; mensagem interna
+e7509fa1a4	INBOUND	yes	Mensagens de bot irmao com wake-word sao descartadas pelo gate bot-to-bot
+fb2f3e213a	RATE	yes	Pacing de envios e edicoes contra um slot compartilhado por chat
+0706dffca1	INTERNAL	no	Todos os writers de config.yaml passam por um writer unico com comentarios
+7dd6bee33b	INTERNAL	no	Escritas do rich_sent_store fora do event loop; performance interna
+992f569fc1	INBOUND	yes	Updates reenviados (replay) precisam ser admitidos antes do dispatch do PTB
+ab24fb0581	EDIT	yes	Reaction de ack do turno precisa usar emoji que o Telegram aceita
+cb567242d7	INTERNAL	no	Cache de descricao de sticker fora do event loop; performance interna
+70f79c8cde	INTERNAL	no	Regex de token do Telegram ancorada em digito (ReDoS); seguranca interna
