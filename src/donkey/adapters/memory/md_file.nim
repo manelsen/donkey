@@ -291,8 +291,10 @@ when defined(withPostgres) or defined(withSqlite):
       let remaining = max(0, SessionSearchMaxRecords - records.len)
       if remaining > 0:
         try:
+          ## Memories only, filtered in the query: other node types would
+          ## be returned as memories and would use up the limit.
           let nodes = magma.graph.listNodesLimited(
-            $userId, "", remaining, SessionSearchMaxNodeContentBytes)
+            $userId, NtMemory, remaining, SessionSearchMaxNodeContentBytes)
           if nodes.isErr:
             return err(nodes.error)
           for node in nodes.get():
@@ -456,23 +458,6 @@ proc ensurePaddock*(a: MdFileAdapter; userId: UserId) =
 
 # ── MemoryPort implementation ─────────────────────────────────────────────────
 
-proc currentUserMd(a: MdFileAdapter; userId: UserId): string =
-  ## USER.md as the store holds it: the graph copy with MAGMA, the file
-  ## otherwise, or the last export when the graph is unavailable.
-  let (access, magma) = a.openGraph(userId)
-  when defined(withPostgres) or defined(withSqlite):
-    if access == gaReady:
-      return magma.loadUserMd(userId)
-  readOrEmpty(a.userMdPath(userId))
-
-proc currentPreferences(a: MdFileAdapter; userId: UserId): string =
-  ## PREFERENCES.md as the store holds it; same rule as currentUserMd.
-  let (access, magma) = a.openGraph(userId)
-  when defined(withPostgres) or defined(withSqlite):
-    if access == gaReady:
-      return magma.loadPreferences(userId)
-  readOrEmpty(a.preferencesMdPath(userId))
-
 proc storedUserMd(a: MdFileAdapter; userId: UserId): Result[string, string] =
   ## USER.md for a caller that will write back what it read. Unlike
   ## currentUserMd there is no fallback to the last export: merging over an
@@ -489,7 +474,7 @@ proc storedUserMd(a: MdFileAdapter; userId: UserId): Result[string, string] =
   of gaNone:
     ok(readOrEmpty(a.userMdPath(userId)))
 
-proc storedPreferences(a: MdFileAdapter; userId: UserId): Result[string, string] =
+proc storedPreferences*(a: MdFileAdapter; userId: UserId): Result[string, string] =
   ## PREFERENCES.md for a caller that will write back what it read; same
   ## rule as storedUserMd.
   let (access, magma) = a.openGraph(userId)
@@ -503,6 +488,15 @@ proc storedPreferences(a: MdFileAdapter; userId: UserId): Result[string, string]
       err(GraphUnavailableError)
   of gaNone:
     ok(readOrEmpty(a.preferencesMdPath(userId)))
+
+proc currentUserMd(a: MdFileAdapter; userId: UserId): string =
+  ## USER.md as the store holds it: the graph copy with MAGMA, the file
+  ## otherwise, or the last export when the graph is unavailable.
+  a.storedUserMd(userId).valueOr(readOrEmpty(a.userMdPath(userId)))
+
+proc currentPreferences(a: MdFileAdapter; userId: UserId): string =
+  ## PREFERENCES.md as the store holds it; same rule as currentUserMd.
+  a.storedPreferences(userId).valueOr(readOrEmpty(a.preferencesMdPath(userId)))
 
 proc hasProfile*(a: MdFileAdapter; userId: UserId): bool =
   let (access, magma) = a.openGraph(userId)
@@ -591,7 +585,15 @@ proc updateUserField*(a: MdFileAdapter; userId: UserId;
     err("update user field: " & e.msg)
 
 proc isRevoked*(a: MdFileAdapter; userId: UserId): bool =
-  isRevokedUserMd(a.currentUserMd(userId))
+  ## Whether access was revoked. This gates every inbound message, so a
+  ## profile that could not be read is never taken for a profile that allows
+  ## access: the last export answers in its place, and with no export either
+  ## the user counts as revoked until the store can be read again.
+  let stored = a.storedUserMd(userId)
+  if stored.isOk:
+    return isRevokedUserMd(stored.get())
+  let exported = readOrEmpty(a.userMdPath(userId))
+  exported.len == 0 or isRevokedUserMd(exported)
 
 # ── DM allowlist ──────────────────────────────────────────────────────────────
 

@@ -355,6 +355,50 @@ when defined(withSqlite):
       check broken.saveIdentity(uid, PersonalityTraits(tone: "seco"), "Guano").isErr
       check good.isRevoked(uid)
 
+    test "session search through the port ignores legacy node types":
+      let a = newAdapter()
+      a.appendMemory(uid, "- gosta de Nim\n")
+      check a.newMagmaAdapter().graph.insertNode(MagmaNode(
+        id: "legacy1", userId: $uid, nodeType: "lesson",
+        content: "licao antiga sobre zarabatana", timestamp: 5))
+      check a.toRuntimePort().searchSessions(uid, "zarabatana", 10, true).get().len == 0
+      check a.toRuntimePort().searchSessions(uid, "Nim", 10, true).get().len == 1
+
+    test "revocation holds when the graph cannot be read":
+      let good = newAdapter()
+      good.saveUserMd(uid, "# Ada\n- **Access:** active")
+      check not good.isRevoked(uid)
+      check not good.isRevoked(UserId("nobody"))
+      check good.updateUserField(uid, "Access", "revoked").isOk
+      check good.isRevoked(uid)
+      writeFile(root / "blocker", "x")
+      let broken = MdFileAdapter(
+        paddocksDir: root / "paddocks",
+        magmaSqlitePath: root / "blocker" / "magma.sqlite",
+      )
+      ## The last export still says revoked.
+      check broken.isRevoked(uid)
+      ## With neither the graph nor an export, access is not assumed.
+      removeFile(broken.userMdPath(uid))
+      check broken.isRevoked(uid)
+
+    test "a channel preference that was not saved is not confirmed":
+      let good = newAdapter()
+      check saveChannelPreference(good, uid, "thinking", "low").isOk
+      check applyThinkTextCommand(good, uid, "high").isOk
+      check loadChannelPreference(good, uid, "thinking") == "high"
+      writeFile(root / "blocker", "x")
+      let broken = MdFileAdapter(
+        paddocksDir: root / "paddocks",
+        magmaSqlitePath: root / "blocker" / "magma.sqlite",
+      )
+      check saveChannelPreference(broken, uid, "thinking", "off").isErr
+      check applyThinkTextCommand(broken, uid, "off").isErr
+      check applyBudgetTextCommand(broken, uid, "balanced").isErr
+      check savedOrError(Result[void, string].err("x"), "feito") != "feito"
+      check savedOrError(Result[void, string].ok(), "feito") == "feito"
+      check loadChannelPreference(good, uid, "thinking") == "high"
+
     test "the first search imports a paddock that only has files":
       let a = newAdapter()
       a.ensurePaddock(uid)

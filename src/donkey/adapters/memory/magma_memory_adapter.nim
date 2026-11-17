@@ -32,7 +32,7 @@ when defined(withPostgres) or defined(withSqlite):
   const
     NtUserProfile = "user_profile"
     NtPreference  = "preference"
-    NtMemory      = "memory"
+    NtMemory*       = "memory"
     NtEntity      = "entity"
     NtCommitment  = "commitment"
     NtEpisode     = "episode"
@@ -346,6 +346,7 @@ when defined(withPostgres) or defined(withSqlite):
     var commitment = parseCommitment(current.get())
     commitment.status = status
     commitment.score = commitmentScore(commitment, getTime().toUnix())
+    ## The status counts as updated only when the store took the write.
     a.upsertNode(
       nid,
       $userId,
@@ -354,8 +355,7 @@ when defined(withPostgres) or defined(withSqlite):
       a.embedFn(commitment.sourceText),
       current.get().timestamp,
       commitmentMeta(commitment),
-    )
-    true
+    ).isOk
 
   proc saveEpisode*(a: MagmaMemoryAdapter; userId: UserId;
                     episode: EpisodeJournal): Result[void, string] {.discardable.} =
@@ -511,7 +511,10 @@ when defined(withPostgres) or defined(withSqlite):
                         entry.temporalScore + entry.neighborScore
       rankedById[n.id] = entry
 
-    let semanticHits = a.graph.searchSimilar(uid, emb, topK = semanticTopK)
+    ## Both windows are restricted to memories in the store, before the
+    ## limit: node types that are no longer written may still be in the table.
+    let semanticHits = a.graph.searchSimilar(uid, emb, topK = semanticTopK,
+                                             nodeType = NtMemory)
     for rank, hit in semanticHits:
       if hit.node.nodeType == NtMemory:
         addSignal(hit.node, semantic = rrfScoreWeighted(
@@ -533,7 +536,8 @@ when defined(withPostgres) or defined(withSqlite):
             rank, policy.lexicalWeight))
 
     let recentNodes = a.graph.queryByTimeRange(uid, 0, getTime().toUnix() + 1,
-                                               limit = recentTopK)
+                                               limit = recentTopK,
+                                               nodeType = NtMemory)
     if policy.intent == qiTemporal:
       for rank, node in recentNodes:
         if node.nodeType == NtMemory:

@@ -95,12 +95,12 @@ proc handleQQModelCallback(msg: InboundMessage;
         discard
     true
   of cbkModelsSet:
-    memory.saveChannelPreference(msg.userId, "provider", callback.provider)
-    memory.saveChannelPreference(msg.userId, "model", callback.model)
+    let saved = memory.saveChannelPreferences(
+      msg.userId, [("provider", callback.provider), ("model", callback.model)])
     qqAdapter.send(OutboundMessage(
       userId: msg.userId,
       channel: ckQQ,
-      text: qqModelConfirmedText(callback.provider, callback.model),
+      text: savedOrError(saved, qqModelConfirmedText(callback.provider, callback.model)),
       replyTo: msg.channelId,
     )).isOkOr:
       discard
@@ -137,11 +137,11 @@ proc handleQQThinkingCallback(msg: InboundMessage;
     return false
   let level = callback.value
   if level in ThinkLevels:
-    memory.saveChannelPreference(msg.userId, "thinking", level)
+    let saved = memory.saveChannelPreference(msg.userId, "thinking", level)
     qqAdapter.send(OutboundMessage(
       userId: msg.userId,
       channel: ckQQ,
-      text: qqThinkingConfirmedText(level),
+      text: savedOrError(saved, qqThinkingConfirmedText(level)),
       replyTo: msg.channelId,
     )).isOkOr:
       discard

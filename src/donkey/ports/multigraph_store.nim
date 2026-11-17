@@ -58,8 +58,10 @@ type
     deleteEdges*: proc(nodeId: string; edgeType: string = ""): int {.gcsafe.}
     getLastNode*: proc(userId: string; nodeType: string = ""): Option[MagmaNode] {.gcsafe.}
     linkTemporal*: proc(fromId, toId: string) {.gcsafe.}
-    searchSimilar*: proc(userId: string; embedding: seq[float32]; topK: int = 10; minScore: float32 = 0.0): seq[MagmaHit] {.gcsafe.}
-    queryByTimeRange*: proc(userId: string; tsStart, tsEnd: int64; limit: int = 50): seq[MagmaNode] {.gcsafe.}
+    ## `nodeType`, when given, restricts the candidates before the limit is
+    ## applied, so nodes of other types cannot take the place of the wanted ones.
+    searchSimilar*: proc(userId: string; embedding: seq[float32]; topK: int = 10; minScore: float32 = 0.0; nodeType: string = ""): seq[MagmaHit] {.gcsafe.}
+    queryByTimeRange*: proc(userId: string; tsStart, tsEnd: int64; limit: int = 50; nodeType: string = ""): seq[MagmaNode] {.gcsafe.}
     traverseNeighbors*: proc(nodeId: string; edgeTypes: seq[string] = @[]; maxDepth: int = 2): seq[MagmaNode] {.gcsafe.}
     statsForUser*: proc(userId: string): MagmaStats {.gcsafe.}
     statsGlobal*: proc(): MagmaStats {.gcsafe.}

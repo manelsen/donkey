@@ -153,19 +153,37 @@ proc loadChannelPreference*(memory: MdFileAdapter;
   ## Reads one preference value by key, without parsing the whole document.
   parsePreferenceString(memory.loadContext(userId).preferencesMd, key)
 
+proc saveChannelPreferences*(memory: MdFileAdapter;
+                             userId: UserId;
+                             entries: openArray[(string, string)]):
+                             Result[void, string] {.discardable.} =
+  ## Sets one or more `key = "value"` preferences in a single read and a
+  ## single write, so they are saved together or not at all. The current
+  ## preferences are read from the store itself: when they cannot be read
+  ## nothing is saved, instead of merging over an old export.
+  let current = ? memory.storedPreferences(userId)
+  var lines = current.splitLines()
+  for (key, value) in entries:
+    var found = false
+    for i in 0 ..< lines.len:
+      if lines[i].startsWith(key):
+        lines[i] = key & " = \"" & value & "\""
+        found = true
+    if not found:
+      lines.add(key & " = \"" & value & "\"")
+  memory.savePreferences(userId, lines.join("\n"))
+
 proc saveChannelPreference*(memory: MdFileAdapter;
                             userId: UserId;
-                            key, value: string) =
-  let ctx = memory.loadContext(userId)
-  var lines = ctx.preferencesMd.splitLines()
-  var found = false
-  for i in 0 ..< lines.len:
-    if lines[i].startsWith(key):
-      lines[i] = key & " = \"" & value & "\""
-      found = true
-  if not found:
-    lines.add(key & " = \"" & value & "\"")
-  memory.savePreferences(userId, lines.join("\n"))
+                            key, value: string): Result[void, string]
+                            {.discardable.} =
+  memory.saveChannelPreferences(userId, [(key, value)])
+
+func savedOrError*(saved: Result[void, string]; confirmation: string): string =
+  ## What to tell the user after a preference change: the confirmation only
+  ## when the change was saved.
+  if saved.isOk: confirmation
+  else: "Não foi possível salvar: " & saved.error
 
 proc getCurrentProviderModel*(memory: MdFileAdapter;
                               userId: UserId): (string, string) =
@@ -458,8 +476,7 @@ proc applyModelsTextCommand*(memory: MdFileAdapter;
     let normalized = normalizeModelCatalog(provider, catalog.entries)
     if normalized.len > 0 and normalized.allIt(it.modelName != model):
       return err("Modelo indisponível agora para `" & provider & "`: `" & model & "`.")
-  memory.saveChannelPreference(userId, "provider", provider)
-  memory.saveChannelPreference(userId, "model", model)
+  ? memory.saveChannelPreferences(userId, [("provider", provider), ("model", model)])
   ok("Modelo definido: " & provider & " / " & model)
 
 proc applyThinkTextCommand*(memory: MdFileAdapter;
@@ -468,7 +485,7 @@ proc applyThinkTextCommand*(memory: MdFileAdapter;
   if value.strip.len == 0:
     return ok(memory.buildThinkHelpText(userId))
   let level = ? parseThinkArgs(value)
-  memory.saveChannelPreference(userId, "thinking", level)
+  ? memory.saveChannelPreference(userId, "thinking", level)
   ok("Thinking definido: " & level)
 
 proc applyBudgetTextCommand*(memory: MdFileAdapter;
@@ -477,7 +494,7 @@ proc applyBudgetTextCommand*(memory: MdFileAdapter;
   if value.strip.len == 0:
     return ok(memory.buildBudgetHelpText(userId))
   let policy = ? parseBudgetArgs(value)
-  memory.saveChannelPreference(userId, "budget", policy)
+  ? memory.saveChannelPreference(userId, "budget", policy)
   ok("Budget definido: " & policy)
 
 proc applySkillTextCommand*(memory: MdFileAdapter;

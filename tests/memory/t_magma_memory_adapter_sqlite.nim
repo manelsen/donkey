@@ -270,6 +270,31 @@ when defined(withSqlite):
       check failing.readPreferences(UserId("u1")).isErr
       check failing.readContext(UserId("u1")).isErr
 
+    test "legacy nodes do not take the place of memories in the search":
+      ## Lessons and entities written before they were dropped are still in
+      ## the table. They must not fill the semantic or the recent window.
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      a.appendMemory(UserId("u1"), "passeio no parque")
+      for i in 0 ..< 40:
+        check a.graph.insertNode(MagmaNode(
+          id: "legacy" & $i, userId: "u1", nodeType: "lesson",
+          content: "licao antiga " & $i,
+          embedding: fakeEmbedFn("o que"), timestamp: getTime().toUnix()))
+      let hits = a.search(UserId("u1"), "o que aconteceu ontem", 1)
+      check hits.len == 1
+      check hits[0].content == "passeio no parque"
+
+    test "a refused commitment update is not reported as done":
+      let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
+      let c = newCommitment(sourceText = "ligar para a Ada", owner = coAgent)
+      check a.saveCommitment(UserId("u1"), c).isOk
+      var rejecting = a.graph
+      rejecting.upsertNode = proc(node: MagmaNode): Result[void, string] {.gcsafe.} =
+        err("disk full")
+      let failing = newMagmaMemoryAdapter(rejecting, fakeEmbedFn)
+      check not failing.updateCommitmentStatus(UserId("u1"), c.id, csDone)
+      check a.updateCommitmentStatus(UserId("u1"), c.id, csDone)
+
     test "reading the context reports a graph that cannot be read":
       let a = newSqliteMagmaMemoryAdapter(dbPath, fakeEmbedFn)
       a.saveUserMd(UserId("u1"), "# Ada")
