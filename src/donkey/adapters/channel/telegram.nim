@@ -186,6 +186,9 @@ proc sendChunkOnce(a: TelegramAdapter; chatId: int64; text, replyTo: string;
 proc sendChunk(a: TelegramAdapter; chatId: int64; text, replyTo: string;
                firstChunk: bool;
                isHtml = false): Result[void, string] =
+  ## Behavior derived from hermes-agent (MIT) fix 595f3a289c; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-013
+  ##
   ## Sends one chunk, retrying once when flood control refused it. The chunks
   ## already delivered are not resent: the retry starts at the refused chunk.
   var retried = false
