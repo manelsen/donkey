@@ -145,3 +145,26 @@ suite "telegram_policy — audio method":
     check audioMethodFor("https://x.test/a.jpg") == ""
     check audioMethodFor("https://x.test/a.pdf") == ""
     check audioMethodFor("https://x.test/noext") == ""
+
+suite "telegram_policy — group mentions":
+
+  test "TG-015: an exact mention addresses the bot":
+    check isAddressedToBot("hey @donkeybot help", "donkeybot")
+    check isAddressedToBot("@DonkeyBot", "donkeybot")
+
+  test "TG-015: a longer handle does not match":
+    check not isAddressedToBot("@donkeybot2 help", "donkeybot")
+    check not isAddressedToBot("@donkeybot_x", "donkeybot")
+
+  test "TG-015: a message without the mention is not addressed":
+    check not isAddressedToBot("bom dia", "donkeybot")
+    check not isAddressedToBot("email a@b.com", "donkeybot")
+
+  test "TG-015: an unknown username disables the gate":
+    check not isAddressedToBot("@donkeybot", "")
+
+  test "TG-015: the gate is opt-in":
+    for value in ["1", "true", "YES", "on"]:
+      check mentionRequiredFromEnv(value)
+    for value in ["0", "false", "", "off"]:
+      check not mentionRequiredFromEnv(value)

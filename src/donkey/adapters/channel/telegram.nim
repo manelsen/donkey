@@ -58,6 +58,12 @@ func apiBaseValue*(a: TelegramAdapter): string =
 func apiUrl(a: TelegramAdapter; meth: string): string =
   a.apiBaseValue & "/bot" & a.token & "/" & meth
 
+func telegramBotUsername*(): string =
+  getEnv("DONKEY_TELEGRAM_BOT_USERNAME").strip.strip(chars = {'@'})
+
+func telegramRequireMention*(): bool =
+  mentionRequiredFromEnv(getEnv("DONKEY_TELEGRAM_REQUIRE_MENTION"))
+
 func telegramLinkPreviewsEnabled*(): bool =
   linkPreviewsFromEnv(getEnv("DONKEY_TELEGRAM_LINK_PREVIEW"))
 

@@ -135,3 +135,28 @@ func audioMethodFor*(url: string): string =
   of "ogg", "opus", "oga": "sendVoice"
   of "mp3", "m4a", "aac", "flac", "wav": "sendAudio"
   else: ""
+
+func isAddressedToBot*(text, botUsername: string): bool =
+  ## Behavior derived from hermes-agent (MIT) fix 1e18e0503f; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-015
+  ##
+  ## A group message addresses the bot when it mentions @username as a word.
+  ## Matching is case-insensitive and requires a boundary, so @mybot2 does not
+  ## wake @mybot.
+  if botUsername.len == 0 or text.len == 0:
+    return false
+  let needle = "@" & botUsername.toLowerAscii()
+  let lower = text.toLowerAscii()
+  var start = 0
+  while true:
+    let at = lower.find(needle, start)
+    if at < 0:
+      return false
+    let after = at + needle.len
+    if after >= lower.len or lower[after] notin {'a' .. 'z', '0' .. '9', '_'}:
+      return true
+    start = after
+
+func mentionRequiredFromEnv*(value: string): bool =
+  ## Opt-in gate; anything but an explicit yes keeps the previous behaviour.
+  value.strip.toLowerAscii in ["1", "true", "yes", "on"]

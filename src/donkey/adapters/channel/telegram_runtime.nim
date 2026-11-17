@@ -11,6 +11,7 @@ import ../../app/approval_runtime
 import ../../app/session_manager
 import ../../domain/agent_message
 import ../../domain/message
+import ../../domain/channels/telegram_policy
 import ../../ports/provider
 import ../identity/identity_resolver
 import ./common_runtime
@@ -764,6 +765,17 @@ proc handleTelegramMessage*(msg: InboundMessage;
                             daemonStartMs: int64;
                             logger: Logger;
                             ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
+  ## Behavior derived from hermes-agent (MIT) fix 1e18e0503f; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-015
+  ##
+  ## In groups the bot may see every message. With the mention gate enabled,
+  ## only messages that mention the bot start a turn; `/cmd@bot` already works
+  ## because parseCommandText strips the suffix.
+  let botUsername = telegramBotUsername()
+  if msg.isGroup and telegramRequireMention() and botUsername.len > 0 and
+     not isAddressedToBot(msg.text, botUsername):
+    logger.debug("telegram: group message not addressed to the bot, ignored")
+    return true
   let pairingRawId =
     if msg.rawChannelId.len > 0: msg.rawChannelId else: msg.channelId
   let auth = authorizeResolvedInbound(

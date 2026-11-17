@@ -322,3 +322,30 @@ suite "telegram_pure — missing sender (TG-004)":
                              "chat": {"id": -1001234567890, "type": "supergroup"},
                              "text": "aviso do admin"}}
     check not isBotUpdate(upd)
+
+suite "telegram_pure — group and topic metadata":
+
+  test "TG-015: a group message is flagged as a group":
+    let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
+                             "chat": {"id": -100, "type": "supergroup"},
+                             "text": "oi"}}
+    check parseUpdate(upd).isGroup
+
+  test "TG-015: a private message is not a group":
+    let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
+                             "chat": {"id": 7, "type": "private"},
+                             "text": "oi"}}
+    check not parseUpdate(upd).isGroup
+
+  test "TG-025: message_thread_id is parsed":
+    let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
+                             "chat": {"id": -100, "type": "supergroup"},
+                             "message_thread_id": 42, "text": "oi"}}
+    check parseUpdate(upd).threadId == "42"
+
+  test "TG-028: media_group_id is parsed":
+    let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
+                             "chat": {"id": 7, "type": "private"},
+                             "media_group_id": "g1",
+                             "photo": [{"file_id": "f1"}]}}
+    check parseUpdate(upd).mediaGroupId == "g1"

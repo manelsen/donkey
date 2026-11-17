@@ -36,8 +36,21 @@ type
     mediaFileId*: string   ## Telegram file_id for download (if hasMedia)
     mediaFileName*: string ## original document name, when provided
     mediaMimeType*: string ## original MIME type, when provided
+    mediaGroupId*: string  ## album id, when the message belongs to one
+    threadId*:    string   ## message_thread_id for forum topics
+    isGroup*:     bool     ## true for group/supergroup chats
 
 # ── Internal pure helpers ─────────────────────────────────────────────────────
+
+func idAsString(node: JsonNode; key: string): string =
+  ## Telegram sends ids as numbers; some fields accept a string too.
+  let value = node.getOrDefault(key)
+  if value.isNil:
+    return ""
+  case value.kind
+  of JInt: $value.getInt
+  of JString: value.getStr
+  else: ""
 
 func extractTextFrom(node: JsonNode): string =
   ## Returns "text" field, or "caption" for media messages.
@@ -172,6 +185,9 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
     let mediaMime = tgMsg |> extractMediaMimeType
     let sessKey   = tgMsg |> extractChatKey
     let chanId    = $tgMsg["message_id"].getInt()
+    let chatType  = tgMsg["chat"].getOrDefault("type").getStr("private")
+    let threadId  = tgMsg.idAsString("message_thread_id")
+    let groupId   = tgMsg.idAsString("media_group_id")
     ## Skip updates that carry neither text nor a recognisable attachment.
     if text.len == 0 and mediaId.len == 0:
       return TgParseResult(kind: tukUnknown)
@@ -185,6 +201,9 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
       mediaFileId:   mediaId,
       mediaFileName: mediaName,
       mediaMimeType: mediaMime,
+      mediaGroupId:  groupId,
+      threadId:      threadId,
+      isGroup:       chatType in ["group", "supergroup"],
     )
 
   TgParseResult(kind: tukUnknown)
@@ -213,6 +232,9 @@ func toInbound*(r: TgParseResult; userId: UserId;
     mediaUrl:     mediaUrl,
     mediaFileName: r.mediaFileName,
     mediaMimeType: r.mediaMimeType,
+    isGroup:       r.isGroup,
+    mediaGroupId:  r.mediaGroupId,
+    threadId:      r.threadId,
   )
 
 func maxNextOffset*(currentOffset: int64; updates: JsonNode): int64 =
