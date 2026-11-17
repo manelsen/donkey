@@ -449,3 +449,53 @@ fb2f3e213a	RATE	yes	Pacing de envios e edicoes contra um slot compartilhado por 
 ab24fb0581	EDIT	yes	Reaction de ack do turno precisa usar emoji que o Telegram aceita
 cb567242d7	INTERNAL	no	Cache de descricao de sticker fora do event loop; performance interna
 70f79c8cde	INTERNAL	no	Regex de token do Telegram ancorada em digito (ReDoS); seguranca interna
+a1838ea87a	INBOUND	yes	Recibos de update precisam sobreviver a rebuild e restart para nao duplicar updates
+aca906df2c	INTERNAL	no	Caches de status limitados entre awaits; performance interna
+32b4acf4c8	INTERNAL	no	Nome do bot no desktop apos setup por QR; feature do desktop
+999b19b6ed	INBOUND	yes	Callbacks do model picker precisam re-checar a autorizacao de quem clicou
+0536b2a147	INTERNAL	no	Avisos de restart privados escopados por perfil; interno
+43800d55f2	INTERNAL	no	Scripts do desktop e gmail-triage partem de env limpo; interno
+ee942a7bbf	INTERNAL	no	Secrets de adapter declarados vs variaveis com nome de plataforma; interno
+3480de0402	FORMAT	yes	Fence de codigo terminada em CRLF precisa fechar o bloco no parse de formatacao
+5f7b1e2d65	FORMAT	yes	Regex de fence ancorada: triple backticks inline nao podem virar bloco de codigo
+c82abc309a	FORMAT	yes	Fences em meio de linha e indentados precisam ser preservados na formatacao
+1809f4fec3	INBOUND	yes	PTB despacha um update por vez; handler lento parece ausencia de progresso na fila
+1a51cedc0b	NET	yes	Mensagem fatal de polling stall deve nomear o stall real observado
+3671e521f2	INBOUND	yes	Dispatcher do PTB para de drenar a fila; updates ficam sem processamento
+5907983b96	INBOUND	yes	PTB serializa todos os updates por padrao; processamento concorrente e opt-in
+96efe44c1c	INBOUND	yes	Retry da recuperacao de ingress stall apos fallback sem event loop
+a6d7e08fd1	INBOUND	yes	Updates do mesmo chat precisam manter a ordem sob dispatch concorrente
+ff90457267	INBOUND	yes	Cancelar um update em espera nao pode quebrar a cadeia por chat
+943d4caa47	INTERNAL	no	Prompts de aprovacao interim vs notify; feature de aprovacao do hermes
+af6f618d3d	INTERNAL	no	Fallback de texto do clarify no Telegram; feature interna de clarify
+e26d4cb3e3	INTERNAL	no	Aprovacao precisa de push em vez de disable_notification; feature de aprovacao do hermes
+7ef5aca075	INBOUND	yes	Updates retidos precisam ir para o adapter reconstruido; fila de updates
+d87a031fe1	INBOUND	yes	Adapter aposentado encaminhando hold: o claim do update deve ser aceito
+0c889a774f	NET	yes	TLS: SSL_CERT_FILE deve ser honrado pelo contexto compartilhado do Telegram
+7748c7f484	INBOUND	yes	Fila de hold do adapter reconectado nao pode voltar ao predecessor
+785cf8a3de	NET	yes	Todo client do Telegram reusa o contexto TLS compartilhado da plataforma
+8e85a0fd8c	INBOUND	yes	inline_query.offset e ecoado pelo cliente; offset negativo indexa o catalogo do fim
+1b8bd66b7f	INTERNAL	no	Guard de lint para stdin em subprocess; CI interno
+a274d3388f	INTERNAL	no	Imports dos modulos core em Python 3.11-3.13
+6d60f56f9f	INTERNAL	no	Pin da dependencia Telegram Client no catalogo de plugin; dependencias
+711a97e953	INTERNAL	no	Repin do Telegram Client para 1.2.12; dependencias
+a0da727d72	INTERNAL	no	Bump de versão no catálogo de plugins; gestão de dependência, sem mudança de comportamento do Telegram.
+b1579e9b53	INTERNAL	no	Repin de versão do cliente Telegram no catálogo; dependência, sem comportamento de API.
+f62b34166a	INTERNAL	no	Repin de versão do plugin no catálogo; gestão de dependência, não comportamento de API.
+fca75c81f7	INTERNAL	no	Reorganização de manifesto do catálogo de plugins; nenhuma mudança de comportamento.
+29cda7a5ef	INBOUND	yes	reply_to_message_id exige id de mensagem existente; âncora que não é id faz o envio falhar.
+2f4b42191e	INTERNAL	no	Refatoração de imports de plugins; sem interação com a API do Telegram.
+b95c4861b2	INTERNAL	no	Plumbing de configuração de authz por plugin; não descreve comportamento da API.
+ecffe12eae	FORMAT	yes	Fences de código em MarkdownV2 precisam sobreviver ao streaming; entidades pre/code são sensíveis.
+407303dfdc	TOPIC_API	yes	Em DM topics, a resposta só entra no tópico novo se o message_thread_id for aplicado na chegada do update.
+42e5a8578f	TOPIC_API	yes	O message_thread_id de um DM topic vem do bot que recebeu a mensagem, não de outro bot do grupo.
+d2a39fdf9f	TOPIC_API	yes	Opção de DM topics precisa existir na config para o message_thread_id automático ser aplicado.
+328b64a9a7	TOPIC_API	yes	Cada createForumTopic gera um service message forum_topic_created com id igual ao message_thread_id.
+3687ef0bf4	TOPIC_API	yes	O service message de criação de tópico pode vir sem message_thread_id; ele pertence ao tópico recém-criado.
+37ec498ea7	TOPIC_API	yes	forum_topic_created é update único; só humano autorizado cria tópico e ele deve ser consumido uma vez.
+406580697a	TOPIC_API	yes	O service message de novo tópico chega depois do envio; a janela deve ser medida pelo horário de envio.
+7cfafba18e	TOPIC_API	yes	createForumTopic não devolve nome editável depois; o nome vem do service message e pode ser renomeado.
+ae596f49a0	TOPIC_API	yes	Editar mantém message.date original, então o edit não entra na janela de tempo do tópico recém-criado.
+bda200183d	TOPIC_API	yes	O service message de novo DM topic não é adjacente em id; a associação deve ser por tempo, não por message_id.
+fbd482d5c5	TOPIC_API	yes	createForumTopic em voo não pode ser cancelado: o tópico é criado, o id se perde e gera tópico duplicado.
+6483c39f84	EDIT	yes	Editar reenvia o mesmo message_id com texto novo, então o update não é replay do envio original.
