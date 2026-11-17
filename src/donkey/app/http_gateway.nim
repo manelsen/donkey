@@ -22,7 +22,9 @@ import ../core/log
 import ../ports/ipc
 import ../core/agent_events
 import ../domain/message
+import ../domain/providers/openai_compat
 import ./metrics
+import ./openai_compat_runtime
 
 const
   GatewayDefaultPort* = 8080
@@ -124,6 +126,9 @@ type
   GatewayStatusFn* = proc(): DaemonStatus {.gcsafe.}
   GatewayLogFn*    = proc(n: int): seq[IpcLogEntry] {.gcsafe.}
   GatewayEventFn*  = proc(n: int): seq[AgentEvent] {.gcsafe.}
+  GatewayCompletionFn* = proc(req: CompletionRequest):
+      Result[CompletionResponse, string] {.gcsafe.}
+    ## Provider-backed completion for the OpenAI-compatible endpoint.
 
 # ── Inbound handler ───────────────────────────────────────────────────────────
 
@@ -179,6 +184,8 @@ func routeGatewayRequest*(req: GatewayRequest): string =
   of "/api/logs":      "logs"
   of "/api/events":    "events"
   of "/api/chat":      "chat"
+  of "/v1/chat/completions": "openai_chat"
+  of "/v1/models":     "openai_models"
   else:                "notfound"
 
 func routeChatMethod*(meth: string): string =
@@ -297,11 +304,30 @@ proc parseChatPost*(body: string): Result[InboundMessage, string] =
 proc tryAcquireSseConnection(): bool {.gcsafe.}
 proc releaseSseConnection() {.gcsafe.}
 
+proc readRequestBody(client: Socket; contentLength: int;
+                    deadline: MonoTime): string =
+  ## Reads at most `contentLength` bytes before the request deadline. Returns
+  ## whatever arrived; the caller validates emptiness.
+  if contentLength <= 0:
+    return ""
+  var buf = newString(contentLength)
+  var received = 0
+  while received < contentLength:
+    if getMonoTime() > deadline:
+      break
+    let n = client.recv(buf[received].addr, contentLength - received)
+    if n <= 0:
+      break
+    received += n
+  if received > 0: buf[0 ..< received] else: ""
+
 proc handleGatewayConn(client: Socket;
                         statusFn: GatewayStatusFn;
                         logFn:    GatewayLogFn;
                         eventFn:  GatewayEventFn;
                         inboundFn: GatewayInboundFn;
+                        completionFn: GatewayCompletionFn;
+                        modelName: string;
                         authToken: string;
                         log:      Logger) {.gcsafe.} =
   defer:
@@ -378,7 +404,7 @@ proc handleGatewayConn(client: Socket;
     case action
     of "index":
       client.sendResponse("200 OK", "text/plain",
-        "Donkey HTTP gateway\nEndpoints: /api/status /api/logs /api/events /api/chat\n", log)
+        "Donkey HTTP gateway\nEndpoints: /api/status /api/logs /api/events /api/chat /v1/models /v1/chat/completions\n", log)
 
     of "health":
       client.sendResponse("200 OK", "text/plain", "ok\n", log)
@@ -434,19 +460,7 @@ proc handleGatewayConn(client: Socket;
           client.sendResponse("503 Service Unavailable", "application/json",
                              "{\"error\":\"inbound handler not configured\"}\n", log)
         else:
-          var body = ""
-          if contentLength > 0:
-            var buf = newString(contentLength)
-            var received = 0
-            while received < contentLength:
-              if getMonoTime() > deadline:
-                break
-              let n = client.recv(buf[received].addr, contentLength - received)
-              if n <= 0:
-                break
-              received += n
-            if received > 0:
-              body = buf[0 ..< received]
+          let body = readRequestBody(client, contentLength, deadline)
           if body.len == 0:
             client.sendResponse("400 Bad Request", "application/json",
                                "{\"error\":\"empty body\"}\n", log)
@@ -464,6 +478,20 @@ proc handleGatewayConn(client: Socket;
                            "{\"info\":\"POST to /api/chat to send messages\"}\n", log)
       else:
         client.sendResponse("405 Method Not Allowed", "text/plain", "", log)
+
+    of "openai_chat":
+      if req.meth != "POST":
+        client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        let body = readRequestBody(client, contentLength, deadline)
+        let reply = chatReply(body, completionFn, modelName, epochTime().int64)
+        client.sendResponse(reply.status, "application/json", reply.body & "\n", log)
+
+    of "openai_models":
+      if req.meth != "GET":
+        client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        client.sendJson(buildOpenAiModels(modelName, epochTime().int64), log)
 
     of "notfound":
       client.sendResponse("404 Not Found", "text/plain", "Not found\n", log)
@@ -486,12 +514,16 @@ type GatewayArgs = object
   logFn:     GatewayLogFn
   eventFn:   GatewayEventFn
   inboundFn: GatewayInboundFn
+  completionFn: GatewayCompletionFn
+  modelName: string
   log:       Logger
 
 var gGatewayStatusFn: GatewayStatusFn
 var gGatewayLogFn:    GatewayLogFn
 var gGatewayEventFn:  GatewayEventFn
 var gGatewayInboundFn: GatewayInboundFn
+var gGatewayCompletionFn: GatewayCompletionFn
+var gGatewayModelName: string
 var gGatewayLog:      Logger
 var gGatewayAuthToken: string
 
@@ -587,7 +619,8 @@ proc gatewayWorker(id: int) {.thread.} =
         continue
       try:
         handleGatewayConn(client, gGatewayStatusFn, gGatewayLogFn, gGatewayEventFn,
-                          gGatewayInboundFn, gGatewayAuthToken, gGatewayLog)
+                          gGatewayInboundFn, gGatewayCompletionFn, gGatewayModelName,
+                          gGatewayAuthToken, gGatewayLog)
       finally:
         releaseHttpConnection()
 
@@ -677,6 +710,8 @@ proc startHttpGateway*(port: int;
                        inboundFn: GatewayInboundFn = nil;
                        bindAddr = "127.0.0.1";
                        authToken = "";
+                       completeFn: GatewayCompletionFn = nil;
+                       modelName = "";
                        log:       Logger = newLogger("http_gateway")
                       ): Result[void, string] =
   ## Starts the HTTP gateway on a dedicated OS thread.
@@ -687,6 +722,8 @@ proc startHttpGateway*(port: int;
     gGatewayLogFn     = logFn
     gGatewayEventFn   = eventFn
     gGatewayInboundFn = inboundFn
+    gGatewayCompletionFn = completeFn
+    gGatewayModelName = modelName
     gGatewayLog       = log
     gGatewayAuthToken = authToken
     acquire(gHttpConnLock)
@@ -700,7 +737,8 @@ proc startHttpGateway*(port: int;
       return err(poolResult.error)
     let args = GatewayArgs(port: port, bindAddr: bindAddr, authToken: authToken,
                            statusFn: statusFn, logFn: logFn,
-                           eventFn: eventFn, inboundFn: inboundFn, log: log)
+                           eventFn: eventFn, inboundFn: inboundFn,
+                           completionFn: completeFn, modelName: modelName, log: log)
     try:
       createThread(gGatewayThread, gatewayThread, args)
     except CatchableError as exc:

@@ -184,10 +184,17 @@ suite "http_gateway route dispatch":
     let req = GatewayRequest(meth: "GET", path: "/health")
     check routeGatewayRequest(req) == "health"
 
+  test "routeGatewayRequest maps the OpenAI-compatible endpoints":
+    check routeGatewayRequest(GatewayRequest(meth: "POST", path: "/v1/chat/completions")) ==
+          "openai_chat"
+    check routeGatewayRequest(GatewayRequest(meth: "GET", path: "/v1/models")) ==
+          "openai_models"
+
   test "health and index are the only public gateway actions":
     check isPublicGatewayAction("index")
     check isPublicGatewayAction("health")
-    for action in ["status", "logs", "events", "chat", "notfound"]:
+    for action in ["status", "logs", "events", "chat", "openai_chat",
+                   "openai_models", "notfound"]:
       check not isPublicGatewayAction(action)
 
   test "routeGatewayRequest maps POST /api/chat to chat action":

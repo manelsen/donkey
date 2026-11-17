@@ -1157,7 +1157,9 @@ proc setupIpcServer(cfg: DonkeyConfig;
                 ") requires DONKEY_HTTP_TOKEN and DONKEY_HTTP_ALLOW_INSECURE=1")
     else:
       let gatewayStart = startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
-                                          bindAddr = httpBind, authToken = httpToken)
+                                          bindAddr = httpBind, authToken = httpToken,
+                                          completeFn = gatewayInboundCtx.services.globalCompleteFn,
+                                          modelName = cfg.defaultModel)
       if gatewayStart.isErr:
         log.error("HTTP gateway disabled: " & gatewayStart.error)
       else:
