@@ -29,3 +29,11 @@ suite "telegram_policy — reply anchors":
   test "TG-005: unrelated errors are not treated as a missing anchor":
     check not isMissingReplyAnchorError("chat not found")
     check not isMissingReplyAnchorError("")
+
+
+suite "telegram_policy — outbound text":
+
+  test "TG-006: empty and whitespace-only text is not sent":
+    check shouldSkipOutboundText("")
+    check shouldSkipOutboundText("   \n\t ")
+    check not shouldSkipOutboundText("oi")

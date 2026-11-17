@@ -213,6 +213,9 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
   if rawId.len == 0: return err("TelegramAdapter.send: no id for " & $msg.userId)
   let chatId = parseBiggestInt(rawId).int64
 
+  if shouldSkipOutboundText(msg.text) and msg.mediaUrl.len == 0:
+    return ok()   ## the API refuses empty text; nothing to deliver
+
   if msg.keyboard.len > 0:
     discard ? a.sendKeyboardRaw(chatId, msg.text, msg.keyboard, msg.replyTo, msg.isHtml)
     return ok()

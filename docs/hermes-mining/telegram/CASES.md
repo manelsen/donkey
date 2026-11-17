@@ -66,8 +66,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Não chamar a API para texto vazio; enviar um marcador ou pular o envio.
 - **Fontes no hermes:** `83dec2b3ec`
 - **Testes no hermes:** -
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n "strip.len == 0|text is empty" src/donkey/adapters/channel/telegram.nim` (sem guarda); envio em `src/donkey/adapters/channel/telegram.nim:193`
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:26` e `src/donkey/adapters/channel/telegram.nim:199`
 - **Prioridade:** P1
 
 ### TG-007: Legenda de mídia tem limite próprio de 1024 caracteres

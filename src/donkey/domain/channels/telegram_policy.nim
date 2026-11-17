@@ -23,3 +23,11 @@ func isMissingReplyAnchorError*(message: string): bool =
   let lower = message.toLowerAscii()
   lower.contains("to be replied not found") or
     lower.contains("reply message not found")
+
+func shouldSkipOutboundText*(text: string): bool =
+  ## Behavior derived from hermes-agent (MIT) fix 83dec2b3ec; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-006
+  ##
+  ## sendMessage refuses empty or whitespace-only text with 400 "message text
+  ## is empty". Skipping the call keeps the turn from failing on nothing.
+  text.strip.len == 0
