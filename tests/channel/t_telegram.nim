@@ -3,6 +3,7 @@
 
 import std/[json, os, strutils, unittest]
 import donkey/adapters/channel/telegram
+import donkey/adapters/http/std_http
 import donkey/adapters/identity/identity_resolver
 import donkey/core/pipeops
 import donkey/domain/message
@@ -222,3 +223,10 @@ suite "telegram adapter — transport wiring (TG-022, TG-030)":
     putEnv("DONKEY_TELEGRAM_TIMEOUT_SEC", "abc")
     check telegramHttpTimeoutSec() == 60
     delEnv("DONKEY_TELEGRAM_TIMEOUT_SEC")
+
+  test "TG-021: the adapter does not retry non-idempotent sends":
+    let resolverPath = getTempDir() / "donkey_tg_retry_ids.tsv"
+    defer: removeFile(resolverPath)
+    let a = newTelegramAdapter("token", resolverPath)
+    check not a.http.retryNonIdempotent
+    check a.http.maxAttempts(rkNonIdempotent) == 1

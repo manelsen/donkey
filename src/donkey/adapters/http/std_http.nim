@@ -15,11 +15,33 @@ type StdHttpAdapter* = object
   allowlist*: seq[string] ## Allowed hosts.
   circuitBreaker*: bool ## Record failures/check the global per-host breaker.
   proxy*: string ## Optional filtering egress proxy URL.
+  retryNonIdempotent*: bool ## false → POST/PATCH make a single attempt.
 
 proc newStdHttpAdapter*(timeout = 60, maxRetries = 3, allowlist: seq[string] = @[],
-                        circuitBreaker = true, proxy = ""): StdHttpAdapter =
+                        circuitBreaker = true, proxy = "",
+                        retryNonIdempotent = true): StdHttpAdapter =
   StdHttpAdapter(timeout: timeout, maxRetries: maxRetries, allowlist: allowlist,
-                 circuitBreaker: circuitBreaker, proxy: proxy)
+                 circuitBreaker: circuitBreaker, proxy: proxy,
+                 retryNonIdempotent: retryNonIdempotent)
+
+type RetryKind* = enum
+  rkIdempotent
+  rkNonIdempotent
+
+func retryKind*(meth: HttpMethod): RetryKind =
+  if meth in {HttpPost, HttpPatch}: rkNonIdempotent else: rkIdempotent
+
+func maxAttempts*(a: StdHttpAdapter; kind: RetryKind): int =
+  ## Behavior derived from hermes-agent (MIT) fix 85cefc7a5a; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-021
+  ##
+  ## A POST that timed out may already have been accepted by the server.
+  ## Retrying it duplicates the side effect, so channels that send messages
+  ## disable retries for non-idempotent methods.
+  if not a.retryNonIdempotent and kind == rkNonIdempotent:
+    1
+  else:
+    a.maxRetries
 
 proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
                       headers: seq[HttpHeader];
@@ -34,7 +56,7 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
     return err("Circuit breaker OPEN for host: " & host)
 
   var lastError = ""
-  for attempt in 1 .. a.maxRetries:
+  for attempt in 1 .. a.maxAttempts(retryKind(meth)):
     let res = block:
       withHttpClientTimeout(a.timeout, redirectLimit, a.proxy):
         if headers.len > 0:
