@@ -132,8 +132,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Manter a janela de penalidade por chat e não serializar todos os envios.
 - **Fontes no hermes:** `fb2f3e213a`, `595f3a289c`
 - **Testes no hermes:** -
-- **Situação no Donkey:** PARCIAL
-- **Evidência no Donkey:** `src/donkey/adapters/http/std_http.nim:54` (retry por requisição, sem janela por chat)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/core/channels/flood_gate.nim:21` e `src/donkey/adapters/channel/telegram.nim:146`
 - **Prioridade:** P1
 
 ### TG-013: Resposta dividida retoma da parte recusada
@@ -143,8 +143,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Retomar apenas da parte que falhou, mantendo a ordem por chat.
 - **Fontes no hermes:** `595f3a289c`, `7efba7c85f`
 - **Testes no hermes:** -
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n "resume|refused chunk" src/donkey/adapters/channel/telegram.nim` (sem resultados); loop em `src/donkey/adapters/channel/telegram.nim:209`
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/core/channels/flood_gate.nim:81` e `src/donkey/adapters/channel/telegram.nim:186`
 - **Prioridade:** P1
 
 ### TG-014: Mensagem dividida pelo cliente continua um único turno
@@ -231,8 +231,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Não repetir cegamente um POST não idempotente; confirmar ou aceitar a perda.
 - **Fontes no hermes:** `85cefc7a5a`, `e98a7006f8`
 - **Testes no hermes:** `tests/gateway/test_send_retry.py`
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `src/donkey/adapters/http/std_http.nim:29` (todo POST é repetido até maxRetries)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/adapters/http/std_http.nim:34` e `src/donkey/adapters/channel/telegram.nim:562`
 - **Prioridade:** P0
 
 ### TG-022: Proxy do ambiente é usado no transporte
@@ -242,8 +242,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Aplicar o proxy configurado em todas as chamadas, sem vazar credenciais no log.
 - **Fontes no hermes:** `d7c41f3cef`, `11e2e04667`, `aa7ee95c6c`
 - **Testes no hermes:** -
-- **Situação no Donkey:** PARCIAL
-- **Evidência no Donkey:** `src/donkey/adapters/http/std_http.nim:21` (proxy opcional; o adapter do Telegram não o repassa)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/adapters/channel/telegram.nim:577`
 - **Prioridade:** P2
 
 ### TG-023: Fallback de DNS não pode apontar para IP privado
@@ -297,8 +297,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Cair para sendDocument em vez de perder a mídia.
 - **Fontes no hermes:** `69fc6d9c1e`, `f6aa1965d7`, `542faf225f`
 - **Testes no hermes:** -
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `src/donkey/adapters/channel/telegram.nim:142` (escolhe por extensão; o fallback é enviar a URL como texto)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:110` e `src/donkey/adapters/channel/telegram.nim:215`
 - **Prioridade:** P1
 
 ### TG-028: Álbuns chegam como updates separados com media_group_id
@@ -330,8 +330,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Aplicar um prazo maior apenas aos uploads.
 - **Fontes no hermes:** `85e673b4a5`, `04057250a3`
 - **Testes no hermes:** `tests/gateway/test_telegram_send_path_health.py`
-- **Situação no Donkey:** PARCIAL
-- **Evidência no Donkey:** `src/donkey/adapters/http/std_http.nim:19` (timeout único de 60 s para todas as chamadas)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/adapters/channel/telegram.nim:64` e `src/donkey/adapters/http/std_http.nim:96`
 - **Prioridade:** P2
 
 ### TG-031: Finalização atrasada não pode suprimir a resposta final
@@ -341,8 +341,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Só considerar a resposta entregue quando a edição final for confirmada.
 - **Fontes no hermes:** `30878411b8`, `fab36436b2`, `0cc7f79016`
 - **Testes no hermes:** `tests/gateway/test_stream_consumer.py`
-- **Situação no Donkey:** PARCIAL
-- **Evidência no Donkey:** `src/donkey/app/outbound_runtime.nim` (estado de apresentação; sem confirmação de edição final)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/app/outbound_runtime.nim:271`
 - **Prioridade:** P1
 
 ### TG-032: Reação só aceita emojis permitidos pelo chat
@@ -385,8 +385,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Desativar a prévia quando o conteúdo é técnico ou repetitivo.
 - **Fontes no hermes:** `f6cfbd2b16`, `00ff9a26cd`
 - **Testes no hermes:** `tests/gateway/test_telegram_text_link_expansion.py`
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n "link_preview" src/donkey` (sem resultados)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:95`
 - **Prioridade:** P2
 
 ### TG-036: Menu de comandos tem limites de quantidade e tamanho
@@ -396,8 +396,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Truncar nomes/descrições e limitar a quantidade antes de publicar.
 - **Fontes no hermes:** `60ecde8ac7`, `da3e22bcfa`, `2ae50bdddd`
 - **Testes no hermes:** -
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n "setMyCommands" src/donkey` (sem resultados)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/core/commands/command_catalog.nim:133`
 - **Prioridade:** P2
 
 ### TG-037: Escape de MarkdownV2 e de HTML
@@ -417,38 +417,33 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 | Categoria | Situação | Prioridade | Casos |
 |---|---|---|---|
 | EDIT | COBERTO | P0 | 1 |
-| EDIT | COBERTO | P1 | 1 |
+| EDIT | COBERTO | P1 | 2 |
 | EDIT | COBERTO | P2 | 1 |
-| EDIT | PARCIAL | P1 | 1 |
-| FORMAT | AUSENTE | P2 | 2 |
 | FORMAT | COBERTO | P0 | 1 |
 | FORMAT | COBERTO | P1 | 3 |
-| FORMAT | COBERTO | P2 | 1 |
+| FORMAT | COBERTO | P2 | 3 |
 | FORMAT | PARCIAL | P1 | 1 |
 | INBOUND | AUSENTE | P1 | 1 |
 | INBOUND | COBERTO | P0 | 3 |
 | INBOUND | COBERTO | P2 | 4 |
 | INBOUND | PARCIAL | P2 | 1 |
-| MEDIA | AUSENTE | P1 | 1 |
 | MEDIA | AUSENTE | P2 | 1 |
-| MEDIA | COBERTO | P1 | 1 |
+| MEDIA | COBERTO | P1 | 2 |
+| MEDIA | COBERTO | P2 | 1 |
 | MEDIA | PARCIAL | P1 | 1 |
-| MEDIA | PARCIAL | P2 | 1 |
-| NET | AUSENTE | P0 | 1 |
-| NET | COBERTO | P2 | 2 |
+| NET | COBERTO | P0 | 1 |
+| NET | COBERTO | P2 | 3 |
 | NET | PARCIAL | P1 | 1 |
-| NET | PARCIAL | P2 | 1 |
-| RATE | AUSENTE | P1 | 1 |
+| RATE | COBERTO | P1 | 2 |
 | RATE | COBERTO | P2 | 1 |
-| RATE | PARCIAL | P1 | 1 |
 | RATE | PARCIAL | P2 | 1 |
 | TOPIC_API | AUSENTE | P1 | 2 |
 
 | Total de casos | 37 |
 |---|---|
-| COBERTO | 19 |
-| PARCIAL | 9 |
-| AUSENTE | 9 |
+| COBERTO | 28 |
+| PARCIAL | 5 |
+| AUSENTE | 4 |
 | P0 | 6 |
 | P1 | 15 |
 | P2 | 16 |
