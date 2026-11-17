@@ -83,13 +83,34 @@ func userTurn(text: string): ConversationHistory =
     ChatMessage(role: roleAssistant, text: "feito"),
   ]
 
-proc slowComplete(calls: ref int; delayMs: int): AsyncCompleteFn =
-  ## A completion that stays in flight, so the coalescing guard is observable.
+type
+  BlockingComplete = ref object
+    blocked: bool
+    gate:    Future[Result[CompletionResponse, string]]
+    calls:   int
+
+proc blockingComplete(state: BlockingComplete): AsyncCompleteFn =
+  ## The first call stays in flight until the test opens the gate, so the
+  ## coalescing guard is deterministic instead of a race with a timer.
   result = proc (req: CompletionRequest):
                Future[Result[CompletionResponse, string]] {.gcsafe, async.} =
-    inc calls[]
-    await sleepAsync(delayMs)
+    inc state.calls
+    if state.blocked:
+      state.blocked = false
+      return await state.gate
     ok(CompletionResponse(text: """{"nothing": true}"""))
+
+proc successResponse(text: string): Result[CompletionResponse, string] =
+  ok(CompletionResponse(text: text))
+
+proc settle(rt: ReviewRuntime; userId: UserId = UserId("u1")) =
+  ## Waits for the background review to finish. Bounded so a broken runtime
+  ## fails the assertion instead of hanging the suite.
+  var spins = 0
+  while rt.isRunning(userId) and spins < 2000:
+    waitFor sleepAsync(milliseconds(1))
+    inc spins
+  doAssert not rt.isRunning(userId), "review did not settle"
 
 proc installSkill(home, slug: string; lock: var RemoteSkillLockfile) =
   let dir = remoteSkillDir(home, slug)
@@ -255,10 +276,10 @@ suite "review runtime — cadence and coalescing":
       memoryInterval = 2)
     check not runtime.afterTurn(UserId("u1"), "s1", userTurn("primeiro"), 0)
     check runtime.afterTurn(UserId("u1"), "s1", userTurn("segundo"), 0)
-    waitFor sleepAsync(20)
+    runtime.settle()
     check calls[] == 1
     check not runtime.afterTurn(UserId("u1"), "s1", userTurn("terceiro"), 0)
-    waitFor sleepAsync(20)
+    runtime.settle()
     check calls[] == 1
 
   test "skill review counts tool iterations across turns":
@@ -269,7 +290,7 @@ suite "review runtime — cadence and coalescing":
       skillInterval = 5)
     check not runtime.afterTurn(UserId("u1"), "s1", userTurn("a"), 3)
     check runtime.afterTurn(UserId("u1"), "s1", userTurn("b"), 2)
-    waitFor sleepAsync(20)
+    runtime.settle()
     check calls[] == 1
 
   test "counters are per user":
@@ -281,7 +302,7 @@ suite "review runtime — cadence and coalescing":
     check not runtime.afterTurn(UserId("u1"), "s1", userTurn("a"), 0)
     check not runtime.afterTurn(UserId("u2"), "s1", userTurn("b"), 0)
     check runtime.afterTurn(UserId("u1"), "s1", userTurn("c"), 0)
-    waitFor sleepAsync(20)
+    runtime.settle()
     check calls[] == 1
 
   test "a disabled review never fires automatically":
@@ -291,7 +312,7 @@ suite "review runtime — cadence and coalescing":
       complete = fakeComplete("""{"nothing": true}""", calls),
       memoryInterval = 1, enabled = false)
     check not runtime.afterTurn(UserId("u1"), "s1", userTurn("a"), 10)
-    waitFor sleepAsync(20)
+    runtime.settle()
     check calls[] == 0
     ## An explicit review still works, like /refine.
     check waitFor(runtime.runReview(UserId("u1"), "s1", userTurn("a"))).isOk
@@ -299,19 +320,22 @@ suite "review runtime — cadence and coalescing":
 
   test "one review per user at a time, and the due turn is not lost":
     let cap = Capture()
-    let calls = new(int)
+    let state = BlockingComplete(
+      blocked: true, gate: newFuture[Result[CompletionResponse, string]]())
     let runtime = testRuntime(capturePort(cap), home = "",
-                              complete = slowComplete(calls, 60),
+                              complete = blockingComplete(state),
                               memoryInterval = 1)
     check runtime.afterTurn(UserId("u1"), "s1", userTurn("a"), 0)
-    waitFor sleepAsync(5)
     check runtime.isRunning(UserId("u1"))
+    ## A turn that arrives while the review is in flight neither starts a
+    ## second one nor loses its place in the cadence.
     check not runtime.afterTurn(UserId("u1"), "s1", userTurn("b"), 0)
-    waitFor sleepAsync(80)
+    state.gate.complete(successResponse("""{"nothing": true}"""))
+    runtime.settle()
     check not runtime.isRunning(UserId("u1"))
     check runtime.afterTurn(UserId("u1"), "s1", userTurn("c"), 0)
-    waitFor sleepAsync(80)
-    check calls[] == 2
+    runtime.settle()
+    check state.calls == 2
 
 proc runWiringTurn(userDir: string; port: MemoryRuntimePort;
                    runtime: ReviewRuntime): Future[OutboundMessage] {.async.} =
@@ -348,7 +372,7 @@ suite "review runtime — orchestrator wiring":
 
     let reply = waitFor runWiringTurn(userDir, port, runtime)
     check reply.text == "pong"
-    waitFor sleepAsync(50)
+    runtime.settle()
     ## The turn itself was auto-captured with the `turn` origin; the review's
     ## fact is the one carrying `review`.
     var reviewed = 0
