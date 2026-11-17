@@ -9,7 +9,6 @@
 ## sleeping.
 
 import std/[strutils, tables]
-import ../pipeops
 
 type
   FloodGate* = ref object
