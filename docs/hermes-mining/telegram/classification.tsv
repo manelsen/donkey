@@ -1,0 +1,51 @@
+hash	category	transfer	reason
+488deb04a4	INTERNAL	no	Adiciona apenas o import asyncio em base.py; correção interna de código, sem comportamento de API.
+b759602483	FORMAT	yes	MarkdownV2 não aceita entidade de itálico atravessando quebra de linha; o parse falha.
+daedec6957	INTERNAL	no	Guarda o import da lib do Telegram no Windows; proteção de dependência interna.
+542faf225f	MEDIA	yes	sendPhoto comprime e recusa imagens grandes; acima de ~5MB o envio precisa ser documento.
+55c70f3508	FORMAT	yes	Sem parse_mode o Telegram mostra as barras de escape do MarkdownV2 no texto.
+5cdcb9e26f	FORMAT	yes	No fallback sem parse_mode os marcadores de itálico do MarkdownV2 aparecem crus.
+928bb16da1	TOPIC_API	yes	message_thread_id precisa acompanhar o envio para cair no tópico certo do fórum.
+a630ca15de	TOPIC_API	yes	Sem message_thread_id a mensagem cai no tópico General do grupo fórum.
+0d6b25274c	TOPIC_API	yes	Cada message_thread_id é uma conversa própria no fórum e deve ter sessão separada.
+69090d6da1	TOPIC_API	yes	Metadados de thread precisam chegar aos métodos de mídia para rotear ao tópico.
+0c182211a1	NET	yes	Desconectar Updater/Application com long polling ativo deixa o ciclo em estado inválido.
+3fab72f1e1	MEDIA	yes	Media group chega em updates encadeados; buffers pendentes ficam órfãos ao desconectar.
+5a2fcaab39	NET	yes	Dois getUpdates simultâneos provocam 409 Conflict e o polling é encerrado.
+8fb618234f	MEDIA	yes	Álbum chega como vários updates com o mesmo media_group_id e precisa ser agrupado.
+4298c6fd9a	TOPIC_API	yes	Sem thread_id a notificação cai no General em vez do tópico de origem.
+4ae1334287	MEDIA	yes	Rajada de fotos chega em updates separados e interrompe o processamento em curso.
+a56937735e	FORMAT	yes	Indicadores de chunk precisam de escape para o MarkdownV2 aceitar a mensagem.
+25b0ae7979	NET	yes	Falha transitória de TLS derruba handshake e conexão durante connect e send.
+365d175100	FORMAT	yes	Sem parse_mode o Telegram exibe Markdown cru; formatação só vale com MarkdownV2.
+7ac9088d5c	EDIT	yes	Editar com conteúdo idêntico devolve 400 Message is not modified, não é falha real.
+d156942419	INBOUND	yes	O cliente do Telegram divide mensagens longas em updates que chegam separados.
+02f639e561	FORMAT	yes	MarkdownV2 usa sintaxe própria para riscado, spoiler e blockquote.
+43b3a0ac66	FORMAT	yes	Dentro de pre/code o MarkdownV2 ainda exige escape de barra invertida e crase.
+488a30e879	NET	yes	Conflito 409 no getUpdates só cessa quando o outro consumidor libera o long polling.
+febfe1c268	FORMAT	yes	Parênteses e chaves soltos quebram o parse do MarkdownV2 e geram 400.
+2bd8e5cb23	NET	yes	Queda de rede encerra o long polling; o getUpdates precisa ser reiniciado.
+3b509da571	NET	yes	Plataformas caem com erro de conexão e precisam reconectar com backoff.
+89befcaf33	TOPIC_API	yes	Entrega em fórum exige chat_id mais message_thread_id como alvo composto.
+6610c377ba	NET	yes	start_polling pode falhar na inicialização e o bot fica sem receber updates.
+41d9d08078	TOPIC_API	yes	message_thread_id inexistente devolve Message thread not found e o envio falha.
+d7c41f3cef	NET	yes	Transporte alternativo ignora HTTP(S)_PROXY e a conexão não sai pela proxy.
+b60cfd6ce6	INBOUND	yes	Responder mensagem apagada devolve message to be replied not found.
+158f49f19a	INTERNAL	no	Define só a ordem de prioridade dos comandos exibidos; decisão de produto interna.
+60ecde8ac7	FORMAT	yes	setMyCommands limita a 100 comandos e cerca de 40 chars por descrição.
+9fd78c7a8e	INTERNAL	no	Corrige o caminho usado no filtro de skills do menu; configuração interna.
+cdb64a869a	NET	yes	Consulta DoH pode devolver IP privado ou loopback e a conexão TLS falha.
+da3e22bcfa	FORMAT	yes	Bot API rejeita menus acima de ~60 comandos; o payload precisa ser limitado.
+2ae50bdddd	FORMAT	yes	Nomes de comando no Telegram têm limite de 32 caracteres.
+83dec2b3ec	FORMAT	yes	sendMessage com texto vazio ou só espaços devolve 400.
+5db630aae4	INTERNAL	no	Respeitar skills desativadas por plataforma é configuração interna do hermes.
+69f85a4dce	MEDIA	yes	Foto sem legenda chega como update só de mídia; ler apenas .text descarta a mensagem.
+85cefc7a5a	NET	yes	Timeout no envio provoca retry e o Telegram entrega a mesma mensagem duas vezes.
+4a75aec433	FORMAT	yes	Bot API proíbe hífen em nome de comando; o autocomplete devolve /claude_code.
+abf1be564b	INTERNAL	no	Inclui extra de webhook nas dependências de instalação; empacotamento interno.
+214e60c951	FORMAT	yes	Nome de comando só aceita minúsculas, dígitos e underscore.
+4a630c2071	MEDIA	yes	Legenda de mídia chega no update e é comparada ao texto para evitar duplicação.
+52b3a3ca3a	EDIT	yes	setMessageReaction aceita apenas emojis predefinidos; reação é opcional no fluxo.
+5075717949	INBOUND	yes	Cliente divide mensagens longas em updates consecutivos com corte perto de 4096.
+aed9b90ae3	EDIT	yes	Editar stream antes de existir message_id falha; a primeira mensagem precisa ser enviada.
+0e315a6f02	EDIT	yes	setMessageReaction só aceita emojis predefinidos e rejeita os demais.
