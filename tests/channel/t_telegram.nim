@@ -230,3 +230,12 @@ suite "telegram adapter — transport wiring (TG-022, TG-030)":
     let a = newTelegramAdapter("token", resolverPath)
     check not a.http.retryNonIdempotent
     check a.http.maxAttempts(rkNonIdempotent) == 1
+
+  test "TG-030: media uploads get their own deadline":
+    delEnv("DONKEY_TELEGRAM_MEDIA_TIMEOUT_SEC")
+    check telegramMediaTimeoutSec() == 300
+    putEnv("DONKEY_TELEGRAM_MEDIA_TIMEOUT_SEC", "600")
+    check telegramMediaTimeoutSec() == 600
+    putEnv("DONKEY_TELEGRAM_MEDIA_TIMEOUT_SEC", "-1")
+    check telegramMediaTimeoutSec() == 300
+    delEnv("DONKEY_TELEGRAM_MEDIA_TIMEOUT_SEC")

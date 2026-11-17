@@ -45,7 +45,8 @@ func maxAttempts*(a: StdHttpAdapter; kind: RetryKind): int =
 
 proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
                       headers: seq[HttpHeader];
-                      redirectLimit = 5): Result[HttpResponse, string] {.gcsafe.} =
+                      redirectLimit = 5;
+                      timeoutSec = 0): Result[HttpResponse, string] {.gcsafe.} =
   # Extract host for circuit breaker and allowlist
   let host = if url.contains("//"): url.split("//")[1].split("/")[0] else: url
 
@@ -58,7 +59,8 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
   var lastError = ""
   for attempt in 1 .. a.maxAttempts(retryKind(meth)):
     let res = block:
-      withHttpClientTimeout(a.timeout, redirectLimit, a.proxy):
+      let effectiveTimeout = if timeoutSec > 0: timeoutSec else: a.timeout
+      withHttpClientTimeout(effectiveTimeout, redirectLimit, a.proxy):
         if headers.len > 0:
           var h = newHttpHeaders()
           for (k, v) in headers: h[k] = v
@@ -111,6 +113,16 @@ proc get*(a: StdHttpAdapter; url: string;
 proc post*(a: StdHttpAdapter; url, body: string;
            headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
   a.requestWithRetry(HttpPost, url, body, headers)
+
+proc postWithTimeout*(a: StdHttpAdapter; url, body: string;
+                      headers: seq[HttpHeader] = @[];
+                      timeoutSec: int): Result[HttpResponse, string] {.gcsafe.} =
+  ## Behavior derived from hermes-agent (MIT) fix 85e673b4a5; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-030
+  ##
+  ## A media upload moves more bytes than a text call; it gets its own
+  ## wall-clock deadline instead of the shared text timeout.
+  a.requestWithRetry(HttpPost, url, body, headers, timeoutSec = timeoutSec)
 
 proc put*(a: StdHttpAdapter; url, body: string;
           headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =

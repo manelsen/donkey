@@ -59,6 +59,21 @@ func apiUrl(a: TelegramAdapter; meth: string): string =
 func telegramLinkPreviewsEnabled*(): bool =
   linkPreviewsFromEnv(getEnv("DONKEY_TELEGRAM_LINK_PREVIEW"))
 
+func telegramMediaTimeoutSec*(): int =
+  ## Behavior derived from hermes-agent (MIT) fix 85e673b4a5; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-030
+  ##
+  ## Uploads get a larger deadline than text calls.
+  let raw = getEnv("DONKEY_TELEGRAM_MEDIA_TIMEOUT_SEC").strip
+  if raw.len == 0:
+    return 300
+  let parsed = try:
+    raw.parseInt
+  except ValueError:
+    return 300
+  if parsed <= 0: 300 else: parsed
+
+
 
 proc parseTgResp(meth: string; resp: HttpResponse): Result[JsonNode, string]
                  {.gcsafe, raises: [].} =
@@ -71,15 +86,24 @@ proc parseTgResp(meth: string; resp: HttpResponse): Result[JsonNode, string]
   except CatchableError as e:
     err(e.msg)
 
-proc post(a: TelegramAdapter; meth: string;
-          body: JsonNode): Result[JsonNode, string] {.gcsafe, raises: [].} =
+proc postWith(a: TelegramAdapter; meth: string; body: JsonNode;
+              timeoutSec: int): Result[JsonNode, string] {.gcsafe, raises: [].} =
   try:
     let headers = @[("Content-Type", "application/json")]
-    a.http.post(a.apiUrl(meth), $body, headers) >>=
+    let sent =
+      if timeoutSec > 0:
+        a.http.postWithTimeout(a.apiUrl(meth), $body, headers, timeoutSec)
+      else:
+        a.http.post(a.apiUrl(meth), $body, headers)
+    sent >>=
       proc(resp: HttpResponse): Result[JsonNode, string] {.gcsafe, raises: [].} =
         parseTgResp(meth, resp)
   except Exception as e:
     err(e.msg)
+
+proc post(a: TelegramAdapter; meth: string;
+          body: JsonNode): Result[JsonNode, string] {.gcsafe, raises: [].} =
+  a.postWith(meth, body, 0)
 
 func chatAllowedReactionEmojis*(chatInfo: JsonNode): tuple[restricted: bool, emojis: seq[string]]
                                {.gcsafe, raises: [].} =
@@ -176,11 +200,12 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
   if replyTo.len > 0:
     try: body["reply_to_message_id"] = %parseInt(replyTo)
     except ValueError: discard
-  let res = a.post(meth, body)
+  let mediaTimeout = telegramMediaTimeoutSec()
+  let res = a.postWith(meth, body, mediaTimeout)
   if res.isOk: return ok()
   if meth == "sendPhoto":
     ## A photo outside the dimension/size limits is still a valid document.
-    let docRes = a.post("sendDocument", asDocumentBody(body))
+    let docRes = a.postWith("sendDocument", asDocumentBody(body), mediaTimeout)
     if docRes.isOk: return ok()
   ## Fallback: send URL as text
   discard ? a.post("sendMessage", %* {"chat_id": tgId, "text": url})
