@@ -270,7 +270,7 @@ func telegramReplyTarget*(chatId, messageId, threadId: string): string =
   ## forum topic, the thread. The three travel as one opaque channel target so
   ## the rest of the app keeps treating `replyTo` as a single string — and the
   ## chat travels with the message instead of being inferred from the user.
-  result = chatId & "#c" & messageId
+  result = if chatId.len > 0: chatId & "#c" & messageId else: messageId
   if threadId.len > 0:
     result.add("#t" & threadId)
 
