@@ -55,8 +55,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Reenviar sem a âncora em vez de perder a resposta.
 - **Fontes no hermes:** `b60cfd6ce6`, `713e2274cf`, `29cda7a5ef`
 - **Testes no hermes:** `tests/gateway/test_telegram_thread_fallback.py;tests/gateway/test_telegram_reply_mode.py`
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n "reply_to_message_id" src/donkey` → `src/donkey/adapters/channel/telegram.nim:120` (o fallback repete a âncora)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:20` e `src/donkey/adapters/channel/telegram.nim:113`
 - **Prioridade:** P0
 
 ### TG-006: Texto vazio ou só espaços é recusado pela API

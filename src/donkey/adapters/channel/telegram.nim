@@ -112,6 +112,19 @@ func renderTelegramHtml*(text: string; isHtml = false): string =
 
 # ── ChannelPort implementation ────────────────────────────────────────────────
 
+proc sendMessageBody(a: TelegramAdapter; body: JsonNode; replyTo: string;
+                     firstChunk: bool): Result[JsonNode, string] {.gcsafe.} =
+  ## Posts a sendMessage payload. When the reply anchor no longer exists, the
+  ## API refuses the whole message; retry once without the anchor so the text
+  ## still arrives.
+  let res = a.post("sendMessage", body)
+  if res.isOk: return res
+  if firstChunk and replyTo.len > 0 and isMissingReplyAnchorError(res.error):
+    var retry = body
+    retry.delete("reply_to_message_id")
+    return a.post("sendMessage", retry)
+  res
+
 proc sendChunk(a: TelegramAdapter; chatId: int64; text, replyTo: string;
                firstChunk: bool;
                isHtml = false): Result[void, string] =
@@ -120,13 +133,13 @@ proc sendChunk(a: TelegramAdapter; chatId: int64; text, replyTo: string;
   var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
   if firstChunk and replyTo.len > 0:
     body["reply_to_message_id"] = %replyTo
-  let res = a.post("sendMessage", body)
+  let res = a.sendMessageBody(body, replyTo, firstChunk)
   if res.isOk: return ok()
   ## Fallback: plain text
   var plain = %* {"chat_id": chatId, "text": text}
   if firstChunk and replyTo.len > 0:
     plain["reply_to_message_id"] = %replyTo
-  discard ? a.post("sendMessage", plain)
+  discard ? a.sendMessageBody(plain, replyTo, firstChunk)
   ok()
 
 proc sendTyping*(a: TelegramAdapter; userId: UserId): Result[void, string] {.gcsafe.} =

@@ -11,5 +11,5 @@ rodada.
 | TG-002 | `7ac9088d5c`, `6483c39f84` | `tests/domain/channels/t_telegram_policy.nim` | `src/donkey/domain/channels/telegram_policy.nim` | portado |
 | TG-003 | `fbfe294882`, `6fb25f86ac`, `3a37785f7f` | `tests/domain/channels/t_telegram_pure.nim` | `src/donkey/domain/channels/telegram_pure.nim` | portado |
 | TG-004 | `1a9a2d7fe8`, `c419cf7c86`, `704872a62f` | `tests/domain/channels/t_telegram_pure.nim` | `src/donkey/domain/channels/telegram_pure.nim` | portado |
-| TG-005 | `b60cfd6ce6`, `713e2274cf`, `29cda7a5ef` | - | - | pendente |
+| TG-005 | `b60cfd6ce6`, `713e2274cf`, `29cda7a5ef` | `tests/domain/channels/t_telegram_policy.nim` | `src/donkey/domain/channels/telegram_policy.nim` | portado |
 | TG-021 | `85cefc7a5a`, `e98a7006f8` | - | - | pendente |

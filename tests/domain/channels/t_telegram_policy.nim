@@ -17,3 +17,15 @@ suite "telegram_policy — edit errors":
     check not isEditNoopError("chat not found")
     check not isEditNoopError(
       "Telegram API error [editMessageText]: message to edit not found")
+
+
+suite "telegram_policy — reply anchors":
+
+  test "TG-005: a missing reply anchor is recognised":
+    check isMissingReplyAnchorError(
+      "Telegram API error [sendMessage]: Bad Request: message to be replied not found")
+    check isMissingReplyAnchorError("reply message not found")
+
+  test "TG-005: unrelated errors are not treated as a missing anchor":
+    check not isMissingReplyAnchorError("chat not found")
+    check not isMissingReplyAnchorError("")

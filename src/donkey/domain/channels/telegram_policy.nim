@@ -13,3 +13,13 @@ func isEditNoopError*(message: string): bool =
   ## identical to the current one. The message is already what the caller
   ## wanted, so this is success, not a failure to retry.
   message.toLowerAscii().contains("message is not modified")
+
+func isMissingReplyAnchorError*(message: string): bool =
+  ## Behavior derived from hermes-agent (MIT) fix b60cfd6ce6; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-005
+  ##
+  ## Replying to a message that was deleted answers 400 "message to be replied
+  ## not found". The answer is still valid; only the anchor is gone.
+  let lower = message.toLowerAscii()
+  lower.contains("to be replied not found") or
+    lower.contains("reply message not found")
