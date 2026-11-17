@@ -3,6 +3,7 @@
 ## Each test starts with the case id from docs/hermes-mining/telegram/CASES.md.
 
 import std/[strutils, unicode, unittest]
+import donkey/core/pipeops
 import donkey/domain/channels/telegram_policy
 
 suite "telegram_policy — edit errors":
@@ -72,3 +73,15 @@ suite "telegram_policy — oversized edits":
 
   test "TG-008: an edit under the limit stays a single chunk":
     check planEditChunks("curto", 4096) == @["curto"]
+
+
+suite "telegram_policy — callback data":
+
+  test "TG-009: callback data up to 64 bytes is accepted":
+    check validateCallbackData("models:set:openrouter:abc").isOk
+    check validateCallbackData(strutils.repeat("a", 64)).isOk
+
+  test "TG-009: callback data above 64 bytes is rejected":
+    let res = validateCallbackData(strutils.repeat("a", 65))
+    check res.isErr
+    check "64" in res.error

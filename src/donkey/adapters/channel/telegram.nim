@@ -187,6 +187,7 @@ proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
   for row in buttons:
     var cols: seq[JsonNode]
     for (label, data) in row:
+      ? validateCallbackData(data)
       cols.add(%* {"text": label, "callback_data": data})
     rows.add(%cols)
   let html = renderTelegramHtml(text, isHtml)

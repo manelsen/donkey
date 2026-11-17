@@ -4,6 +4,7 @@
 ## decides what the API contract requires.
 
 import std/[strutils, unicode]
+import ../../core/pipeops
 import ./telegram_split
 
 func isEditNoopError*(message: string): bool =
@@ -63,3 +64,14 @@ func planEditChunks*(text: string; limit = 4096): seq[string] =
   ## chunk replaces the current message; the rest must be delivered as new
   ## messages, or the tail is silently lost.
   splitForTelegram(text, limit)
+
+func validateCallbackData*(data: string): Result[void, string] =
+  ## Behavior derived from hermes-agent (MIT) fix 6fb57bc9cf; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-009
+  ##
+  ## Telegram rejects a button whose callback_data exceeds 64 bytes, and it
+  ## rejects the whole message. Failing here names the offending button instead
+  ## of surfacing an opaque 400.
+  if data.len > 64:
+    return err("callback_data exceeds 64 bytes (" & $data.len & ")")
+  ok()

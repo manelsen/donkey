@@ -99,8 +99,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Usar um token curto e resolver o valor completo no servidor.
 - **Fontes no hermes:** `6fb57bc9cf`
 - **Testes no hermes:** `tests/gateway/test_telegram_clarify_buttons.py`
-- **Situação no Donkey:** PARCIAL
-- **Evidência no Donkey:** `src/donkey/adapters/channel/common_runtime.nim:70` (tokens curtos só para modelos); demais botões em `src/donkey/adapters/channel/telegram.nim:173`
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:62` e `src/donkey/adapters/channel/telegram.nim:169`
 - **Prioridade:** P1
 
 ### TG-010: A ação de digitação expira em cerca de 5 segundos
