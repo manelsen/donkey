@@ -142,6 +142,42 @@ Recent hardening in the runtime makes this safer:
   correction; only greetings, bare acknowledgements and slash commands are
   skipped (policy in `domain/memory/capture_pure.nim`)
 
+## Self-Improvement Review
+
+Automatic capture above stores the turn as it happened. A second, slower pass
+curates: after a finished user turn the agent reviews the recent conversation
+and keeps only what is durable.
+
+It runs in the background, one review per user at a time, and gets no tools: it
+answers with a small JSON plan and the runtime writes the accepted items. The
+rules are in `core/review/review.nim`:
+
+- a fact must be grounded in the conversation, not inferred from tone;
+- a one-off request never becomes a standing preference;
+- no negative claim about a tool, and no narrative of a session that ended
+  without a working method — if the fix is known, keep the fix;
+- the user profile (`USER.md`) is onboarding-owned, so a plan that targets it
+  is rejected with a warning.
+
+Cadence is two independent counters (`core/review/cadence.nim`): memory every
+N user turns, skills every N tool iterations. `0` disables that half.
+
+```bash
+DONKEY_REVIEW_ENABLED=true        # false skips the automatic pass
+DONKEY_REVIEW_MEMORY_INTERVAL=10  # user turns per memory review
+DONKEY_REVIEW_SKILL_INTERVAL=10   # tool iterations per skill review
+```
+
+A reviewed fact is written through the memory port with the `review` origin.
+
+### Lessons for installed skills
+
+Installed skills are bundles: their `SKILL.md` is replaced on update. A lesson
+therefore goes to a `LEARNED.md` next to it (append-only, one bullet per
+lesson), and the installed-skill block in the system prompt loads those notes
+under the skill they belong to. A review may only teach slugs that are already
+installed; an unknown slug is dropped with a warning.
+
 ## What Is Stored, and What Is Not
 
 A memory is stored as it was said. The only structure kept between memories
@@ -186,6 +222,7 @@ Each memory node records where it came from, in its `meta`:
 | `ingest` | a chunk appended by `memory_ingest` |
 | `consolidation` | facts extracted at `/compact`, `/reset` or `/new` |
 | `markdown` | a paragraph imported from `MEMORY.md` |
+| `review` | a fact kept by the post-turn self-improvement review |
 
 Nodes written before origins existed have empty `meta` and read as unknown.
 
