@@ -249,3 +249,53 @@ fc70d023d8	INBOUND	yes	Politica de autorizacao de bots aplicada as origens de up
 b7c4369ca0	FORMAT	yes	O limite de 4096 caracteres e contado em UTF-16; emoji fora do BMP ocupa duas unidades.
 e55e9fad2c	NET	yes	Long polling pode parar sem o processo morrer; updates deixam de chegar ate novo getUpdates.
 3362bdb4e5	NET	yes	set_my_commands/status/topico DM travam por token e estouram o timeout de connect.
+43edbae638	NET	yes	Retry pos-409 Conflict deixa referencias nulas durante a reconexao.
+5505dbbf43	TOPIC_API	yes	Topico de forum exige par chat_id + thread_id; binding de topicos depende dessa chave.
+69f08c2eb5	INTERNAL	no	Guarda de acesso a atributo interno para padrao de teste; sem comportamento de API.
+7a2369718a	NET	yes	Quedas transitorias de rede no bootstrap interrompem o polling; ele deve retomar sozinho.
+8341b72122	TOPIC_API	yes	Mensagem de DM topic so entra na thread certa com message_thread_id correto.
+9f03095044	NET	yes	IPs de fallback inalcancaveis fazem initialize() pendurar sem timeout por tentativa.
+a682091044	NET	yes	Reconexoes concorrentes deixam o adapter meio destruido entre connect e disconnect.
+cc1e4c32c0	TOPIC_API	yes	message_thread_id chega como int ou str; o gating de grupo precisa normalizar o topico.
+7a648a8bff	INTERNAL	no	Paginacao do picker de modelos e UI do hermes, nao comportamento da API do Telegram.
+8645b34303	NET	yes	updater.stop() sem timeout trava em CLOSE-WAIT e impede reconectar o long polling.
+a37fd66dec	NET	yes	App de init abandonado fica aberto quando o deadline de conexao expira.
+b1c7b96547	NET	yes	Tres chamadas irmaos de updater.stop() sofrem o mesmo travamento CLOSE-WAIT na reconexao.
+c3ab1424e6	INTERNAL	no	Redacao de token nas mensagens de erro; mudanca de logging interno.
+d50aae0e35	NET	yes	Deadline de init por relogio de parede evita pendurar a conexao no timeout.
+fc31f14cda	TOPIC_API	yes	Canal DM topic usa direct_messages_topic_id e zera message_thread_id; forum usa message_thread_id.
+01ee312de6	NET	yes	Limites de keepalive do pool HTTP precisam ser repassados ao transporte de fallback.
+123c6f3a23	INTERNAL	no	Chokepoint de leitura/escrita de config do hermes; nada especifico da API do Telegram.
+1e2914b40a	INTERNAL	no	Redacao de token nos erros de connect/send_document/send_video; logging interno.
+8a9bc38c2e	INTERNAL	no	Roteamento de respostas por perfil multiplex; infraestrutura interna do gateway.
+a0a3c716fc	RATE	yes	Previews duplicadas em sequencia disparam flood control (429/retry_after) nas edicoes.
+4a80e27bba	TOPIC_API	yes	Thread privada explicita: envio com message_thread_id deve respeitar o topico indicado.
+4aaaa206aa	NET	yes	start_polling() sem timeout pendura o handler de erro de rede e bloqueia a reconexao.
+a796e0b796	RATE	yes	sendChatAction (typing) falha em sequencia e precisa de cooldown antes de repetir.
+aaeba213d9	NET	yes	start_polling() no bootstrap e no retry de conflito tambem pendura sem timeout.
+97fb9e1f62	NET	yes	Erros de transporte do heartbeat do PTB sao falhas transitorias de rede.
+04898631cb	EDIT	yes	Edicao final falha e o cliente retem so parte do preview; a resposta final deve ser reenviada.
+4aa499ff9f	RATE	yes	Telegram devolve retry_after em flood control; retries nao podem esperar cooldown longo.
+d48bf743f2	INTERNAL	no	Escopo de override de aprovacao do hermes; feature interna, sem API do Telegram.
+2a0dd95ccf	NET	yes	Sondas pos-reconexao repetem falhas transitorias de rede e precisam ser deduplicadas.
+34d07732dd	FORMAT	yes	Tabelas pipe viram rich_message; o roteamento depende do suporte a rich messages.
+b45a217e0a	FORMAT	yes	Hint de rich Markdown no prompt so faz sentido com rich_messages habilitado.
+b8295cf6f7	NET	yes	Saude do polling medida pelo progresso real do getUpdates, nao so pelo processo vivo.
+e16743b0d5	NET	yes	DoH preso ao DNS do sistema bloqueia o init e os IPs de fallback nao resolvem.
+f5f79ff1b4	NET	yes	Rastrear a requisicao getUpdates e o que permite detectar long poll travado.
+647520f83e	INTERNAL	no	Roteamento por perfil multiplex e chaves de batch do gateway; interno.
+13906cd4de	INBOUND	yes	Topico liberado dispensa mencao; update sem mencao ainda deve ser processado.
+27364b24fe	MEDIA	yes	sendVoice/sendAudio sem duration faz o cliente exibir 0:00 em clipes longos.
+6e96b745d8	INTERNAL	no	Redacao de token nos logs de erro de transporte; logging interno.
+a04fcbf779	INTERNAL	no	Amplia redacao de token para excecoes cruas; seguranca de logs interna.
+d73a6f5ac2	MEDIA	yes	Envio standalone de voz/audio precisa de duration para o cliente mostrar a duracao.
+3391e639f6	NET	yes	Fechamento de pool travado bloqueia o dreno do polling e a escada de reconexao.
+c2cb37532c	NET	yes	Escada de reconexao congela em silencio sem watchdog de recuperacao.
+02d8cbadec	INTERNAL	no	allow_session nas aprovacoes do hermes; feature interna, nao API do Telegram.
+087732c8c6	NET	yes	Watchdog de heartbeat precisa acionar o handoff fatal de reconexao.
+1ba0e873ff	NET	yes	Handoff de recuperacao fatal se perde entre reconexao e conflito 409.
+a31a31826c	INTERNAL	no	Timeout e UX de aprovacao do gateway; feature interna do hermes.
+45fce38b9e	INBOUND	yes	Autorizacao em grupo por group_allow_from/allow_from e identidade do remetente.
+54a0f07101	NET	yes	Plataforma nao configurada nao deve entrar em loop de reconexao infinita.
+7078430934	INBOUND	yes	Allowlist de grupo pode vir como string separada por virgulas; parsing afeta a autorizacao.
+9ecacd6bf4	INBOUND	yes	Split de group_allow_from muda a autorizacao de remetentes em grupos.
