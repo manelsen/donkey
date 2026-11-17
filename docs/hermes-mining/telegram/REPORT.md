@@ -105,7 +105,7 @@ streaming).
 ## Branch, commits e PR
 
 - Branch: `feat/hermes-mining-telegram`
-- PR: preenchido em `docs/hermes-mining/telegram/REPORT.md` no corpo do PR.
+- PR: https://github.com/manelsen/donkey/pull/48 (merge `f3556c6`)
 
 Commits da rodada, em ordem:
 
