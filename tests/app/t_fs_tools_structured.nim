@@ -164,13 +164,17 @@ suite "structured filesystem tool core":
   when defined(posix):
     test "recursive copy fails when a subdirectory cannot be enumerated":
       if geteuid() == 0:
+        ## `skip()` only marks the test; it does not stop this body. Root can
+        ## enumerate directories without read permission, so keep the rest in
+        ## the else branch.
         skip()
-      let restricted = paddock / "docs" / "nested"
-      setFilePermissions(restricted, {})
-      defer:
-        setFilePermissions(restricted, {fpUserRead, fpUserWrite, fpUserExec})
+      else:
+        let restricted = paddock / "docs" / "nested"
+        setFilePermissions(restricted, {})
+        defer:
+          setFilePermissions(restricted, {fpUserRead, fpUserWrite, fpUserExec})
 
-      let parsed = parseEnvelope(
-        performFsCopy("docs", "tmp/docs-copy", paddock, recursive = true))
-      check not parsed["ok"].getBool()
-      check parsed["error"]["message"].getStr().contains("cannot enumerate")
+        let parsed = parseEnvelope(
+          performFsCopy("docs", "tmp/docs-copy", paddock, recursive = true))
+        check not parsed["ok"].getBool()
+        check parsed["error"]["message"].getStr().contains("cannot enumerate")
