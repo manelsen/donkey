@@ -90,11 +90,23 @@ suite "ctl_handler — ctlUserEdit":
     try:
       setupUserPaddock(tmp, "dave")
       let mem = MdFileAdapter(paddocksDir: tmp)
-      ctlUserEdit(mem, "dave", "Preferred Name", "Davey")
+      check ctlUserEdit(mem, "dave", "Preferred Name", "Davey").isOk
       let ctx = mem.loadContext(UserId("dave"))
       check "Davey" in ctx.userMd
     finally:
       cleanupPaddock(tmp)
+
+  when defined(withSqlite):
+    test "reports an edit that was not saved":
+      let tmp = makeTestPaddock()
+      try:
+        setupUserPaddock(tmp, "dave")
+        writeFile(tmp / "blocker", "x")
+        let mem = MdFileAdapter(paddocksDir: tmp,
+                                magmaSqlitePath: tmp / "blocker" / "m.sqlite")
+        check ctlUserEdit(mem, "dave", "Preferred Name", "Davey").isErr
+      finally:
+        cleanupPaddock(tmp)
 
 # ── ctlUserRevoke ──────────────────────────────────────────────────────────────
 

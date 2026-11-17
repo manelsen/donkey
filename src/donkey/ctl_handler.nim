@@ -60,12 +60,12 @@ proc ctlUserShow*(memory: MdFileAdapter; uuid: string): Result[void, string] =
     echo ctx.memoryMd[0 .. min(500, ctx.memoryMd.len - 1)]
   ok()
 
-proc ctlUserEdit*(memory: MdFileAdapter; uuid, field, value: string) =
-  let updated = memory.updateUserField(UserId(uuid), field, value)
-  if updated.isErr:
-    echo "Error: " & updated.error
-    return
+proc ctlUserEdit*(memory: MdFileAdapter;
+                  uuid, field, value: string): Result[void, string] =
+  ## An edit that was not saved is an error, so the command exits non-zero.
+  ? memory.updateUserField(UserId(uuid), field, value)
   echo "Updated " & uuid & ": " & field & " = " & value
+  ok()
 
 proc ctlUserRevoke*(memory: MdFileAdapter; uuid: string; revoked: bool): Result[void, string] =
   let userId = UserId(uuid)
@@ -396,7 +396,9 @@ proc dispatchCtl*(cfg: DonkeyConfig;
     if r.isErr: echo r.error; return 1
     return 0
   if args[1] == "user" and args.len >= 6 and args[2] == "edit":
-    ctlUserEdit(memory, args[3], args[4], args[5 .. ^1].join(" ")); return 0
+    let res = ctlUserEdit(memory, args[3], args[4], args[5 .. ^1].join(" "))
+    if res.isErr: echo "Error: " & res.error; return 1
+    return 0
   if args[1] == "user" and args.len >= 4 and args[2] == "revoke":
     let res = ctlUserRevoke(memory, args[3], true)
     if res.isErr: echo res.error; return 1
