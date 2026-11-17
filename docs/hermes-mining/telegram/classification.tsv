@@ -149,3 +149,53 @@ d87b27cff8	INTERNAL	no	alias de runtime codex no CLI, sem comportamento de API d
 a4fb0a3ac3	INTERNAL	no	entrega de cron em tópico dedicado, recurso interno do hermes
 af381ef12c	NET	yes	connect timeout do Bot API exige nova tentativa em falha transitória
 b38140eb8f	INBOUND	yes	autorização por chat sem user_id do remetente (grupos e canais)
+b93996c35e	MEDIA	yes	áudio enviado como arquivo não é voice message e não deve ir para STT
+ba2572e54c	RATE	yes	após clique inline o typing já expirou e precisa ser retomado
+d69f0c1a99	MEDIA	yes	resposta de voz precisa ser entregue como áudio audível, não silencioso
+d81b888807	INTERNAL	no	aviso de fallback de tópico de cron, fluxo interno do hermes
+db50af910b	INBOUND	yes	allowlist TELEGRAM_ALLOWED_USERS aplicada às mensagens recebidas
+de4cb55bf3	TOPIC_API	yes	envio retomado em DM topic deve ir direto ao tópico, sem thread intermediário
+df530b4a0c	TOPIC_API	yes	API responde "message thread not found" quando o tópico não existe mais
+ed9087fce7	MEDIA	yes	áudio nativo do TTS não deve virar voice message no Telegram
+edce8a5fd4	NET	yes	envios avulsos precisam passar pelo TELEGRAM_PROXY configurado
+ede47a54be	TOPIC_API	yes	roteamento de DM topic deve seguir o tópico atual do usuário
+f260aa6dc0	NET	yes	conflito 409 de polling tira o bot de operação até a recuperação
+f55c67ac1f	FORMAT	yes	limite de tamanho da mensagem obriga dividir o progresso em vários balões
+f8eeb570cb	MEDIA	yes	legenda de voice message no Telegram tem limite de 1024 caracteres
+fbabd560ff	TOPIC_API	yes	notificações de background precisam ser roteadas ao DM topic correto
+fbfe294882	INBOUND	yes	mensagens destinadas a outros bots não devem ser processadas
+a3c753128d	TOPIC_API	yes	API rejeita thread/dm topic inválido; envio cai para o chat principal
+5672772dab	FORMAT	yes	ordem do menu de comandos é limitada pela API e precisa priorizar os úteis
+b9b6e034d5	FORMAT	yes	menu de comandos do Telegram tem limite de itens; a priorização importa
+4a91e36495	INBOUND	yes	contexto observado de grupo (mensagens sem menção) vem na entrada de update
+9451087aab	INBOUND	yes	slash commands observados em grupo precisam ser preservados no contexto
+476c897439	NET	yes	após tempestades de reconexão o envio fica degradado até o path voltar
+5b52e26d18	NET	yes	TimedOut transitório do Bot API pode ser engolido sem derrubar o loop
+bdc9b0eff5	TOPIC_API	yes	novas lanes de DM topic precisam manter message_thread_id próprio
+27df4b3882	TOPIC_API	yes	com reply_to_mode=off o envio em DM topic dispensa âncora de reply
+415be55394	TOPIC_API	yes	entregas em DM topic devem ir direto ao thread, sem reply intermediário
+96c71d8c46	TOPIC_API	yes	entrega em DM topic exige âncora de reply ou thread válido
+9d10c45e32	FORMAT	yes	espaçamento entre linhas de tabela afeta o render no Telegram
+c394e7919d	TOPIC_API	yes	thread de DM topic expirado precisa ser renovado para o send funcionar
+dcd504cea4	TOPIC_API	yes	tópicos de DM podem ser criados on demand para entregar mensagens
+0325e18f34	INTERNAL	no	defaults de exibição e config do hermes, não comportamento de API
+8807b1c727	INTERNAL	no	filtro de ruído de status interno do hermes
+efa952531b	INBOUND	yes	start pings do Telegram chegam como update e devem ser ignorados
+5407d25599	TOPIC_API	yes	chave de batching por thread do DM topic evita misturar conversas
+db96fc60d0	INTERNAL	no	bindings de tópico com compressão de sessão, lógica interna
+784d8dd2c2	INTERNAL	no	correção no canal Matrix, sem comportamento do Telegram
+dc4de14377	NET	yes	pool timeout do httpx derruba o envio; melhor retentar que descartar
+4259bab7d4	TOPIC_API	yes	notificações sintéticas precisam preservar metadata de DM topic
+f768e75ecf	MEDIA	yes	mídia de grupo observado precisa ser baixada e cacheada
+fec5ca71d8	INBOUND	yes	fila de updates deve manter ordem FIFO durante a janela de espera
+454d6cbe52	FORMAT	yes	chunk de overflow selado precisa ser finalizado para renderizar a formatação
+2e62862784	NET	yes	novo conflito 409 após update exige reagendar o polling sem limbo
+ae82eed2b1	MEDIA	yes	voice message do Telegram exige OGG/Opus para tocar
+f4531feee8	FORMAT	yes	fallback de edição em MarkdownV2 e bold no strip de markdown
+3b4c715e1c	FORMAT	yes	fallback para texto sem markdown e split de 4096 no finalize do stream
+590b3c0d7e	FORMAT	yes	stream de overflow parcial precisa ser recuperado sem perder chunks
+d0e017bac8	MEDIA	yes	voice/áudio acima do limite de tamanho não deve ser baixado
+57c2a55be4	FORMAT	yes	rich_message (Bot API 10.1) tem fallback próprio quando falha
+7c0605bf22	FORMAT	yes	formatação rich precisa sobreviver à edição final do stream
+9459057d7f	FORMAT	yes	rich details com expressão matemática quebra o render
+a1f51feb72	FORMAT	yes	rich final não pode gerar preview duplicado
