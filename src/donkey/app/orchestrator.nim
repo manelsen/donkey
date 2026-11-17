@@ -59,6 +59,7 @@ import ./tool_loop_runtime
 import ./subagent_runtime
 import ./prompt_building
 import ./provider_executor
+import ./review_runtime
 import ../core/security/dm_policy
 import ../infra/queue/nonblocking
 
@@ -398,7 +399,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     state: SessionState;
                     msg: AgentMessage;
                     stateRuntime: OrchestratorState;
-                    asyncCompleteFn: AsyncCompleteFn = nil): Future[OrchestratorState] {.async.} =
+                    asyncCompleteFn: AsyncCompleteFn = nil;
+                    reviewRt: ReviewRuntime = nil): Future[OrchestratorState] {.async.} =
   result = stateRuntime |> nextTurn
   var turnSetup = prepareUserTurnSetup(
     globalOutbox, session, memory, completeFn, http, fs, tools, webAllowlist, toolWebPolicy,
@@ -514,6 +516,16 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     discard rememberCommitments(
       result.blackboard, "", loopResult.finalText, epochMs())
 
+  # Post-turn self-improvement review. It is curation, not capture: the turn
+  # itself is already in MEMORY.md above. Skip heartbeat and control turns, a
+  # turn with no final answer, and a turn the user interrupted — there is
+  # nothing to learn from an answer that was cut off.
+  if reviewRt != nil and msg.taskKind == tkUserMsg and
+     loopResult.finalText.len > 0 and
+     not isUserStoppedSince($turnSetup.uid, turnSetup.nativeCtx.userInterrupt):
+    discard reviewRt.afterTurn(turnSetup.uid, result.sessionId, result.history,
+                               loopResult.toolCallCount)
+
 # ── Actor message handling ────────────────────────────────────────────────────
 
 type ActorMessageResult = object
@@ -567,7 +579,8 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
                      state: SessionState;
                      msg: AgentMessage;
                      stateRuntime: OrchestratorState;
-                     asyncCompleteFn: AsyncCompleteFn = nil): Future[OrchestratorState] {.async.} =
+                     asyncCompleteFn: AsyncCompleteFn = nil;
+                     reviewRt: ReviewRuntime = nil): Future[OrchestratorState] {.async.} =
   result = stateRuntime
   let uid = UserId(msg.userId)
   result =
@@ -611,7 +624,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
     globalOutbox, memInbox, toolInbox, memOut, toolOut, session, memory,
     completeFn, errorExplainFn, http, fs, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
     providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, toolsSuffix,
-    state, msg, result, asyncCompleteFn)
+    state, msg, result, asyncCompleteFn, reviewRt = reviewRt)
   if result.onboarding.phase == opDone:
     result =
       result |>->
@@ -646,7 +659,8 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
                         state: SessionState;
                         msg: AgentMessage;
                         stateRuntime: OrchestratorState;
-                        asyncCompleteFn: AsyncCompleteFn = nil): Future[ActorMessageResult] {.async.} =
+                        asyncCompleteFn: AsyncCompleteFn = nil;
+                        reviewRt: ReviewRuntime = nil): Future[ActorMessageResult] {.async.} =
   result.stateRuntime = stateRuntime
   case msg.kind
   of amkCancel:
@@ -660,7 +674,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
       globalOutbox, session, memInbox, toolInbox, memOut, toolOut, memory,
       completeFn, errorExplainFn, http, fs, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
       providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
-      toolsSuffix, state, msg, stateRuntime, asyncCompleteFn)
+      toolsSuffix, state, msg, stateRuntime, asyncCompleteFn, reviewRt = reviewRt)
 
   else:
     discard
@@ -757,7 +771,8 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       errorExplainFn: CompleteFn = nil;
                       asyncCompleteFn: AsyncCompleteFn = nil;
                       subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort();
-                      fs:             FsRuntimePort = unavailableFs()): Future[void] {.async.} =
+                      fs:             FsRuntimePort = unavailableFs();
+                      reviewRuntime:  ReviewRuntime = nil): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
   if daemonShuttingDown():
     return
@@ -785,6 +800,18 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
     (tools |> orchToolsSuffix) &
     (if skillPrompt.len > 0: "\n\n" & skillPrompt else: "")
 
+  # One review runtime per actor: the cadence counters must survive turns.
+  # The paddock is {home}/paddocks/{user}, so its grandparent is the home that
+  # holds the installed skills.
+  let review =
+    if reviewRuntime != nil:
+      reviewRuntime
+    else:
+      newReviewRuntime(
+        reviewConfigFromEnv(), asyncCompleteFn, memory,
+        homeDir = (if paddockDir.len > 0: parentDir(parentDir(paddockDir)) else: ""),
+        log = log.child("review"))
+
   try:
     while true:
       let msg = await collectWithDebounce(inbox)
@@ -792,7 +819,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
         inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
         completeFn, errorExplainFn, http, fs, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
         providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
-        toolsSuffix, state, msg, stateRuntime, asyncCompleteFn)
+        toolsSuffix, state, msg, stateRuntime, asyncCompleteFn, reviewRt = review)
       stateRuntime = actorResult.stateRuntime
       if actorResult.shouldStop:
         break

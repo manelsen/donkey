@@ -50,6 +50,7 @@ type
     slug*:    string
     version*: string
     skillMd*: string
+    learnedMd*: string  ## notes the self-improvement review appended
 
 func normalizeRegistryUrl*(registry: string): string =
   let base = if registry.strip().len > 0: registry.strip() else: ClawhubDefaultRegistry
@@ -69,6 +70,11 @@ func remoteSkillLockPath*(home: string): string =
 
 func remoteSkillOriginPath*(skillDir: string): string =
   skillDir / ClawhubDotDir / "origin.json"
+
+func learnedNotesPath*(skillDir: string): string =
+  ## Agent-authored lessons live next to SKILL.md, never inside it: a skill
+  ## update rewrites SKILL.md, and the notes must survive that.
+  skillDir / "LEARNED.md"
 
 proc remoteSkillReadmePath*(skillDir: string): string =
   for candidate in @["SKILL.md", "skill.md"]:
@@ -289,10 +295,13 @@ proc loadInstalledRemoteSkill*(home, slug: string): Result[InstalledRemoteSkill,
   let readmePath = remoteSkillReadmePath(skillDir)
   if readmePath.len == 0:
     return err("Installed remote skill missing SKILL.md: " & slug)
+  let learnedPath = learnedNotesPath(skillDir)
+  let learned = if fileExists(learnedPath): readFile(learnedPath).strip() else: ""
   ok(InstalledRemoteSkill(
     slug: slug,
     version: origin.installedVersion,
     skillMd: stripFrontmatter(readFile(readmePath)),
+    learnedMd: learned,
   ))
 
 proc loadInstalledRemoteSkills*(home: string): seq[InstalledRemoteSkill] =
@@ -317,6 +326,10 @@ proc buildInstalledRemoteSkillPrompt*(skills: seq[InstalledRemoteSkill]): string
     result.add("\n")
     result.add(skill.skillMd)
     result.add("\n")
+    if skill.learnedMd.len > 0:
+      result.add("\n#### Learned notes\n")
+      result.add(skill.learnedMd)
+      result.add("\n")
 
 proc walkSkillFiles*(skillDir: string): seq[string] =
   if not dirExists(skillDir):
@@ -466,3 +479,28 @@ proc updateRemoteSkill*(home, registry: string; slug: string; force = false): Re
     if validateResult.isErr:
       return err("Local changes detected for " & slug & " (use --force to overwrite)")
   installRemoteSkill(home, registry, slug, force = true).map(proc(origin: RemoteSkillOrigin): string = origin.installedVersion)
+
+proc appendLearnedNote*(skillDir, lesson: string): Result[void, string] =
+  ## Appends one durable lesson to a skill's learned notes. Append-only so two
+  ## reviews cannot overwrite each other, and never touches SKILL.md.
+  if skillDir.len == 0:
+    return err("skill directory is empty")
+  let text = lesson.strip
+  if text.len == 0:
+    return err("lesson is empty")
+  let path = learnedNotesPath(skillDir)
+  try:
+    createDir(skillDir)
+    var prefix = ""
+    if fileExists(path):
+      let existing = readFile(path)
+      if existing.len > 0 and not existing.endsWith("\n"):
+        prefix = "\n"
+    var f = open(path, fmAppend)
+    try:
+      f.write(prefix & "- " & text.replace("\n", " ") & "\n")
+    finally:
+      f.close()
+    ok()
+  except CatchableError as e:
+    err("append learned note: " & e.msg)

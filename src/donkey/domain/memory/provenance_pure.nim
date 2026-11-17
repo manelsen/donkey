@@ -19,6 +19,7 @@ type
     msIngest        = "ingest"         ## chunk written by `memory_ingest`
     msConsolidation = "consolidation"  ## facts extracted at /compact, /reset, /new
     msMarkdown      = "markdown"       ## paragraph imported from MEMORY.md
+    msReview        = "review"         ## fact kept by the post-turn self-improvement review
 
   MemoryOrigin* = object
     source*:    MemorySource
