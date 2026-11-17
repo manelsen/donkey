@@ -49,3 +49,53 @@ abf1be564b	INTERNAL	no	Inclui extra de webhook nas dependências de instalação
 5075717949	INBOUND	yes	Cliente divide mensagens longas em updates consecutivos com corte perto de 4096.
 aed9b90ae3	EDIT	yes	Editar stream antes de existir message_id falha; a primeira mensagem precisa ser enviada.
 0e315a6f02	EDIT	yes	setMessageReaction só aceita emojis predefinidos e rejeita os demais.
+96f9b91489	INTERNAL	no	Troca asserts por tratamento de erro; refatoração interna sem mudança de API.
+b1e2b5ea74	NET	yes	Pool HTTP reaproveitado após reconexão usa conexões mortas e os envios falham.
+d7607292d9	EDIT	yes	Edições rápidas durante o stream truncam o texto final exibido ao usuário.
+9e992df8ae	FORMAT	yes	O limite de 4096 é contado em unidades UTF-16, não em caracteres.
+0cc7f79016	EDIT	yes	Cancelar a task de stream pode reenviar o texto final já editado.
+11e2e04667	NET	yes	HTTPXRequest sem proxy explícito ignora as variáveis de ambiente de proxy.
+449c17e9a9	FORMAT	yes	MarkdownV2 suporta blockquote expansível com sintaxe própria.
+00ff9a26cd	FORMAT	yes	link_preview_options no payload de sendMessage controla a prévia de links.
+06d6903d3c	FORMAT	yes	Caracteres especiais do MarkdownV2 no conteúdo quebram o parse e dão 400.
+096260ce78	INBOUND	yes	callback_query de botão só deve ser aceito de remetente autorizado.
+0cf7d570e2	TOPIC_API	yes	O tópico General do fórum é thread_id=1 e a digitação precisa dele.
+4936b19144	INTERNAL	no	Protege o import opcional do Telegram no cron; robustez interna.
+5221ff9ed1	FORMAT	yes	As opções de prévia de link são lidas do adapter ao montar o payload.
+63548e4fe1	INTERNAL	no	Validação de formato do token no setup do gateway; configuração interna.
+92a23479c0	INBOUND	yes	Teclado do iOS e do Telegram envia travessões Unicode no texto digitado.
+c6398fcaab	FORMAT	yes	Documenta quais sintaxes o MarkdownV2 do Telegram aceita.
+e7c61baaa1	INTERNAL	no	Inclui a dependência do Telegram no bundle termux; empacotamento interno.
+31a72bdbf2	FORMAT	yes	O conteúdo do comando precisa de escape para o MarkdownV2 do prompt.
+9a9b8cd1e4	INBOUND	yes	Novo update chegando durante o processamento pode descartar a mensagem anterior.
+f05590796e	NET	yes	Primeira conexão em cold boot falha e consome o orçamento de retries.
+1a9a2d7fe8	INBOUND	yes	Em update de DM o from_user pode vir nulo; só o chat.id identifica o remetente.
+588333908c	MEDIA	yes	Caminho de mídia só visível no Docker impede o upload do arquivo.
+ff63e2e005	MEDIA	yes	Arquivos de mídia em volume Docker exigem tratamento de caminho no salvamento.
+11369a78f9	FORMAT	yes	URLs com parênteses quebram a sintaxe de link do MarkdownV2.
+1e18e0503f	INBOUND	yes	Menção ao bot em grupo precisa casar palavra inteira; @bot casa @bot2.
+4c50b4689e	TOPIC_API	yes	DM topics são criados e ligados via API; o mapeamento local precisa ser consistente.
+9fdfb09aed	MEDIA	yes	Vídeo chega como vídeo ou documento e mp4 precisa ser aceito no upload.
+a5e368ebfb	INTERNAL	no	Publicar comandos de plugin no menu é decisão de conteúdo interna.
+b65f6ca7fe	TOPIC_API	yes	Criar tópico em DM sem modo Topics habilitado é recusado pela API.
+0dfb7b8a0d	INTERNAL	no	Ajuste no seletor /resume da TUI; recurso interno do hermes.
+16accd44bd	NET	yes	Modo webhook exige secret_token; sem ele a entrega não é autenticada.
+26abac5afd	INTERNAL	no	Muda conftest e testes do próprio hermes; nenhum comportamento de API.
+b0939d9210	INBOUND	yes	Em grupo os comandos também dependem de menção para serem aceitos.
+70a33708e7	INTERNAL	no	Alinha ciclo de reações no Slack; outro canal, sem mudança no Telegram.
+e7590f92a2	NET	yes	no_proxy deve ser respeitado mesmo com proxy configurado explicitamente.
+3ff3dfb5ac	INBOUND	yes	Em grupo o comando chega como /cmd@botname e precisa ser reconhecido.
+6ce796b495	TOPIC_API	yes	Alvo de tópico, chat_id mais thread_id, não pode ser perdido no agendamento.
+d6137453ac	NET	yes	Reconectar mantendo conexões keep-alive antigas trava o novo polling.
+1f712173b2	INBOUND	yes	Em grupo o remetente vem em from_user e a allowlist precisa cobri-lo.
+398945e7b1	INTERNAL	no	Aceitar lista em deliver é ajuste do cron; configuração interna.
+763aadd6bf	INBOUND	yes	Formato antigo com chat-ID na allowlist precisa continuar autorizando DMs.
+a83d579d5b	INBOUND	yes	callback_query de aprovação inline deve passar pela autorização do gateway.
+75e1339d4c	TOPIC_API	yes	Tópico recém-criado em DM fica sem mensagem e o primeiro envio falha.
+2470434d60	NET	yes	Updater pode ficar travado após reconexão sem entregar nenhum update.
+e2cea6eeba	INTERNAL	no	Incluir skills de external_dirs no menu é configuração interna.
+222767e5e8	FORMAT	yes	Nome de comando no Telegram só aceita minúsculas, dígitos e underscore.
+6fda92aa7f	INBOUND	yes	Em grupo o bot só recebe mensagens que o mencionam (require_mention).
+86e64c1d3b	FORMAT	yes	Tocar um BotCommand no menu envia só /comando, sem argumentos.
+1381c89e56	TOPIC_API	yes	API de fórum usa CASCADE e General topic com message_thread_id=1.
+25065283b3	TOPIC_API	yes	Criar e fechar tópicos de fórum segue regras próprias da API de topics.
