@@ -9,6 +9,8 @@ import ../config/skills_registry
 import ../config/clawhub_registry
 import ../core/pipeops
 import ../core/providers/smart_routing
+import ../core/providers/credential_pool
+import ./credential_runtime
 import ../domain/agent_message
 import ../domain/message
 import ../domain/channels/telegram_pure
@@ -25,6 +27,11 @@ export provider
 
 const
   RecentContextMessageLimit* = 5
+
+type
+  CredentialResultHook* = proc(providerName, key: string; ok: bool;
+                               error: string) {.gcsafe.}
+  CredentialNextHook* = proc(providerName, currentKey: string): string {.gcsafe.}
 
 type
   ProviderDefaults* = object
@@ -98,19 +105,19 @@ proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: []
     ProviderSpec(
       providerName: "openrouter",
       modelName: if prefs.modelName.len > 0: prefs.modelName else: "openai/gpt-6.1-sol",
-      apiKey: getEnv("OPENROUTER_API_KEY"),
+      apiKey: resolveCredentialKey("openrouter", ["OPENROUTER_API_KEY"]),
     )
   of "openai":
     ProviderSpec(
       providerName: "openai",
       modelName: if prefs.modelName.len > 0: prefs.modelName else: "gpt-6.1-sol",
-      apiKey: getEnv("OPENAI_API_KEY"),
+      apiKey: resolveCredentialKey("openai", ["OPENAI_API_KEY"]),
     )
   of "deepseek":
     ProviderSpec(
       providerName: "deepseek",
       modelName: if prefs.modelName.len > 0: prefs.modelName else: "deepseek-4.1-flash",
-      apiKey: getEnv("DEEPSEEK_API_KEY"),
+      apiKey: resolveCredentialKey("deepseek", ["DEEPSEEK_API_KEY"]),
     )
   of "ollama":
     ProviderSpec(
@@ -122,61 +129,59 @@ proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: []
     ProviderSpec(
       providerName: "groq",
       modelName: if prefs.modelName.len > 0: prefs.modelName else: GroqDefaultModel,
-      apiKey: getEnv("GROQ_API_KEY"),
+      apiKey: resolveCredentialKey("groq", ["GROQ_API_KEY"]),
     )
   of "opencode-go", "opencode":
     ProviderSpec(
       providerName: "opencode-go",
       modelName: if prefs.modelName.len > 0: prefs.modelName else: OpenCodeGoDefaultModel,
-      apiKey: getEnv("OPENCODE_API_KEY", getEnv("OPENCODE_GO_API_KEY")),
+      apiKey: resolveCredentialKey("opencode-go",
+        ["OPENCODE_API_KEY", "OPENCODE_GO_API_KEY"]),
     )
   of "zen", "opencode-zen":
     ProviderSpec(
       providerName: "zen",
       modelName: if prefs.modelName.len > 0: prefs.modelName else: ZenDefaultModel,
-      apiKey: getEnv("OPENCODE_API_KEY", getEnv("ZEN_API_KEY")),
+      apiKey: resolveCredentialKey("zen", ["OPENCODE_API_KEY", "ZEN_API_KEY"]),
     )
   of "anthropic":
     ProviderSpec(
       providerName: "anthropic",
       modelName: if prefs.modelName.len > 0: prefs.modelName else: "claude-sonnet-5-5",
-      apiKey: getEnv("ANTHROPIC_API_KEY"),
+      apiKey: resolveCredentialKey("anthropic", ["ANTHROPIC_API_KEY"]),
     )
   of "zai-anthropic":
     ProviderSpec(
       providerName: "zai-anthropic",
       modelName: if prefs.modelName.len > 0: prefs.modelName else: "glm-4.7",
-      apiKey: getEnv(
-        "ZAI_ANTHROPIC_API_KEY",
-        getEnv(
-          "ANTHROPIC_AUTH_TOKEN",
-          getEnv("ZAI_CODING_API_KEY", getEnv("ZAI_API_KEY", getEnv("ZHIPU_API_KEY")))
-        )
-      ),
+      apiKey: resolveCredentialKey("zai-anthropic",
+        ["ZAI_ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+         "ZAI_CODING_API_KEY", "ZAI_API_KEY", "ZHIPU_API_KEY"]),
     )
   of "gemini":
     ProviderSpec(
       providerName: "gemini",
       modelName: if prefs.modelName.len > 0: prefs.modelName else: "gemini-3.8-flash",
-      apiKey: getEnv("GEMINI_API_KEY"),
+      apiKey: resolveCredentialKey("gemini", ["GEMINI_API_KEY"]),
     )
   of "minimax":
     ProviderSpec(
       providerName: "minimax",
       modelName: if prefs.modelName.len > 0: prefs.modelName else: "MiniMax-M2",
-      apiKey: getEnv("MINIMAX_API_KEY"),
+      apiKey: resolveCredentialKey("minimax", ["MINIMAX_API_KEY"]),
     )
   of "zai":
     ProviderSpec(
       providerName: "zai",
       modelName: if prefs.modelName.len > 0: prefs.modelName else: "glm-4.7",
-      apiKey: getEnv("ZAI_API_KEY"),
+      apiKey: resolveCredentialKey("zai", ["ZAI_API_KEY"]),
     )
   else:
     ProviderSpec(
       providerName: "zai-coding",
       modelName: if prefs.modelName.len > 0: prefs.modelName else: "glm-4.7",
-      apiKey: getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")),
+      apiKey: resolveCredentialKey("zai-coding",
+        ["ZAI_CODING_API_KEY", "ZHIPU_API_KEY"]),
     )
 
 proc buildProviderBundle*(preferencesMd: string;
@@ -208,28 +213,24 @@ func availableProviderNames*(av: ProviderAvailability): seq[string] =
 
 func detectProviderAvailability*(): ProviderAvailability =
   ProviderAvailability(
-    openrouter: getEnv("OPENROUTER_API_KEY").len > 0,
-    anthropic: getEnv("ANTHROPIC_API_KEY").len > 0,
-    openai: getEnv("OPENAI_API_KEY").len > 0,
-    deepseek: getEnv("DEEPSEEK_API_KEY").len > 0,
-    zaiAnthropic: getEnv(
-      "ZAI_ANTHROPIC_API_KEY",
-      getEnv(
-        "ANTHROPIC_AUTH_TOKEN",
-        getEnv("ZAI_CODING_API_KEY", getEnv("ZAI_API_KEY", getEnv("ZHIPU_API_KEY")))
-      )
-    ).len > 0,
-    gemini: getEnv("GEMINI_API_KEY").len > 0,
-    minimax: getEnv("MINIMAX_API_KEY").len > 0,
-    zai: getEnv("ZAI_API_KEY").len > 0,
-    zaiCoding: getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")).len > 0,
-    groq: getEnv("GROQ_API_KEY").len > 0,
+    openrouter: hasCredentialKey(["OPENROUTER_API_KEY"]),
+    anthropic: hasCredentialKey(["ANTHROPIC_API_KEY"]),
+    openai: hasCredentialKey(["OPENAI_API_KEY"]),
+    deepseek: hasCredentialKey(["DEEPSEEK_API_KEY"]),
+    zaiAnthropic: hasCredentialKey(
+      ["ZAI_ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+       "ZAI_CODING_API_KEY", "ZAI_API_KEY", "ZHIPU_API_KEY"]),
+    gemini: hasCredentialKey(["GEMINI_API_KEY"]),
+    minimax: hasCredentialKey(["MINIMAX_API_KEY"]),
+    zai: hasCredentialKey(["ZAI_API_KEY"]),
+    zaiCoding: hasCredentialKey(["ZAI_CODING_API_KEY", "ZHIPU_API_KEY"]),
+    groq: hasCredentialKey(["GROQ_API_KEY"]),
     ollama: getEnv("OLLAMA_BASE_URL").len > 0,
-    opencodeGo: getEnv("OPENCODE_API_KEY", getEnv("OPENCODE_GO_API_KEY")).len > 0,
-    zen: getEnv("OPENCODE_API_KEY", getEnv("ZEN_API_KEY")).len > 0,
+    opencodeGo: hasCredentialKey(["OPENCODE_API_KEY", "OPENCODE_GO_API_KEY"]),
+    zen: hasCredentialKey(["OPENCODE_API_KEY", "ZEN_API_KEY"]),
   )
 
-func toProviderSpec*(selection: ProviderSelection): ProviderSpec =
+proc toProviderSpec*(selection: ProviderSelection): ProviderSpec =
   buildProviderSpec(ProviderPrefs(
     providerName: selection.providerName,
     modelName: selection.modelName,
@@ -305,6 +306,8 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
                              routingFeedbackHook: RoutingFeedbackHook = nil;
                              routingCostHook: RoutingCostHook = nil;
                              routingProviderCooldownHook: RoutingProviderCooldownHook = nil;
+                             credentialResultHook: CredentialResultHook = nil;
+                             credentialNextHook: CredentialNextHook = nil;
                              fallbackCompleteFn: CompleteFn = nil
                             ): AsyncCompleteFn {.gcsafe.} =
   ## Async twin of buildCompleteFn: selection/hooks run on the event loop,
@@ -352,28 +355,49 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
         cooldownFilteredSelections
     var lastErr = "no provider available"
     for selection in costAwareSelections:
-      if routingHook != nil:
-        try: routingHook(selection, prefs, req)
-        except Exception: discard
-      let startedAt = nowMs()
-      var response: Result[CompletionResponse, string]
-      try:
-        response = await asyncProviderComplete(
-          providerRuntimeBuilder, selection.toProviderSpec, req)
-      except CancelledError:
-        raise
-      except Exception as e:
-        response = asyncCompleteErr(e.msg)
-      let elapsedMs = nowMs() - startedAt
-      recordLatency(selection.providerName, float(elapsedMs))
-      if response.isErr:
-        recordError(selection.providerName)
-      if routingResultHook != nil:
-        try: routingResultHook(selection, elapsedMs, response.isOk)
-        except Exception: discard
-      if response.isOk:
-        return response
-      lastErr = response.error
+      var spec = selection.toProviderSpec
+      var tried: seq[string] = @[]
+      while true:
+        tried.add(spec.apiKey)
+        if routingHook != nil:
+          try: routingHook(selection, prefs, req)
+          except Exception: discard
+        let startedAt = nowMs()
+        var response: Result[CompletionResponse, string]
+        try:
+          response = await asyncProviderComplete(
+            providerRuntimeBuilder, spec, req)
+        except CancelledError:
+          raise
+        except Exception as e:
+          response = asyncCompleteErr(e.msg)
+        let elapsedMs = nowMs() - startedAt
+        recordLatency(selection.providerName, float(elapsedMs))
+        if response.isErr:
+          recordError(selection.providerName)
+        if routingResultHook != nil:
+          try: routingResultHook(selection, elapsedMs, response.isOk)
+          except Exception: discard
+        if credentialResultHook != nil and spec.apiKey.len > 0:
+          try:
+            credentialResultHook(selection.providerName, spec.apiKey,
+                                 response.isOk,
+                                 (if response.isErr: response.error else: ""))
+          except Exception: discard
+        if response.isOk:
+          return response
+        lastErr = response.error
+        ## Another key can fix auth/rate/quota failures; transport and payload
+        ## errors must not burn through the pool.
+        if credentialNextHook == nil or
+           not isRetryableCredentialError(response.error):
+          break
+        let nextKey =
+          try: credentialNextHook(selection.providerName, spec.apiKey)
+          except Exception: ""
+        if nextKey.len == 0 or nextKey in tried:
+          break
+        spec = spec.withApiKey(nextKey)
     if fallbackCompleteFn != nil:
       try:
         return fallbackCompleteFn(req)
@@ -633,6 +657,11 @@ proc withSessionCompleteFn*(fallbackCompleteFn: CompleteFn;
       applyProviderDefaults(memory.loadContext(userId).preferencesMd, providerDefaults),
       providerRuntimeBuilder, routingHook, routingResultHook,
       routingFeedbackHook, routingCostHook, routingProviderCooldownHook,
+      credentialResultHook = proc(providerName, key: string; ok: bool;
+                                  error: string) {.gcsafe.} =
+        noteCredentialResult(providerName, key, ok, error),
+      credentialNextHook = proc(providerName, currentKey: string): string {.gcsafe.} =
+        nextCredentialKey(providerName, currentKey),
       fallbackCompleteFn = fallbackCompleteFn)
   result.errorExplainFn = fallbackCompleteFn
 

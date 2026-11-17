@@ -64,6 +64,29 @@ BRAVE_API_KEY=...   # optional, enables web_search
 
 `donkey doctor` reports which providers are currently enabled by env.
 
+### Multiple Keys and Rotation
+
+Any provider key can carry a pool by adding the plural env next to it:
+
+```bash
+OPENAI_API_KEY=key-a
+OPENAI_API_KEYS=key-a,key-b,key-c
+```
+
+Selection is round-robin over healthy keys. A key that returns `401`, `403`,
+`429`, an invalid-key or a quota error cools down (1 min for rate limits,
+15 min for quota, 30 min otherwise) and the next request uses another one.
+When the error is key-specific, the same request is retried once per untried
+healthy key before the provider fallback moves on. Transport and payload
+errors do not rotate: they are not the key's fault.
+
+The plural env alone also marks the provider as available, so a pool does not
+need a duplicate single key.
+
+> OAuth device-code flows are not wired: none of the providers Donkey talks to
+> exposes a device-code endpoint, and adding an inert token flow would buy no
+> coverage. The pool is the part that applies today.
+
 ## Per-user Overrides
 
 Each user/session can override provider and model in `PREFERENCES.md`:

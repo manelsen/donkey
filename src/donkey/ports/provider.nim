@@ -38,6 +38,12 @@ type
     source*:       ModelCatalogSource
     fetchedAtUnix*: int64
 
+func withApiKey*(spec: ProviderSpec; key: string): ProviderSpec =
+  ## Same provider/model with another credential, for an in-flight retry.
+  result = spec
+  result.apiKey = key
+
+type
   ProviderCaps* = object
     ## Static description of what a provider supports.
     name*:               string
