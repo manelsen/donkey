@@ -33,8 +33,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Descartar updates cujo `from.is_bot` é verdadeiro, incluindo o próprio bot.
 - **Fontes no hermes:** `fbfe294882`, `6fb25f86ac`, `3a37785f7f`
 - **Testes no hermes:** `tests/gateway/test_telegram_group_gating.py;tests/gateway/test_bot_loop_guard.py`
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n "is_bot" src/donkey` (sem resultados); parsing em `src/donkey/domain/channels/telegram_pure.nim:95`
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_pure.nim:95` e `tests/domain/channels/t_telegram_pure.nim`
 - **Prioridade:** P0
 
 ### TG-004: Mensagem sem `from` não pode derrubar o parsing

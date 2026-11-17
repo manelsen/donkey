@@ -92,6 +92,21 @@ func extractMediaMimeType(tgMsg: JsonNode): string =
 
 # ── Public pure API ───────────────────────────────────────────────────────────
 
+func isBotUpdate*(upd: JsonNode): bool =
+  ## Behavior derived from hermes-agent (MIT) fix fbfe294882; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-003
+  ##
+  ## getUpdates delivers messages written by other bots in groups and can
+  ## re-deliver the bot's own messages. Treating them as user input creates
+  ## loops and answers nobody.
+  let sender =
+    if upd.hasKey("message"): upd["message"].getOrDefault("from")
+    elif upd.hasKey("callback_query"): upd["callback_query"].getOrDefault("from")
+    else: nil
+  if sender.isNil or sender.kind != JObject:
+    return false
+  sender.getOrDefault("is_bot").getBool(false)
+
 func parseUpdate*(upd: JsonNode): TgParseResult =
   ## Parses a single Telegram update object into a TgParseResult.
   ## Returns tukUnknown for updates with no actionable content.
@@ -112,6 +127,8 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
 
   if upd.hasKey("message"):
     let tgMsg   = upd["message"]
+    if isBotUpdate(upd):
+      return TgParseResult(kind: tukUnknown)
     let fromId  = tgMsg["from"]["id"].getBiggestInt()
     let text      = tgMsg |> extractTextFrom
     let mediaId   = tgMsg |> extractMediaFileId

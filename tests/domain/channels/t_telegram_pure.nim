@@ -1,7 +1,7 @@
 ## Tests for domain/channels/telegram_pure.nim — pure Telegram update parser.
 ## No I/O or HTTP; all input is constructed directly as JsonNode.
 
-import std/[json, unittest]
+import std/[json, os, unittest]
 import donkey/domain/channels/telegram_pure
 import donkey/core/pipeops
 import donkey/core/types
@@ -261,3 +261,20 @@ suite "telegram_pure.maxNextOffset":
     let arr = %* [{"update_id": 7}, {"update_id": 9}]
     let next = arr |>-> maxNextOffset(0)
     check next == 10
+
+
+suite "telegram_pure — bot senders (TG-003)":
+
+  test "TG-003: an update from a bot is recognised":
+    let upd = parseJson(readFile("tests/fixtures/telegram/hermes/TG-003_bot_sender.json"))
+    check isBotUpdate(upd)
+
+  test "TG-003: an update from a human is not a bot":
+    let upd = %*{"message": {"from": {"id": 1, "is_bot": false},
+                             "chat": {"id": 1, "type": "private"}, "text": "oi"}}
+    check not isBotUpdate(upd)
+
+  test "TG-003: a bot callback is recognised":
+    let upd = %*{"callback_query": {"id": "cb", "from": {"id": 2, "is_bot": true},
+                                    "data": "x"}}
+    check isBotUpdate(upd)
