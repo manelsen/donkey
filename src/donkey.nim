@@ -81,6 +81,7 @@ import donkey/app/metrics_server
 import donkey/app/outbound_runtime
 import donkey/app/gateway_drainer
 import donkey/app/session_manager
+import donkey/adapters/state/daemon_lease
 import donkey/app/session_bootstrap
 import donkey/app/session_ingress
 import donkey/app/doctor
@@ -1789,6 +1790,13 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     initMetrics()
     startOptionalMetricsServer(log)
 
+  ## One daemon per state directory. A lease left by a dead process is taken
+  ## over; a live one stops this startup before any store is opened.
+  var daemonLease = acquireDaemonLease(cfg.home / "state").valueOr:
+    stderr.writeLine "Security Error: " & error
+    quit(1)
+  defer: releaseDaemonLease(daemonLease)
+
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory
   let ctx = bootstrap.ctx
@@ -1796,6 +1804,13 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     let ledgerErr = ctx.runtime.stateStore.ledgerLastCompactError()
     if ledgerErr.len > 0:
       log.warn("ledger compaction at startup: " & ledgerErr)
+    ## Deliveries left pending by the previous process can never finish.
+    let reconciled = ctx.runtime.stateStore.reconcileInterruptedDeliveries()
+    if reconciled.isErr:
+      log.warn("delivery ledger reconciliation: " & reconciled.error)
+    elif reconciled.get() > 0:
+      log.warn("delivery ledger: " & $reconciled.get() &
+               " interrupted deliveries marked failed")
   ## DM authorization is configured once, before any drainer/actor can consume
   ## an inbound message. Service builders stay side-effect free.
   ctx.runtime.sm.configureDmPolicy(

@@ -778,6 +778,29 @@ proc recordPending(store: RuntimeStateStore;
   ## Pending is best-effort: avoid a second synchronous fsync per delivery.
   store.appendLedger(record, durable = false)
 
+proc reconcileInterruptedDeliveries*(store: RuntimeStateStore;
+                                    nowMs = 0): Result[int, string] {.raises: [].} =
+  ## Pending deliveries left by a previous process can never complete: the
+  ## sender is gone. Mark them failed instead of leaving the ledger claiming
+  ## an in-flight send forever. They are not replayed — a duplicate outbound
+  ## message is worse than a visible failure.
+  let loaded = store.loadLedger()
+  if loaded.isErr:
+    return err(loaded.error)
+  let stamp = if nowMs > 0: nowMs else: epochMs()
+  var count = 0
+  for record in loaded.get():
+    if record.state != dlsPending:
+      continue
+    acquire(store.lock)
+    let saved = store.appendMinimalEvent(
+      record.id, dlsFailed, stamp, "interrupted by restart")
+    release(store.lock)
+    if saved.isErr:
+      return err(saved.error)
+    inc count
+  ok(count)
+
 proc markSent(store: RuntimeStateStore;
               id: string;
               updatedAtMs: int64): Result[void, string] {.raises: [].} =
