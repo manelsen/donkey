@@ -184,6 +184,10 @@ suite "http_gateway route dispatch":
     let req = GatewayRequest(meth: "GET", path: "/health")
     check routeGatewayRequest(req) == "health"
 
+  test "routeGatewayRequest maps /dashboard":
+    check routeGatewayRequest(GatewayRequest(meth: "GET", path: "/dashboard")) ==
+          "dashboard"
+
   test "routeGatewayRequest maps the OpenAI-compatible endpoints":
     check routeGatewayRequest(GatewayRequest(meth: "POST", path: "/v1/chat/completions")) ==
           "openai_chat"
@@ -193,6 +197,7 @@ suite "http_gateway route dispatch":
   test "health and index are the only public gateway actions":
     check isPublicGatewayAction("index")
     check isPublicGatewayAction("health")
+    check isPublicGatewayAction("dashboard")
     for action in ["status", "logs", "events", "chat", "openai_chat",
                    "openai_models", "notfound"]:
       check not isPublicGatewayAction(action)
@@ -260,3 +265,19 @@ suite "http_gateway chat POST parsing":
     let result = parseChatPost("""{"text": "hello", "extra": "ignored"}""")
     check result.isOk
     check result.get().text == "hello"
+
+suite "dashboard page":
+
+  test "the shell carries no token and asks for one":
+    let html = buildDashboardHtml()
+    check html.contains("<title>Donkey</title>")
+    check html.contains("sessionStorage")
+    check html.contains("/api/status")
+    check html.contains("/api/logs")
+    check html.contains("Authorization: 'Bearer '")
+
+  test "the shell has no external asset or inline secret":
+    let html = buildDashboardHtml()
+    check not html.contains("<script src=")
+    check not html.contains("<link rel=\"stylesheet\"")
+    check not html.contains("DONKEY_HTTP_TOKEN=")

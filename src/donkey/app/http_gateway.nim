@@ -12,6 +12,9 @@
 ##   POST /api/chat     → receive inbound message from web UI (bidirectional SSE)
 ##
 ## CORS: Access-Control-Allow-Origin: * for local browser access.
+##
+## GET /dashboard is public HTML only: the page asks for the Bearer token and
+## keeps it in sessionStorage, so the data endpoints stay authenticated.
 
 import std/[json, monotimes, net, os, strutils, times]
 import locks
@@ -156,6 +159,60 @@ func buildSseEvent*(event, data: string): string =
     result = "event: " & event & "\n"
   result.add("data: " & data & "\n\n")
 
+func buildDashboardHtml*(): string =
+  ## Read-only status/logs dashboard. The shell is public and carries no
+  ## secrets; the token is entered in the page and sent as a Bearer header to
+  ## the authenticated data endpoints.
+  result = """<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'">
+<title>Donkey</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;margin:2rem;max-width:60rem;color:#1b1b1b}
+h1{font-size:1.4rem;margin:0 0 1rem}
+label{display:flex;gap:.5rem;align-items:center;margin-bottom:1rem;font-size:.9rem}
+input{flex:1;padding:.4rem .6rem;border:1px solid #bbb;border-radius:6px}
+button{padding:.4rem .9rem;border:1px solid #888;border-radius:6px;background:#f4f4f4;cursor:pointer}
+pre{background:#f7f7f7;border:1px solid #e3e3e3;border-radius:8px;padding:.8rem;overflow:auto;max-height:20rem;font-size:.8rem}
+h2{font-size:1rem;margin:1.2rem 0 .4rem}
+</style>
+</head>
+<body>
+<h1>Donkey</h1>
+<label>Token <input id="token" type="password" autocomplete="off" placeholder="DONKEY_HTTP_TOKEN (vazio quando não configurado)"></label>
+<button id="save">Salvar e atualizar</button>
+<h2>Status</h2>
+<pre id="status">—</pre>
+<h2>Logs recentes</h2>
+<pre id="logs">—</pre>
+<script>
+const $ = id => document.getElementById(id);
+let token = sessionStorage.getItem('donkey_token') || '';
+$('token').value = token;
+async function get(path) {
+  const headers = token ? {Authorization: 'Bearer ' + token} : {};
+  const r = await fetch(path, {headers});
+  return r.ok ? await r.text() : 'HTTP ' + r.status;
+}
+async function refresh() {
+  $('status').textContent = await get('/api/status');
+  $('logs').textContent = await get('/api/logs?n=50');
+}
+$('save').onclick = () => {
+  token = $('token').value.trim();
+  sessionStorage.setItem('donkey_token', token);
+  refresh();
+};
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
+"""
+
 func buildStatusBody*(st: DaemonStatus): string =
   $st.toJson()
 
@@ -174,7 +231,7 @@ func buildAgentEventsBody*(events: seq[AgentEvent]): string =
 func isPublicGatewayAction*(action: string): bool =
   ## Liveness/readiness probes must not require credentials. Only static text is
   ## exposed here; every data-bearing endpoint stays behind the token.
-  action in ["index", "health"]
+  action in ["index", "health", "dashboard"]
 
 func routeGatewayRequest*(req: GatewayRequest): string =
   case req.path
@@ -186,6 +243,7 @@ func routeGatewayRequest*(req: GatewayRequest): string =
   of "/api/chat":      "chat"
   of "/v1/chat/completions": "openai_chat"
   of "/v1/models":     "openai_models"
+  of "/dashboard":     "dashboard"
   else:                "notfound"
 
 func routeChatMethod*(meth: string): string =
@@ -404,10 +462,13 @@ proc handleGatewayConn(client: Socket;
     case action
     of "index":
       client.sendResponse("200 OK", "text/plain",
-        "Donkey HTTP gateway\nEndpoints: /api/status /api/logs /api/events /api/chat /v1/models /v1/chat/completions\n", log)
+        "Donkey HTTP gateway\nEndpoints: /dashboard /api/status /api/logs /api/events /api/chat /v1/models /v1/chat/completions\n", log)
 
     of "health":
       client.sendResponse("200 OK", "text/plain", "ok\n", log)
+
+    of "dashboard":
+      client.sendResponse("200 OK", "text/html", buildDashboardHtml(), log)
 
     of "status":
       let st = statusFn()
