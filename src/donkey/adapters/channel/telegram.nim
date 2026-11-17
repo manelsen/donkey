@@ -631,7 +631,7 @@ proc ack*(a: TelegramAdapter; msgId: string) =
 proc answerCallback*(a: TelegramAdapter; callbackId: string): Result[void, string] =
   ## Acknowledges a callback query to remove the loading state in the client.
   if callbackId.len == 0: return ok()
-  discard ? a.post("answerCallbackQuery", %* {"callback_id": callbackId})
+  discard ? a.post("answerCallbackQuery", %* {"callback_query_id": callbackId})
   ok()
 
 func telegramHttpTimeoutSec*(): int =

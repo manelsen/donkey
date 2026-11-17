@@ -793,7 +793,9 @@ proc handleTelegramMessage*(msg: InboundMessage;
   ## only messages that mention the bot start a turn; `/cmd@bot` already works
   ## because parseCommandText strips the suffix.
   let botUsername = telegramBotUsername()
-  if msg.isGroup and telegramRequireMention() and botUsername.len > 0 and
+  ## Callbacks are button taps, not free text: the mention gate does not apply.
+  if msg.isGroup and msg.callbackId.len == 0 and
+     telegramRequireMention() and botUsername.len > 0 and
      not isApprovalCommandText(msg.text):
     {.cast(gcsafe).}:
       let nowMs = epochMs()
