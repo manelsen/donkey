@@ -87,3 +87,7 @@ suite "telegram_format — backslash escapes (TG-037)":
   test "TG-037: code-span text keeps the span closed":
     check codeSpanText("a`b") == "a'b"
     check codeSpanText("plain") == "plain"
+
+
+  test "TG-037: an escaped delimiter does not close the span":
+    check markdownToTelegramHtml("*a \\* b*") == "<i>a * b</i>"

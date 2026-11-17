@@ -9,6 +9,7 @@ import ../../adapters/memory/md_file
 import ../../app/inbound_gate
 import ../../app/approval_runtime
 import ../../app/session_manager
+import ../../app/album_mention_gate
 import ../../domain/agent_message
 import ../../domain/message
 import ../../domain/channels/telegram_policy

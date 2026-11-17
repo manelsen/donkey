@@ -3,7 +3,7 @@
 ## Pure functions only: the adapter decides when to call them, this module
 ## decides what the API contract requires.
 
-import std/[json, strutils, tables, unicode]
+import std/[json, strutils, unicode]
 import ./telegram_split
 
 func isEditNoopError*(message: string): bool =
@@ -165,8 +165,15 @@ func isAddressedToBot*(text, botUsername: string): bool =
       return false
     let after = at + needle.len
     let beforeOk = at == 0 or lower[at - 1] notin {'a' .. 'z', '0' .. '9', '_', '@'}
-    let afterOk = after >= lower.len or
-                  lower[after] notin {'a' .. 'z', '0' .. '9', '_', '.'}
+    ## A trailing period ends the sentence; a period followed by a domain
+    ## character is part of an address and does not address the bot.
+    let afterOk =
+      if after >= lower.len: true
+      elif lower[after] == '.':
+        after + 1 >= lower.len or
+          lower[after + 1] notin {'a' .. 'z', '0' .. '9', '_'}
+      else:
+        lower[after] notin {'a' .. 'z', '0' .. '9', '_'}
     if beforeOk and afterOk:
       return true
     start = after
@@ -185,42 +192,10 @@ func isMissingThreadError*(message: string): bool =
   lower.contains("thread not found") or
     lower.contains("message thread not found")
 
-type AlbumMentionGate* = ref object
-  ## chatId|mediaGroupId → epoch ms until the album counts as addressed.
-  untilMs*: Table[string, int64]
-
-const AlbumMentionTtlMs* = 60_000'i64
-
-func newAlbumMentionGate*(): AlbumMentionGate =
-  AlbumMentionGate(untilMs: initTable[string, int64]())
-
 func albumKey*(chatId, mediaGroupId: string): string =
-  if mediaGroupId.len == 0: "" else: chatId & "|" & mediaGroupId
-
-proc rememberAddressedAlbum*(gate: AlbumMentionGate; key: string;
-                             nowMs: int64; ttlMs = AlbumMentionTtlMs) =
   ## Behavior derived from hermes-agent (MIT) fix 8fb618234f; see
   ## docs/hermes-mining/telegram/CASES.md#tg-028
   ##
-  ## An album's caption lives on one item only. Once that item is addressed,
-  ## its siblings belong to the same user action and must not be dropped by the
-  ## mention gate.
-  if gate.isNil or key.len == 0:
-    return
-  gate.untilMs[key] = nowMs + ttlMs
-
-func albumAddressed*(gate: AlbumMentionGate; key: string;
-                     nowMs: int64): bool =
-  if gate.isNil or key.len == 0:
-    return false
-  gate.untilMs.getOrDefault(key, 0'i64) > nowMs
-
-proc clearExpiredAlbums*(gate: AlbumMentionGate; nowMs: int64) =
-  if gate.isNil:
-    return
-  var expired: seq[string] = @[]
-  for key, untilMs in gate.untilMs:
-    if untilMs <= nowMs:
-      expired.add(key)
-  for key in expired:
-    gate.untilMs.del(key)
+  ## An album's caption lives on one item only. The key groups the siblings of
+  ## the same user action; the window that remembers them lives in the app.
+  if mediaGroupId.len == 0: "" else: chatId & "|" & mediaGroupId

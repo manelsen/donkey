@@ -195,23 +195,12 @@ suite "telegram_policy — forum threads":
     check not isAddressedToBot("escreva para contato@donkeybot.com", "donkeybot")
     check isAddressedToBot("/status@donkeybot", "donkeybot")
 
-suite "telegram_policy — album mention gate":
+  test "TG-015: a trailing period still addresses the bot":
+    check isAddressedToBot("Obrigado, @donkeybot.", "donkeybot")
 
-  test "TG-028: an addressed album admits its siblings":
-    let gate = newAlbumMentionGate()
-    let key = albumKey("u1", "g1")
-    gate.rememberAddressedAlbum(key, 1_000)
-    check gate.albumAddressed(key, 1_500)
-    check not gate.albumAddressed(albumKey("u1", "g2"), 1_500)
-    check not gate.albumAddressed(albumKey("u2", "g1"), 1_500)
 
-  test "TG-028: the window expires":
-    let gate = newAlbumMentionGate()
-    let key = albumKey("u1", "g1")
-    gate.rememberAddressedAlbum(key, 1_000, ttlMs = 500)
-    check not gate.albumAddressed(key, 1_600)
+suite "telegram_policy — album key":
 
-  test "TG-028: a message without a group is never admitted":
-    let gate = newAlbumMentionGate()
-    gate.rememberAddressedAlbum(albumKey("u1", ""), 1_000)
-    check not gate.albumAddressed("", 1_000)
+  test "TG-028: the album key groups chat and media group":
+    check albumKey("u1", "g1") == "u1|g1"
+    check albumKey("u1", "") == ""

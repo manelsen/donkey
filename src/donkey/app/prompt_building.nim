@@ -168,9 +168,12 @@ func addUserTurnWithImages*(history: ConversationHistory;
   ## Behavior derived from hermes-agent (MIT) fix 8fb618234f; see
   ## docs/hermes-mining/telegram/CASES.md#tg-028
   ##
-  ## An album arrives as several updates. The turn keeps every attachment
+  ## An album arrives as several updates. The turn keeps the attachments
   ## instead of only the last one: the first image carries the text and the
-  ## rest follow as image-only entries, so the model sees the whole set.
+  ## rest follow as image-only entries.
+  ##
+  ## At most `MaxAttachmentsPerTurn` images are kept; the extras are dropped
+  ## (the provider and the context window do not take an unbounded album).
   const MaxAttachmentsPerTurn = 10
   if imageUrls.len == 0:
     return addUserTurn(history, userText, "")
