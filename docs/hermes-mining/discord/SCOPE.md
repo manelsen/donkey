@@ -1,0 +1,90 @@
+# Escopo — mineração do Discord
+
+> **Estado:** triagem inicial. A classificação commit a commit e os casos
+> consolidados são o passo seguinte; este documento só mede o corpus e
+> identifica o primeiro alvo.
+
+## Escopo da extração
+
+- `HERMES_REF`: `b076b5856cc6b74ab815ea97d866ee5022a5282a` (`HEAD` do hermes
+  na data desta rodada; o SHA completo está em `LAST_SYNC`).
+- Commits extraídos: **407** (união de assuntos `fix.*discord` com os fixes que
+  tocam `plugins/platforms/discord` e `gateway/platforms/discord.py`).
+- Commits que tocam teste: **322 de 407** (79%).
+- Pipeline: `HERMES_REF=HEAD bash scripts/hermes_mine.sh discord`; duas
+  execuções produzem `commits.tsv` byte-idêntico.
+- Nenhum código do hermes é copiado: o que se transfere é o comportamento
+  documentado nos commits, como no piloto do Telegram.
+
+Para comparação, o Telegram rendeu 718 commits com a ref pinada em
+`b3746e35dd`. O Discord é ~57% desse volume e tem a mesma proporção de commits
+com teste.
+
+## Triagem por assunto
+
+Contagem de **menções no assunto**, não categorias exclusivas: um commit pode
+aparecer em mais de uma linha. Serve para dimensionar o trabalho, não para
+classificar.
+
+| Cluster | Commits | Observação |
+|---|---:|---|
+| Conexão/reconexão/gateway | 123 | inclui intents, startup/shutdown, heartbeat, proxy |
+| Auth/aprovação/permissão | 91 | inclui slash commands de aprovação e PII |
+| Slash/commands/interações | 61 | registro, autocomplete, deferred, botões |
+| Menção/reply/inbound | 51 | inclui dedup e batching |
+| Voz (Opus/RTP/STT/TTS) | 45 | maior custo de porte; depende de stack de áudio |
+| Threads | 41 | participação, persistência, slash em thread |
+| Mídia/anexos/emoji | 40 | documento, vídeo, limites de upload |
+| Entrega/recovery/cursor/dedup | 36 | o cluster P0 deste canal |
+| Rate limit/429/retry | 11 | inclui tempestade de edits |
+
+## Primeiro alvo: entrega e recuperação
+
+É o cluster que mais se parece com o que o Telegram ensinou: perda ou
+duplicação de mensagem em reconexão. O hermes acumulou uma camada inteira
+sobre o gateway:
+
+| Commit | Comportamento documentado |
+|---|---|
+| `bc0e5adb1d` | cursor de recuperação persistido por canal |
+| `2b2203e3a7` | cursor só avança depois da entrega final |
+| `9412f2dd84` | entrega final streamada é persistida |
+| `d5b9c1ee37` | claim de recuperação e falha do ledger são guardados |
+| `38b39b87ef` | I/O do ledger de recuperação fora do event loop |
+| `2278f2cb7e` | recuperação de mensagens endurecida na reconexão |
+| `80744bc2bc`, `fad6cbaed3` | bordas de ciclo de vida da reconexão |
+| `da955a643e` | identidade da mensagem de recuperação preservada |
+| `8c6881231a` | backfill não re-despacha turno já entregue |
+| `cee761ee4a`, `807bdc17f6` | dedup de gateway e de thread-starter |
+| `b9ec39939b` | dedup pré-semeado antes do `mark_async` |
+| `2e2212be1b` | dedup de previews saturados para parar tempestade de edits |
+
+### O que o Donkey tem hoje
+
+`src/donkey/adapters/channel/discord.nim` mantém `session_id`, `seq` e
+`resume_gateway_url` e retoma a sessão no gateway. **Não há** cursor
+persistente, ledger de entrega, backfill nem dedup de mensagem no caminho do
+Discord — uma reconexão pode perder o intervalo ou re-despachar um turno.
+
+O Slack já tem um precedente interno de dedup com TTL
+(`tests/channel/t_slack.nim`, suíte "SlackAdapter event deduplication"), então
+o porte não precisa inventar o formato do registro.
+
+## O que esta triagem não decide
+
+- **Voz** é o maior bloco isolado e depende de RTP/Opus/STT; provavelmente
+  merece um balde próprio, depois dos P0 de entrega.
+- **Slash commands**: o Donkey trata comandos no texto da mensagem; registrar
+  comandos nativos no Discord é decisão de produto, não só correção.
+- **Auth/aprovação** é grande, mas parte é UI de botões que o Donkey já tem
+  em outros canais; precisa da classificação para separar o que é contrato da
+  API do que é escolha do hermes.
+
+## Próximos passos
+
+1. Classificar os 407 commits em `classification.tsv` (categoria,
+   transferível, motivo), com `UNCLEAR` abaixo de 5%.
+2. Consolidar os transferíveis em casos numerados (`DS-001`…), com prioridade
+   P0/P1/P2 pela mesma regra do Telegram.
+3. Portar primeiro o cluster de entrega/recuperação, escrevendo o teste antes
+   e registrando caso → commit → teste em `TRACEABILITY.md`.
