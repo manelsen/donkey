@@ -12,6 +12,7 @@ import donkey/domain/message
 import donkey/domain/personality
 import donkey/domain/more_tools
 import donkey/core/log
+import donkey/core/debounce
 import donkey/core/pipeops
 import donkey/core/tooling/tool_loop
 import donkey/adapters/http/std_http
@@ -1355,3 +1356,86 @@ suite "tool progress preference":
       check not suppressToolProgressFromEnv()
     delEnv("DONKEY_SUPPRESS_TOOL_PROGRESS")
     check not suppressToolProgressFromEnv()
+
+
+suite "adaptive debounce collector":
+
+  proc fastCfg(): DebounceConfig =
+    DebounceConfig(minWindowMs: 60, maxWindowMs: 400,
+                   perPartExtMs: 40, shortMsgThreshold: 40, shortExtMs: 40)
+
+  test "a short burst extends the window and merges into one turn":
+    ## With fastCfg: one short part waits 100 ms; two parts wait 140 ms.
+    ## The third fragment arrives 90 ms after the second, inside that window.
+    check windowMs(2, 3, fastCfg()) == 140
+
+    proc doTest(): Future[string] {.async.} =
+      let inbox = newAsyncQueue[AgentMessage]()
+      await inbox.put(newTaskMsg("a", tkUserMsg, "u", "um", ckTelegram, "1"))
+      let collectFut = collectWithDebounce(inbox, fastCfg())
+      await sleepAsync(chronos.milliseconds(40))
+      await inbox.put(newTaskMsg("b", tkUserMsg, "u", "dois", ckTelegram, "1"))
+      await sleepAsync(chronos.milliseconds(90))
+      await inbox.put(newTaskMsg("c", tkUserMsg, "u", "tres", ckTelegram, "1"))
+      let merged = await collectFut
+      decodeUserPayload(merged.payload).text
+
+    let text = waitFor doTest()
+    check "um" in text
+    check "dois" in text
+    check "tres" in text
+
+  test "a control task in a burst is preserved as a separate turn":
+    proc doTest(): Future[(string, AgentMessageKind, TaskKind)] {.async.} =
+      let inbox = newAsyncQueue[AgentMessage]()
+      await inbox.put(newTaskMsg("a", tkUserMsg, "u", "antes", ckTelegram, "1"))
+      let collectFut = collectWithDebounce(inbox, fastCfg())
+      await sleepAsync(chronos.milliseconds(40))
+      await inbox.put(newTaskMsg("ctrl", tkCompact, "u", "", ckTelegram, "1"))
+      let merged = await collectFut
+      let control = await collectWithDebounce(inbox, fastCfg())
+      (decodeUserPayload(merged.payload).text, control.kind, control.taskKind)
+
+    let (text, kind, taskKind) = waitFor doTest()
+    check text == "antes"
+    check kind == amkTask
+    check taskKind == tkCompact
+
+  test "a fragment after the window becomes a separate turn":
+    proc doTest(): Future[(string, string)] {.async.} =
+      let inbox = newAsyncQueue[AgentMessage]()
+      await inbox.put(newTaskMsg("a", tkUserMsg, "u", "primeiro", ckTelegram, "1"))
+      let collectFut = collectWithDebounce(inbox, fastCfg())
+      await sleepAsync(chronos.milliseconds(120))
+      await inbox.put(newTaskMsg("b", tkUserMsg, "u", "segundo", ckTelegram, "1"))
+      let first = await collectFut
+      let second = await collectWithDebounce(inbox, fastCfg())
+      (decodeUserPayload(first.payload).text, decodeUserPayload(second.payload).text)
+
+    let (first, second) = waitFor doTest()
+    check first == "primeiro"
+    check second == "segundo"
+
+  test "a queued cancel behind a control task wins over the burst":
+    proc doTest(): Future[(AgentMessageKind, TaskKind)] {.async.} =
+      let inbox = newAsyncQueue[AgentMessage]()
+      await inbox.put(newTaskMsg("a", tkUserMsg, "u", "nao devia rodar", ckTelegram, "1"))
+      await inbox.put(newTaskMsg("ctrl", tkCompact, "u", "", ckTelegram, "1"))
+      await inbox.put(newCancelMsg())
+      let collected = await collectWithDebounce(inbox, fastCfg())
+      let control = await collectWithDebounce(inbox, fastCfg())
+      (collected.kind, control.taskKind)
+
+    let (kind, taskKind) = waitFor doTest()
+    check kind == amkCancel
+    check taskKind == tkCompact
+
+  test "cancel wins over buffered fragments":
+    proc doTest(): Future[AgentMessageKind] {.async.} =
+      let inbox = newAsyncQueue[AgentMessage]()
+      await inbox.put(newTaskMsg("a", tkUserMsg, "u", "ola", ckTelegram, "1"))
+      await inbox.put(newCancelMsg())
+      let msg = await collectWithDebounce(inbox, fastCfg())
+      msg.kind
+
+    check (waitFor doTest()) == amkCancel

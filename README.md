@@ -260,7 +260,7 @@ Risky native tools pause and ask the requesting user before executing. The defau
 | **OpenRouter** | ✅ | ✅ | Universal routing fallback |
 
 > [!NOTE]
-> In the daemon runtime, sessions receive the global OpenRouter `streamFn` when `OPENROUTER_API_KEY` is configured. In addition, the orchestrator tool loop only engages streaming when zero tools are present; because sessions register native tools by default, responses are executed through complete turns rather than token streams. Adapter-level streaming flags in the table indicate `buildProviderBundle` support (`zai-anthropic` also provides streaming).
+> In the daemon runtime, sessions receive the global OpenRouter `streamFn` when `OPENROUTER_API_KEY` is configured. Streaming happens only on the first tool-loop round and is subject to the tool gate: with no tools registered it streams whenever `streamFn` exists; with tools registered it streams only when the provider supports streaming tool calls (OpenRouter) and tool progress is not suppressed — `DONKEY_SUPPRESS_TOOL_PROGRESS=1` closes that gate even for a text-only reply. Adapter-level streaming flags in the table indicate `buildProviderBundle` support (`zai-anthropic` also provides streaming).
 
 ---
 

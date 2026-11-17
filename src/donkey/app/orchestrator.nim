@@ -23,10 +23,11 @@
 ##   orchestrator flushes accumulated tokens to the global outbox as an
 ##   OutboundMessage with isPartial=true. The final flush has isPartial=false.
 
-import std/[os, strutils]
+import std/[monotimes, os, strutils]
 import chronos
 import chronos/asyncsync
 import ../core/pipeops
+import ../core/debounce
 import ../core/log
 import ../core/onboarding/onboarding
 import ../core/agent_events
@@ -59,6 +60,7 @@ import ./subagent_runtime
 import ./prompt_building
 import ./provider_executor
 import ../core/security/dm_policy
+import ../infra/queue/nonblocking
 
 # Re-export public API from extracted modules
 export onboarding
@@ -66,7 +68,36 @@ export onboarding_runtime
 export tool_loop_runtime
 export prompt_building
 
-const DebounceWindowMs* = 1_200
+const DebounceWindowMs* = MinWindowMs
+  ## Base window kept for callers that do not pass a `DebounceConfig`.
+
+proc nowMonoMs*(): int64 =
+  ## Monotonic milliseconds, immune to wall-clock adjustments. Kept in the app
+  ## layer so `core/debounce` stays effect-free.
+  getMonoTime().ticks div 1_000_000
+
+proc debounceConfigFromEnv*(): DebounceConfig =
+  ## Reads DONKEY_DEBOUNCE_* overrides. Invalid or non-positive values fall
+  ## back to the compiled policy, so a bad env cannot disable debouncing.
+  proc posInt(name: string; fallback: int64): int64 =
+    let raw = getEnv(name).strip
+    if raw.len == 0:
+      return fallback
+    let parsed = try:
+      raw.parseInt
+    except ValueError:
+      return fallback
+    if parsed <= 0: fallback else: parsed
+
+  result = defaultDebounceConfig()
+  result.minWindowMs = posInt("DONKEY_DEBOUNCE_MIN_MS", result.minWindowMs)
+  result.maxWindowMs = posInt("DONKEY_DEBOUNCE_MAX_MS", result.maxWindowMs)
+  result.perPartExtMs = posInt("DONKEY_DEBOUNCE_PER_PART_MS", result.perPartExtMs)
+  result.shortMsgThreshold = posInt(
+    "DONKEY_DEBOUNCE_SHORT_MSG_CHARS", result.shortMsgThreshold.int64).int
+  result.shortExtMs = posInt("DONKEY_DEBOUNCE_SHORT_EXT_MS", result.shortExtMs)
+  if result.maxWindowMs < result.minWindowMs:
+    result.maxWindowMs = result.minWindowMs
 
 func suppressToolProgressFromEnv*(): bool =
   ## Hides the `🔧 tool [n]` progress messages for deployments that only want
@@ -628,28 +659,66 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
 
 # ── Debounce collector ─────────────────────────────────────────────────────────
 
-proc collectWithDebounce(inbox: AsyncQueue[AgentMessage];
-                         windowMs: int): Future[AgentMessage] {.async.} =
-  ## Waits for the first amkTask, then accumulates more within windowMs.
-  ## Returns a single AgentMessage with all payloads joined by "\n\n".
-  ## Returns amkCancel immediately if cancel arrives at any point.
+proc collectWithDebounce*(inbox: AsyncQueue[AgentMessage];
+                          cfg: DebounceConfig = debounceConfigFromEnv()):
+                          Future[AgentMessage] {.async.} =
+  ## Waits for the first amkTask, then accumulates fragments while they keep
+  ## arriving inside the adaptive window: more parts (or a short last part)
+  ## hold the window open longer, up to `maxWindowMs`. Returns one AgentMessage
+  ## with all payloads joined by `mergeUserPayloads`. `amkCancel` always wins.
   let first = await inbox.get()
-  if first.kind != amkTask: return first   ## cancel / stray — pass through
+  if first.kind != amkTask or first.taskKind != tkUserMsg:
+    return first   ## cancel / control task / stray — pass through untouched
 
-  var texts   = @[first.payload]
-  var latest  = first
+  var texts = @[first.payload]
+  var latest = first
+  var state = initDebounce(first.payload, nowMonoMs())
 
   while true:
+    ## Recompute the remaining wait after every part: the adaptive window can
+    ## grow mid-burst, so a fixed timeout would close too early.
+    let lastTextLen = decodeUserPayload(state.parts[^1]).text.len
+    let win = windowMs(state.parts.len, lastTextLen, cfg)
+    let elapsed = nowMonoMs() - state.lastMs
+    let waitMs = max(1'i64, win - elapsed)
     let nextFut = inbox.get()
-    if not (await withTimeout(nextFut, milliseconds(windowMs))):
-      break   ## timeout — debounce window closed
+    if not (await withTimeout(nextFut, milliseconds(waitMs.int))):
+      break   ## adaptive window closed
     let next = nextFut.read()
     case next.kind
     of amkCancel: return next          ## cancel wins
     of amkTask:
+      if next.taskKind != tkUserMsg:
+        ## A control task must stay its own turn. Put it back at the front and
+        ## close the burst; the actor loop picks it up on the next iteration.
+        discard tryAddFirstNoWait(inbox, next)
+        break
+      state = appendFragment(next.payload, nowMonoMs(), state)
       texts.add(next.payload)
       latest = next
     else: discard
+
+  ## A cancel already sitting in the queue must win over the burst: starting
+  ## the user turn would run a request the user aborted. Drain, look for it,
+  ## and put everything else back in the original order.
+  var pending: seq[AgentMessage] = @[]
+  var cancelMsg: AgentMessage
+  var sawCancel = false
+  while true:
+    let item =
+      try:
+        inbox.popFirstNoWait()
+      except AsyncQueueEmptyError:
+        break
+    if item.kind == amkCancel and not sawCancel:
+      sawCancel = true
+      cancelMsg = item
+    else:
+      pending.add(item)
+  for item in pending:
+    discard tryAddLastNoWait(inbox, item)
+  if sawCancel:
+    return cancelMsg
 
   result         = latest
   result.payload = mergeUserPayloads(texts)
@@ -710,7 +779,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
 
   try:
     while true:
-      let msg = await collectWithDebounce(inbox, DebounceWindowMs)
+      let msg = await collectWithDebounce(inbox)
       let actorResult = await handleActorMessage(
         inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
         completeFn, errorExplainFn, http, fs, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,

@@ -25,20 +25,39 @@ const
 # ── types ──────────────────────────────────────────────────────────────────────
 
 type
+  DebounceConfig* = object
+    ## Tunable bounds for the adaptive window. Defaults mirror the constants.
+    minWindowMs*:       int64
+    maxWindowMs*:       int64
+    perPartExtMs*:      int64
+    shortMsgThreshold*: int
+    shortExtMs*:        int64
+
   DebounceState* = object
     parts*:   seq[string]  ## collected text fragments (oldest first)
     firstMs*: int64        ## monotonic ms when first fragment arrived
     lastMs*:  int64        ## monotonic ms when last fragment arrived
     flushed*: bool         ## true after flush — reset via initDebounce
 
+func defaultDebounceConfig*(): DebounceConfig =
+  ## The compiled-in policy: 1.2 s base, up to 8 s for short bursts.
+  DebounceConfig(
+    minWindowMs: MinWindowMs,
+    maxWindowMs: MaxWindowMs,
+    perPartExtMs: PerPartExtMs,
+    shortMsgThreshold: ShortMsgThreshold,
+    shortExtMs: ShortExtMs,
+  )
+
 # ── pure window computation ────────────────────────────────────────────────────
 
-func windowMs*(partCount: int; lastLen: int): int64 =
+func windowMs*(partCount: int; lastLen: int;
+               cfg: DebounceConfig = defaultDebounceConfig()): int64 =
   ## Adaptive debounce window in milliseconds.
   ## More fragments → longer hold.  Short last message → extra hold.
-  let base = MinWindowMs + (int64(partCount) - 1) * PerPartExtMs
-  let ext   = if lastLen < ShortMsgThreshold: ShortExtMs else: 0i64
-  min(base + ext, MaxWindowMs)
+  let base = cfg.minWindowMs + (int64(partCount) - 1) * cfg.perPartExtMs
+  let ext  = if lastLen < cfg.shortMsgThreshold: cfg.shortExtMs else: 0'i64
+  min(base + ext, cfg.maxWindowMs)
 
 # ── state constructors and transformers ────────────────────────────────────────
 
@@ -56,13 +75,19 @@ func appendFragment*(text: string; nowMs: int64; state: DebounceState): Debounce
     flushed: false,
   )
 
-func shouldFlush*(nowMs: int64; state: DebounceState): bool =
+func shouldFlush*(nowMs: int64; state: DebounceState;
+                  cfg: DebounceConfig = defaultDebounceConfig()): bool =
   ## True when the adaptive window has expired and state is not already flushed.
   ## Designed for |>->: `state |>-> shouldFlush(nowMs)`
   if state.flushed or state.parts.len == 0: return false
   let lastLen = state.parts[^1].len
-  let win     = windowMs(state.parts.len, lastLen)
+  let win     = windowMs(state.parts.len, lastLen, cfg)
   nowMs - state.lastMs >= win
+
+func shouldFlush*(nowMs: int64; cfg: DebounceConfig;
+                  state: DebounceState): bool =
+  ## Convenience overload for callers that keep the config next to the clock.
+  shouldFlush(nowMs, state, cfg)
 
 func markFlushed*(state: DebounceState): DebounceState =
   ## Returns a copy of state with flushed = true.
