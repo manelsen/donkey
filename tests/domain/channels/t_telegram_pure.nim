@@ -1,7 +1,7 @@
 ## Tests for domain/channels/telegram_pure.nim — pure Telegram update parser.
 ## No I/O or HTTP; all input is constructed directly as JsonNode.
 
-import std/[json, unittest]
+import std/[json, os, unittest]
 import donkey/domain/channels/telegram_pure
 import donkey/core/pipeops
 import donkey/core/types
@@ -261,3 +261,64 @@ suite "telegram_pure.maxNextOffset":
     let arr = %* [{"update_id": 7}, {"update_id": 9}]
     let next = arr |>-> maxNextOffset(0)
     check next == 10
+
+
+suite "telegram_pure — bot senders (TG-003)":
+
+  test "TG-003: an update from a bot is recognised":
+    let upd = parseJson(readFile("tests/fixtures/telegram/hermes/TG-003_bot_sender.json"))
+    check isBotUpdate(upd)
+
+  test "TG-003: an update from a human is not a bot":
+    let upd = %*{"message": {"from": {"id": 1, "is_bot": false},
+                             "chat": {"id": 1, "type": "private"}, "text": "oi"}}
+    check not isBotUpdate(upd)
+
+  test "TG-003: a bot callback is recognised":
+    let upd = %*{"callback_query": {"id": "cb", "from": {"id": 2, "is_bot": true},
+                                    "data": "x"}}
+    check isBotUpdate(upd)
+
+
+suite "telegram_pure — missing sender (TG-004)":
+
+  test "TG-004: an anonymous admin message parses instead of raising":
+    let upd = parseJson(readFile("tests/fixtures/telegram/hermes/TG-004_anonymous_admin.json"))
+    let r = parseUpdate(upd)
+    check r.kind == tukMessage
+    check r.rawId == "-1001234567890"
+    check r.sessionKey == "-1001234567890"
+    check r.text == "anonymous admin notice"
+
+  test "TG-004: a private message without from falls back to the chat id":
+    let upd = %*{"message": {"message_id": 1,
+                             "chat": {"id": 4242, "type": "private"},
+                             "text": "oi"}}
+    let r = parseUpdate(upd)
+    check r.kind == tukMessage
+    check r.rawId == "4242"
+
+
+  test "TG-004: an anonymous admin is addressed by the discussion chat":
+    ## In a discussion group the channel behind the admin (sender_chat) is not
+    ## the destination: replies must go to chat.id.
+    let upd = %*{"message": {"message_id": 8,
+                             "from": {"id": 1087968824, "is_bot": true,
+                                      "first_name": "GroupAnonymousBot"},
+                             "sender_chat": {"id": -1009999999999,
+                                             "type": "channel"},
+                             "chat": {"id": -1001234567890, "type": "supergroup"},
+                             "text": "aviso"}}
+    let r = parseUpdate(upd)
+    check r.kind == tukMessage
+    check r.rawId == "-1001234567890"
+
+  test "TG-003: an anonymous admin is not filtered as a bot":
+    let upd = %*{"message": {"message_id": 7,
+                             "from": {"id": 1087968824, "is_bot": true,
+                                      "first_name": "GroupAnonymousBot"},
+                             "sender_chat": {"id": -1001234567890,
+                                             "type": "supergroup"},
+                             "chat": {"id": -1001234567890, "type": "supergroup"},
+                             "text": "aviso do admin"}}
+    check not isBotUpdate(upd)

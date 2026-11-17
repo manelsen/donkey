@@ -25,7 +25,9 @@ src/donkey/app/sandbox
 src/donkey/infra/sandbox/wasm
 tests/reranking/t_*_rerank
 src/donkey/app/orchestrator
-docs/
+docs/*
+!docs/hermes-mining/
+!docs/hermes-mining/**
 .ralph-tui/
 
 # Downloaded SDKs (análise apenas, não são deps)

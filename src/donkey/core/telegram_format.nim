@@ -7,7 +7,7 @@
 ##
 ## This module converts common Markdown to these tags and escapes <, > and &.
 
-import std/[strutils, options, unicode]
+import std/[strutils, unicode]
 import ../domain/text_format
 
 func sanitizeForTelegram*(text: string): string =
@@ -49,9 +49,44 @@ func sanitizeForTelegram*(text: string): string =
   # Replace any remaining invalid characters (like replacement character)
   result = result.replace("\uFFFD", "")
 
-func findTripleBacktick(md: string, start: int): Option[int] =
-  let idx = md.find("```", start)
-  if idx >= 0: some(idx) else: none(int)
+func backtickRun(md: string; start: int): int =
+  ## Length of the backtick run starting at `start`.
+  while start + result < md.len and md[start + result] == '`':
+    inc result
+
+func findBacktickRun(md: string; start, runLen: int; exact = false): int =
+  ## Index of the next backtick run of at least `runLen` (or exactly `runLen`
+  ## when `exact`), or -1.
+  var i = start
+  while i < md.len:
+    if md[i] == '`':
+      let n = backtickRun(md, i)
+      if (if exact: n == runLen else: n >= runLen):
+        return i
+      i += n
+    else:
+      inc i
+  -1
+
+func isFenceCloseLine(md: string; pos: int): bool =
+  ## A closing fence sits at the start of a line and is followed only by
+  ## spaces or tabs until the line ends.
+  var j = pos
+  while j < md.len and md[j] == '`': inc j
+  while j < md.len and (md[j] == ' ' or md[j] == '\t'): inc j
+  j >= md.len or md[j] == '\n' or md[j] == '\r'
+
+func findFenceClose(md: string; start, runLen: int): int =
+  var i = start
+  while i < md.len:
+    if md[i] == '`' and (i == 0 or md[i - 1] == '\n'):
+      let n = backtickRun(md, i)
+      if n >= runLen and isFenceCloseLine(md, i):
+        return i
+      i += n
+    else:
+      inc i
+  -1
 
 func markdownToTelegramHtml*(md: string): string =
   ## Robust Markdown -> Telegram HTML converter.
@@ -61,33 +96,38 @@ func markdownToTelegramHtml*(md: string): string =
   var lineStart = true
 
   while i < md.len:
-    # ── Code blocks ``` ... ``` ──
-    if i + 2 < md.len and md[i] == '`' and md[i + 1] == '`' and md[i + 2] == '`':
-      let contentStart = if i + 3 < md.len and md[i + 3] == '\n': i + 4 else: i + 3
-      let langEnd = md.find('\n', i + 3)
-      let actualStart = if langEnd >= 0 and langEnd < md.len: langEnd + 1 else: contentStart
-      
-      let close = findTripleBacktick(md, actualStart)
-      if close.isSome:
-        let endIdx = close.get()
-        buf.add("<pre>")
-        buf.add(escapeHtml(md[actualStart ..< endIdx]))
-        buf.add("</pre>")
-        i = endIdx + 3
-        if i < md.len and md[i] == '\n': i += 1
-        lineStart = true
-        continue
-
-    # ── Inline code `...` ──
+    # ── Code fences and inline code ──
+    ## A fence is a run of three or more backticks at the start of a line; its
+    ## closing run must be at least as long, so inner ``` stays literal. CRLF
+    ## is accepted and normalised. A run that is not at line start is inline
+    ## code, not a fence.
     if md[i] == '`':
-      let close = md.find('`', i + 1)
-      if close >= 0:
-        buf.add("<code>")
-        buf.add(escapeHtml(md[i + 1 ..< close]))
-        buf.add("</code>")
-        i = close + 1
-        lineStart = false
-        continue
+      let runLen = backtickRun(md, i)
+      if runLen >= 3 and lineStart:
+        var contentStart = i + runLen
+        let langEnd = md.find('\n', contentStart)
+        if langEnd >= 0:
+          contentStart = langEnd + 1
+        let close = findFenceClose(md, contentStart, runLen)
+        if close >= 0:
+          let content = md[contentStart ..< close].replace("\r\n", "\n")
+          buf.add("<pre>")
+          buf.add(escapeHtml(content))
+          buf.add("</pre>")
+          i = close + backtickRun(md, close)
+          if i < md.len and md[i] == '\r': inc i
+          if i < md.len and md[i] == '\n': inc i
+          lineStart = true
+          continue
+      else:
+        let close = findBacktickRun(md, i + runLen, runLen, exact = true)
+        if close >= 0:
+          buf.add("<code>")
+          buf.add(escapeHtml(md[i + runLen ..< close]))
+          buf.add("</code>")
+          i = close + runLen
+          lineStart = false
+          continue
 
     # ── Headers at line start ──
     if lineStart and md[i] == '#':

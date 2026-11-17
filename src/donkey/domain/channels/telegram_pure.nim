@@ -45,12 +45,41 @@ func extractTextFrom(node: JsonNode): string =
   if t.len > 0: t
   else: node.getOrDefault("caption").getStr("")
 
+func senderId(tgMsg: JsonNode): int64 =
+  ## Behavior derived from hermes-agent (MIT) fix 1a9a2d7fe8; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-004
+  ##
+  ## `from` is optional: anonymous admins in groups and channel posts arrive
+  ## without it. Falling back to the chat id keeps the update addressable
+  ## instead of raising on a missing key.
+  ## Anonymous admins carry `sender_chat` (the channel behind the admin) and a
+  ## synthetic `from` (GroupAnonymousBot). `sender_chat.id` is the author, not
+  ## the destination: in a discussion group the reply must go to `chat.id`.
+  let senderChat = tgMsg.getOrDefault("sender_chat")
+  if senderChat != nil and senderChat.kind == JObject:
+    let chatNode = tgMsg.getOrDefault("chat")
+    if chatNode != nil and chatNode.kind == JObject:
+      let chatId = chatNode.getOrDefault("id")
+      if chatId != nil and chatId.kind == JInt:
+        return chatId.getBiggestInt
+  let fromNode = tgMsg.getOrDefault("from")
+  if fromNode != nil and fromNode.kind == JObject:
+    let id = fromNode.getOrDefault("id")
+    if id != nil and id.kind == JInt:
+      return id.getBiggestInt
+  let chatNode = tgMsg.getOrDefault("chat")
+  if chatNode != nil and chatNode.kind == JObject:
+    let id = chatNode.getOrDefault("id")
+    if id != nil and id.kind == JInt:
+      return id.getBiggestInt
+  0
+
 func extractChatKey(tgMsg: JsonNode): string =
   ## Returns the session key: chat.id for groups, from.id for private chats.
   ## Group keying lets all members of a group share one session.
   let chatType = tgMsg["chat"].getOrDefault("type").getStr("private")
   let chatId   = tgMsg["chat"]["id"].getBiggestInt()
-  let fromId   = tgMsg["from"]["id"].getBiggestInt()
+  let fromId   = senderId(tgMsg)
   if chatType in ["group", "supergroup"]: $chatId else: $fromId
 
 func extractMediaFileId(tgMsg: JsonNode): string =
@@ -92,6 +121,28 @@ func extractMediaMimeType(tgMsg: JsonNode): string =
 
 # ── Public pure API ───────────────────────────────────────────────────────────
 
+func isBotUpdate*(upd: JsonNode): bool =
+  ## Behavior derived from hermes-agent (MIT) fix fbfe294882; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-003
+  ##
+  ## getUpdates delivers messages written by other bots in groups and can
+  ## re-deliver the bot's own messages. Treating them as user input creates
+  ## loops and answers nobody.
+  let sender =
+    if upd.hasKey("message"): upd["message"].getOrDefault("from")
+    elif upd.hasKey("callback_query"): upd["callback_query"].getOrDefault("from")
+    else: nil
+  if sender.isNil or sender.kind != JObject:
+    return false
+  if not sender.getOrDefault("is_bot").getBool(false):
+    return false
+  ## Anonymous admins arrive as a synthetic bot user (GroupAnonymousBot) but
+  ## carry `sender_chat`: the message is from a human admin, not from a bot.
+  let msgNode = if upd.hasKey("message"): upd.getOrDefault("message") else: nil
+  if msgNode != nil and msgNode.kind == JObject and msgNode.hasKey("sender_chat"):
+    return false
+  true
+
 func parseUpdate*(upd: JsonNode): TgParseResult =
   ## Parses a single Telegram update object into a TgParseResult.
   ## Returns tukUnknown for updates with no actionable content.
@@ -112,7 +163,9 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
 
   if upd.hasKey("message"):
     let tgMsg   = upd["message"]
-    let fromId  = tgMsg["from"]["id"].getBiggestInt()
+    if isBotUpdate(upd):
+      return TgParseResult(kind: tukUnknown)
+    let fromId  = senderId(tgMsg)
     let text      = tgMsg |> extractTextFrom
     let mediaId   = tgMsg |> extractMediaFileId
     let mediaName = tgMsg |> extractMediaFileName

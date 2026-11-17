@@ -1,0 +1,19 @@
+{
+  "update_id": 900001,
+  "message": {
+    "message_id": 4101,
+    "from": {
+      "id": 700000001,
+      "is_bot": true,
+      "first_name": "Helper",
+      "username": "helper_bot"
+    },
+    "chat": {
+      "id": -1001234567890,
+      "type": "supergroup",
+      "title": "Ops"
+    },
+    "date": 1760000000,
+    "text": "deploy finished"
+  }
+}
