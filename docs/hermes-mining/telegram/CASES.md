@@ -44,8 +44,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Tratar `from` ausente sem exceção: usar o chat como identidade e seguir.
 - **Fontes no hermes:** `1a9a2d7fe8`, `c419cf7c86`, `704872a62f`
 - **Testes no hermes:** `tests/gateway/test_telegram_group_gating.py;tests/gateway/test_telegram_channel_posts.py`
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n 'tgMsg\["from"\]' src/donkey` → `src/donkey/domain/channels/telegram_pure.nim:115` (KeyError em `from` ausente)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_pure.nim:48` e `tests/domain/channels/t_telegram_pure.nim`
 - **Prioridade:** P0
 
 ### TG-005: Âncora de resposta inexistente é descartada, não falha o envio

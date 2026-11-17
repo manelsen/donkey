@@ -278,3 +278,22 @@ suite "telegram_pure — bot senders (TG-003)":
     let upd = %*{"callback_query": {"id": "cb", "from": {"id": 2, "is_bot": true},
                                     "data": "x"}}
     check isBotUpdate(upd)
+
+
+suite "telegram_pure — missing sender (TG-004)":
+
+  test "TG-004: an anonymous admin message parses instead of raising":
+    let upd = parseJson(readFile("tests/fixtures/telegram/hermes/TG-004_anonymous_admin.json"))
+    let r = parseUpdate(upd)
+    check r.kind == tukMessage
+    check r.rawId == "-1001234567890"
+    check r.sessionKey == "-1001234567890"
+    check r.text == "anonymous admin notice"
+
+  test "TG-004: a private message without from falls back to the chat id":
+    let upd = %*{"message": {"message_id": 1,
+                             "chat": {"id": 4242, "type": "private"},
+                             "text": "oi"}}
+    let r = parseUpdate(upd)
+    check r.kind == tukMessage
+    check r.rawId == "4242"
