@@ -216,11 +216,20 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
                 url, caption, replyTo: string): Result[void, string] =
   ## Sends a photo (if URL looks like an image) or a document otherwise.
   ## Falls back to sending a plain URL as text if the API call fails.
+  let audioMethod = audioMethodFor(url)
   let isImage = url.endsWith(".jpg") or url.endsWith(".jpeg") or
                 url.endsWith(".png") or url.endsWith(".gif") or
                 url.endsWith(".webp")
-  let meth    = if isImage: "sendPhoto" else: "sendDocument"
-  let fileKey = if isImage: "photo"     else: "document"
+  let meth =
+    if audioMethod.len > 0: audioMethod
+    elif isImage: "sendPhoto"
+    else: "sendDocument"
+  let fileKey =
+    case meth
+    of "sendPhoto": "photo"
+    of "sendVoice": "voice"
+    of "sendAudio": "audio"
+    else: "document"
   var body = %* {"chat_id": tgId, fileKey: url}
   if caption.len > 0:
     body["caption"] = %clipCaption(caption, TelegramCaptionLimit)

@@ -130,3 +130,18 @@ suite "telegram_policy — media fallback":
   test "TG-027: a document body is unchanged":
     let body = %*{"chat_id": 1, "document": "https://x.test/a.pdf"}
     check asDocumentBody(body) == body
+
+suite "telegram_policy — audio method":
+
+  test "TG-029: voice notes go through sendVoice":
+    check audioMethodFor("https://x.test/a.ogg") == "sendVoice"
+    check audioMethodFor("https://x.test/a.opus") == "sendVoice"
+
+  test "TG-029: music goes through sendAudio":
+    check audioMethodFor("https://x.test/a.mp3") == "sendAudio"
+    check audioMethodFor("https://x.test/a.m4a") == "sendAudio"
+
+  test "TG-029: other media keeps the photo/document path":
+    check audioMethodFor("https://x.test/a.jpg") == ""
+    check audioMethodFor("https://x.test/a.pdf") == ""
+    check audioMethodFor("https://x.test/noext") == ""

@@ -118,3 +118,20 @@ func asDocumentBody*(body: JsonNode): JsonNode =
   if result.hasKey("photo"):
     result["document"] = result["photo"]
     result.delete("photo")
+
+func audioMethodFor*(url: string): string =
+  ## Behavior derived from hermes-agent (MIT) fix b93996c35e; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-029
+  ##
+  ## Voice notes are OGG/OPUS and render as a bubble only through sendVoice;
+  ## music files go through sendAudio so the client shows a player instead of
+  ## a generic document.
+  let lower = url.toLowerAscii()
+  let dot = lower.rfind('.')
+  if dot < 0:
+    return ""
+  let ext = lower[dot + 1 .. ^1]
+  case ext
+  of "ogg", "opus", "oga": "sendVoice"
+  of "mp3", "m4a", "aac", "flac", "wav": "sendAudio"
+  else: ""
