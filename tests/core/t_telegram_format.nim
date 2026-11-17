@@ -1,6 +1,7 @@
 import unittest
 import donkey/core/telegram_format
 import donkey/domain/text_format
+import donkey/domain/text_format
 
 suite "Telegram Formatting":
 
@@ -65,3 +66,17 @@ suite "telegram_format — code fences (TG-033)":
 
   test "TG-033: triple backticks mid-line are inline code, not a fence":
     check markdownToTelegramHtml("use ```x``` here") == "use <code>x</code> here"
+
+suite "telegram_format — backslash escapes (TG-037)":
+
+  test "TG-037: an escaped marker renders literally":
+    check markdownToTelegramHtml("\\*not bold\\*") == "*not bold*"
+    check markdownToTelegramHtml("\\`not code\\`") == "`not code`"
+
+  test "TG-037: escaped text keeps HTML escaping":
+    check markdownToTelegramHtml("\\<tag\\>") == "&lt;tag&gt;"
+
+  test "TG-037: escapeMarkdownInline neutralises markup":
+    let escaped = escapeMarkdownInline("*bold* `code` [x](y)")
+    check escaped == "\\*bold\\* \\`code\\` \\[x\\]\\(y\\)"
+    check markdownToTelegramHtml(escaped) == "*bold* `code` [x](y)"

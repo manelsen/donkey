@@ -11,3 +11,16 @@ func escapeHtml*(text: string): string =
   result = text.replace("&", "&amp;")
                .replace("<", "&lt;")
                .replace(">", "&gt;")
+const MarkdownInlineSpecials* = {'\\', '`', '*', '_', '~', '[', ']', '(', ')', '#', '>', '|'}
+
+func escapeMarkdownInline*(text: string): string =
+  ## Behavior derived from hermes-agent (MIT) fix a694040520; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-037
+  ##
+  ## Dynamic values (tool names, arguments, ids) are inserted into Markdown
+  ## messages. A stray backtick or asterisk would open a span and swallow the
+  ## rest of the message, so every markup character is escaped.
+  for ch in text:
+    if ch in MarkdownInlineSpecials:
+      result.add('\\')
+    result.add(ch)

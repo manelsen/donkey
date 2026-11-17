@@ -96,6 +96,15 @@ func markdownToTelegramHtml*(md: string): string =
   var lineStart = true
 
   while i < md.len:
+    # ── Backslash escapes ──
+    ## `\*` and friends render as the literal character, so dynamic values can
+    ## be escaped before they are embedded in a formatted message.
+    if md[i] == '\\' and i + 1 < md.len:
+      buf.add(escapeHtml($md[i + 1]))
+      i += 2
+      lineStart = false
+      continue
+
     # ── Code fences and inline code ──
     ## A fence is a run of three or more backticks at the start of a line; its
     ## closing run must be at least as long, so inner ``` stays literal. CRLF
