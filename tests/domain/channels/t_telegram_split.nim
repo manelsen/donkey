@@ -80,3 +80,12 @@ suite "telegram_split — UTF-16 message length":
     let chunks = splitForTelegram(text, 4096)
     check chunks[0] == "a\n"
     check chunks.join("") == text
+
+
+  test "TG-001: a whitespace-only hard cut is dropped":
+    let text = strutils.repeat(' ', 4096) & "conteudo"
+    let chunks = splitForTelegram(text, 4096)
+    check chunks.len >= 1
+    for chunk in chunks:
+      check chunk.strip.len > 0
+    check chunks[^1].contains("conteudo")

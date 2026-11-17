@@ -43,8 +43,10 @@ func splitForTelegram*(text: string; limit = TelegramTextLimit): seq[string] =
         currentUnits -= lastBreakUnits
       else:
         ## A break with no content before it would create a whitespace-only
-        ## chunk; cut on the character boundary instead.
-        chunks.add(current)
+        ## chunk; cut on the character boundary instead, dropping the
+        ## whitespace-only prefix.
+        if current.strip.len > 0:
+          chunks.add(current)
         current = ""
         currentUnits = 0
       lastBreak = -1
@@ -55,6 +57,9 @@ func splitForTelegram*(text: string; limit = TelegramTextLimit): seq[string] =
       lastBreak = current.len
       lastBreakUnits = currentUnits
 
-  if current.len > 0:
+  if current.strip.len > 0:
     chunks.add(current)
+  ## Never return an empty plan: a caller may index the first chunk.
+  if chunks.len == 0:
+    return @[text]
   chunks

@@ -260,20 +260,23 @@ proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, str
         ? a.sendChunk(chatId, chunk, "", i == 0, msg.isHtml)
     return ok("")
 
+  if shouldSkipOutboundText(msg.text):
+    return ok("")   ## the API refuses empty text; nothing to deliver
+
   var lastId = ""
   for i, chunk in splitForTelegram(msg.text, TelegramMaxChars):
     let html = renderTelegramHtml(chunk, msg.isHtml)
     var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
     if i == 0 and msg.replyTo.len > 0:
       body["reply_to_message_id"] = %msg.replyTo
-    let res = a.post("sendMessage", body)
+    let res = a.sendMessageBody(body, msg.replyTo, i == 0)
     if res.isOk:
       lastId = $res.value["result"]["message_id"].getInt()
     else:
       # Fallback
       body.delete("parse_mode")
       body["text"] = %chunk
-      let res2 = ? a.post("sendMessage", body)
+      let res2 = ? a.sendMessageBody(body, msg.replyTo, i == 0)
       lastId = $res2["result"]["message_id"].getInt()
   ok(lastId)
 
