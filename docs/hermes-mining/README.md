@@ -27,10 +27,16 @@ and the MIT attribution in `THIRD_PARTY_NOTICES.md` is enough.
 ```bash
 # full run over the reference commit
 bash scripts/hermes_mine.sh telegram
+bash scripts/hermes_mine.sh discord
 
 # incremental run: everything that landed after the last sync
 bash scripts/hermes_mine.sh telegram --since "$(cat docs/hermes-mining/telegram/LAST_SYNC)"
 ```
+
+O componente `discord` cobre o adapter atual em `plugins/platforms/discord` e o
+anterior em `gateway/platforms/discord.py`, unidos aos commits cujo assunto
+começa com `fix` e menciona Discord. Como não havia rodada anterior, a primeira
+extração foi feita na `HEAD` do hermes e o `LAST_SYNC` registra essa ref.
 
 Environment:
 
@@ -44,9 +50,12 @@ cat-file`). It never checks out, fetches or writes there.
 
 Outputs, both deterministic:
 
-- `telegram/commits.tsv` — `hash`, `date`, `subject`, `files_changed`,
+- `<component>/commits.tsv` — `hash`, `date`, `subject`, `files_changed`,
   `test_files`, sorted by date then hash.
-- `telegram/LAST_SYNC` — the `HERMES_REF` used.
+- `<component>/LAST_SYNC` — the `HERMES_REF` used for that component.
+
+Cada componente guarda o próprio `LAST_SYNC`: o do Telegram é `b3746e35dd`,
+o do Discord é `b076b5856c`. A ref de um não reescreve a do outro.
 
 For an incremental round, point `HERMES_REF` at the new hermes `HEAD`, run with
 `--since`, classify the new rows, and extend `CASES.md`. `LAST_SYNC` then holds

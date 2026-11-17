@@ -15,7 +15,7 @@ HERMES_REF="${HERMES_REF:-b3746e35dd}"
 
 usage() {
   echo "usage: $0 <component> [--since <hash>]" >&2
-  echo "supported components: telegram" >&2
+  echo "supported components: telegram, discord" >&2
 }
 
 component="${1:-}"
@@ -82,9 +82,22 @@ case "$component" in
       } | sort -u
     )"
     ;;
+  discord)
+    out_dir="docs/hermes-mining/discord"
+    hashes="$(
+      {
+        git -C "$HERMES_DIR" log "$range" --no-merges -i -E \
+          --grep='^fix.*discord' --format='%H'
+        git -C "$HERMES_DIR" log "$range" --no-merges -i -E \
+          --grep='^fix' --format='%H' -- \
+            plugins/platforms/discord \
+            gateway/platforms/discord.py
+      } | sort -u
+    )"
+    ;;
   *)
     echo "unknown component: $component" >&2
-    echo "supported components: telegram" >&2
+    echo "supported components: telegram, discord" >&2
     exit 2
     ;;
 esac

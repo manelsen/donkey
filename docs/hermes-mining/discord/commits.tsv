@@ -1,0 +1,408 @@
+hash	date	subject	files_changed	test_files
+54147474d3	2026-03-01	feat(gateway): include Discord channel topic in session context	3	-
+928bb16da1	2026-03-10	fix: forward thread_id to Telegram adapter + update send_typing signatures	5	-
+153ccbfd61	2026-03-13	fix: strip user: prefix from Discord allowed user IDs in onboarding	3	-
+0ff1b4ade2	2026-03-14	fix: harden web gateway security and fix error swallowing	8	-
+1b10c3711d	2026-03-14	fix: accept **kwargs in send_voice for Discord and Slack adapters	3	tests/gateway/test_web.py
+238a431545	2026-03-14	fix: make STT config env-overridable and fix doc issues	5	-
+44abe852fb	2026-03-14	fix: add macOS Homebrew Opus fallback and fix shutdown dict iteration	3	tests/gateway/test_discord_opus.py
+49f3f0fc62	2026-03-14	fix: add choices/Choice to discord mock for /voice slash command test	1	tests/gateway/test_discord_slash_commands.py
+62e75cd158	2026-03-14	fix: skip duplicate TTS file attachment when bot is in Discord voice channel	1	-
+7a24168080	2026-03-14	fix: add missing choices/Choice to discord mock in test_discord_free_response	1	tests/gateway/test_discord_free_response.py
+86ddaaee9c	2026-03-14	fix: extract voice reply logic and add comprehensive tests	3	tests/gateway/test_voice_command.py
+8ce66a01ee	2026-03-14	fix(discord): retry without reply reference for system messages	2	tests/gateway/test_discord_send.py
+8f3d7dfcc0	2026-03-14	fix: defer discord adapter annotations	2	tests/gateway/test_discord_imports.py
+9722bd8be0	2026-03-14	fix: 8 voice pipeline bugs with tests proving each fix	4	tests/gateway/test_voice_command.py
+9a177d6f4b	2026-03-14	fix(discord): preserve native document and video attachment support	2	tests/gateway/test_send_image_file.py
+a05a4afa53	2026-03-14	fix: align salvaged Discord send test mock with current slash-command API	1	tests/gateway/test_discord_send.py
+c433c89d7d	2026-03-14	fix: demote RTP debug logs to DEBUG and isolate web sessions	2	-
+c925d2ee76	2026-03-14	fix: voice pipeline thread safety and error handling bugs	4	tests/gateway/test_voice_command.py
+cbe4c23efa	2026-03-14	fix: Discord voice bubble + edge-tts mp3/ogg format mismatch	2	-
+eb052b1b42	2026-03-14	fix: add explicit metadata param to Discord send_voice signature	1	-
+eb34c0b09a	2026-03-14	fix: voice pipeline hardening — 7 bug fixes with tests	8	tests/gateway/test_voice_command.py;tests/test_run_agent.py;tests/tools/test_voice_cli_integration.py;tests/tools/test_voice_mode.py
+fbf47e9ff6	2026-03-14	fix: allow voice reply in Discord VC despite skip_double guard	2	tests/gateway/test_voice_command.py
+0cc784068d	2026-03-15	fix(voice): add UDP keepalive to prevent Discord dropping voice after silence	1	-
+773f3c1137	2026-03-15	fix(voice): DAVE passthrough + auto-map SSRC after bot rejoin	1	-
+f1b4d0b280	2026-03-15	fix(voice): make play_tts play in VC instead of no-op	3	tests/gateway/test_voice_command.py
+9a423c3487	2026-03-16	fix(privacy): skip PII redaction on Discord/Slack (mentions need real IDs)	3	tests/gateway/test_pii_redaction.py
+1bee519a6f	2026-03-17	fix(discord): remove redundant /ask slash command	1	-
+4cb6735541	2026-03-17	fix(approval): show full command in dangerous command approval (#1553)	4	tests/tools/test_approval.py
+72bfa115a0	2026-03-17	fix(discord): removebugged follow up messages from discord slash commands	1	-
+c8582fc4a2	2026-03-17	fix(discord): persist thread participation across gateway restarts	2	tests/gateway/test_discord_thread_persistence.py
+ffa8b562e9	2026-03-22	fix(discord): properly route slash event handling in threads	2	tests/gateway/test_discord_slash_commands.py
+d35df0db71	2026-03-23	fix(discord): ignore system messages in on_message handler (#2618)	2	tests/gateway/test_discord_system_messages.py
+65dace1b1a	2026-03-25	fix(discord): stop phantom typing indicator after agent turn completes (#3003)	1	-
+243ee67529	2026-03-26	fix: store asyncio task references to prevent GC mid-execution (#3267)	6	-
+3f95e741a7	2026-03-26	fix: validate empty user messages to prevent Anthropic API 400 errors (#3322)	3	tests/test_anthropic_adapter.py
+0a80dd9c7a	2026-03-28	fix(discord): clean up deferred "thinking..." after slash commands complete (#3674)	1	-
+d26ee20659	2026-03-28	docs(discord): fix Public Bot setting for Discord-provided invite link (#3519)	1	-
+442888a05b	2026-03-29	fix: store token lock identity at acquire time for Slack and Discord	2	-
+aecbf7fa4a	2026-04-03	fix(discord): register /approve and /deny slash commands, wire up button-based approval UI (#4800)	6	tests/gateway/test_discord_document_handling.py;tests/gateway/test_discord_free_response.py;tests/gateway/test_discord_send.py;tests/gateway/test_voice_command.py
+cee761ee4a	2026-04-03	fix: prevent duplicate messages — gateway dedup + partial stream guard (#4878)	3	-
+2556cfdab1	2026-04-04	fix(gateway): match Discord mention-stripping behavior in Matrix adapter	2	tests/gateway/test_matrix_mention.py
+66d0fa1778	2026-04-05	fix: avoid unnecessary Discord members intent on startup	2	tests/gateway/test_discord_connect.py
+8d5226753f	2026-04-05	fix: add missing ButtonStyle.grey to discord mock for test compatibility	1	tests/gateway/test_discord_connect.py
+2b79569a07	2026-04-06	fix(discord): remove default selection from model picker provider dropdown	1	-
+6f1cb46df9	2026-04-06	fix: register /queue, /background, /btw as native Discord slash commands (#5477)	1	-
+469cd16fe0	2026-04-07	fix(security): consolidated security hardening — SSRF, timing attack, tar traversal, credential leakage (#5944)	14	tests/environments/benchmarks/test_terminalbench2_env_security.py;tests/gateway/test_mattermost.py;tests/gateway/test_media_download_retry.py
+6e02fa73c2	2026-04-07	fix(discord): discard empty placeholder on voice transcription + force STT language	1	-
+f6d4b6a319	2026-04-07	feat(discord): add ignored_channels and no_thread_channels config	2	-
+0fc0c1c83b	2026-04-09	fix(discord): add text batching to merge split long messages	1	-
+13d7ff3420	2026-04-09	fix(gateway): bypass text batching when delay is 0 (#6996)	3	-
+6f8e426275	2026-04-09	fix: add SOCKS proxy support, DISCORD_PROXY env var, and send_message proxy coverage	3	-
+775a46ce75	2026-04-09	fix: normalize reasoning effort ordering in UI	9	tests/hermes_cli/test_commands.py;tests/hermes_cli/test_reasoning_effort_menu.py
+e1b0b135cb	2026-04-09	fix(discord): accept .log attachments and raise document size limit	3	tests/gateway/test_discord_document_handling.py
+0f597dd127	2026-04-10	fix: STT provider-model mismatch — whisper-1 fed to faster-whisper (#7113)	7	tests/gateway/test_stt_config.py;tests/tools/test_transcription_tools.py
+4f2f09affa	2026-04-10	fix(gateway): avoid false failure reactions on restart cancellation	8	tests/gateway/test_base_topic_sessions.py;tests/gateway/test_discord_reactions.py;tests/gateway/test_matrix.py;tests/gateway/test_telegram_reactions.py
+cfbfc4c3f1	2026-04-11	fix(discord): decouple readiness from slash sync	6	tests/gateway/test_discord_connect.py;tests/gateway/test_runner_startup_failures.py;tests/gateway/test_status.py
+3a64348772	2026-04-13	fix(discord): voice session continuity and signal handler thread safety	4	tests/gateway/test_discord_free_response.py;tests/gateway/test_voice_command.py
+8ea9ceb44c	2026-04-14	fix: guard reply_to_text against DeletedReferencedMessage	2	tests/gateway/test_discord_reply_mode.py
+cfa24532d3	2026-04-14	fix(discord): register native /restart slash command	2	tests/gateway/test_discord_slash_commands.py
+22d22cd75c	2026-04-15	fix: auto-register all gateway commands as Discord slash commands (#10528)	2	tests/gateway/test_discord_slash_commands.py
+47e6ea84bb	2026-04-15	fix: file handle bug, warning text, and tests for Discord media send	2	tests/tools/test_send_message_tool.py
+620c296b1d	2026-04-15	fix: discord mock setup and AUTHOR_MAP for channel_prompts tests	2	tests/gateway/test_discord_channel_prompts.py
+90a6336145	2026-04-15	fix: remove redundant key normalization and defensive getattr in channel_prompts	3	tests/gateway/test_discord_channel_prompts.py
+ee9c0a3ed0	2026-04-15	fix(security): add JWT token and Discord mention redaction (#10547)	2	tests/agent/test_redact.py
+c1c9ab534c	2026-04-16	fix(discord): strip RTP padding before DAVE/Opus decode (#11267)	2	tests/integration/test_voice_channel_flow.py
+0f4403346d	2026-04-17	fix(discord): DISCORD_ALLOW_BOTS=mentions/all now works without DISCORD_ALLOWED_USERS	4	-
+32a694ad5f	2026-04-17	fix(discord): fall back when auto-thread creation fails	2	tests/gateway/test_discord_slash_commands.py
+3f3d8a7b24	2026-04-17	fix(discord): strip mention syntax from auto-thread names	2	tests/gateway/test_discord_slash_commands.py
+53da34a4fc	2026-04-17	fix(discord): route attachment downloads through authenticated bot session (#11568)	2	tests/gateway/test_discord_attachment_download.py
+607be54a24	2026-04-17	fix(discord): forum channel media + polish	5	tests/gateway/test_discord_send.py;tests/tools/test_send_message_tool.py
+93fe4b357d	2026-04-17	fix(discord): free-response channels skip auto-threading	2	tests/gateway/test_discord_free_response.py
+a448e7a04d	2026-04-17	fix(discord): drop invalid reply references	2	tests/gateway/test_discord_send.py
+d7fb435e0e	2026-04-17	fix(discord): flat /skill command with autocomplete — fits 8KB limit trivially (#11580)	2	tests/gateway/test_discord_slash_commands.py
+e5b880264b	2026-04-17	fix(discord): harden DISCORD_ALLOWED_ROLES and cover gateway layer	2	tests/gateway/test_discord_bot_auth_bypass.py
+efa6c9f715	2026-04-17	fix(discord): default allowed_mentions to block @everyone and role pings	6	tests/gateway/test_discord_allowed_mentions.py;tests/gateway/test_discord_connect.py
+f5dc4e905d	2026-04-17	fix(discord): skip auto-threading reply messages	2	tests/gateway/test_discord_free_response.py
+632a807a3e	2026-04-18	fix(gateway): slash commands never interrupt a running agent (#12334)	4	tests/gateway/test_command_bypass_active_session.py
+6c0c625952	2026-04-19	fix(gateway): accept finalize kwarg in all platform edit_message overrides	8	tests/gateway/test_stream_consumer.py
+7c10761dd2	2026-04-19	fix(discord): shield text-batch flush from follow-up cancel (#12444)	2	tests/gateway/test_text_batching.py
+a521005fe5	2026-04-19	fix(discord): close two low-severity adapter races (#12558)	2	tests/gateway/test_discord_race_polish.py
+2008e997dc	2026-04-20	fix(discord): handle properly /slash commands in channels	1	-
+0dfb7b8a0d	2026-04-21	fix(tui): /resume picker shows telegram/discord/etc sessions	2	tests/gateway/test_session_list_all_sources.py
+70a33708e7	2026-04-22	fix(gateway/slack): align reaction lifecycle with Discord/Telegram pattern	2	tests/gateway/test_slack.py
+e371af1df2	2026-04-22	Add config option to disable Discord slash commands	1	-
+a1ff6b45ea	2026-04-23	fix(gateway/discord): add safe startup slash sync policy	4	tests/gateway/test_discord_connect.py
+b61ac8964b	2026-04-23	fix(gateway/discord): read permission attrs from AppCommand, canonicalize contexts	2	tests/gateway/test_discord_connect.py
+8598746e86	2026-04-24	fix(discord): honor wildcard '*' in DISCORD_ALLOWED_CHANNELS	2	tests/gateway/test_discord_allowed_channels.py
+8a1e247c6c	2026-04-24	fix(discord): honor wildcard '*' in ignored_channels and free_response_channels	2	tests/gateway/test_discord_allowed_channels.py
+fe34741f32	2026-04-24	fix(model): repair Discord Copilot /model flow	6	tests/gateway/test_discord_model_picker.py;tests/hermes_cli/test_copilot_in_model_list.py;tests/hermes_cli/test_model_validation.py
+5ae07e7b5c	2026-04-25	fix(session): gate stale "no Discord APIs" note on DISCORD_BOT_TOKEN	1	-
+b288934dff	2026-04-26	fix(discord_tool): coerce limit parameter to int before min() call	1	-
+633f74504f	2026-04-27	fix(ci): resolve follow-up title edge case and flaky checks	6	tests/test_tui_gateway_server.py;tests/tools/test_dockerfile_pid1_reaping.py
+e0f5d39837	2026-04-28	fix(discord): widen slash-sync timeout to 600s under rate-limit pressure (#16713) (#17029)	1	-
+25cbe3e1d6	2026-04-30	fix(gateway): preserve thread routing for /update progress and prompts	5	tests/gateway/test_update_command.py;tests/gateway/test_update_streaming.py
+fa7b0b0a67	2026-04-30	fix(discord_tool): key capability cache by token instead of single global	1	-
+2b3923ff13	2026-05-01	fix(gateway): coerce scalar free_response_channels to str before split	4	tests/gateway/test_discord_free_response.py;tests/gateway/test_slack_mention.py
+10297fa23c	2026-05-02	fix(discord): `/reload-skills` now refreshes the `/skill` autocomplete live (#18754)	3	tests/gateway/test_reload_skills_discord_resync.py
+292d2fb42f	2026-05-02	fix(discord): close old client before reconnect to prevent zombie websockets (#18187)	1	-
+5eac6084bc	2026-05-02	fix(discord): warn on 32-char clamp collisions in the /skill collector (#18759)	2	tests/hermes_cli/test_discord_skill_clamp_warning.py
+8825e9044c	2026-05-02	fix(discord): complete #18741 for /skill autocomplete and drop legacy 25x25 caps (#18745)	2	tests/hermes_cli/test_commands.py
+e2cea6eeba	2026-05-02	fix(gateway): include external_dirs skills in Telegram/Discord slash commands (#18741)	2	tests/hermes_cli/test_commands.py
+19ba9e43b6	2026-05-03	fix(gateway/discord): require allowlist auth on slash commands	5	tests/gateway/test_discord_component_auth.py;tests/gateway/test_discord_slash_auth.py;tests/gateway/test_discord_slash_commands.py
+ad4542bf6d	2026-05-04	fix(gateway): allow free_response_channels to override DISCORD_IGNORE_NO_MENTION	1	-
+6b76ea4707	2026-05-05	fix(gateway): load reply_to_mode from config.yaml for Discord and Telegram	3	tests/gateway/test_discord_reply_mode.py;tests/gateway/test_telegram_reply_mode.py
+5a3cadf6eb	2026-05-06	fix(discord): narrow rate-limit catch and move sync state under gateway/	2	tests/gateway/test_discord_connect.py
+d797755a1c	2026-05-06	fix(gateway): wait for systemd restart readiness	4	tests/gateway/test_discord_connect.py;tests/hermes_cli/test_gateway_service.py
+5c045b8f6c	2026-05-07	fix(discord): extend role-scope fix to slash surface + fixture update	3	tests/gateway/test_discord_roles_dm_scope.py;tests/gateway/test_discord_slash_auth.py
+80717a157f	2026-05-07	fix(discord): route DM role-auth opt-in through config.yaml (not env var)	3	tests/gateway/test_discord_roles_dm_scope.py
+ef1e565570	2026-05-07	fix(discord): scope DISCORD_ALLOWED_ROLES to originating guild (CVSS 8.1)	2	tests/gateway/test_discord_roles_dm_scope.py
+ace1c4ea8c	2026-05-10	fix(discord): typing indicator task not cleaned up after API error	2	tests/gateway/test_discord_send.py
+b59ed9c6bc	2026-05-13	fix(discord): handle forwarded messages via message_snapshots	1	-
+d557544560	2026-05-13	fix(discord): keep free-response channels inline	2	tests/gateway/test_discord_free_response.py
+bcca5ed34d	2026-05-14	fix(deps): pin brotlicffi so aiohttp can decode Discord's Brotli attachments	4	-
+e84fe483bc	2026-05-14	feat(discord): channel history backfill for multi-user sessions	10	tests/gateway/test_config.py;tests/gateway/test_discord_free_response.py;tests/gateway/test_session.py
+448a3f9ea2	2026-05-19	fix(discord): transcribe native voice notes	2	tests/gateway/test_discord_attachment_download.py
+5a3317693c	2026-05-19	fix(discord): define view classes after lazy discord.py install	2	tests/gateway/test_discord_lazy_install_views.py
+be0728cacc	2026-05-20	fix: handle Discord typing indicator 429 gracefully	1	-
+7849a3d73f	2026-05-22	fix(gateway,discord-plugin): _platform_status must respect is_connected=False, not silently fall back to check_fn	2	-
+c3caca6584	2026-05-24	fix(gateway): remove discord role allowlist auth bypass (#30742)	1	-
+ea34925002	2026-05-27	fix(discord): recover Windows voice opus decoding	2	tests/gateway/test_discord_opus.py
+b243afb68b	2026-05-28	fix(discord): skip backfill for auto-created threads and update test fakes	3	tests/gateway/test_discord_free_response.py;tests/gateway/test_discord_slash_commands.py
+eafe11d456	2026-05-28	fix(gateway): backfill Discord thread context	3	tests/gateway/test_discord_free_response.py
+6a2e3c2d26	2026-05-29	fix(gateway): guard adapter-trust check against bare GatewayRunner in tests	1	-
+6d2727ef1c	2026-05-30	fix(discord): bridge explicit allow_from configuration to env var mapping	2	tests/gateway/test_config.py
+c2cbe2c97d	2026-05-30	fix: remove Discord mention redaction from secret scrubber	1	-
+86c64cfb5b	2026-06-04	fix(gateway): visually expire Discord interactive views on timeout	1	-
+f6f363662e	2026-06-07	fix(discord): fail closed for component button auth when no allowlist set	2	tests/gateway/test_discord_component_auth.py
+d1f23bb2d5	2026-06-08	fix: prevent TUI gateway stdin EOF crash across all TUI-context subprocess calls	27	-
+311900842e	2026-06-09	fix(discord): don't auto-disconnect voice when reply mode is off	2	-
+243cada157	2026-06-10	fix(model): cover typed gateway /model path + async-safe pricing lookups	5	tests/gateway/test_model_command_expensive_confirm.py
+af978ecb17	2026-06-10	fix(model): require confirmation for expensive model selections	27	tests/agent/test_usage_pricing.py;tests/gateway/test_discord_model_picker.py;tests/gateway/test_telegram_model_picker.py;tests/hermes_cli/test_codex_models.py;tests/hermes_cli/test_model_cost_guard.py;tests/hermes_cli/test_model_picker_expensive_confirm.py;tests/hermes_cli/test_terminal_menu_fallbacks.py;tests/hermes_cli/test_web_server.py;tests/test_tui_gateway_server.py
+e5580f43c2	2026-06-10	fix(discord): propagate role_authorized flag so DISCORD_ALLOWED_ROLES works end-to-end	4	-
+020ef76cf1	2026-06-11	fix(discord): cancel _bot_task on connect() timeout to prevent zombie client	2	tests/gateway/test_discord_connect.py
+08b1c44a53	2026-06-11	fix(discord): extend bot-task cancellation to connect()'s generic exception branch	2	-
+c3464ecf45	2026-06-11	fix(discord): recover from runtime gateway task exits (#44383)	3	tests/gateway/test_discord_connect.py;tests/plugins/test_discord_runtime_failure.py
+331cb38e21	2026-06-12	fix: stop Discord typing after replies	2	tests/gateway/test_keep_typing_timeout.py
+5e851bc6bc	2026-06-14	fix(discord): cap slash commands at Discord's 100-command limit	1	-
+efbe1635dd	2026-06-14	fix(gateway): include replied-to media attachments (#46107)	4	tests/e2e/test_discord_adapter.py;tests/gateway/test_telegram_group_gating.py
+ba49fb51a5	2026-06-19	fix(discord): hydrate channel context when replying to a message (#49212)	2	tests/gateway/test_discord_free_response.py
+bce1e36b57	2026-06-19	fix(discord): unwrap dict choices + soft-boundary truncate clarify buttons	2	tests/gateway/test_discord_clarify_buttons.py
+caaa916289	2026-06-19	fix(gateway): don't let delayed Discord status messages partition history backfill	3	tests/gateway/test_discord_free_response.py
+df2420f571	2026-06-19	fix(gateway): keep non-Discord home-channel startup send byte-identical	1	-
+4c206b972d	2026-06-20	fix(gateway): correct sys.path insertion in plugins to prevent cron namespace collision (#49410)	2	-
+a7dd98c860	2026-06-20	fix(env): guard remaining malformed int/float env var casts with utils helpers	11	-
+4314d451ca	2026-06-21	fix(gateway): accept any inbound file type across all messaging platforms	10	tests/gateway/test_discord_document_handling.py;tests/gateway/test_document_cache.py;tests/gateway/test_telegram_documents.py
+93ea9b04af	2026-06-21	fix(gateway): cap inbound media download size to prevent memory exhaustion	5	tests/gateway/test_media_download_retry.py;tests/gateway/test_platform_base.py
+86e4521cb1	2026-06-22	fix(delivery): make cron output truncation configurable + adapter-aware	5	tests/gateway/test_delivery.py
+e9b86f352f	2026-06-22	fix(discord): delete obsolete slash commands before creating new ones	1	-
+7ff48a6291	2026-06-23	fix(discord): check pairing store for component button auth	2	tests/gateway/test_discord_component_auth.py
+807bdc17f6	2026-06-24	fix(gateway): prevent double dispatch of Discord messages via thread-starter dedup	2	tests/gateway/test_discord_double_dispatch.py
+43b8ba4181	2026-06-25	fix(telegram): preserve Bot API update queue on watcher reconnect	65	tests/gateway/relay/test_relay_going_idle.py;tests/gateway/restart_test_helpers.py;tests/gateway/test_active_session_text_merge.py;tests/gateway/test_base_topic_sessions.py;tests/gateway/test_cancel_background_drain.py;tests/gateway/test_command_bypass_active_session.py;tests/gateway/test_duplicate_reply_suppression.py;tests/gateway/test_ephemeral_reply.py;tests/gateway/test_interrupt_key_match.py;tests/gateway/test_keep_typing_timeout.py;tests/gateway/test_pending_drain_no_recursion.py;tests/gateway/test_pending_drain_race.py;tests/gateway/test_platform_base.py;tests/gateway/test_platform_reconnect.py;tests/gateway/test_platform_reconnect_fd_leak.py;tests/gateway/test_post_delivery_callback_chaining.py;tests/gateway/test_queue_consumption.py;tests/gateway/test_relay_capability_surface.py;tests/gateway/test_run_cleanup_progress.py;tests/gateway/test_run_progress_interrupt.py;tests/gateway/test_run_progress_topics.py;tests/gateway/test_runner_fatal_adapter.py;tests/gateway/test_runner_startup_failures.py;tests/gateway/test_send_multiple_images.py;tests/gateway/test_send_retry.py;tests/gateway/test_session_hygiene.py;tests/gateway/test_session_split_brain_11016.py;tests/gateway/test_status_command.py;tests/gateway/test_telegram_clarify_buttons.py;tests/gateway/test_telegram_conflict.py;tests/gateway/test_telegram_thread_fallback.py;tests/gateway/test_tool_response_drop_recovery.py;tests/gateway/test_tts_media_routing.py;tests/tools/test_send_message_tool.py
+2ecca1e7d3	2026-06-27	fix(windows): capture is not a no-window boundary; route flashing spawns through chokepoint (#53829)	21	tests/scripts/test_windows_footgun_subprocess_rule.py
+5db1430af9	2026-06-27	fix(windows): stop terminal-window popups from background spawns (#53810)	33	tests/gateway/test_status.py;tests/hermes_cli/test_claw.py;tests/hermes_cli/test_gateway.py;tests/hermes_cli/test_gateway_windows.py;tests/hermes_cli/test_web_server.py;tests/test_hermes_bootstrap.py;tests/test_hermes_constants.py;tests/test_no_visible_console_spawns.py;tests/tools/test_browser_hardening.py;tests/tools/test_windows_native_support.py
+6f1a176b33	2026-06-27	fix(gateway/discord): REST liveness probe to detect zombie clients (#26656)	3	tests/gateway/test_discord_liveness.py
+851f75d4df	2026-06-27	fix(discord): honor "*" wildcard in DISCORD_ALLOWED_USERS (#22334)	4	tests/gateway/test_discord_connect.py;tests/gateway/test_voice_command.py
+cf7bf5bdc9	2026-06-27	fix(discord): auto-convert markdown tables to bullet groups	2	tests/gateway/test_discord_format.py
+ef17cd204d	2026-06-27	fix(windows): stop subprocess console-window popups + add CI guard (#53791)	22	tests/hermes_cli/test_psutil_android_extract.py;tests/scripts/test_windows_footgun_subprocess_rule.py
+d2ea948bc0	2026-06-28	fix(gateway): suppress compression status noise on Discord and other chats (#39293)	1	-
+eeca59f489	2026-06-28	fix(windows): hide remaining backend console-flash legs missed on main	7	tests/test_windows_subprocess_no_window_flags.py
+46ab06c238	2026-06-30	fix(gateway): honor Discord connect timeout for ready wait	2	tests/gateway/test_discord_connect.py
+608e8a6062	2026-06-30	fix(discord): accept raw direct bot mentions and ignore bare mention-only pings	3	tests/gateway/test_discord_bot_filter.py;tests/gateway/test_discord_free_response.py
+af5cea04ab	2026-06-30	fix(discord): split oversized final edits, truncate mid-stream previews (#27881)	2	tests/gateway/test_discord_edit_message_overflow.py
+b6045170bb	2026-06-30	fix(discord): extend channel-name matching to slash-command auth; clamp flush deadline to disconnect budget	3	tests/gateway/test_discord_slash_auth.py
+cb9308f0a6	2026-06-30	fix(discord): channel name matching and flush pending sends on shutdown	3	tests/gateway/test_discord_free_response.py;tests/gateway/test_discord_pending_text_batch_shutdown.py
+50a7dce6bd	2026-07-01	fix(discord): auto-thread failure must not silently fall back to inline reply	3	tests/gateway/test_discord_channel_controls.py;tests/gateway/test_discord_free_response.py
+8e94e8f882	2026-07-01	fix(discord): tag unverified channel-context senders like Slack threads	2	tests/gateway/test_discord_free_response.py
+bb304b4914	2026-07-01	fix(gateway): fail-closed external-surface defaults + profile-aware multiplex authz	24	tests/gateway/test_config_driven_access_policy.py;tests/gateway/test_discord_component_auth.py;tests/gateway/test_discord_roles_dm_scope.py;tests/gateway/test_discord_slash_auth.py;tests/gateway/test_feishu_bot_admission.py;tests/gateway/test_multiplex_profile_authz.py;tests/gateway/test_own_policy_startup_gate.py;tests/gateway/test_qqbot.py;tests/gateway/test_voice_command.py;tests/gateway/test_wecom.py;tests/gateway/test_whatsapp_allowlist_lid_resolution.py;tests/gateway/test_whatsapp_group_gating.py;tests/test_yuanbao_pipeline.py
+e9bceb5ae0	2026-07-01	fix(discord): ignore reply-ping-only mentions for bot-authored messages	4	tests/gateway/test_config.py;tests/gateway/test_discord_bot_filter.py
+f981d47cb0	2026-07-01	fix(gateway): prevent Discord disconnects from blocking event loop	3	-
+2e2212be1b	2026-07-05	fix(discord): dedup saturated mid-stream overflow previews to stop edit-rate-limit storms	2	tests/gateway/test_discord_edit_message_overflow.py
+009b42d008	2026-07-07	fix(discord): mirror all interactive prompt payloads into message content	3	tests/gateway/test_discord_prompt_content_siblings.py
+1deeaf71ab	2026-07-07	fix(discord): truncate thread titles by UTF-16 units + AUTHOR_MAP	3	-
+2718179134	2026-07-07	fix(docs): discord permissions (add Create Public Threads, remove Use External Emojis)	4	-
+2acbdd1848	2026-07-07	fix(discord): include approval command in message content	2	tests/gateway/test_discord_exec_approval_content.py
+3e7ade418d	2026-07-07	fix(discord): explain fail-closed allowlist default	2	tests/gateway/test_discord_fail_closed_feedback.py
+4c3a388cba	2026-07-07	fix(discord): widen expired-defer handling to /thread slash command	2	tests/gateway/test_discord_thread_slash_expired_defer.py
+87be36c240	2026-07-07	fix(discord): bound component labels by UTF-16 units	3	tests/gateway/test_discord_clarify_buttons.py;tests/gateway/test_discord_model_picker.py
+b8ce583e05	2026-07-07	fix(discord): bound REST response reads	2	tests/tools/test_discord_tool.py
+b9d9b8aad6	2026-07-07	fix(discord): handle expired slash defer interactions	2	tests/gateway/test_discord_slash_commands.py
+c3808cfc14	2026-07-07	fix(discord): honor pairing grants for message auth	2	tests/gateway/test_discord_slash_auth.py
+e0bca1cbe2	2026-07-07	fix(discord): bound standalone response reads	2	tests/tools/test_send_message_tool.py
+d48bf743f2	2026-07-13	fix(approval): scope smart deny owner overrides to one operation	52	tests/acp/test_permissions.py;tests/cli/test_cli_approval_ui.py;tests/gateway/test_api_server_runs.py;tests/gateway/test_approval_prompt_redaction.py;tests/gateway/test_slack_approval_buttons.py;tests/gateway/test_telegram_approval_buttons.py;tests/gateway/test_tui_approval_redaction.py;tests/tools/test_approval.py;tests/tools/test_execute_code_approval_cluster.py
+e8b7ce8c19	2026-07-15	fix(session): persist profile_name and route batch key by profile	4	-
+3ffd8b3da0	2026-07-16	fix(dashboard): persist Discord toolsets to Discord platform	6	tests/hermes_cli/test_web_server.py
+bfca45bda0	2026-07-16	fix(discord): expose /reasoning reset|show|hide as slash choices	1	-
+2278f2cb7e	2026-07-18	fix(discord): harden reconnect message recovery	9	tests/gateway/test_discord_missed_message_backfill.py;tests/gateway/test_message_deduplicator.py;tests/hermes_cli/test_backup.py
+2b2203e3a7	2026-07-18	fix(discord): advance cursors only after final delivery	2	tests/gateway/test_discord_missed_message_backfill.py
+303949acdc	2026-07-18	fix: backfill missed Discord messages on startup (#3)	2	tests/gateway/test_discord_missed_message_backfill.py
+38b39b87ef	2026-07-18	fix(discord): keep recovery ledger I/O off event loop	2	tests/gateway/test_discord_missed_message_backfill.py
+80744bc2bc	2026-07-18	fix(discord): close reconnect recovery edge cases	2	tests/gateway/test_discord_missed_message_backfill.py
+9412f2dd84	2026-07-18	fix(discord): persist streamed final delivery	4	tests/gateway/test_discord_missed_message_backfill.py;tests/gateway/test_stream_consumer.py
+a52041b2e0	2026-07-18	fix: avoid masking missed Discord parent messages	2	tests/gateway/test_discord_missed_message_backfill.py
+bc0e5adb1d	2026-07-18	fix(discord): persist per-channel recovery cursors	3	tests/gateway/test_discord_missed_message_backfill.py
+d5b9c1ee37	2026-07-18	fix(discord): guard recovery claims and ledger failures	2	tests/gateway/test_discord_missed_message_backfill.py
+da955a643e	2026-07-18	fix(discord): preserve recovery message identity	2	tests/gateway/test_discord_missed_message_backfill.py
+f57157a128	2026-07-18	fix(gateway): recover Discord websocket and event-loop stalls	24	tests/gateway/test_bounded_adapter_teardown.py;tests/gateway/test_config.py;tests/gateway/test_discord_approval_mentions.py;tests/gateway/test_discord_liveness.py;tests/gateway/test_gateway_shutdown.py;tests/gateway/test_multiplex_adapter_registry.py;tests/gateway/test_runner_fatal_adapter.py;tests/gateway/test_safe_adapter_disconnect.py;tests/gateway/test_shutdown_cache_cleanup.py;tests/gateway/test_systemd_notify.py;tests/gateway/test_systemd_watchdog_lifecycle.py;tests/hermes_cli/test_gateway_service.py;tests/hermes_cli/test_systemd_watchdog_unit.py
+fad6cbaed3	2026-07-18	fix(discord): make reconnect recovery lifecycle-safe	4	tests/gateway/test_discord_missed_message_backfill.py
+02d8cbadec	2026-07-21	fix(approval): honor allow_session across all button adapters	7	-
+a31a31826c	2026-07-21	fix(approval): raise gateway approval timeout to 300s, honest stale-tap UX, offer Always on mixed prompts (#68597)	13	tests/gateway/test_telegram_approval_buttons.py;tests/tools/test_command_guards.py
+54a0f07101	2026-07-22	fix(gateway): mark unconfigured platforms as non-retryable to stop reconnect loop	5	tests/gateway/test_discord_connect.py;tests/gateway/test_telegram_connect.py
+5bb933eedf	2026-07-22	fix(slack): reject unauthorized users before event construction	1	-
+f54e8706f7	2026-07-22	fix(platforms): block image upload redirects to private URLs	3	tests/gateway/test_send_multiple_images.py
+241bc112e8	2026-07-23	fix(platforms): clear home channel when setup prompt left blank	14	tests/gateway/test_discord_plugin_setup.py;tests/gateway/test_matrix_plugin_setup.py;tests/gateway/test_mattermost_plugin_setup.py;tests/gateway/test_setup_feishu.py;tests/gateway/test_slack_plugin_setup.py;tests/gateway/test_wecom_plugin_setup.py;tests/gateway/test_whatsapp_plugin_setup.py
+805c22c836	2026-07-23	fix(streaming): add Slack streaming=false default to match Discord	2	tests/gateway/test_per_platform_streaming_defaults.py
+91799405aa	2026-07-23	fix(gateway): hint Slack/Discord channels at the prior auto-reset session	3	tests/gateway/test_channel_continuity_hint.py
+953cbc0300	2026-07-23	fix(state): refuse WAL on SQLite builds with the WAL-reset bug	7	-
+7b8a4d74f9	2026-07-24	fix(gateway): cover discord update-response utf-8 path (#37423)	2	tests/gateway/test_gateway_utf8_encoding.py
+e0dfcf275a	2026-07-25	fix(relay): normalize forwarded Discord interactions to leading-slash commands (#71048)	2	tests/gateway/relay/test_relay_passthrough.py
+384b0a0b5b	2026-07-26	fix(discord): notify user on attachmentless MEDIA drop	4	tests/gateway/test_discord_send.py;tests/gateway/test_tts_media_routing.py
+8eb29a1bb9	2026-07-26	fix(discord): deliver MEDIA video attachments instead of silent drop	3	tests/gateway/test_discord_send.py
+1b0836c7c7	2026-07-28	fix(discord): wire voice input callback at adapter connect time	1	-
+297f5142a6	2026-07-28	fix(discord): prepend warm-up silence so TTS first word isn't clipped	3	tests/gateway/test_discord_voice_mixer.py
+31301c1af7	2026-07-28	fix(discord): wire voice input callback at adapter connect time	3	tests/gateway/test_platform_reconnect.py
+388f612435	2026-07-28	fix(discord): drain pending voice input before disconnect	2	tests/gateway/test_voice_command.py
+9b89da23fb	2026-07-28	Fix Discord ffmpeg discovery on Windows	5	tests/gateway/test_discord_voice_mixer.py;tests/gateway/test_voice_command.py
+a5b32a721a	2026-07-28	fix(discord): preserve voice reply threading	2	tests/gateway/test_discord_send.py
+ae8d3e2027	2026-07-28	fix(discord): make voice timeouts configurable	5	tests/gateway/test_discord_voice_mixer.py;tests/gateway/test_voice_command.py
+d22a1ee5be	2026-07-28	fix(tests): add _FakeAudioSource to discord mock for VoiceMixer inheritance	1	-
+eef1ab72d5	2026-07-28	fix(discord): inherit AudioSource in VoiceMixer for vc.play() compatibility	1	-
+04ec841462	2026-07-29	fix(state): configurable journal_mode + centralize all DB openers	6	tests/test_journal_mode_config.py
+6d292fd5eb	2026-07-29	fix(discord): retry slash sync after failed fingerprint	2	tests/gateway/test_discord_connect.py
+91351b7b77	2026-07-29	fix(state): make journal mode canonical and behaviorally verified	7	tests/test_journal_mode_config.py
+81c0691e17	2026-08-01	fix(gateway): per-profile Discord/Telegram allow-deny gates under multiplex_profiles	4	tests/plugins/platforms/test_discord_gate_isolation.py
+359ff01c23	2026-08-02	fix(secrets): scope-aware standalone-send and startup credential reads in platform adapters	4	-
+dd600d1ace	2026-08-02	fix(discord): suppress link embeds in tool preview markdown links	4	tests/gateway/test_discord_format.py;tests/gateway/test_run_progress_topics.py
+df9e039d2d	2026-08-02	fix(discord): preserve links in truncated tool previews	7	tests/agent/test_display.py;tests/gateway/test_discord_format.py;tests/gateway/test_run_progress_topics.py
+e599f100ec	2026-08-02	fix(discord): avoid truncated URL link targets	3	tests/gateway/test_discord_format.py;tests/gateway/test_run_progress_topics.py
+2f09df5615	2026-08-03	fix(relay): route Discord tool-progress into the auto-thread, not the parent channel (#77830)	2	tests/gateway/test_run_progress_topics.py
+d13e8f7510	2026-08-03	fix: Discord-specific guard + cron sibling + non-regression tests	3	tests/gateway/test_handoff_thread_session_key.py
+e6f1d613b6	2026-08-03	fix(discord): leave voice channels before cancelling the bot task	2	tests/gateway/test_voice_command.py
+0d32607c62	2026-08-07	fix(gateway): split check_fn (passive probe) from ensure_deps_fn (active installer)	16	tests/gateway/test_platform_registry.py;tests/gateway/test_startup_no_eager_platform_install.py;tests/gateway/test_teams.py
+34577fcb03	2026-08-09	fix(gateway): rename a Discord thread once, after the reply lands	8	tests/gateway/relay/test_relay_threads.py;tests/gateway/test_session_title_rename_lane.py;tests/test_tui_gateway_server.py
+100219f664	2026-08-10	fix(cron): surface exception type and traceback for standalone Discord delivery errors	2	-
+333536e7c9	2026-08-12	fix(relay): stamp logical platform + relay trust on Discord interaction events (#84318)	2	tests/gateway/relay/test_relay_passthrough.py
+91bc822330	2026-08-12	fix(gateway): classify terminal adapter connect failures + escalate long-lived retry loops (OOF-156)	7	tests/gateway/test_adapter_connect_classification.py
+b10e7890b6	2026-08-13	fix(discord): name missing privileged intents and stop reconnect loop	4	tests/gateway/test_discord_connect.py;tests/gateway/test_discord_plugin_setup.py
+b48ab1b4ad	2026-08-16	fix(agent+discord): guard truncated-response continuation loops and cap Discord split delivery (#86581)	6	tests/agent/test_repetition_guard.py;tests/gateway/test_discord_split_cap.py;tests/run_agent/test_continuation_repetition_guard.py
+30fcf95805	2026-08-17	fix(bot-mode): group chats no longer lose long-running member turns, remade groups start fresh (Discord bot-mode feedback)	2	-
+21260c3281	2026-08-19	fix(gateway): carry the profile in adapter-derived session keys (#88404)	13	tests/gateway/test_multiplex_adapter_session_key_namespace.py;tests/gateway/test_multiplex_busy_input_mode.py
+ab3e2f563b	2026-08-22	fix(discord): render provider model lists >25 options across multiple select menus	2	tests/gateway/test_discord_model_picker_partition.py
+808a22ea00	2026-08-31	fix(discord): gate relay-only thread rename kwargs	2	tests/gateway/test_session_title_rename_lane.py
+a0a63a1bc2	2026-08-31	fix(gateway): username-based DISCORD_ALLOWED_USERS no longer locks out the operator after one turn	3	tests/gateway/test_discord_username_allowlist_env_reload.py
+fd998120c1	2026-09-01	fix(gateway): judge delivery success against final content, not flag trust (#95382, #98552)	4	tests/gateway/test_silent_partial_delivery_95382.py;tests/gateway/test_stale_finalize_suppression.py
+0437fe66f7	2026-09-02	fix(discord): native slash commands honor guild/channel profile_routes	2	tests/gateway/test_discord_slash_commands.py
+1730a2c32a	2026-09-03	fix(gateway): serialize offloaded persists so concurrent flushes land in order	6	tests/gateway/test_discord_free_response.py;tests/gateway/test_feishu.py;tests/gateway/test_weixin.py
+cf6547da47	2026-09-03	fix(gateway): offload remaining atomic_json_write calls on platform-adapter hot paths	8	tests/gateway/test_discord_free_response.py;tests/gateway/test_feishu.py;tests/gateway/test_feishu_meeting_invite.py;tests/gateway/test_weixin.py
+722acd66f6	2026-09-05	fix(docker): reconcile docker_network: false with a --network flag in docker_extra_args (#100248)	1	-
+8239ec4833	2026-09-05	fix(docker): egress-off reuse probe uses a label filter, not the Docker-only {{.Label}} template (#99213)	1	-
+92686159d1	2026-09-05	fix(pm): integrate audited runtime and lifecycle repairs	362	tests/acp/test_edit_approval.py;tests/acp_adapter/test_acp_images.py;tests/agent/test_aux_progress_streaming.py;tests/agent/test_aux_stream_host_deadline.py;tests/agent/test_codex_aux_timeout_fd_ownership.py;tests/agent/test_coding_context.py;tests/agent/test_credential_pool_profile_oauth_fork.py;tests/agent/test_custom_provider_ca_probes.py;tests/agent/test_estimator_parity_84371.py;tests/agent/test_model_metadata_ssl.py;tests/agent/test_provider_scope_keys.py;tests/agent/test_relay_runtime_plugins.py;tests/agent/test_subdirectory_hints.py;tests/ci/test_desktop_cli_entrypoints.py;tests/ci/test_list_os_marked_tests.py;tests/cli/test_cli_image_command.py;tests/cli/test_modify_other_keys_aliases.py;tests/cli/test_worktree_pushed_tier.py;tests/cron/test_cron_script.py;tests/cron/test_lifecycle_guard_budget.py;tests/cron/test_restart_safe_worker.py;tests/desktop/test_appinstaller_check_script.py;tests/gateway/test_buzz_adapter.py;tests/gateway/test_feishu.py;tests/gateway/test_hosted_room_links.py;tests/gateway/test_hosted_room_peer.py;tests/gateway/test_matrix_deps_rebind.py;tests/gateway/test_multiplex_mcp_discovery.py;tests/gateway/test_session_db_replaced_fallback.py;tests/gateway/test_shutdown_watchdog.py;tests/gateway/test_status_command.py;tests/gateway/test_telegram_media_read_timeout.py;tests/gateway/test_voice_command.py;tests/gateway/test_windows_service_frontend.py;tests/hermes_cli/test_apply_profile_override.py;tests/hermes_cli/test_backup.py;tests/hermes_cli/test_boot_bootstrap.py;tests/hermes_cli/test_boot_wiring.py;tests/hermes_cli/test_bundled_desktop_launch.py;tests/hermes_cli/test_cmd_update.py;tests/hermes_cli/test_dashboard_unified_launch.py;tests/hermes_cli/test_dep_ensure.py;tests/hermes_cli/test_doctor.py;tests/hermes_cli/test_doctor_channel_hygiene.py;tests/hermes_cli/test_doctor_legacy_checkout.py;tests/hermes_cli/test_doctor_pm_store_probe.py;tests/hermes_cli/test_dump_git_commit.py;tests/hermes_cli/test_ensure_windows_bin_launchers.py;tests/hermes_cli/test_external_process_auth_status.py;tests/hermes_cli/test_external_process_provider_seam.py;tests/hermes_cli/test_gateway_proc_fallback.py;tests/hermes_cli/test_gateway_scm_feature_removed.py;tests/hermes_cli/test_gateway_scm_service.py;tests/hermes_cli/test_gui_command.py;tests/hermes_cli/test_install_cua_driver.py;tests/hermes_cli/test_kanban_db.py;tests/hermes_cli/test_kanban_gateway_restart_handoff.py;tests/hermes_cli/test_kanban_transfer.py;tests/hermes_cli/test_launcher_runtime_selection.py;tests/hermes_cli/test_lazy_refresh_venv_repair.py;tests/hermes_cli/test_local_models_routes.py;tests/hermes_cli/test_local_quickstart.py;tests/hermes_cli/test_nous_subscription.py;tests/hermes_cli/test_plugin_admission_transaction.py;tests/hermes_cli/test_plugins_admission_setter.py;tests/hermes_cli/test_plugins_cadence.py;tests/hermes_cli/test_plugins_check_updates.py;tests/hermes_cli/test_plugins_cmd.py;tests/hermes_cli/test_plugins_cmd_deps_flow.py;tests/hermes_cli/test_plugins_cmd_enable_disable_nested.py;tests/hermes_cli/test_plugins_update_sync.py;tests/hermes_cli/test_profile_export_default_path.py;tests/hermes_cli/test_restore_own_holder_guard.py;tests/hermes_cli/test_uninstall_gateway_service.py;tests/hermes_cli/test_uninstall_install_kind.py;tests/hermes_cli/test_uninstall_node_symlinks.py;tests/hermes_cli/test_uninstall_shell_configs.py;tests/hermes_cli/test_update_autostash.py;tests/hermes_cli/test_update_channel.py;tests/hermes_cli/test_update_fleet_restart_pending.py;tests/hermes_cli/test_update_head_moved_gate.py;tests/hermes_cli/test_update_interrupted_recovery.py;tests/hermes_cli/test_update_parked_branch_guard.py;tests/hermes_cli/test_update_self_lock.py;tests/hermes_cli/test_update_serve_generation_recovery.py;tests/hermes_cli/test_update_shim_self_lock.py;tests/hermes_cli/test_update_venv_ownership_preflight.py;tests/hermes_cli/test_update_yes_flag.py;tests/hermes_cli/test_update_zip_symlink_reject.py;tests/hermes_cli/test_update_zip_sync_failure.py;tests/hermes_cli/test_update_zip_two_phase.py;tests/hermes_cli/test_web_memory_provider_setup_install.py;tests/hermes_cli/test_web_server.py;tests/hermes_cli/test_windows_native_docs.py;tests/hermes_cli/test_worktree_gc.py;tests/hermes_state/test_shared_session_db_registry.py;tests/hermes_state/test_state_db_corrupt_quarantine.py;tests/hermes_state/test_state_db_file_identity.py;tests/monitoring/test_gateway_health_export.py;tests/plugins/image_gen/test_meta_ai_provider.py;tests/plugins/memory/test_hindsight_embedded_runtime.py;tests/plugins/memory/test_hindsight_local_runtime_hint.py;tests/plugins/memory/test_hindsight_provider.py;tests/plugins/memory/test_hindsight_setup_deps.py;tests/plugins/platforms/photon/test_presence_watchdog.py;tests/plugins/test_hindsight_health_grace_timeout.py;tests/pm/test_activate_scripts.py;tests/pm/test_activation_runtime.py;tests/pm/test_ffmpeg_resolution.py;tests/pm/test_install_default_closure.py;tests/pm/test_member_selection.py;tests/pm/test_no_lazy_deps.py;tests/pm/test_node_release_candidates.py;tests/pm/test_node_sidecar.py;tests/pm/test_plugins_state.py;tests/pm/test_pm_authority.py;tests/pm/test_pm_core.py;tests/pm/test_receipt.py;tests/pm/test_runtime_selection.py;tests/pm/test_runtime_transaction.py;tests/pm/test_store_extensions.py;tests/pm/test_store_resume.py;tests/pm/test_uv_cache.py;tests/pm/test_workspace.py;tests/pm/test_workspace_build_inputs.py;tests/run_agent/test_in_place_persist_marker_98450.py;tests/scripts/test_compat_inventory.py;tests/scripts/test_contributor_map.py;tests/scripts/test_desktop_cli_wrapper.py;tests/scripts/test_release_canary.py;tests/security/test_gitspawn_config_injection.py;tests/state/test_state_db_holders.py;tests/test_compat_manifest_targets.py;tests/test_hermes_logging.py;tests/test_install_clone_throttle_fallback.py;tests/test_install_ps1_desktop_stage.py;tests/test_install_ps1_managed_python_provenance.py;tests/test_install_sh_desktop_stage.py;tests/test_install_sh_node_deps_workspaces.py;tests/test_install_sh_node_prerelease.py;tests/test_install_sh_node_probe_87460.py;tests/test_install_sh_termux_python_bounds.py;tests/test_iron_proxy.py;tests/test_live_system_guard.py;tests/test_managed_runtime_resolution.py;tests/test_model_tools_async_bridge.py;tests/test_run_tests_parallel.py;tests/test_run_tests_parallel_stdio.py;tests/test_state_db_repair_live_writer_guard.py;tests/test_wal_reset_repair_hint.py;tests/tools/test_browser_chromium_autoinstall.py;tests/tools/test_browser_chromium_check.py;tests/tools/test_browser_lightpanda.py;tests/tools/test_browser_lightpanda_serve.py;tests/tools/test_browser_npx_warmup.py;tests/tools/test_browser_open_timeout.py;tests/tools/test_browser_use_cli.py;tests/tools/test_code_execution.py;tests/tools/test_code_execution_modes.py;tests/tools/test_code_kernel.py;tests/tools/test_credential_files.py;tests/tools/test_file_operations_delete.py;tests/tools/test_file_ops_single_roundtrip.py;tests/tools/test_local_env_blocklist.py;tests/tools/test_local_temp_dir.py;tests/tools/test_macos_protected_search.py;tests/tools/test_mcp_npx_cached_bin.py;tests/tools/test_modal_snapshot_isolation.py;tests/tools/test_read_special_file_guard.py;tests/tools/test_search_files_cpu_windows.py;tests/tools/test_search_files_engine_selection.py;tests/tools/test_self_repo_guard.py;tests/tools/test_skill_bundle_provenance.py;tests/tools/test_skill_ledger.py;tests/tools/test_tts_lifecycle_leases.py;tests/tools/test_voice_cli_integration.py;tests/tools/test_voice_mode.py;tests/tools/test_voice_wsl_pipewire.py;tests/tools/test_wake_word.py;tests/tools/test_working_diff.py;tests/tui_gateway/test_compute_host.py;tests/tui_gateway/test_compute_host_phase1.py;tests/tui_gateway/test_serve_exit_flush.py
+aa0beef684	2026-09-05	fix(security): corrupt-token and docker_env warnings stop logging credential material (#102308)	2	-
+14b9b93668	2026-09-07	fix(deps): sync LAZY_DEPS platform.discord brotlicffi pin to 1.2.0.2	1	-
+22a03c830f	2026-09-07	fix: route Discord cron media to its target and report upload failures	2	tests/gateway/test_discord_attachment_receipts.py
+43ae9e9a23	2026-09-08	fix: reload transport role policy after Discord membership awaits	2	-
+91adf584a4	2026-09-09	fix(gateway): every send_multiple_images override returns the aggregate SendResult	7	-
+45a6101f36	2026-09-10	fix(gateway): secondary-profile send_message, notices and /loop wakeups go out via their own bot	12	tests/gateway/test_multiplex_notice_egress_profile_adapter.py;tests/tools/test_send_message_multiplex_profile_adapter.py
+199c66f70f	2026-09-11	fix(gateway): adapter settings resolve per profile under multiplex, not from the default's env	13	tests/gateway/test_adapter_settings_profile_parity.py
+545e74d0ea	2026-09-11	fix(gateway): a secondary profile's config.yaml no longer poisons the process env under multiplex	12	tests/gateway/test_multiplex_process_global_sinks.py;tests/gateway/test_multiplex_yaml_env_bridge_isolation.py
+954113839b	2026-09-11	fix(discord): apply YAML allow_bots to ingress policy	2	tests/gateway/test_discord_allow_bots_yaml_config.py
+70d0f556d7	2026-09-12	fix(branding): use the Caduceus ☤ (U+2624), not the Rod of Asclepius ⚕ (U+2625)	60	tests/hermes_cli/test_ensure_utf8_locale.py;tests/run_agent/test_unicode_ascii_codec.py
+e151d0b345	2026-09-12	fix(discord): reject a numeric application ID pasted as the bot token during setup	2	tests/gateway/test_discord_plugin_setup.py
+20a7a274d1	2026-09-13	fix(discord): widen upload-size preflight to batch image sends	1	tests/gateway/test_discord_send.py
+3dedb71f2f	2026-09-13	fix(platforms): adapter settings resolve explicit env → own YAML → default, per profile	9	tests/gateway/test_shared_platform_boilerplate.py;tests/gateway/test_slack_thread_require_mention.py;tests/gateway/test_telegram_group_gating.py
+6019a39efa	2026-09-13	fix(discord): raise default upload preflight to 20 MiB (Sep 3 2026 API change)	2	tests/gateway/test_discord_send.py
+73eadd54f5	2026-09-13	fix(platforms): standalone senders return redacted error envelopes	21	tests/gateway/test_standalone_send_redaction.py
+8dd0e80f29	2026-09-13	fix(discord): drop the unreachable frame-silence dimension, keep the config warning	3	tests/gateway/test_discord_liveness.py
+8ed7c180d7	2026-09-13	fix(discord): preflight send_voice uploads too; move the size gate into adapter_media	2	-
+aac36fd96f	2026-09-13	refactor(gateway): text-batch flush lives on BasePlatformAdapter; shield + cancel-race fixes reach all 8 adapters	12	tests/gateway/test_matrix_message_length.py;tests/gateway/test_text_batch_flush_invariants.py;tests/gateway/test_text_batching.py
+cef499fbb5	2026-09-13	fix(discord): liveness probe gains a dispatch-side dimension (#109521)	3	tests/gateway/test_discord_liveness.py
+e95f4fcf2f	2026-09-13	fix(discord): preflight attachment size before upload	3	tests/gateway/test_discord_send.py
+fa787be2bd	2026-09-13	fix(discord): preserve transport owner for thread renames	2	tests/gateway/test_session_title_rename_lane.py
+38bda39562	2026-09-14	fix(kanban): preserve Discord thread route anchors	4	tests/hermes_cli/test_kanban_notify.py
+101861c7f7	2026-09-15	fix(discord): dispatch-side liveness dimension detects an ACKing-but-deaf gateway socket (#109521)	4	tests/gateway/test_discord_event_silence.py
+1f34742552	2026-09-15	fix(discord): skip obfuscated channels in directory and backfill enumeration	4	tests/gateway/test_discord_channel_obfuscation.py
+23036e20a6	2026-09-15	fix(ux): plain-language, actionable user-facing messages (core)	234	tests/agent/test_413_compression.py;tests/agent/test_compression_closed_adoption.py;tests/agent/test_display_tool_failure.py;tests/agent/test_failed_turn_chat_copy.py;tests/agent/test_failed_turn_site_codes.py;tests/agent/test_nous_rate_guard.py;tests/agent/test_run_agent.py;tests/agent/test_secret_scope.py;tests/agent/test_secret_scope_user_message.py;tests/agent/test_turn_completion_explainer.py;tests/agent/test_turn_facade_lease.py;tests/agent/test_turn_finalizer_final_response_persistence.py;tests/cron/test_cron_empty_turn_stays_silent.py;tests/cron/test_cron_failure_alert_remediation_hint.py;tests/cron/test_cron_failure_notice_copy.py;tests/cron/test_cron_failure_summarizer_inactivity.py;tests/cron/test_cron_multiplex_desktop_ticker_scope.py;tests/cron/test_cron_no_agent.py;tests/cron/test_preflight_config.py;tests/cron/test_restart_safe_worker.py;tests/cron/test_run_one_job.py;tests/cron/test_scheduler.py;tests/gateway/test_approval_prompt_redaction.py;tests/gateway/test_approval_timeout_notice.py;tests/gateway/test_approve_deny_commands.py;tests/gateway/test_background_command.py;tests/gateway/test_background_process_notifications.py;tests/gateway/test_cron_interrupt_notification.py;tests/gateway/test_discord_approval_mentions.py;tests/gateway/test_discord_exec_approval_content.py;tests/gateway/test_discord_slash_auth.py;tests/gateway/test_discord_view_base_parity.py;tests/gateway/test_empty_sentinel_rewrite_copy.py;tests/gateway/test_exec_approval_timeout_notice.py;tests/gateway/test_failure_writer_ownership.py;tests/gateway/test_gateway_shutdown.py;tests/gateway/test_interactive_prompt_base.py;tests/gateway/test_kanban_notice_copy.py;tests/gateway/test_kanban_notifier.py;tests/gateway/test_local_model_connection_reply.py;tests/gateway/test_normalize_empty_agent_response.py;tests/gateway/test_restart_notification.py;tests/gateway/test_restart_resume_pending.py;tests/gateway/test_run_progress_interrupt.py;tests/gateway/test_run_progress_topics.py;tests/gateway/test_session_hygiene.py;tests/gateway/test_session_stall_watchdog.py;tests/gateway/test_subagent_failure_notice.py;tests/gateway/test_telegram_approval_buttons.py;tests/gateway/test_telegram_clarify_buttons.py;tests/gateway/test_telegram_noise_filter.py;tests/gateway/test_transcript_read_failure.py;tests/gateway/test_unauthorized_sender_notices.py;tests/gateway/test_update_command.py;tests/hermes_cli/test_api_key_providers.py;tests/hermes_cli/test_auth_pool_operations.py;tests/hermes_cli/test_cli_command_messages.py;tests/hermes_cli/test_computer_use_cli.py;tests/hermes_cli/test_config.py;tests/hermes_cli/test_config_guard_surfaces.py;tests/hermes_cli/test_config_lkg_backup.py;tests/hermes_cli/test_console_engine.py;tests/hermes_cli/test_cron.py;tests/hermes_cli/test_doctor_terminal_backends.py;tests/hermes_cli/test_gateway_service.py;tests/hermes_cli/test_kanban_notify.py;tests/hermes_cli/test_mcp_probe_redaction.py;tests/hermes_cli/test_noninteractive_config_guard.py;tests/hermes_cli/test_profile_distribution.py;tests/hermes_cli/test_resume_display.py;tests/hermes_cli/test_sessions_error_exit_codes.py;tests/hermes_cli/test_sessions_pin.py;tests/hermes_cli/test_set_config_value.py;tests/hermes_cli/test_shared_owner_message.py;tests/hermes_cli/test_skills_hub.py;tests/hermes_cli/test_tool_availability_notices.py;tests/hermes_cli/test_update_messages.py;tests/hermes_cli/test_update_sqlite_remediation.py;tests/hermes_cli/test_ux_messages_auth_config.py;tests/hermes_cli/test_ux_messages_chat_sessions.py;tests/hermes_cli/test_ux_messages_gateway_profiles.py;tests/hermes_cli/test_ux_messages_startup.py;tests/hermes_state/test_hermes_state.py;tests/hermes_state/test_hermes_state_ux_messages.py;tests/hermes_state/test_hermes_state_wal_fallback.py;tests/hermes_state/test_named_profile_session_db.py;tests/hermes_state/test_storage_failure_copy.py;tests/test_utils_atomic_roundtrip_yaml_save.py;tests/tools/test_approval_user_summary.py;tests/tools/test_async_delegation.py;tests/tools/test_delegate_failure_copy.py;tests/tools/test_terminal_backend_unavailable_reason.py;tests/tui_gateway/test_lazy_session_regressions.py;tests/tui_gateway/test_protocol.py;tests/tui_gateway/test_session_resume_db_ownership.py;tests/tui_gateway/test_tui_gateway_server.py;tests/tui_gateway/test_user_messages.py
+624777617c	2026-09-15	fix(discord): filter obfuscated channels on the explicit-id backfill path too	1	-
+9c311038fa	2026-09-15	fix(discord): slash registration and /skill refresh scan the catalog off the event loop	3	tests/gateway/test_discord_connect.py;tests/gateway/test_reload_skills_discord_resync.py
+9d4f1782f2	2026-09-15	fix(config): register discord websocket_event_max_silence_seconds default	1	-
+b4a5ce62e7	2026-09-15	fix(discord): scope the event-silence knob warning to its dimension	1	-
+ec11359b44	2026-09-15	fix(discord): clear fatal status on successful reconnect	2	tests/gateway/test_discord_connect.py
+5d220ed693	2026-09-17	fix(discord): batch bot tag continuations	4	tests/gateway/test_discord_bot_tag_debounce.py;tests/gateway/test_discord_free_response.py
+b675e6dee7	2026-09-17	fix(discord): re-arm the bot handoff window per chunk; trim salvage to invariants	5	tests/gateway/test_discord_bot_inline_mentions.py;tests/gateway/test_discord_bot_tag_debounce.py;tests/gateway/test_discord_free_response.py
+f708640561	2026-09-17	fix(discord): require hard mentions from bots	6	tests/gateway/test_discord_bot_filter.py;tests/gateway/test_discord_bot_inline_mentions.py
+3569a135fe	2026-09-18	fix(tui_gateway): strip a persisted Discord triggering note from user rows on resume	2	tests/tui_gateway/test_tui_gateway_server.py
+5e0a1852f5	2026-09-18	fix(discord): avoid duplicate exec approval details	2	tests/gateway/test_discord_exec_approval_content.py
+63aa02d339	2026-09-18	fix(discord): header-only cards for slash confirm and clarify prompts too	2	tests/gateway/test_discord_exec_approval_content.py
+7f2b64f7a2	2026-09-18	fix(platforms): set media_text_inlined in the sibling document paths	10	tests/gateway/test_discord_document_handling.py;tests/gateway/test_slack.py;tests/gateway/test_telegram_documents.py;tests/gateway/test_whatsapp_cloud.py;tests/gateway/test_whatsapp_formatting.py
+8c6881231a	2026-09-18	fix(discord): backfill stops re-dispatching a message once its turn delivered, and bounds the rest	4	tests/gateway/test_discord_missed_message_backfill.py
+c1eb1592e8	2026-09-18	fix(discord): keep the exec-approval reason bounded after dropping the embed mirror	2	tests/gateway/test_discord_exec_approval_content.py
+c61bbc2461	2026-09-18	fix(gateway): persist the authored text, not the Discord triggering note, as the user row	4	tests/gateway/test_discord_triggering_note_persistence.py
+dcafb1900a	2026-09-18	fix(desktop): hide a persisted Discord triggering note in user bubbles	2	-
+dd7af8e765	2026-09-18	fix(discord): persist unthreaded recovery replies	2	tests/gateway/test_discord_missed_message_backfill.py
+1d6fbd0d1f	2026-09-20	fix: explicit empty backfill channel list disables the Discord scan (review follow-up)	2	tests/gateway/test_discord_missed_message_backfill.py
+587bb10575	2026-09-20	fix(platforms): Discord/WhatsApp/DingTalk gates honour allowlists stored as a JSON-list string	4	tests/plugins/platforms/test_bracket_list_allowlists.py
+a0e7fc4a9e	2026-09-20	fix(gateway): consult _in_bot_thread in the Discord admission gate	2	tests/gateway/test_discord_admission_thread_exemption.py
+c060a821d5	2026-09-20	fix(discord): accept a pasted channel link at the _resolve_channel chokepoint too	3	tests/gateway/test_discord_home_link.py
+d3dc76718e	2026-09-20	fix(discord): normalize channel links in home destinations	2	tests/gateway/test_discord_home_link.py
+43499c4531	2026-09-22	fix(discord): log an unexpected liveness-probe exit at WARNING (from #118504)	1	-
+b1a69d8178	2026-09-22	fix(discord): escalate the first socket_closed liveness strike	2	tests/gateway/test_discord_liveness.py
+b9ec39939b	2026-09-22	fix(discord): pre-seed the starter dedup before awaiting mark_async	2	tests/gateway/test_discord_double_dispatch.py
+ee8a3ded96	2026-09-22	fix(gateway): move the thread-participation persist off the event loop	5	tests/gateway/test_discord_thread_slash_expired_defer.py;tests/gateway/test_thread_tracker_mark_off_loop.py
+fe225b20b1	2026-09-22	fix(discord): treat client_closed as terminal like socket_closed	1	-
+a2ce2da095	2026-09-27	fix(discord): gate model picker cancel on callback auth	1	-
+ee559ccb3b	2026-09-30	fix(discord): preserve title retry thread rename	2	tests/gateway/test_session_title_rename_lane.py
+cc1e4e904c	2026-10-01	fix(discord): fall back to the session row whenever the routing entry lacks the markers	2	tests/gateway/test_session_title_rename_lane.py
+eaecc99c7e	2026-10-02	fix(discord): upsert recreated slash commands without a delete-first step (#104399)	2	tests/gateway/test_discord_connect.py
+462389ea5e	2026-10-03	fix(discord): a numeric allowlist entry removed after connect stops authorizing	2	tests/gateway/test_discord_username_allowlist_env_reload.py
+675bad762a	2026-10-03	fix(discord): resolve allowlisted usernames by username only, not display name or nickname	3	tests/gateway/test_discord_connect.py
+d13d92cc82	2026-10-03	fix(discord): reset username-resolved IDs before the empty-allowlist guard	1	-
+f785deb261	2026-10-03	fix(discord): setup survives rich-text pastes, keeps existing allowed users, and states the intent failure correctly	4	tests/gateway/test_discord_plugin_setup.py
+fedac42bc1	2026-10-03	fix(discord): wizard invite link is a superset of the documented Recommended permissions	3	-
+937f23db2d	2026-10-04	fix(discord): invite link and docs drop the unused Use External Emojis permission	4	-
+019ac2a3e8	2026-10-05	fix(discord): retire the auto-thread rename mask once someone else renames the thread	2	tests/gateway/test_discord_auto_thread_rename_pin.py
+04a6eb4835	2026-10-05	fix(discord): a spoken turn reads its thread's parent bindings and the channel's current labels	4	tests/gateway/test_discord_turn_prompt_parity.py;tests/gateway/test_voice_command.py
+0e73d1d3b6	2026-10-05	fix(discord): track live voice credentials across re-keys instead of snapshotting at start()	2	tests/gateway/test_discord_voice_rekey.py
+118a008f9b	2026-10-05	fix(discord): an utterance transcribed across a /voice join rebind is not posted to the new channel	4	tests/gateway/test_discord_voice_stale_binding.py
+38151eed64	2026-10-05	fix(discord): the triggering-message note no longer depends on message_id presence	3	tests/gateway/test_discord_turn_prompt_parity.py
+39f0da8b2f	2026-10-05	fix(discord): a native slash or /thread starter stamps the role grant for its own actor only	2	tests/gateway/test_discord_slash_auth.py
+4787e4d56f	2026-10-05	fix(discord): a voice speaker outside the member cache still gets a name	2	tests/gateway/test_discord_turn_prompt_parity.py
+7c3a3bfc06	2026-10-05	fix(discord): slash, /thread and voice turns carry a message turn's prompt inputs	4	tests/gateway/test_discord_slash_commands.py;tests/gateway/test_discord_turn_prompt_parity.py
+932210ec2a	2026-10-05	fix(discord): a /voice join to another text channel drops speech the receiver still holds for the old one	5	tests/gateway/test_discord_voice_stale_binding.py
+9eaf235b7d	2026-10-05	fix(voice): one Discord bot's transcript dedup no longer drops another bot's turn	3	tests/gateway/test_voice_transcript_dedup_scope.py
+b85e24df3b	2026-10-05	fix(discord): a thread rename event retires Hermes's auto-thread title mask	3	tests/gateway/test_discord_auto_thread_rename_pin.py;tests/gateway/test_discord_platform_events.py
+d63cdd32a4	2026-10-05	fix(discord): an auto-threaded mention reads the new thread's topic	2	tests/gateway/test_discord_auto_thread_prompt_parity.py
+ea32af9331	2026-10-05	fix(discord): retire the auto-thread title mask from raw rename events	5	tests/e2e/core/platforms/test_discord_thread_rename_ordering.py;tests/gateway/test_discord_auto_thread_rename_pin.py;tests/gateway/test_discord_platform_events.py
+ec991b468b	2026-10-05	fix(discord): Hermes's own auto-thread title rename keeps the pinned prompt	2	tests/gateway/test_discord_auto_thread_rename_pin.py
+f1c26c1a5e	2026-10-05	fix(discord): a role-authorized member's speech in a voice channel reaches the agent	2	tests/gateway/test_discord_voice_role_grant.py
+f5ef17a321	2026-10-05	fix(discord): carry the role verdict into slash command events	2	tests/gateway/test_discord_slash_auth.py
+fb49ef18f5	2026-10-05	fix(discord): capture the voice binding when a poll batch is collected	5	tests/gateway/test_discord_voice_stale_binding.py;tests/gateway/test_voice_command.py
+502df01d54	2026-10-06	fix(discord): buttons stop accepting a user revoked after connect	2	tests/gateway/test_discord_component_auth.py
+a036b13793	2026-10-06	fix(discord): a programmatic voice join binds the requested text channel on every path	7	tests/gateway/test_discord_turn_prompt_parity.py;tests/gateway/test_discord_voice_stale_binding.py;tests/gateway/test_voice_command.py;tests/gateway/test_voice_transcript_dedup_scope.py
+d29d0d07aa	2026-10-06	fix(discord): confirm a snapshot wildcard with the live check too	2	tests/gateway/test_discord_component_auth.py
+68b3b6af2e	2026-10-15	fix(discord): re-authorize durable role grants through the ingress gate resolver	3	tests/plugins/platforms/test_discord_reauthorize_allowed_roles.py
+102c07403a	2026-10-16	fix(relay): a relayed Discord interaction carries the text lane's chat and user labels	5	tests/gateway/relay/test_relay_discord_interaction_labels.py
+2f4b42191e	2026-10-16	fix(platforms): import new plugin siblings relatively (no second adapter copy)	6	-
+6cc4e77caf	2026-10-16	fix(relay): a relayed Discord modal submit carries its submitted values	2	tests/gateway/relay/test_relay_passthrough.py
+ac6c2ec18d	2026-10-16	fix(relay): a relayed Discord interaction carries the reader's authenticated provenance	4	tests/gateway/relay/test_relay_passthrough_authority.py
+b95c4861b2	2026-10-16	fix(platforms): bundled authorization env names hold when the live entry lacks them	41	tests/gateway/test_platform_bundled_authz_fallback.py
+43cc33ec6f	2026-10-23	fix: address review — Feishu plain .ogg stays a file, Ogg duration walks pages	4	tests/gateway/test_discord_audio_delivery.py;tests/gateway/test_feishu_audio_delivery.py
+e2fe88cf7a	2026-10-23	fix(discord): send plain audio as an attachment, voice messages only as Ogg/Opus	4	tests/gateway/test_discord_audio_delivery.py;tests/gateway/test_feishu_audio_delivery.py
+2712a096db	2026-10-26	fix(discord): a button click in a thread gets the thread's authorization verdict	3	tests/gateway/test_discord_config_allowlist_multiplex.py
+9c1a75e56f	2026-10-26	fix(gateway): Discord's config allow_from also governs guild channels	3	tests/gateway/test_discord_config_allowlist_multiplex.py
+39b2158afc	2026-10-28	fix: preserve configured Discord timeouts and retire approval views	7	tests/gateway/test_discord_approval_lifecycle.py;tests/gateway/test_discord_exec_approval_content.py;tests/gateway/test_discord_prompt_timeout_config.py
+4f86e97791	2026-10-28	fix: align Discord approval buttons with request timeout	13	tests/gateway/test_approval_timeout_notice.py;tests/gateway/test_discord_exec_approval_content.py;tests/gateway/test_discord_prompt_timeout_config.py;tests/gateway/test_exec_approval_timeout_notice.py;tests/tools/test_approval_gateway_wait_coalesce_race.py;tests/tools/test_approval_gateway_wait_late_choice.py
+50f57a131f	2026-10-28	fix: a stale Discord approval click leaves the card to the request's observer	20	tests/gateway/test_discord_approval_lifecycle.py;tests/gateway/test_discord_exec_approval_content.py
+8654f1a684	2026-10-28	fix: answered Discord prompts release their view	2	tests/gateway/test_discord_view_base_parity.py
+ac50e08b54	2026-10-28	fix: preserve resolved Discord observer after stale click	2	tests/gateway/test_discord_approval_lifecycle.py
+aecf04f3d8	2026-10-28	fix: an answered Discord approval whose click edit fails still retires its card	2	tests/gateway/test_discord_approval_lifecycle.py
+b5caaf7b44	2026-10-28	fix: a Discord approval card that settles mid-send shows how it ended	19	tests/gateway/test_discord_exec_approval_content.py
+c73b595460	2026-10-29	fix: register approvals.discord_prompt_timeout in the default config	3	tests/gateway/test_discord_prompt_timeout_config.py
+606b83456b	2026-10-30	fix(discord): release the /model picker once it is answered	2	tests/gateway/test_discord_view_base_parity.py
+6abdd20449	2026-10-30	fix(discord): keep the resolved footer when a prompt view times out	3	tests/gateway/test_discord_view_base_parity.py
+5ce74340f9	2026-11-03	fix(discord): probe for libopus once, off the event loop	4	tests/e2e/core/platforms/test_discord_thread_rename_ordering.py;tests/gateway/test_discord_connect.py
+10b6eb5f0a	2026-11-08	fix(gateway): keep every numbered clarify line when the prompt is over its cap	7	tests/gateway/relay/test_relay_interactive.py;tests/gateway/test_discord_clarify_buttons.py;tests/gateway/test_slack_clarify_buttons.py
+2f3e21fc36	2026-11-08	fix(gateway): log proxy URLs without their embedded credentials	5	tests/gateway/test_proxy_url_credentials_not_logged.py
+466591fe65	2026-11-08	fix(gateway): opt-in approvals.approvers binds shared-chat exec approvals to the requester on every platform	44	tests/gateway/relay/test_relay_approval_owner_admins.py;tests/gateway/test_approval_requester_binding.py;tests/gateway/test_approval_requester_binding_adapters.py;tests/gateway/test_approval_requester_binding_admins.py;tests/gateway/test_approval_requester_binding_policy.py;tests/gateway/test_telegram_approval_refusal_expired_query.py
+47f0c6bc0e	2026-11-08	fix(gateway): budget the WhatsApp Cloud approval card against its 1,024 cap	7	tests/gateway/test_exec_approval_deny_only_renderers.py
+48e15ee81b	2026-11-08	fix(telegram): a clipped full-command send keeps the approval card Deny-only	4	tests/gateway/test_exec_approval_deny_only_renderers.py
+4b0be5b740	2026-11-08	fix(gateway): long clarify choices render in full, buttons go positional (#78115)	7	tests/gateway/relay/test_relay_interactive.py;tests/gateway/test_slack_clarify_buttons.py
+63be5950c7	2026-11-08	fix(gateway): keep a proxy secret out of standalone send results	5	tests/gateway/test_standalone_send_proxy_secret.py
+688f81e0ac	2026-11-08	fix(gateway): keep a proxy secret out of the adapter fatal message and runtime status	4	tests/gateway/test_proxy_secret_not_in_fatal_status.py
+c3d47e8caa	2026-11-08	fix(gateway): log only the exception type and proxy host:port for proxy errors	9	tests/gateway/test_proxy_error_text_not_logged.py
+ca237dc5fd	2026-11-08	fix(discord): keep the numbered clarify list whole-line and literal	3	tests/gateway/test_discord_clarify_buttons.py
+e6a6d0df94	2026-11-08	fix(gateway): log proxy URLs without any path segment	9	tests/gateway/test_proxy_url_credentials_not_logged.py
+76ec660497	2026-11-09	fix(gateway): stop prepending the checkout root onto sys.path at import	13	tests/plugins/platforms/test_checkout_root_sys_path.py
+b77ee87c44	2026-11-09	fix(approvals): bind narrowed approvals to the real sender, in one admin scope	27	tests/gateway/test_approval_requester_binding_shared_turns.py
+cbfea87010	2026-11-09	fix(gateway): classify Discord handoff fallback for DM-only notices	2	tests/gateway/test_handoff_thread_session_key.py
+d1aed60ec1	2026-11-09	fix(gateway): slash confirms and clarify questions answer only to their requester	21	tests/gateway/test_prompt_requester_binding.py
+17dd06937e	2026-11-10	fix(gateway): a non-admin cannot answer a prompt where they could not type its command	18	tests/gateway/test_approval_answer_slash_gate.py
+bf77c21427	2026-11-10	fix(gateway): picker cards and the /update prompt answer only to their opener	17	tests/gateway/test_prompt_opener_binding.py
+cdd94deeda	2026-11-10	fix(gateway): a paused gateway keeps blocking other members while an /update prompt waits	5	tests/gateway/test_prompt_opener_binding.py
+8e53bb02c4	2026-11-11	fix(discord): react to a queued message through a partial message	2	tests/gateway/test_discord_reactions.py
+ec842ddde7	2026-11-11	fix(gateway): report a busy follow-up's outcome by its reply's send	5	tests/gateway/test_busy_followup_processing_hooks.py
+5716f75905	2026-11-12	fix(gateway): a reply past the 8-message cap arrives as one file, nothing cut off	41	tests/gateway/test_approval_split_cap_utf16.py;tests/gateway/test_reply_file_handoff.py;tests/gateway/test_stream_reply_ceiling.py;tests/gateway/test_stream_reply_ceiling_rich.py;tests/plugins/platforms/telegram/test_rich_split_cap.py;tests/plugins/platforms/telegram/test_split_cap.py;tests/tools/test_telegram_send_message_chunk_mdv2.py
+64440d2917	2026-11-12	fix(cron): queue only live rejections that precede a send, and keep refusals queueable	5	tests/cron/test_cron_standalone_no_duplicate_replay.py
+8394118739	2026-11-12	fix(gateway): one streamed reply never opens more messages than the adapter's split cap	8	tests/gateway/test_stream_reply_ceiling.py
+9e8f1b4f79	2026-11-12	fix(gateway): a text file captioned with a slash command still runs the command	9	tests/gateway/test_command_caption_document_text.py
+aeb40f7b15	2026-11-12	fix(gateway): a reply past the 8-message cap is one file on every path the review found	13	tests/gateway/test_reply_file_handoff_paths.py
+b00948a767	2026-11-12	fix(cron): a report the standalone lane may have delivered is never queued for replay	11	tests/cron/test_cron_standalone_no_duplicate_replay.py
+ecd13e59c9	2026-11-12	fix(discord): a long reply whose file upload fails is sent whole, never cut at 8	23	tests/e2e/core/platforms/test_discord_long_reply_fallback.py;tests/gateway/test_discord_split_cap.py;tests/gateway/test_native_warning_coverage.py
+032e0f2902	2026-11-13	fix(discord): validate snowflake IDs before URL path interpolation	2	tests/tools/test_discord_tool.py
+168e6644f5	2026-11-13	fix(discord): a single-profile reconnect resolves configured usernames from the YAML	3	tests/gateway/test_discord_connect_username_access.py
+2062b1efc5	2026-11-13	fix(relay): Discord app commands and plain component presses answer prompts as unadmitted	7	tests/gateway/relay/test_relay_discord_command_answer_authority.py
+267022144f	2026-11-13	fix(gateway): a config.yaml allowlist edit applies to the next Discord/Telegram event	9	tests/plugins/platforms/test_live_allowlist_edits.py
+439a19f962	2026-11-13	fix(discord): a fresh connect() resolves configured usernames again	3	tests/gateway/test_discord_connect.py
+46e6db2892	2026-11-13	fix(gateway): HX017 sees transcripts, user_display and getattr names; persist salt without link()	8	tests/gateway/test_log_user_content.py;tests/scripts/test_code_health_log_content_rule.py
+53a5c32f18	2026-11-13	fix(gateway): keep user content and identities out of INFO+ logs	30	tests/gateway/test_log_user_content.py;tests/scripts/test_code_health_log_content_rule.py
+5bc6347340	2026-11-13	fix(gateway): refuse unpinned Discord/Feishu thread targets for shared-bot satellites	4	tests/gateway/test_webhook_profile_egress.py;tests/hermes_cli/test_platform_actions.py
+68276773cf	2026-11-13	fix(discord): treat webhook-authored posts as bots	4	tests/gateway/test_discord_bot_inline_mentions.py
+70b51eae3b	2026-11-13	fix(relay): a Discord button press answers a prompt only for its requester or an admin	7	tests/gateway/relay/test_relay_discord_press_authority.py
+9b706f78b5	2026-11-13	fix(gateway): a bare mirror target tries every probe in state.db first and finds Discord thread channels	3	tests/gateway/test_mirror_bare_target_general.py;tests/tools/test_cronjob_run_background.py
+a62dc41760	2026-11-13	fix(discord): a member's display name cannot break out of the backfill [name] tag	2	tests/gateway/test_discord_channel_context_name_tag.py
+c96945314d	2026-11-13	fix(discord): refresh live gates before the bot-author branch	2	tests/plugins/platforms/test_live_allowlist_edits.py
+cff1c81343	2026-11-13	fix(discord): a reconnect's on_ready keeps the username->ID map for resolved entries	2	tests/plugins/platforms/test_live_allowlist_edits.py
+f1b18838f1	2026-11-13	fix(cron): a failed route read is not retried for the dispatch table; widen the Discord thread caveat	3	tests/tools/test_send_message_shared_bot_route_gate.py
+fac415d52e	2026-11-13	fix(discord): fullmatch snowflake IDs so a trailing newline is rejected	2	tests/tools/test_discord_tool.py
+fbb3cd8b1f	2026-11-13	fix(relay): keep a Discord interaction unadmitted across event copies and merges	4	tests/gateway/relay/test_relay_discord_command_answer_authority.py
+fbfeb47b44	2026-11-13	fix(relay): drop a Discord interaction from a sender this gateway never admitted	7	tests/gateway/relay/test_relay_connector_profile_admission.py;tests/gateway/relay/test_relay_discord_command_answer_authority.py;tests/gateway/relay/test_relay_passthrough.py;tests/gateway/relay/test_relay_passthrough_authority.py
+ff2df58766	2026-11-13	fix(relay): judge a relayed Discord answer by its sender, not by a mark on the event	11	tests/gateway/relay/test_relay_discord_command_answer_authority.py;tests/gateway/relay/test_relay_discord_press_authority.py
+ff881d59f8	2026-11-13	fix(gateway): live allowlist refresh reads the adapter's owning profile, never the ambient scope	3	tests/plugins/platforms/test_live_allowlist_edits.py
+12fc5efbe8	2026-11-14	fix(redact): mask Discord tokens at sentence end and mfa. after escapes	3	tests/agent/test_redact_discord.py
+242773e9dd	2026-11-14	fix(redact): mask Discord tokens glued to escape spellings	3	tests/agent/test_redact.py;tests/agent/test_redact_discord.py
+4996cd4d93	2026-11-14	fix(gateway): hold partial Discord mfa tokens before stream egress	2	tests/gateway/test_stream_consumer_long_secret_holdback.py
+6f0e7a85e6	2026-11-14	fix(redact): match Discord tokens whose user id encodes to N or O	2	tests/agent/test_redact.py
+9f6d02320c	2026-11-14	fix(redact): bound mfa. Discord tokens to 84 chars; accept \b/\f/\xNN before them	2	tests/agent/test_redact_discord.py
+b46e21495f	2026-11-14	fix(gateway): a code submitted as the turn ends is dropped, and SDK debug logs never carry it	4	tests/gateway/test_slack_vault_code_modal.py
+bfa85b3e5f	2026-11-14	fix(security): redact Discord bot tokens outside KEY=value shape	2	tests/agent/test_redact.py
+fb6f8bc91c	2026-11-14	fix(security): redact Slack, Discord and Teams incoming-webhook URLs	2	tests/agent/test_redact.py
