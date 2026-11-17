@@ -92,8 +92,8 @@ func approvalInputSummary*(inputJson: string): string =
 
 func approvalMessage*(request: ApprovalRequest): string =
   "⚠️ *Aprovação necessária*\n\n" &
-  "*Ferramenta:* `" & escapeMarkdownInline(request.toolName) & "`\n" &
-  "*ID:* `" & escapeMarkdownInline(request.id) & "`\n\n" &
+  "*Ferramenta:* `" & codeSpanText(request.toolName) & "`\n" &
+  "*ID:* `" & codeSpanText(request.id) & "`\n\n" &
   escapeMarkdownInline(request.summary) & "\n\n" &
   "Use `/approve " & request.id & "` ou `/deny " & request.id & "`.\n" &
   "Expira em " & $((request.expiresAtMs - request.createdAtMs) div 1000) & "s."
@@ -115,8 +115,8 @@ proc listPendingText*(userId = ""): string {.gcsafe.} =
     return "Nenhuma aprovação pendente."
   result = "🗳️ *Aprovações pendentes*\n"
   for request in pending.get():
-    result.add("\n`" & escapeMarkdownInline(request.id) & "` — `" &
-               escapeMarkdownInline(request.toolName) & "` — " &
+    result.add("\n`" & codeSpanText(request.id) & "` — `" &
+               codeSpanText(request.toolName) & "` — " &
                escapeMarkdownInline(request.summary))
   result.add("\n\nUse `/approve <id>` ou `/deny <id>`.")
 

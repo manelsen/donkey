@@ -3,7 +3,7 @@
 ## Pure functions only: the adapter decides when to call them, this module
 ## decides what the API contract requires.
 
-import std/[json, strutils, unicode]
+import std/[json, strutils, tables, unicode]
 import ./telegram_split
 
 func isEditNoopError*(message: string): bool =
@@ -126,14 +126,18 @@ func audioMethodFor*(url: string): string =
   ## Voice notes are OGG/OPUS and render as a bubble only through sendVoice;
   ## music files go through sendAudio so the client shows a player instead of
   ## a generic document.
-  let lower = url.toLowerAscii()
+  var lower = url.toLowerAscii()
+  let cut = min(
+    (if lower.find('?') >= 0: lower.find('?') else: lower.len),
+    (if lower.find('#') >= 0: lower.find('#') else: lower.len))
+  lower = lower[0 ..< cut]
   let dot = lower.rfind('.')
   if dot < 0:
     return ""
   let ext = lower[dot + 1 .. ^1]
   case ext
   of "ogg", "opus", "oga": "sendVoice"
-  of "mp3", "m4a", "aac", "flac", "wav": "sendAudio"
+  of "mp3", "m4a": "sendAudio"
   else: ""
 
 func isAddressedToBot*(text, botUsername: string): bool =
@@ -147,13 +151,23 @@ func isAddressedToBot*(text, botUsername: string): bool =
     return false
   let needle = "@" & botUsername.toLowerAscii()
   let lower = text.toLowerAscii()
+  ## Command form: `/cmd@bot` addresses the bot even though the mention is
+  ## glued to the command name.
+  if lower[0] == '/':
+    let space = lower.find(' ')
+    let token = if space < 0: lower else: lower[0 ..< space]
+    if token.endsWith(needle):
+      return true
   var start = 0
   while true:
     let at = lower.find(needle, start)
     if at < 0:
       return false
     let after = at + needle.len
-    if after >= lower.len or lower[after] notin {'a' .. 'z', '0' .. '9', '_'}:
+    let beforeOk = at == 0 or lower[at - 1] notin {'a' .. 'z', '0' .. '9', '_', '@'}
+    let afterOk = after >= lower.len or
+                  lower[after] notin {'a' .. 'z', '0' .. '9', '_', '.'}
+    if beforeOk and afterOk:
       return true
     start = after
 
@@ -170,3 +184,43 @@ func isMissingThreadError*(message: string): bool =
   let lower = message.toLowerAscii()
   lower.contains("thread not found") or
     lower.contains("message thread not found")
+
+type AlbumMentionGate* = ref object
+  ## chatId|mediaGroupId → epoch ms until the album counts as addressed.
+  untilMs*: Table[string, int64]
+
+const AlbumMentionTtlMs* = 60_000'i64
+
+func newAlbumMentionGate*(): AlbumMentionGate =
+  AlbumMentionGate(untilMs: initTable[string, int64]())
+
+func albumKey*(chatId, mediaGroupId: string): string =
+  if mediaGroupId.len == 0: "" else: chatId & "|" & mediaGroupId
+
+proc rememberAddressedAlbum*(gate: AlbumMentionGate; key: string;
+                             nowMs: int64; ttlMs = AlbumMentionTtlMs) =
+  ## Behavior derived from hermes-agent (MIT) fix 8fb618234f; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-028
+  ##
+  ## An album's caption lives on one item only. Once that item is addressed,
+  ## its siblings belong to the same user action and must not be dropped by the
+  ## mention gate.
+  if gate.isNil or key.len == 0:
+    return
+  gate.untilMs[key] = nowMs + ttlMs
+
+func albumAddressed*(gate: AlbumMentionGate; key: string;
+                     nowMs: int64): bool =
+  if gate.isNil or key.len == 0:
+    return false
+  gate.untilMs.getOrDefault(key, 0'i64) > nowMs
+
+proc clearExpiredAlbums*(gate: AlbumMentionGate; nowMs: int64) =
+  if gate.isNil:
+    return
+  var expired: seq[string] = @[]
+  for key, untilMs in gate.untilMs:
+    if untilMs <= nowMs:
+      expired.add(key)
+  for key in expired:
+    gate.untilMs.del(key)

@@ -171,11 +171,14 @@ func addUserTurnWithImages*(history: ConversationHistory;
   ## An album arrives as several updates. The turn keeps every attachment
   ## instead of only the last one: the first image carries the text and the
   ## rest follow as image-only entries, so the model sees the whole set.
+  const MaxAttachmentsPerTurn = 10
   if imageUrls.len == 0:
     return addUserTurn(history, userText, "")
   result = addUserTurn(history, userText, imageUrls[0])
-  for i in 1 ..< imageUrls.len:
+  let extra = min(imageUrls.len, MaxAttachmentsPerTurn) - 1
+  for i in 1 .. extra:
     result.addUserWithImage("", imageUrls[i])
+  ## Trim before the current turn could be pushed out by its own attachments.
   result.trimTo(20)
 
 func buildToolLoopDoneText*(toolCallCount: int): string =

@@ -73,10 +73,17 @@ suite "telegram_format — backslash escapes (TG-037)":
     check markdownToTelegramHtml("\\*not bold\\*") == "*not bold*"
     check markdownToTelegramHtml("\\`not code\\`") == "`not code`"
 
-  test "TG-037: escaped text keeps HTML escaping":
-    check markdownToTelegramHtml("\\<tag\\>") == "&lt;tag&gt;"
+  test "TG-037: HTML characters stay escaped":
+    check markdownToTelegramHtml("<tag>") == "&lt;tag&gt;"
 
   test "TG-037: escapeMarkdownInline neutralises markup":
     let escaped = escapeMarkdownInline("*bold* `code` [x](y)")
     check escaped == "\\*bold\\* \\`code\\` \\[x\\]\\(y\\)"
     check markdownToTelegramHtml(escaped) == "*bold* `code` [x](y)"
+
+  test "TG-037: a non-markup backslash stays literal":
+    check markdownToTelegramHtml("C:\\temp\\new") == "C:\\temp\\new"
+
+  test "TG-037: code-span text keeps the span closed":
+    check codeSpanText("a`b") == "a'b"
+    check codeSpanText("plain") == "plain"

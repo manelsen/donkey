@@ -99,7 +99,7 @@ func markdownToTelegramHtml*(md: string): string =
     # ── Backslash escapes ──
     ## `\*` and friends render as the literal character, so dynamic values can
     ## be escaped before they are embedded in a formatted message.
-    if md[i] == '\\' and i + 1 < md.len:
+    if md[i] == '\\' and i + 1 < md.len and md[i + 1] in MarkdownInlineSpecials:
       buf.add(escapeHtml($md[i + 1]))
       i += 2
       lineStart = false

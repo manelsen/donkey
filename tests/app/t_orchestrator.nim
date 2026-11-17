@@ -1479,3 +1479,12 @@ suite "album payloads":
     let history = addUserTurnWithImages(newHistory(), "veja", @["a.jpg"])
     check history.len == 1
     check history[0].imageUrl == "a.jpg"
+
+  test "TG-028: the attachment cap keeps the current turn":
+    var urls: seq[string] = @[]
+    for i in 0 ..< 25:
+      urls.add("img" & $i & ".jpg")
+    let history = addUserTurnWithImages(newHistory(), "veja", urls)
+    check history.len == 10
+    check history[0].text == "veja"
+    check history[0].imageUrl == "img0.jpg"

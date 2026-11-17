@@ -1,4 +1,4 @@
-import std/strutils
+import std/[strutils, tables]
 import chronos/asyncsync
 import results
 import ../../core/commands/command_routing
@@ -17,6 +17,8 @@ import ../../ports/provider
 import ../identity/identity_resolver
 import ./common_runtime
 import ./telegram
+
+var gAlbumMentions = newAlbumMentionGate()
 
 func replyTarget*(msg: InboundMessage): string =
   ## Carries the forum thread along with the message id, so command replies
@@ -779,10 +781,17 @@ proc handleTelegramMessage*(msg: InboundMessage;
   ## only messages that mention the bot start a turn; `/cmd@bot` already works
   ## because parseCommandText strips the suffix.
   let botUsername = telegramBotUsername()
-  if msg.isGroup and telegramRequireMention() and botUsername.len > 0 and
-     not isAddressedToBot(msg.text, botUsername):
-    logger.debug("telegram: group message not addressed to the bot, ignored")
-    return true
+  if msg.isGroup and telegramRequireMention() and botUsername.len > 0:
+    {.cast(gcsafe).}:
+      let nowMs = epochMs()
+      let key = albumKey($msg.userId, msg.mediaGroupId)
+      if isAddressedToBot(msg.text, botUsername):
+        rememberAddressedAlbum(gAlbumMentions, key, nowMs)
+      elif not albumAddressed(gAlbumMentions, key, nowMs):
+        logger.debug("telegram: group message not addressed to the bot, ignored")
+        return true
+      if gAlbumMentions.untilMs.len > 64:
+        clearExpiredAlbums(gAlbumMentions, nowMs)
   let pairingRawId =
     if msg.rawChannelId.len > 0: msg.rawChannelId else: msg.channelId
   let auth = authorizeResolvedInbound(

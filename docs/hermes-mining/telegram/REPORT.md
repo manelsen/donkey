@@ -73,9 +73,14 @@ Vinte e sete casos, cada um com teste que falhava antes da implementação:
 | TG-020 | 409 do polling repetido com backoff | `tests/http/t_std_http.nim` |
 | TG-025 | resposta dentro do forum topic | `tests/domain/channels/t_telegram_policy.nim` |
 | TG-026 | thread apagado cai para o chat raiz | `tests/domain/channels/t_telegram_policy.nim` |
-| TG-028 | álbum mantém todos os anexos no turno | `tests/app/t_orchestrator.nim` |
+| TG-028 | álbum mantém todos os anexos que caem na mesma janela de debounce | `tests/app/t_orchestrator.nim` |
 | TG-029 | voz e áudio nos métodos próprios | `tests/domain/channels/t_telegram_policy.nim` |
 | TG-037 | escape de texto dinâmico em Markdown | `tests/core/t_telegram_format.nim` |
+
+Nota sobre TG-028: a união dos anexos depende da janela de
+`collectWithDebounce`. O teste cobre `mergeUserPayloads` e
+`addUserTurnWithImages`; a chegada real dos updates e o coletor não são
+exercitados por ele.
 
 ## Casos adiados
 

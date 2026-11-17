@@ -24,3 +24,13 @@ func escapeMarkdownInline*(text: string): string =
     if ch in MarkdownInlineSpecials:
       result.add('\\')
     result.add(ch)
+
+func codeSpanText*(text: string): string =
+  ## Behavior derived from hermes-agent (MIT) fix a694040520; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-037
+  ##
+  ## Inside a code span a backslash is not an escape, so escaping would show
+  ## the backslash. Backticks are replaced instead, keeping the value readable
+  ## and the span closed.
+  for ch in text:
+    result.add(if ch == '`': '\'' else: ch)

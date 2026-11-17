@@ -117,6 +117,14 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
         if a.circuitBreaker:
           recordSuccess(host)
         return ok(val)
+      if val.status == 409:
+        ## A polling conflict is not a host failure: retry with backoff
+        ## without counting it against the circuit breaker.
+        lastError = "HTTP 409 (conflict)"
+        if attempt < attemptLimit:
+          sleep(getBackoffMs(attempt))
+          continue
+        return err("HTTP 409 conflict after " & $attemptLimit & " attempts")
       lastError = "HTTP " & $val.status
     else:
       lastError = res.error

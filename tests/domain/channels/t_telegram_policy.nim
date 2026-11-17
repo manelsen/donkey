@@ -182,3 +182,36 @@ suite "telegram_policy — forum threads":
     check isMissingThreadError("Bad Request: message thread not found")
     check isMissingThreadError("MESSAGE THREAD NOT FOUND")
     check not isMissingThreadError("message to be replied not found")
+
+  test "TG-029: a query string does not confuse the extension":
+    check audioMethodFor("https://x.test/a.ogg?token=1") == "sendVoice"
+    check audioMethodFor("https://x.test/a.mp3#t=3") == "sendAudio"
+
+  test "TG-029: other audio formats stay documents":
+    check audioMethodFor("https://x.test/a.flac") == ""
+    check audioMethodFor("https://x.test/a.wav") == ""
+
+  test "TG-015: an email address is not a mention":
+    check not isAddressedToBot("escreva para contato@donkeybot.com", "donkeybot")
+    check isAddressedToBot("/status@donkeybot", "donkeybot")
+
+suite "telegram_policy — album mention gate":
+
+  test "TG-028: an addressed album admits its siblings":
+    let gate = newAlbumMentionGate()
+    let key = albumKey("u1", "g1")
+    gate.rememberAddressedAlbum(key, 1_000)
+    check gate.albumAddressed(key, 1_500)
+    check not gate.albumAddressed(albumKey("u1", "g2"), 1_500)
+    check not gate.albumAddressed(albumKey("u2", "g1"), 1_500)
+
+  test "TG-028: the window expires":
+    let gate = newAlbumMentionGate()
+    let key = albumKey("u1", "g1")
+    gate.rememberAddressedAlbum(key, 1_000, ttlMs = 500)
+    check not gate.albumAddressed(key, 1_600)
+
+  test "TG-028: a message without a group is never admitted":
+    let gate = newAlbumMentionGate()
+    gate.rememberAddressedAlbum(albumKey("u1", ""), 1_000)
+    check not gate.albumAddressed("", 1_000)

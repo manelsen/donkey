@@ -151,11 +151,12 @@ func renderTelegramHtml*(text: string; isHtml = false): string =
 
 proc applyReplyTarget(body: var JsonNode; replyTo: string; firstChunk: bool) =
   ## Splits the composite reply target into the message id and the forum
-  ## thread, so a reply lands in the topic it came from.
-  if not firstChunk or replyTo.len == 0:
+  ## thread. The anchor belongs to the first chunk only, but the thread belongs
+  ## to every chunk, or the continuation lands in the general topic.
+  if replyTo.len == 0:
     return
   let (messageId, threadId) = splitTelegramReplyTarget(replyTo)
-  if messageId.len > 0:
+  if firstChunk and messageId.len > 0:
     try:
       body["reply_to_message_id"] = %parseInt(messageId)
     except ValueError:
@@ -189,6 +190,10 @@ proc sendMessageBody(a: TelegramAdapter; body: JsonNode; replyTo: string;
     ## The topic is gone; deliver to the chat root instead of dropping it.
     var retry = body
     retry.delete("message_thread_id")
+    let second = a.post("sendMessage", retry)
+    if second.isOk or not isMissingReplyAnchorError(second.error):
+      return second
+    retry.delete("reply_to_message_id")
     return a.post("sendMessage", retry)
   res
 
@@ -263,6 +268,13 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
   let mediaTimeout = telegramMediaTimeoutSec()
   let res = a.postWith(meth, body, mediaTimeout)
   if res.isOk: return ok()
+  if body.hasKey("message_thread_id") and isMissingThreadError(res.error):
+    ## The topic is gone; retry the same media in the chat root.
+    var retry = body
+    retry.delete("message_thread_id")
+    retry.delete("reply_to_message_id")
+    let second = a.postWith(meth, retry, mediaTimeout)
+    if second.isOk: return ok()
   if meth == "sendPhoto":
     ## A photo outside the dimension/size limits is still a valid document.
     let docRes = a.postWith("sendDocument", asDocumentBody(body), mediaTimeout)
@@ -302,7 +314,13 @@ proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
   }
   body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
   applyReplyTarget(body, replyTo, true)
-  let res = a.post("sendMessage", body)
+  var res = a.post("sendMessage", body)
+  if res.isErr and body.hasKey("message_thread_id") and
+     isMissingThreadError(res.error):
+    var retry = body
+    retry.delete("message_thread_id")
+    retry.delete("reply_to_message_id")
+    res = a.post("sendMessage", retry)
   if res.isOk:
     return ok($res.value["result"]["message_id"].getInt())
   body.delete("parse_mode")
