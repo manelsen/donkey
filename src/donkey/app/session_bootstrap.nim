@@ -530,6 +530,8 @@ func nativeSessionTools*(): seq[ToolDescription] =
     (CalcToolName,          CalcToolDescription,          CalcToolSchema),
     (RenderMermaidToolName, RenderMermaidToolDescription, RenderMermaidToolSchema),
     (InspectImageToolName,  InspectImageToolDescription,  InspectImageToolSchema),
+    (TranscribeAudioToolName, TranscribeAudioToolDescription, TranscribeAudioToolSchema),
+    (TextToSpeechToolName,  TextToSpeechToolDescription,  TextToSpeechToolSchema),
     (AskToolName,           AskToolDescription,           AskToolSchema),
     (TodoWriteToolName,     TodoWriteToolDescription,     TodoWriteToolSchema),
     (CheckpointToolName,    CheckpointToolDescription,    CheckpointToolSchema),

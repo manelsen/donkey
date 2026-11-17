@@ -36,7 +36,7 @@ suite "ToolPort conformance":
     let result = bt.listTools()
     check result.isOk
     let tools = result.get()
-    check tools.len == 3
+    check tools.len == 5
 
   test "browser_navigate schema":
     let bt = BrowserTools()
@@ -60,6 +60,19 @@ suite "ToolPort conformance":
     check schema.inputSchema{"properties"}.hasKey("max_chars")
     check schema.inputSchema{"properties"}.hasKey("as_html")
 
+  test "browser_click schema":
+    let bt = BrowserTools()
+    let schema = bt.listTools().get().filterIt(it.name == "browser_click")[0]
+    check schema.inputSchema{"properties"}.hasKey("selector")
+    check ($schema.inputSchema{"required"}).contains("selector")
+
+  test "browser_type schema":
+    let bt = BrowserTools()
+    let schema = bt.listTools().get().filterIt(it.name == "browser_type")[0]
+    check schema.inputSchema{"properties"}.hasKey("selector")
+    check schema.inputSchema{"properties"}.hasKey("text")
+    check ($schema.inputSchema{"required"}).contains("text")
+
   test "browser_screenshot schema":
     let bt = BrowserTools()
     let tools = bt.listTools().get()
@@ -70,6 +83,27 @@ suite "ToolPort conformance":
     check schema.inputSchema{"properties"}.hasKey("fullPage")
 
 suite "Input validation":
+
+  test "browser_click requires a selector":
+    var bt = BrowserTools()
+    let tr = bt.invoke(ToolCall(id: "c1", name: "browser_click", input: %* {})).get()
+    check tr.isError
+    check tr.output.contains("missing required field: selector")
+
+  test "browser_type requires a selector and text":
+    var bt = BrowserTools()
+    let noSel = bt.invoke(ToolCall(id: "t1", name: "browser_type", input: %* {"text": "x"})).get()
+    check noSel.isError
+    check noSel.output.contains("selector")
+    let noText = bt.invoke(ToolCall(id: "t2", name: "browser_type", input: %* {"selector": "input"})).get()
+    check noText.isError
+    check noText.output.contains("text")
+
+  test "browser_click needs a running browser":
+    var bt = BrowserTools()
+    let tr = bt.invoke(ToolCall(id: "c2", name: "browser_click", input: %* {"selector": "button"})).get()
+    check tr.isError
+    check tr.output.contains("browser not running")
 
   test "browser_navigate rejects missing url":
     var bt = BrowserTools()
@@ -455,7 +489,7 @@ suite "Browser backends":
 
   test "runtime port routes tool calls with a per-user key":
     let runtime = newBrowserToolRuntime(backend = bbOff)
-    check runtime.listTools().get().len == 3
+    check runtime.listTools().get().len == 5
     let port = runtime.toRuntimePort()
     let recognized = ToolCall(id: "x", name: "browser_content",
                               input: %* {}, userId: "user-a")
@@ -573,5 +607,14 @@ suite "Browser backends":
   test "toRuntimePort exposes the browser tools":
     let port = newBrowserTools(backend = bbOff).toRuntimePort()
     let tools = port.listTools().get()
-    check tools.len == 3
+    check tools.len == 5
     port.close()
+
+suite "interaction scripts":
+
+  test "selectors and text are escaped as JS literals":
+    check jsStringLiteral("a\"b") == "\"a\\\"b\""
+    check jsStringLiteral("a\nb") == "\"a\\nb\""
+    check clickScript("button[data-x='1']").contains(
+      "querySelector(\"button[data-x='1']\")")
+    check typeScript("input", "olá \"mundo\"").contains("\"olá \\\"mundo\\\"\"")

@@ -361,3 +361,33 @@ func parseWsDebuggerUrl*(raw: string): Option[BrowserEndpoint] =
   if port <= 0 or port > 65535:
     return none(BrowserEndpoint)
   some(BrowserEndpoint(host: host, port: port, path: path, secure: secure))
+
+# ── Page interaction scripts (computer-use actions) ──────────────────────────
+
+func jsStringLiteral*(value: string): string =
+  ## A JavaScript string literal, quoted and escaped. Selectors and typed text
+  ## come from the model, so they must never break out of the literal.
+  result = "\""
+  for ch in value:
+    case ch
+    of '\\': result.add("\\\\")
+    of '"':  result.add("\\\"")
+    of '\n': result.add("\\n")
+    of '\r': result.add("\\r")
+    of '\t': result.add("\\t")
+    else:    result.add(ch)
+  result.add("\"")
+
+func clickScript*(selector: string): string =
+  ## Clicks the first element matching `selector` in the page.
+  "(function(){var el=document.querySelector(" & jsStringLiteral(selector) &
+    ");if(!el)return 'not found';el.scrollIntoView({block:'center'});" &
+    "el.click();return 'clicked';})()"
+
+func typeScript*(selector, text: string): string =
+  ## Focuses the element and replaces its value, firing input/change so
+  ## framework listeners see the edit.
+  "(function(){var el=document.querySelector(" & jsStringLiteral(selector) &
+    ");if(!el)return 'not found';el.focus();el.value=" & jsStringLiteral(text) &
+    ";el.dispatchEvent(new Event('input',{bubbles:true}));" &
+    "el.dispatchEvent(new Event('change',{bubbles:true}));return 'typed';})()"

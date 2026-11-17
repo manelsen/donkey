@@ -127,6 +127,26 @@ Only `image/jpeg`, `image/png`, `image/gif` and `image/webp` are accepted
 inline. A URL the provider cannot fetch (Gemini does not fetch arbitrary
 http URLs) or a malformed data URL is dropped so the turn keeps its text.
 
+## Audio Tools
+
+`transcribe_audio` and `text_to_speech` speak the OpenAI-compatible audio
+wire format (`/v1/audio/transcriptions` and `/v1/audio/speech`). They reuse
+`OPENAI_API_KEY` when no dedicated key is set:
+
+```bash
+DONKEY_STT_API_KEY=...        # optional, falls back to OPENAI_API_KEY
+DONKEY_STT_URL=https://api.openai.com/v1/audio/transcriptions
+DONKEY_STT_MODEL=whisper-1
+DONKEY_TTS_API_KEY=...
+DONKEY_TTS_URL=https://api.openai.com/v1/audio/speech
+DONKEY_TTS_MODEL=tts-1
+DONKEY_TTS_VOICE=alloy
+```
+
+Transcription uploads the file as multipart (25 MB limit) and returns the
+text. Speech writes the returned bytes to `attachments/tts-*.mp3` and returns
+the path, so a later tool or reply can reference the file.
+
 ## Provider Notes
 
 ### ZAI Coding

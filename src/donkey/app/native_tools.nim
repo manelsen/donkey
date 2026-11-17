@@ -23,6 +23,7 @@ import ./tools/web_tools
 import ./tools/archive_tools
 import ./tools/data_tools
 import ./tools/utility_tools
+import ./tools/audio_tools
 import ./tools/task_tools
 import ./tools/code_tools
 import ./tools/memory_ingest_io
@@ -36,6 +37,7 @@ export archive_tools   # performArchiveCreate, performArchiveExtract
 export data_tools      # runJsonQuery, runTableQuery
 export utility_tools   # performCalc, performRenderMermaid, performInspectImage,
                        # MermaidTempPrefix
+export audio_tools     # performTranscribe, performSpeech
 export task_tools      # performTask, nextJobId, buildTaskStartedText,
                        # spawnTaskJob, performManageSkills
 export code_tools      # parseCodeRequest, runCodeRequestAsync, codeConfigFromEnv
@@ -206,6 +208,16 @@ type
 
   MermaidContext* = object
     diagram*: string
+
+  TranscribeContext* = object
+    path*:     string
+    language*: string
+    prompt*:   string
+
+  SpeechContext* = object
+    text*:   string
+    voice*:  string
+    format*: string
 
   InspectImageContext* = object
     path*:   string
@@ -564,6 +576,28 @@ proc parseInspectImageContext*(j: JsonNode;
       resolvedToolPath(p, paddockDir, log, toolName, fs) >>=
         proc(rp: string): Result[InspectImageContext, string] =
           ok(InspectImageContext(path: rp, prompt: j.getOrDefault("prompt").getStr("")))
+
+proc parseTranscribeContext*(j: JsonNode; paddockDir: string;
+                             log: Logger = Logger();
+                             fs: FsRuntimePort = unavailableFs()):
+                               Result[TranscribeContext, string] {.gcsafe, raises: [].} =
+  j.requireStringField("path") >>=
+    proc(p: string): Result[TranscribeContext, string] =
+      resolvedToolPath(p, paddockDir, log, TranscribeAudioToolName, fs) >>=
+        proc(rp: string): Result[TranscribeContext, string] =
+          ok(TranscribeContext(
+            path: rp,
+            language: j.getOrDefault("language").getStr("").strip,
+            prompt: j.getOrDefault("prompt").getStr("").strip))
+
+proc parseSpeechContext*(j: JsonNode): Result[SpeechContext, string]
+                         {.gcsafe, raises: [].} =
+  j.requireStringField("text") >>=
+    proc(t: string): Result[SpeechContext, string] =
+      ok(SpeechContext(
+        text: t,
+        voice: j.getOrDefault("voice").getStr("").strip,
+        format: j.getOrDefault("format").getStr("").strip))
 
 proc parseTaskContext*(j: JsonNode): Result[TaskContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("prompt") >>=
@@ -1112,6 +1146,20 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
     let inspectCtx = parseInspectImageContext(j, ctx.paddockDir, ctx.log, InspectImageToolName, ctx.fs).valueOr:
       return handledError(error)
     return handledOutcome(performInspectImage(inspectCtx.path, inspectCtx.prompt, ctx.completeFn))
+  of TranscribeAudioToolName:
+    let ctxAudio = parseTranscribeContext(j, ctx.paddockDir, ctx.log,
+                                          ctx.fs).valueOr:
+      return handledError(error)
+    return handledOutcome(performTranscribe(ctxAudio.path, ctx.http,
+      language = ctxAudio.language, prompt = ctxAudio.prompt))
+  of TextToSpeechToolName:
+    let speechCtx = parseSpeechContext(j).valueOr:
+      return handledError(error)
+    let saved = performSpeech(speechCtx.text, ctx.paddockDir, ctx.http,
+                              voice = speechCtx.voice, format = speechCtx.format)
+    if saved.isErr:
+      return handledError(saved.error)
+    return handledOutcome("Audio saved: " & saved.get())
   else:
     return NativeToolResult(handled: false)
 
