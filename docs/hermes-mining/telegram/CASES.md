@@ -363,8 +363,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Reconhecer o fence pelo tamanho da sequência de crases e aceitar CRLF.
 - **Fontes no hermes:** `3480de0402`, `5f7b1e2d65`, `6c1e913bb0`, `8518913cff`
 - **Testes no hermes:** -
-- **Situação no Donkey:** PARCIAL
-- **Evidência no Donkey:** `src/donkey/core/telegram_format.nim:65` (procura literal "```" e não trata CRLF)
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/core/telegram_format.nim:52` e `tests/core/t_telegram_format.nim`
 - **Prioridade:** P1
 
 ### TG-034: Tabelas não existem no HTML do Telegram

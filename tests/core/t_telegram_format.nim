@@ -52,3 +52,16 @@ suite "Telegram Formatting":
     let result = sanitizeForTelegram(invalidText)
     check result == "HelloWorld"
 
+
+
+suite "telegram_format — code fences (TG-033)":
+
+  test "TG-033: a CRLF fence is recognised and normalised":
+    check markdownToTelegramHtml("```\r\ncode\r\n```") == "<pre>code\n</pre>"
+
+  test "TG-033: a longer fence keeps inner triple backticks literal":
+    check markdownToTelegramHtml("````\n```\ninner\n```\n````") ==
+      "<pre>```\ninner\n```\n</pre>"
+
+  test "TG-033: triple backticks mid-line are inline code, not a fence":
+    check markdownToTelegramHtml("use ```x``` here") == "use <code>x</code> here"
