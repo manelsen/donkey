@@ -362,3 +362,12 @@ suite "telegram_pure — group and topic metadata":
                                                 "chat": {"id": -100, "type": "supergroup"},
                                                 "message_thread_id": 9}}}
     check parseUpdate(upd).threadId == "9"
+
+  test "TG-015: a group callback is flagged as a group":
+    let upd = %*{"callback_query": {"id": "cb", "from": {"id": 7}, "data": "x",
+                                    "message": {"message_id": 3,
+                                                "chat": {"id": -100, "type": "supergroup"}}}}
+    let r = parseUpdate(upd)
+    check r.isGroup
+    check r.chatId == "-100"
+    check r.channelId == "3"

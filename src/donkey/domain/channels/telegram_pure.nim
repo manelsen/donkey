@@ -171,6 +171,9 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
     let chatId =
       if cqMsg.isNil: ""
       else: cqMsg.getOrDefault("chat").idAsString("id")
+    let cqChatType =
+      if cqMsg.isNil: "private"
+      else: cqMsg.getOrDefault("chat").getOrDefault("type").getStr("private")
     return TgParseResult(
       kind:       tukCallbackQuery,
       rawId:      $fromId,
@@ -180,6 +183,7 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
       callbackId: cq["id"].getStr(""),
       threadId:   threadId,
       chatId:     chatId,
+      isGroup:    cqChatType in ["group", "supergroup"],
     )
 
   if upd.hasKey("message"):
