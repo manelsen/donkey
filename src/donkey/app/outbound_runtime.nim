@@ -172,17 +172,19 @@ proc editImmediateOutbound*(msg: OutboundMessage;
 proc editStreamOutbound*(msg: OutboundMessage;
                          channelMsgId: string;
                          ports: OutboundChannelPorts;
-                         log: Logger) {.gcsafe.} =
+                         log: Logger): bool {.gcsafe.} =
+  ## Returns true only when the channel confirmed the edit.
   let port = ports.channelPortFor(msg.channel)
   let res = port.editMessage(msg.userId, channelMsgId, msg.text, msg.isHtml)
   if res.isOk:
     log.debug("sent " & $msg.channel & " (edit) -> " & $msg.userId & " (" & $msg.text.len & " chars)")
-    return
+    return true
   let error = res.error
   case msg.channel
   of ckTelegram: log.warn("tg editMessage: " & error)
   of ckDiscord:  log.warn("dc editMessage: " & error)
   of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli: discard
+  false
 
 proc createStreamOutbound*(msg: OutboundMessage;
                            ports: OutboundChannelPorts;
@@ -267,8 +269,16 @@ proc routeOutbound*(msg: OutboundMessage;
   of oiSend:
     sendImmediateOutbound(effectiveMsg, ports, log, ledger)
   of oiStreamUpdate:
-    editStreamOutbound(effectiveMsg, decision.existingMsgId, ports, log)
-    presentationState.rememberStreamText(effectiveMsg, effectiveMsg.text)
+    if editStreamOutbound(effectiveMsg, decision.existingMsgId, ports, log):
+      presentationState.rememberStreamText(effectiveMsg, effectiveMsg.text)
+    elif not effectiveMsg.isPartial:
+      ## Behavior derived from hermes-agent (MIT) fix 30878411b8; see
+      ## docs/hermes-mining/telegram/CASES.md#tg-031
+      ##
+      ## A final edit that the channel refused must not swallow the answer:
+      ## deliver it as a new message instead of trusting the stale stream.
+      presentationState.clearStream(effectiveMsg)
+      sendImmediateOutbound(effectiveMsg, ports, log, ledger)
   of oiStreamCreate:
     let channelMsgId = createStreamOutbound(effectiveMsg, ports, log, ledger)
     if channelMsgId.len > 0:

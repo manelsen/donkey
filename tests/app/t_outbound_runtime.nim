@@ -392,3 +392,49 @@ suite "outbound_runtime":
     )
     check setOutboundReaction(
       ckTelegram, UserId("u1"), "ch1", "42", "⏳", ports, newLogger("test.outbound"))
+
+  test "TG-031: a refused final edit is delivered as a new message":
+    var sentText = ""
+    let ports = OutboundChannelPorts(
+      telegram: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}: sentText = msg.text
+          ok(),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m1"),
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          err("message to edit not found"),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+      )
+    )
+    var presentationState = initPresentationState()
+    let partial = OutboundMessage(userId: UserId("u1"), channel: ckTelegram,
+                                  text: "parcial", streamId: "s1", isPartial: true)
+    presentationState.rememberStream(partial, "m42")
+    routeOutbound(
+      OutboundMessage(userId: UserId("u1"), channel: ckTelegram,
+                      text: "resposta final", streamId: "s1", isPartial: false),
+      ports,
+      newLogger("test.outbound"),
+      presentationState)
+    check sentText == "resposta final"
+    check presentationState.lookupStream(partial) == ""
+
+  test "TG-031: a refused partial edit does not resend":
+    var sentCount = 0
+    let ports = OutboundChannelPorts(
+      telegram: OutboundChannelPort(
+        send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+          {.cast(gcsafe).}: inc sentCount
+          ok(),
+        sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} = ok("m1"),
+        editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+          err("message to edit not found"),
+        setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} = ok(),
+      )
+    )
+    var presentationState = initPresentationState()
+    let partial = OutboundMessage(userId: UserId("u1"), channel: ckTelegram,
+                                  text: "parcial", streamId: "s1", isPartial: true)
+    presentationState.rememberStream(partial, "m42")
+    routeOutbound(partial, ports, newLogger("test.outbound"), presentationState)
+    check sentCount == 0
