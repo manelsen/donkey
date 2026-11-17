@@ -8,7 +8,7 @@ rodada.
 | Caso | Commits hermes | Teste Donkey | Implementação Donkey | Status |
 |---|---|---|---|---|
 | TG-001 | `9e992df8ae`, `b7c4369ca0`, `c0da5d09a6`, `022d196f38` | `tests/domain/channels/t_telegram_split.nim` | `src/donkey/domain/channels/telegram_split.nim` | portado |
-| TG-002 | `7ac9088d5c`, `6483c39f84` | - | - | pendente |
+| TG-002 | `7ac9088d5c`, `6483c39f84` | `tests/domain/channels/t_telegram_policy.nim` | `src/donkey/domain/channels/telegram_policy.nim` | portado |
 | TG-003 | `fbfe294882`, `6fb25f86ac`, `3a37785f7f` | - | - | pendente |
 | TG-004 | `1a9a2d7fe8`, `c419cf7c86`, `704872a62f` | - | - | pendente |
 | TG-005 | `b60cfd6ce6`, `713e2274cf`, `29cda7a5ef` | - | - | pendente |

@@ -7,7 +7,7 @@
 ## Behavior derived from hermes-agent (MIT) fix 8725; see
 ## docs/hermes-mining/telegram/CASES.md#tg-001
 
-import std/[strutils, unicode]
+import std/unicode
 
 const TelegramTextLimit* = 4096
 

@@ -22,8 +22,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Tratar esse erro como sucesso e não reenviar a mensagem como nova.
 - **Fontes no hermes:** `7ac9088d5c`, `6483c39f84`
 - **Testes no hermes:** `tests/gateway/test_native_admission_edit.py`
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n "not modified" src/donkey` (sem resultados); fallback em `src/donkey/adapters/channel/telegram.nim:242`
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:8` e `src/donkey/adapters/channel/telegram.nim:252`
 - **Prioridade:** P0
 
 ### TG-003: Updates de bots não são entrada de usuário

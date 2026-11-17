@@ -19,6 +19,7 @@ import ../../core/media_download
 import ../../domain/message
 import ../../domain/channels/telegram_pure
 import ../../domain/channels/telegram_split
+import ../../domain/channels/telegram_policy
 import ../../ports/http
 import ../../ports/channel
 import ../http/std_http
@@ -252,11 +253,15 @@ proc editMessage*(a: TelegramAdapter; userId: UserId;
   var body = %* {"chat_id": chatId, "message_id": parseBiggestInt(msgId), "text": html, "parse_mode": "HTML"}
   let res = a.post("editMessageText", body)
   if res.isOk: return ok()
+  ## The text is already what the caller asked for; retrying would fail again.
+  if isEditNoopError(res.error): return ok()
   # Fallback
   body.delete("parse_mode")
   body["text"] = %sanitizedText
-  discard ? a.post("editMessageText", body)
-  ok()
+  let plain = a.post("editMessageText", body)
+  if plain.isOk: return ok()
+  if isEditNoopError(plain.error): return ok()
+  err(plain.error)
 
 proc sendKeyboard*(a: TelegramAdapter; userId: UserId;
                    text: string;
