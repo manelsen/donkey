@@ -549,3 +549,53 @@ ed960fe960	MEDIA	yes	Download de video_note pode falhar; a falha é do file_id/U
 46a7c675ac	EDIT	yes	editMessageText aceita link_preview_options; edição legada ignorava disable_link_previews.
 476fbd9f4c	INTERNAL	no	Chave de config com maiúsculas no picker /model; lógica de UI interna.
 47c7600098	INBOUND	yes	callback_query traz a mensagem de origem; um tap só vale para o prompt daquela mensagem.
+47f0c6bc0e	INTERNAL	no	Limite de 1.024 do cartão de aprovação no WhatsApp Cloud; outro canal.
+481d56d3f0	FORMAT	yes	Escape de moeda em rich text precisa de corpo possessivo para não engolir o texto seguinte.
+486449f268	FORMAT	yes	Math inline iniciado por dígito não deve ser confundido com valor monetário do rich text.
+486601c4fa	FORMAT	yes	Envio standalone precisa manter parse_mode, rich_message e modo silencioso (disable_notification).
+48e15ee81b	INTERNAL	no	Cartão de aprovação Deny-only é feature interna do hermes.
+492571075e	TOPIC_API	yes	Retry com thread id nativo rejeitado como TOPIC_DELETED deve cair no chat root.
+4a2b984fd2	INBOUND	yes	Update não servido por nenhum handler não pode ser confirmado; senão o Telegram não reenvia.
+5209ca9796	INTERNAL	no	Dica de clarify na sessão é feature interna do agente.
+54c27a0417	INTERNAL	no	ACK de /restart é fluxo interno do hermes; usa o roteamento da resposta comum.
+552acb2c51	INTERNAL	no	Unificação de request builder entre adapter e sender; refatoração de código.
+56e9d96183	INBOUND	yes	Menção a outro bot no grupo não endereça o nosso bot; o skip é detectado no gate.
+570f2e40b3	NET	yes	Erro de transporte/proxy carrega a URL do proxy com credenciais; precisa ser redigido.
+5ab38b99d8	INBOUND	yes	Tap em callback expirado responde 'query is too old'; o hint deve ir no tópico do cartão tocado.
+5b7b985700	INTERNAL	no	ACK de /restart local é fluxo interno do hermes.
+5d3723e117	TOPIC_API	yes	A Bot API não resolve tópico por nome: message_thread_id precisa ser id numérico.
+606967f648	INTERNAL	no	Timestamp em transcript de grupo observado é armazenamento interno do hermes.
+60b4d2ffd1	FORMAT	yes	Limite de 4096 da mensagem; o indicador de chunk escapado ocupa espaço no payload.
+60dc0a71fe	EDIT	yes	Testes de edição com link preview exigem is_disabled=True no link_preview_options.
+692283bf91	FORMAT	yes	Tabelas, details e math de rich_message precisam virar texto para o agente.
+6a83bc534f	RATE	yes	Flood control recusa edições; enviar bolhas novas durante a penalidade renova o bloqueio.
+6c1e913bb0	FORMAT	yes	Code span inline é delimitado pela largura da sequência de backticks.
+6e452f4c12	MEDIA	yes	Documentos de imagem HEIC/HEIF/AVIF chegam como document; descartar perde a mídia.
+6eab9f0321	TOPIC_API	yes	Tópicos em chat privado aceitam message_thread_id e rascunhos por streaming (Bot API 9.4/9.5).
+6ffab21708	MEDIA	yes	Álbum preserva flags de inline dos anexos do media group.
+713e2274cf	INBOUND	yes	Âncora de reply inválida responde 'reply message not found'; só o anchor deve cair.
+71b8408ae1	INBOUND	yes	Telegram Business manda updates do chat do dono; responder atinge contatos dele.
+7366bc7a19	TOPIC_API	yes	Binding de tópico sem linha pode ser reparado; não pode desfazer um /new concorrente.
+7636137828	TOPIC_API	yes	forum_topic_created tem message_id igual ao message_thread_id; reply a ele não é reply de usuário.
+7bd2439f63	TOPIC_API	yes	Após tópico morto, reenviar com direct_messages_topic_id recriado faz o ladder ciclar.
+7d51791c52	FORMAT	yes	Blocos rich_message de entrada e de reply precisam do mesmo flattener para texto.
+7efba7c85f	NET	yes	PTB embrulha reset de leitura em NetworkError; reenviar pode duplicar mensagem já postada.
+7f8ef691fe	NET	yes	409 Conflict no polling: a recuperação deve preservar a fila e subir o ladder de retry.
+800826bd54	TOPIC_API	yes	Mensagem recuperada de um tópico herda os inputs de prompt daquele tópico.
+8058fc8f3c	NET	yes	Erro de proxy/transporte sem segredo deve manter texto e traceback originais.
+80903cc65f	MEDIA	yes	Caption pertence ao item do álbum; trocar a mídia por nota não deve descartar a legenda.
+812b40f562	INTERNAL	no	Unicidade de rótulos do picker /model; UI interna do hermes.
+81e5750117	INBOUND	yes	Comando em grupo no modo observação age na sessão compartilhada do grupo.
+84b7cad348	MEDIA	yes	Thumbnail de sendVideo é limitado a 320x320; acima disso o Telegram rejeita.
+8518913cff	FORMAT	yes	Code spans com backticks aninhados precisam de parsing por largura da sequência.
+862a4120ae	INTERNAL	no	Compatibilidade de assinatura do sender standalone; API interna do hermes.
+89b7b4405f	INTERNAL	no	ACK de /restart com timeout é fluxo interno do hermes.
+8daa4ec5f2	TOPIC_API	yes	thread_id de DM topic persistido precisa ser relido antes do setup do tópico.
+8e7908d9ba	FORMAT	yes	URLs ocultas de link vêm nas entidades do texto citado na resposta.
+8f7b04ab39	INTERNAL	no	Watchdog de stall de dispatch é orquestração interna do hermes.
+942db62c1e	INTERNAL	no	Rótulos do picker /model mantendo a org; UI interna.
+96cac93718	RATE	yes	Janela de flood control deve ser checada após a última espera do loop de avisos.
+992377fd0d	RATE	yes	Flood wait curto no envio inline fecha o chat para uploads irmãos.
+9a856f8e91	TOPIC_API	yes	Nome de DM topic não é thread id: a Bot API só aceita id numérico e 'thread not found' exige refresh.
+9c04b1b168	INBOUND	yes	Lotes de updates de grupo observado devem ser separados por remetente.
+a1940c9f39	NET	yes	409 Conflict: o período de quietude deve começar no primeiro poll após a recuperação.
