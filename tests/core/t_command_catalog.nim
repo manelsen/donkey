@@ -137,3 +137,30 @@ suite "Command Catalog":
   test "categoryName returns readable name":
     check categoryName(ccNavigation) == "Navigation"
     check categoryName(ccConfiguration) == "Configuration"
+
+suite "telegram command menu limits (TG-036)":
+
+  test "TG-036: names are lowercased and stripped to a-z0-9_":
+    check sanitizeTelegramCommandName("/Model-Switch") == "modelswitch"
+    check sanitizeTelegramCommandName("a b!c") == "abc"
+    check sanitizeTelegramCommandName("!!!") == ""
+
+  test "TG-036: names are capped at 32 characters":
+    check sanitizeTelegramCommandName(strutils.repeat("a", 50)).len == 32
+
+  test "TG-036: descriptions are capped at 40 characters":
+    check fitTelegramDescription(strutils.repeat("d", 50)).len == 40
+    check fitTelegramDescription("curta") == "curta"
+
+  test "TG-036: duplicates and empty names are dropped":
+    let fitted = fitTelegramCommands(@[
+      ("status", "a"), ("Status", "b"), ("", "c"), ("help", "d")])
+    check fitted.len == 2
+    check fitted[0][0] == "status"
+    check fitted[1][0] == "help"
+
+  test "TG-036: the menu is capped at 100 commands":
+    var raw: seq[(string, string)] = @[]
+    for i in 0 ..< 150:
+      raw.add(("cmd" & $i, "d"))
+    check fitTelegramCommands(raw).len == 100
