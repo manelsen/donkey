@@ -1,0 +1,719 @@
+hash	date	subject	files_changed	test_files
+488deb04a4	2026-02-03	fix telegram, import asyncio	1	-
+b759602483	2026-02-28	fix: prevent italic regex from spanning newlines in Telegram formatter	2	tests/gateway/test_telegram_format.py
+daedec6957	2026-03-02	fix: Telegram adapter crash on Windows when library not installed (#304)	1	-
+542faf225f	2026-03-07	Fix Telegram image delivery for large (>5MB) images	1	-
+55c70f3508	2026-03-07	fix: strip MarkdownV2 escapes from Telegram plaintext fallback	1	-
+5cdcb9e26f	2026-03-07	fix: strip MarkdownV2 italic markers in Telegram plaintext fallback	2	tests/gateway/test_telegram_format.py
+928bb16da1	2026-03-10	fix: forward thread_id to Telegram adapter + update send_typing signatures	5	-
+a630ca15de	2026-03-10	fix: forward thread_id metadata for Telegram forum topic routing	2	-
+0d6b25274c	2026-03-11	fix(gateway): isolate telegram forum topic sessions	16	tests/gateway/test_base_topic_sessions.py;tests/gateway/test_channel_directory.py;tests/gateway/test_delivery.py;tests/gateway/test_mirror.py;tests/gateway/test_run_progress_topics.py;tests/gateway/test_session.py;tests/gateway/test_session_hygiene.py;tests/tools/test_send_message_tool.py
+69090d6da1	2026-03-11	fix: add **kwargs to base/telegram media send methods for metadata routing	2	-
+0c182211a1	2026-03-14	fix(telegram): check updater/app state before disconnect	1	-
+3fab72f1e1	2026-03-14	fix(gateway): clean up pending Telegram media groups on disconnect	2	tests/gateway/test_telegram_documents.py
+5a2fcaab39	2026-03-14	fix(gateway): harden Telegram polling conflict handling	9	tests/gateway/test_runner_fatal_adapter.py;tests/gateway/test_status.py;tests/gateway/test_telegram_conflict.py;tests/hermes_cli/test_gateway_runtime_health.py
+8fb618234f	2026-03-14	fix(gateway): buffer Telegram media groups to prevent self-interruption	2	tests/gateway/test_telegram_documents.py
+4298c6fd9a	2026-03-15	fix: route background process watcher notifications to Telegram forum topics (#1481)	2	-
+4ae1334287	2026-03-15	fix(gateway): prevent telegram photo burst interrupts	5	tests/gateway/test_image_enrichment.py;tests/gateway/test_telegram_documents.py
+a56937735e	2026-03-15	fix(telegram): escape chunk indicators in MarkdownV2 (#1478)	2	tests/gateway/test_telegram_format.py
+25b0ae7979	2026-03-16	fix(telegram): retry on transient TLS failures during connect and send	1	-
+365d175100	2026-03-17	fix: apply MarkdownV2 formatting in _send_telegram for proper rendering	1	-
+7ac9088d5c	2026-03-17	fix: Telegram streaming — config bridge, not-modified, flood control (#1782)	5	-
+d156942419	2026-03-17	fix(telegram): aggregate split text messages before dispatching (#1674)	2	tests/gateway/test_telegram_text_batching.py
+02f639e561	2026-03-20	fix(telegram): add MarkdownV2 support for strikethrough, spoiler, and blockquotes	2	tests/gateway/test_telegram_format.py
+43b3a0ac66	2026-03-20	fix(telegram): escape backslashes and backticks inside code entities for MarkdownV2	2	tests/gateway/test_telegram_format.py
+488a30e879	2026-03-21	fix(gateway): retry Telegram 409 polling conflicts before giving up	2	tests/gateway/test_telegram_conflict.py
+febfe1c268	2026-03-21	fix(telegram): escape bare parentheses/braces in MarkdownV2 output	1	-
+2bd8e5cb23	2026-03-22	fix(telegram): auto-reconnect polling after network interruption	1	-
+3b509da571	2026-03-22	feat: auto-reconnect failed gateway platforms with exponential backoff (#2584)	3	tests/gateway/test_platform_reconnect.py;tests/gateway/test_runner_fatal_adapter.py
+89befcaf33	2026-03-22	fix(cron): support Telegram topic delivery via platform:chat_id:thread_id format (#2455)	3	tests/cron/test_scheduler.py
+6610c377ba	2026-03-26	fix(telegram): self-reschedule reconnect when start_polling fails (#3268)	2	tests/gateway/test_telegram_network_reconnect.py
+41d9d08078	2026-03-27	fix(telegram): fall back to no thread_id on 'Message thread not found' (#3390)	2	tests/gateway/test_telegram_thread_fallback.py
+d7c41f3cef	2026-03-28	fix(telegram): honor proxy env vars in fallback transport (salvage #3411) (#3591)	2	tests/gateway/test_telegram_network.py
+b60cfd6ce6	2026-03-29	fix(telegram): gracefully handle deleted reply targets (#3858)	1	-
+158f49f19a	2026-03-30	fix: enforce priority order in Telegram menu — core > plugins > skills (#4023)	1	-
+60ecde8ac7	2026-03-30	fix: fit all 100 commands in Telegram menu with 40-char descriptions (#4010)	2	-
+9fd78c7a8e	2026-03-30	fix: use SKILLS_DIR not repo path for Telegram menu skill filter (#4005)	1	-
+cdb64a869a	2026-03-30	fix(security): reject private and loopback IPs in Telegram DoH fallback (#4129)	1	-
+da3e22bcfa	2026-03-30	fix: cap Telegram menu at 50 commands — API rejects above ~60 (#4006)	1	-
+2ae50bdddd	2026-03-31	fix(telegram): enforce 32-char limit on command names with collision avoidance (#4211)	2	tests/hermes_cli/test_commands.py
+83dec2b3ec	2026-03-31	fix: skip empty/whitespace text in Telegram send to prevent 400 errors	1	-
+5db630aae4	2026-04-03	fix: respect per-platform disabled skills in Telegram menu and gateway dispatch (#4799)	6	tests/hermes_cli/test_commands.py;tests/hermes_cli/test_skills_config.py
+69f85a4dce	2026-04-03	fix(gateway): race condition, photo media loss, and flood control in Telegram	3	-
+85cefc7a5a	2026-04-04	fix(telegram): prevent duplicate message delivery on send timeout (#5153)	4	tests/gateway/test_send_retry.py;tests/gateway/test_telegram_thread_fallback.py
+4a75aec433	2026-04-05	fix(gateway): resolve Telegram's underscored /commands to skill/plugin keys	3	tests/agent/test_skill_commands.py
+abf1be564b	2026-04-05	fix(deps): include telegram webhook extra in messaging installs (#4915)	3	-
+214e60c951	2026-04-06	fix: sanitize Telegram command names to strip invalid characters	4	tests/agent/test_skill_commands.py;tests/hermes_cli/test_commands.py
+4a630c2071	2026-04-07	fix(telegram): replace substring caption check with exact line-by-line match	2	tests/gateway/test_telegram_caption_merge.py
+52b3a3ca3a	2026-04-07	fix: default Telegram reactions to off, remove dead _remove_reaction	1	-
+5075717949	2026-04-09	fix(telegram): adaptive batch delay for split long messages	1	-
+aed9b90ae3	2026-04-09	fix(stream_consumer): handle overflow when no message exists yet	1	-
+0e315a6f02	2026-04-10	fix(telegram): use valid reaction emojis for processing completion (#7175)	2	tests/gateway/test_telegram_reactions.py
+96f9b91489	2026-04-10	fix(gateway): replace assertions with proper error handling in Telegram and Feishu	2	-
+b1e2b5ea74	2026-04-10	fix(telegram): harden HTTPX request pools during reconnect	1	-
+d7607292d9	2026-04-11	fix(streaming): adaptive backoff + cursor strip to prevent message truncation (#7683)	2	-
+9e992df8ae	2026-04-12	fix(telegram): use UTF-16 code units for message length splitting (#8725)	6	tests/gateway/test_discord_reply_mode.py;tests/gateway/test_platform_base.py;tests/gateway/test_telegram_reply_mode.py
+0cc7f79016	2026-04-13	fix(streaming): prevent duplicate Telegram replies when stream task is cancelled (#9319)	2	tests/gateway/test_stream_consumer.py
+11e2e04667	2026-04-13	fix(telegram): pass proxy URL explicitly to HTTPXRequest when proxy env vars are set	1	-
+449c17e9a9	2026-04-14	fix(gateway): support Telegram MarkdownV2 expandable blockquotes	2	tests/gateway/test_telegram_format.py
+00ff9a26cd	2026-04-15	Fix Telegram link preview suppression for bot sends	4	tests/gateway/test_config.py;tests/tools/test_send_message_tool.py
+06d6903d3c	2026-04-15	fix(telegram): escape Markdown special chars in send_exec_approval	1	-
+096260ce78	2026-04-15	fix(telegram): authorize update prompt callbacks	3	tests/gateway/test_telegram_approval_buttons.py
+0cf7d570e2	2026-04-15	fix(telegram): restore typing indicator and thread routing for forum General topic	2	tests/gateway/test_telegram_thread_fallback.py
+4936b19144	2026-04-15	fix(cron): guard telegram import in _send_to_platform against ImportError	1	-
+5221ff9ed1	2026-04-15	fix(telegram): tolerate bare adapters in link preview helper	1	-
+63548e4fe1	2026-04-15	fix: validate Telegram bot token format during gateway setup (#9843)	1	-
+92a23479c0	2026-04-15	fix(model-switch): normalize Unicode dashes from Telegram/iOS input	3	tests/gateway/test_insights_unicode_flags.py
+c6398fcaab	2026-04-15	fix(prompt): list all supported Telegram markdown formatting	1	-
+e7c61baaa1	2026-04-15	fix: include telegram dependency in termux bundle	2	-
+31a72bdbf2	2026-04-16	fix: escape command content in Telegram exec approval prompt	2	-
+9a9b8cd1e4	2026-04-16	fix: keep rapid telegram follow-ups from getting cut off	3	tests/gateway/test_session_race_guard.py
+f05590796e	2026-04-16	fix(telegram): increase cold-boot retry budget and cap backoff	1	-
+1a9a2d7fe8	2026-04-18	fix(gateway/telegram): fall back to chat.id when from_user is None in DMs	1	-
+588333908c	2026-04-19	fix(telegram): warn on docker-only media paths	7	tests/gateway/test_runner_startup_failures.py;tests/gateway/test_telegram_documents.py
+ff63e2e005	2026-04-19	fix: tighten telegram docker-media salvage follow-ups	4	tests/gateway/test_runner_startup_failures.py;tests/gateway/test_telegram_documents.py
+11369a78f9	2026-04-20	fix(telegram): handle parentheses in URLs during MarkdownV2 link conversion	1	-
+1e18e0503f	2026-04-20	fix(telegram): use word-boundary matching for bot mention detection (#12545)	2	tests/gateway/test_telegram_mention_boundaries.py
+4c50b4689e	2026-04-20	fix(gateway): make Telegram DM topic config writes atomic	2	tests/gateway/test_dm_topics.py
+9fdfb09aed	2026-04-20	fix(telegram): cache inbound videos and accept mp4 uploads	3	tests/gateway/test_telegram_documents.py
+a5e368ebfb	2026-04-20	fix: publish plugin slash commands in Telegram menu	4	tests/hermes_cli/test_commands.py;tests/hermes_cli/test_plugins.py
+b65f6ca7fe	2026-04-20	fix(telegram): actionable error for DM topics when Topics mode not enabled (#13162)	2	-
+0dfb7b8a0d	2026-04-21	fix(tui): /resume picker shows telegram/discord/etc sessions	2	tests/gateway/test_session_list_all_sources.py
+16accd44bd	2026-04-21	fix(telegram): require TELEGRAM_WEBHOOK_SECRET in webhook mode (#13527)	2	tests/gateway/test_telegram_webhook_secret.py
+26abac5afd	2026-04-21	test(conftest): reset module-level state + unset platform allowlists (#13400)	3	tests/gateway/test_internal_event_bypass_pairing.py;tests/gateway/test_signal.py
+b0939d9210	2026-04-21	fix: slash commands now respect require_mention in Telegram groups	2	tests/gateway/test_telegram_group_gating.py
+70a33708e7	2026-04-22	fix(gateway/slack): align reaction lifecycle with Discord/Telegram pattern	2	tests/gateway/test_slack.py
+e7590f92a2	2026-04-24	fix(telegram): honor no_proxy for explicit proxy setup	5	tests/gateway/test_proxy_mode.py;tests/gateway/test_telegram_network.py
+3ff3dfb5ac	2026-04-26	fix(telegram): accept /cmd@botname from bot menu in groups	2	tests/gateway/test_telegram_group_gating.py
+6ce796b495	2026-04-28	fix(cron): preserve Telegram topic targets	2	tests/cron/test_scheduler.py
+d6137453ac	2026-04-28	fix(gateway): drain stale httpx polling connections on Telegram reconnect	2	tests/gateway/test_telegram_network_reconnect.py
+1f712173b2	2026-04-29	fix(telegram): support group user allowlist	4	tests/gateway/test_telegram_group_gating.py;tests/gateway/test_unauthorized_dm_behavior.py
+398945e7b1	2026-04-29	fix(cron): accept list-form deliver values so deliver=['telegram'] works (#17456)	4	tests/cron/test_scheduler.py;tests/tools/test_cronjob_tools.py
+763aadd6bf	2026-04-29	fix(telegram): preserve pre-#17686 chat-ID-in-_USERS configs + doc split	4	tests/gateway/test_unauthorized_dm_behavior.py
+a83d579d5b	2026-04-30	fix(telegram): enforce gateway auth for inline approval callbacks	2	tests/gateway/test_telegram_approval_buttons.py
+75e1339d4c	2026-05-01	fix(telegram): send seed message after creating DM topics (#18334)	1	-
+2470434d60	2026-05-02	fix(telegram): probe polling liveness after reconnect to detect wedged Updater	2	tests/gateway/test_telegram_network_reconnect.py
+e2cea6eeba	2026-05-02	fix(gateway): include external_dirs skills in Telegram/Discord slash commands (#18741)	2	tests/hermes_cli/test_commands.py
+222767e5e8	2026-05-03	fix: sanitize Telegram help command mentions	2	tests/gateway/test_gateway_command_help.py
+6fda92aa7f	2026-05-03	fix(gateway): bridge top-level require_mention to Telegram config	3	tests/gateway/test_telegram_group_gating.py
+86e64c1d3b	2026-05-03	fix(gateway): hide required-arg commands from Telegram menu	3	tests/hermes_cli/test_commands.py
+1381c89e56	2026-05-04	fix(telegram): polish topic mode — CASCADE, General-topic handling, rename guard, debounce	5	tests/gateway/test_telegram_topic_mode.py;tests/test_hermes_state.py
+25065283b3	2026-05-04	fix: improve telegram topic mode setup	7	tests/agent/test_title_generator.py;tests/gateway/test_telegram_topic_mode.py
+69fc6d9c1e	2026-05-04	fix(telegram): fall back to document on any send_photo failure, not just dim errors	1	-
+a7683d04a9	2026-05-04	fix(telegram): harden DM topic binding — persist through switch_session, rebind on /new	4	tests/gateway/test_telegram_topic_mode.py
+f6aa1965d7	2026-05-04	fix(telegram): fallback to document when photo dimensions exceed limits	1	-
+41545f7ec5	2026-05-05	fix(telegram): keep DM topic typing scoped	2	tests/gateway/test_telegram_thread_fallback.py
+6b76ea4707	2026-05-05	fix(gateway): load reply_to_mode from config.yaml for Discord and Telegram	3	tests/gateway/test_discord_reply_mode.py;tests/gateway/test_telegram_reply_mode.py
+f6b68f0f50	2026-05-05	fix(gateway): keep DoH-confirmed Telegram IPs that match system DNS (#14520)	2	tests/gateway/test_telegram_network.py
+2564132a1f	2026-05-07	fix(telegram): preserve thread_id=1 for forum General typing indicator (#21390)	2	tests/gateway/test_telegram_thread_fallback.py
+bd0c54d171	2026-05-07	fix: route Telegram image documents through photo handling	2	tests/gateway/test_telegram_documents.py
+448c11f16d	2026-05-09	fix(telegram): default notifications to 'important' (silence intermediate)	2	-
+854c2ce309	2026-05-09	fix(telegram): honor message.quote for partial-quote reply context	2	tests/gateway/test_telegram_reply_quote.py
+8fdaf4d3d6	2026-05-09	fix(telegram): exclude row-label column from bullet items in table rendering	1	-
+ae005ec588	2026-05-09	fix(send_message): map Telegram General topic id to None for forum groups (#22423)	2	tests/tools/test_send_message_tool.py
+aef297a45e	2026-05-09	fix(telegram): skip send_chat_action for DM topic reply-fallback lanes	2	tests/gateway/test_telegram_thread_fallback.py
+b3239572f0	2026-05-09	fix(telegram): preserve DM topic routing via reply fallback	6	tests/gateway/test_background_command.py;tests/gateway/test_telegram_thread_fallback.py;tests/gateway/test_voice_command.py
+2f00559d9e	2026-05-10	fix(telegram): pass source.thread_id explicitly on auto-reset notice (carve-out of #7404)	1	-
+737314fe91	2026-05-10	fix(telegram): normalize dm threads and retry control sends	4	tests/gateway/test_dm_topics.py;tests/gateway/test_telegram_approval_buttons.py;tests/gateway/test_telegram_model_picker.py
+bf1f40996f	2026-05-10	fix(telegram): split-and-deliver oversized edits instead of silent truncation	3	-
+c0da5d09a6	2026-05-10	fix: use UTF-16 length for Telegram stream consumer message splitting	3	-
+6f285efb80	2026-05-12	fix(telegram): clear in-progress reaction on cancelled processing (#24628)	2	tests/gateway/test_telegram_reactions.py
+9b2488af2a	2026-05-12	fix: include arg-taking commands in Telegram menu	2	tests/hermes_cli/test_commands.py
+e474130c48	2026-05-12	fix(telegram): use thread fallback helper in slash-confirm result send	1	-
+26deeea830	2026-05-14	fix(telegram): restore model-switch success path + author map	3	tests/gateway/test_telegram_model_picker.py
+a694040520	2026-05-14	fix(telegram): escape dynamic markdown in callback flows	4	tests/gateway/test_telegram_approval_buttons.py;tests/gateway/test_telegram_format.py;tests/gateway/test_telegram_model_picker.py
+d44dafdb4e	2026-05-14	fix(telegram): set REQUIRES_EDIT_FINALIZE so final MarkdownV2 edit is not skipped	1	-
+5338250dab	2026-05-16	fix(gateway): add direct_messages_topic_id for synthetic Telegram DM events	1	-
+6f817e1447	2026-05-16	fix(telegram): restore DM topic typing indicator	2	tests/gateway/test_telegram_thread_fallback.py
+1856bd9cc8	2026-05-17	fix(telegram): re-trigger typing indicator after sending messages	1	-
+d87b27cff8	2026-05-17	fix(gateway): add codex runtime telegram alias	2	tests/hermes_cli/test_commands.py
+16d8e44f7a	2026-05-18	fix(telegram): add DM topic typing fallback when message_thread_id rejected	2	tests/gateway/test_telegram_thread_fallback.py
+1891bee9d3	2026-05-18	fix(telegram): wire gt: callback dispatch for gmail-triage buttons	1	-
+1b3c51bccc	2026-05-18	fix(gateway): keep tool-progress edits alive after Telegram flood control	1	-
+21a15b6711	2026-05-18	fix(telegram): respect reply_to_mode for DM topic reply fallback	2	tests/gateway/test_telegram_reply_mode.py
+3ec28f34ca	2026-05-18	fix(telegram): preserve topic metadata on overflow edits	5	tests/gateway/test_run_progress_topics.py;tests/gateway/test_telegram_format.py
+417a653d9e	2026-05-18	fix(gateway): prevent Windows Telegram /restart leaving gateway stopped	4	tests/hermes_cli/test_gateway.py;tests/hermes_cli/test_gateway_windows.py
+434d508d0a	2026-05-18	fix(telegram): propagate extra base_url config	2	tests/gateway/test_config.py
+46ce3453c1	2026-05-18	fix(telegram): gate profile bots by allowed topics	3	tests/gateway/test_telegram_group_gating.py
+4b6d35bed2	2026-05-18	fix(telegram): escape send_slash_confirm preview with format_message	2	tests/gateway/test_telegram_slash_confirm.py
+5c4b43ced7	2026-05-18	fix(telegram): reset sticky fallback IP on connect failure, retry primary DNS	1	-
+6be579f626	2026-05-18	fix(telegram): preserve can_edit after transient network errors in progress edits (#27828)	3	tests/gateway/test_telegram_progress_edit_transient.py
+6fb57bc9cf	2026-05-18	fix(telegram): render full clarify choice text in message body, use short button labels	2	tests/gateway/test_telegram_clarify_buttons.py
+704872a62f	2026-05-18	fix(telegram): handle channel post updates	2	tests/gateway/test_telegram_channel_posts.py
+7682198178	2026-05-18	fix(gateway): register Telegram commands for groups	3	tests/gateway/test_telegram_forum_commands.py
+77c4675a50	2026-05-18	fix(telegram): route image documents (.png/.jpg/.webp/.gif) through vision pipeline	2	-
+7b2bcba167	2026-05-18	fix: avoid Telegram group reply thread session splits	3	tests/gateway/test_dm_topics.py;tests/gateway/test_telegram_thread_fallback.py
+7fad501f08	2026-05-18	fix(telegram): default streaming transport to edit	6	tests/gateway/test_config.py;tests/gateway/test_stream_consumer_draft.py
+89d32052ed	2026-05-18	fix(telegram): fail-closed auth fallback when TELEGRAM_ALLOWED_USERS is empty	2	tests/gateway/test_telegram_callback_auth_fail_closed.py
+95a0955e19	2026-05-18	fix(gateway): restore Telegram DM topic thread_id after session split (#27166)	3	tests/gateway/test_telegram_topic_mode.py
+a4fb0a3ac3	2026-05-18	fix(cron): route Telegram cron deliveries to a dedicated topic via TELEGRAM_CRON_THREAD_ID	7	tests/cron/test_scheduler.py
+af381ef12c	2026-05-18	fix(telegram): retry wrapped connect timeouts	2	tests/gateway/test_telegram_thread_fallback.py
+b38140eb8f	2026-05-18	fix(gateway): allow chat-scoped telegram auth without sender user_id	2	tests/gateway/test_unauthorized_dm_behavior.py
+b93996c35e	2026-05-18	fix(gateway): route Telegram audio file attachments away from STT pipeline (#24870)	2	tests/gateway/test_telegram_audio_vs_voice.py
+ba2572e54c	2026-05-18	fix(telegram): resume typing indicator after inline approval click (#27853)	2	tests/gateway/test_telegram_approval_buttons.py
+d69f0c1a99	2026-05-18	fix(gateway): mark final voice reply as notify-worthy so Telegram delivers it audibly	3	tests/gateway/test_send_voice_reply_notify.py;tests/gateway/test_voice_command.py
+d81b888807	2026-05-18	fix(telegram): report cron topic fallback	4	tests/cron/test_scheduler.py;tests/gateway/test_telegram_thread_fallback.py
+db50af910b	2026-05-18	fix(telegram): enforce TELEGRAM_ALLOWED_USERS allowlist on inbound messages	1	-
+de4cb55bf3	2026-05-18	fix(telegram): route resumed DM topic sends directly	3	tests/gateway/test_telegram_thread_fallback.py
+df530b4a0c	2026-05-18	fix(send_message): add thread-not-found retry for Telegram forum topic sends	1	-
+ed9087fce7	2026-05-18	fix(tts): keep native audio outside Telegram voice delivery	2	tests/tools/test_tts_opus_routing.py
+edce8a5fd4	2026-05-18	fix(send_message): route standalone Telegram sends through TELEGRAM_PROXY	2	tests/tools/test_send_message_telegram_proxy.py
+ede47a54be	2026-05-18	fix(gateway): pin Telegram DM-topic routing to user's current topic	3	tests/gateway/test_telegram_topic_mode.py
+f260aa6dc0	2026-05-18	fix(telegram): recover from post-update polling conflict without entering limbo	2	-
+f55c67ac1f	2026-05-18	fix(gateway): roll over Telegram tool progress bubbles	2	tests/gateway/test_run_progress_topics.py
+f8eeb570cb	2026-05-18	fix(gateway): avoid duplicate Telegram text after auto-TTS voice replies	2	tests/gateway/test_base_topic_sessions.py
+fbabd560ff	2026-05-18	fix(gateway): route background-process notifications into Telegram DM topics	6	tests/gateway/test_background_process_notifications.py
+fbfe294882	2026-05-18	fix: ignore Telegram messages for other bots	2	tests/gateway/test_telegram_group_gating.py
+a3c753128d	2026-05-19	fix(telegram): address post-merge audit follow-ups (#28670, #28672, #28674, #28676, #28678)	2	-
+5672772dab	2026-05-20	fix(gateway): reorder telegram menu priority — everyday commands first	1	-
+b9b6e034d5	2026-05-20	fix(gateway): prioritize Telegram command menu	2	tests/hermes_cli/test_commands.py
+4a91e36495	2026-05-23	fix(gateway): separate observed Telegram group context	6	tests/gateway/test_telegram_group_gating.py;tests/test_hermes_state.py
+9451087aab	2026-05-23	fix(telegram): preserve observed group slash commands	2	tests/gateway/test_telegram_group_gating.py
+476c897439	2026-05-24	fix(telegram): gate send() on send-path health after reconnect storms (#31165)	2	tests/gateway/test_telegram_send_path_health.py
+5b52e26d18	2026-05-24	fix(gateway): swallow transient Telegram TimedOut at loop level	2	tests/gateway/test_loop_exception_handler.py
+bdc9b0eff5	2026-05-24	fix(telegram): preserve new DM topic lanes	3	tests/gateway/test_telegram_thread_fallback.py;tests/gateway/test_telegram_topic_mode.py
+27df4b3882	2026-05-25	fix(telegram): exempt reply_to_mode=off DM topic sends from anchor-required guard	1	-
+415be55394	2026-05-25	fix: route Telegram DM topic deliveries directly	4	tests/gateway/test_delivery.py;tests/gateway/test_telegram_thread_fallback.py
+96c71d8c46	2026-05-25	fix: require anchors for Telegram DM topic deliveries	2	tests/gateway/test_delivery.py
+9d10c45e32	2026-05-25	fix(telegram): tighten table row-group spacing and drop redundant first bullet	2	tests/gateway/test_telegram_format.py
+c394e7919d	2026-05-25	fix: refresh stale Telegram DM topic threads	5	tests/gateway/test_delivery.py;tests/gateway/test_dm_topics.py;tests/gateway/test_telegram_thread_fallback.py
+dcd504cea4	2026-05-25	fix: auto-create Telegram DM topics for delivery	5	tests/gateway/test_delivery.py;tests/gateway/test_dm_topics.py;tests/gateway/test_telegram_thread_fallback.py
+0325e18f34	2026-05-27	fix(gateway): keep Telegram heartbeat + interim commentary on; edit heartbeat in place (#33187)	7	tests/gateway/test_display_config.py;tests/gateway/test_run_cleanup_progress.py;tests/gateway/test_run_progress_topics.py
+8807b1c727	2026-05-27	fix(gateway): hide telegram compaction status noise	2	tests/gateway/test_telegram_noise_filter.py
+efa952531b	2026-05-27	fix: ignore Telegram start pings	4	tests/gateway/test_gateway_command_help.py;tests/gateway/test_session_race_guard.py
+5407d25599	2026-05-28	Fix Telegram DM topic text batch keying	2	tests/gateway/test_telegram_text_batching.py
+db96fc60d0	2026-05-28	fix(gateway): keep Telegram topic bindings aligned with compression children (#34409)	2	tests/gateway/test_telegram_topic_mode.py
+784d8dd2c2	2026-05-29	fix(matrix): fail-closed approval reaction auth when MATRIX_ALLOWED_USERS is empty	2	tests/gateway/test_matrix_approval_reaction_fail_closed.py
+dc4de14377	2026-05-30	fix(telegram): retry on httpx pool timeout instead of dropping the send (#35664)	2	tests/gateway/test_telegram_thread_fallback.py
+4259bab7d4	2026-05-31	fix(gateway): preserve Telegram DM topic routing metadata in synthetic notifications	3	tests/gateway/test_restart_notification.py;tests/gateway/test_update_command.py
+f768e75ecf	2026-06-01	fix(telegram): cache observed group media	2	tests/gateway/test_telegram_group_gating.py
+fec5ca71d8	2026-06-03	fix: preserve telegram queue fifo during grace window	2	tests/gateway/test_busy_session_ack.py
+454d6cbe52	2026-06-04	fix(telegram): finalize sealed overflow chunk so split streamed replies render formatting	2	-
+2e62862784	2026-06-07	fix(telegram): use get_running_loop in polling-conflict retry reschedule (#41716)	2	tests/gateway/test_telegram_conflict.py
+ae82eed2b1	2026-06-07	fix(gateway): use OGG for Telegram auto TTS	2	tests/gateway/test_auto_voice_reply_format.py
+f4531feee8	2026-06-08	fix(telegram): improve MarkdownV2 edit fallback and fix _strip_mdv2 bold handling	2	tests/gateway/test_telegram_format.py
+3b4c715e1c	2026-06-10	fix(telegram): stripped-text fallbacks, re-finalize skip, and tail-only delete guard	4	tests/gateway/test_stream_consumer.py;tests/gateway/test_stream_consumer_fresh_final.py
+590b3c0d7e	2026-06-10	fix(gateway): recover partial Telegram overflow streams	6	tests/gateway/test_telegram_overflow_partial.py
+d0e017bac8	2026-06-11	fix(gateway): gate oversized Telegram voice/audio before download (#44245)	3	tests/gateway/test_telegram_voice_v0_regressions.py
+57c2a55be4	2026-06-13	fix(telegram): harden rich message fallback handling	2	tests/gateway/test_telegram_rich_messages.py
+7c0605bf22	2026-06-13	fix(telegram): preserve rich formatting on stream final	8	tests/agent/test_prompt_builder.py;tests/gateway/test_stream_consumer_draft.py;tests/gateway/test_stream_consumer_thread_routing.py;tests/gateway/test_telegram_rich_messages.py
+9459057d7f	2026-06-14	fix(telegram): guard rich details math crash (#46102)	2	tests/gateway/test_telegram_rich_messages.py
+a1f51feb72	2026-06-14	fix(telegram): avoid rich final duplicate previews (#46206)	13	tests/gateway/test_config.py;tests/gateway/test_stream_consumer.py;tests/gateway/test_stream_consumer_fresh_final.py;tests/gateway/test_telegram_rich_messages.py
+01ae9b853e	2026-06-16	fix(telegram): resolve replies to rich (sendRichMessage) messages	3	-
+4d470b3dbb	2026-06-16	fix(slack): route /debug via /hermes to restore Telegram-parity (#47248)	1	-
+a6364bfa08	2026-06-16	fix(telegram): edit streamed previews in place as rich (Bot API 10.1) (#46890)	7	tests/gateway/test_config.py;tests/gateway/test_telegram_rich_messages.py
+29e5e127c6	2026-06-20	fix(telegram): recover reply text from native rich echo	2	tests/gateway/test_telegram_rich_messages.py
+38f1a923af	2026-06-20	fix(gateway): rename the Telegram topic from /title, not only auto-titles	2	tests/gateway/test_title_command.py
+79f297834a	2026-06-20	fix(gateway): widen cron namespace-collision fix to all migrated adapters	3	-
+c1f11f8c69	2026-06-20	fix(telegram): index streamed rich finals via editMessageText too	2	tests/gateway/test_telegram_rich_messages.py
+09a96ba0f6	2026-06-21	fix(gateway): pause Telegram typing before stream finalize	3	tests/gateway/test_stream_consumer.py
+2f4f23fbfb	2026-06-21	fix(codex): bridge app-server item/started events to Telegram tool-progress (#38835)	2	tests/run_agent/test_codex_app_server_integration.py
+31e59fe44d	2026-06-21	fix(telegram): preserve newlines in rich slash-command output (#46070)	2	tests/gateway/test_telegram_rich_newlines.py
+4314d451ca	2026-06-21	fix(gateway): accept any inbound file type across all messaging platforms	10	tests/gateway/test_discord_document_handling.py;tests/gateway/test_document_cache.py;tests/gateway/test_telegram_documents.py
+4cc28aa3bb	2026-06-21	fix(cron): route Telegram DM-topic cron delivery through DeliveryRouter (#22773)	2	tests/cron/test_scheduler.py
+565b7c8d9d	2026-06-21	fix(telegram): stop typing indicator lingering after final reply	2	tests/gateway/test_telegram_format.py
+6183e8ce1b	2026-06-21	fix(telegram): make Bot API 10.1 rich messages opt-in (default off)	7	tests/gateway/test_config.py;tests/gateway/test_telegram_rich_messages.py
+796f618f99	2026-06-21	fix(telegram): keep chunk markers outside code fences	2	tests/gateway/test_telegram_format.py
+a966932392	2026-06-21	fix(telegram): exempt tables from rich newline hard-breaks	2	tests/gateway/test_telegram_rich_newlines.py
+b5bd66eac9	2026-06-21	fix(telegram): observed/replied group docs of any type are cached too	2	tests/gateway/test_telegram_group_gating.py
+ea056b0559	2026-06-21	fix(telegram): avoid rich messages for CJK text	2	tests/gateway/test_telegram_rich_messages.py
+6681f28d5b	2026-06-22	fix(telegram): disable DM topic mode when last binding is pruned	2	tests/gateway/test_telegram_prune_stale_topic_binding_31501.py
+86e4521cb1	2026-06-22	fix(delivery): make cron output truncation configurable + adapter-aware	5	tests/gateway/test_delivery.py
+d4be583d98	2026-06-23	fix(telegram): raise default command-menu cap to 60 so skills stay visible	5	tests/hermes_cli/test_commands.py
+d539cd9004	2026-06-23	fix(config): write config.yaml as UTF-8 to stop emoji/personality corruption (#51676)	4	tests/hermes_cli/test_atomic_yaml_write.py
+17beb55e3c	2026-06-24	fix(telegram): gate rich draft previews separately	6	tests/gateway/test_config.py;tests/gateway/test_telegram_rich_messages.py
+4b7f3826c2	2026-06-24	fix(telegram): wire platform_httpx_limits into general-pool HTTPXRequest (#31599)	2	tests/gateway/test_telegram_closewait_limits_31599.py
+73a20a6ad6	2026-06-24	fix(telegram): clip mid-stream overflow instead of splitting (#48648)	2	tests/gateway/test_telegram_format.py
+0aea0c3654	2026-06-25	fix(utils): unify YAML list indent across all config writers (#31999)	4	tests/test_yaml_indent_consistency_31999.py
+404b06ac4f	2026-06-25	fix(gateway): honor server retry_after in _send_with_retry for Telegram flood control (#46762)	3	tests/gateway/test_send_retry.py
+43b8ba4181	2026-06-25	fix(telegram): preserve Bot API update queue on watcher reconnect	65	tests/gateway/relay/test_relay_going_idle.py;tests/gateway/restart_test_helpers.py;tests/gateway/test_active_session_text_merge.py;tests/gateway/test_base_topic_sessions.py;tests/gateway/test_cancel_background_drain.py;tests/gateway/test_command_bypass_active_session.py;tests/gateway/test_duplicate_reply_suppression.py;tests/gateway/test_ephemeral_reply.py;tests/gateway/test_interrupt_key_match.py;tests/gateway/test_keep_typing_timeout.py;tests/gateway/test_pending_drain_no_recursion.py;tests/gateway/test_pending_drain_race.py;tests/gateway/test_platform_base.py;tests/gateway/test_platform_reconnect.py;tests/gateway/test_platform_reconnect_fd_leak.py;tests/gateway/test_post_delivery_callback_chaining.py;tests/gateway/test_queue_consumption.py;tests/gateway/test_relay_capability_surface.py;tests/gateway/test_run_cleanup_progress.py;tests/gateway/test_run_progress_interrupt.py;tests/gateway/test_run_progress_topics.py;tests/gateway/test_runner_fatal_adapter.py;tests/gateway/test_runner_startup_failures.py;tests/gateway/test_send_multiple_images.py;tests/gateway/test_send_retry.py;tests/gateway/test_session_hygiene.py;tests/gateway/test_session_split_brain_11016.py;tests/gateway/test_status_command.py;tests/gateway/test_telegram_clarify_buttons.py;tests/gateway/test_telegram_conflict.py;tests/gateway/test_telegram_thread_fallback.py;tests/gateway/test_tool_response_drop_recovery.py;tests/gateway/test_tts_media_routing.py;tests/tools/test_send_message_tool.py
+8501caf51f	2026-06-25	fix(telegram): persistent heartbeat loop to detect CLOSE-WAIT polling sockets	2	tests/gateway/test_telegram_network_reconnect.py
+9d225fbf4e	2026-06-25	fix(telegram): auto-rich pipe tables and topic routing for sendRichMessage	1	-
+ce802e932c	2026-06-25	fix(telegram): heartbeat loop exits cleanly when bot has no get_me	2	tests/gateway/test_telegram_conflict.py
+f284d85efa	2026-06-25	fix(cron): restore [SILENT] silence + suppress empty-turn explainer on Telegram	2	tests/cron/test_scheduler.py
+57864d07ed	2026-06-27	fix(gateway): suppress operational status/error noise on all chat gateways, not just Telegram (#39293)	2	tests/gateway/test_telegram_noise_filter.py
+6326d5c6f6	2026-06-27	fix: remove duplicated table renderer from Telegram adapter	1	-
+6fb25f86ac	2026-06-27	fix(telegram): filter out bot's own messages from inbound processing (#52363)	1	-
+ab1f9b94c5	2026-06-27	fix(telegram): accept @username chat_id in delivery paths (#13206)	4	tests/gateway/test_telegram_username_chat_id.py
+db16854f34	2026-06-27	fix(telegram): surface failed media downloads to user and agent, not a silent empty turn (#53912)	2	tests/gateway/test_telegram_documents.py
+f03823014b	2026-06-27	fix(telegram): kill 409 polling conflict loop by disarming PTB retry synchronously (#53941)	2	tests/gateway/test_telegram_conflict.py
+2ecb6f7fe6	2026-06-28	fix(telegram): clear send_path_degraded on successful reconnect (#35205) (#54076)	3	tests/gateway/test_telegram_send_path_health.py
+3f543229f2	2026-06-28	fix(telegram): notify user when clarify button tap arrives after expiry	2	tests/gateway/test_telegram_clarify_buttons.py
+7b9ff310b6	2026-06-28	fix: salvage #33830 for current main — relocate allow_bots bridge to telegram plugin hook, fix stale adapter import in test	1	tests/gateway/test_telegram_bot_auth_bypass.py
+7e2ca7f68d	2026-06-28	fix(telegram): reset send pool after pool timeouts	2	tests/gateway/test_telegram_thread_fallback.py
+c648ecdca5	2026-06-28	fix(telegram): reject unauthorized users before event construction (#40863)	3	tests/gateway/test_telegram_auth_check.py
+d5ba374c03	2026-06-28	fix(telegram): detect wedged getUpdates consumer via pending_update_count	2	tests/gateway/test_telegram_pending_update_probe.py
+fc70d023d8	2026-06-28	fix(telegram): apply bot auth policy to Telegram sources	6	tests/gateway/test_config.py;tests/gateway/test_discord_bot_auth_bypass.py;tests/gateway/test_feishu_bot_auth_bypass.py;tests/gateway/test_telegram_bot_auth_bypass.py
+6735162531	2026-06-29	fix(gateway): offload the Telegram topic-recovery helper tree off the loop	8	tests/gateway/test_35809_auto_reset_clean_context.py;tests/gateway/test_async_session_db.py;tests/gateway/test_resume_command.py;tests/gateway/test_telegram_topic_mode.py;tests/gateway/test_title_command.py
+8ad15ff7dd	2026-06-30	fix(telegram): cancel delayed deliveries on disconnect	2	tests/gateway/test_telegram_text_batching.py
+b7c4369ca0	2026-06-30	fix(telegram): chunk formatted messages with UTF-16 length accounting	2	tests/tools/test_send_message_tool.py
+e55e9fad2c	2026-06-30	fix(telegram): recover when polling updater stops while process stays alive	2	tests/gateway/test_telegram_pending_update_probe.py
+3362bdb4e5	2026-07-01	fix(telegram): defer post-connect housekeeping off the connect path	2	tests/gateway/test_telegram_conflict.py
+43edbae638	2026-07-01	fix(telegram): widen NoneType reconnect guard to the conflict-retry path	1	-
+5505dbbf43	2026-07-01	fix(telegram): accept both list and mapping shapes for group_topics config	2	tests/gateway/test_dm_topics.py
+69f08c2eb5	2026-07-01	fix(telegram): guard _post_connect_task access for object.__new__ test pattern	1	-
+7a2369718a	2026-07-01	fix(telegram): keep polling alive during transient bootstrap outages	3	tests/gateway/test_telegram_network_reconnect.py
+8341b72122	2026-07-01	fix(gateway): bind Telegram handoffs to DM topics	2	tests/gateway/test_telegram_topic_mode.py
+9f03095044	2026-07-01	fix(telegram): cap initialize() with per-attempt timeout so unreachable fallback IPs can't hang startup	3	-
+a682091044	2026-07-01	fix(telegram): close reconnect races that leave adapter half-destroyed	4	tests/gateway/test_runner_fatal_adapter.py;tests/gateway/test_telegram_network_reconnect.py
+cc1e4c32c0	2026-07-01	fix(telegram): normalize thread id in group gating via shared helper	2	tests/gateway/test_telegram_group_gating.py
+7a648a8bff	2026-07-04	fix(telegram): paginate model provider picker	2	tests/gateway/test_telegram_model_picker.py
+8645b34303	2026-07-04	fix(telegram): bound updater.stop() with timeout to prevent CLOSE-WAIT reconnect hang	2	tests/gateway/test_telegram_network_reconnect.py
+a37fd66dec	2026-07-04	fix(telegram): shut down abandoned init app + AUTHOR_MAP + cover the deadline helper	3	tests/gateway/test_telegram_init_deadline.py
+b1c7b96547	2026-07-04	fix(telegram): bound the 3 sibling updater.stop() calls with the same CLOSE-WAIT timeout	2	tests/gateway/test_telegram_network_reconnect.py
+c3ab1424e6	2026-07-04	fix(telegram): redact transport error tokens	2	tests/gateway/test_telegram_rich_messages.py
+d50aae0e35	2026-07-04	fix(telegram): use wall deadline for init timeout	2	tests/gateway/test_telegram_init_deadline.py
+fc31f14cda	2026-07-04	fix(cron): disambiguate Telegram forum vs channel DM topics at delivery time (#52060)	2	tests/cron/test_scheduler.py
+01ee312de6	2026-07-05	fix(telegram): forward keepalive limits into fallback transport	2	tests/gateway/test_telegram_network.py
+123c6f3a23	2026-07-05	fix(config): close unreadable-overwrite bug class at a single chokepoint	8	tests/hermes_cli/test_config.py
+1e2914b40a	2026-07-05	fix(telegram): redact bot token from connect/disconnect/send_document/send_video errors	2	tests/gateway/test_telegram_error_redaction.py
+8a9bc38c2e	2026-07-05	fix(gateway): route multiplex profile responses through correct adapter	1	-
+a0a3c716fc	2026-07-05	fix(telegram): dedup saturated mid-stream overflow previews to stop flood-control edit storms (#58563)	2	tests/gateway/test_telegram_format.py
+4a80e27bba	2026-07-06	fix telegram explicit private thread routing	2	tests/gateway/test_telegram_thread_fallback.py
+4aaaa206aa	2026-07-07	fix(telegram): add timeout to start_polling() in network error handler	2	tests/gateway/test_telegram_start_polling_timeout.py
+a796e0b796	2026-07-07	fix: cool down transient Telegram typing failures (#46355)	2	tests/gateway/test_telegram_typing_backoff.py
+aaeba213d9	2026-07-07	fix(telegram): bound start_polling() at bootstrap and conflict-retry sites too; strengthen tests	2	tests/gateway/test_telegram_start_polling_timeout.py
+97fb9e1f62	2026-07-10	fix(telegram): classify PTB heartbeat transport errors	1	-
+04898631cb	2026-07-11	fix(telegram): recover final delivery after stream flood	3	tests/gateway/test_telegram_final_delivery.py
+4aa499ff9f	2026-07-11	fix(telegram): harden flood fallback recovery	3	tests/gateway/test_telegram_final_delivery.py
+d48bf743f2	2026-07-13	fix(approval): scope smart deny owner overrides to one operation	52	tests/acp/test_permissions.py;tests/cli/test_cli_approval_ui.py;tests/gateway/test_api_server_runs.py;tests/gateway/test_approval_prompt_redaction.py;tests/gateway/test_slack_approval_buttons.py;tests/gateway/test_telegram_approval_buttons.py;tests/gateway/test_tui_approval_redaction.py;tests/tools/test_approval.py;tests/tools/test_execute_code_approval_cluster.py
+2a0dd95ccf	2026-07-14	fix(telegram): classify and dedup post-reconnect probe failures (#63243)	2	tests/gateway/test_telegram_network_reconnect.py
+34d07732dd	2026-07-14	fix(telegram): respect rich_messages config for pipe table routing	2	tests/gateway/test_telegram_rich_messages.py
+b45a217e0a	2026-07-14	fix(agent): gate Telegram rich-Markdown hint on rich_messages config	4	tests/agent/test_prompt_builder.py;tests/agent/test_system_prompt.py
+b8295cf6f7	2026-07-14	fix(telegram): gate polling health on getUpdates progress	6	tests/gateway/test_telegram_conflict.py;tests/gateway/test_telegram_network_reconnect.py;tests/gateway/test_telegram_polling_progress.py;tests/gateway/test_telegram_send_path_health.py;tests/test_telegram_polling_progress_ptb.py
+e16743b0d5	2026-07-14	fix(telegram): diagnose blocked-loop init hangs, unbind DoH from system DNS	4	tests/gateway/test_telegram_init_deadline.py;tests/gateway/test_telegram_network.py
+f5f79ff1b4	2026-07-14	fix(telegram): instrument getUpdates request via subclass re-tag, not slotted attr	1	-
+647520f83e	2026-07-15	fix(gateway): gate profile routing on multiplex_profiles + widen batch-key routing to all adapters	11	tests/gateway/test_profile_resolution.py
+13906cd4de	2026-07-16	fix(telegram): support free-response topics	2	tests/gateway/test_telegram_group_gating.py
+27364b24fe	2026-07-16	fix(gateway): set duration on Telegram voice/audio so long clips don't show 0:00	2	tests/gateway/test_telegram_voice_duration.py
+6e96b745d8	2026-07-16	fix(telegram): redact bot tokens from transport error logs	1	-
+a04fcbf779	2026-07-16	fix(telegram): widen transport-error redaction to all remaining raw exception sites	2	tests/gateway/test_telegram_error_redaction.py
+d73a6f5ac2	2026-07-16	fix(telegram): include duration in standalone sends	2	tests/gateway/test_telegram_voice_duration.py
+3391e639f6	2026-07-18	fix(telegram): bound polling drain so wedged pool close can't stall reconnect ladder (#66377)	2	tests/gateway/test_telegram_network_reconnect.py
+c2cb37532c	2026-07-18	fix(telegram): add cause-agnostic wedged-recovery watchdog so the reconnect ladder can't freeze silently (#66377)	2	tests/gateway/test_telegram_network_reconnect.py
+02d8cbadec	2026-07-21	fix(approval): honor allow_session across all button adapters	7	-
+087732c8c6	2026-07-21	fix(telegram): widen fatal handoff to heartbeat watchdog path	2	tests/gateway/test_telegram_network_reconnect.py
+1ba0e873ff	2026-07-21	fix(telegram): preserve fatal recovery handoff	3	tests/gateway/test_telegram_conflict.py;tests/gateway/test_telegram_network_reconnect.py
+a31a31826c	2026-07-21	fix(approval): raise gateway approval timeout to 300s, honest stale-tap UX, offer Always on mixed prompts (#68597)	13	tests/gateway/test_telegram_approval_buttons.py;tests/tools/test_command_guards.py
+45fce38b9e	2026-07-22	fix(telegram): group authz fallback + command sender identity	2	-
+54a0f07101	2026-07-22	fix(gateway): mark unconfigured platforms as non-retryable to stop reconnect loop	5	tests/gateway/test_discord_connect.py;tests/gateway/test_telegram_connect.py
+7078430934	2026-07-22	fix(telegram): address review findings from PR #67816	4	tests/gateway/test_telegram_group_gating.py
+9ecacd6bf4	2026-07-22	fix(telegram): update auth check tests for group_allow_from split	1	tests/gateway/test_telegram_auth_check.py
+0cd4afeafd	2026-07-23	fix(security): guard remaining preflighted HTTP fetches	9	tests/gateway/test_feishu.py;tests/gateway/test_slack.py;tests/gateway/test_telegram_thread_fallback.py;tests/gateway/test_wecom.py;tests/tools/test_skill_bundle_provenance.py
+5b76ce169b	2026-07-24	fix(gateway): pass encoding="utf-8" to read_text/write_text in update path (#37423)	9	tests/gateway/test_gateway_utf8_encoding.py
+7338309807	2026-07-24	fix(telegram): prevent connect hang with retry watchdog and fresh app per attempt (#67498)	1	-
+83e30e371f	2026-07-24	fix(telegram): require initial polling readiness	3	tests/gateway/test_telegram_polling_progress.py;tests/gateway/test_telegram_start_polling_timeout.py
+9f8810a693	2026-07-24	fix(gateway): allow Telegram readiness budget	2	tests/gateway/test_platform_reconnect.py
+c8ff720508	2026-07-24	fix(telegram): bind strict cold-start readiness to its own polling generation	3	tests/gateway/test_telegram_start_polling_timeout.py
+d4b867cf9f	2026-07-24	fix(windows): sweep remaining unguarded text-mode subprocess sites codebase-wide	28	-
+fecceec11e	2026-07-25	fix(telegram): restore 2x2 exec-approval button layout	1	-
+08130a26f6	2026-07-26	fix(telegram): follow @username renames and support non-"bot" handles	3	tests/gateway/test_telegram_group_gating.py
+1bdec6f065	2026-07-26	fix(kanban): preserve telegram dm topic metadata	13	tests/gateway/test_kanban_notifier.py;tests/gateway/test_session_env.py;tests/hermes_cli/test_kanban_core_functionality.py;tests/hermes_cli/test_kanban_db_init.py;tests/hermes_cli/test_kanban_notify.py;tests/tools/test_kanban_tools.py
+ca2491f201	2026-07-26	fix(telegram): release fallback transport pools on connect failure	2	-
+d7488a5579	2026-07-26	fix(telegram): treat "never checked" identity as stale on a fresh-boot clock	2	tests/gateway/test_telegram_group_gating.py
+2c771be406	2026-07-28	fix(gateway): dual-stack webhook bind for wecom/msgraph/whatsapp_cloud/teams/telegram siblings	7	-
+4ae27548d6	2026-07-28	fix(media): recognize m2a audio attachments	8	tests/gateway/test_document_cache.py;tests/gateway/test_extract_local_files.py;tests/gateway/test_platform_base.py;tests/gateway/test_telegram_documents.py;tests/tools/test_send_message_tool.py
+ee15e04803	2026-07-28	fix(telegram): render markdown in voice-message captions	1	-
+ef274a4829	2026-07-28	fix(tts): keep Telegram caption on the original reply text	2	tests/gateway/test_base_topic_sessions.py
+240afd0b70	2026-07-29	fix(telegram): batch near-limit command chunks so split /queue pastes don't orphan their continuation	2	tests/gateway/test_telegram_long_command_batching.py
+6cf4bdd165	2026-07-29	test(gateway): fix order-dependent telegram-mock flake cluster	3	tests/gateway/test_dm_topics.py
+703fe94174	2026-07-29	fix(gateway): keep no-patterns early return in mention compilation	2	-
+ab694586b2	2026-07-29	fix: resolve pinned Telegram sessions into sidebar Pinned section	1	-
+524ab53994	2026-07-30	fix(telegram): apply media read_timeout to all upload send paths, not just video	2	tests/tools/test_managed_tool_gateway.py
+57a807373d	2026-07-31	fix(telegram): send_image uploads still went out on the short read timeout	2	tests/gateway/test_telegram_media_read_timeout.py
+30878411b8	2026-08-01	fix(gateway): stop stale streamed finalize from suppressing the complete Telegram response	3	tests/gateway/test_stale_finalize_suppression.py
+81c0691e17	2026-08-01	fix(gateway): per-profile Discord/Telegram allow-deny gates under multiplex_profiles	4	tests/plugins/platforms/test_discord_gate_isolation.py
+dae4cf6bb6	2026-08-01	fix(telegram): let pairing-bound DMs past early auth with allowlist	1	-
+359ff01c23	2026-08-02	fix(secrets): scope-aware standalone-send and startup credential reads in platform adapters	4	-
+e05eba26a3	2026-08-04	fix(telegram+sqlite): resolve polling conflict loop + misleading WAL warning	3	tests/gateway/test_telegram_conflict.py
+0d32607c62	2026-08-07	fix(gateway): split check_fn (passive probe) from ensure_deps_fn (active installer)	16	tests/gateway/test_platform_registry.py;tests/gateway/test_startup_no_eager_platform_install.py;tests/gateway/test_teams.py
+7141a6dc3a	2026-08-07	fix(gateway): queue reconnect before fatal disconnect wedges (#80598)	2	-
+e5e96e8bb5	2026-08-07	fix: harden _await_disconnect_step against outer cancellation + add claim keys	2	-
+022d196f38	2026-08-08	fix(telegram): honor UTF-16 entity offsets	2	tests/gateway/test_telegram_mention_boundaries.py
+95520b812f	2026-08-08	fix(agent): fail open on malformed telegram extra config	2	tests/agent/test_system_prompt.py
+9f582aca1d	2026-08-08	fix(agent): read Telegram rich_messages config from correct path	3	tests/agent/test_system_prompt.py
+3332ad4dbf	2026-08-09	fix(telegram): avoid MDV2 draft preview when rich_messages lacks rich_drafts	2	tests/gateway/test_telegram_rich_messages.py
+82255fa8ef	2026-08-10	fix(telegram): reset failed primary transport pool	3	tests/gateway/test_telegram_closewait_limits_31599.py;tests/gateway/test_telegram_fallback_pool_release_71593.py
+1e46e09bbd	2026-08-12	fix(gateway): scope reaction observers to routed profiles	3	tests/gateway/test_gateway_platform_event_hook.py
+24e3aa180f	2026-08-12	fix(plugins): gateway_platform_event error logs include traceback; pin handler groups	2	tests/gateway/test_gateway_platform_event_hook.py
+91bc822330	2026-08-12	fix(gateway): classify terminal adapter connect failures + escalate long-lived retry loops (OOF-156)	7	tests/gateway/test_adapter_connect_classification.py
+9994bc9ec9	2026-08-12	fix(gateway): enforce post-auth normalized reaction observer	9	tests/gateway/test_gateway_platform_event_hook.py;tests/gateway/test_multiplex_adapter_registry.py
+c0a4535a26	2026-08-12	fix(plugins): address #64176 review on gateway_platform_event (#68431)	3	tests/gateway/test_gateway_platform_event_hook.py
+547043a4d8	2026-08-14	fix(telegram): honor fallback disable during connect	3	tests/gateway/test_telegram_polling_progress.py
+c22815fcaa	2026-08-14	fix(gateway): cap Telegram cold-start connect so startup reaches running fast (#85993)	2	tests/gateway/test_startup_connect_parallel.py
+42dc17ec97	2026-08-15	fix(telegram): close hold-lifecycle gaps on permanent fatal and connected drain	2	tests/gateway/test_telegram_text_batching.py
+b4da6b15e1	2026-08-15	fix(telegram): hold inbound messages across disconnect instead of destroying them	2	tests/gateway/test_telegram_text_batching.py
+cb47f59ffa	2026-08-15	fix: standardize media-group CancelledError to raise	1	-
+25fabcf8eb	2026-08-16	fix(telegram): keep /loop and synthetic sends in the active DM topic	2	tests/gateway/test_telegram_reply_mode.py
+9ca11399c0	2026-08-16	fix(telegram): honor group_allowed_chats in early auth under multiplex profiles (#87132)	2	tests/gateway/test_telegram_auth_check.py
+a85e45da13	2026-08-16	fix(telegram): rebind TypeHandler in the deferred SDK import	1	-
+bd5565650d	2026-08-17	fix(telegram): try IPv4 API IPs before the dual-stack hostname	6	tests/gateway/test_telegram_fallback_pool_release_71593.py;tests/gateway/test_telegram_network.py;tests/gateway/test_telegram_polling_progress.py
+eb4bc1513f	2026-08-17	fix(telegram): log first-choice IPv4 stick as info, not warning	3	tests/gateway/test_telegram_network.py
+21260c3281	2026-08-19	fix(gateway): carry the profile in adapter-derived session keys (#88404)	13	tests/gateway/test_multiplex_adapter_session_key_namespace.py;tests/gateway/test_multiplex_busy_input_mode.py
+790c850144	2026-08-20	fix(telegram): preserve rich finals after DM drafts	3	tests/gateway/test_telegram_rich_messages.py
+fbca706789	2026-08-20	fix(telegram): log the first confirmed getUpdates progress per generation	2	tests/gateway/test_telegram_polling_health_confirmation.py
+e9a7c7aa4d	2026-08-21	fix(telegram): omit topic routing from rich edits	2	tests/gateway/test_telegram_rich_messages.py
+194729c95f	2026-08-22	fix(telegram): keep DM-topic tables on sendRichMessage when drafts degrade	1	-
+3841910cee	2026-08-22	fix(telegram): widen cancellation-shielded stop to sibling paths	1	-
+9e36774d77	2026-08-22	fix(telegram): rebuild after cancellation-shielded stop	3	tests/gateway/test_telegram_network_reconnect.py
+a444b673ad	2026-08-22	fix(telegram): fail closed on long send-path flood waits	2	tests/gateway/test_telegram_send_path_health.py
+bad2ed866c	2026-08-22	fix(telegram): honor the direct-messages-topic alias in the fresh-final gate	2	tests/gateway/test_telegram_rich_messages.py
+bf15b050b1	2026-08-23	fix(telegram): watchdog silent long-poll death via last getUpdates progress (#92991)	2	tests/gateway/test_telegram_polling_stall_watchdog.py
+6c1bfff65c	2026-08-25	fix(telegram): wait for reconnect before failing send as Not connected	1	-
+21b503fb18	2026-08-29	fix(telegram): rank complete menu candidate set	2	tests/hermes_cli/test_commands.py
+5cd9c4563c	2026-08-29	fix(telegram): recover exhausted request pool	2	tests/gateway/test_telegram_network_reconnect.py
+60a664519c	2026-08-29	fix(telegram): prioritize dynamic skill menu commands	2	tests/hermes_cli/test_commands.py
+ccc367dce0	2026-08-29	fix(prompt)+feat(gateway): platform-hint truth pass + universal voice-bubble transcode (all 22 hints source-verified) (#97873)	7	tests/gateway/test_tts_media_routing.py;tests/gateway/test_voice_transcode.py
+0943702c55	2026-08-31	fix(gateway): keep long turns controllable without blocking Telegram	11	tests/gateway/test_config_env_bridge_authority.py;tests/gateway/test_running_agent_session_toggles.py;tests/gateway/test_session_stall_watchdog.py;tests/gateway/test_steer_command.py;tests/gateway/test_turn_lease.py
+7790c8f4c4	2026-08-31	fix(telegram): bound stale-client cleanup and add Windows CLOSE-WAIT live probes (#87057)	2	tests/gateway/test_telegram_closewait_windows_live.py
+8288129475	2026-08-31	fix(telegram): bound polling drain with wall-clock deadline	2	tests/gateway/test_telegram_network_reconnect.py
+a06c0d0a2f	2026-08-31	fix(telegram): recover Windows CLOSE-WAIT getUpdates deadlock	2	-
+b02b7122f8	2026-08-31	fix(telegram): prevent Windows long-poll socket reuse deadlock	3	tests/gateway/test_telegram_closewait_limits_31599.py;tests/gateway/test_telegram_network_reconnect.py
+e2521fdef6	2026-09-01	fix(telegram): promote connect success line to WARNING so healthy startup is terminal-visible	2	tests/gateway/test_telegram_connect_success_visibility.py
+fab36436b2	2026-09-01	fix(gateway): keep one Telegram bubble when the finalize edit fails under reply_to_mode=first (#71047)	2	tests/gateway/test_telegram_final_delivery.py
+351e4c0067	2026-09-02	fix(state): namespace telegram topic tables by profile_name	3	tests/gateway/test_telegram_topic_profile_isolation_76423.py;tests/test_hermes_state.py
+4346721117	2026-09-02	fix(telegram): resolve button-caller authorization via the injected auth check, not handler introspection	2	tests/gateway/test_telegram_callback_auth_fail_closed.py
+62be7043ff	2026-09-02	fix(gateway): pass routed source.profile into telegram topic state	4	tests/gateway/test_telegram_topic_profile_routing_76423.py
+74775df53f	2026-09-02	fix(gateway): route-stamp primary callback auth and carry is_bot through the adapter auth check	4	tests/gateway/test_multiplex_interactive_auth.py
+d55d9d128a	2026-09-02	fix(gateway): route profile into topic prune, cooldowns, and docs	5	tests/gateway/test_telegram_topic_profile_routing_76423.py
+ea6644e1dc	2026-09-02	fix(integration): telegram dm-topic persist reads config.yaml via read_user_config_raw()	1	-
+eef25a70be	2026-09-02	fix(integration): repoint telegram webhook-secret polling test at _start_webhook_mode/_start_polling_mode	1	tests/gateway/test_telegram_webhook_secret.py
+60ee3790e0	2026-09-03	fix(gateway): publish degraded status when polling dies mid-session, via a public seam	5	tests/gateway/test_platform_reconnect.py;tests/gateway/test_telegram_send_path_health.py
+aec50eb597	2026-09-03	fix(live-qa): nous_subscription managed table indexes only selectable features (KeyError 'modal' crashed status/tools/dashboard toolsets); restore PluginManager public API (has_portable_mcp_servers, get_telegram_handler_factories, register_approval_transport), extract_json_candidate public name, canonical_whatsapp_identifier main semantics	5	tests/hermes_cli/test_nous_subscription.py
+b57f17bd4b	2026-09-03	fix(late-slices): restore subprocess footgun guards re-collapsed by r3-30/33/34/36 tails; telegram format_message stays self-free (staticmethod via class ref); _captured_exec explicit shell/env kwargs	7	-
+ce52ae21a7	2026-09-03	fix(telegram): do not publish connected for a degraded, unconfirmed polling path	4	tests/gateway/test_telegram_send_path_health.py
+722acd66f6	2026-09-05	fix(docker): reconcile docker_network: false with a --network flag in docker_extra_args (#100248)	1	-
+8239ec4833	2026-09-05	fix(docker): egress-off reuse probe uses a label filter, not the Docker-only {{.Label}} template (#99213)	1	-
+aa0beef684	2026-09-05	fix(security): corrupt-token and docker_env warnings stop logging credential material (#102308)	2	-
+bc233501aa	2026-09-06	fix(telegram): preserve group mentions and expose per-turn addressing	4	tests/gateway/test_telegram_mention_context.py
+bc31e04d83	2026-09-06	fix(telegram): strip our handle only as sole addressee; keep the identity line session-stable	4	tests/gateway/test_telegram_mention_context.py
+5495c29cf8	2026-09-07	fix(gateway): recognise every definite flood refusal, not only the canonical one	3	tests/gateway/test_delivery_ledger_flood_retry.py
+1a981d8e83	2026-09-09	fix(telegram): bots_require_mention gates bot quote-replies behind an explicit @mention (closes #106430)	5	tests/gateway/test_telegram_group_gating.py
+91adf584a4	2026-09-09	fix(gateway): every send_multiple_images override returns the aggregate SendResult	7	-
+3a37785f7f	2026-09-10	fix(gateway): add bot-to-bot loop guard for Telegram	3	tests/gateway/test_bot_loop_guard.py
+e253ea0233	2026-09-10	fix(gateway): secondary-profile adapters no longer send their credentials to the default profile's host/identity	6	tests/gateway/test_multiplex_endpoint_identity_scope.py
+545e74d0ea	2026-09-11	fix(gateway): a secondary profile's config.yaml no longer poisons the process env under multiplex	12	tests/gateway/test_multiplex_process_global_sinks.py;tests/gateway/test_multiplex_yaml_env_bridge_isolation.py
+70d0f556d7	2026-09-12	fix(branding): use the Caduceus ☤ (U+2624), not the Rod of Asclepius ⚕ (U+2625)	60	tests/hermes_cli/test_ensure_utf8_locale.py;tests/run_agent/test_unicode_ascii_codec.py
+75ade17617	2026-09-12	fix(telegram): normalize unicode dashes in bot menu descriptions	2	tests/hermes_cli/test_commands.py
+122ad719b5	2026-09-13	fix(telegram): runner-side allowlist gate decodes JSON list strings too	4	tests/plugins/platforms/telegram/test_allowlist_json_adapter.py
+178bf0436c	2026-09-13	fix(telegram): ignored_threads and mention_patterns read scoped env → own YAML like every sibling	2	tests/plugins/platforms/matrix/test_blank_config_env_fallback.py
+333bf120a5	2026-09-13	fix(telegram): harden image pre-compression for salvage of #74893	2	tests/gateway/test_telegram_image_precompress.py
+3dedb71f2f	2026-09-13	fix(platforms): adapter settings resolve explicit env → own YAML → default, per profile	9	tests/gateway/test_shared_platform_boilerplate.py;tests/gateway/test_slack_thread_require_mention.py;tests/gateway/test_telegram_group_gating.py
+44ddd117d2	2026-09-13	fix(telegram): close source image handle in _compress_image_to_jpeg	1	-
+5cc9b31b7a	2026-09-13	fix(telegram): decode JSON-encoded allowlist strings before comma-split	2	tests/gateway/test_telegram_allowlist_json.py
+78b98032c5	2026-09-13	fix(telegram): key the deaf-ingress report on dispatcher progress, not update age	3	tests/gateway/test_telegram_ingress_delivery_gap.py
+7c9175f48c	2026-09-13	fix(telegram): a secondary profile's YAML proxy_url reaches request construction without an env bridge	3	tests/gateway/test_telegram_polling_progress.py
+aac36fd96f	2026-09-13	refactor(gateway): text-batch flush lives on BasePlatformAdapter; shield + cancel-race fixes reach all 8 adapters	12	tests/gateway/test_matrix_message_length.py;tests/gateway/test_text_batch_flush_invariants.py;tests/gateway/test_text_batching.py
+d92490a4e4	2026-09-13	fix(telegram): let an explicit TELEGRAM_REACTIONS beat the materialized YAML default	2	tests/gateway/test_telegram_reactions.py
+db407dd078	2026-09-13	fix(telegram): report a healthy-but-deaf ingress instead of nothing (#102260)	3	tests/gateway/test_telegram_ingress_delivery_gap.py
+f6cfbd2b16	2026-09-13	fix(telegram): expose hidden text-link URLs	2	tests/gateway/test_telegram_text_link_expansion.py
+fc73bb462e	2026-09-13	fix(telegram): pre-compress large raster images to JPEG before upload	1	-
+0a5846d37f	2026-09-15	fix(telegram): build command menu off event loop	2	tests/gateway/test_telegram_forum_commands.py
+1847ad2883	2026-09-15	fix(telegram): trim the liveness heartbeat, fix the polling error-callback log lines	2	tests/gateway/test_telegram_polling_health_confirmation.py
+23036e20a6	2026-09-15	fix(ux): plain-language, actionable user-facing messages (core)	234	tests/agent/test_413_compression.py;tests/agent/test_compression_closed_adoption.py;tests/agent/test_display_tool_failure.py;tests/agent/test_failed_turn_chat_copy.py;tests/agent/test_failed_turn_site_codes.py;tests/agent/test_nous_rate_guard.py;tests/agent/test_run_agent.py;tests/agent/test_secret_scope.py;tests/agent/test_secret_scope_user_message.py;tests/agent/test_turn_completion_explainer.py;tests/agent/test_turn_facade_lease.py;tests/agent/test_turn_finalizer_final_response_persistence.py;tests/cron/test_cron_empty_turn_stays_silent.py;tests/cron/test_cron_failure_alert_remediation_hint.py;tests/cron/test_cron_failure_notice_copy.py;tests/cron/test_cron_failure_summarizer_inactivity.py;tests/cron/test_cron_multiplex_desktop_ticker_scope.py;tests/cron/test_cron_no_agent.py;tests/cron/test_preflight_config.py;tests/cron/test_restart_safe_worker.py;tests/cron/test_run_one_job.py;tests/cron/test_scheduler.py;tests/gateway/test_approval_prompt_redaction.py;tests/gateway/test_approval_timeout_notice.py;tests/gateway/test_approve_deny_commands.py;tests/gateway/test_background_command.py;tests/gateway/test_background_process_notifications.py;tests/gateway/test_cron_interrupt_notification.py;tests/gateway/test_discord_approval_mentions.py;tests/gateway/test_discord_exec_approval_content.py;tests/gateway/test_discord_slash_auth.py;tests/gateway/test_discord_view_base_parity.py;tests/gateway/test_empty_sentinel_rewrite_copy.py;tests/gateway/test_exec_approval_timeout_notice.py;tests/gateway/test_failure_writer_ownership.py;tests/gateway/test_gateway_shutdown.py;tests/gateway/test_interactive_prompt_base.py;tests/gateway/test_kanban_notice_copy.py;tests/gateway/test_kanban_notifier.py;tests/gateway/test_local_model_connection_reply.py;tests/gateway/test_normalize_empty_agent_response.py;tests/gateway/test_restart_notification.py;tests/gateway/test_restart_resume_pending.py;tests/gateway/test_run_progress_interrupt.py;tests/gateway/test_run_progress_topics.py;tests/gateway/test_session_hygiene.py;tests/gateway/test_session_stall_watchdog.py;tests/gateway/test_subagent_failure_notice.py;tests/gateway/test_telegram_approval_buttons.py;tests/gateway/test_telegram_clarify_buttons.py;tests/gateway/test_telegram_noise_filter.py;tests/gateway/test_transcript_read_failure.py;tests/gateway/test_unauthorized_sender_notices.py;tests/gateway/test_update_command.py;tests/hermes_cli/test_api_key_providers.py;tests/hermes_cli/test_auth_pool_operations.py;tests/hermes_cli/test_cli_command_messages.py;tests/hermes_cli/test_computer_use_cli.py;tests/hermes_cli/test_config.py;tests/hermes_cli/test_config_guard_surfaces.py;tests/hermes_cli/test_config_lkg_backup.py;tests/hermes_cli/test_console_engine.py;tests/hermes_cli/test_cron.py;tests/hermes_cli/test_doctor_terminal_backends.py;tests/hermes_cli/test_gateway_service.py;tests/hermes_cli/test_kanban_notify.py;tests/hermes_cli/test_mcp_probe_redaction.py;tests/hermes_cli/test_noninteractive_config_guard.py;tests/hermes_cli/test_profile_distribution.py;tests/hermes_cli/test_resume_display.py;tests/hermes_cli/test_sessions_error_exit_codes.py;tests/hermes_cli/test_sessions_pin.py;tests/hermes_cli/test_set_config_value.py;tests/hermes_cli/test_shared_owner_message.py;tests/hermes_cli/test_skills_hub.py;tests/hermes_cli/test_tool_availability_notices.py;tests/hermes_cli/test_update_messages.py;tests/hermes_cli/test_update_sqlite_remediation.py;tests/hermes_cli/test_ux_messages_auth_config.py;tests/hermes_cli/test_ux_messages_chat_sessions.py;tests/hermes_cli/test_ux_messages_gateway_profiles.py;tests/hermes_cli/test_ux_messages_startup.py;tests/hermes_state/test_hermes_state.py;tests/hermes_state/test_hermes_state_ux_messages.py;tests/hermes_state/test_hermes_state_wal_fallback.py;tests/hermes_state/test_named_profile_session_db.py;tests/hermes_state/test_storage_failure_copy.py;tests/test_utils_atomic_roundtrip_yaml_save.py;tests/tools/test_approval_user_summary.py;tests/tools/test_async_delegation.py;tests/tools/test_delegate_failure_copy.py;tests/tools/test_terminal_backend_unavailable_reason.py;tests/tui_gateway/test_lazy_session_regressions.py;tests/tui_gateway/test_protocol.py;tests/tui_gateway/test_session_resume_db_ownership.py;tests/tui_gateway/test_tui_gateway_server.py;tests/tui_gateway/test_user_messages.py
+3250020b34	2026-09-15	fix(telegram): slim the scheduled typing re-arm and trim its tests to two invariants	2	tests/gateway/test_telegram_typing_retrigger.py
+660d4b8d87	2026-09-15	fix(telegram): hop only the menu build off the loop; one invariant test covers both menu sites	2	tests/gateway/test_telegram_forum_commands.py
+7c10c249ce	2026-09-15	fix(telegram): schedule the post-send typing re-arm instead of awaiting it	2	tests/gateway/test_telegram_typing_retrigger.py
+9a41a8be66	2026-09-15	fix(gateway): key Telegram forum handoffs on the group slot the adapter replies on	2	tests/gateway/test_handoff_thread_session_key.py
+ab782a7685	2026-09-15	fix(gateway): skill-slash fallthrough and the Telegram inline picker run off the event loop	3	tests/gateway/test_skill_slash_offloop.py
+e1e943a9df	2026-09-15	fix(telegram): expose polling transport recovery	4	tests/gateway/test_telegram_network.py;tests/gateway/test_telegram_polling_health_confirmation.py
+fa12d7556c	2026-09-15	fix(telegram): allow opt-in CJK rich messages	6	tests/gateway/test_telegram_rich_messages.py
+fd303c0137	2026-09-15	fix(gateway): 'decline' survives the config.yaml load path; Telegram forwards it; wizard offers it	6	tests/gateway/test_unauthorized_dm_behavior.py
+ff307aea5e	2026-09-15	fix(telegram): name empty-string transport errors in adapter log lines	1	-
+3c9431a876	2026-09-16	fix(cron): seed Telegram forum-topic cron threads on the group slot topic replies key	6	tests/cron/test_cron_thread_seed_dm_keying.py;tests/cron/test_scheduler.py
+4a7ed0029d	2026-09-17	fix(telegram): rebuild adapter on confirmed polling stall instead of reusing unquiesced updater (#113618)	2	tests/gateway/test_telegram_polling_stall_watchdog.py
+5ca3e5546c	2026-09-17	fix(telegram): a confirmed stall hands off before the reconnect backoff, not after it	2	tests/gateway/test_telegram_polling_stall_watchdog.py
+3e408dcc2a	2026-09-18	fix(gateway): Telegram topic-binding heal cannot re-pin a route /new moved during its lookups	3	tests/gateway/test_telegram_topic_mode.py
+595f3a289c	2026-09-18	fix(telegram): split replies resume from the refused chunk, never re-send the head; per-chat send order + flood cooldown	4	tests/gateway/test_telegram_split_send_flood.py
+7f2b64f7a2	2026-09-18	fix(platforms): set media_text_inlined in the sibling document paths	10	tests/gateway/test_discord_document_handling.py;tests/gateway/test_slack.py;tests/gateway/test_telegram_documents.py;tests/gateway/test_whatsapp_cloud.py;tests/gateway/test_whatsapp_formatting.py
+b502504b74	2026-09-18	fix(telegram): approval button card fits the 4096-char cap after HTML escaping	4	tests/gateway/test_interactive_prompt_base.py;tests/gateway/test_telegram_approval_buttons.py
+c07708671d	2026-09-18	fix(gateway): every adapter session key goes through one seam (+ lint)	11	tests/gateway/test_adapter_session_key_seam.py;tests/gateway/test_slack.py;tests/scripts/test_check_profile_scope_patterns.py
+edd9fd66a4	2026-09-18	fix(telegram): slash-confirm card budgets the MarkdownV2 rendering; approval budgets count UTF-16 units	3	tests/gateway/test_telegram_approval_buttons.py
+f2f0be898f	2026-09-18	fix(state): support legacy Telegram topic schemas	3	tests/hermes_state/test_purge_profile_state.py;tests/hermes_state/test_rekey_profile_state.py
+1654575c6c	2026-09-19	fix(gateway): canonicalize identity first at every adapter ingress path	5	tests/gateway/test_identity_canonical_ingress.py
+558cc3bd63	2026-09-19	fix(state): self-heal pre-v3 telegram topic tables on read	2	tests/gateway/test_telegram_topic_read_selfheal_103363.py
+04057250a3	2026-09-20	fix(telegram): wall-clock deadline on every Bot API send (text + media)	2	tests/gateway/test_telegram_send_path_health.py
+0c872b611c	2026-09-20	fix(telegram): point dm_topics prerequisite text at BotFather Threaded Mode	3	tests/gateway/test_dm_topics.py
+130b596f6f	2026-09-20	fix(whatsapp,weixin): text-batch delays default to Telegram cadence	5	tests/gateway/test_whatsapp_text_batching.py
+536ce859c4	2026-09-20	fix(telegram): bounded sends do not arm the blocked-loop watchdog	1	-
+75d92e3d7b	2026-09-20	fix(streaming): flood-refused edits wait out Telegram's retry_after instead of re-striking inside the penalty	2	-
+85e673b4a5	2026-09-20	fix(telegram): give media uploads their own 300 s wall-clock deadline	1	-
+97051e4194	2026-09-20	fix(telegram): attach real video geometry and a thumbnail so large uploads aren't square	4	tests/gateway/test_telegram_video_metadata.py;tests/tools/test_telegram_send_message_video_metadata.py
+a57a5f90d2	2026-09-20	fix: slot-busy skipped Telegram edits no longer count as shown text (review follow-up)	3	tests/gateway/test_telegram_shared_outbound_budget.py
+d37f59af4c	2026-09-20	fix(telegram): deadline label default no longer claims init at non-init sites	2	tests/gateway/test_telegram_init_deadline.py
+e7509fa1a4	2026-09-20	fix(telegram): observe sibling-bot wake-word messages dropped by the bot-to-bot gate	2	tests/gateway/test_telegram_group_gating.py
+fb2f3e213a	2026-09-20	fix(telegram): pace sends and edits against a shared per-chat slot	3	tests/gateway/test_telegram_shared_outbound_budget.py;tests/gateway/test_telegram_typing_retrigger.py
+0706dffca1	2026-09-22	fix(config): route every config.yaml writer through one comment-preserving writer	15	tests/gateway/test_dm_topics.py;tests/hermes_cli/test_config.py;tests/hermes_cli/test_config_yaml_comment_preservation.py;tests/hermes_cli/test_model_provider_persistence.py
+7dd6bee33b	2026-09-22	fix(gateway): rich_sent_store writes run off the event loop	5	tests/gateway/test_rich_sent_store_off_loop.py
+992f569fc1	2026-09-22	fix(telegram): admit replayed updates before PTB dispatch	2	-
+ab24fb0581	2026-09-22	fix(relay): use a reaction Telegram actually allows for the turn ack	2	tests/gateway/relay/test_relay_interactive.py
+cb567242d7	2026-09-22	fix(gateway): move the sticker-description cache write off the event loop	3	tests/gateway/test_sticker_cache_off_loop.py
+70f79c8cde	2026-09-23	fix(agent): anchor the Telegram token regex to a digit-run start (ReDoS)	2	tests/agent/test_redact.py
+a1838ea87a	2026-09-23	fix(telegram): keep update receipts across adapter rebuilds and restarts (#120257)	3	tests/plugins/test_telegram_update_admission.py
+aca906df2c	2026-09-23	fix(gateway): keep status caches bounded across awaits (#87479)	2	-
+32b4acf4c8	2026-09-25	fix(desktop): name the connected Telegram bot after QR setup	3	-
+999b19b6ed	2026-09-27	fix(telegram): re-check auth for model picker callbacks	2	tests/gateway/test_telegram_model_picker.py
+0536b2a147	2026-09-28	fix(gateway): keep Telegram private restart notices profile-scoped	2	tests/gateway/test_planned_restart_notice_multiplex.py
+43800d55f2	2026-09-29	fix(child-env): the bot desktop and gmail-triage scripts start from the scrubbed env	2	-
+ee942a7bbf	2026-09-29	fix(terminal-env): adapter secrets are the declared ones, not any platform-named variable	8	tests/tools/test_local_env_blocklist.py
+3480de0402	2026-10-02	fix(telegram): match CRLF-terminated closing fences	2	tests/gateway/test_telegram_format.py
+5f7b1e2d65	2026-10-02	fix(telegram): anchor fenced-code regex so inline triple backticks aren't mangled	2	tests/gateway/test_telegram_format.py
+c82abc309a	2026-10-02	fix(telegram): widen fence anchors to keep mid-line and indented blocks	3	tests/gateway/test_telegram_format.py
+1809f4fec3	2026-10-03	fix(telegram): size ingress dispatch stall budget past a bounded slow handler	3	tests/gateway/test_telegram_ingress_delivery_gap.py;tests/gateway/test_telegram_ingress_dispatch_recovery.py
+1a51cedc0b	2026-10-03	fix(telegram): name the actual stall in the polling-stall fatal message	2	tests/gateway/test_telegram_ingress_dispatch_recovery.py
+3671e521f2	2026-10-03	fix(telegram): escalate ingress dispatch stall to supervisor rebuild	3	tests/gateway/test_telegram_ingress_delivery_gap.py;tests/gateway/test_telegram_ingress_dispatch_recovery.py
+5907983b96	2026-10-03	fix(telegram): enable concurrent update processing (PTB default serializes all updates)	1	-
+96efe44c1c	2026-10-03	fix(telegram): unblock ingress stall recovery retry after no-loop fallback	2	tests/gateway/test_telegram_ingress_dispatch_recovery.py
+a6d7e08fd1	2026-10-03	fix(telegram): keep same-chat updates in order under concurrent dispatch	3	tests/plugins/test_telegram_update_admission.py
+ff90457267	2026-10-03	fix(telegram): keep per-chat chain intact when a waiting update is cancelled	2	tests/plugins/test_telegram_update_admission.py
+943d4caa47	2026-10-04	fix(gateway): keep approval prompts interim instead of tagging them notify	4	tests/gateway/test_exec_approval_timeout_notice.py;tests/plugins/platforms/telegram/test_notification_kwargs.py
+af6f618d3d	2026-10-04	fix(gateway): push the clarify text fallback on Telegram	1	-
+e26d4cb3e3	2026-10-04	fix(telegram): push approval prompts instead of silently delivering them	4	tests/gateway/test_exec_approval_timeout_notice.py;tests/plugins/platforms/telegram/test_notification_kwargs.py
+7ef5aca075	2026-10-05	fix(gateway): hand Telegram held inbound to the rebuilt adapter	5	tests/gateway/test_platform_reconnect.py;tests/gateway/test_telegram_text_batching.py
+d87a031fe1	2026-10-05	fix(telegram): accept the update claim when a retired adapter forwards a hold	2	tests/gateway/test_telegram_text_batching.py
+0c889a774f	2026-10-06	fix(ssl): honour SSL_CERT_FILE in the shared Telegram TLS context	2	tests/gateway/test_telegram_closewait_limits.py
+7748c7f484	2026-10-06	fix(gateway): do not hand an installed reconnect adapter's hold queue back to its predecessor	3	tests/gateway/test_platform_reconnect.py
+785cf8a3de	2026-10-06	fix(telegram): reuse the shared platform TLS context for every Telegram client	4	tests/gateway/test_telegram_closewait_limits.py
+8e85a0fd8c	2026-10-06	fix(plugins/telegram): clamp negative inline-query offsets to page zero	2	tests/plugins/platforms/telegram/test_inline_picker_offset.py
+1b8bd66b7f	2026-10-07	fix(lint): stdin guard catches calls whose arguments start on the next line (review)	20	tests/tools/test_subprocess_stdin_guard.py
+a274d3388f	2026-10-09	fix: core modules import again on Python 3.11-3.13 (re-quote eager forward references)	40	tests/agent/test_codex_app_server_thread_resume.py;tests/ci/test_strict_ruff_target.py;tests/gateway/test_feishu.py
+6d60f56f9f	2026-10-12	fix(plugin-catalog): pin Telegram Client dependency fix	1	-
+711a97e953	2026-10-12	fix(plugin-catalog): repin Telegram Client to 1.2.12	1	-
+a0da727d72	2026-10-12	fix(plugin-catalog): bump Telegram Client to 1.2.11	1	-
+b1579e9b53	2026-10-12	fix(plugin-catalog): repin Telegram Client to 1.2.13	1	-
+f62b34166a	2026-10-12	fix(plugin-catalog): repin Telegram Client to 1.2.14	1	-
+fca75c81f7	2026-10-12	fix(plugin-catalog): address Telegram Client review	2	-
+29cda7a5ef	2026-10-16	fix(telegram): send unanchored when a reply anchor is not a message id (#139611)	2	tests/gateway/test_telegram_reply_mode.py
+2f4b42191e	2026-10-16	fix(platforms): import new plugin siblings relatively (no second adapter copy)	6	-
+b95c4861b2	2026-10-16	fix(platforms): bundled authorization env names hold when the live entry lacks them	41	tests/gateway/test_platform_bundled_authz_fallback.py
+ecffe12eae	2026-10-16	fix(telegram): preserve progress code fences	2	tests/gateway/test_telegram_format.py
+407303dfdc	2026-10-18	fix(telegram): move dm_topic_auto_transfer to adapter ingress so the reply lands in the new topic	9	tests/gateway/test_telegram_dm_topic_auto_transfer.py;tests/gateway/test_telegram_topic_mode.py
+42e5a8578f	2026-10-18	fix(telegram): read dm_topic_auto_transfer from the receiving bot	2	tests/gateway/test_telegram_dm_topic_auto_transfer.py
+d2a39fdf9f	2026-10-18	fix(config): list telegram.extra.dm_topic_auto_transfer in DEFAULT_CONFIG	2	-
+328b64a9a7	2026-10-19	fix(telegram): bound the pending-created-topics cache (Refs #136567)	2	tests/plugins/test_telegram_forum_topic_created_opener.py
+3687ef0bf4	2026-10-19	fix(telegram): route a new DM topic's thread-less opening message into that topic	3	tests/plugins/test_telegram_forum_topic_created_opener.py
+37ec498ea7	2026-10-19	fix(telegram): record topic creations only from authorized humans and consume them once (Refs #136567)	2	tests/plugins/test_telegram_forum_topic_created_opener.py
+406580697a	2026-10-19	fix(telegram): time the new-topic follow on send time, not handler time (#136567)	3	tests/gateway/test_telegram_new_topic_opener.py
+7cfafba18e	2026-10-19	fix(telegram): 建立 topic 時不再快取名稱，恢復自動改名 (Refs #136567)	4	tests/plugins/test_telegram_forum_topic_created_opener.py;tests/plugins/test_telegram_topic_creation_auto_rename.py
+ae596f49a0	2026-10-19	fix(telegram): an edit of an older lobby message keeps its room (#136567)	2	tests/gateway/test_telegram_new_topic_opener.py
+bda200183d	2026-10-19	fix(telegram): follow a new DM topic by time, not message-id adjacency (#136567)	2	-
+fbd482d5c5	2026-10-19	fix(telegram): a newer chunk no longer cancels a committed batch flush	2	tests/gateway/test_telegram_dm_topic_auto_transfer.py
+6483c39f84	2026-10-20	fix(gateway): editing a sent message no longer replies admission_conflict (#140845)	5	tests/gateway/test_native_admission_edit.py
+84b480d38e	2026-10-20	fix(telegram): two edits in one second are two inputs	3	tests/gateway/test_native_admission_edit.py
+ab3e4affd6	2026-10-25	fix(config): meet the code-health ratchet and keep pm's runtime tree off the YAML stack	13	-
+02a790293d	2026-10-31	fix(gateway): timed-out and resolved approval cards keep the full request	9	tests/gateway/test_approval_timeout_notice.py;tests/gateway/test_teams.py;tests/gateway/test_telegram_approval_buttons.py
+44678e5647	2026-10-31	fix(telegram): network error on a resolved-prompt edit keeps the prompt	2	tests/gateway/test_telegram_approval_buttons.py
+5bb0e7d87d	2026-10-31	fix(telegram): uncaptioned voice notes and audio files keep the silence notice in groups	3	tests/gateway/test_telegram_group_gating.py
+61794f3f17	2026-10-31	fix(telegram): a reply to an unknown author keeps the notice without a "?"	2	tests/gateway/test_telegram_group_gating.py
+92c86afb1f	2026-10-31	fix(gateway): resolved approval cards keep the request on Telegram, Feishu and Teams	7	tests/gateway/test_feishu_approval_buttons.py;tests/gateway/test_teams.py;tests/gateway/test_telegram_approval_buttons.py
+c419cf7c86	2026-10-31	fix(telegram): replies to a channel or anonymous-admin post keep the notice	3	tests/gateway/test_telegram_group_gating.py
+ce0602e8a9	2026-10-31	fix(telegram): catch NetworkError, not TelegramError, after a kept-prompt edit fails	1	-
+dc6519da4a	2026-10-31	fix(telegram): let a silence marker stand on group messages not addressed to the bot	7	tests/gateway/test_telegram_group_gating.py;tests/gateway/test_telegram_thread_fallback.py
+e97cdd16fe	2026-10-31	fix(telegram): match the WhatsApp rule on unknown reply authors and indented commands	4	tests/gateway/test_telegram_group_gating.py
+840d104031	2026-11-01	fix(telegram): an uncaptioned video note keeps the group silence notice	3	tests/gateway/test_telegram_group_gating.py
+ed960fe960	2026-11-01	fix(telegram): localize the download-failure reply for video notes	1	-
+179c90f547	2026-11-03	fix(cloud): Telegram on Team Gateway is set up by linking an account to the shared bot	28	tests/gateway/relay/test_relay_link.py;tests/hermes_cli/test_web_server_messaging_relay.py
+5ab58da1f6	2026-11-04	fix(gateway): a stale approval card no longer approves the next request	9	tests/gateway/test_approval_card_request_binding.py
+012cdb2799	2026-11-08	fix(telegram): a network recovery restarts the conflict quiet window	2	tests/gateway/test_telegram_conflict.py
+03db38388d	2026-11-08	fix(telegram): route changes on a private-topic send no longer spend the network retry budget	2	tests/gateway/test_telegram_thread_fallback.py
+09abbb97ca	2026-11-08	fix(telegram): named-topic media fails closed on a dead topic instead of landing in the chat root	3	tests/gateway/test_telegram_thread_fallback.py
+09b17f40f0	2026-11-08	fix(telegram): send a group command's arguments and target as written	5	tests/gateway/test_telegram_command_botname.py;tests/gateway/test_telegram_leading_bot_mentions.py
+0a14810fd8	2026-11-08	fix(telegram): a reconnect that reuses an unsaved DM topic id keeps it in the channel directory	2	tests/gateway/test_dm_topics_config_targets.py
+0a3ce42b8e	2026-11-08	fix(telegram): retried sendAudio attempts keep the track's cover	2	tests/gateway/test_telegram_send_audio.py
+0a5125e20d	2026-11-08	fix(telegram): a cover-art temp file failure no longer blocks sendAudio	2	tests/gateway/test_telegram_send_audio.py
+0b3ae2e2aa	2026-11-08	fix(telegram): configured DM topics are reused after reconnects and listed in the channel directory	5	tests/gateway/test_dm_topics_config_targets.py
+0bdb7d6e95	2026-11-08	fix(telegram): /model picker buttons stay readable for namespaced model ids	3	tests/gateway/test_telegram_model_picker.py
+0c2ae11382	2026-11-08	fix(telegram): deeply nested rich_message blocks no longer drop a plain reply	2	tests/gateway/test_telegram_rich_messages.py
+0eb14936ba	2026-11-08	fix(telegram): type _clarify_state as dict[str, ClarifyPrompt]	1	-
+10a64bdec0	2026-11-08	fix(telegram): rich_message links keep their URL; inline math and custom emoji keep their text	1	-
+11c0e19fec	2026-11-08	fix(telegram): expandable quotes, nested code spans and rich $ amounts render	5	tests/gateway/test_telegram_format.py;tests/plugins/platforms/telegram/test_telegram_markdown.py
+12a9bd5610	2026-11-08	fix(telegram): a deferred upload's failure notice refused by a re-armed window is retried, not lost	2	tests/gateway/test_telegram_media_flood.py
+16913d4120	2026-11-08	fix(telegram): keep emphasis and links from crossing a blockquote line edge	3	tests/plugins/platforms/telegram/test_telegram_markdown.py
+1732b12cf3	2026-11-08	fix(telegram): cover /model picker label truncation branches	1	tests/gateway/test_telegram_model_picker.py
+17669f7e4d	2026-11-08	fix(telegram): keep an expandable quote's || on its last line	2	tests/gateway/test_telegram_format.py
+1a7ceb1d47	2026-11-08	fix(telegram): cache channel-post media via effective_message (#51543)	3	tests/gateway/test_telegram_channel_posts.py;tests/gateway/test_telegram_documents.py
+1ae295c748	2026-11-08	fix(telegram): DM topic setup writes thread_ids into an owned config copy	2	tests/gateway/test_dm_topics_config_targets.py
+1cace33043	2026-11-08	fix(telegram): preserve private topic routing on retries	2	tests/gateway/test_telegram_thread_fallback.py
+20c7684cd2	2026-11-08	fix(telegram): a native direct-messages topic outside a private chat keeps one-call failure	2	tests/gateway/test_telegram_thread_fallback.py
+2b0337ea63	2026-11-08	fix(telegram): shutdown waits for admission claim releases; a queued update cancelled before entry closes its handler	2	tests/plugins/test_telegram_update_admission.py
+2c99a6742a	2026-11-08	fix(telegram): an @handle inside a rich code span does not wake the bot	3	tests/gateway/test_telegram_group_gating.py
+2ea31938e4	2026-11-08	fix(telegram): only take the HTML branch for real Telegram tags in hermes send	2	tests/tools/test_telegram_send_message_html_whitelist.py
+2f3e21fc36	2026-11-08	fix(gateway): log proxy URLs without their embedded credentials	5	tests/gateway/test_proxy_url_credentials_not_logged.py
+311e1063bf	2026-11-08	fix(telegram): a never-sent restart-ack timeout falls back to the reply	2	tests/gateway/test_restart_ack_before_teardown.py
+319a81828a	2026-11-08	fix(telegram): DM-topic retry helpers read the metadata alias; stale docstrings and docs updated	3	-
+367f1f9f98	2026-11-08	fix(telegram): an album answered with Telegram's JSON 5xx is resent as the same album	6	tests/gateway/test_send_multiple_images.py;tests/gateway/test_telegram_thread_fallback.py;tests/tools/test_telegram_standalone_send_parity.py
+369e7d66e9	2026-11-08	fix(telegram): network-recovery stop no longer logs PTB's false refetch WARNING	3	tests/gateway/test_telegram_stop_read_receipt.py;tests/plugins/test_telegram_polling_progress_ptb.py
+3899266a46	2026-11-08	fix(telegram): allow_from admits the user in groups on every profile (per maintainer ruling)	4	tests/gateway/test_discord_config_allowlist_multiplex.py;tests/gateway/test_telegram_allow_from_groups_multiplex.py
+3fa6a2d127	2026-11-08	fix(telegram): mark the full-command approval send as an interim send	2	tests/gateway/test_exec_approval_truncated_preview.py
+466591fe65	2026-11-08	fix(gateway): opt-in approvals.approvers binds shared-chat exec approvals to the requester on every platform	44	tests/gateway/relay/test_relay_approval_owner_admins.py;tests/gateway/test_approval_requester_binding.py;tests/gateway/test_approval_requester_binding_adapters.py;tests/gateway/test_approval_requester_binding_admins.py;tests/gateway/test_approval_requester_binding_policy.py;tests/gateway/test_telegram_approval_refusal_expired_query.py
+46a7c675ac	2026-11-08	fix(telegram): legacy edits honor disable_link_previews (#61018, salvage #61022)	3	tests/gateway/test_telegram_format.py
+476fbd9f4c	2026-11-08	fix(telegram): keep providers whose config key has uppercase in the /model picker	3	tests/gateway/test_telegram_model_picker.py
+47c7600098	2026-11-08	fix(telegram): a clarify resolves only from a tap on its own prompt message	3	tests/gateway/test_telegram_clarify_buttons.py
+47f0c6bc0e	2026-11-08	fix(gateway): budget the WhatsApp Cloud approval card against its 1,024 cap	7	tests/gateway/test_exec_approval_deny_only_renderers.py
+481d56d3f0	2026-11-08	fix(telegram): make the rich currency escape's formula bodies possessive	2	tests/plugins/platforms/telegram/test_telegram_markdown.py
+486449f268	2026-11-08	fix(telegram): keep digit-led inline math out of the rich currency escape	2	tests/plugins/platforms/telegram/test_telegram_markdown.py
+486601c4fa	2026-11-08	fix(telegram): standalone sends keep formatting, honour rich_messages and the notifications mode	10	tests/cron/test_cron_live_delivery_confirmation.py;tests/plugins/platforms/telegram/test_outbound_policy.py;tests/tools/test_telegram_standalone_send_parity.py
+48e15ee81b	2026-11-08	fix(telegram): a clipped full-command send keeps the approval card Deny-only	4	tests/gateway/test_exec_approval_deny_only_renderers.py
+492571075e	2026-11-08	fix(telegram): a native-id retry rejected as TOPIC_DELETED still reaches the chat root	3	tests/gateway/test_telegram_thread_fallback.py
+4a2b984fd2	2026-11-08	fix(telegram): an observer's return does not receipt an unserved update	3	tests/gateway/test_telegram_text_batching.py;tests/plugins/test_telegram_update_admission.py
+5209ca9796	2026-11-08	fix(telegram): recommend clarify buttons only when the session has clarify	7	tests/agent/test_platform_hint_telegram_clarify.py
+54c27a0417	2026-11-08	fix(telegram): the early /restart ack uses the ordinary reply's routing	3	tests/gateway/test_restart_ack_before_teardown.py
+552acb2c51	2026-11-08	fix(telegram): one request builder for the gateway adapter and the standalone sender	6	tests/gateway/test_telegram_closewait_limits.py;tests/gateway/test_telegram_polling_progress.py;tests/tools/test_send_message_telegram_proxy.py
+56e9d96183	2026-11-08	fix(telegram): log an other-bot skip once when observation is on	2	tests/gateway/test_telegram_leading_bot_mentions.py
+570f2e40b3	2026-11-08	fix(gateway): redact the proxy URL out of transport error text before logging or replying	5	tests/gateway/test_proxy_url_credentials_not_logged.py
+5ab38b99d8	2026-11-08	fix(telegram): post the expired-tap recovery hint in the tapped card's forum topic	3	tests/gateway/test_telegram_stale_callback.py
+5b7b985700	2026-11-08	fix(telegram): a LOCAL /restart keeps its acknowledgement in the returned reply	2	tests/gateway/test_restart_ack_before_teardown.py
+5d3723e117	2026-11-08	fix(send_message): explain named Telegram topics on the REST sender	2	tests/tools/test_send_message_target_parse.py
+606967f648	2026-11-08	fix(gateway): stamp observed group transcript rows with epoch floats	2	tests/gateway/test_observed_transcript_timestamp.py
+60b4d2ffd1	2026-11-08	fix(telegram): reserve room for the escaped chunk indicator	2	tests/tools/test_telegram_send_message_chunk_mdv2.py
+60dc0a71fe	2026-11-08	fix(telegram): link-preview edit tests require is_disabled=True	1	tests/gateway/test_telegram_format.py
+692283bf91	2026-11-08	fix(telegram): rich_message tables, details summaries and math blocks reach the agent	2	tests/gateway/test_telegram_rich_messages.py
+6a83bc534f	2026-11-08	fix(gateway): flood-refused progress edits stop sending fresh bubbles into the penalty	3	tests/gateway/test_run_progress_flood_window.py
+6c1e913bb0	2026-11-08	fix(telegram): read inline code spans once, by matching backtick-run width	2	tests/plugins/platforms/telegram/test_telegram_markdown.py
+6e452f4c12	2026-11-08	fix(gateway): accept HEIC/HEIF/AVIF image documents instead of dropping them	4	tests/gateway/test_media_download_retry.py;tests/gateway/test_telegram_documents.py
+6eab9f0321	2026-11-08	fix(telegram): docs say private-chat topics can stream drafts	1	-
+6ffab21708	2026-11-08	fix(telegram): preserve album attachment inlining flags	3	tests/plugins/platforms/telegram/test_album_media_flags.py
+713e2274cf	2026-11-08	fix(telegram): a text reply whose anchor answers "reply message not found" drops only the anchor	2	tests/gateway/test_telegram_thread_fallback.py
+71b8408ae1	2026-11-08	fix(telegram): ignore Telegram Business updates instead of answering the owner's contacts	3	tests/plugins/platforms/telegram/test_business_updates.py
+7366bc7a19	2026-11-08	fix(telegram): rowless-binding repair no longer undoes a concurrent /new	4	tests/gateway/test_telegram_topic_mode.py
+7636137828	2026-11-08	fix(telegram): scope forum reply anchor gate	2	tests/gateway/test_telegram_group_gating.py
+7bd2439f63	2026-11-08	fix(telegram): media ladder ends once the root send is also rejected	2	tests/gateway/test_telegram_thread_fallback.py
+7d51791c52	2026-11-08	fix(telegram): one rich_message flattener for inbound and replied-to blocks	3	tests/gateway/test_telegram_rich_messages.py
+7efba7c85f	2026-11-08	fix(telegram): never resend a standalone chunk after a lost reply	2	tests/tools/test_telegram_send_retry_classification.py
+7f8ef691fe	2026-11-08	fix(telegram): conflict recovery keeps queued messages and its retry ladder climbs	6	tests/gateway/test_telegram_conflict.py;tests/gateway/test_telegram_polling_health_confirmation.py;tests/gateway/test_telegram_start_polling_timeout.py
+800826bd54	2026-11-08	fix(telegram): a recovered topic message takes the topic's prompt inputs	2	tests/gateway/test_dm_topics.py
+8058fc8f3c	2026-11-08	fix(telegram): keep the error text and traceback through a proxy that holds no secret	2	tests/gateway/test_telegram_proxy_error_text_kept.py
+80903cc65f	2026-11-08	fix(telegram): keep an item's caption when a note replaces its media	2	tests/plugins/platforms/telegram/test_album_early_exit_items.py
+812b40f562	2026-11-08	fix(telegram): /model picker labels stay unique when ids differ mid-name	3	tests/gateway/test_telegram_model_picker.py
+81e5750117	2026-11-08	fix(telegram): observe-mode slash commands act on the shared group session	5	tests/gateway/test_telegram_group_gating.py
+84b7cad348	2026-11-08	fix(telegram): fit the sendVideo thumbnail inside 320x320 too	3	tests/gateway/test_telegram_video_metadata.py
+8518913cff	2026-11-08	fix(telegram): handle nested backtick code spans	2	tests/gateway/test_telegram_format.py
+862a4120ae	2026-11-08	fix(telegram): a standalone sender written to the documented signature keeps working	5	tests/tools/test_telegram_standalone_send_parity.py
+89b7b4405f	2026-11-08	fix(telegram): a timed-out /restart ack is not posted a second time	2	tests/gateway/test_restart_ack_before_teardown.py
+8daa4ec5f2	2026-11-08	fix(telegram): re-read persisted DM topic thread_ids before setup	2	tests/gateway/test_dm_topics.py
+8e7908d9ba	2026-11-08	fix(telegram): a reply keeps the hidden link URLs of the message it replies to	4	tests/gateway/test_telegram_reply_quote.py;tests/gateway/test_telegram_text_link_expansion.py
+8f7b04ab39	2026-11-08	fix(telegram): short confirm passes no longer count toward the dispatch-stall watchdog	2	tests/gateway/test_telegram_pending_update_probe.py
+942db62c1e	2026-11-08	fix(telegram): /model picker labels keep the org when it is all that differs	2	tests/gateway/test_telegram_model_picker.py
+96cac93718	2026-11-08	fix(telegram): check the flood window after the notice loop's last wait	2	tests/gateway/test_telegram_media_flood.py
+992377fd0d	2026-11-08	fix(telegram): a short inline flood wait closes the chat for sibling uploads	2	tests/gateway/test_telegram_media_flood.py
+9a856f8e91	2026-11-08	fix(cron): route named Telegram DM topics through the live router's resolver	2	tests/cron/test_cron_named_dm_topic.py
+9c04b1b168	2026-11-08	fix(gateway): observed-group actor rides its own session var; batches split per sender	10	tests/e2e/core/platforms/test_telegram_group_observe.py;tests/gateway/test_session_env.py;tests/gateway/test_telegram_observe_batch_actor.py;tests/plugins/test_telegram_update_admission.py
+a1940c9f39	2026-11-08	fix(telegram): conflict quiet period starts at the first poll after recovery	4	tests/gateway/test_telegram_conflict.py;tests/gateway/test_telegram_polling_health_confirmation.py;tests/gateway/test_telegram_start_polling_timeout.py
+a37a96ea22	2026-11-08	fix(telegram): keep tight digit-only inline math out of the rich currency escape	2	tests/plugins/platforms/telegram/test_telegram_markdown.py
+a54cd3decc	2026-11-08	fix(telegram): observed-group batches never coalesce across senders	2	tests/gateway/test_telegram_observe_batch_actor.py
+a59bd135f8	2026-11-08	fix(telegram): resolve nested and multiline asterisk emphasis together	2	tests/gateway/test_telegram_format.py
+a6c1dfb5bc	2026-11-08	fix(telegram): group messages are addressed by their leading handles; /cmd@bot keeps its args	5	tests/gateway/test_telegram_command_botname.py;tests/gateway/test_telegram_leading_bot_mentions.py
+a7bc01bb33	2026-11-08	fix(telegram): a send cancelled mid-copy no longer orphans its private attachment	2	tests/gateway/test_telegram_media_flood.py
+a8be8bd1be	2026-11-08	fix(telegram): dm_topics outside platforms.telegram.extra are set up again	3	tests/gateway/test_dm_topics_config_targets.py
+aa7ee95c6c	2026-11-08	fix(telegram): check NO_PROXY against the configured Bot API server	4	tests/tools/test_send_message_telegram_proxy.py
+ae73ee431b	2026-11-08	fix(telegram): list unnamed group topics in the channel directory	2	tests/gateway/test_dm_topics_config_targets.py
+afcfc80401	2026-11-08	fix(telegram): the Teams approval card carries the shortened-preview notice	2	tests/gateway/test_teams.py
+b01d28f2d3	2026-11-08	fix(telegram): reconnect reuses a created DM topic whose thread_id save failed	2	tests/gateway/test_dm_topics_config_targets.py
+b3daabee04	2026-11-08	fix(telegram): group triggers read text that arrives as rich_message blocks	3	tests/e2e/core/platforms/test_telegram_rich_message_inbound.py;tests/gateway/test_telegram_group_gating.py
+b4054a1a57	2026-11-08	fix(telegram): albums never resend after a lost reply, report each failed photo, survive stale topics	6	tests/gateway/test_telegram_thread_fallback.py;tests/tools/test_telegram_standalone_send_parity.py
+b50a77e229	2026-11-08	fix(telegram): protect multi-backtick code spans from the rich currency escape	2	tests/plugins/platforms/telegram/test_telegram_markdown.py
+b553d17b25	2026-11-08	fix(telegram): private-topic media retries the same thread once before rerouting	2	tests/gateway/test_telegram_thread_fallback.py
+b56486946c	2026-11-08	fix(telegram): standalone albums use the DM-topic retry signature main now has	2	tests/tools/test_telegram_standalone_send_parity.py
+b5b4348968	2026-11-08	fix(telegram): gate every native media request on a known flood window	2	tests/gateway/test_telegram_media_flood.py
+b616d9ae4d	2026-11-08	fix(telegram): /model picker ordinals are unique across clash groups	2	tests/gateway/test_telegram_model_picker.py
+b65156388b	2026-11-08	fix(telegram): a deferred upload whose file is gone still posts its promised notice	3	tests/gateway/test_telegram_media_flood.py
+b87bc55dd8	2026-11-08	fix(telegram): re-probe a stuck queue after a short confirm interval	2	tests/gateway/test_telegram_pending_update_probe.py
+b89e9e7821	2026-11-08	fix(telegram): a 5xx album or an HTML 5xx page is never resent in another shape	6	tests/gateway/test_telegram_thread_fallback.py;tests/tools/test_telegram_standalone_send_parity.py
+b8b7b3c5e6	2026-11-08	fix(telegram): intake admits every documented allowlist grant, not only the first list	2	tests/gateway/test_telegram_intake_allowlist_union.py
+bb0f05fa31	2026-11-08	fix(cron): resolve named Telegram DM topics	2	tests/tools/test_send_message_target_parse.py
+bbceb0c901	2026-11-08	fix(telegram): private-topic sends keep their topic on retry and reach the chat when the topic is gone	4	tests/gateway/test_telegram_thread_fallback.py
+bcfa71321b	2026-11-08	fix(telegram): preserve mention gating in forum topics	2	tests/gateway/test_telegram_group_gating.py
+bd00a5225e	2026-11-08	fix(telegram): keep the toast helper in the adapter so callback_answer needs no core i18n import	2	-
+bdce549688	2026-11-08	fix(telegram): keep an album in one turn while a sibling is still downloading	4	tests/plugins/platforms/telegram/test_album_slow_sibling.py
+c31412ab6b	2026-11-08	fix(telegram): 跳过网络恢复路径 stop() 尾部的 read-receipt getUpdates	2	tests/gateway/test_telegram_network_reconnect.py
+c3d47e8caa	2026-11-08	fix(gateway): log only the exception type and proxy host:port for proxy errors	9	tests/gateway/test_proxy_error_text_not_logged.py
+c49620d018	2026-11-08	fix(telegram): re-upload flood-refused files natively instead of a text apology	4	tests/gateway/test_telegram_media_flood.py
+c608a8e45f	2026-11-08	fix(telegram): redact connect and fallback-IP discovery errors against the env proxy	2	tests/gateway/test_telegram_doh_proxy_secret.py
+c7af0fcadc	2026-11-08	fix(telegram): standalone photo batches arrive as albums	4	tests/tools/test_telegram_standalone_send_parity.py
+c9f01e1b92	2026-11-08	fix(telegram): keep bots_require_mention on free-response chats and topics	3	tests/gateway/test_telegram_group_gating.py
+c9f39e1946	2026-11-08	fix(telegram): the platform hint steers fixed choices to clarify buttons	3	tests/agent/test_platform_hint_telegram_clarify.py
+cacbcb1fe4	2026-11-08	fix(telegram): keep spaced and TeX-spaced numeric math out of the rich currency escape	2	tests/plugins/platforms/telegram/test_telegram_markdown.py
+cbbd3a89e8	2026-11-08	fix(telegram): deferred media re-uploads keep their file and respect an extended window	3	tests/gateway/test_telegram_media_flood.py
+cd2b2c9f6a	2026-11-08	fix(telegram): emit every closing mark when combined emphasis ends apart	3	tests/gateway/test_telegram_format.py;tests/plugins/platforms/telegram/test_telegram_markdown.py
+ce73fab365	2026-11-08	fix(telegram): a transient "thread not found" in a private topic retries the same thread first	2	tests/gateway/test_telegram_thread_fallback.py
+ceeeec8374	2026-11-08	fix(telegram): messages that arrive as rich_message blocks reach the agent	4	tests/e2e/core/platforms/test_telegram_rich_message_inbound.py;tests/gateway/test_telegram_documents.py
+d0fa9f507e	2026-11-08	fix(telegram): fit the sendAudio cover thumbnail inside 320x320	2	tests/gateway/test_telegram_send_audio.py
+d0fd66ed1e	2026-11-08	fix(telegram): the moved standalone sender keeps proxy credentials out of logs	3	tests/gateway/test_proxy_error_text_not_logged.py;tests/gateway/test_proxy_url_credentials_not_logged.py
+d1c4f6969a	2026-11-08	fix(telegram): standalone sends use the gateway's Bot API URL, timeouts and fallback IPs	8	tests/tools/test_send_message_telegram_proxy.py;tests/tools/test_telegram_send_retry_classification.py
+d25ef07c9c	2026-11-08	fix(telegram): keep pad_inline_flags inside the plugin	2	-
+d385936a97	2026-11-08	fix(telegram): control sends leave a private topic only after a confirmed missing-topic error	2	tests/gateway/test_telegram_thread_fallback.py
+d39af3cae0	2026-11-08	fix(telegram): a refused album keeps the standalone photos in the user's order	3	tests/tools/test_telegram_standalone_send_parity.py
+d7039263b9	2026-11-08	fix(telegram): mp3/m4a sends format the caption and carry track tags	4	tests/gateway/test_telegram_send_audio.py
+d800d62f9f	2026-11-08	fix(telegram): route an album item's early-exit paths through the album queue	2	tests/plugins/platforms/telegram/test_album_early_exit_items.py
+dbca7016cb	2026-11-08	fix(telegram): rich_message filter leaves media messages to the media handler	2	tests/gateway/test_telegram_rich_messages.py
+e0d75d35be	2026-11-08	fix(telegram): a deferred re-upload out of window waits is refused, never sent inside the window	2	tests/gateway/test_telegram_media_flood.py
+e2071e8f57	2026-11-08	fix(telegram): collapse same-kind nested emphasis marks to a single entity	2	tests/gateway/test_telegram_format.py
+e4ec5c2ce2	2026-11-08	fix(telegram): escape MarkdownV2 reserved parens in chunk indicators (#74004)	2	tests/tools/test_telegram_send_message_chunk_mdv2.py
+e520b85086	2026-11-08	fix(telegram): qualify configured topic names that collide under resolver matching	2	tests/gateway/test_dm_topics_config_targets.py
+e5ecded22a	2026-11-08	fix(gateway): drop a Telegram topic binding whose target row is gone	2	tests/gateway/test_telegram_topic_mode.py
+e6a6d0df94	2026-11-08	fix(gateway): log proxy URLs without any path segment	9	tests/gateway/test_proxy_url_credentials_not_logged.py
+e8907ae2b4	2026-11-08	fix(telegram): label the approval delivery receipt as the requested lane	2	tests/gateway/test_approval_delivery_observability.py
+ec092c80c1	2026-11-08	fix(telegram): every button tap is answered, even unknown, data-less or a failed picker edit	2	tests/gateway/test_telegram_callback_ack.py
+f0ac114d2d	2026-11-08	fix(telegram): every native approval renderer honours a Deny-only prompt	7	tests/gateway/test_exec_approval_deny_only_renderers.py
+f22490ccd9	2026-11-08	fix(telegram): keep digit-led math with brackets, bars and bangs whole	2	tests/plugins/platforms/telegram/test_telegram_markdown.py
+f228c919c6	2026-11-08	fix(gateway): retain Telegram observe turn actor	6	tests/gateway/test_session_env.py;tests/plugins/test_telegram_update_admission.py
+f59a7e22a9	2026-11-08	fix(gateway): preserve attachment flags across inbound media paths	10	tests/gateway/relay/test_inbound_media_flags.py;tests/gateway/test_text_batch_media_flags.py;tests/plugins/platforms/telegram/test_album_media_flags.py;tests/plugins/platforms/telegram/test_cached_media_flags.py
+f635dcdd83	2026-11-08	fix(tools): retry a Telegram send only on a transient failure, not a parse error	2	tests/tools/test_telegram_send_retry_classification.py
+f828b087e7	2026-11-08	fix(telegram): bound the voice caption with the published fit_prefix	1	-
+f9de86c545	2026-11-08	fix(telegram): keep a button tap alive when Telegram refuses an expired answer	3	tests/gateway/test_telegram_stale_callback.py
+fdf1f10fe2	2026-11-08	fix(telegram): measure the auto-TTS caption in UTF-16 units, so an emoji-heavy reply keeps its voice bubble	3	tests/gateway/test_telegram_voice_caption_markdown.py
+fe54b16026	2026-11-08	fix(telegram): a root DM moved by topic auto transfer takes the topic's prompt inputs	2	tests/gateway/test_telegram_dm_topic_auto_transfer.py
+007d7e8b50	2026-11-09	fix(telegram): retired adapters edit and delete through their same-profile replacement (#98228, #143364)	4	tests/gateway/test_telegram_send_reconnect_wait.py
+0151c2f613	2026-11-09	fix(platforms/telegram): retry webhook bootstrap once on transient Bot API failure	1	-
+033b6c8530	2026-11-09	fix(telegram): link-shaped text inside a double-backtick code span stays verbatim	2	tests/plugins/platforms/telegram/test_telegram_markdown.py
+039262515c	2026-11-09	fix(telegram): keep seed IPs behind DoH-discovered fallback IPs (#75416, salvage #76685)	3	tests/gateway/test_telegram_network.py
+0e28218d19	2026-11-09	fix(agent): a Telegram token right after an ANSI color code is still masked	2	tests/agent/test_redact_telegram_boundary.py
+2243a114d1	2026-11-09	fix(telegram): an adopted topic opener is not overtaken by threaded follow-ups	2	tests/plugins/test_telegram_update_admission.py
+239609fdb1	2026-11-09	fix(telegram): hermes send keeps HTML formatting past a model-invented tag	2	tests/tools/test_telegram_send_message_html_whitelist.py
+2903e03e4a	2026-11-09	fix(telegram): hermes send keeps an HTML tag whose quoted attribute holds `>`	2	tests/tools/test_telegram_send_message_html_whitelist.py
+2af49ba3e2	2026-11-09	fix(telegram): isolate DM topic update lanes	2	tests/plugins/test_telegram_update_admission.py
+37b58f4912	2026-11-09	fix(telegram): same-name or unnamed oversized album items each keep their note	4	tests/plugins/platforms/telegram/test_album_early_exit_items.py
+385ff1fe4a	2026-11-09	fix(telegram): hermes send treats a tag inside a double-backtick span as a code example	2	tests/tools/test_telegram_send_message_html_whitelist.py
+3a9d3672c9	2026-11-09	fix(telegram): /topic no longer creates and pins an untracked "System" topic	20	-
+3b42157858	2026-11-09	fix(telegram): a typing tick no longer freezes a group's streamed preview	2	tests/gateway/test_telegram_typing_backoff.py
+4161a6c4a1	2026-11-09	fix(telegram): a rich-only group message is addressed like the same plain text	5	tests/plugins/platforms/telegram/test_rich_message_addressing.py
+430d864cb0	2026-11-09	fix(telegram): a delete whose flood window closes during the last allowed wait still runs	2	tests/gateway/test_telegram_flood_window_delete_waits.py
+48d57b63f5	2026-11-09	fix(telegram): getUpdates reuses one socket off Windows instead of a fresh TCP per poll	4	tests/gateway/test_telegram_closewait_limits.py;tests/gateway/test_telegram_getupdates_keepalive.py;tests/tools/test_send_message_telegram_proxy.py
+4b5a85f99c	2026-11-09	fix(telegram): every too-large file in an album gets its own note	2	tests/plugins/platforms/telegram/test_album_early_exit_items.py
+4bfa2ab642	2026-11-09	fix(gateway): /resume refuses a session bound to another Telegram topic before switching	3	tests/gateway/test_telegram_topic_session_switch.py
+51ed48a8e3	2026-11-09	fix(telegram): an observed unmentioned contact card keeps its contents	2	tests/gateway/test_telegram_contact_observe.py
+541b948520	2026-11-09	fix(telegram): an oversized-file note no longer gets the message refused at admission	3	tests/plugins/platforms/telegram/test_item_notes_admission.py
+5532919d31	2026-11-09	fix(telegram): split admission lanes only for real topic messages	2	tests/plugins/test_telegram_update_admission.py
+5948ab52e2	2026-11-09	fix(telegram): typing keep-alives send one call per chat and share its outbound budget	3	tests/gateway/test_telegram_typing_backoff.py
+642bb293db	2026-11-09	fix(gateway): scope editable statuses to each turn	4	tests/gateway/test_status_turn_ownership.py
+6b305c031d	2026-11-09	fix(gateway): Telegram topic renames obey the receiving bot's disable_topic_auto_rename	2	tests/gateway/test_telegram_topic_session_switch.py
+6c93005fe7	2026-11-09	fix(telegram): replacement adapter resolves inside its own profile	2	tests/gateway/test_telegram_send_reconnect_wait.py
+7222595b82	2026-11-09	fix(telegram): streaming drafts and deletes stay out of a chat's flood window	3	tests/gateway/test_telegram_draft_delete_flood_window.py
+74dde239c8	2026-11-09	fix(telegram): fallback walk fails over inside the send deadline (#136412, salvage #136427)	3	tests/gateway/test_telegram_fallback_connect_budget.py
+761605f0d0	2026-11-09	fix(telegram): replay finals refused while degraded once polling heals in place	3	tests/gateway/test_telegram_send_path_recovery_sweep.py
+76ec660497	2026-11-09	fix(gateway): stop prepending the checkout root onto sys.path at import	13	tests/plugins/platforms/test_checkout_root_sys_path.py
+81f2c6850c	2026-11-09	fix(telegram): a degraded refusal whose failed row lands after recovery is still replayed	3	tests/gateway/test_telegram_send_path_recovery_sweep.py
+82bdce51ad	2026-11-09	fix(telegram): /stop and /new drop buffered photos through base's own debounce discard	3	tests/e2e/core/platforms/test_telegram_reset_drops_buffered_media.py
+82e0a7b4c1	2026-11-09	fix(telegram): channel posts obey allowed_chats and require_mention	4	tests/e2e/core/platforms/test_telegram_channel_post_gating.py;tests/gateway/test_telegram_group_gating.py
+8c96f17457	2026-11-09	fix(telegram): a replacement adapter takes the old one's buffered batches before it replays	2	tests/gateway/test_telegram_held_inbound_order.py
+9111b89f89	2026-11-09	fix(gateway): rename Telegram topic to session title on /topic restore	2	tests/gateway/test_telegram_topic_mode.py
+91582993ac	2026-11-09	fix(telegram): answer messages sent while the gateway was off	4	tests/gateway/test_telegram_cold_boot_queue.py;tests/gateway/test_telegram_conflict.py
+91c7c07b95	2026-11-09	fix(telegram): a delete never sleeps a re-extended flood window inline	2	tests/gateway/test_telegram_flood_window_delete_waits.py
+93ba47b799	2026-11-09	fix(gateway): /handoff into a Telegram DM topic rebinds the topic	2	tests/gateway/test_telegram_topic_mode.py
+98ba0238c2	2026-11-09	fix(telegram): do not synthesize bot commands from rich link labels	2	tests/plugins/platforms/telegram/test_rich_message_addressing.py
+a0d954f62d	2026-11-09	fix(telegram): links Telegram cannot open render as their label, not raw syntax	4	tests/gateway/test_telegram_rich_messages.py;tests/plugins/platforms/telegram/test_telegram_markdown.py
+a633070733	2026-11-09	fix(telegram): getUpdates keepalive branches on sys.platform, not an unpublished core name	1	-
+a6c4e29937	2026-11-09	fix(telegram): a root message after a threaded follow-up never adopts the new topic	4	tests/plugins/test_telegram_update_admission.py
+adc5c561df	2026-11-09	fix(gateway): /resume in a Telegram observe group cannot take over a co-member's per-user session	2	tests/gateway/test_telegram_observe_resume_ownership.py
+b13e391042	2026-11-09	fix(telegram): leading code in a rich message counts as content, like plain text	2	tests/plugins/platforms/telegram/test_rich_message_addressing.py
+b822c89fe0	2026-11-09	fix(telegram): /branch --here and /resume keep the topic on the switched-to session	3	tests/gateway/test_telegram_topic_session_switch.py
+b87cfd207e	2026-11-09	fix(gateway): the Telegram menu never advertises a bundle name that cannot dispatch	2	tests/hermes_cli/test_commands_bundle_catalog_safety.py
+b8f7237477	2026-11-09	fix(telegram): a dead private topic reaches the root with a prune, not silently via its native id	4	tests/gateway/test_telegram_thread_fallback.py
+c437722653	2026-11-09	fix(gateway): harden HERMES_TELEGRAM_FOLLOWUP_GRACE_SECONDS env parsing (salvage of #13873 by @Junass1)	2	tests/gateway/test_followup_grace_env_parsing.py
+cb37fe44b1	2026-11-09	fix(agent): preserve identifiers at Telegram token boundaries	2	tests/agent/test_redact_telegram_boundary.py
+cfb6f6e7b3	2026-11-09	fix(telegram): replay held inbound in arrival order	4	tests/gateway/test_telegram_held_inbound_order.py
+d1aed60ec1	2026-11-09	fix(gateway): slash confirms and clarify questions answer only to their requester	21	tests/gateway/test_prompt_requester_binding.py
+d2011903cc	2026-11-09	fix(telegram): log when allowed_topics drops a forum topic	5	tests/e2e/core/platforms/test_telegram_allowed_topics.py
+d742bfddc6	2026-11-09	fix(telegram): contact cards reach the agent, /stop drops buffered photos, SDK import failures name their cause	6	tests/e2e/core/platforms/test_telegram_ingress_shapes.py;tests/gateway/test_telegram_documents.py;tests/plugins/platforms/telegram/test_telegram_import_failure_logging.py
+e98a7006f8	2026-11-09	fix(telegram): a send reset after the request was written is never resent	3	tests/gateway/test_telegram_send_reconnect_wait.py
+ed74264afe	2026-11-09	fix(telegram): a long paste split by the client stays one turn	5	tests/gateway/test_telegram_text_batch_perf.py;tests/gateway/test_telegram_text_batching.py
