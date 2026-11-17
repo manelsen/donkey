@@ -187,3 +187,38 @@ suite "renderTelegramHtml":
     check rendered.contains("<code>fs_list</code>")
     check rendered.contains("<pre>{\"ok\":true}</pre>")
     check not rendered.contains("&lt;code&gt;")
+
+suite "telegram adapter — transport wiring (TG-022, TG-030)":
+
+  test "TG-022: the adapter honours the Telegram proxy variable":
+    let resolverPath = getTempDir() / "donkey_tg_proxy_ids.tsv"
+    defer: removeFile(resolverPath)
+    putEnv("DONKEY_TELEGRAM_PROXY", "http://proxy.local:3128")
+    defer: delEnv("DONKEY_TELEGRAM_PROXY")
+    let a = newTelegramAdapter("token", resolverPath)
+    check a.http.proxy == "http://proxy.local:3128"
+
+  test "TG-022: the generic web proxy is the fallback":
+    let resolverPath = getTempDir() / "donkey_tg_proxy_ids2.tsv"
+    defer: removeFile(resolverPath)
+    delEnv("DONKEY_TELEGRAM_PROXY")
+    putEnv("DONKEY_WEB_PROXY", "http://webproxy.local:8080")
+    defer: delEnv("DONKEY_WEB_PROXY")
+    check telegramProxyUrl() == "http://webproxy.local:8080"
+
+  test "TG-022: the Bot API host is allowlisted":
+    let resolverPath = getTempDir() / "donkey_tg_proxy_ids3.tsv"
+    defer: removeFile(resolverPath)
+    let a = newTelegramAdapter("token", resolverPath)
+    check a.http.allowlist == @["api.telegram.org"]
+
+  test "TG-030: the timeout is configurable and falls back safely":
+    delEnv("DONKEY_TELEGRAM_TIMEOUT_SEC")
+    check telegramHttpTimeoutSec() == 60
+    putEnv("DONKEY_TELEGRAM_TIMEOUT_SEC", "300")
+    check telegramHttpTimeoutSec() == 300
+    putEnv("DONKEY_TELEGRAM_TIMEOUT_SEC", "0")
+    check telegramHttpTimeoutSec() == 60
+    putEnv("DONKEY_TELEGRAM_TIMEOUT_SEC", "abc")
+    check telegramHttpTimeoutSec() == 60
+    delEnv("DONKEY_TELEGRAM_TIMEOUT_SEC")

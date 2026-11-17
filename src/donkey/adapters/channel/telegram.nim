@@ -10,7 +10,7 @@
 ##
 ## IdentityResolver is now in adapters/identity — maps telegram_user_id → UserId.
 
-import std/[json, sequtils, strutils]
+import std/[json, os, sequtils, strutils]
 import ../../core/types
 import ../../core/pipeops
 import ../../core/commands/command_catalog
@@ -495,6 +495,32 @@ proc answerCallback*(a: TelegramAdapter; callbackId: string): Result[void, strin
   discard ? a.post("answerCallbackQuery", %* {"callback_id": callbackId})
   ok()
 
+func telegramHttpTimeoutSec*(): int =
+  ## Behavior derived from hermes-agent (MIT) fix 04057250a3; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-030
+  ##
+  ## Bot API calls are bounded by a wall-clock deadline; media uploads get a
+  ## larger one because the transfer itself is slower.
+  let raw = getEnv("DONKEY_TELEGRAM_TIMEOUT_SEC").strip
+  if raw.len == 0:
+    return 60
+  let parsed = try:
+    raw.parseInt
+  except ValueError:
+    return 60
+  if parsed <= 0: 60 else: parsed
+
+func telegramProxyUrl*(): string =
+  ## Behavior derived from hermes-agent (MIT) fix d7c41f3cef; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-022
+  ##
+  ## The Bot API may only be reachable through a proxy. The Telegram-specific
+  ## variable wins over the generic web proxy.
+  let specific = getEnv("DONKEY_TELEGRAM_PROXY").strip
+  if specific.len > 0:
+    return specific
+  getEnv("DONKEY_WEB_PROXY").strip
+
 proc newTelegramAdapter*(token: string; identityPath: string;
                          apiBase = ""; pollTimeout = DefaultPollTimeout): TelegramAdapter =
   TelegramAdapter(
@@ -502,6 +528,9 @@ proc newTelegramAdapter*(token: string; identityPath: string;
     apiBase:     apiBase,
     offset:      0,
     resolver:    newIdentityResolver(identityPath),
-    http:        newStdHttpAdapter(),
+    http:        newStdHttpAdapter(
+                   timeout = telegramHttpTimeoutSec(),
+                   proxy = telegramProxyUrl(),
+                   allowlist = @["api.telegram.org"]),
     pollTimeout: pollTimeout,
   )
