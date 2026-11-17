@@ -349,3 +349,53 @@ cb47f59ffa	MEDIA	yes	Flush de media group (album) cancelado deve propagar Cancel
 a85e45da13	INTERNAL	no	Rebind de TypeHandler no import deferido do SDK; refatoracao interna.
 bd5565650d	NET	yes	Hostname dual-stack falha; tentar IPs IPv4 da API do Telegram antes.
 eb4bc1513f	NET	yes	Escolha de IP IPv4 como primeira opcao nao e erro; apenas nivel de log.
+21260c3281	INTERNAL	no	Chave de sessao derivada do adapter carrega o perfil; interno do multiplex.
+790c850144	FORMAT	yes	Rich finals (tabelas) apos drafts em DM precisam ser preservados.
+fbca706789	NET	yes	Progresso confirmado do getUpdates por geracao indica polling saudavel.
+e9a7c7aa4d	EDIT	yes	editMessageText identifica a mensagem por chat_id+message_id; campos de topico sao rejeitados.
+194729c95f	FORMAT	yes	Tabelas em DM topic seguem em sendRichMessage quando os drafts degradam.
+3841910cee	NET	yes	Stop protegido contra cancelamento deve valer para caminhos irmaos de reconexao.
+9e36774d77	NET	yes	Apos stop protegido por cancelamento e preciso reconstruir o transporte.
+a444b673ad	RATE	yes	Esperas longas de flood control no caminho de envio devem falhar fechado.
+bad2ed866c	FORMAT	yes	Alias do DM topic define se as tabelas vao em sendRichMessage ou viram bullets.
+bf15b050b1	NET	yes	Long poll morre em silencio; o progresso do getUpdates alimenta o watchdog.
+6c1bfff65c	NET	yes	Polling getUpdates cai com conexao fechada; Bot API recusa envio ate restabelecer o transporte
+21b503fb18	FORMAT	yes	setMyCommands tem limite de quantidade e tamanho de nomes/descricoes; conjunto completo precisa caber
+5cd9c4563c	NET	yes	Pool de conexoes HTTP esgotada derruba requisicoes ao Bot API; exige pool renovada
+60a664519c	FORMAT	yes	Menu de comandos do bot: limite de comandos, nomes curtos e descricoes truncadas pelo Telegram
+ccc367dce0	MEDIA	yes	Nota de voz exige OGG/Opus no Bot API; audio em outro formato vira arquivo comum
+0943702c55	INTERNAL	no	Lease de turno longo e steer no gateway; nao altera comportamento de API do Telegram
+7790c8f4c4	NET	yes	Sockets CLOSE-WAIT no Windows travam o long-poll getUpdates ate o cliente ser limpo
+8288129475	NET	yes	getUpdates long-poll sem deadline deixa o poll preso e atrasa o proximo ciclo
+a06c0d0a2f	NET	yes	Deadlock de getUpdates em CLOSE-WAIT no Windows; conexao morta nao devolve resposta
+b02b7122f8	NET	yes	Reuso de socket de long-poll no Windows trava o getUpdates ate o timeout
+e2521fdef6	INTERNAL	no	Ajuste de nivel de log da linha de conexao; nenhum comportamento de API envolvido
+fab36436b2	EDIT	yes	editMessageText no meio do stream pode falhar; o Telegram mantem a bolha ja enviada
+351e4c0067	INTERNAL	no	Tabelas de estado de topicos com namespace por perfil; persistencia interna
+4346721117	INBOUND	yes	callback_query carrega o usuario que clicou; autorizacao nao pode vir da introspeccao do handler
+62be7043ff	INTERNAL	no	Roteamento de perfil para estado de topicos; bookkeeping interno do hermes
+74775df53f	INBOUND	yes	Callbacks podem vir de bots e de usuarios nao autorizados; auth precisa cobrir is_bot
+d55d9d128a	INTERNAL	no	Prune de cooldowns e docs por perfil; estado e configuracao internos
+ea6644e1dc	INTERNAL	no	Leitura de config.yaml no persist de DM topics; refatoracao behavior-identical
+eef25a70be	INTERNAL	no	Repoint de teste de webhook-secret para os seams de start; teste interno
+60ee3790e0	NET	yes	Polling morre em sessao: Bot API para de entregar updates e o status precisa virar degraded
+aec50eb597	INTERNAL	no	Tabelas de assinatura, PluginManager e helpers internos; nada de Telegram
+b57f17bd4b	INTERNAL	no	Restauracao de guards e assinaturas internas (staticmethod do format_message)
+ce52ae21a7	NET	yes	Caminho de polling nao confirmado nao pode anunciar conexao saudavel ao Bot API
+722acd66f6	INTERNAL	no	docker_network vs --network em extra_args; infraestrutura local
+8239ec4833	INTERNAL	no	Probe de egress do Docker com label filter; infraestrutura local
+aa0beef684	INTERNAL	no	Avisos de token corrompido e docker_env param de logar credenciais; seguranca interna
+bc233501aa	INBOUND	yes	Grupos: mencoes @bot e reply anchors vem no update e precisam sobreviver ao parsing
+bc31e04d83	INBOUND	yes	Em grupo, remover o handle so quando o bot e o unico destinatario da mensagem
+5495c29cf8	RATE	yes	Flood control: 429 com retry_after e variantes de recusa definitiva do Bot API
+1a981d8e83	INBOUND	yes	Quote-reply de outro bot so deve acordar o bot com @mention explicito em grupos
+91adf584a4	MEDIA	yes	Album/media group: envio multiplo de imagens retorna resultado agregado por mensagem
+3a37785f7f	INBOUND	yes	Telegram entrega updates de outros bots; exige guarda anti-loop bot-a-bot
+e253ea0233	INTERNAL	no	Credenciais de perfis secundarios vs host padrao; multiplex interno
+545e74d0ea	INTERNAL	no	config.yaml de perfil secundario poluindo o env do processo; multiplex interno
+70d0f556d7	INTERNAL	no	Troca de glifo de marca; branding, sem relacao com Telegram
+75ade17617	FORMAT	yes	setMyCommands aceita texto simples; travessoes unicode precisam normalizacao
+122ad719b5	INBOUND	yes	Allowlist de remetentes: gate deve aceitar lista em JSON antes de decidir autorizacao
+178bf0436c	INTERNAL	no	Precedencia env -> YAML de ignored_threads e mention_patterns; configuracao
+333bf120a5	MEDIA	yes	Foto acima do limite do Bot API precisa pre-compressao antes do upload
+3dedb71f2f	INTERNAL	no	Resolucao env -> YAML -> default dos settings por perfil; configuracao
