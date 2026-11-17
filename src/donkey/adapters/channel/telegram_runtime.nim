@@ -802,6 +802,10 @@ proc handleTelegramMessage*(msg: InboundMessage;
         rememberAddressedAlbum(gAlbumMentions, key, nowMs)
       elif not albumAddressed(gAlbumMentions, key, nowMs):
         logger.debug("telegram: group message not addressed to the bot, ignored")
+        ## A dropped button tap still needs its acknowledgement, or the client
+        ## keeps the spinner for half a minute.
+        if msg.callbackId.len > 0:
+          discard tgAdapter.answerCallback(msg.callbackId)
         return true
       if gAlbumMentions.untilMs.len > 64:
         clearExpiredAlbums(gAlbumMentions, nowMs)
