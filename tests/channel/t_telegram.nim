@@ -246,3 +246,9 @@ suite "telegram adapter — transport wiring (TG-022, TG-030)":
     putEnv("DONKEY_TELEGRAM_MEDIA_TIMEOUT_SEC", "-1")
     check telegramMediaTimeoutSec() == 300
     delEnv("DONKEY_TELEGRAM_MEDIA_TIMEOUT_SEC")
+
+  test "TG-020: the adapter retries a polling conflict":
+    let resolverPath = getTempDir() / "donkey_tg_conflict_ids.tsv"
+    defer: removeFile(resolverPath)
+    let a = newTelegramAdapter("token", resolverPath)
+    check a.http.retryConflict
