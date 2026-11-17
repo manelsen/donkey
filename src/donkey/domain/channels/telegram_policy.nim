@@ -106,3 +106,15 @@ func withLinkPreviewPolicy*(body: JsonNode; previewsEnabled: bool): JsonNode =
 func linkPreviewsFromEnv*(value: string): bool =
   ## Parses the opt-in flag; anything but an explicit yes keeps previews off.
   value.strip.toLowerAscii in ["1", "true", "yes", "on"]
+
+func asDocumentBody*(body: JsonNode): JsonNode =
+  ## Behavior derived from hermes-agent (MIT) fix 6faa1965d7; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-027
+  ##
+  ## sendPhoto refuses images outside the dimension or size limits, while
+  ## sendDocument accepts the same file. The fallback keeps the media instead
+  ## of dropping it.
+  result = body
+  if result.hasKey("photo"):
+    result["document"] = result["photo"]
+    result.delete("photo")

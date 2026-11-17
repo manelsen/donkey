@@ -178,6 +178,10 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
     except ValueError: discard
   let res = a.post(meth, body)
   if res.isOk: return ok()
+  if meth == "sendPhoto":
+    ## A photo outside the dimension/size limits is still a valid document.
+    let docRes = a.post("sendDocument", asDocumentBody(body))
+    if docRes.isOk: return ok()
   ## Fallback: send URL as text
   discard ? a.post("sendMessage", %* {"chat_id": tgId, "text": url})
   ok()

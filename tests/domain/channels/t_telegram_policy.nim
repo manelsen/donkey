@@ -117,3 +117,16 @@ suite "telegram_policy — link previews":
       check linkPreviewsFromEnv(value)
     for value in ["0", "false", "", "off", "no"]:
       check not linkPreviewsFromEnv(value)
+
+suite "telegram_policy — media fallback":
+
+  test "TG-027: a photo body becomes a document body":
+    let body = %*{"chat_id": 1, "photo": "https://x.test/a.jpg", "caption": "oi"}
+    let doc = asDocumentBody(body)
+    check doc["document"].getStr() == "https://x.test/a.jpg"
+    check not doc.hasKey("photo")
+    check doc["caption"].getStr() == "oi"
+
+  test "TG-027: a document body is unchanged":
+    let body = %*{"chat_id": 1, "document": "https://x.test/a.pdf"}
+    check asDocumentBody(body) == body
