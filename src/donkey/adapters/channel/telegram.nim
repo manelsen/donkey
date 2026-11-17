@@ -33,6 +33,7 @@ const
   TelegramApiBase*   = "https://api.telegram.org"
   DefaultPollTimeout = 1    ## 1 s: short enough for multi-channel fairness
   TelegramMaxChars*  = 4096 ## Telegram sendMessage hard limit
+  TelegramCaptionLimit* = 1024 ## media caption limit
 
 const TelegramReactionFallbacks* = ["👍", "👌", "✅", "🔥", "👏"]
 
@@ -164,7 +165,8 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
   let meth    = if isImage: "sendPhoto" else: "sendDocument"
   let fileKey = if isImage: "photo"     else: "document"
   var body = %* {"chat_id": tgId, fileKey: url}
-  if caption.len > 0:  body["caption"] = %caption
+  if caption.len > 0:
+    body["caption"] = %clipCaption(caption, TelegramCaptionLimit)
   if replyTo.len > 0:
     try: body["reply_to_message_id"] = %parseInt(replyTo)
     except ValueError: discard

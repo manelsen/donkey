@@ -3,7 +3,7 @@
 ## Pure functions only: the adapter decides when to call them, this module
 ## decides what the API contract requires.
 
-import std/strutils
+import std/[strutils, unicode]
 
 func isEditNoopError*(message: string): bool =
   ## Behavior derived from hermes-agent (MIT) fix 7ac9088d5c; see
@@ -31,3 +31,25 @@ func shouldSkipOutboundText*(text: string): bool =
   ## sendMessage refuses empty or whitespace-only text with 400 "message text
   ## is empty". Skipping the call keeps the turn from failing on nothing.
   text.strip.len == 0
+
+func clipCaption*(text: string; limit = 1024): string =
+  ## Behavior derived from hermes-agent (MIT) fix f828b087e7; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-007
+  ##
+  ## The media caption limit (1024) is smaller than the message body limit
+  ## (4096). Clipping on a character boundary keeps the upload valid instead of
+  ## letting the API refuse the whole media message.
+  if limit <= 0:
+    return ""
+  var count = 0
+  for _ in text.runes: inc count
+  if count <= limit:
+    return text
+  var clipped = ""
+  var kept = 0
+  for r in text.runes:
+    if kept + 1 > limit - 1:
+      break
+    clipped.add($r)
+    inc kept
+  clipped & "…"

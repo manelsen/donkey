@@ -2,7 +2,7 @@
 ##
 ## Each test starts with the case id from docs/hermes-mining/telegram/CASES.md.
 
-import std/[strutils, unittest]
+import std/[strutils, unicode, unittest]
 import donkey/domain/channels/telegram_policy
 
 suite "telegram_policy — edit errors":
@@ -37,3 +37,25 @@ suite "telegram_policy — outbound text":
     check shouldSkipOutboundText("")
     check shouldSkipOutboundText("   \n\t ")
     check not shouldSkipOutboundText("oi")
+
+
+func runeCount(s: string): int =
+  for _ in s.runes: inc result
+
+suite "telegram_policy — captions":
+
+  test "TG-007: a long caption is clipped to the 1024 limit":
+    let long = strutils.repeat("a", 1500)
+    let clipped = clipCaption(long, 1024)
+    check runeCount(clipped) <= 1024
+    check clipped.endsWith("…")
+
+  test "TG-007: a caption under the limit is unchanged":
+    check clipCaption("legenda", 1024) == "legenda"
+
+  test "TG-007: clipping respects character boundaries":
+    var text = strutils.repeat("a", 1022)
+    text.add("😀😀😀😀")
+    let clipped = clipCaption(text, 1024)
+    check runeCount(clipped) <= 1024
+    check clipped.endsWith("…")

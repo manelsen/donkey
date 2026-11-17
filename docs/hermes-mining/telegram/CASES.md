@@ -77,8 +77,8 @@ código do hermes. Ver `THIRD_PARTY_NOTICES.md` para a atribuição MIT.
 - **Comportamento esperado do cliente:** Truncar ou dividir a legenda antes do envio, preservando o texto completo em mensagem separada.
 - **Fontes no hermes:** `f828b087e7`, `fdf1f10fe2`
 - **Testes no hermes:** `tests/gateway/test_telegram_voice_caption_markdown.py`
-- **Situação no Donkey:** AUSENTE
-- **Evidência no Donkey:** `rg -n "1024" src/donkey/adapters/channel/telegram.nim` (sem resultados); legenda crua em `src/donkey/adapters/channel/telegram.nim:142`
+- **Situação no Donkey:** COBERTO
+- **Evidência no Donkey:** `src/donkey/domain/channels/telegram_policy.nim:36` e `src/donkey/adapters/channel/telegram.nim:146`
 - **Prioridade:** P1
 
 ### TG-008: Edição também respeita o limite de 4096
