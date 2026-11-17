@@ -63,7 +63,7 @@ func findUnescaped(md: string; needle: string; start: int): int =
       dec j
     if backslashes mod 2 == 0:
       return at
-    i = at + needle.len
+    i = at + 1
   -1
 
 func backtickRun(md: string; start: int): int =

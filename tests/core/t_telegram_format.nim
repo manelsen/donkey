@@ -91,3 +91,8 @@ suite "telegram_format — backslash escapes (TG-037)":
 
   test "TG-037: an escaped delimiter does not close the span":
     check markdownToTelegramHtml("*a \\* b*") == "<i>a * b</i>"
+
+  test "TG-037: overlapping closings are still found":
+    check markdownToTelegramHtml("**a \\***") == "<b>a *</b>"
+    check markdownToTelegramHtml("__a \\___") == "<b>a _</b>"
+    check markdownToTelegramHtml("~~a \\~~~") == "<s>a ~</s>"

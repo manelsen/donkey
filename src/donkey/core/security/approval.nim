@@ -78,3 +78,12 @@ func parseStatus*(raw: string): Option[ApprovalStatus] =
   of "denied":   some(apsDenied)
   of "expired":  some(apsExpired)
   else:          none(ApprovalStatus)
+
+func isApprovalCommandText*(text: string): bool =
+  ## Behavior derived from hermes-agent (MIT) fix b0939d9210; see
+  ## docs/hermes-mining/telegram/CASES.md#tg-015
+  ##
+  ## `/approve <id>` and `/deny <id>` are the format the bot announces. In a
+  ## group with the mention gate on, they must still work without a mention.
+  let parts = text.strip.splitWhitespace()
+  parts.len == 2 and parts[0] in ["/approve", "/deny"]

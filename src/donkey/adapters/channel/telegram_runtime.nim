@@ -5,6 +5,7 @@ import ../../core/commands/command_routing
 import ../../core/log as core_log
 import ../../core/outbound/outbound
 import ../../core/pipeops
+import ../../core/security/approval
 import ../../adapters/memory/md_file
 import ../../app/inbound_gate
 import ../../app/approval_runtime
@@ -719,7 +720,7 @@ proc handleTelegramTaskCommand*(sm: var SessionManager;
       inc msgSeq
       entry.inbox.addLastNoWait(
         newTaskMsg($msgSeq, commandTaskKind(command), $msg.userId,
-                   "", ckTelegram, msg.channelId))
+                   "", ckTelegram, replyTarget(msg)))
 
     # Send feedback for non-silent commands
     let feedback = case command.kind
@@ -758,7 +759,7 @@ proc handleTelegramCoreCallback*(sm: var SessionManager;
       inc msgSeq
       entry.inbox.addLastNoWait(
         newTaskMsg($msgSeq, callbackTaskKind(callback), $msg.userId,
-                   callback.value, ckTelegram, msg.channelId))
+                   callback.value, ckTelegram, replyTarget(msg)))
     return true
   false
 
@@ -782,7 +783,8 @@ proc handleTelegramMessage*(msg: InboundMessage;
   ## only messages that mention the bot start a turn; `/cmd@bot` already works
   ## because parseCommandText strips the suffix.
   let botUsername = telegramBotUsername()
-  if msg.isGroup and telegramRequireMention() and botUsername.len > 0:
+  if msg.isGroup and telegramRequireMention() and botUsername.len > 0 and
+     not isApprovalCommandText(msg.text):
     {.cast(gcsafe).}:
       let nowMs = epochMs()
       let key = albumKey($msg.userId, msg.mediaGroupId)
