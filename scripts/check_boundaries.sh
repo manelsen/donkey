@@ -42,5 +42,10 @@ check_absent \
   '^\s*(import|from)\s+.*(adapters/|app/)' \
   src/donkey/ports
 
+check_absent \
+  "domain must stay pure" \
+  '^\s*(import|from)\s+.*(chronos|asyncsync|asyncdispatch|osproc|httpclient|parsetoml|adapters/|app/)' \
+  src/donkey/domain
+
 echo "Boundary checks passed."
 
