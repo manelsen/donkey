@@ -319,6 +319,12 @@ suite "agent response builders":
   test "sseDone is the OpenAI terminator":
     check sseDone() == "data: [DONE]\n\n"
 
+  test "sseData frames exactly one event per chunk":
+    check sseData("{\"object\":\"chat.completion.chunk\"}") ==
+          "data: {\"object\":\"chat.completion.chunk\"}\n\n"
+    check sseData("{\"error\":{\"message\":\"x\"}}") ==
+          "data: {\"error\":{\"message\":\"x\"}}\n\n"
+
 suite "deltaText precedence":
 
   test "final answers and turn errors are content":

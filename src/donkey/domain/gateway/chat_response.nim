@@ -92,6 +92,10 @@ func buildAgentError*(message: string; errorType = "server_error";
   root["error"] = errorObj
   $root
 
+func sseData*(payload: string): string =
+  ## Frames one already-serialised chunk as a single SSE data event.
+  "data: " & payload & "\n\n"
+
 func sseDone*(): string =
   ## The OpenAI stream terminator, including its blank line.
   "data: [DONE]\n\n"

@@ -27,6 +27,7 @@ import ../core/agent_events
 import ../domain/message
 import ../domain/providers/openai_compat
 import ../domain/gateway/identity_pure
+import ../domain/gateway/capacity_pure as capacity
 import ./metrics
 import ./chat_bridge
 import ./agent_chat_runtime
@@ -331,15 +332,20 @@ proc sendResponse(s: Socket; status, contentType, body: string; log: Logger) =
 proc sendJson(s: Socket; body: string; log: Logger) =
   s.sendResponse("200 OK", "application/json", body, log)
 
-proc sendSseHeaders(s: Socket; log: Logger) =
+proc sendSseHeaders(s: Socket; log: Logger): bool =
   ## Sends SSE-specific response headers, keeps connection open.
+  ## Returns false when the client is already gone.
   let headers = "HTTP/1.1 200 OK\r\n" &
                 CorsHeaders &
                 "Content-Type: text/event-stream\r\n" &
                 "Cache-Control: no-cache\r\n" &
                 "Connection: keep-alive\r\n\r\n"
-  try: s.send(headers) except CatchableError:
+  try:
+    s.send(headers)
+    true
+  except CatchableError:
     log.warn("http_gateway: sendSseHeaders failed: " & getCurrentExceptionMsg())
+    false
 
 proc sendSseData(s: Socket; event, data: string): bool =
   ## Returns false if the connection is broken.
@@ -402,6 +408,8 @@ proc parseChatPost*(body: string): Result[InboundMessage, string] =
 
 proc tryAcquireSseConnection(): bool {.gcsafe.}
 proc releaseSseConnection() {.gcsafe.}
+proc tryAcquireAgentTurn(): bool {.gcsafe.}
+proc releaseAgentTurn() {.gcsafe.}
 
 proc readRequestBody(client: Socket; contentLength: int;
                     deadline: MonoTime): string =
@@ -531,7 +539,8 @@ proc handleGatewayConn(client: Socket;
                             "too many event streams\n", log)
         return
       try:
-        client.sendSseHeaders(log)
+        if not client.sendSseHeaders(log):
+          return
         ## Push a heartbeat comment immediately to confirm stream started.
         try: client.send(": connected\n\n") except CatchableError: discard
         ## Poll loop: push log + agent event snapshots every SseHeartbeatIntervalMs.
@@ -591,18 +600,52 @@ proc handleGatewayConn(client: Socket;
         client.sendResponse("405 Method Not Allowed", "application/json", "", log)
       else:
         let body = readRequestBody(client, contentLength, deadline)
-        let reply = runAgentChat(
-          body            = body,
-          bridge          = chatBridge,
-          dispatch        = agentDispatchFn,
-          authorize       = authorizeFn,
-          tokenConfigured = authToken.len > 0,
-          now             = agentNowSeconds,
-          timeoutMs       = agentTimeoutMs,
-          model           = modelName,
-        )
-        client.sendResponse(httpStatusLine(reply.status), "application/json",
-                            reply.body & "\n", log)
+        if agentChatStreamRequested(body):
+          let openSse = proc(): bool {.gcsafe.} =
+            client.sendSseHeaders(log)
+          let sendSse = proc(chunk: string): bool {.gcsafe.} =
+            try:
+              client.send(chunk)
+              true
+            except CatchableError:
+              false
+          let streamResult = runAgentStream(
+            body            = body,
+            bridge          = chatBridge,
+            dispatch        = agentDispatchFn,
+            authorize       = authorizeFn,
+            tokenConfigured = authToken.len > 0,
+            now             = agentNowSeconds,
+            openStream      = openSse,
+            send            = sendSse,
+            acquireSlot     = tryAcquireSseConnection,
+            releaseSlot     = releaseSseConnection,
+            streamNow       = agentClockMs,
+            streamNap       = agentNap,
+            timeoutMs       = agentTimeoutMs,
+            model           = modelName,
+          )
+          if streamResult.outcome == asPreflightError:
+            client.sendResponse(httpStatusLine(streamResult.reply.status),
+                                "application/json",
+                                streamResult.reply.body & "\n", log)
+        else:
+          discard tryAcquireAgentTurn()
+          try:
+            let reply = runAgentChat(
+              body            = body,
+              bridge          = chatBridge,
+              dispatch        = agentDispatchFn,
+              authorize       = authorizeFn,
+              tokenConfigured = authToken.len > 0,
+              now             = agentNowSeconds,
+              timeoutMs       = agentTimeoutMs,
+              model           = modelName,
+            )
+            client.sendResponse(httpStatusLine(reply.status), "application/json",
+                                reply.body & "\n", log)
+          finally:
+            releaseAgentTurn()
 
     of "openai_models":
       if req.meth != "GET":
@@ -681,6 +724,9 @@ type HttpConnectionArgs = object
 
 var gActiveHttpConnections = 0
 var gActiveSseConnections = 0
+var gActiveAgentTurns = 0
+  ## Non-streaming `/v1/chat/completions` workers. Streaming chat is counted
+  ## as an SSE connection instead, so one worker is never counted twice.
 var gHttpConnLock: Lock
 initLock(gHttpConnLock)  # Module init runs before any gateway thread starts.
 
@@ -703,9 +749,18 @@ proc releaseHttpConnection() =
     release(gHttpConnLock)
 
 proc tryAcquireSseConnection(): bool =
+  ## Long-lived admission for `/api/events` and streaming
+  ## `/v1/chat/completions`: the SSE ceiling applies first, then the shared
+  ## 6-worker budget (agent turns + SSE connections).
   acquire(gHttpConnLock)
   try:
-    if gActiveSseConnections >= MaxConcurrentSseConnections:
+    let snapshot = capacity.LongLivedSnapshot(
+      pendingTurns:     gActiveAgentTurns,
+      sseConnections:   gActiveSseConnections,
+      longLivedWorkers: gActiveAgentTurns + gActiveSseConnections,
+    )
+    if not capacity.admitLongLived(
+        capacity.llSseConnection, snapshot).admitted:
       return false
     inc gActiveSseConnections
     true
@@ -717,6 +772,22 @@ proc releaseSseConnection() =
   try:
     if gActiveSseConnections > 0:
       dec gActiveSseConnections
+  finally:
+    release(gHttpConnLock)
+
+proc tryAcquireAgentTurn(): bool =
+  acquire(gHttpConnLock)
+  try:
+    inc gActiveAgentTurns
+    true
+  finally:
+    release(gHttpConnLock)
+
+proc releaseAgentTurn() =
+  acquire(gHttpConnLock)
+  try:
+    if gActiveAgentTurns > 0:
+      dec gActiveAgentTurns
   finally:
     release(gHttpConnLock)
 
