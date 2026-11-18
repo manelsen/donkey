@@ -46,21 +46,28 @@ func skipSecretValue(s: string; start: int): int =
   i
 
 func namedSecretValueStart(s: string; i: int; name: string): int =
-  ## Matches `name [ws] = [ws] value` and returns the value start, or -1.
+  ## Matches `name ["] [ws] (=|:) [ws] value` and returns the value start, or
+  ## -1. The colon form exists for JSON (`"api_key": "value"`); prose such as
+  ## "monkey: business" must not be mangled, so a colon only counts when the
+  ## value is quoted.
   if not lowerAt(s, i, name):
     return -1
   var j = i + name.len
   while j < s.len and isSecretSpace(s[j]):
     inc j
-  ## JSON style (`"api_key": "value"`) puts a quote and a colon after the
-  ## name, so an optional quote is skipped before either separator.
   if j < s.len and s[j] in {'"', '\''}:
+    inc j
+  while j < s.len and isSecretSpace(s[j]):
     inc j
   if j >= s.len or (s[j] != '=' and s[j] != ':'):
     return -1
+  let colon = s[j] == ':'
   inc j
   while j < s.len and isSecretSpace(s[j]):
     inc j
+  if colon:
+    if j >= s.len or s[j] notin {'"', '\''}:
+      return -1
   j
 
 ## Lowercase on purpose: `lowerAt` compares against lowercased input, so an

@@ -437,6 +437,14 @@ suite "redactForClient":
     check not redacted.contains("secret-value")
     check not redacted.contains("tok-9")
 
+  test "redacts JSON keys with a space before the colon":
+    let redacted = redactForClient("{\"api_key\" : \"secret-value\"}")
+    check not redacted.contains("secret-value")
+
+  test "prose that merely contains key: or token: is left alone":
+    let redacted = redactForClient("monkey: business, token: counting")
+    check redacted == "monkey: business, token: counting"
+
   test "caps the payload at 300 characters":
     let redacted = redactForClient(repeat("a", 1000) & " sk-fake")
     check redacted.len <= 300

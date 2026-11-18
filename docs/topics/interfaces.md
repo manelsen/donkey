@@ -82,7 +82,7 @@ only things the client chooses are the user and the current text.
 | `stream` | Optional boolean; any other type is `400` |
 | `tools` | `[]` accepted; any non-empty array is `400 unsupported_parameter` |
 | `tool_choice`, `response_format` | Presence (non-null) is `400` |
-| `n` | `0`, `1` and `null` accepted; `> 1` or a non-numeric type is `400` |
+| `n` | `1` and `null` accepted; `0`, negatives, `> 1` and non-numeric types are `400 unsupported_parameter` |
 | `system`/`developer` messages | `400 unsupported_parameter` |
 | `temperature`, `top_p`, `max_tokens` | Ignored, not validated |
 
@@ -250,8 +250,12 @@ data: {"error":{"message":"…","type":"provider_error","code":"turn_error"}}
 | Deadline | `timeout_error` / `turn_timeout` |
 | Entry no longer pending | `server_error` / `turn_missing` |
 
-Messages pass through `redactForClient`: `Bearer …`, `sk-…`, `key=…` and
-`token=…` become `[redacted]`, and the text is capped at 300 bytes.
+Messages pass through `redactForClient`: `Bearer` and `Basic` credentials,
+`sk-` keys, the Slack/GitHub/AWS/Google prefixes (`xoxb-`, `ghp_`, `AKIA…`,
+`AIza…`), and the `key`/`token` shapes — including the JSON form with a colon —
+become `[redacted]`. The text is capped at 300 bytes. Over-redaction is
+preferred to a leak; prose such as `monkey: business` is left alone because the
+colon form requires a quoted value.
 
 This differs from the PRD, which asked for the error event **plus** `[DONE]`; the
 code (and its tests) deliberately close without `[DONE]` so a client cannot
@@ -292,6 +296,8 @@ unknown route, connection/stream caps) use `{"error":"…"}` plain text/JSON.
 | `413` | Body/`Content-Length` over `MaxApiRequestBytes` (1 MiB) | `invalid_request_error` / `payload_too_large` |
 | `429` | A turn is already pending for this `api:` user | `rate_limit_error` / `chat_bridge_busy` |
 | `429` | SSE slot/budget exhausted | `rate_limit_error` / `sse_capacity` |
+| `429` | Turn queue full (`MaxPendingTurns`) | `rate_limit_error` / `too_many_pending_turns` |
+| `429` | Long-lived worker budget full | `rate_limit_error` / `no_worker` |
 | `502` | Terminal `rkTurnError` (provider failure) | `provider_error` / `turn_error`, redacted |
 | `502` | `dispatch` threw before a turn started | `server_error` / `dispatch_failed` |
 | `503` | `DONKEY_HTTP_TOKEN` not configured | `server_error` |
