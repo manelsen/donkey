@@ -38,6 +38,10 @@ const
 
 const TelegramReactionFallbacks* = ["👍", "👌", "✅", "🔥", "👏"]
 
+const MediaUnavailableText* = "não foi possível enviar o anexo"
+  ## Final fallback for a failed local upload. It must never contain the path
+  ## or the file name: the chat is not allowed to learn the host layout.
+
 type
   TelegramAdapter* = object
     token*:       string
@@ -45,6 +49,7 @@ type
     offset*:      int64         ## getUpdates offset (mutable via receive)
     resolver*:    IdentityResolver
     http*:        StdHttpAdapter
+    uploadHttp*:  HttpRuntimePort ## media uploads; same proxy/allowlist as http
     flood*:       FloodGate      ## per-chat penalty windows
     chatIds*:     Table[string, string] ## userId → source chat id
     pollTimeout*: int           ## seconds; 1 for multi-channel, up to 30 for solo
@@ -125,6 +130,37 @@ proc postWith(a: TelegramAdapter; meth: string; body: JsonNode;
 proc post(a: TelegramAdapter; meth: string;
           body: JsonNode): Result[JsonNode, string] {.gcsafe, raises: [].} =
   a.postWith(meth, body, 0)
+
+proc postMultipart(a: TelegramAdapter; meth, body, boundary: string):
+                   Result[JsonNode, string] {.gcsafe, raises: [].} =
+  ## Local media travels as multipart/form-data. The upload port is the one the
+  ## caller injected, so the transfer is testable without Telegram.
+  if a.uploadHttp.post.isNil:
+    return err("TelegramAdapter: no upload transport")
+  try:
+    let headers = @[("Content-Type", "multipart/form-data; boundary=" & boundary)]
+    let sent = a.uploadHttp.post(a.apiUrl(meth), body, headers)
+    sent >>=
+      proc(resp: HttpResponse): Result[JsonNode, string] {.gcsafe, raises: [].} =
+        parseTgResp(meth, resp)
+  except Exception as e:
+    err(e.msg)
+
+proc postJsonOnUpload(a: TelegramAdapter; meth: string; body: JsonNode):
+                      Result[JsonNode, string] {.gcsafe, raises: [].} =
+  ## Last-resort text for a failed upload. It uses the same injected port (and
+  ## therefore the same proxy/allowlist) so the fallback is observable in tests
+  ## and never depends on a second transport.
+  if a.uploadHttp.post.isNil:
+    return err("TelegramAdapter: no upload transport")
+  try:
+    let headers = @[("Content-Type", "application/json")]
+    let sent = a.uploadHttp.post(a.apiUrl(meth), $body, headers)
+    sent >>=
+      proc(resp: HttpResponse): Result[JsonNode, string] {.gcsafe, raises: [].} =
+        parseTgResp(meth, resp)
+  except Exception as e:
+    err(e.msg)
 
 func chatAllowedReactionEmojis*(chatInfo: JsonNode): tuple[restricted: bool, emojis: seq[string]]
                                {.gcsafe, raises: [].} =
@@ -261,10 +297,60 @@ proc sendTyping*(a: TelegramAdapter; userId: UserId): Result[void, string] {.gcs
   except ValueError:
     err("TelegramAdapter.sendTyping: bad id: " & rawId)
 
+proc sendMediaFallbackText(a: TelegramAdapter; tgId: int64;
+                           replyTo: string): Result[void, string] =
+  ## Delivers a neutral line when every media attempt failed. Errors are
+  ## replaced by the same line so no transport detail (and no path) leaks.
+  var body = %* {"chat_id": tgId, "text": MediaUnavailableText}
+  applyReplyTarget(body, replyTo, true)
+  let res = a.postJsonOnUpload("sendMessage", body)
+  if res.isOk: ok() else: err(MediaUnavailableText)
+
+proc sendLocalMedia(a: TelegramAdapter; tgId: int64; path, caption,
+                    replyTo: string; durationSec: int): Result[void, string] =
+  ## Reads an existing local file and uploads it as multipart. The topic and
+  ## reply anchor are preserved; a deleted topic is retried at the chat root
+  ## and a refused photo is retried as a document.
+  let data = try:
+    readFile(path)
+  except CatchableError:
+    return a.sendMediaFallbackText(tgId, replyTo)
+  let (_, replyId, threadId) = splitTelegramReplyTarget(replyTo)
+  var spec = mediaUploadSpec(path, tgId,
+                             clipCaption(caption, TelegramCaptionLimit),
+                             threadId, replyId, durationSec)
+  let boundary = "----donkey-tg-" & $epochMs()
+  var res = a.postMultipart(spec.`method`,
+                            mediaUploadBody(spec, data, boundary), boundary)
+  if res.isOk: return ok()
+  if spec.threadId.len > 0 and isMissingThreadError(res.error):
+    ## The topic is gone; deliver to the chat root instead of dropping it.
+    spec.threadId = ""
+    spec.replyTo = ""
+    let retryBoundary = "----donkey-tg-" & $epochMs() & "-retry"
+    res = a.postMultipart(spec.`method`,
+                          mediaUploadBody(spec, data, retryBoundary), retryBoundary)
+    if res.isOk: return ok()
+  if spec.`method` == "sendPhoto":
+    ## A photo outside the dimension/size limits is still a valid document.
+    var docSpec = spec
+    docSpec.`method` = "sendDocument"
+    docSpec.field = "document"
+    let docBoundary = "----donkey-tg-" & $epochMs() & "-doc"
+    let docRes = a.postMultipart("sendDocument",
+                                 mediaUploadBody(docSpec, data, docBoundary),
+                                 docBoundary)
+    if docRes.isOk: return ok()
+  a.sendMediaFallbackText(tgId, replyTo)
+
 proc sendMedia*(a: TelegramAdapter; tgId: int64;
-                url, caption, replyTo: string): Result[void, string] =
-  ## Sends a photo (if URL looks like an image) or a document otherwise.
-  ## Falls back to sending a plain URL as text if the API call fails.
+                url, caption, replyTo: string;
+                durationSec = 0): Result[void, string] =
+  ## Sends a photo (if URL looks like an image) or a document otherwise, or
+  ## uploads a local file as multipart with the same routing.
+  ## Falls back to neutral text if every attempt fails.
+  if fileExists(url):
+    return a.sendLocalMedia(tgId, url, caption, replyTo, durationSec)
   let audioMethod = audioMethodFor(url)
   let isImage = url.endsWith(".jpg") or url.endsWith(".jpeg") or
                 url.endsWith(".png") or url.endsWith(".gif") or
@@ -282,6 +368,8 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
   var body = %* {"chat_id": tgId, fileKey: url}
   if caption.len > 0:
     body["caption"] = %clipCaption(caption, TelegramCaptionLimit)
+  if durationSec > 0 and meth in ["sendVoice", "sendAudio"]:
+    body["duration"] = %durationSec
   applyReplyTarget(body, replyTo, true)
   let mediaTimeout = telegramMediaTimeoutSec()
   let res = a.postWith(meth, body, mediaTimeout)
@@ -367,7 +455,7 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
 
   if msg.mediaUrl.len > 0:
     let (head, tail) = splitCaption(msg.text, TelegramCaptionLimit)
-    ? a.sendMedia(chatId, msg.mediaUrl, head, msg.replyTo)
+    ? a.sendMedia(chatId, msg.mediaUrl, head, msg.replyTo, msg.mediaDurationSec)
     if tail.strip.len > 0:
       for chunk in splitForTelegram(tail, TelegramMaxChars):
         ? a.sendChunk(chatId, chunk, msg.replyTo, false, msg.isHtml)
@@ -388,7 +476,7 @@ proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, str
 
   if msg.mediaUrl.len > 0:
     let (head, tail) = splitCaption(msg.text, TelegramCaptionLimit)
-    ? a.sendMedia(chatId, msg.mediaUrl, head, msg.replyTo)
+    ? a.sendMedia(chatId, msg.mediaUrl, head, msg.replyTo, msg.mediaDurationSec)
     if tail.strip.len > 0:
       for chunk in splitForTelegram(tail, TelegramMaxChars):
         ? a.sendChunk(chatId, chunk, msg.replyTo, false, msg.isHtml)
@@ -661,7 +749,21 @@ func telegramProxyUrl*(): string =
   getEnv("DONKEY_WEB_PROXY").strip
 
 proc newTelegramAdapter*(token: string; identityPath: string;
-                         apiBase = ""; pollTimeout = DefaultPollTimeout): TelegramAdapter =
+                         apiBase = ""; pollTimeout = DefaultPollTimeout;
+                         uploadHttp: HttpRuntimePort = HttpRuntimePort()): TelegramAdapter =
+  ## `uploadHttp` is optional so tests can inject a fake. When omitted, the
+  ## media transport mirrors the text transport (proxy, allowlist, retry
+  ## policy) and only the timeout differs: uploads use the media deadline.
+  let upload =
+    if uploadHttp.post.isNil:
+      newStdHttpAdapter(
+        timeout = telegramMediaTimeoutSec(),
+        proxy = telegramProxyUrl(),
+        allowlist = (if apiBase.len == 0: @["api.telegram.org"] else: @[]),
+        retryNonIdempotent = false,
+        retryConflict = true).toRuntimePort()
+    else:
+      uploadHttp
   TelegramAdapter(
     token:       token,
     apiBase:     apiBase,
@@ -675,5 +777,6 @@ proc newTelegramAdapter*(token: string; identityPath: string;
                    allowlist = (if apiBase.len == 0: @["api.telegram.org"] else: @[]),
                    retryNonIdempotent = false,
                    retryConflict = true),
+    uploadHttp:  upload,
     pollTimeout: pollTimeout,
   )
