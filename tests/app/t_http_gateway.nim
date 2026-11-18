@@ -3,9 +3,14 @@
 
 import std/[json, strutils, unittest]
 import donkey/app/http_gateway
+import donkey/app/chat_bridge
+import donkey/app/agent_chat_runtime
 import donkey/core/agent_events
 import donkey/core/pipeops
 import donkey/core/types
+import donkey/domain/message
+import donkey/domain/gateway/capacity_pure
+import donkey/domain/gateway/identity_pure
 import donkey/ports/ipc
 
 suite "http_gateway request parsing":
@@ -281,3 +286,245 @@ suite "dashboard page":
     check not html.contains("<script src=")
     check not html.contains("<link rel=\"stylesheet\"")
     check not html.contains("DONKEY_HTTP_TOKEN=")
+
+# ── long-lived capacity (gateway counters + admission) ───────────────────────
+#
+# The gateway pool has 8 workers; at most 6 may be blocked by long-lived work.
+# These tests drive the same counters the streaming and non-streaming paths
+# use, so a regression to a second pool (or to no admission at all) is caught
+# here without opening a socket.
+
+type CapDispatchMode = enum
+  cdmFinal
+  cdmRaise
+  cdmNothing
+
+var
+  capNow: int64 = 1_000
+  capBridge {.threadvar.}: ChatBridge
+  capDispatched = 0
+  capMode = cdmFinal
+  capDuringPending = -1
+  capDuringSse = -1
+  capDuringTotal = -1
+  capSseAcquireCalls = 0
+  capSseReleaseCalls = 0
+
+proc capClock(): int64 {.gcsafe, raises: [].} =
+  capNow
+
+proc capNap(ms: int) {.gcsafe, raises: [].} =
+  capNow += int64(ms)
+
+proc capAuthorize(userId: UserId): AuthVerdict {.gcsafe, raises: [].} =
+  discard userId
+  avAllowed
+
+proc capSample() {.gcsafe.} =
+  let occ = longLivedOccupancy()
+  capDuringPending = occ.pendingTurns
+  capDuringSse = occ.sseConnections
+  capDuringTotal = occ.longLivedWorkers
+
+proc capDispatch(msg: InboundMessage) {.gcsafe.} =
+  inc capDispatched
+  capSample()
+  case capMode
+  of cdmFinal:
+    discard capBridge.deliver(OutboundMessage(
+      userId: msg.userId, text: "ok", replyKind: rkFinalAnswer))
+  of cdmRaise:
+    raise newException(CatchableError, "dispatch exploded")
+  of cdmNothing:
+    discard
+
+proc capOpenStream(): bool {.gcsafe.} =
+  true
+
+proc capSendStream(chunk: string): bool {.gcsafe.} =
+  discard chunk
+  capSample()
+  true
+
+proc capAcquireSse(): bool {.gcsafe.} =
+  inc capSseAcquireCalls
+  tryReserveLongLived(llSseConnection).admitted
+
+proc capReleaseSse() {.gcsafe.} =
+  inc capSseReleaseCalls
+  releaseLongLived(llSseConnection)
+
+proc resetCapacity() =
+  resetLongLivedCountersForTest()
+  capNow = 1_000
+  capBridge = newChatBridge(capClock, capNap)
+  capDispatched = 0
+  capMode = cdmFinal
+  capDuringPending = -1
+  capDuringSse = -1
+  capDuringTotal = -1
+  capSseAcquireCalls = 0
+  capSseReleaseCalls = 0
+
+proc reserveCapacity(kind: LongLivedKind; n: int): bool =
+  for _ in 0 ..< n:
+    if not tryReserveLongLived(kind).admitted:
+      return false
+  true
+
+func capacityBody(user = "alice"; text = "oi"): string =
+  $(%* {
+    "user": user,
+    "messages": [%* {"role": "user", "content": text}],
+  })
+
+proc runCapacityTurn(timeoutMs = 100): AgentChatReply =
+  runAdmittedAgentTurn(
+    body            = capacityBody(),
+    bridge          = capBridge,
+    dispatch        = capDispatch,
+    authorize       = capAuthorize,
+    tokenConfigured = true,
+    now             = capClock,
+    timeoutMs       = timeoutMs,
+    model           = "donkey/test",
+  )
+
+proc runCapacityStream(timeoutMs = 5_000): AgentStreamResult =
+  runAgentStream(
+    body            = capacityBody(),
+    bridge          = capBridge,
+    dispatch        = capDispatch,
+    authorize       = capAuthorize,
+    tokenConfigured = true,
+    now             = capClock,
+    openStream      = capOpenStream,
+    send            = capSendStream,
+    acquireSlot     = capAcquireSse,
+    releaseSlot     = capReleaseSse,
+    streamNow       = capClock,
+    streamNap       = capNap,
+    timeoutMs       = timeoutMs,
+    model           = "donkey/test",
+  )
+
+suite "http_gateway long-lived capacity":
+
+  test "a pool at six refuses a new turn with 429 and never dispatches":
+    resetCapacity()
+    # 2 pending turns + 4 SSE connections fill all six long-lived workers.
+    # The turn queue itself still has room (2 < MaxPendingTurns), so the
+    # refusal must come from the shared worker budget.
+    check reserveCapacity(llChatTurn, 2)
+    check reserveCapacity(llSseConnection, 4)
+    check longLivedOccupancy().longLivedWorkers == MaxLongLivedWorkers
+
+    let reply = runCapacityTurn()
+    check reply.status == 429
+    let node = parseJson(reply.body)
+    check node{"error"}{"type"}.getStr() == "rate_limit_error"
+    check node{"error"}{"code"}.getStr() == "no_worker"
+    check capDispatched == 0
+    # A refused request must not consume (or release) a worker.
+    check longLivedOccupancy().longLivedWorkers == MaxLongLivedWorkers
+
+  test "a full pending queue refuses with rate_limit_error":
+    resetCapacity()
+    check reserveCapacity(llChatTurn, MaxPendingTurns)
+
+    let reply = runCapacityTurn()
+    check reply.status == 429
+    let node = parseJson(reply.body)
+    check node{"error"}{"type"}.getStr() == "rate_limit_error"
+    check node{"error"}{"code"}.getStr() == "too_many_pending_turns"
+    check capDispatched == 0
+
+  test "3 pending turns plus 3 SSE streams refuse the seventh and a release admits it":
+    resetCapacity()
+    check reserveCapacity(llChatTurn, 3)
+    check reserveCapacity(llSseConnection, 3)
+    let before = longLivedOccupancy()
+    check before.pendingTurns == 3
+    check before.sseConnections == 3
+    check before.longLivedWorkers == 6
+
+    # Either path is refused: one shared pool, no per-class bypass.
+    check not tryReserveLongLived(llChatTurn).admitted
+    check not tryReserveLongLived(llSseConnection).admitted
+
+    releaseLongLived(llChatTurn)
+    check longLivedOccupancy().longLivedWorkers == 5
+    check tryReserveLongLived(llChatTurn).admitted
+    let after = longLivedOccupancy()
+    check after.pendingTurns == 3
+    check after.sseConnections == 3
+    check after.longLivedWorkers == 6
+
+  test "a turn that fails after admission releases its slot":
+    resetCapacity()
+    capMode = cdmRaise
+
+    let failed = runCapacityTurn()
+    check failed.status == 502
+    check capDispatched == 1
+    check capDuringTotal == 1
+    check longLivedOccupancy().longLivedWorkers == 0
+
+    capMode = cdmNothing
+    capNow = 1_000
+    let timedOut = runCapacityTurn(timeoutMs = 30)
+    check timedOut.status == 504
+    check capDispatched == 2
+    check longLivedOccupancy().longLivedWorkers == 0
+
+  test "a completed turn releases its slot and counts exactly one worker":
+    resetCapacity()
+
+    let reply = runCapacityTurn()
+    check reply.status == 200
+    check capDispatched == 1
+    check capDuringPending == 1
+    check capDuringSse == 0
+    check capDuringTotal == 1
+    check longLivedOccupancy().longLivedWorkers == 0
+
+  test "the streaming path shares the counters and counts exactly one worker":
+    resetCapacity()
+
+    let result = runCapacityStream()
+    check result.outcome == asCompleted
+    check capDuringPending == 0
+    check capDuringSse == 1
+    check capDuringTotal == 1
+    check capSseAcquireCalls == 1
+    check capSseReleaseCalls == 1
+    check longLivedOccupancy().longLivedWorkers == 0
+
+  test "a stream is refused when non-streaming turns already filled the pool":
+    resetCapacity()
+    check reserveCapacity(llChatTurn, 3)
+    check reserveCapacity(llSseConnection, 3)
+
+    let refused = runCapacityStream()
+    check refused.outcome == asPreflightError
+    check refused.reply.status == 429
+    check capDispatched == 0
+    check capSseReleaseCalls == 0
+    let occ = longLivedOccupancy()
+    check occ.pendingTurns == 3
+    check occ.sseConnections == 3
+    check occ.longLivedWorkers == 6
+
+  test "refused turns never consume a long-lived worker":
+    resetCapacity()
+    check reserveCapacity(llChatTurn, 2)
+    check reserveCapacity(llSseConnection, 4)
+
+    for _ in 0 ..< 3:
+      check runCapacityTurn().status == 429
+
+    check capDispatched == 0
+    let occ = longLivedOccupancy()
+    check occ.pendingTurns == 2
+    check occ.sseConnections == 4
+    check occ.longLivedWorkers == MaxLongLivedWorkers

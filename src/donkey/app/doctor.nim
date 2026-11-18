@@ -14,6 +14,7 @@ import ../core/pipeops
 import ../core/diagnostics
 import ../config/types
 import ../domain/providers/descriptors
+import ./credential_runtime
 import ./sandbox
 
 # ── raw Result-returning procs (for >>= chaining) ─────────────────────────────
@@ -41,6 +42,14 @@ proc checkRuntimeCompose*(runtimeCmd: string;
 proc apiKeyResult(v: string; envVar: string): Result[string, string] =
   if v.len > 0: ok("set (" & $v.len & " chars)")
   else: err("not set — export " & envVar)
+
+func endpointResult(v: string; envVar: string): Result[string, string] =
+  ## `atNone` providers (ollama) are configured by an endpoint, not a key.
+  if v.len > 0: ok("endpoint configured (" & envVar & ")")
+  else: err("endpoint not set — export " & envVar)
+
+func missingKeyResult(envNames: openArray[string]): Result[string, string] =
+  err("not set — export " & envNames.join(" or "))
 
 proc pgvectorResult(dsn: string): Result[string, string] =
   if dsn.len == 0:
@@ -156,6 +165,9 @@ const ProviderKeyLabels = [
   ("minimax",       "MiniMax"),
   ("zai",           "Zhipu/ZAI"),
   ("zai-coding",    "ZAI Coding"),
+  ("nvidia",        "NVIDIA NIM"),
+  ("alibaba",       "Alibaba DashScope"),
+  ("fireworks",     "Fireworks AI"),
 ]
 
 func providerKeyLabel(id: string): string =
@@ -172,6 +184,34 @@ func doctorProviderRows*(): seq[DoctorProviderRow] =
       label: providerKeyLabel(descriptor.id),
       envVar: (if descriptor.envNames.len > 0: descriptor.envNames[0] else: ""),
     ))
+
+func credentialValue(envNames: openArray[string]): string =
+  ## The first configured value over every descriptor env name, single or
+  ## plural. Used only to measure presence; never printed.
+  for envName in envNames:
+    let single = getEnv(envName).strip()
+    if single.len > 0:
+      return single
+    let plural = splitKeys(getEnv(poolEnvName(envName)))
+    if plural.len > 0:
+      return plural[0]
+
+proc checkProviderRow*(row: DoctorProviderRow): DiagResult =
+  ## The real credential check: all descriptor env names and their plural
+  ## `*_KEYS` form. `atNone` providers (ollama) are endpoint-configured, not
+  ## API-key providers. The detail never contains the secret.
+  let descriptor = descriptorOr(row.id)
+  if descriptor.authType == atNone:
+    let envName = if descriptor.envNames.len > 0: descriptor.envNames[0] else: ""
+    let endpoint = if envName.len > 0: getEnv(envName).strip() else: ""
+    endpointResult(endpoint, envName) |>-> toDiagResult(row.label)
+  elif providerConfigured(row.id):
+    ## `providerConfigured` is the single truth: every descriptor env name and
+    ## the plural `*_KEYS` form. The value is measured, never echoed.
+    apiKeyResult(credentialValue(descriptor.envNames), row.envVar) |>->
+      toDiagResult(row.label)
+  else:
+    missingKeyResult(descriptor.envNames) |>-> toDiagResult(row.label)
 
 # Non-provider credentials the operator may need.
 const AuxKeyChecks = [
@@ -192,8 +232,26 @@ proc runDoctorChecks*(cfg: DonkeyConfig;
   result.add checkPgvector()
   for (name, envVar) in AuxKeyChecks:
     result.add checkApiKey(name, envVar) |> markWarn
+  ## One credential probe per primary env: opencode-go and zen share
+  ## OPENCODE_API_KEY, so the second row reuses the first result instead of
+  ## asking the environment twice. Provider identity rows are kept.
+  var probed: seq[(string, DiagResult)]
   for row in doctorProviderRows():
-    result.add checkApiKey(row.label, row.envVar) |> markWarn
+    let descriptor = descriptorOr(row.id)
+    let primary = if descriptor.envNames.len > 0: descriptor.envNames[0] else: row.id
+    var reused = -1
+    for i, item in probed:
+      if item[0] == primary:
+        reused = i
+        break
+    var check: DiagResult
+    if reused >= 0:
+      check = probed[reused][1]
+      check.name = row.label
+    else:
+      check = checkProviderRow(row)
+      probed.add((primary, check))
+    result.add check |> markWarn
 
 proc printDoctorReport*(results: seq[DiagResult]) =
   ## Prints a formatted report to stdout.

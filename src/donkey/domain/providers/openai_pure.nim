@@ -230,30 +230,51 @@ proc parseResponseFrom*(body: JsonNode): Result[CompletionResponse, string] =
   ##
   ## Usage:  responseJson >>= parseResponseFrom
   try:
+    if body.isNil or body.kind != JObject:
+      return err("Invalid OpenAI response: not an object")
     let choices = body{"choices"}
-    if choices.kind != JArray or choices.len == 0:
+    if choices.isNil or choices.kind != JArray or choices.len == 0:
       return err("No choices in OpenAI response")
     let choice = choices[0]
+    if choice.isNil or choice.kind != JObject:
+      return err("Invalid OpenAI response: choice is not an object")
+    let message = choice{"message"}
+    if message.isNil or message.kind != JObject:
+      return err("Invalid OpenAI response: missing message")
 
-    let content = choice{"message"}{"content"}.getStr("")
+    let content = message{"content"}.getStr("")
 
     var toolCalls: seq[ToolCallRequest] = @[]
-    if not choice{"message"}{"tool_calls"}.isNil:
-      for tcNode in choice{"message"}{"tool_calls"}:
-        let args = tcNode{"function"}{"arguments"}.getStr("{}")
+    let callsNode = message{"tool_calls"}
+    if not callsNode.isNil and callsNode.kind == JArray:
+      for tcNode in callsNode:
+        ## A malformed entry in a non-empty batch is an error: silently
+        ## dropping it makes the loop answer as if the model had asked for
+        ## nothing, instead of surfacing a broken provider payload.
+        if tcNode.isNil or tcNode.kind != JObject:
+          return err("Invalid OpenAI response: tool_calls entry is not an object")
+        let fn = tcNode{"function"}
+        if fn.isNil or fn.kind != JObject:
+          return err("Invalid OpenAI response: tool_call without function")
+        let name = fn{"name"}.getStr("")
+        if name.len == 0:
+          return err("Invalid OpenAI response: tool_call without name")
         toolCalls.add ToolCallRequest(
           id:        tcNode{"id"}.getStr(""),
-          name:      tcNode{"function"}{"name"}.getStr(""),
-          inputJson: args,
+          name:      name,
+          inputJson: fn{"arguments"}.getStr("{}"),
         )
 
     let usage = body{"usage"}
-    let promptTokens = usage{"prompt_tokens"}.getInt(0)
-    let completionTokens = usage{"completion_tokens"}.getInt(0)
+    var promptTokens = 0
+    var completionTokens = 0
+    if not usage.isNil and usage.kind == JObject:
+      promptTokens = usage{"prompt_tokens"}.getInt(0)
+      completionTokens = usage{"completion_tokens"}.getInt(0)
 
-    var reasoning = choice{"message"}{"reasoning"}.getStr("")
+    var reasoning = message{"reasoning"}.getStr("")
     if reasoning.len == 0:
-      reasoning = choice{"message"}{"reasoning_content"}.getStr("")
+      reasoning = message{"reasoning_content"}.getStr("")
 
     ok CompletionResponse(
       text:         content,

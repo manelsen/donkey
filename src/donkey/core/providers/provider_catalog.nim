@@ -5,6 +5,7 @@
 ## is data-driven rather than hardcoded.
 
 import std/[algorithm, strutils, tables, sequtils, options]
+import ./provider_defaults
 
 type
   ## Capabilities a model can support.
@@ -681,4 +682,39 @@ proc buildDefaultCatalog*(): ProviderCatalog =
     costTier = ctModerate,
     budgetPriority = bpDefault,
     contextWindow = 1_000_000,
+  ))
+
+  # ── NVIDIA NIM ──
+  # Provider breadth: the default model must appear in TUI/model menus without
+  # a live /models fetch. Context stays 0 (unverified); modelLimits owns that
+  # fact and the catalog does not invent one.
+  result.register(makeEntry(
+    DefaultModelNvidia, "nvidia",
+    aliases = @["nemotron-3.5-super-vl"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 0,
+  ))
+
+  # ── Fireworks AI ──
+  # Vision and context are unverified, so no `mcImage` and context 0.
+  result.register(makeEntry(
+    DefaultModelFireworks, "fireworks",
+    aliases = @[],
+    capabilities = {mcTools, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 0,
+  ))
+
+  # ── Alibaba DashScope ──
+  # Vision is not verified, so no `mcImage`.
+  result.register(makeEntry(
+    DefaultModelAlibaba, "alibaba",
+    aliases = @["qwen-3.8-max"],
+    capabilities = {mcTools, mcThinking, mcStreaming},
+    costTier = ctCheap,
+    budgetPriority = bpDefault,
+    contextWindow = 0,
   ))

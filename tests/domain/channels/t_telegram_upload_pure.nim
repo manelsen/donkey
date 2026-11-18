@@ -141,3 +141,99 @@ suite "mediaUploadBody — multipart framing":
     let spec = mediaUploadSpec("/tmp/nota\"x.ogg", 1, "")
     let body = mediaUploadBody(spec, "X", "B")
     check body.contains("filename=\"nota'x.ogg\"")
+
+
+suite "mediaUploadBody — hostile field values":
+
+  test "a caption carrying CRLF and a boundary cannot inject a part":
+    let injection = "legenda\r\n--BOUNDARY\r\n" &
+                    "Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n999"
+    let spec = mediaUploadSpec("/tmp/x.ogg", 42, injection)
+    check '\r' notin spec.caption
+    check '\n' notin spec.caption
+    let body = mediaUploadBody(spec, "DATA", "BOUNDARY")
+    check multipartField(body, "chat_id") == "42"
+    ## chat_id and caption parts open normally: the caption did not add a part.
+    check body.count("\r\n--BOUNDARY\r\n") == 2
+    check multipartField(body, "caption").contains("999")
+
+  test "a filename with quotes and CRLF cannot break the header":
+    let spec = mediaUploadSpec("/tmp/e\"vil\r\nX-Injected: yes.ogg", 1, "")
+    check '\r' notin spec.fileName
+    check '\n' notin spec.fileName
+    check '"' notin spec.fileName
+    let body = mediaUploadBody(spec, "DATA", "B")
+    check body.count("filename=\"") == 1
+    check not body.contains("\r\nX-Injected")
+
+  test "non-numeric thread and reply ids are dropped":
+    let spec = mediaUploadSpec("/tmp/x.ogg", 1, "",
+                               threadId = "7\r\nX-Injected: yes",
+                               replyTo = "11 or 1=1")
+    check spec.threadId == ""
+    check spec.replyTo == ""
+    let body = mediaUploadBody(spec, "DATA", "B")
+    check not hasField(body, "message_thread_id")
+    check not hasField(body, "reply_to_message_id")
+
+  test "numeric thread and reply ids survive validation":
+    let spec = mediaUploadSpec("/tmp/x.ogg", 1, "", threadId = "-7",
+                               replyTo = "11")
+    check spec.threadId == "-7"
+    check spec.replyTo == "11"
+
+
+suite "multipart boundary selection":
+
+  test "a boundary absent from the payload is kept":
+    let payload = "caption and DATA"
+    check pickMultipartBoundary("a1b2", payload) ==
+      TelegramMultipartBoundaryPrefix & "a1b2"
+
+  test "a boundary found in the payload is replaced":
+    let candidate = "deadbeef"
+    let colliding = TelegramMultipartBoundaryPrefix & candidate
+    let payload = "prefix " & colliding & " suffix"
+    let picked = pickMultipartBoundary(candidate, payload)
+    check picked != colliding
+    check not payload.contains(picked)
+
+
+suite "apiBase policy":
+
+  test "the host is derived from the Base URL":
+    check telegramApiHost("https://worker.example") == "worker.example"
+    check telegramApiHost("https://worker.example:8443/bot") == "worker.example:8443"
+    check telegramApiHost("http://127.0.0.1:8080/") == "127.0.0.1:8080"
+    check telegramApiHost("") == ""
+
+  test "the allowlist carries the derived host":
+    check telegramApiAllowlist("") == @["api.telegram.org"]
+    check telegramApiAllowlist("https://worker.example") == @["worker.example"]
+    check telegramApiAllowlist("https://worker.example:8443") ==
+      @["worker.example:8443"]
+
+  test "https is required outside loopback":
+    check telegramApiBaseError("") == ""
+    check telegramApiBaseError("https://worker.example") == ""
+    check telegramApiBaseError("http://127.0.0.1:8080") == ""
+    check telegramApiBaseError("http://localhost:8080") == ""
+    check telegramApiBaseError("http://[::1]:8080") == ""
+    check telegramApiBaseError("http://worker.example").len > 0
+    check telegramApiBaseError("ftp://worker.example").len > 0
+    check telegramApiBaseError("worker.example").len > 0
+
+
+suite "photo rejection":
+
+  test "the Bot API photo-specific errors are recognised":
+    check isPhotoRejectedError("Bad Request: IMAGE_PROCESS_FAILED")
+    check isPhotoRejectedError("Bad Request: PHOTO_INVALID_DIMENSIONS")
+    check isPhotoRejectedError("Bad Request: PHOTO_SAVE_FILE_INVALID")
+    check isPhotoRejectedError("image_process_failed")
+
+  test "a timeout or an unrelated refusal is not photo-specific":
+    check not isPhotoRejectedError("HTTP POST failed after 1 attempts. Last error: timed out")
+    check not isPhotoRejectedError("Bad Request: chat not found")
+    check not isPhotoRejectedError("Too Many Requests: retry after 30")
+    check not isPhotoRejectedError("")

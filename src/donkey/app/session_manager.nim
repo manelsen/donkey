@@ -5,13 +5,14 @@
 ## `channels` tracks which (ChannelKind, raw_id) pairs are associated with
 ## this session — used for `ctl session list`.
 
-import std/[options, tables]
+import std/[algorithm, options, tables]
 import chronos
 import chronos/asyncsync
 import ../core/pipeops
 import ../core/commands/command_routing
 import ../domain/agent_message
 import ../domain/message
+import ../domain/gateway/dashboard_pure
 import ../core/session/session_ingress
 import ../core/security/dm_policy
 import ../ports/runtime_state
@@ -284,6 +285,19 @@ proc getOrCreate*(sm: var SessionManager; userId: UserId): ptr SessionEntry =
 proc get*(sm: var SessionManager; userId: UserId): ptr SessionEntry =
   addr sm.entries[$userId]
 
+func latestChannelFor*(sm: SessionManager; userId: string):
+                       tuple[kind: ChannelKind, rawId: string] =
+  ## The channel a background action should answer on: the last one the user
+  ## used. Never invents one, so a session with no channel falls back to an
+  ## empty CLI target instead of recording a bogus `(ckCli, <session key>)`
+  ## entry that would hijack `latestChannel`.
+  result = (kind: ckCli, rawId: "")
+  if userId notin sm.entries:
+    return
+  let channels = sm.entries[userId].channels
+  if channels.len > 0:
+    result = (kind: channels[^1][0], rawId: channels[^1][1])
+
 proc recordChannel*(sm: var SessionManager;
                     userId: UserId;
                     kind:   ChannelKind;
@@ -311,6 +325,29 @@ func latestChannel*(sm: SessionManager; userId: UserId): Option[ChannelKind] =
 func listSessions*(sm: SessionManager): seq[(UserId, seq[(ChannelKind, string)])] =
   for uid, entry in sm.entries:
     result.add((UserId(uid), entry.channels))
+
+func listSessionDetails*(sm: SessionManager): seq[SessionDetail] =
+  ## Additive dashboard view of the registry. `SessionInfo` (IPC) stays
+  ## untouched; this exposes the session id, the wall-clock timestamp and the
+  ## restored flag without leaking raw channel ids.
+  for uid, entry in sm.entries:
+    var channels: seq[string]
+    for (kind, _) in entry.channels:
+      let name = $kind
+      if name notin channels:
+        channels.add(name)
+    result.add(SessionDetail(
+      sessionId: entry.sessionId,
+      userId: uid,
+      channels: channels,
+      lastInboundEpochMs: entry.lastInboundEpochMs,
+      restored: entry.restored,
+    ))
+  result.sort(proc(a, b: SessionDetail): int =
+    if a.lastInboundEpochMs != b.lastInboundEpochMs:
+      cmp(b.lastInboundEpochMs, a.lastInboundEpochMs)
+    else:
+      cmp(a.userId, b.userId))
 
 func sessionCount*(sm: SessionManager): int = sm.entries.len
 

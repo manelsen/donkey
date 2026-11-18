@@ -6,6 +6,10 @@
 import std/[json, unittest]
 import donkey/domain/message
 import donkey/domain/providers/compat
+import donkey/domain/providers/descriptors
+import donkey/domain/providers/profile_nvidia
+import donkey/domain/providers/profile_alibaba
+import donkey/domain/providers/profile_fireworks
 import donkey/adapters/provider/zhipu
 import donkey/adapters/provider/minimax
 import donkey/adapters/provider/openrouter
@@ -13,6 +17,7 @@ import donkey/adapters/provider/openrouter
 type
   ProfileExpectation = object
     name:               string
+    providerIds:        seq[string]   ## descriptor ids this profile serves
     profile:            CompatProfile
     toolChoice:         bool
     toolResultName:     bool
@@ -24,22 +29,66 @@ type
 
 proc expectations(): seq[ProfileExpectation] =
   @[
-    ProfileExpectation(name: "openai-default", profile: defaultOpenAiProfile(),
+    ProfileExpectation(name: "openai-default", providerIds: @["openai"],
+      profile: defaultOpenAiProfile(),
       toolChoice: false, toolResultName: true, imageWithToolCalls: true,
       includeReasoning: true, reasoningSplit: false, streamOptions: false,
       emptyContent: false),
-    ProfileExpectation(name: "zhipu", profile: zhipuCompatProfile(),
+    ProfileExpectation(name: "groq", providerIds: @["groq"],
+      profile: defaultOpenAiProfile(id = "groq"),
+      toolChoice: false, toolResultName: true, imageWithToolCalls: true,
+      includeReasoning: true, reasoningSplit: false, streamOptions: false,
+      emptyContent: false),
+    ProfileExpectation(name: "deepseek", providerIds: @["deepseek"],
+      profile: defaultOpenAiProfile(id = "deepseek"),
+      toolChoice: false, toolResultName: true, imageWithToolCalls: true,
+      includeReasoning: true, reasoningSplit: false, streamOptions: false,
+      emptyContent: false),
+    ProfileExpectation(name: "opencode-go", providerIds: @["opencode-go"],
+      profile: defaultOpenAiProfile(id = "opencode-go"),
+      toolChoice: false, toolResultName: true, imageWithToolCalls: true,
+      includeReasoning: true, reasoningSplit: false, streamOptions: false,
+      emptyContent: false),
+    ProfileExpectation(name: "zen", providerIds: @["zen"],
+      profile: defaultOpenAiProfile(id = "zen"),
+      toolChoice: false, toolResultName: true, imageWithToolCalls: true,
+      includeReasoning: true, reasoningSplit: false, streamOptions: false,
+      emptyContent: false),
+    ProfileExpectation(name: "zhipu", providerIds: @["zai", "zai-coding"],
+      profile: zhipuCompatProfile(),
       toolChoice: true, toolResultName: false, imageWithToolCalls: false,
       includeReasoning: false, reasoningSplit: false, streamOptions: false,
       emptyContent: true),
-    ProfileExpectation(name: "minimax", profile: miniMaxCompatProfile(),
+    ProfileExpectation(name: "minimax", providerIds: @["minimax"],
+      profile: miniMaxCompatProfile(),
       toolChoice: false, toolResultName: false, imageWithToolCalls: false,
       includeReasoning: false, reasoningSplit: true, streamOptions: false,
       emptyContent: true),
-    ProfileExpectation(name: "openrouter", profile: openRouterCompatProfile(),
+    ProfileExpectation(name: "openrouter", providerIds: @["openrouter"],
+      profile: openRouterCompatProfile(),
       toolChoice: true, toolResultName: false, imageWithToolCalls: false,
       includeReasoning: true, reasoningSplit: false, streamOptions: true,
       emptyContent: true),
+    ProfileExpectation(name: "nvidia", providerIds: @["nvidia"],
+      profile: nvidiaCompatProfile(),
+      toolChoice: false, toolResultName: false, imageWithToolCalls: true,
+      includeReasoning: false, reasoningSplit: false, streamOptions: false,
+      emptyContent: false),
+    ProfileExpectation(name: "alibaba", providerIds: @["alibaba"],
+      profile: alibabaCompatProfile(),
+      toolChoice: false, toolResultName: true,
+      # images suppressed (supportsImages = false), so the image/tool-call
+      # message serialises as a plain string
+      imageWithToolCalls: false,
+      includeReasoning: false, reasoningSplit: false, streamOptions: false,
+      emptyContent: false),
+    ProfileExpectation(name: "fireworks", providerIds: @["fireworks"],
+      profile: fireworksCompatProfile(),
+      # images suppressed (supportsImages = false), so the image/tool-call
+      # message serialises as a plain string
+      toolChoice: false, toolResultName: true, imageWithToolCalls: false,
+      includeReasoning: false, reasoningSplit: false, streamOptions: false,
+      emptyContent: false),
   ]
 
 proc toolRequest(): CompletionRequest =
@@ -110,3 +159,15 @@ suite "compat conformance":
     wrong.quirks.toolChoiceAuto = false
     let body = buildCompatRequestBody(wrong, "m", toolRequest())
     check not body.hasKey("tool_choice")
+
+  test "every chat-completions descriptor has a conformance row":
+    ## A provider with a descriptor but no row would silently skip conformance.
+    ## Every `ptOpenAiChat` descriptor must be claimed by exactly one row.
+    var covered: seq[string]
+    for c in expectations():
+      for id in c.providerIds:
+        check id notin covered       ## no descriptor claimed twice
+        covered.add id
+    for descriptor in providerDescriptors():
+      if descriptor.transport == ptOpenAiChat:
+        check descriptor.id in covered

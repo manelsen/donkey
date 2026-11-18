@@ -22,6 +22,21 @@ type
     trkUsageError
     trkOperationalError
 
+  ReplyKind* = enum
+    ## Semantic role of a message produced by an agent turn. Channels ignore it;
+    ## the API surface uses it to separate content from progress/debug noise.
+    rkChannel       ## ordinary channel text (the default for old constructors)
+    rkToolNotice    ## tool lifecycle event; never client content
+    rkDebug         ## diagnostic text; never client content
+    rkFinalAnswer   ## the answer that closes a turn
+    rkTurnError     ## a terminal error that closes a turn
+
+  ToolCallNotice* = object
+    ## Informational tool event attached to a progress message.
+    phase*: string  ## "start" | "done"
+    name*:  string
+    id*:    string
+
   ChatMessage* = object
     role*:       string
     text*:       string
@@ -32,6 +47,10 @@ type
     seq*:        int64         ## position in the session, set by numberMessages:
                                ## 0 = not numbered yet, SyntheticMessageSeq =
                                ## written by the system, never part of a transcript
+    replyKind*:    ReplyKind      ## semantic role; defaults to rkChannel
+    toolCall*:     ToolCallNotice ## non-empty phase means a tool event
+    inputTokens*:  int
+    outputTokens*: int
 
   ConversationHistory* = seq[ChatMessage]
 
@@ -50,6 +69,7 @@ type
     threadId*:   string       ## forum topic / thread id when present
     chatId*:     string       ## source chat id (group id in groups)
     channel*:    ChannelKind
+    bridgeToken*: uint64      ## API turn generation; 0 for channel traffic
 
   OutboundMessage* = object
     userId*:    UserId
@@ -62,9 +82,15 @@ type
     streamId*:  string       ## non-empty for streaming turns
     isPartial*: bool         ## true for streaming partial edits
     mediaUrl*:  string       ## non-empty → send as photo/document instead of text
+    mediaRoot*: string       ## paddock root the local `mediaUrl` must stay inside
     mediaDurationSec*: int = 0 ## audio duration when the channel can display it
     keyboard*:  seq[seq[(string, string)]]  ## non-empty → send with inline keyboard buttons: [[("label","callback_data"),...],...]
     replaceKeyboard*: bool   ## true → edit keyboard even when `keyboard` is empty
+    replyKind*:    ReplyKind      ## semantic role; channels ignore it
+    toolCall*:     ToolCallNotice ## non-empty phase means a tool event
+    inputTokens*:  int
+    outputTokens*: int
+    bridgeToken*:  uint64         ## API turn generation; 0 for channel traffic
 
   ToolDescription* = object
     name*:        string

@@ -16,6 +16,7 @@ import ../core/tooling/native_tool_dispatch
 import ../core/agent_events
 import ../domain/agent_message
 import ../domain/message
+import ../domain/providers/media_pure
 import ../domain/subagent_pure
 import ../ports/memory
 import ../ports/provider
@@ -75,7 +76,8 @@ proc streamToOutbox*(fn:        StreamFn;
                     ch:        ChannelKind;
                     replyTo:   string;
                     streamId:  string;
-                    stopGeneration: uint64 = 0):
+                    stopGeneration: uint64 = 0;
+                    bridgeToken: uint64 = 0):
                     Future[Result[CompletionResponse, string]] {.async.} =
   var tokenChan: Channel[string]
   var finalResponse: CompletionResponse
@@ -113,6 +115,12 @@ proc streamToOutbox*(fn:        StreamFn;
             replyTo:   replyTo,
             streamId:  streamId,
             isPartial: false,
+            replyKind: rkFinalAnswer,
+            bridgeToken: bridgeToken,
+            # This terminal bypasses `finalizeNormalTurn`, so clamp here too:
+            # a provider reporting negative usage must not reach the API body.
+            inputTokens:  max(0, finalResponse.inputTokens),
+            outputTokens: max(0, finalResponse.outputTokens),
           ))
         return ok(finalResponse)
       accumulated.add(tok)
@@ -133,6 +141,8 @@ proc streamToOutbox*(fn:        StreamFn;
           replyTo:   replyTo,
           streamId:  streamId,
           isPartial: true,
+          replyKind: rkFinalAnswer,
+          bridgeToken: bridgeToken,
         ))
 
     await sleepAsync(milliseconds(30))
@@ -181,6 +191,20 @@ proc safeComplete(fn: CompleteFn; req: CompletionRequest
 func completionErr(msg: string): Result[CompletionResponse, string] {.gcsafe.} =
   err(msg)
 
+proc completeOnce(req: CompletionRequest;
+                  completeFn: CompleteFn;
+                  asyncCompleteFn: AsyncCompleteFn):
+                  Future[Result[CompletionResponse, string]] {.async.} =
+  ## One provider round, through the async twin when the caller has one.
+  if asyncCompleteFn != nil:
+    try:
+      return await asyncCompleteFn(req)
+    except CancelledError:
+      raise
+    except Exception as e:
+      return completionErr(e.msg)
+  safeComplete(completeFn, req)
+
 proc awaitExpectedReply*(outbox: AsyncQueue[AgentMessage];
                         expectedId: string;
                         workerName: string): Future[AgentMessage] {.async.} =
@@ -227,10 +251,12 @@ proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
                      tc: ToolCallRequest;
                      providerLabel: string;
                      debugMode: bool;
-                     log: Logger): Future[ToolCallResult] {.async.} =
+                     log: Logger;
+                     bridgeToken: uint64 = 0): Future[ToolCallResult] {.async.} =
   if debugMode:
     await globalOutbox.put(OutboundMessage(
-      userId: uid, channel: channel, text: buildToolDebugCallText(tc)))
+      userId: uid, channel: channel, text: buildToolDebugCallText(tc),
+      replyKind: rkDebug, bridgeToken: bridgeToken))
 
   log.info("[tool] (" & tc.name & ") <- [" & providerLabel & "] |" &
            $tc.inputJson.len & "|")
@@ -305,7 +331,8 @@ proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
   if debugMode:
     await globalOutbox.put(OutboundMessage(
       userId: uid, channel: channel,
-      text: buildToolDebugResultText(tc.name, toolResult.text)))
+      text: buildToolDebugResultText(tc.name, toolResult.text),
+      replyKind: rkDebug, bridgeToken: bridgeToken))
   toolResult
 
 proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
@@ -326,7 +353,8 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
                       debugMode: bool;
                       toolCallCount: int;
                       recentCalls: seq[(string, string)];
-                      log: Logger): Future[ToolBatchResult] {.async.} =
+                      log: Logger;
+                      bridgeToken: uint64 = 0): Future[ToolBatchResult] {.async.} =
   result = newToolBatchState(history, toolCallCount, recentCalls)
   for i, tc in toolCalls:
     if sessionStopRequested(nativeCtx):
@@ -343,6 +371,7 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
         channel: channel,
         text: prePlan.abortText,
         replyTo: replyTo,
+        bridgeToken: bridgeToken,
       ))
       result =
         result |>->
@@ -354,7 +383,8 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
 
     let toolResult = await executeToolCall(
       globalOutbox, toolInbox, toolOut, nativeCtx, state, result.history,
-      uid, channel, msgId, round, i, tc, providerLabel, debugMode, log)
+      uid, channel, msgId, round, i, tc, providerLabel, debugMode, log,
+      bridgeToken = bridgeToken)
     if toolResult.checkpointNow:
       ## Number before the snapshot: a rewind restores these messages, and the
       ## transcript must recognise them as already stored.
@@ -379,6 +409,9 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
         text: postPlan.progressText,
         streamId: toolStatusId,
         isPartial: true,
+        replyKind: rkToolNotice,
+        toolCall: ToolCallNotice(phase: "done", name: tc.name, id: tc.id),
+        bridgeToken: bridgeToken,
       ))
 
 # ── Tool loop runner ──────────────────────────────────────────────────────────
@@ -408,7 +441,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
                  debugMode: bool;
                  showReasoning: bool;
                  log: Logger;
-                 asyncCompleteFn: AsyncCompleteFn = nil): Future[ToolLoopRunResult] {.async.} =
+                 asyncCompleteFn: AsyncCompleteFn = nil;
+                 bridgeToken: uint64 = 0): Future[ToolLoopRunResult] {.async.} =
   var loopState = history |> newToolLoopState
   var round = 0
   var recentCalls: seq[(string, string)] = @[]
@@ -420,7 +454,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       break
     inc round
 
-    let req = buildPrompt(systemBase, loopState.history, context, tools, reasoning = showReasoning)
+    var req = buildPrompt(systemBase, loopState.history, context, tools, reasoning = showReasoning)
 
     let canStreamToolCalls =
       streamFn != nil and providerLabel.toLowerAscii().startsWith("openrouter")
@@ -432,9 +466,20 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       streamingAvailable = streamFn != nil,
       streamingToolCalls = canStreamToolCalls and not suppressProgress,
     ).useStreaming:
-      let streamedRes = await streamToOutbox(
+      var streamedRes = await streamToOutbox(
         streamFn, req, globalOutbox, uid, channel, replyTo, streamId,
-        nativeCtx.stopGeneration)
+        nativeCtx.stopGeneration, bridgeToken = bridgeToken)
+      ## The streaming branch goes through the same one-shot demotion: a
+      ## vision-less model can refuse the inline image before the first token.
+      if streamedRes.isErr and not loopState.imageRetryUsed and
+         not sessionStopRequested(nativeCtx) and
+         hasInlineImages(req) and isImageRejection(streamedRes.error):
+        loopState.imageRetryUsed = true
+        loopState.history = demoteInlineImagesForTurn(loopState.history)
+        req = withoutInlineImages(req)
+        streamedRes = await streamToOutbox(
+          streamFn, req, globalOutbox, uid, channel, replyTo, streamId,
+          nativeCtx.stopGeneration, bridgeToken = bridgeToken)
       if streamedRes.isErr:
         nativeCtx.log.warn("provider error: " & clipProviderError(streamedRes.error))
         pushAgentEvent(AgentEvent(
@@ -448,10 +493,14 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
           channel: channel,
           text: explainProviderError(errorExplainFn, streamedRes.error),
           replyTo: replyTo,
+          replyKind: rkTurnError,
+          bridgeToken: bridgeToken,
         ))
         loopState.done = true
         continue
       let streamed = streamedRes.value
+      loopState.usage = loopState.usage.addUsage(
+        streamed.inputTokens, streamed.outputTokens)
       if sessionStopRequested(nativeCtx):
         loopState.done = true
         break
@@ -464,7 +513,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
           globalOutbox, toolInbox, toolOut, nativeCtx, state, loopState.history,
           uid, channel, replyTo, msgId, round, toolStatusId, streamed.toolCalls,
           providerLabel, suppressProgress, debugMode, loopState.toolCallCount,
-          recentCalls, log)
+          recentCalls, log, bridgeToken = bridgeToken)
         loopState =
           loopState |>->
           withToolBatchState(batchResult)
@@ -474,16 +523,19 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
           loopState |>->
           withStreamFinalText(streamed.text, streamed.reasoning)
       continue
-    let resp =
-      if asyncCompleteFn != nil:
-        try:
-          await asyncCompleteFn(req)
-        except CancelledError:
-          raise
-        except Exception as e:
-          completionErr(e.msg)
-      else:
-        safeComplete(completeFn, req)
+    var resp = await completeOnce(req, completeFn, asyncCompleteFn)
+    ## One retry per turn: the flag lives in `loopState`, which survives every
+    ## tool round, instead of in the completion closure.
+    if resp.isErr and not loopState.imageRetryUsed and
+       not sessionStopRequested(nativeCtx) and
+       hasInlineImages(req) and isImageRejection(resp.error):
+      loopState.imageRetryUsed = true
+      ## The persistent history drops the image and its inline promise, so
+      ## later rounds rebuild a text-only request. Only this retry request
+      ## carries the removal note.
+      loopState.history = demoteInlineImagesForTurn(loopState.history)
+      req = withoutInlineImages(req)
+      resp = await completeOnce(req, completeFn, asyncCompleteFn)
     if resp.isErr:
       nativeCtx.log.warn("provider error: " & clipProviderError(resp.error))
       pushAgentEvent(AgentEvent(
@@ -497,11 +549,14 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         channel: channel,
         text: explainProviderError(errorExplainFn, resp.error),
         replyTo: replyTo,
+        replyKind: rkTurnError,
+        bridgeToken: bridgeToken,
       ))
       loopState.done = true
       continue
 
     let r = resp.value
+    loopState.usage = loopState.usage.addUsage(r.inputTokens, r.outputTokens)
     if sessionStopRequested(nativeCtx):
       loopState.done = true
       break
@@ -530,7 +585,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         withCompletionResult(completionResult)
       if completionResult.debugText.len > 0:
         await globalOutbox.put(OutboundMessage(
-          userId: uid, channel: channel, text: completionResult.debugText))
+          userId: uid, channel: channel, text: completionResult.debugText,
+          replyKind: rkDebug, bridgeToken: bridgeToken))
       continue
 
     of tlrkHandleToolBatch:
@@ -538,7 +594,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       let batchResult = await processToolCalls(
         globalOutbox, toolInbox, toolOut, nativeCtx, state, loopState.history,
         uid, channel, replyTo, msgId, round, toolStatusId, r.toolCalls,
-        providerLabel, suppressProgress, debugMode, loopState.toolCallCount, recentCalls, log)
+        providerLabel, suppressProgress, debugMode, loopState.toolCallCount, recentCalls, log,
+        bridgeToken = bridgeToken)
       loopState =
         loopState |>->
         withToolBatchState(batchResult)
@@ -589,7 +646,8 @@ proc finalizeNormalTurn*(globalOutbox: AsyncQueue[OutboundMessage];
                         suppressProgress: bool;
                         suppressQuietFinal: bool;
                         showReasoning: bool;
-                        loopResult: ToolLoopRunResult): Future[void] {.async.} =
+                        loopResult: ToolLoopRunResult;
+                        bridgeToken: uint64 = 0): Future[void] {.async.} =
   if not suppressProgress and loopResult.toolCallCount > 0:
     await globalOutbox.put(OutboundMessage(
       userId: uid,
@@ -597,6 +655,9 @@ proc finalizeNormalTurn*(globalOutbox: AsyncQueue[OutboundMessage];
       text: buildToolLoopDoneText(loopResult.toolCallCount),
       streamId: streamId & "-st",
       isPartial: false,
+      replyKind: rkToolNotice,
+      toolCall: ToolCallNotice(phase: "done"),
+      bridgeToken: bridgeToken,
     ))
 
   if not loopResult.done or not loopResult.wasStreamed:
@@ -618,4 +679,8 @@ proc finalizeNormalTurn*(globalOutbox: AsyncQueue[OutboundMessage];
         channel: channel,
         text: fullText,
         replyTo: replyTo,
+        replyKind: rkFinalAnswer,
+        inputTokens: loopResult.usage.inputTokens,
+        outputTokens: loopResult.usage.outputTokens,
+        bridgeToken: bridgeToken,
       ))

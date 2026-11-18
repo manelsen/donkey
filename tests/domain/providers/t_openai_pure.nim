@@ -1,6 +1,6 @@
 ## Tests for domain/providers/openai_pure — OpenAI wire-format helpers.
 
-import std/[json, unittest]
+import std/[json, strutils, unittest]
 import donkey/core/pipeops
 import donkey/domain/providers/openai_pure
 import donkey/domain/message
@@ -409,3 +409,30 @@ suite "openai_pure wire quirks":
     quirks.includeReasoningField = false
     let body = buildRequestBodyWithQuirks("m", req, quirks = quirks)
     check not body.hasKey("include_reasoning")
+
+suite "openai_pure malformed responses":
+
+  test "a body without choices is an error, not a crash":
+    check parseResponseFrom(newJObject()).isErr
+    check parseResponseFrom(%*{"error": {"message": "boom"}}).isErr
+
+  test "an empty choices array is an error":
+    check parseResponseFrom(%*{"choices": []}).isErr
+
+  test "a choice without a message is an error":
+    check parseResponseFrom(%*{"choices": [{}]}).isErr
+
+  test "a message without usage still parses":
+    let res = parseResponseFrom(%*{"choices": [{"message": {"content": "ok"}}]})
+    check res.isOk
+    check res.get().text == "ok"
+    check res.get().inputTokens == 0
+
+  test "a malformed entry in a tool_calls batch is an error":
+    let json = parseJson("""
+      {"choices":[{"message":{"content":null,"tool_calls":[
+        {"id":"c1","function":null}]}}]}
+    """)
+    let res = parseResponseFrom(json)
+    check res.isErr
+    check "tool_call" in res.error

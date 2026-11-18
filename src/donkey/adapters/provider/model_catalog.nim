@@ -4,6 +4,7 @@ import ../../ports/provider
 import ../../ports/http
 import ../http/std_http
 import ../../core/pipeops
+import ../../core/providers/provider_defaults
 import ../../core/providers/smart_routing
 import openrouter
 import anthropic
@@ -130,6 +131,27 @@ func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
       ModelCatalogEntry(providerName: providerName, modelName: "glm-4.6", label: "glm-4.6", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "glm-4.5", label: "glm-4.5", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "glm-4.5-air", label: "glm-4.5-air", isFree: false, available: true),
+    ]
+  of "nvidia", "nvidia-nim", "nim", "build-nvidia":
+    @[
+      ModelCatalogEntry(providerName: providerName,
+                        modelName: DefaultModelNvidia,
+                        label: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+                        isFree: false, available: true, hasPricing: false),
+    ]
+  of "fireworks", "fireworks-ai", "fw":
+    @[
+      ModelCatalogEntry(providerName: providerName,
+                        modelName: DefaultModelFireworks,
+                        label: DefaultModelFireworks,
+                        isFree: false, available: true, hasPricing: false),
+    ]
+  of "alibaba", "dashscope", "alibaba-cloud", "aliyun":
+    @[
+      ModelCatalogEntry(providerName: providerName,
+                        modelName: DefaultModelAlibaba,
+                        label: "qwen3.8-max",
+                        isFree: false, available: true, hasPricing: false),
     ]
   of "ollama":
     @[
@@ -634,8 +656,12 @@ proc buildModelCatalogLoader*(http: HttpRuntimePort = defaultCatalogHttp()): Mod
       loadGeminiCatalog(catalogEnvValue("gemini"), http)
     of "minimax":
       loadMinimaxCatalog(catalogEnvValue("minimax"))
-    of "zai", "zai-coding":
-      loadZaiCatalog(catalogEnvValue(providerName), providerName, true, http)
+    of "zai":
+      ## The general Z.ai platform endpoint: `codingEndpoint = false` is the
+      ## reachable branch for this provider (the coding plan has its own id).
+      loadZaiCatalog(catalogEnvValue("zai"), providerName, false, http)
+    of "zai-coding":
+      loadZaiCatalog(catalogEnvValue("zai-coding"), providerName, true, http)
     of "zai-anthropic":
       loadZaiCatalog(catalogEnvValue("zai-anthropic"), providerName, true, http)
     of "opencode-go", "opencode":

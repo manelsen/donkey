@@ -105,6 +105,15 @@ suite "webhook receiver — crypto helpers":
     check hmacSha256Hex("key", "The quick brown fox jumps over the lazy dog") ==
       "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
 
+suite "webhook receiver — read errors":
+
+  test "an oversized body is a 413, not a 400":
+    ## The socket reader rejects before routing, so the status must still say
+    ## what happened; a 400 would look like a malformed payload.
+    check readErrorResponse("body too large").status == 413
+    check readErrorResponse("truncated body").status == 400
+    check readErrorResponse("request deadline exceeded").status == 400
+
 suite "webhook receiver — Slack":
 
   test "url_verification challenge is echoed when the signature is valid":

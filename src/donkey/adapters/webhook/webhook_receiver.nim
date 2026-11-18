@@ -1,14 +1,19 @@
 ## webhook_receiver.nim — HTTP webhook receiver for callback-style channels.
 ##
-## Adapter layer (I/O boundary). It owns the HTTP listener, authentication of
-## inbound requests and payload parsing, then forwards each payload to the
-## channel adapter's existing `pushEvent`. The application layer keeps draining
-## the adapters' queues exactly as before; this module never imports app/.
+## Adapter layer (I/O boundary). It owns the HTTP listener and payload parsing,
+## then forwards each payload to the channel adapter's existing `pushEvent`. The
+## application layer keeps draining the adapters' queues exactly as before;
+## this module never imports app/.
+##
+## The shared ingress decision (`WebhookRequest`, `WebhookAuthSpec`,
+## `decideIngress`) lives in `webhook_ingress` and is re-exported here, as are
+## the core MAC primitives, so every existing import keeps working.
 ##
 ## Channels and authentication:
 ##   Slack    — X-Slack-Signature (v0 HMAC-SHA256) + replay window
 ##   Feishu   — verification token (url_verification challenge echoed back)
 ##   DingTalk — timestamp/sign HMAC-SHA256 signature
+##   LINE     — X-Line-Signature: base64 HMAC-SHA256 of the raw body
 ##   Matrix   — shared bearer token (Authorization or ?access_token=)
 ##   WhatsApp — hub.verify_token challenge (GET) + X-Hub-Signature-256 (POST)
 ##
@@ -16,19 +21,25 @@
 ## unauthenticated endpoint is ever exposed.
 
 import std/[atomics, base64, json, monotimes, net, os, posix, strutils, tables, times]
-import nimcrypto/[bcmode, hmac, rijndael, sha2]
+import nimcrypto/[bcmode, rijndael, sha2]
 import ../../core/log
 import ../../core/pipeops
+import ../../domain/channels/line_policy
+import ./webhook_ingress
 import ../channel/slack
 import ../channel/feishu
 import ../channel/dingtalk
+import ../channel/line
 import ../channel/matrix
 import ../channel/whatsapp
+
+export webhook_ingress
 
 const
   SlackPath*    = "/webhook/slack"
   FeishuPath*   = "/webhook/feishu"
   DingTalkPath* = "/webhook/dingtalk"
+  LinePath*     = "/webhook/line"
   MatrixPath*   = "/webhook/matrix"
   WhatsAppPath* = "/webhook/whatsapp"
 
@@ -36,6 +47,7 @@ const
   FeishuReplayWindowSec*     = 300
   DingTalkTimestampWindowMs* = 3_600_000
   MaxWebhookBodyBytes*       = 2 * 1024 * 1024
+  LineMaxBodyBytes*          = 1 * 1024 * 1024
   WebhookTlsReloadIntervalMs = 1000
 
   WebhookWorkerCount        = 4
@@ -47,13 +59,6 @@ const
   MaxWebhookLineBytes       = 8192
 
 type
-  WebhookRequest* = object
-    httpMethod*: string
-    path*:       string
-    query*:      Table[string, string]
-    headers*:    Table[string, string]  ## keys are lowercase
-    body*:       string
-
   WebhookResponse* = object
     status*:      int
     body*:        string
@@ -64,6 +69,10 @@ type
     feishuVerificationToken*: string
     feishuEncryptKey*:        string
     dingtalkAppSecret*:       string
+    lineChannelSecret*:       string
+    lineChannelAccessToken*:  string
+    lineAllowedGroups*:       seq[string]
+    lineAllowedUsers*:        seq[string]
     matrixToken*:             string
     whatsappVerifyToken*:     string
     whatsappAppSecret*:       string
@@ -82,34 +91,8 @@ func notFound(): WebhookResponse = plainResp(404, "not found")
 func forbidden(): WebhookResponse = plainResp(403, "forbidden")
 func badRequest(): WebhookResponse = plainResp(400, "bad request")
 func methodNotAllowed(): WebhookResponse = plainResp(405, "method not allowed")
+func payloadTooLarge(): WebhookResponse = plainResp(413, "payload too large")
 func serviceUnavailable(): WebhookResponse = plainResp(503, "server busy")
-
-# ── Crypto / comparison helpers ───────────────────────────────────────────────
-
-func safeEquals*(a, b: string): bool =
-  ## Constant-time-ish comparison for secrets and MACs.
-  if a.len != b.len:
-    return false
-  var diff = 0
-  for i in 0 ..< a.len:
-    diff = diff or (ord(a[i]) xor ord(b[i]))
-  diff == 0
-
-func hmacSha256Hex*(key, data: string): string =
-  ($sha256.hmac(key, data)).toLowerAscii()
-
-func hmacSha256Base64*(key, data: string): string =
-  let digest = sha256.hmac(key, data)
-  var raw = newString(digest.data.len)
-  for i, b in digest.data:
-    raw[i] = char(b)
-  base64.encode(raw)
-
-func header*(req: WebhookRequest; name: string): string =
-  req.headers.getOrDefault(name.toLowerAscii())
-
-func hasQuery*(req: WebhookRequest; key: string): bool =
-  req.query.hasKey(key)
 
 # ── Payload helpers ───────────────────────────────────────────────────────────
 
@@ -319,39 +302,88 @@ proc handleFeishu(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
 
 # ── DingTalk ──────────────────────────────────────────────────────────────────
 
+func dingTalkAuthSpec(cfg: WebhookConfig): WebhookAuthSpec =
+  ## DingTalk signs `timestamp & "\n" & secret` (the body is not covered) and
+  ## carries Unix milliseconds in `timestamp`/`sign`. The body limit matches
+  ## the one already enforced while reading the request.
+  WebhookAuthSpec(
+    scheme:          wasHmacSha256Base64,
+    signedPayload:   wspTimestampNewlineSecret,
+    secret:          cfg.dingtalkAppSecret,
+    signatureHeader: "sign",
+    timestampHeader: "timestamp",
+    replayWindowSec: DingTalkTimestampWindowMs div 1000,
+    timestampScale:  wtsMilliseconds,
+    maxBodyBytes:    MaxWebhookBodyBytes,
+  )
+
 proc handleDingTalk(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
-  if cfg.dingtalkAppSecret.len == 0:
+  let verdict = decideIngress(dingTalkAuthSpec(cfg), req,
+                              nowUnixMs = (epochTime() * 1000).int64)
+  case verdict
+  of wioAccepted:
+    discard
+  of wioNotConfigured:
     return notFound()
-  if req.httpMethod != "POST":
+  of wioMethodNotAllowed:
     return methodNotAllowed()
-
-  let timestamp = req.header("timestamp")
-  let signature = req.header("sign")
-  if timestamp.len == 0 or signature.len == 0:
+  of wioStale, wioForbidden:
     return forbidden()
-
-  ## Timestamps are Unix milliseconds. Validate before the MAC so a hostile
-  ## value cannot reach the crypto path or overflow a window subtraction.
-  var tsMs: int64
-  try:
-    tsMs = parseBiggestInt(timestamp)
-  except ValueError:
-    return forbidden()
-  let nowMs = (epochTime() * 1000).int64
-  if tsMs < nowMs - DingTalkTimestampWindowMs.int64 or
-     tsMs > nowMs + DingTalkTimestampWindowMs.int64:
-    return forbidden()
-
-  let expected = hmacSha256Base64(cfg.dingtalkAppSecret,
-                                  timestamp & "\n" & cfg.dingtalkAppSecret)
-  if not safeEquals(signature, expected):
-    return forbidden()
+  of wioTooLarge:
+    return badRequest()
 
   let payload = parsePayload(req.body).valueOr:
     return badRequest()
 
   dingtalk.pushEvent(payload)
   plainResp(200)
+
+# ── LINE ──────────────────────────────────────────────────────────────────────
+
+func lineAuthSpec(cfg: WebhookConfig): WebhookAuthSpec =
+  ## LINE signs the raw body: base64(HMAC-SHA256(channel secret, body)). There
+  ## is no signed timestamp, so replay defence is the runtime's dedupe of
+  ## `webhookEventId` (US-002/US-006), not an ingress window.
+  WebhookAuthSpec(
+    scheme:          wasHmacSha256Base64,
+    signedPayload:   wspBody,
+    secret:          cfg.lineChannelSecret,
+    signatureHeader: LineSignatureHeader,
+    timestampHeader: "",
+    replayWindowSec: 0,
+    timestampScale:  wtsNone,
+    maxBodyBytes:    LineMaxBodyBytes,
+  )
+
+proc handleLine(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
+  let verdict = decideIngress(lineAuthSpec(cfg), req,
+                              nowUnixMs = (epochTime() * 1000).int64)
+  case verdict
+  of wioAccepted:
+    discard
+  of wioNotConfigured:
+    return notFound()
+  of wioMethodNotAllowed:
+    return methodNotAllowed()
+  of wioStale, wioForbidden:
+    return forbidden()
+  of wioTooLarge:
+    return payloadTooLarge()
+
+  let payload = parsePayload(req.body).valueOr:
+    return badRequest()
+
+  ## The console "Verify" button posts `{"events":[]}`; answer 200 without
+  ## touching the queue. Any real event is parsed here so an unusable shape
+  ## never opens the adapter queue.
+  if parseWebhook(payload).len > 0:
+    if not line.pushEvent(payload):
+      ## The bounded queue is full. Refusing is better than blocking this
+      ## worker (which serves every channel) or acking an event the daemon will
+      ## never see; LINE redelivers, and the replay cache drops duplicates it
+      ## already accepted.
+      return plainResp(503, "line queue is full")
+  plainResp(200, "ok")
 
 # ── Matrix ────────────────────────────────────────────────────────────────────
 
@@ -422,6 +454,7 @@ proc handleWebhookRequest*(cfg: WebhookConfig; req: WebhookRequest): WebhookResp
   of SlackPath:    handleSlack(cfg, req)
   of FeishuPath:   handleFeishu(cfg, req)
   of DingTalkPath: handleDingTalk(cfg, req)
+  of LinePath:     handleLine(cfg, req)
   of MatrixPath:   handleMatrix(cfg, req)
   of WhatsAppPath: handleWhatsApp(cfg, req)
   else:            notFound()
@@ -431,6 +464,7 @@ func anyRouteConfigured*(cfg: WebhookConfig): bool =
     cfg.feishuVerificationToken.len > 0 or
     cfg.feishuEncryptKey.len > 0 or
     cfg.dingtalkAppSecret.len > 0 or
+    cfg.lineChannelSecret.len > 0 or
     cfg.matrixToken.len > 0 or
     cfg.whatsappVerifyToken.len > 0
 
@@ -443,6 +477,7 @@ func statusReason(status: int): string =
   of 403: "Forbidden"
   of 404: "Not Found"
   of 405: "Method Not Allowed"
+  of 413: "Payload Too Large"
   of 503: "Service Unavailable"
   else:  "Error"
 
@@ -571,12 +606,17 @@ proc applyWebhookClientTimeouts(client: Socket;
   discard posix.setsockopt(client.getFd, posix.SOL_SOCKET, posix.SO_SNDTIMEO,
                            addr tv, posix.SockLen(sizeof(tv)))
 
+func readErrorResponse*(error: string): WebhookResponse =
+  ## The socket reader rejects before routing, so the status must describe the
+  ## read failure: an oversized declared body is 413, everything else 400.
+  if error == "body too large": payloadTooLarge() else: badRequest()
+
 proc handleConnection(client: Socket; cfg: WebhookConfig; logger: Logger) =
   defer:
     try: client.close() except CatchableError: discard
   let req = readWebhookRequest(client).valueOr:
     logger.warn("webhook: " & error)
-    sendResponse(client, badRequest())
+    sendResponse(client, readErrorResponse(error))
     return
   let resp = handleWebhookRequest(cfg, req)
   if resp.status != 200:

@@ -113,15 +113,27 @@ bloqueia nenhuma missão. Registro para o futuro: o Hermes tem device code no
 `nous`, mas o client id público é do Hermes (`hermes-cli`); o Donkey precisaria
 de um client id próprio registrado ou de autorização escrita para reutilizá-lo.
 
-## Mission status (18/11/2026)
+## 5. Estado em 18/11/2026 (pós-onda de fundações)
 
-| Missão | Estado |
-|---|---|
-| Provider transport (PRD próprio) | **mergeada** (PR #53, `f5d261da`), 250 testes |
-| Ferramentas | **PR #54 aberto**, US-001..007, 259 testes, CI pending |
-| Interfaces | PRD corrigido; aguarda a vez |
-| Multiagente | PRD corrigido; aguarda a vez |
-| Canais | PRD corrigido; aguarda a vez |
-| Automação | PRD corrigido; aguarda a vez |
-| Durabilidade | PRD corrigido; aguarda a vez |
-| Providers (V4) | PRD corrigido (adapter genérico + breadth); re-revisão em curso |
+Ondas entregues: PR #53 (transporte de provider), PR #54 (ferramentas US-001..007),
+PR #56 (fundações: Interfaces US-001/002, Canais US-000..002, Providers
+US-001..003 + surface, Multiagente US-001..003, Automação US-001/002,
+Durabilidade US-001/002, hardening de upload, cron) e a onda 2 (N3) em curso.
+
+| Missão | Entregue | Falta para N3 |
+|---|---|---|
+| Transporte de provider | completo | — |
+| Ferramentas | US-001..007 + hardening + marcador por álbum + cap antes do merge + retry por turno (streaming incluso) + confinamento ao paddock + `isImageRejection` único + `inspect_image` na política + voz com `replyTo` | TTS pelo store port, GC de anexos |
+| Interfaces | US-001..004 (contrato, endpoint, SSE, dashboard) + docs | token por registro no `ChatBridge`; US-005 fechamento |
+| Multiagente | US-001..003 (fan-out + supervisor) | US-004 (rooms/relay) |
+| Canais | US-000..006 (enum, parser, política, ingress, adapter, rota, runtime) + docs | US-007 (prova de não-duplicação e rollout) |
+| Automação | US-001/002 (puro) + runtime + `enqueueScheduledTask`/`tkSchedule` + store de watermark | store com spec completo, `ctl schedule` (US-007), tick no daemon |
+| Durabilidade | US-001/002 (FSM + store) | US-003+ (recuperação no caminho do turno) |
+| Providers | US-001..004 + availability/routing/doctor/setup; catálogo com limites desconhecidos; PRD corrigido após a segunda revisão (paridade de visão escopada aos modelos verificados) | US-005 (limites verificados), OAuth (TODO de longo prazo) |
+
+Testes-gate que **não** existem ainda com os nomes deste roteiro:
+`t_agent_chat_stream.nim` (SSE vive em `t_agent_chat.nim`),
+`t_subagent_fanout.nim`/`t_subagent_fanout_stop.nim` (viram `t_fanout_plan` +
+`t_fanout_runtime`), `t_line_webhook.nim`/`t_line_runtime.nim` (US-005/006).
+Os nomes reais foram mantidos onde o arquivo já existe; renomear só com ganho
+claro, porque PRDs e revisões citam os nomes atuais.

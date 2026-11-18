@@ -115,6 +115,7 @@ type
     approval*:     ApprovalService
     log*:          Logger
     paddockDir*:   string
+    replyTo*:      string   ## inbound reply anchor, so a voice note stays in the forum topic
     sandboxMode*:  SandboxMode
     sandboxRuntimeCmd*: string
     sandboxImage*: string
@@ -1167,7 +1168,7 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
     if speechCtx.asVoice:
       let prepared = prepareVoiceReply(
         speechCtx.text, speechCtx.caption, ctx.paddockDir, ctx.channel,
-        ctx.uid, ctx.http)
+        ctx.uid, ctx.http, replyTo = ctx.replyTo)
       if prepared.isErr:
         return handledError(prepared.error)
       return NativeToolResult(

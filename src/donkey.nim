@@ -1,6 +1,6 @@
 ## donkey — AI agent system entry point.
 
-import std/[algorithm, json, options, os, parseopt, strutils, tables, terminal, times]
+import std/[algorithm, json, locks, options, os, parseopt, strutils, tables, terminal, times]
 when defined(posix):
   import std/posix
 import locks
@@ -54,12 +54,16 @@ import donkey/adapters/channel/slack
 import donkey/adapters/channel/slack_runtime
 import donkey/adapters/channel/slack_socket
 import donkey/adapters/channel/dingtalk
+import donkey/adapters/channel/line
+import donkey/adapters/channel/line_runtime
 import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
+import donkey/domain/channels/line_policy
 import donkey/adapters/tool/mcp_client
 import donkey/adapters/tools/browser
 import donkey/domain/tools/browser_pure
 import donkey/adapters/state/runtime_store
+import donkey/adapters/state/schedule_store
 import donkey/adapters/state/pairing_store
 import donkey/adapters/state/approval_store
 import donkey/adapters/secrets/vault
@@ -77,7 +81,11 @@ import donkey/app/orchestrator
 import donkey/app/sandbox
 import donkey/app/ipc_server
 import donkey/app/http_gateway
+import donkey/app/chat_bridge
+import donkey/domain/gateway/dashboard_pure
+import donkey/domain/gateway/identity_pure
 import donkey/app/heartbeat
+import donkey/app/scheduler_wiring
 import donkey/app/metrics_server
 import donkey/app/outbound_runtime
 import donkey/app/gateway_drainer
@@ -231,6 +239,10 @@ type DaemonEnv = object
   slackSigningSecret: string
   feishuVerificationToken: string
   feishuEncryptKey: string
+  lineChannelSecret: string
+  lineChannelAccessToken: string
+  lineAllowedGroups: seq[string]
+  lineAllowedUsers: seq[string]
   matrixWebhookToken: string
   whatsappVerifyToken: string
   whatsappAppSecret: string
@@ -244,6 +256,7 @@ type DaemonAdapters = object
   fs: FeishuAdapter
   sl: SlackAdapter
   dt: DingTalkAdapter
+  ln: LineAdapter
   mx: MatrixAdapter
   em: EmailAdapter
   wa: WhatsAppAdapter
@@ -258,7 +271,7 @@ proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPor
     addr adapters.tg, addr adapters.dc, addr adapters.wc,
     addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx,
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
-    addr adapters.cli, signalPtr)
+    addr adapters.cli, signalPtr, addr adapters.ln)
 
 const
   RecentRouteSampleLimit = 32
@@ -329,6 +342,7 @@ type DaemonRuntime = ref object
   lastReminderCheckMs:  int64
   lastEmailPollMs:      int64
   lastSignalPollMs:     int64
+  lineReplay:           LineReplayCache
   msgSeq:               int
   daemonStartMs:        int64
 
@@ -515,6 +529,13 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.slackSigningSecret = getEnv("SLACK_SIGNING_SECRET")
   result.feishuVerificationToken = getEnv("FEISHU_VERIFICATION_TOKEN")
   result.feishuEncryptKey = getEnv("FEISHU_ENCRYPT_KEY")
+  ## LINE: the route is mounted only when the access token exists; the channel
+  ## secret is the HMAC key for X-Line-Signature. Groups are default-deny
+  ## (empty = none), users are opt-in (empty = all) — see line_policy.
+  result.lineChannelSecret = getEnv("LINE_CHANNEL_SECRET").strip()
+  result.lineChannelAccessToken = getEnv("LINE_CHANNEL_ACCESS_TOKEN").strip()
+  result.lineAllowedGroups = parseChatIdList(getEnv("LINE_ALLOWED_GROUPS"))
+  result.lineAllowedUsers = parseChatIdList(getEnv("LINE_ALLOWED_USERS"))
   result.matrixWebhookToken = getEnv("MATRIX_WEBHOOK_TOKEN")
   result.whatsappVerifyToken = getEnv("WHATSAPP_VERIFY_TOKEN")
   result.whatsappAppSecret = getEnv("WHATSAPP_APP_SECRET")
@@ -550,6 +571,14 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
   result.sl = newSlackAdapter(env.slackBotToken, env.identityPath)
   result.dt = newDingTalkAdapter(env.dingTalkAppKey, env.dingTalkAppSecret,
                                  env.dingTalkRobotCode, env.identityPath)
+  ## A stale/bad `LINE_API_BASE` must not abort startup when LINE is not
+  ## configured: construct at the default base in that case (the adapter then
+  ## fails sends with "missing token", which is the truth).
+  result.ln =
+    if env.lineChannelAccessToken.len > 0:
+      newLineAdapter(env.lineChannelAccessToken, env.identityPath)
+    else:
+      newLineAdapter("", env.identityPath, apiBase = "https://api.line.me")
   result.mx = newMatrixAdapter(getEnv("MATRIX_HOMESERVER"), getEnv("MATRIX_BOT_USER_ID"),
                                getEnv("MATRIX_ACCESS_TOKEN"), env.identityPath)
   result.em = newEmailAdapter(getEnv("EMAIL_IMAP_HOST"), getEnv("EMAIL_SMTP_HOST"),
@@ -1029,6 +1058,11 @@ proc startOptionalWebhookReceiver(env: DaemonEnv; log: Logger) =
       if env.feishuAppId.len > 0: env.feishuEncryptKey else: "",
     dingtalkAppSecret:
       if env.dingTalkAppKey.len > 0: env.dingTalkAppSecret else: "",
+    lineChannelSecret:
+      if env.lineChannelAccessToken.len > 0: env.lineChannelSecret else: "",
+    lineChannelAccessToken: env.lineChannelAccessToken,
+    lineAllowedGroups: env.lineAllowedGroups,
+    lineAllowedUsers: env.lineAllowedUsers,
     matrixToken:
       if matrixConfigured(): env.matrixWebhookToken else: "",
     whatsappVerifyToken:
@@ -1072,10 +1106,59 @@ proc buildGlobalSearchFn(memory: MdFileAdapter): SearchFn {.gcsafe.} =
   else:
     discard
 
+# The API turn bridge: the gateway worker registers/polls, the daemon outbox
+# drainer delivers `api:` replies here instead of to a channel port.
+var gApiChatBridge: ChatBridge
+
+proc apiChatNowMs(): int64 {.gcsafe, raises: [].} =
+  int64(epochTime() * 1000)
+
+proc apiChatNap(ms: int) {.gcsafe, raises: [].} =
+  ## The ingress actor for an API turn is spawned on the gateway worker thread
+  ## (same path as `/api/chat`), so this bounded wait also drives that thread's
+  ## dispatcher while the worker waits on the bridge.
+  try:
+    waitFor(sleepAsync(chronos.milliseconds(ms)))
+  except CatchableError:
+    discard
+
 # Forward declaration for handleGatewayFallback (defined later, used in setupIpcServer)
 proc handleGatewayFallback(ctx: DaemonContext; cfg: DonkeyConfig;
                           memory: MdFileAdapter; msg: InboundMessage;
                           log: Logger) {.gcsafe.}
+
+# Forward declaration for buildDaemonSessionServices (defined later, used in setupIpcServer)
+func buildDaemonSessionServices(ctx: DaemonContext; cfg: DonkeyConfig;
+                                memory: MdFileAdapter;
+                                log: Logger): SessionIngressServices
+
+## The dashboard reads sessions from the gateway worker threads while the
+## daemon mutates `sm` on its own thread. Publish a copy from the daemon thread
+## under a small lock instead of iterating the live table across threads.
+var gSessionsLock: Lock
+var gSessionsSnapshot: seq[SessionDetail]
+var gSessionsSnapshotSec: int64 = -1
+
+proc publishSessions(sm: SessionManager) {.gcsafe, raises: [].} =
+  let nowSec = epochTime().int64
+  {.cast(gcsafe).}:
+    if nowSec == gSessionsSnapshotSec:
+      return
+    gSessionsSnapshotSec = nowSec
+    let snapshot = sm.listSessionDetails()
+    acquire(gSessionsLock)
+    try:
+      gSessionsSnapshot = snapshot
+    finally:
+      release(gSessionsLock)
+
+proc sessionsSnapshot(): seq[SessionDetail] {.gcsafe, raises: [].} =
+  {.cast(gcsafe).}:
+    acquire(gSessionsLock)
+    try:
+      result = gSessionsSnapshot
+    finally:
+      release(gSessionsLock)
 
 proc setupIpcServer(cfg: DonkeyConfig;
                     runtime: DaemonRuntime;
@@ -1143,18 +1226,78 @@ proc setupIpcServer(cfg: DonkeyConfig;
       result.add(IpcLogEntry(ts: e.ts, level: e.level, subsys: e.sub, msg: e.msg))
   let gwInboundFn: GatewayInboundFn = proc(msg: InboundMessage) {.gcsafe.} =
     handleGatewayFallback(gatewayInboundCtx, cfg, gatewayInboundMemory, msg, gatewayInboundLog)
+  let gwAuthorizeFn: AuthorizeFn =
+    proc(userId: UserId): AuthVerdict {.gcsafe, raises: [].} =
+      ## Same policy as the ingress: revocation wins, then the DM allowlist.
+      ## A profile that cannot be read fails closed.
+      try:
+        if gatewayInboundMemory.isRevoked(userId):
+          avRevoked
+        elif cfg.dmPolicy != DmPolicyOpen and
+             not gatewayInboundMemory.isDmAllowed(userId):
+          avNotAllowed
+        else:
+          avAllowed
+      except Exception:
+        avRevoked
   try:
     startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
     log.info("IPC socket: " & sockPath)
   except CatchableError as e:
     log.warn("IPC socket disabled: " & e.msg)
   let httpPort = resolveGatewayPort(getEnv("DONKEY_HTTP_PORT"))
+  initLock(gSessionsLock)
+  publishSessions(runtime.sm)
   let gwStatusFn: GatewayStatusFn = proc(): DaemonStatus {.gcsafe.} =
     ipcStatusFn()
   let gwLogFn: GatewayLogFn = proc(n: int): seq[IpcLogEntry] {.gcsafe.} =
     ipcLogFn(n)
   let gwEventFn: GatewayEventFn = proc(n: int): seq[AgentEvent] {.gcsafe.} =
     agentEventSnapshot(n)
+  let gwSessionsFn: GatewaySessionsFn = proc(): seq[SessionDetail] {.gcsafe.} =
+    sessionsSnapshot()
+  let gwProvidersFn: GatewayProvidersFn = proc(): string {.gcsafe.} =
+    buildProvidersJson(
+      detectProviderAvailability(),
+      withRouteLock(runtime.currentProviderCooldowns()),
+      aggregateProviderFeedback(withRouteLock(runtime.currentRouteFeedback())))
+  let gwSessionActionFn: GatewaySessionActionFn =
+    proc(rawUserId: string; taskKind: TaskKind;
+         payload: string): GatewaySessionActionOutcome {.gcsafe.} =
+      ## The dashboard carries the raw session key; it is never run through
+      ## `apiUserId`. An unknown key is a 404, a revoked profile a 403
+      ## (`isRevoked` already answers "revoked" when the profile is unreadable).
+      ## The action takes the raw **user key** (the second column of the
+      ## dashboard table), not the session id: accepting both made a user key
+      ## that equals another session's id resolve to the wrong session.
+      if rawUserId notin runtime.sm.entries:
+        return gsaoNotFound
+      let sessionKey = rawUserId
+      let uid = UserId(sessionKey)
+      ## Same policy as the API: revocation first, then the DM allowlist. A
+      ## policy denial must not answer 202 for a task the ingress will drop.
+      case gwAuthorizeFn(uid)
+      of avAllowed: discard
+      of avRevoked, avNotAllowed: return gsaoRevoked
+      ## Answer on the channel the user actually uses. Passing the session key
+      ## as a `ckCli` channel id recorded a fake channel and sent the
+      ## confirmation to stdout.
+      let target = runtime.sm.latestChannelFor(sessionKey)
+      ensureSessionTask(
+        runtime.sm,
+        InboundMessage(
+          userId: uid,
+          channel: target.kind,
+          channelId: target.rawId,
+          rawChannelId: target.rawId,
+        ),
+        buildDaemonSessionServices(gatewayInboundCtx, cfg, gatewayInboundMemory,
+                                   gatewayInboundLog),
+        runtime.msgSeq,
+        taskKind,
+        payload,
+      )
+      gsaoAccepted
   let httpBind = block:
     let raw = getEnv("DONKEY_HTTP_BIND").strip()
     if raw.len > 0: raw else: "127.0.0.1"
@@ -1165,9 +1308,17 @@ proc setupIpcServer(cfg: DonkeyConfig;
       log.error("HTTP gateway disabled: non-loopback bind (" & httpBind &
                 ") requires DONKEY_HTTP_TOKEN and DONKEY_HTTP_ALLOW_INSECURE=1")
     else:
+      let gwChatBridge = block:
+        {.cast(gcsafe).}: gApiChatBridge
       let gatewayStart = startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
                                           bindAddr = httpBind, authToken = httpToken,
-                                          completeFn = gatewayInboundCtx.services.globalCompleteFn,
+                                          agentDispatchFn = gwInboundFn,
+                                          agentStreamNapFn = apiChatNap,
+                                          sessionsFn = gwSessionsFn,
+                                          providersFn = gwProvidersFn,
+                                          sessionActionFn = gwSessionActionFn,
+                                          authorizeFn = gwAuthorizeFn,
+                                          chatBridge = gwChatBridge,
                                           modelName = cfg.defaultModel)
       if gatewayStart.isErr:
         log.error("HTTP gateway disabled: " & gatewayStart.error)
@@ -1370,6 +1521,7 @@ func outboundPortForChannel(ports: OutboundChannelPorts;
   of ckMatrix: ports.matrix
   of ckEmail: ports.email
   of ckCli: ports.cli
+  of ckLine: ports.line
 
 proc makeCompleteBuilder(): proc(preferencesMd: string): CompleteFn {.gcsafe.} =
   result = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
@@ -1460,6 +1612,18 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
   let outboundPorts = buildRuntimeOutboundPorts(adapters)
   while runtime.globalOutbox.len > 0:
     let outMsg = runtime.globalOutbox.getNoWait()
+    {.cast(gcsafe).}:
+      if isApiChatReply(outMsg):
+        ## API replies belong to a waiting HTTP turn, never to a channel port.
+        ## A reply without a turn token (a scheduled firing for an `api:` user,
+        ## for example) must not close an unrelated HTTP request.
+        if outMsg.bridgeToken == 0:
+          log.warn("dropping an API reply without a turn token for " &
+                   $outMsg.userId)
+          continue
+        if gApiChatBridge != nil:
+          discard gApiChatBridge.deliver(outMsg, outMsg.bridgeToken)
+        continue
     completeInboundReactionStatus(runtime, outboundPorts, outMsg)
     routeOutbound(outMsg, outboundPorts, log, runtime.presentationState, runtime.ledger)
 
@@ -1478,6 +1642,11 @@ proc startDaemonIngress(ctx: DaemonContext;
   startOptionalMatrixGateway(ctx.adapters.mx, log)
   startOptionalWhatsAppGateway(ctx.adapters.wa, ctx.env.whatsappAccessToken,
                                ctx.env.whatsappPhoneNumberId, log)
+  ## The LINE route can enqueue as soon as the receiver binds; the queue must
+  ## be open first (an unopened Channel cannot be sent to from a worker).
+  if ctx.env.lineChannelAccessToken.len > 0:
+    ctx.adapters.ln.openQueue()
+    log.info("LINE webhook queue started")
   startOptionalWebhookReceiver(ctx.env, log)
   startOptionalQQGateway(ctx.adapters.qq, log)
   if ctx.env.telegramToken.len > 0:
@@ -1634,6 +1803,25 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         log
       )
       count > 0,
+    drainLine = proc(): bool =
+      if ctx.env.lineChannelAccessToken.len == 0:
+        return false
+      let linePolicy = LinePolicy(
+        allowedGroups: ctx.env.lineAllowedGroups,
+        allowedUsers:  ctx.env.lineAllowedUsers)
+      ## Hand the `/continue` confirmation to the outbox so this drain does not
+      ## wait for the LINE POST. The outbox drainer runs later on the same
+      ## daemon thread, so this removes the wait from the channel drain, not
+      ## from the daemon (an outbound worker is future work).
+      let enqueueLineReply = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
+        try:
+          ctx.runtime.globalOutbox.putNoWait(msg)
+          ok()
+        except AsyncQueueFullError:
+          err("LINE: outbox full, /continue reply dropped")
+      drainLineEvents(
+        ctx.adapters.ln, ctx.runtime.sm, ctx.runtime.lineReplay,
+        linePolicy, getTime().toUnix(), fallback, enqueueLineReply, log) > 0,
     drainMatrix = proc(): bool =
       let count = drainMatrixGateway(
         matrixConfigured(),
@@ -1775,6 +1963,7 @@ proc runDaemonLoop(ctx: DaemonContext;
     if compactError.isSome:
       log.warn("ledger compaction: " & compactError.get())
   let tick = runDaemonTick(ctx, drainer, memory, log)
+  publishSessions(ctx.runtime.sm)
   DaemonLoopResult(
     sleepMs: if tick.ok: 100 else: 500,
   )
@@ -1810,6 +1999,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory
   let ctx = bootstrap.ctx
+  ## The API bridge must exist before the gateway accepts a turn and before
+  ## the outbox drainer can route `api:` replies.
+  {.cast(gcsafe).}:
+    gApiChatBridge = newChatBridge(apiChatNowMs, apiChatNap)
   if ctx.runtime.stateStore != nil:
     let ledgerErr = ctx.runtime.stateStore.ledgerLastCompactError()
     if ledgerErr.len > 0:
@@ -1917,6 +2110,44 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     startHeartbeat(hbReg, intervalSec = hbInterval)
     log.info("heartbeat: every " & $hbInterval & "s")
 
+  ## Scheduler (automação US-006): a dedicated periodic task, never the
+  ## heartbeat registry — DONKEY_HEARTBEAT_CRON cannot silence
+  ## DONKEY_SCHEDULES_TICK_SEC. Off by default. The store lives in the same
+  ## state dir as the runtime store.
+  var schedulerTask: SchedulerTask
+  block:
+    let envLookup: EnvLookup = proc(name: string): string {.
+        gcsafe, raises: [], noSideEffect.} = getEnv(name)
+    let schedulesCfg = parseSchedulerConfig(envLookup)
+    for warning in schedulesCfg.warnings:
+      log.warn("scheduler config: " & warning)
+    if not schedulesCfg.enabled:
+      log.info("scheduler: disabled (DONKEY_SCHEDULES_ENABLED=0)")
+    else:
+      let scheduleStore = newScheduleStoreRef(cfg.home / "state")
+      let loadSchedules: ScheduleSnapshotLoader =
+        proc(): Result[seq[ScheduleSnapshot], string] {.
+            gcsafe, raises: [].} =
+          let records = scheduleStore.loadAllRecords()
+          if records.isErr:
+            return err(records.error)
+          var snapshot: seq[ScheduleSnapshot]
+          for record in records.get():
+            snapshot.add(ScheduleSnapshot(
+              spec: record.spec,
+              loadWarning: record.loadWarning,
+            ))
+          ok(snapshot)
+      schedulerTask = startSchedulerTask(
+        scheduleStore.scheduleStorePort,
+        loadSchedules,
+        scheduleEnqueueFn(addr ctx.runtime.sm, sessionServices,
+                          addr ctx.runtime.msgSeq),
+        schedulesCfg,
+        epochMs,
+        log.child("scheduler"),
+      )
+
   ## One-time startup: recover messages received while bot was offline.
   block:
     let completeBuilder = makeCompleteBuilder()
@@ -1942,9 +2173,18 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       await sleepAsync(ctimer.milliseconds(loopResult.sleepMs.int64))
   finally:
     log.info("daemon shutdown: stopping background workers")
+    stopSchedulerTask(schedulerTask)
     stopLedgerCompactionWorker(ctx.runtime.ledgerWorker)
     stopSlackSocketMode()
     stopWebhookReceiver()
+    ## LINE events were acked with 200 when queued, so LINE will not redeliver
+    ## them: drain them before the actors are cancelled.
+    if ctx.env.lineChannelAccessToken.len > 0:
+      discard drainer.drainLine()
+      ## The event was acked with 200 and is now being processed; give the
+      ## admitted turn the same bounded chance Slack gets before the actors are
+      ## cancelled.
+      await sleepAsync(ctimer.milliseconds(500))
     ## Stop ingress first, then let already-admitted turns publish their replies.
     ## Connections accepted before the stop may have enqueued Feishu events;
     ## consume them once before exiting. Slack envelopes were already acked

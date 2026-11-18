@@ -4,6 +4,12 @@ import std/[options, strutils]
 import ../../domain/message
 
 type
+  UsageTotals* = object
+    ## Token usage summed across every round of one turn, including streamed
+    ## rounds. Carried to the terminal answer so the API can report it.
+    inputTokens*:  int
+    outputTokens*: int
+
   ToolLoopRunResult* = object
     history*:       ConversationHistory
     finalText*:     string
@@ -11,6 +17,8 @@ type
     done*:          bool
     toolCallCount*: int
     wasStreamed*:   bool
+    imageRetryUsed*: bool       ## one image-less retry per turn, not per round
+    usage*:         UsageTotals
 
   CompletionHandlingResult* = object
     history*:    ConversationHistory
@@ -81,6 +89,21 @@ func newToolBatchState*(history: ConversationHistory;
 
 func newToolLoopState*(history: ConversationHistory): ToolLoopRunResult =
   ToolLoopRunResult(history: history)
+
+func addUsage*(totals: UsageTotals;
+               inputTokens, outputTokens: int): UsageTotals =
+  ## Adds one round's reported usage. Negative provider values are ignored so
+  ## a broken adapter cannot make the turn's totals decrease.
+  UsageTotals(
+    inputTokens:  totals.inputTokens + max(0, inputTokens),
+    outputTokens: totals.outputTokens + max(0, outputTokens),
+  )
+
+func addUsage*(inputTokens, outputTokens: int;
+               totals: UsageTotals): UsageTotals =
+  ## Argument-first form, so a round's usage can read left-to-right:
+  ## `addUsage(inTokens, outTokens, loop.usage)`.
+  totals.addUsage(inputTokens, outputTokens)
 
 func recentRepeatCount*(recentCalls: seq[(string, string)];
                         tc: ToolCallRequest): int =

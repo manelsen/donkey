@@ -46,6 +46,9 @@ type
     ollama*: bool
     opencodeGo*: bool
     zen*: bool
+    nvidia*: bool
+    alibaba*: bool
+    fireworks*: bool
 
   ProviderSelection* = object
     providerName*: string
@@ -178,6 +181,9 @@ func defaultModelForProvider*(providerName: string;
     of "ollama": "llama3.3"
     of "opencode-go", "opencode": OpenCodeGoDefaultModel
     of "zen", "opencode-zen": ZenDefaultModel
+    of "nvidia", "nvidia-nim", "nim", "build-nvidia": DefaultModelNvidia
+    of "alibaba", "dashscope", "alibaba-cloud", "aliyun": DefaultModelAlibaba
+    of "fireworks", "fireworks-ai", "fw": DefaultModelFireworks
     else: "glm-4.7"
 
 func selection(providerName: string; modelName = ""): ProviderSelection =
@@ -228,6 +234,9 @@ func isAvailable(availability: ProviderAvailability; providerName: string): bool
   of "ollama": availability.ollama
   of "opencode-go", "opencode": availability.opencodeGo
   of "zen", "opencode-zen": availability.zen
+  of "nvidia", "nvidia-nim", "nim", "build-nvidia": availability.nvidia
+  of "alibaba", "dashscope", "alibaba-cloud", "aliyun": availability.alibaba
+  of "fireworks", "fireworks-ai", "fw": availability.fireworks
   else: false
 
 # ── Catalog-driven routing helpers ────────────────────────────────────────────
@@ -248,6 +257,9 @@ func availableProviders(rc: RoutingCatalog): seq[string] {.used.} =
   if avail.ollama: result.add("ollama")
   if avail.opencodeGo: result.add("opencode-go")
   if avail.zen: result.add("zen")
+  if avail.nvidia: result.add("nvidia")
+  if avail.alibaba: result.add("alibaba")
+  if avail.fireworks: result.add("fireworks")
 
 func queryModels*(rc: RoutingCatalog; providerName: string;
                  hasTools = false; hasImage = false;

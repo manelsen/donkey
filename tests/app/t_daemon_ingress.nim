@@ -184,12 +184,15 @@ suite "daemon session ingress":
       channel: ckTelegram,
       channelId: "88",
       text: "hello world",
+      bridgeToken: 5'u64,
     )
     enqueueSessionMessage(entry, msg, "u-normal-3", sitActorInbox)
     let queued = entry.inbox.popFirstNoWait()
     check queued.id == "u-normal-3"
     check queued.replyTo == "88"
     check queued.payload == "hello world"
+    ## The API turn generation travels with the task message.
+    check queued.bridgeToken == 5'u64
 
   test "revoked user is detected from USER.md":
     let memory = MdFileAdapter(paddocksDir: "/tmp/donkey_revoked_ingress")
