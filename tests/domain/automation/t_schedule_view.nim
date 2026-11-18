@@ -126,17 +126,15 @@ suite "schedule view — schedulePanelLines":
   test "empty store prints one clear line":
     check schedulePanelLines(@[], FixedNow) == @["No schedules."]
 
-  test "one line per record after a header":
+  test "one self-describing line per record, no header":
     let lines = schedulePanelLines(@[
       makeRow(spec = makeSpec(id = "daily")),
       makeRow(spec = makeSpec(id = "hourly", cron = "0 * * * *")),
     ], FixedNow)
-    check lines.len == 3
-    check "id" in lines[0]
-    check "last_run" in lines[0]
-    check "next_run" in lines[0]
-    check "id=daily" in lines[1]
-    check "id=hourly" in lines[2]
+    check lines.len == 2
+    check "id=daily" in lines[0]
+    check "next_run=" in lines[0]
+    check "id=hourly" in lines[1]
 
 suite "schedule view — JSON":
 

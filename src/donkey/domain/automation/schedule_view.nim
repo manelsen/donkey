@@ -20,7 +20,7 @@
 ## them (the field names are stable so a future store can fill them in).
 ##
 ## Output contract (`list`):
-##   - human: `No schedules.` when there is nothing, else a header plus one
+##   - human: `No schedules.` when there is nothing, else one
 ##     `formatScheduleRow` line per record;
 ##   - `--json`: a JSON array with the same field names, and **no payload**.
 ##
@@ -41,8 +41,6 @@ const
     ## Printed for `last_run` before the schedule ever fired.
   NoSchedulesText* = "No schedules."
     ## Printed by `list` when the store is empty.
-  PanelHeader* = "id  last_run  next_run  enabled  catch_up  last_status"
-    ## Documented header of the human list panel.
   InstantFormat* = "yyyy-MM-dd'T'HH:mm:ss'Z'"
     ## Every instant is rendered in UTC so the offset in `tz` stays explicit.
 
@@ -132,11 +130,12 @@ func formatScheduleRow*(record: ScheduleViewRecord; nowMs: int64): string =
 
 func schedulePanelLines*(records: seq[ScheduleViewRecord];
                          nowMs: int64): seq[string] =
-  ## The list panel: a header plus one row per record, or a single clear line
-  ## when the store is empty.
+  ## The list panel: one self-describing `key=value` line per record, or a
+  ## single clear line when the store is empty. There is no header: the rows
+  ## carry their own field names, and a column header would not line up with
+  ## them.
   if records.len == 0:
     return @[NoSchedulesText]
-  result = @[PanelHeader]
   for record in records:
     result.add formatScheduleRow(record, nowMs)
 
