@@ -63,6 +63,7 @@ import donkey/adapters/tool/mcp_client
 import donkey/adapters/tools/browser
 import donkey/domain/tools/browser_pure
 import donkey/adapters/state/runtime_store
+import donkey/adapters/state/schedule_store
 import donkey/adapters/state/pairing_store
 import donkey/adapters/state/approval_store
 import donkey/adapters/secrets/vault
@@ -84,6 +85,7 @@ import donkey/app/chat_bridge
 import donkey/domain/gateway/dashboard_pure
 import donkey/domain/gateway/identity_pure
 import donkey/app/heartbeat
+import donkey/app/scheduler_wiring
 import donkey/app/metrics_server
 import donkey/app/outbound_runtime
 import donkey/app/gateway_drainer
@@ -2042,6 +2044,44 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     startHeartbeat(hbReg, intervalSec = hbInterval)
     log.info("heartbeat: every " & $hbInterval & "s")
 
+  ## Scheduler (automação US-006): a dedicated periodic task, never the
+  ## heartbeat registry — DONKEY_HEARTBEAT_CRON cannot silence
+  ## DONKEY_SCHEDULES_TICK_SEC. Off by default. The store lives in the same
+  ## state dir as the runtime store.
+  var schedulerTask: SchedulerTask
+  block:
+    let envLookup: EnvLookup = proc(name: string): string {.
+        gcsafe, raises: [], noSideEffect.} = getEnv(name)
+    let schedulesCfg = parseSchedulerConfig(envLookup)
+    for warning in schedulesCfg.warnings:
+      log.warn("scheduler config: " & warning)
+    if not schedulesCfg.enabled:
+      log.info("scheduler: disabled (DONKEY_SCHEDULES_ENABLED=0)")
+    else:
+      let scheduleStore = newScheduleStoreRef(cfg.home / "state")
+      let loadSchedules: ScheduleSnapshotLoader =
+        proc(): Result[seq[ScheduleSnapshot], string] {.
+            gcsafe, raises: [].} =
+          let records = scheduleStore.loadAllRecords()
+          if records.isErr:
+            return err(records.error)
+          var snapshot: seq[ScheduleSnapshot]
+          for record in records.get():
+            snapshot.add(ScheduleSnapshot(
+              spec: record.spec,
+              loadWarning: record.loadWarning,
+            ))
+          ok(snapshot)
+      schedulerTask = startSchedulerTask(
+        scheduleStore.scheduleStorePort,
+        loadSchedules,
+        scheduleEnqueueFn(addr ctx.runtime.sm, sessionServices,
+                          addr ctx.runtime.msgSeq),
+        schedulesCfg,
+        epochMs,
+        log.child("scheduler"),
+      )
+
   ## One-time startup: recover messages received while bot was offline.
   block:
     let completeBuilder = makeCompleteBuilder()
@@ -2067,6 +2107,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       await sleepAsync(ctimer.milliseconds(loopResult.sleepMs.int64))
   finally:
     log.info("daemon shutdown: stopping background workers")
+    stopSchedulerTask(schedulerTask)
     stopLedgerCompactionWorker(ctx.runtime.ledgerWorker)
     stopSlackSocketMode()
     stopWebhookReceiver()
