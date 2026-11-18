@@ -265,12 +265,17 @@ const
   TextToSpeechToolName* = "text_to_speech"
   TextToSpeechToolDescription* =
     "Synthesize speech from text with the configured text-to-speech endpoint. " &
-    "Writes the audio under the workspace attachments and returns its path."
+    "Writes the audio under the workspace attachments and returns its path. " &
+    "With as_voice=true the speech is also delivered to the channel as a voice " &
+    "note when the channel supports voice (Telegram); otherwise the audio is " &
+    "only saved."
   TextToSpeechToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
     "\"text\":{\"type\":\"string\",\"description\":\"Text to speak\"}," &
     "\"voice\":{\"type\":\"string\",\"description\":\"Optional voice name\"}," &
-    "\"format\":{\"type\":\"string\",\"description\":\"mp3 (default), opus, wav, aac or flac\"}}" &
+    "\"format\":{\"type\":\"string\",\"description\":\"mp3 (default), opus, wav, aac or flac\"}," &
+    "\"as_voice\":{\"type\":\"boolean\",\"description\":\"Deliver the speech as a voice note in the channel when it supports voice (default: false)\"}," &
+    "\"caption\":{\"type\":\"string\",\"description\":\"Caption sent with the voice note\"}}" &
     ",\"required\":[\"text\"]}"
 
 const

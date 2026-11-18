@@ -17,6 +17,7 @@ import ../domain/message
 import ../domain/channels/telegram_pure
 import ../domain/builtin_tools
 import ../domain/more_tools
+import ../domain/providers/media_pure
 import ../domain/reminder
 import ../ports/memory
 import ../ports/provider
@@ -202,27 +203,42 @@ proc buildCompleteFn*(preferencesMd: string;
                                   prefs.budgetPolicy)
       else:
         cooldownFilteredSelections
-    var lastErr = "no provider available"
-    for selection in costAwareSelections:
-      if routingHook != nil:
-        try: routingHook(selection, prefs, req)
-        except Exception: discard
-      let startedAt = nowMs()
-      let bundle = providerRuntimeBuilder(selection.toProviderSpec)
-      if bundle.completeFn == nil:
+    var attemptReq = req
+    var retriedWithoutImages = false
+    while true:
+      var lastErr = "no provider available"
+      var attempted = false
+      var allImageRejections = true
+      for selection in costAwareSelections:
+        if routingHook != nil:
+          try: routingHook(selection, prefs, attemptReq)
+          except Exception: discard
+        let startedAt = nowMs()
+        let bundle = providerRuntimeBuilder(selection.toProviderSpec)
+        if bundle.completeFn == nil:
+          continue
+        attempted = true
+        let response = bundle.completeFn(attemptReq)
+        let elapsedMs = nowMs() - startedAt
+        recordLatency(selection.providerName, float(elapsedMs))
+        if response.isErr:
+          recordError(selection.providerName)
+        if routingResultHook != nil:
+          try: routingResultHook(selection, elapsedMs, response.isOk)
+          except Exception: discard
+        if response.isOk:
+          return response
+        lastErr = response.error
+        if not isImageRejection(response.error):
+          allImageRejections = false
+      ## A provider without vision refuses the inline image: retry the same
+      ## selections once as text instead of failing the turn.
+      if not retriedWithoutImages and attempted and allImageRejections and
+         hasInlineImages(attemptReq):
+        retriedWithoutImages = true
+        attemptReq = withoutInlineImages(attemptReq)
         continue
-      let response = bundle.completeFn(req)
-      let elapsedMs = nowMs() - startedAt
-      recordLatency(selection.providerName, float(elapsedMs))
-      if response.isErr:
-        recordError(selection.providerName)
-      if routingResultHook != nil:
-        try: routingResultHook(selection, elapsedMs, response.isOk)
-        except Exception: discard
-      if response.isOk:
-        return response
-      lastErr = response.error
-    err(lastErr)
+      return err(lastErr)
 
 func asyncCompleteErr(msg: string): Result[CompletionResponse, string] {.gcsafe.} =
   err(msg)
@@ -281,57 +297,72 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
         reorderSelectionsWithCost(cooldownFilteredSelections, costs, prefs.budgetPolicy)
       else:
         cooldownFilteredSelections
-    var lastErr = "no provider available"
-    for selection in costAwareSelections:
-      var spec = selection.toProviderSpec
-      var tried: seq[string] = @[]
-      while true:
-        tried.add(spec.apiKey)
-        if routingHook != nil:
-          try: routingHook(selection, prefs, req)
-          except Exception: discard
-        let startedAt = nowMs()
-        var response: Result[CompletionResponse, string]
-        try:
-          response = await asyncProviderComplete(
-            providerRuntimeBuilder, spec, req)
-        except CancelledError:
-          raise
-        except Exception as e:
-          response = asyncCompleteErr(e.msg)
-        let elapsedMs = nowMs() - startedAt
-        recordLatency(selection.providerName, float(elapsedMs))
-        if response.isErr:
-          recordError(selection.providerName)
-        if routingResultHook != nil:
-          try: routingResultHook(selection, elapsedMs, response.isOk)
-          except Exception: discard
-        if credentialResultHook != nil and spec.apiKey.len > 0:
+    var attemptReq = req
+    var retriedWithoutImages = false
+    while true:
+      var lastErr = "no provider available"
+      var attempted = false
+      var allImageRejections = true
+      for selection in costAwareSelections:
+        var spec = selection.toProviderSpec
+        var tried: seq[string] = @[]
+        while true:
+          tried.add(spec.apiKey)
+          if routingHook != nil:
+            try: routingHook(selection, prefs, attemptReq)
+            except Exception: discard
+          let startedAt = nowMs()
+          var response: Result[CompletionResponse, string]
           try:
-            credentialResultHook(selection.providerName, spec.apiKey,
-                                 response.isOk,
-                                 (if response.isErr: response.error else: ""))
-          except Exception: discard
-        if response.isOk:
-          return response
-        lastErr = response.error
-        ## Another key can fix auth/rate/quota failures; transport and payload
-        ## errors must not burn through the pool.
-        if credentialNextHook == nil or
-           not isRetryableCredentialError(response.error):
-          break
-        let nextKey =
-          try: credentialNextHook(selection.providerName, spec.apiKey)
-          except Exception: ""
-        if nextKey.len == 0 or nextKey in tried:
-          break
-        spec = spec.withApiKey(nextKey)
-    if fallbackCompleteFn != nil:
-      try:
-        return fallbackCompleteFn(req)
-      except Exception as e:
-        return asyncCompleteErr(e.msg)
-    return err(lastErr)
+            response = await asyncProviderComplete(
+              providerRuntimeBuilder, spec, attemptReq)
+          except CancelledError:
+            raise
+          except Exception as e:
+            response = asyncCompleteErr(e.msg)
+          attempted = true
+          let elapsedMs = nowMs() - startedAt
+          recordLatency(selection.providerName, float(elapsedMs))
+          if response.isErr:
+            recordError(selection.providerName)
+          if routingResultHook != nil:
+            try: routingResultHook(selection, elapsedMs, response.isOk)
+            except Exception: discard
+          if credentialResultHook != nil and spec.apiKey.len > 0:
+            try:
+              credentialResultHook(selection.providerName, spec.apiKey,
+                                   response.isOk,
+                                   (if response.isErr: response.error else: ""))
+            except Exception: discard
+          if response.isOk:
+            return response
+          lastErr = response.error
+          if not isImageRejection(response.error):
+            allImageRejections = false
+          ## Another key can fix auth/rate/quota failures; transport and payload
+          ## errors must not burn through the pool.
+          if credentialNextHook == nil or
+             not isRetryableCredentialError(response.error):
+            break
+          let nextKey =
+            try: credentialNextHook(selection.providerName, spec.apiKey)
+            except Exception: ""
+          if nextKey.len == 0 or nextKey in tried:
+            break
+          spec = spec.withApiKey(nextKey)
+      ## Same one-shot text retry as the sync path: the channel, the API and
+      ## subagents all reach the provider through here.
+      if not retriedWithoutImages and attempted and allImageRejections and
+         hasInlineImages(attemptReq):
+        retriedWithoutImages = true
+        attemptReq = withoutInlineImages(attemptReq)
+        continue
+      if fallbackCompleteFn != nil:
+        try:
+          return fallbackCompleteFn(attemptReq)
+        except Exception as e:
+          return asyncCompleteErr(e.msg)
+      return err(lastErr)
 
 proc buildFallbackFn*(primary: CompleteFn; fallbacks: seq[CompleteFn]): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =

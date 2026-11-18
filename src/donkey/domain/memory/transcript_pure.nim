@@ -13,8 +13,12 @@
 ## message rewound and written again is a new one. Content is compared only
 ## for histories or files that carry no numbers. No I/O.
 
-import std/sets
+import std/[sets, strutils]
 import ../message
+
+const InlineImageRef* = "inline"
+  ## What the transcript records in place of an inline image (`data:` URL):
+  ## the payload is large and ephemeral, the reference says the turn had one.
 
 type
   TranscriptLine* = object
@@ -23,6 +27,13 @@ type
     seq*:  int64   ## session number; 0 when the line or message has none
     high*: int64   ## stored lines only: highest number in the file up to
                    ## this line; 0 when the line does not record it
+
+func transcriptImageRef*(imageUrl: string): string =
+  ## The image reference a transcript line stores: an inline image becomes
+  ## `InlineImageRef` and never carries base64 into the `.jsonl`; remote URLs
+  ## and local paths are kept as they are.
+  if imageUrl.startsWith("data:"): InlineImageRef
+  else: imageUrl
 
 func sameContent(a, b: TranscriptLine): bool =
   a.role == b.role and a.text == b.text

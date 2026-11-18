@@ -140,6 +140,100 @@ func audioMethodFor*(url: string): string =
   of "mp3", "m4a": "sendAudio"
   else: ""
 
+# ── local media upload ────────────────────────────────────────────────────────
+
+type
+  MediaUpload* = object
+    ## Everything a multipart `send*` call needs, decided without I/O.
+    `method`*:    string  ## Bot API method: sendVoice, sendAudio, sendPhoto, sendDocument
+    field*:       string  ## multipart field that carries the file
+    mime*:        string
+    chatId*:      int64
+    caption*:     string
+    threadId*:    string
+    replyTo*:     string
+    durationSec*: int     ## 0 → omitted; sendVoice/sendAudio only
+    fileName*:    string
+
+func mediaBaseName(path: string): string =
+  ## Last path component without importing os: the policy stays pure.
+  let cut = max(path.rfind('/'), path.rfind('\\'))
+  if cut < 0: path else: path[cut + 1 .. ^1]
+
+func mediaExtension(path: string): string =
+  let name = mediaBaseName(path)
+  let dot = name.rfind('.')
+  if dot < 0: "" else: name[dot + 1 .. ^1].toLowerAscii()
+
+func mediaMimeFor(ext: string): string =
+  case ext
+  of "jpg", "jpeg": "image/jpeg"
+  of "png":         "image/png"
+  of "gif":         "image/gif"
+  of "webp":        "image/webp"
+  of "pdf":         "application/pdf"
+  else:             "application/octet-stream"
+
+func mediaUploadSpec*(path: string; chatId: int64; caption: string;
+                      threadId = ""; replyTo = ""; durationSec = 0): MediaUpload =
+  ## Chooses the Bot API method from the file name. The adapter only reads the
+  ## bytes and posts them; method, field and MIME are decided here.
+  let ext = mediaExtension(path)
+  let audioMethod = audioMethodFor(path)
+  result.fileName = mediaBaseName(path).replace("\"", "'")
+  result.chatId = chatId
+  result.caption = caption
+  result.threadId = threadId
+  result.replyTo = replyTo
+  result.durationSec = max(0, durationSec)
+  if audioMethod == "sendVoice":
+    result.`method` = "sendVoice"
+    result.field = "voice"
+    result.mime = "audio/ogg"
+  elif audioMethod == "sendAudio":
+    result.`method` = "sendAudio"
+    result.field = "audio"
+    result.mime = if ext == "m4a": "audio/mp4" else: "audio/mpeg"
+  elif ext in ["jpg", "jpeg", "png", "gif", "webp"]:
+    result.`method` = "sendPhoto"
+    result.field = "photo"
+    result.mime = mediaMimeFor(ext)
+  else:
+    result.`method` = "sendDocument"
+    result.field = "document"
+    result.mime = mediaMimeFor(ext)
+
+func mediaUploadBody*(spec: MediaUpload; data, boundary: string): string =
+  ## Multipart/form-data framing for the Bot API. Optional fields are omitted
+  ## instead of sent empty; `duration` only exists for the two audio methods
+  ## the client renders with a clock (TG-029).
+  result = ""
+  result.add("--" & boundary & "\r\n")
+  result.add("Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n")
+  result.add($spec.chatId & "\r\n")
+  if spec.caption.len > 0:
+    result.add("--" & boundary & "\r\n")
+    result.add("Content-Disposition: form-data; name=\"caption\"\r\n\r\n")
+    result.add(spec.caption & "\r\n")
+  if spec.threadId.len > 0:
+    result.add("--" & boundary & "\r\n")
+    result.add("Content-Disposition: form-data; name=\"message_thread_id\"\r\n\r\n")
+    result.add(spec.threadId & "\r\n")
+  if spec.replyTo.len > 0:
+    result.add("--" & boundary & "\r\n")
+    result.add("Content-Disposition: form-data; name=\"reply_to_message_id\"\r\n\r\n")
+    result.add(spec.replyTo & "\r\n")
+  if spec.durationSec > 0 and spec.`method` in ["sendVoice", "sendAudio"]:
+    result.add("--" & boundary & "\r\n")
+    result.add("Content-Disposition: form-data; name=\"duration\"\r\n\r\n")
+    result.add($spec.durationSec & "\r\n")
+  result.add("--" & boundary & "\r\n")
+  result.add("Content-Disposition: form-data; name=\"" & spec.field &
+             "\"; filename=\"" & spec.fileName & "\"\r\n")
+  result.add("Content-Type: " & spec.mime & "\r\n\r\n")
+  result.add(data)
+  result.add("\r\n--" & boundary & "--\r\n")
+
 func isAddressedToBot*(text, botUsername: string): bool =
   ## Behavior derived from hermes-agent (MIT) fix 1e18e0503f; see
   ## docs/hermes-mining/telegram/CASES.md#tg-015

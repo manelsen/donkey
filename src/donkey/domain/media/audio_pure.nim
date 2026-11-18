@@ -4,13 +4,15 @@
 ## takes JSON and returns audio bytes. Both shapes are built here so the tool
 ## layer is only transport and file I/O.
 
-import std/[json, os, strutils]
+import std/[json, math, os, strutils]
 import results
 
 const
   MaxTranscriptionBytes* = 25 * 1024 * 1024
     ## OpenAI-compatible transcription endpoints reject larger uploads.
   SpeechFormats* = ["mp3", "opus", "wav", "aac", "flac"]
+  SpeechWordsPerSecond* = 2.5
+    ## Rough speaking rate used for the voice/audio `duration` field.
 
 func audioMimeType*(path: string): string =
   ## MIME type from the file extension; "" when the extension is not audio the
@@ -31,6 +33,14 @@ func speechExtension*(format: string): Result[string, string] =
     ok(value)
   else:
     err("unsupported speech format: " & format)
+
+func estimateSpeechSeconds*(text: string): int =
+  ## Spoken duration of `text` at the approximate reading rate, never below
+  ## one second. Used for the `duration` field of voice/audio messages.
+  let words = text.splitWhitespace().len
+  if words == 0:
+    return 1
+  max(1, int(ceil(words.float / SpeechWordsPerSecond)))
 
 proc buildMultipartBody*(boundary, fileField, fileName, mimeType, data: string;
                          fields: seq[(string, string)] = @[]): string =

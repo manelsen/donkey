@@ -8,6 +8,7 @@ import ../core/pipeops
 import ../domain/message
 import ../domain/personality
 import ../domain/more_tools
+import ../domain/providers/media_pure
 import ../ports/provider
 
 proc safeComplete*(fn: CompleteFn; req: CompletionRequest
@@ -174,13 +175,18 @@ func addUserTurnWithImages*(history: ConversationHistory;
   ##
   ## At most `MaxAttachmentsPerTurn` images are kept; the extras are dropped
   ## (the provider and the context window do not take an unbounded album).
+  ## Inline `data:` images are also capped by `MaxInlineImagesPerTurn`; paths
+  ## and `http(s)` URLs are left untouched.
   const MaxAttachmentsPerTurn = 10
   if imageUrls.len == 0:
     return addUserTurn(history, userText, "")
-  result = addUserTurn(history, userText, imageUrls[0])
-  let extra = min(imageUrls.len, MaxAttachmentsPerTurn) - 1
+  let turnUrls = inlineImagesForTurn(imageUrls)
+  if turnUrls.len == 0:
+    return addUserTurn(history, userText, "")
+  result = addUserTurn(history, userText, turnUrls[0])
+  let extra = min(turnUrls.len, MaxAttachmentsPerTurn) - 1
   for i in 1 .. extra:
-    result.addUserWithImage("", imageUrls[i])
+    result.addUserWithImage("", turnUrls[i])
   ## Trim before the current turn could be pushed out by its own attachments.
   result.trimTo(20)
 
@@ -192,9 +198,8 @@ func genericProviderErrorText*(errMsg: string): string =
   if lower.contains("tool_call_id") or lower.contains("tool result's tool id") or
      lower.contains("tool call id"):
     return "Desculpe, houve uma inconsistência interna ao continuar uma sequência longa de ferramentas. Tente pedir novamente em uma nova mensagem."
-  if lower.contains("image_url") or lower.contains("image url") or
-     lower.contains("file_id") or lower.contains("attachment") or
-     lower.contains("invalid content") or lower.contains("unsupported image"):
+  if isImageRejection(lower) or
+     lower.contains("file_id") or lower.contains("attachment"):
     return "Desculpe, o provedor rejeitou o anexo. Tente reenviar ou use um modelo com suporte a imagens/anexos."
   if lower.contains("401") or lower.contains("403") or lower.contains("unauthorized") or lower.contains("api key"):
     return "Desculpe, houve um problema de autenticação com o provedor configurado."

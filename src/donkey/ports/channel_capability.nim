@@ -16,6 +16,7 @@ type
     cfSetMessageReaction ## react to a message
     cfDownloadFile      ## download files/media from messages
     cfSendMedia         ## send media/files as messages
+    cfSendVoice         ## send an audio file delivered as a voice note
 
   ChannelCapabilityDescriptor* = object
     send*:               bool
@@ -26,6 +27,7 @@ type
     setMessageReaction*: bool
     downloadFile*:       bool
     sendMedia*:          bool
+    sendVoice*:          bool
 
   ChannelCapabilityRegistry* = array[ChannelKind, ChannelCapabilityDescriptor]
 
@@ -64,6 +66,13 @@ const
     sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
     downloadFile: false, sendMedia: false)
 
+  ## Telegram is the only channel that delivers a local audio file as a voice
+  ## note. FullCapability stays untouched because Discord shares it.
+  TelegramCapability = ChannelCapabilityDescriptor(
+    send: true, sendReturnId: true, editMessage: true,
+    sendKeyboard: true, editKeyboard: true, setMessageReaction: true,
+    downloadFile: true, sendMedia: true, sendVoice: true)
+
   # QQ supports sendKeyboard but not editKeyboard
   QQCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
@@ -83,7 +92,7 @@ const
     downloadFile: false, sendMedia: false)
 
 proc channelCapabilityRegistry*(): ChannelCapabilityRegistry =
-  result[ckTelegram]   = FullCapability
+  result[ckTelegram]   = TelegramCapability
   result[ckDiscord]    = FullCapability
   result[ckWeCom]      = BasicCapability
   result[ckWeChat]     = BasicCapability
@@ -116,3 +125,4 @@ func supports*(kind: ChannelKind; flag: ChannelCapabilityFlag): bool =
   of cfSetMessageReaction: caps.setMessageReaction
   of cfDownloadFile:      caps.downloadFile
   of cfSendMedia:         caps.sendMedia
+  of cfSendVoice:         caps.sendVoice

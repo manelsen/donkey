@@ -17,6 +17,8 @@ export provider_defaults
 const
   AutoProviderLabel* = "auto"
   LongContextChars* = 60_000
+  InlineImageApproxChars* = 1_024
+    ## A data URL is bounded work for the provider, not `url.len` of text.
   GroqDefaultModel* = DefaultModelGroq
   OpenCodeGoDefaultModel* = DefaultModelOpenCodeGo
   ZenDefaultModel* = DefaultModelZen
@@ -184,11 +186,15 @@ func selection(providerName: string; modelName = ""): ProviderSelection =
     modelName: if modelName.len > 0: modelName else: defaultModelForProvider(providerName),
   )
 
+func approxCharsForImage*(url: string): int =
+  ## Inline images cost a constant; remote URLs still count as text.
+  if url.startsWith("data:"): InlineImageApproxChars else: url.len
+
 func requestApproxChars*(req: CompletionRequest): int =
   result = req.system.len
   for msg in req.messages:
     result += msg.text.len
-    result += msg.imageUrl.len
+    result += approxCharsForImage(msg.imageUrl)
     result += msg.toolCallId.len
     for call in msg.toolCalls:
       result += call.name.len + call.inputJson.len

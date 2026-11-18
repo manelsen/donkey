@@ -82,6 +82,9 @@ type
     resultKind*:    ToolResultKind
     newHistory*:    Option[ConversationHistory]
     checkpointNow*: bool
+    outbound*:      Option[OutboundMessage]
+      ## Set when the tool produced a message the channel must deliver
+      ## (`executeNativeCategory` enqueues it once).
 
 # ── Context types (parsing only — execution delegated to tool modules) ────────
 
@@ -215,9 +218,11 @@ type
     prompt*:   string
 
   SpeechContext* = object
-    text*:   string
-    voice*:  string
-    format*: string
+    text*:    string
+    voice*:   string
+    format*:  string
+    asVoice*: bool
+    caption*: string
 
   InspectImageContext* = object
     path*:   string
@@ -594,10 +599,14 @@ proc parseSpeechContext*(j: JsonNode): Result[SpeechContext, string]
                          {.gcsafe, raises: [].} =
   j.requireStringField("text") >>=
     proc(t: string): Result[SpeechContext, string] =
+      let asVoice = ?optionalBoolField(j, "as_voice", false)
+      let caption = ?optionalStringField(j, "caption")
       ok(SpeechContext(
         text: t,
         voice: j.getOrDefault("voice").getStr("").strip,
-        format: j.getOrDefault("format").getStr("").strip))
+        format: j.getOrDefault("format").getStr("").strip,
+        asVoice: asVoice,
+        caption: caption))
 
 proc parseTaskContext*(j: JsonNode): Result[TaskContext, string] {.gcsafe, raises: [].} =
   j.requireStringField("prompt") >>=
@@ -1155,6 +1164,17 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
   of TextToSpeechToolName:
     let speechCtx = parseSpeechContext(j).valueOr:
       return handledError(error)
+    if speechCtx.asVoice:
+      let prepared = prepareVoiceReply(
+        speechCtx.text, speechCtx.caption, ctx.paddockDir, ctx.channel,
+        ctx.uid, ctx.http)
+      if prepared.isErr:
+        return handledError(prepared.error)
+      return NativeToolResult(
+        handled: true,
+        text: "Voice reply ready.",
+        resultKind: trkOutput,
+        outbound: some(prepared.get()))
     let saved = performSpeech(speechCtx.text, ctx.paddockDir, ctx.http,
                               voice = speechCtx.voice, format = speechCtx.format)
     if saved.isErr:
@@ -1354,6 +1374,8 @@ proc executeNativeCategory(tc: ToolCallRequest;
   let handler = categoryHandler(category)
   let categoryResult = await handler(tc, ctx, state, history, j)
   if categoryResult.handled:
+    if categoryResult.outbound.isSome and not ctx.outbox.isNil:
+      await ctx.outbox.put(categoryResult.outbound.get())
     return categoryResult
   NativeToolResult(handled: false)
 

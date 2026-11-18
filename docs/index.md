@@ -64,6 +64,7 @@ See [Installation Guide](getting_started/installation.md) for detailed setup.
 - [Commands](topics/commands.md) - Slash command system
 - [Hooks](topics/hooks.md) - Message flow interception
 - [Memory](topics/memory.md) - Persistent storage
+- [Media](topics/media.md) - Inline images, transcripts and voice replies
 - [Sessions](topics/sessions.md) - Session management
 - [Outbound Presentation](architecture.md) - UI surface ownership, fallback policy, and streaming/status model
 
