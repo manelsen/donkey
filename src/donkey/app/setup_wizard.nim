@@ -8,27 +8,22 @@
 ##   ~/.config/donkey/donkey.toml  — main config (home, paddocks, log level, …)
 ##   ~/.config/donkey/donkey.env   — secrets (API keys, bot tokens); chmod 600
 
-import std/[os, strutils, terminal]
+import std/[options, os, strutils, terminal]
 when defined(posix):
   import std/posix
 import ../core/app_meta
 import ../core/providers/smart_routing
+import ../domain/providers/descriptors
 
 # ── Pure helpers (unit-tested) ────────────────────────────────────────────────
 
 func providerEnvVar*(providerName: string): string =
-  ## Returns the environment variable name that holds the API key for a provider.
-  case providerName
-  of "zai-coding": "ZAI_CODING_API_KEY"
-  of "zai":        "ZAI_API_KEY"
-  of "zai-anthropic": "ZAI_ANTHROPIC_API_KEY"
-  of "openrouter": "OPENROUTER_API_KEY"
-  of "anthropic":  "ANTHROPIC_API_KEY"
-  of "gemini":     "GEMINI_API_KEY"
-  of "minimax":    "MINIMAX_API_KEY"
-  of "deepseek":   "DEEPSEEK_API_KEY"
-  of "openai":     "OPENAI_API_KEY"
-  else:            ""
+  ## Returns the environment variable name that holds the API key for a
+  ## provider: the first env name of its descriptor. Empty for unknown ids.
+  let descriptor = providerDescriptor(providerName)
+  if descriptor.isNone or descriptor.get().envNames.len == 0:
+    return ""
+  descriptor.get().envNames[0]
 
 func buildTomlContent*(home: string;
                        logLevel = "info";
@@ -80,7 +75,9 @@ func buildEnvContent*(providers: seq[(string, string)];
   result &= "# Providers\n"
   for (provName, provKey) in providers:
     let envVar = providerEnvVar(provName)
-    if envVar.len > 0:
+    # Local providers have no key; an empty assignment would clobber a real
+    # endpoint set in the operator's shell.
+    if envVar.len > 0 and provKey.len > 0:
       result &= envVar & "=" & provKey & "\n"
   result &= "\n# Optional web search\n"
   result &= "# Used by the `web_search` tool (Brave Search API)\n"
@@ -126,7 +123,16 @@ const Providers = [
   ("7", "deepseek",   "DeepSeek"),
   ("8", "minimax",    "MiniMax"),
   ("9", "ollama",     "Ollama        (local, sem API key)"),
+  ("10", "zai",       "Z.AI          (GLM, OpenAI-compatible)"),
+  ("11", "groq",      "Groq          (inferência rápida)"),
+  ("12", "opencode-go", "OpenCode Go   (agregador)"),
+  ("13", "zen",       "OpenCode Zen  (agregador)"),
 ]
+
+func setupProviderIds*(): seq[string] =
+  ## Provider ids offered by the wizard, in menu order.
+  for (_, name, _) in Providers:
+    result.add name
 
 proc ask(prompt: string; default = ""): string =
   if default.len > 0:
@@ -188,9 +194,11 @@ proc runSetupWizard*(home: string) =
           providerName = name
           break
       if providerName.len == 0:
-        providerName = "zai-coding"
+        providerName = defaultProviderDescriptor().id
 
-      if providerName != "ollama":
+      let descriptor = providerDescriptor(providerName)
+      let localOnly = descriptor.isSome and descriptor.get().authType == atNone
+      if not localOnly:
         let envVar = providerEnvVar(providerName)
         let existing = getEnv(envVar)
         var apiKey = ""

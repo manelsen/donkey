@@ -77,13 +77,13 @@ suite "Admin TUI":
   test "loadProviderItems populates providers":
     var st = newAdminState()
     st.loadProviderItems()
-    check st.items.len == 9
+    check st.items.len == 13
     let names = st.items.mapIt(it.name)
     check "anthropic" in names
     check "zai-anthropic" in names
     check "openai" in names
     check "openrouter" in names
-    check "zhipu" in names
+    check "zai-coding" in names
 
   test "loadModelItems populates models":
     var st = newAdminState()
@@ -125,7 +125,7 @@ suite "Admin TUI":
 
     st.section = asProviders
     st.loadSection()
-    check st.items.len == 9
+    check st.items.len == 13
 
     st.section = asModels
     st.loadSection()

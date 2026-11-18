@@ -66,6 +66,7 @@ import donkey/adapters/secrets/vault
 import donkey/app/approval_runtime
 import donkey/domain/message
 import donkey/domain/agent_message
+import donkey/domain/providers/descriptors
 import donkey/ports/provider
 import donkey/ports/subagent_workspace
 import donkey/ports/http
@@ -420,10 +421,18 @@ proc makeProviderFn[A](a: A): CompleteFn =
     a.complete(req)
 
 proc buildGlobalProviderBundle(): GlobalProviderBundle =
-  let orKey = getEnv("OPENROUTER_API_KEY")
+  let openRouter = descriptorOr("openrouter")
+  let orKey =
+    if openRouter.envNames.len > 0: getEnv(openRouter.envNames[0])
+    else: ""
   let orAdapter = newOpenRouterAdapter(orKey)
   result.completeFn = if orKey.len > 0: makeProviderFn(orAdapter) else: nil
   result.streamFn = if orKey.len > 0: orAdapter.makeStreamFn() else: nil
+
+func routeCostProviderIds(): seq[string] =
+  ## Cost hints cover every provider that has a descriptor.
+  for descriptor in providerDescriptors():
+    result.add descriptor.id
 
 proc buildGlobalSearchFn(memory: MdFileAdapter): SearchFn {.gcsafe.}
 
@@ -1263,8 +1272,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     routeFeedbackHook = proc(): seq[RouteFeedback] {.gcsafe.} =
       withRouteLock(ctx.runtime.currentRouteFeedback()),
     routeCostHook = proc(): seq[RouteCostHint] {.gcsafe.} =
-      loadRouteCostHints(@["openrouter", "groq", "anthropic", "zai-anthropic", "gemini",
-                           "minimax", "zai", "zai-coding", "zen", "opencode-go"]),
+      loadRouteCostHints(routeCostProviderIds()),
     routeProviderCooldownHook = proc(): seq[ProviderCooldown] {.gcsafe.} =
       withRouteLock(ctx.runtime.currentProviderCooldowns()),
     subagentWorkspace = subagentWorkspacePort(),
