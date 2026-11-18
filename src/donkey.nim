@@ -571,7 +571,14 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
   result.sl = newSlackAdapter(env.slackBotToken, env.identityPath)
   result.dt = newDingTalkAdapter(env.dingTalkAppKey, env.dingTalkAppSecret,
                                  env.dingTalkRobotCode, env.identityPath)
-  result.ln = newLineAdapter(env.lineChannelAccessToken, env.identityPath)
+  ## A stale/bad `LINE_API_BASE` must not abort startup when LINE is not
+  ## configured: construct at the default base in that case (the adapter then
+  ## fails sends with "missing token", which is the truth).
+  result.ln =
+    if env.lineChannelAccessToken.len > 0:
+      newLineAdapter(env.lineChannelAccessToken, env.identityPath)
+    else:
+      newLineAdapter("", env.identityPath, apiBase = "https://api.line.me")
   result.mx = newMatrixAdapter(getEnv("MATRIX_HOMESERVER"), getEnv("MATRIX_BOT_USER_ID"),
                                getEnv("MATRIX_ACCESS_TOKEN"), env.identityPath)
   result.em = newEmailAdapter(getEnv("EMAIL_IMAP_HOST"), getEnv("EMAIL_SMTP_HOST"),
@@ -2149,6 +2156,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     stopLedgerCompactionWorker(ctx.runtime.ledgerWorker)
     stopSlackSocketMode()
     stopWebhookReceiver()
+    ## LINE events were acked with 200 when queued, so LINE will not redeliver
+    ## them: drain them before the actors are cancelled.
+    if ctx.env.lineChannelAccessToken.len > 0:
+      discard drainer.drainLine()
     ## Stop ingress first, then let already-admitted turns publish their replies.
     ## Connections accepted before the stop may have enqueued Feishu events;
     ## consume them once before exiting. Slack envelopes were already acked
