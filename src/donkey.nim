@@ -78,6 +78,7 @@ import donkey/app/sandbox
 import donkey/app/ipc_server
 import donkey/app/http_gateway
 import donkey/app/chat_bridge
+import donkey/domain/gateway/dashboard_pure
 import donkey/domain/gateway/identity_pure
 import donkey/app/heartbeat
 import donkey/app/metrics_server
@@ -1095,6 +1096,11 @@ proc handleGatewayFallback(ctx: DaemonContext; cfg: DonkeyConfig;
                           memory: MdFileAdapter; msg: InboundMessage;
                           log: Logger) {.gcsafe.}
 
+# Forward declaration for buildDaemonSessionServices (defined later, used in setupIpcServer)
+func buildDaemonSessionServices(ctx: DaemonContext; cfg: DonkeyConfig;
+                                memory: MdFileAdapter;
+                                log: Logger): SessionIngressServices
+
 proc setupIpcServer(cfg: DonkeyConfig;
                     runtime: DaemonRuntime;
                     sm: SessionManager;
@@ -1187,6 +1193,39 @@ proc setupIpcServer(cfg: DonkeyConfig;
     ipcLogFn(n)
   let gwEventFn: GatewayEventFn = proc(n: int): seq[AgentEvent] {.gcsafe.} =
     agentEventSnapshot(n)
+  let gwSessionsFn: GatewaySessionsFn = proc(): seq[SessionDetail] {.gcsafe.} =
+    runtime.sm.listSessionDetails()
+  let gwProvidersFn: GatewayProvidersFn = proc(): string {.gcsafe.} =
+    buildProvidersJson(
+      detectProviderAvailability(),
+      withRouteLock(runtime.currentProviderCooldowns()),
+      aggregateProviderFeedback(withRouteLock(runtime.currentRouteFeedback())))
+  let gwSessionActionFn: GatewaySessionActionFn =
+    proc(rawUserId: string; taskKind: TaskKind;
+         payload: string): GatewaySessionActionOutcome {.gcsafe.} =
+      ## The dashboard carries the raw session key; it is never run through
+      ## `apiUserId`. An unknown key is a 404, a revoked profile a 403
+      ## (`isRevoked` already answers "revoked" when the profile is unreadable).
+      if rawUserId notin runtime.sm.entries:
+        return gsaoNotFound
+      let uid = UserId(rawUserId)
+      if gatewayInboundMemory.isRevoked(uid):
+        return gsaoRevoked
+      ensureSessionTask(
+        runtime.sm,
+        InboundMessage(
+          userId: uid,
+          channel: ckCli,
+          channelId: rawUserId,
+          rawChannelId: rawUserId,
+        ),
+        buildDaemonSessionServices(gatewayInboundCtx, cfg, gatewayInboundMemory,
+                                   gatewayInboundLog),
+        runtime.msgSeq,
+        taskKind,
+        payload,
+      )
+      gsaoAccepted
   let httpBind = block:
     let raw = getEnv("DONKEY_HTTP_BIND").strip()
     if raw.len > 0: raw else: "127.0.0.1"
@@ -1202,6 +1241,9 @@ proc setupIpcServer(cfg: DonkeyConfig;
       let gatewayStart = startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
                                           bindAddr = httpBind, authToken = httpToken,
                                           agentDispatchFn = gwInboundFn,
+                                          sessionsFn = gwSessionsFn,
+                                          providersFn = gwProvidersFn,
+                                          sessionActionFn = gwSessionActionFn,
                                           authorizeFn = gwAuthorizeFn,
                                           chatBridge = gwChatBridge,
                                           modelName = cfg.defaultModel)
