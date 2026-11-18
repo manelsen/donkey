@@ -34,6 +34,7 @@ import ../core/agent_events
 import ../core/memory/blackboard
 import ../core/tooling/tool_loop
 import ../domain/agent_message
+import ../domain/gateway/identity_pure
 import ../domain/memory/capture_pure
 import ../domain/memory/provenance_pure
 import ../domain/message
@@ -273,6 +274,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
   let payload = msg.payload |> decodeUserPayload
   result.userText = payload.text
   result.isNewUser =
+    not isApiUserId(result.uid) and
     not onboarding_runtime.safeHasProfile(memory, result.uid) and
     not stateRuntime.hasCompletedBootstrapTarget(msg.channel, msg.replyTo)
   result.nativeCtx = buildNativeCtx(
@@ -411,7 +413,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   turnSetup.nativeCtx.asyncCompleteFn = asyncCompleteFn
   attachSubagentRuntime(turnSetup.nativeCtx, result.subagents)
 
-  if turnSetup.isNewUser:
+  if turnSetup.isNewUser and not isApiUserId(turnSetup.uid):
     if result.onboarding.phase == opWakeUp and not result.identity.identityLoaded:
       (result.onboarding, result.identity) =
         onboarding_runtime.safeRestoreOnboardingState(memory, turnSetup.uid)

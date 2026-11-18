@@ -46,7 +46,12 @@ func apiUserId*(raw: string): Result[UserId, string] =
       return err("user contains an invalid character: " & $c)
   ok(UserId(ApiUserPrefix & raw))
 
+func isApiUserId*(userId: UserId): bool =
+  ## True for the synthetic `api:<name>` identity namespace. Programmatic API
+  ## callers are not interactive users and must never enter onboarding.
+  ($userId).startsWith(ApiUserPrefix)
+
 func isApiChatReply*(msg: OutboundMessage): bool =
   ## True only for replies that belong to the API namespace. Keyed on the
   ## user id alone: `replyTo`/`channelId` are routing hints, not identity.
-  ($msg.userId).startsWith(ApiUserPrefix)
+  isApiUserId(msg.userId)
