@@ -30,6 +30,7 @@ import donkey/adapters/http/std_http
 import donkey/adapters/channel/telegram
 import donkey/adapters/channel/outbound_builder
 import donkey/app/inbound_gate
+import donkey/core/security/dm_policy
 import donkey/app/inbound_media
 import donkey/adapters/filesystem/attachment_store
 import donkey/adapters/filesystem/fs_adapter
@@ -80,6 +81,7 @@ import donkey/app/metrics_server
 import donkey/app/outbound_runtime
 import donkey/app/gateway_drainer
 import donkey/app/session_manager
+import donkey/adapters/state/daemon_lease
 import donkey/app/session_bootstrap
 import donkey/app/session_ingress
 import donkey/app/doctor
@@ -1155,7 +1157,9 @@ proc setupIpcServer(cfg: DonkeyConfig;
                 ") requires DONKEY_HTTP_TOKEN and DONKEY_HTTP_ALLOW_INSECURE=1")
     else:
       let gatewayStart = startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
-                                          bindAddr = httpBind, authToken = httpToken)
+                                          bindAddr = httpBind, authToken = httpToken,
+                                          completeFn = gatewayInboundCtx.services.globalCompleteFn,
+                                          modelName = cfg.defaultModel)
       if gatewayStart.isErr:
         log.error("HTTP gateway disabled: " & gatewayStart.error)
       else:
@@ -1788,6 +1792,13 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     initMetrics()
     startOptionalMetricsServer(log)
 
+  ## One daemon per state directory. A lease left by a dead process is taken
+  ## over; a live one stops this startup before any store is opened.
+  var daemonLease = acquireDaemonLease(cfg.home / "state").valueOr:
+    stderr.writeLine "Security Error: " & error
+    quit(1)
+  defer: releaseDaemonLease(daemonLease)
+
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory
   let ctx = bootstrap.ctx
@@ -1795,11 +1806,20 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     let ledgerErr = ctx.runtime.stateStore.ledgerLastCompactError()
     if ledgerErr.len > 0:
       log.warn("ledger compaction at startup: " & ledgerErr)
+    ## Deliveries left pending by the previous process can never finish.
+    let reconciled = ctx.runtime.stateStore.reconcileInterruptedDeliveries()
+    if reconciled.isErr:
+      log.warn("delivery ledger reconciliation: " & reconciled.error)
+    elif reconciled.get() > 0:
+      log.warn("delivery ledger: " & $reconciled.get() &
+               " interrupted deliveries marked failed")
   ## DM authorization is configured once, before any drainer/actor can consume
   ## an inbound message. Service builders stay side-effect free.
   ctx.runtime.sm.configureDmPolicy(
     cfg.dmPolicy,
     proc(userId: UserId): bool {.gcsafe.} = memory.isDmAllowed(userId))
+  ctx.runtime.sm.configureGroupGate(GroupGate(
+    allowedChats: parseChatIdList(getEnv(EnvTelegramAllowedGroups))))
   let pairingStore = newPairingStore(cfg.home / "state" / "pairings.json")
   ctx.runtime.sm.pairingRequest =
     proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =

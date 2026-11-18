@@ -49,6 +49,7 @@ type
     entries*: Table[string, SessionEntry]  ## string(UserId) → entry
     dmPolicy*: DmPolicy
     isDmAllowed*: proc(userId: UserId): bool {.gcsafe.}
+    groupGate*: GroupGate
     pairingRequest*: proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.}
       ## Creates a pending pairing request; wired by the composition root.
     registryStore*: SessionRegistryPort
@@ -247,6 +248,15 @@ proc configureDmPolicy*(sm: var SessionManager;
   ## `func` builders so service construction has no hidden side effects.
   sm.dmPolicy = policy
   sm.isDmAllowed = isAllowed
+
+proc configureGroupGate*(sm: var SessionManager; gate: GroupGate) =
+  ## Configures the group chat allowlist once at daemon startup. It is
+  ## independent of the DM policy: an allowed DM user in a disallowed group is
+  ## still dropped.
+  sm.groupGate = gate
+
+func groupAllows*(sm: SessionManager; chatId: string): bool =
+  groupChatAllowed(sm.groupGate, chatId)
 
 proc allows*(sm: SessionManager; userId: UserId): bool =
   ## Channel-level authorization used before command/callback dispatch.

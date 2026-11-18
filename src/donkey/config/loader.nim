@@ -19,6 +19,7 @@ export types
 const EnvHome* = "DONKEY_HOME"
 const EnvWebAllowlist* = "DONKEY_WEB_ALLOWLIST"
 const EnvDmPolicy* = "DONKEY_DM_POLICY"
+const EnvTelegramAllowedGroups* = "DONKEY_TELEGRAM_ALLOWED_GROUPS"
 
 type
   MainConfigPatch* = object

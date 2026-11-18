@@ -61,13 +61,20 @@ proc authorizeInbound*(sm: SessionManager;
                        kind: ChannelKind;
                        rawId: string;
                        text: string;
-                       linkSource = ilsCommandText): InboundAuthorization {.gcsafe.} =
+                       linkSource = ilsCommandText;
+                       isGroup = false;
+                       chatId = ""): InboundAuthorization {.gcsafe.} =
   ## Single DM gate shared by callback-style channels.
   ##
   ## Known identities are checked against the allowlist. New identities are
   ## minted only under `DmPolicyOpen` or when the event carries a valid link
   ## code for an already-authorized UUID (the handler consumes the code and
   ## rewrites the mapping). A denied sender is never persisted.
+  ##
+  ## A group outside the configured chat allowlist is dropped here, before any
+  ## identity mint, pairing request or link-code redemption.
+  if isGroup and not sm.groupAllows(chatId):
+    return
   if linkSource == ilsModalOnly:
     ## UI-only event: no identity lookup, mint or state mutation.
     result.allowed = true
@@ -112,13 +119,19 @@ proc authorizeResolvedInbound*(sm: SessionManager;
                                userId: UserId;
                                text: string;
                                rawId = "";
-                               linkSource = ilsCommandText): InboundAuthorization {.gcsafe.} =
+                               linkSource = ilsCommandText;
+                               isGroup = false;
+                               chatId = ""): InboundAuthorization {.gcsafe.} =
   ## Variant for channels that already resolved the raw identity (Telegram
   ## `receive()` does this). The policy decision still lives here.
   result.userId = userId
   result.identified = true
   if ($userId).len == 0:
     ## Identity storage failed; never authorize an empty UUID.
+    return
+  if isGroup and not sm.groupAllows(chatId):
+    ## TG-016: the chat is not in the group allowlist, so no turn, no pairing
+    ## and no link-code redemption happens here.
     return
   result.allowed = sm.allows(userId)
   if not result.allowed:

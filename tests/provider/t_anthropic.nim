@@ -182,3 +182,36 @@ suite "AnthropicAdapter streaming helpers":
     check not parsed.isErr
     let chunk = parsed.value
     check chunk.done
+
+suite "AnthropicAdapter image content":
+
+  test "a data URL becomes a base64 image block":
+    var h = newHistory()
+    h.addUserWithImage("what is this?", "data:image/png;base64,QUJD")
+    let body = newAnthropicAdapter("k").buildBody(
+      CompletionRequest(system: "", messages: h))
+    let content = body["messages"][0]["content"]
+    check content.kind == JArray
+    check content[0]["type"].getStr() == "text"
+    check content[1]["type"].getStr() == "image"
+    check content[1]["source"]["type"].getStr() == "base64"
+    check content[1]["source"]["media_type"].getStr() == "image/png"
+    check content[1]["source"]["data"].getStr() == "QUJD"
+
+  test "an http URL becomes a url image block":
+    var h = newHistory()
+    h.addUserWithImage("look", "https://example.test/a.png")
+    let body = newAnthropicAdapter("k").buildBody(
+      CompletionRequest(system: "", messages: h))
+    let img = body["messages"][0]["content"][1]
+    check img["type"].getStr() == "image"
+    check img["source"]["type"].getStr() == "url"
+    check img["source"]["url"].getStr() == "https://example.test/a.png"
+
+  test "a malformed data URL falls back to the text":
+    var h = newHistory()
+    h.addUserWithImage("look", "data:image/png;base64,@@@")
+    let body = newAnthropicAdapter("k").buildBody(
+      CompletionRequest(system: "", messages: h))
+    check body["messages"][0]["content"].kind == JString
+    check body["messages"][0]["content"].getStr() == "look"

@@ -90,9 +90,15 @@ when defined(withSqlite):
       vectorExtensionPath: resolveVecExtensionPath(vectorExtensionPath),
     )
 
-  proc openDb(a: SqliteMagmaStoreAdapter): DbConn =
+  proc openDb*(a: SqliteMagmaStoreAdapter): DbConn =
     ensureEmbeddedSqliteVecRegistered()
     result = db_sqlite.open(a.dbPath, "", "", "")
+    ## WAL lets readers proceed while a writer commits; NORMAL avoids an
+    ## fsync per statement while staying durable across process crashes; the
+    ## busy timeout makes a second writer wait instead of failing at once.
+    result.exec(sql"PRAGMA journal_mode = WAL")
+    result.exec(sql"PRAGMA synchronous = NORMAL")
+    result.exec(sql"PRAGMA busy_timeout = 5000")
     result.exec(sql"PRAGMA foreign_keys = ON")
     if not hasEmbeddedSqliteVec() and a.vectorExtensionPath.len > 0:
       try:

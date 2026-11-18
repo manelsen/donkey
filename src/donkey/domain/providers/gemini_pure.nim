@@ -16,6 +16,7 @@ import std/[json, tables, strutils]
 import results
 import ../../core/pipeops
 import ../../domain/message
+import ./media_pure
 
 # ── Role mapping ──────────────────────────────────────────────────────────────
 
@@ -49,6 +50,14 @@ proc toGeminiContent*(msg: ChatMessage): JsonNode =
   var parts = newJArray()
   if msg.text.len > 0:
     parts.add(textPart(msg.text))
+  if msg.imageUrl.len > 0:
+    ## Gemini can inline bytes, but it cannot fetch an arbitrary http URL.
+    let image = parseDataUrl(msg.imageUrl)
+    if image.isOk:
+      parts.add(%* {"inlineData": {
+        "mimeType": image.get().mimeType,
+        "data": image.get().data,
+      }})
   for tc in msg.toolCalls:
     parts.add(functionCallPart(tc))
   %* {"role": geminiRole(msg.role), "parts": parts}

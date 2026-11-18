@@ -109,6 +109,42 @@ proc browserContentSchema*(): ToolSchema =
     }
   )
 
+proc browserClickSchema*(): ToolSchema =
+  ToolSchema(
+    name: "browser_click",
+    description: "Click the first element matching a CSS selector on the current page.",
+    inputSchema: %* {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "description": "CSS selector of the element to click"
+        }
+      },
+      "required": ["selector"]
+    }
+  )
+
+proc browserTypeSchema*(): ToolSchema =
+  ToolSchema(
+    name: "browser_type",
+    description: "Focus an input matching a CSS selector, replace its value and fire input/change events.",
+    inputSchema: %* {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "description": "CSS selector of the input/textarea"
+        },
+        "text": {
+          "type": "string",
+          "description": "Text to enter"
+        }
+      },
+      "required": ["selector", "text"]
+    }
+  )
+
 proc browserScreenshotSchema*(): ToolSchema =
   ToolSchema(
     name: "browser_screenshot",
@@ -127,7 +163,8 @@ proc browserScreenshotSchema*(): ToolSchema =
 # ── ToolPort Conformance ─────────────────────────────────────────────────────
 
 proc listTools*(bt: BrowserTools): Result[seq[ToolSchema], string] =
-  ok(@[browserNavigateSchema(), browserContentSchema(), browserScreenshotSchema()])
+  ok(@[browserNavigateSchema(), browserContentSchema(), browserScreenshotSchema(),
+       browserClickSchema(), browserTypeSchema()])
 
 # ── Internal CDP Helpers ─────────────────────────────────────────────────────
 
@@ -996,6 +1033,39 @@ proc invokeCommand(bt: var BrowserTools; call: ToolCall): Result[ToolResult, str
     
     return ok(ToolResult(callId: call.id, output: contentResult.get(), isError: false))
   
+  of "browser_click":
+    let selector = call.input.getOrDefault("selector").getStr("")
+    if selector.len == 0:
+      return ok(browserError(call.id, "missing required field: selector"))
+    if bt.process == nil:
+      return ok(browserError(call.id, "browser not running - call browser_navigate first"))
+    let evaluated = bt.evaluateWithIsolatedWorld(clickScript(selector))
+    if evaluated.isErr:
+      return ok(browserError(call.id, evaluated.error))
+    let value = evaluated.get(){"result"}{"value"}.getStr("")
+    if value != "clicked":
+      return ok(browserError(call.id, "selector not found: " & selector))
+    return ok(ToolResult(callId: call.id,
+      output: $(%*{"status": "clicked", "selector": selector}), isError: false))
+
+  of "browser_type":
+    let selector = call.input.getOrDefault("selector").getStr("")
+    let text = call.input.getOrDefault("text").getStr("")
+    if selector.len == 0:
+      return ok(browserError(call.id, "missing required field: selector"))
+    if not call.input.hasKey("text"):
+      return ok(browserError(call.id, "missing required field: text"))
+    if bt.process == nil:
+      return ok(browserError(call.id, "browser not running - call browser_navigate first"))
+    let evaluated = bt.evaluateWithIsolatedWorld(typeScript(selector, text))
+    if evaluated.isErr:
+      return ok(browserError(call.id, evaluated.error))
+    let value = evaluated.get(){"result"}{"value"}.getStr("")
+    if value != "typed":
+      return ok(browserError(call.id, "selector not found: " & selector))
+    return ok(ToolResult(callId: call.id,
+      output: $(%*{"status": "typed", "selector": selector}), isError: false))
+
   of "browser_screenshot":
     let fullPageNode = call.input.getOrDefault("fullPage")
     let fullPage = not fullPageNode.isNil and fullPageNode.kind == JBool and fullPageNode.getBool()

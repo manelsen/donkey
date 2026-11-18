@@ -246,6 +246,33 @@ const
     ",\"required\":[\"diagram\"]}"
 
 # ── inspect_image ─────────────────────────────────────────────────────────────
+# ── transcribe_audio ───────────────────────────────────────────────────────────
+const
+  TranscribeAudioToolName* = "transcribe_audio"
+  TranscribeAudioToolDescription* =
+    "Transcribe a local audio file with the configured speech-to-text endpoint. " &
+    "Accepts mp3, ogg/opus, wav, m4a, webm and flac. " &
+    "The path is resolved inside the current workspace like the other local file tools."
+  TranscribeAudioToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"Local audio file path\"}," &
+    "\"language\":{\"type\":\"string\",\"description\":\"Optional ISO language hint\"}," &
+    "\"prompt\":{\"type\":\"string\",\"description\":\"Optional vocabulary/context hint\"}}" &
+    ",\"required\":[\"path\"]}"
+
+# ── text_to_speech ─────────────────────────────────────────────────────────────
+const
+  TextToSpeechToolName* = "text_to_speech"
+  TextToSpeechToolDescription* =
+    "Synthesize speech from text with the configured text-to-speech endpoint. " &
+    "Writes the audio under the workspace attachments and returns its path."
+  TextToSpeechToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"text\":{\"type\":\"string\",\"description\":\"Text to speak\"}," &
+    "\"voice\":{\"type\":\"string\",\"description\":\"Optional voice name\"}," &
+    "\"format\":{\"type\":\"string\",\"description\":\"mp3 (default), opus, wav, aac or flac\"}}" &
+    ",\"required\":[\"text\"]}"
+
 const
   InspectImageToolName* = "inspect_image"
   InspectImageToolDescription* =

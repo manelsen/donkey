@@ -55,6 +55,8 @@ const
     "calc",
     "render_mermaid",
     "inspect_image",
+    "transcribe_audio",
+    "text_to_speech",
   ]
 
   SessionNativeTools* = [

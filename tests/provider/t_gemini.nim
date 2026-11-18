@@ -181,3 +181,23 @@ suite "GeminiAdapter buildUrl":
     let a   = newGeminiAdapter("k", model = "gemini-2.5-flash")
     let url = a.buildUrl()
     check url.contains("gemini-2.5-flash")
+
+suite "GeminiAdapter image content":
+
+  test "a data URL becomes an inlineData part":
+    var h = newHistory()
+    h.addUserWithImage("what is this?", "data:image/webp;base64,QUJD")
+    let body = newGeminiAdapter("k").buildBody(
+      CompletionRequest(system: "", messages: h))
+    let parts = body["contents"][0]["parts"]
+    check parts.len == 2
+    check parts[0]["text"].getStr() == "what is this?"
+    check parts[1]["inlineData"]["mimeType"].getStr() == "image/webp"
+    check parts[1]["inlineData"]["data"].getStr() == "QUJD"
+
+  test "an http URL adds no image part":
+    var h = newHistory()
+    h.addUserWithImage("look", "https://example.test/a.png")
+    let body = newGeminiAdapter("k").buildBody(
+      CompletionRequest(system: "", messages: h))
+    check body["contents"][0]["parts"].len == 1

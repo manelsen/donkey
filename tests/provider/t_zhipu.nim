@@ -151,3 +151,14 @@ suite "ZhipuAdapter parseResponse":
     check resp.toolCalls[0].id == "call_9"
     check resp.toolCalls[0].name == "read_file"
     check parseJson(resp.toolCalls[0].inputJson)["path"].getStr() == "src/app.nim"
+
+suite "ZhipuAdapter image content":
+
+  test "an image message becomes a content array":
+    var h = newHistory()
+    h.addUserWithImage("what is this?", "data:image/png;base64,QUJD")
+    let body = newZhipuAdapter("k", model = "glm-4.7").buildBody(
+      CompletionRequest(system: "", messages: h))
+    let content = body["messages"][0]["content"]
+    check content.kind == JArray
+    check content[1]["image_url"]["url"].getStr() == "data:image/png;base64,QUJD"

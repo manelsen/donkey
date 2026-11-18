@@ -42,6 +42,9 @@ when defined(withSqlite):
   proc openDb*(a: SqliteStoreAdapter): Result[DbConn, string] =
     try:
       let db = db_sqlite.open(a.dbPath, "", "", "")
+      db.exec(sql"PRAGMA journal_mode = WAL")
+      db.exec(sql"PRAGMA synchronous = NORMAL")
+      db.exec(sql"PRAGMA busy_timeout = 5000")
       ok(db)
     except CatchableError as e:
       err("openDb: " & e.msg)

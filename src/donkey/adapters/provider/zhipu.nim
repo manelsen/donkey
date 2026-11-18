@@ -53,6 +53,13 @@ proc toJson(msg: ChatMessage): JsonNode =
       calls.add(%* {"id": tc.id, "type": "function",
                     "function": {"name": tc.name, "arguments": tc.inputJson}})
     return %* {"role": "assistant", "content": msg.text, "tool_calls": calls}
+  if msg.imageUrl.len > 0:
+    var content = newJArray()
+    if msg.text.len > 0:
+      content.add(%* {"type": "text", "text": msg.text})
+    content.add(%* {"type": "image_url", "image_url": {"url": msg.imageUrl}})
+    return %* {"role": msg.role, "content": content}
+
   %* {"role": msg.role, "content": msg.text}
 
 proc buildBody*(a: ZhipuAdapter; req: CompletionRequest): JsonNode =

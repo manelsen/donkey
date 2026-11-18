@@ -681,3 +681,37 @@ suite "durability":
     let loaded2 = reopened2.loadAll()
     check loaded2.isOk
     check (ckDiscord, "2") in loaded2.value[0].channels
+
+  test "startup reconciliation marks interrupted deliveries failed":
+    let dir = freshDir("ledger-reconcile")
+    defer: cleanup(dir)
+
+    var store = newRuntimeStateStore(dir)
+    let ledger = store.deliveryLedger()
+    let now = epochMs()
+    for id in ["interrupted-a", "interrupted-b"]:
+      check ledger.recordPending(DeliveryRecord(
+        id: id, userId: "user-1", channel: ckTelegram, channelId: "chat-1",
+        textHash: "hash", state: dlsPending, attempts: 1,
+        createdAtMs: now, updatedAtMs: now)).isOk
+    check ledger.recordPending(DeliveryRecord(
+      id: "done", userId: "user-1", channel: ckTelegram, channelId: "chat-1",
+      textHash: "hash", state: dlsPending, attempts: 1,
+      createdAtMs: now, updatedAtMs: now)).isOk
+    check ledger.markSent("done", now).isOk
+
+    let reconciled = store.reconcileInterruptedDeliveries(now + 10)
+    check reconciled.isOk
+    check reconciled.get() == 2
+
+    ## Read through a fresh store: the reconciliation reached the file.
+    let loaded = newRuntimeStateStore(dir).deliveryLedger().loadAll()
+    check loaded.isOk
+    for id in ["interrupted-a", "interrupted-b"]:
+      let record = findRecord(loaded.value, id)
+      check record.state == dlsFailed
+      check record.error.contains("restart")
+    check findRecord(loaded.value, "done").state == dlsSent
+
+    ## A second startup has nothing left to reconcile.
+    check store.reconcileInterruptedDeliveries(now + 20).get() == 0

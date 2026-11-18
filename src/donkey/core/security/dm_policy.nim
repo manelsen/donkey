@@ -24,6 +24,9 @@ type
     policy*:    DmPolicy
     allowlist*: seq[UserId]  ## Empty = all allowed (legacy compat)
 
+  GroupGate* = object
+    allowedChats*: seq[string]  ## Empty = every group allowed
+
   PairingState* = object
     code*:      string         ## 6-digit numeric code
     createdAt*: float          ## Unix timestamp
@@ -35,8 +38,23 @@ const
   PairingExpirySeconds* = 300.0  ## 5 minutes
   MaxPairingAttempts* = 3
 
-func isAllowedDm*(state: DmSecurityState; userId: UserId): bool =
-  ## Returns true if the user is allowed to DM based on policy.
+func groupChatAllowed*(gate: GroupGate; chatId: string): bool =
+  ## Chat-level gate applied to group messages. An empty allowlist means the
+  ## configuration does not restrict groups; otherwise the id must match
+  ## exactly (no prefix matching) and an empty id is never a match.
+  if gate.allowedChats.len == 0:
+    return true
+  chatId.len > 0 and gate.allowedChats.contains(chatId)
+
+func parseChatIdList*(raw: string): seq[string] =
+  ## Parses `DONKEY_TELEGRAM_ALLOWED_GROUPS`: comma-separated ids, trimmed,
+  ## empties dropped and duplicates removed in first-seen order.
+  for part in raw.split(','):
+    let id = part.strip
+    if id.len > 0 and id notin result:
+      result.add(id)
+
+func isAllowedDm*(state: DmSecurityState; userId: UserId): bool =  ## Returns true if the user is allowed to DM based on policy.
   case state.policy
   of DmPolicyOpen:
     true
