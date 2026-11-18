@@ -9,6 +9,7 @@
 ##     fallback.
 
 import std/[json, options, os, strutils, tables, times, unittest]
+import donkey/adapters/channel/common_runtime
 import donkey/adapters/channel/line
 import donkey/adapters/channel/line_runtime
 import donkey/app/session_manager
@@ -60,6 +61,17 @@ proc newAdapter(f: FakeHttp = nil): LineAdapter =
 proc drainQueue(a: var LineAdapter) =
   while a.tryRecvEvent()[0]:
     discard
+
+type
+  ReplySink = ref object
+    items: seq[OutboundMessage]
+
+proc sinkFor(sink: ReplySink): proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
+  ## Captures what the drain hands to the outbox; it never posts.
+  result = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
+    {.cast(gcsafe).}:
+      sink.items.add msg
+    ok()
 
 proc groupPayload(eventId: string; senderId: string; groupId: string;
                   text = "Group hello"): JsonNode =
@@ -116,7 +128,7 @@ suite "LINE runtime — replay cache":
     pushEvent(payload)
     pushEvent(payload)  ## redelivery with the same webhookEventId
 
-    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, rtLog)
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, nil, rtLog)
 
     check inbound.len == 1
     check inbound[0].text == "hello"
@@ -133,7 +145,7 @@ suite "LINE runtime — replay cache":
         inbound.add(msg)
 
     pushEvent(parseFile(Fixtures / "webhook_standby.json"))
-    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, rtLog)
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, nil, rtLog)
 
     check inbound.len == 0
     check not ln.tryRecvEvent()[0]  ## the denied event was consumed
@@ -155,7 +167,7 @@ suite "LINE runtime — group policy":
         inbound.add(msg)
 
     pushEvent(parseFile(Fixtures / "webhook_group_text.json"))
-    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, rtLog)
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, nil, rtLog)
 
     check inbound.len == 0
     check not ln.tryRecvEvent()[0]
@@ -172,7 +184,7 @@ suite "LINE runtime — group policy":
 
     pushEvent(parseFile(Fixtures / "webhook_group_text.json"))
     discard drainLineEvents(ln, sm, replay, policy(groups = @[GroupChat]),
-                            1_000'i64, fallback, rtLog)
+                            1_000'i64, fallback, nil, rtLog)
 
     check inbound.len == 1
     check inbound[0].chatId == GroupChat
@@ -192,7 +204,7 @@ suite "LINE runtime — group policy":
 
     pushEvent(groupPayload("evt-c1x", DmUser, "C1x"))
     discard drainLineEvents(ln, sm, replay, policy(groups = @["C1"]),
-                            1_000'i64, fallback, rtLog)
+                            1_000'i64, fallback, nil, rtLog)
 
     check inbound.len == 0
 
@@ -209,7 +221,7 @@ suite "LINE runtime — group policy":
     pushEvent(groupPayload("evt-speaker-1", "Uaaa", GroupChat))
     pushEvent(groupPayload("evt-speaker-2", "Ubbb", GroupChat))
     discard drainLineEvents(ln, sm, replay, policy(groups = @[GroupChat]),
-                            1_000'i64, fallback, rtLog)
+                            1_000'i64, fallback, nil, rtLog)
 
     check inbound.len == 2
     check inbound[0].userId != inbound[1].userId
@@ -246,13 +258,17 @@ suite "LINE runtime — routing agreement and local commands":
     let fallback = proc(msg: InboundMessage) {.gcsafe.} =
       {.cast(gcsafe).}:
         inbound.add(msg)
+    let sink = ReplySink()
+    let enqueue = sinkFor(sink)
 
     pushEvent(dmPayload("evt-continue", "/continue ABCD1234"))
-    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, rtLog)
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
+                            enqueue, rtLog)
 
     check inbound.len == 0
-    check f.calls.len == 1
-    check parseJson(f.calls[0])["messages"][0]["text"].getStr.contains("Código")
+    check sink.items.len == 1
+    check sink.items[0].text == buildContinueResultText(false)
+    check f.calls.len == 0
 
   test "/help falls through to the session fallback":
     var ln = newAdapter()
@@ -265,7 +281,7 @@ suite "LINE runtime — routing agreement and local commands":
         inbound.add(msg)
 
     pushEvent(dmPayload("evt-help", "/help"))
-    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, rtLog)
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, nil, rtLog)
 
     check inbound.len == 1
     check inbound[0].text == "/help"
@@ -298,12 +314,17 @@ suite "LINE runtime — shared link codes":
       {.cast(gcsafe).}:
         inbound.add(msg)
 
+    let sink = ReplySink()
+    let enqueue = sinkFor(sink)
+
     pushEvent(dmPayload("evt-shared-link", "/continue " & code))
-    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, rtLog)
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
+                            enqueue, rtLog)
 
     check inbound.len == 0
-    check f.calls.len == 1
-    check parseJson(f.calls[0])["messages"][0]["text"].getStr.contains("reconectada")
+    check sink.items.len == 1
+    check sink.items[0].text == buildContinueResultText(true)
+    check f.calls.len == 0
     check ln.resolver.lookup(ckLine, DmUser) == some(target)
 
   test "a shared link code is single-use":
@@ -320,17 +341,22 @@ suite "LINE runtime — shared link codes":
     sm.init()
     var replay = LineReplayCache()
     let fallback = proc(msg: InboundMessage) {.gcsafe.} = discard
+    let sink = ReplySink()
+    let enqueue = sinkFor(sink)
 
     pushEvent(dmPayload("evt-shared-first", "/continue " & code))
-    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, rtLog)
-    check f.calls.len == 1
-    check parseJson(f.calls[0])["messages"][0]["text"].getStr.contains("reconectada")
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
+                            enqueue, rtLog)
+    check sink.items.len == 1
+    check sink.items[0].text == buildContinueResultText(true)
     check ln.resolver.lookup(ckLine, DmUser) == some(target)
 
     pushEvent(dmPayload("evt-shared-second", "/continue " & code))
-    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, rtLog)
-    check f.calls.len == 2
-    check parseJson(f.calls[1])["messages"][0]["text"].getStr.contains("inválido")
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
+                            enqueue, rtLog)
+    check sink.items.len == 2
+    check sink.items[1].text == buildContinueResultText(false)
+    check f.calls.len == 0
     check not ln.resolver.consumeLinkCode(code, ckLine, "Usecond-redemption")
 
   test "an expired shared link code is rejected":
@@ -348,10 +374,113 @@ suite "LINE runtime — shared link codes":
     sm.init()
     var replay = LineReplayCache()
     let fallback = proc(msg: InboundMessage) {.gcsafe.} = discard
+    let sink = ReplySink()
+    let enqueue = sinkFor(sink)
 
     pushEvent(dmPayload("evt-shared-expired", "/continue " & code))
-    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, rtLog)
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
+                            enqueue, rtLog)
 
-    check f.calls.len == 1
-    check parseJson(f.calls[0])["messages"][0]["text"].getStr.contains("inválido")
+    check sink.items.len == 1
+    check sink.items[0].text == buildContinueResultText(false)
+    check f.calls.len == 0
     check ln.resolver.lookup(ckLine, DmUser) != some(target)
+
+suite "LINE runtime — /continue reply is enqueued, never posted inline":
+  ## F2: the drain runs on the daemon thread; a synchronous LINE POST would
+  ## freeze every other channel for up to the 30 s transport timeout. The
+  ## confirmation is handed to the outbox instead.
+
+  setup:
+    var stale = newAdapter()
+    drainQueue(stale)
+
+  test "a valid code enqueues one reply and makes no HTTP call":
+    let path = LineTmp / "enqueue_valid_codes.tsv"
+    removeFile(path)
+    let target = UserId("enqueue-target")
+    let code = sharedLinkCodeService(path).mint(target)
+
+    let f = FakeHttp()
+    var ln = newLineAdapter("test-channel-access-token", path,
+                            apiBase = "https://line.test", http = fake(f))
+    var sm: SessionManager
+    sm.init()
+    var replay = LineReplayCache()
+    var inbound: seq[InboundMessage] = @[]
+    let fallback = proc(msg: InboundMessage) {.gcsafe.} =
+      {.cast(gcsafe).}:
+        inbound.add(msg)
+    let sink = ReplySink()
+    let enqueue = sinkFor(sink)
+    ## The speaker identity the drain authorizes; redeeming the code re-points
+    ## the LINE mapping to the code's target, so capture it before the drain.
+    let lineUser = ln.resolver.resolve(ckLine, DmUser)
+
+    pushEvent(dmPayload("evt-enqueue-continue", "/continue " & code))
+    let turns = drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
+                                enqueue, rtLog)
+
+    check turns == 1
+    check inbound.len == 0
+    check sink.items.len == 1
+    check sink.items[0].text == buildContinueResultText(true)
+    check sink.items[0].channel == ckLine
+    check sink.items[0].replyTo == DmUser
+    check sink.items[0].userId == lineUser
+    check f.calls.len == 0
+
+  test "a nil enqueueReply logs and drops without crashing":
+    let f = FakeHttp()
+    var ln = newAdapter(f)
+    var sm: SessionManager
+    sm.init()
+    var replay = LineReplayCache()
+    let fallback = proc(msg: InboundMessage) {.gcsafe.} = discard
+    var logs: seq[string] = @[]
+    let capture = newLogger("test.line_runtime.capture", lvlError,
+      proc(entry: LogEntry) {.closure, gcsafe.} =
+        {.cast(gcsafe).}:
+          logs.add entry.message)
+
+    pushEvent(dmPayload("evt-nil-enqueue", "/continue ABCD1234"))
+    let turns = drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
+                                nil, capture)
+
+    check turns == 1
+    check f.calls.len == 0
+    check logs.len == 1
+    check logs[0].contains("no outbox")
+    check not ln.tryRecvEvent()[0]
+
+  test "a failed enqueue is logged and the rest of the batch still runs":
+    let f = FakeHttp()
+    var ln = newAdapter(f)
+    var sm: SessionManager
+    sm.init()
+    var replay = LineReplayCache()
+    var inbound: seq[InboundMessage] = @[]
+    let fallback = proc(msg: InboundMessage) {.gcsafe.} =
+      {.cast(gcsafe).}:
+        inbound.add(msg)
+    let failing = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
+      discard msg
+      err("outbox full")
+    var logs: seq[string] = @[]
+    let capture = newLogger("test.line_runtime.capture", lvlError,
+      proc(entry: LogEntry) {.closure, gcsafe.} =
+        {.cast(gcsafe).}:
+          logs.add entry.message)
+
+    pushEvent(dmPayload("evt-enqueue-fails", "/continue ABCD1234"))
+    pushEvent(dmPayload("evt-after-enqueue-fails", "still here"))
+    let turns = drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
+                                failing, capture)
+
+    check turns == 2
+    check inbound.len == 1
+    check inbound[0].text == "still here"
+    check f.calls.len == 0
+    check logs.len == 1
+    check logs[0].contains("outbox full")
+    check not ln.tryRecvEvent()[0]  ## the whole batch was consumed

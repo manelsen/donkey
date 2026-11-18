@@ -30,11 +30,18 @@ proc drainLineEvents*(lnAdapter: var LineAdapter;
                       policy: LinePolicy;
                       nowSec: int64;
                       handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
+                      enqueueReply: proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} = nil;
                       log: Logger = newLogger("line.runtime")): int {.gcsafe.} =
   ## Drains the webhook queue until it is empty and returns the number of
   ## events that produced a turn (session fallback or local `/continue`).
   ## Every event is consumed: denied and duplicate events are logged and
   ## dropped, so the drain loop cannot spin on them.
+  ##
+  ## The `/continue` confirmation is **enqueued** through `enqueueReply`, never
+  ## posted inline: this runs on the daemon thread, where a stalled LINE API
+  ## (30 s transport timeout) would freeze every other channel drain. A nil
+  ## callback logs and drops the reply (tests that do not care about it).
+  ## An enqueue failure is logged and does not abort the rest of the batch.
   var (hasEvent, event) = lnAdapter.tryRecvEvent()
   while hasEvent:
     let decision = decideLineEvent(policy, event)
@@ -75,14 +82,18 @@ proc drainLineEvents*(lnAdapter: var LineAdapter;
       let reply = buildContinueResultText(
         lnAdapter.resolver.consumeLinkCode(command.value, ckLine,
                                            routing.identityId))
-      lnAdapter.send(OutboundMessage(
+      let replyMsg = OutboundMessage(
         userId:  auth.userId,
         channel: ckLine,
         text:    reply,
         replyTo: routing.replyTarget,
-      )).isOkOr:
-        log.error("line: send /continue reply failed for user=" &
-                  $auth.userId & " reason=" & error)
+      )
+      if enqueueReply == nil:
+        log.error("line: no outbox for /continue reply user=" & $auth.userId)
+      else:
+        enqueueReply(replyMsg).isOkOr:
+          log.error("line: enqueue /continue reply failed for user=" &
+                    $auth.userId & " reason=" & error)
       inc result
       (hasEvent, event) = lnAdapter.tryRecvEvent()
       continue

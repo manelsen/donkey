@@ -1803,9 +1803,18 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
       let linePolicy = LinePolicy(
         allowedGroups: ctx.env.lineAllowedGroups,
         allowedUsers:  ctx.env.lineAllowedUsers)
+      ## The drain runs on the daemon thread: hand the `/continue` confirmation
+      ## to the outbox and let its drainer POST it. Posting inline would block
+      ## every other channel for the LINE transport timeout (30 s).
+      let enqueueLineReply = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
+        try:
+          ctx.runtime.globalOutbox.putNoWait(msg)
+          ok()
+        except AsyncQueueFullError:
+          err("LINE: outbox full, /continue reply dropped")
       drainLineEvents(
         ctx.adapters.ln, ctx.runtime.sm, ctx.runtime.lineReplay,
-        linePolicy, getTime().toUnix(), fallback, log) > 0,
+        linePolicy, getTime().toUnix(), fallback, enqueueLineReply, log) > 0,
     drainMatrix = proc(): bool =
       let count = drainMatrixGateway(
         matrixConfigured(),
