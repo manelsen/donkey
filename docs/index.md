@@ -67,6 +67,8 @@ See [Installation Guide](getting_started/installation.md) for detailed setup.
 - [Memory](topics/memory.md) - Persistent storage
 - [Media](topics/media.md) - Inline images, transcripts and voice replies
 - [Sessions](topics/sessions.md) - Session management
+- [Interfaces](topics/interfaces.md) - OpenAI-compatible API, SSE, dashboard and the worker budget
+- [Channels](topics/channels.md) - Telegram, LINE, Slack, Discord and the other channel adapters
 - [Outbound Presentation](architecture.md) - UI surface ownership, fallback policy, and streaming/status model
 
 ### Reference
