@@ -55,10 +55,10 @@ func miniMaxCompatProfile*(endpoint = MiniMaxEndpoint): CompatProfile =
     endpoint: endpoint,
     payloadExtras: %* {"reasoning_split": true},
     supportsImages: true,
-    sseKind: cssOpenAi,
     quirks: OpenAiWireQuirks(
       toolResultName: false,
       toolCallsEmptyContent: true,
+      emptyContentKey: true,
       imageEmptyTextPart: false,
       imageWithToolCalls: false,
       toolChoiceAuto: false,

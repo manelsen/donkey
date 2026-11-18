@@ -12,10 +12,6 @@ import ../message
 import ./openai_pure
 
 type
-  CompatSseKind* = enum
-    cssOpenAi       ## plain OpenAI `data:` chunks ending in `[DONE]`
-    cssOpenRouter   ## OpenAI chunks with OpenRouter reasoning/tool deltas
-
   CompatProfile* = object
     id*:             string
     endpoint*:       string
@@ -24,7 +20,6 @@ type
     reasoningExtras*: JsonNode  ## merged only when req.reasoning
     streamExtras*:   JsonNode   ## merged only when stream = true
     supportsImages*: bool
-    sseKind*:        CompatSseKind
     quirks*:         OpenAiWireQuirks
 
 func defaultOpenAiProfile*(
@@ -34,7 +29,6 @@ func defaultOpenAiProfile*(
     id: id,
     endpoint: endpoint,
     supportsImages: true,
-    sseKind: cssOpenAi,
     quirks: defaultOpenAiQuirks(),
   )
 

@@ -20,21 +20,26 @@ type
     includeReasoning:   bool
     reasoningSplit:     bool
     streamOptions:      bool
+    emptyContent:       bool
 
 proc expectations(): seq[ProfileExpectation] =
   @[
     ProfileExpectation(name: "openai-default", profile: defaultOpenAiProfile(),
       toolChoice: false, toolResultName: true, imageWithToolCalls: true,
-      includeReasoning: true, reasoningSplit: false, streamOptions: false),
+      includeReasoning: true, reasoningSplit: false, streamOptions: false,
+      emptyContent: false),
     ProfileExpectation(name: "zhipu", profile: zhipuCompatProfile(),
       toolChoice: true, toolResultName: false, imageWithToolCalls: false,
-      includeReasoning: false, reasoningSplit: false, streamOptions: false),
+      includeReasoning: false, reasoningSplit: false, streamOptions: false,
+      emptyContent: true),
     ProfileExpectation(name: "minimax", profile: miniMaxCompatProfile(),
       toolChoice: false, toolResultName: false, imageWithToolCalls: false,
-      includeReasoning: false, reasoningSplit: true, streamOptions: false),
+      includeReasoning: false, reasoningSplit: true, streamOptions: false,
+      emptyContent: true),
     ProfileExpectation(name: "openrouter", profile: openRouterCompatProfile(),
       toolChoice: true, toolResultName: false, imageWithToolCalls: false,
-      includeReasoning: true, reasoningSplit: false, streamOptions: true),
+      includeReasoning: true, reasoningSplit: false, streamOptions: true,
+      emptyContent: true),
   ]
 
 proc toolRequest(): CompletionRequest =
@@ -83,6 +88,11 @@ suite "compat conformance":
         check content.kind == JArray
       else:
         check content.kind == JString
+
+    test c.name & " keeps the empty-content contract":
+      let body = build(c, CompletionRequest(messages: @[
+        ChatMessage(role: roleUser, text: "")]))
+      check body["messages"][0].hasKey("content") == c.emptyContent
 
     test c.name & " keeps the streaming body contract":
       let body = build(c, CompletionRequest(), stream = true)

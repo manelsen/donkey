@@ -52,10 +52,10 @@ func zhipuCompatProfile*(endpoint = ZhipuEndpoint): CompatProfile =
     id:             "zai-coding",
     endpoint:       endpoint,
     supportsImages: true,
-    sseKind:        cssOpenAi,
     quirks: OpenAiWireQuirks(
       toolResultName:        false,
       toolCallsEmptyContent: true,
+      emptyContentKey: true,
       imageEmptyTextPart:    false,
       imageWithToolCalls:    false,
       toolChoiceAuto:        true,

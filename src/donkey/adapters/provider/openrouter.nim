@@ -71,10 +71,10 @@ func openRouterCompatProfile*(endpoint = OpenRouterEndpoint;
     extraHeaders: @[("HTTP-Referer", referer), ("X-Title", xTitle)],
     streamExtras: %* {"stream_options": {"include_usage": true}},
     supportsImages: true,
-    sseKind: cssOpenRouter,
     quirks: OpenAiWireQuirks(
       toolResultName: false,
       toolCallsEmptyContent: true,
+      emptyContentKey: true,
       imageEmptyTextPart: true,
       imageWithToolCalls: false,
       toolChoiceAuto: true,

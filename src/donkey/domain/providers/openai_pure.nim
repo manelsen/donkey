@@ -62,6 +62,7 @@ type
     ## Wire differences between OpenAI-compatible providers. Defaults are the
     ## OpenAI behavior; a profile turns on only what its provider needs.
     toolResultName*:        bool  ## send `name` on a tool result (dup of content)
+    emptyContentKey*:       bool  ## send `content: ""` for an empty plain turn
     toolCallsEmptyContent*: bool  ## send `content: ""` on an assistant tool call
     imageEmptyTextPart*:    bool  ## send an empty text part before the image
     imageWithToolCalls*:    bool  ## keep the image when the message has tool calls
@@ -128,7 +129,7 @@ func openaiMessageToJsonWithQuirks*(om: OpenAIMessage;
       content.add(%* {"type": "text", "text": om.content})
     content.add(%* {"type": "image_url", "image_url": {"url": om.imageUrl}})
     result["content"] = content
-  elif om.content.len > 0 or
+  elif om.content.len > 0 or quirks.emptyContentKey or
        (om.toolCalls.len > 0 and quirks.toolCallsEmptyContent):
     result["content"] = % om.content
   if om.name.len > 0:
@@ -143,7 +144,7 @@ func openaiMessageToJsonWithQuirks*(om: OpenAIMessage;
       tcNode["function"]["name"] = % tc.function.name
       tcNode["function"]["arguments"] = % tc.function.arguments
       result["tool_calls"].add tcNode
-  if om.toolCallId.len > 0:
+  if om.toolCallId.len > 0 and om.role == roleTool:
     result["tool_call_id"] = % om.toolCallId
 
 func openaiMessageToJson*(om: OpenAIMessage): JsonNode =

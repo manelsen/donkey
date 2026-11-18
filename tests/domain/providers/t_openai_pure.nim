@@ -320,6 +320,26 @@ suite "openai_pure wire quirks":
     let without = buildRequestBodyWithQuirks("m", req, quirks = noName)
     check not without["messages"][0].hasKey("name")
 
+  test "tool_call_id is only emitted for a tool message":
+    let userReq = CompletionRequest(messages: @[
+      ChatMessage(role: roleUser, text: "x", toolCallId: "t1")])
+    let userBody = buildRequestBodyWithQuirks("m", userReq)
+    check not userBody["messages"][0].hasKey("tool_call_id")
+    let toolReq = CompletionRequest(messages: @[
+      ChatMessage(role: roleTool, text: "r", toolCallId: "t1")])
+    let toolBody = buildRequestBodyWithQuirks("m", toolReq)
+    check toolBody["messages"][0]["tool_call_id"].getStr() == "t1"
+
+  test "an empty plain turn can keep an empty content string":
+    let req = CompletionRequest(messages: @[
+      ChatMessage(role: roleUser, text: "")])
+    let default = buildRequestBodyWithQuirks("m", req)
+    check not default["messages"][0].hasKey("content")
+    var quirks = defaultOpenAiQuirks()
+    quirks.emptyContentKey = true
+    let body = buildRequestBodyWithQuirks("m", req, quirks = quirks)
+    check body["messages"][0]["content"].getStr() == ""
+
   test "an assistant tool call can carry empty content":
     let req = CompletionRequest(messages: @[
       ChatMessage(role: roleAssistant, text: "",
