@@ -73,6 +73,13 @@ const
     sendKeyboard: true, editKeyboard: true, setMessageReaction: true,
     downloadFile: true, sendMedia: true, sendVoice: true)
 
+  ## LINE: send-only. Reply/push accept plain text chunks; no ids, edits,
+  ## keyboards, reactions, media or voice notes.
+  LineCapability = ChannelCapabilityDescriptor(
+    send: true, sendReturnId: false, editMessage: false,
+    sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
+    downloadFile: false, sendMedia: false, sendVoice: false)
+
   # QQ supports sendKeyboard but not editKeyboard
   QQCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
@@ -105,6 +112,7 @@ proc channelCapabilityRegistry*(): ChannelCapabilityRegistry =
   result[ckMatrix]     = MatrixCapability
   result[ckEmail]      = EmailCapability
   result[ckCli]        = CliCapability
+  result[ckLine]       = LineCapability
 
 # ── lookup helpers ────────────────────────────────────────────────────────────
 

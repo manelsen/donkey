@@ -1370,6 +1370,7 @@ func outboundPortForChannel(ports: OutboundChannelPorts;
   of ckMatrix: ports.matrix
   of ckEmail: ports.email
   of ckCli: ports.cli
+  of ckLine: ports.line
 
 proc makeCompleteBuilder(): proc(preferencesMd: string): CompleteFn {.gcsafe.} =
   result = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
