@@ -27,12 +27,18 @@ const
   SupportedImageMimes* = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
   ## Single source of the provider errors that mean "the image was refused".
-  ## `genericProviderErrorText` and the inline-image retry both read this list.
+  ## `genericProviderErrorText` and the inline-image retry both read this list;
+  ## neither may carry a marker of its own.
   ImageRejectionMarkers* = ["image_url", "image url", "unsupported image",
-                            "invalid content", "media type"]
+                            "invalid content", "media type", "file_id",
+                            "attachment"]
 
   ## Appended to the text turn when the inline image had to be dropped.
   InlineImageRemovedNote* = "[imagem removida: provider sem visão]"
+
+  ## The inline-only promise written by `attachmentMarker`. Once the payload is
+  ## demoted it becomes false, so the text helper below removes it.
+  InlineImageAccompaniesClause* = "A imagem já acompanha esta mensagem; "
 
 func isHttpUrl*(raw: string): bool =
   raw.startsWith("http://") or raw.startsWith("https://")
@@ -87,15 +93,28 @@ func inlineImagesForTurn*(urls: seq[string]): seq[string] =
     else:
       result.add(url)
 
+func demoteInlineImageText*(text: string): string =
+  ## Removes the inline-only promise from a marker, leaving the `inspect_image`
+  ## path intact. Existing removal notes are dropped too, so callers can append
+  ## exactly one note without accumulating duplicates.
+  result = text.replace(InlineImageAccompaniesClause, "")
+  result = result.replace("a imagem já acompanha esta mensagem; ", "")
+  result = result.replace(InlineImageRemovedNote, "")
+  result = result.replace(". use inspect_image", ". Use inspect_image")
+  result = result.strip()
+
 func demoteInlineImages*(h: ConversationHistory): ConversationHistory =
   ## The live history after an inline turn: the photo was already sent to the
   ## provider, so `data:` payloads become text-only entries again. `http(s)`
-  ## URLs and paths stay: they are cheap and may still be fetched.
+  ## URLs and paths stay: they are cheap and may still be fetched. The marker
+  ## loses the inline promise as well, because the image no longer travels
+  ## with the message.
   result = newSeq[ChatMessage](h.len)
   for i, msg in h:
     result[i] = msg
     if msg.imageUrl.startsWith("data:"):
       result[i].imageUrl = ""
+      result[i].text = demoteInlineImageText(result[i].text)
 
 func isImageRejection*(error: string): bool =
   ## True when the provider blamed the image payload. Case-insensitive; the
@@ -120,21 +139,47 @@ func withoutInlineImages*(req: CompletionRequest): CompletionRequest =
     return req
   result = req
   result.messages = @[]
+  var lastImageTurn = -1
   for msg in req.messages:
     var stripped = msg
-    if stripped.imageUrl.startsWith("data:"):
+    let hadInline = stripped.imageUrl.startsWith("data:")
+    if hadInline:
       stripped.imageUrl = ""
+      stripped.text = demoteInlineImageText(stripped.text)
     if stripped.role == roleUser and stripped.text.strip.len == 0 and
        stripped.imageUrl.len == 0:
+      ## An image-only turn loses its reason to exist. The note goes in its
+      ## place, not on an earlier user turn.
       continue
+    if hadInline and stripped.role == roleUser and stripped.text.strip.len > 0:
+      lastImageTurn = result.messages.len
     result.messages.add(stripped)
-  var lastUserWithText = -1
-  for i, msg in result.messages:
-    if msg.role == roleUser and msg.text.strip.len > 0:
-      lastUserWithText = i
-  if lastUserWithText >= 0:
-    result.messages[lastUserWithText].text =
-      result.messages[lastUserWithText].text & "\n\n" & InlineImageRemovedNote
+  ## The note belongs to the turn that carried the image. Attaching it to the
+  ## last user turn with text put it on an earlier question when the image
+  ## arrived alone (image-only album entry).
+  if lastImageTurn >= 0:
+    let current = result.messages[lastImageTurn].text
+    if not current.contains(InlineImageRemovedNote):
+      result.messages[lastImageTurn].text =
+        current & "\n\n" & InlineImageRemovedNote
   else:
     ## An album of image-only turns would otherwise leave the request empty.
     result.messages.add(ChatMessage(role: roleUser, text: InlineImageRemovedNote))
+
+func demoteInlineImagesForTurn*(h: ConversationHistory): ConversationHistory =
+  ## The persistent history after the provider refused the inline payload.
+  ## Normally it carries no removal note: only the retry request does, so later
+  ## tool rounds do not repeat it. An album of image-only turns keeps one note,
+  ## otherwise the request would have no user turn at all.
+  let demoted = withoutInlineImages(CompletionRequest(messages: h)).messages
+  var hasDescriptiveUserText = false
+  for msg in demoted:
+    if msg.role == roleUser and
+       msg.text.replace(InlineImageRemovedNote, "").strip.len > 0:
+      hasDescriptiveUserText = true
+      break
+  for msg in demoted:
+    var stripped = msg
+    if hasDescriptiveUserText and stripped.role == roleUser:
+      stripped.text = stripped.text.replace(InlineImageRemovedNote, "").strip()
+    result.add(stripped)

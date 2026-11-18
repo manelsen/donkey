@@ -46,18 +46,43 @@ func skipSecretValue(s: string; start: int): int =
   i
 
 func namedSecretValueStart(s: string; i: int; name: string): int =
-  ## Matches `name [ws] = [ws] value` and returns the value start, or -1.
+  ## Matches `name ["] [ws] (=|:) [ws] value` and returns the value start, or
+  ## -1. The colon form exists for JSON (`"api_key": "value"`); prose such as
+  ## "monkey: business" must not be mangled, so a colon only counts when the
+  ## value is quoted.
   if not lowerAt(s, i, name):
     return -1
   var j = i + name.len
   while j < s.len and isSecretSpace(s[j]):
     inc j
-  if j >= s.len or s[j] != '=':
+  if j < s.len and s[j] in {'"', '\''}:
+    inc j
+  while j < s.len and isSecretSpace(s[j]):
+    inc j
+  if j >= s.len or (s[j] != '=' and s[j] != ':'):
     return -1
+  let colon = s[j] == ':'
   inc j
   while j < s.len and isSecretSpace(s[j]):
     inc j
+  if colon:
+    if j >= s.len or s[j] notin {'"', '\''}:
+      return -1
   j
+
+## Lowercase on purpose: `lowerAt` compares against lowercased input, so an
+## uppercase literal would never match.
+const KnownSecretPrefixes = ["xoxb-", "xoxp-", "xoxa-", "ghp_", "gho_",
+                             "ghu_", "ghs_", "github_pat_", "akia", "aiza",
+                             "nvapi-"]
+
+func prefixSecretAt(s: string; i: int): int =
+  ## Length of a known token prefix starting at `i`, or 0. Case-insensitive,
+  ## so an unusual spelling is over-redacted rather than leaked.
+  for prefix in KnownSecretPrefixes:
+    if lowerAt(s, i, prefix):
+      return prefix.len
+  0
 
 func redactForClient*(text: string): string =
   ## Removes `Bearer <token>` (any whitespace run after `Bearer`),
@@ -76,9 +101,22 @@ func redactForClient*(text: string): string =
       else:
         buf.add(text[i])
         inc i
+    elif lowerAt(text, i, "basic"):
+      var j = i + 5
+      if j < text.len and isSecretSpace(text[j]):
+        while j < text.len and isSecretSpace(text[j]):
+          inc j
+        buf.add(RedactedPlaceholder)
+        i = skipSecretValue(text, j)
+      else:
+        buf.add(text[i])
+        inc i
     elif lowerAt(text, i, "sk-"):
       buf.add(RedactedPlaceholder)
       i = skipSecretValue(text, i + 3)
+    elif prefixSecretAt(text, i) > 0:
+      buf.add(RedactedPlaceholder)
+      i = skipSecretValue(text, i + prefixSecretAt(text, i))
     else:
       let tokenStart = namedSecretValueStart(text, i, "token")
       let keyStart = namedSecretValueStart(text, i, "key")

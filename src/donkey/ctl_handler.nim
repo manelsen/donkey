@@ -4,7 +4,7 @@
 ## Each subcommand group (user, session, tool, skill, provider, memory, status)
 ## has its own handler proc; `dispatchCtl` routes to the right one.
 
-import std/[os, sets, strutils, tables, terminal, times]
+import std/[options, os, sets, strutils, tables, terminal, times]
 import results
 import core/types
 import core/pipeops
@@ -28,6 +28,9 @@ import ports/provider
 import adapters/ipc/client as ipcClient
 import adapters/filesystem/fs_adapter
 import domain/message
+import domain/automation/schedule_pure
+import domain/automation/schedule_view
+import adapters/state/schedule_store
 
 # ── ctl user commands ──────────────────────────────────────────────────────────
 
@@ -380,6 +383,283 @@ proc ctlStatus*(cfg: DonkeyConfig): Result[void, string] =
   echo formatDaemonStatus(st)
   ok()
 
+# ── ctl schedule commands ──────────────────────────────────────────────────────
+## `schedule list/show` are read-only and work with the daemon stopped: they
+## open `{home}/state/schedules.json` through the same store the daemon uses.
+##
+## The handlers below return the rendered stdout text as the `Result` value
+## (instead of echoing it) so the output is testable without capturing stdout;
+## `dispatchSchedule` is the only caller and prints it. That is a deliberate
+## small deviation from the `Result[void, string]` + echo convention used by
+## the older ctl groups.
+
+const
+  ScheduleDefaultChannel = "telegram"
+  ScheduleDefaultTz = "UTC+00:00"
+  ScheduleDefaultCatchUp = "skip"
+
+proc scheduleNow(nowMs: int64): int64 =
+  ## `-1` means "use the wall clock"; tests always inject an instant.
+  if nowMs >= 0: nowMs else: epochMs()
+
+func scheduleViewOf(record: ScheduleRecord): ScheduleViewRecord =
+  ## Adapter row → pure view projection. `last_status`/`last_error`/`failures`
+  ## stay empty: this store slice does not persist them, and the view never
+  ## invents a status.
+  ScheduleViewRecord(
+    spec: record.spec,
+    lastRunAtMs: record.lastRunAtMs,
+    lastFireAtMs: record.lastFireAtMs,
+  )
+
+func parseCatchUpArg(raw: string): Result[ScheduleCatchUp, string] =
+  case raw.strip().toLowerAscii()
+  of "", "skip": ok(scSkip)
+  of "once": ok(scOnce)
+  else:
+    err("invalid catch-up policy '" & raw & "': expected skip or once")
+
+proc ctlScheduleList*(stateDir: string; asJson = false;
+                      nowMs = -1'i64): Result[string, string] =
+  ## `list`: every schedule, never the payload. Empty store prints
+  ## `No schedules.` (human) or `[]` (`--json`) and is a success.
+  let loaded = newScheduleStoreRef(stateDir).loadAllRecords()
+  if loaded.isErr:
+    return err(loaded.error)
+  var rows: seq[ScheduleViewRecord]
+  for record in loaded.get():
+    rows.add scheduleViewOf(record)
+  let at = scheduleNow(nowMs)
+  if asJson:
+    return ok(formatScheduleJson(rows, at))
+  ok(schedulePanelLines(rows, at).join("\n"))
+
+proc ctlScheduleShow*(stateDir, scheduleId: string; asJson = false;
+                      nowMs = -1'i64): Result[string, string] =
+  ## `show <id>`: detail for one schedule, including the payload. Unknown id
+  ## is an error (the caller exits non-zero).
+  let loaded = newScheduleStoreRef(stateDir).loadRecord(scheduleId)
+  if loaded.isErr:
+    return err(loaded.error)
+  if loaded.get().isNone:
+    return err("schedule not found: " & scheduleId)
+  let record = loaded.get().get()
+  let row = scheduleViewOf(record)
+  let at = scheduleNow(nowMs)
+  if asJson:
+    return ok(formatScheduleObjectJson(row, at))
+  var lines = scheduleDetailLines(row, at)
+  if record.loadWarning.len > 0:
+    lines.insert("warning: " & record.loadWarning, 0)
+  ok(lines.join("\n"))
+
+proc ctlScheduleAdd*(stateDir, scheduleId, cronExpr, userId, payload: string;
+                     nowMs: int64; channel = ScheduleDefaultChannel;
+                     tz = ScheduleDefaultTz;
+                     catchUp = ScheduleDefaultCatchUp): Result[string, string] =
+  ## `add <id> ...`: validate, refuse a duplicate id before touching the file,
+  ## then persist `createdAtMs = now`, `lastRunAtMs = createdAtMs` (creation
+  ## never fires) and `lastFireAtMs = 0`.
+  let id = scheduleId.strip()
+  let offset = parseTzOffset(tz)
+  if offset.isErr:
+    return err(offset.error)
+  let policy = parseCatchUpArg(catchUp)
+  if policy.isErr:
+    return err(policy.error)
+
+  let spec = ScheduleSpec(
+    id: id,
+    cronExpr: cronExpr,
+    tzOffsetMinutes: offset.get(),
+    userId: userId,
+    channel: channel,
+    payload: payload,
+    catchUp: policy.get(),
+    enabled: true,
+    createdAtMs: nowMs,
+  )
+  let valid = validateScheduleSpec(spec)
+  if valid.isErr:
+    return err(valid.error)
+
+  let store = newScheduleStoreRef(stateDir)
+  let existing = store.loadRecord(spec.id)
+  if existing.isErr:
+    return err(existing.error)
+  if existing.get().isSome:
+    return err("schedule '" & spec.id & "' already exists; remove it first " &
+               "with `donkey ctl schedule remove " & spec.id & "`")
+
+  let record = ScheduleRecord(
+    spec: spec,
+    lastRunAtMs: spec.createdAtMs,
+    lastFireAtMs: 0,
+  )
+  let saved = store.upsert(record)
+  if saved.isErr:
+    return err(saved.error)
+  ok("Added schedule '" & spec.id & "' (" & spec.cronExpr & ", " &
+     formatTzOffset(spec.tzOffsetMinutes) & ", " & spec.channel & ")")
+
+proc ctlScheduleRemove*(stateDir, scheduleId: string
+                       ): Result[string, string] =
+  ## `remove <id>`: unknown id is an error.
+  let store = newScheduleStoreRef(stateDir)
+  let existing = store.loadRecord(scheduleId)
+  if existing.isErr:
+    return err(existing.error)
+  if existing.get().isNone:
+    return err("schedule not found: " & scheduleId)
+  let removed = store.remove(scheduleId)
+  if removed.isErr:
+    return err(removed.error)
+  ok("Removed schedule '" & scheduleId & "'.")
+
+proc ctlScheduleSetEnabled*(stateDir, scheduleId: string; enabled: bool
+                           ): Result[string, string] =
+  ## `enable`/`disable <id>`: flips `spec.enabled` and rewrites the whole
+  ## record, so both watermarks are preserved. Unknown id is an error.
+  let store = newScheduleStoreRef(stateDir)
+  let existing = store.loadRecord(scheduleId)
+  if existing.isErr:
+    return err(existing.error)
+  if existing.get().isNone:
+    return err("schedule not found: " & scheduleId)
+  var record = existing.get().get()
+  record.spec.enabled = enabled
+  let saved = store.upsert(record)
+  if saved.isErr:
+    return err(saved.error)
+  ok((if enabled: "Enabled schedule '" else: "Disabled schedule '") &
+     scheduleId & "'.")
+
+proc scheduleFlagValue*(args: seq[string]; name: string): Option[string] =
+  var i = 0
+  while i < args.len:
+    if args[i] == name:
+      if i + 1 < args.len:
+        return some(args[i + 1])
+      return none(string)
+    if args[i].startsWith(name & "="):
+      return some(args[i][name.len + 1 .. ^1])
+    inc i
+  none(string)
+
+const ScheduleValueFlags = ["--cron", "--user", "--payload", "--channel",
+                            "--tz", "--catchup", "--catch-up"]
+
+func scheduleAddId*(raw: openArray[string]; fallback: seq[string]): string =
+  ## The schedule id is the first positional after `add`. `main()` parses with
+  ## `std/parseopt`, whose `cmdArgument` also yields the *value* of a long
+  ## option, so `args[3]` can be the cron expression when flags come first —
+  ## and `add --cron "0 9 * * *" ... daily` would create a schedule whose id is
+  ## the cron. Walk the raw argv instead, skipping flags and their values.
+  var i = 0
+  while i < raw.len and raw[i] != "add":
+    inc i
+  if i >= raw.len:
+    if fallback.len >= 4 and not fallback[3].startsWith("--"):
+      return fallback[3]
+    return ""
+  inc i
+  while i < raw.len:
+    let token = raw[i]
+    if token.startsWith("--"):
+      inc i
+      if '=' notin token and token in ScheduleValueFlags and i < raw.len:
+        inc i
+      continue
+    return token
+  ""
+
+func scheduleHasFlag(args: seq[string]; name: string): bool =
+  for arg in args:
+    if arg == name:
+      return true
+  false
+
+proc scheduleUsage() =
+  echo "Usage: donkey ctl schedule <list|show|add|remove|enable|disable> [args]"
+  echo ""
+  echo "  list [--json]"
+  echo "  show <id> [--json]"
+  echo "  add <id> --cron <expr> --user <id> --payload <text>"
+  echo "           [--channel " & ScheduleDefaultChannel & "] [--tz UTC+00:00] [--catchup skip|once]"
+  echo "  remove <id>"
+  echo "  enable <id>"
+  echo "  disable <id>"
+
+proc dispatchSchedule(stateDir: string; args: seq[string];
+                      flagArgs: seq[string] = @[]): int =
+  ## `args[1] == "schedule"`; `args[2]` is the subcommand.
+  ##
+  ## `flagArgs` defaults to the raw `commandLineParams()`: `main()` parses
+  ## argv with `std/getopt`, which swallows every `--flag` before the command
+  ## registry sees it (`else: discard`), so `args` only carries positionals.
+  ## Reading the raw argv here is the smallest fix that keeps `src/donkey.nim`
+  ## out of this story; tests can inject `flagArgs` explicitly.
+  let rawFlags = if flagArgs.len > 0: flagArgs else: commandLineParams()
+  let sub = if args.len >= 3: args[2] else: ""
+  let asJson = scheduleHasFlag(rawFlags, "--json")
+  if sub == "list":
+    let r = ctlScheduleList(stateDir, asJson, epochMs())
+    if r.isErr: echo "Error: " & r.error; return 1
+    echo r.get()
+    return 0
+
+  if sub == "show":
+    if args.len < 4 or args[3].startsWith("--"):
+      echo "Error: missing schedule id"
+      return 1
+    let r = ctlScheduleShow(stateDir, args[3], asJson, epochMs())
+    if r.isErr: echo "Error: " & r.error; return 1
+    echo r.get()
+    return 0
+
+  if sub == "add":
+    let id = scheduleAddId(rawFlags, args)
+    if id.len == 0 or id.startsWith("--"):
+      echo "Error: missing schedule id"
+      return 1
+    let cron = scheduleFlagValue(rawFlags, "--cron")
+    let user = scheduleFlagValue(rawFlags, "--user")
+    let payload = scheduleFlagValue(rawFlags, "--payload")
+    if cron.isNone:
+      echo "Error: --cron is required"
+      return 1
+    if user.isNone:
+      echo "Error: --user is required"
+      return 1
+    if payload.isNone:
+      echo "Error: --payload is required"
+      return 1
+    let channel = scheduleFlagValue(rawFlags, "--channel")
+      .get(ScheduleDefaultChannel)
+    let tz = scheduleFlagValue(rawFlags, "--tz").get(ScheduleDefaultTz)
+    let catchUp = scheduleFlagValue(rawFlags, "--catchup")
+      .get(scheduleFlagValue(rawFlags, "--catch-up").get(ScheduleDefaultCatchUp))
+    let r = ctlScheduleAdd(stateDir, id, cron.get(), user.get(),
+                           payload.get(), epochMs(), channel = channel, tz = tz,
+                           catchUp = catchUp)
+    if r.isErr: echo "Error: " & r.error; return 1
+    echo r.get()
+    return 0
+
+  if sub in ["remove", "enable", "disable"]:
+    if args.len < 4 or args[3].startsWith("--"):
+      echo "Error: missing schedule id"
+      return 1
+    let r =
+      if sub == "remove": ctlScheduleRemove(stateDir, args[3])
+      else: ctlScheduleSetEnabled(stateDir, args[3], sub == "enable")
+    if r.isErr: echo "Error: " & r.error; return 1
+    echo r.get()
+    return 0
+
+  scheduleUsage()
+  2
+
 # ── dispatch ───────────────────────────────────────────────────────────────────
 
 proc dispatchCtl*(cfg: DonkeyConfig;
@@ -509,6 +789,12 @@ proc dispatchCtl*(cfg: DonkeyConfig;
     let r = ctlProviderTest(args[3], buildCompleteFnRef)
     if r.isErr: return 1
     return 0
+
+  # ── schedule ──
+  if args[1] == "schedule":
+    ## Same state dir the daemon uses (`{home}/state`), so read-only commands
+    ## work with the daemon stopped.
+    return dispatchSchedule(cfg.home / "state", args)
 
   # ── memory ──
   when defined(withPostgres) or defined(withSqlite):

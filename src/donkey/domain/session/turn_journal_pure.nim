@@ -161,18 +161,23 @@ func turnIdFor*(userId, channel, channelMessageId, chatId,
 
 func isTurnTerminal*(entry: TurnEntry): bool =
   ## Terminal-and-committable: `tevCommitted` closes a turn only when the final
-  ## reply exists (`tpsReplyReady`), the delivery branch reached an outcome
-  ## (`rdsQueued`, `rdsSent` or `rdsFailed`; `rdsNone`/`rdsAttempted` are still
-  ## in flight and uncertain respectively), memory is terminal (`mwsWritten`,
+  ## reply exists (`tpsReplyReady`), the delivery branch reached a **final**
+  ## outcome (`rdsSent` or `rdsFailed`), memory is terminal (`mwsWritten`,
   ## `mwsSkipped` or `mwsLost`) and the transcript is terminal (`twsSaved` or
   ## `twsLost`; it is derived and never rewritten).
+  ##
+  ## `rdsQueued` is deliberately NOT terminal: the reply is still waiting for
+  ## the drainer, and committing it would hide the turn from `loadActive`, so a
+  ## crash in that window would lose the answer. It stays resumable through
+  ## `sendQueuedReply`, and only `tevDelivered`/`tevDeliveryFailed` may close
+  ## the turn.
   ##
   ## `tpsAccepted`, `tpsCommitted` and `tpsAbandoned` are deliberately NOT
   ## terminal-and-committable: accepted still has work to do, and the two
   ## terminal phases are already closed. This predicate answers "may the
   ## caller journal `tevCommitted` now?", not "is the turn over?".
   entry.phase == tpsReplyReady and
-    entry.replyDelivery in {rdsQueued, rdsSent, rdsFailed} and
+    entry.replyDelivery in {rdsSent, rdsFailed} and
     entry.memoryWrite in {mwsWritten, mwsSkipped, mwsLost} and
     entry.transcriptWrite in {twsSaved, twsLost}
 

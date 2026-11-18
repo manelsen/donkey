@@ -26,6 +26,9 @@ type
     tkBind               ## associate chat with personality
     tkReasoningToggle    ## toggle chain-of-thought visibility
     tkHeartbeat          ## periodic proactive task from HEARTBEAT.md
+    tkSchedule           ## proactive task fired by a persisted schedule (US-005)
+                         ## appended last: existing ordinals are part of the
+                         ## message contract and must not move
 
   AgentMessage* = object
     kind*:     AgentMessageKind

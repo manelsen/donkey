@@ -8,7 +8,7 @@ Donkey connects multiple messaging channels to various LLM providers. It uses a 
 ## Features
 
 - **Multi-Channel**: Telegram, Discord, QQ, Slack, WeChat, Feishu, Matrix, and more
-- **Multi-Provider**: ZAI, OpenRouter, Anthropic, OpenAI, Gemini, DeepSeek, MiniMax, Ollama
+- **Multi-Provider**: ZAI, OpenRouter, Anthropic, OpenAI, Gemini, DeepSeek, MiniMax, Groq, OpenCode, Ollama, NVIDIA NIM, Alibaba DashScope, Fireworks
 - **SQLite-first Memory**: Embedded SQLite + `sqlite-vec` in the normal build
 - **Pure Core**: Hexagonal architecture with pure functional cores
 - **Operational Surface**: `setup`, `doctor`, `service`, TUI dashboard, and heartbeat automation
@@ -63,9 +63,12 @@ See [Installation Guide](getting_started/installation.md) for detailed setup.
 ### Topics
 - [Commands](topics/commands.md) - Slash command system
 - [Hooks](topics/hooks.md) - Message flow interception
+- [Providers](topics/providers.md) - Provider descriptors, compat profiles, limits and adding a provider
 - [Memory](topics/memory.md) - Persistent storage
 - [Media](topics/media.md) - Inline images, transcripts and voice replies
 - [Sessions](topics/sessions.md) - Session management
+- [Interfaces](topics/interfaces.md) - OpenAI-compatible API, SSE, dashboard and the worker budget
+- [Channels](topics/channels.md) - Telegram, LINE, Slack, Discord and the other channel adapters
 - [Outbound Presentation](architecture.md) - UI surface ownership, fallback policy, and streaming/status model
 
 ### Reference

@@ -10,6 +10,7 @@ import donkey/core/types
 import donkey/core/tooling/tool_loop
 import donkey/domain/message
 import donkey/domain/gateway/identity_pure
+import donkey/domain/gateway/chat_response
 import donkey/app/chat_bridge
 import donkey/app/agent_chat_runtime
 
@@ -33,6 +34,10 @@ type DispatchMode = enum
   dmFinal
   dmPartialThenFinal
   dmToolThenFinal
+  dmTwoPartialsThenFinal
+  dmPartialThenError
+  dmHugeFinal
+  dmCumulativePartials
 
 var fakeBridge {.threadvar.}: ChatBridge
 var dispatched {.threadvar.}: seq[InboundMessage]
@@ -75,6 +80,30 @@ proc fakeDispatch(msg: InboundMessage) {.gcsafe.} =
                                tool = ToolCallNotice(phase: "done"))
     deliverToBridge(msg.userId, finalText, rkFinalAnswer,
                                inputTokens = 11, outputTokens = 7)
+  of dmTwoPartialsThenFinal:
+    deliverToBridge(msg.userId, "Olá, ", rkFinalAnswer,
+                               partial = true, inputTokens = 3, outputTokens = 2)
+    deliverToBridge(msg.userId, "mundo", rkFinalAnswer,
+                               partial = true, inputTokens = 5, outputTokens = 3)
+    deliverToBridge(msg.userId, finalText, rkFinalAnswer,
+                               inputTokens = 11, outputTokens = 7)
+  of dmCumulativePartials:
+    ## What the tool loop actually emits: each partial is the full text so far.
+    deliverToBridge(msg.userId, "Olá, ", rkFinalAnswer,
+                    partial = true, inputTokens = 3, outputTokens = 2)
+    deliverToBridge(msg.userId, "Olá, mundo", rkFinalAnswer,
+                    partial = true, inputTokens = 5, outputTokens = 3)
+    deliverToBridge(msg.userId, finalText, rkFinalAnswer,
+                    inputTokens = 11, outputTokens = 7)
+  of dmHugeFinal:
+    deliverToBridge(msg.userId,
+                    repeat('x', MaxTurnBufferBytes + 64), rkFinalAnswer,
+                    inputTokens = 11, outputTokens = 7)
+  of dmPartialThenError:
+    deliverToBridge(msg.userId, "parcial", rkFinalAnswer,
+                               partial = true, inputTokens = 3, outputTokens = 2)
+    discard fakeBridge.fail(msg.userId,
+                            "provider key sk-secret-123 failed")
 
 proc fakeAuthorize(userId: UserId): AuthVerdict {.gcsafe, raises: [].} =
   discard userId
@@ -103,6 +132,78 @@ proc run(body: string; tokenConfigured = true;
 proc contentOf(body: string): string =
   let node = parseJson(body)
   node{"choices"}[0]{"message"}{"content"}.getStr()
+
+# ── SSE fakes ─────────────────────────────────────────────────────────────────
+
+var
+  sseChunks {.threadvar.}: seq[string]
+  sseOpened:        bool
+  sseAcquireCalls:  int
+  sseReleaseCalls:  int
+  sseAcquireAllowed = true
+  sseFailAt:        int  ## 0 = never fail; N = fail on the Nth sent chunk
+
+proc sseSend(chunk: string): bool {.gcsafe.} =
+  sseChunks.add(chunk)
+  if sseFailAt > 0 and sseChunks.len >= sseFailAt:
+    return false
+  true
+
+proc sseOpen(): bool {.gcsafe.} =
+  sseOpened = true
+  true
+
+proc sseAcquire(): bool {.gcsafe.} =
+  inc sseAcquireCalls
+  sseAcquireAllowed
+
+proc sseRelease() {.gcsafe.} =
+  inc sseReleaseCalls
+
+proc resetStream() =
+  resetFakes()
+  sseChunks = @[]
+  sseOpened = false
+  sseAcquireCalls = 0
+  sseReleaseCalls = 0
+  sseAcquireAllowed = true
+  sseFailAt = 0
+
+proc runStream(body: string; timeoutMs = 5_000): AgentStreamResult =
+  runAgentStream(
+    body             = body,
+    bridge           = fakeBridge,
+    dispatch         = fakeDispatch,
+    authorize        = fakeAuthorize,
+    tokenConfigured  = true,
+    now              = fakeEpochSec,
+    openStream       = sseOpen,
+    send             = sseSend,
+    acquireSlot      = sseAcquire,
+    releaseSlot      = sseRelease,
+    streamNow        = fakeNowFn,
+    streamNap        = fakeNapFn,
+    timeoutMs        = timeoutMs,
+    model            = "donkey/test",
+  )
+
+proc streamNodes(): seq[JsonNode] =
+  ## Parses every `data:` payload except the `[DONE]` terminator.
+  for chunk in sseChunks:
+    if chunk == sseDone():
+      continue
+    if chunk.startsWith("data: ") and chunk.endsWith("\n\n"):
+      let payload = chunk["data: ".len ..< chunk.len - 2]
+      result.add(parseJson(payload))
+
+proc doneCount(): int =
+  for chunk in sseChunks:
+    if chunk == sseDone():
+      inc result
+
+proc streamedContent(): string =
+  for node in streamNodes():
+    result.add(node{"choices"}[0]{"delta"}{"content"}.getStr(""))
 
 # ── success path ──────────────────────────────────────────────────────────────
 
@@ -324,3 +425,176 @@ suite "UsageTotals":
     let state = newToolLoopState(@[])
     check state.usage.inputTokens == 0
     check state.usage.outputTokens == 0
+
+# ── streaming (US-003) ────────────────────────────────────────────────────────
+
+suite "cumulative partials":
+
+  test "cumulative snapshots reach the client as deltas, not duplicates":
+    resetStream()
+    dispatchMode = dmCumulativePartials
+    finalText = "Olá, mundo"
+    let result = runStream(bodyFor("alice", "oi"))
+    check result.outcome == asCompleted
+    let nodes = streamNodes()
+    var content = ""
+    for node in nodes:
+      let delta = node["choices"][0]["delta"]
+      if delta.hasKey("content"):
+        content.add(delta["content"].getStr())
+    check content == "Olá, mundo"
+
+suite "truncation":
+
+  test "a final over the buffer cap reports finish_reason length":
+    resetFakes()
+    dispatchMode = dmHugeFinal
+    let reply = run(bodyFor("alice", "oi"))
+    check reply.status == 200
+    check parseJson(reply.body)["choices"][0]["finish_reason"].getStr() == "length"
+
+  test "the SSE final chunk reports finish_reason length":
+    resetStream()
+    dispatchMode = dmHugeFinal
+    let result = runStream(bodyFor("alice", "oi"))
+    check result.outcome == asCompleted
+    let nodes = streamNodes()
+    check nodes[^1]["choices"][0]["finish_reason"].getStr() == "length"
+
+suite "runAgentStream SSE":
+
+  test "emits role, one content chunk per partial, a final stop and one [DONE]":
+    resetStream()
+    dispatchMode = dmTwoPartialsThenFinal
+    finalText = "Olá, mundo"
+
+    let result = runStream(bodyFor("alice", "oi"))
+    check result.outcome == asCompleted
+    check sseOpened
+    check sseChunks.len == 5
+    check doneCount() == 1
+    check sseChunks[^1] == sseDone()
+
+    let nodes = streamNodes()
+    check nodes.len == 4
+    check nodes[0]["object"].getStr() == "chat.completion.chunk"
+    check nodes[0]["choices"][0]["delta"]["role"].getStr() == "assistant"
+    check nodes[1]["choices"][0]["delta"]["content"].getStr() == "Olá, "
+    check nodes[2]["choices"][0]["delta"]["content"].getStr() == "mundo"
+    check nodes[3]["choices"][0]["finish_reason"].getStr() == "stop"
+    check nodes[3]["usage"]["prompt_tokens"].getInt() == 11
+    check nodes[3]["usage"]["completion_tokens"].getInt() == 7
+
+  test "two partials plus the final yield one answer, not the final twice":
+    resetStream()
+    dispatchMode = dmTwoPartialsThenFinal
+    finalText = "Olá, mundo"
+
+    let result = runStream(bodyFor("alice", "oi"))
+    check result.outcome == asCompleted
+    check streamedContent() == "Olá, mundo"
+    check streamedContent() != "Olá, mundoOlá, mundo"
+    let nodes = streamNodes()
+    check not nodes[^1]["choices"][0]["delta"].hasKey("content")
+
+  test "a tool notice never appears as delta.content":
+    resetStream()
+    dispatchMode = dmToolThenFinal
+    finalText = "pronto"
+
+    let result = runStream(bodyFor("alice", "use a tool"))
+    check result.outcome == asCompleted
+
+    var sawToolCall = false
+    let content = streamedContent()
+    for node in streamNodes():
+      let delta = node["choices"][0]["delta"]
+      if delta.hasKey("tool_calls"):
+        sawToolCall = true
+        check not delta.hasKey("content")
+    check sawToolCall
+    check content == "pronto"
+    check not content.contains("🔧")
+    check not content.contains("✅")
+    check not content.contains("tool call(s)")
+
+  test "stream false keeps the existing single JSON path":
+    resetStream()
+    dispatchMode = dmFinal
+    finalText = "sem sse"
+    let body = $(%* {
+      "user": "alice",
+      "stream": false,
+      "messages": [%* {"role": "user", "content": "oi"}],
+    })
+
+    check not agentChatStreamRequested(body)
+    check not agentChatStreamRequested(bodyFor("alice", "oi"))
+
+    let reply = run(body)
+    check reply.status == 200
+    check parseJson(reply.body){"object"}.getStr() == "chat.completion"
+    check contentOf(reply.body) == "sem sse"
+    check sseChunks.len == 0
+
+  test "an error after the first byte emits an error event and no [DONE]":
+    resetStream()
+    dispatchMode = dmPartialThenError
+
+    let result = runStream(bodyFor("alice", "oi"))
+    check result.outcome == asErrored
+    check sseOpened
+    check sseChunks.len == 3
+    check doneCount() == 0
+
+    let nodes = streamNodes()
+    check nodes.len == 3
+    check nodes[0]["choices"][0]["delta"]["role"].getStr() == "assistant"
+    check nodes[1]["choices"][0]["delta"]["content"].getStr() == "parcial"
+    check nodes[2]["error"]["code"].getStr() == "turn_error"
+    for chunk in sseChunks:
+      check not chunk.contains("sk-secret-123")
+
+  test "the SSE slot is released after a completed stream":
+    resetStream()
+    dispatchMode = dmFinal
+    finalText = "ok"
+
+    let result = runStream(bodyFor("alice", "oi"))
+    check result.outcome == asCompleted
+    check sseAcquireCalls == 1
+    check sseReleaseCalls == 1
+    check fakeBridge.pendingCount == 0
+
+  test "the SSE slot is released when the client aborts":
+    resetStream()
+    dispatchMode = dmTwoPartialsThenFinal
+    finalText = "Olá, mundo"
+    sseFailAt = 2  # role chunk succeeds, the first content chunk fails
+
+    let result = runStream(bodyFor("alice", "oi"))
+    check result.outcome == asClientGone
+    check sseReleaseCalls == 1
+    check fakeBridge.pendingCount == 0  # the finished turn was already drained
+
+  test "the SSE slot is released on the deadline":
+    resetStream()
+    dispatchMode = dmNothing
+
+    let result = runStream(bodyFor("alice", "demora"), timeoutMs = 30)
+    check result.outcome == asErrored
+    check sseOpened
+    check sseReleaseCalls == 1
+    check doneCount() == 0
+    check streamNodes()[^1]["error"]["code"].getStr() == "turn_timeout"
+
+  test "a full SSE budget is refused before dispatch":
+    resetStream()
+    sseAcquireAllowed = false
+
+    let result = runStream(bodyFor("alice", "oi"))
+    check result.outcome == asPreflightError
+    check result.reply.status == 429
+    check dispatched.len == 0
+    check sseReleaseCalls == 0
+    check sseChunks.len == 0

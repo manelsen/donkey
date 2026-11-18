@@ -5,12 +5,13 @@
 ## Anthropic fallback, Zen's multi-protocol routing, the Groq/OpenCode/Zen
 ## provider labels, and the model prefix those gateways accept.
 
-import std/[options, os, strutils]
+import std/[net, options, os, strutils]
 import ../../domain/message
 import ../../domain/providers/compat
 import ../../domain/providers/descriptors
 import ../../domain/providers/profile_nvidia
 import ../../domain/providers/profile_alibaba
+import ../../domain/providers/profile_fireworks
 import ../../core/pipeops
 import ../../ports/provider
 import ../../core/providers/smart_routing
@@ -33,6 +34,31 @@ func chatCompletionsEndpoint(base: string): string =
   if value.endsWith("/chat/completions"): value
   else: value & "/chat/completions"
 
+func overrideEndpointSafe(url: string): bool =
+  ## A `baseUrlEnv` override carries the provider key on every call: plain
+  ## http is only acceptable on loopback (local NIM), never to a remote host.
+  let lower = url.strip().toLowerAscii()
+  if lower.startsWith("https://"):
+    return true
+  if not lower.startsWith("http://"):
+    return false
+  var host = lower[7 .. ^1]
+  let slash = host.find('/')
+  if slash >= 0: host = host[0 ..< slash]
+  let colon = host.rfind(':')
+  if colon >= 0: host = host[0 ..< colon]
+  host = host.strip(chars = {'[', ']'})
+  if host == "localhost":
+    return true
+  try:
+    let ip = parseIpAddress(host)
+    if ip.family == IPv4:
+      return ip.address_v4[0] == 127'u8
+    ## IPv6 loopback is the only non-IPv4 address that may stay cleartext.
+    $ip == "::1"
+  except ValueError:
+    false
+
 proc providerEndpointFor*(id: string): string {.gcsafe.} =
   ## Wire URL for a provider. A descriptor `baseUrlEnv` override wins over the
   ## table (docs: `NVIDIA_BASE_URL`, `DASHSCOPE_BASE_URL`); unknown ids fall
@@ -41,7 +67,10 @@ proc providerEndpointFor*(id: string): string {.gcsafe.} =
   let override =
     if descriptor.baseUrlEnv.len > 0: getEnv(descriptor.baseUrlEnv).strip()
     else: ""
-  if override.len == 0:
+  if override.len == 0 or not overrideEndpointSafe(override):
+    ## An unsafe override is ignored rather than used: falling back to the
+    ## provider's real endpoint is the safe failure, and the key never travels
+    ## over cleartext to a remote host.
     return descriptor.baseUrl
   case descriptor.transport
   of ptOpenAiChat: chatCompletionsEndpoint(override)
@@ -78,6 +107,9 @@ proc nvidiaProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
 
 proc alibabaProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
   alibabaCompatProfileAt(providerEndpointFor("alibaba"))
+
+proc fireworksProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
+  fireworksCompatProfileAt(providerEndpointFor("fireworks"))
 
 proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
   let descriptor = descriptorOr(spec.providerName)
@@ -220,6 +252,21 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
               else: providerDefaultModelFor("alibaba"),
       providerName = "Alibaba",
       profileFn = alibabaProfileFromEnv,
+    )
+    ProviderBundle(
+      completeFn: makeFn(adapter),
+      streamFn:   adapter.makeStreamFn(),
+    )
+  of "fireworks":
+    ## Fireworks speaks the OpenAI dialect; the attribution headers and the
+    ## `reasoning_effort: "none"` off-switch are data in
+    ## `fireworksCompatProfile`, so there is no Fireworks adapter file.
+    let adapter = newCompatAdapter(
+      spec.apiKey,
+      model = if spec.modelName.len > 0: spec.modelName
+              else: providerDefaultModelFor("fireworks"),
+      providerName = "Fireworks",
+      profileFn = fireworksProfileFromEnv,
     )
     ProviderBundle(
       completeFn: makeFn(adapter),

@@ -22,7 +22,15 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 # Persistent per-path nimcache root. Falls back to the run's temp dir when
 # HOME is unusable (unset, or a literal "~", which would create "./~").
 TEST_NIMCACHE_ROOT=""
-cache_base="${XDG_CACHE_HOME:-${HOME:-}/.cache}"
+if [ -n "${XDG_CACHE_HOME:-}" ]; then
+  cache_base="$XDG_CACHE_HOME"
+elif [ -n "${HOME:-}" ]; then
+  cache_base="$HOME/.cache"
+else
+  # Neither is set: `/.cache` is absolute but not writable, and creating it
+  # would fail every test in a container. Use the per-run temp dir.
+  cache_base=""
+fi
 case "$cache_base" in
   /*) TEST_NIMCACHE_ROOT="$cache_base/nim/donkey-tests" ;;
 esac
@@ -80,8 +88,21 @@ run_one() {
   # parallel (e.g. t_openai_compat under app/ and domain/providers/).
   # Derive a unique, persistent cache from the test path so parallel runs can
   # never share a directory while warm-cache reuse between runs is preserved.
-  local cache_key="${f%.nim}"
+  # Key on the *absolute* path: two checkouts/worktrees of the same repo share
+  # the relative path (and therefore the cache) otherwise, which is the same
+  # collision this exists to prevent.
+  local abs_f
+  abs_f="$(realpath -m "$f" 2>/dev/null || true)"
+  if [ -z "$abs_f" ]; then abs_f="$PWD/$f"; fi
+  local cache_key="${abs_f%.nim}"
+  cache_key="${cache_key#/}"
   cache_key="${cache_key//\//_}"
+  # Two different paths can flatten to the same key (`a/b_c` vs `a_b/c`), so
+  # append a checksum of the absolute path: deterministic across runs, and a
+  # collision would need the same path.
+  local path_hash
+  path_hash="$(printf '%s' "$abs_f" | cksum | cut -d' ' -f1)"
+  cache_key="${cache_key}_${path_hash}"
   local cache_dir
   if [ -n "$TEST_NIMCACHE_ROOT" ]; then
     cache_dir="$TEST_NIMCACHE_ROOT/${cache_key}_d"

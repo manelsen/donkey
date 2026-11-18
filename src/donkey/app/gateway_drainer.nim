@@ -24,6 +24,7 @@ type
     drainFeishu*:    GatewayDrainProc
     drainSlack*:     GatewayDrainProc
     drainDingTalk*:  GatewayDrainProc
+    drainLine*:      GatewayDrainProc
     drainMatrix*:    GatewayDrainProc
     drainTelegram*:  GatewayDrainProc
     drainWhatsApp*:  GatewayDrainProc
@@ -38,6 +39,7 @@ func initGatewayDrainer*(
   drainFeishu:    GatewayDrainProc = nil,
   drainSlack:     GatewayDrainProc = nil,
   drainDingTalk:  GatewayDrainProc = nil,
+  drainLine:      GatewayDrainProc = nil,
   drainMatrix:    GatewayDrainProc = nil,
   drainTelegram:  GatewayDrainProc = nil,
   drainWhatsApp:  GatewayDrainProc = nil,
@@ -53,6 +55,7 @@ func initGatewayDrainer*(
     drainFeishu:    drainFeishu,
     drainSlack:     drainSlack,
     drainDingTalk:  drainDingTalk,
+    drainLine:      drainLine,
     drainMatrix:    drainMatrix,
     drainTelegram:  drainTelegram,
     drainWhatsApp:  drainWhatsApp,
@@ -249,6 +252,11 @@ proc drainDingTalkGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.
   if drainer.drainDingTalk != nil:
     result = drainer.drainDingTalk()
 
+proc drainLineGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
+  ## Drains the LINE webhook event queue if configured.
+  if drainer.drainLine != nil:
+    result = drainer.drainLine()
+
 proc drainMatrixGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains Matrix gateway from drainer callback.
   if drainer.drainMatrix != nil:
@@ -282,6 +290,7 @@ proc drainGatewayEvents*(drainer: GatewayDrainer): int {.discardable, gcsafe.} =
   if drainSlackGateway(drainer): result.inc
   if drainQQGateway(drainer): result.inc
   if drainDingTalkGateway(drainer): result.inc
+  if drainLineGateway(drainer): result.inc
   if drainMatrixGateway(drainer): result.inc
   if drainTelegramGateway(drainer): result.inc
   if drainWhatsAppGateway(drainer): result.inc

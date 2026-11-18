@@ -139,6 +139,7 @@ func availableProvidersFromEnv*(): ProviderAvailability =
     zaiCoding: getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")).len > 0,
     nvidia: getEnv("NVIDIA_API_KEY").len > 0,
     alibaba: getEnv("DASHSCOPE_API_KEY").len > 0,
+    fireworks: getEnv("FIREWORKS_API_KEY").len > 0,
   )
 
 when defined(withPostgres) or defined(withSqlite):
@@ -842,6 +843,9 @@ proc buildDoctorReport*(memory: MdFileAdapter;
     ("GROQ_API_KEY", "Groq"),
     ("GEMINI_API_KEY", "Gemini"),
     ("MINIMAX_API_KEY", "MiniMax"),
+    ("NVIDIA_API_KEY", "NVIDIA NIM"),
+    ("DASHSCOPE_API_KEY", "Alibaba DashScope"),
+    ("FIREWORKS_API_KEY", "Fireworks AI"),
   ]
   var configuredProviders: seq[string] = @[]
   for (envVar, name) in envVars:

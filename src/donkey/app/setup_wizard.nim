@@ -157,6 +157,9 @@ const ProviderMenu: seq[ProviderMenuItem] = @[
   (id: "groq",          label: "Groq          (inferência rápida)"),
   (id: "opencode-go",   label: "OpenCode Go   (agregador)"),
   (id: "zen",           label: "OpenCode Zen  (agregador)"),
+  (id: "nvidia",        label: "NVIDIA NIM    (build.nvidia.com)"),
+  (id: "alibaba",       label: "Alibaba DashScope (Qwen)"),
+  (id: "fireworks",     label: "Fireworks AI"),
 ]
 
 func isDescriptorId(descriptors: seq[ProviderDescriptor]; id: string): bool =

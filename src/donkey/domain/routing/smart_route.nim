@@ -1,5 +1,12 @@
 ## Smart Routing Classifier — pure task complexity classification.
 ##
+## DEPRECATED / NOT WIRED: production routing lives in
+## `core/providers/smart_routing.nim`. Nothing under `src/` imports this module;
+## only `tests/domain/routing/t_smart_route.nim` does. Its hardcoded provider
+## tables (including the image group) are therefore not the routing behaviour a
+## user experiences, and they will drift. Do not add providers here: add them to
+## the descriptor table, the catalog entry and `core/providers/smart_routing`.
+##
 ## This module turns request signals into an explicit complexity classification,
 ## enabling cost-aware provider selection. All functions are pure and use pipeops.
 ##

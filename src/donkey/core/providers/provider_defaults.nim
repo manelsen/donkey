@@ -18,6 +18,11 @@ const
   DefaultModelMiniMax*     = "MiniMax-M2"
   DefaultModelNvidia*      = "nvidia/nemotron-3.5-super-vl-120b-a12b"
   DefaultModelAlibaba*     = "qwen3.8-max"  ## first of the curated DashScope list
+  DefaultModelFireworks*   = "accounts/fireworks/models/kimi-k2p6"
+    ## Donkey's choice, not a Hermes default: this is
+    ## `fallback_models[0]` in the Fireworks profile
+    ## (`plugins/model-providers/fireworks/__init__.py:43-45`). Hermes'
+    ## `default_aux_model` is `accounts/fireworks/models/glm-5p2`.
 
   # Vision capability is one fact shared by the compat profile and the model
   # limits table. False means "not verified", never "verified absent".

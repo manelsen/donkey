@@ -103,8 +103,12 @@ func isTerminal(event: ChatBridgeEvent): bool =
 
 proc appendEvent(turn: var PendingTurn; event: ChatBridgeEvent) =
   if isTerminal(event):
-    if turn.bufferedBytes + event.text.len > MaxTurnBufferBytes:
-      # The final answer supersedes accumulated partial content.
+    ## The terminal supersedes accumulated partial content, so whatever was
+    ## lost from partials no longer describes the answer: only a terminal that
+    ## is itself clipped makes the turn truncated.
+    turn.truncated = false
+    if event.text.len > MaxTurnBufferBytes:
+      # Only the terminal's own size matters: it replaces the partials.
       turn.events = @[]
       turn.bufferedBytes = 0
       turn.truncated = true
@@ -142,6 +146,17 @@ proc markOrphaned(bridge: ChatBridge; key: string) =
 
 # ── lifecycle ─────────────────────────────────────────────────────────────────
 
+proc sweepExpiredOrphans(bridge: ChatBridge; now: int64) =
+  ## Under the lock: an orphan whose TTL passed is only reclaimed when someone
+  ## touches its key, so a user who never returns would leak the entry for the
+  ## process lifetime. One sweep per registration bounds that.
+  var expired: seq[string]
+  for key, turn in bridge.pending:
+    if turn.orphaned and turn.deadlineMs > 0 and now >= turn.deadlineMs:
+      expired.add(key)
+  for key in expired:
+    bridge.pending.del(key)
+
 proc register*(bridge: ChatBridge; userId: UserId;
                timeoutMs: int64 = 0): Result[void, ChatBridgeError] =
   ## Starts a turn for `userId`. A second turn while one is pending is refused
@@ -150,10 +165,22 @@ proc register*(bridge: ChatBridge; userId: UserId;
   let key = $userId
   acquire(bridge.lock)
   try:
+    bridge.sweepExpiredOrphans(bridge.nowFn())
     if bridge.pending.hasKey(key):
       if orphanExpired(bridge.pending[key], bridge.nowFn()):
         bridge.pending.del(key)
       else:
+        # A worker that died after `register` never abandoned and never
+        # polled: without this the key would stay busy until a process
+        # restart. Reserve it for the orphan TTL instead, so a late terminal
+        # is still discarded but the lockout is bounded.
+        let entry = bridge.pending[key]
+        ## Do not orphan a turn whose terminal is already buffered: the
+        ## original worker still has to poll it, and marking it orphaned would
+        ## clear the answer.
+        if not entry.orphaned and not entry.finished and entry.deadlineMs > 0 and
+            bridge.nowFn() >= entry.deadlineMs:
+          bridge.markOrphaned(key)
         return err(ChatBridgeError(
           kind: cbeBusy,
           message: "a turn is already pending for " & key,
@@ -250,6 +277,13 @@ proc poll*(bridge: ChatBridge; userId: UserId;
         return ChatBridgeBatch(
           status: cbpDone, events: drained, truncated: truncated)
 
+      if drained.len > 0 and deadline > 0 and bridge.nowFn() >= deadline:
+        ## The deadline wins even when there is buffered content: without this
+        ## a chatty turn past its deadline kept answering cbpEvents and the
+        ## caller never saw the timeout.
+        bridge.markOrphaned(key)
+        return ChatBridgeBatch(status: cbpDeadline, truncated: truncated)
+
       if drained.len > 0:
         bridge.pending[key].events = @[]
         bridge.pending[key].bufferedBytes = 0
@@ -280,6 +314,12 @@ proc abandon*(bridge: ChatBridge; userId: UserId): bool =
   acquire(bridge.lock)
   try:
     if not bridge.pending.hasKey(key):
+      return false
+    if bridge.pending[key].finished:
+      # The terminal answer is already buffered and the client is gone:
+      # nothing can consume it, so free the key now instead of holding it for
+      # the whole orphan TTL.
+      bridge.pending.del(key)
       return false
     if bridge.pending[key].orphaned:
       if orphanExpired(bridge.pending[key], bridge.nowFn()):

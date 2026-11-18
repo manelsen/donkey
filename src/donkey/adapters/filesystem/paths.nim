@@ -7,8 +7,9 @@
 ## Exception translation belongs here, at the I/O boundary: callers receive
 ## `Result` and never see filesystem exceptions.
 
-import std/os
+import std/[os, strutils]
 import ../../core/pipeops
+import ../../domain/tools/path_guard
 when defined(posix):
   import std/posix
 
@@ -63,6 +64,32 @@ proc canonicalNearestExisting*(path: string): Result[string, string] {.gcsafe, r
     ok(absolutePath(path))
   except CatchableError as e:
     err(e.msg)
+
+proc resolveConfinedMediaPath*(paddockRoot, raw: string): Result[string, string]
+                               {.gcsafe, raises: [].} =
+  ## Resolves outbound media inside the paddock. The lexical policy decides
+  ## first; the canonical root and target are then re-checked so a symlink
+  ## cannot move the read outside. Every failure is closed: the caller sends
+  ## the neutral notice and never touches the file.
+  try:
+    let decision = classifyOutboundMediaPath(paddockRoot, raw)
+    if decision.kind != mpkLocal:
+      return err(decision.reason)
+    let rootResult = canonicalPath(normalizePath(paddockRoot))
+    if rootResult.isErr:
+      return err("cannot resolve media root")
+    let root = rootResult.get()
+    if not dirExists(root):
+      return err("media root is unavailable")
+    let targetResult = canonicalNearestExisting(decision.lexicalPath)
+    if targetResult.isErr:
+      return err("cannot resolve media path")
+    let target = targetResult.get()
+    if target != root and not target.startsWith(root & $DirSep):
+      return err("media path is outside the paddock")
+    ok(target)
+  except CatchableError:
+    err("cannot resolve media path")
 
 proc secureDir*(path: string): Result[void, string] {.discardable.} =
   try:

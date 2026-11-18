@@ -17,6 +17,7 @@ This matrix reflects the current `core/outbound` capability model used by the ru
 | [Telegram](#telegram) | yes | yes | yes | yes | yes |
 | [Discord](#discord) | yes | yes | yes | yes | yes |
 | [Slack](#slack) | yes | no | no | no | no |
+| [LINE](#line) | yes | no | no | no | no |
 | WeChat Work | yes | no | no | no | no |
 | WeChat | yes | no | no | no | no |
 | QQ | yes | no | no | no | no |
@@ -114,6 +115,157 @@ Register in your server or globally via API.
 - `chat:write`
 - `commands`
 - `app_mentions:read`
+
+---
+
+## LINE
+
+### Features
+- Text messages (push and single-use reply)
+- Group and multi-user room conversations
+- Webhook-driven inbound (no polling, no long-lived connection)
+- Send only: no edits, keyboards, reactions, media, or voice notes
+
+### Configuration
+
+```bash
+export LINE_CHANNEL_ACCESS_TOKEN=YOUR_CHANNEL_ACCESS_TOKEN
+export LINE_CHANNEL_SECRET=YOUR_CHANNEL_SECRET
+export LINE_ALLOWED_GROUPS=C0123456789abcdef,Cfedcba9876543210
+export LINE_ALLOWED_USERS=U0123456789abcdef
+```
+
+| Variable | Required | Meaning |
+|----------|----------|---------|
+| `LINE_CHANNEL_ACCESS_TOKEN` | yes | Bearer token for push/reply. It also gates the channel: without it the LINE route is not mounted and the webhook queue is not opened. |
+| `LINE_CHANNEL_SECRET` | yes | HMAC key for `X-Line-Signature`. With an empty secret `/webhook/line` answers 404. |
+| `LINE_ALLOWED_GROUPS` | no | Comma-separated `groupId`/`roomId` values, exact match. **Empty or unset = no group or room is allowed.** |
+| `LINE_ALLOWED_USERS` | no | Comma-separated `source.userId` values, exact match, applied to DMs and groups. Empty or unset = every speaker allowed. |
+
+`LINE_API_BASE` optionally overrides the API host (HTTPS required outside
+loopback; the default is `https://api.line.me`). Entries in the two allowlists
+are trimmed and deduplicated; an empty entry is dropped.
+
+### Webhook
+
+Point the Messaging API channel at the public HTTPS endpoint:
+
+```
+https://your-public-host/webhook/line
+```
+
+1. Set the channel's **Webhook URL** to that endpoint.
+2. Press **Verify** in the console. It posts `{"events":[]}`, which is answered
+   `200 ok` without enqueueing an event.
+3. Enable **Use webhook** and **Webhook redelivery**. The route answers `503`
+   when its bounded queue is full, and LINE only retries when redelivery is on;
+   the retries are best-effort, so a sustained backlog can still lose an event.
+
+The receiver itself is enabled by `DONKEY_WEBHOOK_PORT` and binds
+`DONKEY_WEBHOOK_HOST` (default `127.0.0.1`). It also accepts plain HTTP, so
+public HTTPS normally comes from a TLS-terminating proxy or from
+`DONKEY_WEBHOOK_TLS_CERT`/`DONKEY_WEBHOOK_TLS_KEY`.
+
+Redelivery can stay enabled: repeated `webhookEventId` values are dropped for
+24 hours (see below). `deliveryContext.isRedelivery` is read for telemetry only
+and never drives a decision.
+
+### Signature
+
+`X-Line-Signature` carries `base64(HMAC-SHA256(channel_secret, raw_body))`,
+computed over the request body exactly as received. There is no signed
+timestamp; replay defence is the `webhookEventId` cache, not an ingress time
+window.
+
+Because the MAC covers raw bytes, re-serialising the JSON, pretty-printing it,
+or changing any whitespace produces a 403. A proxy in front of the receiver must
+not rewrite the body.
+
+| Condition | Response |
+|-----------|----------|
+| Secret not configured | `404` (the route looks absent) |
+| Method other than `POST` | `405` |
+| Body larger than 1 MiB | `413` |
+| Missing or wrong signature | `403` |
+| Malformed or empty JSON body | `400` |
+| Accepted (including `{"events":[]}`) | `200 ok` |
+
+Checks run in that order, so an unconfigured route answers 404 even for a `GET`,
+and a request with a bad signature never reaches the JSON parser.
+
+Two edges sit at the HTTP boundary rather than in the LINE route: a declared
+`Content-Length` above the receiver's global 2 MiB read cap is rejected before
+routing with `413`, and the LINE route itself answers `413` above 1 MiB; a
+saturated worker queue (4 workers, 32 pending connections) answers `503`.
+
+### Behaviour
+
+- **Text only.** Inbound, only `message` events whose `message.type` is `text`
+  are answered. Stickers, images, files and non-message events (follow,
+  postback, …) are consumed and dropped. Outbound, `send` refuses media
+  (`LINE: media unsupported (text only)`) and keyboards
+  (`LINE: keyboards unsupported (text only)`) explicitly instead of dropping
+  them silently, and `downloadFile` always fails with
+  `LINE: media unsupported`.
+- **Standby is dropped.** Events with `mode: "standby"` are consumed without a
+  reply, because another module owns the answer.
+- **Groups must be allowlisted.** A `source.type == "group"` event is gated by
+  its `groupId` and a `room` event by its `roomId`; both are matched exactly
+  against `LINE_ALLOWED_GROUPS`, and an empty list denies every group and room.
+  Groups and rooms share one list — there is no separate room allowlist.
+- **DMs are open by default.** A `source.type == "user"` event is allowed
+  unless `LINE_ALLOWED_USERS` is non-empty; when set, the list applies to every
+  speaker, in DMs and groups alike, and matching is exact (`U1` does not admit
+  `U10`).
+- **Duplicate event ids are dropped for 24 hours.** `webhookEventId` is kept in
+  an in-memory cache with a 24 h TTL and at most 1,000 ids (the oldest is
+  evicted). An event without an id is never treated as a duplicate. The cache
+  is not persisted, so a daemon restart forgets recently seen ids.
+- **Identity is the speaker; the reply target is the conversation.**
+  `source.userId` becomes the Donkey identity while `chatId` — the
+  `groupId`/`roomId`, or the `userId` in a DM — becomes the conversation. A
+  group therefore answers in the group, and two speakers in the same group keep
+  distinct identities. Outbound precedence is `OutboundMessage.replyTo`, then
+  the last conversation that speaker wrote from (remembered in memory by the
+  adapter), then the speaker's raw id (a DM). A proactive send with neither
+  `replyTo` nor a remembered conversation goes to the speaker's DM, not to the
+  group.
+
+Accepted events then go through the shared identity/pairing authorization. That
+gate is called with `isGroup = false` even for a group event, so the LINE
+allowlist is the only group-level gate and the speaker is authorized like a DM
+identity. The LINE gates run first, so a denied event never creates a session,
+identity, or pairing request.
+
+### Limits
+
+- **One push per send.** `send` issues a single
+  `POST /v2/bot/message/push`; the whole text is split into bubbles in that
+  same call, so a long answer cannot be delivered partially or duplicated by a
+  retry.
+- **4,500 characters per bubble.** Chunks are measured in Unicode characters,
+  not bytes; the API's hard per-bubble cap is 5,000, so 4,500 leaves headroom.
+  Breaks prefer a paragraph, then a line, then a word boundary.
+- **At most 5 bubbles.** A sixth chunk is not sent: the last bubble is
+  truncated to fit and ends with `…`.
+- **No retries and no reply→push fallback.** A failed push or reply is returned
+  as an error. Reply tokens are single-use, and a refused reply is never retried
+  as a push. The adapter exposes `sendReply`, but the inbound runtime answers
+  with pushes, so the parsed `replyToken` is currently unused.
+- **429 handling.** A 429 records a channel-wide flood window (`Retry-After`
+  seconds, or the `retry_after`/`retryAfter` body field, default 5 s). Sends
+  attempted while the window is active fail immediately without calling the
+  API.
+- **Startup order.** The webhook queue is opened once at daemon startup,
+  before the receiver binds, because HTTP workers enqueue into it. The queue,
+  the flood window, and the dedupe cache all live in memory.
+
+### Disabling
+
+Unset `LINE_CHANNEL_ACCESS_TOKEN`: the channel is treated as absent, the queue
+is not opened, the drain is a no-op, and `/webhook/line` answers 404. Unsetting
+only `LINE_CHANNEL_SECRET` also makes that route answer 404 while the receiver
+keeps serving other channels.
 
 ---
 

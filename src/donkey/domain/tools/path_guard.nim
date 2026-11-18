@@ -136,6 +136,63 @@ func validatePathAccess*(path: string; workspace = ""): PathValidation =
     return PathValidation(ok: false, error: pveOutsideWorkspace)
   PathValidation(ok: true, normalized: normalizePath(path))
 
+# ── Outbound media confinement ────────────────────────────────────────────────
+
+type
+  OutboundMediaKind* = enum
+    mpkRemote    ## explicit http(s) URL; the channel sends the URL
+    mpkLocal     ## local path contained in the paddock
+    mpkRejected  ## empty, malformed, root-less or outside the paddock
+
+  OutboundMediaPath* = object
+    kind*: OutboundMediaKind
+    lexicalPath*: string  ## normalized candidate; set only for mpkLocal
+    reason*: string       ## path-free explanation; empty on success
+
+func isRemoteMediaPath(raw: string): bool =
+  ## Only an explicit http(s) URL travels as a remote reference. The check is
+  ## case-insensitive and tolerant of surrounding whitespace, like the adapter.
+  let lower = raw.strip.toLowerAscii()
+  lower.startsWith("http://") or lower.startsWith("https://")
+
+func classifyOutboundMediaPath*(paddockRoot, raw: string): OutboundMediaPath =
+  ## Classifies outbound media as remote, local-inside or rejected. Pure: the
+  ## decision normalizes `.`, `..` and repeated separators first, compares on
+  ## segment boundaries (so `/paddock2` is not inside `/paddock`), and never
+  ## puts the path or the root into `reason`.
+  if raw.len == 0:
+    return OutboundMediaPath(kind: mpkRejected, reason: "media path is empty")
+  if '\x00' in raw:
+    return OutboundMediaPath(kind: mpkRejected,
+                             reason: "media path contains a null byte")
+  if isRemoteMediaPath(raw):
+    return OutboundMediaPath(kind: mpkRemote, reason: "remote media URL")
+  if paddockRoot.len == 0:
+    return OutboundMediaPath(kind: mpkRejected,
+                             reason: "no paddock root configured")
+  let normRoot = normalizePath(paddockRoot)
+  if normRoot.len == 0 or normRoot == "/":
+    return OutboundMediaPath(kind: mpkRejected,
+                             reason: "invalid paddock root")
+  let normRaw = normalizePath(raw)
+  if normRaw.len == 0:
+    return OutboundMediaPath(kind: mpkRejected, reason: "media path is empty")
+  let candidate =
+    if normRaw[0] == '/' or normRoot == ".":
+      normRaw
+    else:
+      normalizePath(normRoot & "/" & normRaw)
+  let inside =
+    if normRoot == ".":
+      candidate != ".." and not candidate.startsWith("../") and
+        candidate[0] != '/'
+    else:
+      candidate == normRoot or candidate.startsWith(normRoot & "/")
+  if not inside:
+    return OutboundMediaPath(kind: mpkRejected,
+                             reason: "media path is outside the paddock")
+  OutboundMediaPath(kind: mpkLocal, lexicalPath: candidate, reason: "")
+
 # ── Error Messages ─────────────────────────────────────────────────────────────
 
 func pathAccessErrorMsg*(path: string; workspace = ""): string =

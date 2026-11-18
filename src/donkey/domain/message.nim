@@ -81,6 +81,7 @@ type
     streamId*:  string       ## non-empty for streaming turns
     isPartial*: bool         ## true for streaming partial edits
     mediaUrl*:  string       ## non-empty → send as photo/document instead of text
+    mediaRoot*: string       ## paddock root the local `mediaUrl` must stay inside
     mediaDurationSec*: int = 0 ## audio duration when the channel can display it
     keyboard*:  seq[seq[(string, string)]]  ## non-empty → send with inline keyboard buttons: [[("label","callback_data"),...],...]
     replaceKeyboard*: bool   ## true → edit keyboard even when `keyboard` is empty

@@ -25,8 +25,13 @@ import ../core/log
 import ../ports/ipc
 import ../core/agent_events
 import ../domain/message
+import ../domain/agent_message
 import ../domain/providers/openai_compat
 import ../domain/gateway/identity_pure
+import ../domain/gateway/dashboard_pure
+import ../domain/gateway/redact_pure
+import ../domain/gateway/capacity_pure as capacity
+import ../domain/gateway/chat_response
 import ./metrics
 import ./chat_bridge
 import ./agent_chat_runtime
@@ -133,6 +138,30 @@ type
   GatewayAgentDispatchFn* = proc(msg: InboundMessage) {.gcsafe.}
     ## Starts one agent turn through the same ingress used by `/api/chat`.
 
+  GatewayResponse* = object
+    ## Status + body of a dashboard request, so the socket handler and the
+    ## tests exercise the same code.
+    status*: int
+    contentType*: string
+    body*: string
+
+  GatewaySessionsFn* = proc(): seq[SessionDetail] {.gcsafe.}
+    ## Returns every session; paging is applied by `buildSessionsJson`.
+
+  GatewayProvidersFn* = proc(): string {.gcsafe.}
+    ## Returns the provider-health JSON built by `buildProvidersJson`.
+
+  GatewaySessionActionOutcome* = enum
+    gsaoAccepted
+    gsaoNotFound
+    gsaoRevoked
+
+  GatewaySessionActionFn* = proc(rawUserId: string; taskKind: TaskKind;
+                                  payload: string): GatewaySessionActionOutcome
+                                 {.gcsafe.}
+    ## Performs the one management action. The raw id is the session key, not
+    ## an `api:`-prefixed identity; the wiring owns lookup and revocation.
+
 # ── Inbound handler ───────────────────────────────────────────────────────────
 
 type
@@ -160,9 +189,9 @@ func buildSseEvent*(event, data: string): string =
   result.add("data: " & data & "\n\n")
 
 func buildDashboardHtml*(): string =
-  ## Read-only status/logs dashboard. The shell is public and carries no
-  ## secrets; the token is entered in the page and sent as a Bearer header to
-  ## the authenticated data endpoints.
+  ## Dashboard shell. Public and data-free: the token is entered in the page
+  ## and kept in sessionStorage, every table is filled at runtime through the
+  ## Bearer-authenticated endpoints, and the CSP keeps script/connect local.
   result = """<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -178,6 +207,8 @@ input{flex:1;padding:.4rem .6rem;border:1px solid #bbb;border-radius:6px}
 button{padding:.4rem .9rem;border:1px solid #888;border-radius:6px;background:#f4f4f4;cursor:pointer}
 pre{background:#f7f7f7;border:1px solid #e3e3e3;border-radius:8px;padding:.8rem;overflow:auto;max-height:20rem;font-size:.8rem}
 h2{font-size:1rem;margin:1.2rem 0 .4rem}
+table{width:100%;border-collapse:collapse;font-size:.8rem}
+th,td{text-align:left;padding:.35rem .5rem;border-bottom:1px solid #e3e3e3;vertical-align:top}
 </style>
 </head>
 <body>
@@ -186,26 +217,110 @@ h2{font-size:1rem;margin:1.2rem 0 .4rem}
 <button id="save">Salvar e atualizar</button>
 <h2>Status</h2>
 <pre id="status">—</pre>
+<h2>Sessões</h2>
+<table>
+<thead><tr><th>Sessão</th><th>Usuário</th><th>Canais</th><th>Último contato</th><th>Ativa</th></tr></thead>
+<tbody id="sessions"><tr><td colspan="5">—</td></tr></tbody>
+</table>
+<h2>Providers</h2>
+<table>
+<thead><tr><th>Provider</th><th>Saúde</th><th>Cooldown</th><th>Chamadas</th><th>OK</th><th>Erros</th><th>Latência</th></tr></thead>
+<tbody id="providers"><tr><td colspan="7">—</td></tr></tbody>
+</table>
+<h2>Nova conversa</h2>
+<label>Usuário <input id="new-user" type="text" autocomplete="off" placeholder="userId (2ª coluna da tabela)"></label>
+<button id="new-session">Nova conversa</button>
+<pre id="action">—</pre>
 <h2>Logs recentes</h2>
 <pre id="logs">—</pre>
 <script>
 const $ = id => document.getElementById(id);
 let token = sessionStorage.getItem('donkey_token') || '';
 $('token').value = token;
+function authHeaders() {
+  const headers = {'Content-Type': 'application/json'};
+  if (token) headers.Authorization = 'Bearer ' + token;
+  return headers;
+}
 async function get(path) {
   const headers = token ? {Authorization: 'Bearer ' + token} : {};
   const r = await fetch(path, {headers});
   return r.ok ? await r.text() : 'HTTP ' + r.status;
 }
+async function getJson(path) {
+  const headers = token ? {Authorization: 'Bearer ' + token} : {};
+  const r = await fetch(path, {headers});
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+function row(cells) {
+  const tr = document.createElement('tr');
+  for (const text of cells) {
+    const td = document.createElement('td');
+    td.textContent = text;
+    tr.appendChild(td);
+  }
+  return tr;
+}
+async function refreshSessions() {
+  try {
+    const data = await getJson('/api/sessions');
+    const body = $('sessions');
+    body.replaceChildren();
+    for (const s of (data.sessions || [])) {
+      body.appendChild(row([
+        s.sessionId || '', s.userId || '',
+        (s.channels || []).join(', '),
+        s.lastInboundAt || '—',
+        s.live ? 'sim' : 'não',
+      ]));
+    }
+    if (!body.firstChild) body.appendChild(row(['—', '—', '—', '—', '—']));
+  } catch (e) {
+    $('sessions').replaceChildren(row(['erro', String(e), '', '', '']));
+  }
+}
+async function refreshProviders() {
+  try {
+    const data = await getJson('/api/providers');
+    const body = $('providers');
+    body.replaceChildren();
+    for (const p of data) {
+      body.appendChild(row([
+        p.id || '', p.health || '', p.cooldownUntil || '—',
+        String(p.calls || 0), String(p.ok || 0), String(p.err || 0),
+        String(p.avgLatencyMs || 0) + ' ms',
+      ]));
+    }
+  } catch (e) {
+    $('providers').replaceChildren(row(['erro', String(e), '', '', '', '', '']));
+  }
+}
 async function refresh() {
   $('status').textContent = await get('/api/status');
   $('logs').textContent = await get('/api/logs?n=50');
+  await refreshSessions();
+  await refreshProviders();
 }
 $('save').onclick = () => {
   token = $('token').value.trim();
   sessionStorage.setItem('donkey_token', token);
   refresh();
 };
+$('new-session').addEventListener('click', async () => {
+  const raw = $('new-user').value.trim();
+  if (!raw) {
+    $('action').textContent = 'informe o usuário';
+    return;
+  }
+  const r = await fetch('/api/sessions/' + encodeURIComponent(raw) + '/task', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({action: 'new'}),
+  });
+  $('action').textContent = r.ok ? 'aceito' : 'HTTP ' + r.status;
+  refresh();
+});
 refresh();
 setInterval(refresh, 5000);
 </script>
@@ -228,6 +343,53 @@ func buildAgentEventsBody*(events: seq[AgentEvent]): string =
     arr.add(e.toJson())
   $arr
 
+func dashboardError*(status: int; message: string): GatewayResponse =
+  ## Every dashboard error path leaves through `redactForClient`, so an echoed
+  ## parser/provider message can never carry `Bearer`, `sk-`, `key=` or
+  ## `token=` values to the browser.
+  GatewayResponse(status: status, contentType: "application/json",
+                  body: $(%*{"error": redactForClient(message)}))
+
+proc handleSessionsRequest*(sessionsFn: GatewaySessionsFn;
+                            rawLimit, rawOffset: int): GatewayResponse {.gcsafe.} =
+  ## `GET /api/sessions`. The hook returns every row; paging/clamping is pure,
+  ## so no query value can turn into a 500.
+  if sessionsFn == nil:
+    return dashboardError(503, "sessions hook not configured")
+  GatewayResponse(status: 200, contentType: "application/json",
+                  body: buildSessionsJson(sessionsFn(), rawLimit, rawOffset))
+
+proc handleProvidersRequest*(providersFn: GatewayProvidersFn): GatewayResponse
+                            {.gcsafe.} =
+  ## `GET /api/providers`. The wiring builds the body with the pure provider
+  ## builder, which derives health from availability, cooldowns and metrics.
+  if providersFn == nil:
+    return dashboardError(503, "providers hook not configured")
+  GatewayResponse(status: 200, contentType: "application/json",
+                  body: providersFn())
+
+proc handleSessionActionRequest*(actionFn: GatewaySessionActionFn;
+                                 rawUserId, body, authHeader,
+                                 authToken: string): GatewayResponse {.gcsafe.} =
+  ## `POST /api/sessions/{userId}/task`. The raw session key is never passed
+  ## through `apiUserId`; auth is checked here as well as in the socket
+  ## handler, and a missing hook fails closed.
+  if not isAuthorized(authHeader, authToken):
+    return dashboardError(401, "unauthorized")
+  if actionFn == nil:
+    return dashboardError(503, "session action hook not configured")
+  let parsed = parseSessionAction(body)
+  if parsed.isErr:
+    return dashboardError(400, parsed.error)
+  case actionFn(rawUserId, tkNew, "")
+  of gsaoAccepted:
+    GatewayResponse(status: 202, contentType: "application/json",
+                    body: "{\"status\":\"accepted\"}")
+  of gsaoNotFound:
+    dashboardError(404, "session not found")
+  of gsaoRevoked:
+    dashboardError(403, "access revoked")
+
 func isPublicGatewayAction*(action: string): bool =
   ## Liveness/readiness probes must not require credentials. Only static text is
   ## exposed here; every data-bearing endpoint stays behind the token.
@@ -241,6 +403,8 @@ func routeGatewayRequest*(req: GatewayRequest): string =
   of "/api/logs":      "logs"
   of "/api/events":    "events"
   of "/api/chat":      "chat"
+  of "/api/sessions":  "sessions"
+  of "/api/providers": "providers"
   of "/v1/chat/completions": "openai_chat"
   of "/v1/models":     "openai_models"
   of "/dashboard":     "dashboard"
@@ -256,6 +420,7 @@ func httpStatusLine*(code: int): string =
   ## Status text for the codes the agent endpoint can produce.
   case code
   of 200: "200 OK"
+  of 202: "202 Accepted"
   of 400: "400 Bad Request"
   of 401: "401 Unauthorized"
   of 403: "403 Forbidden"
@@ -292,6 +457,12 @@ proc agentClockMs(): int64 {.gcsafe, raises: [].} =
 
 proc agentNap(ms: int) {.gcsafe, raises: [].} =
   os.sleep(ms)
+
+var gAgentStreamNap: AgentStreamNapFn = agentNap
+  ## The streaming path needs the same dispatcher pump as the non-streaming
+  ## one: the turn's ingress actor runs on this gateway worker, so a plain
+  ## sleep left SSE without events until the deadline. Injected by the daemon,
+  ## which owns the chronos nanosecond loop for this thread.
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
 
@@ -331,15 +502,20 @@ proc sendResponse(s: Socket; status, contentType, body: string; log: Logger) =
 proc sendJson(s: Socket; body: string; log: Logger) =
   s.sendResponse("200 OK", "application/json", body, log)
 
-proc sendSseHeaders(s: Socket; log: Logger) =
+proc sendSseHeaders(s: Socket; log: Logger): bool =
   ## Sends SSE-specific response headers, keeps connection open.
+  ## Returns false when the client is already gone.
   let headers = "HTTP/1.1 200 OK\r\n" &
                 CorsHeaders &
                 "Content-Type: text/event-stream\r\n" &
                 "Cache-Control: no-cache\r\n" &
                 "Connection: keep-alive\r\n\r\n"
-  try: s.send(headers) except CatchableError:
+  try:
+    s.send(headers)
+    true
+  except CatchableError:
     log.warn("http_gateway: sendSseHeaders failed: " & getCurrentExceptionMsg())
+    false
 
 proc sendSseData(s: Socket; event, data: string): bool =
   ## Returns false if the connection is broken.
@@ -389,6 +565,11 @@ proc parseChatPost*(body: string): Result[InboundMessage, string] =
   if not userIdNode.isNil and userIdNode.kind == JString:
     let uid = userIdNode.getStr()
     if uid.len > 0:
+      ## `api:` is the namespace of `/v1/chat/completions`. Accepting it here
+      ## would let a web-UI message mint an identity whose replies the API
+      ## drainer intercepts (and could close another turn's reservation).
+      if uid.startsWith("api:"):
+        return err("'userId' must not use the reserved 'api:' prefix")
       userId = UserId(uid)
   ok(InboundMessage(
     userId:    userId,
@@ -402,6 +583,14 @@ proc parseChatPost*(body: string): Result[InboundMessage, string] =
 
 proc tryAcquireSseConnection(): bool {.gcsafe.}
 proc releaseSseConnection() {.gcsafe.}
+proc runAdmittedAgentTurn*(body: string;
+                           bridge: ChatBridge;
+                           dispatch: GatewayAgentDispatchFn;
+                           authorize: AuthorizeFn;
+                           tokenConfigured: bool;
+                           now: AgentNowFn;
+                           timeoutMs = DefaultAgentTurnTimeoutMs;
+                           model = ""): AgentChatReply {.gcsafe.}
 
 proc readRequestBody(client: Socket; contentLength: int;
                     deadline: MonoTime): string =
@@ -420,12 +609,35 @@ proc readRequestBody(client: Socket; contentLength: int;
     received += n
   if received > 0: buf[0 ..< received] else: ""
 
+proc readRequestBodyStrict(client: Socket; contentLength: int;
+                           deadline: MonoTime): Result[string, string] =
+  ## Like `readRequestBody`, but refuses a short read: a JSON prefix is not the
+  ## body the client declared, and acting on it would accept a truncated
+  ## request.
+  if contentLength <= 0:
+    return ok("")
+  var buf = newString(contentLength)
+  var received = 0
+  while received < contentLength:
+    if getMonoTime() > deadline:
+      return err("request body incomplete")
+    let n = client.recv(buf[received].addr, contentLength - received)
+    if n <= 0:
+      break
+    received += n
+  if received != contentLength:
+    return err("request body incomplete")
+  ok(buf)
+
 proc handleGatewayConn(client: Socket;
                         statusFn: GatewayStatusFn;
                         logFn:    GatewayLogFn;
                         eventFn:  GatewayEventFn;
                         inboundFn: GatewayInboundFn;
                         agentDispatchFn: GatewayAgentDispatchFn;
+                        sessionsFn: GatewaySessionsFn;
+                        providersFn: GatewayProvidersFn;
+                        sessionActionFn: GatewaySessionActionFn;
                         authorizeFn: AuthorizeFn;
                         chatBridge: ChatBridge;
                         modelName: string;
@@ -494,7 +706,13 @@ proc handleGatewayConn(client: Socket;
     if req.meth == "OPTIONS":
       client.sendResponse("204 No Content", "text/plain", "", log)
       return
-    let action = routeGatewayRequest(req)
+    var action = routeGatewayRequest(req)
+    var sessionTaskUser = ""
+    if action == "notfound" and req.meth == "POST":
+      let parsedTaskPath = parseSessionTaskPath(req.path)
+      if parsedTaskPath.isOk:
+        action = "session_task"
+        sessionTaskUser = parsedTaskPath.get()
     if not isPublicGatewayAction(action) and not isAuthorized(authHeader, authToken):
       client.sendResponse("401 Unauthorized", "application/json",
                           "{\"error\":\"unauthorized\"}\n", log)
@@ -525,13 +743,46 @@ proc handleGatewayConn(client: Socket;
       let entries = logFn(n)
       client.sendJson(buildLogsBody(entries), log)
 
+    of "sessions":
+      if req.meth != "GET":
+        client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        let limit = parseQueryInt(rawPath, "limit", DashboardDefaultLimit)
+        let offset = parseQueryInt(rawPath, "offset", 0)
+        let res = handleSessionsRequest(sessionsFn, limit, offset)
+        client.sendResponse(httpStatusLine(res.status), res.contentType,
+                            res.body, log)
+
+    of "providers":
+      if req.meth != "GET":
+        client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        let res = handleProvidersRequest(providersFn)
+        client.sendResponse(httpStatusLine(res.status), res.contentType,
+                            res.body, log)
+
+    of "session_task":
+      if req.meth != "POST":
+        client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        let bodyResult = readRequestBodyStrict(client, contentLength, deadline)
+        if bodyResult.isErr:
+          client.sendResponse("400 Bad Request", "application/json",
+                              "{\"error\":\"request body incomplete\"}\n", log)
+          return
+        let res = handleSessionActionRequest(sessionActionFn, sessionTaskUser,
+                                             bodyResult.get(), authHeader, authToken)
+        client.sendResponse(httpStatusLine(res.status), res.contentType,
+                            res.body, log)
+
     of "events":
       if not tryAcquireSseConnection():
         client.sendResponse("503 Service Unavailable", "text/plain",
                             "too many event streams\n", log)
         return
       try:
-        client.sendSseHeaders(log)
+        if not client.sendSseHeaders(log):
+          return
         ## Push a heartbeat comment immediately to confirm stream started.
         try: client.send(": connected\n\n") except CatchableError: discard
         ## Poll loop: push log + agent event snapshots every SseHeartbeatIntervalMs.
@@ -591,18 +842,51 @@ proc handleGatewayConn(client: Socket;
         client.sendResponse("405 Method Not Allowed", "application/json", "", log)
       else:
         let body = readRequestBody(client, contentLength, deadline)
-        let reply = runAgentChat(
-          body            = body,
-          bridge          = chatBridge,
-          dispatch        = agentDispatchFn,
-          authorize       = authorizeFn,
-          tokenConfigured = authToken.len > 0,
-          now             = agentNowSeconds,
-          timeoutMs       = agentTimeoutMs,
-          model           = modelName,
-        )
-        client.sendResponse(httpStatusLine(reply.status), "application/json",
-                            reply.body & "\n", log)
+        if agentChatStreamRequested(body):
+          var streamNapFn: AgentStreamNapFn = agentNap
+          {.cast(gcsafe).}:
+            streamNapFn = gAgentStreamNap
+          let openSse = proc(): bool {.gcsafe.} =
+            client.sendSseHeaders(log)
+          let sendSse = proc(chunk: string): bool {.gcsafe.} =
+            try:
+              client.send(chunk)
+              true
+            except CatchableError:
+              false
+          let streamResult = runAgentStream(
+            body            = body,
+            bridge          = chatBridge,
+            dispatch        = agentDispatchFn,
+            authorize       = authorizeFn,
+            tokenConfigured = authToken.len > 0,
+            now             = agentNowSeconds,
+            openStream      = openSse,
+            send            = sendSse,
+            acquireSlot     = tryAcquireSseConnection,
+            releaseSlot     = releaseSseConnection,
+            streamNow       = agentClockMs,
+            streamNap       = streamNapFn,
+            timeoutMs       = agentTimeoutMs,
+            model           = modelName,
+          )
+          if streamResult.outcome == asPreflightError:
+            client.sendResponse(httpStatusLine(streamResult.reply.status),
+                                "application/json",
+                                streamResult.reply.body & "\n", log)
+        else:
+          let reply = runAdmittedAgentTurn(
+            body            = body,
+            bridge          = chatBridge,
+            dispatch        = agentDispatchFn,
+            authorize       = authorizeFn,
+            tokenConfigured = authToken.len > 0,
+            now             = agentNowSeconds,
+            timeoutMs       = agentTimeoutMs,
+            model           = modelName,
+          )
+          client.sendResponse(httpStatusLine(reply.status), "application/json",
+                              reply.body & "\n", log)
 
     of "openai_models":
       if req.meth != "GET":
@@ -632,6 +916,9 @@ type GatewayArgs = object
   eventFn:   GatewayEventFn
   inboundFn: GatewayInboundFn
   agentDispatchFn: GatewayAgentDispatchFn
+  sessionsFn: GatewaySessionsFn
+  providersFn: GatewayProvidersFn
+  sessionActionFn: GatewaySessionActionFn
   authorizeFn: AuthorizeFn
   chatBridge: ChatBridge
   modelName: string
@@ -643,6 +930,9 @@ var gGatewayLogFn:    GatewayLogFn
 var gGatewayEventFn:  GatewayEventFn
 var gGatewayInboundFn: GatewayInboundFn
 var gGatewayAgentDispatchFn: GatewayAgentDispatchFn
+var gGatewaySessionsFn: GatewaySessionsFn
+var gGatewayProvidersFn: GatewayProvidersFn
+var gGatewaySessionActionFn: GatewaySessionActionFn
 var gGatewayAuthorizeFn: AuthorizeFn
 var gGatewayChatBridge: ChatBridge
 var gGatewayModelName: string
@@ -681,6 +971,9 @@ type HttpConnectionArgs = object
 
 var gActiveHttpConnections = 0
 var gActiveSseConnections = 0
+var gActiveAgentTurns = 0
+  ## Non-streaming `/v1/chat/completions` workers. Streaming chat is counted
+  ## as an SSE connection instead, so one worker is never counted twice.
 var gHttpConnLock: Lock
 initLock(gHttpConnLock)  # Module init runs before any gateway thread starts.
 
@@ -702,23 +995,128 @@ proc releaseHttpConnection() =
   finally:
     release(gHttpConnLock)
 
-proc tryAcquireSseConnection(): bool =
+# ── Long-lived worker admission ───────────────────────────────────────────────
+#
+# Non-streaming agent turns and SSE streams both block a gateway worker for
+# their whole lifetime. They share one counter set under `gHttpConnLock` and
+# one policy (`capacity.admitLongLived`): at most `MaxLongLivedWorkers` of the
+# 8 workers may be long-lived, so `/health`, `/api/*` and `/v1/models` always
+# keep the 2 reserved workers. There is no second pool and no class is exempt.
+
+proc resetLongLivedCountersForTest*() {.gcsafe.} =
+  ## Test/diagnostic hook: clears both counters. The gateway never calls it and
+  ## it must not run while worker threads are serving requests.
   acquire(gHttpConnLock)
   try:
-    if gActiveSseConnections >= MaxConcurrentSseConnections:
-      return false
-    inc gActiveSseConnections
-    true
+    gActiveAgentTurns = 0
+    gActiveSseConnections = 0
   finally:
     release(gHttpConnLock)
 
-proc releaseSseConnection() =
+proc longLivedOccupancy*(): capacity.LongLivedSnapshot {.gcsafe.} =
+  ## Occupancy before the next request is decided. `longLivedWorkers` is the
+  ## sum of both classes, never just the larger one.
   acquire(gHttpConnLock)
   try:
-    if gActiveSseConnections > 0:
-      dec gActiveSseConnections
+    capacity.LongLivedSnapshot(
+      pendingTurns:     gActiveAgentTurns,
+      sseConnections:   gActiveSseConnections,
+      longLivedWorkers: gActiveAgentTurns + gActiveSseConnections,
+    )
   finally:
     release(gHttpConnLock)
+
+proc tryReserveLongLived*(kind: capacity.LongLivedKind):
+    capacity.CapacityVerdict {.gcsafe.} =
+  ## Runs `admitLongLived` against the live counters and increments the class
+  ## counter only on `cvAdmit`. A refusal leaves the snapshot untouched, so an
+  ## over-capacity request never consumes (or releases) someone else's worker.
+  acquire(gHttpConnLock)
+  try:
+    let snapshot = capacity.LongLivedSnapshot(
+      pendingTurns:     gActiveAgentTurns,
+      sseConnections:   gActiveSseConnections,
+      longLivedWorkers: gActiveAgentTurns + gActiveSseConnections,
+    )
+    result = capacity.admitLongLived(kind, snapshot)
+    if result.admitted:
+      case kind
+      of capacity.llChatTurn: inc gActiveAgentTurns
+      of capacity.llSseConnection: inc gActiveSseConnections
+  finally:
+    release(gHttpConnLock)
+
+proc releaseLongLived*(kind: capacity.LongLivedKind) {.gcsafe.} =
+  acquire(gHttpConnLock)
+  try:
+    case kind
+    of capacity.llChatTurn:
+      if gActiveAgentTurns > 0:
+        dec gActiveAgentTurns
+    of capacity.llSseConnection:
+      if gActiveSseConnections > 0:
+        dec gActiveSseConnections
+  finally:
+    release(gHttpConnLock)
+
+proc tryAcquireSseConnection(): bool {.gcsafe.} =
+  tryReserveLongLived(capacity.llSseConnection).admitted
+
+proc releaseSseConnection() {.gcsafe.} =
+  releaseLongLived(capacity.llSseConnection)
+
+proc runAdmittedAgentTurn*(body: string;
+                           bridge: ChatBridge;
+                           dispatch: GatewayAgentDispatchFn;
+                           authorize: AuthorizeFn;
+                           tokenConfigured: bool;
+                           now: AgentNowFn;
+                           timeoutMs: int;
+                           model: string): AgentChatReply =
+  ## Non-streaming `/v1/chat/completions`: reserve one long-lived worker
+  ## before the turn can register or dispatch. A refusal never reaches the
+  ## dispatch hook and keeps the streaming path's mapping: `429` with a
+  ## `rate_limit_error` body for both capacity verdicts (`cvNoWorker` is a
+  ## backlog condition that clears on its own, not a server fault, so `503`
+  ## would invite clients to retry a different way for no benefit). The code
+  ## still distinguishes a full turn queue from a full shared pool.
+  ##
+  ## `finally` releases the reservation on every exit: 200, 502 from a
+  ## dispatch/turn error, 504 on the deadline, or an escaping exception. The
+  ## release happens before the response is written, so a client abort cannot
+  ## strand the slot.
+  let verdict = tryReserveLongLived(capacity.llChatTurn)
+  if not verdict.admitted:
+    var code = "no_worker"
+    var message = "no long-lived worker available"
+    case verdict
+    of capacity.cvTooManyPendingTurns:
+      code = "too_many_pending_turns"
+      message = "too many pending chat turns"
+    of capacity.cvNoWorker:
+      discard
+    of capacity.cvTooManySseConnections:
+      code = "sse_capacity"
+      message = "too many concurrent streams"
+    of capacity.cvAdmit:
+      discard  # unreachable: cvAdmit was handled above
+    return AgentChatReply(
+      status: 429,
+      body: buildAgentError(message, "rate_limit_error", code),
+    )
+  try:
+    runAgentChat(
+      body            = body,
+      bridge          = bridge,
+      dispatch        = dispatch,
+      authorize       = authorize,
+      tokenConfigured = tokenConfigured,
+      now             = now,
+      timeoutMs       = timeoutMs,
+      model           = model,
+    )
+  finally:
+    releaseLongLived(capacity.llChatTurn)
 
 proc gatewayWorker(id: int) {.thread.} =
   {.cast(gcsafe).}:
@@ -743,10 +1141,16 @@ proc gatewayWorker(id: int) {.thread.} =
       try:
         handleGatewayConn(client, gGatewayStatusFn, gGatewayLogFn, gGatewayEventFn,
                           gGatewayInboundFn, gGatewayAgentDispatchFn,
+                          gGatewaySessionsFn, gGatewayProvidersFn,
+                          gGatewaySessionActionFn,
                           gGatewayAuthorizeFn, gGatewayChatBridge, gGatewayModelName,
                           gGatewayAgentTimeoutMs, gGatewayAuthToken, gGatewayLog)
       finally:
         releaseHttpConnection()
+
+var gGatewayListenerActive = false
+  ## The pool and the listener have different lifetimes: a failed bind leaves
+  ## the pool usable, so a retry must be allowed once the port is free.
 
 proc gatewayThread(args: GatewayArgs) {.thread.} =
   {.cast(gcsafe).}:
@@ -764,8 +1168,12 @@ proc gatewayThread(args: GatewayArgs) {.thread.} =
       server.setSockOpt(OptReuseAddr, true)
       server.bindAddr(Port(args.port), host)
       server.listen()
+      {.cast(gcsafe).}:
+        gGatewayListenerActive = true
     except CatchableError as exc:
       args.log.error("http_gateway: bind " & host & ":" & $args.port & " failed — " & exc.msg)
+      {.cast(gcsafe).}:
+        gGatewayListenerActive = false
       if server != nil:
         server.close()
       return
@@ -832,6 +1240,9 @@ proc startHttpGateway*(port: int;
                        logFn:    GatewayLogFn;
                        eventFn:  GatewayEventFn = nil;
                        inboundFn: GatewayInboundFn = nil;
+                       sessionsFn: GatewaySessionsFn = nil;
+                       providersFn: GatewayProvidersFn = nil;
+                       sessionActionFn: GatewaySessionActionFn = nil;
                        bindAddr = "127.0.0.1";
                        authToken = "";
                        agentDispatchFn: GatewayAgentDispatchFn = nil;
@@ -839,8 +1250,20 @@ proc startHttpGateway*(port: int;
                        chatBridge: ChatBridge = nil;
                        modelName = "";
                        agentTimeoutMs = 0;
+                       agentStreamNapFn: AgentStreamNapFn = nil;
                        log:       Logger = newLogger("http_gateway")
                       ): Result[void, string] =
+  ## A second call would publish a new dispatcher/bridge before binding; even
+  ## if the bind failed, the running listener would keep using the new wiring.
+  if gGatewayListenerActive:
+    return err("http_gateway: already running")
+  ## A private bridge is never fed by the daemon outbox drainer: every turn
+  ## would register and poll a queue nobody drains, ending in 504.
+  if agentDispatchFn != nil and chatBridge == nil:
+    return err("http_gateway: the agent endpoint requires the shared ChatBridge")
+  if agentStreamNapFn != nil:
+    {.cast(gcsafe).}:
+      gAgentStreamNap = agentStreamNapFn
   ## Starts the HTTP gateway on a dedicated OS thread.
   ## statusFn, logFn, and eventFn are called on each request; they must be gcsafe.
   ## inboundFn is called when POST /api/chat is received; may be nil.
@@ -852,6 +1275,9 @@ proc startHttpGateway*(port: int;
     gGatewayEventFn   = eventFn
     gGatewayInboundFn = inboundFn
     gGatewayAgentDispatchFn = agentDispatchFn
+    gGatewaySessionsFn = sessionsFn
+    gGatewayProvidersFn = providersFn
+    gGatewaySessionActionFn = sessionActionFn
     gGatewayAuthorizeFn = authorizeFn
     gGatewayChatBridge = if chatBridge != nil: chatBridge
                          else: newChatBridge(agentClockMs, agentNap)
@@ -874,6 +1300,9 @@ proc startHttpGateway*(port: int;
                            statusFn: statusFn, logFn: logFn,
                            eventFn: eventFn, inboundFn: inboundFn,
                            agentDispatchFn: agentDispatchFn,
+                           sessionsFn: sessionsFn,
+                           providersFn: providersFn,
+                           sessionActionFn: sessionActionFn,
                            authorizeFn: authorizeFn,
                            chatBridge: gGatewayChatBridge,
                            modelName: modelName,

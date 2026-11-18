@@ -339,6 +339,61 @@ suite "OrchestratorAgent":
 
     check reply.text == "pong"
 
+  test "brand-new api user skips onboarding and gets a terminal answer":
+    let tmpDir = getTempDir() / "donkey_test_orch_api_new_user"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[OutboundMessage] {.async.} =
+      let userDir = dir / "api_alice"
+      createDir(userDir)
+      let mem      = MdFileAdapter(paddocksDir: dir)
+      let inbox    = newAsyncQueue[AgentMessage]()
+      let outbox   = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 userDir, state)
+      await inbox.put(newTaskMsg("req-api-new", tkUserMsg, "api:alice", "ping"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      return reply
+
+    let reply = waitFor doTest(tmpDir)
+    check reply.replyKind == rkFinalAnswer
+    check reply.text == "pong"
+
+  test "brand-new interactive user still enters onboarding":
+    let tmpDir = getTempDir() / "donkey_test_orch_interactive_new_user"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[OutboundMessage] {.async.} =
+      let userDir = dir / "u-new"
+      createDir(userDir)
+      let mem      = MdFileAdapter(paddocksDir: dir)
+      let inbox    = newAsyncQueue[AgentMessage]()
+      let outbox   = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 userDir, state)
+      await inbox.put(newTaskMsg("req-interactive-new", tkUserMsg, "u-new", "ping"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      return reply
+
+    let reply = waitFor doTest(tmpDir)
+    check reply.replyKind == rkChannel
+    check reply.text != "pong"
+    check reply.keyboard.len > 0
+
   test "final response strips thought tags and masks leaked secrets":
     let tmpDir = getTempDir() / "donkey_test_orch_sanitize"
     removeDir(tmpDir)
@@ -436,6 +491,42 @@ suite "OrchestratorAgent":
       await inbox.put(newCancelMsg())
       await orchFut
       return reply
+
+    let reply = waitFor doTest(tmpDir)
+
+    check reply.text == "pong"
+
+  test "a scheduled task is processed as an agent turn":
+    ## `tkSchedule` must not be discarded by the actor gate, and it runs with
+    ## the same background rules as a heartbeat (no progress chatter).
+    let tmpDir = getTempDir() / "donkey_test_orch_schedule"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[OutboundMessage] {.async.} =
+      let userDir = dir / "u-schedule"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Bob")
+      let mem      = MdFileAdapter(paddocksDir: dir)
+      let inbox    = newAsyncQueue[AgentMessage]()
+      let outbox   = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 dir / "u-schedule", state)
+      await inbox.put(newTaskMsg("req-sched", tkSchedule, "u-schedule",
+        "Resumo diário.\n\n[schedule daily fired at 1700000000000 ms]"))
+      ## Bounded: if the actor gate ever drops `tkSchedule` again, the test
+      ## must fail here instead of hanging the whole suite.
+      let replyFut = outbox.get()
+      let arrived = await withTimeout(replyFut, 5.seconds)
+      await inbox.put(newCancelMsg())
+      await orchFut
+      if not arrived:
+        raise newException(ValueError, "scheduled task produced no reply")
+      return await replyFut
 
     let reply = waitFor doTest(tmpDir)
 
@@ -1467,6 +1558,24 @@ suite "album payloads":
     ])
     let payload = decodeUserPayload(merged)
     check payload.mediaUrls == @["a.jpg", "b.jpg", "c.jpg"]
+
+  test "TG-028: merged albums keep mediaPaths aligned with mediaUrls":
+    let merged = mergeUserPayloads([
+      """{"text":"","mediaUrl":"data:image/png;base64,QQ==","mediaPaths":["attachments/a.png"]}""",
+      """{"text":"","mediaUrl":"b.jpg","mediaPaths":["attachments/b.png"]}""",
+    ])
+    let payload = decodeUserPayload(merged)
+    check payload.mediaUrls == @["data:image/png;base64,QQ==", "b.jpg"]
+    check payload.mediaPaths == @["attachments/a.png", "attachments/b.png"]
+
+  test "TG-028: a legacy payload without mediaPaths disables path claims":
+    let merged = mergeUserPayloads([
+      """{"text":"veja","mediaUrl":"data:image/png;base64,QQ=="}""",
+      """{"text":"","mediaUrl":"b.jpg","mediaPaths":["attachments/b.png"]}""",
+    ])
+    let payload = decodeUserPayload(merged)
+    check payload.mediaUrls.len == 2
+    check payload.mediaPaths.len == 0
 
   test "TG-028: the turn keeps one history entry per image":
     let history = addUserTurnWithImages(newHistory(), "veja", @["a.jpg", "b.jpg"])

@@ -238,7 +238,7 @@ suite "turn journal store":
     check commits == 1
     check store.loadActive().get().len == 0
 
-  test "a queued reply is terminal enough to commit, streamed or buffered":
+  test "a queued reply is resumable but not committable, streamed or buffered":
     let dir = freshDir("commit_queued")
     defer: cleanup(dir)
 
@@ -246,7 +246,8 @@ suite "turn journal store":
     let stamp = 2_000_000'i64
 
     ## Streamed turn: the final reply only reached the outbox, the drainer has
-    ## not sent it yet. Queued delivery is terminal because the outbox owns it.
+    ## not sent it yet. Queued delivery is NOT terminal for commit: closing the
+    ## turn here would hide it from `loadActive` and a crash would lose it.
     check store.append("stream-turn", inbound("stream-turn", "oi", stamp),
                        stamp).isOk
     check store.append("stream-turn", TurnEvent(kind: tevStreamStarted),
@@ -269,6 +270,12 @@ suite "turn journal store":
     check streamed.phase == tpsReplyReady
     check streamed.replyDelivery == rdsQueued
     check streamed.replySource == rsStreamed
+    check store.commitIfTerminal("stream-turn", stamp).get() == false
+    ## Once the drainer attempts and delivers, the turn is committable.
+    check store.append("stream-turn",
+      TurnEvent(kind: tevDeliveryAttempted, ownerEpochMs: stamp), stamp).isOk
+    check store.append("stream-turn", TurnEvent(kind: tevDelivered,
+      deliveryId: "stream-turn-reply"), stamp).isOk
     check store.commitIfTerminal("stream-turn", stamp).get() == true
     check store.loadById("stream-turn").get().get().phase == tpsCommitted
 
@@ -293,6 +300,11 @@ suite "turn journal store":
     check buffered.phase == tpsReplyReady
     check buffered.replyDelivery == rdsQueued
     check buffered.replySource == rsBuffered
+    check store.commitIfTerminal("buffer-turn", stamp).get() == false
+    check store.append("buffer-turn",
+      TurnEvent(kind: tevDeliveryAttempted, ownerEpochMs: stamp), stamp).isOk
+    check store.append("buffer-turn", TurnEvent(kind: tevDelivered,
+      deliveryId: "buffer-turn-reply"), stamp).isOk
     check store.commitIfTerminal("buffer-turn", stamp).get() == true
     check store.loadById("buffer-turn").get().get().phase == tpsCommitted
 
@@ -446,3 +458,24 @@ suite "turn journal store":
     ## And the journal is immediately readable (no torn frame at the tail).
     check store.loadById("turn-0-19").get().isSome
     check store.loadById("turn-1-19").get().isSome
+
+  test "a complete frame without its trailing LF is not applied":
+    let dir = freshDir("no_lf")
+    defer: cleanup(dir)
+    let store = newTurnJournalStore(dir)
+    let stamp = 3_000_000'i64
+    check store.append("t1", inbound("t1", "oi", stamp), stamp).isOk
+    let path = dir / "turn_journal.jsonl"
+    let frame = """{"v":1,"turn_id":"t1","ts_ms":3000000,"event":{"kind":"tevAbandoned"}}"""
+    writeFile(path, readFile(path) & frame)   # no trailing LF
+    let loaded = store.loadById("t1")
+    check loaded.isOk
+    let entry = loaded.get().get()
+    check entry.phase != tpsAbandoned
+
+  test "quoted key and token values are fully redacted":
+    let text = "key=\"secret-value\" token='tok-9' safekey=public"
+    let redacted = redactSecrets(text)
+    check "secret-value" notin redacted
+    check "tok-9" notin redacted
+    check "public" in redacted

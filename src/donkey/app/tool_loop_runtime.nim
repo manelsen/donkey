@@ -16,6 +16,7 @@ import ../core/tooling/native_tool_dispatch
 import ../core/agent_events
 import ../domain/agent_message
 import ../domain/message
+import ../domain/providers/media_pure
 import ../domain/subagent_pure
 import ../ports/memory
 import ../ports/provider
@@ -114,8 +115,10 @@ proc streamToOutbox*(fn:        StreamFn;
             streamId:  streamId,
             isPartial: false,
             replyKind: rkFinalAnswer,
-            inputTokens:  finalResponse.inputTokens,
-            outputTokens: finalResponse.outputTokens,
+            # This terminal bypasses `finalizeNormalTurn`, so clamp here too:
+            # a provider reporting negative usage must not reach the API body.
+            inputTokens:  max(0, finalResponse.inputTokens),
+            outputTokens: max(0, finalResponse.outputTokens),
           ))
         return ok(finalResponse)
       accumulated.add(tok)
@@ -184,6 +187,20 @@ proc safeComplete(fn: CompleteFn; req: CompletionRequest
 
 func completionErr(msg: string): Result[CompletionResponse, string] {.gcsafe.} =
   err(msg)
+
+proc completeOnce(req: CompletionRequest;
+                  completeFn: CompleteFn;
+                  asyncCompleteFn: AsyncCompleteFn):
+                  Future[Result[CompletionResponse, string]] {.async.} =
+  ## One provider round, through the async twin when the caller has one.
+  if asyncCompleteFn != nil:
+    try:
+      return await asyncCompleteFn(req)
+    except CancelledError:
+      raise
+    except Exception as e:
+      return completionErr(e.msg)
+  safeComplete(completeFn, req)
 
 proc awaitExpectedReply*(outbox: AsyncQueue[AgentMessage];
                         expectedId: string;
@@ -428,7 +445,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       break
     inc round
 
-    let req = buildPrompt(systemBase, loopState.history, context, tools, reasoning = showReasoning)
+    var req = buildPrompt(systemBase, loopState.history, context, tools, reasoning = showReasoning)
 
     let canStreamToolCalls =
       streamFn != nil and providerLabel.toLowerAscii().startsWith("openrouter")
@@ -440,9 +457,20 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       streamingAvailable = streamFn != nil,
       streamingToolCalls = canStreamToolCalls and not suppressProgress,
     ).useStreaming:
-      let streamedRes = await streamToOutbox(
+      var streamedRes = await streamToOutbox(
         streamFn, req, globalOutbox, uid, channel, replyTo, streamId,
         nativeCtx.stopGeneration)
+      ## The streaming branch goes through the same one-shot demotion: a
+      ## vision-less model can refuse the inline image before the first token.
+      if streamedRes.isErr and not loopState.imageRetryUsed and
+         not sessionStopRequested(nativeCtx) and
+         hasInlineImages(req) and isImageRejection(streamedRes.error):
+        loopState.imageRetryUsed = true
+        loopState.history = demoteInlineImagesForTurn(loopState.history)
+        req = withoutInlineImages(req)
+        streamedRes = await streamToOutbox(
+          streamFn, req, globalOutbox, uid, channel, replyTo, streamId,
+          nativeCtx.stopGeneration)
       if streamedRes.isErr:
         nativeCtx.log.warn("provider error: " & clipProviderError(streamedRes.error))
         pushAgentEvent(AgentEvent(
@@ -485,16 +513,19 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
           loopState |>->
           withStreamFinalText(streamed.text, streamed.reasoning)
       continue
-    let resp =
-      if asyncCompleteFn != nil:
-        try:
-          await asyncCompleteFn(req)
-        except CancelledError:
-          raise
-        except Exception as e:
-          completionErr(e.msg)
-      else:
-        safeComplete(completeFn, req)
+    var resp = await completeOnce(req, completeFn, asyncCompleteFn)
+    ## One retry per turn: the flag lives in `loopState`, which survives every
+    ## tool round, instead of in the completion closure.
+    if resp.isErr and not loopState.imageRetryUsed and
+       not sessionStopRequested(nativeCtx) and
+       hasInlineImages(req) and isImageRejection(resp.error):
+      loopState.imageRetryUsed = true
+      ## The persistent history drops the image and its inline promise, so
+      ## later rounds rebuild a text-only request. Only this retry request
+      ## carries the removal note.
+      loopState.history = demoteInlineImagesForTurn(loopState.history)
+      req = withoutInlineImages(req)
+      resp = await completeOnce(req, completeFn, asyncCompleteFn)
     if resp.isErr:
       nativeCtx.log.warn("provider error: " & clipProviderError(resp.error))
       pushAgentEvent(AgentEvent(

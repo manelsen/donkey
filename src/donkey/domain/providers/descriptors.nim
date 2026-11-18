@@ -113,6 +113,13 @@ const ProviderDescriptors*: seq[ProviderDescriptor] = @[
     baseUrlEnv: "DASHSCOPE_BASE_URL",
     defaultModel: DefaultModelAlibaba,
     aliases: @["dashscope", "alibaba-cloud", "aliyun"]),
+  ProviderDescriptor(
+    id: "fireworks", transport: ptOpenAiChat, authType: atApiKey,
+    envNames: @["FIREWORKS_API_KEY"],
+    baseUrl: "https://api.fireworks.ai/inference/v1/chat/completions",
+    baseUrlEnv: "",
+    defaultModel: DefaultModelFireworks,
+    aliases: @["fireworks-ai", "fw"]),
 ]
 
 func providerDescriptors*(): seq[ProviderDescriptor] =

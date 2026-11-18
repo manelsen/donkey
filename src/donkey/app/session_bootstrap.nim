@@ -19,6 +19,7 @@ import ../domain/builtin_tools
 import ../domain/more_tools
 import ../domain/providers/media_pure
 import ../domain/reminder
+import ../ports/attachment_store
 import ../ports/memory
 import ../ports/provider
 import ../ports/subagent_workspace
@@ -141,6 +142,7 @@ func availableProviderNames*(av: ProviderAvailability): seq[string] =
   if av.ollama: result.add("ollama")
   if av.nvidia: result.add("nvidia")
   if av.alibaba: result.add("alibaba")
+  if av.fireworks: result.add("fireworks")
 
 func detectProviderAvailability*(): ProviderAvailability =
   ## One field per provider, all derived from the descriptor env names. The
@@ -161,6 +163,7 @@ func detectProviderAvailability*(): ProviderAvailability =
     zen: providerConfigured("zen"),
     nvidia: providerConfigured("nvidia"),
     alibaba: providerConfigured("alibaba"),
+    fireworks: providerConfigured("fireworks"),
   )
 
 proc toProviderSpec*(selection: ProviderSelection): ProviderSpec =
@@ -208,7 +211,8 @@ proc buildCompleteFn*(preferencesMd: string;
       else:
         cooldownFilteredSelections
     var attemptReq = req
-    var retriedWithoutImages = false
+    # The single image retry lives in runToolLoop; do not enable it again here.
+    var retriedWithoutImages = true
     while true:
       var lastErr = "no provider available"
       var attempted = false
@@ -302,7 +306,8 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
       else:
         cooldownFilteredSelections
     var attemptReq = req
-    var retriedWithoutImages = false
+    # The single image retry lives in runToolLoop; do not enable it again here.
+    var retriedWithoutImages = true
     while true:
       var lastErr = "no provider available"
       var attempted = false
@@ -362,6 +367,13 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
         attemptReq = withoutInlineImages(attemptReq)
         continue
       if fallbackCompleteFn != nil:
+        ## If every selection refused the inline image, do not hand that same
+        ## image to the fallback: its error (a 503, say) would not look like an
+        ## image rejection, and the turn-level retry would never run. Surface
+        ## the rejection so the turn retries once in text — and only then may
+        ## the fallback be used.
+        if allImageRejections and hasInlineImages(attemptReq):
+          return err(lastErr)
         try:
           return fallbackCompleteFn(attemptReq)
         except Exception as e:
@@ -386,9 +398,17 @@ func providerLabelFromPrefs*(prefs: string;
 
 func encodeSessionPayload*(msg: InboundMessage;
                            recentContext = ""): string =
+  ## `mediaPaths` stays index-aligned with `mediaUrl`/`mediaUrls`: the turn
+  ## builder needs the disk path of every inline image so it can present the
+  ## ones beyond the inline cap as path-only attachments instead of dropping
+  ## them. Payloads without `mediaPaths` are legacy and keep their text marker.
+  var mediaPaths: seq[string] = @[]
+  if msg.mediaUrl.len > 0 and msg.mediaFileName.startsWith(AttachmentDirName & "/"):
+    mediaPaths.add(msg.mediaFileName)
   if msg.mediaUrl.len == 0 and recentContext.len == 0:
     return msg.text
   $(%* {"text": msg.text, "mediaUrl": msg.mediaUrl,
+        "mediaPaths": mediaPaths,
         "mediaGroupId": msg.mediaGroupId, "recentContext": recentContext})
 
 func sessionReplyTo*(msg: InboundMessage): string =
@@ -397,6 +417,8 @@ func sessionReplyTo*(msg: InboundMessage): string =
     telegramReplyTarget(msg.chatId, msg.channelId, msg.threadId)
   of ckDiscord:
     if msg.channelId.len > 0: "channel:" & msg.channelId else: ""
+  of ckLine:
+    msg.chatId
   else:
     ""
 

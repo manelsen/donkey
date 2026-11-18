@@ -10,6 +10,7 @@ import ../domain/personality
 import ../domain/more_tools
 import ../domain/providers/media_pure
 import ../ports/provider
+import ./inbound_media
 
 proc safeComplete*(fn: CompleteFn; req: CompletionRequest
                  ): Result[CompletionResponse, string] {.gcsafe, raises: [].} =
@@ -30,6 +31,7 @@ type UserPayload* = object
   text*:          string
   mediaUrl*:      string
   mediaUrls*:     seq[string]   ## every attachment of the turn (albums)
+  mediaPaths*:    seq[string]   ## disk paths, index-aligned with mediaUrls
   recentContext*: string
 
 func providerLabelFromPrefs*(prefs: string): string =
@@ -116,8 +118,19 @@ proc decodeUserPayload*(payload: string): UserPayload =
       for item in urls:
         if item.kind == JString and item.getStr.len > 0:
           result.mediaUrls.add(item.getStr)
+    let paths = j.getOrDefault("mediaPaths")
+    if paths != nil and paths.kind == JArray:
+      for item in paths:
+        if item.kind == JString:
+          result.mediaPaths.add(item.getStr)
   except CatchableError:
     discard
+
+func indexOf(values: seq[string]; value: string): int =
+  for i, item in values:
+    if item == value:
+      return i
+  -1
 
 proc mergeUserPayloads*(payloads: openArray[string]): string =
   if payloads.len == 0:
@@ -127,29 +140,63 @@ proc mergeUserPayloads*(payloads: openArray[string]): string =
   var mergedText: seq[string] = @[]
   var mediaUrl = ""
   var mediaUrls: seq[string] = @[]
+  var mediaPaths: seq[string] = @[]
   var recentContext = ""
+  var pathsUsable = true
+
+  proc addAttachment(url, path: string) =
+    if url.len == 0:
+      return
+    let idx = indexOf(mediaUrls, url)
+    if idx >= 0:
+      if mediaPaths[idx].len == 0 and path.len > 0:
+        mediaPaths[idx] = path
+    else:
+      mediaUrls.add(url)
+      mediaPaths.add(path)
+
   for raw in payloads:
     let decoded = decodeUserPayload(raw)
     if decoded.text.strip.len > 0:
       mergedText.add(decoded.text)
+    ## Every payload that carries attachments must also carry one path per
+    ## attachment. A legacy payload without them makes the whole merged turn
+    ## fall back to the text marker; inventing a path would be worse.
+    if decoded.mediaUrls.len > 0 and
+       decoded.mediaPaths.len != decoded.mediaUrls.len:
+      pathsUsable = false
     if decoded.mediaUrl.len > 0:
+      let urlIndex = indexOf(decoded.mediaUrls, decoded.mediaUrl)
+      let pathForUrl =
+        if urlIndex >= 0 and urlIndex < decoded.mediaPaths.len:
+          decoded.mediaPaths[urlIndex]
+        elif urlIndex < 0 and decoded.mediaPaths.len > 0:
+          decoded.mediaPaths[0]
+        else:
+          ""
+      if pathForUrl.len == 0:
+        pathsUsable = false
       mediaUrl = decoded.mediaUrl
-      if decoded.mediaUrl notin mediaUrls:
-        mediaUrls.add(decoded.mediaUrl)
-    for url in decoded.mediaUrls:
-      if url notin mediaUrls:
-        mediaUrls.add(url)
+      addAttachment(decoded.mediaUrl, pathForUrl)
+    for i, url in decoded.mediaUrls:
+      let path = if i < decoded.mediaPaths.len: decoded.mediaPaths[i] else: ""
+      if path.len == 0:
+        pathsUsable = false
+      addAttachment(url, path)
     if recentContext.len == 0 and decoded.recentContext.len > 0:
       recentContext = decoded.recentContext
   let text = mergedText.join("\n\n")
-  if mediaUrl.len > 0 and mediaUrl notin mediaUrls:
-    mediaUrls.insert(mediaUrl, 0)
+  if not pathsUsable or mediaUrls.len == 0:
+    mediaPaths = @[]
+  elif mediaPaths.len != mediaUrls.len:
+    mediaPaths = @[]
   if mediaUrl.len == 0 and mediaUrls.len == 0 and recentContext.len == 0:
     return text
   $(%* {
     "text": text,
     "mediaUrl": mediaUrl,
     "mediaUrls": mediaUrls,
+    "mediaPaths": mediaPaths,
     "recentContext": recentContext,
   })
 
@@ -163,9 +210,18 @@ func addUserTurn*(history: ConversationHistory;
     result.addUser(userText)
   result.trimTo(20)
 
+func withAttachmentMarkers(text: string; markers: seq[string]): string =
+  result = text
+  if markers.len == 0:
+    return
+  if result.len > 0:
+    result.add("\n\n")
+  result.add(markers.join("\n\n"))
+
 func addUserTurnWithImages*(history: ConversationHistory;
                             userText: string;
-                            imageUrls: seq[string]): ConversationHistory =
+                            imageUrls: seq[string];
+                            mediaPaths: seq[string] = @[]): ConversationHistory =
   ## Behavior derived from hermes-agent (MIT) fix 8fb618234f; see
   ## docs/hermes-mining/telegram/CASES.md#tg-028
   ##
@@ -173,19 +229,50 @@ func addUserTurnWithImages*(history: ConversationHistory;
   ## instead of only the last one: the first image carries the text and the
   ## rest follow as image-only entries.
   ##
-  ## At most `MaxAttachmentsPerTurn` images are kept; the extras are dropped
-  ## (the provider and the context window do not take an unbounded album).
-  ## Inline `data:` images are also capped by `MaxInlineImagesPerTurn`; paths
-  ## and `http(s)` URLs are left untouched.
+  ## `MaxAttachmentsPerTurn` bounds the attachments. `MaxInlineImagesPerTurn`
+  ## bounds only the inline `data:` payloads: beyond it an image is still
+  ## presented, but as a path-only `inspect_image` marker (the disk path comes
+  ## from the index-aligned `mediaPaths`), never silently dropped.
+  ##
+  ## Without `mediaPaths` (legacy payloads) the text marker is authoritative and
+  ## is left untouched.
   const MaxAttachmentsPerTurn = 10
   if imageUrls.len == 0:
     return addUserTurn(history, userText, "")
-  let turnUrls = inlineImagesForTurn(imageUrls)
+  let havePaths = mediaPaths.len == imageUrls.len and mediaPaths.len > 0
+  var text =
+    if havePaths: stripImageMarkersForPaths(userText, mediaPaths)
+    else: userText
+  var markers: seq[string] = @[]
+  var turnUrls: seq[string] = @[]
+  let kept = min(imageUrls.len, MaxAttachmentsPerTurn)
+  var inlineCount = 0
+  for i in 0 ..< kept:
+    let url = imageUrls[i]
+    let path = if havePaths: mediaPaths[i] else: ""
+    if url.startsWith("data:"):
+      if inlineCount < MaxInlineImagesPerTurn:
+        inc inlineCount
+        turnUrls.add(url)
+        if havePaths and path.len > 0:
+          markers.add(imageAttachmentMarker(path, true))
+      elif havePaths and path.len > 0:
+        markers.add(imageAttachmentMarker(path, false))
+    else:
+      turnUrls.add(url)
+  ## Attachments beyond the send cap are not sent, but their marker must not
+  ## disappear: keep a path-only instruction so the model can still inspect the
+  ## file instead of losing it silently.
+  if havePaths:
+    for i in kept ..< imageUrls.len:
+      let path = mediaPaths[i]
+      if path.len > 0:
+        markers.add(imageAttachmentMarker(path, false))
+  text = withAttachmentMarkers(text, markers)
   if turnUrls.len == 0:
-    return addUserTurn(history, userText, "")
-  result = addUserTurn(history, userText, turnUrls[0])
-  let extra = min(turnUrls.len, MaxAttachmentsPerTurn) - 1
-  for i in 1 .. extra:
+    return addUserTurn(history, text, "")
+  result = addUserTurn(history, text, turnUrls[0])
+  for i in 1 ..< turnUrls.len:
     result.addUserWithImage("", turnUrls[i])
   ## Trim before the current turn could be pushed out by its own attachments.
   result.trimTo(20)
@@ -198,11 +285,10 @@ func genericProviderErrorText*(errMsg: string): string =
   if lower.contains("tool_call_id") or lower.contains("tool result's tool id") or
      lower.contains("tool call id"):
     return "Desculpe, houve uma inconsistência interna ao continuar uma sequência longa de ferramentas. Tente pedir novamente em uma nova mensagem."
-  if isImageRejection(lower) or
-     lower.contains("file_id") or lower.contains("attachment"):
-    return "Desculpe, o provedor rejeitou o anexo. Tente reenviar ou use um modelo com suporte a imagens/anexos."
   if lower.contains("401") or lower.contains("403") or lower.contains("unauthorized") or lower.contains("api key"):
     return "Desculpe, houve um problema de autenticação com o provedor configurado."
+  if isImageRejection(lower):
+    return "Desculpe, o provedor rejeitou o anexo. Tente reenviar ou use um modelo com suporte a imagens/anexos."
   if lower.contains("400") or lower.contains("bad request") or lower.contains("invalid"):
     return "Desculpe, o provedor rejeitou esta solicitação."
   if lower.contains("429") or lower.contains("rate limit") or lower.contains("500") or

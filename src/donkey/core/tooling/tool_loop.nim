@@ -17,6 +17,7 @@ type
     done*:          bool
     toolCallCount*: int
     wasStreamed*:   bool
+    imageRetryUsed*: bool       ## one image-less retry per turn, not per round
     usage*:         UsageTotals
 
   CompletionHandlingResult* = object

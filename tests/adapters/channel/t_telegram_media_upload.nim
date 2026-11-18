@@ -115,7 +115,8 @@ suite "TelegramAdapter — local media upload":
     let f = FakeUpload()
     let a = newAdapter(f)
     let target = telegramReplyTarget("42", "900", "7")
-    let res = a.sendMedia(42, OggFixture, "legenda", target)
+    let res = a.sendMedia(42, OggFixture, "legenda", target,
+                          mediaRoot = getCurrentDir())
     check res.isOk
     check f.calls.len == 1
     check f.calls[0].url == "https://tg.test/botTOK/sendVoice"
@@ -136,6 +137,7 @@ suite "TelegramAdapter — local media upload":
     let a = newAdapter(f)
     let uid = a.resolver.resolve(ckTelegram, "42")
     let msg = OutboundMessage(userId: uid, text: "musica", mediaUrl: Mp3Fixture,
+                              mediaRoot: getCurrentDir(),
                               mediaDurationSec: 4)
     let res = a.send(msg)
     check res.isOk
@@ -151,7 +153,8 @@ suite "TelegramAdapter — local media upload":
     let f = FakeUpload()
     let a = newAdapter(f)
     let uid = a.resolver.resolve(ckTelegram, "42")
-    let msg = OutboundMessage(userId: uid, text: "musica", mediaUrl: Mp3Fixture)
+    let msg = OutboundMessage(userId: uid, text: "musica", mediaUrl: Mp3Fixture,
+                              mediaRoot: getCurrentDir())
     check a.send(msg).isOk
     check not hasField(f.calls[0].body, "duration")
 
@@ -163,7 +166,7 @@ suite "TelegramAdapter — local media upload":
     let f = FakeUpload(failMethods: @["sendPhoto"],
                        failDescription: "Bad Request: PHOTO_INVALID_DIMENSIONS")
     let a = newAdapter(f)
-    check a.sendMedia(42, path, "foto", "").isOk
+    check a.sendMedia(42, path, "foto", "", mediaRoot = dir).isOk
     check f.calls.len == 2
     check f.calls[0].url.endsWith("/sendPhoto")
     check f.calls[1].url.endsWith("/sendDocument")
@@ -178,7 +181,7 @@ suite "TelegramAdapter — local media upload":
     let f = FakeUpload(failMethods: @["sendPhoto"],
                        failDescription: "HTTP POST failed after 1 attempts. Last error: timed out")
     let a = newAdapter(f)
-    check a.sendMedia(42, path, "foto", "").isOk
+    check a.sendMedia(42, path, "foto", "", mediaRoot = dir).isOk
     ## The upload is not repeated as a document; only the neutral text follows.
     check f.calls.len == 2
     check f.calls[0].url.endsWith("/sendPhoto")
@@ -189,7 +192,8 @@ suite "TelegramAdapter — local media upload":
     let f = FakeUpload(failThreadOnce: true)
     let a = newAdapter(f)
     let target = telegramReplyTarget("42", "900", "7")
-    check a.sendMedia(42, OggFixture, "legenda", target).isOk
+    check a.sendMedia(42, OggFixture, "legenda", target,
+                      mediaRoot = getCurrentDir()).isOk
     check f.calls.len == 2
     check f.calls[0].url.endsWith("/sendVoice")
     check f.calls[1].url.endsWith("/sendVoice")
@@ -200,7 +204,8 @@ suite "TelegramAdapter — local media upload":
     let f = FakeUpload(replyFailureMethod: "sendVoice")
     let a = newAdapter(f)
     let target = telegramReplyTarget("42", "900", "7")
-    check a.sendMedia(42, OggFixture, "legenda", target).isOk
+    check a.sendMedia(42, OggFixture, "legenda", target,
+                      mediaRoot = getCurrentDir()).isOk
     check f.calls.len == 2
     check f.calls[0].url.endsWith("/sendVoice")
     check hasField(f.calls[0].body, "reply_to_message_id")
@@ -217,7 +222,7 @@ suite "TelegramAdapter — local media upload":
                        replyFailureMethod: "sendMessage")
     let a = newAdapter(f)
     let target = telegramReplyTarget("42", "900", "")
-    check a.sendMedia(42, path, "legenda", target).isOk
+    check a.sendMedia(42, path, "legenda", target, mediaRoot = dir).isOk
     let last = f.calls[^1]
     check last.url.endsWith("/sendMessage")
     check last.body.contains(NeutralFallback)
@@ -229,7 +234,7 @@ suite "TelegramAdapter — local media upload":
     let path = dir / "nao-existe-absoluto-xyz.ogg"
     let f = FakeUpload()
     let a = newAdapter(f)
-    check a.sendMedia(42, path, "legenda", "").isOk
+    check a.sendMedia(42, path, "legenda", "", mediaRoot = dir).isOk
     check f.calls.len == 1
     check f.calls[0].url.endsWith("/sendMessage")
     check f.calls[0].body.contains(NeutralFallback)
@@ -241,7 +246,7 @@ suite "TelegramAdapter — local media upload":
     defer: removeDir(dir)
     let f = FakeUpload()
     let a = newAdapter(f)
-    check a.sendMedia(42, dir, "legenda", "").isOk
+    check a.sendMedia(42, dir, "legenda", "", mediaRoot = dir).isOk
     check f.calls.len == 1
     check f.calls[0].url.endsWith("/sendMessage")
     check f.calls[0].body.contains(NeutralFallback)
@@ -256,7 +261,7 @@ suite "TelegramAdapter — local media upload":
     check getFileSize(path) > TelegramMaxUploadBytes
     let f = FakeUpload()
     let a = newAdapter(f)
-    check a.sendMedia(42, path, "legenda", "").isOk
+    check a.sendMedia(42, path, "legenda", "", mediaRoot = dir).isOk
     check f.calls.len == 1
     check f.calls[0].url.endsWith("/sendMessage")
     check f.calls[0].body.contains(NeutralFallback)
@@ -270,7 +275,8 @@ suite "TelegramAdapter — local media upload":
     a.chatIds[$uid] = "42"
     let groupTarget = telegramReplyTarget("-100999", "900", "")
     let msg = OutboundMessage(userId: uid, text: "legenda",
-                              mediaUrl: OggFixture, replyTo: groupTarget)
+                              mediaUrl: OggFixture, replyTo: groupTarget,
+                              mediaRoot: getCurrentDir())
     check a.send(msg).isOk
     check f.calls.len == 1
     check multipartField(f.calls[0].body, "chat_id") == "-100999"
@@ -282,7 +288,8 @@ suite "TelegramAdapter — local media upload":
     a.chatIds[$uid] = "-100999"
     let dmTarget = telegramReplyTarget("42", "900", "")
     let msg = OutboundMessage(userId: uid, text: "legenda",
-                              mediaUrl: OggFixture, replyTo: dmTarget)
+                              mediaUrl: OggFixture, replyTo: dmTarget,
+                              mediaRoot: getCurrentDir())
     check a.send(msg).isOk
     check f.calls.len == 1
     check multipartField(f.calls[0].body, "chat_id") == "42"
@@ -290,7 +297,8 @@ suite "TelegramAdapter — local media upload":
   test "a 429 upload is recorded and is not amplified":
     let f = FakeUpload(floodMethods: @["sendVoice"])
     let a = newAdapter(f)
-    check a.sendMedia(42, OggFixture, "legenda", "").isOk
+    check a.sendMedia(42, OggFixture, "legenda", "",
+                      mediaRoot = getCurrentDir()).isOk
     ## One refused upload and the neutral text: no document/audio retry.
     check f.calls.len == 2
     check f.calls[0].url.endsWith("/sendVoice")
@@ -300,15 +308,18 @@ suite "TelegramAdapter — local media upload":
   test "uploads prefer postNoRedirect when the port exposes it":
     let f = FakeUpload(preferNoRedirect: true)
     let a = newAdapter(f)
-    check a.sendMedia(42, OggFixture, "legenda", "").isOk
+    check a.sendMedia(42, OggFixture, "legenda", "",
+                      mediaRoot = getCurrentDir()).isOk
     check f.noRedirectCalls == 1
     check f.calls.len == 1
 
   test "each upload uses a fresh random boundary":
     let f = FakeUpload()
     let a = newAdapter(f)
-    check a.sendMedia(42, OggFixture, "um", "").isOk
-    check a.sendMedia(42, OggFixture, "dois", "").isOk
+    check a.sendMedia(42, OggFixture, "um", "",
+                      mediaRoot = getCurrentDir()).isOk
+    check a.sendMedia(42, OggFixture, "dois", "",
+                      mediaRoot = getCurrentDir()).isOk
     let first = headerValue(f.calls[0].headers, "Content-Type")
     let second = headerValue(f.calls[1].headers, "Content-Type")
     check first.startsWith("multipart/form-data; boundary=----donkey-tg-")
@@ -322,10 +333,15 @@ suite "TelegramAdapter — local media upload":
     let a = newAdapter(f)
     check a.http.allowlist == @["tg.test"]
 
-  test "an http apiBase outside loopback is rejected":
-    expect ValueError:
-      discard newTelegramAdapter("TOK", getTempDir() / "donkey_tg_ids_http.tsv",
+  test "an http apiBase outside loopback fails closed instead of raising":
+    ## Raising aborted daemon startup and every other channel with it. The
+    ## adapter records the reason and refuses to send.
+    let bad = newTelegramAdapter("TOK", getTempDir() / "donkey_tg_ids_http.tsv",
                                  apiBase = "http://tg.test")
+    check bad.configError.len > 0
+    var msg = OutboundMessage(userId: UserId("42"), channel: ckTelegram,
+                              text: "oi")
+    check bad.send(msg).isErr
     let loopback = newTelegramAdapter("TOK",
                                       getTempDir() / "donkey_tg_ids_loopback.tsv",
                                       apiBase = "http://127.0.0.1:8080")
@@ -341,7 +357,7 @@ suite "TelegramAdapter — local media upload":
                                       "sendPhoto", "sendDocument"])
     let a = newAdapter(f)
     let target = telegramReplyTarget("42", "900", "7")
-    check a.sendMedia(42, path, "legenda", target).isOk
+    check a.sendMedia(42, path, "legenda", target, mediaRoot = dir).isOk
     let last = f.calls[^1]
     check last.url.endsWith("/sendMessage")
     check last.body.contains(NeutralFallback)
@@ -359,11 +375,125 @@ suite "TelegramAdapter — local media upload":
                                       "sendPhoto", "sendDocument",
                                       "sendMessage"])
     let a = newAdapter(f)
-    let res = a.sendMedia(42, path, "legenda", "")
+    let res = a.sendMedia(42, path, "legenda", "", mediaRoot = dir)
     check res.isErr
     check res.error == NeutralFallback
     check not res.error.contains("segredo-absoluto-xyz")
     check not res.error.contains(dir)
+
+  test "a local file outside the paddock becomes neutral text and survives":
+    let base = freshDir("confine-outside")
+    defer: removeDir(base)
+    let root = base / "paddock"
+    createDir(root)
+    let outside = base / "segredo-absoluto.ogg"
+    writeFile(outside, "OGG")
+    let f = FakeUpload()
+    let a = newAdapter(f)
+    check a.sendMedia(42, outside, "legenda", "", mediaRoot = root).isOk
+    check f.calls.len == 1
+    check f.calls[0].url.endsWith("/sendMessage")
+    check f.calls[0].body.contains(NeutralFallback)
+    check not f.calls[0].body.contains("segredo-absoluto")
+    check not f.calls[0].body.contains(base)
+    check fileExists(outside)
+    check readFile(outside) == "OGG"
+
+  test "a sibling directory sharing the paddock prefix is rejected":
+    let base = freshDir("confine-sibling")
+    defer: removeDir(base)
+    let root = base / "paddock"
+    let sibling = base / "paddock2"
+    createDir(root)
+    createDir(sibling)
+    let file = sibling / "foto.png"
+    writeFile(file, "PNG")
+    let f = FakeUpload()
+    let a = newAdapter(f)
+    check a.sendMedia(42, file, "legenda", "", mediaRoot = root).isOk
+    check f.calls.len == 1
+    check f.calls[0].url.endsWith("/sendMessage")
+    check f.calls[0].body.contains(NeutralFallback)
+    check not f.calls[0].body.contains("foto.png")
+    check fileExists(file)
+
+  test "sendReturnId uploads local media that lives inside the paddock":
+    let f = FakeUpload()
+    let a = newAdapter(f)
+    let uid = a.resolver.resolve(ckTelegram, "42")
+    let msg = OutboundMessage(userId: uid, text: "legenda",
+                              mediaUrl: OggFixture,
+                              mediaRoot: getCurrentDir())
+    check a.sendReturnId(msg).isOk
+    check f.calls.len == 1
+    check f.calls[0].url.endsWith("/sendVoice")
+
+  test "an empty paddock root fails closed":
+    let f = FakeUpload()
+    let a = newAdapter(f)
+    check a.sendMedia(42, OggFixture, "legenda", "").isOk
+    check f.calls.len == 1
+    check f.calls[0].url.endsWith("/sendMessage")
+    check f.calls[0].body.contains(NeutralFallback)
+    check not f.calls[0].body.contains("sample.ogg")
+
+  test "the canonical path is read and uploaded":
+    let root = freshDir("confine-canonical")
+    defer: removeDir(root)
+    writeFile(root / "real.ogg", "OGGDATA")
+    when defined(posix):
+      createSymlink(root / "real.ogg", root / "link.ogg")
+      let f = FakeUpload()
+      let a = newAdapter(f)
+      check a.sendMedia(42, root / "link.ogg", "legenda", "",
+                        mediaRoot = root).isOk
+      check f.calls.len == 1
+      check f.calls[0].url.endsWith("/sendVoice")
+      check f.calls[0].body.contains("OGGDATA")
+      check f.calls[0].body.contains("filename=\"real.ogg\"")
+      check not f.calls[0].body.contains("link.ogg")
+    else:
+      discard
+
+  test "a symlink out of the paddock is neutral and the target survives":
+    let base = freshDir("confine-symlink")
+    defer: removeDir(base)
+    let root = base / "paddock"
+    createDir(root)
+    let outside = base / "fora.ogg"
+    writeFile(outside, "FORA")
+    when defined(posix):
+      createSymlink(outside, root / "link.ogg")
+      let f = FakeUpload()
+      let a = newAdapter(f)
+      check a.sendMedia(42, root / "link.ogg", "legenda", "",
+                        mediaRoot = root).isOk
+      check f.calls.len == 1
+      check f.calls[0].url.endsWith("/sendMessage")
+      check f.calls[0].body.contains(NeutralFallback)
+      check not f.calls[0].body.contains("fora.ogg")
+      check not f.calls[0].body.contains(".ogg")
+      check fileExists(outside)
+      check readFile(outside) == "FORA"
+    else:
+      discard
+
+  test "the neutral notice carries no path, name or extension":
+    let base = freshDir("confine-notice")
+    defer: removeDir(base)
+    let root = base / "paddock"
+    createDir(root)
+    let outside = base / "pasta" / "segredo.opus"
+    createDir(base / "pasta")
+    writeFile(outside, "X")
+    let f = FakeUpload()
+    let a = newAdapter(f)
+    check a.sendMedia(42, outside, "legenda", "", mediaRoot = root).isOk
+    let notice = f.calls[^1].body
+    check notice.contains(NeutralFallback)
+    check not notice.contains("/")
+    check not notice.contains("segredo")
+    check not notice.contains(".opus")
 
   test "the constructed adapter owns an upload transport":
     let f = FakeUpload()

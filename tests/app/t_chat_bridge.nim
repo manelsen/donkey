@@ -125,6 +125,64 @@ suite "ChatBridge lifecycle":
     fakeNow += MaxOrphanTtlMs
     check bridge.register(uid, timeoutMs = 5000).isOk
 
+  test "a complete terminal after truncated partials is not truncated":
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    check bridge.register(uid, timeoutMs = 5000).isOk
+    # Partials alone overflow the buffer...
+    for i in 0 .. 4:
+      check bridge.deliver(apiMsg(repeat("x", MaxTurnBufferBytes div 3), partial = true))
+    # ...but the terminal supersedes them and is complete.
+    check bridge.deliver(apiMsg("curto"))
+    let done = bridge.poll(uid)
+    check done.status == cbpDone
+    check not done.truncated
+    check done.events[^1].text == "curto"
+
+  test "the orphan TTL replaces the turn deadline":
+    ## Abandoning at t=0 must reserve the key for MaxOrphanTtlMs, not keep the
+    ## original 5 s deadline: at t=10 s the key is still busy.
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    check bridge.register(uid, timeoutMs = 5000).isOk
+    check bridge.abandon(uid)
+    fakeNow += 10_000
+    check bridge.register(uid).isErr
+    fakeNow += MaxOrphanTtlMs
+    check bridge.register(uid).isOk
+
+  test "abandon after the terminal frees the key instead of holding it":
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    check bridge.register(uid, timeoutMs = 5000).isOk
+    check bridge.deliver(apiMsg("resposta"))
+    # The client left after the answer was already produced: nothing to
+    # preserve, and the key must not stay reserved for the whole TTL.
+    check not bridge.abandon(uid)
+    check bridge.register(uid, timeoutMs = 5000).isOk
+
+  test "a buffered terminal survives another register past the deadline":
+    ## A finished the turn but B registered before A polled: B is refused, and
+    ## A must still get its answer. Marking A orphaned here would clear it.
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    check bridge.register(uid, timeoutMs = 5000).isOk
+    check bridge.deliver(apiMsg("resposta de A"))
+    fakeNow += 10_000
+    check bridge.register(uid).isErr
+    let done = bridge.poll(uid)
+    check done.status == cbpDone
+    check done.events[^1].text == "resposta de A"
+
+  test "an expired turn that was never polled is reclaimed after the TTL":
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    check bridge.register(uid, timeoutMs = 5000).isOk
+    fakeNow += 10_000            # past the deadline, no poll, no abandon
+    check bridge.register(uid).isErr
+    fakeNow += MaxOrphanTtlMs
+    check bridge.register(uid).isOk
+
   test "poll on an unknown user is missing":
     let bridge = newBridge()
     check bridge.poll(UserId("api:nobody")).status == cbpMissing
@@ -204,17 +262,22 @@ suite "ChatBridge buffer and deadline":
     check bridge.deliver(apiMsg(repeat("x", MaxTurnBufferBytes + 4096),
                                 rkFinalAnswer, partial = true))
     check bridge.deliver(apiMsg("tail", rkFinalAnswer, partial = true))
-    check bridge.deliver(apiMsg("fim"))
 
+    ## The partial stream is capped and flagged while the turn is open...
+    let partials = bridge.poll(uid)
+    check partials.status == cbpEvents
+    check partials.truncated
+    var contentBytes = 0
+    for event in partials.events:
+      contentBytes += event.text.len
+    check contentBytes <= MaxTurnBufferBytes
+
+    ## ...but a complete terminal supersedes them and is not "truncated":
+    ## reporting `length` for a short, complete answer was the bug.
+    check bridge.deliver(apiMsg("fim"))
     let batch = bridge.poll(uid)
     check batch.status == cbpDone
-    check batch.truncated
-    var contentBytes = 0
-    for event in batch.events:
-      if event.kind != rkFinalAnswer or event.text != "fim":
-        contentBytes += event.text.len
-    check contentBytes <= MaxTurnBufferBytes
-    # The terminal answer is still delivered even when the buffer is full.
+    check not batch.truncated
     check batch.events[^1].text == "fim"
 
   test "a deadline with a fake clock ends the turn without sleeping":
@@ -311,3 +374,14 @@ suite "admitLongLived":
     check admitLongLived(llSseConnection,
       LongLivedSnapshot(pendingTurns: 3, sseConnections: 3,
                         longLivedWorkers: 3), wide) == cvNoWorker
+
+  test "a sweep reclaims orphans of users who never come back":
+    let bridge = newBridge()
+    check bridge.register(UserId("api:gone"), timeoutMs = 5000).isOk
+    check bridge.abandon(UserId("api:gone"))
+    check bridge.pendingCount() == 1
+    fakeNow += MaxOrphanTtlMs
+    ## A different user registering sweeps the expired orphan.
+    check bridge.register(UserId("api:other")).isOk
+    check bridge.pendingCount() == 1
+    check bridge.poll(UserId("api:gone")).status == cbpMissing

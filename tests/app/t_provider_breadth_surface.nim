@@ -139,3 +139,36 @@ suite "nvidia and alibaba breadth — setup surface":
 
   test "an endpoint-configured provider never yields an API key":
     check providerKeyFromEnv("ollama") == ""
+
+suite "fireworks breadth — descriptor to availability":
+
+  const FireworksEnv = "FIREWORKS_API_KEY"
+
+  test "Fireworks identity comes from the descriptor table":
+    let descriptor = descriptorOr("fireworks")
+    check descriptor.id == "fireworks"
+    check descriptor.envNames == @[FireworksEnv]
+    check descriptor.defaultModel == DefaultModelFireworks
+    check descriptor.transport == ptOpenAiChat
+    check providerDescriptor("fw").get().id == "fireworks"
+    check providerDescriptor("fireworks-ai").get().id == "fireworks"
+
+  test "an empty model resolves to the descriptor default":
+    check defaultModelForProvider("fireworks") == DefaultModelFireworks
+    let spec = buildProviderSpec(
+      ProviderPrefs(providerName: "fireworks", modelName: ""))
+    check spec.modelName == DefaultModelFireworks
+    check spec.modelName != "glm-4.7"
+
+  test "the daemon status surface lists Fireworks when its env key exists":
+    withEnv(FireworksEnv, "fw-test"):
+      let availability = detectProviderAvailability()
+      check availability.fireworks
+      check availableProviderNames(availability).has("fireworks")
+      check availableProvidersFromEnv().fireworks
+
+  test "unset env leaves Fireworks unavailable":
+    withoutEnv(FireworksEnv):
+      withoutEnv("FIREWORKS_API_KEYS"):
+        check not detectProviderAvailability().fireworks
+        check not availableProvidersFromEnv().fireworks

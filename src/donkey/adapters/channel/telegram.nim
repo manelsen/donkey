@@ -24,6 +24,7 @@ import ../../domain/channels/telegram_policy
 import ../../ports/http
 import ../../ports/channel
 import ../http/std_http
+import ../filesystem/paths
 import ../identity/identity_resolver
 
 export identity_resolver
@@ -49,6 +50,7 @@ const MediaUnavailableText* = "não foi possível enviar o anexo"
 type
   TelegramAdapter* = object
     token*:       string
+    configError*: string        ## invalid apiBase/proxy; sends fail closed
     apiBase*:     string        ## override for testing (e.g. mock server URL)
     offset*:      int64         ## getUpdates offset (mutable via receive)
     resolver*:    IdentityResolver
@@ -423,19 +425,26 @@ proc sendMediaFallbackText(a: TelegramAdapter; tgId: int64;
   if res.isOk: ok() else: err(MediaUnavailableText)
 
 proc sendLocalMedia(a: TelegramAdapter; tgId: int64; path, caption,
-                    replyTo: string; durationSec: int): Result[void, string] =
-  ## Reads an existing local file and uploads it as multipart. The destination
-  ## comes from the reply target (same rule as text), the topic and reply
-  ## anchor are preserved, and a deleted topic/anchor is retried without the
-  ## dead reference. A photo refused for its own limits is retried as a
+                    replyTo, mediaRoot: string;
+                    durationSec: int): Result[void, string] =
+  ## Reads an existing local file and uploads it as multipart. The path is
+  ## confined to the paddock before any byte is read; a denial is the same
+  ## neutral notice as a missing file and never deletes the target. The
+  ## destination comes from the reply target (same rule as text), the topic and
+  ## reply anchor are preserved, and a deleted topic/anchor is retried without
+  ## the dead reference. A photo refused for its own limits is retried as a
   ## document; any other error is not duplicated.
   let chatId = mediaChatId(tgId, replyTo)
-  let loaded = localMediaBytes(path, TelegramMaxUploadBytes)
+  let confined = resolveConfinedMediaPath(mediaRoot, path)
+  if confined.isErr:
+    return a.sendMediaFallbackText(chatId, replyTo)
+  let safePath = confined.value
+  let loaded = localMediaBytes(safePath, TelegramMaxUploadBytes)
   if loaded.isErr:
     return a.sendMediaFallbackText(chatId, replyTo)
   let data = loaded.value
   let (_, replyId, threadId) = splitTelegramReplyTarget(replyTo)
-  var spec = mediaUploadSpec(path, chatId,
+  var spec = mediaUploadSpec(safePath, chatId,
                              clipCaption(caption, TelegramCaptionLimit),
                              threadId, replyId, durationSec)
   var res = a.postMediaUpload(spec, data)
@@ -461,12 +470,15 @@ proc sendLocalMedia(a: TelegramAdapter; tgId: int64; path, caption,
 
 proc sendMedia*(a: TelegramAdapter; tgId: int64;
                 url, caption, replyTo: string;
-                durationSec = 0): Result[void, string] =
+                durationSec = 0; mediaRoot = ""): Result[void, string] =
   ## Sends a photo (if URL looks like an image) or a document otherwise, or
-  ## uploads a local file as multipart with the same routing.
+  ## uploads a local file as multipart with the same routing. A local file must
+  ## live inside `mediaRoot`; the confinement happens in `sendLocalMedia`.
   ## Falls back to neutral text if every attempt fails.
+  if a.configError.len > 0:
+    return err("TelegramAdapter: " & a.configError)
   if not isRemoteMediaUrl(url):
-    return a.sendLocalMedia(tgId, url, caption, replyTo, durationSec)
+    return a.sendLocalMedia(tgId, url, caption, replyTo, mediaRoot, durationSec)
   let audioMethod = audioMethodFor(url)
   let isImage = url.endsWith(".jpg") or url.endsWith(".jpeg") or
                 url.endsWith(".png") or url.endsWith(".gif") or
@@ -560,6 +572,8 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message with Markdown (plain-text fallback), split at 4096 chars.
   ## If msg.keyboard is non-empty, sends with an inline keyboard.
   ## If msg.mediaUrl is set, sends as photo/document (caption = msg.text).
+  if a.configError.len > 0:
+    return err("TelegramAdapter: " & a.configError)
   let rawId = a.chatIdFor(msg.userId)
   if rawId.len == 0: return err("TelegramAdapter.send: no id for " & $msg.userId)
   let chatId = parseBiggestInt(rawId).int64
@@ -573,7 +587,8 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
 
   if msg.mediaUrl.len > 0:
     let (head, tail) = splitCaption(msg.text, TelegramCaptionLimit)
-    ? a.sendMedia(chatId, msg.mediaUrl, head, msg.replyTo, msg.mediaDurationSec)
+    ? a.sendMedia(chatId, msg.mediaUrl, head, msg.replyTo,
+                  msg.mediaDurationSec, msg.mediaRoot)
     if tail.strip.len > 0:
       for chunk in splitForTelegram(tail, TelegramMaxChars):
         ? a.sendChunk(chatId, chunk, msg.replyTo, false, msg.isHtml)
@@ -585,6 +600,8 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
 
 proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, string] =
   ## Sends and returns the message_id.
+  if a.configError.len > 0:
+    return err("TelegramAdapter: " & a.configError)
   let rawId = a.chatIdFor(msg.userId)
   if rawId.len == 0: return err("TelegramAdapter.sendReturnId: no id for " & $msg.userId)
   let chatId = parseBiggestInt(rawId).int64
@@ -594,7 +611,8 @@ proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, str
 
   if msg.mediaUrl.len > 0:
     let (head, tail) = splitCaption(msg.text, TelegramCaptionLimit)
-    ? a.sendMedia(chatId, msg.mediaUrl, head, msg.replyTo, msg.mediaDurationSec)
+    ? a.sendMedia(chatId, msg.mediaUrl, head, msg.replyTo,
+                  msg.mediaDurationSec, msg.mediaRoot)
     if tail.strip.len > 0:
       for chunk in splitForTelegram(tail, TelegramMaxChars):
         ? a.sendChunk(chatId, chunk, msg.replyTo, false, msg.isHtml)
@@ -876,9 +894,10 @@ proc newTelegramAdapter*(token: string; identityPath: string;
   ## host becomes the egress allowlist instead of disabling it.
   let base = apiBase.strip
   let baseError = telegramApiBaseError(base)
-  if baseError.len > 0:
-    raise newException(ValueError, "TelegramAdapter: " & baseError)
-  let allowlist = telegramApiAllowlist(base)
+  ## Do not raise: an invalid override would abort daemon startup and take
+  ## every other channel with it. Record the reason and fail sends instead.
+  let effectiveBase = if baseError.len > 0: "https://api.telegram.org" else: base
+  let allowlist = telegramApiAllowlist(effectiveBase)
   let upload =
     if uploadHttp.post.isNil:
       newStdHttpAdapter(
@@ -891,6 +910,7 @@ proc newTelegramAdapter*(token: string; identityPath: string;
       uploadHttp
   TelegramAdapter(
     token:       token,
+    configError: baseError,
     apiBase:     base,
     offset:      0,
     resolver:    newIdentityResolver(identityPath),

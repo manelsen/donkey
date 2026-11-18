@@ -166,6 +166,17 @@ suite "parseAgentChatRequest":
     """)
     check res.isOk
 
+  test "n as zero or negative is refused":
+    for n in ["0", "-1", "0.0", "-1.0"]:
+      let body = """
+        {"user": "alice", "n": $#,
+         "messages": [{"role": "user", "content": "oi"}]}
+      """.replace("$#", n)
+      let res = parseAgentChatRequest(body)
+      check res.isErr
+      check res.error.code == "unsupported_parameter"
+      check res.error.param == "n"
+
   test "n as a float of 1 is harmless":
     let res = parseAgentChatRequest("""
       {"user": "alice", "n": 1.0,
@@ -319,6 +330,12 @@ suite "agent response builders":
   test "sseDone is the OpenAI terminator":
     check sseDone() == "data: [DONE]\n\n"
 
+  test "sseData frames exactly one event per chunk":
+    check sseData("{\"object\":\"chat.completion.chunk\"}") ==
+          "data: {\"object\":\"chat.completion.chunk\"}\n\n"
+    check sseData("{\"error\":{\"message\":\"x\"}}") ==
+          "data: {\"error\":{\"message\":\"x\"}}\n\n"
+
 suite "deltaText precedence":
 
   test "final answers and turn errors are content":
@@ -402,6 +419,31 @@ suite "redactForClient":
     check not redacted.contains("abc123")
     check not redacted.contains("tok123")
     check redacted.contains("safe=\"visible\"")
+
+  test "redacts Basic auth and common token prefixes":
+    let redacted = redactForClient(
+      "Authorization: Basic dXNlcjpwYXNz xoxb-1234-5678 ghp_abcdef " &
+      "AKIAIOSFODNN7EXAMPLE AIzaSyA123456789")
+    check not redacted.contains("dXNlcjpwYXNz")
+    check not redacted.contains("xoxb-1234")
+    check not redacted.contains("ghp_abcdef")
+    check not redacted.contains("AKIAIOSFODNN7EXAMPLE")
+    check not redacted.contains("AIzaSyA123456789")
+    check redacted.contains(RedactedPlaceholder)
+
+  test "redacts JSON-style secret keys with a colon":
+    let redacted = redactForClient(
+      "{\"api_key\": \"secret-value\", \"token\": \"tok-9\"}")
+    check not redacted.contains("secret-value")
+    check not redacted.contains("tok-9")
+
+  test "redacts JSON keys with a space before the colon":
+    let redacted = redactForClient("{\"api_key\" : \"secret-value\"}")
+    check not redacted.contains("secret-value")
+
+  test "prose that merely contains key: or token: is left alone":
+    let redacted = redactForClient("monkey: business, token: counting")
+    check redacted == "monkey: business, token: counting"
 
   test "caps the payload at 300 characters":
     let redacted = redactForClient(repeat("a", 1000) & " sk-fake")
