@@ -5,13 +5,14 @@
 ## `channels` tracks which (ChannelKind, raw_id) pairs are associated with
 ## this session — used for `ctl session list`.
 
-import std/[options, tables]
+import std/[algorithm, options, tables]
 import chronos
 import chronos/asyncsync
 import ../core/pipeops
 import ../core/commands/command_routing
 import ../domain/agent_message
 import ../domain/message
+import ../domain/gateway/dashboard_pure
 import ../core/session/session_ingress
 import ../core/security/dm_policy
 import ../ports/runtime_state
@@ -311,6 +312,29 @@ func latestChannel*(sm: SessionManager; userId: UserId): Option[ChannelKind] =
 func listSessions*(sm: SessionManager): seq[(UserId, seq[(ChannelKind, string)])] =
   for uid, entry in sm.entries:
     result.add((UserId(uid), entry.channels))
+
+func listSessionDetails*(sm: SessionManager): seq[SessionDetail] =
+  ## Additive dashboard view of the registry. `SessionInfo` (IPC) stays
+  ## untouched; this exposes the session id, the wall-clock timestamp and the
+  ## restored flag without leaking raw channel ids.
+  for uid, entry in sm.entries:
+    var channels: seq[string]
+    for (kind, _) in entry.channels:
+      let name = $kind
+      if name notin channels:
+        channels.add(name)
+    result.add(SessionDetail(
+      sessionId: entry.sessionId,
+      userId: uid,
+      channels: channels,
+      lastInboundEpochMs: entry.lastInboundEpochMs,
+      restored: entry.restored,
+    ))
+  result.sort(proc(a, b: SessionDetail): int =
+    if a.lastInboundEpochMs != b.lastInboundEpochMs:
+      cmp(b.lastInboundEpochMs, a.lastInboundEpochMs)
+    else:
+      cmp(a.userId, b.userId))
 
 func sessionCount*(sm: SessionManager): int = sm.entries.len
 

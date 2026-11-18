@@ -25,8 +25,11 @@ import ../core/log
 import ../ports/ipc
 import ../core/agent_events
 import ../domain/message
+import ../domain/agent_message
 import ../domain/providers/openai_compat
 import ../domain/gateway/identity_pure
+import ../domain/gateway/dashboard_pure
+import ../domain/gateway/redact_pure
 import ../domain/gateway/capacity_pure as capacity
 import ./metrics
 import ./chat_bridge
@@ -134,6 +137,30 @@ type
   GatewayAgentDispatchFn* = proc(msg: InboundMessage) {.gcsafe.}
     ## Starts one agent turn through the same ingress used by `/api/chat`.
 
+  GatewayResponse* = object
+    ## Status + body of a dashboard request, so the socket handler and the
+    ## tests exercise the same code.
+    status*: int
+    contentType*: string
+    body*: string
+
+  GatewaySessionsFn* = proc(): seq[SessionDetail] {.gcsafe.}
+    ## Returns every session; paging is applied by `buildSessionsJson`.
+
+  GatewayProvidersFn* = proc(): string {.gcsafe.}
+    ## Returns the provider-health JSON built by `buildProvidersJson`.
+
+  GatewaySessionActionOutcome* = enum
+    gsaoAccepted
+    gsaoNotFound
+    gsaoRevoked
+
+  GatewaySessionActionFn* = proc(rawUserId: string; taskKind: TaskKind;
+                                  payload: string): GatewaySessionActionOutcome
+                                 {.gcsafe.}
+    ## Performs the one management action. The raw id is the session key, not
+    ## an `api:`-prefixed identity; the wiring owns lookup and revocation.
+
 # ── Inbound handler ───────────────────────────────────────────────────────────
 
 type
@@ -161,9 +188,9 @@ func buildSseEvent*(event, data: string): string =
   result.add("data: " & data & "\n\n")
 
 func buildDashboardHtml*(): string =
-  ## Read-only status/logs dashboard. The shell is public and carries no
-  ## secrets; the token is entered in the page and sent as a Bearer header to
-  ## the authenticated data endpoints.
+  ## Dashboard shell. Public and data-free: the token is entered in the page
+  ## and kept in sessionStorage, every table is filled at runtime through the
+  ## Bearer-authenticated endpoints, and the CSP keeps script/connect local.
   result = """<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -179,6 +206,8 @@ input{flex:1;padding:.4rem .6rem;border:1px solid #bbb;border-radius:6px}
 button{padding:.4rem .9rem;border:1px solid #888;border-radius:6px;background:#f4f4f4;cursor:pointer}
 pre{background:#f7f7f7;border:1px solid #e3e3e3;border-radius:8px;padding:.8rem;overflow:auto;max-height:20rem;font-size:.8rem}
 h2{font-size:1rem;margin:1.2rem 0 .4rem}
+table{width:100%;border-collapse:collapse;font-size:.8rem}
+th,td{text-align:left;padding:.35rem .5rem;border-bottom:1px solid #e3e3e3;vertical-align:top}
 </style>
 </head>
 <body>
@@ -187,26 +216,110 @@ h2{font-size:1rem;margin:1.2rem 0 .4rem}
 <button id="save">Salvar e atualizar</button>
 <h2>Status</h2>
 <pre id="status">—</pre>
+<h2>Sessões</h2>
+<table>
+<thead><tr><th>Sessão</th><th>Usuário</th><th>Canais</th><th>Último contato</th><th>Ativa</th></tr></thead>
+<tbody id="sessions"><tr><td colspan="5">—</td></tr></tbody>
+</table>
+<h2>Providers</h2>
+<table>
+<thead><tr><th>Provider</th><th>Saúde</th><th>Cooldown</th><th>Chamadas</th><th>OK</th><th>Erros</th><th>Latência</th></tr></thead>
+<tbody id="providers"><tr><td colspan="7">—</td></tr></tbody>
+</table>
+<h2>Nova conversa</h2>
+<label>Usuário <input id="new-user" type="text" autocomplete="off" placeholder="id da sessão (UUID)"></label>
+<button id="new-session">Nova conversa</button>
+<pre id="action">—</pre>
 <h2>Logs recentes</h2>
 <pre id="logs">—</pre>
 <script>
 const $ = id => document.getElementById(id);
 let token = sessionStorage.getItem('donkey_token') || '';
 $('token').value = token;
+function authHeaders() {
+  const headers = {'Content-Type': 'application/json'};
+  if (token) headers.Authorization = 'Bearer ' + token;
+  return headers;
+}
 async function get(path) {
   const headers = token ? {Authorization: 'Bearer ' + token} : {};
   const r = await fetch(path, {headers});
   return r.ok ? await r.text() : 'HTTP ' + r.status;
 }
+async function getJson(path) {
+  const headers = token ? {Authorization: 'Bearer ' + token} : {};
+  const r = await fetch(path, {headers});
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+function row(cells) {
+  const tr = document.createElement('tr');
+  for (const text of cells) {
+    const td = document.createElement('td');
+    td.textContent = text;
+    tr.appendChild(td);
+  }
+  return tr;
+}
+async function refreshSessions() {
+  try {
+    const data = await getJson('/api/sessions');
+    const body = $('sessions');
+    body.replaceChildren();
+    for (const s of (data.sessions || [])) {
+      body.appendChild(row([
+        s.sessionId || '', s.userId || '',
+        (s.channels || []).join(', '),
+        s.lastInboundAt || '—',
+        s.live ? 'sim' : 'não',
+      ]));
+    }
+    if (!body.firstChild) body.appendChild(row(['—', '—', '—', '—', '—']));
+  } catch (e) {
+    $('sessions').replaceChildren(row(['erro', String(e), '', '', '']));
+  }
+}
+async function refreshProviders() {
+  try {
+    const data = await getJson('/api/providers');
+    const body = $('providers');
+    body.replaceChildren();
+    for (const p of data) {
+      body.appendChild(row([
+        p.id || '', p.health || '', p.cooldownUntil || '—',
+        String(p.calls || 0), String(p.ok || 0), String(p.err || 0),
+        String(p.avgLatencyMs || 0) + ' ms',
+      ]));
+    }
+  } catch (e) {
+    $('providers').replaceChildren(row(['erro', String(e), '', '', '', '', '']));
+  }
+}
 async function refresh() {
   $('status').textContent = await get('/api/status');
   $('logs').textContent = await get('/api/logs?n=50');
+  await refreshSessions();
+  await refreshProviders();
 }
 $('save').onclick = () => {
   token = $('token').value.trim();
   sessionStorage.setItem('donkey_token', token);
   refresh();
 };
+$('new-session').addEventListener('click', async () => {
+  const raw = $('new-user').value.trim();
+  if (!raw) {
+    $('action').textContent = 'informe o usuário';
+    return;
+  }
+  const r = await fetch('/api/sessions/' + encodeURIComponent(raw) + '/task', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({action: 'new'}),
+  });
+  $('action').textContent = r.ok ? 'aceito' : 'HTTP ' + r.status;
+  refresh();
+});
 refresh();
 setInterval(refresh, 5000);
 </script>
@@ -229,6 +342,53 @@ func buildAgentEventsBody*(events: seq[AgentEvent]): string =
     arr.add(e.toJson())
   $arr
 
+func dashboardError*(status: int; message: string): GatewayResponse =
+  ## Every dashboard error path leaves through `redactForClient`, so an echoed
+  ## parser/provider message can never carry `Bearer`, `sk-`, `key=` or
+  ## `token=` values to the browser.
+  GatewayResponse(status: status, contentType: "application/json",
+                  body: $(%*{"error": redactForClient(message)}))
+
+proc handleSessionsRequest*(sessionsFn: GatewaySessionsFn;
+                            rawLimit, rawOffset: int): GatewayResponse {.gcsafe.} =
+  ## `GET /api/sessions`. The hook returns every row; paging/clamping is pure,
+  ## so no query value can turn into a 500.
+  if sessionsFn == nil:
+    return dashboardError(503, "sessions hook not configured")
+  GatewayResponse(status: 200, contentType: "application/json",
+                  body: buildSessionsJson(sessionsFn(), rawLimit, rawOffset))
+
+proc handleProvidersRequest*(providersFn: GatewayProvidersFn): GatewayResponse
+                            {.gcsafe.} =
+  ## `GET /api/providers`. The wiring builds the body with the pure provider
+  ## builder, which derives health from availability, cooldowns and metrics.
+  if providersFn == nil:
+    return dashboardError(503, "providers hook not configured")
+  GatewayResponse(status: 200, contentType: "application/json",
+                  body: providersFn())
+
+proc handleSessionActionRequest*(actionFn: GatewaySessionActionFn;
+                                 rawUserId, body, authHeader,
+                                 authToken: string): GatewayResponse {.gcsafe.} =
+  ## `POST /api/sessions/{userId}/task`. The raw session key is never passed
+  ## through `apiUserId`; auth is checked here as well as in the socket
+  ## handler, and a missing hook fails closed.
+  if not isAuthorized(authHeader, authToken):
+    return dashboardError(401, "unauthorized")
+  if actionFn == nil:
+    return dashboardError(503, "session action hook not configured")
+  let parsed = parseSessionAction(body)
+  if parsed.isErr:
+    return dashboardError(400, parsed.error)
+  case actionFn(rawUserId, tkNew, "")
+  of gsaoAccepted:
+    GatewayResponse(status: 202, contentType: "application/json",
+                    body: "{\"status\":\"accepted\"}")
+  of gsaoNotFound:
+    dashboardError(404, "session not found")
+  of gsaoRevoked:
+    dashboardError(403, "access revoked")
+
 func isPublicGatewayAction*(action: string): bool =
   ## Liveness/readiness probes must not require credentials. Only static text is
   ## exposed here; every data-bearing endpoint stays behind the token.
@@ -242,6 +402,8 @@ func routeGatewayRequest*(req: GatewayRequest): string =
   of "/api/logs":      "logs"
   of "/api/events":    "events"
   of "/api/chat":      "chat"
+  of "/api/sessions":  "sessions"
+  of "/api/providers": "providers"
   of "/v1/chat/completions": "openai_chat"
   of "/v1/models":     "openai_models"
   of "/dashboard":     "dashboard"
@@ -257,6 +419,7 @@ func httpStatusLine*(code: int): string =
   ## Status text for the codes the agent endpoint can produce.
   case code
   of 200: "200 OK"
+  of 202: "202 Accepted"
   of 400: "400 Bad Request"
   of 401: "401 Unauthorized"
   of 403: "403 Forbidden"
@@ -434,6 +597,9 @@ proc handleGatewayConn(client: Socket;
                         eventFn:  GatewayEventFn;
                         inboundFn: GatewayInboundFn;
                         agentDispatchFn: GatewayAgentDispatchFn;
+                        sessionsFn: GatewaySessionsFn;
+                        providersFn: GatewayProvidersFn;
+                        sessionActionFn: GatewaySessionActionFn;
                         authorizeFn: AuthorizeFn;
                         chatBridge: ChatBridge;
                         modelName: string;
@@ -502,7 +668,13 @@ proc handleGatewayConn(client: Socket;
     if req.meth == "OPTIONS":
       client.sendResponse("204 No Content", "text/plain", "", log)
       return
-    let action = routeGatewayRequest(req)
+    var action = routeGatewayRequest(req)
+    var sessionTaskUser = ""
+    if action == "notfound" and req.meth == "POST":
+      let parsedTaskPath = parseSessionTaskPath(req.path)
+      if parsedTaskPath.isOk:
+        action = "session_task"
+        sessionTaskUser = parsedTaskPath.get()
     if not isPublicGatewayAction(action) and not isAuthorized(authHeader, authToken):
       client.sendResponse("401 Unauthorized", "application/json",
                           "{\"error\":\"unauthorized\"}\n", log)
@@ -532,6 +704,34 @@ proc handleGatewayConn(client: Socket;
       let n = parseQueryInt(rawPath, "n", 50)
       let entries = logFn(n)
       client.sendJson(buildLogsBody(entries), log)
+
+    of "sessions":
+      if req.meth != "GET":
+        client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        let limit = parseQueryInt(rawPath, "limit", DashboardDefaultLimit)
+        let offset = parseQueryInt(rawPath, "offset", 0)
+        let res = handleSessionsRequest(sessionsFn, limit, offset)
+        client.sendResponse(httpStatusLine(res.status), res.contentType,
+                            res.body, log)
+
+    of "providers":
+      if req.meth != "GET":
+        client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        let res = handleProvidersRequest(providersFn)
+        client.sendResponse(httpStatusLine(res.status), res.contentType,
+                            res.body, log)
+
+    of "session_task":
+      if req.meth != "POST":
+        client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        let body = readRequestBody(client, contentLength, deadline)
+        let res = handleSessionActionRequest(sessionActionFn, sessionTaskUser,
+                                             body, authHeader, authToken)
+        client.sendResponse(httpStatusLine(res.status), res.contentType,
+                            res.body, log)
 
     of "events":
       if not tryAcquireSseConnection():
@@ -675,6 +875,9 @@ type GatewayArgs = object
   eventFn:   GatewayEventFn
   inboundFn: GatewayInboundFn
   agentDispatchFn: GatewayAgentDispatchFn
+  sessionsFn: GatewaySessionsFn
+  providersFn: GatewayProvidersFn
+  sessionActionFn: GatewaySessionActionFn
   authorizeFn: AuthorizeFn
   chatBridge: ChatBridge
   modelName: string
@@ -686,6 +889,9 @@ var gGatewayLogFn:    GatewayLogFn
 var gGatewayEventFn:  GatewayEventFn
 var gGatewayInboundFn: GatewayInboundFn
 var gGatewayAgentDispatchFn: GatewayAgentDispatchFn
+var gGatewaySessionsFn: GatewaySessionsFn
+var gGatewayProvidersFn: GatewayProvidersFn
+var gGatewaySessionActionFn: GatewaySessionActionFn
 var gGatewayAuthorizeFn: AuthorizeFn
 var gGatewayChatBridge: ChatBridge
 var gGatewayModelName: string
@@ -814,6 +1020,8 @@ proc gatewayWorker(id: int) {.thread.} =
       try:
         handleGatewayConn(client, gGatewayStatusFn, gGatewayLogFn, gGatewayEventFn,
                           gGatewayInboundFn, gGatewayAgentDispatchFn,
+                          gGatewaySessionsFn, gGatewayProvidersFn,
+                          gGatewaySessionActionFn,
                           gGatewayAuthorizeFn, gGatewayChatBridge, gGatewayModelName,
                           gGatewayAgentTimeoutMs, gGatewayAuthToken, gGatewayLog)
       finally:
@@ -903,6 +1111,9 @@ proc startHttpGateway*(port: int;
                        logFn:    GatewayLogFn;
                        eventFn:  GatewayEventFn = nil;
                        inboundFn: GatewayInboundFn = nil;
+                       sessionsFn: GatewaySessionsFn = nil;
+                       providersFn: GatewayProvidersFn = nil;
+                       sessionActionFn: GatewaySessionActionFn = nil;
                        bindAddr = "127.0.0.1";
                        authToken = "";
                        agentDispatchFn: GatewayAgentDispatchFn = nil;
@@ -923,6 +1134,9 @@ proc startHttpGateway*(port: int;
     gGatewayEventFn   = eventFn
     gGatewayInboundFn = inboundFn
     gGatewayAgentDispatchFn = agentDispatchFn
+    gGatewaySessionsFn = sessionsFn
+    gGatewayProvidersFn = providersFn
+    gGatewaySessionActionFn = sessionActionFn
     gGatewayAuthorizeFn = authorizeFn
     gGatewayChatBridge = if chatBridge != nil: chatBridge
                          else: newChatBridge(agentClockMs, agentNap)
@@ -945,6 +1159,9 @@ proc startHttpGateway*(port: int;
                            statusFn: statusFn, logFn: logFn,
                            eventFn: eventFn, inboundFn: inboundFn,
                            agentDispatchFn: agentDispatchFn,
+                           sessionsFn: sessionsFn,
+                           providersFn: providersFn,
+                           sessionActionFn: sessionActionFn,
                            authorizeFn: authorizeFn,
                            chatBridge: gGatewayChatBridge,
                            modelName: modelName,
