@@ -496,6 +496,37 @@ suite "OrchestratorAgent":
 
     check reply.text == "pong"
 
+  test "a scheduled task is processed as an agent turn":
+    ## `tkSchedule` must not be discarded by the actor gate, and it runs with
+    ## the same background rules as a heartbeat (no progress chatter).
+    let tmpDir = getTempDir() / "donkey_test_orch_schedule"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[OutboundMessage] {.async.} =
+      let userDir = dir / "u-schedule"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Bob")
+      let mem      = MdFileAdapter(paddocksDir: dir)
+      let inbox    = newAsyncQueue[AgentMessage]()
+      let outbox   = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 dir / "u-schedule", state)
+      await inbox.put(newTaskMsg("req-sched", tkSchedule, "u-schedule",
+        "Resumo diário.\n\n[schedule daily fired at 1700000000000 ms]"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      return reply
+
+    let reply = waitFor doTest(tmpDir)
+
+    check reply.text == "pong"
+
   test "heartbeat is ignored while onboarding is still pending":
     let tmpDir = getTempDir() / "donkey_test_orch_heartbeat_onboarding_guard"
     removeDir(tmpDir)

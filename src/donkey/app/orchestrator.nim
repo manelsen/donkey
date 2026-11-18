@@ -498,8 +498,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
 
   log.info($turnSetup.uid & " (" & $msg.channel & ") -> [" & providerLabel & "] |" &
            $turnSetup.userText.len & "|")
-  let suppressHeartbeatProgress = msg.taskKind == tkHeartbeat
-  let suppressQuietHeartbeatFinal = msg.taskKind == tkHeartbeat
+  let suppressHeartbeatProgress = msg.taskKind in {tkHeartbeat, tkSchedule}
+  let suppressQuietHeartbeatFinal = msg.taskKind in {tkHeartbeat, tkSchedule}
   let suppressProgress = suppressHeartbeatProgress or suppressToolProgressFromEnv()
   let loopResult = await runToolLoop(
     globalOutbox, toolInbox, toolOut, memory, completeFn, errorExplainFn, streamFn, turnSetup.nativeCtx,
@@ -633,9 +633,12 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
       withoutCompletedBootstrapTarget(msg.channel, msg.replyTo)
   if controlResult.handled and msg.taskKind == tkUserMsg:
     saveNumberedSession(memory, uid, sessionId, state, result.history)
-  if controlResult.handled or msg.taskKind notin {tkUserMsg, tkHeartbeat}:
+  if controlResult.handled or msg.taskKind notin {tkUserMsg, tkHeartbeat, tkSchedule}:
     return
-  if msg.taskKind == tkHeartbeat and not onboarding_runtime.safeHasCompletedBootstrap(memory, uid):
+  ## Background tasks (heartbeat, scheduled) only run for a user that finished
+  ## onboarding: there is nobody to answer an onboarding question in that path.
+  if msg.taskKind in {tkHeartbeat, tkSchedule} and
+      not onboarding_runtime.safeHasCompletedBootstrap(memory, uid):
     return
 
   result = await handleUserTurn(
