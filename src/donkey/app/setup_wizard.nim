@@ -12,6 +12,8 @@
 import std/[options, os, strutils, terminal]
 when defined(posix):
   import std/posix
+when defined(posix):
+  import std/posix
 import ../core/app_meta
 import ../core/providers/smart_routing
 import ../domain/providers/descriptors
@@ -160,6 +162,33 @@ proc configDirPath*(): string =
 
 proc configFilePath*(): string =
   configDirPath() / ConfigFileName
+
+proc writePrivateFile*(path, content: string) =
+  ## Creates the file with 0600 **before** any credential is written, then
+  ## renames it into place: `writeFile` + later `chmod` leaves a 0644 window in
+  ## which another local account can read the whole key pool.
+  when defined(posix):
+    let tmp = path & ".tmp." & $getCurrentProcessId()
+    let fd = posix.open(tmp.cstring, O_CREAT or O_WRONLY or O_TRUNC, 0o600)
+    if fd < 0:
+      raise newException(IOError, "cannot create " & tmp)
+    try:
+      var written = 0
+      while written < content.len:
+        let n = posix.write(fd, content[written].unsafeAddr,
+                            content.len - written)
+        if n <= 0:
+          raise newException(IOError, "cannot write " & tmp)
+        written += n
+    finally:
+      discard posix.close(fd)
+    try:
+      moveFile(tmp, path)   # atomic on POSIX; the mode travels with the inode
+    except OSError:
+      discard posix.unlink(tmp.cstring)
+      raise newException(IOError, "cannot rename " & tmp)
+  else:
+    writeFile(path, content)
 
 proc envFilePath*(): string =
   configDirPath() / EnvFileName
@@ -445,10 +474,8 @@ proc runSetupWizard*(home: string) =
 
   let envContent = buildEnvContent(providers, channels, braveApiKey)
   try:
-    writeFile(envPath, envContent)
-    when not defined(windows):
-      discard execShellCmd("chmod 600 \"" & envPath & "\"")
-    echo "  ✓ " & envPath & "  (chmod 600)"
+    writePrivateFile(envPath, envContent)
+    echo "  ✓ " & envPath & "  (0600)"
   except CatchableError as e:
     echo "  ✗ " & envPath & ": " & e.msg
     return

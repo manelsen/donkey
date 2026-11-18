@@ -239,3 +239,17 @@ suite "credential source preservation (G1/G2)":
       @[(provider: "ollama", envName: "OLLAMA_BASE_URL", key: "should-not-leak")],
       @[])
     check env.count("OLLAMA_BASE_URL=") == 0
+
+suite "private credential file":
+
+  when defined(posix):
+    test "the env file is created 0600, not chmodded afterwards":
+      let path = getTempDir() / ("donkey_setup_private_" &
+                                 $getCurrentProcessId() & ".env")
+      defer: removeFile(path)
+      writePrivateFile(path, "OPENAI_API_KEY=sk-fake\n")
+      let perms = getFilePermissions(path)
+      check fpUserRead in perms
+      check fpUserWrite in perms
+      check fpGroupRead notin perms
+      check fpOthersRead notin perms

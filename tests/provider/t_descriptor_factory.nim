@@ -186,3 +186,8 @@ suite "descriptor factory":
       check cap.url == descriptorOr(id).baseUrl
       check headerValue(cap.headers, "Authorization") == "Bearer key-" & id
       check cap.body.len > 0
+
+  test "a userinfo override is ignored, not sent over cleartext":
+    ## `localhost:pass@remote.example` hides the real host in the userinfo.
+    putEnv("NVIDIA_BASE_URL", "http://localhost:pass@remote.example/v1")
+    check providerEndpointFor("nvidia") == descriptorOr("nvidia").baseUrl

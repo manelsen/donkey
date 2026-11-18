@@ -46,6 +46,10 @@ func overrideEndpointSafe(url: string): bool =
   var host = lower[7 .. ^1]
   let slash = host.find('/')
   if slash >= 0: host = host[0 ..< slash]
+  if '@' in host:
+    ## `localhost:pass@remote.example` hides the real host in userinfo; a
+    ## provider endpoint never legitimately carries credentials there.
+    return false
   let colon = host.rfind(':')
   if colon >= 0: host = host[0 ..< colon]
   host = host.strip(chars = {'[', ']'})
