@@ -100,6 +100,8 @@ var idsSeq = 0
 var raceSwapTarget {.threadvar.}: string
   ## Outside path used by the descriptor-race tests (a gcsafe callback cannot
   ## capture a GC'd local).
+var raceSwapRoot {.threadvar.}: string
+var raceSwapOutside {.threadvar.}: string
 
 proc newAdapter(f: FakeUpload): TelegramAdapter =
   inc idsSeq
@@ -602,3 +604,59 @@ suite "TelegramAdapter — local media read through the validated descriptor":
       check not f.calls[0].body.contains(root)
       check fileExists(outsideDir / "nota.ogg")
       check readFile(outsideDir / "nota.ogg") == "FORA"
+
+  test "a symlinked parent swapped in after validation is never followed":
+    ## F4: the file is validated, then read by name again. Swapping a
+    ## *directory* on the way to it is the same race one level up, and
+    ## O_NOFOLLOW on the last component alone does not stop it.
+    when defined(posix):
+      let base = freshDir("fd-swap-parent")
+      defer: removeDir(base)
+      let root = base / "paddock"
+      let outside = base / "fora"
+      createDir(root)
+      createDir(outside)
+      writeFile(outside / "nota.ogg", "FORA-SECRETO")
+      let path = root / "nota.ogg"
+      writeFile(path, "DENTRO")
+      let f = FakeUpload()
+      var a = newAdapter(f)
+      raceSwapRoot = root
+      raceSwapOutside = outside
+      a.mediaValidatedHook = proc (canonical: string) {.gcsafe, raises: [].} =
+        ## The validated name is now reached through a link instead.
+        try:
+          moveDir(raceSwapRoot, raceSwapRoot & "-saved")
+          createSymlink(raceSwapOutside, raceSwapRoot)
+        except CatchableError:
+          discard
+      check a.sendMedia(42, path, "legenda", "", mediaRoot = root).isOk
+      check f.calls.len == 1
+      check f.calls[0].url.endsWith("/sendMessage")
+      check f.calls[0].body.contains(NeutralFallback)
+      check not f.calls[0].body.contains("FORA-SECRETO")
+      check readFile(outside / "nota.ogg") == "FORA-SECRETO"
+
+  test "a link on an intermediate directory is never followed":
+    ## F4: the file sits under a directory that is a link. Validation resolves
+    ## the link, but anything that re-opens the name afterwards would follow it
+    ## into the target, so the read must go through a descriptor opened
+    ## component by component.
+    when defined(posix):
+      let base = freshDir("fd-link-mid")
+      defer: removeDir(base)
+      let root = base / "paddock"
+      let outside = base / "fora"
+      createDir(root)
+      createDir(outside)
+      writeFile(outside / "nota.ogg", "FORA-SECRETO")
+      createSymlink(outside, root / "grupo")
+      let f = FakeUpload()
+      let a = newAdapter(f)
+      check a.sendMedia(42, root / "grupo" / "nota.ogg", "legenda", "",
+                        mediaRoot = root).isOk
+      check f.calls.len == 1
+      check f.calls[0].url.endsWith("/sendMessage")
+      check f.calls[0].body.contains(NeutralFallback)
+      check not f.calls[0].body.contains("FORA-SECRETO")
+      check readFile(outside / "nota.ogg") == "FORA-SECRETO"
