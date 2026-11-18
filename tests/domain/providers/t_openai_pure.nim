@@ -306,3 +306,86 @@ suite "openai_pure image content":
       ChatMessage(role: "user", text: "hello")])
     let body = buildRequestBody("gpt-4", req)
     check body["messages"][0]["content"].kind == JString
+
+suite "openai_pure wire quirks":
+
+  test "tool result name is optional":
+    let req = CompletionRequest(messages: @[
+      ChatMessage(role: roleTool, text: "saída", toolCallId: "t1")])
+    let withName = buildRequestBodyWithQuirks(
+      "m", req, quirks = defaultOpenAiQuirks())
+    check withName["messages"][0]["name"].getStr() == "saída"
+    var noName = defaultOpenAiQuirks()
+    noName.toolResultName = false
+    let without = buildRequestBodyWithQuirks("m", req, quirks = noName)
+    check not without["messages"][0].hasKey("name")
+
+  test "an assistant tool call can carry empty content":
+    let req = CompletionRequest(messages: @[
+      ChatMessage(role: roleAssistant, text: "",
+                  toolCalls: @[ToolCallRequest(id: "t1", name: "search",
+                                               inputJson: "{}")])])
+    let default = buildRequestBodyWithQuirks("m", req)
+    check not default["messages"][0].hasKey("content")
+    var emptyContent = defaultOpenAiQuirks()
+    emptyContent.toolCallsEmptyContent = true
+    let body = buildRequestBodyWithQuirks("m", req, quirks = emptyContent)
+    check body["messages"][0]["content"].getStr() == ""
+
+  test "tool_choice auto is added only with tools":
+    let req = CompletionRequest(
+      messages: @[ChatMessage(role: roleUser, text: "oi")],
+      tools: @[ToolDescription(name: "search", description: "b",
+                               schemaJson: """{"type":"object"}""")])
+    var quirks = defaultOpenAiQuirks()
+    quirks.toolChoiceAuto = true
+    let withTools = buildRequestBodyWithQuirks("m", req, quirks = quirks)
+    check withTools["tool_choice"].getStr() == "auto"
+    let noTools = CompletionRequest(
+      messages: @[ChatMessage(role: roleUser, text: "oi")])
+    let without = buildRequestBodyWithQuirks("m", noTools, quirks = quirks)
+    check not without.hasKey("tool_choice")
+
+  test "the stream key can be omitted for non-streaming requests":
+    var quirks = defaultOpenAiQuirks()
+    quirks.omitStreamKey = true
+    let base = buildRequestBodyWithQuirks("m", CompletionRequest(), quirks = quirks)
+    check not base.hasKey("stream")
+    let streaming = buildRequestBodyWithQuirks(
+      "m", CompletionRequest(), stream = true, quirks = quirks)
+    check streaming["stream"].getBool()
+
+  test "an image with empty text can carry an empty text part":
+    let req = CompletionRequest(messages: @[
+      ChatMessage(role: roleUser, text: "",
+                  imageUrl: "data:image/png;base64,QUJD")])
+    let default = buildRequestBodyWithQuirks("m", req)
+    check default["messages"][0]["content"].len == 1
+    var quirks = defaultOpenAiQuirks()
+    quirks.imageEmptyTextPart = true
+    let body = buildRequestBodyWithQuirks("m", req, quirks = quirks)
+    check body["messages"][0]["content"][0]["type"].getStr() == "text"
+    check body["messages"][0]["content"][0]["text"].getStr() == ""
+    check body["messages"][0]["content"][1]["type"].getStr() == "image_url"
+
+  test "tool calls can win over an image":
+    let req = CompletionRequest(messages: @[
+      ChatMessage(role: roleAssistant, text: "q",
+                  imageUrl: "data:image/png;base64,QUJD",
+                  toolCalls: @[ToolCallRequest(id: "t1", name: "search",
+                                               inputJson: "{}")])])
+    let default = buildRequestBodyWithQuirks("m", req)
+    check default["messages"][0]["content"].kind == JArray
+    var quirks = defaultOpenAiQuirks()
+    quirks.imageWithToolCalls = false
+    let body = buildRequestBodyWithQuirks("m", req, quirks = quirks)
+    check body["messages"][0]["content"].getStr() == "q"
+    check body["messages"][0].hasKey("tool_calls")
+
+  test "include_reasoning can be suppressed":
+    let req = CompletionRequest(reasoning: true)
+    check buildRequestBodyWithQuirks("m", req)["include_reasoning"].getBool()
+    var quirks = defaultOpenAiQuirks()
+    quirks.includeReasoningField = false
+    let body = buildRequestBodyWithQuirks("m", req, quirks = quirks)
+    check not body.hasKey("include_reasoning")

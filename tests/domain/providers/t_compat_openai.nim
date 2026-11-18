@@ -74,6 +74,23 @@ suite "compat request body":
     check body["stream"].getBool() == false
     check body["thinking"]["type"].getStr() == "enabled"
 
+  test "a profile can carry the provider wire quirks":
+    var profile = defaultOpenAiProfile()
+    profile.quirks = OpenAiWireQuirks(
+      toolResultName: false, toolCallsEmptyContent: true,
+      imageEmptyTextPart: false, imageWithToolCalls: false,
+      toolChoiceAuto: true, omitStreamKey: true,
+      includeReasoningField: false)
+    let req = CompletionRequest(
+      messages: @[ChatMessage(role: roleUser, text: "oi")],
+      tools: @[ToolDescription(name: "search", description: "b",
+                               schemaJson: """{"type":"object"}""")],
+      reasoning: true)
+    let body = buildCompatRequestBody(profile, "glm", req)
+    check not body.hasKey("stream")
+    check body["tool_choice"].getStr() == "auto"
+    check not body.hasKey("include_reasoning")
+
   test "reasoning extras merge only when reasoning is requested":
     var profile = defaultOpenAiProfile()
     profile.reasoningExtras = %* {"thinking": {"type": "enabled"}}

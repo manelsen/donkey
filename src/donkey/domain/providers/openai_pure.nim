@@ -58,6 +58,25 @@ type
     choices*: seq[OpenAIChoice]
     usage*:   OpenAIUsage
 
+  OpenAiWireQuirks* = object
+    ## Wire differences between OpenAI-compatible providers. Defaults are the
+    ## OpenAI behavior; a profile turns on only what its provider needs.
+    toolResultName*:        bool  ## send `name` on a tool result (dup of content)
+    toolCallsEmptyContent*: bool  ## send `content: ""` on an assistant tool call
+    imageEmptyTextPart*:    bool  ## send an empty text part before the image
+    imageWithToolCalls*:    bool  ## keep the image when the message has tool calls
+    toolChoiceAuto*:        bool  ## add tool_choice="auto" when tools are present
+    omitStreamKey*:         bool  ## non-streaming bodies omit `stream`
+    includeReasoningField*: bool  ## send include_reasoning when req.reasoning
+
+
+const
+  OpenAiWireQuirksDefault* = OpenAiWireQuirks(
+    toolResultName: true, imageWithToolCalls: true, includeReasoningField: true)
+
+func defaultOpenAiQuirks*(): OpenAiWireQuirks =
+  OpenAiWireQuirksDefault
+
 # ── Internal pure helpers ─────────────────────────────────────────────────────
 
 func roleToOpenAI*(role: string): string =
@@ -77,7 +96,8 @@ func toolCallToOpenAI*(tc: ToolCallRequest): OpenAIToolCall =
 
 
 
-func messageToOpenAI*(msg: ChatMessage): OpenAIMessage =
+func messageToOpenAIWithQuirks*(msg: ChatMessage;
+                                quirks: OpenAiWireQuirks): OpenAIMessage =
   var om = OpenAIMessage(
     role:     msg.role,
     content:  msg.text,
@@ -88,21 +108,28 @@ func messageToOpenAI*(msg: ChatMessage): OpenAIMessage =
       om.toolCalls.add toolCallToOpenAI(tc)
   if msg.toolCallId.len > 0:
     om.toolCallId = msg.toolCallId
-    om.name = msg.text  ## tool result content goes in content field
+    if quirks.toolResultName:
+      om.name = msg.text  ## tool result content goes in content field
   om
 
-func openaiMessageToJson*(om: OpenAIMessage): JsonNode =
+func messageToOpenAI*(msg: ChatMessage): OpenAIMessage =
+  messageToOpenAIWithQuirks(msg, defaultOpenAiQuirks())
+
+func openaiMessageToJsonWithQuirks*(om: OpenAIMessage;
+                                    quirks: OpenAiWireQuirks): JsonNode =
   result = newJObject()
   result["role"] = % om.role
-  if om.imageUrl.len > 0:
+  let toolCallWins = om.toolCalls.len > 0 and not quirks.imageWithToolCalls
+  if not toolCallWins and om.imageUrl.len > 0:
     ## Vision turns carry an array of parts; a data URL is passed through as
     ## `image_url` (the OpenAI-compatible shape). The text part is optional.
     var content = newJArray()
-    if om.content.len > 0:
+    if om.content.len > 0 or quirks.imageEmptyTextPart:
       content.add(%* {"type": "text", "text": om.content})
     content.add(%* {"type": "image_url", "image_url": {"url": om.imageUrl}})
     result["content"] = content
-  elif om.content.len > 0:
+  elif om.content.len > 0 or
+       (om.toolCalls.len > 0 and quirks.toolCallsEmptyContent):
     result["content"] = % om.content
   if om.name.len > 0:
     result["name"] = % om.name
@@ -119,16 +146,23 @@ func openaiMessageToJson*(om: OpenAIMessage): JsonNode =
   if om.toolCallId.len > 0:
     result["tool_call_id"] = % om.toolCallId
 
+func openaiMessageToJson*(om: OpenAIMessage): JsonNode =
+  openaiMessageToJsonWithQuirks(om, defaultOpenAiQuirks())
+
 # ── Public pure API ───────────────────────────────────────────────────────────
+
+func buildMessagesArrayWithQuirks*(messages: seq[ChatMessage];
+                                   quirks: OpenAiWireQuirks): JsonNode =
+  result = newJArray()
+  for msg in messages:
+    let om = messageToOpenAIWithQuirks(msg, quirks)
+    result.add openaiMessageToJsonWithQuirks(om, quirks)
 
 func buildMessagesArray*(messages: seq[ChatMessage]): JsonNode =
   ## Converts internal conversation history to OpenAI messages array.
   ##
   ## Usage:  req.messages |> buildMessagesArray
-  result = newJArray()
-  for msg in messages:
-    let om = msg |> messageToOpenAI
-    result.add om |> openaiMessageToJson
+  buildMessagesArrayWithQuirks(messages, defaultOpenAiQuirks())
 
 proc buildToolsArray*(tools: seq[ToolDescription]): JsonNode =
   ## Converts internal tool descriptions to OpenAI tools array.
@@ -147,11 +181,11 @@ proc buildToolsArray*(tools: seq[ToolDescription]): JsonNode =
       toolNode["function"]["parameters"] = newJObject()  ## fallback to empty schema
     result.add toolNode
 
-proc buildRequestBody*(model: string; req: CompletionRequest;
-                       stream = false): JsonNode =
-  ## Builds the full OpenAI /chat/completions request body as JSON.
-  ##
-  ## Usage:  buildRequestBody("gpt-4", req)
+proc buildRequestBodyWithQuirks*(model: string; req: CompletionRequest;
+                                 stream = false;
+                                 quirks = defaultOpenAiQuirks()): JsonNode =
+  ## Full OpenAI-compatible body with the provider's wire quirks. The default
+  ## quirks reproduce the OpenAI payload exactly.
   result = newJObject()
   result["model"] = % model
   var msgs = newJArray()
@@ -161,15 +195,24 @@ proc buildRequestBody*(model: string; req: CompletionRequest;
     sysMsg["content"] = % req.system
     msgs.add sysMsg
   for msg in req.messages:
-    msgs.add msg |> messageToOpenAI |> openaiMessageToJson
+    let om = messageToOpenAIWithQuirks(msg, quirks)
+    msgs.add openaiMessageToJsonWithQuirks(om, quirks)
   result["messages"] = msgs
   if req.tools.len > 0:
     result["tools"] = req.tools.buildToolsArray
+    if quirks.toolChoiceAuto:
+      result["tool_choice"] = %"auto"
   if req.maxTokens > 0:
     result["max_tokens"] = % req.maxTokens
-  if req.reasoning:
+  if req.reasoning and quirks.includeReasoningField:
     result["include_reasoning"] = % true
-  result["stream"] = % stream
+  if not (quirks.omitStreamKey and not stream):
+    result["stream"] = % stream
+
+proc buildRequestBody*(model: string; req: CompletionRequest;
+                       stream = false): JsonNode =
+  ## OpenAI payload without provider quirks.
+  buildRequestBodyWithQuirks(model, req, stream, defaultOpenAiQuirks())
 
 func parseToolCallsFromChoice*(choice: OpenAIChoice): seq[ToolCallRequest] =
   ## Extracts tool calls from an OpenAI choice message if present.

@@ -25,6 +25,7 @@ type
     streamExtras*:   JsonNode   ## merged only when stream = true
     supportsImages*: bool
     sseKind*:        CompatSseKind
+    quirks*:         OpenAiWireQuirks
 
 func defaultOpenAiProfile*(
     endpoint = "https://api.openai.com/v1/chat/completions";
@@ -34,6 +35,7 @@ func defaultOpenAiProfile*(
     endpoint: endpoint,
     supportsImages: true,
     sseKind: cssOpenAi,
+    quirks: defaultOpenAiQuirks(),
   )
 
 func suppressImages(req: CompletionRequest): CompletionRequest =
@@ -59,7 +61,7 @@ proc buildCompatRequestBody*(profile: CompatProfile; model: string;
   let effective =
     if profile.supportsImages: req
     else: suppressImages(req)
-  result = buildRequestBody(model, effective, stream)
+  result = buildRequestBodyWithQuirks(model, effective, stream, profile.quirks)
   mergeInto(result, profile.payloadExtras)
   if req.reasoning:
     mergeInto(result, profile.reasoningExtras)
