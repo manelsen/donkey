@@ -80,6 +80,49 @@ suite "http_gateway auth":
     check not chatRequestAllowed("", "text/plain", "")
     check chatRequestAllowed("https://evil.example", "text/plain", "secret")
 
+  test "every /api route needs a Bearer token even with an empty token":
+    ## An unconfigured token closes the data routes instead of leaving them open
+    ## to a loopback browser; only the shell and the probes stay public.
+    for action in ["status", "logs", "events", "chat", "sessions", "providers",
+                   "session_task"]:
+      check gatewayAuthVerdict(action, "", "") == gavNoToken
+      check gatewayAuthVerdict(action, "", "secret") == gavRejected
+      check gatewayAuthVerdict(action, "Bearer nope", "secret") == gavRejected
+      check gatewayAuthVerdict(action, "Bearer secret", "secret") == gavAllowed
+
+  test "the /api route set matches the actions the router can return":
+    for path in ["/api/status", "/api/logs", "/api/events", "/api/chat",
+                 "/api/sessions", "/api/providers"]:
+      check isApiRouteAction(routeGatewayRequest(
+        GatewayRequest(meth: "GET", path: path)))
+    check isApiRouteAction("session_task")
+    for action in ["index", "health", "dashboard", "openai_chat",
+                   "openai_models", "notfound"]:
+      check not isApiRouteAction(action)
+
+  test "the public shell and probes never ask for a token":
+    for action in ["index", "health", "dashboard"]:
+      check gatewayAuthVerdict(action, "", "") == gavPublic
+      check gatewayAuthVerdict(action, "", "secret") == gavPublic
+
+  test "requests without a token to /api/sessions are rejected and with a token accepted":
+    let req = GatewayRequest(meth: "GET", path: "/api/sessions")
+    let action = routeGatewayRequest(req)
+    check action == "sessions"
+    check gatewayAuthVerdict(action, "", "") == gavNoToken
+    check gatewayAuthVerdict(action, "", "segredo") == gavRejected
+    check gatewayAuthVerdict(action, "", "") == gavNoToken
+    check gatewayAuthVerdict(action, "Bearer segredo", "segredo") == gavAllowed
+    let providers = routeGatewayRequest(GatewayRequest(meth: "GET", path: "/api/providers"))
+    check gatewayAuthVerdict(providers, "", "segredo") == gavRejected
+    check gatewayAuthVerdict(providers, "Bearer segredo", "segredo") == gavAllowed
+
+  test "the OpenAI-compatible routes keep the historical empty-token behaviour":
+    for action in ["openai_chat", "openai_models"]:
+      check gatewayAuthVerdict(action, "", "") == gavAllowed
+      check gatewayAuthVerdict(action, "", "secret") == gavRejected
+      check gatewayAuthVerdict(action, "Bearer secret", "secret") == gavAllowed
+
   test "non-loopback bind requires a token and explicit insecure opt-in":
     check gatewayBindIsAllowed("127.0.0.1", "")
     check gatewayBindIsAllowed("localhost", "")
