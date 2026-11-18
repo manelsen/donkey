@@ -154,10 +154,13 @@ proc readConfinedMediaFile*(paddockRoot, resolvedPath: string; limit: int64;
         var linkBuf = newString(4096)
         let linkLen = posix.readlink(("/proc/self/fd/" & $fd).cstring,
                                      linkBuf.cstring, linkBuf.len)
-        if linkLen > 0:
-          linkBuf.setLen(linkLen)
-          if linkBuf != root and not linkBuf.startsWith(root & $DirSep):
-            return err("media path is outside the paddock")
+        if linkLen <= 0:
+          ## No /proc entry means the opened file cannot be proven to live
+          ## inside the root: fail closed rather than skipping the check.
+          return err("media path cannot be verified")
+        linkBuf.setLen(linkLen)
+        if linkBuf != root and not linkBuf.startsWith(root & $DirSep):
+          return err("media path is outside the paddock")
       if opened.st_size > limit:
         return err("media file exceeds the cap")
       var data = ""

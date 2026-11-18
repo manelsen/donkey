@@ -195,3 +195,9 @@ suite "descriptor factory":
   test "a userinfo override is rejected for https too":
     putEnv("NVIDIA_BASE_URL", "https://api.nvidia.com@evil.example/v1")
     check providerEndpointFor("nvidia") == descriptorOr("nvidia").baseUrl
+
+  test "an @ inside the query does not look like userinfo":
+    putEnv("NVIDIA_BASE_URL", "https://gateway.example/v1?key=a@b")
+    ## The authority is `gateway.example`: the override is accepted (whatever
+    ## the resulting URL shape), not silently replaced by the hosted endpoint.
+    check providerEndpointFor("nvidia") != descriptorOr("nvidia").baseUrl

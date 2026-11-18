@@ -45,8 +45,15 @@ func overrideEndpointSafe(url: string): bool =
   if schemeEnd <= 0:
     return false
   var authority = lower[schemeEnd + 3 .. ^1]
-  let slash = authority.find('/')
-  if slash >= 0: authority = authority[0 ..< slash]
+  ## RFC 3986: the authority ends at the first `/`, `?` or `#`. Cutting only at
+  ## `/` dragged a query into the authority, and an `@` there rejected a
+  ## legitimate override.
+  var endIdx = authority.len
+  for delim in ['/', '?', '#']:
+    let at = authority.find(delim)
+    if at >= 0 and at < endIdx:
+      endIdx = at
+  authority = authority[0 ..< endIdx]
   if '@' in authority:
     return false
   if lower.startsWith("https://"):
