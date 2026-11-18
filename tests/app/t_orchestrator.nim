@@ -1547,6 +1547,26 @@ suite "adaptive debounce collector":
     check kind == amkTask
     check taskKind == tkCompact
 
+  test "a fragment from another turn is preserved as its own turn":
+    proc doTest(): Future[(string, uint64, uint64)] {.async.} =
+      let inbox = newAsyncQueue[AgentMessage]()
+      var first = newTaskMsg("a", tkUserMsg, "u", "um", ckTelegram, "1")
+      first.bridgeToken = 7
+      await inbox.put(first)
+      let collectFut = collectWithDebounce(inbox, fastCfg())
+      await sleepAsync(chronos.milliseconds(40))
+      var other = newTaskMsg("b", tkUserMsg, "u", "dois", ckTelegram, "1")
+      other.bridgeToken = 8
+      await inbox.put(other)
+      let merged = await collectFut
+      let second = await collectWithDebounce(inbox, fastCfg())
+      (decodeUserPayload(merged.payload).text, merged.bridgeToken,
+       second.bridgeToken)
+    let (text, firstToken, secondToken) = waitFor doTest()
+    check text == "um"
+    check firstToken == 7
+    check secondToken == 8
+
   test "a fragment after the window becomes a separate turn":
     proc doTest(): Future[(string, string)] {.async.} =
       let inbox = newAsyncQueue[AgentMessage]()
@@ -1652,3 +1672,4 @@ suite "album payloads":
     check history.len == 10
     check history[0].text == "veja"
     check history[0].imageUrl == "img0.jpg"
+

@@ -737,6 +737,12 @@ proc collectWithDebounce*(inbox: AsyncQueue[AgentMessage];
         ## close the burst; the actor loop picks it up on the next iteration.
         discard tryAddFirstNoWait(inbox, next)
         break
+      if next.bridgeToken != first.bridgeToken:
+        ## Different turns (an API request and a channel message, or two
+        ## generations) must never be merged: the merged turn would carry one
+        ## token and the other turn's text.
+        discard tryAddFirstNoWait(inbox, next)
+        break
       state = appendFragment(next.payload, nowMonoMs(), state)
       texts.add(next.payload)
       latest = next

@@ -289,7 +289,7 @@ proc fail*(bridge: ChatBridge; userId: UserId; message: string;
     release(bridge.lock)
 
 proc poll*(bridge: ChatBridge; userId: UserId;
-           stepMs: int = PollStepMs): ChatBridgeBatch =
+           stepMs: int = PollStepMs; token: uint64 = 0): ChatBridgeBatch =
   ## Drains the pending turn. Partial events are returned with `cbpEvents`
   ## while the turn stays registered; a terminal event returns `cbpDone` and
   ## removes the entry. With a deadline the call naps (through the injected
@@ -299,6 +299,11 @@ proc poll*(bridge: ChatBridge; userId: UserId;
     acquire(bridge.lock)
     try:
       if not bridge.pending.hasKey(key):
+        return ChatBridgeBatch(status: cbpMissing)
+
+      ## A caller that knows its generation must never read or remove another
+      ## turn's reservation. Channel callers pass 0 and keep the old behaviour.
+      if token != 0 and bridge.pending[key].token != token:
         return ChatBridgeBatch(status: cbpMissing)
 
       if bridge.pending[key].orphaned:
@@ -344,7 +349,7 @@ proc poll*(bridge: ChatBridge; userId: UserId;
       return ChatBridgeBatch(status: cbpEvents)
     bridge.napFn(stepMs)
 
-proc abandon*(bridge: ChatBridge; userId: UserId): bool =
+proc abandon*(bridge: ChatBridge; userId: UserId; token: uint64 = 0): bool =
   ## The client left: stop waiting without cancelling the agent turn. The key
   ## stays reserved (`cbeBusy`) until the orphan's terminal answer arrives or
   ## the TTL expires, so a late answer can never become the next turn's
@@ -353,6 +358,10 @@ proc abandon*(bridge: ChatBridge; userId: UserId): bool =
   acquire(bridge.lock)
   try:
     if not bridge.pending.hasKey(key):
+      return false
+    ## A worker that timed out must not abandon the turn that registered in
+    ## the meantime: the generation it owns is gone.
+    if token != 0 and bridge.pending[key].token != token:
       return false
     if bridge.pending[key].finished:
       # The terminal answer is already buffered and the client is gone:

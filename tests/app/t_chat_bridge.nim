@@ -487,3 +487,27 @@ suite "admitLongLived":
     check bridge.register(UserId("api:other")).isOk
     check bridge.pendingCount() == 1
     check bridge.poll(UserId("api:gone")).status == cbpMissing
+
+  test "poll tied to a stale generation is missing, not another turn's":
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    let first = bridge.register(uid, timeoutMs = 5000)
+    check first.isOk
+    check bridge.abandon(uid)
+    fakeNow += MaxOrphanTtlMs
+    let second = bridge.register(uid)   # no deadline: poll returns immediately
+    check second.isOk
+    check bridge.poll(uid, token = first.get()).status == cbpMissing
+    check bridge.poll(uid, token = second.get()).status == cbpEvents
+
+  test "abandon with a stale generation leaves the new turn alone":
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    let first = bridge.register(uid)
+    check first.isOk
+    check bridge.abandon(uid, token = first.get())
+    fakeNow += MaxOrphanTtlMs
+    let second = bridge.register(uid)
+    check second.isOk
+    check not bridge.abandon(uid, token = first.get())
+    check bridge.poll(uid, token = second.get()).status == cbpEvents

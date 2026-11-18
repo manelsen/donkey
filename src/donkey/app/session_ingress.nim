@@ -427,6 +427,10 @@ proc enqueueScheduledTask*(sm: var SessionManager;
   let uidText = spec.userId.strip()
   if uidText.len == 0:
     return err(ScheduledTaskEmptyUserError)
+  if uidText.startsWith("api:"):
+    ## `api:` identities are request-scoped: their replies are intercepted by
+    ## the HTTP bridge, and a scheduled firing has no turn token to match.
+    return err("scheduled task dropped: api: users are request-scoped")
   let uid = UserId(uidText)
   if services.isRevoked != nil and services.isRevoked(uid):
     return err(ScheduledTaskRevokedError)
