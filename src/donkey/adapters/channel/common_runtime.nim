@@ -843,6 +843,9 @@ proc buildDoctorReport*(memory: MdFileAdapter;
     ("GROQ_API_KEY", "Groq"),
     ("GEMINI_API_KEY", "Gemini"),
     ("MINIMAX_API_KEY", "MiniMax"),
+    ("NVIDIA_API_KEY", "NVIDIA NIM"),
+    ("DASHSCOPE_API_KEY", "Alibaba DashScope"),
+    ("FIREWORKS_API_KEY", "Fireworks AI"),
   ]
   var configuredProviders: seq[string] = @[]
   for (envVar, name) in envVars:

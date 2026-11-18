@@ -51,7 +51,11 @@ func overrideEndpointSafe(url: string): bool =
   if host == "localhost":
     return true
   try:
-    parseIpAddress(host).address_v4[0] == 127'u8
+    let ip = parseIpAddress(host)
+    if ip.family == IPv4:
+      return ip.address_v4[0] == 127'u8
+    ## IPv6 loopback is the only non-IPv4 address that may stay cleartext.
+    $ip == "::1"
   except ValueError:
     false
 

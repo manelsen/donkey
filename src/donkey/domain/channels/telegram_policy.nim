@@ -191,7 +191,9 @@ func isLoopbackHost*(host: string): bool =
     return true
   try:
     let ip = parseIpAddress(bare)
-    ip.family == IPv4 and ip.address_v4[0] == 127'u8
+    if ip.family == IPv4:
+      return ip.address_v4[0] == 127'u8
+    $ip == "::1"
   except ValueError:
     false
 
