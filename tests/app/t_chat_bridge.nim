@@ -161,6 +161,19 @@ suite "ChatBridge lifecycle":
     check not bridge.abandon(uid)
     check bridge.register(uid, timeoutMs = 5000).isOk
 
+  test "a buffered terminal survives another register past the deadline":
+    ## A finished the turn but B registered before A polled: B is refused, and
+    ## A must still get its answer. Marking A orphaned here would clear it.
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    check bridge.register(uid, timeoutMs = 5000).isOk
+    check bridge.deliver(apiMsg("resposta de A"))
+    fakeNow += 10_000
+    check bridge.register(uid).isErr
+    let done = bridge.poll(uid)
+    check done.status == cbpDone
+    check done.events[^1].text == "resposta de A"
+
   test "an expired turn that was never polled is reclaimed after the TTL":
     let bridge = newBridge()
     let uid = UserId("api:alice")

@@ -163,7 +163,10 @@ proc register*(bridge: ChatBridge; userId: UserId;
         # restart. Reserve it for the orphan TTL instead, so a late terminal
         # is still discarded but the lockout is bounded.
         let entry = bridge.pending[key]
-        if not entry.orphaned and entry.deadlineMs > 0 and
+        ## Do not orphan a turn whose terminal is already buffered: the
+        ## original worker still has to poll it, and marking it orphaned would
+        ## clear the answer.
+        if not entry.orphaned and not entry.finished and entry.deadlineMs > 0 and
             bridge.nowFn() >= entry.deadlineMs:
           bridge.markOrphaned(key)
         return err(ChatBridgeError(
