@@ -52,13 +52,15 @@ const
     ## Rejects `reasoning_effort: "none"` with reasoning off (review E2).
 
 func fireworksReasoningOffExtrasFor*(model: string): JsonNode =
-  ## The off switch for one model, or nil when the model is not on the
-  ## allowlist. `CompatProfile` is per bundle while the allowlist is per model,
-  ## so the extras are chosen by the model the bundle will send.
+  ## The off switch for one model. `CompatProfile` is per bundle while the
+  ## allowlist is per model, so the extras are chosen by the model the bundle
+  ## will send. A model off the allowlist gets an empty object rather than nil:
+  ## merging it adds nothing, and the profile stays a plain JSON value that
+  ## every copy of the profile shares safely.
   if model in FireworksReasoningNoneModels:
     %* {"reasoning_effort": "none"}
   else:
-    nil
+    newJObject()
 
 func fireworksCompatProfileAt*(endpoint: string;
                                reasoningOffExtras: JsonNode): CompatProfile =

@@ -15,6 +15,7 @@ import donkey/adapters/provider/runtime_builder
 import donkey/core/pipeops
 import donkey/core/providers/provider_defaults
 import donkey/domain/message
+import donkey/domain/providers/compat
 import donkey/domain/providers/descriptors
 import donkey/domain/providers/model_limits
 import donkey/domain/providers/profile_alibaba
@@ -90,6 +91,42 @@ suite "alibaba provider bundle":
     check not body.hasKey("reasoning_effort")
     check not body.hasKey("include_reasoning")
     check not body.hasKey("preserve_thinking")
+
+  test "the request equals what the Alibaba profile builds, header for header":
+    ## Review E4: no source grep. The bundle's request is compared with the
+    ## request the Alibaba profile itself builds, so a builder arm wired to
+    ## another profile (or to the Zhipu fallback) fails on URL, header or body.
+    let had = existsEnv("DASHSCOPE_BASE_URL")
+    let previous = getEnv("DASHSCOPE_BASE_URL")
+    delEnv("DASHSCOPE_BASE_URL")
+    defer:
+      if had: putEnv("DASHSCOPE_BASE_URL", previous) else: delEnv("DASHSCOPE_BASE_URL")
+    let model = DefaultModelAlibaba
+    let req = CompletionRequest(
+      system: "seja breve",
+      messages: @[ChatMessage(role: roleUser, text: "oi")],
+      reasoning: true)
+    let profile = alibabaCompatProfileAt(
+      providerEndpointFor("alibaba"))
+    let expectedBody = buildCompatRequestBody(profile, model, req)
+    let expectedHeaders = newCompatAdapter(
+      "dashscope-test", model = model, providerName = "Alibaba",
+      profileFn = alibabaCompatProfile
+    ).requestHeaders(profile)
+    var cap = Capture()
+    let res = completeThroughPort(
+      ProviderSpec(providerName: "alibaba", apiKey: "dashscope-test",
+                   modelName: model), req, cap)
+    require res.isOk
+    check cap.url == profile.endpoint
+    check cap.headers.len == expectedHeaders.len
+    for (name, value) in expectedHeaders:
+      check headerValue(cap.headers, name) == value
+    check parseJson(cap.body) == expectedBody
+    ## DashScope carries neither the Fireworks off switch nor the NIM billing
+    ## header, which is what tells the two compat arms apart.
+    check not parseJson(cap.body).hasKey("reasoning_effort")
+    check headerValue(cap.headers, "X-BILLING-INVOKE-ORIGIN") == ""
 
   test "the DASHSCOPE_BASE_URL override is what the bundle posts to":
     let had = existsEnv("DASHSCOPE_BASE_URL")
