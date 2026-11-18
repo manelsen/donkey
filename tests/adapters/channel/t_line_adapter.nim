@@ -396,14 +396,13 @@ suite "splitForLine — UTF-16 units":
 suite "LineAdapter — invalid configuration fails closed":
 
   test "an invalid base does not raise; sends return an error":
-    let fakeHttp = newFake()
+    ## No injected transport: an injected fake is the documented way to use a
+    ## plain-http loopback in tests, and validation is skipped for it.
     let adapter = newLineAdapter("tok", "/tmp/line-invalid.tsv",
-                                 apiBase = "http://api.line.me",
-                                 http = fake(fakeHttp))
+                                 apiBase = "http://api.line.me")
     check adapter.configError.len > 0
     let res = adapter.send(OutboundMessage(userId: UserId("U1"),
                                            channel: ckLine, text: "oi",
                                            replyTo: "U1"))
     check res.isErr
     check res.error.contains("apiBase")
-    check fakeHttp.calls.len == 0

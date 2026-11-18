@@ -149,7 +149,9 @@ func isLoopbackLineHost(host: string): bool =
     return true
   try:
     let ip = parseIpAddress(bare)
-    ip.family == IPv4 and ip.address_v4[0] == 127'u8
+    if ip.family == IPv4:
+      return ip.address_v4[0] == 127'u8
+    $ip == "::1"
   except ValueError:
     false
 
@@ -216,6 +218,24 @@ func clipRunes(s: string; maxRunes: int): string =
 
 func isLineWhitespace(r: Rune): bool =
   r.int in [9, 10, 13, 32]
+
+func clipToLineUnits*(text: string; maxUnits: int): string =
+  ## Cuts `text` so it fits in `maxUnits` UTF-16 code units, never splitting a
+  ## code point.
+  if maxUnits <= 0:
+    return ""
+  var units = 0
+  var pos = 0
+  while pos < text.len:
+    let step = runeLenAt(text, pos)
+    if step <= 0:
+      break
+    let width = (if int(runeAt(text, pos)) > 0xFFFF: 2 else: 1)
+    if units + width > maxUnits:
+      break
+    units += width
+    pos += step
+  text[0 ..< pos]
 
 func splitForLine*(text: string; maxChars = LineChunkChars): seq[string] =
   ## Splits text into at most `LineMaxBubbles` bubbles of at most `maxChars`
@@ -289,8 +309,12 @@ func splitForLine*(text: string; maxChars = LineChunkChars): seq[string] =
     if cut <= cur:
       cut = limit
 
-    result.add text[starts[cur] ..< starts[cut]].strip(
+    let piece = text[starts[cur] ..< starts[cut]].strip(
       leading = false, trailing = true)
+    ## Whitespace-only slices must not become empty bubbles: LINE rejects them
+    ## and the whole POST with it.
+    if piece.len > 0:
+      result.add piece
     cur = cut
     while cur < total and isLineWhitespace(runes[cur]):
       inc cur
@@ -301,7 +325,9 @@ func splitForLine*(text: string; maxChars = LineChunkChars): seq[string] =
     elif result.len > 0:
       ## Budget exhausted: mark the truncation on the last bubble.
       let last = result[^1]
-      result[^1] = clipRunes(last, maxChars - 1).strip(
+      ## `maxChars` is UTF-16 units; clipping by runes could leave the bubble
+      ## at the limit and the ellipsis would push it over.
+      result[^1] = clipToLineUnits(last, maxChars - 1).strip(
         leading = false, trailing = true) & LineEllipsis
   result
 
@@ -534,7 +560,11 @@ proc newLineAdapter*(channelAccessToken, identityPath: string;
 
   ## Do not raise: an invalid base would abort daemon startup and take every
   ## other channel with it. The adapter records the reason and fails sends.
-  let baseError = lineApiBaseError(base)
+  ## The plain-http loopback allowance exists for an injected test transport;
+  ## a real one must never send the Bearer in clear text.
+  let baseError =
+    if http.post.isNil: lineApiBaseError(base)
+    else: ""
   let effectiveBase = if baseError.len > 0: "https://api.line.me" else: base
 
   var runtimeHttp = http
