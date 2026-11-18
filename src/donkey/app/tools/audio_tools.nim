@@ -12,6 +12,8 @@ import std/[os, strutils]
 import results
 import ../../core/pipeops
 import ../../domain/media/audio_pure
+import ../../domain/message
+import ../../ports/channel_capability
 import ../../ports/http
 
 const
@@ -151,3 +153,25 @@ proc performSpeech*(text: string; paddockDir: string; http: HttpRuntimePort;
     ok("attachments/" & name)
   except Exception as e:
     err("text_to_speech: " & e.msg)
+
+proc prepareVoiceReply*(text, caption, paddockDir: string;
+                        channel: ChannelKind; uid: UserId;
+                        http: HttpRuntimePort): Result[OutboundMessage, string]
+                        {.gcsafe, raises: [].} =
+  ## Synthesizes `text` as an opus voice note and describes the outbound
+  ## message; the caller enqueues it. The capability check comes first, so a
+  ## channel without voice support falls back to text without paying for TTS.
+  ## A failed synthesis leaves no file behind.
+  if not supports(channel, cfSendVoice):
+    return err("text_to_speech: channel " & $channel &
+               " cannot deliver voice notes")
+  let saved = performSpeech(text, paddockDir, http, format = "opus")
+  if saved.isErr:
+    return err(saved.error)
+  ok(OutboundMessage(
+    userId: uid,
+    channel: channel,
+    text: caption,
+    mediaUrl: paddockDir / saved.get(),
+    mediaDurationSec: estimateSpeechSeconds(text),
+  ))
