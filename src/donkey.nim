@@ -1267,10 +1267,12 @@ proc setupIpcServer(cfg: DonkeyConfig;
       ## The dashboard carries the raw session key; it is never run through
       ## `apiUserId`. An unknown key is a 404, a revoked profile a 403
       ## (`isRevoked` already answers "revoked" when the profile is unreadable).
-      let keyOpt = runtime.sm.sessionKeyFor(rawUserId)
-      if keyOpt.isNone:
+      ## The action takes the raw **user key** (the second column of the
+      ## dashboard table), not the session id: accepting both made a user key
+      ## that equals another session's id resolve to the wrong session.
+      if rawUserId notin runtime.sm.entries:
         return gsaoNotFound
-      let sessionKey = keyOpt.get()
+      let sessionKey = rawUserId
       let uid = UserId(sessionKey)
       ## Same policy as the API: revocation first, then the DM allowlist. A
       ## policy denial must not answer 202 for a task the ingress will drop.

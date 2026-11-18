@@ -367,6 +367,13 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
         attemptReq = withoutInlineImages(attemptReq)
         continue
       if fallbackCompleteFn != nil:
+        ## If every selection refused the inline image, do not hand that same
+        ## image to the fallback: its error (a 503, say) would not look like an
+        ## image rejection, and the turn-level retry would never run. Surface
+        ## the rejection so the turn retries once in text — and only then may
+        ## the fallback be used.
+        if allImageRejections and hasInlineImages(attemptReq):
+          return err(lastErr)
         try:
           return fallbackCompleteFn(attemptReq)
         except Exception as e:

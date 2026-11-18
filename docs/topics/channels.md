@@ -157,7 +157,9 @@ https://your-public-host/webhook/line
 1. Set the channel's **Webhook URL** to that endpoint.
 2. Press **Verify** in the console. It posts `{"events":[]}`, which is answered
    `200 ok` without enqueueing an event.
-3. Enable **Use webhook**.
+3. Enable **Use webhook** and **Webhook redelivery**. The route answers `503`
+   when its bounded queue is full, and LINE only retries when redelivery is on;
+   the retries are best-effort, so a sustained backlog can still lose an event.
 
 The receiver itself is enabled by `DONKEY_WEBHOOK_PORT` and binds
 `DONKEY_WEBHOOK_HOST` (default `127.0.0.1`). It also accepts plain HTTP, so

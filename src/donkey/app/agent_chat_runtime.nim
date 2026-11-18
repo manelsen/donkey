@@ -333,9 +333,19 @@ proc runAgentStream*(body: string;
           ## (`"Olá, mundo"` after `"Olá, "`), while a channel-style producer
           ## sends true deltas. Normalise both to a delta so an SSE client that
           ## concatenates chunks never sees the same text twice.
+          ## A clipped cumulative snapshot can be shorter than what was
+          ## already sent; treating it as a delta duplicated text. Only a
+          ## snapshot that extends the sent text contributes its suffix; an
+          ## older prefix inside it contributes nothing; anything else is a
+          ## genuine delta.
           let text =
-            if incoming.startsWith(sentContent): incoming[sentContent.len .. ^1]
-            else: incoming
+            if incoming.len <= sentContent.len and
+               sentContent.contains(incoming):
+              ""
+            elif incoming.startsWith(sentContent):
+              incoming[sentContent.len .. ^1]
+            else:
+              incoming
           if text.len > 0:
             if chunksSent >= MaxSseChunksPerTurn:
               finishReason = "length"
@@ -389,7 +399,8 @@ proc runAgentStream*(body: string;
 
   if not writeData(buildAgentChunk(
       chunkId, chosenModel, created, role = "assistant")):
-    discard bridge.abandon(request.userId)
+    if not reservationClosed:
+      discard bridge.abandon(request.userId)
     return AgentStreamResult(outcome: asClientGone)
 
   var lastPing = clock()
@@ -412,6 +423,10 @@ proc runAgentStream*(body: string;
       if not finished and not errored and not clientGone:
         finished = true
     of cbpDeadline:
+      ## The bridge already holds the key as an orphan. It is no longer ours
+      ## to abandon: by the time the error is written the orphan may have been
+      ## reclaimed and a new turn registered for the same user.
+      reservationClosed = true
       discard writeData(buildAgentError(
         "agent turn timed out", "timeout_error", "turn_timeout"))
       if not clientGone:
@@ -448,10 +463,12 @@ proc runAgentStream*(body: string;
     if not reservationClosed:
       discard bridge.abandon(request.userId)
     return AgentStreamResult(outcome: asClientGone)
-  if not send(sseDone()):
-    return AgentStreamResult(outcome: asClientGone)
+  let doneSent = send(sseDone())
   if gaveUpForChunks and not reservationClosed:
     ## We closed the stream without the terminal; release the user's slot
-    ## instead of leaving it reserved for a reader that no longer exists.
+    ## instead of leaving it reserved for a reader that no longer exists. Do
+    ## it even when `[DONE]` fails: the client is gone either way.
     discard bridge.abandon(request.userId)
+  if not doneSent:
+    return AgentStreamResult(outcome: asClientGone)
   AgentStreamResult(outcome: asCompleted)

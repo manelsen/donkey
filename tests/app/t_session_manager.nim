@@ -186,11 +186,191 @@ suite "SessionManager":
     check missing.kind == ckCli
     check missing.rawId == ""
 
-  test "the dashboard id resolves by raw key or by session id":
+# SessionManager unit tests.
+## Verifies session creation, channel tracking, and listing.
+
+import std/[options, tables, unittest]
+import chronos/asyncsync
+import donkey/app/session_manager
+import donkey/domain/agent_message
+import donkey/domain/message
+import donkey/core/types
+
+suite "SessionManager":
+
+  test "hasSession returns false for unknown user":
     var sm: SessionManager
     sm.init()
-    let uid = UserId("lookup-uuid")
+    check not sm.hasSession(UserId("unknown-uuid"))
+
+  test "getOrCreate creates a session":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("test-uuid-1")
+    let isNew = not sm.hasSession(uid)
+    let entry = sm.getOrCreate(uid)
+    check isNew
+    check sm.hasSession(uid)
+    check entry != nil
+
+  test "getOrCreate returns same entry on repeated calls":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("test-uuid-2")
+    let e1 = sm.getOrCreate(uid)
+    let e2 = sm.getOrCreate(uid)
+    ## Both point to the same session entry.
+    check e1.inbox == e2.inbox
+
+  test "recordChannel adds channels":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("test-uuid-3")
     discard sm.getOrCreate(uid)
-    check sm.sessionKeyFor($uid) == some($uid)
-    check sm.sessionKeyFor(sm.entries[$uid].sessionId) == some($uid)
-    check sm.sessionKeyFor("not-a-session").isNone
+    sm.recordChannel(uid, ckTelegram, "12345")
+    sm.recordChannel(uid, ckDiscord,  "67890")
+    let entry = sm.get(uid)
+    check entry.channels.len == 2
+    check (ckTelegram, "12345") in entry.channels
+    check (ckDiscord, "67890")  in entry.channels
+
+  test "recordChannel is idempotent":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("test-uuid-4")
+    discard sm.getOrCreate(uid)
+    sm.recordChannel(uid, ckTelegram, "42")
+    sm.recordChannel(uid, ckTelegram, "42")
+    check sm.get(uid).channels.len == 1
+
+  test "recordChannel moves repeated pair to most recent position":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("test-uuid-recent")
+    discard sm.getOrCreate(uid)
+    sm.recordChannel(uid, ckTelegram, "42")
+    sm.recordChannel(uid, ckDiscord, "99")
+    sm.recordChannel(uid, ckTelegram, "42")
+    check sm.get(uid).channels.len == 2
+    check sm.get(uid).channels[^1] == (ckTelegram, "42")
+
+  test "latestChannel returns most recently seen channel":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("test-uuid-latest")
+    discard sm.getOrCreate(uid)
+    check sm.latestChannel(uid).isNone
+    sm.recordChannel(uid, ckTelegram, "42")
+    sm.recordChannel(uid, ckDiscord, "99")
+    check sm.latestChannel(uid).get == ckDiscord
+
+  test "recordChannel ignores blank raw ids":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("test-uuid-blank")
+    discard sm.getOrCreate(uid)
+    sm.recordChannel(uid, ckTelegram, "")
+    check sm.get(uid).channels.len == 0
+
+  test "listSessions returns all sessions":
+    var sm: SessionManager
+    sm.init()
+    let u1 = UserId("list-uuid-1")
+    let u2 = UserId("list-uuid-2")
+    discard sm.getOrCreate(u1)
+    discard sm.getOrCreate(u2)
+    sm.recordChannel(u1, ckTelegram, "1")
+    sm.recordChannel(u2, ckDiscord,  "2")
+    let sessions = sm.listSessions()
+    check sessions.len == 2
+    var foundU1, foundU2 = false
+    for (uid, _) in sessions:
+      if uid == u1: foundU1 = true
+      if uid == u2: foundU2 = true
+    check foundU1 and foundU2
+
+  test "cancelAllActors signals live sessions only":
+    var sm: SessionManager
+    sm.init()
+    let live = sm.getOrCreate(UserId("cancel-live"))
+    let restoredUid = UserId("cancel-restored")
+    discard sm.getOrCreate(restoredUid)
+    sm.entries[$restoredUid].restored = true
+
+    registerActor()
+    let startGeneration = currentSessionStopGeneration()
+    let stopFut = sm.cancelAllActors()
+    check live.inbox.len == 1
+    check sm.entries[$restoredUid].inbox.len == 0
+    check live.inbox.getNoWait().kind == amkCancel
+    check isSessionStopRequested(startGeneration)
+    check not stopFut.finished()
+    unregisterActor()
+    check stopFut.finished()
+
+  test "prepareEntry creates new session lease with signature":
+    var sm: SessionManager
+    sm.init()
+    let lease = sm.prepareEntry(UserId("sig-uuid-1"), "sig-a")
+    check lease.isNew
+    check not lease.rebuilt
+    check lease.entry != nil
+    check lease.entry[].toolCatalogSignature == "sig-a"
+
+  test "prepareEntry rebuilds runtime when signature changes":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("sig-uuid-2")
+    let first = sm.prepareEntry(uid, "sig-a")
+    first.entry[].awaitingAsk = true
+    let oldInbox = first.entry[].inbox
+    let oldAskInbox = first.entry[].askInbox
+    let rebuilt = sm.prepareEntry(uid, "sig-b")
+    check not rebuilt.isNew
+    check rebuilt.rebuilt
+    check rebuilt.oldInbox == oldInbox
+    check rebuilt.oldAskInbox == oldAskInbox
+    check rebuilt.entry[].inbox != oldInbox
+    check rebuilt.entry[].askInbox != oldAskInbox
+    check not rebuilt.entry[].awaitingAsk
+
+  test "restored entry has metadata but no live session until rebuilt":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("restored-uuid-1")
+    discard sm.getOrCreate(uid)
+    check sm.hasSession(uid)
+    check sm.hasLiveSession(uid)
+
+    ## Simulate a process restart: metadata is present but no actor is attached.
+    sm.entries[$uid].restored = true
+    check sm.hasSession(uid)
+    check not sm.hasLiveSession(uid)
+
+    let lease = sm.prepareEntry(uid, "sig-restored")
+    check lease.rebuilt
+    check sm.hasLiveSession(uid)
+    check not sm.hasLiveSession(UserId("unknown-uuid-restored"))
+
+  test "the dashboard target is the last channel the user used":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("target-uuid")
+    discard sm.getOrCreate(uid)
+    sm.recordChannel(uid, ckTelegram, "tg-1", persist = false)
+    sm.recordChannel(uid, ckDiscord, "disc-9", persist = false)
+    let target = sm.latestChannelFor($uid)
+    check target.kind == ckDiscord
+    check target.rawId == "disc-9"
+
+  test "the dashboard target never invents a channel":
+    var sm: SessionManager
+    sm.init()
+    discard sm.getOrCreate(UserId("no-channel-uuid"))
+    let target = sm.latestChannelFor("no-channel-uuid")
+    check target.kind == ckCli
+    check target.rawId == ""
+    let missing = sm.latestChannelFor("unknown-key")
+    check missing.kind == ckCli
+    check missing.rawId == ""
+

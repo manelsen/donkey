@@ -228,7 +228,7 @@ th,td{text-align:left;padding:.35rem .5rem;border-bottom:1px solid #e3e3e3;verti
 <tbody id="providers"><tr><td colspan="7">—</td></tr></tbody>
 </table>
 <h2>Nova conversa</h2>
-<label>Usuário <input id="new-user" type="text" autocomplete="off" placeholder="id da sessão (UUID)"></label>
+<label>Usuário <input id="new-user" type="text" autocomplete="off" placeholder="userId (2ª coluna da tabela)"></label>
 <button id="new-session">Nova conversa</button>
 <pre id="action">—</pre>
 <h2>Logs recentes</h2>
@@ -609,6 +609,26 @@ proc readRequestBody(client: Socket; contentLength: int;
     received += n
   if received > 0: buf[0 ..< received] else: ""
 
+proc readRequestBodyStrict(client: Socket; contentLength: int;
+                           deadline: MonoTime): Result[string, string] =
+  ## Like `readRequestBody`, but refuses a short read: a JSON prefix is not the
+  ## body the client declared, and acting on it would accept a truncated
+  ## request.
+  if contentLength <= 0:
+    return ok("")
+  var buf = newString(contentLength)
+  var received = 0
+  while received < contentLength:
+    if getMonoTime() > deadline:
+      return err("request body incomplete")
+    let n = client.recv(buf[received].addr, contentLength - received)
+    if n <= 0:
+      break
+    received += n
+  if received != contentLength:
+    return err("request body incomplete")
+  ok(buf)
+
 proc handleGatewayConn(client: Socket;
                         statusFn: GatewayStatusFn;
                         logFn:    GatewayLogFn;
@@ -745,9 +765,13 @@ proc handleGatewayConn(client: Socket;
       if req.meth != "POST":
         client.sendResponse("405 Method Not Allowed", "application/json", "", log)
       else:
-        let body = readRequestBody(client, contentLength, deadline)
+        let bodyResult = readRequestBodyStrict(client, contentLength, deadline)
+        if bodyResult.isErr:
+          client.sendResponse("400 Bad Request", "application/json",
+                              "{\"error\":\"request body incomplete\"}\n", log)
+          return
         let res = handleSessionActionRequest(sessionActionFn, sessionTaskUser,
-                                             body, authHeader, authToken)
+                                             bodyResult.get(), authHeader, authToken)
         client.sendResponse(httpStatusLine(res.status), res.contentType,
                             res.body, log)
 
@@ -1124,6 +1148,10 @@ proc gatewayWorker(id: int) {.thread.} =
       finally:
         releaseHttpConnection()
 
+var gGatewayListenerActive = false
+  ## The pool and the listener have different lifetimes: a failed bind leaves
+  ## the pool usable, so a retry must be allowed once the port is free.
+
 proc gatewayThread(args: GatewayArgs) {.thread.} =
   {.cast(gcsafe).}:
     let host =
@@ -1140,8 +1168,12 @@ proc gatewayThread(args: GatewayArgs) {.thread.} =
       server.setSockOpt(OptReuseAddr, true)
       server.bindAddr(Port(args.port), host)
       server.listen()
+      {.cast(gcsafe).}:
+        gGatewayListenerActive = true
     except CatchableError as exc:
       args.log.error("http_gateway: bind " & host & ":" & $args.port & " failed — " & exc.msg)
+      {.cast(gcsafe).}:
+        gGatewayListenerActive = false
       if server != nil:
         server.close()
       return
@@ -1223,7 +1255,7 @@ proc startHttpGateway*(port: int;
                       ): Result[void, string] =
   ## A second call would publish a new dispatcher/bridge before binding; even
   ## if the bind failed, the running listener would keep using the new wiring.
-  if gGatewayPoolStarted:
+  if gGatewayListenerActive:
     return err("http_gateway: already running")
   ## A private bridge is never fed by the daemon outbox drainer: every turn
   ## would register and poll a queue nobody drains, ending in 504.
