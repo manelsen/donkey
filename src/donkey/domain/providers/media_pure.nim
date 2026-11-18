@@ -8,7 +8,9 @@
 
 import std/[base64, strutils]
 import results
+import ../../core/providers/provider_defaults
 import ../message
+import ./descriptors
 
 type
   InlineImage* = object
@@ -183,3 +185,29 @@ func demoteInlineImagesForTurn*(h: ConversationHistory): ConversationHistory =
     if hasDescriptiveUserText and stripped.role == roleUser:
       stripped.text = stripped.text.replace(InlineImageRemovedNote, "").strip()
     result.add(stripped)
+
+func filterImagesForCapability*(urls: openArray[string];
+                                supportsImages: bool): seq[string] =
+  ## The images a request may carry for a provider with this vision capability.
+  ## A provider without vision removes the inline `data:` payloads instead of
+  ## letting the transport strip them after the turn text already promised the
+  ## image (review E3). `http(s)` URLs and paths stay: they are cheap and the
+  ## provider may still fetch or ignore them.
+  for url in urls:
+    if supportsImages or not url.startsWith("data:"):
+      result.add(url)
+
+func inlineImageAccompanies*(supportsImages: bool): bool =
+  ## Whether a marker may claim that the image travels with the message. False
+  ## for a provider without vision, whose request never carries the payload.
+  supportsImages
+
+func inlineSupportsImagesFor*(providerName: string): bool =
+  ## The vision capability of the provider the turn is addressed to, resolved
+  ## through its descriptor (aliases included). An unknown provider gets no
+  ## promise; a provider without a compat profile reports false.
+  case descriptorOr(providerName).id
+  of "fireworks": FireworksSupportsImages
+  of "alibaba":   AlibabaSupportsImages
+  of "nvidia":    NvidiaSupportsImages
+  else:           false
