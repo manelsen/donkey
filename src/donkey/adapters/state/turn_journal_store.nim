@@ -107,6 +107,8 @@ type
     ## cleared only by a successful fsync of the same kind.
     data: bool       ## tail bytes were written but their fsync failed
     directory: bool  ## a directory entry on the journal path is not fsynced
+    commit: bool     ## a `tevCommitted` frame was written but not fsynced,
+                     ## and its writer never waited for a later fsync of it
 
 # A single lock for every journal instance in this process: the file is the
 # unit of serialization, not the store object.
@@ -125,7 +127,7 @@ proc loadPending(path: string): PendingSync {.raises: [].} =
 
 proc savePending(path: string; pending: PendingSync) {.raises: [].} =
   {.cast(gcsafe).}:
-    if pending.data or pending.directory:
+    if pending.data or pending.directory or pending.commit:
       pendingSyncByPath[path] = pending
     else:
       pendingSyncByPath.del(path)
@@ -332,7 +334,9 @@ proc retryPendingSync(path: string;
                       pending: var PendingSync): Result[void, string] {.raises: [].} =
   ## Runs before any new bytes are written. A tail whose fsync failed is
   ## confirmed first; writing on top of it would extend the unconfirmed range
-  ## and make the window larger.
+  ## and make the window larger. A resynced commit keeps `commit = true`: its
+  ## bytes are now durable, but only a later process that reads them back may
+  ## report the commit as persisted.
   if pending.directory:
     let synced = syncJournalDirs(path)
     if synced.isErr:
@@ -345,13 +349,14 @@ proc retryPendingSync(path: string;
     pending.data = false
   ok()
 
-proc appendFramedLine(path, line: string;
+proc appendFramedLine(path, line: string; isCommit: bool;
                       pending: var PendingSync): Result[void, string] {.raises: [].} =
   ## Appends exactly one frame and fsyncs the data file. The directory entry is
   ## fsynced when this append created the journal, or retried when an earlier
   ## creation could not confirm it. On a failed data fsync the frame stays on
   ## disk (a later retry can still make it durable) but the call returns `err`
-  ## and the tail is marked pending.
+  ## and the tail is marked pending. `isCommit` keeps that mark on a
+  ## `tevCommitted` frame even after a retry resyncs it.
   var mayHaveWritten = false
   try:
     let prepared = ensureJournalDir(path, pending.directory)
@@ -381,8 +386,14 @@ proc appendFramedLine(path, line: string;
       f.close()
     if syncError.len > 0:
       pending.data = true
+      if isCommit:
+        pending.commit = true
       return err(syncError)
     pending.data = false
+    # A later frame must not clear the mark of a commit the retry resynced:
+    # only a new commit this call fsynced, or a restart, settles that one.
+    if isCommit:
+      pending.commit = false
     if isNew:
       let dir = parentDir(path)
       if dir.len > 0:
@@ -394,6 +405,8 @@ proc appendFramedLine(path, line: string;
   except CatchableError as e:
     if mayHaveWritten:
       pending.data = true
+      if isCommit:
+        pending.commit = true
     err("append failed for " & path & ": " & e.msg)
 
 proc atomicWriteText(path, content, tmpSuffix: string;
@@ -428,6 +441,7 @@ proc atomicWriteText(path, content, tmpSuffix: string;
     # The renamed file's data was fsynced above, so a pending tail from the
     # old file no longer exists.
     pending.data = false
+    pending.commit = false
     let dir = parentDir(path)
     if dir.len > 0:
       let synced = syncDir(dir)
@@ -760,7 +774,8 @@ proc appendEventLocked(store: TurnJournalStore; turnId: string;
   let effective = sanitizeEvent(event)
   let line = $eventToJson(turnId, effective, stamp)
   var pending = loadPending(store.path)
-  let saved = appendFramedLine(store.path, line, pending)
+  let saved = appendFramedLine(store.path, line,
+                               event.kind == tevCommitted, pending)
   savePending(store.path, pending)
   saved
 
@@ -768,22 +783,26 @@ proc confirmDurabilityLocked(store: TurnJournalStore): Result[void, string] {.ra
   ## Caller must hold `journalLock`. Confirms a tail left pending by an earlier
   ## failed fsync. Used before reporting an already-visible commit frame as
   ## persisted (B1). A failed retry keeps the flag so the next call tries again.
+  ## Resyncing the bytes does not settle a `commit` mark: that record says its
+  ## writer never waited for the fsync, so only a process that reads the frame
+  ## back from disk may treat the commit as persisted.
   var pending = loadPending(store.path)
-  if not pending.data and not pending.directory:
-    return ok()
-  if pending.directory:
-    let synced = syncJournalDirs(store.path)
-    if synced.isErr:
-      savePending(store.path, pending)
-      return err(synced.error)
-    pending.directory = false
   if pending.data:
     let synced = syncExistingFile(store.path)
     if synced.isErr:
       savePending(store.path, pending)
       return err(synced.error)
     pending.data = false
+  if pending.directory:
+    let synced = syncJournalDirs(store.path)
+    if synced.isErr:
+      savePending(store.path, pending)
+      return err(synced.error)
+    pending.directory = false
   savePending(store.path, pending)
+  if pending.commit:
+    return err("commit frame of " & store.path &
+               " was not fsynced by its writer")
   ok()
 
 proc append*(store: TurnJournalStore; turnId: string; event: TurnEvent;
