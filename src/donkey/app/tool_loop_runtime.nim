@@ -34,6 +34,12 @@ type TypingFn* = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: []
 
 const RepeatAbortThreshold* = 2    ## abort if same (tool, args) seen ≥ this many times
 
+const
+  AskInterruptedReply* = "A pergunta pendente foi cancelada porque chegou " &
+    "uma nova mensagem antes da resposta."
+    ## Terminal reply for a turn whose open `ask` the ingress cancelled. It
+    ## closes the turn's bridge instead of leaving the caller to time out.
+
 func clipProviderError(err: string; maxChars = 500): string =
   clipUtf8(err, maxChars)
     .replace("\r\n", "\\n")
@@ -406,6 +412,17 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
       ## The ingress cancelled the open ask for a new API turn. Stop the batch
       ## and the turn: the next round could ask again and block the new turn.
       result.askInterrupted = true
+      if not suppressProgress:
+        ## The turn ends without a final text, so close its bridge with a
+        ## terminal error; otherwise the caller waits until the deadline.
+        await globalOutbox.put(OutboundMessage(
+          userId: uid,
+          channel: channel,
+          text: AskInterruptedReply,
+          replyTo: replyTo,
+          replyKind: rkTurnError,
+          bridgeToken: bridgeToken,
+        ))
       for j in i + 1 ..< toolCalls.len:
         result = result |>->
           withToolResult(toolCalls[j], AskInterruptedText,
