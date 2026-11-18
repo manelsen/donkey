@@ -27,9 +27,11 @@ const
   SupportedImageMimes* = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
   ## Single source of the provider errors that mean "the image was refused".
-  ## `genericProviderErrorText` and the inline-image retry both read this list.
+  ## `genericProviderErrorText` and the inline-image retry both read this list;
+  ## neither may carry a marker of its own.
   ImageRejectionMarkers* = ["image_url", "image url", "unsupported image",
-                            "invalid content", "media type"]
+                            "invalid content", "media type", "file_id",
+                            "attachment"]
 
   ## Appended to the text turn when the inline image had to be dropped.
   InlineImageRemovedNote* = "[imagem removida: provider sem visão]"

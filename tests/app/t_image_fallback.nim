@@ -65,6 +65,15 @@ suite "image rejection detection":
     check not isImageRejection("429 rate limit exceeded")
     check not isImageRejection("401 Unauthorized")
 
+  test "attachment and file_id errors are image rejections too":
+    # The refusal text and the one-shot retry must agree on this list; before,
+    # `genericProviderErrorText` matched these two outside the pure predicate,
+    # so an "attachment" error explained the refusal but never retried.
+    check isImageRejection("400 attachment type unsupported")
+    check isImageRejection("invalid file_id")
+    for marker in @ImageRejectionMarkers & @["attachment", "file_id"]:
+      check isImageRejection("400 " & marker & " rejected")
+
 suite "withoutInlineImages":
 
   test "strips data URLs, keeps text and notes the last user turn with text":
