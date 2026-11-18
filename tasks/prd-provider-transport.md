@@ -96,9 +96,15 @@ Cada história segue exatamente esta ordem, sem atalho:
 6. Commitar a história com a evidência do vermelho → verde no corpo do commit
    (duas linhas bastam: o erro inicial e o resultado final).
 
+Exceção única: **refactor puro sem mudança de comportamento** (US-007, US-008,
+US-009 e a parte de fiação da US-010). Nesses casos o teste é de
+**caracterização**: escreve-se primeiro, ele fica verde antes e depois, e o
+commit diz “characterization, green before/after”. O vermelho continua
+obrigatório para qualquer história que adicione ou mude comportamento.
+
 Proibido:
 
-- Escrever implementação antes do teste falhar.
+- Escrever implementação antes do teste falhar (fora da exceção acima).
 - Editar um teste existente para “acomodar” a mudança. Se o comportamento
   mudou, a história diz isso explicitamente.
 - Rodar a suíte inteira como primeiro sinal: o primeiro sinal é o teste novo
