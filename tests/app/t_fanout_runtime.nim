@@ -27,6 +27,9 @@ type
     creates:       seq[string]
     removes:       seq[string]
     settledAtRemove: seq[bool]
+    ## Status of every child at each `remove` call, indexed like `removes`.
+    ## Used to prove that siblings are signalled before any settlement runs.
+    statusesAtRemove: seq[seq[SubagentStatus]]
     failCreateAt:  int  ## 1-based create call that fails; 0 never fails
     mgr:           SubagentManager
 
@@ -45,6 +48,11 @@ proc spyRemove(spy: WorkspaceSpy; path: string):
     spy.removes.add(id)
     let mgr = spy.mgr
     spy.settledAtRemove.add(if mgr.isNil: false else: mgr.childSettled(id))
+    var statuses: seq[SubagentStatus]
+    if not mgr.isNil:
+      for info in mgr.listSubagents():
+        statuses.add(info.status)
+    spy.statusesAtRemove.add(statuses)
   ok()
 
 proc spyWorkspace(spy: WorkspaceSpy): SubagentWorkspacePort =
@@ -120,6 +128,27 @@ proc waitRemoves(spy: WorkspaceSpy; expected: int) {.async, gcsafe.} =
   while spy.removes.len < expected and attempts < 2_000:
     await sleepAsync(chronos.milliseconds(1))
     inc attempts
+
+proc waitStatus(mgr: SubagentManager; subagentId: string;
+                status: SubagentStatus; attempts = 400) {.async, gcsafe.} =
+  ## Bounded poll for a transition. Never asserts: the caller decides.
+  var tries = 0
+  while childStatus(mgr, subagentId) != status and tries < attempts:
+    await sleepAsync(chronos.milliseconds(2))
+    inc tries
+
+proc waitFanoutDone(mgr: SubagentManager; fanoutId: string;
+                    attempts = 1_000) {.async, gcsafe.} =
+  var tries = 0
+  while fanoutId in mgr.fanouts and not mgr.fanouts[fanoutId].done and
+      tries < attempts:
+    await sleepAsync(chronos.milliseconds(2))
+    inc tries
+
+func liveCount(statuses: seq[SubagentStatus]): int =
+  for status in statuses:
+    if status in {ssQueued, ssRunning}:
+      inc result
 
 suite "fanout runtime":
 
@@ -378,3 +407,375 @@ suite "fanout runtime":
       check spy.removes[i] == spy.creates[i]
     for child in agg.children:
       check child.status == ssCompleted
+
+  # ── Deferred findings C1–C7 (tasks/reviews/deferred-findings-v4.md) ─────────
+
+  test "awaitFanout does not publish before an in-flight shutdown settles":
+    ## C1: `cancelAll` marks the fan-out done before it finishes settling the
+    ## children. A concurrent consumer must wait for that settlement instead of
+    ## publishing queued placeholders.
+    let base = fanoutBase / "settle-before-publish"
+    removeDir(base)
+    defer: removeDir(base)
+    let opened = new(int)
+    let gate = newAsyncEvent()
+    defer: gate.fire()
+    let complete = proc(req: CompletionRequest):
+                       Future[Result[CompletionResponse, string]]
+                       {.async, gcsafe.} =
+      discard req
+      {.cast(gcsafe).}:
+        inc opened[]
+      {.cast(gcsafe).}:
+        await gate.wait()
+      return ok(CompletionResponse(text: "late"))
+    let spy = WorkspaceSpy()
+    let mgr = newSubagentManager(spyWorkspace(spy))
+    spy.mgr = mgr
+    var parent = makeParent(base, complete)
+    let plan = makePlan(@[task("one"), task("two"), task("three")])
+
+    let started = waitFor mgr.startFanout(parent, plan, fpCollectAll)
+    check started.error.len == 0
+    waitFor waitCount(opened, 3)
+    check opened[] == 3
+
+    # Shutdown runs first and suspends in its settlement loop; the consumer
+    # then asks for the aggregate while that settlement is still in flight.
+    let shutdown = mgr.cancelAll()
+    let agg = waitFor mgr.awaitFanout(started.handle.fanoutId, 0,
+                                      $parent.uid, 0)
+
+    for id in started.handle.childIds:
+      check mgr.childSettled(id)
+    check spy.removes.len == 3
+    check agg.children.len == 3
+    for child in agg.children:
+      check child.status == ssCancelled
+    check agg.cancelled == 3
+    check agg.stopReason == fsrSessionStop
+    waitFor shutdown
+
+  test "fail-fast signals every sibling before settling any of them":
+    ## C2: the failed child's siblings are signalled in one phase; settling the
+    ## first sibling must not leave the others running (they could complete in
+    ## that window).
+    let base = fanoutBase / "signal-all-first"
+    removeDir(base)
+    defer: removeDir(base)
+    let opened = new(int)
+    let gate = newAsyncEvent()
+    defer: gate.fire()
+    let complete = proc(req: CompletionRequest):
+                       Future[Result[CompletionResponse, string]]
+                       {.async, gcsafe.} =
+      let text = requestText(req)
+      {.cast(gcsafe).}:
+        inc opened[]
+      if "boom" in text:
+        return err("injected child failure")
+      {.cast(gcsafe).}:
+        await gate.wait()
+      return ok(CompletionResponse(text: "late"))
+    let spy = WorkspaceSpy()
+    let mgr = newSubagentManager(spyWorkspace(spy))
+    spy.mgr = mgr
+    var parent = makeParent(base, complete)
+    let plan = makePlan(@[task("first"), task("boom"), task("third")])
+
+    let started = waitFor mgr.startFanout(parent, plan, fpFailFast)
+    check started.error.len == 0
+    let agg = waitFor mgr.awaitFanout(started.handle.fanoutId, 0,
+                                      $parent.uid, 0)
+    check agg.stopReason == fsrChildFailed
+    check agg.children[0].status == ssCancelled
+    check agg.children[2].status == ssCancelled
+    check agg.children[0].cancelledBySibling
+    check agg.children[2].cancelledBySibling
+
+    waitFor waitRemoves(spy, 3)
+    let blocked = [started.handle.childIds[0], started.handle.childIds[2]]
+    var checkedBlocked = 0
+    for i, removedId in spy.removes:
+      if removedId notin blocked:
+        continue
+      inc checkedBlocked
+      # At the removal of a cancelled sibling, no other child may still be
+      # queued or running: the signal phase ran before any settlement.
+      check liveCount(spy.statusesAtRemove[i]) == 0
+    check checkedBlocked == 2
+
+  test "an awaited fan-out is removed from the registry":
+    ## C3: plan, outcomes and future are dropped once the aggregate is built.
+    let base = fanoutBase / "fanout-removed"
+    removeDir(base)
+    defer: removeDir(base)
+    let complete = proc(req: CompletionRequest):
+                       Future[Result[CompletionResponse, string]]
+                       {.async, gcsafe.} =
+      discard req
+      await sleepAsync(chronos.milliseconds(2))
+      return ok(CompletionResponse(text: "done", inputTokens: 2,
+                                   outputTokens: 1))
+    let spy = WorkspaceSpy()
+    let mgr = newSubagentManager(spyWorkspace(spy))
+    spy.mgr = mgr
+    var parent = makeParent(base, complete)
+    let plan = makePlan(@[task("one"), task("two")])
+
+    let started = waitFor mgr.startFanout(parent, plan, fpCollectAll)
+    check mgr.fanouts.hasKey(started.handle.fanoutId)
+    let agg = waitFor mgr.awaitFanout(started.handle.fanoutId, 0,
+                                      $parent.uid, 0)
+    check agg.ok == 2
+    check not mgr.fanouts.hasKey(started.handle.fanoutId)
+    waitFor waitRemoves(spy, 2)
+
+  test "an external cancel fails fast on the siblings":
+    ## C5: cancelling one child from outside is a fail-fast trigger; the flag
+    ## `cancelledBySibling` belongs to the supervisor-cancelled siblings, not
+    ## to the externally cancelled child.
+    let base = fanoutBase / "external-cancel"
+    removeDir(base)
+    defer: removeDir(base)
+    let opened = new(int)
+    let gate = newAsyncEvent()
+    defer: gate.fire()
+    let complete = proc(req: CompletionRequest):
+                       Future[Result[CompletionResponse, string]]
+                       {.async, gcsafe.} =
+      discard req
+      {.cast(gcsafe).}:
+        inc opened[]
+      {.cast(gcsafe).}:
+        await gate.wait()
+      return ok(CompletionResponse(text: "late"))
+    let spy = WorkspaceSpy()
+    let mgr = newSubagentManager(spyWorkspace(spy))
+    spy.mgr = mgr
+    var parent = makeParent(base, complete)
+    let plan = makePlan(@[task("first"), task("second"), task("third")])
+
+    let started = waitFor mgr.startFanout(parent, plan, fpFailFast)
+    check started.error.len == 0
+    waitFor waitCount(opened, 3)
+    check waitFor mgr.cancelSubagent(started.handle.childIds[1])
+
+    waitFor waitStatus(mgr, started.handle.childIds[0], ssCancelled)
+    waitFor waitStatus(mgr, started.handle.childIds[2], ssCancelled)
+    let firstCancelled = childStatus(mgr, started.handle.childIds[0]) ==
+                         ssCancelled
+    let thirdCancelled = childStatus(mgr, started.handle.childIds[2]) ==
+                         ssCancelled
+    check firstCancelled
+    check thirdCancelled
+    # Without the sibling signal the blocked children never finish, so the
+    # aggregate is only asked for once they are cancelled.
+    if firstCancelled and thirdCancelled:
+      let agg = waitFor mgr.awaitFanout(started.handle.fanoutId, 0,
+                                        $parent.uid, 0)
+      check agg.children[1].status == ssCancelled
+      check not agg.children[1].cancelledBySibling
+      check agg.children[0].cancelledBySibling
+      check agg.children[2].cancelledBySibling
+    waitFor mgr.cancelAll()
+    waitFor waitRemoves(spy, 3)
+
+  test "an external cancel leaves the siblings alone under collect-all":
+    ## C5 boundary: the fail-fast trigger is policy-scoped.
+    let base = fanoutBase / "external-cancel-collect"
+    removeDir(base)
+    defer: removeDir(base)
+    let opened = new(int)
+    let gate = newAsyncEvent()
+    defer: gate.fire()
+    let complete = proc(req: CompletionRequest):
+                       Future[Result[CompletionResponse, string]]
+                       {.async, gcsafe.} =
+      discard req
+      {.cast(gcsafe).}:
+        inc opened[]
+      {.cast(gcsafe).}:
+        await gate.wait()
+      return ok(CompletionResponse(text: "late"))
+    let spy = WorkspaceSpy()
+    let mgr = newSubagentManager(spyWorkspace(spy))
+    spy.mgr = mgr
+    var parent = makeParent(base, complete)
+    let plan = makePlan(@[task("first"), task("second"), task("third")])
+
+    let started = waitFor mgr.startFanout(parent, plan, fpCollectAll)
+    check started.error.len == 0
+    waitFor waitCount(opened, 3)
+    check waitFor mgr.cancelSubagent(started.handle.childIds[1])
+    waitFor sleepAsync(chronos.milliseconds(60))
+    check childStatus(mgr, started.handle.childIds[0]) == ssRunning
+    check childStatus(mgr, started.handle.childIds[2]) == ssRunning
+    waitFor mgr.cancelAll()
+    waitFor waitRemoves(spy, 3)
+
+  test "the aggregate token cap is enforced at each completion":
+    ## C6: A+B blow the cap at completion time, so C must not start another
+    ## provider round waiting for the 100 ms tick.
+    let base = fanoutBase / "cap-at-completion"
+    removeDir(base)
+    defer: removeDir(base)
+    let fastDone = new(int)
+    let secondRound = new(int)
+    let gate = newAsyncEvent()
+    defer: gate.fire()
+    let complete = proc(req: CompletionRequest):
+                       Future[Result[CompletionResponse, string]]
+                       {.async, gcsafe.} =
+      let text = requestText(req)
+      if "cheap-a" in text:
+        {.cast(gcsafe).}:
+          inc fastDone[]
+        return ok(CompletionResponse(text: "a", inputTokens: 10,
+                                     outputTokens: 5))
+      if "cheap-b" in text:
+        {.cast(gcsafe).}:
+          inc fastDone[]
+        return ok(CompletionResponse(text: "b", inputTokens: 6,
+                                     outputTokens: 4))
+      var firstRound = false
+      {.cast(gcsafe).}:
+        inc secondRound[]
+        firstRound = secondRound[] == 1
+      if firstRound:
+        # First round: wait for the cap to be blown by the cheap children, then
+        # hand back a tool call so the loop asks the provider again — the
+        # second round the completion-time check must prevent.
+        {.cast(gcsafe).}:
+          await gate.wait()
+        return ok(CompletionResponse(
+          text: "",
+          toolCalls: @[ToolCallRequest(id: "call-1", name: "current_time",
+                                       inputJson: "{}")],
+        ))
+      return ok(CompletionResponse(text: "second round", inputTokens: 1,
+                                   outputTokens: 1))
+    let spy = WorkspaceSpy()
+    let mgr = newSubagentManager(spyWorkspace(spy))
+    spy.mgr = mgr
+    var parent = makeParent(base, complete)
+    let plan = makePlan(@[task("cheap-a"), task("cheap-b"), task("blocked")],
+                        aggregateTokens = 20)
+
+    let started = waitFor mgr.startFanout(parent, plan, fpCollectAll)
+    check started.error.len == 0
+    waitFor waitCount(fastDone, 2)
+    waitFor sleepAsync(chronos.milliseconds(10))
+    gate.fire()
+
+    let agg = waitFor mgr.awaitFanout(started.handle.fanoutId, 0,
+                                      $parent.uid, 0)
+    # 0 rounds if the cancel won the start, 1 if the first round was already
+    # in flight; never the second round.
+    check secondRound[] < 2
+    check agg.stopReason == fsrAggregateBudget
+    check agg.children[0].status == ssCompleted
+    check agg.children[1].status == ssCompleted
+    check agg.children[2].status == ssCancelled
+    check agg.totalTokens >= 25
+    waitFor waitRemoves(spy, 3)
+
+  test "a completion after the aggregate deadline is timed out":
+    ## C7: the deadline is applied when the child finishes, not on the next
+    ## tick; a child finishing 25 ms after a 10 ms deadline is not accepted.
+    let base = fanoutBase / "deadline-at-completion"
+    removeDir(base)
+    defer: removeDir(base)
+    let gate = newAsyncEvent()
+    defer: gate.fire()
+    let complete = proc(req: CompletionRequest):
+                       Future[Result[CompletionResponse, string]]
+                       {.async, gcsafe.} =
+      discard req
+      {.cast(gcsafe).}:
+        await gate.wait()
+      return ok(CompletionResponse(text: "too late", inputTokens: 2,
+                                   outputTokens: 1))
+    let spy = WorkspaceSpy()
+    let mgr = newSubagentManager(spyWorkspace(spy))
+    spy.mgr = mgr
+    var parent = makeParent(base, complete)
+    let plan = makePlan(@[task("late")], durationMs = 10)
+
+    let started = waitFor mgr.startFanout(parent, plan, fpCollectAll)
+    check started.error.len == 0
+    # Past the 10 ms aggregate deadline but well before the 100 ms tick.
+    waitFor sleepAsync(chronos.milliseconds(25))
+    gate.fire()
+
+    let agg = waitFor mgr.awaitFanout(started.handle.fanoutId, 0,
+                                      $parent.uid, 0)
+    check agg.children.len == 1
+    check agg.children[0].status == ssTimedOut
+    check "aggregate duration" in agg.children[0].error
+    check agg.timedOut == 1
+    check agg.ok == 0
+    check agg.stopReason == fsrChildTimedOut
+    waitFor waitRemoves(spy, 1)
+
+  test "the settlement wait is a monotonic deadline, not the child's finish":
+    ## C4: chronos `withTimeout` cancels *and* waits, so a future that ignores
+    ## cancellation makes the 2 s bound unbounded. The bounded wait must abandon
+    ## the future at the deadline instead.
+    let release = new(bool)
+    let stubborn = proc(release: ref bool): Future[void] {.async, gcsafe.} =
+      while true:
+        var done = false
+        {.cast(gcsafe).}:
+          done = release[]
+        if done:
+          return
+        try:
+          await sleepAsync(chronos.milliseconds(5))
+        except CancelledError:
+          discard
+    let fut = stubborn(release)
+    let started = nowMs()
+    let settled = waitFor awaitSettled(fut, 100)
+    let elapsed = nowMs() - started
+    check not settled
+    check elapsed >= 80
+    check elapsed < 1_500
+    check not fut.finished()
+    release[] = true
+    waitFor sleepAsync(chronos.milliseconds(30))
+
+  test "completed fan-out states are pruned by count and age":
+    ## C3: a detached fan-out nobody awaits is bounded by retention.
+    let base = fanoutBase / "prune-fanouts"
+    removeDir(base)
+    defer: removeDir(base)
+    let complete = proc(req: CompletionRequest):
+                       Future[Result[CompletionResponse, string]]
+                       {.async, gcsafe.} =
+      discard req
+      await sleepAsync(chronos.milliseconds(1))
+      return ok(CompletionResponse(text: "done", inputTokens: 2,
+                                   outputTokens: 1))
+    let spy = WorkspaceSpy()
+    let mgr = newSubagentManager(spyWorkspace(spy))
+    spy.mgr = mgr
+    var parent = makeParent(base, complete)
+
+    let first = waitFor mgr.startFanout(parent, makePlan(@[task("first")]),
+                                        fpCollectAll)
+    waitFor waitFanoutDone(mgr, first.handle.fanoutId)
+    let second = waitFor mgr.startFanout(parent, makePlan(@[task("second")]),
+                                         fpCollectAll)
+    waitFor waitFanoutDone(mgr, second.handle.fanoutId)
+    check mgr.fanouts.hasKey(first.handle.fanoutId)
+    check mgr.fanouts.hasKey(second.handle.fanoutId)
+
+    mgr.pruneFanouts(retain = 1)
+    check not mgr.fanouts.hasKey(first.handle.fanoutId)
+    check mgr.fanouts.hasKey(second.handle.fanoutId)
+
+    mgr.pruneFanouts(retain = SubagentFanoutRetention,
+                     atMs = nowMs() + SubagentFanoutRetentionMs + 1)
+    check not mgr.fanouts.hasKey(second.handle.fanoutId)
+    waitFor waitRemoves(spy, 2)
