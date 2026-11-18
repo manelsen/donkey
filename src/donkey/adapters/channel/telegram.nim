@@ -437,9 +437,15 @@ proc openPathComponent*(paddockRoot, resolvedPath: string): Result[PathComponent
   ## instead of being opened or followed.
   when defined(posix):
     try:
+      ## `resolveConfinedMediaPath` compared the file against the canonical
+      ## paddock root; reuse the same reference here, otherwise a relative or
+      ## symlinked paddock root would make a valid file look outside.
       var lexicalRoot = paddockRoot
       normalizePath(lexicalRoot)
-      let root = lexicalRoot
+      let canonicalRoot = canonicalPath(lexicalRoot)
+      if canonicalRoot.isErr:
+        return err("media root is unavailable")
+      let root = canonicalRoot.get()
       let slot = componentSlot(root, resolvedPath)
       if slot.len == 0:
         return err("media path is outside the paddock")
@@ -450,8 +456,11 @@ proc openPathComponent*(paddockRoot, resolvedPath: string): Result[PathComponent
         ## A file with another name can be unlinked and replaced by a link
         ## without the name in the component chain ever changing.
         return err("media file has several names")
+      ## The root itself is opened without following a symlink: on non-Linux
+      ## POSIX there is no `/proc` check, so `O_DIRECTORY` alone would follow a
+      ## root swapped for a link after validation.
       var current = PathComponent(name: root, fd: posix.open(
-        root.cstring, O_RDONLY or PosixODirectory))
+        root.cstring, O_RDONLY or PosixODirectory or PosixONoFollow))
       if current.fd < 0:
         return err("media root is unavailable")
       let parts = slot.split('/')

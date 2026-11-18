@@ -14,6 +14,7 @@
 
 import std/locks
 import ../../core/pipeops
+import ../../core/channels/flood_gate
 import ../../domain/message
 import ./line
 
@@ -100,7 +101,9 @@ proc deliverQueuedReplies*(q: LineReplyQueue; a: LineAdapter;
   if q == nil:
     return 0
   var msg: OutboundMessage
-  while q.tryDequeue(msg):
+  ## A flood window is already known before the POST: do not remove the head,
+  ## or `a.send` would refuse without attempting and the reply would be lost.
+  while a.flood.remainingMs(0, epochMs()) == 0 and q.tryDequeue(msg):
     inc result
     var sent: Result[void, string]
     try:
