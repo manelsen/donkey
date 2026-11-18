@@ -308,6 +308,12 @@ proc runAgentStream*(body: string;
   var finishReason = "stop"
   var inputTokens = 0
   var outputTokens = 0
+  var reservationClosed = false
+    ## `poll` returning done/missing removes the bridge entry; abandoning then
+    ## would hit whatever turn registered next for the same user.
+  var gaveUpForChunks = false
+    ## The chunk budget forced us to close the stream before the terminal:
+    ## the late answer has no reader, so the reservation must be released.
 
   proc writeData(payload: string): bool =
     if send(sseData(payload)):
@@ -354,6 +360,7 @@ proc runAgentStream*(body: string;
           if chunksSent >= MaxSseChunksPerTurn:
             finishReason = "length"
             finished = true
+            gaveUpForChunks = true
             return
           if not writeData(buildAgentChunk(
               chunkId, chosenModel, created, content = text)):
@@ -373,6 +380,7 @@ proc runAgentStream*(body: string;
         if chunksSent >= MaxSseChunksPerTurn:
           finishReason = "length"
           finished = true
+          gaveUpForChunks = true
           return
         discard writeData(buildAgentChunk(
           chunkId, chosenModel, created, toolCall = event.toolCall))
@@ -394,6 +402,7 @@ proc runAgentStream*(body: string;
         if finished or errored or clientGone:
           break
     of cbpDone:
+      reservationClosed = true
       if batch.truncated:
         finishReason = "length"
       for event in batch.events:
@@ -408,6 +417,7 @@ proc runAgentStream*(body: string;
       if not clientGone:
         errored = true
     of cbpMissing:
+      reservationClosed = true
       discard writeData(buildAgentError(
         "agent turn is no longer pending", "server_error", "turn_missing"))
       if not clientGone:
@@ -424,7 +434,8 @@ proc runAgentStream*(body: string;
       nap(PollStepMs)
 
   if clientGone:
-    discard bridge.abandon(request.userId)
+    if not reservationClosed:
+      discard bridge.abandon(request.userId)
     return AgentStreamResult(outcome: asClientGone)
   if errored:
     return AgentStreamResult(outcome: asErrored)
@@ -434,8 +445,13 @@ proc runAgentStream*(body: string;
       finishReason = finishReason,
       inputTokens = inputTokens,
       outputTokens = outputTokens)):
-    discard bridge.abandon(request.userId)
+    if not reservationClosed:
+      discard bridge.abandon(request.userId)
     return AgentStreamResult(outcome: asClientGone)
   if not send(sseDone()):
     return AgentStreamResult(outcome: asClientGone)
+  if gaveUpForChunks and not reservationClosed:
+    ## We closed the stream without the terminal; release the user's slot
+    ## instead of leaving it reserved for a reader that no longer exists.
+    discard bridge.abandon(request.userId)
   AgentStreamResult(outcome: asCompleted)
