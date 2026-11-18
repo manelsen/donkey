@@ -1,0 +1,25 @@
+{
+  "destination": "U9c2f8a1b7d6e5f4a3b2c1d0e9f8a7b6c",
+  "events": [
+    {
+      "type": "message",
+      "mode": "active",
+      "timestamp": 1700000000123,
+      "webhookEventId": "01H8Y6Q4Z3J9K2M5N7P8R9S0T1",
+      "deliveryContext": {
+        "isRedelivery": false
+      },
+      "replyToken": "b6f0d5c1e2a34f5b8c9d0e1f2a3b4c5d",
+      "source": {
+        "type": "user",
+        "userId": "U4af4980629a1c5f5b1a1f0e7b7a1e111"
+      },
+      "message": {
+        "id": "468789577898262530",
+        "type": "text",
+        "quoteToken": "q3Pl0Xy9sV2wQ1rT4uI7oP6nM5bV4cX3",
+        "text": "Hello from LINE"
+      }
+    }
+  ]
+}

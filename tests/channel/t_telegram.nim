@@ -213,12 +213,13 @@ suite "telegram adapter — transport wiring (TG-022, TG-030)":
     let a = newTelegramAdapter("token", resolverPath)
     check a.http.allowlist == @["api.telegram.org"]
 
-  test "TG-022: a custom apiBase is not blocked by the allowlist":
+  test "TG-022: a custom apiBase is allowlisted to its own host":
     let resolverPath = getTempDir() / "donkey_tg_proxy_ids4.tsv"
     defer: removeFile(resolverPath)
     let a = newTelegramAdapter("token", resolverPath,
                                apiBase = "https://worker.example")
-    check a.http.allowlist.len == 0
+    # Egress is restricted to the configured host instead of being disabled.
+    check a.http.allowlist == @["worker.example"]
 
   test "TG-030: the timeout is configurable and falls back safely":
     delEnv("DONKEY_TELEGRAM_TIMEOUT_SEC")

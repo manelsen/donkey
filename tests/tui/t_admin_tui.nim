@@ -4,6 +4,7 @@ import illwill as ill
 import donkey/tui/admin_tui
 import donkey/config/types
 import donkey/core/types
+import donkey/domain/providers/descriptors
 import donkey/adapters/memory/md_file
 
 suite "Admin TUI":
@@ -77,13 +78,18 @@ suite "Admin TUI":
   test "loadProviderItems populates providers":
     var st = newAdminState()
     st.loadProviderItems()
-    check st.items.len == 13
+    ## Intentional growth: the list is derived from providerDescriptors(), so
+    ## it gains a row whenever the descriptor table does (nvidia/alibaba now).
+    check st.items.len == providerDescriptors().len
+    check st.items.len > 13
     let names = st.items.mapIt(it.name)
     check "anthropic" in names
     check "zai-anthropic" in names
     check "openai" in names
     check "openrouter" in names
     check "zai-coding" in names
+    check "nvidia" in names
+    check "alibaba" in names
 
   test "loadModelItems populates models":
     var st = newAdminState()
@@ -125,7 +131,7 @@ suite "Admin TUI":
 
     st.section = asProviders
     st.loadSection()
-    check st.items.len == 13
+    check st.items.len == providerDescriptors().len
 
     st.section = asModels
     st.loadSection()

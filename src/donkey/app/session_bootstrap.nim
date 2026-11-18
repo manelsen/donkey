@@ -139,6 +139,8 @@ func availableProviderNames*(av: ProviderAvailability): seq[string] =
   if av.zaiCoding: result.add("zai-coding")
   if av.groq: result.add("groq")
   if av.ollama: result.add("ollama")
+  if av.nvidia: result.add("nvidia")
+  if av.alibaba: result.add("alibaba")
 
 func detectProviderAvailability*(): ProviderAvailability =
   ## One field per provider, all derived from the descriptor env names. The
@@ -157,6 +159,8 @@ func detectProviderAvailability*(): ProviderAvailability =
     ollama: providerConfigured("ollama"),
     opencodeGo: providerConfigured("opencode-go"),
     zen: providerConfigured("zen"),
+    nvidia: providerConfigured("nvidia"),
+    alibaba: providerConfigured("alibaba"),
   )
 
 proc toProviderSpec*(selection: ProviderSelection): ProviderSpec =

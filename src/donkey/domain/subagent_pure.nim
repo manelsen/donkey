@@ -5,6 +5,7 @@
 ## still has budget. Default policy is intentionally read-only.
 
 import std/[json, strutils]
+import results
 
 type
   SubagentStatus* = enum
@@ -73,6 +74,68 @@ type
     bdTokensExceeded
     bdTimeExceeded
 
+  ## One child of a fan-out. The shape mirrors `SubagentRequest`; the plan
+  ## keeps the effective (clamped) limits so the runtime spawns what was
+  ## validated here, before any workspace exists.
+  FanoutRequest* = object
+    task*:    string
+    context*: string
+    tools*:   seq[string]
+    limits*:  SubagentLimits
+
+  FanoutTask* = FanoutRequest
+
+  FanoutLimits* = object
+    maxChildren*:            int
+    maxAggregateTokens*:     int
+    maxAggregateDurationMs*: int64
+
+  FanoutPlan* = object
+    tasks*:         seq[FanoutRequest]  ## deterministic: input order
+    limits*:        FanoutLimits        ## normalized (maxChildren filled in)
+    plannedTokens*: int                 ## sum of clamped per-child maxTokens
+
+  FanoutOutcome* = object
+    index*:              int
+    subagentId*:         string
+    status*:             SubagentStatus
+    text*:               string
+    error*:              string
+    usage*:              SubagentUsage
+    cancelledBySibling*: bool
+    durationMs*:         int64
+
+  FanoutChildOutcome* = FanoutOutcome
+
+  FanoutPolicy* = enum
+    fpFailFast
+    fpCollectAll
+
+  FanoutStopReason* = enum
+    fsrNone
+    fsrSpawnFailed
+    fsrChildFailed
+    fsrChildTimedOut
+    fsrSessionStop
+    fsrAggregateBudget
+
+  FanoutSignal* = object
+    spawnFailed*:    bool
+    stopRequested*:  bool
+    budgetExceeded*: bool
+
+  FanoutAggregate* = object
+    fanoutId*:        string
+    policy*:          FanoutPolicy
+    children*:        seq[FanoutOutcome]  ## ordered by plan index
+    stopReason*:      FanoutStopReason
+    ok*:              int
+    failed*:          int
+    timedOut*:        int
+    cancelled*:       int
+    totalTokens*:     int
+    totalDurationMs*: int64
+
 const
   SubagentDefaultMaxToolCalls*  = 24
   SubagentMinToolCalls*         = 1
@@ -87,6 +150,14 @@ const
   SubagentMaxTaskChars*    = 8_000
   SubagentMaxContextChars* = 32_000
   SubagentMaxRequestedTools* = 32
+
+  ## Fan-out ceilings. `FanoutAbsoluteMaxAggregateTokens` refuses absurd plans
+  ## up front; `FanoutLimits.maxAggregateTokens` is the runtime ceiling that
+  ## cancels a fan-out when real usage exceeds it. They are distinct knobs.
+  FanoutMaxChildren* = 8
+  FanoutAbsoluteMaxAggregateTokens* = 512_000
+  FanoutDefaultAggregateTokens* = 256_000
+  FanoutDefaultAggregateDurationMs* = 120_000'i64
 
   ## Read-only defaults. The runtime intersects this list with the tools the
   ## parent actually has, so a minimal parent does not advertise ghosts.
@@ -299,3 +370,168 @@ func toJson*(info: SubagentInfo; nowMs: int64): JsonNode =
     "input_tokens": if info.usage == nil: 0 else: info.usage.inputTokens,
     "output_tokens": if info.usage == nil: 0 else: info.usage.outputTokens,
   }
+
+# Fan-out: pure plan validation, aggregation and policy.
+#
+# The runtime creates workspaces, futures and cancellations; this module only
+# decides whether a set of children may start and what their outcomes mean.
+
+func defaultFanoutLimits*(): FanoutLimits =
+  FanoutLimits(
+    maxChildren:            FanoutMaxChildren,
+    maxAggregateTokens:     FanoutDefaultAggregateTokens,
+    maxAggregateDurationMs: FanoutDefaultAggregateDurationMs,
+  )
+
+func effectiveMaxChildren(limits: FanoutLimits): int =
+  if limits.maxChildren > 0: limits.maxChildren else: FanoutMaxChildren
+
+func len*(plan: FanoutPlan): int =
+  plan.tasks.len
+
+func planFanout*(tasks: openArray[FanoutRequest]; limits: FanoutLimits;
+                 availableTools: openArray[string]):
+                 Result[FanoutPlan, string] =
+  ## Fail closed before the runtime creates any child. Shape, tools and the
+  ## plan-time token ceiling are checked here; the runtime token ceiling is
+  ## enforced later against real usage.
+  if tasks.len == 0:
+    return err("fanout requires at least 1 task")
+  let maxChildren = effectiveMaxChildren(limits)
+  if maxChildren > FanoutMaxChildren:
+    return err("maxChildren exceeds absolute ceiling: " & $maxChildren &
+               " > " & $FanoutMaxChildren)
+  if tasks.len > maxChildren:
+    return err("fanout supports at most " & $maxChildren & " children")
+  if limits.maxAggregateTokens <= 0:
+    return err("aggregate token budget must be positive")
+  if limits.maxAggregateTokens > FanoutAbsoluteMaxAggregateTokens:
+    return err("maxAggregateTokens exceeds absolute ceiling: " &
+               $limits.maxAggregateTokens & " > " &
+               $FanoutAbsoluteMaxAggregateTokens)
+  if limits.maxAggregateDurationMs <= 0:
+    return err("maxAggregateDurationMs must be positive")
+  if limits.maxAggregateDurationMs > SubagentMaxDurationMs:
+    return err("maxAggregateDurationMs exceeds " & $SubagentMaxDurationMs &
+               " ms")
+
+  var normalized: seq[FanoutRequest]
+  normalized.setLen(tasks.len)
+  var plannedTokens = 0
+  for i, task in tasks:
+    let requestError = subagentRequestError(SubagentRequest(
+      task: task.task,
+      context: task.context,
+      tools: task.tools,
+    ), 0)
+    if requestError.len > 0:
+      return err(requestError)
+    for raw in task.tools:
+      let name = raw.strip()
+      if name.len == 0:
+        continue
+      if name notin availableTools:
+        return err("tool '" & name & "' is not available in this session")
+    let effective = clampSubagentLimits(task.limits)
+    normalized[i] = FanoutRequest(
+      task: task.task,
+      context: task.context,
+      tools: task.tools,
+      limits: effective,
+    )
+    plannedTokens += effective.maxTokens
+
+  if plannedTokens > FanoutAbsoluteMaxAggregateTokens:
+    return err("aggregate token budget exceeded: " & $plannedTokens &
+               " > " & $FanoutAbsoluteMaxAggregateTokens)
+
+  ok(FanoutPlan(
+    tasks: normalized,
+    limits: FanoutLimits(
+      maxChildren: maxChildren,
+      maxAggregateTokens: limits.maxAggregateTokens,
+      maxAggregateDurationMs: limits.maxAggregateDurationMs,
+    ),
+    plannedTokens: plannedTokens,
+  ))
+
+func aggregateFanout*(plan: FanoutPlan; outcomes: openArray[FanoutOutcome];
+                      fanoutId: string; policy: FanoutPolicy;
+                      signal: FanoutSignal): FanoutAggregate =
+  ## Completion order must not matter: children are placed by plan index and
+  ## missing indexes become queued placeholders so the sequence always has
+  ## `plan.len` entries.
+  result.fanoutId = fanoutId
+  result.policy = policy
+  result.children = newSeq[FanoutOutcome](plan.tasks.len)
+  var seen = newSeq[bool](plan.tasks.len)
+  for outcome in outcomes:
+    if outcome.index >= 0 and outcome.index < result.children.len and
+        not seen[outcome.index]:
+      result.children[outcome.index] = outcome
+      seen[outcome.index] = true
+  for i in 0 ..< result.children.len:
+    if not seen[i]:
+      result.children[i] = FanoutOutcome(index: i, status: ssQueued)
+
+  for child in result.children:
+    result.totalTokens += totalTokens(child.usage)
+    if child.durationMs > 0:
+      result.totalDurationMs += child.durationMs
+    case child.status
+    of ssCompleted: inc result.ok
+    of ssFailed: inc result.failed
+    of ssTimedOut: inc result.timedOut
+    of ssCancelled: inc result.cancelled
+    else: discard
+
+  # Precedence: spawn > stop > budget > first failure by index. A sibling
+  # cancellation is never a failure and never becomes the stop reason.
+  if signal.spawnFailed:
+    result.stopReason = fsrSpawnFailed
+  elif signal.stopRequested:
+    result.stopReason = fsrSessionStop
+  elif signal.budgetExceeded:
+    result.stopReason = fsrAggregateBudget
+  else:
+    result.stopReason = fsrNone
+    for child in result.children:
+      if child.cancelledBySibling or child.status == ssCancelled:
+        continue
+      if child.status == ssFailed:
+        result.stopReason = fsrChildFailed
+        break
+      if child.status == ssTimedOut:
+        result.stopReason = fsrChildTimedOut
+        break
+
+func fanoutShouldCancelSiblings*(agg: FanoutAggregate;
+                                 policy: FanoutPolicy): bool =
+  ## Only a real failure triggers fail-fast cancellation. `ssCancelled` and
+  ## `cancelledBySibling` are results of cancellation, never a reason to
+  ## cancel again on every supervisor tick.
+  if policy != fpFailFast:
+    return false
+  for child in agg.children:
+    if child.cancelledBySibling or child.status == ssCancelled:
+      continue
+    if child.status == ssFailed or child.status == ssTimedOut:
+      return true
+  false
+
+func fanoutBudgetDecision*(totalTokens: int;
+                           limits: FanoutLimits): BudgetDecision =
+  ## Runtime aggregate ceiling. Zero means the documented default, so a
+  ## detached caller that does not configure a budget still has one.
+  let ceiling =
+    if limits.maxAggregateTokens > 0: limits.maxAggregateTokens
+    else: FanoutDefaultAggregateTokens
+  if totalTokens >= ceiling: bdTokensExceeded else: bdOk
+
+func fanoutProgressDue*(lastMs, nowMs: int64;
+                        intervalMs: int64 = 1_000): bool =
+  if intervalMs <= 0:
+    return true
+  if nowMs < lastMs:
+    return false
+  nowMs - lastMs >= intervalMs

@@ -4,7 +4,7 @@
 ## Checks that depend on external binaries use status-only assertions
 ## (pass or fail gracefully regardless of environment).
 
-import std/[os, strutils, unittest]
+import std/[os, sequtils, strutils, unittest]
 import donkey/app/doctor
 import donkey/core/diagnostics
 import donkey/core/pipeops
@@ -239,6 +239,76 @@ suite "doctor — summary":
     check "PostgreSQL-backed MAGMA" in summary
     check "zai-coding / glm-4.7" in summary
     check "enabled via Brave Search" in summary
+
+# ── provider credentials ──────────────────────────────────────────────────────
+
+proc restoreEnv(name: string; had: bool; previous: string) =
+  if had: putEnv(name, previous) else: delEnv(name)
+
+suite "doctor — provider credentials":
+
+  test "accepts any descriptor env name, not only the first":
+    let hadFirst = existsEnv("ZAI_CODING_API_KEY")
+    let previousFirst = getEnv("ZAI_CODING_API_KEY")
+    let hadPlural = existsEnv("ZAI_CODING_API_KEYS")
+    let previousPlural = getEnv("ZAI_CODING_API_KEYS")
+    let hadZhipu = existsEnv("ZHIPU_API_KEY")
+    let previousZhipu = getEnv("ZHIPU_API_KEY")
+    defer:
+      restoreEnv("ZAI_CODING_API_KEY", hadFirst, previousFirst)
+      restoreEnv("ZAI_CODING_API_KEYS", hadPlural, previousPlural)
+      restoreEnv("ZHIPU_API_KEY", hadZhipu, previousZhipu)
+    delEnv("ZAI_CODING_API_KEY")
+    delEnv("ZAI_CODING_API_KEYS")
+    putEnv("ZHIPU_API_KEY", "zk-fallback")
+    let row = doctorProviderRows().filterIt(it.id == "zai-coding")[0]
+    let r = checkProviderRow(row)
+    check r.name == "ZAI Coding"
+    check r.status == dsOk
+    check "set (" in r.detail
+
+  test "accepts the plural *_KEYS form":
+    let hadSingle = existsEnv("OPENAI_API_KEY")
+    let previousSingle = getEnv("OPENAI_API_KEY")
+    let hadPlural = existsEnv("OPENAI_API_KEYS")
+    let previousPlural = getEnv("OPENAI_API_KEYS")
+    defer:
+      restoreEnv("OPENAI_API_KEY", hadSingle, previousSingle)
+      restoreEnv("OPENAI_API_KEYS", hadPlural, previousPlural)
+    delEnv("OPENAI_API_KEY")
+    putEnv("OPENAI_API_KEYS", "sk-a,sk-b")
+    let row = doctorProviderRows().filterIt(it.id == "openai")[0]
+    check checkProviderRow(row).status == dsOk
+
+  test "an endpoint provider is configured by its endpoint, not a key":
+    let had = existsEnv("OLLAMA_BASE_URL")
+    let previous = getEnv("OLLAMA_BASE_URL")
+    defer: restoreEnv("OLLAMA_BASE_URL", had, previous)
+    delEnv("OLLAMA_BASE_URL")
+    let row = doctorProviderRows().filterIt(it.id == "ollama")[0]
+    let missing = checkProviderRow(row)
+    check missing.status == dsErr
+    check "OLLAMA_BASE_URL" in missing.detail
+    putEnv("OLLAMA_BASE_URL", "http://localhost:11434")
+    let configured = checkProviderRow(row)
+    check configured.status == dsOk
+    check "endpoint" in configured.detail
+
+  test "the formatted report never prints the secret, only its length":
+    const secret = "sk-doctor-super-secret-value"
+    let hadSingle = existsEnv("OPENROUTER_API_KEY")
+    let previousSingle = getEnv("OPENROUTER_API_KEY")
+    let hadPlural = existsEnv("OPENROUTER_API_KEYS")
+    let previousPlural = getEnv("OPENROUTER_API_KEYS")
+    defer:
+      restoreEnv("OPENROUTER_API_KEY", hadSingle, previousSingle)
+      restoreEnv("OPENROUTER_API_KEYS", hadPlural, previousPlural)
+    delEnv("OPENROUTER_API_KEYS")
+    putEnv("OPENROUTER_API_KEY", secret)
+    let results = runDoctorChecks(DonkeyConfig(sandboxMode: smNone))
+    let report = results |>-> formatReport("Donkey Doctor")
+    check secret notin report
+    check "set (" & $secret.len & " chars)" in report
 
 # ── >>= chaining with runRuntimeCmd ───────────────────────────────────────────
 

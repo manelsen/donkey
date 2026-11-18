@@ -113,6 +113,9 @@ proc streamToOutbox*(fn:        StreamFn;
             replyTo:   replyTo,
             streamId:  streamId,
             isPartial: false,
+            replyKind: rkFinalAnswer,
+            inputTokens:  finalResponse.inputTokens,
+            outputTokens: finalResponse.outputTokens,
           ))
         return ok(finalResponse)
       accumulated.add(tok)
@@ -133,6 +136,7 @@ proc streamToOutbox*(fn:        StreamFn;
           replyTo:   replyTo,
           streamId:  streamId,
           isPartial: true,
+          replyKind: rkFinalAnswer,
         ))
 
     await sleepAsync(milliseconds(30))
@@ -230,7 +234,8 @@ proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
                      log: Logger): Future[ToolCallResult] {.async.} =
   if debugMode:
     await globalOutbox.put(OutboundMessage(
-      userId: uid, channel: channel, text: buildToolDebugCallText(tc)))
+      userId: uid, channel: channel, text: buildToolDebugCallText(tc),
+      replyKind: rkDebug))
 
   log.info("[tool] (" & tc.name & ") <- [" & providerLabel & "] |" &
            $tc.inputJson.len & "|")
@@ -305,7 +310,8 @@ proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
   if debugMode:
     await globalOutbox.put(OutboundMessage(
       userId: uid, channel: channel,
-      text: buildToolDebugResultText(tc.name, toolResult.text)))
+      text: buildToolDebugResultText(tc.name, toolResult.text),
+      replyKind: rkDebug))
   toolResult
 
 proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
@@ -379,6 +385,8 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
         text: postPlan.progressText,
         streamId: toolStatusId,
         isPartial: true,
+        replyKind: rkToolNotice,
+        toolCall: ToolCallNotice(phase: "done", name: tc.name, id: tc.id),
       ))
 
 # ── Tool loop runner ──────────────────────────────────────────────────────────
@@ -448,10 +456,13 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
           channel: channel,
           text: explainProviderError(errorExplainFn, streamedRes.error),
           replyTo: replyTo,
+          replyKind: rkTurnError,
         ))
         loopState.done = true
         continue
       let streamed = streamedRes.value
+      loopState.usage = loopState.usage.addUsage(
+        streamed.inputTokens, streamed.outputTokens)
       if sessionStopRequested(nativeCtx):
         loopState.done = true
         break
@@ -497,11 +508,13 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         channel: channel,
         text: explainProviderError(errorExplainFn, resp.error),
         replyTo: replyTo,
+        replyKind: rkTurnError,
       ))
       loopState.done = true
       continue
 
     let r = resp.value
+    loopState.usage = loopState.usage.addUsage(r.inputTokens, r.outputTokens)
     if sessionStopRequested(nativeCtx):
       loopState.done = true
       break
@@ -530,7 +543,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         withCompletionResult(completionResult)
       if completionResult.debugText.len > 0:
         await globalOutbox.put(OutboundMessage(
-          userId: uid, channel: channel, text: completionResult.debugText))
+          userId: uid, channel: channel, text: completionResult.debugText,
+          replyKind: rkDebug))
       continue
 
     of tlrkHandleToolBatch:
@@ -597,6 +611,8 @@ proc finalizeNormalTurn*(globalOutbox: AsyncQueue[OutboundMessage];
       text: buildToolLoopDoneText(loopResult.toolCallCount),
       streamId: streamId & "-st",
       isPartial: false,
+      replyKind: rkToolNotice,
+      toolCall: ToolCallNotice(phase: "done"),
     ))
 
   if not loopResult.done or not loopResult.wasStreamed:
@@ -618,4 +634,7 @@ proc finalizeNormalTurn*(globalOutbox: AsyncQueue[OutboundMessage];
         channel: channel,
         text: fullText,
         replyTo: replyTo,
+        replyKind: rkFinalAnswer,
+        inputTokens: loopResult.usage.inputTokens,
+        outputTokens: loopResult.usage.outputTokens,
       ))

@@ -174,6 +174,29 @@ suite "core/cron":
       check matchesCron(expr, dtMatch) == true
       check matchesCron(expr, dtNoMatch) == false
 
+    test "day of week uses cron numbering (0 = Sunday, 1 = Monday)":
+      let monday = parseCronExpr("0 9 * * 1").get()
+      let sunday = parseCronExpr("0 9 * * 0").get()
+      let saturday = parseCronExpr("0 9 * * 6").get()
+      let mon = initDateTime(18, mMar, 2024, 9, 0, 0, utc())
+      let sun = initDateTime(17, mMar, 2024, 9, 0, 0, utc())
+      let sat = initDateTime(16, mMar, 2024, 9, 0, 0, utc())
+      check mon.weekday == dMon
+      check sun.weekday == dSun
+      check sat.weekday == dSat
+      check matchesCron(monday, mon) == true
+      check matchesCron(monday, sun) == false
+      check matchesCron(sunday, sun) == true
+      check matchesCron(sunday, mon) == false
+      check matchesCron(saturday, sat) == true
+
+    test "weekday range 1-5 matches Monday to Friday only":
+      let expr = parseCronExpr("0 9 * * 1-5").get()
+      check matchesCron(expr, initDateTime(18, mMar, 2024, 9, 0, 0, utc())) == true
+      check matchesCron(expr, initDateTime(22, mMar, 2024, 9, 0, 0, utc())) == true
+      check matchesCron(expr, initDateTime(23, mMar, 2024, 9, 0, 0, utc())) == false
+      check matchesCron(expr, initDateTime(24, mMar, 2024, 9, 0, 0, utc())) == false
+
   suite "nextRun":
     test "every minute - next minute":
       let expr = everyMinute()
@@ -231,6 +254,14 @@ suite "core/cron":
       check next.minute == 0
       check next.hour == 9
       check next.monthday == 24
+
+    test "Monday schedule lands on Monday, not Tuesday":
+      let expr = parseCronExpr("0 9 * * 1").get()
+      let friday = initDateTime(15, mMar, 2024, 10, 0, 0, utc())
+      let next = nextRun(expr, friday)
+      check next.weekday == dMon
+      check next.monthday == 18
+      check next.hour == 9
 
   suite "isValidCron":
     test "valid expressions":

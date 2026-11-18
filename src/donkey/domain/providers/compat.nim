@@ -18,6 +18,7 @@ type
     extraHeaders*:   seq[(string, string)]
     payloadExtras*:  JsonNode   ## merged at the top level; nil = none
     reasoningExtras*: JsonNode  ## merged only when req.reasoning
+    reasoningOffExtras*: JsonNode ## merged only when not req.reasoning
     streamExtras*:   JsonNode   ## merged only when stream = true
     supportsImages*: bool
     quirks*:         OpenAiWireQuirks
@@ -59,5 +60,7 @@ proc buildCompatRequestBody*(profile: CompatProfile; model: string;
   mergeInto(result, profile.payloadExtras)
   if req.reasoning:
     mergeInto(result, profile.reasoningExtras)
+  else:
+    mergeInto(result, profile.reasoningOffExtras)
   if stream:
     mergeInto(result, profile.streamExtras)

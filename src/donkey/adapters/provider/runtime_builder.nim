@@ -5,9 +5,12 @@
 ## Anthropic fallback, Zen's multi-protocol routing, the Groq/OpenCode/Zen
 ## provider labels, and the model prefix those gateways accept.
 
-import std/[options, strutils]
+import std/[options, os, strutils]
 import ../../domain/message
+import ../../domain/providers/compat
 import ../../domain/providers/descriptors
+import ../../domain/providers/profile_nvidia
+import ../../domain/providers/profile_alibaba
 import ../../core/pipeops
 import ../../ports/provider
 import ../../core/providers/smart_routing
@@ -19,11 +22,30 @@ import minimax
 import ollama
 import openai
 import deepseek
+import compat_adapter
 
-func providerEndpointFor*(id: string): string =
-  ## Wire URL for a provider, from the descriptor table. Unknown ids fall back
-  ## to zai-coding, matching `buildProviderSpec`.
-  descriptorOr(id).baseUrl
+func chatCompletionsEndpoint(base: string): string =
+  ## `NVIDIA_BASE_URL=http://localhost:8000/v1` → `.../v1/chat/completions`.
+  ## An already-complete endpoint is left alone.
+  var value = base.strip
+  while value.endsWith("/"):
+    value.setLen(value.len - 1)
+  if value.endsWith("/chat/completions"): value
+  else: value & "/chat/completions"
+
+proc providerEndpointFor*(id: string): string {.gcsafe.} =
+  ## Wire URL for a provider. A descriptor `baseUrlEnv` override wins over the
+  ## table (docs: `NVIDIA_BASE_URL`, `DASHSCOPE_BASE_URL`); unknown ids fall
+  ## back to zai-coding, matching `buildProviderSpec`.
+  let descriptor = descriptorOr(id)
+  let override =
+    if descriptor.baseUrlEnv.len > 0: getEnv(descriptor.baseUrlEnv).strip()
+    else: ""
+  if override.len == 0:
+    return descriptor.baseUrl
+  case descriptor.transport
+  of ptOpenAiChat: chatCompletionsEndpoint(override)
+  else: override
 
 func providerDefaultModelFor*(id: string): string =
   ## Default model id for a provider, from the descriptor table.
@@ -46,6 +68,16 @@ func stripProviderPrefix(model: string): string =
   elif model.startsWith("zen/"): model["zen/".len .. ^1]
   elif model.startsWith("opencode-zen/"): model["opencode-zen/".len .. ^1]
   else: model
+
+# ── Env-aware compat profiles ─────────────────────────────────────────────────
+# `CompatProfileFn` is a top-level nimcall proc, so the descriptor's
+# `baseUrlEnv` override is read per call instead of being captured.
+
+proc nvidiaProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
+  nvidiaCompatProfileAt(providerEndpointFor("nvidia"))
+
+proc alibabaProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
+  alibabaCompatProfileAt(providerEndpointFor("alibaba"))
 
 proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
   let descriptor = descriptorOr(spec.providerName)
@@ -159,6 +191,35 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
       model = stripProviderPrefix(rawModel),
       endpoint = providerEndpointFor("zen"),
       providerName = "OpenCode Zen",
+    )
+    ProviderBundle(
+      completeFn: makeFn(adapter),
+      streamFn:   adapter.makeStreamFn(),
+    )
+  of "nvidia":
+    ## NVIDIA NIM speaks the OpenAI dialect; everything provider-specific is
+    ## data in `nvidiaCompatProfile`, so there is no NVIDIA adapter file.
+    let adapter = newCompatAdapter(
+      spec.apiKey,
+      model = if spec.modelName.len > 0: spec.modelName
+              else: providerDefaultModelFor("nvidia"),
+      providerName = "NVIDIA",
+      profileFn = nvidiaProfileFromEnv,
+    )
+    ProviderBundle(
+      completeFn: makeFn(adapter),
+      streamFn:   adapter.makeStreamFn(),
+    )
+  of "alibaba":
+    ## DashScope speaks the OpenAI dialect under `compatible-mode`; everything
+    ## provider-specific is data in `alibabaCompatProfile`, so there is no
+    ## Alibaba adapter file.
+    let adapter = newCompatAdapter(
+      spec.apiKey,
+      model = if spec.modelName.len > 0: spec.modelName
+              else: providerDefaultModelFor("alibaba"),
+      providerName = "Alibaba",
+      profileFn = alibabaProfileFromEnv,
     )
     ProviderBundle(
       completeFn: makeFn(adapter),

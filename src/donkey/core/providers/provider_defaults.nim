@@ -16,3 +16,11 @@ const
   DefaultModelZai*         = "glm-4.7"
   DefaultModelGemini*      = "gemini-3.8-flash"
   DefaultModelMiniMax*     = "MiniMax-M2"
+  DefaultModelNvidia*      = "nvidia/nemotron-3.5-super-vl-120b-a12b"
+  DefaultModelAlibaba*     = "qwen3.8-max"  ## first of the curated DashScope list
+
+  # Vision capability is one fact shared by the compat profile and the model
+  # limits table. False means "not verified", never "verified absent".
+  NvidiaSupportsImages*    = true   ## providers.md:517-518 (text and image inputs)
+  AlibabaSupportsImages*   = false  ## not verified
+  FireworksSupportsImages* = false  ## not verified

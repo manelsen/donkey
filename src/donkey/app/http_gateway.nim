@@ -26,8 +26,10 @@ import ../ports/ipc
 import ../core/agent_events
 import ../domain/message
 import ../domain/providers/openai_compat
+import ../domain/gateway/identity_pure
 import ./metrics
-import ./openai_compat_runtime
+import ./chat_bridge
+import ./agent_chat_runtime
 
 const
   GatewayDefaultPort* = 8080
@@ -42,7 +44,6 @@ const
   GatewayMaxHeaderLines = 64
   GatewayMaxHeaderBytes = 64 * 1024
   GatewayRequestDeadlineSec = 15
-  GatewayMaxBodyBytes = 1024 * 1024
 
 func resolveGatewayPort*(raw: string): int =
   ## Parses DONKEY_HTTP_PORT semantics.
@@ -129,9 +130,8 @@ type
   GatewayStatusFn* = proc(): DaemonStatus {.gcsafe.}
   GatewayLogFn*    = proc(n: int): seq[IpcLogEntry] {.gcsafe.}
   GatewayEventFn*  = proc(n: int): seq[AgentEvent] {.gcsafe.}
-  GatewayCompletionFn* = proc(req: CompletionRequest):
-      Result[CompletionResponse, string] {.gcsafe.}
-    ## Provider-backed completion for the OpenAI-compatible endpoint.
+  GatewayAgentDispatchFn* = proc(msg: InboundMessage) {.gcsafe.}
+    ## Starts one agent turn through the same ingress used by `/api/chat`.
 
 # ── Inbound handler ───────────────────────────────────────────────────────────
 
@@ -251,6 +251,47 @@ func routeChatMethod*(meth: string): string =
   of "POST":  "chat"
   of "GET":   "chat_get"
   else:       "method_not_allowed"
+
+func httpStatusLine*(code: int): string =
+  ## Status text for the codes the agent endpoint can produce.
+  case code
+  of 200: "200 OK"
+  of 400: "400 Bad Request"
+  of 401: "401 Unauthorized"
+  of 403: "403 Forbidden"
+  of 404: "404 Not Found"
+  of 405: "405 Method Not Allowed"
+  of 413: "413 Payload Too Large"
+  of 429: "429 Too Many Requests"
+  of 502: "502 Bad Gateway"
+  of 503: "503 Service Unavailable"
+  of 504: "504 Gateway Timeout"
+  else:   $code
+
+func resolveAgentTimeoutMs*(raw: string): int =
+  ## `DONKEY_HTTP_AGENT_TIMEOUT_SEC`: default 120 s, capped at 600 s.
+  ## Empty, invalid or non-positive values fall back to the default, so a bad
+  ## env can never disable the turn deadline.
+  const DefaultSec = 120
+  const MaxSec = 600
+  if raw.len == 0:
+    return DefaultSec * 1000
+  try:
+    let parsed = parseInt(raw)
+    if parsed <= 0: DefaultSec * 1000
+    elif parsed > MaxSec: MaxSec * 1000
+    else: parsed * 1000
+  except ValueError:
+    DefaultSec * 1000
+
+proc agentNowSeconds(): int64 {.gcsafe, raises: [].} =
+  epochTime().int64
+
+proc agentClockMs(): int64 {.gcsafe, raises: [].} =
+  int64(epochTime() * 1000)
+
+proc agentNap(ms: int) {.gcsafe, raises: [].} =
+  os.sleep(ms)
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
 
@@ -384,8 +425,11 @@ proc handleGatewayConn(client: Socket;
                         logFn:    GatewayLogFn;
                         eventFn:  GatewayEventFn;
                         inboundFn: GatewayInboundFn;
-                        completionFn: GatewayCompletionFn;
+                        agentDispatchFn: GatewayAgentDispatchFn;
+                        authorizeFn: AuthorizeFn;
+                        chatBridge: ChatBridge;
                         modelName: string;
+                        agentTimeoutMs: int;
                         authToken: string;
                         log:      Logger) {.gcsafe.} =
   defer:
@@ -430,9 +474,11 @@ proc handleGatewayConn(client: Socket;
         let val = lc[15..^1].strip()
         try:
           let parsed = parseBiggestInt(val)
-          if parsed > GatewayMaxBodyBytes:
-            client.sendResponse("413 Payload Too Large", "text/plain",
-                                "body too large\n", log)
+          if parsed > MaxApiRequestBytes:
+            client.sendResponse("413 Payload Too Large", "application/json",
+                                "{\"error\":{\"message\":\"body too large\"," &
+                                "\"type\":\"invalid_request_error\"," &
+                                "\"code\":\"payload_too_large\"}}\n", log)
             return
           contentLength = parsed.int
         except ValueError:
@@ -545,8 +591,18 @@ proc handleGatewayConn(client: Socket;
         client.sendResponse("405 Method Not Allowed", "application/json", "", log)
       else:
         let body = readRequestBody(client, contentLength, deadline)
-        let reply = chatReply(body, completionFn, modelName, epochTime().int64)
-        client.sendResponse(reply.status, "application/json", reply.body & "\n", log)
+        let reply = runAgentChat(
+          body            = body,
+          bridge          = chatBridge,
+          dispatch        = agentDispatchFn,
+          authorize       = authorizeFn,
+          tokenConfigured = authToken.len > 0,
+          now             = agentNowSeconds,
+          timeoutMs       = agentTimeoutMs,
+          model           = modelName,
+        )
+        client.sendResponse(httpStatusLine(reply.status), "application/json",
+                            reply.body & "\n", log)
 
     of "openai_models":
       if req.meth != "GET":
@@ -575,16 +631,22 @@ type GatewayArgs = object
   logFn:     GatewayLogFn
   eventFn:   GatewayEventFn
   inboundFn: GatewayInboundFn
-  completionFn: GatewayCompletionFn
+  agentDispatchFn: GatewayAgentDispatchFn
+  authorizeFn: AuthorizeFn
+  chatBridge: ChatBridge
   modelName: string
+  agentTimeoutMs: int
   log:       Logger
 
 var gGatewayStatusFn: GatewayStatusFn
 var gGatewayLogFn:    GatewayLogFn
 var gGatewayEventFn:  GatewayEventFn
 var gGatewayInboundFn: GatewayInboundFn
-var gGatewayCompletionFn: GatewayCompletionFn
+var gGatewayAgentDispatchFn: GatewayAgentDispatchFn
+var gGatewayAuthorizeFn: AuthorizeFn
+var gGatewayChatBridge: ChatBridge
 var gGatewayModelName: string
+var gGatewayAgentTimeoutMs: int
 var gGatewayLog:      Logger
 var gGatewayAuthToken: string
 
@@ -680,8 +742,9 @@ proc gatewayWorker(id: int) {.thread.} =
         continue
       try:
         handleGatewayConn(client, gGatewayStatusFn, gGatewayLogFn, gGatewayEventFn,
-                          gGatewayInboundFn, gGatewayCompletionFn, gGatewayModelName,
-                          gGatewayAuthToken, gGatewayLog)
+                          gGatewayInboundFn, gGatewayAgentDispatchFn,
+                          gGatewayAuthorizeFn, gGatewayChatBridge, gGatewayModelName,
+                          gGatewayAgentTimeoutMs, gGatewayAuthToken, gGatewayLog)
       finally:
         releaseHttpConnection()
 
@@ -771,20 +834,31 @@ proc startHttpGateway*(port: int;
                        inboundFn: GatewayInboundFn = nil;
                        bindAddr = "127.0.0.1";
                        authToken = "";
-                       completeFn: GatewayCompletionFn = nil;
+                       agentDispatchFn: GatewayAgentDispatchFn = nil;
+                       authorizeFn: AuthorizeFn = nil;
+                       chatBridge: ChatBridge = nil;
                        modelName = "";
+                       agentTimeoutMs = 0;
                        log:       Logger = newLogger("http_gateway")
                       ): Result[void, string] =
   ## Starts the HTTP gateway on a dedicated OS thread.
   ## statusFn, logFn, and eventFn are called on each request; they must be gcsafe.
   ## inboundFn is called when POST /api/chat is received; may be nil.
+  ## agentDispatchFn starts `/v1/chat/completions` turns through the same
+  ## ingress; `chatBridge` is shared with the daemon outbox drainer.
   {.cast(gcsafe).}:
     gGatewayStatusFn  = statusFn
     gGatewayLogFn     = logFn
     gGatewayEventFn   = eventFn
     gGatewayInboundFn = inboundFn
-    gGatewayCompletionFn = completeFn
+    gGatewayAgentDispatchFn = agentDispatchFn
+    gGatewayAuthorizeFn = authorizeFn
+    gGatewayChatBridge = if chatBridge != nil: chatBridge
+                         else: newChatBridge(agentClockMs, agentNap)
     gGatewayModelName = modelName
+    gGatewayAgentTimeoutMs =
+      if agentTimeoutMs > 0: agentTimeoutMs
+      else: resolveAgentTimeoutMs(getEnv("DONKEY_HTTP_AGENT_TIMEOUT_SEC"))
     gGatewayLog       = log
     gGatewayAuthToken = authToken
     acquire(gHttpConnLock)
@@ -799,7 +873,12 @@ proc startHttpGateway*(port: int;
     let args = GatewayArgs(port: port, bindAddr: bindAddr, authToken: authToken,
                            statusFn: statusFn, logFn: logFn,
                            eventFn: eventFn, inboundFn: inboundFn,
-                           completionFn: completeFn, modelName: modelName, log: log)
+                           agentDispatchFn: agentDispatchFn,
+                           authorizeFn: authorizeFn,
+                           chatBridge: gGatewayChatBridge,
+                           modelName: modelName,
+                           agentTimeoutMs: gGatewayAgentTimeoutMs,
+                           log: log)
     try:
       createThread(gGatewayThread, gatewayThread, args)
     except CatchableError as exc:

@@ -10,9 +10,9 @@ A V4 mede **Interfaces em 37%** (peso 8%, distância 59); a prioridade 2 é “e
 agente** (tools/memória) e SSE; dashboard com gestão”. Hoje é mais estreito:
 
 - `POST /v1/chat/completions` é proxy de provider (`app/openai_compat_runtime.chatReply`):
-  `parseOpenAiChatRequest` **recusa** `stream` e `tools`; `POST /api/chat` é fire-and-forget.
-- `/dashboard` é shell público read-only (sessões/providers só no blob de `/api/status`), e o outbox não tem
-  dono de “fim de turno”: progresso (`🔧`), done e debug saem como `isPartial=false` e seriam confundidos com
+  `parseOpenAiChatRequest` **recusa** `stream` e `tools`; `POST /api/chat` é fire-and-forget. `/dashboard` é
+  shell público read-only (sessões/providers só no blob de `/api/status`), e o outbox não tem dono de “fim de
+  turno”: progresso, done (`✅ N tool call(s)`) e debug saem como `isPartial=false` e seriam confundidos com
   resposta final por uma correlação ingênua.
 
 ## 2. Objetivos
@@ -39,7 +39,6 @@ Obrigatórios ao fim de **toda** história:
 bash scripts/check_boundaries.sh && nimble build -y && JOBS=6 bash scripts/run_tests.sh && git diff --check
 ```
 
-- TDD: teste primeiro, **falha mostrada**, implementação mínima, verde.
 - `domain/` puro (`func`), app/adapter só liga, `raise` só em adapter e I/O falível em `Result[T, string]`;
   nenhum teste novo usa rede, provider real, socket real, `sleep` real ou Docker.
 - Nenhum teste existente é editado para “acomodar”; se precisar mudar, o comportamento mudou e a história
@@ -55,10 +54,11 @@ US-001 escreve `domain/message.nim`; US-002 escreve `http_gateway.nim`, `src/don
 `tool_loop_runtime.nim` e `core/tooling/tool_loop.nim`; US-003 só volta a `http_gateway.nim` **depois** de
 US-002; US-004 depois de US-003. Só US-001 é disjunta da missão de ferramentas. Onde este PRD divergir de
 `tasks/roadmap-v4.md` (remoção de `t_openai_compat` em US-002, dono de `src/donkey.nim`), vale **este
-documento**; registre a divergência no commit, sem editar o roadmap.
+documento**; registre no commit, sem editar o roadmap.
 
-Antes da US-001: `git status --short` (sujo: pare), pull `--ff-only` em `master`, branch
-`feat/interfaces-agent-api`, e o commit de abertura declara este PRD como fonte de verdade da missão.
+Antes da US-001: `git status --short` (sujo: pare), pull `--ff-only` em `master` e branch
+`feat/interfaces-agent-api`; o commit de abertura declara este PRD como fonte de verdade, e o gate de worktree
+limpo vale na **execução** de cada história, não na redação do documento.
 
 ## 5. Histórias
 
@@ -68,7 +68,8 @@ Antes da US-001: `git status --short` (sujo: pare), pull `--ff-only` em `master`
 **Critérios de aceite:**
 - [ ] `domain/gateway/identity_pure.nim`: `apiUserId*(raw)` aceita `[a-z0-9._-]{1,64}`, recusa `.`/`..`,
       barras e maiúsculas, e devolve `UserId("api:" & normalizado)`; `isApiChatReply*(msg)` é verdadeiro só
-      para `$msg.userId` com prefixo `api:` — **sem** `replyTo`/`channelId`.
+      para `$msg.userId` com prefixo `api:` — **sem** `replyTo`/`channelId`; `AuthVerdict` (`avAllowed`,
+      `avRevoked`, `avNotAllowed`) mora aqui, com `authorize*: proc(userId: UserId): AuthVerdict`.
 - [ ] `domain/gateway/chat_request.nim`: `AgentChatRequest` e `parseAgentChatRequest*` (400
       `invalid_request_error`/`unsupported_parameter`): `user` obrigatório e última mensagem `user`;
       `system`/`developer`, `tools`, `tool_choice`, `response_format` e `n > 1` recusados; `temperature`,
@@ -82,59 +83,66 @@ Antes da US-001: `git status --short` (sujo: pare), pull `--ff-only` em `master`
       `key=…`, `token=…`, trunca em 300).
 - [ ] `app/chat_bridge.nim` e `domain/gateway/capacity_pure.nim`: `ChatBridge` (`Lock` + pending table)
       chaveada por `$userId` (`register`, `deliver`, `fail`, `poll`, `abandon`), com `now`/`nap` injetados,
-      nunca `sleep` real; `MaxTurnBufferBytes = 256 * 1024` (marca `truncated`), segundo turno do mesmo
-      `userId` → `ChatBridgeBusy`, mensagem sem entrada pendente **descartada**. `admitLongLived*` aplica
-      `MaxPendingTurns = 4`, `MaxConcurrentSseConnections = 4` e `MaxLongLivedWorkers = 6`, deixando 2 dos 8
-      workers para `/health`, `/dashboard`, `/api/status`, `/api/logs` e `/v1/models`.
+      nunca `sleep` real; `MaxTurnBufferBytes = 256 * 1024` (marca `truncated`) e segundo turno do mesmo
+      `userId` → `ChatBridgeBusy`. **`abandon` não libera a chave**: marca a entrada `orphaned` e retém a
+      reserva até `rkFinalAnswer`/`rkTurnError` ou `MaxOrphanTtlMs`, então o órfão A nunca fecha o turno B (B só
+      registra após o terminal de A) e mensagem sem entrada pendente é descartada. `admitLongLived*` aplica
+      `MaxPendingTurns = 4`, `MaxConcurrentSseConnections = 4` e `MaxLongLivedWorkers = 6` **como total**
+      (turnos + `/api/events`), deixando 2 dos 8 workers para leitura; 4 pendentes + 4 SSE = 8 excede o teto.
 - [ ] `tests/domain/gateway/t_chat_contract.nim` e `tests/app/t_chat_bridge.nim`: `user` ausente e com `../`,
       `stream`, `tools`, `deltaText`, precedência de `replyKind`, parcial+final, buffer truncado, deadline com
-      relógio falso, mesmo usuário recusado, entrega tardia e admissão; `parseOpenAiChatRequest` e
-      `tests/domain/providers/t_openai_compat.nim` intocados.
+      relógio falso, **A abandonado → B `ChatBridgeBusy` → terminal de A libera → B registra**, entrega tardia e
+      admissão total; `parseOpenAiChatRequest` e `tests/domain/providers/t_openai_compat.nim` intocados.
 
 ### US-002: `/v1/chat/completions` não-streaming com o loop do agente
 **Descrição:** a chamada roda um turno real do agente e devolve `chat.completion`, com exatamente uma resposta.
 
 **Critérios de aceite:**
 - [ ] `app/agent_chat_runtime.nim`: `runAgentChat*(body, bridge, dispatch, authorize, tokenConfigured, now)`
-      mapeia 503 sem `DONKEY_HTTP_TOKEN`, 400 do parser, 403 por `authorize` (`avRevoked`/`avNotAllowed`),
-      413 quando `body.len > MaxApiRequestBytes` (1 MiB, mesmo limite do gateway), 429 `ChatBridgeBusy`,
-      504 deadline, 502 `rkTurnError` e 200 com `usage`; `authorize` roda **antes** de `dispatch`, então a
-      recusa do ingress (`session_ingress.nim`) não é alcançada e nenhum texto de recusa vira conteúdo.
+      mapeia 503 sem `DONKEY_HTTP_TOKEN`, 400 do parser, 403 por `authorize` (`avRevoked`/`avNotAllowed`) com
+      `buildAgentError("permission_error")`, 413 quando `body.len > MaxApiRequestBytes` (1 MiB: nome único, que
+      substitui `GatewayMaxBodyBytes`), 429 `ChatBridgeBusy`, 504 deadline, 502 `rkTurnError` e 200 com `usage`;
+      `authorize` roda **antes** de `dispatch`, então a recusa do ingress (`session_ingress.nim`) não é
+      alcançada e nenhum texto de recusa vira conteúdo.
 - [ ] `dispatch` recebe `InboundMessage(userId: apiUserId, channel: ckCli, channelId: $userId, text: turnText)`
       e usa o **mesmo** `handleGatewayFallback` de `/api/chat`, sem segundo caminho de sessão. Em
       `src/donkey.nim`, antes de `routeOutbound`: `isApiChatReply(msg)` entrega à `ChatBridge` e **não** vai ao
-      porta CLI; `rkFinalAnswer`/`rkTurnError` fecham o turno, `rkToolNotice` vira evento de tool e
-      `rkDebug`/`rkChannel` são descartados. `authorize` é fiado ao mesmo `isRevoked`/DM policy do ingress.
-- [ ] Marcação no turno (`app/tool_loop_runtime.nim`): progresso e `buildToolLoopDoneText` levam
-      `replyKind: rkToolNotice` + `toolCall` (`phase: "start"|"done"`), o texto final de `finalizeNormalTurn` e
-      o de `streamToOutbox` levam `rkFinalAnswer`, a explicação de erro de provider leva `rkTurnError` e o
-      `debugText` leva `rkDebug`; o texto dos canais não muda. Regra: **`toolCall`/`rkToolNotice` nunca é
-      conteúdo**. `usage` decidido: `UsageTotals` + `addUsage*` em `core/tooling/tool_loop.nim` somam
-      `inputTokens`/`outputTokens` de **todas** as rodadas (inclusive streamadas) em `ToolLoopRunResult`,
-      copiados para a `rkFinalAnswer`; o bridge repassa ao corpo.
-- [ ] `GatewayCompletionFn`/`chatReply` saem de `app/http_gateway.nim` e `app/openai_compat_runtime.nim` e
+      porta CLI; `rkFinalAnswer`/`rkTurnError` fecham o turno, `rkToolNotice` vira tool e `rkDebug`/`rkChannel`
+      são descartados. `authorize` é fiado ao mesmo `isRevoked`/DM policy do ingress.
+- [ ] Conteúdo é **só o evento terminal**: `runAgentChat` ignora `isPartial=true` (que `streamToOutbox` emite
+      mesmo sem `stream: true`) e devolve o texto da `rkFinalAnswer`, nunca concatenado; sem terminal até o
+      deadline → 504. Marcação no turno (`app/tool_loop_runtime.nim`): progresso e `buildToolLoopDoneText`
+      (`"✅ N tool call(s)"`, hoje `isPartial=false`) levam `replyKind: rkToolNotice` + `toolCall`
+      (`phase: "start"|"done"`), o texto final de `finalizeNormalTurn`/`streamToOutbox` leva `rkFinalAnswer`, o
+      erro de provider leva `rkTurnError` e o `debugText` leva `rkDebug`; o texto dos canais não muda. Regra:
+      **`toolCall`/`rkToolNotice` nunca é conteúdo**. `usage`: `UsageTotals` + `addUsage*` em
+      `core/tooling/tool_loop.nim` somam `inputTokens`/`outputTokens` de **todas** as rodadas (inclusive
+      streamadas) em `ToolLoopRunResult`, copiados para a `rkFinalAnswer`; o bridge repassa ao corpo.
+      `GatewayCompletionFn`/`chatReply` saem de `app/http_gateway.nim` e `app/openai_compat_runtime.nim` e
       `tests/app/t_openai_compat.nim` sai junto — mudança declarada: 400/503/502 passam ao teste novo.
 - [ ] `tests/app/t_agent_chat.nim` com `dispatch`/`authorize`/relógio falsos: 200 + `usage`, 400 `system`, 403,
-      429 concorrente, 504 deadline, 413 corpo grande, dois `user` com `UserId` distintos e um turno com tool
-      produzindo **uma** resposta sem `🔧` no `content`; `addUsage*` coberto em
-      `tests/core/t_tool_loop_usage.nim` (soma de rodadas normal e streamada).
+      429, 504, 413, dois `user` com `UserId` distintos; turno com tool devolve **uma** resposta cujo `content`
+      é **igual** ao texto final e não contém `🔧`, `✅` nem `tool call(s)`; parciais + `rkFinalAnswer` devolvem
+      **um** texto igual ao final; **A abandonado → B 429 → final de A não vira conteúdo de B**. `addUsage*`
+      coberto em `tests/core/t_tool_loop_usage.nim` (rodada normal e streamada).
 
 ### US-003: SSE com chunk OpenAI, tool calls e limites
 **Descrição:** `stream: true` recebe chunks incrementais e a atividade de tools sem conexão pendurada.
 
 **Critérios de aceite:**
 - [ ] `app/agent_chat_stream.nim`: `runAgentStream*(userId, bridge, send: proc(chunk: string): bool, limits,
-      nap)` testável sem socket: role → deltas de `content` (parciais coalescidos por `deltaText`; a
-      `rkFinalAnswer` substitui e fecha o restante) → deltas de `tool_calls` a partir de `toolCall` → chunk
-      final com `finish_reason` + `usage` → `data: [DONE]`. Limites: `MaxSseChunksPerTurn = 4096` e
-      `DONKEY_HTTP_AGENT_TIMEOUT_SEC` (default 120, máx 600), com keepalive `: ping` a cada 15 s e relógio/nap
-      injetados; estouro encerra com `finish_reason: "length"` + `[DONE]`.
-- [ ] `send` falso (cliente saiu) → `bridge.abandon` e slot liberado, **sem** cancelar o turno; mensagens
-      tardias daquele `userId` são descartadas; erro no meio emite `{"error":...}` redigido + `[DONE]`.
+      nap)`: role → deltas de `content` (parciais coalescidos por `deltaText`; a `rkFinalAnswer` substitui e
+      fecha o restante) → deltas de `tool_calls` a partir de `toolCall` → chunk final com `finish_reason` +
+      `usage` → `data: [DONE]`. Limites: `MaxSseChunksPerTurn = 4096` e `DONKEY_HTTP_AGENT_TIMEOUT_SEC`
+      (default 120, máx 600), com keepalive `: ping` a cada 15 s e relógio/nap injetados; estouro encerra com
+      `finish_reason: "length"` + `[DONE]`.
+- [ ] `send` falso (cliente saiu) → `bridge.abandon` (chave fica reservada até o terminal do órfão, **sem**
+      cancelar o turno; novo turno do mesmo `userId` recebe 429 até lá) e o órfão nunca vira conteúdo do
+      próximo; erro no meio emite `{"error":...}` redigido + `[DONE]`.
 - [ ] `http_gateway.nim` (após US-002): a rota `stream: true` usa `admitLongLived` antes de bloquear o worker
       (429 se o orçamento estourar), conta em `MaxPendingTurns` e deixa `MaxConcurrentSseConnections` só para
-      `/api/events`. `tests/app/t_agent_chat_stream.nim`: ordem dos chunks, `tool_calls` sem texto de canal
-      misturado, coalescência de parciais, `length` no estouro, desconexão no 2º chunk, 429 e `[DONE]`.
+      `/api/events`. `tests/app/t_agent_chat_stream.nim`: ordem dos chunks, `tool_calls` sem texto de canal,
+      coalescência, `length` no estouro, desconexão no 2º chunk, 429 e `[DONE]`.
 
 ### US-004: Dashboard: sessões, providers e nova conversa
 **Descrição:** leitura de sessões e saúde de providers e **uma** ação de gestão, sem segundo escritor de memória.
@@ -153,24 +161,23 @@ Antes da US-001: `git status --short` (sujo: pare), pull `--ff-only` em `master`
       ≥ 0, inválidos clampados (nunca 500), health com ids de `providerDescriptor`.
 - [ ] `POST /api/sessions/{userId}/task` → 404 quando a chave crua não existe em `sm.entries` (**não** passa
       por `apiUserId`, que prefixaria `api:`), 403 se `isRevoked`, 202 e `ensureSessionTask(..., tkNew, "")`
-      (mesmo `tkNew` de `handleControlTask`, mapeado em `tests/adapters/channel/t_telegram_runtime.nim` e
-      `tests/core/t_command_catalog.nim`).
+      (mesmo `tkNew` de `handleControlTask`, mapeado em `t_telegram_runtime.nim` e `t_command_catalog.nim`).
 - [ ] `buildDashboardHtml` ganha as tabelas e o botão **“nova conversa”** (fetch com Bearer + `setInterval`),
-      com CSP `default-src 'none'` e nenhum dado inline do servidor. `tests/app/t_dashboard_api.nim` e
-      `tests/app/t_dashboard_action.nim`: shapes 200, clamp, 202 com hook chamado uma vez com `tkNew`, 404 para
-      UUID inexistente, 403, 400 `{"kind":"reset"}`, 401 sem token e redação de `sk-fake`/`key=`/`Bearer x`.
+      com CSP `default-src 'none'` e nenhum dado inline. `t_dashboard_api`/`t_dashboard_action`: shapes 200,
+      clamp, 202 com hook chamado uma vez com `tkNew`, 404 para UUID inexistente, 403, 400 `{"kind":"reset"}`,
+      401 sem token e redação de `sk-fake`/`key=`/`Bearer x`.
 
 ### US-005: Documentar e fechar a missão
 **Descrição:** a próxima pessoa entende contrato, limites e a postura de autenticação sem ler o código.
 
 **Critérios de aceite:**
-- [ ] Criar `docs/topics/http-gateway.md` com rotas, autenticação, orçamento de workers (6 long-lived, 2
-      reservados), limites, streaming, semântica de `user`/sessão, ausência de cancelamento e a justificativa do
-      503 sem `DONKEY_HTTP_TOKEN` (o `/api/chat` histórico segue local-only); reescrever a seção
-      “OpenAI-Compatible API” de `docs/reference/configuration.md` (hoje “not the agent loop”), incluir
+- [ ] Criar `docs/topics/http-gateway.md` com rotas, autenticação, orçamento de workers (6 long-lived como
+      total, 2 reservados), limites, streaming, semântica de `user`/sessão, ausência de cancelamento e a
+      justificativa do 503 sem `DONKEY_HTTP_TOKEN` (o `/api/chat` histórico segue local-only); reescrever a
+      seção “OpenAI-Compatible API” de `docs/reference/configuration.md` (hoje “not the agent loop”), incluir
       `DONKEY_HTTP_AGENT_TIMEOUT_SEC` na tabela de env e confirmar por `rg` que não sobrou `chatReply`,
-      `GatewayCompletionFn`, `openai_compat_runtime` nem “not the agent loop”.
-- [ ] O commit registra que a missão é de produto, não de arquitetura, e que a V5 reavalia Interfaces.
+      `GatewayCompletionFn`, `openai_compat_runtime` nem “not the agent loop”; o commit registra que a missão é
+      de produto, não de arquitetura, e que a V5 reavalia Interfaces.
 
 ## 6. Requisitos funcionais
 
@@ -178,27 +185,25 @@ Antes da US-001: `git status --short` (sujo: pare), pull `--ff-only` em `master`
 - **FR-2:** Identidade é `api:<user>` sanitizada; sessão, histórico e paddock são por usuário.
 - **FR-3:** Tools do cliente seguem recusadas; tool calls do agente são informativos para o cliente.
 - **FR-4:** Só `rkFinalAnswer`/`rkTurnError` fecham o turno; `toolCall`/`rkToolNotice` nunca são conteúdo.
-- **FR-5:** Todo caminho (200, streaming, erro, desconexão, deadline) libera o slot da ponte e do worker.
+- **FR-5:** Terminal (`rkFinalAnswer`/`rkTurnError`) ou deadline libera ponte e worker; o órfão retém a chave
+  até o terminal e nunca fecha o turno seguinte.
 - **FR-6:** Erros e dashboard passam por `redactForClient`; `/api/sessions`, `/api/providers` e a ação exigem
   Bearer e, sem token, o endpoint de agente é 503.
 
 ## 7. Não-objetivos
 
-- `tools` do cliente, `response_format`, `n > 1`, replay de histórico do cliente.
 - `ChannelKind` novo para a API (decidido: `ckCli` + prefixo `api:`); persistir turnos em ledger.
-- Autenticação por usuário, rate limit por token/IP, auditoria de acesso; gestão de providers e skills; cancelar
-  o turno no `abandon` e reservar worker fixo por endpoint.
+- Autenticação por usuário, rate limit por token/IP, auditoria; gestão de providers/skills; cancelar o turno no
+  `abandon`; worker fixo por endpoint.
 
 ## 8. Métricas de sucesso
 
 - Dois turnos via `/v1/chat/completions` mantêm contexto e memória; turno com tool emite `tool_calls` no SSE e
   termina em `finish_reason: "stop"` com **um** texto; erros (400/401/403/413/429/502/504) cobertos, zero
-  `sk-`/`key=`/`Bearer ` nos payloads, nenhum teste dormindo de verdade e suíte verde sem editar teste existente
-  além da remoção declarada em US-002.
+  `sk-`/`key=`/`Bearer ` nos payloads e suíte verde sem editar teste existente além da remoção de US-002.
 
 ## 9. Questões em aberto
 
-- `ckCli` + prefixo `api:` basta, ou vale `ChannelKind` próprio na segunda superfície? Revisar na V5.
-- Honrar `system` do cliente exigiria overlay de prompt; a ação de gestão exige `DONKEY_HTTP_ADMIN_TOKEN`
-  separado? Por ora o token de instância cobre.
+- Honrar `system` do cliente exigiria overlay de prompt; a ação exige `DONKEY_HTTP_ADMIN_TOKEN` separado? Por ora
+  o token de instância cobre.
 [/PRD]

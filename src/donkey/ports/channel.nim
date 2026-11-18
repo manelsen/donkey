@@ -56,6 +56,7 @@ type
     matrix*:    OutboundChannelPort
     email*:     OutboundChannelPort
     cli*:       OutboundChannelPort
+    line*:      OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 

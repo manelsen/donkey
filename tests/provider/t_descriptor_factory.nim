@@ -2,9 +2,10 @@
 ## runtime_builder. They must return exactly the metadata the descriptor table
 ## already declares, so the builder and the catalog stop repeating it.
 
-import std/unittest
+import std/[os, unittest]
 import donkey/adapters/provider/runtime_builder
 import donkey/domain/providers/descriptors
+import donkey/ports/provider
 
 const EndpointCases = [
   ("openrouter",   "https://openrouter.ai/api/v1/chat/completions"),
@@ -20,6 +21,8 @@ const EndpointCases = [
   ("minimax",      "https://api.minimax.io/v1/chat/completions"),
   ("zai",          "https://api.z.ai/api/paas/v4/chat/completions"),
   ("zai-coding",   "https://api.z.ai/api/coding/paas/v4/chat/completions"),
+  ("nvidia",       "https://integrate.api.nvidia.com/v1/chat/completions"),
+  ("alibaba",      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"),
 ]
 
 const DefaultModelCases = [
@@ -36,6 +39,8 @@ const DefaultModelCases = [
   ("minimax",      "MiniMax-M2"),
   ("zai",          "glm-4.7"),
   ("zai-coding",   "glm-4.7"),
+  ("nvidia",       "nvidia/nemotron-3.5-super-vl-120b-a12b"),
+  ("alibaba",      "qwen3.8-max"),
 ]
 
 suite "descriptor factory":
@@ -73,3 +78,42 @@ suite "descriptor factory":
       for alias in descriptor.aliases:
         check providerEndpointFor(alias) == descriptor.baseUrl
         check providerDefaultModelFor(alias) == descriptor.defaultModel
+
+  test "providerEndpointFor consumes baseUrlEnv when it is set":
+    ## `NVIDIA_BASE_URL=http://localhost:8000/v1` (as documented for local NIM)
+    ## must resolve to the chat/completions path; an already-complete endpoint
+    ## is used as-is.
+    let hadNvidia = existsEnv("NVIDIA_BASE_URL")
+    let previousNvidia = getEnv("NVIDIA_BASE_URL")
+    let hadAlibaba = existsEnv("DASHSCOPE_BASE_URL")
+    let previousAlibaba = getEnv("DASHSCOPE_BASE_URL")
+    defer:
+      if hadNvidia: putEnv("NVIDIA_BASE_URL", previousNvidia)
+      else: delEnv("NVIDIA_BASE_URL")
+      if hadAlibaba: putEnv("DASHSCOPE_BASE_URL", previousAlibaba)
+      else: delEnv("DASHSCOPE_BASE_URL")
+
+    putEnv("NVIDIA_BASE_URL", "http://localhost:8000/v1/")
+    check providerEndpointFor("nvidia") ==
+          "http://localhost:8000/v1/chat/completions"
+    putEnv("NVIDIA_BASE_URL",
+           "http://localhost:8000/v1/chat/completions")
+    check providerEndpointFor("nvidia") ==
+          "http://localhost:8000/v1/chat/completions"
+
+    putEnv("DASHSCOPE_BASE_URL", "https://dashscope.example/v1")
+    check providerEndpointFor("alibaba") ==
+          "https://dashscope.example/v1/chat/completions"
+
+  test "every chat-completions descriptor has its own streaming branch":
+    ## Deleting the `of "nvidia"` (or `of "alibaba"`) branch makes the bundle
+    ## fall through to Zhipu, whose streamFn is nil. zai/zai-coding and minimax
+    ## are excluded on purpose: their runtime branches chain to non-streaming
+    ## adapters.
+    for descriptor in providerDescriptors():
+      if descriptor.transport == ptOpenAiChat and
+         descriptor.id notin ["zai", "zai-coding", "minimax"]:
+        let bundle = buildProviderBundle(
+          ProviderSpec(providerName: descriptor.id, apiKey: "test-key"))
+        check bundle.completeFn != nil
+        check bundle.streamFn != nil
