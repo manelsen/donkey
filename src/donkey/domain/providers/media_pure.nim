@@ -8,6 +8,7 @@
 
 import std/[base64, strutils]
 import results
+import ../message
 
 type
   InlineImage* = object
@@ -24,6 +25,14 @@ const
   ## SVG is deliberately absent: it is a script-carrying document, not an
   ## image the providers agree to inline.
   SupportedImageMimes* = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+
+  ## Single source of the provider errors that mean "the image was refused".
+  ## `genericProviderErrorText` and the inline-image retry both read this list.
+  ImageRejectionMarkers* = ["image_url", "image url", "unsupported image",
+                            "invalid content", "media type"]
+
+  ## Appended to the text turn when the inline image had to be dropped.
+  InlineImageRemovedNote* = "[imagem removida: provider sem visão]"
 
 func isHttpUrl*(raw: string): bool =
   raw.startsWith("http://") or raw.startsWith("https://")
@@ -77,3 +86,55 @@ func inlineImagesForTurn*(urls: seq[string]): seq[string] =
         inc inlined
     else:
       result.add(url)
+
+func demoteInlineImages*(h: ConversationHistory): ConversationHistory =
+  ## The live history after an inline turn: the photo was already sent to the
+  ## provider, so `data:` payloads become text-only entries again. `http(s)`
+  ## URLs and paths stay: they are cheap and may still be fetched.
+  result = newSeq[ChatMessage](h.len)
+  for i, msg in h:
+    result[i] = msg
+    if msg.imageUrl.startsWith("data:"):
+      result[i].imageUrl = ""
+
+func isImageRejection*(error: string): bool =
+  ## True when the provider blamed the image payload. Case-insensitive; the
+  ## markers are the only place this classification lives.
+  let lower = error.toLowerAscii()
+  for marker in ImageRejectionMarkers:
+    if lower.contains(marker):
+      return true
+
+func hasInlineImages*(req: CompletionRequest): bool =
+  ## True when the request still carries at least one `data:` image.
+  for msg in req.messages:
+    if msg.imageUrl.startsWith("data:"):
+      return true
+
+func withoutInlineImages*(req: CompletionRequest): CompletionRequest =
+  ## The text-only twin of a request: drops `data:` images (http(s) URLs stay),
+  ## notes the last user turn that still has text, and removes user turns left
+  ## with neither text nor image. A request without inline images is returned
+  ## unchanged. Tool-call turns are preserved even when their text is empty.
+  if not hasInlineImages(req):
+    return req
+  result = req
+  result.messages = @[]
+  for msg in req.messages:
+    var stripped = msg
+    if stripped.imageUrl.startsWith("data:"):
+      stripped.imageUrl = ""
+    if stripped.role == roleUser and stripped.text.strip.len == 0 and
+       stripped.imageUrl.len == 0:
+      continue
+    result.messages.add(stripped)
+  var lastUserWithText = -1
+  for i, msg in result.messages:
+    if msg.role == roleUser and msg.text.strip.len > 0:
+      lastUserWithText = i
+  if lastUserWithText >= 0:
+    result.messages[lastUserWithText].text =
+      result.messages[lastUserWithText].text & "\n\n" & InlineImageRemovedNote
+  else:
+    ## An album of image-only turns would otherwise leave the request empty.
+    result.messages.add(ChatMessage(role: roleUser, text: InlineImageRemovedNote))

@@ -38,6 +38,7 @@ import ../domain/memory/capture_pure
 import ../domain/memory/provenance_pure
 import ../domain/message
 import ../domain/personality
+import ../domain/providers/media_pure
 import ../config/types as cfgTypes
 import ./memory_consolidation
 import ./session_manager
@@ -497,6 +498,11 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   result =
     result |>->
     withLoopResult(loopResult)
+
+  ## The inline photo belonged to this turn only. Demote it before
+  ## `finalizeNormalTurn` and `saveNumberedSession` so the next request — and
+  ## the transcript — carry the text marker instead of the base64 payload.
+  result.history = demoteInlineImages(result.history)
 
   stopTypingLoop(turnSetup.typingLoop)
   await finalizeNormalTurn(
