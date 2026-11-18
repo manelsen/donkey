@@ -11,6 +11,7 @@ import ../../domain/providers/compat
 import ../../domain/providers/descriptors
 import ../../domain/providers/profile_nvidia
 import ../../domain/providers/profile_alibaba
+import ../../domain/providers/profile_fireworks
 import ../../core/pipeops
 import ../../ports/provider
 import ../../core/providers/smart_routing
@@ -78,6 +79,9 @@ proc nvidiaProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
 
 proc alibabaProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
   alibabaCompatProfileAt(providerEndpointFor("alibaba"))
+
+proc fireworksProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
+  fireworksCompatProfileAt(providerEndpointFor("fireworks"))
 
 proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
   let descriptor = descriptorOr(spec.providerName)
@@ -220,6 +224,21 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
               else: providerDefaultModelFor("alibaba"),
       providerName = "Alibaba",
       profileFn = alibabaProfileFromEnv,
+    )
+    ProviderBundle(
+      completeFn: makeFn(adapter),
+      streamFn:   adapter.makeStreamFn(),
+    )
+  of "fireworks":
+    ## Fireworks speaks the OpenAI dialect; the attribution headers and the
+    ## `reasoning_effort: "none"` off-switch are data in
+    ## `fireworksCompatProfile`, so there is no Fireworks adapter file.
+    let adapter = newCompatAdapter(
+      spec.apiKey,
+      model = if spec.modelName.len > 0: spec.modelName
+              else: providerDefaultModelFor("fireworks"),
+      providerName = "Fireworks",
+      profileFn = fireworksProfileFromEnv,
     )
     ProviderBundle(
       completeFn: makeFn(adapter),

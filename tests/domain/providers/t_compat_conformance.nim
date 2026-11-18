@@ -9,6 +9,7 @@ import donkey/domain/providers/compat
 import donkey/domain/providers/descriptors
 import donkey/domain/providers/profile_nvidia
 import donkey/domain/providers/profile_alibaba
+import donkey/domain/providers/profile_fireworks
 import donkey/adapters/provider/zhipu
 import donkey/adapters/provider/minimax
 import donkey/adapters/provider/openrouter
@@ -79,6 +80,13 @@ proc expectations(): seq[ProfileExpectation] =
       # images suppressed (supportsImages = false), so the image/tool-call
       # message serialises as a plain string
       imageWithToolCalls: false,
+      includeReasoning: false, reasoningSplit: false, streamOptions: false,
+      emptyContent: false),
+    ProfileExpectation(name: "fireworks", providerIds: @["fireworks"],
+      profile: fireworksCompatProfile(),
+      # images suppressed (supportsImages = false), so the image/tool-call
+      # message serialises as a plain string
+      toolChoice: false, toolResultName: true, imageWithToolCalls: false,
       includeReasoning: false, reasoningSplit: false, streamOptions: false,
       emptyContent: false),
   ]
