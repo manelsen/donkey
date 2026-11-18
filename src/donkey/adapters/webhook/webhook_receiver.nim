@@ -601,12 +601,17 @@ proc applyWebhookClientTimeouts(client: Socket;
   discard posix.setsockopt(client.getFd, posix.SOL_SOCKET, posix.SO_SNDTIMEO,
                            addr tv, posix.SockLen(sizeof(tv)))
 
+func readErrorResponse*(error: string): WebhookResponse =
+  ## The socket reader rejects before routing, so the status must describe the
+  ## read failure: an oversized declared body is 413, everything else 400.
+  if error == "body too large": payloadTooLarge() else: badRequest()
+
 proc handleConnection(client: Socket; cfg: WebhookConfig; logger: Logger) =
   defer:
     try: client.close() except CatchableError: discard
   let req = readWebhookRequest(client).valueOr:
     logger.warn("webhook: " & error)
-    sendResponse(client, badRequest())
+    sendResponse(client, readErrorResponse(error))
     return
   let resp = handleWebhookRequest(cfg, req)
   if resp.status != 200:
