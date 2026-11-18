@@ -18,6 +18,7 @@ import ../../core/pipeops
 import ../../core/types
 import ../../ports/memory
 import ../../domain/memory/episode_pure
+import ../../domain/memory/transcript_pure
 import ../../domain/message
 import ../../domain/personality
 export json
@@ -200,7 +201,7 @@ proc saveSession*(a: MarkdownMemoryAdapter; userId: UserId;
   var buf = ""
   for msg in history:
     buf.add($(%* {"role": msg.role, "text": msg.text,
-                  "imageUrl": msg.imageUrl}) & "\n")
+                  "imageUrl": transcriptImageRef(msg.imageUrl)}) & "\n")
   let writeResult = path.writeFileResult(buf)
   if writeResult.isErr:
     return err(writeResult.error)

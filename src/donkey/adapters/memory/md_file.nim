@@ -845,7 +845,7 @@ proc saveSession*(a: MdFileAdapter; userId: UserId;
   for index in fresh:
     let msg = history[index]
     var record = %* {"role": msg.role, "text": msg.text,
-                     "imageUrl": msg.imageUrl, "ts": nowMs}
+                     "imageUrl": transcriptImageRef(msg.imageUrl), "ts": nowMs}
     if msg.seq > 0:
       ## `hi` is the highest number in the file up to this line: after a
       ## rewind a low number can be the last line of a file that holds much

@@ -23,6 +23,7 @@ when defined(withSqlite):
   import std/[json, os, strutils, times]
   import ../../core/pipeops
   import ../../core/types
+  import ../../domain/memory/transcript_pure
   import ../../domain/message
   import ../../domain/personality
   import ../../ports/memory
@@ -203,7 +204,7 @@ when defined(withSqlite):
     var buf = ""
     for msg in history:
       buf.add($(%* {"role": msg.role, "text": msg.text,
-                    "imageUrl": msg.imageUrl}) & "\n")
+                    "imageUrl": transcriptImageRef(msg.imageUrl)}) & "\n")
     try:
       db.exec(sql"""INSERT INTO sessions (session_id, user_id, history_jsonl, created_at)
                     VALUES (?, ?, ?, ?)
