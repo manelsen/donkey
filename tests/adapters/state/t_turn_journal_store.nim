@@ -653,6 +653,41 @@ suite "turn journal durability":
     check dirSyncsFor(dir) == 3
     check store.loadById("t3").get().isSome
 
+  test "a pending rename is confirmed even when nothing else is written":
+    let dir = freshDir("rename_retry")
+    defer: cleanup(dir)
+    resetSyncHook()
+    setTurnJournalSyncHook(testSyncHook)
+    defer: setTurnJournalSyncHook(nil)
+
+    let store = newTurnJournalStore(dir)
+    let stamp = 8_000_000'i64
+    check store.append("old", inbound("old", "oi", stamp), stamp).isOk
+    terminalEvents(store, "old", stamp)
+    check store.commitIfTerminal("old", stamp).get() == true
+    check store.append("live", inbound("live", "oi", stamp), stamp).isOk
+
+    ## Compaction renames a new file over the journal, but the directory entry
+    ## is not confirmed. The rename is the only thing that made the new bytes
+    ## reachable, so it stays pending until a later call confirms it.
+    gDirSyncFailPath = dir
+    gDirSyncFailures = 1
+    check store.compact(200 * 24 * 60 * 60 * 1000'i64).isErr
+    let afterFail = dirSyncsFor(dir)
+
+    ## Nothing else to write: the journal has no new events and no turn left to
+    ## drop. The pending rename must still be confirmed by the next call, which
+    ## only has to write a directory entry.
+    let emptied = store.compact(200 * 24 * 60 * 60 * 1000'i64)
+    check emptied.isOk
+    check emptied.get() == false
+    check dirSyncsFor(dir) == afterFail + 1
+
+    ## And the journal is intact afterwards: the active turn was kept and the
+    ## old terminal the first pass dropped stays gone.
+    check store.loadById("live").get().isSome
+    check store.loadById("old").get().isNone
+
   test "creating the state directory fsyncs its parent":
     let root = freshDir("state_parent_sync")
     defer: cleanup(root)

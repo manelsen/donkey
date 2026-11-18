@@ -916,8 +916,19 @@ proc compact*(store: TurnJournalStore; nowMs: int64;
   ## unknown version/kind or corruption in the middle: compaction must never
   ## silently discard a newer writer's data. A torn trailing line is the one
   ## safe case, because it was never a complete frame.
+  ##
+  ## A directory entry left pending by an earlier rename is confirmed here even
+  ## when this pass rewrites nothing: the rename is the only thing that made
+  ## the new file reachable, so waiting for the next append could wait forever.
   acquire(journalLock)
   defer: release(journalLock)
+  var pending = loadPending(store.path)
+  if pending.directory:
+    let synced = syncJournalDirs(store.path)
+    if synced.isErr:
+      return err(synced.error)
+    pending.directory = false
+    savePending(store.path, pending)
   let snapshot = readJournal(store.path)
   if snapshot.isErr:
     return err(snapshot.error)
@@ -953,7 +964,6 @@ proc compact*(store: TurnJournalStore; nowMs: int64;
   while fileExists(store.path & ".tmp." & suffix):
     inc attempt
     suffix = $getCurrentProcessId() & "-" & $now & "-" & $attempt
-  var pending = loadPending(store.path)
   let written = atomicWriteText(store.path, payload, suffix, pending)
   savePending(store.path, pending)
   if written.isErr:
