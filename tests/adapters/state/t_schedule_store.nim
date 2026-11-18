@@ -17,11 +17,13 @@
 ##
 ## These tests exercise both APIs: the `ScheduleStorePort` contract used by
 ## `tickSchedule` (load/save watermark) and the record API used by the ctl and
-## the daemon tick (`loadAllRecords`/`upsert`/`remove`). Restart reload (two
-## instances), overwrite semantics, corruption, forward-compatible fields,
-## `loadAll` and on-disk permissions are covered as well.
+## the daemon tick (`loadAllRecords`/`upsert`/`insertIfAbsent`/`setEnabled`/
+## `remove`). Restart reload (two instances), overwrite semantics, atomic
+## "insert unless the id exists" under thread contention, corruption,
+## forward-compatible fields, `loadAll` and on-disk permissions are covered as
+## well.
 
-import std/[atomics, json, options, os, sets, unittest]
+import std/[atomics, json, options, os, sets, strutils, unittest]
 import results
 import donkey/adapters/state/schedule_store
 import donkey/app/automation_runtime
@@ -84,7 +86,14 @@ type
     worker: int
     count: int
 
+  InsertArg = object
+    stateDir: string
+    id: string
+    payload: string
+
 var gSaveErrors: Atomic[int]
+var gInsertWins: Atomic[int]
+var gInsertErrors: Atomic[int]
 
 proc saveWorker(arg: SaveArg) {.thread.} =
   {.cast(gcsafe).}:
@@ -94,6 +103,29 @@ proc saveWorker(arg: SaveArg) {.thread.} =
       let saved = store.save(watermark(id, 1_000'i64 + i, 1_000'i64))
       if saved.isErr:
         discard gSaveErrors.fetchAdd(1)
+
+proc insertWorker(arg: InsertArg) {.thread.} =
+  ## Every worker races for the *same* id: only one may be told it inserted.
+  {.cast(gcsafe).}:
+    let store = newScheduleStoreRef(arg.stateDir)
+    let inserted = store.insertIfAbsent(ScheduleRecord(
+      spec: ScheduleSpec(
+        id: arg.id,
+        cronExpr: "*/5 * * * *",
+        tzOffsetMinutes: 0,
+        userId: "user-1",
+        channel: "telegram",
+        payload: arg.payload,
+        catchUp: scSkip,
+        enabled: true,
+        createdAtMs: 1_000'i64,
+      ),
+      lastRunAtMs: 1_000'i64,
+    ))
+    if inserted.isErr:
+      discard gInsertErrors.fetchAdd(1)
+    elif inserted.get():
+      discard gInsertWins.fetchAdd(1)
 
 suite "schedule watermark store (port)":
   ## Fixtures in this suite exercise the runtime-facing port: load/save only
@@ -469,3 +501,84 @@ suite "schedule record store (spec + watermark)":
     let store = newScheduleStoreRef(dir)
     check store.upsert(fullRecord()).isOk
     check fileExists(dir / (ScheduleFileName & ".lock"))
+
+suite "schedule store — atomic insertIfAbsent":
+
+  test "insertIfAbsent persists a new id and reports true":
+    let dir = freshDir("insert_new")
+    defer: cleanup(dir)
+    let store = newScheduleStoreRef(dir)
+
+    let inserted = store.insertIfAbsent(fullRecord())
+    check inserted.isOk
+    check inserted.get()
+
+    let loaded = store.loadRecord("daily")
+    check loaded.isOk
+    check loaded.get().isSome
+    check loaded.get().get().spec.payload == "run the report"
+    check loaded.get().get().spec.createdAtMs == 1_600_000_000_000'i64
+    check loaded.get().get().lastRunAtMs == 1_700_000_000_123'i64
+
+  test "insertIfAbsent refuses an existing id without touching the file":
+    let dir = freshDir("insert_dup")
+    defer: cleanup(dir)
+    let store = newScheduleStoreRef(dir)
+
+    check store.insertIfAbsent(fullRecord(payload = "first")).isOk
+    let before = readFile(store.path)
+
+    let duplicate = store.insertIfAbsent(fullRecord(payload = "second"))
+    check duplicate.isOk
+    check not duplicate.get()
+    ## The losing insert must not rewrite the row (nor its watermark).
+    check readFile(store.path) == before
+    check store.loadRecord("daily").get().get().spec.payload == "first"
+    check recordIds(store.path, "daily") == 1
+
+  test "insertIfAbsent trims the id and refuses an empty one":
+    let dir = freshDir("insert_id")
+    defer: cleanup(dir)
+    let store = newScheduleStoreRef(dir)
+
+    check store.insertIfAbsent(fullRecord(id = "  daily  ")).get()
+    check store.loadRecord("daily").get().isSome
+    let blank = store.insertIfAbsent(fullRecord(id = "   "))
+    check blank.isErr
+    check "empty schedule id" in blank.error
+
+  test "insertIfAbsent fails closed on a corrupt document":
+    let dir = freshDir("insert_corrupt")
+    defer: cleanup(dir)
+    let store = newScheduleStoreRef(dir)
+    writeFile(store.path, """{"v":2,"schedules":[""")
+    let before = readFile(store.path)
+
+    let inserted = store.insertIfAbsent(fullRecord())
+    check inserted.isErr
+    check "cannot parse schedule store" in inserted.error
+    check readFile(store.path) == before
+
+  test "concurrent insertIfAbsent of the same id lets exactly one win":
+    let dir = freshDir("insert_race")
+    defer: cleanup(dir)
+
+    const Workers = 8
+    gInsertWins.store(0)
+    gInsertErrors.store(0)
+    var threads: array[Workers, Thread[InsertArg]]
+    for i in 0 ..< Workers:
+      createThread(threads[i], insertWorker,
+                   InsertArg(stateDir: dir, id: "race",
+                             payload: "worker-" & $i))
+    joinThreads(threads)
+
+    check gInsertErrors.load() == 0
+    check gInsertWins.load() == 1
+    check recordIds(dir / ScheduleFileName, "race") == 1
+
+    let all = newScheduleStoreRef(dir).loadAllRecords()
+    check all.isOk
+    check all.get().len == 1
+    check all.get()[0].spec.id == "race"
+
