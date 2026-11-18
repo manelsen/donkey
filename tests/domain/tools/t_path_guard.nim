@@ -230,6 +230,55 @@ suite "validatePathAccess":
     check not v.ok
     check v.error == pveNullByte
 
+suite "classifyOutboundMediaPath":
+
+  test "http(s) is remote even without a paddock root":
+    check classifyOutboundMediaPath("", "https://example.test/foto.png").kind == mpkRemote
+    check classifyOutboundMediaPath("", "http://example.test/foto.png").kind == mpkRemote
+    check classifyOutboundMediaPath("/paddock", "https://example.test/foto.png").kind == mpkRemote
+
+  test "valid relative and absolute paths inside the paddock are local":
+    check classifyOutboundMediaPath("/paddock", "attachments/nota.opus").kind == mpkLocal
+    check classifyOutboundMediaPath("/paddock", "/paddock/attachments/nota.opus").kind == mpkLocal
+    check classifyOutboundMediaPath("/paddock", "/paddock").kind == mpkLocal
+    check classifyOutboundMediaPath(".", "attachments/nota.opus").kind == mpkLocal
+    check classifyOutboundMediaPath(".", "../etc/passwd").kind == mpkRejected
+
+  test "a sibling with the same prefix is rejected":
+    check classifyOutboundMediaPath("/paddock", "/paddock2/foto.png").kind == mpkRejected
+    check classifyOutboundMediaPath("/paddock", "/paddock-evil/foto.png").kind == mpkRejected
+    check classifyOutboundMediaPath("/paddock", "/paddock.txt").kind == mpkRejected
+
+  test "traversal and absolute paths outside are rejected":
+    check classifyOutboundMediaPath("/paddock", "../etc/passwd").kind == mpkRejected
+    check classifyOutboundMediaPath("/paddock", "/paddock/../etc/passwd").kind == mpkRejected
+    check classifyOutboundMediaPath("/paddock", "/etc/passwd").kind == mpkRejected
+
+  test "dot and duplicate separators normalise before the decision":
+    check classifyOutboundMediaPath("/paddock/", "/paddock//attachments/./nota.opus").kind ==
+      mpkLocal
+    check classifyOutboundMediaPath("/paddock", "attachments//./nota.opus").kind == mpkLocal
+    check classifyOutboundMediaPath("/paddock", "/paddock/attachments/../nota.opus").kind ==
+      mpkLocal
+
+  test "empty path, null byte, empty root and root slash are rejected":
+    check classifyOutboundMediaPath("/paddock", "").kind == mpkRejected
+    check classifyOutboundMediaPath("/paddock", "attachments/nota" & '\x00' & ".opus").kind ==
+      mpkRejected
+    check classifyOutboundMediaPath("", "attachments/nota.opus").kind == mpkRejected
+    check classifyOutboundMediaPath("/", "/attachments/nota.opus").kind == mpkRejected
+
+  test "rejection reasons never carry the path or the root":
+    let byTraversal = classifyOutboundMediaPath("/paddock", "../etc/passwd")
+    check byTraversal.kind == mpkRejected
+    check byTraversal.reason.len > 0
+    check "passwd" notin byTraversal.reason
+    check "/etc" notin byTraversal.reason
+    let bySibling = classifyOutboundMediaPath("/paddock", "/paddock2/segredo.png")
+    check bySibling.kind == mpkRejected
+    check "segredo" notin bySibling.reason
+    check "paddock2" notin bySibling.reason
+
 suite "pathAccessErrorMsg":
 
   test "empty path message":

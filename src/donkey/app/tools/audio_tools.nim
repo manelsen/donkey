@@ -174,5 +174,6 @@ proc prepareVoiceReply*(text, caption, paddockDir: string;
     text: caption,
     replyTo: replyTo,
     mediaUrl: paddockDir / saved.get(),
+    mediaRoot: paddockDir,
     mediaDurationSec: estimateSpeechSeconds(text),
   ))

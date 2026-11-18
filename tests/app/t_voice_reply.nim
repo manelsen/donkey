@@ -115,6 +115,7 @@ suite "prepareVoiceReply":
     check msg.mediaUrl.startsWith(dir / "attachments")
     check msg.mediaUrl.extractFilename.startsWith("tts-")
     check msg.mediaUrl.endsWith(".opus")
+    check msg.mediaRoot == dir
     check fileExists(msg.mediaUrl)
     check readFile(msg.mediaUrl) == "OPUSBYTES"
 
@@ -192,6 +193,7 @@ suite "text_to_speech as_voice wiring":
     check msg.text == "ouça"
     check msg.mediaUrl == res.outbound.get().mediaUrl
     check msg.mediaUrl.endsWith(".opus")
+    check msg.mediaRoot == dir
     check fileExists(msg.mediaUrl)
     check msg.mediaDurationSec > 0
     check cap.posts == 1
