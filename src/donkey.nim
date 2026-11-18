@@ -77,6 +77,8 @@ import donkey/app/orchestrator
 import donkey/app/sandbox
 import donkey/app/ipc_server
 import donkey/app/http_gateway
+import donkey/app/chat_bridge
+import donkey/domain/gateway/identity_pure
 import donkey/app/heartbeat
 import donkey/app/metrics_server
 import donkey/app/outbound_runtime
@@ -1072,6 +1074,22 @@ proc buildGlobalSearchFn(memory: MdFileAdapter): SearchFn {.gcsafe.} =
   else:
     discard
 
+# The API turn bridge: the gateway worker registers/polls, the daemon outbox
+# drainer delivers `api:` replies here instead of to a channel port.
+var gApiChatBridge: ChatBridge
+
+proc apiChatNowMs(): int64 {.gcsafe, raises: [].} =
+  int64(epochTime() * 1000)
+
+proc apiChatNap(ms: int) {.gcsafe, raises: [].} =
+  ## The ingress actor for an API turn is spawned on the gateway worker thread
+  ## (same path as `/api/chat`), so this bounded wait also drives that thread's
+  ## dispatcher while the worker waits on the bridge.
+  try:
+    waitFor(sleepAsync(chronos.milliseconds(ms)))
+  except CatchableError:
+    discard
+
 # Forward declaration for handleGatewayFallback (defined later, used in setupIpcServer)
 proc handleGatewayFallback(ctx: DaemonContext; cfg: DonkeyConfig;
                           memory: MdFileAdapter; msg: InboundMessage;
@@ -1143,6 +1161,20 @@ proc setupIpcServer(cfg: DonkeyConfig;
       result.add(IpcLogEntry(ts: e.ts, level: e.level, subsys: e.sub, msg: e.msg))
   let gwInboundFn: GatewayInboundFn = proc(msg: InboundMessage) {.gcsafe.} =
     handleGatewayFallback(gatewayInboundCtx, cfg, gatewayInboundMemory, msg, gatewayInboundLog)
+  let gwAuthorizeFn: AuthorizeFn =
+    proc(userId: UserId): AuthVerdict {.gcsafe, raises: [].} =
+      ## Same policy as the ingress: revocation wins, then the DM allowlist.
+      ## A profile that cannot be read fails closed.
+      try:
+        if gatewayInboundMemory.isRevoked(userId):
+          avRevoked
+        elif cfg.dmPolicy != DmPolicyOpen and
+             not gatewayInboundMemory.isDmAllowed(userId):
+          avNotAllowed
+        else:
+          avAllowed
+      except Exception:
+        avRevoked
   try:
     startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
     log.info("IPC socket: " & sockPath)
@@ -1165,9 +1197,13 @@ proc setupIpcServer(cfg: DonkeyConfig;
       log.error("HTTP gateway disabled: non-loopback bind (" & httpBind &
                 ") requires DONKEY_HTTP_TOKEN and DONKEY_HTTP_ALLOW_INSECURE=1")
     else:
+      let gwChatBridge = block:
+        {.cast(gcsafe).}: gApiChatBridge
       let gatewayStart = startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
                                           bindAddr = httpBind, authToken = httpToken,
-                                          completeFn = gatewayInboundCtx.services.globalCompleteFn,
+                                          agentDispatchFn = gwInboundFn,
+                                          authorizeFn = gwAuthorizeFn,
+                                          chatBridge = gwChatBridge,
                                           modelName = cfg.defaultModel)
       if gatewayStart.isErr:
         log.error("HTTP gateway disabled: " & gatewayStart.error)
@@ -1461,6 +1497,12 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
   let outboundPorts = buildRuntimeOutboundPorts(adapters)
   while runtime.globalOutbox.len > 0:
     let outMsg = runtime.globalOutbox.getNoWait()
+    {.cast(gcsafe).}:
+      if isApiChatReply(outMsg):
+        ## API replies belong to a waiting HTTP turn, never to a channel port.
+        if gApiChatBridge != nil:
+          discard gApiChatBridge.deliver(outMsg)
+        continue
     completeInboundReactionStatus(runtime, outboundPorts, outMsg)
     routeOutbound(outMsg, outboundPorts, log, runtime.presentationState, runtime.ledger)
 
@@ -1811,6 +1853,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory
   let ctx = bootstrap.ctx
+  ## The API bridge must exist before the gateway accepts a turn and before
+  ## the outbox drainer can route `api:` replies.
+  {.cast(gcsafe).}:
+    gApiChatBridge = newChatBridge(apiChatNowMs, apiChatNap)
   if ctx.runtime.stateStore != nil:
     let ledgerErr = ctx.runtime.stateStore.ledgerLastCompactError()
     if ledgerErr.len > 0:
