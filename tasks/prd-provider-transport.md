@@ -186,9 +186,10 @@ OpenAI-compatible para que texto, tools e imagem sejam serializados uma vez só.
 
 **Critérios de aceite:**
 - [ ] Criar `src/donkey/domain/providers/compat.nim` com `CompatProfile`
-      (endpoint, headers extras, extras de payload, role map, suporte a
-      imagem, parser de SSE, sanitizador de tools) e
-      `buildCompatRequestBody(profile, model, req, stream): JsonNode`.
+      (endpoint, headers extras, extras de payload/reasoning/stream, quirks de
+      wire, suporte a imagem) e
+      `buildCompatRequestBody(profile, model, req, stream): JsonNode`. O SSE
+      continua no adapter; o perfil não finge um hook que não existe.
 - [ ] `openai.nim` e `deepseek.nim` usam o novo builder e o perfil default;
       nenhum dos dois mantém serialização própria.
 - [ ] Testes golden em `tests/domain/providers/t_compat_openai.nim` para:
@@ -206,9 +207,9 @@ OpenAI-compatible para que texto, tools e imagem sejam serializados uma vez só.
 - [ ] `newZhipuAdapter` constrói o adapter compatível com perfil Zhipu
       (endpoint `api.z.ai/...`, `thinking` quando `req.reasoning`, native tools
       declaradas).
-- [ ] `zhipu.nim` deixa de ter `toJson`/`buildBody` locais; o parsing de
-      resposta usa `openai_pure.parseResponseFrom` ou um hook de perfil
-      documentado.
+- [ ] `zhipu.nim` deixa de ter `toJson`/`buildBody` locais; o parser de
+      resposta permanece no adapter (`parseZhipuResponse`), documentado, porque
+      o formato de resposta tem diferenças próprias.
 - [ ] Testes golden do perfil Zhipu em `tests/domain/providers/t_compat_zhipu.nim`
       (thinking on/off, tools nativas, imagem).
 - [ ] `tests/provider/t_zhipu.nim` continua passando sem edição.
@@ -226,18 +227,19 @@ transporte OpenAI-compatible, expressando só `reasoning_split`.
 - [ ] Golden test com `reasoning_split` e tool calls.
 - [ ] `tests/provider/t_minimax.nim` continua passando sem edição.
 
-### US-005: Migrar OpenRouter para o perfil + hook de SSE
+### US-005: Migrar OpenRouter para o perfil, mantendo o SSE no módulo
 
-**Descrição:** Como mantenedor, quero que os headers obrigatórios e o SSE do
-OpenRouter fiquem atrás do perfil, sem duplicar a serialização de mensagens.
+**Descrição:** Como mantenedor, quero que os headers obrigatórios fiquem no
+perfil, sem duplicar a serialização de mensagens; o parser SSE continua no
+adapter, onde é testado.
 
 **Critérios de aceite:**
 - [ ] `openrouter.nim` usa o builder compatível; remove `toJson`/`buildBody`.
 - [ ] Perfil OpenRouter: `HTTP-Referer` e `X-Title`, endpoint e modelo default.
-- [ ] O parser SSE (`OpenRouterSseChunk`) permanece funcional, agora exposto
-      como hook do perfil; os testes de streaming existentes passam sem edição.
-- [ ] Golden test do request OpenRouter (inclui imagem, tools e reasoning) e
-      teste do hook SSE.
+- [ ] O parser SSE (`OpenRouterSseChunk`) permanece funcional no módulo; os
+      testes de streaming existentes passam sem edição e o caminho de produção
+      (`complete`/`makeStreamFn`) chama os mesmos builders testados.
+- [ ] Golden test do request OpenRouter (inclui imagem, tools e reasoning).
 
 ### US-006: Suíte de conformidade tabelada
 
@@ -282,6 +284,10 @@ não sejam repetidos no factory nem no catálogo.
       o que fica fora.
 - [ ] Nenhum endpoint, default model ou alias duplicado em
       `runtime_builder.nim`; `rg` confirma.
+- [ ] A resolução de credencial do catálogo passa a ser a do descritor. O
+      delta observável para `zai` (antes `ZAI_CODING_API_KEY`/`ZHIPU_API_KEY`,
+      agora `ZAI_API_KEY`) fica registrado no commit como consolidação
+      deliberada, alinhada a `buildProviderSpec`.
 - [ ] Testes existentes de `t_runtime_builder` e `t_model_catalog` passam sem
       edição; novo teste de paridade cobre um provider por família.
 
