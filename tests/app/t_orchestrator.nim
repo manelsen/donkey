@@ -518,10 +518,15 @@ suite "OrchestratorAgent":
                                  dir / "u-schedule", state)
       await inbox.put(newTaskMsg("req-sched", tkSchedule, "u-schedule",
         "Resumo diário.\n\n[schedule daily fired at 1700000000000 ms]"))
-      let reply = await outbox.get()
+      ## Bounded: if the actor gate ever drops `tkSchedule` again, the test
+      ## must fail here instead of hanging the whole suite.
+      let replyFut = outbox.get()
+      let arrived = await withTimeout(replyFut, 5.seconds)
       await inbox.put(newCancelMsg())
       await orchFut
-      return reply
+      if not arrived:
+        raise newException(ValueError, "scheduled task produced no reply")
+      return await replyFut
 
     let reply = waitFor doTest(tmpDir)
 
