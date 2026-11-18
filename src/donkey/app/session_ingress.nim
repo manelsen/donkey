@@ -7,6 +7,7 @@
 
 import chronos
 import chronos/asyncsync
+import std/strutils
 import ../config/types
 import ../core/types
 import ../core/log
@@ -15,12 +16,15 @@ import ../core/session/session_ingress as coreSessionIngress
 import ../core/providers/smart_routing
 import ../core/security/dm_policy
 import ../domain/agent_message
+import ../domain/automation/schedule_pure
 import ../domain/message
 import ../ports/memory
 import ../ports/provider
+import ../ports/runtime_state
 import ../ports/tool
 import ../ports/http
 import ../ports/fs
+import ./automation_runtime
 import ./session_manager
 import ./session_state
 import ../ports/subagent_workspace
@@ -363,6 +367,91 @@ proc ensureSessionTask*(sm:       var SessionManager;
                         payload:  string) {.gcsafe.} =
   ## Helper to ensure session ingress for background or system task.
   discard startSessionIngress(sm, msg, services, msgSeq, taskKind, payload)
+
+# ── Scheduled task enqueue (automation US-005) ───────────────────────────────
+#
+# The scheduler fires at most once per occurrence and must know whether the
+# firing reached the inbox. `ensureSessionTask` cannot answer that: it discards
+# the ingress context, so an empty user id or a DM denial silently drops the
+# task. `enqueueScheduledTask` applies the same gates *before* touching the
+# session and surfaces each drop as `Err` for `ScheduleTickResult.enqueueError`.
+
+const
+  ScheduledTaskDroppedError* = "scheduled task dropped: denied or revoked"
+    ## US-005 contract text: a dropped firing is an error, never `sent`.
+  ScheduledTaskEmptyUserError* = "scheduled task dropped: empty user id"
+  ScheduledTaskRevokedError* = "scheduled task dropped: user revoked"
+
+func formatScheduledTaskPayload*(spec: ScheduleSpec; instantMs: int64): string =
+  ## Payload handed to the inbox for one firing.
+  ##
+  ## `AgentMessage` carries no timestamp, so the fired instant is appended to
+  ## the payload as a provenance line. The payload is what the orchestrator
+  ## turns into the user turn, so the instant reaches the model and the user;
+  ## the schedule's own payload stays a prefix of the text.
+  spec.payload & "\n\n[schedule " & spec.id & " fired at " & $instantMs & " ms]"
+
+func channelKindForSpec(spec: ScheduleSpec; channel: var ChannelKind): bool =
+  ## Accepts every `ChannelKind` spelling (the parser in `domain/identity` only
+  ## knows the legacy subset). Unknown names are rejected by the caller.
+  parseChannelKindName(spec.channel, channel)
+
+proc enqueueScheduledTask*(sm: var SessionManager;
+                           services: SessionIngressServices;
+                           msgSeq: var int;
+                           spec: ScheduleSpec;
+                           instantMs: int64): Result[void, string] {.gcsafe.} =
+  ## Enqueues one schedule firing as a `tkSchedule` task.
+  ##
+  ## Reuses the normal ingress path (one session, one inbox, no second
+  ## orchestrator) but fails closed: every gate below returns `Err` *before*
+  ## `startSessionIngress` runs, so a denied firing leaves the session
+  ## untouched and the runtime can record it as `failed`.
+  let uidText = spec.userId.strip()
+  if uidText.len == 0:
+    return err(ScheduledTaskEmptyUserError)
+  let uid = UserId(uidText)
+  if services.isRevoked != nil and services.isRevoked(uid):
+    return err(ScheduledTaskRevokedError)
+  if services.dmPolicy != DmPolicyOpen:
+    let allowed = services.isDmAllowed != nil and services.isDmAllowed(uid)
+    if not allowed:
+      return err(ScheduledTaskDroppedError)
+
+  var channel: ChannelKind
+  if not channelKindForSpec(spec, channel):
+    return err("scheduled task dropped: unknown channel '" & spec.channel & "'")
+
+  let msg = InboundMessage(
+    userId: uid,
+    channelId: "",
+    text: "",
+    channel: channel,
+  )
+  let ctx = startSessionIngress(
+    sm, msg, services, msgSeq, tkSchedule,
+    formatScheduledTaskPayload(spec, instantMs))
+  if ctx.msgId.len == 0:
+    ## Defensive backstop: the gates above mirror `startSessionIngress`, but an
+    ## empty context still means the task never reached the inbox.
+    return err(ScheduledTaskDroppedError)
+  ok()
+
+proc scheduleEnqueueFn*(sm: ptr SessionManager;
+                        services: SessionIngressServices;
+                        msgSeq: ptr int): ScheduleEnqueueFn =
+  ## Adapts `enqueueScheduledTask` to the runtime's `ScheduleEnqueueFn`.
+  ##
+  ## The runtime owns the watermark; this closure only reports whether the
+  ## occurrence reached the inbox. The session manager and the message
+  ## sequence counter are passed by pointer because the runtime callback
+  ## outlives the composition-root stack frame (same pattern as the daemon).
+  result = proc(spec: ScheduleSpec; instantMs: int64): Result[void, string]
+      {.gcsafe, raises: [].} =
+    try:
+      enqueueScheduledTask(sm[], services, msgSeq[], spec, instantMs)
+    except Exception as e:
+      err("scheduled task dropped: " & e.msg)
 
 proc handleSessionFallback*(sm:           var SessionManager;
                            msgSeq:       var int;
