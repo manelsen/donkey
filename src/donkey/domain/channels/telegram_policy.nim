@@ -140,7 +140,121 @@ func audioMethodFor*(url: string): string =
   of "mp3", "m4a": "sendAudio"
   else: ""
 
+func isPhotoRejectedError*(message: string): bool =
+  ## Only the photo-specific refusals mean the file can still travel as a
+  ## document. A timeout or any other error may have been accepted already, so
+  ## retrying it as a different method would duplicate the media.
+  let lower = message.toLowerAscii()
+  lower.contains("image_process_failed") or
+    lower.contains("photo_invalid_dimensions") or
+    lower.contains("photo_save_file_invalid")
+
+# ── apiBase policy ────────────────────────────────────────────────────────────
+
+func bareTelegramHost(host: string): string =
+  ## Host without brackets or port, used only for the loopback decision.
+  if host.startsWith("["):
+    let close = host.find(']')
+    if close > 0:
+      return host[1 ..< close]
+  let colon = host.rfind(':')
+  if colon >= 0: host[0 ..< colon] else: host
+
+func telegramApiHost*(apiBase: string): string =
+  ## Host exactly as the HTTP transport derives it from a URL (it includes the
+  ## port), so the same string can be used as an allowlist entry.
+  let base = apiBase.strip
+  let marker = base.find("://")
+  if marker < 0:
+    return ""
+  var host = base[marker + 3 .. ^1]
+  let slash = host.find('/')
+  if slash >= 0:
+    host = host[0 ..< slash]
+  let query = host.find('?')
+  if query >= 0:
+    host = host[0 ..< query]
+  let fragment = host.find('#')
+  if fragment >= 0:
+    host = host[0 ..< fragment]
+  let at = host.rfind('@')
+  if at >= 0:
+    host = host[at + 1 .. ^1]
+  host.strip
+
+func isLoopbackHost*(host: string): bool =
+  ## A development proxy may speak plain http on the local machine only.
+  let bare = bareTelegramHost(host).toLowerAscii()
+  bare == "localhost" or bare == "::1" or bare.startsWith("127.")
+
+func telegramApiBaseError*(apiBase: string): string =
+  ## Reason a custom Base URL is refused; empty means it is acceptable.
+  let base = apiBase.strip
+  if base.len == 0:
+    return ""
+  let marker = base.find("://")
+  if marker <= 0:
+    return "apiBase must be an absolute https URL"
+  let scheme = base[0 ..< marker].toLowerAscii()
+  let host = telegramApiHost(base)
+  if host.len == 0:
+    return "apiBase has no host"
+  if scheme == "https":
+    return ""
+  if scheme == "http":
+    if isLoopbackHost(host):
+      return ""
+    return "apiBase must use https outside loopback"
+  "apiBase must use https"
+
+func telegramApiAllowlist*(apiBase: string): seq[string] =
+  ## Egress is restricted to the configured Bot API host. An empty override
+  ## keeps the official endpoint; a custom base contributes its own host
+  ## instead of disabling the allowlist.
+  let base = apiBase.strip
+  if base.len == 0:
+    return @["api.telegram.org"]
+  let host = telegramApiHost(base)
+  if host.len == 0: @[] else: @[host]
+
+
 # ── local media upload ────────────────────────────────────────────────────────
+
+const TelegramMultipartBoundaryPrefix* = "----donkey-tg-"
+  ## Prefix for the random multipart delimiter. The random portion is supplied
+  ## by the adapter (sysrand) so the boundary is not predictable from the clock.
+
+func stripMultipartControls(value: string): string =
+  ## Removes CR/LF so a field value can never start a new multipart part.
+  for ch in value:
+    if ch != '\r' and ch != '\n':
+      result.add ch
+
+func numericMultipartId(value: string): string =
+  ## Telegram ids are signed integers. Anything else is dropped instead of
+  ## being framed into the payload.
+  let v = value.strip
+  if v.len == 0:
+    return ""
+  var start = 0
+  if v[0] == '-':
+    start = 1
+  if start >= v.len:
+    return ""
+  for i in start ..< v.len:
+    if v[i] notin {'0' .. '9'}:
+      return ""
+  v
+
+func pickMultipartBoundary*(randomHex, payload: string): string =
+  ## Builds the boundary from caller-supplied randomness, then perturbs it
+  ## deterministically until it does not occur in the payload. The candidate
+  ## itself is never reused when the bytes happen to contain it.
+  result = TelegramMultipartBoundaryPrefix & randomHex
+  var salt = 0
+  while payload.contains(result):
+    inc salt
+    result = TelegramMultipartBoundaryPrefix & randomHex & "-" & $salt
 
 type
   MediaUpload* = object
@@ -177,14 +291,15 @@ func mediaMimeFor(ext: string): string =
 func mediaUploadSpec*(path: string; chatId: int64; caption: string;
                       threadId = ""; replyTo = ""; durationSec = 0): MediaUpload =
   ## Chooses the Bot API method from the file name. The adapter only reads the
-  ## bytes and posts them; method, field and MIME are decided here.
+  ## bytes and posts them; method, field and MIME are decided here. Every value
+  ## that travels in the multipart envelope is sanitised at the boundary.
   let ext = mediaExtension(path)
   let audioMethod = audioMethodFor(path)
-  result.fileName = mediaBaseName(path).replace("\"", "'")
+  result.fileName = stripMultipartControls(mediaBaseName(path)).replace("\"", "'")
   result.chatId = chatId
-  result.caption = caption
-  result.threadId = threadId
-  result.replyTo = replyTo
+  result.caption = stripMultipartControls(caption)
+  result.threadId = numericMultipartId(threadId)
+  result.replyTo = numericMultipartId(replyTo)
   result.durationSec = max(0, durationSec)
   if audioMethod == "sendVoice":
     result.`method` = "sendVoice"
@@ -206,30 +321,35 @@ func mediaUploadSpec*(path: string; chatId: int64; caption: string;
 func mediaUploadBody*(spec: MediaUpload; data, boundary: string): string =
   ## Multipart/form-data framing for the Bot API. Optional fields are omitted
   ## instead of sent empty; `duration` only exists for the two audio methods
-  ## the client renders with a clock (TG-029).
+  ## the client renders with a clock (TG-029). Values are re-sanitised here so
+  ## a directly constructed MediaUpload cannot inject framing either.
+  let caption = stripMultipartControls(spec.caption)
+  let threadId = numericMultipartId(spec.threadId)
+  let replyTo = numericMultipartId(spec.replyTo)
+  let fileName = stripMultipartControls(spec.fileName).replace("\"", "'")
   result = ""
   result.add("--" & boundary & "\r\n")
   result.add("Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n")
   result.add($spec.chatId & "\r\n")
-  if spec.caption.len > 0:
+  if caption.len > 0:
     result.add("--" & boundary & "\r\n")
     result.add("Content-Disposition: form-data; name=\"caption\"\r\n\r\n")
-    result.add(spec.caption & "\r\n")
-  if spec.threadId.len > 0:
+    result.add(caption & "\r\n")
+  if threadId.len > 0:
     result.add("--" & boundary & "\r\n")
     result.add("Content-Disposition: form-data; name=\"message_thread_id\"\r\n\r\n")
-    result.add(spec.threadId & "\r\n")
-  if spec.replyTo.len > 0:
+    result.add(threadId & "\r\n")
+  if replyTo.len > 0:
     result.add("--" & boundary & "\r\n")
     result.add("Content-Disposition: form-data; name=\"reply_to_message_id\"\r\n\r\n")
-    result.add(spec.replyTo & "\r\n")
+    result.add(replyTo & "\r\n")
   if spec.durationSec > 0 and spec.`method` in ["sendVoice", "sendAudio"]:
     result.add("--" & boundary & "\r\n")
     result.add("Content-Disposition: form-data; name=\"duration\"\r\n\r\n")
     result.add($spec.durationSec & "\r\n")
   result.add("--" & boundary & "\r\n")
   result.add("Content-Disposition: form-data; name=\"" & spec.field &
-             "\"; filename=\"" & spec.fileName & "\"\r\n")
+             "\"; filename=\"" & fileName & "\"\r\n")
   result.add("Content-Type: " & spec.mime & "\r\n\r\n")
   result.add(data)
   result.add("\r\n--" & boundary & "--\r\n")
