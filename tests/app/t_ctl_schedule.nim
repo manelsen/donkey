@@ -317,3 +317,30 @@ suite "ctl schedule — remove/enable/disable":
       check toggled.spec.createdAtMs == FixedNow
     finally:
       cleanup(dir)
+
+suite "ctl schedule — argument parsing":
+
+  test "the id wins when flags come before it":
+    ## `add --cron "0 9 * * *" ... daily` used to create a schedule whose id
+    ## was the cron expression, because parseopt yields the flag value as an
+    ## argument.
+    check scheduleAddId(@["donkey", "ctl", "schedule", "add", "--cron",
+                          "0 9 * * *", "--user", "alice", "--payload", "p",
+                          "daily"], @[]) == "daily"
+
+  test "the documented order still works":
+    check scheduleAddId(@["donkey", "ctl", "schedule", "add", "daily",
+                          "--cron", "0 9 * * *"], @[]) == "daily"
+
+  test "a boolean flag does not swallow the id":
+    check scheduleAddId(@["donkey", "ctl", "schedule", "add", "--json",
+                          "daily"], @[]) == "daily"
+
+  test "--flag=value is understood":
+    check scheduleFlagValue(@["--cron=0 9 * * *"], "--cron") ==
+      some("0 9 * * *")
+    check scheduleFlagValue(@["--catch-up=once"], "--catch-up") == some("once")
+
+  test "a missing id is empty, not a flag value":
+    check scheduleAddId(@["donkey", "ctl", "schedule", "add", "--cron",
+                          "0 9 * * *"], @[]) == ""

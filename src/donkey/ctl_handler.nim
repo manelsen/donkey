@@ -534,15 +534,44 @@ proc ctlScheduleSetEnabled*(stateDir, scheduleId: string; enabled: bool
   ok((if enabled: "Enabled schedule '" else: "Disabled schedule '") &
      scheduleId & "'.")
 
-proc scheduleFlagValue(args: seq[string]; name: string): Option[string] =
+proc scheduleFlagValue*(args: seq[string]; name: string): Option[string] =
   var i = 0
   while i < args.len:
     if args[i] == name:
       if i + 1 < args.len:
         return some(args[i + 1])
       return none(string)
+    if args[i].startsWith(name & "="):
+      return some(args[i][name.len + 1 .. ^1])
     inc i
   none(string)
+
+const ScheduleValueFlags = ["--cron", "--user", "--payload", "--channel",
+                            "--tz", "--catchup", "--catch-up"]
+
+func scheduleAddId*(raw: openArray[string]; fallback: seq[string]): string =
+  ## The schedule id is the first positional after `add`. `main()` parses with
+  ## `std/parseopt`, whose `cmdArgument` also yields the *value* of a long
+  ## option, so `args[3]` can be the cron expression when flags come first —
+  ## and `add --cron "0 9 * * *" ... daily` would create a schedule whose id is
+  ## the cron. Walk the raw argv instead, skipping flags and their values.
+  var i = 0
+  while i < raw.len and raw[i] != "add":
+    inc i
+  if i >= raw.len:
+    if fallback.len >= 4 and not fallback[3].startsWith("--"):
+      return fallback[3]
+    return ""
+  inc i
+  while i < raw.len:
+    let token = raw[i]
+    if token.startsWith("--"):
+      inc i
+      if '=' notin token and token in ScheduleValueFlags and i < raw.len:
+        inc i
+      continue
+    return token
+  ""
 
 func scheduleHasFlag(args: seq[string]; name: string): bool =
   for arg in args:
@@ -589,7 +618,8 @@ proc dispatchSchedule(stateDir: string; args: seq[string];
     return 0
 
   if sub == "add":
-    if args.len < 4 or args[3].startsWith("--"):
+    let id = scheduleAddId(rawFlags, args)
+    if id.len == 0 or id.startsWith("--"):
       echo "Error: missing schedule id"
       return 1
     let cron = scheduleFlagValue(rawFlags, "--cron")
@@ -609,7 +639,7 @@ proc dispatchSchedule(stateDir: string; args: seq[string];
     let tz = scheduleFlagValue(rawFlags, "--tz").get(ScheduleDefaultTz)
     let catchUp = scheduleFlagValue(rawFlags, "--catchup")
       .get(scheduleFlagValue(rawFlags, "--catch-up").get(ScheduleDefaultCatchUp))
-    let r = ctlScheduleAdd(stateDir, args[3], cron.get(), user.get(),
+    let r = ctlScheduleAdd(stateDir, id, cron.get(), user.get(),
                            payload.get(), epochMs(), channel = channel, tz = tz,
                            catchUp = catchUp)
     if r.isErr: echo "Error: " & r.error; return 1
