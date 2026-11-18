@@ -472,3 +472,10 @@ suite "turn journal store":
     check loaded.isOk
     let entry = loaded.get().get()
     check entry.phase != tpsAbandoned
+
+  test "quoted key and token values are fully redacted":
+    let text = "key=\"secret-value\" token='tok-9' safekey=public"
+    let redacted = redactSecrets(text)
+    check "secret-value" notin redacted
+    check "tok-9" notin redacted
+    check "public" in redacted

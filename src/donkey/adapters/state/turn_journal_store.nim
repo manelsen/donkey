@@ -336,18 +336,23 @@ func redactSecrets*(text: string): string =
         result.add "sk-[redacted]"
         i = j
         continue
-    elif matchesAt(text, i, "key="):
-      result.add text[i ..< i + "key=".len]
-      i += "key=".len
-      while i < text.len and not isValueDelimiter(text[i]):
+    elif (matchesAt(text, i, "key=") or matchesAt(text, i, "token=")) and
+         (i == 0 or not isAsciiAlphaNum(text[i - 1])):
+      let label = if matchesAt(text, i, "key="): "key=" else: "token="
+      result.add text[i ..< i + label.len]
+      i += label.len
+      if i < text.len and text[i] in {'"', '\''}:
+        ## A quoted value ends at the matching quote; stopping at the opening
+        ## quote would leave the secret itself in the journal.
+        let quote = text[i]
         inc i
-      result.add "[redacted]"
-      continue
-    elif matchesAt(text, i, "token="):
-      result.add text[i ..< i + "token=".len]
-      i += "token=".len
-      while i < text.len and not isValueDelimiter(text[i]):
-        inc i
+        while i < text.len and text[i] != quote:
+          inc i
+        if i < text.len:
+          inc i
+      else:
+        while i < text.len and not isValueDelimiter(text[i]):
+          inc i
       result.add "[redacted]"
       continue
     result.add text[i]
