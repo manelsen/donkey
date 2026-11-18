@@ -410,6 +410,8 @@ func sessionReplyTo*(msg: InboundMessage): string =
     telegramReplyTarget(msg.chatId, msg.channelId, msg.threadId)
   of ckDiscord:
     if msg.channelId.len > 0: "channel:" & msg.channelId else: ""
+  of ckLine:
+    msg.chatId
   else:
     ""
 

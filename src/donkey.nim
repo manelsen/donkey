@@ -54,8 +54,11 @@ import donkey/adapters/channel/slack
 import donkey/adapters/channel/slack_runtime
 import donkey/adapters/channel/slack_socket
 import donkey/adapters/channel/dingtalk
+import donkey/adapters/channel/line
+import donkey/adapters/channel/line_runtime
 import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
+import donkey/domain/channels/line_policy
 import donkey/adapters/tool/mcp_client
 import donkey/adapters/tools/browser
 import donkey/domain/tools/browser_pure
@@ -234,6 +237,10 @@ type DaemonEnv = object
   slackSigningSecret: string
   feishuVerificationToken: string
   feishuEncryptKey: string
+  lineChannelSecret: string
+  lineChannelAccessToken: string
+  lineAllowedGroups: seq[string]
+  lineAllowedUsers: seq[string]
   matrixWebhookToken: string
   whatsappVerifyToken: string
   whatsappAppSecret: string
@@ -247,6 +254,7 @@ type DaemonAdapters = object
   fs: FeishuAdapter
   sl: SlackAdapter
   dt: DingTalkAdapter
+  ln: LineAdapter
   mx: MatrixAdapter
   em: EmailAdapter
   wa: WhatsAppAdapter
@@ -261,7 +269,7 @@ proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPor
     addr adapters.tg, addr adapters.dc, addr adapters.wc,
     addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx,
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
-    addr adapters.cli, signalPtr)
+    addr adapters.cli, signalPtr, addr adapters.ln)
 
 const
   RecentRouteSampleLimit = 32
@@ -332,6 +340,7 @@ type DaemonRuntime = ref object
   lastReminderCheckMs:  int64
   lastEmailPollMs:      int64
   lastSignalPollMs:     int64
+  lineReplay:           LineReplayCache
   msgSeq:               int
   daemonStartMs:        int64
 
@@ -518,6 +527,13 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.slackSigningSecret = getEnv("SLACK_SIGNING_SECRET")
   result.feishuVerificationToken = getEnv("FEISHU_VERIFICATION_TOKEN")
   result.feishuEncryptKey = getEnv("FEISHU_ENCRYPT_KEY")
+  ## LINE: the route is mounted only when the access token exists; the channel
+  ## secret is the HMAC key for X-Line-Signature. Groups are default-deny
+  ## (empty = none), users are opt-in (empty = all) — see line_policy.
+  result.lineChannelSecret = getEnv("LINE_CHANNEL_SECRET").strip()
+  result.lineChannelAccessToken = getEnv("LINE_CHANNEL_ACCESS_TOKEN").strip()
+  result.lineAllowedGroups = parseChatIdList(getEnv("LINE_ALLOWED_GROUPS"))
+  result.lineAllowedUsers = parseChatIdList(getEnv("LINE_ALLOWED_USERS"))
   result.matrixWebhookToken = getEnv("MATRIX_WEBHOOK_TOKEN")
   result.whatsappVerifyToken = getEnv("WHATSAPP_VERIFY_TOKEN")
   result.whatsappAppSecret = getEnv("WHATSAPP_APP_SECRET")
@@ -553,6 +569,7 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
   result.sl = newSlackAdapter(env.slackBotToken, env.identityPath)
   result.dt = newDingTalkAdapter(env.dingTalkAppKey, env.dingTalkAppSecret,
                                  env.dingTalkRobotCode, env.identityPath)
+  result.ln = newLineAdapter(env.lineChannelAccessToken, env.identityPath)
   result.mx = newMatrixAdapter(getEnv("MATRIX_HOMESERVER"), getEnv("MATRIX_BOT_USER_ID"),
                                getEnv("MATRIX_ACCESS_TOKEN"), env.identityPath)
   result.em = newEmailAdapter(getEnv("EMAIL_IMAP_HOST"), getEnv("EMAIL_SMTP_HOST"),
@@ -1032,6 +1049,11 @@ proc startOptionalWebhookReceiver(env: DaemonEnv; log: Logger) =
       if env.feishuAppId.len > 0: env.feishuEncryptKey else: "",
     dingtalkAppSecret:
       if env.dingTalkAppKey.len > 0: env.dingTalkAppSecret else: "",
+    lineChannelSecret:
+      if env.lineChannelAccessToken.len > 0: env.lineChannelSecret else: "",
+    lineChannelAccessToken: env.lineChannelAccessToken,
+    lineAllowedGroups: env.lineAllowedGroups,
+    lineAllowedUsers: env.lineAllowedUsers,
     matrixToken:
       if matrixConfigured(): env.matrixWebhookToken else: "",
     whatsappVerifyToken:
@@ -1563,6 +1585,11 @@ proc startDaemonIngress(ctx: DaemonContext;
   startOptionalMatrixGateway(ctx.adapters.mx, log)
   startOptionalWhatsAppGateway(ctx.adapters.wa, ctx.env.whatsappAccessToken,
                                ctx.env.whatsappPhoneNumberId, log)
+  ## The LINE route can enqueue as soon as the receiver binds; the queue must
+  ## be open first (an unopened Channel cannot be sent to from a worker).
+  if ctx.env.lineChannelAccessToken.len > 0:
+    ctx.adapters.ln.openQueue()
+    log.info("LINE webhook queue started")
   startOptionalWebhookReceiver(ctx.env, log)
   startOptionalQQGateway(ctx.adapters.qq, log)
   if ctx.env.telegramToken.len > 0:
@@ -1719,6 +1746,15 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         log
       )
       count > 0,
+    drainLine = proc(): bool =
+      if ctx.env.lineChannelAccessToken.len == 0:
+        return false
+      let linePolicy = LinePolicy(
+        allowedGroups: ctx.env.lineAllowedGroups,
+        allowedUsers:  ctx.env.lineAllowedUsers)
+      drainLineEvents(
+        ctx.adapters.ln, ctx.runtime.sm, ctx.runtime.lineReplay,
+        linePolicy, getTime().toUnix(), fallback, log) > 0,
     drainMatrix = proc(): bool =
       let count = drainMatrixGateway(
         matrixConfigured(),

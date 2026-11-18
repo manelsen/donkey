@@ -13,6 +13,7 @@
 ##   Slack    — X-Slack-Signature (v0 HMAC-SHA256) + replay window
 ##   Feishu   — verification token (url_verification challenge echoed back)
 ##   DingTalk — timestamp/sign HMAC-SHA256 signature
+##   LINE     — X-Line-Signature: base64 HMAC-SHA256 of the raw body
 ##   Matrix   — shared bearer token (Authorization or ?access_token=)
 ##   WhatsApp — hub.verify_token challenge (GET) + X-Hub-Signature-256 (POST)
 ##
@@ -23,10 +24,12 @@ import std/[atomics, base64, json, monotimes, net, os, posix, strutils, tables, 
 import nimcrypto/[bcmode, rijndael, sha2]
 import ../../core/log
 import ../../core/pipeops
+import ../../domain/channels/line_policy
 import ./webhook_ingress
 import ../channel/slack
 import ../channel/feishu
 import ../channel/dingtalk
+import ../channel/line
 import ../channel/matrix
 import ../channel/whatsapp
 
@@ -36,6 +39,7 @@ const
   SlackPath*    = "/webhook/slack"
   FeishuPath*   = "/webhook/feishu"
   DingTalkPath* = "/webhook/dingtalk"
+  LinePath*     = "/webhook/line"
   MatrixPath*   = "/webhook/matrix"
   WhatsAppPath* = "/webhook/whatsapp"
 
@@ -43,6 +47,7 @@ const
   FeishuReplayWindowSec*     = 300
   DingTalkTimestampWindowMs* = 3_600_000
   MaxWebhookBodyBytes*       = 2 * 1024 * 1024
+  LineMaxBodyBytes*          = 1 * 1024 * 1024
   WebhookTlsReloadIntervalMs = 1000
 
   WebhookWorkerCount        = 4
@@ -64,6 +69,10 @@ type
     feishuVerificationToken*: string
     feishuEncryptKey*:        string
     dingtalkAppSecret*:       string
+    lineChannelSecret*:       string
+    lineChannelAccessToken*:  string
+    lineAllowedGroups*:       seq[string]
+    lineAllowedUsers*:        seq[string]
     matrixToken*:             string
     whatsappVerifyToken*:     string
     whatsappAppSecret*:       string
@@ -82,6 +91,7 @@ func notFound(): WebhookResponse = plainResp(404, "not found")
 func forbidden(): WebhookResponse = plainResp(403, "forbidden")
 func badRequest(): WebhookResponse = plainResp(400, "bad request")
 func methodNotAllowed(): WebhookResponse = plainResp(405, "method not allowed")
+func payloadTooLarge(): WebhookResponse = plainResp(413, "payload too large")
 func serviceUnavailable(): WebhookResponse = plainResp(503, "server busy")
 
 # ── Payload helpers ───────────────────────────────────────────────────────────
@@ -328,6 +338,48 @@ proc handleDingTalk(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
   dingtalk.pushEvent(payload)
   plainResp(200)
 
+# ── LINE ──────────────────────────────────────────────────────────────────────
+
+func lineAuthSpec(cfg: WebhookConfig): WebhookAuthSpec =
+  ## LINE signs the raw body: base64(HMAC-SHA256(channel secret, body)). There
+  ## is no signed timestamp, so replay defence is the runtime's dedupe of
+  ## `webhookEventId` (US-002/US-006), not an ingress window.
+  WebhookAuthSpec(
+    scheme:          wasHmacSha256Base64,
+    signedPayload:   wspBody,
+    secret:          cfg.lineChannelSecret,
+    signatureHeader: LineSignatureHeader,
+    timestampHeader: "",
+    replayWindowSec: 0,
+    timestampScale:  wtsNone,
+    maxBodyBytes:    LineMaxBodyBytes,
+  )
+
+proc handleLine(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
+  let verdict = decideIngress(lineAuthSpec(cfg), req,
+                              nowUnixMs = (epochTime() * 1000).int64)
+  case verdict
+  of wioAccepted:
+    discard
+  of wioNotConfigured:
+    return notFound()
+  of wioMethodNotAllowed:
+    return methodNotAllowed()
+  of wioStale, wioForbidden:
+    return forbidden()
+  of wioTooLarge:
+    return payloadTooLarge()
+
+  let payload = parsePayload(req.body).valueOr:
+    return badRequest()
+
+  ## The console "Verify" button posts `{"events":[]}`; answer 200 without
+  ## touching the queue. Any real event is parsed here so an unusable shape
+  ## never opens the adapter queue.
+  if parseWebhook(payload).len > 0:
+    line.pushEvent(payload)
+  plainResp(200, "ok")
+
 # ── Matrix ────────────────────────────────────────────────────────────────────
 
 func matrixSuppliedToken(req: WebhookRequest): string =
@@ -397,6 +449,7 @@ proc handleWebhookRequest*(cfg: WebhookConfig; req: WebhookRequest): WebhookResp
   of SlackPath:    handleSlack(cfg, req)
   of FeishuPath:   handleFeishu(cfg, req)
   of DingTalkPath: handleDingTalk(cfg, req)
+  of LinePath:     handleLine(cfg, req)
   of MatrixPath:   handleMatrix(cfg, req)
   of WhatsAppPath: handleWhatsApp(cfg, req)
   else:            notFound()
@@ -406,6 +459,7 @@ func anyRouteConfigured*(cfg: WebhookConfig): bool =
     cfg.feishuVerificationToken.len > 0 or
     cfg.feishuEncryptKey.len > 0 or
     cfg.dingtalkAppSecret.len > 0 or
+    cfg.lineChannelSecret.len > 0 or
     cfg.matrixToken.len > 0 or
     cfg.whatsappVerifyToken.len > 0
 
@@ -418,6 +472,7 @@ func statusReason(status: int): string =
   of 403: "Forbidden"
   of 404: "Not Found"
   of 405: "Method Not Allowed"
+  of 413: "Payload Too Large"
   of 503: "Service Unavailable"
   else:  "Error"
 
