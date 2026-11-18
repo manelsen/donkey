@@ -1,9 +1,13 @@
 ## webhook_receiver.nim — HTTP webhook receiver for callback-style channels.
 ##
-## Adapter layer (I/O boundary). It owns the HTTP listener, authentication of
-## inbound requests and payload parsing, then forwards each payload to the
-## channel adapter's existing `pushEvent`. The application layer keeps draining
-## the adapters' queues exactly as before; this module never imports app/.
+## Adapter layer (I/O boundary). It owns the HTTP listener and payload parsing,
+## then forwards each payload to the channel adapter's existing `pushEvent`. The
+## application layer keeps draining the adapters' queues exactly as before;
+## this module never imports app/.
+##
+## The shared ingress decision (`WebhookRequest`, `WebhookAuthSpec`,
+## `decideIngress`) lives in `webhook_ingress` and is re-exported here, as are
+## the core MAC primitives, so every existing import keeps working.
 ##
 ## Channels and authentication:
 ##   Slack    — X-Slack-Signature (v0 HMAC-SHA256) + replay window
@@ -19,14 +23,14 @@ import std/[atomics, base64, json, monotimes, net, os, posix, strutils, tables, 
 import nimcrypto/[bcmode, rijndael, sha2]
 import ../../core/log
 import ../../core/pipeops
-import ../../core/security/webhook_auth
+import ./webhook_ingress
 import ../channel/slack
 import ../channel/feishu
 import ../channel/dingtalk
 import ../channel/matrix
 import ../channel/whatsapp
 
-export webhook_auth
+export webhook_ingress
 
 const
   SlackPath*    = "/webhook/slack"
@@ -50,13 +54,6 @@ const
   MaxWebhookLineBytes       = 8192
 
 type
-  WebhookRequest* = object
-    httpMethod*: string
-    path*:       string
-    query*:      Table[string, string]
-    headers*:    Table[string, string]  ## keys are lowercase
-    body*:       string
-
   WebhookResponse* = object
     status*:      int
     body*:        string
@@ -86,14 +83,6 @@ func forbidden(): WebhookResponse = plainResp(403, "forbidden")
 func badRequest(): WebhookResponse = plainResp(400, "bad request")
 func methodNotAllowed(): WebhookResponse = plainResp(405, "method not allowed")
 func serviceUnavailable(): WebhookResponse = plainResp(503, "server busy")
-
-# ── Request helpers ───────────────────────────────────────────────────────────
-
-func header*(req: WebhookRequest; name: string): string =
-  req.headers.getOrDefault(name.toLowerAscii())
-
-func hasQuery*(req: WebhookRequest; key: string): bool =
-  req.query.hasKey(key)
 
 # ── Payload helpers ───────────────────────────────────────────────────────────
 
@@ -303,33 +292,35 @@ proc handleFeishu(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
 
 # ── DingTalk ──────────────────────────────────────────────────────────────────
 
+func dingTalkAuthSpec(cfg: WebhookConfig): WebhookAuthSpec =
+  ## DingTalk signs `timestamp & "\n" & secret` (the body is not covered) and
+  ## carries Unix milliseconds in `timestamp`/`sign`. The body limit matches
+  ## the one already enforced while reading the request.
+  WebhookAuthSpec(
+    scheme:          wasHmacSha256Base64,
+    signedPayload:   wspTimestampNewlineSecret,
+    secret:          cfg.dingtalkAppSecret,
+    signatureHeader: "sign",
+    timestampHeader: "timestamp",
+    replayWindowSec: DingTalkTimestampWindowMs div 1000,
+    timestampScale:  wtsMilliseconds,
+    maxBodyBytes:    MaxWebhookBodyBytes,
+  )
+
 proc handleDingTalk(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
-  if cfg.dingtalkAppSecret.len == 0:
+  let verdict = decideIngress(dingTalkAuthSpec(cfg), req,
+                              nowUnixMs = (epochTime() * 1000).int64)
+  case verdict
+  of wioAccepted:
+    discard
+  of wioNotConfigured:
     return notFound()
-  if req.httpMethod != "POST":
+  of wioMethodNotAllowed:
     return methodNotAllowed()
-
-  let timestamp = req.header("timestamp")
-  let signature = req.header("sign")
-  if timestamp.len == 0 or signature.len == 0:
+  of wioStale, wioForbidden:
     return forbidden()
-
-  ## Timestamps are Unix milliseconds. Validate before the MAC so a hostile
-  ## value cannot reach the crypto path or overflow a window subtraction.
-  var tsMs: int64
-  try:
-    tsMs = parseBiggestInt(timestamp)
-  except ValueError:
-    return forbidden()
-  let nowMs = (epochTime() * 1000).int64
-  if tsMs < nowMs - DingTalkTimestampWindowMs.int64 or
-     tsMs > nowMs + DingTalkTimestampWindowMs.int64:
-    return forbidden()
-
-  let expected = hmacSha256Base64(cfg.dingtalkAppSecret,
-                                  timestamp & "\n" & cfg.dingtalkAppSecret)
-  if not safeEquals(signature, expected):
-    return forbidden()
+  of wioTooLarge:
+    return badRequest()
 
   let payload = parsePayload(req.body).valueOr:
     return badRequest()
