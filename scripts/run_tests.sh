@@ -80,7 +80,14 @@ run_one() {
   # parallel (e.g. t_openai_compat under app/ and domain/providers/).
   # Derive a unique, persistent cache from the test path so parallel runs can
   # never share a directory while warm-cache reuse between runs is preserved.
-  local cache_key="${f%.nim}"
+  # Key on the *absolute* path: two checkouts/worktrees of the same repo share
+  # the relative path (and therefore the cache) otherwise, which is the same
+  # collision this exists to prevent.
+  local abs_f
+  abs_f="$(realpath -m "$f" 2>/dev/null || true)"
+  if [ -z "$abs_f" ]; then abs_f="$PWD/$f"; fi
+  local cache_key="${abs_f%.nim}"
+  cache_key="${cache_key#/}"
   cache_key="${cache_key//\//_}"
   local cache_dir
   if [ -n "$TEST_NIMCACHE_ROOT" ]; then
