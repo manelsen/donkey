@@ -10,6 +10,7 @@
 import std/[httpclient, json, streams, strutils]
 import ../../domain/message
 import ../../domain/providers/openai_pure
+import ../../domain/providers/compat
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/json_helpers
@@ -80,7 +81,7 @@ proc complete*(a: OpenAIAdapter;
       "Content-Type":  "application/json",
       "Authorization": "Bearer " & a.apiKey,
     })
-    let body = buildRequestBody(a.model, req)
+    let body = buildCompatRequestBody(defaultOpenAiProfile(endpoint = OpenAIEndpoint), a.model, req)
     let url  = if a.endpoint.len > 0: a.endpoint else: OpenAIEndpoint
     let resp = client.post(url, body = $body)
     checkApiStatus(resp, a.displayName)
@@ -98,7 +99,7 @@ proc makeStreamFn*(a: OpenAIAdapter): StreamFn =
         "Content-Type":  "application/json",
         "Authorization": "Bearer " & adapter.apiKey,
       })
-      let body = buildRequestBody(adapter.model, req, stream = true)
+      let body = buildCompatRequestBody(defaultOpenAiProfile(endpoint = OpenAIEndpoint), adapter.model, req, stream = true)
       let url  = if adapter.endpoint.len > 0: adapter.endpoint else: OpenAIEndpoint
       let resp = client.request(url, httpMethod = HttpPost, body = $body)
       checkApiStatus(resp, adapter.displayName)
