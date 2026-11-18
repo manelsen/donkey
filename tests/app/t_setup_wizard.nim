@@ -8,6 +8,14 @@ import donkey/app/setup_wizard
 import donkey/app/doctor
 import donkey/config/loader
 
+proc withEnv(name, value: string; body: proc()) =
+  ## Sets `name` for the duration of `body`, restoring the previous value.
+  let previous = getEnv(name)
+  putEnv(name, value)
+  defer:
+    if previous.len > 0: putEnv(name, previous) else: delEnv(name)
+  body()
+
 suite "buildTomlContent":
 
   test "contains home dir":
@@ -180,3 +188,54 @@ suite "setup paths and snapshot":
     check "SQLite-first MAGMA" in summary
     check "zai-coding / glm-4.7" in summary
     check "mode=oci, runtime=docker" in summary
+
+suite "credential source preservation (G1/G2)":
+
+  test "G1: plural *_KEYS pool keeps the plural env name and the whole pool":
+    withEnv("OPENAI_API_KEY", ""):
+      withEnv("OPENAI_API_KEYS", "A,B"):
+        let credential = providerCredentialFromEnv("openai")
+        check credential.envName == "OPENAI_API_KEYS"
+        check credential.value == "A,B"
+        let env = buildEnvContent(
+          @[(provider: "openai", envName: credential.envName,
+             key: credential.value)], @[])
+        check "OPENAI_API_KEYS=A,B" in env
+        check "\nOPENAI_API_KEY=" notin env
+
+  test "G2: Go and Zen persist their own env names when no shared key exists":
+    withEnv("OPENCODE_API_KEY", ""):
+      withEnv("OPENCODE_GO_API_KEY", "A"):
+        withEnv("ZEN_API_KEY", "B"):
+          let go = providerCredentialFromEnv("opencode-go")
+          let zen = providerCredentialFromEnv("zen")
+          check go.envName == "OPENCODE_GO_API_KEY"
+          check go.value == "A"
+          check zen.envName == "ZEN_API_KEY"
+          check zen.value == "B"
+          let env = buildEnvContent(
+            @[(provider: "opencode-go", envName: go.envName, key: go.value),
+              (provider: "zen", envName: zen.envName, key: zen.value)], @[])
+          check "OPENCODE_GO_API_KEY=A" in env
+          check "ZEN_API_KEY=B" in env
+          check "\nOPENCODE_API_KEY=" notin env
+
+  test "G2: a shared key is still written once in the source-aware form":
+    withEnv("OPENCODE_API_KEY", "shared"):
+      withEnv("OPENCODE_GO_API_KEY", ""):
+        withEnv("ZEN_API_KEY", ""):
+          let go = providerCredentialFromEnv("opencode-go")
+          let zen = providerCredentialFromEnv("zen")
+          check go.envName == "OPENCODE_API_KEY"
+          check zen.envName == "OPENCODE_API_KEY"
+          let env = buildEnvContent(
+            @[(provider: "opencode-go", envName: go.envName, key: go.value),
+              (provider: "zen", envName: zen.envName, key: zen.value)], @[])
+          check env.count("OPENCODE_API_KEY=") == 1
+          check "OPENCODE_API_KEY=shared" in env
+
+  test "the source-aware form never writes a key for an endpoint-only provider":
+    let env = buildEnvContent(
+      @[(provider: "ollama", envName: "OLLAMA_BASE_URL", key: "should-not-leak")],
+      @[])
+    check env.count("OLLAMA_BASE_URL=") == 0
