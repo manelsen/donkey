@@ -12,6 +12,7 @@
 import std/[httpclient, json, streams, strutils]
 import ../../domain/message
 import ../../domain/providers/openai_pure
+import ../../domain/providers/compat
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/json_helpers
@@ -122,7 +123,7 @@ proc complete*(a: DeepSeekAdapter;
       "Content-Type":  "application/json",
       "Authorization": "Bearer " & a.apiKey,
     })
-    let body = buildRequestBody(a.model, req)
+    let body = buildCompatRequestBody(defaultOpenAiProfile(endpoint = DeepSeekEndpoint), a.model, req)
     let url  = if a.endpoint.len > 0: a.endpoint else: DeepSeekEndpoint
     let resp = client.post(url, body = $body)
     checkApiStatus(resp, "DeepSeek")
@@ -140,7 +141,7 @@ proc makeStreamFn*(a: DeepSeekAdapter): StreamFn =
         "Content-Type":  "application/json",
         "Authorization": "Bearer " & adapter.apiKey,
       })
-      let body = buildRequestBody(adapter.model, req, stream = true)
+      let body = buildCompatRequestBody(defaultOpenAiProfile(endpoint = DeepSeekEndpoint), adapter.model, req, stream = true)
       let url  = if adapter.endpoint.len > 0: adapter.endpoint else: DeepSeekEndpoint
       let resp = client.request(url, httpMethod = HttpPost, body = $body)
       checkApiStatus(resp, "DeepSeek")

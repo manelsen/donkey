@@ -13,6 +13,7 @@ import std/[os, osproc, strutils]
 import ../core/pipeops
 import ../core/diagnostics
 import ../config/types
+import ../domain/providers/descriptors
 import ./sandbox
 
 # ── raw Result-returning procs (for >>= chaining) ─────────────────────────────
@@ -136,18 +137,46 @@ proc checkSandboxPolicy*(cfg: DonkeyConfig;
 
 # ── orchestration ──────────────────────────────────────────────────────────────
 
-const ApiKeyChecks = [
+type
+  DoctorProviderRow* = tuple[id, label, envVar: string]
+
+# Labels are operator-facing text (UI policy); identity and env come from
+# providerDescriptors().
+const ProviderKeyLabels = [
+  ("openrouter",    "OpenRouter"),
+  ("openai",        "OpenAI"),
+  ("deepseek",      "DeepSeek"),
+  ("ollama",        "Ollama"),
+  ("groq",          "Groq"),
+  ("opencode-go",   "OpenCode Go"),
+  ("zen",           "OpenCode Zen"),
+  ("anthropic",     "Anthropic"),
+  ("zai-anthropic", "ZAI Anthropic"),
+  ("gemini",        "Gemini"),
+  ("minimax",       "MiniMax"),
+  ("zai",           "Zhipu/ZAI"),
+  ("zai-coding",    "ZAI Coding"),
+]
+
+func providerKeyLabel(id: string): string =
+  for (candidate, label) in ProviderKeyLabels:
+    if candidate == id:
+      return label
+  id
+
+func doctorProviderRows*(): seq[DoctorProviderRow] =
+  ## Provider key checks shown by `doctor`, one row per descriptor.
+  for descriptor in providerDescriptors():
+    result.add((
+      id: descriptor.id,
+      label: providerKeyLabel(descriptor.id),
+      envVar: (if descriptor.envNames.len > 0: descriptor.envNames[0] else: ""),
+    ))
+
+# Non-provider credentials the operator may need.
+const AuxKeyChecks = [
   ("Telegram",       "TELEGRAM_BOT_TOKEN"),
   ("Discord",        "DISCORD_BOT_TOKEN"),
-  ("Zhipu/ZAI",      "ZAI_API_KEY"),
-  ("ZAI Coding",     "ZAI_CODING_API_KEY"),
-  ("ZAI Anthropic",  "ZAI_ANTHROPIC_API_KEY"),
-  ("OpenRouter",     "OPENROUTER_API_KEY"),
-  ("Anthropic",      "ANTHROPIC_API_KEY"),
-  ("OpenAI",         "OPENAI_API_KEY"),
-  ("DeepSeek",       "DEEPSEEK_API_KEY"),
-  ("Gemini",         "GEMINI_API_KEY"),
-  ("MiniMax",        "MINIMAX_API_KEY"),
   ("Brave Search",   "BRAVE_API_KEY"),
 ]
 
@@ -161,8 +190,10 @@ proc runDoctorChecks*(cfg: DonkeyConfig;
   if cfg.sandboxMode == smOci:
     result.add checkContainerRuntime(cfg.sandboxRuntimeCmd)
   result.add checkPgvector()
-  for (name, envVar) in ApiKeyChecks:
+  for (name, envVar) in AuxKeyChecks:
     result.add checkApiKey(name, envVar) |> markWarn
+  for row in doctorProviderRows():
+    result.add checkApiKey(row.label, row.envVar) |> markWarn
 
 proc printDoctorReport*(results: seq[DiagResult]) =
   ## Prints a formatted report to stdout.

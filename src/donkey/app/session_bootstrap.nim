@@ -10,6 +10,7 @@ import ../config/clawhub_registry
 import ../core/pipeops
 import ../core/providers/smart_routing
 import ../core/providers/credential_pool
+import ../domain/providers/descriptors
 import ./credential_runtime
 import ../domain/agent_message
 import ../domain/message
@@ -100,89 +101,16 @@ proc parseProviderPrefs*(preferencesMd: string;
   parseProviderPrefs(applyProviderDefaults(preferencesMd, defaults))
 
 proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: [].} =
-  case prefs.providerName
-  of "openrouter":
-    ProviderSpec(
-      providerName: "openrouter",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: "openai/gpt-6.1-sol",
-      apiKey: resolveCredentialKey("openrouter", ["OPENROUTER_API_KEY"]),
-    )
-  of "openai":
-    ProviderSpec(
-      providerName: "openai",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: "gpt-6.1-sol",
-      apiKey: resolveCredentialKey("openai", ["OPENAI_API_KEY"]),
-    )
-  of "deepseek":
-    ProviderSpec(
-      providerName: "deepseek",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: "deepseek-4.1-flash",
-      apiKey: resolveCredentialKey("deepseek", ["DEEPSEEK_API_KEY"]),
-    )
-  of "ollama":
-    ProviderSpec(
-      providerName: "ollama",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: "llama3.3",
-      apiKey: getEnv("OLLAMA_BASE_URL", ""),
-    )
-  of "groq":
-    ProviderSpec(
-      providerName: "groq",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: GroqDefaultModel,
-      apiKey: resolveCredentialKey("groq", ["GROQ_API_KEY"]),
-    )
-  of "opencode-go", "opencode":
-    ProviderSpec(
-      providerName: "opencode-go",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: OpenCodeGoDefaultModel,
-      apiKey: resolveCredentialKey("opencode-go",
-        ["OPENCODE_API_KEY", "OPENCODE_GO_API_KEY"]),
-    )
-  of "zen", "opencode-zen":
-    ProviderSpec(
-      providerName: "zen",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: ZenDefaultModel,
-      apiKey: resolveCredentialKey("zen", ["OPENCODE_API_KEY", "ZEN_API_KEY"]),
-    )
-  of "anthropic":
-    ProviderSpec(
-      providerName: "anthropic",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: "claude-sonnet-5-5",
-      apiKey: resolveCredentialKey("anthropic", ["ANTHROPIC_API_KEY"]),
-    )
-  of "zai-anthropic":
-    ProviderSpec(
-      providerName: "zai-anthropic",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: "glm-4.7",
-      apiKey: resolveCredentialKey("zai-anthropic",
-        ["ZAI_ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
-         "ZAI_CODING_API_KEY", "ZAI_API_KEY", "ZHIPU_API_KEY"]),
-    )
-  of "gemini":
-    ProviderSpec(
-      providerName: "gemini",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: "gemini-3.8-flash",
-      apiKey: resolveCredentialKey("gemini", ["GEMINI_API_KEY"]),
-    )
-  of "minimax":
-    ProviderSpec(
-      providerName: "minimax",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: "MiniMax-M2",
-      apiKey: resolveCredentialKey("minimax", ["MINIMAX_API_KEY"]),
-    )
-  of "zai":
-    ProviderSpec(
-      providerName: "zai",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: "glm-4.7",
-      apiKey: resolveCredentialKey("zai", ["ZAI_API_KEY"]),
-    )
-  else:
-    ProviderSpec(
-      providerName: "zai-coding",
-      modelName: if prefs.modelName.len > 0: prefs.modelName else: "glm-4.7",
-      apiKey: resolveCredentialKey("zai-coding",
-        ["ZAI_CODING_API_KEY", "ZHIPU_API_KEY"]),
-    )
+  ## Identity and credential come from the descriptor table; routing names and
+  ## aliases are normalized there. Unknown providers keep the zai-coding
+  ## fallback.
+  let descriptor = descriptorOr(prefs.providerName)
+  ProviderSpec(
+    providerName: descriptor.id,
+    modelName: if prefs.modelName.len > 0: prefs.modelName
+               else: descriptor.defaultModel,
+    apiKey: descriptorApiKey(descriptor),
+  )
 
 proc buildProviderBundle*(preferencesMd: string;
                           providerRuntimeBuilder: ProviderRuntimeBuilder): ProviderBundle {.gcsafe.} =
@@ -212,22 +140,22 @@ func availableProviderNames*(av: ProviderAvailability): seq[string] =
   if av.ollama: result.add("ollama")
 
 func detectProviderAvailability*(): ProviderAvailability =
+  ## One field per provider, all derived from the descriptor env names. The
+  ## plural credential env alone also marks a provider available.
   ProviderAvailability(
-    openrouter: hasCredentialKey(["OPENROUTER_API_KEY"]),
-    anthropic: hasCredentialKey(["ANTHROPIC_API_KEY"]),
-    openai: hasCredentialKey(["OPENAI_API_KEY"]),
-    deepseek: hasCredentialKey(["DEEPSEEK_API_KEY"]),
-    zaiAnthropic: hasCredentialKey(
-      ["ZAI_ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
-       "ZAI_CODING_API_KEY", "ZAI_API_KEY", "ZHIPU_API_KEY"]),
-    gemini: hasCredentialKey(["GEMINI_API_KEY"]),
-    minimax: hasCredentialKey(["MINIMAX_API_KEY"]),
-    zai: hasCredentialKey(["ZAI_API_KEY"]),
-    zaiCoding: hasCredentialKey(["ZAI_CODING_API_KEY", "ZHIPU_API_KEY"]),
-    groq: hasCredentialKey(["GROQ_API_KEY"]),
-    ollama: getEnv("OLLAMA_BASE_URL").len > 0,
-    opencodeGo: hasCredentialKey(["OPENCODE_API_KEY", "OPENCODE_GO_API_KEY"]),
-    zen: hasCredentialKey(["OPENCODE_API_KEY", "ZEN_API_KEY"]),
+    openrouter: providerConfigured("openrouter"),
+    anthropic: providerConfigured("anthropic"),
+    openai: providerConfigured("openai"),
+    deepseek: providerConfigured("deepseek"),
+    zaiAnthropic: providerConfigured("zai-anthropic"),
+    gemini: providerConfigured("gemini"),
+    minimax: providerConfigured("minimax"),
+    zai: providerConfigured("zai"),
+    zaiCoding: providerConfigured("zai-coding"),
+    groq: providerConfigured("groq"),
+    ollama: providerConfigured("ollama"),
+    opencodeGo: providerConfigured("opencode-go"),
+    zen: providerConfigured("zen"),
   )
 
 proc toProviderSpec*(selection: ProviderSelection): ProviderSpec =

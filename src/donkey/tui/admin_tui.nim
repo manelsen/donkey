@@ -11,6 +11,7 @@ import illwill as ill
 import terminal as term
 import ../core/types
 import ../config/types
+import ../domain/providers/descriptors
 import ../adapters/memory/md_file
 import ../ports/provider
 
@@ -329,6 +330,11 @@ proc loadChannelItems*(st: var AdminState) =
       AdminItem(name: "cli", description: "Command-line interface", enabled: true, status: "active"),
     ]
 
+func tuiKnownProviders*(): seq[string] =
+  ## Single source for the operator-facing provider list: descriptor ids.
+  for descriptor in providerDescriptors():
+    result.add descriptor.id
+
 proc loadProviderItems*(st: var AdminState) =
   ## Load providers from runtime daemon status when available,
   ## otherwise fall back to all known providers.
@@ -342,10 +348,8 @@ proc loadProviderItems*(st: var AdminState) =
         status: "connected"
       ))
   else:
-    const knownProviders = ["anthropic", "zai-anthropic", "openai", "openrouter", "gemini",
-                           "deepseek", "ollama", "minimax", "zhipu"]
     st.items = @[]
-    for p in knownProviders:
+    for p in tuiKnownProviders():
       st.items.add(AdminItem(
         name: p,
         description: "Provider",
@@ -372,8 +376,7 @@ proc loadModelItems*(st: var AdminState) =
             status: catalogSourceLabel(catalog.get().source),
           ))
     # Also fetch from known providers not yet covered
-    const knownProviders = ["anthropic", "zai-anthropic", "openrouter", "gemini", "deepseek", "ollama", "minimax", "zhipu"]
-    for prov in knownProviders:
+    for prov in tuiKnownProviders():
       if prov in seenProviders: continue
       let catalog = st.catalogLoader(prov)
       if catalog.isOk:

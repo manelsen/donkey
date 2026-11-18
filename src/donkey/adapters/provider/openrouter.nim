@@ -9,6 +9,8 @@
 
 import std/[httpclient, json, streams, strutils, tables]
 import ../../domain/message
+import ../../domain/providers/compat
+import ../../domain/providers/openai_pure
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/app_meta
@@ -55,57 +57,48 @@ proc caps*(a: OpenRouterAdapter): ProviderCaps =
     requiresUserFirst: false,
   )
 
-# ── JSON serialisation ────────────────────────────────────────────────────────
+# ── Compat profile ────────────────────────────────────────────────────────────
 
-proc toJson(msg: ChatMessage): JsonNode =
-  ## Serialises a ChatMessage to OpenAI-compatible JSON.
-  if msg.role == "tool":
-    ## Tool result message — must carry tool_call_id.
-    return %* {"role": "tool",
-               "tool_call_id": msg.toolCallId,
-               "content":      msg.text}
-  if msg.toolCalls.len > 0:
-    ## Assistant message with pending tool calls.
-    var calls = newJArray()
-    for tc in msg.toolCalls:
-      calls.add(%* {"id": tc.id, "type": "function",
-                    "function": {"name": tc.name, "arguments": tc.inputJson}})
-    return %* {"role": "assistant", "content": msg.text, "tool_calls": calls}
-  if msg.imageUrl.len > 0:
-    let content = %* [
-      {"type": "text",      "text": msg.text},
-      {"type": "image_url", "image_url": {"url": msg.imageUrl}},
-    ]
-    return %* {"role": msg.role, "content": content}
-  %* {"role": msg.role, "content": msg.text}
+func openRouterCompatProfile*(endpoint = OpenRouterEndpoint;
+                              referer = OpenRouterReferer;
+                              xTitle = OpenRouterTitle): CompatProfile =
+  ## The OpenRouter deviations from the OpenAI transport: the two headers the
+  ## platform requires, the wire quirks and usage reporting while streaming.
+  ## `include_reasoning` comes from the quirk, so there are no reasoningExtras.
+  CompatProfile(
+    id: "openrouter",
+    endpoint: endpoint,
+    extraHeaders: @[("HTTP-Referer", referer), ("X-Title", xTitle)],
+    streamExtras: %* {"stream_options": {"include_usage": true}},
+    supportsImages: true,
+    quirks: OpenAiWireQuirks(
+      toolResultName: false,
+      toolCallsEmptyContent: true,
+      emptyContentKey: true,
+      imageEmptyTextPart: true,
+      imageWithToolCalls: false,
+      toolChoiceAuto: true,
+      omitStreamKey: true,
+      includeReasoningField: true,
+    ),
+  )
+
+func profileFor*(a: OpenRouterAdapter): CompatProfile =
+  ## The profile for this adapter instance: explicit overrides win, an empty
+  ## endpoint falls back to the OpenRouter default. Pure: safe to call from
+  ## any thread (a fresh profile and fresh JsonNodes per call).
+  let endpoint = if a.endpoint.len > 0: a.endpoint else: OpenRouterEndpoint
+  openRouterCompatProfile(endpoint = endpoint, referer = a.referer,
+                          xTitle = a.xTitle)
+
+# ── JSON serialisation ────────────────────────────────────────────────────────
 
 proc buildBody*(a: OpenRouterAdapter; req: CompletionRequest): JsonNode =
   ## Exported for unit testing of JSON serialisation without live HTTP.
-  var messages: seq[JsonNode] = @[]
-  if req.system.len > 0:
-    messages.add(%* {"role": "system", "content": req.system})
-  for m in req.messages:
-    messages.add(m.toJson())
-  result = %* {"model": a.model, "messages": messages}
-  if req.reasoning:
-    result["include_reasoning"] = %true
-  if req.maxTokens > 0:
-    result["max_tokens"] = %req.maxTokens
-  if req.tools.len > 0:
-    var toolsArr = newJArray()
-    for td in req.tools:
-      let schema = try: parseJson(td.schemaJson) except: newJObject()
-      toolsArr.add(%* {"type": "function",
-                        "function": {"name":        td.name,
-                                     "description": td.description,
-                                     "parameters":  schema}})
-    result["tools"]       = toolsArr
-    result["tool_choice"] = %"auto"
+  buildCompatRequestBody(a.profileFor(), a.model, req)
 
 proc buildStreamBody*(a: OpenRouterAdapter; req: CompletionRequest): JsonNode =
-  result = a.buildBody(req)
-  result["stream"] = %true
-  result["stream_options"] = %* {"include_usage": true}
+  buildCompatRequestBody(a.profileFor(), a.model, req, stream = true)
 
 # ── Response parsing ──────────────────────────────────────────────────────────
 
@@ -188,16 +181,17 @@ proc parseOpenRouterSseLine*(line: string): Result[OpenRouterSseChunk, string] =
 
 proc complete*(a: OpenRouterAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
+  let profile = a.profileFor()
   withHttpClient:
-    client.headers = newHttpHeaders({
+    var headers = newHttpHeaders({
       "Content-Type":  "application/json",
       "Authorization": "Bearer " & a.apiKey,
-      "HTTP-Referer":  a.referer,
-      "X-Title":       a.xTitle,
     })
+    for (name, value) in profile.extraHeaders:
+      headers[name] = value
+    client.headers = headers
     let body = $a.buildBody(req)
-    let url  = if a.endpoint.len > 0: a.endpoint else: OpenRouterEndpoint
-    let resp = client.post(url, body = body)
+    let resp = client.post(profile.endpoint, body = body)
     checkApiStatus(resp, "OpenRouter")
     resp.body |> parseJson |> parseOpenRouterResponse
 
@@ -211,16 +205,19 @@ proc makeStreamFn*(a: OpenRouterAdapter): StreamFn =
   result = proc(req: CompletionRequest;
                 onToken: proc(tok: string) {.gcsafe.}
                ): Result[CompletionResponse, string] {.gcsafe.} =
+    ## The profile is rebuilt inside the worker thread: a CompatProfile owns
+    ## JsonNodes, so nothing GC-managed is captured/shared across threads.
+    let profile = adapter.profileFor()
     withHttpClient:
-      client.headers = newHttpHeaders({
+      var headers = newHttpHeaders({
         "Content-Type":  "application/json",
         "Authorization": "Bearer " & adapter.apiKey,
-        "HTTP-Referer":  adapter.referer,
-        "X-Title":       adapter.xTitle,
       })
+      for (name, value) in profile.extraHeaders:
+        headers[name] = value
+      client.headers = headers
       let body = $adapter.buildStreamBody(req)
-      let url  = if adapter.endpoint.len > 0: adapter.endpoint else: OpenRouterEndpoint
-      let resp = client.request(url, httpMethod = HttpPost, body = body)
+      let resp = client.request(profile.endpoint, httpMethod = HttpPost, body = body)
       checkApiStatus(resp, "OpenRouter")
 
       var accumulated = ""

@@ -5,10 +5,11 @@
 
 import std/[os, strutils]
 import ../core/app_meta
+import ../domain/providers/descriptors
 
 # ── templates & constants ──────────────────────────────────────────────────────
 
-const EnvFileTemplate* = """# """ & AppName & """ environment — fill in the values you need.
+const EnvFileHeader* = """# """ & AppName & """ environment — fill in the values you need.
 # Permissions: chmod 600 ~/.config/""" & ConfigDirName & "/" & EnvFileName & """
 
 TELEGRAM_BOT_TOKEN=
@@ -30,18 +31,9 @@ QQ_OFFICIAL_APP_ID=
 QQ_OFFICIAL_CLIENT_SECRET=
 # QQ_OFFICIAL_API_BASE=https://api.sgroup.qq.com
 # QQ_OFFICIAL_TOKEN_BASE=https://bots.qq.com
+"""
 
-ZAI_API_KEY=
-ZAI_CODING_API_KEY=
-ZAI_ANTHROPIC_API_KEY=
-OPENROUTER_API_KEY=
-OPENAI_API_KEY=
-DEEPSEEK_API_KEY=
-ANTHROPIC_API_KEY=
-GEMINI_API_KEY=
-MINIMAX_API_KEY=
-OPENCODE_API_KEY=
-
+const EnvFileTail* = """
 BRAVE_API_KEY=
 # SQLite-first runtime (default):
 # DONKEY_MAGMA_SQLITE_PATH=/path/to/donkey-magma.sqlite
@@ -52,6 +44,49 @@ BRAVE_API_KEY=
 #   if 5432 is busy: DONKEY_PG_PORT=5433 docker compose up -d postgres
 # DONKEY_PG_DSN=host=127.0.0.1 user=postgres password=donkey_pass dbname=donkey port=5432
 """
+
+# Channel and tooling credentials stay curated text; provider keys come from
+# providerDescriptors().
+const ServiceAuxEnvKeys = [
+  "TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN",
+  "WECOM_CORP_ID", "WECOM_CORP_SECRET", "WECOM_AGENT_ID",
+  "WECOM_CALLBACK_TOKEN", "WECHAT_APP_ID", "WECHAT_APP_SECRET",
+  "WECHAT_CALLBACK_TOKEN", "WECHAT_TEMPLATE_ID",
+  "FEISHU_APP_ID", "FEISHU_APP_SECRET",
+  "FEISHU_VERIFICATION_TOKEN",
+  "QQ_ONEBOT_URL", "QQ_ONEBOT_TOKEN",
+  "QQ_OFFICIAL_APP_ID", "QQ_OFFICIAL_CLIENT_SECRET",
+  "QQ_OFFICIAL_API_BASE", "QQ_OFFICIAL_TOKEN_BASE",
+  "BRAVE_API_KEY", "DONKEY_PG_DSN", "DONKEY_SQLITE_VEC_PATH",
+  "DONKEY_SQLITE_VECTOR_PATH",
+]
+
+func serviceEnvKeys*(): seq[string] =
+  ## Env keys `service install` copies from the current environment.
+  for key in ServiceAuxEnvKeys:
+    if key notin result:
+      result.add key
+  for descriptor in providerDescriptors():
+    for envName in descriptor.envNames:
+      if envName notin result:
+        result.add envName
+
+proc buildEnvFileTemplate*(): string =
+  ## Scaffold written to ~/.config/donkey/donkey.env on `service install`.
+  ## One placeholder per provider, derived from the descriptor table.
+  result = EnvFileHeader
+  result.add "\n"
+  var seen: seq[string]
+  for descriptor in providerDescriptors():
+    if descriptor.envNames.len == 0:
+      continue
+    let envName = descriptor.envNames[0]
+    if envName in seen:
+      continue
+    seen.add envName
+    result.add envName & "=\n"
+  result.add "\n"
+  result.add EnvFileTail
 
 const TomlTemplate* = """# """ & AppName & """ configuration
 
@@ -113,26 +148,10 @@ proc ctlServiceInstall*() =
   # Env file — create if missing, then inject any keys found in current env
   let envPath = svcCfgDir() / EnvFileName
   if not fileExists(envPath):
-    writeFile(envPath, EnvFileTemplate)
+    writeFile(envPath, buildEnvFileTemplate())
     discard svcRun("chmod 600 " & envPath)
 
-  const knownKeys = [
-    "TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN",
-    "WECOM_CORP_ID", "WECOM_CORP_SECRET", "WECOM_AGENT_ID",
-    "WECOM_CALLBACK_TOKEN", "WECHAT_APP_ID", "WECHAT_APP_SECRET",
-    "WECHAT_CALLBACK_TOKEN", "WECHAT_TEMPLATE_ID",
-    "FEISHU_APP_ID", "FEISHU_APP_SECRET",
-    "FEISHU_VERIFICATION_TOKEN",
-    "QQ_ONEBOT_URL", "QQ_ONEBOT_TOKEN",
-    "QQ_OFFICIAL_APP_ID", "QQ_OFFICIAL_CLIENT_SECRET",
-    "QQ_OFFICIAL_API_BASE", "QQ_OFFICIAL_TOKEN_BASE",
-    "ZAI_API_KEY", "ZAI_CODING_API_KEY", "ZHIPU_API_KEY",
-    "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
-    "GEMINI_API_KEY", "MINIMAX_API_KEY",
-    "OPENCODE_API_KEY",
-    "BRAVE_API_KEY", "DONKEY_PG_DSN", "DONKEY_SQLITE_VEC_PATH",
-    "DONKEY_SQLITE_VECTOR_PATH",
-  ]
+  let knownKeys = serviceEnvKeys()
   var envContent = readFile(envPath)
   var injected: seq[string]
   for k in knownKeys:

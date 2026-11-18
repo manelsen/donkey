@@ -147,6 +147,57 @@ Transcription uploads the file as multipart (25 MB limit) and returns the
 text. Speech writes the returned bytes to `attachments/tts-*.mp3` and returns
 the path, so a later tool or reply can reference the file.
 
+## Provider Architecture
+
+Providers are split into three layers, each with one owner:
+
+| Layer | Where | Owns |
+|---|---|---|
+| Descriptor | `domain/providers/descriptors.nim` | id, transport, ordered env names, base URL, default model, aliases, aggregator flag |
+| Transport | `domain/providers/openai_pure.nim` + `compat.nim`, `anthropic_pure.nim`, `gemini_pure.nim`, `ollama_pure.nim` | the wire shape and its quirks |
+| Adapter | `adapters/provider/*.nim` | HTTP, headers, streaming, response parsing |
+
+A request flows: descriptor resolves the identity → the adapter builds a
+`CompatProfile` → `buildCompatRequestBody` renders the OpenAI shape (with
+`OpenAiWireQuirks`) → the adapter posts it.
+
+The OpenAI-compatible transport is the default. A provider expresses only its
+deltas, never a copied serializer:
+
+- `payloadExtras` — always merged (MiniMax `reasoning_split`);
+- `reasoningExtras` — merged only when the turn asks for reasoning (Zhipu
+  `thinking`);
+- `streamExtras` — merged only for a streaming request (OpenRouter
+  `stream_options.include_usage`);
+- `extraHeaders` — provider-mandated headers (OpenRouter);
+- `OpenAiWireQuirks` — tool-result `name`, empty content, image/text ordering,
+  image vs tool-call precedence, `tool_choice: auto`, omitting `stream`,
+  `include_reasoning`, and empty-content preservation.
+
+What stays provider-specific, and why:
+
+- **Response parsing** — error envelopes differ (Zhipu, MiniMax, OpenRouter);
+  the parsers remain in their adapters and are tested there.
+- **SSE** — OpenRouter's tool-call deltas and reasoning chunks are richer than
+  the OpenAI stream; its parser stays module-level.
+- **Anthropic, Gemini and Ollama** — separate transports; their pure modules
+  own the wire format.
+
+Operational surfaces (`doctor`, `setup`, the service env template, the TUI and
+the route-cost hints) read the same descriptor table, so a provider is added
+once.
+
+### Adding a compatible provider
+
+1. Add one descriptor row (or reuse an alias).
+2. Add a profile constructor that names only the deltas.
+3. Add the adapter constructor and the response parser if the envelope differs.
+4. Add one conformance row in `tests/domain/providers/t_compat_conformance.nim`
+   and one golden request test.
+
+`buildBody` on the migrated adapters remains a thin test seam over
+`buildCompatRequestBody`; it is not a second serializer.
+
 ## Provider Notes
 
 ### ZAI Coding

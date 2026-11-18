@@ -10,13 +10,16 @@
 import std/[algorithm, strutils]
 import ../../domain/message
 import ./provider_catalog
+import ./provider_defaults
+
+export provider_defaults
 
 const
   AutoProviderLabel* = "auto"
   LongContextChars* = 60_000
-  GroqDefaultModel* = "llama-3.3-70b-versatile"
-  OpenCodeGoDefaultModel* = "opencode/deepseek-4.1-flash"
-  ZenDefaultModel* = "zen/deepseek-4.1-flash"
+  GroqDefaultModel* = DefaultModelGroq
+  OpenCodeGoDefaultModel* = DefaultModelOpenCodeGo
+  ZenDefaultModel* = DefaultModelZen
 
 type
   SmartRoutingPrefs* = object

@@ -12,6 +12,8 @@
 
 import std/[httpclient, json]
 import ../../domain/message
+import ../../domain/providers/compat
+import ../../domain/providers/openai_pure
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/json_helpers
@@ -40,50 +42,37 @@ proc caps*(a: ZhipuAdapter): ProviderCaps =
     requiresUserFirst: false,
   )
 
+# ── Compat profile ────────────────────────────────────────────────────────────
+
+func zhipuCompatProfile*(endpoint = ZhipuEndpoint): CompatProfile =
+  ## Z.AI / GLM expresses only its wire deviations: `thinking` when reasoning
+  ## is requested, native tools, no `name` on tool results, `content: ""` on an
+  ## assistant tool call, and no image envelope once the turn has tool calls.
+  ## An empty endpoint means the default Z.AI coding endpoint, matching the
+  ## adapter's `newZhipuAdapter` default.
+  let resolved = if endpoint.len > 0: endpoint else: ZhipuEndpoint
+  CompatProfile(
+    id:             "zai-coding",
+    endpoint:       resolved,
+    supportsImages: true,
+    quirks: OpenAiWireQuirks(
+      toolResultName:        false,
+      toolCallsEmptyContent: true,
+      emptyContentKey: true,
+      imageEmptyTextPart:    false,
+      imageWithToolCalls:    false,
+      toolChoiceAuto:        true,
+      omitStreamKey:         true,
+      includeReasoningField: false,
+    ),
+    reasoningExtras: %* {"thinking": {"type": "enabled"}},
+  )
+
 # ── JSON serialisation ────────────────────────────────────────────────────────
-
-proc toJson(msg: ChatMessage): JsonNode =
-  if msg.role == "tool":
-    return %* {"role": "tool",
-               "tool_call_id": msg.toolCallId,
-               "content":      msg.text}
-  if msg.toolCalls.len > 0:
-    var calls = newJArray()
-    for tc in msg.toolCalls:
-      calls.add(%* {"id": tc.id, "type": "function",
-                    "function": {"name": tc.name, "arguments": tc.inputJson}})
-    return %* {"role": "assistant", "content": msg.text, "tool_calls": calls}
-  if msg.imageUrl.len > 0:
-    var content = newJArray()
-    if msg.text.len > 0:
-      content.add(%* {"type": "text", "text": msg.text})
-    content.add(%* {"type": "image_url", "image_url": {"url": msg.imageUrl}})
-    return %* {"role": msg.role, "content": content}
-
-  %* {"role": msg.role, "content": msg.text}
 
 proc buildBody*(a: ZhipuAdapter; req: CompletionRequest): JsonNode =
   ## Exported for unit testing of JSON serialisation without live HTTP.
-  var messages: seq[JsonNode] = @[]
-  if req.system.len > 0:
-    messages.add(%* {"role": "system", "content": req.system})
-  for m in req.messages:
-    messages.add(m.toJson())
-  result = %* {"model": a.model, "messages": messages}
-  if req.reasoning:
-    result["thinking"] = %* {"type": "enabled"}
-  if req.maxTokens > 0:
-    result["max_tokens"] = %req.maxTokens
-  if req.tools.len > 0:
-    var toolsArr = newJArray()
-    for td in req.tools:
-      let schema = try: parseJson(td.schemaJson) except: newJObject()
-      toolsArr.add(%* {"type": "function",
-                        "function": {"name":        td.name,
-                                     "description": td.description,
-                                     "parameters":  schema}})
-    result["tools"]       = toolsArr
-    result["tool_choice"] = %"auto"
+  buildCompatRequestBody(zhipuCompatProfile(a.endpoint), a.model, req)
 
 func parseZhipuResponse*(parsed: JsonNode): Result[CompletionResponse, string] =
   let choices = parsed{"choices"}
