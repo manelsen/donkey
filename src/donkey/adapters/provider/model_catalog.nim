@@ -139,6 +139,13 @@ func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
                         label: "nvidia/nemotron-3.5-super-vl-120b-a12b",
                         isFree: false, available: true, hasPricing: true),
     ]
+  of "fireworks", "fireworks-ai", "fw":
+    @[
+      ModelCatalogEntry(providerName: providerName,
+                        modelName: DefaultModelFireworks,
+                        label: DefaultModelFireworks,
+                        isFree: false, available: true, hasPricing: true),
+    ]
   of "alibaba", "dashscope", "alibaba-cloud", "aliyun":
     @[
       ModelCatalogEntry(providerName: providerName,

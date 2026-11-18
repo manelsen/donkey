@@ -141,6 +141,7 @@ func availableProviderNames*(av: ProviderAvailability): seq[string] =
   if av.ollama: result.add("ollama")
   if av.nvidia: result.add("nvidia")
   if av.alibaba: result.add("alibaba")
+  if av.fireworks: result.add("fireworks")
 
 func detectProviderAvailability*(): ProviderAvailability =
   ## One field per provider, all derived from the descriptor env names. The
@@ -161,6 +162,7 @@ func detectProviderAvailability*(): ProviderAvailability =
     zen: providerConfigured("zen"),
     nvidia: providerConfigured("nvidia"),
     alibaba: providerConfigured("alibaba"),
+    fireworks: providerConfigured("fireworks"),
   )
 
 proc toProviderSpec*(selection: ProviderSelection): ProviderSpec =

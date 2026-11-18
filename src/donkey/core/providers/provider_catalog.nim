@@ -697,6 +697,17 @@ proc buildDefaultCatalog*(): ProviderCatalog =
     contextWindow = 0,
   ))
 
+  # ── Fireworks AI ──
+  # Vision and context are unverified, so no `mcImage` and context 0.
+  result.register(makeEntry(
+    DefaultModelFireworks, "fireworks",
+    aliases = @[],
+    capabilities = {mcTools, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 0,
+  ))
+
   # ── Alibaba DashScope ──
   # Vision is not verified, so no `mcImage`.
   result.register(makeEntry(

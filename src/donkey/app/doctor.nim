@@ -167,6 +167,7 @@ const ProviderKeyLabels = [
   ("zai-coding",    "ZAI Coding"),
   ("nvidia",        "NVIDIA NIM"),
   ("alibaba",       "Alibaba DashScope"),
+  ("fireworks",     "Fireworks AI"),
 ]
 
 func providerKeyLabel(id: string): string =
