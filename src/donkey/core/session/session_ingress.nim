@@ -30,11 +30,13 @@ type
     actionKind*:          SessionIngressActionKind
     target*:              SessionIngressTarget
     shouldRecordChannel*: bool
+    cancelsAsk*:          bool ## abandon the open ask before enqueueing
 
 func `$`*(signature: SessionRuntimeSignature): string {.borrow.}
 func `==`*(a, b: SessionRuntimeSignature): bool {.borrow.}
 
-func decideSessionIngress*(request: SessionIngressRequest): SessionIngressDecision =
+func decideSessionIngress*(request: SessionIngressRequest;
+                           answerableAsk = true): SessionIngressDecision =
   result.shouldRecordChannel = true
   if not request.state.hasSession:
     result.actionKind = siaStartNewSession
@@ -47,9 +49,16 @@ func decideSessionIngress*(request: SessionIngressRequest): SessionIngressDecisi
     return
 
   result.actionKind = siaReuseSessionRuntime
-  result.target =
-    if request.state.awaitingAsk: sitAskInbox
-    else: sitActorInbox
+  if not request.state.awaitingAsk:
+    result.target = sitActorInbox
+  elif answerableAsk:
+    result.target = sitAskInbox
+  else:
+    ## A request that cannot answer (an API turn carries no conversational
+    ## text for the question) must not be delivered as the answer. Cancelling
+    ## the ask lets its waiting turn end instead of swallowing this one.
+    result.target = sitActorInbox
+    result.cancelsAsk = true
 
 func startsSessionRuntime*(decision: SessionIngressDecision): bool =
   decision.actionKind in {siaStartNewSession, siaRebuildSessionRuntime}

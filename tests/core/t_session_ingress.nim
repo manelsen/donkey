@@ -34,6 +34,38 @@ suite "session ingress decisions":
     check decision.target == sitAskInbox
     check not decision.startsSessionRuntime
 
+  test "an api request cancels the pending ask instead of answering it":
+    ## A7: an orphaned ask reservation expires, then an API request from the
+    ## same user arrives. Answering it with the previous turn's text hands the
+    ## wrong correlation to both turns: the old one replies with a stale token
+    ## and the new one never runs.
+    let decision = decideSessionIngress(SessionIngressRequest(
+      userId: UserId("u-api-ask"),
+      state: SessionIngressState(
+        hasSession: true,
+        awaitingAsk: true,
+        currentSignature: SessionRuntimeSignature("sig-a"),
+      ),
+      nextSignature: SessionRuntimeSignature("sig-a"),
+      ),
+      answerableAsk = false)
+    check decision.actionKind == siaReuseSessionRuntime
+    check decision.target == sitActorInbox
+    check decision.cancelsAsk
+
+  test "a channel reply to an open ask keeps answering it":
+    let decision = decideSessionIngress(SessionIngressRequest(
+      userId: UserId("u-chan-ask"),
+      state: SessionIngressState(
+        hasSession: true,
+        awaitingAsk: true,
+        currentSignature: SessionRuntimeSignature("sig-a"),
+      ),
+      nextSignature: SessionRuntimeSignature("sig-a"),
+      ))
+    check decision.target == sitAskInbox
+    check not decision.cancelsAsk
+
   test "signature drift rebuilds runtime and clears ask redirect":
     let decision = decideSessionIngress(SessionIngressRequest(
       userId: UserId("u-rebuild"),
