@@ -106,36 +106,36 @@ de verdade. `git status --short` sujo → **pare**.
 - [ ] `ports/channel_capability.nim`: `LineCapability` (`send: true`, demais `false`) e entrada no `channelCapabilityRegistry`.
 - [ ] `app/outbound_runtime.nim`: todos os `case` exaustivos ganham `ckLine` — `channelTag` (`"ln"`), `channelPortFor`, reação e log de edit/send; `outboundPortForChannel` em `src/donkey.nim:1360-1372` ganha `of ckLine: ports.line` (US-000 só toca esse branch).
 - [ ] `adapters/state/pairing_store.nim`: `parseChannelName` aceita `"line"`; teste novo `tests/adapters/state/t_pairing_line.nim` prova round-trip save/load.
-- [ ] `tests/ports/t_channel_capability.nim` e `t_outbound_builder_caps.nim` passam **sem edição** (ambos exigem `send` para todo `ChannelKind`).
+- [ ] `tests/ports/t_channel_capability.nim` e `t_outbound_builder_caps.nim` passam **sem edição** (ambos exigem `send` para todo `ChannelKind`); novo `tests/ports/t_line_capability.nim` prova `send = true` e `sendReturnId`/`editMessage`/`sendKeyboard`/`editKeyboard`/`setMessageReaction`/`downloadFile`/`sendMedia` falsos.
 
 ### US-001: Parsing puro do webhook LINE
 
 **Descrição:** payload vira resultado puro, com fonte e conteúdo separados.
 
 **Critérios de aceite:**
-- [ ] Criar `src/donkey/domain/channels/line_pure.nim` com `LineSourceKind` (`lskUser`, `lskGroup`, `lskRoom`, `lskUnknown`), `LineContentKind` (`lckText`, `lckNonText`, `lckUnknown`), `LineMode` (`lmActive`, `lmStandby`) e `LineParseResult` (`senderId`, `chatId`, `sourceKind`, `contentKind`, `mode`, `isRedelivery`, `text`, `messageId`, `eventId`, `replyToken`); `parseWebhook*(payload): seq[LineParseResult]` e `toInbound*(r, userId): InboundMessage`.
-- [ ] Precedência: `sourceKind` e `contentKind` são ortogonais; em grupo/room `senderId = source.userId` e `chatId = groupId/roomId`; em DM ambos são `userId`; `message.type != "text"` → `lckNonText`; `type != "message"` → `lckUnknown`; `mode == "standby"` é preservado; `deliveryContext.isRedelivery` é lido só para telemetria (nunca decide descarte); `events` vazio, não-array ou payload inválido → `@[]` (Verify do console).
+- [ ] Criar `src/donkey/domain/channels/line_pure.nim` com `LineSourceKind` (`lskUser`, `lskGroup`, `lskRoom`, `lskUnknown`), `LineContentKind` (`lckText`, `lckNonText`, `lckUnknown`), `LineMode` (`lmActive`, `lmStandby`) e `LineParseResult` (`senderId`, `chatId`, `sourceKind`, `contentKind`, `mode`, `isRedelivery`, `text`, `messageId`, `eventId`, `replyToken`); `parseWebhook*(payload: JsonNode): seq[LineParseResult]`; `toInbound*(r, userId): InboundMessage` preenche `channel = ckLine`, `rawChannelId = senderId`, `channelId = chatId`, `chatId = chatId`, `isGroup = sourceKind != lskUser`.
+- [ ] Precedência: `sourceKind` e `contentKind` são ortogonais; em grupo/room `senderId = source.userId` e `chatId = groupId/roomId`; em DM ambos são `userId`; `message.type != "text"` → `lckNonText`; `type != "message"` → `lckUnknown`; `mode == "standby"` é preservado; `deliveryContext.isRedelivery` é lido só para telemetria (nunca decide descarte); payload que não é `JObject` ou sem `events` array → `@[]` (JSON malformado vira 400 em US-005 e nunca chega ao parser); `events` vazio → `@[]` (Verify do console).
 - [ ] Teste em `tests/domain/channels/t_line_pure.nim` com `tests/fixtures/line/webhook_text.json`, `webhook_group_text.json`, `webhook_standby.json`, `webhook_non_message.json` e `webhook_empty_events.json`; grupo+sticker prova `lskGroup`+`lckNonText`.
 
-### US-002: Política de replay (puro)
+### US-002: Política inbound pura (replay, gates e roteamento)
 
-**Descrição:** decisão de duplicata pura e mutação explícita, sem tocar no parser.
+**Descrição:** decisões puras que o runtime consome; assinatura não mora aqui.
 
 **Critérios de aceite:**
-- [ ] Criar `src/donkey/domain/channels/line_policy.nim` (não editar `line_pure.nim`) com `LineReplayCache`, `replayDecision*(cache; eventId; nowSec): bool` (`true` aceita) e `recordEvent*(cache: var LineReplayCache; eventId; nowSec)` (`proc` mutador).
-- [ ] TTL `LineReplayTtlSec = 86400` (margem sobre o retry, §1) e limite `LineReplayMaxEvents = 1000` (bound do Hermes); evicção da entrada mais antiga; `eventId.len == 0` nunca é duplicata e nunca entra no cache.
-- [ ] Nenhum `epochTime` no módulo: `nowSec` entra por parâmetro.
-- [ ] Teste em `tests/domain/channels/t_line_policy.nim`: decisão pura sem mutação, aceite/duplicata, TTL 24 h, evicção no limite, id vazio.
+- [ ] Criar `src/donkey/domain/channels/line_policy.nim` (não editar `line_pure.nim`) com `LineReplayCache`, `replayDecision*(cache; eventId; nowSec): bool`, `recordEvent*(cache: var LineReplayCache; eventId; nowSec)` (`proc` mutador) e `replayCacheLen*`; `LinePolicy` (`allowedGroups`, `allowedUsers`), `LineEventDecision`, `decideLineEvent*`, `lineGroupAllowed*` (**default-deny**: lista vazia nega grupo/room) e `lineUserAllowed*`; `LineRouting`/`lineRouting*` (`identityId`, `replyTarget`) e a constante `LineSignatureHeader*`.
+- [ ] **Sem MAC neste arquivo:** não definir `verifyLineSignature`, `lineSignatureFor` nem `constantTimeEquals`, e não importar `hmac`/`base64`; a única verificação é `decideIngress` em US-003. Se a implementação atual tiver esses símbolos, esta história os remove.
+- [ ] Precedência de `decideLineEvent`: `standby` > conteúdo desconhecido/não-texto > source inválido > grupo/room não permitido > usuário não permitido > aceite; matching exato (nada de prefixo); `eventId` vazio nunca é duplicata e nunca entra no cache; TTL `86400` e bound `1000`, evicção da mais antiga.
+- [ ] Teste em `tests/domain/channels/t_line_policy.nim`: decisão pura sem mutação, aceite/duplicata, TTL 24 h, evicção no limite, **allowlist exata** (`C1` vs `C1x`, `U1` vs `U10`), **dois gates falhando** (grupo e usuário) → `ledDropGroupNotAllowed`, **clock rollback** (registro no futuro continua duplicata), **duplicata no limite de evicção** e `eventId` vazio. Assinatura/KAT pertencem a US-003, não a este arquivo.
 
 ### US-003: Ingress webhook compartilhado + migração do DingTalk
 
-**Descrição:** um verificador só, sem ciclo de import e sem copiar HMAC.
+**Descrição:** um MAC, um verificador, sem ciclo de import.
 
 **Critérios de aceite:**
-- [ ] Criar `src/donkey/adapters/webhook/webhook_ingress.nim` movendo `WebhookRequest`, `safeEquals`, `hmacSha256Hex/Base64`, `header` e `hasQuery` para lá, com `export`; `webhook_receiver.nim` importa e re-exporta. `rg "webhook_receiver" src/donkey/adapters/webhook/webhook_ingress.nim` vazio (sem ciclo).
+- [ ] Criar `src/donkey/core/security/webhook_auth.nim` (puro) com **as únicas definições** de `safeEquals*`, `hmacSha256Hex*` e `hmacSha256Base64*`; `src/donkey/adapters/webhook/webhook_ingress.nim` importa e re-exporta esse módulo, e move `WebhookRequest`, `header` e `hasQuery` para si; `webhook_receiver.nim` importa e re-exporta `webhook_ingress`. `rg "webhook_receiver" .../webhook_ingress.nim` vazio (sem ciclo) e `rg -n "func safeEquals|func hmacSha256" src` só acha o módulo core.
 - [ ] `WebhookAuthSpec` com `scheme` (só `wasHmacSha256Base64`), `signedPayload` (`wspBody` \| `wspTimestampNewlineSecret`), `secret`, `signatureHeader`, `timestampHeader`, `replayWindowSec`, `timestampScale`; `decideIngress*(spec, req): WebhookIngressOutcome` (`wioAccepted`, `wioForbidden`, `wioMethodNotAllowed`, `wioNotConfigured`).
-- [ ] `handleDingTalk` compõe `decideIngress(signedPayload = wspTimestampNewlineSecret)` + `parsePayload` + `pushEvent`; janela ±3.600.000 ms e respostas 403/400/405/404 idênticas; `t_webhook_receiver.nim` passa **sem edição**.
-- [ ] KAT fixo em `tests/adapters/webhook/t_webhook_ingress.nim`: corpo `{"events":[]}` + segredo `test-channel-secret` → `sKRrt+MTE71nWWZPaYrvYSdH9JGlgckmBidZxDuPgPc=`; segredo vazio → `wioNotConfigured`; timestamp fora da janela antes do MAC; método ≠ POST.
+- [ ] `handleDingTalk` compõe `decideIngress(signedPayload = wspTimestampNewlineSecret)` + `parsePayload` + `pushEvent`; o MAC usa `hmacSha256Base64` do módulo core; janela ±3.600.000 ms e respostas 403/400/405/404 idênticas; `t_webhook_receiver.nim` passa **sem edição**.
+- [ ] KAT e suíte de assinatura em `tests/adapters/webhook/t_webhook_ingress.nim`: corpo `{"events":[]}` + segredo `test-channel-secret` → `sKRrt+MTE71nWWZPaYrvYSdH9JGlgckmBidZxDuPgPc=`; segredo vazio → `wioNotConfigured`; timestamp fora da janela antes do MAC; método ≠ POST.
 
 ### US-004: Adapter LINE (outbound + fila)
 
@@ -153,20 +153,21 @@ de verdade. `git status --short` sujo → **pare**.
 
 **Critérios de aceite:**
 - [ ] `WebhookConfig` ganha `lineChannelSecret`; `LinePath = "/webhook/line"`; `anyRouteConfigured` inclui LINE; `handleWebhookRequest` despacha a rota.
-- [ ] `handleLine` usa `decideIngress(wasHmacSha256Base64, wspBody, "x-line-signature", sem timestamp)`; sucesso faz `parseWebhook` → `pushEvent` → 200 vazio; `{"events":[]}` → 200 sem enfileirar.
+- [ ] `handleLine` usa `decideIngress(wasHmacSha256Base64, wspBody, signatureHeader = LineSignatureHeader, sem timestamp)` (constante de `line_policy`, sem literal `"x-line-signature"`); sucesso faz `parseWebhook(payload)` → `pushEvent` → `plainResp(200, "ok")`; `{"events":[]}` também responde `200 "ok"` sem enfileirar.
 - [ ] Segredo vazio → 404; assinatura inválida → 403 (Hermes 401; a LINE só exige não-2xx); JSON inválido → 400; método ≠ POST → 405.
 - [ ] Teste em `tests/adapters/webhook/t_line_webhook.nim` com assinatura real e `webhook_text.json` + `webhook_empty_events.json`.
-- [ ] `src/donkey.nim` (`DaemonEnv.lineAllowedGroups`, `loadDaemonEnv`, `startOptionalWebhookReceiver`) lê `LINE_CHANNEL_SECRET`, `LINE_CHANNEL_ACCESS_TOKEN` (`plugin.yaml:18-28`) e `LINE_ALLOWED_GROUPS` (`plugin.yaml:46-49`; lista vazia = negar grupos); segredo só é montado quando o token existe.
+- [ ] `src/donkey.nim` (`DaemonEnv.lineAllowedGroups`/`lineAllowedUsers`, `loadDaemonEnv`, `startOptionalWebhookReceiver`) lê `LINE_CHANNEL_SECRET`, `LINE_CHANNEL_ACCESS_TOKEN` (`plugin.yaml:18-28`), `LINE_ALLOWED_GROUPS` (`plugin.yaml:46-49`; vazio = nenhum grupo, `decideLineEvent`) e `LINE_ALLOWED_USERS` (`plugin.yaml:42-45`; vazio = todos); segredo só é montado quando o token existe.
 
 ### US-006: Runtime inbound, gate por canal e wiring
 
 **Descrição:** DM/grupo decididos antes de sessão, e o canal realmente ligado no daemon.
 
 **Critérios de aceite:**
-- [ ] Criar `src/donkey/adapters/channel/line_runtime.nim` com `drainLineEvents*(..., nowSec: int64)`: descarta `lmStandby` e `lckNonText`; dedupe (`replayDecision`/`recordEvent`); grupo/room passam por `groupChatAllowed(GroupGate(allowedChats: LINE_ALLOWED_GROUPS), chatId)` — **vazio nega todo grupo**; só depois `authorizeInbound(..., isGroup = false)` com `rawId = senderId` e `channelId = chatId`.
+- [ ] Criar `src/donkey/adapters/channel/line_runtime.nim` com `drainLineEvents*(..., nowSec: int64)` consumindo a política de US-002: `decideLineEvent(LinePolicy(allowedGroups: env.lineAllowedGroups, allowedUsers: env.lineAllowedUsers), event)`; só `ledAccept` segue; `lineRouting(event)` fornece `identityId` (para `authorizeInbound(sm, gate, ckLine, routing.identityId, text, isGroup = false)`) e `replyTarget` (registrado como `chatId` em `sm.recordChannel`); `toInbound(event, userId)` monta a mensagem. Nenhuma reimplementação local de standby/conteúdo/grupo/usuário.
+- [ ] Dedupe com `replayDecision(runtime.lineReplay, event.eventId, nowSec)` e `recordEvent(runtime.lineReplay, ...)` no aceite; `LineReplayCache` é value type cujo `recordEvent` reconstrói `entries` — US-006 mantém **um único `var lineReplay`** em `DaemonRuntime` e nunca copia por valor (cópia faz o dedupe virar no-op); `replayCacheLen` no log de debug.
 - [ ] Intercepta **apenas** `/continue` (reuso de `lcaContinueLink`); qualquer outro texto cai em `handleSessionFallback`; evento negado é consumido e logado.
-- [ ] Wiring completo: `app/gateway_drainer.nim` (campo `drainLine`, param em `initGatewayDrainer`, proc `drainLineGateway`, chamada em `drainGatewayEvents`); `DaemonAdapters.ln` + `initDaemonAdapters`; `buildOutboundPorts` + `buildRuntimeOutboundPorts`; closure de drain em `src/donkey.nim`; `LineReplayCache` vive em `DaemonRuntime`; `sessionReplyTo` devolve `chatId` para `ckLine`.
-- [ ] Teste em `tests/adapters/channel/t_line_runtime.nim`: grupo com lista vazia não cria sessão/identidade; lista com `C1` aceita; dois speakers do mesmo grupo compartilham identidade; duplicata não gera turno; `/continue` é local e `/help` chega ao fallback; `t_dm_gate_runtimes.nim` passa sem edição.
+- [ ] Wiring completo: `app/gateway_drainer.nim` (campo `drainLine`, param em `initGatewayDrainer`, proc `drainLineGateway`, chamada em `drainGatewayEvents`); `DaemonAdapters.ln` + `initDaemonAdapters`; `buildOutboundPorts` + `buildRuntimeOutboundPorts`; closure de drain em `src/donkey.nim`; `LineReplayCache` no `DaemonRuntime`; `sessionReplyTo` devolve `chatId` para `ckLine`.
+- [ ] Teste em `tests/adapters/channel/t_line_runtime.nim`: lista de grupos vazia nega; `C1` aceita; `C1x` nega; dois speakers do mesmo grupo recebem **identidades distintas** e ambos respondem em `chatId`; `lineRouting` e `toInbound` concordam; duplicata não gera turno; `/continue` é local e `/help` chega ao fallback; `t_dm_gate_runtimes.nim` passa sem edição.
 
 ### US-007: Docs, rollout e prova de não-duplicação
 
@@ -174,13 +175,13 @@ de verdade. `git status --short` sujo → **pare**.
 
 **Critérios de aceite:**
 - [ ] `docs/topics/channels.md` ganha linha e seção LINE: env vars, URL pública HTTPS, passos no console (webhook + "Verify"), toggle de redelivery, `mode` standby, limites e como desabilitar.
-- [ ] `rg -n "hmacSha256Base64" src/donkey/adapters/webhook/` só encontra `webhook_ingress.nim` para os canais migrados; `rg "pushEvent\\(payload\\)"` mostra LINE e DingTalk no mesmo caminho.
+- [ ] `rg -n "func safeEquals|func hmacSha256|proc hmacSha256" src` só encontra `core/security/webhook_auth.nim`; `rg -n "hmac|base64" src/donkey/domain/channels/line_policy.nim` e `rg -n "x-line-signature" src/donkey/adapters` vazios; `rg "pushEvent\\(payload\\)"` mostra LINE e DingTalk no mesmo caminho de `webhook_ingress`.
 - [ ] Commit registra que o placar de Canais não muda (breadth +1, sem recontagem).
 
 ## 7. Requisitos funcionais
 
 - **FR-1:** Corpo bruto é a única entrada de assinatura; segredo só é desembrulhado no adapter e o domínio recebe strings/`Result`.
-- **FR-2:** `line_pure.nim` e `line_policy.nim` não importam `http`, `chronos`, `app/` nem `adapters/`; o ingress não importa o receiver, e `WebhookRequest`/helpers têm um único dono (`webhook_ingress`).
+- **FR-2:** `line_pure.nim` e `line_policy.nim` não importam `http`, `chronos`, `app/` nem `adapters/`; o ingress não importa o receiver; `WebhookRequest`/`header` têm um único dono (`webhook_ingress`) e `safeEquals`/`hmacSha256*` têm um único dono (`core/security/webhook_auth`).
 - **FR-3:** Todo erro de envio LINE é `Result.err` com status e corpo truncado.
 - **FR-4:** Gate de grupo e dedupe rodam antes de `handleSessionFallback`, mint e pairing; standby nunca responde.
 - **FR-5:** O `to` do push é sempre `U…`/`C…`/`R…`; prefixos internos nunca vazam para a API.
@@ -192,13 +193,13 @@ de verdade. `git status --short` sujo → **pare**.
 
 ## 9. Considerações técnicas
 
-- **Segurança:** não há timestamp assinado (só `X-Line-Signature`); a defesa é assinatura + dedupe de `webhookEventId` com TTL de 24 h e bound 1000. `isRedelivery` é telemetria, não defesa: um corpo capturado reenvia com o mesmo flag. MAC e tokens usam `safeEquals` de `webhook_ingress` (tempo constante).
-- Grupos são **default-deny** por `LINE_ALLOWED_GROUPS`, independente do `GroupGate` do Telegram; identidade é o falante (`senderId`), e o destino de saída é `chatId` via `replyTo`.
+- **Segurança:** não há timestamp assinado (só `X-Line-Signature`, via `LineSignatureHeader`); a defesa é assinatura + dedupe de `webhookEventId` com TTL de 24 h e bound 1000. `isRedelivery` é telemetria, não defesa: um corpo capturado reenvia com o mesmo flag. MAC e comparação existem **só** em `core/security/webhook_auth` (`hmacSha256*`/`safeEquals`), re-exportados por `webhook_ingress`; `line_policy` não define MAC.
+- Grupos são **default-deny** por `LINE_ALLOWED_GROUPS`, independente do `GroupGate` do Telegram; cada falante tem identidade própria (`senderId`), e o destino de saída é `chatId` via `replyTo`.
 - Fila por módulo segue Feishu/DingTalk; `openQueue` uma vez no startup. `ckLine` é aditivo: `parseChannelName`, capability e `case` exaustivos são o checklist de compilação; toda função pura nova é `func`, mutação de cache é `proc` e adapters usam `try/except` só na borda.
 
 ## 10. Métricas de sucesso
 
-- Adicionar LINE = 1 entrada de enum/capability + 1 parser + 1 política + 1 adapter + wiring; nenhuma cópia de HMAC/janela.
+- Adicionar LINE = 1 entrada de enum/capability + 1 parser + 1 política + 1 adapter + wiring; **1 definição** de `safeEquals`/`hmacSha256*` (core) e 0 cópias em adapters/domain; `line_policy` sem `hmac`/`base64`.
 - `t_webhook_receiver.nim`, `t_channel_capability.nim` e `t_outbound_builder_caps.nim` verdes **sem edição**; suíte total verde (baseline 242+), sem edição de testes.
 - `check_boundaries.sh` exit 0; zero import de `adapters/` em `domain/`; 0 `raise` novo fora de `adapters/`.
 
