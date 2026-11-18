@@ -27,6 +27,7 @@ type
     id*: string
     lastRunAtMs*: int64
     createdAtMs*: int64
+    lastFireAtMs*: int64   ## when the schedule last actually fired (0 = never)
 
   ScheduleStorePort* = object
     ## Persistence boundary. Implementations live in the state adapter (or an
@@ -109,10 +110,9 @@ proc tickSchedule*(
     # on the recovery tick. A later tick can resume normally.
     recovered = true
     state = initialWatermark(spec)
-    let saved = store.save(state)
-    if saved.isErr:
-      return err("cannot persist watermark for schedule '" & id & "': " &
-        saved.error)
+    ## Do not write: the row is gone, which means the schedule was removed
+    ## between the tick's snapshot and this load. Recreating it would resurrect
+    ## a phantom, spec-less row in `ctl schedule list`.
     return ok(ScheduleTickResult(
       scheduleId: id,
       firedAtMs: none(int64),
@@ -144,6 +144,7 @@ proc tickSchedule*(
     id: id,
     lastRunAtMs: decision.watermarkMs,
     createdAtMs: state.createdAtMs,
+    lastFireAtMs: state.lastFireAtMs,
   )
   let saved = store.save(next)
   if saved.isErr:
@@ -158,4 +159,15 @@ proc tickSchedule*(
   let enqueued = enqueue(spec, instant)
   if enqueued.isErr:
     tick.enqueueError = enqueued.error
+    return ok(tick)
+  ## Record the firing only after the task reached the inbox: `last_run` in
+  ## `ctl schedule list/show` reads this, and it must not claim a run that was
+  ## dropped. The watermark is already persisted, so a crash here loses the
+  ## display value, not the at-most-once guarantee.
+  discard store.save(ScheduleWatermark(
+    id: id,
+    lastRunAtMs: decision.watermarkMs,
+    createdAtMs: state.createdAtMs,
+    lastFireAtMs: instant,
+  ))
   ok(tick)

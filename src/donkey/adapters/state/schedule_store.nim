@@ -383,12 +383,13 @@ proc newScheduleStoreRef*(stateDir: string): ScheduleStore =
   ScheduleStore(stateDir: stateDir, path: stateDir / ScheduleFileName)
 
 func toWatermark*(record: ScheduleRecord): ScheduleWatermark =
-  ## Projection used by `ScheduleStorePort`: the runtime only sees these
-  ## three fields.
+  ## Projection used by `ScheduleStorePort`: the runtime sees the watermark
+  ## and the last fire instant.
   ScheduleWatermark(
     id: record.spec.id,
     lastRunAtMs: record.lastRunAtMs,
     createdAtMs: record.spec.createdAtMs,
+    lastFireAtMs: record.lastFireAtMs,
   )
 
 proc loadRecord*(store: ScheduleStore; scheduleId: string
@@ -503,6 +504,8 @@ proc save*(store: ScheduleStore; state: ScheduleWatermark
     else: ScheduleRecord(spec: ScheduleSpec(id: state.id))
   record.spec.id = state.id
   record.lastRunAtMs = state.lastRunAtMs
+  if state.lastFireAtMs > 0:
+    record.lastFireAtMs = state.lastFireAtMs
   if record.spec.createdAtMs == 0:
     record.spec.createdAtMs = state.createdAtMs
   record.loadWarning = ""

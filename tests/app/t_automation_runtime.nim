@@ -133,6 +133,9 @@ suite "automation runtime — tick state machine":
     check third.isOk
     check third.get().firedAtMs == some(createdAt + MinuteMs)
     check rec.instants == @[createdAt + MinuteMs]
+    ## `ctl schedule list/show` reads `last_run` from the fire instant, not the
+    ## watermark; without this write it always said "never".
+    check store.stored("sched-1").get().lastFireAtMs == createdAt + MinuteMs
 
   test "a restart resumes from the persisted watermark without replaying a 30-day backlog":
     let createdAt = 0'i64
@@ -366,14 +369,15 @@ suite "automation runtime — persistence boundary":
     check rec.instants.len == 0
     check store.saveCount == 0
 
-  test "a missing record is reinitialised without firing on that tick":
+  test "a missing record is not resurrected, and nothing fires":
     let createdAt = at(12, 0)
     let spec = makeSpec("* * * * *", createdAt = createdAt)
     let store = newFakeStore()
     let rec = Recorder()
 
-    # Missing record: recover the watermark from createdAt, but never fire the
-    # first observation (the store loss could hide a consumed occurrence).
+    ## A row that is absent means the schedule was removed between the tick's
+    ## snapshot and this load. The tick reports the recovery and writes
+    ## nothing: recreating the row produced a phantom, spec-less schedule.
     let recovered = tickSchedule(
       store.makePort, spec, createdAt + MinuteMs, rec.makeEnqueue
     )
@@ -382,15 +386,16 @@ suite "automation runtime — persistence boundary":
     check recovered.get().firedAtMs.isNone
     check recovered.get().watermarkMs == createdAt
     check rec.instants.len == 0
-    check store.stored("sched-1").get().lastRunAtMs == createdAt
+    check store.stored("sched-1").isNone
 
-    # The next tick is a normal tick and may fire the one due occurrence.
+    ## Still absent: it does not fire later either.
     let next = tickSchedule(
       store.makePort, spec, createdAt + 2 * MinuteMs, rec.makeEnqueue
     )
     check next.isOk
-    check next.get().firedAtMs == some(createdAt + 2 * MinuteMs)
-    check rec.instants == @[createdAt + 2 * MinuteMs]
+    check next.get().recovered
+    check next.get().firedAtMs.isNone
+    check rec.instants.len == 0
 
   test "a failed watermark save does not enqueue":
     let spec = makeSpec("* * * * *")

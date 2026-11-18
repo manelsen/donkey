@@ -42,8 +42,10 @@ proc cleanup(dir: string) =
   except CatchableError:
     discard
 
-proc watermark(id: string; lastRunAtMs, createdAtMs: int64): ScheduleWatermark =
-  ScheduleWatermark(id: id, lastRunAtMs: lastRunAtMs, createdAtMs: createdAtMs)
+proc watermark(id: string; lastRunAtMs, createdAtMs: int64;
+               lastFireAtMs = 0'i64): ScheduleWatermark =
+  ScheduleWatermark(id: id, lastRunAtMs: lastRunAtMs, createdAtMs: createdAtMs,
+                    lastFireAtMs: lastFireAtMs)
 
 proc fullRecord(
   id = "daily";
@@ -335,7 +337,8 @@ suite "schedule record store (spec + watermark)":
 
     ## The runtime port still reads the watermark out of the full record.
     check store.load("daily").get().get() ==
-      watermark("daily", 1_700_000_000_123'i64, 1_600_000_000_000'i64)
+      watermark("daily", 1_700_000_000_123'i64, 1_600_000_000_000'i64,
+                lastFireAtMs = 1_700_000_000_000'i64)
 
   test "upsert then edit the payload: watermark and createdAtMs preserved":
     let dir = freshDir("record-edit")
