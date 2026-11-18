@@ -10,12 +10,16 @@
 ##   - temperature range is (0.0, 1.0] (not 0.0-2.0 like OpenAI)
 ##   - Streaming supported via standard SSE
 ##   - Tool calling supported (M2.1+)
+##
+## The wire format itself lives in the shared compat transport; this adapter
+## only builds the MiniMax profile (endpoint + `reasoning_split`).
 
 import std/[httpclient, json]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
 import ../http/helpers
+import ../../domain/providers/compat
 import ../../domain/providers/openai_pure
 
 const
@@ -40,59 +44,35 @@ proc caps*(a: MiniMaxAdapter): ProviderCaps =
     requiresUserFirst: false,
   )
 
-# ── JSON serialisation (OpenAI-compatible) ────────────────────────────────────
+# ── Compat profile ────────────────────────────────────────────────────────────
 
-proc toJson(msg: ChatMessage): JsonNode =
-  ## Serialises a ChatMessage to OpenAI-compatible JSON for MiniMax.
-  if msg.role == "tool":
-    return %* {"role": "tool",
-               "tool_call_id": msg.toolCallId,
-               "content":      msg.text}
-  if msg.toolCalls.len > 0:
-    var calls = newJArray()
-    for tc in msg.toolCalls:
-      calls.add(%* {"id": tc.id, "type": "function",
-                    "function": {"name": tc.name, "arguments": tc.inputJson}})
-    return %* {"role": "assistant", "content": msg.text, "tool_calls": calls}
-  if msg.imageUrl.len > 0:
-    var content = newJArray()
-    if msg.text.len > 0:
-      content.add(%* {"type": "text", "text": msg.text})
-    content.add(%* {"type": "image_url", "image_url": {"url": msg.imageUrl}})
-    return %* {"role": msg.role, "content": content}
+func miniMaxCompatProfile*(endpoint = MiniMaxEndpoint): CompatProfile =
+  ## MiniMax speaks plain OpenAI chat/completions. `reasoning_split: true` is
+  ## unconditional: it keeps thinking out of `content` and in the reasoning
+  ## details, as the previous local builder did.
+  CompatProfile(
+    id: "minimax",
+    endpoint: endpoint,
+    payloadExtras: %* {"reasoning_split": true},
+    supportsImages: true,
+    sseKind: cssOpenAi,
+    quirks: OpenAiWireQuirks(
+      toolResultName: false,
+      toolCallsEmptyContent: true,
+      imageEmptyTextPart: false,
+      imageWithToolCalls: false,
+      toolChoiceAuto: false,
+      omitStreamKey: true,
+      includeReasoningField: false,
+    ),
+  )
 
-  %* {"role": msg.role, "content": msg.text}
+# ── Request serialisation (shared OpenAI-compatible transport) ────────────────
 
 proc buildBody*(a: MiniMaxAdapter; req: CompletionRequest): JsonNode =
   ## Exported for unit testing.
-  ## OpenAI-compatible format with reasoning_split for thinking separation.
-  var messages: seq[JsonNode] = @[]
-  if req.system.len > 0:
-    messages.add(%* {"role": "system", "content": req.system})
-  for m in req.messages:
-    messages.add(m.toJson())
-
-  result = %* {
-    "model": a.model,
-    "messages": messages,
-    "reasoning_split": true,
-  }
-
-  if req.maxTokens > 0:
-    result["max_tokens"] = %req.maxTokens
-
-  if req.tools.len > 0:
-    var tools: seq[JsonNode] = @[]
-    for t in req.tools:
-      tools.add(%* {
-        "type": "function",
-        "function": {
-          "name": t.name,
-          "description": t.description,
-          "parameters": parseJson(t.schemaJson),
-        }
-      })
-    result["tools"] = %tools
+  let endpoint = if a.endpoint.len > 0: a.endpoint else: MiniMaxEndpoint
+  buildCompatRequestBody(miniMaxCompatProfile(endpoint), a.model, req)
 
 # ── Response parsing (reuse OpenAI parser) ────────────────────────────────────
 
