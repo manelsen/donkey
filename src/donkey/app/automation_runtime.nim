@@ -137,6 +137,13 @@ proc tickSchedule*(
     missedOccurrenceMs: decision.missedOccurrenceMs,
   )
 
+  ## The schedule may have been removed since the load (`ctl remove` is a
+  ## separate process). Do not save or fire a row that no longer exists: the
+  ## save would recreate a spec-less phantom and queue an obsolete payload.
+  if store.load(id).get(none(ScheduleWatermark)).isNone:
+    tick.recovered = true
+    return ok(tick)
+
   # Upsert on every tick, even when the watermark is unchanged (rollback, two
   # ticks in the same instant). The contract is "persist at the end of each
   # tick"; the adapter may skip an identical write internally.
