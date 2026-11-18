@@ -13,6 +13,7 @@ import ../../domain/providers/profile_nvidia
 import ../../domain/providers/profile_alibaba
 import ../../domain/providers/profile_fireworks
 import ../../core/pipeops
+import ../../ports/http
 import ../../ports/provider
 import ../../core/providers/smart_routing
 import zhipu
@@ -111,7 +112,12 @@ proc alibabaProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
 proc fireworksProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
   fireworksCompatProfileAt(providerEndpointFor("fireworks"))
 
-proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
+proc buildProviderBundle*(spec: ProviderSpec; http: HttpRuntimePort
+                         ): ProviderBundle {.gcsafe.} =
+  ## `http` is forwarded only to the compat branches (NVIDIA, Alibaba,
+  ## Fireworks). An empty port means production: those branches keep
+  ## `newHttpClient`, while a test injects a fake port and observes the request
+  ## the bundle actually sends instead of reading the builder source.
   let descriptor = descriptorOr(spec.providerName)
   let canonicalId =
     if providerDescriptor(spec.providerName).isSome: descriptor.id
@@ -237,6 +243,7 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
               else: providerDefaultModelFor("nvidia"),
       providerName = "NVIDIA",
       profileFn = nvidiaProfileFromEnv,
+      http = http,
     )
     ProviderBundle(
       completeFn: makeFn(adapter),
@@ -252,6 +259,7 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
               else: providerDefaultModelFor("alibaba"),
       providerName = "Alibaba",
       profileFn = alibabaProfileFromEnv,
+      http = http,
     )
     ProviderBundle(
       completeFn: makeFn(adapter),
@@ -267,6 +275,7 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
               else: providerDefaultModelFor("fireworks"),
       providerName = "Fireworks",
       profileFn = fireworksProfileFromEnv,
+      http = http,
     )
     ProviderBundle(
       completeFn: makeFn(adapter),
@@ -276,3 +285,9 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
     ProviderBundle(
       completeFn: makeFn(newZhipuAdapter(spec.apiKey, model = spec.modelName))
     )
+
+proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
+  ## The production entry point. Kept as a real one-argument overload (not a
+  ## default parameter) so the proc still converts to `ProviderRuntimeBuilder`
+  ## where the builder is passed as a value.
+  buildProviderBundle(spec, HttpRuntimePort())

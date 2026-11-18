@@ -4,8 +4,36 @@
 
 import std/[os, strutils, unittest]
 import donkey/adapters/provider/runtime_builder
+import donkey/core/pipeops
+import donkey/domain/message
 import donkey/domain/providers/descriptors
+import donkey/ports/http
 import donkey/ports/provider
+
+type
+  Capture = ref object
+    url:     string
+    body:    string
+    headers: seq[HttpHeader]
+
+proc recordingPort(cap: Capture): HttpRuntimePort =
+  ## Answers every compat request so the factory's choice of branch is
+  ## observable: URL and credential are captured, no socket is opened.
+  HttpRuntimePort(
+    postNoRedirect: proc (url, body: string; headers: seq[HttpHeader] = @[]):
+                     Result[HttpResponse, string] {.gcsafe.} =
+      cap.url = url
+      cap.body = body
+      cap.headers = headers
+      ok(HttpResponse(status: 200,
+                      body: """{"choices":[{"message":{"content":"ok"}}]}""",))
+  )
+
+func headerValue(headers: seq[HttpHeader]; name: string): string =
+  for header in headers:
+    if header.name.toLowerAscii() == name.toLowerAscii():
+      return header.value
+  ""
 
 const EndpointCases = [
   ("openrouter",   "https://openrouter.ai/api/v1/chat/completions"),
@@ -143,3 +171,18 @@ suite "descriptor factory":
     putEnv("NVIDIA_BASE_URL", "https://nim.example/v1/")
     check providerEndpointFor("nvidia") ==
       "https://nim.example/v1/chat/completions"
+
+  test "every compat bundle posts to its own descriptor endpoint":
+    ## The injected port makes the builder's branch choice black-box: a bundle
+    ## wired to another provider's profile posts to that other endpoint.
+    for id in ["nvidia", "alibaba", "fireworks"]:
+      var cap = Capture()
+      let bundle = buildProviderBundle(
+        ProviderSpec(providerName: id, apiKey: "key-" & id),
+        http = recordingPort(cap))
+      let res = bundle.completeFn(CompletionRequest())
+      require res.isOk
+      check cap.url == providerEndpointFor(id)
+      check cap.url == descriptorOr(id).baseUrl
+      check headerValue(cap.headers, "Authorization") == "Bearer key-" & id
+      check cap.body.len > 0

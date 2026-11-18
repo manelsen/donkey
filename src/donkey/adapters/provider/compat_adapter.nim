@@ -14,11 +14,18 @@
 ## deltas plus `[DONE]`. `delta.reasoning` is out of scope (see PRD §11). A body
 ## that never yields a `data:` event is an error, not an empty success — the
 ## same stance as the non-streaming path.
+##
+## The non-streaming path takes an optional `HttpRuntimePort`. When it is set,
+## `complete` posts through it instead of `newHttpClient`, which is what makes
+## the provider profile observable from a test: the fake port captures the URL,
+## the headers and the body the bundle actually emits. The port has no
+## streaming API, so `makeStreamFn` keeps using `newHttpClient`.
 
 import std/[httpclient, json, streams, strutils]
 import ../../domain/message
 import ../../domain/providers/compat
 import ../../domain/providers/openai_pure
+import ../../ports/http
 import ../../ports/provider
 import ../../core/pipeops
 import ../http/helpers
@@ -38,11 +45,21 @@ type
     model*:        string
     providerName*: string   ## display label, e.g. "NVIDIA"
     profileFn*:    CompatProfileFn
+    http*:         HttpRuntimePort
+      ## Optional transport for `complete`. An empty port (both `post` and
+      ## `postNoRedirect` nil) keeps the default `newHttpClient` path; a set
+      ## port owns its timeout and retry policy, so the adapter only adds the
+      ## profile headers and parses the body.
 
 # ── Concept conformance ───────────────────────────────────────────────────────
 
 func displayName*(a: CompatAdapter): string =
   if a.providerName.len > 0: a.providerName else: "OpenAI"
+
+func hasHttp*(a: CompatAdapter): bool =
+  ## True when `complete` will use the injected port. Both POST entry points
+  ## count: a fake may fill either one.
+  a.http.post != nil or a.http.postNoRedirect != nil
 
 proc caps*(a: CompatAdapter): ProviderCaps =
   ## The context window stays 0 (unknown) until `modelLimits` (US-002/US-005).
@@ -89,10 +106,35 @@ proc parseCompatBody*(body: JsonNode): Result[CompletionResponse, string] =
 
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
+func wireHeaders(a: CompatAdapter; profile: CompatProfile): seq[HttpHeader] =
+  ## `requestHeaders` as the port's tuple type; the HTTP client path converts
+  ## the same list into `HttpHeaders`.
+  for (name, value) in a.requestHeaders(profile):
+    result.add (name: name, value: value)
+
+proc completeWithPort(a: CompatAdapter; profile: CompatProfile;
+                      body: string): Result[CompletionResponse, string] =
+  ## The injected transport: `postNoRedirect` when available (the production
+  ## no-redirect contract), otherwise `post`. Status handling mirrors
+  ## `checkApiStatus`, including the provider label.
+  if not a.hasHttp:
+    return err("compat adapter: no injected http port")
+  let post = if a.http.postNoRedirect != nil: a.http.postNoRedirect
+             else: a.http.post
+  let sent = post(requestUrl(profile), body, a.wireHeaders(profile))
+  if sent.isErr:
+    return err(sent.error)
+  let resp = sent.get()
+  if resp.status < 200 or resp.status >= 300:
+    return err(a.displayName & " API error " & $resp.status & ": " & resp.body)
+  parseCompatBody(parseJson(resp.body))
+
 proc complete*(a: CompatAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
   let profile = a.profileFn()
   try:
+    if a.hasHttp:
+      return a.completeWithPort(profile, $a.buildBody(req))
     let client = newHttpClient(timeout = CompatHttpTimeoutSec * 1000,
                                maxRedirects = 0)
     defer: client.close()
@@ -192,10 +234,12 @@ proc makeStreamFn*(a: CompatAdapter): StreamFn =
 proc newCompatAdapter*(apiKey: string;
                        model: string;
                        providerName = "";
-                       profileFn: CompatProfileFn): CompatAdapter =
+                       profileFn: CompatProfileFn;
+                       http = HttpRuntimePort()): CompatAdapter =
   CompatAdapter(
     apiKey:       apiKey,
     model:        model,
     providerName: providerName,
     profileFn:    profileFn,
+    http:         http,
   )
