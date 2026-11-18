@@ -554,12 +554,20 @@ proc finalizeWhenSettled(mgr: SubagentManager; rt: SubagentRuntime) {.async.} =
   ## never leaks a paddock.
   if rt.future.isNil:
     return
-  try:
-    await rt.future
-  except CancelledError:
-    discard
-  except Exception:
-    discard
+  ## C1: `markCancelled` cancels the future to deliver the cancellation, and
+  ## awaiting a cancelled future never resumes the awaiter. The watcher therefore
+  ## waits on the finish, bounded, and removes only a settled child; otherwise
+  ## a cancelled child kept its paddock for the life of the process.
+  if not rt.future.finished():
+    try:
+      await rt.future
+    except CancelledError:
+      discard
+    except Exception:
+      discard
+  if not await awaitSettled(rt.future, SubagentSettleBudgetMs):
+    rt.parent.log.warn("subagent paddock orphaned: child did not settle id=" &
+                       rt.id)
   discard finalizeChild(mgr, rt)
 
 proc pruneChildren(mgr: SubagentManager) {.gcsafe, raises: [].} =
@@ -859,19 +867,29 @@ proc cancelAll*(mgr: SubagentManager): Future[void] {.async.} =
 proc newFanoutId(mgr: SubagentManager): string =
   "fan-" & $epochMs() & "-" & $mgr.fanoutCounter
 
+func fanoutSettleBudget(st: FanoutState): int64 =
+  SubagentSettleBudgetMs * int64(max(1, st.childIds.len))
+
 proc cancelFanoutChildren(mgr: SubagentManager; st: FanoutState;
                           bySibling: bool) {.async.} =
-  ## C2: signal every live child in one synchronous phase *before* awaiting the
-  ## first settlement, so no sibling can finish inside the cancel/settle
-  ## window. Settlement (cancel + bounded wait + finalize) is aggregated after.
+  ## C2: signal every live child in one synchronous phase *before* awaiting any
+  ## settlement, so no sibling can finish inside the cancel/settle window.
   for id in st.childIds:
     if id notin mgr.children:
       continue
     markCancelled(mgr.children[id], bySibling)
+  ## C1: the signal cancels the child future, and awaiting a cancelled future
+  ## never resumes the caller. The settlement is observed on the future itself,
+  ## on a bounded deadline, until every child of the signal phase is settled.
+  let deadline = nowMs() + fanoutSettleBudget(st)
   for id in st.childIds:
     if id notin mgr.children:
       continue
-    discard await mgr.settleChild(id)
+    let rt = mgr.children[id]
+    if not await awaitSettled(rt.future, deadline - nowMs()):
+      rt.parent.log.warn("subagent paddock orphaned: child did not settle id=" &
+                         id)
+    discard finalizeChild(mgr, rt)
 
 proc pruneFanouts*(mgr: SubagentManager; retain = SubagentFanoutRetention;
                    atMs: int64 = 0) =
@@ -1022,21 +1040,26 @@ proc awaitFanout*(mgr: SubagentManager; fanoutId: string;
   if mgr.isNil or fanoutId notin mgr.fanouts:
     return FanoutAggregate(fanoutId: fanoutId, children: @[])
   let st = mgr.fanouts[fanoutId]
-  while not st.done:
+  let budget = fanoutSettleBudget(st)
+  var settleDeadline = 0'i64
+  while true:
     if isSessionStopRequested(stopGeneration) or
        isUserStoppedSince(userId, userInterrupt):
       st.signal.stopRequested = true
+      settleDeadline = nowMs() + budget
       st.done = true
       st.doneAtMs = nowMs()
       break
-    if not st.future.isNil and st.future.finished():
+    if st.done or (not st.future.isNil and st.future.finished()):
       break
     await sleepAsync(chronos.milliseconds(FanoutTickMs))
+  if settleDeadline == 0:
+    settleDeadline = nowMs() + budget
   if not st.future.isNil and not st.future.finished():
     ## The supervisor may be mid-settlement (it was cancelled by shutdown or is
-    ## cancelling children itself). Wait for that work, bounded.
-    let budget = SubagentSettleBudgetMs * int64(max(1, st.childIds.len))
-    discard await awaitSettled(st.future, budget)
+    ## cancelling children itself). Wait for that work, bounded from before
+    ## `done` was observed, so the wait covers the settlement it announced (C1).
+    discard await awaitSettled(st.future, settleDeadline - nowMs())
   if not st.future.isNil and st.future.finished():
     try:
       await st.future
@@ -1044,15 +1067,26 @@ proc awaitFanout*(mgr: SubagentManager; fanoutId: string;
       discard
     except Exception:
       discard
-  ## C1: final settlement sweep. Settling is idempotent; a child that already
-  ## settled returns at once, a live one is cancelled and awaited here.
+  ## C1: `done` only says the supervisor stopped. A child it cancelled keeps
+  ## running until its own finally publishes the result, so the aggregate is
+  ## built only once every child of the fan-out is settled; each pending one is
+  ## awaited on the shared budget and reported if it never arrives.
   if st.signal.stopRequested:
     for id in st.childIds:
       if id in mgr.children:
         markCancelled(mgr.children[id], bySibling = false)
   for id in st.childIds:
-    if id in mgr.children:
-      discard await mgr.settleChild(id)
+    if id notin mgr.children or mgr.childSettled(id):
+      continue
+    let rt = mgr.children[id]
+    if rt.status in {ssQueued, ssRunning}:
+      ## A live child is cancelled here; one already marked cancelled is only
+      ## awaited, since a second cancel could misfire its fail-fast.
+      discard await mgr.cancelSubagent(id, signalSiblings = false)
+    if not await awaitSettled(rt.future, settleDeadline - nowMs()):
+      rt.parent.log.warn("subagent paddock orphaned: child did not settle id=" &
+                         id)
+    discard finalizeChild(mgr, rt)
   var outcomes: seq[FanoutOutcome]
   for i in 0 ..< st.outcomes.len:
     if st.captured[i]:

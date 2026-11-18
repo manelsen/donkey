@@ -456,6 +456,53 @@ suite "fanout runtime":
     check agg.stopReason == fsrSessionStop
     waitFor shutdown
 
+  test "awaitFanout publishes only after every child of the fan-out settled":
+    ## C1: fail-fast cancels the sibling and reports `done` as soon as its own
+    ## settlement work returns. The sibling's result is still being published
+    ## inside its own future then, so the consumer must wait for the child to
+    ## settle instead of reading a half-cancelled fan-out.
+    let base = fanoutBase / "settle-in-flight"
+    removeDir(base)
+    defer: removeDir(base)
+    let opened = new(int)
+    let lift = newAsyncEvent()
+    defer: lift.fire()
+    let complete = proc(req: CompletionRequest):
+                       Future[Result[CompletionResponse, string]]
+                       {.async, gcsafe.} =
+      {.cast(gcsafe).}:
+        inc opened[]
+      if "boom" in requestText(req):
+        return err("injected child failure")
+      {.cast(gcsafe).}:
+        await lift.wait()
+      return ok(CompletionResponse(text: "late"))
+    let spy = WorkspaceSpy()
+    let mgr = newSubagentManager(spyWorkspace(spy))
+    spy.mgr = mgr
+    var parent = makeParent(base, complete)
+    let plan = makePlan(@[task("first"), task("boom")])
+
+    let started = waitFor mgr.startFanout(parent, plan, fpFailFast)
+    check started.error.len == 0
+    var attempts = 0
+    while opened[] < 1 and attempts < 2_000:
+      waitFor sleepAsync(chronos.milliseconds(1))
+      inc attempts
+    check opened[] >= 1
+    let agg = waitFor mgr.awaitFanout(started.handle.fanoutId, 0,
+                                      $parent.uid, 0)
+    for id in started.handle.childIds:
+      check mgr.childSettled(id)
+    check agg.children[0].status == ssCancelled
+    check agg.children[0].cancelledBySibling
+    check agg.children[1].status == ssFailed
+    check agg.stopReason == fsrChildFailed
+    waitFor waitRemoves(spy, 2)
+    check spy.removes.len == 2
+    for settled in spy.settledAtRemove:
+      check settled
+
   test "fail-fast signals every sibling before settling any of them":
     ## C2: the failed child's siblings are signalled in one phase; settling the
     ## first sibling must not leave the others running (they could complete in
