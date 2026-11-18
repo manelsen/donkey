@@ -9,26 +9,18 @@
 ##   User on Discord calls /continue <code> → their Discord ID is mapped
 ##   to the same UUID as the Telegram user.
 
-import std/[options, os, random, strutils, tables, times]
+import std/[options, os, random, strutils, tables]
 import ../../app/inbound_gate
+import ../../core/identity/link_codes
 import ../../core/pipeops
 import ../../core/types
 
 type
-  LinkEntry = object
-    userId: UserId
-    expiry: Time
-
   IdentityResolver* = ref object
     store*:       Table[string, UserId]       ## "kind:rawId" → uuid
     reverseMap*:  Table[string, seq[string]]  ## string(uuid) → seq["kind:rawId"]
     path*:        string
-    pendingLinks: Table[string, LinkEntry]    ## code → {userId, expiry}
-
-const
-  LinkCodeAlpha  = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-  LinkCodeLen    = 6
-  LinkCodeTtlSec = 600  ## 10 minutes
+    linkCodes*:   LinkCodeService             ## shared per identity file
 
 func channelKey*(kind: ChannelKind; rawId: string): string =
   ## Storage key: "telegram:12345" or "discord:678901234".
@@ -85,10 +77,10 @@ proc loadPersistedMappings(r: IdentityResolver): Result[void, string] =
 
 proc newIdentityResolver*(path: string): IdentityResolver =
   result = IdentityResolver(
-    path:         path,
-    store:        initTable[string, UserId](),
-    reverseMap:   initTable[string, seq[string]](),
-    pendingLinks: initTable[string, LinkEntry](),
+    path:        path,
+    store:       initTable[string, UserId](),
+    reverseMap:  initTable[string, seq[string]](),
+    linkCodes:   sharedLinkCodeService(path),
   )
   discard result.loadPersistedMappings()
 
@@ -161,26 +153,15 @@ proc reverseChannel*(r: IdentityResolver; userId: UserId; kind: ChannelKind): st
 proc generateLinkCode*(r: IdentityResolver; userId: UserId): string =
   ## Generates a 6-char one-time code for cross-channel linking.
   ## Valid for 10 minutes. Call this when user types /mycode on any channel.
-  randomize()
-  result = newString(LinkCodeLen)
-  for i in 0..<LinkCodeLen:
-    result[i] = LinkCodeAlpha[rand(LinkCodeAlpha.len - 1)]
-  r.pendingLinks[result] = LinkEntry(
-    userId: userId,
-    expiry: getTime() + initDuration(seconds = LinkCodeTtlSec),
-  )
+  ## The table is shared by every resolver built from the same identity file,
+  ## so the code is redeemable on another channel in this process.
+  r.linkCodes.mint(userId)
 
 proc peekLinkCode*(r: IdentityResolver; code: string): Option[UserId] =
   ## Returns the target UUID for a valid, unexpired link code without consuming
   ## it. Used by the DM gate to admit `/continue` from an unknown identity only
   ## when the code points at an already-authorized account.
-  if code notin r.pendingLinks:
-    return none(UserId)
-  let entry = r.pendingLinks[code]
-  if getTime() > entry.expiry:
-    r.pendingLinks.del(code)
-    return none(UserId)
-  some(entry.userId)
+  r.linkCodes.peek(code)
 
 proc identityGate*(r: IdentityResolver): IdentityGatePort {.gcsafe.} =
   ## Adapter-side port used by the application inbound gate. The business
@@ -197,19 +178,18 @@ proc identityGate*(r: IdentityResolver): IdentityGatePort {.gcsafe.} =
 proc consumeLinkCode*(r: IdentityResolver; code: string;
                       kind: ChannelKind; rawId: string): bool =
   ## Links (kind, rawId) to the userId stored under code. Single-use. Saves to disk.
-  ## Returns false if code is unknown or expired.
-  if code notin r.pendingLinks: return false
-  let entry = r.pendingLinks[code]
-  if getTime() > entry.expiry:
-    r.pendingLinks.del(code)
-    return false
+  ## Returns false if code is unknown or expired. The code table is shared by
+  ## every resolver built from the same identity file, so a code minted on
+  ## another channel is redeemable here.
+  let target = r.linkCodes.redeem(code)
+  if target.isNone: return false
+  let userId = target.get
   let key = channelKey(kind, rawId)
-  r.store[key] = entry.userId
-  let us = $entry.userId
+  r.store[key] = userId
+  let us = $userId
   if us notin r.reverseMap: r.reverseMap[us] = @[]
   if key notin r.reverseMap[us]:
     r.reverseMap[us].add(key)
-  r.pendingLinks.del(code)
   let saved = r.save()
   if saved.isErr:
     r.store.del(key)

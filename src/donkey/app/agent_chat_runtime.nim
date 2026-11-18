@@ -148,25 +148,29 @@ proc runAgentChat*(body: string;
       return errorReply(429, "a turn is already pending for this user",
                         "rate_limit_error", "chat_bridge_busy")
     return errorReply(503, "agent turn could not be registered")
+  let turnToken = registered.get()
 
+  ## The generation travels with the turn: every reply the actor emits carries
+  ## it back, so a late terminal cannot close another turn.
   try:
     dispatch(InboundMessage(
       userId:    request.userId,
       channel:   ckCli,
       channelId: $request.userId,
       text:      request.text,
+      bridgeToken: turnToken,
     ))
   except CatchableError as exc:
     ## No turn is running, so close the reservation instead of abandoning it.
-    discard bridge.fail(request.userId, exc.msg)
-    discard bridge.poll(request.userId)
+    discard bridge.fail(request.userId, exc.msg, token = turnToken)
+    discard bridge.poll(request.userId, token = turnToken)
     return errorReply(502, exc.msg, "server_error", "dispatch_failed")
 
   var terminal: ChatBridgeEvent
   var haveTerminal = false
   var truncated = false
   while true:
-    let batch = bridge.poll(request.userId)
+    let batch = bridge.poll(request.userId, token = turnToken)
     case batch.status
     of cbpEvents:
       ## Partials (including streamed deltas) are never concatenated; keep
@@ -271,6 +275,7 @@ proc runAgentStream*(body: string;
     return AgentStreamResult(
       outcome: asPreflightError,
       reply: errorReply(503, "agent turn could not be registered"))
+  let turnToken = registered.get()
 
   try:
     dispatch(InboundMessage(
@@ -278,17 +283,18 @@ proc runAgentStream*(body: string;
       channel:   ckCli,
       channelId: $request.userId,
       text:      request.text,
+      bridgeToken: turnToken,
     ))
   except CatchableError as exc:
     ## No turn is running, so close the reservation instead of abandoning it.
-    discard bridge.fail(request.userId, exc.msg)
-    discard bridge.poll(request.userId)
+    discard bridge.fail(request.userId, exc.msg, token = turnToken)
+    discard bridge.poll(request.userId, token = turnToken)
     return AgentStreamResult(
       outcome: asPreflightError,
       reply: errorReply(502, exc.msg, "server_error", "dispatch_failed"))
 
   if not openStream():
-    discard bridge.abandon(request.userId)
+    discard bridge.abandon(request.userId, token = turnToken)
     return AgentStreamResult(outcome: asClientGone)
 
   let created = now()
@@ -400,12 +406,12 @@ proc runAgentStream*(body: string;
   if not writeData(buildAgentChunk(
       chunkId, chosenModel, created, role = "assistant")):
     if not reservationClosed:
-      discard bridge.abandon(request.userId)
+      discard bridge.abandon(request.userId, token = turnToken)
     return AgentStreamResult(outcome: asClientGone)
 
   var lastPing = clock()
   while not finished and not errored and not clientGone:
-    let batch = bridge.poll(request.userId, stepMs = 0)
+    let batch = bridge.poll(request.userId, stepMs = 0, token = turnToken)
     case batch.status
     of cbpEvents:
       for event in batch.events:
@@ -450,7 +456,7 @@ proc runAgentStream*(body: string;
 
   if clientGone:
     if not reservationClosed:
-      discard bridge.abandon(request.userId)
+      discard bridge.abandon(request.userId, token = turnToken)
     return AgentStreamResult(outcome: asClientGone)
   if errored:
     return AgentStreamResult(outcome: asErrored)
@@ -461,14 +467,14 @@ proc runAgentStream*(body: string;
       inputTokens = inputTokens,
       outputTokens = outputTokens)):
     if not reservationClosed:
-      discard bridge.abandon(request.userId)
+      discard bridge.abandon(request.userId, token = turnToken)
     return AgentStreamResult(outcome: asClientGone)
   let doneSent = send(sseDone())
   if gaveUpForChunks and not reservationClosed:
     ## We closed the stream without the terminal; release the user's slot
     ## instead of leaving it reserved for a reader that no longer exists. Do
     ## it even when `[DONE]` fails: the client is gone either way.
-    discard bridge.abandon(request.userId)
+    discard bridge.abandon(request.userId, token = turnToken)
   if not doneSent:
     return AgentStreamResult(outcome: asClientGone)
   AgentStreamResult(outcome: asCompleted)

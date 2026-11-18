@@ -11,6 +11,20 @@ suite "Message types":
     check msg.text    == "olá"
     check $msg.userId == "u1"
 
+  test "InboundMessage bridge token defaults to zero and travels with the turn":
+    let plain = InboundMessage(userId: UserId("u1"), text: "canal")
+    check plain.bridgeToken == 0'u64
+    let api = InboundMessage(userId: UserId("api:u1"), text: "api",
+                             bridgeToken: 3'u64)
+    check api.bridgeToken == 3'u64
+
+  test "OutboundMessage bridge token defaults to zero and travels with the turn":
+    let plain = OutboundMessage(userId: UserId("u1"), text: "canal")
+    check plain.bridgeToken == 0'u64
+    let api = OutboundMessage(userId: UserId("api:u1"), text: "api",
+                              bridgeToken: 9'u64)
+    check api.bridgeToken == 9'u64
+
   test "ConversationHistory starts empty":
     let h = newHistory()
     check h.len == 0

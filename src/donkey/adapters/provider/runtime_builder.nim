@@ -13,6 +13,7 @@ import ../../domain/providers/profile_nvidia
 import ../../domain/providers/profile_alibaba
 import ../../domain/providers/profile_fireworks
 import ../../core/pipeops
+import ../../ports/http
 import ../../ports/provider
 import ../../core/providers/smart_routing
 import zhipu
@@ -37,14 +38,29 @@ func chatCompletionsEndpoint(base: string): string =
 func overrideEndpointSafe(url: string): bool =
   ## A `baseUrlEnv` override carries the provider key on every call: plain
   ## http is only acceptable on loopback (local NIM), never to a remote host.
+  ## Userinfo is rejected for both schemes: `https://api.nvidia.com@evil/v1`
+  ## would otherwise pass the https shortcut and send the key to `evil`.
   let lower = url.strip().toLowerAscii()
+  let schemeEnd = lower.find("://")
+  if schemeEnd <= 0:
+    return false
+  var authority = lower[schemeEnd + 3 .. ^1]
+  ## RFC 3986: the authority ends at the first `/`, `?` or `#`. Cutting only at
+  ## `/` dragged a query into the authority, and an `@` there rejected a
+  ## legitimate override.
+  var endIdx = authority.len
+  for delim in ['/', '?', '#']:
+    let at = authority.find(delim)
+    if at >= 0 and at < endIdx:
+      endIdx = at
+  authority = authority[0 ..< endIdx]
+  if '@' in authority:
+    return false
   if lower.startsWith("https://"):
     return true
   if not lower.startsWith("http://"):
     return false
-  var host = lower[7 .. ^1]
-  let slash = host.find('/')
-  if slash >= 0: host = host[0 ..< slash]
+  var host = authority
   let colon = host.rfind(':')
   if colon >= 0: host = host[0 ..< colon]
   host = host.strip(chars = {'[', ']'})
@@ -54,10 +70,10 @@ func overrideEndpointSafe(url: string): bool =
     let ip = parseIpAddress(host)
     if ip.family == IPv4:
       return ip.address_v4[0] == 127'u8
-    ## IPv6 loopback is the only non-IPv4 address that may stay cleartext.
     $ip == "::1"
   except ValueError:
     false
+
 
 proc providerEndpointFor*(id: string): string {.gcsafe.} =
   ## Wire URL for a provider. A descriptor `baseUrlEnv` override wins over the
@@ -111,7 +127,12 @@ proc alibabaProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
 proc fireworksProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
   fireworksCompatProfileAt(providerEndpointFor("fireworks"))
 
-proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
+proc buildProviderBundle*(spec: ProviderSpec; http: HttpRuntimePort
+                         ): ProviderBundle {.gcsafe.} =
+  ## `http` is forwarded only to the compat branches (NVIDIA, Alibaba,
+  ## Fireworks). An empty port means production: those branches keep
+  ## `newHttpClient`, while a test injects a fake port and observes the request
+  ## the bundle actually sends instead of reading the builder source.
   let descriptor = descriptorOr(spec.providerName)
   let canonicalId =
     if providerDescriptor(spec.providerName).isSome: descriptor.id
@@ -237,6 +258,7 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
               else: providerDefaultModelFor("nvidia"),
       providerName = "NVIDIA",
       profileFn = nvidiaProfileFromEnv,
+      http = http,
     )
     ProviderBundle(
       completeFn: makeFn(adapter),
@@ -252,6 +274,7 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
               else: providerDefaultModelFor("alibaba"),
       providerName = "Alibaba",
       profileFn = alibabaProfileFromEnv,
+      http = http,
     )
     ProviderBundle(
       completeFn: makeFn(adapter),
@@ -267,6 +290,7 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
               else: providerDefaultModelFor("fireworks"),
       providerName = "Fireworks",
       profileFn = fireworksProfileFromEnv,
+      http = http,
     )
     ProviderBundle(
       completeFn: makeFn(adapter),
@@ -276,3 +300,9 @@ proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
     ProviderBundle(
       completeFn: makeFn(newZhipuAdapter(spec.apiKey, model = spec.modelName))
     )
+
+proc buildProviderBundle*(spec: ProviderSpec): ProviderBundle {.gcsafe.} =
+  ## The production entry point. Kept as a real one-argument overload (not a
+  ## default parameter) so the proc still converts to `ProviderRuntimeBuilder`
+  ## where the builder is passed as a value.
+  buildProviderBundle(spec, HttpRuntimePort())

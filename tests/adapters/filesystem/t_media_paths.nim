@@ -8,6 +8,8 @@
 import std/[os, strutils, unittest]
 import results
 import donkey/adapters/filesystem/paths
+when defined(posix):
+  import std/posix
 
 proc freshDir(tag: string): string =
   result = getTempDir() / ("donkey_media_paths_" & tag & "_" &
@@ -171,3 +173,150 @@ suite "resolveConfinedMediaPath — symlinks":
       check resolved.get() == canonicalDir(realRoot) / "nota.opus"
     else:
       discard
+
+suite "readConfinedMediaFile — read through the validated descriptor":
+
+  test "a regular file inside the paddock is read in full":
+    let root = freshDir("fd-regular")
+    defer: removeDir(root)
+    let file = root / "nota.opus"
+    let payload = "OPUS-payload-0123456789"
+    writeFile(file, payload)
+    let resolved = resolveConfinedMediaPath(root, file)
+    check resolved.isOk
+    let loaded = readConfinedMediaFile(root, resolved.get(), 4096)
+    check loaded.isOk
+    check loaded.get() == payload
+
+  test "the size cap is applied to the opened file":
+    let root = freshDir("fd-cap")
+    defer: removeDir(root)
+    let file = root / "nota.opus"
+    writeFile(file, "12345678")
+    let resolved = resolveConfinedMediaPath(root, file)
+    check resolved.isOk
+    check readConfinedMediaFile(root, resolved.get(), 8).isOk
+    let over = readConfinedMediaFile(root, resolved.get(), 7)
+    check over.isErr
+    check file notin over.error
+
+  test "a symlink swapped in after validation is refused and the target survives":
+    when defined(posix):
+      let base = freshDir("fd-swap-symlink")
+      defer: removeDir(base)
+      let root = base / "paddock"
+      createDir(root)
+      let outside = base / "segredo.opus"
+      writeFile(outside, "SEGREDO")
+      let file = root / "nota.opus"
+      writeFile(file, "DENTRO")
+      let resolved = resolveConfinedMediaPath(root, file)
+      check resolved.isOk
+      let canonical = resolved.get()
+      ## The attacker wins the race: the validated name now points outside.
+      removeFile(canonical)
+      createSymlink(outside, canonical)
+      let loaded = readConfinedMediaFile(root, canonical, 4096)
+      check loaded.isErr
+      check canonical notin loaded.error
+      check base notin loaded.error
+      check fileExists(outside)
+      check readFile(outside) == "SEGREDO"
+
+  test "a symlink to an outside directory swapped in after validation is refused":
+    when defined(posix):
+      let base = freshDir("fd-swap-symlink-dir")
+      defer: removeDir(base)
+      let root = base / "paddock"
+      createDir(root)
+      let outsideDir = base / "outside"
+      createDir(outsideDir)
+      writeFile(outsideDir / "foto.png", "PNG")
+      let file = root / "nota.opus"
+      writeFile(file, "DENTRO")
+      let resolved = resolveConfinedMediaPath(root, file)
+      check resolved.isOk
+      let canonical = resolved.get()
+      removeFile(canonical)
+      createSymlink(outsideDir, canonical)
+      let loaded = readConfinedMediaFile(root, canonical, 4096)
+      check loaded.isErr
+      check fileExists(outsideDir / "foto.png")
+      check readFile(outsideDir / "foto.png") == "PNG"
+
+  test "a file replaced by a FIFO is refused without blocking":
+    when defined(posix):
+      let root = freshDir("fd-fifo")
+      defer: removeDir(root)
+      let file = root / "nota.opus"
+      writeFile(file, "DENTRO")
+      let resolved = resolveConfinedMediaPath(root, file)
+      check resolved.isOk
+      let canonical = resolved.get()
+      removeFile(canonical)
+      check mkfifo(canonical.cstring, Mode(0o600)) == 0
+      let loaded = readConfinedMediaFile(root, canonical, 4096)
+      check loaded.isErr
+      check canonical notin loaded.error
+
+  test "a path replaced by a directory is refused":
+    let root = freshDir("fd-dir")
+    defer: removeDir(root)
+    let file = root / "nota.opus"
+    writeFile(file, "DENTRO")
+    let resolved = resolveConfinedMediaPath(root, file)
+    check resolved.isOk
+    let canonical = resolved.get()
+    removeFile(canonical)
+    createDir(canonical)
+    check readConfinedMediaFile(root, canonical, 4096).isErr
+
+  test "a validated path that leaves the paddock is refused":
+    let base = freshDir("fd-outside")
+    defer: removeDir(base)
+    let root = base / "paddock"
+    createDir(root)
+    let outside = base / "fora.opus"
+    writeFile(outside, "FORA")
+    let loaded = readConfinedMediaFile(root, outside, 4096)
+    check loaded.isErr
+    check base notin loaded.error
+    check fileExists(outside)
+    check readFile(outside) == "FORA"
+
+  test "a symlink swapped in after validation is refused even inside the paddock":
+    when defined(posix):
+      let root = freshDir("fd-swap-symlink-inside")
+      defer: removeDir(root)
+      writeFile(root / "a.opus", "A")
+      writeFile(root / "b.opus", "B")
+      let resolved = resolveConfinedMediaPath(root, root / "a.opus")
+      check resolved.isOk
+      let canonical = resolved.get()
+      removeFile(canonical)
+      createSymlink(root / "b.opus", canonical)
+      ## `O_NOFOLLOW` refuses the substituted link even though its target is
+      ## also inside: the canonical name must stay a regular file.
+      let loaded = readConfinedMediaFile(root, canonical, 4096)
+      check loaded.isErr
+      check readFile(root / "b.opus") == "B"
+
+  when defined(linux):
+    test "an intermediate directory swapped to a symlink outside is refused":
+      ## `O_NOFOLLOW` only guards the final component; the fd's /proc entry is
+      ## what proves the opened file still lives inside the root.
+      let root = freshDir("swap-root")
+      defer: removeDir(root)
+      let outside = freshDir("swap-outside")
+      defer: removeDir(outside)
+      createDir(root / "sub")
+      writeFile(root / "sub" / "a.txt", "inside")
+      writeFile(outside / "a.txt", "outside")
+      ## Resolve before the swap, as the adapter does: with TMPDIR behind a
+      ## symlink, a hand-built path would be rejected by the prefix check
+      ## before the descriptor is ever opened, making the test vacuous.
+      let resolved = resolveConfinedMediaPath(root, root / "sub" / "a.txt").get()
+      removeDir(root / "sub")
+      createSymlink(outside, root / "sub")
+      let r = readConfinedMediaFile(root, resolved, 1024)
+      check r.isErr

@@ -97,6 +97,10 @@ proc hasField(body, name: string): bool =
 
 var idsSeq = 0
 
+var raceSwapTarget {.threadvar.}: string
+  ## Outside path used by the descriptor-race tests (a gcsafe callback cannot
+  ## capture a GC'd local).
+
 proc newAdapter(f: FakeUpload): TelegramAdapter =
   inc idsSeq
   let idsPath = getTempDir() / ("donkey_tg_upload_ids_" & $idsSeq & ".tsv")
@@ -501,3 +505,100 @@ suite "TelegramAdapter — local media upload":
     check not a.uploadHttp.post.isNil
     let defaulted = newTelegramAdapter("TOK", getTempDir() / "donkey_tg_ids_default.tsv")
     check not defaulted.uploadHttp.post.isNil
+
+suite "TelegramAdapter — local media read through the validated descriptor":
+
+  test "a regular file inside the paddock is uploaded with the same bytes":
+    let root = freshDir("fd-bytes")
+    defer: removeDir(root)
+    let path = root / "nota.ogg"
+    let payload = "OGGDATA-0123456789-abcdef"
+    writeFile(path, payload)
+    let f = FakeUpload()
+    let a = newAdapter(f)
+    check a.sendMedia(42, path, "legenda", "", mediaRoot = root).isOk
+    check f.calls.len == 1
+    check f.calls[0].url.endsWith("/sendVoice")
+    check f.calls[0].body.contains(payload)
+
+  test "a symlink swapped in after validation becomes neutral text":
+    when defined(posix):
+      let base = freshDir("fd-swap")
+      defer: removeDir(base)
+      let root = base / "paddock"
+      createDir(root)
+      let outside = base / "fora" / "segredo.ogg"
+      createDir(base / "fora")
+      writeFile(outside, "SEGREDO")
+      let path = root / "nota.ogg"
+      writeFile(path, "DENTRO")
+      let f = FakeUpload()
+      var a = newAdapter(f)
+      ## A gcsafe callback cannot capture a GC'd local; the target travels in a
+      ## threadvar, like the adapter's own mutable state.
+      raceSwapTarget = outside
+      a.mediaValidatedHook = proc (canonical: string) {.gcsafe, raises: [].} =
+        ## The race: the name validated a moment ago now points outside.
+        try:
+          removeFile(canonical)
+          createSymlink(raceSwapTarget, canonical)
+        except CatchableError:
+          discard
+      check a.sendMedia(42, path, "legenda", "", mediaRoot = root).isOk
+      check f.calls.len == 1
+      check f.calls[0].url.endsWith("/sendMessage")
+      check f.calls[0].body.contains(NeutralFallback)
+      check not f.calls[0].body.contains("segredo")
+      check not f.calls[0].body.contains(".ogg")
+      check not f.calls[0].body.contains(root)
+      check not f.calls[0].body.contains(base)
+      check fileExists(outside)
+      check readFile(outside) == "SEGREDO"
+
+  test "a file swapped for a FIFO after validation becomes neutral text":
+    when defined(posix):
+      let root = freshDir("fd-swap-fifo")
+      defer: removeDir(root)
+      let path = root / "nota.ogg"
+      writeFile(path, "DENTRO")
+      let f = FakeUpload()
+      var a = newAdapter(f)
+      a.mediaValidatedHook = proc (canonical: string) {.gcsafe, raises: [].} =
+        try:
+          removeFile(canonical)
+          discard mkfifo(canonical.cstring, Mode(0o600))
+        except CatchableError:
+          discard
+      check a.sendMedia(42, path, "legenda", "", mediaRoot = root).isOk
+      check f.calls.len == 1
+      check f.calls[0].url.endsWith("/sendMessage")
+      check f.calls[0].body.contains(NeutralFallback)
+      check not f.calls[0].body.contains("nota.ogg")
+      check not f.calls[0].body.contains(root)
+
+  test "a path swapped for a directory after validation becomes neutral text":
+    when defined(posix):
+      let base = freshDir("fd-swap-dir")
+      defer: removeDir(base)
+      let root = base / "paddock"
+      createDir(root)
+      let outsideDir = base / "outside"
+      createDir(outsideDir)
+      writeFile(outsideDir / "nota.ogg", "FORA")
+      let path = root / "nota.ogg"
+      writeFile(path, "DENTRO")
+      let f = FakeUpload()
+      var a = newAdapter(f)
+      a.mediaValidatedHook = proc (canonical: string) {.gcsafe, raises: [].} =
+        try:
+          removeFile(canonical)
+          createDir(canonical)
+        except CatchableError:
+          discard
+      check a.sendMedia(42, path, "legenda", "", mediaRoot = root).isOk
+      check f.calls.len == 1
+      check f.calls[0].url.endsWith("/sendMessage")
+      check f.calls[0].body.contains(NeutralFallback)
+      check not f.calls[0].body.contains(root)
+      check fileExists(outsideDir / "nota.ogg")
+      check readFile(outsideDir / "nota.ogg") == "FORA"

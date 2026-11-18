@@ -1,17 +1,51 @@
-## t_nvidia.nim — NVIDIA NIM end-to-end wiring (US-001).
+## t_nvidia.nim — NVIDIA NIM end-to-end wiring (US-001, review E4).
 ##
-## The bundle must come from the generic `CompatAdapter` through the descriptor,
-## not from the Zhipu fallback at the bottom of `runtime_builder`. No network:
-## the bundle is built, never called.
+## The bundle must come from the generic `CompatAdapter` through the
+## descriptor, not from the Zhipu fallback at the bottom of `runtime_builder`.
+##
+## Wiring is pinned behaviourally: the bundle is built with an injected
+## `HttpRuntimePort` and `completeFn` is called, so the test asserts the request
+## the bundle actually produced. The NIM billing header is scoped to the hosted
+## endpoint, which is only observable on the wire. No network: the port answers.
 
-import std/[os, unittest]
+import std/[json, os, strutils, unittest]
 import donkey/adapters/provider/compat_adapter
 import donkey/adapters/provider/runtime_builder
+import donkey/core/pipeops
 import donkey/core/providers/provider_defaults
 import donkey/core/providers/smart_routing
+import donkey/domain/message
 import donkey/domain/providers/descriptors
 import donkey/domain/providers/profile_nvidia
+import donkey/ports/http
 import donkey/ports/provider
+
+type
+  Capture = ref object
+    url:     string
+    body:    string
+    headers: seq[HttpHeader]
+
+proc recordingPort(cap: Capture): HttpRuntimePort =
+  HttpRuntimePort(
+    postNoRedirect: proc (url, body: string; headers: seq[HttpHeader] = @[]):
+                     Result[HttpResponse, string] {.gcsafe.} =
+      cap.url = url
+      cap.body = body
+      cap.headers = headers
+      ok(HttpResponse(status: 200,
+                      body: """{"choices":[{"message":{"content":"ok"}}]}""")),
+  )
+
+func headerValue(headers: seq[HttpHeader]; name: string): string =
+  for header in headers:
+    if header.name.toLowerAscii() == name.toLowerAscii():
+      return header.value
+  ""
+
+proc completeThroughPort(spec: ProviderSpec; req: CompletionRequest;
+                         cap: Capture): Result[CompletionResponse, string] =
+  buildProviderBundle(spec, http = recordingPort(cap)).completeFn(req)
 
 suite "nvidia provider bundle":
 
@@ -20,6 +54,46 @@ suite "nvidia provider bundle":
       ProviderSpec(providerName: "nvidia", apiKey: "nvapi-test"))
     check bundle.completeFn != nil
     check bundle.streamFn != nil   ## the Zhipu fallback has no streamFn
+
+  test "the alias posts to the hosted endpoint with the billing header":
+    let had = existsEnv("NVIDIA_BASE_URL")
+    let previous = getEnv("NVIDIA_BASE_URL")
+    defer:
+      if had: putEnv("NVIDIA_BASE_URL", previous) else: delEnv("NVIDIA_BASE_URL")
+    delEnv("NVIDIA_BASE_URL")
+    for name in ["nvidia", "nim"]:
+      check descriptorOr(name).id == "nvidia"
+      var cap = Capture()
+      let res = completeThroughPort(
+        ProviderSpec(providerName: name, apiKey: "nvapi-test"),
+        CompletionRequest(reasoning: true), cap)
+      require res.isOk
+      check cap.url == "https://integrate.api.nvidia.com/v1/chat/completions"
+      check headerValue(cap.headers, "Authorization") == "Bearer nvapi-test"
+      check headerValue(cap.headers, NvidiaBillingHeaderName) ==
+            NvidiaBillingHeaderValue
+      let body = parseJson(cap.body)
+      check body["model"].getStr() == DefaultModelNvidia
+      check not body.hasKey("include_reasoning")
+      check not body.hasKey("reasoning_effort")
+
+  test "the billing header is absent from a local NIM endpoint":
+    ## `NVIDIA_BASE_URL` is read per call by the profile, so the same bundle
+    ## moves from hosted to local without a rebuild — and stops claiming
+    ## build.nvidia.com billing.
+    let had = existsEnv("NVIDIA_BASE_URL")
+    let previous = getEnv("NVIDIA_BASE_URL")
+    defer:
+      if had: putEnv("NVIDIA_BASE_URL", previous) else: delEnv("NVIDIA_BASE_URL")
+    putEnv("NVIDIA_BASE_URL", "http://127.0.0.1:8000/v1/")
+    var cap = Capture()
+    let res = completeThroughPort(
+      ProviderSpec(providerName: "nvidia", apiKey: "nvapi-test"),
+      CompletionRequest(), cap)
+    require res.isOk
+    check cap.url == "http://127.0.0.1:8000/v1/chat/completions"
+    check headerValue(cap.headers, NvidiaBillingHeaderName) == ""
+    check headerValue(cap.headers, "Authorization") == "Bearer nvapi-test"
 
   test "the descriptor supplies the default model":
     check providerDefaultModelFor("nvidia") == DefaultModelNvidia

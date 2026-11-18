@@ -6,18 +6,50 @@
 ## capturing stdout.
 ##
 ## Covered: empty list (human + `--json`), add round-trip through the real
-## store, duplicate/invalid add, show of a known/unknown id, remove, and the
-## enable→disable round-trip that must preserve the watermark.
+## store, duplicate/invalid/concurrent add, show of a known/unknown id, remove,
+## and the disable/enable round-trip: disabling preserves both watermarks, while
+## re-enabling advances `lastRunAtMs` so a daemon that was stopped for the whole
+## disabled period cannot catch up on it.
 
-import std/[json, options, os, strutils, unittest]
+import std/[atomics, json, options, os, strutils, unittest]
 import results
 import donkey/adapters/state/schedule_store
+import donkey/app/automation_runtime
 import donkey/domain/automation/schedule_pure
 import donkey/ctl_handler
 
 const
   FixedNow = 1_700_000_040_000'i64
     ## 2023-11-14T22:14:00Z: fixed creation clock for every test.
+  HourMs = 3_600_000'i64
+
+type
+  Recorder = ref object
+    instants: seq[int64]
+
+  AddArg = object
+    stateDir: string
+    id: string
+
+var gAddWins: Atomic[int]
+var gAddLosers: Atomic[int]
+
+proc makeEnqueue(rec: Recorder): ScheduleEnqueueFn =
+  result = proc(
+    spec: ScheduleSpec; instantMs: int64
+  ): Result[void, string] {.gcsafe, raises: [].} =
+    rec.instants.add(instantMs)
+    ok()
+
+proc addWorker(arg: AddArg) {.thread.} =
+  ## Both workers add the same id; the store must accept exactly one.
+  {.cast(gcsafe).}:
+    let added = ctlScheduleAdd(arg.stateDir, arg.id, "*/5 * * * *", "alice",
+                               "payload", FixedNow)
+    if added.isOk:
+      discard gAddWins.fetchAdd(1)
+    else:
+      discard gAddLosers.fetchAdd(1)
 
 proc freshDir(tag: string): string =
   result = getTempDir() / ("donkey_ctl_schedule_" & tag & "_" &
@@ -143,6 +175,27 @@ suite "ctl schedule — add":
       # The original record survives unchanged.
       let record = newScheduleStoreRef(dir).loadRecord("daily").get().get()
       check record.spec.payload == "run the report"
+    finally:
+      cleanup(dir)
+
+  test "concurrent adds of the same id accept exactly one":
+    let dir = freshDir("add_race")
+    try:
+      const Workers = 8
+      gAddWins.store(0)
+      gAddLosers.store(0)
+      var threads: array[Workers, Thread[AddArg]]
+      for i in 0 ..< Workers:
+        createThread(threads[i], addWorker,
+                     AddArg(stateDir: dir, id: "race"))
+      joinThreads(threads)
+
+      check gAddWins.load() == 1
+      check gAddLosers.load() == Workers - 1
+      let all = newScheduleStoreRef(dir).loadAllRecords()
+      check all.isOk
+      check all.get().len == 1
+      check all.get()[0].spec.id == "race"
     finally:
       cleanup(dir)
 
@@ -292,7 +345,7 @@ suite "ctl schedule — remove/enable/disable":
     finally:
       cleanup(dir)
 
-  test "enable then disable round-trips and preserves the watermark":
+  test "disable preserves the watermark and enable advances it":
     let dir = freshDir("toggle_roundtrip")
     try:
       check addDaily(dir).isOk
@@ -303,18 +356,57 @@ suite "ctl schedule — remove/enable/disable":
       record.lastFireAtMs = FixedNow + 60_000
       check store.upsert(record).isOk
 
-      check ctlScheduleSetEnabled(dir, "daily", false).isOk
+      check ctlScheduleSetEnabled(dir, "daily", false,
+                                  nowMs = FixedNow + 120_000).isOk
       var toggled = store.loadRecord("daily").get().get()
       check not toggled.spec.enabled
+      ## Disabling never moves either watermark.
       check toggled.lastRunAtMs == FixedNow + 60_000
       check toggled.lastFireAtMs == FixedNow + 60_000
 
-      check ctlScheduleSetEnabled(dir, "daily", true).isOk
+      check ctlScheduleSetEnabled(dir, "daily", true,
+                                  nowMs = FixedNow + 3_600_000).isOk
       toggled = store.loadRecord("daily").get().get()
       check toggled.spec.enabled
-      check toggled.lastRunAtMs == FixedNow + 60_000
+      ## Re-enabling closes the disabled window: the watermark becomes "now",
+      ## while the last actual firing stays historical.
+      check toggled.lastRunAtMs == FixedNow + 3_600_000
       check toggled.lastFireAtMs == FixedNow + 60_000
       check toggled.spec.createdAtMs == FixedNow
+    finally:
+      cleanup(dir)
+
+  test "re-enabling after a stopped daemon does not fire the stale occurrence":
+    let dir = freshDir("enable_catchup")
+    try:
+      check addDaily(dir).isOk
+      let store = newScheduleStoreRef(dir)
+      # One firing at FixedNow, then disabled. The daemon was down for the
+      # whole disabled period, so no tick advanced the watermark itself.
+      var record = store.loadRecord("daily").get().get()
+      record.lastRunAtMs = FixedNow
+      record.lastFireAtMs = FixedNow
+      check store.upsert(record).isOk
+      check ctlScheduleSetEnabled(dir, "daily", false,
+                                  nowMs = FixedNow + 1_000).isOk
+
+      # 2023-11-15T12:00Z (the next 09:00 at UTC-03:00) falls inside the
+      # disabled window: a catch-up tick would fire it without the fix.
+      let enableNow = FixedNow + 14 * HourMs
+      check ctlScheduleSetEnabled(dir, "daily", true, nowMs = enableNow).isOk
+
+      let enabled = store.loadRecord("daily").get().get()
+      check enabled.spec.enabled
+      check enabled.lastRunAtMs == enableNow
+      check enabled.lastFireAtMs == FixedNow
+
+      let rec = Recorder()
+      let tick = tickSchedule(newScheduleStore(dir), enabled.spec, enableNow,
+                              rec.makeEnqueue)
+      check tick.isOk
+      check tick.get().firedAtMs.isNone
+      check tick.get().missedOccurrenceMs.isNone
+      check rec.instants.len == 0
     finally:
       cleanup(dir)
 

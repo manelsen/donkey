@@ -6,11 +6,30 @@
 ## reducer in `domain/session/turn_journal_pure` owns the state transitions.
 ##
 ## Durability points:
-##   - each append fsyncs the data file before returning;
-##   - the parent directory is fsynced when the journal is created, so the
-##     file entry itself survives a power loss;
+##   - `append` returns `ok` only after the data file is fsynced. An `err`
+##     means the bytes may be visible but are not confirmed durable.
+##   - when a data fsync fails, the tail is marked unsynced for that journal
+##     path and the next append retries the fsync *before* writing more.
+##     `commitIfTerminal` never reports an already-visible commit frame as
+##     persisted until that retry succeeds (B1).
+##   - the journal's directory entry is fsynced when the file is created, and
+##     a failed directory fsync stays pending and is retried by the next
+##     append instead of being forgotten because `isNew` is now false (B2).
+##   - when this store creates the state directory, its entry in the parent
+##     directory is fsynced too, so the directory itself survives a power loss
+##     (B3).
 ##   - compaction writes a sibling temp file, fsyncs it, renames it over the
 ##     journal and fsyncs the directory.
+##
+## Guarantee across restarts: the pending flags only close the in-process
+## window where a frame sits in the page cache and a power loss could still
+## drop it. After a fresh open there is no flag, and framing decides: a
+## complete `\n<json>\n` frame read back from disk survived the power loss,
+## while a lost or torn frame is discarded by `repairTornTail` and the turn
+## stays active for recovery. A visible `tevCommitted` is therefore trusted
+## after a restart, but never trusted by the process that failed to fsync it.
+## A per-frame durability marker would change the on-disk schema, which this
+## story forbids.
 ##
 ## Permissions: state dir 0700, journal file 0600.
 ##
@@ -83,10 +102,59 @@ type
     unknownFields: bool
     unknownKind: bool
 
+  PendingSync = object
+    ## Durability of the last write has not been confirmed yet. A flag is
+    ## cleared only by a successful fsync of the same kind.
+    data: bool       ## tail bytes were written but their fsync failed
+    directory: bool  ## a directory entry on the journal path is not fsynced
+
 # A single lock for every journal instance in this process: the file is the
 # unit of serialization, not the store object.
 var journalLock: Lock
 initLock(journalLock)
+
+# Pending sync flags are keyed by journal path, not by store instance: the
+# daemon's actor and drainer hold distinct instances over the same file, and a
+# commit written by one must not be trusted by the other before its fsync
+# succeeds. All access happens under `journalLock`.
+var pendingSyncByPath: Table[string, PendingSync]
+
+proc loadPending(path: string): PendingSync {.raises: [].} =
+  {.cast(gcsafe).}:
+    result = pendingSyncByPath.getOrDefault(path)
+
+proc savePending(path: string; pending: PendingSync) {.raises: [].} =
+  {.cast(gcsafe).}:
+    if pending.data or pending.directory:
+      pendingSyncByPath[path] = pending
+    else:
+      pendingSyncByPath.del(path)
+
+# ---------------------------------------------------------------------------
+# Test seam for the durability guarantees (B1/B2/B3). Production code never
+# installs a hook: the default is nil and every fsync goes to the kernel. The
+# tests use it to fail a specific fsync and assert that the store retries.
+# ---------------------------------------------------------------------------
+
+type
+  JournalSyncKind* = enum
+    jskData       ## data-file fsync (the frame bytes)
+    jskDirectory  ## directory-entry fsync (new file, rename, new state dir)
+
+  JournalSyncHook* = proc(path: string; kind: JournalSyncKind): bool
+    {.gcsafe, raises: [].}
+    ## Returns `true` to perform the real fsync, `false` to simulate failure.
+
+var journalSyncHook {.threadvar.}: JournalSyncHook
+  ## Thread-local so the seam never needs a lock and tests are independent.
+
+proc setTurnJournalSyncHook*(hook: JournalSyncHook) {.raises: [].} =
+  ## Test-only injection point. Pass `nil` to restore real fsync behaviour.
+  journalSyncHook = hook
+
+proc syncAllowed(path: string; kind: JournalSyncKind): bool {.raises: [].} =
+  let hook = journalSyncHook
+  hook == nil or hook(path, kind)
 
 # ---------------------------------------------------------------------------
 # Small durable-file helpers. `adapters/state/runtime_store.nim` has the same
@@ -120,6 +188,8 @@ proc syncFile(f: File; path: string): Result[void, string] {.raises: [].} =
   except CatchableError as e:
     return err("flush failed for " & path & ": " & e.msg)
   when defined(posix):
+    if not syncAllowed(path, jskData):
+      return err("fsync failed for " & path & ": injected failure")
     let fd = cint(f.getFileHandle())
     when defined(macosx):
       if posix.fcntl(fd, F_FULLFSYNC) == 0:
@@ -132,6 +202,8 @@ proc syncDir(path: string): Result[void, string] {.raises: [].} =
   ## Persist a directory entry (new file, rename). Needed for durability of the
   ## name, not of the already-fsynced data.
   when defined(posix):
+    if not syncAllowed(path, jskDirectory):
+      return err("fsync failed for directory " & path & ": injected failure")
     try:
       let fd = posix.open(path.cstring, posix.O_RDONLY)
       if fd < 0:
@@ -166,15 +238,32 @@ proc renamePath(source, dest: string): Result[void, string] {.raises: [].} =
     except CatchableError as e:
       err("rename failed for " & source & ": " & e.msg)
 
-proc ensureJournalDir(path: string): Result[void, string] {.raises: [].} =
+proc ensureJournalDir(path: string;
+                      pendingDirSync: var bool): Result[void, string] {.raises: [].} =
   let dir = parentDir(path)
   if dir.len == 0:
     return ok()
+  let existed = dirExists(dir)
   try:
     createDir(dir)
   except CatchableError as e:
     return err("cannot create journal directory " & dir & ": " & e.msg)
-  hardenDir(dir)
+  let hardened = hardenDir(dir)
+  if hardened.isErr:
+    if not existed:
+      pendingDirSync = true
+    return err(hardened.error)
+  if not existed:
+    # B3: the new directory's own entry lives in its parent. Without this
+    # fsync a crash right after creation can lose the state dir and the
+    # journal inside it, even though the journal file itself was fsynced.
+    let parent = parentDir(dir)
+    if parent.len > 0:
+      let synced = syncDir(parent)
+      if synced.isErr:
+        pendingDirSync = true
+        return err(synced.error)
+  ok()
 
 proc repairTornTail(path: string): Result[void, string] {.raises: [].} =
   ## Frames always end with '\n'. If the last byte is not a newline, the
@@ -210,13 +299,67 @@ proc repairTornTail(path: string): Result[void, string] {.raises: [].} =
     # Non-POSIX builds keep the torn bytes; reads still ignore them.
     ok()
 
-proc appendFramedLine(path, line: string): Result[void, string] {.raises: [].} =
-  ## Appends exactly one frame and fsyncs the data file. The directory entry is
-  ## fsynced only when this append created the journal.
+proc syncJournalDirs(path: string): Result[void, string] {.raises: [].} =
+  ## Persists the directory entries that make the journal reachable: the file
+  ## entry in the state dir (B2) and, one level up, the state dir's own entry
+  ## when this store created it (B3). Both are idempotent; a missing directory
+  ## is skipped because `ensureJournalDir` will create and sync it.
+  let dir = parentDir(path)
+  if dir.len > 0 and dirExists(dir):
+    let synced = syncDir(dir)
+    if synced.isErr:
+      return err(synced.error)
+  let parent = parentDir(dir)
+  if parent.len > 0 and dirExists(parent):
+    let synced = syncDir(parent)
+    if synced.isErr:
+      return err(synced.error)
+  ok()
+
+proc syncExistingFile(path: string): Result[void, string] {.raises: [].} =
+  ## Re-fsyncs a file that was written earlier without reopening it for
+  ## append. Used to retry a data fsync that failed on a previous call.
+  if not fileExists(path):
+    return ok()
   try:
-    let prepared = ensureJournalDir(path)
+    var f = open(path, fmReadWriteExisting)
+    defer: f.close()
+    syncFile(f, path)
+  except CatchableError as e:
+    err("cannot reopen journal " & path & " for fsync: " & e.msg)
+
+proc retryPendingSync(path: string;
+                      pending: var PendingSync): Result[void, string] {.raises: [].} =
+  ## Runs before any new bytes are written. A tail whose fsync failed is
+  ## confirmed first; writing on top of it would extend the unconfirmed range
+  ## and make the window larger.
+  if pending.directory:
+    let synced = syncJournalDirs(path)
+    if synced.isErr:
+      return err(synced.error)
+    pending.directory = false
+  if pending.data:
+    let synced = syncExistingFile(path)
+    if synced.isErr:
+      return err(synced.error)
+    pending.data = false
+  ok()
+
+proc appendFramedLine(path, line: string;
+                      pending: var PendingSync): Result[void, string] {.raises: [].} =
+  ## Appends exactly one frame and fsyncs the data file. The directory entry is
+  ## fsynced when this append created the journal, or retried when an earlier
+  ## creation could not confirm it. On a failed data fsync the frame stays on
+  ## disk (a later retry can still make it durable) but the call returns `err`
+  ## and the tail is marked pending.
+  var mayHaveWritten = false
+  try:
+    let prepared = ensureJournalDir(path, pending.directory)
     if prepared.isErr:
       return err(prepared.error)
+    let retried = retryPendingSync(path, pending)
+    if retried.isErr:
+      return err(retried.error)
     let isNew = not fileExists(path)
     if not isNew:
       let repaired = repairTornTail(path)
@@ -227,6 +370,7 @@ proc appendFramedLine(path, line: string): Result[void, string] {.raises: [].} =
     if hardened.isErr:
       f.close()
       return err(hardened.error)
+    mayHaveWritten = true
     var syncError = ""
     try:
       f.write("\n" & line & "\n")
@@ -236,22 +380,28 @@ proc appendFramedLine(path, line: string): Result[void, string] {.raises: [].} =
     finally:
       f.close()
     if syncError.len > 0:
+      pending.data = true
       return err(syncError)
+    pending.data = false
     if isNew:
       let dir = parentDir(path)
       if dir.len > 0:
         let synced = syncDir(dir)
         if synced.isErr:
+          pending.directory = true
           return err(synced.error)
     ok()
   except CatchableError as e:
+    if mayHaveWritten:
+      pending.data = true
     err("append failed for " & path & ": " & e.msg)
 
-proc atomicWriteText(path, content, tmpSuffix: string): Result[void, string] {.raises: [].} =
+proc atomicWriteText(path, content, tmpSuffix: string;
+                     pending: var PendingSync): Result[void, string] {.raises: [].} =
   ## Temp file + fsync + rename + directory fsync. Used by compaction only.
   let tmp = path & ".tmp." & tmpSuffix
   try:
-    let prepared = ensureJournalDir(path)
+    let prepared = ensureJournalDir(path, pending.directory)
     if prepared.isErr:
       return err(prepared.error)
     var f = open(tmp, fmWrite)
@@ -275,10 +425,14 @@ proc atomicWriteText(path, content, tmpSuffix: string): Result[void, string] {.r
     if renamed.isErr:
       removeQuietly(tmp)
       return err(renamed.error)
+    # The renamed file's data was fsynced above, so a pending tail from the
+    # old file no longer exists.
+    pending.data = false
     let dir = parentDir(path)
     if dir.len > 0:
       let synced = syncDir(dir)
       if synced.isErr:
+        pending.directory = true
         return err(synced.error)
     ok()
   except CatchableError as e:
@@ -605,13 +759,41 @@ proc appendEventLocked(store: TurnJournalStore; turnId: string;
   ## Caller must hold `journalLock`.
   let effective = sanitizeEvent(event)
   let line = $eventToJson(turnId, effective, stamp)
-  appendFramedLine(store.path, line)
+  var pending = loadPending(store.path)
+  let saved = appendFramedLine(store.path, line, pending)
+  savePending(store.path, pending)
+  saved
+
+proc confirmDurabilityLocked(store: TurnJournalStore): Result[void, string] {.raises: [].} =
+  ## Caller must hold `journalLock`. Confirms a tail left pending by an earlier
+  ## failed fsync. Used before reporting an already-visible commit frame as
+  ## persisted (B1). A failed retry keeps the flag so the next call tries again.
+  var pending = loadPending(store.path)
+  if not pending.data and not pending.directory:
+    return ok()
+  if pending.directory:
+    let synced = syncJournalDirs(store.path)
+    if synced.isErr:
+      savePending(store.path, pending)
+      return err(synced.error)
+    pending.directory = false
+  if pending.data:
+    let synced = syncExistingFile(store.path)
+    if synced.isErr:
+      savePending(store.path, pending)
+      return err(synced.error)
+    pending.data = false
+  savePending(store.path, pending)
+  ok()
 
 proc append*(store: TurnJournalStore; turnId: string; event: TurnEvent;
              nowMs: int64 = 0): Result[void, string] {.gcsafe, raises: [].} =
-  ## Appends one event and fsyncs it. A second `tevCommitted` for an already
-  ## committed turn is a no-op: the drainer and the actor may both reach the
-  ## commit point, and the journal is the arbiter.
+  ## Appends one event and fsyncs it. `ok` means written *and* fsynced; `err`
+  ## means the event is not confirmed durable. A second `tevCommitted` for an
+  ## already committed turn is a no-op: the drainer and the actor may both
+  ## reach the commit point, and the journal is the arbiter. That no-op still
+  ## confirms a pending fsync first, so it never reports success for a frame
+  ## that may only be in the page cache.
   if turnId.len == 0:
     return err("turn journal: empty turn id")
   acquire(journalLock)
@@ -627,14 +809,16 @@ proc append*(store: TurnJournalStore; turnId: string; event: TurnEvent;
       else:
         none(TurnEntry)
     if current.isSome and current.get.phase == tpsCommitted:
-      return ok()
+      return store.confirmDurabilityLocked()
   store.appendEventLocked(turnId, event, stamp)
 
 proc commitIfTerminal*(store: TurnJournalStore; turnId: string;
                        nowMs: int64 = 0): Result[bool, string] {.gcsafe, raises: [].} =
   ## Commits only when delivery, memory and transcript are terminal. Returns
-  ## `true` when this call wrote `tevCommitted` and `false` when there was
-  ## nothing to do (missing, active, not terminal or already committed).
+  ## `true` when this call wrote and fsynced `tevCommitted` and `false` when
+  ## there was nothing to do (missing, active, not terminal or already
+  ## committed). An already-visible commit frame whose fsync failed is retried
+  ## before `false` is returned, and an `err` means the frame is not durable.
   acquire(journalLock)
   defer: release(journalLock)
   let snapshot = readJournal(store.path)
@@ -644,6 +828,10 @@ proc commitIfTerminal*(store: TurnJournalStore; turnId: string;
     return ok(false)
   let entry = snapshot.get().entries.getOrDefault(turnId)
   if entry.phase in {tpsCommitted, tpsAbandoned}:
+    if entry.phase == tpsCommitted:
+      let confirmed = store.confirmDurabilityLocked()
+      if confirmed.isErr:
+        return err(confirmed.error)
     return ok(false)
   if not isTurnTerminal(entry):
     return ok(false)
@@ -746,7 +934,9 @@ proc compact*(store: TurnJournalStore; nowMs: int64;
   while fileExists(store.path & ".tmp." & suffix):
     inc attempt
     suffix = $getCurrentProcessId() & "-" & $now & "-" & $attempt
-  let written = atomicWriteText(store.path, payload, suffix)
+  var pending = loadPending(store.path)
+  let written = atomicWriteText(store.path, payload, suffix, pending)
+  savePending(store.path, pending)
   if written.isErr:
     return err(written.error)
   ok(true)

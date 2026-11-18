@@ -59,6 +59,9 @@ type
     flood*:       FloodGate      ## per-chat penalty windows
     chatIds*:     Table[string, string] ## userId → source chat id
     pollTimeout*: int           ## seconds; 1 for multi-channel, up to 30 for solo
+    mediaValidatedHook*: proc (canonicalPath: string) {.gcsafe, raises: [].}
+      ## Test-only seam fired after confinement and before the descriptor read.
+      ## Production adapters leave it nil.
 
 # ── API helpers ───────────────────────────────────────────────────────────────
 
@@ -364,44 +367,6 @@ func mediaChatId(tgId: int64; replyTo: string): int64 =
       discard
   tgId
 
-proc readFileLimited(path: string; limit: int64): Result[string, string] =
-  ## Reads at most `limit` bytes. One extra byte is probed only at the cap, so
-  ## the adapter can tell an exact-cap file from one that grew after the size
-  ## check. Never reads above the ceiling.
-  try:
-    var file: File
-    if not open(file, path, fmRead):
-      return err("media file unreadable")
-    defer: close(file)
-    var data = ""
-    var chunk = newString(TelegramUploadReadChunk)
-    while data.len.int64 < limit:
-      let remaining = limit - data.len.int64
-      let want = int(min(int64(chunk.len), remaining))
-      let got = readBuffer(file, addr chunk[0], want)
-      if got <= 0:
-        break
-      data.add(chunk[0 ..< got])
-    if data.len.int64 >= limit:
-      var extra: char
-      if readBuffer(file, addr extra, 1) > 0:
-        return err("media file exceeds the cap")
-    ok(data)
-  except CatchableError:
-    err("media file unreadable")
-
-proc localMediaBytes(path: string; limit: int64): Result[string, string] =
-  ## Cheap rejections first: the file must exist, must not be a directory and
-  ## must fit the cap before any byte is read.
-  if path.len == 0 or not fileExists(path) or dirExists(path):
-    return err("media file unavailable")
-  try:
-    if getFileSize(path) > limit:
-      return err("media file exceeds the cap")
-  except CatchableError:
-    return err("media file unreadable")
-  readFileLimited(path, limit)
-
 proc sendMediaFallbackText(a: TelegramAdapter; tgId: int64;
                            replyTo: string): Result[void, string] =
   ## Delivers a neutral line when every media attempt failed. Errors are
@@ -428,7 +393,8 @@ proc sendLocalMedia(a: TelegramAdapter; tgId: int64; path, caption,
                     replyTo, mediaRoot: string;
                     durationSec: int): Result[void, string] =
   ## Reads an existing local file and uploads it as multipart. The path is
-  ## confined to the paddock before any byte is read; a denial is the same
+  ## confined to the paddock before any byte is read and the bytes come from
+  ## the descriptor validated against that confinement; a denial is the same
   ## neutral notice as a missing file and never deletes the target. The
   ## destination comes from the reply target (same rule as text), the topic and
   ## reply anchor are preserved, and a deleted topic/anchor is retried without
@@ -439,7 +405,12 @@ proc sendLocalMedia(a: TelegramAdapter; tgId: int64; path, caption,
   if confined.isErr:
     return a.sendMediaFallbackText(chatId, replyTo)
   let safePath = confined.value
-  let loaded = localMediaBytes(safePath, TelegramMaxUploadBytes)
+  if not a.mediaValidatedHook.isNil:
+    ## Test seam: lets a test win the race between validation and the read.
+    a.mediaValidatedHook(safePath)
+  let loaded = readConfinedMediaFile(mediaRoot, safePath,
+                                     TelegramMaxUploadBytes,
+                                     TelegramUploadReadChunk)
   if loaded.isErr:
     return a.sendMediaFallbackText(chatId, replyTo)
   let data = loaded.value

@@ -4,8 +4,36 @@
 
 import std/[os, strutils, unittest]
 import donkey/adapters/provider/runtime_builder
+import donkey/core/pipeops
+import donkey/domain/message
 import donkey/domain/providers/descriptors
+import donkey/ports/http
 import donkey/ports/provider
+
+type
+  Capture = ref object
+    url:     string
+    body:    string
+    headers: seq[HttpHeader]
+
+proc recordingPort(cap: Capture): HttpRuntimePort =
+  ## Answers every compat request so the factory's choice of branch is
+  ## observable: URL and credential are captured, no socket is opened.
+  HttpRuntimePort(
+    postNoRedirect: proc (url, body: string; headers: seq[HttpHeader] = @[]):
+                     Result[HttpResponse, string] {.gcsafe.} =
+      cap.url = url
+      cap.body = body
+      cap.headers = headers
+      ok(HttpResponse(status: 200,
+                      body: """{"choices":[{"message":{"content":"ok"}}]}""",))
+  )
+
+func headerValue(headers: seq[HttpHeader]; name: string): string =
+  for header in headers:
+    if header.name.toLowerAscii() == name.toLowerAscii():
+      return header.value
+  ""
 
 const EndpointCases = [
   ("openrouter",   "https://openrouter.ai/api/v1/chat/completions"),
@@ -143,3 +171,33 @@ suite "descriptor factory":
     putEnv("NVIDIA_BASE_URL", "https://nim.example/v1/")
     check providerEndpointFor("nvidia") ==
       "https://nim.example/v1/chat/completions"
+
+  test "every compat bundle posts to its own descriptor endpoint":
+    ## The injected port makes the builder's branch choice black-box: a bundle
+    ## wired to another provider's profile posts to that other endpoint.
+    for id in ["nvidia", "alibaba", "fireworks"]:
+      var cap = Capture()
+      let bundle = buildProviderBundle(
+        ProviderSpec(providerName: id, apiKey: "key-" & id),
+        http = recordingPort(cap))
+      let res = bundle.completeFn(CompletionRequest())
+      require res.isOk
+      check cap.url == providerEndpointFor(id)
+      check cap.url == descriptorOr(id).baseUrl
+      check headerValue(cap.headers, "Authorization") == "Bearer key-" & id
+      check cap.body.len > 0
+
+  test "a userinfo override is ignored, not sent over cleartext":
+    ## `localhost:pass@remote.example` hides the real host in the userinfo.
+    putEnv("NVIDIA_BASE_URL", "http://localhost:pass@remote.example/v1")
+    check providerEndpointFor("nvidia") == descriptorOr("nvidia").baseUrl
+
+  test "a userinfo override is rejected for https too":
+    putEnv("NVIDIA_BASE_URL", "https://api.nvidia.com@evil.example/v1")
+    check providerEndpointFor("nvidia") == descriptorOr("nvidia").baseUrl
+
+  test "an @ inside the query does not look like userinfo":
+    putEnv("NVIDIA_BASE_URL", "https://gateway.example/v1?key=a@b")
+    ## The authority is `gateway.example`: the override is accepted (whatever
+    ## the resulting URL shape), not silently replaced by the hosted endpoint.
+    check providerEndpointFor("nvidia") != descriptorOr("nvidia").baseUrl

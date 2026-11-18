@@ -1615,8 +1615,14 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
     {.cast(gcsafe).}:
       if isApiChatReply(outMsg):
         ## API replies belong to a waiting HTTP turn, never to a channel port.
+        ## A reply without a turn token (a scheduled firing for an `api:` user,
+        ## for example) must not close an unrelated HTTP request.
+        if outMsg.bridgeToken == 0:
+          log.warn("dropping an API reply without a turn token for " &
+                   $outMsg.userId)
+          continue
         if gApiChatBridge != nil:
-          discard gApiChatBridge.deliver(outMsg)
+          discard gApiChatBridge.deliver(outMsg, outMsg.bridgeToken)
         continue
     completeInboundReactionStatus(runtime, outboundPorts, outMsg)
     routeOutbound(outMsg, outboundPorts, log, runtime.presentationState, runtime.ledger)
@@ -1803,9 +1809,19 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
       let linePolicy = LinePolicy(
         allowedGroups: ctx.env.lineAllowedGroups,
         allowedUsers:  ctx.env.lineAllowedUsers)
+      ## Hand the `/continue` confirmation to the outbox so this drain does not
+      ## wait for the LINE POST. The outbox drainer runs later on the same
+      ## daemon thread, so this removes the wait from the channel drain, not
+      ## from the daemon (an outbound worker is future work).
+      let enqueueLineReply = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
+        try:
+          ctx.runtime.globalOutbox.putNoWait(msg)
+          ok()
+        except AsyncQueueFullError:
+          err("LINE: outbox full, /continue reply dropped")
       drainLineEvents(
         ctx.adapters.ln, ctx.runtime.sm, ctx.runtime.lineReplay,
-        linePolicy, getTime().toUnix(), fallback, log) > 0,
+        linePolicy, getTime().toUnix(), fallback, enqueueLineReply, log) > 0,
     drainMatrix = proc(): bool =
       let count = drainMatrixGateway(
         matrixConfigured(),

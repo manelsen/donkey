@@ -484,21 +484,19 @@ proc ctlScheduleAdd*(stateDir, scheduleId, cronExpr, userId, payload: string;
     return err(valid.error)
 
   let store = newScheduleStoreRef(stateDir)
-  let existing = store.loadRecord(spec.id)
-  if existing.isErr:
-    return err(existing.error)
-  if existing.get().isSome:
-    return err("schedule '" & spec.id & "' already exists; remove it first " &
-               "with `donkey ctl schedule remove " & spec.id & "`")
-
   let record = ScheduleRecord(
     spec: spec,
     lastRunAtMs: spec.createdAtMs,
     lastFireAtMs: 0,
   )
-  let saved = store.upsert(record)
-  if saved.isErr:
-    return err(saved.error)
+  ## Check-and-insert in one store transaction: `loadRecord` + `upsert` in two
+  ## lock acquisitions let two concurrent `add`s both pass the duplicate check.
+  let inserted = store.insertIfAbsent(record)
+  if inserted.isErr:
+    return err(inserted.error)
+  if not inserted.get():
+    return err("schedule '" & spec.id & "' already exists; remove it first " &
+               "with `donkey ctl schedule remove " & spec.id & "`")
   ok("Added schedule '" & spec.id & "' (" & spec.cronExpr & ", " &
      formatTzOffset(spec.tzOffsetMinutes) & ", " & spec.channel & ")")
 
@@ -516,21 +514,21 @@ proc ctlScheduleRemove*(stateDir, scheduleId: string
     return err(removed.error)
   ok("Removed schedule '" & scheduleId & "'.")
 
-proc ctlScheduleSetEnabled*(stateDir, scheduleId: string; enabled: bool
-                           ): Result[string, string] =
-  ## `enable`/`disable <id>`: flips `spec.enabled` and rewrites the whole
-  ## record, so both watermarks are preserved. Unknown id is an error.
-  let store = newScheduleStoreRef(stateDir)
-  let existing = store.loadRecord(scheduleId)
-  if existing.isErr:
-    return err(existing.error)
-  if existing.get().isNone:
+proc ctlScheduleSetEnabled*(stateDir, scheduleId: string; enabled: bool;
+                            nowMs = -1'i64): Result[string, string] =
+  ## `enable`/`disable <id>`: one store transaction flips `spec.enabled`.
+  ##
+  ## A real re-enable (disabled → enabled) also writes `lastRunAtMs = now`:
+  ## if the daemon was stopped for the whole disabled period, no tick advanced
+  ## the watermark, and the first tick after enabling would catch up on that
+  ## window. `lastFireAtMs` is historical and stays untouched. Unknown id is
+  ## an error.
+  let toggled = newScheduleStoreRef(stateDir).setEnabled(
+    scheduleId, enabled, scheduleNow(nowMs))
+  if toggled.isErr:
+    return err(toggled.error)
+  if not toggled.get():
     return err("schedule not found: " & scheduleId)
-  var record = existing.get().get()
-  record.spec.enabled = enabled
-  let saved = store.upsert(record)
-  if saved.isErr:
-    return err(saved.error)
   ok((if enabled: "Enabled schedule '" else: "Disabled schedule '") &
      scheduleId & "'.")
 

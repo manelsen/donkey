@@ -13,6 +13,7 @@ import donkey/domain/providers/compat
 import donkey/domain/providers/openai_pure
 import donkey/domain/providers/profile_nvidia
 import donkey/adapters/provider/compat_adapter
+import donkey/ports/http
 
 const TestModel = "nvidia/nemotron-3.5-super-vl-120b-a12b"
 
@@ -24,6 +25,37 @@ func headerValue(headers: seq[(string, string)]; name: string): string =
   for (key, value) in headers:
     if key == name:
       return value
+  ""
+
+type
+  WireCapture = ref object
+    url:     string
+    body:    string
+    headers: seq[HttpHeader]
+
+proc recordingPort(cap: WireCapture;
+                   response = """{"choices":[{"message":{"content":"ok"}}]}""";
+                   status = 200;
+                   usePost = false): HttpRuntimePort =
+  ## The fake transport captures the exact request the adapter emits. The
+  ## buyer of the seam is `complete`; redirects are irrelevant here, so the
+  ## default fills `postNoRedirect` (the production contract) and `usePost`
+  ## exercises the fallback.
+  let handler = proc (url, body: string; headers: seq[HttpHeader] = @[]):
+                Result[HttpResponse, string] {.gcsafe.} =
+    cap.url = url
+    cap.body = body
+    cap.headers = headers
+    ok(HttpResponse(status: status, body: response))
+  if usePost:
+    HttpRuntimePort(post: handler)
+  else:
+    HttpRuntimePort(postNoRedirect: handler)
+
+func httpHeaderValue(headers: seq[HttpHeader]; name: string): string =
+  for header in headers:
+    if header.name.toLowerAscii() == name.toLowerAscii():
+      return header.value
   ""
 
 suite "compat adapter — request body (NVIDIA golden)":
@@ -187,14 +219,14 @@ suite "compat adapter — streaming consumer (no network)":
       "\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":1}}\n" &
       "data: [DONE]\n"
     let res = consumeCompatSse(newStringStream(sse), nil)
-    check res.isOk
+    require res.isOk
     check res.get().text == "olá"
     check res.get().inputTokens == 2
     check res.get().outputTokens == 1
 
   test "an SSE stream with only [DONE] is a legitimate empty success":
     let res = consumeCompatSse(newStringStream("data: [DONE]\n"), nil)
-    check res.isOk
+    require res.isOk
     check res.get().text == ""
 
   test "keepalive comments and blank lines are ignored":
@@ -202,5 +234,85 @@ suite "compat adapter — streaming consumer (no network)":
               "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n" &
               "data: [DONE]\n"
     let res = consumeCompatSse(newStringStream(sse), nil)
-    check res.isOk
+    require res.isOk
     check res.get().text == "ok"
+
+suite "compat adapter — injected HTTP port":
+  ## The non-streaming path takes an optional `HttpRuntimePort`. It is the only
+  ## way to observe what the adapter actually sends, so these tests pin the
+  ## request (URL, headers, body) instead of grepping source text.
+
+  test "no port keeps the default transport":
+    check not nvidiaAdapter().hasHttp
+
+  test "complete posts through the port and parses the response":
+    let cap = WireCapture()
+    let adapter = newCompatAdapter("key-port", model = TestModel,
+                                   providerName = "NVIDIA",
+                                   profileFn = nvidiaCompatProfile,
+                                   http = recordingPort(cap))
+    let res = adapter.complete(CompletionRequest(
+      system: "seja breve",
+      messages: @[ChatMessage(role: roleUser, text: "oi")]))
+    require res.isOk
+    check res.get().text == "ok"
+    check cap.url == "https://integrate.api.nvidia.com/v1/chat/completions"
+    check httpHeaderValue(cap.headers, "Authorization") == "Bearer key-port"
+    check httpHeaderValue(cap.headers, "Content-Type") == "application/json"
+    check httpHeaderValue(cap.headers, NvidiaBillingHeaderName) == "Donkey"
+    let body = parseJson(cap.body)
+    check body["model"].getStr() == TestModel
+    check body["messages"][0]["content"].getStr() == "seja breve"
+    check not body.hasKey("include_reasoning")
+
+  test "the port receives the profile quirks in the body":
+    let cap = WireCapture()
+    let adapter = newCompatAdapter("key-port", model = TestModel,
+                                   providerName = "NVIDIA",
+                                   profileFn = nvidiaCompatProfile,
+                                   http = recordingPort(cap))
+    let res = adapter.complete(CompletionRequest(
+      messages: @[
+        ChatMessage(role: roleAssistant, text: "",
+                    toolCalls: @[ToolCallRequest(id: "t1", name: "search",
+                                                 inputJson: """{"q":"x"}""")]),
+        ChatMessage(role: roleTool, text: "resultado", toolCallId: "t1")]))
+    require res.isOk
+    let body = parseJson(cap.body)
+    check body["messages"][1]["role"].getStr() == "tool"
+    check not body["messages"][1].hasKey("name")   ## the NIM quirk
+
+  test "a port with only post is used as the fallback":
+    let cap = WireCapture()
+    let adapter = newCompatAdapter("key-post", model = TestModel,
+                                   providerName = "NVIDIA",
+                                   profileFn = nvidiaCompatProfile,
+                                   http = recordingPort(cap, usePost = true))
+    let res = adapter.complete(CompletionRequest())
+    require res.isOk
+    check cap.url == "https://integrate.api.nvidia.com/v1/chat/completions"
+
+  test "a non-2xx port response is an error Result, not an exception":
+    let cap = WireCapture()
+    let adapter = newCompatAdapter("key-401", model = TestModel,
+                                   providerName = "NVIDIA",
+                                   profileFn = nvidiaCompatProfile,
+                                   http = recordingPort(cap, status = 401,
+                                     response = """{"error":"unauthorized"}"""))
+    let res = adapter.complete(CompletionRequest())
+    check res.isErr
+    check res.error.contains("401")
+    check res.error.contains("NVIDIA")
+
+  test "a port transport error is propagated as a Result":
+    let adapter = newCompatAdapter("key-err", model = TestModel,
+                                   providerName = "NVIDIA",
+                                   profileFn = nvidiaCompatProfile,
+                                   http = HttpRuntimePort(
+                                     postNoRedirect: proc (url, body: string;
+                                         headers: seq[HttpHeader] = @[]):
+                                         Result[HttpResponse, string] {.gcsafe.} =
+                                       err("connection refused")))
+    let res = adapter.complete(CompletionRequest())
+    check res.isErr
+    check res.error.contains("connection refused")

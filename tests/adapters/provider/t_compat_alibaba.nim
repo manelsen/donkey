@@ -20,6 +20,7 @@ import donkey/domain/providers/compat
 import donkey/domain/providers/descriptors
 import donkey/domain/providers/profile_alibaba
 import donkey/adapters/provider/compat_adapter
+import donkey/ports/http
 
 const TestModel = "qwen3.8-max"
 
@@ -32,6 +33,30 @@ func headerValue(headers: seq[(string, string)]; name: string): string =
     if key == name:
       return value
   ""
+
+type
+  WireCapture = ref object
+    url:     string
+    body:    string
+    headers: seq[HttpHeader]
+
+proc recordingPort(cap: WireCapture;
+                   response = """{"choices":[{"message":{"content":"ok"}}]}""";
+                   status = 200): HttpRuntimePort =
+  ## Answers instead of a socket so `complete` can be asserted on the wire.
+  HttpRuntimePort(
+    postNoRedirect: proc (url, body: string; headers: seq[HttpHeader] = @[]):
+                     Result[HttpResponse, string] {.gcsafe.} =
+      cap.url = url
+      cap.body = body
+      cap.headers = headers
+      ok(HttpResponse(status: status, body: response)),
+  )
+
+proc wireAdapter(cap: WireCapture; status = 200): CompatAdapter =
+  newCompatAdapter("key-dash", model = TestModel, providerName = "Alibaba",
+                   profileFn = alibabaCompatProfile,
+                   http = recordingPort(cap, status = status))
 
 suite "alibaba compat — descriptor":
 
@@ -138,6 +163,43 @@ suite "alibaba compat — headers and URL":
   test "an explicit endpoint flows through unchanged":
     check requestUrl(alibabaCompatProfileAt("http://127.0.0.1:9/v1/chat")) ==
           "http://127.0.0.1:9/v1/chat"
+
+suite "alibaba compat — request on the wire (injected port)":
+  ## `complete` is the only consumer of the endpoint and extra headers, so the
+  ## port is where the profile becomes observable.
+
+  test "complete posts the DashScope body with only the default headers":
+    let cap = WireCapture()
+    let res = wireAdapter(cap).complete(CompletionRequest(
+      messages: @[ChatMessage(role: roleUser, text: "oi")]))
+    require res.isOk
+    check res.get().text == "ok"
+    check cap.url ==
+          "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+    check headerValue(cap.headers, "Authorization") == "Bearer key-dash"
+    check headerValue(cap.headers, "Content-Type") == "application/json"
+    check cap.headers.len == 2              ## the profile adds no extras
+    check headerValue(cap.headers, "X-BILLING-INVOKE-ORIGIN") == ""
+    let body = parseJson(cap.body)
+    check body["model"].getStr() == TestModel
+    check not body.hasKey("reasoning_effort")
+    check not body.hasKey("include_reasoning")
+
+  test "reasoning on adds no DashScope-specific field":
+    let cap = WireCapture()
+    let res = wireAdapter(cap).complete(CompletionRequest(reasoning: true))
+    require res.isOk
+    let body = parseJson(cap.body)
+    check not body.hasKey("preserve_thinking")
+    check not body.hasKey("clear_thinking")
+    check not body.hasKey("reasoning_effort")
+
+  test "a non-2xx from the port is an error naming Alibaba":
+    let cap = WireCapture()
+    let res = wireAdapter(cap, status = 400).complete(CompletionRequest())
+    check res.isErr
+    check res.error.contains("400")
+    check res.error.contains("Alibaba")
 
 suite "alibaba compat — golden response":
 

@@ -31,6 +31,7 @@ import donkey/domain/providers/compat
 import donkey/domain/providers/descriptors
 import donkey/domain/providers/profile_fireworks
 import donkey/adapters/provider/compat_adapter
+import donkey/ports/http
 
 const TestModel = "accounts/fireworks/models/kimi-k2p6"
 
@@ -43,6 +44,30 @@ func headerValue(headers: seq[(string, string)]; name: string): string =
     if key == name:
       return value
   ""
+
+type
+  WireCapture = ref object
+    url:     string
+    body:    string
+    headers: seq[HttpHeader]
+
+proc recordingPort(cap: WireCapture;
+                   response = """{"choices":[{"message":{"content":"ok"}}]}""";
+                   status = 200): HttpRuntimePort =
+  ## Answers instead of a socket so `complete` can be asserted on the wire.
+  HttpRuntimePort(
+    postNoRedirect: proc (url, body: string; headers: seq[HttpHeader] = @[]):
+                     Result[HttpResponse, string] {.gcsafe.} =
+      cap.url = url
+      cap.body = body
+      cap.headers = headers
+      ok(HttpResponse(status: status, body: response)),
+  )
+
+proc wireAdapter(cap: WireCapture; status = 200): CompatAdapter =
+  newCompatAdapter("key-fw", model = TestModel, providerName = "Fireworks",
+                   profileFn = fireworksCompatProfile,
+                   http = recordingPort(cap, status = status))
 
 suite "fireworks compat — descriptor":
 
@@ -162,6 +187,42 @@ suite "fireworks compat — headers and URL":
   test "an explicit endpoint flows through unchanged":
     check requestUrl(fireworksCompatProfileAt("http://127.0.0.1:9/v1/chat")) ==
           "http://127.0.0.1:9/v1/chat"
+
+suite "fireworks compat — request on the wire (injected port)":
+  ## `complete` is the only consumer of the endpoint and extra headers, so the
+  ## port is where the profile becomes observable.
+
+  test "complete posts the Fireworks body and headers to the descriptor endpoint":
+    let cap = WireCapture()
+    let res = wireAdapter(cap).complete(CompletionRequest(
+      messages: @[ChatMessage(role: roleUser, text: "oi")]))
+    require res.isOk
+    check res.get().text == "ok"
+    check cap.url == "https://api.fireworks.ai/inference/v1/chat/completions"
+    check headerValue(cap.headers, "Authorization") == "Bearer key-fw"
+    check headerValue(cap.headers, "Content-Type") == "application/json"
+    check headerValue(cap.headers, "X-Title") == "Donkey"
+    check headerValue(cap.headers, "HTTP-Referer") == FireworksReferer
+    let body = parseJson(cap.body)
+    check body["model"].getStr() == TestModel
+    check body["reasoning_effort"].getStr() == "none"
+    check not body.hasKey("include_reasoning")
+
+  test "reasoning on omits the off switch and every reasoning key":
+    let cap = WireCapture()
+    let res = wireAdapter(cap).complete(CompletionRequest(reasoning: true))
+    require res.isOk
+    let body = parseJson(cap.body)
+    check not body.hasKey("reasoning_effort")
+    check not body.hasKey("include_reasoning")
+    check not body.hasKey("reasoning")
+
+  test "a non-2xx from the port is an error naming Fireworks":
+    let cap = WireCapture()
+    let res = wireAdapter(cap, status = 429).complete(CompletionRequest())
+    check res.isErr
+    check res.error.contains("429")
+    check res.error.contains("Fireworks")
 
 suite "fireworks compat — golden response":
 

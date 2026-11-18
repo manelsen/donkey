@@ -11,6 +11,31 @@
 ## failure, a pending memory is lost rather than rewritten, and a pending
 ## transcript is lost because it is derived from memory.
 ##
+## Recovery checkpoints (CP) and the plan each one produces:
+##
+## | CP | Journal state | Resume plan |
+## |---|---|---|
+## | CP-1/2 | accepted, rsBuffered, rdsNone | replay model once |
+## | CP-3 | accepted, rsStreamed, rdsNone | abandon + notice |
+## | CP-4 | replyReady, rsBuffered, rdsNone | enqueue the final once |
+## | CP-4-streamed (B4) | replyReady, rsStreamed, rdsNone | resend the final |
+## | CP-5 | replyReady, any source, rdsQueued | resend the final once |
+## | CP-6/7 | replyReady, rdsAttempted/rdsFailed | reconcile/fail + notice |
+## | CP-12 | committed | nothing (duplicate inbound) |
+## | CP-13 | accepted, replay budget spent | abandon + notice |
+##
+## CP-4-streamed decision: the final exists, but the partials were already
+## published, so the user saw half an answer and the crash happened before the
+## outbox put.
+## Resending the stored final as a simple message is chosen over silence: one
+## possible duplicate after a crash is cheaper than a question that never gets
+## answered. The plan keeps `commit = false` (rdsNone is not terminal), never
+## sets `enqueueReply` (the outbox never saw this text) and never abandons.
+## CP-3 stays "nothing / abandon" because no final was produced at all: there
+## is no text to resend, and replaying the model could duplicate partials.
+## CP-4 (buffered) keeps `enqueueReply`: nothing reached the channel, so the
+## outbox receives its first copy and `sendQueuedReply` stays false.
+##
 ## There is deliberately no linear `Delivered` phase: `tpsCommitted` means the
 ## turn is closed, while the delivery outcome lives in `ReplyDelivery`.
 
@@ -340,8 +365,10 @@ func resumeDecision*(entry: TurnEntry): TurnResumePlan =
   ## never performs the action. Duplicating an effect is worse than losing it:
   ## uncertain delivery is reconciled, pending memory/transcript are lost.
   ## `sendQueuedReply` resends a final that was already handed to the outbox
-  ## (buffered or streamed), and `commit` is set only for a terminal-and-
-  ## committable turn so the caller can journal `tevCommitted`.
+  ## (buffered or streamed) **or** a streamed final that crashed before the
+  ## put (B4: the user already saw partials, so it is resent as a simple
+  ## message). `commit` is set only for a terminal-and-committable turn so the
+  ## caller can journal `tevCommitted`.
   result.turnId = entry.turnId
   if entry.phase == tpsCommitted:
     return
@@ -412,7 +439,19 @@ func resumeDecision*(entry: TurnEntry): TurnResumePlan =
         result.abandon = true
         if mayNotice:
           result.emitNotice = true
-    # Streamed with nothing queued (CP-4-streamed): nothing was shown yet.
+    elif entry.replyDelivery == rdsNone and entry.replySource == rsStreamed:
+      # CP-4-streamed / B4: the turn produced its final after streaming started
+      # but crashed before `tevReplyQueued` (before `outbox.put`). The user
+      # already saw the partials, so silence is worse than a possible duplicate
+      # after the crash: resend the stored final as a simple message. It is
+      # never re-enqueued (the outbox never saw it) and never abandoned.
+      if entry.replyText.len > 0:
+        result.sendQueuedReply = true
+      else:
+        # Fail-closed: without the stored text there is nothing to resend.
+        result.abandon = true
+        if mayNotice:
+          result.emitNotice = true
   of tpsCommitted, tpsAbandoned:
     discard
 

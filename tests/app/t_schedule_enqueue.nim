@@ -322,3 +322,17 @@ suite "TaskKind — tkSchedule is additive":
 
   test "tkSchedule stringifies by name":
     check $tkSchedule == "tkSchedule"
+
+  test "an api: user is refused: their replies are request-scoped":
+    let base = tempBase("api-user")
+    defer: removeDir(base)
+    let outbox = newAsyncQueue[OutboundMessage]()
+    let services = makeServices(base, outbox)
+    var sm: SessionManager
+    sm.init()
+    var msgSeq = 0
+    let res = enqueueScheduledTask(sm, services, msgSeq,
+                                   makeSpec(userId = "api:alice"), FiredAtMs)
+    check res.isErr
+    check "request-scoped" in res.error
+    check msgSeq == 0

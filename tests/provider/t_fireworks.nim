@@ -1,17 +1,51 @@
-## t_fireworks.nim — Fireworks end-to-end wiring (US-004).
+## t_fireworks.nim — Fireworks end-to-end wiring (US-004, review E4).
 ##
-## The bundle must come from the generic `CompatAdapter` through the descriptor,
-## not from the Zhipu fallback at the bottom of `runtime_builder`. No network:
-## the bundle is built, never called.
+## The bundle must come from the generic `CompatAdapter` through the
+## descriptor, not from the Zhipu fallback at the bottom of `runtime_builder`.
+##
+## The branch is pinned behaviourally: the bundle is built with an injected
+## `HttpRuntimePort` and `completeFn` is called, so the test asserts the request
+## the bundle actually produced (URL, auth header, Fireworks-only body). A
+## profile swapped at the builder's call site fails here; a source grep would
+## not. No network: the port answers.
 
-import std/[strutils, unittest]
+import std/[json, strutils, unittest]
 import donkey/adapters/provider/compat_adapter
 import donkey/adapters/provider/runtime_builder
 import donkey/core/pipeops
 import donkey/core/providers/provider_defaults
+import donkey/domain/message
 import donkey/domain/providers/descriptors
 import donkey/domain/providers/profile_fireworks
+import donkey/ports/http
 import donkey/ports/provider
+
+type
+  Capture = ref object
+    url:     string
+    body:    string
+    headers: seq[HttpHeader]
+
+proc recordingPort(cap: Capture): HttpRuntimePort =
+  HttpRuntimePort(
+    postNoRedirect: proc (url, body: string; headers: seq[HttpHeader] = @[]):
+                     Result[HttpResponse, string] {.gcsafe.} =
+      cap.url = url
+      cap.body = body
+      cap.headers = headers
+      ok(HttpResponse(status: 200,
+                      body: """{"choices":[{"message":{"content":"ok"}}]}""")),
+  )
+
+func headerValue(headers: seq[HttpHeader]; name: string): string =
+  for header in headers:
+    if header.name.toLowerAscii() == name.toLowerAscii():
+      return header.value
+  ""
+
+proc completeThroughPort(spec: ProviderSpec; req: CompletionRequest;
+                         cap: Capture): Result[CompletionResponse, string] =
+  buildProviderBundle(spec, http = recordingPort(cap)).completeFn(req)
 
 suite "fireworks provider bundle":
 
@@ -23,21 +57,49 @@ suite "fireworks provider bundle":
 
   test "the alias names reach the same real bundle":
     for name in ["fireworks-ai", "fw"]:
-      let bundle = buildProviderBundle(
-        ProviderSpec(providerName: name, apiKey: "fw-test"))
       check descriptorOr(name).id == "fireworks"
-      check bundle.completeFn != nil
-      check bundle.streamFn != nil
+      var cap = Capture()
+      let res = completeThroughPort(
+        ProviderSpec(providerName: name, apiKey: "fw-test"),
+        CompletionRequest(), cap)
+      require res.isOk
+      check cap.url == descriptorOr("fireworks").baseUrl
 
-  test "the fireworks branch selects fireworksCompatProfile, not another profile":
-    ## The bundle is opaque, so the branch's profile choice is pinned at the
-    ## call site. Deleting `of "fireworks":` fails the streamFn test above;
-    ## swapping the profile removes one of these lines.
-    const source = staticRead(
-      "../../src/donkey/adapters/provider/runtime_builder.nim")
-    check "of \"fireworks\":" in source
-    check "profileFn = fireworksProfileFromEnv" in source
-    check "fireworksCompatProfileAt(providerEndpointFor(\"fireworks\"))" in source
+  test "the bundle's request is the Fireworks profile, not another compat profile":
+    ## Endpoint per provider, the credential, and the Fireworks-only body
+    ## difference: no `reasoning_effort`/`include_reasoning` when reasoning is
+    ## on. NVIDIA or Alibaba swapped in would either change the endpoint or
+    ## leave a billing header / omit nothing.
+    var cap = Capture()
+    let res = completeThroughPort(
+      ProviderSpec(providerName: "fireworks", apiKey: "fw-test"),
+      CompletionRequest(system: "s",
+                        messages: @[ChatMessage(role: roleUser, text: "oi")],
+                        reasoning: true), cap)
+    require res.isOk
+    check cap.url == "https://api.fireworks.ai/inference/v1/chat/completions"
+    check headerValue(cap.headers, "Authorization") == "Bearer fw-test"
+    check headerValue(cap.headers, "Content-Type") == "application/json"
+    check headerValue(cap.headers, "X-Title") == "Donkey"
+    check headerValue(cap.headers, "HTTP-Referer").len > 0
+    check headerValue(cap.headers, "X-BILLING-INVOKE-ORIGIN") == ""
+    let body = parseJson(cap.body)
+    check body["model"].getStr() == DefaultModelFireworks
+    check not body.hasKey("reasoning_effort")
+    check not body.hasKey("include_reasoning")
+    check not body.hasKey("reasoning")
+
+  test "the off switch is the Fireworks reasoning_effort none":
+    ## Only the Fireworks profile carries `reasoning_off` extras, so this is
+    ## the second half of the profile proof.
+    var cap = Capture()
+    let res = completeThroughPort(
+      ProviderSpec(providerName: "fireworks", apiKey: "fw-test"),
+      CompletionRequest(reasoning: false), cap)
+    require res.isOk
+    let body = parseJson(cap.body)
+    check body["reasoning_effort"].getStr() == "none"
+    check not body.hasKey("include_reasoning")
 
   test "the descriptor supplies the default model":
     check providerDefaultModelFor("fireworks") == DefaultModelFireworks

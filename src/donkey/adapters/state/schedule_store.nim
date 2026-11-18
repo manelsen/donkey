@@ -36,6 +36,16 @@
 ##     scheduler watermark;
 ##   - every other spec field is replaced by the incoming record.
 ##
+## Two ctl operations are single-store transactions instead of
+## load-then-upsert, so a concurrent process cannot interleave between the
+## check and the write:
+##   - `insertIfAbsent`: refuses (returns `false`) an id that already exists;
+##     used by `ctl schedule add`;
+##   - `setEnabled`: flips `spec.enabled` and, on a disabled → enabled
+##     transition, moves `lastRunAtMs` to `now` so a re-enabled schedule does
+##     not catch up on the period the daemon was stopped. `lastFireAtMs` is
+##     left untouched.
+##
 ## `save` (the `ScheduleStorePort` path used by `tickSchedule`) reads/writes
 ## only the watermark: the stored spec is preserved, `createdAtMs` follows the
 ## same write-once rule, and `lastRunAtMs` is authoritative (a tick may
@@ -476,6 +486,71 @@ proc upsert*(store: ScheduleStore; record: ScheduleRecord
   records[id] = toStore
   atomicWriteText(store.path, $recordsToJson(records))
 
+proc insertIfAbsent*(store: ScheduleStore; record: ScheduleRecord
+                    ): Result[bool, string] {.gcsafe, raises: [].} =
+  ## Create-only write: the duplicate check and the insert happen under the
+  ## same in-process lock and file lock, so two concurrent adds cannot both
+  ## see a free id. Returns `true` when the row was written and `false` when
+  ## the id already exists (the stored row is left byte-for-byte untouched).
+  ## A corrupt document is an error and is left untouched.
+  let id = record.spec.id.strip()
+  if id.len == 0:
+    return err("schedule store: empty schedule id")
+  acquire(scheduleStoreLock)
+  defer: release(scheduleStoreLock)
+  let fileLock = lockFile(store)
+  defer: unlockFile(fileLock)
+  let current = readRecordsLocked(store.path)
+  if current.isErr:
+    return err(current.error)
+  var records = current.get()
+  if id in records:
+    return ok(false)
+  var toStore = record
+  toStore.spec.id = id
+  toStore.loadWarning = ""
+  records[id] = toStore
+  let written = atomicWriteText(store.path, $recordsToJson(records))
+  if written.isErr:
+    return err(written.error)
+  ok(true)
+
+proc setEnabled*(store: ScheduleStore; scheduleId: string; enabled: bool;
+                 nowMs: int64): Result[bool, string] {.gcsafe, raises: [].} =
+  ## Single-transaction enable/disable. Flipping `spec.enabled` and moving the
+  ## watermark cannot be split by a concurrent tick or ctl write.
+  ##
+  ## A disabled → enabled transition sets `lastRunAtMs = max(lastRun, now)`:
+  ## a daemon that was stopped for the whole disabled period has no watermark
+  ## from that window, so without this the first tick would catch up on it.
+  ## The watermark never moves backwards (clock rollback keeps the old value).
+  ## `lastFireAtMs` records the last real firing and is never touched here.
+  ## Returns `false` when the id is absent.
+  let id = scheduleId.strip()
+  if id.len == 0:
+    return err("schedule store: empty schedule id")
+  acquire(scheduleStoreLock)
+  defer: release(scheduleStoreLock)
+  let fileLock = lockFile(store)
+  defer: unlockFile(fileLock)
+  let current = readRecordsLocked(store.path)
+  if current.isErr:
+    return err(current.error)
+  var records = current.get()
+  if id notin records:
+    return ok(false)
+  var record = records.getOrDefault(id)
+  let reenabling = enabled and not record.spec.enabled
+  record.spec.enabled = enabled
+  if reenabling:
+    record.lastRunAtMs = max(record.lastRunAtMs, nowMs)
+  record.loadWarning = ""
+  records[id] = record
+  let written = atomicWriteText(store.path, $recordsToJson(records))
+  if written.isErr:
+    return err(written.error)
+  ok(true)
+
 proc remove*(store: ScheduleStore; scheduleId: string
             ): Result[void, string] {.gcsafe, raises: [].} =
   ## Remove the row and atomically rewrite the document. Removing an absent id
@@ -545,7 +620,9 @@ proc save*(store: ScheduleStore; state: ScheduleWatermark
     if state.id in records: records.getOrDefault(state.id)
     else: ScheduleRecord(spec: ScheduleSpec(id: state.id))
   record.spec.id = state.id
-  record.lastRunAtMs = state.lastRunAtMs
+  ## Monotonic: a tick that computed its watermark before `ctl enable`
+  ## advanced it must not rewind the watermark and replay the disabled period.
+  record.lastRunAtMs = max(record.lastRunAtMs, state.lastRunAtMs)
   if state.lastFireAtMs > 0:
     record.lastFireAtMs = state.lastFireAtMs
   if record.spec.createdAtMs == 0:

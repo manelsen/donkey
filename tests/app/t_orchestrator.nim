@@ -366,6 +366,61 @@ suite "OrchestratorAgent":
     check reply.replyKind == rkFinalAnswer
     check reply.text == "pong"
 
+  test "the task bridge token reaches the outbound terminal":
+    let tmpDir = getTempDir() / "donkey_test_orch_bridge_token"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[OutboundMessage] {.async.} =
+      let userDir = dir / "api_alice"
+      createDir(userDir)
+      let mem      = MdFileAdapter(paddocksDir: dir)
+      let inbox    = newAsyncQueue[AgentMessage]()
+      let outbox   = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 userDir, state)
+      var task = newTaskMsg("req-api-token", tkUserMsg, "api:alice", "ping")
+      task.bridgeToken = 7'u64
+      await inbox.put(task)
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      return reply
+
+    let reply = waitFor doTest(tmpDir)
+    check reply.replyKind == rkFinalAnswer
+    check reply.bridgeToken == 7'u64
+
+  test "a channel turn leaves the outbound token at zero":
+    let tmpDir = getTempDir() / "donkey_test_orch_no_token"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[OutboundMessage] {.async.} =
+      let userDir = dir / "u-no-token"
+      createDir(userDir)
+      let mem      = MdFileAdapter(paddocksDir: dir)
+      let inbox    = newAsyncQueue[AgentMessage]()
+      let outbox   = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 userDir, state)
+      await inbox.put(newTaskMsg("req-no-token", tkUserMsg, "u-no-token", "ping"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      return reply
+
+    let reply = waitFor doTest(tmpDir)
+    check reply.bridgeToken == 0'u64
+
   test "brand-new interactive user still enters onboarding":
     let tmpDir = getTempDir() / "donkey_test_orch_interactive_new_user"
     removeDir(tmpDir)
@@ -1492,6 +1547,27 @@ suite "adaptive debounce collector":
     check kind == amkTask
     check taskKind == tkCompact
 
+  test "a fragment from another turn is preserved as its own turn":
+    proc doTest(): Future[(string, uint64, uint64)] {.async.} =
+      let inbox = newAsyncQueue[AgentMessage]()
+      var first = newTaskMsg("a", tkUserMsg, "u", "um", ckTelegram, "1")
+      first.bridgeToken = 7
+      var other = newTaskMsg("b", tkUserMsg, "u", "dois", ckTelegram, "1")
+      other.bridgeToken = 8
+      ## Both are queued before the collection starts, so the test does not
+      ## depend on the debounce clock: a collector that ignored the token would
+      ## merge them and return "um" + "dois".
+      await inbox.put(first)
+      await inbox.put(other)
+      let merged = await collectWithDebounce(inbox, fastCfg())
+      let second = await collectWithDebounce(inbox, fastCfg())
+      (decodeUserPayload(merged.payload).text, merged.bridgeToken,
+       second.bridgeToken)
+    let (text, firstToken, secondToken) = waitFor doTest()
+    check text == "um"
+    check firstToken == 7
+    check secondToken == 8
+
   test "a fragment after the window becomes a separate turn":
     proc doTest(): Future[(string, string)] {.async.} =
       let inbox = newAsyncQueue[AgentMessage]()
@@ -1597,3 +1673,4 @@ suite "album payloads":
     check history.len == 10
     check history[0].text == "veja"
     check history[0].imageUrl == "img0.jpg"
+
