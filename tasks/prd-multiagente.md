@@ -124,7 +124,7 @@ evidência vermelho → verde.
 - [ ] `spawnFanout = startFanout + awaitFanout*(mgr; fanoutId; stopGeneration; userId; userInterrupt): Future[FanoutAggregate]`. `FanoutState` em `mgr.fanouts: Table[string, FanoutState]` **nos dois modos** (bookkeeping; não ocupa slot). Deadline = `plan.limits.maxAggregateDurationMs` (já ≤ 600 s).
 - [ ] **Captura na conclusão:** o supervisor grava o `FanoutOutcome` de cada filho em `FanoutState.outcomes` quando ele termina; `awaitFanout` agrega desse snapshot, nunca de `mgr.children` (a retenção 64 pode podar um filho não lido).
 - [ ] Cada filho mantém `SessionState`, `ConversationHistory`, `SubagentUsage`, inbox/outbox e paddock próprios; o `ref` de usage é criado por filho. Se `running + plan.len > mgr.maxConcurrent`, falha antes de criar paddock (`running` = filhos vivos, inclui os de fan-out detachado).
-- [ ] `fpFailFast`: no primeiro failure, cancela irmãos via `cancelSubagent`, marca `cancelledBySibling` e para — teste: 2º filho `ssFailed`, 1º/3º `ssCancelled` + `cancelledBySibling`, stop reason `fsrChildFailed`.
+- [ ] `fpFailFast`: no primeiro failure **ou** cancelamento externo de um irmão, cancela os demais via `cancelSubagent`, marca `cancelledBySibling` e para — teste: 2º filho `ssFailed`, 1º/3º `ssCancelled` + `cancelledBySibling`, stop reason `fsrChildFailed`; variante com o 2º cancelado por `cancel_subagent` em vez de falho, com 1º/3º `ssCancelled` + `cancelledBySibling`.
 - [ ] Barreira (não sleep): 3 filhos com `parent.asyncCompleteFn` (o `completeFn` síncrono bloquearia a thread e daria deadlock, não timeout) esperando `contador == 3`; `maxDurationMs ≥ 2_000`; timeout da barreira 1,5 s. `paddockDirFor` distinto e ordem do agregado igual à do plano.
 
 ### US-006: Tool `spawn_subagents`
@@ -159,7 +159,7 @@ evidência vermelho → verde.
 - [ ] O supervisor (de `spawnFanout` ou detachado) checa `isSessionStopRequested`/`isUserStoppedSince` a cada 100 ms, sinaliza `stopRequested`, cancela os filhos vivos e devolve `fsrSessionStop` com parciais.
 - [ ] **Teto de runtime:** no tick **e** na conclusão de cada filho, soma os tokens de **todos** os filhos do fan-out — snapshots dos finalizados + vivos — e chama `fanoutBudgetDecision(total, plan.limits)`. Em `bdTokensExceeded` sinaliza `budgetExceeded`, cancela todos e devolve `fsrAggregateBudget`. Teste: teto 20, filho A termina com 15, B com 10 → total 25, C é cancelado e o reason é `fsrAggregateBudget` (prova que finalizado continua contando).
 - [ ] `cancelAll` percorre `mgr.children` **e** `mgr.fanouts`, cancela supervisors detachados, e só chama `finalizeChild` (US-003, após `childSettled`) depois do settlement/reap; espera ≤ 2 s. `tests/app/t_subagent_fanout_stop.nim`: 8 filhos, stop e shutdown no meio, `subagents/` vazio, zero futures pendentes, `removes == creates`.
-- [ ] `cancel_subagent` de um irmão derruba os demais com `fpFailFast` e não os derruba com `fpCollectAll` (documentado na US-007).
+- [ ] `cancel_subagent` de um irmão derruba os demais com `fpFailFast` e não os derruba com `fpCollectAll` (documentado na US-007). **Decisão:** cancelamento externo **dispara** o fail-fast, como um failure: o irmão cancelado de fora é marcado `ssCancelled` sem `cancelledBySibling` (a marca significa "cancelado pelo fail-fast", não "cancelado por alguém") e o supervisor sinaliza `failFast` nos demais, que passam a `ssCancelled` + `cancelledBySibling`; o stop reason segue a precedência da US-002 e não reage a `ssCancelled`. Com `fpCollectAll` nada é derrubado. Cancelamento externo de **todos** os irmãos (`/stop`, shutdown) é `fsrSessionStop`, não fail-fast.
 
 ### US-007: Documentar e fechar a missão
 **Descrição:** a próxima pessoa entende quando usar fan-out e o que ele não é.
@@ -180,7 +180,11 @@ evidência vermelho → verde.
   (`finalizeChild`), e um settlement que vence **não** encerra a obrigação: o término tardio do
   future do filho reagenda a remoção.
 - **FR-4:** Agregado ordenado pelo índice do plano; índice inválido é ignorado, ausente é `ssQueued`; snapshot na conclusão.
-- **FR-5:** `fpFailFast` cancela irmãos no primeiro failure; `ssCancelled` nunca é failure nem re-dispara cancelamento.
+- **FR-5:** `fpFailFast` cancela irmãos no primeiro desfecho que **não** seja conclusão limpa:
+  `ssFailed`, `ssTimedOut` **e** cancelamento externo (`cancel_subagent` de um irmão). O
+  cancelamento externo é a causa raiz do fail-fast; o que não o dispara é o cancelamento
+  **derivado** que o próprio fail-fast ou o shutdown aplicou nos irmãos (`ssCancelled` com
+  `cancelledBySibling`), e esse nunca vira stop reason nem re-dispara cancelamento.
 - **FR-6:** Dois tetos: plano (`FanoutAbsoluteMaxAggregateTokens`, 512k) recusa pedidos absurdos; runtime (`maxAggregateTokens`) cancela pelo consumo real somado de todos os filhos.
 - **FR-7:** O turno pai recebe no máximo uma linha de progresso por filho concluído e o desfecho por filho no resultado da tool.
 - **FR-8:** Stop do processo e `/stop` cancelam todos os filhos e os supervisors detachados, com bound de 2 s.
