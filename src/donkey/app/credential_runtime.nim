@@ -10,6 +10,7 @@
 import std/[options, os, strutils, tables]
 import ../core/pipeops
 import ../core/providers/credential_pool
+import ../domain/providers/descriptors
 
 var gPools: Table[string, CredentialPool]
 
@@ -67,6 +68,23 @@ proc resolveCredentialKey*(providerName: string;
         return picked.get()
     return ""
   ""
+
+func providerConfigured*(id: string): bool {.gcsafe, raises: [].} =
+  ## True when the descriptor's env has a single or plural value. Local
+  ## providers use their endpoint env instead of a credential.
+  let d = descriptorOr(id)
+  if d.authType == atNone:
+    return d.envNames.len > 0 and getEnv(d.envNames[0]).strip.len > 0
+  hasCredentialKey(d.envNames)
+
+proc descriptorApiKey*(d: ProviderDescriptor; nowMs = nowMs()): string
+                       {.gcsafe, raises: [].} =
+  ## The credential (or endpoint for local providers) the descriptor names.
+  if d.authType == atNone:
+    if d.envNames.len == 0:
+      return ""
+    return getEnv(d.envNames[0]).strip
+  resolveCredentialKey(d.id, d.envNames, nowMs)
 
 proc nextCredentialKey*(providerName, currentKey: string;
                         nowMs = nowMs()): string {.gcsafe, raises: [].} =
