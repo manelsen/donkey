@@ -123,11 +123,11 @@ Durabilidade US-001/002, hardening de upload, cron) e a onda 2 (N3) em curso.
 | Missão | Entregue | Falta para N3 |
 |---|---|---|
 | Transporte de provider | completo | — |
-| Ferramentas | US-001..007 + hardening de upload + `isImageRejection` único + `inspect_image` na política + voz com `replyTo` | marcador de anexo por álbum, cap antes do merge, retry por turno (inclui streaming), confinamento ao paddock, TTS pelo store port, GC de anexos |
-| Interfaces | US-001, US-002, US-003 (SSE) | US-004 (dashboard), US-005 (docs); token por registro no `ChatBridge` |
+| Ferramentas | US-001..007 + hardening + marcador por álbum + cap antes do merge + retry por turno (streaming incluso) + confinamento ao paddock + `isImageRejection` único + `inspect_image` na política + voz com `replyTo` | TTS pelo store port, GC de anexos |
+| Interfaces | US-001..004 (contrato, endpoint, SSE, dashboard) + docs | token por registro no `ChatBridge`; US-005 fechamento |
 | Multiagente | US-001..003 (fan-out + supervisor) | US-004 (rooms/relay) |
-| Canais | US-000..003 (enum, parser, política, ingress) | US-004 (adapter), US-005 (rota), US-006 (runtime), US-007 (docs/prova) |
-| Automação | US-001/002 (puro) | runtime de scheduler, persistência de `lastRun`, wiring no daemon |
+| Canais | US-000..006 (enum, parser, política, ingress, adapter, rota, runtime) + docs | US-007 (prova de não-duplicação e rollout) |
+| Automação | US-001/002 (puro) + runtime + `enqueueScheduledTask`/`tkSchedule` + store de watermark | store com spec completo, `ctl schedule` (US-007), tick no daemon |
 | Durabilidade | US-001/002 (FSM + store) | US-003+ (recuperação no caminho do turno) |
 | Providers | US-001..004 + availability/routing/doctor/setup; catálogo com limites desconhecidos | US-005 (limites verificados), OAuth (TODO de longo prazo) |
 
