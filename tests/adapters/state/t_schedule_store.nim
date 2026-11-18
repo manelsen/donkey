@@ -1,20 +1,31 @@
-## Schedule watermark store adapter tests.
+## Schedule store adapter tests.
 ##
 ## The store is a single JSON document in the state dir
-## (`{stateDir}/schedules.json`) holding one record per schedule id:
+## (`{stateDir}/schedules.json`) holding one record per schedule id. Since the
+## schema version bump, a row carries the full spec plus the runtime watermark:
 ##
-##   {"v": 1, "schedules": [
-##     {"id": "...", "last_run_at_ms": 0, "created_at_ms": 0}
+##   {"v": 2, "schedules": [
+##     {"id": "...", "cron_expr": "*/5 * * * *", "tz_offset_minutes": 0,
+##      "user_id": "...", "channel": "telegram", "payload": "...",
+##      "catch_up": "once", "enabled": true,
+##      "created_at_ms": 0, "last_run_at_ms": 0, "last_fire_at_ms": 0}
 ##   ]}
 ##
-## These tests exercise the port contract used by `tickSchedule`, restart
-## reload (two instances), overwrite semantics, corruption, forward-compatible
-## fields, `loadAll` and on-disk permissions.
+## A v1 document (watermarks only) is still accepted: each row loads with empty
+## spec fields, keeps its watermark, and is flagged through `loadWarning`. The
+## next save upgrades the document to v2 without losing the watermark.
+##
+## These tests exercise both APIs: the `ScheduleStorePort` contract used by
+## `tickSchedule` (load/save watermark) and the record API used by the ctl and
+## the daemon tick (`loadAllRecords`/`upsert`/`remove`). Restart reload (two
+## instances), overwrite semantics, corruption, forward-compatible fields,
+## `loadAll` and on-disk permissions are covered as well.
 
 import std/[atomics, json, options, os, sets, unittest]
 import results
 import donkey/adapters/state/schedule_store
 import donkey/app/automation_runtime
+import donkey/domain/automation/schedule_pure
 
 proc freshDir(tag: string): string =
   result = getTempDir() / ("donkey_schedule_store_" & tag & "_" &
@@ -33,6 +44,30 @@ proc cleanup(dir: string) =
 
 proc watermark(id: string; lastRunAtMs, createdAtMs: int64): ScheduleWatermark =
   ScheduleWatermark(id: id, lastRunAtMs: lastRunAtMs, createdAtMs: createdAtMs)
+
+proc fullRecord(
+  id = "daily";
+  payload = "run the report";
+  cron = "*/5 * * * *";
+  catchUp = scOnce;
+  enabled = true;
+): ScheduleRecord =
+  ## A row with every persisted field set to a distinct, recognisable value.
+  ScheduleRecord(
+    spec: ScheduleSpec(
+      id: id,
+      cronExpr: cron,
+      tzOffsetMinutes: -180,
+      userId: "user-42",
+      channel: "telegram",
+      payload: payload,
+      catchUp: catchUp,
+      enabled: enabled,
+      createdAtMs: 1_600_000_000_000'i64,
+    ),
+    lastRunAtMs: 1_700_000_000_123'i64,
+    lastFireAtMs: 1_700_000_000_000'i64,
+  )
 
 proc recordIds(path: string; wanted: string): int =
   ## Counts raw records for `wanted`, independent of the adapter's reader.
@@ -58,7 +93,10 @@ proc saveWorker(arg: SaveArg) {.thread.} =
       if saved.isErr:
         discard gSaveErrors.fetchAdd(1)
 
-suite "schedule watermark store":
+suite "schedule watermark store (port)":
+  ## Fixtures in this suite exercise the runtime-facing port: load/save only
+  ## know about the watermark, and must keep leaving the spec of an existing
+  ## row untouched.
 
   test "saves and reloads all three fields; unknown id is none":
     let dir = freshDir("roundtrip")
@@ -153,7 +191,7 @@ suite "schedule watermark store":
     defer: cleanup(dir)
 
     let store = newScheduleStoreRef(dir)
-    writeFile(store.path, "{\"v\":1,\"schedules\":[{\"id\":\"job\"")
+    writeFile(store.path, "{\"v\":2,\"schedules\":[{\"id\":\"job\"")
     let before = readFile(store.path)
 
     let loaded = store.load("job")
@@ -164,18 +202,29 @@ suite "schedule watermark store":
     check all.isErr
     check readFile(store.path) == before
 
+    let records = store.loadAllRecords()
+    check records.isErr
+    check readFile(store.path) == before
+
     ## A write must fail closed on a corrupt document: silently replacing it
     ## would erase every watermark the operator might still recover.
     check store.save(watermark("job", 1'i64, 1'i64)).isErr
+    check store.upsert(fullRecord("job")).isErr
+    check store.remove("job").isErr
     check readFile(store.path) == before
 
   test "unknown future fields and a record without id are tolerated":
     let dir = freshDir("future")
     defer: cleanup(dir)
 
+    ## Declared v2 fixture: the spec fields are present, plus a field this
+    ## version does not know and a spec-less row that must be skipped.
     let store = newScheduleStoreRef(dir)
-    writeFile(store.path, """{"v": 1, "future_top_level": true, "schedules": [
-      {"id": "known", "last_run_at_ms": 30, "created_at_ms": 10,
+    writeFile(store.path, """{"v": 2, "future_top_level": true, "schedules": [
+      {"id": "known", "cron_expr": "* * * * *", "tz_offset_minutes": 0,
+       "user_id": "u", "channel": "telegram", "payload": "p",
+       "catch_up": "once", "enabled": true,
+       "last_run_at_ms": 30, "created_at_ms": 10,
        "future_field": {"nested": [1, 2, 3]}},
       {"last_run_at_ms": 99, "created_at_ms": 99},
       {"id": "", "last_run_at_ms": 98, "created_at_ms": 98}
@@ -186,6 +235,13 @@ suite "schedule watermark store":
     check loaded.get().isSome
     check loaded.get().get() == watermark("known", 30'i64, 10'i64)
     check store.loadAll().get().len == 1
+
+    let records = store.loadAllRecords()
+    check records.isOk
+    check records.get().len == 1
+    check records.get()[0].spec.catchUp == scOnce
+    check records.get()[0].spec.enabled
+    check records.get()[0].loadWarning.len == 0
 
     ## The tolerated document is still writable; the skipped records stay
     ## skipped and the known record keeps working.
@@ -235,3 +291,150 @@ suite "schedule watermark store":
       check fpOthersRead notin dirPerms
       check fpOthersWrite notin dirPerms
       check fpOthersExec notin dirPerms
+
+suite "schedule record store (spec + watermark)":
+
+  test "full record round-trips including channel, catchUp and enabled":
+    let dir = freshDir("record-roundtrip")
+    defer: cleanup(dir)
+
+    let store = newScheduleStoreRef(dir)
+    let expected = fullRecord()
+    check expected.spec.createdAtMs > 0
+    check store.upsert(expected).isOk
+
+    let all = store.loadAllRecords()
+    check all.isOk
+    check all.get().len == 1
+    let got = all.get()[0]
+    check got.spec.id == "daily"
+    check got.spec.cronExpr == "*/5 * * * *"
+    check got.spec.tzOffsetMinutes == -180
+    check got.spec.userId == "user-42"
+    check got.spec.channel == "telegram"
+    check got.spec.payload == "run the report"
+    check got.spec.catchUp == scOnce
+    check got.spec.enabled
+    check got.spec.createdAtMs == 1_600_000_000_000'i64
+    check got.lastRunAtMs == 1_700_000_000_123'i64
+    check got.lastFireAtMs == 1_700_000_000_000'i64
+    check got.loadWarning.len == 0
+
+    ## The document is written in the current schema version.
+    let doc = parseFile(store.path)
+    check doc["v"].getInt == 2
+    check doc["schedules"][0]["channel"].getStr == "telegram"
+    check doc["schedules"][0]["catch_up"].getStr == "once"
+    check doc["schedules"][0]["enabled"].getBool
+
+    ## A second instance reloads the same record: restart-safe.
+    let reopened = newScheduleStoreRef(dir).loadAllRecords()
+    check reopened.isOk
+    check reopened.get()[0].spec.payload == "run the report"
+    check reopened.get()[0].lastFireAtMs == 1_700_000_000_000'i64
+
+    ## The runtime port still reads the watermark out of the full record.
+    check store.load("daily").get().get() ==
+      watermark("daily", 1_700_000_000_123'i64, 1_600_000_000_000'i64)
+
+  test "upsert then edit the payload: watermark and createdAtMs preserved":
+    let dir = freshDir("record-edit")
+    defer: cleanup(dir)
+
+    let store = newScheduleStoreRef(dir)
+    let original = fullRecord()
+    check store.upsert(original).isOk
+
+    ## A spec edit arrives without the read-modify-write watermark: all three
+    ## timing fields are zero (omitted) and must keep their stored values.
+    var edited = original
+    edited.spec.payload = "run it twice"
+    edited.spec.cronExpr = "0 * * * *"
+    edited.spec.catchUp = scSkip
+    edited.spec.enabled = false
+    edited.spec.createdAtMs = 0
+    edited.lastRunAtMs = 0
+    edited.lastFireAtMs = 0
+    check store.upsert(edited).isOk
+
+    let all = store.loadAllRecords()
+    check all.isOk
+    check all.get().len == 1
+    let got = all.get()[0]
+    check got.spec.payload == "run it twice"
+    check got.spec.cronExpr == "0 * * * *"
+    check got.spec.catchUp == scSkip
+    check not got.spec.enabled
+    check got.spec.createdAtMs == original.spec.createdAtMs
+    check got.lastRunAtMs == original.lastRunAtMs
+    check got.lastFireAtMs == original.lastFireAtMs
+
+    ## An explicit non-zero watermark from a tick is still accepted.
+    var lastRunAtMs = original.lastRunAtMs + 60_000'i64
+    var ticked = got
+    ticked.lastRunAtMs = lastRunAtMs
+    check store.upsert(ticked).isOk
+    check store.loadAllRecords().get()[0].lastRunAtMs == lastRunAtMs
+
+  test "remove then loadAllRecords does not contain it":
+    let dir = freshDir("record-remove")
+    defer: cleanup(dir)
+
+    let store = newScheduleStoreRef(dir)
+    check store.upsert(fullRecord("keep-me")).isOk
+    check store.upsert(fullRecord("delete-me")).isOk
+    check store.loadAllRecords().get().len == 2
+
+    check store.remove("delete-me").isOk
+    let all = store.loadAllRecords()
+    check all.isOk
+    check all.get().len == 1
+    check all.get()[0].spec.id == "keep-me"
+    check store.load("delete-me").get().isNone
+
+    ## Removal is idempotent: a second remove is still ok.
+    check store.remove("delete-me").isOk
+    check store.remove("never-existed").isOk
+
+  test "v1 watermarks-only file loads with a warning and keeps the watermark":
+    let dir = freshDir("v1")
+    defer: cleanup(dir)
+
+    let store = newScheduleStoreRef(dir)
+    writeFile(store.path, """{"v": 1, "schedules": [
+      {"id": "legacy", "last_run_at_ms": 123, "created_at_ms": 100}
+    ]}""")
+
+    ## Chosen behaviour: accept, do not drop the watermark, flag the row.
+    let all = store.loadAllRecords()
+    check all.isOk
+    check all.get().len == 1
+    let legacy = all.get()[0]
+    check legacy.spec.id == "legacy"
+    check legacy.spec.cronExpr == ""
+    check legacy.spec.userId == ""
+    check legacy.spec.channel == ""
+    check legacy.spec.payload == ""
+    check not legacy.spec.enabled
+    check legacy.spec.createdAtMs == 100'i64
+    check legacy.lastRunAtMs == 123'i64
+    check legacy.lastFireAtMs == 0'i64
+    check legacy.loadWarning.len > 0
+
+    ## The port keeps working on the same row.
+    check store.load("legacy").get().get() == watermark("legacy", 123'i64, 100'i64)
+
+    ## A later upsert fills the spec, keeps the watermark and rewrites v2.
+    var upgraded = fullRecord("legacy")
+    upgraded.spec.createdAtMs = 0
+    upgraded.lastRunAtMs = 0
+    upgraded.lastFireAtMs = 0
+    check store.upsert(upgraded).isOk
+
+    let reloaded = store.loadAllRecords()
+    check reloaded.isOk
+    check reloaded.get()[0].spec.payload == "run the report"
+    check reloaded.get()[0].lastRunAtMs == 123'i64
+    check reloaded.get()[0].spec.createdAtMs == 100'i64
+    check reloaded.get()[0].loadWarning.len == 0
+    check parseFile(store.path)["v"].getInt == 2
