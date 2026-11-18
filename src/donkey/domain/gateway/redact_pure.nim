@@ -52,12 +52,29 @@ func namedSecretValueStart(s: string; i: int; name: string): int =
   var j = i + name.len
   while j < s.len and isSecretSpace(s[j]):
     inc j
-  if j >= s.len or s[j] != '=':
+  ## JSON style (`"api_key": "value"`) puts a quote and a colon after the
+  ## name, so an optional quote is skipped before either separator.
+  if j < s.len and s[j] in {'"', '\''}:
+    inc j
+  if j >= s.len or (s[j] != '=' and s[j] != ':'):
     return -1
   inc j
   while j < s.len and isSecretSpace(s[j]):
     inc j
   j
+
+## Lowercase on purpose: `lowerAt` compares against lowercased input, so an
+## uppercase literal would never match.
+const KnownSecretPrefixes = ["xoxb-", "xoxp-", "xoxa-", "ghp_", "gho_",
+                             "ghu_", "ghs_", "github_pat_", "akia", "aiza"]
+
+func prefixSecretAt(s: string; i: int): int =
+  ## Length of a known token prefix starting at `i`, or 0. Case-insensitive,
+  ## so an unusual spelling is over-redacted rather than leaked.
+  for prefix in KnownSecretPrefixes:
+    if lowerAt(s, i, prefix):
+      return prefix.len
+  0
 
 func redactForClient*(text: string): string =
   ## Removes `Bearer <token>` (any whitespace run after `Bearer`),
@@ -76,9 +93,22 @@ func redactForClient*(text: string): string =
       else:
         buf.add(text[i])
         inc i
+    elif lowerAt(text, i, "basic"):
+      var j = i + 5
+      if j < text.len and isSecretSpace(text[j]):
+        while j < text.len and isSecretSpace(text[j]):
+          inc j
+        buf.add(RedactedPlaceholder)
+        i = skipSecretValue(text, j)
+      else:
+        buf.add(text[i])
+        inc i
     elif lowerAt(text, i, "sk-"):
       buf.add(RedactedPlaceholder)
       i = skipSecretValue(text, i + 3)
+    elif prefixSecretAt(text, i) > 0:
+      buf.add(RedactedPlaceholder)
+      i = skipSecretValue(text, i + prefixSecretAt(text, i))
     else:
       let tokenStart = namedSecretValueStart(text, i, "token")
       let keyStart = namedSecretValueStart(text, i, "key")

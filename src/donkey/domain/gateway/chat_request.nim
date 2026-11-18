@@ -111,8 +111,8 @@ proc parseAgentChatRequest*(body: string): Result[AgentChatRequest, AgentChatErr
   if present(nNode):
     let tooMany =
       case nNode.kind
-      of JInt: nNode.getInt() > 1
-      of JFloat: nNode.getFloat() > 1.0
+      of JInt: nNode.getInt() != 1
+      of JFloat: nNode.getFloat() != 1.0
       of JString: true  # a string is never a valid `n`
       else: true        # bool/array/object/null is never a valid `n`
     if tooMany:
