@@ -210,7 +210,8 @@ proc buildCompleteFn*(preferencesMd: string;
       else:
         cooldownFilteredSelections
     var attemptReq = req
-    var retriedWithoutImages = false
+    # The single image retry lives in runToolLoop; do not enable it again here.
+    var retriedWithoutImages = true
     while true:
       var lastErr = "no provider available"
       var attempted = false
@@ -304,7 +305,8 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
       else:
         cooldownFilteredSelections
     var attemptReq = req
-    var retriedWithoutImages = false
+    # The single image retry lives in runToolLoop; do not enable it again here.
+    var retriedWithoutImages = true
     while true:
       var lastErr = "no provider available"
       var attempted = false

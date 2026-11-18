@@ -6,9 +6,18 @@
 
 import std/[strutils, unittest]
 import chronos
+import chronos/asyncsync
+import donkey/app/native_tools
+import donkey/app/provider_executor
 import donkey/app/session_bootstrap
+import donkey/app/session_state
+import donkey/app/tool_loop_runtime
+import donkey/core/log
+import donkey/core/types
+import donkey/domain/agent_message
 import donkey/domain/message
 import donkey/domain/providers/media_pure
+import donkey/ports/memory
 import donkey/ports/provider
 
 const
@@ -110,32 +119,26 @@ suite "withoutInlineImages":
 
 suite "image rejection fallback":
 
-  test "a rejected inline image retries once without the data URL":
+  test "the builder surfaces the rejection; the turn loop owns the retry":
+    ## The retry moved to `runToolLoop` so it happens once per turn, not once
+    ## per provider call (see the "turn-scoped image retry" suite below).
     gCalls = @[]
     let fn = buildCompleteFn("provider = \"openai\"", imageRejectingBuilderImpl)
     let res = fn(imageRequest())
-    check res.isOk
-    check gCalls.len == 2
-    check gCalls[0].messages.len == 1
+    check res.isErr
+    check isImageRejection(res.error)
+    check gCalls.len == 1
     check gCalls[0].messages[0].imageUrl == DataPng
-    check gCalls[1].messages.len == 1
-    check gCalls[1].messages[0].imageUrl == ""
-    check gCalls[1].messages[0].text.contains("veja a foto")
-    check gCalls[1].messages[0].text.contains(Note)
 
-  test "an album of images only leaves no empty turn":
+  test "an album of images only is not retried inside the builder":
     gCalls = @[]
     var h = newHistory()
     h.addUserWithImage("", DataPng)
     h.addUserWithImage("", DataJpeg)
     let fn = buildCompleteFn("provider = \"openai\"", imageRejectingBuilderImpl)
     let res = fn(CompletionRequest(messages: h))
-    check res.isOk
-    check gCalls.len == 2
-    for msg in gCalls[1].messages:
-      check not (msg.text.len == 0 and msg.imageUrl.len == 0)
-    check gCalls[1].messages.len == 1
-    check gCalls[1].messages[0].text == Note
+    check res.isErr
+    check gCalls.len == 1
 
   test "a non-image error does not retry":
     gCalls = @[]
@@ -153,13 +156,107 @@ suite "image rejection fallback":
     check res.isErr
     check gCalls.len == 1
 
-  test "the async path retries once without the data URL":
+  test "the async builder also leaves the retry to the turn loop":
     gCalls = @[]
     let fn = buildAsyncCompleteFn("provider = \"openai\"",
                                   imageRejectingBuilderImpl)
     let res = waitFor fn(imageRequest())
-    check res.isOk
-    check gCalls.len == 2
-    check gCalls[1].messages.len == 1
-    check gCalls[1].messages[0].imageUrl == ""
-    check gCalls[1].messages[0].text.contains(Note)
+    check res.isErr
+    check isImageRejection(res.error)
+    check gCalls.len == 1
+
+# ── Turn-scoped retry across tool rounds ──────────────────────────────────────
+#
+# The retry belongs to the turn, not to one completion call: a turn with N tool
+# rounds must spend at most one extra provider call on the image, and the note
+# must be written once. These fakes reject `data:` images and then answer with
+# tool calls until the scripted rounds are over.
+
+var
+  gTurnCalls:     seq[CompletionRequest]
+  gTurnToolsLeft: int
+  gTurnNextCall:  int
+
+proc resetTurn(toolCalls: int) =
+  gTurnCalls = @[]
+  gTurnToolsLeft = toolCalls
+  gTurnNextCall = 0
+
+proc imageRejectingTurnComplete(req: CompletionRequest):
+    Result[CompletionResponse, string] {.gcsafe.} =
+  {.cast(gcsafe).}:
+    gTurnCalls.add(req)
+    if hasDataImage(req):
+      return err("400 invalid image_url: unsupported image content")
+    if gTurnToolsLeft > 0:
+      dec gTurnToolsLeft
+      inc gTurnNextCall
+      return ok(CompletionResponse(
+        text: "",
+        toolCalls: @[ToolCallRequest(
+          id: "call_" & $gTurnNextCall,
+          name: "current_time",
+          inputJson: "{\"n\":" & $gTurnNextCall & "}",
+        )],
+      ))
+    return ok(CompletionResponse(text: "resposta só texto"))
+
+proc imageRejectingTurnAsync(req: CompletionRequest):
+    Future[Result[CompletionResponse, string]] {.async, gcsafe.} =
+  result = imageRejectingTurnComplete(req)
+
+proc countNotes(reqs: seq[CompletionRequest]): int =
+  for req in reqs:
+    for msg in req.messages:
+      result += msg.text.count(InlineImageRemovedNote)
+
+proc runImageTurn(completeFn: CompleteFn;
+                  asyncCompleteFn: AsyncCompleteFn = nil):
+                  Future[ToolLoopRunResult] {.async.} =
+  let outbox = newAsyncQueue[OutboundMessage]()
+  let toolInbox = newAsyncQueue[AgentMessage]()
+  let toolOut = newAsyncQueue[AgentMessage]()
+  let logger = newLogger("test.image.turn", lvlError)
+  var ctx = NativeCtx(
+    uid: UserId("u-turn"),
+    channel: ckTelegram,
+    outbox: outbox,
+    completeFn: completeFn,
+    log: logger,
+  )
+  var history = newHistory()
+  history.addUserWithImage("veja a foto", DataPng)
+  result = await runToolLoop(
+    outbox, toolInbox, toolOut, MemoryRuntimePort(), completeFn, nil, nil,
+    ctx, newSessionState(), history, UserId("u-turn"), ckTelegram, "",
+    "msg-turn", "stream-turn", "system", "", @[], "openai", true, false, false,
+    logger, asyncCompleteFn)
+
+suite "turn-scoped image retry":
+
+  test "sync: three tool rounds cost one retry, not one per round":
+    resetTurn(toolCalls = 3)
+    let loop = waitFor runImageTurn(imageRejectingTurnComplete)
+
+    check loop.done
+    check loop.imageRetryUsed
+    check loop.finalText == "resposta só texto"
+    # 3 tool calls + the final answer + the single image retry.
+    check gTurnCalls.len == 5
+    check hasDataImage(gTurnCalls[0])
+    for i in 1 ..< gTurnCalls.len:
+      check not hasDataImage(gTurnCalls[i])
+    check countNotes(gTurnCalls) == 1
+
+  test "async: three tool rounds cost one retry, not one per round":
+    resetTurn(toolCalls = 3)
+    let loop = waitFor runImageTurn(nil, imageRejectingTurnAsync)
+
+    check loop.done
+    check loop.imageRetryUsed
+    check loop.finalText == "resposta só texto"
+    check gTurnCalls.len == 5
+    check hasDataImage(gTurnCalls[0])
+    for i in 1 ..< gTurnCalls.len:
+      check not hasDataImage(gTurnCalls[i])
+    check countNotes(gTurnCalls) == 1
