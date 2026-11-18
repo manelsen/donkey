@@ -156,7 +156,7 @@ proc performSpeech*(text: string; paddockDir: string; http: HttpRuntimePort;
 
 proc prepareVoiceReply*(text, caption, paddockDir: string;
                         channel: ChannelKind; uid: UserId;
-                        http: HttpRuntimePort): Result[OutboundMessage, string]
+                        http: HttpRuntimePort; replyTo = ""): Result[OutboundMessage, string]
                         {.gcsafe, raises: [].} =
   ## Synthesizes `text` as an opus voice note and describes the outbound
   ## message; the caller enqueues it. The capability check comes first, so a
@@ -172,6 +172,7 @@ proc prepareVoiceReply*(text, caption, paddockDir: string;
     userId: uid,
     channel: channel,
     text: caption,
+    replyTo: replyTo,
     mediaUrl: paddockDir / saved.get(),
     mediaDurationSec: estimateSpeechSeconds(text),
   ))

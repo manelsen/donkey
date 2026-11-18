@@ -117,6 +117,16 @@ suite "prepareVoiceReply":
     check fileExists(msg.mediaUrl)
     check readFile(msg.mediaUrl) == "OPUSBYTES"
 
+  test "the voice note keeps the forum thread":
+    let dir = freshDir("replyto")
+    defer: removeDir(dir)
+    let cap = PostCapture(status: 200, response: "OPUSBYTES")
+    let prepared = prepareVoiceReply("olá mundo", "recado",
+                                     dir, ckTelegram, UserId("u1"),
+                                     fakeHttp(cap), replyTo = "77")
+    check prepared.isOk
+    check prepared.get().replyTo == "77"
+
   test "a channel without cfSendVoice fails before any TTS request":
     let dir = freshDir("email")
     defer: removeDir(dir)

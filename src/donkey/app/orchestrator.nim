@@ -288,6 +288,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
       dmPolicy: DmPolicyOpen, wiring: false),
     tools, log,
     paddockDir, sandboxMode, sandboxRuntimeCmd, sandboxImage)
+  result.nativeCtx.replyTo = msg.replyTo
   result.nativeCtx.stopGeneration = stateRuntime.stopGeneration
   ## Recorded per turn: a `/stop` that arrives after this point aborts the
   ## turn; one that arrived before it belongs to an earlier turn.
