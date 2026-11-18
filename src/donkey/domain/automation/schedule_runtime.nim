@@ -125,6 +125,14 @@ func decideTick*(
     return
 
   if spec.catchUp == scSkip:
+    ## `skip` means "no backlog", not "never fire". The earliest unconsumed
+    ## occurrence is the candidate; when it is within the grace window it is
+    ## fired. When it is already stale, look for the newest occurrence inside
+    ## the window instead of dropping the whole interval: starting from the
+    ## watermark made a stale first occurrence shadow a newer one (every-minute
+    ## cron, a 3-minute gap). If nothing is inside the window, report the
+    ## earliest as missed and advance.
+    let grace = max(graceMs, 0'i64)
     let candidate = nextRunAfterMs(spec, lastRunMs)
     if candidate.isNone:
       # Invalid or never-matching cron: nothing to consume, so leave the
@@ -134,11 +142,17 @@ func decideTick*(
     let at = candidate.get()
     if at > nowMs:
       return
-    if nowMs - at <= max(graceMs, 0):
+    if nowMs - at <= grace:
       result.fireAtMs = some(at)
-    else:
-      result.missedOccurrenceMs = some(at)
-    return
+      return
+    let searchFrom = max(lastRunMs, max(0'i64, nowMs - grace))
+    let recent = nextRunAfterMs(spec, searchFrom)
+    if recent.isSome:
+      let newest = recent.get()
+      if newest <= nowMs and nowMs - newest <= grace:
+        result.fireAtMs = some(newest)
+        return
+    result.missedOccurrenceMs = some(at)
 
   let instant = catchUpInstant(spec, lastRunMs, nowMs, maxLookbackMinutes)
   if instant.isSome:

@@ -110,10 +110,12 @@ suite "schedule runtime — decideTick":
     # occurrence stays behind the open left edge of the next window.
     check decision.watermarkMs == at(12, 0) + 30_000
 
-  test "scSkip never fires but still advances the watermark":
+  test "scSkip fires the current occurrence after a long idle gap":
+    ## 11:00 -> 12:30 on a */15 cron: the earlier occurrences are backlog,
+    ## but 12:30 is current, so it fires (skip is not "never fire").
     let spec = makeSpec("*/15 * * * *", catchUp = scSkip)
     let decision = decideTick(spec, at(11, 0), at(12, 30))
-    check decision.fireAtMs.isNone
+    check decision.fireAtMs == some(at(12, 30))
     check decision.watermarkMs == at(12, 30)
 
   test "a disabled schedule never fires but still advances the watermark":
@@ -171,6 +173,16 @@ suite "schedule runtime — scSkip means no backlog, not never fire":
     check next.fireAtMs.isNone
     check next.missedOccurrenceMs.isNone
     check next.watermarkMs == now + MinuteMs
+
+  test "scSkip fires a recent occurrence even when an older one is stale":
+    ## Watermark 11:59, now 12:03:30, every-minute cron, 2 min grace: the
+    ## first occurrence after the watermark (12:00) is stale, but 12:02 is
+    ## inside the window. Searching from the watermark would drop both.
+    let spec = makeSpec("* * * * *", catchUp = scSkip)
+    let decision = decideTick(spec, at(11, 59), at(12, 3) + 30_000)
+    check decision.fireAtMs.isSome
+    check at(12, 3) + 30_000 - decision.fireAtMs.get() <= 2 * MinuteMs
+    check decision.missedOccurrenceMs.isNone
 
   test "scSkip with graceMs=0 only fires the exact instant":
     let spec = makeSpec("* * * * *", catchUp = scSkip)
