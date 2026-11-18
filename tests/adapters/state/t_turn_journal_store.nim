@@ -479,3 +479,164 @@ suite "turn journal store":
     check "secret-value" notin redacted
     check "tok-9" notin redacted
     check "public" in redacted
+
+# ---------------------------------------------------------------------------
+# Durability of the commit point (B1/B2/B3). The fsync seam lets a test fail
+# one specific sync and assert that the store never reports a write it did not
+# confirm, and that it retries the sync on the next append.
+# ---------------------------------------------------------------------------
+
+var
+  gDataSyncFailures: int
+  gDataSyncCalls: int
+  gDirSyncFailures: int
+  gDirSyncFailPath: string
+  gDirSyncPaths: seq[string]
+
+proc testSyncHook(path: string; kind: JournalSyncKind): bool
+    {.gcsafe, raises: [].} =
+  result = true
+  {.cast(gcsafe).}:
+    case kind
+    of jskData:
+      inc gDataSyncCalls
+      if gDataSyncFailures > 0:
+        dec gDataSyncFailures
+        result = false
+    of jskDirectory:
+      gDirSyncPaths.add(path)
+      if gDirSyncFailures > 0 and path == gDirSyncFailPath:
+        dec gDirSyncFailures
+        result = false
+
+proc resetSyncHook() =
+  gDataSyncFailures = 0
+  gDataSyncCalls = 0
+  gDirSyncFailures = 0
+  gDirSyncFailPath = ""
+  gDirSyncPaths = @[]
+
+proc dirSyncsFor(path: string): int =
+  for item in gDirSyncPaths:
+    if item.normalizedPath == path.normalizedPath:
+      inc result
+
+suite "turn journal durability":
+
+  test "a commit whose fsync failed is not reported as persisted":
+    let dir = freshDir("commit_sync_failed")
+    defer: cleanup(dir)
+    resetSyncHook()
+    setTurnJournalSyncHook(testSyncHook)
+    defer: setTurnJournalSyncHook(nil)
+
+    let store = newTurnJournalStore(dir)
+    let stamp = 4_000_000'i64
+    check store.append("turn-1", inbound("turn-1", "oi", stamp), stamp).isOk
+    terminalEvents(store, "turn-1", stamp)
+
+    ## The commit frame reaches the file, but its fsync fails: the frame is
+    ## visible and still not durable.
+    gDataSyncFailures = 3
+    check store.commitIfTerminal("turn-1", stamp).isErr
+
+    ## The daemon has two writers (actor and drainer) on the same file, so a
+    ## second instance must not trust the visible frame either.
+    let other = newTurnJournalStore(dir)
+    check other.commitIfTerminal("turn-1", stamp).isErr
+
+    ## `append` of a duplicate commit is a no-op, but it must not confirm the
+    ## commit while the frame is still unconfirmed.
+    check other.append("turn-1", TurnEvent(kind: tevCommitted), stamp).isErr
+
+    ## The retries must not append a second commit frame.
+    var commits = 0
+    for line in journalLines(store):
+      if "\"tevCommitted\"" in line:
+        inc commits
+    check commits == 1
+
+    ## Once the fsync succeeds the frame is confirmed and the earlier call is
+    ## recognised as the writer (`false` = already committed, not written now).
+    let confirmed = store.commitIfTerminal("turn-1", stamp)
+    check confirmed.isOk
+    check confirmed.get() == false
+    check newTurnJournalStore(dir).loadById("turn-1").get().get().phase ==
+      tpsCommitted
+
+  test "the next append retries a tail whose fsync failed":
+    let dir = freshDir("append_sync_retry")
+    defer: cleanup(dir)
+    resetSyncHook()
+    setTurnJournalSyncHook(testSyncHook)
+    defer: setTurnJournalSyncHook(nil)
+
+    let store = newTurnJournalStore(dir)
+    let stamp = 5_000_000'i64
+    check store.append("turn-1", inbound("turn-1", "oi", stamp), stamp).isOk
+    terminalEvents(store, "turn-1", stamp)
+
+    gDataSyncFailures = 1
+    check store.commitIfTerminal("turn-1", stamp).isErr
+
+    ## A later append must first confirm the unsynced tail instead of writing
+    ## on top of bytes whose durability was never established: one sync for
+    ## the retry plus one for the new frame.
+    let callsBefore = gDataSyncCalls
+    check store.append("turn-1",
+      TurnEvent(kind: tevDeliveryAttempted, ownerEpochMs: stamp), stamp).isOk
+    check gDataSyncCalls == callsBefore + 2
+    check store.commitIfTerminal("turn-1", stamp).get() == false
+
+  test "a failed directory fsync is retried on the next append":
+    let dir = freshDir("dir_sync_retry")
+    defer: cleanup(dir)
+    resetSyncHook()
+    setTurnJournalSyncHook(testSyncHook)
+    defer: setTurnJournalSyncHook(nil)
+
+    let store = newTurnJournalStore(dir)
+    let stamp = 6_000_000'i64
+
+    ## The journal file is written, but its directory entry is not confirmed.
+    ## The append must fail: without the entry the whole file can disappear.
+    gDirSyncFailPath = dir
+    gDirSyncFailures = 2
+    check store.append("t1", inbound("t1", "oi", stamp), stamp).isErr
+
+    ## The file already exists now, so a store that only looked at `isNew`
+    ## would skip the directory sync. The pending flag forces a retry.
+    check store.append("t2", inbound("t2", "oi", stamp), stamp).isErr
+    check dirSyncsFor(dir) == 2
+
+    gDirSyncFailures = 0
+    check store.append("t3", inbound("t3", "oi", stamp), stamp).isOk
+    check dirSyncsFor(dir) == 3
+    check store.loadById("t3").get().isSome
+
+  test "creating the state directory fsyncs its parent":
+    let root = freshDir("state_parent_sync")
+    defer: cleanup(root)
+    resetSyncHook()
+    setTurnJournalSyncHook(testSyncHook)
+    defer: setTurnJournalSyncHook(nil)
+
+    let stateDir = root / "state"
+    check not dirExists(stateDir)
+    let store = newTurnJournalStore(stateDir)
+    check store.append("t1", inbound("t1", "oi")).isOk
+    check dirSyncsFor(root) == 1
+
+    ## A failure to persist the new directory in its parent must fail the
+    ## append, and the next append must retry it.
+    let root2 = freshDir("state_parent_sync_fail")
+    defer: cleanup(root2)
+    let stateDir2 = root2 / "state"
+    gDirSyncFailPath = root2
+    gDirSyncFailures = 1
+    check newTurnJournalStore(stateDir2).append(
+      "t1", inbound("t1", "oi")).isErr
+    check newTurnJournalStore(stateDir2).append(
+      "t1", inbound("t1", "oi")).isOk
+    check dirSyncsFor(root2) == 2
+
