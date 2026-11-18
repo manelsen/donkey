@@ -285,6 +285,17 @@ proc getOrCreate*(sm: var SessionManager; userId: UserId): ptr SessionEntry =
 proc get*(sm: var SessionManager; userId: UserId): ptr SessionEntry =
   addr sm.entries[$userId]
 
+func sessionKeyFor*(sm: SessionManager; keyOrSessionId: string): Option[string] =
+  ## The dashboard displays `sessionId`, while the registry is keyed by the
+  ## raw user key. Accept either, so "nova conversa" does not 404 on the id the
+  ## page just rendered.
+  if keyOrSessionId in sm.entries:
+    return some(keyOrSessionId)
+  for uid, entry in sm.entries:
+    if entry.sessionId == keyOrSessionId:
+      return some(uid)
+  none(string)
+
 func latestChannelFor*(sm: SessionManager; userId: string):
                        tuple[kind: ChannelKind, rawId: string] =
   ## The channel a background action should answer on: the last one the user

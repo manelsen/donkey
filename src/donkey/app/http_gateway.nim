@@ -458,6 +458,12 @@ proc agentClockMs(): int64 {.gcsafe, raises: [].} =
 proc agentNap(ms: int) {.gcsafe, raises: [].} =
   os.sleep(ms)
 
+var gAgentStreamNap: AgentStreamNapFn = agentNap
+  ## The streaming path needs the same dispatcher pump as the non-streaming
+  ## one: the turn's ingress actor runs on this gateway worker, so a plain
+  ## sleep left SSE without events until the deadline. Injected by the daemon,
+  ## which owns the chronos nanosecond loop for this thread.
+
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 const CorsHeaders = "Access-Control-Allow-Origin: *\r\n" &
@@ -808,6 +814,9 @@ proc handleGatewayConn(client: Socket;
       else:
         let body = readRequestBody(client, contentLength, deadline)
         if agentChatStreamRequested(body):
+          var streamNapFn: AgentStreamNapFn = agentNap
+          {.cast(gcsafe).}:
+            streamNapFn = gAgentStreamNap
           let openSse = proc(): bool {.gcsafe.} =
             client.sendSseHeaders(log)
           let sendSse = proc(chunk: string): bool {.gcsafe.} =
@@ -828,7 +837,7 @@ proc handleGatewayConn(client: Socket;
             acquireSlot     = tryAcquireSseConnection,
             releaseSlot     = releaseSseConnection,
             streamNow       = agentClockMs,
-            streamNap       = agentNap,
+            streamNap       = streamNapFn,
             timeoutMs       = agentTimeoutMs,
             model           = modelName,
           )
@@ -1204,8 +1213,12 @@ proc startHttpGateway*(port: int;
                        chatBridge: ChatBridge = nil;
                        modelName = "";
                        agentTimeoutMs = 0;
+                       agentStreamNapFn: AgentStreamNapFn = nil;
                        log:       Logger = newLogger("http_gateway")
                       ): Result[void, string] =
+  if agentStreamNapFn != nil:
+    {.cast(gcsafe).}:
+      gAgentStreamNap = agentStreamNapFn
   ## Starts the HTTP gateway on a dedicated OS thread.
   ## statusFn, logFn, and eventFn are called on each request; they must be gcsafe.
   ## inboundFn is called when POST /api/chat is received; may be nil.

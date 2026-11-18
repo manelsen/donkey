@@ -37,6 +37,7 @@ type DispatchMode = enum
   dmTwoPartialsThenFinal
   dmPartialThenError
   dmHugeFinal
+  dmCumulativePartials
 
 var fakeBridge {.threadvar.}: ChatBridge
 var dispatched {.threadvar.}: seq[InboundMessage]
@@ -86,6 +87,14 @@ proc fakeDispatch(msg: InboundMessage) {.gcsafe.} =
                                partial = true, inputTokens = 5, outputTokens = 3)
     deliverToBridge(msg.userId, finalText, rkFinalAnswer,
                                inputTokens = 11, outputTokens = 7)
+  of dmCumulativePartials:
+    ## What the tool loop actually emits: each partial is the full text so far.
+    deliverToBridge(msg.userId, "Olá, ", rkFinalAnswer,
+                    partial = true, inputTokens = 3, outputTokens = 2)
+    deliverToBridge(msg.userId, "Olá, mundo", rkFinalAnswer,
+                    partial = true, inputTokens = 5, outputTokens = 3)
+    deliverToBridge(msg.userId, finalText, rkFinalAnswer,
+                    inputTokens = 11, outputTokens = 7)
   of dmHugeFinal:
     deliverToBridge(msg.userId,
                     repeat('x', MaxTurnBufferBytes + 64), rkFinalAnswer,
@@ -418,6 +427,22 @@ suite "UsageTotals":
     check state.usage.outputTokens == 0
 
 # ── streaming (US-003) ────────────────────────────────────────────────────────
+
+suite "cumulative partials":
+
+  test "cumulative snapshots reach the client as deltas, not duplicates":
+    resetStream()
+    dispatchMode = dmCumulativePartials
+    finalText = "Olá, mundo"
+    let result = runStream(bodyFor("alice", "oi"))
+    check result.outcome == asCompleted
+    let nodes = streamNodes()
+    var content = ""
+    for node in nodes:
+      let delta = node["choices"][0]["delta"]
+      if delta.hasKey("content"):
+        content.add(delta["content"].getStr())
+    check content == "Olá, mundo"
 
 suite "truncation":
 

@@ -185,3 +185,12 @@ suite "SessionManager":
     let missing = sm.latestChannelFor("unknown-key")
     check missing.kind == ckCli
     check missing.rawId == ""
+
+  test "the dashboard id resolves by raw key or by session id":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("lookup-uuid")
+    discard sm.getOrCreate(uid)
+    check sm.sessionKeyFor($uid) == some($uid)
+    check sm.sessionKeyFor(sm.entries[$uid].sessionId) == some($uid)
+    check sm.sessionKeyFor("not-a-session").isNone

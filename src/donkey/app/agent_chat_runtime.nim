@@ -321,16 +321,24 @@ proc runAgentStream*(body: string;
     case event.kind
     of rkFinalAnswer:
       if event.isPartial:
-        let text = deltaText(event.text, event.kind)
-        if text.len > 0:
-          if chunksSent >= MaxSseChunksPerTurn:
-            finishReason = "length"
-            finished = true
-            return
-          if not writeData(buildAgentChunk(
-              chunkId, chosenModel, created, content = text)):
-            return
-          sentContent.add(text)
+        let incoming = deltaText(event.text, event.kind)
+        if incoming.len > 0:
+          ## Producers differ: the tool loop flushes cumulative snapshots
+          ## (`"Olá, mundo"` after `"Olá, "`), while a channel-style producer
+          ## sends true deltas. Normalise both to a delta so an SSE client that
+          ## concatenates chunks never sees the same text twice.
+          let text =
+            if incoming.startsWith(sentContent): incoming[sentContent.len .. ^1]
+            else: incoming
+          if text.len > 0:
+            if chunksSent >= MaxSseChunksPerTurn:
+              finishReason = "length"
+              finished = true
+              return
+            if not writeData(buildAgentChunk(
+                chunkId, chosenModel, created, content = text)):
+              return
+            sentContent.add(text)
       else:
         var text = event.text
         if sentContent.len > 0:

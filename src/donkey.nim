@@ -1267,9 +1267,11 @@ proc setupIpcServer(cfg: DonkeyConfig;
       ## The dashboard carries the raw session key; it is never run through
       ## `apiUserId`. An unknown key is a 404, a revoked profile a 403
       ## (`isRevoked` already answers "revoked" when the profile is unreadable).
-      if rawUserId notin runtime.sm.entries:
+      let keyOpt = runtime.sm.sessionKeyFor(rawUserId)
+      if keyOpt.isNone:
         return gsaoNotFound
-      let uid = UserId(rawUserId)
+      let sessionKey = keyOpt.get()
+      let uid = UserId(sessionKey)
       ## Same policy as the API: revocation first, then the DM allowlist. A
       ## policy denial must not answer 202 for a task the ingress will drop.
       case gwAuthorizeFn(uid)
@@ -1278,7 +1280,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
       ## Answer on the channel the user actually uses. Passing the session key
       ## as a `ckCli` channel id recorded a fake channel and sent the
       ## confirmation to stdout.
-      let target = runtime.sm.latestChannelFor(rawUserId)
+      let target = runtime.sm.latestChannelFor(sessionKey)
       ensureSessionTask(
         runtime.sm,
         InboundMessage(
@@ -1309,6 +1311,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
       let gatewayStart = startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
                                           bindAddr = httpBind, authToken = httpToken,
                                           agentDispatchFn = gwInboundFn,
+                                          agentStreamNapFn = apiChatNap,
                                           sessionsFn = gwSessionsFn,
                                           providersFn = gwProvidersFn,
                                           sessionActionFn = gwSessionActionFn,
