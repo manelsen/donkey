@@ -4,10 +4,11 @@
 ## performRenderMermaid converts Mermaid diagrams to SVG.
 ## performInspectImage uses the LLM as a vision assistant.
 
-import std/[osproc, os, strutils, times, base64]
+import std/[osproc, os, strutils, times]
 import results
 import ../../domain/calc
 import ../../domain/message
+import ../../domain/providers/media_pure
 import ../../ports/provider
 
 # ── calc ──────────────────────────────────────────────────────────────────────
@@ -43,23 +44,33 @@ proc performRenderMermaid*(diagram: string): string {.gcsafe, raises: [].} =
 # ── inspect_image ─────────────────────────────────────────────────────────────
 
 proc mimeFromExt(path: string): string =
+  ## Empty when the extension is not an image the providers agree to inline.
+  ## Guessing `image/jpeg` sent raw SVG/BMP/HEIC bytes labelled as JPEG.
   let ext = splitFile(path).ext.toLowerAscii()
   case ext
   of ".jpg", ".jpeg": "image/jpeg"
   of ".png":          "image/png"
   of ".gif":          "image/gif"
   of ".webp":         "image/webp"
-  else:               "image/jpeg"
+  else:               ""
 
 proc performInspectImage*(path, prompt: string;
                           completeFn: CompleteFn): string {.gcsafe, raises: [].} =
   try:
     if not fileExists(path):
       return "Error: file not found: " & path
+    let mime = mimeFromExt(path)
+    if mime.len == 0 or mime notin SupportedImageMimes:
+      return "Error: unsupported image type " & splitFile(path).ext
+    # Check the encoded budget before reading: base64 grows by ~4/3.
+    let rawSize = getFileSize(path)
+    if rawSize <= 0 or rawSize * 4 div 3 > MaxInlineImageEncodedBytes:
+      return "Error: image too large to inline (" & $rawSize & " bytes)"
     let bytes    = readFile(path)
-    let b64      = encode(bytes)
-    let mime     = mimeFromExt(path)
-    let dataUrl  = "data:" & mime & ";base64," & b64
+    let encoded  = imageDataUrl(mime, bytes.toOpenArrayByte(0, bytes.high))
+    if encoded.isErr:
+      return "Error: " & encoded.error
+    let dataUrl  = encoded.value
     let question = if prompt.len > 0: prompt else: "Describe this image in detail."
     var h = newHistory()
     h.addUserWithImage(question, dataUrl)
