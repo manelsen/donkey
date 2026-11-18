@@ -113,6 +113,8 @@ proc linkCodePort*(s: LinkCodeService): LinkCodePort {.gcsafe.} =
   LinkCodePort(
     mint:   proc(userId: UserId): string {.gcsafe.} =
       s.mint(userId),
+    peek:   proc(code: string): Option[UserId] {.gcsafe.} =
+      s.peek(code),
     redeem: proc(code: string): Option[UserId] {.gcsafe.} =
       s.redeem(code),
   )
