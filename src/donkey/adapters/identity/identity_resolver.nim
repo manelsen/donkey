@@ -14,6 +14,7 @@ import ../../app/inbound_gate
 import ../../core/identity/link_codes
 import ../../core/pipeops
 import ../../core/types
+import ../../ports/link_codes
 
 type
   IdentityResolver* = ref object
@@ -156,6 +157,20 @@ proc generateLinkCode*(r: IdentityResolver; userId: UserId): string =
   ## The table is shared by every resolver built from the same identity file,
   ## so the code is redeemable on another channel in this process.
   r.linkCodes.mint(userId)
+
+proc linkCodePort*(r: IdentityResolver): LinkCodePort {.gcsafe.} =
+  ## The cross-channel seam for `/mycode` → `/continue`. It exposes the shared
+  ## table, not this resolver, so a code minted on another channel resolves
+  ## here.
+  let service = r.linkCodes
+  LinkCodePort(
+    mint:   proc(userId: UserId): string {.gcsafe.} =
+      service.mint(userId),
+    peek:   proc(code: string): Option[UserId] {.gcsafe.} =
+      service.peek(code),
+    redeem: proc(code: string): Option[UserId] {.gcsafe.} =
+      service.redeem(code),
+  )
 
 proc peekLinkCode*(r: IdentityResolver; code: string): Option[UserId] =
   ## Returns the target UUID for a valid, unexpired link code without consuming

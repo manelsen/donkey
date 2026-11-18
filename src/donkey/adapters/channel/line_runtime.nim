@@ -13,6 +13,7 @@
 ## the caller must pass the daemon's single `var lineReplay` — a by-value copy
 ## would make dedupe a no-op.
 
+import std/options
 import ../../app/inbound_gate
 import ../../app/session_manager
 import ../../core/commands/command_routing
@@ -81,9 +82,15 @@ proc drainLineEvents*(lnAdapter: var LineAdapter;
     if command.route == crLocal and
        decideLocalCommandAction(command) == lcaContinueLink:
       ## Only `/continue` is local; every other command/text is a session turn.
-      let reply = buildContinueResultText(
-        lnAdapter.resolver.consumeLinkCode(command.value, ckLine,
-                                           routing.identityId))
+      ## Redeem through the cross-channel seam: the code was probably minted
+      ## by `/mycode` on Telegram, so the resolver bound to this adapter is
+      ## not the authority on it.
+      let target = lnAdapter.linkCodes.peek(command.value)
+      let linked =
+        if target.isNone: false
+        else: lnAdapter.resolver.confirmLinkCode(command.value, ckLine,
+                                                 routing.identityId)
+      let reply = buildContinueResultText(linked)
       let replyMsg = OutboundMessage(
         userId:  auth.userId,
         channel: ckLine,

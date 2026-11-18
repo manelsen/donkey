@@ -484,3 +484,81 @@ suite "LINE runtime — /continue reply is enqueued, never posted inline":
     check logs.len == 1
     check logs[0].contains("outbox full")
     check not ln.tryRecvEvent()[0]  ## the whole batch was consumed
+
+suite "LINE runtime — /continue resolves through the link-code seam":
+  ## F1: `/mycode` on Telegram mints through the Telegram resolver and
+  ## `/continue` on LINE must redeem through the same table. The runtime asks
+  ## `linkCodes`, never the resolver it happens to own.
+
+  test "a code minted on the Telegram port resolves through the LINE port":
+    let path = LineTmp / "seam_cross_channel.tsv"
+    removeFile(path)
+    let tg = newIdentityResolver(path)
+    let target = tg.resolve(ckTelegram, "460101")
+    let line = newLineAdapter("test-channel-access-token", path,
+                              apiBase = "https://line.test",
+                              http = fake(FakeHttp()))
+
+    let tgPort: LinkCodePort = tg.linkCodePort()
+    let linePort: LinkCodePort = line.linkCodes
+    let code = tgPort.mint(target)
+
+    check linePort.redeem(code) == some(target)
+    ## Single use: the same redemption cannot be replayed on either side.
+    check tgPort.redeem(code).isNone
+    check linePort.redeem(code).isNone
+    ## The table is shared, not copied: a code minted on LINE is redeemable on
+    ## the Telegram side too.
+    let back = linePort.mint(target)
+    check back.len == LinkCodeLen
+    check tgPort.redeem(back) == some(target)
+
+  test "the LINE port and the LINE resolver share one table":
+    let path = LineTmp / "seam_shared_with_resolver.tsv"
+    removeFile(path)
+    let target = UserId("seam-resolver-target")
+    let line = newLineAdapter("test-channel-access-token", path,
+                              apiBase = "https://line.test",
+                              http = fake(FakeHttp()))
+    let port: LinkCodePort = line.linkCodes
+    let code = port.mint(target)
+    check line.resolver.consumeLinkCode(code, ckLine, "Useam") == true
+    check line.resolver.lookup(ckLine, "Useam") == some(target)
+
+  test "/continue with a Telegram-minted code links the LINE speaker":
+    let path = LineTmp / "seam_runtime_telegram_minted.tsv"
+    removeFile(path)
+    let tg = newIdentityResolver(path)
+    let target = tg.resolve(ckTelegram, "460102")
+    let code = tg.generateLinkCode(target)
+
+    var ln = newLineAdapter("test-channel-access-token", path,
+                            apiBase = "https://line.test",
+                            http = fake(FakeHttp()))
+    var sm: SessionManager
+    sm.init()
+    var replay = LineReplayCache()
+    let fallback = proc(msg: InboundMessage) {.gcsafe.} = discard
+    let sink = ReplySink()
+    let enqueue = sinkFor(sink)
+
+    pushEvent(dmPayload("evt-seam-continue", "/continue " & code))
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
+                            enqueue, rtLog)
+
+    check sink.items.len == 1
+    check sink.items[0].text == buildContinueResultText(true)
+    check ln.resolver.lookup(ckLine, DmUser) == some(target)
+
+  test "a code minted on LINE links a Telegram speaker":
+    let path = LineTmp / "seam_runtime_line_minted.tsv"
+    removeFile(path)
+    let line = newLineAdapter("test-channel-access-token", path,
+                              apiBase = "https://line.test",
+                              http = fake(FakeHttp()))
+    let tg = newIdentityResolver(path)
+    let target = line.resolver.resolve(ckLine, DmUser)
+    let code: string = line.linkCodes.mint(target)
+
+    check tg.consumeLinkCode(code, ckTelegram, "460103") == true
+    check tg.lookup(ckTelegram, "460103") == some(target)
