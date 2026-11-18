@@ -407,7 +407,7 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
       ## and the turn: the next round could ask again and block the new turn.
       result.askInterrupted = true
       for j in i + 1 ..< toolCalls.len:
-        result = result |->>
+        result = result |>->
           withToolResult(toolCalls[j], AskInterruptedText,
                          trkOperationalError, none(ConversationHistory))
       break
