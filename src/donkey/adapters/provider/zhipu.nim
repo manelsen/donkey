@@ -48,9 +48,12 @@ func zhipuCompatProfile*(endpoint = ZhipuEndpoint): CompatProfile =
   ## Z.AI / GLM expresses only its wire deviations: `thinking` when reasoning
   ## is requested, native tools, no `name` on tool results, `content: ""` on an
   ## assistant tool call, and no image envelope once the turn has tool calls.
+  ## An empty endpoint means the default Z.AI coding endpoint, matching the
+  ## adapter's `newZhipuAdapter` default.
+  let resolved = if endpoint.len > 0: endpoint else: ZhipuEndpoint
   CompatProfile(
     id:             "zai-coding",
-    endpoint:       endpoint,
+    endpoint:       resolved,
     supportsImages: true,
     quirks: OpenAiWireQuirks(
       toolResultName:        false,

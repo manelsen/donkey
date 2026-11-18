@@ -83,7 +83,10 @@ func openRouterCompatProfile*(endpoint = OpenRouterEndpoint;
     ),
   )
 
-func profileFor(a: OpenRouterAdapter): CompatProfile =
+func profileFor*(a: OpenRouterAdapter): CompatProfile =
+  ## The profile for this adapter instance: explicit overrides win, an empty
+  ## endpoint falls back to the OpenRouter default. Pure: safe to call from
+  ## any thread (a fresh profile and fresh JsonNodes per call).
   let endpoint = if a.endpoint.len > 0: a.endpoint else: OpenRouterEndpoint
   openRouterCompatProfile(endpoint = endpoint, referer = a.referer,
                           xTitle = a.xTitle)
@@ -187,7 +190,7 @@ proc complete*(a: OpenRouterAdapter;
     for (name, value) in profile.extraHeaders:
       headers[name] = value
     client.headers = headers
-    let body = $buildCompatRequestBody(profile, a.model, req)
+    let body = $a.buildBody(req)
     let resp = client.post(profile.endpoint, body = body)
     checkApiStatus(resp, "OpenRouter")
     resp.body |> parseJson |> parseOpenRouterResponse
@@ -199,10 +202,12 @@ proc makeStreamFn*(a: OpenRouterAdapter): StreamFn =
   ## Tokens are delivered one at a time via the onToken callback.
   ## Falls back to a regular completion when SSE is unavailable.
   let adapter = a   ## capture by value
-  let profile = a.profileFor()
   result = proc(req: CompletionRequest;
                 onToken: proc(tok: string) {.gcsafe.}
                ): Result[CompletionResponse, string] {.gcsafe.} =
+    ## The profile is rebuilt inside the worker thread: a CompatProfile owns
+    ## JsonNodes, so nothing GC-managed is captured/shared across threads.
+    let profile = adapter.profileFor()
     withHttpClient:
       var headers = newHttpHeaders({
         "Content-Type":  "application/json",
@@ -211,7 +216,7 @@ proc makeStreamFn*(a: OpenRouterAdapter): StreamFn =
       for (name, value) in profile.extraHeaders:
         headers[name] = value
       client.headers = headers
-      let body = $buildCompatRequestBody(profile, adapter.model, req, stream = true)
+      let body = $adapter.buildStreamBody(req)
       let resp = client.request(profile.endpoint, httpMethod = HttpPost, body = body)
       checkApiStatus(resp, "OpenRouter")
 

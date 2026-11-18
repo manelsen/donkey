@@ -96,3 +96,96 @@ suite "MiniMax compat profile":
     let req = CompletionRequest(messages: newHistory(), maxTokens: 256)
     let body = buildCompatRequestBody(miniMaxCompatProfile(), MiniMaxDefaultModel, req)
     check body["max_tokens"].getInt() == 256
+
+# ── Adapter ↔ profile equivalence (characterization) ─────────────────────────
+#
+# The shared transport already produces these bodies, so the matrix below is a
+# characterization test: it pins `buildBody` to the profile. It fails the day
+# the adapter stops delegating — e.g. by passing `stream = true` or overriding
+# a quirk such as `imageEmptyTextPart` on its own.
+
+proc bodyOf(req: CompletionRequest): JsonNode =
+  newMiniMaxAdapter("k").buildBody(req)
+
+proc profileBody(req: CompletionRequest): JsonNode =
+  buildCompatRequestBody(miniMaxCompatProfile(MiniMaxEndpoint),
+                         MiniMaxDefaultModel, req)
+
+suite "MiniMax adapter matches the compat profile":
+
+  test "text turn":
+    var h = newHistory()
+    h.addUser("oi")
+    h.addAssistant("olá")
+    let req = CompletionRequest(system: "seja breve", messages: h)
+    check bodyOf(req) == profileBody(req)
+    check not bodyOf(req).hasKey("stream")
+
+  test "tools and tool result turn":
+    var h = newHistory()
+    h.addUser("consulte")
+    h.add(assistantWithCall("", ""))
+    h.add(ChatMessage(role: roleTool, text: "resultado", toolCallId: "t1"))
+    let req = CompletionRequest(
+      messages: h,
+      tools: @[ToolDescription(name: "search", description: "busca",
+                               schemaJson: """{"type":"object"}""")])
+    check bodyOf(req) == profileBody(req)
+
+  test "image-only turn":
+    let req = CompletionRequest(
+      messages: @[ChatMessage(role: roleUser, text: "",
+                              imageUrl: "data:image/png;base64,QUJD")])
+    check bodyOf(req) == profileBody(req)
+
+  test "image plus tool calls turn":
+    let req = CompletionRequest(
+      messages: @[assistantWithCall("calling", "data:image/png;base64,QUJD")])
+    check bodyOf(req) == profileBody(req)
+
+  test "empty plain turn":
+    let req = CompletionRequest(
+      messages: @[ChatMessage(role: roleUser, text: "")])
+    check bodyOf(req) == profileBody(req)
+
+# ── Empty and malformed payloads ─────────────────────────────────────────────
+
+suite "MiniMax empty content and tool schemas":
+
+  test "an image-only turn has no empty text part":
+    let req = CompletionRequest(
+      messages: @[ChatMessage(role: roleUser, text: "",
+                              imageUrl: "data:image/png;base64,QUJD")])
+    let content = bodyOf(req)["messages"][0]["content"]
+    check content.kind == JArray
+    check content.len == 1
+    check content[0]["type"].getStr() == "image_url"
+
+  test "empty plain user and assistant turns keep content as empty string":
+    for role in [roleUser, roleAssistant]:
+      let req = CompletionRequest(messages: @[ChatMessage(role: role, text: "")])
+      let msg = bodyOf(req)["messages"][0]
+      check msg.hasKey("content")
+      check msg["content"].getStr() == ""
+
+  test "an empty tool result keeps content as empty string":
+    let req = CompletionRequest(
+      messages: @[ChatMessage(role: roleTool, text: "", toolCallId: "t1")])
+    let msg = bodyOf(req)["messages"][0]
+    check msg.hasKey("content")
+    check msg["content"].getStr() == ""
+    check msg["tool_call_id"].getStr() == "t1"
+
+  test "max_tokens is absent when the request does not set it":
+    let req = CompletionRequest(messages: newHistory(), maxTokens: 0)
+    check not bodyOf(req).hasKey("max_tokens")
+
+  test "invalid or empty schemaJson falls back to an empty object":
+    for schema in ["not json", ""]:
+      let req = CompletionRequest(
+        messages: newHistory(),
+        tools: @[ToolDescription(name: "search", description: "busca",
+                                 schemaJson: schema)])
+      let parameters = bodyOf(req)["tools"][0]["function"]["parameters"]
+      check parameters.kind == JObject
+      check parameters.len == 0
