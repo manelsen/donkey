@@ -620,7 +620,9 @@ proc save*(store: ScheduleStore; state: ScheduleWatermark
     if state.id in records: records.getOrDefault(state.id)
     else: ScheduleRecord(spec: ScheduleSpec(id: state.id))
   record.spec.id = state.id
-  record.lastRunAtMs = state.lastRunAtMs
+  ## Monotonic: a tick that computed its watermark before `ctl enable`
+  ## advanced it must not rewind the watermark and replay the disabled period.
+  record.lastRunAtMs = max(record.lastRunAtMs, state.lastRunAtMs)
   if state.lastFireAtMs > 0:
     record.lastFireAtMs = state.lastFireAtMs
   if record.spec.createdAtMs == 0:
