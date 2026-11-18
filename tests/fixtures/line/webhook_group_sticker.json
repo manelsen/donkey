@@ -1,0 +1,28 @@
+{
+  "destination": "U9c2f8a1b7d6e5f4a3b2c1d0e9f8a7b6c",
+  "events": [
+    {
+      "type": "message",
+      "mode": "active",
+      "timestamp": 1700000000789,
+      "webhookEventId": "01H8Y6Q4Z3J9K2M5N7P8R9S0T3",
+      "deliveryContext": {
+        "isRedelivery": false
+      },
+      "replyToken": "d8f2e7c3a4b55d7c0e1f2a3b4c5d6e7f",
+      "source": {
+        "type": "group",
+        "groupId": "C1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6",
+        "userId": "U4af4980629a1c5f5b1a1f0e7b7a1e111"
+      },
+      "message": {
+        "id": "468789577898262541",
+        "type": "sticker",
+        "stickerId": "52002734",
+        "packageId": "11537",
+        "stickerResourceType": "ANIMATION",
+        "keywords": ["happy", "joy"]
+      }
+    }
+  ]
+}

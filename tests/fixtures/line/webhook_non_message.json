@@ -1,0 +1,52 @@
+{
+  "destination": "U9c2f8a1b7d6e5f4a3b2c1d0e9f8a7b6c",
+  "events": [
+    {
+      "type": "follow",
+      "mode": "active",
+      "timestamp": 1700000002020,
+      "webhookEventId": "01H8Y6Q4Z3J9K2M5N7P8R9S0T5",
+      "deliveryContext": {
+        "isRedelivery": false
+      },
+      "replyToken": "f0b4a9e5c6d77f9e2a3b4c5d6e7f8091",
+      "source": {
+        "type": "user",
+        "userId": "U4af4980629a1c5f5b1a1f0e7b7a1e111"
+      },
+      "follow": {
+        "isUnblocked": false
+      }
+    },
+    {
+      "type": "postback",
+      "mode": "active",
+      "timestamp": 1700000002030,
+      "webhookEventId": "01H8Y6Q4Z3J9K2M5N7P8R9S0T6",
+      "deliveryContext": {
+        "isRedelivery": false
+      },
+      "replyToken": "a1c5b0f6d7e88a0f3b4c5d6e7f809102",
+      "source": {
+        "type": "user",
+        "userId": "U4af4980629a1c5f5b1a1f0e7b7a1e111"
+      },
+      "postback": {
+        "data": "action=buy"
+      }
+    },
+    {
+      "type": "unfollow",
+      "mode": "active",
+      "timestamp": 1700000002040,
+      "webhookEventId": "01H8Y6Q4Z3J9K2M5N7P8R9S0T7",
+      "deliveryContext": {
+        "isRedelivery": false
+      },
+      "source": {
+        "type": "user",
+        "userId": "U4af4980629a1c5f5b1a1f0e7b7a1e111"
+      }
+    }
+  ]
+}
