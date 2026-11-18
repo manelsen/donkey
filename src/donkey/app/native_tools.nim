@@ -73,6 +73,12 @@ import ./session_manager
 import ./approval_runtime
 import ./provider_executor
 
+const
+  AskInterruptedText* = "Error: ask interrupted."
+    ## Wake-up the ingress sends when a new API turn cancels the open ask. The
+    ## tool loop stops the batch on this result instead of starting the next
+    ## tool, so the old turn cannot block on a second question.
+
 # ── Result type ───────────────────────────────────────────────────────────────
 
 type
@@ -1206,7 +1212,7 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
     let reply = await ctx.session[].askInbox.get()
     ctx.session[].awaitingAsk = false
     if reply == "__DONKEY_ASK_CANCELLED__":
-      return handledError("Error: ask interrupted.")
+      return handledError(AskInterruptedText)
     return handledText(reply)
   of TodoWriteToolName:
     let ops = parseTodoOps(j).valueOr:

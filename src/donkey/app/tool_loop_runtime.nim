@@ -16,6 +16,7 @@ import ../core/tooling/native_tool_dispatch
 import ../core/agent_events
 import ../domain/agent_message
 import ../domain/message
+import ../domain/more_tools
 import ../domain/providers/media_pure
 import ../domain/subagent_pure
 import ../ports/memory
@@ -400,6 +401,14 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
     result =
       result |>->
       withToolResult(tc, toolResult.text, toolResult.resultKind, toolResult.newHistory)
+    if tc.name == AskToolName and toolResult.text == AskInterruptedText:
+      ## The ingress cancelled the open ask for a new API turn. Stop before the
+      ## next tool so this turn cannot block on a second question.
+      for j in i + 1 ..< toolCalls.len:
+        result = result |->
+          withToolResult(toolCalls[j], AskInterruptedText,
+                         trkOperationalError, none(ConversationHistory))
+      break
     let postPlan = planToolBatchItem(
       @[], tc, RepeatAbortThreshold, result.toolCallCount, toolResult.text)
     if not suppressProgress:
