@@ -38,18 +38,22 @@ func chatCompletionsEndpoint(base: string): string =
 func overrideEndpointSafe(url: string): bool =
   ## A `baseUrlEnv` override carries the provider key on every call: plain
   ## http is only acceptable on loopback (local NIM), never to a remote host.
+  ## Userinfo is rejected for both schemes: `https://api.nvidia.com@evil/v1`
+  ## would otherwise pass the https shortcut and send the key to `evil`.
   let lower = url.strip().toLowerAscii()
+  let schemeEnd = lower.find("://")
+  if schemeEnd <= 0:
+    return false
+  var authority = lower[schemeEnd + 3 .. ^1]
+  let slash = authority.find('/')
+  if slash >= 0: authority = authority[0 ..< slash]
+  if '@' in authority:
+    return false
   if lower.startsWith("https://"):
     return true
   if not lower.startsWith("http://"):
     return false
-  var host = lower[7 .. ^1]
-  let slash = host.find('/')
-  if slash >= 0: host = host[0 ..< slash]
-  if '@' in host:
-    ## `localhost:pass@remote.example` hides the real host in userinfo; a
-    ## provider endpoint never legitimately carries credentials there.
-    return false
+  var host = authority
   let colon = host.rfind(':')
   if colon >= 0: host = host[0 ..< colon]
   host = host.strip(chars = {'[', ']'})
@@ -59,10 +63,10 @@ func overrideEndpointSafe(url: string): bool =
     let ip = parseIpAddress(host)
     if ip.family == IPv4:
       return ip.address_v4[0] == 127'u8
-    ## IPv6 loopback is the only non-IPv4 address that may stay cleartext.
     $ip == "::1"
   except ValueError:
     false
+
 
 proc providerEndpointFor*(id: string): string {.gcsafe.} =
   ## Wire URL for a provider. A descriptor `baseUrlEnv` override wins over the

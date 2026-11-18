@@ -9,7 +9,7 @@
 ##   ~/.config/donkey/donkey.toml  — main config (home, paddocks, log level, …)
 ##   ~/.config/donkey/donkey.env   — secrets (API keys, bot tokens); chmod 600
 
-import std/[options, os, strutils, terminal]
+import std/[options, os, strutils, sysrand, terminal]
 when defined(posix):
   import std/posix
 when defined(posix):
@@ -163,30 +163,59 @@ proc configDirPath*(): string =
 proc configFilePath*(): string =
   configDirPath() / ConfigFileName
 
+proc privateTempName(path: string): string =
+  ## Unpredictable suffix so an existing (possibly attacker-readable) file can
+  ## never be reopened by name.
+  var raw: array[8, byte]
+  if not urandom(raw):
+    raise newException(IOError, "cannot obtain randomness for " & path)
+  var suffix = ""
+  for b in raw:
+    suffix.add(toHex(b, 2))
+  path & ".tmp." & $getCurrentProcessId() & "." & suffix
+
 proc writePrivateFile*(path, content: string) =
   ## Creates the file with 0600 **before** any credential is written, then
   ## renames it into place: `writeFile` + later `chmod` leaves a 0644 window in
-  ## which another local account can read the whole key pool.
+  ## which another local account can read the whole key pool. `O_EXCL` makes
+  ## the mode apply to a file this call created, not to a pre-existing one.
   when defined(posix):
-    let tmp = path & ".tmp." & $getCurrentProcessId()
-    let fd = posix.open(tmp.cstring, O_CREAT or O_WRONLY or O_TRUNC, 0o600)
+    var tmp = ""
+    var fd: cint = -1
+    for attempt in 0 ..< 3:
+      tmp = privateTempName(path)
+      fd = posix.open(tmp.cstring, O_CREAT or O_WRONLY or O_EXCL, 0o600)
+      if fd >= 0:
+        break
+      if errno != EEXIST:
+        raise newException(IOError, "cannot create a temporary file for " & path)
     if fd < 0:
-      raise newException(IOError, "cannot create " & tmp)
+      raise newException(IOError, "cannot create a temporary file for " & path)
+
+    var writeError = ""
     try:
       var written = 0
       while written < content.len:
         let n = posix.write(fd, content[written].unsafeAddr,
                             content.len - written)
         if n <= 0:
-          raise newException(IOError, "cannot write " & tmp)
+          writeError = "short write"
+          break
         written += n
-    finally:
-      discard posix.close(fd)
+    except CatchableError as e:
+      writeError = e.msg
+    ## A deferred write error can surface only at close (NFS): never publish a
+    ## temp whose close failed.
+    if posix.close(fd) != 0 and writeError.len == 0:
+      writeError = "close failed"
+    if writeError.len > 0:
+      discard posix.unlink(tmp.cstring)
+      raise newException(IOError, "cannot write credentials: " & writeError)
     try:
       moveFile(tmp, path)   # atomic on POSIX; the mode travels with the inode
     except OSError:
       discard posix.unlink(tmp.cstring)
-      raise newException(IOError, "cannot rename " & tmp)
+      raise newException(IOError, "cannot publish " & path)
   else:
     writeFile(path, content)
 
@@ -475,7 +504,10 @@ proc runSetupWizard*(home: string) =
   let envContent = buildEnvContent(providers, channels, braveApiKey)
   try:
     writePrivateFile(envPath, envContent)
-    echo "  ✓ " & envPath & "  (0600)"
+    when defined(posix):
+      echo "  ✓ " & envPath & "  (0600)"
+    else:
+      echo "  ✓ " & envPath
   except CatchableError as e:
     echo "  ✗ " & envPath & ": " & e.msg
     return

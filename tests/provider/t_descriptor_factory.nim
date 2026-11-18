@@ -191,3 +191,7 @@ suite "descriptor factory":
     ## `localhost:pass@remote.example` hides the real host in the userinfo.
     putEnv("NVIDIA_BASE_URL", "http://localhost:pass@remote.example/v1")
     check providerEndpointFor("nvidia") == descriptorOr("nvidia").baseUrl
+
+  test "a userinfo override is rejected for https too":
+    putEnv("NVIDIA_BASE_URL", "https://api.nvidia.com@evil.example/v1")
+    check providerEndpointFor("nvidia") == descriptorOr("nvidia").baseUrl
