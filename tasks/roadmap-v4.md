@@ -112,3 +112,16 @@ providers do Donkey são API-key; o fluxo fica como TODO de longo prazo e não
 bloqueia nenhuma missão. Registro para o futuro: o Hermes tem device code no
 `nous`, mas o client id público é do Hermes (`hermes-cli`); o Donkey precisaria
 de um client id próprio registrado ou de autorização escrita para reutilizá-lo.
+
+## Mission status (18/11/2026)
+
+| Missão | Estado |
+|---|---|
+| Provider transport (PRD próprio) | **mergeada** (PR #53, `f5d261da`), 250 testes |
+| Ferramentas | **PR #54 aberto**, US-001..007, 259 testes, CI pending |
+| Interfaces | PRD corrigido; aguarda a vez |
+| Multiagente | PRD corrigido; aguarda a vez |
+| Canais | PRD corrigido; aguarda a vez |
+| Automação | PRD corrigido; aguarda a vez |
+| Durabilidade | PRD corrigido; aguarda a vez |
+| Providers (V4) | PRD corrigido (adapter genérico + breadth); re-revisão em curso |
