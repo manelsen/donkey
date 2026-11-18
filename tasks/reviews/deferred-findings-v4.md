@@ -325,3 +325,20 @@ A confirmação do rename pendente só ocorre no próximo append com conteúdo.
 
 ### H6. Identidade por token — decisão de produto (inalterada)
 Continua como não-objetivo do PRD; registrada aqui para não se perder.
+
+### A7. `askInbox` não preserva a correlação — major
+`src/donkey/app/session_ingress.nim:349-360` · revisão #58 (re-revisão)
+Se uma reserva órfã expira enquanto `awaitingAsk` está ativo, um novo pedido do
+mesmo usuário é entregue como **texto da pergunta** ao turno anterior; o turno
+antigo responde com o token antigo e o novo pedido nunca roda (e o worker HTTP
+espera até o deadline).
+
+**Correção proposta (contida, precisa de teste):** quando `msg.bridgeToken != 0`
+(um pedido da API) e a sessão está em `awaitingAsk`, cancelar a pergunta
+(`__DONKEY_ASK_CANCELLED__`), limpar `awaitingAsk` e enfileirar o pedido como
+task normal, em vez de entregá-lo como resposta. Para canais (token 0) nada
+muda.
+
+**Por que ficou fora desta rodada:** mexe na semântica do `ask` e não há
+harness de teste para ask+token; um patch sem teste nesse caminho é pior que a
+dívida documentada.
