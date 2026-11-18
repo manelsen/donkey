@@ -89,6 +89,12 @@ run_one() {
   local cache_key="${abs_f%.nim}"
   cache_key="${cache_key#/}"
   cache_key="${cache_key//\//_}"
+  # Two different paths can flatten to the same key (`a/b_c` vs `a_b/c`), so
+  # append a checksum of the absolute path: deterministic across runs, and a
+  # collision would need the same path.
+  local path_hash
+  path_hash="$(printf '%s' "$abs_f" | cksum | cut -d' ' -f1)"
+  cache_key="${cache_key}_${path_hash}"
   local cache_dir
   if [ -n "$TEST_NIMCACHE_ROOT" ]; then
     cache_dir="$TEST_NIMCACHE_ROOT/${cache_key}_d"
