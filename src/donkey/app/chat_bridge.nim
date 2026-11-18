@@ -146,6 +146,17 @@ proc markOrphaned(bridge: ChatBridge; key: string) =
 
 # ── lifecycle ─────────────────────────────────────────────────────────────────
 
+proc sweepExpiredOrphans(bridge: ChatBridge; now: int64) =
+  ## Under the lock: an orphan whose TTL passed is only reclaimed when someone
+  ## touches its key, so a user who never returns would leak the entry for the
+  ## process lifetime. One sweep per registration bounds that.
+  var expired: seq[string]
+  for key, turn in bridge.pending:
+    if turn.orphaned and turn.deadlineMs > 0 and now >= turn.deadlineMs:
+      expired.add(key)
+  for key in expired:
+    bridge.pending.del(key)
+
 proc register*(bridge: ChatBridge; userId: UserId;
                timeoutMs: int64 = 0): Result[void, ChatBridgeError] =
   ## Starts a turn for `userId`. A second turn while one is pending is refused
@@ -154,6 +165,7 @@ proc register*(bridge: ChatBridge; userId: UserId;
   let key = $userId
   acquire(bridge.lock)
   try:
+    bridge.sweepExpiredOrphans(bridge.nowFn())
     if bridge.pending.hasKey(key):
       if orphanExpired(bridge.pending[key], bridge.nowFn()):
         bridge.pending.del(key)
@@ -264,6 +276,13 @@ proc poll*(bridge: ChatBridge; userId: UserId;
         bridge.pending.del(key)
         return ChatBridgeBatch(
           status: cbpDone, events: drained, truncated: truncated)
+
+      if drained.len > 0 and deadline > 0 and bridge.nowFn() >= deadline:
+        ## The deadline wins even when there is buffered content: without this
+        ## a chatty turn past its deadline kept answering cbpEvents and the
+        ## caller never saw the timeout.
+        bridge.markOrphaned(key)
+        return ChatBridgeBatch(status: cbpDeadline, truncated: truncated)
 
       if drained.len > 0:
         bridge.pending[key].events = @[]

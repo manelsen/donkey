@@ -374,3 +374,14 @@ suite "admitLongLived":
     check admitLongLived(llSseConnection,
       LongLivedSnapshot(pendingTurns: 3, sseConnections: 3,
                         longLivedWorkers: 3), wide) == cvNoWorker
+
+  test "a sweep reclaims orphans of users who never come back":
+    let bridge = newBridge()
+    check bridge.register(UserId("api:gone"), timeoutMs = 5000).isOk
+    check bridge.abandon(UserId("api:gone"))
+    check bridge.pendingCount() == 1
+    fakeNow += MaxOrphanTtlMs
+    ## A different user registering sweeps the expired orphan.
+    check bridge.register(UserId("api:other")).isOk
+    check bridge.pendingCount() == 1
+    check bridge.poll(UserId("api:gone")).status == cbpMissing
