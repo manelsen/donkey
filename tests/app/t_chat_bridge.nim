@@ -510,4 +510,11 @@ suite "admitLongLived":
     let second = bridge.register(uid)
     check second.isOk
     check not bridge.abandon(uid, token = first.get())
-    check bridge.poll(uid, token = second.get()).status == cbpEvents
+    # B has content buffered: a stale poll must not consume it either.
+    check bridge.deliver(apiMsg("resposta de B"), token = second.get())
+    let stale = bridge.poll(uid, token = first.get())
+    check stale.status == cbpMissing
+    check stale.events.len == 0
+    let mine = bridge.poll(uid, token = second.get())
+    check mine.status == cbpDone
+    check mine.events[^1].text == "resposta de B"

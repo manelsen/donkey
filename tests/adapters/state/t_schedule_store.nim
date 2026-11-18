@@ -586,9 +586,16 @@ suite "schedule store — atomic insertIfAbsent":
     let dir = freshDir("monotonic")
     defer: cleanup(dir)
     let store = newScheduleStoreRef(dir)
-    check store.upsert(fullRecord()).isOk
-    # A tick that started before `enable` writes an older watermark.
+    var record = fullRecord()
+    record.spec.enabled = false
+    record.lastRunAtMs = 1_600_000_000_000'i64
+    check store.upsert(record).isOk
+    # Re-enable at a later instant: the watermark advances there.
+    check store.setEnabled("daily", true, 1_650_000_000_000'i64).isOk
+    check store.loadRecord("daily").get().get().lastRunAtMs ==
+      1_650_000_000_000'i64
+    # A tick that started before the enable writes its older watermark.
     check store.save(watermark("daily", 1_600_000_000_000'i64,
                                1_600_000_000_000'i64)).isOk
     check store.loadRecord("daily").get().get().lastRunAtMs ==
-      1_700_000_000_123'i64
+      1_650_000_000_000'i64

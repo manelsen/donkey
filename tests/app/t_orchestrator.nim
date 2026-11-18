@@ -1552,13 +1552,14 @@ suite "adaptive debounce collector":
       let inbox = newAsyncQueue[AgentMessage]()
       var first = newTaskMsg("a", tkUserMsg, "u", "um", ckTelegram, "1")
       first.bridgeToken = 7
-      await inbox.put(first)
-      let collectFut = collectWithDebounce(inbox, fastCfg())
-      await sleepAsync(chronos.milliseconds(40))
       var other = newTaskMsg("b", tkUserMsg, "u", "dois", ckTelegram, "1")
       other.bridgeToken = 8
+      ## Both are queued before the collection starts, so the test does not
+      ## depend on the debounce clock: a collector that ignored the token would
+      ## merge them and return "um" + "dois".
+      await inbox.put(first)
       await inbox.put(other)
-      let merged = await collectFut
+      let merged = await collectWithDebounce(inbox, fastCfg())
       let second = await collectWithDebounce(inbox, fastCfg())
       (decodeUserPayload(merged.payload).text, merged.bridgeToken,
        second.bridgeToken)

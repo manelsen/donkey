@@ -306,11 +306,16 @@ suite "readConfinedMediaFile — read through the validated descriptor":
       ## `O_NOFOLLOW` only guards the final component; the fd's /proc entry is
       ## what proves the opened file still lives inside the root.
       let root = freshDir("swap-root")
+      defer: removeDir(root)
       let outside = freshDir("swap-outside")
+      defer: removeDir(outside)
       createDir(root / "sub")
       writeFile(root / "sub" / "a.txt", "inside")
       writeFile(outside / "a.txt", "outside")
-      let resolved = root / "sub" / "a.txt"
+      ## Resolve before the swap, as the adapter does: with TMPDIR behind a
+      ## symlink, a hand-built path would be rejected by the prefix check
+      ## before the descriptor is ever opened, making the test vacuous.
+      let resolved = resolveConfinedMediaPath(root, root / "sub" / "a.txt").get()
       removeDir(root / "sub")
       createSymlink(outside, root / "sub")
       let r = readConfinedMediaFile(root, resolved, 1024)
