@@ -286,8 +286,11 @@ suite "turn_journal_pure":
   test "B2: isTurnTerminal requires replyReady and three terminal branches":
     check isTurnTerminal(mkEntry(phase = tpsReplyReady, delivery = rdsSent,
                                  memory = mwsWritten, transcript = twsSaved))
-    check isTurnTerminal(mkEntry(phase = tpsReplyReady, delivery = rdsQueued,
-                                 memory = mwsSkipped, transcript = twsLost))
+    # Queued means "waiting for the drainer": still resumable, not terminal.
+    check not isTurnTerminal(mkEntry(phase = tpsReplyReady,
+                                     delivery = rdsQueued,
+                                     memory = mwsSkipped,
+                                     transcript = twsLost))
     check isTurnTerminal(mkEntry(phase = tpsReplyReady, delivery = rdsFailed,
                                  memory = mwsLost, transcript = twsSaved))
 
@@ -623,10 +626,11 @@ suite "turn_journal_pure":
                                  memory = mwsWritten,
                                  transcript = twsSaved)).commit
     check not resumePlan(mkEntry(phase = tpsAbandoned)).commit
-    # A queued delivery is a terminal outcome for closing the turn.
-    check resumePlan(mkEntry(phase = tpsReplyReady, delivery = rdsQueued,
-                             memory = mwsSkipped,
-                             transcript = twsLost)).commit
+    # A queued delivery is resumable but must not close the turn.
+    let queued = resumePlan(mkEntry(phase = tpsReplyReady, delivery = rdsQueued,
+                                    memory = mwsSkipped, transcript = twsLost))
+    check not queued.commit
+    check queued.sendQueuedReply
 
   test "pin: a queued reply never triggers a delivery notice":
     for source in ReplySource:
