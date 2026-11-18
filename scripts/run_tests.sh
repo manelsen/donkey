@@ -22,7 +22,15 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 # Persistent per-path nimcache root. Falls back to the run's temp dir when
 # HOME is unusable (unset, or a literal "~", which would create "./~").
 TEST_NIMCACHE_ROOT=""
-cache_base="${XDG_CACHE_HOME:-${HOME:-}/.cache}"
+if [ -n "${XDG_CACHE_HOME:-}" ]; then
+  cache_base="$XDG_CACHE_HOME"
+elif [ -n "${HOME:-}" ]; then
+  cache_base="$HOME/.cache"
+else
+  # Neither is set: `/.cache` is absolute but not writable, and creating it
+  # would fail every test in a container. Use the per-run temp dir.
+  cache_base=""
+fi
 case "$cache_base" in
   /*) TEST_NIMCACHE_ROOT="$cache_base/nim/donkey-tests" ;;
 esac
