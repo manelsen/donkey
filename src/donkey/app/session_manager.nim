@@ -285,6 +285,19 @@ proc getOrCreate*(sm: var SessionManager; userId: UserId): ptr SessionEntry =
 proc get*(sm: var SessionManager; userId: UserId): ptr SessionEntry =
   addr sm.entries[$userId]
 
+func latestChannelFor*(sm: SessionManager; userId: string):
+                       tuple[kind: ChannelKind, rawId: string] =
+  ## The channel a background action should answer on: the last one the user
+  ## used. Never invents one, so a session with no channel falls back to an
+  ## empty CLI target instead of recording a bogus `(ckCli, <session key>)`
+  ## entry that would hijack `latestChannel`.
+  result = (kind: ckCli, rawId: "")
+  if userId notin sm.entries:
+    return
+  let channels = sm.entries[userId].channels
+  if channels.len > 0:
+    result = (kind: channels[^1][0], rawId: channels[^1][1])
+
 proc recordChannel*(sm: var SessionManager;
                     userId: UserId;
                     kind:   ChannelKind;

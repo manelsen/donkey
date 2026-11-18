@@ -1,6 +1,6 @@
 ## donkey — AI agent system entry point.
 
-import std/[algorithm, json, options, os, parseopt, strutils, tables, terminal, times]
+import std/[algorithm, json, locks, options, os, parseopt, strutils, tables, terminal, times]
 when defined(posix):
   import std/posix
 import locks
@@ -1125,6 +1125,34 @@ func buildDaemonSessionServices(ctx: DaemonContext; cfg: DonkeyConfig;
                                 memory: MdFileAdapter;
                                 log: Logger): SessionIngressServices
 
+## The dashboard reads sessions from the gateway worker threads while the
+## daemon mutates `sm` on its own thread. Publish a copy from the daemon thread
+## under a small lock instead of iterating the live table across threads.
+var gSessionsLock: Lock
+var gSessionsSnapshot: seq[SessionDetail]
+var gSessionsSnapshotSec: int64 = -1
+
+proc publishSessions(sm: SessionManager) {.gcsafe, raises: [].} =
+  let nowSec = epochTime().int64
+  {.cast(gcsafe).}:
+    if nowSec == gSessionsSnapshotSec:
+      return
+    gSessionsSnapshotSec = nowSec
+    let snapshot = sm.listSessionDetails()
+    acquire(gSessionsLock)
+    try:
+      gSessionsSnapshot = snapshot
+    finally:
+      release(gSessionsLock)
+
+proc sessionsSnapshot(): seq[SessionDetail] {.gcsafe, raises: [].} =
+  {.cast(gcsafe).}:
+    acquire(gSessionsLock)
+    try:
+      result = gSessionsSnapshot
+    finally:
+      release(gSessionsLock)
+
 proc setupIpcServer(cfg: DonkeyConfig;
                     runtime: DaemonRuntime;
                     sm: SessionManager;
@@ -1211,6 +1239,8 @@ proc setupIpcServer(cfg: DonkeyConfig;
   except CatchableError as e:
     log.warn("IPC socket disabled: " & e.msg)
   let httpPort = resolveGatewayPort(getEnv("DONKEY_HTTP_PORT"))
+  initLock(gSessionsLock)
+  publishSessions(runtime.sm)
   let gwStatusFn: GatewayStatusFn = proc(): DaemonStatus {.gcsafe.} =
     ipcStatusFn()
   let gwLogFn: GatewayLogFn = proc(n: int): seq[IpcLogEntry] {.gcsafe.} =
@@ -1218,7 +1248,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
   let gwEventFn: GatewayEventFn = proc(n: int): seq[AgentEvent] {.gcsafe.} =
     agentEventSnapshot(n)
   let gwSessionsFn: GatewaySessionsFn = proc(): seq[SessionDetail] {.gcsafe.} =
-    runtime.sm.listSessionDetails()
+    sessionsSnapshot()
   let gwProvidersFn: GatewayProvidersFn = proc(): string {.gcsafe.} =
     buildProvidersJson(
       detectProviderAvailability(),
@@ -1233,15 +1263,22 @@ proc setupIpcServer(cfg: DonkeyConfig;
       if rawUserId notin runtime.sm.entries:
         return gsaoNotFound
       let uid = UserId(rawUserId)
-      if gatewayInboundMemory.isRevoked(uid):
-        return gsaoRevoked
+      ## Same policy as the API: revocation first, then the DM allowlist. A
+      ## policy denial must not answer 202 for a task the ingress will drop.
+      case gwAuthorizeFn(uid)
+      of avAllowed: discard
+      of avRevoked, avNotAllowed: return gsaoRevoked
+      ## Answer on the channel the user actually uses. Passing the session key
+      ## as a `ckCli` channel id recorded a fake channel and sent the
+      ## confirmation to stdout.
+      let target = runtime.sm.latestChannelFor(rawUserId)
       ensureSessionTask(
         runtime.sm,
         InboundMessage(
           userId: uid,
-          channel: ckCli,
-          channelId: rawUserId,
-          rawChannelId: rawUserId,
+          channel: target.kind,
+          channelId: target.rawId,
+          rawChannelId: target.rawId,
         ),
         buildDaemonSessionServices(gatewayInboundCtx, cfg, gatewayInboundMemory,
                                    gatewayInboundLog),
@@ -1898,6 +1935,7 @@ proc runDaemonLoop(ctx: DaemonContext;
     if compactError.isSome:
       log.warn("ledger compaction: " & compactError.get())
   let tick = runDaemonTick(ctx, drainer, memory, log)
+  publishSessions(ctx.runtime.sm)
   DaemonLoopResult(
     sleepMs: if tick.ok: 100 else: 500,
   )

@@ -163,3 +163,25 @@ suite "SessionManager":
     check lease.rebuilt
     check sm.hasLiveSession(uid)
     check not sm.hasLiveSession(UserId("unknown-uuid-restored"))
+
+  test "the dashboard target is the last channel the user used":
+    var sm: SessionManager
+    sm.init()
+    let uid = UserId("target-uuid")
+    discard sm.getOrCreate(uid)
+    sm.recordChannel(uid, ckTelegram, "tg-1", persist = false)
+    sm.recordChannel(uid, ckDiscord, "disc-9", persist = false)
+    let target = sm.latestChannelFor($uid)
+    check target.kind == ckDiscord
+    check target.rawId == "disc-9"
+
+  test "the dashboard target never invents a channel":
+    var sm: SessionManager
+    sm.init()
+    discard sm.getOrCreate(UserId("no-channel-uuid"))
+    let target = sm.latestChannelFor("no-channel-uuid")
+    check target.kind == ckCli
+    check target.rawId == ""
+    let missing = sm.latestChannelFor("unknown-key")
+    check missing.kind == ckCli
+    check missing.rawId == ""
