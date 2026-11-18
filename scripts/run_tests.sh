@@ -19,6 +19,15 @@ JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/donkey_tests_XXXXXX")
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+# Persistent per-path nimcache root. Falls back to the run's temp dir when
+# HOME is unusable (unset, or a literal "~", which would create "./~").
+TEST_NIMCACHE_ROOT=""
+cache_base="${XDG_CACHE_HOME:-${HOME:-}/.cache}"
+case "$cache_base" in
+  /*) TEST_NIMCACHE_ROOT="$cache_base/nim/donkey-tests" ;;
+esac
+export TEST_NIMCACHE_ROOT
+
 HAVE_GNU_REALPATH=0
 if command -v realpath >/dev/null 2>&1 &&    [ -n "$(realpath -m --relative-to=. . 2>/dev/null)" ]; then
   HAVE_GNU_REALPATH=1
@@ -64,7 +73,27 @@ run_one() {
 
   local log="$tmp_dir/test_${id}.log"
   printf "RUN   %s\n" "$f"
-  if nim c --hints:off --mm:orc -u:withPostgres -r "$f" > "$log" 2>&1; then
+
+  # Nim keys its default nimcache on the file basename only
+  # (~/.cache/nim/<basename>_d), so two tests with the same name in different
+  # directories clobber each other's main-module object when compiled in
+  # parallel (e.g. t_openai_compat under app/ and domain/providers/).
+  # Derive a unique, persistent cache from the test path so parallel runs can
+  # never share a directory while warm-cache reuse between runs is preserved.
+  local cache_key="${f%.nim}"
+  cache_key="${cache_key//\//_}"
+  local cache_dir
+  if [ -n "$TEST_NIMCACHE_ROOT" ]; then
+    cache_dir="$TEST_NIMCACHE_ROOT/${cache_key}_d"
+  else
+    # No usable HOME (unset or a literal "~"): keep the cache inside the
+    # per-run temp dir instead of creating a "./~" directory in the repo.
+    cache_dir="$tmp_dir/nimcache_${id}_d"
+  fi
+
+  if nim c --hints:off --mm:orc -u:withPostgres \
+       --nimcache:"$cache_dir" \
+       -r "$f" > "$log" 2>&1; then
     touch "$tmp_dir/pass_${id}"
     local summary
     summary=$(grep -E "\[Summary\]|\[OK\]" "$log" | tail -1 || true)
