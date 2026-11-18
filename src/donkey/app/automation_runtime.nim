@@ -170,7 +170,11 @@ proc tickSchedule*(
   ## Record the firing only after the task reached the inbox: `last_run` in
   ## `ctl schedule list/show` reads this, and it must not claim a run that was
   ## dropped. The watermark is already persisted, so a crash here loses the
-  ## display value, not the at-most-once guarantee.
+  ## display value, not the at-most-once guarantee. Re-check first: `save`
+  ## recreates a missing row, and the schedule may have been removed during the
+  ## enqueue.
+  if store.load(id).get(none(ScheduleWatermark)).isNone:
+    return ok(tick)
   discard store.save(ScheduleWatermark(
     id: id,
     lastRunAtMs: decision.watermarkMs,
