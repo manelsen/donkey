@@ -255,7 +255,43 @@ alternância; `quirks.nim` está inerte e duplicado.
 - [ ] Nenhum comportamento de Gemini/Anthropic muda (`gemini_pure` e
       `anthropic_pure` são os donos).
 
-### US-008: Documentar a arquitetura e fechar a missão
+### US-008: runtime_builder e catálogo a partir dos descritores
+
+**Descrição:** Como mantenedor, quero que endpoints, modelos default e aliases
+não sejam repetidos no factory nem no catálogo.
+
+**Critérios de aceite:**
+- [ ] `runtime_builder.nim` resolve endpoint por `descriptor.baseUrl` (quando o
+      provider não tem override próprio), modelo default por
+      `descriptor.defaultModel`, aliases por `descriptor.aliases` e o fallback
+      desconhecido por `defaultProviderDescriptor`.
+- [ ] `model_catalog.nim` resolve nomes de env por `descriptor.envNames` em vez
+      das cadeias próprias (linhas ~605–639).
+- [ ] O host do catálogo (OpenRouter/Groq/Anthropic/Gemini/Z.ai) pode continuar
+      explícito quando o path de `/models` não for derivável do chat; documentar
+      o que fica fora.
+- [ ] Nenhum endpoint, default model ou alias duplicado em
+      `runtime_builder.nim`; `rg` confirma.
+- [ ] Testes existentes de `t_runtime_builder` e `t_model_catalog` passam sem
+      edição; novo teste de paridade cobre um provider por família.
+
+### US-009: doctor, setup, service handler, TUI e custo a partir dos descritores
+
+**Descrição:** Como mantenedor, quero que toda lista de providers visível ao
+operador venha da tabela, sem listas velhas.
+
+**Critérios de aceite:**
+- [ ] `doctor.nim`, `setup_wizard.nim`, `service_handler.nim`,
+      `admin_tui.nim` e `src/donkey.nim` (fallback OpenRouter, lista de custo)
+      iteram `providerDescriptors()`; nenhuma lista de ids/env própria.
+- [ ] A lista do doctor deixa de omitir groq/ollama/opencode-go/zen.
+- [ ] Teste de paridade: para cada descritor, o doctor e o setup expõem o mesmo
+      conjunto de providers e o primeiro env var de cada um.
+- [ ] Textos/labels podem continuar explícitos; só a identidade e o env vêm da
+      tabela.
+- [ ] Nenhuma mudança de comportamento além de listas mais completas.
+
+### US-010: Documentar a arquitetura e fechar a missão
 
 **Descrição:** Como mantenedor, quero que a próxima pessoa entenda a divisão
 descritor → transporte → perfil.
