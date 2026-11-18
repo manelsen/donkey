@@ -218,12 +218,18 @@ func fieldMatches*(field: CronField; value: int): bool =
     return true
   value in field.values
 
+func cronWeekday*(dt: DateTime): int =
+  ## Cron numbers days 0 = Sunday .. 6 = Saturday, while Nim's `WeekDay` is
+  ## `dMon = 0 .. dSun = 6`. Shift by one and wrap so a schedule written for
+  ## Monday fires on Monday instead of Tuesday.
+  (dt.weekday.ord + 1) mod 7
+
 func matchesCron*(expr: CronExpr; dt: DateTime): bool =
   # Day-of-month and day-of-week: if both are restricted (not "*"),
   # the cron matches if EITHER matches (OR semantics).
   # If one is unrestricted, use AND semantics with the restricted one.
   let domMatches = fieldMatches(expr.dayOfMonth, dt.monthday)
-  let dowMatches = fieldMatches(expr.dayOfWeek, dt.weekday.ord)
+  let dowMatches = fieldMatches(expr.dayOfWeek, cronWeekday(dt))
   let domAll = expr.dayOfMonth.hasAll
   let dowAll = expr.dayOfWeek.hasAll
   let dayOk =
