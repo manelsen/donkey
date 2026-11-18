@@ -516,7 +516,15 @@ proc readJournal(path: string): Result[JournalSnapshot, string] {.raises: [].} =
   except CatchableError as e:
     return err("cannot read turn journal " & path & ": " & e.msg)
 
-  let lines = raw.splitLines()
+  ## Frames are written as `\n<json>\n`. A trailing segment without its LF is
+  ## a torn append even when the JSON happens to be complete: applying it would
+  ## report an event the writer never confirmed, and the next append repairs
+  ## (removes) exactly that segment.
+  var lines = raw.split('\n')
+  if raw.len > 0 and raw[^1] == '\n':
+    if lines.len > 0: lines.setLen(lines.len - 1)
+  elif lines.len > 0:
+    lines.setLen(lines.len - 1)
   var lastNonEmpty = -1
   for idx, line in lines:
     if line.strip().len > 0:
