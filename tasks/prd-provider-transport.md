@@ -82,6 +82,50 @@ Regras adicionais, sem exceção:
 - Se o worktree estiver sujo ao começar, **pare** e registre; não use stash,
   reset ou checkout sobre trabalho alheio.
 
+### 4.1 Ciclo de execução — TDD não é opcional
+
+Cada história segue exatamente esta ordem, sem atalho:
+
+1. Escrever **um** arquivo de teste (ou um bloco novo nele) e rodá-lo.
+2. **Mostrar a falha** no relato da história: a saída do `run_tests.sh` com o
+   erro esperado (módulo ausente, símbolo inexistente ou asserção falhando).
+   Teste que passa antes da implementação está errado e deve ser corrigido.
+3. Implementar o mínimo para o teste passar.
+4. Rodar o mesmo teste até verde.
+5. Rodar os quality gates completos.
+6. Commitar a história com a evidência do vermelho → verde no corpo do commit
+   (duas linhas bastam: o erro inicial e o resultado final).
+
+Proibido:
+
+- Escrever implementação antes do teste falhar.
+- Editar um teste existente para “acomodar” a mudança. Se o comportamento
+  mudou, a história diz isso explicitamente.
+- Rodar a suíte inteira como primeiro sinal: o primeiro sinal é o teste novo
+  falhando sozinho.
+
+### 4.2 Paralelização
+
+Pode-se paralelizar sem limite o que **não compartilha arquivos**:
+
+- pesquisa e leitura (inventário de providers, testes, hooks do hermes);
+- redação de testes de histórias diferentes, desde que cada uma seja dona do
+  seu arquivo de teste;
+- implementação de histórias com **conjuntos de arquivos disjuntos**.
+
+Regras de coordenação:
+
+- `src/donkey/domain/providers/compat.nim` e `openai_pure.nim` têm **um único
+  escritor** por vez. A US-002 é o portão serializado; só depois dela as
+  migrações de Zhipu/MiniMax/OpenRouter podem correr em paralelo.
+- Cada subagente declara os arquivos que possui; ninguém edita arquivo de
+  outro.
+- A suíte completa e os commits são **sequenciais na sessão principal**.
+  Testes direcionados podem rodar em paralelo; `run_tests.sh` completo não,
+  porque os binários de teste colidem.
+- O TDD continua obrigatório por história: o vermelho é mostrado antes da
+  implementação, mesmo quando a implementação roda em paralelo.
+
 ## 5. Preparação (antes da US-001)
 
 1. `cd ~/git/donkey && git status --short`. Se houver alteração, pare.
