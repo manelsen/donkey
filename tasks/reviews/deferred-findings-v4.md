@@ -281,3 +281,47 @@ Dois critérios se contradizem sobre `ssCancelled` disparar fail-fast.
 3. **F1/F2/F3** — LINE atrás de um serviço de códigos e de um worker de saída.
 4. **A2/A3** — dono único da thread do turno (habilita SSE e dashboard).
 5. **G1/G2**, **D1–D3**, **E1–E4**, **H*** — menor risco, podem ir em paralelo.
+
+---
+
+## Atualização — revisão da onda de dívida (PR #58)
+
+Os achados abaixo nasceram da revisão da própria onda de dívida. Os majors
+foram corrigidos; estes ficam como follow-up.
+
+### A5. Envio de saída roda na thread do daemon — major (arquitetural)
+`src/donkey.nim` (`drainGlobalOutbox`) · revisão #58
+Todo `routeOutbound` chama `port.send` de forma síncrona no dreno do outbox, que
+roda no thread do daemon. O `/continue` do LINE foi enfileirado (F2), mas o POST
+apenas mudou de lugar: um endpoint lento bloqueia todos os canais e o scheduler
+pelo timeout do transporte (30 s no LINE).
+
+**Por que adiado:** exige um worker de saída (fila própria + thread) e uma
+política de ordenação por usuário; é vizinho do A1.
+**Correção:** fila de saída drenada por thread(s) de trabalho, com confirmação
+por mensagem e o ledger atualizado lá.
+
+### A6. Confinamento por descritor é Linux-only — major
+`src/donkey/adapters/filesystem/paths.nim` · revisão #58
+O `O_NOFOLLOW` cobre só o componente final; a prova de que o arquivo aberto
+continua dentro da raiz vem de `/proc/self/fd/N`. Em macOS não há `/proc`, então
+um diretório intermediário trocado por symlink passa.
+
+**Correção:** no macOS, `fcntl(F_GETPATH)` no fd para revalidar a raiz; ou
+`openat` component a component.
+
+### C8. Conclusão tardia sobrescreve `ssTimedOut` — minor
+`src/donkey/app/subagent_runtime.nim`
+Um filho que conclui depois de o loop agregado encerrar pode registrar
+`completed` sobre o `ssTimedOut` já marcado.
+
+### C9. Remoção de filho com future pendente — minor
+`subagent_runtime.nim`
+A varredura de retenção pode remover um filho cujo future ainda não terminou.
+
+### B7. Rename pendente sem retry quando não há nada a escrever — minor
+`src/donkey/adapters/state/turn_journal_store.nim`
+A confirmação do rename pendente só ocorre no próximo append com conteúdo.
+
+### H6. Identidade por token — decisão de produto (inalterada)
+Continua como não-objetivo do PRD; registrada aqui para não se perder.
