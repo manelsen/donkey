@@ -39,6 +39,7 @@ type
     text*:     string
     channel*:  ChannelKind
     replyTo*:  string
+    bridgeToken*: uint64   ## API turn generation copied from the inbound message
 
 func newTaskMsg*(id: string; kind: TaskKind; userId, payload: string;
                  channel = ckTelegram; replyTo = ""): AgentMessage =

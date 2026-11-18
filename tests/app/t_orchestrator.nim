@@ -366,6 +366,61 @@ suite "OrchestratorAgent":
     check reply.replyKind == rkFinalAnswer
     check reply.text == "pong"
 
+  test "the task bridge token reaches the outbound terminal":
+    let tmpDir = getTempDir() / "donkey_test_orch_bridge_token"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[OutboundMessage] {.async.} =
+      let userDir = dir / "api_alice"
+      createDir(userDir)
+      let mem      = MdFileAdapter(paddocksDir: dir)
+      let inbox    = newAsyncQueue[AgentMessage]()
+      let outbox   = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 userDir, state)
+      var task = newTaskMsg("req-api-token", tkUserMsg, "api:alice", "ping")
+      task.bridgeToken = 7'u64
+      await inbox.put(task)
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      return reply
+
+    let reply = waitFor doTest(tmpDir)
+    check reply.replyKind == rkFinalAnswer
+    check reply.bridgeToken == 7'u64
+
+  test "a channel turn leaves the outbound token at zero":
+    let tmpDir = getTempDir() / "donkey_test_orch_no_token"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[OutboundMessage] {.async.} =
+      let userDir = dir / "u-no-token"
+      createDir(userDir)
+      let mem      = MdFileAdapter(paddocksDir: dir)
+      let inbox    = newAsyncQueue[AgentMessage]()
+      let outbox   = newAsyncQueue[OutboundMessage]()
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      let state = newSessionState()
+      let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
+                                 newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                 userDir, state)
+      await inbox.put(newTaskMsg("req-no-token", tkUserMsg, "u-no-token", "ping"))
+      let reply = await outbox.get()
+      await inbox.put(newCancelMsg())
+      await orchFut
+      return reply
+
+    let reply = waitFor doTest(tmpDir)
+    check reply.bridgeToken == 0'u64
+
   test "brand-new interactive user still enters onboarding":
     let tmpDir = getTempDir() / "donkey_test_orch_interactive_new_user"
     removeDir(tmpDir)

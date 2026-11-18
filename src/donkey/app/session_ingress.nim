@@ -260,6 +260,13 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              subagentWorkspace = bootstrap.subagentWorkspace,
                              fs = fs)
 
+func sessionTaskMsg(msg: InboundMessage; msgId: string;
+                     recentContext = ""): AgentMessage =
+  ## Session task carrying the inbound message, including the API turn
+  ## generation: every reply of this turn is correlated to it downstream.
+  result = buildSessionTaskMsg(msg, msgId, recentContext)
+  result.bridgeToken = msg.bridgeToken
+
 proc enqueueSessionMessage*(entry: var SessionEntry;
                             msg: InboundMessage;
                             msgId: string;
@@ -270,7 +277,7 @@ proc enqueueSessionMessage*(entry: var SessionEntry;
     entry.awaitingAsk = false
     entry.askInbox.addLastNoWait(msg.text)
   of sitActorInbox:
-    entry.inbox.addLastNoWait(buildSessionTaskMsg(msg, msgId))
+    entry.inbox.addLastNoWait(sessionTaskMsg(msg, msgId))
 
 proc startSessionIngress*(sm: var SessionManager;
                           msg: InboundMessage;
@@ -337,7 +344,7 @@ proc startSessionIngress*(sm: var SessionManager;
   case result.plan.decision.target
   of sitActorInbox:
     if taskKind == tkUserMsg:
-      result.plan.entry[].inbox.addLastNoWait(buildSessionTaskMsg(msg, result.msgId, recentContext))
+      result.plan.entry[].inbox.addLastNoWait(sessionTaskMsg(msg, result.msgId, recentContext))
     else:
       result.plan.entry[].inbox.addLastNoWait(newTaskMsg(
         result.msgId, taskKind, $msg.userId, taskPayload,

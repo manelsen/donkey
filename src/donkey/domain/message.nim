@@ -69,6 +69,7 @@ type
     threadId*:   string       ## forum topic / thread id when present
     chatId*:     string       ## source chat id (group id in groups)
     channel*:    ChannelKind
+    bridgeToken*: uint64      ## API turn generation; 0 for channel traffic
 
   OutboundMessage* = object
     userId*:    UserId
@@ -89,6 +90,7 @@ type
     toolCall*:     ToolCallNotice ## non-empty phase means a tool event
     inputTokens*:  int
     outputTokens*: int
+    bridgeToken*:  uint64         ## API turn generation; 0 for channel traffic
 
   ToolDescription* = object
     name*:        string

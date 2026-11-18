@@ -38,6 +38,8 @@ type DispatchMode = enum
   dmPartialThenError
   dmHugeFinal
   dmCumulativePartials
+  dmTokenEchoFinal        ## the terminal carries the inbound turn token
+  dmWrongTokenFinal       ## a terminal from another generation
 
 var fakeBridge {.threadvar.}: ChatBridge
 var dispatched {.threadvar.}: seq[InboundMessage]
@@ -47,7 +49,8 @@ var authVerdict = avAllowed
 
 proc deliverToBridge(userId: UserId; text: string; kind = rkFinalAnswer;
                      partial = false; tool = ToolCallNotice();
-                     inputTokens = 0; outputTokens = 0) {.gcsafe.} =
+                     inputTokens = 0; outputTokens = 0;
+                     token = 0'u64) {.gcsafe.} =
   discard fakeBridge.deliver(OutboundMessage(
     userId:  userId,
     text:    text,
@@ -56,6 +59,7 @@ proc deliverToBridge(userId: UserId; text: string; kind = rkFinalAnswer;
     toolCall: tool,
     inputTokens: inputTokens,
     outputTokens: outputTokens,
+    bridgeToken: token,
   ))
 
 proc fakeDispatch(msg: InboundMessage) {.gcsafe.} =
@@ -104,6 +108,17 @@ proc fakeDispatch(msg: InboundMessage) {.gcsafe.} =
                                partial = true, inputTokens = 3, outputTokens = 2)
     discard fakeBridge.fail(msg.userId,
                             "provider key sk-secret-123 failed")
+  of dmTokenEchoFinal:
+    ## The real orchestrator copies the token onto every outbox message; the
+    ## fake does the same so the bridge sees the registration token.
+    deliverToBridge(msg.userId, finalText, rkFinalAnswer,
+                    inputTokens = 11, outputTokens = 7,
+                    token = msg.bridgeToken)
+  of dmWrongTokenFinal:
+    ## A reply produced by another generation of the same user.
+    deliverToBridge(msg.userId, finalText, rkFinalAnswer,
+                    inputTokens = 11, outputTokens = 7,
+                    token = msg.bridgeToken + 1)
 
 proc fakeAuthorize(userId: UserId): AuthVerdict {.gcsafe, raises: [].} =
   discard userId
@@ -409,6 +424,35 @@ suite "runAgentChat deadline":
     check reply.status == 502
     check not reply.body.contains("sk-secret-123")
     check reply.body.contains("[redacted]")
+
+# ── per-turn token end to end ─────────────────────────────────────────────────
+
+suite "runAgentChat per-turn token":
+
+  test "the dispatched turn carries the registration token and closes it":
+    resetFakes()
+    dispatchMode = dmTokenEchoFinal
+    finalText = "eco do turno"
+
+    let reply = run(bodyFor("alice", "oi"))
+    check reply.status == 200
+    check contentOf(reply.body) == "eco do turno"
+    check dispatched.len == 1
+    ## First registration on a fresh bridge.
+    check dispatched[0].bridgeToken == 1'u64
+    check fakeBridge.pendingCount == 0
+
+  test "a reply from another generation cannot close the turn":
+    resetFakes()
+    dispatchMode = dmWrongTokenFinal
+    finalText = "de outro turno"
+
+    let reply = run(bodyFor("alice", "oi"))
+    ## The terminal was discarded, so the turn ran to its deadline.
+    check reply.status == 504
+    check dispatched.len == 1
+    check dispatched[0].bridgeToken == 1'u64
+    check fakeBridge.pendingCount == 1
 
 # ── usage accumulation primitives ─────────────────────────────────────────────
 

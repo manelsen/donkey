@@ -506,7 +506,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     state, history, turnSetup.uid, msg.channel, msg.replyTo, msg.id, turnSetup.streamId,
     systemBase, context, tools, providerLabel,
     suppressProgress, result.debugMode, result.showReasoning, log,
-    asyncCompleteFn)
+    asyncCompleteFn, bridgeToken = msg.bridgeToken)
   result =
     result |>->
     withLoopResult(loopResult)
@@ -519,7 +519,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   stopTypingLoop(turnSetup.typingLoop)
   await finalizeNormalTurn(
     globalOutbox, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.streamId, streamFn,
-    suppressProgress, suppressQuietHeartbeatFinal, result.showReasoning, loopResult)
+    suppressProgress, suppressQuietHeartbeatFinal, result.showReasoning, loopResult,
+    bridgeToken = msg.bridgeToken)
 
   # Capture the turn into long-term memory. The policy (what counts as
   # substantive, how each side is clipped) lives in domain/memory/capture_pure.

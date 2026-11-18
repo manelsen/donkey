@@ -4,6 +4,12 @@
 ## actor delivers outbox messages from another thread; the worker polls for
 ## events until a final answer, a turn error, the deadline or an abandon.
 ##
+## Registration returns a generation token. Replies produced by an API turn
+## carry it, so a terminal from a turn that already ended (abandoned, expired)
+## is discarded instead of closing the turn that took the user's slot after
+## the TTL. Callers with no token — channel turns — pass 0 and keep the
+## per-user behaviour.
+##
 ## Waiting is injected (`now`/`nap`) so tests never sleep and the production
 ## adapter can use the real clock without leaking it into domain code.
 
@@ -51,6 +57,7 @@ type
     truncated*: bool
 
   PendingTurn = object
+    token:         uint64 ## identity of this registration; 0 = never handed out
     events:        seq[ChatBridgeEvent]
     bufferedBytes: int
     truncated:     bool
@@ -59,10 +66,11 @@ type
     deadlineMs:    int64  ## absolute clock value; 0 = no deadline (or the TTL)
 
   ChatBridge* = ref object
-    lock:    Lock
-    pending: Table[string, PendingTurn]
-    nowFn:   NowFn
-    napFn:   NapFn
+    lock:     Lock
+    pending:  Table[string, PendingTurn]
+    tokenSeq: uint64
+    nowFn:    NowFn
+    napFn:    NapFn
 
 const ChatBridgeBusy* = cbeBusy
   ## The `register` refusal for a user that already has a pending turn.
@@ -80,6 +88,14 @@ proc newChatBridge*(now: NowFn; nap: NapFn): ChatBridge =
   result.pending = initTable[string, PendingTurn]()
   result.nowFn = now
   result.napFn = nap
+
+# ── turn identity ─────────────────────────────────────────────────────────────
+
+func tokenMatches(turn: PendingTurn; token: uint64): bool =
+  ## A zero token is the "I have no generation" caller (a channel turn) and is
+  ## accepted for whatever entry exists, preserving the pre-token behaviour.
+  ## Non-zero tokens are only accepted by their own registration.
+  token == 0 or turn.token == token
 
 # ── buffer helpers ────────────────────────────────────────────────────────────
 
@@ -158,10 +174,15 @@ proc sweepExpiredOrphans(bridge: ChatBridge; now: int64) =
     bridge.pending.del(key)
 
 proc register*(bridge: ChatBridge; userId: UserId;
-               timeoutMs: int64 = 0): Result[void, ChatBridgeError] =
-  ## Starts a turn for `userId`. A second turn while one is pending is refused
-  ## with `cbeBusy` (the caller maps it to 429). `timeoutMs` is 0 for no
-  ## deadline; otherwise the deadline is fixed at registration time.
+               timeoutMs: int64 = 0): Result[uint64, ChatBridgeError] =
+  ## Starts a turn for `userId` and returns its generation token. A second turn
+  ## while one is pending is refused with `cbeBusy` (the caller maps it to 429).
+  ## `timeoutMs` is 0 for no deadline; otherwise the deadline is fixed at
+  ## registration time.
+  ##
+  ## The token identifies this registration, not the user: replies that carry
+  ## an older token belong to a turn that already ended and must not close the
+  ## current one.
   let key = $userId
   acquire(bridge.lock)
   try:
@@ -188,20 +209,34 @@ proc register*(bridge: ChatBridge; userId: UserId;
     let deadline =
       if timeoutMs > 0: bridge.nowFn() + timeoutMs
       else: 0'i64
-    bridge.pending[key] = PendingTurn(deadlineMs: deadline)
-    ok()
+    inc bridge.tokenSeq
+    let token = bridge.tokenSeq
+    bridge.pending[key] = PendingTurn(deadlineMs: deadline, token: token)
+    ok(token)
   finally:
     release(bridge.lock)
 
-proc deliver*(bridge: ChatBridge; msg: OutboundMessage): bool =
+proc deliver*(bridge: ChatBridge; msg: OutboundMessage;
+              token: uint64 = 0): bool =
   ## Accepts an outbox message for the pending turn of `msg.userId`.
   ## Returns false when there is no pending turn or the turn already closed
   ## (late delivery is discarded). Debug/channel chatter is accepted and
   ## ignored: it never becomes client content.
+  ##
+  ## A non-zero token is the generation the message belongs to: it is only
+  ## accepted by the pending entry registered with that token, so a terminal
+  ## from an abandoned turn cannot close the turn that replaced it after the
+  ## TTL. Callers without a token pass 0 (or leave it on the message) and keep
+  ## the previous per-user behaviour.
   let key = $msg.userId
+  let effectiveToken = if token != 0: token else: msg.bridgeToken
   acquire(bridge.lock)
   try:
     if not bridge.pending.hasKey(key):
+      return false
+    if not tokenMatches(bridge.pending[key], effectiveToken):
+      ## Another generation's message: discard it without touching the live
+      ## entry (it may be a partial, a terminal or an error).
       return false
     let event = ChatBridgeEvent(
       kind:         msg.replyKind,
@@ -227,13 +262,17 @@ proc deliver*(bridge: ChatBridge; msg: OutboundMessage): bool =
   finally:
     release(bridge.lock)
 
-proc fail*(bridge: ChatBridge; userId: UserId; message: string): bool =
+proc fail*(bridge: ChatBridge; userId: UserId; message: string;
+           token: uint64 = 0): bool =
   ## Closes a pending turn with a turn error. No-op when the turn is missing
-  ## or already closed.
+  ## or already closed. A non-zero `token` closes only the registration that
+  ## owns it: the same rule as `deliver`.
   let key = $userId
   acquire(bridge.lock)
   try:
     if not bridge.pending.hasKey(key):
+      return false
+    if not tokenMatches(bridge.pending[key], token):
       return false
     if bridge.pending[key].orphaned:
       # The orphan failed: the terminal releases the reservation.

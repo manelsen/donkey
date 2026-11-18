@@ -32,13 +32,14 @@ proc newBridge(): ChatBridge =
   newChatBridge(fakeNowFn, fakeNapFn)
 
 func apiMsg(text: string; kind = rkFinalAnswer; partial = false;
-            tool = ToolCallNotice()): OutboundMessage =
+            tool = ToolCallNotice(); token = 0'u64): OutboundMessage =
   OutboundMessage(
     userId: UserId("api:alice"),
     text: text,
     replyKind: kind,
     isPartial: partial,
     toolCall: tool,
+    bridgeToken: token,
   )
 
 # ── bridge lifecycle ──────────────────────────────────────────────────────────
@@ -250,6 +251,107 @@ suite "ChatBridge lifecycle":
 
     # Debug/channel chatter must not even reach the pending queue.
     check batch.events.len == 2
+
+# ── per-turn token (A4) ───────────────────────────────────────────────────────
+
+suite "ChatBridge per-turn token":
+
+  test "a terminal from an abandoned turn cannot close the new one":
+    ## A registered, left, and its TTL expired; B owns the slot now. A's
+    ## terminal must be discarded instead of closing B's turn.
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    let first = bridge.register(uid, timeoutMs = 5000)
+    check first.isOk
+    check first.get() == 1'u64
+    check bridge.abandon(uid)
+
+    fakeNow += MaxOrphanTtlMs + 1
+    let second = bridge.register(uid)
+    check second.isOk
+    check second.get() == 2'u64
+
+    check not bridge.deliver(apiMsg("fim do A", token = 1))
+    ## B stays open: the stale terminal is not buffered and does not close it.
+    let stillOpen = bridge.poll(uid)
+    check stillOpen.status == cbpEvents
+    check stillOpen.events.len == 0
+    check bridge.pendingCount == 1
+
+    ## B's own token is what closes it.
+    check bridge.deliver(apiMsg("fim do B", token = 2))
+    let done = bridge.poll(uid)
+    check done.status == cbpDone
+    check done.events.len == 1
+    check done.events[0].text == "fim do B"
+
+  test "tokens are monotonic per registration and per user":
+    let bridge = newBridge()
+    check bridge.register(UserId("api:alice")).get() == 1'u64
+    check bridge.register(UserId("api:bob")).get() == 2'u64
+    check bridge.poll(UserId("api:alice")).status == cbpEvents
+    check bridge.abandon(UserId("api:alice"))
+    fakeNow += MaxOrphanTtlMs + 1
+    check bridge.register(UserId("api:alice")).get() == 3'u64
+
+  test "a terminal with no token keeps closing the pending turn":
+    ## Channel turns have no bridge and pass 0: today's behaviour is preserved.
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    check bridge.register(uid, timeoutMs = 5000).isOk
+    check bridge.deliver(apiMsg("resposta", token = 0))
+    let done = bridge.poll(uid)
+    check done.status == cbpDone
+    check done.events[^1].text == "resposta"
+
+  test "a fail with no token keeps closing the pending turn":
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    check bridge.register(uid, timeoutMs = 5000).isOk
+    check bridge.fail(uid, "canal falhou", token = 0)
+    let done = bridge.poll(uid)
+    check done.status == cbpDone
+    check done.events[^1].kind == rkTurnError
+    check done.events[^1].text == "canal falhou"
+
+  test "a stale partial is discarded and never buffered into the new turn":
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    check bridge.register(uid, timeoutMs = 5000).get() == 1'u64
+    check bridge.abandon(uid)
+    fakeNow += MaxOrphanTtlMs + 1
+    check bridge.register(uid).get() == 2'u64
+
+    check not bridge.deliver(apiMsg("parcial do A", partial = true, token = 1))
+    let empty = bridge.poll(uid)
+    check empty.status == cbpEvents
+    check empty.events.len == 0
+
+    ## The live generation's partial is still accepted.
+    check bridge.deliver(apiMsg("parcial do B", partial = true, token = 2))
+    let partial = bridge.poll(uid)
+    check partial.status == cbpEvents
+    check partial.events.len == 1
+    check partial.events[0].text == "parcial do B"
+    check partial.events[0].isPartial
+
+  test "a stale fail cannot close the new turn":
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    check bridge.register(uid, timeoutMs = 5000).get() == 1'u64
+    check bridge.abandon(uid)
+    fakeNow += MaxOrphanTtlMs + 1
+    check bridge.register(uid).get() == 2'u64
+
+    check not bridge.fail(uid, "erro do A", token = 1)
+    check bridge.pendingCount == 1
+    check bridge.poll(uid).status == cbpEvents
+
+    check bridge.fail(uid, "erro do B", token = 2)
+    let done = bridge.poll(uid)
+    check done.status == cbpDone
+    check done.events[^1].kind == rkTurnError
+    check done.events[^1].text == "erro do B"
 
 # ── limits ────────────────────────────────────────────────────────────────────
 

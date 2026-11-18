@@ -1616,7 +1616,7 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
       if isApiChatReply(outMsg):
         ## API replies belong to a waiting HTTP turn, never to a channel port.
         if gApiChatBridge != nil:
-          discard gApiChatBridge.deliver(outMsg)
+          discard gApiChatBridge.deliver(outMsg, outMsg.bridgeToken)
         continue
     completeInboundReactionStatus(runtime, outboundPorts, outMsg)
     routeOutbound(outMsg, outboundPorts, log, runtime.presentationState, runtime.ledger)

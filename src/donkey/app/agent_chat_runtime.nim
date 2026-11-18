@@ -148,17 +148,21 @@ proc runAgentChat*(body: string;
       return errorReply(429, "a turn is already pending for this user",
                         "rate_limit_error", "chat_bridge_busy")
     return errorReply(503, "agent turn could not be registered")
+  let turnToken = registered.get()
 
+  ## The generation travels with the turn: every reply the actor emits carries
+  ## it back, so a late terminal cannot close another turn.
   try:
     dispatch(InboundMessage(
       userId:    request.userId,
       channel:   ckCli,
       channelId: $request.userId,
       text:      request.text,
+      bridgeToken: turnToken,
     ))
   except CatchableError as exc:
     ## No turn is running, so close the reservation instead of abandoning it.
-    discard bridge.fail(request.userId, exc.msg)
+    discard bridge.fail(request.userId, exc.msg, token = turnToken)
     discard bridge.poll(request.userId)
     return errorReply(502, exc.msg, "server_error", "dispatch_failed")
 
@@ -271,6 +275,7 @@ proc runAgentStream*(body: string;
     return AgentStreamResult(
       outcome: asPreflightError,
       reply: errorReply(503, "agent turn could not be registered"))
+  let turnToken = registered.get()
 
   try:
     dispatch(InboundMessage(
@@ -278,10 +283,11 @@ proc runAgentStream*(body: string;
       channel:   ckCli,
       channelId: $request.userId,
       text:      request.text,
+      bridgeToken: turnToken,
     ))
   except CatchableError as exc:
     ## No turn is running, so close the reservation instead of abandoning it.
-    discard bridge.fail(request.userId, exc.msg)
+    discard bridge.fail(request.userId, exc.msg, token = turnToken)
     discard bridge.poll(request.userId)
     return AgentStreamResult(
       outcome: asPreflightError,
