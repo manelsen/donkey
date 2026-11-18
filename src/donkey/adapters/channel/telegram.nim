@@ -50,6 +50,7 @@ const MediaUnavailableText* = "não foi possível enviar o anexo"
 type
   TelegramAdapter* = object
     token*:       string
+    configError*: string        ## invalid apiBase/proxy; sends fail closed
     apiBase*:     string        ## override for testing (e.g. mock server URL)
     offset*:      int64         ## getUpdates offset (mutable via receive)
     resolver*:    IdentityResolver
@@ -474,6 +475,8 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
   ## uploads a local file as multipart with the same routing. A local file must
   ## live inside `mediaRoot`; the confinement happens in `sendLocalMedia`.
   ## Falls back to neutral text if every attempt fails.
+  if a.configError.len > 0:
+    return err("TelegramAdapter: " & a.configError)
   if not isRemoteMediaUrl(url):
     return a.sendLocalMedia(tgId, url, caption, replyTo, mediaRoot, durationSec)
   let audioMethod = audioMethodFor(url)
@@ -569,6 +572,8 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message with Markdown (plain-text fallback), split at 4096 chars.
   ## If msg.keyboard is non-empty, sends with an inline keyboard.
   ## If msg.mediaUrl is set, sends as photo/document (caption = msg.text).
+  if a.configError.len > 0:
+    return err("TelegramAdapter: " & a.configError)
   let rawId = a.chatIdFor(msg.userId)
   if rawId.len == 0: return err("TelegramAdapter.send: no id for " & $msg.userId)
   let chatId = parseBiggestInt(rawId).int64
@@ -595,6 +600,8 @@ proc send*(a: TelegramAdapter; msg: OutboundMessage): Result[void, string] =
 
 proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, string] =
   ## Sends and returns the message_id.
+  if a.configError.len > 0:
+    return err("TelegramAdapter: " & a.configError)
   let rawId = a.chatIdFor(msg.userId)
   if rawId.len == 0: return err("TelegramAdapter.sendReturnId: no id for " & $msg.userId)
   let chatId = parseBiggestInt(rawId).int64
@@ -887,9 +894,10 @@ proc newTelegramAdapter*(token: string; identityPath: string;
   ## host becomes the egress allowlist instead of disabling it.
   let base = apiBase.strip
   let baseError = telegramApiBaseError(base)
-  if baseError.len > 0:
-    raise newException(ValueError, "TelegramAdapter: " & baseError)
-  let allowlist = telegramApiAllowlist(base)
+  ## Do not raise: an invalid override would abort daemon startup and take
+  ## every other channel with it. Record the reason and fail sends instead.
+  let effectiveBase = if baseError.len > 0: "https://api.telegram.org" else: base
+  let allowlist = telegramApiAllowlist(effectiveBase)
   let upload =
     if uploadHttp.post.isNil:
       newStdHttpAdapter(
@@ -902,6 +910,7 @@ proc newTelegramAdapter*(token: string; identityPath: string;
       uploadHttp
   TelegramAdapter(
     token:       token,
+    configError: baseError,
     apiBase:     base,
     offset:      0,
     resolver:    newIdentityResolver(identityPath),

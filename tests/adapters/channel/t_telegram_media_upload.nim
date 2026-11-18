@@ -333,10 +333,15 @@ suite "TelegramAdapter — local media upload":
     let a = newAdapter(f)
     check a.http.allowlist == @["tg.test"]
 
-  test "an http apiBase outside loopback is rejected":
-    expect ValueError:
-      discard newTelegramAdapter("TOK", getTempDir() / "donkey_tg_ids_http.tsv",
+  test "an http apiBase outside loopback fails closed instead of raising":
+    ## Raising aborted daemon startup and every other channel with it. The
+    ## adapter records the reason and refuses to send.
+    let bad = newTelegramAdapter("TOK", getTempDir() / "donkey_tg_ids_http.tsv",
                                  apiBase = "http://tg.test")
+    check bad.configError.len > 0
+    var msg = OutboundMessage(userId: UserId("42"), channel: ckTelegram,
+                              text: "oi")
+    check bad.send(msg).isErr
     let loopback = newTelegramAdapter("TOK",
                                       getTempDir() / "donkey_tg_ids_loopback.tsv",
                                       apiBase = "http://127.0.0.1:8080")

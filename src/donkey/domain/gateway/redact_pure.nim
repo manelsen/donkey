@@ -73,7 +73,8 @@ func namedSecretValueStart(s: string; i: int; name: string): int =
 ## Lowercase on purpose: `lowerAt` compares against lowercased input, so an
 ## uppercase literal would never match.
 const KnownSecretPrefixes = ["xoxb-", "xoxp-", "xoxa-", "ghp_", "gho_",
-                             "ghu_", "ghs_", "github_pat_", "akia", "aiza"]
+                             "ghu_", "ghs_", "github_pat_", "akia", "aiza",
+                             "nvapi-"]
 
 func prefixSecretAt(s: string; i: int): int =
   ## Length of a known token prefix starting at `i`, or 0. Case-insensitive,

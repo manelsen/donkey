@@ -565,6 +565,11 @@ proc parseChatPost*(body: string): Result[InboundMessage, string] =
   if not userIdNode.isNil and userIdNode.kind == JString:
     let uid = userIdNode.getStr()
     if uid.len > 0:
+      ## `api:` is the namespace of `/v1/chat/completions`. Accepting it here
+      ## would let a web-UI message mint an identity whose replies the API
+      ## drainer intercepts (and could close another turn's reservation).
+      if uid.startsWith("api:"):
+        return err("'userId' must not use the reserved 'api:' prefix")
       userId = UserId(uid)
   ok(InboundMessage(
     userId:    userId,
@@ -1216,6 +1221,14 @@ proc startHttpGateway*(port: int;
                        agentStreamNapFn: AgentStreamNapFn = nil;
                        log:       Logger = newLogger("http_gateway")
                       ): Result[void, string] =
+  ## A second call would publish a new dispatcher/bridge before binding; even
+  ## if the bind failed, the running listener would keep using the new wiring.
+  if gGatewayPoolStarted:
+    return err("http_gateway: already running")
+  ## A private bridge is never fed by the daemon outbox drainer: every turn
+  ## would register and poll a queue nobody drains, ending in 504.
+  if agentDispatchFn != nil and chatBridge == nil:
+    return err("http_gateway: the agent endpoint requires the shared ChatBridge")
   if agentStreamNapFn != nil:
     {.cast(gcsafe).}:
       gAgentStreamNap = agentStreamNapFn
