@@ -31,6 +31,7 @@ import ../domain/gateway/identity_pure
 import ../domain/gateway/dashboard_pure
 import ../domain/gateway/redact_pure
 import ../domain/gateway/capacity_pure as capacity
+import ../domain/gateway/chat_response
 import ./metrics
 import ./chat_bridge
 import ./agent_chat_runtime
@@ -571,8 +572,14 @@ proc parseChatPost*(body: string): Result[InboundMessage, string] =
 
 proc tryAcquireSseConnection(): bool {.gcsafe.}
 proc releaseSseConnection() {.gcsafe.}
-proc tryAcquireAgentTurn(): bool {.gcsafe.}
-proc releaseAgentTurn() {.gcsafe.}
+proc runAdmittedAgentTurn*(body: string;
+                           bridge: ChatBridge;
+                           dispatch: GatewayAgentDispatchFn;
+                           authorize: AuthorizeFn;
+                           tokenConfigured: bool;
+                           now: AgentNowFn;
+                           timeoutMs = DefaultAgentTurnTimeoutMs;
+                           model = ""): AgentChatReply {.gcsafe.}
 
 proc readRequestBody(client: Socket; contentLength: int;
                     deadline: MonoTime): string =
@@ -830,22 +837,18 @@ proc handleGatewayConn(client: Socket;
                                 "application/json",
                                 streamResult.reply.body & "\n", log)
         else:
-          discard tryAcquireAgentTurn()
-          try:
-            let reply = runAgentChat(
-              body            = body,
-              bridge          = chatBridge,
-              dispatch        = agentDispatchFn,
-              authorize       = authorizeFn,
-              tokenConfigured = authToken.len > 0,
-              now             = agentNowSeconds,
-              timeoutMs       = agentTimeoutMs,
-              model           = modelName,
-            )
-            client.sendResponse(httpStatusLine(reply.status), "application/json",
-                                reply.body & "\n", log)
-          finally:
-            releaseAgentTurn()
+          let reply = runAdmittedAgentTurn(
+            body            = body,
+            bridge          = chatBridge,
+            dispatch        = agentDispatchFn,
+            authorize       = authorizeFn,
+            tokenConfigured = authToken.len > 0,
+            now             = agentNowSeconds,
+            timeoutMs       = agentTimeoutMs,
+            model           = modelName,
+          )
+          client.sendResponse(httpStatusLine(reply.status), "application/json",
+                              reply.body & "\n", log)
 
     of "openai_models":
       if req.meth != "GET":
@@ -954,10 +957,42 @@ proc releaseHttpConnection() =
   finally:
     release(gHttpConnLock)
 
-proc tryAcquireSseConnection(): bool =
-  ## Long-lived admission for `/api/events` and streaming
-  ## `/v1/chat/completions`: the SSE ceiling applies first, then the shared
-  ## 6-worker budget (agent turns + SSE connections).
+# ── Long-lived worker admission ───────────────────────────────────────────────
+#
+# Non-streaming agent turns and SSE streams both block a gateway worker for
+# their whole lifetime. They share one counter set under `gHttpConnLock` and
+# one policy (`capacity.admitLongLived`): at most `MaxLongLivedWorkers` of the
+# 8 workers may be long-lived, so `/health`, `/api/*` and `/v1/models` always
+# keep the 2 reserved workers. There is no second pool and no class is exempt.
+
+proc resetLongLivedCountersForTest*() {.gcsafe.} =
+  ## Test/diagnostic hook: clears both counters. The gateway never calls it and
+  ## it must not run while worker threads are serving requests.
+  acquire(gHttpConnLock)
+  try:
+    gActiveAgentTurns = 0
+    gActiveSseConnections = 0
+  finally:
+    release(gHttpConnLock)
+
+proc longLivedOccupancy*(): capacity.LongLivedSnapshot {.gcsafe.} =
+  ## Occupancy before the next request is decided. `longLivedWorkers` is the
+  ## sum of both classes, never just the larger one.
+  acquire(gHttpConnLock)
+  try:
+    capacity.LongLivedSnapshot(
+      pendingTurns:     gActiveAgentTurns,
+      sseConnections:   gActiveSseConnections,
+      longLivedWorkers: gActiveAgentTurns + gActiveSseConnections,
+    )
+  finally:
+    release(gHttpConnLock)
+
+proc tryReserveLongLived*(kind: capacity.LongLivedKind):
+    capacity.CapacityVerdict {.gcsafe.} =
+  ## Runs `admitLongLived` against the live counters and increments the class
+  ## counter only on `cvAdmit`. A refusal leaves the snapshot untouched, so an
+  ## over-capacity request never consumes (or releases) someone else's worker.
   acquire(gHttpConnLock)
   try:
     let snapshot = capacity.LongLivedSnapshot(
@@ -965,37 +1000,85 @@ proc tryAcquireSseConnection(): bool =
       sseConnections:   gActiveSseConnections,
       longLivedWorkers: gActiveAgentTurns + gActiveSseConnections,
     )
-    if not capacity.admitLongLived(
-        capacity.llSseConnection, snapshot).admitted:
-      return false
-    inc gActiveSseConnections
-    true
+    result = capacity.admitLongLived(kind, snapshot)
+    if result.admitted:
+      case kind
+      of capacity.llChatTurn: inc gActiveAgentTurns
+      of capacity.llSseConnection: inc gActiveSseConnections
   finally:
     release(gHttpConnLock)
 
-proc releaseSseConnection() =
+proc releaseLongLived*(kind: capacity.LongLivedKind) {.gcsafe.} =
   acquire(gHttpConnLock)
   try:
-    if gActiveSseConnections > 0:
-      dec gActiveSseConnections
+    case kind
+    of capacity.llChatTurn:
+      if gActiveAgentTurns > 0:
+        dec gActiveAgentTurns
+    of capacity.llSseConnection:
+      if gActiveSseConnections > 0:
+        dec gActiveSseConnections
   finally:
     release(gHttpConnLock)
 
-proc tryAcquireAgentTurn(): bool =
-  acquire(gHttpConnLock)
-  try:
-    inc gActiveAgentTurns
-    true
-  finally:
-    release(gHttpConnLock)
+proc tryAcquireSseConnection(): bool {.gcsafe.} =
+  tryReserveLongLived(capacity.llSseConnection).admitted
 
-proc releaseAgentTurn() =
-  acquire(gHttpConnLock)
+proc releaseSseConnection() {.gcsafe.} =
+  releaseLongLived(capacity.llSseConnection)
+
+proc runAdmittedAgentTurn*(body: string;
+                           bridge: ChatBridge;
+                           dispatch: GatewayAgentDispatchFn;
+                           authorize: AuthorizeFn;
+                           tokenConfigured: bool;
+                           now: AgentNowFn;
+                           timeoutMs: int;
+                           model: string): AgentChatReply =
+  ## Non-streaming `/v1/chat/completions`: reserve one long-lived worker
+  ## before the turn can register or dispatch. A refusal never reaches the
+  ## dispatch hook and keeps the streaming path's mapping: `429` with a
+  ## `rate_limit_error` body for both capacity verdicts (`cvNoWorker` is a
+  ## backlog condition that clears on its own, not a server fault, so `503`
+  ## would invite clients to retry a different way for no benefit). The code
+  ## still distinguishes a full turn queue from a full shared pool.
+  ##
+  ## `finally` releases the reservation on every exit: 200, 502 from a
+  ## dispatch/turn error, 504 on the deadline, or an escaping exception. The
+  ## release happens before the response is written, so a client abort cannot
+  ## strand the slot.
+  let verdict = tryReserveLongLived(capacity.llChatTurn)
+  if not verdict.admitted:
+    var code = "no_worker"
+    var message = "no long-lived worker available"
+    case verdict
+    of capacity.cvTooManyPendingTurns:
+      code = "too_many_pending_turns"
+      message = "too many pending chat turns"
+    of capacity.cvNoWorker:
+      discard
+    of capacity.cvTooManySseConnections:
+      code = "sse_capacity"
+      message = "too many concurrent streams"
+    of capacity.cvAdmit:
+      discard  # unreachable: cvAdmit was handled above
+    return AgentChatReply(
+      status: 429,
+      body: buildAgentError(message, "rate_limit_error", code),
+    )
   try:
-    if gActiveAgentTurns > 0:
-      dec gActiveAgentTurns
+    runAgentChat(
+      body            = body,
+      bridge          = bridge,
+      dispatch        = dispatch,
+      authorize       = authorize,
+      tokenConfigured = tokenConfigured,
+      now             = now,
+      timeoutMs       = timeoutMs,
+      model           = model,
+    )
   finally:
-    release(gHttpConnLock)
+    releaseLongLived(capacity.llChatTurn)
 
 proc gatewayWorker(id: int) {.thread.} =
   {.cast(gcsafe).}:
