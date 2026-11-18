@@ -248,14 +248,20 @@ proc parseResponseFrom*(body: JsonNode): Result[CompletionResponse, string] =
     let callsNode = message{"tool_calls"}
     if not callsNode.isNil and callsNode.kind == JArray:
       for tcNode in callsNode:
+        ## A malformed entry in a non-empty batch is an error: silently
+        ## dropping it makes the loop answer as if the model had asked for
+        ## nothing, instead of surfacing a broken provider payload.
         if tcNode.isNil or tcNode.kind != JObject:
-          continue
+          return err("Invalid OpenAI response: tool_calls entry is not an object")
         let fn = tcNode{"function"}
         if fn.isNil or fn.kind != JObject:
-          continue
+          return err("Invalid OpenAI response: tool_call without function")
+        let name = fn{"name"}.getStr("")
+        if name.len == 0:
+          return err("Invalid OpenAI response: tool_call without name")
         toolCalls.add ToolCallRequest(
           id:        tcNode{"id"}.getStr(""),
-          name:      fn{"name"}.getStr(""),
+          name:      name,
           inputJson: fn{"arguments"}.getStr("{}"),
         )
 

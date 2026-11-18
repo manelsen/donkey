@@ -2,7 +2,7 @@
 ## runtime_builder. They must return exactly the metadata the descriptor table
 ## already declares, so the builder and the catalog stop repeating it.
 
-import std/[os, unittest]
+import std/[os, strutils, unittest]
 import donkey/adapters/provider/runtime_builder
 import donkey/domain/providers/descriptors
 import donkey/ports/provider
@@ -43,7 +43,25 @@ const DefaultModelCases = [
   ("alibaba",      "qwen3.8-max"),
 ]
 
+let hadNvidiaBase = existsEnv("NVIDIA_BASE_URL")
+let prevNvidiaBase = getEnv("NVIDIA_BASE_URL")
+let hadDashscopeBase = existsEnv("DASHSCOPE_BASE_URL")
+let prevDashscopeBase = getEnv("DASHSCOPE_BASE_URL")
+
+proc restoreEnv(name: string; had: bool; previous: string) =
+  if had: putEnv(name, previous) else: delEnv(name)
+
 suite "descriptor factory":
+
+  setup:
+    ## The tests compare against the hosted endpoints; a local override in the
+    ## developer's environment must not change the expectation.
+    delEnv("NVIDIA_BASE_URL")
+    delEnv("DASHSCOPE_BASE_URL")
+
+  teardown:
+    restoreEnv("NVIDIA_BASE_URL", hadNvidiaBase, prevNvidiaBase)
+    restoreEnv("DASHSCOPE_BASE_URL", hadDashscopeBase, prevDashscopeBase)
 
   test "providerEndpointFor returns the descriptor base URL for every provider":
     for (id, expected) in EndpointCases:
@@ -117,3 +135,11 @@ suite "descriptor factory":
           ProviderSpec(providerName: descriptor.id, apiKey: "test-key"))
         check bundle.completeFn != nil
         check bundle.streamFn != nil
+  test "a cleartext remote override is ignored, not used":
+    putEnv("NVIDIA_BASE_URL", "http://evil.example/v1")
+    check providerEndpointFor("nvidia") == descriptorOr("nvidia").baseUrl
+    putEnv("NVIDIA_BASE_URL", "http://127.0.0.1:8000/v1/")
+    check providerEndpointFor("nvidia").startsWith("http://127.0.0.1:8000/v1")
+    putEnv("NVIDIA_BASE_URL", "https://nim.example/v1/")
+    check providerEndpointFor("nvidia") ==
+      "https://nim.example/v1/chat/completions"

@@ -122,6 +122,7 @@ proc consumeCompatSse*(input: Stream;
   var inputTokens = 0
   var outputTokens = 0
   var sawEvent = false
+  var sawDone = false
   var diagnostic = ""
   var line = ""
   while input.readLine(line):
@@ -139,6 +140,7 @@ proc consumeCompatSse*(input: Stream;
     let chunk = parsed.value
     sawEvent = true
     if chunk.done:
+      sawDone = true
       break
     if chunk.token.len > 0:
       accumulated.add(chunk.token)
@@ -152,6 +154,10 @@ proc consumeCompatSse*(input: Stream;
     if detail.len > 0:
       return err("compat provider returned a non-SSE response: " & detail)
     return err("compat provider returned a non-SSE response: empty body")
+  if not sawDone:
+    ## EOF without `[DONE]` is a cut connection, not a finished answer: the
+    ## accumulated text is partial and must not be reported as complete.
+    return err("compat provider stream ended without [DONE] (truncated)")
 
   ok CompletionResponse(
     text:         accumulated,
