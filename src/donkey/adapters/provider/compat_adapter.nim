@@ -24,6 +24,10 @@ import ../../core/pipeops
 import ../http/helpers
 import openai
 
+const CompatHttpTimeoutSec* = 120
+  ## A stalled provider must not hang the turn forever, and `redirectLimit = 0`
+  ## keeps the provider Bearer from being forwarded to another host.
+
 type
   CompatProfileFn* = proc(): CompatProfile {.gcsafe, nimcall.}
     ## A top-level constructor, never a closure: it returns a fresh profile
@@ -88,7 +92,10 @@ proc parseCompatBody*(body: JsonNode): Result[CompletionResponse, string] =
 proc complete*(a: CompatAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
   let profile = a.profileFn()
-  withHttpClient:
+  try:
+    let client = newHttpClient(timeout = CompatHttpTimeoutSec * 1000,
+                               maxRedirects = 0)
+    defer: client.close()
     var headers = newHttpHeaders()
     for (name, value) in a.requestHeaders(profile):
       headers[name] = value
@@ -96,6 +103,8 @@ proc complete*(a: CompatAdapter;
     let resp = client.post(requestUrl(profile), body = $a.buildBody(req))
     checkApiStatus(resp, a.displayName)
     resp.body |> parseJson |> parseCompatBody
+  except CatchableError as e:
+    err(e.msg)
 
 # ── Streaming ─────────────────────────────────────────────────────────────────
 
@@ -157,7 +166,10 @@ proc makeStreamFn*(a: CompatAdapter): StreamFn =
                ): Result[CompletionResponse, string] {.gcsafe.} =
     ## The profile is rebuilt inside the worker: no JsonNode is captured.
     let profile = a.profileFn()
-    withHttpClient:
+    try:
+      let client = newHttpClient(timeout = CompatHttpTimeoutSec * 1000,
+                                 maxRedirects = 0)
+      defer: client.close()
       var headers = newHttpHeaders()
       for (name, value) in a.requestHeaders(profile):
         headers[name] = value
@@ -166,6 +178,8 @@ proc makeStreamFn*(a: CompatAdapter): StreamFn =
                                 body = $a.buildBody(req, stream = true))
       checkApiStatus(resp, a.displayName)
       consumeCompatSse(resp.bodyStream, onToken)
+    except CatchableError as e:
+      err(e.msg)
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

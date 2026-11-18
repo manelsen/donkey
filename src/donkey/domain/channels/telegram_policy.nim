@@ -3,7 +3,7 @@
 ## Pure functions only: the adapter decides when to call them, this module
 ## decides what the API contract requires.
 
-import std/[json, strutils, unicode]
+import std/[json, net, strutils, unicode]
 import ./telegram_split
 
 func isEditNoopError*(message: string): bool =
@@ -184,8 +184,16 @@ func telegramApiHost*(apiBase: string): string =
 
 func isLoopbackHost*(host: string): bool =
   ## A development proxy may speak plain http on the local machine only.
+  ## A DNS name such as `127.evil.com` must not pass: only the literal
+  ## loopback names and 127.0.0.0/8 are local.
   let bare = bareTelegramHost(host).toLowerAscii()
-  bare == "localhost" or bare == "::1" or bare.startsWith("127.")
+  if bare == "localhost" or bare == "::1":
+    return true
+  try:
+    let ip = parseIpAddress(bare)
+    ip.family == IPv4 and ip.address_v4[0] == 127'u8
+  except ValueError:
+    false
 
 func telegramApiBaseError*(apiBase: string): string =
   ## Reason a custom Base URL is refused; empty means it is acceptable.

@@ -27,7 +27,7 @@
 ## always wins, the remembered chat is the fallback, and the identity's raw id
 ## is the last resort (DMs).
 
-import std/[json, os, strutils, tables, unicode]
+import std/[net, json, os, strutils, tables, unicode]
 import ../../core/pipeops
 import ../../core/types
 import ../../core/channels/flood_gate
@@ -141,8 +141,16 @@ func bareLineHost(host: string): string =
   if colon >= 0: host[0 ..< colon] else: host
 
 func isLoopbackLineHost(host: string): bool =
+  ## Literal loopback only: a DNS name like `127.evil.com` is not local, even
+  ## though it starts with the same bytes.
   let bare = bareLineHost(host).toLowerAscii()
-  bare == "localhost" or bare == "::1" or bare.startsWith("127.")
+  if bare == "localhost" or bare == "::1":
+    return true
+  try:
+    let ip = parseIpAddress(bare)
+    ip.family == IPv4 and ip.address_v4[0] == 127'u8
+  except ValueError:
+    false
 
 func lineApiBaseError*(apiBase: string): string =
   ## Reason a custom base is refused; empty means acceptable. The production
@@ -385,7 +393,12 @@ proc postJson(a: LineAdapter; url, label: string;
                   ("Content-Type", "application/json")]
   var sent: Result[HttpResponse, string]
   try:
-    sent = a.http.post(url, $body, headers)
+    sent =
+      if not a.http.postNoRedirect.isNil:
+        ## A redirect would forward the Bearer to another host.
+        a.http.postNoRedirect(url, $body, headers)
+      else:
+        a.http.post(url, $body, headers)
   except CatchableError:
     return err("LINE " & label & " transport error")
 
