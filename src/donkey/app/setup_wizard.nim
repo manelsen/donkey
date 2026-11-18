@@ -14,6 +14,7 @@ when defined(posix):
 import ../core/app_meta
 import ../core/providers/smart_routing
 import ../domain/providers/descriptors
+import ./credential_runtime
 
 # ── Pure helpers (unit-tested) ────────────────────────────────────────────────
 
@@ -24,6 +25,26 @@ func providerEnvVar*(providerName: string): string =
   if descriptor.isNone or descriptor.get().envNames.len == 0:
     return ""
   descriptor.get().envNames[0]
+
+func providerKeyFromEnv*(providerName: string): string =
+  ## The first configured credential for a provider, considering every
+  ## descriptor env name and the plural `*_KEYS` form. Endpoint-configured
+  ## providers (`atNone`, e.g. ollama) never yield an API key.
+  let descriptor = providerDescriptor(providerName)
+  if descriptor.isNone:
+    return ""
+  let d = descriptor.get()
+  if d.authType == atNone:
+    return ""
+  if not providerConfigured(providerName):
+    return ""
+  for envName in d.envNames:
+    let single = getEnv(envName).strip()
+    if single.len > 0:
+      return single
+    let plural = splitKeys(getEnv(poolEnvName(envName)))
+    if plural.len > 0:
+      return plural[0]
 
 func buildTomlContent*(home: string;
                        logLevel = "info";
@@ -73,11 +94,14 @@ func buildEnvContent*(providers: seq[(string, string)];
   result &= "#   if 5432 is busy: DONKEY_PG_PORT=5433 docker compose up -d postgres\n"
   result &= "# DONKEY_PG_DSN=host=127.0.0.1 user=postgres password=donkey_pass dbname=donkey port=5432\n\n"
   result &= "# Providers\n"
+  var writtenEnv: seq[string]
   for (provName, provKey) in providers:
     let envVar = providerEnvVar(provName)
     # Local providers have no key; an empty assignment would clobber a real
-    # endpoint set in the operator's shell.
-    if envVar.len > 0 and provKey.len > 0:
+    # endpoint set in the operator's shell. Two providers can share the first
+    # env name (opencode-go/zen); dotenv keeps the first, so write it once.
+    if envVar.len > 0 and provKey.len > 0 and envVar notin writtenEnv:
+      writtenEnv.add envVar
       result &= envVar & "=" & provKey & "\n"
   result &= "\n# Optional web search\n"
   result &= "# Used by the `web_search` tool (Brave Search API)\n"
@@ -113,26 +137,54 @@ proc setupAlreadyDone*(): bool =
 
 # ── Interactive wizard ────────────────────────────────────────────────────────
 
-const Providers = [
-  ("1", "zai-coding", "ZAI Coding    (GLM)           [recomendado]"),
-  ("2", "zai-anthropic", "Z.AI Anthropic compat        [Claude-compatible]"),
-  ("3", "openrouter", "OpenRouter    (300+ modelos)"),
-  ("4", "anthropic",  "Anthropic     (Claude)"),
-  ("5", "gemini",     "Google Gemini"),
-  ("6", "openai",     "OpenAI        (GPT)"),
-  ("7", "deepseek",   "DeepSeek"),
-  ("8", "minimax",    "MiniMax"),
-  ("9", "ollama",     "Ollama        (local, sem API key)"),
-  ("10", "zai",       "Z.AI          (GLM, OpenAI-compatible)"),
-  ("11", "groq",      "Groq          (inferência rápida)"),
-  ("12", "opencode-go", "OpenCode Go   (agregador)"),
-  ("13", "zen",       "OpenCode Zen  (agregador)"),
+type
+  ProviderMenuItem = tuple[id: string, label: string]
+
+## Curated display labels and menu order for the wizard. The ids themselves
+## come from providerDescriptors(); anything missing here still appears, with
+## its descriptor id as the label, appended in descriptor order.
+const ProviderMenu: seq[ProviderMenuItem] = @[
+  (id: "zai-coding",    label: "ZAI Coding    (GLM)           [recomendado]"),
+  (id: "zai-anthropic", label: "Z.AI Anthropic compat        [Claude-compatible]"),
+  (id: "openrouter",    label: "OpenRouter    (300+ modelos)"),
+  (id: "anthropic",     label: "Anthropic     (Claude)"),
+  (id: "gemini",        label: "Google Gemini"),
+  (id: "openai",        label: "OpenAI        (GPT)"),
+  (id: "deepseek",      label: "DeepSeek"),
+  (id: "minimax",       label: "MiniMax"),
+  (id: "ollama",        label: "Ollama        (local, sem API key)"),
+  (id: "zai",           label: "Z.AI          (GLM, OpenAI-compatible)"),
+  (id: "groq",          label: "Groq          (inferência rápida)"),
+  (id: "opencode-go",   label: "OpenCode Go   (agregador)"),
+  (id: "zen",           label: "OpenCode Zen  (agregador)"),
 ]
 
+func isDescriptorId(descriptors: seq[ProviderDescriptor]; id: string): bool =
+  for descriptor in descriptors:
+    if descriptor.id == id:
+      return true
+
+func providerMenuLabel(id: string): string =
+  for item in ProviderMenu:
+    if item.id == id:
+      return item.label
+  id
+
 func setupProviderIds*(): seq[string] =
-  ## Provider ids offered by the wizard, in menu order.
-  for (_, name, _) in Providers:
-    result.add name
+  ## Provider ids offered by the wizard: every descriptor id exactly once.
+  ## Curated menu order first, then any descriptor not curated yet.
+  let descriptors = providerDescriptors()
+  for item in ProviderMenu:
+    if isDescriptorId(descriptors, item.id) and item.id notin result:
+      result.add item.id
+  for descriptor in descriptors:
+    if descriptor.id notin result:
+      result.add descriptor.id
+
+func setupProviderMenu(): seq[(string, string, string)] =
+  ## (number, id, label) rows shown by the interactive wizard.
+  for i, id in setupProviderIds():
+    result.add ($(i + 1), id, providerMenuLabel(id))
 
 proc ask(prompt: string; default = ""): string =
   if default.len > 0:
@@ -182,14 +234,15 @@ proc runSetupWizard*(home: string) =
   var providers: seq[(string, string)] = @[]
 
   block providerLoop:
+    let menu = setupProviderMenu()
     while true:
       echo "  Providers disponíveis:"
-      for (num, _, label) in Providers:
+      for (num, _, label) in menu:
         echo "    " & num & ") " & label
       echo ""
-      let provChoice = ask("  Escolha (1-" & $Providers.len & ")", "1")
+      let provChoice = ask("  Escolha (1-" & $menu.len & ")", "1")
       var providerName = ""
-      for (num, name, _) in Providers:
+      for (num, name, _) in menu:
         if num == provChoice:
           providerName = name
           break
@@ -200,10 +253,10 @@ proc runSetupWizard*(home: string) =
       let localOnly = descriptor.isSome and descriptor.get().authType == atNone
       if not localOnly:
         let envVar = providerEnvVar(providerName)
-        let existing = getEnv(envVar)
+        let existing = providerKeyFromEnv(providerName)
         var apiKey = ""
         if existing.len > 0:
-          echo "    (usando " & envVar & " do ambiente)"
+          echo "    (credencial de " & providerName & " já configurada no ambiente — " & envVar & ")"
           apiKey = existing
         else:
           apiKey = askSecret("    API key (" & envVar & ")")

@@ -99,6 +99,20 @@ const ProviderDescriptors*: seq[ProviderDescriptor] = @[
     envNames: @["ZAI_CODING_API_KEY", "ZHIPU_API_KEY"],
     baseUrl: "https://api.z.ai/api/coding/paas/v4/chat/completions",
     defaultModel: DefaultModelZai),
+  ProviderDescriptor(
+    id: "nvidia", transport: ptOpenAiChat, authType: atApiKey,
+    envNames: @["NVIDIA_API_KEY"],
+    baseUrl: "https://integrate.api.nvidia.com/v1/chat/completions",
+    baseUrlEnv: "NVIDIA_BASE_URL",
+    defaultModel: DefaultModelNvidia,
+    aliases: @["nvidia-nim", "nim", "build-nvidia"]),
+  ProviderDescriptor(
+    id: "alibaba", transport: ptOpenAiChat, authType: atApiKey,
+    envNames: @["DASHSCOPE_API_KEY"],
+    baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+    baseUrlEnv: "DASHSCOPE_BASE_URL",
+    defaultModel: DefaultModelAlibaba,
+    aliases: @["dashscope", "alibaba-cloud", "aliyun"]),
 ]
 
 func providerDescriptors*(): seq[ProviderDescriptor] =

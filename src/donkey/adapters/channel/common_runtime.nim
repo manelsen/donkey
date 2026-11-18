@@ -120,7 +120,9 @@ func donkeyHomeDir*(memory: MdFileAdapter): string =
 func userSkillsPath*(memory: MdFileAdapter; userId: UserId): string =
   skill_runtime.userSkillsPath(memory.paddockDir(userId))
 
-func availableProvidersFromEnv(): ProviderAvailability =
+func availableProvidersFromEnv*(): ProviderAvailability =
+  ## Credential presence for the channel status line. Exported so the surface
+  ## tests can assert it without a message loop.
   ProviderAvailability(
     openrouter: getEnv("OPENROUTER_API_KEY").len > 0,
     anthropic: getEnv("ANTHROPIC_API_KEY").len > 0,
@@ -135,6 +137,8 @@ func availableProvidersFromEnv(): ProviderAvailability =
     minimax: getEnv("MINIMAX_API_KEY").len > 0,
     zai: getEnv("ZAI_API_KEY").len > 0,
     zaiCoding: getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")).len > 0,
+    nvidia: getEnv("NVIDIA_API_KEY").len > 0,
+    alibaba: getEnv("DASHSCOPE_API_KEY").len > 0,
   )
 
 when defined(withPostgres) or defined(withSqlite):
