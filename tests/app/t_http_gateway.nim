@@ -117,6 +117,24 @@ suite "http_gateway auth":
     check gatewayAuthVerdict(providers, "", "segredo") == gavRejected
     check gatewayAuthVerdict(providers, "Bearer segredo", "segredo") == gavAllowed
 
+  test "a valid token may act as any api: user (pinned product decision)":
+    ## Per-user authentication is an explicit PRD non-goal: the token
+    ## authenticates the client against the instance, and the `user` of a request
+    ## is caller-asserted. This test pins that limitation so a future change to
+    ## token-to-user mapping is a deliberate, visible decision rather than a
+    ## silent behaviour change.
+    const token = "dono-da-instancia"
+    const bearer = "Bearer " & token
+    check gatewayAuthVerdict("sessions", bearer, token) == gavAllowed
+    for raw in ["alice", "bob", "admin"]:
+      let uid = apiUserId(raw)
+      check uid.isOk
+      check uid.get() == UserId(ApiUserPrefix & raw)
+    ## The same credential is accepted regardless of which identity the request
+    ## claims: the name is validated, never checked against the token holder.
+    check isAuthorized(bearer, token)
+    check UserId("api:alice") != UserId("api:bob")
+
   test "the OpenAI-compatible routes keep the historical empty-token behaviour":
     for action in ["openai_chat", "openai_models"]:
       check gatewayAuthVerdict(action, "", "") == gavAllowed
