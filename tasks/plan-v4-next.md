@@ -84,6 +84,28 @@ Gate: teste com store real e dois "reinícios"; PR separado.
 - registrar dívidas: endpoints duplicados (descritor × perfil), `durable_file`,
   `ports/turn_journal`, accessors do supervisor, dedupe de rows do doctor.
 
+## Mapa de itens abertos de Ferramentas (do mapeamento)
+
+| # | Item | Dono do arquivo | Situação |
+|---|---|---|---|
+| 1 | marcador de anexo honesto (H2) | `inbound_media`, `prompt_building`, `session_bootstrap`, `orchestrator` | em andamento |
+| 2 | cap antes do merge + uma cópia de `MaxAttachmentsPerTurn` | `prompt_building`, `orchestrator` | aberto (mesmo dono do 1) |
+| 3 | voz com `replyTo` | `audio_tools`, `native_tools`, `orchestrator` | feito (`49ba38cf`) |
+| 4 | `inspect_image` com política de inline | `tools/utility_tools` | feito (`78592371`) |
+| 5 | retry por turno + streaming (M1/M2/L3) | `tool_loop_runtime`, `tool_loop`, `media_pure` | em andamento |
+| 6 | fonte única de `isImageRejection` | `media_pure`, `prompt_building` | feito (`649b0d11`) |
+| 7 | confinamento de mídia ao paddock | `src/donkey.nim` + política pura | aberto |
+| 8 | TTS pelo `attachment_store` | port em `runOrchestrator → buildNativeCtx → NativeCtx` | **revertido** por violar boundary; precisa do port |
+| 9 | GC de anexos | política pura + sweep + hook | aberto, decisão: só com referência ou comando explícito |
+
+**Gargalo real:** `orchestrator.nim`, `session_bootstrap.nim` e `src/donkey.nim` são donos de
+quatro itens ao mesmo tempo. Nada de novo deve entrar nesses arquivos até o
+marcador fechar; depois eles liberam, em ordem: (a) port do `attachment_store`,
+(b) hook do retry, (c) confinamento, (d) GC — um dono por vez.
+
+`check_boundaries.sh` estava vermelho em `audio_tools.nim` por importar
+`adapters/` de `app/`; corrigido em `49ba38cf`.
+
 ## Ordem de paralelização
 
 Ferramentas e Interfaces podem correr em paralelo **só** depois que o PR #56
