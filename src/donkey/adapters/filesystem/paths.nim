@@ -23,6 +23,62 @@ when defined(posix):
     ## Not exported by Nim's std/posix. Importing it keeps the value correct on
     ## every POSIX target instead of hard-coding per-platform numbers.
 
+when defined(macosx):
+  var F_GETPATH {.importc, header: "<fcntl.h>".}: cint
+    ## Not exported by Nim's std/posix. `fcntl(fd, F_GETPATH, buf)` writes the
+    ## descriptor's path into a `MAXPATHLEN` buffer.
+  var MAXPATHLEN {.importc, header: "<sys/param.h>".}: cint
+
+type
+  DescriptorPathCapability* = enum
+    ## What a platform can say about the path behind an opened descriptor.
+    dpcUnsupported    ## No descriptor-to-path query: the root is proven only
+                      ## by `O_NOFOLLOW` plus the inode check.
+    dpcLinuxProcFs    ## `/proc/self/fd/N` names the opened file.
+    dpcMacosFGetPath  ## `fcntl(F_GETPATH)` names the opened file; on APFS the
+                      ## name already covers a directory swapped for a symlink.
+
+func descriptorPathCapability*(hasLinuxProcFs, hasMacosFGetPath: bool):
+                             DescriptorPathCapability =
+  ## Decides from compiled-in platform capability, never from a runtime probe.
+  if hasLinuxProcFs: dpcLinuxProcFs
+  elif hasMacosFGetPath: dpcMacosFGetPath
+  else: dpcUnsupported
+
+const
+  DescriptorPathSupport* =
+    when defined(linux): descriptorPathCapability(true, false)
+    elif defined(macosx): descriptorPathCapability(false, true)
+    else: descriptorPathCapability(false, false)
+
+func descriptorPathDecision*(capability: DescriptorPathCapability; inodeMatched: bool,
+                             root, descriptorPath: string):
+                            Result[bool, string] =
+  ## Pure decision for an opened descriptor: `ok(true)` reads, `ok(false)` means
+  ## the validated name designates another file, `err` is a fail-closed refusal.
+  ## Linux needs the `/proc/self/fd` entry even when the inode matched, so a
+  ## missing entry refuses instead of proving nothing. macOS `F_GETPATH` is
+  ## decisive only when it returns a path (a nil return is no evidence); an
+  ## absent path on either platform otherwise answers from the inode check,
+  ## which `O_NOFOLLOW` already tightened for the final component.
+  if not inodeMatched:
+    return ok(false)
+  case capability
+  of dpcLinuxProcFs:
+    if descriptorPath.len == 0:
+      return err("media path cannot be verified")
+    if descriptorPath != root and not descriptorPath.startsWith(root & $DirSep):
+      return err("media path is outside the paddock")
+    ok(true)
+  of dpcMacosFGetPath:
+    if descriptorPath.len == 0:
+      return ok(true)
+    if descriptorPath != root and not descriptorPath.startsWith(root & $DirSep):
+      return err("media path is outside the paddock")
+    ok(true)
+  of dpcUnsupported:
+    ok(true)
+
 proc canonicalPath*(path: string): Result[string, string] =
   ## Resolves symlinks when `path` exists. Returns an error when the path
   ## exists as an unresolvable/dangling symlink; callers must not fall back to
@@ -118,8 +174,9 @@ proc readConfinedMediaFile*(paddockRoot, resolvedPath: string; limit: int64;
   ##   2. `open(O_RDONLY|O_NOFOLLOW|O_NONBLOCK)` — a final symlink is refused
   ##      and a FIFO substituted for the file cannot block the caller;
   ##   3. `fstat` must report a regular file whose device/inode matches a fresh
-  ##      `stat` of `resolvedPath`, and (on Linux) the descriptor's own path in
-  ##      `/proc/self/fd` must remain inside the root;
+  ##      `stat` of `resolvedPath`, and the descriptor's own path (Linux:
+  ##      `/proc/self/fd`, macOS: `fcntl(F_GETPATH)`) must remain inside the
+  ##      root; a Linux build without a `/proc` entry refuses instead;
   ##   4. only then bytes are read from the descriptor, at most `limit` (+ one
   ##      probe byte at the cap to detect growth).
   ##
@@ -146,21 +203,31 @@ proc readConfinedMediaFile*(paddockRoot, resolvedPath: string; limit: int64;
       if posix.fstat(fd, opened) != 0 or not S_ISREG(opened.st_mode):
         return err("media target is not a regular file")
       var named: Stat
-      if posix.stat(resolvedPath.cstring, named) != 0 or
-         named.st_dev != opened.st_dev or named.st_ino != opened.st_ino:
-        ## The name no longer designates the descriptor we validated.
-        return err("media file changed after validation")
-      when defined(linux):
+      let inodeMatched = posix.stat(resolvedPath.cstring, named) == 0 and
+                         named.st_dev == opened.st_dev and
+                         named.st_ino == opened.st_ino
+      var descriptorPath = ""
+      case DescriptorPathSupport
+      of dpcLinuxProcFs:
         var linkBuf = newString(4096)
         let linkLen = posix.readlink(("/proc/self/fd/" & $fd).cstring,
                                      linkBuf.cstring, linkBuf.len)
-        if linkLen <= 0:
-          ## No /proc entry means the opened file cannot be proven to live
-          ## inside the root: fail closed rather than skipping the check.
-          return err("media path cannot be verified")
-        linkBuf.setLen(linkLen)
-        if linkBuf != root and not linkBuf.startsWith(root & $DirSep):
-          return err("media path is outside the paddock")
+        if linkLen > 0:
+          linkBuf.setLen(linkLen)
+          descriptorPath = linkBuf
+      of dpcMacosFGetPath:
+        when defined(macosx):
+          var pathBuf = newString(MAXPATHLEN.int)
+          if posix.fcntl(fd, F_GETPATH, pathBuf.cstring) >= 0:
+            descriptorPath = $cast[cstring](addr pathBuf[0])
+      of dpcUnsupported:
+        discard
+      let inside = descriptorPathDecision(DescriptorPathSupport, inodeMatched,
+                                          root, descriptorPath)
+      if inside.isErr:
+        return err(inside.error)
+      if not inside.get():
+        return err("media file changed after validation")
       if opened.st_size > limit:
         return err("media file exceeds the cap")
       var data = ""

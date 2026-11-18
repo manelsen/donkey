@@ -301,22 +301,85 @@ suite "readConfinedMediaFile — read through the validated descriptor":
       check loaded.isErr
       check readFile(root / "b.opus") == "B"
 
-  when defined(linux):
-    test "an intermediate directory swapped to a symlink outside is refused":
-      ## `O_NOFOLLOW` only guards the final component; the fd's /proc entry is
-      ## what proves the opened file still lives inside the root.
-      let root = freshDir("swap-root")
-      defer: removeDir(root)
-      let outside = freshDir("swap-outside")
-      defer: removeDir(outside)
-      createDir(root / "sub")
-      writeFile(root / "sub" / "a.txt", "inside")
-      writeFile(outside / "a.txt", "outside")
-      ## Resolve before the swap, as the adapter does: with TMPDIR behind a
-      ## symlink, a hand-built path would be rejected by the prefix check
-      ## before the descriptor is ever opened, making the test vacuous.
-      let resolved = resolveConfinedMediaPath(root, root / "sub" / "a.txt").get()
-      removeDir(root / "sub")
-      createSymlink(outside, root / "sub")
-      let r = readConfinedMediaFile(root, resolved, 1024)
+  test "an intermediate directory swapped to a symlink outside is refused":
+    ## `O_NOFOLLOW` only guards the final component; the descriptor's own path
+    ## (Linux: /proc/self/fd, macOS: F_GETPATH) is what proves the opened file
+    ## still lives inside the root. The macOS branch documents the limitation
+    ## the platform shares with Linux when /proc is absent.
+    let root = freshDir("swap-root")
+    defer: removeDir(root)
+    let outside = freshDir("swap-outside")
+    defer: removeDir(outside)
+    createDir(root / "sub")
+    writeFile(root / "sub" / "a.txt", "inside")
+    writeFile(outside / "a.txt", "outside")
+    ## Resolve before the swap, as the adapter does: with TMPDIR behind a
+    ## symlink, a hand-built path would be rejected by the prefix check
+    ## before the descriptor is ever opened, making the test vacuous.
+    let resolved = resolveConfinedMediaPath(root, root / "sub" / "a.txt").get()
+    removeDir(root / "sub")
+    createSymlink(outside, root / "sub")
+    let r = readConfinedMediaFile(root, resolved, 1024)
+    when DescriptorPathSupport in {dpcLinuxProcFs, dpcMacosFGetPath}:
       check r.isErr
+    else:
+      ## Without a descriptor path the root can only be proven lexically; the
+      ## test pins that instead of pretending the swap is caught.
+      check r.isOk
+
+suite "descriptor path decision — platform capability":
+
+  test "capability is chosen per platform, not by a runtime probe":
+    check descriptorPathCapability(true, false) == dpcLinuxProcFs
+    check descriptorPathCapability(false, true) == dpcMacosFGetPath
+    check descriptorPathCapability(false, false) == dpcUnsupported
+    when defined(linux):
+      check DescriptorPathSupport == dpcLinuxProcFs
+    elif defined(macosx):
+      check DescriptorPathSupport == dpcMacosFGetPath
+    else:
+      check DescriptorPathSupport == dpcUnsupported
+
+  test "linux reads only when /proc names a path inside the root":
+    let root = "/paddock"
+    check descriptorPathDecision(dpcLinuxProcFs, true, root,
+                                 root / "a.opus").get()
+
+  test "linux refuses without a /proc entry even when the inode matched":
+    let refused = descriptorPathDecision(dpcLinuxProcFs, true, "/paddock", "")
+    check refused.isErr
+    check refused.error == "media path cannot be verified"
+
+  test "linux refuses a descriptor path outside the root or a lookalike":
+    check descriptorPathDecision(dpcLinuxProcFs, true, "/paddock",
+                                 "/etc/passwd").isErr
+    check descriptorPathDecision(dpcLinuxProcFs, true, "/paddock",
+                                 "/paddock2/a.opus").isErr
+    check descriptorPathDecision(dpcLinuxProcFs, true, "/paddock",
+                                 "/paddockx").isErr
+
+  test "linux reports a name that no longer designates the descriptor":
+    let moved = descriptorPathDecision(dpcLinuxProcFs, false, "/paddock",
+                                       "/etc/passwd")
+    check moved.isOk
+    check not moved.get()
+
+  test "macOS revalidates the root through F_GETPATH":
+    let root = "/paddock"
+    ## An intermediate directory swapped for a symlink has the fd inside /etc,
+    ## and F_GETPATH reports that path.
+    check descriptorPathDecision(dpcMacosFGetPath, true, root,
+                                 "/etc").isErr
+    check descriptorPathDecision(dpcMacosFGetPath, true, root,
+                                 root / "sub" / "a.opus").get()
+
+  test "macOS without F_GETPATH output still proves the target by inode":
+    ## APFS vnodes cannot be detached from their parent without a rename, so a
+    ## directory symlink swap never produces an inside-root path in the first
+    ## place; the traversal happened before `open` and the inode check covers it.
+    check descriptorPathDecision(dpcMacosFGetPath, true, "/paddock", "").get()
+    check not descriptorPathDecision(dpcMacosFGetPath, false, "/paddock", "").get()
+
+  test "an unsupported platform answers from the inode check":
+    check descriptorPathDecision(dpcUnsupported, true, "/paddock", "").get()
+    check not descriptorPathDecision(dpcUnsupported, false, "/paddock", "").get()
