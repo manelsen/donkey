@@ -106,6 +106,9 @@ suite "schedule watermark store (port)":
 
     let store = newScheduleStoreRef(dir)
     check store.path == dir / ScheduleFileName
+    ## `save` is update-only now: the row is the schedule definition, so a
+    ## watermark for an unknown id must not create a phantom.
+    check store.upsert(fullRecord()).isOk
     check store.save(watermark("daily", 1_700_000_000_123'i64,
                                1_600_000_000_000'i64)).isOk
 
@@ -117,7 +120,8 @@ suite "schedule watermark store (port)":
     check state.lastRunAtMs == 1_700_000_000_123'i64
     check state.createdAtMs == 1_600_000_000_000'i64
     check state == watermark("daily", 1_700_000_000_123'i64,
-                             1_600_000_000_000'i64)
+                             1_600_000_000_000'i64,
+                             lastFireAtMs = 1_700_000_000_000'i64)
 
     let missing = store.load("not-a-schedule")
     check missing.isOk
@@ -441,3 +445,21 @@ suite "schedule record store (spec + watermark)":
     check reloaded.get()[0].spec.createdAtMs == 100'i64
     check reloaded.get()[0].loadWarning.len == 0
     check parseFile(store.path)["v"].getInt == 2
+
+  test "a document without a schedules array is an error, not an empty store":
+    let dir = freshDir("no-schedules")
+    defer: cleanup(dir)
+    let path = dir / ScheduleFileName
+    writeFile(path, """{"v":2}""")
+    let store = newScheduleStoreRef(dir)
+    check store.loadAllRecords().isErr
+    check store.load("daily").isErr
+
+  test "an empty object is an empty store":
+    let dir = freshDir("empty-object")
+    defer: cleanup(dir)
+    writeFile(dir / ScheduleFileName, """{}""")
+    let store = newScheduleStoreRef(dir)
+    check store.loadAllRecords().isOk
+    check store.loadAllRecords().get().len == 0
+

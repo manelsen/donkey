@@ -327,7 +327,13 @@ proc readRecordsLocked(path: string
 
   let list = doc{"schedules"}
   if list == nil:
-    return ok(records)
+    ## An empty object is a fresh/legacy store; a document with fields but no
+    ## `schedules` array is a shape we do not understand, and treating it as
+    ## empty would let the next save wipe every other schedule.
+    if doc.len == 0:
+      return ok(records)
+    return err("cannot parse schedule store " & path &
+               ": missing \"schedules\" array")
   if list.kind != JArray:
     return err("cannot parse schedule store " & path &
                ": \"schedules\" is not an array")
