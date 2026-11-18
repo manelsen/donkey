@@ -21,6 +21,8 @@ type
     endpoint*:       string
     extraHeaders*:   seq[(string, string)]
     payloadExtras*:  JsonNode   ## merged at the top level; nil = none
+    reasoningExtras*: JsonNode  ## merged only when req.reasoning
+    streamExtras*:   JsonNode   ## merged only when stream = true
     supportsImages*: bool
     sseKind*:        CompatSseKind
 
@@ -43,6 +45,11 @@ func suppressImages(req: CompletionRequest): CompletionRequest =
     copy.imageUrl = ""
     result.messages.add(copy)
 
+proc mergeInto(base: var JsonNode; extras: JsonNode) =
+  if not extras.isNil and extras.kind == JObject:
+    for key, value in extras:
+      base[key] = value
+
 proc buildCompatRequestBody*(profile: CompatProfile; model: string;
                              req: CompletionRequest;
                              stream = false): JsonNode =
@@ -53,7 +60,8 @@ proc buildCompatRequestBody*(profile: CompatProfile; model: string;
     if profile.supportsImages: req
     else: suppressImages(req)
   result = buildRequestBody(model, effective, stream)
-  if not profile.payloadExtras.isNil and
-     profile.payloadExtras.kind == JObject:
-    for key, value in profile.payloadExtras:
-      result[key] = value
+  mergeInto(result, profile.payloadExtras)
+  if req.reasoning:
+    mergeInto(result, profile.reasoningExtras)
+  if stream:
+    mergeInto(result, profile.streamExtras)

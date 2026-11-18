@@ -74,6 +74,22 @@ suite "compat request body":
     check body["stream"].getBool() == false
     check body["thinking"]["type"].getStr() == "enabled"
 
+  test "reasoning extras merge only when reasoning is requested":
+    var profile = defaultOpenAiProfile()
+    profile.reasoningExtras = %* {"thinking": {"type": "enabled"}}
+    let plain = buildCompatRequestBody(profile, "glm", CompletionRequest())
+    check not plain.hasKey("thinking")
+    let reasoning = CompletionRequest(reasoning: true)
+    check buildCompatRequestBody(profile, "glm", reasoning)["thinking"]["type"].getStr() ==
+          "enabled"
+
+  test "stream extras merge only for streaming requests":
+    var profile = defaultOpenAiProfile()
+    profile.streamExtras = %* {"stream_options": {"include_usage": true}}
+    check not buildCompatRequestBody(profile, "m", CompletionRequest()).hasKey("stream_options")
+    let streaming = buildCompatRequestBody(profile, "m", CompletionRequest(), stream = true)
+    check streaming["stream_options"]["include_usage"].getBool()
+
   test "streaming is carried through":
     let body = buildCompatRequestBody(defaultOpenAiProfile(), "gpt",
                                       CompletionRequest(), stream = true)
