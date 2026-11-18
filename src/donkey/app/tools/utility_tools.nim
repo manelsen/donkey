@@ -64,9 +64,20 @@ proc performInspectImage*(path, prompt: string;
       return "Error: unsupported image type " & splitFile(path).ext
     # Check the encoded budget before reading: base64 grows by ~4/3.
     let rawSize = getFileSize(path)
-    if rawSize <= 0 or rawSize * 4 div 3 > MaxInlineImageEncodedBytes:
+    let maxRaw = MaxInlineImageEncodedBytes * 3 div 4
+    if rawSize <= 0 or rawSize > maxRaw:
       return "Error: image file too large to inline (" & $rawSize & " raw bytes)"
-    let bytes    = readFile(path)
+    ## Read with the cap applied: the file can grow between the size check and
+    ## the read, and `readFile` would allocate the whole thing.
+    var handle: File
+    if not open(handle, path):
+      return "Error: cannot read image " & splitFile(path).ext
+    defer: close(handle)
+    var bytes = newString(maxRaw + 1)
+    let read = readBuffer(handle, addr bytes[0], maxRaw + 1)
+    if read > maxRaw:
+      return "Error: image file too large to inline (" & $read & " raw bytes)"
+    bytes.setLen(read)
     let encoded  = imageDataUrl(mime, bytes.toOpenArrayByte(0, bytes.high))
     if encoded.isErr:
       return "Error: " & encoded.error

@@ -463,3 +463,9 @@ suite "schedule record store (spec + watermark)":
     check store.loadAllRecords().isOk
     check store.loadAllRecords().get().len == 0
 
+  test "a cross-process lock file guards the document":
+    let dir = freshDir("lockfile")
+    defer: cleanup(dir)
+    let store = newScheduleStoreRef(dir)
+    check store.upsert(fullRecord()).isOk
+    check fileExists(dir / (ScheduleFileName & ".lock"))

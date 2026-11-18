@@ -141,6 +141,21 @@ suite "schedule enqueue — success path":
     ## Exactly one ingress context was consumed.
     check msgSeq == 2
 
+  test "a firing is not recorded as user activity":
+    let base = tempBase("activity")
+    defer: removeDir(base)
+    let outbox = newAsyncQueue[OutboundMessage]()
+    let services = makeServices(base, outbox)
+    var sm: SessionManager
+    sm.init()
+    var msgSeq = 0
+    primeSession(sm, services, msgSeq, UserIdOk)
+    let before = sm.entries[UserIdOk].lastInboundEpochMs
+    sleep(5)  # ensure the clock would move
+    let res = enqueueScheduledTask(sm, services, msgSeq, makeSpec(), FiredAtMs)
+    check res.isOk
+    check sm.entries[UserIdOk].lastInboundEpochMs == before
+
   test "the recorded channel follows the spec, not a session default":
     let base = tempBase("channel")
     defer: removeDir(base)

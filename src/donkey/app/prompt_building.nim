@@ -260,6 +260,14 @@ func addUserTurnWithImages*(history: ConversationHistory;
         markers.add(imageAttachmentMarker(path, false))
     else:
       turnUrls.add(url)
+  ## Attachments beyond the send cap are not sent, but their marker must not
+  ## disappear: keep a path-only instruction so the model can still inspect the
+  ## file instead of losing it silently.
+  if havePaths:
+    for i in kept ..< imageUrls.len:
+      let path = mediaPaths[i]
+      if path.len > 0:
+        markers.add(imageAttachmentMarker(path, false))
   text = withAttachmentMarkers(text, markers)
   if turnUrls.len == 0:
     return addUserTurn(history, text, "")

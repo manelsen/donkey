@@ -110,7 +110,8 @@ func toolCatalogSignature*(tools: seq[ToolDescription];
 proc buildEnsureSessionPlan*(sm: var SessionManager;
                              userId: UserId;
                              toolCatalogSignature: SessionRuntimeSignature;
-                             persist: bool = true): EnsureSessionPlan =
+                             persist: bool = true;
+                             recordActivity: bool = true): EnsureSessionPlan =
   ## Evaluates session ingress state and decides whether to reuse, rebuild, or create a session.
   ## `persist = false` lets the ingress path batch the registry write after
   ## channel bookkeeping.
@@ -126,8 +127,12 @@ proc buildEnsureSessionPlan*(sm: var SessionManager;
     ingressState.lastInboundAtMs > 0 and
     now - ingressState.lastInboundAtMs >= ColdSessionThresholdMs
   let lease = sm.applyIngressDecision(userId, decision, toolCatalogSignature)
-  lease.entry[].lastInboundAtMs = now
-  lease.entry[].lastInboundEpochMs = epochMs()
+  ## A scheduled or heartbeat task is not the user talking: recording it as
+  ## inbound activity would show the firing time as "last message" on the
+  ## dashboard and skew the cold-session decision.
+  if recordActivity:
+    lease.entry[].lastInboundAtMs = now
+    lease.entry[].lastInboundEpochMs = epochMs()
   if persist:
     sm.persistSession(userId)
   EnsureSessionPlan(
@@ -142,10 +147,13 @@ proc buildEnsureSessionPlan*(sm: var SessionManager;
 proc buildSessionIngressContext*(sm: var SessionManager;
                                  msg: InboundMessage;
                                  toolCatalogSignature: SessionRuntimeSignature;
-                                 msgSeq: var int): SessionIngressContext =
+                                 msgSeq: var int;
+                                 recordActivity: bool = true): SessionIngressContext =
   ## Builds ingress plan, records the channel, and persists the session exactly
   ## once per inbound message.
-  result.plan = sm.buildEnsureSessionPlan(msg.userId, toolCatalogSignature, persist = false)
+  result.plan = sm.buildEnsureSessionPlan(msg.userId, toolCatalogSignature,
+                                          persist = false,
+                                          recordActivity = recordActivity)
   inc msgSeq
   result.msgId = $msg.userId & "-" & $msgSeq
   if result.plan.decision.shouldRecordChannel:
@@ -315,7 +323,9 @@ proc startSessionIngress*(sm: var SessionManager;
     subagentWorkspace = services.subagentWorkspace)
   let signature = toolCatalogSignature(
     bootstrap.tools, bootstrap.providerLabel, bootstrap.paddockDir, bootstrap.skillPrompt)
-  result = sm.buildSessionIngressContext(msg, signature, msgSeq)
+  result = sm.buildSessionIngressContext(
+    msg, signature, msgSeq,
+    recordActivity = taskKind notin {tkSchedule, tkHeartbeat})
   let recentContext =
     if result.plan.injectRecentContext:
       loadRecentContext(services.memory, msg.userId)

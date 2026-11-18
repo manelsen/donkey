@@ -463,6 +463,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       ## The streaming branch goes through the same one-shot demotion: a
       ## vision-less model can refuse the inline image before the first token.
       if streamedRes.isErr and not loopState.imageRetryUsed and
+         not sessionStopRequested(nativeCtx) and
          hasInlineImages(req) and isImageRejection(streamedRes.error):
         loopState.imageRetryUsed = true
         loopState.history = demoteInlineImagesForTurn(loopState.history)
@@ -516,6 +517,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
     ## One retry per turn: the flag lives in `loopState`, which survives every
     ## tool round, instead of in the completion closure.
     if resp.isErr and not loopState.imageRetryUsed and
+       not sessionStopRequested(nativeCtx) and
        hasInlineImages(req) and isImageRejection(resp.error):
       loopState.imageRetryUsed = true
       ## The persistent history drops the image and its inline promise, so

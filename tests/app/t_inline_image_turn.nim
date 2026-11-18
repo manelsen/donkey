@@ -157,6 +157,20 @@ suite "inline image turn":
     ## Exactly the four inline images may claim to accompany the turn.
     check countSub(allText, "já acompanha esta mensagem") == 4
 
+  test "an eleventh image keeps its path marker even though it is not sent":
+    var urls, paths: seq[string] = @[]
+    for i in 0 ..< 11:
+      urls.add(imageDataUrl("image/png", bytesOf("png" & $i)).get())
+      paths.add("attachments/eleven" & $i & ".png")
+    let history = addUserTurnWithImages(newHistory(), "veja", urls, paths)
+    let allText = textOf(history)
+    ## Ten are sent (four inline, six as paths); the eleventh is not sent but
+    ## must not vanish: its marker points at the file.
+    for i in 0 ..< 11:
+      check allText.contains(paths[i])
+    check countSub(allText, "já acompanha esta mensagem") == 4
+    check allText.contains("inspect_image")
+
   test "album of four inline plus twenty paths keeps four inline and six paths":
     var urls, paths: seq[string] = @[]
     for i in 0 ..< 4:

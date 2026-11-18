@@ -57,7 +57,7 @@
 ## store instances in this process, so concurrent saves of different ids do
 ## not lose each other's rows.
 
-import std/[json, locks, options, os, strutils, tables]
+import std/[json, locks, options, os, posix, strutils, tables]
 when defined(posix):
   import std/posix
 import results
@@ -115,6 +115,26 @@ proc hardenFile(path: string): Result[void, string] {.raises: [].} =
     if posix.chmod(path.cstring, posix.Mode(0o600)) != 0:
       return err("cannot restrict permissions of " & path)
   ok()
+
+proc lockFile(store: ScheduleStore): cint {.raises: [].} =
+  ## Cross-process exclusion for the read-modify-write window: `ctl` and the
+  ## daemon are different processes, and the in-process `Lock` cannot see each
+  ## other. A dedicated `.lock` file keeps the JSON file itself untouched.
+  when defined(posix):
+    result = posix.open((store.path & ".lock").cstring,
+                        O_CREAT or O_RDWR, 0o600)
+    if result >= 0:
+      if posix.lockf(result, F_LOCK, 0) != 0:
+        discard posix.close(result)
+        result = -1
+  else:
+    result = -1
+
+proc unlockFile(fd: cint) {.raises: [].} =
+  when defined(posix):
+    if fd >= 0:
+      discard posix.lockf(fd, F_ULOCK, 0)
+      discard posix.close(fd)
 
 proc syncFile(f: File; path: string): Result[void, string] {.raises: [].} =
   try:
@@ -212,9 +232,11 @@ proc atomicWriteText(path, content: string): Result[void, string] {.raises: [].}
       return err(renamed.error)
     let dir = parentDir(path)
     if dir.len > 0:
-      let synced = syncDir(dir)
-      if synced.isErr:
-        return err(synced.error)
+      ## The rename already made the new content visible. A directory fsync is
+      ## a durability nicety; reporting it as a failed write would make the
+      ## caller believe the watermark did not advance and skip an occurrence
+      ## that is, in fact, consumed.
+      discard syncDir(dir)
     ok()
   except CatchableError as e:
     removeQuietly(tmp)
@@ -403,6 +425,8 @@ proc loadRecord*(store: ScheduleStore; scheduleId: string
     gcsafe, raises: [].} =
   acquire(scheduleStoreLock)
   defer: release(scheduleStoreLock)
+  let fileLock = lockFile(store)
+  defer: unlockFile(fileLock)
   let records = readRecordsLocked(store.path)
   if records.isErr:
     return err(records.error)
@@ -417,6 +441,8 @@ proc loadAllRecords*(store: ScheduleStore
   ## Every stored record in file order (the same order rows are rewritten).
   acquire(scheduleStoreLock)
   defer: release(scheduleStoreLock)
+  let fileLock = lockFile(store)
+  defer: unlockFile(fileLock)
   let records = readRecordsLocked(store.path)
   if records.isErr:
     return err(records.error)
@@ -435,6 +461,8 @@ proc upsert*(store: ScheduleStore; record: ScheduleRecord
     return err("schedule store: empty schedule id")
   acquire(scheduleStoreLock)
   defer: release(scheduleStoreLock)
+  let fileLock = lockFile(store)
+  defer: unlockFile(fileLock)
   let current = readRecordsLocked(store.path)
   if current.isErr:
     return err(current.error)
@@ -458,6 +486,8 @@ proc remove*(store: ScheduleStore; scheduleId: string
     return err("schedule store: empty schedule id")
   acquire(scheduleStoreLock)
   defer: release(scheduleStoreLock)
+  let fileLock = lockFile(store)
+  defer: unlockFile(fileLock)
   let current = readRecordsLocked(store.path)
   if current.isErr:
     return err(current.error)
@@ -472,6 +502,8 @@ proc load*(store: ScheduleStore; scheduleId: string
   ## Port-facing read: watermark only.
   acquire(scheduleStoreLock)
   defer: release(scheduleStoreLock)
+  let fileLock = lockFile(store)
+  defer: unlockFile(fileLock)
   let records = readRecordsLocked(store.path)
   if records.isErr:
     return err(records.error)
@@ -484,6 +516,8 @@ proc loadAll*(store: ScheduleStore
              ): Result[seq[ScheduleWatermark], string] {.gcsafe, raises: [].} =
   acquire(scheduleStoreLock)
   defer: release(scheduleStoreLock)
+  let fileLock = lockFile(store)
+  defer: unlockFile(fileLock)
   let records = readRecordsLocked(store.path)
   if records.isErr:
     return err(records.error)
@@ -501,6 +535,8 @@ proc save*(store: ScheduleStore; state: ScheduleWatermark
     return err("schedule store: empty schedule id")
   acquire(scheduleStoreLock)
   defer: release(scheduleStoreLock)
+  let fileLock = lockFile(store)
+  defer: unlockFile(fileLock)
   let current = readRecordsLocked(store.path)
   if current.isErr:
     return err(current.error)
