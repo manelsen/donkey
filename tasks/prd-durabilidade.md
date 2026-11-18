@@ -192,7 +192,11 @@ US-005. Um escritor por arquivo; suíte completa e commits são sequenciais.
   descartada mesmo que o turno tenha saído da janela de turnos; compactar junto (uma única
   janela de 7 dias para os dois) permite segunda resposta à reentrega tardia do canal, o que
   viola o objetivo 3. `compact(nowMs)` só pode remover uma chave quando o turno associado já
-  não existe **e** `nowMs - lastSeenMs > DedupeRetentionMs`.
+  não existe **e** `nowMs - lastSeenMs > DedupeRetentionMs`. A janela da chave é própria e
+  **maior** que a de turnos (`DefaultTurnJournalRetentionMs`, 7 dias): `DedupeRetentionMs`
+  vale 30 dias, contados do último `lastSeenMs` da chave, e a remoção do turno não altera
+  esse relógio. Assim uma chave nunca expira junto com o turno que ela deduplica, e a
+  compactação que descarta o turno não toca na chave antes dos 30 dias.
 - Final streamed: `streamToOutbox` grava `tevReplyQueued` no put; crash antes do drainer é
   CP-5 e o replay envia o texto como mensagem simples. `createStreamOutbound`,
   `createReplacementOutbound` e o fallback de edição journalizam como `sendImmediateOutbound`.

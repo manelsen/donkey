@@ -159,6 +159,8 @@ evidência vermelho → verde.
 - [ ] O supervisor (de `spawnFanout` ou detachado) checa `isSessionStopRequested`/`isUserStoppedSince` a cada 100 ms, sinaliza `stopRequested`, cancela os filhos vivos e devolve `fsrSessionStop` com parciais.
 - [ ] **Teto de runtime:** no tick **e** na conclusão de cada filho, soma os tokens de **todos** os filhos do fan-out — snapshots dos finalizados + vivos — e chama `fanoutBudgetDecision(total, plan.limits)`. Em `bdTokensExceeded` sinaliza `budgetExceeded`, cancela todos e devolve `fsrAggregateBudget`. Teste: teto 20, filho A termina com 15, B com 10 → total 25, C é cancelado e o reason é `fsrAggregateBudget` (prova que finalizado continua contando).
 - [ ] `cancelAll` percorre `mgr.children` **e** `mgr.fanouts`, cancela supervisors detachados, e só chama `finalizeChild` (US-003, após `childSettled`) depois do settlement/reap; espera ≤ 2 s. `tests/app/t_subagent_fanout_stop.nim`: 8 filhos, stop e shutdown no meio, `subagents/` vazio, zero futures pendentes, `removes == creates`.
+- [ ] **Shutdown com future pendente:** se o future de um filho não termina dentro do bound de 2 s, `cancelAll` para de esperar, deixa o paddock no lugar e o processo encerra; um sweep de inicialização remove diretórios de `subagents/` sem dono vivo (cleanup, não retomada). Teste: filho que ignora o cancelamento, shutdown em 2 s, zero futures pendentes, diretório presente; a inicialização seguinte o remove sem recriar o fan-out.
+- [ ] Shutdown e `/stop` nunca marcam `cancelledBySibling`: a marca é exclusiva do fail-fast; o cancelamento derivado do processo é `ssCancelled` sem a marca e não vira stop reason.
 - [ ] `cancel_subagent` de um irmão derruba os demais com `fpFailFast` e não os derruba com `fpCollectAll` (documentado na US-007). **Decisão:** cancelamento externo **dispara** o fail-fast, como um failure: o irmão cancelado de fora é marcado `ssCancelled` sem `cancelledBySibling` (a marca significa "cancelado pelo fail-fast", não "cancelado por alguém") e o supervisor sinaliza `failFast` nos demais, que passam a `ssCancelled` + `cancelledBySibling`; o stop reason segue a precedência da US-002 e não reage a `ssCancelled`. Com `fpCollectAll` nada é derrubado. Cancelamento externo de **todos** os irmãos (`/stop`, shutdown) é `fsrSessionStop`, não fail-fast.
 
 ### US-007: Documentar e fechar a missão
@@ -193,7 +195,7 @@ evidência vermelho → verde.
 
 ## 8. Não-objetivos
 
-Rooms, relay e Kanban; unificar fan-out com os jobs `task`/`await`/`cancel_job`; persistir/retomar fan-out após restart; compartilhar contexto/memória entre irmãos; worktree git por filho; mudar approval, rede, sandbox ou política de tools do filho; expor fan-out em dashboard/TUI/API. A missão **não** fecha o item 3 da V4 nem move o placar.
+Rooms, relay e Kanban; unificar fan-out com os jobs `task`/`await`/`cancel_job`; persistir/retomar fan-out após restart (o sweep de inicialização remove paddocks órfãos; isso é cleanup, não retomada); compartilhar contexto/memória entre irmãos; worktree git por filho; mudar approval, rede, sandbox ou política de tools do filho; expor fan-out em dashboard/TUI/API. A missão **não** fecha o item 3 da V4 nem move o placar.
 
 ## 9. Considerações técnicas
 
