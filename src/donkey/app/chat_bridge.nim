@@ -103,8 +103,12 @@ func isTerminal(event: ChatBridgeEvent): bool =
 
 proc appendEvent(turn: var PendingTurn; event: ChatBridgeEvent) =
   if isTerminal(event):
-    if turn.bufferedBytes + event.text.len > MaxTurnBufferBytes:
-      # The final answer supersedes accumulated partial content.
+    ## The terminal supersedes accumulated partial content, so whatever was
+    ## lost from partials no longer describes the answer: only a terminal that
+    ## is itself clipped makes the turn truncated.
+    turn.truncated = false
+    if event.text.len > MaxTurnBufferBytes:
+      # Only the terminal's own size matters: it replaces the partials.
       turn.events = @[]
       turn.bufferedBytes = 0
       turn.truncated = true

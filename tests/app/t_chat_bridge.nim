@@ -125,6 +125,20 @@ suite "ChatBridge lifecycle":
     fakeNow += MaxOrphanTtlMs
     check bridge.register(uid, timeoutMs = 5000).isOk
 
+  test "a complete terminal after truncated partials is not truncated":
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    check bridge.register(uid, timeoutMs = 5000).isOk
+    # Partials alone overflow the buffer...
+    for i in 0 .. 4:
+      check bridge.deliver(apiMsg(repeat("x", MaxTurnBufferBytes div 3), partial = true))
+    # ...but the terminal supersedes them and is complete.
+    check bridge.deliver(apiMsg("curto"))
+    let done = bridge.poll(uid)
+    check done.status == cbpDone
+    check not done.truncated
+    check done.events[^1].text == "curto"
+
   test "the orphan TTL replaces the turn deadline":
     ## Abandoning at t=0 must reserve the key for MaxOrphanTtlMs, not keep the
     ## original 5 s deadline: at t=10 s the key is still busy.
@@ -235,17 +249,22 @@ suite "ChatBridge buffer and deadline":
     check bridge.deliver(apiMsg(repeat("x", MaxTurnBufferBytes + 4096),
                                 rkFinalAnswer, partial = true))
     check bridge.deliver(apiMsg("tail", rkFinalAnswer, partial = true))
-    check bridge.deliver(apiMsg("fim"))
 
+    ## The partial stream is capped and flagged while the turn is open...
+    let partials = bridge.poll(uid)
+    check partials.status == cbpEvents
+    check partials.truncated
+    var contentBytes = 0
+    for event in partials.events:
+      contentBytes += event.text.len
+    check contentBytes <= MaxTurnBufferBytes
+
+    ## ...but a complete terminal supersedes them and is not "truncated":
+    ## reporting `length` for a short, complete answer was the bug.
+    check bridge.deliver(apiMsg("fim"))
     let batch = bridge.poll(uid)
     check batch.status == cbpDone
-    check batch.truncated
-    var contentBytes = 0
-    for event in batch.events:
-      if event.kind != rkFinalAnswer or event.text != "fim":
-        contentBytes += event.text.len
-    check contentBytes <= MaxTurnBufferBytes
-    # The terminal answer is still delivered even when the buffer is full.
+    check not batch.truncated
     check batch.events[^1].text == "fim"
 
   test "a deadline with a fake clock ends the turn without sleeping":
