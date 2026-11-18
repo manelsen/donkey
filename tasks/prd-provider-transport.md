@@ -128,8 +128,12 @@ Regras de coordenação:
 
 ## 5. Preparação (antes da US-001)
 
-1. `cd ~/git/donkey && git status --short`. Se houver alteração, pare.
-2. `git fetch origin && git switch master && git pull --ff-only`
+1. `cd ~/git/donkey && git status --short`. Em missão **paralela**, o worktree
+   contém mudanças de outros donos: pare apenas se houver alteração em um
+   arquivo que **você** possui. Nunca use stash, reset ou checkout sobre
+   trabalho alheio.
+2. `git fetch origin && git switch master && git pull --ff-only` (uma única vez,
+   antes de abrir a missão; durante a missão ninguém troca de branch).
 3. Criar a branch `feat/provider-transport`.
 4. Registrar no commit de abertura que este PRD é a fonte de verdade da
    missão.
