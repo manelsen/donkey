@@ -54,7 +54,7 @@ proc stubComplete(req: CompletionRequest): Result[CompletionResponse, string] =
   ok(CompletionResponse(text: "stub"))
 
 proc baseCtx(paddock: string; http: HttpRuntimePort;
-             channel = ckTelegram): NativeCtx =
+             channel = ckTelegram; replyTo = ""): NativeCtx =
   NativeCtx(
     uid:        UserId("voice-user"),
     channel:    channel,
@@ -63,6 +63,7 @@ proc baseCtx(paddock: string; http: HttpRuntimePort;
     http:       http,
     log:        newLogger("test.voice", lvlError),
     paddockDir: paddock,
+    replyTo:    replyTo,
   )
 
 suite "estimateSpeechSeconds":
@@ -194,6 +195,18 @@ suite "text_to_speech as_voice wiring":
     check fileExists(msg.mediaUrl)
     check msg.mediaDurationSec > 0
     check cap.posts == 1
+
+  test "the queued voice note keeps the composite forum target":
+    ## The app passes the composite `chat#cmsg#thread` anchor, not a bare id.
+    let dir = freshDir("wiring-replyto")
+    defer: removeDir(dir)
+    let cap = PostCapture(status: 200, response: "OPUSBYTES")
+    let ctx = baseCtx(dir, fakeHttp(cap), replyTo = "123#c9#t7")
+    let res = waitFor speak(ctx,
+      """{"text":"olá mundo","as_voice":true,"caption":"ouça"}""")
+    check res.handled
+    check res.outbound.isSome
+    check res.outbound.get().replyTo == "123#c9#t7"
 
   test "a channel without cfSendVoice queues nothing":
     let dir = freshDir("wiring-email")

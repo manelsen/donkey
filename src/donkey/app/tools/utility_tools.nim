@@ -65,7 +65,7 @@ proc performInspectImage*(path, prompt: string;
     # Check the encoded budget before reading: base64 grows by ~4/3.
     let rawSize = getFileSize(path)
     if rawSize <= 0 or rawSize * 4 div 3 > MaxInlineImageEncodedBytes:
-      return "Error: image too large to inline (" & $rawSize & " bytes)"
+      return "Error: image file too large to inline (" & $rawSize & " raw bytes)"
     let bytes    = readFile(path)
     let encoded  = imageDataUrl(mime, bytes.toOpenArrayByte(0, bytes.high))
     if encoded.isErr:

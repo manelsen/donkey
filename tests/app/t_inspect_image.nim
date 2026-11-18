@@ -21,7 +21,9 @@ proc fakeComplete(req: CompletionRequest): Result[CompletionResponse, string]
   ok(CompletionResponse(text: "descrição"))
 
 proc writeTemp(name: string; content: string): string =
-  result = getTempDir() / name
+  ## Pid-scoped: two checkouts (or a crashed run) on the same host must not
+  ## share these files.
+  result = getTempDir() / ("donkey_inspect_" & $getCurrentProcessId() & "_" & name)
   writeFile(result, content)
 
 suite "inspect_image inline policy":
@@ -30,7 +32,7 @@ suite "inspect_image inline policy":
     gCalls.setLen(0)
 
   test "a png is sent as a data URL with the right media type":
-    let path = writeTemp("donkey_inspect_ok.png", "PNGDATA")
+    let path = writeTemp("ok.png", "PNGDATA")
     defer: removeFile(path)
     let reply = performInspectImage(path, "o que é?", fakeComplete)
     check reply == "descrição"
@@ -40,7 +42,7 @@ suite "inspect_image inline policy":
 
   test "an unsupported extension is refused, not relabelled as jpeg":
     for ext in [".svg", ".bmp", ".heic"]:
-      let path = writeTemp("donkey_inspect_bad" & ext, "<svg/>")
+      let path = writeTemp("bad" & ext, "<svg/>")
       defer: removeFile(path)
       let reply = performInspectImage(path, "", fakeComplete)
       check reply.toLowerAscii().contains("unsupported")
@@ -48,11 +50,14 @@ suite "inspect_image inline policy":
     check gCalls.len == 0
 
   test "a file over the inline cap is refused before encoding":
-    let path = getTempDir() / "donkey_inspect_big.png"
+    let path = getTempDir() /
+      ("donkey_inspect_" & $getCurrentProcessId() & "_big.png")
     let size = MaxInlineImageEncodedBytes  # raw > 3/4 of the encoded cap
     writeFile(path, repeat('A', size))
     defer: removeFile(path)
     let reply = performInspectImage(path, "", fakeComplete)
-    check reply.toLowerAscii().contains("large") or
-      reply.toLowerAscii().contains("too big")
+    # The precheck must fire, not `imageDataUrl`'s encoded-size error: the
+    # latter also contains "large" and would hide a deleted precheck.
+    check reply.contains("raw bytes")
+    check not reply.contains("encoded bytes")
     check gCalls.len == 0
