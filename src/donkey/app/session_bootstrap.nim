@@ -19,6 +19,7 @@ import ../domain/builtin_tools
 import ../domain/more_tools
 import ../domain/providers/media_pure
 import ../domain/reminder
+import ../ports/attachment_store
 import ../ports/memory
 import ../ports/provider
 import ../ports/subagent_workspace
@@ -390,9 +391,17 @@ func providerLabelFromPrefs*(prefs: string;
 
 func encodeSessionPayload*(msg: InboundMessage;
                            recentContext = ""): string =
+  ## `mediaPaths` stays index-aligned with `mediaUrl`/`mediaUrls`: the turn
+  ## builder needs the disk path of every inline image so it can present the
+  ## ones beyond the inline cap as path-only attachments instead of dropping
+  ## them. Payloads without `mediaPaths` are legacy and keep their text marker.
+  var mediaPaths: seq[string] = @[]
+  if msg.mediaUrl.len > 0 and msg.mediaFileName.startsWith(AttachmentDirName & "/"):
+    mediaPaths.add(msg.mediaFileName)
   if msg.mediaUrl.len == 0 and recentContext.len == 0:
     return msg.text
   $(%* {"text": msg.text, "mediaUrl": msg.mediaUrl,
+        "mediaPaths": mediaPaths,
         "mediaGroupId": msg.mediaGroupId, "recentContext": recentContext})
 
 func sessionReplyTo*(msg: InboundMessage): string =

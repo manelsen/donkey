@@ -88,3 +88,14 @@ suite "prompt building":
     check "autenticação" in genericProviderErrorText("401 Unauthorized")
     check "temporariamente" in genericProviderErrorText("429 rate limit")
     check "anexo" in genericProviderErrorText("unsupported image content")
+
+  test "auth wins when the error also mentions an attachment":
+    let text = genericProviderErrorText("401 Unauthorized: attachment type unsupported")
+    check "autenticação" in text
+    check "anexo" notin text
+
+  test "a pure image rejection still maps to the attachment message":
+    let text = genericProviderErrorText(
+      """OpenRouter 400: invalid image_url: expected a URL, got file_id""")
+    check "anexo" in text
+    check "autenticação" notin text

@@ -463,14 +463,23 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
       else: blackboardBlock
 
   const MaxAttachmentsPerTurn = 10
-  if userPayload.mediaUrls.len > MaxAttachmentsPerTurn:
-    log.warn("turn with " & $userPayload.mediaUrls.len & " attachments; keeping " &
+  var attachmentUrls = userPayload.mediaUrls
+  if attachmentUrls.len == 0 and userPayload.mediaUrl.len > 0:
+    attachmentUrls = @[userPayload.mediaUrl]
+  let attachmentPaths =
+    if userPayload.mediaPaths.len == attachmentUrls.len:
+      userPayload.mediaPaths
+    else:
+      @[]
+  if attachmentUrls.len > MaxAttachmentsPerTurn:
+    log.warn("turn with " & $attachmentUrls.len & " attachments; keeping " &
              $MaxAttachmentsPerTurn)
   let history =
-    if userPayload.mediaUrls.len > 1:
-      addUserTurnWithImages(result.history, userPayload.text, userPayload.mediaUrls)
+    if attachmentUrls.len > 0:
+      addUserTurnWithImages(result.history, userPayload.text, attachmentUrls,
+                            attachmentPaths)
     else:
-      addUserTurn(result.history, userPayload.text, userPayload.mediaUrl)
+      addUserTurn(result.history, userPayload.text, "")
 
   result =
     result |>->
