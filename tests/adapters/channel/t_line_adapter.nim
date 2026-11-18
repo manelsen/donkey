@@ -4,7 +4,7 @@
 ## account and no real credential. The adapter is the only place that knows
 ## the LINE endpoints; the pure parser/policy live in domain/channels.
 
-import std/[json, os, strutils, tables, times, unittest]
+import std/[unicode, json, os, strutils, tables, times, unittest]
 import donkey/adapters/channel/line
 import donkey/core/channels/flood_gate
 import donkey/core/pipeops
@@ -371,3 +371,18 @@ suite "LineAdapter — webhook queue":
     pushEvent(parseFile("tests/fixtures/line/webhook_empty_events.json"))
     let (has, _) = a.tryRecvEvent()
     check not has
+
+suite "splitForLine — UTF-16 units":
+
+  test "an emoji counts as two units":
+    ## LINE's 4,500 limit is in UTF-16 code units; 3,000 emoji are 6,000 units
+    ## and must not fit in one bubble.
+    let emoji = "😀"
+    let text = emoji.repeat(3000)
+    let parts = splitForLine(text)
+    check parts.len >= 2
+    for part in parts:
+      var units = 0
+      for r in part.runes:
+        units += (if int(r) > 0xFFFF: 2 else: 1)
+      check units <= 4500

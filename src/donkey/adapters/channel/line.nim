@@ -74,20 +74,29 @@ type
 ## Opened once at daemon startup via openQueue().
 var gLineEvents* {.global.}: Channel[LineParseResult]
 
-proc pushEvent*(payload: JsonNode) =
+const LineQueueCapacity* = 256
+  ## Bounded: an unbuffered queue makes the webhook worker block until the
+  ## daemon drains, and a burst would stall every connection on that worker.
+
+proc pushEvent*(payload: JsonNode): bool {.discardable.} =
   ## Parses a LINE webhook payload (already signature-verified upstream) and
   ## enqueues every event. Policy decisions belong to `line_policy`/the
   ## runtime, so standby, non-text and unknown events are queued too; the
-  ## runtime consumes and logs the ones it drops.
+  ## runtime consumes and logs the ones they drop.
+  ##
+  ## Returns false when the queue is full: the route then answers 503 so LINE
+  ## redelivers, instead of blocking the worker or silently dropping events.
+  result = true
   for ev in parseWebhook(payload):
     {.cast(gcsafe).}:
-      gLineEvents.send(ev)
+      if not gLineEvents.trySend(ev):
+        result = false
 
 proc openQueue*() =
   ## Opens the module-level event queue. Call once at daemon startup, before
   ## the `/webhook/line` route starts accepting payloads.
   {.cast(gcsafe).}:
-    gLineEvents.open()
+    gLineEvents.open(LineQueueCapacity)
 
 proc openQueue*(a: LineAdapter) =
   ## Adapter-shaped overload used by the shared channel startup convention.
@@ -201,8 +210,9 @@ func isLineWhitespace(r: Rune): bool =
 
 func splitForLine*(text: string; maxChars = LineChunkChars): seq[string] =
   ## Splits text into at most `LineMaxBubbles` bubbles of at most `maxChars`
-  ## Unicode characters. Breaks are preferred at a paragraph, then a line,
-  ## then a word boundary past the halfway point; otherwise the cut is hard.
+  ## **UTF-16 code units** (what LINE counts; an emoji is two). Breaks are
+  ## preferred at a paragraph, then a line, then a word boundary past the
+  ## halfway point; otherwise the cut is hard.
   ## When the bubble budget is exhausted the last bubble is ellipsised, so a
   ## long answer never silently loses its tail marker.
   if text.len == 0:
@@ -223,14 +233,24 @@ func splitForLine*(text: string; maxChars = LineChunkChars): seq[string] =
   starts.add text.len
 
   let total = runes.len
-  if total <= maxChars:
+  ## LINE measures a message in UTF-16 code units, not code points: counting
+  ## runes lets a string of emoji exceed the API limit by up to 2x.
+  var units = newSeq[int](total + 1)
+  for i in 0 ..< total:
+    units[i + 1] = units[i] + (if int(runes[i]) > 0xFFFF: 2 else: 1)
+  let totalUnits = units[^1]
+  if totalUnits <= maxChars:
     return @[text]
 
   var cur = 0
   while cur < total and result.len < LineMaxBubbles and
-        (total - cur) > maxChars:
-    let limit = cur + maxChars
-    let minCut = cur + maxChars div 2
+        (totalUnits - units[cur]) > maxChars:
+    var limit = cur
+    while limit < total and units[limit + 1] - units[cur] <= maxChars:
+      inc limit
+    var minCut = cur
+    while minCut < total and units[minCut + 1] - units[cur] <= maxChars div 2:
+      inc minCut
     var cut = -1
 
     var i = limit - 1

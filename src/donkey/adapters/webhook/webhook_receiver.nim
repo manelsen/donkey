@@ -377,7 +377,12 @@ proc handleLine(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
   ## touching the queue. Any real event is parsed here so an unusable shape
   ## never opens the adapter queue.
   if parseWebhook(payload).len > 0:
-    line.pushEvent(payload)
+    if not line.pushEvent(payload):
+      ## The bounded queue is full. Refusing is better than blocking this
+      ## worker (which serves every channel) or acking an event the daemon will
+      ## never see; LINE redelivers, and the replay cache drops duplicates it
+      ## already accepted.
+      return plainResp(503, "line queue is full")
   plainResp(200, "ok")
 
 # ── Matrix ────────────────────────────────────────────────────────────────────
