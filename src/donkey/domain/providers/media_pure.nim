@@ -139,23 +139,28 @@ func withoutInlineImages*(req: CompletionRequest): CompletionRequest =
     return req
   result = req
   result.messages = @[]
+  var lastImageTurn = -1
   for msg in req.messages:
     var stripped = msg
-    if stripped.imageUrl.startsWith("data:"):
+    let hadInline = stripped.imageUrl.startsWith("data:")
+    if hadInline:
       stripped.imageUrl = ""
       stripped.text = demoteInlineImageText(stripped.text)
     if stripped.role == roleUser and stripped.text.strip.len == 0 and
        stripped.imageUrl.len == 0:
+      ## An image-only turn loses its reason to exist. The note goes in its
+      ## place, not on an earlier user turn.
       continue
+    if hadInline and stripped.role == roleUser and stripped.text.strip.len > 0:
+      lastImageTurn = result.messages.len
     result.messages.add(stripped)
-  var lastUserWithText = -1
-  for i, msg in result.messages:
-    if msg.role == roleUser and msg.text.strip.len > 0:
-      lastUserWithText = i
-  if lastUserWithText >= 0:
-    let current = result.messages[lastUserWithText].text
+  ## The note belongs to the turn that carried the image. Attaching it to the
+  ## last user turn with text put it on an earlier question when the image
+  ## arrived alone (image-only album entry).
+  if lastImageTurn >= 0:
+    let current = result.messages[lastImageTurn].text
     if not current.contains(InlineImageRemovedNote):
-      result.messages[lastUserWithText].text =
+      result.messages[lastImageTurn].text =
         current & "\n\n" & InlineImageRemovedNote
   else:
     ## An album of image-only turns would otherwise leave the request empty.

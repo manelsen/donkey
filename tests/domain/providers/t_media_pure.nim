@@ -107,3 +107,29 @@ suite "demoteInlineImagesForTurn":
     check demoted.len == 1
     check demoted[0].role == roleUser
     check demoted[0].text == InlineImageRemovedNote
+
+suite "withoutInlineImages — note placement":
+
+  test "an image-only turn gets the note, not the earlier question":
+    var h: ConversationHistory = @[
+      ChatMessage(role: roleUser, text: "Oi"),
+      ChatMessage(role: roleAssistant, text: "Olá"),
+      ChatMessage(role: roleUser, imageUrl: DataPng),
+    ]
+    let stripped = withoutInlineImages(CompletionRequest(messages: h))
+    check stripped.messages.len == 3
+    check stripped.messages[0].text == "Oi"
+    check not stripped.messages[0].text.contains(InlineImageRemovedNote)
+    check stripped.messages[^1].text == InlineImageRemovedNote
+    check stripped.messages[^1].imageUrl == ""
+
+  test "an image with text keeps the note on its own turn":
+    var h: ConversationHistory = @[
+      ChatMessage(role: roleUser, text: "primeira"),
+      ChatMessage(role: roleUser, text: "veja", imageUrl: DataPng),
+    ]
+    let stripped = withoutInlineImages(CompletionRequest(messages: h))
+    check stripped.messages.len == 2
+    check stripped.messages[0].text == "primeira"
+    check stripped.messages[1].text.contains(InlineImageRemovedNote)
+    check stripped.messages[1].text.contains("veja")
