@@ -65,6 +65,7 @@ type
     resolver*:           IdentityResolver
     http*:               HttpRuntimePort
     flood*:              FloodGate     ## channel-wide 429 window
+    configError*:        string        ## invalid base/credentials; sends fail closed
     chatIds*:            Table[string, string]
       ## senderId (raw `U…`) → last conversation it wrote from (`C…`/`R…`/`U…`)
 
@@ -448,6 +449,8 @@ proc send*(a: LineAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends text only. Media and keyboards are refused explicitly instead of
   ## being dropped silently: LINE's capability descriptor is send-only and a
   ## caller that ignores it must see the reason.
+  if a.configError.len > 0:
+    return err("LINE: " & a.configError)
   if msg.mediaUrl.len > 0:
     return err("LINE: media unsupported (text only)")
   if msg.keyboard.len > 0:
@@ -470,6 +473,8 @@ proc sendReply*(a: LineAdapter; replyToken, text: string): Result[void, string] 
   ## Answers with a single-use reply token. A refused reply (expired token,
   ## 400) is returned as `err` and never retried as a push: that would bill
   ## the metered API and could duplicate the answer.
+  if a.configError.len > 0:
+    return err("LINE: " & a.configError)
   let token = replyToken.strip
   if token.len == 0:
     return err("LINE: missing reply token")
@@ -481,15 +486,13 @@ proc sendReply*(a: LineAdapter; replyToken, text: string): Result[void, string] 
   ok()
 
 proc tryRecvEvent*(a: var LineAdapter): (bool, LineParseResult) =
-  ## Non-blocking poll for webhook events. Dequeuing is also where the last
-  ## conversation is remembered (the same moment the Telegram adapter records
-  ## `chatIds` during `receive`).
+  ## Non-blocking poll for webhook events. It deliberately does **not** remember
+  ## the conversation: a group event that policy will deny must not become the
+  ## sender's remembered target. The runtime records it after acceptance.
   var has = false
   var ev: LineParseResult
   {.cast(gcsafe).}:
     (has, ev) = gLineEvents.tryRecv()
-  if has:
-    a.rememberChat(ev.senderId, ev.chatId)
   (has, ev)
 
 proc receive*(a: var LineAdapter): Result[seq[InboundMessage], string] =
@@ -529,19 +532,21 @@ proc newLineAdapter*(channelAccessToken, identityPath: string;
     elif envBase.len > 0: envBase
     else: ""
 
+  ## Do not raise: an invalid base would abort daemon startup and take every
+  ## other channel with it. The adapter records the reason and fails sends.
   let baseError = lineApiBaseError(base)
-  if baseError.len > 0:
-    raise newException(ValueError, "LineAdapter: " & baseError)
+  let effectiveBase = if baseError.len > 0: "https://api.line.me" else: base
 
   var runtimeHttp = http
   if runtimeHttp.post.isNil:
     runtimeHttp = newStdHttpAdapter(
       timeout = LineTimeoutSec,
-      allowlist = lineApiAllowlist(base),
+      allowlist = lineApiAllowlist(effectiveBase),
       retryNonIdempotent = false,
       retryConflict = false).toRuntimePort()
 
   LineAdapter(
+    configError: baseError,
     channelAccessToken: token,
     apiBase:            base,
     resolver:           newIdentityResolver(identityPath),

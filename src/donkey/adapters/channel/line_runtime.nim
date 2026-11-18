@@ -61,7 +61,9 @@ proc drainLineEvents*(lnAdapter: var LineAdapter;
       continue
 
     ## The identity is the speaker; the recorded conversation is the reply
-    ## target, so a proactive send answers the group instead of the DM.
+    ## target, so a proactive send answers the group instead of the DM. Both
+    ## are recorded only after the policy accepts the event.
+    lnAdapter.rememberChat(routing.identityId, routing.replyTarget)
     sm.recordChannel(auth.userId, ckLine, routing.replyTarget, persist = false)
     let msg = toInbound(event, auth.userId)
 

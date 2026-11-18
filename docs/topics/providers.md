@@ -33,8 +33,12 @@ nimble build
 | ZAI Anthropic | `ZAI_ANTHROPIC_API_KEY` | Anthropic-compatible Claude models | Yes | Yes |
 | ZAI generic | `ZAI_API_KEY` | `glm-4.7` | No (complete only) | Yes |
 | Anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-5-5` | Yes | Yes |
-| OpenAI | `OPENAI_API_KEY` | `gpt-6.1-sol` | Yes | Yes |
+| OpenAI | `OPENAI_API_KEY` | `gpt-6.1-sol` | Yes* | Yes |
 | OpenRouter | `OPENROUTER_API_KEY` | `openai/gpt-6.1-sol` | Provider-dependent | Provider-dependent |
+
+\* Tool calling means "over the Chat Completions wire". A model that only
+exposes function calling through the Responses API is not covered by the compat
+path; the table describes the transport, not every model's API surface.
 | Gemini | `GEMINI_API_KEY` | `gemini-3.8-flash` | No (complete only) | Yes |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-4.1-flash` | Yes | Yes |
 | MiniMax | `MINIMAX_API_KEY` | `MiniMax-M2` | No (complete only) | Yes |

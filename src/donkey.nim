@@ -2163,6 +2163,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     ## them: drain them before the actors are cancelled.
     if ctx.env.lineChannelAccessToken.len > 0:
       discard drainer.drainLine()
+      ## The event was acked with 200 and is now being processed; give the
+      ## admitted turn the same bounded chance Slack gets before the actors are
+      ## cancelled.
+      await sleepAsync(ctimer.milliseconds(500))
     ## Stop ingress first, then let already-admitted turns publish their replies.
     ## Connections accepted before the stop may have enqueued Feishu events;
     ## consume them once before exiting. Slack envelopes were already acked

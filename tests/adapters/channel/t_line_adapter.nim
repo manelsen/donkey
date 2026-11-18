@@ -344,6 +344,10 @@ suite "LineAdapter — webhook queue":
     check ev.text == "Hello from LINE"
     check ev.senderId == "U4af4980629a1c5f5b1a1f0e7b7a1e111"
     check ev.chatId == ev.senderId
+    ## Dequeuing no longer remembers the chat: the runtime records it after the
+    ## policy accepts the event (a denied group must not become the target).
+    check a.chatIds.getOrDefault(ev.senderId, "") == ""
+    a.rememberChat(ev.senderId, ev.chatId)
     check a.chatIds.getOrDefault(ev.senderId, "") == ev.chatId
 
   test "a group event remembers the group, not the speaker":
@@ -357,6 +361,8 @@ suite "LineAdapter — webhook queue":
     check has
     check ev.senderId == "U4af4980629a1c5f5b1a1f0e7b7a1e111"
     check ev.chatId == "C1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6"
+    check a.chatIds.getOrDefault(ev.senderId, "") == ""
+    a.rememberChat(ev.senderId, ev.chatId)
     check a.chatIds.getOrDefault(ev.senderId, "") == ev.chatId
 
     let uid = a.resolver.resolve(ckLine, ev.senderId)
@@ -386,3 +392,18 @@ suite "splitForLine — UTF-16 units":
       for r in part.runes:
         units += (if int(r) > 0xFFFF: 2 else: 1)
       check units <= 4500
+
+suite "LineAdapter — invalid configuration fails closed":
+
+  test "an invalid base does not raise; sends return an error":
+    let fakeHttp = newFake()
+    let adapter = newLineAdapter("tok", "/tmp/line-invalid.tsv",
+                                 apiBase = "http://api.line.me",
+                                 http = fake(fakeHttp))
+    check adapter.configError.len > 0
+    let res = adapter.send(OutboundMessage(userId: UserId("U1"),
+                                           channel: ckLine, text: "oi",
+                                           replyTo: "U1"))
+    check res.isErr
+    check res.error.contains("apiBase")
+    check fakeHttp.calls.len == 0
