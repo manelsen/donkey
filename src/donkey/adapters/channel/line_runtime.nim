@@ -38,10 +38,12 @@ proc drainLineEvents*(lnAdapter: var LineAdapter;
   ## dropped, so the drain loop cannot spin on them.
   ##
   ## The `/continue` confirmation is **enqueued** through `enqueueReply`, never
-  ## posted inline: this runs on the daemon thread, where a stalled LINE API
-  ## (30 s transport timeout) would freeze every other channel drain. A nil
-  ## callback logs and drops the reply (tests that do not care about it).
-  ## An enqueue failure is logged and does not abort the rest of the batch.
+  ## posted inline in this loop: the drain does not wait for the LINE API. The
+  ## OUTBOX drainer still performs the POST on the daemon thread, so this moves
+  ## the wait out of the channel drain, not out of the daemon; an outbound
+  ## worker is future work (threading design A1). A nil callback logs and drops
+  ## the reply (tests that do not care). An enqueue failure is logged and does
+  ## not abort the rest of the batch.
   var (hasEvent, event) = lnAdapter.tryRecvEvent()
   while hasEvent:
     let decision = decideLineEvent(policy, event)

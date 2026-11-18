@@ -300,3 +300,18 @@ suite "readConfinedMediaFile — read through the validated descriptor":
       let loaded = readConfinedMediaFile(root, canonical, 4096)
       check loaded.isErr
       check readFile(root / "b.opus") == "B"
+
+  when defined(linux):
+    test "an intermediate directory swapped to a symlink outside is refused":
+      ## `O_NOFOLLOW` only guards the final component; the fd's /proc entry is
+      ## what proves the opened file still lives inside the root.
+      let root = freshDir("swap-root")
+      let outside = freshDir("swap-outside")
+      createDir(root / "sub")
+      writeFile(root / "sub" / "a.txt", "inside")
+      writeFile(outside / "a.txt", "outside")
+      let resolved = root / "sub" / "a.txt"
+      removeDir(root / "sub")
+      createSymlink(outside, root / "sub")
+      let r = readConfinedMediaFile(root, resolved, 1024)
+      check r.isErr
