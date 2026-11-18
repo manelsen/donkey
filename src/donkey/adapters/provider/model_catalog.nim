@@ -1,4 +1,5 @@
 import std/[algorithm, json, math, options, os, strutils, tables, times]
+import ../../domain/providers/descriptors
 import ../../ports/provider
 import ../../ports/http
 import ../http/std_http
@@ -8,6 +9,12 @@ import openrouter
 import anthropic
 
 const
+  ## Endpoints that are NOT derivable from the descriptor chat URL, so they stay
+  ## explicit: `/models` is a sibling resource with a provider-specific path
+  ## (Gemini's collection is `/v1beta/models`, z.ai's is `.../models`, Ollama
+  ## lists `/api/tags`). Model lists below are hand-curated because models.dev
+  ## does not carry every aggregator/free variant; only env names and the Ollama
+  ## base URL come from the descriptor table.
   OpenRouterModelsEndpoint = "https://openrouter.ai/api/v1/models"
   GroqModelsEndpoint = "https://api.groq.com/openai/v1/models"
   AnthropicModelsEndpoint = "https://api.anthropic.com/v1/models"
@@ -16,6 +23,15 @@ const
 
 type
   CatalogParser = proc(json: JsonNode): Result[seq[ModelCatalogEntry], string] {.gcsafe.}
+
+func catalogEnvValue(id: string): string =
+  ## First non-empty credential/base-URL env for the provider, in descriptor
+  ## order. Aliases resolve through the same table as the runtime builder.
+  for envName in descriptorOr(id).envNames:
+    let value = getEnv(envName)
+    if value.len > 0:
+      return value
+  ""
 
 func sortCatalog(entries: seq[ModelCatalogEntry]): seq[ModelCatalogEntry] =
   result = entries
@@ -552,7 +568,8 @@ proc loadOllamaCatalog(baseUrl: string; http: HttpRuntimePort): Result[ModelCata
   let parser: CatalogParser = proc(json: JsonNode): Result[seq[ModelCatalogEntry], string] {.gcsafe.} =
     parseOllamaTagsCatalog($json)
   
-  let url = (if baseUrl.len > 0: baseUrl else: "http://localhost:11434") & "/api/tags"
+  let url = (if baseUrl.len > 0: baseUrl
+             else: descriptorOr("ollama").baseUrl) & "/api/tags"
   fetchHttpCatalog(http, url, @[], parser)
 
 proc loadMinimaxCatalog(apiKey: string): Result[ModelCatalogResult, string] =
@@ -579,7 +596,7 @@ proc buildModelCatalogLoader*(http: HttpRuntimePort = defaultCatalogHttp()): Mod
       if cachedOpenRouter.isSome and
          (now - cachedOpenRouter.get().fetchedAtUnix) <= CacheTtlSec:
         return ok(cachedOpenRouter.get())
-      let direct = loadOpenRouterCatalog(getEnv("OPENROUTER_API_KEY"), http)
+      let direct = loadOpenRouterCatalog(catalogEnvValue("openrouter"), http)
       if direct.isOk:
         cachedOpenRouter = some(direct.get())
         return direct
@@ -601,41 +618,31 @@ proc buildModelCatalogLoader*(http: HttpRuntimePort = defaultCatalogHttp()): Mod
       if filtered.len > 0:
         return ok(catalogResult(filtered, mcsLive, cachedModelsDev.get().fetchedAtUnix))
 
-    ## Fallback para APIs específicas ou catálogo estático
+    ## Fallback para APIs específicas ou catálogo estático. Nomes de env e a
+    ## base do Ollama vêm do descritor; ver o comentário do bloco `const`.
     case providerName
     of "openrouter":
       if openRouterError.len > 0:
         err(openRouterError)
       else:
-        loadOpenRouterCatalog(getEnv("OPENROUTER_API_KEY"), http)
+        loadOpenRouterCatalog(catalogEnvValue("openrouter"), http)
     of "groq":
-      loadGroqCatalog(getEnv("GROQ_API_KEY"), http)
+      loadGroqCatalog(catalogEnvValue("groq"), http)
     of "anthropic":
-      loadAnthropicCatalog(getEnv("ANTHROPIC_API_KEY"), http)
+      loadAnthropicCatalog(catalogEnvValue("anthropic"), http)
     of "gemini":
-      loadGeminiCatalog(getEnv("GEMINI_API_KEY"), http)
+      loadGeminiCatalog(catalogEnvValue("gemini"), http)
     of "minimax":
-      loadMinimaxCatalog(getEnv("MINIMAX_API_KEY"))
+      loadMinimaxCatalog(catalogEnvValue("minimax"))
     of "zai", "zai-coding":
-      loadZaiCatalog(getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")), providerName, true, http)
+      loadZaiCatalog(catalogEnvValue(providerName), providerName, true, http)
     of "zai-anthropic":
-      loadZaiCatalog(
-        getEnv(
-          "ZAI_ANTHROPIC_API_KEY",
-          getEnv(
-            "ANTHROPIC_AUTH_TOKEN",
-            getEnv("ZAI_CODING_API_KEY", getEnv("ZAI_API_KEY", getEnv("ZHIPU_API_KEY")))
-          )
-        ),
-        providerName,
-        true,
-        http,
-      )
+      loadZaiCatalog(catalogEnvValue("zai-anthropic"), providerName, true, http)
     of "opencode-go", "opencode":
-      loadOpencodeGoCatalog(getEnv("OPENCODE_API_KEY", getEnv("OPENCODE_GO_API_KEY")), http)
+      loadOpencodeGoCatalog(catalogEnvValue("opencode-go"), http)
     of "zen", "opencode-zen":
-      loadZenCatalog(http, getEnv("OPENCODE_API_KEY", getEnv("ZEN_API_KEY")))
+      loadZenCatalog(http, catalogEnvValue("zen"))
     of "ollama":
-      loadOllamaCatalog(getEnv("OLLAMA_BASE_URL"), http)
+      loadOllamaCatalog(catalogEnvValue("ollama"), http)
     else:
       ok(fallbackCatalog(providerName))
