@@ -111,6 +111,10 @@ func validateScheduleSpec*(spec: ScheduleSpec): Result[void, string] =
 
   if spec.userId.strip().len == 0:
     return err("schedule userId must not be empty")
+  if spec.userId.strip().startsWith("api:"):
+    ## `api:` identities are request-scoped: a scheduled firing carries no turn
+    ## token, so its reply would be dropped by the API bridge.
+    return err("schedule userId must not use the reserved 'api:' prefix")
   if spec.payload.len == 0:
     return err("schedule payload must not be empty")
 

@@ -551,3 +551,9 @@ suite "schedule spec — US-002 catch-up":
     let spec = makeSpec("* * * * *", catchUp = scOnce, createdAt = createdAt)
     check dueInstants(spec, spec.createdAtMs, at(12, 0)) == @[at(12, 0)]
     check catchUpInstant(spec, spec.createdAtMs, at(12, 0)) == some(at(12, 0))
+
+  test "a userId in the reserved api: namespace is refused":
+    let spec = makeSpec("* * * * *", userId = "api:alice")
+    let r = validateScheduleSpec(spec)
+    check r.isErr
+    check r.error.contains("api:")
