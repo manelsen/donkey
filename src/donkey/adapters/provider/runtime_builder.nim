@@ -115,8 +115,8 @@ func stripProviderPrefix(model: string): string =
   else: model
 
 # ── Env-aware compat profiles ─────────────────────────────────────────────────
-# `CompatProfileFn` is a top-level nimcall proc, so the descriptor's
-# `baseUrlEnv` override is read per call instead of being captured.
+# The descriptor's `baseUrlEnv` override is read per call instead of being
+# captured, so an env change applies to the next request.
 
 proc nvidiaProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
   nvidiaCompatProfileAt(providerEndpointFor("nvidia"))
@@ -124,8 +124,13 @@ proc nvidiaProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
 proc alibabaProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
   alibabaCompatProfileAt(providerEndpointFor("alibaba"))
 
-proc fireworksProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
-  fireworksCompatProfileAt(providerEndpointFor("fireworks"))
+proc fireworksProfileForModel(model: string): CompatProfileFn =
+  ## The off switch is per model, so the profile is built for the model the
+  ## bundle will send instead of for the default one. A closure: the model is
+  ## captured, and only the resulting proc pointer crosses into the adapter.
+  result = proc(): CompatProfile {.gcsafe.} =
+    fireworksCompatProfileAt(providerEndpointFor("fireworks"),
+                             fireworksReasoningOffExtrasFor(model))
 
 proc buildProviderBundle*(spec: ProviderSpec; http: HttpRuntimePort
                          ): ProviderBundle {.gcsafe.} =
@@ -283,13 +288,16 @@ proc buildProviderBundle*(spec: ProviderSpec; http: HttpRuntimePort
   of "fireworks":
     ## Fireworks speaks the OpenAI dialect; the attribution headers and the
     ## `reasoning_effort: "none"` off-switch are data in
-    ## `fireworksCompatProfile`, so there is no Fireworks adapter file.
+    ## `fireworksCompatProfile`, so there is no Fireworks adapter file. The
+    ## switch is chosen by model: Muse Spark Open rejects "none".
+    let model =
+      if spec.modelName.len > 0: spec.modelName
+      else: providerDefaultModelFor("fireworks")
     let adapter = newCompatAdapter(
       spec.apiKey,
-      model = if spec.modelName.len > 0: spec.modelName
-              else: providerDefaultModelFor("fireworks"),
+      model = model,
       providerName = "Fireworks",
-      profileFn = fireworksProfileFromEnv,
+      profileFn = fireworksProfileForModel(model),
       http = http,
     )
     ProviderBundle(

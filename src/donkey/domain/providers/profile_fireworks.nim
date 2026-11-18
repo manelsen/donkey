@@ -24,6 +24,13 @@
 ## switch: Fireworks gets no `include_reasoning`. `req.reasoning = true` sends
 ## no effort either — `CompletionRequest` has no effort field (PRD §11).
 ##
+## `reasoning_effort: "none"` is not accepted by every model on the service:
+## Muse Spark Open rejects the value even with reasoning off. The off switch is
+## therefore an allowlist of model ids, and a model that is not on it gets no
+## effort field at all (review E2). Only the default model is verified in the
+## Hermes sources above; a missing entry sends nothing, which is the safe
+## failure for a model whose acceptance was never proven.
+##
 ## Pure: no I/O, no network. The `JsonNode` is profile data, not transport code.
 
 import std/json
@@ -37,10 +44,28 @@ const
   FireworksTitle*     = "Donkey"
   FireworksUserAgent* = "Donkey"
 
-func fireworksCompatProfileAt*(endpoint: string): CompatProfile =
+  FireworksReasoningNoneModels* = [DefaultModelFireworks]
+    ## Model ids that accept the top-level `reasoning_effort: "none"` off
+    ## switch. Anything absent sends no effort field.
+
+  MuseSparkOpenModel* = "accounts/fireworks/models/muse-spark-open"
+    ## Rejects `reasoning_effort: "none"` with reasoning off (review E2).
+
+func fireworksReasoningOffExtrasFor*(model: string): JsonNode =
+  ## The off switch for one model, or nil when the model is not on the
+  ## allowlist. `CompatProfile` is per bundle while the allowlist is per model,
+  ## so the extras are chosen by the model the bundle will send.
+  if model in FireworksReasoningNoneModels:
+    %* {"reasoning_effort": "none"}
+  else:
+    nil
+
+func fireworksCompatProfileAt*(endpoint: string;
+                               reasoningOffExtras: JsonNode): CompatProfile =
   ## The Fireworks deviations from the OpenAI transport, at an explicit
-  ## endpoint (tests, a proxy). Attribution headers are sent on every request;
-  ## the values are Donkey's, never Hermes'.
+  ## endpoint (tests, a proxy) and with the off switch of one model.
+  ## Attribution headers are sent on every request; the values are Donkey's,
+  ## never Hermes'.
   result = CompatProfile(
     id: "fireworks",
     endpoint: endpoint,
@@ -49,11 +74,16 @@ func fireworksCompatProfileAt*(endpoint: string): CompatProfile =
       ("X-Title", FireworksTitle),
       ("User-Agent", FireworksUserAgent),
     ],
-    reasoningOffExtras: %* {"reasoning_effort": "none"},
+    reasoningOffExtras: reasoningOffExtras,
     supportsImages: FireworksSupportsImages,
     quirks: defaultOpenAiQuirks(),
   )
   result.quirks.includeReasoningField = false
+
+func fireworksCompatProfileAt*(endpoint: string): CompatProfile =
+  ## The default model's profile, for callers that only name an endpoint.
+  fireworksCompatProfileAt(endpoint,
+                           fireworksReasoningOffExtrasFor(DefaultModelFireworks))
 
 func fireworksCompatProfile*(): CompatProfile =
   ## The profile the adapter/runtime builder passes as `profileFn`; zero-arg so

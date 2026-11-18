@@ -36,9 +36,11 @@ const CompatHttpTimeoutSec* = 120
   ## keeps the provider Bearer from being forwarded to another host.
 
 type
-  CompatProfileFn* = proc(): CompatProfile {.gcsafe, nimcall.}
-    ## A top-level constructor, never a closure: it returns a fresh profile
-    ## (and fresh JsonNodes) on every call.
+  CompatProfileFn* = proc(): CompatProfile {.gcsafe.}
+    ## A gcsafe constructor that returns a fresh profile (and fresh JsonNodes)
+    ## on every call. A closure is allowed because the per-model choice (the
+    ## Fireworks reasoning_off allowlist) is captured; only the proc pointer
+    ## crosses into the adapter, never a JsonNode.
 
   CompatAdapter* = object
     apiKey*:       string

@@ -124,3 +124,40 @@ suite "fireworks provider bundle":
     check fireworksCompatProfile().endpoint == descriptorOr("fireworks").baseUrl
     check fireworksCompatProfile().supportsImages == FireworksSupportsImages
     check not fireworksCompatProfile().supportsImages
+
+suite "fireworks reasoning_effort allowlist (review E2)":
+  ## Review E2: reasoning_effort: "none" is not accepted by every Fireworks
+  ## model. Muse Spark Open rejects the value even with reasoning off, so the
+  ## off switch is an allowlist: a model that is not on it gets no effort field.
+
+  test "a model that accepts the off value keeps the off switch":
+    check DefaultModelFireworks in FireworksReasoningNoneModels
+    var cap = Capture()
+    let res = completeThroughPort(
+      ProviderSpec(providerName: "fireworks", apiKey: "fw-test",
+                   modelName: DefaultModelFireworks),
+      CompletionRequest(reasoning: false), cap)
+    require res.isOk
+    check parseJson(cap.body)["reasoning_effort"].getStr() == "none"
+
+  test "Muse Spark Open is off the allowlist by default model name":
+    check MuseSparkOpenModel notin FireworksReasoningNoneModels
+
+  test "Muse Spark Open never receives reasoning_effort, off or on":
+    for reasoning in [false, true]:
+      var cap = Capture()
+      let res = completeThroughPort(
+        ProviderSpec(providerName: "fireworks", apiKey: "fw-test",
+                     modelName: MuseSparkOpenModel),
+        CompletionRequest(reasoning: reasoning), cap)
+      require res.isOk
+      let body = parseJson(cap.body)
+      check body["model"].getStr() == MuseSparkOpenModel
+      check not body.hasKey("reasoning_effort")
+      check not body.hasKey("include_reasoning")
+
+  test "the off extras are per model, not per profile":
+    check fireworksReasoningOffExtrasFor(DefaultModelFireworks) ==
+          %* {"reasoning_effort": "none"}
+    check fireworksReasoningOffExtrasFor(MuseSparkOpenModel).isNil
+    check fireworksReasoningOffExtrasFor("accounts/fireworks/models/x").isNil
