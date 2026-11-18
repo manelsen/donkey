@@ -401,11 +401,13 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
     result =
       result |>->
       withToolResult(tc, toolResult.text, toolResult.resultKind, toolResult.newHistory)
-    if tc.name == AskToolName and toolResult.text == AskInterruptedText:
-      ## The ingress cancelled the open ask for a new API turn. Stop before the
-      ## next tool so this turn cannot block on a second question.
+    if tc.name == AskToolName and toolResult.text == AskInterruptedText and
+       toolResult.resultKind == trkOperationalError:
+      ## The ingress cancelled the open ask for a new API turn. Stop the batch
+      ## and the turn: the next round could ask again and block the new turn.
+      result.askInterrupted = true
       for j in i + 1 ..< toolCalls.len:
-        result = result |->
+        result = result |->>
           withToolResult(toolCalls[j], AskInterruptedText,
                          trkOperationalError, none(ConversationHistory))
       break
