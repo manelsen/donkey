@@ -16,14 +16,17 @@
 ## unauthenticated endpoint is ever exposed.
 
 import std/[atomics, base64, json, monotimes, net, os, posix, strutils, tables, times]
-import nimcrypto/[bcmode, hmac, rijndael, sha2]
+import nimcrypto/[bcmode, rijndael, sha2]
 import ../../core/log
 import ../../core/pipeops
+import ../../core/security/webhook_auth
 import ../channel/slack
 import ../channel/feishu
 import ../channel/dingtalk
 import ../channel/matrix
 import ../channel/whatsapp
+
+export webhook_auth
 
 const
   SlackPath*    = "/webhook/slack"
@@ -84,26 +87,7 @@ func badRequest(): WebhookResponse = plainResp(400, "bad request")
 func methodNotAllowed(): WebhookResponse = plainResp(405, "method not allowed")
 func serviceUnavailable(): WebhookResponse = plainResp(503, "server busy")
 
-# ── Crypto / comparison helpers ───────────────────────────────────────────────
-
-func safeEquals*(a, b: string): bool =
-  ## Constant-time-ish comparison for secrets and MACs.
-  if a.len != b.len:
-    return false
-  var diff = 0
-  for i in 0 ..< a.len:
-    diff = diff or (ord(a[i]) xor ord(b[i]))
-  diff == 0
-
-func hmacSha256Hex*(key, data: string): string =
-  ($sha256.hmac(key, data)).toLowerAscii()
-
-func hmacSha256Base64*(key, data: string): string =
-  let digest = sha256.hmac(key, data)
-  var raw = newString(digest.data.len)
-  for i, b in digest.data:
-    raw[i] = char(b)
-  base64.encode(raw)
+# ── Request helpers ───────────────────────────────────────────────────────────
 
 func header*(req: WebhookRequest; name: string): string =
   req.headers.getOrDefault(name.toLowerAscii())
