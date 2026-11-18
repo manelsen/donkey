@@ -36,6 +36,7 @@ type DispatchMode = enum
   dmToolThenFinal
   dmTwoPartialsThenFinal
   dmPartialThenError
+  dmHugeFinal
 
 var fakeBridge {.threadvar.}: ChatBridge
 var dispatched {.threadvar.}: seq[InboundMessage]
@@ -85,6 +86,10 @@ proc fakeDispatch(msg: InboundMessage) {.gcsafe.} =
                                partial = true, inputTokens = 5, outputTokens = 3)
     deliverToBridge(msg.userId, finalText, rkFinalAnswer,
                                inputTokens = 11, outputTokens = 7)
+  of dmHugeFinal:
+    deliverToBridge(msg.userId,
+                    repeat('x', MaxTurnBufferBytes + 64), rkFinalAnswer,
+                    inputTokens = 11, outputTokens = 7)
   of dmPartialThenError:
     deliverToBridge(msg.userId, "parcial", rkFinalAnswer,
                                partial = true, inputTokens = 3, outputTokens = 2)
@@ -413,6 +418,23 @@ suite "UsageTotals":
     check state.usage.outputTokens == 0
 
 # ── streaming (US-003) ────────────────────────────────────────────────────────
+
+suite "truncation":
+
+  test "a final over the buffer cap reports finish_reason length":
+    resetFakes()
+    dispatchMode = dmHugeFinal
+    let reply = run(bodyFor("alice", "oi"))
+    check reply.status == 200
+    check parseJson(reply.body)["choices"][0]["finish_reason"].getStr() == "length"
+
+  test "the SSE final chunk reports finish_reason length":
+    resetStream()
+    dispatchMode = dmHugeFinal
+    let result = runStream(bodyFor("alice", "oi"))
+    check result.outcome == asCompleted
+    let nodes = streamNodes()
+    check nodes[^1]["choices"][0]["finish_reason"].getStr() == "length"
 
 suite "runAgentStream SSE":
 

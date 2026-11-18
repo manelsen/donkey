@@ -164,6 +164,7 @@ proc runAgentChat*(body: string;
 
   var terminal: ChatBridgeEvent
   var haveTerminal = false
+  var truncated = false
   while true:
     let batch = bridge.poll(request.userId)
     case batch.status
@@ -172,6 +173,7 @@ proc runAgentChat*(body: string;
       ## waiting for the one event that closes the turn.
       discard
     of cbpDone:
+      truncated = batch.truncated
       for event in batch.events:
         if event.isTerminalEvent:
           terminal = event
@@ -201,6 +203,9 @@ proc runAgentChat*(body: string;
       created      = created,
       inputTokens  = terminal.inputTokens,
       outputTokens = terminal.outputTokens,
+      # A terminal over the bridge buffer cap is clipped; presenting it as
+      # `stop` would claim the answer is complete.
+      finishReason = if truncated: "length" else: "stop",
     ),
   )
 
@@ -381,6 +386,8 @@ proc runAgentStream*(body: string;
         if finished or errored or clientGone:
           break
     of cbpDone:
+      if batch.truncated:
+        finishReason = "length"
       for event in batch.events:
         handleEvent(event)
         if finished or errored or clientGone:

@@ -125,6 +125,37 @@ suite "ChatBridge lifecycle":
     fakeNow += MaxOrphanTtlMs
     check bridge.register(uid, timeoutMs = 5000).isOk
 
+  test "the orphan TTL replaces the turn deadline":
+    ## Abandoning at t=0 must reserve the key for MaxOrphanTtlMs, not keep the
+    ## original 5 s deadline: at t=10 s the key is still busy.
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    check bridge.register(uid, timeoutMs = 5000).isOk
+    check bridge.abandon(uid)
+    fakeNow += 10_000
+    check bridge.register(uid).isErr
+    fakeNow += MaxOrphanTtlMs
+    check bridge.register(uid).isOk
+
+  test "abandon after the terminal frees the key instead of holding it":
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    check bridge.register(uid, timeoutMs = 5000).isOk
+    check bridge.deliver(apiMsg("resposta"))
+    # The client left after the answer was already produced: nothing to
+    # preserve, and the key must not stay reserved for the whole TTL.
+    check not bridge.abandon(uid)
+    check bridge.register(uid, timeoutMs = 5000).isOk
+
+  test "an expired turn that was never polled is reclaimed after the TTL":
+    let bridge = newBridge()
+    let uid = UserId("api:alice")
+    check bridge.register(uid, timeoutMs = 5000).isOk
+    fakeNow += 10_000            # past the deadline, no poll, no abandon
+    check bridge.register(uid).isErr
+    fakeNow += MaxOrphanTtlMs
+    check bridge.register(uid).isOk
+
   test "poll on an unknown user is missing":
     let bridge = newBridge()
     check bridge.poll(UserId("api:nobody")).status == cbpMissing

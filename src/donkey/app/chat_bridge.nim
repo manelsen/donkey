@@ -154,6 +154,14 @@ proc register*(bridge: ChatBridge; userId: UserId;
       if orphanExpired(bridge.pending[key], bridge.nowFn()):
         bridge.pending.del(key)
       else:
+        # A worker that died after `register` never abandoned and never
+        # polled: without this the key would stay busy until a process
+        # restart. Reserve it for the orphan TTL instead, so a late terminal
+        # is still discarded but the lockout is bounded.
+        let entry = bridge.pending[key]
+        if not entry.orphaned and entry.deadlineMs > 0 and
+            bridge.nowFn() >= entry.deadlineMs:
+          bridge.markOrphaned(key)
         return err(ChatBridgeError(
           kind: cbeBusy,
           message: "a turn is already pending for " & key,
@@ -280,6 +288,12 @@ proc abandon*(bridge: ChatBridge; userId: UserId): bool =
   acquire(bridge.lock)
   try:
     if not bridge.pending.hasKey(key):
+      return false
+    if bridge.pending[key].finished:
+      # The terminal answer is already buffered and the client is gone:
+      # nothing can consume it, so free the key now instead of holding it for
+      # the whole orphan TTL.
+      bridge.pending.del(key)
       return false
     if bridge.pending[key].orphaned:
       if orphanExpired(bridge.pending[key], bridge.nowFn()):
