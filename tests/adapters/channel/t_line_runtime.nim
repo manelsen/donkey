@@ -8,10 +8,11 @@
 ##   - only `/continue` is handled locally; everything else is the session
 ##     fallback.
 
-import std/[json, os, strutils, tables, unittest]
+import std/[json, options, os, strutils, tables, times, unittest]
 import donkey/adapters/channel/line
 import donkey/adapters/channel/line_runtime
 import donkey/app/session_manager
+import donkey/core/identity/link_codes
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/domain/channels/line_policy
@@ -268,3 +269,89 @@ suite "LINE runtime — routing agreement and local commands":
 
     check inbound.len == 1
     check inbound[0].text == "/help"
+
+suite "LINE runtime — shared link codes":
+
+  setup:
+    var stale = newAdapter()
+    drainQueue(stale)
+
+  test "a code minted by the Telegram resolver links a LINE identity":
+    ## F1: `/mycode` on Telegram and `/continue` on LINE use different
+    ## resolvers built from the same identity file. Sharing the path must share
+    ## the pending-code table, so a code minted on one channel is redeemable on
+    ## the other in the same process.
+    let path = LineTmp / "shared_codes_telegram_line.tsv"
+    removeFile(path)
+    let tg = newIdentityResolver(path)
+    let target = tg.resolve(ckTelegram, "460001")
+    let code = tg.generateLinkCode(target)
+
+    let f = FakeHttp()
+    var ln = newLineAdapter("test-channel-access-token", path,
+                            apiBase = "https://line.test", http = fake(f))
+    var sm: SessionManager
+    sm.init()
+    var replay = LineReplayCache()
+    var inbound: seq[InboundMessage] = @[]
+    let fallback = proc(msg: InboundMessage) {.gcsafe.} =
+      {.cast(gcsafe).}:
+        inbound.add(msg)
+
+    pushEvent(dmPayload("evt-shared-link", "/continue " & code))
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, rtLog)
+
+    check inbound.len == 0
+    check f.calls.len == 1
+    check parseJson(f.calls[0])["messages"][0]["text"].getStr.contains("reconectada")
+    check ln.resolver.lookup(ckLine, DmUser) == some(target)
+
+  test "a shared link code is single-use":
+    let path = LineTmp / "shared_codes_single_use.tsv"
+    removeFile(path)
+    let tg = newIdentityResolver(path)
+    let target = tg.resolve(ckTelegram, "460002")
+    let code = tg.generateLinkCode(target)
+
+    let f = FakeHttp()
+    var ln = newLineAdapter("test-channel-access-token", path,
+                            apiBase = "https://line.test", http = fake(f))
+    var sm: SessionManager
+    sm.init()
+    var replay = LineReplayCache()
+    let fallback = proc(msg: InboundMessage) {.gcsafe.} = discard
+
+    pushEvent(dmPayload("evt-shared-first", "/continue " & code))
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, rtLog)
+    check f.calls.len == 1
+    check parseJson(f.calls[0])["messages"][0]["text"].getStr.contains("reconectada")
+    check ln.resolver.lookup(ckLine, DmUser) == some(target)
+
+    pushEvent(dmPayload("evt-shared-second", "/continue " & code))
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, rtLog)
+    check f.calls.len == 2
+    check parseJson(f.calls[1])["messages"][0]["text"].getStr.contains("inválido")
+    check not ln.resolver.consumeLinkCode(code, ckLine, "Usecond-redemption")
+
+  test "an expired shared link code is rejected":
+    let path = LineTmp / "shared_codes_expired.tsv"
+    removeFile(path)
+    let target = UserId("expired-link-target")
+    let code = sharedLinkCodeService(path).mint(
+      target,
+      now = getTime() - initDuration(seconds = LinkCodeTtlSec + 1))
+
+    let f = FakeHttp()
+    var ln = newLineAdapter("test-channel-access-token", path,
+                            apiBase = "https://line.test", http = fake(f))
+    var sm: SessionManager
+    sm.init()
+    var replay = LineReplayCache()
+    let fallback = proc(msg: InboundMessage) {.gcsafe.} = discard
+
+    pushEvent(dmPayload("evt-shared-expired", "/continue " & code))
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback, rtLog)
+
+    check f.calls.len == 1
+    check parseJson(f.calls[0])["messages"][0]["text"].getStr.contains("inválido")
+    check ln.resolver.lookup(ckLine, DmUser) != some(target)

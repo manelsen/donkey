@@ -383,6 +383,24 @@ suite "channel DM gate — runtime drains":
 
 suite "shared DM gate":
 
+  test "a code minted by one channel resolver is redeemable by another":
+    ## F1: `/mycode` and `/continue` on different channels build separate
+    ## resolvers over the same identity file. They must share the pending-code
+    ## table, not only the path.
+    let dir = GateTmp / "shared-code-table"
+    removeDir(dir)
+    createDir(dir)
+    let path = dir / "identities.tsv"
+    let tg = newIdentityResolver(path)
+    let ln = newIdentityResolver(path)
+    let target = tg.resolve(ckTelegram, "700010")
+    let code = tg.generateLinkCode(target)
+
+    check linkTargetFor(ln.identityGate(), ckLine, "/continue " & code) == some(target)
+    check ln.consumeLinkCode(code, ckLine, "line-700010")
+    check ln.lookup(ckLine, "line-700010").get == target
+    check not ln.consumeLinkCode(code, ckLine, "line-700011")
+
   test "unknown sender may link a new identity with /continue for an authorized account":
     let dir = GateTmp / "shared-link"
     removeDir(dir)
