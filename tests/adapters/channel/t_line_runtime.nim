@@ -11,6 +11,7 @@
 import std/[json, options, os, strutils, tables, times, unittest]
 import donkey/adapters/channel/common_runtime
 import donkey/adapters/channel/line
+import donkey/adapters/channel/line_outbox
 import donkey/adapters/channel/line_runtime
 import donkey/app/session_manager
 import donkey/core/identity/link_codes
@@ -562,3 +563,107 @@ suite "LINE runtime — /continue resolves through the link-code seam":
 
     check tg.consumeLinkCode(code, ckTelegram, "460103") == true
     check tg.lookup(ckTelegram, "460103") == some(target)
+
+proc enqueueOf(q: LineReplyQueue): proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
+  ## The drain's callback shape; the queue itself never posts.
+  result = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
+    q.enqueueReply(msg)
+
+suite "LINE runtime — /continue replies never block the drain":
+  ## F2: the drain runs on the daemon loop. A LINE POST can wait up to the
+  ## 30 s transport timeout, and today the wait happens while the reply is
+  ## delivered on that same loop, stalling Telegram and the scheduler. The
+  ## confirmation must be handed to a queue the daemon drains, with a reply
+  ## target, instead of being sent inline.
+
+  test "enqueueing a /continue reply performs no transport call":
+    let path = LineTmp / "f2_no_inline_post.tsv"
+    removeFile(path)
+    let target = UserId("f2-target")
+    let code = sharedLinkCodeService(path).mint(target)
+
+    let f = FakeHttp()
+    var ln = newLineAdapter("test-channel-access-token", path,
+                            apiBase = "https://line.test", http = fake(f))
+    var sm: SessionManager
+    sm.init()
+    var replay = LineReplayCache()
+    let fallback = proc(msg: InboundMessage) {.gcsafe.} = discard
+    var queue = newLineReplyQueue()
+    defer: queue.deinit()
+
+    pushEvent(dmPayload("evt-f2-enqueue", "/continue " & code))
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
+                            enqueueOf(queue), rtLog)
+
+    check f.calls.len == 0
+    check queue.len == 1
+
+  test "the queued reply keeps the conversation and delivers later":
+    let path = LineTmp / "f2_delivers_later.tsv"
+    removeFile(path)
+    let code = sharedLinkCodeService(path).mint(UserId("f2-deliver"))
+
+    let f = FakeHttp()
+    var ln = newLineAdapter("test-channel-access-token", path,
+                            apiBase = "https://line.test", http = fake(f))
+    var sm: SessionManager
+    sm.init()
+    var replay = LineReplayCache()
+    let fallback = proc(msg: InboundMessage) {.gcsafe.} = discard
+    var queue = newLineReplyQueue()
+    defer: queue.deinit()
+
+    let lineUser = ln.resolver.resolve(ckLine, DmUser)
+    pushEvent(dmPayload("evt-f2-later", "/continue " & code))
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
+                            enqueueOf(queue), rtLog)
+
+    check queue.len == 1
+    check f.calls.len == 0
+    check queue.deliverQueuedReplies(ln) == 1
+    check queue.len == 0
+    check f.calls.len == 1
+    let body = parseJson(f.calls[0])
+    check body["to"].getStr == DmUser
+    check body["messages"][0]["text"].getStr == buildContinueResultText(true)
+    discard lineUser
+
+  test "a full reply queue fails the enqueue without posting or aborting the batch":
+    let path = LineTmp / "f2_full.tsv"
+    removeFile(path)
+    let f = FakeHttp()
+    var ln = newLineAdapter("test-channel-access-token", path,
+                            apiBase = "https://line.test", http = fake(f))
+    var sm: SessionManager
+    sm.init()
+    var replay = LineReplayCache()
+    var inbound: seq[InboundMessage] = @[]
+    let fallback = proc(msg: InboundMessage) {.gcsafe.} =
+      {.cast(gcsafe).}:
+        inbound.add(msg)
+    check f.calls.len == 0
+    ## No capacity argument here: the queue must expose its own bound so the
+    ## drain never grows it past what the daemon agreed to hold.
+    var queue = newLineReplyQueue()
+    defer: queue.deinit()
+    for i in 0 ..< queue.capacity():
+      check queue.enqueueReply(
+        OutboundMessage(userId: UserId("x"), text: "filler " & $i)).isOk
+
+    pushEvent(dmPayload("evt-f2-full-continue", "/continue ABCD1234"))
+    pushEvent(dmPayload("evt-f2-full-after", "still here"))
+    discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
+                            enqueueOf(queue), rtLog)
+
+    check queue.len == queue.capacity()
+    check inbound.len == 1
+    check inbound[0].text == "still here"
+    check f.calls.len == 0
+    check not ln.tryRecvEvent()[0]
+
+  test "a nil queue is refused rather than posted inline":
+    var queue: LineReplyQueue
+    check queue.enqueueReply(OutboundMessage(userId: UserId("x"), text: "t")).isErr
+    check queue.len == 0
+    check queue.deliverQueuedReplies(LineAdapter()) == 0
