@@ -9,6 +9,8 @@
 #   bash scripts/run_tests.sh tests/ports   # Run only tests under tests/ports
 #   bash scripts/run_tests.sh tests/ports/t_channel.nim # Run single test
 #   JOBS=1 bash scripts/run_tests.sh        # Serial execution (for debugging)
+#   SHARD_INDEX=2 SHARD_TOTAL=4 bash scripts/run_tests.sh
+#                                           # Run only shard 2 of 4 (sorted paths)
 #
 # Exit code: 0 if all tests pass, non-zero otherwise.
 
@@ -174,12 +176,29 @@ for target in "${TARGETS[@]}"; do
 done
 TARGETS=("${normalized_targets[@]}")
 
+SHARD_TOTAL="${SHARD_TOTAL:-1}"
+SHARD_INDEX="${SHARD_INDEX:-1}"
+if ! [[ "$SHARD_TOTAL" =~ ^[1-9][0-9]*$ ]] || ! [[ "$SHARD_INDEX" =~ ^[1-9][0-9]*$ ]]; then
+  echo "SHARD_TOTAL/SHARD_INDEX must be positive integers" >&2
+  exit 2
+fi
+if [ "$SHARD_INDEX" -gt "$SHARD_TOTAL" ]; then
+  echo "SHARD_INDEX ($SHARD_INDEX) exceeds SHARD_TOTAL ($SHARD_TOTAL)" >&2
+  exit 2
+fi
+
+mapfile -t files < <(find "${TARGETS[@]}" -name "*.nim" | sort)
+if [ "$SHARD_TOTAL" -gt 1 ] && [ "${#files[@]}" -gt 0 ]; then
+  mapfile -t files < <(printf '%s\n' "${files[@]}" |
+    awk -v i="$SHARD_INDEX" -v n="$SHARD_TOTAL" '((NR - 1) % n) + 1 == i')
+fi
+
 idx=0
 items=()
-while IFS= read -r f; do
+for f in "${files[@]}"; do
   idx=$((idx + 1))
   items+=("$f" "$TMP_DIR" "$idx")
-done < <(find "${TARGETS[@]}" -name "*.nim" | sort)
+done
 
 if [ "$idx" -eq 0 ]; then
   echo "No test files found for targets: ${TARGETS[*]}"
