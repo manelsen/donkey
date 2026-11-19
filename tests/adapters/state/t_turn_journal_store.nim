@@ -545,24 +545,28 @@ suite "turn journal durability":
     let other = newTurnJournalStore(dir)
     check other.commitIfTerminal("turn-1", stamp).isErr
 
-    ## `append` of a duplicate commit is a no-op, but it must not confirm the
-    ## commit while the frame is still unconfirmed.
+    ## A duplicate commit must not report success while the frame is
+    ## unconfirmed, and no retry may append a second commit frame.
     check other.append("turn-1", TurnEvent(kind: tevCommitted), stamp).isErr
-
-    ## The retries must not append a second commit frame.
     var commits = 0
     for line in journalLines(store):
       if "\"tevCommitted\"" in line:
         inc commits
     check commits == 1
 
-    ## Once the fsync succeeds the frame is confirmed and the earlier call is
-    ## recognised as the writer (`false` = already committed, not written now).
-    let confirmed = store.commitIfTerminal("turn-1", stamp)
-    check confirmed.isOk
-    check confirmed.get() == false
-    check newTurnJournalStore(dir).loadById("turn-1").get().get().phase ==
-      tpsCommitted
+    ## No caller in this process may report the commit as settled: only the
+    ## call that waits for the fsync may report it as persisted, and that call
+    ## already failed. A retry resyncs the bytes, but it is still not the
+    ## writer. Reporting `false` here would let the drainer close the turn
+    ## believing a commit nobody confirmed.
+    check store.commitIfTerminal("turn-1", stamp).isErr
+    check other.commitIfTerminal("turn-1", stamp).isErr
+    check other.append("turn-1", TurnEvent(kind: tevCommitted), stamp).isErr
+
+    ## A restart is the honest resolution: the writer is gone and the frame is
+    ## read back from disk, the same evidence every other frame rests on.
+    let restarted = newTurnJournalStore(dir)
+    check restarted.loadById("turn-1").get().get().phase == tpsCommitted
 
   test "the next append retries a tail whose fsync failed":
     let dir = freshDir("append_sync_retry")
@@ -581,12 +585,47 @@ suite "turn journal durability":
 
     ## A later append must first confirm the unsynced tail instead of writing
     ## on top of bytes whose durability was never established: one sync for
-    ## the retry plus one for the new frame.
+    ## the retry plus one for the new frame. Confirming the bytes is not the
+    ## same as the commit being reported as persisted: that stays `err` (B1).
     let callsBefore = gDataSyncCalls
     check store.append("turn-1",
       TurnEvent(kind: tevDeliveryAttempted, ownerEpochMs: stamp), stamp).isOk
     check gDataSyncCalls == callsBefore + 2
-    check store.commitIfTerminal("turn-1", stamp).get() == false
+    check store.commitIfTerminal("turn-1", stamp).isErr
+
+  test "only the confirming writer reports a visible commit as persisted":
+    let dir = freshDir("commit_writer")
+    defer: cleanup(dir)
+    resetSyncHook()
+    setTurnJournalSyncHook(testSyncHook)
+    defer: setTurnJournalSyncHook(nil)
+
+    let actor = newTurnJournalStore(dir)
+    let drainer = newTurnJournalStore(dir)
+    let stamp = 7_000_000'i64
+    check actor.append("turn-1", inbound("turn-1", "oi", stamp), stamp).isOk
+    terminalEvents(actor, "turn-1", stamp)
+
+    ## The drainer reaches the commit point first and fsyncs its frame itself.
+    let callsBefore = gDataSyncCalls
+    check drainer.commitIfTerminal("turn-1", stamp).get() == true
+    check gDataSyncCalls == callsBefore + 1
+
+    ## The actor's pending flags never saw that fsync, so it must not report the
+    ## commit as persisted (`false` asserts a persistence it cannot see). The
+    ## duplicate append is a no-op and appends nothing.
+    check actor.commitIfTerminal("turn-1", stamp).isOk
+    check actor.commitIfTerminal("turn-1", stamp).get() == false
+    check actor.append("turn-1", TurnEvent(kind: tevCommitted), stamp).isOk
+
+    ## No retry may append a second commit frame.
+    var commits = 0
+    for line in journalLines(actor):
+      if "\"tevCommitted\"" in line:
+        inc commits
+    check commits == 1
+    check newTurnJournalStore(dir).loadById("turn-1").get().get().phase ==
+      tpsCommitted
 
   test "a failed directory fsync is retried on the next append":
     let dir = freshDir("dir_sync_retry")
@@ -613,6 +652,41 @@ suite "turn journal durability":
     check store.append("t3", inbound("t3", "oi", stamp), stamp).isOk
     check dirSyncsFor(dir) == 3
     check store.loadById("t3").get().isSome
+
+  test "a pending rename is confirmed even when nothing else is written":
+    let dir = freshDir("rename_retry")
+    defer: cleanup(dir)
+    resetSyncHook()
+    setTurnJournalSyncHook(testSyncHook)
+    defer: setTurnJournalSyncHook(nil)
+
+    let store = newTurnJournalStore(dir)
+    let stamp = 8_000_000'i64
+    check store.append("old", inbound("old", "oi", stamp), stamp).isOk
+    terminalEvents(store, "old", stamp)
+    check store.commitIfTerminal("old", stamp).get() == true
+    check store.append("live", inbound("live", "oi", stamp), stamp).isOk
+
+    ## Compaction renames a new file over the journal, but the directory entry
+    ## is not confirmed. The rename is the only thing that made the new bytes
+    ## reachable, so it stays pending until a later call confirms it.
+    gDirSyncFailPath = dir
+    gDirSyncFailures = 1
+    check store.compact(200 * 24 * 60 * 60 * 1000'i64).isErr
+    let afterFail = dirSyncsFor(dir)
+
+    ## Nothing else to write: the journal has no new events and no turn left to
+    ## drop. The pending rename must still be confirmed by the next call, which
+    ## only has to write a directory entry.
+    let emptied = store.compact(200 * 24 * 60 * 60 * 1000'i64)
+    check emptied.isOk
+    check emptied.get() == false
+    check dirSyncsFor(dir) == afterFail + 1
+
+    ## And the journal is intact afterwards: the active turn was kept and the
+    ## old terminal the first pass dropped stays gone.
+    check store.loadById("live").get().isSome
+    check store.loadById("old").get().isNone
 
   test "creating the state directory fsyncs its parent":
     let root = freshDir("state_parent_sync")

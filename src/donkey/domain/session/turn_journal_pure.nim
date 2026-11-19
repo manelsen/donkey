@@ -18,7 +18,7 @@
 ## | CP-1/2 | accepted, rsBuffered, rdsNone | replay model once |
 ## | CP-3 | accepted, rsStreamed, rdsNone | abandon + notice |
 ## | CP-4 | replyReady, rsBuffered, rdsNone | enqueue the final once |
-## | CP-4-streamed (B4) | replyReady, rsStreamed, rdsNone | resend the final |
+## | CP-4-streamed (B4) | replyReady, rsStreamed, rdsNone | lost + notice |
 ## | CP-5 | replyReady, any source, rdsQueued | resend the final once |
 ## | CP-6/7 | replyReady, rdsAttempted/rdsFailed | reconcile/fail + notice |
 ## | CP-12 | committed | nothing (duplicate inbound) |
@@ -26,11 +26,14 @@
 ##
 ## CP-4-streamed decision: the final exists, but the partials were already
 ## published, so the user saw half an answer and the crash happened before the
-## outbox put.
-## Resending the stored final as a simple message is chosen over silence: one
-## possible duplicate after a crash is cheaper than a question that never gets
-## answered. The plan keeps `commit = false` (rdsNone is not terminal), never
-## sets `enqueueReply` (the outbox never saw this text) and never abandons.
+## outbox put. The reply is declared lost (`markLost` plus one notice) and is
+## never resent: once partials reached the channel the same text cannot be
+## proven undelivered, and a second copy of an answer the user is reading is a
+## visible bug on every crash. `commit = false` (rdsNone is not terminal),
+## `abandon = false` (only the reply is lost, not the turn) and
+## `enqueueReply = false` (the outbox never saw this text). `tevStreamedLost`
+## records the decision; the notice budget, not that event, keeps it from being
+## announced twice.
 ## CP-3 stays "nothing / abandon" because no final was produced at all: there
 ## is no text to resend, and replaying the model could duplicate partials.
 ## CP-4 (buffered) keeps `enqueueReply`: nothing reached the channel, so the
@@ -93,6 +96,7 @@ type
     tevDeliveryAttempted
     tevDelivered
     tevDeliveryFailed
+    tevStreamedLost    ## CP-4-streamed: the final was declared lost, not resent
     tevMemoryPending
     tevMemoryWritten
     tevMemorySkipped
@@ -132,9 +136,10 @@ type
     of tevDeliveryAttempted:
       ownerEpochMs*: int64
     of tevStreamStarted, tevReplyQueued, tevDelivered, tevDeliveryFailed,
-       tevMemoryPending, tevMemoryWritten, tevMemorySkipped, tevMemoryLost,
-       tevTranscriptPending, tevTranscriptSaved, tevTranscriptLost,
-       tevCommitted, tevAbandoned, tevRecoveryPass, tevRecoveryNotified:
+       tevStreamedLost, tevMemoryPending, tevMemoryWritten, tevMemorySkipped,
+       tevMemoryLost, tevTranscriptPending, tevTranscriptSaved,
+       tevTranscriptLost, tevCommitted, tevAbandoned, tevRecoveryPass,
+       tevRecoveryNotified:
       discard
 
   TurnEntry* = object
@@ -158,6 +163,7 @@ type
     phase*: TurnPhase
     replyDelivery*: ReplyDelivery
     replySource*: ReplySource
+    streamedLost*: bool     ## CP-4-streamed: the final after the partials
     memoryWrite*: MemoryWrite
     transcriptWrite*: TranscriptWrite
 
@@ -309,6 +315,11 @@ func applyTurnEvent*(previous: Option[TurnEntry],
   of tevDeliveryFailed:
     if entry.phase == tpsReplyReady and entry.replyDelivery == rdsAttempted:
       entry.replyDelivery = rdsFailed
+  of tevStreamedLost:
+    # Records the CP-4-streamed decision without touching delivery or phase.
+    if entry.phase == tpsReplyReady and entry.replyDelivery == rdsNone and
+       entry.replySource == rsStreamed:
+      entry.streamedLost = true
   of tevMemoryPending:
     if entry.memoryWrite == mwsNone:
       entry.memoryWrite = mwsPending
@@ -354,9 +365,16 @@ func applyTurnEvent*(previous: Option[TurnEntry],
 
   result = some(entry)
 
+func streamedFinalLost(entry: TurnEntry): bool =
+  ## CP-4-streamed and not yet recorded: the final of a streamed turn crashed
+  ## before the outbox put. See the CP-4-streamed decision at the top.
+  entry.phase == tpsReplyReady and entry.replySource == rsStreamed and
+    entry.replyDelivery == rdsNone and not entry.streamedLost
+
 func hasLostBranch(entry: TurnEntry): bool =
   entry.memoryWrite in {mwsNone, mwsPending} or
-    entry.transcriptWrite in {twsNone, twsPending}
+    entry.transcriptWrite in {twsNone, twsPending} or
+    streamedFinalLost(entry)
 
 func resumeDecision*(entry: TurnEntry): TurnResumePlan =
   ## Total decision over the product of `TurnPhase`, `ReplyDelivery`,
@@ -365,10 +383,10 @@ func resumeDecision*(entry: TurnEntry): TurnResumePlan =
   ## never performs the action. Duplicating an effect is worse than losing it:
   ## uncertain delivery is reconciled, pending memory/transcript are lost.
   ## `sendQueuedReply` resends a final that was already handed to the outbox
-  ## (buffered or streamed) **or** a streamed final that crashed before the
-  ## put (B4: the user already saw partials, so it is resent as a simple
-  ## message). `commit` is set only for a terminal-and-committable turn so the
-  ## caller can journal `tevCommitted`.
+  ## (buffered or streamed). A streamed final that crashed before the put
+  ## (CP-4-streamed) is never resent: it is declared lost, with `emitNotice`
+  ## and without `abandon`. `commit` is set only for a terminal-and-committable
+  ## turn so the caller can journal `tevCommitted`.
   result.turnId = entry.turnId
   if entry.phase == tpsCommitted:
     return
@@ -384,6 +402,9 @@ func resumeDecision*(entry: TurnEntry): TurnResumePlan =
   if entry.replyDelivery == rdsAttempted:
     result.reconcileDelivery = true
   if entry.replyDelivery in {rdsAttempted, rdsFailed} and mayNotice:
+    result.emitNotice = true
+  if streamedFinalLost(entry) and mayNotice:
+    # B4: partials reached the channel, so the final cannot be proven unseen.
     result.emitNotice = true
 
   # `attempts` counts recovery passes: ingress journals 0, the first pass sets
@@ -442,16 +463,12 @@ func resumeDecision*(entry: TurnEntry): TurnResumePlan =
     elif entry.replyDelivery == rdsNone and entry.replySource == rsStreamed:
       # CP-4-streamed / B4: the turn produced its final after streaming started
       # but crashed before `tevReplyQueued` (before `outbox.put`). The user
-      # already saw the partials, so silence is worse than a possible duplicate
-      # after the crash: resend the stored final as a simple message. It is
-      # never re-enqueued (the outbox never saw it) and never abandoned.
-      if entry.replyText.len > 0:
-        result.sendQueuedReply = true
-      else:
-        # Fail-closed: without the stored text there is nothing to resend.
-        result.abandon = true
-        if mayNotice:
-          result.emitNotice = true
+      # already saw the partials, so the final may have been seen too: it is
+      # declared lost (`markLost` above) and never resent or re-enqueued. The
+      # notice is set for every state of the stored text, so losing a final
+      # with empty text is not silent either. Nothing is planned here beyond
+      # that, which is why this branch is empty.
+      discard
   of tpsCommitted, tpsAbandoned:
     discard
 
@@ -465,9 +482,13 @@ func resumePlan*(entry: TurnEntry): TurnResumePlan =
 
 func recoveryNoticeText*(entry: TurnEntry; channel: string): string =
   ## One user-visible copy per turn, and only for a delivery that may have
-  ## happened or for an abandoned turn. Empty means "do not send anything".
+  ## happened, a streamed final declared lost or an abandoned turn. Empty
+  ## means "do not send anything".
   ## `channel` is accepted now so US-007 can vary the copy later without
   ## changing this interface; today the text is the same for every channel.
+  if streamedFinalLost(entry):
+    return "Não consegui confirmar a entrega da resposta completa. Para não " &
+      "repetir um texto que já apareceu parcialmente, não vou reenviá-la."
   if entry.phase != tpsAbandoned and
      entry.replyDelivery notin {rdsAttempted, rdsFailed}:
     return ""

@@ -364,19 +364,21 @@ suite "turn_journal_pure":
     check resumeDecision(cp3).emitNotice
 
     # CP-4 streamed (B4): the final exists and the partials were already
-    # published, so it is resent as a simple message; replay stays forbidden.
+    # published, so it is declared lost with a notice; replay stays forbidden.
     let cp4 = mkEntry(phase = tpsReplyReady, source = rsStreamed)
     check not resumeDecision(cp4).replayModel
     check not resumeDecision(cp4).enqueueReply
-    check resumeDecision(cp4).sendQueuedReply
-    check not resumeDecision(cp4).abandon
+    check not resumeDecision(cp4).sendQueuedReply
+    check resumeDecision(cp4).markLost
+    check resumeDecision(cp4).emitNotice
+    check not resumeDecision(cp4).commit
 
     # Same phase and delivery as CP-3, but buffered: replay is allowed.
     let cp1 = mkEntry(phase = tpsAccepted, source = rsBuffered)
     check resumeDecision(cp1).replayModel
     check not resumeDecision(cp1).abandon
 
-  test "CP-4/B4: buffered reply ready enqueues once, streamed resends":
+  test "CP-4/B4: buffered reply ready enqueues once, streamed is declared lost":
     let buffered = resumeDecision(mkEntry(phase = tpsReplyReady,
                                         source = rsBuffered))
     check buffered.enqueueReply
@@ -386,15 +388,16 @@ suite "turn_journal_pure":
     check not buffered.emitNotice
     check not buffered.commit
 
-    # B4: a streamed final that never reached the outbox is resent as a simple
-    # message. Silence would leave the user with the partials forever.
+    # B4: a streamed final that never reached the outbox is not resent. The
+    # user already saw partials, so a second copy would duplicate text they
+    # have; the reply is declared lost and the user is told.
     let streamed = resumeDecision(mkEntry(phase = tpsReplyReady,
                                         source = rsStreamed))
     check not streamed.enqueueReply
-    check streamed.sendQueuedReply
-    check not streamed.abandon
+    check not streamed.sendQueuedReply
     check streamed.markLost
-    check not streamed.emitNotice
+    check streamed.emitNotice
+    check not streamed.abandon
     check not streamed.commit
 
   test "CP-5: a queued reply is resent once for both sources":
@@ -417,37 +420,96 @@ suite "turn_journal_pure":
     check not streamed.abandon
     check not streamed.commit
 
-  test "B4: streamed final without queue is resent, not dropped":
+  test "B4: streamed final without queue is declared lost with a notice":
     # Crash between `tevReplyReady(rsStreamed)` and `tevReplyQueued`: the user
-    # already saw partial text and the final lives only in the journal. The
-    # answer is resent as a simple message instead of being lost; a possible
-    # duplicate after a crash is cheaper than permanent silence.
+    # already saw partial text and the final never reached the outbox. The
+    # conservative policy wins here: resending text the user may have seen
+    # half of duplicates it, so the reply is declared lost and an operator and
+    # the user can both see it instead of guessing.
     let plan = resumeDecision(mkEntry(phase = tpsReplyReady,
                                       source = rsStreamed,
                                       delivery = rdsNone))
-    check plan.sendQueuedReply
+    check not plan.sendQueuedReply
     check not plan.enqueueReply
-    check not plan.abandon
+    check plan.markLost
+    check plan.emitNotice
+    check not plan.abandon       # losing the reply is not abandoning the turn
     check not plan.reconcileDelivery
-    check plan.markLost          # the actor will not run again
-    check not plan.emitNotice    # nothing uncertain went out
     check not plan.commit        # rdsNone is never terminal
     check not plan.replayModel
 
-  test "B4: buffered final without queue keeps the enqueue path":
-    # The contrast that justifies resending only the streamed case: a buffered
-    # reply was never handed to the outbox and never reached the channel, so
-    # `sendQueuedReply` stays false (there is nothing to resend) and the
-    # ordinary `enqueueReply` path publishes the first copy, with no duplicate
-    # risk. A streamed final already has partials in the channel, so it must be
-    # resent instead of enqueued twice.
-    let plan = resumeDecision(mkEntry(phase = tpsReplyReady,
-                                      source = rsBuffered,
-                                      delivery = rdsNone))
-    check not plan.sendQueuedReply
-    check plan.enqueueReply
-    check not plan.abandon
-    check not plan.commit
+  test "B4: the streamed loss is planned once per notice budget":
+    var entry = mkEntry(phase = tpsReplyReady, source = rsStreamed,
+                        delivery = rdsNone)
+    check resumeDecision(entry).emitNotice
+    entry = withEvent(entry, simpleEvent(tevRecoveryNotified))
+    check not resumeDecision(entry).emitNotice
+
+    # Recording the loss is idempotent and never moves the turn.
+    var lost = mkEntry(phase = tpsReplyReady, source = rsStreamed,
+                       delivery = rdsNone)
+    lost = withEvent(lost, simpleEvent(tevStreamedLost))
+    check lost.streamedLost
+    check lost.phase == tpsReplyReady
+    check lost.replyDelivery == rdsNone
+    lost = withEvent(lost, simpleEvent(tevStreamedLost))
+    check lost.streamedLost
+    lost = withEvent(lost, simpleEvent(tevRecoveryNotified))
+    check not resumeDecision(lost).emitNotice
+
+  test "B4: the streamed loss stays inside the rdsNone window":
+    # A queued, attempted, sent or failed streamed reply keeps its own policy.
+    for delivery in [rdsQueued, rdsAttempted, rdsSent, rdsFailed]:
+      let plan = resumeDecision(mkEntry(phase = tpsReplyReady,
+                                        source = rsStreamed,
+                                        delivery = delivery))
+      check plan.markLost
+      if delivery == rdsQueued:
+        check plan.sendQueuedReply
+        check not plan.emitNotice
+      elif delivery == rdsAttempted:
+        check not plan.sendQueuedReply
+        check plan.reconcileDelivery
+        check plan.emitNotice
+      elif delivery == rdsSent:
+        check not plan.sendQueuedReply
+        check not plan.emitNotice
+      else:
+        check not plan.sendQueuedReply
+        check plan.emitNotice
+
+    # The buffered crash before the outbox is the one case that still takes
+    # its first copy: nothing reached the channel, so nothing can duplicate.
+    let buffered = resumeDecision(mkEntry(phase = tpsReplyReady,
+                                          source = rsBuffered,
+                                          delivery = rdsNone))
+    check buffered.enqueueReply
+    check not buffered.sendQueuedReply
+    check not buffered.emitNotice
+
+    # A streamed turn that died before producing its final is CP-3, not B4.
+    let cp3 = resumeDecision(mkEntry(phase = tpsAccepted,
+                                     source = rsStreamed))
+    check cp3.abandon
+    check cp3.emitNotice
+
+  test "B4: the streamed loss has its own recovery notice":
+    let lost = mkEntry(phase = tpsReplyReady, source = rsStreamed,
+                       delivery = rdsNone)
+    let text = recoveryNoticeText(lost, "telegram")
+    check text.len > 0
+    check text != recoveryNoticeText(mkEntry(phase = tpsReplyReady,
+                                             delivery = rdsAttempted),
+                                     "telegram")
+    check text != recoveryNoticeText(mkEntry(phase = tpsAbandoned),
+                                     "telegram")
+
+    # The other states keep the old notice rules.
+    check recoveryNoticeText(mkEntry(phase = tpsReplyReady,
+                                   delivery = rdsNone), "telegram").len == 0
+    check recoveryNoticeText(mkEntry(phase = tpsReplyReady,
+                                   source = rsStreamed,
+                                   delivery = rdsQueued), "telegram").len == 0
 
   test "CP-6/CP-7: an attempted delivery is failed, never resent":
     for delivery in [rdsAttempted, rdsFailed]:
@@ -669,13 +731,15 @@ suite "turn_journal_pure":
                                     memory = mwsSkipped, transcript = twsLost))
     check not queued.commit
     check queued.sendQueuedReply
-    # B4: a streamed final resent from `rdsNone` closes nothing either.
+    # B4: a streamed final declared lost from `rdsNone` closes nothing either.
     let streamed = resumePlan(mkEntry(phase = tpsReplyReady,
                                       delivery = rdsNone,
                                       source = rsStreamed,
                                       memory = mwsWritten,
                                       transcript = twsSaved))
-    check streamed.sendQueuedReply
+    check streamed.markLost
+    check streamed.emitNotice
+    check not streamed.sendQueuedReply
     check not streamed.commit
 
   test "pin: a queued reply never triggers a delivery notice":
@@ -726,15 +790,15 @@ suite "turn_journal_pure":
     check decision.abandon
     check decision.emitNotice
 
-    # B4 resend is fail-closed too: without the stored text there is nothing to
-    # resend, so the turn is abandoned with a notice instead of sending "".
+    # B4 fails closed the same way: the loss is declared and noticed, never a
+    # send of "", and the turn stays out of `tpsCommitted`.
     let streamed = resumeDecision(mkEntry(phase = tpsReplyReady,
                                          delivery = rdsNone,
                                          source = rsStreamed,
                                          replyText = ""))
     check not streamed.sendQueuedReply
     check not streamed.enqueueReply
-    check streamed.abandon
+    check streamed.markLost
     check streamed.emitNotice
     check not streamed.commit
 
@@ -778,12 +842,21 @@ suite "turn_journal_pure":
 
               if first.sendQueuedReply:
                 check phase == tpsReplyReady
-                # CP-5 (queued) and B4 (streamed but never queued).
-                check delivery == rdsQueued or
-                      (delivery == rdsNone and e.replySource == rsStreamed)
+                check delivery == rdsQueued
                 check e.replyText.len > 0
                 check not first.enqueueReply
                 check not first.abandon
+                check not first.commit
+
+              if phase == tpsReplyReady and delivery == rdsNone and
+                 e.replySource == rsStreamed:
+                # B4: the ambiguous streamed final is never resent or enqueued.
+                check not first.sendQueuedReply
+                check not first.enqueueReply
+                check first.markLost
+                check first.emitNotice
+                check not first.abandon
+                check not first.reconcileDelivery
                 check not first.commit
 
               check first.commit == (isTurnTerminal(e) and
@@ -795,7 +868,10 @@ suite "turn_journal_pure":
 
               if first.emitNotice:
                 check e.replyDelivery in {rdsAttempted, rdsFailed} or
-                      first.abandon or e.phase == tpsAbandoned
+                      first.abandon or e.phase == tpsAbandoned or
+                      (phase == tpsReplyReady and delivery == rdsNone and
+                       e.replySource == rsStreamed and
+                       e.notices < MaxNotices)
 
               if phase == tpsAbandoned and e.notices >= MaxNotices:
                 check not first.emitNotice
