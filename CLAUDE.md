@@ -227,6 +227,7 @@ src/donkey/
   domain/     ← lógica de negócio pura (func only), zero side effects
   ports/      ← concepts Nim (ChannelPort, ProviderPort, MemoryPort, ToolPort, …)
   app/        ← shell de casos de uso: lifecycle, actors, queues, wiring (Chronos)
+  bootstrap/  ← composition root: wiring/init extraído do entrypoint; único lugar (com src/donkey.nim) que pode importar adapters
   adapters/   ← I/O boundary: channel, provider, memory, tool, http, secrets, ipc
   infra/      ← sandbox: Docker, WASM, limits, paddock layout
   config/     ← DonkeyConfig, loader TOML, skills/clawhub registry
@@ -241,6 +242,7 @@ Estas regras agora são enforced por `scripts/check_boundaries.sh` e `tests/arch
 - `core` não importa `adapters/*`, `chronos`, `chronos/asyncsync`, `osproc`, `httpclient` nem `parsetoml`
 - `ports` definem capacidades estáveis; não importam `adapters/*` nem `app/*`
 - `app` é shell de casos de uso: lifecycle, actors, queues, streaming, polling, wiring
+- `bootstrap` é o composition root extraído do entrypoint: pode importar `adapters/*`, `app/*` e `config/*`; não recebe lógica de negócio nova
 - `adapters` traduzem I/O externo para `ports`; não carregam semântica cross-channel ou decisão de negócio
 
 Checklist de refactor/PR:
