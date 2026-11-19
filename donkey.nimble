@@ -8,6 +8,9 @@ binDir      = "."
 bin         = @["donkey"]
 
 # Dependencies
+# CI pins Nim 2.2.12: 2.2.14/2.4.x SIGSEGV under --mm:orc when a built-in
+# Channel carries GC-managed values (provider executor); the dependency set is
+# not the cause. Keep >= 2.0.0 so the Alpine Docker image still resolves.
 requires "nim >= 2.0.0"
 requires "chronos >= 4.4.1"
 requires "nimcrypto >= 0.7.3"

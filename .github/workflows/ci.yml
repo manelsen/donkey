@@ -11,6 +11,12 @@ on:
 permissions:
   contents: read
 
+env:
+  # 2.2.14/2.4.x SIGSEGV under ORC when a built-in Channel carries GC-managed
+  # values (provider executor). The cache key includes this version so artifacts
+  # from another compiler are never restored.
+  NIM_VERSION: '2.2.12'
+
 jobs:
   test-and-build:
     name: Build & Test
@@ -41,9 +47,7 @@ jobs:
       - name: Set up Nim
         uses: jiro4989/setup-nim-action@v2
         with:
-          # 2.2.14/2.4.x SIGSEGV under ORC when a Channel carries GC-managed
-          # values (provider executor); 2.2.12 is the newest passing compiler.
-          nim-version: '2.2.12'
+          nim-version: ${{ env.NIM_VERSION }}
 
       - name: Cache Nim & Nimble artifacts
         uses: actions/cache@v4
@@ -51,9 +55,9 @@ jobs:
           path: |
             ~/.nimble
             ~/.cache/nim
-          key: ${{ runner.os }}-nim-cache-${{ hashFiles('donkey.nimble') }}
+          key: ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-${{ hashFiles('donkey.nimble') }}
           restore-keys: |
-            ${{ runner.os }}-nim-cache-
+            ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-
 
       - name: Install Nim dependencies
         run: |
@@ -87,8 +91,6 @@ jobs:
     runs-on: ubuntu-latest
     container: quay.io/pypa/manylinux_2_28_x86_64
     env:
-      # 2.2.14/2.4.x crash in the provider executor under ORC; see the test job.
-      NIM_VERSION: '2.2.12'
       MAX_GLIBC: '2.28'
 
     steps:

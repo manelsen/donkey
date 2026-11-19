@@ -45,7 +45,7 @@ proc pkgParts(dirName: string): tuple[name, version: string] =
   if verDash < 0:
     return ("", "")
   let ver = rest[verDash + 1 .. ^1]
-  if ver.len == 0 or ver[0] notin {'0'..'9'} or '.' notin ver:
+  if ver.len == 0 or ver[0] notin {'0'..'9'}:
     return ("", "")
   (rest[0 ..< verDash], ver)
 
