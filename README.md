@@ -330,6 +330,30 @@ python3 scripts/compare_test_reports.py /tmp/tests-before /tmp/tests-after
 >
 > PostgreSQL/Age tests and in-process wasm3 (`t_wasm.nim`) are excluded by default in `scripts/run_tests.sh`. WASM applet and shell composer suites run automatically when `~/.donkey/busybox` and `wasmtime` are present on the host.
 
+### Test runner performance
+
+Measured with Nim 2.2.12, `JOBS=4`, the same checkout and the same test
+fixtures. Cold runs used separate empty `XDG_CACHE_HOME` trees; warm runs
+reused them.
+
+| Mode | Cold | Warm | Compilations (cold) |
+|---|---:|---:|---:|
+| `TEST_RUNNER=legacy` | 730.76 s | 92.04 s | 294 |
+| `grouped` (4 groups, default) | 233.31 s | 48.68 s | 20 |
+
+The original target was **3×** in both scenarios. The default grouped mode
+reaches **3.13× cold** and **1.89× warm**. The warm ceiling is the remaining
+test runtime after the orchestrator debounce fixture, not scheduling; this
+delivery accepts a 4-minute cold and 1-minute warm ceiling.
+
+The gcov audit compiled both modes with
+`--lineDir:on --passC:--coverage --passL:--coverage`. It recorded zero gcov
+errors. The 447 line and 344 branch differences are instrumentation
+attribution changes (inlining and dead-code elimination between translation
+units), not lost tests: both modes run the same 5,528 cases, and
+function-level counts confirm that the affected functions execute in grouped
+mode.
+
 ### Verifying Architectural Boundaries
 
 Core and Domain modules must never import Adapters. Run the automated boundary checker:
