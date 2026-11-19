@@ -9,6 +9,8 @@
 #   bash scripts/run_tests.sh tests/ports   # Run only tests under tests/ports
 #   bash scripts/run_tests.sh tests/ports/t_channel.nim # Run single test
 #   JOBS=1 bash scripts/run_tests.sh        # Serial execution (for debugging)
+#   SHARD_INDEX=2 SHARD_TOTAL=4 bash scripts/run_tests.sh
+#                                           # Run only shard 2 of 4 (sorted paths)
 #
 # Exit code: 0 if all tests pass, non-zero otherwise.
 
@@ -174,22 +176,73 @@ for target in "${TARGETS[@]}"; do
 done
 TARGETS=("${normalized_targets[@]}")
 
+SHARD_TOTAL="${SHARD_TOTAL:-1}"
+SHARD_INDEX="${SHARD_INDEX:-1}"
+if ! [[ "$SHARD_TOTAL" =~ ^[1-9][0-9]*$ ]] || ! [[ "$SHARD_INDEX" =~ ^[1-9][0-9]*$ ]]; then
+  echo "SHARD_TOTAL/SHARD_INDEX must be positive integers" >&2
+  exit 2
+fi
+if [ "$SHARD_INDEX" -gt "$SHARD_TOTAL" ]; then
+  echo "SHARD_INDEX ($SHARD_INDEX) exceeds SHARD_TOTAL ($SHARD_TOTAL)" >&2
+  exit 2
+fi
+
+# Every target must exist: `find` would otherwise report an error, contribute
+# no files, and let a mistyped target look like a successful empty run.
+for target in "${TARGETS[@]}"; do
+  if [ ! -e "$target" ]; then
+    echo "No such test target: $target" >&2
+    exit 2
+  fi
+done
+
+# Bash 3.2 (stock macOS) has no mapfile; collect with a while-read loop.
+# sort -u drops files listed twice when a target overlaps a file target.
+files=()
+file_count=0
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  files+=("$f")
+  file_count=$((file_count + 1))
+done < <(find "${TARGETS[@]}" -name "*.nim" | sort -u)
+
+if [ "$file_count" -eq 0 ]; then
+  echo "No test files found for targets: ${TARGETS[*]}" >&2
+  exit 2
+fi
+
+# Assign files to shards deterministically (round-robin over the sorted list).
 idx=0
 items=()
-while IFS= read -r f; do
+shard_nr=0
+for f in "${files[@]}"; do
+  shard_nr=$((shard_nr + 1))
+  if [ "$SHARD_TOTAL" -gt 1 ] &&
+     [ $(( (shard_nr - 1) % SHARD_TOTAL + 1 )) -ne "$SHARD_INDEX" ]; then
+    continue
+  fi
   idx=$((idx + 1))
   items+=("$f" "$TMP_DIR" "$idx")
-done < <(find "${TARGETS[@]}" -name "*.nim" | sort)
+done
 
 if [ "$idx" -eq 0 ]; then
-  echo "No test files found for targets: ${TARGETS[*]}"
+  echo "Shard $SHARD_INDEX/$SHARD_TOTAL has no test files for targets: ${TARGETS[*]}"
   exit 0
 fi
 
-printf "%s\0" "${items[@]}" | xargs -0 -P "$JOBS" -n 3 bash -c 'run_one "$@"' _
+runner_status=0
+printf "%s\0" "${items[@]}" |
+  xargs -0 -P "$JOBS" -n 3 bash -c 'run_one "$@"' _ || runner_status=$?
 
 PASS=$(find "$TMP_DIR" -name "pass_*" | wc -l)
 FAIL=$(find "$TMP_DIR" -name "fail_*" | wc -l)
+
+# A worker killed before it could write a marker (OOM, xargs failing to spawn)
+# must not look like a green run: no fail_* file will exist in that case.
+if [ "$runner_status" -ne 0 ] && [ "$FAIL" -eq 0 ]; then
+  echo "Test runner failed (xargs status $runner_status) without recording a failure" >&2
+  exit 1
+fi
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
