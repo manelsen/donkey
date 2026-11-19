@@ -129,7 +129,7 @@ Durabilidade US-001/002, hardening de upload, cron) e a onda 2 (N3) em curso.
 | Canais | US-000..006 (enum, parser, política, ingress, adapter, rota, runtime) + docs | US-007 (prova de não-duplicação e rollout) |
 | Automação | US-001/002 (puro) + runtime + `enqueueScheduledTask`/`tkSchedule` + store de watermark | store com spec completo, `ctl schedule` (US-007), tick no daemon |
 | Durabilidade | US-001/002 (FSM + store) | US-003+ (recuperação no caminho do turno) |
-| Providers | US-001..004 + availability/routing/doctor/setup; catálogo com limites desconhecidos | US-005 (limites verificados), OAuth (TODO de longo prazo) |
+| Providers | US-001..004 + availability/routing/doctor/setup; catálogo com limites desconhecidos; PRD corrigido após a segunda revisão (paridade de visão escopada aos modelos verificados) | US-005 (limites verificados), OAuth (TODO de longo prazo) |
 
 Testes-gate que **não** existem ainda com os nomes deste roteiro:
 `t_agent_chat_stream.nim` (SSE vive em `t_agent_chat.nim`),

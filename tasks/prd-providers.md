@@ -21,7 +21,7 @@ Evidência (read-only em `/home/micelio/git/hermes-agent`): NVIDIA em `providers
 1. Um `CompatAdapter` genérico (headers/endpoint/corpo/parser) e a NVIDIA provando-o ponta a ponta.
 2. Alibaba e Fireworks só com descritor+perfil puro; nenhum adapter por provider.
 3. Limites verificados numa fonte pura, com efeito real no roteamento e nas superfícies.
-4. Zero regressão; testes existentes intocados, exceto a linha aditiva declarada na conformidade.
+4. Zero regressão; testes existentes intocados, exceto a linha nova (multi-linha + import) declarada na conformidade.
 
 ## 3. Fora de escopo
 
@@ -46,7 +46,7 @@ Regras adicionais, sem exceção:
 - TDD: teste primeiro, **falha mostrada**, implementação mínima, verde.
 - Lógica pura em `domain/`/`core/` como `func`; adapter só faz I/O.
 - Proibido `raise` fora de adapter; I/O falível devolve `Result[T, string]`.
-- Nenhum teste novo usa rede, provider real ou Docker; nenhum teste existente é editado, **exceto** a linha aditiva de `t_compat_conformance.nim` declarada na US-001/003/004.
+- Nenhum teste novo usa rede, provider real ou Docker; nenhum teste existente é editado, **exceto** a linha nova (multi-linha + import) de `t_compat_conformance.nim` declarada na US-001/003/004.
 - Worktree sujo em arquivo que **você** possui: pare e registre; nunca use stash, reset ou checkout sobre trabalho alheio.
 
 ### 4.1 Ciclo de execução — TDD não é opcional
@@ -56,9 +56,9 @@ Por história: escrever **um** teste e rodá-lo; mostrar a falha (módulo/símbo
 ### 4.2 Paralelização e posse de arquivo
 
 - Pesquisa e redação de testes em paralelo; implementação só com arquivos disjuntos; cada subagente declara o que possui.
-- Novos e exclusivos: `adapters/provider/compat_adapter.nim` + `tests/adapters/provider/t_compat_adapter.nim` (US-001), `domain/providers/model_limits.nim` (US-002), `domain/providers/profile_{nvidia,alibaba,fireworks}.nim` (uma por história). **Não** crie `adapters/provider/{nvidia,alibaba,fireworks}.nim`.
-- Escritores únicos, um por vez: `compat.nim` (só US-001, aditivo), `descriptors.nim`/`provider_defaults.nim`/`runtime_builder.nim` (US-001 → US-003 → US-004), `t_compat_conformance.nim` (linhas aditivas).
-- `smart_routing.nim` e `session_bootstrap.nim` são compartilhados com **ferramentas** (`requestApproxChars`, `buildCompleteFn`) e **multiagente**: espere aqueles PRDs liberarem os arquivos; depois esta missão é a única escritora e edita por história. Se estiverem ativos, **pare**.
+- Novos e exclusivos: `adapters/provider/compat_adapter.nim` + `tests/adapters/provider/t_compat_adapter.nim` (US-001), `domain/providers/model_limits.nim` (US-002), `domain/providers/profile_{nvidia,alibaba,fireworks}.nim` (uma por história), `app/provider_surface.nim` (US-005). **Não** crie `adapters/provider/{nvidia,alibaba,fireworks}.nim`.
+- Escritores únicos, um por vez: `compat.nim` (só US-001, aditivo), `descriptors.nim`/`provider_defaults.nim`/`runtime_builder.nim` (US-001 → US-003 → US-004), `t_compat_conformance.nim` (uma linha nova multi-linha + import por provider), `src/donkey.nim` (US-005, remove a função local de custo + import + chamada do helper; combine com o dono do arquivo).
+- `smart_routing.nim` e `session_bootstrap.nim` são compartilhados com **ferramentas** (`requestApproxChars`, `buildCompleteFn`) e **multiagente**: espere aqueles PRDs liberarem os arquivos; depois esta missão é a única escritora e edita por história. Se estiverem ativos, **pare**. `setup_wizard.nim` **não** é tocado: ainda tem lista local (§11).
 - A US-002 é arquivo novo e pode ser escrita em paralelo à US-001; o merge é antes da US-005. `provider_catalog.nim` só tem escritor na US-005; suíte e commits são sequenciais.
 
 ## 5. Preparação (antes da US-001)
@@ -79,10 +79,12 @@ Por história: escrever **um** teste e rodá-lo; mostrar a falha (módulo/símbo
 - [ ] `compat.nim` ganha `reasoningOffExtras*: JsonNode` (aditivo), mesclado quando `not req.reasoning`; é a única edição no arquivo e ninguém mais o toca. Novo `tests/domain/providers/t_compat_reasoning_off.nim` prova o merge com `false` e a ausência com `true`.
 - [ ] Criar `adapters/provider/compat_adapter.nim` com `CompatAdapter` (`apiKey`, `model`, `providerName`, `profileFn: proc(): CompatProfile {.gcsafe, nimcall.}`), `newCompatAdapter*`, `buildBody*` (via `buildCompatRequestBody`), puros `requestHeaders*`/`requestUrl*`/`parseCompatBody*`, `complete*` (headers de `requestHeaders`, POST em `requestUrl`, parse por `parseCompatBody`, que usa `openai_pure.parseResponseFrom`) e `makeStreamFn*` (reusa `parseOpenAISseLine`; SSE de conteúdo + `[DONE]`; `delta.reasoning` fica fora, §11). `caps*` devolve `maxContextTokens=0` até a US-002. Nada de JsonNode capturado no closure.
 - [ ] `tests/adapters/provider/t_compat_adapter.nim`: `requestHeaders` inclui `Authorization`, `Content-Type` e `profile.extraHeaders`; `requestUrl` = `profile.endpoint`; corpo = `buildCompatRequestBody`; `parseCompatBody` ok e erro; `streamFn != nil`; sem rede.
-- [ ] NVIDIA: `DefaultModelNvidia*` em `provider_defaults.nim`; descritor (`ptOpenAiChat`, `NVIDIA_API_KEY`, endpoint da tabela, `baseUrlEnv: "NVIDIA_BASE_URL"`, aliases `nvidia-nim`/`nim`/`build-nvidia`, sem `nemotron`); `domain/providers/profile_nvidia.nim` com `nvidiaCompatProfile*()`: `quirks.toolResultName = false`, `includeReasoningField = false` (campo do Donkey), `supportsImages = true`, `extraHeaders = @[("X-BILLING-INVOKE-ORIGIN", "Donkey")]`.
-- [ ] Fiação: `runtime_builder.nim` (usa `newCompatAdapter` + perfil), `ProviderAvailability.nvidia`, `isAvailable`, `detectProviderAvailability`, `availableProviderNames`; criar `tests/app/t_provider_breadth_surface.nim` provando que doctor/setup/TUI/custo (transporte US-009) listam `nvidia` sem lista própria.
+- [ ] `provider_defaults.nim` ganha `SupportsImagesNvidia* = true`, `SupportsImagesAlibaba* = false`, `SupportsImagesFireworks* = false`: **fonte única** de visão, importada pelo perfil e por `modelLimits`.
+- [ ] NVIDIA: `DefaultModelNvidia*` em `provider_defaults.nim`; descritor (`ptOpenAiChat`, `NVIDIA_API_KEY`, endpoint da tabela, `baseUrlEnv: "NVIDIA_BASE_URL"`, aliases `nvidia-nim`/`nim`/`build-nvidia`, sem `nemotron`); `domain/providers/profile_nvidia.nim` com `nvidiaCompatProfile*()`: `quirks.toolResultName = false`, `includeReasoningField = false` (campo do Donkey), `supportsImages = SupportsImagesNvidia`, `extraHeaders = @[("X-BILLING-INVOKE-ORIGIN", "Donkey")]`.
+- [ ] Fiação: `runtime_builder.nim` (usa `newCompatAdapter` + perfil), `ProviderAvailability.nvidia`, `isAvailable`, `detectProviderAvailability`, `availableProviderNames`; criar `tests/app/t_provider_breadth_surface.nim` provando que doctor/TUI/custo listam `nvidia` sem lista própria. `setup_wizard` fica fora do claim: ainda tem `Providers` local (`setup_wizard.nim:116-130`), ver §11.
 - [ ] `tests/domain/providers/t_compat_nvidia.nim`: golden system+texto, tools, tool result **sem** `name`, **imagem preservada** (data URL), `reasoning=true` sem `include_reasoning`/`reasoning_effort`, header ≠ `HermesAgent`; resposta com `reasoning_content` via `openai_pure`.
-- [ ] `tests/provider/t_nvidia.nim`: `buildProviderBundle` com `streamFn != nil` (não é fallback Zhipu), modelo default e `caps().toolCalling`; **uma linha nova** em `t_compat_conformance.nim` (aditiva, nenhuma asserção existente muda).
+- [ ] `tests/provider/t_nvidia.nim`: `buildProviderBundle` com `streamFn != nil` (não é fallback Zhipu), modelo default e `caps().toolCalling`; **linha nova (multi-linha + import)** em `t_compat_conformance.nim`, sem mudar asserção existente.
+- [ ] Contrato da linha de conformidade, igual nas três: `toolResultName=false`, `toolChoiceAuto=false`, `emptyContentKey=false`, `includeReasoningField=false`, `streamExtras=nil` (sem `stream_options`), `imageWithToolCalls=true`, `payloadExtras=nil`/`reasoningExtras=nil`; diferem só em `supportsImages` (constantes acima) e, no Fireworks, em `reasoningOffExtras`.
 
 ### US-002: `modelLimits` puro (4a)
 
@@ -90,8 +92,8 @@ Por história: escrever **um** teste e rodá-lo; mostrar a falha (módulo/símbo
 
 - [ ] Criar `domain/providers/model_limits.nim` com `ModelLimits` (`contextWindow`, `maxOutputTokens`, `supportsImages`, `supportsTools`, `source`, `sourceRef`), `ModelLimitSource` (`mlsVerified`/`mlsDescriptor`/`mlsUnknown`) e `modelLimits*(provider, model): ModelLimits`.
 - [ ] Precedência: entrada exata `(provider, model)` → default do descritor (0/false) → **desconhecido conservador: tudo 0/false**; ausência nunca vira promessa (FR-3). `func` pura, sem I/O.
-- [ ] Tabela verificada: NVIDIA `supportsImages=true`, `supportsTools=true` (`providers.md:517-518`), `maxOutputTokens=16384` (`nvidia/__init__.py:31`), `contextWindow=0` (sem fonte); Alibaba/Fireworks só entram com fato verificado — caso contrário `mlsUnknown` com `sourceRef` vazio.
-- [ ] `tests/domain/providers/t_model_limits.nim`: precedência, desconhecido 0/false, `sourceRef` preenchido em `mlsVerified`, determinismo; nenhum acesso a catálogo.
+- [ ] Tabela verificada: NVIDIA `supportsImages=SupportsImagesNvidia`, `supportsTools=true` (`providers.md:517-518`), `maxOutputTokens=16384` (`nvidia/__init__.py:31`), `contextWindow=0` (sem fonte); Alibaba/Fireworks usam as constantes de visão e só entram com fato verificado — caso contrário `mlsUnknown` com `sourceRef` vazio.
+- [ ] `tests/domain/providers/t_model_limits.nim`: precedência, desconhecido 0/false, `sourceRef` preenchido em `mlsVerified`, determinismo e **paridade só nos modelos verificados**: para `(nvidia, DefaultModelNvidia)` (entrada marcada `mlsVerified`), `modelLimits(id, model).supportsImages == profile.supportsImages` (a constante é a única fonte). O modelo desconhecido continua `mlsUnknown` com `supportsImages=false` mesmo com o perfil em `SupportsImagesNvidia=true`, porque ausência nunca vira promessa (FR-3); asserir isso explicitamente, sem comparar com o perfil. Nenhum acesso a catálogo.
 
 ### US-003: Alibaba DashScope (Qwen Cloud)
 
@@ -100,9 +102,9 @@ Por história: escrever **um** teste e rodá-lo; mostrar a falha (módulo/símbo
 **Verificação:** `auth.py:212-213`, `alibaba/__init__.py:22-25`, `providers.md:36,259-260`, `models_catalog_static.py:209-212`.
 
 - [ ] `DefaultModelAlibaba* = "qwen3.8-max"` (primeiro da lista curada; `providers.md:260` usa `qwen3.5-plus` — divergência em §11); descritor `alibaba` (`ptOpenAiChat`, `DASHSCOPE_API_KEY`, endpoint da tabela, `baseUrlEnv: "DASHSCOPE_BASE_URL"`, aliases `dashscope`/`alibaba-cloud`/`aliyun`, sem `qwen`).
-- [ ] `domain/providers/profile_alibaba.nim` com `alibabaCompatProfile*()`: `supportsImages = false` (não verificada), `includeReasoningField = false` (quirk do Donkey), sem `payloadExtras`. `runtime_builder` constrói `newCompatAdapter`; **nenhum adapter novo**.
+- [ ] `domain/providers/profile_alibaba.nim` com `alibabaCompatProfile*()`: `supportsImages = SupportsImagesAlibaba` (não verificada), `toolResultName = false`, `includeReasoningField = false` (quirk do Donkey), sem `payloadExtras`. `runtime_builder` constrói `newCompatAdapter`; **nenhum adapter novo**.
 - [ ] `preserve_thinking` **não** entra: o transporte não reenvia `reasoning`; dívida em §11.
-- [ ] Fiação de runtime/superfície como na US-001; `tests/domain/providers/t_compat_alibaba.nim` (golden, imagem suprimida, sem `include_reasoning`) e `tests/provider/t_alibaba.nim` (bundle não-fallback, endpoint sem barra dupla); linha aditiva na conformidade.
+- [ ] Fiação de runtime/superfície como na US-001; `tests/domain/providers/t_compat_alibaba.nim` (golden, imagem suprimida, sem `include_reasoning`) e `tests/provider/t_alibaba.nim` (bundle não-fallback, endpoint sem barra dupla); linha nova (multi-linha + import) na conformidade.
 
 ### US-004: Fireworks AI
 
@@ -111,24 +113,25 @@ Por história: escrever **um** teste e rodá-lo; mostrar a falha (módulo/símbo
 **Verificação:** `providers.py:75-76`, `fireworks/__init__.py:9-42`, `providers.md:227-229,293`, `chat_completions.py:40-46,288`.
 
 - [ ] `DefaultModelFireworks* = "accounts/fireworks/models/kimi-k2p6"` com comentário: **escolha do Donkey** a partir de `fallback_models[0]`, não default do Hermes (`glm-5p2` é `default_aux_model`); descritor `fireworks` (`ptOpenAiChat`, `FIREWORKS_API_KEY`, endpoint, `baseUrlEnv: ""`, aliases `fireworks-ai`/`fw`).
-- [ ] `domain/providers/profile_fireworks.nim`: `fireworksCompatProfile*()` com `HTTP-Referer`, `X-Title: "Donkey"`, `User-Agent: "Donkey"`, `supportsImages = false`, `includeReasoningField = false` e `reasoningOffExtras = {"reasoning_effort": "none"}` — Hermes emite `"none"` quando desabilitado (`fireworks/__init__.py:23-24`); `req.reasoning=true` não emite nada (sem esforço no `CompletionRequest`). `runtime_builder` usa `newCompatAdapter`.
-- [ ] Golden `tests/domain/providers/t_compat_fireworks.nim`: corpo só com chaves OpenAI, `reasoning=false` → `reasoning_effort: "none"`, `reasoning=true` → sem `reasoning_effort`/`reasoning`/`include_reasoning`, imagem suprimida; `tests/provider/t_fireworks.nim` (bundle não-fallback, default); linha aditiva na conformidade.
+- [ ] `domain/providers/profile_fireworks.nim`: `fireworksCompatProfile*()` com `HTTP-Referer: "https://github.com/manelsen/donkey"` (pinado), `X-Title: "Donkey"`, `User-Agent: "Donkey"`, `supportsImages = SupportsImagesFireworks`, `toolResultName = false`, `includeReasoningField = false` e `reasoningOffExtras = {"reasoning_effort": "none"}` — Hermes emite `"none"` quando desabilitado (`fireworks/__init__.py:24`); `req.reasoning=true` não emite nada (sem esforço no `CompletionRequest`). `runtime_builder` usa `newCompatAdapter`.
+- [ ] Golden `tests/domain/providers/t_compat_fireworks.nim`: corpo só com chaves OpenAI, `reasoning=false` → `reasoning_effort: "none"`, `reasoning=true` → sem `reasoning_effort`/`reasoning`/`include_reasoning`, imagem suprimida; `tests/provider/t_fireworks.nim` (bundle não-fallback, default); linha nova (multi-linha + import) na conformidade.
 
 ### US-005: Catálogo, roteamento e `ProviderCaps` (4b)
 
 **Descrição:** dar efeito real a `modelLimits`, sem reordenar o que existe.
 
-- [ ] `provider_catalog.buildDefaultCatalog` registra entradas dos três usando `modelLimits`; `CompatAdapter.caps` lê `maxContextTokens` de `modelLimits` (só esse campo flui; sem visão em `ProviderCaps`).
-- [ ] `smart_routing`: helper puro `appendCapabilitySelections*(selections, catalog, query, providerIds)` recebe ids **ordenados por id** e consulta **por provider** (`ModelQuery.provider`), nunca com provider vazio nem iterando `Table.entries`; `smartRouteSelections` usa os ids de `providerDescriptors()` ordenados e acrescenta os capazes **depois** da ordem atual. Nada reordena.
-- [ ] Efeito real: NVIDIA entra na lista de imagem porque `supportsImages=true`. Contexto de produção é 0 nos três, então o ramo de contexto longo **não muda produção**; um provider sintético (`contextWindow=200_000`) no teste prova o mecanismo e **falha se o limite for ignorado**. Provider com `supportsImages=false` não entra.
-- [ ] Propagação do transporte US-009: estender `tests/app/t_provider_breadth_surface.nim` (criado na US-001) provando que `doctor`, `setup_wizard`, TUI e a lista de custo de `src/donkey.nim` mostram os três ids sem lista local; se algum ainda hardcodar, **pare e escale** ao dono do transporte, não edite o arquivo dele.
+- [ ] `provider_catalog.buildDefaultCatalog` registra entradas dos três usando `modelLimits`; `mcImage`/`mcTools` derivam de `supportsImages`/`supportsTools`; `CompatAdapter.caps` lê `maxContextTokens` de `modelLimits` (só esse campo flui; sem visão em `ProviderCaps`).
+- [ ] `smart_routing`: helper puro `appendCapabilitySelections*(selections, catalog, query, providerIds)` recebe ids **ordenados por id** e consulta **por provider** (`ModelQuery.provider`), nunca com provider vazio nem iterando `Table.entries`. `smartRouteSelections` ganha `catalog = buildDefaultCatalog()` opcional (produção não muda) e chama o helper em **três pontos**: (a) fim do bloco `if signals.hasImage`, com `hasImage=true`; (b) fim do bloco de contexto longo (`approxInputChars >= LongContextChars`), com `minContextWindow = LongContextMinTokens`; (c) antes de `dedupeSelections`, quando `signals.hasTools`, com `hasTools=true`. Acrescenta **depois** da ordem atual; nada reordena.
+- [ ] Criar `LongContextMinTokens* = 32_000` em `smart_routing.nim`, **distinto** de `LongContextChars = 60_000` (chars): o filtro do catálogo usa tokens, nunca o limiar de chars. Teste com catálogo sintético injetado: provider de `contextWindow=200_000` entra no ramo real de contexto longo; um de `16_000` não entra; **falha se o limite for ignorado**. NVIDIA entra no ramo de imagem via `mcImage` (constante `SupportsImagesNvidia`); provider com `supportsImages=false` não entra.
+- [ ] Custo testável: mover `routeCostProviderIds` (`src/donkey.nim:432`) para `app/provider_surface.nim` como `routeCostProviderIds*`; `src/donkey.nim` remove a função local, importa o helper e o chama. `tests/app/t_provider_surface.nim` prova ids == descritores e inclui os três.
+- [ ] Propagação: estender `tests/app/t_provider_breadth_surface.nim` (US-001) para `doctor`, TUI e custo. **`setup_wizard` fica de fora**: `setup_wizard.nim:116-130` ainda hardcoda 13 ids e não lista os novos; registrar como resíduo do transporte US-009 em §11 e **não** editar o arquivo aqui.
 - [ ] `tests/domain/providers/t_model_limits_catalog.nim` e `tests/core/providers/t_catalog_limits.nim`; testes atuais de smart routing/catálogo sem edição.
 
 ### US-006: Documentar e fechar a missão
 
 **Descrição:** a próxima pessoa entende adapter, breadth, limites e o buraco de OAuth.
 
-- [ ] `docs/topics/providers.md`: “Adapter compat” (perfil → `CompatAdapter` → `openai_pure`), “Breadth” com a tabela dos três, “Limites” com `sourceRef` e 0 = não afirmar, e “OAuth device-code: TODO de longo prazo” copiando §6.1; `docs/index.md` lista o tópico.
+- [ ] `docs/topics/providers.md`: “Adapter compat” (perfil → `CompatAdapter` → `openai_pure`), “Breadth” com a tabela dos três, “Limites” com `sourceRef` e 0 = não afirmar, e “OAuth device-code: deferido (TODO de longo prazo)” copiando §6.1; `docs/index.md` lista o tópico.
 - [ ] `rg -n "toJson|buildBody|newHttpClient" src/donkey/domain/providers/profile_{nvidia,alibaba,fireworks}.nim` vazio; `rg -n "HermesAgent" src/donkey` vazio; commit registra que OAuth Copilot/Codex e Bedrock/Vertex/Azure seguem fora e que o placar não é recalculado.
 
 ### 6.1 OAuth device-code — TODO de longo prazo
@@ -141,7 +144,7 @@ Por história: escrever **um** teste e rodá-lo; mostrar a falha (módulo/símbo
 
 ## 7. Requisitos funcionais
 
-- **FR-1:** Provider novo = 1 linha no descritor + 1 perfil puro + 1 linha aditiva na conformidade + fiação; **nunca** adapter por provider.
+- **FR-1:** Provider novo = 1 linha no descritor + 1 perfil puro + 1 linha nova (multi-linha + import) na conformidade + fiação; **nunca** adapter por provider.
 - **FR-2:** `CompatAdapter` é o único consumidor de `profile.extraHeaders`/`profile.endpoint`; perfil é dado, não código.
 - **FR-3:** `modelLimits` é puro e desconhecido é 0/false; ausência nunca vira promessa de contexto, visão ou tools.
 - **FR-4:** Roteamento lê capacidades do catálogo em ordem determinística (ids ordenados), sem reordenar os providers atuais.
@@ -163,15 +166,17 @@ Enriquecimento por `/models` ao vivo; fetch de models.dev; `qwen-oauth`/`minimax
 ## 10. Métricas de sucesso
 
 - `newCompatAdapter` usado pelos três providers; zero `newNvidiaAdapter`-style com HTTP próprio e zero `adapters/provider/{nvidia,alibaba,fireworks}.nim`.
-- NVIDIA: imagem preservada e `reasoning_content` não-streaming parseado; SSE de conteúdo coberto.
+- NVIDIA: imagem preservada e `reasoning_content` não-streaming parseado. SSE não é métrica desta missão (`streamFn != nil` apenas; conteúdo já tem teste em `t_openai`).
 - Limite desconhecido é sempre 0/false; teste sintético falha se o roteamento ignorar contexto/visão; ordem atual byte-idêntica.
+- Custo e doctor/TUI provados por helper/teste; `setup_wizard` segue fora até o transporte US-009 corrigir a lista local.
 - Suíte verde (baseline do dia do start), `check_boundaries.sh` exit 0, nenhum import novo de `adapters/` em `domain/`/`core/`.
 
 ## 11. Questões em aberto
 
-- **OAuth:** client-id do Donkey ou autorização para `hermes-cli` (§6.1); até lá, bloqueado.
+- **OAuth:** client-id do Donkey ou autorização para `hermes-cli` (§6.1); até lá, deferido (TODO de longo prazo).
 - **NVIDIA:** `X-BILLING-INVOKE-ORIGIN: Donkey` é aceito ou precisa de registro, e deve ser omitido em NIM local? Contexto do Nemotron não está no Hermes (fica 0).
 - **Alibaba:** default `qwen3.8-max` ou o exemplo `qwen3.5-plus`? Visão não verificada; `preserve_thinking` só com replay de `reasoning`.
-- **Fireworks:** `HTTP-Referer`/`X-Title`/`User-Agent` ideais? `kimi-k2p6` é escolha do Donkey; falta campo de esforço para mapear `reasoning_effort` além de `"none"`.
+- **Fireworks:** `kimi-k2p6` é escolha do Donkey; falta campo de esforço para mapear `reasoning_effort` além de `"none"`. Headers estão pinados (§US-004).
+- **Setup:** `setup_wizard.nim:116-130` mantém 13 ids locais (resíduo do transporte US-009); os três novos não aparecem no wizard até o dono corrigir. Esta missão não edita o arquivo.
 - **Streaming:** `parseOpenAISseLine` ignora `delta.reasoning`; acumular reasoning em SSE fica fora desta missão e precisa de história própria.
 [/PRD]
