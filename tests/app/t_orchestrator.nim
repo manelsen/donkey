@@ -113,6 +113,25 @@ proc longText(prefix: string; targetLen: int): string =
 # ── AsyncQueue round-trip ──────────────────────────────────────────────────────
 
 proc runTests*() =
+  # The orchestrator uses the production adaptive debounce window (1.2s plus
+  # 600ms for short fragments). These integration tests assert routing, not
+  # wall-clock debounce behavior, and the dedicated debounce suite passes its
+  # own config. Keep the production defaults elsewhere and restore the
+  # environment when the test module exits.
+  let oldDebounceMin = getEnv("DONKEY_DEBOUNCE_MIN_MS", "")
+  let oldDebounceShort = getEnv("DONKEY_DEBOUNCE_SHORT_EXT_MS", "")
+  putEnv("DONKEY_DEBOUNCE_MIN_MS", "10")
+  putEnv("DONKEY_DEBOUNCE_SHORT_EXT_MS", "10")
+  defer:
+    if oldDebounceMin.len == 0:
+      delEnv("DONKEY_DEBOUNCE_MIN_MS")
+    else:
+      putEnv("DONKEY_DEBOUNCE_MIN_MS", oldDebounceMin)
+    if oldDebounceShort.len == 0:
+      delEnv("DONKEY_DEBOUNCE_SHORT_EXT_MS")
+    else:
+      putEnv("DONKEY_DEBOUNCE_SHORT_EXT_MS", oldDebounceShort)
+
   suite "AsyncQueue round-trip":
 
     test "put and get a task message":
