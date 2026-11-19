@@ -60,7 +60,7 @@ import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
 import donkey/domain/channels/line_policy
 import donkey/adapters/tool/mcp_client
-import donkey/adapters/tools/browser
+import donkey/adapters/tools/browser_executor
 import donkey/domain/tools/browser_pure
 import donkey/adapters/state/runtime_store
 import donkey/adapters/state/schedule_store
@@ -206,7 +206,7 @@ proc makeTgTypingFn(token: string; identityPath: string; log: Logger): TypingFn 
 type DaemonToolBundle = object
   clients: seq[ToolRuntimePort]
   tools:   seq[ToolDescription]
-  browserRuntime: BrowserToolRuntime
+  browserRuntime: BrowserExecutor
 
 type GlobalProviderBundle = object
   completeFn: CompleteFn
@@ -286,7 +286,7 @@ type RouteSample = object
 type DaemonServices = object
   toolClients:      seq[ToolRuntimePort]
   tools:            seq[ToolDescription]
-  browserRuntime:   BrowserToolRuntime
+  browserRuntime:   BrowserExecutor
   globalCompleteFn: CompleteFn
   globalStreamFn:   StreamFn
   tgTypingFn:       TypingFn
@@ -397,11 +397,6 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
     log.warn("browser: invalid DONKEY_BROWSER_BACKEND='" &
              getEnv("DONKEY_BROWSER_BACKEND") & "'; tools disabled")
   if browserBackend != bbOff:
-    ## CDP discovery polls a loopback endpoint while Chromium boots; a shared
-    ## circuit breaker would stay open for 60s after three connection refusals
-    ## and outlive the 30s discovery deadline.
-    let discoveryHttp = newStdHttpAdapter(
-      timeout = 2, maxRetries = 1, circuitBreaker = false).toRuntimePort()
     let rawBrowserTimeout = getEnv("DONKEY_BROWSER_TIMEOUT_MS").strip()
     var browserTimeoutMs = BrowserDefaultTimeoutMs
     if rawBrowserTimeout.len > 0:
@@ -411,16 +406,20 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
       except ValueError:
         log.warn("browser: invalid DONKEY_BROWSER_TIMEOUT_MS='" &
                  rawBrowserTimeout & "'; using " & $BrowserDefaultTimeoutMs)
-    let browserRuntime = newBrowserToolRuntime(
-      backend = browserBackend,
-      executablePath = getEnv("DONKEY_BROWSER_PATH"),
-      profileBaseDir = getEnv("DONKEY_BROWSER_PROFILE_DIR"),
-      proxyServer = getEnv("DONKEY_BROWSER_PROXY"),
-      timeoutMs = browserTimeoutMs,
-      http = discoveryHttp,
-    )
+    let browserRuntime =
+      try:
+        newBrowserExecutor(
+          backend = browserBackend,
+          executablePath = getEnv("DONKEY_BROWSER_PATH"),
+          profileBaseDir = getEnv("DONKEY_BROWSER_PROFILE_DIR"),
+          proxyServer = getEnv("DONKEY_BROWSER_PROXY"),
+          timeoutMs = browserTimeoutMs)
+      except CatchableError as e:
+        log.warn("browser disabled: " & e.msg)
+        return
     result.browserRuntime = browserRuntime
-    let browserSchemas = browserRuntime.listTools().valueOr:
+    let browserPort = browserRuntime.toRuntimePort()
+    let browserSchemas = browserPort.listTools().valueOr:
       @[]
     for s in browserSchemas:
       result.tools.add(ToolDescription(
@@ -428,7 +427,7 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
         description: s.description,
         schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
       ))
-    result.clients.add(browserRuntime.toRuntimePort())
+    result.clients.add(browserPort)
 
 proc makeProviderFn[A](a: A): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
@@ -2204,6 +2203,11 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       actorStop, ctimer.milliseconds(2_000))
     if not actorsStopped:
       log.warn("daemon shutdown: actor stop deadline elapsed")
+    if ctx.services.browserRuntime != nil:
+      let browserStopped = await withTimeout(
+        ctx.services.browserRuntime.stop(), ctimer.milliseconds(2_000))
+      if not browserStopped:
+        log.warn("daemon shutdown: browser stop deadline elapsed")
     drainGlobalOutbox(ctx.runtime, ctx.adapters, log)
     if ctx.runtime.stateStore != nil:
       discard ctx.runtime.stateStore.flushSessions()

@@ -23,6 +23,7 @@ import donkey/app/orchestrator
 import donkey/app/provider_executor
 import donkey/app/session_manager
 import donkey/app/session_state
+import donkey/ports/tool
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -312,6 +313,63 @@ suite "ToolAgent":
 # ── OrchestratorAgent ─────────────────────────────────────────────────────────
 
 suite "OrchestratorAgent":
+
+  test "new interrupts an outstanding async tool and accepts the next turn":
+    let tmpDir = getTempDir() / "donkey_test_orch_new_during_tool"
+    removeDir(tmpDir)
+    defer: removeDir(tmpDir)
+
+    proc doTest(dir: string): Future[tuple[cancelled: bool, next: OutboundMessage]] {.async.} =
+      let user = UserId("u-new-during-tool")
+      let userDir = dir / $user
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Browser test user")
+      let inbox = newAsyncQueue[AgentMessage]()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let started = newAsyncEvent()
+      var toolCancelled = false
+      let client = ToolRuntimePort(
+        invokeAsync: proc(call: ToolCall): Future[Result[ToolResult, string]] {.async.} =
+          started.fire()
+          try:
+            await sleepAsync(seconds(30))
+            return ok(ToolResult(callId: call.id, output: "late browser reply"))
+          finally:
+            toolCancelled = true,
+      )
+      proc complete(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+        if req.messages.len > 0 and req.messages[^1].text == "browse":
+          return ok(CompletionResponse(toolCalls: @[
+            ToolCallRequest(id: "browser", name: "browser_navigate", inputJson: "{}")]))
+        stubComplete(req)
+
+      let mem = MdFileAdapter(paddocksDir: dir)
+      var session = makeSessionEntry()
+      session.inbox = inbox
+      var sm: SessionManager
+      let actor = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(),
+        complete, newStdHttpAdapter().toRuntimePort(), nil, @[client],
+        @[ToolDescription(name: "browser_navigate")], userDir, newSessionState())
+      try:
+        await inbox.put(newTaskMsg("browse", tkUserMsg, $user, "browse"))
+        await started.wait().wait(seconds(3))
+        sm.requestTurnInterrupt(user)
+        await inbox.put(newTaskMsg("new", tkNew, $user, ""))
+        while true:
+          let msg = await outbox.get().wait(seconds(2))
+          if "Nova conversa iniciada" in msg.text:
+            break
+        await inbox.put(newTaskMsg("next", tkUserMsg, $user, "ping"))
+        let next = await outbox.get().wait(seconds(3))
+        return (toolCancelled, next)
+      finally:
+        await inbox.put(newCancelMsg())
+        await actor.wait(seconds(4))
+
+    let (cancelled, next) = waitFor doTest(tmpDir)
+    check cancelled
+    check next.replyKind == rkFinalAnswer
+    check next.text == "pong"
 
   test "userMsg produces a text reply":
     let tmpDir = getTempDir() / "donkey_test_orch"

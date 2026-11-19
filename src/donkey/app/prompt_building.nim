@@ -12,6 +12,13 @@ import ../domain/providers/media_pure
 import ../ports/provider
 import ./inbound_media
 
+const LiveSourcesPrompt* =
+  "For current news, digests, and other time-sensitive facts, consult live sources " &
+  "during this run and cite their actual URLs. If you cannot search, you can still " &
+  "check known sources with an available web tool. If tools are unavailable, fail, " &
+  "or return no usable evidence, report what you could verify and what remains unknown. " &
+  "Never invent headlines, dates, links, quotes, or claims of having searched."
+
 proc safeComplete*(fn: CompleteFn; req: CompletionRequest
                  ): Result[CompletionResponse, string] {.gcsafe, raises: [].} =
   try: fn(req)
@@ -53,8 +60,14 @@ func providerLabelFromPrefs*(prefs: string): string =
 func orchToolsSuffix*(tools: seq[ToolDescription]): string =
   if tools.len == 0: return ""
   result = "\n\n## Available tools\n\n"
-  result.add "You have access to the following tools. When a task requires one of them, " &
-             "call it — do not tell the user you cannot access files, the web, or run commands.\n\n"
+  result.add "Use the listed tools whenever the task requires them. " &
+             "Report any capability you lack and any tool error that prevents completion.\n\n"
+  if tools.anyIt(it.name == WebSearchToolName):
+    result.add "Use `web_search` to discover current articles. Open the relevant sources " &
+               "with an available fetch or browser tool to verify their contents and dates.\n\n"
+  if tools.anyIt(it.name == "browser_content"):
+    result.add "After navigating in the browser, use `browser_content` to read the page " &
+               "before citing it.\n\n"
   if tools.anyIt(it.name == ManageSkillsToolName):
     result.add "You can install and enable skills for the current user with `manage_skills`. " &
                "Never say your toolset is fixed or that you cannot install skills. " &
@@ -100,6 +113,7 @@ func buildSystemBase*(agentTraits: PersonalityTraits;
      "You are a personal AI assistant.\n\n") &
   "Be helpful and remember what the user tells you. " &
   "Respond in the user's preferred language." &
+  "\n\n" & LiveSourcesPrompt &
   toolsSuffix
 
 proc decodeUserPayload*(payload: string): UserPayload =

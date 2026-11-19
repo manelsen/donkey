@@ -12,6 +12,18 @@ suite "prompt building":
     check systemBase.contains("Respond in the user's preferred language.")
     check systemBase.contains("## Available tools")
 
+  test "live news requires sources even when no web tool is available":
+    let systemBase = buildSystemBase(PersonalityTraits(), "", orchToolsSuffix(@[]))
+    check systemBase.contains("consult live sources during this run")
+    check systemBase.contains("cite their actual URLs")
+    check systemBase.contains("If tools are unavailable")
+    check systemBase.contains("Never invent headlines")
+
+  test "the tool catalog recommends web search when configured":
+    let suffix = orchToolsSuffix(@[ToolDescription(name: WebSearchToolName)])
+    check suffix.contains("Use `web_search` to discover current articles")
+    check suffix.contains("verify their contents and dates")
+
   test "orchToolsSuffix teaches manage_skills for missing capabilities":
     let suffix = orchToolsSuffix(@[
       ToolDescription(

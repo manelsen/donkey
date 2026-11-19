@@ -21,6 +21,7 @@ import ../domain/subagent_pure
 import ../ports/provider
 import ../ports/subagent_workspace
 import ./native_tools
+import ./prompt_building
 import ./provider_executor
 import ./session_manager
 import ./session_state
@@ -33,7 +34,7 @@ const
     "You are a focused subagent. Complete only the delegated task. " &
     "You cannot ask the user questions or spawn other subagents. " &
     "Use the available tools when needed, respect the workspace boundary, " &
-    "and return a concise, self-contained result."
+    "and return a concise, self-contained result.\n\n" & LiveSourcesPrompt
   SubagentMaxConcurrent* = 16
   SubagentCompletedRetention* = 64
 
