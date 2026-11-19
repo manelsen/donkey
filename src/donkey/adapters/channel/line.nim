@@ -27,7 +27,7 @@
 ## always wins, the remembered chat is the fallback, and the identity's raw id
 ## is the last resort (DMs).
 
-import std/[net, json, os, strutils, tables, unicode]
+import std/[net, json, options, os, strutils, tables, unicode]
 import ../../core/pipeops
 import ../../core/types
 import ../../core/channels/flood_gate
@@ -35,12 +35,14 @@ import ../../domain/message
 import ../../domain/channels/line_pure
 import ../../ports/channel
 import ../../ports/http
+import ../../ports/link_codes
 import ../http/std_http
 import ../identity/identity_resolver
 
 export line_pure
 export identity_resolver
 export channel.FileDownload
+export link_codes
 
 const
   LineApiBase*       = "https://api.line.me"
@@ -63,6 +65,9 @@ type
     channelAccessToken*: string
     apiBase*:            string        ## override for tests/proxies
     resolver*:           IdentityResolver
+    linkCodes*:          LinkCodePort
+      ## Cross-channel `/continue` seam: the table is shared per identity file,
+      ## so a code minted on another channel resolves here.
     http*:               HttpRuntimePort
     flood*:              FloodGate     ## channel-wide 429 window
     configError*:        string        ## invalid base/credentials; sends fail closed
@@ -471,6 +476,20 @@ proc targetFor(a: LineAdapter; msg: OutboundMessage): string =
   else:
     lineTarget(rawId)
 
+# ── Link codes (cross-channel `/continue`) ────────────────────────────────────
+
+proc confirmLinkCode*(resolver: IdentityResolver; code: string;
+                      kind: ChannelKind; rawId: string): bool {.gcsafe.} =
+  ## Redeems `code` and maps (kind, rawId) to its target. A code from another
+  ## channel must resolve here: the pending table is keyed by the identity file,
+  ## not by the adapter that minted it.
+  resolver.consumeLinkCode(code.strip, kind, rawId)
+
+proc linkCodePort*(a: LineAdapter): LinkCodePort {.gcsafe.} =
+  ## Cross-channel seam used by the LINE runtime. The semantics of a code (TTL,
+  ## single use) stay in the shared table; minting and redeeming just reach it.
+  a.resolver.linkCodePort()
+
 proc send*(a: LineAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends text only. Media and keyboards are refused explicitly instead of
   ## being dropped silently: LINE's capability descriptor is send-only and a
@@ -575,7 +594,7 @@ proc newLineAdapter*(channelAccessToken, identityPath: string;
       retryNonIdempotent = false,
       retryConflict = false).toRuntimePort()
 
-  LineAdapter(
+  var adapter = LineAdapter(
     configError: baseError,
     channelAccessToken: token,
     apiBase:            base,
@@ -584,3 +603,5 @@ proc newLineAdapter*(channelAccessToken, identityPath: string;
     flood:              newFloodGate(),
     chatIds:            initTable[string, string](),
   )
+  adapter.linkCodes = adapter.resolver.linkCodePort()
+  adapter

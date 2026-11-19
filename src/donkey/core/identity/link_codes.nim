@@ -15,6 +15,7 @@
 
 import std/[locks, options, os, random, tables, times]
 import ../types
+import ../../ports/link_codes
 
 const
   LinkCodeAlpha*  = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -105,3 +106,15 @@ proc sharedLinkCodeService*(path: string): LinkCodeService {.gcsafe.} =
       if key notin gServices:
         gServices[key] = newLinkCodeService()
       result = gServices[key]
+
+proc linkCodePort*(s: LinkCodeService): LinkCodePort {.gcsafe.} =
+  ## The service as the cross-channel seam every channel asks for. It carries
+  ## no channel knowledge, so any channel's port lands on the same table.
+  LinkCodePort(
+    mint:   proc(userId: UserId): string {.gcsafe.} =
+      s.mint(userId),
+    peek:   proc(code: string): Option[UserId] {.gcsafe.} =
+      s.peek(code),
+    redeem: proc(code: string): Option[UserId] {.gcsafe.} =
+      s.redeem(code),
+  )
