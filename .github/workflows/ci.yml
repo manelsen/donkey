@@ -76,14 +76,35 @@ jobs:
       - name: Build Donkey binary
         run: nimble build -y
 
+      - name: Check the binary
+        run: ./donkey --version
+
+      - name: Self-check affected selection
+        run: |
+          check_exact() {
+            local files="$1" expected="$2" actual
+            actual="$(AFFECTED_FILES="$files" bash scripts/affected_tests.sh)"
+            if [ "$actual" != "$expected" ]; then
+              echo "affected_tests.sh('$files') = [$actual], expected [$expected]" >&2
+              return 1
+            fi
+          }
+          channel="$(AFFECTED_FILES=src/donkey/adapters/channel/telegram.nim bash scripts/affected_tests.sh)"
+          if ! printf '%s\n' "$channel" | grep -qxF 'tests/adapters/channel'; then
+            echo "channel change did not select tests/adapters/channel: [$channel]" >&2
+            exit 1
+          fi
+          check_exact src/donkey/core/log.nim tests
+          check_exact README.md tests/architecture
+          echo "affected selection self-check passed"
+
       - name: Run stress suite
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         run: bash scripts/run_stress_tests.sh
 
   # PRs run only the targets affected by the diff (scripts/affected_tests.sh);
   # master runs the full suite split across four shards.
   test:
-    name: Tests (${{ matrix.shard }}/4)
+    name: Tests (${{ strategy.job-index + 1 }}/${{ strategy.job-total }})
     needs: build
     runs-on: ubuntu-latest
     env:
@@ -141,18 +162,21 @@ jobs:
 
       - name: Fetch base branch
         if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
           git fetch --no-tags --depth=1 origin \
-            "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+            "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
 
       - name: Run tests
         env:
           JOBS: 4
-          SHARD_INDEX: ${{ matrix.shard }}
-          SHARD_TOTAL: 4
+          SHARD_INDEX: ${{ strategy.job-index + 1 }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            mapfile -t targets < <(bash scripts/affected_tests.sh "origin/${{ github.base_ref }}")
+            mapfile -t targets < <(bash scripts/affected_tests.sh "$BASE_REF")
           else
             targets=(tests)
           fi
