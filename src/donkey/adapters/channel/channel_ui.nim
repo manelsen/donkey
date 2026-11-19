@@ -384,7 +384,7 @@ proc buildDoctorReport*(memory: MdFileAdapter;
                         toolClientsCount: int;
                         sessionCount: int): string =
   var report = "🩺 Donkey Doctor\n\n"
-  
+
   ## Teste do provider ativo do usuário (não o default da instância)
   let t0 = nowMs()
   let userPrefs = memory.loadContext(userId).preferencesMd
@@ -399,7 +399,7 @@ proc buildDoctorReport*(memory: MdFileAdapter;
   else:
     let clipped = clipUtf8(resp.error.strip, 300)
     report.add("❌ Provider: " & clipped & "\n")
-  
+
   ## Modelo atual
   let (prov, mdl) = memory.getCurrentProviderModel(userId)
   report.add("📦 Modelo: " & prov & " / " & mdl & "\n")
@@ -420,7 +420,7 @@ proc buildDoctorReport*(memory: MdFileAdapter;
         )
       except CatchableError:
         report.add("❌ Multigraph Memory: failed to read graph stats\n")
-  
+
   ## Diretório de memória
   let mpath = memory.paddocksDir
   if dirExists(mpath):
@@ -430,14 +430,14 @@ proc buildDoctorReport*(memory: MdFileAdapter;
     report.add("📁 Memory dir (debug): " & mpath & " (" & $size & " arquivos)\n")
   else:
     report.add("❌ Memory dir missing (debug): " & mpath & "\n")
-  
+
   ## Tools e MCP
   report.add("🔧 Tools loaded: " & $toolsCount & "\n")
   report.add("🔌 MCP clients: " & $toolClientsCount & "\n")
-  
+
   ## Sessões ativas
   report.add("👥 Active sessions: " & $sessionCount & "\n")
-  
+
   ## Canais ativos (verifica identidade)
   var channels: seq[string] = @[]
   if getEnv("TELEGRAM_BOT_TOKEN").len > 0: channels.add("Telegram")
@@ -448,7 +448,7 @@ proc buildDoctorReport*(memory: MdFileAdapter;
     report.add("📡 Active channels: " & channels.join(", ") & "\n")
   else:
     report.add("📡 Active channels: nenhum\n")
-  
+
   ## Environment checks
   let envVars = [
     ("OPENROUTER_API_KEY", "OpenRouter"),
@@ -471,7 +471,7 @@ proc buildDoctorReport*(memory: MdFileAdapter;
     report.add("🔑 API keys: " & configuredProviders.join(", ") & "\n")
   else:
     report.add("🔑 API keys: nenhuma configurada\n")
-  
+
   report
 
 proc buildMemoryBootstrapSnapshot(userMd, preferencesMd, sourceLabel: string): string =

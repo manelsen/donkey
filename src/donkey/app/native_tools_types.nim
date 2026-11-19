@@ -289,4 +289,3 @@ proc buildRewindResult*(state: SessionState; idx: int): Result[NativeToolResult,
     resultKind: trkOutput,
     newHistory: some(restored),
   ))
-
