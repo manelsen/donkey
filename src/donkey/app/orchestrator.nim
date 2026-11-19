@@ -464,7 +464,6 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
       if context.len > 0: context & "\n\n" & blackboardBlock
       else: blackboardBlock
 
-  const MaxAttachmentsPerTurn = 10
   var attachmentUrls = userPayload.mediaUrls
   if attachmentUrls.len == 0 and userPayload.mediaUrl.len > 0:
     attachmentUrls = @[userPayload.mediaUrl]

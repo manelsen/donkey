@@ -236,7 +236,6 @@ func addUserTurnWithImages*(history: ConversationHistory;
   ##
   ## Without `mediaPaths` (legacy payloads) the text marker is authoritative and
   ## is left untouched.
-  const MaxAttachmentsPerTurn = 10
   if imageUrls.len == 0:
     return addUserTurn(history, userText, "")
   let havePaths = mediaPaths.len == imageUrls.len and mediaPaths.len > 0

@@ -22,6 +22,9 @@ const
   ## practical Anthropic ceiling and keeps the JSON body bounded.
   MaxInlineImageEncodedBytes* = 5 * 1024 * 1024
   MaxInlineImagesPerTurn* = 4
+  ## Hard cap on attachments carried into a single turn; the extras are
+  ## reported and dropped rather than expanded into messages.
+  MaxAttachmentsPerTurn* = 10
 
   ## Anthropic, Gemini and the OpenAI-compatible vision models accept these.
   ## SVG is deliberately absent: it is a script-carrying document, not an

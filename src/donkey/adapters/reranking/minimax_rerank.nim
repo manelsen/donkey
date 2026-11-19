@@ -25,8 +25,7 @@ type
     maxChars*: int
     maxTokens*: int
 
-proc parseScores*(content: string; count: int): seq[float32] =
-  llm_rerank_common.parseScores(content, count)
+export parseScores
 
 proc buildBody*(a: MiniMaxRerankAdapter;
                 query: string;

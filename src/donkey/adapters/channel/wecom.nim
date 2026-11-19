@@ -18,7 +18,7 @@
 ##   WECOM_CORP_ID, WECOM_CORP_SECRET, WECOM_AGENT_ID,
 ##   WECOM_CALLBACK_TOKEN, WECOM_WEBHOOK_PORT (default 8081)
 
-import std/[algorithm, json, locks, net, strutils, tables, times]
+import std/[algorithm, json, locks, net, strutils, tables]
 import checksums/sha1
 import ../../core/log
 import ../../core/pipeops
@@ -54,10 +54,6 @@ type
 var gWeComEvents* {.global.}: Channel[WeComEvent]
 
 # ── Token management ──────────────────────────────────────────────────────────
-
-proc epochMs(): int64 =
-  let t = getTime()
-  t.toUnix() * 1000 + (t.nanosecond div 1_000_000)
 
 proc refreshToken*(a: var WeComAdapter): Result[void, string] =
   let url = WeComApiBase & "/cgi-bin/gettoken?corpid=" & a.corpId &
