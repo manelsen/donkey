@@ -452,25 +452,26 @@ if [ "$file_count" -eq 0 ]; then
   exit 2
 fi
 
-# Assign files to shards deterministically (round-robin over the sorted list).
+# Collect the selected files first. Legacy mode filters them round-robin;
+# grouped mode assigns whole units below, using the full checkout inventory.
 idx=0
 items=()
-selected_files=()
-shard_nr=0
-for f in "${files[@]}"; do
-  shard_nr=$((shard_nr + 1))
-  if [ "$SHARD_TOTAL" -gt 1 ] &&
-     [ $(( (shard_nr - 1) % SHARD_TOTAL + 1 )) -ne "$SHARD_INDEX" ]; then
-    continue
+selected_files=("${files[@]}")
+if [ "$TEST_RUNNER" = "legacy" ]; then
+  shard_nr=0
+  for f in "${files[@]}"; do
+    shard_nr=$((shard_nr + 1))
+    if [ "$SHARD_TOTAL" -gt 1 ] &&
+       [ $(( (shard_nr - 1) % SHARD_TOTAL + 1 )) -ne "$SHARD_INDEX" ]; then
+      continue
+    fi
+    idx=$((idx + 1))
+    items+=("$f" "$TMP_DIR" "$idx")
+  done
+  if [ "$idx" -eq 0 ]; then
+    echo "Shard $SHARD_INDEX/$SHARD_TOTAL has no test files for targets: ${TARGETS[*]}"
+    exit 0
   fi
-  idx=$((idx + 1))
-  selected_files+=("$f")
-  items+=("$f" "$TMP_DIR" "$idx")
-done
-
-if [ "$idx" -eq 0 ]; then
-  echo "Shard $SHARD_INDEX/$SHARD_TOTAL has no test files for targets: ${TARGETS[*]}"
-  exit 0
 fi
 
 if [ "$TEST_RUNNER" = "grouped" ]; then
@@ -523,16 +524,51 @@ if [ "$TEST_RUNNER" = "grouped" ]; then
   GROUP_MANIFEST="$normalized_manifest"
   export GROUP_MANIFEST
 
+  # Shard assignment uses the complete checkout inventory: every manifest
+  # group is one unit, and every non-manifest test file is one unit. Path
+  # filtering happens after assignment, so a group never splits across shards
+  # and adding a new file cannot move a group to another shard.
+  group_units="$TMP_DIR/unit_groups.txt"
+  cut -f1 "$GROUP_MANIFEST" | sort -u > "$group_units"
+  all_tests="$TMP_DIR/all_tests.txt"
+  find tests -name '*.nim' | sort -u > "$all_tests"
+
+  units=()
+  while IFS= read -r group; do
+    [ -n "$group" ] && units+=("group:$group")
+  done < "$group_units"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if ! grep -Fqx "$path" "$seen_paths"; then
+      units+=("file:$path")
+    fi
+  done < "$all_tests"
+
+  unit_shards="$TMP_DIR/unit_shards.tsv"
+  : > "$unit_shards"
+  unit_nr=0
+  for unit in "${units[@]}"; do
+    unit_nr=$((unit_nr + 1))
+    unit_shard=$(( (unit_nr - 1) % SHARD_TOTAL + 1 ))
+    printf '%s\t%s\n' "$unit" "$unit_shard" >> "$unit_shards"
+  done
+
   jobs=()
   group_names="$TMP_DIR/groups.txt"
   : > "$group_names"
   for f in "${selected_files[@]}"; do
     group="$(awk -F'\t' -v p="$f" '$2 == p { print $1; exit }' "$GROUP_MANIFEST")"
     if [ -n "$group" ]; then
-      printf '%s\n' "$f" >> "$TMP_DIR/group_${group}.files"
-      printf '%s\n' "$group" >> "$group_names"
+      group_shard="$(awk -F'\t' -v k="group:$group" '$1 == k { print $2; exit }' "$unit_shards")"
+      if [ "$group_shard" = "$SHARD_INDEX" ]; then
+        printf '%s\n' "$f" >> "$TMP_DIR/group_${group}.files"
+        printf '%s\n' "$group" >> "$group_names"
+      fi
     else
-      jobs+=("file"$'\t'"$f")
+      file_shard="$(awk -F'\t' -v k="file:$f" '$1 == k { print $2; exit }' "$unit_shards")"
+      if [ "$file_shard" = "$SHARD_INDEX" ]; then
+        jobs+=("file"$'\t'"$f")
+      fi
     fi
   done
   while IFS= read -r group; do
@@ -540,6 +576,11 @@ if [ "$TEST_RUNNER" = "grouped" ]; then
     group_files="$(paste -sd, "$TMP_DIR/group_${group}.files")"
     jobs+=("group"$'\t'"$group"$'\t'"$group_files")
   done < <(sort -u "$group_names")
+
+  if [ "${#jobs[@]}" -eq 0 ]; then
+    echo "Shard $SHARD_INDEX/$SHARD_TOTAL has no test units for targets: ${TARGETS[*]}"
+    exit 0
+  fi
 
   runner_status=0
   printf "%s\0" "${jobs[@]}" |
