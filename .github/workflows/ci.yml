@@ -104,7 +104,7 @@ jobs:
   # PRs run only the targets affected by the diff (scripts/affected_tests.sh);
   # master runs the full suite split across four shards.
   test:
-    name: Tests (${{ strategy.job-index + 1 }}/${{ strategy.job-total }})
+    name: Tests (${{ matrix.shard }}/${{ strategy.job-total }})
     needs: build
     runs-on: ubuntu-latest
     env:
@@ -171,7 +171,7 @@ jobs:
       - name: Run tests
         env:
           JOBS: 4
-          SHARD_INDEX: ${{ strategy.job-index + 1 }}
+          SHARD_INDEX: ${{ matrix.shard }}
           SHARD_TOTAL: ${{ strategy.job-total }}
           BASE_REF: ${{ github.base_ref }}
         run: |
