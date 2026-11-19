@@ -31,6 +31,9 @@ type
     history*:       ConversationHistory
     toolCallCount*: int
     aborted*:       bool
+    askInterrupted*: bool
+      ## The ingress cancelled the open ask for a new API turn: the batch and
+      ## the turn must end, not just the remaining tools of this batch.
     recentCalls*:   seq[(string, string)]
 
   ToolLoopStreamDecision* = object
@@ -256,7 +259,7 @@ func withToolBatchState*(batch: ToolBatchState;
   result = state
   result.history = batch.history
   result.toolCallCount = batch.toolCallCount
-  result.done = batch.aborted
+  result.done = batch.aborted or batch.askInterrupted
 
 func decideToolLoopStreaming*(round: int;
                               toolsCount: int;

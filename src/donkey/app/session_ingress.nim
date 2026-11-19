@@ -111,7 +111,8 @@ proc buildEnsureSessionPlan*(sm: var SessionManager;
                              userId: UserId;
                              toolCatalogSignature: SessionRuntimeSignature;
                              persist: bool = true;
-                             recordActivity: bool = true): EnsureSessionPlan =
+                             recordActivity: bool = true;
+                             answerableAsk: bool = true): EnsureSessionPlan =
   ## Evaluates session ingress state and decides whether to reuse, rebuild, or create a session.
   ## `persist = false` lets the ingress path batch the registry write after
   ## channel bookkeeping.
@@ -121,7 +122,7 @@ proc buildEnsureSessionPlan*(sm: var SessionManager;
     userId: userId,
     state: ingressState,
     nextSignature: toolCatalogSignature,
-  ))
+  ), answerableAsk = answerableAsk)
   let now = nowMs()
   let wasCold =
     ingressState.lastInboundAtMs > 0 and
@@ -148,12 +149,14 @@ proc buildSessionIngressContext*(sm: var SessionManager;
                                  msg: InboundMessage;
                                  toolCatalogSignature: SessionRuntimeSignature;
                                  msgSeq: var int;
-                                 recordActivity: bool = true): SessionIngressContext =
+                                 recordActivity: bool = true;
+                                 answerableAsk: bool = true): SessionIngressContext =
   ## Builds ingress plan, records the channel, and persists the session exactly
   ## once per inbound message.
   result.plan = sm.buildEnsureSessionPlan(msg.userId, toolCatalogSignature,
                                           persist = false,
-                                          recordActivity = recordActivity)
+                                          recordActivity = recordActivity,
+                                          answerableAsk = answerableAsk)
   inc msgSeq
   result.msgId = $msg.userId & "-" & $msgSeq
   if result.plan.decision.shouldRecordChannel:
@@ -330,9 +333,14 @@ proc startSessionIngress*(sm: var SessionManager;
     subagentWorkspace = services.subagentWorkspace)
   let signature = toolCatalogSignature(
     bootstrap.tools, bootstrap.providerLabel, bootstrap.paddockDir, bootstrap.skillPrompt)
+  ## An API turn carries no text the user typed in the conversation, so it can
+  ## never answer an open ask; delivering it there would hand the question to
+  ## the wrong turn and drop this one.
+  let answersAsk = msg.bridgeToken == 0
   result = sm.buildSessionIngressContext(
     msg, signature, msgSeq,
-    recordActivity = taskKind notin {tkSchedule, tkHeartbeat})
+    recordActivity = taskKind notin {tkSchedule, tkHeartbeat},
+    answerableAsk = answersAsk)
   let recentContext =
     if result.plan.injectRecentContext:
       loadRecentContext(services.memory, msg.userId)
@@ -341,6 +349,9 @@ proc startSessionIngress*(sm: var SessionManager;
   ## Enqueue task message BEFORE starting the new orchestrator.
   ## This prevents the orchestrator from receiving a cancel message
   ## (from the old orchestrator's inbox) before the task.
+  if result.plan.decision.cancelsAsk and not result.plan.entry[].askInbox.isNil:
+    result.plan.entry[].askInbox.addLastNoWait("__DONKEY_ASK_CANCELLED__")
+    result.plan.entry[].awaitingAsk = false
   case result.plan.decision.target
   of sitActorInbox:
     if taskKind == tkUserMsg:

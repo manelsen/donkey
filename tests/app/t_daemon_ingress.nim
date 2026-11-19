@@ -1,4 +1,4 @@
-import std/[os, strutils, unittest]
+import std/[os, strutils, tables, unittest]
 import chronos
 import chronos/asyncsync
 import donkey/app/session_ingress
@@ -193,6 +193,53 @@ suite "daemon session ingress":
     check queued.payload == "hello world"
     ## The API turn generation travels with the task message.
     check queued.bridgeToken == 5'u64
+
+  test "an api request cancels an open ask instead of answering it":
+    var sm: SessionManager
+    sm.init()
+    ## An ask reservation whose asking turn is gone: this is the state A7
+    ## describes once the orphaned turn has expired.
+    let entry = SessionEntry(
+      inbox: newAsyncQueue[AgentMessage](),
+      askInbox: newAsyncQueue[string](),
+      awaitingAsk: true,
+      channels: @[],
+      toolCatalogSignature: "sig-a",
+    )
+    entry.askInbox.addLastNoWait("stale")
+    sm.entries["u-api-ask"] = entry
+    let msg = InboundMessage(
+      userId: UserId("u-api-ask"),
+      channel: ckCli,
+      channelId: "api:u-api-ask",
+      text: "a new api turn",
+      bridgeToken: 7'u64,
+    )
+    var msgSeq = 0
+    let ctx = sm.buildSessionIngressContext(
+      msg, SessionRuntimeSignature("sig-a"), msgSeq, answerableAsk = msg.bridgeToken == 0)
+    check ctx.plan.decision.target == sitActorInbox
+    check ctx.plan.decision.cancelsAsk
+    check ctx.plan.entry[].inbox.len == 0
+
+  test "an api request over an open ask reaches the actor inbox":
+    ## A7 wiring, expressed at the layer that owns the decision: the plan the
+    ## ingress builds for an API message never targets the ask queue.
+    var sm: SessionManager
+    sm.init()
+    let entry = SessionEntry(
+      inbox: newAsyncQueue[AgentMessage](),
+      askInbox: newAsyncQueue[string](),
+      awaitingAsk: true,
+      channels: @[],
+      toolCatalogSignature: "sig-a",
+    )
+    entry.askInbox.addLastNoWait("stale")
+    sm.entries["u-chan-ask"] = entry
+    let plan = sm.buildEnsureSessionPlan(
+      UserId("u-chan-ask"), SessionRuntimeSignature("sig-a"), answerableAsk = false)
+    check plan.decision.target == sitActorInbox
+    check plan.decision.cancelsAsk
 
   test "revoked user is detected from USER.md":
     let memory = MdFileAdapter(paddocksDir: "/tmp/donkey_revoked_ingress")

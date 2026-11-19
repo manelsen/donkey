@@ -16,6 +16,7 @@ import ../core/tooling/native_tool_dispatch
 import ../core/agent_events
 import ../domain/agent_message
 import ../domain/message
+import ../domain/more_tools
 import ../domain/providers/media_pure
 import ../domain/subagent_pure
 import ../ports/memory
@@ -32,6 +33,12 @@ export tool_loop
 type TypingFn* = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: [].}
 
 const RepeatAbortThreshold* = 2    ## abort if same (tool, args) seen ≥ this many times
+
+const
+  AskInterruptedReply* = "A pergunta pendente foi cancelada porque chegou " &
+    "uma nova mensagem antes da resposta."
+    ## Terminal reply for a turn whose open `ask` the ingress cancelled. It
+    ## closes the turn's bridge instead of leaving the caller to time out.
 
 func clipProviderError(err: string; maxChars = 500): string =
   clipUtf8(err, maxChars)
@@ -400,6 +407,27 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
     result =
       result |>->
       withToolResult(tc, toolResult.text, toolResult.resultKind, toolResult.newHistory)
+    if tc.name == AskToolName and toolResult.text == AskInterruptedText and
+       toolResult.resultKind == trkOperationalError:
+      ## The ingress cancelled the open ask for a new API turn. Stop the batch
+      ## and the turn: the next round could ask again and block the new turn.
+      result.askInterrupted = true
+      if not suppressProgress:
+        ## The turn ends without a final text, so close its bridge with a
+        ## terminal error; otherwise the caller waits until the deadline.
+        await globalOutbox.put(OutboundMessage(
+          userId: uid,
+          channel: channel,
+          text: AskInterruptedReply,
+          replyTo: replyTo,
+          replyKind: rkTurnError,
+          bridgeToken: bridgeToken,
+        ))
+      for j in i + 1 ..< toolCalls.len:
+        result = result |>->
+          withToolResult(toolCalls[j], AskInterruptedText,
+                         trkOperationalError, none(ConversationHistory))
+      break
     let postPlan = planToolBatchItem(
       @[], tc, RepeatAbortThreshold, result.toolCallCount, toolResult.text)
     if not suppressProgress:
