@@ -173,7 +173,8 @@ jobs:
           JOBS: 4
           SHARD_INDEX: ${{ matrix.shard }}
           SHARD_TOTAL: ${{ strategy.job-total }}
-          BASE_REF: ${{ github.base_ref }}
+          # The fetch step creates origin/<branch>; checkout leaves no local branch.
+          BASE_REF: origin/${{ github.base_ref }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             mapfile -t targets < <(bash scripts/affected_tests.sh "$BASE_REF")
