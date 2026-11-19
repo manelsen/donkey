@@ -1,0 +1,12 @@
+core_pilot	tests/core/t_actor.nim
+core_pilot	tests/core/t_approval_pure.nim
+core_pilot	tests/core/t_command_catalog.nim
+core_pilot	tests/core/t_command_routing.nim
+core_pilot	tests/core/t_diagnostics.nim
+core_pilot	tests/core/t_output_sanitizer.nim
+core_pilot	tests/core/t_pipeops.nim
+core_pilot	tests/core/t_provider_catalog.nim
+core_pilot	tests/core/t_provider_failover.nim
+core_pilot	tests/core/t_routing_policy.nim
+core_pilot	tests/core/t_structured_tool_result.nim
+core_pilot	tests/core/t_utf8_clip.nim
