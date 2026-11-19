@@ -41,7 +41,9 @@ jobs:
       - name: Set up Nim
         uses: jiro4989/setup-nim-action@v2
         with:
-          nim-version: '2.2.8'
+          # 2.2.14/2.4.x SIGSEGV under ORC when a Channel carries GC-managed
+          # values (provider executor); 2.2.12 is the newest passing compiler.
+          nim-version: '2.2.12'
 
       - name: Cache Nim & Nimble artifacts
         uses: actions/cache@v4
@@ -85,7 +87,8 @@ jobs:
     runs-on: ubuntu-latest
     container: quay.io/pypa/manylinux_2_28_x86_64
     env:
-      NIM_VERSION: '2.2.8'
+      # 2.2.14/2.4.x crash in the provider executor under ORC; see the test job.
+      NIM_VERSION: '2.2.12'
       MAX_GLIBC: '2.28'
 
     steps:
