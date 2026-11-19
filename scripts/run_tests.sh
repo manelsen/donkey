@@ -73,35 +73,14 @@ case "$cache_base" in
 esac
 export TEST_NIMCACHE_ROOT
 
-# Grouped artifacts live beside the per-file caches so warm runs reuse them.
-if [ -n "$TEST_NIMCACHE_ROOT" ]; then
+# CI stores grouped artifacts separately from the per-file caches.
+if [ -n "${TEST_GROUP_CACHE_DIR:-}" ]; then
+  GROUP_CACHE_ROOT="$TEST_GROUP_CACHE_DIR"
+elif [ -n "$TEST_NIMCACHE_ROOT" ]; then
   GROUP_CACHE_ROOT="$TEST_NIMCACHE_ROOT/grouped"
 else
   GROUP_CACHE_ROOT="$TMP_DIR/grouped"
 fi
-export GROUP_CACHE_ROOT
-
-file_mtime() {
-  if stat -c %Y "$1" >/dev/null 2>&1; then
-    stat -c %Y "$1"
-  else
-    stat -f %m "$1" 2>/dev/null || echo 0
-  fi
-}
-export -f file_mtime
-
-# Newest input shared by every group: project sources, build config and the
-# installed Nimble packages. A binary older than this is rebuilt.
-NEWEST_SOURCE=0
-while IFS= read -r f; do
-  m="$(file_mtime "$f")"
-  [ "$m" -gt "$NEWEST_SOURCE" ] && NEWEST_SOURCE="$m"
-done < <(
-  find src -name '*.nim'
-  printf '%s\n' config.nims donkey.nimble
-  find "$HOME/.nimble/pkgs2" -mindepth 1 -maxdepth 1 -type d 2>/dev/null
-)
-export NEWEST_SOURCE
 
 HAVE_GNU_REALPATH=0
 if command -v realpath >/dev/null 2>&1 &&    [ -n "$(realpath -m --relative-to=. . 2>/dev/null)" ]; then
@@ -255,11 +234,7 @@ record_report() {
 export -f record_report
 
 group_cache_dir() {
-  local group="$1"
-  local nim_hash cache_hash
-  nim_hash="$(nim --version 2>/dev/null | head -1 | cksum | cut -d' ' -f1)"
-  cache_hash="$(printf '%s|%s|%s|%s' "$REPO_ROOT" "$group" "$nim_hash" "$EXTRA_NIM_FLAGS" | cksum | cut -d' ' -f1)"
-  printf '%s' "$GROUP_CACHE_ROOT/${group}_${cache_hash}"
+  printf '%s' "$GROUP_CACHE_ROOT/${1}_${GROUP_CACHE_PROFILE}"
 }
 export -f group_cache_dir
 
@@ -267,12 +242,13 @@ export -f group_cache_dir
 # test cannot serialize the rest of its group.
 build_group() {
   local group="$1"
-  local cache_dir lock entry binary build_log
+  local cache_dir lock entry binary build_log stamp
   cache_dir="$(group_cache_dir "$group")"
   lock="${cache_dir}.lock"
   entry="$cache_dir/entry.nim"
   binary="$cache_dir/entry"
   build_log="$cache_dir/build.log"
+  stamp="$cache_dir/input.sha256"
 
   local tries=0
   mkdir -p "$GROUP_CACHE_ROOT"
@@ -319,28 +295,15 @@ build_group() {
     mv "$entry.tmp" "$entry"
   fi
 
-  local needs_build=1
-  if [ -x "$binary" ]; then
-    needs_build=0
-    local binary_mtime
-    binary_mtime="$(file_mtime "$binary")"
-    if [ "$binary_mtime" -lt "$NEWEST_SOURCE" ] ||
-       [ "$(file_mtime "$entry")" -gt "$binary_mtime" ]; then
-      needs_build=1
-    else
-      local f
-      for f in "${paths[@]}"; do
-        if [ "$(file_mtime "$f")" -gt "$binary_mtime" ]; then
-          needs_build=1
-          break
-        fi
-      done
-    fi
-  fi
-
   local run_status=0
-  if [ "$needs_build" -eq 1 ]; then
-    if [ -n "${REPORT_DIR:-}" ]; then
+  if [ -x "$binary" ] && [ -n "$GROUP_CACHE_INPUTS" ] && [ -r "$stamp" ] &&
+     [ "$(cat "$stamp")" = "$GROUP_CACHE_INPUTS" ]; then
+    printf 'REUSE group %s\n' "$group"
+  else
+    printf 'BUILD group %s\n' "$group"
+    if ! rm -f "$stamp"; then
+      run_status=1
+    elif [ -n "${REPORT_DIR:-}" ]; then
       UNITTEST2_OUTPUT_LVL=VERBOSE nim c --hints:off --mm:orc -u:withPostgres $EXTRA_NIM_FLAGS \
         --panics:on -d:ssl -d:wasm3HasWASI --threads:on \
         -d:withSqlite -d:staticSqlite \
@@ -354,6 +317,10 @@ build_group() {
         --path:"$REPO_ROOT" --path:"$REPO_ROOT/src" \
         --nimcache:"$cache_dir/nimcache" -o:"$binary" "$entry" \
         > "$build_log" 2>&1 || run_status=$?
+    fi
+    if [ "$run_status" -eq 0 ] && [ -x "$binary" ] && [ -n "$GROUP_CACHE_INPUTS" ]; then
+      printf '%s\n' "$GROUP_CACHE_INPUTS" > "$stamp.tmp" &&
+        mv "$stamp.tmp" "$stamp" || run_status=$?
     fi
   fi
   rm -rf "$lock"
@@ -661,6 +628,21 @@ if [ "$TEST_RUNNER" = "grouped" ]; then
 
   build_status=0
   if [ -n "${build_jobs[0]:-}" ]; then
+    fingerprints=""
+    if [ -r "${TEST_GROUP_FINGERPRINT_FILE:-}" ]; then
+      fingerprints="$(cat "$TEST_GROUP_FINGERPRINT_FILE")"
+    elif command -v python3 >/dev/null 2>&1; then
+      fingerprints="$(python3 scripts/test_build_fingerprint.py)" || fingerprints=""
+    fi
+    read -r GROUP_CACHE_PROFILE GROUP_CACHE_INPUTS <<< "$fingerprints"
+    if ! [[ "$GROUP_CACHE_PROFILE" =~ ^[0-9a-f]{64}$ &&
+            "$GROUP_CACHE_INPUTS" =~ ^[0-9a-f]{64}$ ]]; then
+      # Environments without a fingerprint tool can still compile and run tests.
+      GROUP_CACHE_ROOT="$TMP_DIR/grouped"
+      GROUP_CACHE_PROFILE=uncached
+      GROUP_CACHE_INPUTS=""
+    fi
+    export GROUP_CACHE_ROOT GROUP_CACHE_PROFILE GROUP_CACHE_INPUTS
     printf "%s\0" "${build_jobs[@]}" |
       xargs -0 -P "$JOBS" -n 1 bash -c 'run_job "$1"' _ || build_status=$?
   fi
