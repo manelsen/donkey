@@ -19,56 +19,60 @@ proc fakeLineSend(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
   inc lineSends
   ok()
 
-suite "ChannelKind — LINE":
+proc runTests*() =
+  suite "ChannelKind — LINE":
 
-  test "ckLine has the public label line":
-    check $ckLine == "line"
+    test "ckLine has the public label line":
+      check $ckLine == "line"
 
-  test "ckLine is appended at the end of the enum":
-    check ckLine == high(ChannelKind)
+    test "ckLine is appended at the end of the enum":
+      check ckLine == high(ChannelKind)
 
-suite "capability — LINE":
+  suite "capability — LINE":
 
-  test "LINE is send-only, not a copy of FullCapability":
-    ## Descriptor has nine flags: send plus the seven listed in the PRD
-    ## (sendReturnId, editMessage, sendKeyboard, editKeyboard,
-    ## setMessageReaction, downloadFile, sendMedia) and sendVoice. All eight
-    ## non-send flags must stay false.
-    let caps = capability(ckLine)
-    check caps.send
-    check not caps.sendReturnId
-    check not caps.editMessage
-    check not caps.sendKeyboard
-    check not caps.editKeyboard
-    check not caps.setMessageReaction
-    check not caps.downloadFile
-    check not caps.sendMedia
-    check not caps.sendVoice
+    test "LINE is send-only, not a copy of FullCapability":
+      ## Descriptor has nine flags: send plus the seven listed in the PRD
+      ## (sendReturnId, editMessage, sendKeyboard, editKeyboard,
+      ## setMessageReaction, downloadFile, sendMedia) and sendVoice. All eight
+      ## non-send flags must stay false.
+      let caps = capability(ckLine)
+      check caps.send
+      check not caps.sendReturnId
+      check not caps.editMessage
+      check not caps.sendKeyboard
+      check not caps.editKeyboard
+      check not caps.setMessageReaction
+      check not caps.downloadFile
+      check not caps.sendMedia
+      check not caps.sendVoice
 
-  test "supports() mirrors the descriptor for every flag":
-    for flag in ChannelCapabilityFlag:
-      if flag == cfSend:
-        check supports(ckLine, flag)
-      else:
-        check not supports(ckLine, flag)
+    test "supports() mirrors the descriptor for every flag":
+      for flag in ChannelCapabilityFlag:
+        if flag == cfSend:
+          check supports(ckLine, flag)
+        else:
+          check not supports(ckLine, flag)
 
-  test "registry entry matches capability()":
-    check channelCapabilityRegistry()[ckLine] == capability(ckLine)
+    test "registry entry matches capability()":
+      check channelCapabilityRegistry()[ckLine] == capability(ckLine)
 
-suite "outbound wiring — LINE":
+  suite "outbound wiring — LINE":
 
-  test "OutboundChannelPorts exposes a line port":
-    var ports = OutboundChannelPorts()
-    check ports.line.send == nil
-    ports.line = OutboundChannelPort(send: fakeLineSend)
-    check ports.line.send != nil
+    test "OutboundChannelPorts exposes a line port":
+      var ports = OutboundChannelPorts()
+      check ports.line.send == nil
+      ports.line = OutboundChannelPort(send: fakeLineSend)
+      check ports.line.send != nil
 
-  test "outbound runtime routes ckLine through the line port":
-    let log = newLogger("test.line", lvlError, proc(e: LogEntry) = discard)
-    var ports = OutboundChannelPorts()
-    ports.line = OutboundChannelPort(send: fakeLineSend)
-    lineSends = 0
-    sendImmediateOutbound(
-      OutboundMessage(userId: UserId("U1"), channel: ckLine, text: "hi"),
-      ports, log)
-    check lineSends == 1
+    test "outbound runtime routes ckLine through the line port":
+      let log = newLogger("test.line", lvlError, proc(e: LogEntry) = discard)
+      var ports = OutboundChannelPorts()
+      ports.line = OutboundChannelPort(send: fakeLineSend)
+      lineSends = 0
+      sendImmediateOutbound(
+        OutboundMessage(userId: UserId("U1"), channel: ckLine, text: "hi"),
+        ports, log)
+      check lineSends == 1
+
+when isMainModule:
+  runTests()

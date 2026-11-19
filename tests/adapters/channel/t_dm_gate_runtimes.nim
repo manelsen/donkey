@@ -45,761 +45,765 @@ proc gateLoader(): ModelCatalogLoader =
 
 let gateLog = newLogger("test.dm_gate", lvlError)
 
-suite "channel DM gate — runtime drains":
+proc runTests*() =
+  suite "channel DM gate — runtime drains":
 
-  test "telegram denies unauthorized text before provider and session creation":
-    removeDir(GateTmp / "telegram")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
-    var tg = TelegramAdapter(
-      resolver: newIdentityResolver(GateTmp / "telegram" / "ids.tsv"))
-    var presentationState = initPresentationState()
-    let memory = MdFileAdapter(paddocksDir: GateTmp / "telegram" / "paddocks")
+    test "telegram denies unauthorized text before provider and session creation":
+      removeDir(GateTmp / "telegram")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+      var tg = TelegramAdapter(
+        resolver: newIdentityResolver(GateTmp / "telegram" / "ids.tsv"))
+      var presentationState = initPresentationState()
+      let memory = MdFileAdapter(paddocksDir: GateTmp / "telegram" / "paddocks")
 
-    var providerCalls = 0
-    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-      proc(req: CompletionRequest): Result[CompletionResponse, string] =
-        inc providerCalls
-        ok(CompletionResponse(text: "unexpected provider call"))
-    var msgSeq = 0
+      var providerCalls = 0
+      let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] =
+          inc providerCalls
+          ok(CompletionResponse(text: "unexpected provider call"))
+      var msgSeq = 0
 
-    let msg = InboundMessage(
-      userId: UserId("tg-intruder"),
-      channel: ckTelegram,
-      channelId: "42",
-      text: "hello")
+      let msg = InboundMessage(
+        userId: UserId("tg-intruder"),
+        channel: ckTelegram,
+        channelId: "42",
+        text: "hello")
 
-    let handled = handleTelegramMessage(
-      msg, sm, tg, presentationState, memory, completeBuilder, gateLoader(),
-      0, 0, msgSeq, 0, gateLog)
+      let handled = handleTelegramMessage(
+        msg, sm, tg, presentationState, memory, completeBuilder, gateLoader(),
+        0, 0, msgSeq, 0, gateLog)
 
-    check handled  ## denied message is consumed, no fallback dispatch
-    check providerCalls == 0
-    check sm.sessionCount() == 0
+      check handled  ## denied message is consumed, no fallback dispatch
+      check providerCalls == 0
+      check sm.sessionCount() == 0
 
-  test "parsePreferenceString reads a cursor key from a preferences document":
-    let prefs = "discord_last_msg_id = \"123456789012345678\"\n" &
-                "provider = \"gemini\"\n"
-    check parsePreferenceString(prefs, "discord_last_msg_id") == "123456789012345678"
-    check parsePreferenceString(prefs, "provider") == "gemini"
-    check parsePreferenceString(prefs, "missing").len == 0
+    test "parsePreferenceString reads a cursor key from a preferences document":
+      let prefs = "discord_last_msg_id = \"123456789012345678\"\n" &
+                  "provider = \"gemini\"\n"
+      check parsePreferenceString(prefs, "discord_last_msg_id") == "123456789012345678"
+      check parsePreferenceString(prefs, "provider") == "gemini"
+      check parsePreferenceString(prefs, "missing").len == 0
 
-  test "wecom drops unauthorized text but keeps draining authorized traffic":
-    removeDir(GateTmp / "wecom")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    var wc = newWeComAdapter("corp", "secret", "tok", 42, GateTmp / "wecom" / "ids.tsv")
-    let allowed = wc.resolver.resolve(ckWeCom, "allowed-user")
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} =
-      {.cast(gcsafe).}:
-        u == allowed
-    let memory = MdFileAdapter(paddocksDir: GateTmp / "wecom" / "paddocks")
+    test "wecom drops unauthorized text but keeps draining authorized traffic":
+      removeDir(GateTmp / "wecom")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      var wc = newWeComAdapter("corp", "secret", "tok", 42, GateTmp / "wecom" / "ids.tsv")
+      let allowed = wc.resolver.resolve(ckWeCom, "allowed-user")
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} =
+        {.cast(gcsafe).}:
+          u == allowed
+      let memory = MdFileAdapter(paddocksDir: GateTmp / "wecom" / "paddocks")
 
-    var providerCalls = 0
-    var fallbackMsgs: seq[InboundMessage] = @[]
-    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-      proc(req: CompletionRequest): Result[CompletionResponse, string] =
-        inc providerCalls
-        ok(CompletionResponse(text: "unexpected provider call"))
-    var msgSeq = 0
+      var providerCalls = 0
+      var fallbackMsgs: seq[InboundMessage] = @[]
+      let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] =
+          inc providerCalls
+          ok(CompletionResponse(text: "unexpected provider call"))
+      var msgSeq = 0
 
-    gWeComEvents.open()
-    gWeComEvents.send(WeComEvent(
-      msgType: "text", fromUser: "intruder", msgId: "m1", content: "/status"))
-    gWeComEvents.send(WeComEvent(
-      msgType: "text", fromUser: "allowed-user", msgId: "m2", content: "hello"))
+      gWeComEvents.open()
+      gWeComEvents.send(WeComEvent(
+        msgType: "text", fromUser: "intruder", msgId: "m1", content: "/status"))
+      gWeComEvents.send(WeComEvent(
+        msgType: "text", fromUser: "allowed-user", msgId: "m2", content: "hello"))
 
-    let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
-      {.cast(gcsafe).}:
-        fallbackMsgs.add(msg)
+      let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          fallbackMsgs.add(msg)
 
-    drainWeComEvents(wc, "corp", sm, memory, completeBuilder, gateLoader(),
-                     0, 0, 0, msgSeq, gateLog, onFallback)
+      drainWeComEvents(wc, "corp", sm, memory, completeBuilder, gateLoader(),
+                       0, 0, 0, msgSeq, gateLog, onFallback)
 
-    check providerCalls == 0
-    check fallbackMsgs.len == 1
-    check fallbackMsgs[0].text == "hello"
-    check sm.sessionCount() == 0
-    check not wc.tryRecvEvent()[0]  ## denied event was consumed
-    check wc.resolver.lookup(ckWeCom, "intruder").isNone  ## denied sender not minted
-    check wc.resolver.lookup(ckWeCom, "allowed-user").isSome
+      check providerCalls == 0
+      check fallbackMsgs.len == 1
+      check fallbackMsgs[0].text == "hello"
+      check sm.sessionCount() == 0
+      check not wc.tryRecvEvent()[0]  ## denied event was consumed
+      check wc.resolver.lookup(ckWeCom, "intruder").isNone  ## denied sender not minted
+      check wc.resolver.lookup(ckWeCom, "allowed-user").isSome
 
-  test "wechat drops unauthorized messages before command dispatch":
-    removeDir(GateTmp / "wechat")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
-    var wch = newWeChatAdapter("app", "secret", "tok", "", GateTmp / "wechat" / "ids.tsv")
-    let memory = MdFileAdapter(paddocksDir: GateTmp / "wechat" / "paddocks")
+    test "wechat drops unauthorized messages before command dispatch":
+      removeDir(GateTmp / "wechat")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+      var wch = newWeChatAdapter("app", "secret", "tok", "", GateTmp / "wechat" / "ids.tsv")
+      let memory = MdFileAdapter(paddocksDir: GateTmp / "wechat" / "paddocks")
 
-    var providerCalls = 0
-    var fallbackCalls = 0
-    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-      proc(req: CompletionRequest): Result[CompletionResponse, string] =
-        inc providerCalls
-        ok(CompletionResponse(text: "unexpected provider call"))
-    var msgSeq = 0
+      var providerCalls = 0
+      var fallbackCalls = 0
+      let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] =
+          inc providerCalls
+          ok(CompletionResponse(text: "unexpected provider call"))
+      var msgSeq = 0
 
-    let xml = "<xml><FromUserName>intruder</FromUserName>" &
-              "<MsgType>text</MsgType><MsgId>w1</MsgId>" &
-              "<Content>/mycode</Content></xml>"
-    check wch.enqueueWebhookXml(xml).isOk
+      let xml = "<xml><FromUserName>intruder</FromUserName>" &
+                "<MsgType>text</MsgType><MsgId>w1</MsgId>" &
+                "<Content>/mycode</Content></xml>"
+      check wch.enqueueWebhookXml(xml).isOk
 
-    let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
-      {.cast(gcsafe).}:
-        inc fallbackCalls
+      let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          inc fallbackCalls
 
-    drainWeChatEvents(wch, "app", sm, memory, completeBuilder, gateLoader(),
-                      0, 0, 0, msgSeq, onFallback, gateLog)
-
-    check providerCalls == 0
-    check fallbackCalls == 0
-    check sm.sessionCount() == 0
-    check not wch.tryRecvEvent()[0]
-    check wch.resolver.lookup(ckWeChat, "intruder").isNone  ## denied sender not minted
-
-  test "wechat media-only /continue does not mint an identity before binding":
-    removeDir(GateTmp / "wechat-media")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    var wch = newWeChatAdapter("app", "secret", "tok", "", GateTmp / "wechat-media" / "ids.tsv")
-    let target = wch.resolver.resolve(ckWeChat, "existing-wechat")
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} =
-      {.cast(gcsafe).}:
-        u == target
-    let code = wch.resolver.generateLinkCode(target)
-    let memory = MdFileAdapter(paddocksDir: GateTmp / "wechat-media" / "paddocks")
-    var providerCalls = 0
-    var fallbackCalls = 0
-    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-      proc(req: CompletionRequest): Result[CompletionResponse, string] =
-        inc providerCalls
-        ok(CompletionResponse(text: "unexpected provider call"))
-    var msgSeq = 0
-
-    let xml = "<xml><FromUserName>media-intruder</FromUserName>" &
-              "<MsgType>image</MsgType><MsgId>w-media</MsgId>" &
-              "<MediaId>media-1</MediaId>" &
-              "<Content>/continue " & code & "</Content></xml>"
-    check wch.enqueueWebhookXml(xml).isOk
-
-    let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
-      {.cast(gcsafe).}:
-        inc fallbackCalls
-
-    drainWeChatEvents(wch, "app", sm, memory, completeBuilder, gateLoader(),
-                      0, 0, 0, msgSeq, onFallback, gateLog)
-
-    check providerCalls == 0
-    check fallbackCalls == 0
-    check wch.resolver.lookup(ckWeChat, "media-intruder").isNone
-
-  test "qq drops unauthorized messages and consumes the event":
-    removeDir(GateTmp / "qq")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
-    var qq = newQQOneBotChannelAdapter("http://127.0.0.1:1", "",
-                                       GateTmp / "qq" / "ids.tsv")
-    let memory = MdFileAdapter(paddocksDir: GateTmp / "qq" / "paddocks")
-
-    var providerCalls = 0
-    var fallbackCalls = 0
-    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-      proc(req: CompletionRequest): Result[CompletionResponse, string] =
-        inc providerCalls
-        ok(CompletionResponse(text: "unexpected provider call"))
-    var msgSeq = 0
-
-    check qq.enqueueEventJson("""{"post_type":"message","message_type":"private",
-      "user_id":4242,"message_id":7,"raw_message":"/status"}""").isOk
-
-    let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
-      {.cast(gcsafe).}:
-        inc fallbackCalls
-
-    drainQQEvents(qq, sm, memory, completeBuilder, gateLoader(),
-                  0, 0, 0, msgSeq, onFallback, gateLog)
-
-    check providerCalls == 0
-    check fallbackCalls == 0
-    check sm.sessionCount() == 0
-    check not qq.tryRecvEvent()[0]
-    check qq.resolver.lookup(ckQQ, "4242").isNone  ## denied sender not minted
-
-  test "feishu drops unauthorized messages and consumes the event":
-    removeDir(GateTmp / "feishu")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
-    var fs = newFeishuAdapter("cli_app", "secret", GateTmp / "feishu" / "ids.tsv")
-    fs.openQueue()
-    let memory = MdFileAdapter(paddocksDir: GateTmp / "feishu" / "paddocks")
-
-    var providerCalls = 0
-    var fallbackCalls = 0
-    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-      proc(req: CompletionRequest): Result[CompletionResponse, string] =
-        inc providerCalls
-        ok(CompletionResponse(text: "unexpected provider call"))
-    var msgSeq = 0
-
-    feishu.pushEvent(%* {
-      "schema": "2.0",
-      "header": {"event_type": "im.message.receive_v1"},
-      "event": {
-        "message": {
-          "message_type": "text",
-          "message_id":   "om_gate1",
-          "chat_id":      "oc_gate1",
-          "chat_type":    "p2p",
-          "content":      "{\"text\":\"/status\"}",
-        },
-        "sender": {"sender_id": {"open_id": "ou_intruder"}},
-      },
-    })
-
-    let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
-      {.cast(gcsafe).}:
-        inc fallbackCalls
-
-    drainFeishuEvents(fs, "cli_app", sm, memory, completeBuilder, gateLoader(),
-                      0, 0, 0, msgSeq, onFallback, gateLog)
-
-    check providerCalls == 0
-    check fallbackCalls == 0
-    check sm.sessionCount() == 0
-    check not fs.tryRecvEvent()[0]
-    check fs.resolver.lookup(ckFeishu, "ou_intruder").isNone  ## denied sender not minted
-
-  test "whatsapp drops unauthorized messages before ack and provider dispatch":
-    removeDir(GateTmp / "whatsapp")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
-    var wa = newWhatsAppAdapter("token", "PN1", GateTmp / "whatsapp" / "ids.tsv",
-                                "http://127.0.0.1:1")
-    wa.openQueue()
-    let memory = MdFileAdapter(paddocksDir: GateTmp / "whatsapp" / "paddocks")
-
-    var providerCalls = 0
-    var fallbackCalls = 0
-    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-      proc(req: CompletionRequest): Result[CompletionResponse, string] =
-        inc providerCalls
-        ok(CompletionResponse(text: "unexpected provider call"))
-    var msgSeq = 0
-
-    whatsapp.pushEvent(%* {
-      "entry": [{
-        "changes": [{
-          "value": {
-            "metadata": {"phone_number_id": "PN1"},
-            "messages": [{
-              "from": "5511999990010",
-              "id":   "wamid.gate1",
-              "type": "text",
-              "text": {"body": "/status"},
-            }],
-          }
-        }]
-      }]
-    })
-
-    let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
-      {.cast(gcsafe).}:
-        inc fallbackCalls
-
-    drainWhatsAppEvents(wa, "PN1", sm, memory, completeBuilder, gateLoader(),
+      drainWeChatEvents(wch, "app", sm, memory, completeBuilder, gateLoader(),
                         0, 0, 0, msgSeq, onFallback, gateLog)
 
-    check providerCalls == 0
-    check fallbackCalls == 0
-    check sm.sessionCount() == 0
-    check not wa.tryRecvEvent()[0]
-    check wa.resolver.lookup(ckWhatsApp, "5511999990010").isNone  ## denied sender not minted
+      check providerCalls == 0
+      check fallbackCalls == 0
+      check sm.sessionCount() == 0
+      check not wch.tryRecvEvent()[0]
+      check wch.resolver.lookup(ckWeChat, "intruder").isNone  ## denied sender not minted
 
-  test "dingtalk gateway drainer denies unauthorized and advances the queue":
-    var queue: seq[InboundMessage] = @[
-      InboundMessage(userId: UserId("dt-intruder"), channel: ckDingTalk, text: "/status"),
-      InboundMessage(userId: UserId("dt-owner"), channel: ckDingTalk, text: "hello"),
-    ]
-    var dispatched: seq[string] = @[]
-
-    let poll = proc(): (bool, InboundMessage) {.gcsafe.} =
-      {.cast(gcsafe).}:
-        if queue.len == 0:
-          return (false, InboundMessage())
-        result = (true, queue[0])
-        queue.delete(0)
-
-    let count = drainDingTalkGateway(
-      true,
-      poll,
-      proc(msg: InboundMessage) {.gcsafe.} =
+    test "wechat media-only /continue does not mint an identity before binding":
+      removeDir(GateTmp / "wechat-media")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      var wch = newWeChatAdapter("app", "secret", "tok", "", GateTmp / "wechat-media" / "ids.tsv")
+      let target = wch.resolver.resolve(ckWeChat, "existing-wechat")
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} =
         {.cast(gcsafe).}:
-          dispatched.add(msg.text),
-      gateLog,
-      proc(userId: UserId): bool {.gcsafe.} = userId == UserId("dt-owner"))
-
-    check count == 1
-    check dispatched == @["hello"]
-    check queue.len == 0
-
-  test "matrix gateway drainer denies unauthorized and advances the queue":
-    var queue: seq[InboundMessage] = @[
-      InboundMessage(userId: UserId("mx-intruder"), channel: ckMatrix, text: "/status"),
-      InboundMessage(userId: UserId("mx-owner"), channel: ckMatrix, text: "hi"),
-    ]
-    var dispatched: seq[string] = @[]
-
-    let poll = proc(): (bool, InboundMessage) {.gcsafe.} =
-      {.cast(gcsafe).}:
-        if queue.len == 0:
-          return (false, InboundMessage())
-        result = (true, queue[0])
-        queue.delete(0)
-
-    let count = drainMatrixGateway(
-      true,
-      poll,
-      proc(msg: InboundMessage) {.gcsafe.} =
-        {.cast(gcsafe).}:
-          dispatched.add(msg.text),
-      gateLog,
-      proc(userId: UserId): bool {.gcsafe.} = userId == UserId("mx-owner"))
-
-    check count == 1
-    check dispatched == @["hi"]
-    check queue.len == 0
-
-suite "shared DM gate":
-
-  test "a code minted by one channel resolver is redeemable by another":
-    ## F1: `/mycode` and `/continue` on different channels build separate
-    ## resolvers over the same identity file. They must share the pending-code
-    ## table, not only the path.
-    let dir = GateTmp / "shared-code-table"
-    removeDir(dir)
-    createDir(dir)
-    let path = dir / "identities.tsv"
-    let tg = newIdentityResolver(path)
-    let ln = newIdentityResolver(path)
-    let target = tg.resolve(ckTelegram, "700010")
-    let code = tg.generateLinkCode(target)
-
-    check linkTargetFor(ln.identityGate(), ckLine, "/continue " & code) == some(target)
-    check ln.consumeLinkCode(code, ckLine, "line-700010")
-    check ln.lookup(ckLine, "line-700010").get == target
-    check not ln.consumeLinkCode(code, ckLine, "line-700011")
-
-  test "unknown sender may link a new identity with /continue for an authorized account":
-    let dir = GateTmp / "shared-link"
-    removeDir(dir)
-    createDir(dir)
-    let resolver = newIdentityResolver(dir / "identities.tsv")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    let target = resolver.resolve(ckWeCom, "existing-user")
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} =
-      {.cast(gcsafe).}:
-        u == target
-
-    let code = resolver.generateLinkCode(target)
-    check linkTargetFor(resolver.identityGate(), ckWeCom, "/continue " & code) == some(target)
-    check resolver.lookup(ckWeCom, "new-device").isNone
-
-    let auth = authorizeInbound(
-      sm, resolver.identityGate(), ckWeCom, "new-device", "/continue " & code)
-    check auth.allowed
-    check auth.identified
-    ## The gate minted a temporary identity; consuming the code rewrites it to
-    ## the authorized target.
-    check resolver.consumeLinkCode(code, ckWeCom, "new-device")
-    check resolver.lookup(ckWeCom, "new-device").get == target
-
-  test "unknown sender cannot link to a non-authorized target":
-    let dir = GateTmp / "shared-link-denied"
-    removeDir(dir)
-    createDir(dir)
-    let resolver = newIdentityResolver(dir / "identities.tsv")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
-    let code = resolver.generateLinkCode(UserId("not-authorized"))
-
-    let auth = authorizeInbound(
-      sm, resolver.identityGate(), ckWeCom, "intruder", "/continue " & code)
-    check not auth.allowed
-    check not auth.identified
-    check resolver.lookup(ckWeCom, "intruder").isNone
-
-  test "unknown sender with a wrong code is denied without minting":
-    let dir = GateTmp / "shared-link-wrong"
-    removeDir(dir)
-    createDir(dir)
-    let resolver = newIdentityResolver(dir / "identities.tsv")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
-
-    let auth = authorizeInbound(
-      sm, resolver.identityGate(), ckWeCom, "intruder", "/continue WRONG1")
-    check not auth.allowed
-    check not auth.identified
-    check resolver.lookup(ckWeCom, "intruder").isNone
-
-  test "open policy still mints a first-contact identity":
-    let dir = GateTmp / "shared-open"
-    removeDir(dir)
-    createDir(dir)
-    let resolver = newIdentityResolver(dir / "identities.tsv")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyOpen
-
-    let auth = authorizeInbound(sm, resolver.identityGate(), ckWeChat, "first-contact", "hello")
-    check auth.allowed
-    check auth.identified
-    check resolver.lookup(ckWeChat, "first-contact").isSome
-
-  test "telegram inner gate admits /continue for an authorized target":
-    let dir = GateTmp / "telegram-link"
-    removeDir(dir)
-    createDir(dir)
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    var tg = newTelegramAdapter(
-      "token", dir / "identities.tsv", apiBase = "http://127.0.0.1:1")
-    let target = tg.resolver.resolve(ckTelegram, "700001")
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} =
-      {.cast(gcsafe).}:
-        u == target
-    let code = tg.resolver.generateLinkCode(target)
-
-    # `receive()` normally mints the transient UUID before the gate runs.
-    let transient = tg.resolver.resolve(ckTelegram, "900001")
-    var presentation = initPresentationState()
-    let memory = MdFileAdapter(paddocksDir: dir / "paddocks")
-    var providerCalls = 0
-    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-      proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
-        {.cast(gcsafe).}:
+          u == target
+      let code = wch.resolver.generateLinkCode(target)
+      let memory = MdFileAdapter(paddocksDir: GateTmp / "wechat-media" / "paddocks")
+      var providerCalls = 0
+      var fallbackCalls = 0
+      let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] =
           inc providerCalls
-        ok(CompletionResponse(text: "unexpected"))
-    var msgSeq = 0
+          ok(CompletionResponse(text: "unexpected provider call"))
+      var msgSeq = 0
 
-    let handled = handleTelegramMessage(
-      InboundMessage(
-        userId: transient,
-        channel: ckTelegram,
-        channelId: "chat-1",
-        text: "/continue " & code,
-      ),
-      sm, tg, presentation, memory, completeBuilder, gateLoader(),
-      0, 0, msgSeq, 0, gateLog)
+      let xml = "<xml><FromUserName>media-intruder</FromUserName>" &
+                "<MsgType>image</MsgType><MsgId>w-media</MsgId>" &
+                "<MediaId>media-1</MediaId>" &
+                "<Content>/continue " & code & "</Content></xml>"
+      check wch.enqueueWebhookXml(xml).isOk
 
-    check handled
-    check providerCalls == 0
-    check sm.sessionCount() == 0
-    check tg.resolver.lookup(ckTelegram, "900001").get == target
+      let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          inc fallbackCalls
 
-  test "discord offline cursor falls back to the session snowflake floor":
-    let epochMs = 1_700_000_000_000'i64
-    let floor = discordSnowflakeFloor(epochMs)
-    check floor > 0
-    check discordMessageAfterCursor($(floor + 10), "", floor)
-    check not discordMessageAfterCursor($(floor - 10), "", floor)
-    check discordMessageAfterCursor("200", "100", 0)
-    check not discordMessageAfterCursor("100", "100", 0)
-    check not discordMessageAfterCursor("999", "", 0)
-    # 18-digit cursor vs 19-digit message: numeric, not lexicographic.
-    check discordMessageAfterCursor("1000000000000000000", "999999999999999999", 0)
-    check not discordMessageAfterCursor("not-a-snowflake", "100", 0)
+      drainWeChatEvents(wch, "app", sm, memory, completeBuilder, gateLoader(),
+                        0, 0, 0, msgSeq, onFallback, gateLog)
 
-  test "discord unknown sender without a link code is denied without minting":
-    let dir = GateTmp / "discord-deny"
-    removeDir(dir)
-    createDir(dir)
-    let resolver = newIdentityResolver(dir / "identities.tsv")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+      check providerCalls == 0
+      check fallbackCalls == 0
+      check wch.resolver.lookup(ckWeChat, "media-intruder").isNone
 
-    let auth = authorizeInbound(
-      sm, resolver.identityGate(), ckDiscord, "discord-intruder", "hello", ilsNone)
-    check not auth.allowed
-    check not auth.identified
-    check resolver.lookup(ckDiscord, "discord-intruder").isNone
+    test "qq drops unauthorized messages and consumes the event":
+      removeDir(GateTmp / "qq")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+      var qq = newQQOneBotChannelAdapter("http://127.0.0.1:1", "",
+                                         GateTmp / "qq" / "ids.tsv")
+      let memory = MdFileAdapter(paddocksDir: GateTmp / "qq" / "paddocks")
 
-  test "discord bare link code is admitted only for an authorized target":
-    let dir = GateTmp / "discord-code"
-    removeDir(dir)
-    createDir(dir)
-    let resolver = newIdentityResolver(dir / "identities.tsv")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    let target = resolver.resolve(ckDiscord, "discord-owner")
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} =
-      {.cast(gcsafe).}:
-        u == target
-    let code = resolver.generateLinkCode(target)
+      var providerCalls = 0
+      var fallbackCalls = 0
+      let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] =
+          inc providerCalls
+          ok(CompletionResponse(text: "unexpected provider call"))
+      var msgSeq = 0
 
-    let auth = authorizeInbound(
-      sm, resolver.identityGate(), ckDiscord, "discord-new", code, ilsBareCode)
-    check auth.allowed
-    check resolver.consumeLinkCode(code, ckDiscord, "discord-new")
-    check resolver.lookup(ckDiscord, "discord-new").get == target
+      check qq.enqueueEventJson("""{"post_type":"message","message_type":"private",
+      "user_id":4242,"message_id":7,"raw_message":"/status"}""").isOk
 
-    let wrong = authorizeInbound(
-      sm, resolver.identityGate(), ckDiscord, "discord-other", "WRONG1", ilsBareCode)
-    check not wrong.allowed
-    check resolver.lookup(ckDiscord, "discord-other").isNone
+      let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          inc fallbackCalls
 
-  test "discord modal event is allowed without minting an identity":
-    let dir = GateTmp / "discord-modal"
-    removeDir(dir)
-    createDir(dir)
-    let resolver = newIdentityResolver(dir / "identities.tsv")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+      drainQQEvents(qq, sm, memory, completeBuilder, gateLoader(),
+                    0, 0, 0, msgSeq, onFallback, gateLog)
 
-    let auth = authorizeInbound(
-      sm, resolver.identityGate(), ckDiscord, "discord-modal-user", "", ilsModalOnly)
-    check auth.allowed
-    check not auth.identified
-    check resolver.lookup(ckDiscord, "discord-modal-user").isNone
+      check providerCalls == 0
+      check fallbackCalls == 0
+      check sm.sessionCount() == 0
+      check not qq.tryRecvEvent()[0]
+      check qq.resolver.lookup(ckQQ, "4242").isNone  ## denied sender not minted
 
-  test "slack drops unauthorized messages and consumes the event":
-    removeDir(GateTmp / "slack")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyAllowlist
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
-    var sl = newSlackAdapter("token", GateTmp / "slack" / "ids.tsv")
-    sl.openQueue()
-    let memory = MdFileAdapter(paddocksDir: GateTmp / "slack" / "paddocks")
+    test "feishu drops unauthorized messages and consumes the event":
+      removeDir(GateTmp / "feishu")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+      var fs = newFeishuAdapter("cli_app", "secret", GateTmp / "feishu" / "ids.tsv")
+      fs.openQueue()
+      let memory = MdFileAdapter(paddocksDir: GateTmp / "feishu" / "paddocks")
 
-    var fallbackCalls = 0
-    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-      proc(req: CompletionRequest): Result[CompletionResponse, string] =
-        ok(CompletionResponse(text: "unexpected provider call"))
-    var msgSeq = 0
+      var providerCalls = 0
+      var fallbackCalls = 0
+      let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] =
+          inc providerCalls
+          ok(CompletionResponse(text: "unexpected provider call"))
+      var msgSeq = 0
 
-    slack.pushEvent(%* {
-      "type": "event_callback",
-      "team_id": "T1",
-      "event": {
-        "type": "message",
-        "user": "U_intruder",
-        "text": "/status",
-        "channel": "C1",
-        "ts": "1700000000.000001",
-      },
-    })
+      feishu.pushEvent(%* {
+        "schema": "2.0",
+        "header": {"event_type": "im.message.receive_v1"},
+        "event": {
+          "message": {
+            "message_type": "text",
+            "message_id":   "om_gate1",
+            "chat_id":      "oc_gate1",
+            "chat_type":    "p2p",
+            "content":      "{\"text\":\"/status\"}",
+          },
+          "sender": {"sender_id": {"open_id": "ou_intruder"}},
+        },
+      })
 
-    let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
-      {.cast(gcsafe).}:
-        inc fallbackCalls
+      let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          inc fallbackCalls
 
-    drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
-                     0, 0, 0, msgSeq, onFallback, gateLog)
+      drainFeishuEvents(fs, "cli_app", sm, memory, completeBuilder, gateLoader(),
+                        0, 0, 0, msgSeq, onFallback, gateLog)
 
-    check fallbackCalls == 0
-    check sm.sessionCount() == 0
-    check not sl.tryRecvEvent()[0]
-    check sl.resolver.lookup(ckSlack, "U_intruder").isNone  ## denied sender not minted
+      check providerCalls == 0
+      check fallbackCalls == 0
+      check sm.sessionCount() == 0
+      check not fs.tryRecvEvent()[0]
+      check fs.resolver.lookup(ckFeishu, "ou_intruder").isNone  ## denied sender not minted
 
-  test "slack dispatches authorized messages with event metadata":
-    removeDir(GateTmp / "slack-ok")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyOpen
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = true
-    var sl = newSlackAdapter("token", GateTmp / "slack-ok" / "ids.tsv")
-    sl.openQueue()
-    let memory = MdFileAdapter(paddocksDir: GateTmp / "slack-ok" / "paddocks")
+    test "whatsapp drops unauthorized messages before ack and provider dispatch":
+      removeDir(GateTmp / "whatsapp")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+      var wa = newWhatsAppAdapter("token", "PN1", GateTmp / "whatsapp" / "ids.tsv",
+                                  "http://127.0.0.1:1")
+      wa.openQueue()
+      let memory = MdFileAdapter(paddocksDir: GateTmp / "whatsapp" / "paddocks")
 
-    var dispatched: seq[InboundMessage] = @[]
-    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-      proc(req: CompletionRequest): Result[CompletionResponse, string] =
-        ok(CompletionResponse(text: "unexpected provider call"))
-    var msgSeq = 0
+      var providerCalls = 0
+      var fallbackCalls = 0
+      let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] =
+          inc providerCalls
+          ok(CompletionResponse(text: "unexpected provider call"))
+      var msgSeq = 0
 
-    let payload = %* {
-      "type": "event_callback",
-      "team_id": "T1",
-      "event_id": "Ev-dedupe",
-      "event": {
-        "type": "message",
-        "user": "U_owner",
-        "text": "hello",
-        "channel": "C1",
-        "ts": "1700000000.000002",
-      },
-    }
-    slack.pushEvent(payload)
-    slack.pushEvent(payload)  ## Slack redelivery must not start two turns
+      whatsapp.pushEvent(%* {
+        "entry": [{
+          "changes": [{
+            "value": {
+              "metadata": {"phone_number_id": "PN1"},
+              "messages": [{
+                "from": "5511999990010",
+                "id":   "wamid.gate1",
+                "type": "text",
+                "text": {"body": "/status"},
+              }],
+            }
+          }]
+        }]
+      })
 
-    let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
-      {.cast(gcsafe).}:
-        dispatched.add(msg)
+      let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          inc fallbackCalls
 
-    drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
-                     0, 0, 0, msgSeq, onFallback, gateLog)
+      drainWhatsAppEvents(wa, "PN1", sm, memory, completeBuilder, gateLoader(),
+                          0, 0, 0, msgSeq, onFallback, gateLog)
 
-    check dispatched.len == 1
-    check dispatched[0].channel == ckSlack
-    check dispatched[0].text == "hello"
-    check dispatched[0].channelId == "C1"
-    check dispatched[0].messageId == "1700000000.000002"
-    check not sl.tryRecvEvent()[0]
+      check providerCalls == 0
+      check fallbackCalls == 0
+      check sm.sessionCount() == 0
+      check not wa.tryRecvEvent()[0]
+      check wa.resolver.lookup(ckWhatsApp, "5511999990010").isNone  ## denied sender not minted
 
-  test "slack forwards onboarding callbacks as session tasks":
-    removeDir(GateTmp / "slack-onboarding")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyOpen
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = true
-    var sl = newSlackAdapter("token", GateTmp / "slack-onboarding" / "ids.tsv")
-    sl.openQueue()
-    let memory = MdFileAdapter(paddocksDir: GateTmp / "slack-onboarding" / "paddocks")
-    var msgSeq = 0
-    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-      proc(req: CompletionRequest): Result[CompletionResponse, string] =
-        ok(CompletionResponse(text: "unexpected provider call"))
+    test "dingtalk gateway drainer denies unauthorized and advances the queue":
+      var queue: seq[InboundMessage] = @[
+        InboundMessage(userId: UserId("dt-intruder"), channel: ckDingTalk, text: "/status"),
+        InboundMessage(userId: UserId("dt-owner"), channel: ckDingTalk, text: "hello"),
+      ]
+      var dispatched: seq[string] = @[]
 
-    let uid = sl.resolver.resolve(ckSlack, "U_onboard")
-    let entry = sm.getOrCreate(uid)
-    check sm.hasLiveSession(uid)
+      let poll = proc(): (bool, InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          if queue.len == 0:
+            return (false, InboundMessage())
+          result = (true, queue[0])
+          queue.delete(0)
 
-    slack.pushEvent(%* {
-      "type": "block_actions",
-      "user": {"id": "U_onboard"},
-      "actions": [
-        {"action_id": "personality:mode:guided",
-         "value": "personality:mode:guided"}
-      ],
-      "channel": {"id": "C1"},
-      "team_id": "T1",
-      "trigger_id": "tr-onboard",
-    })
+      let count = drainDingTalkGateway(
+        true,
+        poll,
+        proc(msg: InboundMessage) {.gcsafe.} =
+          {.cast(gcsafe).}:
+            dispatched.add(msg.text),
+        gateLog,
+        proc(userId: UserId): bool {.gcsafe.} = userId == UserId("dt-owner"))
 
-    var fallbackCalls = 0
-    let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
-      {.cast(gcsafe).}:
-        inc fallbackCalls
-    drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
-                     0, 0, 0, msgSeq, onFallback, gateLog)
+      check count == 1
+      check dispatched == @["hello"]
+      check queue.len == 0
 
-    check fallbackCalls == 0       ## onboarding must not become user text
-    check entry[].inbox.len == 1   ## enqueued as tkPersonalityChoice
+    test "matrix gateway drainer denies unauthorized and advances the queue":
+      var queue: seq[InboundMessage] = @[
+        InboundMessage(userId: UserId("mx-intruder"), channel: ckMatrix, text: "/status"),
+        InboundMessage(userId: UserId("mx-owner"), channel: ckMatrix, text: "hi"),
+      ]
+      var dispatched: seq[string] = @[]
 
-  test "slack drainer processes events without a signing secret":
-    removeDir(GateTmp / "slack-off")
-    var sm: SessionManager
-    sm.init()
-    var sl = newSlackAdapter("token", GateTmp / "slack-off" / "ids.tsv")
-    sl.openQueue()
-    let memory = MdFileAdapter(paddocksDir: GateTmp / "slack-off" / "paddocks")
-    let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
-      proc(req: CompletionRequest): Result[CompletionResponse, string] =
-        ok(CompletionResponse(text: "unexpected provider call"))
-    var msgSeq = 0
+      let poll = proc(): (bool, InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          if queue.len == 0:
+            return (false, InboundMessage())
+          result = (true, queue[0])
+          queue.delete(0)
 
-    slack.pushEvent(%* {
-      "type": "event_callback",
-      "team_id": "T1",
-      "event": {
-        "type": "message",
-        "user": "U_owner",
-        "text": "hello",
-        "channel": "C1",
-        "ts": "1700000000.000003",
-      },
-    })
+      let count = drainMatrixGateway(
+        true,
+        poll,
+        proc(msg: InboundMessage) {.gcsafe.} =
+          {.cast(gcsafe).}:
+            dispatched.add(msg.text),
+        gateLog,
+        proc(userId: UserId): bool {.gcsafe.} = userId == UserId("mx-owner"))
 
-    drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
-                     0, 0, 0, msgSeq, proc(msg: InboundMessage) {.gcsafe.} = discard,
-                     gateLog)
+      check count == 1
+      check dispatched == @["hi"]
+      check queue.len == 0
 
-    check not sl.tryRecvEvent()[0]  ## Socket Mode has no signing secret gate
+  suite "shared DM gate":
 
-suite "DM pairing gate":
+    test "a code minted by one channel resolver is redeemable by another":
+      ## F1: `/mycode` and `/continue` on different channels build separate
+      ## resolvers over the same identity file. They must share the pending-code
+      ## table, not only the path.
+      let dir = GateTmp / "shared-code-table"
+      removeDir(dir)
+      createDir(dir)
+      let path = dir / "identities.tsv"
+      let tg = newIdentityResolver(path)
+      let ln = newIdentityResolver(path)
+      let target = tg.resolve(ckTelegram, "700010")
+      let code = tg.generateLinkCode(target)
 
-  test "unknown sender /pair creates a pending request without minting":
-    removeDir(GateTmp / "pairing")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyPairing
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
-    var requested: seq[(ChannelKind, string)] = @[]
-    sm.pairingRequest = proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
-      {.cast(gcsafe).}:
-        requested.add((kind, rawId))
-      ok()
-    let resolver = newIdentityResolver(GateTmp / "pairing" / "ids.tsv")
+      check linkTargetFor(ln.identityGate(), ckLine, "/continue " & code) == some(target)
+      check ln.consumeLinkCode(code, ckLine, "line-700010")
+      check ln.lookup(ckLine, "line-700010").get == target
+      check not ln.consumeLinkCode(code, ckLine, "line-700011")
 
-    let auth = authorizeInbound(sm, resolver.identityGate(), ckTelegram,
-                                "999", "/pair")
+    test "unknown sender may link a new identity with /continue for an authorized account":
+      let dir = GateTmp / "shared-link"
+      removeDir(dir)
+      createDir(dir)
+      let resolver = newIdentityResolver(dir / "identities.tsv")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      let target = resolver.resolve(ckWeCom, "existing-user")
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} =
+        {.cast(gcsafe).}:
+          u == target
 
-    check not auth.allowed
-    check requested.len == 1
-    check requested[0][0] == ckTelegram
-    check requested[0][1] == "999"
-    check resolver.lookup(ckTelegram, "999").isNone
+      let code = resolver.generateLinkCode(target)
+      check linkTargetFor(resolver.identityGate(), ckWeCom, "/continue " & code) == some(target)
+      check resolver.lookup(ckWeCom, "new-device").isNone
 
-  test "ordinary text does not create a pairing request":
-    removeDir(GateTmp / "pairing-text")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyPairing
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
-    var calls = 0
-    sm.pairingRequest = proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
-      {.cast(gcsafe).}:
-        inc calls
-      ok()
-    let resolver = newIdentityResolver(GateTmp / "pairing-text" / "ids.tsv")
+      let auth = authorizeInbound(
+        sm, resolver.identityGate(), ckWeCom, "new-device", "/continue " & code)
+      check auth.allowed
+      check auth.identified
+      ## The gate minted a temporary identity; consuming the code rewrites it to
+      ## the authorized target.
+      check resolver.consumeLinkCode(code, ckWeCom, "new-device")
+      check resolver.lookup(ckWeCom, "new-device").get == target
 
-    let auth = authorizeInbound(sm, resolver.identityGate(), ckTelegram,
-                                "998", "hello")
+    test "unknown sender cannot link to a non-authorized target":
+      let dir = GateTmp / "shared-link-denied"
+      removeDir(dir)
+      createDir(dir)
+      let resolver = newIdentityResolver(dir / "identities.tsv")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+      let code = resolver.generateLinkCode(UserId("not-authorized"))
 
-    check not auth.allowed
-    check calls == 0
+      let auth = authorizeInbound(
+        sm, resolver.identityGate(), ckWeCom, "intruder", "/continue " & code)
+      check not auth.allowed
+      check not auth.identified
+      check resolver.lookup(ckWeCom, "intruder").isNone
 
-  test "resolved Telegram identities still forward the raw id":
-    removeDir(GateTmp / "pairing-resolved")
-    var sm: SessionManager
-    sm.init()
-    sm.dmPolicy = DmPolicyPairing
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
-    var requestedRaw = ""
-    sm.pairingRequest = proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
-      {.cast(gcsafe).}:
-        requestedRaw = rawId
-      ok()
-    let resolver = newIdentityResolver(GateTmp / "pairing-resolved" / "ids.tsv")
-    let uid = resolver.resolve(ckTelegram, "chat-42")
+    test "unknown sender with a wrong code is denied without minting":
+      let dir = GateTmp / "shared-link-wrong"
+      removeDir(dir)
+      createDir(dir)
+      let resolver = newIdentityResolver(dir / "identities.tsv")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
 
-    let auth = authorizeResolvedInbound(sm, resolver.identityGate(), ckTelegram,
-                                        uid, "/pair", rawId = "chat-42")
+      let auth = authorizeInbound(
+        sm, resolver.identityGate(), ckWeCom, "intruder", "/continue WRONG1")
+      check not auth.allowed
+      check not auth.identified
+      check resolver.lookup(ckWeCom, "intruder").isNone
 
-    check not auth.allowed
-    check requestedRaw == "chat-42"
+    test "open policy still mints a first-contact identity":
+      let dir = GateTmp / "shared-open"
+      removeDir(dir)
+      createDir(dir)
+      let resolver = newIdentityResolver(dir / "identities.tsv")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyOpen
+
+      let auth = authorizeInbound(sm, resolver.identityGate(), ckWeChat, "first-contact", "hello")
+      check auth.allowed
+      check auth.identified
+      check resolver.lookup(ckWeChat, "first-contact").isSome
+
+    test "telegram inner gate admits /continue for an authorized target":
+      let dir = GateTmp / "telegram-link"
+      removeDir(dir)
+      createDir(dir)
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      var tg = newTelegramAdapter(
+        "token", dir / "identities.tsv", apiBase = "http://127.0.0.1:1")
+      let target = tg.resolver.resolve(ckTelegram, "700001")
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} =
+        {.cast(gcsafe).}:
+          u == target
+      let code = tg.resolver.generateLinkCode(target)
+
+      # `receive()` normally mints the transient UUID before the gate runs.
+      let transient = tg.resolver.resolve(ckTelegram, "900001")
+      var presentation = initPresentationState()
+      let memory = MdFileAdapter(paddocksDir: dir / "paddocks")
+      var providerCalls = 0
+      let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+          {.cast(gcsafe).}:
+            inc providerCalls
+          ok(CompletionResponse(text: "unexpected"))
+      var msgSeq = 0
+
+      let handled = handleTelegramMessage(
+        InboundMessage(
+          userId: transient,
+          channel: ckTelegram,
+          channelId: "chat-1",
+          text: "/continue " & code,
+        ),
+        sm, tg, presentation, memory, completeBuilder, gateLoader(),
+        0, 0, msgSeq, 0, gateLog)
+
+      check handled
+      check providerCalls == 0
+      check sm.sessionCount() == 0
+      check tg.resolver.lookup(ckTelegram, "900001").get == target
+
+    test "discord offline cursor falls back to the session snowflake floor":
+      let epochMs = 1_700_000_000_000'i64
+      let floor = discordSnowflakeFloor(epochMs)
+      check floor > 0
+      check discordMessageAfterCursor($(floor + 10), "", floor)
+      check not discordMessageAfterCursor($(floor - 10), "", floor)
+      check discordMessageAfterCursor("200", "100", 0)
+      check not discordMessageAfterCursor("100", "100", 0)
+      check not discordMessageAfterCursor("999", "", 0)
+      # 18-digit cursor vs 19-digit message: numeric, not lexicographic.
+      check discordMessageAfterCursor("1000000000000000000", "999999999999999999", 0)
+      check not discordMessageAfterCursor("not-a-snowflake", "100", 0)
+
+    test "discord unknown sender without a link code is denied without minting":
+      let dir = GateTmp / "discord-deny"
+      removeDir(dir)
+      createDir(dir)
+      let resolver = newIdentityResolver(dir / "identities.tsv")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+
+      let auth = authorizeInbound(
+        sm, resolver.identityGate(), ckDiscord, "discord-intruder", "hello", ilsNone)
+      check not auth.allowed
+      check not auth.identified
+      check resolver.lookup(ckDiscord, "discord-intruder").isNone
+
+    test "discord bare link code is admitted only for an authorized target":
+      let dir = GateTmp / "discord-code"
+      removeDir(dir)
+      createDir(dir)
+      let resolver = newIdentityResolver(dir / "identities.tsv")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      let target = resolver.resolve(ckDiscord, "discord-owner")
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} =
+        {.cast(gcsafe).}:
+          u == target
+      let code = resolver.generateLinkCode(target)
+
+      let auth = authorizeInbound(
+        sm, resolver.identityGate(), ckDiscord, "discord-new", code, ilsBareCode)
+      check auth.allowed
+      check resolver.consumeLinkCode(code, ckDiscord, "discord-new")
+      check resolver.lookup(ckDiscord, "discord-new").get == target
+
+      let wrong = authorizeInbound(
+        sm, resolver.identityGate(), ckDiscord, "discord-other", "WRONG1", ilsBareCode)
+      check not wrong.allowed
+      check resolver.lookup(ckDiscord, "discord-other").isNone
+
+    test "discord modal event is allowed without minting an identity":
+      let dir = GateTmp / "discord-modal"
+      removeDir(dir)
+      createDir(dir)
+      let resolver = newIdentityResolver(dir / "identities.tsv")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+
+      let auth = authorizeInbound(
+        sm, resolver.identityGate(), ckDiscord, "discord-modal-user", "", ilsModalOnly)
+      check auth.allowed
+      check not auth.identified
+      check resolver.lookup(ckDiscord, "discord-modal-user").isNone
+
+    test "slack drops unauthorized messages and consumes the event":
+      removeDir(GateTmp / "slack")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyAllowlist
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+      var sl = newSlackAdapter("token", GateTmp / "slack" / "ids.tsv")
+      sl.openQueue()
+      let memory = MdFileAdapter(paddocksDir: GateTmp / "slack" / "paddocks")
+
+      var fallbackCalls = 0
+      let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] =
+          ok(CompletionResponse(text: "unexpected provider call"))
+      var msgSeq = 0
+
+      slack.pushEvent(%* {
+        "type": "event_callback",
+        "team_id": "T1",
+        "event": {
+          "type": "message",
+          "user": "U_intruder",
+          "text": "/status",
+          "channel": "C1",
+          "ts": "1700000000.000001",
+        },
+      })
+
+      let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          inc fallbackCalls
+
+      drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
+                       0, 0, 0, msgSeq, onFallback, gateLog)
+
+      check fallbackCalls == 0
+      check sm.sessionCount() == 0
+      check not sl.tryRecvEvent()[0]
+      check sl.resolver.lookup(ckSlack, "U_intruder").isNone  ## denied sender not minted
+
+    test "slack dispatches authorized messages with event metadata":
+      removeDir(GateTmp / "slack-ok")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyOpen
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = true
+      var sl = newSlackAdapter("token", GateTmp / "slack-ok" / "ids.tsv")
+      sl.openQueue()
+      let memory = MdFileAdapter(paddocksDir: GateTmp / "slack-ok" / "paddocks")
+
+      var dispatched: seq[InboundMessage] = @[]
+      let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] =
+          ok(CompletionResponse(text: "unexpected provider call"))
+      var msgSeq = 0
+
+      let payload = %* {
+        "type": "event_callback",
+        "team_id": "T1",
+        "event_id": "Ev-dedupe",
+        "event": {
+          "type": "message",
+          "user": "U_owner",
+          "text": "hello",
+          "channel": "C1",
+          "ts": "1700000000.000002",
+        },
+      }
+      slack.pushEvent(payload)
+      slack.pushEvent(payload)  ## Slack redelivery must not start two turns
+
+      let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          dispatched.add(msg)
+
+      drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
+                       0, 0, 0, msgSeq, onFallback, gateLog)
+
+      check dispatched.len == 1
+      check dispatched[0].channel == ckSlack
+      check dispatched[0].text == "hello"
+      check dispatched[0].channelId == "C1"
+      check dispatched[0].messageId == "1700000000.000002"
+      check not sl.tryRecvEvent()[0]
+
+    test "slack forwards onboarding callbacks as session tasks":
+      removeDir(GateTmp / "slack-onboarding")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyOpen
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = true
+      var sl = newSlackAdapter("token", GateTmp / "slack-onboarding" / "ids.tsv")
+      sl.openQueue()
+      let memory = MdFileAdapter(paddocksDir: GateTmp / "slack-onboarding" / "paddocks")
+      var msgSeq = 0
+      let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] =
+          ok(CompletionResponse(text: "unexpected provider call"))
+
+      let uid = sl.resolver.resolve(ckSlack, "U_onboard")
+      let entry = sm.getOrCreate(uid)
+      check sm.hasLiveSession(uid)
+
+      slack.pushEvent(%* {
+        "type": "block_actions",
+        "user": {"id": "U_onboard"},
+        "actions": [
+          {"action_id": "personality:mode:guided",
+           "value": "personality:mode:guided"}
+        ],
+        "channel": {"id": "C1"},
+        "team_id": "T1",
+        "trigger_id": "tr-onboard",
+      })
+
+      var fallbackCalls = 0
+      let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          inc fallbackCalls
+      drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
+                       0, 0, 0, msgSeq, onFallback, gateLog)
+
+      check fallbackCalls == 0       ## onboarding must not become user text
+      check entry[].inbox.len == 1   ## enqueued as tkPersonalityChoice
+
+    test "slack drainer processes events without a signing secret":
+      removeDir(GateTmp / "slack-off")
+      var sm: SessionManager
+      sm.init()
+      var sl = newSlackAdapter("token", GateTmp / "slack-off" / "ids.tsv")
+      sl.openQueue()
+      let memory = MdFileAdapter(paddocksDir: GateTmp / "slack-off" / "paddocks")
+      let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] =
+          ok(CompletionResponse(text: "unexpected provider call"))
+      var msgSeq = 0
+
+      slack.pushEvent(%* {
+        "type": "event_callback",
+        "team_id": "T1",
+        "event": {
+          "type": "message",
+          "user": "U_owner",
+          "text": "hello",
+          "channel": "C1",
+          "ts": "1700000000.000003",
+        },
+      })
+
+      drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
+                       0, 0, 0, msgSeq, proc(msg: InboundMessage) {.gcsafe.} = discard,
+                       gateLog)
+
+      check not sl.tryRecvEvent()[0]  ## Socket Mode has no signing secret gate
+
+  suite "DM pairing gate":
+
+    test "unknown sender /pair creates a pending request without minting":
+      removeDir(GateTmp / "pairing")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyPairing
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+      var requested: seq[(ChannelKind, string)] = @[]
+      sm.pairingRequest = proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
+        {.cast(gcsafe).}:
+          requested.add((kind, rawId))
+        ok()
+      let resolver = newIdentityResolver(GateTmp / "pairing" / "ids.tsv")
+
+      let auth = authorizeInbound(sm, resolver.identityGate(), ckTelegram,
+                                  "999", "/pair")
+
+      check not auth.allowed
+      check requested.len == 1
+      check requested[0][0] == ckTelegram
+      check requested[0][1] == "999"
+      check resolver.lookup(ckTelegram, "999").isNone
+
+    test "ordinary text does not create a pairing request":
+      removeDir(GateTmp / "pairing-text")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyPairing
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+      var calls = 0
+      sm.pairingRequest = proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
+        {.cast(gcsafe).}:
+          inc calls
+        ok()
+      let resolver = newIdentityResolver(GateTmp / "pairing-text" / "ids.tsv")
+
+      let auth = authorizeInbound(sm, resolver.identityGate(), ckTelegram,
+                                  "998", "hello")
+
+      check not auth.allowed
+      check calls == 0
+
+    test "resolved Telegram identities still forward the raw id":
+      removeDir(GateTmp / "pairing-resolved")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyPairing
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false
+      var requestedRaw = ""
+      sm.pairingRequest = proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
+        {.cast(gcsafe).}:
+          requestedRaw = rawId
+        ok()
+      let resolver = newIdentityResolver(GateTmp / "pairing-resolved" / "ids.tsv")
+      let uid = resolver.resolve(ckTelegram, "chat-42")
+
+      let auth = authorizeResolvedInbound(sm, resolver.identityGate(), ckTelegram,
+                                          uid, "/pair", rawId = "chat-42")
+
+      check not auth.allowed
+      check requestedRaw == "chat-42"
+
+when isMainModule:
+  runTests()

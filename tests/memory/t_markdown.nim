@@ -117,26 +117,30 @@ proc runContractTests(adapter: MarkdownMemoryAdapter) =
 
 # ── bootstrapUserMd helper ───────────────────────────────────────────────────
 
-suite "bootstrapUserMd":
+proc runTests*() =
+  suite "bootstrapUserMd":
 
-  test "includes name and preferred name":
-    let md = bootstrapUserMd("Alice Wonderland", "Alice", "UTC-3", "pt-BR")
-    check md.contains("Alice Wonderland")
-    check md.contains("Alice")
+    test "includes name and preferred name":
+      let md = bootstrapUserMd("Alice Wonderland", "Alice", "UTC-3", "pt-BR")
+      check md.contains("Alice Wonderland")
+      check md.contains("Alice")
 
-  test "includes timezone and language":
-    let md = bootstrapUserMd("Bob", "Bob", "UTC+8", "zh-CN")
-    check md.contains("UTC+8")
-    check md.contains("zh-CN")
+    test "includes timezone and language":
+      let md = bootstrapUserMd("Bob", "Bob", "UTC+8", "zh-CN")
+      check md.contains("UTC+8")
+      check md.contains("zh-CN")
 
-  test "has YAML frontmatter":
-    let md = bootstrapUserMd("X", "X", "UTC", "en")
-    check md.startsWith("---\n")
+    test "has YAML frontmatter":
+      let md = bootstrapUserMd("X", "X", "UTC", "en")
+      check md.startsWith("---\n")
 
-# ── implementations under test ────────────────────────────────────────────────
+  # ── implementations under test ────────────────────────────────────────────────
 
-block mdFile:
-  let base = getTempDir() / "donkey_test_markdown_paddocks"
-  createDir(base)
-  defer: removeDir(base)
-  runContractTests(MarkdownMemoryAdapter(paddocksDir: base))
+  block mdFile:
+    let base = getTempDir() / "donkey_test_markdown_paddocks"
+    createDir(base)
+    defer: removeDir(base)
+    runContractTests(MarkdownMemoryAdapter(paddocksDir: base))
+
+when isMainModule:
+  runTests()

@@ -54,60 +54,64 @@ proc call(ctx: NativeCtx; name, input: string): Future[NativeToolResult] {.async
     ToolCallRequest(id: "1", name: name, inputJson: input),
     ctx, newSessionState(), newHistory())
 
-suite "audio tool registration":
+proc runTests*() =
+  suite "audio tool registration":
 
-  test "both audio tools are advertised":
-    let names = nativeSessionTools().mapIt(it.name)
-    check "transcribe_audio" in names
-    check "text_to_speech" in names
+    test "both audio tools are advertised":
+      let names = nativeSessionTools().mapIt(it.name)
+      check "transcribe_audio" in names
+      check "text_to_speech" in names
 
-suite "audio tool dispatch":
+  suite "audio tool dispatch":
 
-  setup:
-    putEnv("DONKEY_STT_API_KEY", "test-key")
-    putEnv("DONKEY_TTS_API_KEY", "test-key")
+    setup:
+      putEnv("DONKEY_STT_API_KEY", "test-key")
+      putEnv("DONKEY_TTS_API_KEY", "test-key")
 
-  teardown:
-    delEnv("DONKEY_STT_API_KEY")
-    delEnv("DONKEY_TTS_API_KEY")
+    teardown:
+      delEnv("DONKEY_STT_API_KEY")
+      delEnv("DONKEY_TTS_API_KEY")
 
-  test "transcribe_audio resolves the path and returns the text":
-    let dir = freshDir("stt")
-    defer: removeDir(dir)
-    writeFile(dir / "nota.mp3", "AUDIO")
-    let cap = Capture(status: 200, response: """{"text": "transcrição"}""")
-    let res = waitFor call(baseCtx(dir, fakeHttp(cap)), "transcribe_audio",
-                           """{"path": "nota.mp3"}""")
-    check res.handled
-    check res.text == "transcrição"
-    check cap.body.contains("AUDIO")
+    test "transcribe_audio resolves the path and returns the text":
+      let dir = freshDir("stt")
+      defer: removeDir(dir)
+      writeFile(dir / "nota.mp3", "AUDIO")
+      let cap = Capture(status: 200, response: """{"text": "transcrição"}""")
+      let res = waitFor call(baseCtx(dir, fakeHttp(cap)), "transcribe_audio",
+                             """{"path": "nota.mp3"}""")
+      check res.handled
+      check res.text == "transcrição"
+      check cap.body.contains("AUDIO")
 
-  test "transcribe_audio rejects a path outside the paddock":
-    let dir = freshDir("stt-escape")
-    defer: removeDir(dir)
-    let cap = Capture(status: 200, response: """{"text": "x"}""")
-    let res = waitFor call(baseCtx(dir, fakeHttp(cap)), "transcribe_audio",
-                           """{"path": "../outside.mp3"}""")
-    check res.handled
-    check res.text.startsWith("Error:")
-    check cap.url == ""
+    test "transcribe_audio rejects a path outside the paddock":
+      let dir = freshDir("stt-escape")
+      defer: removeDir(dir)
+      let cap = Capture(status: 200, response: """{"text": "x"}""")
+      let res = waitFor call(baseCtx(dir, fakeHttp(cap)), "transcribe_audio",
+                             """{"path": "../outside.mp3"}""")
+      check res.handled
+      check res.text.startsWith("Error:")
+      check cap.url == ""
 
-  test "text_to_speech writes the file and returns its path":
-    let dir = freshDir("tts")
-    defer: removeDir(dir)
-    let cap = Capture(status: 200, response: "MP3")
-    let res = waitFor call(baseCtx(dir, fakeHttp(cap)), "text_to_speech",
-                           """{"text": "olá"}""")
-    check res.handled
-    check res.text.startsWith("Audio saved: attachments/tts-")
-    let rel = res.text.split(": ", 1)[1]
-    check readFile(dir / rel) == "MP3"
+    test "text_to_speech writes the file and returns its path":
+      let dir = freshDir("tts")
+      defer: removeDir(dir)
+      let cap = Capture(status: 200, response: "MP3")
+      let res = waitFor call(baseCtx(dir, fakeHttp(cap)), "text_to_speech",
+                             """{"text": "olá"}""")
+      check res.handled
+      check res.text.startsWith("Audio saved: attachments/tts-")
+      let rel = res.text.split(": ", 1)[1]
+      check readFile(dir / rel) == "MP3"
 
-  test "text_to_speech requires text":
-    let dir = freshDir("tts-empty")
-    defer: removeDir(dir)
-    let cap = Capture()
-    let res = waitFor call(baseCtx(dir, fakeHttp(cap)), "text_to_speech", "{}")
-    check res.handled
-    check res.text.startsWith("Error:")
-    check cap.url == ""
+    test "text_to_speech requires text":
+      let dir = freshDir("tts-empty")
+      defer: removeDir(dir)
+      let cap = Capture()
+      let res = waitFor call(baseCtx(dir, fakeHttp(cap)), "text_to_speech", "{}")
+      check res.handled
+      check res.text.startsWith("Error:")
+      check cap.url == ""
+
+when isMainModule:
+  runTests()

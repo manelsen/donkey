@@ -117,6 +117,9 @@ run_one() {
       *t_sqlite_store*) skip_reason="requires -d:withSqlite" ;;
       *t_postgres*|*t_pgvector*|*t_age_store*)
         skip_reason="requires live PostgreSQL backend" ;;
+      *t_magma_memory_adapter_sqlite*) ;;
+      *t_magma_graph*|*t_magma_integration*|*t_magma_memory_adapter*)
+        skip_reason="requires -d:withPostgres and a live database" ;;
       *t_wasm.nim) skip_reason="requires the wasm3 nimble package" ;;
       *t_wasm*|*t_shell_composer*)
         if [ ! -f "$HOME/.donkey/busybox" ] || ! command -v wasmtime >/dev/null 2>&1; then

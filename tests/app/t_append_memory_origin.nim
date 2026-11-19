@@ -11,67 +11,71 @@ type Capture = ref object
   tagged:  seq[string]
   origins: seq[MemoryOrigin]
 
-suite "safeAppendMemory with origin":
+proc runTests*() =
+  suite "safeAppendMemory with origin":
 
-  test "uses the origin-aware hook when the backend has one":
-    let captured = Capture()
-    let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string): Result[void, string]
-                        {.gcsafe, raises: [].} =
-        {.cast(gcsafe).}: captured.plain.add(text)
-        ok(),
-      appendMemoryFrom: proc(userId: UserId; text: string;
-                             origin: MemoryOrigin): Result[void, string]
-                             {.gcsafe, raises: [].} =
-        {.cast(gcsafe).}:
-          captured.tagged.add(text)
-          captured.origins.add(origin)
-        ok(),
-    )
-    check safeAppendMemory(mem, UserId("u1"), "fato", turnOrigin("s1")).isOk
-    check captured.plain.len == 0
-    check captured.tagged == @["fato"]
-    check captured.origins == @[turnOrigin("s1")]
+    test "uses the origin-aware hook when the backend has one":
+      let captured = Capture()
+      let mem = MemoryRuntimePort(
+        appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                          {.gcsafe, raises: [].} =
+          {.cast(gcsafe).}: captured.plain.add(text)
+          ok(),
+        appendMemoryFrom: proc(userId: UserId; text: string;
+                               origin: MemoryOrigin): Result[void, string]
+                               {.gcsafe, raises: [].} =
+          {.cast(gcsafe).}:
+            captured.tagged.add(text)
+            captured.origins.add(origin)
+          ok(),
+      )
+      check safeAppendMemory(mem, UserId("u1"), "fato", turnOrigin("s1")).isOk
+      check captured.plain.len == 0
+      check captured.tagged == @["fato"]
+      check captured.origins == @[turnOrigin("s1")]
 
-  test "falls back to plain append when the backend has no hook":
-    let captured = Capture()
-    let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string): Result[void, string]
-                        {.gcsafe, raises: [].} =
-        {.cast(gcsafe).}: captured.plain.add(text)
-        ok(),
-    )
-    check safeAppendMemory(mem, UserId("u1"), "fato", turnOrigin("s1")).isOk
-    check captured.plain == @["fato"]
+    test "falls back to plain append when the backend has no hook":
+      let captured = Capture()
+      let mem = MemoryRuntimePort(
+        appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                          {.gcsafe, raises: [].} =
+          {.cast(gcsafe).}: captured.plain.add(text)
+          ok(),
+      )
+      check safeAppendMemory(mem, UserId("u1"), "fato", turnOrigin("s1")).isOk
+      check captured.plain == @["fato"]
 
-  test "origin stays optional":
-    let captured = Capture()
-    let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string): Result[void, string]
-                        {.gcsafe, raises: [].} =
-        {.cast(gcsafe).}: captured.plain.add(text)
-        ok(),
-    )
-    check safeAppendMemory(mem, UserId("u1"), "fato").isOk
-    check captured.plain == @["fato"]
+    test "origin stays optional":
+      let captured = Capture()
+      let mem = MemoryRuntimePort(
+        appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                          {.gcsafe, raises: [].} =
+          {.cast(gcsafe).}: captured.plain.add(text)
+          ok(),
+      )
+      check safeAppendMemory(mem, UserId("u1"), "fato").isOk
+      check captured.plain == @["fato"]
 
-  test "a failed append is reported to the caller":
-    let failing = MemoryRuntimePort(
-      appendMemoryFrom: proc(userId: UserId; text: string;
-                             origin: MemoryOrigin): Result[void, string]
-                             {.gcsafe, raises: [].} =
-        err("graph unavailable"),
-    )
-    let res = safeAppendMemory(failing, UserId("u1"), "fato", turnOrigin("s1"))
-    check res.isErr
-    check res.error == "graph unavailable"
+    test "a failed append is reported to the caller":
+      let failing = MemoryRuntimePort(
+        appendMemoryFrom: proc(userId: UserId; text: string;
+                               origin: MemoryOrigin): Result[void, string]
+                               {.gcsafe, raises: [].} =
+          err("graph unavailable"),
+      )
+      let res = safeAppendMemory(failing, UserId("u1"), "fato", turnOrigin("s1"))
+      check res.isErr
+      check res.error == "graph unavailable"
 
-  test "a failure in a backend without origins is reported, not swallowed":
-    let failing = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string): Result[void, string]
-                        {.gcsafe, raises: [].} =
-        err("disk full"),
-    )
-    let res = safeAppendMemory(failing, UserId("u1"), "fato")
-    check res.isErr
-    check "disk full" in res.error
+    test "a failure in a backend without origins is reported, not swallowed":
+      let failing = MemoryRuntimePort(
+        appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                          {.gcsafe, raises: [].} =
+          err("disk full"),
+      )
+      let res = safeAppendMemory(failing, UserId("u1"), "fato")
+      check res.isErr
+      check "disk full" in res.error
+
+when isMainModule:
+  runTests()
