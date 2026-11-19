@@ -3,6 +3,9 @@
 import std/[strutils, unittest]
 import donkey/core/pipeops
 import donkey/domain/providers/media_pure
+import donkey/domain/providers/profile_alibaba
+import donkey/domain/providers/profile_fireworks
+import donkey/domain/providers/profile_nvidia
 
 func bytes(data: string): seq[byte] =
   for ch in data:
@@ -57,3 +60,62 @@ suite "inlineImagesForTurn":
 
   test "an empty list stays empty":
     check inlineImagesForTurn(@[]).len == 0
+
+suite "inline marker follows the chosen provider's capability":
+  ## Review E3: the turn builder wrote "the image accompanies this message"
+  ## from the media type alone, but a compat profile with `supportsImages =
+  ## false` (Fireworks, Alibaba) strips `imageUrl` before the body is built. The
+  ## model was then told about an image it never received.
+
+  test "vision keeps the image and the inline promise":
+    let filtered = filterImagesForCapability(@["data:image/png;base64,QQ=="],
+                                             supportsImages = true)
+    check filtered.len == 1
+    check filtered[0] == "data:image/png;base64,QQ=="
+    check inlineImageAccompanies(supportsImages = true)
+
+  test "no vision drops the image and the promise together":
+    let filtered = filterImagesForCapability(@["data:image/png;base64,QQ=="],
+                                             supportsImages = false)
+    check filtered.len == 0
+    check not inlineImageAccompanies(supportsImages = false)
+
+  test "no vision keeps http URLs and paths: the provider can still fetch them":
+    let urls = @["https://example.test/a.png", "attachments/a.png"]
+    let withVision = filterImagesForCapability(urls, supportsImages = true)
+    let withoutVision = filterImagesForCapability(urls, supportsImages = false)
+    check withVision == urls
+    check withoutVision == urls
+
+  test "the inline decision is the capability, not only the media type":
+    let image = "data:image/png;base64,QQ=="
+    let kept = filterImagesForCapability(@[image], supportsImages = true)
+    let dropped = filterImagesForCapability(@[image], supportsImages = false)
+    check kept.len == 1
+    check dropped.len == 0
+    check inlineImageAccompanies(supportsImages = true)
+    check not inlineImageAccompanies(supportsImages = false)
+
+suite "the provider answers the inline question by its canonical id":
+
+  test "the capability follows the descriptor, aliases included":
+    check inlineSupportsImagesFor("nvidia")
+    check inlineSupportsImagesFor("nvidia-nim")
+    check not inlineSupportsImagesFor("fireworks")
+    check not inlineSupportsImagesFor("fw")
+    check not inlineSupportsImagesFor("alibaba-cloud")
+
+  test "an unknown or non-compat provider makes no image promise":
+    check not inlineSupportsImagesFor("does-not-exist")
+    check not inlineSupportsImagesFor("")
+    check not inlineSupportsImagesFor("anthropic")
+
+suite "a profile never promises an image the capability denies":
+
+  test "the compat profiles report the same vision constant the turn reads":
+    check fireworksCompatProfile().supportsImages ==
+          inlineSupportsImagesFor("fireworks")
+    check alibabaCompatProfile().supportsImages ==
+          inlineSupportsImagesFor("alibaba")
+    check nvidiaCompatProfile().supportsImages ==
+          inlineSupportsImagesFor("nvidia")
