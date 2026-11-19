@@ -17,6 +17,7 @@ tests/**
 !tests/**/*.nim
 !tests/fixtures/**
 !tests/test_groups.tsv
+!tests/test_group_exceptions.tsv
 
 # Build artifacts
 donkey_release
