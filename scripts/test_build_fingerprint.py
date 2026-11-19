@@ -43,17 +43,28 @@ def add_tree(digest, root, suffixes=None):
 
 def main():
     profile = hashlib.sha256()
-    for value in (str(ROOT), platform.system(), platform.machine(),
-                  os.environ.get("ImageOS", ""), os.environ.get("ImageVersion", "")):
+    system = platform.system()
+    for value in (str(ROOT), system, platform.machine()):
         add(profile, os.fsencode(value))
     for name in ("EXTRA_NIM_FLAGS", "NIMFLAGS", "CC", "CFLAGS", "CPPFLAGS",
                  "LDFLAGS", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET"):
         add(profile, os.fsencode(os.environ.get(name, "")))
-    for tool in ("nim", "cc", "gcc", "clang"):
+    tools = ("nim", "cc", "gcc", "clang", "ld") if system == "Linux" else (
+        "nim", "cc", "gcc", "clang")
+    for tool in tools:
         executable = shutil.which(tool)
         if executable:
             add(profile, os.fsencode(executable))
             add(profile, subprocess.check_output([executable, "--version"], cwd=ROOT))
+    if system == "Linux":
+        # Hosted runners can rotate between image revisions with the same ABI.
+        add_file(profile, Path("/etc/os-release"))
+        cc = shutil.which("gcc") or shutil.which("cc")
+        if cc:
+            for library in ("libc.so.6", "libgcc_s.so.1", "libssl.so", "libcrypto.so"):
+                location = subprocess.check_output(
+                    [cc, "-print-file-name=" + library], cwd=ROOT, text=True).strip()
+                add_file(profile, Path(location))
     home = Path.home()
     config_home = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
     for path in (home / ".nim.cfg", config_home / "nim/nim.cfg",
