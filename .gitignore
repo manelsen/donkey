@@ -5,6 +5,9 @@ nimblecache/
 /donkey
 /dist/
 
+# Generated API documentation (built in CI as an artifact)
+/htmldocs/
+
 # Never commit plaintext secrets or the key file
 *.enc
 .secret_key
