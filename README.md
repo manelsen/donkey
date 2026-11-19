@@ -293,8 +293,11 @@ Donkey follows disciplined Test-Driven Development (TDD) with strict architectur
 ### Running Tests
 
 ```bash
-# Run the default test suite in parallel across all CPU cores
+# Run the default test suite (grouped compilation, one process per file)
 bash scripts/run_tests.sh
+
+# Fall back to one compiler invocation per file
+TEST_RUNNER=legacy bash scripts/run_tests.sh
 
 # Target a specific module or test file
 bash scripts/run_tests.sh tests/ports
@@ -302,6 +305,20 @@ bash scripts/run_tests.sh tests/app/t_orchestrator.nim
 
 # Execute via Nimble
 nimble test
+```
+
+`tests/test_groups.tsv` maps each grouped test file to a group. Files that
+cannot share a binary (profile-gated backends, stress, executable-location
+dependencies) stay in the per-file fallback and are documented in
+`tests/test_group_exceptions.tsv`.
+
+To compare two runs case by case, point the runner at empty report directories
+and use the comparator:
+
+```bash
+TEST_REPORT_DIR=/tmp/tests-before bash scripts/run_tests.sh tests/core
+TEST_REPORT_DIR=/tmp/tests-after  bash scripts/run_tests.sh tests/core
+python3 scripts/compare_test_reports.py /tmp/tests-before /tmp/tests-after
 ```
 
 > [!NOTE]

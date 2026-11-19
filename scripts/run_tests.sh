@@ -40,7 +40,9 @@ fi
 
 # Test execution mode. `legacy` compiles one binary per file; `grouped`
 # compiles one binary per manifest group and runs each file in a subprocess.
-TEST_RUNNER="${TEST_RUNNER:-legacy}"
+TEST_RUNNER="${TEST_RUNNER:-grouped}"
+EXTRA_NIM_FLAGS="${EXTRA_NIM_FLAGS:-}"
+export EXTRA_NIM_FLAGS
 case "$TEST_RUNNER" in
   legacy|grouped) ;;
   *)
@@ -78,6 +80,28 @@ else
   GROUP_CACHE_ROOT="$TMP_DIR/grouped"
 fi
 export GROUP_CACHE_ROOT
+
+file_mtime() {
+  if stat -c %Y "$1" >/dev/null 2>&1; then
+    stat -c %Y "$1"
+  else
+    stat -f %m "$1" 2>/dev/null || echo 0
+  fi
+}
+export -f file_mtime
+
+# Newest input shared by every group: project sources, build config and the
+# installed Nimble packages. A binary older than this is rebuilt.
+NEWEST_SOURCE=0
+while IFS= read -r f; do
+  m="$(file_mtime "$f")"
+  [ "$m" -gt "$NEWEST_SOURCE" ] && NEWEST_SOURCE="$m"
+done < <(
+  find src -name '*.nim'
+  printf '%s\n' config.nims donkey.nimble
+  find "$HOME/.nimble/pkgs2" -mindepth 1 -maxdepth 1 -type d 2>/dev/null
+)
+export NEWEST_SOURCE
 
 HAVE_GNU_REALPATH=0
 if command -v realpath >/dev/null 2>&1 &&    [ -n "$(realpath -m --relative-to=. . 2>/dev/null)" ]; then
@@ -164,6 +188,11 @@ run_one() {
   local path_hash
   path_hash="$(printf '%s' "$abs_f" | cksum | cut -d' ' -f1)"
   cache_key="${cache_key}_${path_hash}"
+  if [ -n "$EXTRA_NIM_FLAGS" ]; then
+    local flags_hash
+    flags_hash="$(printf '%s' "$EXTRA_NIM_FLAGS" | cksum | cut -d' ' -f1)"
+    cache_key="${cache_key}_${flags_hash}"
+  fi
   local cache_dir
   if [ -n "$TEST_NIMCACHE_ROOT" ]; then
     cache_dir="$TEST_NIMCACHE_ROOT/${cache_key}_d"
@@ -177,11 +206,11 @@ run_one() {
   if [ -n "${REPORT_DIR:-}" ]; then
     # unittest2 only prints individual case names in verbose mode; its
     # compact output is enough for CI but not for report comparison.
-    UNITTEST2_OUTPUT_LVL=VERBOSE nim c --hints:off --mm:orc -u:withPostgres \
+    UNITTEST2_OUTPUT_LVL=VERBOSE nim c --hints:off --mm:orc -u:withPostgres $EXTRA_NIM_FLAGS \
       --nimcache:"$cache_dir" \
       -r "$f" > "$log" 2>&1 || run_status=$?
   else
-    nim c --hints:off --mm:orc -u:withPostgres \
+    nim c --hints:off --mm:orc -u:withPostgres $EXTRA_NIM_FLAGS \
       --nimcache:"$cache_dir" \
       -r "$f" > "$log" 2>&1 || run_status=$?
   fi
@@ -225,14 +254,21 @@ record_report() {
 }
 export -f record_report
 
-# Compile one manifest group and run each requested file in its own process.
-run_group() {
+group_cache_dir() {
   local group="$1"
-  local files_csv="$2"
-  local nim_hash cache_hash cache_dir lock entry binary build_log
+  local nim_hash cache_hash
   nim_hash="$(nim --version 2>/dev/null | head -1 | cksum | cut -d' ' -f1)"
-  cache_hash="$(printf '%s|%s|%s' "$REPO_ROOT" "$group" "$nim_hash" | cksum | cut -d' ' -f1)"
-  cache_dir="$GROUP_CACHE_ROOT/${group}_${cache_hash}"
+  cache_hash="$(printf '%s|%s|%s|%s' "$REPO_ROOT" "$group" "$nim_hash" "$EXTRA_NIM_FLAGS" | cksum | cut -d' ' -f1)"
+  printf '%s' "$GROUP_CACHE_ROOT/${group}_${cache_hash}"
+}
+export -f group_cache_dir
+
+# Compile one manifest group. Files are executed later, in parallel, so a slow
+# test cannot serialize the rest of its group.
+build_group() {
+  local group="$1"
+  local cache_dir lock entry binary build_log
+  cache_dir="$(group_cache_dir "$group")"
   lock="${cache_dir}.lock"
   entry="$cache_dir/entry.nim"
   binary="$cache_dir/entry"
@@ -277,75 +313,109 @@ run_group() {
     echo '  stderr.writeLine("unknown grouped test: " & target)'
     echo '  quit(2)'
   } > "$entry.tmp"
-  mv "$entry.tmp" "$entry"
+  if cmp -s "$entry.tmp" "$entry"; then
+    rm -f "$entry.tmp"
+  else
+    mv "$entry.tmp" "$entry"
+  fi
+
+  local needs_build=1
+  if [ -x "$binary" ]; then
+    needs_build=0
+    local binary_mtime
+    binary_mtime="$(file_mtime "$binary")"
+    if [ "$binary_mtime" -lt "$NEWEST_SOURCE" ] ||
+       [ "$(file_mtime "$entry")" -gt "$binary_mtime" ]; then
+      needs_build=1
+    else
+      local f
+      for f in "${paths[@]}"; do
+        if [ "$(file_mtime "$f")" -gt "$binary_mtime" ]; then
+          needs_build=1
+          break
+        fi
+      done
+    fi
+  fi
 
   local run_status=0
-  if [ -n "${REPORT_DIR:-}" ]; then
-    UNITTEST2_OUTPUT_LVL=VERBOSE nim c --hints:off --mm:orc -u:withPostgres \
-      --panics:on -d:ssl -d:wasm3HasWASI --threads:on \
-      -d:withSqlite -d:staticSqlite \
-      --path:"$REPO_ROOT" --path:"$REPO_ROOT/src" \
-      --nimcache:"$cache_dir/nimcache" -o:"$binary" "$entry" \
-      > "$build_log" 2>&1 || run_status=$?
-  else
-    nim c --hints:off --mm:orc -u:withPostgres \
-      --panics:on -d:ssl -d:wasm3HasWASI --threads:on \
-      -d:withSqlite -d:staticSqlite \
-      --path:"$REPO_ROOT" --path:"$REPO_ROOT/src" \
-      --nimcache:"$cache_dir/nimcache" -o:"$binary" "$entry" \
-      > "$build_log" 2>&1 || run_status=$?
+  if [ "$needs_build" -eq 1 ]; then
+    if [ -n "${REPORT_DIR:-}" ]; then
+      UNITTEST2_OUTPUT_LVL=VERBOSE nim c --hints:off --mm:orc -u:withPostgres $EXTRA_NIM_FLAGS \
+        --panics:on -d:ssl -d:wasm3HasWASI --threads:on \
+        -d:withSqlite -d:staticSqlite \
+        --path:"$REPO_ROOT" --path:"$REPO_ROOT/src" \
+        --nimcache:"$cache_dir/nimcache" -o:"$binary" "$entry" \
+        > "$build_log" 2>&1 || run_status=$?
+    else
+      nim c --hints:off --mm:orc -u:withPostgres $EXTRA_NIM_FLAGS \
+        --panics:on -d:ssl -d:wasm3HasWASI --threads:on \
+        -d:withSqlite -d:staticSqlite \
+        --path:"$REPO_ROOT" --path:"$REPO_ROOT/src" \
+        --nimcache:"$cache_dir/nimcache" -o:"$binary" "$entry" \
+        > "$build_log" 2>&1 || run_status=$?
+    fi
   fi
   rm -rf "$lock"
-
-  local group_files=()
-  IFS=',' read -r -a group_files <<< "$files_csv"
 
   if [ "$run_status" -ne 0 ] || [ ! -x "$binary" ]; then
     echo "FAIL  group $group (compile)"
     grep -E "Error:|error:" "$build_log" | head -10 >&2 || true
-    local f id
-    for f in "${group_files[@]}"; do
-      [ -n "$f" ] || continue
-      id="g$(printf '%s' "$f" | cksum | cut -d' ' -f1)"
-      echo "$f" > "$TMP_DIR/fail_${id}"
+    printf '%s\n' "$build_log" > "$TMP_DIR/groupfail_${group}"
+    return 1
+  fi
+  touch "$TMP_DIR/groupok_${group}"
+  return 0
+}
+export -f build_group
+
+# Run one selected file from an already-compiled group.
+run_group_file() {
+  local group="$1"
+  local f="$2"
+  local cache_dir binary build_log
+  cache_dir="$(group_cache_dir "$group")"
+  binary="$cache_dir/entry"
+  build_log="$cache_dir/build.log"
+  local id
+  id="g$(printf '%s' "$f" | cksum | cut -d' ' -f1)"
+
+  if [ ! -f "$TMP_DIR/groupok_${group}" ]; then
+    printf "RUN   %s\n" "$f"
+    echo "FAIL  $f"
+    echo "$f" > "$TMP_DIR/fail_${id}"
+    if [ -n "${REPORT_DIR:-}" ]; then
       record_report "$f" failed "$build_log" "$id"
-    done
+    fi
     return 1
   fi
 
-  local group_status=0
-  local f id log
-  for f in "${group_files[@]}"; do
-    [ -n "$f" ] || continue
-    id="g$(printf '%s' "$f" | cksum | cut -d' ' -f1)"
-    log="$TMP_DIR/test_${id}.log"
-    printf "RUN   %s\n" "$f"
-    local file_status=0
-    if [ -n "${REPORT_DIR:-}" ]; then
-      TEST_FILE="$f" UNITTEST2_OUTPUT_LVL=VERBOSE "$binary" > "$log" 2>&1 || file_status=$?
-    else
-      TEST_FILE="$f" "$binary" > "$log" 2>&1 || file_status=$?
-    fi
-    if [ "$file_status" -eq 0 ]; then
-      touch "$TMP_DIR/pass_${id}"
-      local summary
-      summary=$(grep -E "\[Summary\]|\[OK\]" "$log" | tail -1 || true)
-      printf "PASS  %-65s %s\n" "$f" "$summary"
-    else
-      echo "$f" > "$TMP_DIR/fail_${id}"
-      echo "FAIL  $f"
-      grep -E "Error:|FAILED|\[FAILED\]" "$log" | head -10 >&2 || true
-      group_status=1
-    fi
-    if [ -n "${REPORT_DIR:-}" ]; then
-      local file_status_name="executed"
-      [ "$file_status" -ne 0 ] && file_status_name="failed"
-      record_report "$f" "$file_status_name" "$log" "$id"
-    fi
-  done
-  return "$group_status"
+  local log="$TMP_DIR/test_${id}.log"
+  printf "RUN   %s\n" "$f"
+  local file_status=0
+  if [ -n "${REPORT_DIR:-}" ]; then
+    TEST_FILE="$f" UNITTEST2_OUTPUT_LVL=VERBOSE "$binary" > "$log" 2>&1 || file_status=$?
+  else
+    TEST_FILE="$f" "$binary" > "$log" 2>&1 || file_status=$?
+  fi
+  if [ "$file_status" -eq 0 ]; then
+    touch "$TMP_DIR/pass_${id}"
+    local summary
+    summary=$(grep -E "\[Summary\]|\[OK\]" "$log" | tail -1 || true)
+    printf "PASS  %-65s %s\n" "$f" "$summary"
+  else
+    echo "$f" > "$TMP_DIR/fail_${id}"
+    echo "FAIL  $f"
+    grep -E "Error:|FAILED|\[FAILED\]" "$log" | head -10 >&2 || true
+  fi
+  if [ -n "${REPORT_DIR:-}" ]; then
+    local file_status_name="executed"
+    [ "$file_status" -ne 0 ] && file_status_name="failed"
+    record_report "$f" "$file_status_name" "$log" "$id"
+  fi
+  return "$file_status"
 }
-export -f run_group
+export -f run_group_file
 
 run_job() {
   local job="$1"
@@ -358,9 +428,12 @@ run_job() {
       run_one "$rest" "$TMP_DIR" "$id"
       ;;
     group)
+      build_group "$rest"
+      ;;
+    gfile)
       local group="${rest%%$'\t'*}"
-      local files="${rest#*$'\t'}"
-      run_group "$group" "$files"
+      local f="${rest#*$'\t'}"
+      run_group_file "$group" "$f"
       ;;
     *)
       echo "Unknown test job: $job" >&2
@@ -553,7 +626,8 @@ if [ "$TEST_RUNNER" = "grouped" ]; then
     printf '%s\t%s\n' "$unit" "$unit_shard" >> "$unit_shards"
   done
 
-  jobs=()
+  build_jobs=()
+  run_jobs=()
   group_names="$TMP_DIR/groups.txt"
   : > "$group_names"
   for f in "${selected_files[@]}"; do
@@ -567,24 +641,34 @@ if [ "$TEST_RUNNER" = "grouped" ]; then
     else
       file_shard="$(awk -F'\t' -v k="file:$f" '$1 == k { print $2; exit }' "$unit_shards")"
       if [ "$file_shard" = "$SHARD_INDEX" ]; then
-        jobs+=("file"$'\t'"$f")
+        run_jobs+=("file"$'\t'"$f")
       fi
     fi
   done
   while IFS= read -r group; do
     [ -n "$group" ] || continue
-    group_files="$(paste -sd, "$TMP_DIR/group_${group}.files")"
-    jobs+=("group"$'\t'"$group"$'\t'"$group_files")
+    build_jobs+=("group"$'\t'"$group")
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      run_jobs+=("gfile"$'\t'"$group"$'\t'"$f")
+    done < "$TMP_DIR/group_${group}.files"
   done < <(sort -u "$group_names")
 
-  if [ "${#jobs[@]}" -eq 0 ]; then
+  if [ "${#run_jobs[@]}" -eq 0 ]; then
     echo "Shard $SHARD_INDEX/$SHARD_TOTAL has no test units for targets: ${TARGETS[*]}"
     exit 0
   fi
 
+  build_status=0
+  printf "%s\0" "${build_jobs[@]}" |
+    xargs -0 -P "$JOBS" -n 1 bash -c 'run_job "$1"' _ || build_status=$?
+  run_status=0
+  printf "%s\0" "${run_jobs[@]}" |
+    xargs -0 -P "$JOBS" -n 1 bash -c 'run_job "$1"' _ || run_status=$?
   runner_status=0
-  printf "%s\0" "${jobs[@]}" |
-    xargs -0 -P "$JOBS" -n 1 bash -c 'run_job "$1"' _ || runner_status=$?
+  if [ "$build_status" -ne 0 ] || [ "$run_status" -ne 0 ]; then
+    runner_status=1
+  fi
 else
   runner_status=0
   printf "%s\0" "${items[@]}" |
