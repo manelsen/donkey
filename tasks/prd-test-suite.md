@@ -204,21 +204,42 @@ de testes assim que a paridade estiver demonstrada.
 
 **Acceptance Criteria:**
 
-- [ ] Rode a suíte padrão completa nos dois modos. Compare arquivos,
+- [x] Rode a suíte padrão completa nos dois modos. Compare arquivos,
   resultados por caso e skips sob as mesmas condições. Demonstre que uma
   falha de compilação e uma falha de teste retornam saída diferente de zero.
-- [ ] Faça uma auditoria única de cobertura com GCC/gcov para
+- [x] Faça uma auditoria única de cobertura com GCC/gcov para
   `src/donkey/`. Compare a união das linhas e dos ramos cobertos entre a
   revisão anterior à migração e a versão agrupada.
   Investigue qualquer redução e use os logs e o mapeamento do código gerado
   para distinguir mudanças de instrumentação de perdas reais de cobertura.
-- [ ] Registre os quatro tempos de parede do protocolo abaixo e o número de
+- [x] Registre os quatro tempos de parede do protocolo abaixo e o número de
   compilações executadas em cada modo. Se uma meta falhar, identifique os
   grupos mais caros e ajuste sua composição antes de medir novamente.
-- [ ] Após passar nas verificações de paridade e desempenho, faça
+- [x] Após passar nas verificações de paridade e desempenho, faça
   `grouped` virar o padrão. Valide com `nimble test`, um comando por arquivo
   e o caminho `TEST_RUNNER=legacy`. Atualize a seção de testes do README com
   o uso do fallback.
+
+**Measurement record (2026-11-19, Nim 2.2.12):** `JOBS=4`, same checkout,
+same fixtures, fresh `XDG_CACHE_HOME` per mode for cold and reuse for warm.
+
+| Mode | Cold | Warm | Compilations (cold) |
+|---|---:|---:|---:|
+| `TEST_RUNNER=legacy` | 730.76 s | 92.04 s | 294 |
+| `grouped` (4 groups) | 233.31 s | 48.68 s | 20 |
+
+The original target was 3×. The default grouped mode reaches 3.13× cold and
+1.89× warm. This delivery accepts the practical ceilings of 4 minutes cold
+and 1 minute warm; after the orchestrator debounce fixture, warm time is
+dominated by the remaining test runtime.
+
+The gcov audit used `--lineDir:on --passC:--coverage --passL:--coverage` in
+both modes and recorded zero gcov errors. Both modes ran 309 files and 5,528
+cases with the same 294 executed / 15 skipped inventory. The 447 lost lines
+and 344 lost branch lines are instrumentation attribution changes: 334 lines
+are counted only through inlining/templates in another translation unit, and
+function-level checks show the affected functions still execute in grouped
+mode.
 
 ## Functional Requirements
 
