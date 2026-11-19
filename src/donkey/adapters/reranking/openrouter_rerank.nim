@@ -62,8 +62,7 @@ proc buildBody*(a: OpenRouterRerankAdapter;
     ]
   }
 
-proc parseScores*(content: string; count: int): seq[float32] =
-  llm_rerank_common.parseScores(content, count)
+export parseScores
 
 proc newOpenRouterRerankAdapter*(apiKey: string;
                                  model = DefaultRerankModel;

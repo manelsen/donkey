@@ -15,7 +15,7 @@
 ##   Provider LLM calls (max ~10 s) block the event loop but not this thread.
 ##   Discord heartbeat interval is ~41 s; occasional missed beats are tolerated.
 
-import std/[json, locks, net, os, random, strutils, tables, times, uri]
+import std/[json, locks, net, os, random, strutils, tables, uri]
 import ../../core/log
 import ../../core/app_meta
 import ../../core/commands/command_catalog
@@ -89,10 +89,6 @@ type
     sessionId:    string
     resumeUrl:    string  ## provided in READY for resume
   DiscordReconnect = object of IOError  ## OP=7 is normal, not an error
-
-proc epochMs(): int64 =
-  let t = getTime()
-  t.toUnix() * 1000 + (t.nanosecond div 1_000_000)
 
 proc sendHeartbeat(state: var GatewayState) =
   let payload = if state.lastSeq > 0: $state.lastSeq else: "null"
