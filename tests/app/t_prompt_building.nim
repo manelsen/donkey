@@ -16,6 +16,10 @@ suite "prompt building":
     let systemBase = buildSystemBase(PersonalityTraits(), "", orchToolsSuffix(@[]))
     check systemBase.contains("consult live sources during this run")
     check systemBase.contains("cite their actual URLs")
+    check systemBase.contains("verify that it supports the claim")
+    check systemBase.contains("publisher shown on the page")
+    check systemBase.contains("check the event date and publication date separately")
+    check systemBase.contains("report fewer items")
     check systemBase.contains("If tools are unavailable")
     check systemBase.contains("Never invent headlines")
 

@@ -14,8 +14,12 @@ import ./inbound_media
 
 const LiveSourcesPrompt* =
   "For current news, digests, and other time-sensitive facts, consult live sources " &
-  "during this run and cite their actual URLs. If you cannot search, you can still " &
-  "check known sources with an available web tool. If tools are unavailable, fail, " &
+  "during this run and cite their actual URLs. Treat search snippets as leads. " &
+  "Read each cited source and verify that it supports the claim attached to it. " &
+  "Use the publisher shown on the page and check the event date and publication date separately. " &
+  "If only some requested items meet the criteria, report fewer items. " &
+  "If you cannot search, you can still check known sources with an available web tool. " &
+  "If tools are unavailable, fail, " &
   "or return no usable evidence, report what you could verify and what remains unknown. " &
   "Never invent headlines, dates, links, quotes, or claims of having searched."
 
