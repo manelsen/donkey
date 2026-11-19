@@ -660,8 +660,10 @@ if [ "$TEST_RUNNER" = "grouped" ]; then
   fi
 
   build_status=0
-  printf "%s\0" "${build_jobs[@]}" |
-    xargs -0 -P "$JOBS" -n 1 bash -c 'run_job "$1"' _ || build_status=$?
+  if [ -n "${build_jobs[0]:-}" ]; then
+    printf "%s\0" "${build_jobs[@]}" |
+      xargs -0 -P "$JOBS" -n 1 bash -c 'run_job "$1"' _ || build_status=$?
+  fi
   run_status=0
   printf "%s\0" "${run_jobs[@]}" |
     xargs -0 -P "$JOBS" -n 1 bash -c 'run_job "$1"' _ || run_status=$?
