@@ -13,8 +13,20 @@
 ##
 ## CORS: Access-Control-Allow-Origin: * for local browser access.
 ##
-## GET /dashboard is public HTML only: the page asks for the Bearer token and
-## keeps it in sessionStorage, so the data endpoints stay authenticated.
+## Auth: `GET /`, `/health` and `/dashboard` are public (liveness probes plus a
+## data-free shell that asks for the Bearer token and keeps it in
+## sessionStorage). Every `/api/*` route, including `/api/sessions` and
+## `/api/providers`, requires `Authorization: Bearer <DONKEY_HTTP_TOKEN>` even on
+## loopback and even for `OPTIONS`: there is no unauthenticated mode for the
+## data routes, so a gateway started without a token answers `401` there and the
+## shell is the only thing left open. The `/v1/*` agent routes keep their
+## historical local-only behaviour for an empty token; the agent itself already
+## refuses to run without one.
+##
+## The token authenticates the client against the instance, never a user: the
+## `user` field of a request is caller-asserted, so any token holder may act as
+## any `api:<name>`. Per-user authentication is an explicit PRD non-goal and is
+## pinned by `tests/app/t_http_gateway.nim` so the limitation stays deliberate.
 
 import std/[json, monotimes, net, os, strutils, times]
 import locks
@@ -80,8 +92,9 @@ func constantTimeEq(a, b: string): bool =
   diff == 0
 
 func isAuthorized*(authHeader, token: string): bool =
-  ## Empty token keeps the historical local-only behavior; otherwise a
-  ## matching Bearer token is required on every request.
+  ## Empty token keeps the historical local-only behavior for the routes that
+  ## accept it; `/api/*` asks `gatewayAuthVerdict` instead and never treats an
+  ## empty token as authorized.
   if token.len == 0:
     return true
   constantTimeEq(parseBearerToken(authHeader), token)
@@ -213,7 +226,7 @@ th,td{text-align:left;padding:.35rem .5rem;border-bottom:1px solid #e3e3e3;verti
 </head>
 <body>
 <h1>Donkey</h1>
-<label>Token <input id="token" type="password" autocomplete="off" placeholder="DONKEY_HTTP_TOKEN (vazio quando não configurado)"></label>
+<label>Token <input id="token" type="password" autocomplete="off" placeholder="DONKEY_HTTP_TOKEN (obrigatório nas rotas /api)"></label>
 <button id="save">Salvar e atualizar</button>
 <h2>Status</h2>
 <pre id="status">—</pre>
@@ -242,14 +255,24 @@ function authHeaders() {
   if (token) headers.Authorization = 'Bearer ' + token;
   return headers;
 }
+// A request without a token can never satisfy the mandatory bearer check on
+// /api/sessions, /api/providers and the session action; the shell asks for the
+// token first and does not hammer the endpoints with an answer it knows is 401.
+function hasToken() {
+  if (token) return true;
+  $('token').focus();
+  for (const id of ['sessions', 'providers']) {
+    $(id).replaceChildren(row(['informe o token', '', '', '', '', '', '']));
+  }
+  return false;
+}
 async function get(path) {
   const headers = token ? {Authorization: 'Bearer ' + token} : {};
   const r = await fetch(path, {headers});
   return r.ok ? await r.text() : 'HTTP ' + r.status;
 }
 async function getJson(path) {
-  const headers = token ? {Authorization: 'Bearer ' + token} : {};
-  const r = await fetch(path, {headers});
+  const r = await fetch(path, {headers: authHeaders()});
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }
@@ -263,6 +286,7 @@ function row(cells) {
   return tr;
 }
 async function refreshSessions() {
+  if (!hasToken()) return;
   try {
     const data = await getJson('/api/sessions');
     const body = $('sessions');
@@ -281,6 +305,7 @@ async function refreshSessions() {
   }
 }
 async function refreshProviders() {
+  if (!hasToken()) return;
   try {
     const data = await getJson('/api/providers');
     const body = $('providers');
@@ -311,6 +336,11 @@ $('new-session').addEventListener('click', async () => {
   const raw = $('new-user').value.trim();
   if (!raw) {
     $('action').textContent = 'informe o usuário';
+    return;
+  }
+  if (!token) {
+    $('action').textContent = 'informe o token';
+    $('token').focus();
     return;
   }
   const r = await fetch('/api/sessions/' + encodeURIComponent(raw) + '/task', {
@@ -373,7 +403,10 @@ proc handleSessionActionRequest*(actionFn: GatewaySessionActionFn;
                                  authToken: string): GatewayResponse {.gcsafe.} =
   ## `POST /api/sessions/{userId}/task`. The raw session key is never passed
   ## through `apiUserId`; auth is checked here as well as in the socket
-  ## handler, and a missing hook fails closed.
+  ## handler, and a missing hook fails closed. An empty token is a `401` here
+  ## like in the socket handler: `/api/*` never runs unauthenticated.
+  if authToken.len == 0:
+    return dashboardError(401, "api routes require DONKEY_HTTP_TOKEN")
   if not isAuthorized(authHeader, authToken):
     return dashboardError(401, "unauthorized")
   if actionFn == nil:
@@ -394,6 +427,35 @@ func isPublicGatewayAction*(action: string): bool =
   ## Liveness/readiness probes must not require credentials. Only static text is
   ## exposed here; every data-bearing endpoint stays behind the token.
   action in ["index", "health", "dashboard"]
+
+type
+  GatewayAuthVerdict* = enum
+    gavPublic    ## No credential needed: index, health, dashboard shell.
+    gavAllowed   ## Bearer token matched.
+    gavNoToken   ## An `/api/*` route was reached with no token configured.
+    gavRejected  ## `/api/*` without a matching Bearer token.
+
+func isApiRouteAction*(action: string): bool =
+  ## The `/api/*` data surface. A set of route actions, not a prefix test: the
+  ## cross-origin and fail-closed checks must agree with `routeGatewayRequest`,
+  ## which already enumerates every action.
+  action in ["status", "logs", "events", "chat", "sessions", "providers",
+             "session_task"]
+
+func gatewayAuthVerdict*(action, authHeader, token: string): GatewayAuthVerdict =
+  ## `/api/*` requires a matching Bearer token regardless of bind address; an
+  ## unconfigured token closes those routes instead of opening them to loopback
+  ## browsers. The `/v1/*` agent routes keep the historical empty-token
+  ## behaviour (the agent itself already refuses to run without a token).
+  if isPublicGatewayAction(action):
+    return gavPublic
+  if token.len == 0:
+    if isApiRouteAction(action):
+      return gavNoToken
+    return gavAllowed
+  if constantTimeEq(parseBearerToken(authHeader), token):
+    return gavAllowed
+  gavRejected
 
 func routeGatewayRequest*(req: GatewayRequest): string =
   case req.path
@@ -703,20 +765,35 @@ proc handleGatewayConn(client: Socket;
         origin = h[7..^1].strip()
 
     let req = parseGatewayRequest(requestLine)
+    var action = routeGatewayRequest(req)
     if req.meth == "OPTIONS":
+      ## Preflights are answered before the body is read, but `/api/*` still
+      ## needs the bearer check: `Access-Control-Allow-Origin: *` would
+      ## otherwise let any page probe the data routes from loopback.
+      if isApiRouteAction(action) and
+         not isAuthorized(authHeader, authToken):
+        client.sendResponse("401 Unauthorized", "application/json",
+                            "{\"error\":\"unauthorized\"}\n", log)
+        return
       client.sendResponse("204 No Content", "text/plain", "", log)
       return
-    var action = routeGatewayRequest(req)
     var sessionTaskUser = ""
     if action == "notfound" and req.meth == "POST":
       let parsedTaskPath = parseSessionTaskPath(req.path)
       if parsedTaskPath.isOk:
         action = "session_task"
         sessionTaskUser = parsedTaskPath.get()
-    if not isPublicGatewayAction(action) and not isAuthorized(authHeader, authToken):
+    case gatewayAuthVerdict(action, authHeader, authToken)
+    of gavRejected:
       client.sendResponse("401 Unauthorized", "application/json",
                           "{\"error\":\"unauthorized\"}\n", log)
       return
+    of gavNoToken:
+      client.sendResponse("401 Unauthorized", "application/json",
+                          "{\"error\":\"api routes require DONKEY_HTTP_TOKEN\"}\n", log)
+      return
+    of gavPublic, gavAllowed:
+      discard
     if not isPublicGatewayAction(action) and authToken.len == 0 and origin.len > 0 and
        not isLocalOrigin(origin):
       client.sendResponse("403 Forbidden", "application/json",

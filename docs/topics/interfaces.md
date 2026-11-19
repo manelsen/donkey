@@ -44,9 +44,17 @@ The agent endpoint additionally refuses to run **without** a configured token:
 - token missing (`DONKEY_HTTP_TOKEN` unset/empty) → `503`
   `{"error":{"message":"agent endpoint requires DONKEY_HTTP_TOKEN",...}}`.
 
-This is deliberate. `/api/chat` keeps its historical local-only behavior when
-no token is set, but a route that runs the full agent loop is not exposed
+This is deliberate. `/v1/*` keeps its historical local-only gate behind that
+check, but a route that runs the full agent loop is not exposed
 unauthenticated even on loopback.
+
+The dashboard data routes (`/api/*`, including `/api/sessions`,
+`/api/providers` and the session action) also require the Bearer token even
+when the client comes from loopback and even for `OPTIONS`: there is no
+unauthenticated mode for them, so a gateway started without
+`DONKEY_HTTP_TOKEN` answers `401` there. `/`, `/health` and the `/dashboard`
+shell stay public; the shell asks for the token once and keeps it in
+`sessionStorage`.
 
 The request field `user` is the identity. It must match `[a-z0-9._-]{1,64}`,
 must not be `.` or `..`, and is turned into the synthetic user id
@@ -57,7 +65,9 @@ must not be `.` or `..`, and is turned into the synthetic user id
   versus `alice`); the prefix is what keeps the namespaces apart.
 - `user` is **caller-asserted**. The Bearer token authenticates the client
   against the instance, not the user inside the body. Any token holder can act
-  as any `api:` identity.
+  as any `api:` identity. Per-user credentials are an explicit non-goal:
+  `tests/app/t_http_gateway.nim` pins this so the limitation stays a decision
+  rather than a bug.
 
 A turn for an `api:` user never enters channel onboarding: the orchestrator
 skips the onboarding state machine for `isApiUserId(...)` users, so the API

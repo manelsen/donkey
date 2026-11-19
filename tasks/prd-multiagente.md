@@ -118,12 +118,13 @@ evidência vermelho → verde.
 
 - [ ] `FanoutHandle` (`fanoutId`, `childIds`) e `FanoutStart` (`handle`, `failedIndex`, `error`) em `app/subagent_runtime.nim`. `startFanout*(mgr; parent: NativeCtx; plan: FanoutPlan; policy: FanoutPolicy): Future[FanoutStart]` faz **sequencial** `await mgr.spawn` por tarefa: `spawn` é `{.async.}` sem `await` interno, então os N filhos começam juntos. Não usar `awaitSubagent` por filho.
 - [ ] **Falha parcial:** aborta o plano; `FanoutStart.error` traz a mensagem, `failedIndex` o índice e `handle.childIds` **os ids já criados e cancelados**. Cada um passa por `settleChild` (≤ 2 s) e `finalizeChild`. `spawnFanout` converte em agregado com `signal.spawnFailed = true` e `children` derivados de `handle.childIds`. Teste: port de workspace falhando no 2º `create`, 3 tarefas, `create`/`remove` casados, nenhum filho vivo.
-- [ ] **Dono único da remoção:** `finalizeChild(mgr, rt)` é a única função que chama `workspace.remove`, e só quando `childSettled(rt)` = status terminal (`notin {ssQueued, ssRunning}`) **e** `future.finished()`. `runChild` finally não remove mais; `settleChild` cancela, espera `withTimeout(rt.future, 2_000)` e chama `finalizeChild`; timeout não remove (loga órfão e o teste falha). `cancelSubagent` deixa de remover o paddock: mudança de comportamento declarada, sem editar asserção para esconder a corrida.
+- [ ] **Dono único da remoção:** `finalizeChild(mgr, rt)` é a única função que chama `workspace.remove`, e só quando `childSettled(rt)` = status terminal (`notin {ssQueued, ssRunning}`) **e** `future.finished()`. `runChild` finally não remove mais; `settleChild` cancela, espera `withTimeout(rt.future, 2_000)` e chama `finalizeChild`; timeout não remove. `cancelSubagent` deixa de remover o paddock: mudança de comportamento declarada, sem editar asserção para esconder a corrida.
+- [ ] **Cleanup é reagendado, não só logado:** um `settleChild` que vence em 2 s deixa o paddock no lugar porque o future do filho ainda não terminou; sem um segundo caminho de remoção ele vira órfão permanente. O término **tardio** do future do filho (callback `addCallback` e a varredura periódica de retenção) precisa chamar `finalizeChild` de novo, depois de reavaliar `childSettled`; a remoção vale para o filho de fan-out e para o avulso, com e sem supervisor, e o log de órfão continua existindo só como diagnóstico. Teste não-vacuoso: filho cujo future só termina depois do prazo de 2 s termina com `#remove == #create` e nenhum diretório em `subagents/`, sem depender de `/stop` nem do shutdown.
 - [ ] Teste não-vacuoso: port espião grava `create:<id>` e, no `remove`, o resultado de `childSettled(mgr, id)`; exige `settled=true` e `#remove == #create`.
 - [ ] `spawnFanout = startFanout + awaitFanout*(mgr; fanoutId; stopGeneration; userId; userInterrupt): Future[FanoutAggregate]`. `FanoutState` em `mgr.fanouts: Table[string, FanoutState]` **nos dois modos** (bookkeeping; não ocupa slot). Deadline = `plan.limits.maxAggregateDurationMs` (já ≤ 600 s).
 - [ ] **Captura na conclusão:** o supervisor grava o `FanoutOutcome` de cada filho em `FanoutState.outcomes` quando ele termina; `awaitFanout` agrega desse snapshot, nunca de `mgr.children` (a retenção 64 pode podar um filho não lido).
 - [ ] Cada filho mantém `SessionState`, `ConversationHistory`, `SubagentUsage`, inbox/outbox e paddock próprios; o `ref` de usage é criado por filho. Se `running + plan.len > mgr.maxConcurrent`, falha antes de criar paddock (`running` = filhos vivos, inclui os de fan-out detachado).
-- [ ] `fpFailFast`: no primeiro failure, cancela irmãos via `cancelSubagent`, marca `cancelledBySibling` e para — teste: 2º filho `ssFailed`, 1º/3º `ssCancelled` + `cancelledBySibling`, stop reason `fsrChildFailed`.
+- [ ] `fpFailFast`: no primeiro failure **ou** cancelamento externo de um irmão, cancela os demais via `cancelSubagent`, marca `cancelledBySibling` e para — teste: 2º filho `ssFailed`, 1º/3º `ssCancelled` + `cancelledBySibling`, stop reason `fsrChildFailed`; variante com o 2º cancelado por `cancel_subagent` em vez de falho, com 1º/3º `ssCancelled` + `cancelledBySibling`.
 - [ ] Barreira (não sleep): 3 filhos com `parent.asyncCompleteFn` (o `completeFn` síncrono bloquearia a thread e daria deadlock, não timeout) esperando `contador == 3`; `maxDurationMs ≥ 2_000`; timeout da barreira 1,5 s. `paddockDirFor` distinto e ordem do agregado igual à do plano.
 
 ### US-006: Tool `spawn_subagents`
@@ -158,7 +159,9 @@ evidência vermelho → verde.
 - [ ] O supervisor (de `spawnFanout` ou detachado) checa `isSessionStopRequested`/`isUserStoppedSince` a cada 100 ms, sinaliza `stopRequested`, cancela os filhos vivos e devolve `fsrSessionStop` com parciais.
 - [ ] **Teto de runtime:** no tick **e** na conclusão de cada filho, soma os tokens de **todos** os filhos do fan-out — snapshots dos finalizados + vivos — e chama `fanoutBudgetDecision(total, plan.limits)`. Em `bdTokensExceeded` sinaliza `budgetExceeded`, cancela todos e devolve `fsrAggregateBudget`. Teste: teto 20, filho A termina com 15, B com 10 → total 25, C é cancelado e o reason é `fsrAggregateBudget` (prova que finalizado continua contando).
 - [ ] `cancelAll` percorre `mgr.children` **e** `mgr.fanouts`, cancela supervisors detachados, e só chama `finalizeChild` (US-003, após `childSettled`) depois do settlement/reap; espera ≤ 2 s. `tests/app/t_subagent_fanout_stop.nim`: 8 filhos, stop e shutdown no meio, `subagents/` vazio, zero futures pendentes, `removes == creates`.
-- [ ] `cancel_subagent` de um irmão derruba os demais com `fpFailFast` e não os derruba com `fpCollectAll` (documentado na US-007).
+- [ ] **Shutdown com future pendente:** se o future de um filho não termina dentro do bound de 2 s, `cancelAll` para de esperar, deixa o paddock no lugar e o processo encerra; um sweep de inicialização remove diretórios de `subagents/` sem dono vivo (cleanup, não retomada). Teste: filho que ignora o cancelamento, shutdown em 2 s, o future pode continuar pendente até o exit (o processo não o aguarda), diretório presente; a inicialização seguinte o remove sem recriar o fan-out.
+- [ ] Shutdown e `/stop` nunca marcam `cancelledBySibling`: a marca é exclusiva do fail-fast; o cancelamento derivado do processo é `ssCancelled` sem a marca e não vira stop reason.
+- [ ] `cancel_subagent` de um irmão derruba os demais com `fpFailFast` e não os derruba com `fpCollectAll` (documentado na US-007). **Decisão:** cancelamento externo **dispara** o fail-fast, como um failure: o irmão cancelado de fora é marcado `ssCancelled` sem `cancelledBySibling` (a marca significa "cancelado pelo fail-fast", não "cancelado por alguém") e o supervisor sinaliza `failFast` nos demais, que passam a `ssCancelled` + `cancelledBySibling`; o stop reason segue a precedência da US-002 e não reage a `ssCancelled`. Com `fpCollectAll` nada é derrubado. Cancelamento externo de **todos** os irmãos (`/stop`, shutdown) é `fsrSessionStop`, não fail-fast.
 
 ### US-007: Documentar e fechar a missão
 **Descrição:** a próxima pessoa entende quando usar fan-out e o que ele não é.
@@ -174,9 +177,16 @@ evidência vermelho → verde.
 
 - **FR-1:** Plano, agregação, stop reason, orçamento e progresso vivem em `domain/subagent_pure.nim`, como `func`, sem chronos/I/O/adapter.
 - **FR-2:** O runtime é a única camada que cria paddock, dispara future e cancela; erro de I/O chega como `Result`/status, nunca como exceção.
-- **FR-3:** Cada filho tem sessão, histórico, usage, inbox/outbox e paddock próprios; nenhum estado mutável é compartilhado. Paddock só é removido após `childSettled`, por um único dono.
+- **FR-3:** Cada filho tem sessão, histórico, usage, inbox/outbox e paddock próprios; nenhum
+  estado mutável é compartilhado. Paddock só é removido após `childSettled`, por um único dono
+  (`finalizeChild`), e um settlement que vence **não** encerra a obrigação: o término tardio do
+  future do filho reagenda a remoção.
 - **FR-4:** Agregado ordenado pelo índice do plano; índice inválido é ignorado, ausente é `ssQueued`; snapshot na conclusão.
-- **FR-5:** `fpFailFast` cancela irmãos no primeiro failure; `ssCancelled` nunca é failure nem re-dispara cancelamento.
+- **FR-5:** `fpFailFast` cancela irmãos no primeiro desfecho que **não** seja conclusão limpa:
+  `ssFailed`, `ssTimedOut` **e** cancelamento externo (`cancel_subagent` de um irmão). O
+  cancelamento externo é a causa raiz do fail-fast; o que não o dispara é o cancelamento
+  **derivado** que o próprio fail-fast ou o shutdown aplicou nos irmãos (`ssCancelled` com
+  `cancelledBySibling`), e esse nunca vira stop reason nem re-dispara cancelamento.
 - **FR-6:** Dois tetos: plano (`FanoutAbsoluteMaxAggregateTokens`, 512k) recusa pedidos absurdos; runtime (`maxAggregateTokens`) cancela pelo consumo real somado de todos os filhos.
 - **FR-7:** O turno pai recebe no máximo uma linha de progresso por filho concluído e o desfecho por filho no resultado da tool.
 - **FR-8:** Stop do processo e `/stop` cancelam todos os filhos e os supervisors detachados, com bound de 2 s.
@@ -185,13 +195,13 @@ evidência vermelho → verde.
 
 ## 8. Não-objetivos
 
-Rooms, relay e Kanban; unificar fan-out com os jobs `task`/`await`/`cancel_job`; persistir/retomar fan-out após restart; compartilhar contexto/memória entre irmãos; worktree git por filho; mudar approval, rede, sandbox ou política de tools do filho; expor fan-out em dashboard/TUI/API. A missão **não** fecha o item 3 da V4 nem move o placar.
+Rooms, relay e Kanban; unificar fan-out com os jobs `task`/`await`/`cancel_job`; persistir/retomar fan-out após restart (o sweep de inicialização remove paddocks órfãos; isso é cleanup, não retomada); compartilhar contexto/memória entre irmãos; worktree git por filho; mudar approval, rede, sandbox ou política de tools do filho; expor fan-out em dashboard/TUI/API. A missão **não** fecha o item 3 da V4 nem move o placar.
 
 ## 9. Considerações técnicas
 
 - `NativeCtx` é copiado por valor; o `SubagentUsage` de cada filho é um `ref` novo — nunca o do pai nem o de um irmão.
 - `plan.limits` já vem normalizado e carrega o teto de runtime e a duração máxima (≤ 600 s); o supervisor usa essa duração como deadline. `fanoutBudgetDecision` trata `0` como 256k, mas `planFanout` exige budget > 0.
-- Supervisão sem busy-wait: `sleepAsync(100)` por tick, `cancelSoon()` + `reap*`, settlement com `withTimeout` e remoção só por `finalizeChild`.
+- Supervisão sem busy-wait: `sleepAsync(100)` por tick, `cancelSoon()` + `reap*`, settlement com `withTimeout` e remoção só por `finalizeChild`; o timeout de settlement **não** descarta a remoção, ele a reagenda para o término tardio do future (callback e varredura de retenção).
 - Progresso usa o outbox **do pai**, com `streamId` próprio; o outbox do filho continua drenado pelo pai. `fanout_id` = `fan-<epochMs>-<counter>` do primeiro filho.
 - `cancelSubagent` muda de comportamento (não remove mais o paddock): se um teste existente depender da remoção síncrona, isso é mudança de comportamento e a história diz isso.
 

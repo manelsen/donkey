@@ -91,7 +91,7 @@ US-005. Um escritor por arquivo; suíte completa e commits são sequenciais.
 **Descrição:** Como mantenedor, quero que o diário sobreviva ao restart sem duplicar fsync.
 **Critérios de aceite:**
 - [ ] Extrair `atomicWriteText`, `appendJsonLine`, `syncDir` e permissões 0600/0700 de `adapters/state/runtime_store.nim` para `adapters/state/durable_file.nim`, sem mudar a API pública de `runtime_store`.
-- [ ] `adapters/state/turn_journal.nim` com `TurnJournalStore` (`append`, `loadAll`, `loadByInbound`, `loadById`, `compact(nowMs)`) e `ports/turn_journal.nim` com `TurnJournalPort`; append `"\n<json>\n"` com fsync por evento; linha truncada ignorada; compaction mantém ativos + terminais de 7 dias e não compacta diante de campo desconhecido.
+- [ ] `adapters/state/turn_journal.nim` com `TurnJournalStore` (`append`, `loadAll`, `loadByInbound`, `loadById`, `compact(nowMs)`) e `ports/turn_journal.nim` com `TurnJournalPort`; append `"\n<json>\n"` com fsync por evento; linha truncada ignorada; compaction mantém ativos + terminais de 7 dias e não compacta diante de campo desconhecido; as **chaves de inbound** (`userId`+`channel`+`chatId`+`channelMessageId`, ou o fallback `chatId:channelId:hash(text)`) têm retenção **própria e separada da de turnos** (`DedupeRetentionMs`, ≥ 7 dias e nunca menor que a de turnos): descartar o turno terminal não pode liberar a chave, senão a reentrega do canal depois da compaction gera uma **segunda resposta**.
 - [ ] `tests/state/t_turn_journal.nim`: restart por store novo, linha truncada, permissões 0600/0700, **redação** de `Bearer`/`sk-`/`token=`, retenção e evento futuro; `tests/app/t_durability.nim` verde sem edição.
 
 ### US-003: Planejador de recuperação
@@ -187,6 +187,16 @@ US-005. Um escritor por arquivo; suíte completa e commits são sequenciais.
   fase linear. `rdsSent` só é gravado pelo drainer depois de `port.send`/edição final.
 - `commitIfTerminal` grava `tevCommitted` quando `isTurnTerminal`; o caminho feliz também
   commita (não só a retomada), então CP-12/dedup funciona e a compaction descarta o turno.
+- Dedup e compaction são retenções **independentes**: a chave de inbound sobrevive ao turno
+  que ela deduplica. Enquanto a chave existir, `loadByInbound` responde e a reentrega é
+  descartada mesmo que o turno tenha saído da janela de turnos; compactar junto (uma única
+  janela de 7 dias para os dois) permite segunda resposta à reentrega tardia do canal, o que
+  viola o objetivo 3. `compact(nowMs)` só pode remover uma chave quando o turno associado já
+  não existe **e** `nowMs - lastSeenMs > DedupeRetentionMs`. A janela da chave é própria e
+  **maior** que a de turnos (`DefaultTurnJournalRetentionMs`, 7 dias): `DedupeRetentionMs`
+  vale 30 dias, contados do último `lastSeenMs` da chave, e a remoção do turno não altera
+  esse relógio. Assim uma chave nunca expira junto com o turno que ela deduplica, e a
+  compactação que descarta o turno não toca na chave antes dos 30 dias.
 - Final streamed: `streamToOutbox` grava `tevReplyQueued` no put; crash antes do drainer é
   CP-5 e o replay envia o texto como mensagem simples. `createStreamOutbound`,
   `createReplacementOutbound` e o fallback de edição journalizam como `sendImmediateOutbound`.
@@ -197,7 +207,8 @@ US-005. Um escritor por arquivo; suíte completa e commits são sequenciais.
 - Schema/privacidade: texto inbound ≤ 16 KiB, até 10 URLs de mídia ≤ 2 KiB cada, reply ≤
   32 KiB, redigidos (`Bearer`, `sk-`, `key=`, `token=`) antes do append; diretório 0700,
   arquivo 0600. Sem conteúdo de anexo, tool args ou payload de provider.
-- 9 a 12 eventos por turno; retenção 7 dias; replay O(ativos + janela).
+- 9 a 12 eventos por turno; retenção 7 dias para turnos e retenção **separada** (nunca
+  menor) para as chaves de inbound; replay O(ativos + janela).
 - `turn_journal_pure.nim` não importa `os`/`chronos`/`json` de I/O: encoding/decoding são
   `func` sobre strings, como `lease_pure`; escrita sempre antes do efeito e nenhuma
   recuperação antes do diário aberto + lease.
@@ -211,7 +222,9 @@ US-005. Um escritor por arquivo; suíte completa e commits são sequenciais.
 
 ## 11. Questões em aberto
 
-- Retenção de 7 dias vs. 30 do ledger: alinhar em US-008 se a operação pedir.
+- Retenção de turnos de 7 dias vs. 30 do ledger: alinhar em US-008 se a operação pedir.
+  A retenção de **chaves de inbound** é outra janela e o seu valor default (`7` dias, nunca
+  menor que a de turnos) fica em US-002, não em US-008.
 - A cópia do aviso deve variar por canal? Começar única e revisar em US-007.
 - Quem commitar primeiro em `src/donkey.nim` (provider, canais, interfaces, automação ou
   durabilidade) libera o arquivo; a ordem entre missões é operacional, não técnica.
