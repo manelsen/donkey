@@ -36,6 +36,10 @@ proc redirectHttp(location: string): HttpRuntimePort =
 proc runTests*() =
   suite "structured web tools":
 
+    test "Brave responses without web results are reported as empty":
+      check performWebSearch("current news", 5, "test-key",
+                             mockHttp(200, """{"type":"search"}""")) == "(no results)"
+
     test "performFetchStructured returns text body envelope":
       let parsed = parse(performFetchStructured(mockHttp(200, "<p>Hello structured web</p>"),
                                                 "https://example.com",

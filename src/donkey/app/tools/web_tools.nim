@@ -164,7 +164,7 @@ proc performWebSearch*(query: string; count: int;
       return "Brave API error " & $resp.value.status
     let j = parseJson(resp.value.body)
     let webResults = j.getOrDefault("web").getOrDefault("results")
-    if webResults.kind != JArray or webResults.len == 0:
+    if webResults == nil or webResults.kind != JArray or webResults.len == 0:
       return "(no results)"
     var lines: seq[string] = @[]
     for item in webResults:
