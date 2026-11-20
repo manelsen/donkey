@@ -100,7 +100,10 @@ proc handleQQOneBotConn*(client: Socket; logger: Logger; secret = "";
   ## is read through http_request_reader: bounded headers, capped body,
   ## socket timeouts — a hostile peer gets 4xx instead of OOM or a hung thread.
   defer: closeWebhookClient(client)
-  discard applyWebhookClientTimeouts(client, timeoutSec)
+  applyWebhookClientTimeouts(client, timeoutSec).isOkOr:
+    logger.warn("qq webhook: " & error)
+    recordWebhookFailure("qq", error)
+    return
   let req = readWebhookRequest(client).valueOr:
     logger.warn("qq webhook: rejected request: " & error)
     recordWebhookFailure("qq", error)
@@ -173,12 +176,19 @@ proc startWebhook*(a: QQAdapter; host: string; port: Port; secret: string;
   let server = ? bindOneBotListener(host, port)
   let domain = listenDomain(host)
   gQQOneBotEvents.open()
-  gQQOneBotEventsOpen     = true
+  gQQOneBotEventsOpen = true
+  try:
+    {.cast(gcsafe).}:
+      createThread(gQQOneBotWebhookThread, qqOneBotWebhookThread,
+                   QQOneBotWebhookArgs(listenFd: server.getFd, domain: domain,
+                                       secret: secret, logger: logger))
+  except CatchableError as e:
+    ## Undo so a later call can retry instead of seeing "already started".
+    gQQOneBotEventsOpen = false
+    gQQOneBotEvents.close()
+    try: server.close() except CatchableError: discard
+    return err("qq webhook thread: " & e.msg)
   gQQOneBotWebhookStarted = true
-  {.cast(gcsafe).}:
-    createThread(gQQOneBotWebhookThread, qqOneBotWebhookThread,
-                 QQOneBotWebhookArgs(listenFd: server.getFd, domain: domain,
-                                     secret: secret, logger: logger))
   ok()
 
 proc enqueueEventJson*(a: var QQAdapter; payload: string): Result[void, string] =

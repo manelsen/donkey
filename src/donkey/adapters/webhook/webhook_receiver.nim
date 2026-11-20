@@ -564,7 +564,12 @@ proc webhookWorker(arg: WebhookWorkerArg) {.thread.} =
         discard posix.close(cint(fd))
         continue
       try:
-        discard applyWebhookClientTimeouts(client)
+        ## Without SO_RCVTIMEO a silent client would hold this worker until
+        ## the request deadline; refuse rather than serve it unbounded.
+        applyWebhookClientTimeouts(client).isOkOr:
+          arg.logger.warn("webhook: " & error)
+          try: client.close() except CatchableError: discard
+          continue
         if arg.cfg.tlsCertFile.len > 0:
           ## Reload the certificate when the files change, so rotation does
           ## not require a daemon restart. A failed reload keeps the old
@@ -715,7 +720,10 @@ proc webhookServerThread(args: WebhookServerArgs) {.thread.} =
           args.logger.warn("webhook: accept error: " & e.msg)
           sleep(50)
           continue
-        discard applyWebhookClientTimeouts(client)
+        applyWebhookClientTimeouts(client).isOkOr:
+          args.logger.warn("webhook: " & error)
+          try: client.close() except CatchableError: discard
+          continue
         if not gWebhookQueue.trySend(client.getFd):
           sendResponse(client, serviceUnavailable())
           try: client.close() except CatchableError: discard

@@ -79,6 +79,16 @@ proc recordWebhookFailure*(serverType, reason: string) {.gcsafe, raises: [].} =
     finally:
       release(gMetricsLock)
 
+proc webhookFailureCount*(serverType: string): int {.gcsafe, raises: [].} =
+  ## Current failure count for one webhook server type (0 if never seen).
+  {.cast(gcsafe).}:
+    if not gMetricsReady: return 0
+    acquire(gMetricsLock)
+    try:
+      result = gMetrics.webhookFailures.getOrDefault(serverType)
+    finally:
+      release(gMetricsLock)
+
 proc recordReminderFailure*(reason: string) {.gcsafe, raises: [].} =
   ## Records a reminder delivery failure for metrics/observability.
   ## Key: reason string (e.g. "delivery timeout").

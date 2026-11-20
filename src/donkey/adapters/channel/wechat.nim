@@ -262,7 +262,10 @@ proc handleWeChatConn*(client: Socket; token: string; logger: Logger;
   ## POST /?signature=…&timestamp=…&nonce=…            → parse XML, enqueue event
   ## Reading goes through http_request_reader (bounded, timed out).
   defer: closeWebhookClient(client)
-  discard applyWebhookClientTimeouts(client, timeoutSec)
+  applyWebhookClientTimeouts(client, timeoutSec).isOkOr:
+    logger.warn("wechat webhook: " & error)
+    recordWebhookFailure("wechat", error)
+    return
   let req = readWebhookRequest(client).valueOr:
     logger.warn("wechat webhook: rejected request: " & error)
     recordWebhookFailure("wechat", error)
@@ -277,8 +280,13 @@ proc handleWeChatConn*(client: Socket; token: string; logger: Logger;
   elif req.httpMethod == "GET":
     client.respond("200 OK", req.query.getOrDefault("echostr"))
   elif req.httpMethod == "POST":
+    ## Always 200 "success": WeChat retries anything else. A body we cannot
+    ## parse is dropped, but counted and logged so the loss is visible.
     let evRes = parseWebhookXml(req.body)
-    if evRes.isOk and gWeChatEventsOpen:
+    if evRes.isErr:
+      logger.warn("wechat webhook: dropped unparseable event: " & evRes.error)
+      recordWebhookFailure("wechat", "unparseable event")
+    elif gWeChatEventsOpen:
       gWeChatEvents.send(evRes.value)
     client.respond("200 OK", "success")
   else:
