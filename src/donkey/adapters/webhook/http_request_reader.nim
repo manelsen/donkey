@@ -82,10 +82,13 @@ proc applyWebhookClientTimeouts*(client: Socket;
   if r != 0 or s != 0: err("failed to set client socket timeouts")
   else: ok()
 
-proc requestDeadline(): MonoTime =
+proc requestDeadline(seconds: int): MonoTime =
   ## Total time budget for one request, on the monotonic clock so a
   ## wall-clock jump cannot extend or shorten it.
-  getMonoTime() + initDuration(seconds = WebhookRequestDeadlineSec)
+  getMonoTime() + initDuration(seconds = seconds)
+
+proc remainingMs(deadline: MonoTime): int =
+  max(1, (deadline - getMonoTime()).inMilliseconds.int)
 
 proc readHttpLine(s: Socket; deadline: MonoTime): Result[string, string] =
   ## Reads one CRLF/LF terminated line; bounded in length and in time.
@@ -105,9 +108,10 @@ proc readHttpLine(s: Socket; deadline: MonoTime): Result[string, string] =
   err("header line too long")
 
 proc readWebhookRequest*(client: Socket;
-                         maxBodyBytes = MaxWebhookBodyBytes): Result[WebhookRequest, string] =
+                         maxBodyBytes = MaxWebhookBodyBytes;
+                         deadlineSec = WebhookRequestDeadlineSec): Result[WebhookRequest, string] =
   ## Reads one request. Callers should applyWebhookClientTimeouts first.
-  let deadline = requestDeadline()
+  let deadline = requestDeadline(deadlineSec)
 
   let requestLine = ? readHttpLine(client, deadline)
   if requestLine.len == 0:
@@ -126,6 +130,7 @@ proc readWebhookRequest*(client: Socket;
 
   var headers = initTable[string, string]()
   var contentLength = 0
+  var sawContentLength = false
   var headerLines = 0
   var headerBytes = 0
   while true:
@@ -145,7 +150,12 @@ proc readWebhookRequest*(client: Socket;
     let value = line[colon + 1 .. ^1].strip()
     headers[name] = value
     if name == "content-length":
-      contentLength = ? parseContentLength(value)
+      ## RFC 9112 §6.3: differing repeated lengths make framing ambiguous.
+      let n = ? parseContentLength(value)
+      if sawContentLength and n != contentLength:
+        return err("conflicting content-length")
+      contentLength = n
+      sawContentLength = true
 
   var body = ""
   if contentLength > 0:
@@ -156,7 +166,10 @@ proc readWebhookRequest*(client: Socket;
     while received < contentLength:
       if getMonoTime() > deadline:
         return err("request deadline exceeded")
-      let n = try: client.recv(body[received].addr, contentLength - received)
+      ## A buffered recv may loop over many reads internally; bounding each
+      ## call by the remaining budget stops a slow-drip sender at the deadline.
+      let n = try: client.recv(body[received].addr, contentLength - received,
+                               remainingMs(deadline))
               except CatchableError: -1
       if n <= 0:
         break

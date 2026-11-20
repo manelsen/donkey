@@ -1,7 +1,7 @@
 ## Bounded HTTP request reader shared by every embedded webhook server.
 ## Uses real loopback sockets: the client writes, then the server side reads.
 
-import std/[monotimes, net, strutils, tables, times, unittest]
+import std/[monotimes, net, os, strutils, tables, times, unittest]
 import donkey/core/pipeops
 import donkey/adapters/webhook/http_request_reader
 
@@ -24,6 +24,26 @@ proc withRequest(raw: string; maxBody = MaxWebhookBodyBytes;
   defer: conn.close()
   discard applyWebhookClientTimeouts(conn, timeoutSec)
   readWebhookRequest(conn, maxBody)
+
+type DripArgs = object
+  port: int
+  head: string
+  bytes: int
+  gapMs: int
+
+proc dripClient(args: DripArgs) {.thread.} =
+  ## Sends the headers, then the body one byte at a time — each gap shorter
+  ## than the socket timeout, so only the total deadline can stop it.
+  let s = newSocket()
+  defer: s.close()
+  try:
+    s.connect("127.0.0.1", Port(args.port))
+    s.send(args.head)
+    for _ in 0 ..< args.bytes:
+      sleep(args.gapMs)
+      s.send("x")
+  except CatchableError:
+    discard
 
 proc runTests*() =
   suite "parseContentLength":
@@ -83,6 +103,41 @@ proc runTests*() =
     test "truncated body is rejected":
       let r = withRequest("POST / HTTP/1.1\r\nContent-Length: 10\r\n\r\nabc")
       check r.isErr
+
+    test "conflicting duplicate Content-Length is rejected":
+      let r = withRequest("POST / HTTP/1.1\r\nContent-Length: 2\r\n" &
+                          "Content-Length: 1\r\n\r\na")
+      check r.isErr
+      check r.error == "conflicting content-length"
+      check readErrorStatus(r.error) == 400
+
+    test "identical duplicate Content-Length is accepted":
+      let r = withRequest("POST / HTTP/1.1\r\nContent-Length: 1\r\n" &
+                          "Content-Length: 1\r\n\r\na")
+      check r.isOk
+      check r.get.body == "a"
+
+    test "slow-drip body is cut at the total deadline":
+      let server = newSocket()
+      defer: server.close()
+      server.setSockOpt(OptReuseAddr, true)
+      server.bindAddr(Port(0), "127.0.0.1")
+      server.listen()
+      var th: Thread[DripArgs]
+      createThread(th, dripClient, DripArgs(
+        port: server.getLocalAddr()[1].int,
+        head: "POST / HTTP/1.1\r\nContent-Length: 40\r\n\r\n",
+        bytes: 40, gapMs: 150))
+      var conn: Socket
+      server.accept(conn)
+      discard applyWebhookClientTimeouts(conn, 1)
+      let t0 = getMonoTime()
+      let r = readWebhookRequest(conn, deadlineSec = 1)
+      let elapsed = getMonoTime() - t0
+      conn.close()
+      joinThread(th)
+      check r.isErr
+      check elapsed < initDuration(milliseconds = 2500)
 
     test "slow client (no data) times out instead of hanging":
       let t0 = getMonoTime()
