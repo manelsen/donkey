@@ -179,7 +179,7 @@ proc handleWeComConn*(client: Socket; token: string; logger: Logger;
     try: client.close() except CatchableError: discard
   try:
     discard applyWebhookClientTimeouts(client, timeoutSec)
-    let req = readWebhookRequest(client).valueOr:
+    let req = readWebhookRequest(client, idleSec = timeoutSec).valueOr:
       logger.warn("wecom: rejected request: " & error)
       recordWebhookFailure("wecom", error)
       client.sendHttpReply(statusLine(readErrorStatus(error)), "", logger)

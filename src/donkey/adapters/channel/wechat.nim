@@ -264,7 +264,7 @@ proc handleWeChatConn*(client: Socket; token: string; logger: Logger;
   defer:
     try: client.close() except CatchableError: discard
   discard applyWebhookClientTimeouts(client, timeoutSec)
-  let req = readWebhookRequest(client).valueOr:
+  let req = readWebhookRequest(client, idleSec = timeoutSec).valueOr:
     logger.warn("wechat webhook: rejected request: " & error)
     recordWebhookFailure("wechat", error)
     client.respond(statusLine(readErrorStatus(error)), "")

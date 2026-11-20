@@ -7,6 +7,7 @@ import donkey/adapters/webhook/http_request_reader
 
 proc withRequest(raw: string; maxBody = MaxWebhookBodyBytes;
                  timeoutSec = 1): Result[WebhookRequest, string] =
+  ## The reader gets the same idle timeout as the socket, as handlers do.
   ## Writes `raw` from a loopback client (kept open) and reads it server-side.
   let server = newSocket()
   defer: server.close()
@@ -23,7 +24,7 @@ proc withRequest(raw: string; maxBody = MaxWebhookBodyBytes;
   server.accept(conn)
   defer: conn.close()
   discard applyWebhookClientTimeouts(conn, timeoutSec)
-  readWebhookRequest(conn, maxBody)
+  readWebhookRequest(conn, maxBody, idleSec = timeoutSec)
 
 type DripArgs = object
   port: int
@@ -140,6 +141,13 @@ proc runTests*() =
       joinThread(th)
       check r.isErr
       check elapsed < initDuration(milliseconds = 2500)
+
+    test "declared body never sent: idle timeout, not the total deadline":
+      let t0 = getMonoTime()
+      let r = withRequest("POST / HTTP/1.1\r\nContent-Length: 1\r\n\r\n",
+                          timeoutSec = 1)
+      check r.isErr
+      check (getMonoTime() - t0) < initDuration(milliseconds = 2500)
 
     test "slow client (no data) times out instead of hanging":
       let t0 = getMonoTime()

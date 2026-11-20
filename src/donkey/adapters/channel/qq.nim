@@ -102,7 +102,7 @@ proc handleQQOneBotConn*(client: Socket; logger: Logger; secret = "";
   defer:
     try: client.close() except CatchableError: discard
   discard applyWebhookClientTimeouts(client, timeoutSec)
-  let req = readWebhookRequest(client).valueOr:
+  let req = readWebhookRequest(client, idleSec = timeoutSec).valueOr:
     logger.warn("qq webhook: rejected request: " & error)
     recordWebhookFailure("qq", error)
     client.respond(statusLine(readErrorStatus(error)))

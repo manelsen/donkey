@@ -109,8 +109,10 @@ proc readHttpLine(s: Socket; deadline: MonoTime): Result[string, string] =
 
 proc readWebhookRequest*(client: Socket;
                          maxBodyBytes = MaxWebhookBodyBytes;
-                         deadlineSec = WebhookRequestDeadlineSec): Result[WebhookRequest, string] =
-  ## Reads one request. Callers should applyWebhookClientTimeouts first.
+                         deadlineSec = WebhookRequestDeadlineSec;
+                         idleSec = WebhookClientTimeoutSec): Result[WebhookRequest, string] =
+  ## Reads one request. Callers should applyWebhookClientTimeouts first and
+  ## pass the same value as `idleSec`.
   let deadline = requestDeadline(deadlineSec)
 
   let requestLine = ? readHttpLine(client, deadline)
@@ -166,10 +168,13 @@ proc readWebhookRequest*(client: Socket;
     while received < contentLength:
       if getMonoTime() > deadline:
         return err("request deadline exceeded")
-      ## A buffered recv may loop over many reads internally; bounding each
-      ## call by the remaining budget stops a slow-drip sender at the deadline.
+      ## A buffered recv may loop over many reads internally, and the timeout
+      ## overload waits in poll (SO_RCVTIMEO does not apply). Bound each call
+      ## by the idle timeout *and* the remaining budget: a silent client is
+      ## cut after idleSec, a slow-drip sender at the total deadline.
+      let callMs = min(idleSec * 1000, remainingMs(deadline))
       let n = try: client.recv(body[received].addr, contentLength - received,
-                               remainingMs(deadline))
+                               callMs)
               except CatchableError: -1
       if n <= 0:
         break
