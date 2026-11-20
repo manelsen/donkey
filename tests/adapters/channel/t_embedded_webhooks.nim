@@ -4,6 +4,7 @@
 
 import std/[monotimes, net, strutils, times, unittest]
 import donkey/core/log
+import donkey/core/pipeops
 import donkey/core/security/webhook_auth
 import donkey/adapters/channel/qq
 import donkey/adapters/channel/wechat
@@ -109,6 +110,22 @@ proc runTests*() =
       let sig = "sha1=" & hmacSha1Hex("onebot-secret", event)
       check exchange(post("X-Signature: " & sig & "\r\n"),
                      signed).startsWith("HTTP/1.1 200")
+
+  suite "qq onebot listener bind":
+
+    test "IPv4 loopback binds and reports its port":
+      let s = bindOneBotListener("127.0.0.1", Port(0))
+      check s.isOk
+      if s.isOk: s.get.close()
+
+    test "IPv6 loopback binds with an IPv6 socket":
+      let s = bindOneBotListener("::1", Port(0))
+      check s.isOk
+      if s.isOk: s.get.close()
+
+    test "bind failure is an error, not a dead thread":
+      check bindOneBotListener("203.0.113.1", Port(0)).isErr
+      check bindOneBotListener("not a host", Port(0)).isErr
 
 when isMainModule:
   runTests()

@@ -15,7 +15,7 @@
 ## Sending:
 ##   Uses OneBot HTTP APIs with Bearer token authentication.
 
-import std/[json, net, strutils, tables]
+import std/[json, nativesockets, net, strutils, tables]
 import ../../core/log
 import ../../core/pipeops
 import ../../domain/message
@@ -44,10 +44,10 @@ type
     events:       seq[QQEvent]   ## direct-injection queue (tests / external)
 
   QQOneBotWebhookArgs = object
-    host:   string
-    port:   int
-    secret: string
-    logger: Logger
+    listenFd: SocketHandle   ## bound + listening, owned by the thread
+    domain:   Domain
+    secret:   string
+    logger:   Logger
 
 var gQQOneBotEvents: Channel[QQEvent]
 var gQQOneBotEventsOpen    = false
@@ -121,12 +121,34 @@ proc handleQQOneBotConn*(client: Socket; logger: Logger; secret = "";
   else:
     client.respond("405 Method Not Allowed")
 
+func listenDomain(host: string): Domain =
+  ## `::1` and other IPv6 literals need an AF_INET6 socket; names and IPv4
+  ## literals bind on AF_INET.
+  try:
+    if parseIpAddress(host).family == IpAddressFamily.IPv6: AF_INET6
+    else: AF_INET
+  except ValueError: AF_INET
+
+proc bindOneBotListener*(host: string; port: Port): Result[Socket, string] =
+  ## Binds synchronously so a bad host/port is reported to the caller
+  ## instead of killing the listener thread after "started" was logged.
+  ## The socket family follows the host: `::1` needs an AF_INET6 socket.
+  let domain = listenDomain(host)
+  var server: Socket
+  try:
+    server = newSocket(domain)
+    server.setSockOpt(OptReuseAddr, true)
+    server.bindAddr(port, host)
+    server.listen()
+    ok(server)
+  except CatchableError as e:
+    if server != nil:
+      try: server.close() except CatchableError: discard
+    err("bind " & host & ":" & $port & ": " & e.msg)
+
 proc qqOneBotWebhookThread(args: QQOneBotWebhookArgs) {.thread.} =
   ## Minimal HTTP/1.1 server for OneBot v11 event delivery.
-  var server = newSocket()
-  server.setSockOpt(OptReuseAddr, true)
-  server.bindAddr(Port(args.port), args.host)
-  server.listen()
+  let server = newSocket(args.listenFd, args.domain)
 
   while true:
     var client: Socket
@@ -149,12 +171,14 @@ proc startWebhook*(a: QQAdapter; host: string; port: Port; secret: string;
   ? oneBotListenerCheck(host, secret)
   if gQQOneBotWebhookStarted:
     return ok()
+  let server = ? bindOneBotListener(host, port)
+  let domain = listenDomain(host)
   gQQOneBotEvents.open()
   gQQOneBotEventsOpen     = true
   gQQOneBotWebhookStarted = true
   {.cast(gcsafe).}:
     createThread(gQQOneBotWebhookThread, qqOneBotWebhookThread,
-                 QQOneBotWebhookArgs(host: host, port: port.int,
+                 QQOneBotWebhookArgs(listenFd: server.getFd, domain: domain,
                                      secret: secret, logger: logger))
   ok()
 
