@@ -28,6 +28,8 @@ const UiSlotHelp* = "help"
 type ModelMenuEntry* = tuple[provider: string, models: seq[string]]
 
 var modelMenuCache: seq[ModelMenuEntry]
+var modelMenuLock: Lock  ## guards modelMenuCache; channel runtimes run on several threads
+initLock(modelMenuLock)
 
 proc buildModelMenu*(): seq[ModelMenuEntry] =
   ## Derives the model menu from the ProviderCatalog, so the UI always
@@ -37,8 +39,9 @@ proc buildModelMenu*(): seq[ModelMenuEntry] =
   ## fetches models dynamically) still appear with an empty model list to
   ## keep the menu backwards-compatible.
   {.cast(gcsafe).}:
-    if modelMenuCache.len > 0:
-      return modelMenuCache
+    withLock modelMenuLock:
+      if modelMenuCache.len > 0:
+        return modelMenuCache
   let cat = buildDefaultCatalog()
   var providers = cat.allProviders()
   providers.sort()  # deterministic ordering
@@ -49,7 +52,8 @@ proc buildModelMenu*(): seq[ModelMenuEntry] =
   # Providers not in the catalog but still referenced in routing:
   result.add(("zen", @[]))
   {.cast(gcsafe).}:
-    modelMenuCache = result
+    withLock modelMenuLock:
+      modelMenuCache = result
 
 proc modelMenu*(): seq[ModelMenuEntry] =
   ## Returns the model menu derived from the ProviderCatalog.

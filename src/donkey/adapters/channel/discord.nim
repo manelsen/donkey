@@ -52,7 +52,8 @@ type
 # ── Gateway thread ─────────────────────────────────────────────────────────────
 
 ## Module-level channel — opened once, valid for daemon lifetime.
-## Thread-safe: chronos Channel uses internal synchronization.
+## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
+## lock internally and deep-copy the payload. Must be open()ed before use.
 var gDiscordEvents* {.global.}: Channel[DiscordRawEvent]
 
 ## Buffer for messages received before gateway is ready (READY dispatch).

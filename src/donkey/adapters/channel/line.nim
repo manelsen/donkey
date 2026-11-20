@@ -76,7 +76,8 @@ type
 
 # ── Webhook queue ─────────────────────────────────────────────────────────────
 
-## Thread-safe: chronos Channel uses internal synchronization.
+## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
+## lock internally and deep-copy the payload. Must be open()ed before use.
 ## Opened once at daemon startup via openQueue().
 var gLineEvents* {.global.}: Channel[LineParseResult]
 

@@ -53,7 +53,8 @@ type
 
 # ── Module-level event queue ──────────────────────────────────────────────────
 
-## Thread-safe: chronos Channel uses internal synchronization.
+## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
+## lock internally and deep-copy the payload. Must be open()ed before use.
 var gMxEvents* {.global.}: Channel[MatrixEvent]
 
 # ── Transaction ID counter ────────────────────────────────────────────────────
@@ -63,6 +64,7 @@ var gMxEvents* {.global.}: Channel[MatrixEvent]
 ## nextTxnId() which is called by sendChunk, sendReturnId, and editMessage.
 var gMxTxnSeq {.global.}: int
 var gMxTxnLock {.global.}: Lock
+initLock(gMxTxnLock)  # at module init: send/edit may run before openQueue()
 
 proc nextTxnId(): string =
   acquire(gMxTxnLock)
@@ -263,7 +265,6 @@ proc ack*(a: MatrixAdapter; msgId: string) =
 
 proc openQueue*(a: MatrixAdapter) =
   ## Opens the module-level event queue. Call once at daemon startup.
-  initLock(gMxTxnLock)
   {.cast(gcsafe).}:
     gMxEvents.open()
 

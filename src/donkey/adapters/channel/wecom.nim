@@ -50,7 +50,8 @@ type
     tokenExpiry:    int64   ## epoch ms; 0 = not yet fetched
 
 ## Module-level channel — opened once, valid for daemon lifetime.
-## Thread-safe: chronos Channel uses internal synchronization.
+## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
+## lock internally and deep-copy the payload. Must be open()ed before use.
 var gWeComEvents* {.global.}: Channel[WeComEvent]
 
 # ── Token management ──────────────────────────────────────────────────────────
