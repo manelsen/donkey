@@ -182,8 +182,7 @@ func buildSendBody(robotCode, rawId, text: string): Result[JsonNode, string] =
   ## Builds the DingTalk robot message request body.
   if rawId.len == 0:
     return err("DingTalkAdapter.buildSendBody: missing target id")
-  let msgParam = "{\"content\":\"" &
-    text.replace("\\", "\\\\").replace("\"", "\\\"") & "\"}"
+  let msgParam = textMsgParam(text)
   if rawId.startsWith("conv:"):
     let convId = rawId["conv:".len .. ^1]
     return ok(%* {

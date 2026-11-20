@@ -14,7 +14,7 @@
 ##   |>    — payload |> parseEvent
 ##   >>=   — http.post(...) >>= parseFsBody >>= extractMsgId
 
-import std/[json, strutils]
+import std/json
 import ../../core/types
 import ../../core/pipeops
 import ../../core/media_download
@@ -154,7 +154,7 @@ proc postJson(a: FeishuAdapter; path: string;
 
 proc sendChunk(a: FeishuAdapter; openId, text: string): Result[void, string] =
   ## Sends a single text chunk to a Feishu user by open_id.
-  let content = "{\"text\":\"" & text.replace("\\", "\\\\").replace("\"", "\\\"") & "\"}"
+  let content = textContent(text)
   discard ? a.postJson("/open-apis/im/v1/messages?receive_id_type=open_id", %* {
     "receive_id": openId,
     "msg_type":   "text",
@@ -220,7 +220,7 @@ proc sendReturnId*(a: FeishuAdapter; msg: OutboundMessage): Result[string, strin
   if fsId.len == 0:
     return err("FeishuAdapter.sendReturnId: no Feishu ID for " & $msg.userId)
   let chunk = splitChunks(msg.text, FsMaxChars)[0]
-  let content = "{\"text\":\"" & chunk.replace("\\", "\\\\").replace("\"", "\\\"") & "\"}"
+  let content = textContent(chunk)
   a.postJson("/open-apis/im/v1/messages?receive_id_type=open_id", %* {
     "receive_id": fsId,
     "msg_type":   "text",
@@ -231,7 +231,7 @@ proc editMessage*(a: FeishuAdapter; userId: UserId;
                   msgId, text: string): Result[void, string] =
   ## Updates an existing Feishu message via PATCH /im/v1/messages/{message_id}.
   let txt = if text.len > FsMaxChars: text[0 ..< FsMaxChars] else: text
-  let content = "{\"text\":\"" & txt.replace("\\", "\\\\").replace("\"", "\\\"") & "\"}"
+  let content = textContent(txt)
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let body    = %* {"content": content}
   let resp    = a.http.patch(a.base() & "/open-apis/im/v1/messages/" & msgId,

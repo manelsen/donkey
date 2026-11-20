@@ -215,5 +215,22 @@ proc runTests*() =
       check r.hasMedia
       check r.mediaUrl == "mxc://matrix.org/img1"
 
+  suite "matrix_pure outbound bodies":
+
+    const nasty = "linha 1\nlinha 2\r\n\ttab \"aspas\" \\barra\\ \u0001 ünïcødé"
+
+    test "textBody is valid JSON for control chars, quotes and backslashes":
+      let j = parseJson(textBody(nasty))
+      check j["msgtype"].getStr == "m.text"
+      check j["body"].getStr == nasty
+
+    test "editBody is valid JSON and carries m.replace relation":
+      let j = parseJson(editBody(nasty, "$evt\"x:matrix.org"))
+      check j["body"].getStr == "* " & nasty
+      check j["m.new_content"]["msgtype"].getStr == "m.text"
+      check j["m.new_content"]["body"].getStr == nasty
+      check j["m.relates_to"]["rel_type"].getStr == "m.replace"
+      check j["m.relates_to"]["event_id"].getStr == "$evt\"x:matrix.org"
+
 when isMainModule:
   runTests()
