@@ -29,6 +29,8 @@ import donkey/adapters/channel/wecom
 import donkey/adapters/channel/wecom_runtime
 import donkey/adapters/channel/qq_channel
 import donkey/adapters/channel/qq_runtime
+import donkey/adapters/channel/telegram
+import donkey/adapters/channel/telegram_runtime
 import donkey/app/command_dispatch
 import donkey/app/session_manager
 
@@ -305,6 +307,41 @@ proc runTests*() =
       drainWeComEvents(wc, "corp", sm, env("wc"), msgSeq, noop, logger)
       check anyRequest(proc(r: Recorded): bool =
         r.carriesLinkCode and "\"touser\":\"wc-user\"" in r.body)
+
+    test "Telegram: a group gets the notice, never the link code or the doctor report":
+      for text in ["/mycode", "/doctor", "/memory", "/whoami"]:
+        reset()
+        var sm = openSessions()
+        var msgSeq = 0
+        var state = initPresentationState()
+        var tg = newTelegramAdapter("TOK", Tmp / "tg" / "ids.tsv", apiBase = base())
+        let e = env("tg")
+        let msg = InboundMessage(userId: tg.resolver.resolve(ckTelegram, "7"),
+                                 channel: ckTelegram,
+                                 channelId: "11", chatId: "-100", rawChannelId: "7",
+                                 isGroup: true, text: text)
+        check handleTelegramMessage(msg, sm, tg, state, e.memory, e.completeBuilder,
+                                    e.modelCatalogLoader, 0, 0, msgSeq, 0, logger)
+        check anyRequest(proc(r: Recorded): bool =
+          "sendMessage" in r.target and RequesterOnlyNotice in r.body)
+        check not anyRequest(carriesLinkCode)
+        check not anyRequest(proc(r: Recorded): bool = "Doctor" in r.body)
+
+    test "Telegram: a private chat gets the link code":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      var tg = newTelegramAdapter("TOK", Tmp / "tg2" / "ids.tsv", apiBase = base())
+      let e = env("tg2")
+      let msg = InboundMessage(userId: tg.resolver.resolve(ckTelegram, "8"),
+                               channel: ckTelegram,
+                               channelId: "12", chatId: "8", rawChannelId: "8",
+                               text: "/mycode")
+      check handleTelegramMessage(msg, sm, tg, state, e.memory, e.completeBuilder,
+                                  e.modelCatalogLoader, 0, 0, msgSeq, 0, logger)
+      check anyRequest(proc(r: Recorded): bool =
+        "sendMessage" in r.target and r.carriesLinkCode)
 
 when isMainModule:
   runTests()
