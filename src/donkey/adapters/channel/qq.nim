@@ -99,10 +99,9 @@ proc handleQQOneBotConn*(client: Socket; logger: Logger; secret = "";
   ## Serves one OneBot v11 event delivery and closes the socket. The request
   ## is read through http_request_reader: bounded headers, capped body,
   ## socket timeouts — a hostile peer gets 4xx instead of OOM or a hung thread.
-  defer:
-    try: client.close() except CatchableError: discard
+  defer: closeWebhookClient(client)
   discard applyWebhookClientTimeouts(client, timeoutSec)
-  let req = readWebhookRequest(client, idleSec = timeoutSec).valueOr:
+  let req = readWebhookRequest(client).valueOr:
     logger.warn("qq webhook: rejected request: " & error)
     recordWebhookFailure("qq", error)
     client.respond(statusLine(readErrorStatus(error)))
@@ -136,7 +135,7 @@ proc bindOneBotListener*(host: string; port: Port): Result[Socket, string] =
   let domain = listenDomain(host)
   var server: Socket
   try:
-    server = newSocket(domain)
+    server = newSocket(domain, buffered = false)  ## see http_request_reader
     server.setSockOpt(OptReuseAddr, true)
     server.bindAddr(port, host)
     server.listen()
@@ -148,7 +147,7 @@ proc bindOneBotListener*(host: string; port: Port): Result[Socket, string] =
 
 proc qqOneBotWebhookThread(args: QQOneBotWebhookArgs) {.thread.} =
   ## Minimal HTTP/1.1 server for OneBot v11 event delivery.
-  let server = newSocket(args.listenFd, args.domain)
+  let server = newSocket(args.listenFd, args.domain, buffered = false)
 
   while true:
     var client: Socket

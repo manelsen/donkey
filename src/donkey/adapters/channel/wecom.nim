@@ -175,11 +175,10 @@ proc handleWeComConn*(client: Socket; token: string; logger: Logger;
   ## Reading goes through http_request_reader (bounded, timed out), and
   ## msg_signature is mandatory: WeCom always signs, so an unsigned request
   ## is a forgery and must not reach the agent.
-  defer:
-    try: client.close() except CatchableError: discard
+  defer: closeWebhookClient(client)
   try:
     discard applyWebhookClientTimeouts(client, timeoutSec)
-    let req = readWebhookRequest(client, idleSec = timeoutSec).valueOr:
+    let req = readWebhookRequest(client).valueOr:
       logger.warn("wecom: rejected request: " & error)
       recordWebhookFailure("wecom", error)
       client.sendHttpReply(statusLine(readErrorStatus(error)), "", logger)
@@ -229,7 +228,7 @@ type WeComWebhookArgs = object
 
 proc webhookThread(args: WeComWebhookArgs) {.thread.} =
   {.cast(gcsafe).}:
-    var server = newSocket()
+    var server = newSocket(buffered = false)  ## see http_request_reader
     server.setSockOpt(OptReuseAddr, true)
     server.bindAddr(Port(args.port))
     server.listen()

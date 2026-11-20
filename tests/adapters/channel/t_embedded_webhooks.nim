@@ -15,7 +15,7 @@ type ConnHandler = proc(client: Socket) {.closure.}
 proc exchange(raw: string; handler: ConnHandler): string =
   ## Sends `raw` from a loopback client, runs `handler` on the accepted
   ## server socket (which closes it) and returns whatever the client received.
-  let server = newSocket()
+  let server = newSocket(buffered = false)  ## as production listeners
   defer: server.close()
   server.setSockOpt(OptReuseAddr, true)
   server.bindAddr(Port(0), "127.0.0.1")

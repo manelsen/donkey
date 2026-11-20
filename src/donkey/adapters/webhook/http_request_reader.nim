@@ -7,10 +7,12 @@
 ##   - Content-Length validated and capped *before* allocating the body
 ##   - SO_RCVTIMEO/SO_SNDTIMEO on the client socket plus a monotonic deadline
 ##     for the whole request (slowloris cannot pin the listener thread)
+##   - listeners must accept **unbuffered** sockets (`newSocket(buffered =
+##     false)`), so each recv returns per packet and both limits apply
 ##
 ## Errors are plain strings; readErrorStatus maps them to an HTTP status.
 
-import std/[monotimes, net, posix, strutils, tables, times]
+import std/[monotimes, nativesockets, net, posix, strutils, tables, times]
 import ../../core/pipeops
 import ./webhook_ingress
 
@@ -87,9 +89,6 @@ proc requestDeadline(seconds: int): MonoTime =
   ## wall-clock jump cannot extend or shorten it.
   getMonoTime() + initDuration(seconds = seconds)
 
-proc remainingMs(deadline: MonoTime): int =
-  max(1, (deadline - getMonoTime()).inMilliseconds.int)
-
 proc readHttpLine(s: Socket; deadline: MonoTime): Result[string, string] =
   ## Reads one CRLF/LF terminated line; bounded in length and in time.
   var line = ""
@@ -109,10 +108,11 @@ proc readHttpLine(s: Socket; deadline: MonoTime): Result[string, string] =
 
 proc readWebhookRequest*(client: Socket;
                          maxBodyBytes = MaxWebhookBodyBytes;
-                         deadlineSec = WebhookRequestDeadlineSec;
-                         idleSec = WebhookClientTimeoutSec): Result[WebhookRequest, string] =
-  ## Reads one request. Callers should applyWebhookClientTimeouts first and
-  ## pass the same value as `idleSec`.
+                         deadlineSec = WebhookRequestDeadlineSec): Result[WebhookRequest, string] =
+  ## Reads one request. `client` must be an **unbuffered** socket with
+  ## applyWebhookClientTimeouts applied: a buffered recv only returns once
+  ## the full size arrived, which defeats both the idle timeout and the
+  ## deadline check.
   let deadline = requestDeadline(deadlineSec)
 
   let requestLine = ? readHttpLine(client, deadline)
@@ -168,13 +168,10 @@ proc readWebhookRequest*(client: Socket;
     while received < contentLength:
       if getMonoTime() > deadline:
         return err("request deadline exceeded")
-      ## A buffered recv may loop over many reads internally, and the timeout
-      ## overload waits in poll (SO_RCVTIMEO does not apply). Bound each call
-      ## by the idle timeout *and* the remaining budget: a silent client is
-      ## cut after idleSec, a slow-drip sender at the total deadline.
-      let callMs = min(idleSec * 1000, remainingMs(deadline))
-      let n = try: client.recv(body[received].addr, contentLength - received,
-                               callMs)
+      ## Unbuffered socket: recv returns after one kernel read, so SO_RCVTIMEO
+      ## is an idle timeout renewed by every packet, and this loop re-checks
+      ## the total deadline between packets (slow-drip senders are cut).
+      let n = try: client.recv(body[received].addr, contentLength - received)
               except CatchableError: -1
       if n <= 0:
         break
@@ -189,6 +186,24 @@ proc readWebhookRequest*(client: Socket;
     headers:    headers,
     body:       body,
   ))
+
+const MaxDrainBytes = 64 * 1024
+
+proc closeWebhookClient*(client: Socket) =
+  ## Closes a client after the response was sent. The reader may stop
+  ## mid-request (rejected header, oversized body), and closing a socket with
+  ## unread input makes the kernel send RST, which can discard the response
+  ## before the peer reads it. Drain what already arrived (non-blocking,
+  ## bounded) first.
+  var buf: array[4096, char]
+  var drained = 0
+  try: client.getFd.setBlocking(false) except CatchableError: discard
+  while drained < MaxDrainBytes:
+    let n = posix.recv(client.getFd, addr buf[0], buf.len, 0'i32)
+    if n <= 0:
+      break
+    drained += n
+  try: client.close() except CatchableError: discard
 
 func statusLine*(code: int): string =
   ## "<code> <reason>" for the handful of statuses embedded listeners emit.

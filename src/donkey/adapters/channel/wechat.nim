@@ -261,10 +261,9 @@ proc handleWeChatConn*(client: Socket; token: string; logger: Logger;
   ## GET  /?signature=…&timestamp=…&nonce=…&echostr=…  → echo echostr if valid
   ## POST /?signature=…&timestamp=…&nonce=…            → parse XML, enqueue event
   ## Reading goes through http_request_reader (bounded, timed out).
-  defer:
-    try: client.close() except CatchableError: discard
+  defer: closeWebhookClient(client)
   discard applyWebhookClientTimeouts(client, timeoutSec)
-  let req = readWebhookRequest(client, idleSec = timeoutSec).valueOr:
+  let req = readWebhookRequest(client).valueOr:
     logger.warn("wechat webhook: rejected request: " & error)
     recordWebhookFailure("wechat", error)
     client.respond(statusLine(readErrorStatus(error)), "")
@@ -287,7 +286,7 @@ proc handleWeChatConn*(client: Socket; token: string; logger: Logger;
 
 proc wechatWebhookThread(args: WeChatWebhookArgs) {.thread.} =
   ## Minimal HTTP/1.1 server for WeChat Official Account webhook.
-  var server = newSocket()
+  var server = newSocket(buffered = false)  ## see http_request_reader
   server.setSockOpt(OptReuseAddr, true)
   server.bindAddr(Port(args.port))
   server.listen()

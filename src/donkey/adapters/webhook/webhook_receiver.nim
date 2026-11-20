@@ -479,8 +479,7 @@ func readErrorResponse*(error: string): WebhookResponse =
   if readErrorStatus(error) == 413: payloadTooLarge() else: badRequest()
 
 proc handleConnection(client: Socket; cfg: WebhookConfig; logger: Logger) =
-  defer:
-    try: client.close() except CatchableError: discard
+  defer: closeWebhookClient(client)
   let req = readWebhookRequest(client).valueOr:
     logger.warn("webhook: " & error)
     sendResponse(client, readErrorResponse(error))

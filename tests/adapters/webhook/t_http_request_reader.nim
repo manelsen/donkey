@@ -7,9 +7,8 @@ import donkey/adapters/webhook/http_request_reader
 
 proc withRequest(raw: string; maxBody = MaxWebhookBodyBytes;
                  timeoutSec = 1): Result[WebhookRequest, string] =
-  ## The reader gets the same idle timeout as the socket, as handlers do.
   ## Writes `raw` from a loopback client (kept open) and reads it server-side.
-  let server = newSocket()
+  let server = newSocket(buffered = false)
   defer: server.close()
   server.setSockOpt(OptReuseAddr, true)
   server.bindAddr(Port(0), "127.0.0.1")
@@ -24,7 +23,7 @@ proc withRequest(raw: string; maxBody = MaxWebhookBodyBytes;
   server.accept(conn)
   defer: conn.close()
   discard applyWebhookClientTimeouts(conn, timeoutSec)
-  readWebhookRequest(conn, maxBody, idleSec = timeoutSec)
+  readWebhookRequest(conn, maxBody)
 
 type DripArgs = object
   port: int
@@ -47,6 +46,29 @@ proc dripClient(args: DripArgs) {.thread.} =
       s.send("x", flags = {})
   except CatchableError:
     discard
+
+proc dripRequest(bytes, gapMs, deadlineSec: int): (Result[WebhookRequest, string], Duration) =
+  ## Server side as production builds it: unbuffered client socket with a
+  ## 1s idle timeout; the client drips the body from another thread.
+  let server = newSocket(buffered = false)
+  defer: server.close()
+  server.setSockOpt(OptReuseAddr, true)
+  server.bindAddr(Port(0), "127.0.0.1")
+  server.listen()
+  var th: Thread[DripArgs]
+  createThread(th, dripClient, DripArgs(
+    port: server.getLocalAddr()[1].int,
+    head: "POST / HTTP/1.1\r\nContent-Length: " & $bytes & "\r\n\r\n",
+    bytes: bytes, gapMs: gapMs))
+  var conn: Socket
+  server.accept(conn)
+  discard applyWebhookClientTimeouts(conn, 1)
+  let t0 = getMonoTime()
+  let r = readWebhookRequest(conn, deadlineSec = deadlineSec)
+  let elapsed = getMonoTime() - t0
+  conn.close()
+  joinThread(th)
+  (r, elapsed)
 
 proc runTests*() =
   suite "parseContentLength":
@@ -121,26 +143,17 @@ proc runTests*() =
       check r.get.body == "a"
 
     test "slow-drip body is cut at the total deadline":
-      let server = newSocket()
-      defer: server.close()
-      server.setSockOpt(OptReuseAddr, true)
-      server.bindAddr(Port(0), "127.0.0.1")
-      server.listen()
-      var th: Thread[DripArgs]
-      createThread(th, dripClient, DripArgs(
-        port: server.getLocalAddr()[1].int,
-        head: "POST / HTTP/1.1\r\nContent-Length: 40\r\n\r\n",
-        bytes: 40, gapMs: 150))
-      var conn: Socket
-      server.accept(conn)
-      discard applyWebhookClientTimeouts(conn, 1)
-      let t0 = getMonoTime()
-      let r = readWebhookRequest(conn, deadlineSec = 1)
-      let elapsed = getMonoTime() - t0
-      conn.close()
-      joinThread(th)
+      let (r, elapsed) = dripRequest(bytes = 40, gapMs = 150, deadlineSec = 1)
       check r.isErr
       check elapsed < initDuration(milliseconds = 2500)
+
+    test "active transfer longer than the idle timeout completes":
+      ## Each gap (150ms) is under the idle timeout (1s); the whole body
+      ## (~3s) is over it but under the total deadline (10s).
+      let (r, _) = dripRequest(bytes = 20, gapMs = 150, deadlineSec = 10)
+      check r.isOk
+      if r.isOk:
+        check r.get.body == 'x'.repeat(20)
 
     test "declared body never sent: idle timeout, not the total deadline":
       let t0 = getMonoTime()
