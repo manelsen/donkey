@@ -112,6 +112,10 @@ Run the interactive setup wizard to initialize configuration templates and state
 
 The wizard configures `~/.config/donkey/donkey.toml`, provisions the state store in `~/.donkey/`, selects the available OCI sandbox runtime, and saves provider keys. Verify provider connectivity with `./donkey ctl provider test <name>`.
 
+For a systemd user service with the native Lightpanda browser, run `bash deploy/install.sh --lightpanda --binary ./donkey` with a binary built from this checkout. For a Nightly that includes Lightpanda support, pass the binary path installed by `deploy/update.sh`. The installer verifies the upstream Lightpanda binary, installs it in `~/.local/bin`, and writes `DONKEY_BROWSER_BACKEND` and `DONKEY_BROWSER_PATH` to the service's `donkey.env`. The x86_64 Lightpanda binary requires glibc 2.35 or newer.
+
+Lightpanda needs outbound DNS and HTTPS on the service host. Have the host firewall block browser traffic to private and reserved destinations. The `DONKEY_BROWSER_PROXY` setting is supported by Chromium and Edge.
+
 ### 3. Start the Daemon
 
 > [!IMPORTANT]
