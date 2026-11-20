@@ -148,6 +148,7 @@ g2	tests/core/t_memory_rerank_prefs.nim
 g2	tests/core/t_native_tool_dispatch.nim
 g2	tests/core/t_network.nim
 g2	tests/core/t_onboarding.nim
+g2	tests/core/t_media_download.nim
 g2	tests/core/t_outbound.nim
 g2	tests/core/t_output_sanitizer.nim
 g2	tests/core/t_pipeops.nim

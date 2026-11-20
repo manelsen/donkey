@@ -211,12 +211,8 @@ proc downloadFile*(a: MatrixAdapter; mxcUrl: string): Result[FileDownload, strin
     let baseUrl = if a.apiBase.len > 0: a.apiBase else: a.homeserver
     let downloadUrl = baseUrl.strip(chars = {'/'}) & "/_matrix/media/v3/download/" & serverName & "/" & mediaId
     let headers = @[a.authHeader()]
-    let resp = ? a.http.get(downloadUrl, headers)
-    
-    var data = newSeq[byte](resp.body.len)
-    for i in 0 ..< resp.body.len:
-      data[i] = cast[byte](resp.body[i])
-    
+    let data = ? a.http.fetchBytes(downloadUrl, headers)
+
     ok(FileDownload(
       fileName: "matrix_" & mediaId,
       fileSize: data.len.int64,

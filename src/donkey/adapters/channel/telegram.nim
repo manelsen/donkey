@@ -893,18 +893,8 @@ proc getFile*(a: TelegramAdapter; fileId: string): Result[string, string] =
 proc downloadFileBytes*(a: TelegramAdapter; filePath: string): Result[seq[byte], string] =
   ## Downloads file content from Telegram servers.
   ## filePath should be obtained from getFile() first.
-  try:
-    let url = a.apiBaseValue & "/file/bot" & a.token & "/" & filePath
-    let headers: seq[(string, string)] = @[]
-    let resp = ? a.http.get(url, headers)
-    
-    # Convert string body to seq[byte]
-    var data = newSeq[byte](resp.body.len)
-    for i in 0 ..< resp.body.len:
-      data[i] = cast[byte](resp.body[i])
-    ok(data)
-  except CatchableError as e:
-    err(e.msg)
+  let url = a.apiBaseValue & "/file/bot" & a.token & "/" & filePath
+  a.http.fetchBytes(url, @[])
 
 proc downloadFile*(a: TelegramAdapter; fileId: string): Result[FileDownload, string] =
   ## Complete file download: gets file info and downloads content.

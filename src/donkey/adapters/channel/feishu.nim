@@ -176,12 +176,8 @@ proc downloadFile*(a: FeishuAdapter; fileKey: string): Result[FileDownload, stri
     # We need to construct the right URL
     let downloadUrl = "/open-apis/im/v1/files/" & fileKey & "/download"
     let headers = @[a.authHeader()]
-    let resp = ? a.http.get(base(a) & downloadUrl, headers)
-    
-    var data = newSeq[byte](resp.body.len)
-    for i in 0 ..< resp.body.len:
-      data[i] = cast[byte](resp.body[i])
-    
+    let data = ? a.http.fetchBytes(base(a) & downloadUrl, headers)
+
     ok(FileDownload(
       fileName: "feishu_" & fileKey,
       fileSize: data.len.int64,
