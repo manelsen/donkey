@@ -6,6 +6,7 @@
 ## decide command policy themselves. This module depends only on `core`,
 ## `domain`, `ports` and the session manager, never on adapters.
 
+import std/tables
 import chronos/asyncsync
 import ../core/pipeops
 import ../core/commands/command_outcome
@@ -110,7 +111,9 @@ proc localReply(env: CommandEnv; sm: SessionManager;
     else:
       replied(rtUnsupported, UnsupportedCommandText)
   of lcaShowWhoami:
-    let sessionId = if sm.hasLiveSession(userId): "active" else: ""
+    let sessionId =
+      if sm.hasLiveSession(userId): sm.entries.getOrDefault($userId).sessionId
+      else: ""
     replied(topic, buildWhoamiText(userId, sessionId, req.rawId))
   of lcaReasoningToggle:
     reasoningReply(env, userId)
@@ -171,5 +174,9 @@ proc dispatchCommand*(env: CommandEnv;
   of crSessionTask: sessionTask(sm, msgSeq, req)
   of crUi:          dispatchUiCommand(env, req)
   of crPing:        fromResult(rtPing, env.services.ping(req.userId))
-  of crStatus:      fromResult(rtStatus, env.services.status(req.userId, sm.sessionCount()))
+  of crStatus:
+    ## /allowlist shares the status route but has no handler of its own yet:
+    ## it stays with the session instead of answering with /status.
+    if req.command.kind != cmdStatus: fallback()
+    else: fromResult(rtStatus, env.services.status(req.userId, sm.sessionCount()))
   of crCallback, crNone: fallback()

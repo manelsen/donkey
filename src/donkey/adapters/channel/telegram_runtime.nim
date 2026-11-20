@@ -138,7 +138,9 @@ proc telegramCommandRequest(msg: InboundMessage; command: CommandDecision;
   CommandDispatchRequest(
     command: command, userId: msg.userId, channel: ckTelegram,
     messageId: replyTarget(msg),
-    rawId: tgAdapter.resolver.reverseChannel(msg.userId, ckTelegram),
+    rawId:  # the sender, not the first Telegram account linked to the user
+      if msg.rawChannelId.len > 0: msg.rawChannelId
+      else: tgAdapter.resolver.reverseChannel(msg.userId, ckTelegram),
     links: tgAdapter.resolver.identityLinkPort(),
     sessionMode: smCreate, ensureSession: ensure, interactiveUi: true)
 
@@ -609,7 +611,7 @@ proc handleTelegramCommand*(sm: var SessionManager;
   let outcome = dispatchCommand(env, sm, msgSeq,
     telegramCommandRequest(msg, command, tgAdapter, ensureTaskSession))
   if command.route == crLocal and action == lcaReasoningToggle and
-     outcome.kind == cokReply:
+     outcome.kind == cokReply and not outcome.reply.failed:
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
     if kbdId.len > 0:
       discard tgAdapter.editKeyboardText(msg.userId, kbdId,

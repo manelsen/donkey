@@ -316,14 +316,14 @@ proc discordReplySink*(dcAdapter: DiscordAdapter): DiscordReplySink =
     post: proc(event: DiscordRawEvent; userId: UserId; text: string;
                private: bool): Result[void, string] {.gcsafe.} =
       {.cast(gcsafe).}:
+        ## The DM goes to the Discord account that sent the command, not to
+        ## whichever account of the same user the resolver lists first.
+        let target =
+          if private: "channel:" & ? dcAdapter.dmChannelFor(event.discordUserId)
+          elif event.channelId.len > 0: "channel:" & event.channelId
+          else: ""
         dcAdapter.send(OutboundMessage(
-          userId: userId,
-          channel: ckDiscord,
-          text: text,
-          replyTo:
-            if private or event.channelId.len == 0: ""
-            else: "channel:" & event.channelId,
-        )),
+          userId: userId, channel: ckDiscord, text: text, replyTo: target)),
   )
 
 func discordReplyStyle*(reply: CommandReply): (string, int) =

@@ -133,6 +133,16 @@ proc runTests*() =
       check o.reply.topic == rtWhoami
       check "raw-1" in o.reply.text
 
+    test "/allowlist stays with the session instead of answering with /status":
+      check dispatchCommand(env, sm, msgSeq, request(p, cmdAllowlist)).kind == cokFallback
+
+    test "/whoami shows the real session id":
+      let entry = sm.getOrCreate(UserId("u-1"))
+      let o = dispatchCommand(env, sm, msgSeq, request(p, cmdWhoami))
+      check entry.sessionId.len > 0
+      check entry.sessionId in o.reply.text
+      check "`active`" notin o.reply.text
+
   suite "dispatchCommand: session tasks":
     setup:
       var sm: SessionManager
@@ -202,6 +212,7 @@ proc runTests*() =
       for channel in ChannelKind:
         for kind in helpCommandKinds(commandCaps(channel)):
           let o = dispatchCommand(env, sm, msgSeq, request(p, kind, channel = channel))
+          check o.kind != cokFallback
           if o.kind == cokReply:
             check o.reply.topic != rtUnsupported
             if o.reply.topic == rtUnsupported:

@@ -193,11 +193,16 @@ Implemented on `feat/command-dispatch-app`.
 - **Presentation**: Discord goes through `DiscordReplySink` (`presentDiscordOutcome`). Telegram goes through `presentTelegramOutcome` / `telegramReplyText`. QQ and Telegram groups refuse requester-only commands *before* dispatching, so a link code is never minted or consumed where its answer cannot be shown.
 - **Split of `common_runtime.nim`** (951 → 88 lines): pure texts went to `core/commands/command_text.nim`, preferences to `adapters/memory/channel_prefs_store.nim`, model pickers to `adapters/channel/model_catalog_ui.nim`, and MdFile-backed effects to `adapters/channel/command_services.nim`. `common_runtime` re-exports them for existing callers and keeps only UI slots and wiring (`ChannelRuntimeEnv`).
 
+### Follow-up
+
+- The `/models`, `/think` and `/budget` text commands still choose between help, listing and change, and validate the catalogue, inside `command_services` (an adapter). The next step is to move the pure validation to `core`, the orchestration to `app/command_dispatch`, and leave only reads and writes in the adapter (CodeRabbit, PR #75).
+- `/allowlist` shares the status route but has no handler of its own. The dispatcher hands it to the session instead of answering with `/status`.
+
 ### Decisions on the open questions
 
 - No private path in a group: the bot refuses with `RequesterOnlyNotice` ("Envie este comando em mensagem direta.") and does not send a one-time link.
 - `/whoami` is requester-only.
-- Progress texts: `acceptedText` lives in core. Telegram sends it for every accepted task and Discord uses it as the ephemeral ack. Plain-text channels stay silent, as before.
+- Progress texts: `acceptedText` lives in core. Telegram sends it for every accepted task. Discord interactions and Slack slash commands get it as their ephemeral acknowledgement. Plain-text messages on the other channels stay silent, as before.
 - `Result` in `domain/`: still open. This PRD added no `Result` to `domain/`.
 
 ### Regression tests per defect

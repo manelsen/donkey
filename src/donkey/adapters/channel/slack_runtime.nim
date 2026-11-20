@@ -38,16 +38,20 @@ proc slackCommandOutcome(slAdapter: var SlackAdapter;
                          command: CommandDecision;
                          userId: UserId;
                          event: SlackRawEvent;
-                         messageId: string): CommandOutcome =
-  ## Slack presents /menu and /config as Block Kit keyboards; when that fails,
-  ## and for every other command, the shared dispatcher answers.
+                         messageId: string;
+                         presented: var bool): CommandOutcome =
+  ## Slack presents /menu and /config as Block Kit keyboards (`presented`);
+  ## when that fails, and for every other command, the shared dispatcher
+  ## answers.
   if command.route == crLocal and decideLocalCommandAction(command) == lcaShowMenu:
     if slAdapter.sendKeyboard(userId, buildMenuText(), buildMenuButtons()).isOk:
-      return accepted(command.kind)
+      presented = true
+      return fallback()
   elif command.kind == cmdConfig:
     if slAdapter.sendKeyboard(userId, env.memory.buildConfigText(userId),
                               buildConfigButtons()).isOk:
-      return accepted(command.kind)
+      presented = true
+      return fallback()
   dispatchCommand(env.commands, sm, msgSeq,
     commandRequest(command, userId, ckSlack, messageId, event.slackUserId,
                    slAdapter.resolver))
@@ -134,24 +138,30 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
 
       if routedText.strip.len > 0:
         let command = decideCommandRequest(CommandRequest(channel: ckSlack, text: routedText))
+        var presented = false
         let outcome =
           try:
             slackCommandOutcome(slAdapter, sm, msgSeq, env, command, userId,
-                                event, messageId)
+                                event, messageId, presented)
           except CatchableError as e:
             replied(rtUnsupported, "Erro ao processar comando: " & e.msg)
-        case outcome.kind
-        of cokFallback:
-          handleSessionFallback(msg)
-        of cokAccepted:
-          discard
-        of cokReply:
-          ## Slack answers unsupported commands instead of staying silent.
-          ## Every Slack reply is ephemeral or a DM: none lands in a channel.
-          if outcome.reply.text.len > 0:
-            replyToEvent(slAdapter, event, userId, outcome.reply.text).isOkOr:
-              log.error("sl send " & $outcome.reply.topic & " failed for user=" &
-                        $userId & " reason=" & error)
+        if not presented:  ## a Block Kit keyboard already answered otherwise
+          case outcome.kind
+          of cokFallback:
+            handleSessionFallback(msg)
+          of cokAccepted:
+            ## A slash command expects a visible answer; plain messages stay
+            ## silent while the task runs.
+            if event.kind == srSlashCommand:
+              replyToEvent(slAdapter, event, userId, acceptedText(outcome.task)).isOkOr:
+                log.error("sl send ack failed for user=" & $userId & " reason=" & error)
+          of cokReply:
+            ## Slack answers unsupported commands instead of staying silent.
+            ## Every Slack reply is ephemeral or a DM: none lands in a channel.
+            if outcome.reply.text.len > 0:
+              replyToEvent(slAdapter, event, userId, outcome.reply.text).isOkOr:
+                log.error("sl send " & $outcome.reply.topic & " failed for user=" &
+                          $userId & " reason=" & error)
       else:
         handleSessionFallback(msg)
 

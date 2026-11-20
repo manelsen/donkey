@@ -267,8 +267,10 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
       elif shared and requesterOnlyCommand(command):
         ## QQ has no private path from a group: refuse before minting or
         ## consuming anything.
+        ## The official API only accepts passive replies: carry the message id.
         qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ,
-                                       text: RequesterOnlyNotice)).isOkOr:
+                                       text: RequesterOnlyNotice,
+                                       replyTo: event.messageId)).isOkOr:
           log.error("qq send notice failed for user=" & $userId & " reason=" & error)
       elif command.route == crStatus and command.kind == cmdStatus and
            qqAdapter.kind == qbkOfficial:

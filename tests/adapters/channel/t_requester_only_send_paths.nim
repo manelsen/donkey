@@ -31,6 +31,7 @@ import donkey/adapters/channel/qq_channel
 import donkey/adapters/channel/qq_runtime
 import donkey/adapters/channel/telegram
 import donkey/adapters/channel/telegram_runtime
+import donkey/core/commands/command_routing
 import donkey/app/command_dispatch
 import donkey/app/session_manager
 
@@ -63,10 +64,13 @@ proc serve(args: ServerArgs) {.thread.} =
       server.accept(client)
     except CatchableError:
       break
+    var stopping = false
     {.cast(gcsafe).}:
-      if gStop:
-        client.close()
-        break
+      withLock gLock:
+        stopping = gStop
+    if stopping:
+      client.close()
+      break
     try:
       let requestLine = client.recvLine(timeout = 5000)
       var contentLength = 0
@@ -107,7 +111,8 @@ proc startServer() =
   createThread(gServerThread, serve, ServerArgs(fd: int(listener.getFd())))
 
 proc stopServer() =
-  gStop = true
+  withLock gLock:
+    gStop = true
   try:
     let poke = newSocket()
     poke.connect("127.0.0.1", Port(gPort))
@@ -342,6 +347,117 @@ proc runTests*() =
                                   e.modelCatalogLoader, 0, 0, msgSeq, 0, logger)
       check anyRequest(proc(r: Recorded): bool =
         "sendMessage" in r.target and r.carriesLinkCode)
+
+    test "Discord: the DM goes to the account that sent the command":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc5" / "ids.tsv", apiBase = base())
+      let user = dc.resolver.resolve(ckDiscord, "first-account")
+      check dc.resolver.consumeLinkCode(dc.resolver.generateLinkCode(user),
+                                        ckDiscord, "second-account")
+      handleDiscordEvent(sm, DiscordRawEvent(kind: deMessage,
+        discordUserId: "second-account", content: "/mycode",
+        channelId: "guild-chan", messageId: "m5"),
+        dc, state, env("dc5"), msgSeq, logger, noop, noop, noop)
+      check anyRequest(proc(r: Recorded): bool =
+        "/users/@me/channels" in r.target and "second-account" in r.body)
+      check not anyRequest(proc(r: Recorded): bool = "first-account" in r.body)
+
+    test "QQ official: the group notice is a passive reply carrying msg_id":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var qq = newQQOfficialChannelAdapter("app", "secret", Tmp / "qqo" / "ids.tsv",
+                                           apiBase = base(), tokenBase = base())
+      check qq.enqueueEventJson($(%* {"op": 0, "t": "GROUP_AT_MESSAGE_CREATE",
+        "s": 2, "d": {"group_openid": "G1", "author": {"member_openid": "M1"},
+                      "id": "msg-77", "content": "/mycode"}})).isOk
+      drainQQEvents(qq, sm, env("qqo"), msgSeq, noop, logger)
+      check anyRequest(proc(r: Recorded): bool =
+        "/v2/groups/G1/messages" in r.target and RequesterOnlyNotice in r.body and
+          "msg-77" in r.body)
+      check not anyRequest(carriesLinkCode)
+
+    test "Slack: an accepted slash command is acknowledged":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var sl = newSlackAdapter("token", Tmp / "sl2" / "ids.tsv", apiBase = base())
+      sl.openQueue()
+      discard sm.getOrCreate(sl.resolver.resolve(ckSlack, "U2"))
+      slack.pushEvent(%* {"type": "slash_command", "user_id": "U2",
+                          "command": "/compact", "channel_id": "C_public",
+                          "team_id": "T1", "trigger_id": "tr-1"})
+      drainSlackEvents(sl, sm, env("sl2"), msgSeq, noop, logger)
+      check msgSeq == 1
+      check anyRequest(proc(r: Recorded): bool =
+        "chat.postMessage" in r.target and acceptedText(cmdCompact) in r.body)
+
+    test "Slack: a /menu keyboard is not followed by an acknowledgement":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var sl = newSlackAdapter("token", Tmp / "sl3" / "ids.tsv", apiBase = base())
+      sl.openQueue()
+      slack.pushEvent(%* {"type": "slash_command", "user_id": "U3",
+                          "command": "/menu", "channel_id": "C_public",
+                          "team_id": "T1", "trigger_id": "tr-2"})
+      drainSlackEvents(sl, sm, env("sl3"), msgSeq, noop, logger)
+      check anyRequest(proc(r: Recorded): bool = "chat.postMessage" in r.target)
+      check not anyRequest(proc(r: Recorded): bool = "Comando recebido" in r.body)
+
+    test "Telegram: /whoami names the account that sent it":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      var tg = newTelegramAdapter("TOK", Tmp / "tg3" / "ids.tsv", apiBase = base())
+      let user = tg.resolver.resolve(ckTelegram, "111")
+      check tg.resolver.consumeLinkCode(tg.resolver.generateLinkCode(user),
+                                        ckTelegram, "222")
+      let e = env("tg3")
+      let msg = InboundMessage(userId: user, channel: ckTelegram, channelId: "222",
+                               chatId: "222", rawChannelId: "222", text: "/whoami")
+      check handleTelegramMessage(msg, sm, tg, state, e.memory, e.completeBuilder,
+                                  e.modelCatalogLoader, 0, 0, msgSeq, 0, logger)
+      check anyRequest(proc(r: Recorded): bool =
+        "sendMessage" in r.target and "222" in r.body and "Identity" in r.body)
+      check not anyRequest(proc(r: Recorded): bool = "`111`" in r.body)
+
+    test "Telegram: a failed /reasoning save is reported, not hidden by the keyboard":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      var tg = newTelegramAdapter("TOK", Tmp / "tg4" / "ids.tsv", apiBase = base())
+      let user = tg.resolver.resolve(ckTelegram, "333")
+      let e = env("tg4")
+      check e.memory.savePreferences(user, "reasoning = \"on\"").isOk
+      setUiMsgId(state, ckTelegram, user, UiSlotConfig, "55")
+      let dir = e.memory.paddockDir(user)
+      let prefsFile = e.memory.preferencesMdPath(user)
+      setFilePermissions(prefsFile, {fpUserRead})
+      setFilePermissions(dir, {fpUserRead, fpUserExec})
+      defer:
+        setFilePermissions(dir, {fpUserRead, fpUserWrite, fpUserExec})
+        setFilePermissions(prefsFile, {fpUserRead, fpUserWrite})
+      let writable =
+        try:
+          let f = open(prefsFile, fmAppend)
+          f.close()
+          true
+        except IOError:
+          false
+      let msg = InboundMessage(userId: user, channel: ckTelegram, channelId: "333",
+                               chatId: "333", rawChannelId: "333", text: "/reasoning")
+      check handleTelegramMessage(msg, sm, tg, state, e.memory, e.completeBuilder,
+                                  e.modelCatalogLoader, 0, 0, msgSeq, 0, logger)
+      if not writable:  ## root writes anywhere
+        check anyRequest(proc(r: Recorded): bool =
+          "sendMessage" in r.target and "Não foi possível" in r.body)
+        check not anyRequest(proc(r: Recorded): bool = "editMessage" in r.target)
 
 when isMainModule:
   runTests()
