@@ -8,12 +8,13 @@ import ../identity/identity_resolver
 import ../../app/inbound_gate
 import ../../app/approval_runtime
 import whatsapp
-import ./text_command_dispatch
+import ../../app/command_dispatch
+import ./common_runtime
 
 proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
                           whatsappPhoneNumberId: string;
                           sm: var SessionManager;
-                          env: CommandEnv;
+                          env: ChannelRuntimeEnv;
                           msgSeq: var int;
                           handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
                           log: Logger = newLogger("wa.outbound")) =
@@ -57,12 +58,13 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
 
     if event.kind in {wrkText, wrkInteractive} and event.text.strip.len > 0:
       let command = decideCommandRequest(CommandRequest(channel: ckWhatsApp, text: event.text))
-      let outcome = dispatchTextCommand(env, sm, msgSeq, command, userId, ckWhatsApp,
-                                        event.messageId, waAdapter.resolver, event.waUserId)
+      let outcome = dispatchCommand(env.commands, sm, msgSeq,
+          commandRequest(command, userId, ckWhatsApp, event.messageId, event.waUserId,
+                         waAdapter.resolver))
       case outcome.kind
       of cokFallback:
         handleSessionFallback(msg)
-      of cokSilent:
+      of cokAccepted:
         discard
       of cokReply:
         if outcome.reply.shouldSend:

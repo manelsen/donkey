@@ -34,10 +34,10 @@ import donkey/core/security/dm_policy
 import donkey/app/inbound_media
 import donkey/adapters/filesystem/attachment_store
 import donkey/adapters/filesystem/fs_adapter
+import donkey/adapters/channel/common_runtime
 import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/channel/discord
 import donkey/adapters/channel/discord_runtime
-import donkey/adapters/channel/text_command_dispatch
 import donkey/adapters/channel/wecom
 import donkey/adapters/channel/wecom_runtime
 import donkey/adapters/channel/wechat
@@ -1720,10 +1720,9 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
   let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
   let fallback = proc(msg: InboundMessage) {.gcsafe.} =
     handleGatewayFallback(ctx, cfg, memory, msg, log)
-  let cmdEnv = CommandEnv(
-    memory: memory, completeBuilder: completeBuilder,
-    modelCatalogLoader: modelCatalogLoader, toolsCount: toolsCount,
-    toolClientsCount: toolClientsCount, daemonStartMs: ctx.runtime.daemonStartMs)
+  let cmdEnv = newChannelRuntimeEnv(
+    memory, completeBuilder, modelCatalogLoader, toolsCount,
+    toolClientsCount, ctx.runtime.daemonStartMs)
 
   initGatewayDrainer(
     drainDiscord = proc(): bool =
@@ -2158,11 +2157,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
     discord_runtime.checkDiscordOfflineMessages(
       ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState,
-      CommandEnv(memory: memory, completeBuilder: completeBuilder,
-                 modelCatalogLoader: modelCatalogLoader,
-                 toolsCount: ctx.services.tools.len + nativeSessionTools().len,
-                 toolClientsCount: ctx.services.toolClients.len,
-                 daemonStartMs: ctx.runtime.daemonStartMs),
+      newChannelRuntimeEnv(memory, completeBuilder, modelCatalogLoader,
+                           ctx.services.tools.len + nativeSessionTools().len,
+                           ctx.services.toolClients.len,
+                           ctx.runtime.daemonStartMs),
       ctx.runtime.msgSeq, log,
       proc(msg: InboundMessage) {.gcsafe.} =
         stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),

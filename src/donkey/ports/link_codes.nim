@@ -19,3 +19,11 @@ type
     redeem*: proc(code: string): Option[UserId] {.gcsafe.}
       ## Consumes a valid code and returns its target; the caller performs the
       ## mapping, because only it knows the raw id of the speaker redeeming.
+
+  IdentityLinkPort* = object
+    ## The two halves of `/mycode` → `/continue` as one channel sees them:
+    ## mint a code for the speaker, or link the speaker's raw id to the
+    ## account a code points at. `link` is false for an unknown or expired
+    ## code, or when the mapping could not be saved.
+    mint*: proc(userId: UserId): string {.gcsafe.}
+    link*: proc(code: string; channel: ChannelKind; rawId: string): bool {.gcsafe.}

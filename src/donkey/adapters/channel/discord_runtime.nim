@@ -11,10 +11,11 @@ import ../../app/session_manager
 import ../../domain/agent_message
 import ../../domain/message
 import ../../ports/provider
+import ../../app/command_dispatch
+import ../../ports/channel_capability
 import ../identity/identity_resolver
 import ./common_runtime
 import ./discord
-import ./text_command_dispatch
 
 proc sendDiscordReply(event: DiscordRawEvent;
                       dcAdapter: DiscordAdapter;
@@ -143,8 +144,7 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
           "Abri o catálogo de " & providerOnly & " na sua DM.", logger,
         )
     elif command.value.strip.len > 0:
-      let reply = memory.applyModelsTextCommand(userId, command.value, modelCatalogLoader).valueOr: error
-      sendDiscordReply(event, dcAdapter, userId, reply, logger)
+      return false  ## text form: answered by the shared dispatcher
     else:
       let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotModels)
       if kbdId.len > 0 and event.interactionId.len == 0:
@@ -161,8 +161,7 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
     true
   of cmdThink:
     if command.value.strip.len > 0:
-      let reply = memory.applyThinkTextCommand(userId, command.value).valueOr: error
-      sendDiscordReply(event, dcAdapter, userId, reply, logger)
+      return false  ## text form: answered by the shared dispatcher
     else:
       let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotThink)
       if kbdId.len > 0 and event.interactionId.len == 0:
@@ -176,13 +175,6 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
           "Abri o seletor de thinking na sua DM.",
           logger,
         )
-    true
-  of cmdBudget:
-    let reply = memory.applyBudgetTextCommand(userId, command.value).valueOr: error
-    sendDiscordReply(event, dcAdapter, userId, reply, logger)
-    true
-  of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
-    sendDiscordReply(event, dcAdapter, userId, buildDeferredUiCommandText(command.kind), logger)
     true
   else:
     false
@@ -257,7 +249,7 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
     true
   of cbkHelpPage:
     const HelpColor = 0x5865F2
-    let pages = buildHelpPages()
+    let pages = buildHelpPages(commandCaps(ckDiscord))
     let page  = min(max(callback.page, 0), pages.len - 1)
     let (pTitle, pBody) = pages[page]
     let title   = "📖 Ajuda — " & pTitle & " (" & $(page + 1) & "/" & $pages.len & ")"
@@ -297,39 +289,119 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
   else:
     false
 
-proc presentDiscordReply(event: DiscordRawEvent; dcAdapter: DiscordAdapter;
-                         userId: UserId; reply: CommandReply; logger: Logger) =
-  ## Discord renders most command replies as colored embeds.
-  template embed(title: string; color: int) =
-    sendDiscordEmbed(event, dcAdapter, userId, title, reply.text, color, logger)
-  case reply.topic
-  of rtAbout:       embed("🫏 Donkey", 0x5865F2)
-  of rtStartIntro:  embed("👋 Donkey", 0x5865F2)
-  of rtLinkCode:    embed("🔗 Link Code", 0x5865F2)
-  of rtClearMemory: embed("🗑️ Memórias", 0xE67E22)
-  of rtDoctor:      embed("🩺 Doctor", 0x95A5A6)
-  of rtMemory:      embed("🧠 Memórias", 0x9B59B6)
-  of rtContinue:    embed("🔗 Continue", if reply.failed: 0xED4245 else: 0x57F287)
-  of rtNoSession:   embed("ℹ️ Info", 0xED4245)
-  of rtPing:        embed("🏓 Ping", if "error" in reply.text: 0xED4245 else: 0x57F287)
-  of rtStatus:      embed("📊 Status", 0x57F287)
-  of rtHelp:
-    sendDiscordReply(event, dcAdapter, userId, buildHelpText(true), logger)
-  of rtUnsupported:
-    discard
-  of rtSkill, rtUi, rtMenu, rtWhoami, rtReasoning:
-    sendDiscordReply(event, dcAdapter, userId, reply.text, logger)
+type
+  DiscordReplySink* = object
+    ## The two ways a command reply leaves the Discord runtime. Tests swap in
+    ## a recorder; production wraps the adapter (`discordReplySink`).
+    respond*: proc(event: DiscordRawEvent; title, text: string; color: int;
+                   ephemeral: bool): Result[void, string] {.gcsafe.}
+      ## The initial response to an interaction (an embed when `title` is set).
+    post*: proc(event: DiscordRawEvent; userId: UserId; text: string;
+                private: bool): Result[void, string] {.gcsafe.}
+      ## A message: in the event's channel, or in the user's DM when `private`.
 
-proc handleDiscordLocalExtra(sm: SessionManager;
-                             event: DiscordRawEvent;
+proc discordReplySink*(dcAdapter: DiscordAdapter): DiscordReplySink =
+  DiscordReplySink(
+    respond: proc(event: DiscordRawEvent; title, text: string; color: int;
+                  ephemeral: bool): Result[void, string] {.gcsafe.} =
+      {.cast(gcsafe).}:
+        if title.len > 0:
+          let embed = dcAdapter.sendInteractionEmbedPage(
+            event.interactionId, event.interactionToken, title, text, color, @[],
+            ephemeral = ephemeral)
+          if embed.isOk:
+            return ok()
+        dcAdapter.sendInteractionResponse(
+          event.interactionId, event.interactionToken, text, ephemeral = ephemeral),
+    post: proc(event: DiscordRawEvent; userId: UserId; text: string;
+               private: bool): Result[void, string] {.gcsafe.} =
+      {.cast(gcsafe).}:
+        dcAdapter.send(OutboundMessage(
+          userId: userId,
+          channel: ckDiscord,
+          text: text,
+          replyTo:
+            if private or event.channelId.len == 0: ""
+            else: "channel:" & event.channelId,
+        )),
+  )
+
+func discordReplyStyle*(reply: CommandReply): (string, int) =
+  ## Discord renders most command replies as colored embeds.
+  case reply.topic
+  of rtAbout:       ("🫏 Donkey", 0x5865F2)
+  of rtStartIntro:  ("👋 Donkey", 0x5865F2)
+  of rtLinkCode:    ("🔗 Link Code", 0x5865F2)
+  of rtClearMemory: ("🗑️ Memórias", 0xE67E22)
+  of rtDoctor:      ("🩺 Doctor", 0x95A5A6)
+  of rtMemory:      ("🧠 Memórias", 0x9B59B6)
+  of rtContinue:    ("🔗 Continue", if reply.failed: 0xED4245 else: 0x57F287)
+  of rtNoSession:   ("ℹ️ Info", 0xED4245)
+  of rtPing:        ("🏓 Ping", if reply.failed: 0xED4245 else: 0x57F287)
+  of rtStatus:      ("📊 Status", 0x57F287)
+  of rtWhoami:      ("🆔 Identity", 0x5865F2)
+  of rtReasoning:   ("🧠 Reasoning", 0x57F287)
+  of rtHelp, rtSkill, rtUi, rtMenu, rtConfig, rtUnsupported: ("", 0)
+
+func discordReplyRoute*(event: DiscordRawEvent; reply: CommandReply): ReplyRoute =
+  ## An interaction reply can be ephemeral, so it never needs another path. A
+  ## text command may come from a server channel: requester-only replies go
+  ## to the DM instead.
+  routeReply(reply, inSharedSpace = event.interactionId.len == 0,
+             hasPrivatePath = true)
+
+const DiscordFallbackAck* = "⏳ Processando..."
+
+proc presentDiscordOutcome*(sink: DiscordReplySink; event: DiscordRawEvent;
+                            userId: UserId; outcome: CommandOutcome;
+                            logger: Logger) =
+  ## Presents a dispatcher outcome. An interaction always gets exactly one
+  ## initial response, whatever the outcome; a requester-only reply is
+  ## ephemeral on an interaction and goes by DM otherwise, and is never
+  ## posted publicly when that fails.
+  let isInteraction = event.interactionId.len > 0
+  case outcome.kind
+  of cokFallback:
+    if isInteraction:
+      sink.respond(event, "", DiscordFallbackAck, 0, ephemeral = true).isOkOr:
+        core_log.log(logger, core_log.lvlError, "dc interaction ack: " & error)
+  of cokAccepted:
+    if isInteraction:
+      sink.respond(event, "", acceptedText(outcome.task), 0, ephemeral = true).isOkOr:
+        core_log.log(logger, core_log.lvlError, "dc interaction ack: " & error)
+  of cokReply:
+    let reply = outcome.reply
+    if reply.topic == rtUnsupported and not isInteraction:
+      return
+    let text =
+      if reply.topic == rtUnsupported: UnsupportedCommandText else: reply.text
+    let (title, color) = discordReplyStyle(reply)
+    if isInteraction:
+      let ephemeral = reply.requesterOnly or reply.topic == rtUnsupported
+      sink.respond(event, title, text, color, ephemeral).isOkOr:
+        core_log.log(logger, core_log.lvlError,
+                     "dc interaction " & $reply.topic & ": " & error)
+      return
+    case discordReplyRoute(event, reply)
+    of rrConversation:
+      sink.post(event, userId, text, private = false).isOkOr:
+        core_log.log(logger, core_log.lvlError, "dc send " & $reply.topic & ": " & error)
+    of rrPrivate:
+      sink.post(event, userId, text, private = true).isOkOr:
+        core_log.log(logger, core_log.lvlError,
+                     "dc DM " & $reply.topic & " failed (not posted publicly): " & error)
+    of rrNotice:
+      sink.post(event, userId, RequesterOnlyNotice, private = false).isOkOr:
+        core_log.log(logger, core_log.lvlError, "dc send notice: " & error)
+
+proc handleDiscordLocalExtra(event: DiscordRawEvent;
                              dcAdapter: DiscordAdapter;
                              presentationState: var PresentationState;
-                             memory: MdFileAdapter;
                              userId: UserId;
                              command: CommandDecision;
                              logger: Logger): bool =
-  ## Discord-only local commands: keyboard menu, whoami, paged help in
-  ## interactions, reasoning toggle. False → use the shared dispatcher.
+  ## Discord-only presentation of local commands: the keyboard menu and paged
+  ## help in interactions. False → use the shared dispatcher.
   if command.route != crLocal:
     return false
   case decideLocalCommandAction(command)
@@ -346,41 +418,36 @@ proc handleDiscordLocalExtra(sm: SessionManager;
         "Abri o menu na sua DM.", logger,
       )
     true
-  of lcaShowWhoami:
-    let sessId = if sm.hasLiveSession(userId): "active" else: ""
-    sendDiscordEmbed(event, dcAdapter, userId,
-      "🆔 Identity", buildWhoamiText(userId, sessId, event.discordUserId), 0x5865F2, logger)
-    true
   of lcaHelpText:
-    let pages = buildHelpPages()
-    if event.interactionId.len > 0 and pages.len > 0:
-      let (pTitle, pBody) = pages[0]
-      dcAdapter.sendInteractionEmbedPage(
-        event.interactionId, event.interactionToken,
-        "📖 Ajuda — " & pTitle & " (1/" & $pages.len & ")",
-        pBody, 0x5865F2, buildHelpNavButtons(0, pages.len)).isOkOr:
-          core_log.log(logger, core_log.lvlWarn, "dc help embed: " & error)
-          sendDiscordReply(event, dcAdapter, userId, buildHelpText(true), logger)
-    else:
-      sendDiscordReply(event, dcAdapter, userId, buildHelpText(true), logger)
-    true
-  of lcaReasoningToggle:
-    let prefs = common_runtime.loadChannelPrefs(memory, userId)
-    let next = if prefs.reasoning == "on": "off" else: "on"
-    let saved = common_runtime.saveChannelPreference(memory, userId, "reasoning", next)
-    sendDiscordEmbed(event, dcAdapter, userId,
-      "🧠 Reasoning",
-      savedOrError(saved, if next == "on": "Reasoning ativado." else: "Reasoning desativado."),
-      0x57F287, logger)
+    let pages = buildHelpPages(commandCaps(ckDiscord))
+    if event.interactionId.len == 0 or pages.len == 0:
+      return false
+    let (pTitle, pBody) = pages[0]
+    dcAdapter.sendInteractionEmbedPage(
+      event.interactionId, event.interactionToken,
+      "📖 Ajuda — " & pTitle & " (1/" & $pages.len & ")",
+      pBody, 0x5865F2, buildHelpNavButtons(0, pages.len)).isOkOr:
+        core_log.log(logger, core_log.lvlWarn, "dc help embed: " & error)
+        sendDiscordReply(event, dcAdapter, userId,
+                         helpTextFor(ckDiscord, interactiveUi = true), logger)
     true
   else:
     false
+
+proc discordCommandRequest(dcAdapter: DiscordAdapter; event: DiscordRawEvent;
+                           command: CommandDecision;
+                           userId: UserId): CommandDispatchRequest =
+  ## Session tasks from Discord carry no message id (no reaction target).
+  CommandDispatchRequest(
+    command: command, userId: userId, channel: ckDiscord, messageId: "",
+    rawId: event.discordUserId, links: dcAdapter.resolver.identityLinkPort(),
+    interactiveUi: true)
 
 proc handleDiscordEvent*(sm: var SessionManager;
                          event: DiscordRawEvent;
                          dcAdapter: DiscordAdapter;
                          presentationState: var PresentationState;
-                         env: CommandEnv;
+                         env: ChannelRuntimeEnv;
                          msgSeq: var int;
                          logger: Logger;
                          handleInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
@@ -410,37 +477,30 @@ proc handleDiscordEvent*(sm: var SessionManager;
     if event.messageId.len > 0:
       memory.saveChannelPreference(userId, "discord_last_msg_id", event.messageId)
     let command = decideCommandRequest(CommandRequest(channel: ckDiscord, text: event.content))
-    if command.route == crUi:
-      discard handleDiscordUiCommand(event, dcAdapter, presentationState, memory, userId,
-                                     command, modelCatalogLoader, toolsCount,
-                                     toolClientsCount, daemonStartMs, msgSeq, logger)
+    if command.route == crUi and
+       handleDiscordUiCommand(event, dcAdapter, presentationState, memory, userId,
+                              command, modelCatalogLoader, toolsCount,
+                              toolClientsCount, daemonStartMs, msgSeq, logger):
       completeInboundStatus(inbound)
-    elif handleDiscordLocalExtra(sm, event, dcAdapter, presentationState, memory,
+    elif handleDiscordLocalExtra(event, dcAdapter, presentationState,
                                  userId, command, logger):
       completeInboundStatus(inbound)
     else:
-      ## Session tasks from Discord carry no message id (no reaction target).
-      let outcome = dispatchTextCommand(env, sm, msgSeq, command, userId, ckDiscord,
-                                        "", dcAdapter.resolver, event.discordUserId)
-      case outcome.kind
-      of cokFallback:
+      let outcome = dispatchCommand(env.commands, sm, msgSeq,
+        discordCommandRequest(dcAdapter, event, command, userId))
+      presentDiscordOutcome(discordReplySink(dcAdapter), event, userId, outcome, logger)
+      if outcome.kind == cokFallback:
         handleSessionFallback(inbound)
-      of cokSilent:
-        completeInboundStatus(inbound)
-      of cokReply:
-        presentDiscordReply(event, dcAdapter, userId, outcome.reply, logger)
+      else:
         completeInboundStatus(inbound)
 
   of deInteraction:
-    let code = event.content |> strip
-    let linked = dcAdapter.resolver.consumeLinkCode(
-      code, ckDiscord, event.discordUserId)
-    let replyText =
-      if linked: "✅ Session reconnected! Your conversation history carries over."
-      else:      "❌ Invalid or expired code. Generate a fresh one with `/mycode`."
-    dcAdapter.sendInteractionResponse(
-      event.interactionId, event.interactionToken, replyText).isOkOr:
-        core_log.log(logger, core_log.lvlError, "dc interaction response: " & error)
+    ## The /continue modal submits a bare code.
+    let userId = dcAdapter.resolver.resolve(ckDiscord, event.discordUserId)
+    let command = newCommandDecision(cmdContinue, event.content |> strip)
+    let outcome = dispatchCommand(env.commands, sm, msgSeq,
+      discordCommandRequest(dcAdapter, event, command, userId))
+    presentDiscordOutcome(discordReplySink(dcAdapter), event, userId, outcome, logger)
 
   of deModalRequest:
     dcAdapter.sendInteractionModal(
@@ -502,7 +562,7 @@ proc checkDiscordOfflineMessages*(sm: var SessionManager;
                                    dcAdapter: DiscordAdapter;
                                    discordToken: string;
                                    presentationState: var PresentationState;
-                                   env: CommandEnv;
+                                   env: ChannelRuntimeEnv;
                                    msgSeq: var int;
                                    logger: Logger;
                                    handleInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
@@ -566,7 +626,7 @@ proc drainDiscordEvents*(sm: var SessionManager;
                          dcAdapter: DiscordAdapter;
                          discordToken: string;
                          presentationState: var PresentationState;
-                         env: CommandEnv;
+                         env: ChannelRuntimeEnv;
                          msgSeq: var int;
                          logger: Logger;
                          handleInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
