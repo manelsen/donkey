@@ -6,6 +6,7 @@
 ## Adapters: McpClientAdapter (subprocess JSON-RPC via stdin/stdout).
 
 import std/json
+import chronos
 import ../core/pipeops
 
 type
@@ -38,6 +39,8 @@ type
   ToolRuntimePort* = object
     listTools*: proc(): Result[seq[ToolSchema], string] {.gcsafe.}
     invoke*:    proc(call: ToolCall): Result[ToolResult, string] {.gcsafe.}
+    invokeAsync*: proc(call: ToolCall): Future[Result[ToolResult, string]]
+      {.gcsafe, raises: [CatchableError].}
     close*:     proc() {.gcsafe.}
 
   LoadedToolRuntime* = object

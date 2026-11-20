@@ -89,6 +89,8 @@ proc executeToolCalls*(clients: var seq[ToolRuntimePort];
     var invoked = false
     for i in 0 ..< clients.len:
       # Try each client in order; stop at first that knows this tool.
+      if clients[i].invoke == nil:
+        continue
       let res = clients[i].invoke(call)
       if res.isOk:
         result.add((tc, res.value.output))
