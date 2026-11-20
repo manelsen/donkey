@@ -16,11 +16,11 @@ import donkey/adapters/channel/common_runtime
 import donkey/adapters/channel/text_command_dispatch
 import donkey/app/session_manager
 
-const Tmp = "/tmp/donkey_text_command_dispatch"
+let tmpRoot = getTempDir() / ("donkey_text_command_dispatch_" & $getCurrentProcessId())
 
 proc env(): CommandEnv =
   CommandEnv(
-    memory: MdFileAdapter(paddocksDir: Tmp / "paddocks"),
+    memory: MdFileAdapter(paddocksDir: tmpRoot / "paddocks"),
     completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.} =
       proc(req: CompletionRequest): Result[CompletionResponse, string] =
         ok(CompletionResponse(text: "pong")),
@@ -39,12 +39,12 @@ proc run(kind: CommandKind; value = ""; sm: var SessionManager;
 proc runTests*() =
   suite "dispatchTextCommand":
     setup:
-      removeDir(Tmp)
-      createDir(Tmp)
+      removeDir(tmpRoot)
+      createDir(tmpRoot)
       var sm: SessionManager
       sm.init()
       var msgSeq = 0
-      let resolver = newIdentityResolver(Tmp / "ids.tsv")
+      let resolver = newIdentityResolver(tmpRoot / "ids.tsv")
 
     test "plain text is not a command: caller falls back to the session":
       check run(cmdNone, "", sm, msgSeq, resolver).kind == cokFallback
