@@ -38,10 +38,12 @@ proc dripClient(args: DripArgs) {.thread.} =
   defer: s.close()
   try:
     s.connect("127.0.0.1", Port(args.port))
-    s.send(args.head)
+    ## flags = {}: without SafeDisconn a closed peer raises instead of
+    ## making net.send retry forever (which would hang joinThread).
+    s.send(args.head, flags = {})
     for _ in 0 ..< args.bytes:
       sleep(args.gapMs)
-      s.send("x")
+      s.send("x", flags = {})
   except CatchableError:
     discard
 
