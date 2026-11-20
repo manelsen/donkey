@@ -22,6 +22,7 @@ import std/[algorithm, json, locks, net, strutils, tables, times]
 import checksums/sha1
 import ../../core/log
 import ../../core/pipeops
+import ../../core/security/webhook_auth
 import ../../domain/message
 import ../../domain/channels/wechat_pure
 import ../http/std_http
@@ -177,7 +178,10 @@ proc handleWeComConn*(client: Socket; token: string; logger: Logger;
   ## is a forgery and must not reach the agent.
   defer: closeWebhookClient(client)
   try:
-    discard applyWebhookClientTimeouts(client, timeoutSec)
+    applyWebhookClientTimeouts(client, timeoutSec).isOkOr:
+      logger.warn("wecom: " & error)
+      recordWebhookFailure("wecom", error)
+      return
     let req = readWebhookRequest(client).valueOr:
       logger.warn("wecom: rejected request: " & error)
       recordWebhookFailure("wecom", error)
@@ -187,7 +191,7 @@ proc handleWeComConn*(client: Socket; token: string; logger: Logger;
     let sig   = req.query.getOrDefault("msg_signature")
     let ts    = req.query.getOrDefault("timestamp")
     let nonce = req.query.getOrDefault("nonce")
-    if sig.len == 0 or sig != wecomSignature(token, ts, nonce):
+    if sig.len == 0 or not safeEquals(sig, wecomSignature(token, ts, nonce)):
       logger.warn("wecom: missing or invalid msg_signature")
       client.sendHttpReply("403 Forbidden", "invalid signature", logger)
       return

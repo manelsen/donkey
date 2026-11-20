@@ -2,7 +2,9 @@
 ## requests instead of allocating unbounded memory or blocking forever.
 ## Each test drives the real connection handler over a loopback socket.
 
-import std/[monotimes, net, strutils, times, unittest]
+import std/[algorithm, monotimes, net, strutils, times, unittest]
+import checksums/sha1
+import donkey/app/metrics
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/security/webhook_auth
@@ -37,6 +39,22 @@ proc exchange(raw: string; handler: ConnHandler): string =
 const hugeBody = "POST /?signature=x&timestamp=1&nonce=2 HTTP/1.1\r\n" &
                  "Content-Length: 99999999999\r\n\r\n"
 const badLength = "POST / HTTP/1.1\r\nContent-Length: -1\r\n\r\n"
+
+proc ipv6LoopbackAvailable(): bool =
+  ## Containers often run with IPv6 disabled; the bind test only makes sense
+  ## where the kernel can bind ::1 at all.
+  try:
+    let probe = newSocket(AF_INET6)
+    defer: probe.close()
+    probe.bindAddr(Port(0), "::1")
+    true
+  except CatchableError:
+    false
+
+proc wechatSig(token, ts, nonce: string): string =
+  var parts = @[token, ts, nonce]
+  parts.sort()
+  $secureHash(parts.join(""))
 
 proc runTests*() =
   let logger = newLogger("test.embedded_webhooks")
@@ -119,13 +137,30 @@ proc runTests*() =
       if s.isOk: s.get.close()
 
     test "IPv6 loopback binds with an IPv6 socket":
-      let s = bindOneBotListener("::1", Port(0))
-      check s.isOk
-      if s.isOk: s.get.close()
+      if not ipv6LoopbackAvailable():
+        skip()
+      else:
+        let s = bindOneBotListener("::1", Port(0))
+        check s.isOk
+        if s.isOk: s.get.close()
 
     test "bind failure is an error, not a dead thread":
       check bindOneBotListener("203.0.113.1", Port(0)).isErr
       check bindOneBotListener("not a host", Port(0)).isErr
+
+  suite "wechat dropped events are observable":
+
+    test "signed POST with an unparseable body counts a webhook failure":
+      initMetrics()
+      let before = webhookFailureCount("wechat")
+      let q = "/?signature=" & wechatSig("tok", "1", "2") & "&timestamp=1&nonce=2"
+      let body = "not xml"
+      let raw = "POST " & q & " HTTP/1.1\r\nContent-Length: " & $body.len &
+                "\r\n\r\n" & body
+      let resp = exchange(raw, proc(c: Socket) {.closure.} =
+        handleWeChatConn(c, "tok", logger, timeoutSec = 1))
+      check resp.startsWith("HTTP/1.1 200")   # WeChat retries on non-200
+      check webhookFailureCount("wechat") == before + 1
 
 when isMainModule:
   runTests()
