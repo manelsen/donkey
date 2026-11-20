@@ -7,7 +7,9 @@ import donkey/core/pipeops
 import donkey/domain/message
 import donkey/ports/channel
 import donkey/ports/channel_capability
+import std/os
 import donkey/adapters/channel/outbound_builder
+import donkey/adapters/channel/discord
 
 # ── Capability consistency between descriptor and outbound wiring ─────────────
 
@@ -148,6 +150,21 @@ proc runTests*() =
           # editMessage implies the channel can track message ids
           doAssert caps.sendReturnId, $kind & " has editMessage but not sendReturnId"
           check caps.sendReturnId
+
+  suite "outbound wiring error propagation":
+
+    test "discord sendKeyboard propagates adapter failure":
+      ## Unknown user → adapter returns err before any network I/O.
+      ## The wiring must not swallow it with `discard ...; ok()`.
+      let path = getTempDir() / "donkey_test_ob_dc_ids.tsv"
+      removeFile(path)
+      defer: removeFile(path)
+      var dc = newDiscordAdapter("tok", path, apiBase = "http://127.0.0.1:1")
+      let ports = buildOutboundPorts(nil, addr dc, nil, nil, nil, nil, nil,
+                                     nil, nil, nil, nil, nil)
+      let r = ports.discord.sendKeyboard(UserId("00000000-0000-0000-0000-000000000000"), "pick", @[@[("A", "a")]])
+      check r.isErr
+      check "no Discord ID" in r.error
 
 when isMainModule:
   runTests()
