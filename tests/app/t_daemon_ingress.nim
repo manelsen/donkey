@@ -58,286 +58,290 @@ proc makeTestServices(memory: MdFileAdapter;
     http = HttpRuntimePort(),
   )
 
-suite "daemon session ingress":
+proc runTests*() =
+  suite "daemon session ingress":
 
-  test "toolCatalogSignature changes with provider and tools":
-    let baseTools = @[
-      ToolDescription(name: "a", description: "desc-a", schemaJson: """{"type":"object"}"""),
-      ToolDescription(name: "b", description: "desc-b", schemaJson: """{"type":"object","x":1}"""),
-    ]
-    let same = toolCatalogSignature(baseTools, "zai-coding/glm-4.7", "/tmp/p1")
-    let changedProvider = toolCatalogSignature(baseTools, "gemini/flash", "/tmp/p1")
-    let changedTool = toolCatalogSignature(
-      @[ToolDescription(name: "a", description: "desc-a2", schemaJson: """{"type":"object"}""")],
-      "zai-coding/glm-4.7",
-      "/tmp/p1",
-    )
-    check same != changedProvider
-    check same != changedTool
+    test "toolCatalogSignature changes with provider and tools":
+      let baseTools = @[
+        ToolDescription(name: "a", description: "desc-a", schemaJson: """{"type":"object"}"""),
+        ToolDescription(name: "b", description: "desc-b", schemaJson: """{"type":"object","x":1}"""),
+      ]
+      let same = toolCatalogSignature(baseTools, "zai-coding/glm-4.7", "/tmp/p1")
+      let changedProvider = toolCatalogSignature(baseTools, "gemini/flash", "/tmp/p1")
+      let changedTool = toolCatalogSignature(
+        @[ToolDescription(name: "a", description: "desc-a2", schemaJson: """{"type":"object"}""")],
+        "zai-coding/glm-4.7",
+        "/tmp/p1",
+      )
+      check same != changedProvider
+      check same != changedTool
 
-  test "buildSessionIngressContext increments msg id and reuses existing entry":
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
-    let msg = InboundMessage(
-      userId: UserId("u-ingress"),
-      channel: ckTelegram,
-      channelId: "42",
-      text: "hello",
-    )
-    let first = sm.buildSessionIngressContext(msg, SessionRuntimeSignature("sig-a"), msgSeq)
-    let second = sm.buildSessionIngressContext(msg, SessionRuntimeSignature("sig-a"), msgSeq)
-    check first.plan.decision.actionKind == siaStartNewSession
-    check not first.plan.decision.rebuildsSessionRuntime
-    check second.plan.decision.actionKind == siaReuseSessionRuntime
-    check first.msgId == "u-ingress-1"
-    check second.msgId == "u-ingress-2"
-    check first.plan.entry == second.plan.entry
+    test "buildSessionIngressContext increments msg id and reuses existing entry":
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
+      let msg = InboundMessage(
+        userId: UserId("u-ingress"),
+        channel: ckTelegram,
+        channelId: "42",
+        text: "hello",
+      )
+      let first = sm.buildSessionIngressContext(msg, SessionRuntimeSignature("sig-a"), msgSeq)
+      let second = sm.buildSessionIngressContext(msg, SessionRuntimeSignature("sig-a"), msgSeq)
+      check first.plan.decision.actionKind == siaStartNewSession
+      check not first.plan.decision.rebuildsSessionRuntime
+      check second.plan.decision.actionKind == siaReuseSessionRuntime
+      check first.msgId == "u-ingress-1"
+      check second.msgId == "u-ingress-2"
+      check first.plan.entry == second.plan.entry
 
-  test "buildSessionIngressContext persists exactly one registry write per message":
-    gRegistryUpserts.setLen(0)
-    var sm: SessionManager
-    sm.init()
-    sm.setRegistryStore(countingRegistry())
-    var msgSeq = 0
-    let msg = InboundMessage(
-      userId: UserId("u-persist"),
-      channel: ckTelegram,
-      channelId: "900",
-      text: "hello",
-    )
-    discard sm.buildSessionIngressContext(msg, SessionRuntimeSignature("sig-p"), msgSeq)
-    check gRegistryUpserts.len == 1
-    ## The single write must include the channel recorded on this message.
-    check gRegistryUpserts[0].channels == @[(ckTelegram, "900")]
-    check gRegistryUpserts[0].lastInboundAtMs > 0
+    test "buildSessionIngressContext persists exactly one registry write per message":
+      gRegistryUpserts.setLen(0)
+      var sm: SessionManager
+      sm.init()
+      sm.setRegistryStore(countingRegistry())
+      var msgSeq = 0
+      let msg = InboundMessage(
+        userId: UserId("u-persist"),
+        channel: ckTelegram,
+        channelId: "900",
+        text: "hello",
+      )
+      discard sm.buildSessionIngressContext(msg, SessionRuntimeSignature("sig-p"), msgSeq)
+      check gRegistryUpserts.len == 1
+      ## The single write must include the channel recorded on this message.
+      check gRegistryUpserts[0].channels == @[(ckTelegram, "900")]
+      check gRegistryUpserts[0].lastInboundAtMs > 0
 
-    ## The reuse path is also a single write, still carrying the channel.
-    discard sm.buildSessionIngressContext(msg, SessionRuntimeSignature("sig-p"), msgSeq)
-    check gRegistryUpserts.len == 2
-    check gRegistryUpserts[1].channels == @[(ckTelegram, "900")]
+      ## The reuse path is also a single write, still carrying the channel.
+      discard sm.buildSessionIngressContext(msg, SessionRuntimeSignature("sig-p"), msgSeq)
+      check gRegistryUpserts.len == 2
+      check gRegistryUpserts[1].channels == @[(ckTelegram, "900")]
 
-  test "SessionManager channel-level authorization follows the DM policy":
-    var sm: SessionManager
-    sm.init()
-    let uid = UserId("u-auth")
-    check sm.allows(uid)
-    sm.dmPolicy = DmPolicyAllowlist
-    sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = u == UserId("u-auth")
-    check sm.allows(uid)
-    check not sm.allows(UserId("other"))
+    test "SessionManager channel-level authorization follows the DM policy":
+      var sm: SessionManager
+      sm.init()
+      let uid = UserId("u-auth")
+      check sm.allows(uid)
+      sm.dmPolicy = DmPolicyAllowlist
+      sm.isDmAllowed = proc(u: UserId): bool {.gcsafe.} = u == UserId("u-auth")
+      check sm.allows(uid)
+      check not sm.allows(UserId("other"))
 
-  test "allowlist policy rejects an unknown user":
-    let tmpDir = getTempDir() / "donkey_test_ingress_allowlist"
-    removeDir(tmpDir)
-    defer: removeDir(tmpDir)
-    let memory = MdFileAdapter(paddocksDir: tmpDir / "paddocks")
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = makeTestServices(
-      memory, outbox,
-      isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false,
-      dmPolicy = DmPolicyAllowlist,
-    )
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
-    let msg = InboundMessage(
-      userId: UserId("u-denied"),
-      channel: ckTelegram,
-      channelId: "42",
-      text: "hello",
-    )
-    discard startSessionIngress(sm, msg, services, msgSeq)
-    check outbox.len == 1
-    let reply = waitFor outbox.get()
-    check "não autorizado" in reply.text
+    test "allowlist policy rejects an unknown user":
+      let tmpDir = getTempDir() / "donkey_test_ingress_allowlist"
+      removeDir(tmpDir)
+      defer: removeDir(tmpDir)
+      let memory = MdFileAdapter(paddocksDir: tmpDir / "paddocks")
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = makeTestServices(
+        memory, outbox,
+        isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false,
+        dmPolicy = DmPolicyAllowlist,
+      )
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
+      let msg = InboundMessage(
+        userId: UserId("u-denied"),
+        channel: ckTelegram,
+        channelId: "42",
+        text: "hello",
+      )
+      discard startSessionIngress(sm, msg, services, msgSeq)
+      check outbox.len == 1
+      let reply = waitFor outbox.get()
+      check "não autorizado" in reply.text
 
-  test "enqueueSessionMessage diverts next reply to askInbox":
-    var entry = SessionEntry(
-      inbox: newAsyncQueue[AgentMessage](),
-      askInbox: newAsyncQueue[string](),
-      awaitingAsk: true,
-      channels: @[],
-      toolCatalogSignature: "sig-a",
-    )
-    let msg = InboundMessage(
-      userId: UserId("u-ask"),
-      channel: ckTelegram,
-      channelId: "77",
-      text: "my answer",
-    )
-    enqueueSessionMessage(entry, msg, "u-ask-1", sitAskInbox)
-    check not entry.awaitingAsk
-    check entry.askInbox.popFirstNoWait() == "my answer"
-    check entry.inbox.len == 0
+    test "enqueueSessionMessage diverts next reply to askInbox":
+      var entry = SessionEntry(
+        inbox: newAsyncQueue[AgentMessage](),
+        askInbox: newAsyncQueue[string](),
+        awaitingAsk: true,
+        channels: @[],
+        toolCatalogSignature: "sig-a",
+      )
+      let msg = InboundMessage(
+        userId: UserId("u-ask"),
+        channel: ckTelegram,
+        channelId: "77",
+        text: "my answer",
+      )
+      enqueueSessionMessage(entry, msg, "u-ask-1", sitAskInbox)
+      check not entry.awaitingAsk
+      check entry.askInbox.popFirstNoWait() == "my answer"
+      check entry.inbox.len == 0
 
-  test "enqueueSessionMessage sends normal inbound text to actor inbox":
-    var entry = SessionEntry(
-      inbox: newAsyncQueue[AgentMessage](),
-      askInbox: newAsyncQueue[string](),
-      awaitingAsk: false,
-      channels: @[],
-      toolCatalogSignature: "sig-a",
-    )
-    let msg = InboundMessage(
-      userId: UserId("u-normal"),
-      channel: ckTelegram,
-      channelId: "88",
-      text: "hello world",
-      bridgeToken: 5'u64,
-    )
-    enqueueSessionMessage(entry, msg, "u-normal-3", sitActorInbox)
-    let queued = entry.inbox.popFirstNoWait()
-    check queued.id == "u-normal-3"
-    check queued.replyTo == "88"
-    check queued.payload == "hello world"
-    ## The API turn generation travels with the task message.
-    check queued.bridgeToken == 5'u64
+    test "enqueueSessionMessage sends normal inbound text to actor inbox":
+      var entry = SessionEntry(
+        inbox: newAsyncQueue[AgentMessage](),
+        askInbox: newAsyncQueue[string](),
+        awaitingAsk: false,
+        channels: @[],
+        toolCatalogSignature: "sig-a",
+      )
+      let msg = InboundMessage(
+        userId: UserId("u-normal"),
+        channel: ckTelegram,
+        channelId: "88",
+        text: "hello world",
+        bridgeToken: 5'u64,
+      )
+      enqueueSessionMessage(entry, msg, "u-normal-3", sitActorInbox)
+      let queued = entry.inbox.popFirstNoWait()
+      check queued.id == "u-normal-3"
+      check queued.replyTo == "88"
+      check queued.payload == "hello world"
+      ## The API turn generation travels with the task message.
+      check queued.bridgeToken == 5'u64
 
-  test "an api request cancels an open ask instead of answering it":
-    var sm: SessionManager
-    sm.init()
-    ## An ask reservation whose asking turn is gone: this is the state A7
-    ## describes once the orphaned turn has expired.
-    let entry = SessionEntry(
-      inbox: newAsyncQueue[AgentMessage](),
-      askInbox: newAsyncQueue[string](),
-      awaitingAsk: true,
-      channels: @[],
-      toolCatalogSignature: "sig-a",
-    )
-    entry.askInbox.addLastNoWait("stale")
-    sm.entries["u-api-ask"] = entry
-    let msg = InboundMessage(
-      userId: UserId("u-api-ask"),
-      channel: ckCli,
-      channelId: "api:u-api-ask",
-      text: "a new api turn",
-      bridgeToken: 7'u64,
-    )
-    var msgSeq = 0
-    let ctx = sm.buildSessionIngressContext(
-      msg, SessionRuntimeSignature("sig-a"), msgSeq, answerableAsk = msg.bridgeToken == 0)
-    check ctx.plan.decision.target == sitActorInbox
-    check ctx.plan.decision.cancelsAsk
-    check ctx.plan.entry[].inbox.len == 0
+    test "an api request cancels an open ask instead of answering it":
+      var sm: SessionManager
+      sm.init()
+      ## An ask reservation whose asking turn is gone: this is the state A7
+      ## describes once the orphaned turn has expired.
+      let entry = SessionEntry(
+        inbox: newAsyncQueue[AgentMessage](),
+        askInbox: newAsyncQueue[string](),
+        awaitingAsk: true,
+        channels: @[],
+        toolCatalogSignature: "sig-a",
+      )
+      entry.askInbox.addLastNoWait("stale")
+      sm.entries["u-api-ask"] = entry
+      let msg = InboundMessage(
+        userId: UserId("u-api-ask"),
+        channel: ckCli,
+        channelId: "api:u-api-ask",
+        text: "a new api turn",
+        bridgeToken: 7'u64,
+      )
+      var msgSeq = 0
+      let ctx = sm.buildSessionIngressContext(
+        msg, SessionRuntimeSignature("sig-a"), msgSeq, answerableAsk = msg.bridgeToken == 0)
+      check ctx.plan.decision.target == sitActorInbox
+      check ctx.plan.decision.cancelsAsk
+      check ctx.plan.entry[].inbox.len == 0
 
-  test "an api request over an open ask reaches the actor inbox":
-    ## A7 wiring, expressed at the layer that owns the decision: the plan the
-    ## ingress builds for an API message never targets the ask queue.
-    var sm: SessionManager
-    sm.init()
-    let entry = SessionEntry(
-      inbox: newAsyncQueue[AgentMessage](),
-      askInbox: newAsyncQueue[string](),
-      awaitingAsk: true,
-      channels: @[],
-      toolCatalogSignature: "sig-a",
-    )
-    entry.askInbox.addLastNoWait("stale")
-    sm.entries["u-chan-ask"] = entry
-    let plan = sm.buildEnsureSessionPlan(
-      UserId("u-chan-ask"), SessionRuntimeSignature("sig-a"), answerableAsk = false)
-    check plan.decision.target == sitActorInbox
-    check plan.decision.cancelsAsk
+    test "an api request over an open ask reaches the actor inbox":
+      ## A7 wiring, expressed at the layer that owns the decision: the plan the
+      ## ingress builds for an API message never targets the ask queue.
+      var sm: SessionManager
+      sm.init()
+      let entry = SessionEntry(
+        inbox: newAsyncQueue[AgentMessage](),
+        askInbox: newAsyncQueue[string](),
+        awaitingAsk: true,
+        channels: @[],
+        toolCatalogSignature: "sig-a",
+      )
+      entry.askInbox.addLastNoWait("stale")
+      sm.entries["u-chan-ask"] = entry
+      let plan = sm.buildEnsureSessionPlan(
+        UserId("u-chan-ask"), SessionRuntimeSignature("sig-a"), answerableAsk = false)
+      check plan.decision.target == sitActorInbox
+      check plan.decision.cancelsAsk
 
-  test "revoked user is detected from USER.md":
-    let memory = MdFileAdapter(paddocksDir: "/tmp/donkey_revoked_ingress")
-    let uid = UserId("u-revoked")
-    memory.saveUserMd(uid, "# User\n\n**Access:** revoked\n")
-    check memory.isRevoked(uid)
+    test "revoked user is detected from USER.md":
+      let memory = MdFileAdapter(paddocksDir: "/tmp/donkey_revoked_ingress")
+      let uid = UserId("u-revoked")
+      memory.saveUserMd(uid, "# User\n\n**Access:** revoked\n")
+      check memory.isRevoked(uid)
 
-  test "handleSessionFallback rejects revoked user into global outbox":
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = SessionIngressServices(
-      globalOutbox: outbox,
-      isRevoked: proc(u: UserId): bool = u == UserId("u-revoked-user"),
-    )
-    let msg = InboundMessage(
-      userId: UserId("u-revoked-user"),
-      channel: ckTelegram,
-      channelId: "123",
-      text: "hello",
-    )
-    handleSessionFallback(sm, msgSeq, msg, services)
-    check outbox.len == 1
-    let rejected = outbox.popFirstNoWait()
-    check rejected.userId == UserId("u-revoked-user")
-    check "revogado" in rejected.text
-    check msgSeq == 0
-    check not sm.hasSession(UserId("u-revoked-user"))
+    test "handleSessionFallback rejects revoked user into global outbox":
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = SessionIngressServices(
+        globalOutbox: outbox,
+        isRevoked: proc(u: UserId): bool = u == UserId("u-revoked-user"),
+      )
+      let msg = InboundMessage(
+        userId: UserId("u-revoked-user"),
+        channel: ckTelegram,
+        channelId: "123",
+        text: "hello",
+      )
+      handleSessionFallback(sm, msgSeq, msg, services)
+      check outbox.len == 1
+      let rejected = outbox.popFirstNoWait()
+      check rejected.userId == UserId("u-revoked-user")
+      check "revogado" in rejected.text
+      check msgSeq == 0
+      check not sm.hasSession(UserId("u-revoked-user"))
 
-  test "handleSessionFallback creates session and leaves outbox clear for non-revoked user":
-    let dir = getTempDir() / "donkey_ingress_non_revoked_" & $nowMs()
-    createDir(dir)
-    defer: removeDir(dir)
-    let memory = MdFileAdapter(paddocksDir: dir)
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = makeTestServices(memory, outbox, proc(u: UserId): bool = false)
-    let msg = InboundMessage(
-      userId: UserId("u-allowed-user"),
-      channel: ckTelegram,
-      channelId: "123",
-      text: "hello allowed user",
-    )
-    handleSessionFallback(sm, msgSeq, msg, services)
-    check sm.hasSession(UserId("u-allowed-user"))
-    check msgSeq == 1
-    check outbox.len == 0
+    test "handleSessionFallback creates session and leaves outbox clear for non-revoked user":
+      let dir = getTempDir() / "donkey_ingress_non_revoked_" & $nowMs()
+      createDir(dir)
+      defer: removeDir(dir)
+      let memory = MdFileAdapter(paddocksDir: dir)
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = makeTestServices(memory, outbox, proc(u: UserId): bool = false)
+      let msg = InboundMessage(
+        userId: UserId("u-allowed-user"),
+        channel: ckTelegram,
+        channelId: "123",
+        text: "hello allowed user",
+      )
+      handleSessionFallback(sm, msgSeq, msg, services)
+      check sm.hasSession(UserId("u-allowed-user"))
+      check msgSeq == 1
+      check outbox.len == 0
 
-  test "handleSessionFallback proceeds with session creation when isRevoked is nil":
-    let dir = getTempDir() / "donkey_ingress_nil_revoked_" & $nowMs()
-    createDir(dir)
-    defer: removeDir(dir)
-    let memory = MdFileAdapter(paddocksDir: dir)
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = makeTestServices(memory, outbox, nil)
-    let msg = InboundMessage(
-      userId: UserId("u-nil-revoked-user"),
-      channel: ckTelegram,
-      channelId: "123",
-      text: "hello unverified user",
-    )
-    handleSessionFallback(sm, msgSeq, msg, services)
-    check sm.hasSession(UserId("u-nil-revoked-user"))
-    check msgSeq == 1
-    check outbox.len == 0
+    test "handleSessionFallback proceeds with session creation when isRevoked is nil":
+      let dir = getTempDir() / "donkey_ingress_nil_revoked_" & $nowMs()
+      createDir(dir)
+      defer: removeDir(dir)
+      let memory = MdFileAdapter(paddocksDir: dir)
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = makeTestServices(memory, outbox, nil)
+      let msg = InboundMessage(
+        userId: UserId("u-nil-revoked-user"),
+        channel: ckTelegram,
+        channelId: "123",
+        text: "hello unverified user",
+      )
+      handleSessionFallback(sm, msgSeq, msg, services)
+      check sm.hasSession(UserId("u-nil-revoked-user"))
+      check msgSeq == 1
+      check outbox.len == 0
 
-  test "handleSessionFallback rejects user revoked in real MdFileAdapter":
-    let dir = getTempDir() / "donkey_ingress_md_revoked_" & $nowMs()
-    createDir(dir)
-    defer: removeDir(dir)
-    let memory = MdFileAdapter(paddocksDir: dir)
-    let revokedUid = UserId("u-real-revoked")
-    memory.saveUserMd(revokedUid, "# User\n\n**Access:** revoked\n")
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let isRevokedHook: proc(u: UserId): bool {.gcsafe.} =
-      proc(u: UserId): bool {.gcsafe.} =
-        {.gcsafe.}:
-          memory.isRevoked(u)
-    let services = makeTestServices(memory, outbox, isRevokedHook)
-    let msg = InboundMessage(
-      userId: revokedUid,
-      channel: ckTelegram,
-      channelId: "123",
-      text: "hello from revoked",
-    )
-    handleSessionFallback(sm, msgSeq, msg, services)
-    check outbox.len == 1
-    let rejected = outbox.popFirstNoWait()
-    check rejected.userId == revokedUid
-    check "revogado" in rejected.text
-    check msgSeq == 0
-    check not sm.hasSession(revokedUid)
+    test "handleSessionFallback rejects user revoked in real MdFileAdapter":
+      let dir = getTempDir() / "donkey_ingress_md_revoked_" & $nowMs()
+      createDir(dir)
+      defer: removeDir(dir)
+      let memory = MdFileAdapter(paddocksDir: dir)
+      let revokedUid = UserId("u-real-revoked")
+      memory.saveUserMd(revokedUid, "# User\n\n**Access:** revoked\n")
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let isRevokedHook: proc(u: UserId): bool {.gcsafe.} =
+        proc(u: UserId): bool {.gcsafe.} =
+          {.gcsafe.}:
+            memory.isRevoked(u)
+      let services = makeTestServices(memory, outbox, isRevokedHook)
+      let msg = InboundMessage(
+        userId: revokedUid,
+        channel: ckTelegram,
+        channelId: "123",
+        text: "hello from revoked",
+      )
+      handleSessionFallback(sm, msgSeq, msg, services)
+      check outbox.len == 1
+      let rejected = outbox.popFirstNoWait()
+      check rejected.userId == revokedUid
+      check "revogado" in rejected.text
+      check msgSeq == 0
+      check not sm.hasSession(revokedUid)
+
+when isMainModule:
+  runTests()

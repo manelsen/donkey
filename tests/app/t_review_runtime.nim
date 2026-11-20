@@ -122,221 +122,6 @@ proc installSkill(home, slug: string; lock: var RemoteSkillLockfile) =
   lock.skills[slug] = RemoteSkillLockEntry(version: "1.0.0", installedAt: 1)
   writeRemoteSkillLockfile(home, lock)
 
-suite "review config":
-
-  test "defaults mirror the reference cadence":
-    delEnv("DONKEY_REVIEW_ENABLED")
-    delEnv("DONKEY_REVIEW_MEMORY_INTERVAL")
-    delEnv("DONKEY_REVIEW_SKILL_INTERVAL")
-    let cfg = reviewConfigFromEnv()
-    check cfg.enabled
-    check cfg.memoryInterval == 10
-    check cfg.skillInterval == 10
-
-  test "env overrides and invalid values fall back":
-    putEnv("DONKEY_REVIEW_ENABLED", "false")
-    putEnv("DONKEY_REVIEW_MEMORY_INTERVAL", "3")
-    putEnv("DONKEY_REVIEW_SKILL_INTERVAL", "nope")
-    defer:
-      delEnv("DONKEY_REVIEW_ENABLED")
-      delEnv("DONKEY_REVIEW_MEMORY_INTERVAL")
-      delEnv("DONKEY_REVIEW_SKILL_INTERVAL")
-    let cfg = reviewConfigFromEnv()
-    check not cfg.enabled
-    check cfg.memoryInterval == 3
-    check cfg.skillInterval == 10
-
-  test "zero disables that half of the review":
-    putEnv("DONKEY_REVIEW_MEMORY_INTERVAL", "0")
-    defer: delEnv("DONKEY_REVIEW_MEMORY_INTERVAL")
-    check reviewConfigFromEnv().memoryInterval == 0
-
-suite "review runtime — what gets written":
-
-  test "keeps a grounded fact with the review origin":
-    let cap = Capture()
-    let runtime = testRuntime(capturePort(cap), home = "",
-                              complete = fakeComplete("""{"memory": ["O deploy usa blue-green."]}"""))
-    let res = waitFor runtime.runReview(UserId("u1"), "s1", userTurn("como fazemos o deploy?"))
-    check res.isOk
-    check res.get().memorySaved == 1
-    check cap.appended.len == 1
-    check cap.appended[0][0] == "O deploy usa blue-green."
-    check cap.appended[0][1].source == msReview
-    check cap.appended[0][1].sessionId == "s1"
-
-  test "nothing to keep writes nothing":
-    let cap = Capture()
-    let runtime = testRuntime(capturePort(cap), home = "",
-                              complete = fakeComplete("""{"nothing": true}"""))
-    let res = waitFor runtime.runReview(UserId("u1"), "s1", userTurn("oi"))
-    check res.isOk
-    check res.get().nothing
-    check res.get().memorySaved == 0
-    check cap.appended.len == 0
-
-  test "a profile target is rejected and never written":
-    let cap = Capture()
-    let runtime = testRuntime(capturePort(cap), home = "",
-                              complete = fakeComplete("""{"user": ["gosta de azul"]}"""))
-    let res = waitFor runtime.runReview(UserId("u1"), "s1", userTurn("eu gosto de azul"))
-    check res.isOk
-    check cap.appended.len == 0
-    check res.get().warnings.len >= 1
-
-  test "malformed JSON is an error and writes nothing":
-    let cap = Capture()
-    let runtime = testRuntime(capturePort(cap), home = "",
-                              complete = fakeComplete("claro! vou pensar nisso"))
-    let res = waitFor runtime.runReview(UserId("u1"), "s1", userTurn("oi"))
-    check res.isErr
-    check cap.appended.len == 0
-
-  test "a failed completion is reported, not swallowed":
-    let cap = Capture()
-    let failing: AsyncCompleteFn = proc (req: CompletionRequest):
-        Future[Result[CompletionResponse, string]] {.gcsafe, async.} =
-      err("provider down")
-    let runtime = testRuntime(capturePort(cap), home = "", complete = failing)
-    let res = waitFor runtime.runReview(UserId("u1"), "s1", userTurn("oi"))
-    check res.isErr
-    check res.error.contains("provider down")
-
-  test "an empty digest asks the model nothing":
-    let cap = Capture()
-    let calls = new(int)
-    let runtime = testRuntime(capturePort(cap), home = "",
-                              complete = fakeComplete("""{"memory": ["x"]}""", calls))
-    let res = waitFor runtime.runReview(UserId("u1"), "s1", @[])
-    check res.isOk
-    check calls[] == 0
-    check cap.appended.len == 0
-
-suite "review runtime — skills":
-
-  test "a lesson lands in LEARNED.md, never in SKILL.md, and loads with the skill":
-    let dir = getTempDir() / "donkey_review_skill"
-    removeDir(dir)
-    defer: removeDir(dir)
-    var lock = defaultRemoteSkillLockfile()
-    installSkill(dir, "deploy", lock)
-    let skillPath = remoteSkillDir(dir, "deploy") / "SKILL.md"
-    let before = readFile(skillPath)
-    let cap = Capture()
-    let runtime = testRuntime(capturePort(cap), home = dir,
-      complete = fakeComplete("""{"skills": [{"slug": "deploy", "lesson": "Rode o gate antes do push."}]}"""))
-    let res = waitFor runtime.runReview(UserId("u1"), "s1", userTurn("o push quebrou o gate"))
-    check res.isOk
-    check res.get().lessonsSaved == 1
-    let learned = readFile(remoteSkillDir(dir, "deploy") / "LEARNED.md")
-    check learned.contains("- Rode o gate antes do push.")
-    check readFile(skillPath) == before
-    let prompt = buildInstalledRemoteSkillPrompt(loadInstalledRemoteSkills(dir))
-    check prompt.contains("Learned notes")
-    check prompt.contains("Rode o gate antes do push.")
-
-  test "the prompt offers only the installed slugs":
-    let dir = getTempDir() / "donkey_review_slugs"
-    removeDir(dir)
-    defer: removeDir(dir)
-    var lock = defaultRemoteSkillLockfile()
-    installSkill(dir, "deploy", lock)
-    let cap = Capture()
-    let seen = new(seq[string])
-    let runtime = testRuntime(capturePort(cap), home = dir,
-      complete = fakeComplete("""{"nothing": true}""", seen = seen))
-    discard waitFor runtime.runReview(UserId("u1"), "s1", userTurn("oi"))
-    check seen[].len == 1
-    check seen[][0].contains("deploy")
-    check not seen[][0].contains("slug-inexistente")
-
-  test "an unknown slug is dropped but the memory fact survives":
-    let dir = getTempDir() / "donkey_review_unknown"
-    removeDir(dir)
-    defer: removeDir(dir)
-    var lock = defaultRemoteSkillLockfile()
-    installSkill(dir, "deploy", lock)
-    let cap = Capture()
-    let runtime = testRuntime(capturePort(cap), home = dir,
-      complete = fakeComplete(
-        """{"memory": ["fato real"], "skills": [{"slug": "inventada", "lesson": "x"}]}"""))
-    let res = waitFor runtime.runReview(UserId("u1"), "s1", userTurn("oi"))
-    check res.isOk
-    check res.get().memorySaved == 1
-    check res.get().lessonsSaved == 0
-    check res.get().warnings.len >= 1
-
-suite "review runtime — cadence and coalescing":
-
-  test "memory review fires on the Nth turn and resets":
-    let cap = Capture()
-    let calls = new(int)
-    let runtime = testRuntime(capturePort(cap), home = "",
-      complete = fakeComplete("""{"memory": ["fato"]}""", calls),
-      memoryInterval = 2)
-    check not runtime.afterTurn(UserId("u1"), "s1", userTurn("primeiro"), 0)
-    check runtime.afterTurn(UserId("u1"), "s1", userTurn("segundo"), 0)
-    runtime.settle()
-    check calls[] == 1
-    check not runtime.afterTurn(UserId("u1"), "s1", userTurn("terceiro"), 0)
-    runtime.settle()
-    check calls[] == 1
-
-  test "skill review counts tool iterations across turns":
-    let cap = Capture()
-    let calls = new(int)
-    let runtime = testRuntime(capturePort(cap), home = "",
-      complete = fakeComplete("""{"nothing": true}""", calls),
-      skillInterval = 5)
-    check not runtime.afterTurn(UserId("u1"), "s1", userTurn("a"), 3)
-    check runtime.afterTurn(UserId("u1"), "s1", userTurn("b"), 2)
-    runtime.settle()
-    check calls[] == 1
-
-  test "counters are per user":
-    let cap = Capture()
-    let calls = new(int)
-    let runtime = testRuntime(capturePort(cap), home = "",
-      complete = fakeComplete("""{"nothing": true}""", calls),
-      memoryInterval = 2)
-    check not runtime.afterTurn(UserId("u1"), "s1", userTurn("a"), 0)
-    check not runtime.afterTurn(UserId("u2"), "s1", userTurn("b"), 0)
-    check runtime.afterTurn(UserId("u1"), "s1", userTurn("c"), 0)
-    runtime.settle()
-    check calls[] == 1
-
-  test "a disabled review never fires automatically":
-    let cap = Capture()
-    let calls = new(int)
-    let runtime = testRuntime(capturePort(cap), home = "",
-      complete = fakeComplete("""{"nothing": true}""", calls),
-      memoryInterval = 1, enabled = false)
-    check not runtime.afterTurn(UserId("u1"), "s1", userTurn("a"), 10)
-    runtime.settle()
-    check calls[] == 0
-    ## An explicit review still works, like /refine.
-    check waitFor(runtime.runReview(UserId("u1"), "s1", userTurn("a"))).isOk
-    check calls[] == 1
-
-  test "one review per user at a time, and the due turn is not lost":
-    let cap = Capture()
-    let state = BlockingComplete(
-      blocked: true, gate: newFuture[Result[CompletionResponse, string]]())
-    let runtime = testRuntime(capturePort(cap), home = "",
-                              complete = blockingComplete(state),
-                              memoryInterval = 1)
-    check runtime.afterTurn(UserId("u1"), "s1", userTurn("a"), 0)
-    check runtime.isRunning(UserId("u1"))
-    ## A turn that arrives while the review is in flight neither starts a
-    ## second one nor loses its place in the cadence.
-    check not runtime.afterTurn(UserId("u1"), "s1", userTurn("b"), 0)
-    state.gate.complete(successResponse("""{"nothing": true}"""))
-    runtime.settle()
-    check not runtime.isRunning(UserId("u1"))
-    check runtime.afterTurn(UserId("u1"), "s1", userTurn("c"), 0)
-    runtime.settle()
-    check state.calls == 2
-
 proc runWiringTurn(userDir: string; port: MemoryRuntimePort;
                    runtime: ReviewRuntime): Future[OutboundMessage] {.async.} =
   let inbox = newAsyncQueue[AgentMessage]()
@@ -353,32 +138,252 @@ proc runWiringTurn(userDir: string; port: MemoryRuntimePort;
   await orchFut
   return reply
 
-suite "review runtime — orchestrator wiring":
 
-  test "a finished user turn feeds the cadence and may write memory":
-    let home = getTempDir() / "donkey_review_orch"
-    removeDir(home)
-    defer: removeDir(home)
-    let userDir = home / "paddocks" / "u1"
-    createDir(userDir)
-    writeFile(userDir / "USER.md", "# Bob")
+proc runTests*() =
+  suite "review config":
 
-    let cap = Capture(paddock: userDir)
-    let port = reviewPort(MdFileAdapter(paddocksDir: home / "paddocks"), cap)
+    test "defaults mirror the reference cadence":
+      delEnv("DONKEY_REVIEW_ENABLED")
+      delEnv("DONKEY_REVIEW_MEMORY_INTERVAL")
+      delEnv("DONKEY_REVIEW_SKILL_INTERVAL")
+      let cfg = reviewConfigFromEnv()
+      check cfg.enabled
+      check cfg.memoryInterval == 10
+      check cfg.skillInterval == 10
 
-    let runtime = testRuntime(port, home = home,
-      complete = fakeComplete("""{"memory": ["O deploy usa blue-green."]}"""),
-      memoryInterval = 1)
+    test "env overrides and invalid values fall back":
+      putEnv("DONKEY_REVIEW_ENABLED", "false")
+      putEnv("DONKEY_REVIEW_MEMORY_INTERVAL", "3")
+      putEnv("DONKEY_REVIEW_SKILL_INTERVAL", "nope")
+      defer:
+        delEnv("DONKEY_REVIEW_ENABLED")
+        delEnv("DONKEY_REVIEW_MEMORY_INTERVAL")
+        delEnv("DONKEY_REVIEW_SKILL_INTERVAL")
+      let cfg = reviewConfigFromEnv()
+      check not cfg.enabled
+      check cfg.memoryInterval == 3
+      check cfg.skillInterval == 10
 
-    let reply = waitFor runWiringTurn(userDir, port, runtime)
-    check reply.text == "pong"
-    runtime.settle()
-    ## The turn itself was auto-captured with the `turn` origin; the review's
-    ## fact is the one carrying `review`.
-    var reviewed = 0
-    for (text, origin) in cap.appended:
-      if origin.source == msReview:
-        inc reviewed
-        check text == "O deploy usa blue-green."
-    check reviewed == 1
-    check readFile(userDir / "MEMORY.md").contains("O deploy usa blue-green.")
+    test "zero disables that half of the review":
+      putEnv("DONKEY_REVIEW_MEMORY_INTERVAL", "0")
+      defer: delEnv("DONKEY_REVIEW_MEMORY_INTERVAL")
+      check reviewConfigFromEnv().memoryInterval == 0
+
+  suite "review runtime — what gets written":
+
+    test "keeps a grounded fact with the review origin":
+      let cap = Capture()
+      let runtime = testRuntime(capturePort(cap), home = "",
+                                complete = fakeComplete("""{"memory": ["O deploy usa blue-green."]}"""))
+      let res = waitFor runtime.runReview(UserId("u1"), "s1", userTurn("como fazemos o deploy?"))
+      check res.isOk
+      check res.get().memorySaved == 1
+      check cap.appended.len == 1
+      check cap.appended[0][0] == "O deploy usa blue-green."
+      check cap.appended[0][1].source == msReview
+      check cap.appended[0][1].sessionId == "s1"
+
+    test "nothing to keep writes nothing":
+      let cap = Capture()
+      let runtime = testRuntime(capturePort(cap), home = "",
+                                complete = fakeComplete("""{"nothing": true}"""))
+      let res = waitFor runtime.runReview(UserId("u1"), "s1", userTurn("oi"))
+      check res.isOk
+      check res.get().nothing
+      check res.get().memorySaved == 0
+      check cap.appended.len == 0
+
+    test "a profile target is rejected and never written":
+      let cap = Capture()
+      let runtime = testRuntime(capturePort(cap), home = "",
+                                complete = fakeComplete("""{"user": ["gosta de azul"]}"""))
+      let res = waitFor runtime.runReview(UserId("u1"), "s1", userTurn("eu gosto de azul"))
+      check res.isOk
+      check cap.appended.len == 0
+      check res.get().warnings.len >= 1
+
+    test "malformed JSON is an error and writes nothing":
+      let cap = Capture()
+      let runtime = testRuntime(capturePort(cap), home = "",
+                                complete = fakeComplete("claro! vou pensar nisso"))
+      let res = waitFor runtime.runReview(UserId("u1"), "s1", userTurn("oi"))
+      check res.isErr
+      check cap.appended.len == 0
+
+    test "a failed completion is reported, not swallowed":
+      let cap = Capture()
+      let failing: AsyncCompleteFn = proc (req: CompletionRequest):
+          Future[Result[CompletionResponse, string]] {.gcsafe, async.} =
+        err("provider down")
+      let runtime = testRuntime(capturePort(cap), home = "", complete = failing)
+      let res = waitFor runtime.runReview(UserId("u1"), "s1", userTurn("oi"))
+      check res.isErr
+      check res.error.contains("provider down")
+
+    test "an empty digest asks the model nothing":
+      let cap = Capture()
+      let calls = new(int)
+      let runtime = testRuntime(capturePort(cap), home = "",
+                                complete = fakeComplete("""{"memory": ["x"]}""", calls))
+      let res = waitFor runtime.runReview(UserId("u1"), "s1", @[])
+      check res.isOk
+      check calls[] == 0
+      check cap.appended.len == 0
+
+  suite "review runtime — skills":
+
+    test "a lesson lands in LEARNED.md, never in SKILL.md, and loads with the skill":
+      let dir = getTempDir() / "donkey_review_skill"
+      removeDir(dir)
+      defer: removeDir(dir)
+      var lock = defaultRemoteSkillLockfile()
+      installSkill(dir, "deploy", lock)
+      let skillPath = remoteSkillDir(dir, "deploy") / "SKILL.md"
+      let before = readFile(skillPath)
+      let cap = Capture()
+      let runtime = testRuntime(capturePort(cap), home = dir,
+        complete = fakeComplete("""{"skills": [{"slug": "deploy", "lesson": "Rode o gate antes do push."}]}"""))
+      let res = waitFor runtime.runReview(UserId("u1"), "s1", userTurn("o push quebrou o gate"))
+      check res.isOk
+      check res.get().lessonsSaved == 1
+      let learned = readFile(remoteSkillDir(dir, "deploy") / "LEARNED.md")
+      check learned.contains("- Rode o gate antes do push.")
+      check readFile(skillPath) == before
+      let prompt = buildInstalledRemoteSkillPrompt(loadInstalledRemoteSkills(dir))
+      check prompt.contains("Learned notes")
+      check prompt.contains("Rode o gate antes do push.")
+
+    test "the prompt offers only the installed slugs":
+      let dir = getTempDir() / "donkey_review_slugs"
+      removeDir(dir)
+      defer: removeDir(dir)
+      var lock = defaultRemoteSkillLockfile()
+      installSkill(dir, "deploy", lock)
+      let cap = Capture()
+      let seen = new(seq[string])
+      let runtime = testRuntime(capturePort(cap), home = dir,
+        complete = fakeComplete("""{"nothing": true}""", seen = seen))
+      discard waitFor runtime.runReview(UserId("u1"), "s1", userTurn("oi"))
+      check seen[].len == 1
+      check seen[][0].contains("deploy")
+      check not seen[][0].contains("slug-inexistente")
+
+    test "an unknown slug is dropped but the memory fact survives":
+      let dir = getTempDir() / "donkey_review_unknown"
+      removeDir(dir)
+      defer: removeDir(dir)
+      var lock = defaultRemoteSkillLockfile()
+      installSkill(dir, "deploy", lock)
+      let cap = Capture()
+      let runtime = testRuntime(capturePort(cap), home = dir,
+        complete = fakeComplete(
+          """{"memory": ["fato real"], "skills": [{"slug": "inventada", "lesson": "x"}]}"""))
+      let res = waitFor runtime.runReview(UserId("u1"), "s1", userTurn("oi"))
+      check res.isOk
+      check res.get().memorySaved == 1
+      check res.get().lessonsSaved == 0
+      check res.get().warnings.len >= 1
+
+  suite "review runtime — cadence and coalescing":
+
+    test "memory review fires on the Nth turn and resets":
+      let cap = Capture()
+      let calls = new(int)
+      let runtime = testRuntime(capturePort(cap), home = "",
+        complete = fakeComplete("""{"memory": ["fato"]}""", calls),
+        memoryInterval = 2)
+      check not runtime.afterTurn(UserId("u1"), "s1", userTurn("primeiro"), 0)
+      check runtime.afterTurn(UserId("u1"), "s1", userTurn("segundo"), 0)
+      runtime.settle()
+      check calls[] == 1
+      check not runtime.afterTurn(UserId("u1"), "s1", userTurn("terceiro"), 0)
+      runtime.settle()
+      check calls[] == 1
+
+    test "skill review counts tool iterations across turns":
+      let cap = Capture()
+      let calls = new(int)
+      let runtime = testRuntime(capturePort(cap), home = "",
+        complete = fakeComplete("""{"nothing": true}""", calls),
+        skillInterval = 5)
+      check not runtime.afterTurn(UserId("u1"), "s1", userTurn("a"), 3)
+      check runtime.afterTurn(UserId("u1"), "s1", userTurn("b"), 2)
+      runtime.settle()
+      check calls[] == 1
+
+    test "counters are per user":
+      let cap = Capture()
+      let calls = new(int)
+      let runtime = testRuntime(capturePort(cap), home = "",
+        complete = fakeComplete("""{"nothing": true}""", calls),
+        memoryInterval = 2)
+      check not runtime.afterTurn(UserId("u1"), "s1", userTurn("a"), 0)
+      check not runtime.afterTurn(UserId("u2"), "s1", userTurn("b"), 0)
+      check runtime.afterTurn(UserId("u1"), "s1", userTurn("c"), 0)
+      runtime.settle()
+      check calls[] == 1
+
+    test "a disabled review never fires automatically":
+      let cap = Capture()
+      let calls = new(int)
+      let runtime = testRuntime(capturePort(cap), home = "",
+        complete = fakeComplete("""{"nothing": true}""", calls),
+        memoryInterval = 1, enabled = false)
+      check not runtime.afterTurn(UserId("u1"), "s1", userTurn("a"), 10)
+      runtime.settle()
+      check calls[] == 0
+      ## An explicit review still works, like /refine.
+      check waitFor(runtime.runReview(UserId("u1"), "s1", userTurn("a"))).isOk
+      check calls[] == 1
+
+    test "one review per user at a time, and the due turn is not lost":
+      let cap = Capture()
+      let state = BlockingComplete(
+        blocked: true, gate: newFuture[Result[CompletionResponse, string]]())
+      let runtime = testRuntime(capturePort(cap), home = "",
+                                complete = blockingComplete(state),
+                                memoryInterval = 1)
+      check runtime.afterTurn(UserId("u1"), "s1", userTurn("a"), 0)
+      check runtime.isRunning(UserId("u1"))
+      ## A turn that arrives while the review is in flight neither starts a
+      ## second one nor loses its place in the cadence.
+      check not runtime.afterTurn(UserId("u1"), "s1", userTurn("b"), 0)
+      state.gate.complete(successResponse("""{"nothing": true}"""))
+      runtime.settle()
+      check not runtime.isRunning(UserId("u1"))
+      check runtime.afterTurn(UserId("u1"), "s1", userTurn("c"), 0)
+      runtime.settle()
+      check state.calls == 2
+
+  suite "review runtime — orchestrator wiring":
+
+    test "a finished user turn feeds the cadence and may write memory":
+      let home = getTempDir() / "donkey_review_orch"
+      removeDir(home)
+      defer: removeDir(home)
+      let userDir = home / "paddocks" / "u1"
+      createDir(userDir)
+      writeFile(userDir / "USER.md", "# Bob")
+
+      let cap = Capture(paddock: userDir)
+      let port = reviewPort(MdFileAdapter(paddocksDir: home / "paddocks"), cap)
+
+      let runtime = testRuntime(port, home = home,
+        complete = fakeComplete("""{"memory": ["O deploy usa blue-green."]}"""),
+        memoryInterval = 1)
+
+      let reply = waitFor runWiringTurn(userDir, port, runtime)
+      check reply.text == "pong"
+      runtime.settle()
+      ## The turn itself was auto-captured with the `turn` origin; the review's
+      ## fact is the one carrying `review`.
+      var reviewed = 0
+      for (text, origin) in cap.appended:
+        if origin.source == msReview:
+          inc reviewed
+          check text == "O deploy usa blue-green."
+      check reviewed == 1
+      check readFile(userDir / "MEMORY.md").contains("O deploy usa blue-green.")
+
+when isMainModule:
+  runTests()

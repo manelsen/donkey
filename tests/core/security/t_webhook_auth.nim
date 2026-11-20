@@ -17,26 +17,30 @@ const
   KatBase64   = "sKRrt+MTE71nWWZPaYrvYSdH9JGlgckmBidZxDuPgPc="
   KatHex      = "b0a46bb7e31313bd6759664f698aef612747f491a581c926062759c43b8f80f7"
 
-suite "hmacSha256 — external known-answer vectors":
-  test "base64 form matches the LINE/DingTalk vector":
-    check hmacSha256Base64(KatSecret, KatBody) == KatBase64
+proc runTests*() =
+  suite "hmacSha256 — external known-answer vectors":
+    test "base64 form matches the LINE/DingTalk vector":
+      check hmacSha256Base64(KatSecret, KatBody) == KatBase64
 
-  test "hex form matches the independently computed digest":
-    check hmacSha256Hex(KatSecret, KatBody) == KatHex
+    test "hex form matches the independently computed digest":
+      check hmacSha256Hex(KatSecret, KatBody) == KatHex
 
-  test "the body is signed byte for byte, not normalized":
-    check hmacSha256Base64(KatSecret, KatBody & "\n") != KatBase64
+    test "the body is signed byte for byte, not normalized":
+      check hmacSha256Base64(KatSecret, KatBody & "\n") != KatBase64
 
-suite "safeEquals":
-  test "equal strings compare true":
-    check safeEquals(KatBase64, KatBase64)
-    check safeEquals("", "")
+  suite "safeEquals":
+    test "equal strings compare true":
+      check safeEquals(KatBase64, KatBase64)
+      check safeEquals("", "")
 
-  test "a same-length mismatch compares false":
-    var wrong = KatBase64
-    wrong[0] = if wrong[0] == 'A': 'B' else: 'A'
-    check not safeEquals(wrong, KatBase64)
+    test "a same-length mismatch compares false":
+      var wrong = KatBase64
+      wrong[0] = if wrong[0] == 'A': 'B' else: 'A'
+      check not safeEquals(wrong, KatBase64)
 
-  test "different lengths compare false without indexing":
-    check not safeEquals("", KatBase64)
-    check not safeEquals(KatBase64, KatBase64[0 ..< 10])
+    test "different lengths compare false without indexing":
+      check not safeEquals("", KatBase64)
+      check not safeEquals(KatBase64, KatBase64[0 ..< 10])
+
+when isMainModule:
+  runTests()

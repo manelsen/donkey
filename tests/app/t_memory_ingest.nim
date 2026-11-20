@@ -23,189 +23,137 @@ proc runIngest(ctx: NativeCtx; input: string): Future[NativeToolResult] {.async.
   let call = ToolCallRequest(id: "m1", name: "memory_ingest", inputJson: input)
   result = await executeNativeTool(call, ctx, SessionState(), @[])
 
-suite "memory_ingest tool":
+proc runTests*() =
+  suite "memory_ingest tool":
 
-  setup:
-    removeDir(TestRoot)
-    createDir(TestRoot)
+    setup:
+      removeDir(TestRoot)
+      createDir(TestRoot)
 
-  teardown:
-    removeDir(TestRoot)
+    teardown:
+      removeDir(TestRoot)
 
-  test "ingests a workspace file in chunks":
-    writeFile(TestRoot / "notes.md",
-      repeat("primeira parte com bastante texto. ", 20) & "\n\n" &
-      repeat("segunda parte com mais texto. ", 20) & "\n\n" &
-      repeat("terceira parte final. ", 20) & "\n")
-    let captured = Capture()
-    let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string): Result[void, string]
-                        {.gcsafe, raises: [].} =
-        {.cast(gcsafe).}:
-          captured.chunks.add(text)
-        ok()
-    )
-    var ctx = NativeCtx(
-      uid: UserId("u1"),
-      channel: ckTelegram,
-      paddockDir: TestRoot,
-      fs: newFsAdapter(),
-      memory: mem,
-      log: ingestLog,
-    )
-    let res = waitFor runIngest(ctx, """{"path":"notes.md","chunk_chars":500}""")
-    check res.handled
-    check res.resultKind == trkOutput
-    let parsed = parseJson(res.text)
-    check parsed["ok"].getBool()
-    check parsed["chunks"].getInt() >= 2
-    let joined = captured.chunks.join("\n")
-    check "primeira parte" in joined
-    check "terceira parte" in joined
+    test "ingests a workspace file in chunks":
+      writeFile(TestRoot / "notes.md",
+        repeat("primeira parte com bastante texto. ", 20) & "\n\n" &
+        repeat("segunda parte com mais texto. ", 20) & "\n\n" &
+        repeat("terceira parte final. ", 20) & "\n")
+      let captured = Capture()
+      let mem = MemoryRuntimePort(
+        appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                          {.gcsafe, raises: [].} =
+          {.cast(gcsafe).}:
+            captured.chunks.add(text)
+          ok()
+      )
+      var ctx = NativeCtx(
+        uid: UserId("u1"),
+        channel: ckTelegram,
+        paddockDir: TestRoot,
+        fs: newFsAdapter(),
+        memory: mem,
+        log: ingestLog,
+      )
+      let res = waitFor runIngest(ctx, """{"path":"notes.md","chunk_chars":500}""")
+      check res.handled
+      check res.resultKind == trkOutput
+      let parsed = parseJson(res.text)
+      check parsed["ok"].getBool()
+      check parsed["chunks"].getInt() >= 2
+      let joined = captured.chunks.join("\n")
+      check "primeira parte" in joined
+      check "terceira parte" in joined
 
-  test "accepts inline text":
-    let captured = Capture()
-    let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string): Result[void, string]
-                        {.gcsafe, raises: [].} =
-        {.cast(gcsafe).}:
-          captured.chunks.add(text)
-        ok()
-    )
-    var ctx = NativeCtx(
-      uid: UserId("u1"),
-      channel: ckTelegram,
-      paddockDir: TestRoot,
-      fs: newFsAdapter(),
-      memory: mem,
-      log: ingestLog,
-    )
-    let res = waitFor runIngest(ctx, """{"text":"uma nota curta","chunk_chars":1000}""")
-    check res.handled
-    check res.resultKind == trkOutput
-    check captured.chunks == @["uma nota curta"]
+    test "accepts inline text":
+      let captured = Capture()
+      let mem = MemoryRuntimePort(
+        appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                          {.gcsafe, raises: [].} =
+          {.cast(gcsafe).}:
+            captured.chunks.add(text)
+          ok()
+      )
+      var ctx = NativeCtx(
+        uid: UserId("u1"),
+        channel: ckTelegram,
+        paddockDir: TestRoot,
+        fs: newFsAdapter(),
+        memory: mem,
+        log: ingestLog,
+      )
+      let res = waitFor runIngest(ctx, """{"text":"uma nota curta","chunk_chars":1000}""")
+      check res.handled
+      check res.resultKind == trkOutput
+      check captured.chunks == @["uma nota curta"]
 
-  test "tags chunks as ingest when the backend records origins":
-    let captured = Capture()
-    let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string): Result[void, string]
-                        {.gcsafe, raises: [].} =
-        {.cast(gcsafe).}:
-          captured.chunks.add("plain:" & text)
-        ok(),
-      appendMemoryFrom: proc(userId: UserId; text: string;
-                             origin: MemoryOrigin): Result[void, string]
-                             {.gcsafe, raises: [].} =
-        {.cast(gcsafe).}:
-          captured.chunks.add($origin.source & ":" & origin.sessionId & ":" & text)
-        ok(),
-    )
-    var ctx = NativeCtx(
-      uid: UserId("u1"),
-      channel: ckTelegram,
-      paddockDir: TestRoot,
-      memory: mem,
-      log: ingestLog,
-      scopeSessionId: "s42",
-    )
-    let res = waitFor runIngest(ctx, """{"text":"uma nota curta","chunk_chars":1000}""")
-    check res.handled
-    check res.resultKind == trkOutput
-    check captured.chunks == @["ingest:s42:uma nota curta"]
+    test "tags chunks as ingest when the backend records origins":
+      let captured = Capture()
+      let mem = MemoryRuntimePort(
+        appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                          {.gcsafe, raises: [].} =
+          {.cast(gcsafe).}:
+            captured.chunks.add("plain:" & text)
+          ok(),
+        appendMemoryFrom: proc(userId: UserId; text: string;
+                               origin: MemoryOrigin): Result[void, string]
+                               {.gcsafe, raises: [].} =
+          {.cast(gcsafe).}:
+            captured.chunks.add($origin.source & ":" & origin.sessionId & ":" & text)
+          ok(),
+      )
+      var ctx = NativeCtx(
+        uid: UserId("u1"),
+        channel: ckTelegram,
+        paddockDir: TestRoot,
+        memory: mem,
+        log: ingestLog,
+        scopeSessionId: "s42",
+      )
+      let res = waitFor runIngest(ctx, """{"text":"uma nota curta","chunk_chars":1000}""")
+      check res.handled
+      check res.resultKind == trkOutput
+      check captured.chunks == @["ingest:s42:uma nota curta"]
 
-  test "reports a backend that fails to store a chunk":
-    let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string): Result[void, string]
-                        {.gcsafe, raises: [].} = ok(),
-      appendMemoryFrom: proc(userId: UserId; text: string;
-                             origin: MemoryOrigin): Result[void, string]
-                             {.gcsafe, raises: [].} =
-        err("graph unavailable"),
-    )
-    var ctx = NativeCtx(
-      uid: UserId("u1"),
-      channel: ckTelegram,
-      paddockDir: TestRoot,
-      memory: mem,
-      log: ingestLog,
-    )
-    let res = waitFor runIngest(ctx, """{"text":"uma nota curta"}""")
-    check res.handled
-    check res.resultKind == trkOperationalError
-    check "graph unavailable" in res.text
+    test "reports a backend that fails to store a chunk":
+      let mem = MemoryRuntimePort(
+        appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                          {.gcsafe, raises: [].} = ok(),
+        appendMemoryFrom: proc(userId: UserId; text: string;
+                               origin: MemoryOrigin): Result[void, string]
+                               {.gcsafe, raises: [].} =
+          err("graph unavailable"),
+      )
+      var ctx = NativeCtx(
+        uid: UserId("u1"),
+        channel: ckTelegram,
+        paddockDir: TestRoot,
+        memory: mem,
+        log: ingestLog,
+      )
+      let res = waitFor runIngest(ctx, """{"text":"uma nota curta"}""")
+      check res.handled
+      check res.resultKind == trkOperationalError
+      check "graph unavailable" in res.text
 
-  test "reports a backend without origins that fails to store a chunk":
-    let mem = MemoryRuntimePort(
-      appendMemory: proc(userId: UserId; text: string): Result[void, string]
-                        {.gcsafe, raises: [].} =
-        err("disk full"),
-    )
-    var ctx = NativeCtx(
-      uid: UserId("u1"),
-      channel: ckTelegram,
-      paddockDir: TestRoot,
-      memory: mem,
-      log: ingestLog,
-    )
-    let res = waitFor runIngest(ctx, """{"text":"uma nota curta"}""")
-    check res.handled
-    check res.resultKind == trkOperationalError
-    check "disk full" in res.text
+    test "reports a backend without origins that fails to store a chunk":
+      let mem = MemoryRuntimePort(
+        appendMemory: proc(userId: UserId; text: string): Result[void, string]
+                          {.gcsafe, raises: [].} =
+          err("disk full"),
+      )
+      var ctx = NativeCtx(
+        uid: UserId("u1"),
+        channel: ckTelegram,
+        paddockDir: TestRoot,
+        memory: mem,
+        log: ingestLog,
+      )
+      let res = waitFor runIngest(ctx, """{"text":"uma nota curta"}""")
+      check res.handled
+      check res.resultKind == trkOperationalError
+      check "disk full" in res.text
 
-  test "rejects path traversal":
-    let mem = MemoryRuntimePort()
-    var ctx = NativeCtx(
-      uid: UserId("u1"),
-      channel: ckTelegram,
-      paddockDir: TestRoot,
-      fs: newFsAdapter(),
-      memory: mem,
-      log: ingestLog,
-    )
-    let res = waitFor runIngest(ctx, """{"path":"../etc/passwd"}""")
-    check res.handled
-    check res.resultKind == trkOperationalError
-    check "outside paddock" in res.text or "path" in res.text
-
-  test "rejects binary files":
-    writeFile(TestRoot / "bin.dat", "abc\0def")
-    let mem = MemoryRuntimePort()
-    var ctx = NativeCtx(
-      uid: UserId("u1"),
-      channel: ckTelegram,
-      paddockDir: TestRoot,
-      fs: newFsAdapter(),
-      memory: mem,
-      log: ingestLog,
-    )
-    let res = waitFor runIngest(ctx, """{"path":"bin.dat"}""")
-    check res.handled
-    check res.resultKind == trkOperationalError
-    check "binary" in res.text
-
-  test "requires exactly one of path or text":
-    let mem = MemoryRuntimePort()
-    var ctx = NativeCtx(
-      uid: UserId("u1"),
-      channel: ckTelegram,
-      paddockDir: TestRoot,
-      fs: newFsAdapter(),
-      memory: mem,
-      log: ingestLog,
-    )
-    let both = waitFor runIngest(ctx, """{"path":"x","text":"y"}""")
-    check both.resultKind == trkOperationalError
-    let neither = waitFor runIngest(ctx, """{}""")
-    check neither.resultKind == trkOperationalError
-
-  when defined(posix):
-    test "rejects a symlink that escapes the paddock":
-      let outsideDir = TestRoot & "_outside"
-      createDir(outsideDir)
-      let outside = outsideDir / "secret.txt"
-      writeFile(outside, "secret")
-      defer: removeDir(outsideDir)
-      createSymlink(outside, TestRoot / "link.txt")
+    test "rejects path traversal":
       let mem = MemoryRuntimePort()
       var ctx = NativeCtx(
         uid: UserId("u1"),
@@ -215,15 +163,13 @@ suite "memory_ingest tool":
         memory: mem,
         log: ingestLog,
       )
-      let res = waitFor runIngest(ctx, """{"path":"link.txt"}""")
+      let res = waitFor runIngest(ctx, """{"path":"../etc/passwd"}""")
       check res.handled
       check res.resultKind == trkOperationalError
-      check "symlink" in res.text or "outside paddock" in res.text
+      check "outside paddock" in res.text or "path" in res.text
 
-    test "rejects a dangling symlink":
-      let outside = TestRoot & "_missing_outside.txt"
-      removeFile(outside)
-      createSymlink(outside, TestRoot / "dangling.txt")
+    test "rejects binary files":
+      writeFile(TestRoot / "bin.dat", "abc\0def")
       let mem = MemoryRuntimePort()
       var ctx = NativeCtx(
         uid: UserId("u1"),
@@ -233,18 +179,34 @@ suite "memory_ingest tool":
         memory: mem,
         log: ingestLog,
       )
-      let res = waitFor runIngest(ctx, """{"path":"dangling.txt"}""")
+      let res = waitFor runIngest(ctx, """{"path":"bin.dat"}""")
       check res.handled
       check res.resultKind == trkOperationalError
-      check "symlink" in res.text or "resolve" in res.text
+      check "binary" in res.text
 
-    test "unreadable file returns an operational error":
-      if getuid() == 0:
-        check true
-      else:
-        let path = TestRoot / "secret.txt"
-        writeFile(path, "secret")
-        setFilePermissions(path, {})
+    test "requires exactly one of path or text":
+      let mem = MemoryRuntimePort()
+      var ctx = NativeCtx(
+        uid: UserId("u1"),
+        channel: ckTelegram,
+        paddockDir: TestRoot,
+        fs: newFsAdapter(),
+        memory: mem,
+        log: ingestLog,
+      )
+      let both = waitFor runIngest(ctx, """{"path":"x","text":"y"}""")
+      check both.resultKind == trkOperationalError
+      let neither = waitFor runIngest(ctx, """{}""")
+      check neither.resultKind == trkOperationalError
+
+    when defined(posix):
+      test "rejects a symlink that escapes the paddock":
+        let outsideDir = TestRoot & "_outside"
+        createDir(outsideDir)
+        let outside = outsideDir / "secret.txt"
+        writeFile(outside, "secret")
+        defer: removeDir(outsideDir)
+        createSymlink(outside, TestRoot / "link.txt")
         let mem = MemoryRuntimePort()
         var ctx = NativeCtx(
           uid: UserId("u1"),
@@ -254,7 +216,49 @@ suite "memory_ingest tool":
           memory: mem,
           log: ingestLog,
         )
-        let res = waitFor runIngest(ctx, """{"path":"secret.txt"}""")
+        let res = waitFor runIngest(ctx, """{"path":"link.txt"}""")
         check res.handled
         check res.resultKind == trkOperationalError
-        check "read" in res.text or "inspect" in res.text
+        check "symlink" in res.text or "outside paddock" in res.text
+
+      test "rejects a dangling symlink":
+        let outside = TestRoot & "_missing_outside.txt"
+        removeFile(outside)
+        createSymlink(outside, TestRoot / "dangling.txt")
+        let mem = MemoryRuntimePort()
+        var ctx = NativeCtx(
+          uid: UserId("u1"),
+          channel: ckTelegram,
+          paddockDir: TestRoot,
+          fs: newFsAdapter(),
+          memory: mem,
+          log: ingestLog,
+        )
+        let res = waitFor runIngest(ctx, """{"path":"dangling.txt"}""")
+        check res.handled
+        check res.resultKind == trkOperationalError
+        check "symlink" in res.text or "resolve" in res.text
+
+      test "unreadable file returns an operational error":
+        if getuid() == 0:
+          check true
+        else:
+          let path = TestRoot / "secret.txt"
+          writeFile(path, "secret")
+          setFilePermissions(path, {})
+          let mem = MemoryRuntimePort()
+          var ctx = NativeCtx(
+            uid: UserId("u1"),
+            channel: ckTelegram,
+            paddockDir: TestRoot,
+            fs: newFsAdapter(),
+            memory: mem,
+            log: ingestLog,
+          )
+          let res = waitFor runIngest(ctx, """{"path":"secret.txt"}""")
+          check res.handled
+          check res.resultKind == trkOperationalError
+          check "read" in res.text or "inspect" in res.text
+
+when isMainModule:
+  runTests()

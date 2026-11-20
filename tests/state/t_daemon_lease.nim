@@ -27,83 +27,87 @@ proc writeLease(path: string; pid: int; host: string) =
   createDir(parentDir(path))
   writeFile(path, $(%* {"pid": pid, "host": host, "startedAtMs": 1}))
 
-suite "lease purity":
+proc runTests*() =
+  suite "lease purity":
 
-  test "a dead pid on the same host is stale":
-    check leaseIsStale(LeaseRecord(pid: 10, host: "h"), "h", pidAlive = false)
+    test "a dead pid on the same host is stale":
+      check leaseIsStale(LeaseRecord(pid: 10, host: "h"), "h", pidAlive = false)
 
-  test "a live pid on the same host is not stale":
-    check not leaseIsStale(LeaseRecord(pid: 10, host: "h"), "h", pidAlive = true)
+    test "a live pid on the same host is not stale":
+      check not leaseIsStale(LeaseRecord(pid: 10, host: "h"), "h", pidAlive = true)
 
-  test "a lease from another host is never stale":
-    check not leaseIsStale(LeaseRecord(pid: 10, host: "other"), "h", pidAlive = false)
+    test "a lease from another host is never stale":
+      check not leaseIsStale(LeaseRecord(pid: 10, host: "other"), "h", pidAlive = false)
 
-  test "a record without a host is judged by its pid":
-    check leaseIsStale(LeaseRecord(pid: 10, host: ""), "h", pidAlive = false)
+    test "a record without a host is judged by its pid":
+      check leaseIsStale(LeaseRecord(pid: 10, host: ""), "h", pidAlive = false)
 
-  test "round-trips through JSON":
-    let record = LeaseRecord(pid: 42, host: "h", startedAtMs: 99)
-    check decodeLease(encodeLease(record)).get() == record
+    test "round-trips through JSON":
+      let record = LeaseRecord(pid: 42, host: "h", startedAtMs: 99)
+      check decodeLease(encodeLease(record)).get() == record
 
-  test "a corrupt record decodes to none":
-    check decodeLease("not json").isNone
-    check decodeLease("{}").isNone
+    test "a corrupt record decodes to none":
+      check decodeLease("not json").isNone
+      check decodeLease("{}").isNone
 
-suite "daemon lease":
+  suite "daemon lease":
 
-  test "a fresh state directory acquires the lease":
-    let dir = freshDir("fresh")
-    defer: cleanup(dir)
-    let lease = acquireDaemonLease(dir, nowMs = 100)
-    check lease.isOk
-    check lease.get().held
-    check fileExists(leasePath(dir))
+    test "a fresh state directory acquires the lease":
+      let dir = freshDir("fresh")
+      defer: cleanup(dir)
+      let lease = acquireDaemonLease(dir, nowMs = 100)
+      check lease.isOk
+      check lease.get().held
+      check fileExists(leasePath(dir))
 
-  test "a live lease blocks a second daemon":
-    let dir = freshDir("live")
-    defer: cleanup(dir)
-    let first = acquireDaemonLease(dir)
-    check first.isOk
-    let second = acquireDaemonLease(dir)
-    check second.isErr
-    check second.error.contains("already running")
-    var released = first.get()
-    releaseDaemonLease(released)
+    test "a live lease blocks a second daemon":
+      let dir = freshDir("live")
+      defer: cleanup(dir)
+      let first = acquireDaemonLease(dir)
+      check first.isOk
+      let second = acquireDaemonLease(dir)
+      check second.isErr
+      check second.error.contains("already running")
+      var released = first.get()
+      releaseDaemonLease(released)
 
-  test "releasing removes the lease and allows a new acquire":
-    let dir = freshDir("release")
-    defer: cleanup(dir)
-    var lease = acquireDaemonLease(dir).get()
-    releaseDaemonLease(lease)
-    check not lease.held
-    check not fileExists(leasePath(dir))
-    check acquireDaemonLease(dir).isOk
+    test "releasing removes the lease and allows a new acquire":
+      let dir = freshDir("release")
+      defer: cleanup(dir)
+      var lease = acquireDaemonLease(dir).get()
+      releaseDaemonLease(lease)
+      check not lease.held
+      check not fileExists(leasePath(dir))
+      check acquireDaemonLease(dir).isOk
 
-  test "a lease from a dead pid is taken over":
-    let dir = freshDir("stale")
-    defer: cleanup(dir)
-    writeLease(leasePath(dir), pid = 2_000_000_000, host = daemonHost())
-    let lease = acquireDaemonLease(dir, nowMs = 500)
-    check lease.isOk
-    let stored = decodeLease(readFile(leasePath(dir))).get()
-    check stored.pid == getCurrentProcessId()
+    test "a lease from a dead pid is taken over":
+      let dir = freshDir("stale")
+      defer: cleanup(dir)
+      writeLease(leasePath(dir), pid = 2_000_000_000, host = daemonHost())
+      let lease = acquireDaemonLease(dir, nowMs = 500)
+      check lease.isOk
+      let stored = decodeLease(readFile(leasePath(dir))).get()
+      check stored.pid == getCurrentProcessId()
 
-  test "a lease from another host is not taken over":
-    let dir = freshDir("otherhost")
-    defer: cleanup(dir)
-    writeLease(leasePath(dir), pid = 2_000_000_000, host = "some-other-host")
-    check acquireDaemonLease(dir).isErr
+    test "a lease from another host is not taken over":
+      let dir = freshDir("otherhost")
+      defer: cleanup(dir)
+      writeLease(leasePath(dir), pid = 2_000_000_000, host = "some-other-host")
+      check acquireDaemonLease(dir).isErr
 
-  test "release does not remove a successor's lease":
-    let dir = freshDir("successor")
-    defer: cleanup(dir)
-    var lease = acquireDaemonLease(dir).get()
-    writeLease(leasePath(dir), pid = 2_000_000_000, host = daemonHost())
-    releaseDaemonLease(lease)
-    check fileExists(leasePath(dir))
+    test "release does not remove a successor's lease":
+      let dir = freshDir("successor")
+      defer: cleanup(dir)
+      var lease = acquireDaemonLease(dir).get()
+      writeLease(leasePath(dir), pid = 2_000_000_000, host = daemonHost())
+      releaseDaemonLease(lease)
+      check fileExists(leasePath(dir))
 
-  test "a corrupt lease does not block startup":
-    let dir = freshDir("corrupt")
-    defer: cleanup(dir)
-    writeFile(leasePath(dir), "garbage")
-    check acquireDaemonLease(dir).isOk
+    test "a corrupt lease does not block startup":
+      let dir = freshDir("corrupt")
+      defer: cleanup(dir)
+      writeFile(leasePath(dir), "garbage")
+      check acquireDaemonLease(dir).isOk
+
+when isMainModule:
+  runTests()

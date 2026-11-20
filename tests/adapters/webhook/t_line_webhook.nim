@@ -44,95 +44,99 @@ proc drainQueue(a: var LineAdapter) =
 # receiver starts accepting payloads).
 openQueue()
 
-suite "LINE webhook route — acceptance":
+proc runTests*() =
+  suite "LINE webhook route — acceptance":
 
-  test "a valid signature returns 200 and enqueues the event":
-    var ln = newAdapter()
-    drainQueue(ln)
+    test "a valid signature returns 200 and enqueues the event":
+      var ln = newAdapter()
+      drainQueue(ln)
 
-    let body = readFile(Fixtures / "webhook_text.json")
-    let resp = handleWebhookRequest(
-      WebhookConfig(lineChannelSecret: TestSecret),
-      mkReq("POST", LinePath, body,
-            headers = [(LineSignatureHeader, sign(body))]))
+      let body = readFile(Fixtures / "webhook_text.json")
+      let resp = handleWebhookRequest(
+        WebhookConfig(lineChannelSecret: TestSecret),
+        mkReq("POST", LinePath, body,
+              headers = [(LineSignatureHeader, sign(body))]))
 
-    check resp.status == 200
-    check resp.body == "ok"
-    let (hasEvent, event) = ln.tryRecvEvent()
-    check hasEvent
-    check event.eventId == "01H8Y6Q4Z3J9K2M5N7P8R9S0T1"
-    check event.senderId == "U4af4980629a1c5f5b1a1f0e7b7a1e111"
-    check event.text == "Hello from LINE"
-    check not ln.tryRecvEvent()[0]  ## exactly one event
+      check resp.status == 200
+      check resp.body == "ok"
+      let (hasEvent, event) = ln.tryRecvEvent()
+      check hasEvent
+      check event.eventId == "01H8Y6Q4Z3J9K2M5N7P8R9S0T1"
+      check event.senderId == "U4af4980629a1c5f5b1a1f0e7b7a1e111"
+      check event.text == "Hello from LINE"
+      check not ln.tryRecvEvent()[0]  ## exactly one event
 
-  test "the console Verify payload is 200 and enqueues nothing":
-    var ln = newAdapter()
-    drainQueue(ln)
+    test "the console Verify payload is 200 and enqueues nothing":
+      var ln = newAdapter()
+      drainQueue(ln)
 
-    let body = readFile(Fixtures / "webhook_empty_events.json")
-    let resp = handleWebhookRequest(
-      WebhookConfig(lineChannelSecret: TestSecret),
-      mkReq("POST", LinePath, body,
-            headers = [(LineSignatureHeader, sign(body))]))
+      let body = readFile(Fixtures / "webhook_empty_events.json")
+      let resp = handleWebhookRequest(
+        WebhookConfig(lineChannelSecret: TestSecret),
+        mkReq("POST", LinePath, body,
+              headers = [(LineSignatureHeader, sign(body))]))
 
-    check resp.status == 200
-    check resp.body == "ok"
-    check not ln.tryRecvEvent()[0]
+      check resp.status == 200
+      check resp.body == "ok"
+      check not ln.tryRecvEvent()[0]
 
-  test "DingTalk and LINE share the same ingress path constants":
-    check LinePath == "/webhook/line"
-    check LineSignatureHeader == "X-Line-Signature"
+    test "DingTalk and LINE share the same ingress path constants":
+      check LinePath == "/webhook/line"
+      check LineSignatureHeader == "X-Line-Signature"
 
-suite "LINE webhook route — rejections":
+  suite "LINE webhook route — rejections":
 
-  test "a wrong signature is 403 and enqueues nothing":
-    var ln = newAdapter()
-    drainQueue(ln)
+    test "a wrong signature is 403 and enqueues nothing":
+      var ln = newAdapter()
+      drainQueue(ln)
 
-    let body = readFile(Fixtures / "webhook_text.json")
-    let resp = handleWebhookRequest(
-      WebhookConfig(lineChannelSecret: TestSecret),
-      mkReq("POST", LinePath, body,
-            headers = [(LineSignatureHeader, sign(body, "another-secret"))]))
+      let body = readFile(Fixtures / "webhook_text.json")
+      let resp = handleWebhookRequest(
+        WebhookConfig(lineChannelSecret: TestSecret),
+        mkReq("POST", LinePath, body,
+              headers = [(LineSignatureHeader, sign(body, "another-secret"))]))
 
-    check resp.status == 403
-    check not ln.tryRecvEvent()[0]
+      check resp.status == 403
+      check not ln.tryRecvEvent()[0]
 
-  test "a missing signature is 403":
-    let body = readFile(Fixtures / "webhook_text.json")
-    let resp = handleWebhookRequest(
-      WebhookConfig(lineChannelSecret: TestSecret),
-      mkReq("POST", LinePath, body))
-    check resp.status == 403
+    test "a missing signature is 403":
+      let body = readFile(Fixtures / "webhook_text.json")
+      let resp = handleWebhookRequest(
+        WebhookConfig(lineChannelSecret: TestSecret),
+        mkReq("POST", LinePath, body))
+      check resp.status == 403
 
-  test "an empty secret makes the route look absent":
-    let body = readFile(Fixtures / "webhook_text.json")
-    let resp = handleWebhookRequest(
-      WebhookConfig(),
-      mkReq("POST", LinePath, body,
-            headers = [(LineSignatureHeader, sign(body))]))
-    check resp.status == 404
+    test "an empty secret makes the route look absent":
+      let body = readFile(Fixtures / "webhook_text.json")
+      let resp = handleWebhookRequest(
+        WebhookConfig(),
+        mkReq("POST", LinePath, body,
+              headers = [(LineSignatureHeader, sign(body))]))
+      check resp.status == 404
 
-  test "a non-POST method is 405":
-    let body = readFile(Fixtures / "webhook_text.json")
-    let resp = handleWebhookRequest(
-      WebhookConfig(lineChannelSecret: TestSecret),
-      mkReq("GET", LinePath, body,
-            headers = [(LineSignatureHeader, sign(body))]))
-    check resp.status == 405
+    test "a non-POST method is 405":
+      let body = readFile(Fixtures / "webhook_text.json")
+      let resp = handleWebhookRequest(
+        WebhookConfig(lineChannelSecret: TestSecret),
+        mkReq("GET", LinePath, body,
+              headers = [(LineSignatureHeader, sign(body))]))
+      check resp.status == 405
 
-  test "a body over 1 MiB is 413":
-    let body = repeat('a', 1024 * 1024 + 1)
-    let resp = handleWebhookRequest(
-      WebhookConfig(lineChannelSecret: TestSecret),
-      mkReq("POST", LinePath, body,
-            headers = [(LineSignatureHeader, sign(body))]))
-    check resp.status == 413
+    test "a body over 1 MiB is 413":
+      let body = repeat('a', 1024 * 1024 + 1)
+      let resp = handleWebhookRequest(
+        WebhookConfig(lineChannelSecret: TestSecret),
+        mkReq("POST", LinePath, body,
+              headers = [(LineSignatureHeader, sign(body))]))
+      check resp.status == 413
 
-  test "malformed JSON with a valid signature is 400":
-    let body = """{"events": ["""
-    let resp = handleWebhookRequest(
-      WebhookConfig(lineChannelSecret: TestSecret),
-      mkReq("POST", LinePath, body,
-            headers = [(LineSignatureHeader, sign(body))]))
-    check resp.status == 400
+    test "malformed JSON with a valid signature is 400":
+      let body = """{"events": ["""
+      let resp = handleWebhookRequest(
+        WebhookConfig(lineChannelSecret: TestSecret),
+        mkReq("POST", LinePath, body,
+              headers = [(LineSignatureHeader, sign(body))]))
+      check resp.status == 400
+
+when isMainModule:
+  runTests()

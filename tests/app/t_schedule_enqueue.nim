@@ -108,231 +108,235 @@ proc primeSession(sm: var SessionManager; services: SessionIngressServices;
   )
   discard startSessionIngress(sm, msg, services, msgSeq)
 
-suite "schedule enqueue — success path":
+proc runTests*() =
+  suite "schedule enqueue — success path":
 
-  test "a valid spec enqueues exactly one tkSchedule task":
-    let base = tempBase("ok")
-    defer: removeDir(base)
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = makeServices(base, outbox)
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
-    let spec = makeSpec()
-    primeSession(sm, services, msgSeq, UserIdOk)
-    check msgSeq == 1
+    test "a valid spec enqueues exactly one tkSchedule task":
+      let base = tempBase("ok")
+      defer: removeDir(base)
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = makeServices(base, outbox)
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
+      let spec = makeSpec()
+      primeSession(sm, services, msgSeq, UserIdOk)
+      check msgSeq == 1
 
-    let res = enqueueScheduledTask(sm, services, msgSeq, spec, FiredAtMs)
+      let res = enqueueScheduledTask(sm, services, msgSeq, spec, FiredAtMs)
 
-    check res.isOk
-    let uid = UserId(UserIdOk)
-    check sm.hasSession(uid)
-    var entry = sm.entries[UserIdOk]
-    check entry.inbox.len == 1
-    let task = entry.inbox.popFirstNoWait()
-    check task.kind == amkTask
-    check task.taskKind == tkSchedule
-    check task.userId == UserIdOk
-    check task.channel == ckTelegram
-    ## The spec's own payload reaches the turn unchanged (prefixed prose)...
-    check task.payload.startsWith(spec.payload)
-    ## ...and the fired instant is recorded in the payload, not dropped.
-    check ("[schedule sched-1 fired at " & $FiredAtMs & " ms]") in task.payload
-    ## Exactly one ingress context was consumed.
-    check msgSeq == 2
+      check res.isOk
+      let uid = UserId(UserIdOk)
+      check sm.hasSession(uid)
+      var entry = sm.entries[UserIdOk]
+      check entry.inbox.len == 1
+      let task = entry.inbox.popFirstNoWait()
+      check task.kind == amkTask
+      check task.taskKind == tkSchedule
+      check task.userId == UserIdOk
+      check task.channel == ckTelegram
+      ## The spec's own payload reaches the turn unchanged (prefixed prose)...
+      check task.payload.startsWith(spec.payload)
+      ## ...and the fired instant is recorded in the payload, not dropped.
+      check ("[schedule sched-1 fired at " & $FiredAtMs & " ms]") in task.payload
+      ## Exactly one ingress context was consumed.
+      check msgSeq == 2
 
-  test "a firing is not recorded as user activity":
-    let base = tempBase("activity")
-    defer: removeDir(base)
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = makeServices(base, outbox)
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
-    primeSession(sm, services, msgSeq, UserIdOk)
-    let before = sm.entries[UserIdOk].lastInboundEpochMs
-    sleep(5)  # ensure the clock would move
-    let res = enqueueScheduledTask(sm, services, msgSeq, makeSpec(), FiredAtMs)
-    check res.isOk
-    check sm.entries[UserIdOk].lastInboundEpochMs == before
+    test "a firing is not recorded as user activity":
+      let base = tempBase("activity")
+      defer: removeDir(base)
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = makeServices(base, outbox)
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
+      primeSession(sm, services, msgSeq, UserIdOk)
+      let before = sm.entries[UserIdOk].lastInboundEpochMs
+      sleep(5)  # ensure the clock would move
+      let res = enqueueScheduledTask(sm, services, msgSeq, makeSpec(), FiredAtMs)
+      check res.isOk
+      check sm.entries[UserIdOk].lastInboundEpochMs == before
 
-  test "the recorded channel follows the spec, not a session default":
-    let base = tempBase("channel")
-    defer: removeDir(base)
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = makeServices(base, outbox)
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
-    let spec = makeSpec(userId = "u-slack", channel = "slack")
-    primeSession(sm, services, msgSeq, "u-slack")
-    check msgSeq == 1
+    test "the recorded channel follows the spec, not a session default":
+      let base = tempBase("channel")
+      defer: removeDir(base)
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = makeServices(base, outbox)
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
+      let spec = makeSpec(userId = "u-slack", channel = "slack")
+      primeSession(sm, services, msgSeq, "u-slack")
+      check msgSeq == 1
 
-    check enqueueScheduledTask(sm, services, msgSeq, spec, FiredAtMs).isOk
+      check enqueueScheduledTask(sm, services, msgSeq, spec, FiredAtMs).isOk
 
-    var entry = sm.entries["u-slack"]
-    check entry.inbox.len == 1
-    let task = entry.inbox.popFirstNoWait()
-    check task.taskKind == tkSchedule
-    check task.channel == ckSlack
-    check task.userId == "u-slack"
+      var entry = sm.entries["u-slack"]
+      check entry.inbox.len == 1
+      let task = entry.inbox.popFirstNoWait()
+      check task.taskKind == tkSchedule
+      check task.channel == ckSlack
+      check task.userId == "u-slack"
 
-  test "the ScheduleEnqueueFn adapter reports Ok and forwards the instant":
-    let base = tempBase("adapter")
-    defer: removeDir(base)
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = makeServices(base, outbox)
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
-    let spec = makeSpec(id = "sched-adapter")
-    primeSession(sm, services, msgSeq, UserIdOk)
-    let enqueue = scheduleEnqueueFn(addr sm, services, addr msgSeq)
+    test "the ScheduleEnqueueFn adapter reports Ok and forwards the instant":
+      let base = tempBase("adapter")
+      defer: removeDir(base)
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = makeServices(base, outbox)
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
+      let spec = makeSpec(id = "sched-adapter")
+      primeSession(sm, services, msgSeq, UserIdOk)
+      let enqueue = scheduleEnqueueFn(addr sm, services, addr msgSeq)
 
-    let res = enqueue(spec, FiredAtMs)
+      let res = enqueue(spec, FiredAtMs)
 
-    check res.isOk
-    var entry = sm.entries[UserIdOk]
-    check entry.inbox.len == 1
-    let task = entry.inbox.popFirstNoWait()
-    check task.taskKind == tkSchedule
-    check ("[schedule sched-adapter fired at " & $FiredAtMs & " ms]") in
-      task.payload
+      check res.isOk
+      var entry = sm.entries[UserIdOk]
+      check entry.inbox.len == 1
+      let task = entry.inbox.popFirstNoWait()
+      check task.taskKind == tkSchedule
+      check ("[schedule sched-adapter fired at " & $FiredAtMs & " ms]") in
+        task.payload
 
-suite "schedule enqueue — dropped firings are errors":
+  suite "schedule enqueue — dropped firings are errors":
 
-  test "empty user id is Err and nothing is enqueued":
-    let base = tempBase("empty")
-    defer: removeDir(base)
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = makeServices(base, outbox)
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
+    test "empty user id is Err and nothing is enqueued":
+      let base = tempBase("empty")
+      defer: removeDir(base)
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = makeServices(base, outbox)
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
 
-    let res = enqueueScheduledTask(
-      sm, services, msgSeq, makeSpec(userId = ""), FiredAtMs)
+      let res = enqueueScheduledTask(
+        sm, services, msgSeq, makeSpec(userId = ""), FiredAtMs)
 
-    check res.isErr
-    check res.error == "scheduled task dropped: empty user id"
-    check msgSeq == 0
-    check sm.entries.len == 0
+      check res.isErr
+      check res.error == "scheduled task dropped: empty user id"
+      check msgSeq == 0
+      check sm.entries.len == 0
 
-  test "whitespace-only user id is Err and nothing is enqueued":
-    let base = tempBase("blank")
-    defer: removeDir(base)
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = makeServices(base, outbox)
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
+    test "whitespace-only user id is Err and nothing is enqueued":
+      let base = tempBase("blank")
+      defer: removeDir(base)
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = makeServices(base, outbox)
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
 
-    let res = enqueueScheduledTask(
-      sm, services, msgSeq, makeSpec(userId = "   "), FiredAtMs)
+      let res = enqueueScheduledTask(
+        sm, services, msgSeq, makeSpec(userId = "   "), FiredAtMs)
 
-    check res.isErr
-    check msgSeq == 0
-    check sm.entries.len == 0
+      check res.isErr
+      check msgSeq == 0
+      check sm.entries.len == 0
 
-  test "revoked user is Err and nothing is enqueued":
-    let base = tempBase("revoked")
-    defer: removeDir(base)
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = makeServices(
-      base, outbox,
-      isRevoked = proc(u: UserId): bool {.gcsafe.} = u == UserId(UserIdOk),
-    )
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
+    test "revoked user is Err and nothing is enqueued":
+      let base = tempBase("revoked")
+      defer: removeDir(base)
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = makeServices(
+        base, outbox,
+        isRevoked = proc(u: UserId): bool {.gcsafe.} = u == UserId(UserIdOk),
+      )
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
 
-    let res = enqueueScheduledTask(sm, services, msgSeq, makeSpec(), FiredAtMs)
+      let res = enqueueScheduledTask(sm, services, msgSeq, makeSpec(), FiredAtMs)
 
-    check res.isErr
-    check res.error == "scheduled task dropped: user revoked"
-    check msgSeq == 0
-    check sm.entries.len == 0
+      check res.isErr
+      check res.error == "scheduled task dropped: user revoked"
+      check msgSeq == 0
+      check sm.entries.len == 0
 
-  test "DM policy denial on the spec channel is Err, with no unauthorized reply":
-    let base = tempBase("denied")
-    defer: removeDir(base)
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = makeServices(
-      base, outbox,
-      isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false,
-      dmPolicy = DmPolicyAllowlist,
-    )
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
+    test "DM policy denial on the spec channel is Err, with no unauthorized reply":
+      let base = tempBase("denied")
+      defer: removeDir(base)
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = makeServices(
+        base, outbox,
+        isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false,
+        dmPolicy = DmPolicyAllowlist,
+      )
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
 
-    let res = enqueueScheduledTask(sm, services, msgSeq, makeSpec(), FiredAtMs)
+      let res = enqueueScheduledTask(sm, services, msgSeq, makeSpec(), FiredAtMs)
 
-    check res.isErr
-    check res.error == "scheduled task dropped: denied or revoked"
-    check msgSeq == 0
-    check sm.entries.len == 0
-    ## A background task must not emit the "não autorizado" user-facing reply.
-    check outbox.len == 0
+      check res.isErr
+      check res.error == "scheduled task dropped: denied or revoked"
+      check msgSeq == 0
+      check sm.entries.len == 0
+      ## A background task must not emit the "não autorizado" user-facing reply.
+      check outbox.len == 0
 
-  test "the ScheduleEnqueueFn adapter propagates the denial as Err":
-    let base = tempBase("adapter-denied")
-    defer: removeDir(base)
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = makeServices(
-      base, outbox,
-      isRevoked = proc(u: UserId): bool {.gcsafe.} = true,
-    )
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
-    let enqueue = scheduleEnqueueFn(addr sm, services, addr msgSeq)
+    test "the ScheduleEnqueueFn adapter propagates the denial as Err":
+      let base = tempBase("adapter-denied")
+      defer: removeDir(base)
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = makeServices(
+        base, outbox,
+        isRevoked = proc(u: UserId): bool {.gcsafe.} = true,
+      )
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
+      let enqueue = scheduleEnqueueFn(addr sm, services, addr msgSeq)
 
-    let res = enqueue(makeSpec(), FiredAtMs)
+      let res = enqueue(makeSpec(), FiredAtMs)
 
-    check res.isErr
-    check res.error == "scheduled task dropped: user revoked"
-    check msgSeq == 0
-    check sm.entries.len == 0
+      check res.isErr
+      check res.error == "scheduled task dropped: user revoked"
+      check msgSeq == 0
+      check sm.entries.len == 0
 
-  test "unknown channel is Err and nothing is enqueued":
-    let base = tempBase("channel-unknown")
-    defer: removeDir(base)
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = makeServices(base, outbox)
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
+    test "unknown channel is Err and nothing is enqueued":
+      let base = tempBase("channel-unknown")
+      defer: removeDir(base)
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = makeServices(base, outbox)
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
 
-    let res = enqueueScheduledTask(
-      sm, services, msgSeq, makeSpec(channel = "carrier-pigeon"), FiredAtMs)
+      let res = enqueueScheduledTask(
+        sm, services, msgSeq, makeSpec(channel = "carrier-pigeon"), FiredAtMs)
 
-    check res.isErr
-    check msgSeq == 0
-    check sm.entries.len == 0
+      check res.isErr
+      check msgSeq == 0
+      check sm.entries.len == 0
 
-suite "TaskKind — tkSchedule is additive":
+  suite "TaskKind — tkSchedule is additive":
 
-  test "tkSchedule does not move the existing ordinals":
-    ## `TaskKind` ordinals are part of the message contract: the new member is
-    ## appended after `tkHeartbeat`.
-    check ord(tkUserMsg) == 0
-    check ord(tkHeartbeat) == 15
-    check ord(tkSchedule) == ord(tkHeartbeat) + 1
+    test "tkSchedule does not move the existing ordinals":
+      ## `TaskKind` ordinals are part of the message contract: the new member is
+      ## appended after `tkHeartbeat`.
+      check ord(tkUserMsg) == 0
+      check ord(tkHeartbeat) == 15
+      check ord(tkSchedule) == ord(tkHeartbeat) + 1
 
-  test "tkSchedule stringifies by name":
-    check $tkSchedule == "tkSchedule"
+    test "tkSchedule stringifies by name":
+      check $tkSchedule == "tkSchedule"
 
-  test "an api: user is refused: their replies are request-scoped":
-    let base = tempBase("api-user")
-    defer: removeDir(base)
-    let outbox = newAsyncQueue[OutboundMessage]()
-    let services = makeServices(base, outbox)
-    var sm: SessionManager
-    sm.init()
-    var msgSeq = 0
-    let res = enqueueScheduledTask(sm, services, msgSeq,
-                                   makeSpec(userId = "api:alice"), FiredAtMs)
-    check res.isErr
-    check "request-scoped" in res.error
-    check msgSeq == 0
+    test "an api: user is refused: their replies are request-scoped":
+      let base = tempBase("api-user")
+      defer: removeDir(base)
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let services = makeServices(base, outbox)
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
+      let res = enqueueScheduledTask(sm, services, msgSeq,
+                                     makeSpec(userId = "api:alice"), FiredAtMs)
+      check res.isErr
+      check "request-scoped" in res.error
+      check msgSeq == 0
+
+when isMainModule:
+  runTests()
