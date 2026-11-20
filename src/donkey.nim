@@ -1091,8 +1091,15 @@ proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
     let oneBotPort = Port(parseInt(
       if getEnv("QQ_ONEBOT_WEBHOOK_PORT").len > 0:
         getEnv("QQ_ONEBOT_WEBHOOK_PORT") else: "8082"))
-    qqAdapter.startWebhook(oneBotPort, log)
-    log.info("QQ OneBot webhook listener started on port " & $oneBotPort)
+    let oneBotHost =
+      if getEnv("QQ_ONEBOT_WEBHOOK_HOST").len > 0: getEnv("QQ_ONEBOT_WEBHOOK_HOST")
+      else: "127.0.0.1"
+    qqAdapter.startWebhook(oneBotHost, oneBotPort, getEnv("QQ_ONEBOT_SECRET"),
+                           log).isOkOr:
+      log.error("QQ OneBot webhook: " & error)
+      return
+    log.info("QQ OneBot webhook listener started on " & oneBotHost & ":" &
+             $oneBotPort)
   of qbkOfficial:
     log.info("QQ official API client enabled")
     qqAdapter.startGateway()

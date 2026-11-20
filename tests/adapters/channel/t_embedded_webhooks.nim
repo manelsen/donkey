@@ -4,6 +4,7 @@
 
 import std/[monotimes, net, strutils, times, unittest]
 import donkey/core/log
+import donkey/core/security/webhook_auth
 import donkey/adapters/channel/qq
 import donkey/adapters/channel/wechat
 import donkey/adapters/channel/wecom
@@ -85,6 +86,29 @@ proc runTests*() =
                           wecomHandler)
       check resp.startsWith("HTTP/1.1 200")
       check resp.endsWith("hello")
+
+  suite "qq onebot X-Signature enforcement":
+    const event = """{"post_type":"message","message_type":"private",""" &
+                  """"user_id":42,"message_id":1,"raw_message":"hi"}"""
+
+    proc post(headers: string): string =
+      "POST / HTTP/1.1\r\nContent-Length: " & $event.len & "\r\n" &
+        headers & "\r\n" & event
+
+    let signed: ConnHandler = proc(c: Socket) {.closure.} =
+      handleQQOneBotConn(c, logger, secret = "onebot-secret", timeoutSec = 1)
+
+    test "unsigned event is rejected when a secret is configured":
+      check exchange(post(""), signed).startsWith("HTTP/1.1 403")
+
+    test "forged signature is rejected":
+      check exchange(post("X-Signature: sha1=" & '0'.repeat(40) & "\r\n"),
+                     signed).startsWith("HTTP/1.1 403")
+
+    test "correctly signed event is accepted":
+      let sig = "sha1=" & hmacSha1Hex("onebot-secret", event)
+      check exchange(post("X-Signature: " & sig & "\r\n"),
+                     signed).startsWith("HTTP/1.1 200")
 
 when isMainModule:
   runTests()

@@ -5,16 +5,21 @@
 ##   thread. It accepts POST requests from the OneBot bridge and pushes parsed
 ##   events into a thread-safe Channel drained by tryRecvEvent().
 ##
+##   Authentication: with QQ_ONEBOT_SECRET set, every POST must carry the
+##   OneBot v11 `X-Signature: sha1=<HMAC-SHA1(secret, body)>` header (403
+##   otherwise). Without a secret the listener only binds to loopback.
+##
 ##   For testing or external forwarding, enqueueEventJson() accepts raw JSON
 ##   directly without going through the HTTP path.
 ##
 ## Sending:
 ##   Uses OneBot HTTP APIs with Bearer token authentication.
 
-import std/[json, net, strutils]
+import std/[json, net, strutils, tables]
 import ../../core/log
 import ../../core/pipeops
 import ../../domain/message
+import ../../domain/channels/qq_pure
 import ../http/std_http
 import ../identity/identity_resolver
 import ../webhook/http_request_reader
@@ -39,7 +44,9 @@ type
     events:       seq[QQEvent]   ## direct-injection queue (tests / external)
 
   QQOneBotWebhookArgs = object
+    host:   string
     port:   int
+    secret: string
     logger: Logger
 
 var gQQOneBotEvents: Channel[QQEvent]
@@ -87,7 +94,7 @@ proc respond(s: Socket; status: string) =
   let resp = "HTTP/1.1 " & status & "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
   try: s.send(resp) except CatchableError: discard
 
-proc handleQQOneBotConn*(client: Socket; logger: Logger;
+proc handleQQOneBotConn*(client: Socket; logger: Logger; secret = "";
                          timeoutSec = WebhookClientTimeoutSec) =
   ## Serves one OneBot v11 event delivery and closes the socket. The request
   ## is read through http_request_reader: bounded headers, capped body,
@@ -101,6 +108,12 @@ proc handleQQOneBotConn*(client: Socket; logger: Logger;
     client.respond(statusLine(readErrorStatus(error)))
     return
   if req.httpMethod == "POST" and req.body.len > 0:
+    if not oneBotSignatureValid(secret, req.body,
+                                req.headers.getOrDefault("x-signature")):
+      logger.warn("qq webhook: rejected event with missing/invalid X-Signature")
+      recordWebhookFailure("qq", "invalid signature")
+      client.respond(statusLine(403))
+      return
     let evRes = parseEventJson(req.body)
     if evRes.isOk and gQQOneBotEventsOpen:
       gQQOneBotEvents.send(evRes.value)
@@ -112,7 +125,7 @@ proc qqOneBotWebhookThread(args: QQOneBotWebhookArgs) {.thread.} =
   ## Minimal HTTP/1.1 server for OneBot v11 event delivery.
   var server = newSocket()
   server.setSockOpt(OptReuseAddr, true)
-  server.bindAddr(Port(args.port))
+  server.bindAddr(Port(args.port), args.host)
   server.listen()
 
   while true:
@@ -122,23 +135,28 @@ proc qqOneBotWebhookThread(args: QQOneBotWebhookArgs) {.thread.} =
     except CatchableError:
       continue
     try:
-      handleQQOneBotConn(client, args.logger)
+      handleQQOneBotConn(client, args.logger, args.secret)
     except CatchableError:
       let errMsg = getCurrentExceptionMsg()
       args.logger.warn("qq webhook: connection handler error: " & errMsg)
       recordWebhookFailure("qq", errMsg)
 
-proc startWebhook*(a: QQAdapter; port: Port; logger: Logger) =
-  ## Starts the embedded OneBot webhook HTTP server on the given port.
+proc startWebhook*(a: QQAdapter; host: string; port: Port; secret: string;
+                   logger: Logger): Result[void, string] =
+  ## Starts the embedded OneBot webhook HTTP server on host:port.
+  ## Refuses a non-loopback bind without a secret (see oneBotListenerCheck).
   ## Safe to call multiple times — only the first call has effect.
+  ? oneBotListenerCheck(host, secret)
   if gQQOneBotWebhookStarted:
-    return
+    return ok()
   gQQOneBotEvents.open()
   gQQOneBotEventsOpen     = true
   gQQOneBotWebhookStarted = true
   {.cast(gcsafe).}:
     createThread(gQQOneBotWebhookThread, qqOneBotWebhookThread,
-                 QQOneBotWebhookArgs(port: port.int, logger: logger))
+                 QQOneBotWebhookArgs(host: host, port: port.int,
+                                     secret: secret, logger: logger))
+  ok()
 
 proc enqueueEventJson*(a: var QQAdapter; payload: string): Result[void, string] =
   let event = ? parseEventJson(payload)

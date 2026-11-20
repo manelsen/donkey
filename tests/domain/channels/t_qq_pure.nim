@@ -1,7 +1,7 @@
 ## Tests for domain/channels/qq_pure.nim — pure QQ official bot event parser.
 ## No I/O or HTTP; all input is constructed directly as JsonNode.
 
-import std/[json, unittest]
+import std/[json, strutils, unittest]
 import donkey/core/pipeops
 import donkey/domain/channels/qq_pure
 import donkey/core/types
@@ -338,6 +338,45 @@ proc runTests*() =
       let r = makeC2cPayload("u1", "msg1", "hello") |> parseEvent
       let msg = toInbound(r, UserId("uuid"))
       check msg.mediaUrl == ""
+
+  suite "qq_pure: OneBot X-Signature":
+    const body = """{"post_type":"message"}"""
+    const good = "sha1=19a20b08a7fa2632968ebb5ca3efca2111a59eab"
+
+    test "valid sha1= signature is accepted":
+      check oneBotSignatureValid("onebot-secret", body, good)
+
+    test "missing, wrong or unprefixed signature is rejected":
+      check not oneBotSignatureValid("onebot-secret", body, "")
+      check not oneBotSignatureValid("onebot-secret", body,
+                                     "sha1=" & '0'.repeat(40))
+      check not oneBotSignatureValid("onebot-secret", body,
+                                     "19a20b08a7fa2632968ebb5ca3efca2111a59eab")
+
+    test "tampered body is rejected":
+      check not oneBotSignatureValid("onebot-secret", body & " ", good)
+
+    test "uppercase hex from the bridge is accepted":
+      check oneBotSignatureValid("onebot-secret", body, good.toUpperAscii()
+                                   .replace("SHA1=", "sha1="))
+
+    test "no secret configured: nothing to verify":
+      check oneBotSignatureValid("", body, "")
+
+  suite "qq_pure: OneBot listener exposure":
+    test "loopback without secret is allowed":
+      check oneBotListenerCheck("127.0.0.1", "").isOk
+      check oneBotListenerCheck("localhost", "").isOk
+      check oneBotListenerCheck("::1", "").isOk
+
+    test "public bind without secret is refused":
+      check oneBotListenerCheck("0.0.0.0", "").isErr
+      check oneBotListenerCheck("::", "").isErr
+      check oneBotListenerCheck("127.evil.com", "").isErr
+      check oneBotListenerCheck("10.0.0.5", "").isErr
+
+    test "public bind with secret is allowed":
+      check oneBotListenerCheck("0.0.0.0", "s3cret").isOk
 
 when isMainModule:
   runTests()
