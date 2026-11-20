@@ -14,6 +14,7 @@ import ../../ports/provider
 import ../identity/identity_resolver
 import ./common_runtime
 import ./discord
+import ./text_command_dispatch
 
 proc sendDiscordReply(event: DiscordRawEvent;
                       dcAdapter: DiscordAdapter;
@@ -296,21 +297,100 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
   else:
     false
 
+proc presentDiscordReply(event: DiscordRawEvent; dcAdapter: DiscordAdapter;
+                         userId: UserId; reply: CommandReply; logger: Logger) =
+  ## Discord renders most command replies as colored embeds.
+  template embed(title: string; color: int) =
+    sendDiscordEmbed(event, dcAdapter, userId, title, reply.text, color, logger)
+  case reply.topic
+  of rtAbout:       embed("🫏 Donkey", 0x5865F2)
+  of rtStartIntro:  embed("👋 Donkey", 0x5865F2)
+  of rtLinkCode:    embed("🔗 Link Code", 0x5865F2)
+  of rtClearMemory: embed("🗑️ Memórias", 0xE67E22)
+  of rtDoctor:      embed("🩺 Doctor", 0x95A5A6)
+  of rtMemory:      embed("🧠 Memórias", 0x9B59B6)
+  of rtContinue:    embed("🔗 Continue", if reply.failed: 0xED4245 else: 0x57F287)
+  of rtNoSession:   embed("ℹ️ Info", 0xED4245)
+  of rtPing:        embed("🏓 Ping", if "error" in reply.text: 0xED4245 else: 0x57F287)
+  of rtStatus:      embed("📊 Status", 0x57F287)
+  of rtHelp:
+    sendDiscordReply(event, dcAdapter, userId, buildHelpText(true), logger)
+  of rtUnsupported:
+    discard
+  of rtSkill, rtUi, rtMenu, rtWhoami, rtReasoning:
+    sendDiscordReply(event, dcAdapter, userId, reply.text, logger)
+
+proc handleDiscordLocalExtra(sm: SessionManager;
+                             event: DiscordRawEvent;
+                             dcAdapter: DiscordAdapter;
+                             presentationState: var PresentationState;
+                             memory: MdFileAdapter;
+                             userId: UserId;
+                             command: CommandDecision;
+                             logger: Logger): bool =
+  ## Discord-only local commands: keyboard menu, whoami, paged help in
+  ## interactions, reasoning toggle. False → use the shared dispatcher.
+  if command.route != crLocal:
+    return false
+  case decideLocalCommandAction(command)
+  of lcaShowMenu:
+    let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotMenu)
+    if kbdId.len > 0 and event.interactionId.len == 0:
+      dcAdapter.smartEditKeyboard(
+        event, userId, kbdId, buildMenuText(), buildMenuButtons()).isOkOr:
+          core_log.log(logger, core_log.lvlWarn, "dc menu keyboard: " & error)
+    else:
+      sendDiscordKeyboard(
+        dcAdapter, event, presentationState, userId, UiSlotMenu,
+        buildMenuText(), buildMenuButtons(),
+        "Abri o menu na sua DM.", logger,
+      )
+    true
+  of lcaShowWhoami:
+    let sessId = if sm.hasLiveSession(userId): "active" else: ""
+    sendDiscordEmbed(event, dcAdapter, userId,
+      "🆔 Identity", buildWhoamiText(userId, sessId, event.discordUserId), 0x5865F2, logger)
+    true
+  of lcaHelpText:
+    let pages = buildHelpPages()
+    if event.interactionId.len > 0 and pages.len > 0:
+      let (pTitle, pBody) = pages[0]
+      dcAdapter.sendInteractionEmbedPage(
+        event.interactionId, event.interactionToken,
+        "📖 Ajuda — " & pTitle & " (1/" & $pages.len & ")",
+        pBody, 0x5865F2, buildHelpNavButtons(0, pages.len)).isOkOr:
+          core_log.log(logger, core_log.lvlWarn, "dc help embed: " & error)
+          sendDiscordReply(event, dcAdapter, userId, buildHelpText(true), logger)
+    else:
+      sendDiscordReply(event, dcAdapter, userId, buildHelpText(true), logger)
+    true
+  of lcaReasoningToggle:
+    let prefs = common_runtime.loadChannelPrefs(memory, userId)
+    let next = if prefs.reasoning == "on": "off" else: "on"
+    let saved = common_runtime.saveChannelPreference(memory, userId, "reasoning", next)
+    sendDiscordEmbed(event, dcAdapter, userId,
+      "🧠 Reasoning",
+      savedOrError(saved, if next == "on": "Reasoning ativado." else: "Reasoning desativado."),
+      0x57F287, logger)
+    true
+  else:
+    false
+
 proc handleDiscordEvent*(sm: var SessionManager;
                          event: DiscordRawEvent;
                          dcAdapter: DiscordAdapter;
                          presentationState: var PresentationState;
-                         memory: MdFileAdapter;
-                         completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
-                         modelCatalogLoader: ModelCatalogLoader;
-                         toolsCount: int;
-                         toolClientsCount: int;
-                         daemonStartMs: int64;
+                         env: CommandEnv;
                          msgSeq: var int;
                          logger: Logger;
                          handleInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
                          completeInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
                          handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.}) =
+  let memory = env.memory
+  let modelCatalogLoader = env.modelCatalogLoader
+  let toolsCount = env.toolsCount
+  let toolClientsCount = env.toolClientsCount
+  let daemonStartMs = env.daemonStartMs
   case event.kind
   of deMessage:
     let userId = dcAdapter.resolver.resolve(ckDiscord, event.discordUserId)
@@ -330,121 +410,26 @@ proc handleDiscordEvent*(sm: var SessionManager;
     if event.messageId.len > 0:
       memory.saveChannelPreference(userId, "discord_last_msg_id", event.messageId)
     let command = decideCommandRequest(CommandRequest(channel: ckDiscord, text: event.content))
-    case command.route
-    of crLocal:
-      case decideLocalCommandAction(command)
-      of lcaShowAbout:
-        sendDiscordEmbed(event, dcAdapter, userId,
-          "🫏 Donkey",
-          buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount()),
-          0x5865F2, logger)
-      of lcaStartIntro:
-        sendDiscordEmbed(event, dcAdapter, userId,
-          "👋 Donkey", buildStartIntroText(), 0x5865F2, logger)
-      of lcaSkillCommand:
-        let reply = applySkillTextCommand(
-          memory,
-          userId,
-          command.value,
-          homeDir = memory.donkeyHomeDir(),
-        ).valueOr:
-          error
-        sendDiscordReply(
-          event,
-          dcAdapter,
-          userId,
-          reply,
-          logger,
-        )
-      of lcaShowMenu:
-        let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotMenu)
-        if kbdId.len > 0 and event.interactionId.len == 0:
-          dcAdapter.smartEditKeyboard(
-            event, userId, kbdId, buildMenuText(), buildMenuButtons()).isOkOr:
-              core_log.log(logger, core_log.lvlWarn, "dc menu keyboard: " & error)
-        else:
-          sendDiscordKeyboard(
-            dcAdapter, event, presentationState, userId, UiSlotMenu,
-            buildMenuText(), buildMenuButtons(),
-            "Abri o menu na sua DM.", logger,
-          )
-      of lcaShowWhoami:
-        let sessId = if sm.hasLiveSession(userId): "active" else: ""
-        sendDiscordEmbed(event, dcAdapter, userId,
-          "🆔 Identity", buildWhoamiText(userId, sessId, event.discordUserId), 0x5865F2, logger)
-      of lcaGenerateLinkCode:
-        sendDiscordEmbed(event, dcAdapter, userId,
-          "🔗 Link Code", buildLinkCodeText(dcAdapter.resolver.generateLinkCode(userId)), 0x5865F2, logger)
-      of lcaClearMemory:
-        sendDiscordEmbed(event, dcAdapter, userId,
-          "🗑️ Memórias", clearMemoryReply(memory, userId), 0xE67E22, logger)
-      of lcaDoctorReport:
-        sendDiscordEmbed(event, dcAdapter, userId,
-          "🩺 Doctor",
-          buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount()),
-          0x95A5A6, logger)
-      of lcaHelpText:
-        let pages = buildHelpPages()
-        if event.interactionId.len > 0 and pages.len > 0:
-          let (pTitle, pBody) = pages[0]
-          dcAdapter.sendInteractionEmbedPage(
-            event.interactionId, event.interactionToken,
-            "📖 Ajuda — " & pTitle & " (1/" & $pages.len & ")",
-            pBody, 0x5865F2, buildHelpNavButtons(0, pages.len)).isOkOr:
-              core_log.log(logger, core_log.lvlWarn, "dc help embed: " & error)
-              sendDiscordReply(event, dcAdapter, userId, buildHelpText(true), logger)
-        else:
-          sendDiscordReply(event, dcAdapter, userId, buildHelpText(true), logger)
-      of lcaShowMemory:
-        sendDiscordEmbed(event, dcAdapter, userId,
-          "🧠 Memórias",
-          buildMemoryViewText(memory, userId),
-          0x9B59B6, logger)
-      of lcaContinueLink:
-        let linked = dcAdapter.resolver.consumeLinkCode(command.value, ckDiscord, event.discordUserId)
-        sendDiscordEmbed(event, dcAdapter, userId,
-          "🔗 Continue", buildContinueResultText(linked),
-          if linked: 0x57F287 else: 0xED4245, logger)
-      of lcaReasoningToggle:
-        let prefs = common_runtime.loadChannelPrefs(memory, userId)
-        let next = if prefs.reasoning == "on": "off" else: "on"
-        let saved = common_runtime.saveChannelPreference(memory, userId, "reasoning", next)
-        sendDiscordEmbed(event, dcAdapter, userId,
-          "🧠 Reasoning",
-          savedOrError(saved, if next == "on": "Reasoning ativado." else: "Reasoning desativado."),
-          0x57F287, logger)
-      else:
-        discard
+    if command.route == crUi:
+      discard handleDiscordUiCommand(event, dcAdapter, presentationState, memory, userId,
+                                     command, modelCatalogLoader, toolsCount,
+                                     toolClientsCount, daemonStartMs, msgSeq, logger)
       completeInboundStatus(inbound)
-    of crSessionTask:
-      if sm.hasLiveSession(userId):
-        let entry = sm.getOrCreate(userId)
-        inc msgSeq
-        entry.inbox.addLastNoWait(
-          newTaskMsg($msgSeq, commandTaskKind(command), $userId, "", ckDiscord, ""))
+    elif handleDiscordLocalExtra(sm, event, dcAdapter, presentationState, memory,
+                                 userId, command, logger):
+      completeInboundStatus(inbound)
+    else:
+      ## Session tasks from Discord carry no message id (no reaction target).
+      let outcome = dispatchTextCommand(env, sm, msgSeq, command, userId, ckDiscord,
+                                        "", dcAdapter.resolver, event.discordUserId)
+      case outcome.kind
+      of cokFallback:
+        handleSessionFallback(inbound)
+      of cokSilent:
         completeInboundStatus(inbound)
-      else:
-        let errText =
-          if command.kind == cmdDebug: "Nenhuma sessão ativa. Envie uma mensagem primeiro."
-          else: "Nenhuma conversa ativa para reiniciar."
-        sendDiscordEmbed(event, dcAdapter, userId, "ℹ️ Info", errText, 0xED4245, logger)
+      of cokReply:
+        presentDiscordReply(event, dcAdapter, userId, outcome.reply, logger)
         completeInboundStatus(inbound)
-    of crUi:
-      discard handleDiscordUiCommand(event, dcAdapter, presentationState, memory, userId, command, modelCatalogLoader, toolsCount, toolClientsCount, daemonStartMs, msgSeq, logger)
-      completeInboundStatus(inbound)
-    of crPing:
-      let pingText = buildPingText(memory, userId, completeBuilder)
-      let pingColor = if "error" in pingText: 0xED4245 else: 0x57F287
-      sendDiscordEmbed(event, dcAdapter, userId, "🏓 Ping", pingText, pingColor, logger)
-      completeInboundStatus(inbound)
-    of crStatus:
-      sendDiscordEmbed(event, dcAdapter, userId,
-        "📊 Status",
-        buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs),
-        0x57F287, logger)
-      completeInboundStatus(inbound)
-    of crCallback, crNone:
-      handleSessionFallback(inbound)
 
   of deInteraction:
     let code = event.content |> strip
@@ -517,18 +502,14 @@ proc checkDiscordOfflineMessages*(sm: var SessionManager;
                                    dcAdapter: DiscordAdapter;
                                    discordToken: string;
                                    presentationState: var PresentationState;
-                                   memory: MdFileAdapter;
-                                   completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
-                                   modelCatalogLoader: ModelCatalogLoader;
-                                   toolsCount: int;
-                                   toolClientsCount: int;
-                                   daemonStartMs: int64;
+                                   env: CommandEnv;
                                    msgSeq: var int;
                                    logger: Logger;
                                    handleInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
                                    completeInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
                                    handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.}) =
   ## One-time startup check for messages received while the bot was down.
+  let memory = env.memory
   ## NOTE: Discord does NOT deliver DMs sent while bot was offline.
   ## We fetch recent messages and filter by last processed message_id.
   if discordToken.len == 0:
@@ -574,8 +555,7 @@ proc checkDiscordOfflineMessages*(sm: var SessionManager;
         content:       content,
         channelId:     chId,
         messageId:     msgId,
-      ), dcAdapter, presentationState, memory, completeBuilder,
-         modelCatalogLoader, toolsCount, toolClientsCount, daemonStartMs, msgSeq, logger,
+      ), dcAdapter, presentationState, env, msgSeq, logger,
          handleInboundStatus, completeInboundStatus,
          handleSessionFallback)
       memory.saveChannelPreference(userId, "discord_last_msg_id", msgId)
@@ -586,12 +566,7 @@ proc drainDiscordEvents*(sm: var SessionManager;
                          dcAdapter: DiscordAdapter;
                          discordToken: string;
                          presentationState: var PresentationState;
-                         memory: MdFileAdapter;
-                         completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
-                         modelCatalogLoader: ModelCatalogLoader;
-                         toolsCount: int;
-                         toolClientsCount: int;
-                         daemonStartMs: int64;
+                         env: CommandEnv;
                          msgSeq: var int;
                          logger: Logger;
                          handleInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
@@ -619,8 +594,7 @@ proc drainDiscordEvents*(sm: var SessionManager;
       continue
     logger.info("discord event: " & $event.kind & " from " &
       (if auth.identified: $auth.userId else: "unidentified sender"))
-    handleDiscordEvent(sm, event, dcAdapter, presentationState, memory, completeBuilder,
-                       modelCatalogLoader, toolsCount, toolClientsCount, daemonStartMs, msgSeq, logger,
+    handleDiscordEvent(sm, event, dcAdapter, presentationState, env, msgSeq, logger,
                        handleInboundStatus,
                        completeInboundStatus,
                        handleSessionFallback)

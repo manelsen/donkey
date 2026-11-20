@@ -17,6 +17,7 @@ import donkey/domain/message
 import donkey/ports/provider
 import donkey/adapters/memory/md_file
 import donkey/adapters/channel/common_runtime
+import donkey/adapters/channel/text_command_dispatch
 import donkey/adapters/channel/discord_runtime
 import donkey/app/inbound_gate
 import donkey/adapters/channel/telegram
@@ -117,8 +118,8 @@ proc runTests*() =
         {.cast(gcsafe).}:
           fallbackMsgs.add(msg)
 
-      drainWeComEvents(wc, "corp", sm, memory, completeBuilder, gateLoader(),
-                       0, 0, 0, msgSeq, gateLog, onFallback)
+      drainWeComEvents(wc, "corp", sm, CommandEnv(memory: memory, completeBuilder: completeBuilder, modelCatalogLoader: gateLoader()),
+                       msgSeq, onFallback, gateLog)
 
       check providerCalls == 0
       check fallbackMsgs.len == 1
@@ -154,8 +155,8 @@ proc runTests*() =
         {.cast(gcsafe).}:
           inc fallbackCalls
 
-      drainWeChatEvents(wch, "app", sm, memory, completeBuilder, gateLoader(),
-                        0, 0, 0, msgSeq, onFallback, gateLog)
+      drainWeChatEvents(wch, "app", sm, CommandEnv(memory: memory, completeBuilder: completeBuilder, modelCatalogLoader: gateLoader()),
+                        msgSeq, onFallback, gateLog)
 
       check providerCalls == 0
       check fallbackCalls == 0
@@ -193,8 +194,8 @@ proc runTests*() =
         {.cast(gcsafe).}:
           inc fallbackCalls
 
-      drainWeChatEvents(wch, "app", sm, memory, completeBuilder, gateLoader(),
-                        0, 0, 0, msgSeq, onFallback, gateLog)
+      drainWeChatEvents(wch, "app", sm, CommandEnv(memory: memory, completeBuilder: completeBuilder, modelCatalogLoader: gateLoader()),
+                        msgSeq, onFallback, gateLog)
 
       check providerCalls == 0
       check fallbackCalls == 0
@@ -225,8 +226,8 @@ proc runTests*() =
         {.cast(gcsafe).}:
           inc fallbackCalls
 
-      drainQQEvents(qq, sm, memory, completeBuilder, gateLoader(),
-                    0, 0, 0, msgSeq, onFallback, gateLog)
+      drainQQEvents(qq, sm, CommandEnv(memory: memory, completeBuilder: completeBuilder, modelCatalogLoader: gateLoader()),
+                    msgSeq, onFallback, gateLog)
 
       check providerCalls == 0
       check fallbackCalls == 0
@@ -271,8 +272,8 @@ proc runTests*() =
         {.cast(gcsafe).}:
           inc fallbackCalls
 
-      drainFeishuEvents(fs, "cli_app", sm, memory, completeBuilder, gateLoader(),
-                        0, 0, 0, msgSeq, onFallback, gateLog)
+      drainFeishuEvents(fs, "cli_app", sm, CommandEnv(memory: memory, completeBuilder: completeBuilder, modelCatalogLoader: gateLoader()),
+                        msgSeq, onFallback, gateLog)
 
       check providerCalls == 0
       check fallbackCalls == 0
@@ -319,8 +320,8 @@ proc runTests*() =
         {.cast(gcsafe).}:
           inc fallbackCalls
 
-      drainWhatsAppEvents(wa, "PN1", sm, memory, completeBuilder, gateLoader(),
-                          0, 0, 0, msgSeq, onFallback, gateLog)
+      drainWhatsAppEvents(wa, "PN1", sm, CommandEnv(memory: memory, completeBuilder: completeBuilder, modelCatalogLoader: gateLoader()),
+                          msgSeq, onFallback, gateLog)
 
       check providerCalls == 0
       check fallbackCalls == 0
@@ -619,8 +620,8 @@ proc runTests*() =
         {.cast(gcsafe).}:
           inc fallbackCalls
 
-      drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
-                       0, 0, 0, msgSeq, onFallback, gateLog)
+      drainSlackEvents(sl, sm, CommandEnv(memory: memory, completeBuilder: completeBuilder, modelCatalogLoader: gateLoader()),
+                       msgSeq, onFallback, gateLog)
 
       check fallbackCalls == 0
       check sm.sessionCount() == 0
@@ -662,8 +663,8 @@ proc runTests*() =
         {.cast(gcsafe).}:
           dispatched.add(msg)
 
-      drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
-                       0, 0, 0, msgSeq, onFallback, gateLog)
+      drainSlackEvents(sl, sm, CommandEnv(memory: memory, completeBuilder: completeBuilder, modelCatalogLoader: gateLoader()),
+                       msgSeq, onFallback, gateLog)
 
       check dispatched.len == 1
       check dispatched[0].channel == ckSlack
@@ -706,8 +707,8 @@ proc runTests*() =
       let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
         {.cast(gcsafe).}:
           inc fallbackCalls
-      drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
-                       0, 0, 0, msgSeq, onFallback, gateLog)
+      drainSlackEvents(sl, sm, CommandEnv(memory: memory, completeBuilder: completeBuilder, modelCatalogLoader: gateLoader()),
+                       msgSeq, onFallback, gateLog)
 
       check fallbackCalls == 0       ## onboarding must not become user text
       check entry[].inbox.len == 1   ## enqueued as tkPersonalityChoice
@@ -736,8 +737,8 @@ proc runTests*() =
         },
       })
 
-      drainSlackEvents(sl, sm, memory, completeBuilder, gateLoader(),
-                       0, 0, 0, msgSeq, proc(msg: InboundMessage) {.gcsafe.} = discard,
+      drainSlackEvents(sl, sm, CommandEnv(memory: memory, completeBuilder: completeBuilder, modelCatalogLoader: gateLoader()),
+                       msgSeq, proc(msg: InboundMessage) {.gcsafe.} = discard,
                        gateLog)
 
       check not sl.tryRecvEvent()[0]  ## Socket Mode has no signing secret gate

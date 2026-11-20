@@ -8,17 +8,16 @@ import std/strutils
 import chronos/asyncsync
 import ../../core/commands/command_routing
 import ../../core/log
-import ../../adapters/memory/md_file
 import ../../app/session_manager
 import ../../domain/agent_message
 import ../../domain/message
-import ../../ports/provider
 import ../identity/identity_resolver
 import ../../app/inbound_gate
 import ../../app/approval_runtime
 import ../../domain/channels/slack_pure
 import ./common_runtime
 import ./slack
+import ./text_command_dispatch
 
 proc replyToEvent(slAdapter: var SlackAdapter;
                   event: SlackRawEvent;
@@ -33,14 +32,58 @@ proc replyToEvent(slAdapter: var SlackAdapter;
       return ok()
   slAdapter.send(OutboundMessage(userId: userId, channel: ckSlack, text: text))
 
+proc slackCommandOutcome(slAdapter: var SlackAdapter;
+                         sm: var SessionManager;
+                         msgSeq: var int;
+                         env: CommandEnv;
+                         command: CommandDecision;
+                         userId: UserId;
+                         event: SlackRawEvent;
+                         messageId: string): CommandOutcome =
+  ## Slack-only commands (Block Kit menus, whoami, reasoning toggle, extra UI
+  ## views) first; everything else goes through the shared dispatcher.
+  let memory = env.memory
+  case command.route
+  of crLocal:
+    case decideLocalCommandAction(command)
+    of lcaShowMenu:
+      let text = buildMenuText()
+      if slAdapter.sendKeyboard(userId, text, buildMenuButtons()).isOk:
+        return CommandOutcome(kind: cokSilent)
+      return replied(rtMenu, text)
+    of lcaShowWhoami:
+      return replied(rtWhoami, buildWhoamiText(userId, "", event.channelId),
+                     sensitive = true)
+    of lcaReasoningToggle:
+      let prefs = loadChannelPrefs(memory, userId)
+      let next = if prefs.reasoning == "on": "off" else: "on"
+      let saved = saveChannelPreference(memory, userId, "reasoning", next)
+      return replied(rtReasoning, savedOrError(saved, "Reasoning: " & next))
+    else:
+      discard
+  of crUi:
+    case command.kind
+    of cmdConfig:
+      let text = memory.buildConfigText(userId)
+      if slAdapter.sendKeyboard(userId, text, buildConfigButtons()).isOk:
+        return CommandOutcome(kind: cokSilent)
+      return replied(rtUi, text)
+    of cmdTasks:
+      return replied(rtUi, buildTasksText())
+    of cmdAgents:
+      return replied(rtUi, buildAgentsText(env.toolsCount, env.toolClientsCount))
+    of cmdPoll:
+      return replied(rtUi, buildPollText())
+    else:
+      discard
+  else:
+    discard
+  dispatchTextCommand(env, sm, msgSeq, command, userId, ckSlack, messageId,
+                      slAdapter.resolver, event.slackUserId)
+
 proc drainSlackEvents*(slAdapter: var SlackAdapter;
                        sm: var SessionManager;
-                       memory: MdFileAdapter;
-                       completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
-                       modelCatalogLoader: ModelCatalogLoader;
-                       toolsCount: int;
-                       toolClientsCount: int;
-                       daemonStartMs: int64;
+                       env: CommandEnv;
                        msgSeq: var int;
                        handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
                        log: Logger = newLogger("sl.outbound")) =
@@ -120,126 +163,24 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
 
       if routedText.strip.len > 0:
         let command = decideCommandRequest(CommandRequest(channel: ckSlack, text: routedText))
-        case command.route
-        of crLocal:
-          var reply = ""
-          var sensitive = false
-          var menuSent = false
+        let outcome =
           try:
-            reply =
-              case decideLocalCommandAction(command)
-              of lcaShowAbout:
-                buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount())
-              of lcaStartIntro:
-                buildStartIntroText()
-              of lcaShowMenu:
-                let text = buildMenuText()
-                if slAdapter.sendKeyboard(userId, text, buildMenuButtons()).isOk:
-                  menuSent = true
-                  ""
-                else:
-                  text
-              of lcaShowWhoami:
-                sensitive = true
-                buildWhoamiText(userId, "", event.channelId)
-              of lcaSkillCommand:
-                let reply = applySkillTextCommand(
-                  memory,
-                  userId,
-                  command.value,
-                  homeDir = memory.donkeyHomeDir(),
-                ).valueOr:
-                  error
-                reply
-              of lcaGenerateLinkCode:
-                sensitive = true
-                buildLinkCodeText(slAdapter.resolver.generateLinkCode(userId))
-              of lcaClearMemory:
-                clearMemoryReply(memory, userId)
-              of lcaDoctorReport:
-                sensitive = true
-                buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount())
-              of lcaHelpText:
-                buildHelpText(false)
-              of lcaShowMemory:
-                sensitive = true
-                buildMemoryViewText(memory, userId)
-              of lcaContinueLink:
-                sensitive = true
-                buildContinueResultText(slAdapter.resolver.consumeLinkCode(
-                  command.value, ckSlack, event.slackUserId))
-              of lcaReasoningToggle:
-                let prefs = loadChannelPrefs(memory, userId)
-                let next = if prefs.reasoning == "on": "off" else: "on"
-                let saved = saveChannelPreference(memory, userId, "reasoning", next)
-                savedOrError(saved, "Reasoning: " & next)
-              else:
-                "Comando indisponível neste canal. Use /help."
+            slackCommandOutcome(slAdapter, sm, msgSeq, env, command, userId,
+                                event, messageId)
           except CatchableError as e:
-            reply = "Erro ao processar comando: " & e.msg
-          if not menuSent and reply.len > 0:
-            replyToEvent(slAdapter, event, userId, reply, sensitive).isOkOr:
-              log.error("sl send failed for user=" & $userId & " reason=" & error)
-        of crSessionTask:
-          if sm.hasLiveSession(userId):
-            let entry = sm.getOrCreate(userId)
-            inc msgSeq
-            entry.inbox.addLastNoWait(
-              newTaskMsg($msgSeq, commandTaskKind(command), $userId, "", ckSlack, messageId))
-          else:
-            let text =
-              if command.kind == cmdDebug:
-                "Nenhuma sessão ativa. Envie uma mensagem primeiro."
-              else:
-                "Nenhuma conversa ativa para reiniciar."
-            replyToEvent(slAdapter, event, userId, text).isOkOr:
-              log.error("sl send sessionTask feedback failed for user=" & $userId & " reason=" & error)
-        of crUi:
-          var reply = ""
-          var configSent = false
-          try:
-            reply =
-              case command.kind
-              of cmdModels:
-                memory.applyModelsTextCommand(userId, command.value, modelCatalogLoader).valueOr: error
-              of cmdThink:
-                memory.applyThinkTextCommand(userId, command.value).valueOr: error
-              of cmdBudget:
-                memory.applyBudgetTextCommand(userId, command.value).valueOr: error
-              of cmdConfig:
-                let text = memory.buildConfigText(userId)
-                if slAdapter.sendKeyboard(userId, text, buildConfigButtons()).isOk:
-                  configSent = true
-                  ""
-                else:
-                  text
-              of cmdTasks:
-                buildTasksText()
-              of cmdAgents:
-                buildAgentsText(toolsCount, toolClientsCount)
-              of cmdPoll:
-                buildPollText()
-              of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
-                buildDeferredUiCommandText(command.kind)
-              else:
-                "Comando indisponível neste canal. Use /help."
-          except CatchableError as e:
-            reply = "Erro ao processar comando: " & e.msg
-          if not configSent and reply.len > 0:
-            replyToEvent(slAdapter, event, userId, reply).isOkOr:
-              log.error("sl send crUi failed for user=" & $userId & " reason=" & error)
-        of crPing:
-          replyToEvent(slAdapter, event, userId,
-                       buildPingText(memory, userId, completeBuilder)).isOkOr:
-            log.error("sl send crPing failed for user=" & $userId & " reason=" & error)
-        of crStatus:
-          replyToEvent(slAdapter, event, userId,
-                       buildTextStatusText(memory, userId, toolsCount,
-                                           sm.sessionCount(),
-                                           daemonStartMs)).isOkOr:
-            log.error("sl send crStatus failed for user=" & $userId & " reason=" & error)
-        of crCallback, crNone:
+            replied(rtUnsupported, "Erro ao processar comando: " & e.msg)
+        case outcome.kind
+        of cokFallback:
           handleSessionFallback(msg)
+        of cokSilent:
+          discard
+        of cokReply:
+          ## Slack answers unsupported commands instead of staying silent.
+          if outcome.reply.text.len > 0:
+            replyToEvent(slAdapter, event, userId, outcome.reply.text,
+                         outcome.reply.sensitive).isOkOr:
+              log.error("sl send " & $outcome.reply.topic & " failed for user=" &
+                        $userId & " reason=" & error)
       else:
         handleSessionFallback(msg)
 

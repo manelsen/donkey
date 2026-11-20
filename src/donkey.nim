@@ -37,6 +37,7 @@ import donkey/adapters/filesystem/fs_adapter
 import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/channel/discord
 import donkey/adapters/channel/discord_runtime
+import donkey/adapters/channel/text_command_dispatch
 import donkey/adapters/channel/wecom
 import donkey/adapters/channel/wecom_runtime
 import donkey/adapters/channel/wechat
@@ -1712,13 +1713,16 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
   let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
   let fallback = proc(msg: InboundMessage) {.gcsafe.} =
     handleGatewayFallback(ctx, cfg, memory, msg, log)
+  let cmdEnv = CommandEnv(
+    memory: memory, completeBuilder: completeBuilder,
+    modelCatalogLoader: modelCatalogLoader, toolsCount: toolsCount,
+    toolClientsCount: toolClientsCount, daemonStartMs: ctx.runtime.daemonStartMs)
 
   initGatewayDrainer(
     drainDiscord = proc(): bool =
       drainDiscordGateway(ctx.env.discordToken.len > 0, proc(): bool =
         discord_runtime.drainDiscordEvents(
-          ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, memory, completeBuilder, modelCatalogLoader,
-          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, cmdEnv,
           ctx.runtime.msgSeq, log,
           proc(msg: InboundMessage) =
             stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),
@@ -1731,32 +1735,28 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
     drainWeCom = proc(): bool =
       drainWeComGateway(ctx.env.wecomCorpId.len > 0, proc(): bool =
         wecom_runtime.drainWeComEvents(
-          ctx.adapters.wc, ctx.env.wecomCorpId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
-          ctx.runtime.msgSeq, log, fallback)
+          ctx.adapters.wc, ctx.env.wecomCorpId, ctx.runtime.sm, cmdEnv,
+          ctx.runtime.msgSeq, fallback, log)
         true
       ),
     drainWeChat = proc(): bool =
       drainWeChatGateway(ctx.env.wechatAppId.len > 0, proc(): bool =
         wechat_runtime.drainWeChatEvents(
-          ctx.adapters.wch, ctx.env.wechatAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.adapters.wch, ctx.env.wechatAppId, ctx.runtime.sm, cmdEnv,
           ctx.runtime.msgSeq, fallback, log)
         true
       ),
     drainQQ = proc(): bool =
       drainQQGateway(ctx.adapters.qq.enabled(), proc(): bool =
         qq_runtime.drainQQEvents(
-          ctx.adapters.qq, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.adapters.qq, ctx.runtime.sm, cmdEnv,
           ctx.runtime.msgSeq, fallback, log)
         true
       ),
     drainFeishu = proc(): bool =
       drainFeishuGateway(ctx.env.feishuAppId.len > 0, proc(): bool =
         feishu_runtime.drainFeishuEvents(
-          ctx.adapters.fs, ctx.env.feishuAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.adapters.fs, ctx.env.feishuAppId, ctx.runtime.sm, cmdEnv,
           ctx.runtime.msgSeq, fallback, log)
         true
       ),
@@ -1765,8 +1765,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
                         (ctx.env.slackSigningSecret.len > 0 or
                          ctx.env.slackAppToken.len > 0), proc(): bool =
         slack_runtime.drainSlackEvents(
-          ctx.adapters.sl, ctx.runtime.sm, memory, completeBuilder,
-          modelCatalogLoader, toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.adapters.sl, ctx.runtime.sm, cmdEnv,
           ctx.runtime.msgSeq, fallback, log)
         true
       ),
@@ -1863,10 +1862,8 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
     drainWhatsApp = proc(): bool =
       drainWhatsAppGateway(ctx.env.whatsappAccessToken.len > 0, proc(): bool =
         whatsapp_runtime.drainWhatsAppEvents(
-          ctx.adapters.wa, ctx.env.whatsappPhoneNumberId, ctx.runtime.sm, memory,
-          completeBuilder, modelCatalogLoader,
-          toolsCount, toolClientsCount,
-          ctx.runtime.daemonStartMs, ctx.runtime.msgSeq, fallback, log)
+          ctx.adapters.wa, ctx.env.whatsappPhoneNumberId, ctx.runtime.sm, cmdEnv,
+          ctx.runtime.msgSeq, fallback, log)
         true
       ),
     drainEmail = proc(): bool =
@@ -2153,9 +2150,12 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     let modelCatalogLoader = buildModelCatalogLoader()
     let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
     discord_runtime.checkDiscordOfflineMessages(
-      ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, memory,
-      completeBuilder, modelCatalogLoader,
-      ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
+      ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState,
+      CommandEnv(memory: memory, completeBuilder: completeBuilder,
+                 modelCatalogLoader: modelCatalogLoader,
+                 toolsCount: ctx.services.tools.len + nativeSessionTools().len,
+                 toolClientsCount: ctx.services.toolClients.len,
+                 daemonStartMs: ctx.runtime.daemonStartMs),
       ctx.runtime.msgSeq, log,
       proc(msg: InboundMessage) {.gcsafe.} =
         stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),

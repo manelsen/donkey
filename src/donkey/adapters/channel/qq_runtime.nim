@@ -6,7 +6,6 @@ import ../../core/pipeops
 import ../../core/log
 import ../../adapters/memory/md_file
 import ../../app/session_manager
-import ../../domain/agent_message
 import ../../domain/message
 import ../../ports/provider
 import ../identity/identity_resolver
@@ -14,6 +13,7 @@ import ../../app/inbound_gate
 import ../../app/approval_runtime
 import ./common_runtime
 import ./qq_channel
+import ./text_command_dispatch
 
 func qqSupportsRichUi*(kind: QQBackendKind): bool =
   kind == qbkOfficial
@@ -218,14 +218,15 @@ proc handleQQUiCallback(msg: InboundMessage;
   handleQQModelCallback(msg, callback, qqAdapter, memory, modelCatalogLoader, rawUserId) or
     handleQQThinkingCallback(msg, callback, qqAdapter, memory)
 
+proc qqUptimeText*(daemonStartMs: int64; now = nowMs()): string =
+  let uptimeSec = (now - daemonStartMs) div 1_000
+  if uptimeSec < 60: $uptimeSec & "s"
+  elif uptimeSec < 3600: $(uptimeSec div 60) & "m"
+  else: $(uptimeSec div 3600) & "h " & $((uptimeSec mod 3600) div 60) & "m"
+
 proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
                     sm: var SessionManager;
-                    memory: MdFileAdapter;
-                    completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
-                    modelCatalogLoader: ModelCatalogLoader;
-                    toolsCount: int;
-                    toolClientsCount: int;
-                    daemonStartMs: int64;
+                    env: CommandEnv;
                     msgSeq: var int;
                     handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
                     log: Logger = newLogger("qq.outbound")) =
@@ -260,127 +261,46 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
       )
       let command = decideCommandRequest(CommandRequest(channel: ckQQ, text: event.content))
       case command.route
-      of crLocal:
-        case decideLocalCommandAction(command)
-        of lcaShowAbout:
-          qqAdapter.send(OutboundMessage(
-            userId: userId,
-            channel: ckQQ,
-            text: buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount()),
-          )).isOkOr:
-            log.error("qq send lcaShowAbout failed for user=" & $userId & " reason=" & error)
-        of lcaStartIntro:
-          qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: buildStartIntroText())).isOkOr:
-            log.error("qq send lcaStartIntro failed for user=" & $userId & " reason=" & error)
-        of lcaSkillCommand:
-          let reply = applySkillTextCommand(
-            memory,
-            userId,
-            command.value,
-            homeDir = memory.donkeyHomeDir(),
-          ).valueOr:
-            error
-          qqAdapter.send(OutboundMessage(
-            userId: userId,
-            channel: ckQQ,
-            text: reply,
-          )).isOkOr:
-            log.error("qq send lcaSkillCommand failed for user=" & $userId & " reason=" & error)
-        of lcaGenerateLinkCode:
-          qqAdapter.send(OutboundMessage(
-            userId: userId,
-            channel: ckQQ,
-            text: buildLinkCodeText(qqAdapter.generateLinkCode(userId)),
-          )).isOkOr:
-            log.error("qq send lcaGenerateLinkCode failed for user=" & $userId & " reason=" & error)
-        of lcaClearMemory:
-          qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: clearMemoryReply(memory, userId))).isOkOr:
-            log.error("qq send lcaClearMemory failed for user=" & $userId & " reason=" & error)
-        of lcaDoctorReport:
-          qqAdapter.send(OutboundMessage(
-            userId: userId,
-            channel: ckQQ,
-            text: buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount()),
-          )).isOkOr:
-            log.error("qq send lcaDoctorReport failed for user=" & $userId & " reason=" & error)
-        of lcaHelpText:
-          qqAdapter.send(OutboundMessage(
-            userId: userId,
-            channel: ckQQ,
-            text: qqHelpText(qqAdapter.kind),
-          )).isOkOr:
-            log.error("qq send lcaHelpText failed for user=" & $userId & " reason=" & error)
-        of lcaShowMemory:
-          qqAdapter.send(OutboundMessage(
-            userId: userId,
-            channel: ckQQ,
-            text: buildMemoryViewText(memory, userId),
-          )).isOkOr:
-            log.error("qq send lcaShowMemory failed for user=" & $userId & " reason=" & error)
-        of lcaContinueLink:
-          let linked = qqAdapter.consumeLinkCode(command.value, qqRawIdentity(event))
-          qqAdapter.send(OutboundMessage(
-            userId: userId,
-            channel: ckQQ,
-            text: buildContinueResultText(linked),
-          )).isOkOr:
-            log.error("qq send lcaContinueLink failed for user=" & $userId & " reason=" & error)
-        else:
-          discard
-      of crSessionTask:
-        if sm.hasLiveSession(userId):
-          let entry = sm.getOrCreate(userId)
-          inc msgSeq
-          entry.inbox.addLastNoWait(
-            newTaskMsg($msgSeq, commandTaskKind(command), $userId, "", ckQQ, event.messageId))
-        else:
-          let text =
-            if command.kind == cmdDebug:
-              "Nenhuma sessão ativa. Envie uma mensagem primeiro."
-            else:
-              "Nenhuma conversa ativa para reiniciar."
-          qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: text)).isOkOr:
-            log.error("qq send sessionTask feedback failed for user=" & $userId & " reason=" & error)
       of crUi:
-        discard handleQQUiCommand(msg, command, qqAdapter, memory, modelCatalogLoader, event.userId)
-      of crPing:
-        qqAdapter.send(OutboundMessage(
-          userId: userId,
-          channel: ckQQ,
-          text: buildPingText(memory, userId, completeBuilder),
-        )).isOkOr:
-          log.error("qq send crPing failed for user=" & $userId & " reason=" & error)
-      of crStatus:
-        let providerLine = buildProviderStatusLine(memory, userId)
-        let thinking = memory.getCurrentThinkLevel(userId)
-        let uptimeSec = (nowMs() - daemonStartMs) div 1_000
-        let uptimeStr =
-          if uptimeSec < 60: $uptimeSec & "s"
-          elif uptimeSec < 3600: $(uptimeSec div 60) & "m"
-          else: $(uptimeSec div 3600) & "h " & $((uptimeSec mod 3600) div 60) & "m"
-        qqAdapter.send(OutboundMessage(
-          userId: userId,
-          channel: ckQQ,
-          text:
-            if qqAdapter.kind == qbkOfficial:
-              qqStatusText(providerLine, thinking, toolsCount, sm.sessionCount(), uptimeStr)
-            else:
-              buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs),
-        )).isOkOr:
-          log.error("qq send crStatus failed for user=" & $userId & " reason=" & error)
+        ## Keyboards on the official backend, text menus on OneBot.
+        discard handleQQUiCommand(msg, command, qqAdapter, env.memory,
+                                  env.modelCatalogLoader, event.userId)
       of crCallback:
         let callback = decideCallbackRequest(CallbackRequest(channel: ckQQ, data: command.value))
         case callback.route
         of cbrUi:
-          discard handleQQUiCallback(msg, callback, qqAdapter, memory, modelCatalogLoader, event.userId)
+          discard handleQQUiCallback(msg, callback, qqAdapter, env.memory,
+                                     env.modelCatalogLoader, event.userId)
         of cbrSessionTask:
-          if sm.hasLiveSession(userId):
-            let entry = sm.getOrCreate(userId)
-            inc msgSeq
-            entry.inbox.addLastNoWait(
-              newTaskMsg($msgSeq, callbackTaskKind(callback), $userId, callback.value, ckQQ, event.messageId))
+          discard enqueueSessionTask(sm, msgSeq, userId, callbackTaskKind(callback),
+                                     callback.value, ckQQ, event.messageId)
         else:
           handleSessionFallback(msg)
-      of crNone:
-        handleSessionFallback(msg)
+      of crStatus:
+        let text =
+          if qqAdapter.kind == qbkOfficial:
+            qqStatusText(buildProviderStatusLine(env.memory, userId),
+                         env.memory.getCurrentThinkLevel(userId), env.toolsCount,
+                         sm.sessionCount(), qqUptimeText(env.daemonStartMs))
+          else:
+            buildTextStatusText(env.memory, userId, env.toolsCount,
+                                sm.sessionCount(), env.daemonStartMs)
+        qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: text)).isOkOr:
+          log.error("qq send crStatus failed for user=" & $userId & " reason=" & error)
+      else:
+        let outcome = dispatchTextCommand(env, sm, msgSeq, command, userId, ckQQ,
+                                          event.messageId, qqAdapter.resolver, rawId)
+        case outcome.kind
+        of cokFallback:
+          handleSessionFallback(msg)
+        of cokSilent:
+          discard
+        of cokReply:
+          if outcome.reply.shouldSend:
+            let text =
+              if outcome.reply.topic == rtHelp: qqHelpText(qqAdapter.kind)
+              else: outcome.reply.text
+            qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: text)).isOkOr:
+              log.error("qq send " & $outcome.reply.topic & " failed for user=" &
+                        $userId & " reason=" & error)
     (hasEvent, event) = qqAdapter.tryRecvEvent()
