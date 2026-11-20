@@ -17,6 +17,7 @@ import ../../core/pipeops
 import ../../domain/message
 import ../http/std_http
 import ../identity/identity_resolver
+import ../webhook/http_request_reader
 import ../../app/metrics
 
 const
@@ -82,26 +83,33 @@ proc parseEventJson*(payload: string): Result[QQEvent, string] =
   except CatchableError as e:
     err(e.msg)
 
+proc respond(s: Socket; status: string) =
+  let resp = "HTTP/1.1 " & status & "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+  try: s.send(resp) except CatchableError: discard
+
+proc handleQQOneBotConn*(client: Socket; logger: Logger;
+                         timeoutSec = WebhookClientTimeoutSec) =
+  ## Serves one OneBot v11 event delivery and closes the socket. The request
+  ## is read through http_request_reader: bounded headers, capped body,
+  ## socket timeouts — a hostile peer gets 4xx instead of OOM or a hung thread.
+  defer:
+    try: client.close() except CatchableError: discard
+  discard applyWebhookClientTimeouts(client, timeoutSec)
+  let req = readWebhookRequest(client).valueOr:
+    logger.warn("qq webhook: rejected request: " & error)
+    recordWebhookFailure("qq", error)
+    client.respond(statusLine(readErrorStatus(error)))
+    return
+  if req.httpMethod == "POST" and req.body.len > 0:
+    let evRes = parseEventJson(req.body)
+    if evRes.isOk and gQQOneBotEventsOpen:
+      gQQOneBotEvents.send(evRes.value)
+    client.respond("200 OK")
+  else:
+    client.respond("405 Method Not Allowed")
+
 proc qqOneBotWebhookThread(args: QQOneBotWebhookArgs) {.thread.} =
   ## Minimal HTTP/1.1 server for OneBot v11 event delivery.
-  ## Accepts POST requests with a JSON body and enqueues parsed QQEvents.
-
-  proc readLine(s: Socket): string =
-    var buf = ""
-    var c: char
-    while true:
-      if s.recv(c.addr, 1) != 1:
-        return buf
-      if c == '\r':
-        discard s.recv(c.addr, 1)
-        break
-      buf.add(c)
-    buf
-
-  proc respond(s: Socket; status: string) =
-    let resp = "HTTP/1.1 " & status & "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-    try: s.send(resp) except CatchableError: discard
-
   var server = newSocket()
   server.setSockOpt(OptReuseAddr, true)
   server.bindAddr(Port(args.port))
@@ -114,39 +122,11 @@ proc qqOneBotWebhookThread(args: QQOneBotWebhookArgs) {.thread.} =
     except CatchableError:
       continue
     try:
-      let requestLine = client.readLine()
-      let parts = requestLine.split(' ')
-      let meth = if parts.len >= 1: parts[0] else: ""
-      var contentLength = 0
-      while true:
-        let h = client.readLine()
-        if h.len == 0:
-          break
-        let lower = h.toLowerAscii()
-        if lower.startsWith("content-length:"):
-          try: contentLength = parseInt(h[15 .. ^1].strip())
-          except ValueError: discard
-      var body = ""
-      if contentLength > 0:
-        body = newString(contentLength)
-        var received = 0
-        while received < contentLength:
-          let n = client.recv(body[received].addr, contentLength - received)
-          if n <= 0: break
-          received += n
-
-      if meth == "POST" and body.len > 0:
-        let evRes = parseEventJson(body)
-        if evRes.isOk:
-          gQQOneBotEvents.send(evRes.value)
-        client.respond("200 OK")
-      else:
-        client.respond("405 Method Not Allowed")
+      handleQQOneBotConn(client, args.logger)
     except CatchableError:
       let errMsg = getCurrentExceptionMsg()
       args.logger.warn("qq webhook: connection handler error: " & errMsg)
       recordWebhookFailure("qq", errMsg)
-    try: client.close() except CatchableError: discard
 
 proc startWebhook*(a: QQAdapter; port: Port; logger: Logger) =
   ## Starts the embedded OneBot webhook HTTP server on the given port.

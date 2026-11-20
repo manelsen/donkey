@@ -1,5 +1,6 @@
 g0	tests/adapters/channel/t_common_runtime.nim
 g0	tests/adapters/channel/t_dm_gate_runtimes.nim
+g0	tests/adapters/channel/t_embedded_webhooks.nim
 g0	tests/adapters/channel/t_doctor_report.nim
 g0	tests/adapters/channel/t_line_adapter.nim
 g0	tests/adapters/channel/t_line_runtime.nim
@@ -31,6 +32,7 @@ g0	tests/adapters/tools/t_git.nim
 g0	tests/adapters/tools/t_mcp_client.nim
 g0	tests/adapters/tools/t_shell.nim
 g0	tests/adapters/webhook/t_line_webhook.nim
+g0	tests/adapters/webhook/t_http_request_reader.nim
 g0	tests/adapters/webhook/t_webhook_ingress.nim
 g0	tests/adapters/webhook/t_webhook_receiver.nim
 g0	tests/app/t_agent_chat.nim
@@ -145,10 +147,10 @@ g2	tests/core/t_hook_executor.nim
 g2	tests/core/t_json_log.nim
 g2	tests/core/t_log.nim
 g2	tests/core/t_memory_rerank_prefs.nim
+g2	tests/core/t_media_download.nim
 g2	tests/core/t_native_tool_dispatch.nim
 g2	tests/core/t_network.nim
 g2	tests/core/t_onboarding.nim
-g2	tests/core/t_media_download.nim
 g2	tests/core/t_outbound.nim
 g2	tests/core/t_output_sanitizer.nim
 g2	tests/core/t_pipeops.nim
