@@ -34,3 +34,13 @@ docs/*
 
 # Downloaded SDKs (análise apenas, não são deps)
 larksuiteoapi-node-sdk-*.tgz
+
+# `nim c src/.../foo.nim` drops an extensionless ELF next to the source.
+# Only Nim sources belong under src/ — same allow-list approach as tests/.
+src/**
+!src/**/
+!src/**/*.nim
+src/**/htmldocs/
+
+# Editor/merge backups
+*.orig
