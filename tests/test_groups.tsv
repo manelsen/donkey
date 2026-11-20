@@ -11,6 +11,7 @@ g0	tests/adapters/channel/t_telegram_media_upload.nim
 g0	tests/adapters/channel/t_telegram_runtime.nim
 g0	tests/adapters/channel/t_discord_command_replies.nim
 g0	tests/adapters/channel/t_requester_only_routes.nim
+g0	tests/adapters/channel/t_requester_only_send_paths.nim
 g0	tests/adapters/channel/t_wechat.nim
 g0	tests/adapters/filesystem/t_media_paths.nim
 g0	tests/adapters/hooks/t_memory_capture_hook.nim

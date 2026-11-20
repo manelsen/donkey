@@ -212,4 +212,8 @@ Implemented on `feat/command-dispatch-app`.
 | Slack `/config` fallback mentions buttons | `t_command_dispatch_app.nim` ("the /config text fallback…") |
 | `/memory` raising `IOError` | `tests/adapters/channel/t_common_runtime.nim` (unreadable memory file) |
 
+Every row was reproduced on `master` (2ed548db) with a probe against the old API: Discord posted `/mycode` to the server channel, a `/compact` slash command got no interaction response, `/stop` on Slack left the turn running, `/compact` said "reiniciar", Feishu `/help` listed `/config`, the Slack config text mentioned buttons, and `/memory` raised `IOError`.
+
+`tests/adapters/channel/t_requester_only_send_paths.nim` runs the real runtimes and adapters (Discord, QQ, Feishu, Slack, WhatsApp, WeChat, WeCom) against a local recording HTTP server. It checks that a link code asked from a group or server channel reaches only the requester's private path, or is replaced by the notice. A failed Discord DM posts nothing in the channel.
+
 [/PRD]
