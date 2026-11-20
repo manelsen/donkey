@@ -16,6 +16,10 @@ const
   KatBody     = """{"events":[]}"""
   KatBase64   = "sKRrt+MTE71nWWZPaYrvYSdH9JGlgckmBidZxDuPgPc="
   KatHex      = "b0a46bb7e31313bd6759664f698aef612747f491a581c926062759c43b8f80f7"
+  ## printf '%s' '{"post_type":"message"}' | openssl dgst -sha1 -hmac 'onebot-secret'
+  KatSha1Secret = "onebot-secret"
+  KatSha1Body   = """{"post_type":"message"}"""
+  KatSha1Hex    = "19a20b08a7fa2632968ebb5ca3efca2111a59eab"
 
 proc runTests*() =
   suite "hmacSha256 — external known-answer vectors":
@@ -27,6 +31,13 @@ proc runTests*() =
 
     test "the body is signed byte for byte, not normalized":
       check hmacSha256Base64(KatSecret, KatBody & "\n") != KatBase64
+
+  suite "hmacSha1 — OneBot v11 X-Signature":
+    test "hex form matches the independently computed digest":
+      check hmacSha1Hex(KatSha1Secret, KatSha1Body) == KatSha1Hex
+
+    test "a different secret gives a different digest":
+      check hmacSha1Hex("other", KatSha1Body) != KatSha1Hex
 
   suite "safeEquals":
     test "equal strings compare true":

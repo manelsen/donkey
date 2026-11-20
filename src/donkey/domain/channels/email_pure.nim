@@ -145,3 +145,24 @@ func hasAttachment*(r: EmailParseResult): bool =
   ## True when the email carries a MIME attachment (not currently parsed).
   ## Reserved for future multipart/mixed support.
   r.kind == emkUnknown
+
+# ── IMAP quoting ──────────────────────────────────────────────────────────────
+
+func imapQuote*(value: string): Result[string, string] =
+  ## Encodes `value` as an IMAP quoted string (RFC 3501 §4.3): escapes `"`
+  ## and `\`. CR, LF and NUL cannot appear in a quoted string — accepting
+  ## them would let a credential inject extra IMAP commands — so they are
+  ## rejected instead.
+  var quoted = newStringOfCap(value.len + 2)
+  quoted.add('"')
+  for c in value:
+    case c
+    of '\r', '\n', '\0':
+      return err("imapQuote: CR, LF and NUL are not allowed")
+    of '"', '\\':
+      quoted.add('\\')
+      quoted.add(c)
+    else:
+      quoted.add(c)
+  quoted.add('"')
+  ok(quoted)

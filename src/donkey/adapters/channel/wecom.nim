@@ -26,6 +26,7 @@ import ../../domain/message
 import ../../domain/channels/wechat_pure
 import ../http/std_http
 import ../identity/identity_resolver
+import ../webhook/http_request_reader
 import ../../app/metrics
 
 const WeComApiBase = "https://qyapi.weixin.qq.com"
@@ -50,7 +51,8 @@ type
     tokenExpiry:    int64   ## epoch ms; 0 = not yet fetched
 
 ## Module-level channel — opened once, valid for daemon lifetime.
-## Thread-safe: chronos Channel uses internal synchronization.
+## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
+## lock internally and deep-copy the payload. Must be open()ed before use.
 var gWeComEvents* {.global.}: Channel[WeComEvent]
 
 # ── Token management ──────────────────────────────────────────────────────────
@@ -159,15 +161,6 @@ proc dedupCheck(msgId: string): bool =
     gWeComSeen[msgId] = now
     false
 
-proc readHttpLine(s: Socket): string =
-  var c: char
-  while true:
-    if s.recv(c.addr, 1) != 1: break
-    if c == '\r':
-      discard s.recv(c.addr, 1)
-      break
-    result.add(c)
-
 proc sendHttpReply(s: Socket; status, body: string; logger: Logger) =
   let r = "HTTP/1.1 " & status & "\r\n" &
           "Content-Type: text/plain; charset=utf-8\r\n" &
@@ -176,66 +169,39 @@ proc sendHttpReply(s: Socket; status, body: string; logger: Logger) =
   try: s.send(r) except CatchableError:
     logger.warn("wecom: failed to send response: " & getCurrentExceptionMsg())
 
-proc parseQueryParams(requestLine: string): Table[string, string] =
-  let q = requestLine.find('?')
-  if q < 0: return
-  let sp = requestLine.find(' ', q)
-  let qs = if sp > q: requestLine[q+1 ..< sp] else: requestLine[q+1 .. ^1]
-  for pair in qs.split('&'):
-    let kv = pair.split('=', 1)
-    if kv.len == 2: result[kv[0]] = kv[1]
-
-proc handleWeComConn(client: Socket; token: string; logger: Logger) =
-  defer:
-    try: client.close() except CatchableError: discard
+proc handleWeComConn*(client: Socket; token: string; logger: Logger;
+                      timeoutSec = WebhookClientTimeoutSec) =
+  ## Serves one WeCom callback request and closes the socket.
+  ## Reading goes through http_request_reader (bounded, timed out), and
+  ## msg_signature is mandatory: WeCom always signs, so an unsigned request
+  ## is a forgery and must not reach the agent.
+  defer: closeWebhookClient(client)
   try:
-    let requestLine = client.readHttpLine()
-    if requestLine.len == 0: return
+    discard applyWebhookClientTimeouts(client, timeoutSec)
+    let req = readWebhookRequest(client).valueOr:
+      logger.warn("wecom: rejected request: " & error)
+      recordWebhookFailure("wecom", error)
+      client.sendHttpReply(statusLine(readErrorStatus(error)), "", logger)
+      return
 
-    ## Read and discard headers; capture Content-Length.
-    var contentLen = 0
-    while true:
-      let line = client.readHttpLine()
-      if line.len == 0: break
-      if line.toLowerAscii().startsWith("content-length:"):
-        try: contentLen = parseInt(line[15 .. ^1].strip())
-        except ValueError: discard
+    let sig   = req.query.getOrDefault("msg_signature")
+    let ts    = req.query.getOrDefault("timestamp")
+    let nonce = req.query.getOrDefault("nonce")
+    if sig.len == 0 or sig != wecomSignature(token, ts, nonce):
+      logger.warn("wecom: missing or invalid msg_signature")
+      client.sendHttpReply("403 Forbidden", "invalid signature", logger)
+      return
 
-    let params  = parseQueryParams(requestLine)
-    let sig     = params.getOrDefault("msg_signature")
-    let ts      = params.getOrDefault("timestamp")
-    let nonce   = params.getOrDefault("nonce")
-    let isGet   = requestLine.startsWith("GET ")
-
-    if isGet:
+    if req.httpMethod == "GET":
       ## URL verification handshake.
-      let echostr  = params.getOrDefault("echostr")
-      let expected = wecomSignature(token, ts, nonce)
-      if sig.len > 0 and sig != expected:
-        logger.warn("wecom: URL verify sig mismatch")
-        client.sendHttpReply("403 Forbidden", "invalid signature", logger)
-        return
-      client.sendHttpReply("200 OK", echostr, logger)
+      client.sendHttpReply("200 OK", req.query.getOrDefault("echostr"), logger)
       logger.info("wecom: URL verification OK")
       return
 
-    ## POST — read body, ack immediately.
-    var body = ""
-    if contentLen > 0:
-      body = newString(contentLen)
-      discard client.recv(body, contentLen)
     client.sendHttpReply("200 OK", "", logger)  ## respond fast before processing
+    if req.body.len == 0: return
 
-    if body.len == 0: return
-
-    ## Verify signature on POST (plaintext mode).
-    if sig.len > 0:
-      let expected = wecomSignature(token, ts, nonce)
-      if sig != expected:
-        logger.warn("wecom: POST sig mismatch")
-        return
-
-    let r = parseXmlMsg(body)
+    let r = parseXmlMsg(req.body)
     if r.kind != wckText: return
     let text = r.text.strip()
     if text.len == 0: return
@@ -262,7 +228,7 @@ type WeComWebhookArgs = object
 
 proc webhookThread(args: WeComWebhookArgs) {.thread.} =
   {.cast(gcsafe).}:
-    var server = newSocket()
+    var server = newSocket(buffered = false)  ## see http_request_reader
     server.setSockOpt(OptReuseAddr, true)
     server.bindAddr(Port(args.port))
     server.listen()

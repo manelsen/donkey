@@ -53,7 +53,8 @@ type
 
 # ── Module-level event queue ──────────────────────────────────────────────────
 
-## Thread-safe: chronos Channel uses internal synchronization.
+## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
+## lock internally and deep-copy the payload. Must be open()ed before use.
 var gMxEvents* {.global.}: Channel[MatrixEvent]
 
 # ── Transaction ID counter ────────────────────────────────────────────────────
@@ -63,6 +64,7 @@ var gMxEvents* {.global.}: Channel[MatrixEvent]
 ## nextTxnId() which is called by sendChunk, sendReturnId, and editMessage.
 var gMxTxnSeq {.global.}: int
 var gMxTxnLock {.global.}: Lock
+initLock(gMxTxnLock)  # at module init: send/edit may run before openQueue()
 
 proc nextTxnId(): string =
   acquire(gMxTxnLock)
@@ -172,16 +174,11 @@ func buildSendUrl(base, roomId, txnId: string): string =
   base.strip(chars = {'/'}) & MxApiPath &
     "/rooms/" & roomId & "/send/m.room.message/" & txnId
 
-func buildSendBody(text: string): string =
-  ## Builds the JSON body for a Matrix m.text message send.
-  let safe = text.replace("\\", "\\\\").replace("\"", "\\\"")
-  "{\"msgtype\":\"m.text\",\"body\":\"" & safe & "\"}"
-
 proc sendChunk(a: MatrixAdapter; roomId, text: string): Result[void, string] =
   ## Sends a single text chunk to the given room.
   let url  = buildSendUrl(a.resolvedBase(), roomId, nextTxnId())
   let hdrs = @[a.authHeader(), ("Content-Type", "application/json")]
-  let resp = ? a.http.put(url, buildSendBody(text), hdrs)
+  let resp = ? a.http.put(url, textBody(text), hdrs)
   if resp.status < 200 or resp.status >= 300:
     return err("Matrix send error " & $resp.status & ": " & resp.body)
   ok()
@@ -216,12 +213,8 @@ proc downloadFile*(a: MatrixAdapter; mxcUrl: string): Result[FileDownload, strin
     let baseUrl = if a.apiBase.len > 0: a.apiBase else: a.homeserver
     let downloadUrl = baseUrl.strip(chars = {'/'}) & "/_matrix/media/v3/download/" & serverName & "/" & mediaId
     let headers = @[a.authHeader()]
-    let resp = ? a.http.get(downloadUrl, headers)
-    
-    var data = newSeq[byte](resp.body.len)
-    for i in 0 ..< resp.body.len:
-      data[i] = cast[byte](resp.body[i])
-    
+    let data = ? a.http.fetchBytes(downloadUrl, headers)
+
     ok(FileDownload(
       fileName: "matrix_" & mediaId,
       fileSize: data.len.int64,
@@ -247,7 +240,7 @@ proc sendReturnId*(a: MatrixAdapter; msg: OutboundMessage): Result[string, strin
   let chunk = splitChunks(msg.text, MxMaxChars)[0]
   let url   = buildSendUrl(a.resolvedBase(), roomId, nextTxnId())
   let hdrs  = @[a.authHeader(), ("Content-Type", "application/json")]
-  a.http.put(url, buildSendBody(chunk), hdrs) >>= parseMxBody >>= extractEventId
+  a.http.put(url, textBody(chunk), hdrs) >>= parseMxBody >>= extractEventId
 
 proc editMessage*(a: MatrixAdapter; userId: UserId;
                   msgId, text: string): Result[void, string] =
@@ -256,11 +249,7 @@ proc editMessage*(a: MatrixAdapter; userId: UserId;
   let roomId = a.resolver.reverseChannel(userId, ckMatrix)
   if roomId.len == 0:
     return err("MatrixAdapter.editMessage: no Matrix room for user " & $userId)
-  let safe = text.replace("\\", "\\\\").replace("\"", "\\\"")
-  let body = "{\"msgtype\":\"m.text\",\"body\":\"* " & safe &
-    "\",\"m.new_content\":{\"msgtype\":\"m.text\",\"body\":\"" & safe &
-    "\"},\"m.relates_to\":{\"rel_type\":\"m.replace\",\"event_id\":\"" &
-    msgId & "\"}}"
+  let body = editBody(text, msgId)
   let url  = buildSendUrl(a.resolvedBase(), roomId, nextTxnId())
   let hdrs = @[a.authHeader(), ("Content-Type", "application/json")]
   let resp = ? a.http.put(url, body, hdrs)
@@ -276,7 +265,6 @@ proc ack*(a: MatrixAdapter; msgId: string) =
 
 proc openQueue*(a: MatrixAdapter) =
   ## Opens the module-level event queue. Call once at daemon startup.
-  initLock(gMxTxnLock)
   {.cast(gcsafe).}:
     gMxEvents.open()
 

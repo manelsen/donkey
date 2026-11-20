@@ -268,5 +268,14 @@ proc runTests*() =
       let msg = r.toInbound(UserId("user-42"))
       check msg.mediaUrl == "fil_789"
 
+  suite "feishu_pure.textContent":
+
+    test "is valid JSON for control chars, quotes and backslashes":
+      const nasty = "linha 1\nlinha 2\r\n\ttab \"aspas\" \\barra\\ \u0001 ünïcødé"
+      check parseJson(textContent(nasty))["text"].getStr == nasty
+
+    test "empty text yields empty text field":
+      check parseJson(textContent(""))["text"].getStr == ""
+
 when isMainModule:
   runTests()

@@ -26,6 +26,7 @@ import ../../core/log
 import ../../core/pipeops
 import ../../domain/channels/line_policy
 import ./webhook_ingress
+import ./http_request_reader
 import ../channel/slack
 import ../channel/feishu
 import ../channel/dingtalk
@@ -34,6 +35,7 @@ import ../channel/matrix
 import ../channel/whatsapp
 
 export webhook_ingress
+export http_request_reader.MaxWebhookBodyBytes
 
 const
   SlackPath*    = "/webhook/slack"
@@ -46,17 +48,11 @@ const
   SlackReplayWindowSec*      = 300
   FeishuReplayWindowSec*     = 300
   DingTalkTimestampWindowMs* = 3_600_000
-  MaxWebhookBodyBytes*       = 2 * 1024 * 1024
   LineMaxBodyBytes*          = 1 * 1024 * 1024
   WebhookTlsReloadIntervalMs = 1000
 
   WebhookWorkerCount        = 4
   WebhookQueueDepth         = 32
-  WebhookClientTimeoutSec   = 5
-  WebhookRequestDeadlineSec = 15
-  MaxWebhookHeaderLines     = 64
-  MaxWebhookHeaderBytes     = 64 * 1024
-  MaxWebhookLineBytes       = 8192
 
 type
   WebhookResponse* = object
@@ -112,20 +108,6 @@ func feishuToken(payload: JsonNode): string =
     if h != nil and h.kind == JObject:
       token = h.getOrDefault("token").getStr("")
   token
-
-func percentDecode(s: string): string =
-  result = newStringOfCap(s.len)
-  var i = 0
-  while i < s.len:
-    if s[i] == '%' and i + 2 < s.len:
-      try:
-        result.add(char(parseHexInt(s[i + 1 .. i + 2])))
-        i += 3
-        continue
-      except ValueError:
-        discard
-    result.add(s[i])
-    inc i
 
 proc parseForm(body: string): Table[string, string] =
   ## application/x-www-form-urlencoded decoder (Slack slash commands).
@@ -481,110 +463,6 @@ func statusReason(status: int): string =
   of 503: "Service Unavailable"
   else:  "Error"
 
-proc requestDeadline(): MonoTime =
-  ## Total time budget for one request, measured on the monotonic clock so a
-  ## wall-clock jump cannot extend or shorten it.
-  getMonoTime() + initDuration(seconds = WebhookRequestDeadlineSec)
-
-proc readHttpLine(s: Socket; deadline: MonoTime): Result[string, string] =
-  ## Reads one CRLF/LF terminated line; bounded in length and in time.
-  var line = ""
-  while line.len < MaxWebhookLineBytes:
-    if getMonoTime() > deadline:
-      return err("request deadline exceeded")
-    var c: char
-    let n = s.recv(c.addr, 1)
-    if n <= 0:
-      return err("connection closed or read timed out")
-    if c == '\r':
-      continue
-    if c == '\n':
-      return ok(line)
-    line.add(c)
-  err("header line too long")
-
-proc parseQuery(query: string): Table[string, string] =
-  result = initTable[string, string]()
-  if query.len == 0:
-    return
-  for pair in query.split('&'):
-    if pair.len == 0:
-      continue
-    let kv = pair.split('=', 1)
-    let key = percentDecode(kv[0])
-    let value = if kv.len == 2: percentDecode(kv[1]) else: ""
-    result[key] = value
-
-proc readWebhookRequest(client: Socket): Result[WebhookRequest, string] =
-  let deadline = requestDeadline()
-
-  let requestLine = readHttpLine(client, deadline).valueOr:
-    return err(error)
-  if requestLine.len == 0:
-    return err("empty request line")
-
-  let parts = requestLine.split(' ')
-  if parts.len < 2:
-    return err("malformed request line")
-
-  var path = parts[1]
-  var query = initTable[string, string]()
-  let qpos = path.find('?')
-  if qpos >= 0:
-    query = parseQuery(path[qpos + 1 .. ^1])
-    path = path[0 ..< qpos]
-
-  var headers = initTable[string, string]()
-  var contentLength = 0
-  var headerLines = 0
-  var headerBytes = 0
-  while true:
-    if headerLines >= MaxWebhookHeaderLines:
-      return err("too many headers")
-    let line = readHttpLine(client, deadline).valueOr:
-      return err(error)
-    inc headerLines
-    headerBytes += line.len
-    if headerBytes > MaxWebhookHeaderBytes:
-      return err("headers too large")
-    if line.len == 0:
-      break
-    let colon = line.find(':')
-    if colon <= 0:
-      continue
-    let name = line[0 ..< colon].strip().toLowerAscii()
-    let value = line[colon + 1 .. ^1].strip()
-    headers[name] = value
-    if name == "content-length":
-      try:
-        contentLength = parseInt(value)
-      except ValueError:
-        contentLength = 0
-
-  var body = ""
-  if contentLength > 0:
-    if contentLength > MaxWebhookBodyBytes:
-      return err("body too large")
-    body = newString(contentLength)
-    var received = 0
-    while received < contentLength:
-      if getMonoTime() > deadline:
-        return err("request deadline exceeded")
-      let n = client.recv(body[received].addr, contentLength - received)
-      if n <= 0:
-        break
-      received += n
-    if received != contentLength:
-      return err("truncated body")
-
-  ok(WebhookRequest(
-    httpMethod: parts[0],
-    path:       path,
-    query:      query,
-    headers:    headers,
-    body:       body,
-  ))
-
 proc sendResponse(client: Socket; resp: WebhookResponse) =
   let head = "HTTP/1.1 " & $resp.status & " " & statusReason(resp.status) & "\r\n" &
              "Content-Type: " & resp.contentType & "\r\n" &
@@ -595,25 +473,13 @@ proc sendResponse(client: Socket; resp: WebhookResponse) =
   except CatchableError:
     discard
 
-proc applyWebhookClientTimeouts(client: Socket;
-                                seconds = WebhookClientTimeoutSec) =
-  ## Bounds every blocking recv/send from a connected client.
-  var tv: posix.Timeval
-  tv.tv_sec = posix.Time(seconds)
-  tv.tv_usec = posix.Suseconds(0)
-  discard posix.setsockopt(client.getFd, posix.SOL_SOCKET, posix.SO_RCVTIMEO,
-                           addr tv, posix.SockLen(sizeof(tv)))
-  discard posix.setsockopt(client.getFd, posix.SOL_SOCKET, posix.SO_SNDTIMEO,
-                           addr tv, posix.SockLen(sizeof(tv)))
-
 func readErrorResponse*(error: string): WebhookResponse =
   ## The socket reader rejects before routing, so the status must describe the
   ## read failure: an oversized declared body is 413, everything else 400.
-  if error == "body too large": payloadTooLarge() else: badRequest()
+  if readErrorStatus(error) == 413: payloadTooLarge() else: badRequest()
 
 proc handleConnection(client: Socket; cfg: WebhookConfig; logger: Logger) =
-  defer:
-    try: client.close() except CatchableError: discard
+  defer: closeWebhookClient(client)
   let req = readWebhookRequest(client).valueOr:
     logger.warn("webhook: " & error)
     sendResponse(client, readErrorResponse(error))
@@ -698,7 +564,7 @@ proc webhookWorker(arg: WebhookWorkerArg) {.thread.} =
         discard posix.close(cint(fd))
         continue
       try:
-        applyWebhookClientTimeouts(client)
+        discard applyWebhookClientTimeouts(client)
         if arg.cfg.tlsCertFile.len > 0:
           ## Reload the certificate when the files change, so rotation does
           ## not require a daemon restart. A failed reload keeps the old
@@ -849,7 +715,7 @@ proc webhookServerThread(args: WebhookServerArgs) {.thread.} =
           args.logger.warn("webhook: accept error: " & e.msg)
           sleep(50)
           continue
-        applyWebhookClientTimeouts(client)
+        discard applyWebhookClientTimeouts(client)
         if not gWebhookQueue.trySend(client.getFd):
           sendResponse(client, serviceUnavailable())
           try: client.close() except CatchableError: discard

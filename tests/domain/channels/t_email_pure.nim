@@ -181,5 +181,20 @@ proc runTests*() =
       let r = EmailParseResult(kind: emkUnknown)
       check r.hasAttachment
 
+  suite "email_pure.imapQuote":
+
+    test "wraps plain value in double quotes":
+      check imapQuote("bot@example.com").get == "\"bot@example.com\""
+
+    test "escapes double quote and backslash":
+      check imapQuote("p\"a\\ss").get == "\"p\\\"a\\\\ss\""
+
+    test "rejects CR and LF (command injection)":
+      check imapQuote("pass\r\nA2 DELETE INBOX").isErr
+      check imapQuote("pass\nx").isErr
+
+    test "rejects NUL":
+      check imapQuote("a\0b").isErr
+
 when isMainModule:
   runTests()

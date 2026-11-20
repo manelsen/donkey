@@ -195,5 +195,11 @@ proc runTests*() =
       check msg.channelId == "msg_grp"
       check msg.channel == ckDingTalk
 
+  suite "dingtalk_pure.textMsgParam":
+
+    test "is valid JSON for control chars, quotes and backslashes":
+      const nasty = "linha 1\nlinha 2\r\n\ttab \"aspas\" \\barra\\ \u0001 ünïcødé"
+      check parseJson(textMsgParam(nasty))["content"].getStr == nasty
+
 when isMainModule:
   runTests()

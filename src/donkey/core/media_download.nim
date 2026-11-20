@@ -39,18 +39,27 @@ func extractMimeType*(url: string): string =
   elif fileName.endsWith(".webm"): "video/webm"
   else: "application/octet-stream"
 
+func toBytes(s: string): seq[byte] =
+  result = newSeq[byte](s.len)
+  for i in 0 ..< s.len:
+    result[i] = byte(s[i])
+
+proc fetchBytes*(http: HttpPort; url: string;
+                 headers: seq[HttpHeader]): Result[seq[byte], string] =
+  ## GETs `url` and returns the body as bytes. Any non-2xx status is an
+  ## error — otherwise an error page (404 HTML, 401 JSON) would be handed
+  ## to the caller as if it were the requested file.
+  try:
+    let resp = ? http.get(url, headers)
+    if resp.status < 200 or resp.status >= 300:
+      return err("download failed: HTTP " & $resp.status)
+    ok(resp.body.toBytes)
+  except CatchableError as e:
+    err("fetchBytes: " & e.msg)
+
 proc downloadUrlAsBytes*(http: HttpPort; url: string): Result[seq[byte], string] =
   ## Downloads any URL and returns raw bytes as seq[byte].
-  try:
-    let headers: seq[(string, string)] = @[]
-    let resp = ? http.get(url, headers)
-    
-    result = newSeq[byte](resp.body.len)
-    for i in 0 ..< resp.body.len:
-      result[i] = cast[byte](resp.body[i])
-    ok(result)
-  except CatchableError as e:
-    err("downloadUrlAsBytes: " & e.msg)
+  http.fetchBytes(url, @[])
 
 proc downloadUrl*(http: HttpPort; url: string;
                   fileName = ""): Result[FileDownload, string] =
