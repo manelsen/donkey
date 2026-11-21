@@ -9,7 +9,13 @@ import ../identity/identity_resolver
 import ../../app/inbound_gate
 import ../../app/approval_runtime
 import ./wechat
-import ./text_command_dispatch
+import ../../app/command_dispatch
+import ./common_runtime
+
+proc logSendFailure(operation, error: string) {.gcsafe.} =
+  ## A reply that could not be delivered is logged, never dropped silently.
+  newLogger("wch.runtime").warn(operation & ": send failed: " & error)
+
 
 proc sendWeChatReply(wchAdapter: var WeChatAdapter;
                      userId: UserId;
@@ -19,12 +25,12 @@ proc sendWeChatReply(wchAdapter: var WeChatAdapter;
     channel: ckWeChat,
     text: text,
   )).isOkOr:
-    discard
+    logSendFailure("sendWeChatReply", error)
 
 proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
                         wechatAppId: string;
                         sm: var SessionManager;
-                        env: CommandEnv;
+                        env: ChannelRuntimeEnv;
                         msgSeq: var int;
                         handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
                         log: Logger = newLogger("wch.outbound")) =
@@ -61,12 +67,13 @@ proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
       )
       if event.msgType == "text" and event.content.strip.len > 0:
         let command = decideCommandRequest(CommandRequest(channel: ckWeChat, text: event.content))
-        let outcome = dispatchTextCommand(env, sm, msgSeq, command, userId, ckWeChat,
-                                          event.msgId, wchAdapter.resolver, event.fromUser)
+        let outcome = dispatchCommand(env.commands, sm, msgSeq,
+          commandRequest(command, userId, ckWeChat, event.msgId, event.fromUser,
+                         wchAdapter.resolver))
         case outcome.kind
         of cokFallback:
           handleSessionFallback(msg)
-        of cokSilent:
+        of cokAccepted:
           discard
         of cokReply:
           if outcome.reply.shouldSend:

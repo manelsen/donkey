@@ -12,6 +12,13 @@ when defined(withPostgres):
   import donkey/adapters/memory/magma_graph
   import donkey/adapters/memory/magma_memory_adapter
 
+proc canRead(path: string): bool =
+  try:
+    discard readFile(path)
+    true
+  except IOError:
+    false
+
 proc runTests*() =
   suite "common_runtime":
 
@@ -53,10 +60,37 @@ proc runTests*() =
       check text.contains("/skill install <slug> — baixa e habilita")
 
     test "buildHelpText expands /skill subcommands":
-      let text = buildHelpText(false)
+      let text = buildHelpText(AllCommandSurfaceCaps, false)
       check text.contains("/skill — busca, instala e habilita skills")
       check text.contains("/skill search <query> — busca skills remotas")
       check text.contains("/skill read <slug> — lê o SKILL.md")
+
+    test "buildMemoryViewText reports an unreadable memory file as an error":
+      let tmpDir = getTempDir() / ("donkey_memview_unreadable_" & $getCurrentProcessId())
+      let memory = MdFileAdapter(paddocksDir: tmpDir)
+      let userId = UserId("u-unreadable")
+      defer: removeDir(tmpDir)
+      createDir(memory.memoryMdPath(userId).parentDir)
+      writeFile(memory.memoryMdPath(userId), "secret memories")
+      setFilePermissions(memory.memoryMdPath(userId), {})
+      defer: setFilePermissions(memory.memoryMdPath(userId), {fpUserRead, fpUserWrite})
+      let view = buildMemoryViewText(memory, userId)
+      if not canRead(memory.memoryMdPath(userId)):  ## root reads anything
+        check view.isErr
+        check "MEMORY.md" in view.error
+
+    test "the command service never raises on an unreadable memory file":
+      let tmpDir = getTempDir() / ("donkey_memview_service_" & $getCurrentProcessId())
+      let memory = MdFileAdapter(paddocksDir: tmpDir)
+      let userId = UserId("u-unreadable-service")
+      defer: removeDir(tmpDir)
+      createDir(memory.memoryMdPath(userId).parentDir)
+      writeFile(memory.memoryMdPath(userId), "secret memories")
+      setFilePermissions(memory.memoryMdPath(userId), {})
+      defer: setFilePermissions(memory.memoryMdPath(userId), {fpUserRead, fpUserWrite})
+      let services = newCommandServices(memory, nil, nil, 0, 0, 0)
+      if not canRead(memory.memoryMdPath(userId)):
+        check services.memoryView(userId).isErr
 
     test "parseModelsArgs validates provider and model":
       let parsed = parseModelsArgs("gemini gemini-2.5-pro").get()
@@ -397,7 +431,7 @@ permissions = ["--allow-net=clawhub.ai"]
         createDir(tmpDir / $userId)
         writeFile(tmpDir / $userId / "MEMORY.md", "markdown memory only")
 
-        let view = buildMemoryViewText(memory, userId)
+        let view = buildMemoryViewText(memory, userId).get
         check view.contains("Multigraph Memory")
         check view.contains("graph-backed memory")
         check "markdown memory only" notin view
@@ -417,7 +451,7 @@ permissions = ["--allow-net=clawhub.ai"]
         let userId = UserId("u-common-memory-fallback")
         writeFile(tmpDir / $userId / "MEMORY.md", "markdown fallback memory")
 
-        let view = buildMemoryViewText(memory, userId)
+        let view = buildMemoryViewText(memory, userId).get
         check view.contains("Markdown fallback")
         check view.contains("markdown fallback memory")
 
@@ -438,7 +472,7 @@ permissions = ["--allow-net=clawhub.ai"]
         magma.saveUserMd(userId, "# Void\n**Timezone:** America/Sao_Paulo")
         magma.savePreferences(userId, "language = \"pt-BR\"")
 
-        let view = buildMemoryViewText(memory, userId)
+        let view = buildMemoryViewText(memory, userId).get
         check view.contains("Multigraph Memory")
         check view.contains("👤 Perfil")
         check view.contains("America/Sao_Paulo")
