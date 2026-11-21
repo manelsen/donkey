@@ -112,6 +112,6 @@ rg -n '^\s*except:\s*$' src
 rg -n -A1 'isOkOr:\s*$' src | grep -c -- '-\s*discard$'
 rg -c 'getEnv\(' src/donkey/app src/donkey/adapters src/donkey.nim
 rg -ln 'withHttpClient\b' src
-python3 deadmods.py   # reachability from src/donkey.nim
-python3 dups.py       # duplicated 8-line windows (normalized)
+python3 scripts/audit/deadmods.py   # reachability from src/donkey.nim
+python3 scripts/audit/dups.py       # duplicated 8-line windows (normalized)
 ```
