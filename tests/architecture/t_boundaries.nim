@@ -14,8 +14,9 @@ func importSpans(src: string): seq[string] =
   var i = 0
   while i < lines.len:
     let t = starts[i].strip
-    if t.startsWith("import ") or t == "import" or t.startsWith("from ") or
-       t.startsWith("include "):
+    ## A quoted path is blank in `codeOnly`, so the keyword may stand alone.
+    let keyword = t.split(' ', 1)[0]
+    if keyword in ["import", "from", "include"]:
       var statement = @[lines[i].strip(leading = false)]
       var j = i + 1
       while j < lines.len:
@@ -56,6 +57,9 @@ proc runTests*() =
       check not importSpans("import std/os # adapters/x")[0].contains("adapters/")
       check not importSpans("import std/os #[ adapters/x ]#")[0].contains("adapters/")
       check importSpans("const example = \"\"\"\nimport ../adapters/x\n\"\"\"").len == 0
+      check importSpans("include \"../adapters/x\"")[0].contains("adapters/")
+      check importSpans("from \"../adapters/x\" import y")[0].contains("adapters/")
+      check importSpans("imported = 1").len == 0
 
 when isMainModule:
   runTests()
