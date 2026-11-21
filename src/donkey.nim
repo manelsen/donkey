@@ -313,7 +313,7 @@ proc emailPollThread(adapter: ptr EmailAdapter) {.thread.} =
   var res: PollResult
   try:
     res = adapter[].pollInbox()
-  except Exception as e:
+  except CatchableError as e:
     res = pollFailure(e.msg)
   gEmailPollCh.send(res)
 
@@ -321,7 +321,7 @@ proc signalPollThread(adapter: ptr SignalAdapter) {.thread.} =
   var res: PollResult
   try:
     res = adapter[].receive()
-  except Exception as e:
+  except CatchableError as e:
     res = pollFailure(e.msg)
   gSignalPollCh.send(res)
 
@@ -1245,7 +1245,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
           avNotAllowed
         else:
           avAllowed
-      except Exception:
+      except Exception:  ## effect boundary: callee raises are unannotated
         avRevoked
   try:
     startIpcServer(sockPath, ipcStatusFn, ipcLogFn)

@@ -108,7 +108,7 @@ proc deliverQueuedReplies*(q: LineReplyQueue; a: LineAdapter;
     var sent: Result[void, string]
     try:
       sent = a.send(msg)
-    except Exception:
+    except CatchableError:
       sent = Result[void, string].err("LINE: reply delivery failed")
     if onResult != nil:
       onResult(msg, sent)

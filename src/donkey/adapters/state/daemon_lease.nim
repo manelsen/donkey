@@ -73,7 +73,7 @@ proc acquireDaemonLease*(stateDir: string; nowMs = epochMs();
     when defined(posix):
       discard posix.chmod(path.cstring, posix.Mode(0o600))
     ok(DaemonLease(path: path, owner: owner, held: true))
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err("acquire daemon lease: " & e.msg)
 
 proc releaseDaemonLease*(lease: var DaemonLease) {.gcsafe, raises: [].} =
@@ -89,5 +89,5 @@ proc releaseDaemonLease*(lease: var DaemonLease) {.gcsafe, raises: [].} =
     if current.isSome and current.get().pid == lease.owner.pid and
        current.get().host == lease.owner.host:
       removeFile(lease.path)
-  except Exception:
+  except CatchableError:
     discard

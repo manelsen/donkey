@@ -422,7 +422,7 @@ template guarded(what: string; operation: untyped): Result[void, string] =
   ## conversion belongs here, in the adapter.
   try:
     operation
-  except Exception as e:
+  except CatchableError as e:
     Result[void, string].err(what & ": " & e.msg)
 
 proc toRuntimePort*(a: MarkdownMemoryAdapter): MemoryRuntimePort =

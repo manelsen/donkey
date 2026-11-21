@@ -141,7 +141,7 @@ proc performFsList*(path, paddock: string; recursive = false;
       "base_path": relativeToPaddock(guard.resolved, paddock),
       "items": items,
     })
-  except Exception as e:
+  except CatchableError as e:
     operationalErrorToolResult(e.msg)
 
 proc performFsRead*(path, paddock: string; format = "text"): StructuredToolResult {.gcsafe, raises: [].} =
@@ -181,7 +181,7 @@ proc performFsRead*(path, paddock: string; format = "text"): StructuredToolResul
       usageErrorToolResult("unsupported fs_read format: " & format)
   except JsonParsingError as e:
     operationalErrorToolResult("invalid json: " & e.msg)
-  except Exception as e:
+  except CatchableError as e:
     operationalErrorToolResult(e.msg)
 
 proc contentToString*(content: JsonNode; format: string): tuple[ok: bool, text: string, err: StructuredToolResult] =
@@ -232,7 +232,7 @@ proc performFsWrite*(path, paddock, mode: string; content: JsonNode;
       "format": format,
       "bytes_written": rendered.text.len,
     })
-  except Exception as e:
+  except CatchableError as e:
     operationalErrorToolResult(e.msg)
 
 proc performFsMkdir*(path, paddock: string; parents = false): StructuredToolResult {.gcsafe, raises: [].} =
@@ -245,7 +245,7 @@ proc performFsMkdir*(path, paddock: string; parents = false): StructuredToolResu
     else:
       createDir(guard.resolved)
     successPathPayload(guard.resolved, paddock)
-  except Exception as e:
+  except CatchableError as e:
     operationalErrorToolResult(e.msg)
 
 proc performFsCopy*(src, dst, paddock: string; recursive = false): StructuredToolResult {.gcsafe, raises: [].} =
@@ -275,7 +275,7 @@ proc performFsCopy*(src, dst, paddock: string; recursive = false): StructuredToo
       "dst": relativeToPaddock(dstGuard.resolved, paddock),
       "kind": entryKind(dstGuard.resolved),
     })
-  except Exception as e:
+  except CatchableError as e:
     operationalErrorToolResult(e.msg)
 
 proc performFsMove*(src, dst, paddock: string): StructuredToolResult {.gcsafe, raises: [].} =
@@ -298,7 +298,7 @@ proc performFsMove*(src, dst, paddock: string): StructuredToolResult {.gcsafe, r
       "dst": relativeToPaddock(dstGuard.resolved, paddock),
       "kind": entryKind(dstGuard.resolved),
     })
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     operationalErrorToolResult(e.msg)
 
 proc performFsRemove*(path, paddock: string; recursive = false): StructuredToolResult {.gcsafe, raises: [].} =
@@ -322,7 +322,7 @@ proc performFsRemove*(path, paddock: string; recursive = false): StructuredToolR
       "kind": kind,
       "removed": true,
     })
-  except Exception as e:
+  except CatchableError as e:
     operationalErrorToolResult(e.msg)
 
 # ── bash ──────────────────────────────────────────────────────────────────────

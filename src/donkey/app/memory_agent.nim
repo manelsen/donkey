@@ -52,7 +52,7 @@ proc runMemoryAgent*(inbox:     AsyncQueue[AgentMessage];
           let parts = @[ctx.userMd, memSection, ctx.preferencesMd]
           let text = parts.join("\n")
           await outbox.put(newResultMsg(msg.id, text))
-        except Exception as e:
+        except Exception as e:  ## effect boundary: callee raises are unannotated
           await outbox.put(newErrorMsg(msg.id, "MemoryAgent loadCtx: " & e.msg))
 
       of tkSaveMem:

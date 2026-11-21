@@ -262,7 +262,7 @@ proc readRemoteSkillLockfile*(home: string): RemoteSkillLockfile =
           version: node.getOrDefault("version").getStr(""),
           installedAt: node.getOrDefault("installedAt").getBiggestInt().int64,
         )
-  except:
+  except CatchableError:
     result = defaultRemoteSkillLockfile()
 
 proc writeRemoteSkillLockfile*(home: string; lock: RemoteSkillLockfile) =

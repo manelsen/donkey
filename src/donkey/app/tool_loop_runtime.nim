@@ -193,7 +193,7 @@ proc stopTypingLoop*(flag: TypingFlag) =
 proc safeComplete(fn: CompleteFn; req: CompletionRequest
                  ): Result[CompletionResponse, string] {.gcsafe, raises: [].} =
   try: fn(req)
-  except Exception as e: err(e.msg)
+  except Exception as e: err(e.msg)  ## effect boundary: callee raises are unannotated
 
 func completionErr(msg: string): Result[CompletionResponse, string] {.gcsafe.} =
   err(msg)
@@ -208,7 +208,7 @@ proc completeOnce(req: CompletionRequest;
       return await asyncCompleteFn(req)
     except CancelledError:
       raise
-    except Exception as e:
+    except Exception as e:  ## effect boundary: callee raises are unannotated
       return completionErr(e.msg)
   safeComplete(completeFn, req)
 

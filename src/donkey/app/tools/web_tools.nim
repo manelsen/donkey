@@ -90,7 +90,7 @@ proc performFetch*(http: httpPort.HttpRuntimePort;
     elif body.startsWith("<"):
       body = stripHtml(body)
     truncateBody(body, cap)
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     "Error: " & e.msg
 
 proc performFetchStructured*(http: httpPort.HttpRuntimePort;
@@ -134,7 +134,7 @@ proc performFetchStructured*(http: httpPort.HttpRuntimePort;
       data["body"] = %truncateBody(body, cap)
 
     successToolResult(data)
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     operationalErrorToolResult(e.msg)
 
 # ── web_search (Brave) ────────────────────────────────────────────────────────
@@ -158,7 +158,7 @@ proc performWebSearch*(query: string; count: int;
     ]
     var resp: Result[HttpResponse, string]
     try: resp = http.get(url, headers)
-    except Exception as e: return "Error: " & e.msg
+    except CatchableError as e: return "Error: " & e.msg
     if resp.isErr: return "Error: " & resp.error
     if resp.value.status != 200:
       return "Brave API error " & $resp.value.status
@@ -173,5 +173,5 @@ proc performWebSearch*(query: string; count: int;
       let desc  = item.getOrDefault("description").getStr("")
       lines.add(title & "\n" & url2 & "\n" & desc)
     lines.join("\n\n")
-  except CatchableError as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     "Error: " & e.msg

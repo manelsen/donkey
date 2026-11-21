@@ -53,7 +53,7 @@ proc runContemplationNow*(loadMemories: ContemplationLoader;
     if episode.summary.len == 0 and episode.title.len == 0:
       return
     writeEpisode(loadUserId(), episode)
-  except Exception:
+  except Exception:  ## effect boundary: callee raises are unannotated
     discard
 
 proc runContemplationTurn*(cfg: ContemplationConfig;

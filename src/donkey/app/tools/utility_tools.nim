@@ -16,7 +16,7 @@ import ../../ports/provider
 proc performCalc*(expression: string): string {.gcsafe, raises: [].} =
   try:
     evalCalc(expression)
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     "Error: " & e.msg
 
 # ── render_mermaid ────────────────────────────────────────────────────────────
@@ -89,5 +89,5 @@ proc performInspectImage*(path, prompt: string;
     let resp = completeFn(req)
     if resp.isErr: return "Error: " & resp.error
     resp.value.text
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     "Error: " & e.msg
