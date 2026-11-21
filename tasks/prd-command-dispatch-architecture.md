@@ -64,84 +64,84 @@ Stories touching a specific runtime also run that runtime's tests directly, e.g.
 **Description:** As a maintainer, I want the dispatcher's output to say *who may see* a reply and *whether the channel owes an acknowledgement*, so that channels can't silently get privacy or ack semantics wrong.
 
 **Acceptance Criteria:**
-- [ ] `CommandReply`, `ReplyTopic` and `CommandOutcome` move to a pure `core/commands/` module.
-- [ ] `sensitive: bool` is replaced by `visibility: ReplyVisibility` (`rvPublic`, `rvRequesterOnly`).
-- [ ] `cokSilent` is replaced by an outcome stating the request was accepted. Channels with an interaction protocol (Discord slash commands, Slack slash commands) must ack it.
-- [ ] Pure tests cover the topic → visibility mapping for every local action (`/mycode`, `/continue`, `/doctor`, `/memory`, `/whoami` are requester-only).
+- [x] `CommandReply`, `ReplyTopic` and `CommandOutcome` move to a pure `core/commands/` module.
+- [x] `sensitive: bool` is replaced by `visibility: ReplyVisibility` (`rvPublic`, `rvRequesterOnly`).
+- [x] `cokSilent` is replaced by an outcome stating the request was accepted. Channels with an interaction protocol (Discord slash commands, Slack slash commands) must ack it.
+- [x] Pure tests cover the topic → visibility mapping for every local action (`/mycode`, `/continue`, `/doctor`, `/memory`, `/whoami` are requester-only).
 
 ### US-002: Ports for what commands need
 **Description:** As a maintainer, I want the dispatcher to depend on ports, so that `app/` can host it without importing adapters (enforced by `check_boundaries.sh`).
 
 **Acceptance Criteria:**
-- [ ] Every memory operation the commands use (memory view, clear, channel prefs, model/think/budget prefs, skill entries) is reachable through `MemoryRuntimePort` or a new narrow port. Fallible operations return `Result`.
-- [ ] Link code generation and consumption go through `LinkCodePort` (already in `ports/link_codes.nim`).
-- [ ] The model catalog, provider ping and doctor report are injected as function fields. They are not imported from adapters.
-- [ ] `MdFileAdapter` and `IdentityResolver` provide the new ports. No call site constructs them inside the dispatcher.
+- [x] Every memory operation the commands use (memory view, clear, channel prefs, model/think/budget prefs, skill entries) is reachable through `MemoryRuntimePort` or a new narrow port. Fallible operations return `Result`.
+- [x] Link code generation and consumption go through `LinkCodePort` (already in `ports/link_codes.nim`).
+- [x] The model catalog, provider ping and doctor report are injected as function fields. They are not imported from adapters.
+- [x] `MdFileAdapter` and `IdentityResolver` provide the new ports. No call site constructs them inside the dispatcher.
 
 ### US-003: Move the dispatcher to `app/command_dispatch.nim`
 **Description:** As a maintainer, I want command policy in the application layer, so that adapters are back to pure I/O translation.
 
 **Acceptance Criteria:**
-- [ ] `app/command_dispatch.nim` exposes `dispatchCommand(env, sessions, request): CommandOutcome`, where `env` holds only ports and plain values.
-- [ ] `adapters/channel/text_command_dispatch.nim` is deleted. Runtimes import the app module, which the dependency direction allows: adapters → app.
-- [ ] `tests/architecture/t_boundaries.nim` gains a check that `app/command_dispatch.nim` imports no `adapters/` module.
-- [ ] `t_text_command_dispatch.nim` moves to `tests/app/` and runs against fake ports. No files are written on disk.
+- [x] `app/command_dispatch.nim` exposes `dispatchCommand(env, sessions, request): CommandOutcome`, where `env` holds only ports and plain values.
+- [x] `adapters/channel/text_command_dispatch.nim` is deleted. Runtimes import the app module, which the dependency direction allows: adapters → app.
+- [x] `tests/architecture/t_boundaries.nim` gains a check that `app/command_dispatch.nim` imports no `adapters/` module.
+- [x] `t_text_command_dispatch.nim` moves to `tests/app/` and runs against fake ports. No files are written on disk.
 
 ### US-004: Shared turn-interrupt policy
 **Description:** As a user, I want `/stop` (and other interrupting commands) to stop the running answer on every channel, so that Telegram is not the only channel where it works.
 
 **Acceptance Criteria:**
-- [ ] The dispatcher calls `requestTurnInterrupt` before enqueueing when `interruptsTurn(command.kind)` holds.
-- [ ] Telegram's local copy of that branch is removed in favour of the shared one.
-- [ ] A test with a busy session asserts that the stop flag is set before the task is enqueued, for at least one non-Telegram channel kind.
+- [x] The dispatcher calls `requestTurnInterrupt` before enqueueing when `interruptsTurn(command.kind)` holds.
+- [x] Telegram's local copy of that branch is removed in favour of the shared one.
+- [x] A test with a busy session asserts that the stop flag is set before the task is enqueued, for at least one non-Telegram channel kind.
 
 ### US-005: Per-command no-session text
 **Description:** As a user, I want an accurate message when a session command has no session to act on.
 
 **Acceptance Criteria:**
-- [ ] The no-session text is chosen per `CommandKind` from a pure table. `/compact`, `/stop` and `/debug` do not say "reiniciar".
-- [ ] A pure test asserts that every session-task command has a no-session text.
+- [x] The no-session text is chosen per `CommandKind` from a pure table. `/compact`, `/stop` and `/debug` do not say "reiniciar".
+- [x] A pure test asserts that every session-task command has a no-session text.
 
 ### US-006: Capability-aware help and command availability
 **Description:** As a user, I want `/help` to list only commands this channel can actually answer.
 
 **Acceptance Criteria:**
-- [ ] `ChannelCapabilityDescriptor` gains the command-surface capabilities it needs (at least `configUi`, `interactiveMenus`).
-- [ ] `buildHelpText` takes the descriptor and omits commands the channel answers with `rtUnsupported`.
-- [ ] A test iterates over all `ChannelKind` values and asserts that every command listed in help is dispatched to something other than `rtUnsupported`.
-- [ ] The Slack `/config` text fallback names `/models`, `/think` and `/budget` instead of buttons.
+- [x] `ChannelCapabilityDescriptor` gains the command-surface capabilities it needs (at least `configUi`, `interactiveMenus`).
+- [x] `buildHelpText` takes the descriptor and omits commands the channel answers with `rtUnsupported`.
+- [x] A test iterates over all `ChannelKind` values and asserts that every command listed in help is dispatched to something other than `rtUnsupported`.
+- [x] The Slack `/config` text fallback names `/models`, `/think` and `/budget` instead of buttons.
 
 ### US-007: Requester-only replies are never public
 **Description:** As a user, I want link codes, diagnostics and memory dumps sent only to me, so that other members of a group or server cannot read them or take over my session.
 
 **Acceptance Criteria:**
-- [ ] Discord: on interactions, `rvRequesterOnly` replies use the ephemeral flag. On text events they are sent by DM.
-- [ ] Group contexts on Slack, QQ, Feishu, WeCom and WeChat: a requester-only reply goes through the channel's private path. If the channel has none, the bot replies publicly with a fixed notice ("envie este comando em mensagem direta") and never with the content.
-- [ ] If the private send fails, the content is **not** posted publicly as a fallback.
-- [ ] Tests per channel prove that a requester-only reply in a group context never reaches the public send path.
+- [x] Discord: on interactions, `rvRequesterOnly` replies use the ephemeral flag. On text events they are sent by DM.
+- [x] Group contexts on Slack, QQ, Feishu, WeCom and WeChat: a requester-only reply goes through the channel's private path. If the channel has none, the bot replies publicly with a fixed notice ("envie este comando em mensagem direta") and never with the content.
+- [x] If the private send fails, the content is **not** posted publicly as a fallback.
+- [x] Tests per channel prove that a requester-only reply in a group context never reaches the public send path.
 
 ### US-008: Discord interactions are always acknowledged
 **Description:** As a user, I want Discord slash commands that start a task to show as successful.
 
 **Acceptance Criteria:**
-- [ ] Every outcome for an event with `interactionId` produces exactly one initial interaction response within the handler. An accepted task gets a short ephemeral confirmation.
-- [ ] A test with a fake Discord adapter asserts one interaction response per slash event across all outcome kinds.
+- [x] Every outcome for an event with `interactionId` produces exactly one initial interaction response within the handler. An accepted task gets a short ephemeral confirmation.
+- [x] A test with a fake Discord adapter asserts one interaction response per slash event across all outcome kinds.
 
 ### US-009: Migrate Telegram onto the shared dispatcher
 **Description:** As a maintainer, I want Telegram to stop carrying its own command tree.
 
 **Acceptance Criteria:**
-- [ ] `handleTelegramTaskCommand` and the Telegram local-action tree call `dispatchCommand`. Telegram keeps only presentation (markdown, keyboards, reply targets, progress feedback text).
-- [ ] Telegram-only behaviours (session auto-creation for `/debug`, `/reset`, `/new`, …) become explicit dispatcher options, not a second code path.
-- [ ] Existing Telegram runtime tests pass unchanged, or are updated only where this PRD changes behaviour on purpose.
+- [x] `handleTelegramTaskCommand` and the Telegram local-action tree call `dispatchCommand`. Telegram keeps only presentation (markdown, keyboards, reply targets, progress feedback text).
+- [x] Telegram-only behaviours (session auto-creation for `/debug`, `/reset`, `/new`, …) become explicit dispatcher options, not a second code path.
+- [x] Existing Telegram runtime tests pass unchanged, or are updated only where this PRD changes behaviour on purpose.
 
 ### US-010: Shrink `common_runtime.nim`
 **Description:** As a maintainer, I want the remaining adapter-side helpers to be presentation only.
 
 **Acceptance Criteria:**
-- [ ] Pure text builders (help, about, status, ping, deferred UI text) move to `core/commands/` or `domain/`.
-- [ ] Builders that read files return `Result[string, string]`. `buildMemoryViewText` on an unreadable file yields an error reply, not an exception.
-- [ ] `common_runtime.nim` has no reference to `MdFileAdapter` outside wiring helpers, or is removed.
+- [x] Pure text builders (help, about, status, ping, deferred UI text) move to `core/commands/` or `domain/`.
+- [x] Builders that read files return `Result[string, string]`. `buildMemoryViewText` on an unreadable file yields an error reply, not an exception.
+- [x] `common_runtime.nim` has no reference to `MdFileAdapter` outside wiring helpers, or is removed.
 
 ## Functional Requirements
 
@@ -181,3 +181,44 @@ Stories touching a specific runtime also run that runtime's tests directly, e.g.
 - Should `/whoami` be requester-only? It leaks internal user and session ids.
 - Should Telegram's progress texts (e.g. "🗜️ Compactando histórico...") become dispatcher replies for all channels, or stay Telegram presentation?
 - Does `Result` belong in `domain/`? See the ADR note above.
+
+## Implementation Notes
+
+Implemented on `feat/command-dispatch-app`.
+
+- **Contract** (`core/commands/command_outcome.nim`): visibility comes from the topic (`topicVisibility`), so a channel cannot mark a reply public by mistake. `cokAccepted` carries the command kind; `acceptedText` is the ack text, and it is also Telegram's progress text. `routeReply` / `replyDelivery` decide conversation, private path or notice, and never fall back from a failed private send to the shared space.
+- **Ports**: `CommandServicesPort` (`ports/command_services.nim`), with every effect returning `Result`, and `IdentityLinkPort` (`ports/link_codes.nim`), which mints a code and links the speaker's raw id. `LinkCodePort` alone was not enough because redeeming has to write the identity mapping. The adapters provide them through `newCommandServices` (`adapters/channel/command_services.nim`) and `identityLinkPort` (`identity_resolver.nim`). The `guarded` template turns any exception into `err`.
+- **Dispatcher** (`app/command_dispatch.nim`): `dispatchCommand(env, sm, msgSeq, request)`. `dispatchUiCommand` serves the text forms of picker commands without a session. Session behaviour is `SessionMode` (`smRequireLive` / `smCreate`) plus an optional `ensureSession` hook (US-009).
+- **Capabilities**: the descriptor gained `configUi`, `interactiveMenus` and `repliesToRequester`. `/whoami`, `/reasoning`, `/tasks`, `/agents` and `/poll` are now answered by the dispatcher on every channel. Only `/config` and `/menu` depend on the channel. That is how help and availability line up: help no longer has to hide commands that a channel could answer in text.
+- **Presentation**: Discord goes through `DiscordReplySink` (`presentDiscordOutcome`). Telegram goes through `presentTelegramOutcome` / `telegramReplyText`. QQ and Telegram groups refuse requester-only commands *before* dispatching, so a link code is never minted or consumed where its answer cannot be shown.
+- **Split of `common_runtime.nim`** (951 → 88 lines): pure texts went to `core/commands/command_text.nim`, preferences to `adapters/memory/channel_prefs_store.nim`, model pickers to `adapters/channel/model_catalog_ui.nim`, and MdFile-backed effects to `adapters/channel/command_services.nim`. `common_runtime` re-exports them for existing callers and keeps only UI slots and wiring (`ChannelRuntimeEnv`).
+
+### Follow-up
+
+- The `/models`, `/think` and `/budget` text commands still choose between help, listing and change, and validate the catalogue, inside `command_services` (an adapter). The next step is to move the pure validation to `core`, the orchestration to `app/command_dispatch`, and leave only reads and writes in the adapter (CodeRabbit, PR #75).
+- `/allowlist` shares the status route but has no handler of its own. The dispatcher hands it to the session instead of answering with `/status`.
+
+### Decisions on the open questions
+
+- No private path in a group: the bot refuses with `RequesterOnlyNotice` ("Envie este comando em mensagem direta.") and does not send a one-time link.
+- `/whoami` is requester-only.
+- Progress texts: `acceptedText` lives in core. Telegram sends it for every accepted task. Discord interactions and Slack slash commands get it as their ephemeral acknowledgement. Plain-text messages on the other channels stay silent, as before.
+- `Result` in `domain/`: still open. This PRD added no `Result` to `domain/`.
+
+### Regression tests per defect
+
+| Defect | Test |
+|---|---|
+| Discord public `/mycode` | `tests/adapters/channel/t_discord_command_replies.nim` |
+| `/stop` without interrupt | `tests/app/t_command_dispatch_app.nim` ("/stop on a busy non-Telegram session…") |
+| Discord interaction without ack | `t_discord_command_replies.nim` ("every outcome kind produces exactly one…") |
+| `/compact` no-session text | `tests/core/t_command_outcome.nim`, `t_command_dispatch_app.nim` |
+| Feishu `/help` lists `/config` | `t_command_dispatch_app.nim` (capabilities suite) |
+| Slack `/config` fallback mentions buttons | `t_command_dispatch_app.nim` ("the /config text fallback…") |
+| `/memory` raising `IOError` | `tests/adapters/channel/t_common_runtime.nim` (unreadable memory file) |
+
+Every row was reproduced on `master` (2ed548db) with a probe against the old API: Discord posted `/mycode` to the server channel, a `/compact` slash command got no interaction response, `/stop` on Slack left the turn running, `/compact` said "reiniciar", Feishu `/help` listed `/config`, the Slack config text mentioned buttons, and `/memory` raised `IOError`.
+
+`tests/adapters/channel/t_requester_only_send_paths.nim` runs the real runtimes and adapters (Discord, Telegram, QQ, Feishu, Slack, WhatsApp, WeChat, WeCom) against a local recording HTTP server. It checks that a link code asked from a group or server channel reaches only the requester's private path, or is replaced by the notice. A failed Discord DM posts nothing in the channel.
+
+[/PRD]

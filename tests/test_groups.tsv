@@ -9,7 +9,9 @@ g0	tests/adapters/channel/t_qq_runtime.nim
 g0	tests/adapters/channel/t_telegram_api_base.nim
 g0	tests/adapters/channel/t_telegram_media_upload.nim
 g0	tests/adapters/channel/t_telegram_runtime.nim
-g0	tests/adapters/channel/t_text_command_dispatch.nim
+g0	tests/adapters/channel/t_discord_command_replies.nim
+g0	tests/adapters/channel/t_requester_only_routes.nim
+g0	tests/adapters/channel/t_requester_only_send_paths.nim
 g0	tests/adapters/channel/t_wechat.nim
 g0	tests/adapters/filesystem/t_media_paths.nim
 g0	tests/adapters/hooks/t_memory_capture_hook.nim
@@ -39,6 +41,7 @@ g0	tests/adapters/webhook/t_webhook_receiver.nim
 g0	tests/app/t_agent_chat.nim
 g0	tests/app/t_agent_message.nim
 g0	tests/app/t_agent_runner.nim
+g0	tests/app/t_command_dispatch_app.nim
 g0	tests/app/t_album_mention_gate.nim
 g0	tests/app/t_append_memory_origin.nim
 g0	tests/app/t_approval_runtime.nim
@@ -132,6 +135,7 @@ g1	tests/core/t_approval.nim
 g1	tests/core/t_approval_pure.nim
 g1	tests/core/t_command_catalog.nim
 g1	tests/core/t_command_dispatch.nim
+g1	tests/core/t_command_outcome.nim
 g1	tests/core/t_command_registry.nim
 g1	tests/core/t_command_routing.nim
 g1	tests/core/t_compact_command.nim
