@@ -2,8 +2,21 @@ import std/[json, os, strutils, tables, unittest]
 import donkey/config/clawhub_registry
 import donkey/core/pipeops
 
+proc dumpCannotRaise(slug, reason: string) {.raises: [].} =
+  ## Compiles only while the dump cannot raise: it runs inside `except`
+  ## handlers, where an escaping exception would bypass the `err` result.
+  dumpSkillArtifact(slug, reason)
+
 proc runTests*() =
   suite "clawhub_registry":
+
+    test "a failed post-mortem dump does not raise":
+      let slug = "dump-blocked-" & $getCurrentProcessId()
+      let blocked = "/tmp/donkey_skill_" & slug & ".dump"
+      createDir(blocked)  # writeFile on a directory fails
+      defer: removeDir(blocked)
+      dumpCannotRaise(slug, "download exception: timeout")
+      check dirExists(blocked)
 
     test "parseSearchHits reads remote results":
       let hits = parseSearchHits(%* {

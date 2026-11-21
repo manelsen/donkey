@@ -14,11 +14,12 @@
 ## The wire format itself lives in the shared compat transport; this adapter
 ## only builds the MiniMax profile (endpoint + `reasoning_split`).
 
-import std/[httpclient, json]
+import std/[json]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
-import ../http/helpers
+import ../../ports/http
+import ./provider_http
 import ../../domain/providers/compat
 import ../../domain/providers/openai_pure
 
@@ -29,6 +30,7 @@ const
 type
   MiniMaxAdapter* = object
     apiKey*:   string
+    http*:     HttpRuntimePort  ## nil → production provider transport
     model*:    string
     endpoint*: string   ## override for testing
 
@@ -102,16 +104,12 @@ proc parseMiniMaxResponse*(j: JsonNode): Result[CompletionResponse, string] =
 
 proc complete*(a: MiniMaxAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
-  withHttpClient:
-    client.headers = newHttpHeaders({
-      "Content-Type":  "application/json",
-      "Authorization": "Bearer " & a.apiKey,
-    })
+  providerGuard:
+    var headers: seq[HttpHeader] = @[("Content-Type", "application/json"), ("Authorization", "Bearer " & a.apiKey)]
     let body = $a.buildBody(req)
     let url  = if a.endpoint.len > 0: a.endpoint else: MiniMaxEndpoint
-    let resp = client.post(url, body = body)
-    checkApiStatus(resp, "MiniMax")
-    resp.body |> parseJson |> parseMiniMaxResponse
+    let resp = ? postProvider(a.http, "MiniMax", url, body, headers)
+    resp |> parseJson |> parseMiniMaxResponse
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 
