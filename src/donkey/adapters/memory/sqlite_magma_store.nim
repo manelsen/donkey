@@ -24,6 +24,12 @@ when defined(withSqlite):
     SqliteLegacyEmbeddingColumn = "embedding"
     SqliteVectorEmbeddingColumn = "embedding_vec"
     SqliteVectorDimension = 4096
+    SqliteVectorBytes = SqliteVectorDimension * sizeof(float32)
+    BlobSchemaMigration = "embedding-blobs-v1"
+    CosineIndexMigration = "cosine-index-v1"
+    CosineIndexFailed = "cosine-index-v1-failed"
+      ## The rebuild failed: reads stop retrying it under the write lock
+      ## until a write changes the nodes (updateVecIndex clears it).
 
   func sqliteVecPlatformDir*(): string =
     when defined(macosx):
@@ -96,9 +102,9 @@ when defined(withSqlite):
     ## WAL lets readers proceed while a writer commits; NORMAL avoids an
     ## fsync per statement while staying durable across process crashes; the
     ## busy timeout makes a second writer wait instead of failing at once.
+    result.exec(sql"PRAGMA busy_timeout = 5000")
     result.exec(sql"PRAGMA journal_mode = WAL")
     result.exec(sql"PRAGMA synchronous = NORMAL")
-    result.exec(sql"PRAGMA busy_timeout = 5000")
     result.exec(sql"PRAGMA foreign_keys = ON")
     if not hasEmbeddedSqliteVec() and a.vectorExtensionPath.len > 0:
       try:
@@ -106,9 +112,6 @@ when defined(withSqlite):
         result.loadExtension(a.vectorExtensionPath)
       except CatchableError:
         discard
-
-  func hasVectorExtension(a: SqliteMagmaStoreAdapter): bool =
-    hasEmbeddedSqliteVec() or a.vectorExtensionPath.len > 0
 
   func buildVectorJson(vec: seq[float32]): string =
     if vec.len == 0:
@@ -145,18 +148,14 @@ when defined(withSqlite):
     except CatchableError:
       return false
 
-  proc tryInitVec(a: SqliteMagmaStoreAdapter; db: DbConn): bool =
-    if not a.hasVectorExtension or not db.hasLoadedVec():
-      return false
+  template writeTransaction(db: DbConn; body: untyped) =
+    db.exec(sql"BEGIN IMMEDIATE")
     try:
-      db.exec(sql("""CREATE VIRTUAL TABLE IF NOT EXISTS """ & SqliteVecTable &
-        """ USING vec0(
-          user_id TEXT PARTITION KEY,
-          embedding FLOAT[""" & $SqliteVectorDimension & """]
-        )"""))
-      true
+      body
+      db.exec(sql"COMMIT")
     except CatchableError:
-      false
+      discard db.tryExec(sql"ROLLBACK")
+      raise
 
   proc createNodesTable(db: DbConn) =
     db.exec(sql("""CREATE TABLE IF NOT EXISTS """ & SqliteNodesTable & """ (
@@ -187,38 +186,27 @@ when defined(withSqlite):
         " BLOB NOT NULL DEFAULT X''"
       ))
 
-  proc syncVecRow(db: DbConn; nodeRowid, userId, blob: string) =
-    if not db.hasLoadedVec():
-      return
-    try:
-      db.exec(sql("DELETE FROM " & SqliteVecTable & " WHERE rowid = ?"), nodeRowid)
-    except CatchableError:
-      discard
-    if blob.len == 0:
-      return
-    try:
-      let stmt = db.prepare(
-        "INSERT INTO " & SqliteVecTable & " (rowid, user_id, embedding) VALUES (?, ?, ?)"
-      )
-      let blobData = blobBytes(blob)
-      stmt.bindParam(1, nodeRowid)
-      stmt.bindParam(2, userId)
-      stmt.bindParam(3, blobData)
-      db.exec(stmt)
-      stmt.finalize()
-    except CatchableError:
-      discard
+  const InsertVecRows = "INSERT INTO " & SqliteVecTable &
+    " (rowid, user_id, embedding) SELECT rowid, user_id, " & SqliteVectorEmbeddingColumn &
+    " FROM " & SqliteNodesTable &
+    " WHERE length(" & SqliteVectorEmbeddingColumn & ") = " & $SqliteVectorBytes
 
-  proc backfillVecIndex(db: DbConn) =
-    if not db.hasLoadedVec():
-      return
-    let rows = db.getAllRows(sql(
-      "SELECT rowid, user_id, " & SqliteVectorEmbeddingColumn &
-      " FROM " & SqliteNodesTable &
-      " WHERE length(" & SqliteVectorEmbeddingColumn & ") > 0"
-    ))
-    for row in rows:
-      db.syncVecRow(row[0], row[1], row[2])
+  proc updateVecIndex(db: DbConn; vecReady: bool; nodeId: string; deleting = false) =
+    if vecReady:
+      try:
+        db.exec(sql(
+          "DELETE FROM " & SqliteVecTable & " WHERE rowid = " &
+          "(SELECT rowid FROM " & SqliteNodesTable & " WHERE id = ?)"
+        ), nodeId)
+        if not deleting:
+          db.exec(sql(InsertVecRows & " AND id = ?"), nodeId)
+        return
+      except DbError:
+        discard
+    # The base table remains authoritative, including for writers without vec0.
+    # A connection with vec0 will rebuild the index after an unsynced write.
+    db.exec(sql"DELETE FROM magma_schema_migrations WHERE name IN (?, ?)",
+            CosineIndexMigration, CosineIndexFailed)
 
   proc backfillVectorEmbeddings(db: DbConn) =
     let rows = db.getAllRows(sql(
@@ -231,6 +219,8 @@ when defined(withSqlite):
       return
     for row in rows:
       let blob = encodeVectorBlob(parseVectorLiteral(row[1]))
+      if blob.len == 0:
+        continue
       let blobData = blobBytes(blob)
       let stmt = db.prepare(
         "UPDATE " & SqliteNodesTable & " SET " & SqliteVectorEmbeddingColumn &
@@ -241,14 +231,10 @@ when defined(withSqlite):
       db.exec(stmt)
       stmt.finalize()
 
-  proc ensureSchema(a: SqliteMagmaStoreAdapter) =
-    let db = a.openDb()
-    defer: db.close()
+  proc migrateBlobSchema(db: DbConn) =
     db.createNodesTable()
     db.ensureVectorColumn()
     db.backfillVectorEmbeddings()
-    discard a.tryInitVec(db)
-    db.backfillVecIndex()
     db.exec(sql("""CREATE TABLE IF NOT EXISTS """ & SqliteEdgesTable & """ (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       from_id TEXT NOT NULL REFERENCES """ & SqliteNodesTable & """(id) ON DELETE CASCADE,
@@ -263,6 +249,79 @@ when defined(withSqlite):
       ON """ & SqliteEdgesTable & """ (from_id, edge_type)"""))
     db.exec(sql("""CREATE INDEX IF NOT EXISTS idx_sqlite_me_to_type
       ON """ & SqliteEdgesTable & """ (to_id, edge_type)"""))
+    db.exec(sql"INSERT INTO magma_schema_migrations (name) VALUES (?)", BlobSchemaMigration)
+
+  proc rebuildVecIndex(db: DbConn): bool =
+    db.exec(sql"SAVEPOINT magma_vec_rebuild")
+    try:
+      db.exec(sql("DROP TABLE IF EXISTS " & SqliteVecTable))
+      db.exec(sql("CREATE VIRTUAL TABLE " & SqliteVecTable & " USING vec0(" &
+        "user_id TEXT PARTITION KEY, embedding FLOAT[" & $SqliteVectorDimension &
+        "] distance_metric=cosine)"))
+      db.exec(sql(InsertVecRows))
+      db.exec(sql"INSERT INTO magma_schema_migrations (name) VALUES (?)", CosineIndexMigration)
+      db.exec(sql"RELEASE SAVEPOINT magma_vec_rebuild")
+      true
+    except DbError as e:
+      db.exec(sql"ROLLBACK TO SAVEPOINT magma_vec_rebuild")
+      db.exec(sql"RELEASE SAVEPOINT magma_vec_rebuild")
+      db.exec(sql"INSERT OR IGNORE INTO magma_schema_migrations (name) VALUES (?)",
+              CosineIndexFailed)
+      stderr.writeLine("WARN magma.sqlite: vector index rebuild failed, " &
+                       "searching without it: " & e.msg)
+      false
+
+  proc schemaMigrations(db: DbConn): tuple[blobs, vecIndex, vecFailed: bool] =
+    if db.getValue(sql"""SELECT 1 FROM sqlite_master
+        WHERE type = 'table' AND name = 'magma_schema_migrations'""") != "1":
+      return
+    for row in db.getAllRows(sql"SELECT name FROM magma_schema_migrations"):
+      case row[0]
+      of BlobSchemaMigration: result.blobs = true
+      of CosineIndexMigration: result.vecIndex = true
+      of CosineIndexFailed: result.vecFailed = true
+      else: discard
+
+  proc openStoreDb(a: SqliteMagmaStoreAdapter): tuple[db: DbConn, vecReady: bool] =
+    let db = a.openDb()
+    try:
+      let vecAvailable = (hasEmbeddedSqliteVec() or a.vectorExtensionPath.len > 0) and
+        db.hasLoadedVec()
+      var migrations = db.schemaMigrations()
+      let rebuildVec = vecAvailable and not migrations.vecIndex and
+        not migrations.vecFailed
+      if not migrations.blobs or rebuildVec:
+        db.writeTransaction:
+          db.exec(sql"CREATE TABLE IF NOT EXISTS magma_schema_migrations (name TEXT PRIMARY KEY)")
+          migrations = db.schemaMigrations()
+          if not migrations.blobs:
+            db.migrateBlobSchema()
+          if vecAvailable and not migrations.vecIndex and not migrations.vecFailed:
+            migrations.vecIndex = db.rebuildVecIndex()
+      (db, vecAvailable and migrations.vecIndex)
+    except CatchableError:
+      db.close()
+      raise
+
+  proc tryOpenStoreDb(a: SqliteMagmaStoreAdapter):
+      Result[tuple[db: DbConn, vecReady: bool], string] =
+    ## openStoreDb for the store operations: a locked or unreadable database
+    ## (for example another writer holding the lock past busy_timeout during
+    ## a migration) becomes an error value instead of leaving the adapter.
+    try:
+      ok(a.openStoreDb())
+    except CatchableError as e:
+      err("open store: " & e.msg)
+
+  template openStoreOr(a: SqliteMagmaStoreAdapter; fallback: untyped) {.dirty.} =
+    ## Opens the store as `db`/`vecReady`, or logs and returns `fallback`
+    ## (which may read `opened.error`).
+    let opened = a.tryOpenStoreDb()
+    if opened.isErr:
+      stderr.writeLine("WARN magma.sqlite: " & opened.error)
+      return fallback
+    let (db, vecReady) = opened.get()
+    discard vecReady
 
   proc parseMeta(raw: string): JsonNode =
     if raw.len == 0:
@@ -305,46 +364,52 @@ when defined(withSqlite):
     (dot / (sqrt(normA) * sqrt(normB))).float32
 
   proc migrate*(a: SqliteMagmaStoreAdapter) =
-    a.ensureSchema()
+    let opened = a.tryOpenStoreDb()
+    if opened.isErr:
+      stderr.writeLine("WARN magma.sqlite: " & opened.error)
+      return
+    opened.get().db.close()
+
+  proc writeNode(db: DbConn; node: MagmaNode; upsert: bool) =
+    let metaJson = if node.meta != nil: $node.meta else: "{}"
+    let blob = encodeVectorBlob(node.embedding)
+    let insert = (if upsert: "INSERT INTO " else: "INSERT OR IGNORE INTO ") &
+      SqliteNodesTable & " (id, user_id, node_type, content, " &
+      SqliteLegacyEmbeddingColumn & ", " & SqliteVectorEmbeddingColumn & ", ts, meta)"
+    let onConflict =
+      if upsert:
+        " ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id, node_type=excluded.node_type," &
+        " content=excluded.content, " & SqliteLegacyEmbeddingColumn & "=''," &
+        " " & SqliteVectorEmbeddingColumn & "=excluded." & SqliteVectorEmbeddingColumn &
+        ", ts=excluded.ts, meta=excluded.meta"
+      else:
+        ""
+    if blob.len == 0:
+      db.exec(sql(insert & " VALUES (?, ?, ?, ?, '', X'', ?, ?)" & onConflict),
+        node.id, node.userId, node.nodeType, node.content, node.timestamp, metaJson)
+    else:
+      let stmt = db.prepare(insert & " VALUES (?, ?, ?, ?, '', ?, ?, ?)" & onConflict)
+      try:
+        stmt.bindParams(node.id, node.userId, node.nodeType, node.content,
+          blobBytes(blob), node.timestamp, metaJson)
+      except DbError:
+        stmt.finalize()
+        raise
+      if not db.tryExec(stmt):
+        # db_connector finalizes an unsuccessful prepared statement in tryExec.
+        dbError(db)
+      stmt.finalize()
 
   proc insertNode*(a: SqliteMagmaStoreAdapter; node: MagmaNode): bool =
-    a.ensureSchema()
-    let db = a.openDb()
+    openStoreOr(a, false)
     defer: db.close()
     try:
-      var inserted = false
-      let metaJson = if node.meta != nil: $node.meta else: "{}"
-      let blob = encodeVectorBlob(node.embedding)
-      if blob.len > 0:
-        block:
-          let stmt = db.prepare(
-            "INSERT OR IGNORE INTO " & SqliteNodesTable &
-            " (id, user_id, node_type, content, " & SqliteLegacyEmbeddingColumn &
-            ", " & SqliteVectorEmbeddingColumn &
-            ", ts, meta) VALUES (?, ?, ?, ?, '', ?, ?, ?)"
-          )
-          defer: stmt.finalize()
-          let blobData = blobBytes(blob)
-          stmt.bindParam(1, node.id)
-          stmt.bindParam(2, node.userId)
-          stmt.bindParam(3, node.nodeType)
-          stmt.bindParam(4, node.content)
-          stmt.bindParam(5, blobData)
-          stmt.bindParam(6, $node.timestamp)
-          stmt.bindParam(7, metaJson)
-          db.exec(stmt)
-        let row = db.getRow(sql("SELECT changes()"))
-        inserted = row.len > 0 and row[0] != "0"
-        let rowid = db.getValue(sql("SELECT rowid FROM " & SqliteNodesTable & " WHERE id = ?"), node.id)
-        db.syncVecRow(rowid, node.userId, blob)
-      else:
-        db.exec(sql(
-          "INSERT OR IGNORE INTO " & SqliteNodesTable &
-          " (id, user_id, node_type, content, ts, meta) VALUES (?, ?, ?, ?, ?, ?)"
-        ), node.id, node.userId, node.nodeType, node.content,
-           $node.timestamp, metaJson)
-        let row = db.getRow(sql("SELECT changes()"))
-        inserted = row.len > 0 and row[0] != "0"
+      var inserted: bool
+      db.writeTransaction:
+        db.writeNode(node, upsert = false)
+        inserted = db.getValue(sql"SELECT changes()") == "1"
+        if inserted:
+          db.updateVecIndex(vecReady, node.id)
       inserted
     except CatchableError:
       false
@@ -354,52 +419,17 @@ when defined(withSqlite):
     ## Inserts or replaces a node. A refused write comes back as an error:
     ## the caller must be able to tell a stored node from a lost one.
     try:
-      a.ensureSchema()
-      let db = a.openDb()
+      openStoreOr(a, err(opened.error))
       defer: db.close()
-      let metaJson = if node.meta != nil: $node.meta else: "{}"
-      let blob = encodeVectorBlob(node.embedding)
-      if blob.len > 0:
-        block:
-          let stmt = db.prepare(
-            "INSERT INTO " & SqliteNodesTable &
-            " (id, user_id, node_type, content, " & SqliteLegacyEmbeddingColumn &
-            ", " & SqliteVectorEmbeddingColumn & ", ts, meta) VALUES (?, ?, ?, ?, '', ?, ?, ?) " &
-            "ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id, node_type=excluded.node_type, " &
-            "content=excluded.content, " & SqliteLegacyEmbeddingColumn & "=excluded." &
-            SqliteLegacyEmbeddingColumn & ", " & SqliteVectorEmbeddingColumn &
-            "=excluded." & SqliteVectorEmbeddingColumn & ", ts=excluded.ts, meta=excluded.meta"
-          )
-          defer: stmt.finalize()
-          let blobData = blobBytes(blob)
-          stmt.bindParam(1, node.id)
-          stmt.bindParam(2, node.userId)
-          stmt.bindParam(3, node.nodeType)
-          stmt.bindParam(4, node.content)
-          stmt.bindParam(5, blobData)
-          stmt.bindParam(6, $node.timestamp)
-          stmt.bindParam(7, metaJson)
-          db.exec(stmt)
-        let rowid = db.getValue(sql("SELECT rowid FROM " & SqliteNodesTable & " WHERE id = ?"), node.id)
-        db.syncVecRow(rowid, node.userId, blob)
-      else:
-        db.exec(sql(
-          "INSERT INTO " & SqliteNodesTable &
-          " (id, user_id, node_type, content, ts, meta) VALUES (?, ?, ?, ?, ?, ?) " &
-          "ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id, node_type=excluded.node_type, " &
-          "content=excluded.content, " & SqliteLegacyEmbeddingColumn & "='', " &
-          SqliteVectorEmbeddingColumn & "=X'', ts=excluded.ts, meta=excluded.meta"
-        ), node.id, node.userId, node.nodeType, node.content,
-           $node.timestamp, metaJson)
-        let rowid = db.getValue(sql("SELECT rowid FROM " & SqliteNodesTable & " WHERE id = ?"), node.id)
-        db.syncVecRow(rowid, node.userId, "")
+      db.writeTransaction:
+        db.writeNode(node, upsert = true)
+        db.updateVecIndex(vecReady, node.id)
       ok()
     except CatchableError as e:
       err("upsert node: " & e.msg)
 
   proc getNode*(a: SqliteMagmaStoreAdapter; nodeId: string): Option[MagmaNode] =
-    a.ensureSchema()
-    let db = a.openDb()
+    openStoreOr(a, none(MagmaNode))
     defer: db.close()
     try:
       let rows = db.getAllRows(sql(
@@ -412,8 +442,7 @@ when defined(withSqlite):
       none(MagmaNode)
 
   proc listNodes*(a: SqliteMagmaStoreAdapter; userId: string; nodeType: string = ""): seq[MagmaNode] =
-    a.ensureSchema()
-    let db = a.openDb()
+    openStoreOr(a, newSeq[MagmaNode]())
     defer: db.close()
     try:
       let rows =
@@ -439,8 +468,7 @@ when defined(withSqlite):
                          Result[seq[MagmaNode], string] =
     if limit <= 0 or maxContentBytes <= 0:
       return ok(newSeq[MagmaNode]())
-    a.ensureSchema()
-    let db = a.openDb()
+    openStoreOr(a, err(opened.error))
     defer: db.close()
     try:
       let rows =
@@ -471,25 +499,20 @@ when defined(withSqlite):
       err("listNodesLimited failed: " & e.msg)
 
   proc deleteNode*(a: SqliteMagmaStoreAdapter; nodeId: string): bool =
-    a.ensureSchema()
-    let db = a.openDb()
+    openStoreOr(a, false)
     defer: db.close()
     try:
-      let nodeRowid = db.getValue(sql("SELECT rowid FROM " & SqliteNodesTable & " WHERE id = ?"), nodeId)
-      if nodeRowid.len > 0 and db.hasLoadedVec():
-        try:
-          db.exec(sql("DELETE FROM " & SqliteVecTable & " WHERE node_rowid = ?"), nodeRowid)
-        except CatchableError:
-          discard
-      db.exec(sql("DELETE FROM " & SqliteNodesTable & " WHERE id = ?"), nodeId)
-      let row = db.getRow(sql("SELECT changes()"))
-      row.len > 0 and row[0] != "0"
+      var deleted: bool
+      db.writeTransaction:
+        db.updateVecIndex(vecReady, nodeId, deleting = true)
+        db.exec(sql("DELETE FROM " & SqliteNodesTable & " WHERE id = ?"), nodeId)
+        deleted = db.getValue(sql"SELECT changes()") == "1"
+      deleted
     except CatchableError:
       false
 
   proc insertEdge*(a: SqliteMagmaStoreAdapter; edge: MagmaEdge): bool =
-    a.ensureSchema()
-    let db = a.openDb()
+    openStoreOr(a, false)
     defer: db.close()
     try:
       db.exec(sql(
@@ -504,8 +527,7 @@ when defined(withSqlite):
 
   proc getEdges*(a: SqliteMagmaStoreAdapter; nodeId: string;
                  edgeType: string = ""; direction: string = "out"): seq[MagmaEdge] =
-    a.ensureSchema()
-    let db = a.openDb()
+    openStoreOr(a, newSeq[MagmaEdge]())
     defer: db.close()
     try:
       var query = "SELECT from_id, to_id, edge_type, weight, meta FROM " & SqliteEdgesTable & " WHERE "
@@ -536,8 +558,7 @@ when defined(withSqlite):
       discard
 
   proc deleteEdges*(a: SqliteMagmaStoreAdapter; nodeId: string; edgeType: string = ""): int =
-    a.ensureSchema()
-    let db = a.openDb()
+    openStoreOr(a, 0)
     defer: db.close()
     try:
       if edgeType.len > 0:
@@ -557,8 +578,7 @@ when defined(withSqlite):
     ## Most recently inserted node for the user, optionally of one type.
     ## `ts` has one-second resolution and ids sort as text ("m9" > "m10"), so
     ## ties are broken by rowid, which follows insertion order.
-    a.ensureSchema()
-    let db = a.openDb()
+    openStoreOr(a, none(MagmaNode))
     defer: db.close()
     try:
       let rows =
@@ -596,13 +616,13 @@ when defined(withSqlite):
     ## the neighbourhood is widened until enough nodes of the type are found
     ## or the index has no more to give; past its largest `k` the search
     ## falls back to comparing every node of the type.
-    a.ensureSchema()
-    let db = a.openDb()
+    openStoreOr(a, newSeq[MagmaHit]())
     defer: db.close()
     if embedding.len == 0 or topK <= 0:
       return @[]
-    if a.tryInitVec(db):
+    if vecReady and embedding.len == SqliteVectorDimension and topK <= VecKnnMaxK:
       try:
+        let queryVector = buildVectorJson(embedding)
         var k = topK
         var exhausted = false
         while true:
@@ -615,9 +635,10 @@ when defined(withSqlite):
             " WHERE embedding MATCH ? AND k = ? AND user_id = ?" &
             ") AS v " &
             "JOIN " & SqliteNodesTable & " n ON n.rowid = v.rowid " &
-            "WHERE (1.0 - v.distance) >= ? " &
+            "WHERE (1.0 - v.distance) >= CAST(? AS REAL) " &
+            "AND EXISTS (SELECT 1 FROM magma_schema_migrations WHERE name = ?) " &
             "ORDER BY v.distance LIMIT ?"
-          ), buildVectorJson(embedding), $k, userId, $minScore, $k)
+          ), queryVector, $k, userId, $minScore, CosineIndexMigration, $k)
           result.setLen(0)
           for row in rows:
             if nodeType.len > 0 and row[2] != nodeType:
@@ -635,7 +656,10 @@ when defined(withSqlite):
           if k >= VecKnnMaxK:
             break
           k = min(k * 4, VecKnnMaxK)
-        if exhausted and result.len > 0:
+        # Non-indexable legacy vectors can still meet a zero or negative
+        # threshold in the in-process cosine fallback.
+        if exhausted and result.len > 0 and
+           (minScore > 0 or (result.len == topK and result[^1].score > 0)):
           return result
       except CatchableError:
         discard
@@ -659,8 +683,7 @@ when defined(withSqlite):
                          nodeType: string = ""): seq[MagmaNode] =
     ## Newest first. With `nodeType`, the filter is part of the query, so the
     ## limit counts only nodes of that type.
-    a.ensureSchema()
-    let db = a.openDb()
+    openStoreOr(a, newSeq[MagmaNode]())
     defer: db.close()
     try:
       let columns =
@@ -707,8 +730,7 @@ when defined(withSqlite):
     if raw.len == 0: 0 else: parseInt(raw)
 
   proc stats*(a: SqliteMagmaStoreAdapter; userId: string): MagmaStats =
-    a.ensureSchema()
-    let db = a.openDb()
+    openStoreOr(a, MagmaStats())
     defer: db.close()
     try:
       let rows = db.getAllRows(sql(
@@ -738,8 +760,7 @@ when defined(withSqlite):
       discard
 
   proc stats*(a: SqliteMagmaStoreAdapter): MagmaStats =
-    a.ensureSchema()
-    let db = a.openDb()
+    openStoreOr(a, MagmaStats())
     defer: db.close()
     try:
       let rows = db.getAllRows(sql(

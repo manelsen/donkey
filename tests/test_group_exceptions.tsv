@@ -1,6 +1,6 @@
 tests/adapters/memory/t_hybrid_search.nim	empty test file; known zero-case inventory exception
 tests/adapters/memory/t_pgvector_store.nim	requires live PostgreSQL/pgvector backend
-tests/adapters/memory/t_sqlite_magma_store.nim	suite gated by when defined(withSqlite)
+tests/adapters/memory/t_sqlite_magma_store.nim	needs -d:withSqlite -d:staticSqlite, set by its own .nims
 tests/app/t_ingestion_regression.nim	uses getAppDir()/downloads; needs a dedicated binary
 tests/app/t_wasm_file_ops.nim	requires ~/.donkey/busybox and wasmtime; runner skips when absent
 tests/app/t_wasm_find.nim	requires ~/.donkey/busybox and wasmtime; runner skips when absent
