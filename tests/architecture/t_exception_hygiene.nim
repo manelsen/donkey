@@ -11,29 +11,63 @@ import std/[os, strutils, unittest]
 
 const BoundaryMarker = "## effect boundary: callee raises are unannotated"
 
-func codeOf(line: string): string =
-  ## The line without string/char literals and without its comment, so that
-  ## "except:" in text or after `#` is not mistaken for code.
-  var i = 0
-  while i < line.len:
-    let c = line[i]
-    if c == '#': break
-    if c == '"' or c == '\'':
-      inc i
-      while i < line.len and line[i] != c:
-        if line[i] == '\\': inc i
-        inc i
-      result.add ' '
-    else:
-      result.add c
-    inc i
-
 func isIdentChar(c: char): bool = c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
 
-func exceptHeads(line: string): seq[string] =
-  ## What follows each `except` keyword in the code part of the line, up to
-  ## the colon: "" for a bare handler, "Exception", "CatchableError", ...
-  let code = codeOf(line)
+func codeOnly(src: string): string =
+  ## `src` with comments and string/char literals blanked out, newlines kept,
+  ## so "except:" in text is not mistaken for code and line numbers still
+  ## match. Lexical state carries across lines: `#[ ]#` block comments (they
+  ## nest), `"""` strings, raw strings (`r"…"`, `fmt"…"`, where `\` is not an
+  ## escape and `""` is a quote), plain strings and char literals.
+  var i = 0
+  template blank(c: char) = result.add(if c == '\n': '\n' else: ' ')
+  while i < src.len:
+    let c = src[i]
+    let prev = if i > 0: src[i - 1] else: ' '
+    if c == '#' and (src.continuesWith("#[", i) or src.continuesWith("##[", i)):
+      var depth = 0
+      while i < src.len:
+        if src.continuesWith("#[", i):
+          inc depth; blank(src[i]); blank(src[i + 1]); i += 2
+        elif src.continuesWith("]#", i):
+          dec depth; blank(src[i]); blank(src[i + 1]); i += 2
+          if depth == 0: break
+        else:
+          blank(src[i]); inc i
+    elif c == '#':
+      while i < src.len and src[i] != '\n':
+        blank(src[i]); inc i
+    elif src.continuesWith("\"\"\"", i):
+      result.add "   "; i += 3
+      while i < src.len and not src.continuesWith("\"\"\"", i):
+        blank(src[i]); inc i
+      while i < src.len and src[i] == '"':
+        blank(src[i]); inc i
+    elif c == '"' and isIdentChar(prev):
+      blank(c); inc i
+      while i < src.len and src[i] != '\n':
+        if src[i] == '"':
+          if i + 1 < src.len and src[i + 1] == '"':
+            blank(src[i]); blank(src[i + 1]); i += 2
+            continue
+          break
+        blank(src[i]); inc i
+      if i < src.len and src[i] == '"':
+        blank(src[i]); inc i
+    elif c == '"' or (c == '\'' and not isIdentChar(prev)):
+      blank(c); inc i
+      while i < src.len and src[i] != c and src[i] != '\n':
+        if src[i] == '\\' and i + 1 < src.len:
+          blank(src[i]); inc i
+        blank(src[i]); inc i
+      if i < src.len and src[i] == c:
+        blank(src[i]); inc i
+    else:
+      result.add c; inc i
+
+func handlerTypes(code: string): seq[seq[string]] =
+  ## For each `except` keyword in a line of code: the exception types listed
+  ## before the colon (empty for a bare handler), without any `as` binding.
   var i = code.find("except")
   while i >= 0:
     let stop = i + "except".len
@@ -41,50 +75,68 @@ func exceptHeads(line: string): seq[string] =
     let wordEnd = stop >= code.len or not isIdentChar(code[stop])
     if wordStart and wordEnd:
       let colon = code.find(':', stop)
-      result.add(if colon < 0: code[stop .. ^1].strip else: code[stop ..< colon].strip)
+      var head = (if colon < 0: code[stop .. ^1] else: code[stop ..< colon]).strip
+      let asAt = head.find(" as ")
+      if asAt >= 0: head = head[0 ..< asAt]
+      var types: seq[string]
+      for t in head.split(','):
+        if t.strip.len > 0: types.add t.strip
+      result.add types
     i = code.find("except", stop)
 
-func isBareExcept(line: string): bool =
-  ## `except:` with no exception type, anywhere in the line's code: alone,
-  ## before a comment, with an inline value, or inside a one-line `try`.
-  "" in exceptHeads(line)
+func isBareExcept(code: string): bool =
+  ## `except:` with no exception type, anywhere in the line's code.
+  for types in handlerTypes(code):
+    if types.len == 0: return true
 
-func catchesException(line: string): bool =
-  for head in exceptHeads(line):
-    if head == "Exception" or head.startsWith("Exception ") or
-       head.startsWith("Exception,"):
-      return true
+func catchesException(code: string): bool =
+  ## Some handler in the line lists `Exception`, in any position.
+  for types in handlerTypes(code):
+    if "Exception" in types: return true
+
+func bare(src: string): bool = isBareExcept(codeOnly(src))
+func broad(src: string): bool = catchesException(codeOnly(src))
 
 proc runTests*() =
   suite "exception hygiene":
-    test "a bare except is recognized with or without a trailing comment":
-      check isBareExcept("  except:")
-      check isBareExcept("except: # fallback")
-      check isBareExcept("except :  ## why")
-      check isBareExcept("except: newJObject()")
-      check isBareExcept("let x = (try: parseInt(s) except: -1)")
-      check not isBareExcept("let x = (try: parseInt(s) except ValueError: -1)")
-      check not isBareExcept("echo \"except: in a string\"")
-      check not isBareExcept("discard  # except: in a comment")
-      check catchesException("let x = (try: f() except Exception: 0)")
-      check catchesException("except Exception as e:")
-      check not catchesException("except CatchableError as e:")
-      check not isBareExcept("except CatchableError:")
-      check not isBareExcept("except CatchableError: # fallback")
-      check not isBareExcept("except ValueError, IOError:")
-      check not isBareExcept("exceptional = true")
+    test "handlers are recognized in code, not in comments or literals":
+      check bare("  except:")
+      check bare("except: # fallback")
+      check bare("except :  ## why")
+      check bare("except: newJObject()")
+      check bare("let x = (try: parseInt(s) except: -1)")
+      check bare("let x = (try: r\"C:\\\" except: \"\")")
+      check bare("const a = \"\"\"\nexcept:\n\"\"\"\nexcept:")
+      check bare("let n = 0'i64\nexcept:")
+      check not bare("let x = (try: parseInt(s) except ValueError: -1)")
+      check not bare("echo \"except: in a string\"")
+      check not bare("discard  # except: in a comment")
+      check not bare("const a = \"\"\"\nexcept:\n\"\"\"")
+      check not bare("#[\nexcept:\n#[ nested ]#\nexcept:\n]#")
+      check not bare("let c = '\"'\necho \"except:\"")
+      check not bare("except CatchableError:")
+      check not bare("except CatchableError: # fallback")
+      check not bare("except ValueError, IOError:")
+      check not bare("exceptional = true")
+      check broad("let x = (try: f() except Exception: 0)")
+      check broad("except Exception as e:")
+      check broad("except ValueError, Exception:")
+      check broad("except Exception, ValueError as e:")
+      check not broad("except CatchableError as e:")
+      check not broad("except ValueError, IOError:")
+      check not broad("echo \"except Exception:\"")
 
     test "no bare except and no unexplained except Exception in src":
       for path in walkDirRec("src"):
         if not path.endsWith(".nim"): continue
-        var n = 0
-        for line in readFile(path).splitLines():
-          inc n
-          if isBareExcept(line):
-            checkpoint(path & ":" & $n & " bare except")
+        let lines = readFile(path).splitLines()
+        let code = codeOnly(lines.join("\n")).splitLines()
+        for n, line in lines:
+          if isBareExcept(code[n]):
+            checkpoint(path & ":" & $(n + 1) & " bare except")
             fail()
-          if catchesException(line) and BoundaryMarker notin line:
-            checkpoint(path & ":" & $n & " except Exception without the boundary marker")
+          if catchesException(code[n]) and BoundaryMarker notin line:
+            checkpoint(path & ":" & $(n + 1) & " except Exception without the boundary marker")
             fail()
 
 when isMainModule:
