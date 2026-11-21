@@ -135,7 +135,7 @@ proc postWith(a: TelegramAdapter; meth: string; body: JsonNode;
     sent >>=
       proc(resp: HttpResponse): Result[JsonNode, string] {.gcsafe, raises: [].} =
         parseTgResp(meth, resp)
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err(e.msg)
 
 proc post(a: TelegramAdapter; meth: string;
@@ -168,7 +168,7 @@ proc postMultipart(a: TelegramAdapter; meth, body, boundary: string;
       if retryAfter > 0:
         a.flood.noteRetryAfter(chatId, retryAfter, epochMs())
     res
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err(e.msg)
 
 proc randomBoundaryHex(bytes = 24): string =
@@ -211,7 +211,7 @@ proc postJsonOnUpload(a: TelegramAdapter; meth: string; body: JsonNode):
     sent >>=
       proc(resp: HttpResponse): Result[JsonNode, string] {.gcsafe, raises: [].} =
         parseTgResp(meth, resp)
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err(e.msg)
 
 func chatAllowedReactionEmojis*(chatInfo: JsonNode): tuple[restricted: bool, emojis: seq[string]]
@@ -893,18 +893,8 @@ proc getFile*(a: TelegramAdapter; fileId: string): Result[string, string] =
 proc downloadFileBytes*(a: TelegramAdapter; filePath: string): Result[seq[byte], string] =
   ## Downloads file content from Telegram servers.
   ## filePath should be obtained from getFile() first.
-  try:
-    let url = a.apiBaseValue & "/file/bot" & a.token & "/" & filePath
-    let headers: seq[(string, string)] = @[]
-    let resp = ? a.http.get(url, headers)
-    
-    # Convert string body to seq[byte]
-    var data = newSeq[byte](resp.body.len)
-    for i in 0 ..< resp.body.len:
-      data[i] = cast[byte](resp.body[i])
-    ok(data)
-  except CatchableError as e:
-    err(e.msg)
+  let url = a.apiBaseValue & "/file/bot" & a.token & "/" & filePath
+  a.http.fetchBytes(url, @[])
 
 proc downloadFile*(a: TelegramAdapter; fileId: string): Result[FileDownload, string] =
   ## Complete file download: gets file info and downloads content.

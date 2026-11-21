@@ -62,6 +62,13 @@ proc unsupportedDownloadFile(fileId: string): Result[FileDownload, string] {.gcs
 ## to the generic unsupported stub.  The descriptor is the single source of
 ## truth — the if/else branches here are a direct mirror of the registry in
 ## channel_capability.nim.
+##
+## Lifetime invariant: the closures capture raw `ptr` to each adapter, so the
+## adapters must outlive every returned OutboundChannelPorts and must not move.
+## The daemon satisfies this by keeping them in `DaemonContext.adapters`
+## (a `ref object` alive for the whole process) and rebuilding the ports per
+## tick instead of storing them. Never pass the address of a stack local
+## whose ports escape the current scope.
 
 proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          dcAdapter: ptr DiscordAdapter;
@@ -111,8 +118,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     sendKeyboard: proc(userId: UserId; text: string;
                         buttons: seq[seq[(string, string)]];
                         replyTo = ""): Result[void, string] {.gcsafe.} =
-      discard dcAdapter[].sendKeyboard(userId, text, buttons)
-      ok(),
+      dcAdapter[].sendKeyboard(userId, text, buttons).map(proc(s: string): void = discard s),
     editKeyboard: proc(userId: UserId; msgId, text: string;
                         buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} =
       dcAdapter[].editKeyboard(userId, msgId, text, buttons),

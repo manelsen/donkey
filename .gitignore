@@ -16,6 +16,8 @@ tests/**
 !tests/**/
 !tests/**/*.nim
 !tests/fixtures/**
+!tests/test_groups.tsv
+!tests/test_group_exceptions.tsv
 
 # Build artifacts
 donkey_release
@@ -32,3 +34,13 @@ docs/*
 
 # Downloaded SDKs (análise apenas, não são deps)
 larksuiteoapi-node-sdk-*.tgz
+
+# `nim c src/.../foo.nim` drops an extensionless ELF next to the source.
+# Only Nim sources belong under src/ — same allow-list approach as tests/.
+src/**
+!src/**/
+!src/**/*.nim
+src/**/htmldocs/
+
+# Editor/merge backups
+*.orig

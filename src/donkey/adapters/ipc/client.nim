@@ -21,7 +21,7 @@ proc existsOrRaise*(path: string): bool =
   try:
     let fi = getFileInfo(path, false)
     return fi.kind in {pcFile, pcLinkToFile, pcDir, pcLinkToDir}
-  except:
+  except CatchableError:
     return false
 
 proc ipcQuery*(sockPath: string; payload: JsonNode): Result[JsonNode, string] =
@@ -38,7 +38,7 @@ proc ipcQuery*(sockPath: string; payload: JsonNode): Result[JsonNode, string] =
     if line.len == 0:
       return err("empty response from daemon")
     line |> parseJson |> ok
-  except Exception as e:
+  except CatchableError as e:
     err(e.msg)
 
 proc queryStatus*(sockPath: string): Result[DaemonStatus, string] =

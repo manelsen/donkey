@@ -2,7 +2,7 @@
 # Install script — installs as a systemd --user service (no root needed).
 #
 # Usage:
-#   bash deploy/install.sh [--binary /path/to/binary]
+#   bash deploy/install.sh [--binary /path/to/binary] [--lightpanda]
 #
 # After install:
 #   1. Edit ~/.config/$CONFIG_DIR/$ENV_FILE  — fill in API keys and bot tokens
@@ -47,12 +47,77 @@ render_template() {
     "$src" > "$dst"
 }
 
+# Lightpanda is installed on the service host, where the daemon starts it.
+install_lightpanda() (
+  local version=1.0.4 arch checksum asset work_dir
+  arch="$(uname -m)"
+  case "$(uname -s)-$arch" in
+    Linux-x86_64) checksum=7d22651129901203abdb95c64f49069c49e88f5211f4d8c4c6828c123c4adab4 ;;
+    Linux-aarch64) checksum=f021d49a0b66d07bf2633f8e00870b9075293516f872695b0ca4aeb5848b6ea8 ;;
+    *) echo "ERROR: --lightpanda requires Linux x86_64 or aarch64." >&2; exit 1 ;;
+  esac
+
+  if [ -x "$LIGHTPANDA_DST" ] &&
+      printf '%s  %s\n' "$checksum" "$LIGHTPANDA_DST" | sha256sum --status -c; then
+    "$LIGHTPANDA_DST" version >/dev/null
+    return 0
+  fi
+
+  work_dir="$(mktemp -d "$(dirname "$LIGHTPANDA_DST")/.lightpanda.XXXXXX")"
+  trap 'rm -rf "$work_dir"' EXIT
+  asset="lightpanda-$arch-linux"
+  echo "==> Downloading Lightpanda $version"
+  curl -fsSL --retry 3 \
+    "https://github.com/lightpanda-io/browser/releases/download/$version/$asset" \
+    -o "$work_dir/lightpanda"
+  printf '%s  %s\n' "$checksum" "$work_dir/lightpanda" | sha256sum -c
+  chmod 755 "$work_dir/lightpanda"
+  "$work_dir/lightpanda" version
+  mv -fT "$work_dir/lightpanda" "$LIGHTPANDA_DST"
+)
+
+configure_lightpanda() (
+  local env_file temp_env
+  env_file="$(realpath "$CONFIG_DIR/$ENV_FILE")"
+  temp_env="$(mktemp "${env_file}.XXXXXX")"
+  trap 'rm -f "$temp_env"' EXIT
+  awk '!/^[[:space:]]*DONKEY_BROWSER_(BACKEND|PATH)[[:space:]]*=/' "$env_file" > "$temp_env"
+  printf 'DONKEY_BROWSER_BACKEND=lightpanda\nDONKEY_BROWSER_PATH="%s"\n' \
+    "$LIGHTPANDA_DST" >> "$temp_env"
+  mv -f "$temp_env" "$env_file"
+)
+
 # ── Locate binary ─────────────────────────────────────────────────────────────
 
-BINARY_SRC="${1:-}"
-if [ -n "$BINARY_SRC" ] && [[ "$BINARY_SRC" == --binary ]]; then
-  BINARY_SRC="${2:-}"
-fi
+BINARY_SRC=""
+WITH_LIGHTPANDA=false
+LIGHTPANDA_DST="$HOME/.local/bin/lightpanda"
+usage() {
+  echo "Usage: bash deploy/install.sh [--binary /path/to/binary] [--lightpanda]"
+}
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --binary)
+      if [ "$#" -lt 2 ] || [[ "$2" == --* ]]; then
+        usage >&2
+        exit 2
+      fi
+      BINARY_SRC="$2"
+      shift ;;
+    --lightpanda) WITH_LIGHTPANDA=true ;;
+    -h|--help) usage; exit 0 ;;
+    -*)
+      usage >&2
+      exit 2 ;;
+    *)
+      if [ -n "$BINARY_SRC" ]; then
+        usage >&2
+        exit 2
+      fi
+      BINARY_SRC="$1" ;;
+  esac
+  shift
+done
 
 if [ -z "$BINARY_SRC" ]; then
   # Try common build output locations
@@ -75,6 +140,21 @@ if [ -z "$BINARY_SRC" ] || [ ! -f "$BINARY_SRC" ]; then
   exit 1
 fi
 
+if "$WITH_LIGHTPANDA"; then
+  if [ -n "${DONKEY_BROWSER_PROXY:-}" ] ||
+      { [ -f "$CONFIG_DIR/$ENV_FILE" ] && awk '
+        /^[[:space:]]*DONKEY_BROWSER_PROXY[[:space:]]*=/ {
+          sub(/^[^=]*=[[:space:]]*/, "")
+          sub(/[[:space:]]*$/, "")
+          configured = ($0 != "" && $0 != "\"\"" && $0 != "\047\047")
+        }
+        END { exit !configured }
+      ' "$CONFIG_DIR/$ENV_FILE"; }; then
+    echo "ERROR: --lightpanda is incompatible with DONKEY_BROWSER_PROXY." >&2
+    exit 1
+  fi
+fi
+
 echo "==> Installing $APP_NAME (user service)"
 echo "    Binary : $BINARY_DST"
 echo "    Config : $CONFIG_DIR"
@@ -87,10 +167,16 @@ mkdir -p "$HOME/.local/bin"
 mkdir -p "$CONFIG_DIR"
 mkdir -p "$SERVICE_DIR"
 
+if "$WITH_LIGHTPANDA"; then
+  install_lightpanda
+fi
+
 # ── Binary ────────────────────────────────────────────────────────────────────
 
-echo "==> Installing binary"
-install -m 755 "$BINARY_SRC" "$BINARY_DST"
+if ! [ "$BINARY_SRC" -ef "$BINARY_DST" ]; then
+  echo "==> Installing binary"
+  install -m 755 "$BINARY_SRC" "$BINARY_DST"
+fi
 
 # ── Config files (only if they don't already exist) ──────────────────────────
 
@@ -102,7 +188,12 @@ if [ ! -f "$CONFIG_DIR/$ENV_FILE" ]; then
   sed -i "s|^DONKEY_HOME=.*|# DONKEY_HOME defaults to ~/$HOME_DIR_NAME — uncomment to override|" \
     "$CONFIG_DIR/$ENV_FILE"
 else
-  echo "==> $CONFIG_DIR/$ENV_FILE already exists — not overwriting"
+  echo "==> Keeping existing $CONFIG_DIR/$ENV_FILE"
+fi
+
+if "$WITH_LIGHTPANDA"; then
+  configure_lightpanda
+  echo "==> Enabled Lightpanda in $CONFIG_DIR/$ENV_FILE"
 fi
 
 if [ ! -f "$CONFIG_DIR/$CONFIG_FILE" ]; then

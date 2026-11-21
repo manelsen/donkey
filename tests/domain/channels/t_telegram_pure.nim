@@ -74,300 +74,304 @@ func makeUnknownUpdate(updateId: int): JsonNode =
 
 # ── parseUpdate ───────────────────────────────────────────────────────────────
 
-suite "telegram_pure.parseUpdate — text message":
+proc runTests*() =
+  suite "telegram_pure.parseUpdate — text message":
 
-  test "kind is tukMessage for a text update":
-    let upd = makeTextUpdate(1, 111, 111, "private", "hello")
-    let r = upd |> parseUpdate
-    check r.kind == tukMessage
+    test "kind is tukMessage for a text update":
+      let upd = makeTextUpdate(1, 111, 111, "private", "hello")
+      let r = upd |> parseUpdate
+      check r.kind == tukMessage
 
-  test "rawId matches from.id":
-    let upd = makeTextUpdate(2, 222, 222, "private", "hi")
-    let r = upd |> parseUpdate
-    check r.rawId == "222"
+    test "rawId matches from.id":
+      let upd = makeTextUpdate(2, 222, 222, "private", "hi")
+      let r = upd |> parseUpdate
+      check r.rawId == "222"
 
-  test "sessionKey equals from.id for private chat":
-    let upd = makeTextUpdate(3, 333, 333, "private", "hey")
-    let r = upd |> parseUpdate
-    check r.sessionKey == "333"
+    test "sessionKey equals from.id for private chat":
+      let upd = makeTextUpdate(3, 333, 333, "private", "hey")
+      let r = upd |> parseUpdate
+      check r.sessionKey == "333"
 
-  test "sessionKey equals chat.id for group chat":
-    let upd = makeTextUpdate(4, 444, 9001, "group", "sup")
-    let r = upd |> parseUpdate
-    check r.sessionKey == "9001"
+    test "sessionKey equals chat.id for group chat":
+      let upd = makeTextUpdate(4, 444, 9001, "group", "sup")
+      let r = upd |> parseUpdate
+      check r.sessionKey == "9001"
 
-  test "sessionKey equals chat.id for supergroup":
-    let upd = makeTextUpdate(5, 555, 9002, "supergroup", "yo")
-    let r = upd |> parseUpdate
-    check r.sessionKey == "9002"
+    test "sessionKey equals chat.id for supergroup":
+      let upd = makeTextUpdate(5, 555, 9002, "supergroup", "yo")
+      let r = upd |> parseUpdate
+      check r.sessionKey == "9002"
 
-  test "text is captured":
-    let upd = makeTextUpdate(6, 666, 666, "private", "I want pizza")
-    let r = upd |> parseUpdate
-    check r.text == "I want pizza"
+    test "text is captured":
+      let upd = makeTextUpdate(6, 666, 666, "private", "I want pizza")
+      let r = upd |> parseUpdate
+      check r.text == "I want pizza"
 
-  test "channelId matches message_id":
-    let upd = makeTextUpdate(7, 777, 777, "private", "ok")
-    let r = upd |> parseUpdate
-    check r.channelId == "42"
+    test "channelId matches message_id":
+      let upd = makeTextUpdate(7, 777, 777, "private", "ok")
+      let r = upd |> parseUpdate
+      check r.channelId == "42"
 
-  test "no media for plain text":
-    let upd = makeTextUpdate(8, 888, 888, "private", "text only")
-    let r = upd |> parseUpdate
-    check not r.hasMedia
-    check r.mediaFileId == ""
+    test "no media for plain text":
+      let upd = makeTextUpdate(8, 888, 888, "private", "text only")
+      let r = upd |> parseUpdate
+      check not r.hasMedia
+      check r.mediaFileId == ""
 
-  test "empty-content message returns tukUnknown":
-    let upd = makeEmptyMsgUpdate(9, 999)
-    let r = upd |> parseUpdate
-    check r.kind == tukUnknown
+    test "empty-content message returns tukUnknown":
+      let upd = makeEmptyMsgUpdate(9, 999)
+      let r = upd |> parseUpdate
+      check r.kind == tukUnknown
 
-suite "telegram_pure.parseUpdate — media":
+  suite "telegram_pure.parseUpdate — media":
 
-  test "photo: hasMedia is true, picks largest variant":
-    let upd = makeMediaUpdate(10, 1001, "photo")
-    let r = upd |> parseUpdate
-    check r.kind == tukMessage
-    check r.hasMedia
-    check r.mediaFileId == "big_id"
-    check r.mediaFileName == "photo.jpg"
-    check r.mediaMimeType == "image/jpeg"
+    test "photo: hasMedia is true, picks largest variant":
+      let upd = makeMediaUpdate(10, 1001, "photo")
+      let r = upd |> parseUpdate
+      check r.kind == tukMessage
+      check r.hasMedia
+      check r.mediaFileId == "big_id"
+      check r.mediaFileName == "photo.jpg"
+      check r.mediaMimeType == "image/jpeg"
 
-  test "photo: caption becomes text":
-    let upd = makeMediaUpdate(11, 1002, "photo")
-    let r = upd |> parseUpdate
-    check r.text == "look at this"
+    test "photo: caption becomes text":
+      let upd = makeMediaUpdate(11, 1002, "photo")
+      let r = upd |> parseUpdate
+      check r.text == "look at this"
 
-  test "document: hasMedia is true":
-    let upd = makeMediaUpdate(12, 1003, "document")
-    let r = upd |> parseUpdate
-    check r.hasMedia
-    check r.mediaFileId == "doc_id"
-    check r.mediaFileName == "file.pdf"
-    check r.mediaMimeType == "application/pdf"
+    test "document: hasMedia is true":
+      let upd = makeMediaUpdate(12, 1003, "document")
+      let r = upd |> parseUpdate
+      check r.hasMedia
+      check r.mediaFileId == "doc_id"
+      check r.mediaFileName == "file.pdf"
+      check r.mediaMimeType == "application/pdf"
 
-  test "voice: hasMedia is true":
-    let upd = makeMediaUpdate(13, 1004, "voice")
-    let r = upd |> parseUpdate
-    check r.hasMedia
-    check r.mediaFileId == "voice_id"
-    check r.mediaFileName == "voice.ogg"
-    check r.mediaMimeType == "audio/ogg"
+    test "voice: hasMedia is true":
+      let upd = makeMediaUpdate(13, 1004, "voice")
+      let r = upd |> parseUpdate
+      check r.hasMedia
+      check r.mediaFileId == "voice_id"
+      check r.mediaFileName == "voice.ogg"
+      check r.mediaMimeType == "audio/ogg"
 
-suite "telegram_pure.parseUpdate — callback_query":
+  suite "telegram_pure.parseUpdate — callback_query":
 
-  test "kind is tukCallbackQuery":
-    let upd = makeCallbackUpdate(20, 2001, "yes", "cb-42")
-    let r = upd |> parseUpdate
-    check r.kind == tukCallbackQuery
+    test "kind is tukCallbackQuery":
+      let upd = makeCallbackUpdate(20, 2001, "yes", "cb-42")
+      let r = upd |> parseUpdate
+      check r.kind == tukCallbackQuery
 
-  test "text is /callback <data>":
-    let upd = makeCallbackUpdate(21, 2002, "no", "cb-43")
-    let r = upd |> parseUpdate
-    check r.text == "/callback no"
+    test "text is /callback <data>":
+      let upd = makeCallbackUpdate(21, 2002, "no", "cb-43")
+      let r = upd |> parseUpdate
+      check r.text == "/callback no"
 
-  test "callbackId is populated":
-    let upd = makeCallbackUpdate(22, 2003, "ok", "cb-44")
-    let r = upd |> parseUpdate
-    check r.callbackId == "cb-44"
+    test "callbackId is populated":
+      let upd = makeCallbackUpdate(22, 2003, "ok", "cb-44")
+      let r = upd |> parseUpdate
+      check r.callbackId == "cb-44"
 
-  test "hasCallbackId is true":
-    let upd = makeCallbackUpdate(23, 2004, "nope", "cb-45")
-    let r = upd |> parseUpdate
-    check r.hasCallbackId
+    test "hasCallbackId is true":
+      let upd = makeCallbackUpdate(23, 2004, "nope", "cb-45")
+      let r = upd |> parseUpdate
+      check r.hasCallbackId
 
-  test "rawId comes from from.id":
-    let upd = makeCallbackUpdate(24, 2005, "x", "cb-46")
-    let r = upd |> parseUpdate
-    check r.rawId == "2005"
+    test "rawId comes from from.id":
+      let upd = makeCallbackUpdate(24, 2005, "x", "cb-46")
+      let r = upd |> parseUpdate
+      check r.rawId == "2005"
 
-  test "unknown update returns tukUnknown":
-    let upd = makeUnknownUpdate(30)
-    let r = upd |> parseUpdate
-    check r.kind == tukUnknown
+    test "unknown update returns tukUnknown":
+      let upd = makeUnknownUpdate(30)
+      let r = upd |> parseUpdate
+      check r.kind == tukUnknown
 
-# ── parseUpdates ──────────────────────────────────────────────────────────────
+  # ── parseUpdates ──────────────────────────────────────────────────────────────
 
-suite "telegram_pure.parseUpdates — batch":
+  suite "telegram_pure.parseUpdates — batch":
 
-  test "returns only actionable results":
-    let arr = %* [
-      makeTextUpdate(1, 100, 100, "private", "hello"),
-      makeUnknownUpdate(2),
-      makeCallbackUpdate(3, 200, "yes", "cb1"),
-    ]
-    let results = arr |> parseUpdates
-    check results.len == 2
-    check results[0].kind == tukMessage
-    check results[1].kind == tukCallbackQuery
+    test "returns only actionable results":
+      let arr = %* [
+        makeTextUpdate(1, 100, 100, "private", "hello"),
+        makeUnknownUpdate(2),
+        makeCallbackUpdate(3, 200, "yes", "cb1"),
+      ]
+      let results = arr |> parseUpdates
+      check results.len == 2
+      check results[0].kind == tukMessage
+      check results[1].kind == tukCallbackQuery
 
-  test "empty array returns empty seq":
-    let arr = newJArray()
-    let results = arr |> parseUpdates
-    check results.len == 0
+    test "empty array returns empty seq":
+      let arr = newJArray()
+      let results = arr |> parseUpdates
+      check results.len == 0
 
-  test "all unknowns returns empty seq":
-    let arr = %* [makeUnknownUpdate(1), makeUnknownUpdate(2)]
-    let results = arr |> parseUpdates
-    check results.len == 0
+    test "all unknowns returns empty seq":
+      let arr = %* [makeUnknownUpdate(1), makeUnknownUpdate(2)]
+      let results = arr |> parseUpdates
+      check results.len == 0
 
-# ── toInbound ─────────────────────────────────────────────────────────────────
+  # ── toInbound ─────────────────────────────────────────────────────────────────
 
-suite "telegram_pure.toInbound":
+  suite "telegram_pure.toInbound":
 
-  test "converts TgParseResult to InboundMessage":
-    let upd = makeTextUpdate(40, 4001, 4001, "private", "convert me")
-    let r   = upd |> parseUpdate
-    let uid = UserId("test-uuid")
-    let msg = r.toInbound(uid)
-    check msg.userId == uid
-    check msg.channel == ckTelegram
-    check msg.text == "convert me"
-    check msg.channelId == "42"
-    check msg.rawChannelId == "4001"
-    check msg.mediaUrl == ""
+    test "converts TgParseResult to InboundMessage":
+      let upd = makeTextUpdate(40, 4001, 4001, "private", "convert me")
+      let r   = upd |> parseUpdate
+      let uid = UserId("test-uuid")
+      let msg = r.toInbound(uid)
+      check msg.userId == uid
+      check msg.channel == ckTelegram
+      check msg.text == "convert me"
+      check msg.channelId == "42"
+      check msg.rawChannelId == "4001"
+      check msg.mediaUrl == ""
 
-  test "mediaUrl is forwarded":
-    let upd = makeMediaUpdate(41, 4002, "photo")
-    let r   = upd |> parseUpdate
-    let uid = UserId("uuid-2")
-    let msg = r.toInbound(uid, "https://cdn.example.com/photo.jpg")
-    check msg.mediaUrl == "https://cdn.example.com/photo.jpg"
-    check msg.mediaFileName == "photo.jpg"
-    check msg.mediaMimeType == "image/jpeg"
+    test "mediaUrl is forwarded":
+      let upd = makeMediaUpdate(41, 4002, "photo")
+      let r   = upd |> parseUpdate
+      let uid = UserId("uuid-2")
+      let msg = r.toInbound(uid, "https://cdn.example.com/photo.jpg")
+      check msg.mediaUrl == "https://cdn.example.com/photo.jpg"
+      check msg.mediaFileName == "photo.jpg"
+      check msg.mediaMimeType == "image/jpeg"
 
-# ── maxNextOffset ─────────────────────────────────────────────────────────────
+  # ── maxNextOffset ─────────────────────────────────────────────────────────────
 
-suite "telegram_pure.maxNextOffset":
+  suite "telegram_pure.maxNextOffset":
 
-  test "returns max update_id + 1":
-    let arr = %* [
-      {"update_id": 10, "message": {}},
-      {"update_id": 15, "message": {}},
-      {"update_id": 12, "message": {}},
-    ]
-    check maxNextOffset(0, arr) == 16
+    test "returns max update_id + 1":
+      let arr = %* [
+        {"update_id": 10, "message": {}},
+        {"update_id": 15, "message": {}},
+        {"update_id": 12, "message": {}},
+      ]
+      check maxNextOffset(0, arr) == 16
 
-  test "returns currentOffset when array is empty":
-    let arr = newJArray()
-    check maxNextOffset(5, arr) == 5
+    test "returns currentOffset when array is empty":
+      let arr = newJArray()
+      check maxNextOffset(5, arr) == 5
 
-  test "returns currentOffset when all ids are below it":
-    ## Should not happen in normal operation but must be safe.
-    let arr = %* [{"update_id": 3, "message": {}}]
-    check maxNextOffset(10, arr) == 10
+    test "returns currentOffset when all ids are below it":
+      ## Should not happen in normal operation but must be safe.
+      let arr = %* [{"update_id": 3, "message": {}}]
+      check maxNextOffset(10, arr) == 10
 
-  test "pipe variant: |>-> maxNextOffset(offset)":
-    let arr = %* [{"update_id": 7}, {"update_id": 9}]
-    let next = arr |>-> maxNextOffset(0)
-    check next == 10
-
-
-suite "telegram_pure — bot senders (TG-003)":
-
-  test "TG-003: an update from a bot is recognised":
-    let upd = parseJson(readFile("tests/fixtures/telegram/hermes/TG-003_bot_sender.json"))
-    check isBotUpdate(upd)
-
-  test "TG-003: an update from a human is not a bot":
-    let upd = %*{"message": {"from": {"id": 1, "is_bot": false},
-                             "chat": {"id": 1, "type": "private"}, "text": "oi"}}
-    check not isBotUpdate(upd)
-
-  test "TG-003: a bot callback is recognised":
-    let upd = %*{"callback_query": {"id": "cb", "from": {"id": 2, "is_bot": true},
-                                    "data": "x"}}
-    check isBotUpdate(upd)
+    test "pipe variant: |>-> maxNextOffset(offset)":
+      let arr = %* [{"update_id": 7}, {"update_id": 9}]
+      let next = arr |>-> maxNextOffset(0)
+      check next == 10
 
 
-suite "telegram_pure — missing sender (TG-004)":
+  suite "telegram_pure — bot senders (TG-003)":
 
-  test "TG-004: an anonymous admin message parses instead of raising":
-    let upd = parseJson(readFile("tests/fixtures/telegram/hermes/TG-004_anonymous_admin.json"))
-    let r = parseUpdate(upd)
-    check r.kind == tukMessage
-    check r.rawId == "-1001234567890"
-    check r.sessionKey == "-1001234567890"
-    check r.text == "anonymous admin notice"
+    test "TG-003: an update from a bot is recognised":
+      let upd = parseJson(readFile("tests/fixtures/telegram/hermes/TG-003_bot_sender.json"))
+      check isBotUpdate(upd)
 
-  test "TG-004: a private message without from falls back to the chat id":
-    let upd = %*{"message": {"message_id": 1,
-                             "chat": {"id": 4242, "type": "private"},
-                             "text": "oi"}}
-    let r = parseUpdate(upd)
-    check r.kind == tukMessage
-    check r.rawId == "4242"
+    test "TG-003: an update from a human is not a bot":
+      let upd = %*{"message": {"from": {"id": 1, "is_bot": false},
+                               "chat": {"id": 1, "type": "private"}, "text": "oi"}}
+      check not isBotUpdate(upd)
+
+    test "TG-003: a bot callback is recognised":
+      let upd = %*{"callback_query": {"id": "cb", "from": {"id": 2, "is_bot": true},
+                                      "data": "x"}}
+      check isBotUpdate(upd)
 
 
-  test "TG-004: an anonymous admin is addressed by the discussion chat":
-    ## In a discussion group the channel behind the admin (sender_chat) is not
-    ## the destination: replies must go to chat.id.
-    let upd = %*{"message": {"message_id": 8,
-                             "from": {"id": 1087968824, "is_bot": true,
-                                      "first_name": "GroupAnonymousBot"},
-                             "sender_chat": {"id": -1009999999999,
-                                             "type": "channel"},
-                             "chat": {"id": -1001234567890, "type": "supergroup"},
-                             "text": "aviso"}}
-    let r = parseUpdate(upd)
-    check r.kind == tukMessage
-    check r.rawId == "-1001234567890"
+  suite "telegram_pure — missing sender (TG-004)":
 
-  test "TG-003: an anonymous admin is not filtered as a bot":
-    let upd = %*{"message": {"message_id": 7,
-                             "from": {"id": 1087968824, "is_bot": true,
-                                      "first_name": "GroupAnonymousBot"},
-                             "sender_chat": {"id": -1001234567890,
-                                             "type": "supergroup"},
-                             "chat": {"id": -1001234567890, "type": "supergroup"},
-                             "text": "aviso do admin"}}
-    check not isBotUpdate(upd)
+    test "TG-004: an anonymous admin message parses instead of raising":
+      let upd = parseJson(readFile("tests/fixtures/telegram/hermes/TG-004_anonymous_admin.json"))
+      let r = parseUpdate(upd)
+      check r.kind == tukMessage
+      check r.rawId == "-1001234567890"
+      check r.sessionKey == "-1001234567890"
+      check r.text == "anonymous admin notice"
 
-suite "telegram_pure — group and topic metadata":
+    test "TG-004: a private message without from falls back to the chat id":
+      let upd = %*{"message": {"message_id": 1,
+                               "chat": {"id": 4242, "type": "private"},
+                               "text": "oi"}}
+      let r = parseUpdate(upd)
+      check r.kind == tukMessage
+      check r.rawId == "4242"
 
-  test "TG-015: a group message is flagged as a group":
-    let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
-                             "chat": {"id": -100, "type": "supergroup"},
-                             "text": "oi"}}
-    check parseUpdate(upd).isGroup
 
-  test "TG-015: a private message is not a group":
-    let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
-                             "chat": {"id": 7, "type": "private"},
-                             "text": "oi"}}
-    check not parseUpdate(upd).isGroup
+    test "TG-004: an anonymous admin is addressed by the discussion chat":
+      ## In a discussion group the channel behind the admin (sender_chat) is not
+      ## the destination: replies must go to chat.id.
+      let upd = %*{"message": {"message_id": 8,
+                               "from": {"id": 1087968824, "is_bot": true,
+                                        "first_name": "GroupAnonymousBot"},
+                               "sender_chat": {"id": -1009999999999,
+                                               "type": "channel"},
+                               "chat": {"id": -1001234567890, "type": "supergroup"},
+                               "text": "aviso"}}
+      let r = parseUpdate(upd)
+      check r.kind == tukMessage
+      check r.rawId == "-1001234567890"
 
-  test "TG-025: message_thread_id is parsed":
-    let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
-                             "chat": {"id": -100, "type": "supergroup"},
-                             "message_thread_id": 42, "text": "oi"}}
-    check parseUpdate(upd).threadId == "42"
+    test "TG-003: an anonymous admin is not filtered as a bot":
+      let upd = %*{"message": {"message_id": 7,
+                               "from": {"id": 1087968824, "is_bot": true,
+                                        "first_name": "GroupAnonymousBot"},
+                               "sender_chat": {"id": -1001234567890,
+                                               "type": "supergroup"},
+                               "chat": {"id": -1001234567890, "type": "supergroup"},
+                               "text": "aviso do admin"}}
+      check not isBotUpdate(upd)
 
-  test "TG-028: media_group_id is parsed":
-    let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
-                             "chat": {"id": 7, "type": "private"},
-                             "media_group_id": "g1",
-                             "photo": [{"file_id": "f1"}]}}
-    check parseUpdate(upd).mediaGroupId == "g1"
+  suite "telegram_pure — group and topic metadata":
 
-  test "TG-015: the source chat id is exposed":
-    let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
-                             "chat": {"id": -100, "type": "supergroup"},
-                             "text": "oi"}}
-    check parseUpdate(upd).chatId == "-100"
+    test "TG-015: a group message is flagged as a group":
+      let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
+                               "chat": {"id": -100, "type": "supergroup"},
+                               "text": "oi"}}
+      check parseUpdate(upd).isGroup
 
-  test "TG-025: a callback carries its thread":
-    let upd = %*{"callback_query": {"id": "cb", "from": {"id": 7}, "data": "x",
-                                    "message": {"message_id": 3,
-                                                "chat": {"id": -100, "type": "supergroup"},
-                                                "message_thread_id": 9}}}
-    check parseUpdate(upd).threadId == "9"
+    test "TG-015: a private message is not a group":
+      let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
+                               "chat": {"id": 7, "type": "private"},
+                               "text": "oi"}}
+      check not parseUpdate(upd).isGroup
 
-  test "TG-015: a group callback is flagged as a group":
-    let upd = %*{"callback_query": {"id": "cb", "from": {"id": 7}, "data": "x",
-                                    "message": {"message_id": 3,
-                                                "chat": {"id": -100, "type": "supergroup"}}}}
-    let r = parseUpdate(upd)
-    check r.isGroup
-    check r.chatId == "-100"
-    check r.channelId == "3"
+    test "TG-025: message_thread_id is parsed":
+      let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
+                               "chat": {"id": -100, "type": "supergroup"},
+                               "message_thread_id": 42, "text": "oi"}}
+      check parseUpdate(upd).threadId == "42"
+
+    test "TG-028: media_group_id is parsed":
+      let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
+                               "chat": {"id": 7, "type": "private"},
+                               "media_group_id": "g1",
+                               "photo": [{"file_id": "f1"}]}}
+      check parseUpdate(upd).mediaGroupId == "g1"
+
+    test "TG-015: the source chat id is exposed":
+      let upd = %*{"message": {"message_id": 1, "from": {"id": 7},
+                               "chat": {"id": -100, "type": "supergroup"},
+                               "text": "oi"}}
+      check parseUpdate(upd).chatId == "-100"
+
+    test "TG-025: a callback carries its thread":
+      let upd = %*{"callback_query": {"id": "cb", "from": {"id": 7}, "data": "x",
+                                      "message": {"message_id": 3,
+                                                  "chat": {"id": -100, "type": "supergroup"},
+                                                  "message_thread_id": 9}}}
+      check parseUpdate(upd).threadId == "9"
+
+    test "TG-015: a group callback is flagged as a group":
+      let upd = %*{"callback_query": {"id": "cb", "from": {"id": 7}, "data": "x",
+                                      "message": {"message_id": 3,
+                                                  "chat": {"id": -100, "type": "supergroup"}}}}
+      let r = parseUpdate(upd)
+      check r.isGroup
+      check r.chatId == "-100"
+      check r.channelId == "3"
+
+when isMainModule:
+  runTests()

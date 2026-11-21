@@ -74,7 +74,7 @@ proc loadIdentity*(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits
 func paddockDir*(a: MdFileAdapter; userId: UserId): string {.gcsafe.}
 proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
                        channel: string; scheduledAt: int64;
-                       message: string): string {.gcsafe.}
+                       message: string): string {.gcsafe, raises: [CatchableError].}
 proc loadDueReminders*(a: MdFileAdapter): seq[JsonNode] {.gcsafe.}
 proc deleteReminder*(a: MdFileAdapter; userId: UserId; reminderId: string) {.gcsafe.}
 proc searchSessions*(a: MdFileAdapter; userId: UserId;
@@ -122,7 +122,7 @@ when defined(withPostgres) or defined(withSqlite):
         if a.magmaDsn.len > 0:
           return newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
       nil
-    except Exception:
+    except Exception:  ## effect boundary: callee raises are unannotated
       nil
 
   type GraphHandle = MagmaMemoryAdapter
@@ -227,7 +227,7 @@ when defined(withPostgres) or defined(withSqlite):
            importMarkdownInto(magma, markdownCtx).isErr:
           return (gaUnavailable, nil)
       (gaReady, magma)
-    except Exception:
+    except Exception:  ## effect boundary: callee raises are unannotated
       (gaUnavailable, nil)
 else:
   proc openGraph(a: MdFileAdapter; userId: UserId):
@@ -308,7 +308,7 @@ when defined(withPostgres) or defined(withSqlite):
               text: node.content,
               timestampMs: node.timestamp * 1000,
             ))
-        except Exception as e:
+        except Exception as e:  ## effect boundary: callee raises are unannotated
           return err("MAGMA search failed: " & e.msg)
     ok(rankSessionRecords(records, query, epochMs(), limit))
 
@@ -323,7 +323,7 @@ proc saveEpisodeF1(a: MdFileAdapter; userId: UserId;
       return ok()
     a.appendMemory(userId, "\n" & marker & "\n## Episode: " & episode.title &
                    "\n" & episode.summary & "\n")
-  except Exception as e:
+  except CatchableError as e:
     err("save episode: " & e.msg)
 
 proc saveEpisode(a: MdFileAdapter; userId: UserId;
@@ -338,7 +338,7 @@ proc saveEpisode(a: MdFileAdapter; userId: UserId;
     when defined(withPostgres) or defined(withSqlite):
       try:
         magma.saveEpisode(userId, episode)
-      except Exception as e:
+      except Exception as e:  ## effect boundary: callee raises are unannotated
         err("save episode: " & e.msg)
     else:
       err(GraphUnavailableError)
@@ -383,7 +383,7 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
                            {.gcsafe, raises: [].} =
                         a.searchSessions(userId, query, limit, includeMemory),
     paddockDir:       proc(userId: UserId): string {.gcsafe.} = a.paddockDir(userId),
-    scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string {.gcsafe.} =
+    scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string {.gcsafe, raises: [CatchableError].} =
                         a.scheduleReminder(userId, channel, scheduledAt, message),
     loadDueReminders: proc(): seq[JsonNode] {.gcsafe.} = a.loadDueReminders(),
     deleteReminder:   proc(userId: UserId; reminderId: string) {.gcsafe.} = a.deleteReminder(userId, reminderId),
@@ -532,7 +532,7 @@ proc tryExport(path, content: string) {.raises: [].} =
   ## so failing to refresh it does not undo or fail the write itself.
   try:
     exportFile(path, content)
-  except Exception:
+  except CatchableError:
     discard
 
 proc saveUserMd*(a: MdFileAdapter; userId: UserId;
@@ -551,7 +551,7 @@ proc saveUserMd*(a: MdFileAdapter; userId: UserId;
     of gaNone:
       exportFile(a.userMdPath(userId), content)
     ok()
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err("save user profile: " & e.msg)
 
 proc listUsers*(a: MdFileAdapter): seq[UserSummary] =
@@ -583,7 +583,7 @@ proc updateUserField*(a: MdFileAdapter; userId: UserId;
       elif field.toLowerAscii() == "access": "Access"
       else: field
     a.saveUserMd(userId, current.setUserFieldText(label, value))
-  except Exception as e:
+  except CatchableError as e:
     err("update user field: " & e.msg)
 
 proc isRevoked*(a: MdFileAdapter; userId: UserId): bool =
@@ -663,6 +663,14 @@ proc appendToMemoryFile(a: MdFileAdapter; userId: UserId; text: string) =
     f.close()
   discard secureFile(path)
 
+proc tryAppendExport(a: MdFileAdapter; userId: UserId; text: string) {.raises: [].} =
+  ## appendMemory's export after the graph took the entry: like tryExport,
+  ## it cannot fail the append, so nothing it raises may reach the caller.
+  try:
+    a.appendToMemoryFile(userId, text)
+  except CatchableError:
+    discard
+
 proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string;
                    origin = MemoryOrigin()): Result[void, string] =
   ## Appends one memory.
@@ -685,14 +693,11 @@ proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string;
     of gaReady:
       when defined(withPostgres) or defined(withSqlite):
         ? magma.appendMemory(userId, text, origin)
-      try:
-        a.appendToMemoryFile(userId, text)
-      except Exception:
-        discard  ## see tryExport: the export can be rebuilt from the graph
+      a.tryAppendExport(userId, text)
     of gaNone:
       a.appendToMemoryFile(userId, text)
     ok()
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err("append memory: " & e.msg)
 
 proc savePreferences*(a: MdFileAdapter; userId: UserId;
@@ -710,7 +715,7 @@ proc savePreferences*(a: MdFileAdapter; userId: UserId;
     of gaNone:
       exportFile(a.preferencesMdPath(userId), content)
     ok()
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err("save preferences: " & e.msg)
 
 proc clearMemory*(a: MdFileAdapter; userId: UserId): Result[void, string] =
@@ -735,7 +740,7 @@ proc clearMemory*(a: MdFileAdapter; userId: UserId): Result[void, string] =
       when defined(withPostgres) or defined(withSqlite):
         ? magma.clearMemory(userId)
     ok()
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err("clear memory: " & e.msg)
 
 proc resetBootstrap*(a: MdFileAdapter; userId: UserId): Result[void, string] =
@@ -752,7 +757,7 @@ proc resetBootstrap*(a: MdFileAdapter; userId: UserId): Result[void, string] =
       when defined(withPostgres) or defined(withSqlite):
         ? magma.resetBootstrap(userId)
     ok()
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err("reset bootstrap: " & e.msg)
 
 proc readFileTail(path: string; maxBytes: int): string =
@@ -945,7 +950,7 @@ proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
               timestampMs: getLastModificationTime(memoryPath).toUnix() * 1000,
             ))
     ok(records)
-  except Exception as e:
+  except CatchableError as e:
     err("session search read failed: " & e.msg)
 
 proc searchSessions*(a: MdFileAdapter; userId: UserId;
@@ -960,7 +965,7 @@ proc searchSessions*(a: MdFileAdapter; userId: UserId;
   try:
     let records = ? a.sessionSearchRecords(userId, includeMemory)
     ok(rankSessionRecords(records, query, epochMs(), limit))
-  except Exception as e:
+  except CatchableError as e:
     err("session search failed: " & e.msg)
 
 proc listSessions*(a: MdFileAdapter; userId: UserId): seq[string] =
@@ -986,7 +991,7 @@ proc saveIdentity*(a: MdFileAdapter; userId: UserId;
   try:
     let current = ? a.storedPreferences(userId)
     a.savePreferences(userId, mergeIdentityPrefs(current, traits, name))
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err("save identity: " & e.msg)
 
 proc loadIdentity*(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits) =

@@ -12,12 +12,13 @@
 ##
 ## Pure wire-format helpers live in domain/providers/ollama_pure.nim.
 
-import std/[httpclient, json, streams, strutils]
+import std/[json, streams, strutils]
 import ../../domain/message
 import ../../ports/provider
 import ../../core/pipeops
 import ../../domain/providers/ollama_pure as opure
-import ../http/helpers
+import ../../ports/http
+import ./provider_http
 
 const
   OllamaDefaultBaseUrl* = "http://localhost:11434"
@@ -26,6 +27,7 @@ const
 type
   OllamaAdapter* = object
     baseUrl*: string   ## e.g. "http://localhost:11434"; override for testing
+    http*:     HttpRuntimePort  ## nil → production provider transport
     model*:   string
     apiKey*:  string   ## optional Bearer token for remote Ollama instances
 
@@ -91,16 +93,14 @@ proc parseOllamaSseLine*(line: string): Result[OllamaSseChunk, string] =
 
 proc complete*(a: OllamaAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
-  withHttpClient:
-    var headers = @[("Content-Type", "application/json")]
+  providerGuard:
+    var headers: seq[HttpHeader] = @[("Content-Type", "application/json")]
     if a.apiKey.len > 0:
       headers.add(("Authorization", "Bearer " & a.apiKey))
-    client.headers = newHttpHeaders(headers)
     let body = $a.buildBody(req)
     let url  = (if a.baseUrl.len > 0: a.baseUrl else: OllamaDefaultBaseUrl) & "/api/chat"
-    let resp = client.post(url, body = body)
-    checkApiStatus(resp, "Ollama")
-    resp.body |> parseJson |> parseOllamaResponse |> ok
+    let resp = ? postProvider(a.http, "Ollama", url, body, headers)
+    resp |> parseJson |> parseOllamaResponse |> ok
 
 # ── Streaming ─────────────────────────────────────────────────────────────────
 
@@ -112,20 +112,18 @@ proc makeStreamFn*(a: OllamaAdapter): StreamFn =
   result = proc(req: CompletionRequest;
                 onToken: proc(tok: string) {.gcsafe.}
                ): Result[CompletionResponse, string] {.gcsafe.} =
-    withHttpClient:
-      var headers = @[("Content-Type", "application/json")]
+    providerGuard:
+      var headers: seq[HttpHeader] = @[("Content-Type", "application/json")]
       if adapter.apiKey.len > 0:
         headers.add(("Authorization", "Bearer " & adapter.apiKey))
-      client.headers = newHttpHeaders(headers)
       let body = $adapter.buildStreamBody(req)
       let url  = (if adapter.baseUrl.len > 0: adapter.baseUrl else: OllamaDefaultBaseUrl) & "/api/chat"
-      let resp = client.request(url, httpMethod = HttpPost, body = body)
-      checkApiStatus(resp, "Ollama")
+      let resp = ? postProviderStream(adapter.http, "Ollama", url, body, headers)
       var accumulated  = ""
       var inputTokens  = 0
       var outputTokens = 0
       var line = ""
-      while streams.readLine(resp.bodyStream, line):
+      while streams.readLine(resp, line):
         let chunk = parseOllamaSseLine(line).valueOr: continue
         if chunk.token.len > 0:
           accumulated.add(chunk.token)

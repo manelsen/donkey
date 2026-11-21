@@ -26,7 +26,7 @@ proc performTask*(prompt, context: string;
     let resp = completeFn(req)
     if resp.isErr: return "Task error: " & resp.error
     resp.value.text
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     "Task error: " & e.msg
 
 proc nextJobId*(state: SessionState): string {.gcsafe, raises: [].} =
@@ -61,5 +61,5 @@ proc performManageSkills*(memory: MemoryRuntimePort;
                           registry = ""): Result[string, string] {.gcsafe, raises: [].} =
   try:
     applySkillCommand(memory.paddockDir(uid), value, registry = registry)
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err("Error: " & e.msg)

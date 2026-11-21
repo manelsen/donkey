@@ -154,3 +154,10 @@ func toInbound*(r: DtParseResult; userId: UserId): InboundMessage =
 func hasMedia*(r: DtParseResult): bool =
   ## True when the message carries a file/image that the adapter must download.
   r.kind in {dtkImage, dtkAudio, dtkVideo, dtkFile}
+
+# ── Outbound msgParam ─────────────────────────────────────────────────────────
+
+func textMsgParam*(text: string): string =
+  ## DingTalk `msgParam` for msgKey=sampleText: a JSON-encoded string
+  ## `{"content": ...}`. Built with std/json so control chars are escaped.
+  $(%* {"content": text})

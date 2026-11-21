@@ -276,7 +276,9 @@ proc pollInbox*(a: EmailAdapter): Result[seq[InboundMessage], string] =
   var s = ? newImapSession(a.imapHost, a.imapPort)
   defer: s.imapClose()
 
-  let loginResp = ? s.imapCmd("LOGIN \"" & a.user & "\" \"" & a.password & "\"")
+  let user = ? imapQuote(a.user)
+  let pass = ? imapQuote(a.password)
+  let loginResp = ? s.imapCmd("LOGIN " & user & " " & pass)
   if loginResp.len > 0 and ("NO" in loginResp[^1] or "BAD" in loginResp[^1]):
     return err("IMAP LOGIN failed: " & loginResp[^1])
 

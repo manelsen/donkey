@@ -23,7 +23,7 @@ type
     brkServiceWorker
 
   BrowserWsMode* = enum
-    wsmBrowserPath   ## Lightpanda: /devtools/browser
+    wsmBrowserPath   ## Lightpanda: /
     wsmPageTarget    ## Chromium/Edge: page webSocketDebuggerUrl from /json/list
 
   BrowserLaunchSpec* = object

@@ -222,423 +222,427 @@ proc streamedContent(): string =
 
 # ── success path ──────────────────────────────────────────────────────────────
 
-suite "runAgentChat success":
-
-  test "dispatches the turn and returns chat.completion with usage":
-    resetFakes()
-    dispatchMode = dmFinal
-    finalText = "olá do agente"
-
-    let reply = run(bodyFor("alice", "oi"))
-    check reply.status == 200
-
-    let node = parseJson(reply.body)
-    check node{"object"}.getStr() == "chat.completion"
-    check node{"model"}.getStr() == "donkey/test"
-    check node{"created"}.getBiggestInt() == 1_700_000_000
-    check node{"choices"}.len == 1
-    check node{"choices"}[0]{"message"}{"role"}.getStr() == "assistant"
-    check contentOf(reply.body) == "olá do agente"
-    check node{"usage"}{"prompt_tokens"}.getInt() == 11
-    check node{"usage"}{"completion_tokens"}.getInt() == 7
-    check node{"usage"}{"total_tokens"}.getInt() == 18
-
-    check dispatched.len == 1
-    check dispatched[0].userId == UserId("api:alice")
-    check dispatched[0].channel == ckCli
-    check dispatched[0].channelId == "api:alice"
-    check dispatched[0].text == "oi"
-    check fakeBridge.pendingCount == 0
-
-  test "two users dispatch distinct UserIds":
-    resetFakes()
-    dispatchMode = dmFinal
-    finalText = "ok"
-
-    check run(bodyFor("alice", "a")).status == 200
-    check run(bodyFor("bob", "b")).status == 200
-    check dispatched.len == 2
-    check dispatched[0].userId == UserId("api:alice")
-    check dispatched[1].userId == UserId("api:bob")
-
-  test "partials plus the final answer yield exactly one text equal to the final":
-    resetFakes()
-    dispatchMode = dmPartialThenFinal
-    finalText = "resposta final"
-
-    let reply = run(bodyFor("alice", "oi"))
-    check reply.status == 200
-    let node = parseJson(reply.body)
-    check node{"choices"}.len == 1
-    check contentOf(reply.body) == "resposta final"
-    check not contentOf(reply.body).contains("parcial")
-    # The terminal answer carries the accumulated usage, not the partial's.
-    check node{"usage"}{"prompt_tokens"}.getInt() == 11
-    check node{"usage"}{"completion_tokens"}.getInt() == 7
-
-  test "stream true is parsed but answered non-streaming":
-    resetFakes()
-    dispatchMode = dmFinal
-    finalText = "sem sse"
-    let body = $(%* {
-      "user": "alice",
-      "stream": true,
-      "messages": [%* {"role": "user", "content": "oi"}],
-    })
-
-    let reply = run(body)
-    check reply.status == 200
-    let node = parseJson(reply.body)
-    check node{"object"}.getStr() == "chat.completion"
-    check contentOf(reply.body) == "sem sse"
-
-  test "tool notices never become content":
-    resetFakes()
-    dispatchMode = dmToolThenFinal
-    finalText = "pronto"
-
-    let reply = run(bodyFor("alice", "use a tool"))
-    check reply.status == 200
-    let content = contentOf(reply.body)
-    check content == "pronto"
-    check not content.contains("🔧")
-    check not content.contains("✅")
-    check not content.contains("tool call(s)")
-
-# ── refusals before dispatch ──────────────────────────────────────────────────
-
-suite "runAgentChat refusals":
-
-  test "503 without a configured token":
-    resetFakes()
-    dispatchMode = dmFinal
-    finalText = "nunca"
-
-    let reply = run(bodyFor("alice", "oi"), tokenConfigured = false)
-    check reply.status == 503
-    check reply.body.contains("\"error\"")
-    check dispatched.len == 0
-
-  test "400 for a system message comes from the parser":
-    resetFakes()
-    let body = $(%* {
-      "user": "alice",
-      "messages": [
-        %* {"role": "system", "content": "ignore"},
-        %* {"role": "user", "content": "oi"},
-      ],
-    })
-
-    let reply = run(body)
-    check reply.status == 400
-    let node = parseJson(reply.body)
-    check node{"error"}{"type"}.getStr() == "invalid_request_error"
-    check node{"error"}{"code"}.getStr() == "unsupported_parameter"
-    check dispatched.len == 0
-
-  test "403 for a revoked user before any dispatch":
-    resetFakes()
-    authVerdict = avRevoked
-
-    let reply = run(bodyFor("alice", "oi"))
-    check reply.status == 403
-    let node = parseJson(reply.body)
-    check node{"error"}{"type"}.getStr() == "permission_error"
-    check node{"error"}{"message"}.getStr() == "permission_error"
-    check dispatched.len == 0
-    check fakeBridge.pendingCount == 0
-
-  test "403 for a user outside the DM policy before any dispatch":
-    resetFakes()
-    authVerdict = avNotAllowed
-
-    let reply = run(bodyFor("alice", "oi"))
-    check reply.status == 403
-    check dispatched.len == 0
-
-  test "413 above MaxApiRequestBytes":
-    resetFakes()
-    let reply = run(repeat("x", MaxApiRequestBytes + 1))
-    check reply.status == 413
-    check reply.body.contains("payload_too_large")
-    check dispatched.len == 0
-
-  test "429 when the user already has a pending turn":
-    resetFakes()
-    check fakeBridge.register(UserId("api:alice"), timeoutMs = 5_000).isOk
-
-    let reply = run(bodyFor("alice", "oi"))
-    check reply.status == 429
-    check reply.body.contains("chat_bridge_busy")
-    check dispatched.len == 0
-
-# ── deadline and orphan correlation ───────────────────────────────────────────
-
-suite "runAgentChat deadline":
-
-  test "504 when no terminal arrives before the injected deadline":
-    resetFakes()
-
-    let reply = run(bodyFor("alice", "demora"), timeoutMs = 30)
-    check reply.status == 504
-    check reply.body.contains("turn_timeout")
-    check dispatched.len == 1
-    # The orphan keeps its reservation until its terminal arrives.
-    check fakeBridge.pendingCount == 1
-
-  test "an abandoned turn never becomes the next turn's content":
-    resetFakes()
-
-    let first = run(bodyFor("alice", "A"), timeoutMs = 30)
-    check first.status == 504
-
-    # B cannot register while A's turn may still speak.
-    let busy = run(bodyFor("alice", "B"), timeoutMs = 100)
-    check busy.status == 429
-    check dispatched.len == 1
-
-    # A's terminal releases the key but is discarded, never buffered for B.
-    let uid = UserId("api:alice")
-    check not fakeBridge.deliver(OutboundMessage(
-      userId: uid, text: "fim do A", replyKind: rkFinalAnswer))
-
-    dispatchMode = dmFinal
-    finalText = "fim do B"
-    let second = run(bodyFor("alice", "B"), timeoutMs = 100)
-    check second.status == 200
-    check contentOf(second.body) == "fim do B"
-    check not contentOf(second.body).contains("fim do A")
-    check dispatched.len == 2
-
-  test "a turn error closes with 502 and is redacted":
-    resetFakes()
-    # A dispatch that fails the turn instead of answering it.
-    proc failDispatch(msg: InboundMessage) {.gcsafe.} =
-      dispatched.add(msg)
-      discard fakeBridge.fail(msg.userId, "provider key sk-secret-123 failed")
-
-    let reply = runAgentChat(bodyFor("alice", "oi"), fakeBridge, failDispatch,
-                             fakeAuthorize, tokenConfigured = true,
-                             now = fakeEpochSec, timeoutMs = 100,
-                             model = "donkey/test")
-    check reply.status == 502
-    check not reply.body.contains("sk-secret-123")
-    check reply.body.contains("[redacted]")
-
-# ── per-turn token end to end ─────────────────────────────────────────────────
-
-suite "runAgentChat per-turn token":
-
-  test "the dispatched turn carries the registration token and closes it":
-    resetFakes()
-    dispatchMode = dmTokenEchoFinal
-    finalText = "eco do turno"
-
-    let reply = run(bodyFor("alice", "oi"))
-    check reply.status == 200
-    check contentOf(reply.body) == "eco do turno"
-    check dispatched.len == 1
-    ## First registration on a fresh bridge.
-    check dispatched[0].bridgeToken == 1'u64
-    check fakeBridge.pendingCount == 0
-
-  test "a reply from another generation cannot close the turn":
-    resetFakes()
-    dispatchMode = dmWrongTokenFinal
-    finalText = "de outro turno"
-
-    let reply = run(bodyFor("alice", "oi"))
-    ## The terminal was discarded, so the turn ran to its deadline.
-    check reply.status == 504
-    check dispatched.len == 1
-    check dispatched[0].bridgeToken == 1'u64
-    check fakeBridge.pendingCount == 1
-
-# ── usage accumulation primitives ─────────────────────────────────────────────
-
-suite "UsageTotals":
-
-  test "addUsage sums every round":
-    var usage = UsageTotals()
-    usage = usage.addUsage(10, 2)
-    usage = addUsage(3, 4, usage)
-    check usage.inputTokens == 13
-    check usage.outputTokens == 6
-
-  test "a fresh tool loop state starts at zero":
-    let state = newToolLoopState(@[])
-    check state.usage.inputTokens == 0
-    check state.usage.outputTokens == 0
-
-# ── streaming (US-003) ────────────────────────────────────────────────────────
-
-suite "cumulative partials":
-
-  test "cumulative snapshots reach the client as deltas, not duplicates":
-    resetStream()
-    dispatchMode = dmCumulativePartials
-    finalText = "Olá, mundo"
-    let result = runStream(bodyFor("alice", "oi"))
-    check result.outcome == asCompleted
-    let nodes = streamNodes()
-    var content = ""
-    for node in nodes:
-      let delta = node["choices"][0]["delta"]
-      if delta.hasKey("content"):
-        content.add(delta["content"].getStr())
-    check content == "Olá, mundo"
-
-suite "truncation":
-
-  test "a final over the buffer cap reports finish_reason length":
-    resetFakes()
-    dispatchMode = dmHugeFinal
-    let reply = run(bodyFor("alice", "oi"))
-    check reply.status == 200
-    check parseJson(reply.body)["choices"][0]["finish_reason"].getStr() == "length"
-
-  test "the SSE final chunk reports finish_reason length":
-    resetStream()
-    dispatchMode = dmHugeFinal
-    let result = runStream(bodyFor("alice", "oi"))
-    check result.outcome == asCompleted
-    let nodes = streamNodes()
-    check nodes[^1]["choices"][0]["finish_reason"].getStr() == "length"
-
-suite "runAgentStream SSE":
-
-  test "emits role, one content chunk per partial, a final stop and one [DONE]":
-    resetStream()
-    dispatchMode = dmTwoPartialsThenFinal
-    finalText = "Olá, mundo"
-
-    let result = runStream(bodyFor("alice", "oi"))
-    check result.outcome == asCompleted
-    check sseOpened
-    check sseChunks.len == 5
-    check doneCount() == 1
-    check sseChunks[^1] == sseDone()
-
-    let nodes = streamNodes()
-    check nodes.len == 4
-    check nodes[0]["object"].getStr() == "chat.completion.chunk"
-    check nodes[0]["choices"][0]["delta"]["role"].getStr() == "assistant"
-    check nodes[1]["choices"][0]["delta"]["content"].getStr() == "Olá, "
-    check nodes[2]["choices"][0]["delta"]["content"].getStr() == "mundo"
-    check nodes[3]["choices"][0]["finish_reason"].getStr() == "stop"
-    check nodes[3]["usage"]["prompt_tokens"].getInt() == 11
-    check nodes[3]["usage"]["completion_tokens"].getInt() == 7
-
-  test "two partials plus the final yield one answer, not the final twice":
-    resetStream()
-    dispatchMode = dmTwoPartialsThenFinal
-    finalText = "Olá, mundo"
-
-    let result = runStream(bodyFor("alice", "oi"))
-    check result.outcome == asCompleted
-    check streamedContent() == "Olá, mundo"
-    check streamedContent() != "Olá, mundoOlá, mundo"
-    let nodes = streamNodes()
-    check not nodes[^1]["choices"][0]["delta"].hasKey("content")
-
-  test "a tool notice never appears as delta.content":
-    resetStream()
-    dispatchMode = dmToolThenFinal
-    finalText = "pronto"
-
-    let result = runStream(bodyFor("alice", "use a tool"))
-    check result.outcome == asCompleted
-
-    var sawToolCall = false
-    let content = streamedContent()
-    for node in streamNodes():
-      let delta = node["choices"][0]["delta"]
-      if delta.hasKey("tool_calls"):
-        sawToolCall = true
-        check not delta.hasKey("content")
-    check sawToolCall
-    check content == "pronto"
-    check not content.contains("🔧")
-    check not content.contains("✅")
-    check not content.contains("tool call(s)")
-
-  test "stream false keeps the existing single JSON path":
-    resetStream()
-    dispatchMode = dmFinal
-    finalText = "sem sse"
-    let body = $(%* {
-      "user": "alice",
-      "stream": false,
-      "messages": [%* {"role": "user", "content": "oi"}],
-    })
-
-    check not agentChatStreamRequested(body)
-    check not agentChatStreamRequested(bodyFor("alice", "oi"))
-
-    let reply = run(body)
-    check reply.status == 200
-    check parseJson(reply.body){"object"}.getStr() == "chat.completion"
-    check contentOf(reply.body) == "sem sse"
-    check sseChunks.len == 0
-
-  test "an error after the first byte emits an error event and no [DONE]":
-    resetStream()
-    dispatchMode = dmPartialThenError
-
-    let result = runStream(bodyFor("alice", "oi"))
-    check result.outcome == asErrored
-    check sseOpened
-    check sseChunks.len == 3
-    check doneCount() == 0
-
-    let nodes = streamNodes()
-    check nodes.len == 3
-    check nodes[0]["choices"][0]["delta"]["role"].getStr() == "assistant"
-    check nodes[1]["choices"][0]["delta"]["content"].getStr() == "parcial"
-    check nodes[2]["error"]["code"].getStr() == "turn_error"
-    for chunk in sseChunks:
-      check not chunk.contains("sk-secret-123")
-
-  test "the SSE slot is released after a completed stream":
-    resetStream()
-    dispatchMode = dmFinal
-    finalText = "ok"
-
-    let result = runStream(bodyFor("alice", "oi"))
-    check result.outcome == asCompleted
-    check sseAcquireCalls == 1
-    check sseReleaseCalls == 1
-    check fakeBridge.pendingCount == 0
-
-  test "the SSE slot is released when the client aborts":
-    resetStream()
-    dispatchMode = dmTwoPartialsThenFinal
-    finalText = "Olá, mundo"
-    sseFailAt = 2  # role chunk succeeds, the first content chunk fails
-
-    let result = runStream(bodyFor("alice", "oi"))
-    check result.outcome == asClientGone
-    check sseReleaseCalls == 1
-    check fakeBridge.pendingCount == 0  # the finished turn was already drained
-
-  test "the SSE slot is released on the deadline":
-    resetStream()
-    dispatchMode = dmNothing
-
-    let result = runStream(bodyFor("alice", "demora"), timeoutMs = 30)
-    check result.outcome == asErrored
-    check sseOpened
-    check sseReleaseCalls == 1
-    check doneCount() == 0
-    check streamNodes()[^1]["error"]["code"].getStr() == "turn_timeout"
-
-  test "a full SSE budget is refused before dispatch":
-    resetStream()
-    sseAcquireAllowed = false
-
-    let result = runStream(bodyFor("alice", "oi"))
-    check result.outcome == asPreflightError
-    check result.reply.status == 429
-    check dispatched.len == 0
-    check sseReleaseCalls == 0
-    check sseChunks.len == 0
+proc runTests*() =
+  suite "runAgentChat success":
+
+    test "dispatches the turn and returns chat.completion with usage":
+      resetFakes()
+      dispatchMode = dmFinal
+      finalText = "olá do agente"
+
+      let reply = run(bodyFor("alice", "oi"))
+      check reply.status == 200
+
+      let node = parseJson(reply.body)
+      check node{"object"}.getStr() == "chat.completion"
+      check node{"model"}.getStr() == "donkey/test"
+      check node{"created"}.getBiggestInt() == 1_700_000_000
+      check node{"choices"}.len == 1
+      check node{"choices"}[0]{"message"}{"role"}.getStr() == "assistant"
+      check contentOf(reply.body) == "olá do agente"
+      check node{"usage"}{"prompt_tokens"}.getInt() == 11
+      check node{"usage"}{"completion_tokens"}.getInt() == 7
+      check node{"usage"}{"total_tokens"}.getInt() == 18
+
+      check dispatched.len == 1
+      check dispatched[0].userId == UserId("api:alice")
+      check dispatched[0].channel == ckCli
+      check dispatched[0].channelId == "api:alice"
+      check dispatched[0].text == "oi"
+      check fakeBridge.pendingCount == 0
+
+    test "two users dispatch distinct UserIds":
+      resetFakes()
+      dispatchMode = dmFinal
+      finalText = "ok"
+
+      check run(bodyFor("alice", "a")).status == 200
+      check run(bodyFor("bob", "b")).status == 200
+      check dispatched.len == 2
+      check dispatched[0].userId == UserId("api:alice")
+      check dispatched[1].userId == UserId("api:bob")
+
+    test "partials plus the final answer yield exactly one text equal to the final":
+      resetFakes()
+      dispatchMode = dmPartialThenFinal
+      finalText = "resposta final"
+
+      let reply = run(bodyFor("alice", "oi"))
+      check reply.status == 200
+      let node = parseJson(reply.body)
+      check node{"choices"}.len == 1
+      check contentOf(reply.body) == "resposta final"
+      check not contentOf(reply.body).contains("parcial")
+      # The terminal answer carries the accumulated usage, not the partial's.
+      check node{"usage"}{"prompt_tokens"}.getInt() == 11
+      check node{"usage"}{"completion_tokens"}.getInt() == 7
+
+    test "stream true is parsed but answered non-streaming":
+      resetFakes()
+      dispatchMode = dmFinal
+      finalText = "sem sse"
+      let body = $(%* {
+        "user": "alice",
+        "stream": true,
+        "messages": [%* {"role": "user", "content": "oi"}],
+      })
+
+      let reply = run(body)
+      check reply.status == 200
+      let node = parseJson(reply.body)
+      check node{"object"}.getStr() == "chat.completion"
+      check contentOf(reply.body) == "sem sse"
+
+    test "tool notices never become content":
+      resetFakes()
+      dispatchMode = dmToolThenFinal
+      finalText = "pronto"
+
+      let reply = run(bodyFor("alice", "use a tool"))
+      check reply.status == 200
+      let content = contentOf(reply.body)
+      check content == "pronto"
+      check not content.contains("🔧")
+      check not content.contains("✅")
+      check not content.contains("tool call(s)")
+
+  # ── refusals before dispatch ──────────────────────────────────────────────────
+
+  suite "runAgentChat refusals":
+
+    test "503 without a configured token":
+      resetFakes()
+      dispatchMode = dmFinal
+      finalText = "nunca"
+
+      let reply = run(bodyFor("alice", "oi"), tokenConfigured = false)
+      check reply.status == 503
+      check reply.body.contains("\"error\"")
+      check dispatched.len == 0
+
+    test "400 for a system message comes from the parser":
+      resetFakes()
+      let body = $(%* {
+        "user": "alice",
+        "messages": [
+          %* {"role": "system", "content": "ignore"},
+          %* {"role": "user", "content": "oi"},
+        ],
+      })
+
+      let reply = run(body)
+      check reply.status == 400
+      let node = parseJson(reply.body)
+      check node{"error"}{"type"}.getStr() == "invalid_request_error"
+      check node{"error"}{"code"}.getStr() == "unsupported_parameter"
+      check dispatched.len == 0
+
+    test "403 for a revoked user before any dispatch":
+      resetFakes()
+      authVerdict = avRevoked
+
+      let reply = run(bodyFor("alice", "oi"))
+      check reply.status == 403
+      let node = parseJson(reply.body)
+      check node{"error"}{"type"}.getStr() == "permission_error"
+      check node{"error"}{"message"}.getStr() == "permission_error"
+      check dispatched.len == 0
+      check fakeBridge.pendingCount == 0
+
+    test "403 for a user outside the DM policy before any dispatch":
+      resetFakes()
+      authVerdict = avNotAllowed
+
+      let reply = run(bodyFor("alice", "oi"))
+      check reply.status == 403
+      check dispatched.len == 0
+
+    test "413 above MaxApiRequestBytes":
+      resetFakes()
+      let reply = run(repeat("x", MaxApiRequestBytes + 1))
+      check reply.status == 413
+      check reply.body.contains("payload_too_large")
+      check dispatched.len == 0
+
+    test "429 when the user already has a pending turn":
+      resetFakes()
+      check fakeBridge.register(UserId("api:alice"), timeoutMs = 5_000).isOk
+
+      let reply = run(bodyFor("alice", "oi"))
+      check reply.status == 429
+      check reply.body.contains("chat_bridge_busy")
+      check dispatched.len == 0
+
+  # ── deadline and orphan correlation ───────────────────────────────────────────
+
+  suite "runAgentChat deadline":
+
+    test "504 when no terminal arrives before the injected deadline":
+      resetFakes()
+
+      let reply = run(bodyFor("alice", "demora"), timeoutMs = 30)
+      check reply.status == 504
+      check reply.body.contains("turn_timeout")
+      check dispatched.len == 1
+      # The orphan keeps its reservation until its terminal arrives.
+      check fakeBridge.pendingCount == 1
+
+    test "an abandoned turn never becomes the next turn's content":
+      resetFakes()
+
+      let first = run(bodyFor("alice", "A"), timeoutMs = 30)
+      check first.status == 504
+
+      # B cannot register while A's turn may still speak.
+      let busy = run(bodyFor("alice", "B"), timeoutMs = 100)
+      check busy.status == 429
+      check dispatched.len == 1
+
+      # A's terminal releases the key but is discarded, never buffered for B.
+      let uid = UserId("api:alice")
+      check not fakeBridge.deliver(OutboundMessage(
+        userId: uid, text: "fim do A", replyKind: rkFinalAnswer))
+
+      dispatchMode = dmFinal
+      finalText = "fim do B"
+      let second = run(bodyFor("alice", "B"), timeoutMs = 100)
+      check second.status == 200
+      check contentOf(second.body) == "fim do B"
+      check not contentOf(second.body).contains("fim do A")
+      check dispatched.len == 2
+
+    test "a turn error closes with 502 and is redacted":
+      resetFakes()
+      # A dispatch that fails the turn instead of answering it.
+      proc failDispatch(msg: InboundMessage) {.gcsafe.} =
+        dispatched.add(msg)
+        discard fakeBridge.fail(msg.userId, "provider key sk-secret-123 failed")
+
+      let reply = runAgentChat(bodyFor("alice", "oi"), fakeBridge, failDispatch,
+                               fakeAuthorize, tokenConfigured = true,
+                               now = fakeEpochSec, timeoutMs = 100,
+                               model = "donkey/test")
+      check reply.status == 502
+      check not reply.body.contains("sk-secret-123")
+      check reply.body.contains("[redacted]")
+
+  # ── per-turn token end to end ─────────────────────────────────────────────────
+
+  suite "runAgentChat per-turn token":
+
+    test "the dispatched turn carries the registration token and closes it":
+      resetFakes()
+      dispatchMode = dmTokenEchoFinal
+      finalText = "eco do turno"
+
+      let reply = run(bodyFor("alice", "oi"))
+      check reply.status == 200
+      check contentOf(reply.body) == "eco do turno"
+      check dispatched.len == 1
+      ## First registration on a fresh bridge.
+      check dispatched[0].bridgeToken == 1'u64
+      check fakeBridge.pendingCount == 0
+
+    test "a reply from another generation cannot close the turn":
+      resetFakes()
+      dispatchMode = dmWrongTokenFinal
+      finalText = "de outro turno"
+
+      let reply = run(bodyFor("alice", "oi"))
+      ## The terminal was discarded, so the turn ran to its deadline.
+      check reply.status == 504
+      check dispatched.len == 1
+      check dispatched[0].bridgeToken == 1'u64
+      check fakeBridge.pendingCount == 1
+
+  # ── usage accumulation primitives ─────────────────────────────────────────────
+
+  suite "UsageTotals":
+
+    test "addUsage sums every round":
+      var usage = UsageTotals()
+      usage = usage.addUsage(10, 2)
+      usage = addUsage(3, 4, usage)
+      check usage.inputTokens == 13
+      check usage.outputTokens == 6
+
+    test "a fresh tool loop state starts at zero":
+      let state = newToolLoopState(@[])
+      check state.usage.inputTokens == 0
+      check state.usage.outputTokens == 0
+
+  # ── streaming (US-003) ────────────────────────────────────────────────────────
+
+  suite "cumulative partials":
+
+    test "cumulative snapshots reach the client as deltas, not duplicates":
+      resetStream()
+      dispatchMode = dmCumulativePartials
+      finalText = "Olá, mundo"
+      let result = runStream(bodyFor("alice", "oi"))
+      check result.outcome == asCompleted
+      let nodes = streamNodes()
+      var content = ""
+      for node in nodes:
+        let delta = node["choices"][0]["delta"]
+        if delta.hasKey("content"):
+          content.add(delta["content"].getStr())
+      check content == "Olá, mundo"
+
+  suite "truncation":
+
+    test "a final over the buffer cap reports finish_reason length":
+      resetFakes()
+      dispatchMode = dmHugeFinal
+      let reply = run(bodyFor("alice", "oi"))
+      check reply.status == 200
+      check parseJson(reply.body)["choices"][0]["finish_reason"].getStr() == "length"
+
+    test "the SSE final chunk reports finish_reason length":
+      resetStream()
+      dispatchMode = dmHugeFinal
+      let result = runStream(bodyFor("alice", "oi"))
+      check result.outcome == asCompleted
+      let nodes = streamNodes()
+      check nodes[^1]["choices"][0]["finish_reason"].getStr() == "length"
+
+  suite "runAgentStream SSE":
+
+    test "emits role, one content chunk per partial, a final stop and one [DONE]":
+      resetStream()
+      dispatchMode = dmTwoPartialsThenFinal
+      finalText = "Olá, mundo"
+
+      let result = runStream(bodyFor("alice", "oi"))
+      check result.outcome == asCompleted
+      check sseOpened
+      check sseChunks.len == 5
+      check doneCount() == 1
+      check sseChunks[^1] == sseDone()
+
+      let nodes = streamNodes()
+      check nodes.len == 4
+      check nodes[0]["object"].getStr() == "chat.completion.chunk"
+      check nodes[0]["choices"][0]["delta"]["role"].getStr() == "assistant"
+      check nodes[1]["choices"][0]["delta"]["content"].getStr() == "Olá, "
+      check nodes[2]["choices"][0]["delta"]["content"].getStr() == "mundo"
+      check nodes[3]["choices"][0]["finish_reason"].getStr() == "stop"
+      check nodes[3]["usage"]["prompt_tokens"].getInt() == 11
+      check nodes[3]["usage"]["completion_tokens"].getInt() == 7
+
+    test "two partials plus the final yield one answer, not the final twice":
+      resetStream()
+      dispatchMode = dmTwoPartialsThenFinal
+      finalText = "Olá, mundo"
+
+      let result = runStream(bodyFor("alice", "oi"))
+      check result.outcome == asCompleted
+      check streamedContent() == "Olá, mundo"
+      check streamedContent() != "Olá, mundoOlá, mundo"
+      let nodes = streamNodes()
+      check not nodes[^1]["choices"][0]["delta"].hasKey("content")
+
+    test "a tool notice never appears as delta.content":
+      resetStream()
+      dispatchMode = dmToolThenFinal
+      finalText = "pronto"
+
+      let result = runStream(bodyFor("alice", "use a tool"))
+      check result.outcome == asCompleted
+
+      var sawToolCall = false
+      let content = streamedContent()
+      for node in streamNodes():
+        let delta = node["choices"][0]["delta"]
+        if delta.hasKey("tool_calls"):
+          sawToolCall = true
+          check not delta.hasKey("content")
+      check sawToolCall
+      check content == "pronto"
+      check not content.contains("🔧")
+      check not content.contains("✅")
+      check not content.contains("tool call(s)")
+
+    test "stream false keeps the existing single JSON path":
+      resetStream()
+      dispatchMode = dmFinal
+      finalText = "sem sse"
+      let body = $(%* {
+        "user": "alice",
+        "stream": false,
+        "messages": [%* {"role": "user", "content": "oi"}],
+      })
+
+      check not agentChatStreamRequested(body)
+      check not agentChatStreamRequested(bodyFor("alice", "oi"))
+
+      let reply = run(body)
+      check reply.status == 200
+      check parseJson(reply.body){"object"}.getStr() == "chat.completion"
+      check contentOf(reply.body) == "sem sse"
+      check sseChunks.len == 0
+
+    test "an error after the first byte emits an error event and no [DONE]":
+      resetStream()
+      dispatchMode = dmPartialThenError
+
+      let result = runStream(bodyFor("alice", "oi"))
+      check result.outcome == asErrored
+      check sseOpened
+      check sseChunks.len == 3
+      check doneCount() == 0
+
+      let nodes = streamNodes()
+      check nodes.len == 3
+      check nodes[0]["choices"][0]["delta"]["role"].getStr() == "assistant"
+      check nodes[1]["choices"][0]["delta"]["content"].getStr() == "parcial"
+      check nodes[2]["error"]["code"].getStr() == "turn_error"
+      for chunk in sseChunks:
+        check not chunk.contains("sk-secret-123")
+
+    test "the SSE slot is released after a completed stream":
+      resetStream()
+      dispatchMode = dmFinal
+      finalText = "ok"
+
+      let result = runStream(bodyFor("alice", "oi"))
+      check result.outcome == asCompleted
+      check sseAcquireCalls == 1
+      check sseReleaseCalls == 1
+      check fakeBridge.pendingCount == 0
+
+    test "the SSE slot is released when the client aborts":
+      resetStream()
+      dispatchMode = dmTwoPartialsThenFinal
+      finalText = "Olá, mundo"
+      sseFailAt = 2  # role chunk succeeds, the first content chunk fails
+
+      let result = runStream(bodyFor("alice", "oi"))
+      check result.outcome == asClientGone
+      check sseReleaseCalls == 1
+      check fakeBridge.pendingCount == 0  # the finished turn was already drained
+
+    test "the SSE slot is released on the deadline":
+      resetStream()
+      dispatchMode = dmNothing
+
+      let result = runStream(bodyFor("alice", "demora"), timeoutMs = 30)
+      check result.outcome == asErrored
+      check sseOpened
+      check sseReleaseCalls == 1
+      check doneCount() == 0
+      check streamNodes()[^1]["error"]["code"].getStr() == "turn_timeout"
+
+    test "a full SSE budget is refused before dispatch":
+      resetStream()
+      sseAcquireAllowed = false
+
+      let result = runStream(bodyFor("alice", "oi"))
+      check result.outcome == asPreflightError
+      check result.reply.status == 429
+      check dispatched.len == 0
+      check sseReleaseCalls == 0
+      check sseChunks.len == 0
+
+when isMainModule:
+  runTests()

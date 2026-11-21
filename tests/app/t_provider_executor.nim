@@ -157,149 +157,153 @@ proc collectTexts(futures: seq[Future[Result[CompletionResponse, string]]]): Fut
     texts.add res.value.text
   return texts
 
-suite "provider executor":
+proc runTests*() =
+  suite "provider executor":
 
-  test "runs a provider call on a worker and returns its result":
-    let builder = useStub("from-worker", delayMs = 120)
-    let res = waitFor asyncProviderComplete(
-      builder, ProviderSpec(providerName: "stub"), CompletionRequest())
-    check providerPoolReady()
-    check res.isOk
-    check res.value.text == "from-worker"
+    test "runs a provider call on a worker and returns its result":
+      let builder = useStub("from-worker", delayMs = 120)
+      let res = waitFor asyncProviderComplete(
+        builder, ProviderSpec(providerName: "stub"), CompletionRequest())
+      check providerPoolReady()
+      check res.isOk
+      check res.value.text == "from-worker"
 
-  test "worker exception becomes an error Result":
-    let builder: ProviderRuntimeBuilder = raisingBuilder
-    let res = waitFor asyncProviderComplete(
-      builder, ProviderSpec(providerName: "stub"), CompletionRequest())
-    check res.isErr
-    check "boom" in res.error
+    test "worker exception becomes an error Result":
+      let builder: ProviderRuntimeBuilder = raisingBuilder
+      let res = waitFor asyncProviderComplete(
+        builder, ProviderSpec(providerName: "stub"), CompletionRequest())
+      check res.isErr
+      check "boom" in res.error
 
-  test "provider error Result passes through unchanged":
-    let builder: ProviderRuntimeBuilder = errorBuilder
-    let res = waitFor asyncProviderComplete(
-      builder, ProviderSpec(providerName: "stub"), CompletionRequest())
-    check res.isErr
-    check res.error == "upstream 429"
+    test "provider error Result passes through unchanged":
+      let builder: ProviderRuntimeBuilder = errorBuilder
+      let res = waitFor asyncProviderComplete(
+        builder, ProviderSpec(providerName: "stub"), CompletionRequest())
+      check res.isErr
+      check res.error == "upstream 429"
 
-  test "missing provider is reported without raising":
-    let builder: ProviderRuntimeBuilder = emptyBuilder
-    let res = waitFor asyncProviderComplete(
-      builder, ProviderSpec(providerName: "ghost"), CompletionRequest())
-    check res.isErr
-    check "provider unavailable: ghost" in res.error
+    test "missing provider is reported without raising":
+      let builder: ProviderRuntimeBuilder = emptyBuilder
+      let res = waitFor asyncProviderComplete(
+        builder, ProviderSpec(providerName: "ghost"), CompletionRequest())
+      check res.isErr
+      check "provider unavailable: ghost" in res.error
 
-  test "multiple sequential calls reuse the pool":
-    let builder = useStub("ok", delayMs = 5)
-    let texts = waitFor runSequential(builder, 6)
-    check texts.len == 6
-    for i, text in texts:
-      check text == "ok"
+    test "multiple sequential calls reuse the pool":
+      let builder = useStub("ok", delayMs = 5)
+      let texts = waitFor runSequential(builder, 6)
+      check texts.len == 6
+      for i, text in texts:
+        check text == "ok"
 
-  test "pool stays healthy after an error":
-    let failing: ProviderRuntimeBuilder = failingBuilder
-    let first = waitFor asyncProviderComplete(
-      failing, ProviderSpec(providerName: "stub"), CompletionRequest())
-    check first.isErr
-    let second = waitFor asyncProviderComplete(
-      useStub("recovered"), ProviderSpec(providerName: "stub"), CompletionRequest())
-    check second.isOk
-    check second.value.text == "recovered"
+    test "pool stays healthy after an error":
+      let failing: ProviderRuntimeBuilder = failingBuilder
+      let first = waitFor asyncProviderComplete(
+        failing, ProviderSpec(providerName: "stub"), CompletionRequest())
+      check first.isErr
+      let second = waitFor asyncProviderComplete(
+        useStub("recovered"), ProviderSpec(providerName: "stub"), CompletionRequest())
+      check second.isOk
+      check second.value.text == "recovered"
 
-  test "concurrent jobs run in parallel but bounded by the pool":
-    let builder = taggedBuilder(delayMs = 120)
-    let start = Moment.now()
-    let texts = waitFor runConcurrent(builder, 8)
-    let elapsedMs = (Moment.now() - start).milliseconds
-
-    check texts.len == 8
-    for i, text in texts:
-      check text == "m" & $i
-
-    # 8 jobs of 120ms on a pool of 4 workers need at least two batches.
-    # A thread-per-call executor would finish in roughly one batch (~120ms).
-    check elapsedMs >= 200
-
-  test "GC-managed result payloads survive the thread handoff":
-    const payloadSize = 4096
-    let builder = payloadBuilder(payloadSize)
-    let texts = waitFor runConcurrent(builder, 16)
-
-    check texts.len == 16
-    for i, text in texts:
-      let prefix = "m" & $i & ":"
-      check text.startsWith(prefix)
-      check text.len == prefix.len + payloadSize
-
-  test "pool configuration is bounded and fixed":
-    check ProviderWorkerCount == 4
-    check ProviderQueueDepth > 0
-
-  test "builder runs on the caller thread":
-    # The builder is `nimcall` (no shared environment), but the executor still
-    # invokes it on the event loop before enqueuing.
-    gExpectedBuilderThreadId = getThreadId()
-    let builder: ProviderRuntimeBuilder = threadCheckBuilder
-    let res = waitFor asyncProviderComplete(
-      builder, ProviderSpec(providerName: "stub"), CompletionRequest())
-    check res.isOk
-    check res.value.text == "event-loop-builder"
-
-  test "builder exception becomes an error Result and the pool stays healthy":
-    let builder: ProviderRuntimeBuilder = builderExceptionBuilder
-    let res = waitFor asyncProviderComplete(
-      builder, ProviderSpec(providerName: "stub"), CompletionRequest())
-    check res.isErr
-    check "builder boom" in res.error
-
-    let after = waitFor asyncProviderComplete(
-      useStub("after-builder-error"), ProviderSpec(providerName: "stub"), CompletionRequest())
-    check after.isOk
-    check after.value.text == "after-builder-error"
-
-  test "cancelling an in-flight call returns promptly without waiting for the worker":
-    let builder = useStub("slow", delayMs = 250)
-    let start = Moment.now()
-    let cancelled = waitFor waitAndCancel(builder, cancelAfterMs = 40)
-    let elapsedMs = (Moment.now() - start).milliseconds
-
-    check cancelled
-    # Non-blocking cancellation: the caller must not wait for the 250ms
-    # provider call to return.
-    check elapsedMs < 200
-
-    let after = waitFor asyncProviderComplete(
-      useStub("after-cancel"), ProviderSpec(providerName: "stub"), CompletionRequest())
-    check after.isOk
-    check after.value.text == "after-cancel"
-
-  test "cancelling a queued job is acknowledged without leaking its slot":
-    # Occupy every worker, then queue and cancel a job behind them. The queued
-    # job must be skipped by a worker and its slot released safely.
-    let builder = taggedBuilder(delayMs = 120)
-    var busy: seq[Future[Result[CompletionResponse, string]]]
-    for i in 0 ..< ProviderWorkerCount:
-      busy.add asyncProviderComplete(
-        builder, ProviderSpec(providerName: "stub", modelName: "busy" & $i),
-        CompletionRequest())
-
-    check waitFor cancelQueued(builder, "queued")
-
-    let busyTexts = waitFor collectTexts(busy)
-    check busyTexts.len == ProviderWorkerCount
-    for i, text in busyTexts:
-      check text == "busy" & $i
-
-  test "repeated cancellation drains results and keeps the pool healthy":
-    # Large results may be produced after cancellation; the worker discards
-    # them locally (or the last reference drains them) instead of leaking them
-    # inside a channel whose consumer is gone.
-    let slow = useStub(repeat('y', 4096), delayMs = 250)
-    for _ in 0 ..< 6:
+    test "concurrent jobs run in parallel but bounded by the pool":
+      let builder = taggedBuilder(delayMs = 120)
       let start = Moment.now()
-      check waitFor waitAndCancel(slow, cancelAfterMs = 20)
-      check (Moment.now() - start).milliseconds < 200
+      let texts = waitFor runConcurrent(builder, 8)
+      let elapsedMs = (Moment.now() - start).milliseconds
 
-    let after = waitFor asyncProviderComplete(
-      useStub("alive"), ProviderSpec(providerName: "stub"), CompletionRequest())
-    check after.isOk
-    check after.value.text == "alive"
+      check texts.len == 8
+      for i, text in texts:
+        check text == "m" & $i
+
+      # 8 jobs of 120ms on a pool of 4 workers need at least two batches.
+      # A thread-per-call executor would finish in roughly one batch (~120ms).
+      check elapsedMs >= 200
+
+    test "GC-managed result payloads survive the thread handoff":
+      const payloadSize = 4096
+      let builder = payloadBuilder(payloadSize)
+      let texts = waitFor runConcurrent(builder, 16)
+
+      check texts.len == 16
+      for i, text in texts:
+        let prefix = "m" & $i & ":"
+        check text.startsWith(prefix)
+        check text.len == prefix.len + payloadSize
+
+    test "pool configuration is bounded and fixed":
+      check ProviderWorkerCount == 4
+      check ProviderQueueDepth > 0
+
+    test "builder runs on the caller thread":
+      # The builder is `nimcall` (no shared environment), but the executor still
+      # invokes it on the event loop before enqueuing.
+      gExpectedBuilderThreadId = getThreadId()
+      let builder: ProviderRuntimeBuilder = threadCheckBuilder
+      let res = waitFor asyncProviderComplete(
+        builder, ProviderSpec(providerName: "stub"), CompletionRequest())
+      check res.isOk
+      check res.value.text == "event-loop-builder"
+
+    test "builder exception becomes an error Result and the pool stays healthy":
+      let builder: ProviderRuntimeBuilder = builderExceptionBuilder
+      let res = waitFor asyncProviderComplete(
+        builder, ProviderSpec(providerName: "stub"), CompletionRequest())
+      check res.isErr
+      check "builder boom" in res.error
+
+      let after = waitFor asyncProviderComplete(
+        useStub("after-builder-error"), ProviderSpec(providerName: "stub"), CompletionRequest())
+      check after.isOk
+      check after.value.text == "after-builder-error"
+
+    test "cancelling an in-flight call returns promptly without waiting for the worker":
+      let builder = useStub("slow", delayMs = 250)
+      let start = Moment.now()
+      let cancelled = waitFor waitAndCancel(builder, cancelAfterMs = 40)
+      let elapsedMs = (Moment.now() - start).milliseconds
+
+      check cancelled
+      # Non-blocking cancellation: the caller must not wait for the 250ms
+      # provider call to return.
+      check elapsedMs < 200
+
+      let after = waitFor asyncProviderComplete(
+        useStub("after-cancel"), ProviderSpec(providerName: "stub"), CompletionRequest())
+      check after.isOk
+      check after.value.text == "after-cancel"
+
+    test "cancelling a queued job is acknowledged without leaking its slot":
+      # Occupy every worker, then queue and cancel a job behind them. The queued
+      # job must be skipped by a worker and its slot released safely.
+      let builder = taggedBuilder(delayMs = 120)
+      var busy: seq[Future[Result[CompletionResponse, string]]]
+      for i in 0 ..< ProviderWorkerCount:
+        busy.add asyncProviderComplete(
+          builder, ProviderSpec(providerName: "stub", modelName: "busy" & $i),
+          CompletionRequest())
+
+      check waitFor cancelQueued(builder, "queued")
+
+      let busyTexts = waitFor collectTexts(busy)
+      check busyTexts.len == ProviderWorkerCount
+      for i, text in busyTexts:
+        check text == "busy" & $i
+
+    test "repeated cancellation drains results and keeps the pool healthy":
+      # Large results may be produced after cancellation; the worker discards
+      # them locally (or the last reference drains them) instead of leaking them
+      # inside a channel whose consumer is gone.
+      let slow = useStub(repeat('y', 4096), delayMs = 250)
+      for _ in 0 ..< 6:
+        let start = Moment.now()
+        check waitFor waitAndCancel(slow, cancelAfterMs = 20)
+        check (Moment.now() - start).milliseconds < 200
+
+      let after = waitFor asyncProviderComplete(
+        useStub("alive"), ProviderSpec(providerName: "stub"), CompletionRequest())
+      check after.isOk
+      check after.value.text == "alive"
+
+when isMainModule:
+  runTests()

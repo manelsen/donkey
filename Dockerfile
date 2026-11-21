@@ -4,7 +4,6 @@ FROM nimlang/nim:alpine AS builder
 RUN apk add --no-cache openssl-dev git
 
 WORKDIR /app
-RUN nimble install -y https://github.com/beef331/wasm3
 COPY . .
 RUN nimble build -y -d:release -d:withSqlite
 

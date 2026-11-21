@@ -22,6 +22,7 @@ import ../../domain/message
 import ../../ports/channel
 import ../http/std_http
 import ../identity/identity_resolver
+import ../webhook/http_request_reader
 import ../../app/metrics
 
 const
@@ -249,29 +250,51 @@ proc sendTemplate*(a: WeChatAdapter;
     return err("wechat template send error " & $resp.status & ": " & resp.body)
   ok()
 
-proc wechatWebhookThread(args: WeChatWebhookArgs) {.thread.} =
-  ## Minimal HTTP/1.1 server for WeChat Official Account webhook.
+proc respond(s: Socket; status, body: string) =
+  let resp = "HTTP/1.1 " & status & "\r\nContent-Length: " &
+             $body.len & "\r\nConnection: close\r\n\r\n" & body
+  try: s.send(resp) except CatchableError: discard
+
+proc handleWeChatConn*(client: Socket; token: string; logger: Logger;
+                       timeoutSec = WebhookClientTimeoutSec) =
+  ## Serves one WeChat Official Account webhook request and closes the socket.
   ## GET  /?signature=…&timestamp=…&nonce=…&echostr=…  → echo echostr if valid
   ## POST /?signature=…&timestamp=…&nonce=…            → parse XML, enqueue event
+  ## Reading goes through http_request_reader (bounded, timed out).
+  defer: closeWebhookClient(client)
+  applyWebhookClientTimeouts(client, timeoutSec).isOkOr:
+    logger.warn("wechat webhook: " & error)
+    recordWebhookFailure("wechat", error)
+    return
+  let req = readWebhookRequest(client).valueOr:
+    logger.warn("wechat webhook: rejected request: " & error)
+    recordWebhookFailure("wechat", error)
+    client.respond(statusLine(readErrorStatus(error)), "")
+    return
+  let signature = req.query.getOrDefault("signature")
+  let timestamp = req.query.getOrDefault("timestamp")
+  let nonce     = req.query.getOrDefault("nonce")
 
-  proc readLine(s: Socket): string =
-    var buf = ""
-    var c: char
-    while true:
-      if s.recv(c.addr, 1) != 1:
-        return buf
-      if c == '\r':
-        discard s.recv(c.addr, 1)
-        break
-      buf.add(c)
-    buf
+  if not verifyWebhookSignature(token, timestamp, nonce, signature):
+    client.respond("403 Forbidden", "forbidden")
+  elif req.httpMethod == "GET":
+    client.respond("200 OK", req.query.getOrDefault("echostr"))
+  elif req.httpMethod == "POST":
+    ## Always 200 "success": WeChat retries anything else. A body we cannot
+    ## parse is dropped, but counted and logged so the loss is visible.
+    let evRes = parseWebhookXml(req.body)
+    if evRes.isErr:
+      logger.warn("wechat webhook: dropped unparseable event: " & evRes.error)
+      recordWebhookFailure("wechat", "unparseable event")
+    elif gWeChatEventsOpen:
+      gWeChatEvents.send(evRes.value)
+    client.respond("200 OK", "success")
+  else:
+    client.respond("405 Method Not Allowed", "")
 
-  proc respond(s: Socket; status, body: string) =
-    let resp = "HTTP/1.1 " & status & "\r\nContent-Length: " &
-               $body.len & "\r\nConnection: close\r\n\r\n" & body
-    try: s.send(resp) except CatchableError: discard
-
-  var server = newSocket()
+proc wechatWebhookThread(args: WeChatWebhookArgs) {.thread.} =
+  ## Minimal HTTP/1.1 server for WeChat Official Account webhook.
+  var server = newSocket(buffered = false)  ## see http_request_reader
   server.setSockOpt(OptReuseAddr, true)
   server.bindAddr(Port(args.port))
   server.listen()
@@ -283,53 +306,11 @@ proc wechatWebhookThread(args: WeChatWebhookArgs) {.thread.} =
     except CatchableError:
       continue
     try:
-      let requestLine = client.readLine()
-      let parts = requestLine.split(' ')
-      let meth  = if parts.len >= 1: parts[0] else: ""
-      let url   = if parts.len >= 2: parts[1] else: "/"
-      let qpos  = url.find('?')
-      let query = if qpos >= 0: url[qpos + 1 .. ^1] else: ""
-      # Read headers
-      var contentLength = 0
-      while true:
-        let h = client.readLine()
-        if h.len == 0:
-          break
-        let lower = h.toLowerAscii()
-        if lower.startsWith("content-length:"):
-          try: contentLength = parseInt(h[15 .. ^1].strip())
-          except ValueError: discard
-      # Read body
-      var body = ""
-      if contentLength > 0:
-        body = newString(contentLength)
-        var received = 0
-        while received < contentLength:
-          let n = client.recv(body[received].addr, contentLength - received)
-          if n <= 0: break
-          received += n
-
-      let params    = parseQueryString(query)
-      let signature = params.getOrDefault("signature")
-      let timestamp = params.getOrDefault("timestamp")
-      let nonce     = params.getOrDefault("nonce")
-
-      if not verifyWebhookSignature(args.token, timestamp, nonce, signature):
-        client.respond("403 Forbidden", "forbidden")
-      elif meth == "GET":
-        client.respond("200 OK", params.getOrDefault("echostr"))
-      elif meth == "POST":
-        let evRes = parseWebhookXml(body)
-        if evRes.isOk:
-          gWeChatEvents.send(evRes.value)
-        client.respond("200 OK", "success")
-      else:
-        client.respond("405 Method Not Allowed", "")
+      handleWeChatConn(client, args.token, args.logger)
     except CatchableError:
       let errMsg = getCurrentExceptionMsg()
       args.logger.warn("wechat webhook: connection handler error: " & errMsg)
       recordWebhookFailure("wechat", errMsg)
-    try: client.close() except CatchableError: discard
 
 proc startWebhook*(a: WeChatAdapter; port: Port; logger: Logger) {.gcsafe.} =
   ## Starts the embedded WeChat webhook HTTP server on the given port.

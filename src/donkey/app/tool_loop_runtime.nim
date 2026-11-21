@@ -193,7 +193,7 @@ proc stopTypingLoop*(flag: TypingFlag) =
 proc safeComplete(fn: CompleteFn; req: CompletionRequest
                  ): Result[CompletionResponse, string] {.gcsafe, raises: [].} =
   try: fn(req)
-  except Exception as e: err(e.msg)
+  except Exception as e: err(e.msg)  ## effect boundary: callee raises are unannotated
 
 func completionErr(msg: string): Result[CompletionResponse, string] {.gcsafe.} =
   err(msg)
@@ -208,7 +208,7 @@ proc completeOnce(req: CompletionRequest;
       return await asyncCompleteFn(req)
     except CancelledError:
       raise
-    except Exception as e:
+    except Exception as e:  ## effect boundary: callee raises are unannotated
       return completionErr(e.msg)
   safeComplete(completeFn, req)
 
@@ -229,10 +229,12 @@ proc invokeToolAgent(toolInbox: AsyncQueue[AgentMessage];
                      callIndex: int;
                      tc: ToolCallRequest;
                      userId: string;
+                     userInterrupt: uint64;
                      providerLabel: string;
                      log: Logger): Future[ToolCallResult] {.async.} =
   let payload = $ %* {
-    "name": tc.name, "id": tc.id, "inputJson": tc.inputJson
+    "name": tc.name, "id": tc.id, "inputJson": tc.inputJson,
+    "userInterrupt": userInterrupt.BiggestInt
   }
   let taskId = msgId & "-" & $round & "-" & $callIndex
   await toolInbox.put(newTaskMsg(taskId, tkInvokeTool, userId, payload))
@@ -334,7 +336,8 @@ proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
       )
 
   let toolResult = await invokeToolAgent(
-    toolInbox, toolOut, msgId, round, callIndex, tc, $uid, providerLabel, log)
+    toolInbox, toolOut, msgId, round, callIndex, tc, $uid, nativeCtx.userInterrupt,
+    providerLabel, log)
   if debugMode:
     await globalOutbox.put(OutboundMessage(
       userId: uid, channel: channel,

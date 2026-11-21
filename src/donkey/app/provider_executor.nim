@@ -97,7 +97,7 @@ proc safeAsyncComplete*(fn: AsyncCompleteFn;
     return await fn(req)
   except CancelledError:
     raise
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     return err(Result[CompletionResponse, string],
                "async complete raised: " & e.msg)
 
@@ -132,7 +132,7 @@ proc callProvider(bundle: sink ProviderBundle; req: sink CompletionRequest
     if bundle.completeFn == nil:
       return err("provider unavailable")
     bundle.completeFn(req)
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err(e.msg)
 
 proc completeJob(job: sink ProviderJob) {.gcsafe.} =
@@ -233,7 +233,7 @@ proc asyncProviderComplete*(builder: ProviderRuntimeBuilder;
   except CatchableError as e:
     return err(Result[CompletionResponse, string],
                "provider executor: builder failed: " & e.msg)
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     return err(Result[CompletionResponse, string],
                "provider executor: builder failed: " & e.msg)
 

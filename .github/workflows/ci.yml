@@ -63,11 +63,6 @@ jobs:
 
       - name: Install Nim dependencies
         run: |
-          if [ ! -d ~/.nimble/pkgs2/wasm3* ]; then
-            git clone --recurse-submodules https://github.com/beef331/wasm3 /tmp/wasm3
-            rm -rf /tmp/wasm3/src/wasm3/wasm3c/platforms
-            (cd /tmp/wasm3 && nimble install -y)
-          fi
           nimble install -y --depsOnly
 
       - name: Verify architectural boundaries
@@ -153,11 +148,6 @@ jobs:
 
       - name: Install Nim dependencies
         run: |
-          if [ ! -d ~/.nimble/pkgs2/wasm3* ]; then
-            git clone --recurse-submodules https://github.com/beef331/wasm3 /tmp/wasm3
-            rm -rf /tmp/wasm3/src/wasm3/wasm3c/platforms
-            (cd /tmp/wasm3 && nimble install -y)
-          fi
           nimble install -y --depsOnly
 
       - name: Fetch base branch
@@ -168,6 +158,23 @@ jobs:
           git fetch --no-tags --depth=1 origin \
             "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
 
+      - name: Fingerprint grouped test inputs
+        id: grouped_inputs
+        run: |
+          fingerprints="$(python3 scripts/test_build_fingerprint.py)"
+          read -r profile inputs <<< "$fingerprints"
+          printf '%s\n' "$fingerprints" > "$RUNNER_TEMP/donkey-grouped-fingerprints"
+          echo "profile=$profile" >> "$GITHUB_OUTPUT"
+          echo "inputs=$inputs" >> "$GITHUB_OUTPUT"
+
+      - name: Cache grouped test binaries and objects
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/donkey/grouped-tests
+          key: grouped-tests-v1-${{ matrix.shard }}-${{ steps.grouped_inputs.outputs.profile }}-${{ steps.grouped_inputs.outputs.inputs }}
+          restore-keys: |
+            grouped-tests-v1-${{ matrix.shard }}-${{ steps.grouped_inputs.outputs.profile }}-
+
       - name: Run tests
         env:
           JOBS: 4
@@ -176,6 +183,8 @@ jobs:
           # The fetch step creates origin/<branch>; checkout leaves no local branch.
           BASE_REF: origin/${{ github.base_ref }}
         run: |
+          export TEST_GROUP_CACHE_DIR="$HOME/.cache/donkey/grouped-tests"
+          export TEST_GROUP_FINGERPRINT_FILE="$RUNNER_TEMP/donkey-grouped-fingerprints"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             mapfile -t targets < <(bash scripts/affected_tests.sh "$BASE_REF")
           else
@@ -209,9 +218,6 @@ jobs:
 
       - name: Install Nim dependencies
         run: |
-          git clone --recurse-submodules https://github.com/beef331/wasm3 /tmp/wasm3
-          rm -rf /tmp/wasm3/src/wasm3/wasm3c/platforms
-          (cd /tmp/wasm3 && nimble install -y)
           nimble install -y --depsOnly
 
       - name: Build optimized binary

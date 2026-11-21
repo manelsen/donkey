@@ -15,7 +15,7 @@
 ##   - CDP commands sent over WebSocket via ws_client.nim
 ##   - JSON-RPC 2.0 protocol for command/response correlation
 
-import std/[json, net, options, os, osproc, strtabs, strutils, tables, times]
+import std/[json, net, options, os, osproc, sequtils, strtabs, strutils, tables, times]
 when defined(posix):
   import std/posix
 import ../../ports/http
@@ -36,6 +36,8 @@ const
   ]
 
 type
+  BrowserStopCheck* = proc(): bool {.gcsafe, raises: [].}
+
   BrowserTools* = object
     backend*: BrowserBackendKind  ## off/auto/lightpanda/edge/chromium
     executablePath*: string       ## explicit browser executable
@@ -47,6 +49,7 @@ type
     process*: Process             ## browser subprocess
     ws*: WsClient                 ## CDP WebSocket connection
     pageTargetId*: string         ## active page target ID
+    pageSessionId: string         ## flattened session on the Lightpanda browser endpoint
     mainFrameId*: string          ## main frame, used for isolated evaluation
     contentContextId*: int        ## reused isolated world for content reads
     currentUrl*: string           ## URL of loaded page
@@ -58,6 +61,7 @@ type
     http*: HttpRuntimePort        ## transport for Chromium /json/list
     proxyServer*: string          ## optional filtering egress proxy
     timeoutMs*: int               ## per-CDP-command and navigation budget
+    shouldStop: BrowserStopCheck
     blockedRequests*: int         ## requests denied by URL/DNS policy
     blockedWebSockets*: int       ## WebSocket creations observed and denied
     blockedServiceWorkers*: int   ## service worker events observed and denied
@@ -168,7 +172,7 @@ proc listTools*(bt: BrowserTools): Result[seq[ToolSchema], string] =
 
 # ── Internal CDP Helpers ─────────────────────────────────────────────────────
 
-var cdpRequestCounter: int = 0
+var cdpRequestCounter {.threadvar.}: int
 
 proc nextId*(): int =
   inc cdpRequestCounter
@@ -177,6 +181,16 @@ proc nextId*(): int =
 proc cdpTimeoutMs*(bt: BrowserTools): int =
   clampBrowserTimeoutMs(bt.timeoutMs)
 
+proc cancelled(bt: BrowserTools): bool =
+  bt.shouldStop != nil and bt.shouldStop()
+
+func cdpRequest(bt: BrowserTools; id: int; cdpMethod: string;
+                params: JsonNode): JsonNode =
+  result = %*{"id": id, "method": cdpMethod, "params": params}
+  if bt.pageSessionId.len > 0 and
+     not (cdpMethod.startsWith("Target.") or cdpMethod.startsWith("Browser.")):
+    result["sessionId"] = %bt.pageSessionId
+
 proc fireCdpCommand(bt: var BrowserTools; cdpMethod: string; params: JsonNode) =
   ## Sends a CDP command without waiting for its response. Used from inside the
   ## receive loop to answer Fetch.requestPaused events. A missing socket is
@@ -184,7 +198,7 @@ proc fireCdpCommand(bt: var BrowserTools; cdpMethod: string; params: JsonNode) =
   if bt.ws.sock == nil:
     return
   let id = nextId()
-  bt.ws.sendFrame($(%*{"id": id, "method": cdpMethod, "params": params}))
+  bt.ws.sendFrame($bt.cdpRequest(id, cdpMethod, params))
 
 proc isAllowedBrowserRequest*(url: string;
                               kind = brkUnknown;
@@ -222,6 +236,9 @@ proc hardenProfileDir(path: string): Result[void, string] =
 
 proc handleCdpEvent*(bt: var BrowserTools; resp: JsonNode) =
   ## Applies one asynchronous CDP event received while waiting for a response.
+  if bt.pageSessionId.len > 0 and
+     resp{"sessionId"}.getStr("") != bt.pageSessionId:
+    return
   let cdpMethod = resp["method"].getStr("")
   let params = resp{"params"}
   case cdpMethod
@@ -352,29 +369,30 @@ proc sendCdpCommand*(bt: var BrowserTools; cdpMethod: string; params: JsonNode =
   ## Send a CDP command and wait for response.
   if bt.ws.sock == nil:
     return err("CDP socket is closed")
+  if bt.cancelled():
+    bt.invalidateConnection()
+    return err("browser operation interrupted")
   let id = nextId()
-  let cmd = %*{
-    "id": id,
-    "method": cdpMethod,
-    "params": params
-  }
-  
-  bt.ws.sendFrame($cmd)
+  bt.ws.sendFrame($bt.cdpRequest(id, cdpMethod, params))
   
   # Receive responses until we get our matching ID
   var deadline = epochTime() + float(bt.cdpTimeoutMs()) / 1000.0
   while true:
+    if bt.cancelled():
+      bt.invalidateConnection()
+      return err("browser operation interrupted")
     let now = epochTime()
     if now >= deadline:
+      bt.invalidateConnection()
       return err("CDP timeout waiting for " & cdpMethod & " response")
     
     let remainingMs = max(1, int((deadline - now) * 1000))
-    let frameRes = bt.ws.recvFrame(remainingMs, frameTimeoutMs = remainingMs,
+    let frameRes = bt.ws.recvFrame(min(remainingMs, 100), frameTimeoutMs = remainingMs,
                                    maxPayloadBytes = BrowserMaxCdpFrameBytes)
     if frameRes.isErr:
-      bt.invalidateConnection()
       if frameRes.error == "timeout":
-        return err("CDP timeout waiting for " & cdpMethod & " response")
+        continue
+      bt.invalidateConnection()
       return err("WebSocket receive error: " & frameRes.error)
     let frame = frameRes.get()
     
@@ -419,18 +437,21 @@ proc ensurePage*(bt: var BrowserTools): Result[string, string] =
   return ok(bt.pageTargetId)
 
 proc activatePage*(bt: var BrowserTools): Result[void, string] =
-  ## Activate the page target for sending commands.
+  ## Attach to the target on Lightpanda before sending page-domain commands.
   if bt.pageTargetId.len == 0:
     return err("no active page target")
 
   ## Chromium page endpoints do not expose Target.activateTarget; the page
   ## target is already the one this WebSocket is attached to.
-  if bt.backend.isChromiumBackend():
+  if bt.backend.isChromiumBackend() or bt.pageSessionId.len > 0:
     return ok()
 
-  discard bt.sendCdpCommand("Target.activateTarget", %*{
-    "targetId": bt.pageTargetId
+  let attachment = ? bt.sendCdpCommand("Target.attachToTarget", %*{
+    "targetId": bt.pageTargetId, "flatten": true
   })
+  bt.pageSessionId = attachment{"sessionId"}.getStr("")
+  if bt.pageSessionId.len == 0:
+    return err("no sessionId in Target.attachToTarget response")
   return ok()
 
 proc resolveMainFrameId(bt: var BrowserTools): string =
@@ -504,6 +525,9 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
   bt.mainFrameId = ""
   bt.contentContextId = 0
 
+  discard ? ensurePage(bt)
+  ? activatePage(bt)
+
   ## Network monitoring is always enabled: it is the second layer for redirects,
   ## WebSockets and service workers, even when waitUntil is not networkidle.
   let netResult = bt.sendCdpCommand("Network.enable")
@@ -530,14 +554,14 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
     "urls": BrowserBlockedUrlPatterns
   })
   if blockedUrls.isErr:
-    let legacyBlocked = bt.sendCdpCommand("Network.setBlockedURLs", %*{
-      "urlPatterns": BrowserBlockedUrlPatterns
+    let structuredBlocked = bt.sendCdpCommand("Network.setBlockedURLs", %*{
+      "urlPatterns": BrowserBlockedUrlPatterns.mapIt(%*{"urlPattern": it, "block": true})
     })
-    if legacyBlocked.isErr:
-      bt.addHardeningWarning("URL blocking unsupported: " & legacyBlocked.error)
+    if structuredBlocked.isErr:
+      bt.addHardeningWarning("URL blocking unsupported: " & structuredBlocked.error)
       if bt.backend.isChromiumBackend():
         return err("cannot block WebSocket/WebTransport URLs: " &
-                   legacyBlocked.error)
+                   structuredBlocked.error)
 
   ## Intercept every request before it leaves the browser. This covers
   ## redirects and page subresources, not just the initial URL. Without
@@ -550,12 +574,6 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
     if fetchResult.isErr:
       return err("cannot enable request interception: " & fetchResult.error)
     bt.fetchEnabled = true
-  
-  # Ensure we have a page target
-  let targetId = ? ensurePage(bt)
-  if targetId.len == 0:
-    return err("empty targetId from ensurePage")
-  ? activatePage(bt)
   
   # Enable Page domain events before installing the per-document policy.
   let pageEnable = bt.sendCdpCommand("Page.enable")
@@ -626,6 +644,9 @@ proc navigateTo*(bt: var BrowserTools; url: string; waitUntil = "networkidle"): 
   let targetReady = if waitUntil == "domcontentloaded": "interactive"
                     else: "complete"
   while epochTime() < deadline:
+    if bt.cancelled():
+      bt.invalidateConnection()
+      return err("browser operation interrupted")
     if bt.policyViolation.len > 0:
       return err("browser policy violation: " & bt.policyViolation)
     let evalResp = bt.sendCdpCommand("Runtime.evaluate", %*{
@@ -817,6 +838,8 @@ proc waitForChromiumPage(bt: var BrowserTools;
     return err("HTTP port not configured for Chromium CDP discovery")
   let endpoint = "http://" & bt.host & ":" & $bt.port & "/json/list"
   while epochTime() < deadline:
+    if bt.cancelled():
+      return err("browser operation interrupted")
     try:
       let response = bt.http.get(endpoint, @[])
       if response.isErr or response.get().status != 200:
@@ -858,8 +881,47 @@ proc cleanupOwnedProfile(bt: var BrowserTools) =
     bt.profileDir = ""
   bt.ownsProfileDir = false
 
+proc stopBrowserProcess(bt: var BrowserTools) =
+  if bt.process == nil:
+    return
+  let process = bt.process
+  bt.process = nil
+  try:
+    if process.running():
+      process.terminate()
+      # Reap the child. On POSIX osproc kills it if this grace period expires.
+      discard process.waitForExit(250)
+  except CatchableError:
+    discard
+  try:
+    process.close()
+  except CatchableError:
+    discard
+
+proc connectLightpanda(bt: var BrowserTools): Result[void, string] =
+  let deadline = epochTime() + float(min(bt.cdpTimeoutMs(), 15_000)) / 1000.0
+  var lastError = "CDP server did not become ready"
+  while epochTime() < deadline:
+    if bt.cancelled():
+      return err("browser operation interrupted")
+    try:
+      if not bt.process.running():
+        return err("Lightpanda exited before CDP was ready")
+      let remainingMs = max(1, int((deadline - epochTime()) * 1000))
+      bt.ws = wsConnect(bt.host, Port(bt.port), "/",
+                        useTls = false, timeoutMs = min(remainingMs, 500))
+      return ok()
+    except OSError, TimeoutError:
+      lastError = getCurrentExceptionMsg()
+      sleep(50)
+    except CatchableError as e:
+      return err("Lightpanda WebSocket connect failed: " & e.msg)
+  err("Lightpanda WebSocket connect failed: " & lastError)
+
 proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
   ## Spawn the configured browser backend and connect its CDP endpoint.
+  if bt.cancelled():
+    return err("browser operation interrupted")
   if bt.process != nil:
     return ok("already running")
   bt.needsRecreate = false
@@ -901,32 +963,23 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
   bt.backend = kind
 
   if kind == bbLightpanda:
-    sleep(500)
-    try:
-      bt.ws = wsConnect(bt.host, Port(bt.port), "/devtools/browser",
-                        useTls = false, timeoutMs = min(bt.cdpTimeoutMs(), 15_000))
-    except IOError as e:
-      bt.process.terminate()
-      bt.process.close()
-      bt.process = nil
-      return err("WebSocket connect failed: " & e.msg)
+    let connected = bt.connectLightpanda()
+    if connected.isErr:
+      bt.stopBrowserProcess()
+      return err(connected.error)
     return ok("connected")
 
   let deadline = epochTime() + float(bt.cdpTimeoutMs()) / 1000.0
   let page = bt.waitForChromiumPage(deadline)
   if page.isErr:
-    bt.process.terminate()
-    bt.process.close()
-    bt.process = nil
+    bt.stopBrowserProcess()
     bt.cleanupOwnedProfile()
     return err(page.error)
 
   let (wsUrl, targetId, pageUrl) = page.get()
   let endpointOpt = parseWsDebuggerUrl(wsUrl)
   if endpointOpt.isNone:
-    bt.process.terminate()
-    bt.process.close()
-    bt.process = nil
+    bt.stopBrowserProcess()
     bt.cleanupOwnedProfile()
     return err("invalid CDP websocket URL from Chromium")
   let endpoint = endpointOpt.get()
@@ -934,10 +987,8 @@ proc spawnBrowser*(bt: var BrowserTools): Result[string, string] =
     bt.ws = wsConnect(endpoint.host, Port(endpoint.port),
                       endpoint.path, useTls = endpoint.secure,
                       timeoutMs = min(bt.cdpTimeoutMs(), 15_000))
-  except IOError as e:
-    bt.process.terminate()
-    bt.process.close()
-    bt.process = nil
+  except CatchableError as e:
+    bt.stopBrowserProcess()
     bt.cleanupOwnedProfile()
     return err("WebSocket connect failed: " & e.msg)
   bt.pageTargetId = targetId
@@ -955,12 +1006,10 @@ proc close*(bt: var BrowserTools) =
       bt.ws.wsClose()
     except CatchableError: discard
     bt.ws.sock = nil
-  if bt.process != nil:
-    bt.process.terminate()
-    bt.process.close()
-    bt.process = nil
+  bt.stopBrowserProcess()
   bt.cleanupOwnedProfile()
   bt.pageTargetId = ""
+  bt.pageSessionId = ""
   bt.mainFrameId = ""
   bt.contentContextId = 0
   bt.currentUrl = ""
@@ -1100,6 +1149,8 @@ proc invoke*(bt: var BrowserTools; call: ToolCall): Result[ToolResult, string] =
     bt.drainPendingEvents()
   if bt.connectionLost:
     bt.close()
+    if result.isOk and result.value.isError:
+      return result
     return ok(browserError(call.id,
       "browser connection lost; the next call recreates the session"))
   ## A WebSocket, service worker or blocked document violation means the page
@@ -1122,6 +1173,7 @@ proc newBrowserTools*(
   http: HttpRuntimePort = HttpRuntimePort();
   proxyServer: string = "";
   timeoutMs: int = BrowserDefaultTimeoutMs;
+  shouldStop: BrowserStopCheck = nil;
 ): BrowserTools =
   var resolvedBackend = backend
   if lightpandaPath.len > 0 and backend == bbAuto:
@@ -1137,6 +1189,7 @@ proc newBrowserTools*(
     http: http,
     proxyServer: proxyServer,
     timeoutMs: clampBrowserTimeoutMs(timeoutMs),
+    shouldStop: shouldStop,
     process: nil,
     pageTargetId: "",
     currentUrl: ""
@@ -1155,6 +1208,7 @@ type
     proxyServer: string
     idleTimeoutSeconds: float
     timeoutMs: int
+    shouldStop: BrowserStopCheck
     http: HttpRuntimePort
     ownerThread: int
     byUser*: Table[string, ref BrowserTools]
@@ -1181,7 +1235,8 @@ proc newBrowserToolRuntime*(backend: BrowserBackendKind = bbAuto;
                              http: HttpRuntimePort = HttpRuntimePort();
                              proxyServer = "";
                              idleTimeoutSeconds = 900.0;
-                             timeoutMs = BrowserDefaultTimeoutMs
+                             timeoutMs = BrowserDefaultTimeoutMs;
+                             shouldStop: BrowserStopCheck = nil
                             ): BrowserToolRuntime =
   BrowserToolRuntime(
     backend: backend,
@@ -1193,6 +1248,7 @@ proc newBrowserToolRuntime*(backend: BrowserBackendKind = bbAuto;
     proxyServer: proxyServer,
     idleTimeoutSeconds: idleTimeoutSeconds,
     timeoutMs: clampBrowserTimeoutMs(timeoutMs),
+    shouldStop: shouldStop,
     http: http,
     ownerThread: getThreadId(),
     byUser: initTable[string, ref BrowserTools](),
@@ -1292,6 +1348,7 @@ proc invoke*(rt: BrowserToolRuntime; call: ToolCall): Result[ToolResult, string]
       http = rt.http,
       proxyServer = rt.proxyServer,
       timeoutMs = rt.timeoutMs,
+      shouldStop = rt.shouldStop,
     )
     if rt.profileBaseDir.len > 0:
       # Operator-provided profiles persist across runs; never delete them, but

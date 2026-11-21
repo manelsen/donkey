@@ -14,7 +14,7 @@
 ##   |>    — payload |> parseEvent
 ##   >>=   — http.post(...) >>= parseFsBody >>= extractMsgId
 
-import std/[json, strutils]
+import std/json
 import ../../core/types
 import ../../core/pipeops
 import ../../core/media_download
@@ -46,7 +46,8 @@ type
 
 # ── Module-level event queue ──────────────────────────────────────────────────
 
-## Thread-safe: chronos Channel uses internal synchronization.
+## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
+## lock internally and deep-copy the payload. Must be open()ed before use.
 ## Opened once at daemon startup via openQueue().
 var gFsEvents* {.global.}: Channel[FeishuEvent]
 
@@ -154,7 +155,7 @@ proc postJson(a: FeishuAdapter; path: string;
 
 proc sendChunk(a: FeishuAdapter; openId, text: string): Result[void, string] =
   ## Sends a single text chunk to a Feishu user by open_id.
-  let content = "{\"text\":\"" & text.replace("\\", "\\\\").replace("\"", "\\\"") & "\"}"
+  let content = textContent(text)
   discard ? a.postJson("/open-apis/im/v1/messages?receive_id_type=open_id", %* {
     "receive_id": openId,
     "msg_type":   "text",
@@ -176,12 +177,8 @@ proc downloadFile*(a: FeishuAdapter; fileKey: string): Result[FileDownload, stri
     # We need to construct the right URL
     let downloadUrl = "/open-apis/im/v1/files/" & fileKey & "/download"
     let headers = @[a.authHeader()]
-    let resp = ? a.http.get(base(a) & downloadUrl, headers)
-    
-    var data = newSeq[byte](resp.body.len)
-    for i in 0 ..< resp.body.len:
-      data[i] = cast[byte](resp.body[i])
-    
+    let data = ? a.http.fetchBytes(base(a) & downloadUrl, headers)
+
     ok(FileDownload(
       fileName: "feishu_" & fileKey,
       fileSize: data.len.int64,
@@ -220,7 +217,7 @@ proc sendReturnId*(a: FeishuAdapter; msg: OutboundMessage): Result[string, strin
   if fsId.len == 0:
     return err("FeishuAdapter.sendReturnId: no Feishu ID for " & $msg.userId)
   let chunk = splitChunks(msg.text, FsMaxChars)[0]
-  let content = "{\"text\":\"" & chunk.replace("\\", "\\\\").replace("\"", "\\\"") & "\"}"
+  let content = textContent(chunk)
   a.postJson("/open-apis/im/v1/messages?receive_id_type=open_id", %* {
     "receive_id": fsId,
     "msg_type":   "text",
@@ -231,7 +228,7 @@ proc editMessage*(a: FeishuAdapter; userId: UserId;
                   msgId, text: string): Result[void, string] =
   ## Updates an existing Feishu message via PATCH /im/v1/messages/{message_id}.
   let txt = if text.len > FsMaxChars: text[0 ..< FsMaxChars] else: text
-  let content = "{\"text\":\"" & txt.replace("\\", "\\\\").replace("\"", "\\\"") & "\"}"
+  let content = textContent(txt)
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let body    = %* {"content": content}
   let resp    = a.http.patch(a.base() & "/open-apis/im/v1/messages/" & msgId,

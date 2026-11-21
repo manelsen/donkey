@@ -17,24 +17,28 @@ func idSet(values: seq[string]): HashSet[string] =
   for value in values:
     result.incl value
 
-suite "setup wizard provider list":
+proc runTests*() =
+  suite "setup wizard provider list":
 
-  test "setup provider ids equal the descriptor ids as a set":
-    let expected = idSet(descriptorIds())
-    let actual = idSet(setupProviderIds())
-    check actual == expected
-    for id in descriptorIds():
-      check id in actual
-    for id in setupProviderIds():
-      check id in expected
+    test "setup provider ids equal the descriptor ids as a set":
+      let expected = idSet(descriptorIds())
+      let actual = idSet(setupProviderIds())
+      check actual == expected
+      for id in descriptorIds():
+        check id in actual
+      for id in setupProviderIds():
+        check id in expected
 
-  test "setup provider ids contain no duplicates":
-    let ids = setupProviderIds()
-    check ids.len == ids.deduplicate().len
-    check ids.len == idSet(ids).len
+    test "setup provider ids contain no duplicates":
+      let ids = setupProviderIds()
+      check ids.len == ids.deduplicate().len
+      check ids.len == idSet(ids).len
 
-  test "setup provider ids cover every descriptor exactly once":
-    let ids = setupProviderIds()
-    check ids.len == providerDescriptors().len
-    for descriptor in providerDescriptors():
-      check ids.count(descriptor.id) == 1
+    test "setup provider ids cover every descriptor exactly once":
+      let ids = setupProviderIds()
+      check ids.len == providerDescriptors().len
+      for descriptor in providerDescriptors():
+        check ids.count(descriptor.id) == 1
+
+when isMainModule:
+  runTests()

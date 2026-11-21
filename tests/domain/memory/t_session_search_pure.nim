@@ -8,109 +8,113 @@ proc rec(sessionId, role, text: string; kind = shkSession;
   SessionSearchRecord(sessionId: sessionId, kind: kind, role: role,
                       text: text, timestampMs: ts)
 
-suite "session_search_pure":
+proc runTests*() =
+  suite "session_search_pure":
 
-  test "query terms fold case and punctuation":
-    check queryTerms("Deploy, PRODUCTION!") == @["deploy", "production"]
-    check queryTerms("café") == @["café"]
-    check queryTerms("").len == 0
-    check queryTerms("a a a b") == @["a", "b"]
+    test "query terms fold case and punctuation":
+      check queryTerms("Deploy, PRODUCTION!") == @["deploy", "production"]
+      check queryTerms("café") == @["café"]
+      check queryTerms("").len == 0
+      check queryTerms("a a a b") == @["a", "b"]
 
-  test "scores records with all terms above partial matches":
-    let query = "deploy production"
-    let full = rec("s1", "user", "We deploy production on Fridays")
-    let partial = rec("s2", "user", "deploy staging only")
-    check scoreSessionRecord(full, query, 0) > scoreSessionRecord(partial, query, 0)
-    check scoreSessionRecord(rec("s3", "user", "nothing here"), query, 0) == 0
+    test "scores records with all terms above partial matches":
+      let query = "deploy production"
+      let full = rec("s1", "user", "We deploy production on Fridays")
+      let partial = rec("s2", "user", "deploy staging only")
+      check scoreSessionRecord(full, query, 0) > scoreSessionRecord(partial, query, 0)
+      check scoreSessionRecord(rec("s3", "user", "nothing here"), query, 0) == 0
 
-  test "phrase and role bonuses are applied":
-    let phrase = rec("s1", "user", "the deploy production checklist")
-    let scattered = rec("s2", "user", "deploy then production")
-    check scoreSessionRecord(phrase, "deploy production", 0) >
-          scoreSessionRecord(scattered, "deploy production", 0)
-    check scoreSessionRecord(rec("s1", "memory", "deploy"), "deploy", 0) >
-          scoreSessionRecord(rec("s1", "assistant", "deploy"), "deploy", 0)
+    test "phrase and role bonuses are applied":
+      let phrase = rec("s1", "user", "the deploy production checklist")
+      let scattered = rec("s2", "user", "deploy then production")
+      check scoreSessionRecord(phrase, "deploy production", 0) >
+            scoreSessionRecord(scattered, "deploy production", 0)
+      check scoreSessionRecord(rec("s1", "memory", "deploy"), "deploy", 0) >
+            scoreSessionRecord(rec("s1", "assistant", "deploy"), "deploy", 0)
 
-  test "recency breaks ties without dominating relevance":
-    let old = rec("old", "user", "deploy", ts = 0)
-    let recent = rec("recent", "user", "deploy", ts = 1_000_000)
-    check scoreSessionRecord(recent, "deploy", 1_000_001) >
-          scoreSessionRecord(old, "deploy", 1_000_001)
+    test "recency breaks ties without dominating relevance":
+      let old = rec("old", "user", "deploy", ts = 0)
+      let recent = rec("recent", "user", "deploy", ts = 1_000_000)
+      check scoreSessionRecord(recent, "deploy", 1_000_001) >
+            scoreSessionRecord(old, "deploy", 1_000_001)
 
-  test "snippet is bounded and UTF-8-safe":
-    let long = repeat("a", 200) & " café deploy " & repeat("b", 200)
-    let snippet = makeSnippet(long, "deploy", 80)
-    check snippet.len <= 90
-    check "deploy" in snippet
-    check validateUtf8(snippet) == -1
-    let emoji = "😀 " & repeat("x", 100) & " deploy"
-    check validateUtf8(makeSnippet(emoji, "deploy", 40)) == -1
+    test "snippet is bounded and UTF-8-safe":
+      let long = repeat("a", 200) & " café deploy " & repeat("b", 200)
+      let snippet = makeSnippet(long, "deploy", 80)
+      check snippet.len <= 90
+      check "deploy" in snippet
+      check validateUtf8(snippet) == -1
+      let emoji = "😀 " & repeat("x", 100) & " deploy"
+      check validateUtf8(makeSnippet(emoji, "deploy", 40)) == -1
 
-  test "rank filters, sorts and clamps":
-    let records = @[
-      rec("s1", "user", "deploy production"),
-      rec("s2", "user", "deploy"),
-      rec("s3", "user", "unrelated"),
-    ]
-    let hits = rankSessionRecords(records, "deploy", 0, 1)
-    check hits.len == 1
-    check hits[0].sessionId == "s1"
-    check hits[0].score > 0
+    test "rank filters, sorts and clamps":
+      let records = @[
+        rec("s1", "user", "deploy production"),
+        rec("s2", "user", "deploy"),
+        rec("s3", "user", "unrelated"),
+      ]
+      let hits = rankSessionRecords(records, "deploy", 0, 1)
+      check hits.len == 1
+      check hits[0].sessionId == "s1"
+      check hits[0].score > 0
 
-  test "zero limit uses the default and max limit is capped":
-    check clampSessionSearchLimit(0) == SessionSearchDefaultLimit
-    check clampSessionSearchLimit(-1) == SessionSearchDefaultLimit
-    check clampSessionSearchLimit(999) == SessionSearchMaxLimit
-    check clampSessionSearchLimit(7) == 7
+    test "zero limit uses the default and max limit is capped":
+      check clampSessionSearchLimit(0) == SessionSearchDefaultLimit
+      check clampSessionSearchLimit(-1) == SessionSearchDefaultLimit
+      check clampSessionSearchLimit(999) == SessionSearchMaxLimit
+      check clampSessionSearchLimit(7) == 7
 
-  test "all-term matches win; OR is only a fallback":
-    let full = rec("full", "user", "deploy production")
-    let partial = rec("partial", "user", "deploy staging")
-    let both = rankSessionRecords(@[full, partial], "deploy production", 0, 10)
-    check both.len == 1
-    check both[0].sessionId == "full"
-    let fallback = rankSessionRecords(@[partial], "deploy production", 0, 10)
-    check fallback.len == 1
-    check fallback[0].sessionId == "partial"
+    test "all-term matches win; OR is only a fallback":
+      let full = rec("full", "user", "deploy production")
+      let partial = rec("partial", "user", "deploy staging")
+      let both = rankSessionRecords(@[full, partial], "deploy production", 0, 10)
+      check both.len == 1
+      check both[0].sessionId == "full"
+      let fallback = rankSessionRecords(@[partial], "deploy production", 0, 10)
+      check fallback.len == 1
+      check fallback[0].sessionId == "partial"
 
-  test "empty query returns no hits":
-    check rankSessionRecords(@[rec("s1", "user", "deploy")], "", 0).len == 0
+    test "empty query returns no hits":
+      check rankSessionRecords(@[rec("s1", "user", "deploy")], "", 0).len == 0
 
-suite "lexical ranking of plain texts":
+  suite "lexical ranking of plain texts":
 
-  test "ranks texts that hold every term before partial matches are dropped":
-    let texts = @["deploy de producao na sexta", "almoco", "deploy antigo"]
-    check rankTextsLexically(texts, "deploy producao", 5) == @[0]
+    test "ranks texts that hold every term before partial matches are dropped":
+      let texts = @["deploy de producao na sexta", "almoco", "deploy antigo"]
+      check rankTextsLexically(texts, "deploy producao", 5) == @[0]
 
-  test "falls back to partial matches when no text holds every term":
-    let texts = @["deploy antigo", "almoco", "producao parada"]
-    let ranked = rankTextsLexically(texts, "deploy producao", 5)
-    check ranked.len == 2
-    check 1 notin ranked
+    test "falls back to partial matches when no text holds every term":
+      let texts = @["deploy antigo", "almoco", "producao parada"]
+      let ranked = rankTextsLexically(texts, "deploy producao", 5)
+      check ranked.len == 2
+      check 1 notin ranked
 
-  test "more occurrences rank higher":
-    let texts = @["zarabatana", "zarabatana zarabatana zarabatana"]
-    check rankTextsLexically(texts, "zarabatana", 5) == @[1, 0]
+    test "more occurrences rank higher":
+      let texts = @["zarabatana", "zarabatana zarabatana zarabatana"]
+      check rankTextsLexically(texts, "zarabatana", 5) == @[1, 0]
 
-  test "ties keep the input order":
-    let texts = @["nota zarabatana a", "nota zarabatana b"]
-    check rankTextsLexically(texts, "zarabatana", 5) == @[0, 1]
+    test "ties keep the input order":
+      let texts = @["nota zarabatana a", "nota zarabatana b"]
+      check rankTextsLexically(texts, "zarabatana", 5) == @[0, 1]
 
-  test "is case-insensitive and accent-aware like session search":
-    check rankTextsLexically(@["O CODINOME É Zarabatana"], "zarabatana", 5) == @[0]
+    test "is case-insensitive and accent-aware like session search":
+      check rankTextsLexically(@["O CODINOME É Zarabatana"], "zarabatana", 5) == @[0]
 
-  test "respects the limit and ignores empty input":
-    let texts = @["a zarabatana", "b zarabatana", "c zarabatana"]
-    check rankTextsLexically(texts, "zarabatana", 2).len == 2
-    check rankTextsLexically(texts, "", 5).len == 0
-    check rankTextsLexically(newSeq[string](), "zarabatana", 5).len == 0
-    check rankTextsLexically(texts, "zarabatana", 0).len == 0
+    test "respects the limit and ignores empty input":
+      let texts = @["a zarabatana", "b zarabatana", "c zarabatana"]
+      check rankTextsLexically(texts, "zarabatana", 2).len == 2
+      check rankTextsLexically(texts, "", 5).len == 0
+      check rankTextsLexically(newSeq[string](), "zarabatana", 5).len == 0
+      check rankTextsLexically(texts, "zarabatana", 0).len == 0
 
-  test "one- and two-letter terms do not decide the ranking":
-    ## "o" is inside almost every word; counting it would rank by letters.
-    let texts = @["ooooo oooo ooo", "o codinome e zarabatana"]
-    check rankTextsLexically(texts, "o codinome", 5) == @[1]
+    test "one- and two-letter terms do not decide the ranking":
+      ## "o" is inside almost every word; counting it would rank by letters.
+      let texts = @["ooooo oooo ooo", "o codinome e zarabatana"]
+      check rankTextsLexically(texts, "o codinome", 5) == @[1]
 
-  test "a query made only of short terms still matches":
-    check rankTextsLexically(@["id 42", "outra coisa"], "id 42", 5) == @[0]
+    test "a query made only of short terms still matches":
+      check rankTextsLexically(@["id 42", "outra coisa"], "id 42", 5) == @[0]
 
+
+when isMainModule:
+  runTests()

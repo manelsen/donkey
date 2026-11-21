@@ -209,3 +209,10 @@ func hasMedia*(r: FsParseResult): bool =
 func isVerification*(r: FsParseResult): bool =
   ## True when this is a url_verification challenge that must be echoed back.
   r.kind == fmkEvent and r.eventType == "url_verification" and r.challenge.len > 0
+
+# ── Outbound content ──────────────────────────────────────────────────────────
+
+func textContent*(text: string): string =
+  ## Feishu `content` field for msg_type=text: a JSON-encoded string
+  ## `{"text": ...}`. Built with std/json so control chars are escaped.
+  $(%* {"text": text})

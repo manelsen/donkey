@@ -7,23 +7,27 @@ import donkey/ports/embedding
 
 proc verifyEmbeddingPort[T: EmbeddingPort](e: T) {.used.} = discard
 
-suite "newOpenRouterEmbeddingAdapter":
+proc runTests*() =
+  suite "newOpenRouterEmbeddingAdapter":
 
-  test "default model is set":
-    let a = newOpenRouterEmbeddingAdapter("key")
-    check a.model == DefaultEmbedModel
+    test "default model is set":
+      let a = newOpenRouterEmbeddingAdapter("key")
+      check a.model == DefaultEmbedModel
 
-  test "custom model is used":
-    let a = newOpenRouterEmbeddingAdapter("key", model = "text-embedding-3-small")
-    check a.model == "text-embedding-3-small"
+    test "custom model is used":
+      let a = newOpenRouterEmbeddingAdapter("key", model = "text-embedding-3-small")
+      check a.model == "text-embedding-3-small"
 
-  test "api key is stored":
-    let a = newOpenRouterEmbeddingAdapter("my-secret-key")
-    check a.apiKey == "my-secret-key"
+    test "api key is stored":
+      let a = newOpenRouterEmbeddingAdapter("my-secret-key")
+      check a.apiKey == "my-secret-key"
 
-suite "OpenRouterEmbeddingAdapter satisfies EmbeddingPort concept":
+  suite "OpenRouterEmbeddingAdapter satisfies EmbeddingPort concept":
 
-  test "compile-time concept check passes":
-    let a = newOpenRouterEmbeddingAdapter("tok")
-    verifyEmbeddingPort(a)
-    check true
+    test "compile-time concept check passes":
+      let a = newOpenRouterEmbeddingAdapter("tok")
+      verifyEmbeddingPort(a)
+      check true
+
+when isMainModule:
+  runTests()

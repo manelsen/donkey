@@ -26,38 +26,42 @@ proc writeTemp(name: string; content: string): string =
   result = getTempDir() / ("donkey_inspect_" & $getCurrentProcessId() & "_" & name)
   writeFile(result, content)
 
-suite "inspect_image inline policy":
+proc runTests*() =
+  suite "inspect_image inline policy":
 
-  setup:
-    gCalls.setLen(0)
+    setup:
+      gCalls.setLen(0)
 
-  test "a png is sent as a data URL with the right media type":
-    let path = writeTemp("ok.png", "PNGDATA")
-    defer: removeFile(path)
-    let reply = performInspectImage(path, "o que é?", fakeComplete)
-    check reply == "descrição"
-    check gCalls.len == 1
-    let msg = gCalls[0].messages[^1]
-    check msg.imageUrl.startsWith("data:image/png;base64,")
+    test "a png is sent as a data URL with the right media type":
+      let path = writeTemp("ok.png", "PNGDATA")
+      defer: removeFile(path)
+      let reply = performInspectImage(path, "o que é?", fakeComplete)
+      check reply == "descrição"
+      check gCalls.len == 1
+      let msg = gCalls[0].messages[^1]
+      check msg.imageUrl.startsWith("data:image/png;base64,")
 
-  test "an unsupported extension is refused, not relabelled as jpeg":
-    for ext in [".svg", ".bmp", ".heic"]:
-      let path = writeTemp("bad" & ext, "<svg/>")
+    test "an unsupported extension is refused, not relabelled as jpeg":
+      for ext in [".svg", ".bmp", ".heic"]:
+        let path = writeTemp("bad" & ext, "<svg/>")
+        defer: removeFile(path)
+        let reply = performInspectImage(path, "", fakeComplete)
+        check reply.toLowerAscii().contains("unsupported")
+        check not reply.contains("data:")
+      check gCalls.len == 0
+
+    test "a file over the inline cap is refused before encoding":
+      let path = getTempDir() /
+        ("donkey_inspect_" & $getCurrentProcessId() & "_big.png")
+      let size = MaxInlineImageEncodedBytes  # raw > 3/4 of the encoded cap
+      writeFile(path, repeat('A', size))
       defer: removeFile(path)
       let reply = performInspectImage(path, "", fakeComplete)
-      check reply.toLowerAscii().contains("unsupported")
-      check not reply.contains("data:")
-    check gCalls.len == 0
+      # The precheck must fire, not `imageDataUrl`'s encoded-size error: the
+      # latter also contains "large" and would hide a deleted precheck.
+      check reply.contains("raw bytes")
+      check not reply.contains("encoded bytes")
+      check gCalls.len == 0
 
-  test "a file over the inline cap is refused before encoding":
-    let path = getTempDir() /
-      ("donkey_inspect_" & $getCurrentProcessId() & "_big.png")
-    let size = MaxInlineImageEncodedBytes  # raw > 3/4 of the encoded cap
-    writeFile(path, repeat('A', size))
-    defer: removeFile(path)
-    let reply = performInspectImage(path, "", fakeComplete)
-    # The precheck must fire, not `imageDataUrl`'s encoded-size error: the
-    # latter also contains "large" and would hide a deleted precheck.
-    check reply.contains("raw bytes")
-    check not reply.contains("encoded bytes")
-    check gCalls.len == 0
+when isMainModule:
+  runTests()

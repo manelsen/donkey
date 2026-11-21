@@ -27,9 +27,12 @@
 ##   4. qqRawIdentity(r)     → string               ("group:<id>" or userId)
 ##   5. isInteraction(r)     → bool
 ##   6. hasMedia(r)          → bool
+##   7. oneBotSignatureValid(secret, body, header) → bool   (OneBot v11 HTTP POST)
+##   8. oneBotListenerCheck(host, secret) → Result      (refuse public unsigned bind)
 
-import std/json
+import std/[json, net, strutils]
 import ../../core/pipeops
+import ../../core/security/webhook_auth
 import ../../domain/message
 
 # ── Domain types ──────────────────────────────────────────────────────────────
@@ -181,3 +184,41 @@ func isInteraction*(r: QqParseResult): bool =
 func hasMedia*(r: QqParseResult): bool =
   ## QQ official bot v1 does not support media inbound; always false.
   false
+
+
+# ---------------------------------------------------------------------------
+# OneBot v11 HTTP POST authentication
+# ---------------------------------------------------------------------------
+
+func oneBotSignatureValid*(secret, body, header: string): bool =
+  ## OneBot v11 sends `X-Signature: sha1=<hex HMAC-SHA1(secret, body)>` when
+  ## the bridge has a `secret` configured. Without a local secret there is
+  ## nothing to verify (oneBotListenerCheck then keeps the bind on loopback).
+  if secret.len == 0:
+    return true
+  const prefix = "sha1="
+  if not header.startsWith(prefix):
+    return false
+  safeEquals(header[prefix.len .. ^1].toLowerAscii(), hmacSha1Hex(secret, body))
+
+func isLoopbackBindHost*(host: string): bool =
+  ## Bind address (not a URL): `localhost`, 127.0.0.0/8 or ::1.
+  let h = host.strip().toLowerAscii()
+  if h == "localhost":
+    return true
+  try:
+    let ip = parseIpAddress(h)
+    case ip.family
+    of IPv4: ip.address_v4[0] == 127'u8
+    of IPv6: ip == parseIpAddress("::1")
+  except ValueError:
+    false
+
+func oneBotListenerCheck*(host, secret: string): Result[void, string] =
+  ## Anyone who can reach an unsigned listener can inject messages as any QQ
+  ## user, so a non-loopback bind requires QQ_ONEBOT_SECRET.
+  if secret.len > 0 or isLoopbackBindHost(host):
+    ok()
+  else:
+    err("QQ OneBot webhook on " & host & " requires QQ_ONEBOT_SECRET " &
+        "(or bind to 127.0.0.1)")

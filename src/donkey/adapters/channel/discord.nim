@@ -52,7 +52,8 @@ type
 # ── Gateway thread ─────────────────────────────────────────────────────────────
 
 ## Module-level channel — opened once, valid for daemon lifetime.
-## Thread-safe: chronos Channel uses internal synchronization.
+## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
+## lock internally and deep-copy the payload. Must be open()ed before use.
 var gDiscordEvents* {.global.}: Channel[DiscordRawEvent]
 
 ## Buffer for messages received before gateway is ready (READY dispatch).
@@ -344,7 +345,7 @@ proc discordGatewayThread(arg: GatewayArgs) {.thread.} =
       # OP=7 is normal - Discord requests reconnect for load balancing
       arg.logger.info("discord: reconnecting…")
       sleep(1000) # Brief pause before reconnect
-    except Exception as e:
+    except CatchableError as e:
       arg.logger.error("discord: gateway error: " & e.msg & " — reconnecting in " & $backoffMs & " ms")
       sleep(backoffMs)
       backoffMs = min(backoffMs * 2, 60_000)
@@ -551,10 +552,19 @@ proc send*(a: DiscordAdapter; msg: OutboundMessage): Result[void, string] =
     ? a.sendChunk(chId, chunk)
   ok()
 
+const DiscordEphemeralFlag* = 64  ## message visible only to the invoking user
+
+func interactionMessageData*(content: string; ephemeral: bool): JsonNode =
+  result = %* {"content": content}
+  if ephemeral:
+    result["flags"] = %DiscordEphemeralFlag
+
 proc sendInteractionResponse*(a: DiscordAdapter;
-                              interactionId, interactionToken, text: string): Result[void, string] =
+                              interactionId, interactionToken, text: string;
+                              ephemeral = false): Result[void, string] =
   ## Responds to a slash command interaction (must be within 3 seconds).
-  let body    = %* {"type": 4, "data": {"content": text}}
+  ## An ephemeral response is shown only to the user who ran the command.
+  let body    = %* {"type": 4, "data": interactionMessageData(text, ephemeral)}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url = a.base() & "/interactions/" & interactionId & "/" & interactionToken & "/callback"
   let resp = ? a.http.post(url, $body, headers)
@@ -581,15 +591,16 @@ proc sendInteractionEmbedPage*(a: DiscordAdapter;
                                interactionId, interactionToken: string;
                                title, description: string;
                                color: int;
-                               buttons: seq[seq[(string, string)]]): Result[void, string] =
+                               buttons: seq[seq[(string, string)]];
+                               ephemeral = false): Result[void, string] =
   ## Responds to a slash command with a rich embed + navigation buttons (type 4).
-  let body = %* {
-    "type": 4,
-    "data": {
-      "embeds": [{"title": title, "description": description, "color": color}],
-      "components": makeComponentRows(buttons),
-    },
+  var data = %* {
+    "embeds": [{"title": title, "description": description, "color": color}],
+    "components": makeComponentRows(buttons),
   }
+  if ephemeral:
+    data["flags"] = %DiscordEphemeralFlag
+  let body = %* {"type": 4, "data": data}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url = a.base() & "/interactions/" & interactionId & "/" & interactionToken & "/callback"
   let resp = ? a.http.post(url, $body, headers)
@@ -763,7 +774,7 @@ proc getAppId*(a: DiscordAdapter): Result[string, string] =
     let id = ? extractId(resp)
     if a.appId != nil: a.appId[] = id
     ok(id)
-  except Exception as e:
+  except CatchableError as e:
     err(e.msg)
 
 proc registerSlashCommands*(a: DiscordAdapter; appId: string; guildId = ""): Result[void, string] =
@@ -787,7 +798,7 @@ proc registerSlashCommands*(a: DiscordAdapter; appId: string; guildId = ""): Res
     if resp.status < 200 or resp.status >= 300:
       return err("Discord register commands error " & $resp.status & ": " & resp.body)
     ok()
-  except Exception as e:
+  except CatchableError as e:
     err("Discord register commands failed: " & e.msg)
 
 # ── Constructor ────────────────────────────────────────────────────────────────

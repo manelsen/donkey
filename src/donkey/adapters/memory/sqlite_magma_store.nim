@@ -516,7 +516,7 @@ when defined(withSqlite):
           fromId: row[0],
           toId: row[1],
           edgeType: row[2],
-          weight: try: parseFloat(row[3]) except: 1.0,
+          weight: try: parseFloat(row[3]) except CatchableError: 1.0,
           meta: parseMeta(row[4]),
         ))
     except CatchableError:
@@ -612,7 +612,7 @@ when defined(withSqlite):
               break
             result.add(MagmaHit(
               node: rowToNode(row[0 .. 7]),
-              score: clamp(try: parseFloat(row[8]) except: 0.0, 0.0, 1.0).float32,
+              score: clamp(try: parseFloat(row[8]) except CatchableError: 0.0, 0.0, 1.0).float32,
               path: @[row[0]],
             ))
           if result.len >= topK or rows.len < k:
