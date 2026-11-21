@@ -11,10 +11,18 @@ on:
 permissions:
   contents: read
 
+env:
+  # 2.2.14/2.4.x SIGSEGV under ORC when a built-in Channel carries GC-managed
+  # values (provider executor). The cache key includes this version so artifacts
+  # from another compiler are never restored.
+  NIM_VERSION: '2.2.12'
+
 jobs:
-  test-and-build:
-    name: Build & Test
+  build:
+    name: Build & boundaries
     runs-on: ubuntu-latest
+    env:
+      NIM_CACHE_SUFFIX: build
 
     steps:
       - name: Checkout code
@@ -41,7 +49,7 @@ jobs:
       - name: Set up Nim
         uses: jiro4989/setup-nim-action@v2
         with:
-          nim-version: '2.2.8'
+          nim-version: ${{ env.NIM_VERSION }}
 
       - name: Cache Nim & Nimble artifacts
         uses: actions/cache@v4
@@ -49,17 +57,12 @@ jobs:
           path: |
             ~/.nimble
             ~/.cache/nim
-          key: ${{ runner.os }}-nim-cache-${{ hashFiles('donkey.nimble') }}
+          key: ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-${{ env.NIM_CACHE_SUFFIX }}-${{ hashFiles('donkey.nimble') }}
           restore-keys: |
-            ${{ runner.os }}-nim-cache-
+            ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-${{ env.NIM_CACHE_SUFFIX }}-
 
       - name: Install Nim dependencies
         run: |
-          if [ ! -d ~/.nimble/pkgs2/wasm3* ]; then
-            git clone --recurse-submodules https://github.com/beef331/wasm3 /tmp/wasm3
-            rm -rf /tmp/wasm3/src/wasm3/wasm3c/platforms
-            (cd /tmp/wasm3 && nimble install -y)
-          fi
           nimble install -y --depsOnly
 
       - name: Verify architectural boundaries
@@ -68,13 +71,126 @@ jobs:
       - name: Build Donkey binary
         run: nimble build -y
 
-      - name: Run test suite
-        env:
-          JOBS: 4
-        run: nimble test
+      - name: Check the binary
+        run: ./donkey --version
+
+      - name: Self-check affected selection
+        run: |
+          check_exact() {
+            local files="$1" expected="$2" actual
+            actual="$(AFFECTED_FILES="$files" bash scripts/affected_tests.sh)"
+            if [ "$actual" != "$expected" ]; then
+              echo "affected_tests.sh('$files') = [$actual], expected [$expected]" >&2
+              return 1
+            fi
+          }
+          channel="$(AFFECTED_FILES=src/donkey/adapters/channel/telegram.nim bash scripts/affected_tests.sh)"
+          if ! printf '%s\n' "$channel" | grep -qxF 'tests/adapters/channel'; then
+            echo "channel change did not select tests/adapters/channel: [$channel]" >&2
+            exit 1
+          fi
+          check_exact src/donkey/core/log.nim tests
+          check_exact README.md tests/architecture
+          echo "affected selection self-check passed"
 
       - name: Run stress suite
         run: bash scripts/run_stress_tests.sh
+
+  # PRs run only the targets affected by the diff (scripts/affected_tests.sh);
+  # master runs the full suite split across four shards.
+  test:
+    name: Tests (${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      NIM_CACHE_SUFFIX: shard-${{ matrix.shard }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          if ! dpkg -s libssl-dev >/dev/null 2>&1; then
+            sudo apt-get update || true
+            sudo apt-get install -y libssl-dev || true
+          fi
+          if ! command -v rg >/dev/null 2>&1; then
+            # Ubuntu mirrors are a recurring transient failure in this runner.
+            # ripgrep ships a static musl binary on GitHub releases.
+            RG_VERSION=14.1.1
+            curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o /tmp/ripgrep.tar.gz
+            sudo mkdir -p /opt/ripgrep
+            sudo tar -xzf /tmp/ripgrep.tar.gz -C /opt/ripgrep --strip-components=1
+            sudo ln -sf /opt/ripgrep/rg /usr/local/bin/rg
+          fi
+          command -v rg >/dev/null 2>&1 || { echo "ripgrep is required"; exit 1; }
+          dpkg -s libssl-dev >/dev/null 2>&1 || { echo "libssl-dev is required"; exit 1; }
+
+      - name: Set up Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: ${{ env.NIM_VERSION }}
+
+      - name: Cache Nim & Nimble artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.nimble
+            ~/.cache/nim
+          key: ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-${{ env.NIM_CACHE_SUFFIX }}-${{ hashFiles('donkey.nimble') }}
+          restore-keys: |
+            ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-${{ env.NIM_CACHE_SUFFIX }}-
+
+      - name: Install Nim dependencies
+        run: |
+          nimble install -y --depsOnly
+
+      - name: Fetch base branch
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin \
+            "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+
+      - name: Fingerprint grouped test inputs
+        id: grouped_inputs
+        run: |
+          fingerprints="$(python3 scripts/test_build_fingerprint.py)"
+          read -r profile inputs <<< "$fingerprints"
+          printf '%s\n' "$fingerprints" > "$RUNNER_TEMP/donkey-grouped-fingerprints"
+          echo "profile=$profile" >> "$GITHUB_OUTPUT"
+          echo "inputs=$inputs" >> "$GITHUB_OUTPUT"
+
+      - name: Cache grouped test binaries and objects
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/donkey/grouped-tests
+          key: grouped-tests-v1-${{ matrix.shard }}-${{ steps.grouped_inputs.outputs.profile }}-${{ steps.grouped_inputs.outputs.inputs }}
+          restore-keys: |
+            grouped-tests-v1-${{ matrix.shard }}-${{ steps.grouped_inputs.outputs.profile }}-
+
+      - name: Run tests
+        env:
+          JOBS: 4
+          SHARD_INDEX: ${{ matrix.shard }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
+          # The fetch step creates origin/<branch>; checkout leaves no local branch.
+          BASE_REF: origin/${{ github.base_ref }}
+        run: |
+          export TEST_GROUP_CACHE_DIR="$HOME/.cache/donkey/grouped-tests"
+          export TEST_GROUP_FINGERPRINT_FILE="$RUNNER_TEMP/donkey-grouped-fingerprints"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            mapfile -t targets < <(bash scripts/affected_tests.sh "$BASE_REF")
+          else
+            targets=(tests)
+          fi
+          bash scripts/run_tests.sh "${targets[@]}"
 
   docs:
     name: Documentation
@@ -87,7 +203,7 @@ jobs:
       - name: Set up Nim
         uses: jiro4989/setup-nim-action@v2
         with:
-          nim-version: '2.2.8'
+          nim-version: ${{ env.NIM_VERSION }}
 
       - name: Cache Nim & Nimble artifacts
         uses: actions/cache@v4
@@ -95,18 +211,12 @@ jobs:
           path: |
             ~/.nimble
             ~/.cache/nim
-          key: ${{ runner.os }}-nim-cache-${{ hashFiles('donkey.nimble') }}
+          key: ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-docs-${{ hashFiles('donkey.nimble') }}
           restore-keys: |
-            ${{ runner.os }}-nim-cache-
+            ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-docs-
 
       - name: Install Nim dependencies
-        run: |
-          if [ ! -d ~/.nimble/pkgs2/wasm3* ]; then
-            git clone --recurse-submodules https://github.com/beef331/wasm3 /tmp/wasm3
-            rm -rf /tmp/wasm3/src/wasm3/wasm3c/platforms
-            (cd /tmp/wasm3 && nimble install -y)
-          fi
-          nimble install -y --depsOnly
+        run: nimble install -y --depsOnly
 
       - name: Generate API documentation
         run: bash scripts/generate_docs.sh
@@ -128,7 +238,6 @@ jobs:
     runs-on: ubuntu-latest
     container: quay.io/pypa/manylinux_2_28_x86_64
     env:
-      NIM_VERSION: '2.2.8'
       MAX_GLIBC: '2.28'
 
     steps:
@@ -146,9 +255,6 @@ jobs:
 
       - name: Install Nim dependencies
         run: |
-          git clone --recurse-submodules https://github.com/beef331/wasm3 /tmp/wasm3
-          rm -rf /tmp/wasm3/src/wasm3/wasm3c/platforms
-          (cd /tmp/wasm3 && nimble install -y)
           nimble install -y --depsOnly
 
       - name: Build optimized binary
@@ -190,7 +296,7 @@ jobs:
     # rolling "nightly" pre-release, which deploy/update.sh downloads.
     name: Publish nightly binary
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: [test-and-build, package]
+    needs: [test, package]
     runs-on: ubuntu-latest
     permissions:
       contents: write

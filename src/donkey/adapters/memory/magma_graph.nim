@@ -330,7 +330,7 @@ when defined(withPostgres):
           fromId: row[0],
           toId: row[1],
           edgeType: row[2],
-          weight: try: parseFloat(row[3]) except: 1.0,
+          weight: try: parseFloat(row[3]) except CatchableError: 1.0,
           meta: if row[4].len > 0: parseJson(row[4]) else: newJObject(),
         ))
     except CatchableError:
@@ -417,7 +417,7 @@ when defined(withPostgres):
             columns & " WHERE user_id = ? AND embedding IS NOT NULL" & order
           ), emb, userId, emb, $topK)
       for row in rows:
-        let score = try: parseFloat(row[6]).float32 except: 0.0
+        let score = try: parseFloat(row[6]).float32 except CatchableError: 0.0
         if score >= minScore:
           result.add(MagmaHit(
             node: MagmaNode(

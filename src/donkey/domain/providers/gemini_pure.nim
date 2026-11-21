@@ -35,12 +35,12 @@ proc textPart*(text: string): JsonNode =
 proc functionCallPart*(tc: ToolCallRequest): JsonNode =
   ## Converts a ToolCallRequest to a Gemini functionCall part.
   ## inputJson is used as-is (assumed pre-serialized or simple string).
-  let args = try: parseJson(tc.inputJson) except: newJObject()
+  let args = try: parseJson(tc.inputJson) except CatchableError: newJObject()
   %* {"functionCall": {"name": tc.name, "args": args}}
 
 proc functionResponsePart*(msg: ChatMessage; functionName: string): JsonNode =
   ## Converts a tool-result message to a Gemini functionResponse part.
-  let response = try: parseJson(msg.text) except: %* {"result": msg.text}
+  let response = try: parseJson(msg.text) except CatchableError: %* {"result": msg.text}
   %* {"functionResponse": {"name": functionName, "response": response, "id": msg.toolCallId}}
 
 # ── Content array builder ────────────────────────────────────────────────────
@@ -92,7 +92,7 @@ proc buildToolsArray*(tools: seq[ToolDescription]): JsonNode =
   ## Serializes tool descriptions to Gemini tools format.
   var declarations = newJArray()
   for td in tools:
-    let schema = try: parseJson(td.schemaJson) except: newJObject()
+    let schema = try: parseJson(td.schemaJson) except CatchableError: newJObject()
     declarations.add(%* {
       "name": td.name,
       "description": td.description,

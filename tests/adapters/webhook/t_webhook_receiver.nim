@@ -99,506 +99,510 @@ proc clearQueues() =
   var wa = newWhatsAppAdapter("tok", "PN1", HookTmp / "wa.tsv")
   while wa.tryRecvEvent()[0]: discard
 
-suite "webhook receiver — crypto helpers":
+proc runTests*() =
+  suite "webhook receiver — crypto helpers":
 
-  test "hmacSha256Hex matches the RFC 4231 test vector":
-    check hmacSha256Hex("key", "The quick brown fox jumps over the lazy dog") ==
-      "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+    test "hmacSha256Hex matches the RFC 4231 test vector":
+      check hmacSha256Hex("key", "The quick brown fox jumps over the lazy dog") ==
+        "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
 
-suite "webhook receiver — read errors":
+  suite "webhook receiver — read errors":
 
-  test "an oversized body is a 413, not a 400":
-    ## The socket reader rejects before routing, so the status must still say
-    ## what happened; a 400 would look like a malformed payload.
-    check readErrorResponse("body too large").status == 413
-    check readErrorResponse("truncated body").status == 400
-    check readErrorResponse("request deadline exceeded").status == 400
+    test "an oversized body is a 413, not a 400":
+      ## The socket reader rejects before routing, so the status must still say
+      ## what happened; a 400 would look like a malformed payload.
+      check readErrorResponse("body too large").status == 413
+      check readErrorResponse("truncated body").status == 400
+      check readErrorResponse("request deadline exceeded").status == 400
 
-suite "webhook receiver — Slack":
+  suite "webhook receiver — Slack":
 
-  test "url_verification challenge is echoed when the signature is valid":
-    let secret = "slack-signing"
-    let body = """{"type":"url_verification","challenge":"ch-1"}"""
-    let ts = $epochTime().int64
-    let cfg = WebhookConfig(slackSigningSecret: secret)
+    test "url_verification challenge is echoed when the signature is valid":
+      let secret = "slack-signing"
+      let body = """{"type":"url_verification","challenge":"ch-1"}"""
+      let ts = $epochTime().int64
+      let cfg = WebhookConfig(slackSigningSecret: secret)
 
-    let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
-      headers = [("X-Slack-Request-Timestamp", ts),
-                 ("X-Slack-Signature", slackSig(secret, ts, body))]))
+      let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
+        headers = [("X-Slack-Request-Timestamp", ts),
+                   ("X-Slack-Signature", slackSig(secret, ts, body))]))
 
-    check resp.status == 200
-    check resp.body == "ch-1"
+      check resp.status == 200
+      check resp.body == "ch-1"
 
-  test "invalid signature is rejected":
-    let cfg = WebhookConfig(slackSigningSecret: "slack-signing")
-    let ts = $epochTime().int64
-    let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath,
-      """{"type":"url_verification","challenge":"ch-1"}""",
-      headers = [("X-Slack-Request-Timestamp", ts),
-                 ("X-Slack-Signature", "v0=deadbeef")]))
-    check resp.status == 403
+    test "invalid signature is rejected":
+      let cfg = WebhookConfig(slackSigningSecret: "slack-signing")
+      let ts = $epochTime().int64
+      let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath,
+        """{"type":"url_verification","challenge":"ch-1"}""",
+        headers = [("X-Slack-Request-Timestamp", ts),
+                   ("X-Slack-Signature", "v0=deadbeef")]))
+      check resp.status == 403
 
-  test "stale timestamp is rejected (replay window)":
-    let secret = "slack-signing"
-    let body = """{"type":"url_verification","challenge":"ch-1"}"""
-    let ts = $(epochTime().int64 - 3600)
-    let cfg = WebhookConfig(slackSigningSecret: secret)
-    let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
-      headers = [("X-Slack-Request-Timestamp", ts),
-                 ("X-Slack-Signature", slackSig(secret, ts, body))]))
-    check resp.status == 403
+    test "stale timestamp is rejected (replay window)":
+      let secret = "slack-signing"
+      let body = """{"type":"url_verification","challenge":"ch-1"}"""
+      let ts = $(epochTime().int64 - 3600)
+      let cfg = WebhookConfig(slackSigningSecret: secret)
+      let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
+        headers = [("X-Slack-Request-Timestamp", ts),
+                   ("X-Slack-Signature", slackSig(secret, ts, body))]))
+      check resp.status == 403
 
-  test "extreme negative timestamp is rejected without overflowing":
-    let secret = "slack-signing"
-    let body = """{"type":"url_verification","challenge":"ch-1"}"""
-    let ts = "-9223372036854775000"
-    let cfg = WebhookConfig(slackSigningSecret: secret)
-    let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
-      headers = [("X-Slack-Request-Timestamp", ts),
-                 ("X-Slack-Signature", slackSig(secret, ts, body))]))
-    check resp.status == 403
+    test "extreme negative timestamp is rejected without overflowing":
+      let secret = "slack-signing"
+      let body = """{"type":"url_verification","challenge":"ch-1"}"""
+      let ts = "-9223372036854775000"
+      let cfg = WebhookConfig(slackSigningSecret: secret)
+      let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
+        headers = [("X-Slack-Request-Timestamp", ts),
+                   ("X-Slack-Signature", slackSig(secret, ts, body))]))
+      check resp.status == 403
 
-  test "extreme positive timestamp is rejected":
-    let secret = "slack-signing"
-    let body = """{"type":"url_verification","challenge":"ch-1"}"""
-    let ts = "9223372036854775807"
-    let cfg = WebhookConfig(slackSigningSecret: secret)
-    let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
-      headers = [("X-Slack-Request-Timestamp", ts),
-                 ("X-Slack-Signature", slackSig(secret, ts, body))]))
-    check resp.status == 403
+    test "extreme positive timestamp is rejected":
+      let secret = "slack-signing"
+      let body = """{"type":"url_verification","challenge":"ch-1"}"""
+      let ts = "9223372036854775807"
+      let cfg = WebhookConfig(slackSigningSecret: secret)
+      let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
+        headers = [("X-Slack-Request-Timestamp", ts),
+                   ("X-Slack-Signature", slackSig(secret, ts, body))]))
+      check resp.status == 403
 
-  test "message payload is dispatched to the Slack queue":
-    clearQueues()
-    var sl = newSlackAdapter("tok", HookTmp / "slack.tsv")
-    sl.openQueue()
-    let secret = "slack-signing"
-    let body = """{"type":"event_callback","team_id":"T1",
+    test "message payload is dispatched to the Slack queue":
+      clearQueues()
+      var sl = newSlackAdapter("tok", HookTmp / "slack.tsv")
+      sl.openQueue()
+      let secret = "slack-signing"
+      let body = """{"type":"event_callback","team_id":"T1",
       "event":{"type":"message","user":"U1","text":"hi there",
                "channel":"C1","ts":"1.1"}}"""
-    let ts = $epochTime().int64
-    let cfg = WebhookConfig(slackSigningSecret: secret)
+      let ts = $epochTime().int64
+      let cfg = WebhookConfig(slackSigningSecret: secret)
 
-    let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
-      headers = [("X-Slack-Request-Timestamp", ts),
-                 ("X-Slack-Signature", slackSig(secret, ts, body))]))
+      let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
+        headers = [("X-Slack-Request-Timestamp", ts),
+                   ("X-Slack-Signature", slackSig(secret, ts, body))]))
 
-    check resp.status == 200
-    let (hasEvent, event) = sl.tryRecvEvent()
-    check hasEvent
-    check event.slackUserId == "U1"
-    check event.text == "hi there"
+      check resp.status == 200
+      let (hasEvent, event) = sl.tryRecvEvent()
+      check hasEvent
+      check event.slackUserId == "U1"
+      check event.text == "hi there"
 
-  test "form-encoded slash command is normalized and dispatched":
-    clearQueues()
-    var sl = newSlackAdapter("tok", HookTmp / "slack.tsv")
-    sl.openQueue()
-    let secret = "slack-signing"
-    let body = "user_id=U9&command=%2Fhelp&text=now&channel_id=C9" &
-               "&team_id=T9&trigger_id=tr9"
-    let ts = $epochTime().int64
-    let cfg = WebhookConfig(slackSigningSecret: secret)
+    test "form-encoded slash command is normalized and dispatched":
+      clearQueues()
+      var sl = newSlackAdapter("tok", HookTmp / "slack.tsv")
+      sl.openQueue()
+      let secret = "slack-signing"
+      let body = "user_id=U9&command=%2Fhelp&text=now&channel_id=C9" &
+                 "&team_id=T9&trigger_id=tr9"
+      let ts = $epochTime().int64
+      let cfg = WebhookConfig(slackSigningSecret: secret)
 
-    let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
-      headers = [("X-Slack-Request-Timestamp", ts),
-                 ("X-Slack-Signature", slackSig(secret, ts, body)),
-                 ("Content-Type", "application/x-www-form-urlencoded")]))
+      let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
+        headers = [("X-Slack-Request-Timestamp", ts),
+                   ("X-Slack-Signature", slackSig(secret, ts, body)),
+                   ("Content-Type", "application/x-www-form-urlencoded")]))
 
-    check resp.status == 200
-    let (hasEvent, event) = sl.tryRecvEvent()
-    check hasEvent
-    check event.kind == srSlashCommand
-    check event.slackUserId == "U9"
-    check event.text == "/help now"
+      check resp.status == 200
+      let (hasEvent, event) = sl.tryRecvEvent()
+      check hasEvent
+      check event.kind == srSlashCommand
+      check event.slackUserId == "U9"
+      check event.text == "/help now"
 
-  test "form-encoded block action payload is decoded and dispatched":
-    clearQueues()
-    var sl = newSlackAdapter("tok", HookTmp / "slack.tsv")
-    sl.openQueue()
-    let secret = "slack-signing"
-    let interactive = %* {
-      "type": "block_actions",
-      "user": {"id": "U7"},
-      "actions": [{"action_id": "models", "value": "models"}],
-      "channel": {"id": "C7"},
-      "team_id": "T7",
-      "trigger_id": "tr7",
-    }
-    let body = "payload=" & encodeUrl($interactive, usePlus = false)
-    let ts = $epochTime().int64
-    let cfg = WebhookConfig(slackSigningSecret: secret)
+    test "form-encoded block action payload is decoded and dispatched":
+      clearQueues()
+      var sl = newSlackAdapter("tok", HookTmp / "slack.tsv")
+      sl.openQueue()
+      let secret = "slack-signing"
+      let interactive = %* {
+        "type": "block_actions",
+        "user": {"id": "U7"},
+        "actions": [{"action_id": "models", "value": "models"}],
+        "channel": {"id": "C7"},
+        "team_id": "T7",
+        "trigger_id": "tr7",
+      }
+      let body = "payload=" & encodeUrl($interactive, usePlus = false)
+      let ts = $epochTime().int64
+      let cfg = WebhookConfig(slackSigningSecret: secret)
 
-    let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
-      headers = [("X-Slack-Request-Timestamp", ts),
-                 ("X-Slack-Signature", slackSig(secret, ts, body)),
-                 ("Content-Type", "application/x-www-form-urlencoded")]))
+      let resp = handleWebhookRequest(cfg, mkReq("POST", SlackPath, body,
+        headers = [("X-Slack-Request-Timestamp", ts),
+                   ("X-Slack-Signature", slackSig(secret, ts, body)),
+                   ("Content-Type", "application/x-www-form-urlencoded")]))
 
-    check resp.status == 200
-    let (hasEvent, event) = sl.tryRecvEvent()
-    check hasEvent
-    check event.kind == srBlockAction
-    check event.slackUserId == "U7"
-    check event.text == "models"
-    check event.triggerId == "tr7"
+      check resp.status == 200
+      let (hasEvent, event) = sl.tryRecvEvent()
+      check hasEvent
+      check event.kind == srBlockAction
+      check event.slackUserId == "U7"
+      check event.text == "models"
+      check event.triggerId == "tr7"
 
-suite "webhook receiver — Feishu":
+  suite "webhook receiver — Feishu":
 
-  test "url_verification is echoed as JSON with a matching token":
-    let cfg = WebhookConfig(feishuVerificationToken: "fs-token")
-    let body = """{"type":"url_verification","challenge":"fs-ch","token":"fs-token"}"""
-    let resp = handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body))
-    check resp.status == 200
-    check parseJson(resp.body)["challenge"].getStr() == "fs-ch"
+    test "url_verification is echoed as JSON with a matching token":
+      let cfg = WebhookConfig(feishuVerificationToken: "fs-token")
+      let body = """{"type":"url_verification","challenge":"fs-ch","token":"fs-token"}"""
+      let resp = handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body))
+      check resp.status == 200
+      check parseJson(resp.body)["challenge"].getStr() == "fs-ch"
 
-  test "wrong verification token is rejected":
-    let cfg = WebhookConfig(feishuVerificationToken: "fs-token")
-    let body = """{"type":"url_verification","challenge":"fs-ch","token":"nope"}"""
-    check handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body)).status == 403
+    test "wrong verification token is rejected":
+      let cfg = WebhookConfig(feishuVerificationToken: "fs-token")
+      let body = """{"type":"url_verification","challenge":"fs-ch","token":"nope"}"""
+      check handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body)).status == 403
 
-  test "encrypted payload is decrypted and the challenge is echoed":
-    let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
-                            feishuEncryptKey: "enc-key")
-    let inner = %* {
-      "type": "url_verification",
-      "challenge": "enc-ch",
-      "token": "fs-token",
-    }
-    let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
-    let resp = handleWebhookRequest(cfg,
-      mkReq("POST", FeishuPath, body,
-            headers = feishuSignedHeaders(body, "enc-key")))
-    check resp.status == 200
-    check parseJson(resp.body)["challenge"].getStr() == "enc-ch"
+    test "encrypted payload is decrypted and the challenge is echoed":
+      let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
+                              feishuEncryptKey: "enc-key")
+      let inner = %* {
+        "type": "url_verification",
+        "challenge": "enc-ch",
+        "token": "fs-token",
+      }
+      let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
+      let resp = handleWebhookRequest(cfg,
+        mkReq("POST", FeishuPath, body,
+              headers = feishuSignedHeaders(body, "enc-key")))
+      check resp.status == 200
+      check parseJson(resp.body)["challenge"].getStr() == "enc-ch"
 
-  test "encrypted payload without a signature is rejected":
-    let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
-                            feishuEncryptKey: "enc-key")
-    let inner = %* {"type": "url_verification", "challenge": "enc-ch",
-                    "token": "fs-token"}
-    let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
-    check handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body)).status == 403
+    test "encrypted payload without a signature is rejected":
+      let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
+                              feishuEncryptKey: "enc-key")
+      let inner = %* {"type": "url_verification", "challenge": "enc-ch",
+                      "token": "fs-token"}
+      let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
+      check handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body)).status == 403
 
-  test "encrypted payload with a bad signature is rejected":
-    let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
-                            feishuEncryptKey: "enc-key")
-    let inner = %* {"type": "url_verification", "challenge": "enc-ch",
-                    "token": "fs-token"}
-    let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
-    check handleWebhookRequest(cfg,
-      mkReq("POST", FeishuPath, body,
-            headers = feishuSignedHeaders(body, "wrong-key"))).status == 403
+    test "encrypted payload with a bad signature is rejected":
+      let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
+                              feishuEncryptKey: "enc-key")
+      let inner = %* {"type": "url_verification", "challenge": "enc-ch",
+                      "token": "fs-token"}
+      let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
+      check handleWebhookRequest(cfg,
+        mkReq("POST", FeishuPath, body,
+              headers = feishuSignedHeaders(body, "wrong-key"))).status == 403
 
-  test "encrypted payload with the wrong key is rejected":
-    let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
-                            feishuEncryptKey: "other-key")
-    let inner = %* {
-      "type": "url_verification",
-      "challenge": "enc-ch",
-      "token": "fs-token",
-    }
-    let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
-    check handleWebhookRequest(cfg,
-      mkReq("POST", FeishuPath, body,
-            headers = feishuSignedHeaders(body, "other-key"))).status == 400
+    test "encrypted payload with the wrong key is rejected":
+      let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
+                              feishuEncryptKey: "other-key")
+      let inner = %* {
+        "type": "url_verification",
+        "challenge": "enc-ch",
+        "token": "fs-token",
+      }
+      let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
+      check handleWebhookRequest(cfg,
+        mkReq("POST", FeishuPath, body,
+              headers = feishuSignedHeaders(body, "other-key"))).status == 400
 
-  test "plaintext is rejected when an encrypt key is configured":
-    let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
-                            feishuEncryptKey: "enc-key")
-    let body = """{"type":"url_verification","challenge":"fs-ch","token":"fs-token"}"""
-    check handleWebhookRequest(cfg,
-      mkReq("POST", FeishuPath, body,
-            headers = feishuSignedHeaders(body, "enc-key"))).status == 400
+    test "plaintext is rejected when an encrypt key is configured":
+      let cfg = WebhookConfig(feishuVerificationToken: "fs-token",
+                              feishuEncryptKey: "enc-key")
+      let body = """{"type":"url_verification","challenge":"fs-ch","token":"fs-token"}"""
+      check handleWebhookRequest(cfg,
+        mkReq("POST", FeishuPath, body,
+              headers = feishuSignedHeaders(body, "enc-key"))).status == 400
 
-  test "encrypt key alone configures the Feishu route":
-    let cfg = WebhookConfig(feishuEncryptKey: "enc-key")
-    check anyRouteConfigured(cfg)
-    let inner = %* {"type": "url_verification", "challenge": "enc-only"}
-    let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
-    let resp = handleWebhookRequest(cfg,
-      mkReq("POST", FeishuPath, body,
-            headers = feishuSignedHeaders(body, "enc-key")))
-    check resp.status == 200
-    check parseJson(resp.body)["challenge"].getStr() == "enc-only"
+    test "encrypt key alone configures the Feishu route":
+      let cfg = WebhookConfig(feishuEncryptKey: "enc-key")
+      check anyRouteConfigured(cfg)
+      let inner = %* {"type": "url_verification", "challenge": "enc-only"}
+      let body = $(%* {"encrypt": feishuEncrypt("enc-key", $inner)})
+      let resp = handleWebhookRequest(cfg,
+        mkReq("POST", FeishuPath, body,
+              headers = feishuSignedHeaders(body, "enc-key")))
+      check resp.status == 200
+      check parseJson(resp.body)["challenge"].getStr() == "enc-only"
 
-  test "message payload is dispatched to the Feishu queue":
-    clearQueues()
-    var fs = newFeishuAdapter("cli", "secret", HookTmp / "feishu.tsv")
-    fs.openQueue()
-    let cfg = WebhookConfig(feishuVerificationToken: "fs-token")
-    let body = """{"schema":"2.0",
+    test "message payload is dispatched to the Feishu queue":
+      clearQueues()
+      var fs = newFeishuAdapter("cli", "secret", HookTmp / "feishu.tsv")
+      fs.openQueue()
+      let cfg = WebhookConfig(feishuVerificationToken: "fs-token")
+      let body = """{"schema":"2.0",
       "header":{"event_type":"im.message.receive_v1","token":"fs-token"},
       "event":{"message":{"message_type":"text","message_id":"om_1",
                           "chat_id":"oc_1","chat_type":"p2p",
                           "content":"{\"text\":\"oi\"}"},
                "sender":{"sender_id":{"open_id":"ou_1"}}}}"""
 
-    let resp = handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body))
-    check resp.status == 200
-    let (hasEvent, event) = fs.tryRecvEvent()
-    check hasEvent
-    check event.openId == "ou_1"
-    check event.content == "oi"
+      let resp = handleWebhookRequest(cfg, mkReq("POST", FeishuPath, body))
+      check resp.status == 200
+      let (hasEvent, event) = fs.tryRecvEvent()
+      check hasEvent
+      check event.openId == "ou_1"
+      check event.content == "oi"
 
-suite "webhook receiver — DingTalk":
+  suite "webhook receiver — DingTalk":
 
-  test "valid signature dispatches the payload":
-    clearQueues()
-    var dt = newDingTalkAdapter("key", "dt-secret", "robot", HookTmp / "dt.tsv")
-    dt.openQueue()
-    let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
-    let ts = $((epochTime() * 1000).int64)
-    let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
+    test "valid signature dispatches the payload":
+      clearQueues()
+      var dt = newDingTalkAdapter("key", "dt-secret", "robot", HookTmp / "dt.tsv")
+      dt.openQueue()
+      let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
+      let ts = $((epochTime() * 1000).int64)
+      let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
                    "text":{"content":"hi dt"}}"""
-    let sign = hmacSha256Base64("dt-secret", ts & "\n" & "dt-secret")
-
-    let resp = handleWebhookRequest(cfg, mkReq("POST", DingTalkPath, body,
-      headers = [("timestamp", ts), ("sign", sign)]))
-
-    check resp.status == 200
-    let (hasEvent, event) = dt.tryRecvEvent()
-    check hasEvent
-    check event.rawId == "u1"
-    check event.content == "hi dt"
-
-  test "invalid signature is rejected and not dispatched":
-    clearQueues()
-    let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
-    let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
-                   "text":{"content":"nope"}}"""
-    let ts = $((epochTime() * 1000).int64)
-    let resp = handleWebhookRequest(cfg, mkReq("POST", DingTalkPath, body,
-      headers = [("timestamp", ts), ("sign", "bogus")]))
-    check resp.status == 403
-
-    var dt = newDingTalkAdapter("key", "dt-secret", "robot", HookTmp / "dt.tsv")
-    check not dt.tryRecvEvent()[0]
-
-  test "expired timestamp is rejected (replay window)":
-    clearQueues()
-    let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
-    let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
-                   "text":{"content":"old"}}"""
-    let ts = $((epochTime().int64 - 7200) * 1000)
-    let sign = hmacSha256Base64("dt-secret", ts & "\n" & "dt-secret")
-
-    let resp = handleWebhookRequest(cfg, mkReq("POST", DingTalkPath, body,
-      headers = [("timestamp", ts), ("sign", sign)]))
-
-    check resp.status == 403
-    var dt = newDingTalkAdapter("key", "dt-secret", "robot", HookTmp / "dt.tsv")
-    check not dt.tryRecvEvent()[0]
-
-  test "future timestamp is rejected (replay window)":
-    clearQueues()
-    let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
-    let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
-                   "text":{"content":"future"}}"""
-    let ts = $((epochTime().int64 + 7200) * 1000)
-    let sign = hmacSha256Base64("dt-secret", ts & "\n" & "dt-secret")
-
-    let resp = handleWebhookRequest(cfg, mkReq("POST", DingTalkPath, body,
-      headers = [("timestamp", ts), ("sign", sign)]))
-
-    check resp.status == 403
-
-  test "non-numeric and extreme timestamps are rejected without overflowing":
-    let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
-    let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
-                   "text":{"content":"x"}}"""
-
-    for ts in ["not-a-number", "-9223372036854775000"]:
       let sign = hmacSha256Base64("dt-secret", ts & "\n" & "dt-secret")
+
       let resp = handleWebhookRequest(cfg, mkReq("POST", DingTalkPath, body,
         headers = [("timestamp", ts), ("sign", sign)]))
+
+      check resp.status == 200
+      let (hasEvent, event) = dt.tryRecvEvent()
+      check hasEvent
+      check event.rawId == "u1"
+      check event.content == "hi dt"
+
+    test "invalid signature is rejected and not dispatched":
+      clearQueues()
+      let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
+      let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
+                   "text":{"content":"nope"}}"""
+      let ts = $((epochTime() * 1000).int64)
+      let resp = handleWebhookRequest(cfg, mkReq("POST", DingTalkPath, body,
+        headers = [("timestamp", ts), ("sign", "bogus")]))
       check resp.status == 403
 
-suite "webhook receiver — Matrix":
+      var dt = newDingTalkAdapter("key", "dt-secret", "robot", HookTmp / "dt.tsv")
+      check not dt.tryRecvEvent()[0]
 
-  test "bearer token dispatches the payload":
-    clearQueues()
-    var mx = newMatrixAdapter("https://mx", "@bot:mx", "tok", HookTmp / "mx.tsv")
-    mx.openQueue()
-    let cfg = WebhookConfig(matrixToken: "mx-token")
-    let body = """{"type":"m.room.message","room_id":"!r:mx","event_id":"$e:mx",
+    test "expired timestamp is rejected (replay window)":
+      clearQueues()
+      let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
+      let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
+                   "text":{"content":"old"}}"""
+      let ts = $((epochTime().int64 - 7200) * 1000)
+      let sign = hmacSha256Base64("dt-secret", ts & "\n" & "dt-secret")
+
+      let resp = handleWebhookRequest(cfg, mkReq("POST", DingTalkPath, body,
+        headers = [("timestamp", ts), ("sign", sign)]))
+
+      check resp.status == 403
+      var dt = newDingTalkAdapter("key", "dt-secret", "robot", HookTmp / "dt.tsv")
+      check not dt.tryRecvEvent()[0]
+
+    test "future timestamp is rejected (replay window)":
+      clearQueues()
+      let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
+      let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
+                   "text":{"content":"future"}}"""
+      let ts = $((epochTime().int64 + 7200) * 1000)
+      let sign = hmacSha256Base64("dt-secret", ts & "\n" & "dt-secret")
+
+      let resp = handleWebhookRequest(cfg, mkReq("POST", DingTalkPath, body,
+        headers = [("timestamp", ts), ("sign", sign)]))
+
+      check resp.status == 403
+
+    test "non-numeric and extreme timestamps are rejected without overflowing":
+      let cfg = WebhookConfig(dingtalkAppSecret: "dt-secret")
+      let body = """{"msgtype":"text","senderId":"u1","msgId":"m1",
+                   "text":{"content":"x"}}"""
+
+      for ts in ["not-a-number", "-9223372036854775000"]:
+        let sign = hmacSha256Base64("dt-secret", ts & "\n" & "dt-secret")
+        let resp = handleWebhookRequest(cfg, mkReq("POST", DingTalkPath, body,
+          headers = [("timestamp", ts), ("sign", sign)]))
+        check resp.status == 403
+
+  suite "webhook receiver — Matrix":
+
+    test "bearer token dispatches the payload":
+      clearQueues()
+      var mx = newMatrixAdapter("https://mx", "@bot:mx", "tok", HookTmp / "mx.tsv")
+      mx.openQueue()
+      let cfg = WebhookConfig(matrixToken: "mx-token")
+      let body = """{"type":"m.room.message","room_id":"!r:mx","event_id":"$e:mx",
                    "sender":"@u:mx","content":{"msgtype":"m.text","body":"hi mx"}}"""
 
-    let resp = handleWebhookRequest(cfg, mkReq("POST", MatrixPath, body,
-      headers = [("Authorization", "Bearer mx-token")]))
-    check resp.status == 200
-    let (hasEvent, event) = mx.tryRecvEvent()
-    check hasEvent
-    check event.roomId == "!r:mx"
-    check event.content == "hi mx"
+      let resp = handleWebhookRequest(cfg, mkReq("POST", MatrixPath, body,
+        headers = [("Authorization", "Bearer mx-token")]))
+      check resp.status == 200
+      let (hasEvent, event) = mx.tryRecvEvent()
+      check hasEvent
+      check event.roomId == "!r:mx"
+      check event.content == "hi mx"
 
-  test "query access_token is accepted and a bad token is rejected":
-    let cfg = WebhookConfig(matrixToken: "mx-token")
-    let body = """{"type":"m.room.message","room_id":"!r:mx","event_id":"$e2:mx",
+    test "query access_token is accepted and a bad token is rejected":
+      let cfg = WebhookConfig(matrixToken: "mx-token")
+      let body = """{"type":"m.room.message","room_id":"!r:mx","event_id":"$e2:mx",
                    "sender":"@u:mx","content":{"msgtype":"m.text","body":"x"}}"""
-    check handleWebhookRequest(cfg, mkReq("POST", MatrixPath, body,
-      query = [("access_token", "mx-token")])).status == 200
-    check handleWebhookRequest(cfg, mkReq("POST", MatrixPath, body,
-      headers = [("Authorization", "Bearer wrong")])).status == 403
+      check handleWebhookRequest(cfg, mkReq("POST", MatrixPath, body,
+        query = [("access_token", "mx-token")])).status == 200
+      check handleWebhookRequest(cfg, mkReq("POST", MatrixPath, body,
+        headers = [("Authorization", "Bearer wrong")])).status == 403
 
-suite "webhook receiver — WhatsApp":
+  suite "webhook receiver — WhatsApp":
 
-  test "GET verification echoes the challenge on a matching token":
-    let cfg = WebhookConfig(whatsappVerifyToken: "wa-verify")
-    let resp = handleWebhookRequest(cfg, mkReq("GET", WhatsAppPath,
-      query = [("hub.mode", "subscribe"),
-               ("hub.challenge", "wa-ch"),
-               ("hub.verify_token", "wa-verify")]))
-    check resp.status == 200
-    check resp.body == "wa-ch"
+    test "GET verification echoes the challenge on a matching token":
+      let cfg = WebhookConfig(whatsappVerifyToken: "wa-verify")
+      let resp = handleWebhookRequest(cfg, mkReq("GET", WhatsAppPath,
+        query = [("hub.mode", "subscribe"),
+                 ("hub.challenge", "wa-ch"),
+                 ("hub.verify_token", "wa-verify")]))
+      check resp.status == 200
+      check resp.body == "wa-ch"
 
-  test "GET verification rejects a wrong token":
-    let cfg = WebhookConfig(whatsappVerifyToken: "wa-verify")
-    let resp = handleWebhookRequest(cfg, mkReq("GET", WhatsAppPath,
-      query = [("hub.mode", "subscribe"),
-               ("hub.challenge", "wa-ch"),
-               ("hub.verify_token", "nope")]))
-    check resp.status == 403
+    test "GET verification rejects a wrong token":
+      let cfg = WebhookConfig(whatsappVerifyToken: "wa-verify")
+      let resp = handleWebhookRequest(cfg, mkReq("GET", WhatsAppPath,
+        query = [("hub.mode", "subscribe"),
+                 ("hub.challenge", "wa-ch"),
+                 ("hub.verify_token", "nope")]))
+      check resp.status == 403
 
-  test "signed POST dispatches the payload":
-    clearQueues()
-    var wa = newWhatsAppAdapter("tok", "PN1", HookTmp / "wa.tsv")
-    wa.openQueue()
-    let cfg = WebhookConfig(whatsappVerifyToken: "wa-verify",
-                            whatsappAppSecret: "wa-secret")
-    let body = """{"entry":[{"changes":[{"value":{
+    test "signed POST dispatches the payload":
+      clearQueues()
+      var wa = newWhatsAppAdapter("tok", "PN1", HookTmp / "wa.tsv")
+      wa.openQueue()
+      let cfg = WebhookConfig(whatsappVerifyToken: "wa-verify",
+                              whatsappAppSecret: "wa-secret")
+      let body = """{"entry":[{"changes":[{"value":{
       "metadata":{"phone_number_id":"PN1"},
       "messages":[{"from":"5511999","id":"wamid.1","type":"text",
                    "text":{"body":"hi wa"}}]}}]}]}"""
-    let sig = "sha256=" & hmacSha256Hex("wa-secret", body)
+      let sig = "sha256=" & hmacSha256Hex("wa-secret", body)
 
-    let resp = handleWebhookRequest(cfg, mkReq("POST", WhatsAppPath, body,
-      headers = [("X-Hub-Signature-256", sig)]))
-    check resp.status == 200
-    let (hasEvent, event) = wa.tryRecvEvent()
-    check hasEvent
-    check event.waUserId == "5511999"
-    check event.text == "hi wa"
+      let resp = handleWebhookRequest(cfg, mkReq("POST", WhatsAppPath, body,
+        headers = [("X-Hub-Signature-256", sig)]))
+      check resp.status == 200
+      let (hasEvent, event) = wa.tryRecvEvent()
+      check hasEvent
+      check event.waUserId == "5511999"
+      check event.text == "hi wa"
 
-  test "unsigned POST is rejected when no app secret is configured":
-    let cfg = WebhookConfig(whatsappVerifyToken: "wa-verify")
-    check handleWebhookRequest(cfg, mkReq("POST", WhatsAppPath, "{}")).status == 403
+    test "unsigned POST is rejected when no app secret is configured":
+      let cfg = WebhookConfig(whatsappVerifyToken: "wa-verify")
+      check handleWebhookRequest(cfg, mkReq("POST", WhatsAppPath, "{}")).status == 403
 
-suite "webhook receiver — exposure guard":
+  suite "webhook receiver — exposure guard":
 
-  test "unknown path is not found":
-    let cfg = WebhookConfig(slackSigningSecret: "x")
-    check handleWebhookRequest(cfg, mkReq("POST", "/webhook/nope", "{}")).status == 404
+    test "unknown path is not found":
+      let cfg = WebhookConfig(slackSigningSecret: "x")
+      check handleWebhookRequest(cfg, mkReq("POST", "/webhook/nope", "{}")).status == 404
 
-  test "unconfigured channel route is not found":
-    let cfg = WebhookConfig(slackSigningSecret: "x")
-    check handleWebhookRequest(cfg, mkReq("POST", FeishuPath, "{}")).status == 404
+    test "unconfigured channel route is not found":
+      let cfg = WebhookConfig(slackSigningSecret: "x")
+      check handleWebhookRequest(cfg, mkReq("POST", FeishuPath, "{}")).status == 404
 
-  test "starting a receiver without any secret is refused":
-    let r = startWebhookReceiver(WebhookConfig(), 9099, "127.0.0.1", hookLog)
-    check r.isErr
-    check "no webhook channel" in r.error
-
-  test "invalid port is refused":
-    let cfg = WebhookConfig(slackSigningSecret: "x")
-    for port in [0, -1, 70000]:
-      let r = startWebhookReceiver(cfg, port, "127.0.0.1", hookLog)
+    test "starting a receiver without any secret is refused":
+      let r = startWebhookReceiver(WebhookConfig(), 9099, "127.0.0.1", hookLog)
       check r.isErr
-      check "invalid webhook port" in r.error
+      check "no webhook channel" in r.error
 
-  test "bind failure is reported and does not mark the receiver started":
-    var blocker = newSocket()
-    blocker.setSockOpt(OptReuseAddr, true)
-    blocker.bindAddr(Port(0), "127.0.0.1")
-    blocker.listen()
-    let (_, busyPort) = blocker.getLocalAddr()
+    test "invalid port is refused":
+      let cfg = WebhookConfig(slackSigningSecret: "x")
+      for port in [0, -1, 70000]:
+        let r = startWebhookReceiver(cfg, port, "127.0.0.1", hookLog)
+        check r.isErr
+        check "invalid webhook port" in r.error
 
-    let cfg = WebhookConfig(slackSigningSecret: "x")
-    let first = startWebhookReceiver(cfg, int(busyPort), "127.0.0.1", hookLog)
-    check first.isErr
-    check "cannot bind" in first.error
+    test "bind failure is reported and does not mark the receiver started":
+      var blocker = newSocket()
+      blocker.setSockOpt(OptReuseAddr, true)
+      blocker.bindAddr(Port(0), "127.0.0.1")
+      blocker.listen()
+      let (_, busyPort) = blocker.getLocalAddr()
 
-    ## A second attempt must reach the bind again instead of short-circuiting on
-    ## `gWebhookStarted`, proving the failed start did not set the flag.
-    let second = startWebhookReceiver(cfg, int(busyPort), "127.0.0.1", hookLog)
-    check second.isErr
-    check "cannot bind" in second.error
-    check not second.error.contains("already started")
+      let cfg = WebhookConfig(slackSigningSecret: "x")
+      let first = startWebhookReceiver(cfg, int(busyPort), "127.0.0.1", hookLog)
+      check first.isErr
+      check "cannot bind" in first.error
 
-    blocker.close()
+      ## A second attempt must reach the bind again instead of short-circuiting on
+      ## `gWebhookStarted`, proving the failed start did not set the flag.
+      let second = startWebhookReceiver(cfg, int(busyPort), "127.0.0.1", hookLog)
+      check second.isErr
+      check "cannot bind" in second.error
+      check not second.error.contains("already started")
 
-  test "receiver starts, stops and restarts cleanly":
-    var probe = newSocket()
-    probe.setSockOpt(OptReuseAddr, true)
-    probe.bindAddr(Port(0), "127.0.0.1")
-    let (_, port) = probe.getLocalAddr()
-    probe.close()
+      blocker.close()
 
-    let cfg = WebhookConfig(feishuVerificationToken: "tok")
-    let first = startWebhookReceiver(cfg, int(port), "127.0.0.1", hookLog)
-    check first.isOk
-    stopWebhookReceiver()
-
-    let second = startWebhookReceiver(cfg, int(port), "127.0.0.1", hookLog)
-    check second.isOk
-    stopWebhookReceiver()
-
-  test "TLS requires both certificate and key":
-    let cfg = WebhookConfig(slackSigningSecret: "x",
-                            tlsCertFile: "/tmp/cert.pem")
-    let r = startWebhookReceiver(cfg, 9096, "127.0.0.1", hookLog)
-    check r.isErr
-    check "both" in r.error
-
-  test "invalid TLS files are refused":
-    let cfg = WebhookConfig(slackSigningSecret: "x",
-                            tlsCertFile: "/nonexistent/cert.pem",
-                            tlsKeyFile: "/nonexistent/key.pem")
-    let r = startWebhookReceiver(cfg, 9095, "127.0.0.1", hookLog)
-    check r.isErr
-    check "TLS certificate" in r.error
-
-  test "native TLS serves a signed Slack challenge":
-    let (cert, key) = generateTestTlsCert(HookTmp / "tls")
-    if cert.len == 0:
-      echo "skipping TLS integration test: openssl unavailable"
-    else:
+    test "receiver starts, stops and restarts cleanly":
       var probe = newSocket()
       probe.setSockOpt(OptReuseAddr, true)
       probe.bindAddr(Port(0), "127.0.0.1")
       let (_, port) = probe.getLocalAddr()
       probe.close()
 
-      let secret = "tls-signing"
-      let cfg = WebhookConfig(slackSigningSecret: secret,
-                              tlsCertFile: cert, tlsKeyFile: key)
-      let started = startWebhookReceiver(cfg, int(port), "127.0.0.1", hookLog)
-      check started.isOk
-      defer: stopWebhookReceiver()
+      let cfg = WebhookConfig(feishuVerificationToken: "tok")
+      let first = startWebhookReceiver(cfg, int(port), "127.0.0.1", hookLog)
+      check first.isOk
+      stopWebhookReceiver()
 
-      let body = """{"type":"url_verification","challenge":"tls-ch-1"}"""
-      let ts = $epochTime().int64
-      let sig = slackSig(secret, ts, body)
-      let request = "POST " & SlackPath & " HTTP/1.1\r\n" &
-                    "Host: localhost\r\n" &
-                    "Content-Type: application/json\r\n" &
-                    "Content-Length: " & $body.len & "\r\n" &
-                    "X-Slack-Request-Timestamp: " & ts & "\r\n" &
-                    "X-Slack-Signature: " & sig & "\r\n" &
-                    "Connection: close\r\n\r\n" & body
+      let second = startWebhookReceiver(cfg, int(port), "127.0.0.1", hookLog)
+      check second.isOk
+      stopWebhookReceiver()
 
-      var client = newSocket()
-      client.connect("127.0.0.1", Port(int(port)))
-      let clientCtx = newContext(verifyMode = CVerifyNone)
-      clientCtx.wrapConnectedSocket(client, handshakeAsClient)
-      client.send(request)
+    test "TLS requires both certificate and key":
+      let cfg = WebhookConfig(slackSigningSecret: "x",
+                              tlsCertFile: "/tmp/cert.pem")
+      let r = startWebhookReceiver(cfg, 9096, "127.0.0.1", hookLog)
+      check r.isErr
+      check "both" in r.error
 
-      var response = ""
-      while true:
-        var chunk = ""
-        let n = client.recv(chunk, 4096)
-        if n <= 0:
-          break
-        response.add(chunk)
-      client.close()
+    test "invalid TLS files are refused":
+      let cfg = WebhookConfig(slackSigningSecret: "x",
+                              tlsCertFile: "/nonexistent/cert.pem",
+                              tlsKeyFile: "/nonexistent/key.pem")
+      let r = startWebhookReceiver(cfg, 9095, "127.0.0.1", hookLog)
+      check r.isErr
+      check "TLS certificate" in r.error
 
-      check "200 OK" in response
-      check "tls-ch-1" in response
+    test "native TLS serves a signed Slack challenge":
+      let (cert, key) = generateTestTlsCert(HookTmp / "tls")
+      if cert.len == 0:
+        echo "skipping TLS integration test: openssl unavailable"
+      else:
+        var probe = newSocket()
+        probe.setSockOpt(OptReuseAddr, true)
+        probe.bindAddr(Port(0), "127.0.0.1")
+        let (_, port) = probe.getLocalAddr()
+        probe.close()
+
+        let secret = "tls-signing"
+        let cfg = WebhookConfig(slackSigningSecret: secret,
+                                tlsCertFile: cert, tlsKeyFile: key)
+        let started = startWebhookReceiver(cfg, int(port), "127.0.0.1", hookLog)
+        check started.isOk
+        defer: stopWebhookReceiver()
+
+        let body = """{"type":"url_verification","challenge":"tls-ch-1"}"""
+        let ts = $epochTime().int64
+        let sig = slackSig(secret, ts, body)
+        let request = "POST " & SlackPath & " HTTP/1.1\r\n" &
+                      "Host: localhost\r\n" &
+                      "Content-Type: application/json\r\n" &
+                      "Content-Length: " & $body.len & "\r\n" &
+                      "X-Slack-Request-Timestamp: " & ts & "\r\n" &
+                      "X-Slack-Signature: " & sig & "\r\n" &
+                      "Connection: close\r\n\r\n" & body
+
+        var client = newSocket()
+        client.connect("127.0.0.1", Port(int(port)))
+        let clientCtx = newContext(verifyMode = CVerifyNone)
+        clientCtx.wrapConnectedSocket(client, handshakeAsClient)
+        client.send(request)
+
+        var response = ""
+        while true:
+          var chunk = ""
+          let n = client.recv(chunk, 4096)
+          if n <= 0:
+            break
+          response.add(chunk)
+        client.close()
+
+        check "200 OK" in response
+        check "tls-ch-1" in response
+
+when isMainModule:
+  runTests()

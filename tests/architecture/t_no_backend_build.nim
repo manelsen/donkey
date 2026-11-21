@@ -3,16 +3,20 @@
 
 import std/[os, osproc, strutils, unittest]
 
-suite "build without a graph backend":
+proc runTests*() =
+  suite "build without a graph backend":
 
-  test "the daemon type-checks with SQLite and PostgreSQL disabled":
-    let root = currentSourcePath().parentDir.parentDir.parentDir
-    let (output, code) = execCmdEx(
-      "nim check --hints:off -u:withSqlite -u:withPostgres " &
-      quoteShell(root / "src" / "donkey.nim"),
-      workingDir = root)
-    if code != 0:
-      for line in output.splitLines():
-        if "Error" in line:
-          checkpoint(line)
-    check code == 0
+    test "the daemon type-checks with SQLite and PostgreSQL disabled":
+      let root = currentSourcePath().parentDir.parentDir.parentDir
+      let (output, code) = execCmdEx(
+        "nim check --hints:off -u:withSqlite -u:withPostgres " &
+        quoteShell(root / "src" / "donkey.nim"),
+        workingDir = root)
+      if code != 0:
+        for line in output.splitLines():
+          if "Error" in line:
+            checkpoint(line)
+      check code == 0
+
+when isMainModule:
+  runTests()

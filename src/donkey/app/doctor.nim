@@ -39,7 +39,7 @@ proc checkRuntimeCompose*(runtimeCmd: string;
     let (output, code) = execCmdEx(runtimeCmd.quoteShell & " compose version")
     if code == 0: ok(runtimeVersion & " | compose: " & output.strip())
     else: err(runtimeCmd & " compose plugin not available")
-  except:
+  except CatchableError:
     err(runtimeCmd & " compose check failed")
 
 proc apiKeyResult(v: string; envVar: string): Result[string, string] =

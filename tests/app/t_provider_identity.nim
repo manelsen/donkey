@@ -21,86 +21,90 @@ func idSet(values: seq[string]): HashSet[string] =
 
 # ── doctor ─────────────────────────────────────────────────────────────────────
 
-suite "provider identity — doctor":
+proc runTests*() =
+  suite "provider identity — doctor":
 
-  test "doctor provider rows cover every descriptor":
-    let rows = doctorProviderRows()
-    check rows.len == providerDescriptors().len
-    let ids = rows.mapIt(it.id)
-    for id in descriptorIds():
-      check id in ids
+    test "doctor provider rows cover every descriptor":
+      let rows = doctorProviderRows()
+      check rows.len == providerDescriptors().len
+      let ids = rows.mapIt(it.id)
+      for id in descriptorIds():
+        check id in ids
 
-  test "doctor provider rows carry the first descriptor env name":
-    for row in doctorProviderRows():
-      let descriptor = providerDescriptor(row.id).get()
-      check row.envVar == descriptor.envNames[0]
+    test "doctor provider rows carry the first descriptor env name":
+      for row in doctorProviderRows():
+        let descriptor = providerDescriptor(row.id).get()
+        check row.envVar == descriptor.envNames[0]
 
-  test "doctor rows have unique labels":
-    let labels = doctorProviderRows().mapIt(it.label)
-    check labels.len == labels.deduplicate().len
+    test "doctor rows have unique labels":
+      let labels = doctorProviderRows().mapIt(it.label)
+      check labels.len == labels.deduplicate().len
 
-  test "runDoctorChecks lists a key check for every descriptor":
-    let results = runDoctorChecks(DonkeyConfig(sandboxMode: smNone))
-    for row in doctorProviderRows():
-      check results.anyIt(it.name == row.label)
+    test "runDoctorChecks lists a key check for every descriptor":
+      let results = runDoctorChecks(DonkeyConfig(sandboxMode: smNone))
+      for row in doctorProviderRows():
+        check results.anyIt(it.name == row.label)
 
-# ── setup wizard ───────────────────────────────────────────────────────────────
+  # ── setup wizard ───────────────────────────────────────────────────────────────
 
-suite "provider identity — setup wizard":
+  suite "provider identity — setup wizard":
 
-  test "setup provider menu covers every descriptor":
-    let ids = setupProviderIds()
-    check ids.len == providerDescriptors().len
-    for id in descriptorIds():
-      check id in ids
+    test "setup provider menu covers every descriptor":
+      let ids = setupProviderIds()
+      check ids.len == providerDescriptors().len
+      for id in descriptorIds():
+        check id in ids
 
-  test "setup provider env var is the first descriptor env name":
-    for id in descriptorIds():
-      let descriptor = providerDescriptor(id).get()
-      check providerEnvVar(id) == descriptor.envNames[0]
+    test "setup provider env var is the first descriptor env name":
+      for id in descriptorIds():
+        let descriptor = providerDescriptor(id).get()
+        check providerEnvVar(id) == descriptor.envNames[0]
 
-  test "unknown provider still has no env var":
-    check providerEnvVar("unknown") == ""
+    test "unknown provider still has no env var":
+      check providerEnvVar("unknown") == ""
 
-  test "doctor and setup expose the same provider set":
-    check idSet(doctorProviderRows().mapIt(it.id)) == idSet(setupProviderIds())
+    test "doctor and setup expose the same provider set":
+      check idSet(doctorProviderRows().mapIt(it.id)) == idSet(setupProviderIds())
 
-  test "doctor and setup agree on every provider env var":
-    for row in doctorProviderRows():
-      check providerEnvVar(row.id) == row.envVar
+    test "doctor and setup agree on every provider env var":
+      for row in doctorProviderRows():
+        check providerEnvVar(row.id) == row.envVar
 
-# ── service handler ────────────────────────────────────────────────────────────
+  # ── service handler ────────────────────────────────────────────────────────────
 
-suite "provider identity — service handler":
+  suite "provider identity — service handler":
 
-  test "service env keys contain every descriptor env name":
-    let keys = serviceEnvKeys()
-    for descriptor in providerDescriptors():
-      for envName in descriptor.envNames:
-        check envName in keys
+    test "service env keys contain every descriptor env name":
+      let keys = serviceEnvKeys()
+      for descriptor in providerDescriptors():
+        for envName in descriptor.envNames:
+          check envName in keys
 
-  test "service env template mentions every provider env name":
-    let envTemplate = buildEnvFileTemplate()
-    for descriptor in providerDescriptors():
-      check descriptor.envNames[0] & "=" in envTemplate
+    test "service env template mentions every provider env name":
+      let envTemplate = buildEnvFileTemplate()
+      for descriptor in providerDescriptors():
+        check descriptor.envNames[0] & "=" in envTemplate
 
-# ── admin TUI ──────────────────────────────────────────────────────────────────
+  # ── admin TUI ──────────────────────────────────────────────────────────────────
 
-suite "provider identity — admin TUI":
+  suite "provider identity — admin TUI":
 
-  test "TUI known providers cover every descriptor":
-    let ids = tuiKnownProviders()
-    check ids.len == providerDescriptors().len
-    for id in descriptorIds():
-      check id in ids
+    test "TUI known providers cover every descriptor":
+      let ids = tuiKnownProviders()
+      check ids.len == providerDescriptors().len
+      for id in descriptorIds():
+        check id in ids
 
-  test "TUI provider fallback matches the single source":
-    var st = newAdminState()
-    st.loadProviderItems()
-    check st.items.mapIt(it.name) == tuiKnownProviders()
+    test "TUI provider fallback matches the single source":
+      var st = newAdminState()
+      st.loadProviderItems()
+      check st.items.mapIt(it.name) == tuiKnownProviders()
 
-  test "TUI keeps a single provider list":
-    let source = readFile(currentSourcePath().parentDir.parentDir.parentDir /
-                          "src" / "donkey" / "tui" / "admin_tui.nim")
-    check source.count("const knownProviders") == 0
-    check source.count("func tuiKnownProviders*()") == 1
+    test "TUI keeps a single provider list":
+      let source = readFile(currentSourcePath().parentDir.parentDir.parentDir /
+                            "src" / "donkey" / "tui" / "admin_tui.nim")
+      check source.count("const knownProviders") == 0
+      check source.count("func tuiKnownProviders*()") == 1
+
+when isMainModule:
+  runTests()

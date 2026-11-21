@@ -51,7 +51,8 @@ type
 
 # ── Module-level event queue ──────────────────────────────────────────────────
 
-## Thread-safe: chronos Channel uses internal synchronization.
+## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
+## lock internally and deep-copy the payload. Must be open()ed before use.
 ## Opened once at daemon startup via openQueue().
 var gDtEvents* {.global.}: Channel[DingTalkEvent]
 
@@ -182,8 +183,7 @@ func buildSendBody(robotCode, rawId, text: string): Result[JsonNode, string] =
   ## Builds the DingTalk robot message request body.
   if rawId.len == 0:
     return err("DingTalkAdapter.buildSendBody: missing target id")
-  let msgParam = "{\"content\":\"" &
-    text.replace("\\", "\\\\").replace("\"", "\\\"") & "\"}"
+  let msgParam = textMsgParam(text)
   if rawId.startsWith("conv:"):
     let convId = rawId["conv:".len .. ^1]
     return ok(%* {
@@ -228,7 +228,9 @@ proc downloadFile*(a: var DingTalkAdapter; downloadCode: string): Result[FileDow
     }
     let headers = @[dtTokenHeader(token), ("Content-Type", "application/json")]
     let resp = ? a.http.post(downloadUrl, $body, headers)
-    
+    if resp.status < 200 or resp.status >= 300:
+      return err("DingTalk downloadFile: HTTP " & $resp.status & ": " & resp.body)
+
     # DingTalk returns a JSON with download URL, not the file directly
     let j = parseJson(resp.body)
     let fileUrl = j.getOrDefault("downloadUrl").getStr("")
@@ -236,13 +238,8 @@ proc downloadFile*(a: var DingTalkAdapter; downloadCode: string): Result[FileDow
       return err("DingTalk downloadFile: no downloadUrl in response")
     
     # Now fetch the actual file
-    let fileHeaders: seq[(string, string)] = @[]
-    let fileResp = ? a.http.get(fileUrl, fileHeaders)
-    
-    var data = newSeq[byte](fileResp.body.len)
-    for i in 0 ..< fileResp.body.len:
-      data[i] = cast[byte](fileResp.body[i])
-    
+    let data = ? a.http.fetchBytes(fileUrl, @[])
+
     ok(FileDownload(
       fileName: "dingtalk_" & downloadCode,
       fileSize: data.len.int64,

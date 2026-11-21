@@ -5,6 +5,7 @@
 ## previously lived in outbound_builder.nim.
 
 import ../core/types
+import ../core/commands/command_text
 
 type
   ChannelCapabilityFlag* = enum
@@ -28,6 +29,11 @@ type
     downloadFile*:       bool
     sendMedia*:          bool
     sendVoice*:          bool
+    configUi*:           bool  ## /config is answered with a button view
+    interactiveMenus*:   bool  ## /menu is answered with a button view
+    repliesToRequester*: bool
+      ## Every reply is addressed to the requester (DM, open_id, openid), even
+      ## for a command sent from a group, so no reply lands in a shared space.
 
   ChannelCapabilityRegistry* = array[ChannelKind, ChannelCapabilityDescriptor]
 
@@ -36,16 +42,6 @@ type
 ## Keep this table in sync with what each adapter actually implements.
 
 const
-  FullCapability = ChannelCapabilityDescriptor(
-    send: true, sendReturnId: true, editMessage: true,
-    sendKeyboard: true, editKeyboard: true, setMessageReaction: true,
-    downloadFile: true, sendMedia: true)
-
-  NoReactionCapability = ChannelCapabilityDescriptor(
-    send: true, sendReturnId: true, editMessage: true,
-    sendKeyboard: true, editKeyboard: true, setMessageReaction: false,
-    downloadFile: false, sendMedia: true)
-
   BasicCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
     sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
@@ -67,11 +63,25 @@ const
     downloadFile: false, sendMedia: false)
 
   ## Telegram is the only channel that delivers a local audio file as a voice
-  ## note. FullCapability stays untouched because Discord shares it.
+  ## note.
   TelegramCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: true, editMessage: true,
     sendKeyboard: true, editKeyboard: true, setMessageReaction: true,
-    downloadFile: true, sendMedia: true, sendVoice: true)
+    downloadFile: true, sendMedia: true, sendVoice: true,
+    configUi: true, interactiveMenus: true)
+
+  ## Discord and Slack runtimes answer /config and /menu with button views.
+  DiscordCapability = ChannelCapabilityDescriptor(
+    send: true, sendReturnId: true, editMessage: true,
+    sendKeyboard: true, editKeyboard: true, setMessageReaction: true,
+    downloadFile: true, sendMedia: true,
+    configUi: true, interactiveMenus: true)
+
+  SlackCapability = ChannelCapabilityDescriptor(
+    send: true, sendReturnId: true, editMessage: true,
+    sendKeyboard: true, editKeyboard: true, setMessageReaction: false,
+    downloadFile: false, sendMedia: true,
+    configUi: true, interactiveMenus: true)
 
   ## LINE: send-only. Reply/push accept plain text chunks; no ids, edits,
   ## keyboards, reactions, media or voice notes.
@@ -100,12 +110,12 @@ const
 
 proc channelCapabilityRegistry*(): ChannelCapabilityRegistry =
   result[ckTelegram]   = TelegramCapability
-  result[ckDiscord]    = FullCapability
+  result[ckDiscord]    = DiscordCapability
   result[ckWeCom]      = BasicCapability
   result[ckWeChat]     = BasicCapability
   result[ckQQ]         = QQCapability
   result[ckFeishu]     = BasicCapability
-  result[ckSlack]      = NoReactionCapability
+  result[ckSlack]      = SlackCapability
   result[ckWhatsApp]   = SendOnlyCapability
   result[ckSignal]     = SendOnlyCapability
   result[ckDingTalk]   = DingTalkCapability
@@ -113,6 +123,8 @@ proc channelCapabilityRegistry*(): ChannelCapabilityRegistry =
   result[ckEmail]      = EmailCapability
   result[ckCli]        = CliCapability
   result[ckLine]       = LineCapability
+  for kind in [ckWeCom, ckWeChat, ckFeishu, ckSlack, ckWhatsApp]:
+    result[kind].repliesToRequester = true
 
 # ── lookup helpers ────────────────────────────────────────────────────────────
 
@@ -134,3 +146,9 @@ func supports*(kind: ChannelKind; flag: ChannelCapabilityFlag): bool =
   of cfDownloadFile:      caps.downloadFile
   of cfSendMedia:         caps.sendMedia
   of cfSendVoice:         caps.sendVoice
+
+func commandCaps*(d: ChannelCapabilityDescriptor): CommandSurfaceCaps =
+  CommandSurfaceCaps(configUi: d.configUi, interactiveMenus: d.interactiveMenus)
+
+func commandCaps*(kind: ChannelKind): CommandSurfaceCaps =
+  capability(kind).commandCaps

@@ -120,3 +120,21 @@ func toInbound*(r: MxParseResult; userId: UserId): InboundMessage =
 func hasMedia*(r: MxParseResult): bool =
   ## True when the event carries a media attachment the adapter must download.
   r.kind in {mxkImage, mxkAudio, mxkVideo, mxkFile}
+
+# ── Outbound bodies ───────────────────────────────────────────────────────────
+#
+# Built with std/json so every control char (\n, \r, \t, U+0000–U+001F) is
+# escaped. Hand-concatenated JSON broke on any multi-line LLM reply.
+
+func textBody*(text: string): string =
+  ## JSON body for an m.text send event.
+  $(%* {"msgtype": "m.text", "body": text})
+
+func editBody*(text, eventId: string): string =
+  ## JSON body for an m.replace edit of `eventId` (fallback body prefixed "* ").
+  $(%* {
+    "msgtype": "m.text",
+    "body":    "* " & text,
+    "m.new_content": {"msgtype": "m.text", "body": text},
+    "m.relates_to":  {"rel_type": "m.replace", "event_id": eventId},
+  })

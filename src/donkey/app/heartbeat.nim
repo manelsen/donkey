@@ -235,7 +235,7 @@ proc heartbeatLoop(reg: HeartbeatRegistry;
       reg.runAllTasks()
     except CancelledError:
       break
-    except Exception:
+    except Exception:  ## effect boundary: callee raises are unannotated
       discard
 
 proc heartbeatCronLoop(reg: HeartbeatRegistry;
@@ -247,7 +247,7 @@ proc heartbeatCronLoop(reg: HeartbeatRegistry;
       reg.runAllTasks()
     except CancelledError:
       break
-    except Exception:
+    except Exception:  ## effect boundary: callee raises are unannotated
       discard
 
 proc startHeartbeat*(reg: HeartbeatRegistry; intervalSec = 60) =

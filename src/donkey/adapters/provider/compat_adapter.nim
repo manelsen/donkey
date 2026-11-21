@@ -15,25 +15,23 @@
 ## that never yields a `data:` event is an error, not an empty success — the
 ## same stance as the non-streaming path.
 ##
-## The non-streaming path takes an optional `HttpRuntimePort`. When it is set,
-## `complete` posts through it instead of `newHttpClient`, which is what makes
-## the provider profile observable from a test: the fake port captures the URL,
-## the headers and the body the bundle actually emits. The port has no
-## streaming API, so `makeStreamFn` keeps using `newHttpClient`.
+## Both paths take an optional `HttpRuntimePort`; without one they use the
+## provider transport (deadline, no redirects, no repeated POST). The injected
+## port is what makes the provider profile observable from a test: the fake
+## captures the URL, the headers and the body the bundle actually emits.
 
-import std/[httpclient, json, streams, strutils]
+import std/[json, streams, strutils]
 import ../../domain/message
 import ../../domain/providers/compat
 import ../../domain/providers/openai_pure
 import ../../ports/http
 import ../../ports/provider
 import ../../core/pipeops
-import ../http/helpers
+import ./provider_http
 import openai
 
-const CompatHttpTimeoutSec* = 120
-  ## A stalled provider must not hang the turn forever, and `redirectLimit = 0`
-  ## keeps the provider Bearer from being forwarded to another host.
+const CompatHttpTimeoutSec* = ProviderHttpTimeoutSec
+  ## Same deadline as every provider (see provider_http).
 
 type
   CompatProfileFn* = proc(): CompatProfile {.gcsafe.}
@@ -49,7 +47,7 @@ type
     profileFn*:    CompatProfileFn
     http*:         HttpRuntimePort
       ## Optional transport for `complete`. An empty port (both `post` and
-      ## `postNoRedirect` nil) keeps the default `newHttpClient` path; a set
+      ## `postNoRedirect` nil) uses the provider transport; a set
       ## port owns its timeout and retry policy, so the adapter only adds the
       ## profile headers and parses the body.
 
@@ -109,8 +107,7 @@ proc parseCompatBody*(body: JsonNode): Result[CompletionResponse, string] =
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
 func wireHeaders(a: CompatAdapter; profile: CompatProfile): seq[HttpHeader] =
-  ## `requestHeaders` as the port's tuple type; the HTTP client path converts
-  ## the same list into `HttpHeaders`.
+  ## `requestHeaders` as the port's tuple type.
   for (name, value) in a.requestHeaders(profile):
     result.add (name: name, value: value)
 
@@ -118,7 +115,7 @@ proc completeWithPort(a: CompatAdapter; profile: CompatProfile;
                       body: string): Result[CompletionResponse, string] =
   ## The injected transport: `postNoRedirect` when available (the production
   ## no-redirect contract), otherwise `post`. Status handling mirrors
-  ## `checkApiStatus`, including the provider label.
+  ## `apiError`, including the provider label.
   if not a.hasHttp:
     return err("compat adapter: no injected http port")
   let post = if a.http.postNoRedirect != nil: a.http.postNoRedirect
@@ -128,7 +125,7 @@ proc completeWithPort(a: CompatAdapter; profile: CompatProfile;
     return err(sent.error)
   let resp = sent.get()
   if resp.status < 200 or resp.status >= 300:
-    return err(a.displayName & " API error " & $resp.status & ": " & resp.body)
+    return err(apiError(a.displayName, resp.status, resp.body))
   parseCompatBody(parseJson(resp.body))
 
 proc complete*(a: CompatAdapter;
@@ -137,16 +134,9 @@ proc complete*(a: CompatAdapter;
   try:
     if a.hasHttp:
       return a.completeWithPort(profile, $a.buildBody(req))
-    let client = newHttpClient(timeout = CompatHttpTimeoutSec * 1000,
-                               maxRedirects = 0)
-    defer: client.close()
-    var headers = newHttpHeaders()
-    for (name, value) in a.requestHeaders(profile):
-      headers[name] = value
-    client.headers = headers
-    let resp = client.post(requestUrl(profile), body = $a.buildBody(req))
-    checkApiStatus(resp, a.displayName)
-    resp.body |> parseJson |> parseCompatBody
+    let body = ? postProvider(HttpRuntimePort(), a.displayName, requestUrl(profile),
+                              $a.buildBody(req), a.wireHeaders(profile))
+    body |> parseJson |> parseCompatBody
   except CatchableError as e:
     err(e.msg)
 
@@ -217,17 +207,12 @@ proc makeStreamFn*(a: CompatAdapter): StreamFn =
     ## The profile is rebuilt inside the worker: no JsonNode is captured.
     let profile = a.profileFn()
     try:
-      let client = newHttpClient(timeout = CompatHttpTimeoutSec * 1000,
-                                 maxRedirects = 0)
-      defer: client.close()
-      var headers = newHttpHeaders()
-      for (name, value) in a.requestHeaders(profile):
-        headers[name] = value
-      client.headers = headers
-      let resp = client.request(requestUrl(profile), httpMethod = HttpPost,
-                                body = $a.buildBody(req, stream = true))
-      checkApiStatus(resp, a.displayName)
-      consumeCompatSse(resp.bodyStream, onToken)
+      ## A fake that fills only `post` keeps the production transport here.
+      let stream = ? postProviderStream(
+        (if a.http.postNoRedirect != nil: a.http else: HttpRuntimePort()),
+        a.displayName, requestUrl(profile), $a.buildBody(req, stream = true),
+        a.wireHeaders(profile))
+      consumeCompatSse(stream, onToken)
     except CatchableError as e:
       err(e.msg)
 

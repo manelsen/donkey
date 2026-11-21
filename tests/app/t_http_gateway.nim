@@ -13,348 +13,6 @@ import donkey/domain/gateway/capacity_pure
 import donkey/domain/gateway/identity_pure
 import donkey/ports/ipc
 
-suite "http_gateway request parsing":
-
-  test "resolveGatewayPort uses default when unset":
-    check resolveGatewayPort("") == GatewayDefaultPort
-
-  test "resolveGatewayPort disables gateway for zero or negative values":
-    check resolveGatewayPort("0") == 0
-    check resolveGatewayPort("-1") == 0
-
-  test "resolveGatewayPort keeps explicit positive value":
-    check resolveGatewayPort("18080") == 18080
-
-  test "resolveGatewayPort falls back on invalid values":
-    check resolveGatewayPort("nope") == GatewayDefaultPort
-
-  test "parseGatewayRequest extracts GET /api/status":
-    let r = parseGatewayRequest("GET /api/status HTTP/1.1")
-    check r.meth == "GET"
-    check r.path == "/api/status"
-
-  test "parseGatewayRequest extracts POST /api/chat":
-    let r = parseGatewayRequest("POST /api/chat HTTP/1.1")
-    check r.meth == "POST"
-    check r.path == "/api/chat"
-
-  test "parseGatewayRequest handles root path":
-    let r = parseGatewayRequest("GET / HTTP/1.1")
-    check r.meth == "GET"
-    check r.path == "/"
-
-  test "parseGatewayRequest handles malformed line gracefully":
-    let r = parseGatewayRequest("")
-    check r.meth == ""
-    check r.path == ""
-
-  test "parseGatewayRequest strips query string from path":
-    let r = parseGatewayRequest("GET /api/logs?n=20 HTTP/1.1")
-    check r.meth == "GET"
-    check r.path == "/api/logs"
-
-suite "http_gateway auth":
-
-  test "empty token keeps local behavior":
-    check isAuthorized("", "")
-
-  test "bearer token matches case-insensitively on the scheme":
-    check isAuthorized("Bearer secret", "secret")
-    check isAuthorized("bearer secret", "secret")
-
-  test "wrong or missing token is rejected":
-    check not isAuthorized("Bearer nope", "secret")
-    check not isAuthorized("", "secret")
-
-  test "local origin validation requires an exact local host":
-    check isLocalOrigin("http://localhost:3000")
-    check isLocalOrigin("http://127.0.0.1:8080")
-    check not isLocalOrigin("http://localhost.evil.com")
-    check not isLocalOrigin("http://127.0.0.1.evil.com")
-    check not isLocalOrigin("https://localhost/path")
-
-  test "chat without a token requires a local origin and JSON body":
-    check chatRequestAllowed("", "application/json", "")
-    check chatRequestAllowed("http://localhost:3000", "application/json", "")
-    check not chatRequestAllowed("https://evil.example", "application/json", "")
-    check not chatRequestAllowed("", "text/plain", "")
-    check chatRequestAllowed("https://evil.example", "text/plain", "secret")
-
-  test "every /api route needs a Bearer token even with an empty token":
-    ## An unconfigured token closes the data routes instead of leaving them open
-    ## to a loopback browser; only the shell and the probes stay public.
-    for action in ["status", "logs", "events", "chat", "sessions", "providers",
-                   "session_task"]:
-      check gatewayAuthVerdict(action, "", "") == gavNoToken
-      check gatewayAuthVerdict(action, "", "secret") == gavRejected
-      check gatewayAuthVerdict(action, "Bearer nope", "secret") == gavRejected
-      check gatewayAuthVerdict(action, "Bearer secret", "secret") == gavAllowed
-
-  test "the /api route set matches the actions the router can return":
-    for path in ["/api/status", "/api/logs", "/api/events", "/api/chat",
-                 "/api/sessions", "/api/providers"]:
-      check isApiRouteAction(routeGatewayRequest(
-        GatewayRequest(meth: "GET", path: path)))
-    check isApiRouteAction("session_task")
-    for action in ["index", "health", "dashboard", "openai_chat",
-                   "openai_models", "notfound"]:
-      check not isApiRouteAction(action)
-
-  test "the public shell and probes never ask for a token":
-    for action in ["index", "health", "dashboard"]:
-      check gatewayAuthVerdict(action, "", "") == gavPublic
-      check gatewayAuthVerdict(action, "", "secret") == gavPublic
-
-  test "requests without a token to /api/sessions are rejected and with a token accepted":
-    let req = GatewayRequest(meth: "GET", path: "/api/sessions")
-    let action = routeGatewayRequest(req)
-    check action == "sessions"
-    check gatewayAuthVerdict(action, "", "") == gavNoToken
-    check gatewayAuthVerdict(action, "", "segredo") == gavRejected
-    check gatewayAuthVerdict(action, "", "") == gavNoToken
-    check gatewayAuthVerdict(action, "Bearer segredo", "segredo") == gavAllowed
-    let providers = routeGatewayRequest(GatewayRequest(meth: "GET", path: "/api/providers"))
-    check gatewayAuthVerdict(providers, "", "segredo") == gavRejected
-    check gatewayAuthVerdict(providers, "Bearer segredo", "segredo") == gavAllowed
-
-  test "a valid token may act as any api: user (pinned product decision)":
-    ## Per-user authentication is an explicit PRD non-goal: the token
-    ## authenticates the client against the instance, and the `user` of a request
-    ## is caller-asserted. This test pins that limitation so a future change to
-    ## token-to-user mapping is a deliberate, visible decision rather than a
-    ## silent behaviour change.
-    const token = "dono-da-instancia"
-    const bearer = "Bearer " & token
-    check gatewayAuthVerdict("sessions", bearer, token) == gavAllowed
-    for raw in ["alice", "bob", "admin"]:
-      let uid = apiUserId(raw)
-      check uid.isOk
-      check uid.get() == UserId(ApiUserPrefix & raw)
-    ## The same credential is accepted regardless of which identity the request
-    ## claims: the name is validated, never checked against the token holder.
-    check isAuthorized(bearer, token)
-    check UserId("api:alice") != UserId("api:bob")
-
-  test "the OpenAI-compatible routes keep the historical empty-token behaviour":
-    for action in ["openai_chat", "openai_models"]:
-      check gatewayAuthVerdict(action, "", "") == gavAllowed
-      check gatewayAuthVerdict(action, "", "secret") == gavRejected
-      check gatewayAuthVerdict(action, "Bearer secret", "secret") == gavAllowed
-
-  test "non-loopback bind requires a token and explicit insecure opt-in":
-    check gatewayBindIsAllowed("127.0.0.1", "")
-    check gatewayBindIsAllowed("localhost", "")
-    check not gatewayBindIsAllowed("0.0.0.0", "")
-    check not gatewayBindIsAllowed("192.168.1.10", "")
-    check not gatewayBindIsAllowed("0.0.0.0", "secret")
-    check gatewayBindIsAllowed("0.0.0.0", "secret", allowInsecure = true)
-
-suite "http_gateway SSE formatting":
-
-  test "buildSseEvent produces correct SSE format":
-    let ev = buildSseEvent("log", "{\"msg\":\"hello\"}")
-    check ev.contains("event: log\n")
-    check ev.contains("data: {\"msg\":\"hello\"}\n")
-    check ev.endsWith("\n\n")
-
-  test "buildSseEvent with empty event produces data-only line":
-    let ev = buildSseEvent("", "heartbeat")
-    check not ev.contains("event:")
-    check ev.contains("data: heartbeat\n")
-    check ev.endsWith("\n\n")
-
-suite "http_gateway JSON serialisation":
-
-  test "buildStatusBody returns valid JSON with uptimeSec":
-    let st = DaemonStatus(
-      uptimeSec: 42,
-      sessionCount: 2,
-      memoryBackend: "md+magma",
-      memoryStats: MemoryStats(
-        totalNodes: 12,
-        memoryNodes: 8,
-        profileNodes: 2,
-        preferenceNodes: 1,
-        entityNodes: 1,
-        embeddingNodes: 11,
-        totalEdges: 9,
-      ),
-    )
-    let body = buildStatusBody(st)
-    let j = parseJson(body)
-    check j{"uptimeSec"}.getBiggestInt() == 42
-    check j{"memoryStats"}{"totalNodes"}.getInt() == 12
-    check j{"memoryStats"}{"embeddingNodes"}.getInt() == 11
-
-  test "buildLogsBody returns JSON array":
-    let entries = @[
-      IpcLogEntry(ts: "2026-01-01T00:00:00Z", level: "INFO",
-                  subsys: "daemon", msg: "started"),
-    ]
-    let body = buildLogsBody(entries)
-    let j = parseJson(body)
-    check j.kind == JArray
-    check j.len == 1
-    check j[0]{"msg"}.getStr() == "started"
-
-  test "buildLogsBody returns empty array for no entries":
-    let body = buildLogsBody(@[])
-    let j = parseJson(body)
-    check j.kind == JArray
-    check j.len == 0
-
-suite "http_gateway agent events serialisation":
-
-  test "buildAgentEventsBody returns JSON array":
-    agentEventRingInit()
-    pushAgentEvent(AgentEvent(kind: aekToolCall, userId: "u1",
-                              toolName: "bash", summary: "ls"))
-    let events = agentEventSnapshot(10)
-    let body = buildAgentEventsBody(events)
-    let j = parseJson(body)
-    check j.kind == JArray
-    check j.len == 1
-    check j[0]{"kind"}.getStr() == "tool_call"
-    check j[0]{"userId"}.getStr() == "u1"
-
-  test "buildAgentEventsBody returns empty array for no events":
-    agentEventRingInit()
-    let body = buildAgentEventsBody(@[])
-    let j = parseJson(body)
-    check j.kind == JArray
-    check j.len == 0
-
-suite "http_gateway route dispatch":
-
-  test "routeGatewayRequest maps GET /api/status to status action":
-    let req = GatewayRequest(meth: "GET", path: "/api/status")
-    check routeGatewayRequest(req) == "status"
-
-  test "routeGatewayRequest maps GET /api/logs to logs action":
-    let req = GatewayRequest(meth: "GET", path: "/api/logs")
-    check routeGatewayRequest(req) == "logs"
-
-  test "routeGatewayRequest maps GET /api/events to events action":
-    let req = GatewayRequest(meth: "GET", path: "/api/events")
-    check routeGatewayRequest(req) == "events"
-
-  test "routeGatewayRequest maps unknown paths to notfound":
-    let req = GatewayRequest(meth: "GET", path: "/unknown")
-    check routeGatewayRequest(req) == "notfound"
-
-  test "routeGatewayRequest maps root to index action":
-    let req = GatewayRequest(meth: "GET", path: "/")
-    check routeGatewayRequest(req) == "index"
-
-  test "routeGatewayRequest maps /health to health action":
-    let req = GatewayRequest(meth: "GET", path: "/health")
-    check routeGatewayRequest(req) == "health"
-
-  test "routeGatewayRequest maps /dashboard":
-    check routeGatewayRequest(GatewayRequest(meth: "GET", path: "/dashboard")) ==
-          "dashboard"
-
-  test "routeGatewayRequest maps the OpenAI-compatible endpoints":
-    check routeGatewayRequest(GatewayRequest(meth: "POST", path: "/v1/chat/completions")) ==
-          "openai_chat"
-    check routeGatewayRequest(GatewayRequest(meth: "GET", path: "/v1/models")) ==
-          "openai_models"
-
-  test "health and index are the only public gateway actions":
-    check isPublicGatewayAction("index")
-    check isPublicGatewayAction("health")
-    check isPublicGatewayAction("dashboard")
-    for action in ["status", "logs", "events", "chat", "openai_chat",
-                   "openai_models", "notfound"]:
-      check not isPublicGatewayAction(action)
-
-  test "routeGatewayRequest maps POST /api/chat to chat action":
-    let req = GatewayRequest(meth: "POST", path: "/api/chat")
-    check routeGatewayRequest(req) == "chat"
-
-suite "http_gateway chat method routing":
-
-  test "routeChatMethod maps POST to chat":
-    check routeChatMethod("POST") == "chat"
-
-  test "routeChatMethod maps GET to chat_get":
-    check routeChatMethod("GET") == "chat_get"
-
-  test "routeChatMethod maps unknown methods to method_not_allowed":
-    check routeChatMethod("DELETE") == "method_not_allowed"
-    check routeChatMethod("PUT") == "method_not_allowed"
-
-suite "http_gateway chat POST parsing":
-
-  test "parseChatPost parses valid JSON with text":
-    let result = parseChatPost("""{"text": "hello world"}""")
-    check result.isOk
-    let msg = result.get()
-    check msg.text == "hello world"
-    check msg.userId == CliDefaultUserId
-    check msg.channelId == "webui"
-    check msg.channel == ckCli
-
-  test "parseChatPost parses JSON with custom userId":
-    let result = parseChatPost("""{"text": "hi", "userId": "alice"}""")
-    check result.isOk
-    let msg = result.get()
-    check msg.text == "hi"
-    check msg.userId == UserId("alice")
-
-  test "parseChatPost rejects empty body":
-    let result = parseChatPost("")
-    check result.isErr
-    check result.error.contains("empty body")
-
-  test "parseChatPost rejects invalid JSON":
-    let result = parseChatPost("not json")
-    check result.isErr
-    check result.error.contains("invalid JSON")
-
-  test "parseChatPost rejects non-object JSON":
-    let result = parseChatPost("""["array"]""")
-    check result.isErr
-    check result.error.contains("expected JSON object")
-
-  test "parseChatPost rejects missing text field":
-    let result = parseChatPost("""{"userId": "alice"}""")
-    check result.isErr
-    check result.error.contains("missing or empty 'text' field")
-
-  test "parseChatPost rejects empty text field":
-    let result = parseChatPost("""{"text": ""}""")
-    check result.isErr
-    check result.error.contains("missing or empty 'text' field")
-
-  test "parseChatPost handles JSON with extra fields":
-    let result = parseChatPost("""{"text": "hello", "extra": "ignored"}""")
-    check result.isOk
-    check result.get().text == "hello"
-
-suite "dashboard page":
-
-  test "the shell carries no token and asks for one":
-    let html = buildDashboardHtml()
-    check html.contains("<title>Donkey</title>")
-    check html.contains("sessionStorage")
-    check html.contains("/api/status")
-    check html.contains("/api/logs")
-    check html.contains("Authorization: 'Bearer '")
-
-  test "the shell has no external asset or inline secret":
-    let html = buildDashboardHtml()
-    check not html.contains("<script src=")
-    check not html.contains("<link rel=\"stylesheet\"")
-    check not html.contains("DONKEY_HTTP_TOKEN=")
-
-# ── long-lived capacity (gateway counters + admission) ───────────────────────
-#
-# The gateway pool has 8 workers; at most 6 may be blocked by long-lived work.
-# These tests drive the same counters the streaming and non-streaming paths
-# use, so a regression to a second pool (or to no admission at all) is caught
-# here without opening a socket.
-
 type CapDispatchMode = enum
   cdmFinal
   cdmRaise
@@ -469,123 +127,470 @@ proc runCapacityStream(timeoutMs = 5_000): AgentStreamResult =
     model           = "donkey/test",
   )
 
-suite "http_gateway long-lived capacity":
 
-  test "a pool at six refuses a new turn with 429 and never dispatches":
-    resetCapacity()
-    # 2 pending turns + 4 SSE connections fill all six long-lived workers.
-    # The turn queue itself still has room (2 < MaxPendingTurns), so the
-    # refusal must come from the shared worker budget.
-    check reserveCapacity(llChatTurn, 2)
-    check reserveCapacity(llSseConnection, 4)
-    check longLivedOccupancy().longLivedWorkers == MaxLongLivedWorkers
+proc runTests*() =
+  suite "http_gateway request parsing":
 
-    let reply = runCapacityTurn()
-    check reply.status == 429
-    let node = parseJson(reply.body)
-    check node{"error"}{"type"}.getStr() == "rate_limit_error"
-    check node{"error"}{"code"}.getStr() == "no_worker"
-    check capDispatched == 0
-    # A refused request must not consume (or release) a worker.
-    check longLivedOccupancy().longLivedWorkers == MaxLongLivedWorkers
+    test "resolveGatewayPort uses default when unset":
+      check resolveGatewayPort("") == GatewayDefaultPort
 
-  test "a full pending queue refuses with rate_limit_error":
-    resetCapacity()
-    check reserveCapacity(llChatTurn, MaxPendingTurns)
+    test "resolveGatewayPort disables gateway for zero or negative values":
+      check resolveGatewayPort("0") == 0
+      check resolveGatewayPort("-1") == 0
 
-    let reply = runCapacityTurn()
-    check reply.status == 429
-    let node = parseJson(reply.body)
-    check node{"error"}{"type"}.getStr() == "rate_limit_error"
-    check node{"error"}{"code"}.getStr() == "too_many_pending_turns"
-    check capDispatched == 0
+    test "resolveGatewayPort keeps explicit positive value":
+      check resolveGatewayPort("18080") == 18080
 
-  test "3 pending turns plus 3 SSE streams refuse the seventh and a release admits it":
-    resetCapacity()
-    check reserveCapacity(llChatTurn, 3)
-    check reserveCapacity(llSseConnection, 3)
-    let before = longLivedOccupancy()
-    check before.pendingTurns == 3
-    check before.sseConnections == 3
-    check before.longLivedWorkers == 6
+    test "resolveGatewayPort falls back on invalid values":
+      check resolveGatewayPort("nope") == GatewayDefaultPort
 
-    # Either path is refused: one shared pool, no per-class bypass.
-    check not tryReserveLongLived(llChatTurn).admitted
-    check not tryReserveLongLived(llSseConnection).admitted
+    test "parseGatewayRequest extracts GET /api/status":
+      let r = parseGatewayRequest("GET /api/status HTTP/1.1")
+      check r.meth == "GET"
+      check r.path == "/api/status"
 
-    releaseLongLived(llChatTurn)
-    check longLivedOccupancy().longLivedWorkers == 5
-    check tryReserveLongLived(llChatTurn).admitted
-    let after = longLivedOccupancy()
-    check after.pendingTurns == 3
-    check after.sseConnections == 3
-    check after.longLivedWorkers == 6
+    test "parseGatewayRequest extracts POST /api/chat":
+      let r = parseGatewayRequest("POST /api/chat HTTP/1.1")
+      check r.meth == "POST"
+      check r.path == "/api/chat"
 
-  test "a turn that fails after admission releases its slot":
-    resetCapacity()
-    capMode = cdmRaise
+    test "parseGatewayRequest handles root path":
+      let r = parseGatewayRequest("GET / HTTP/1.1")
+      check r.meth == "GET"
+      check r.path == "/"
 
-    let failed = runCapacityTurn()
-    check failed.status == 502
-    check capDispatched == 1
-    check capDuringTotal == 1
-    check longLivedOccupancy().longLivedWorkers == 0
+    test "parseGatewayRequest handles malformed line gracefully":
+      let r = parseGatewayRequest("")
+      check r.meth == ""
+      check r.path == ""
 
-    capMode = cdmNothing
-    capNow = 1_000
-    let timedOut = runCapacityTurn(timeoutMs = 30)
-    check timedOut.status == 504
-    check capDispatched == 2
-    check longLivedOccupancy().longLivedWorkers == 0
+    test "parseGatewayRequest strips query string from path":
+      let r = parseGatewayRequest("GET /api/logs?n=20 HTTP/1.1")
+      check r.meth == "GET"
+      check r.path == "/api/logs"
 
-  test "a completed turn releases its slot and counts exactly one worker":
-    resetCapacity()
+  suite "http_gateway auth":
 
-    let reply = runCapacityTurn()
-    check reply.status == 200
-    check capDispatched == 1
-    check capDuringPending == 1
-    check capDuringSse == 0
-    check capDuringTotal == 1
-    check longLivedOccupancy().longLivedWorkers == 0
+    test "empty token keeps local behavior":
+      check isAuthorized("", "")
 
-  test "the streaming path shares the counters and counts exactly one worker":
-    resetCapacity()
+    test "bearer token matches case-insensitively on the scheme":
+      check isAuthorized("Bearer secret", "secret")
+      check isAuthorized("bearer secret", "secret")
 
-    let result = runCapacityStream()
-    check result.outcome == asCompleted
-    check capDuringPending == 0
-    check capDuringSse == 1
-    check capDuringTotal == 1
-    check capSseAcquireCalls == 1
-    check capSseReleaseCalls == 1
-    check longLivedOccupancy().longLivedWorkers == 0
+    test "wrong or missing token is rejected":
+      check not isAuthorized("Bearer nope", "secret")
+      check not isAuthorized("", "secret")
 
-  test "a stream is refused when non-streaming turns already filled the pool":
-    resetCapacity()
-    check reserveCapacity(llChatTurn, 3)
-    check reserveCapacity(llSseConnection, 3)
+    test "local origin validation requires an exact local host":
+      check isLocalOrigin("http://localhost:3000")
+      check isLocalOrigin("http://127.0.0.1:8080")
+      check not isLocalOrigin("http://localhost.evil.com")
+      check not isLocalOrigin("http://127.0.0.1.evil.com")
+      check not isLocalOrigin("https://localhost/path")
 
-    let refused = runCapacityStream()
-    check refused.outcome == asPreflightError
-    check refused.reply.status == 429
-    check capDispatched == 0
-    check capSseReleaseCalls == 0
-    let occ = longLivedOccupancy()
-    check occ.pendingTurns == 3
-    check occ.sseConnections == 3
-    check occ.longLivedWorkers == 6
+    test "chat without a token requires a local origin and JSON body":
+      check chatRequestAllowed("", "application/json", "")
+      check chatRequestAllowed("http://localhost:3000", "application/json", "")
+      check not chatRequestAllowed("https://evil.example", "application/json", "")
+      check not chatRequestAllowed("", "text/plain", "")
+      check chatRequestAllowed("https://evil.example", "text/plain", "secret")
 
-  test "refused turns never consume a long-lived worker":
-    resetCapacity()
-    check reserveCapacity(llChatTurn, 2)
-    check reserveCapacity(llSseConnection, 4)
+    test "every /api route needs a Bearer token even with an empty token":
+      ## An unconfigured token closes the data routes instead of leaving them open
+      ## to a loopback browser; only the shell and the probes stay public.
+      for action in ["status", "logs", "events", "chat", "sessions", "providers",
+                     "session_task"]:
+        check gatewayAuthVerdict(action, "", "") == gavNoToken
+        check gatewayAuthVerdict(action, "", "secret") == gavRejected
+        check gatewayAuthVerdict(action, "Bearer nope", "secret") == gavRejected
+        check gatewayAuthVerdict(action, "Bearer secret", "secret") == gavAllowed
 
-    for _ in 0 ..< 3:
-      check runCapacityTurn().status == 429
+    test "the /api route set matches the actions the router can return":
+      for path in ["/api/status", "/api/logs", "/api/events", "/api/chat",
+                   "/api/sessions", "/api/providers"]:
+        check isApiRouteAction(routeGatewayRequest(
+          GatewayRequest(meth: "GET", path: path)))
+      check isApiRouteAction("session_task")
+      for action in ["index", "health", "dashboard", "openai_chat",
+                     "openai_models", "notfound"]:
+        check not isApiRouteAction(action)
 
-    check capDispatched == 0
-    let occ = longLivedOccupancy()
-    check occ.pendingTurns == 2
-    check occ.sseConnections == 4
-    check occ.longLivedWorkers == MaxLongLivedWorkers
+    test "the public shell and probes never ask for a token":
+      for action in ["index", "health", "dashboard"]:
+        check gatewayAuthVerdict(action, "", "") == gavPublic
+        check gatewayAuthVerdict(action, "", "secret") == gavPublic
+
+    test "requests without a token to /api/sessions are rejected and with a token accepted":
+      let req = GatewayRequest(meth: "GET", path: "/api/sessions")
+      let action = routeGatewayRequest(req)
+      check action == "sessions"
+      check gatewayAuthVerdict(action, "", "") == gavNoToken
+      check gatewayAuthVerdict(action, "", "segredo") == gavRejected
+      check gatewayAuthVerdict(action, "", "") == gavNoToken
+      check gatewayAuthVerdict(action, "Bearer segredo", "segredo") == gavAllowed
+      let providers = routeGatewayRequest(GatewayRequest(meth: "GET", path: "/api/providers"))
+      check gatewayAuthVerdict(providers, "", "segredo") == gavRejected
+      check gatewayAuthVerdict(providers, "Bearer segredo", "segredo") == gavAllowed
+
+    test "a valid token may act as any api: user (pinned product decision)":
+      ## Per-user authentication is an explicit PRD non-goal: the token
+      ## authenticates the client against the instance, and the `user` of a request
+      ## is caller-asserted. This test pins that limitation so a future change to
+      ## token-to-user mapping is a deliberate, visible decision rather than a
+      ## silent behaviour change.
+      const token = "dono-da-instancia"
+      const bearer = "Bearer " & token
+      check gatewayAuthVerdict("sessions", bearer, token) == gavAllowed
+      for raw in ["alice", "bob", "admin"]:
+        let uid = apiUserId(raw)
+        check uid.isOk
+        check uid.get() == UserId(ApiUserPrefix & raw)
+      ## The same credential is accepted regardless of which identity the request
+      ## claims: the name is validated, never checked against the token holder.
+      check isAuthorized(bearer, token)
+      check UserId("api:alice") != UserId("api:bob")
+
+    test "the OpenAI-compatible routes keep the historical empty-token behaviour":
+      for action in ["openai_chat", "openai_models"]:
+        check gatewayAuthVerdict(action, "", "") == gavAllowed
+        check gatewayAuthVerdict(action, "", "secret") == gavRejected
+        check gatewayAuthVerdict(action, "Bearer secret", "secret") == gavAllowed
+
+    test "non-loopback bind requires a token and explicit insecure opt-in":
+      check gatewayBindIsAllowed("127.0.0.1", "")
+      check gatewayBindIsAllowed("localhost", "")
+      check not gatewayBindIsAllowed("0.0.0.0", "")
+      check not gatewayBindIsAllowed("192.168.1.10", "")
+      check not gatewayBindIsAllowed("0.0.0.0", "secret")
+      check gatewayBindIsAllowed("0.0.0.0", "secret", allowInsecure = true)
+
+  suite "http_gateway SSE formatting":
+
+    test "buildSseEvent produces correct SSE format":
+      let ev = buildSseEvent("log", "{\"msg\":\"hello\"}")
+      check ev.contains("event: log\n")
+      check ev.contains("data: {\"msg\":\"hello\"}\n")
+      check ev.endsWith("\n\n")
+
+    test "buildSseEvent with empty event produces data-only line":
+      let ev = buildSseEvent("", "heartbeat")
+      check not ev.contains("event:")
+      check ev.contains("data: heartbeat\n")
+      check ev.endsWith("\n\n")
+
+  suite "http_gateway JSON serialisation":
+
+    test "buildStatusBody returns valid JSON with uptimeSec":
+      let st = DaemonStatus(
+        uptimeSec: 42,
+        sessionCount: 2,
+        memoryBackend: "md+magma",
+        memoryStats: MemoryStats(
+          totalNodes: 12,
+          memoryNodes: 8,
+          profileNodes: 2,
+          preferenceNodes: 1,
+          entityNodes: 1,
+          embeddingNodes: 11,
+          totalEdges: 9,
+        ),
+      )
+      let body = buildStatusBody(st)
+      let j = parseJson(body)
+      check j{"uptimeSec"}.getBiggestInt() == 42
+      check j{"memoryStats"}{"totalNodes"}.getInt() == 12
+      check j{"memoryStats"}{"embeddingNodes"}.getInt() == 11
+
+    test "buildLogsBody returns JSON array":
+      let entries = @[
+        IpcLogEntry(ts: "2026-01-01T00:00:00Z", level: "INFO",
+                    subsys: "daemon", msg: "started"),
+      ]
+      let body = buildLogsBody(entries)
+      let j = parseJson(body)
+      check j.kind == JArray
+      check j.len == 1
+      check j[0]{"msg"}.getStr() == "started"
+
+    test "buildLogsBody returns empty array for no entries":
+      let body = buildLogsBody(@[])
+      let j = parseJson(body)
+      check j.kind == JArray
+      check j.len == 0
+
+  suite "http_gateway agent events serialisation":
+
+    test "buildAgentEventsBody returns JSON array":
+      agentEventRingInit()
+      pushAgentEvent(AgentEvent(kind: aekToolCall, userId: "u1",
+                                toolName: "bash", summary: "ls"))
+      let events = agentEventSnapshot(10)
+      let body = buildAgentEventsBody(events)
+      let j = parseJson(body)
+      check j.kind == JArray
+      check j.len == 1
+      check j[0]{"kind"}.getStr() == "tool_call"
+      check j[0]{"userId"}.getStr() == "u1"
+
+    test "buildAgentEventsBody returns empty array for no events":
+      agentEventRingInit()
+      let body = buildAgentEventsBody(@[])
+      let j = parseJson(body)
+      check j.kind == JArray
+      check j.len == 0
+
+  suite "http_gateway route dispatch":
+
+    test "routeGatewayRequest maps GET /api/status to status action":
+      let req = GatewayRequest(meth: "GET", path: "/api/status")
+      check routeGatewayRequest(req) == "status"
+
+    test "routeGatewayRequest maps GET /api/logs to logs action":
+      let req = GatewayRequest(meth: "GET", path: "/api/logs")
+      check routeGatewayRequest(req) == "logs"
+
+    test "routeGatewayRequest maps GET /api/events to events action":
+      let req = GatewayRequest(meth: "GET", path: "/api/events")
+      check routeGatewayRequest(req) == "events"
+
+    test "routeGatewayRequest maps unknown paths to notfound":
+      let req = GatewayRequest(meth: "GET", path: "/unknown")
+      check routeGatewayRequest(req) == "notfound"
+
+    test "routeGatewayRequest maps root to index action":
+      let req = GatewayRequest(meth: "GET", path: "/")
+      check routeGatewayRequest(req) == "index"
+
+    test "routeGatewayRequest maps /health to health action":
+      let req = GatewayRequest(meth: "GET", path: "/health")
+      check routeGatewayRequest(req) == "health"
+
+    test "routeGatewayRequest maps /dashboard":
+      check routeGatewayRequest(GatewayRequest(meth: "GET", path: "/dashboard")) ==
+            "dashboard"
+
+    test "routeGatewayRequest maps the OpenAI-compatible endpoints":
+      check routeGatewayRequest(GatewayRequest(meth: "POST", path: "/v1/chat/completions")) ==
+            "openai_chat"
+      check routeGatewayRequest(GatewayRequest(meth: "GET", path: "/v1/models")) ==
+            "openai_models"
+
+    test "health and index are the only public gateway actions":
+      check isPublicGatewayAction("index")
+      check isPublicGatewayAction("health")
+      check isPublicGatewayAction("dashboard")
+      for action in ["status", "logs", "events", "chat", "openai_chat",
+                     "openai_models", "notfound"]:
+        check not isPublicGatewayAction(action)
+
+    test "routeGatewayRequest maps POST /api/chat to chat action":
+      let req = GatewayRequest(meth: "POST", path: "/api/chat")
+      check routeGatewayRequest(req) == "chat"
+
+  suite "http_gateway chat method routing":
+
+    test "routeChatMethod maps POST to chat":
+      check routeChatMethod("POST") == "chat"
+
+    test "routeChatMethod maps GET to chat_get":
+      check routeChatMethod("GET") == "chat_get"
+
+    test "routeChatMethod maps unknown methods to method_not_allowed":
+      check routeChatMethod("DELETE") == "method_not_allowed"
+      check routeChatMethod("PUT") == "method_not_allowed"
+
+  suite "http_gateway chat POST parsing":
+
+    test "parseChatPost parses valid JSON with text":
+      let result = parseChatPost("""{"text": "hello world"}""")
+      check result.isOk
+      let msg = result.get()
+      check msg.text == "hello world"
+      check msg.userId == CliDefaultUserId
+      check msg.channelId == "webui"
+      check msg.channel == ckCli
+
+    test "parseChatPost parses JSON with custom userId":
+      let result = parseChatPost("""{"text": "hi", "userId": "alice"}""")
+      check result.isOk
+      let msg = result.get()
+      check msg.text == "hi"
+      check msg.userId == UserId("alice")
+
+    test "parseChatPost rejects empty body":
+      let result = parseChatPost("")
+      check result.isErr
+      check result.error.contains("empty body")
+
+    test "parseChatPost rejects invalid JSON":
+      let result = parseChatPost("not json")
+      check result.isErr
+      check result.error.contains("invalid JSON")
+
+    test "parseChatPost rejects non-object JSON":
+      let result = parseChatPost("""["array"]""")
+      check result.isErr
+      check result.error.contains("expected JSON object")
+
+    test "parseChatPost rejects missing text field":
+      let result = parseChatPost("""{"userId": "alice"}""")
+      check result.isErr
+      check result.error.contains("missing or empty 'text' field")
+
+    test "parseChatPost rejects empty text field":
+      let result = parseChatPost("""{"text": ""}""")
+      check result.isErr
+      check result.error.contains("missing or empty 'text' field")
+
+    test "parseChatPost handles JSON with extra fields":
+      let result = parseChatPost("""{"text": "hello", "extra": "ignored"}""")
+      check result.isOk
+      check result.get().text == "hello"
+
+  suite "dashboard page":
+
+    test "the shell carries no token and asks for one":
+      let html = buildDashboardHtml()
+      check html.contains("<title>Donkey</title>")
+      check html.contains("sessionStorage")
+      check html.contains("/api/status")
+      check html.contains("/api/logs")
+      check html.contains("Authorization: 'Bearer '")
+
+    test "the shell has no external asset or inline secret":
+      let html = buildDashboardHtml()
+      check not html.contains("<script src=")
+      check not html.contains("<link rel=\"stylesheet\"")
+      check not html.contains("DONKEY_HTTP_TOKEN=")
+
+  # ── long-lived capacity (gateway counters + admission) ───────────────────────
+  #
+  # The gateway pool has 8 workers; at most 6 may be blocked by long-lived work.
+  # These tests drive the same counters the streaming and non-streaming paths
+  # use, so a regression to a second pool (or to no admission at all) is caught
+  # here without opening a socket.
+
+  suite "http_gateway long-lived capacity":
+
+    test "a pool at six refuses a new turn with 429 and never dispatches":
+      resetCapacity()
+      # 2 pending turns + 4 SSE connections fill all six long-lived workers.
+      # The turn queue itself still has room (2 < MaxPendingTurns), so the
+      # refusal must come from the shared worker budget.
+      check reserveCapacity(llChatTurn, 2)
+      check reserveCapacity(llSseConnection, 4)
+      check longLivedOccupancy().longLivedWorkers == MaxLongLivedWorkers
+
+      let reply = runCapacityTurn()
+      check reply.status == 429
+      let node = parseJson(reply.body)
+      check node{"error"}{"type"}.getStr() == "rate_limit_error"
+      check node{"error"}{"code"}.getStr() == "no_worker"
+      check capDispatched == 0
+      # A refused request must not consume (or release) a worker.
+      check longLivedOccupancy().longLivedWorkers == MaxLongLivedWorkers
+
+    test "a full pending queue refuses with rate_limit_error":
+      resetCapacity()
+      check reserveCapacity(llChatTurn, MaxPendingTurns)
+
+      let reply = runCapacityTurn()
+      check reply.status == 429
+      let node = parseJson(reply.body)
+      check node{"error"}{"type"}.getStr() == "rate_limit_error"
+      check node{"error"}{"code"}.getStr() == "too_many_pending_turns"
+      check capDispatched == 0
+
+    test "3 pending turns plus 3 SSE streams refuse the seventh and a release admits it":
+      resetCapacity()
+      check reserveCapacity(llChatTurn, 3)
+      check reserveCapacity(llSseConnection, 3)
+      let before = longLivedOccupancy()
+      check before.pendingTurns == 3
+      check before.sseConnections == 3
+      check before.longLivedWorkers == 6
+
+      # Either path is refused: one shared pool, no per-class bypass.
+      check not tryReserveLongLived(llChatTurn).admitted
+      check not tryReserveLongLived(llSseConnection).admitted
+
+      releaseLongLived(llChatTurn)
+      check longLivedOccupancy().longLivedWorkers == 5
+      check tryReserveLongLived(llChatTurn).admitted
+      let after = longLivedOccupancy()
+      check after.pendingTurns == 3
+      check after.sseConnections == 3
+      check after.longLivedWorkers == 6
+
+    test "a turn that fails after admission releases its slot":
+      resetCapacity()
+      capMode = cdmRaise
+
+      let failed = runCapacityTurn()
+      check failed.status == 502
+      check capDispatched == 1
+      check capDuringTotal == 1
+      check longLivedOccupancy().longLivedWorkers == 0
+
+      capMode = cdmNothing
+      capNow = 1_000
+      let timedOut = runCapacityTurn(timeoutMs = 30)
+      check timedOut.status == 504
+      check capDispatched == 2
+      check longLivedOccupancy().longLivedWorkers == 0
+
+    test "a completed turn releases its slot and counts exactly one worker":
+      resetCapacity()
+
+      let reply = runCapacityTurn()
+      check reply.status == 200
+      check capDispatched == 1
+      check capDuringPending == 1
+      check capDuringSse == 0
+      check capDuringTotal == 1
+      check longLivedOccupancy().longLivedWorkers == 0
+
+    test "the streaming path shares the counters and counts exactly one worker":
+      resetCapacity()
+
+      let result = runCapacityStream()
+      check result.outcome == asCompleted
+      check capDuringPending == 0
+      check capDuringSse == 1
+      check capDuringTotal == 1
+      check capSseAcquireCalls == 1
+      check capSseReleaseCalls == 1
+      check longLivedOccupancy().longLivedWorkers == 0
+
+    test "a stream is refused when non-streaming turns already filled the pool":
+      resetCapacity()
+      check reserveCapacity(llChatTurn, 3)
+      check reserveCapacity(llSseConnection, 3)
+
+      let refused = runCapacityStream()
+      check refused.outcome == asPreflightError
+      check refused.reply.status == 429
+      check capDispatched == 0
+      check capSseReleaseCalls == 0
+      let occ = longLivedOccupancy()
+      check occ.pendingTurns == 3
+      check occ.sseConnections == 3
+      check occ.longLivedWorkers == 6
+
+    test "refused turns never consume a long-lived worker":
+      resetCapacity()
+      check reserveCapacity(llChatTurn, 2)
+      check reserveCapacity(llSseConnection, 4)
+
+      for _ in 0 ..< 3:
+        check runCapacityTurn().status == 429
+
+      check capDispatched == 0
+      let occ = longLivedOccupancy()
+      check occ.pendingTurns == 2
+      check occ.sseConnections == 4
+      check occ.longLivedWorkers == MaxLongLivedWorkers
+
+when isMainModule:
+  runTests()

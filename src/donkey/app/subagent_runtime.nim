@@ -21,6 +21,7 @@ import ../domain/subagent_pure
 import ../ports/provider
 import ../ports/subagent_workspace
 import ./native_tools
+import ./prompt_building
 import ./provider_executor
 import ./session_manager
 import ./session_state
@@ -33,7 +34,7 @@ const
     "You are a focused subagent. Complete only the delegated task. " &
     "You cannot ask the user questions or spawn other subagents. " &
     "Use the available tools when needed, respect the workspace boundary, " &
-    "and return a concise, self-contained result."
+    "and return a concise, self-contained result.\n\n" & LiveSourcesPrompt
   SubagentMaxConcurrent* = 16
   SubagentCompletedRetention* = 64
 
@@ -127,7 +128,7 @@ proc reapVoid(fut: Future[void]) {.async.} =
     await fut
   except CancelledError:
     discard
-  except Exception:
+  except CatchableError:
     discard
 
 proc reapLoop(fut: Future[ToolLoopRunResult]) {.async.} =
@@ -135,7 +136,7 @@ proc reapLoop(fut: Future[ToolLoopRunResult]) {.async.} =
     discard await fut
   except CancelledError:
     discard
-  except Exception:
+  except CatchableError:
     discard
 
 proc awaitSettled*(future: Future[void]; budgetMs: int64):
@@ -390,7 +391,7 @@ proc makeBudgetedComplete(rt: SubagentRuntime;
     let response =
       try:
         parentComplete(req)
-      except Exception as e:
+      except Exception as e:  ## effect boundary: callee raises are unannotated
         err("subagent provider error: " & e.msg)
     if response.isErr:
       rt.lastError = response.error
@@ -428,7 +429,7 @@ proc makeBudgetedAsyncComplete(rt: SubagentRuntime;
         await parentComplete(req)
       except CancelledError:
         raise
-      except Exception as e:
+      except Exception as e:  ## effect boundary: callee raises are unannotated
         err("subagent provider error: " & e.msg)
     if response.isErr:
       rt.lastError = response.error
@@ -512,7 +513,7 @@ proc runChild(mgr: SubagentManager; rt: SubagentRuntime) {.async.} =
       rt.status = ssCancelled
       if rt.lastError.len == 0:
         rt.lastError = "subagent was cancelled"
-  except Exception as e:
+  except CatchableError as e:
     rt.status = ssFailed
     rt.lastError = "subagent failed: " & e.msg
   finally:
@@ -563,7 +564,7 @@ proc finalizeWhenSettled(mgr: SubagentManager; rt: SubagentRuntime) {.async.} =
       await rt.future
     except CancelledError:
       discard
-    except Exception:
+    except CatchableError:
       discard
   if not await awaitSettled(rt.future, SubagentSettleBudgetMs):
     rt.parent.log.warn("subagent paddock orphaned: child did not settle id=" &
@@ -730,7 +731,7 @@ proc awaitSubagent*(mgr: SubagentManager; subagentId: string;
           discard await mgr.cancelSubagent(subagentId)
         except CancelledError:
           discard
-        except Exception:
+        except Exception:  ## effect boundary: callee raises are unannotated
           discard
         return rt.result
       let remaining = deadline - nowMs()
@@ -852,7 +853,7 @@ proc cancelAll*(mgr: SubagentManager): Future[void] {.async.} =
       settled = await awaitSettled(rt.future, remaining)
     except CancelledError:
       settled = rt.future.finished()
-    except Exception:
+    except CatchableError:
       settled = rt.future.finished()
     if not settled:
       rt.parent.log.warn("subagent paddock orphaned on shutdown id=" & rt.id)
@@ -1065,7 +1066,7 @@ proc awaitFanout*(mgr: SubagentManager; fanoutId: string;
       await st.future
     except CancelledError:
       discard
-    except Exception:
+    except CatchableError:
       discard
   ## C1: `done` only says the supervisor stopped. A child it cancelled keeps
   ## running until its own finally publishes the result, so the aggregate is

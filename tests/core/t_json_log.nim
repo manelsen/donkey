@@ -6,27 +6,31 @@ import donkey/core/types
 
 var gCaptured: string
 
-suite "Observability - JSON Logging":
+proc runTests*() =
+  suite "Observability - JSON Logging":
 
-  test "produces valid JSON log entry":
-    let jsonSink = proc(e: LogEntry) {.gcsafe.} =
-      {.cast(gcsafe).}:
-        gCaptured = $(%* {
-          "ts": e.timestamp,
-          "lvl": $e.level,
-          "sub": e.subsystem,
-          "msg": e.message
-        })
-    
-    let logger = newLogger("test", lvlDebug, jsonSink)
-    logger.info("hello observability")
-    
-    let j = parseJson(gCaptured)
-    check j["msg"].getStr() == "hello observability"
-    check j["sub"].getStr() == "test"
-    check j["lvl"].getStr() == "info"
+    test "produces valid JSON log entry":
+      let jsonSink = proc(e: LogEntry) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          gCaptured = $(%* {
+            "ts": e.timestamp,
+            "lvl": $e.level,
+            "sub": e.subsystem,
+            "msg": e.message
+          })
 
-suite "Observability - Metrics":
+      let logger = newLogger("test", lvlDebug, jsonSink)
+      logger.info("hello observability")
 
-  test "metrics capture latency":
-    check true
+      let j = parseJson(gCaptured)
+      check j["msg"].getStr() == "hello observability"
+      check j["sub"].getStr() == "test"
+      check j["lvl"].getStr() == "info"
+
+  suite "Observability - Metrics":
+
+    test "metrics capture latency":
+      check true
+
+when isMainModule:
+  runTests()

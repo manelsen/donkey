@@ -25,59 +25,63 @@ proc openManager(): SessionManager =
   sm.init()
   sm
 
-suite "group allowlist gate":
+proc runTests*() =
+  suite "group allowlist gate":
 
-  test "a group outside the allowlist is denied even under an open DM policy":
-    var sm = openManager()
-    sm.configureGroupGate(GroupGate(allowedChats: @["-100123"]))
-    let uid = UserId("u-1")
-    let gate = fixedGate(uid)
+    test "a group outside the allowlist is denied even under an open DM policy":
+      var sm = openManager()
+      sm.configureGroupGate(GroupGate(allowedChats: @["-100123"]))
+      let uid = UserId("u-1")
+      let gate = fixedGate(uid)
 
-    let allowed = authorizeResolvedInbound(
-      sm, gate, ckTelegram, uid, "oi", isGroup = true, chatId = "-100123")
-    check allowed.allowed
-    check allowed.userId == uid
+      let allowed = authorizeResolvedInbound(
+        sm, gate, ckTelegram, uid, "oi", isGroup = true, chatId = "-100123")
+      check allowed.allowed
+      check allowed.userId == uid
 
-    let denied = authorizeResolvedInbound(
-      sm, gate, ckTelegram, uid, "oi", isGroup = true, chatId = "-100999")
-    check not denied.allowed
+      let denied = authorizeResolvedInbound(
+        sm, gate, ckTelegram, uid, "oi", isGroup = true, chatId = "-100999")
+      check not denied.allowed
 
-  test "direct messages are not affected by the group allowlist":
-    var sm = openManager()
-    sm.configureGroupGate(GroupGate(allowedChats: @["-100123"]))
-    let uid = UserId("u-1")
-    let dm = authorizeResolvedInbound(
-      sm, fixedGate(uid), ckTelegram, uid, "oi", isGroup = false, chatId = "")
-    check dm.allowed
+    test "direct messages are not affected by the group allowlist":
+      var sm = openManager()
+      sm.configureGroupGate(GroupGate(allowedChats: @["-100123"]))
+      let uid = UserId("u-1")
+      let dm = authorizeResolvedInbound(
+        sm, fixedGate(uid), ckTelegram, uid, "oi", isGroup = false, chatId = "")
+      check dm.allowed
 
-  test "an empty group allowlist keeps every group allowed":
-    var sm = openManager()
-    sm.configureGroupGate(GroupGate())
-    let uid = UserId("u-1")
-    let res = authorizeResolvedInbound(
-      sm, fixedGate(uid), ckTelegram, uid, "oi", isGroup = true, chatId = "-42")
-    check res.allowed
+    test "an empty group allowlist keeps every group allowed":
+      var sm = openManager()
+      sm.configureGroupGate(GroupGate())
+      let uid = UserId("u-1")
+      let res = authorizeResolvedInbound(
+        sm, fixedGate(uid), ckTelegram, uid, "oi", isGroup = true, chatId = "-42")
+      check res.allowed
 
-  test "a link code cannot admit a sender in a disallowed group":
-    var sm = openManager()
-    sm.dmPolicy = DmPolicyAllowlist
-    let sender = UserId("sender")
-    let target = UserId("target")
-    sm.isDmAllowed = allowedOnly(target)
-    sm.configureGroupGate(GroupGate(allowedChats: @["-100123"]))
-    let res = authorizeInbound(
-      sm, fixedGate(sender, some(target)), ckTelegram, "raw-1", "/continue ABC",
-      isGroup = true, chatId = "-100999")
-    check not res.allowed
+    test "a link code cannot admit a sender in a disallowed group":
+      var sm = openManager()
+      sm.dmPolicy = DmPolicyAllowlist
+      let sender = UserId("sender")
+      let target = UserId("target")
+      sm.isDmAllowed = allowedOnly(target)
+      sm.configureGroupGate(GroupGate(allowedChats: @["-100123"]))
+      let res = authorizeInbound(
+        sm, fixedGate(sender, some(target)), ckTelegram, "raw-1", "/continue ABC",
+        isGroup = true, chatId = "-100999")
+      check not res.allowed
 
-  test "the link code still works inside an allowed group":
-    var sm = openManager()
-    sm.dmPolicy = DmPolicyAllowlist
-    let sender = UserId("sender")
-    let target = UserId("target")
-    sm.isDmAllowed = allowedOnly(target)
-    sm.configureGroupGate(GroupGate(allowedChats: @["-100123"]))
-    let res = authorizeInbound(
-      sm, fixedGate(sender, some(target)), ckTelegram, "raw-1", "/continue ABC",
-      isGroup = true, chatId = "-100123")
-    check res.allowed
+    test "the link code still works inside an allowed group":
+      var sm = openManager()
+      sm.dmPolicy = DmPolicyAllowlist
+      let sender = UserId("sender")
+      let target = UserId("target")
+      sm.isDmAllowed = allowedOnly(target)
+      sm.configureGroupGate(GroupGate(allowedChats: @["-100123"]))
+      let res = authorizeInbound(
+        sm, fixedGate(sender, some(target)), ckTelegram, "raw-1", "/continue ABC",
+        isGroup = true, chatId = "-100123")
+      check res.allowed
+
+when isMainModule:
+  runTests()

@@ -648,7 +648,7 @@ when defined(withPostgres) or defined(withSqlite):
         {.gcsafe, raises: [].} =
       try:
         result = a.search(userId, query, limit)
-      except Exception:
+      except Exception:  ## effect boundary: callee raises are unannotated
         result = @[]
 
   proc deleteUser*(a: MagmaMemoryAdapter; userId: UserId) =

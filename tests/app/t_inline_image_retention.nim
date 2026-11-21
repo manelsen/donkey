@@ -81,57 +81,61 @@ proc firstTurnPayload(paddockDir: string): string =
     "recentContext": "",
   })
 
-suite "inline image retention":
+proc runTests*() =
+  suite "inline image retention":
 
-  setup:
-    removeDir(TestRoot)
-    createDir(TestRoot)
-    gRequests = @[]
+    setup:
+      removeDir(TestRoot)
+      createDir(TestRoot)
+      gRequests = @[]
 
-  teardown:
-    removeDir(TestRoot)
+    teardown:
+      removeDir(TestRoot)
 
-  test "the second turn does not resend the inline photo":
-    proc doTest(dir: string): Future[seq[CompletionRequest]] {.async.} =
-      let userDir = dir / "u-ret"
-      createDir(userDir)
-      writeFile(userDir / "USER.md", "# Bob")
-      let payload = firstTurnPayload(userDir)
-      let mem = MdFileAdapter(paddocksDir: dir)
-      let inbox = newAsyncQueue[AgentMessage]()
-      let outbox = newAsyncQueue[OutboundMessage]()
-      var session = makeSessionEntry()
-      session.inbox = inbox
-      let state = newSessionState()
-      let orchFut = runOrchestrator(
-        inbox, addr session, outbox, mem.toRuntimePort(), recordingComplete,
-        newStdHttpAdapter().toRuntimePort(), nil, @[], @[], userDir, state)
-      await inbox.put(newTaskMsg("req-inline-1", tkUserMsg, "u-ret", payload))
-      discard await outbox.get()
-      await inbox.put(newTaskMsg("req-inline-2", tkUserMsg, "u-ret", "segunda mensagem"))
-      discard await outbox.get()
-      await inbox.put(newCancelMsg())
-      await orchFut
-      var recorded: seq[CompletionRequest]
-      {.cast(gcsafe).}:
-        recorded = gRequests
-      return recorded
+    test "the second turn does not resend the inline photo":
+      proc doTest(dir: string): Future[seq[CompletionRequest]] {.async.} =
+        let userDir = dir / "u-ret"
+        createDir(userDir)
+        writeFile(userDir / "USER.md", "# Bob")
+        let payload = firstTurnPayload(userDir)
+        let mem = MdFileAdapter(paddocksDir: dir)
+        let inbox = newAsyncQueue[AgentMessage]()
+        let outbox = newAsyncQueue[OutboundMessage]()
+        var session = makeSessionEntry()
+        session.inbox = inbox
+        let state = newSessionState()
+        let orchFut = runOrchestrator(
+          inbox, addr session, outbox, mem.toRuntimePort(), recordingComplete,
+          newStdHttpAdapter().toRuntimePort(), nil, @[], @[], userDir, state)
+        await inbox.put(newTaskMsg("req-inline-1", tkUserMsg, "u-ret", payload))
+        discard await outbox.get()
+        await inbox.put(newTaskMsg("req-inline-2", tkUserMsg, "u-ret", "segunda mensagem"))
+        discard await outbox.get()
+        await inbox.put(newCancelMsg())
+        await orchFut
+        var recorded: seq[CompletionRequest]
+        {.cast(gcsafe).}:
+          recorded = gRequests
+        return recorded
 
-    let requests = waitFor doTest(TestRoot)
-    check requests.len >= 2
+      let requests = waitFor doTest(TestRoot)
+      check requests.len >= 2
 
-    ## The first request carried the photo inline.
-    let firstIdx = requestContaining(requests, "veja a foto")
-    check firstIdx >= 0
-    check hasDataImage(requests[firstIdx])
+      ## The first request carried the photo inline.
+      let firstIdx = requestContaining(requests, "veja a foto")
+      check firstIdx >= 0
+      check hasDataImage(requests[firstIdx])
 
-    ## The second turn sees the marker but no `data:` image.
-    let secondIdx = requestContaining(requests, "segunda mensagem")
-    check secondIdx >= 0
-    check not hasDataImage(requests[secondIdx])
-    var markerSurvived = false
-    for msg in requests[secondIdx].messages:
-      if msg.role == roleUser and msg.text.contains("attachments/photo.png") and
-         msg.text.contains("inspect_image"):
-        markerSurvived = true
-    check markerSurvived
+      ## The second turn sees the marker but no `data:` image.
+      let secondIdx = requestContaining(requests, "segunda mensagem")
+      check secondIdx >= 0
+      check not hasDataImage(requests[secondIdx])
+      var markerSurvived = false
+      for msg in requests[secondIdx].messages:
+        if msg.role == roleUser and msg.text.contains("attachments/photo.png") and
+           msg.text.contains("inspect_image"):
+          markerSurvived = true
+      check markerSurvived
+
+when isMainModule:
+  runTests()

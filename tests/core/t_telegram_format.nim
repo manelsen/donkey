@@ -3,96 +3,100 @@ import donkey/core/telegram_format
 import donkey/domain/text_format
 import donkey/domain/text_format
 
-suite "Telegram Formatting":
+proc runTests*() =
+  suite "Telegram Formatting":
 
-  test "escapes basic HTML entities":
-    check escapeHtml("A < B & C > D") == "A &lt; B &amp; C &gt; D"
+    test "escapes basic HTML entities":
+      check escapeHtml("A < B & C > D") == "A &lt; B &amp; C &gt; D"
 
-  test "converts bold":
-    check markdownToTelegramHtml("Hello **world**") == "Hello <b>world</b>"
-    check markdownToTelegramHtml("Hello __world__") == "Hello <b>world</b>"
+    test "converts bold":
+      check markdownToTelegramHtml("Hello **world**") == "Hello <b>world</b>"
+      check markdownToTelegramHtml("Hello __world__") == "Hello <b>world</b>"
 
-  test "converts italic":
-    check markdownToTelegramHtml("Hello *world*") == "Hello <i>world</i>"
-    check markdownToTelegramHtml("Hello _world_") == "Hello <i>world</i>"
+    test "converts italic":
+      check markdownToTelegramHtml("Hello *world*") == "Hello <i>world</i>"
+      check markdownToTelegramHtml("Hello _world_") == "Hello <i>world</i>"
 
-  test "converts inline code":
-    check markdownToTelegramHtml("Use `code` here") == "Use <code>code</code> here"
+    test "converts inline code":
+      check markdownToTelegramHtml("Use `code` here") == "Use <code>code</code> here"
 
-  test "converts triple backtick code block":
-    check markdownToTelegramHtml("```\nprint('hi')\n```") == "<pre>print('hi')\n</pre>"
-    check markdownToTelegramHtml("```python\nprint('hi')\n```") == "<pre>print('hi')\n</pre>"
+    test "converts triple backtick code block":
+      check markdownToTelegramHtml("```\nprint('hi')\n```") == "<pre>print('hi')\n</pre>"
+      check markdownToTelegramHtml("```python\nprint('hi')\n```") == "<pre>print('hi')\n</pre>"
 
-  test "converts single line blockquote":
-    check markdownToTelegramHtml("> hello") == "<blockquote>hello</blockquote>"
+    test "converts single line blockquote":
+      check markdownToTelegramHtml("> hello") == "<blockquote>hello</blockquote>"
 
-  test "converts multiline blockquote":
-    let md = "> line 1\n> line 2"
-    check markdownToTelegramHtml(md) == "<blockquote>line 1\nline 2</blockquote>"
+    test "converts multiline blockquote":
+      let md = "> line 1\n> line 2"
+      check markdownToTelegramHtml(md) == "<blockquote>line 1\nline 2</blockquote>"
 
-  test "converts mixed formatting":
-    let md = "**bold** and *italic* and `code`"
-    check markdownToTelegramHtml(md) == "<b>bold</b> and <i>italic</i> and <code>code</code>"
+    test "converts mixed formatting":
+      let md = "**bold** and *italic* and `code`"
+      check markdownToTelegramHtml(md) == "<b>bold</b> and <i>italic</i> and <code>code</code>"
 
-  test "converts links":
-    check markdownToTelegramHtml("[Google](https://google.com)") == "<a href=\"https://google.com\">Google</a>"
+    test "converts links":
+      check markdownToTelegramHtml("[Google](https://google.com)") == "<a href=\"https://google.com\">Google</a>"
 
-  test "handles complex reasoning block":
-    let md = "> Step 1: Thinking...\n> Step 2: More thinking.\n\nFinal answer is **42**."
-    let expected = "<blockquote>Step 1: Thinking...\nStep 2: More thinking.</blockquote>\n\nFinal answer is <b>42</b>."
-    check markdownToTelegramHtml(md) == expected
+    test "handles complex reasoning block":
+      let md = "> Step 1: Thinking...\n> Step 2: More thinking.\n\nFinal answer is **42**."
+      let expected = "<blockquote>Step 1: Thinking...\nStep 2: More thinking.</blockquote>\n\nFinal answer is <b>42</b>."
+      check markdownToTelegramHtml(md) == expected
 
-  test "sanitizeForTelegram preserves valid UTF-8":
-    check sanitizeForTelegram("Hello World") == "Hello World"
-    check sanitizeForTelegram("🎉 🚀 ✅") == "🎉 🚀 ✅"
-    check sanitizeForTelegram("Café ☕") == "Café ☕"
+    test "sanitizeForTelegram preserves valid UTF-8":
+      check sanitizeForTelegram("Hello World") == "Hello World"
+      check sanitizeForTelegram("🎉 🚀 ✅") == "🎉 🚀 ✅"
+      check sanitizeForTelegram("Café ☕") == "Café ☕"
 
-  test "sanitizeForTelegram removes invalid bytes":
-    # Test with invalid continuation bytes
-    let invalidText = "Hello\xFFWorld"
-    let result = sanitizeForTelegram(invalidText)
-    check result == "HelloWorld"
-
-
-
-suite "telegram_format — code fences (TG-033)":
-
-  test "TG-033: a CRLF fence is recognised and normalised":
-    check markdownToTelegramHtml("```\r\ncode\r\n```") == "<pre>code\n</pre>"
-
-  test "TG-033: a longer fence keeps inner triple backticks literal":
-    check markdownToTelegramHtml("````\n```\ninner\n```\n````") ==
-      "<pre>```\ninner\n```\n</pre>"
-
-  test "TG-033: triple backticks mid-line are inline code, not a fence":
-    check markdownToTelegramHtml("use ```x``` here") == "use <code>x</code> here"
-
-suite "telegram_format — backslash escapes (TG-037)":
-
-  test "TG-037: an escaped marker renders literally":
-    check markdownToTelegramHtml("\\*not bold\\*") == "*not bold*"
-    check markdownToTelegramHtml("\\`not code\\`") == "`not code`"
-
-  test "TG-037: HTML characters stay escaped":
-    check markdownToTelegramHtml("<tag>") == "&lt;tag&gt;"
-
-  test "TG-037: escapeMarkdownInline neutralises markup":
-    let escaped = escapeMarkdownInline("*bold* `code` [x](y)")
-    check escaped == "\\*bold\\* \\`code\\` \\[x\\]\\(y\\)"
-    check markdownToTelegramHtml(escaped) == "*bold* `code` [x](y)"
-
-  test "TG-037: a non-markup backslash stays literal":
-    check markdownToTelegramHtml("C:\\temp\\new") == "C:\\temp\\new"
-
-  test "TG-037: code-span text keeps the span closed":
-    check codeSpanText("a`b") == "a'b"
-    check codeSpanText("plain") == "plain"
+    test "sanitizeForTelegram removes invalid bytes":
+      # Test with invalid continuation bytes
+      let invalidText = "Hello\xFFWorld"
+      let result = sanitizeForTelegram(invalidText)
+      check result == "HelloWorld"
 
 
-  test "TG-037: an escaped delimiter does not close the span":
-    check markdownToTelegramHtml("*a \\* b*") == "<i>a * b</i>"
 
-  test "TG-037: overlapping closings are still found":
-    check markdownToTelegramHtml("**a \\***") == "<b>a *</b>"
-    check markdownToTelegramHtml("__a \\___") == "<b>a _</b>"
-    check markdownToTelegramHtml("~~a \\~~~") == "<s>a ~</s>"
+  suite "telegram_format — code fences (TG-033)":
+
+    test "TG-033: a CRLF fence is recognised and normalised":
+      check markdownToTelegramHtml("```\r\ncode\r\n```") == "<pre>code\n</pre>"
+
+    test "TG-033: a longer fence keeps inner triple backticks literal":
+      check markdownToTelegramHtml("````\n```\ninner\n```\n````") ==
+        "<pre>```\ninner\n```\n</pre>"
+
+    test "TG-033: triple backticks mid-line are inline code, not a fence":
+      check markdownToTelegramHtml("use ```x``` here") == "use <code>x</code> here"
+
+  suite "telegram_format — backslash escapes (TG-037)":
+
+    test "TG-037: an escaped marker renders literally":
+      check markdownToTelegramHtml("\\*not bold\\*") == "*not bold*"
+      check markdownToTelegramHtml("\\`not code\\`") == "`not code`"
+
+    test "TG-037: HTML characters stay escaped":
+      check markdownToTelegramHtml("<tag>") == "&lt;tag&gt;"
+
+    test "TG-037: escapeMarkdownInline neutralises markup":
+      let escaped = escapeMarkdownInline("*bold* `code` [x](y)")
+      check escaped == "\\*bold\\* \\`code\\` \\[x\\]\\(y\\)"
+      check markdownToTelegramHtml(escaped) == "*bold* `code` [x](y)"
+
+    test "TG-037: a non-markup backslash stays literal":
+      check markdownToTelegramHtml("C:\\temp\\new") == "C:\\temp\\new"
+
+    test "TG-037: code-span text keeps the span closed":
+      check codeSpanText("a`b") == "a'b"
+      check codeSpanText("plain") == "plain"
+
+
+    test "TG-037: an escaped delimiter does not close the span":
+      check markdownToTelegramHtml("*a \\* b*") == "<i>a * b</i>"
+
+    test "TG-037: overlapping closings are still found":
+      check markdownToTelegramHtml("**a \\***") == "<b>a *</b>"
+      check markdownToTelegramHtml("__a \\___") == "<b>a _</b>"
+      check markdownToTelegramHtml("~~a \\~~~") == "<s>a ~</s>"
+
+when isMainModule:
+  runTests()

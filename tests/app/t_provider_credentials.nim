@@ -15,58 +15,6 @@ proc clearCreds() =
                "GROQ_API_KEY", "GROQ_API_KEYS"]:
     delEnv(name)
 
-suite "credential runtime":
-
-  test "the plural env sits next to the single key":
-    check poolEnvName("OPENAI_API_KEY") == "OPENAI_API_KEYS"
-    check poolEnvName("ZAI_API_KEY") == "ZAI_API_KEYS"
-    check poolEnvName("SOMETHING") == "SOMETHING_KEYS"
-
-  test "a plural-only value still counts as available":
-    clearCreds()
-    defer: clearCreds()
-    putEnv("OPENAI_API_KEYS", "a,b")
-    check hasCredentialKey(["OPENAI_API_KEY"])
-    check detectProviderAvailability().openai
-
-  test "resolve rotates through the pool":
-    clearCreds()
-    defer: clearCreds()
-    putEnv("OPENAI_API_KEYS", "a,b")
-    check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "a"
-    check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "b"
-    check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "a"
-
-  test "a single key becomes a one-key pool":
-    clearCreds()
-    defer: clearCreds()
-    putEnv("OPENAI_API_KEY", "solo")
-    check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "solo"
-    check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "solo"
-
-  test "a failed key cools down and the next request uses another":
-    clearCreds()
-    defer: clearCreds()
-    putEnv("OPENAI_API_KEYS", "a,b")
-    check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "a"
-    noteCredentialResult("openai", "a", ok = false, error = "429 rate limit")
-    check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "b"
-
-  test "cooldown depends on the failure kind":
-    check cooldownForError("429 Too Many Requests") == 60_000
-    check cooldownForError("rate limit exceeded") == 60_000
-    check cooldownForError("insufficient_quota") == 15 * 60_000
-    check cooldownForError("401 Unauthorized") == 30 * 60_000
-
-  test "buildProviderSpec takes its key from the pool":
-    clearCreds()
-    defer: clearCreds()
-    putEnv("OPENAI_API_KEYS", "a,b")
-    let first = buildProviderSpec(ProviderPrefs(providerName: "openai"))
-    let second = buildProviderSpec(ProviderPrefs(providerName: "openai"))
-    check first.apiKey == "a"
-    check second.apiKey == "b"
-
 var gSeenKeys: seq[string]
 
 proc keyedBuilderImpl(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} =
@@ -96,33 +44,90 @@ proc hooks(): tuple[res: CredentialResultHook, next: CredentialNextHook] =
   result.next = proc (providerName, currentKey: string): string {.gcsafe.} =
     nextCredentialKey(providerName, currentKey)
 
-suite "in-flight credential retry":
 
-  test "a 429 retries the same provider with the next key":
-    clearCreds()
-    defer: clearCreds()
-    gSeenKeys = @[]
-    putEnv("OPENAI_API_KEYS", "a,b")
-    let h = hooks()
-    let fn = buildAsyncCompleteFn(
-      "provider = \"openai\"", keyedBuilderImpl,
-      credentialResultHook = h.res, credentialNextHook = h.next)
-    let res = waitFor fn(CompletionRequest(
-      messages: @[ChatMessage(role: roleUser, text: "hi")]))
-    check res.isOk
-    check res.get().text == "ok from b"
-    check gSeenKeys == @["a", "b"]
+proc runTests*() =
+  suite "credential runtime":
 
-  test "a transport error does not burn another key":
-    clearCreds()
-    defer: clearCreds()
-    gSeenKeys = @[]
-    putEnv("OPENAI_API_KEYS", "a,b")
-    let h = hooks()
-    let fn = buildAsyncCompleteFn(
-      "provider = \"openai\"", staleKeyBuilderImpl,
-      credentialResultHook = h.res, credentialNextHook = h.next)
-    let res = waitFor fn(CompletionRequest(
-      messages: @[ChatMessage(role: roleUser, text: "hi")]))
-    check res.isErr
-    check gSeenKeys == @["a"]
+    test "the plural env sits next to the single key":
+      check poolEnvName("OPENAI_API_KEY") == "OPENAI_API_KEYS"
+      check poolEnvName("ZAI_API_KEY") == "ZAI_API_KEYS"
+      check poolEnvName("SOMETHING") == "SOMETHING_KEYS"
+
+    test "a plural-only value still counts as available":
+      clearCreds()
+      defer: clearCreds()
+      putEnv("OPENAI_API_KEYS", "a,b")
+      check hasCredentialKey(["OPENAI_API_KEY"])
+      check detectProviderAvailability().openai
+
+    test "resolve rotates through the pool":
+      clearCreds()
+      defer: clearCreds()
+      putEnv("OPENAI_API_KEYS", "a,b")
+      check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "a"
+      check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "b"
+      check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "a"
+
+    test "a single key becomes a one-key pool":
+      clearCreds()
+      defer: clearCreds()
+      putEnv("OPENAI_API_KEY", "solo")
+      check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "solo"
+      check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "solo"
+
+    test "a failed key cools down and the next request uses another":
+      clearCreds()
+      defer: clearCreds()
+      putEnv("OPENAI_API_KEYS", "a,b")
+      check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "a"
+      noteCredentialResult("openai", "a", ok = false, error = "429 rate limit")
+      check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "b"
+
+    test "cooldown depends on the failure kind":
+      check cooldownForError("429 Too Many Requests") == 60_000
+      check cooldownForError("rate limit exceeded") == 60_000
+      check cooldownForError("insufficient_quota") == 15 * 60_000
+      check cooldownForError("401 Unauthorized") == 30 * 60_000
+
+    test "buildProviderSpec takes its key from the pool":
+      clearCreds()
+      defer: clearCreds()
+      putEnv("OPENAI_API_KEYS", "a,b")
+      let first = buildProviderSpec(ProviderPrefs(providerName: "openai"))
+      let second = buildProviderSpec(ProviderPrefs(providerName: "openai"))
+      check first.apiKey == "a"
+      check second.apiKey == "b"
+
+  suite "in-flight credential retry":
+
+    test "a 429 retries the same provider with the next key":
+      clearCreds()
+      defer: clearCreds()
+      gSeenKeys = @[]
+      putEnv("OPENAI_API_KEYS", "a,b")
+      let h = hooks()
+      let fn = buildAsyncCompleteFn(
+        "provider = \"openai\"", keyedBuilderImpl,
+        credentialResultHook = h.res, credentialNextHook = h.next)
+      let res = waitFor fn(CompletionRequest(
+        messages: @[ChatMessage(role: roleUser, text: "hi")]))
+      check res.isOk
+      check res.get().text == "ok from b"
+      check gSeenKeys == @["a", "b"]
+
+    test "a transport error does not burn another key":
+      clearCreds()
+      defer: clearCreds()
+      gSeenKeys = @[]
+      putEnv("OPENAI_API_KEYS", "a,b")
+      let h = hooks()
+      let fn = buildAsyncCompleteFn(
+        "provider = \"openai\"", staleKeyBuilderImpl,
+        credentialResultHook = h.res, credentialNextHook = h.next)
+      let res = waitFor fn(CompletionRequest(
+        messages: @[ChatMessage(role: roleUser, text: "hi")]))
+      check res.isErr
+      check gSeenKeys == @["a"]
+
+when isMainModule:
+  runTests()

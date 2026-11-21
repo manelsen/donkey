@@ -23,7 +23,7 @@ export onboarding
 proc safeComplete(fn: CompleteFn; req: CompletionRequest
                  ): Result[CompletionResponse, string] {.gcsafe, raises: [].} =
   try: fn(req)
-  except Exception as e: err(e.msg)
+  except Exception as e: err(e.msg)  ## effect boundary: callee raises are unannotated
 
 proc unwrapOrReplyError*[T](globalOutbox: AsyncQueue[OutboundMessage];
                             uid: UserId;
@@ -139,7 +139,7 @@ proc safeSaveSession*(memory: MemoryRuntimePort;
                      history: ConversationHistory) {.gcsafe, raises: [].} =
   try:
     memory.saveSession(uid, sessionId, history)
-  except Exception:
+  except Exception:  ## effect boundary: callee raises are unannotated
     discard
 
 proc warnNotSaved(what: string; uid: UserId; saved: Result[void, string])
@@ -165,7 +165,7 @@ proc safeLoadIdentity*(memory: MemoryRuntimePort;
                       uid: UserId): (string, PersonalityTraits) {.gcsafe, raises: [].} =
   try:
     memory.loadIdentity(uid)
-  except Exception:
+  except Exception:  ## effect boundary: callee raises are unannotated
     ("", PersonalityTraits())
 
 proc safeHasProfile*(memory: MemoryRuntimePort;
@@ -175,7 +175,7 @@ proc safeLoadPreferences(memory: MemoryRuntimePort;
                          uid: UserId): string {.gcsafe, raises: [].} =
   try:
     memory.loadContext(uid).preferencesMd
-  except Exception:
+  except Exception:  ## effect boundary: callee raises are unannotated
     ""
 
 proc safeSavePreferences(memory: MemoryRuntimePort;
@@ -235,14 +235,14 @@ proc safeHasProfile*(memory: MemoryRuntimePort;
                     uid: UserId): bool {.gcsafe, raises: [].} =
   try:
     memory.hasProfile(uid)
-  except Exception:
+  except Exception:  ## effect boundary: callee raises are unannotated
     false
 
 proc safeHasCompletedBootstrap*(memory: MemoryRuntimePort;
                                uid: UserId): bool {.gcsafe, raises: [].} =
   try:
     memory.loadContext(uid).userMd.strip.len > 0
-  except Exception:
+  except Exception:  ## effect boundary: callee raises are unannotated
     false
 
 proc safeAppendMemory*(memory: MemoryRuntimePort;

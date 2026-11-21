@@ -5,14 +5,10 @@
 import std/[os, strutils, unittest]
 import donkey/core/pipeops
 import donkey/adapters/secrets/file_key
-import donkey/ports/secrets
 
 # ── contract ──────────────────────────────────────────────────────────────────
 
-proc verifySecretStore(s: SecretStore) = discard
-
 proc runContractTests(store: FileKeyStore) =
-  verifySecretStore(store)
   suite "SecretStore contract [" & store.label & "]":
 
     test "isEncrypted: enc2: prefix → true":

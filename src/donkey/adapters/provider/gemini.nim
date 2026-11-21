@@ -13,12 +13,13 @@
 ##   - Response: candidates[0].content.parts[0].text
 ##   - Token usage: usageMetadata.promptTokenCount / candidatesTokenCount
 
-import std/[httpclient, json]
+import std/[json]
 import ../../domain/message
 import ../../domain/providers/gemini_pure as gp
 import ../../ports/provider
 import ../../core/pipeops
-import ../http/helpers
+import ../../ports/http
+import ./provider_http
 
 # Re-export from pure module for backwards compatibility
 export gp.geminiRole, gp.textPart, gp.functionCallPart, gp.functionResponsePart,
@@ -32,6 +33,7 @@ const
 type
   GeminiAdapter* = object
     apiKey*:   string
+    http*:     HttpRuntimePort  ## nil → production provider transport
     model*:    string
     endpoint*: string   ## full URL override for testing
 
@@ -66,13 +68,12 @@ proc buildBody*(a: GeminiAdapter; req: CompletionRequest): JsonNode =
 
 proc complete*(a: GeminiAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
-  withHttpClient:
-    client.headers = newHttpHeaders({"Content-Type": "application/json"})
+  providerGuard:
+    var headers: seq[HttpHeader] = @[("Content-Type", "application/json")]
     let body = $a.buildBody(req)
     let url  = a.buildUrl()
-    let resp = client.post(url, body = body)
-    checkApiStatus(resp, "Gemini")
-    resp.body |> parseJson |> parseGeminiResponse
+    let resp = ? postProvider(a.http, "Gemini", url, body, headers)
+    resp |> parseJson |> parseGeminiResponse
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

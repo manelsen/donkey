@@ -305,7 +305,7 @@ when defined(withPostgres) or defined(withSqlite):
         let ctx = memory.loadContext(userId)
         let rerankFn = buildMagmaRerankFn(ctx.preferencesMd)
         magmaSearch.searchWithRerank(userId, query, limit, rerankFn)
-      except Exception:
+      except Exception:  ## effect boundary: callee raises are unannotated
         @[]
 
   proc loadMagmaMemoryStats*(memory: MdFileAdapter): MemoryStats {.gcsafe, raises: [].} =
@@ -323,5 +323,5 @@ when defined(withPostgres) or defined(withSqlite):
         embeddingNodes: stats.embeddingNodes,
         totalEdges: stats.totalEdges,
       )
-    except Exception:
+    except Exception:  ## effect boundary: callee raises are unannotated
       MemoryStats()

@@ -18,6 +18,7 @@
 import std/[json, strutils]
 import ../../core/types
 import ../../core/pipeops
+import ../../core/media_download
 import ../../domain/message
 import ../../domain/channels/whatsapp_pure
 import ../../ports/http
@@ -50,7 +51,8 @@ type
 
 # ── Module-level event queue ───────────────────────────────────────────────────
 
-## Thread-safe: chronos Channel uses internal synchronization.
+## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
+## lock internally and deep-copy the payload. Must be open()ed before use.
 ## Opened once at daemon startup via openQueue().
 var gWaEvents* {.global.}: Channel[WaRawEvent]
 
@@ -157,17 +159,8 @@ proc downloadMediaFile*(a: WhatsAppAdapter; mediaId: string): Result[seq[byte], 
   ## Resolves media ID and downloads the file content.
   ## Combines resolveMediaUrl with binary download.
   let url = ? a.resolveMediaUrl(mediaId)
-  try:
-    # WhatsApp media URLs need authorization header
-    let authHeaders = @[a.authHeader()]
-    let resp = ? a.http.get(url, authHeaders)
-
-    var data = newSeq[byte](resp.body.len)
-    for i in 0 ..< resp.body.len:
-      data[i] = cast[byte](resp.body[i])
-    ok(data)
-  except CatchableError as e:
-    err("downloadMediaFile: " & e.msg)
+  # WhatsApp media URLs need authorization header
+  a.http.fetchBytes(url, @[a.authHeader()])
 
 proc downloadFile*(a: WhatsAppAdapter; mediaId: string): Result[FileDownload, string] =
   ## Downloads a WhatsApp media file by its media ID.

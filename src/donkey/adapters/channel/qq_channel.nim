@@ -148,9 +148,10 @@ proc startGateway*(a: var QQChannelAdapter) =
   else:
     discard
 
-proc startWebhook*(a: QQChannelAdapter; port: Port; log: Logger) =
+proc startWebhook*(a: QQChannelAdapter; host: string; port: Port;
+                   secret: string; log: Logger): Result[void, string] =
   case a.kind
   of qbkOneBot:
-    a.onebot.startWebhook(port, log)
+    a.onebot.startWebhook(host, port, secret, log)
   else:
-    discard
+    ok()

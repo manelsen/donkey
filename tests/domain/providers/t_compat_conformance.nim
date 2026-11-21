@@ -111,63 +111,67 @@ proc imageWithToolsRequest(): CompletionRequest =
 proc build(c: ProfileExpectation; req: CompletionRequest; stream = false): JsonNode =
   buildCompatRequestBody(c.profile, "m", req, stream)
 
-suite "compat conformance":
+proc runTests*() =
+  suite "compat conformance":
 
-  for c in expectations():
-    test c.name & " keeps the tool_choice contract":
-      let body = build(c, toolRequest())
-      check body.hasKey("tool_choice") == c.toolChoice
-
-    test c.name & " keeps the tool-result name contract":
-      let body = build(c, toolResultRequest())
-      check body["messages"][0].hasKey("name") == c.toolResultName
-
-    test c.name & " keeps the reasoning contract":
-      let body = build(c, CompletionRequest(reasoning: true))
-      check body.hasKey("include_reasoning") == c.includeReasoning
-      if c.reasoningSplit:
-        check body["reasoning_split"].getBool()
-      else:
-        check not body.hasKey("reasoning_split")
-
-    test c.name & " keeps the image/tool-call precedence":
-      let body = build(c, imageWithToolsRequest())
-      let content = body["messages"][0]["content"]
-      if c.imageWithToolCalls:
-        check content.kind == JArray
-      else:
-        check content.kind == JString
-
-    test c.name & " keeps the empty-content contract":
-      let body = build(c, CompletionRequest(messages: @[
-        ChatMessage(role: roleUser, text: "")]))
-      check body["messages"][0].hasKey("content") == c.emptyContent
-
-    test c.name & " keeps the streaming body contract":
-      let body = build(c, CompletionRequest(), stream = true)
-      check body["stream"].getBool()
-      if c.streamOptions:
-        check body["stream_options"]["include_usage"].getBool()
-      else:
-        check not body.hasKey("stream_options")
-
-  test "the table detects a profile that loses a hook":
-    ## Negative control: with tool_choice disabled, the OpenRouter row's
-    ## expectation (toolChoice=true) would fail. This proves the assertions are
-    ## live, not vacuous.
-    var wrong = openRouterCompatProfile()
-    wrong.quirks.toolChoiceAuto = false
-    let body = buildCompatRequestBody(wrong, "m", toolRequest())
-    check not body.hasKey("tool_choice")
-
-  test "every chat-completions descriptor has a conformance row":
-    ## A provider with a descriptor but no row would silently skip conformance.
-    ## Every `ptOpenAiChat` descriptor must be claimed by exactly one row.
-    var covered: seq[string]
     for c in expectations():
-      for id in c.providerIds:
-        check id notin covered       ## no descriptor claimed twice
-        covered.add id
-    for descriptor in providerDescriptors():
-      if descriptor.transport == ptOpenAiChat:
-        check descriptor.id in covered
+      test c.name & " keeps the tool_choice contract":
+        let body = build(c, toolRequest())
+        check body.hasKey("tool_choice") == c.toolChoice
+
+      test c.name & " keeps the tool-result name contract":
+        let body = build(c, toolResultRequest())
+        check body["messages"][0].hasKey("name") == c.toolResultName
+
+      test c.name & " keeps the reasoning contract":
+        let body = build(c, CompletionRequest(reasoning: true))
+        check body.hasKey("include_reasoning") == c.includeReasoning
+        if c.reasoningSplit:
+          check body["reasoning_split"].getBool()
+        else:
+          check not body.hasKey("reasoning_split")
+
+      test c.name & " keeps the image/tool-call precedence":
+        let body = build(c, imageWithToolsRequest())
+        let content = body["messages"][0]["content"]
+        if c.imageWithToolCalls:
+          check content.kind == JArray
+        else:
+          check content.kind == JString
+
+      test c.name & " keeps the empty-content contract":
+        let body = build(c, CompletionRequest(messages: @[
+          ChatMessage(role: roleUser, text: "")]))
+        check body["messages"][0].hasKey("content") == c.emptyContent
+
+      test c.name & " keeps the streaming body contract":
+        let body = build(c, CompletionRequest(), stream = true)
+        check body["stream"].getBool()
+        if c.streamOptions:
+          check body["stream_options"]["include_usage"].getBool()
+        else:
+          check not body.hasKey("stream_options")
+
+    test "the table detects a profile that loses a hook":
+      ## Negative control: with tool_choice disabled, the OpenRouter row's
+      ## expectation (toolChoice=true) would fail. This proves the assertions are
+      ## live, not vacuous.
+      var wrong = openRouterCompatProfile()
+      wrong.quirks.toolChoiceAuto = false
+      let body = buildCompatRequestBody(wrong, "m", toolRequest())
+      check not body.hasKey("tool_choice")
+
+    test "every chat-completions descriptor has a conformance row":
+      ## A provider with a descriptor but no row would silently skip conformance.
+      ## Every `ptOpenAiChat` descriptor must be claimed by exactly one row.
+      var covered: seq[string]
+      for c in expectations():
+        for id in c.providerIds:
+          check id notin covered       ## no descriptor claimed twice
+          covered.add id
+      for descriptor in providerDescriptors():
+        if descriptor.transport == ptOpenAiChat:
+          check descriptor.id in covered
+
+when isMainModule:
+  runTests()

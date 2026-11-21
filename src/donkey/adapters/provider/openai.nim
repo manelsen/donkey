@@ -7,14 +7,15 @@
 ##
 ## Streaming: SSE via "stream": true request flag.
 
-import std/[httpclient, json, streams, strutils]
+import std/[json, streams, strutils]
 import ../../domain/message
 import ../../domain/providers/openai_pure
 import ../../domain/providers/compat
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/json_helpers
-import ../http/helpers
+import ../../ports/http
+import ./provider_http
 
 const
   OpenAIEndpoint*    = "https://api.openai.com/v1/chat/completions"
@@ -23,6 +24,7 @@ const
 type
   OpenAIAdapter* = object
     apiKey*:   string
+    http*:     HttpRuntimePort  ## nil → production provider transport
     model*:    string
     endpoint*: string   ## override for testing
     providerName*: string ## e.g. "OpenAI" or "Groq"
@@ -76,16 +78,12 @@ proc parseOpenAISseLine*(line: string): Result[OpenAISseChunk, string] =
 
 proc complete*(a: OpenAIAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
-  withHttpClient:
-    client.headers = newHttpHeaders({
-      "Content-Type":  "application/json",
-      "Authorization": "Bearer " & a.apiKey,
-    })
+  providerGuard:
+    var headers: seq[HttpHeader] = @[("Content-Type", "application/json"), ("Authorization", "Bearer " & a.apiKey)]
     let body = buildCompatRequestBody(defaultOpenAiProfile(endpoint = OpenAIEndpoint), a.model, req)
     let url  = if a.endpoint.len > 0: a.endpoint else: OpenAIEndpoint
-    let resp = client.post(url, body = $body)
-    checkApiStatus(resp, a.displayName)
-    resp.body |> parseJson |> parseResponseFrom
+    let resp = ? postProvider(a.http, a.displayName, url, $body, headers)
+    resp |> parseJson |> parseResponseFrom
 
 # ── Streaming ─────────────────────────────────────────────────────────────────
 
@@ -94,22 +92,18 @@ proc makeStreamFn*(a: OpenAIAdapter): StreamFn =
   result = proc(req: CompletionRequest;
                 onToken: proc(tok: string) {.gcsafe.}
                ): Result[CompletionResponse, string] {.gcsafe.} =
-    withHttpClient:
-      client.headers = newHttpHeaders({
-        "Content-Type":  "application/json",
-        "Authorization": "Bearer " & adapter.apiKey,
-      })
+    providerGuard:
+      var headers: seq[HttpHeader] = @[("Content-Type", "application/json"), ("Authorization", "Bearer " & adapter.apiKey)]
       let body = buildCompatRequestBody(defaultOpenAiProfile(endpoint = OpenAIEndpoint), adapter.model, req, stream = true)
       let url  = if adapter.endpoint.len > 0: adapter.endpoint else: OpenAIEndpoint
-      let resp = client.request(url, httpMethod = HttpPost, body = $body)
-      checkApiStatus(resp, adapter.displayName)
+      let resp = ? postProviderStream(adapter.http, adapter.displayName, url, $body, headers)
       
       var accumulated = ""
       var reasoning = ""
       var inputTokens = 0
       var outputTokens = 0
       
-      for line in resp.bodyStream.lines:
+      for line in resp.lines:
         let res = parseOpenAISseLine(line)
         if res.isErr: continue
         let chunk = res.value

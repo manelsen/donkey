@@ -3,16 +3,15 @@ import chronos/asyncsync
 import ../../core/commands/command_routing
 import ../../core/log as core_log
 import ../../core/pipeops
-import ../../adapters/memory/md_file
 import ../../app/session_manager
-import ../../domain/agent_message
 import ../../domain/message
-import ../../ports/provider
 import ../identity/identity_resolver
 import ../../app/inbound_gate
 import ../../app/approval_runtime
 import ./common_runtime
 import ./wecom
+import ../../app/command_dispatch
+import ../../ports/channel_capability
 
 # ── Markdown builders for WeCom rich replies ──────────────────────────────────
 #
@@ -20,7 +19,7 @@ import ./wecom
 # <font color="info|comment|warning">text</font>, [link](url), > quote, - list.
 
 func buildWeComHelpMd*(): string =
-  let pages = buildHelpPages()
+  let pages = buildHelpPages(commandCaps(ckWeCom))
   result = "## 📖 Donkey — Ajuda\n"
   for (title, body) in pages:
     result.add("\n**" & title & "**\n")
@@ -57,20 +56,36 @@ proc wcMd(wcAdapter: var WeComAdapter; userId: UserId; md: string; logger: Logge
     wcAdapter.send(OutboundMessage(userId: userId, channel: ckWeCom, text: md)).isOkOr:
       logger.error("wc send text fallback failed for user=" & $userId & " reason=" & error)
 
+proc presentWeComReply(wcAdapter: var WeComAdapter; userId: UserId;
+                       reply: CommandReply; logger: Logger) =
+  ## WeCom renders diagnostic topics as markdown cards; the rest as text.
+  if not reply.shouldSend:
+    return
+  case reply.topic
+  of rtAbout, rtDoctor:
+    wcMd(wcAdapter, userId, buildWeComDoctorMd(reply.text), logger)
+  of rtLinkCode:
+    wcMd(wcAdapter, userId, buildWeComMycodeM(reply.text), logger)
+  of rtHelp:
+    wcMd(wcAdapter, userId, buildWeComHelpMd(), logger)
+  of rtMemory:
+    wcMd(wcAdapter, userId, buildWeComMemoryMd(reply.text), logger)
+  of rtPing:
+    wcMd(wcAdapter, userId, buildWeComPingMd(reply.text), logger)
+  of rtStatus:
+    wcMd(wcAdapter, userId, buildWeComStatusMd(reply.text), logger)
+  else:
+    wcReply(wcAdapter, userId, reply.text, logger)
+
 # ── Main drain ────────────────────────────────────────────────────────────────
 
 proc drainWeComEvents*(wcAdapter: var WeComAdapter;
                        wecomCorpId: string;
                        sm: var SessionManager;
-                       memory: MdFileAdapter;
-                       completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
-                       modelCatalogLoader: ModelCatalogLoader;
-                       toolsCount: int;
-                       toolClientsCount: int;
-                       daemonStartMs: int64;
+                       env: ChannelRuntimeEnv;
                        msgSeq: var int;
-                       logger: Logger;
-                       handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.}) =
+                       handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
+                       logger: Logger) =
   if wecomCorpId.len == 0:
     return
 
@@ -97,76 +112,14 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
         text:      event.content,
       )
       let command = decideCommandRequest(CommandRequest(channel: ckWeCom, text: event.content))
-      case command.route
-      of crLocal:
-        case decideLocalCommandAction(command)
-        of lcaShowAbout:
-          wcMd(wcAdapter, userId, buildWeComDoctorMd(
-            buildAboutText(memory, userId, toolsCount, toolClientsCount, sm.sessionCount())), logger)
-        of lcaStartIntro:
-          wcReply(wcAdapter, userId, buildStartIntroText(), logger)
-        of lcaSkillCommand:
-          let reply = applySkillTextCommand(
-            memory,
-            userId,
-            command.value,
-            homeDir = memory.donkeyHomeDir(),
-          ).valueOr:
-            error
-          wcReply(
-            wcAdapter,
-            userId,
-            reply,
-            logger,
-          )
-        of lcaGenerateLinkCode:
-          wcMd(wcAdapter, userId, buildWeComMycodeM(
-            buildLinkCodeText(wcAdapter.resolver.generateLinkCode(userId))), logger)
-        of lcaClearMemory:
-          wcReply(wcAdapter, userId, clearMemoryReply(memory, userId), logger)
-        of lcaDoctorReport:
-          wcMd(wcAdapter, userId, buildWeComDoctorMd(
-            buildDoctorReport(memory, completeBuilder, userId, toolsCount, toolClientsCount, sm.sessionCount())), logger)
-        of lcaHelpText:
-          wcMd(wcAdapter, userId, buildWeComHelpMd(), logger)
-        of lcaShowMemory:
-          wcMd(wcAdapter, userId, buildWeComMemoryMd(
-            buildMemoryViewText(memory, userId)), logger)
-        of lcaContinueLink:
-          let linked = wcAdapter.resolver.consumeLinkCode(command.value, ckWeCom, event.fromUser)
-          wcReply(wcAdapter, userId, buildContinueResultText(linked), logger)
-        else:
-          discard
-      of crSessionTask:
-        if sm.hasLiveSession(userId):
-          let entry = sm.getOrCreate(userId)
-          inc msgSeq
-          entry.inbox.addLastNoWait(
-            newTaskMsg($msgSeq, commandTaskKind(command), $userId, "", ckWeCom, event.msgId))
-        else:
-          let errText =
-            if command.kind == cmdDebug: "Nenhuma sessão ativa. Envie uma mensagem primeiro."
-            else: "Nenhuma conversa ativa para reiniciar."
-          wcReply(wcAdapter, userId, errText, logger)
-      of crUi:
-        let reply =
-          case command.kind
-          of cmdModels:
-            memory.applyModelsTextCommand(userId, command.value, modelCatalogLoader).valueOr: error
-          of cmdThink:
-            memory.applyThinkTextCommand(userId, command.value).valueOr: error
-          of cmdBudget:
-            memory.applyBudgetTextCommand(userId, command.value).valueOr: error
-          of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
-            buildDeferredUiCommandText(command.kind)
-          else: ""
-        if reply.len > 0:
-          wcReply(wcAdapter, userId, reply, logger)
-      of crPing:
-        wcMd(wcAdapter, userId, buildWeComPingMd(buildPingText(memory, userId, completeBuilder)), logger)
-      of crStatus:
-        wcMd(wcAdapter, userId, buildWeComStatusMd(
-          buildTextStatusText(memory, userId, toolsCount, sm.sessionCount(), daemonStartMs)), logger)
-      of crCallback, crNone:
+      let outcome = dispatchCommand(env.commands, sm, msgSeq,
+          commandRequest(command, userId, ckWeCom, event.msgId, event.fromUser,
+                         wcAdapter.resolver))
+      case outcome.kind
+      of cokFallback:
         handleSessionFallback(inbound)
+      of cokAccepted:
+        discard
+      of cokReply:
+        presentWeComReply(wcAdapter, userId, outcome.reply, logger)
     (hasEvent, event) = wcAdapter.tryRecvEvent()

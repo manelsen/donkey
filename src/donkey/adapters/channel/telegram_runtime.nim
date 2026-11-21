@@ -16,9 +16,16 @@ import ../../domain/message
 import ../../domain/channels/telegram_policy
 import ../../domain/channels/telegram_pure
 import ../../ports/provider
+import ../../app/command_dispatch
+import ../../ports/channel_capability
 import ../identity/identity_resolver
 import ./common_runtime
 import ./telegram
+
+proc logSendFailure(operation, error: string) {.gcsafe.} =
+  ## A reply that could not be delivered is logged, never dropped silently.
+  newLogger("tg.runtime").warn(operation & ": send failed: " & error)
+
 
 var gAlbumMentions = newAlbumMentionGate()
 
@@ -113,6 +120,120 @@ proc saveTelegramPreference*(memory: MdFileAdapter;
                              {.discardable.} =
   saveChannelPreference(memory, userId, key, value)
 
+# ── Shared dispatcher wiring and Telegram presentation ───────────────────────
+
+proc telegramCommandEnv(memory: MdFileAdapter;
+                        completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
+                        modelCatalogLoader: ModelCatalogLoader = nil;
+                        toolsCount = 0; toolClientsCount = 0;
+                        daemonStartMs = 0'i64): CommandEnv =
+  CommandEnv(services: newCommandServices(memory, completeBuilder, modelCatalogLoader,
+                                          toolsCount, toolClientsCount, daemonStartMs))
+
+proc telegramCommandRequest(msg: InboundMessage; command: CommandDecision;
+                            tgAdapter: TelegramAdapter;
+                            ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind;
+                                                    payload: string) {.gcsafe.} = nil):
+                            CommandDispatchRequest =
+  ## Telegram starts a session for a session command when there is none.
+  var ensure: EnsureSessionFn = nil
+  if ensureTaskSession != nil:
+    ensure = proc(kind: TaskKind; payload: string) {.gcsafe.} =
+      ensureTaskSession(msg, kind, payload)
+  CommandDispatchRequest(
+    command: command, userId: msg.userId, channel: ckTelegram,
+    messageId: replyTarget(msg),
+    rawId:  # the sender, not the first Telegram account linked to the user
+      if msg.rawChannelId.len > 0: msg.rawChannelId
+      else: tgAdapter.resolver.reverseChannel(msg.userId, ckTelegram),
+    links: tgAdapter.resolver.identityLinkPort(),
+    sessionMode: smCreate, ensureSession: ensure, interactiveUi: true)
+
+func decorateTelegramStatus*(text: string): string =
+  text
+    .replace("Status", "*📊 Status*")
+    .replace("Provider: ", "🤖 Provider: ")
+    .replace("\nThinking: ", "\n🧠 Thinking: ")
+    .replace("\nReasoning: ", "\n💭 Reasoning: ")
+    .replace("\nTools: ", "\n🔧 Tools: ")
+    .replace("\nSessões ativas: ", "\n💬 Sessões ativas: ")
+    .replace("\nMemórias: ", "\n📝 Memórias: ")
+    .replace(" linhas\nUptime: ", " linhas\n⏱ Uptime: ")
+
+func decorateTelegramDoctor(report: string): string =
+  report
+    .replace("Donkey Doctor", "*🩺 Donkey Doctor*")
+    .replace("Provider: OK", "✅ Provider: OK")
+    .replace("Provider: ", "❌ Provider: ")
+    .replace("Memory dir: ", "✅ Memory dir: ")
+    .replace("Memory dir missing: ", "❌ Memory dir missing: ")
+    .replace("Tools loaded: ", "🔧 Tools loaded: ")
+    .replace("MCP clients: ", "🔌 MCP clients: ")
+    .replace("Active sessions: ", "💬 Active sessions: ")
+
+func telegramReplyText*(reply: CommandReply): string =
+  ## Telegram markdown and emoji around the dispatcher's plain text.
+  let mark = if reply.failed: "❌ " else: "✅ "
+  case reply.topic
+  of rtHelp:
+    reply.text.replace("Donkey", "Donkey 🫏") & "\n\n" &
+      "Envie qualquer mensagem para conversar. Imagens e documentos são aceitos."
+  of rtDoctor:
+    if reply.failed: reply.text else: decorateTelegramDoctor(reply.text)
+  of rtStatus:
+    if reply.failed: reply.text else: decorateTelegramStatus(reply.text)
+  of rtPing:
+    (if reply.failed: "❌ " else: "🏓 ") & reply.text
+  of rtClearMemory:
+    (if reply.failed: "" else: "🗑️ ") & reply.text
+  of rtContinue, rtReasoning:
+    mark & reply.text
+  else:
+    reply.text
+
+func telegramReplyRoute*(msg: InboundMessage; reply: CommandReply): ReplyRoute =
+  ## A group is a shared space and the bot has no private path from it.
+  routeReply(reply, inSharedSpace = msg.isGroup, hasPrivatePath = false)
+
+proc sendTelegramText(tgAdapter: var TelegramAdapter; msg: InboundMessage;
+                      text: string; logger: Logger) =
+  tgAdapter.send(OutboundMessage(
+    userId:  msg.userId,
+    channel: ckTelegram,
+    text:    text,
+    replyTo: replyTarget(msg),
+  )).isOkOr:
+    logger.error("tg send failed for user=" & $msg.userId & " reason=" & error)
+
+proc presentTelegramOutcome(tgAdapter: var TelegramAdapter; msg: InboundMessage;
+                            outcome: CommandOutcome; logger: Logger): bool =
+  ## False only for a fallback: the message belongs to the session.
+  case outcome.kind
+  of cokFallback:
+    false
+  of cokAccepted:
+    sendTelegramText(tgAdapter, msg, acceptedText(outcome.task), logger)
+    true
+  of cokReply:
+    let text =
+      case telegramReplyRoute(msg, outcome.reply)
+      of rrNotice: RequesterOnlyNotice
+      of rrConversation, rrPrivate: telegramReplyText(outcome.reply)
+    if text.len > 0:
+      sendTelegramText(tgAdapter, msg, text, logger)
+    true
+
+proc presentTelegramUiText(tgAdapter: var TelegramAdapter; msg: InboundMessage;
+                           command: CommandDecision; memory: MdFileAdapter;
+                           modelCatalogLoader: ModelCatalogLoader = nil;
+                           toolsCount = 0; toolClientsCount = 0): bool =
+  ## Text forms of UI commands come from the shared dispatcher.
+  let env = telegramCommandEnv(memory, nil, modelCatalogLoader, toolsCount,
+                               toolClientsCount)
+  let outcome = dispatchUiCommand(env, telegramCommandRequest(msg, command, tgAdapter))
+  presentTelegramOutcome(tgAdapter, msg, outcome, newLogger("tg.ui"))
+
+
 proc clearTelegramKeyboard*(tgAdapter: var TelegramAdapter;
                             presentationState: var PresentationState;
                             userId: UserId;
@@ -120,7 +241,7 @@ proc clearTelegramKeyboard*(tgAdapter: var TelegramAdapter;
   let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, userId, slot)
   if kbdId.len > 0:
     tgAdapter.editKeyboard(userId, kbdId, @[]).isOkOr:
-      discard
+      logSendFailure("clearTelegramKeyboard", error)
     common_runtime.clearUiMsgId(presentationState, ckTelegram, userId, slot)
 
 proc handleTelegramModels*(msg: InboundMessage;
@@ -144,7 +265,7 @@ proc handleTelegramModels*(msg: InboundMessage;
     let buttons = buildModelPageButtons(providerOnly, entries, currProv, currModel, 0)
     if currentKbdId.len > 0:
       tgAdapter.editKeyboardText(msg.userId, currentKbdId, title, buttons).isOkOr:
-        discard
+        logSendFailure("handleTelegramModels", error)
     else:
       let sentId = tgAdapter.sendKeyboard(msg.userId, title, buttons, replyTo = replyTarget(msg)).valueOr:
         core_log.log(logger, core_log.lvlError, "tg send keyboard error: " & error)
@@ -152,22 +273,14 @@ proc handleTelegramModels*(msg: InboundMessage;
       common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels, sentId)
     return true
   if command.value.strip.len > 0:
-    let reply = memory.applyModelsTextCommand(msg.userId, command.value, modelCatalogLoader).valueOr: error
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    reply,
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    return true
+    return presentTelegramUiText(tgAdapter, msg, command, memory, modelCatalogLoader)
   let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
   if currentKbdId.len > 0:
     tgAdapter.editKeyboardText(
       msg.userId, currentKbdId,
       "Escolha o provider:",
       memory.buildProviderButtons(msg.userId)).isOkOr:
-        discard
+        logSendFailure("handleTelegramModels", error)
   else:
     let sentId = tgAdapter.sendKeyboard(msg.userId,
       "Escolha o provider:", memory.buildProviderButtons(msg.userId),
@@ -212,7 +325,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
         text: "Essa seleção expirou. Abra /models novamente.",
         replyTo: replyTarget(msg),
       )).isOkOr:
-        discard
+        logSendFailure("handleTelegramModelCallback", error)
       return true
     logger.info("tg callback models:set:" & callback.provider & ":" & model)
     let saved = memory.saveChannelPreferences(
@@ -254,7 +367,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
     if kbdId.len > 0:
       tgAdapter.editKeyboard(msg.userId, kbdId,
                              memory.buildProviderButtons(msg.userId)).isOkOr:
-        discard
+        logSendFailure("handleTelegramModelCallback", error)
     return true
 
   else:
@@ -280,7 +393,7 @@ proc handleTelegramThinkingCallback*(msg: InboundMessage;
         msg.userId, kbdId,
         savedOrError(saved, "🧠 Thinking: " & level),
         @[]).isOkOr:
-          discard
+          logSendFailure("handleTelegramThinkingCallback", error)
       common_runtime.clearUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotThink)
     else:
       tgAdapter.send(OutboundMessage(
@@ -289,7 +402,7 @@ proc handleTelegramThinkingCallback*(msg: InboundMessage;
         text:    "🧠 Thinking: *" & level & "*",
         replyTo: replyTarget(msg),
       )).isOkOr:
-        discard
+        logSendFailure("handleTelegramThinkingCallback", error)
   true
 
 proc handleTelegramThink*(msg: InboundMessage;
@@ -300,22 +413,14 @@ proc handleTelegramThink*(msg: InboundMessage;
   if command.kind != cmdThink:
     return false
   if command.value.strip.len > 0:
-    let reply = memory.applyThinkTextCommand(msg.userId, command.value).valueOr: error
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    reply,
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    return true
+    return presentTelegramUiText(tgAdapter, msg, command, memory)
   let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotThink)
   if currentKbdId.len > 0:
     tgAdapter.editKeyboardText(
       msg.userId, currentKbdId,
       "Nível de raciocínio:",
       memory.buildThinkButtons(msg.userId)).isOkOr:
-        discard
+        logSendFailure("handleTelegramThink", error)
   else:
     let sentId = tgAdapter.sendKeyboard(msg.userId,
       "Nível de raciocínio:", memory.buildThinkButtons(msg.userId),
@@ -330,15 +435,8 @@ proc handleTelegramBudget*(msg: InboundMessage;
                            memory: MdFileAdapter): bool =
   if command.kind != cmdBudget:
     return false
-  let reply = memory.applyBudgetTextCommand(msg.userId, command.value).valueOr: error
-  tgAdapter.send(OutboundMessage(
-    userId:  msg.userId,
-    channel: ckTelegram,
-    text:    reply,
-    replyTo: replyTarget(msg),
-  )).isOkOr:
-    discard
-  true
+  presentTelegramUiText(tgAdapter, msg, command, memory)
+
 
 proc handleTelegramUiCommand*(msg: InboundMessage;
                               command: CommandDecision;
@@ -361,33 +459,9 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
           return true
       common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig, sentId)
     true
-  of cmdTasks:
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    buildTasksText(),
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    true
-  of cmdAgents:
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    buildAgentsText(toolsCount, toolClientsCount),
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    true
-  of cmdPoll:
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    buildPollText(),
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    true
+  of cmdTasks, cmdAgents, cmdPoll:
+    presentTelegramUiText(tgAdapter, msg, command, memory,
+                          toolsCount = toolsCount, toolClientsCount = toolClientsCount)
   of cmdModels:
     handleTelegramModels(msg, command, tgAdapter, presentationState, memory, modelCatalogLoader, logger)
   of cmdThink:
@@ -395,15 +469,7 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
   of cmdBudget:
     handleTelegramBudget(msg, command, tgAdapter, memory)
   of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
-    let reply = buildDeferredUiCommandText(command.kind)
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    reply,
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    true
+    presentTelegramUiText(tgAdapter, msg, command, memory)
   else:
     false
 
@@ -430,7 +496,7 @@ proc handleTelegramUiCallback*(msg: InboundMessage;
   of cbkThinkSet:
     return handleTelegramThinkingCallback(msg, callback, tgAdapter, presentationState, memory)
   of cbkHelpPage:
-    let pages = buildHelpPages()
+    let pages = buildHelpPages(commandCaps(ckTelegram))
     let page  = min(max(callback.page, 0), pages.len - 1)
     let (pTitle, pBody) = pages[page]
     let helpText = "📖 Ajuda — " & pTitle & " (" & $(page + 1) & "/" & $pages.len & ")\n\n" & pBody
@@ -477,16 +543,8 @@ proc buildTelegramStatusText*(memory: MdFileAdapter;
                               toolsCount: int;
                               sessionCount: int;
                               daemonStartMs: int64): string =
-  let text = buildTextStatusText(memory, userId, toolsCount, sessionCount, daemonStartMs)
-  result = text
-  result = result.replace("Status", "*📊 Status*")
-  result = result.replace("Provider: ", "🤖 Provider: ")
-  result = result.replace("\nThinking: ", "\n🧠 Thinking: ")
-  result = result.replace("\nReasoning: ", "\n💭 Reasoning: ")
-  result = result.replace("\nTools: ", "\n🔧 Tools: ")
-  result = result.replace("\nSessões ativas: ", "\n💬 Sessões ativas: ")
-  result = result.replace("\nMemórias: ", "\n📝 Memórias: ")
-  result = result.replace(" linhas\nUptime: ", " linhas\n⏱ Uptime: ")
+  decorateTelegramStatus(
+    buildTextStatusText(memory, userId, toolsCount, sessionCount, daemonStartMs))
 
 proc handleTelegramPing*(msg: InboundMessage;
                          command: CommandDecision;
@@ -495,27 +553,11 @@ proc handleTelegramPing*(msg: InboundMessage;
                          completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.}): bool =
   if command.kind != cmdPing:
     return false
-
-  let t0 = nowMs()
-  let (prov, mdl) = memory.getCurrentProviderModel(msg.userId)
-  let pingFn = completeBuilder("provider = \"" & prov & "\"\nmodel = \"" & mdl & "\"")
-  var history = newHistory()
-  history.addUser("ping")
-  let req = buildPrompt("Reply with one word: pong", history, "")
-  let resp = pingFn(req)
-  let delta = nowMs() - t0
-  let text = if resp.isOk:
-               "🏓 pong — *" & prov & " / " & mdl & "* — *" & $delta & "ms*"
-             else:
-               "❌ " & prov & " error: " & resp.error
-  tgAdapter.send(OutboundMessage(
-    userId:  msg.userId,
-    channel: ckTelegram,
-    text:    text,
-    replyTo: replyTarget(msg),
-  )).isOkOr:
-    discard
-  true
+  let pong = telegramCommandEnv(memory, completeBuilder).services.ping(msg.userId)
+  let outcome =
+    if pong.isOk: replied(rtPing, pong.get)
+    else: replied(rtPing, pong.error, failed = true)
+  presentTelegramOutcome(tgAdapter, msg, outcome, newLogger("tg.ping"))
 
 proc handleTelegramStatus*(msg: InboundMessage;
                            command: CommandDecision;
@@ -526,15 +568,66 @@ proc handleTelegramStatus*(msg: InboundMessage;
                            daemonStartMs: int64): bool =
   if command.kind != cmdStatus:
     return false
+  let env = telegramCommandEnv(memory, nil, toolsCount = toolsCount,
+                               daemonStartMs = daemonStartMs)
+  let text = env.services.status(msg.userId, sessionCount)
+  let outcome =
+    if text.isOk: replied(rtStatus, text.get)
+    else: replied(rtStatus, text.error, failed = true)
+  presentTelegramOutcome(tgAdapter, msg, outcome, newLogger("tg.status"))
 
-  tgAdapter.send(OutboundMessage(
-    userId:  msg.userId,
-    channel: ckTelegram,
-    text:    memory.buildTelegramStatusText(msg.userId, toolsCount, sessionCount, daemonStartMs),
-    replyTo: replyTarget(msg),
-  )).isOkOr:
-    discard
-  true
+proc handleTelegramCommand*(sm: var SessionManager;
+                            msg: InboundMessage;
+                            command: CommandDecision;
+                            tgAdapter: var TelegramAdapter;
+                            presentationState: var PresentationState;
+                            memory: MdFileAdapter;
+                            completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
+                            modelCatalogLoader: ModelCatalogLoader;
+                            toolsCount: int;
+                            toolClientsCount: int;
+                            msgSeq: var int;
+                            daemonStartMs: int64;
+                            logger: Logger;
+                            ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
+  ## Every Telegram command goes through the shared dispatcher. Telegram only
+  ## presents: the menu as a keyboard, a refreshed config keyboard after
+  ## /reasoning, markdown and progress texts, and the group refusal for
+  ## requester-only commands. False → the message belongs to the session.
+  let action = decideLocalCommandAction(command)
+  if command.route == crLocal and action == lcaShowMenu:
+    let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotMenu)
+    if currentKbdId.len > 0:
+      discard tgAdapter.editKeyboardText(
+        msg.userId, currentKbdId, buildMenuText(), buildMenuButtons())
+    else:
+      let sentId = tgAdapter.sendKeyboard(
+        msg.userId, buildMenuText(), buildMenuButtons(), replyTo = replyTarget(msg)).valueOr:
+          return true
+      common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotMenu, sentId)
+    return true
+  if msg.isGroup and requesterOnlyCommand(command):
+    ## No private path from a group: refuse before minting or consuming a
+    ## link code, or printing diagnostics where everyone can read them.
+    sendTelegramText(tgAdapter, msg, RequesterOnlyNotice, logger)
+    return true
+  let env = telegramCommandEnv(memory, completeBuilder, modelCatalogLoader,
+                               toolsCount, toolClientsCount, daemonStartMs)
+  let outcome = dispatchCommand(env, sm, msgSeq,
+    telegramCommandRequest(msg, command, tgAdapter, ensureTaskSession))
+  if command.route == crLocal and action == lcaReasoningToggle and
+     outcome.kind == cokReply and not outcome.reply.failed:
+    let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
+    if kbdId.len > 0:
+      let edited = tgAdapter.editKeyboardText(msg.userId, kbdId,
+        memory.buildConfigText(msg.userId), buildConfigButtons())
+      if edited.isOk:
+        return true
+      ## The /config message may be gone. The preference is already saved:
+      ## confirm it below instead of running the toggle again.
+      logSendFailure("reasoning keyboard edit", edited.error)
+      common_runtime.clearUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
+  presentTelegramOutcome(tgAdapter, msg, outcome, logger)
 
 proc handleTelegramCoreCommand*(sm: var SessionManager;
                                 msg: InboundMessage;
@@ -547,166 +640,13 @@ proc handleTelegramCoreCommand*(sm: var SessionManager;
                                 toolClientsCount: int;
                                 msgSeq: var int;
                                 logger: Logger): bool =
-  case decideLocalCommandAction(command)
-  of lcaShowAbout:
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    buildAboutText(memory, msg.userId, toolsCount, toolClientsCount, sm.sessionCount()),
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    return true
-  of lcaStartIntro:
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    buildStartIntroText(),
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    return true
-  of lcaShowMenu:
-    let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotMenu)
-    if currentKbdId.len > 0:
-      discard tgAdapter.editKeyboardText(
-        msg.userId, currentKbdId, buildMenuText(), buildMenuButtons())
-    else:
-      let sentId = tgAdapter.sendKeyboard(
-        msg.userId, buildMenuText(), buildMenuButtons(), replyTo = replyTarget(msg)).valueOr:
-          return true
-      common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotMenu, sentId)
-    return true
-  of lcaShowWhoami:
-    let sessId = if sm.hasLiveSession(msg.userId): "active" else: "" # SessionManager doesn't expose sessionId easily here, using placeholder
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    buildWhoamiText(msg.userId, sessId, msg.channelId),
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    return true
-  of lcaSkillCommand:
-    let reply = applySkillTextCommand(
-      memory,
-      msg.userId,
-      command.value,
-      homeDir = memory.donkeyHomeDir(),
-    ).valueOr:
-      error
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    reply,
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    return true
-  of lcaGenerateLinkCode:
-    if msg.isGroup:
-      ## A pairing code in a group would be visible to everyone there.
-      tgAdapter.send(OutboundMessage(
-        userId:  msg.userId,
-        channel: ckTelegram,
-        text:    "Use /mycode em um chat privado com o bot.",
-        replyTo: replyTarget(msg),
-      )).isOkOr:
-        discard
-      return true
-    let code = tgAdapter.resolver.generateLinkCode(msg.userId)
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    buildLinkCodeText(code),
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    return true
-  of lcaClearMemory:
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    clearMemoryReply(memory, msg.userId, "🗑️ Memórias apagadas."),
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    return true
-  of lcaDoctorReport:
-    var report = buildDoctorReport(
-      memory, completeBuilder, msg.userId, toolsCount, toolClientsCount, sm.sessionCount())
-    report = report
-      .replace("Donkey Doctor", "*🩺 Donkey Doctor*")
-      .replace("Provider: OK", "✅ Provider: OK")
-      .replace("Provider: ", "❌ Provider: ")
-      .replace("Memory dir: ", "✅ Memory dir: ")
-      .replace("Memory dir missing: ", "❌ Memory dir missing: ")
-      .replace("Tools loaded: ", "🔧 Tools loaded: ")
-      .replace("MCP clients: ", "🔌 MCP clients: ")
-      .replace("Active sessions: ", "💬 Active sessions: ")
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    report,
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    return true
-  of lcaHelpText:
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    buildHelpText(true).replace("Donkey", "Donkey 🫏") & "\n\n" &
-               "Envie qualquer mensagem para conversar. Imagens e documentos são aceitos.",
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    return true
-  of lcaShowMemory:
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    buildMemoryViewText(memory, msg.userId),
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    return true
-  of lcaContinueLink:
-    let rawTgId = tgAdapter.resolver.reverseChannel(msg.userId, ckTelegram)
-    let linked = tgAdapter.resolver.consumeLinkCode(command.value, ckTelegram, rawTgId)
-    let replyText = if linked: "✅ " & buildContinueResultText(true)
-                    else: "❌ " & buildContinueResultText(false)
-    tgAdapter.send(OutboundMessage(
-      userId:  msg.userId,
-      channel: ckTelegram,
-      text:    replyText,
-      replyTo: replyTarget(msg),
-    )).isOkOr:
-      discard
-    return true
-  of lcaReasoningToggle:
-    let prefs = loadChannelPrefs(memory, msg.userId)
-    let next = if prefs.reasoning == "on": "off" else: "on"
-    let saved = saveChannelPreference(memory, msg.userId, "reasoning", next)
+  ## Local commands (menu buttons and callbacks reach them through here).
+  if command.route != crLocal:
+    return false
+  handleTelegramCommand(sm, msg, command, tgAdapter, presentationState, memory,
+                        completeBuilder, nil, toolsCount, toolClientsCount,
+                        msgSeq, 0, logger)
 
-    # Update current keyboard if it was a menu/config
-    let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
-    if kbdId.len > 0:
-      # If we are in the config menu, refresh it
-      discard tgAdapter.editKeyboardText(msg.userId, kbdId, memory.buildConfigText(msg.userId), buildConfigButtons())
-    else:
-      tgAdapter.send(OutboundMessage(
-        userId:  msg.userId,
-        channel: ckTelegram,
-        text:    savedOrError(saved, "✅ Reasoning " & (if next == "on": "ativado" else: "desativado") & "."),
-        replyTo: replyTarget(msg),
-      )).isOkOr:
-        logger.error("tg send lcaReasoningToggle failed for user=" & $msg.userId & " reason=" & error)
-    return true
-  else:
-    discard
-
-  false
 proc handleTelegramTaskCommand*(sm: var SessionManager;
                                  msg: InboundMessage;
                                  command: CommandDecision;
@@ -714,45 +654,14 @@ proc handleTelegramTaskCommand*(sm: var SessionManager;
                                  msgSeq: var int;
                                  logger: Logger;
                                  ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
+  ## Session commands go through the shared dispatcher (which interrupts the
+  ## running turn for /stop, /new, /restart and /reset); Telegram only adds
+  ## the progress text.
   if not isSessionTaskCommand(command.kind):
     return false
-
-  # Commands that should start a session if one doesn't exist
-  if command.kind in {cmdDebug, cmdReset, cmdNew, cmdCompact, cmdStop, cmdRestart, cmdBind}:
-    if interruptsTurn(command.kind):
-      ## The command is queued behind the busy actor; the application policy
-      ## sets the stop flag and denies pending approvals immediately.
-      requestTurnInterrupt(sm, msg.userId)
-    if ensureTaskSession != nil:
-      ensureTaskSession(msg, commandTaskKind(command), "")
-    else:
-      let entry = sm.getOrCreate(msg.userId)
-      inc msgSeq
-      entry.inbox.addLastNoWait(
-        newTaskMsg($msgSeq, commandTaskKind(command), $msg.userId,
-                   "", ckTelegram, replyTarget(msg)))
-
-    # Send feedback for non-silent commands
-    let feedback = case command.kind
-      of cmdDebug: "🐞 Alterando modo debug..."
-      of cmdReset: "🔄 Reiniciando bootstrap... vou avisar quando terminar."
-      of cmdNew: "🆕 Arquivando e iniciando nova sessão..."
-      of cmdCompact: "🗜️ Compactando histórico..."
-      of cmdStop: "🛑 Parando execução..."
-      of cmdRestart: "♻️ Reiniciando..."
-      of cmdBind: "🔗 Preparando vínculo..."
-      else: ""
-    if feedback.len > 0:
-      tgAdapter.send(OutboundMessage(
-        userId:  msg.userId,
-        channel: ckTelegram,
-        text:    feedback,
-        replyTo: replyTarget(msg),
-      )).isOkOr:
-        logger.error("tg send taskCommand feedback failed for user=" & $msg.userId & " reason=" & error)
-    return true
-
-  false
+  let outcome = dispatchCommand(CommandEnv(), sm, msgSeq,
+    telegramCommandRequest(msg, command, tgAdapter, ensureTaskSession))
+  presentTelegramOutcome(tgAdapter, msg, outcome, logger)
 
 proc handleTelegramCoreCallback*(sm: var SessionManager;
                                  msg: InboundMessage;
@@ -829,15 +738,9 @@ proc handleTelegramMessage*(msg: InboundMessage;
       logger.error("tg send approval reply failed: " & error)
     return true
   let command = decideCommandRequest(CommandRequest(channel: msg.channel, text: msg.text))
-  case command.route
-  of crLocal:
-    return handleTelegramCoreCommand(sm, msg, command, tgAdapter, presentationState, memory,
-                                     completeBuilder, toolsCount, toolClientsCount, msgSeq, logger)
-  of crSessionTask:
-    return handleTelegramTaskCommand(sm, msg, command, tgAdapter, msgSeq, logger, ensureTaskSession)
-  of crUi:
-    return handleTelegramUiCommand(msg, command, tgAdapter, presentationState, memory, modelCatalogLoader, toolClientsCount, toolsCount, logger)
-  of crCallback:
+  if command.route == crNone:
+    return false
+  if command.route == crCallback:
     let approvalReply = tryHandleApprovalInput(msg.userId, command.value)
     if approvalReply.isSome:
       discard tgAdapter.answerCallback(msg.callbackId)
@@ -847,17 +750,19 @@ proc handleTelegramMessage*(msg: InboundMessage;
         logger.error("tg send approval callback failed: " & error)
       return true
     let callback = decideCallbackRequest(CallbackRequest(channel: msg.channel, data: command.value))
-    case callback.route
-    of cbrUi:
-      handleTelegramUiCallback(msg, callback, sm, tgAdapter, presentationState, memory, completeBuilder, modelCatalogLoader, toolClientsCount, toolsCount, msgSeq, daemonStartMs, logger, ensureTaskSession)
-    of cbrSessionTask:
-      handleTelegramCoreCallback(sm, msg, callback, tgAdapter, msgSeq, ensureTaskSession)
-    of cbrNone:
-      false
-  of crPing:
-    handleTelegramPing(msg, command, tgAdapter, memory, completeBuilder)
-  of crStatus:
-    handleTelegramStatus(msg, command, tgAdapter, memory,
-                         toolsCount, sm.sessionCount(), daemonStartMs)
-  of crNone:
-    false
+    return
+      case callback.route
+      of cbrUi:
+        handleTelegramUiCallback(msg, callback, sm, tgAdapter, presentationState, memory, completeBuilder, modelCatalogLoader, toolClientsCount, toolsCount, msgSeq, daemonStartMs, logger, ensureTaskSession)
+      of cbrSessionTask:
+        handleTelegramCoreCallback(sm, msg, callback, tgAdapter, msgSeq, ensureTaskSession)
+      of cbrNone:
+        false
+  if command.route == crUi and
+     handleTelegramUiCommand(msg, command, tgAdapter, presentationState, memory,
+                             modelCatalogLoader, toolClientsCount, toolsCount, logger):
+    return true
+  handleTelegramCommand(sm, msg, command, tgAdapter, presentationState, memory,
+                        completeBuilder, modelCatalogLoader, toolsCount,
+                        toolClientsCount, msgSeq, daemonStartMs, logger,
+                        ensureTaskSession)

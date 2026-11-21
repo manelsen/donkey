@@ -34,6 +34,7 @@ import donkey/core/security/dm_policy
 import donkey/app/inbound_media
 import donkey/adapters/filesystem/attachment_store
 import donkey/adapters/filesystem/fs_adapter
+import donkey/adapters/channel/common_runtime
 import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/channel/discord
 import donkey/adapters/channel/discord_runtime
@@ -60,7 +61,7 @@ import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
 import donkey/domain/channels/line_policy
 import donkey/adapters/tool/mcp_client
-import donkey/adapters/tools/browser
+import donkey/adapters/tools/browser_executor
 import donkey/domain/tools/browser_pure
 import donkey/adapters/state/runtime_store
 import donkey/adapters/state/schedule_store
@@ -206,7 +207,7 @@ proc makeTgTypingFn(token: string; identityPath: string; log: Logger): TypingFn 
 type DaemonToolBundle = object
   clients: seq[ToolRuntimePort]
   tools:   seq[ToolDescription]
-  browserRuntime: BrowserToolRuntime
+  browserRuntime: BrowserExecutor
 
 type GlobalProviderBundle = object
   completeFn: CompleteFn
@@ -286,7 +287,7 @@ type RouteSample = object
 type DaemonServices = object
   toolClients:      seq[ToolRuntimePort]
   tools:            seq[ToolDescription]
-  browserRuntime:   BrowserToolRuntime
+  browserRuntime:   BrowserExecutor
   globalCompleteFn: CompleteFn
   globalStreamFn:   StreamFn
   tgTypingFn:       TypingFn
@@ -312,7 +313,7 @@ proc emailPollThread(adapter: ptr EmailAdapter) {.thread.} =
   var res: PollResult
   try:
     res = adapter[].pollInbox()
-  except Exception as e:
+  except CatchableError as e:
     res = pollFailure(e.msg)
   gEmailPollCh.send(res)
 
@@ -320,7 +321,7 @@ proc signalPollThread(adapter: ptr SignalAdapter) {.thread.} =
   var res: PollResult
   try:
     res = adapter[].receive()
-  except Exception as e:
+  except CatchableError as e:
     res = pollFailure(e.msg)
   gSignalPollCh.send(res)
 
@@ -397,11 +398,6 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
     log.warn("browser: invalid DONKEY_BROWSER_BACKEND='" &
              getEnv("DONKEY_BROWSER_BACKEND") & "'; tools disabled")
   if browserBackend != bbOff:
-    ## CDP discovery polls a loopback endpoint while Chromium boots; a shared
-    ## circuit breaker would stay open for 60s after three connection refusals
-    ## and outlive the 30s discovery deadline.
-    let discoveryHttp = newStdHttpAdapter(
-      timeout = 2, maxRetries = 1, circuitBreaker = false).toRuntimePort()
     let rawBrowserTimeout = getEnv("DONKEY_BROWSER_TIMEOUT_MS").strip()
     var browserTimeoutMs = BrowserDefaultTimeoutMs
     if rawBrowserTimeout.len > 0:
@@ -411,16 +407,20 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
       except ValueError:
         log.warn("browser: invalid DONKEY_BROWSER_TIMEOUT_MS='" &
                  rawBrowserTimeout & "'; using " & $BrowserDefaultTimeoutMs)
-    let browserRuntime = newBrowserToolRuntime(
-      backend = browserBackend,
-      executablePath = getEnv("DONKEY_BROWSER_PATH"),
-      profileBaseDir = getEnv("DONKEY_BROWSER_PROFILE_DIR"),
-      proxyServer = getEnv("DONKEY_BROWSER_PROXY"),
-      timeoutMs = browserTimeoutMs,
-      http = discoveryHttp,
-    )
+    let browserRuntime =
+      try:
+        newBrowserExecutor(
+          backend = browserBackend,
+          executablePath = getEnv("DONKEY_BROWSER_PATH"),
+          profileBaseDir = getEnv("DONKEY_BROWSER_PROFILE_DIR"),
+          proxyServer = getEnv("DONKEY_BROWSER_PROXY"),
+          timeoutMs = browserTimeoutMs)
+      except CatchableError as e:
+        log.warn("browser disabled: " & e.msg)
+        return
     result.browserRuntime = browserRuntime
-    let browserSchemas = browserRuntime.listTools().valueOr:
+    let browserPort = browserRuntime.toRuntimePort()
+    let browserSchemas = browserPort.listTools().valueOr:
       @[]
     for s in browserSchemas:
       result.tools.add(ToolDescription(
@@ -428,7 +428,7 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
         description: s.description,
         schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
       ))
-    result.clients.add(browserRuntime.toRuntimePort())
+    result.clients.add(browserPort)
 
 proc makeProviderFn[A](a: A): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
@@ -1091,8 +1091,15 @@ proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
     let oneBotPort = Port(parseInt(
       if getEnv("QQ_ONEBOT_WEBHOOK_PORT").len > 0:
         getEnv("QQ_ONEBOT_WEBHOOK_PORT") else: "8082"))
-    qqAdapter.startWebhook(oneBotPort, log)
-    log.info("QQ OneBot webhook listener started on port " & $oneBotPort)
+    let oneBotHost =
+      if getEnv("QQ_ONEBOT_WEBHOOK_HOST").len > 0: getEnv("QQ_ONEBOT_WEBHOOK_HOST")
+      else: "127.0.0.1"
+    qqAdapter.startWebhook(oneBotHost, oneBotPort, getEnv("QQ_ONEBOT_SECRET"),
+                           log).isOkOr:
+      log.error("QQ OneBot webhook: " & error)
+      return
+    log.info("QQ OneBot webhook listener started on " & oneBotHost & ":" &
+             $oneBotPort)
   of qbkOfficial:
     log.info("QQ official API client enabled")
     qqAdapter.startGateway()
@@ -1238,7 +1245,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
           avNotAllowed
         else:
           avAllowed
-      except Exception:
+      except Exception:  ## effect boundary: callee raises are unannotated
         avRevoked
   try:
     startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
@@ -1713,13 +1720,15 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
   let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
   let fallback = proc(msg: InboundMessage) {.gcsafe.} =
     handleGatewayFallback(ctx, cfg, memory, msg, log)
+  let cmdEnv = newChannelRuntimeEnv(
+    memory, completeBuilder, modelCatalogLoader, toolsCount,
+    toolClientsCount, ctx.runtime.daemonStartMs)
 
   initGatewayDrainer(
     drainDiscord = proc(): bool =
       drainDiscordGateway(ctx.env.discordToken.len > 0, proc(): bool =
         discord_runtime.drainDiscordEvents(
-          ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, memory, completeBuilder, modelCatalogLoader,
-          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, cmdEnv,
           ctx.runtime.msgSeq, log,
           proc(msg: InboundMessage) =
             stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),
@@ -1732,32 +1741,28 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
     drainWeCom = proc(): bool =
       drainWeComGateway(ctx.env.wecomCorpId.len > 0, proc(): bool =
         wecom_runtime.drainWeComEvents(
-          ctx.adapters.wc, ctx.env.wecomCorpId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
-          ctx.runtime.msgSeq, log, fallback)
+          ctx.adapters.wc, ctx.env.wecomCorpId, ctx.runtime.sm, cmdEnv,
+          ctx.runtime.msgSeq, fallback, log)
         true
       ),
     drainWeChat = proc(): bool =
       drainWeChatGateway(ctx.env.wechatAppId.len > 0, proc(): bool =
         wechat_runtime.drainWeChatEvents(
-          ctx.adapters.wch, ctx.env.wechatAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.adapters.wch, ctx.env.wechatAppId, ctx.runtime.sm, cmdEnv,
           ctx.runtime.msgSeq, fallback, log)
         true
       ),
     drainQQ = proc(): bool =
       drainQQGateway(ctx.adapters.qq.enabled(), proc(): bool =
         qq_runtime.drainQQEvents(
-          ctx.adapters.qq, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.adapters.qq, ctx.runtime.sm, cmdEnv,
           ctx.runtime.msgSeq, fallback, log)
         true
       ),
     drainFeishu = proc(): bool =
       drainFeishuGateway(ctx.env.feishuAppId.len > 0, proc(): bool =
         feishu_runtime.drainFeishuEvents(
-          ctx.adapters.fs, ctx.env.feishuAppId, ctx.runtime.sm, memory, completeBuilder, modelCatalogLoader,
-          toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.adapters.fs, ctx.env.feishuAppId, ctx.runtime.sm, cmdEnv,
           ctx.runtime.msgSeq, fallback, log)
         true
       ),
@@ -1766,8 +1771,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
                         (ctx.env.slackSigningSecret.len > 0 or
                          ctx.env.slackAppToken.len > 0), proc(): bool =
         slack_runtime.drainSlackEvents(
-          ctx.adapters.sl, ctx.runtime.sm, memory, completeBuilder,
-          modelCatalogLoader, toolsCount, toolClientsCount, ctx.runtime.daemonStartMs,
+          ctx.adapters.sl, ctx.runtime.sm, cmdEnv,
           ctx.runtime.msgSeq, fallback, log)
         true
       ),
@@ -1864,10 +1868,8 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
     drainWhatsApp = proc(): bool =
       drainWhatsAppGateway(ctx.env.whatsappAccessToken.len > 0, proc(): bool =
         whatsapp_runtime.drainWhatsAppEvents(
-          ctx.adapters.wa, ctx.env.whatsappPhoneNumberId, ctx.runtime.sm, memory,
-          completeBuilder, modelCatalogLoader,
-          toolsCount, toolClientsCount,
-          ctx.runtime.daemonStartMs, ctx.runtime.msgSeq, fallback, log)
+          ctx.adapters.wa, ctx.env.whatsappPhoneNumberId, ctx.runtime.sm, cmdEnv,
+          ctx.runtime.msgSeq, fallback, log)
         true
       ),
     drainEmail = proc(): bool =
@@ -2154,9 +2156,11 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     let modelCatalogLoader = buildModelCatalogLoader()
     let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
     discord_runtime.checkDiscordOfflineMessages(
-      ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, memory,
-      completeBuilder, modelCatalogLoader,
-      ctx.services.tools.len + nativeSessionTools().len, ctx.services.toolClients.len, ctx.runtime.daemonStartMs,
+      ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState,
+      newChannelRuntimeEnv(memory, completeBuilder, modelCatalogLoader,
+                           ctx.services.tools.len + nativeSessionTools().len,
+                           ctx.services.toolClients.len,
+                           ctx.runtime.daemonStartMs),
       ctx.runtime.msgSeq, log,
       proc(msg: InboundMessage) {.gcsafe.} =
         stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),
@@ -2204,6 +2208,11 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       actorStop, ctimer.milliseconds(2_000))
     if not actorsStopped:
       log.warn("daemon shutdown: actor stop deadline elapsed")
+    if ctx.services.browserRuntime != nil:
+      let browserStopped = await withTimeout(
+        ctx.services.browserRuntime.stop(), ctimer.milliseconds(2_000))
+      if not browserStopped:
+        log.warn("daemon shutdown: browser stop deadline elapsed")
     drainGlobalOutbox(ctx.runtime, ctx.adapters, log)
     if ctx.runtime.stateStore != nil:
       discard ctx.runtime.stateStore.flushSessions()
