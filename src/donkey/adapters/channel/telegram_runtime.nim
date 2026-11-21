@@ -619,9 +619,14 @@ proc handleTelegramCommand*(sm: var SessionManager;
      outcome.kind == cokReply and not outcome.reply.failed:
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
     if kbdId.len > 0:
-      discard tgAdapter.editKeyboardText(msg.userId, kbdId,
+      let edited = tgAdapter.editKeyboardText(msg.userId, kbdId,
         memory.buildConfigText(msg.userId), buildConfigButtons())
-      return true
+      if edited.isOk:
+        return true
+      ## The /config message may be gone. The preference is already saved:
+      ## confirm it below instead of running the toggle again.
+      logSendFailure("reasoning keyboard edit", edited.error)
+      common_runtime.clearUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
   presentTelegramOutcome(tgAdapter, msg, outcome, logger)
 
 proc handleTelegramCoreCommand*(sm: var SessionManager;
