@@ -4,6 +4,9 @@
 ## Pure types and formatting live in core/diagnostics; this module owns the I/O.
 ##
 ## Pipeline usage:
+##
+## .. code-block:: nim
+##
 ##   runRuntimeCmd()     |>->  toDiagResult("container runtime")
 ##   runRuntimeCmd()     >>=   checkRuntimeCompose    -- chained binary checks
 ##   results             |>    countFailed             -- count hard failures
@@ -75,7 +78,7 @@ proc checkSandboxRuntime*(cfg: DonkeyConfig): DiagResult =
 
 proc checkApiKey*(name: string; envVar: string): DiagResult =
   ## Checks whether an API key environment variable is set.
-  ##   checkApiKey("OpenRouter", "OPENROUTER_API_KEY") |> markWarn
+  ##   ``checkApiKey("OpenRouter", "OPENROUTER_API_KEY") |> markWarn``
   apiKeyResult(getEnv(envVar), envVar) |>-> toDiagResult(name)
 
 proc checkPgvector*(): DiagResult =

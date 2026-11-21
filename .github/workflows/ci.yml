@@ -192,6 +192,43 @@ jobs:
           fi
           bash scripts/run_tests.sh "${targets[@]}"
 
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: ${{ env.NIM_VERSION }}
+
+      - name: Cache Nim & Nimble artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.nimble
+            ~/.cache/nim
+          key: ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-docs-${{ hashFiles('donkey.nimble') }}
+          restore-keys: |
+            ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-docs-
+
+      - name: Install Nim dependencies
+        run: nimble install -y --depsOnly
+
+      - name: Generate API documentation
+        run: bash scripts/generate_docs.sh
+
+      - name: Upload documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: donkey-htmldocs
+          path: htmldocs/
+          retention-days: 14
+          if-no-files-found: error
+
   package:
     # Builds the optimized binary inside an image with glibc 2.28, so the
     # same file runs on older distributions too (Oracle Linux 8+, Debian 10+,

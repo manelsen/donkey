@@ -40,7 +40,7 @@ func toDiagResult*(name: string; r: Result[string, string]): DiagResult =
 func markWarn*(r: DiagResult): DiagResult =
   ## Downgrades dsErr to dsWarn; leaves dsOk and dsWarn unchanged.
   ## Use for optional dependencies that should not block startup.
-  ##   optionalCheck |> markWarn
+  ##   ``optionalCheck |> markWarn``
   if r.status == dsErr:
     DiagResult(name: r.name, status: dsWarn, detail: r.detail)
   else:
@@ -48,7 +48,7 @@ func markWarn*(r: DiagResult): DiagResult =
 
 func formatResult*(r: DiagResult): string =
   ## Formats a single check result as a human-readable tagged line.
-  ##   check |> formatResult
+  ##   ``check |> formatResult``
   let marker = case r.status
     of dsOk:   "  [OK]  "
     of dsWarn: " [WARN] "
@@ -57,20 +57,20 @@ func formatResult*(r: DiagResult): string =
 
 func countFailed*(results: seq[DiagResult]): int =
   ## Counts checks with dsErr status (warnings are not failures).
-  ##   results |> countFailed
+  ##   ``results |> countFailed``
   for r in results:
     if r.status == dsErr: inc result
 
 func allPassed*(results: seq[DiagResult]): bool =
   ## True when no check has dsErr status (warnings are allowed).
-  ##   results |> allPassed
+  ##   ``results |> allPassed``
   (results |> countFailed) == 0
 
 # ── last-arg transforms (|>-> friendly — seq is last arg) ─────────────────────
 
 func formatReport*(title: string; results: seq[DiagResult]): string =
   ## Formats a full diagnostic report with title header and all check lines.
-  ##   results |>-> formatReport("Donkey Doctor")
+  ##   ``results |>-> formatReport("Donkey Doctor")``
   result = title & "\n"
   result &= repeat('-', title.len) & "\n"
   for r in results:
