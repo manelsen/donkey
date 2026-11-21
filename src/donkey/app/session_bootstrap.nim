@@ -220,7 +220,7 @@ proc buildCompleteFn*(preferencesMd: string;
       for selection in costAwareSelections:
         if routingHook != nil:
           try: routingHook(selection, prefs, attemptReq)
-          except Exception: discard
+          except CatchableError: discard
         let startedAt = nowMs()
         let bundle = providerRuntimeBuilder(selection.toProviderSpec)
         if bundle.completeFn == nil:
@@ -233,7 +233,7 @@ proc buildCompleteFn*(preferencesMd: string;
           recordError(selection.providerName)
         if routingResultHook != nil:
           try: routingResultHook(selection, elapsedMs, response.isOk)
-          except Exception: discard
+          except CatchableError: discard
         if response.isOk:
           return response
         lastErr = response.error
@@ -271,7 +271,7 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
     var feedback: seq[RouteFeedback] = @[]
     if routingFeedbackHook != nil:
       try: feedback = routingFeedbackHook()
-      except Exception: feedback = @[]
+      except Exception: feedback = @[]  ## effect boundary: callee raises are unannotated
     let rankedSelections =
       if routingFeedbackHook != nil:
         reorderSelectionsWithFeedback(baseSelections, feedback)
@@ -290,7 +290,7 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
     var cooldowns: seq[ProviderCooldown] = @[]
     if routingProviderCooldownHook != nil:
       try: cooldowns = routingProviderCooldownHook()
-      except Exception: cooldowns = @[]
+      except Exception: cooldowns = @[]  ## effect boundary: callee raises are unannotated
     let cooldownFilteredSelections =
       if routingProviderCooldownHook != nil:
         applyProviderCooldowns(providerHealthySelections, cooldowns, nowMs() div 1000)
@@ -299,7 +299,7 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
     var costs: seq[RouteCostHint] = @[]
     if routingCostHook != nil:
       try: costs = routingCostHook()
-      except Exception: costs = @[]
+      except Exception: costs = @[]  ## effect boundary: callee raises are unannotated
     let costAwareSelections =
       if routingCostHook != nil:
         reorderSelectionsWithCost(cooldownFilteredSelections, costs, prefs.budgetPolicy)
@@ -319,7 +319,7 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
           tried.add(spec.apiKey)
           if routingHook != nil:
             try: routingHook(selection, prefs, attemptReq)
-            except Exception: discard
+            except Exception: discard  ## effect boundary: callee raises are unannotated
           let startedAt = nowMs()
           var response: Result[CompletionResponse, string]
           try:
@@ -327,7 +327,7 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
               providerRuntimeBuilder, spec, attemptReq)
           except CancelledError:
             raise
-          except Exception as e:
+          except CatchableError as e:
             response = asyncCompleteErr(e.msg)
           attempted = true
           let elapsedMs = nowMs() - startedAt
@@ -336,13 +336,13 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
             recordError(selection.providerName)
           if routingResultHook != nil:
             try: routingResultHook(selection, elapsedMs, response.isOk)
-            except Exception: discard
+            except Exception: discard  ## effect boundary: callee raises are unannotated
           if credentialResultHook != nil and spec.apiKey.len > 0:
             try:
               credentialResultHook(selection.providerName, spec.apiKey,
                                    response.isOk,
                                    (if response.isErr: response.error else: ""))
-            except Exception: discard
+            except Exception: discard  ## effect boundary: callee raises are unannotated
           if response.isOk:
             return response
           lastErr = response.error
@@ -355,7 +355,7 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
             break
           let nextKey =
             try: credentialNextHook(selection.providerName, spec.apiKey)
-            except Exception: ""
+            except Exception: ""  ## effect boundary: callee raises are unannotated
           if nextKey.len == 0 or nextKey in tried:
             break
           spec = spec.withApiKey(nextKey)
@@ -376,7 +376,7 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
           return err(lastErr)
         try:
           return fallbackCompleteFn(attemptReq)
-        except Exception as e:
+        except Exception as e:  ## effect boundary: callee raises are unannotated
           return asyncCompleteErr(e.msg)
       return err(lastErr)
 

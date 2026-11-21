@@ -26,7 +26,7 @@ const LiveSourcesPrompt* =
 proc safeComplete*(fn: CompleteFn; req: CompletionRequest
                  ): Result[CompletionResponse, string] {.gcsafe, raises: [].} =
   try: fn(req)
-  except Exception as e: err(e.msg)
+  except Exception as e: err(e.msg)  ## effect boundary: callee raises are unannotated
 
 type NormalTurnPrep* = object
   history*:        ConversationHistory

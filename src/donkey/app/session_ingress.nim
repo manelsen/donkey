@@ -482,7 +482,7 @@ proc scheduleEnqueueFn*(sm: ptr SessionManager;
       {.gcsafe, raises: [].} =
     try:
       enqueueScheduledTask(sm[], services, msgSeq[], spec, instantMs)
-    except Exception as e:
+    except Exception as e:  ## effect boundary: callee raises are unannotated
       err("scheduled task dropped: " & e.msg)
 
 proc handleSessionFallback*(sm:           var SessionManager;

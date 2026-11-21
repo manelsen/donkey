@@ -435,7 +435,7 @@ when defined(withPostgres):
         let countStr = stripAgtpeValue(r.get[0][0])
         try:
           ok(parseInt(countStr))
-        except:
+        except CatchableError:
           ok(0)
       else:
         ok(0)

@@ -23,5 +23,5 @@ proc parseChannelPrefs*(preferencesMd: string): ChannelPrefs =
         result.budget = normalizeBudgetPolicy(t["budget"].getStr("balanced"))
       if t.hasKey("reasoning"):
         result.reasoning = t["reasoning"].getStr("on")
-  except:
+  except CatchableError:
     discard

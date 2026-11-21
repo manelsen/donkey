@@ -863,7 +863,7 @@ proc executeLegacyNativeTool(tc: ToolCallRequest;
     let ts = reminder.parseWhen(whenStr, getTime().toUnix())
     try:
       discard ctx.memory.scheduleReminder(ctx.uid, $ctx.channel, ts, remMsg)
-    except Exception as e:
+    except Exception as e:  ## effect boundary: callee raises are unannotated
       return handledError("Error: " & e.msg)
     return handledText("Reminder scheduled.")
   of CurrentTimeToolName:

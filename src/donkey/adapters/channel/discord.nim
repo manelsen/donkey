@@ -345,7 +345,7 @@ proc discordGatewayThread(arg: GatewayArgs) {.thread.} =
       # OP=7 is normal - Discord requests reconnect for load balancing
       arg.logger.info("discord: reconnecting…")
       sleep(1000) # Brief pause before reconnect
-    except Exception as e:
+    except CatchableError as e:
       arg.logger.error("discord: gateway error: " & e.msg & " — reconnecting in " & $backoffMs & " ms")
       sleep(backoffMs)
       backoffMs = min(backoffMs * 2, 60_000)
@@ -764,7 +764,7 @@ proc getAppId*(a: DiscordAdapter): Result[string, string] =
     let id = ? extractId(resp)
     if a.appId != nil: a.appId[] = id
     ok(id)
-  except Exception as e:
+  except CatchableError as e:
     err(e.msg)
 
 proc registerSlashCommands*(a: DiscordAdapter; appId: string; guildId = ""): Result[void, string] =
@@ -788,7 +788,7 @@ proc registerSlashCommands*(a: DiscordAdapter; appId: string; guildId = ""): Res
     if resp.status < 200 or resp.status >= 300:
       return err("Discord register commands error " & $resp.status & ": " & resp.body)
     ok()
-  except Exception as e:
+  except CatchableError as e:
     err("Discord register commands failed: " & e.msg)
 
 # ── Constructor ────────────────────────────────────────────────────────────────

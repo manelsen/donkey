@@ -101,6 +101,7 @@ g1	tests/app/t_subagent_runtime.nim
 g1	tests/app/t_voice_reply.nim
 g1	tests/architecture/t_boundaries.nim
 g1	tests/architecture/t_no_backend_build.nim
+g1	tests/architecture/t_exception_hygiene.nim
 g1	tests/channel/t_dingtalk.nim
 g1	tests/channel/t_discord.nim
 g1	tests/channel/t_email.nim

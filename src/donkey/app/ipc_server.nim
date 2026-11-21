@@ -49,7 +49,7 @@ proc handleConn(server: StreamServer;
     else:
       resp = %*{"ok": false, "error": "unknown command: " & cmd}
     discard await transport.write($resp & "\n")
-  except Exception:
+  except CatchableError:
     discard
   transport.close()
 

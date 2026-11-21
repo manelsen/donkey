@@ -203,7 +203,7 @@ proc runSilentMemoryTurn*(
   var resp: Result[CompletionResponse, string]
   try:
     resp = completeFn(req)
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     resp = err(Result[CompletionResponse, string], "complete raised: " & e.msg)
   if resp.isErr:
     return err("silent turn complete: " & resp.error)

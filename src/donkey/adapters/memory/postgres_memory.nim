@@ -158,7 +158,7 @@ when defined(withPostgres):
       db.exec(sql"LOAD 'age'")
       if not db.ageGraphExists():
         db.exec(sql("SELECT * FROM ag_catalog.create_graph('" & PgGraphName & "')"))
-    except Exception:
+    except CatchableError:
       discard
 
   # ── MemoryPort implementation ──────────────────────────────────────────────
