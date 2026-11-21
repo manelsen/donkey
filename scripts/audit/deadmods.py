@@ -12,12 +12,14 @@ def targets(path,src):
         spec=m.group(1).split('#')[0]
         # expand a/[b,c]
         parts=[]
-        for item in re.split(r',(?![^\[]*\])',spec):
-            item=item.strip().split(' as ')[0].strip()
-            mm=re.match(r'(.*)/\[(.*)\]',item)
+        # `import a except b` restricts symbols, not the dependency on `a`.
+        spec=re.split(r'[ \t]+except[ \t]+',spec)[0]
+        for raw in re.split(r',(?![^\[]*\])',spec):
+            name=raw.strip().split(' as ')[0].strip()
+            mm=re.match(r'(.*)/\[(.*)\]',name)
             if mm:
                 for x in mm.group(2).split(','): parts.append(mm.group(1)+'/'+x.strip())
-            else: parts.append(item)
+            else: parts.append(name)
         for p in parts:
             p=p.strip().strip('"')
             if p.startswith('std/') or not p: continue
