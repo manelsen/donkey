@@ -106,12 +106,18 @@ proc applyModelsTextCommand*(memory: MdFileAdapter;
     return ok(buildProviderCatalogText(
       provider,
       ModelCatalogResult(entries: entries, source: mcsFallback, fetchedAtUnix: 0)))
-  let (provider, model) = ? parseModelsArgs(value)
+  ## The selection is checked against the catalog `/models <provider>`
+  ## shows; the static list applies only when no catalog was loaded.
+  let (provider, model) = ? parseModelsSelection(value)
+  var loaded: seq[ModelCatalogEntry]
   if modelCatalogLoader != nil:
     let catalog = modelCatalogLoader(provider).valueOr: emptyCatalogResult()
-    let normalized = normalizeModelCatalog(provider, catalog.entries)
-    if normalized.len > 0 and normalized.allIt(it.modelName != model):
+    loaded = normalizeModelCatalog(provider, catalog.entries)
+  if loaded.len > 0:
+    if loaded.allIt(it.modelName != model):
       return err("Modelo indisponível agora para `" & provider & "`: `" & model & "`.")
+  else:
+    discard ? parseModelsArgs(value)
   ? memory.saveChannelPreferences(userId, [("provider", provider), ("model", model)])
   ok("Modelo definido: " & provider & " / " & model)
 

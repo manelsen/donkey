@@ -182,6 +182,33 @@ proc runTests*() =
       check text.contains("`free-model` [free]")
       check text.contains("Fonte: live")
 
+    test "applyModelsTextCommand accepts a model the loaded catalog lists":
+      ## The catalog shown by `/models <provider>` is the one the selection
+      ## is checked against; the static list is only the fallback.
+      let tmpDir = getTempDir() / "donkey_common_runtime_models_live"
+      let memory = MdFileAdapter(paddocksDir: tmpDir)
+      let userId = UserId("u-common-models-live")
+      defer:
+        if dirExists(tmpDir):
+          removeDir(tmpDir)
+      let loader: ModelCatalogLoader =
+        proc(providerName: string): Result[ModelCatalogResult, string] =
+          ok(ModelCatalogResult(
+            entries: @[ModelCatalogEntry(providerName: providerName,
+              modelName: "gemini-brand-new", label: "new", available: true)],
+            source: mcsLive, fetchedAtUnix: getTime().toUnix()))
+      check "gemini-brand-new" notin supportedModels("gemini")
+      check supportedModels("gemini").len > 0
+      let chosen = applyModelsTextCommand(memory, userId, "gemini gemini-brand-new", loader)
+      check chosen.isOk
+      check getCurrentProviderModel(memory, userId) == ("gemini", "gemini-brand-new")
+      check applyModelsTextCommand(memory, userId, "gemini gemini-2.5-pro", loader).isErr
+      let empty: ModelCatalogLoader =
+        proc(providerName: string): Result[ModelCatalogResult, string] =
+          ok(ModelCatalogResult(source: mcsLive))
+      check applyModelsTextCommand(memory, userId, "gemini gemini-brand-new", empty).isErr
+      check applyModelsTextCommand(memory, userId, "gemini gemini-2.5-pro", empty).isOk
+
     test "normalizeModelCatalog treats ZAI provider aliases as the same catalog family":
       let normalized = normalizeModelCatalog("zai-anthropic", @[
         ModelCatalogEntry(providerName: "zai-coding", modelName: "glm-4.7", label: "GLM 4.7", available: true),
