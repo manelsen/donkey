@@ -10,7 +10,8 @@ import ../../app/inbound_gate
 import ../../app/approval_runtime
 import ./common_runtime
 import ./wecom
-import ./text_command_dispatch
+import ../../app/command_dispatch
+import ../../ports/channel_capability
 
 # ── Markdown builders for WeCom rich replies ──────────────────────────────────
 #
@@ -18,7 +19,7 @@ import ./text_command_dispatch
 # <font color="info|comment|warning">text</font>, [link](url), > quote, - list.
 
 func buildWeComHelpMd*(): string =
-  let pages = buildHelpPages()
+  let pages = buildHelpPages(commandCaps(ckWeCom))
   result = "## 📖 Donkey — Ajuda\n"
   for (title, body) in pages:
     result.add("\n**" & title & "**\n")
@@ -81,7 +82,7 @@ proc presentWeComReply(wcAdapter: var WeComAdapter; userId: UserId;
 proc drainWeComEvents*(wcAdapter: var WeComAdapter;
                        wecomCorpId: string;
                        sm: var SessionManager;
-                       env: CommandEnv;
+                       env: ChannelRuntimeEnv;
                        msgSeq: var int;
                        handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
                        logger: Logger) =
@@ -111,12 +112,13 @@ proc drainWeComEvents*(wcAdapter: var WeComAdapter;
         text:      event.content,
       )
       let command = decideCommandRequest(CommandRequest(channel: ckWeCom, text: event.content))
-      let outcome = dispatchTextCommand(env, sm, msgSeq, command, userId, ckWeCom,
-                                        event.msgId, wcAdapter.resolver, event.fromUser)
+      let outcome = dispatchCommand(env.commands, sm, msgSeq,
+          commandRequest(command, userId, ckWeCom, event.msgId, event.fromUser,
+                         wcAdapter.resolver))
       case outcome.kind
       of cokFallback:
         handleSessionFallback(inbound)
-      of cokSilent:
+      of cokAccepted:
         discard
       of cokReply:
         presentWeComReply(wcAdapter, userId, outcome.reply, logger)

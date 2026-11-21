@@ -46,6 +46,7 @@ type
     corpSecret*:    string
     callbackToken*: string
     agentId*:       int
+    apiBase*:       string  ## override for testing
     resolver*:      IdentityResolver
     http:           StdHttpAdapter
     accessToken:    string
@@ -62,8 +63,11 @@ proc epochMs(): int64 =
   let t = getTime()
   t.toUnix() * 1000 + (t.nanosecond div 1_000_000)
 
+func base(a: WeComAdapter): string =
+  if a.apiBase.len > 0: a.apiBase else: WeComApiBase
+
 proc refreshToken*(a: var WeComAdapter): Result[void, string] =
-  let url = WeComApiBase & "/cgi-bin/gettoken?corpid=" & a.corpId &
+  let url = a.base() & "/cgi-bin/gettoken?corpid=" & a.corpId &
             "&corpsecret=" & a.corpSecret
   let resp = ? a.http.get(url)
   var j: JsonNode
@@ -95,7 +99,7 @@ func wecomSignature*(token, timestamp, nonce: string): string =
 
 proc apiPost(a: var WeComAdapter; endpoint: string; body: JsonNode): Result[void, string] =
   let token = ? a.ensureToken()
-  let url = WeComApiBase & endpoint & "?access_token=" & token
+  let url = a.base() & endpoint & "?access_token=" & token
   let resp = ? a.http.post(url, $body, @[("Content-Type", "application/json")])
   if resp.status < 200 or resp.status >= 300:
     return err("WeCom HTTP " & $resp.status)
@@ -266,8 +270,10 @@ proc tryRecvEvent*(a: var WeComAdapter): (bool, WeComEvent) =
 # ── Constructor ────────────────────────────────────────────────────────────────
 
 proc newWeComAdapter*(corpId, corpSecret, callbackToken: string;
-                      agentId: int; identityPath: string): WeComAdapter =
+                      agentId: int; identityPath: string;
+                      apiBase = ""): WeComAdapter =
   WeComAdapter(
+    apiBase:       apiBase,
     corpId:        corpId,
     corpSecret:    corpSecret,
     callbackToken: callbackToken,

@@ -9,12 +9,13 @@ import ../identity/identity_resolver
 import ../../app/inbound_gate
 import ../../app/approval_runtime
 import ./feishu
-import ./text_command_dispatch
+import ../../app/command_dispatch
+import ./common_runtime
 
 proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
                         feishuAppId: string;
                         sm: var SessionManager;
-                        env: CommandEnv;
+                        env: ChannelRuntimeEnv;
                         msgSeq: var int;
                         handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
                         log: Logger = newLogger("fs.outbound")) =
@@ -53,12 +54,13 @@ proc drainFeishuEvents*(fsAdapter: var FeishuAdapter;
       )
       if event.msgType == "text" and (event.content |> strip).len > 0:
         let command = decideCommandRequest(CommandRequest(channel: ckFeishu, text: event.content))
-        let outcome = dispatchTextCommand(env, sm, msgSeq, command, userId, ckFeishu,
-                                          event.msgId, fsAdapter.resolver, event.openId)
+        let outcome = dispatchCommand(env.commands, sm, msgSeq,
+          commandRequest(command, userId, ckFeishu, event.msgId, event.openId,
+                         fsAdapter.resolver))
         case outcome.kind
         of cokFallback:
           handleSessionFallback(msg)
-        of cokSilent:
+        of cokAccepted:
           discard
         of cokReply:
           if outcome.reply.shouldSend:
