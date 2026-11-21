@@ -17,7 +17,6 @@ import donkey/core/providers/provider_defaults
 import donkey/domain/message
 import donkey/domain/providers/compat
 import donkey/domain/providers/descriptors
-import donkey/domain/providers/model_limits
 import donkey/domain/providers/profile_alibaba
 import donkey/ports/http
 import donkey/ports/provider
@@ -157,7 +156,6 @@ proc runTests*() =
       check c.toolCalling
       check c.maxContextTokens == 0
       check c.requiresUserFirst == false
-      check modelLimits("alibaba", DefaultModelAlibaba).source == mlsUnknown
 
     test "the profile endpoint is the descriptor endpoint":
       let had = existsEnv("DASHSCOPE_BASE_URL")

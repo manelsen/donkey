@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## O que é o Donkey
 
-**Donkey** é um sistema de agentes de IA ("Claw") escrito em Nim, self-hosted em VPS, servindo equipes corporativas pequenas. O projeto tem ~30k LOC em 149 arquivos Nim com 120 arquivos de teste, seguindo rigorosamente arquitetura hexagonal e TDD. F1–F4 implementados: adapters de providers (Zhipu, OpenRouter, Anthropic, Gemini, MiniMax, DeepSeek, Ollama), canais (Telegram, Discord, WeCom), MCP/Deno tool integration, e arquitetura multi-agente com Chronos (OrchestratorAgent + MemoryAgent + ToolAgent por sessão).
+**Donkey** é um sistema de agentes de IA ("Claw") escrito em Nim, self-hosted em VPS, servindo equipes corporativas pequenas. O projeto tem ~67k LOC em 268 arquivos Nim com 275 arquivos de teste, seguindo rigorosamente arquitetura hexagonal e TDD. F1–F4 implementados: adapters de providers (Zhipu, OpenRouter, Anthropic, Gemini, MiniMax, DeepSeek, Ollama), canais (Telegram, Discord, WeCom), MCP/Deno tool integration, e arquitetura multi-agente com Chronos (OrchestratorAgent + MemoryAgent + ToolAgent por sessão).
 
 **Estado atual (branch ralph/donkey-v1-sovereign-pipeops):**
 - Channels implementados: Telegram ✓, Discord ✓, WeCom ✓ — outros mapeados (F2+)
@@ -207,11 +207,10 @@ DOMAIN LAYER (domain/ — Nim `func`, zero side effects, 100% testável)
   ├── personality.nim   → PersonalityTraits, onboarding phases (12)
   ├── channels/         → formatadores puros por canal (telegram_pure, discord_pure, …)
   ├── providers/        → tradutores puros por provider (openai_pure, anthropic_pure, …)
-  ├── memory/           → chunking, decay, graph_pure, rrf (algoritmos puros)
-  └── routing/          → smart_route, failover
+  └── memory/           → chunking, decay, graph_pure, rrf (algoritmos puros)
 
 CORE INFRASTRUCTURE (core/ — sem I/O externo)
-  Log, Cron, Actor, Pipeops, Types, CommandRouting, Onboarding,
+  Log, Cron, Pipeops, Types, CommandRouting, Onboarding,
   ToolLoop, NativeToolDispatch, SecretScan, SessionIngress, Debounce
 
 OUTBOUND ADAPTERS (adapters/channel/)
@@ -228,7 +227,7 @@ src/donkey/
   ports/      ← concepts Nim (ChannelPort, ProviderPort, MemoryPort, ToolPort, …)
   app/        ← shell de casos de uso: lifecycle, actors, queues, wiring (Chronos)
   adapters/   ← I/O boundary: channel, provider, memory, tool, http, secrets, ipc
-  infra/      ← sandbox: Docker, WASM, limits, paddock layout
+  infra/      ← sandbox (code runner, shell composer, wasm tools), fs copy, queues
   config/     ← DonkeyConfig, loader TOML, skills/clawhub registry
   tui/        ← dashboard terminal
 ```
@@ -347,7 +346,7 @@ Em modo Guided, o Donkey coleta dimensões de personalidade uma a uma. Em modo F
 - **MCP:** client desde o início ✓
 - **Bootstrapping:** onboarding de 12 fases ✓
 - **Native tools:** shell, web_fetch, web_search, calc, fs (read/write/find/grep), git ✓
-- **Sandbox:** Docker e WASM disponíveis para execução de código (infra/sandbox/)
+- **Sandbox:** OCI (Docker/Podman) e Wasm (wasmtime) para o tool bash (`app/sandbox.nim`)
 - **Binary:** `donkey` (daemon), `donkey ctl` (CLI de administração)
 - **Model catalog:** descoberta dinâmica de modelos via OpenRouter, Groq, Anthropic, Gemini e models.dev (com cache TTL)
 
