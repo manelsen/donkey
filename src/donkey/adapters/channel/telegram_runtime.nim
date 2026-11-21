@@ -161,15 +161,9 @@ func decorateTelegramStatus*(text: string): string =
     .replace(" linhas\nUptime: ", " linhas\n⏱ Uptime: ")
 
 func decorateTelegramDoctor(report: string): string =
-  report
-    .replace("Donkey Doctor", "*🩺 Donkey Doctor*")
-    .replace("Provider: OK", "✅ Provider: OK")
-    .replace("Provider: ", "❌ Provider: ")
-    .replace("Memory dir: ", "✅ Memory dir: ")
-    .replace("Memory dir missing: ", "❌ Memory dir missing: ")
-    .replace("Tools loaded: ", "🔧 Tools loaded: ")
-    .replace("MCP clients: ", "🔌 MCP clients: ")
-    .replace("Active sessions: ", "💬 Active sessions: ")
+  ## The report already carries its status marks (command_services); only
+  ## the title is set in bold here.
+  report.replace("🩺 Donkey Doctor", "*🩺 Donkey Doctor*")
 
 func telegramReplyText*(reply: CommandReply): string =
   ## Telegram markdown and emoji around the dispatcher's plain text.

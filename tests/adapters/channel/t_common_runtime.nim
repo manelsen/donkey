@@ -79,6 +79,25 @@ proc runTests*() =
         check view.isErr
         check "MEMORY.md" in view.error
 
+    when defined(withSqlite):
+      test "buildMemoryViewText reads the graph before the Markdown fallback":
+        ## With a healthy graph, an unreadable export must not fail /memory:
+        ## the Markdown files are read only when the fallback is needed.
+        let tmpDir = getTempDir() / ("donkey_memview_graph_first_" & $getCurrentProcessId())
+        defer: removeDir(tmpDir)
+        let memory = MdFileAdapter(paddocksDir: tmpDir,
+                                   magmaSqlitePath: tmpDir / "magma.db")
+        let userId = UserId("u-graph-first")
+        check memory.appendMemory(userId, "graph-backed memory").isOk
+        let exported = memory.memoryMdPath(userId)
+        if not fileExists(exported): writeFile(exported, "export")
+        setFilePermissions(exported, {})
+        defer: setFilePermissions(exported, {fpUserRead, fpUserWrite})
+        let view = buildMemoryViewText(memory, userId)
+        check view.isOk
+        if view.isOk:
+          check "graph-backed memory" in view.get
+
     test "the command service never raises on an unreadable memory file":
       let tmpDir = getTempDir() / ("donkey_memview_service_" & $getCurrentProcessId())
       let memory = MdFileAdapter(paddocksDir: tmpDir)
@@ -162,6 +181,33 @@ proc runTests*() =
       check text.contains("Provider: anthropic")
       check text.contains("`free-model` [free]")
       check text.contains("Fonte: live")
+
+    test "applyModelsTextCommand accepts a model the loaded catalog lists":
+      ## The catalog shown by `/models <provider>` is the one the selection
+      ## is checked against; the static list is only the fallback.
+      let tmpDir = getTempDir() / "donkey_common_runtime_models_live"
+      let memory = MdFileAdapter(paddocksDir: tmpDir)
+      let userId = UserId("u-common-models-live")
+      defer:
+        if dirExists(tmpDir):
+          removeDir(tmpDir)
+      let loader: ModelCatalogLoader =
+        proc(providerName: string): Result[ModelCatalogResult, string] =
+          ok(ModelCatalogResult(
+            entries: @[ModelCatalogEntry(providerName: providerName,
+              modelName: "gemini-brand-new", label: "new", available: true)],
+            source: mcsLive, fetchedAtUnix: getTime().toUnix()))
+      check "gemini-brand-new" notin supportedModels("gemini")
+      check supportedModels("gemini").len > 0
+      let chosen = applyModelsTextCommand(memory, userId, "gemini gemini-brand-new", loader)
+      check chosen.isOk
+      check getCurrentProviderModel(memory, userId) == ("gemini", "gemini-brand-new")
+      check applyModelsTextCommand(memory, userId, "gemini gemini-2.5-pro", loader).isErr
+      let empty: ModelCatalogLoader =
+        proc(providerName: string): Result[ModelCatalogResult, string] =
+          ok(ModelCatalogResult(source: mcsLive))
+      check applyModelsTextCommand(memory, userId, "gemini gemini-brand-new", empty).isErr
+      check applyModelsTextCommand(memory, userId, "gemini gemini-2.5-pro", empty).isOk
 
     test "normalizeModelCatalog treats ZAI provider aliases as the same catalog family":
       let normalized = normalizeModelCatalog("zai-anthropic", @[
