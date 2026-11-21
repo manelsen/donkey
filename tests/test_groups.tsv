@@ -101,6 +101,7 @@ g1	tests/architecture/t_no_backend_build.nim
 g1	tests/architecture/t_exception_hygiene.nim
 g1	tests/architecture/t_nim_source.nim
 g1	tests/architecture/t_no_swallowed_errors.nim
+g1	tests/architecture/t_gcsafe_casts.nim
 g1	tests/channel/t_dingtalk.nim
 g1	tests/channel/t_discord.nim
 g1	tests/channel/t_email.nim
