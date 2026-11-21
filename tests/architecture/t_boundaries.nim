@@ -6,11 +6,14 @@ func importSpans(src: string): seq[string] =
   ## removed and paths kept, quoted ones included. A statement continues
   ## over deeper-indented lines; blank and comment-only lines in between do
   ## not end it.
+  ## Statements start where the code says so (`codeOnly`: an `import` inside
+  ## a string is text); their paths are read with literals kept.
+  let starts = codeOnly(src).splitLines()
   let lines = withoutComments(src).splitLines()
   func indentOf(line: string): int = line.len - line.strip(trailing = false).len
   var i = 0
   while i < lines.len:
-    let t = lines[i].strip
+    let t = starts[i].strip
     if t.startsWith("import ") or t == "import" or t.startsWith("from ") or
        t.startsWith("include "):
       var statement = @[lines[i].strip(leading = false)]
@@ -52,6 +55,7 @@ proc runTests*() =
       check importSpans("import std/os,\n  # more\n  \"../adapters/x\"")[0].contains("adapters/")
       check not importSpans("import std/os # adapters/x")[0].contains("adapters/")
       check not importSpans("import std/os #[ adapters/x ]#")[0].contains("adapters/")
+      check importSpans("const example = \"\"\"\nimport ../adapters/x\n\"\"\"").len == 0
 
 when isMainModule:
   runTests()
