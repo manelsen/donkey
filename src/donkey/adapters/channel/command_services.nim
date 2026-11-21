@@ -342,9 +342,13 @@ proc readMemoryFile(path: string): Result[string, string] =
     err("não foi possível ler " & path.extractFilename & ": " & getCurrentExceptionMsg())
 
 proc buildMemoryViewText*(memory: MdFileAdapter; userId: UserId): Result[string, string] =
-  let markdownText = ? readMemoryFile(memory.memoryMdPath(userId))
-  let markdownUserText = ? readMemoryFile(memory.userMdPath(userId))
-  let markdownPrefsText = ? readMemoryFile(memory.preferencesMdPath(userId))
+  ## With MAGMA the graph is read first; the Markdown files are read only
+  ## when the view falls back to them, so an unreadable export does not
+  ## fail /memory while the graph holds the memory.
+  template readMarkdown() {.dirty.} =
+    let markdownText = ? readMemoryFile(memory.memoryMdPath(userId))
+    let markdownUserText = ? readMemoryFile(memory.userMdPath(userId))
+    let markdownPrefsText = ? readMemoryFile(memory.preferencesMdPath(userId))
   when defined(withPostgres) or defined(withSqlite):
     if memory.hasMagmaBackend:
       try:
@@ -361,6 +365,7 @@ proc buildMemoryViewText*(memory: MdFileAdapter; userId: UserId): Result[string,
           ))
       except CatchableError:
         discard
+      readMarkdown()
       if markdownText.len > 0:
         return ok("📄 Markdown fallback\n" & markdownText)
       if markdownUserText.len > 0 or markdownPrefsText.len > 0:
@@ -370,6 +375,7 @@ proc buildMemoryViewText*(memory: MdFileAdapter; userId: UserId): Result[string,
           "📄 Markdown fallback",
         ))
       return ok("Nenhuma memória salva ainda.")
+  readMarkdown()
   if markdownText.len > 0:
     return ok(markdownText)
   if markdownUserText.len > 0 or markdownPrefsText.len > 0:

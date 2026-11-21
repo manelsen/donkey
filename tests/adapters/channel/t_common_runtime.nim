@@ -79,6 +79,25 @@ proc runTests*() =
         check view.isErr
         check "MEMORY.md" in view.error
 
+    when defined(withSqlite):
+      test "buildMemoryViewText reads the graph before the Markdown fallback":
+        ## With a healthy graph, an unreadable export must not fail /memory:
+        ## the Markdown files are read only when the fallback is needed.
+        let tmpDir = getTempDir() / ("donkey_memview_graph_first_" & $getCurrentProcessId())
+        defer: removeDir(tmpDir)
+        let memory = MdFileAdapter(paddocksDir: tmpDir,
+                                   magmaSqlitePath: tmpDir / "magma.db")
+        let userId = UserId("u-graph-first")
+        check memory.appendMemory(userId, "graph-backed memory").isOk
+        let exported = memory.memoryMdPath(userId)
+        if not fileExists(exported): writeFile(exported, "export")
+        setFilePermissions(exported, {})
+        defer: setFilePermissions(exported, {fpUserRead, fpUserWrite})
+        let view = buildMemoryViewText(memory, userId)
+        check view.isOk
+        if view.isOk:
+          check "graph-backed memory" in view.get
+
     test "the command service never raises on an unreadable memory file":
       let tmpDir = getTempDir() / ("donkey_memview_service_" & $getCurrentProcessId())
       let memory = MdFileAdapter(paddocksDir: tmpDir)
