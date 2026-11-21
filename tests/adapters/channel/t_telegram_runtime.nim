@@ -1,6 +1,7 @@
 import std/[os, sequtils, strutils, unittest]
 import results
 import donkey/core/commands/command_routing
+import donkey/core/commands/command_outcome
 import donkey/core/log
 import donkey/core/outbound/outbound
 import donkey/adapters/channel/telegram
@@ -13,6 +14,16 @@ import donkey/ports/provider
 
 proc runTests*() =
   suite "telegram_runtime":
+    test "/doctor keeps the service's status marks, one per line":
+      let report = "🩺 Donkey Doctor\n\n✅ Provider: OK (12ms)\n" &
+                   "❌ Provider: timeout\n🔧 Tools loaded: 3\n"
+      let text = telegramReplyText(CommandReply(topic: rtDoctor, text: report))
+      check "✅ Provider: OK (12ms)" in text
+      check "❌ Provider: timeout" in text
+      check "✅ ✅" notin text and "❌ ✅" notin text and "❌ ❌" notin text
+      check "🔧 🔧" notin text
+      check text.count("🩺") == 1
+
 
     test "parseTelegramPrefs returns defaults when empty":
       let prefs = parseTelegramPrefs("")
