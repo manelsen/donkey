@@ -234,6 +234,36 @@ proc runTests*() =
         "send_group_msg" in r.target and RequesterOnlyNotice in r.body)
       check not anyRequest(carriesLinkCode)
 
+    test "QQ: a link code asked in a DM goes to that DM, even with a group bound first":
+      ## The reply target is where the command came from, not the first QQ
+      ## binding of the user: a group bound earlier must not receive the code.
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var qq = newQQOneBotChannelAdapter(base(), "", Tmp / "qq-dm" / "ids.tsv")
+      let user = qq.resolver.resolve(ckQQ, "group:99")
+      check qq.resolver.consumeLinkCode(qq.resolver.generateLinkCode(user), ckQQ, "7")
+      check qq.resolver.reverseChannel(user, ckQQ) == "group:99"
+      check qq.enqueueEventJson("""{"post_type":"message","message_type":"private",
+        "user_id":7,"message_id":9,"raw_message":"/mycode"}""").isOk
+      drainQQEvents(qq, sm, env("qq-dm"), msgSeq, noop, logger)
+      check anyRequest(proc(r: Recorded): bool =
+        "send_private_msg" in r.target and "\"user_id\":\"7\"" in r.body and carriesLinkCode(r))
+      check not anyRequest(proc(r: Recorded): bool = "send_group_msg" in r.target)
+
+    test "QQ official: every command reply is a passive reply carrying msg_id":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var qq = newQQOfficialChannelAdapter("app", "secret", Tmp / "qqo-help" / "ids.tsv",
+                                           apiBase = base(), tokenBase = base())
+      check qq.enqueueEventJson($(%* {"op": 0, "t": "GROUP_AT_MESSAGE_CREATE",
+        "s": 2, "d": {"group_openid": "G2", "author": {"member_openid": "M2"},
+                      "id": "msg-78", "content": "/help"}})).isOk
+      drainQQEvents(qq, sm, env("qqo-help"), msgSeq, noop, logger)
+      check anyRequest(proc(r: Recorded): bool =
+        "/v2/groups/G2/messages" in r.target and "msg-78" in r.body)
+
     test "Feishu: a link code asked in a group chat goes to the sender's open_id":
       reset()
       var sm = openSessions()
