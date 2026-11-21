@@ -99,7 +99,7 @@ type
     searchSessions*:  SearchSessionsFn
     paddockDir*:      proc(userId: UserId): string {.gcsafe.}
     scheduleReminder*:  proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string
-                          {.gcsafe.}
+                          {.gcsafe, raises: [CatchableError].}
     loadDueReminders*:  proc(): seq[JsonNode] {.gcsafe.}
     deleteReminder*:    proc(userId: UserId; reminderId: string) {.gcsafe.}
     ## Optional consolidation hooks. Nil means the backend has no episode

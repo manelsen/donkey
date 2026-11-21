@@ -59,7 +59,7 @@ proc runToolAgent*(inbox:   AsyncQueue[AgentMessage];
         toolId    = j["id"].getStr("")
         interrupt = j{"userInterrupt"}.getBiggestInt(interrupt.BiggestInt).uint64
         toolInput = try: parseJson(j["inputJson"].getStr("{}"))
-                    except: newJObject()
+                    except CatchableError: newJObject()
       except CatchableError as e:
         await outbox.put(newErrorMsg(msg.id, "ToolAgent: bad payload: " & e.msg))
         continue

@@ -98,6 +98,7 @@ None of these is reachable from `src/donkey.nim`. They are kept alive only by te
 - 19 modules in `domain/` return `Result`, and there are 43 `proc`s in `domain/` (the rule is pure `func`). This needs the ADR already listed as an open question in the command-dispatch PRD.
 - 29 modules import `results` directly instead of `pipeops`.
 - There are 134 `{.cast(gcsafe).}`, concentrated in `session_manager` (10), `metrics` (9) and `http_gateway` (7). Each one is an unchecked promise. Prefer locks with `{.gcsafe.}` on the procs, or move the state out of globals.
+- About 60 `except Exception` remain, each marked `## effect boundary`. The cause is a callee without `raises`: port closures (`MemoryRuntimePort.loadContext`, `CompleteFn`, `SearchFn` users) and forward declarations without `raises`, which Nim treats as raising `Exception` (found in `md_file.nim`). `scheduleReminder` was annotated in #78 as the pattern: port field, forward declaration and closure get `raises: [CatchableError]`, and the handler narrows. `loadContext` needs the MAGMA graph closures annotated first.
 - The documentation says ports are `concept`s, but most of them (`MemoryRuntimePort`, `LinkCodePort`, `CommandServicesPort`) are objects of closures. The text should describe both styles.
 
 ## Suggested order

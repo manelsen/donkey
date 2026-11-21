@@ -74,7 +74,7 @@ proc loadIdentity*(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits
 func paddockDir*(a: MdFileAdapter; userId: UserId): string {.gcsafe.}
 proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
                        channel: string; scheduledAt: int64;
-                       message: string): string {.gcsafe.}
+                       message: string): string {.gcsafe, raises: [CatchableError].}
 proc loadDueReminders*(a: MdFileAdapter): seq[JsonNode] {.gcsafe.}
 proc deleteReminder*(a: MdFileAdapter; userId: UserId; reminderId: string) {.gcsafe.}
 proc searchSessions*(a: MdFileAdapter; userId: UserId;
@@ -383,7 +383,7 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
                            {.gcsafe, raises: [].} =
                         a.searchSessions(userId, query, limit, includeMemory),
     paddockDir:       proc(userId: UserId): string {.gcsafe.} = a.paddockDir(userId),
-    scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string {.gcsafe.} =
+    scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string {.gcsafe, raises: [CatchableError].} =
                         a.scheduleReminder(userId, channel, scheduledAt, message),
     loadDueReminders: proc(): seq[JsonNode] {.gcsafe.} = a.loadDueReminders(),
     deleteReminder:   proc(userId: UserId; reminderId: string) {.gcsafe.} = a.deleteReminder(userId, reminderId),
@@ -663,6 +663,14 @@ proc appendToMemoryFile(a: MdFileAdapter; userId: UserId; text: string) =
     f.close()
   discard secureFile(path)
 
+proc tryAppendExport(a: MdFileAdapter; userId: UserId; text: string) {.raises: [].} =
+  ## appendMemory's export after the graph took the entry: like tryExport,
+  ## it cannot fail the append, so nothing it raises may reach the caller.
+  try:
+    a.appendToMemoryFile(userId, text)
+  except CatchableError:
+    discard
+
 proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string;
                    origin = MemoryOrigin()): Result[void, string] =
   ## Appends one memory.
@@ -685,10 +693,7 @@ proc appendMemory*(a: MdFileAdapter; userId: UserId; text: string;
     of gaReady:
       when defined(withPostgres) or defined(withSqlite):
         ? magma.appendMemory(userId, text, origin)
-      try:
-        a.appendToMemoryFile(userId, text)
-      except CatchableError:
-        discard  ## see tryExport: the export can be rebuilt from the graph
+      a.tryAppendExport(userId, text)
     of gaNone:
       a.appendToMemoryFile(userId, text)
     ok()

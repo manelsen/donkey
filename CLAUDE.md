@@ -58,7 +58,7 @@ provider.complete(req) >>= saveToMemory >>= notifyUser
 
 **Regras:**
 - `try/except` apenas dentro do adapter, nunca exposto para fora
-- Capture `CatchableError`, nunca `Exception` nem `except:` sem tipo: um `Defect` deve derrubar, não virar "indisponível". `except Exception` só numa fronteira `{.raises: [].}` que chama callee sem `raises` anotado, marcada com `## effect boundary: callee raises are unannotated` (verificado por `tests/architecture/t_exception_hygiene.nim`)
+- Capture `CatchableError`, nunca `Exception` nem `except:` sem tipo: um `Defect` deve derrubar, não virar "indisponível". `except Exception` só numa proc com lista de `raises` fechada (`{.raises: [].}`, ou `{.async.}` do Chronos, que só admite `CatchableError`) que chama callee sem `raises` anotado (closure de port, forward declaration sem `raises`), marcada com `## effect boundary: callee raises are unannotated` (verificado por `tests/architecture/t_exception_hygiene.nim`)
 - Procs do domínio (`func`) continuam puros — sem Result, sem I/O
 - `pipeops.nim` é o único lugar onde `results` é importado diretamente; o resto importa via `pipeops`
 
