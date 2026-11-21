@@ -35,9 +35,11 @@ func hasReason(line, comments: string): bool =
   false
 
 func castCount(code: string): int =
-  ## Casts in a line of code, however the pragma tokens are spaced.
+  ## Casts in a line of code: `cast(gcsafe)` as a pragma item, alone or among
+  ## others (`{.cast(gcsafe), cast(noSideEffect).}`), however it is spaced.
+  ## In code it can only be a pragma; a type cast is `cast[T](x)`.
   let squeezed = code.multiReplace((" ", ""), ("\t", ""))
-  squeezed.count(CastPragma)
+  squeezed.count("cast(gcsafe)")
 
 func castSites(path, src: string): seq[CastSite] =
   ## Casts in code (not in comments or strings), each with whether a reason
@@ -63,6 +65,9 @@ proc runTests*() =
       check castSites("x", "let s = \"{.cast(gcsafe).}\"").len == 0
       check castSites("x", "{. cast(gcsafe) .}:\n  discard").len == 1
       check castSites("x", "{.cast( gcsafe ).}: discard").len == 1
+      check castSites("x", "{.cast(gcsafe), cast(noSideEffect).}: discard").len == 1
+      check castSites("x", "{.cast(noSideEffect), cast( gcsafe ).}: discard").len == 1
+      check castSites("x", "let p = cast[pointer](x)").len == 0
       check not castSites("x", "let l = \"## gcsafe: not a comment\"\n{.cast(gcsafe).}:")[0].explained
       check castSites("x", "let l = 1  ## gcsafe: a real comment\n{.cast(gcsafe).}:")[0].explained
 
