@@ -64,7 +64,7 @@ proc textBlock(text: string): JsonNode =
   %* {"type": "text", "text": text}
 
 proc toolUseBlock(tc: ToolCallRequest): JsonNode =
-  let input = try: parseJson(tc.inputJson) except: newJObject()
+  let input = try: parseJson(tc.inputJson) except CatchableError: newJObject()
   %* {
     "type": "tool_use",
     "id": tc.id,
@@ -145,7 +145,7 @@ proc buildBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
   if req.tools.len > 0:
     var toolsArr = newJArray()
     for td in req.tools:
-      let schema = try: parseJson(td.schemaJson) except: newJObject()
+      let schema = try: parseJson(td.schemaJson) except CatchableError: newJObject()
       toolsArr.add(%* {
         "name": td.name,
         "description": td.description,

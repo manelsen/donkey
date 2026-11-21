@@ -11,11 +11,49 @@ import std/[os, strutils, unittest]
 
 const BoundaryMarker = "## effect boundary: callee raises are unannotated"
 
+func codeOf(line: string): string =
+  ## The line without string/char literals and without its comment, so that
+  ## "except:" in text or after `#` is not mistaken for code.
+  var i = 0
+  while i < line.len:
+    let c = line[i]
+    if c == '#': break
+    if c == '"' or c == '\'':
+      inc i
+      while i < line.len and line[i] != c:
+        if line[i] == '\\': inc i
+        inc i
+      result.add ' '
+    else:
+      result.add c
+    inc i
+
+func isIdentChar(c: char): bool = c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
+
+func exceptHeads(line: string): seq[string] =
+  ## What follows each `except` keyword in the code part of the line, up to
+  ## the colon: "" for a bare handler, "Exception", "CatchableError", ...
+  let code = codeOf(line)
+  var i = code.find("except")
+  while i >= 0:
+    let stop = i + "except".len
+    let wordStart = i == 0 or not isIdentChar(code[i - 1])
+    let wordEnd = stop >= code.len or not isIdentChar(code[stop])
+    if wordStart and wordEnd:
+      let colon = code.find(':', stop)
+      result.add(if colon < 0: code[stop .. ^1].strip else: code[stop ..< colon].strip)
+    i = code.find("except", stop)
+
 func isBareExcept(line: string): bool =
-  ## `except:` with no exception type, whatever follows the colon: nothing,
-  ## a comment, or an inline value (`except: newJObject()`).
-  let t = line.strip
-  t.startsWith("except") and t["except".len .. ^1].strip.startsWith(":")
+  ## `except:` with no exception type, anywhere in the line's code: alone,
+  ## before a comment, with an inline value, or inside a one-line `try`.
+  "" in exceptHeads(line)
+
+func catchesException(line: string): bool =
+  for head in exceptHeads(line):
+    if head == "Exception" or head.startsWith("Exception ") or
+       head.startsWith("Exception,"):
+      return true
 
 proc runTests*() =
   suite "exception hygiene":
@@ -24,6 +62,13 @@ proc runTests*() =
       check isBareExcept("except: # fallback")
       check isBareExcept("except :  ## why")
       check isBareExcept("except: newJObject()")
+      check isBareExcept("let x = (try: parseInt(s) except: -1)")
+      check not isBareExcept("let x = (try: parseInt(s) except ValueError: -1)")
+      check not isBareExcept("echo \"except: in a string\"")
+      check not isBareExcept("discard  # except: in a comment")
+      check catchesException("let x = (try: f() except Exception: 0)")
+      check catchesException("except Exception as e:")
+      check not catchesException("except CatchableError as e:")
       check not isBareExcept("except CatchableError:")
       check not isBareExcept("except CatchableError: # fallback")
       check not isBareExcept("except ValueError, IOError:")
@@ -35,11 +80,10 @@ proc runTests*() =
         var n = 0
         for line in readFile(path).splitLines():
           inc n
-          let t = line.strip
           if isBareExcept(line):
             checkpoint(path & ":" & $n & " bare except")
             fail()
-          if t.startsWith("except Exception") and BoundaryMarker notin line:
+          if catchesException(line) and BoundaryMarker notin line:
             checkpoint(path & ":" & $n & " except Exception without the boundary marker")
             fail()
 

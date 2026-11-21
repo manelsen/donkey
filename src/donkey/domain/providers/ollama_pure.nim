@@ -28,7 +28,7 @@ proc messageToOllama*(msg: ChatMessage): JsonNode =
     ## Ollama tool_calls use JSON object arguments, not string.
     var calls = newJArray()
     for tc in msg.toolCalls:
-      let args = try: parseJson(tc.inputJson) except: newJObject()
+      let args = try: parseJson(tc.inputJson) except CatchableError: newJObject()
       calls.add(%* {"function": {"name": tc.name, "arguments": args}})
     return %* {"role": "assistant", "content": msg.text, "tool_calls": calls}
   if msg.imageUrl.len > 0:
@@ -55,7 +55,7 @@ proc buildOllamaRequest*(model: string; req: CompletionRequest;
   if req.tools.len > 0:
     var toolsArr = newJArray()
     for td in req.tools:
-      let schema = try: parseJson(td.schemaJson) except: newJObject()
+      let schema = try: parseJson(td.schemaJson) except CatchableError: newJObject()
       toolsArr.add(%* {"type": "function",
                         "function": {"name":        td.name,
                                      "description": td.description,
