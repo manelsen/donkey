@@ -151,8 +151,11 @@ proc parseRemoteSkillVersion*(j: JsonNode): RemoteSkillVersion =
       size: file.getOrDefault("size").getInt(0),
     )
 
+const ClawhubHttpTimeoutSec* = 60
+  ## A stalled registry must not hang `/skill search` or `/skill install`.
+
 proc newRegistryClient*(registry: string): HttpClient =
-  result = newHttpClient()
+  result = newHttpClient(timeout = ClawhubHttpTimeoutSec * 1000)
   result.headers = newHttpHeaders({
     "Accept": "application/json",
   })
@@ -169,7 +172,9 @@ proc fetchJson*(registry, path: string): Result[JsonNode, string] =
   except CatchableError as e:
     err(e.msg)
 
-proc dumpSkillArtifact*(slug, reason: string; data: string = "") {.gcsafe.} =
+proc dumpSkillArtifact*(slug, reason: string; data: string = "") {.gcsafe, raises: [].} =
+  ## Best-effort post-mortem. It runs inside `except` handlers, so a failed
+  ## write must not raise past the `err` the caller is about to return.
   let path = "/tmp/donkey_skill_" & slug.replace("/", "_") & ".dump"
   var body = "# donkey skill install post-mortem dump\n"
   body.add("slug: " & slug & "\n")
@@ -179,11 +184,14 @@ proc dumpSkillArtifact*(slug, reason: string; data: string = "") {.gcsafe.} =
   if data.len > 0:
     body.add("\n-- data (first 1024 bytes) --\n")
     body.add(data[0 .. min(data.high, 1023)])
-  writeFile(path, body)
+  try:
+    writeFile(path, body)
+  except CatchableError:
+    discard
 
 proc downloadZipBytes*(registry, slug, version: string): Result[seq[byte], string] =
   try:
-    let client = newHttpClient()
+    let client = newHttpClient(timeout = ClawhubHttpTimeoutSec * 1000)
     defer: client.close()
     var url = registryUrl(registry, ClawhubApiDownload)
     url.add(if '?' in url: "&" else: "?")
@@ -262,7 +270,7 @@ proc readRemoteSkillLockfile*(home: string): RemoteSkillLockfile =
           version: node.getOrDefault("version").getStr(""),
           installedAt: node.getOrDefault("installedAt").getBiggestInt().int64,
         )
-  except:
+  except CatchableError:
     result = defaultRemoteSkillLockfile()
 
 proc writeRemoteSkillLockfile*(home: string; lock: RemoteSkillLockfile) =

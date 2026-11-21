@@ -15,13 +15,14 @@
 ##   - Response parsing must extract both text blocks and tool_use blocks
 ##   - max_tokens is REQUIRED by the API (no default)
 
-import std/[httpclient, json, streams, strutils]
+import std/[json, streams, strutils]
 import ../../domain/message
 import ../../domain/providers/media_pure
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/json_helpers
-import ../http/helpers
+import ../../ports/http
+import ./provider_http
 import ./sse
 
 const
@@ -34,6 +35,7 @@ const
 type
   AnthropicAdapter* = object
     apiKey*:   string
+    http*:     HttpRuntimePort  ## nil → production provider transport
     model*:    string
     baseUrl*:  string   ## base URL override for compatible APIs
     endpoint*: string   ## override for testing
@@ -62,7 +64,7 @@ proc textBlock(text: string): JsonNode =
   %* {"type": "text", "text": text}
 
 proc toolUseBlock(tc: ToolCallRequest): JsonNode =
-  let input = try: parseJson(tc.inputJson) except: newJObject()
+  let input = try: parseJson(tc.inputJson) except CatchableError: newJObject()
   %* {
     "type": "tool_use",
     "id": tc.id,
@@ -143,7 +145,7 @@ proc buildBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
   if req.tools.len > 0:
     var toolsArr = newJArray()
     for td in req.tools:
-      let schema = try: parseJson(td.schemaJson) except: newJObject()
+      let schema = try: parseJson(td.schemaJson) except CatchableError: newJObject()
       toolsArr.add(%* {
         "name": td.name,
         "description": td.description,
@@ -234,34 +236,24 @@ proc parseAnthropicSseLine*(line: string): Result[AnthropicSseChunk, string] =
 
 proc complete*(a: AnthropicAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
-  withHttpClient:
-    client.headers = newHttpHeaders({
-      "Content-Type":      "application/json",
-      "x-api-key":         a.apiKey,
-      "anthropic-version": AnthropicVersion,
-    })
+  providerGuard:
+    var headers: seq[HttpHeader] = @[("Content-Type", "application/json"), ("x-api-key", a.apiKey), ("anthropic-version", AnthropicVersion)]
     let body = $a.buildBody(req)
     let url  = a.messagesUrl()
-    let resp = client.post(url, body = body)
-    checkApiStatus(resp, "Anthropic")
-    resp.body |> parseJson |> parseAnthropicResponse
+    let resp = ? postProvider(a.http, "Anthropic", url, body, headers)
+    resp |> parseJson |> parseAnthropicResponse
 
 proc makeStreamFn*(a: AnthropicAdapter): StreamFn =
   let adapter = a
   result = proc(req: CompletionRequest;
                 onToken: proc(tok: string) {.gcsafe.}
                ): Result[CompletionResponse, string] {.gcsafe.} =
-    withHttpClient:
-      client.headers = newHttpHeaders({
-        "Content-Type":      "application/json",
-        "x-api-key":         adapter.apiKey,
-        "anthropic-version": AnthropicVersion,
-      })
+    providerGuard:
+      var headers: seq[HttpHeader] = @[("Content-Type", "application/json"), ("x-api-key", adapter.apiKey), ("anthropic-version", AnthropicVersion)]
       let body = $adapter.buildStreamBody(req)
       let url  = adapter.messagesUrl()
-      let resp = client.request(url, httpMethod = HttpPost, body = body)
-      checkApiStatus(resp, "Anthropic")
-      sseAccumulate(resp.bodyStream, parseAnthropicSseLine, onToken)
+      let resp = ? postProviderStream(adapter.http, "Anthropic", url, body, headers)
+      sseAccumulate(resp, parseAnthropicSseLine, onToken)
       ok(CompletionResponse(
         text:         accumulated,
         inputTokens:  inputTokens,

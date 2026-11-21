@@ -302,7 +302,7 @@ proc loadTomlConfig*(path: string): Option[TomlValueRef] =
     return none(TomlValueRef)
   try:
     some(parseFile(path))
-  except:
+  except CatchableError:
     none(TomlValueRef)
 
 proc loadConfig*(path: string): DonkeyConfig =

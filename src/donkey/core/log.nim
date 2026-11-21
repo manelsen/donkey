@@ -19,7 +19,7 @@ type
     subsystem*: string
     message*:   string
 
-  LogSink* = proc(entry: LogEntry) {.closure, gcsafe.}
+  LogSink* = proc(entry: LogEntry) {.closure, gcsafe, raises: [CatchableError].}
 
   Logger* = object
     subsystem*: string
@@ -202,7 +202,7 @@ proc log*(logger: Logger; level: LogLevel; msg: string) {.gcsafe, raises: [].} =
         subsystem: logger.subsystem,
         message:   msg,
       ))
-    except Exception: discard
+    except CatchableError: discard
 
 template debug*(logger: Logger; msg: string) = logger.log(lvlDebug, msg)
 template info*(logger: Logger; msg: string)  = logger.log(lvlInfo,  msg)

@@ -59,7 +59,7 @@ proc runToolAgent*(inbox:   AsyncQueue[AgentMessage];
         toolId    = j["id"].getStr("")
         interrupt = j{"userInterrupt"}.getBiggestInt(interrupt.BiggestInt).uint64
         toolInput = try: parseJson(j["inputJson"].getStr("{}"))
-                    except: newJObject()
+                    except CatchableError: newJObject()
       except CatchableError as e:
         await outbox.put(newErrorMsg(msg.id, "ToolAgent: bad payload: " & e.msg))
         continue
@@ -81,7 +81,7 @@ proc runToolAgent*(inbox:   AsyncQueue[AgentMessage];
               Result[ToolResult, string].err("tool invocation unavailable")
           except CancelledError:
             raise
-          except Exception as e:
+          except Exception as e:  ## effect boundary: callee raises are unannotated
             Result[ToolResult, string].err("ToolAgent invoke: " & e.msg)
         if res.isOk:
           await outbox.put(newResultMsg(msg.id, res.value.output))

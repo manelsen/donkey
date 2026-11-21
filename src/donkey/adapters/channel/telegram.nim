@@ -135,7 +135,7 @@ proc postWith(a: TelegramAdapter; meth: string; body: JsonNode;
     sent >>=
       proc(resp: HttpResponse): Result[JsonNode, string] {.gcsafe, raises: [].} =
         parseTgResp(meth, resp)
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err(e.msg)
 
 proc post(a: TelegramAdapter; meth: string;
@@ -168,7 +168,7 @@ proc postMultipart(a: TelegramAdapter; meth, body, boundary: string;
       if retryAfter > 0:
         a.flood.noteRetryAfter(chatId, retryAfter, epochMs())
     res
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err(e.msg)
 
 proc randomBoundaryHex(bytes = 24): string =
@@ -211,7 +211,7 @@ proc postJsonOnUpload(a: TelegramAdapter; meth: string; body: JsonNode):
     sent >>=
       proc(resp: HttpResponse): Result[JsonNode, string] {.gcsafe, raises: [].} =
         parseTgResp(meth, resp)
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     err(e.msg)
 
 func chatAllowedReactionEmojis*(chatInfo: JsonNode): tuple[restricted: bool, emojis: seq[string]]

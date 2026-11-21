@@ -17,15 +17,19 @@ type StdHttpAdapter* = object
   proxy*: string ## Optional filtering egress proxy URL.
   retryNonIdempotent*: bool ## false → POST/PATCH make a single attempt.
   retryConflict*: bool ## true → a 409 on an idempotent call is retried.
+  returnServerError*: bool ## true → once attempts run out, a 5xx response is
+                           ## returned as `ok` so the caller can read its body.
 
 proc newStdHttpAdapter*(timeout = 60, maxRetries = 3, allowlist: seq[string] = @[],
                         circuitBreaker = true, proxy = "",
                         retryNonIdempotent = true,
-                        retryConflict = false): StdHttpAdapter =
+                        retryConflict = false,
+                        returnServerError = false): StdHttpAdapter =
   StdHttpAdapter(timeout: timeout, maxRetries: maxRetries, allowlist: allowlist,
                  circuitBreaker: circuitBreaker, proxy: proxy,
                  retryNonIdempotent: retryNonIdempotent,
-                 retryConflict: retryConflict)
+                 retryConflict: retryConflict,
+                 returnServerError: returnServerError)
 
 type RetryKind* = enum
   rkIdempotent
@@ -126,6 +130,12 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
           continue
         return err("HTTP 409 conflict after " & $attemptLimit & " attempts")
       lastError = "HTTP " & $val.status
+      if a.returnServerError and attempt == attemptLimit:
+        ## Still a host failure for the breaker, but the caller gets the
+        ## status and body to build its own error.
+        if a.circuitBreaker:
+          recordFailure(host)
+        return ok(val)
     else:
       lastError = res.error
 
