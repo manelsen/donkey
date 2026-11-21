@@ -15,6 +15,7 @@ testresults/
 tests/**
 !tests/**/
 !tests/**/*.nim
+!tests/**/*.nims
 !tests/fixtures/**
 !tests/test_groups.tsv
 !tests/test_group_exceptions.tsv
