@@ -303,14 +303,14 @@ build_group() {
       run_status=1
     elif [ -n "${REPORT_DIR:-}" ]; then
       UNITTEST2_OUTPUT_LVL=VERBOSE nim c --hints:off --mm:orc -u:withPostgres $EXTRA_NIM_FLAGS \
-        --panics:on -d:ssl -d:wasm3HasWASI --threads:on \
+        --panics:on -d:ssl --threads:on \
         -d:withSqlite -d:staticSqlite \
         --path:"$REPO_ROOT" --path:"$REPO_ROOT/src" \
         --nimcache:"$cache_dir/nimcache" -o:"$binary" "$entry" \
         > "$build_log" 2>&1 || run_status=$?
     else
       nim c --hints:off --mm:orc -u:withPostgres $EXTRA_NIM_FLAGS \
-        --panics:on -d:ssl -d:wasm3HasWASI --threads:on \
+        --panics:on -d:ssl --threads:on \
         -d:withSqlite -d:staticSqlite \
         --path:"$REPO_ROOT" --path:"$REPO_ROOT/src" \
         --nimcache:"$cache_dir/nimcache" -o:"$binary" "$entry" \

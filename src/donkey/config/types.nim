@@ -20,7 +20,7 @@ type
   SandboxMode* = enum
     smNone   = "none"    ## workingDir only — no OS-level isolation
     smOci    = "oci"     ## ephemeral OCI container with bind-mounted paddock
-    smWasm   = "wasm"    ## embedded wasm3 runtime with WASI
+    smWasm   = "wasm"    ## wasmtime CLI running the busybox shell.wasm (app/sandbox)
 
   DonkeyConfig* = object
     home*:          string       ## Base dir; default: ~/.donkey
