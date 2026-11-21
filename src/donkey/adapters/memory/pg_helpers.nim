@@ -4,7 +4,7 @@
 ##
 ## Provides withDb: opens a DB connection via a.openDb(), injects `db`
 ## into the body, closes it via defer, and wraps body in try/except.
-## Analogous to withHttpClient in adapters/http/helpers.nim.
+## Analogous to withHttpClientTimeout in adapters/http/helpers.nim.
 
 when defined(withPostgres):
   template withDb*(a: untyped; body: untyped): untyped =

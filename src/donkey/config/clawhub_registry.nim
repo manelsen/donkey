@@ -151,8 +151,11 @@ proc parseRemoteSkillVersion*(j: JsonNode): RemoteSkillVersion =
       size: file.getOrDefault("size").getInt(0),
     )
 
+const ClawhubHttpTimeoutSec* = 60
+  ## A stalled registry must not hang `/skill search` or `/skill install`.
+
 proc newRegistryClient*(registry: string): HttpClient =
-  result = newHttpClient()
+  result = newHttpClient(timeout = ClawhubHttpTimeoutSec * 1000)
   result.headers = newHttpHeaders({
     "Accept": "application/json",
   })
@@ -183,7 +186,7 @@ proc dumpSkillArtifact*(slug, reason: string; data: string = "") {.gcsafe.} =
 
 proc downloadZipBytes*(registry, slug, version: string): Result[seq[byte], string] =
   try:
-    let client = newHttpClient()
+    let client = newHttpClient(timeout = ClawhubHttpTimeoutSec * 1000)
     defer: client.close()
     var url = registryUrl(registry, ClawhubApiDownload)
     url.add(if '?' in url: "&" else: "?")
