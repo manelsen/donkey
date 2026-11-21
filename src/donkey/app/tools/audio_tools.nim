@@ -78,7 +78,7 @@ proc performTranscribe*(path: string; http: HttpRuntimePort;
     return errorText("transcribe_audio", "file not found: " & path)
   let data = try:
     readFile(path)
-  except Exception as e:
+  except CatchableError as e:
     return errorText("transcribe_audio", e.msg)
   if data.len > maxBytes:
     return errorText("transcribe_audio", "file too large (" & $data.len &
@@ -98,7 +98,7 @@ proc performTranscribe*(path: string; http: HttpRuntimePort;
   ]
   let response = try:
     http.post(endpoint, body, headers)
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     return errorText("transcribe_audio", e.msg)
   if response.isErr:
     return errorText("transcribe_audio", response.error)
@@ -134,7 +134,7 @@ proc performSpeech*(text: string; paddockDir: string; http: HttpRuntimePort;
   ]
   let response = try:
     http.post(endpoint, payload, headers)
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     return err("text_to_speech: " & e.msg)
   if response.isErr:
     return err("text_to_speech: " & response.error)
@@ -151,7 +151,7 @@ proc performSpeech*(text: string; paddockDir: string; http: HttpRuntimePort;
     createDir(dir)
     writeFile(dir / name, audio)
     ok("attachments/" & name)
-  except Exception as e:
+  except CatchableError as e:
     err("text_to_speech: " & e.msg)
 
 proc prepareVoiceReply*(text, caption, paddockDir: string;

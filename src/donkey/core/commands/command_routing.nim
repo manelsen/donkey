@@ -324,14 +324,14 @@ func parseCallbackData*(data: string): CallbackDecision =
     if parts.len == 2:
       try:
         return newCallbackDecision(cbkModelsPage, provider = parts[0], page = parseInt(parts[1]))
-      except:
+      except CatchableError:
         return newCallbackDecision(cbkUnknown)
   if data == "models:back":
     return newCallbackDecision(cbkModelsBack)
   if data.startsWith("help:page:"):
     try:
       return newCallbackDecision(cbkHelpPage, page = parseInt(data[10 .. ^1]))
-    except:
+    except CatchableError:
       return newCallbackDecision(cbkUnknown)
   if data.startsWith("think:set:"):
     return newCallbackDecision(cbkThinkSet, value = data[10 .. ^1])

@@ -295,7 +295,7 @@ proc loadModelsDevCatalog(http: HttpRuntimePort): Result[ModelCatalogResult, str
       return ok(catalogResult(entries.sortCatalog(), mcsLive, getTime().toUnix()))
     else:
       return err("models.dev returned no entries for supported providers")
-  except Exception as e:
+  except CatchableError as e:
     err(e.msg)
 
 func parseCostMicrosPer1k(costStr: string): int =
@@ -303,7 +303,7 @@ func parseCostMicrosPer1k(costStr: string): int =
   if costStr.len == 0: return 0
   try:
     (costStr.parseFloat() * 1_000_000_000).round.int
-  except:
+  except CatchableError:
     0
 
 proc parseOpenRouterCatalog*(body: string): Result[seq[ModelCatalogEntry], string] =

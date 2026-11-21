@@ -249,7 +249,7 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
       """), $userId, vecStr, $limit)
       var hits: seq[MemoryHit]
       for row in rows:
-        let score = try: parseFloat(row[2]).float32 except: 0.0
+        let score = try: parseFloat(row[2]).float32 except CatchableError: 0.0
         hits.add(MemoryHit(content: row[0], kind: row[1], score: score))
       ok(hits)
 
@@ -279,8 +279,8 @@ CREATE INDEX IF NOT EXISTS idx_pgva_embed
       var results: seq[(string, int, int)]
       for row in rows:
         let content = row[0]
-        let idx = try: parseInt(row[1]) except: 0
-        let offset = try: parseInt(row[2]) except: 0
+        let idx = try: parseInt(row[1]) except CatchableError: 0
+        let offset = try: parseInt(row[2]) except CatchableError: 0
         results.add((content, idx, offset))
       ok(results)
 

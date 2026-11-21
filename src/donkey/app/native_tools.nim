@@ -863,7 +863,7 @@ proc executeLegacyNativeTool(tc: ToolCallRequest;
     let ts = reminder.parseWhen(whenStr, getTime().toUnix())
     try:
       discard ctx.memory.scheduleReminder(ctx.uid, $ctx.channel, ts, remMsg)
-    except Exception as e:
+    except CatchableError as e:
       return handledError("Error: " & e.msg)
     return handledText("Reminder scheduled.")
   of CurrentTimeToolName:
@@ -1478,7 +1478,7 @@ proc executeNativeTool*(tc:      ToolCallRequest;
                         history: ConversationHistory;
                        ): Future[NativeToolResult] {.async.} =
   let j = try: parseJson(tc.inputJson)
-          except: newJObject()
+          except CatchableError: newJObject()
   if sessionStopRequested(ctx):
     return NativeToolResult(
       handled: true,
