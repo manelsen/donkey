@@ -9,14 +9,15 @@
 ##     that is NOT exposed to the user (CompletionResponse has no field for it).
 ##   - Streaming via SSE is supported.
 
-import std/[httpclient, json, streams, strutils]
+import std/[json, streams, strutils]
 import ../../domain/message
 import ../../domain/providers/openai_pure
 import ../../domain/providers/compat
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/json_helpers
-import ../http/helpers
+import ../../ports/http
+import ./provider_http
 
 const
   DeepSeekEndpoint*    = "https://api.deepseek.com/v1/chat/completions"
@@ -25,6 +26,7 @@ const
 type
   DeepSeekAdapter* = object
     apiKey*:   string
+    http*:     HttpRuntimePort  ## nil → production provider transport
     model*:    string
     endpoint*: string   ## override for testing
 
@@ -118,16 +120,12 @@ proc parseDeepSeekResponse*(body: JsonNode): Result[CompletionResponse, string] 
 
 proc complete*(a: DeepSeekAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
-  withHttpClient:
-    client.headers = newHttpHeaders({
-      "Content-Type":  "application/json",
-      "Authorization": "Bearer " & a.apiKey,
-    })
+  providerGuard:
+    var headers: seq[HttpHeader] = @[("Content-Type", "application/json"), ("Authorization", "Bearer " & a.apiKey)]
     let body = buildCompatRequestBody(defaultOpenAiProfile(endpoint = DeepSeekEndpoint), a.model, req)
     let url  = if a.endpoint.len > 0: a.endpoint else: DeepSeekEndpoint
-    let resp = client.post(url, body = $body)
-    checkApiStatus(resp, "DeepSeek")
-    resp.body |> parseJson |> parseDeepSeekResponse
+    let resp = ? postProvider(a.http, "DeepSeek", url, $body, headers)
+    resp |> parseJson |> parseDeepSeekResponse
 
 # ── Streaming ─────────────────────────────────────────────────────────────────
 
@@ -136,22 +134,18 @@ proc makeStreamFn*(a: DeepSeekAdapter): StreamFn =
   result = proc(req: CompletionRequest;
                 onToken: proc(tok: string) {.gcsafe.}
                ): Result[CompletionResponse, string] {.gcsafe.} =
-    withHttpClient:
-      client.headers = newHttpHeaders({
-        "Content-Type":  "application/json",
-        "Authorization": "Bearer " & adapter.apiKey,
-      })
+    providerGuard:
+      var headers: seq[HttpHeader] = @[("Content-Type", "application/json"), ("Authorization", "Bearer " & adapter.apiKey)]
       let body = buildCompatRequestBody(defaultOpenAiProfile(endpoint = DeepSeekEndpoint), adapter.model, req, stream = true)
       let url  = if adapter.endpoint.len > 0: adapter.endpoint else: DeepSeekEndpoint
-      let resp = client.request(url, httpMethod = HttpPost, body = $body)
-      checkApiStatus(resp, "DeepSeek")
+      let resp = ? postProviderStream(adapter.http, "DeepSeek", url, $body, headers)
       
       var accumulated = ""
       var reasoning = ""
       var inputTokens = 0
       var outputTokens = 0
       
-      for line in resp.bodyStream.lines:
+      for line in resp.lines:
         let res = parseDeepSeekSseLine(line)
         if res.isErr: continue
         let chunk = res.value

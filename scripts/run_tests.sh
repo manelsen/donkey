@@ -117,13 +117,11 @@ run_one() {
   # Skip files that require special build flags (opt-in backends)
   if [ -z "$skip_reason" ]; then
     case "$f" in
-      *t_sqlite_store*) skip_reason="requires -d:withSqlite" ;;
-      *t_postgres*|*t_pgvector*|*t_age_store*)
+      *t_postgres*|*t_pgvector*)
         skip_reason="requires live PostgreSQL backend" ;;
       *t_magma_memory_adapter_sqlite*) ;;
       *t_magma_graph*|*t_magma_integration*|*t_magma_memory_adapter*)
         skip_reason="requires -d:withPostgres and a live database" ;;
-      *t_wasm.nim) skip_reason="requires the wasm3 nimble package" ;;
       *t_wasm*|*t_shell_composer*)
         if [ ! -f "$HOME/.donkey/busybox" ] || ! command -v wasmtime >/dev/null 2>&1; then
           skip_reason="requires ~/.donkey/busybox and wasmtime"
@@ -305,14 +303,14 @@ build_group() {
       run_status=1
     elif [ -n "${REPORT_DIR:-}" ]; then
       UNITTEST2_OUTPUT_LVL=VERBOSE nim c --hints:off --mm:orc -u:withPostgres $EXTRA_NIM_FLAGS \
-        --panics:on -d:ssl -d:wasm3HasWASI --threads:on \
+        --panics:on -d:ssl --threads:on \
         -d:withSqlite -d:staticSqlite \
         --path:"$REPO_ROOT" --path:"$REPO_ROOT/src" \
         --nimcache:"$cache_dir/nimcache" -o:"$binary" "$entry" \
         > "$build_log" 2>&1 || run_status=$?
     else
       nim c --hints:off --mm:orc -u:withPostgres $EXTRA_NIM_FLAGS \
-        --panics:on -d:ssl -d:wasm3HasWASI --threads:on \
+        --panics:on -d:ssl --threads:on \
         -d:withSqlite -d:staticSqlite \
         --path:"$REPO_ROOT" --path:"$REPO_ROOT/src" \
         --nimcache:"$cache_dir/nimcache" -o:"$binary" "$entry" \

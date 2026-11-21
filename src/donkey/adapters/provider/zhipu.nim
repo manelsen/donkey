@@ -10,14 +10,15 @@
 ##     but native tools are passed as {"type":"web_search"} etc.
 ##   - No streaming in F1 (streaming added in F4)
 
-import std/[httpclient, json]
+import std/[json]
 import ../../domain/message
 import ../../domain/providers/compat
 import ../../domain/providers/openai_pure
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/json_helpers
-import ../http/helpers
+import ../../ports/http
+import ./provider_http
 
 const
   ZhipuEndpoint* = "https://api.z.ai/api/coding/paas/v4/chat/completions"
@@ -27,6 +28,7 @@ const
 type
   ZhipuAdapter* = object
     apiKey*:   string
+    http*:     HttpRuntimePort  ## nil → production provider transport
     model*:    string   ## defaults to ZhipuDefaultModel
     endpoint*: string   ## override for testing
 
@@ -116,16 +118,12 @@ func parseZhipuResponse*(parsed: JsonNode): Result[CompletionResponse, string] =
 # ── HTTP call ─────────────────────────────────────────────────────────────────
 
 proc complete*(a: ZhipuAdapter; req: CompletionRequest): Result[CompletionResponse, string] =
-  withHttpClient:
-    client.headers = newHttpHeaders({
-      "Content-Type":  "application/json",
-      "Authorization": "Bearer " & a.apiKey,
-    })
+  providerGuard:
+    var headers: seq[HttpHeader] = @[("Content-Type", "application/json"), ("Authorization", "Bearer " & a.apiKey)]
     let body = $a.buildBody(req)
     let url  = if a.endpoint.len > 0: a.endpoint else: ZhipuEndpoint
-    let resp = client.post(url, body = body)
-    checkApiStatus(resp, "Zhipu")
-    resp.body |> parseJson |> parseZhipuResponse
+    let resp = ? postProvider(a.http, "Zhipu", url, body, headers)
+    resp |> parseJson |> parseZhipuResponse
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

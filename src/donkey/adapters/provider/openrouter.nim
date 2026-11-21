@@ -7,7 +7,7 @@
 ## Format: OpenAI-compatible (system as first message with role=system,
 ## messages array with role/content pairs).
 
-import std/[httpclient, json, streams, strutils, tables]
+import std/[json, streams, strutils, tables]
 import ../../domain/message
 import ../../domain/providers/compat
 import ../../domain/providers/openai_pure
@@ -15,7 +15,8 @@ import ../../ports/provider
 import ../../core/pipeops
 import ../../core/app_meta
 import ../../core/json_helpers
-import ../http/helpers
+import ../../ports/http
+import ./provider_http
 
 const
   OpenRouterEndpoint*    = "https://openrouter.ai/api/v1/chat/completions"
@@ -26,6 +27,7 @@ const
 type
   OpenRouterAdapter* = object
     apiKey*:   string
+    http*:     HttpRuntimePort  ## nil → production provider transport
     model*:    string
     endpoint*: string   ## override for testing
     referer*:  string   ## HTTP-Referer header value
@@ -182,18 +184,13 @@ proc parseOpenRouterSseLine*(line: string): Result[OpenRouterSseChunk, string] =
 proc complete*(a: OpenRouterAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
   let profile = a.profileFor()
-  withHttpClient:
-    var headers = newHttpHeaders({
-      "Content-Type":  "application/json",
-      "Authorization": "Bearer " & a.apiKey,
-    })
+  providerGuard:
+    var headers: seq[HttpHeader] = @[("Content-Type", "application/json"), ("Authorization", "Bearer " & a.apiKey)]
     for (name, value) in profile.extraHeaders:
-      headers[name] = value
-    client.headers = headers
+      headers.add((name, value))
     let body = $a.buildBody(req)
-    let resp = client.post(profile.endpoint, body = body)
-    checkApiStatus(resp, "OpenRouter")
-    resp.body |> parseJson |> parseOpenRouterResponse
+    let resp = ? postProvider(a.http, "OpenRouter", profile.endpoint, body, headers)
+    resp |> parseJson |> parseOpenRouterResponse
 
 # ── Streaming ─────────────────────────────────────────────────────────────────
 
@@ -208,17 +205,12 @@ proc makeStreamFn*(a: OpenRouterAdapter): StreamFn =
     ## The profile is rebuilt inside the worker thread: a CompatProfile owns
     ## JsonNodes, so nothing GC-managed is captured/shared across threads.
     let profile = adapter.profileFor()
-    withHttpClient:
-      var headers = newHttpHeaders({
-        "Content-Type":  "application/json",
-        "Authorization": "Bearer " & adapter.apiKey,
-      })
+    providerGuard:
+      var headers: seq[HttpHeader] = @[("Content-Type", "application/json"), ("Authorization", "Bearer " & adapter.apiKey)]
       for (name, value) in profile.extraHeaders:
-        headers[name] = value
-      client.headers = headers
+        headers.add((name, value))
       let body = $adapter.buildStreamBody(req)
-      let resp = client.request(profile.endpoint, httpMethod = HttpPost, body = body)
-      checkApiStatus(resp, "OpenRouter")
+      let resp = ? postProviderStream(adapter.http, "OpenRouter", profile.endpoint, body, headers)
 
       var accumulated = ""
       var reasoning = ""
@@ -227,7 +219,7 @@ proc makeStreamFn*(a: OpenRouterAdapter): StreamFn =
       var toolAcc = initTable[int, ToolCallRequest]()
       var toolOrder: seq[int] = @[]
       var line = ""
-      while resp.bodyStream.readLine(line):
+      while resp.readLine(line):
         let chunk = parseOpenRouterSseLine(line).valueOr:
           return err(error)
         if chunk.done:

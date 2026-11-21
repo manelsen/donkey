@@ -19,7 +19,6 @@ requires "results >= 0.5.1"
 requires "ws >= 0.6.0"
 requires "db_connector >= 0.1.0" ## PostgreSQL + pgvector + AGE (-d:withPostgres)
 requires "illwill >= 0.4.1" ## TUI dashboard (donkey tui)
-requires "wasm3 >= 0.1.6"
 requires "checksums >= 0.2.2" ## SHA1 for WeChat webhook signature (replaces deprecated std/sha1)
 
 # Tasks
