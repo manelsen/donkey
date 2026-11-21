@@ -9,7 +9,6 @@ switch("panics", "on")
 
 # Required for httpclient HTTPS (Telegram API, Zhipu API).
 switch("define", "ssl")
-switch("define", "wasm3HasWasi")
 
 # Required for Discord gateway thread (Channel[T] cross-thread communication).
 switch("threads", "on")

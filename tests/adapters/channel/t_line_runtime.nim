@@ -8,11 +8,9 @@
 ##   - only `/continue` is handled locally; everything else is the session
 ##     fallback.
 
-import std/[json, options, os, strutils, tables, times, unittest]
+import std/[json, options, os, times, unittest]
 import donkey/adapters/channel/common_runtime
 import donkey/adapters/channel/line
-import donkey/adapters/channel/line_admission
-import donkey/adapters/channel/line_outbox
 import donkey/adapters/channel/line_runtime
 import donkey/app/session_manager
 import donkey/core/identity/link_codes
@@ -107,18 +105,9 @@ proc dmPayload(eventId, text: string): JsonNode =
 proc policy(groups: seq[string] = @[]; users: seq[string] = @[]): LinePolicy =
   LinePolicy(allowedGroups: groups, allowedUsers: users)
 
-var admitReplay {.threadvar.}: LineReplayCache
-  ## Replay cache the gcsafe admission callbacks consult (a gcsafe callback
-  ## cannot capture a GC'd local).
 
 # The daemon opens the queue once at startup, before the route accepts payloads.
 openQueue()
-
-proc enqueueOf(q: LineReplyQueue): proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
-  ## The drain's callback shape; the queue itself never posts.
-  result = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
-    q.enqueueReply(msg)
-
 
 proc runTests*() =
   suite "LINE runtime — replay cache":
@@ -399,105 +388,6 @@ proc runTests*() =
       check f.calls.len == 0
       check ln.resolver.lookup(ckLine, DmUser) != some(target)
 
-  suite "LINE runtime — /continue reply is enqueued, never posted inline":
-    ## F2: the drain runs on the daemon thread; a synchronous LINE POST would
-    ## freeze every other channel for up to the 30 s transport timeout. The
-    ## confirmation is handed to the outbox instead.
-
-    setup:
-      var stale = newAdapter()
-      drainQueue(stale)
-
-    test "a valid code enqueues one reply and makes no HTTP call":
-      let path = LineTmp / "enqueue_valid_codes.tsv"
-      removeFile(path)
-      let target = UserId("enqueue-target")
-      let code = sharedLinkCodeService(path).mint(target)
-
-      let f = FakeHttp()
-      var ln = newLineAdapter("test-channel-access-token", path,
-                              apiBase = "https://line.test", http = fake(f))
-      var sm: SessionManager
-      sm.init()
-      var replay = LineReplayCache()
-      var inbound: seq[InboundMessage] = @[]
-      let fallback = proc(msg: InboundMessage) {.gcsafe.} =
-        {.cast(gcsafe).}:
-          inbound.add(msg)
-      let sink = ReplySink()
-      let enqueue = sinkFor(sink)
-      ## The speaker identity the drain authorizes; redeeming the code re-points
-      ## the LINE mapping to the code's target, so capture it before the drain.
-      let lineUser = ln.resolver.resolve(ckLine, DmUser)
-
-      pushEvent(dmPayload("evt-enqueue-continue", "/continue " & code))
-      let turns = drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
-                                  enqueue, rtLog)
-
-      check turns == 1
-      check inbound.len == 0
-      check sink.items.len == 1
-      check sink.items[0].text == buildContinueResultText(true)
-      check sink.items[0].channel == ckLine
-      check sink.items[0].replyTo == DmUser
-      check sink.items[0].userId == lineUser
-      check f.calls.len == 0
-
-    test "a nil enqueueReply logs and drops without crashing":
-      let f = FakeHttp()
-      var ln = newAdapter(f)
-      var sm: SessionManager
-      sm.init()
-      var replay = LineReplayCache()
-      let fallback = proc(msg: InboundMessage) {.gcsafe.} = discard
-      var logs: seq[string] = @[]
-      let capture = newLogger("test.line_runtime.capture", lvlError,
-        proc(entry: LogEntry) {.closure, gcsafe.} =
-          {.cast(gcsafe).}:
-            logs.add entry.message)
-
-      pushEvent(dmPayload("evt-nil-enqueue", "/continue ABCD1234"))
-      let turns = drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
-                                  nil, capture)
-
-      check turns == 1
-      check f.calls.len == 0
-      check logs.len == 1
-      check logs[0].contains("no outbox")
-      check not ln.tryRecvEvent()[0]
-
-    test "a failed enqueue is logged and the rest of the batch still runs":
-      let f = FakeHttp()
-      var ln = newAdapter(f)
-      var sm: SessionManager
-      sm.init()
-      var replay = LineReplayCache()
-      var inbound: seq[InboundMessage] = @[]
-      let fallback = proc(msg: InboundMessage) {.gcsafe.} =
-        {.cast(gcsafe).}:
-          inbound.add(msg)
-      let failing = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
-        discard msg
-        err("outbox full")
-      var logs: seq[string] = @[]
-      let capture = newLogger("test.line_runtime.capture", lvlError,
-        proc(entry: LogEntry) {.closure, gcsafe.} =
-          {.cast(gcsafe).}:
-            logs.add entry.message)
-
-      pushEvent(dmPayload("evt-enqueue-fails", "/continue ABCD1234"))
-      pushEvent(dmPayload("evt-after-enqueue-fails", "still here"))
-      let turns = drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
-                                  failing, capture)
-
-      check turns == 2
-      check inbound.len == 1
-      check inbound[0].text == "still here"
-      check f.calls.len == 0
-      check logs.len == 1
-      check logs[0].contains("outbox full")
-      check not ln.tryRecvEvent()[0]  ## the whole batch was consumed
-
   suite "LINE runtime — /continue resolves through the link-code seam":
     ## F1: `/mycode` on Telegram mints through the Telegram resolver and
     ## `/continue` on LINE must redeem through the same table. The runtime asks
@@ -575,185 +465,6 @@ proc runTests*() =
 
       check tg.consumeLinkCode(code, ckTelegram, "460103") == true
       check tg.lookup(ckTelegram, "460103") == some(target)
-
-  suite "LINE runtime — /continue replies never block the drain":
-    ## F2: the drain runs on the daemon loop. A LINE POST can wait up to the
-    ## 30 s transport timeout, and today the wait happens while the reply is
-    ## delivered on that same loop, stalling Telegram and the scheduler. The
-    ## confirmation must be handed to a queue the daemon drains, with a reply
-    ## target, instead of being sent inline.
-
-    test "enqueueing a /continue reply performs no transport call":
-      let path = LineTmp / "f2_no_inline_post.tsv"
-      removeFile(path)
-      let target = UserId("f2-target")
-      let code = sharedLinkCodeService(path).mint(target)
-
-      let f = FakeHttp()
-      var ln = newLineAdapter("test-channel-access-token", path,
-                              apiBase = "https://line.test", http = fake(f))
-      var sm: SessionManager
-      sm.init()
-      var replay = LineReplayCache()
-      let fallback = proc(msg: InboundMessage) {.gcsafe.} = discard
-      var queue = newLineReplyQueue()
-      defer: queue.deinit()
-
-      pushEvent(dmPayload("evt-f2-enqueue", "/continue " & code))
-      discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
-                              enqueueOf(queue), rtLog)
-
-      check f.calls.len == 0
-      check queue.len == 1
-
-    test "the queued reply keeps the conversation and delivers later":
-      let path = LineTmp / "f2_delivers_later.tsv"
-      removeFile(path)
-      let code = sharedLinkCodeService(path).mint(UserId("f2-deliver"))
-
-      let f = FakeHttp()
-      var ln = newLineAdapter("test-channel-access-token", path,
-                              apiBase = "https://line.test", http = fake(f))
-      var sm: SessionManager
-      sm.init()
-      var replay = LineReplayCache()
-      let fallback = proc(msg: InboundMessage) {.gcsafe.} = discard
-      var queue = newLineReplyQueue()
-      defer: queue.deinit()
-
-      let lineUser = ln.resolver.resolve(ckLine, DmUser)
-      pushEvent(dmPayload("evt-f2-later", "/continue " & code))
-      discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
-                              enqueueOf(queue), rtLog)
-
-      check queue.len == 1
-      check f.calls.len == 0
-      check queue.deliverQueuedReplies(ln) == 1
-      check queue.len == 0
-      check f.calls.len == 1
-      let body = parseJson(f.calls[0])
-      check body["to"].getStr == DmUser
-      check body["messages"][0]["text"].getStr == buildContinueResultText(true)
-      discard lineUser
-
-    test "a full reply queue fails the enqueue without posting or aborting the batch":
-      let path = LineTmp / "f2_full.tsv"
-      removeFile(path)
-      let f = FakeHttp()
-      var ln = newLineAdapter("test-channel-access-token", path,
-                              apiBase = "https://line.test", http = fake(f))
-      var sm: SessionManager
-      sm.init()
-      var replay = LineReplayCache()
-      var inbound: seq[InboundMessage] = @[]
-      let fallback = proc(msg: InboundMessage) {.gcsafe.} =
-        {.cast(gcsafe).}:
-          inbound.add(msg)
-      check f.calls.len == 0
-      ## No capacity argument here: the queue must expose its own bound so the
-      ## drain never grows it past what the daemon agreed to hold.
-      var queue = newLineReplyQueue()
-      defer: queue.deinit()
-      for i in 0 ..< queue.capacity():
-        check queue.enqueueReply(
-          OutboundMessage(userId: UserId("x"), text: "filler " & $i)).isOk
-
-      pushEvent(dmPayload("evt-f2-full-continue", "/continue ABCD1234"))
-      pushEvent(dmPayload("evt-f2-full-after", "still here"))
-      discard drainLineEvents(ln, sm, replay, policy(), 1_000'i64, fallback,
-                              enqueueOf(queue), rtLog)
-
-      check queue.len == queue.capacity()
-      check inbound.len == 1
-      check inbound[0].text == "still here"
-      check f.calls.len == 0
-      check not ln.tryRecvEvent()[0]
-
-    test "a nil queue is refused rather than posted inline":
-      var queue: LineReplyQueue
-      check queue.enqueueReply(OutboundMessage(userId: UserId("x"), text: "t")).isErr
-      check queue.len == 0
-      check queue.deliverQueuedReplies(LineAdapter()) == 0
-
-  suite "LINE runtime — replay admission before the queue slot":
-    ## F3: under saturation a redelivery of an event the daemon already accepted
-    ## takes the only free queue slot, the new event is refused, and its own
-    ## redelivery is then dropped as a duplicate. The replay cache lives in the
-    ## runtime, so the runtime's admission runs before a slot is taken.
-
-    test "a replay is not admitted and leaves the slot for a new event":
-      var replay = LineReplayCache()
-      recordEvent(replay, "evt-a", 1_000'i64)  ## already accepted by the drain
-      let admission = newLineAdmissionState()
-      admitReplay = replay
-      let admit = proc(ev: LineParseResult; nowSec: int64): LineAdmission {.gcsafe, raises: [].} =
-        admissionFor(admitReplay, ev.eventId, nowSec)
-
-      let evA = parseWebhook(dmPayload("evt-a", "hello"))[0]
-      let evB = parseWebhook(dmPayload("evt-b", "hello"))[0]
-
-      var verdictA: LineAdmission
-      check not admission.reserve(admit, evA, 2_000'i64, verdictA)
-      check verdictA == laRemembered
-      var verdictB: LineAdmission
-      check admission.reserve(admit, evB, 2_000'i64, verdictB)
-      check verdictB == laFresh
-      admission.settle()
-      check admission.inFlight() == 0
-
-    test "the admission never mutates the replay cache":
-      ## It runs on the webhook worker, before the enqueue; recording there would
-      ## drop the event for good if the enqueue then failed.
-      var replay = LineReplayCache()
-      let admission = newLineAdmissionState()
-      admitReplay = replay
-      let admit = proc(ev: LineParseResult; nowSec: int64): LineAdmission {.gcsafe, raises: [].} =
-        admissionFor(admitReplay, ev.eventId, nowSec)
-      let ev = parseWebhook(dmPayload("evt-pure", "x"))[0]
-      var verdict: LineAdmission
-      check admission.reserve(admit, ev, 1_000'i64, verdict)
-      check replayCacheLen(replay) == 0
-      admission.settle()
-
-    test "settled reservations are handed out again":
-      let admission = newLineAdmissionState()
-      let acceptAll = proc(ev: LineParseResult; nowSec: int64): LineAdmission {.gcsafe, raises: [].} =
-        discard ev
-        discard nowSec
-        laFresh
-      for i in 0 ..< LineAdmissionCapacity:
-        var verdict: LineAdmission
-        check admission.reserve(acceptAll,
-          parseWebhook(dmPayload("evt-slot-" & $i, "x"))[0], 1_000'i64, verdict)
-        check verdict == laFresh
-      check admission.inFlight() == LineAdmissionCapacity
-      for i in 0 ..< LineAdmissionCapacity:
-        admission.settle()
-      check admission.inFlight() == 0
-      var againVerdict: LineAdmission
-      check admission.reserve(acceptAll,
-        parseWebhook(dmPayload("evt-slot-again", "x"))[0], 1_000'i64, againVerdict)
-      check againVerdict == laFresh
-      admission.settle()
-      check admission.inFlight() == 0
-
-    test "the runtime verdict is what the webhook worker acts on":
-      ## A refusal means "do not reserve": for a replay that is a no-op, for a
-      ## policy drop it is a 503 like today, and neither takes a slot.
-      var replay = LineReplayCache()
-      recordEvent(replay, "evt-route-a", 1_000'i64)
-      let admission = newLineAdmissionState()
-      admitReplay = replay
-      let admit = proc(ev: LineParseResult; nowSec: int64): LineAdmission {.gcsafe, raises: [].} =
-        admissionFor(admitReplay, ev.eventId, nowSec)
-      let replayAdmission = admit(parseWebhook(dmPayload("evt-route-a", "x"))[0], 2_000'i64)
-      check replayAdmission == laRemembered
-      let freshAdmission = admit(parseWebhook(dmPayload("evt-route-b", "x"))[0], 2_000'i64)
-      check freshAdmission == laFresh
-      var verdict: LineAdmission
-      check not admission.reserve(admit, parseWebhook(dmPayload("evt-route-a", "x"))[0],
-                                  2_000'i64, verdict)
-      check verdict == laRemembered
 
 when isMainModule:
   runTests()

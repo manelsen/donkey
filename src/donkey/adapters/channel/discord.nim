@@ -552,10 +552,19 @@ proc send*(a: DiscordAdapter; msg: OutboundMessage): Result[void, string] =
     ? a.sendChunk(chId, chunk)
   ok()
 
+const DiscordEphemeralFlag* = 64  ## message visible only to the invoking user
+
+func interactionMessageData*(content: string; ephemeral: bool): JsonNode =
+  result = %* {"content": content}
+  if ephemeral:
+    result["flags"] = %DiscordEphemeralFlag
+
 proc sendInteractionResponse*(a: DiscordAdapter;
-                              interactionId, interactionToken, text: string): Result[void, string] =
+                              interactionId, interactionToken, text: string;
+                              ephemeral = false): Result[void, string] =
   ## Responds to a slash command interaction (must be within 3 seconds).
-  let body    = %* {"type": 4, "data": {"content": text}}
+  ## An ephemeral response is shown only to the user who ran the command.
+  let body    = %* {"type": 4, "data": interactionMessageData(text, ephemeral)}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url = a.base() & "/interactions/" & interactionId & "/" & interactionToken & "/callback"
   let resp = ? a.http.post(url, $body, headers)
@@ -582,15 +591,16 @@ proc sendInteractionEmbedPage*(a: DiscordAdapter;
                                interactionId, interactionToken: string;
                                title, description: string;
                                color: int;
-                               buttons: seq[seq[(string, string)]]): Result[void, string] =
+                               buttons: seq[seq[(string, string)]];
+                               ephemeral = false): Result[void, string] =
   ## Responds to a slash command with a rich embed + navigation buttons (type 4).
-  let body = %* {
-    "type": 4,
-    "data": {
-      "embeds": [{"title": title, "description": description, "color": color}],
-      "components": makeComponentRows(buttons),
-    },
+  var data = %* {
+    "embeds": [{"title": title, "description": description, "color": color}],
+    "components": makeComponentRows(buttons),
   }
+  if ephemeral:
+    data["flags"] = %DiscordEphemeralFlag
+  let body = %* {"type": 4, "data": data}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url = a.base() & "/interactions/" & interactionId & "/" & interactionToken & "/callback"
   let resp = ? a.http.post(url, $body, headers)

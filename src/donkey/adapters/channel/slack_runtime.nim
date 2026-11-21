@@ -17,16 +17,15 @@ import ../../app/approval_runtime
 import ../../domain/channels/slack_pure
 import ./common_runtime
 import ./slack
-import ./text_command_dispatch
+import ../../app/command_dispatch
 
 proc replyToEvent(slAdapter: var SlackAdapter;
                   event: SlackRawEvent;
                   userId: UserId;
-                  text: string;
-                  sensitive = false): Result[void, string] =
-  ## Slash commands reply through response_url (ephemeral) unless the content
-  ## is sensitive; everything else uses the adapter's DM path.
-  if not sensitive and event.kind == srSlashCommand and event.responseUrl.len > 0:
+                  text: string): Result[void, string] =
+  ## Slash commands reply through response_url (ephemeral); everything else,
+  ## and any response_url failure, uses the requester's DM.
+  if event.kind == srSlashCommand and event.responseUrl.len > 0:
     let viaUrl = slAdapter.respondToUrl(event.responseUrl, text)
     if viaUrl.isOk:
       return ok()
@@ -35,55 +34,31 @@ proc replyToEvent(slAdapter: var SlackAdapter;
 proc slackCommandOutcome(slAdapter: var SlackAdapter;
                          sm: var SessionManager;
                          msgSeq: var int;
-                         env: CommandEnv;
+                         env: ChannelRuntimeEnv;
                          command: CommandDecision;
                          userId: UserId;
                          event: SlackRawEvent;
-                         messageId: string): CommandOutcome =
-  ## Slack-only commands (Block Kit menus, whoami, reasoning toggle, extra UI
-  ## views) first; everything else goes through the shared dispatcher.
-  let memory = env.memory
-  case command.route
-  of crLocal:
-    case decideLocalCommandAction(command)
-    of lcaShowMenu:
-      let text = buildMenuText()
-      if slAdapter.sendKeyboard(userId, text, buildMenuButtons()).isOk:
-        return CommandOutcome(kind: cokSilent)
-      return replied(rtMenu, text)
-    of lcaShowWhoami:
-      return replied(rtWhoami, buildWhoamiText(userId, "", event.channelId),
-                     sensitive = true)
-    of lcaReasoningToggle:
-      let prefs = loadChannelPrefs(memory, userId)
-      let next = if prefs.reasoning == "on": "off" else: "on"
-      let saved = saveChannelPreference(memory, userId, "reasoning", next)
-      return replied(rtReasoning, savedOrError(saved, "Reasoning: " & next))
-    else:
-      discard
-  of crUi:
-    case command.kind
-    of cmdConfig:
-      let text = memory.buildConfigText(userId)
-      if slAdapter.sendKeyboard(userId, text, buildConfigButtons()).isOk:
-        return CommandOutcome(kind: cokSilent)
-      return replied(rtUi, text)
-    of cmdTasks:
-      return replied(rtUi, buildTasksText())
-    of cmdAgents:
-      return replied(rtUi, buildAgentsText(env.toolsCount, env.toolClientsCount))
-    of cmdPoll:
-      return replied(rtUi, buildPollText())
-    else:
-      discard
-  else:
-    discard
-  dispatchTextCommand(env, sm, msgSeq, command, userId, ckSlack, messageId,
-                      slAdapter.resolver, event.slackUserId)
+                         messageId: string;
+                         presented: var bool): CommandOutcome =
+  ## Slack presents /menu and /config as Block Kit keyboards (`presented`);
+  ## when that fails, and for every other command, the shared dispatcher
+  ## answers.
+  if command.route == crLocal and decideLocalCommandAction(command) == lcaShowMenu:
+    if slAdapter.sendKeyboard(userId, buildMenuText(), buildMenuButtons()).isOk:
+      presented = true
+      return fallback()
+  elif command.kind == cmdConfig:
+    if slAdapter.sendKeyboard(userId, env.memory.buildConfigText(userId),
+                              buildConfigButtons()).isOk:
+      presented = true
+      return fallback()
+  dispatchCommand(env.commands, sm, msgSeq,
+    commandRequest(command, userId, ckSlack, messageId, event.slackUserId,
+                   slAdapter.resolver))
 
 proc drainSlackEvents*(slAdapter: var SlackAdapter;
                        sm: var SessionManager;
-                       env: CommandEnv;
+                       env: ChannelRuntimeEnv;
                        msgSeq: var int;
                        handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
                        log: Logger = newLogger("sl.outbound")) =
@@ -163,24 +138,30 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
 
       if routedText.strip.len > 0:
         let command = decideCommandRequest(CommandRequest(channel: ckSlack, text: routedText))
+        var presented = false
         let outcome =
           try:
             slackCommandOutcome(slAdapter, sm, msgSeq, env, command, userId,
-                                event, messageId)
+                                event, messageId, presented)
           except CatchableError as e:
             replied(rtUnsupported, "Erro ao processar comando: " & e.msg)
-        case outcome.kind
-        of cokFallback:
-          handleSessionFallback(msg)
-        of cokSilent:
-          discard
-        of cokReply:
-          ## Slack answers unsupported commands instead of staying silent.
-          if outcome.reply.text.len > 0:
-            replyToEvent(slAdapter, event, userId, outcome.reply.text,
-                         outcome.reply.sensitive).isOkOr:
-              log.error("sl send " & $outcome.reply.topic & " failed for user=" &
-                        $userId & " reason=" & error)
+        if not presented:  ## a Block Kit keyboard already answered otherwise
+          case outcome.kind
+          of cokFallback:
+            handleSessionFallback(msg)
+          of cokAccepted:
+            ## A slash command expects a visible answer; plain messages stay
+            ## silent while the task runs.
+            if event.kind == srSlashCommand:
+              replyToEvent(slAdapter, event, userId, acceptedText(outcome.task)).isOkOr:
+                log.error("sl send ack failed for user=" & $userId & " reason=" & error)
+          of cokReply:
+            ## Slack answers unsupported commands instead of staying silent.
+            ## Every Slack reply is ephemeral or a DM: none lands in a channel.
+            if outcome.reply.text.len > 0:
+              replyToEvent(slAdapter, event, userId, outcome.reply.text).isOkOr:
+                log.error("sl send " & $outcome.reply.topic & " failed for user=" &
+                          $userId & " reason=" & error)
       else:
         handleSessionFallback(msg)
 
