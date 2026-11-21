@@ -234,6 +234,25 @@ proc runTests*() =
         "send_group_msg" in r.target and RequesterOnlyNotice in r.body)
       check not anyRequest(carriesLinkCode)
 
+    test "QQ: /continue with a valid code in a group is refused before it is used":
+      ## The refusal comes before the dispatch: the group gets the notice
+      ## and the code is still valid for the DM it was meant for.
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var qq = newQQOneBotChannelAdapter(base(), "", Tmp / "qq-cont" / "ids.tsv")
+      let owner = qq.resolver.resolve(ckQQ, "5")
+      let code = qq.resolver.generateLinkCode(owner)
+      check qq.enqueueEventJson("""{"post_type":"message","message_type":"group",
+        "group_id":98,"user_id":6,"message_id":10,"raw_message":"/continue """ &
+        code & """"}""").isOk
+      drainQQEvents(qq, sm, env("qq-cont"), msgSeq, noop, logger)
+      check anyRequest(proc(r: Recorded): bool =
+        "send_group_msg" in r.target and RequesterOnlyNotice in r.body)
+      check requests().len == 1
+      check qq.resolver.consumeLinkCode(code, ckQQ, "6")
+      check qq.resolver.resolve(ckQQ, "6") == owner
+
     test "QQ: a link code asked in a DM goes to that DM, even with a group bound first":
       ## The reply target is where the command came from, not the first QQ
       ## binding of the user: a group bound earlier must not receive the code.

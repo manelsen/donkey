@@ -64,6 +64,10 @@ There are 127 `getEnv` calls outside `config/` (59 in `app/`, 62 in `adapters/`,
 - `model_catalog_ui` reads preferences from storage.
 - `CommandServicesPort` carries counters.
 
+**Reminder (owner asked to be reminded; from the #79 review of the #75 code):**
+- [ ] Move the `/models`, `/think` and `/budget` policy out of `adapters/channel/command_services.nim`: argument meaning and validation into `core` (pure), orchestration (check, save, reply) into `app`, and keep only catalog and persistence operations in the adapter. That lets the policy be tested without the Markdown store.
+- [ ] Make preference reads return `Result`: `loadChannelPrefs`, `loadChannelPreference`, `getCurrentProviderModel`, `getCurrentThinkLevel`, `getCurrentBudgetPolicy` and the UI builders that call them read through `loadContext` but return plain values, so a failed read looks like default preferences. Propagate the error and let each caller decide.
+
 ## P3: duplication and dead code
 
 ### 11. 39 modules (about 8.4k lines, 11% of the code) outside the binary — DONE

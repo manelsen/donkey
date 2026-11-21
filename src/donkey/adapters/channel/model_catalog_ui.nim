@@ -231,14 +231,20 @@ proc buildModelPageButtons*(provider: string;
   navRow.add(("← voltar", "models:back"))
   result.add(navRow)
 
-proc parseModelsArgs*(value: string): Result[(string, string), string] =
+proc parseModelsSelection*(value: string): Result[(string, string), string] =
+  ## `/models <provider> <model>`: the shape and a known provider. Whether
+  ## the model is offered is checked against a catalog by the caller.
   let parts = value.splitWhitespace()
   if parts.len != 2:
     return err("Use `/models <provider> <model>`.")
   let provider = parts[0]
-  let model = parts[1]
   if provider notin supportedProviders():
     return err("Provider inválido: `" & provider & "`.")
+  ok((provider, parts[1]))
+
+proc parseModelsArgs*(value: string): Result[(string, string), string] =
+  ## parseModelsSelection checked against the static model list.
+  let (provider, model) = ? parseModelsSelection(value)
   let models = supportedModels(provider)
   if models.len > 0 and model notin models:
     return err("Modelo inválido para `" & provider & "`: `" & model & "`.")

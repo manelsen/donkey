@@ -22,24 +22,50 @@ func userSkillsPath*(memory: MdFileAdapter; userId: UserId): string =
 proc loadChannelPrefs*(memory: MdFileAdapter; userId: UserId): ChannelPrefs =
   parseChannelPrefs(memory.loadContext(userId).preferencesMd)
 
+func preferenceKey(line: string): string =
+  ## The key of a `key = value` line; "" for blanks, comments and other text.
+  let trimmed = line.strip
+  if trimmed.len == 0 or trimmed[0] == '#':
+    return ""
+  let eq = trimmed.find('=')
+  if eq < 0: "" else: trimmed[0 ..< eq].strip
+
 func parsePreferenceString*(preferencesMd: string; key: string): string =
   ## Reads a single `key = "value"` (or `key = value`) entry from a
   ## preferences document. Returns "" when the key is absent or malformed.
   ## Used for values that are not part of ChannelPrefs (e.g. cursors).
   for line in preferencesMd.splitLines():
+    if preferenceKey(line) != key:
+      continue
     let trimmed = line.strip
-    if trimmed.len == 0 or trimmed[0] == '#':
-      continue
     let eq = trimmed.find('=')
-    if eq < 0:
-      continue
-    if trimmed[0 ..< eq].strip != key:
-      continue
     var value = trimmed[eq + 1 .. ^1].strip
     if value.len >= 2 and value[0] == '"' and value[^1] == '"':
       value = value[1 .. ^2]
     return value
   ""
+
+func setPreferences*(preferencesMd: string;
+                     entries: openArray[(string, string)]): string =
+  ## The document with each `key = "value"` set: lines whose key is exactly
+  ## that key are replaced (a longer key such as `model_timeout` is another
+  ## setting), and a missing key is appended. Other lines are kept.
+  var lines = if preferencesMd.len == 0: @[] else: preferencesMd.splitLines()
+  for (key, value) in entries:
+    let entry = key & " = \"" & value & "\""
+    var found = false
+    var kept: seq[string]
+    for line in lines:
+      if preferenceKey(line) == key:
+        if not found:
+          kept.add entry
+          found = true
+      else:
+        kept.add line
+    if not found:
+      kept.add entry
+    lines = kept
+  lines.join("\n")
 
 proc loadChannelPreference*(memory: MdFileAdapter;
                             userId: UserId;
@@ -56,16 +82,7 @@ proc saveChannelPreferences*(memory: MdFileAdapter;
   ## preferences are read from the store itself: when they cannot be read
   ## nothing is saved, instead of merging over an old export.
   let current = ? memory.storedPreferences(userId)
-  var lines = current.splitLines()
-  for (key, value) in entries:
-    var found = false
-    for i in 0 ..< lines.len:
-      if lines[i].startsWith(key):
-        lines[i] = key & " = \"" & value & "\""
-        found = true
-    if not found:
-      lines.add(key & " = \"" & value & "\"")
-  memory.savePreferences(userId, lines.join("\n"))
+  memory.savePreferences(userId, setPreferences(current, entries))
 
 proc saveChannelPreference*(memory: MdFileAdapter;
                             userId: UserId;

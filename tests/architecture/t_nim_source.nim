@@ -5,7 +5,7 @@ import std/[strutils, unittest]
 
 func isIdentChar*(c: char): bool = c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
 
-func codeOnly*(src: string): string =
+func lexBlank(src: string; keepLiterals: bool): string =
   ## `src` with comments and string/char literals blanked out, newlines kept,
   ## so "except:" in text is not mistaken for code and line numbers still
   ## match. Lexical state carries across lines: `#[ ]#` block comments (they
@@ -13,6 +13,8 @@ func codeOnly*(src: string): string =
   ## escape and `""` is a quote), plain strings and char literals.
   var i = 0
   template blank(c: char) = result.add(if c == '\n': '\n' else: ' ')
+  template lit(c: char) =
+    if keepLiterals: result.add c else: blank(c)
   while i < src.len:
     let c = src[i]
     let prev = if i > 0: src[i - 1] else: ' '
@@ -36,32 +38,40 @@ func codeOnly*(src: string): string =
       while i < src.len and src[i] != '\n':
         blank(src[i]); inc i
     elif src.continuesWith("\"\"\"", i):
-      result.add "   "; i += 3
+      lit(src[i]); lit(src[i + 1]); lit(src[i + 2]); i += 3
       while i < src.len and not src.continuesWith("\"\"\"", i):
-        blank(src[i]); inc i
+        lit(src[i]); inc i
       while i < src.len and src[i] == '"':
-        blank(src[i]); inc i
+        lit(src[i]); inc i
     elif c == '"' and isIdentChar(prev):
-      blank(c); inc i
+      lit(c); inc i
       while i < src.len and src[i] != '\n':
         if src[i] == '"':
           if i + 1 < src.len and src[i + 1] == '"':
-            blank(src[i]); blank(src[i + 1]); i += 2
+            lit(src[i]); lit(src[i + 1]); i += 2
             continue
           break
-        blank(src[i]); inc i
+        lit(src[i]); inc i
       if i < src.len and src[i] == '"':
-        blank(src[i]); inc i
+        lit(src[i]); inc i
     elif c == '"' or (c == '\'' and not isIdentChar(prev)):
-      blank(c); inc i
+      lit(c); inc i
       while i < src.len and src[i] != c and src[i] != '\n':
         if src[i] == '\\' and i + 1 < src.len:
-          blank(src[i]); inc i
-        blank(src[i]); inc i
+          lit(src[i]); inc i
+        lit(src[i]); inc i
       if i < src.len and src[i] == c:
-        blank(src[i]); inc i
+        lit(src[i]); inc i
     else:
       result.add c; inc i
+
+func codeOnly*(src: string): string =
+  ## Comments and literals blanked: what the compiler reads as code.
+  lexBlank(src, keepLiterals = false)
+
+func withoutComments*(src: string): string =
+  ## Only comments blanked; string and char literals kept (import paths).
+  lexBlank(src, keepLiterals = true)
 
 proc runTests*() =
   suite "nim source lexer":
@@ -74,6 +84,10 @@ proc runTests*() =
       check "except" in codeOnly("let n = 0'i64\nexcept:")
       check "except" notin codeOnly("let c = '\"'\necho \"except:\"")
       check codeOnly("a\n# b\nc").count('\n') == 2
+      check withoutComments("import \"../a\" # b") == "import \"../a\"    "
+      let kept = withoutComments("x = \"#\" #[ c ]# y")
+      check kept.len == "x = \"#\" #[ c ]# y".len
+      check kept.startsWith("x = \"#\"") and kept.endsWith(" y") and "c" notin kept
       check "isOkOr" in codeOnly("##[ opening: #[ ]##\nsend().isOkOr: discard")
       check "isOkOr" in codeOnly("##[ a ##[ nested ]## b ]##\nsend().isOkOr: discard")
       check "isOkOr" in codeOnly("#[ a ]## b\nsend().isOkOr: discard")
