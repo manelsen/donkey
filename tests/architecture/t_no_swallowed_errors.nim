@@ -25,7 +25,8 @@ func swallowedAt(lines: seq[string]): seq[int] =
     var body: seq[string]
     for j in i + 1 ..< code.len:
       if code[j].strip.len == 0: continue
-      if code[j].indentOf <= line.indentOf: break
+      ## Indentation from the source: blanked literals are not indentation.
+      if lines[j].indentOf <= lines[i].indentOf: break
       body.add code[j].strip
     if body.len > 0 and body.allIt(it == "discard"):
       result.add i
@@ -44,6 +45,7 @@ proc runTests*() =
       check swallows("send().isOkOr:  discard")
       check swallows("send().isOkOr:\tdiscard")
       check not swallows("send().isOkOr: log.warn(error)")
+      check swallows("send(\n  \"x\").isOkOr:\n    discard")
       check not swallows("send().isOkOr:\n  log.warn(error)")
       check not swallows("send().isOkOr:\n  discard\n  log.warn(error)")
       check not swallows("send().isOkOr:\n  log.warn(error)\nother()\ndiscard")

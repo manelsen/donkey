@@ -17,12 +17,18 @@ func codeOnly*(src: string): string =
     let c = src[i]
     let prev = if i > 0: src[i - 1] else: ' '
     if c == '#' and (src.continuesWith("#[", i) or src.continuesWith("##[", i)):
+      ## A doc block (`##[`) nests and closes only with `##[` / `]##`; a
+      ## plain block with `#[` / `]#`.
+      let doc = src.continuesWith("##[", i)
+      let (open, close) = if doc: ("##[", "]##") else: ("#[", "]#")
       var depth = 0
       while i < src.len:
-        if src.continuesWith("#[", i):
-          inc depth; blank(src[i]); blank(src[i + 1]); i += 2
-        elif src.continuesWith("]#", i):
-          dec depth; blank(src[i]); blank(src[i + 1]); i += 2
+        if src.continuesWith(open, i):
+          inc depth
+          for _ in open: blank(src[i]); inc i
+        elif src.continuesWith(close, i):
+          dec depth
+          for _ in close: blank(src[i]); inc i
           if depth == 0: break
         else:
           blank(src[i]); inc i
@@ -68,6 +74,9 @@ proc runTests*() =
       check "except" in codeOnly("let n = 0'i64\nexcept:")
       check "except" notin codeOnly("let c = '\"'\necho \"except:\"")
       check codeOnly("a\n# b\nc").count('\n') == 2
+      check "isOkOr" in codeOnly("##[ opening: #[ ]##\nsend().isOkOr: discard")
+      check "isOkOr" in codeOnly("##[ a ##[ nested ]## b ]##\nsend().isOkOr: discard")
+      check "isOkOr" in codeOnly("#[ a ]## b\nsend().isOkOr: discard")
 
 when isMainModule:
   runTests()
