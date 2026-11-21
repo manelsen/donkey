@@ -56,6 +56,7 @@ proc runTests*() =
       check ProviderHttpTimeoutSec > 0
       check not a.retryNonIdempotent
       check a.circuitBreaker
+      check a.returnServerError
 
     test "OpenRouter complete and stream go through the port":
       let r = failing()

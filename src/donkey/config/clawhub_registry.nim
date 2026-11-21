@@ -172,7 +172,9 @@ proc fetchJson*(registry, path: string): Result[JsonNode, string] =
   except CatchableError as e:
     err(e.msg)
 
-proc dumpSkillArtifact*(slug, reason: string; data: string = "") {.gcsafe.} =
+proc dumpSkillArtifact*(slug, reason: string; data: string = "") {.gcsafe, raises: [].} =
+  ## Best-effort post-mortem. It runs inside `except` handlers, so a failed
+  ## write must not raise past the `err` the caller is about to return.
   let path = "/tmp/donkey_skill_" & slug.replace("/", "_") & ".dump"
   var body = "# donkey skill install post-mortem dump\n"
   body.add("slug: " & slug & "\n")
@@ -182,7 +184,10 @@ proc dumpSkillArtifact*(slug, reason: string; data: string = "") {.gcsafe.} =
   if data.len > 0:
     body.add("\n-- data (first 1024 bytes) --\n")
     body.add(data[0 .. min(data.high, 1023)])
-  writeFile(path, body)
+  try:
+    writeFile(path, body)
+  except CatchableError:
+    discard
 
 proc downloadZipBytes*(registry, slug, version: string): Result[seq[byte], string] =
   try:

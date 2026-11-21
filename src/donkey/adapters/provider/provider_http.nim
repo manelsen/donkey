@@ -7,7 +7,9 @@
 ##   - no redirects: the API key must not be forwarded to another host;
 ##   - no repeated POST: a retried completion may already have been accepted
 ##     and billed;
-##   - the per-host circuit breaker.
+##   - the per-host circuit breaker;
+##   - a final 5xx comes back as a response, so the error keeps the provider
+##     name and body (`apiError`).
 ## Tests inject a fake port through the adapter's `http` field.
 
 import std/[httpcore, streams]
@@ -19,7 +21,8 @@ const ProviderHttpTimeoutSec* = 120
 
 proc providerHttpAdapter*(): StdHttpAdapter =
   newStdHttpAdapter(timeout = ProviderHttpTimeoutSec, maxRetries = 3,
-                    circuitBreaker = true, retryNonIdempotent = false)
+                    circuitBreaker = true, retryNonIdempotent = false,
+                    returnServerError = true)
 
 proc transport*(http: HttpRuntimePort): HttpRuntimePort =
   ## The injected port, or the production transport when none was set.

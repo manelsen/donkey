@@ -13,6 +13,10 @@ The same template is used by `openai`, `anthropic`, `ollama`, `zhipu`, `gemini`,
 This contradicts `CLAUDE.md`: "Todos os adapters usam `HttpPort` para I/O HTTP, nunca `std/httpclient` diretamente."
 **Fix:** give `HttpPort` a streaming operation, or at least route every provider through `withHttpClientTimeout` with the egress settings. Then remove `withHttpClient`.
 
+**Status:** done in `fix/provider-http-port` (#77). Every provider posts through `HttpRuntimePort` with a 120 s timeout, no redirects and no repeated POST; a final 5xx keeps the provider name and body.
+
+**Remaining gap (found in the #77 review):** the `std/httpclient` timeout is per read, not per request. In Nim 2.2.8 it covers neither `net.dial` (`httpclient.nim:1057`) nor the chunk-size line (`httpclient.nim:793`), and a server that sends a byte now and then never trips it. This holds for every `StdHttpAdapter` user (providers, channels) and for `clawhub_registry`. A wall-clock deadline for the whole request needs a different transport (Chronos `HttpSessionRef` with a request deadline, or a connect timeout plus an overall deadline checked between reads).
+
 ### 2. `except Exception` in 96 places
 `except Exception` also catches `Defect` (index errors, nil access, assertion failures), so programming errors turn into "unavailable" results instead of crashing loudly. The worst files are `md_file.nim` (16), `session_bootstrap.nim` (11), `subagent_runtime.nim` (9), `fs_tools.nim` (7) and `onboarding_runtime.nim` (6). There are also 9 bare `except:` (for example in `core/commands/command_routing.nim:327,334`, `config/loader.nim:305` and `app/doctor.nim:39`).
 **Fix:** use `except CatchableError` everywhere except where a `{.raises: [].}` boundary really needs `Exception`, and comment those.

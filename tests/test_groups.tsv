@@ -23,6 +23,7 @@ g0	tests/adapters/provider/t_compat_fireworks.nim
 g0	tests/adapters/provider/t_deepseek.nim
 g0	tests/adapters/provider/t_openai.nim
 g0	tests/adapters/provider/t_provider_transport.nim
+g0	tests/adapters/provider/t_provider_server_error.nim
 g0	tests/adapters/state/t_approval_store.nim
 g0	tests/adapters/state/t_pairing_line.nim
 g0	tests/adapters/state/t_pairing_store.nim
