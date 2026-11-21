@@ -49,7 +49,9 @@ echo "    Output: $OUTDIR/"
                  -name '*.nim' | sort)
 } > "$ENTRY"
 
-GIT_URL="$(git remote get-url origin 2>/dev/null | sed -E 's#^git@github\.com:#https://github.com/#; s#\.git$##')"
+## A checkout without `origin` (a tarball, a fresh clone of a fork) falls
+## back to the canonical URL instead of tripping `set -e`/`pipefail`.
+GIT_URL="$(git remote get-url origin 2>/dev/null | sed -E 's#^git@github\.com:#https://github.com/#; s#\.git$##')" || GIT_URL=""
 GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo main)"
 GIT_URL="${GIT_URL:-https://github.com/manelsen/donkey}"
 
