@@ -27,6 +27,9 @@ when defined(withSqlite):
     SqliteVectorBytes = SqliteVectorDimension * sizeof(float32)
     BlobSchemaMigration = "embedding-blobs-v1"
     CosineIndexMigration = "cosine-index-v1"
+    CosineIndexFailed = "cosine-index-v1-failed"
+      ## The rebuild failed: reads stop retrying it under the write lock
+      ## until a write changes the nodes (updateVecIndex clears it).
 
   func sqliteVecPlatformDir*(): string =
     when defined(macosx):
@@ -202,7 +205,8 @@ when defined(withSqlite):
         discard
     # The base table remains authoritative, including for writers without vec0.
     # A connection with vec0 will rebuild the index after an unsynced write.
-    db.exec(sql"DELETE FROM magma_schema_migrations WHERE name = ?", CosineIndexMigration)
+    db.exec(sql"DELETE FROM magma_schema_migrations WHERE name IN (?, ?)",
+            CosineIndexMigration, CosineIndexFailed)
 
   proc backfillVectorEmbeddings(db: DbConn) =
     let rows = db.getAllRows(sql(
@@ -258,12 +262,16 @@ when defined(withSqlite):
       db.exec(sql"INSERT INTO magma_schema_migrations (name) VALUES (?)", CosineIndexMigration)
       db.exec(sql"RELEASE SAVEPOINT magma_vec_rebuild")
       true
-    except DbError:
+    except DbError as e:
       db.exec(sql"ROLLBACK TO SAVEPOINT magma_vec_rebuild")
       db.exec(sql"RELEASE SAVEPOINT magma_vec_rebuild")
+      db.exec(sql"INSERT OR IGNORE INTO magma_schema_migrations (name) VALUES (?)",
+              CosineIndexFailed)
+      stderr.writeLine("WARN magma.sqlite: vector index rebuild failed, " &
+                       "searching without it: " & e.msg)
       false
 
-  proc schemaMigrations(db: DbConn): tuple[blobs, vecIndex: bool] =
+  proc schemaMigrations(db: DbConn): tuple[blobs, vecIndex, vecFailed: bool] =
     if db.getValue(sql"""SELECT 1 FROM sqlite_master
         WHERE type = 'table' AND name = 'magma_schema_migrations'""") != "1":
       return
@@ -271,6 +279,7 @@ when defined(withSqlite):
       case row[0]
       of BlobSchemaMigration: result.blobs = true
       of CosineIndexMigration: result.vecIndex = true
+      of CosineIndexFailed: result.vecFailed = true
       else: discard
 
   proc openStoreDb(a: SqliteMagmaStoreAdapter): tuple[db: DbConn, vecReady: bool] =
@@ -279,18 +288,40 @@ when defined(withSqlite):
       let vecAvailable = (hasEmbeddedSqliteVec() or a.vectorExtensionPath.len > 0) and
         db.hasLoadedVec()
       var migrations = db.schemaMigrations()
-      if not migrations.blobs or (vecAvailable and not migrations.vecIndex):
+      let rebuildVec = vecAvailable and not migrations.vecIndex and
+        not migrations.vecFailed
+      if not migrations.blobs or rebuildVec:
         db.writeTransaction:
           db.exec(sql"CREATE TABLE IF NOT EXISTS magma_schema_migrations (name TEXT PRIMARY KEY)")
           migrations = db.schemaMigrations()
           if not migrations.blobs:
             db.migrateBlobSchema()
-          if vecAvailable and not migrations.vecIndex:
+          if vecAvailable and not migrations.vecIndex and not migrations.vecFailed:
             migrations.vecIndex = db.rebuildVecIndex()
       (db, vecAvailable and migrations.vecIndex)
     except CatchableError:
       db.close()
       raise
+
+  proc tryOpenStoreDb(a: SqliteMagmaStoreAdapter):
+      Result[tuple[db: DbConn, vecReady: bool], string] =
+    ## openStoreDb for the store operations: a locked or unreadable database
+    ## (for example another writer holding the lock past busy_timeout during
+    ## a migration) becomes an error value instead of leaving the adapter.
+    try:
+      ok(a.openStoreDb())
+    except CatchableError as e:
+      err("open store: " & e.msg)
+
+  template openStoreOr(a: SqliteMagmaStoreAdapter; fallback: untyped) {.dirty.} =
+    ## Opens the store as `db`/`vecReady`, or logs and returns `fallback`
+    ## (which may read `opened.error`).
+    let opened = a.tryOpenStoreDb()
+    if opened.isErr:
+      stderr.writeLine("WARN magma.sqlite: " & opened.error)
+      return fallback
+    let (db, vecReady) = opened.get()
+    discard vecReady
 
   proc parseMeta(raw: string): JsonNode =
     if raw.len == 0:
@@ -333,7 +364,11 @@ when defined(withSqlite):
     (dot / (sqrt(normA) * sqrt(normB))).float32
 
   proc migrate*(a: SqliteMagmaStoreAdapter) =
-    a.openStoreDb().db.close()
+    let opened = a.tryOpenStoreDb()
+    if opened.isErr:
+      stderr.writeLine("WARN magma.sqlite: " & opened.error)
+      return
+    opened.get().db.close()
 
   proc writeNode(db: DbConn; node: MagmaNode; upsert: bool) =
     let metaJson = if node.meta != nil: $node.meta else: "{}"
@@ -366,7 +401,7 @@ when defined(withSqlite):
       stmt.finalize()
 
   proc insertNode*(a: SqliteMagmaStoreAdapter; node: MagmaNode): bool =
-    let (db, vecReady) = a.openStoreDb()
+    openStoreOr(a, false)
     defer: db.close()
     try:
       var inserted: bool
@@ -384,7 +419,7 @@ when defined(withSqlite):
     ## Inserts or replaces a node. A refused write comes back as an error:
     ## the caller must be able to tell a stored node from a lost one.
     try:
-      let (db, vecReady) = a.openStoreDb()
+      openStoreOr(a, err(opened.error))
       defer: db.close()
       db.writeTransaction:
         db.writeNode(node, upsert = true)
@@ -394,7 +429,7 @@ when defined(withSqlite):
       err("upsert node: " & e.msg)
 
   proc getNode*(a: SqliteMagmaStoreAdapter; nodeId: string): Option[MagmaNode] =
-    let db = a.openStoreDb().db
+    openStoreOr(a, none(MagmaNode))
     defer: db.close()
     try:
       let rows = db.getAllRows(sql(
@@ -407,7 +442,7 @@ when defined(withSqlite):
       none(MagmaNode)
 
   proc listNodes*(a: SqliteMagmaStoreAdapter; userId: string; nodeType: string = ""): seq[MagmaNode] =
-    let db = a.openStoreDb().db
+    openStoreOr(a, newSeq[MagmaNode]())
     defer: db.close()
     try:
       let rows =
@@ -433,7 +468,7 @@ when defined(withSqlite):
                          Result[seq[MagmaNode], string] =
     if limit <= 0 or maxContentBytes <= 0:
       return ok(newSeq[MagmaNode]())
-    let db = a.openStoreDb().db
+    openStoreOr(a, err(opened.error))
     defer: db.close()
     try:
       let rows =
@@ -464,7 +499,7 @@ when defined(withSqlite):
       err("listNodesLimited failed: " & e.msg)
 
   proc deleteNode*(a: SqliteMagmaStoreAdapter; nodeId: string): bool =
-    let (db, vecReady) = a.openStoreDb()
+    openStoreOr(a, false)
     defer: db.close()
     try:
       var deleted: bool
@@ -477,7 +512,7 @@ when defined(withSqlite):
       false
 
   proc insertEdge*(a: SqliteMagmaStoreAdapter; edge: MagmaEdge): bool =
-    let db = a.openStoreDb().db
+    openStoreOr(a, false)
     defer: db.close()
     try:
       db.exec(sql(
@@ -492,7 +527,7 @@ when defined(withSqlite):
 
   proc getEdges*(a: SqliteMagmaStoreAdapter; nodeId: string;
                  edgeType: string = ""; direction: string = "out"): seq[MagmaEdge] =
-    let db = a.openStoreDb().db
+    openStoreOr(a, newSeq[MagmaEdge]())
     defer: db.close()
     try:
       var query = "SELECT from_id, to_id, edge_type, weight, meta FROM " & SqliteEdgesTable & " WHERE "
@@ -523,7 +558,7 @@ when defined(withSqlite):
       discard
 
   proc deleteEdges*(a: SqliteMagmaStoreAdapter; nodeId: string; edgeType: string = ""): int =
-    let db = a.openStoreDb().db
+    openStoreOr(a, 0)
     defer: db.close()
     try:
       if edgeType.len > 0:
@@ -543,7 +578,7 @@ when defined(withSqlite):
     ## Most recently inserted node for the user, optionally of one type.
     ## `ts` has one-second resolution and ids sort as text ("m9" > "m10"), so
     ## ties are broken by rowid, which follows insertion order.
-    let db = a.openStoreDb().db
+    openStoreOr(a, none(MagmaNode))
     defer: db.close()
     try:
       let rows =
@@ -581,7 +616,7 @@ when defined(withSqlite):
     ## the neighbourhood is widened until enough nodes of the type are found
     ## or the index has no more to give; past its largest `k` the search
     ## falls back to comparing every node of the type.
-    let (db, vecReady) = a.openStoreDb()
+    openStoreOr(a, newSeq[MagmaHit]())
     defer: db.close()
     if embedding.len == 0 or topK <= 0:
       return @[]
@@ -648,7 +683,7 @@ when defined(withSqlite):
                          nodeType: string = ""): seq[MagmaNode] =
     ## Newest first. With `nodeType`, the filter is part of the query, so the
     ## limit counts only nodes of that type.
-    let db = a.openStoreDb().db
+    openStoreOr(a, newSeq[MagmaNode]())
     defer: db.close()
     try:
       let columns =
@@ -695,7 +730,7 @@ when defined(withSqlite):
     if raw.len == 0: 0 else: parseInt(raw)
 
   proc stats*(a: SqliteMagmaStoreAdapter; userId: string): MagmaStats =
-    let db = a.openStoreDb().db
+    openStoreOr(a, MagmaStats())
     defer: db.close()
     try:
       let rows = db.getAllRows(sql(
@@ -725,7 +760,7 @@ when defined(withSqlite):
       discard
 
   proc stats*(a: SqliteMagmaStoreAdapter): MagmaStats =
-    let db = a.openStoreDb().db
+    openStoreOr(a, MagmaStats())
     defer: db.close()
     try:
       let rows = db.getAllRows(sql(

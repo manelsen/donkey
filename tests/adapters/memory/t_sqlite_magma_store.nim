@@ -169,12 +169,61 @@ when defined(withSqlite):
 
         store.migrate()
         check db.getValue(sql"SELECT count(*) FROM magma_node_vec") == "1"
+        check db.getValue(sql"""SELECT count(*) FROM magma_schema_migrations
+          WHERE name = 'cosine-index-v1'""") == "1"
+        check "distance_metric=cosine" in db.getValue(sql"""SELECT sql FROM sqlite_master
+          WHERE name = 'magma_node_vec'""")
         let version = db.getValue(sql"PRAGMA data_version")
         let reopened = newSqliteMagmaStoreAdapter(dbPath)
         reopened.migrate()
         check reopened.listNodesLimited("u1", "memory", 1, 64).get().len == 1
         check db.getValue(sql"PRAGMA data_version") == version
         check db.getValue(sql"SELECT count(*) FROM magma_node_vec") == "1"
+
+      test "a write outside the index is repaired on the next open":
+        ## A writer without sqlite-vec stores the node and drops the marker;
+        ## the next connection with sqlite-vec rebuilds the index.
+        let store = newSqliteMagmaStoreAdapter(dbPath)
+        store.migrate()
+        let db = store.openDb()
+        defer: db.close()
+        db.exec(sql"""INSERT INTO magma_nodes (id, user_id, node_type, content, embedding_vec)
+          VALUES ('unsynced', 'u1', 'memory', 'written without vec0', zeroblob(16384))""")
+        db.exec(sql"DELETE FROM magma_schema_migrations WHERE name = 'cosine-index-v1'")
+        check db.getValue(sql"SELECT count(*) FROM magma_node_vec") == "0"
+        store.migrate()
+        check db.getValue(sql"SELECT count(*) FROM magma_node_vec") == "1"
+        check db.getValue(sql"""SELECT count(*) FROM magma_schema_migrations
+          WHERE name = 'cosine-index-v1'""") == "1"
+
+      test "a failed index rebuild is recorded and not retried on every read":
+        ## A view in place of the index makes DROP TABLE fail, so the rebuild
+        ## cannot succeed. Reads must not take the write lock again each time.
+        let store = newSqliteMagmaStoreAdapter(dbPath)
+        store.migrate()
+        let db = store.openDb()
+        defer: db.close()
+        db.exec(sql"DROP TABLE magma_node_vec")
+        db.exec(sql"CREATE VIEW magma_node_vec AS SELECT 1 AS embedding")
+        db.exec(sql"DELETE FROM magma_schema_migrations WHERE name = 'cosine-index-v1'")
+        store.migrate()
+        check db.getValue(sql"""SELECT count(*) FROM magma_schema_migrations
+          WHERE name = 'cosine-index-v1-failed'""") == "1"
+        let version = db.getValue(sql"PRAGMA data_version")
+        check store.listNodesLimited("u1", "memory", 1, 64).isOk
+        check db.getValue(sql"PRAGMA data_version") == version
+
+      test "a locked database during the index migration is an error, not an exception":
+        let store = newSqliteMagmaStoreAdapter(dbPath)
+        store.migrate()
+        let db = store.openDb()
+        defer: db.close()
+        db.exec(sql"DELETE FROM magma_schema_migrations WHERE name = 'cosine-index-v1'")
+        let holder = store.openDb()
+        defer: holder.close()
+        holder.exec(sql"BEGIN IMMEDIATE")
+        defer: discard holder.tryExec(sql"ROLLBACK")
+        check store.listNodesLimited("u1", "memory", 1, 64).isErr
 
       test "indexed writes preserve duplicate inserts, cosine ranking and deletes":
         let store = newSqliteMagmaStoreAdapter(dbPath)
