@@ -98,8 +98,8 @@ proc handleQQModelCallback(msg: InboundMessage;
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
     let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
-    qqAdapter.sendKeyboard(
-      msg.userId,
+    qqAdapter.sendKeyboardTo(
+      msg.rawChannelId,
       qqModelPickerTitle(callback.provider, 0, entries, catalog),
       buildModelPageButtons(callback.provider, entries, currProv, currModel, 0),
       replyTo = msg.channelId,
@@ -112,7 +112,7 @@ proc handleQQModelCallback(msg: InboundMessage;
       return true
     let saved = memory.saveChannelPreferences(
       msg.userId, [("provider", callback.provider), ("model", model)])
-    qqAdapter.send(OutboundMessage(
+    qqAdapter.sendTo(msg.rawChannelId, OutboundMessage(
       userId: msg.userId,
       channel: ckQQ,
       text: savedOrError(saved, qqModelConfirmedText(callback.provider, model)),
@@ -124,8 +124,8 @@ proc handleQQModelCallback(msg: InboundMessage;
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
     let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
-    qqAdapter.sendKeyboard(
-      msg.userId,
+    qqAdapter.sendKeyboardTo(
+      msg.rawChannelId,
       qqModelPickerTitle(callback.provider, callback.page, entries, catalog),
       buildModelPageButtons(callback.provider, entries, currProv, currModel, callback.page),
       replyTo = msg.channelId,
@@ -133,8 +133,8 @@ proc handleQQModelCallback(msg: InboundMessage;
         logSendFailure("handleQQModelCallback", error)
     true
   of cbkModelsBack:
-    qqAdapter.sendKeyboard(
-      msg.userId,
+    qqAdapter.sendKeyboardTo(
+      msg.rawChannelId,
       qqProviderPickerTitle(),
       memory.buildProviderButtons(msg.userId),
       replyTo = msg.channelId,
@@ -153,7 +153,7 @@ proc handleQQThinkingCallback(msg: InboundMessage;
   let level = callback.value
   if level in ThinkLevels:
     let saved = memory.saveChannelPreference(msg.userId, "thinking", level)
-    qqAdapter.send(OutboundMessage(
+    qqAdapter.sendTo(msg.rawChannelId, OutboundMessage(
       userId: msg.userId,
       channel: ckQQ,
       text: savedOrError(saved, qqThinkingConfirmedText(level)),
@@ -175,8 +175,8 @@ proc handleQQUiCommand(msg: InboundMessage;
         let catalog = modelCatalogLoader(provider).valueOr: emptyCatalogResult()
         let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
         let entries = sortModelCatalog(normalizeModelCatalog(provider, catalog.entries))
-        qqAdapter.sendKeyboard(
-          msg.userId,
+        qqAdapter.sendKeyboardTo(
+          msg.rawChannelId,
           qqModelPickerTitle(provider, 0, entries, catalog),
           buildModelPageButtons(provider, entries, currProv, currModel, 0),
           replyTo = msg.channelId,
@@ -185,7 +185,7 @@ proc handleQQUiCommand(msg: InboundMessage;
         return true
     if command.value.strip.len > 0 or qqAdapter.kind != qbkOfficial:
       return false  ## text form: answered by the shared dispatcher
-    qqAdapter.sendKeyboard(msg.userId, qqProviderPickerTitle(),
+    qqAdapter.sendKeyboardTo(msg.rawChannelId, qqProviderPickerTitle(),
       memory.buildProviderButtons(msg.userId), replyTo = msg.channelId,
       allowedRawUserId = rawUserId).isOkOr:
         logSendFailure("handleQQUiCommand", error)
@@ -193,7 +193,7 @@ proc handleQQUiCommand(msg: InboundMessage;
   of cmdThink:
     if not qqShouldOpenThinkPicker(qqAdapter.kind, command):
       return false  ## text form: answered by the shared dispatcher
-    qqAdapter.sendKeyboard(msg.userId, qqThinkPickerTitle(),
+    qqAdapter.sendKeyboardTo(msg.rawChannelId, qqThinkPickerTitle(),
       memory.buildThinkButtons(msg.userId), replyTo = msg.channelId,
       allowedRawUserId = rawUserId).isOkOr:
         logSendFailure("handleQQUiCommand", error)
@@ -239,7 +239,7 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
       let userId = auth.userId
       let approvalReply = tryHandleApprovalInput(userId, event.content)
       if approvalReply.isSome:
-        qqAdapter.send(OutboundMessage(
+        qqAdapter.sendTo(rawId, OutboundMessage(
           userId: userId, channel: ckQQ, text: approvalReply.get,
           replyTo: event.messageId)).isOkOr:
           log.error("qq send approval reply failed: " & error)
@@ -249,6 +249,7 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
         userId: userId,
         channel: ckQQ,
         channelId: event.messageId,
+        rawChannelId: rawId,
         text: event.content,
       )
       let command = decideCommandRequest(CommandRequest(channel: ckQQ, text: event.content))
@@ -273,7 +274,7 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
         ## QQ has no private path from a group: refuse before minting or
         ## consuming anything.
         ## The official API only accepts passive replies: carry the message id.
-        qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ,
+        qqAdapter.sendTo(rawId, OutboundMessage(userId: userId, channel: ckQQ,
                                        text: RequesterOnlyNotice,
                                        replyTo: event.messageId)).isOkOr:
           log.error("qq send notice failed for user=" & $userId & " reason=" & error)
@@ -282,7 +283,8 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
         let text = qqStatusText(buildProviderStatusLine(env.memory, userId),
                                 env.memory.getCurrentThinkLevel(userId), env.toolsCount,
                                 sm.sessionCount(), qqUptimeText(env.daemonStartMs))
-        qqAdapter.send(OutboundMessage(userId: userId, channel: ckQQ, text: text)).isOkOr:
+        qqAdapter.sendTo(rawId, OutboundMessage(userId: userId, channel: ckQQ, text: text,
+                                              replyTo: event.messageId)).isOkOr:
           log.error("qq send status failed for user=" & $userId & " reason=" & error)
       else:
         let outcome = dispatchCommand(env.commands, sm, msgSeq,
@@ -300,9 +302,11 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
             let text =
               if outcome.reply.topic == rtHelp: qqHelpText(qqAdapter.kind)
               else: delivered
-            qqAdapter.send(OutboundMessage(
+            ## The answer goes back where the command came from, as a passive
+            ## reply (the official API requires the message id).
+            qqAdapter.sendTo(rawId, OutboundMessage(
               userId: userId, channel: ckQQ, text: text,
-              replyTo: if outcome.reply.topic == rtUi: msg.channelId else: "",
+              replyTo: event.messageId,
             )).isOkOr:
               log.error("qq send " & $outcome.reply.topic & " failed for user=" &
                         $userId & " reason=" & error)

@@ -112,15 +112,43 @@ proc tryRecvEvent*(a: var QQChannelAdapter): (bool, QQInboundEvent) =
   of qbkNone:
     (false, QQInboundEvent())
 
-proc send*(a: var QQChannelAdapter; msg: OutboundMessage): Result[void, string] =
-  let rawId = a.resolver.reverseChannel(msg.userId, ckQQ)
+proc sendTo*(a: var QQChannelAdapter; rawId: string;
+             msg: OutboundMessage): Result[void, string] =
+  ## Sends to an explicit destination: "group:<id>" or a private user id.
+  ## A reply goes where its message came from; the user's first QQ binding
+  ## may be a group, and a DM's answer must never land there.
   if rawId.len == 0:
-    return err("QQChannelAdapter.send: no QQ id for user " & $msg.userId)
+    return err("QQChannelAdapter.sendTo: missing destination for user " & $msg.userId)
   case a.kind
   of qbkOneBot:
     a.onebot.sendToRawId(rawId, msg)
   of qbkOfficial:
     a.official.sendToRawId(rawId, msg)
+  of qbkNone:
+    err("qq channel disabled")
+
+proc send*(a: var QQChannelAdapter; msg: OutboundMessage): Result[void, string] =
+  ## Unprompted delivery (no inbound message to answer): the user's first
+  ## QQ binding. Replies use `sendTo` with the inbound destination.
+  let rawId = a.resolver.reverseChannel(msg.userId, ckQQ)
+  if rawId.len == 0:
+    return err("QQChannelAdapter.send: no QQ id for user " & $msg.userId)
+  a.sendTo(rawId, msg)
+
+proc sendKeyboardTo*(a: var QQChannelAdapter;
+                     rawId: string;
+                     text: string;
+                     buttons: seq[seq[(string, string)]];
+                     replyTo = "";
+                     allowedRawUserId = ""): Result[void, string] =
+  ## A keyboard sent to an explicit destination, like `sendTo`.
+  if rawId.len == 0:
+    return err("QQChannelAdapter.sendKeyboardTo: missing destination")
+  case a.kind
+  of qbkOfficial:
+    a.official.sendKeyboardToRawId(rawId, text, buttons, replyTo, allowedRawUserId)
+  of qbkOneBot:
+    err("QQ OneBot does not support rich keyboard")
   of qbkNone:
     err("qq channel disabled")
 
@@ -133,13 +161,7 @@ proc sendKeyboard*(a: var QQChannelAdapter;
   let rawId = a.resolver.reverseChannel(userId, ckQQ)
   if rawId.len == 0:
     return err("QQChannelAdapter.sendKeyboard: no QQ id for user " & $userId)
-  case a.kind
-  of qbkOfficial:
-    a.official.sendKeyboardToRawId(rawId, text, buttons, replyTo, allowedRawUserId)
-  of qbkOneBot:
-    err("QQ OneBot does not support rich keyboard")
-  of qbkNone:
-    err("qq channel disabled")
+  a.sendKeyboardTo(rawId, text, buttons, replyTo, allowedRawUserId)
 
 proc startGateway*(a: var QQChannelAdapter) =
   case a.kind
