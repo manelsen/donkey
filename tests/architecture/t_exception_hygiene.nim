@@ -65,37 +65,50 @@ func codeOnly(src: string): string =
     else:
       result.add c; inc i
 
-func handlerTypes(code: string): seq[seq[string]] =
-  ## For each `except` keyword in a line of code: the exception types listed
-  ## before the colon (empty for a bare handler), without any `as` binding.
+type Handler = object
+  firstLine, lastLine: int  ## 0-based span of `except … :`
+  types: seq[string]        ## empty for a bare handler
+
+func lineAt(code: string; pos: int): int = code[0 ..< pos].count('\n')
+
+func inImport(code: string; pos: int): bool =
+  ## `import a except b` / `from a import b except c` exclude symbols; they
+  ## are not handlers.
+  let lineStart = code.rfind('\n', last = max(pos - 1, 0)) + 1
+  let head = code[lineStart ..< pos].strip
+  head.startsWith("import ") or head.startsWith("from ") or
+    head.startsWith("include ")
+
+func handlers(code: string): seq[Handler] =
+  ## Every exception handler in `code` (comments and literals already
+  ## blanked). The head runs from `except` to its colon, across lines when
+  ## the type list continues after a comma.
   var i = code.find("except")
   while i >= 0:
     let stop = i + "except".len
     let wordStart = i == 0 or not isIdentChar(code[i - 1])
     let wordEnd = stop >= code.len or not isIdentChar(code[stop])
-    if wordStart and wordEnd:
+    if wordStart and wordEnd and not code.inImport(i):
       let colon = code.find(':', stop)
-      var head = (if colon < 0: code[stop .. ^1] else: code[stop ..< colon]).strip
+      let headEnd = if colon < 0: code.len else: colon
+      var head = code[stop ..< headEnd].replace('\n', ' ').strip
       let asAt = head.find(" as ")
       if asAt >= 0: head = head[0 ..< asAt]
-      var types: seq[string]
+      var h = Handler(firstLine: code.lineAt(i), lastLine: code.lineAt(headEnd))
       for t in head.split(','):
-        if t.strip.len > 0: types.add t.strip
-      result.add types
+        var name = t.strip
+        if name.startsWith("system."): name = name["system.".len .. ^1]
+        if name.len > 0: h.types.add name
+      result.add h
     i = code.find("except", stop)
 
-func isBareExcept(code: string): bool =
-  ## `except:` with no exception type, anywhere in the line's code.
-  for types in handlerTypes(code):
-    if types.len == 0: return true
+func bare(src: string): bool =
+  for h in handlers(codeOnly(src)):
+    if h.types.len == 0: return true
 
-func catchesException(code: string): bool =
-  ## Some handler in the line lists `Exception`, in any position.
-  for types in handlerTypes(code):
-    if "Exception" in types: return true
-
-func bare(src: string): bool = isBareExcept(codeOnly(src))
-func broad(src: string): bool = catchesException(codeOnly(src))
+func broad(src: string): bool =
+  for h in handlers(codeOnly(src)):
+    if "Exception" in h.types: return true
 
 proc runTests*() =
   suite "exception hygiene":
@@ -125,19 +138,29 @@ proc runTests*() =
       check not broad("except CatchableError as e:")
       check not broad("except ValueError, IOError:")
       check not broad("echo \"except Exception:\"")
+      check broad("except system.Exception: discard")
+      check not broad("except system.CatchableError: discard")
+      check broad("try: f()\nexcept ValueError,\n       Exception:\n  discard")
+      check not bare("import std/os except\n  walkDir")
+      check not bare("from std/os import nil except walkDir")
+      check not bare("import std/strutils except strip")
 
     test "no bare except and no unexplained except Exception in src":
       for path in walkDirRec("src"):
         if not path.endsWith(".nim"): continue
         let lines = readFile(path).splitLines()
-        let code = codeOnly(lines.join("\n")).splitLines()
-        for n, line in lines:
-          if isBareExcept(code[n]):
-            checkpoint(path & ":" & $(n + 1) & " bare except")
+        for h in handlers(codeOnly(lines.join("\n"))):
+          let at = path & ":" & $(h.firstLine + 1)
+          if h.types.len == 0:
+            checkpoint(at & " bare except")
             fail()
-          if catchesException(code[n]) and BoundaryMarker notin line:
-            checkpoint(path & ":" & $(n + 1) & " except Exception without the boundary marker")
-            fail()
+          if "Exception" in h.types:
+            var marked = false
+            for n in h.firstLine .. min(h.lastLine, lines.high):
+              if BoundaryMarker in lines[n]: marked = true
+            if not marked:
+              checkpoint(at & " except Exception without the boundary marker")
+              fail()
 
 when isMainModule:
   runTests()
