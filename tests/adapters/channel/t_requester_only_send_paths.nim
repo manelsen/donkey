@@ -459,5 +459,27 @@ proc runTests*() =
           "sendMessage" in r.target and "Não foi possível" in r.body)
         check not anyRequest(proc(r: Recorded): bool = "editMessage" in r.target)
 
+    test "Telegram: /reasoning is confirmed when the /config keyboard cannot be edited":
+      ## The /config message may be gone while its id is still stored. The
+      ## preference is already saved, so the toggle must be confirmed once
+      ## (a repeated /reasoning would flip it back) and the stale id dropped.
+      reset(failPaths = @["editMessage"])
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      var tg = newTelegramAdapter("TOK", Tmp / "tg5" / "ids.tsv", apiBase = base())
+      let user = tg.resolver.resolve(ckTelegram, "444")
+      let e = env("tg5")
+      check e.memory.savePreferences(user, "reasoning = \"on\"").isOk
+      setUiMsgId(state, ckTelegram, user, UiSlotConfig, "56")
+      let msg = InboundMessage(userId: user, channel: ckTelegram, channelId: "444",
+                               chatId: "444", rawChannelId: "444", text: "/reasoning")
+      check handleTelegramMessage(msg, sm, tg, state, e.memory, e.completeBuilder,
+                                  e.modelCatalogLoader, 0, 0, msgSeq, 0, logger)
+      check anyRequest(proc(r: Recorded): bool = "editMessage" in r.target)
+      check anyRequest(proc(r: Recorded): bool =
+        "sendMessage" in r.target and "Reasoning desativado." in r.body)
+      check getUiMsgId(state, ckTelegram, user, UiSlotConfig) == ""
+
 when isMainModule:
   runTests()

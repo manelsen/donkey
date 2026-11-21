@@ -16,6 +16,11 @@ import ./qq_channel
 import ../../app/command_dispatch
 import ../../ports/channel_capability
 
+proc logSendFailure(operation, error: string) {.gcsafe.} =
+  ## A reply that could not be delivered is logged, never dropped silently.
+  newLogger("qq.runtime").warn(operation & ": send failed: " & error)
+
+
 func qqSupportsRichUi*(kind: QQBackendKind): bool =
   kind == qbkOfficial
 
@@ -99,7 +104,7 @@ proc handleQQModelCallback(msg: InboundMessage;
       buildModelPageButtons(callback.provider, entries, currProv, currModel, 0),
       replyTo = msg.channelId,
       allowedRawUserId = rawUserId).isOkOr:
-        discard
+        logSendFailure("handleQQModelCallback", error)
     true
   of cbkModelsSet:
     let model = resolveModelCallback(callback.provider, callback.model)
@@ -113,7 +118,7 @@ proc handleQQModelCallback(msg: InboundMessage;
       text: savedOrError(saved, qqModelConfirmedText(callback.provider, model)),
       replyTo: msg.channelId,
     )).isOkOr:
-      discard
+      logSendFailure("handleQQModelCallback", error)
     true
   of cbkModelsPage:
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
@@ -125,7 +130,7 @@ proc handleQQModelCallback(msg: InboundMessage;
       buildModelPageButtons(callback.provider, entries, currProv, currModel, callback.page),
       replyTo = msg.channelId,
       allowedRawUserId = rawUserId).isOkOr:
-        discard
+        logSendFailure("handleQQModelCallback", error)
     true
   of cbkModelsBack:
     qqAdapter.sendKeyboard(
@@ -134,7 +139,7 @@ proc handleQQModelCallback(msg: InboundMessage;
       memory.buildProviderButtons(msg.userId),
       replyTo = msg.channelId,
       allowedRawUserId = rawUserId).isOkOr:
-        discard
+        logSendFailure("handleQQModelCallback", error)
     true
   else:
     false
@@ -154,7 +159,7 @@ proc handleQQThinkingCallback(msg: InboundMessage;
       text: savedOrError(saved, qqThinkingConfirmedText(level)),
       replyTo: msg.channelId,
     )).isOkOr:
-      discard
+      logSendFailure("handleQQThinkingCallback", error)
   true
 
 proc handleQQUiCommand(msg: InboundMessage;
@@ -176,14 +181,14 @@ proc handleQQUiCommand(msg: InboundMessage;
           buildModelPageButtons(provider, entries, currProv, currModel, 0),
           replyTo = msg.channelId,
           allowedRawUserId = rawUserId).isOkOr:
-            discard
+            logSendFailure("handleQQUiCommand", error)
         return true
     if command.value.strip.len > 0 or qqAdapter.kind != qbkOfficial:
       return false  ## text form: answered by the shared dispatcher
     qqAdapter.sendKeyboard(msg.userId, qqProviderPickerTitle(),
       memory.buildProviderButtons(msg.userId), replyTo = msg.channelId,
       allowedRawUserId = rawUserId).isOkOr:
-        discard
+        logSendFailure("handleQQUiCommand", error)
     true
   of cmdThink:
     if not qqShouldOpenThinkPicker(qqAdapter.kind, command):
@@ -191,7 +196,7 @@ proc handleQQUiCommand(msg: InboundMessage;
     qqAdapter.sendKeyboard(msg.userId, qqThinkPickerTitle(),
       memory.buildThinkButtons(msg.userId), replyTo = msg.channelId,
       allowedRawUserId = rawUserId).isOkOr:
-        discard
+        logSendFailure("handleQQUiCommand", error)
     true
   else:
     false

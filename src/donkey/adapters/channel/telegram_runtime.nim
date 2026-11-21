@@ -22,6 +22,11 @@ import ../identity/identity_resolver
 import ./common_runtime
 import ./telegram
 
+proc logSendFailure(operation, error: string) {.gcsafe.} =
+  ## A reply that could not be delivered is logged, never dropped silently.
+  newLogger("tg.runtime").warn(operation & ": send failed: " & error)
+
+
 var gAlbumMentions = newAlbumMentionGate()
 
 func replyTarget*(msg: InboundMessage): string =
@@ -236,7 +241,7 @@ proc clearTelegramKeyboard*(tgAdapter: var TelegramAdapter;
   let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, userId, slot)
   if kbdId.len > 0:
     tgAdapter.editKeyboard(userId, kbdId, @[]).isOkOr:
-      discard
+      logSendFailure("clearTelegramKeyboard", error)
     common_runtime.clearUiMsgId(presentationState, ckTelegram, userId, slot)
 
 proc handleTelegramModels*(msg: InboundMessage;
@@ -260,7 +265,7 @@ proc handleTelegramModels*(msg: InboundMessage;
     let buttons = buildModelPageButtons(providerOnly, entries, currProv, currModel, 0)
     if currentKbdId.len > 0:
       tgAdapter.editKeyboardText(msg.userId, currentKbdId, title, buttons).isOkOr:
-        discard
+        logSendFailure("handleTelegramModels", error)
     else:
       let sentId = tgAdapter.sendKeyboard(msg.userId, title, buttons, replyTo = replyTarget(msg)).valueOr:
         core_log.log(logger, core_log.lvlError, "tg send keyboard error: " & error)
@@ -275,7 +280,7 @@ proc handleTelegramModels*(msg: InboundMessage;
       msg.userId, currentKbdId,
       "Escolha o provider:",
       memory.buildProviderButtons(msg.userId)).isOkOr:
-        discard
+        logSendFailure("handleTelegramModels", error)
   else:
     let sentId = tgAdapter.sendKeyboard(msg.userId,
       "Escolha o provider:", memory.buildProviderButtons(msg.userId),
@@ -320,7 +325,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
         text: "Essa seleção expirou. Abra /models novamente.",
         replyTo: replyTarget(msg),
       )).isOkOr:
-        discard
+        logSendFailure("handleTelegramModelCallback", error)
       return true
     logger.info("tg callback models:set:" & callback.provider & ":" & model)
     let saved = memory.saveChannelPreferences(
@@ -362,7 +367,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
     if kbdId.len > 0:
       tgAdapter.editKeyboard(msg.userId, kbdId,
                              memory.buildProviderButtons(msg.userId)).isOkOr:
-        discard
+        logSendFailure("handleTelegramModelCallback", error)
     return true
 
   else:
@@ -388,7 +393,7 @@ proc handleTelegramThinkingCallback*(msg: InboundMessage;
         msg.userId, kbdId,
         savedOrError(saved, "🧠 Thinking: " & level),
         @[]).isOkOr:
-          discard
+          logSendFailure("handleTelegramThinkingCallback", error)
       common_runtime.clearUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotThink)
     else:
       tgAdapter.send(OutboundMessage(
@@ -397,7 +402,7 @@ proc handleTelegramThinkingCallback*(msg: InboundMessage;
         text:    "🧠 Thinking: *" & level & "*",
         replyTo: replyTarget(msg),
       )).isOkOr:
-        discard
+        logSendFailure("handleTelegramThinkingCallback", error)
   true
 
 proc handleTelegramThink*(msg: InboundMessage;
@@ -415,7 +420,7 @@ proc handleTelegramThink*(msg: InboundMessage;
       msg.userId, currentKbdId,
       "Nível de raciocínio:",
       memory.buildThinkButtons(msg.userId)).isOkOr:
-        discard
+        logSendFailure("handleTelegramThink", error)
   else:
     let sentId = tgAdapter.sendKeyboard(msg.userId,
       "Nível de raciocínio:", memory.buildThinkButtons(msg.userId),
@@ -614,9 +619,14 @@ proc handleTelegramCommand*(sm: var SessionManager;
      outcome.kind == cokReply and not outcome.reply.failed:
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
     if kbdId.len > 0:
-      discard tgAdapter.editKeyboardText(msg.userId, kbdId,
+      let edited = tgAdapter.editKeyboardText(msg.userId, kbdId,
         memory.buildConfigText(msg.userId), buildConfigButtons())
-      return true
+      if edited.isOk:
+        return true
+      ## The /config message may be gone. The preference is already saved:
+      ## confirm it below instead of running the toggle again.
+      logSendFailure("reasoning keyboard edit", edited.error)
+      common_runtime.clearUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
   presentTelegramOutcome(tgAdapter, msg, outcome, logger)
 
 proc handleTelegramCoreCommand*(sm: var SessionManager;

@@ -12,6 +12,11 @@ import ./wechat
 import ../../app/command_dispatch
 import ./common_runtime
 
+proc logSendFailure(operation, error: string) {.gcsafe.} =
+  ## A reply that could not be delivered is logged, never dropped silently.
+  newLogger("wch.runtime").warn(operation & ": send failed: " & error)
+
+
 proc sendWeChatReply(wchAdapter: var WeChatAdapter;
                      userId: UserId;
                      text: string) =
@@ -20,7 +25,7 @@ proc sendWeChatReply(wchAdapter: var WeChatAdapter;
     channel: ckWeChat,
     text: text,
   )).isOkOr:
-    discard
+    logSendFailure("sendWeChatReply", error)
 
 proc drainWeChatEvents*(wchAdapter: var WeChatAdapter;
                         wechatAppId: string;
