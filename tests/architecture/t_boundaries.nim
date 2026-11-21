@@ -2,39 +2,30 @@ import std/[osproc, strutils, unittest]
 import ./t_nim_source
 
 func importSpans(src: string): seq[string] =
-  ## The source text of each import statement (`import`, `from`, `include`),
-  ## continuation lines included. Statements are found in `codeOnly` (so a
-  ## commented-out import is ignored) and read back from `src` at the same
-  ## offsets, so a quoted path such as `import "../adapters/x"` is kept.
-  let code = codeOnly(src)
-  let lines = code.splitLines()
-  let original = src.splitLines()
-  var offset = 0
+  ## Each import statement (`import`, `from`, `include`) with comments
+  ## removed and paths kept, quoted ones included. A statement continues
+  ## over deeper-indented lines; blank and comment-only lines in between do
+  ## not end it.
+  let lines = withoutComments(src).splitLines()
+  func indentOf(line: string): int = line.len - line.strip(trailing = false).len
   var i = 0
   while i < lines.len:
     let t = lines[i].strip
-    let start = offset
-    let indent = lines[i].len - lines[i].strip(trailing = false).len
     if t.startsWith("import ") or t == "import" or t.startsWith("from ") or
        t.startsWith("include "):
-      var stop = offset + lines[i].len
+      var statement = @[lines[i].strip(leading = false)]
       var j = i + 1
-      var o = stop + 1
-      ## A continuation is a deeper-indented line that is not blank or a
-      ## comment in the source (a line holding only a quoted path is blank
-      ## in `code`, so the source decides).
-      while j < lines.len and original[j].strip.len > 0 and
-            not original[j].strip.startsWith("#") and
-            lines[j].len - lines[j].strip(trailing = false).len > indent:
-        stop = o + lines[j].len
-        o = stop + 1
+      while j < lines.len:
+        if lines[j].strip.len == 0:
+          inc j
+          continue
+        if lines[j].indentOf <= lines[i].indentOf:
+          break
+        statement.add lines[j].strip
         inc j
-      result.add src[start ..< min(stop, src.len)]
-      for k in i ..< j:
-        offset += lines[k].len + 1
+      result.add statement.join(" ")
       i = j
     else:
-      offset += lines[i].len + 1
       inc i
 
 proc runTests*() =
@@ -58,6 +49,9 @@ proc runTests*() =
       check importSpans("import std/os,\n  \"../adapters/x\"\nlet y = 1")[0].contains("adapters/")
       check importSpans("## import ../adapters/x\nlet x = \"adapters/\"").len == 0
       check importSpans("import a\nlet z = \"adapters/\"") == @["import a"]
+      check importSpans("import std/os,\n  # more\n  \"../adapters/x\"")[0].contains("adapters/")
+      check not importSpans("import std/os # adapters/x")[0].contains("adapters/")
+      check not importSpans("import std/os #[ adapters/x ]#")[0].contains("adapters/")
 
 when isMainModule:
   runTests()
