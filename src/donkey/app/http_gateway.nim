@@ -322,10 +322,11 @@ proc readHttpLine(conn: GatewayConnection; deadline: Moment):
 
 proc sendRaw(conn: GatewayConnection; data: string): Future[bool]
     {.async: (raises: []).} =
-  ## False when the client is gone.
+  ## False when the client is gone; the callers stop writing then and log
+  ## where it matters (the cause is the client, not the daemon).
   if data.len == 0:
     return true
-  return await conn.write(data)
+  return (await conn.write(data)).isOk
 
 proc sendResponse(conn: GatewayConnection; status, contentType, body: string;
                   log: Logger): Future[void] {.async: (raises: []).} =
@@ -355,11 +356,13 @@ proc readRequestBody(conn: GatewayConnection; contentLength: int;
   if contentLength <= 0:
     return ""
   var body = newStringOfCap(contentLength)
-  while body.len < contentLength and Moment.now() < deadline:
+  while body.len < contentLength:
     let chunk = await conn.readSome(contentLength - body.len, deadline)
-    if chunk.len == 0:
+    ## End of stream, the deadline or a failed read: the body is what came,
+    ## and `readRequestBodyStrict` refuses it when it is short.
+    if chunk.isErr or chunk.get().len == 0:
       break
-    body.add chunk
+    body.add chunk.get()
   return body
 
 proc readRequestBodyStrict(conn: GatewayConnection; contentLength: int;

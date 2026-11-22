@@ -21,6 +21,9 @@ type
     server: StreamServer
     port*:  int
 
+const ReadChunkBytes = 8192
+  ## The most one partial body read allocates.
+
 proc remaining(deadline: Moment): chronos.Duration =
   let left = deadline - Moment.now()
   if left > chronos.ZeroDuration: left else: chronos.ZeroDuration
@@ -41,31 +44,37 @@ proc streamConnection*(transport: StreamTransport): GatewayConnection =
         return err("request cancelled")
       except CatchableError as e:
         return err("connection closed or read failed: " & e.msg),
-    readSome: proc(maxBytes: int; deadline: Moment): Future[string]
-                  {.async: (raises: []).} =
-      if maxBytes <= 0 or Moment.now() >= deadline:
-        return ""
-      var buf = newString(maxBytes)
-      let reading = transport.readOnce(addr buf[0], maxBytes)
+    readSome: proc(maxBytes: int; deadline: Moment):
+                  Future[Result[string, string]] {.async: (raises: []).} =
+      if maxBytes <= 0:
+        return ok("")
+      if Moment.now() >= deadline:
+        return err("request deadline exceeded")
+      ## Bounded: the caller asks for everything still missing, and a fresh
+      ## zeroed buffer of that size per partial read would make a body that
+      ## arrives in small pieces quadratic.
+      let size = min(maxBytes, ReadChunkBytes)
+      var buf = newString(size)
+      let reading = transport.readOnce(addr buf[0], size)
       try:
         if not await reading.withTimeout(deadline.remaining):
           await reading.cancelAndWait()
-          return ""
+          return err("request deadline exceeded")
         let n = reading.read()
-        if n <= 0:
-          return ""
-        buf.setLen(n)
-        return buf
-      except CatchableError:
-        return "",
-    write: proc(data: string): Future[bool] {.async: (raises: []).} =
+        buf.setLen(max(n, 0))
+        return ok(buf)
+      except CancelledError:
+        return err("request cancelled")
+      except CatchableError as e:
+        return err("read failed: " & e.msg),
+    write: proc(data: string): Future[Result[void, string]] {.async: (raises: []).} =
       try:
         discard await transport.write(data)
-        return true
+        return ok()
       except CancelledError:
-        return false
-      except CatchableError:
-        return false,
+        return err("write cancelled")
+      except CatchableError as e:
+        return err("client gone: " & e.msg),
     atEof: proc(): bool {.gcsafe, raises: [].} = transport.atEof)
 
 proc gatewayBindAddress*(bindAddr: string; port: int):
