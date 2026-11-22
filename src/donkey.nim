@@ -328,6 +328,10 @@ proc signalPollThread(adapter: ptr SignalAdapter) {.thread.} =
 type DaemonRuntime = ref object
   globalOutbox:         AsyncQueue[OutboundMessage]
   sm:                   SessionManager
+  apiChatBridge:        ChatBridge
+    ## API turns: the gateway registers and waits, the outbox drainer
+    ## delivers `api:` replies here instead of to a channel port. Both run on
+    ## the daemon loop.
   stateStore:           RuntimeStateStore
   ledger:               DeliveryLedgerPort
   ledgerWorker:         LedgerCompactionWorker
@@ -1113,10 +1117,6 @@ proc buildGlobalSearchFn(memory: MdFileAdapter): SearchFn {.gcsafe.} =
   else:
     discard
 
-# The API turn bridge: the gateway worker registers/polls, the daemon outbox
-# drainer delivers `api:` replies here instead of to a channel port.
-var gApiChatBridge: ChatBridge
-
 proc apiChatNowMs(): int64 {.gcsafe, raises: [].} =
   int64(epochTime() * 1000)
 
@@ -1136,34 +1136,6 @@ proc handleGatewayFallback(ctx: DaemonContext; cfg: DonkeyConfig;
 func buildDaemonSessionServices(ctx: DaemonContext; cfg: DonkeyConfig;
                                 memory: MdFileAdapter;
                                 log: Logger): SessionIngressServices
-
-## The dashboard reads sessions from the gateway worker threads while the
-## daemon mutates `sm` on its own thread. Publish a copy from the daemon thread
-## under a small lock instead of iterating the live table across threads.
-var gSessionsLock: Lock
-var gSessionsSnapshot: seq[SessionDetail]
-var gSessionsSnapshotSec: int64 = -1
-
-proc publishSessions(sm: SessionManager) {.gcsafe, raises: [].} =
-  let nowSec = epochTime().int64
-  {.cast(gcsafe).}:
-    if nowSec == gSessionsSnapshotSec:
-      return
-    gSessionsSnapshotSec = nowSec
-    let snapshot = sm.listSessionDetails()
-    acquire(gSessionsLock)
-    try:
-      gSessionsSnapshot = snapshot
-    finally:
-      release(gSessionsLock)
-
-proc sessionsSnapshot(): seq[SessionDetail] {.gcsafe, raises: [].} =
-  {.cast(gcsafe).}:
-    acquire(gSessionsLock)
-    try:
-      result = gSessionsSnapshot
-    finally:
-      release(gSessionsLock)
 
 proc setupIpcServer(cfg: DonkeyConfig;
                     runtime: DaemonRuntime;
@@ -1258,8 +1230,6 @@ proc setupIpcServer(cfg: DonkeyConfig;
   except CatchableError as e:
     log.warn("IPC socket disabled: " & e.msg)
   let httpPort = resolveGatewayPort(getEnv("DONKEY_HTTP_PORT"))
-  initLock(gSessionsLock)
-  publishSessions(runtime.sm)
   let gwStatusFn: GatewayStatusFn = proc(): DaemonStatus {.gcsafe.} =
     ipcStatusFn()
   let gwLogFn: GatewayLogFn = proc(n: int): seq[IpcLogEntry] {.gcsafe.} =
@@ -1267,7 +1237,8 @@ proc setupIpcServer(cfg: DonkeyConfig;
   let gwEventFn: GatewayEventFn = proc(n: int): seq[AgentEvent] {.gcsafe.} =
     agentEventSnapshot(n)
   let gwSessionsFn: GatewaySessionsFn = proc(): seq[SessionDetail] {.gcsafe.} =
-    sessionsSnapshot()
+    ## The gateway runs on the daemon loop: the live table is read directly.
+    runtime.sm.listSessionDetails()
   let gwProvidersFn: GatewayProvidersFn = proc(): string {.gcsafe.} =
     buildProvidersJson(
       detectProviderAvailability(),
@@ -1326,8 +1297,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
       log.error("HTTP gateway disabled: non-loopback bind (" & httpBind &
                 ") requires DONKEY_HTTP_TOKEN and DONKEY_HTTP_ALLOW_INSECURE=1")
     else:
-      let gwChatBridge = block:
-        {.cast(gcsafe).}: gApiChatBridge
+      let gwChatBridge = runtime.apiChatBridge
       let gatewayStart = startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
                                           bindAddr = httpBind, authToken = httpToken,
                                           agentDispatchFn = gwInboundFn,
@@ -1629,18 +1599,17 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
   let outboundPorts = buildRuntimeOutboundPorts(adapters)
   while runtime.globalOutbox.len > 0:
     let outMsg = runtime.globalOutbox.getNoWait()
-    {.cast(gcsafe).}:
-      if isApiChatReply(outMsg):
-        ## API replies belong to a waiting HTTP turn, never to a channel port.
-        ## A reply without a turn token (a scheduled firing for an `api:` user,
-        ## for example) must not close an unrelated HTTP request.
-        if outMsg.bridgeToken == 0:
-          log.warn("dropping an API reply without a turn token for " &
-                   $outMsg.userId)
-          continue
-        if gApiChatBridge != nil:
-          discard gApiChatBridge.deliver(outMsg, outMsg.bridgeToken)
+    if isApiChatReply(outMsg):
+      ## API replies belong to a waiting HTTP turn, never to a channel port.
+      ## A reply without a turn token (a scheduled firing for an `api:` user,
+      ## for example) must not close an unrelated HTTP request.
+      if outMsg.bridgeToken == 0:
+        log.warn("dropping an API reply without a turn token for " &
+                 $outMsg.userId)
         continue
+      if runtime.apiChatBridge != nil:
+        discard runtime.apiChatBridge.deliver(outMsg, outMsg.bridgeToken)
+      continue
     completeInboundReactionStatus(runtime, outboundPorts, outMsg)
     routeOutbound(outMsg, outboundPorts, log, runtime.presentationState, runtime.ledger)
 
@@ -1975,7 +1944,6 @@ proc runDaemonLoop(ctx: DaemonContext;
     if compactError.isSome:
       log.warn("ledger compaction: " & compactError.get())
   let tick = runDaemonTick(ctx, drainer, memory, log)
-  publishSessions(ctx.runtime.sm)
   DaemonLoopResult(
     sleepMs: if tick.ok: 100 else: 500,
   )
@@ -2013,8 +1981,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let ctx = bootstrap.ctx
   ## The API bridge must exist before the gateway accepts a turn and before
   ## the outbox drainer can route `api:` replies.
-  {.cast(gcsafe).}:
-    gApiChatBridge = newChatBridge(apiChatNowMs, apiChatNap)
+  ctx.runtime.apiChatBridge = newChatBridge(apiChatNowMs, apiChatNap)
   if ctx.runtime.stateStore != nil:
     let ledgerErr = ctx.runtime.stateStore.ledgerLastCompactError()
     if ledgerErr.len > 0:
