@@ -83,29 +83,17 @@ Chronos 4.x gera procs com `raises: [CatchableError]` por padrão. Ao escrever p
 
 ### HttpPort — transporte HTTP intercambiável
 
-Todos os adapters (providers e channels) usam `HttpPort` para I/O HTTP, nunca `std/httpclient` diretamente. Isso permite trocar o backend TLS sem tocar em nenhum adapter.
+Todos os adapters (providers e channels) usam `HttpPort` para I/O HTTP, nunca `std/httpclient` diretamente (o `config/clawhub_registry` também).
 
 ```
-ZhipuAdapter ──┐
+ZhipuAdapter ──────┐
 OpenRouterAdapter ─┤
-AnthropicAdapter ──┤→ http: StdHttpAdapter  (VPS — std/httpclient + OpenSSL)
-GeminiAdapter ─────┤          ↕
-MiniMaxAdapter ────┤   ChronosHttpAdapter   (IoT — Chronos + bearssl, zero deps)
-TelegramAdapter ───┘
+AnthropicAdapter ──┤→ http: StdHttpAdapter ──→ deadline_transport
+GeminiAdapter ─────┤   (allowlist, breaker,     (Chronos + bearssl,
+TelegramAdapter ───┘    retries, 429/409)        pool de threads)
 ```
 
-**Adapter atual:** `StdHttpAdapter` — stateless value type (`object` sem campos), criado pelo construtor de cada adapter via `newStdHttpAdapter()`.
-
-**Para implementar `ChronosHttpAdapter`** (quando necessário para RPi Zero / IoT):
-1. Criar `src/donkey/adapters/http/chronos_http.nim` satisfazendo `HttpPort`:
-   ```nim
-   type ChronosHttpAdapter* = object
-   proc get*(a: ChronosHttpAdapter; url: string; headers: seq[HttpHeader]): Result[HttpResponse, string]
-   proc post*(a: ChronosHttpAdapter; url, body: string; headers: seq[HttpHeader]): Result[HttpResponse, string]
-   ```
-   Implementar usando `chronos/apps/http/httpclient` + `nim-bearssl` para TLS.
-2. Passar `http: newChronosHttpAdapter()` nos construtores dos adapters — nenhum outro código muda.
-3. Compilar com `musl-gcc` + `--passL:"-static"` para binário sem deps em runtime.
+**`StdHttpAdapter`** (`adapters/http/std_http.nim`): allowlist, circuit breaker por host, retries com backoff, 429 e 409. Cada tentativa roda em **`deadline_transport`**: um pool de threads, cada uma com seu laço Chronos, executa a requisição sob `wait(prazo)`. O prazo vale para a requisição inteira (conexão, headers, cada leitura do corpo); ao vencer, a requisição é cancelada e a conexão fechada. O `std/httpclient` limitava cada leitura, não a requisição: um servidor que pingava bytes segurava o chamador para sempre. Quem chama bloqueia como antes, mas só até o prazo, e nunca roda um laço Chronos (evita `waitFor` aninhado dentro do laço do daemon). TLS pelo bearssl, que valida certificado e nome do servidor; proxy de egress por túnel CONNECT. O prazo não cobre a resolução de nomes (getaddrinfo bloqueante no worker): o chamador volta no prazo, o worker fica preso até o resolver responder.
 
 **Conceito:**
 ```nim
@@ -184,7 +172,7 @@ Formato do arquivo: `[salt 32B][nonce 12B][ciphertext][tag 16B]` — binário pu
 | `ToolPort` | `listTools() → Result[seq[ToolSchema], string]` + `invoke(ToolCall) → Result[ToolResult, string]` | `McpClientAdapter` (MCP servers + Deno skills) |
 | `MemoryPort` | `hasProfile`, `loadContext`, `saveUserMd`, `appendMemory`, `savePreferences` | `MdFileAdapter` (F1), `PostgresAdapter` (F2+) |
 | `ChannelPort` | `send(OutboundMessage) → Result[void, string]` + `receive() → Result[seq[InboundMessage], string]` + `ack(string)` | `TelegramAdapter` |
-| `HttpPort` | `get(url, headers) → Result[HttpResponse, string]` + `post(url, body, headers) → Result[HttpResponse, string]` | `StdHttpAdapter` (VPS), `ChronosHttpAdapter` (IoT, a implementar) |
+| `HttpPort` | `get(url, headers) → Result[HttpResponse, string]` + `post(url, body, headers) → Result[HttpResponse, string]` | `StdHttpAdapter` sobre `deadline_transport` (Chronos + bearssl, prazo por requisição) |
 
 Ports são `concept` Nim — structural typing verificado em compile-time. Adapters não declaram conformidade; o compilador verifica. O `HttpPort` é interno (adapters → HttpPort), não exposto para a camada de aplicação.
 
