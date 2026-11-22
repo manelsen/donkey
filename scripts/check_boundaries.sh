@@ -62,5 +62,10 @@ check_absent \
   '^\s*(import|from)\s+.*command_text' \
   src/donkey/ports src/donkey/adapters/memory
 
+check_absent \
+  "ports and the memory store must not import command texts (multi-line import lists)" \
+  '^\s+command_text(,|\]|\s*$)' \
+  src/donkey/ports src/donkey/adapters/memory
+
 echo "Boundary checks passed."
 

@@ -68,8 +68,12 @@ proc runTests*() =
       ## Presentation belongs to the channels: a port or the store that
       ## imports the texts module is refused.
       for (dir, form) in [("src/donkey/ports", "import ../core/commands/command_text"),
+                          ("src/donkey/ports", "import ../core/commands/[\n  command_text\n]"),
+                          ("src/donkey/ports", "import ../core/commands/[types,\n  command_text]"),
                           ("src/donkey/adapters/memory",
-                           "import ../../core/commands/command_text")]:
+                           "import ../../core/commands/command_text"),
+                          ("src/donkey/adapters/memory",
+                           "import ../../core/commands/[\n  command_text\n]")]:
         let probe = dir & "/zz_boundary_probe.nim"
         writeFile(probe, form & "\n")
         defer: removeFile(probe)
