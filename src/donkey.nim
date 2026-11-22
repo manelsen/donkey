@@ -1,9 +1,8 @@
 ## donkey — AI agent system entry point.
 
-import std/[algorithm, json, locks, options, os, parseopt, strutils, tables, terminal, times]
+import std/[json, options, os, parseopt, strutils, tables, terminal, times]
 when defined(posix):
   import std/posix
-import locks
 import chronos
 import chronos/asyncsync
 import chronos/timer as ctimer
@@ -15,6 +14,7 @@ import donkey/config/skills_registry
 import donkey/adapters/tool/runtime_builder
 import donkey/core/log
 import donkey/infra/thread_handle
+import donkey/app/route_health
 import donkey/core/pipeops
 import donkey/adapters/http/circuit_breakers
 import donkey/core/agent_events
@@ -103,16 +103,6 @@ import donkey/app/daemon_start_handler
 import donkey/ctl_handler
 import donkey/ports/memory
 import donkey/adapters/ipc/types    as ipcTypes
-
-var gRoutingLock: Lock
-
-template withRouteLock(body: untyped): untyped =
-  block:
-    acquire(gRoutingLock)
-    try:
-      body
-    finally:
-      release(gRoutingLock)
 
 const Version* = AppVersion
 
@@ -275,16 +265,6 @@ proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPor
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
     addr adapters.cli, signalPtr, addr adapters.ln)
 
-const
-  RecentRouteSampleLimit = 32
-  DefaultRecentRouteSampleTtlSec = 6 * 60 * 60
-  DefaultProviderCooldownSec = 10 * 60
-
-type RouteSample = object
-  ok: bool
-  elapsedMs: int
-  recordedAtUnix: int64
-
 type DaemonServices = object
   toolClients:      seq[ToolRuntimePort]
   tools:            seq[ToolDescription]
@@ -340,14 +320,7 @@ type DaemonRuntime = ref object
   ledger:               DeliveryLedgerPort
   ledgerWorker:         LedgerCompactionWorker
   presentationState:    PresentationState
-  routeCounts:          Table[string, int]
-  routeCallCounts:      Table[string, int]
-  routeOkCounts:        Table[string, int]
-  routeErrCounts:       Table[string, int]
-  routeLatencyTotalsMs: Table[string, int64]
-  routeRecentSamples:   Table[string, seq[RouteSample]]
-  providerCooldownUntil: Table[string, int64]
-  routeHealthPath:      string
+  routeHealth:          RouteHealth
   lastReminderCheckMs:  int64
   lastEmailPollMs:      int64
   lastSignalPollMs:     int64
@@ -614,113 +587,16 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
       sockPath = if rawSock.len > 0: rawSock else: SignalDefaultSock,
     )
 
-func recentRouteSampleTtlSec(): int64 =
-  let raw = getEnv("DONKEY_ROUTE_HEALTH_TTL_SEC")
+proc envSeconds(name: string; default: int64): int64 =
+  ## A positive whole number of seconds from the environment, or `default`.
+  let raw = getEnv(name).strip()
   if raw.len == 0:
-    return DefaultRecentRouteSampleTtlSec
+    return default
   try:
-    let ttl = parseInt(raw)
-    if ttl > 0: ttl else: DefaultRecentRouteSampleTtlSec
+    let value = parseInt(raw)
+    if value > 0: value else: default
   except ValueError:
-    DefaultRecentRouteSampleTtlSec
-
-func routeHealthPath(home: string): string =
-  home / "state" / "route_health.json"
-
-func providerCooldownSec(): int64 =
-  let raw = getEnv("DONKEY_PROVIDER_COOLDOWN_SEC")
-  if raw.len == 0:
-    return DefaultProviderCooldownSec
-  try:
-    let ttl = parseInt(raw)
-    if ttl > 0: ttl else: DefaultProviderCooldownSec
-  except ValueError:
-    DefaultProviderCooldownSec
-
-proc pruneRecentRouteSamples(runtime: DaemonRuntime) =
-  let nowSec = getTime().toUnix()
-  let ttlSec = recentRouteSampleTtlSec()
-  for route, samples in runtime.routeRecentSamples.mpairs:
-    var kept: seq[RouteSample] = @[]
-    for sample in samples:
-      if sample.recordedAtUnix > 0 and nowSec - sample.recordedAtUnix <= ttlSec:
-        kept.add(sample)
-    if kept.len > RecentRouteSampleLimit:
-      kept = kept[(kept.len - RecentRouteSampleLimit) .. ^1]
-    samples = kept
-
-proc pruneProviderCooldowns(runtime: DaemonRuntime) =
-  let nowSec = getTime().toUnix()
-  var expired: seq[string] = @[]
-  for providerName, untilUnix in runtime.providerCooldownUntil:
-    if untilUnix <= nowSec:
-      expired.add(providerName)
-  for providerName in expired:
-    runtime.providerCooldownUntil.del(providerName)
-
-proc saveRecentRouteSamples(runtime: DaemonRuntime) =
-  if runtime.routeHealthPath.len == 0:
-    return
-  try:
-    runtime.pruneRecentRouteSamples()
-    createDir(parentDir(runtime.routeHealthPath))
-    var data = newJArray()
-    for route, samples in runtime.routeRecentSamples:
-      if samples.len == 0:
-        continue
-      var sampleData = newJArray()
-      for sample in samples:
-        sampleData.add(%*{
-          "ok": sample.ok,
-          "elapsed_ms": sample.elapsedMs,
-          "recorded_at": sample.recordedAtUnix,
-        })
-      data.add(%*{
-        "route": route,
-        "samples": sampleData,
-      })
-    var cooldowns = newJArray()
-    for providerName, untilUnix in runtime.providerCooldownUntil:
-      cooldowns.add(%*{
-        "provider": providerName,
-        "until_unix": untilUnix,
-      })
-    writeFile(runtime.routeHealthPath, $(%*{
-      "saved_at": getTime().toUnix(),
-      "routes": data,
-      "provider_cooldowns": cooldowns,
-    }))
-  except CatchableError:
-    discard
-
-proc loadRecentRouteSamples(runtime: DaemonRuntime) =
-  if runtime.routeHealthPath.len == 0 or not fileExists(runtime.routeHealthPath):
-    return
-  try:
-    let parsed = parseJson(readFile(runtime.routeHealthPath))
-    for routeNode in parsed{"routes"}:
-      let route = routeNode{"route"}.getStr("")
-      if route.len == 0:
-        continue
-      var samples: seq[RouteSample] = @[]
-      for sampleNode in routeNode{"samples"}:
-        samples.add(RouteSample(
-          ok: sampleNode{"ok"}.getBool(false),
-          elapsedMs: sampleNode{"elapsed_ms"}.getInt(0),
-          recordedAtUnix: sampleNode{"recorded_at"}.getBiggestInt(0),
-        ))
-      runtime.routeRecentSamples[route] = samples
-    runtime.pruneRecentRouteSamples()
-    for cooldownNode in parsed{"provider_cooldowns"}:
-      let providerName = cooldownNode{"provider"}.getStr("")
-      let untilUnix = cooldownNode{"until_unix"}.getBiggestInt(0)
-      if providerName.len > 0 and untilUnix > 0:
-        runtime.providerCooldownUntil[providerName] = untilUnix
-    runtime.pruneProviderCooldowns()
-  except CatchableError:
-    discard
-
-var gRoutingLockReady = false
+    default
 
 proc envFloatValue(name: string; default: float): float =
   let raw = getEnv(name).strip()
@@ -733,9 +609,6 @@ proc envFloatValue(name: string; default: float): float =
 
 proc initDaemonRuntime(home: string): DaemonRuntime =
   new(result)
-  if not gRoutingLockReady:
-    initLock(gRoutingLock)
-    gRoutingLockReady = true
   result.globalOutbox = newAsyncQueue[OutboundMessage]()
   result.sm.init()
   let stateStore = newRuntimeStateStore(
@@ -749,178 +622,14 @@ proc initDaemonRuntime(home: string): DaemonRuntime =
   result.sm.setRegistryStore(stateStore.sessionRegistry())
   result.ledger = stateStore.deliveryLedger()
   result.presentationState = initPresentationState()
-  result.routeHealthPath = routeHealthPath(home)
-  result.loadRecentRouteSamples()
+  result.routeHealth = newRouteHealth(
+    home / "state" / "route_health.json",
+    sampleTtlSec = envSeconds("DONKEY_ROUTE_HEALTH_TTL_SEC",
+                              DefaultRecentRouteSampleTtlSec),
+    cooldownSec = envSeconds("DONKEY_PROVIDER_COOLDOWN_SEC",
+                             DefaultProviderCooldownSec))
+  result.routeHealth.load()
   result.daemonStartMs = nowMs()
-
-proc recordRouteChoice(runtime: DaemonRuntime; selection: ProviderSelection) =
-  let key = selection.formatSelection
-  runtime.routeCounts[key] = runtime.routeCounts.getOrDefault(key) + 1
-
-proc refreshProviderCooldowns(runtime: DaemonRuntime) {.gcsafe.}
-proc currentRouteFeedback(runtime: DaemonRuntime): seq[RouteFeedback] {.gcsafe.}
-
-proc recordRouteResult(runtime: DaemonRuntime;
-                       selection: ProviderSelection;
-                       elapsedMs: int64;
-                       ok: bool) {.gcsafe.} =
-  let key = selection.formatSelection
-  let nowSec = getTime().toUnix()
-  runtime.routeCallCounts[key] = runtime.routeCallCounts.getOrDefault(key) + 1
-  runtime.routeLatencyTotalsMs[key] = runtime.routeLatencyTotalsMs.getOrDefault(key) + elapsedMs
-  var samples = runtime.routeRecentSamples.getOrDefault(key)
-  samples.add(RouteSample(
-    ok: ok,
-    elapsedMs: if elapsedMs > 0: int(elapsedMs) else: 0,
-    recordedAtUnix: nowSec,
-  ))
-  if samples.len > RecentRouteSampleLimit:
-    samples = samples[(samples.len - RecentRouteSampleLimit) .. ^1]
-  runtime.routeRecentSamples[key] = samples
-  runtime.pruneRecentRouteSamples()
-  runtime.saveRecentRouteSamples()
-  if ok:
-    runtime.routeOkCounts[key] = runtime.routeOkCounts.getOrDefault(key) + 1
-  else:
-    runtime.routeErrCounts[key] = runtime.routeErrCounts.getOrDefault(key) + 1
-  runtime.refreshProviderCooldowns()
-
-proc refreshProviderCooldowns(runtime: DaemonRuntime) {.gcsafe.} =
-  runtime.pruneProviderCooldowns()
-  let nowSec = getTime().toUnix()
-  for feedback in aggregateProviderFeedback(runtime.currentRouteFeedback()):
-    if feedback.shouldCircuitBreakProvider and
-       runtime.providerCooldownUntil.getOrDefault(feedback.providerName) <= nowSec:
-      runtime.providerCooldownUntil[feedback.providerName] = nowSec + providerCooldownSec()
-  runtime.saveRecentRouteSamples()
-
-proc topRouteCounts(runtime: DaemonRuntime; limit = 5): seq[ipcTypes.RouteCount] =
-  var items: seq[(string, int)] = @[]
-  for route, count in runtime.routeCounts:
-    items.add((route, count))
-  items.sort(proc(a, b: (string, int)): int =
-    if a[1] != b[1]:
-      return cmp(b[1], a[1])
-    cmp(a[0], b[0])
-  )
-  for i in 0 ..< min(limit, items.len):
-    result.add(ipcTypes.RouteCount(route: items[i][0], count: items[i][1]))
-
-proc topRouteMetrics(runtime: DaemonRuntime; limit = 5): seq[ipcTypes.RouteMetric] =
-  var items: seq[(string, int)] = @[]
-  for route, calls in runtime.routeCallCounts:
-    items.add((route, calls))
-  items.sort(proc(a, b: (string, int)): int =
-    if a[1] != b[1]:
-      return cmp(b[1], a[1])
-    cmp(a[0], b[0])
-  )
-  for i in 0 ..< min(limit, items.len):
-    let route = items[i][0]
-    let calls = items[i][1]
-    let totalLatency = runtime.routeLatencyTotalsMs.getOrDefault(route)
-    result.add(ipcTypes.RouteMetric(
-      route: route,
-      calls: calls,
-      okCalls: runtime.routeOkCounts.getOrDefault(route),
-      errCalls: runtime.routeErrCounts.getOrDefault(route),
-      avgLatencyMs: if calls > 0: int(totalLatency div calls) else: 0,
-    ))
-
-proc topRecentRouteMetrics(runtime: DaemonRuntime; limit = 5): seq[ipcTypes.RouteMetric] =
-  runtime.pruneRecentRouteSamples()
-  var items: seq[(string, int)] = @[]
-  for route, samples in runtime.routeRecentSamples:
-    if samples.len > 0:
-      items.add((route, samples.len))
-  items.sort(proc(a, b: (string, int)): int =
-    if a[1] != b[1]:
-      return cmp(b[1], a[1])
-    cmp(a[0], b[0])
-  )
-  for i in 0 ..< min(limit, items.len):
-    let route = items[i][0]
-    let samples = runtime.routeRecentSamples.getOrDefault(route)
-    var okCalls = 0
-    var errCalls = 0
-    var totalLatency = 0
-    for sample in samples:
-      totalLatency += sample.elapsedMs
-      if sample.ok:
-        inc okCalls
-      else:
-        inc errCalls
-    let calls = samples.len
-    result.add(ipcTypes.RouteMetric(
-      route: route,
-      calls: calls,
-      okCalls: okCalls,
-      errCalls: errCalls,
-      avgLatencyMs: if calls > 0: totalLatency div calls else: 0,
-    ))
-
-proc currentRouteFeedback(runtime: DaemonRuntime): seq[RouteFeedback] {.gcsafe.} =
-  runtime.pruneRecentRouteSamples()
-  for route, samples in runtime.routeRecentSamples:
-    if samples.len == 0:
-      continue
-    var okCalls = 0
-    var errCalls = 0
-    var totalLatency = 0
-    for sample in samples:
-      totalLatency += sample.elapsedMs
-      if sample.ok:
-        inc okCalls
-      else:
-        inc errCalls
-    let calls = samples.len
-    result.add(RouteFeedback(
-      route: route,
-      calls: calls,
-      okCalls: okCalls,
-      errCalls: errCalls,
-      avgLatencyMs: if calls > 0: totalLatency div calls else: 0,
-    ))
-
-proc topRecentProviderMetrics(runtime: DaemonRuntime; limit = 5): seq[ipcTypes.ProviderMetric] =
-  let feedback = aggregateProviderFeedback(runtime.currentRouteFeedback())
-  var items = feedback
-  items.sort(proc(a, b: ProviderFeedback): int =
-    if a.calls != b.calls:
-      return cmp(b.calls, a.calls)
-    cmp(a.providerName, b.providerName)
-  )
-  for i in 0 ..< min(limit, items.len):
-    result.add(ipcTypes.ProviderMetric(
-      providerName: items[i].providerName,
-      calls: items[i].calls,
-      okCalls: items[i].okCalls,
-      errCalls: items[i].errCalls,
-      avgLatencyMs: items[i].avgLatencyMs,
-    ))
-
-proc activeProviderCooldowns(runtime: DaemonRuntime; limit = 5): seq[string] =
-  runtime.pruneProviderCooldowns()
-  let nowSec = getTime().toUnix()
-  var items: seq[(string, int64)] = @[]
-  for providerName, untilUnix in runtime.providerCooldownUntil:
-    if untilUnix > nowSec:
-      items.add((providerName, untilUnix))
-  items.sort(proc(a, b: (string, int64)): int =
-    if a[1] != b[1]:
-      return cmp(a[1], b[1])
-    cmp(a[0], b[0])
-  )
-  for i in 0 ..< min(limit, items.len):
-    let remaining = max(0'i64, items[i][1] - nowSec)
-    result.add(items[i][0] & " (" & relativeAgeText(remaining) & ")")
-
-proc currentProviderCooldowns(runtime: DaemonRuntime): seq[ProviderCooldown] =
-  runtime.pruneProviderCooldowns()
-  let nowSec = getTime().toUnix()
-  for providerName, untilUnix in runtime.providerCooldownUntil:
-    if untilUnix > nowSec:
-      result.add(ProviderCooldown(providerName: providerName, untilUnix: untilUnix))
 
 proc initDaemonContext(cfg: DonkeyConfig;
                        env: DaemonEnv;
@@ -1196,11 +905,11 @@ proc setupIpcServer(cfg: DonkeyConfig;
       sessions:      sessions,
       channels:      activeChannels,
       providers:     availableProviderNames(detectProviderAvailability()),
-      routeCounts:   withRouteLock(runtime.topRouteCounts()),
-      routeMetrics:  withRouteLock(runtime.topRouteMetrics()),
-      recentRouteMetrics: withRouteLock(runtime.topRecentRouteMetrics()),
-      recentProviderMetrics: withRouteLock(runtime.topRecentProviderMetrics()),
-      providerCooldowns: withRouteLock(runtime.activeProviderCooldowns()),
+      routeCounts:   runtime.routeHealth.topRouteCounts(),
+      routeMetrics:  runtime.routeHealth.topRouteMetrics(),
+      recentRouteMetrics: runtime.routeHealth.topRecentRouteMetrics(),
+      recentProviderMetrics: runtime.routeHealth.topRecentProviderMetrics(),
+      providerCooldowns: runtime.routeHealth.activeCooldownLabels(),
       toolsCount:    toolsCount,
       memoryBackend: block:
         when defined(withPostgres) or defined(withSqlite):
@@ -1256,8 +965,8 @@ proc setupIpcServer(cfg: DonkeyConfig;
   let gwProvidersFn: GatewayProvidersFn = proc(): string {.gcsafe.} =
     buildProvidersJson(
       detectProviderAvailability(),
-      withRouteLock(runtime.currentProviderCooldowns()),
-      aggregateProviderFeedback(withRouteLock(runtime.currentRouteFeedback())))
+      runtime.routeHealth.cooldowns(),
+      aggregateProviderFeedback(runtime.routeHealth.feedback()))
   let gwSessionActionFn: GatewaySessionActionFn =
     proc(rawUserId: string; taskKind: TaskKind;
          payload: string): GatewaySessionActionOutcome
@@ -1418,15 +1127,15 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     buildDenoSkillRuntime,
     buildSkillRuntimePolicyResolver(cfg),
     routeRecordHook = proc(selection: ProviderSelection) {.gcsafe.} =
-      withRouteLock(ctx.runtime.recordRouteChoice(selection)),
+      ctx.runtime.routeHealth.recordChoice(selection),
     routeResultHook = proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.} =
-      withRouteLock(ctx.runtime.recordRouteResult(selection, elapsedMs, ok)),
+      ctx.runtime.routeHealth.recordResult(selection, elapsedMs, ok),
     routeFeedbackHook = proc(): seq[RouteFeedback] {.gcsafe.} =
-      withRouteLock(ctx.runtime.currentRouteFeedback()),
+      ctx.runtime.routeHealth.feedback(),
     routeCostHook = proc(): seq[RouteCostHint] {.gcsafe.} =
       loadRouteCostHints(routeCostProviderIds()),
     routeProviderCooldownHook = proc(): seq[ProviderCooldown] {.gcsafe.} =
-      withRouteLock(ctx.runtime.currentProviderCooldowns()),
+      ctx.runtime.routeHealth.cooldowns(),
     subagentWorkspace = subagentWorkspacePort(),
     fs = newFsAdapter(),
   )
