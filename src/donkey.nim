@@ -15,6 +15,7 @@ import donkey/adapters/tool/runtime_builder
 import donkey/core/log
 import donkey/infra/thread_handle
 import donkey/app/route_health
+import donkey/app/daemon_endpoints
 import donkey/core/pipeops
 import donkey/adapters/http/circuit_breakers
 import donkey/core/agent_events
@@ -862,7 +863,6 @@ func buildDaemonSessionServices(ctx: DaemonContext; cfg: DonkeyConfig;
 
 proc setupIpcServer(cfg: DonkeyConfig;
                     runtime: DaemonRuntime;
-                    sm: SessionManager;
                     toolsCount: int;
                     daemonStartMs: int64;
                     telegramToken: string;
@@ -877,50 +877,27 @@ proc setupIpcServer(cfg: DonkeyConfig;
                     gatewayInboundMemory: MdFileAdapter;
                     gatewayInboundLog: Logger) =
   let sockPath = cfg.home / SockFileName
+  let channels = ActiveChannels(
+    telegram: telegramToken.len > 0, discord: discordToken.len > 0,
+    wecom: wecomCorpId.len > 0, wechat: wechatAppId.len > 0,
+    feishu: feishuAppId.len > 0, slack: slackBotToken.len > 0, qq: qqEnabled)
   let ipcStatusFn: StatusProvider = proc(): DaemonStatus {.gcsafe, raises: [].} =
-    var sessions: seq[SessionInfo]
-    for (uid, chans) in sm.listSessions():
-      var chanNames: seq[string]
-      for (ck, _) in chans:
-        chanNames.add($ck)
-      sessions.add(SessionInfo(userId: $uid, channels: chanNames))
-    var activeChannels: seq[string]
-    if telegramToken.len > 0: activeChannels.add("telegram")
-    if discordToken.len > 0: activeChannels.add("discord")
-    if wecomCorpId.len > 0: activeChannels.add("wecom")
-    if wechatAppId.len > 0: activeChannels.add("wechat")
-    if feishuAppId.len > 0: activeChannels.add("feishu")
-    if slackBotToken.len > 0: activeChannels.add("slack")
-    if qqEnabled: activeChannels.add("qq")
+    ## Reads the live session table (runtime.sm): the `sm` argument is a copy
+    ## taken at startup, and showed the startup sessions forever.
     var memoryStats: MemoryStats
+    var memoryBackend = "md"
     when defined(withPostgres) or defined(withSqlite):
       if gatewayInboundMemory.hasMagmaBackend:
+        memoryBackend = "md+" & gatewayInboundMemory.magmaBackendName
         try:
           memoryStats = loadMagmaMemoryStats(gatewayInboundMemory)
         except CatchableError:
           discard
-    DaemonStatus(
-      uptimeSec:     (nowMs() - daemonStartMs) div 1000,
-      sessionCount:  sm.sessionCount(),
-      sessions:      sessions,
-      channels:      activeChannels,
-      providers:     availableProviderNames(detectProviderAvailability()),
-      routeCounts:   runtime.routeHealth.topRouteCounts(),
-      routeMetrics:  runtime.routeHealth.topRouteMetrics(),
-      recentRouteMetrics: runtime.routeHealth.topRecentRouteMetrics(),
-      recentProviderMetrics: runtime.routeHealth.topRecentProviderMetrics(),
-      providerCooldowns: runtime.routeHealth.activeCooldownLabels(),
-      toolsCount:    toolsCount,
-      memoryBackend: block:
-        when defined(withPostgres) or defined(withSqlite):
-          if gatewayInboundMemory.hasMagmaBackend:
-            "md+" & gatewayInboundMemory.magmaBackendName
-          else:
-            "md"
-        else:
-          "md",
-      memoryStats:   memoryStats,
-    )
+    daemonStatus(runtime.sm, DaemonStatusInputs(
+      channels: channels, health: runtime.routeHealth, toolsCount: toolsCount,
+      uptimeSec: (nowMs() - daemonStartMs) div 1000,
+      providers: availableProviderNames(detectProviderAvailability()),
+      memoryBackend: memoryBackend, memoryStats: memoryStats))
   let ipcLogFn: LogProvider = proc(n: int): seq[IpcLogEntry] {.gcsafe, raises: [].} =
     for e in ringSnapshot(n):
       result.add(IpcLogEntry(ts: e.ts, level: e.level, subsys: e.sub, msg: e.msg))
@@ -933,20 +910,21 @@ proc setupIpcServer(cfg: DonkeyConfig;
         raise e
       except Exception as e:  ## effect boundary: callee raises are unannotated
         raise newException(CatchableError, "gateway inbound: " & e.msg, e)
+  let isRevokedCheck: ProfileCheck =
+    proc(userId: UserId): bool {.gcsafe, raises: [CatchableError].} =
+      try: gatewayInboundMemory.isRevoked(userId)
+      except CatchableError as e: raise e
+      except Exception as e:  ## effect boundary: callee raises are unannotated
+        raise newException(CatchableError, e.msg, e)
+  let isDmAllowedCheck: ProfileCheck =
+    proc(userId: UserId): bool {.gcsafe, raises: [CatchableError].} =
+      try: gatewayInboundMemory.isDmAllowed(userId)
+      except CatchableError as e: raise e
+      except Exception as e:  ## effect boundary: callee raises are unannotated
+        raise newException(CatchableError, e.msg, e)
   let gwAuthorizeFn: AuthorizeFn =
     proc(userId: UserId): AuthVerdict {.gcsafe, raises: [].} =
-      ## Same policy as the ingress: revocation wins, then the DM allowlist.
-      ## A profile that cannot be read fails closed.
-      try:
-        if gatewayInboundMemory.isRevoked(userId):
-          avRevoked
-        elif cfg.dmPolicy != DmPolicyOpen and
-             not gatewayInboundMemory.isDmAllowed(userId):
-          avNotAllowed
-        else:
-          avAllowed
-      except Exception:  ## effect boundary: callee raises are unannotated
-        avRevoked
+      authorizeUser(userId, isRevokedCheck, isDmAllowedCheck, cfg.dmPolicy)
   try:
     startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
     log.info("IPC socket: " & sockPath)
@@ -967,49 +945,25 @@ proc setupIpcServer(cfg: DonkeyConfig;
       detectProviderAvailability(),
       runtime.routeHealth.cooldowns(),
       aggregateProviderFeedback(runtime.routeHealth.feedback()))
-  let gwSessionActionFn: GatewaySessionActionFn =
-    proc(rawUserId: string; taskKind: TaskKind;
-         payload: string): GatewaySessionActionOutcome
+  let enqueueSessionTask: SessionTaskEnqueue =
+    proc(msg: InboundMessage; kind: TaskKind; payload: string)
         {.gcsafe, raises: [CatchableError].} =
-      ## The dashboard carries the raw session key; it is never run through
-      ## `apiUserId`. An unknown key is a 404, a revoked profile a 403
-      ## (`isRevoked` already answers "revoked" when the profile is unreadable).
-      ## The action takes the raw **user key** (the second column of the
-      ## dashboard table), not the session id: accepting both made a user key
-      ## that equals another session's id resolve to the wrong session.
-      if rawUserId notin runtime.sm.entries:
-        return gsaoNotFound
-      let sessionKey = rawUserId
-      let uid = UserId(sessionKey)
-      ## Same policy as the API: revocation first, then the DM allowlist. A
-      ## policy denial must not answer 202 for a task the ingress will drop.
-      case gwAuthorizeFn(uid)
-      of avAllowed: discard
-      of avRevoked, avNotAllowed: return gsaoRevoked
-      ## Answer on the channel the user actually uses. Passing the session key
-      ## as a `ckCli` channel id recorded a fake channel and sent the
-      ## confirmation to stdout.
-      let target = runtime.sm.latestChannelFor(sessionKey)
       try:
         ensureSessionTask(
-          runtime.sm,
-          InboundMessage(
-            userId: uid,
-            channel: target.kind,
-            channelId: target.rawId,
-            rawChannelId: target.rawId,
-          ),
+          runtime.sm, msg,
           buildDaemonSessionServices(gatewayInboundCtx, cfg, gatewayInboundMemory,
                                      gatewayInboundLog),
-          runtime.msgSeq,
-          taskKind,
-          payload,
-        )
+          runtime.msgSeq, kind, payload)
       except CatchableError as e:
         raise e
       except Exception as e:  ## effect boundary: callee raises are unannotated
         raise newException(CatchableError, "gateway session task: " & e.msg, e)
-      gsaoAccepted
+  let gwSessionActionFn: GatewaySessionActionFn =
+    proc(rawUserId: string; taskKind: TaskKind;
+         payload: string): GatewaySessionActionOutcome
+        {.gcsafe, raises: [CatchableError].} =
+      runSessionAction(runtime.sm, rawUserId, taskKind, payload,
+                       gwAuthorizeFn, enqueueSessionTask)
   let httpBind = block:
     let raw = getEnv("DONKEY_HTTP_BIND").strip()
     if raw.len > 0: raw else: "127.0.0.1"
@@ -1365,7 +1319,7 @@ proc setupDaemonRuntime(ctx: DaemonContext;
                         cfg: DonkeyConfig;
                         memory: MdFileAdapter;
                         log: Logger) =
-  setupIpcServer(cfg, ctx.runtime, ctx.runtime.sm, ctx.services.tools.len + nativeSessionTools().len, ctx.runtime.daemonStartMs,
+  setupIpcServer(cfg, ctx.runtime, ctx.services.tools.len + nativeSessionTools().len, ctx.runtime.daemonStartMs,
                  ctx.env.telegramToken, ctx.env.discordToken, ctx.env.wecomCorpId,
                  ctx.env.wechatAppId, ctx.env.feishuAppId, ctx.env.slackBotToken,
                  ctx.adapters.qq.enabled(), log,
