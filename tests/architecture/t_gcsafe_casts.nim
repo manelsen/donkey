@@ -14,7 +14,7 @@ import ./t_nim_source
 const
   CastPragma = "{.cast(gcsafe).}"
   ReasonMarker = "## gcsafe:"
-  UnexplainedBudget = 96
+  UnexplainedBudget = 63
     ## Casts in src/ without a reason. Lower it as casts are removed or
     ## explained; it must never go up.
 
@@ -37,8 +37,12 @@ func hasReason(line, comments: string): bool =
 func castCount(code: string): int =
   ## Casts in a line of code: `cast(gcsafe)` as a pragma item, alone or among
   ## others (`{.cast(gcsafe), cast(noSideEffect).}`), however it is spaced.
-  ## In code it can only be a pragma; a type cast is `cast[T](x)`.
+  ## In code it can only be a pragma; a type cast is `cast[T](x)`. The older
+  ## block form `{.gcsafe.}:` switches the check off the same way and counts
+  ## too (a proc pragma `{.gcsafe.} =` does not).
   let squeezed = code.multiReplace((" ", ""), ("\t", ""))
+  if squeezed.startsWith("{.gcsafe.}:"):
+    inc result
   var at = squeezed.find("cast(gcsafe)")
   while at >= 0:
     if at == 0 or not isIdentChar(squeezed[at - 1]):  ## not `broadcast(...)`
@@ -73,6 +77,8 @@ proc runTests*() =
       check castSites("x", "{.cast(noSideEffect), cast( gcsafe ).}: discard").len == 1
       check castSites("x", "let p = cast[pointer](x)").len == 0
       check castSites("x", "broadcast(gcsafe)").len == 0
+      check castSites("x", "  {.gcsafe.}:\n    discard").len == 1
+      check castSites("x", "proc p() {.gcsafe.} = discard").len == 0
       check castSites("x", "{.raises: [], cast(gcsafe).}: discard").len == 1
       check not castSites("x", "let l = \"## gcsafe: not a comment\"\n{.cast(gcsafe).}:")[0].explained
       check castSites("x", "let l = 1  ## gcsafe: a real comment\n{.cast(gcsafe).}:")[0].explained

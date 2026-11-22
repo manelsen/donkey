@@ -526,79 +526,78 @@ proc newWebhookTlsContext(cfg: WebhookConfig; logger: Logger): SslContext =
     nil
 
 proc webhookWorker(arg: WebhookWorkerArg) {.thread.} =
-  {.cast(gcsafe).}:
-    var tlsContext: SslContext
-    var lastTlsCheck: MonoTime
-    var certMtime, keyMtime: times.Time
-    var initError = ""
-    if arg.cfg.tlsCertFile.len > 0:
-      try:
-        tlsContext = newWebhookTlsContext(arg.cfg, arg.logger)
-        if tlsContext == nil:
-          initError = "TLS certificate unavailable"
-        else:
-          certMtime = getLastModificationTime(arg.cfg.tlsCertFile)
-          keyMtime = getLastModificationTime(arg.cfg.tlsKeyFile)
-          lastTlsCheck = getMonoTime()
-      except CatchableError as e:
-        initError = "cannot stat TLS certificate: " & e.msg
-    if arg.ready != nil:
-      try:
-        arg.ready[].send(initError)
-      except CatchableError:
-        discard
-    if initError.len > 0:
-      arg.logger.error("webhook: TLS worker stopped: " & initError)
-      return
+  var tlsContext: SslContext
+  var lastTlsCheck: MonoTime
+  var certMtime, keyMtime: times.Time
+  var initError = ""
+  if arg.cfg.tlsCertFile.len > 0:
+    try:
+      tlsContext = newWebhookTlsContext(arg.cfg, arg.logger)
+      if tlsContext == nil:
+        initError = "TLS certificate unavailable"
+      else:
+        certMtime = getLastModificationTime(arg.cfg.tlsCertFile)
+        keyMtime = getLastModificationTime(arg.cfg.tlsKeyFile)
+        lastTlsCheck = getMonoTime()
+    except CatchableError as e:
+      initError = "cannot stat TLS certificate: " & e.msg
+  if arg.ready != nil:
+    try:
+      arg.ready[].send(initError)
+    except CatchableError:
+      discard
+  if initError.len > 0:
+    arg.logger.error("webhook: TLS worker stopped: " & initError)
+    return
 
-    while true:
-      let fd = gWebhookQueue.recv()
-      if fd == SocketHandle(-1):
-        break
-      var client: Socket
-      try:
-        ## Unbuffered: every recv returns after the kernel read, so the body
-        ## loop observes the total request deadline even for trickle clients.
-        client = newSocket(fd, buffered = false)
-      except CatchableError:
-        discard posix.close(cint(fd))
+  while true:
+    let fd = gWebhookQueue.recv()
+    if fd == SocketHandle(-1):
+      break
+    var client: Socket
+    try:
+      ## Unbuffered: every recv returns after the kernel read, so the body
+      ## loop observes the total request deadline even for trickle clients.
+      client = newSocket(fd, buffered = false)
+    except CatchableError:
+      discard posix.close(cint(fd))
+      continue
+    try:
+      ## Without SO_RCVTIMEO a silent client would hold this worker until
+      ## the request deadline; refuse rather than serve it unbounded.
+      applyWebhookClientTimeouts(client).isOkOr:
+        arg.logger.warn("webhook: " & error)
+        try: client.close() except CatchableError: discard
         continue
-      try:
-        ## Without SO_RCVTIMEO a silent client would hold this worker until
-        ## the request deadline; refuse rather than serve it unbounded.
-        applyWebhookClientTimeouts(client).isOkOr:
-          arg.logger.warn("webhook: " & error)
+      if arg.cfg.tlsCertFile.len > 0:
+        ## Reload the certificate when the files change, so rotation does
+        ## not require a daemon restart. A failed reload keeps the old
+        ## context and is retried on the next connection.
+        let now = getMonoTime()
+        if inMilliseconds(now - lastTlsCheck) >= WebhookTlsReloadIntervalMs:
+          lastTlsCheck = now
+          try:
+            let newCertMtime = getLastModificationTime(arg.cfg.tlsCertFile)
+            let newKeyMtime = getLastModificationTime(arg.cfg.tlsKeyFile)
+            if newCertMtime != certMtime or newKeyMtime != keyMtime:
+              let reloaded = newWebhookTlsContext(arg.cfg, arg.logger)
+              if reloaded != nil:
+                tlsContext = reloaded
+                certMtime = newCertMtime
+                keyMtime = newKeyMtime
+                arg.logger.info("webhook: TLS certificate reloaded")
+          except CatchableError as e:
+            arg.logger.warn("webhook: TLS reload failed: " & e.msg)
+        try:
+          tlsContext.wrapConnectedSocket(client, handshakeAsServer)
+        except CatchableError as e:
+          arg.logger.warn("webhook: TLS handshake failed: " & e.msg)
           try: client.close() except CatchableError: discard
           continue
-        if arg.cfg.tlsCertFile.len > 0:
-          ## Reload the certificate when the files change, so rotation does
-          ## not require a daemon restart. A failed reload keeps the old
-          ## context and is retried on the next connection.
-          let now = getMonoTime()
-          if inMilliseconds(now - lastTlsCheck) >= WebhookTlsReloadIntervalMs:
-            lastTlsCheck = now
-            try:
-              let newCertMtime = getLastModificationTime(arg.cfg.tlsCertFile)
-              let newKeyMtime = getLastModificationTime(arg.cfg.tlsKeyFile)
-              if newCertMtime != certMtime or newKeyMtime != keyMtime:
-                let reloaded = newWebhookTlsContext(arg.cfg, arg.logger)
-                if reloaded != nil:
-                  tlsContext = reloaded
-                  certMtime = newCertMtime
-                  keyMtime = newKeyMtime
-                  arg.logger.info("webhook: TLS certificate reloaded")
-            except CatchableError as e:
-              arg.logger.warn("webhook: TLS reload failed: " & e.msg)
-          try:
-            tlsContext.wrapConnectedSocket(client, handshakeAsServer)
-          except CatchableError as e:
-            arg.logger.warn("webhook: TLS handshake failed: " & e.msg)
-            try: client.close() except CatchableError: discard
-            continue
-        handleConnection(client, arg.cfg, arg.logger)
-      except CatchableError as e:
-        arg.logger.warn("webhook: connection error: " & e.msg)
-        try: client.close() except CatchableError: discard
+      handleConnection(client, arg.cfg, arg.logger)
+    except CatchableError as e:
+      arg.logger.warn("webhook: connection error: " & e.msg)
+      try: client.close() except CatchableError: discard
 
 proc startWebhookPool(cfg: WebhookConfig; logger: Logger): Result[void, string] =
   ## Opens the queue and starts every worker. After a failed worker

@@ -13,7 +13,10 @@ import ../../domain/calc  # globMatch
 import ../../infra/sandbox/wasm_tools
 import ./fs_tools
 
-let searchLog = newLogger("donkey.tools.search")
+template searchLog(): Logger =
+  ## Built where it is used: a global Logger holds GC memory, which made
+  ## every call site need {.cast(gcsafe).}. `newLogger` is a cheap func.
+  newLogger("donkey.tools.search")
 
 # ── find ──────────────────────────────────────────────────────────────────────
 
@@ -36,8 +39,7 @@ proc walkFind(path, pattern, kind: string; max: int;
       of pcLinkToFile, pcLinkToDir:
         discard  ## skip symlinks — prevents escaping the paddock
   except CatchableError as e:
-    {.cast(gcsafe).}:
-      searchLog.warn("walkFind error at " & path & ": " & e.msg)
+    searchLog().warn("walkFind error at " & path & ": " & e.msg)
 
 proc performFind*(path, pattern, kind: string; max: int): string {.gcsafe, raises: [].} =
   var results: seq[string] = @[]
@@ -69,8 +71,7 @@ proc walkFindStructured(path, pattern, kind: string; max: int;
       of pcLinkToFile, pcLinkToDir:
         discard
   except CatchableError as e:
-    {.cast(gcsafe).}:
-      searchLog.warn("walkFindStructured error at " & path & ": " & e.msg)
+    searchLog().warn("walkFindStructured error at " & path & ": " & e.msg)
 
 proc performFindStructured*(path, pattern, kind: string; max: int;
                             paddock = ""): StructuredToolResult {.gcsafe, raises: [].} =
@@ -142,8 +143,7 @@ proc grepFile(path, pattern: string; max: int;
         results.add(path & ":" & $lineNum & ":" & line)
         if results.len >= max: return
   except CatchableError as e:
-    {.cast(gcsafe).}:
-      searchLog.warn("grepFile error on " & path & ": " & e.msg)
+    searchLog().warn("grepFile error on " & path & ": " & e.msg)
 
 proc grepDir(path, pattern: string; recursive: bool;
              max: int; results: var seq[string]) {.gcsafe, raises: [].} =
@@ -159,8 +159,7 @@ proc grepDir(path, pattern: string; recursive: bool;
       of pcLinkToFile, pcLinkToDir:
         discard  ## skip symlinks — prevents escaping the paddock
   except CatchableError as e:
-    {.cast(gcsafe).}:
-      searchLog.warn("grepDir error at " & path & ": " & e.msg)
+    searchLog().warn("grepDir error at " & path & ": " & e.msg)
 
 proc performGrep*(pattern, path: string; recursive: bool;
                   max: int): string {.gcsafe, raises: [].} =
@@ -189,8 +188,7 @@ proc grepFileStructured(path, pattern, paddock: string; max: int;
         })
         if matches.len >= max: return
   except CatchableError as e:
-    {.cast(gcsafe).}:
-      searchLog.warn("grepFileStructured error on " & path & ": " & e.msg)
+    searchLog().warn("grepFileStructured error on " & path & ": " & e.msg)
 
 proc grepDirStructured(path, pattern, paddock: string; recursive: bool; max: int;
                        matches: var seq[JsonNode]) {.gcsafe, raises: [].} =
@@ -206,8 +204,7 @@ proc grepDirStructured(path, pattern, paddock: string; recursive: bool; max: int
       of pcLinkToFile, pcLinkToDir:
         discard
   except CatchableError as e:
-    {.cast(gcsafe).}:
-      searchLog.warn("grepDirStructured error at " & path & ": " & e.msg)
+    searchLog().warn("grepDirStructured error at " & path & ": " & e.msg)
 
 proc performGrepStructured*(pattern, path: string; recursive: bool;
                             max: int; paddock = ""): StructuredToolResult {.gcsafe, raises: [].} =

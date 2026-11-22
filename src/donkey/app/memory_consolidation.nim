@@ -217,12 +217,11 @@ proc persistConsolidation(memory: MemoryRuntimePort;
     discard items
     episode
   let writeEpisode = proc(uid: UserId; value: EpisodeJournal) {.gcsafe.} =
-    {.cast(gcsafe).}:
-      let saved = memory.saveEpisode(uid, value)
-      if saved.isOk:
-        episodeSaved = true
-      else:
-        log.warn("memory consolidation: episode: " & saved.error)
+    let saved = memory.saveEpisode(uid, value)
+    if saved.isOk:
+      episodeSaved = true
+    else:
+      log.warn("memory consolidation: episode: " & saved.error)
   let loadUserId = proc(): UserId {.gcsafe.} = userId
 
   runContemplationNow(loadMemories, buildEpisode, writeEpisode, loadUserId)

@@ -235,21 +235,20 @@ type WeComWebhookArgs = object
   logger: Logger
 
 proc webhookThread(args: WeComWebhookArgs) {.thread.} =
-  {.cast(gcsafe).}:
-    var server = newSocket(buffered = false)  ## see http_request_reader
-    server.setSockOpt(OptReuseAddr, true)
-    server.bindAddr(Port(args.port))
-    server.listen()
-    args.logger.info("wecom: webhook listening on port " & $args.port)
-    while true:
-      var client: Socket
-      try:
-        server.accept(client)
-        handleWeComConn(client, args.token, args.logger)
-      except CatchableError as e:
-        args.logger.warn("wecom: accept error: " & e.msg)
-        recordWebhookFailure("wecom", "accept: " & e.msg)
-        try: client.close() except CatchableError: discard
+  var server = newSocket(buffered = false)  ## see http_request_reader
+  server.setSockOpt(OptReuseAddr, true)
+  server.bindAddr(Port(args.port))
+  server.listen()
+  args.logger.info("wecom: webhook listening on port " & $args.port)
+  while true:
+    var client: Socket
+    try:
+      server.accept(client)
+      handleWeComConn(client, args.token, args.logger)
+    except CatchableError as e:
+      args.logger.warn("wecom: accept error: " & e.msg)
+      recordWebhookFailure("wecom", "accept: " & e.msg)
+      try: client.close() except CatchableError: discard
 
 ## Thread handle for the WeCom webhook OS thread.
 ## Safe: only assigned once via createThread in startWebhook.

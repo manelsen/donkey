@@ -139,9 +139,8 @@ proc requestSessionStop*() {.gcsafe, raises: [].} =
   ## Process-wide shutdown signal. Actors compare the generation they started
   ## with; a newer generation means "stop". Per-session `/stop` keeps using the
   ## inbox cancel message.
-  {.cast(gcsafe).}:
-    gShuttingDown = true
-    inc gSessionStopGeneration
+  gShuttingDown = true
+  inc gSessionStopGeneration
 
 proc requestUserStop*(userId: string) {.gcsafe, raises: [].} =
   ## Bumps the per-user interrupt counter. Safe to set from a channel handler
@@ -186,17 +185,14 @@ proc requestTurnInterrupt*(sm: var SessionManager; userId: UserId)
       entry[].awaitingAsk = false
 
 proc daemonShuttingDown*(): bool {.gcsafe, raises: [].} =
-  {.cast(gcsafe).}:
-    gShuttingDown
+  gShuttingDown
 
 proc currentSessionStopGeneration*(): uint64 {.gcsafe, raises: [].} =
-  {.cast(gcsafe).}:
-    gSessionStopGeneration
+  gSessionStopGeneration
 
 proc isSessionStopRequested*(startGeneration: uint64): bool
                                            {.gcsafe, raises: [].} =
-  {.cast(gcsafe).}:
-    gSessionStopGeneration != startGeneration
+  gSessionStopGeneration != startGeneration
 
 proc registerActor*() {.gcsafe, raises: [].} =
   {.cast(gcsafe).}:

@@ -304,26 +304,24 @@ proc discordReplySink*(dcAdapter: DiscordAdapter): DiscordReplySink =
   DiscordReplySink(
     respond: proc(event: DiscordRawEvent; title, text: string; color: int;
                   ephemeral: bool): Result[void, string] {.gcsafe.} =
-      {.cast(gcsafe).}:
-        if title.len > 0:
-          let embed = dcAdapter.sendInteractionEmbedPage(
-            event.interactionId, event.interactionToken, title, text, color, @[],
-            ephemeral = ephemeral)
-          if embed.isOk:
-            return ok()
-        dcAdapter.sendInteractionResponse(
-          event.interactionId, event.interactionToken, text, ephemeral = ephemeral),
+      if title.len > 0:
+        let embed = dcAdapter.sendInteractionEmbedPage(
+          event.interactionId, event.interactionToken, title, text, color, @[],
+          ephemeral = ephemeral)
+        if embed.isOk:
+          return ok()
+      dcAdapter.sendInteractionResponse(
+        event.interactionId, event.interactionToken, text, ephemeral = ephemeral),
     post: proc(event: DiscordRawEvent; userId: UserId; text: string;
                private: bool): Result[void, string] {.gcsafe.} =
-      {.cast(gcsafe).}:
-        ## The DM goes to the Discord account that sent the command, not to
-        ## whichever account of the same user the resolver lists first.
-        let target =
-          if private: "channel:" & ? dcAdapter.dmChannelFor(event.discordUserId)
-          elif event.channelId.len > 0: "channel:" & event.channelId
-          else: ""
-        dcAdapter.send(OutboundMessage(
-          userId: userId, channel: ckDiscord, text: text, replyTo: target)),
+      ## The DM goes to the Discord account that sent the command, not to
+      ## whichever account of the same user the resolver lists first.
+      let target =
+        if private: "channel:" & ? dcAdapter.dmChannelFor(event.discordUserId)
+        elif event.channelId.len > 0: "channel:" & event.channelId
+        else: ""
+      dcAdapter.send(OutboundMessage(
+        userId: userId, channel: ckDiscord, text: text, replyTo: target)),
   )
 
 func discordReplyStyle*(reply: CommandReply): (string, int) =
