@@ -90,10 +90,15 @@ proc threadCheckBuilder(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} 
   var expected: int
   {.cast(gcsafe).}:
     expected = gExpectedBuilderThreadId
-  if getThreadId() != expected:
-    raise newException(ValueError, "builder ran off the event loop thread")
+  if getThreadId() == expected:
+    raise newException(ValueError, "builder ran on the event loop thread")
+  ## The closure captures the thread that built it and checks it runs there:
+  ## built on one worker and called on another would fail too.
+  let builtOn = getThreadId()
   let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
-    ok(CompletionResponse(text: "event-loop-builder"))
+    if getThreadId() != builtOn:
+      return err("closure called on another thread than the one that built it")
+    ok(CompletionResponse(text: "worker-builder"))
   ProviderBundle(completeFn: complete)
 
 proc builderExceptionBuilder(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} =
@@ -235,15 +240,16 @@ proc runTests*() =
       check ProviderWorkerCount == 4
       check ProviderQueueDepth > 0
 
-    test "builder runs on the caller thread":
-      # The builder is `nimcall` (no shared environment), but the executor still
-      # invokes it on the event loop before enqueuing.
+    test "builder runs on the worker that calls the provider":
+      # The bundle's closures must be built, used and freed on one thread:
+      # ORC's cycle collector keeps per-thread roots, so a closure built on
+      # the loop and freed on a worker crashes under Nim 2.4.
       gExpectedBuilderThreadId = getThreadId()
       let builder: ProviderRuntimeBuilder = threadCheckBuilder
       let res = waitFor asyncProviderComplete(
         builder, ProviderSpec(providerName: "stub"), CompletionRequest())
       check res.isOk
-      check res.value.text == "event-loop-builder"
+      check res.value.text == "worker-builder"
 
     test "builder exception becomes an error Result and the pool stays healthy":
       let builder: ProviderRuntimeBuilder = builderExceptionBuilder

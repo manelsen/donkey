@@ -27,7 +27,7 @@
 ## always wins, the remembered chat is the fallback, and the identity's raw id
 ## is the last resort (DMs).
 
-import std/[net, json, options, os, strutils, tables, unicode]
+import std/[net, json, os, strutils, tables, unicode]
 import ../../core/pipeops
 import ../../core/types
 import ../../core/channels/flood_gate

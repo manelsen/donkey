@@ -15,7 +15,6 @@ import ../../domain/providers/profile_fireworks
 import ../../core/pipeops
 import ../../ports/http
 import ../../ports/provider
-import ../../core/providers/smart_routing
 import zhipu
 import openrouter
 import anthropic

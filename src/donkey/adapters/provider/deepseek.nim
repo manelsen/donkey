@@ -11,7 +11,6 @@
 
 import std/[json, streams, strutils]
 import ../../domain/message
-import ../../domain/providers/openai_pure
 import ../../domain/providers/compat
 import ../../ports/provider
 import ../../core/pipeops
