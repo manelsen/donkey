@@ -4,6 +4,7 @@ when defined(withPostgres) or defined(withSqlite):
   import std/[os, strutils]
   import ../../core/types
   import ../../core/providers/smart_routing
+  import ../../app/channel_prefs_parse
   import ../../core/memory_rerank_prefs
   import ../../ports/memory
   import ../../ports/embedding

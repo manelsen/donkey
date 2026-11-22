@@ -33,6 +33,23 @@ proc tryParseChannelPrefs*(preferencesMd: string): Result[ChannelPrefs, string] 
   except CatchableError as e:
     err("PREFERENCES.md: " & e.msg)
 
+proc parseSmartRoutingPrefs*(preferencesMd: string): SmartRoutingPrefs {.raises: [].} =
+  ## The routing preferences, read as TOML like every other preference, so
+  ## escapes, comments and every string form mean what they mean in TOML. A
+  ## document that is not valid TOML is still read line by line
+  ## (`scanSmartRoutingPrefs`) so the turn can be routed.
+  if preferencesMd.len == 0:
+    return defaultSmartRoutingPrefs()
+  try:
+    let t = parseToml(preferencesMd)
+    var entries: seq[(string, string)]
+    for key in ["provider", "model", "thinking", "budget"]:
+      if t.hasKey(key) and t[key].kind == TomlValueKind.String:
+        entries.add((key, t[key].getStr()))
+    smartRoutingPrefsFrom(entries)
+  except CatchableError:
+    scanSmartRoutingPrefs(preferencesMd)
+
 proc parseChannelPrefs*(preferencesMd: string): ChannelPrefs =
   ## For callers that must go on with something (building a turn): a
   ## malformed document reads as the defaults. Commands use

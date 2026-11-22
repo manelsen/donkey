@@ -12,6 +12,7 @@ import ../../core/pipeops
 import ../../core/utf8
 import ../../core/commands/command_text
 import ../../core/providers/smart_routing
+import ../../app/channel_prefs_parse
 import ../../adapters/memory/md_file
 import ../../adapters/memory/channel_prefs_store
 import ../../domain/message
