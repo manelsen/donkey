@@ -3,6 +3,8 @@ g0	tests/adapters/channel/t_dm_gate_runtimes.nim
 g0	tests/adapters/channel/t_embedded_webhooks.nim
 g0	tests/infra/t_event_queue.nim
 g0	tests/infra/t_thread_handle.nim
+g0	tests/infra/t_thread_owner.nim
+g0	tests/infra/t_fixed.nim
 g0	tests/adapters/channel/t_doctor_report.nim
 g0	tests/adapters/channel/t_line_adapter.nim
 g0	tests/adapters/channel/t_line_runtime.nim
@@ -122,6 +124,7 @@ g1	tests/channel/t_wecom.nim
 g1	tests/channel/t_whatsapp.nim
 g1	tests/config/t_clawhub_registry.nim
 g1	tests/config/t_dotenv.nim
+g1	tests/config/t_toml.nim
 g1	tests/config/t_loader.nim
 g1	tests/config/t_skills_registry.nim
 g1	tests/core/memory/t_blackboard.nim

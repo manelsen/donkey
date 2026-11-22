@@ -7,7 +7,8 @@
 ## Thread-safe via a Lock. agentEventRingInit() must be called once in the
 ## daemon before any pushAgentEvent() calls (same pattern as log ringInit()).
 
-import std/[json, locks, times]
+import std/[json, times]
+import ../infra/thread_owner
 
 const AgentEventRingCap* = 200
 
@@ -30,46 +31,40 @@ type
 
 # ── ring buffer ───────────────────────────────────────────────────────────────
 
-var gAgentRing:   array[AgentEventRingCap, AgentEvent]
-var gAgentHead:   int
-var gAgentCount:  int
-var gAgentLock:   Lock
-var gAgentReady:  bool
-initLock(gAgentLock)  ## module init: before any thread can push
-
-template withAgentRing(body: untyped) =
-  ## The one way to touch the ring, from any thread.
-  ## gcsafe: the ring and its counters are only read or written here, under gAgentLock; events are copied in and out
-  {.cast(gcsafe).}:
-    withLock gAgentLock:
-      body
+## The ring belongs to the daemon loop: the orchestrator, tool loop and
+## subagents push there, and the gateway and IPC read there. It is
+## thread-local to the loop (gcsafe, no lock, no cast); gAgentOwner reports
+## any other thread that touches it.
+var gAgentRing  {.threadvar.}: array[AgentEventRingCap, AgentEvent]
+var gAgentHead  {.threadvar.}: int
+var gAgentCount {.threadvar.}: int
+var gAgentReady {.threadvar.}: bool
+var gAgentOwner: ThreadOwner
 
 proc agentEventRingInit*() {.gcsafe.} =
   ## Enables (or resets) the ring.
-  withAgentRing:
-    gAgentHead  = 0
-    gAgentCount = 0
-    gAgentReady = true
+  discard gAgentOwner.isOwner("agent event ring")
+  gAgentHead  = 0
+  gAgentCount = 0
+  gAgentReady = true
 
 proc pushAgentEvent*(ev: AgentEvent) {.gcsafe.} =
+  if not gAgentOwner.isOwner("agent event ring") or not gAgentReady: return
   var e = ev
   if e.ts.len == 0:
     e.ts = now().utc().format("yyyy-MM-dd'T'HH:mm:ss'Z'")
-  withAgentRing:
-    if not gAgentReady: return
-    gAgentRing[gAgentHead mod AgentEventRingCap] = e
-    inc gAgentHead
-    if gAgentCount < AgentEventRingCap: inc gAgentCount
+  gAgentRing[gAgentHead mod AgentEventRingCap] = e
+  inc gAgentHead
+  if gAgentCount < AgentEventRingCap: inc gAgentCount
 
 proc agentEventSnapshot*(n: int): seq[AgentEvent] {.gcsafe.} =
   ## Returns up to `n` most recent events in insertion order.
-  withAgentRing:
-    if not gAgentReady: return @[]
-    let take = min(n, gAgentCount)
-    let start = (gAgentHead - take + AgentEventRingCap * 2) mod AgentEventRingCap
-    result = newSeq[AgentEvent](take)
-    for i in 0 ..< take:
-      result[i] = gAgentRing[(start + i) mod AgentEventRingCap]
+  if not gAgentOwner.isOwner("agent event ring") or not gAgentReady: return @[]
+  let take = min(n, gAgentCount)
+  let start = (gAgentHead - take + AgentEventRingCap * 2) mod AgentEventRingCap
+  result = newSeq[AgentEvent](take)
+  for i in 0 ..< take:
+    result[i] = gAgentRing[(start + i) mod AgentEventRingCap]
 
 # ── serialisation ─────────────────────────────────────────────────────────────
 

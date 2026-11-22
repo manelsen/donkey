@@ -9,10 +9,9 @@
 ##   permissions = ["--allow-net=api.example.com"]
 
 import std/[os, strutils]
-import parsetoml
 import ../domain/builtin_tools
 import ../core/pipeops
-import ./toml_parse
+import ./toml
 
 type
   SkillManifest* = object
@@ -108,7 +107,7 @@ proc loadSkillRegistry*(path: string): seq[SkillManifest] {.gcsafe.} =
   ## Returns empty seq if file does not exist or contains no entries.
   if not fileExists(path):
     return @[]
-  var t: parsetoml.TomlValueRef
+  var t: TomlValueRef
   t = parseTomlFile(path)
   if not t.hasKey("skill"):
     return @[]

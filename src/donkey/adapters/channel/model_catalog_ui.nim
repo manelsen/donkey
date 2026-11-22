@@ -12,20 +12,21 @@ import ../../adapters/memory/md_file
 import ../../adapters/memory/channel_prefs_store
 import ../../domain/message
 import ../../ports/provider
+import ../../infra/thread_owner
 
 const ModelPageSize* = 6  ## Discord: máx 5 action rows. 6 modelos / 2 por row = 3 rows + 1 nav = 4 rows (seguro)
 
 type ModelMenuEntry* = tuple[provider: string, models: seq[string]]
 
-var modelMenuCache: seq[ModelMenuEntry]
-var modelMenuLock: Lock  ## guards modelMenuCache; channel runtimes run on several threads
-initLock(modelMenuLock)
+## The menu and the callback tokens belong to the daemon loop, where every
+## channel runtime builds menus and resolves button taps. Thread-local to it
+## (gcsafe, no lock, no cast); gMenuOwner reports any other thread.
+var modelMenuCache {.threadvar.}: seq[ModelMenuEntry]
+var gMenuOwner: ThreadOwner
 
 template withMenuCache(body: untyped) =
-  ## gcsafe: modelMenuCache is only read or written here, under modelMenuLock; the menu is copied in and out
-  {.cast(gcsafe).}:
-    withLock modelMenuLock:
-      body
+  if gMenuOwner.isOwner("model menu cache"):
+    body
 
 proc buildModelMenu*(): seq[ModelMenuEntry] =
   ## Derives the model menu from the ProviderCatalog, so the UI always
@@ -57,15 +58,11 @@ type ModelCallbackTarget = object
   provider: string
   model: string
 
-var modelCallbackTargets: Table[string, ModelCallbackTarget]
-var modelCallbackLock: Lock
-initLock(modelCallbackLock)
+var modelCallbackTargets {.threadvar.}: Table[string, ModelCallbackTarget]
 
 template withCallbackTargets(body: untyped) =
-  ## gcsafe: modelCallbackTargets is only read or written here, under modelCallbackLock; tokens and targets are copied in and out
-  {.cast(gcsafe).}:
-    withLock modelCallbackLock:
-      body
+  if gMenuOwner.isOwner("model callback tokens"):
+    body
 
 func modelCallbackToken(provider, model: string): string =
   "mt" & ($secureHash(provider & "\0" & model)).toLowerAscii()[0 ..< 12]

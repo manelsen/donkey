@@ -7,6 +7,9 @@
 ##   on the same line or the line above.
 ## - Casts without a reason have a budget that only goes down. Removing one
 ##   means lowering `UnexplainedBudget` in the same change; adding one fails.
+## - The diet ended at zero casts. `ExplainedBudget` (0) caps the explained
+##   ones too: a new cast fails the test even with a reason, until the budget
+##   is raised on purpose.
 
 import std/[os, strutils, unittest]
 import ./t_nim_source
@@ -15,8 +18,10 @@ const
   CastPragma = "{.cast(gcsafe).}"
   ReasonMarker = "## gcsafe:"
   UnexplainedBudget = 0
-    ## Casts in src/ without a reason. Lower it as casts are removed or
-    ## explained; it must never go up.
+    ## Casts in src/ without a reason: none may come back.
+  ExplainedBudget = 0
+    ## Casts with a written reason. The codebase has none; raising this is a
+    ## deliberate, reviewed decision, never a side effect of a change.
 
 type CastSite = object
   path: string
@@ -113,6 +118,10 @@ proc runTests*() =
       if unexplained.len < UnexplainedBudget:
         checkpoint("lower UnexplainedBudget to " & $unexplained.len)
       check unexplained.len == UnexplainedBudget
+      let explained = total - unexplained.len
+      if explained > ExplainedBudget:
+        checkpoint($explained & " explained casts; ExplainedBudget is " & $ExplainedBudget)
+      check explained <= ExplainedBudget
 
 when isMainModule:
   runTests()

@@ -7,7 +7,7 @@
 ##   3. Built-in defaults (see config/types.nim)
 
 import std/[options, os, strutils]
-import parsetoml
+import ./toml
 import ./types
 import ../core/types
 import ../core/app_meta
@@ -301,7 +301,7 @@ proc loadTomlConfig*(path: string): Option[TomlValueRef] =
   if not fileExists(path):
     return none(TomlValueRef)
   try:
-    some(parseFile(path))
+    some(parseTomlFile(path))
   except CatchableError:
     none(TomlValueRef)
 

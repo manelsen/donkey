@@ -16,6 +16,7 @@
 import std/[locks, options, os, random, tables, times]
 import ../types
 import ../../ports/link_codes
+import ../../infra/thread_owner
 
 const
   LinkCodeAlpha*  = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -77,11 +78,11 @@ proc redeem*(s: LinkCodeService; code: string;
       return none(UserId)
     result = some(entry.userId)
 
-var
-  gRegistryLock: Lock
-  gServices:     Table[string, LinkCodeService]
-
-initLock(gRegistryLock)  ## module init runs before any resolver is built
+## Resolvers are built by the adapter constructors on the main thread (the
+## daemon loop), so the registry is thread-local to it: gcsafe, no lock, no
+## cast. gRegistryOwner reports a resolver built on any other thread.
+var gServices {.threadvar.}: Table[string, LinkCodeService]
+var gRegistryOwner: ThreadOwner
 
 proc serviceKey(path: string): string {.gcsafe.} =
   ## Canonical enough to make `ids.tsv` and `/home/u/ids.tsv` the same table
@@ -97,18 +98,14 @@ proc sharedLinkCodeService*(path: string): LinkCodeService {.gcsafe.} =
   ## Every resolver built from the same identity file shares this table, so a
   ## code minted on one channel is redeemable on another.
   ##
-  ## The registry is global by design (one table per identity file). Every
-  ## access happens under `gRegistryLock`; each service guards its table with
-  ## its own lock. The service itself is a `ref` shared by the resolvers: its
-  ## reference count is not atomic under ORC, so resolvers must be copied and
-  ## dropped on one thread (the daemon loop). See the ORC/YRC note in the audit.
+  ## One table per identity file. Each service guards its table with its own
+  ## lock. The service is a `ref` shared by the resolvers, and ORC does not
+  ## count references atomically: see the ORC/YRC note in the audit.
+  discard gRegistryOwner.isOwner("link code registry")
   let key = serviceKey(path)
-  ## gcsafe: gServices only under gRegistryLock; the shared service ref relies on resolvers living on the daemon loop (ORC refcounts are not atomic)
-  {.cast(gcsafe).}:
-    withLock gRegistryLock:
-      if key notin gServices:
-        gServices[key] = newLinkCodeService()
-      result = gServices[key]
+  if key notin gServices:
+    gServices[key] = newLinkCodeService()
+  result = gServices[key]
 
 proc linkCodePort*(s: LinkCodeService): LinkCodePort {.gcsafe.} =
   ## The service as the cross-channel seam every channel asks for. It carries

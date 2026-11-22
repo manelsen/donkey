@@ -3,16 +3,26 @@
 ## Lightweight, thread-safe, gcsafe. No chronos dependency.
 ## The HTTP server wrapper lives in metrics_server.nim.
 
-import std/[locks, tables, strformat]
+import std/[locks, strformat]
+import ../infra/fixed
+export fixed  ## callers read the counters (len, hasKey, [])
+
+const
+  MetricKeys = 64      ## keys per counter; the rest is counted under "_other"
+  MetricKeyBytes = 64  ## provider, channel, server or reason name
 
 type
+  Counter = FixedTable[MetricKeys, MetricKeyBytes, int]
+
   MetricsRegistry* = object
-    latencyCounts*:      Table[string, int]        # provider -> number of samples
-    latencySums*:        Table[string, float]      # provider -> sum of samples
-    errors*:             Table[string, int]        # provider -> count
-    outboundFailures*:   Table[string, int]        # channel -> count
-    webhookFailures*:    Table[string, int]        # server type -> count
-    reminderFailures*:   Table[string, int]        # reason -> count
+    ## Plain values (no GC memory): any thread records under gMetricsLock
+    ## with no cast.
+    latencyCounts*:      Counter                                           # provider -> number of samples
+    latencySums*:        FixedTable[MetricKeys, MetricKeyBytes, float]     # provider -> sum of samples
+    errors*:             Counter        # provider -> count
+    outboundFailures*:   Counter        # channel -> count
+    webhookFailures*:    Counter        # server type -> count
+    reminderFailures*:   Counter        # reason -> count
 
 var gMetrics: MetricsRegistry
 var gMetricsLock: Lock
@@ -21,13 +31,11 @@ initLock(gMetricsLock)  ## module init: before any thread can record
 
 template withMetrics(body: untyped) =
   ## The one way to touch the registry, from any thread.
-  ## gcsafe: gMetrics and gMetricsReady are only read or written here, under gMetricsLock; keys and counts are copied in and out
-  {.cast(gcsafe).}:
-    acquire(gMetricsLock)
-    try:
-      body
-    finally:
-      release(gMetricsLock)
+  acquire(gMetricsLock)
+  try:
+    body
+  finally:
+    release(gMetricsLock)
 
 proc metricsSnapshot*(): MetricsRegistry {.gcsafe, raises: [].} =
   ## A copy of the registry, taken under the lock.
@@ -37,12 +45,7 @@ proc metricsSnapshot*(): MetricsRegistry {.gcsafe, raises: [].} =
 proc initMetrics*() {.gcsafe, raises: [].} =
   ## Initializes (or resets) the metrics registry.
   withMetrics:
-    gMetrics.latencyCounts = initTable[string, int]()
-    gMetrics.latencySums = initTable[string, float]()
-    gMetrics.errors = initTable[string, int]()
-    gMetrics.outboundFailures = initTable[string, int]()
-    gMetrics.webhookFailures = initTable[string, int]()
-    gMetrics.reminderFailures = initTable[string, int]()
+    gMetrics = MetricsRegistry()
     gMetricsReady = true
 
 # ── Provider metrics (called from async context) ─────────────────────────────
@@ -50,15 +53,13 @@ proc initMetrics*() {.gcsafe, raises: [].} =
 proc recordLatency*(provider: string; ms: float) {.gcsafe.} =
   withMetrics:
     if not gMetricsReady: return
-    gMetrics.latencyCounts[provider] =
-      gMetrics.latencyCounts.getOrDefault(provider) + 1
-    gMetrics.latencySums[provider] =
-      gMetrics.latencySums.getOrDefault(provider) + ms
+    gMetrics.latencyCounts.inc(provider, 1)
+    gMetrics.latencySums.inc(provider, ms)
 
 proc recordError*(provider: string) {.gcsafe.} =
   withMetrics:
     if not gMetricsReady: return
-    gMetrics.errors[provider] = gMetrics.errors.getOrDefault(provider) + 1
+    gMetrics.errors.inc(provider, 1)
 
 # ── Operational failure counters (US-012) ────────────────────────────────────
 #    Thread-safe, gcsafe — callable from any thread.
@@ -68,27 +69,27 @@ proc recordOutboundFailure*(channel, reason: string) {.gcsafe, raises: [].} =
   ## Key: channel (e.g. "qq", "tg", "fs", "wc").
   withMetrics:
     if not gMetricsReady: return
-    gMetrics.outboundFailures[channel] = gMetrics.outboundFailures.getOrDefault(channel) + 1
+    gMetrics.outboundFailures.inc(channel, 1)
 
 proc recordWebhookFailure*(serverType, reason: string) {.gcsafe, raises: [].} =
   ## Records a webhook processing failure for metrics/observability.
   ## Key: server type (e.g. "wechat", "qq", "wecom").
   withMetrics:
     if not gMetricsReady: return
-    gMetrics.webhookFailures[serverType] = gMetrics.webhookFailures.getOrDefault(serverType) + 1
+    gMetrics.webhookFailures.inc(serverType, 1)
 
 proc webhookFailureCount*(serverType: string): int {.gcsafe, raises: [].} =
   ## Current failure count for one webhook server type (0 if never seen).
   withMetrics:
     if not gMetricsReady: return 0
-    result = gMetrics.webhookFailures.getOrDefault(serverType)
+    result = gMetrics.webhookFailures.get(serverType)
 
 proc recordReminderFailure*(reason: string) {.gcsafe, raises: [].} =
   ## Records a reminder delivery failure for metrics/observability.
   ## Key: reason string (e.g. "delivery timeout").
   withMetrics:
     if not gMetricsReady: return
-    gMetrics.reminderFailures[reason] = gMetrics.reminderFailures.getOrDefault(reason) + 1
+    gMetrics.reminderFailures.inc(reason, 1)
 
 # ── Rendering ─────────────────────────────────────────────────────────────────
 
@@ -112,7 +113,7 @@ proc renderMetrics*(): string {.gcsafe.} =
     res.add("# TYPE donkey_provider_latency_ms_count counter\n")
     for prov, count in gMetrics.latencyCounts:
       if count > 0:
-        let total = gMetrics.latencySums.getOrDefault(prov)
+        let total = gMetrics.latencySums.get(prov)
         res.add(&"donkey_provider_latency_ms_sum{{provider=\"{escapeLabel(prov)}\"}} {total}\n")
         res.add(&"donkey_provider_latency_ms_count{{provider=\"{escapeLabel(prov)}\"}} {count}\n")
 
