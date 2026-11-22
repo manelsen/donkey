@@ -113,5 +113,48 @@ meta = { version = "1.0", enabled = true }
           raised = "line" in e.msg
         check raised
 
+    test "quotes right before the multiline closing delimiter belong to the content":
+      const tq = "\"\"\""
+      const sq = "'''"
+      check parseToml("a = " & tq & "\"X\"" & tq)["a"].getStr == "\"X\""
+      check parseToml("a = " & tq & "X\"\"" & tq)["a"].getStr == "X\"\""
+      check parseToml("a = " & sq & "'X'" & sq)["a"].getStr == "'X'"
+      check parseToml("a = " & sq & "X''" & sq)["a"].getStr == "X''"
+
+    test "a line-ending backslash must really end the line":
+      const tq = "\"\"\""
+      check parseToml("a = " & tq & "abc\\   \n   def" & tq)["a"].getStr == "abcdef"
+      expect TomlError:
+        discard parseToml("a = " & tq & "abc\\ def" & tq)
+
+    test "underscores in numbers must sit between digits":
+      check parseToml("n = 1_024")["n"].getInt == 1024
+      check parseToml("n = 0xdead_beef")["n"].getInt == 0xdeadbeef
+      for bad in ["n = 1__0", "n = _10", "n = 10_", "n = 1_.5", "n = 0x_ff"]:
+        expect TomlError:
+          discard parseToml(bad)
+
+    test "an inline table is closed once written":
+      expect TomlError:
+        discard parseToml("security = { dm_policy = \"pairing\" }\nsecurity.web = 1")
+      expect TomlError:
+        discard parseToml("a = { b = { c = 1 } }\n[a.b]\nd = 2")
+      check parseToml("a = { b = 1, c.d = 2 }")["a"]["c"]["d"].getInt == 2
+
+    test "a static array cannot be extended by an array-of-tables header":
+      expect TomlError:
+        discard parseToml("tool = []\n[[tool]]\ncommand = \"uvx\"")
+      let t = parseToml("[[tool]]\nname = \"a\"\n[[tool]]\nname = \"b\"")
+      check t["tool"].getElems.len == 2
+
+    test "a table can be defined only once":
+      expect TomlError:
+        discard parseToml("[security]\na = 1\n[security]\nb = 2")
+      expect TomlError:
+        discard parseToml("[fruit]\napple.color = \"red\"\n[fruit.apple]\nx = 1")
+      ## Implicit parents may be defined later, and [[x]] elements are distinct.
+      check parseToml("[a.b]\nc = 1\n[a]\nd = 2")["a"]["d"].getInt == 2
+      check parseToml("[[s]]\n[s.meta]\nk = 1\n[[s]]\n[s.meta]\nk = 2")["s"].getElems.len == 2
+
 when isMainModule:
   runTests()

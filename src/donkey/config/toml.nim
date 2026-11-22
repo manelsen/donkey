@@ -25,7 +25,17 @@ type
   TomlValueRef* = ref TomlValue
   TomlTableRef* = OrderedTableRef[string, TomlValueRef]
 
+  TomlOrigin = enum
+    ## How a table or array came to be, which decides what may extend it.
+    toImplicit  ## parent created on the way to a header or dotted key
+    toHeader    ## defined by a `[header]` or as a `[[header]]` element
+    toDotted    ## defined by a dotted key (`a.b = 1`)
+    toInline    ## an inline table `{...}`: closed once written
+    toStatic    ## an array value `[...]`: closed once written
+    toAot       ## an array of tables, extended by `[[header]]`
+
   TomlValue* = object
+    origin: TomlOrigin
     case kind*: TomlValueKind
     of TomlValueKind.None: discard
     of TomlValueKind.String: stringVal*: string
@@ -155,12 +165,20 @@ func parseBasicString(p: var Parser): string =
     while true:
       if p.atEnd: p.fail("unterminated multiline string")
       if p.startsAt("\"\"\""):
-        for _ in 0 ..< 3: p.advance()
+        ## Up to two quotes right before the delimiter are content.
+        var run = 0
+        while run < 5 and p.peek(run) == '"': inc run
+        for _ in 0 ..< run - 3: result.add '"'
+        for _ in 0 ..< run: p.advance()
         return
       if p.peek == '\\':
         if p.peek(1) in {'\n', '\r', ' ', '\t'}:
-          ## Line-ending backslash: trim the newline and leading whitespace.
+          ## Line-ending backslash: only whitespace may follow it on the
+          ## line; then the newline and the next line's indentation go.
           p.advance()
+          while not p.atEnd and p.peek in {' ', '\t'}: p.advance()
+          if not (p.peek == '\n' or p.startsAt("\r\n")):
+            p.fail("a line-ending backslash must end the line")
           while not p.atEnd and p.peek in {' ', '\t', '\r', '\n'}: p.advance()
         else:
           p.parseEscape(result)
@@ -186,7 +204,10 @@ func parseLiteralString(p: var Parser): string =
     while true:
       if p.atEnd: p.fail("unterminated multiline literal string")
       if p.startsAt("'''"):
-        for _ in 0 ..< 3: p.advance()
+        var run = 0
+        while run < 5 and p.peek(run) == '\'': inc run
+        for _ in 0 ..< run - 3: result.add '\''
+        for _ in 0 ..< run: p.advance()
         return
       result.add p.peek
       p.advance()
@@ -236,6 +257,16 @@ func parseNumberOrBool(p: var Parser): TomlValueRef =
   of "false": return TomlValueRef(kind: TomlValueKind.Bool, boolVal: false)
   of "": p.fail("expected a value")
   else: discard
+  ## Each `_` must sit between two digits of the number's base.
+  let body = if word.len > 0 and word[0] in {'+', '-'}: word[1 .. ^1] else: word
+  let allowed =
+    if body.startsWith("0x"): HexDigits
+    elif body.startsWith("0o") or body.startsWith("0b"): Digits
+    else: Digits
+  for i, c in word:
+    if c == '_' and (i == 0 or i == word.high or
+                     word[i - 1] notin allowed or word[i + 1] notin allowed):
+      p.fail("misplaced '_' in '" & word & "'")
   let digits = word.replace("_", "")
   if digits.len == 0 or digits[^1] == '.' or (digits.len > 0 and digits[0] == '.'):
     p.fail("invalid value '" & word & "'")
@@ -253,7 +284,7 @@ func parseNumberOrBool(p: var Parser): TomlValueRef =
     p.fail("invalid value '" & word & "'")
 
 func parseArray(p: var Parser): TomlValueRef =
-  result = TomlValueRef(kind: TomlValueKind.Array)
+  result = TomlValueRef(kind: TomlValueKind.Array, origin: toStatic)
   p.advance()  # [
   while true:
     p.skipBlank()
@@ -271,12 +302,19 @@ func parseArray(p: var Parser): TomlValueRef =
 func setPath(p: Parser; table: TomlValueRef; path: seq[string];
              value: TomlValueRef)
 
+func closeInline(v: TomlValueRef) =
+  ## Marks an inline table and every table built inside it as closed.
+  if v.kind == TomlValueKind.Table:
+    v.origin = toInline
+    for child in v.tableVal.values: closeInline(child)
+
 func parseInlineTable(p: var Parser): TomlValueRef =
   result = newTable()
   p.advance()  # {
   p.skipSpaces()
   if p.peek == '}':
     p.advance()
+    closeInline(result)
     return
   while true:
     let key = p.parseKey()
@@ -289,6 +327,7 @@ func parseInlineTable(p: var Parser): TomlValueRef =
       p.advance()
     elif p.peek == '}':
       p.advance()
+      closeInline(result)
       return
     else:
       p.fail("expected ',' or '}' in inline table")
@@ -304,28 +343,39 @@ func parseValue(p: var Parser): TomlValueRef =
 
 # ── tables ────────────────────────────────────────────────────────────────────
 
-func childTable(p: Parser; table: TomlValueRef; key: string): TomlValueRef =
-  ## The table under `key`, created when missing. Into an array of tables it
-  ## descends into the last element, as TOML headers do.
+func childTable(p: Parser; table: TomlValueRef; key: string;
+                origin = toImplicit): TomlValueRef =
+  ## The table under `key`, created (with `origin`) when missing. Into an
+  ## array of tables it descends into the last element, as TOML headers do.
+  ## Inline tables and static arrays are closed.
   if not table.tableVal.hasKey(key):
     let child = newTable()
+    child.origin = origin
     table.tableVal[key] = child
     return child
   let existing = table.tableVal[key]
   case existing.kind
-  of TomlValueKind.Table: existing
+  of TomlValueKind.Table:
+    if existing.origin == toInline:
+      p.fail("inline table '" & key & "' cannot be extended")
+    existing
   of TomlValueKind.Array:
-    if existing.arrayVal.len == 0 or existing.arrayVal[^1].kind != TomlValueKind.Table:
-      p.fail("'" & key & "' is not a table")
+    if existing.origin != toAot or existing.arrayVal.len == 0:
+      p.fail("'" & key & "' is not an array of tables")
     existing.arrayVal[^1]
   else:
     p.fail("'" & key & "' is already a value")
 
 func setPath(p: Parser; table: TomlValueRef; path: seq[string];
              value: TomlValueRef) =
+  ## A dotted key defines its intermediate tables; it may extend tables it
+  ## defined itself, never one defined by a header.
   var target = table
-  for part in path[0 ..< path.len - 1]:
-    target = p.childTable(target, part)
+  for i, part in path[0 ..< path.len - 1]:
+    let known = target.tableVal.hasKey(part)
+    target = p.childTable(target, part, toDotted)
+    if known and target.origin == toHeader:
+      p.fail("table '" & path[0 .. i].join(".") & "' is already defined")
   let last = path[^1]
   if target.tableVal.hasKey(last):
     p.fail("duplicate key '" & path.join(".") & "'")
@@ -349,11 +399,12 @@ func parseToml*(text: string): TomlValueRef =
         parent = p.childTable(parent, part)
       let last = path[^1]
       if not parent.tableVal.hasKey(last):
-        parent.tableVal[last] = TomlValueRef(kind: TomlValueKind.Array)
+        parent.tableVal[last] = TomlValueRef(kind: TomlValueKind.Array, origin: toAot)
       let arr = parent.tableVal[last]
-      if arr.kind != TomlValueKind.Array:
+      if arr.kind != TomlValueKind.Array or arr.origin != toAot:
         p.fail("'" & last & "' is not an array of tables")
       current = newTable()
+      current.origin = toHeader
       arr.arrayVal.add current
       p.expectLineEnd()
     elif p.peek == '[':
@@ -364,6 +415,9 @@ func parseToml*(text: string): TomlValueRef =
       current = result
       for part in path:
         current = p.childTable(current, part)
+      if current.origin in {toHeader, toDotted}:
+        p.fail("table '" & path.join(".") & "' is already defined")
+      current.origin = toHeader
       p.expectLineEnd()
     else:
       let key = p.parseKey()

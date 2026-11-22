@@ -1,5 +1,6 @@
 ## Test reliability mechanisms: retry, circuit breaker.
 
+import std/strutils
 import std/[unittest, times, os, tables]
 import donkey/core/pipeops
 import donkey/adapters/http/circuit_breakers
@@ -28,6 +29,25 @@ proc runTests*() =
 
       recordFailure(name) # 3rd failure
       check checkCircuit(name) == false
+
+    test "a host name too long to store whole is never tripped":
+
+      ## Truncated, two long hosts differing only in the port would share a
+
+      ## breaker; such names are not tracked at all.
+
+      initReliability()
+
+      let long = "a".repeat(260)
+
+      for _ in 0 ..< 5:
+
+        recordFailure(long & ":10000")
+
+      check checkCircuit(long & ":10000")
+
+      check checkCircuit(long & ":10001")
+
 
     test "recovers after timeout":
       let name = "recovering-api"

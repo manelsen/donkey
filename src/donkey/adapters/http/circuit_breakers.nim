@@ -30,9 +30,11 @@ template withBreakers(body: untyped) =
     release(gBreakerLock)
 
 proc trackable(name: string): bool =
-  ## A known host, or room for a new one. The table's overflow bucket is
-  ## never used: unrelated hosts must not share one breaker.
-  name in gBreakers or gBreakers.len < BreakerHosts - 1
+  ## A host that fits whole (a truncated name could match another one) and
+  ## is known or has room. The overflow bucket is never used: unrelated
+  ## hosts must not share one breaker. Anything else is never tripped.
+  name.len <= BreakerHostBytes and
+    (name in gBreakers or gBreakers.len < BreakerHosts - 1)
 
 proc breaker(name: string): ptr CircuitBreaker =
   ## The breaker for `name`, created closed on first use. Call only when
