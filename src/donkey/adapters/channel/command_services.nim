@@ -95,11 +95,15 @@ proc buildTextStatusText*(memory: MdFileAdapter;
                           toolsCount: int;
                           sessionCount: int;
                           daemonStartMs: int64): Result[string, string] =
-  let ctx = memory.loadContext(userId)
-  let memLines = ctx.memoryMd.countLines()
-  let uptimeStr = formatUptime((nowMs() - daemonStartMs) div 1_000)
+  ## Preferences first, so an unreadable PREFERENCES.md is reported as such;
+  ## a memory file that cannot be read is an error too, never an exception.
   let providerLine = ? buildProviderStatusLine(memory, userId)
   let prefs = ? memory.loadChannelPrefs(userId).mapErr(preferencesUnreadableText)
+  let memLines =
+    try: memory.loadContext(userId).memoryMd.countLines()
+    except CatchableError as e:
+      return err("Não foi possível ler a memória: " & e.msg)
+  let uptimeStr = formatUptime((nowMs() - daemonStartMs) div 1_000)
   ok "Status\n\n" &
     providerLine & "\n" &
     "Thinking: " & prefs.thinking & "\n" &

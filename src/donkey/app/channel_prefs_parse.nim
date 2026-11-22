@@ -16,16 +16,19 @@ proc tryParseChannelPrefs*(preferencesMd: string): Result[ChannelPrefs, string] 
     return ok(prefs)
   try:
     let t = parseToml(preferencesMd)
+    for key in ["provider", "model", "thinking", "budget", "reasoning"]:
+      if t.hasKey(key) and t[key].kind != TomlValueKind.String:
+        return err("PREFERENCES.md: `" & key & "` must be a string")
     if t.hasKey("provider"):
       prefs.provider = t["provider"].getStr()
     if t.hasKey("model"):
       prefs.model = t["model"].getStr()
     if t.hasKey("thinking"):
-      prefs.thinking = t["thinking"].getStr("off")
+      prefs.thinking = t["thinking"].getStr()
     if t.hasKey("budget"):
-      prefs.budget = normalizeBudgetPolicy(t["budget"].getStr("balanced"))
+      prefs.budget = normalizeBudgetPolicy(t["budget"].getStr())
     if t.hasKey("reasoning"):
-      prefs.reasoning = t["reasoning"].getStr("on")
+      prefs.reasoning = t["reasoning"].getStr()
     ok(prefs)
   except CatchableError as e:
     err("PREFERENCES.md: " & e.msg)

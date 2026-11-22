@@ -122,6 +122,16 @@ func normalizeBudgetPolicy*(value: string): string =
   else:
     "balanced"
 
+func preferenceValue(raw: string): string =
+  ## The value of a `key = value` line as TOML reads a string: inside the
+  ## quotes when quoted, otherwise up to a `#` comment.
+  let text = raw.strip()
+  if text.len > 0 and text[0] == '"':
+    let close = text.find('"', 1)
+    return if close > 0: text[1 ..< close] else: text[1 .. ^1]
+  let hash = text.find('#')
+  (if hash >= 0: text[0 ..< hash] else: text).strip()
+
 func parseSmartRoutingPrefs*(preferencesMd: string): SmartRoutingPrefs =
   result = defaultSmartRoutingPrefs()
   for line in preferencesMd.splitLines():
@@ -129,7 +139,7 @@ func parseSmartRoutingPrefs*(preferencesMd: string): SmartRoutingPrefs =
     if parts.len != 2:
       continue
     let key = parts[0].strip()
-    let value = parts[1].strip().strip(chars = {'"'})
+    let value = preferenceValue(parts[1])
     case key
     of "provider":
       result.providerName = value

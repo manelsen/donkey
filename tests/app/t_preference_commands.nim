@@ -1,7 +1,7 @@
 ## The /models, /think and /budget orchestration over an in-memory store:
 ## read the preferences, validate, save, answer. No Markdown files.
 
-import std/[strutils, tables, unittest]
+import std/[sequtils, strutils, tables, unittest]
 import donkey/core/pipeops
 import donkey/core/types
 import donkey/core/providers/smart_routing
@@ -23,15 +23,22 @@ proc savePrefs(userId: UserId; entries: seq[(string, string)]): Result[void, str
   if gSaveError.len > 0:
     return err(gSaveError)
   gSaves.add entries
-  var doc = gStore.getOrDefault($userId)
+  ## Like the real store: a key already present is replaced, not repeated.
+  var lines: seq[string]
+  for line in gStore.getOrDefault($userId).splitLines:
+    if line.strip.len > 0 and entries.allIt(not line.startsWith(it[0] & " =")):
+      lines.add line
   for (key, value) in entries:
-    doc.add "\n" & key & " = \"" & value & "\""
-  gStore[$userId] = doc
+    lines.add key & " = \"" & value & "\""
+  gStore[$userId] = lines.join("\n")
   ok()
 
 proc catalogWith(provider: string): Result[ModelCatalogResult, string] {.gcsafe.} =
   ok(ModelCatalogResult(source: mcsFallback, entries: @[
     ModelCatalogEntry(providerName: provider, modelName: "live/one", label: "live/one")]))
+
+proc emptyCatalog(provider: string): Result[ModelCatalogResult, string] {.gcsafe.} =
+  ok(ModelCatalogResult(source: mcsLive, fetchedAtUnix: 1))
 
 proc failingCatalog(provider: string): Result[ModelCatalogResult, string] {.gcsafe.} =
   err("catalog down")
@@ -70,6 +77,15 @@ proc runTests*() =
       check deps().runThinkCommand(user, "max").error == "Nível inválido: `max`."
       check gSaves.len == 2
 
+    test "a later value replaces the earlier one":
+      check deps().runThinkCommand(user, "low").isOk
+      check deps().runThinkCommand(user, "high").isOk
+      check deps().runThinkCommand(user, "").get.startsWith("Thinking atual: high")
+
+    test "the budget shown is the budget routing applies":
+      gStore["u1"] = "budget = \"quality-first\" # escolha local"
+      check deps().runBudgetCommand(user, "").get.startsWith("Budget atual: quality-first")
+
     test "an unreadable store is an error, not the defaults":
       gReadError = "graph unavailable"
       check deps().runThinkCommand(user, "").error ==
@@ -106,6 +122,12 @@ proc runTests*() =
         "Modelo definido: anthropic / live/one"
       check gSaves == @[@[("provider", "anthropic"), ("model", "live/one")]]
 
+    test "an empty loaded catalog lists the static models it will accept":
+      ## The listing and the selection follow one rule: with no models in the
+      ## loaded catalog, the static menu applies to both.
+      check "- `claude-x`" in deps(emptyCatalog).runModelsCommand(user, "anthropic").get
+      check deps(emptyCatalog).runModelsCommand(user, "anthropic claude-x").isOk
+
     test "a catalog that fails to load falls back to the static list":
       check deps(failingCatalog).runModelsCommand(user, "anthropic claude-x").isOk
       check deps(failingCatalog).runModelsCommand(user, "anthropic other").error ==
@@ -122,6 +144,11 @@ proc runTests*() =
       check tryParseChannelPrefs("provider = \"anthropic\"").get.provider == "anthropic"
       check tryParseChannelPrefs("provider = [unclosed").isErr
       check tryParseChannelPrefs("").get == defaultChannelPrefs()
+
+    test "a preference of the wrong type is an error, not the default":
+      check tryParseChannelPrefs("thinking = 123").isErr
+      check tryParseChannelPrefs("provider = true").isErr
+      check tryParseChannelPrefs("model = [\"x\"]").isErr
 
     test "every help refuses a malformed document":
       reset()

@@ -6,6 +6,18 @@ import donkey/domain/message
 proc runTests*() =
   suite "smart_routing":
 
+    test "parseSmartRoutingPrefs reads values the way TOML does":
+      ## A trailing comment is not part of the value: it used to turn a valid
+      ## `budget` into the default and a `provider` into an unknown one.
+      let prefs = parseSmartRoutingPrefs(
+        "budget = \"quality-first\" # preferência local\n" &
+        "provider = \"anthropic\"   # fixo\n" &
+        "thinking = high # sem aspas")
+      check prefs.budgetPolicy == "quality-first"
+      check prefs.providerName == "anthropic"
+      check prefs.thinking == "high"
+      check parseSmartRoutingPrefs("model = \"a#b\"").modelName == "a#b"
+
     test "parseSmartRoutingPrefs keeps auto routing when no provider override":
       let prefs = parseSmartRoutingPrefs("thinking = \"high\"")
       check prefs.providerName == "zai-coding"

@@ -192,14 +192,15 @@ proc tellPrefsUnreadable(tgAdapter: var TelegramAdapter; msg: InboundMessage;
   ## A picker needs the current preferences to mark the selection. When they
   ## cannot be read the user is told so: in the picker message when there is
   ## one, otherwise in a new message.
+  ## The picker message may be gone (deleted by the user): then the text
+  ## goes out as a new message, so the user is told either way.
   let text = preferencesUnreadableText(reason)
-  if kbdId.len > 0:
-    tgAdapter.editKeyboardText(msg.userId, kbdId, text, @[]).isOkOr:
-      logSendFailure("preferences unreadable", error)
-  else:
-    tgAdapter.send(OutboundMessage(userId: msg.userId, channel: ckTelegram,
-                                   text: text, replyTo: replyTarget(msg))).isOkOr:
-      logSendFailure("preferences unreadable", error)
+  if kbdId.len > 0 and
+     tgAdapter.editKeyboardText(msg.userId, kbdId, text, @[]).isOk:
+    return
+  tgAdapter.send(OutboundMessage(userId: msg.userId, channel: ckTelegram,
+                                 text: text, replyTo: replyTarget(msg))).isOkOr:
+    logSendFailure("preferences unreadable", error)
 
 proc presentTelegramOutcome(tgAdapter: var TelegramAdapter; msg: InboundMessage;
                             outcome: CommandOutcome; logger: Logger): bool =

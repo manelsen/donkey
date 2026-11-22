@@ -67,11 +67,18 @@ proc runModelsCommand*(deps: PreferenceCommandDeps; userId: UserId;
   of mrkHelp:
     deps.modelsHelp(userId)
   of mrkCatalog:
-    let catalog = deps.loadCatalog(request.provider).get(ModelCatalogResult(
+    ## Listed by the rule the selection follows: the loaded catalog when it
+    ## has models for the provider, the static menu otherwise.
+    let staticCatalog = ModelCatalogResult(
       source: mcsFallback,
       entries: deps.menu.menuModels(request.provider).mapIt(ModelCatalogEntry(
         providerName: request.provider, modelName: it, label: it, available: true)),
-    ))
+    )
+    let loaded = deps.loadCatalog(request.provider)
+    let catalog =
+      if loaded.isSome and
+         normalizeModelCatalog(request.provider, loaded.get.entries).len > 0: loaded.get
+      else: staticCatalog
     ok(providerCatalogText(request.provider, catalog, nowUnix()))
   of mrkSelect:
     let catalogModels =
