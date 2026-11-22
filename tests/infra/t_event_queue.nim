@@ -22,6 +22,13 @@ proc producer() {.thread.} =
 
 proc runTests*() =
   suite "event queue":
+    test "dispose frees the drop counter once":
+      var q = initEventQueue[Ev]("disposable", capacity = 2)
+      check q.push(Ev())
+      q.dispose()
+      q.dispose()  ## a second call is a no-op
+      check q.takeDropped() == 0
+
     test "events come out in order and a full queue refuses instead of blocking":
       var q = initEventQueue[Ev]("test", capacity = 2)
       check q.push(Ev(id: 1, text: "a"))

@@ -44,8 +44,17 @@ proc waitPush*[T](q: EventQueue[T]; event: sink T) =
   q.chan.send(event)
 
 proc takeDropped*[T](q: EventQueue[T]): int =
-  ## Drops since the last call, resetting the count.
+  ## Drops since the last call, resetting the count (0 once disposed).
+  if q.dropped == nil: return 0
   q.dropped[].exchange(0)
+
+proc dispose*[T](q: var EventQueue[T]) =
+  ## Frees the drop counter of a short-lived queue. Call it once no other
+  ## thread holds a copy (after joining the producer); a second call is a
+  ## no-op. The buffer itself is freed with its last copy.
+  if q.dropped != nil:
+    deallocShared(q.dropped)
+    q.dropped = nil
 
 proc reportDrops[T](q: EventQueue[T]) =
   ## Runs on the consumer (the daemon loop), never on the receiving thread.

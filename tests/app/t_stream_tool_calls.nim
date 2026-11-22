@@ -179,9 +179,30 @@ proc runTests*() =
       check res.isOk
       check epochTime() - startedAt < 1.0
       check not gSlowFinished.load()
-      ## The thread is reaped in the background once the provider returns.
+      check liveStreams() == 1  ## still running, and still counted
+      ## The thread is joined and freed in the background once the provider
+      ## returns; only then does it stop counting.
       waitFor sleepAsync(chronos.milliseconds(2000))
       check gSlowFinished.load()
+      check liveStreams() == 0
+
+    test "abandoned streams count against a cap until they are reaped":
+      ## A hung provider must not let stopped turns pile up threads.
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let stopped = currentSessionStopGeneration() + 1
+      for _ in 0 ..< MaxLiveStreams:
+        check (waitFor streamToOutbox(slowFactory, CompletionRequest(), outbox,
+                 UserId("u1"), ckTelegram, "", "sid", stopGeneration = stopped)).isOk
+      check liveStreams() == MaxLiveStreams
+      check not streamSlotAvailable()
+      let refused = waitFor streamToOutbox(
+        threadRecordingFactory, CompletionRequest(), outbox, UserId("u1"),
+        ckTelegram, "", "sid")
+      check refused.isErr
+      check "saturated" in refused.error
+      waitFor sleepAsync(chronos.milliseconds(2000))
+      check liveStreams() == 0
+      check streamSlotAvailable()
 
   # ── Turn-scoped retry in the streaming branch ────────────────────────────────
   #

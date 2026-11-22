@@ -27,8 +27,8 @@ import ../app/approval_runtime
 import ./session_manager
 import ../app/prompt_building
 import ../app/provider_executor
+import ../infra/event_queue
 import ../infra/thread_handle
-import threading/channels
 
 export tool_loop
 
@@ -62,12 +62,25 @@ type ToolBatchResult* = ToolBatchState
 # shared with it: the job carries the request (copied into the thread), a
 # `nimcall` factory and an atomically counted channel. The thread builds the
 # provider closure itself, sends tokens and then one final event, and the
-# event loop polls the channel.
+# event loop polls the queue.
+#
+# A stopped turn returns at once and leaves its thread to be reaped in the
+# background, so a hung provider could pile threads up. Every stream counts
+# against `MaxLiveStreams` until it is joined; at the cap the tool loop falls
+# back to the executor (bounded queue) instead of streaming.
 
 const
   StreamFlushMs* = 1_000
   StreamPollMs = 30
   StreamChannelDepth = 512
+  MaxLiveStreams* = 8
+
+var gLiveStreams = 0
+  ## Started and not yet joined. Touched only on the event loop thread.
+
+proc liveStreams*(): int {.gcsafe.} = gLiveStreams
+
+proc streamSlotAvailable*(): bool {.gcsafe.} = gLiveStreams < MaxLiveStreams
 
 type
   StreamEvent = object
@@ -79,7 +92,7 @@ type
   StreamJob = object
     factory: StreamFactory
     req:     CompletionRequest
-    events:  Chan[StreamEvent]
+    events:  EventQueue[StreamEvent]
 
 proc runStreamJob(job: StreamJob) {.thread, nimcall, raises: [].} =
   let events = job.events
@@ -91,26 +104,29 @@ proc runStreamJob(job: StreamJob) {.thread, nimcall, raises: [].} =
     else:
       let res = fn(job.req,
                    proc(tok: string) {.gcsafe.} =
-                     events.send(StreamEvent(token: tok)))
+                     events.waitPush(StreamEvent(token: tok)))
       if res.isOk: final.response = res.value
       else: final.error = res.error
   except Exception as e:  ## effect boundary: callee raises are unannotated
     final.error = e.msg
-  events.send(final)
+  events.waitPush(final)
 
 proc reapStream(handle: ThreadHandle[StreamJob];
-                events: Chan[StreamEvent]) {.async: (raises: []).} =
+                events: EventQueue[StreamEvent]) {.async: (raises: []).} =
   ## Drains an abandoned stream (stopped or cancelled turn) until its final
   ## event, then joins the thread, without blocking the event loop meanwhile.
   var h = handle
+  var q = events
   while true:
     var ev: StreamEvent
-    if events.tryRecv(ev):
+    if q.tryPop(ev):
       if ev.done: break
     else:
       try: await sleepAsync(milliseconds(StreamPollMs))
       except CancelledError: return  ## shutting down: leave the thread be
   joinAndFree(h)
+  q.dispose()
+  dec gLiveStreams
 
 proc streamToOutbox*(factory:   StreamFactory;
                     req:       CompletionRequest;
@@ -124,13 +140,18 @@ proc streamToOutbox*(factory:   StreamFactory;
                     Future[Result[CompletionResponse, string]] {.async.} =
   ## Streams one completion into `outbox` as partial edits and a final
   ## message. A stop returns at once; the thread is reaped in the background.
-  let events = newChan[StreamEvent](StreamChannelDepth)
+  if not streamSlotAvailable():
+    return err("streaming saturated: " & $gLiveStreams &
+               " stream(s) still running")
+  var events = initEventQueue[StreamEvent]("stream", StreamChannelDepth)
   var handle: ThreadHandle[StreamJob]
   try:
     handle = spawnThread(runStreamJob,
                          StreamJob(factory: factory, req: req, events: events))
   except CatchableError as e:
+    events.dispose()
     return err("stream thread: " & e.msg)
+  inc gLiveStreams
 
   var accumulated = ""
   var lastFlush   = nowMs()
@@ -143,11 +164,13 @@ proc streamToOutbox*(factory:   StreamFactory;
         return ok(CompletionResponse())
       while true:
         var ev: StreamEvent  ## fresh each time: see EventQueue.tryPop
-        if not events.tryRecv(ev): break
+        if not events.tryPop(ev): break
         if not ev.done:
           accumulated.add(ev.token)
           continue
         joinAndFree(handle)
+        events.dispose()
+        dec gLiveStreams
         joined = true
         if ev.error.len > 0:
           return err(ev.error)
@@ -522,13 +545,14 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
     var req = buildPrompt(systemBase, loopState.history, context, tools, reasoning = showReasoning)
 
     let canStreamToolCalls =
-      streamFactory != nil and providerLabel.toLowerAscii().startsWith("openrouter")
+      streamFactory != nil and streamSlotAvailable() and
+      providerLabel.toLowerAscii().startsWith("openrouter")
     ## Suppressing tool progress must not disable plain streaming on the
     ## first round; only the tool-call stream channel stays hidden.
     if decideToolLoopStreaming(
       round = round,
       toolsCount = tools.len,
-      streamingAvailable = streamFactory != nil,
+      streamingAvailable = streamFactory != nil and streamSlotAvailable(),
       streamingToolCalls = canStreamToolCalls and not suppressProgress,
     ).useStreaming:
       var streamedRes = await streamToOutbox(
