@@ -161,7 +161,7 @@ Formato do arquivo: `[salt 32B][nonce 12B][ciphertext][tag 16B]` — binário pu
 ### Config
 **TOML** para toda configuração. Sem YAML.
 
-O ambiente é lido uma vez: `config/environment.readEnvironment` tira um snapshot depois que `donkey.env` e o vault o preencheram, e ele vai em `DonkeyConfig.env`. Quem precisa de uma variável recebe o snapshot (ou settings tipados lidos dele), nunca chama `getEnv`; teste monta o seu com `environmentOf`, sem `putEnv`. Verificado por `tests/architecture/t_env_reads.nim` (orçamento que só desce, até zero).
+O ambiente é lido uma vez: `config/environment.readEnvironment` tira um snapshot depois que `donkey.env` e o vault o preencheram, e ele vai em `DonkeyConfig.env`. Quem precisa de uma variável recebe o snapshot (ou settings tipados lidos dele), nunca chama `getEnv`; teste monta o seu com `environmentOf`, sem `putEnv`. Chaves de provider ficam no snapshot instalado no laço (`useCredentials`); configuração de tools vem de `NativeCtx.env`; adapters recebem settings tipados. Processos filhos (sandbox, code runner, navegador) recebem cópia filtrada do ambiente vivo por `inheritedByChild`. Verificado por `tests/architecture/t_env_reads.nim`: nenhuma leitura fora de `config/environment` (e dos que preenchem o ambiente: `dotenv`, vault).
 
 ### Interface
 **CLI + TUI**. Sem web UI.

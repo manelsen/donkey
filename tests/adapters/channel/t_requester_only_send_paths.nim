@@ -7,6 +7,7 @@
 
 import std/[json, locks, nativesockets, net, os, strutils, unittest]
 import chronos/asyncsync
+import donkey/config/environment
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/outbound/outbound
@@ -386,15 +387,13 @@ proc runTests*() =
       ## Goes through the album-mention gate, which lives on the daemon loop
       ## and is created on first use.
       reset()
-      putEnv("DONKEY_TELEGRAM_BOT_USERNAME", "donkeybot")
-      putEnv("DONKEY_TELEGRAM_REQUIRE_MENTION", "1")
-      defer:
-        delEnv("DONKEY_TELEGRAM_BOT_USERNAME")
-        delEnv("DONKEY_TELEGRAM_REQUIRE_MENTION")
       var sm = openSessions()
       var msgSeq = 0
       var state = initPresentationState()
-      var tg = newTelegramAdapter("TOK", Tmp / "tg-mention" / "ids.tsv", apiBase = base())
+      var tg = newTelegramAdapter("TOK", Tmp / "tg-mention" / "ids.tsv", apiBase = base(),
+        settings = telegramSettings(environmentOf({
+          "DONKEY_TELEGRAM_BOT_USERNAME": "donkeybot",
+          "DONKEY_TELEGRAM_REQUIRE_MENTION": "1"})))
       let e = env("tg-mention")
       let msg = InboundMessage(userId: tg.resolver.resolve(ckTelegram, "9"),
                                channel: ckTelegram,

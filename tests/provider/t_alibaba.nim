@@ -96,11 +96,6 @@ proc runTests*() =
       ## Review E4: no source grep. The bundle's request is compared with the
       ## request the Alibaba profile itself builds, so a builder arm wired to
       ## another profile (or to the Zhipu fallback) fails on URL, header or body.
-      let had = existsEnv("DASHSCOPE_BASE_URL")
-      let previous = getEnv("DASHSCOPE_BASE_URL")
-      delEnv("DASHSCOPE_BASE_URL")
-      defer:
-        if had: putEnv("DASHSCOPE_BASE_URL", previous) else: delEnv("DASHSCOPE_BASE_URL")
       let model = DefaultModelAlibaba
       let req = CompletionRequest(
         system: "seja breve",
@@ -129,14 +124,10 @@ proc runTests*() =
       check headerValue(cap.headers, "X-BILLING-INVOKE-ORIGIN") == ""
 
     test "the DASHSCOPE_BASE_URL override is what the bundle posts to":
-      let had = existsEnv("DASHSCOPE_BASE_URL")
-      let previous = getEnv("DASHSCOPE_BASE_URL")
-      defer:
-        if had: putEnv("DASHSCOPE_BASE_URL", previous) else: delEnv("DASHSCOPE_BASE_URL")
-      putEnv("DASHSCOPE_BASE_URL", "https://dashscope.example/v1/")
       var cap = Capture()
       let res = completeThroughPort(
-        ProviderSpec(providerName: "alibaba", apiKey: "dashscope-test"),
+        ProviderSpec(providerName: "alibaba", apiKey: "dashscope-test",
+                     baseUrl: "https://dashscope.example/v1/"),
         CompletionRequest(), cap)
       require res.isOk
       check cap.url == "https://dashscope.example/v1/chat/completions"
@@ -158,11 +149,6 @@ proc runTests*() =
       check c.requiresUserFirst == false
 
     test "the profile endpoint is the descriptor endpoint":
-      let had = existsEnv("DASHSCOPE_BASE_URL")
-      let previous = getEnv("DASHSCOPE_BASE_URL")
-      delEnv("DASHSCOPE_BASE_URL")
-      defer:
-        if had: putEnv("DASHSCOPE_BASE_URL", previous) else: delEnv("DASHSCOPE_BASE_URL")
       check alibabaCompatProfile().id == "alibaba"
       check alibabaCompatProfile().endpoint == providerEndpointFor("alibaba")
       check alibabaCompatProfile().endpoint == descriptorOr("alibaba").baseUrl

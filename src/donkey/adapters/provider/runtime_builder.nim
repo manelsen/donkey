@@ -74,13 +74,14 @@ func overrideEndpointSafe(url: string): bool =
     false
 
 
-proc providerEndpointFor*(id: string): string {.gcsafe.} =
-  ## Wire URL for a provider. A descriptor `baseUrlEnv` override wins over the
-  ## table (docs: `NVIDIA_BASE_URL`, `DASHSCOPE_BASE_URL`); unknown ids fall
-  ## back to zai-coding, matching `buildProviderSpec`.
+proc providerEndpointFor*(id: string; baseUrl = ""): string {.gcsafe.} =
+  ## Wire URL for a provider. `baseUrl`, the value of the descriptor's
+  ## `baseUrlEnv` (docs: `NVIDIA_BASE_URL`, `DASHSCOPE_BASE_URL`) carried in
+  ## the spec, wins over the table when the descriptor has one; unknown ids
+  ## fall back to zai-coding, matching `buildProviderSpec`.
   let descriptor = descriptorOr(id)
   let override =
-    if descriptor.baseUrlEnv.len > 0: getEnv(descriptor.baseUrlEnv).strip()
+    if descriptor.baseUrlEnv.len > 0: baseUrl.strip()
     else: ""
   if override.len == 0 or not overrideEndpointSafe(override):
     ## An unsafe override is ignored rather than used: falling back to the
@@ -113,15 +114,15 @@ func stripProviderPrefix(model: string): string =
   elif model.startsWith("opencode-zen/"): model["opencode-zen/".len .. ^1]
   else: model
 
-# ── Env-aware compat profiles ─────────────────────────────────────────────────
-# The descriptor's `baseUrlEnv` override is read per call instead of being
-# captured, so an env change applies to the next request.
+# ── Compat profiles ───────────────────────────────────────────────────────────
+# The endpoint comes from the spec (`baseUrl`), so the bundle built on the
+# worker never reads the environment.
 
-proc nvidiaProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
-  nvidiaCompatProfileAt(providerEndpointFor("nvidia"))
+proc nvidiaProfileAt(endpoint: string): CompatProfileFn =
+  result = proc(): CompatProfile {.gcsafe.} = nvidiaCompatProfileAt(endpoint)
 
-proc alibabaProfileFromEnv(): CompatProfile {.gcsafe, nimcall.} =
-  alibabaCompatProfileAt(providerEndpointFor("alibaba"))
+proc alibabaProfileAt(endpoint: string): CompatProfileFn =
+  result = proc(): CompatProfile {.gcsafe.} = alibabaCompatProfileAt(endpoint)
 
 proc fireworksProfileForModel(model: string): CompatProfileFn =
   ## The off switch is per model, so the profile is built for the model the
@@ -261,7 +262,7 @@ proc buildProviderBundle*(spec: ProviderSpec; http: HttpRuntimePort
       model = if spec.modelName.len > 0: spec.modelName
               else: providerDefaultModelFor("nvidia"),
       providerName = "NVIDIA",
-      profileFn = nvidiaProfileFromEnv,
+      profileFn = nvidiaProfileAt(providerEndpointFor("nvidia", spec.baseUrl)),
       http = http,
     )
     ProviderBundle(
@@ -277,7 +278,7 @@ proc buildProviderBundle*(spec: ProviderSpec; http: HttpRuntimePort
       model = if spec.modelName.len > 0: spec.modelName
               else: providerDefaultModelFor("alibaba"),
       providerName = "Alibaba",
-      profileFn = alibabaProfileFromEnv,
+      profileFn = alibabaProfileAt(providerEndpointFor("alibaba", spec.baseUrl)),
       http = http,
     )
     ProviderBundle(

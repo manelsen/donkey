@@ -1,5 +1,6 @@
 ## skill_runtime — shared skill search/install/enable helpers for channels and native tools.
 
+import ../config/environment
 import std/[os, sequtils, strutils]
 import results
 import ../config/skills_registry
@@ -177,6 +178,10 @@ proc enableRemoteSkillForUser(userPaddockDir, home, slug: string): Result[seq[Sk
         break
   ok(enabled)
 
+func skillRegistry*(env: Environment): string =
+  ## `CLAWHUB_REGISTRY` from the environment snapshot, or the public registry.
+  env.stripped("CLAWHUB_REGISTRY", ClawhubDefaultRegistry)
+
 proc applySkillCommand*(userPaddockDir: string;
                         value: string;
                         homeDir = "";
@@ -184,7 +189,7 @@ proc applySkillCommand*(userPaddockDir: string;
                         searchBackend: SkillSearchBackend = nil;
                         installBackend: SkillInstallBackend = nil): Result[string, string] =
   let home = if homeDir.len > 0: homeDir else: donkeyHomeDirFromPaddock(userPaddockDir)
-  let registryUrl = if registry.len > 0: registry else: getEnv("CLAWHUB_REGISTRY", ClawhubDefaultRegistry)
+  let registryUrl = if registry.len > 0: registry else: ClawhubDefaultRegistry
   let searchFn = if searchBackend != nil: searchBackend else: defaultSkillSearchBackend
   let installFn = if installBackend != nil: installBackend else: defaultSkillInstallBackend
   let trimmed = value.strip

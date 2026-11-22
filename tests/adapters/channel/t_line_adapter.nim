@@ -254,17 +254,14 @@ proc runTests*() =
       check res.error.contains("token")
       check f.calls.len == 0
 
-    test "the token comes from LINE_CHANNEL_ACCESS_TOKEN when not supplied":
-      let previous = getEnv("LINE_CHANNEL_ACCESS_TOKEN")
-      putEnv("LINE_CHANNEL_ACCESS_TOKEN", "env-token-42")
-      defer:
-        if previous.len > 0: putEnv("LINE_CHANNEL_ACCESS_TOKEN", previous)
-        else: delEnv("LINE_CHANNEL_ACCESS_TOKEN")
+    test "the supplied token is the Bearer, trimmed":
+      ## The daemon reads LINE_CHANNEL_ACCESS_TOKEN from the environment
+      ## snapshot and passes it here; the adapter never reads the process.
       let f = newFake()
-      let a = newTestAdapter(f, token = "")
+      let a = newTestAdapter(f, token = "  passed-token-42 ")
       check a.send(OutboundMessage(userId: UserId("u"), channel: ckLine,
                                    text: "x", replyTo: "U1")).isOk
-      check headerValue(f.calls[0].headers, "Authorization") == "Bearer env-token-42"
+      check headerValue(f.calls[0].headers, "Authorization") == "Bearer passed-token-42"
 
   # ── 5. long text boundary and empty text ────────────────────────────────────
 

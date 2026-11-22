@@ -15,6 +15,7 @@ when defined(posix):
   import std/posix
 import ../../core/types
 import ../../core/pipeops
+import ../../config/environment
 import ../../core/commands/command_catalog
 import ../../core/telegram_format
 import ../../core/channels/flood_gate
@@ -50,6 +51,16 @@ const MediaUnavailableText* = "não foi possível enviar o anexo"
   ## or the file name: the chat is not allowed to learn the host layout.
 
 type
+  TelegramSettings* = object
+    ## Deployment knobs of the Telegram adapter, read once from the environment
+    ## snapshot by `telegramSettings`.
+    botUsername*:     string  ## without "@"; enables mention handling in groups
+    requireMention*:  bool
+    linkPreviews*:    bool
+    httpTimeoutSec*:  int
+    mediaTimeoutSec*: int
+    proxyUrl*:        string
+
   TelegramAdapter* = object
     token*:       string
     configError*: string        ## invalid apiBase/proxy; sends fail closed
@@ -61,6 +72,7 @@ type
     flood*:       FloodGate      ## per-chat penalty windows
     chatIds*:     Table[string, string] ## userId → source chat id
     pollTimeout*: int           ## seconds; 1 for multi-channel, up to 30 for solo
+    settings*:    TelegramSettings
     mediaValidatedHook*: proc (canonicalPath: string) {.gcsafe, raises: [].}
       ## Test-only seam fired after confinement and before the descriptor read.
       ## Production adapters leave it nil.
@@ -86,30 +98,33 @@ proc chatIdFor(a: TelegramAdapter; userId: UserId): string =
 func apiUrl(a: TelegramAdapter; meth: string): string =
   a.apiBaseValue & "/bot" & a.token & "/" & meth
 
-func telegramBotUsername*(): string =
-  getEnv("DONKEY_TELEGRAM_BOT_USERNAME").strip.strip(chars = {'@'})
-
-func telegramRequireMention*(): bool =
-  mentionRequiredFromEnv(getEnv("DONKEY_TELEGRAM_REQUIRE_MENTION"))
-
-func telegramLinkPreviewsEnabled*(): bool =
-  linkPreviewsFromEnv(getEnv("DONKEY_TELEGRAM_LINK_PREVIEW"))
-
-func telegramMediaTimeoutSec*(): int =
-  ## Behavior derived from hermes-agent (MIT) fix 85e673b4a5; see
-  ## docs/hermes-mining/telegram/CASES.md#tg-030
-  ##
-  ## Uploads get a larger deadline than text calls.
-  let raw = getEnv("DONKEY_TELEGRAM_MEDIA_TIMEOUT_SEC").strip
-  if raw.len == 0:
-    return 300
+func positiveSecondsOr(raw: string; fallback: int): int =
+  let value = raw.strip
+  if value.len == 0:
+    return fallback
   let parsed = try:
-    raw.parseInt
+    value.parseInt
   except ValueError:
-    return 300
-  if parsed <= 0: 300 else: parsed
+    return fallback
+  if parsed <= 0: fallback else: parsed
 
-
+func telegramSettings*(env: Environment): TelegramSettings =
+  ## - `DONKEY_TELEGRAM_BOT_USERNAME`, `DONKEY_TELEGRAM_REQUIRE_MENTION`,
+  ##   `DONKEY_TELEGRAM_LINK_PREVIEW`.
+  ## - `DONKEY_TELEGRAM_TIMEOUT_SEC` (default 60) bounds Bot API calls and
+  ##   `DONKEY_TELEGRAM_MEDIA_TIMEOUT_SEC` (default 300) uploads, which are
+  ##   slower (hermes-agent (MIT) fixes 04057250a3 and 85e673b4a5; see
+  ##   docs/hermes-mining/telegram/CASES.md#tg-030).
+  ## - The Bot API may only be reachable through a proxy:
+  ##   `DONKEY_TELEGRAM_PROXY` wins over `DONKEY_WEB_PROXY` (hermes-agent fix
+  ##   d7c41f3cef; CASES.md#tg-022).
+  TelegramSettings(
+    botUsername: env.stripped("DONKEY_TELEGRAM_BOT_USERNAME").strip(chars = {'@'}),
+    requireMention: mentionRequiredFromEnv(env.get("DONKEY_TELEGRAM_REQUIRE_MENTION")),
+    linkPreviews: linkPreviewsFromEnv(env.get("DONKEY_TELEGRAM_LINK_PREVIEW")),
+    httpTimeoutSec: positiveSecondsOr(env.get("DONKEY_TELEGRAM_TIMEOUT_SEC"), 60),
+    mediaTimeoutSec: positiveSecondsOr(env.get("DONKEY_TELEGRAM_MEDIA_TIMEOUT_SEC"), 300),
+    proxyUrl: env.stripped("DONKEY_TELEGRAM_PROXY", env.stripped("DONKEY_WEB_PROXY")))
 
 proc parseTgResp(meth: string; resp: HttpResponse): Result[JsonNode, string]
                  {.gcsafe, raises: [].} =
@@ -309,13 +324,13 @@ proc sendChunkOnce(a: TelegramAdapter; chatId: int64; text, replyTo: string;
   let html = renderTelegramHtml(text, isHtml)
   var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
   applyReplyTarget(body, replyTo, firstChunk)
-  body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
+  body = withLinkPreviewPolicy(body, a.settings.linkPreviews)
   let res = a.sendMessageBody(body, replyTo, firstChunk)
   if res.isOk: return ok()
   ## Fallback: plain text
   var plain = %* {"chat_id": chatId, "text": text}
   applyReplyTarget(plain, replyTo, firstChunk)
-  plain = withLinkPreviewPolicy(plain, telegramLinkPreviewsEnabled())
+  plain = withLinkPreviewPolicy(plain, a.settings.linkPreviews)
   discard ? a.sendMessageBody(plain, replyTo, firstChunk)
   ok()
 
@@ -618,7 +633,7 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
   if durationSec > 0 and meth in ["sendVoice", "sendAudio"]:
     body["duration"] = %durationSec
   applyReplyTarget(body, replyTo, true)
-  let mediaTimeout = telegramMediaTimeoutSec()
+  let mediaTimeout = a.settings.mediaTimeoutSec
   var res = a.postWith(meth, body, mediaTimeout)
   if res.isOk: return ok()
   if body.hasKey("message_thread_id") and isMissingThreadError(res.error):
@@ -637,7 +652,7 @@ proc sendMedia*(a: TelegramAdapter; tgId: int64;
   ## Fallback: send URL as text, in the same chat and topic.
   var textBody = %* {"chat_id": tgId, "text": url}
   applyReplyTarget(textBody, replyTo, true)
-  textBody = withLinkPreviewPolicy(textBody, telegramLinkPreviewsEnabled())
+  textBody = withLinkPreviewPolicy(textBody, a.settings.linkPreviews)
   let textRes = a.sendMessageBody(textBody, replyTo, true)
   if textRes.isOk: return ok()
   err(textRes.error)
@@ -671,7 +686,7 @@ proc sendKeyboardRaw(a: TelegramAdapter; chatId: int64;
     "parse_mode": "HTML",
     "reply_markup": {"inline_keyboard": rows},
   }
-  body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
+  body = withLinkPreviewPolicy(body, a.settings.linkPreviews)
   applyReplyTarget(body, replyTo, true)
   var res = a.post("sendMessage", body)
   if res.isErr and body.hasKey("message_thread_id") and
@@ -744,7 +759,7 @@ proc sendReturnId*(a: TelegramAdapter; msg: OutboundMessage): Result[string, str
   for i, chunk in splitForTelegram(msg.text, TelegramMaxChars):
     let html = renderTelegramHtml(chunk, msg.isHtml)
     var body = %* {"chat_id": chatId, "text": html, "parse_mode": "HTML"}
-    body = withLinkPreviewPolicy(body, telegramLinkPreviewsEnabled())
+    body = withLinkPreviewPolicy(body, a.settings.linkPreviews)
     applyReplyTarget(body, msg.replyTo, i == 0)
     let res = a.sendMessageBody(body, msg.replyTo, i == 0)
     if res.isOk:
@@ -966,35 +981,10 @@ proc answerCallback*(a: TelegramAdapter; callbackId: string): Result[void, strin
   discard ? a.post("answerCallbackQuery", %* {"callback_query_id": callbackId})
   ok()
 
-func telegramHttpTimeoutSec*(): int =
-  ## Behavior derived from hermes-agent (MIT) fix 04057250a3; see
-  ## docs/hermes-mining/telegram/CASES.md#tg-030
-  ##
-  ## Bot API calls are bounded by a wall-clock deadline; media uploads get a
-  ## larger one because the transfer itself is slower.
-  let raw = getEnv("DONKEY_TELEGRAM_TIMEOUT_SEC").strip
-  if raw.len == 0:
-    return 60
-  let parsed = try:
-    raw.parseInt
-  except ValueError:
-    return 60
-  if parsed <= 0: 60 else: parsed
-
-func telegramProxyUrl*(): string =
-  ## Behavior derived from hermes-agent (MIT) fix d7c41f3cef; see
-  ## docs/hermes-mining/telegram/CASES.md#tg-022
-  ##
-  ## The Bot API may only be reachable through a proxy. The Telegram-specific
-  ## variable wins over the generic web proxy.
-  let specific = getEnv("DONKEY_TELEGRAM_PROXY").strip
-  if specific.len > 0:
-    return specific
-  getEnv("DONKEY_WEB_PROXY").strip
-
 proc newTelegramAdapter*(token: string; identityPath: string;
                          apiBase = ""; pollTimeout = DefaultPollTimeout;
-                         uploadHttp: HttpRuntimePort = HttpRuntimePort()): TelegramAdapter =
+                         uploadHttp: HttpRuntimePort = HttpRuntimePort();
+                         settings = telegramSettings(Environment())): TelegramAdapter =
   ## `uploadHttp` is optional so tests can inject a fake. When omitted, the
   ## media transport mirrors the text transport (proxy, allowlist, retry
   ## policy) and only the timeout differs: uploads use the media deadline.
@@ -1009,8 +999,8 @@ proc newTelegramAdapter*(token: string; identityPath: string;
   let upload =
     if uploadHttp.post.isNil:
       newStdHttpAdapter(
-        timeout = telegramMediaTimeoutSec(),
-        proxy = telegramProxyUrl(),
+        timeout = settings.mediaTimeoutSec,
+        proxy = settings.proxyUrl,
         allowlist = allowlist,
         retryNonIdempotent = false,
         retryConflict = true).toRuntimePort()
@@ -1025,11 +1015,12 @@ proc newTelegramAdapter*(token: string; identityPath: string;
     flood:       newFloodGate(),
     chatIds:     initTable[string, string](),
     http:        newStdHttpAdapter(
-                   timeout = telegramHttpTimeoutSec(),
-                   proxy = telegramProxyUrl(),
+                   timeout = settings.httpTimeoutSec,
+                   proxy = settings.proxyUrl,
                    allowlist = allowlist,
                    retryNonIdempotent = false,
                    retryConflict = true),
     uploadHttp:  upload,
     pollTimeout: pollTimeout,
+    settings:    settings,
   )

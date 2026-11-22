@@ -57,11 +57,6 @@ proc runTests*() =
       check bundle.streamFn != nil   ## the Zhipu fallback has no streamFn
 
     test "the alias posts to the hosted endpoint with the billing header":
-      let had = existsEnv("NVIDIA_BASE_URL")
-      let previous = getEnv("NVIDIA_BASE_URL")
-      defer:
-        if had: putEnv("NVIDIA_BASE_URL", previous) else: delEnv("NVIDIA_BASE_URL")
-      delEnv("NVIDIA_BASE_URL")
       for name in ["nvidia", "nim"]:
         check descriptorOr(name).id == "nvidia"
         var cap = Capture()
@@ -79,17 +74,12 @@ proc runTests*() =
         check not body.hasKey("reasoning_effort")
 
     test "the billing header is absent from a local NIM endpoint":
-      ## `NVIDIA_BASE_URL` is read per call by the profile, so the same bundle
-      ## moves from hosted to local without a rebuild — and stops claiming
-      ## build.nvidia.com billing.
-      let had = existsEnv("NVIDIA_BASE_URL")
-      let previous = getEnv("NVIDIA_BASE_URL")
-      defer:
-        if had: putEnv("NVIDIA_BASE_URL", previous) else: delEnv("NVIDIA_BASE_URL")
-      putEnv("NVIDIA_BASE_URL", "http://127.0.0.1:8000/v1/")
+      ## `NVIDIA_BASE_URL` (carried in the spec) moves the bundle from hosted
+      ## to local — and it stops claiming build.nvidia.com billing.
       var cap = Capture()
       let res = completeThroughPort(
-        ProviderSpec(providerName: "nvidia", apiKey: "nvapi-test"),
+        ProviderSpec(providerName: "nvidia", apiKey: "nvapi-test",
+                     baseUrl: "http://127.0.0.1:8000/v1/"),
         CompletionRequest(), cap)
       require res.isOk
       check cap.url == "http://127.0.0.1:8000/v1/chat/completions"
@@ -105,11 +95,6 @@ proc runTests*() =
       check defaultModelForProvider("nvidia") != "glm-4.7"
 
     test "the profile endpoint is the descriptor endpoint":
-      let had = existsEnv("NVIDIA_BASE_URL")
-      let previous = getEnv("NVIDIA_BASE_URL")
-      delEnv("NVIDIA_BASE_URL")
-      defer:
-        if had: putEnv("NVIDIA_BASE_URL", previous) else: delEnv("NVIDIA_BASE_URL")
       check nvidiaCompatProfile().id == "nvidia"
       check nvidiaCompatProfile().endpoint == providerEndpointFor("nvidia")
       check nvidiaCompatProfile().endpoint == descriptorOr("nvidia").baseUrl

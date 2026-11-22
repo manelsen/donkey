@@ -71,26 +71,8 @@ const DefaultModelCases = [
   ("alibaba",      "qwen3.8-max"),
 ]
 
-let hadNvidiaBase = existsEnv("NVIDIA_BASE_URL")
-let prevNvidiaBase = getEnv("NVIDIA_BASE_URL")
-let hadDashscopeBase = existsEnv("DASHSCOPE_BASE_URL")
-let prevDashscopeBase = getEnv("DASHSCOPE_BASE_URL")
-
-proc restoreEnv(name: string; had: bool; previous: string) =
-  if had: putEnv(name, previous) else: delEnv(name)
-
 proc runTests*() =
   suite "descriptor factory":
-
-    setup:
-      ## The tests compare against the hosted endpoints; a local override in the
-      ## developer's environment must not change the expectation.
-      delEnv("NVIDIA_BASE_URL")
-      delEnv("DASHSCOPE_BASE_URL")
-
-    teardown:
-      restoreEnv("NVIDIA_BASE_URL", hadNvidiaBase, prevNvidiaBase)
-      restoreEnv("DASHSCOPE_BASE_URL", hadDashscopeBase, prevDashscopeBase)
 
     test "providerEndpointFor returns the descriptor base URL for every provider":
       for (id, expected) in EndpointCases:
@@ -126,30 +108,16 @@ proc runTests*() =
           check providerEndpointFor(alias) == descriptor.baseUrl
           check providerDefaultModelFor(alias) == descriptor.defaultModel
 
-    test "providerEndpointFor consumes baseUrlEnv when it is set":
+    test "providerEndpointFor consumes the baseUrlEnv value when it is set":
       ## `NVIDIA_BASE_URL=http://localhost:8000/v1` (as documented for local NIM)
       ## must resolve to the chat/completions path; an already-complete endpoint
       ## is used as-is.
-      let hadNvidia = existsEnv("NVIDIA_BASE_URL")
-      let previousNvidia = getEnv("NVIDIA_BASE_URL")
-      let hadAlibaba = existsEnv("DASHSCOPE_BASE_URL")
-      let previousAlibaba = getEnv("DASHSCOPE_BASE_URL")
-      defer:
-        if hadNvidia: putEnv("NVIDIA_BASE_URL", previousNvidia)
-        else: delEnv("NVIDIA_BASE_URL")
-        if hadAlibaba: putEnv("DASHSCOPE_BASE_URL", previousAlibaba)
-        else: delEnv("DASHSCOPE_BASE_URL")
-
-      putEnv("NVIDIA_BASE_URL", "http://localhost:8000/v1/")
-      check providerEndpointFor("nvidia") ==
+      check providerEndpointFor("nvidia", "http://localhost:8000/v1/") ==
             "http://localhost:8000/v1/chat/completions"
-      putEnv("NVIDIA_BASE_URL",
-             "http://localhost:8000/v1/chat/completions")
-      check providerEndpointFor("nvidia") ==
+      check providerEndpointFor("nvidia", "http://localhost:8000/v1/chat/completions") ==
             "http://localhost:8000/v1/chat/completions"
 
-      putEnv("DASHSCOPE_BASE_URL", "https://dashscope.example/v1")
-      check providerEndpointFor("alibaba") ==
+      check providerEndpointFor("alibaba", "https://dashscope.example/v1") ==
             "https://dashscope.example/v1/chat/completions"
 
     test "every chat-completions descriptor has its own streaming branch":
@@ -165,12 +133,9 @@ proc runTests*() =
           check bundle.completeFn != nil
           check bundle.streamFn != nil
     test "a cleartext remote override is ignored, not used":
-      putEnv("NVIDIA_BASE_URL", "http://evil.example/v1")
-      check providerEndpointFor("nvidia") == descriptorOr("nvidia").baseUrl
-      putEnv("NVIDIA_BASE_URL", "http://127.0.0.1:8000/v1/")
-      check providerEndpointFor("nvidia").startsWith("http://127.0.0.1:8000/v1")
-      putEnv("NVIDIA_BASE_URL", "https://nim.example/v1/")
-      check providerEndpointFor("nvidia") ==
+      check providerEndpointFor("nvidia", "http://evil.example/v1") == descriptorOr("nvidia").baseUrl
+      check providerEndpointFor("nvidia", "http://127.0.0.1:8000/v1/").startsWith("http://127.0.0.1:8000/v1")
+      check providerEndpointFor("nvidia", "https://nim.example/v1/") ==
         "https://nim.example/v1/chat/completions"
 
     test "every compat bundle posts to its own descriptor endpoint":
@@ -188,20 +153,28 @@ proc runTests*() =
         check headerValue(cap.headers, "Authorization") == "Bearer key-" & id
         check cap.body.len > 0
 
+    test "the spec's base URL reaches the request of a compat bundle":
+      ## `baseUrl` is read on the loop and travels in the spec, so the bundle
+      ## built on a worker uses it without reading the environment.
+      var cap = Capture()
+      let bundle = buildProviderBundle(
+        ProviderSpec(providerName: "nvidia", apiKey: "k",
+                     baseUrl: "https://nim.example/v1/"),
+        http = recordingPort(cap))
+      require bundle.completeFn(CompletionRequest()).isOk
+      check cap.url == "https://nim.example/v1/chat/completions"
+
     test "a userinfo override is ignored, not sent over cleartext":
       ## `localhost:pass@remote.example` hides the real host in the userinfo.
-      putEnv("NVIDIA_BASE_URL", "http://localhost:pass@remote.example/v1")
-      check providerEndpointFor("nvidia") == descriptorOr("nvidia").baseUrl
+      check providerEndpointFor("nvidia", "http://localhost:pass@remote.example/v1") == descriptorOr("nvidia").baseUrl
 
     test "a userinfo override is rejected for https too":
-      putEnv("NVIDIA_BASE_URL", "https://api.nvidia.com@evil.example/v1")
-      check providerEndpointFor("nvidia") == descriptorOr("nvidia").baseUrl
+      check providerEndpointFor("nvidia", "https://api.nvidia.com@evil.example/v1") == descriptorOr("nvidia").baseUrl
 
     test "an @ inside the query does not look like userinfo":
-      putEnv("NVIDIA_BASE_URL", "https://gateway.example/v1?key=a@b")
       ## The authority is `gateway.example`: the override is accepted (whatever
       ## the resulting URL shape), not silently replaced by the hosted endpoint.
-      check providerEndpointFor("nvidia") != descriptorOr("nvidia").baseUrl
+      check providerEndpointFor("nvidia", "https://gateway.example/v1?key=a@b") != descriptorOr("nvidia").baseUrl
 
 when isMainModule:
   runTests()

@@ -6,6 +6,7 @@
 ##
 ## Requires illwill. Runs in foreground (no Chronos).
 
+import ../config/environment
 import std/[os, sequtils, strformat, strutils, times, options]
 import illwill
 import ../core/pipeops
@@ -337,13 +338,13 @@ proc render(tb: var TerminalBuffer; st: TuiState) =
 
 # ── entry point ───────────────────────────────────────────────────────────────
 
-proc runTui*(sockPath: string) =
+proc runTui*(sockPath: string; env: Environment) =
   illwillInit(fullScreen = true)
   defer: illwillDeinit()
 
   var st = TuiState(sockPath: sockPath, panel: pSessions, admin: newAdminState(), memory: MdFileAdapter(paddocksDir: sockPath.parentDir() / "paddocks"))
   fetchData(st)
-  st.admin.catalogLoader = buildModelCatalogLoader()
+  st.admin.catalogLoader = buildModelCatalogLoader(env)
   st.lastFetch = epochTime()
 
   var tb = newTerminalBuffer(terminalWidth(), terminalHeight())

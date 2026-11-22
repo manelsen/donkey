@@ -9,6 +9,7 @@
 import std/[algorithm, json, os, strutils, times]
 import ../../core/types
 import ../../core/pipeops
+import ../../config/environment
 import ../../ports/memory
 import ../filesystem/paths
 import ../../domain/memory/episode_pure
@@ -30,12 +31,27 @@ type
     magmaDsn*:      string   ## optional MAGMA shadow backend DSN
     magmaSqlitePath*: string ## optional MAGMA SQLite backend path
     magmaSqliteVectorPath*: string ## optional sqlite-vec extension path
+    magmaEnv*:      Environment ## what MAGMA reads from the environment snapshot
+                                ## (see `magmaEnvironment`)
 
   UserSummary* = object
     userId*:      UserId
     hasProfile*:  bool
     preferredName*: string
     access*:      string
+
+const
+  MagmaEnvNames = ["OPENROUTER_API_KEY", "ZAI_API_KEY", "ZAI_CODING_API_KEY",
+                   "ZHIPU_API_KEY", "MINIMAX_API_KEY"]
+    ## Embedding and rerank keys; the knobs are the `DONKEY_MEMORY_*` names.
+
+func magmaEnvironment*(env: Environment): Environment =
+  ## The part of the snapshot MAGMA reads: embedding and rerank keys and the
+  ## `DONKEY_MEMORY_*` search and rerank knobs. A subset, because the adapter
+  ## is copied by value into many closures.
+  for (name, value) in env.pairs:
+    if name in MagmaEnvNames or name.startsWith("DONKEY_MEMORY_"):
+      result = result.with(name, value)
 
 const
   ## Search is a bounded synchronous read on purpose: 8 MiB total keeps it in
@@ -87,8 +103,8 @@ proc sessionSearchRecords(a: MdFileAdapter; userId: UserId;
                           {.gcsafe, raises: [].}
 
 when defined(withPostgres) or defined(withSqlite):
-  proc buildMagmaEmbedFn(): EmbedFn =
-    let embedKey = getEnv("OPENROUTER_API_KEY")
+  proc buildMagmaEmbedFn(env: Environment): EmbedFn =
+    let embedKey = env.get("OPENROUTER_API_KEY")
     if embedKey.len == 0:
       return proc(text: string): seq[float32] {.gcsafe.} = @[]
     let embedAdapter = newOpenRouterEmbeddingAdapter(embedKey)
@@ -115,12 +131,12 @@ when defined(withPostgres) or defined(withSqlite):
             createDir(dbDir)
           return newSqliteMagmaMemoryAdapter(
             a.magmaSqlitePath,
-            buildMagmaEmbedFn(),
+            buildMagmaEmbedFn(a.magmaEnv),
             vectorExtensionPath = a.magmaSqliteVectorPath,
           )
       when defined(withPostgres):
         if a.magmaDsn.len > 0:
-          return newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn())
+          return newMagmaMemoryAdapter(a.magmaDsn, buildMagmaEmbedFn(a.magmaEnv))
       nil
     except Exception:  ## effect boundary: callee raises are unannotated
       nil

@@ -74,11 +74,12 @@ proc newChannelRuntimeEnv*(memory: MdFileAdapter;
                            modelCatalogLoader: ModelCatalogLoader;
                            toolsCount = 0;
                            toolClientsCount = 0;
-                           daemonStartMs = 0'i64): ChannelRuntimeEnv =
+                           daemonStartMs = 0'i64;
+                           skillRegistry = ""): ChannelRuntimeEnv =
   ChannelRuntimeEnv(
     commands: CommandEnv(services: newCommandServices(
       memory, completeBuilder, modelCatalogLoader, toolsCount, toolClientsCount,
-      daemonStartMs)),
+      daemonStartMs, skillRegistry)),
     memory: memory,
     completeBuilder: completeBuilder,
     modelCatalogLoader: modelCatalogLoader,
