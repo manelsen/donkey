@@ -40,7 +40,7 @@ proc runTests*() =
       # We can't wait 60s in a unit test easily,
       # but we can mock the lastFailure if we had access or use a small timeout.
       # For now, let's just check the state logic.
-      check gBreakers[name].state == csOpen
+      check breakerState(name) == csOpen
 
 when isMainModule:
   runTests()

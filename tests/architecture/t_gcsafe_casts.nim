@@ -14,7 +14,7 @@ import ./t_nim_source
 const
   CastPragma = "{.cast(gcsafe).}"
   ReasonMarker = "## gcsafe:"
-  UnexplainedBudget = 63
+  UnexplainedBudget = 40
     ## Casts in src/ without a reason. Lower it as casts are removed or
     ## explained; it must never go up.
 
@@ -34,33 +34,41 @@ func hasReason(line, comments: string): bool =
     at = line.find(ReasonMarker, at + 1)
   false
 
-func castCount(code: string): int =
-  ## Casts in a line of code: `cast(gcsafe)` as a pragma item, alone or among
-  ## others (`{.cast(gcsafe), cast(noSideEffect).}`), however it is spaced.
-  ## In code it can only be a pragma; a type cast is `cast[T](x)`. The older
-  ## block form `{.gcsafe.}:` switches the check off the same way and counts
-  ## too (a proc pragma `{.gcsafe.} =` does not).
-  let squeezed = code.multiReplace((" ", ""), ("\t", ""))
-  ## Anywhere on the line (`proc p() = {.gcsafe.}: discard`); a proc pragma
-  ## is followed by `=`, never by `:`.
-  result += squeezed.count("{.gcsafe.}:")
+func castLines(code: string): seq[int] =
+  ## 0-based lines where a cast starts, read over the whole file with spaces
+  ## and line breaks squeezed out, so a pragma split across lines (`{.` then
+  ## `gcsafe.}:` below) is still one cast. `cast(gcsafe)` counts as a pragma
+  ## item, alone or among others, unless it is the tail of a longer name
+  ## (`broadcast(gcsafe)`); a type cast is `cast[T](x)`. The older block form
+  ## `{.gcsafe.}:` switches the check off the same way and counts too (a proc
+  ## pragma is followed by `=`, never by `:`).
+  var squeezed = ""
+  var lineOf: seq[int]
+  var line = 0
+  for c in code:
+    if c == '\n': inc line
+    elif c notin {' ', '\t', '\r'}:
+      squeezed.add c
+      lineOf.add line
   var at = squeezed.find("cast(gcsafe)")
   while at >= 0:
-    if at == 0 or not isIdentChar(squeezed[at - 1]):  ## not `broadcast(...)`
-      inc result
+    if at == 0 or not isIdentChar(squeezed[at - 1]):
+      result.add lineOf[at]
     at = squeezed.find("cast(gcsafe)", at + 1)
+  at = squeezed.find("{.gcsafe.}:")
+  while at >= 0:
+    result.add lineOf[at]
+    at = squeezed.find("{.gcsafe.}:", at + 1)
 
 func castSites(path, src: string): seq[CastSite] =
   ## Casts in code (not in comments or strings), each with whether a reason
   ## sits in a comment on its line or the line above.
   let lines = src.splitLines()
-  let code = codeOnly(src).splitLines()
   let comments = withoutComments(src).splitLines()
-  for i, line in code:
-    for _ in 1 .. castCount(line):
-      let explained = lines[i].hasReason(comments[i]) or
-        (i > 0 and lines[i - 1].hasReason(comments[i - 1]))
-      result.add CastSite(path: path, line: i + 1, explained: explained)
+  for i in castLines(codeOnly(src)):
+    let explained = lines[i].hasReason(comments[i]) or
+      (i > 0 and lines[i - 1].hasReason(comments[i - 1]))
+    result.add CastSite(path: path, line: i + 1, explained: explained)
 
 proc runTests*() =
   suite "gcsafe casts":
@@ -82,6 +90,8 @@ proc runTests*() =
       check castSites("x", "proc p() {.gcsafe.} = discard").len == 0
       check castSites("x", "proc p() = {.gcsafe.}: discard").len == 1
       check castSites("x", "let f: proc() {.gcsafe.} = nil").len == 0
+      check castSites("x", "{.\n  gcsafe.}:\n  discard").len == 1
+      check castSites("x", "{.cast(\n  gcsafe).}:\n  discard")[0].line == 1
       check castSites("x", "{.raises: [], cast(gcsafe).}: discard").len == 1
       check not castSites("x", "let l = \"## gcsafe: not a comment\"\n{.cast(gcsafe).}:")[0].explained
       check castSites("x", "let l = 1  ## gcsafe: a real comment\n{.cast(gcsafe).}:")[0].explained

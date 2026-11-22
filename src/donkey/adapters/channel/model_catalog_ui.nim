@@ -21,6 +21,12 @@ var modelMenuCache: seq[ModelMenuEntry]
 var modelMenuLock: Lock  ## guards modelMenuCache; channel runtimes run on several threads
 initLock(modelMenuLock)
 
+template withMenuCache(body: untyped) =
+  ## gcsafe: modelMenuCache is only read or written here, under modelMenuLock; the menu is copied in and out
+  {.cast(gcsafe).}:
+    withLock modelMenuLock:
+      body
+
 proc buildModelMenu*(): seq[ModelMenuEntry] =
   ## Derives the model menu from the ProviderCatalog, so the UI always
   ## reflects what is actually registered as the source of truth.
@@ -28,10 +34,9 @@ proc buildModelMenu*(): seq[ModelMenuEntry] =
   ## Providers with no catalog entries (e.g. "zen", a meta-provider that
   ## fetches models dynamically) still appear with an empty model list to
   ## keep the menu backwards-compatible.
-  {.cast(gcsafe).}:
-    withLock modelMenuLock:
-      if modelMenuCache.len > 0:
-        return modelMenuCache
+  withMenuCache:
+    if modelMenuCache.len > 0:
+      return modelMenuCache
   let cat = buildDefaultCatalog()
   var providers = cat.allProviders()
   providers.sort()  # deterministic ordering
@@ -41,9 +46,8 @@ proc buildModelMenu*(): seq[ModelMenuEntry] =
     result.add((provider, models))
   # Providers not in the catalog but still referenced in routing:
   result.add(("zen", @[]))
-  {.cast(gcsafe).}:
-    withLock modelMenuLock:
-      modelMenuCache = result
+  withMenuCache:
+    modelMenuCache = result
 
 proc modelMenu*(): seq[ModelMenuEntry] =
   ## Returns the model menu derived from the ProviderCatalog.
@@ -57,6 +61,12 @@ var modelCallbackTargets: Table[string, ModelCallbackTarget]
 var modelCallbackLock: Lock
 initLock(modelCallbackLock)
 
+template withCallbackTargets(body: untyped) =
+  ## gcsafe: modelCallbackTargets is only read or written here, under modelCallbackLock; tokens and targets are copied in and out
+  {.cast(gcsafe).}:
+    withLock modelCallbackLock:
+      body
+
 func modelCallbackToken(provider, model: string): string =
   "mt" & ($secureHash(provider & "\0" & model)).toLowerAscii()[0 ..< 12]
 
@@ -64,18 +74,16 @@ proc registerModelCallback*(provider, model: string): string {.gcsafe.} =
   ## Telegram limits callback_data to 64 bytes; OpenRouter model ids routinely
   ## exceed it. Register the full id and put a short stable token in the button.
   let token = modelCallbackToken(provider, model)
-  {.cast(gcsafe).}:
-    withLock modelCallbackLock:
-      modelCallbackTargets[token] = ModelCallbackTarget(
-        provider: provider, model: model)
+  withCallbackTargets:
+    modelCallbackTargets[token] = ModelCallbackTarget(
+      provider: provider, model: model)
   token
 
 proc resolveModelCallback*(provider, value: string): string {.gcsafe, raises: [].} =
   ## Resolves a compact model token. Legacy full model names still work.
   var target: ModelCallbackTarget
-  {.cast(gcsafe).}:
-    withLock modelCallbackLock:
-      target = modelCallbackTargets.getOrDefault(value)
+  withCallbackTargets:
+    target = modelCallbackTargets.getOrDefault(value)
   if target.model.len > 0:
     return if target.provider == provider: target.model else: ""
   if value.len == 14 and value.startsWith("mt"):

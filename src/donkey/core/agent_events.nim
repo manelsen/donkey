@@ -35,34 +35,41 @@ var gAgentHead:   int
 var gAgentCount:  int
 var gAgentLock:   Lock
 var gAgentReady:  bool
+initLock(gAgentLock)  ## module init: before any thread can push
 
-proc agentEventRingInit*() =
-  initLock(gAgentLock)
-  gAgentHead  = 0
-  gAgentCount = 0
-  gAgentReady = true
-
-proc pushAgentEvent*(ev: AgentEvent) =
-  {.gcsafe.}:
-    if not gAgentReady: return
-    var e = ev
-    if e.ts.len == 0:
-      e.ts = now().utc().format("yyyy-MM-dd'T'HH:mm:ss'Z'")
+template withAgentRing(body: untyped) =
+  ## The one way to touch the ring, from any thread.
+  ## gcsafe: the ring and its counters are only read or written here, under gAgentLock; events are copied in and out
+  {.cast(gcsafe).}:
     withLock gAgentLock:
-      gAgentRing[gAgentHead mod AgentEventRingCap] = e
-      inc gAgentHead
-      if gAgentCount < AgentEventRingCap: inc gAgentCount
+      body
+
+proc agentEventRingInit*() {.gcsafe.} =
+  ## Enables (or resets) the ring.
+  withAgentRing:
+    gAgentHead  = 0
+    gAgentCount = 0
+    gAgentReady = true
+
+proc pushAgentEvent*(ev: AgentEvent) {.gcsafe.} =
+  var e = ev
+  if e.ts.len == 0:
+    e.ts = now().utc().format("yyyy-MM-dd'T'HH:mm:ss'Z'")
+  withAgentRing:
+    if not gAgentReady: return
+    gAgentRing[gAgentHead mod AgentEventRingCap] = e
+    inc gAgentHead
+    if gAgentCount < AgentEventRingCap: inc gAgentCount
 
 proc agentEventSnapshot*(n: int): seq[AgentEvent] {.gcsafe.} =
   ## Returns up to `n` most recent events in insertion order.
-  {.cast(gcsafe).}:
+  withAgentRing:
     if not gAgentReady: return @[]
-    withLock gAgentLock:
-      let take = min(n, gAgentCount)
-      let start = (gAgentHead - take + AgentEventRingCap * 2) mod AgentEventRingCap
-      result = newSeq[AgentEvent](take)
-      for i in 0 ..< take:
-        result[i] = gAgentRing[(start + i) mod AgentEventRingCap]
+    let take = min(n, gAgentCount)
+    let start = (gAgentHead - take + AgentEventRingCap * 2) mod AgentEventRingCap
+    result = newSeq[AgentEvent](take)
+    for i in 0 ..< take:
+      result[i] = gAgentRing[(start + i) mod AgentEventRingCap]
 
 # ── serialisation ─────────────────────────────────────────────────────────────
 

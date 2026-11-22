@@ -5,14 +5,17 @@
 ## keys, and a key that returned an auth/rate/quota error cools down so the
 ## next request uses another one.
 ##
-## Provider specs are built on the event loop, so the table needs no lock.
+## Provider specs are built on the event loop and the credential hooks run
+## there after each await, so the pools are thread-local to it: gcsafe with
+## no lock and no cast. Another thread would see its own (empty) pools, which
+## costs rotation, never memory safety.
 
 import std/[options, os, strutils, tables]
 import ../core/pipeops
 import ../core/providers/credential_pool
 import ../domain/providers/descriptors
 
-var gPools: Table[string, CredentialPool]
+var gPools {.threadvar.}: Table[string, CredentialPool]
 
 func poolEnvName*(envName: string): string =
   ## `openai` + `OPENAI_API_KEY` -> `OPENAI_API_KEYS`.
@@ -39,8 +42,7 @@ func hasCredentialKey*(envNames: openArray[string]): bool =
 
 proc resetCredentialPools*() {.gcsafe, raises: [].} =
   ## Test hook: forget rotation and cooldown state.
-  {.cast(gcsafe).}:
-    gPools.clear()
+  gPools.clear()
 
 proc resolveCredentialKey*(providerName: string;
                            envNames: openArray[string];
@@ -58,14 +60,13 @@ proc resolveCredentialKey*(providerName: string;
         keys = @[single]
     if keys.len == 0:
       continue
-    {.cast(gcsafe).}:
-      var pool = gPools.getOrDefault(providerName)
-      if pool.keys != keys:
-        pool = initCredentialPool(keys)
-      let picked = pool.pick(nowMs)
-      gPools[providerName] = pool
-      if picked.isSome:
-        return picked.get()
+    var pool = gPools.getOrDefault(providerName)
+    if pool.keys != keys:
+      pool = initCredentialPool(keys)
+    let picked = pool.pick(nowMs)
+    gPools[providerName] = pool
+    if picked.isSome:
+      return picked.get()
     return ""
   ""
 
@@ -89,11 +90,10 @@ proc descriptorApiKey*(d: ProviderDescriptor; nowMs = nowMs()): string
 proc nextCredentialKey*(providerName, currentKey: string;
                         nowMs = nowMs()): string {.gcsafe, raises: [].} =
   ## Another healthy key for an in-flight retry; "" when there is none.
-  {.cast(gcsafe).}:
-    if not gPools.hasKey(providerName):
-      return ""
-    let picked = gPools.getOrDefault(providerName).nextHealthy(currentKey, nowMs)
-    if picked.isSome: return picked.get()
+  if not gPools.hasKey(providerName):
+    return ""
+  let picked = gPools.getOrDefault(providerName).nextHealthy(currentKey, nowMs)
+  if picked.isSome: return picked.get()
   ""
 
 func cooldownForError*(message: string): int64 =
@@ -113,12 +113,11 @@ proc noteCredentialResult*(providerName, key: string; ok: bool;
                            {.gcsafe, raises: [].} =
   if key.len == 0:
     return
-  {.cast(gcsafe).}:
-    if not gPools.hasKey(providerName):
-      return
-    var pool = gPools.getOrDefault(providerName)
-    if ok:
-      pool.noteSuccess(key)
-    else:
-      pool.noteFailure(key, nowMs, cooldownForError(error))
-    gPools[providerName] = pool
+  if not gPools.hasKey(providerName):
+    return
+  var pool = gPools.getOrDefault(providerName)
+  if ok:
+    pool.noteSuccess(key)
+  else:
+    pool.noteFailure(key, nowMs, cooldownForError(error))
+  gPools[providerName] = pool
