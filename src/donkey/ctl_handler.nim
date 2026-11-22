@@ -736,7 +736,7 @@ proc dispatchCtl*(cfg: DonkeyConfig;
     if res.isErr: echo res.error; return 1
     return 0
   if args[1] == "secret" and args.len >= 3 and args[2] == "import-env":
-    let path = if args.len >= 4: args[3] else: envFilePath(resolveHome())
+    let path = if args.len >= 4: args[3] else: envFilePath(resolveHome(cfg.env))
     let res = ctlSecretImportEnv(secretVault, path)
     if res.isErr: echo res.error; return 1
     return 0
@@ -760,12 +760,12 @@ proc dispatchCtl*(cfg: DonkeyConfig;
   if args[1] == "skill" and args[2] == "install" and args.len == 4:
     ## Remote install (slug only)
     let r = ctlSkillInstallRemote(cfg.home,
-                          getEnv("CLAWHUB_REGISTRY", ClawhubDefaultRegistry),
+                          cfg.env.get("CLAWHUB_REGISTRY", ClawhubDefaultRegistry),
                           args[3])
     if r.isErr: return 1
     return 0
   if args[1] == "skill" and args[2] == "search" and args.len >= 4:
-    let r = ctlSkillSearchRemote(getEnv("CLAWHUB_REGISTRY", ClawhubDefaultRegistry), args[3])
+    let r = ctlSkillSearchRemote(cfg.env.get("CLAWHUB_REGISTRY", ClawhubDefaultRegistry), args[3])
     if r.isErr: return 1
     return 0
   if args[1] == "skill" and args[2] == "list" and args.len >= 3:
@@ -777,7 +777,7 @@ proc dispatchCtl*(cfg: DonkeyConfig;
   if args[1] == "skill" and args[2] == "update" and args.len >= 3:
     let slug = if args.len >= 4: args[3] else: ""
     let r = ctlSkillUpdateRemote(cfg.home,
-                         getEnv("CLAWHUB_REGISTRY", ClawhubDefaultRegistry),
+                         cfg.env.get("CLAWHUB_REGISTRY", ClawhubDefaultRegistry),
                          slug)
     if r.isErr: return 1
     return 0
@@ -799,15 +799,11 @@ proc dispatchCtl*(cfg: DonkeyConfig;
     proc makeMagmaMemory(): MdFileAdapter =
       MdFileAdapter(
         paddocksDir: cfg.paddocks,
-        magmaDsn: getEnv("DONKEY_PG_DSN"),
+        magmaDsn: cfg.env.get("DONKEY_PG_DSN"),
         magmaSqlitePath:
           block:
-            let p = getEnv("DONKEY_MAGMA_SQLITE_PATH")
-            if p.len > 0: p else: cfg.home / "state" / "magma.sqlite",
-        magmaSqliteVectorPath:
-          block:
-            let vecPath = getEnv("DONKEY_SQLITE_VEC_PATH")
-            if vecPath.len > 0: vecPath else: getEnv("DONKEY_SQLITE_VECTOR_PATH"),
+            cfg.env.get("DONKEY_MAGMA_SQLITE_PATH", cfg.home / "state" / "magma.sqlite"),
+        magmaSqliteVectorPath: cfg.env.get("DONKEY_SQLITE_VEC_PATH", cfg.env.get("DONKEY_SQLITE_VECTOR_PATH")),
       )
 
     if args[1] == "memory" and args[2] == "search" and args.len >= 5:

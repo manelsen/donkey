@@ -2,7 +2,7 @@
 ## Updated for the new API:
 ##   runOrchestrator(inbox, globalOutbox, mem, completeFn, streamFactory, clients, tools, paddockDir)
 ##   globalOutbox: AsyncQueue[OutboundMessage]  (was AsyncQueue[AgentMessage])
-##   streamFactory:     StreamFactory = nil for all non-streaming tests
+##   streamFactory:     StreamFactory() for all non-streaming tests
 
 import std/[json, os, strutils, unittest]
 import chronos
@@ -20,6 +20,7 @@ import donkey/adapters/memory/md_file
 import donkey/app/memory_agent
 import donkey/app/tool_agent
 import donkey/app/orchestrator
+import donkey/ports/provider
 import donkey/app/provider_executor
 import donkey/app/session_manager
 import donkey/app/session_state
@@ -368,7 +369,7 @@ proc runTests*() =
         session.inbox = inbox
         var sm: SessionManager
         let actor = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(),
-          complete, newStdHttpAdapter().toRuntimePort(), nil, @[client],
+          complete, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[client],
           @[ToolDescription(name: "browser_navigate")], userDir, newSessionState())
         try:
           await inbox.put(newTaskMsg("browse", tkUserMsg, $user, "browse"))
@@ -406,7 +407,7 @@ proc runTests*() =
         var session = makeSessionEntry()
         session.inbox = inbox
         let state = newSessionState()
-        let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+        let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
                                    dir / "u42", state)
         await inbox.put(newTaskMsg("req4", tkUserMsg, "u42", "ping"))
         let reply = await outbox.get()
@@ -432,7 +433,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
                                    userDir, state)
         await inbox.put(newTaskMsg("req-api-new", tkUserMsg, "api:alice", "ping"))
         let reply = await outbox.get()
@@ -459,7 +460,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
                                    userDir, state)
         var task = newTaskMsg("req-api-token", tkUserMsg, "api:alice", "ping")
         task.bridgeToken = 7'u64
@@ -488,7 +489,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
                                    userDir, state)
         await inbox.put(newTaskMsg("req-no-token", tkUserMsg, "u-no-token", "ping"))
         let reply = await outbox.get()
@@ -514,7 +515,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
                                    userDir, state)
         await inbox.put(newTaskMsg("req-interactive-new", tkUserMsg, "u-new", "ping"))
         let reply = await outbox.get()
@@ -550,7 +551,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), leakyComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
                                    dir / "u-sanitize", state)
         await inbox.put(newTaskMsg("req-sanitize", tkUserMsg, "u-sanitize", "ping"))
         let reply = await outbox.get()
@@ -589,7 +590,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), thinkingOnly,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
                                    dir / "u-thinking", state)
         await inbox.put(newTaskMsg("req-thinking", tkUserMsg, "u-thinking", "ping"))
         let reply = await outbox.get()
@@ -616,7 +617,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
                                    dir / "u-heartbeat", state)
         await inbox.put(newTaskMsg("req-hb", tkHeartbeat, "u-heartbeat",
           "Heartbeat automático.\nTarefas pendentes:\n- [ ] Review the logs"))
@@ -647,7 +648,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
                                    dir / "u-schedule", state)
         await inbox.put(newTaskMsg("req-sched", tkSchedule, "u-schedule",
           "Resumo diário.\n\n[schedule daily fired at 1700000000000 ms]"))
@@ -685,7 +686,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
                                    dir / "u-heartbeat-new", state)
         await inbox.put(newTaskMsg("req-hb", tkHeartbeat, "u-heartbeat-new",
           "Heartbeat automático.\nTarefas pendentes:\n- [ ] Review the logs"))
@@ -715,7 +716,7 @@ proc runTests*() =
         var session = makeSessionEntry()
         session.inbox = inbox
         let state = newSessionState()
-        let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubCompleteRetry, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+        let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubCompleteRetry, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
                                    dir / "u1", state)
         await inbox.put(newTaskMsg("req6", tkUserMsg, "u1", "hello"))
         let reply = await outbox.get()
@@ -742,7 +743,7 @@ proc runTests*() =
         var session = makeSessionEntry()
         session.inbox = inbox
         let state = newSessionState()
-        let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubCompleteEmpty, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+        let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubCompleteEmpty, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
                                    dir / "u1", state)
         await inbox.put(newTaskMsg("req5", tkUserMsg, "u1", "hello"))
         let reply = await outbox.get()
@@ -769,7 +770,7 @@ proc runTests*() =
         var session = makeSessionEntry()
         session.inbox = inbox
         let state = newSessionState()
-        let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+        let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
                                    dir / "u-seq", state)
         await inbox.put(newTaskMsg("req-a", tkUserMsg, "u-seq", "ping"))
         discard await outbox.get()
@@ -816,7 +817,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), longComplete,
-          newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-long-memory", state)
+          newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-long-memory", state)
         await inbox.put(newTaskMsg("req-long", tkUserMsg, "u-long-memory", longText("Pergunta longa:", 900)))
         discard await outbox.get()
         await inbox.put(newCancelMsg())
@@ -844,7 +845,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubOperationalMemoryFailure,
-          newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-skip-memory", state)
+          newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-skip-memory", state)
         await inbox.put(newTaskMsg("req-skip", tkUserMsg, "u-skip-memory",
           "Pesquise online por Mythos e registre na memória tudo o que descobriu."))
         discard await outbox.get()
@@ -873,7 +874,7 @@ proc runTests*() =
         let state = newSessionState()
         let orchFut = runOrchestrator(
           inbox, addr session, outbox, mem.toRuntimePort(),
-          stubProvider500, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+          stubProvider500, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
           dir / "u1", state, errorExplainFn = stubErrorExplainer)
         await inbox.put(newTaskMsg("req-err", tkUserMsg, "u1", "hello"))
         let reply = await outbox.get()
@@ -899,7 +900,7 @@ proc runTests*() =
         var session = makeSessionEntry()
         session.inbox = inbox
         let state = newSessionState()
-        let fut    = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+        let fut    = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
                                      dir / "u1", state)
         await inbox.put(newCancelMsg())
         await fut
@@ -928,7 +929,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-reset",
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-reset",
                                    state, log = orchLog)
         await inbox.put(newTaskMsg("req-reset-1", tkUserMsg, "u-reset", "ping"))
         let firstReply = await outbox.get()
@@ -975,7 +976,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-reset-guard", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-reset-guard", state)
         await inbox.put(newTaskMsg("req-reset-1", tkReset, "u-reset-guard", ""))
         let resetReply = await outbox.get()
         await inbox.put(newTaskMsg("req-reset-2", tkUserMsg, "u-reset-guard", "oi"))
@@ -1004,7 +1005,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-tg-bootstrap", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-tg-bootstrap", state)
         await inbox.put(newTaskMsg("req-tg-1", tkUserMsg, "u-tg-bootstrap", "oi", ckTelegram, "101"))
         let wakeupReply = await outbox.get()
         await inbox.put(newTaskMsg("req-tg-2", tkPersonalityChoice, "u-tg-bootstrap",
@@ -1039,7 +1040,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-heartbeat-mid-bootstrap", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-heartbeat-mid-bootstrap", state)
         await inbox.put(newTaskMsg("req-mid-1", tkUserMsg, "u-heartbeat-mid-bootstrap", "oi", ckTelegram, "101"))
         discard await outbox.get()
         await inbox.put(newTaskMsg("req-mid-2", tkPersonalityChoice, "u-heartbeat-mid-bootstrap", "personality:mode:guided", ckTelegram, "555"))
@@ -1135,7 +1136,7 @@ proc runTests*() =
           toolCallCount: 2,
         )
         await finalizeNormalTurn(
-          outbox, UserId("u1"), ckTelegram, "", "stream-1", nil,
+          outbox, UserId("u1"), ckTelegram, "", "stream-1", StreamFactory(),
           suppressProgress = true, suppressQuietFinal = true,
           showReasoning = false, loopResult = loopResult)
         doAssert not (await withTimeout(outbox.get(), 100.milliseconds))
@@ -1339,7 +1340,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubNameChoiceReady,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-name-dialogue", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-name-dialogue", state)
         await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-name-dialogue", "oi", ckTelegram, "101"))
         discard await outbox.get()
         await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-name-dialogue", "personality:mode:guided", ckTelegram, "555"))
@@ -1380,7 +1381,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-profile-msgs", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-profile-msgs", state)
         await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-profile-msgs", "oi", ckTelegram, "101"))
         discard await outbox.get()
         await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-profile-msgs", "personality:mode:guided", ckTelegram, "555"))
@@ -1419,7 +1420,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubUserProfileReady,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-micro-profile", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-micro-profile", state)
         await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-micro-profile", "oi", ckTelegram, "101"))
         discard await outbox.get()
         await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-micro-profile", "personality:mode:guided", ckTelegram, "555"))
@@ -1458,7 +1459,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubFreeConvoReady,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-resume-convo", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-resume-convo", state)
         await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-resume-convo", "oi", ckTelegram, "101"))
         discard await outbox.get()
         await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-resume-convo", "personality:mode:free", ckTelegram, "555"))
@@ -1477,7 +1478,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-resume-convo", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-resume-convo", state)
         await inbox.put(newTaskMsg("req-4", tkUserMsg, "u-resume-convo", "Nex", ckTelegram, "101"))
         let reply = await outbox.get()
         await inbox.put(newCancelMsg())
@@ -1492,7 +1493,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubUserProfileReady,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-resume-convo", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-resume-convo", state)
         await inbox.put(newTaskMsg("req-5", tkUserMsg, "u-resume-convo",
           "Sou Manel, pode me chamar de Void. Gosto de franqueza. UTC-3. Português brasileiro.",
           ckTelegram, "101"))
@@ -1534,7 +1535,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), nil, @[], @[], dir / "u-bootstrap-latch", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-bootstrap-latch", state)
         await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-bootstrap-latch", "oi", ckTelegram, "101"))
         discard await outbox.get()
         await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-bootstrap-latch", "personality:mode:guided", ckTelegram, "555"))

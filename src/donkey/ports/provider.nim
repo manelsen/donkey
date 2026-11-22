@@ -65,13 +65,18 @@ type
                   ): Result[CompletionResponse, string]
                      {.gcsafe.}
 
-  StreamFactory* = proc(): StreamFn {.gcsafe, nimcall.}
+  StreamBuilder* = proc(credential: string): StreamFn {.gcsafe, nimcall.}
+
+  StreamFactory* = object
     ## Builds a fresh StreamFn. Streaming runs on its own thread and calls
-    ## the factory there, so the provider closure is built, used and freed
-    ## on that thread alone: ORC counts references without atomics, and a
+    ## `build` there, so the provider closure is built, used and freed on
+    ## that thread alone: ORC counts references without atomics, and a
     ## closure shared with the event loop could be freed twice. `nimcall`
-    ## forbids the factory itself from capturing loop state. nil means
-    ## streaming is not available.
+    ## forbids the builder from capturing loop state; what it needs (the API
+    ## key) travels as plain data in `credential`, read on the loop from the
+    ## environment snapshot. No builder means streaming is not available.
+    build*:      StreamBuilder
+    credential*: string
 
   ProviderBundle* = object
     completeFn*: CompleteFn
@@ -91,6 +96,10 @@ type
 
     p.caps() is ProviderCaps
     ## Declare provider capabilities (pure metadata, no I/O).
+
+func available*(factory: StreamFactory): bool =
+  ## Whether streaming can run with this factory.
+  factory.build != nil
 
 func catalogSourceLabel*(source: ModelCatalogSource): string =
   case source

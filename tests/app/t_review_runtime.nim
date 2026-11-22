@@ -129,7 +129,7 @@ proc runWiringTurn(userDir: string; port: MemoryRuntimePort;
   var session = SessionEntry(inbox: inbox, askInbox: newAsyncQueue[string]())
   let orchFut = runOrchestrator(
     inbox, addr session, outbox, port, stubComplete,
-    newStdHttpAdapter().toRuntimePort(), nil, @[], @[],
+    newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
     userDir, newSessionState(), reviewRuntime = runtime)
   await inbox.put(newTaskMsg("req-review", tkUserMsg, "u1",
                              "como fazemos o deploy?"))

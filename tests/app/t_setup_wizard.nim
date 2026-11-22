@@ -184,7 +184,7 @@ proc runTests*() =
       )
       let tomlPath = testDir / "donkey.toml"
       writeFile(tomlPath, tomlContent)
-      let cfg = loadConfig(tomlPath)
+      let cfg = loadConfig(tomlPath, Environment())
       let summary = buildDoctorSummary(cfg)
       check "SQLite-first MAGMA" in summary
       check "zai-coding / glm-4.7" in summary

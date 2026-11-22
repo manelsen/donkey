@@ -131,12 +131,11 @@ proc printHelp = echo cliHelpText()
 ##     - subsequent partials: editMessage
 ##     - isPartial=false: editMessage + delete from presentationState
 
-proc makeTgTypingFn(token: string; identityPath: string; log: Logger): TypingFn =
+proc makeTgTypingFn(token, identityPath, apiBase: string; log: Logger): TypingFn =
   ## Returns a TypingFn that sends typing indicators to Telegram users.
   ## Uses its own TelegramAdapter instance (token + resolver shared via ref).
   let tg = new TelegramAdapter
-  tg[] = newTelegramAdapter(token, identityPath,
-                            apiBase = getEnv("DONKEY_TELEGRAM_API_BASE").strip(),
+  tg[] = newTelegramAdapter(token, identityPath, apiBase = apiBase,
                             pollTimeout = 0)
   result = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: [].} =
     if channel == ckTelegram:
@@ -188,6 +187,12 @@ type DaemonEnv = object
   matrixWebhookToken: string
   whatsappVerifyToken: string
   whatsappAppSecret: string
+  wecomWebhookPort: string
+  wechatWebhookPort: string
+  matrixConfigured: bool
+  qqOneBotWebhookPort: string
+  qqOneBotWebhookHost: string
+  qqOneBotSecret: string
 
 type DaemonAdapters = object
   tg: TelegramAdapter
@@ -321,15 +326,15 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
 
   ## Browser tools are opt-in: no process is spawned until the first
   ## browser_navigate call. Backend selection is pure/strategy-based.
-  let parsedBackend = parseBrowserBackend(getEnv("DONKEY_BROWSER_BACKEND"))
+  let parsedBackend = parseBrowserBackend(cfg.env.get("DONKEY_BROWSER_BACKEND"))
   var browserBackend = bbOff
   if parsedBackend.isSome:
     browserBackend = parsedBackend.get()
-  elif getEnv("DONKEY_BROWSER_BACKEND").strip.len > 0:
+  elif cfg.env.get("DONKEY_BROWSER_BACKEND").strip.len > 0:
     log.warn("browser: invalid DONKEY_BROWSER_BACKEND='" &
-             getEnv("DONKEY_BROWSER_BACKEND") & "'; tools disabled")
+             cfg.env.get("DONKEY_BROWSER_BACKEND") & "'; tools disabled")
   if browserBackend != bbOff:
-    let rawBrowserTimeout = getEnv("DONKEY_BROWSER_TIMEOUT_MS").strip()
+    let rawBrowserTimeout = cfg.env.get("DONKEY_BROWSER_TIMEOUT_MS").strip()
     var browserTimeoutMs = BrowserDefaultTimeoutMs
     if rawBrowserTimeout.len > 0:
       try:
@@ -342,9 +347,9 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
       try:
         newBrowserExecutor(
           backend = browserBackend,
-          executablePath = getEnv("DONKEY_BROWSER_PATH"),
-          profileBaseDir = getEnv("DONKEY_BROWSER_PROFILE_DIR"),
-          proxyServer = getEnv("DONKEY_BROWSER_PROXY"),
+          executablePath = cfg.env.get("DONKEY_BROWSER_PATH"),
+          profileBaseDir = cfg.env.get("DONKEY_BROWSER_PROFILE_DIR"),
+          proxyServer = cfg.env.get("DONKEY_BROWSER_PROXY"),
           timeoutMs = browserTimeoutMs)
       except CatchableError as e:
         log.warn("browser disabled: " & e.msg)
@@ -365,19 +370,21 @@ proc makeProviderFn[A](a: A): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
     a.complete(req)
 
-proc openRouterKey(): string {.gcsafe.} =
+proc openRouterKey(env: Environment): string =
   let openRouter = descriptorOr("openrouter")
-  if openRouter.envNames.len > 0: getEnv(openRouter.envNames[0]) else: ""
+  if openRouter.envNames.len > 0: env.get(openRouter.envNames[0]) else: ""
 
-proc openRouterStream(): StreamFn {.nimcall, gcsafe.} =
+proc openRouterStream(apiKey: string): StreamFn {.nimcall, gcsafe.} =
   ## Runs on the stream thread: the adapter and its closure are built there.
-  newOpenRouterAdapter(openRouterKey()).makeStreamFn()
+  newOpenRouterAdapter(apiKey).makeStreamFn()
 
-proc buildGlobalProviderBundle(): GlobalProviderBundle =
-  let orKey = openRouterKey()
+proc buildGlobalProviderBundle(env: Environment): GlobalProviderBundle =
+  let orKey = openRouterKey(env)
   let orAdapter = newOpenRouterAdapter(orKey)
   result.completeFn = if orKey.len > 0: makeProviderFn(orAdapter) else: nil
-  result.streamFactory = if orKey.len > 0: openRouterStream else: nil
+  result.streamFactory =
+    if orKey.len > 0: StreamFactory(build: openRouterStream, credential: orKey)
+    else: StreamFactory()
 
 func routeCostProviderIds(): seq[string] =
   ## Cost hints cover every provider that has a descriptor.
@@ -389,12 +396,11 @@ proc buildGlobalSearchFn(memory: MdFileAdapter): SearchFn {.gcsafe.}
 func defaultMagmaSqlitePath(home: string): string =
   home / "state" / "magma.sqlite"
 
-func configuredMagmaSqlitePath(home: string): string =
+func configuredMagmaSqlitePath(home: string; env: Environment): string =
   when defined(withSqlite):
-    let configured = getEnv("DONKEY_MAGMA_SQLITE_PATH")
-    if configured.len > 0: configured else: defaultMagmaSqlitePath(home)
+    env.get("DONKEY_MAGMA_SQLITE_PATH", defaultMagmaSqlitePath(home))
   else:
-    getEnv("DONKEY_MAGMA_SQLITE_PATH")
+    env.get("DONKEY_MAGMA_SQLITE_PATH")
 
 proc initDaemonServices(cfg: DonkeyConfig;
                         env: DaemonEnv;
@@ -404,105 +410,115 @@ proc initDaemonServices(cfg: DonkeyConfig;
   result.tools = toolBundle.tools
   result.browserRuntime = toolBundle.browserRuntime
 
-  let providerBundle = buildGlobalProviderBundle()
+  let providerBundle = buildGlobalProviderBundle(cfg.env)
   result.globalCompleteFn = providerBundle.completeFn
   result.globalStreamFactory = providerBundle.streamFactory
-  result.tgTypingFn = makeTgTypingFn(env.telegramToken, env.identityPath, log)
+  result.tgTypingFn = makeTgTypingFn(env.telegramToken, env.identityPath,
+                                     cfg.env.stripped("DONKEY_TELEGRAM_API_BASE"), log)
   result.globalSearchFn = buildGlobalSearchFn(env.memory)
   when defined(withPostgres) or defined(withSqlite):
     if result.globalSearchFn != nil:
       log.info("MAGMA semantic search enabled")
 
 proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
-  result.telegramToken = getEnv("TELEGRAM_BOT_TOKEN").strip()
+  result.telegramToken = cfg.env.get("TELEGRAM_BOT_TOKEN").strip()
   if result.telegramToken.len == 0:
     log.warn("TELEGRAM_BOT_TOKEN not set — Telegram disabled")
 
-  result.discordToken = getEnv("DISCORD_BOT_TOKEN")
-  result.discordGuildId = getEnv("DISCORD_GUILD_ID")
-  result.wecomCorpId = getEnv("WECOM_CORP_ID")
-  result.wechatAppId = getEnv("WECHAT_APP_ID")
-  result.feishuAppId = getEnv("FEISHU_APP_ID")
-  result.slackBotToken = getEnv("SLACK_BOT_TOKEN")
-  result.slackAppToken = getEnv("SLACK_APP_TOKEN")
-  result.dingTalkAppKey = getEnv("DINGTALK_APP_KEY")
-  result.dingTalkAppSecret = getEnv("DINGTALK_APP_SECRET")
-  result.dingTalkRobotCode = getEnv("DINGTALK_ROBOT_CODE")
-  result.qqApiBase = getEnv("QQ_ONEBOT_URL")
-  result.qqOfficialAppId = getEnv("QQ_OFFICIAL_APP_ID")
-  result.qqOfficialApiBase = getEnv("QQ_OFFICIAL_API_BASE")
-  let pgDsn = getEnv("DONKEY_PG_DSN")
+  result.discordToken = cfg.env.get("DISCORD_BOT_TOKEN")
+  result.discordGuildId = cfg.env.get("DISCORD_GUILD_ID")
+  result.wecomCorpId = cfg.env.get("WECOM_CORP_ID")
+  result.wechatAppId = cfg.env.get("WECHAT_APP_ID")
+  result.feishuAppId = cfg.env.get("FEISHU_APP_ID")
+  result.slackBotToken = cfg.env.get("SLACK_BOT_TOKEN")
+  result.slackAppToken = cfg.env.get("SLACK_APP_TOKEN")
+  result.dingTalkAppKey = cfg.env.get("DINGTALK_APP_KEY")
+  result.dingTalkAppSecret = cfg.env.get("DINGTALK_APP_SECRET")
+  result.dingTalkRobotCode = cfg.env.get("DINGTALK_ROBOT_CODE")
+  result.qqApiBase = cfg.env.get("QQ_ONEBOT_URL")
+  result.qqOfficialAppId = cfg.env.get("QQ_OFFICIAL_APP_ID")
+  result.qqOfficialApiBase = cfg.env.get("QQ_OFFICIAL_API_BASE")
+  let pgDsn = cfg.env.get("DONKEY_PG_DSN")
   result.memory = MdFileAdapter(
     paddocksDir:     cfg.paddocks,
     magmaDsn:       pgDsn,
-    magmaSqlitePath: configuredMagmaSqlitePath(cfg.home),
+    magmaSqlitePath: configuredMagmaSqlitePath(cfg.home, cfg.env),
     magmaSqliteVectorPath:
       block:
-        let vecPath = getEnv("DONKEY_SQLITE_VEC_PATH")
-        if vecPath.len > 0: vecPath else: getEnv("DONKEY_SQLITE_VECTOR_PATH"),
+        let vecPath = cfg.env.get("DONKEY_SQLITE_VEC_PATH")
+        if vecPath.len > 0: vecPath else: cfg.env.get("DONKEY_SQLITE_VECTOR_PATH"),
   )
   result.identityPath = cfg.home / "identities.tsv"
-  let wecomAgentIdStr = getEnv("WECOM_AGENT_ID")
+  let wecomAgentIdStr = cfg.env.get("WECOM_AGENT_ID")
   result.wecomAgentId =
     if wecomAgentIdStr.len > 0: parseInt(wecomAgentIdStr) else: 0
   
   # WhatsApp Cloud API
-  result.whatsappAccessToken = getEnv("WHATSAPP_ACCESS_TOKEN")
-  result.whatsappPhoneNumberId = getEnv("WHATSAPP_PHONE_NUMBER_ID")
+  result.whatsappAccessToken = cfg.env.get("WHATSAPP_ACCESS_TOKEN")
+  result.whatsappPhoneNumberId = cfg.env.get("WHATSAPP_PHONE_NUMBER_ID")
 
   # HTTP webhook receiver (Slack / Feishu / DingTalk / Matrix / WhatsApp)
-  let webhookPortStr = getEnv("DONKEY_WEBHOOK_PORT")
+  let webhookPortStr = cfg.env.get("DONKEY_WEBHOOK_PORT")
   result.webhookPort = 0
   if webhookPortStr.len > 0:
     try:
       result.webhookPort = parseInt(webhookPortStr)
     except ValueError:
       result.webhookPort = 0
-  let webhookHost = getEnv("DONKEY_WEBHOOK_HOST")
+  let webhookHost = cfg.env.get("DONKEY_WEBHOOK_HOST")
   result.webhookHost = if webhookHost.len > 0: webhookHost else: "127.0.0.1"
-  result.webhookTlsCert = getEnv("DONKEY_WEBHOOK_TLS_CERT").strip()
-  result.webhookTlsKey = getEnv("DONKEY_WEBHOOK_TLS_KEY").strip()
-  result.slackSigningSecret = getEnv("SLACK_SIGNING_SECRET")
-  result.feishuVerificationToken = getEnv("FEISHU_VERIFICATION_TOKEN")
-  result.feishuEncryptKey = getEnv("FEISHU_ENCRYPT_KEY")
+  result.webhookTlsCert = cfg.env.get("DONKEY_WEBHOOK_TLS_CERT").strip()
+  result.webhookTlsKey = cfg.env.get("DONKEY_WEBHOOK_TLS_KEY").strip()
+  result.slackSigningSecret = cfg.env.get("SLACK_SIGNING_SECRET")
+  result.feishuVerificationToken = cfg.env.get("FEISHU_VERIFICATION_TOKEN")
+  result.feishuEncryptKey = cfg.env.get("FEISHU_ENCRYPT_KEY")
   ## LINE: the route is mounted only when the access token exists; the channel
   ## secret is the HMAC key for X-Line-Signature. Groups are default-deny
   ## (empty = none), users are opt-in (empty = all) — see line_policy.
-  result.lineChannelSecret = getEnv("LINE_CHANNEL_SECRET").strip()
-  result.lineChannelAccessToken = getEnv("LINE_CHANNEL_ACCESS_TOKEN").strip()
-  result.lineAllowedGroups = parseChatIdList(getEnv("LINE_ALLOWED_GROUPS"))
-  result.lineAllowedUsers = parseChatIdList(getEnv("LINE_ALLOWED_USERS"))
-  result.matrixWebhookToken = getEnv("MATRIX_WEBHOOK_TOKEN")
-  result.whatsappVerifyToken = getEnv("WHATSAPP_VERIFY_TOKEN")
-  result.whatsappAppSecret = getEnv("WHATSAPP_APP_SECRET")
+  result.lineChannelSecret = cfg.env.get("LINE_CHANNEL_SECRET").strip()
+  result.lineChannelAccessToken = cfg.env.get("LINE_CHANNEL_ACCESS_TOKEN").strip()
+  result.lineAllowedGroups = parseChatIdList(cfg.env.get("LINE_ALLOWED_GROUPS"))
+  result.lineAllowedUsers = parseChatIdList(cfg.env.get("LINE_ALLOWED_USERS"))
+  result.matrixWebhookToken = cfg.env.get("MATRIX_WEBHOOK_TOKEN")
+  result.whatsappVerifyToken = cfg.env.get("WHATSAPP_VERIFY_TOKEN")
+  result.whatsappAppSecret = cfg.env.get("WHATSAPP_APP_SECRET")
+  result.wecomWebhookPort = cfg.env.get("WECOM_WEBHOOK_PORT", "8081")
+  result.wechatWebhookPort = cfg.env.get("WECHAT_WEBHOOK_PORT", "8081")
+  result.matrixConfigured =
+    cfg.env.get("MATRIX_HOMESERVER").len > 0 and
+    cfg.env.get("MATRIX_BOT_USER_ID").len > 0 and
+    cfg.env.get("MATRIX_ACCESS_TOKEN").len > 0
+  result.qqOneBotWebhookPort = cfg.env.get("QQ_ONEBOT_WEBHOOK_PORT", "8082")
+  result.qqOneBotWebhookHost = cfg.env.get("QQ_ONEBOT_WEBHOOK_HOST", "127.0.0.1")
+  result.qqOneBotSecret = cfg.env.get("QQ_ONEBOT_SECRET")
 
-proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
+proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
   result.tg = newTelegramAdapter(
     env.telegramToken, env.identityPath,
-    apiBase = getEnv("DONKEY_TELEGRAM_API_BASE").strip(),
+    apiBase = cfg.env.get("DONKEY_TELEGRAM_API_BASE").strip(),
     pollTimeout = 0)
   result.dc = newDiscordAdapter(env.discordToken, env.identityPath)
-  result.wc = newWeComAdapter(env.wecomCorpId, getEnv("WECOM_CORP_SECRET"),
-                              getEnv("WECOM_CALLBACK_TOKEN"), env.wecomAgentId,
+  result.wc = newWeComAdapter(env.wecomCorpId, cfg.env.get("WECOM_CORP_SECRET"),
+                              cfg.env.get("WECOM_CALLBACK_TOKEN"), env.wecomAgentId,
                               env.identityPath)
-  result.wch = newWeChatAdapter(env.wechatAppId, getEnv("WECHAT_APP_SECRET"),
-                                getEnv("WECHAT_CALLBACK_TOKEN"),
-                                getEnv("WECHAT_TEMPLATE_ID"),
+  result.wch = newWeChatAdapter(env.wechatAppId, cfg.env.get("WECHAT_APP_SECRET"),
+                                cfg.env.get("WECHAT_CALLBACK_TOKEN"),
+                                cfg.env.get("WECHAT_TEMPLATE_ID"),
                                 env.identityPath)
-  if env.qqOfficialAppId.len > 0 and getEnv("QQ_OFFICIAL_CLIENT_SECRET").len > 0:
+  if env.qqOfficialAppId.len > 0 and cfg.env.get("QQ_OFFICIAL_CLIENT_SECRET").len > 0:
     result.qq = newQQOfficialChannelAdapter(
       env.qqOfficialAppId,
-      getEnv("QQ_OFFICIAL_CLIENT_SECRET"),
+      cfg.env.get("QQ_OFFICIAL_CLIENT_SECRET"),
       env.identityPath,
-      apiBase = getEnv("QQ_OFFICIAL_API_BASE"),
-      tokenBase = getEnv("QQ_OFFICIAL_TOKEN_BASE"),
+      apiBase = cfg.env.get("QQ_OFFICIAL_API_BASE"),
+      tokenBase = cfg.env.get("QQ_OFFICIAL_TOKEN_BASE"),
     )
   elif env.qqApiBase.len > 0:
-    result.qq = newQQOneBotChannelAdapter(env.qqApiBase, getEnv("QQ_ONEBOT_TOKEN"),
+    result.qq = newQQOneBotChannelAdapter(env.qqApiBase, cfg.env.get("QQ_ONEBOT_TOKEN"),
                                           env.identityPath)
   else:
     result.qq = newQQDisabledChannelAdapter(env.identityPath)
-  result.fs = newFeishuAdapter(env.feishuAppId, getEnv("FEISHU_APP_SECRET"),
+  result.fs = newFeishuAdapter(env.feishuAppId, cfg.env.get("FEISHU_APP_SECRET"),
                                env.identityPath)
   result.sl = newSlackAdapter(env.slackBotToken, env.identityPath)
   result.dt = newDingTalkAdapter(env.dingTalkAppKey, env.dingTalkAppSecret,
@@ -515,10 +531,10 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
       newLineAdapter(env.lineChannelAccessToken, env.identityPath)
     else:
       newLineAdapter("", env.identityPath, apiBase = "https://api.line.me")
-  result.mx = newMatrixAdapter(getEnv("MATRIX_HOMESERVER"), getEnv("MATRIX_BOT_USER_ID"),
-                               getEnv("MATRIX_ACCESS_TOKEN"), env.identityPath)
-  result.em = newEmailAdapter(getEnv("EMAIL_IMAP_HOST"), getEnv("EMAIL_SMTP_HOST"),
-                              getEnv("EMAIL_USER"), getEnv("EMAIL_PASSWORD"),
+  result.mx = newMatrixAdapter(cfg.env.get("MATRIX_HOMESERVER"), cfg.env.get("MATRIX_BOT_USER_ID"),
+                               cfg.env.get("MATRIX_ACCESS_TOKEN"), env.identityPath)
+  result.em = newEmailAdapter(cfg.env.get("EMAIL_IMAP_HOST"), cfg.env.get("EMAIL_SMTP_HOST"),
+                              cfg.env.get("EMAIL_USER"), cfg.env.get("EMAIL_PASSWORD"),
                               env.identityPath)
   result.cli = newCliAdapter()
   
@@ -528,18 +544,18 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
                                    env.identityPath)
 
   # Signal (optional - requires a running signal-cli daemon socket)
-  let signalAccount = getEnv("SIGNAL_ACCOUNT").strip()
+  let signalAccount = cfg.env.get("SIGNAL_ACCOUNT").strip()
   if signalAccount.len > 0:
-    let rawSock = getEnv("SIGNAL_SOCKET").strip()
+    let rawSock = cfg.env.get("SIGNAL_SOCKET").strip()
     result.signal = newSignalAdapter(
       signalAccount,
       env.identityPath,
       sockPath = if rawSock.len > 0: rawSock else: SignalDefaultSock,
     )
 
-proc envSeconds(name: string; default: int64): int64 =
+proc envSeconds(env: Environment; name: string; default: int64): int64 =
   ## A positive whole number of seconds from the environment, or `default`.
-  let raw = getEnv(name).strip()
+  let raw = env.stripped(name)
   if raw.len == 0:
     return default
   try:
@@ -548,8 +564,8 @@ proc envSeconds(name: string; default: int64): int64 =
   except ValueError:
     default
 
-proc envFloatValue(name: string; default: float): float =
-  let raw = getEnv(name).strip()
+proc envFloatValue(env: Environment; name: string; default: float): float =
+  let raw = env.stripped(name)
   if raw.len == 0:
     return default
   try:
@@ -557,15 +573,15 @@ proc envFloatValue(name: string; default: float): float =
   except ValueError:
     result = default
 
-proc initDaemonRuntime(home: string): DaemonRuntime =
+proc initDaemonRuntime(home: string; env: Environment): DaemonRuntime =
   new(result)
   result.globalOutbox = newAsyncQueue[OutboundMessage]()
   result.sm.init()
   let stateStore = newRuntimeStateStore(
     home / "state",
-    ledgerRetentionDays = envFloatValue("DONKEY_LEDGER_RETENTION_DAYS",
+    ledgerRetentionDays = envFloatValue(env, "DONKEY_LEDGER_RETENTION_DAYS",
                                         LedgerRetentionDaysDefault),
-    ledgerCompactIntervalSec = envFloatValue("DONKEY_LEDGER_COMPACT_INTERVAL_SEC",
+    ledgerCompactIntervalSec = envFloatValue(env, "DONKEY_LEDGER_COMPACT_INTERVAL_SEC",
                                              LedgerCompactIntervalSecDefault),
   )
   result.stateStore = stateStore
@@ -574,9 +590,9 @@ proc initDaemonRuntime(home: string): DaemonRuntime =
   result.presentationState = initPresentationState()
   result.routeHealth = newRouteHealth(
     routeHealthFileStore(home / "state" / "route_health.json"),
-    sampleTtlSec = envSeconds("DONKEY_ROUTE_HEALTH_TTL_SEC",
+    sampleTtlSec = envSeconds(env, "DONKEY_ROUTE_HEALTH_TTL_SEC",
                               DefaultRecentRouteSampleTtlSec),
-    cooldownSec = envSeconds("DONKEY_PROVIDER_COOLDOWN_SEC",
+    cooldownSec = envSeconds(env, "DONKEY_PROVIDER_COOLDOWN_SEC",
                              DefaultProviderCooldownSec))
   result.routeHealth.load()
   result.daemonStartMs = nowMs()
@@ -586,9 +602,9 @@ proc initDaemonContext(cfg: DonkeyConfig;
                        log: Logger): DaemonContext =
   new(result)
   result.env = env
-  result.adapters = initDaemonAdapters(env)
+  result.adapters = initDaemonAdapters(cfg, env)
   result.services = initDaemonServices(cfg, env, log)
-  result.runtime = initDaemonRuntime(cfg.home)
+  result.runtime = initDaemonRuntime(cfg.home, cfg.env)
 
 proc loadDaemonBootstrap(cfg: DonkeyConfig;
                          log: Logger): DaemonBootstrap =
@@ -625,14 +641,13 @@ proc startOptionalDiscordGateway(dcAdapter: var DiscordAdapter;
   log.info("Discord gateway thread started")
 
 proc startOptionalWeComGateway(wcAdapter: var WeComAdapter;
-                               wecomCorpId: string;
+                               wecomCorpId, webhookPort: string;
                                log: Logger) =
   if wecomCorpId.len == 0:
     log.info("WECOM_CORP_ID not set — WeCom disabled")
     return
 
-  let wcPort = Port(parseInt(if getEnv("WECOM_WEBHOOK_PORT").len > 0:
-                               getEnv("WECOM_WEBHOOK_PORT") else: "8081"))
+  let wcPort = Port(parseInt(webhookPort))
   wcAdapter.startWebhook(wcPort, log)
   log.info("WeCom webhook started on port " & $wcPort)
 
@@ -647,14 +662,13 @@ proc startOptionalFeishuGateway(fsAdapter: var FeishuAdapter;
   log.info("Feishu WebSocket gateway started")
 
 proc startOptionalWeChatGateway(wchAdapter: var WeChatAdapter;
-                                wechatAppId: string;
+                                wechatAppId, webhookPort: string;
                                 log: Logger) =
   if wechatAppId.len == 0:
     log.info("WECHAT_APP_ID not set — WeChat disabled")
     return
 
-  let port = Port(parseInt(if getEnv("WECHAT_WEBHOOK_PORT").len > 0:
-                             getEnv("WECHAT_WEBHOOK_PORT") else: "8081"))
+  let port = Port(parseInt(webhookPort))
   wchAdapter.startWebhook(port, log)
   log.info("WeChat webhook listener started on port " & $port)
 
@@ -666,6 +680,7 @@ proc slackSocketHttp(): HttpRuntimePort {.nimcall, gcsafe.} =
 proc startOptionalSlackGateway(slAdapter: var SlackAdapter;
                                slackBotToken: string;
                                slackAppToken: string;
+                               slackSigningSecret: string;
                                slackHttp: SlackHttpFactory;
                                log: Logger) =
   if slackBotToken.len == 0:
@@ -676,7 +691,7 @@ proc startOptionalSlackGateway(slAdapter: var SlackAdapter;
   if slackAppToken.len > 0:
     startSlackSocketMode(slackAppToken, slackHttp, log).isOkOr:
       log.error("slack socket: " & error)
-  elif getEnv("SLACK_SIGNING_SECRET").len == 0:
+  elif slackSigningSecret.len == 0:
     log.warn("SLACK_SIGNING_SECRET/SLACK_APP_TOKEN not set — Slack inbound disabled")
   log.info("Slack gateway started")
 
@@ -690,14 +705,10 @@ proc startOptionalDingTalkGateway(dtAdapter: var DingTalkAdapter;
   dtAdapter.openQueue()
   log.info("DingTalk gateway started")
 
-func matrixConfigured(): bool =
-  getEnv("MATRIX_HOMESERVER").len > 0 and
-    getEnv("MATRIX_BOT_USER_ID").len > 0 and
-    getEnv("MATRIX_ACCESS_TOKEN").len > 0
-
 proc startOptionalMatrixGateway(mxAdapter: var MatrixAdapter;
+                                configured: bool;
                                 log: Logger) =
-  if not matrixConfigured():
+  if not configured:
     log.info("MATRIX_HOMESERVER/MATRIX_BOT_USER_ID/MATRIX_ACCESS_TOKEN not set — Matrix disabled")
     return
 
@@ -741,7 +752,7 @@ proc startOptionalWebhookReceiver(env: DaemonEnv; log: Logger) =
     lineAllowedGroups: env.lineAllowedGroups,
     lineAllowedUsers: env.lineAllowedUsers,
     matrixToken:
-      if matrixConfigured(): env.matrixWebhookToken else: "",
+      if env.matrixConfigured: env.matrixWebhookToken else: "",
     whatsappVerifyToken:
       if env.whatsappAccessToken.len > 0 and env.whatsappPhoneNumberId.len > 0:
         env.whatsappVerifyToken
@@ -759,19 +770,16 @@ proc startOptionalWebhookReceiver(env: DaemonEnv; log: Logger) =
            env.webhookHost & ":" & $env.webhookPort)
 
 proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
+                             env: DaemonEnv;
                              log: Logger) =
   if not qqAdapter.enabled():
     log.info("QQ not configured — QQ disabled")
     return
   case qqAdapter.kind
   of qbkOneBot:
-    let oneBotPort = Port(parseInt(
-      if getEnv("QQ_ONEBOT_WEBHOOK_PORT").len > 0:
-        getEnv("QQ_ONEBOT_WEBHOOK_PORT") else: "8082"))
-    let oneBotHost =
-      if getEnv("QQ_ONEBOT_WEBHOOK_HOST").len > 0: getEnv("QQ_ONEBOT_WEBHOOK_HOST")
-      else: "127.0.0.1"
-    qqAdapter.startWebhook(oneBotHost, oneBotPort, getEnv("QQ_ONEBOT_SECRET"),
+    let oneBotPort = Port(parseInt(env.qqOneBotWebhookPort))
+    let oneBotHost = env.qqOneBotWebhookHost
+    qqAdapter.startWebhook(oneBotHost, oneBotPort, env.qqOneBotSecret,
                            log).isOkOr:
       log.error("QQ OneBot webhook: " & error)
       return
@@ -879,7 +887,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
     log.info("IPC socket: " & sockPath)
   except CatchableError as e:
     log.warn("IPC socket disabled: " & e.msg)
-  let httpPort = resolveGatewayPort(getEnv("DONKEY_HTTP_PORT"))
+  let httpPort = resolveGatewayPort(cfg.env.get("DONKEY_HTTP_PORT"))
   let gwStatusFn: GatewayStatusFn = proc(): DaemonStatus {.gcsafe.} =
     ipcStatusFn()
   let gwLogFn: GatewayLogFn = proc(n: int): seq[IpcLogEntry] {.gcsafe.} =
@@ -914,10 +922,10 @@ proc setupIpcServer(cfg: DonkeyConfig;
       runSessionAction(runtime.sm, rawUserId, taskKind, payload,
                        gwAuthorizeFn, enqueueSessionTask)
   let httpBind = block:
-    let raw = getEnv("DONKEY_HTTP_BIND").strip()
+    let raw = cfg.env.get("DONKEY_HTTP_BIND").strip()
     if raw.len > 0: raw else: "127.0.0.1"
-  let httpToken = getEnv("DONKEY_HTTP_TOKEN").strip()
-  let httpAllowInsecure = getEnv("DONKEY_HTTP_ALLOW_INSECURE").strip() == "1"
+  let httpToken = cfg.env.get("DONKEY_HTTP_TOKEN").strip()
+  let httpAllowInsecure = cfg.env.get("DONKEY_HTTP_ALLOW_INSECURE").strip() == "1"
   if httpPort > 0:
     if not gatewayBindIsAllowed(httpBind, httpToken, httpAllowInsecure):
       log.error("HTTP gateway disabled: non-loopback bind (" & httpBind &
@@ -966,7 +974,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     proc(userId: UserId): bool = memory.isDmAllowed(userId),
     cfg.dmPolicy,
     newStdHttpAdapter(allowlist = cfg.webAllowlist,
-                      proxy = getEnv("DONKEY_WEB_PROXY").strip()).toRuntimePort(),
+                      proxy = cfg.env.get("DONKEY_WEB_PROXY").strip()).toRuntimePort(),
     buildProviderBundle,
     buildDenoSkillRuntime,
     buildSkillRuntimePolicyResolver(cfg),
@@ -1143,13 +1151,16 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
 proc startDaemonIngress(ctx: DaemonContext;
                         log: Logger) =
   startOptionalDiscordGateway(ctx.adapters.dc, ctx.env.discordToken, ctx.env.discordGuildId, log)
-  startOptionalWeComGateway(ctx.adapters.wc, ctx.env.wecomCorpId, log)
-  startOptionalWeChatGateway(ctx.adapters.wch, ctx.env.wechatAppId, log)
+  startOptionalWeComGateway(ctx.adapters.wc, ctx.env.wecomCorpId,
+                            ctx.env.wecomWebhookPort, log)
+  startOptionalWeChatGateway(ctx.adapters.wch, ctx.env.wechatAppId,
+                             ctx.env.wechatWebhookPort, log)
   startOptionalFeishuGateway(ctx.adapters.fs, ctx.env.feishuAppId, log)
   startOptionalSlackGateway(ctx.adapters.sl, ctx.env.slackBotToken,
-                            ctx.env.slackAppToken, slackSocketHttp, log)
+                            ctx.env.slackAppToken, ctx.env.slackSigningSecret,
+                            slackSocketHttp, log)
   startOptionalDingTalkGateway(ctx.adapters.dt, ctx.env.dingTalkAppKey, log)
-  startOptionalMatrixGateway(ctx.adapters.mx, log)
+  startOptionalMatrixGateway(ctx.adapters.mx, ctx.env.matrixConfigured, log)
   startOptionalWhatsAppGateway(ctx.adapters.wa, ctx.env.whatsappAccessToken,
                                ctx.env.whatsappPhoneNumberId, log)
   ## The LINE route can enqueue as soon as the receiver binds; the queue must
@@ -1158,7 +1169,7 @@ proc startDaemonIngress(ctx: DaemonContext;
     ctx.adapters.ln.openQueue()
     log.info("LINE webhook queue started")
   startOptionalWebhookReceiver(ctx.env, log)
-  startOptionalQQGateway(ctx.adapters.qq, log)
+  startOptionalQQGateway(ctx.adapters.qq, ctx.env, log)
   if ctx.env.telegramToken.len > 0:
     log.info("Telegram bot starting (token len=" & $ctx.env.telegramToken.len & ")")
     ctx.adapters.tg.registerBotCommands().isOkOr:
@@ -1331,7 +1342,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         linePolicy, getTime().toUnix(), fallback, enqueueLineReply, log) > 0,
     drainMatrix = proc(): bool =
       let count = drainMatrixGateway(
-        matrixConfigured(),
+        ctx.env.matrixConfigured,
         proc(): (bool, InboundMessage) =
           var (hasEvent, event) = ctx.adapters.mx.tryRecvEvent()
           while hasEvent:
@@ -1522,7 +1533,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     cfg.dmPolicy,
     proc(userId: UserId): bool {.gcsafe.} = memory.isDmAllowed(userId))
   ctx.runtime.sm.configureGroupGate(GroupGate(
-    allowedChats: parseChatIdList(getEnv(EnvTelegramAllowedGroups))))
+    allowedChats: parseChatIdList(cfg.env.get(EnvTelegramAllowedGroups))))
   let pairingStore = newPairingStore(cfg.home / "state" / "pairings.json")
   ctx.runtime.sm.pairingRequest =
     proc(kind: ChannelKind; rawId: string): Result[void, string] {.gcsafe.} =
@@ -1597,7 +1608,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     )
   hbReg.registerTask("heartbeat", proc() {.gcsafe.} =
     deliverHeartbeats(cfg.paddocks, heartbeatOutboxFn))
-  let hbCronExpr = getEnv("DONKEY_HEARTBEAT_CRON").strip()
+  let hbCronExpr = cfg.env.get("DONKEY_HEARTBEAT_CRON").strip()
   if hbCronExpr.len > 0:
     let hbCronStart = startHeartbeatCron(hbReg, hbCronExpr)
     if hbCronStart.isErr:
@@ -1605,7 +1616,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       quit(1)
     log.info("heartbeat cron: " & hbCronExpr)
   else:
-    let hbIntervalStr = getEnv("DONKEY_HEARTBEAT_SEC")
+    let hbIntervalStr = cfg.env.get("DONKEY_HEARTBEAT_SEC")
     let hbInterval = if hbIntervalStr.len > 0:
       try: parseInt(hbIntervalStr) except ValueError: 60
     else: 60
@@ -1619,7 +1630,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   var schedulerTask: SchedulerTask
   block:
     let envLookup: EnvLookup = proc(name: string): string {.
-        gcsafe, raises: [], noSideEffect.} = getEnv(name)
+        gcsafe, raises: [], noSideEffect.} = cfg.env.get(name)
     let schedulesCfg = parseSchedulerConfig(envLookup)
     for warning in schedulesCfg.warnings:
       log.warn("scheduler config: " & warning)
@@ -1762,18 +1773,20 @@ proc main =
 
   # setup doesn't need config — handle it early
   if args.len >= 1 and args[0] == "setup":
-    runSetupWizard(resolveHome())
+    runSetupWizard(resolveHome(readEnvironment()))
     quit(0)
 
   if configPath.len == 0:
     configPath = getConfigDir() / ConfigDirName / ConfigFileName
 
-  let home = resolveHome()
+  let home = resolveHome(readEnvironment())
 
   ## Load .env file if present — checks {home}/donkey.env then ~/.config/donkey/donkey.env
   discard loadDonkeyEnv(home)
 
-  var cfg = loadConfig(configPath)
+  ## From here on the environment is read once: `cfg.env` is the snapshot
+  ## taken after donkey.env (and, below, the vault) filled it in.
+  var cfg = loadConfig(configPath, readEnvironment())
   ## Decrypting the vault must not block administrative commands that do not
   ## consume its variables (service stop/logs, secret recovery, user/pairing).
   let needsVault =
@@ -1791,7 +1804,7 @@ proc main =
     if vaultApplied.get() > 0:
       ## Reload env-backed policies (dm_policy, allowlist, ...) after the
       ## vault populated variables that were absent from donkey.env.
-      cfg = loadConfig(configPath)
+      cfg = loadConfig(configPath, readEnvironment())
   configureApprovalServiceFromEnv(
     newApprovalStore(cfg.home / "state" / "approvals.json").toApprovalPort())
 
@@ -1828,7 +1841,7 @@ proc main =
   cmdReg.register(CommandEntry(
     name: "setup", minArgs: 1,
     handler: proc(a: seq[string]): int =
-      runSetupWizard(resolveHome()); 0,
+      runSetupWizard(resolveHome(cfg.env)); 0,
     context: ccNone, description: "Interactive first-run configuration wizard"))
 
   # Post-bootstrap commands

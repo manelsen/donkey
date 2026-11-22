@@ -39,14 +39,14 @@ proc imageRejectingStream(req: CompletionRequest;
     onToken("texto ok")
   ok(CompletionResponse(text: "texto ok"))
 
-proc imageRejectingFactory(): StreamFn {.nimcall, gcsafe.} =
+proc imageRejectingFactory(credential: string): StreamFn {.nimcall, gcsafe.} =
   imageRejectingStream
 
 var
   gFactoryThread: Atomic[int]
   gSlowFinished:  Atomic[bool]
 
-proc threadRecordingFactory(): StreamFn {.nimcall, gcsafe.} =
+proc threadRecordingFactory(credential: string): StreamFn {.nimcall, gcsafe.} =
   ## Records where the provider closure is built.
   gFactoryThread.store(getThreadId())
   proc(req: CompletionRequest; onToken: proc(tok: string) {.gcsafe.}
@@ -54,7 +54,7 @@ proc threadRecordingFactory(): StreamFn {.nimcall, gcsafe.} =
     onToken("oi")
     ok(CompletionResponse(text: "oi"))
 
-proc slowFactory(): StreamFn {.nimcall, gcsafe.} =
+proc slowFactory(credential: string): StreamFn {.nimcall, gcsafe.} =
   proc(req: CompletionRequest; onToken: proc(tok: string) {.gcsafe.}
       ): Result[CompletionResponse, string] {.gcsafe.} =
     onToken("comecei")
@@ -78,7 +78,7 @@ proc runStreamingImageTurn():
   history.addUserWithImage("veja a foto", DataPng)
   result = await runToolLoop(
     outbox, toolInbox, toolOut, MemoryRuntimePort(), nil, nil,
-    imageRejectingFactory, ctx, newSessionState(), history, UserId("u-stream"),
+    StreamFactory(build: imageRejectingFactory), ctx, newSessionState(), history, UserId("u-stream"),
     ckTelegram, "", "msg-stream", "stream-id", "system", "", @[], "openrouter",
     true, false, false, logger, nil)
 
@@ -87,7 +87,7 @@ proc runTests*() =
   suite "streamToOutbox — tool calls":
 
     test "returns tool calls and does not emit a fake final text":
-      let fn: StreamFactory = proc(): StreamFn {.nimcall, gcsafe.} =
+      let build: StreamBuilder = proc(credential: string): StreamFn {.nimcall, gcsafe.} =
         proc(req: CompletionRequest;
              onToken: proc(tok: string) {.gcsafe.}
             ): Result[CompletionResponse, string] {.gcsafe.} =
@@ -99,14 +99,14 @@ proc runTests*() =
 
       let outbox = newAsyncQueue[OutboundMessage]()
       let res = waitFor streamToOutbox(
-        fn, CompletionRequest(), outbox, UserId("u1"), ckTelegram, "", "sid")
+        StreamFactory(build: build), CompletionRequest(), outbox, UserId("u1"), ckTelegram, "", "sid")
       check res.isOk
       check res.value.toolCalls.len == 1
       check res.value.toolCalls[0].name == "read_file"
       check outbox.len == 0
 
     test "provider error is returned instead of a fake final message":
-      let fn: StreamFactory = proc(): StreamFn {.nimcall, gcsafe.} =
+      let build: StreamBuilder = proc(credential: string): StreamFn {.nimcall, gcsafe.} =
         proc(req: CompletionRequest;
              onToken: proc(tok: string) {.gcsafe.}
             ): Result[CompletionResponse, string] {.gcsafe.} =
@@ -114,13 +114,13 @@ proc runTests*() =
 
       let outbox = newAsyncQueue[OutboundMessage]()
       let res = waitFor streamToOutbox(
-        fn, CompletionRequest(), outbox, UserId("u1"), ckTelegram, "", "sid")
+        StreamFactory(build: build), CompletionRequest(), outbox, UserId("u1"), ckTelegram, "", "sid")
       check res.isErr
       check "HTTP 500" in res.error
       check outbox.len == 0
 
     test "text-only stream still emits the final message":
-      let fn: StreamFactory = proc(): StreamFn {.nimcall, gcsafe.} =
+      let build: StreamBuilder = proc(credential: string): StreamFn {.nimcall, gcsafe.} =
         proc(req: CompletionRequest;
              onToken: proc(tok: string) {.gcsafe.}
             ): Result[CompletionResponse, string] {.gcsafe.} =
@@ -129,7 +129,7 @@ proc runTests*() =
 
       let outbox = newAsyncQueue[OutboundMessage]()
       let res = waitFor streamToOutbox(
-        fn, CompletionRequest(), outbox, UserId("u1"), ckTelegram, "", "sid")
+        StreamFactory(build: build), CompletionRequest(), outbox, UserId("u1"), ckTelegram, "", "sid")
       check res.isOk
       check res.value.toolCalls.len == 0
       check outbox.len == 1
@@ -140,7 +140,7 @@ proc runTests*() =
     test "a negative provider usage never reaches the terminal as negative":
       ## The streamed terminal bypasses `finalizeNormalTurn`, so the raw
       ## provider values used to reach the 200 body unclamped.
-      let fn: StreamFactory = proc(): StreamFn {.nimcall, gcsafe.} =
+      let build: StreamBuilder = proc(credential: string): StreamFn {.nimcall, gcsafe.} =
         proc(req: CompletionRequest;
              onToken: proc(tok: string) {.gcsafe.}
             ): Result[CompletionResponse, string] {.gcsafe.} =
@@ -149,12 +149,28 @@ proc runTests*() =
 
       let outbox = newAsyncQueue[OutboundMessage]()
       let res = waitFor streamToOutbox(
-        fn, CompletionRequest(), outbox, UserId("u1"), ckTelegram, "", "sid")
+        StreamFactory(build: build), CompletionRequest(), outbox, UserId("u1"), ckTelegram, "", "sid")
       check res.isOk
       check outbox.len == 1
       let final = waitFor outbox.get()
       check final.inputTokens == 0
       check final.outputTokens == 0
+
+    test "the credential travels to the builder as plain data":
+      ## The stream thread cannot read the loop's environment snapshot, so
+      ## the API key is read on the loop and carried in the factory.
+      let build: StreamBuilder = proc(credential: string): StreamFn {.nimcall, gcsafe.} =
+        let key = credential
+        result = proc(req: CompletionRequest;
+                      onToken: proc(tok: string) {.gcsafe.}
+                     ): Result[CompletionResponse, string] {.gcsafe.} =
+          err("built with " & key)
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let res = waitFor streamToOutbox(
+        StreamFactory(build: build, credential: "k-123"), CompletionRequest(),
+        outbox, UserId("u1"), ckTelegram, "", "sid")
+      check res.isErr
+      check res.error == "built with k-123"
 
     test "the provider closure is built and dropped on the stream thread":
       ## ORC counts references without atomics: a closure built on the
@@ -162,7 +178,7 @@ proc runTests*() =
       gFactoryThread.store(0)
       let outbox = newAsyncQueue[OutboundMessage]()
       let res = waitFor streamToOutbox(
-        threadRecordingFactory, CompletionRequest(), outbox, UserId("u1"),
+        StreamFactory(build: threadRecordingFactory), CompletionRequest(), outbox, UserId("u1"),
         ckTelegram, "", "sid")
       check res.isOk
       check gFactoryThread.load() != 0
@@ -174,7 +190,7 @@ proc runTests*() =
       let startedAt = epochTime()
       ## A generation other than the current one reads as "stop requested".
       let res = waitFor streamToOutbox(
-        slowFactory, CompletionRequest(), outbox, UserId("u1"), ckTelegram,
+        StreamFactory(build: slowFactory), CompletionRequest(), outbox, UserId("u1"), ckTelegram,
         "", "sid", stopGeneration = currentSessionStopGeneration() + 1)
       check res.isOk
       check epochTime() - startedAt < 1.0
@@ -191,12 +207,12 @@ proc runTests*() =
       let outbox = newAsyncQueue[OutboundMessage]()
       let stopped = currentSessionStopGeneration() + 1
       for _ in 0 ..< MaxLiveStreams:
-        check (waitFor streamToOutbox(slowFactory, CompletionRequest(), outbox,
+        check (waitFor streamToOutbox(StreamFactory(build: slowFactory), CompletionRequest(), outbox,
                  UserId("u1"), ckTelegram, "", "sid", stopGeneration = stopped)).isOk
       check liveStreams() == MaxLiveStreams
       check not streamSlotAvailable()
       let refused = waitFor streamToOutbox(
-        threadRecordingFactory, CompletionRequest(), outbox, UserId("u1"),
+        StreamFactory(build: threadRecordingFactory), CompletionRequest(), outbox, UserId("u1"),
         ckTelegram, "", "sid")
       check refused.isErr
       check "saturated" in refused.error
@@ -210,7 +226,7 @@ proc runTests*() =
       let outbox = newAsyncQueue[OutboundMessage]()
       let stopped = currentSessionStopGeneration() + 1
       for _ in 0 ..< MaxLiveStreams:
-        discard waitFor streamToOutbox(slowFactory, CompletionRequest(), outbox,
+        discard waitFor streamToOutbox(StreamFactory(build: slowFactory), CompletionRequest(), outbox,
           UserId("u1"), ckTelegram, "", "sid", stopGeneration = stopped)
       gStreamCalls.store(0)
       let loop = waitFor runStreamingImageTurn()

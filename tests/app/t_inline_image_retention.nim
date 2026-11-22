@@ -14,6 +14,7 @@ import donkey/adapters/http/std_http
 import donkey/adapters/memory/md_file
 import donkey/app/inbound_media
 import donkey/app/orchestrator
+import donkey/ports/provider
 import donkey/app/prompt_building
 import donkey/app/session_manager
 import donkey/app/session_state
@@ -106,7 +107,7 @@ proc runTests*() =
         let state = newSessionState()
         let orchFut = runOrchestrator(
           inbox, addr session, outbox, mem.toRuntimePort(), recordingComplete,
-          newStdHttpAdapter().toRuntimePort(), nil, @[], @[], userDir, state)
+          newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], userDir, state)
         await inbox.put(newTaskMsg("req-inline-1", tkUserMsg, "u-ret", payload))
         discard await outbox.get()
         await inbox.put(newTaskMsg("req-inline-2", tkUserMsg, "u-ret", "segunda mensagem"))

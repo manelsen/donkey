@@ -7,6 +7,7 @@
 ##   3. Built-in defaults (see config/types.nim)
 
 import std/[options, os, strutils]
+import ./environment
 import ./toml
 import ./types
 import ../core/types
@@ -14,7 +15,7 @@ import ../core/app_meta
 import ../core/pipeops
 import ../core/security/dm_policy
 
-export types
+export types, environment
 
 const EnvHome* = "DONKEY_HOME"
 const EnvWebAllowlist* = "DONKEY_WEB_ALLOWLIST"
@@ -52,8 +53,24 @@ proc resolveHomeFromEnv*(homeEnv: string): string =
     return homeEnv
   expandTilde("~/" & HomeDirName)
 
-proc resolveHome*(): string =
-  resolveHomeFromEnv(getEnv(EnvHome))
+proc userHome*(env: Environment): string =
+  ## The user's home directory from the snapshot's `HOME`; the platform's
+  ## answer only when the snapshot has none (Windows has no `HOME`).
+  let home = env.get("HOME")
+  if home.len > 0: home else: getHomeDir()
+
+proc expandHome*(path: string; env: Environment): string =
+  ## `expandTilde` resolved against the snapshot instead of the process:
+  ## `~` and `~/x` start at `userHome(env)`; anything else is left alone.
+  if path == "~": userHome(env)
+  elif path.startsWith("~/"): userHome(env) / path[2 .. ^1]
+  else: path
+
+proc resolveHome*(env: Environment): string =
+  ## `DONKEY_HOME` when set, otherwise `~/.donkey` under the snapshot's home.
+  let explicit = env.get(EnvHome)
+  if explicit.len > 0: explicit
+  else: expandHome("~/" & HomeDirName, env)
 
 proc parseSandboxMode*(rawMode: string): Option[SandboxMode] =
   case rawMode.strip().toLowerAscii()
@@ -182,12 +199,13 @@ proc applySecurityConfigPatch*(patch: SecurityConfigPatch; cfg: DonkeyConfig): D
   if patch.invalidDmPolicy.isSome:
     result.invalidDmPolicy = patch.invalidDmPolicy.get()
 
-proc applyEnvOverrides*(cfg: DonkeyConfig): DonkeyConfig =
+proc applyEnvOverrides*(cfg: DonkeyConfig; env: Environment): DonkeyConfig =
   result = cfg
-  let rawAllowlist = getEnv(EnvWebAllowlist).strip()
+  result.env = env
+  let rawAllowlist = env.stripped(EnvWebAllowlist)
   if rawAllowlist.len > 0:
     result.webAllowlist = parseHostList(rawAllowlist)
-  let rawDmPolicy = getEnv(EnvDmPolicy).strip()
+  let rawDmPolicy = env.stripped(EnvDmPolicy)
   if rawDmPolicy.len > 0:
     let parsed = parseDmPolicy(rawDmPolicy)
     if parsed.isSome:
@@ -196,7 +214,8 @@ proc applyEnvOverrides*(cfg: DonkeyConfig): DonkeyConfig =
     else:
       result.invalidDmPolicy = rawDmPolicy
 
-proc parseMainConfigPatch*(doc: TomlValueRef): MainConfigPatch =
+proc parseMainConfigPatch*(doc: TomlValueRef; env: Environment): MainConfigPatch =
+  ## Paths may start with `~`, resolved against the snapshot's home.
   if not doc.hasKey(ConfigSectionName):
     return
   let mainSection = doc[ConfigSectionName]
@@ -204,7 +223,7 @@ proc parseMainConfigPatch*(doc: TomlValueRef): MainConfigPatch =
   if mainSection.hasKey("home"):
     let homeVal = mainSection["home"].getStr().strip()
     if homeVal.len > 0:
-      result.home = some(expandTilde(homeVal))
+      result.home = some(expandHome(homeVal, env))
 
   if mainSection.hasKey("log_level"):
     result.logLevel = some(parseLogLevel(mainSection["log_level"].getStr()))
@@ -212,12 +231,12 @@ proc parseMainConfigPatch*(doc: TomlValueRef): MainConfigPatch =
   if mainSection.hasKey("log_file"):
     let logFile = mainSection["log_file"].getStr().strip()
     if logFile.len > 0:
-      result.logFile = some(expandTilde(logFile))
+      result.logFile = some(expandHome(logFile, env))
 
   if mainSection.hasKey("paddocks"):
     let paddocks = mainSection["paddocks"].getStr().strip()
     if paddocks.len > 0:
-      result.paddocks = some(expandTilde(paddocks))
+      result.paddocks = some(expandHome(paddocks, env))
 
   if mainSection.hasKey("default_provider"):
     let defaultProvider = mainSection["default_provider"].getStr().strip()
@@ -305,11 +324,13 @@ proc loadTomlConfig*(path: string): Option[TomlValueRef] =
   except CatchableError:
     none(TomlValueRef)
 
-proc loadConfig*(path: string): DonkeyConfig =
-  let baseConfig = defaultConfig(resolveHome())
+proc loadConfig*(path: string; env: Environment): DonkeyConfig =
+  ## donkey.toml over the defaults, then the environment over both. The
+  ## snapshot is kept in `env` for the settings read from it later.
+  let baseConfig = defaultConfig(resolveHome(env))
   let docOpt = loadTomlConfig(path)
   if docOpt.isNone:
-    var fallback = baseConfig |> applyEnvOverrides
+    var fallback = baseConfig.applyEnvOverrides(env)
     if fileExists(path) and fallback.invalidDmPolicy.len == 0:
       # A file that exists but cannot be parsed must not silently fall back to
       # DmPolicyOpen; startup will reject it.
@@ -317,7 +338,7 @@ proc loadConfig*(path: string): DonkeyConfig =
     return fallback
 
   let doc = docOpt.get()
-  let mainPatch = parseMainConfigPatch(doc)
+  let mainPatch = parseMainConfigPatch(doc, env)
   let securityPatch = parseSecurityConfigPatch(doc)
   let sandboxPatch = parseSandboxConfigPatch(doc)
   result =
@@ -325,4 +346,4 @@ proc loadConfig*(path: string): DonkeyConfig =
     applyMainConfigPatch(mainPatch) |>->
     applySecurityConfigPatch(securityPatch) |>->
     applySandboxConfigPatch(sandboxPatch)
-  result = result |> applyEnvOverrides
+  result = result.applyEnvOverrides(env)
