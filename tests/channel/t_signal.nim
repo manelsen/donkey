@@ -5,6 +5,7 @@
 import std/[json, os, unittest]
 import donkey/adapters/channel/signal
 import donkey/adapters/identity/identity_resolver
+import donkey/domain/message
 import donkey/core/types
 import donkey/core/pipeops
 import donkey/domain/channels/signal_pure
@@ -77,6 +78,20 @@ proc runTests*() =
       check res == ""
 
   # ── SignalAdapter construction ─────────────────────────────────────────────────
+
+  suite "Signal polling off the daemon loop":
+
+    test "senders are resolved on the loop, after the poll":
+      let path = getTempDir() / "donkey_test_ids_sig_polled.tsv"
+      removeFile(path)
+      defer: removeFile(path)
+      let a = newSignalAdapter("+1234567890", path, sockPath = "/tmp/x.sock")
+      let polled = @[("+5511999990000",
+                      InboundMessage(channel: ckSignal, channelId: "17", text: "oi"))]
+      let msgs = a.resolvePolled(polled)
+      check msgs.len == 1
+      check msgs[0].userId == a.resolver.resolve(ckSignal, "+5511999990000")
+      check msgs[0].channelId == "17"
 
   suite "SignalAdapter construction":
 

@@ -228,7 +228,7 @@ proc handleWeComConn*(client: Socket; token: string; logger: Logger;
 type WeComWebhookArgs = object
   token:  string
   port:   int
-  logger: Logger
+  logger: LogSpec
 
 proc webhookThread(args: WeComWebhookArgs) {.thread.} =
   var server = newSocket(buffered = false)  ## see http_request_reader
@@ -252,7 +252,7 @@ var gWeComThread: ThreadHandle[WeComWebhookArgs]  ## shared memory: a global poi
 
 proc startWebhook*(a: WeComAdapter; port: Port; logger: Logger) =
   ## Starts the webhook listener on a dedicated OS thread.
-  let args = WeComWebhookArgs(token: a.callbackToken, port: port.int, logger: logger)
+  let args = WeComWebhookArgs(token: a.callbackToken, port: port.int, logger: logger.spec)
   gWeComThread = spawnThread(webhookThread, args)
 
 proc tryRecvEvent*(a: var WeComAdapter): (bool, WeComEvent) =

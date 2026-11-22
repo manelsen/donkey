@@ -270,14 +270,30 @@ proc sendSmtp(a: EmailAdapter; toAddr, subject, body: string): Result[void, stri
 
 # ── Inbound polling ────────────────────────────────────────────────────────────
 
-proc pollInbox*(a: EmailAdapter): Result[seq[InboundMessage], string] =
-  ## Connects to IMAP, fetches UNSEEN messages, marks them \Seen, and
-  ## returns resolved InboundMessages.
-  var s = ? newImapSession(a.imapHost, a.imapPort)
+type
+  EmailInbox* = object
+    ## IMAP access as plain data. The poll runs on its own thread, which
+    ## must not hold the adapter: its identity resolver is made of refs.
+    host*:     string
+    port*:     int
+    user*:     string
+    password*: string
+
+  PolledEmail* = (string, InboundMessage)
+    ## The sender address and the message, before identity resolution.
+
+func inbox*(a: EmailAdapter): EmailInbox =
+  EmailInbox(host: a.imapHost, port: a.imapPort, user: a.user,
+             password: a.password)
+
+proc fetchUnseen*(box: EmailInbox): Result[seq[PolledEmail], string] =
+  ## Connects to IMAP, fetches UNSEEN messages and marks them \Seen. Touches
+  ## no shared state, so it may run on any thread; senders stay unresolved.
+  var s = ? newImapSession(box.host, box.port)
   defer: s.imapClose()
 
-  let user = ? imapQuote(a.user)
-  let pass = ? imapQuote(a.password)
+  let user = ? imapQuote(box.user)
+  let pass = ? imapQuote(box.password)
   let loginResp = ? s.imapCmd("LOGIN " & user & " " & pass)
   if loginResp.len > 0 and ("NO" in loginResp[^1] or "BAD" in loginResp[^1]):
     return err("IMAP LOGIN failed: " & loginResp[^1])
@@ -287,19 +303,30 @@ proc pollInbox*(a: EmailAdapter): Result[seq[InboundMessage], string] =
   let searchResp = ? s.imapCmd("SEARCH UNSEEN")
   let msgNums    = searchResp |> parseSearchNums
 
-  var msgs: seq[InboundMessage]
+  var polled: seq[PolledEmail]
   for num in msgNums:
     let fetchResp = ? s.imapCmd("FETCH " & $num & " RFC822")
     let raw       = fetchResp |> extractFetchLiteral
     if raw.len == 0: continue
     let parsed = raw |> parseEmail
     if parsed.fromAddr.len == 0: continue
-    let uid = a.resolver.resolve(ckEmail, parsed.fromAddr)
-    msgs.add(parsed.toInbound(uid))
+    polled.add((parsed.fromAddr, parsed.toInbound(UserId(""))))
     discard s.imapCmd("STORE " & $num & " +FLAGS (\\Seen)")
 
   discard s.imapCmd("LOGOUT")
-  ok(msgs)
+  ok(polled)
+
+proc resolvePolled*(a: EmailAdapter; polled: seq[PolledEmail]): seq[InboundMessage] =
+  ## Resolves each sender to a user. Runs on the daemon loop, where the
+  ## identity resolver lives.
+  for (sender, msg) in polled:
+    var resolved = msg
+    resolved.userId = a.resolver.resolve(ckEmail, sender)
+    result.add resolved
+
+proc pollInbox*(a: EmailAdapter): Result[seq[InboundMessage], string] =
+  ## Fetches and resolves in one go, on the calling thread.
+  ok(a.resolvePolled(? fetchUnseen(a.inbox)))
 
 # ── ChannelPort methods ────────────────────────────────────────────────────────
 

@@ -285,7 +285,7 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
 
 type GatewayArgs = object
   token:  string
-  logger: Logger
+  logger: LogSpec
 
 proc discordGatewayThread(arg: GatewayArgs) {.thread.} =
   ## Entry point for the dedicated gateway OS thread.
@@ -708,7 +708,7 @@ proc ack*(a: DiscordAdapter; channelId: string) =
 
 proc startGateway*(a: DiscordAdapter; logger: Logger) {.gcsafe.} =
   ## Starts the Discord gateway thread. Call once at daemon startup.
-  gGatewayThread = spawnThread(discordGatewayThread, GatewayArgs(token: a.token, logger: logger))
+  gGatewayThread = spawnThread(discordGatewayThread, GatewayArgs(token: a.token, logger: logger.spec))
 
 proc tryRecvEvent*(a: DiscordAdapter): (bool, DiscordRawEvent) =
   ## Non-blocking poll for gateway events. Returns (false, default) when empty.

@@ -9,12 +9,147 @@
 ## owns. The block lives as long as the process (the thread may outlive the
 ## caller), unless `joinAndFree` releases it after the thread ended.
 
+##
+## The argument is copied into the thread, and ORC counts references without
+## atomics: a `ref` or a closure environment in it would be counted by two
+## threads at once. `spawnThread` refuses such an argument at compile time
+## (`sharesNothing`). Strings and seqs are copied, so they are fine; a raw
+## `ptr` is an explicit opt-in to manual sharing (locks, atomics); a
+## `nimcall` proc has no environment. A thread that needs a closure (an HTTP
+## port, a provider) builds it itself, from plain data or a `nimcall` factory.
+
+import std/macros
+
 type ThreadHandle*[T] = ptr Thread[T]
+
+proc gcShared(t: NimNode; seen: var seq[NimNode]): bool {.compileTime.}
+proc bodyShared(t, impl: NimNode; seen: var seq[NimNode]): bool {.compileTime.}
+
+proc fieldsShared(n: NimNode; seen: var seq[NimNode]): bool {.compileTime.} =
+  ## Walks an object or tuple body: fields, variant branches, the base type.
+  case n.kind
+  of nnkIdentDefs:
+    gcShared(n[^2], seen)
+  of nnkOfInherit:
+    gcShared(n[0], seen)
+  of nnkRecCase:
+    if gcShared(n[0][^2], seen): return true
+    for i in 1 ..< n.len:
+      if fieldsShared(n[i], seen): return true
+    false
+  of nnkSym:
+    n.symKind == nskType and gcShared(n, seen)
+  else:
+    for c in n:
+      if fieldsShared(c, seen): return true
+    false
+
+proc bodyShared(t, impl: NimNode; seen: var seq[NimNode]): bool {.compileTime.} =
+  ## An object or tuple `t` with its expanded body `impl`. Only these are
+  ## recorded in `seen`: they are the only types that can contain themselves.
+  ## Compared by type identity, not by name (two scopes may each have a
+  ## `Payload`), and recorded under the type itself, so `Box[int]` and
+  ## `Box[ref int]` stay distinct.
+  for known in seen:
+    if sameType(known, t): return false  ## recursive, or met before
+  seen.add t
+  if impl.kind == nnkTupleConstr:
+    for c in impl:
+      if gcShared(c, seen): return true
+    false
+  else:
+    fieldsShared(impl, seen)
+
+proc closureProc(impl: NimNode): bool {.compileTime.} =
+  ## A proc type is a closure unless declared with another convention.
+  if impl.kind == nnkProcTy and impl.len > 1:
+    for p in impl[1]:
+      if p.kind in {nnkIdent, nnkSym} and
+         $p in ["nimcall", "cdecl", "stdcall", "noconv", "inline", "fastcall",
+                "safecall", "syscall"]:
+        return false
+  true
+
+proc wrappedShared(t, impl: NimNode; seen: var seq[NimNode]): bool {.compileTime.} =
+  ## A distinct type, alias or generic instance, judged by the shape of its
+  ## expansion rather than by its type kind, which can still read as the
+  ## wrapper (`RefOf[T] = ref T`) and would loop. A shape not listed here is
+  ## refused, never accepted unread.
+  case impl.kind
+  of nnkRefTy:
+    true
+  of nnkPtrTy:
+    false
+  of nnkDistinctTy:
+    gcShared(impl[0], seen)
+  of nnkObjectTy, nnkTupleConstr, nnkTupleTy:
+    bodyShared(t, impl, seen)
+  of nnkProcTy:
+    closureProc(impl)
+  of nnkBracketExpr:
+    ## seq[T], set[T], openArray[T], array[I, T], ptr/ref generics: judged by
+    ## the container and its element.
+    if impl.len < 2: return true
+    case $impl[0]
+    of "ptr", "pointer": false
+    of "ref": true
+    of "range": false  ## an ordinal subrange holds no ref
+    of "seq", "set", "openArray", "varargs", "UncheckedArray":
+      gcShared(impl[^1], seen)
+    of "array": gcShared(impl[^1], seen)
+    else: true
+  of nnkSym:
+    if sameType(impl, t): true  ## no progress: refuse rather than accept
+    else: gcShared(impl, seen)
+  else:
+    true
+
+const MaxTypeDepth = 64
+  ## Deeper than any real argument. A type the walker cannot make progress on
+  ## stops here and is refused, instead of exhausting the VM.
+
+var typeDepth {.compileTime.} = 0
+
+proc gcShared(t: NimNode; seen: var seq[NimNode]): bool =
+  ## True when a value of type `t` can hold a ref or a closure environment.
+  if typeDepth >= MaxTypeDepth:
+    error("sharesNothing: cannot classify " & t.repr &
+          " (no progress); refusing it as a thread argument", t)
+  inc typeDepth
+  defer: dec typeDepth
+  case t.typeKind
+  of ntyRef:
+    true
+  of ntyPtr, ntyPointer, ntyCString, ntyString, ntyBool, ntyChar, ntyEnum,
+     ntyInt..ntyUInt64, ntyNil, ntyEmpty, ntyVoid, ntyRange:
+    false
+  of ntyProc:
+    closureProc(t.getTypeImpl)
+  of ntyDistinct, ntyGenericInst, ntyAlias, ntyTypeDesc:
+    wrappedShared(t, t.getTypeImpl, seen)
+  of ntySequence, ntyOpenArray, ntyVarargs, ntySet, ntyUncheckedArray:
+    gcShared(t.getTypeImpl[^1], seen)
+  of ntyArray:
+    gcShared(t.getTypeImpl[2], seen)
+  of ntyTuple, ntyObject:
+    bodyShared(t, t.getTypeImpl, seen)
+  else:
+    true  ## unknown kind: refuse rather than guess
+
+macro sharesNothing*(T: typedesc): bool =
+  ## True when a `T` holds no ref and no closure: safe to copy into another
+  ## thread under ORC.
+  var seen: seq[NimNode]
+  newLit(not gcShared(T.getTypeInst[1], seen))
 
 proc spawnThread*[T](fn: proc(arg: T) {.thread, nimcall.};
                      arg: T): ThreadHandle[T] =
   ## Starts `fn(arg)` on a new thread. Raises ResourceExhaustedError like
   ## `createThread` when the OS refuses.
+  when not sharesNothing(T):
+    {.error: "spawnThread: the thread argument holds a ref or a closure, " &
+             "which ORC would count from two threads; pass plain data and " &
+             "build it in the thread".}
   result = cast[ThreadHandle[T]](allocShared0(sizeof(Thread[T])))
   try:
     createThread(result[], fn, arg)

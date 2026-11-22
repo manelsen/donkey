@@ -61,7 +61,7 @@ type
   WeChatWebhookArgs = object
     port:   int
     token:  string
-    logger: Logger
+    logger: LogSpec
 
 var gWeChatEvents = initEventQueue[WeChatEvent]("wechat")
 var gWeChatEventsOpen  = false
@@ -322,7 +322,7 @@ proc startWebhook*(a: WeChatAdapter; port: Port; logger: Logger) {.gcsafe.} =
   gWeChatEventsOpen    = true
   gWeChatWebhookStarted = true
   gWeChatWebhookThread = spawnThread(wechatWebhookThread,
-               WeChatWebhookArgs(port: port.int, token: a.callbackToken, logger: logger))
+               WeChatWebhookArgs(port: port.int, token: a.callbackToken, logger: logger.spec))
 
 proc tryRecvEvent*(a: var WeChatAdapter): (bool, WeChatEvent) =
   if gWeChatEventsOpen:

@@ -14,6 +14,7 @@ import donkey/config/tools_registry
 import donkey/config/skills_registry
 import donkey/adapters/tool/runtime_builder
 import donkey/core/log
+import donkey/infra/thread_handle
 import donkey/core/pipeops
 import donkey/adapters/http/circuit_breakers
 import donkey/core/agent_events
@@ -294,13 +295,16 @@ type DaemonServices = object
   globalSearchFn:   SearchFn
 
 type
-  PollResult = Result[seq[InboundMessage], string]
+  PollResult = Result[seq[(string, InboundMessage)], string]
+    ## Sender and message, unresolved: identities are resolved on the loop.
 
 var
   gEmailPollCh: Channel[PollResult]
   gSignalPollCh: Channel[PollResult]
-  gEmailPollThread: Thread[ptr EmailAdapter]
-  gSignalPollThread: Thread[ptr SignalAdapter]
+  gEmailPollThread: ThreadHandle[EmailInbox]
+  gSignalPollThread: ThreadHandle[string]
+    ## The poll threads get plain data (IMAP access, the signal-cli socket
+    ## path), never the adapter: its identity resolver belongs to the loop.
   gEmailPollOpened = false
   gSignalPollOpened = false
   gEmailPollInFlight = false
@@ -309,18 +313,18 @@ var
 func pollFailure(msg: string): PollResult {.gcsafe.} =
   err(msg)
 
-proc emailPollThread(adapter: ptr EmailAdapter) {.thread.} =
+proc emailPollThread(box: EmailInbox) {.thread.} =
   var res: PollResult
   try:
-    res = adapter[].pollInbox()
+    res = fetchUnseen(box)
   except CatchableError as e:
     res = pollFailure(e.msg)
   gEmailPollCh.send(res)
 
-proc signalPollThread(adapter: ptr SignalAdapter) {.thread.} =
+proc signalPollThread(sockPath: string) {.thread.} =
   var res: PollResult
   try:
-    res = adapter[].receive()
+    res = fetchPending(sockPath)
   except CatchableError as e:
     res = pollFailure(e.msg)
   gSignalPollCh.send(res)
@@ -995,10 +999,15 @@ proc startOptionalWeChatGateway(wchAdapter: var WeChatAdapter;
   wchAdapter.startWebhook(port, log)
   log.info("WeChat webhook listener started on port " & $port)
 
+proc slackSocketHttp(): HttpRuntimePort {.nimcall, gcsafe.} =
+  ## Built on the Socket Mode reader thread (see SlackHttpFactory).
+  newStdHttpAdapter(timeout = 15, maxRetries = 2,
+                    circuitBreaker = false).toRuntimePort()
+
 proc startOptionalSlackGateway(slAdapter: var SlackAdapter;
                                slackBotToken: string;
                                slackAppToken: string;
-                               slackHttp: HttpRuntimePort;
+                               slackHttp: SlackHttpFactory;
                                log: Logger) =
   if slackBotToken.len == 0:
     log.info("SLACK_BOT_TOKEN not set — Slack disabled")
@@ -1625,10 +1634,7 @@ proc startDaemonIngress(ctx: DaemonContext;
   startOptionalWeChatGateway(ctx.adapters.wch, ctx.env.wechatAppId, log)
   startOptionalFeishuGateway(ctx.adapters.fs, ctx.env.feishuAppId, log)
   startOptionalSlackGateway(ctx.adapters.sl, ctx.env.slackBotToken,
-                            ctx.env.slackAppToken,
-                            newStdHttpAdapter(timeout = 15, maxRetries = 2,
-                                              circuitBreaker = false).toRuntimePort(),
-                            log)
+                            ctx.env.slackAppToken, slackSocketHttp, log)
   startOptionalDingTalkGateway(ctx.adapters.dt, ctx.env.dingTalkAppKey, log)
   startOptionalMatrixGateway(ctx.adapters.mx, log)
   startOptionalWhatsAppGateway(ctx.adapters.wa, ctx.env.whatsappAccessToken,
@@ -1863,11 +1869,11 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         let (hasResult, polled) = gEmailPollCh.tryRecv()
         if hasResult:
           gEmailPollInFlight = false
-          joinThread(gEmailPollThread)
+          joinAndFree(gEmailPollThread)
           if polled.isErr:
             log.warn("email poll: " & polled.error)
             return false
-          for msg in polled.value:
+          for msg in ctx.adapters.em.resolvePolled(polled.value):
             fallback(msg)
           return polled.value.len > 0
         return false
@@ -1879,7 +1885,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         gEmailPollCh.open(1)
         gEmailPollOpened = true
       gEmailPollInFlight = true
-      createThread(gEmailPollThread, emailPollThread, addr ctx.adapters.em)
+      gEmailPollThread = spawnThread(emailPollThread, ctx.adapters.em.inbox)
       false,
     drainSignal = proc(): bool =
       if ctx.adapters.signal.account.len == 0:
@@ -1888,11 +1894,11 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         let (hasResult, polled) = gSignalPollCh.tryRecv()
         if hasResult:
           gSignalPollInFlight = false
-          joinThread(gSignalPollThread)
+          joinAndFree(gSignalPollThread)
           if polled.isErr:
             log.warn("signal poll: " & polled.error)
             return false
-          for msg in polled.value:
+          for msg in ctx.adapters.signal.resolvePolled(polled.value):
             fallback(msg)
           return polled.value.len > 0
         return false
@@ -1904,7 +1910,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         gSignalPollCh.open(1)
         gSignalPollOpened = true
       gSignalPollInFlight = true
-      createThread(gSignalPollThread, signalPollThread, addr ctx.adapters.signal)
+      gSignalPollThread = spawnThread(signalPollThread, ctx.adapters.signal.sockPath)
       false,
   )
 
