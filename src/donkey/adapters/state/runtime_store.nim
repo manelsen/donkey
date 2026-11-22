@@ -693,8 +693,7 @@ proc ledgerCompactionLoop(_: int) {.thread.} =
         break
       let res = gLedgerWorker.store[].compactLedger()
       if res.isErr:
-        {.cast(gcsafe).}:
-          discard gLedgerWorker.store[].compactErrorChan.trySend(res.error)
+        discard gLedgerWorker.store[].compactErrorChan.trySend(res.error)
 
 proc startLedgerCompactionWorker*(store: ptr RuntimeStateStore;
                                   intervalSec: float):

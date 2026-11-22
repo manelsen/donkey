@@ -87,11 +87,10 @@ proc serviceKey(path: string): string {.gcsafe.} =
   ## Canonical enough to make `ids.tsv` and `/home/u/ids.tsv` the same table
   ## without requiring the file to exist yet (resolvers may be built before
   ## the first save).
-  {.cast(gcsafe).}:
-    try:
-      result = absolutePath(path)
-    except CatchableError:
-      result = path
+  try:
+    result = absolutePath(path)
+  except CatchableError:
+    result = path
 
 proc sharedLinkCodeService*(path: string): LinkCodeService {.gcsafe.} =
   ## Returns the process-wide service for `path`, creating it on first use.

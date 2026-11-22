@@ -1259,10 +1259,9 @@ proc onOwnerThread(rt: BrowserToolRuntime): bool {.gcsafe, raises: [].} =
   ## requires it. That annotation is only honest while the runtime is confined
   ## to the daemon event-loop thread; this guard turns the invariant into a
   ## check instead of a compiler promise.
-  {.cast(gcsafe).}:
-    ## `getThreadId` is a thread-local read and `ownerThread` is an int; this
-    ## scope touches no GC-managed global state.
-    getThreadId() == rt.ownerThread
+  ## `getThreadId` is a thread-local read and `ownerThread` is an int; this
+  ## scope touches no GC-managed global state.
+  getThreadId() == rt.ownerThread
 
 proc isPortAvailable(host: string; port: int): bool =
   ## Best-effort check for a free loopback port before spawning a browser.

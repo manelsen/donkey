@@ -438,8 +438,7 @@ proc newCommandServices*(memory: MdFileAdapter;
       guarded: buildMemoryViewText(memory, userId),
     clearMemory: proc(userId: UserId): Result[void, string] {.gcsafe.} =
       try:
-        {.cast(gcsafe).}:
-          memory.clearMemory(userId)
+        memory.clearMemory(userId)
       except CatchableError as e:
         err(e.msg),
     skill: proc(userId: UserId; value: string): Result[string, string] {.gcsafe.} =
@@ -453,14 +452,12 @@ proc newCommandServices*(memory: MdFileAdapter;
       guarded: applyBudgetTextCommand(memory, userId, value),
     channelPrefs: proc(userId: UserId): Result[ChannelPrefs, string] {.gcsafe.} =
       try:
-        {.cast(gcsafe).}:
-          ok(memory.loadChannelPrefs(userId))
+        ok(memory.loadChannelPrefs(userId))
       except CatchableError as e:
         err(e.msg),
     savePreference: proc(userId: UserId; key, value: string): Result[void, string] {.gcsafe.} =
       try:
-        {.cast(gcsafe).}:
-          memory.saveChannelPreference(userId, key, value)
+        memory.saveChannelPreference(userId, key, value)
       except CatchableError as e:
         err(e.msg),
     toolsCount: toolsCount,

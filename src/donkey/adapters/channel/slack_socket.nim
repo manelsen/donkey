@@ -110,104 +110,102 @@ proc sleepOrStop(client: SlackSocketMode; ms: int): bool =
   not client.stop.load()
 
 proc runSlackSocket(client: SlackSocketMode) {.thread.} =
-  {.cast(gcsafe).}:
-    var backoff = SlackSocketReconnectMinMs
-    while not client.stop.load():
-      let urlRes = client.openSocketUrl()
-      if urlRes.isErr:
-        client.logger.warn("slack socket: " & urlRes.error)
-        if not client.sleepOrStop(backoff):
-          break
-        backoff = min(backoff * 2, SlackSocketReconnectMaxMs)
-        continue
+  var backoff = SlackSocketReconnectMinMs
+  while not client.stop.load():
+    let urlRes = client.openSocketUrl()
+    if urlRes.isErr:
+      client.logger.warn("slack socket: " & urlRes.error)
+      if not client.sleepOrStop(backoff):
+        break
+      backoff = min(backoff * 2, SlackSocketReconnectMaxMs)
+      continue
 
-      let socketUrl = parseUri(urlRes.get())
-      let port =
-        if socketUrl.port.len > 0:
-          try: Port(parseInt(socketUrl.port))
-          except ValueError: Port(443)
-        else:
-          Port(443)
-      let path =
-        if socketUrl.path.len > 0: socketUrl.path else: "/"
-      let fullPath =
-        if socketUrl.query.len > 0: path & "?" & socketUrl.query else: path
+    let socketUrl = parseUri(urlRes.get())
+    let port =
+      if socketUrl.port.len > 0:
+        try: Port(parseInt(socketUrl.port))
+        except ValueError: Port(443)
+      else:
+        Port(443)
+    let path =
+      if socketUrl.path.len > 0: socketUrl.path else: "/"
+    let fullPath =
+      if socketUrl.query.len > 0: path & "?" & socketUrl.query else: path
 
-      var ws: WsClient
-      try:
-        let onSocket = proc(sock: Socket) {.gcsafe.} =
-          {.cast(gcsafe).}:
-            acquire(client.fdLock)
-            client.activeFd = sock.getFd
-            release(client.fdLock)
-        ws = wsConnect(socketUrl.hostname, port, fullPath,
-                       timeoutMs = 10_000, onSocket = onSocket)
-      except CatchableError as e:
+    var ws: WsClient
+    try:
+      let onSocket = proc(sock: Socket) {.gcsafe.} =
         acquire(client.fdLock)
-        client.activeFd = SocketHandle(-1)
+        client.activeFd = sock.getFd
         release(client.fdLock)
-        client.logger.warn("slack socket: connect failed: " & e.msg)
-        if not client.sleepOrStop(backoff):
-          break
-        backoff = min(backoff * 2, SlackSocketReconnectMaxMs)
-        continue
-
-      client.logger.info("slack socket: connected")
-      backoff = SlackSocketReconnectMinMs
-      var lastActivity = getMonoTime()
-      var reopen = false
-      while not client.stop.load() and not reopen:
-        let frameRes = ws.recvFrame(1000)
-        if frameRes.isErr:
-          if frameRes.error == "timeout":
-            if inMilliseconds(getMonoTime() - lastActivity) >=
-               SlackSocketIdleTimeoutMs:
-              client.logger.warn("slack socket: idle timeout; reconnecting")
-              reopen = true
-            else:
-              continue
-          else:
-            client.logger.warn("slack socket: " & frameRes.error)
-            reopen = true
-          continue
-        let frame = frameRes.get()
-        lastActivity = getMonoTime()
-        try:
-          case frame.opcode
-          of WsOpcodeText:
-            var envelope: JsonNode
-            try:
-              envelope = parseJson(frame.data)
-            except CatchableError as e:
-              client.logger.warn("slack socket: invalid envelope: " & e.msg)
-              continue
-            if envelope.getOrDefault("type").getStr("") == "hello":
-              continue
-            let id = envelopeId(envelope)
-            let keepOpen = handleSlackSocketEnvelope(envelope)
-            ## Ack after the payload is queued, so a crash before queueing
-            ## leaves the event eligible for redelivery.
-            if id.len > 0:
-              ws.sendFrame($ %* {"envelope_id": id})
-            if not keepOpen:
-              reopen = true
-          of WsOpcodePing:
-            ws.sendFrame(frame.data, WsOpcodePong)
-          of WsOpcodeClose:
-            reopen = true
-          else:
-            discard
-        except CatchableError as e:
-          client.logger.warn("slack socket: " & e.msg)
-          reopen = true
-
+      ws = wsConnect(socketUrl.hostname, port, fullPath,
+                     timeoutMs = 10_000, onSocket = onSocket)
+    except CatchableError as e:
       acquire(client.fdLock)
       client.activeFd = SocketHandle(-1)
       release(client.fdLock)
-      wsClose(ws)
-      if not client.stop.load():
-        if not client.sleepOrStop(1000):
-          break
+      client.logger.warn("slack socket: connect failed: " & e.msg)
+      if not client.sleepOrStop(backoff):
+        break
+      backoff = min(backoff * 2, SlackSocketReconnectMaxMs)
+      continue
+
+    client.logger.info("slack socket: connected")
+    backoff = SlackSocketReconnectMinMs
+    var lastActivity = getMonoTime()
+    var reopen = false
+    while not client.stop.load() and not reopen:
+      let frameRes = ws.recvFrame(1000)
+      if frameRes.isErr:
+        if frameRes.error == "timeout":
+          if inMilliseconds(getMonoTime() - lastActivity) >=
+             SlackSocketIdleTimeoutMs:
+            client.logger.warn("slack socket: idle timeout; reconnecting")
+            reopen = true
+          else:
+            continue
+        else:
+          client.logger.warn("slack socket: " & frameRes.error)
+          reopen = true
+        continue
+      let frame = frameRes.get()
+      lastActivity = getMonoTime()
+      try:
+        case frame.opcode
+        of WsOpcodeText:
+          var envelope: JsonNode
+          try:
+            envelope = parseJson(frame.data)
+          except CatchableError as e:
+            client.logger.warn("slack socket: invalid envelope: " & e.msg)
+            continue
+          if envelope.getOrDefault("type").getStr("") == "hello":
+            continue
+          let id = envelopeId(envelope)
+          let keepOpen = handleSlackSocketEnvelope(envelope)
+          ## Ack after the payload is queued, so a crash before queueing
+          ## leaves the event eligible for redelivery.
+          if id.len > 0:
+            ws.sendFrame($ %* {"envelope_id": id})
+          if not keepOpen:
+            reopen = true
+        of WsOpcodePing:
+          ws.sendFrame(frame.data, WsOpcodePong)
+        of WsOpcodeClose:
+          reopen = true
+        else:
+          discard
+      except CatchableError as e:
+        client.logger.warn("slack socket: " & e.msg)
+        reopen = true
+
+    acquire(client.fdLock)
+    client.activeFd = SocketHandle(-1)
+    release(client.fdLock)
+    wsClose(ws)
+    if not client.stop.load():
+      if not client.sleepOrStop(1000):
+        break
 
 proc startSlackSocketMode*(appToken: string;
                            http: HttpRuntimePort;
@@ -225,8 +223,7 @@ proc startSlackSocketMode*(appToken: string;
   client.activeFd = SocketHandle(-1)
   initLock(client.fdLock)
   try:
-    {.cast(gcsafe).}:
-      createThread(gSlackSocketThread, runSlackSocket, client)
+    createThread(gSlackSocketThread, runSlackSocket, client)
   except CatchableError as e:
     return err("cannot start Slack Socket Mode: " & e.msg)
 

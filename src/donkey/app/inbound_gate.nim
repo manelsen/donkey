@@ -14,7 +14,10 @@ import ../core/types
 import ../domain/message
 import ./session_manager
 
-let gateLog = newLogger("inbound.gate")
+template gateLog(): Logger =
+  ## Built where it is used: a global Logger holds GC memory, which made
+  ## every call site need {.cast(gcsafe).}. `newLogger` is a cheap func.
+  newLogger("inbound.gate")
 
 type
   IdentityGatePort* = object
@@ -109,9 +112,8 @@ proc authorizeInbound*(sm: SessionManager;
       ## until the CLI adds the minted UUID to the allowlist.
       let requested = sm.pairingRequest(kind, rawId)
       if requested.isErr:
-        {.cast(gcsafe).}:
-          gateLog.warn("pairing request failed for " & $kind & " " & rawId &
-                       ": " & requested.error)
+        gateLog().warn("pairing request failed for " & $kind & " " & rawId &
+                     ": " & requested.error)
 
 proc authorizeResolvedInbound*(sm: SessionManager;
                                gate: IdentityGatePort;
@@ -148,6 +150,5 @@ proc authorizeResolvedInbound*(sm: SessionManager;
     if pairing.kind == cmdPair:
       let requested = sm.pairingRequest(kind, rawId)
       if requested.isErr:
-        {.cast(gcsafe).}:
-          gateLog.warn("pairing request failed for " & $kind & " " & rawId &
-                       ": " & requested.error)
+        gateLog().warn("pairing request failed for " & $kind & " " & rawId &
+                     ": " & requested.error)

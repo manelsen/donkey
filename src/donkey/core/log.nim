@@ -48,9 +48,10 @@ proc ringInit*() =
   initLock(gRingLock)
   gRingReady = true
 
-proc ringPush(e: LogEntry) =
-  ## Called from the default sink when gRingReady. GC-safe.
-  {.gcsafe.}:
+proc ringPush(e: LogEntry) {.gcsafe.} =
+  ## Called from the default sink when gRingReady, on any thread that logs.
+  ## gcsafe: entries are copied into the ring and out of it only under gRingLock
+  {.cast(gcsafe).}:
     if not gRingReady: return
     let tag = case e.level
       of lvlDebug: "DBG"
@@ -68,6 +69,7 @@ proc ringPush(e: LogEntry) =
 proc ringSnapshot*(n: int): seq[RingEntry] {.gcsafe.} =
   ## Returns up to n most recent entries, oldest first.
   if not gRingReady: return @[]
+  ## gcsafe: entries are copied into the ring and out of it only under gRingLock
   {.cast(gcsafe).}:
     acquire(gRingLock)
     defer: release(gRingLock)
@@ -80,9 +82,8 @@ proc ringSnapshot*(n: int): seq[RingEntry] {.gcsafe.} =
 
 # ── human-friendly mode (TTY) ────────────────────────────────────────────────
 
-## Log format flags — set once at daemon startup from CLI args.
-## Safe: only written during initialization before any Logger is created.
-## Read-only during normal operation; no concurrent writes.
+## Log format flags — set once at daemon startup from CLI args, read-only
+## afterwards. Plain bools hold no GC memory, so reading them is gcsafe.
 var gHumanLog   {.global.}: bool = false
 var gColorLog   {.global.}: bool = false
 var gJsonLog    {.global.}: bool = false
@@ -90,15 +91,15 @@ var gJsonLog    {.global.}: bool = false
 proc enableHumanLog*() =
   ## Switch stderr to compact human format. Call once from main.
   ## Colors are enabled separately only when stderr is a TTY.
-  {.cast(gcsafe).}: gHumanLog = true
+  gHumanLog = true
 
 proc enableColorLog*() =
   ## Enable ANSI colors in human format. Call when stderr is a TTY.
-  {.cast(gcsafe).}: gColorLog = true
+  gColorLog = true
 
 proc enableJsonLog*() =
   ## Switch stderr to structured JSON output.
-  {.cast(gcsafe).}: gJsonLog = true
+  gJsonLog = true
 
 proc shortenUuids(s: string): string =
   ## Replace 36-char UUID strings with [first8chars].
@@ -161,22 +162,21 @@ proc jsonLine(e: LogEntry) =
 # ── default sink ──────────────────────────────────────────────────────────────
 
 proc stderrSink(e: LogEntry) {.gcsafe, raises: [].} =
-  {.cast(gcsafe).}:
-    try:
-      if gJsonLog:
-        jsonLine(e)
-      elif gHumanLog:
-        humanLine(e)
-      else:
-        let tag = case e.level
-          of lvlDebug: "DBG"
-          of lvlInfo:  "INF"
-          of lvlWarn:  "WRN"
-          of lvlError: "ERR"
-          of lvlFatal: "FTL"
-        stderr.writeLine &"[{e.timestamp}] {tag} [{e.subsystem}] {e.message}"
-      ringPush(e)
-    except IOError: discard
+  try:
+    if gJsonLog:
+      jsonLine(e)
+    elif gHumanLog:
+      humanLine(e)
+    else:
+      let tag = case e.level
+        of lvlDebug: "DBG"
+        of lvlInfo:  "INF"
+        of lvlWarn:  "WRN"
+        of lvlError: "ERR"
+        of lvlFatal: "FTL"
+      stderr.writeLine &"[{e.timestamp}] {tag} [{e.subsystem}] {e.message}"
+    ringPush(e)
+  except IOError: discard
 
 # ── constructors ──────────────────────────────────────────────────────────────
 
@@ -194,15 +194,14 @@ func child*(logger: Logger; subsystem: string): Logger =
 
 proc log*(logger: Logger; level: LogLevel; msg: string) {.gcsafe, raises: [].} =
   if level < logger.minLevel: return
-  {.cast(gcsafe).}:
-    try:
-      logger.sink(LogEntry(
-        timestamp: now().format("yyyy-MM-dd'T'HH:mm:ss"),
-        level:     level,
-        subsystem: logger.subsystem,
-        message:   msg,
-      ))
-    except CatchableError: discard
+  try:
+    logger.sink(LogEntry(
+      timestamp: now().format("yyyy-MM-dd'T'HH:mm:ss"),
+      level:     level,
+      subsystem: logger.subsystem,
+      message:   msg,
+    ))
+  except CatchableError: discard
 
 template debug*(logger: Logger; msg: string) = logger.log(lvlDebug, msg)
 template info*(logger: Logger; msg: string)  = logger.log(lvlInfo,  msg)

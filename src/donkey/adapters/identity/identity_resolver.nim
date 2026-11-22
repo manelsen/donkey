@@ -216,9 +216,7 @@ proc identityLinkPort*(r: IdentityResolver): IdentityLinkPort {.gcsafe.} =
   ## `/mycode` and `/continue` as the command dispatcher sees them.
   IdentityLinkPort(
     mint: proc(userId: UserId): string {.gcsafe.} =
-      {.cast(gcsafe).}:
-        r.generateLinkCode(userId),
+      r.generateLinkCode(userId),
     link: proc(code: string; channel: ChannelKind; rawId: string): bool {.gcsafe.} =
-      {.cast(gcsafe).}:
-        r.consumeLinkCode(code, channel, rawId),
+      r.consumeLinkCode(code, channel, rawId),
   )
