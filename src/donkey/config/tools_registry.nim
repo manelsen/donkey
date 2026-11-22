@@ -7,9 +7,8 @@
 ##   args    = ["mcp-server-fetch"]
 
 import std/[os]
-import parsetoml
 import ../adapters/tool/mcp_client
-import ./toml_parse
+import ./toml
 
 type
   ToolKind* = enum
@@ -41,7 +40,7 @@ proc loadToolRegistry*(path: string): seq[ToolEntry] {.gcsafe.} =
   ## Returns empty seq if file does not exist or contains no entries.
   if not fileExists(path):
     return @[]
-  var t: parsetoml.TomlValueRef
+  var t: TomlValueRef
   t = parseTomlFile(path)
   if not t.hasKey("tool"):
     return @[]

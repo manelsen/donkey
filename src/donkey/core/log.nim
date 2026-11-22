@@ -10,6 +10,7 @@
 
 import std/[locks, strformat, times, json]
 import ./types
+import ../infra/fixed
 export types
 
 type
@@ -35,50 +36,60 @@ type
 # ── ring buffer (global, optional — init only in daemon) ──────────────────────
 
 const RingCap* = 500
+const
+  RingMessageBytes = 1024  ## the ring keeps the first KiB; stderr has it whole
+  RingSubsystemBytes = 64
 
-var gRingBuf:   array[RingCap, RingEntry]
+type StoredEntry = object
+  ## A ring slot: plain values with no GC memory, so every thread that logs
+  ## shares the ring under gRingLock with no cast.
+  ts:    FixedText[32]
+  level: FixedText[4]
+  sub:   FixedText[RingSubsystemBytes]
+  msg:   FixedText[RingMessageBytes]
+
+var gRingBuf:   array[RingCap, StoredEntry]
 var gRingHead:  int
 var gRingCount: int
 var gRingLock:  Lock
 var gRingReady: bool   ## false until ringInit() called
+initLock(gRingLock)    ## module init: before any thread can log
 
 proc ringInit*() =
   ## Call once in the daemon before creating the first Logger.
   ## CLI tools must NOT call this — the default sink remains stderr-only.
-  initLock(gRingLock)
-  gRingReady = true
+  withLock gRingLock:
+    gRingReady = true
 
 proc ringPush(e: LogEntry) {.gcsafe.} =
-  ## Called from the default sink when gRingReady, on any thread that logs.
-  ## gcsafe: entries are copied into the ring and out of it only under gRingLock
-  {.cast(gcsafe).}:
+  ## Called from the default sink, on any thread that logs.
+  let tag = case e.level
+    of lvlDebug: "DBG"
+    of lvlInfo:  "INF"
+    of lvlWarn:  "WRN"
+    of lvlError: "ERR"
+    of lvlFatal: "FTL"
+  let stored = StoredEntry(
+    ts: toFixed[32](e.timestamp), level: toFixed[4](tag),
+    sub: toFixed[RingSubsystemBytes](e.subsystem),
+    msg: toFixed[RingMessageBytes](e.message))
+  withLock gRingLock:
     if not gRingReady: return
-    let tag = case e.level
-      of lvlDebug: "DBG"
-      of lvlInfo:  "INF"
-      of lvlWarn:  "WRN"
-      of lvlError: "ERR"
-      of lvlFatal: "FTL"
-    acquire(gRingLock)
-    gRingBuf[gRingHead] = RingEntry(
-      ts: e.timestamp, level: tag, sub: e.subsystem, msg: e.message)
+    gRingBuf[gRingHead] = stored
     gRingHead  = (gRingHead + 1) mod RingCap
     if gRingCount < RingCap: inc gRingCount
-    release(gRingLock)
 
 proc ringSnapshot*(n: int): seq[RingEntry] {.gcsafe.} =
   ## Returns up to n most recent entries, oldest first.
-  if not gRingReady: return @[]
-  ## gcsafe: entries are copied into the ring and out of it only under gRingLock
-  {.cast(gcsafe).}:
-    acquire(gRingLock)
-    defer: release(gRingLock)
+  withLock gRingLock:
+    if not gRingReady: return @[]
     let take   = min(n, gRingCount)
     let offset = gRingCount - take
     let oldest = if gRingCount < RingCap: 0 else: gRingHead
     result = newSeq[RingEntry](take)
     for i in 0 ..< take:
-      result[i] = gRingBuf[(oldest + offset + i) mod RingCap]
+      let e = gRingBuf[(oldest + offset + i) mod RingCap]
+      result[i] = RingEntry(ts: $e.ts, level: $e.level, sub: $e.sub, msg: $e.msg)
 
 # ── human-friendly mode (TTY) ────────────────────────────────────────────────
 

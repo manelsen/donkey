@@ -3,46 +3,66 @@
 ## workers, webhook threads, the daemon loop), so it is guarded by a lock;
 ## `core/reliability` keeps only the types and the backoff curve.
 
-import std/[locks, tables]
+import std/locks
 import ../../core/pipeops
 import ../../core/reliability
+import ../../infra/fixed
 export reliability
 
-var gBreakers {.global.}: Table[string, CircuitBreaker]
-var gBreakerLock {.global.}: Lock
-var gReliabilityReady {.global.}: bool = false
+const
+  BreakerHosts = 128      ## hosts tracked; beyond that a host is never tripped
+  BreakerHostBytes = 256  ## a DNS name is at most 253 bytes
+
+## Plain values (no GC memory), so every thread that makes HTTP calls shares
+## them under gBreakerLock with no cast.
+var gBreakers: FixedTable[BreakerHosts, BreakerHostBytes, CircuitBreaker]
+var gBreakerLock: Lock
+var gReliabilityReady: bool = false
 initLock(gBreakerLock)  ## module init: before any thread can check a circuit
 
 template withBreakers(body: untyped) =
   ## The one way to touch the breakers, from any thread (provider workers,
   ## webhook threads, the daemon loop).
-  ## gcsafe: gBreakers and gReliabilityReady are only read or written here, under gBreakerLock; names and breakers are copied in and out
-  {.cast(gcsafe).}:
-    acquire(gBreakerLock)
-    try:
-      body
-    finally:
-      release(gBreakerLock)
+  acquire(gBreakerLock)
+  try:
+    body
+  finally:
+    release(gBreakerLock)
+
+proc trackable(name: string): bool =
+  ## A host that fits whole (a truncated name could match another one) and
+  ## is known or has room. The overflow bucket is never used: unrelated
+  ## hosts must not share one breaker. Anything else is never tripped.
+  name.len <= BreakerHostBytes and
+    (name in gBreakers or gBreakers.len < BreakerHosts - 1)
+
+proc breaker(name: string): ptr CircuitBreaker =
+  ## The breaker for `name`, created closed on first use. Call only when
+  ## `trackable(name)`, under gBreakerLock.
+  let fresh = name notin gBreakers
+  result = addr gBreakers.mgetOrPut(name)
+  if fresh:
+    result[] = CircuitBreaker(maxFailures: 3, resetTimeout: 60, state: csClosed)
 
 proc initReliability*() {.gcsafe.} =
   ## Enables (or resets) circuit breaking.
   withBreakers:
-    gBreakers = initTable[string, CircuitBreaker]()
+    gBreakers.clear()
     gReliabilityReady = true
 
 proc breakerState*(name: string): CircuitState {.gcsafe.} =
   ## The current state of one breaker (closed when unknown).
   withBreakers:
-    result = gBreakers.getOrDefault(name).state
+    result = gBreakers.get(name).state
 
 proc checkCircuit*(name: string): bool {.gcsafe.} =
   ## Returns true if the circuit is CLOSED (allowed) or HALF-OPEN (testing).
   withBreakers:
-    if not gReliabilityReady: return true
-    if not gBreakers.hasKey(name):
-      gBreakers[name] = CircuitBreaker(maxFailures: 3, resetTimeout: 60, state: csClosed)
+    if not gReliabilityReady or not trackable(name): return true
+    if name notin gBreakers:
+      discard breaker(name)
       return true
-    let b = addr gBreakers[name]
+    let b = breaker(name)
     if b.state == csOpen:
       if (nowMs() - b.lastFailure) > (b.resetTimeout * 1000):
         b.state = csHalfOpen
@@ -53,17 +73,15 @@ proc checkCircuit*(name: string): bool {.gcsafe.} =
 proc recordSuccess*(name: string) {.gcsafe.} =
   withBreakers:
     if not gReliabilityReady: return
-    if gBreakers.hasKey(name):
-      let b = addr gBreakers[name]
+    if name in gBreakers:
+      let b = breaker(name)
       b.failCount = 0
       b.state = csClosed
 
 proc recordFailure*(name: string) {.gcsafe.} =
   withBreakers:
-    if not gReliabilityReady: return
-    if not gBreakers.hasKey(name):
-      gBreakers[name] = CircuitBreaker(maxFailures: 3, resetTimeout: 60, state: csClosed)
-    let b = addr gBreakers[name]
+    if not gReliabilityReady or not trackable(name): return
+    let b = breaker(name)
     b.failCount.inc
     b.lastFailure = nowMs()
     if b.failCount >= b.maxFailures:

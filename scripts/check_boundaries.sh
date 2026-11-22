@@ -34,7 +34,12 @@ check_absent \
 
 check_absent \
   "core must stay free of runtime-only deps" \
-  '^\s*(import|from)\s+.*(chronos|asyncsync|osproc|httpclient|parsetoml|adapters/)' \
+  '^\s*(import|from)\s+.*(chronos|asyncsync|osproc|httpclient|config/toml|config/\[[^]]*\btoml\b|adapters/)' \
+  src/donkey/core
+
+check_absent \
+  "core must stay free of runtime-only deps (multi-line import lists)" \
+  '^\s+(chronos|asyncsync|osproc|httpclient|toml)(,|\]|\s*$)' \
   src/donkey/core
 
 check_absent \
@@ -44,12 +49,12 @@ check_absent \
 
 check_absent \
   "domain must stay pure" \
-  '^\s*(import|from)\s+.*(chronos|asyncsync|asyncdispatch|osproc|httpclient|parsetoml|adapters/|app/)' \
+  '^\s*(import|from)\s+.*(chronos|asyncsync|asyncdispatch|osproc|httpclient|config/toml|config/\[[^]]*\btoml\b|adapters/|app/)' \
   src/donkey/domain
 
 check_absent \
   "domain must stay pure (multi-line import lists)" \
-  '^\s+(chronos|asyncsync|asyncdispatch|osproc|httpclient|parsetoml)(,|\]|\s*$)' \
+  '^\s+(chronos|asyncsync|asyncdispatch|osproc|httpclient|toml)(,|\]|\s*$)' \
   src/donkey/domain
 
 echo "Boundary checks passed."

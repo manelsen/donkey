@@ -50,6 +50,20 @@ proc runTests*() =
     test "layer import rules stay intact":
       check execCmd("bash scripts/check_boundaries.sh") == 0
 
+    test "the TOML parser stays out of core and domain in every import form":
+      ## Plants each form in a throwaway module and expects the script to
+      ## refuse it; the module is removed whatever happens.
+      for layer in ["core", "domain"]:
+        for form in ["import ../config/toml",
+                     "import ../config/[toml]",
+                     "import ../config/[types, toml]",
+                     "import ../config/[\n  toml\n]"]:
+          let probe = "src/donkey/" & layer & "/zz_boundary_probe.nim"
+          writeFile(probe, form & "\n")
+          defer: removeFile(probe)
+          check execCmdEx("bash scripts/check_boundaries.sh").exitCode != 0
+      check execCmd("bash scripts/check_boundaries.sh") == 0
+
     test "genDepend edges are read":
       let graph = parseDependDot("digraph x {\n\"a\" -> \"../adapters/b\";\n" &
                                  "\"b\" -> \"std/os\";\n}")

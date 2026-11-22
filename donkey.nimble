@@ -14,7 +14,6 @@ bin         = @["donkey"]
 requires "nim >= 2.0.0"
 requires "chronos >= 4.4.1"
 requires "nimcrypto >= 0.7.3"
-requires "parsetoml >= 0.7.2"
 requires "results >= 0.5.1"
 requires "ws >= 0.6.0"
 requires "db_connector >= 0.1.0" ## PostgreSQL + pgvector + AGE (-d:withPostgres)

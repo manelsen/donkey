@@ -1,8 +1,8 @@
 ## Channel preference parsing — pure functions over raw text.
-## Lives in app so it can use parsetoml without polluting core.
+## Lives in app so core stays free of the TOML parser.
 ## Orchestrator imports THIS instead of common_runtime.
 
-import ../config/toml_parse
+import ../config/toml
 import ../core/providers/smart_routing  ## for normalizeBudgetPolicy
 import ../core/types                    ## ChannelPrefs, defaultChannelPrefs
 
@@ -11,7 +11,7 @@ proc parseChannelPrefs*(preferencesMd: string): ChannelPrefs =
   if preferencesMd.len == 0:
     return
   try:
-    let t = parseTomlString(preferencesMd)
+    let t = parseToml(preferencesMd)
     if t.hasKey("provider"):
       result.provider = t["provider"].getStr()
     if t.hasKey("model"):

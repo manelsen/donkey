@@ -29,7 +29,7 @@ when defined(withPostgres):
 when defined(withSqlite):
   switch("define", "staticSqlite")
 
-# Nimble package paths (chronos, parsetoml, results, nimcrypto).
+# Nimble package paths (chronos, results, nimcrypto, threading).
 # A cache can hold several versions of the same package; adding all of them
 # leaves resolution to filesystem order. Keep only the newest version.
 import std/[os, strutils, tables]
