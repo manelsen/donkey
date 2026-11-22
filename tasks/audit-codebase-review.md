@@ -38,6 +38,13 @@ It has 2381 lines and 91 procs. Besides wiring, it holds:
 
 **Fix:** move route health into `app/route_health.nim`, IPC into `app/ipc_server.nim` (which already exists), and the paddock operations into an adapter behind `SubagentWorkspacePort`. Read the environment once into the configuration.
 
+**Status (0.3.x):** done except the environment. `donkey.nim` went from 2368 to about 1880 lines:
+- route health is `app/route_health` (state, persistence, cooldowns, metrics; the global routing lock is gone, every caller runs on the daemon loop);
+- the IPC/gateway policy is `app/daemon_endpoints` (status snapshot, access policy, dashboard session action); `donkey.nim` keeps only the server wiring. Fixed on the way: the status read a copy of the SessionManager taken at startup, so it listed the startup sessions forever;
+- the subagent paddocks are `adapters/filesystem/subagent_workspace`;
+- turn reactions are `app/turn_reaction` (errors recognised by `replyKind`), the CLI help is `app/cli_help`.
+Reading the environment once moves with item 9.
+
 ### 5. `MdFileAdapter` and `MemoryRuntimePort` mix five responsibilities
 They cover memory/profile, the DM allowlist (`isDmAllowed`/`addDmAllowed`), reminders (`scheduleReminder`/`loadDueReminders`), identity (`saveIdentity`), transcript search and user revocation. The port inherits the mix, so every memory backend has to implement reminders and the allowlist.
 **Fix:** split into `ReminderPort`, `AllowlistPort` and `IdentityPort`. The MdFile store can keep implementing all of them, but each should sit behind its own port.

@@ -1,9 +1,8 @@
 ## donkey — AI agent system entry point.
 
-import std/[algorithm, json, locks, options, os, parseopt, strutils, tables, terminal, times]
+import std/[json, options, os, parseopt, strutils, tables, terminal, times]
 when defined(posix):
   import std/posix
-import locks
 import chronos
 import chronos/asyncsync
 import chronos/timer as ctimer
@@ -15,6 +14,12 @@ import donkey/config/skills_registry
 import donkey/adapters/tool/runtime_builder
 import donkey/core/log
 import donkey/infra/thread_handle
+import donkey/app/route_health
+import donkey/adapters/state/route_health_file
+import donkey/app/daemon_endpoints
+import donkey/adapters/filesystem/subagent_workspace
+import donkey/app/turn_reaction
+import donkey/app/cli_help
 import donkey/core/pipeops
 import donkey/adapters/http/circuit_breakers
 import donkey/core/agent_events
@@ -74,7 +79,6 @@ import donkey/domain/message
 import donkey/domain/agent_message
 import donkey/domain/providers/descriptors
 import donkey/ports/provider
-import donkey/ports/subagent_workspace
 import donkey/ports/http
 import donkey/ports/channel
 import donkey/ports/tool
@@ -104,75 +108,10 @@ import donkey/ctl_handler
 import donkey/ports/memory
 import donkey/adapters/ipc/types    as ipcTypes
 
-var gRoutingLock: Lock
 
-template withRouteLock(body: untyped): untyped =
-  block:
-    acquire(gRoutingLock)
-    try:
-      body
-    finally:
-      release(gRoutingLock)
+proc printVersion = echo versionText()
 
-const Version* = AppVersion
-
-proc printVersion =
-  echo AppSlug & " " & Version
-
-proc printHelp =
-  echo AppSlug & " " & Version & """
-
-Usage:
-  """ & AppSlug & """ [options] [command]
-
-Options:
-  --version        Print version and exit
-  --help           Show this help
-  --config <path>  Path to """ & ConfigFileName & """  (default: ~/.config/""" & ConfigDirName & "/" & ConfigFileName & """)
-  --dev-mode       Enable development mode (allows sandbox=none)
-
-Commands:
-  setup                          Interactive first-run configuration wizard
-  about                          Show a concise runtime overview
-  start                          Start the daemon
-  ctl user list                  List registered users
-  ctl user show <uuid>           Show user profile
-  ctl user edit <uuid> <field> <value>
-                                Edit a USER.md field
-  ctl user revoke <uuid>        Revoke user access
-  ctl user allow <uuid>         Restore user access
-  ctl pair list                 List pending DM pairing requests
-  ctl pair approve <code>       Approve a pairing request and allow the user
-  ctl pair reject <code>        Discard a pairing request
-  ctl approval list [user]      List pending tool approvals
-  ctl approval approve <id>     Approve a pending tool call
-  ctl approval deny <id>        Deny a pending tool call
-  ctl secret set <name>         Encrypt a secret read from stdin
-  ctl secret list               List stored secret names (never values)
-  ctl secret remove <name>      Remove a stored secret
-  ctl secret import-env [path]  Encrypt KEY=VALUE pairs from donkey.env
-  ctl session list <uuid>        List active sessions for a user
-  ctl tool install <command>            Register an MCP server
-  ctl skill search <query>              Search remote skills on ClawHub
-  ctl skill install <name> <script>     Register a local Deno skill
-  ctl skill install <slug>              Download/install remote skill bundle
-  ctl skill list                        List local skill registry + remote installs
-  ctl skill update <name> <script>      Update a local skill path
-  ctl skill update [slug]               Update one/all remote installed skills
-  ctl provider test <name>              Test provider connectivity
-  ctl memory search <uuid> <q>   Semantic search in user memory via MAGMA
-  ctl memory import <uuid>       Import .md paddock into MAGMA
-  ctl memory export <uuid> [dir] Export MAGMA memory view as .md
-  ctl status                     Show daemon status (daemon must be running)
-  tui                            Open live TUI dashboard (daemon must be running)
-  service install                Install as systemd --user service
-  service remove                 Remove the systemd --user service
-  service start                  systemctl --user start """ & AppSlug & """
-  service stop                   systemctl --user stop """ & AppSlug & """
-  service restart                systemctl --user restart """ & AppSlug & """
-  service logs [-f] [--cat]      Show service logs (follow with -f, clean output with --cat)
-  doctor                         Run the full runtime diagnostic
-"""
+proc printHelp = echo cliHelpText()
 
 # ── daemon ─────────────────────────────────────────────────────────────────────
 ##
@@ -182,7 +121,8 @@ Commands:
 ##   Daemon loop is async; Telegram uses pollTimeout=0 (non-blocking per iter).
 ##   Each iteration: drain globalOutbox → drain Discord → poll Telegram → yield.
 ##   Orchestrators are asyncSpawn tasks; debounce lives in collectWithDebounce
-##   (withTimeout, timer-exact). Streaming uses an OS thread + Channel[string].
+##   (withTimeout, timer-exact). Streaming runs on its own thread, which builds
+##   the provider closure from a StreamFactory (app/tool_loop_runtime).
 ##
 ## Stream routing:
 ##   OutboundMessage.streamId non-empty → streaming turn.
@@ -275,16 +215,6 @@ proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPor
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
     addr adapters.cli, signalPtr, addr adapters.ln)
 
-const
-  RecentRouteSampleLimit = 32
-  DefaultRecentRouteSampleTtlSec = 6 * 60 * 60
-  DefaultProviderCooldownSec = 10 * 60
-
-type RouteSample = object
-  ok: bool
-  elapsedMs: int
-  recordedAtUnix: int64
-
 type DaemonServices = object
   toolClients:      seq[ToolRuntimePort]
   tools:            seq[ToolDescription]
@@ -340,14 +270,7 @@ type DaemonRuntime = ref object
   ledger:               DeliveryLedgerPort
   ledgerWorker:         LedgerCompactionWorker
   presentationState:    PresentationState
-  routeCounts:          Table[string, int]
-  routeCallCounts:      Table[string, int]
-  routeOkCounts:        Table[string, int]
-  routeErrCounts:       Table[string, int]
-  routeLatencyTotalsMs: Table[string, int64]
-  routeRecentSamples:   Table[string, seq[RouteSample]]
-  providerCooldownUntil: Table[string, int64]
-  routeHealthPath:      string
+  routeHealth:          RouteHealth
   lastReminderCheckMs:  int64
   lastEmailPollMs:      int64
   lastSignalPollMs:     int64
@@ -614,113 +537,16 @@ proc initDaemonAdapters(env: DaemonEnv): DaemonAdapters =
       sockPath = if rawSock.len > 0: rawSock else: SignalDefaultSock,
     )
 
-func recentRouteSampleTtlSec(): int64 =
-  let raw = getEnv("DONKEY_ROUTE_HEALTH_TTL_SEC")
+proc envSeconds(name: string; default: int64): int64 =
+  ## A positive whole number of seconds from the environment, or `default`.
+  let raw = getEnv(name).strip()
   if raw.len == 0:
-    return DefaultRecentRouteSampleTtlSec
+    return default
   try:
-    let ttl = parseInt(raw)
-    if ttl > 0: ttl else: DefaultRecentRouteSampleTtlSec
+    let value = parseInt(raw)
+    if value > 0: value else: default
   except ValueError:
-    DefaultRecentRouteSampleTtlSec
-
-func routeHealthPath(home: string): string =
-  home / "state" / "route_health.json"
-
-func providerCooldownSec(): int64 =
-  let raw = getEnv("DONKEY_PROVIDER_COOLDOWN_SEC")
-  if raw.len == 0:
-    return DefaultProviderCooldownSec
-  try:
-    let ttl = parseInt(raw)
-    if ttl > 0: ttl else: DefaultProviderCooldownSec
-  except ValueError:
-    DefaultProviderCooldownSec
-
-proc pruneRecentRouteSamples(runtime: DaemonRuntime) =
-  let nowSec = getTime().toUnix()
-  let ttlSec = recentRouteSampleTtlSec()
-  for route, samples in runtime.routeRecentSamples.mpairs:
-    var kept: seq[RouteSample] = @[]
-    for sample in samples:
-      if sample.recordedAtUnix > 0 and nowSec - sample.recordedAtUnix <= ttlSec:
-        kept.add(sample)
-    if kept.len > RecentRouteSampleLimit:
-      kept = kept[(kept.len - RecentRouteSampleLimit) .. ^1]
-    samples = kept
-
-proc pruneProviderCooldowns(runtime: DaemonRuntime) =
-  let nowSec = getTime().toUnix()
-  var expired: seq[string] = @[]
-  for providerName, untilUnix in runtime.providerCooldownUntil:
-    if untilUnix <= nowSec:
-      expired.add(providerName)
-  for providerName in expired:
-    runtime.providerCooldownUntil.del(providerName)
-
-proc saveRecentRouteSamples(runtime: DaemonRuntime) =
-  if runtime.routeHealthPath.len == 0:
-    return
-  try:
-    runtime.pruneRecentRouteSamples()
-    createDir(parentDir(runtime.routeHealthPath))
-    var data = newJArray()
-    for route, samples in runtime.routeRecentSamples:
-      if samples.len == 0:
-        continue
-      var sampleData = newJArray()
-      for sample in samples:
-        sampleData.add(%*{
-          "ok": sample.ok,
-          "elapsed_ms": sample.elapsedMs,
-          "recorded_at": sample.recordedAtUnix,
-        })
-      data.add(%*{
-        "route": route,
-        "samples": sampleData,
-      })
-    var cooldowns = newJArray()
-    for providerName, untilUnix in runtime.providerCooldownUntil:
-      cooldowns.add(%*{
-        "provider": providerName,
-        "until_unix": untilUnix,
-      })
-    writeFile(runtime.routeHealthPath, $(%*{
-      "saved_at": getTime().toUnix(),
-      "routes": data,
-      "provider_cooldowns": cooldowns,
-    }))
-  except CatchableError:
-    discard
-
-proc loadRecentRouteSamples(runtime: DaemonRuntime) =
-  if runtime.routeHealthPath.len == 0 or not fileExists(runtime.routeHealthPath):
-    return
-  try:
-    let parsed = parseJson(readFile(runtime.routeHealthPath))
-    for routeNode in parsed{"routes"}:
-      let route = routeNode{"route"}.getStr("")
-      if route.len == 0:
-        continue
-      var samples: seq[RouteSample] = @[]
-      for sampleNode in routeNode{"samples"}:
-        samples.add(RouteSample(
-          ok: sampleNode{"ok"}.getBool(false),
-          elapsedMs: sampleNode{"elapsed_ms"}.getInt(0),
-          recordedAtUnix: sampleNode{"recorded_at"}.getBiggestInt(0),
-        ))
-      runtime.routeRecentSamples[route] = samples
-    runtime.pruneRecentRouteSamples()
-    for cooldownNode in parsed{"provider_cooldowns"}:
-      let providerName = cooldownNode{"provider"}.getStr("")
-      let untilUnix = cooldownNode{"until_unix"}.getBiggestInt(0)
-      if providerName.len > 0 and untilUnix > 0:
-        runtime.providerCooldownUntil[providerName] = untilUnix
-    runtime.pruneProviderCooldowns()
-  except CatchableError:
-    discard
-
-var gRoutingLockReady = false
+    default
 
 proc envFloatValue(name: string; default: float): float =
   let raw = getEnv(name).strip()
@@ -733,9 +559,6 @@ proc envFloatValue(name: string; default: float): float =
 
 proc initDaemonRuntime(home: string): DaemonRuntime =
   new(result)
-  if not gRoutingLockReady:
-    initLock(gRoutingLock)
-    gRoutingLockReady = true
   result.globalOutbox = newAsyncQueue[OutboundMessage]()
   result.sm.init()
   let stateStore = newRuntimeStateStore(
@@ -749,178 +572,14 @@ proc initDaemonRuntime(home: string): DaemonRuntime =
   result.sm.setRegistryStore(stateStore.sessionRegistry())
   result.ledger = stateStore.deliveryLedger()
   result.presentationState = initPresentationState()
-  result.routeHealthPath = routeHealthPath(home)
-  result.loadRecentRouteSamples()
+  result.routeHealth = newRouteHealth(
+    routeHealthFileStore(home / "state" / "route_health.json"),
+    sampleTtlSec = envSeconds("DONKEY_ROUTE_HEALTH_TTL_SEC",
+                              DefaultRecentRouteSampleTtlSec),
+    cooldownSec = envSeconds("DONKEY_PROVIDER_COOLDOWN_SEC",
+                             DefaultProviderCooldownSec))
+  result.routeHealth.load()
   result.daemonStartMs = nowMs()
-
-proc recordRouteChoice(runtime: DaemonRuntime; selection: ProviderSelection) =
-  let key = selection.formatSelection
-  runtime.routeCounts[key] = runtime.routeCounts.getOrDefault(key) + 1
-
-proc refreshProviderCooldowns(runtime: DaemonRuntime) {.gcsafe.}
-proc currentRouteFeedback(runtime: DaemonRuntime): seq[RouteFeedback] {.gcsafe.}
-
-proc recordRouteResult(runtime: DaemonRuntime;
-                       selection: ProviderSelection;
-                       elapsedMs: int64;
-                       ok: bool) {.gcsafe.} =
-  let key = selection.formatSelection
-  let nowSec = getTime().toUnix()
-  runtime.routeCallCounts[key] = runtime.routeCallCounts.getOrDefault(key) + 1
-  runtime.routeLatencyTotalsMs[key] = runtime.routeLatencyTotalsMs.getOrDefault(key) + elapsedMs
-  var samples = runtime.routeRecentSamples.getOrDefault(key)
-  samples.add(RouteSample(
-    ok: ok,
-    elapsedMs: if elapsedMs > 0: int(elapsedMs) else: 0,
-    recordedAtUnix: nowSec,
-  ))
-  if samples.len > RecentRouteSampleLimit:
-    samples = samples[(samples.len - RecentRouteSampleLimit) .. ^1]
-  runtime.routeRecentSamples[key] = samples
-  runtime.pruneRecentRouteSamples()
-  runtime.saveRecentRouteSamples()
-  if ok:
-    runtime.routeOkCounts[key] = runtime.routeOkCounts.getOrDefault(key) + 1
-  else:
-    runtime.routeErrCounts[key] = runtime.routeErrCounts.getOrDefault(key) + 1
-  runtime.refreshProviderCooldowns()
-
-proc refreshProviderCooldowns(runtime: DaemonRuntime) {.gcsafe.} =
-  runtime.pruneProviderCooldowns()
-  let nowSec = getTime().toUnix()
-  for feedback in aggregateProviderFeedback(runtime.currentRouteFeedback()):
-    if feedback.shouldCircuitBreakProvider and
-       runtime.providerCooldownUntil.getOrDefault(feedback.providerName) <= nowSec:
-      runtime.providerCooldownUntil[feedback.providerName] = nowSec + providerCooldownSec()
-  runtime.saveRecentRouteSamples()
-
-proc topRouteCounts(runtime: DaemonRuntime; limit = 5): seq[ipcTypes.RouteCount] =
-  var items: seq[(string, int)] = @[]
-  for route, count in runtime.routeCounts:
-    items.add((route, count))
-  items.sort(proc(a, b: (string, int)): int =
-    if a[1] != b[1]:
-      return cmp(b[1], a[1])
-    cmp(a[0], b[0])
-  )
-  for i in 0 ..< min(limit, items.len):
-    result.add(ipcTypes.RouteCount(route: items[i][0], count: items[i][1]))
-
-proc topRouteMetrics(runtime: DaemonRuntime; limit = 5): seq[ipcTypes.RouteMetric] =
-  var items: seq[(string, int)] = @[]
-  for route, calls in runtime.routeCallCounts:
-    items.add((route, calls))
-  items.sort(proc(a, b: (string, int)): int =
-    if a[1] != b[1]:
-      return cmp(b[1], a[1])
-    cmp(a[0], b[0])
-  )
-  for i in 0 ..< min(limit, items.len):
-    let route = items[i][0]
-    let calls = items[i][1]
-    let totalLatency = runtime.routeLatencyTotalsMs.getOrDefault(route)
-    result.add(ipcTypes.RouteMetric(
-      route: route,
-      calls: calls,
-      okCalls: runtime.routeOkCounts.getOrDefault(route),
-      errCalls: runtime.routeErrCounts.getOrDefault(route),
-      avgLatencyMs: if calls > 0: int(totalLatency div calls) else: 0,
-    ))
-
-proc topRecentRouteMetrics(runtime: DaemonRuntime; limit = 5): seq[ipcTypes.RouteMetric] =
-  runtime.pruneRecentRouteSamples()
-  var items: seq[(string, int)] = @[]
-  for route, samples in runtime.routeRecentSamples:
-    if samples.len > 0:
-      items.add((route, samples.len))
-  items.sort(proc(a, b: (string, int)): int =
-    if a[1] != b[1]:
-      return cmp(b[1], a[1])
-    cmp(a[0], b[0])
-  )
-  for i in 0 ..< min(limit, items.len):
-    let route = items[i][0]
-    let samples = runtime.routeRecentSamples.getOrDefault(route)
-    var okCalls = 0
-    var errCalls = 0
-    var totalLatency = 0
-    for sample in samples:
-      totalLatency += sample.elapsedMs
-      if sample.ok:
-        inc okCalls
-      else:
-        inc errCalls
-    let calls = samples.len
-    result.add(ipcTypes.RouteMetric(
-      route: route,
-      calls: calls,
-      okCalls: okCalls,
-      errCalls: errCalls,
-      avgLatencyMs: if calls > 0: totalLatency div calls else: 0,
-    ))
-
-proc currentRouteFeedback(runtime: DaemonRuntime): seq[RouteFeedback] {.gcsafe.} =
-  runtime.pruneRecentRouteSamples()
-  for route, samples in runtime.routeRecentSamples:
-    if samples.len == 0:
-      continue
-    var okCalls = 0
-    var errCalls = 0
-    var totalLatency = 0
-    for sample in samples:
-      totalLatency += sample.elapsedMs
-      if sample.ok:
-        inc okCalls
-      else:
-        inc errCalls
-    let calls = samples.len
-    result.add(RouteFeedback(
-      route: route,
-      calls: calls,
-      okCalls: okCalls,
-      errCalls: errCalls,
-      avgLatencyMs: if calls > 0: totalLatency div calls else: 0,
-    ))
-
-proc topRecentProviderMetrics(runtime: DaemonRuntime; limit = 5): seq[ipcTypes.ProviderMetric] =
-  let feedback = aggregateProviderFeedback(runtime.currentRouteFeedback())
-  var items = feedback
-  items.sort(proc(a, b: ProviderFeedback): int =
-    if a.calls != b.calls:
-      return cmp(b.calls, a.calls)
-    cmp(a.providerName, b.providerName)
-  )
-  for i in 0 ..< min(limit, items.len):
-    result.add(ipcTypes.ProviderMetric(
-      providerName: items[i].providerName,
-      calls: items[i].calls,
-      okCalls: items[i].okCalls,
-      errCalls: items[i].errCalls,
-      avgLatencyMs: items[i].avgLatencyMs,
-    ))
-
-proc activeProviderCooldowns(runtime: DaemonRuntime; limit = 5): seq[string] =
-  runtime.pruneProviderCooldowns()
-  let nowSec = getTime().toUnix()
-  var items: seq[(string, int64)] = @[]
-  for providerName, untilUnix in runtime.providerCooldownUntil:
-    if untilUnix > nowSec:
-      items.add((providerName, untilUnix))
-  items.sort(proc(a, b: (string, int64)): int =
-    if a[1] != b[1]:
-      return cmp(a[1], b[1])
-    cmp(a[0], b[0])
-  )
-  for i in 0 ..< min(limit, items.len):
-    let remaining = max(0'i64, items[i][1] - nowSec)
-    result.add(items[i][0] & " (" & relativeAgeText(remaining) & ")")
-
-proc currentProviderCooldowns(runtime: DaemonRuntime): seq[ProviderCooldown] =
-  runtime.pruneProviderCooldowns()
-  let nowSec = getTime().toUnix()
-  for providerName, untilUnix in runtime.providerCooldownUntil:
-    if untilUnix > nowSec:
-      result.add(ProviderCooldown(providerName: providerName, untilUnix: untilUnix))
 
 proc initDaemonContext(cfg: DonkeyConfig;
                        env: DaemonEnv;
@@ -1153,7 +812,6 @@ func buildDaemonSessionServices(ctx: DaemonContext; cfg: DonkeyConfig;
 
 proc setupIpcServer(cfg: DonkeyConfig;
                     runtime: DaemonRuntime;
-                    sm: SessionManager;
                     toolsCount: int;
                     daemonStartMs: int64;
                     telegramToken: string;
@@ -1168,50 +826,27 @@ proc setupIpcServer(cfg: DonkeyConfig;
                     gatewayInboundMemory: MdFileAdapter;
                     gatewayInboundLog: Logger) =
   let sockPath = cfg.home / SockFileName
+  let channels = ActiveChannels(
+    telegram: telegramToken.len > 0, discord: discordToken.len > 0,
+    wecom: wecomCorpId.len > 0, wechat: wechatAppId.len > 0,
+    feishu: feishuAppId.len > 0, slack: slackBotToken.len > 0, qq: qqEnabled)
   let ipcStatusFn: StatusProvider = proc(): DaemonStatus {.gcsafe, raises: [].} =
-    var sessions: seq[SessionInfo]
-    for (uid, chans) in sm.listSessions():
-      var chanNames: seq[string]
-      for (ck, _) in chans:
-        chanNames.add($ck)
-      sessions.add(SessionInfo(userId: $uid, channels: chanNames))
-    var activeChannels: seq[string]
-    if telegramToken.len > 0: activeChannels.add("telegram")
-    if discordToken.len > 0: activeChannels.add("discord")
-    if wecomCorpId.len > 0: activeChannels.add("wecom")
-    if wechatAppId.len > 0: activeChannels.add("wechat")
-    if feishuAppId.len > 0: activeChannels.add("feishu")
-    if slackBotToken.len > 0: activeChannels.add("slack")
-    if qqEnabled: activeChannels.add("qq")
+    ## Reads the live session table (runtime.sm): the `sm` argument is a copy
+    ## taken at startup, and showed the startup sessions forever.
     var memoryStats: MemoryStats
+    var memoryBackend = "md"
     when defined(withPostgres) or defined(withSqlite):
       if gatewayInboundMemory.hasMagmaBackend:
+        memoryBackend = "md+" & gatewayInboundMemory.magmaBackendName
         try:
           memoryStats = loadMagmaMemoryStats(gatewayInboundMemory)
         except CatchableError:
           discard
-    DaemonStatus(
-      uptimeSec:     (nowMs() - daemonStartMs) div 1000,
-      sessionCount:  sm.sessionCount(),
-      sessions:      sessions,
-      channels:      activeChannels,
-      providers:     availableProviderNames(detectProviderAvailability()),
-      routeCounts:   withRouteLock(runtime.topRouteCounts()),
-      routeMetrics:  withRouteLock(runtime.topRouteMetrics()),
-      recentRouteMetrics: withRouteLock(runtime.topRecentRouteMetrics()),
-      recentProviderMetrics: withRouteLock(runtime.topRecentProviderMetrics()),
-      providerCooldowns: withRouteLock(runtime.activeProviderCooldowns()),
-      toolsCount:    toolsCount,
-      memoryBackend: block:
-        when defined(withPostgres) or defined(withSqlite):
-          if gatewayInboundMemory.hasMagmaBackend:
-            "md+" & gatewayInboundMemory.magmaBackendName
-          else:
-            "md"
-        else:
-          "md",
-      memoryStats:   memoryStats,
-    )
+    daemonStatus(runtime.sm, DaemonStatusInputs(
+      channels: channels, health: runtime.routeHealth, toolsCount: toolsCount,
+      uptimeSec: (nowMs() - daemonStartMs) div 1000,
+      providers: availableProviderNames(detectProviderAvailability()),
+      memoryBackend: memoryBackend, memoryStats: memoryStats))
   let ipcLogFn: LogProvider = proc(n: int): seq[IpcLogEntry] {.gcsafe, raises: [].} =
     for e in ringSnapshot(n):
       result.add(IpcLogEntry(ts: e.ts, level: e.level, subsys: e.sub, msg: e.msg))
@@ -1224,20 +859,21 @@ proc setupIpcServer(cfg: DonkeyConfig;
         raise e
       except Exception as e:  ## effect boundary: callee raises are unannotated
         raise newException(CatchableError, "gateway inbound: " & e.msg, e)
+  ## The memory adapter answers with plain booleans and may raise; the
+  ## checks hand the policy a Result.
+  let isRevokedCheck: ProfileCheck =
+    proc(userId: UserId): Result[bool, string] {.gcsafe, raises: [].} =
+      try: ok(gatewayInboundMemory.isRevoked(userId))
+      except Exception as e:  ## effect boundary: callee raises are unannotated
+        err(e.msg)
+  let isDmAllowedCheck: ProfileCheck =
+    proc(userId: UserId): Result[bool, string] {.gcsafe, raises: [].} =
+      try: ok(gatewayInboundMemory.isDmAllowed(userId))
+      except Exception as e:  ## effect boundary: callee raises are unannotated
+        err(e.msg)
   let gwAuthorizeFn: AuthorizeFn =
     proc(userId: UserId): AuthVerdict {.gcsafe, raises: [].} =
-      ## Same policy as the ingress: revocation wins, then the DM allowlist.
-      ## A profile that cannot be read fails closed.
-      try:
-        if gatewayInboundMemory.isRevoked(userId):
-          avRevoked
-        elif cfg.dmPolicy != DmPolicyOpen and
-             not gatewayInboundMemory.isDmAllowed(userId):
-          avNotAllowed
-        else:
-          avAllowed
-      except Exception:  ## effect boundary: callee raises are unannotated
-        avRevoked
+      authorizeUser(userId, isRevokedCheck, isDmAllowedCheck, cfg.dmPolicy)
   try:
     startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
     log.info("IPC socket: " & sockPath)
@@ -1256,51 +892,27 @@ proc setupIpcServer(cfg: DonkeyConfig;
   let gwProvidersFn: GatewayProvidersFn = proc(): string {.gcsafe.} =
     buildProvidersJson(
       detectProviderAvailability(),
-      withRouteLock(runtime.currentProviderCooldowns()),
-      aggregateProviderFeedback(withRouteLock(runtime.currentRouteFeedback())))
-  let gwSessionActionFn: GatewaySessionActionFn =
-    proc(rawUserId: string; taskKind: TaskKind;
-         payload: string): GatewaySessionActionOutcome
+      runtime.routeHealth.cooldowns(),
+      aggregateProviderFeedback(runtime.routeHealth.feedback()))
+  let enqueueSessionTask: SessionTaskEnqueue =
+    proc(msg: InboundMessage; kind: TaskKind; payload: string)
         {.gcsafe, raises: [CatchableError].} =
-      ## The dashboard carries the raw session key; it is never run through
-      ## `apiUserId`. An unknown key is a 404, a revoked profile a 403
-      ## (`isRevoked` already answers "revoked" when the profile is unreadable).
-      ## The action takes the raw **user key** (the second column of the
-      ## dashboard table), not the session id: accepting both made a user key
-      ## that equals another session's id resolve to the wrong session.
-      if rawUserId notin runtime.sm.entries:
-        return gsaoNotFound
-      let sessionKey = rawUserId
-      let uid = UserId(sessionKey)
-      ## Same policy as the API: revocation first, then the DM allowlist. A
-      ## policy denial must not answer 202 for a task the ingress will drop.
-      case gwAuthorizeFn(uid)
-      of avAllowed: discard
-      of avRevoked, avNotAllowed: return gsaoRevoked
-      ## Answer on the channel the user actually uses. Passing the session key
-      ## as a `ckCli` channel id recorded a fake channel and sent the
-      ## confirmation to stdout.
-      let target = runtime.sm.latestChannelFor(sessionKey)
       try:
         ensureSessionTask(
-          runtime.sm,
-          InboundMessage(
-            userId: uid,
-            channel: target.kind,
-            channelId: target.rawId,
-            rawChannelId: target.rawId,
-          ),
+          runtime.sm, msg,
           buildDaemonSessionServices(gatewayInboundCtx, cfg, gatewayInboundMemory,
                                      gatewayInboundLog),
-          runtime.msgSeq,
-          taskKind,
-          payload,
-        )
+          runtime.msgSeq, kind, payload)
       except CatchableError as e:
         raise e
       except Exception as e:  ## effect boundary: callee raises are unannotated
         raise newException(CatchableError, "gateway session task: " & e.msg, e)
-      gsaoAccepted
+  let gwSessionActionFn: GatewaySessionActionFn =
+    proc(rawUserId: string; taskKind: TaskKind;
+         payload: string): GatewaySessionActionOutcome
+        {.gcsafe, raises: [CatchableError].} =
+      runSessionAction(runtime.sm, rawUserId, taskKind, payload,
+                       gwAuthorizeFn, enqueueSessionTask)
   let httpBind = block:
     let raw = getEnv("DONKEY_HTTP_BIND").strip()
     if raw.len > 0: raw else: "127.0.0.1"
@@ -1332,65 +944,6 @@ proc setupIpcServer(cfg: DonkeyConfig;
   else:
     log.info("HTTP gateway: disabled")
 
-when defined(posix):
-  const
-    PosixODirectory = cint(0o200000)
-    PosixONoFollow = cint(0o400000)
-
-proc ensurePrivateDir(path: string): Result[void, string]
-                                      {.gcsafe, raises: [].} =
-  ## Creates or validates a real directory with 0700 permissions. The final
-  ## component is opened with O_NOFOLLOW so a symlink cannot redirect chmod or
-  ## the child paddock creation.
-  if path.len == 0:
-    return err("empty subagent paddock path")
-  when defined(posix):
-    if posix.mkdir(path.cstring, Mode(0o700)) != 0 and
-       osLastError() != OSErrorCode(posix.EEXIST):
-      return err("mkdir subagent paddock: " & osErrorMsg(osLastError()))
-    let fd = posix.open(path.cstring,
-                        O_RDONLY or PosixODirectory or PosixONoFollow)
-    if fd < 0:
-      return err("open subagent paddock: " & osErrorMsg(osLastError()))
-    defer: discard posix.close(fd)
-    if posix.fchmod(fd, Mode(0o700)) != 0:
-      return err("chmod subagent paddock: " & osErrorMsg(osLastError()))
-    ok()
-  else:
-    try:
-      createDir(path)
-      setFilePermissions(path, {fpUserRead, fpUserWrite, fpUserExec})
-      ok()
-    except CatchableError as e:
-      err("create subagent paddock: " & e.msg)
-
-proc createSubagentPaddock(root, subagentId: string):
-                           Result[string, string] {.gcsafe, raises: [].} =
-  let subagentsRoot = root / "subagents"
-  ?ensurePrivateDir(subagentsRoot)
-  let childDir = subagentsRoot / subagentId
-  ?ensurePrivateDir(childDir)
-  ok(childDir)
-
-proc removeSubagentPaddock(path: string): Result[void, string]
-                                           {.gcsafe, raises: [].} =
-  if path.len == 0:
-    return ok()
-  try:
-    if symlinkExists(path):
-      removeFile(path)
-    elif dirExists(path):
-      removeDir(path)
-    ok()
-  except CatchableError as e:
-    err("remove subagent paddock: " & e.msg)
-
-proc subagentWorkspacePort*(): SubagentWorkspacePort =
-  SubagentWorkspacePort(
-    create: createSubagentPaddock,
-    remove: removeSubagentPaddock,
-  )
-
 func buildDaemonSessionServices(ctx: DaemonContext;
                                 cfg: DonkeyConfig;
                                 memory: MdFileAdapter;
@@ -1418,15 +971,15 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     buildDenoSkillRuntime,
     buildSkillRuntimePolicyResolver(cfg),
     routeRecordHook = proc(selection: ProviderSelection) {.gcsafe.} =
-      withRouteLock(ctx.runtime.recordRouteChoice(selection)),
+      ctx.runtime.routeHealth.recordChoice(selection),
     routeResultHook = proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.} =
-      withRouteLock(ctx.runtime.recordRouteResult(selection, elapsedMs, ok)),
+      ctx.runtime.routeHealth.recordResult(selection, elapsedMs, ok),
     routeFeedbackHook = proc(): seq[RouteFeedback] {.gcsafe.} =
-      withRouteLock(ctx.runtime.currentRouteFeedback()),
+      ctx.runtime.routeHealth.feedback(),
     routeCostHook = proc(): seq[RouteCostHint] {.gcsafe.} =
       loadRouteCostHints(routeCostProviderIds()),
     routeProviderCooldownHook = proc(): seq[ProviderCooldown] {.gcsafe.} =
-      withRouteLock(ctx.runtime.currentProviderCooldowns()),
+      ctx.runtime.routeHealth.cooldowns(),
     subagentWorkspace = subagentWorkspacePort(),
     fs = newFsAdapter(),
   )
@@ -1435,35 +988,6 @@ proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
                                   msg:      InboundMessage;
                                   services: SessionIngressServices) =
   handleSessionFallback(runtime.sm, runtime.msgSeq, msg, services)
-
-func inboundStatusMessageId(msg: InboundMessage): string =
-  if msg.messageId.len > 0: msg.messageId else: msg.channelId
-
-func shouldStageInboundReaction(msg: InboundMessage): bool =
-  supportsMessageReactions(msg.channel) and
-    msg.callbackId.len == 0 and
-    inboundStatusMessageId(msg).len > 0
-
-proc stageInboundReactionStatus(runtime: var DaemonRuntime;
-                                outboundPorts: OutboundChannelPorts;
-                                msg: InboundMessage) =
-  if not shouldStageInboundReaction(msg):
-    return
-  let statusMsgId = inboundStatusMessageId(msg)
-  discard setOutboundReaction(msg.channel, msg.userId, msg.channelId, statusMsgId, "⏳", outboundPorts, newLogger("status.reaction"))
-  runtime.presentationState.rememberStatus(msg.channel, msg.userId, "turn", statusMsgId, msg.channelId)
-
-proc completeInboundReactionStatus(runtime: var DaemonRuntime;
-                                   outboundPorts: OutboundChannelPorts;
-                                   channel: ChannelKind;
-                                   userId: UserId;
-                                   channelId, msgId: string;
-                                   isError: bool) =
-  if not supportsMessageReactions(channel) or msgId.len == 0:
-    return
-  runtime.presentationState.clearStatus(channel, userId, "turn")
-  let finalEmoji = if isError: "❌" else: "✅"
-  discard setOutboundReaction(channel, userId, channelId, msgId, finalEmoji, outboundPorts, newLogger("status.reaction"))
 
 proc handleTelegramFallback(runtime:      var DaemonRuntime;
                             msg:          InboundMessage;
@@ -1549,11 +1073,11 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
       log.warn("telegram: unauthorized message from " & $msg.userId)
       continue
 
-    let stagedReaction = shouldStageInboundReaction(msg)
+    let stagedReaction = shouldStageReaction(msg)
     if stagedReaction:
       tgAdapter.sendTyping(msg.userId).isOkOr:
         log.warn("tg sendTyping (staged) failed for user=" & $msg.userId & " reason=" & error)
-      stageInboundReactionStatus(runtime, outboundPorts, msg)
+      stageReaction(runtime.presentationState, outboundPorts, msg)
     
     # Download media if present
     processInboundMediaDownload(msg, outboundPorts.telegram,
@@ -1566,7 +1090,8 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
       proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} =
         ensureSessionTask(runtimePtr[].sm, msg, services, runtimePtr[].msgSeq, taskKind, payload)):
       if stagedReaction:
-        completeInboundReactionStatus(runtime, outboundPorts, msg.channel, msg.userId, msg.channelId, inboundStatusMessageId(msg), false)
+        completeReaction(runtime.presentationState, outboundPorts, msg.channel,
+                         msg.userId, msg.channelId, statusMessageId(msg), false)
     else:
       handleTelegramFallback(runtime, msg, services)
   true
@@ -1595,18 +1120,6 @@ proc publishDueReminders(runtime: var DaemonRuntime;
     memory.deleteReminder(rUid, rId)
     log.info("reminder fired " & $rUid)
 
-proc completeInboundReactionStatus(runtime:   var DaemonRuntime;
-                                   outboundPorts: OutboundChannelPorts;
-                                   outMsg:    OutboundMessage) =
-  let msgId = runtime.presentationState.lookupStatus(outMsg.channel, outMsg.userId, "turn")
-  if not supportsMessageReactions(outMsg.channel) or outMsg.isPartial or msgId.len == 0:
-    return
-
-  let channelId = runtime.presentationState.lookupStatusChannelId(outMsg.channel, outMsg.userId, "turn")
-  let isError = outMsg.text.startsWith("Desculpe") or
-                outMsg.text.startsWith("Tool call loop")
-  completeInboundReactionStatus(runtime, outboundPorts, outMsg.channel, outMsg.userId, channelId, msgId, isError)
-
 proc drainGlobalOutbox(runtime:  var DaemonRuntime;
                        adapters: var DaemonAdapters;
                        log:      Logger) =
@@ -1624,7 +1137,7 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
       if runtime.apiChatBridge != nil:
         discard runtime.apiChatBridge.deliver(outMsg, outMsg.bridgeToken)
       continue
-    completeInboundReactionStatus(runtime, outboundPorts, outMsg)
+    completeReactionFor(runtime.presentationState, outboundPorts, outMsg)
     routeOutbound(outMsg, outboundPorts, log, runtime.presentationState, runtime.ledger)
 
 proc startDaemonIngress(ctx: DaemonContext;
@@ -1656,7 +1169,7 @@ proc setupDaemonRuntime(ctx: DaemonContext;
                         cfg: DonkeyConfig;
                         memory: MdFileAdapter;
                         log: Logger) =
-  setupIpcServer(cfg, ctx.runtime, ctx.runtime.sm, ctx.services.tools.len + nativeSessionTools().len, ctx.runtime.daemonStartMs,
+  setupIpcServer(cfg, ctx.runtime, ctx.services.tools.len + nativeSessionTools().len, ctx.runtime.daemonStartMs,
                  ctx.env.telegramToken, ctx.env.discordToken, ctx.env.wecomCorpId,
                  ctx.env.wechatAppId, ctx.env.feishuAppId, ctx.env.slackBotToken,
                  ctx.adapters.qq.enabled(), log,
@@ -1721,10 +1234,10 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, cmdEnv,
           ctx.runtime.msgSeq, log,
           proc(msg: InboundMessage) =
-            stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),
+            stageReaction(ctx.runtime.presentationState, outboundPorts, msg),
           proc(msg: InboundMessage) =
-            completeInboundReactionStatus(ctx.runtime, outboundPorts, msg.channel, msg.userId,
-              msg.channelId, inboundStatusMessageId(msg), false),
+            completeReaction(ctx.runtime.presentationState, outboundPorts, msg.channel, msg.userId,
+              msg.channelId, statusMessageId(msg), false),
           fallback)
         true
       ),
@@ -2150,10 +1663,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
                            ctx.runtime.daemonStartMs),
       ctx.runtime.msgSeq, log,
       proc(msg: InboundMessage) {.gcsafe.} =
-        stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),
+        stageReaction(ctx.runtime.presentationState, outboundPorts, msg),
       proc(msg: InboundMessage) {.gcsafe.} =
-        completeInboundReactionStatus(ctx.runtime, outboundPorts, msg.channel, msg.userId,
-          msg.channelId, inboundStatusMessageId(msg), false),
+        completeReaction(ctx.runtime.presentationState, outboundPorts, msg.channel, msg.userId,
+          msg.channelId, statusMessageId(msg), false),
       proc(msg: InboundMessage) {.gcsafe.} =
         handleGatewayFallback(ctx, cfg, memory, msg, log))
 
