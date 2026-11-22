@@ -8,26 +8,13 @@ import std/[algorithm, json, options, os, sequtils, strutils]
 import nimcrypto/sha2
 import results
 import ../../core/tooling/structured_tool_result
+import ../../core/tooling/native_tool_args
+export native_tool_args.HashlineAnchor, native_tool_args.EditFileOpKind,
+       native_tool_args.EditFileOp, native_tool_args.parseHashlineAnchor
 import ../session_state
 import ./fs_tools
 
-# ── Hashline types ────────────────────────────────────────────────────────────
-
-type
-  HashlineAnchor* = object
-    line*: int
-    hash*: string
-
-  EditFileOpKind* = enum
-    efokReplace = "replace"
-    efokAppend  = "append"
-    efokPrepend = "prepend"
-
-  EditFileOp* = object
-    kind*:  EditFileOpKind
-    pos*:   Option[HashlineAnchor]
-    stop*:  Option[HashlineAnchor]
-    lines*: seq[string]
+# Hashline anchors and edit ops are parsed in core/tooling/native_tool_args.
 
 # ── SHA-256 helper ───────────────────────────────────────────────────────────
 
@@ -159,22 +146,6 @@ proc replaceStructuredText*(path, findText, replaceText: string; count: int;
     })
   except CatchableError as e:
     operationalErrorToolResult(e.msg)
-
-proc parseHashlineAnchor*(raw: string): Result[HashlineAnchor, string] {.gcsafe, raises: [].} =
-  let trimmed = raw.strip()
-  let anchorOnly =
-    if ":" in trimmed: trimmed.split(":", maxsplit = 1)[0].strip()
-    else: trimmed
-  let parts = anchorOnly.split("#", maxsplit = 1)
-  if parts.len != 2 or parts[0].len == 0 or parts[1].len == 0:
-    return err("Error: invalid anchor '" & raw & "'. Expected LINE#ID.")
-  try:
-    let line = parseInt(parts[0])
-    if line < 1:
-      return err("Error: invalid anchor '" & raw & "'. Line must be >= 1.")
-    ok(HashlineAnchor(line: line, hash: parts[1].toLowerAscii()))
-  except ValueError:
-    err("Error: invalid anchor '" & raw & "'. Expected LINE#ID.")
 
 proc validateHashlineAnchor*(anchor: HashlineAnchor;
                              lines: seq[string]): Result[bool, string] {.gcsafe, raises: [].} =

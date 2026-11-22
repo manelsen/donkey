@@ -137,6 +137,7 @@ g1	tests/config/t_environment.nim
 g1	tests/config/t_toml.nim
 g1	tests/config/t_loader.nim
 g1	tests/config/t_skills_registry.nim
+g1	tests/core/t_native_tool_args.nim
 g1	tests/core/memory/t_blackboard.nim
 g1	tests/core/memory/t_embedder.nim
 g1	tests/core/memory/t_silent_turn.nim

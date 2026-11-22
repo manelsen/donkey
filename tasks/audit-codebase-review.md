@@ -61,6 +61,8 @@ It contains bearer auth, routing, the dashboard HTML, SSE, connection admission 
 It holds about 25 `parse*Context` functions (argument parsing and validation) and the `execute*NativeTool` procs.
 **Fix:** move the parsers to `domain/tools/` as `func`s, and keep only dispatch in `app`.
 
+**Status (0.3.x): done.** The argument contexts and their parsers live in `core/tooling/native_tool_args` as `func`s (core, not domain: `core` is where parsers go, and these return `Result`, which the domain rule excludes until the ADR in item 13). Tools that take a path get it raw; `app/native_tools` only resolves it inside the paddock (file system, logging) and dispatches. `native_tools.nim` went from 1535 to about 1090 lines. Fixed on the way: a call without `edits` (edit_file), `job_ids` (await) or `ops` (todo) read `.kind` of a nil node, a SIGSEGV that took the daemon down.
+
 ### 8. Raw I/O in `app`
 `app/tools/*` (`fs_tools` 14, `search_tools` 4 and others), `sandbox`, `heartbeat`, `service_handler` and `setup_wizard` call `readFile`, `writeFile`, `execProcess` and `walkDir` directly, even though `ports/fs.nim` exists. This makes it impossible to test with fakes and inconsistent with providers and channels.
 
