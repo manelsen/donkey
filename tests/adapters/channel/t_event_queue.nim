@@ -3,7 +3,7 @@
 ## global queue with no `{.cast(gcsafe).}`: this file only compiles while the
 ## queue is gcsafe to share.
 
-import std/unittest
+import std/[monotimes, times, unittest]
 import donkey/adapters/channel/event_queue
 
 type Ev = object
@@ -40,13 +40,34 @@ proc runTests*() =
       createThread(t, producer)
       var got = 0
       var ev: Ev
-      while got < Produced:
+      let deadline = getMonoTime() + initDuration(seconds = 10)
+      while got < Produced and getMonoTime() < deadline:
         if gQueue.tryPop(ev):
           check ev.id == got
           check ev.text == "event " & $got
           inc got
-      joinThread(t)
       check got == Produced
+      if got == Produced:
+        joinThread(t)  ## a stuck producer is reported above, not waited on
+
+    test "a full queue counts its drops for the consumer to report":
+      ## The receiving thread must not write logs (stderr may block); it
+      ## only counts, and the loop takes the count.
+      var q = initEventQueue[Ev]("drops", capacity = 1)
+      check q.push(Ev(id: 1))
+      check not q.push(Ev(id: 2))
+      check not q.push(Ev(id: 3))
+      check q.takeDropped() == 2
+      check q.takeDropped() == 0
+
+    test "receiving into a reused variable keeps it intact when the queue is empty":
+      var q = initEventQueue[Ev]("reuse", capacity = 2)
+      var ev = Ev(id: 7, text: "kept")
+      check not q.tryPop(ev)
+      check ev.text == "kept"
+      check q.push(Ev(id: 8, text: "next"))
+      check q.tryPop(ev)
+      check ev == Ev(id: 8, text: "next")
 
 when isMainModule:
   runTests()

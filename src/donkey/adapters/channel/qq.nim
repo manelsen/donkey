@@ -193,7 +193,8 @@ proc startWebhook*(a: QQAdapter; host: string; port: Port; secret: string;
 proc enqueueEventJson*(a: var QQAdapter; payload: string): Result[void, string] =
   let event = ? parseEventJson(payload)
   if gQQOneBotEventsOpen:
-    gQQOneBotEvents.push(event)
+    if not gQQOneBotEvents.push(event):
+      return err("qq event queue full: event dropped")
   else:
     a.events.add(event)
   ok()
