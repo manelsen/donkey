@@ -33,6 +33,8 @@ import ../channel/dingtalk
 import ../channel/line
 import ../channel/matrix
 import ../channel/whatsapp
+import ../../infra/event_queue
+import ../../infra/thread_handle
 
 export webhook_ingress
 export http_request_reader.MaxWebhookBodyBytes
@@ -504,10 +506,11 @@ type
     ready:  ptr Channel[string]
 
 var
-  gWebhookThread: Thread[WebhookServerArgs]
-  gWebhookWorkers {.global.}: array[WebhookWorkerCount, Thread[WebhookWorkerArg]]
-  gWebhookQueue {.global.}: Channel[SocketHandle]
-  gWebhookQueueOpened {.global.} = false
+  ## Handles and the socket queue live in shared memory behind pointers, so
+  ## these globals hold nothing the GC owns and are gcsafe to touch.
+  gWebhookThread: ThreadHandle[WebhookServerArgs]
+  gWebhookWorkers: array[WebhookWorkerCount, ThreadHandle[WebhookWorkerArg]]
+  gWebhookQueue = initEventQueue[SocketHandle]("webhook", capacity = WebhookQueueDepth)
   gWebhookPoolStarted {.global.} = false
   gWebhookPoolAttempted {.global.} = false
   gWebhookWorkersStarted {.global.} = 0
@@ -551,7 +554,8 @@ proc webhookWorker(arg: WebhookWorkerArg) {.thread.} =
     return
 
   while true:
-    let fd = gWebhookQueue.recv()
+    var fd: SocketHandle
+    gWebhookQueue.waitPop(fd)
     if fd == SocketHandle(-1):
       break
     var client: Socket
@@ -608,26 +612,23 @@ proc startWebhookPool(cfg: WebhookConfig; logger: Logger): Result[void, string] 
   if gWebhookPoolAttempted:
     return err("webhook: worker pool initialization already failed; not retrying")
   gWebhookPoolAttempted = true
-  if not gWebhookQueueOpened:
-    gWebhookQueue.open(WebhookQueueDepth)
-    gWebhookQueueOpened = true
   var ready: Channel[string]
   ready.open(WebhookWorkerCount)
   try:
     for i in 0 ..< WebhookWorkerCount:
-      createThread(gWebhookWorkers[i], webhookWorker,
+      gWebhookWorkers[i] = spawnThread(webhookWorker,
                    WebhookWorkerArg(cfg: cfg, logger: logger,
                                     ready: addr ready))
       inc gWebhookWorkersStarted
   except CatchableError as e:
     ## Stop the workers that were already created before reporting failure.
     for _ in 0 ..< gWebhookWorkersStarted:
-      gWebhookQueue.send(SocketHandle(-1))
+      gWebhookQueue.waitPush(SocketHandle(-1))
     for i in 0 ..< gWebhookWorkersStarted:
-      joinThread(gWebhookWorkers[i])
+      joinAndFree(gWebhookWorkers[i])
     gWebhookWorkersStarted = 0
     while true:
-      let (hasQueued, fd) = gWebhookQueue.tryRecv()
+      let (hasQueued, fd) = gWebhookQueue.tryTake()
       if not hasQueued:
         break
       if fd != SocketHandle(-1):
@@ -644,12 +645,12 @@ proc startWebhookPool(cfg: WebhookConfig; logger: Logger): Result[void, string] 
   ready.close()
   if initError.len > 0:
     for _ in 0 ..< gWebhookWorkersStarted:
-      gWebhookQueue.send(SocketHandle(-1))
+      gWebhookQueue.waitPush(SocketHandle(-1))
     for i in 0 ..< gWebhookWorkersStarted:
-      joinThread(gWebhookWorkers[i])
+      joinAndFree(gWebhookWorkers[i])
     gWebhookWorkersStarted = 0
     while true:
-      let (hasQueued, fd) = gWebhookQueue.tryRecv()
+      let (hasQueued, fd) = gWebhookQueue.tryTake()
       if not hasQueued:
         break
       if fd != SocketHandle(-1):
@@ -668,76 +669,75 @@ proc sendHandshake(args: WebhookServerArgs; message: string) =
     discard
 
 proc webhookServerThread(args: WebhookServerArgs) {.thread.} =
-  {.cast(gcsafe).}:
-    var server: Socket
-    var handshakeSent = false
-    try:
-      server = newSocket()
-      server.setSockOpt(OptReuseAddr, true)
-      server.bindAddr(Port(args.port), args.host)
-      server.listen()
+  var server: Socket
+  var handshakeSent = false
+  try:
+    server = newSocket()
+    server.setSockOpt(OptReuseAddr, true)
+    server.bindAddr(Port(args.port), args.host)
+    server.listen()
 
-      ## Bound accept() so shutdown can be observed without closing the
-      ## listening socket from another thread.
-      var tv: posix.Timeval
-      tv.tv_sec = posix.Time(1)
-      tv.tv_usec = posix.Suseconds(0)
-      discard posix.setsockopt(server.getFd, posix.SOL_SOCKET,
-                               posix.SO_RCVTIMEO, addr tv,
-                               posix.SockLen(sizeof(tv)))
+    ## Bound accept() so shutdown can be observed without closing the
+    ## listening socket from another thread.
+    var tv: posix.Timeval
+    tv.tv_sec = posix.Time(1)
+    tv.tv_usec = posix.Suseconds(0)
+    discard posix.setsockopt(server.getFd, posix.SOL_SOCKET,
+                             posix.SO_RCVTIMEO, addr tv,
+                             posix.SockLen(sizeof(tv)))
 
-      let pool = startWebhookPool(args.cfg, args.logger)
-      if pool.isErr:
-        args.logger.error("webhook: " & pool.error)
-        args.sendHandshake(pool.error)
-        return
+    let pool = startWebhookPool(args.cfg, args.logger)
+    if pool.isErr:
+      args.logger.error("webhook: " & pool.error)
+      args.sendHandshake(pool.error)
+      return
 
-      let scheme = if args.cfg.tlsCertFile.len > 0: "https" else: "http"
-      args.logger.info("webhook receiver listening on " & scheme & "://" &
-                       args.host & ":" & $args.port)
-      args.sendHandshake("")
-      handshakeSent = true
+    let scheme = if args.cfg.tlsCertFile.len > 0: "https" else: "http"
+    args.logger.info("webhook receiver listening on " & scheme & "://" &
+                     args.host & ":" & $args.port)
+    args.sendHandshake("")
+    handshakeSent = true
 
-      while not gWebhookStop.load():
-        var client: Socket
-        try:
-          server.accept(client)
-        except TimeoutError:
+    while not gWebhookStop.load():
+      var client: Socket
+      try:
+        server.accept(client)
+      except TimeoutError:
+        continue
+      except OSError as e:
+        if gWebhookStop.load():
+          break
+        if e.errorCode == EAGAIN or e.errorCode == EWOULDBLOCK:
           continue
-        except OSError as e:
-          if gWebhookStop.load():
-            break
-          if e.errorCode == EAGAIN or e.errorCode == EWOULDBLOCK:
-            continue
-          args.logger.warn("webhook: accept error: " & e.msg)
-          ## Avoid a hot loop when accept fails persistently (e.g. EMFILE).
-          sleep(50)
-          continue
-        except CatchableError as e:
-          if gWebhookStop.load():
-            break
-          args.logger.warn("webhook: accept error: " & e.msg)
-          sleep(50)
-          continue
-        applyWebhookClientTimeouts(client).isOkOr:
-          args.logger.warn("webhook: " & error)
-          try: client.close() except CatchableError: discard
-          continue
-        if not gWebhookQueue.trySend(client.getFd):
-          sendResponse(client, serviceUnavailable())
-          try: client.close() except CatchableError: discard
-          # Ownership of the fd transfers to a worker only on a successful send.
-    except CatchableError as e:
-      if handshakeSent:
-        args.logger.error("webhook: server error: " & e.msg)
-      else:
-        args.logger.error("webhook: cannot bind " & args.host & ":" & $args.port &
-                          ": " & e.msg)
-        args.sendHandshake("cannot bind " & args.host & ":" & $args.port &
-                           ": " & e.msg)
-    finally:
-      if server != nil:
-        try: server.close() except CatchableError: discard
+        args.logger.warn("webhook: accept error: " & e.msg)
+        ## Avoid a hot loop when accept fails persistently (e.g. EMFILE).
+        sleep(50)
+        continue
+      except CatchableError as e:
+        if gWebhookStop.load():
+          break
+        args.logger.warn("webhook: accept error: " & e.msg)
+        sleep(50)
+        continue
+      applyWebhookClientTimeouts(client).isOkOr:
+        args.logger.warn("webhook: " & error)
+        try: client.close() except CatchableError: discard
+        continue
+      if not gWebhookQueue.push(client.getFd):
+        sendResponse(client, serviceUnavailable())
+        try: client.close() except CatchableError: discard
+        # Ownership of the fd transfers to a worker only on a successful send.
+  except CatchableError as e:
+    if handshakeSent:
+      args.logger.error("webhook: server error: " & e.msg)
+    else:
+      args.logger.error("webhook: cannot bind " & args.host & ":" & $args.port &
+                        ": " & e.msg)
+      args.sendHandshake("cannot bind " & args.host & ":" & $args.port &
+                         ": " & e.msg)
+  finally:
+    if server != nil:
+      try: server.close() except CatchableError: discard
 
 proc startWebhookReceiver*(cfg: WebhookConfig;
                            port: int;
@@ -769,8 +769,7 @@ proc startWebhookReceiver*(cfg: WebhookConfig;
   handshake.open(1)
   try:
     try:
-      {.cast(gcsafe).}:
-        createThread(gWebhookThread, webhookServerThread,
+      gWebhookThread = spawnThread(webhookServerThread,
                      WebhookServerArgs(port: port, host: host, cfg: cfg,
                                        logger: logger, handshake: addr handshake))
     except CatchableError as e:
@@ -780,8 +779,7 @@ proc startWebhookReceiver*(cfg: WebhookConfig;
     if report.len > 0:
       ## The server thread has already left its accept loop; join it before the
       ## caller can retry and reuse the same global Thread object.
-      {.cast(gcsafe).}:
-        joinThread(gWebhookThread)
+      joinAndFree(gWebhookThread)
       return err(report)
   finally:
     handshake.close()
@@ -795,28 +793,26 @@ proc stopWebhookReceiver*() {.gcsafe.} =
   if not gWebhookStarted:
     return
   gWebhookStop.store(true)
-  {.cast(gcsafe).}:
-    joinThread(gWebhookThread)
+  joinAndFree(gWebhookThread)
   ## The accept loop is the only producer and it has stopped. Close descriptors
   ## still waiting in the queue so a slow client cannot delay shutdown; only
   ## in-flight requests (at most one per worker) remain to be joined.
   while true:
-    let (hasQueued, fd) = gWebhookQueue.tryRecv()
+    let (hasQueued, fd) = gWebhookQueue.tryTake()
     if not hasQueued:
       break
     if fd != SocketHandle(-1):
       discard posix.close(cint(fd))
   if gWebhookWorkersStarted > 0:
     for _ in 0 ..< gWebhookWorkersStarted:
-      gWebhookQueue.send(SocketHandle(-1))
+      gWebhookQueue.waitPush(SocketHandle(-1))
     for i in 0 ..< gWebhookWorkersStarted:
-      {.cast(gcsafe).}:
-        joinThread(gWebhookWorkers[i])
+      joinAndFree(gWebhookWorkers[i])
     gWebhookWorkersStarted = 0
     ## A worker may have exited before consuming its sentinel; drain any
     ## leftovers so a later restart does not inherit a poison pill.
     while true:
-      let (hasQueued, fd) = gWebhookQueue.tryRecv()
+      let (hasQueued, fd) = gWebhookQueue.tryTake()
       if not hasQueued:
         break
       if fd != SocketHandle(-1):

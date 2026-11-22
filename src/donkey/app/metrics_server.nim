@@ -8,6 +8,8 @@ import std/posix
 import ../core/pipeops
 import ../core/log
 import ./metrics
+import ../infra/event_queue
+import ../infra/thread_handle
 
 export metrics  # re-export initMetrics*, record*, renderMetrics*, gMetrics
 
@@ -29,9 +31,11 @@ type MetricsWorkerArg = object
   log: Logger
 
 var
-  gMetricsThread {.global.}: Thread[MetricsServerArgs]
-  gMetricsWorkers {.global.}: array[MetricsWorkerCount, Thread[MetricsWorkerArg]]
-  gMetricsQueue {.global.}: Channel[SocketHandle]
+  ## Handles and the socket queue live in shared memory behind pointers, so
+  ## these globals hold nothing the GC owns and are gcsafe to touch.
+  gMetricsThread: ThreadHandle[MetricsServerArgs]
+  gMetricsWorkers: array[MetricsWorkerCount, ThreadHandle[MetricsWorkerArg]]
+  gMetricsQueue = initEventQueue[SocketHandle]("metrics", capacity = MetricsQueueDepth)
   gMetricsThreadStarted = false
   gMetricsPoolStarted = false
   gMetricsPoolAttempted = false
@@ -86,7 +90,8 @@ proc handleMetricsClient(client: Socket; log: Logger) =
 
 proc metricsWorker(arg: MetricsWorkerArg) {.thread.} =
   while true:
-    let fd = gMetricsQueue.recv()
+    var fd: SocketHandle
+    gMetricsQueue.waitPop(fd)
     if fd == SocketHandle(-1):
       break
     var client: Socket
@@ -111,16 +116,12 @@ proc startMetricsPool(log: Logger): Result[void, string] =
   if gMetricsPoolAttempted:
     return err("metrics: worker pool initialization already failed; not retrying")
   gMetricsPoolAttempted = true
-  try:
-    gMetricsQueue.open(MetricsQueueDepth)
-  except CatchableError as exc:
-    return err("metrics: cannot open worker queue — " & exc.msg)
 
   var started = 0
   var firstError = ""
   for i in 0 ..< MetricsWorkerCount:
     try:
-      createThread(gMetricsWorkers[i], metricsWorker, MetricsWorkerArg(id: i, log: log))
+      gMetricsWorkers[i] = spawnThread(metricsWorker, MetricsWorkerArg(id: i, log: log))
       inc started
     except CatchableError as exc:
       if firstError.len == 0:
@@ -158,7 +159,7 @@ proc metricsServerThread(args: MetricsServerArgs) {.thread.} =
       args.log.error("metrics: accept failed — " & exc.msg)
       continue
     let fd = client.getFd
-    if not gMetricsQueue.trySend(fd):
+    if not gMetricsQueue.push(fd):
       sendMetricsResponse(client, "503 Service Unavailable", "text/plain", "metrics busy")
       client.close()
 
@@ -187,8 +188,8 @@ proc startMetricsServer*(host: string; port: int; log: Logger): Result[void, str
   if poolResult.isErr:
     return poolResult
   try:
-    createThread(gMetricsThread, metricsServerThread,
-                 MetricsServerArgs(host: host, port: port, log: log))
+    gMetricsThread = spawnThread(metricsServerThread,
+                                 MetricsServerArgs(host: host, port: port, log: log))
   except CatchableError as exc:
     let msg = "metrics: cannot start server thread — " & exc.msg
     log.error(msg)

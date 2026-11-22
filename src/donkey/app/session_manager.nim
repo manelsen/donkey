@@ -130,10 +130,13 @@ proc restoreSessions*(sm: var SessionManager): Result[int, string] =
   ok(count)
 
 var gSessionStopGeneration: uint64 = 0
-var gUserInterrupts: Table[string, uint64]
+var gUserInterrupts {.threadvar.}: Table[string, uint64]
+  ## Thread-local to the daemon loop: channel handlers set it and the actors,
+  ## tools and subagents that read it all run there (gcsafe, no cast).
 var gShuttingDown = false
 var gLiveActors = 0
-var gAllActorsStopped: Future[void]
+var gAllActorsStopped {.threadvar.}: Future[void]
+  ## A Chronos future belongs to the loop that created it.
 
 proc requestSessionStop*() {.gcsafe, raises: [].} =
   ## Process-wide shutdown signal. Actors compare the generation they started
@@ -150,22 +153,19 @@ proc requestUserStop*(userId: string) {.gcsafe, raises: [].} =
   ## is what let a rebuilt actor un-stop an older in-flight turn.
   if userId.len == 0:
     return
-  {.cast(gcsafe).}:
-    gUserInterrupts[userId] = gUserInterrupts.getOrDefault(userId) + 1
+  gUserInterrupts[userId] = gUserInterrupts.getOrDefault(userId) + 1
 
 proc currentUserInterrupt*(userId: string): uint64 {.gcsafe, raises: [].} =
   if userId.len == 0:
     return 0
-  {.cast(gcsafe).}:
-    gUserInterrupts.getOrDefault(userId)
+  gUserInterrupts.getOrDefault(userId)
 
 proc isUserStoppedSince*(userId: string; interrupt: uint64): bool
                         {.gcsafe, raises: [].} =
   ## True when a `/stop` arrived after the turn recorded `interrupt`.
   if userId.len == 0:
     return false
-  {.cast(gcsafe).}:
-    gUserInterrupts.getOrDefault(userId) != interrupt
+  gUserInterrupts.getOrDefault(userId) != interrupt
 
 func interruptsTurn*(kind: CommandKind): bool =
   ## Cross-channel policy: these commands abort the current turn and deny
@@ -195,29 +195,26 @@ proc isSessionStopRequested*(startGeneration: uint64): bool
   gSessionStopGeneration != startGeneration
 
 proc registerActor*() {.gcsafe, raises: [].} =
-  {.cast(gcsafe).}:
-    if gLiveActors == 0 or gAllActorsStopped.isNil or
-       gAllActorsStopped.finished():
-      gAllActorsStopped = newFuture[void]("session.allActorsStopped")
-    inc gLiveActors
+  if gLiveActors == 0 or gAllActorsStopped.isNil or
+     gAllActorsStopped.finished():
+    gAllActorsStopped = newFuture[void]("session.allActorsStopped")
+  inc gLiveActors
 
 proc unregisterActor*() {.gcsafe, raises: [].} =
-  {.cast(gcsafe).}:
-    if gLiveActors > 0:
-      dec gLiveActors
-    if gLiveActors == 0 and not gAllActorsStopped.isNil and
-       not gAllActorsStopped.finished():
-      gAllActorsStopped.complete()
+  if gLiveActors > 0:
+    dec gLiveActors
+  if gLiveActors == 0 and not gAllActorsStopped.isNil and
+     not gAllActorsStopped.finished():
+    gAllActorsStopped.complete()
 
 proc allActorsStoppedFuture*(): Future[void] {.gcsafe, raises: [].} =
-  {.cast(gcsafe).}:
-    if gLiveActors == 0:
-      let done = newFuture[void]("session.allActorsStopped.done")
-      done.complete()
-      return done
-    if gAllActorsStopped.isNil or gAllActorsStopped.finished():
-      gAllActorsStopped = newFuture[void]("session.allActorsStopped")
-    gAllActorsStopped
+  if gLiveActors == 0:
+    let done = newFuture[void]("session.allActorsStopped.done")
+    done.complete()
+    return done
+  if gAllActorsStopped.isNil or gAllActorsStopped.finished():
+    gAllActorsStopped = newFuture[void]("session.allActorsStopped")
+  gAllActorsStopped
 
 proc cancelAllActors*(sm: var SessionManager): Future[void] =
   ## Signals live orchestrators and returns the shared stop future. The inbox

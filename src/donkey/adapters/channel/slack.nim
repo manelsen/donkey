@@ -21,7 +21,7 @@ import ../../domain/channels/slack_pure
 import ../../ports/http
 import ../http/std_http
 import ../identity/identity_resolver
-import ./event_queue
+import ../../infra/event_queue
 
 export identity_resolver
 

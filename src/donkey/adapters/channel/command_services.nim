@@ -413,8 +413,7 @@ proc buildPingText*(memory: MdFileAdapter;
 template guarded(body: untyped): untyped =
   ## Port calls never raise: file and provider I/O failures become `err`.
   try:
-    {.cast(gcsafe).}:
-      body
+    body
   except CatchableError as e:
     err(e.msg)
 

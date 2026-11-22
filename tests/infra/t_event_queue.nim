@@ -4,7 +4,7 @@
 ## queue is gcsafe to share.
 
 import std/[monotimes, times, unittest]
-import donkey/adapters/channel/event_queue
+import donkey/infra/event_queue
 
 type Ev = object
   id: int
@@ -68,6 +68,32 @@ proc runTests*() =
       check q.push(Ev(id: 8, text: "next"))
       check q.tryPop(ev)
       check ev == Ev(id: 8, text: "next")
+
+    test "waitPush waits for room instead of dropping":
+      var q = initEventQueue[Ev]("full", capacity = 1)
+      check q.push(Ev(id: 1))
+      var t: Thread[ptr EventQueue[Ev]]
+      proc drain(qp: ptr EventQueue[Ev]) {.thread.} =
+        var ev: Ev
+        qp[].waitPop(ev)
+      createThread(t, drain, addr q)
+      q.waitPush(Ev(id: 2))
+      joinThread(t)
+      check q.takeDropped() == 0
+      var ev: Ev
+      check q.tryPop(ev) and ev.id == 2
+
+    test "waitPop blocks until an event arrives from another thread":
+      var t: Thread[void]
+      proc late() {.thread.} =
+        var spins = 0
+        while not gQueue.push(Ev(id: 42, text: "late")):
+          inc spins
+      createThread(t, late)
+      var ev: Ev
+      gQueue.waitPop(ev)
+      joinThread(t)
+      check ev == Ev(id: 42, text: "late")
 
 when isMainModule:
   runTests()

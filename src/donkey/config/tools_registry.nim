@@ -9,6 +9,7 @@
 import std/[os]
 import parsetoml
 import ../adapters/tool/mcp_client
+import ./toml_parse
 
 type
   ToolKind* = enum
@@ -41,7 +42,7 @@ proc loadToolRegistry*(path: string): seq[ToolEntry] {.gcsafe.} =
   if not fileExists(path):
     return @[]
   var t: parsetoml.TomlValueRef
-  {.cast(gcsafe).}: t = parsetoml.parseFile(path)
+  t = parseTomlFile(path)
   if not t.hasKey("tool"):
     return @[]
   for node in t["tool"].getElems():

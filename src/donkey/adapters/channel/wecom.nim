@@ -29,7 +29,8 @@ import ../http/std_http
 import ../identity/identity_resolver
 import ../webhook/http_request_reader
 import ../../app/metrics
-import ./event_queue
+import ../../infra/event_queue
+import ../../infra/thread_handle
 
 const WeComApiBase = "https://qyapi.weixin.qq.com"
 
@@ -139,33 +140,28 @@ proc sendMarkdown*(a: var WeComAdapter; userId: UserId; md: string): Result[void
 
 # ── Webhook HTTP server ────────────────────────────────────────────────────────
 
-## Simple dedup table: msgId → timestamp.  Prevents processing WeCom retries.
-## Protected by gWeComSeenLock — accessed from the webhook OS thread in
-## handleWeComConn via dedupCheck(). The lock ensures table mutation
-## (add/del) is atomic and prevents iterator invalidation during prune.
-var gWeComSeen   {.global.}: Table[string, int64]
-var gWeComSeenTs {.global.}: int64  ## last prune epoch ms
-var gWeComSeenLock {.global.}: Lock
+## Simple dedup table: msgId → timestamp. Prevents processing WeCom retries.
+## Only the webhook thread reads and writes it (handleWeComConn → dedupCheck,
+## one connection at a time), so it is thread-local to that thread: no lock,
+## no cast.
+var gWeComSeen   {.threadvar.}: Table[string, int64]
+var gWeComSeenTs {.threadvar.}: int64  ## last prune epoch ms
 
 const DedupWindowMs = 5 * 60 * 1000  ## 5 minutes
 
 proc dedupCheck(msgId: string): bool =
   ## Returns true if this msgId was recently seen (duplicate).
-  ## Protected by gWeComSeenLock.
-  acquire(gWeComSeenLock)
-  defer: release(gWeComSeenLock)
-  {.cast(gcsafe).}:
-    let now = epochMs()
-    if now - gWeComSeenTs > DedupWindowMs:
-      # Prune stale entries
-      var toDelete: seq[string]
-      for k, ts in gWeComSeen:
-        if now - ts > DedupWindowMs: toDelete.add(k)
-      for k in toDelete: gWeComSeen.del(k)
-      gWeComSeenTs = now
-    if msgId in gWeComSeen: return true
-    gWeComSeen[msgId] = now
-    false
+  let now = epochMs()
+  if now - gWeComSeenTs > DedupWindowMs:
+    # Prune stale entries
+    var toDelete: seq[string]
+    for k, ts in gWeComSeen:
+      if now - ts > DedupWindowMs: toDelete.add(k)
+    for k in toDelete: gWeComSeen.del(k)
+    gWeComSeenTs = now
+  if msgId in gWeComSeen: return true
+  gWeComSeen[msgId] = now
+  false
 
 proc sendHttpReply(s: Socket; status, body: string; logger: Logger) =
   let r = "HTTP/1.1 " & status & "\r\n" &
@@ -252,14 +248,12 @@ proc webhookThread(args: WeComWebhookArgs) {.thread.} =
 
 ## Thread handle for the WeCom webhook OS thread.
 ## Safe: only assigned once via createThread in startWebhook.
-var gWeComThread: Thread[WeComWebhookArgs]
+var gWeComThread: ThreadHandle[WeComWebhookArgs]  ## shared memory: a global pointer is gcsafe
 
 proc startWebhook*(a: WeComAdapter; port: Port; logger: Logger) =
   ## Starts the webhook listener on a dedicated OS thread.
-  initLock(gWeComSeenLock)
-  {.cast(gcsafe).}:
-    let args = WeComWebhookArgs(token: a.callbackToken, port: port.int, logger: logger)
-    createThread(gWeComThread, webhookThread, args)
+  let args = WeComWebhookArgs(token: a.callbackToken, port: port.int, logger: logger)
+  gWeComThread = spawnThread(webhookThread, args)
 
 proc tryRecvEvent*(a: var WeComAdapter): (bool, WeComEvent) =
   let (ok, ev) = gWeComEvents.tryTake()

@@ -1965,9 +1965,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   when defined(posix):
     posix.signal(posix.SIGTERM, handleShutdownSignal)
     posix.signal(posix.SIGINT, handleShutdownSignal)
-  {.cast(gcsafe).}:
-    initMetrics()
-    startOptionalMetricsServer(log)
+  initMetrics()
+  startOptionalMetricsServer(log)
 
   ## One daemon per state directory. A lease left by a dead process is taken
   ## over; a live one stops this startup before any store is opened.

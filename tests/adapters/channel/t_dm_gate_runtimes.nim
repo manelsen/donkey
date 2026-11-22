@@ -36,7 +36,7 @@ import donkey/adapters/channel/slack_runtime
 import donkey/adapters/identity/identity_resolver
 import donkey/app/gateway_drainer
 import donkey/app/session_manager
-import donkey/adapters/channel/event_queue
+import donkey/infra/event_queue
 
 const GateTmp = "/tmp/donkey_dm_gate_tests"
 

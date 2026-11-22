@@ -13,6 +13,7 @@ import ../../core/pipeops
 import ../../ports/http
 import ./slack
 import ./ws_client
+import ../../infra/thread_handle
 
 const
   SlackSocketReconnectMinMs = 1_000
@@ -20,19 +21,30 @@ const
   SlackSocketIdleTimeoutMs  = 120_000
 
 type
-  SlackSocketMode* = ref object
+  SlackSocketControl = object
+    ## What the daemon and the reader thread share: in shared memory behind a
+    ## pointer, so neither side holds a ref the other one also counts.
+    stop:     Atomic[bool]
+    fdLock:   Lock
+    activeFd: SocketHandle
+
+  SlackSocketArgs = object
     appToken: string
     http:     HttpRuntimePort
     logger:   Logger
-    stop:     Atomic[bool]
-    stopped:  bool
-    fdLock:   Lock
-    activeFd: SocketHandle
-    thread:   Thread[SlackSocketMode]
+    control:  ptr SlackSocketControl
+
+  SlackSocketMode* = ref object
+    ## Built and used by the reader thread only.
+    appToken: string
+    http:     HttpRuntimePort
+    logger:   Logger
+    control:  ptr SlackSocketControl
 
 var
-  gSlackSocketThread: Thread[SlackSocketMode]
-  gSlackSocketClient: SlackSocketMode
+  gSlackSocketThread: ThreadHandle[SlackSocketArgs]
+  gSlackSocketControl: ptr SlackSocketControl
+    ## Pointers hold nothing the GC owns: gcsafe to touch from the daemon.
   gSlackSocketStarted = false
 
 func envelopeId(envelope: JsonNode): string =
@@ -104,14 +116,16 @@ proc openSocketUrl(client: SlackSocketMode): Result[string, string] =
 
 proc sleepOrStop(client: SlackSocketMode; ms: int): bool =
   var waited = 0
-  while waited < ms and not client.stop.load():
+  while waited < ms and not client.control.stop.load():
     sleep(1000)
     waited += 1000
-  not client.stop.load()
+  not client.control.stop.load()
 
-proc runSlackSocket(client: SlackSocketMode) {.thread.} =
+proc runSlackSocket(args: SlackSocketArgs) {.thread.} =
+  let client = SlackSocketMode(appToken: args.appToken, http: args.http,
+                               logger: args.logger, control: args.control)
   var backoff = SlackSocketReconnectMinMs
-  while not client.stop.load():
+  while not client.control.stop.load():
     let urlRes = client.openSocketUrl()
     if urlRes.isErr:
       client.logger.warn("slack socket: " & urlRes.error)
@@ -135,15 +149,15 @@ proc runSlackSocket(client: SlackSocketMode) {.thread.} =
     var ws: WsClient
     try:
       let onSocket = proc(sock: Socket) {.gcsafe.} =
-        acquire(client.fdLock)
-        client.activeFd = sock.getFd
-        release(client.fdLock)
+        acquire(client.control.fdLock)
+        client.control.activeFd = sock.getFd
+        release(client.control.fdLock)
       ws = wsConnect(socketUrl.hostname, port, fullPath,
                      timeoutMs = 10_000, onSocket = onSocket)
     except CatchableError as e:
-      acquire(client.fdLock)
-      client.activeFd = SocketHandle(-1)
-      release(client.fdLock)
+      acquire(client.control.fdLock)
+      client.control.activeFd = SocketHandle(-1)
+      release(client.control.fdLock)
       client.logger.warn("slack socket: connect failed: " & e.msg)
       if not client.sleepOrStop(backoff):
         break
@@ -154,7 +168,7 @@ proc runSlackSocket(client: SlackSocketMode) {.thread.} =
     backoff = SlackSocketReconnectMinMs
     var lastActivity = getMonoTime()
     var reopen = false
-    while not client.stop.load() and not reopen:
+    while not client.control.stop.load() and not reopen:
       let frameRes = ws.recvFrame(1000)
       if frameRes.isErr:
         if frameRes.error == "timeout":
@@ -199,11 +213,11 @@ proc runSlackSocket(client: SlackSocketMode) {.thread.} =
         client.logger.warn("slack socket: " & e.msg)
         reopen = true
 
-    acquire(client.fdLock)
-    client.activeFd = SocketHandle(-1)
-    release(client.fdLock)
+    acquire(client.control.fdLock)
+    client.control.activeFd = SocketHandle(-1)
+    release(client.control.fdLock)
     wsClose(ws)
-    if not client.stop.load():
+    if not client.control.stop.load():
       if not client.sleepOrStop(1000):
         break
 
@@ -218,35 +232,36 @@ proc startSlackSocketMode*(appToken: string;
   if gSlackSocketStarted:
     return err("Slack Socket Mode is already started")
 
-  let client = SlackSocketMode(appToken: appToken, http: http, logger: logger)
-  client.stop.store(false)
-  client.activeFd = SocketHandle(-1)
-  initLock(client.fdLock)
+  let control = cast[ptr SlackSocketControl](allocShared0(sizeof(SlackSocketControl)))
+  control.stop.store(false)
+  control.activeFd = SocketHandle(-1)
+  initLock(control.fdLock)
   try:
-    createThread(gSlackSocketThread, runSlackSocket, client)
+    gSlackSocketThread = spawnThread(runSlackSocket,
+      SlackSocketArgs(appToken: appToken, http: http, logger: logger, control: control))
   except CatchableError as e:
+    deinitLock(control.fdLock)
+    deallocShared(control)
     return err("cannot start Slack Socket Mode: " & e.msg)
-
-  {.cast(gcsafe).}:
-    gSlackSocketClient = client
-    gSlackSocketStarted = true
+  gSlackSocketControl = control
+  gSlackSocketStarted = true
   ok()
 
 proc stopSlackSocketMode*() =
   ## Stops the reader thread. Safe to call when Socket Mode was never started.
-  {.cast(gcsafe).}:
-    if not gSlackSocketStarted:
-      return
-    let client = gSlackSocketClient
-    client.stop.store(true)
-    when defined(posix):
-      ## Wake a blocked SSL_read so shutdown does not depend on frame timing.
-      acquire(client.fdLock)
-      if client.activeFd != SocketHandle(-1):
-        discard posix.shutdown(posix.SocketHandle(client.activeFd),
-                              posix.SHUT_RDWR)
-      release(client.fdLock)
-    joinThread(gSlackSocketThread)
-    deinitLock(client.fdLock)
-    gSlackSocketClient = nil
-    gSlackSocketStarted = false
+  if not gSlackSocketStarted:
+    return
+  let control = gSlackSocketControl
+  control.stop.store(true)
+  when defined(posix):
+    ## Wake a blocked SSL_read so shutdown does not depend on frame timing.
+    acquire(control.fdLock)
+    if control.activeFd != SocketHandle(-1):
+      discard posix.shutdown(posix.SocketHandle(control.activeFd),
+                            posix.SHUT_RDWR)
+    release(control.fdLock)
+  joinAndFree(gSlackSocketThread)
+  deinitLock(control.fdLock)
+  deallocShared(control)
+  gSlackSocketControl = nil
+  gSlackSocketStarted = false

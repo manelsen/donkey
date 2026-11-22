@@ -15,7 +15,7 @@
 
 import std/atomics
 import threading/channels
-import ../../core/log
+import ../core/log
 
 const DefaultEventCapacity* = 1024
 
@@ -38,6 +38,11 @@ proc push*[T](q: EventQueue[T]; event: sink T): bool {.discardable.} =
   if not result:
     discard q.dropped[].fetchAdd(1)
 
+proc waitPush*[T](q: EventQueue[T]; event: sink T) =
+  ## Blocks until there is room (for control messages, such as a stop
+  ## sentinel, that must not be dropped).
+  q.chan.send(event)
+
 proc takeDropped*[T](q: EventQueue[T]): int =
   ## Drops since the last call, resetting the count.
   q.dropped[].exchange(0)
@@ -59,6 +64,14 @@ proc tryPop*[T](q: EventQueue[T]; event: var T): bool =
   result = q.chan.tryRecv(received)
   if result:
     event = move(received)
+
+proc waitPop*[T](q: EventQueue[T]; event: var T) =
+  ## Blocks until an event arrives (for worker threads that only wait on the
+  ## queue). Same fresh-temporary receive as `tryPop`.
+  q.reportDrops()
+  var received: T
+  q.chan.recv(received)
+  event = move(received)
 
 proc tryTake*[T](q: EventQueue[T]): (bool, T) =
   ## `tryPop` in the `(found, event)` shape the adapters' pollers return.
