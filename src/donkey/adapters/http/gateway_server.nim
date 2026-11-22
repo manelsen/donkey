@@ -68,8 +68,14 @@ proc streamConnection*(transport: StreamTransport): GatewayConnection =
       except CatchableError as e:
         return err("read failed: " & e.msg),
     write: proc(data: string): Future[Result[void, string]] {.async: (raises: []).} =
+      if data.len == 0:
+        return ok()
       try:
-        discard await transport.write(data)
+        ## A reset or broken pipe may complete the write with fewer bytes
+        ## (zero) instead of raising: that is the client gone, not success.
+        let written = await transport.write(data)
+        if written < data.len:
+          return err("client gone: wrote " & $written & " of " & $data.len & " bytes")
         return ok()
       except CancelledError:
         return err("write cancelled")
