@@ -41,6 +41,7 @@ g0	tests/adapters/webhook/t_webhook_receiver.nim
 g0	tests/app/t_agent_chat.nim
 g0	tests/app/t_agent_message.nim
 g0	tests/app/t_command_dispatch_app.nim
+g0	tests/app/t_preference_commands.nim
 g0	tests/app/t_album_mention_gate.nim
 g0	tests/app/t_append_memory_origin.nim
 g0	tests/app/t_approval_runtime.nim
@@ -142,6 +143,8 @@ g1	tests/core/t_command_dispatch.nim
 g1	tests/core/t_command_outcome.nim
 g1	tests/core/t_command_registry.nim
 g1	tests/core/t_command_routing.nim
+g1	tests/core/t_preference_commands.nim
+g1	tests/core/t_app_meta.nim
 g1	tests/core/t_compact_command.nim
 g1	tests/core/t_cron.nim
 g1	tests/core/t_debounce.nim

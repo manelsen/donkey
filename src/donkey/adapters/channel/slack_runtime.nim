@@ -48,8 +48,11 @@ proc slackCommandOutcome(slAdapter: var SlackAdapter;
       presented = true
       return fallback()
   elif command.kind == cmdConfig:
-    if slAdapter.sendKeyboard(userId, env.memory.buildConfigText(userId),
-                              buildConfigButtons()).isOk:
+    ## Unreadable preferences fall through to the dispatcher, which reports
+    ## the error instead of showing defaults.
+    let configText = env.memory.buildConfigText(userId)
+    if configText.isOk and
+       slAdapter.sendKeyboard(userId, configText.get, buildConfigButtons()).isOk:
       presented = true
       return fallback()
   dispatchCommand(env.commands, sm, msgSeq,

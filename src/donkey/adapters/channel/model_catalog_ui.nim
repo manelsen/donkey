@@ -1,6 +1,8 @@
 ## Model catalog presentation shared by the channels with pickers: the
 ## provider/model menu, compact callback tokens for long model ids, catalog
-## paging and buttons, and the /models argument parser.
+## paging and buttons. The buttons take the current selection as data: this
+## module reads no preferences. The pure catalog rules (family, order, source
+## line, listing) live in `core/commands/preference_commands`.
 
 import std/[algorithm, sequtils, strutils, tables, times]
 import checksums/sha1
@@ -8,11 +10,11 @@ import ../../core/pipeops
 import ../../core/utf8
 import ../../core/commands/command_text
 import ../../core/providers/provider_catalog
-import ../../adapters/memory/md_file
-import ../../adapters/memory/channel_prefs_store
-import ../../domain/message
+import ../../core/commands/preference_commands
 import ../../ports/provider
 import ../../infra/thread_owner
+
+export preference_commands.normalizeModelCatalog, preference_commands.sortModelCatalog
 
 const ModelPageSize* = 6  ## Discord: máx 5 action rows. 6 modelos / 2 por row = 3 rows + 1 nav = 4 rows (seguro)
 
@@ -54,6 +56,11 @@ proc modelMenu*(): seq[ModelMenuEntry] =
   ## Returns the model menu derived from the ProviderCatalog.
   buildModelMenu()
 
+proc currentModelMenu*(): ModelMenu =
+  ## The menu as the pure /models policy reads it.
+  for (provider, models) in modelMenu():
+    result.add((provider: provider, models: models))
+
 type ModelCallbackTarget = object
   provider: string
   model: string
@@ -89,9 +96,8 @@ proc resolveModelCallback*(provider, value: string): string {.gcsafe, raises: []
 func emptyCatalogResult*(): ModelCatalogResult =
   ModelCatalogResult(entries: @[], source: mcsFallback, fetchedAtUnix: 0)
 
-proc buildThinkButtons*(memory: MdFileAdapter;
-                        userId: UserId): seq[seq[(string, string)]] =
-  let curr = memory.getCurrentThinkLevel(userId)
+func buildThinkButtons*(curr: string): seq[seq[(string, string)]] =
+  ## One button per level; `curr` is marked.
   var row: seq[(string, string)]
   for lvl in ThinkLevels:
     let label = if lvl == curr: "✓ " & lvl else: lvl
@@ -108,9 +114,8 @@ proc supportedModels*(provider: string): seq[string] =
       return models
   @[]
 
-proc buildProviderButtons*(memory: MdFileAdapter;
-                           userId: UserId): seq[seq[(string, string)]] =
-  let (currProv, _) = memory.getCurrentProviderModel(userId)
+proc buildProviderButtons*(currProv: string): seq[seq[(string, string)]] =
+  ## The providers, three per row; `currProv` is marked.
   result = @[]
   var row: seq[(string, string)]
   for (prov, _) in modelMenu():
@@ -122,10 +127,8 @@ proc buildProviderButtons*(memory: MdFileAdapter;
   if row.len > 0:
     result.add(row)
 
-proc buildModelButtons*(memory: MdFileAdapter;
-                        provider: string;
-                        userId: UserId): seq[seq[(string, string)]] =
-  let (currProv, currModel) = memory.getCurrentProviderModel(userId)
+proc buildModelButtons*(provider, currProv, currModel: string): seq[seq[(string, string)]] =
+  ## `provider`'s static models, two per row; the current one is marked.
   result = @[]
   for (prov, models) in modelMenu():
     if prov != provider:
@@ -141,34 +144,6 @@ proc buildModelButtons*(memory: MdFileAdapter;
     if row.len > 0:
       result.add(row)
   result.add(@[("← voltar", "models:back")])
-
-func normalizeModelCatalog*(provider: string;
-                            entries: seq[ModelCatalogEntry]): seq[ModelCatalogEntry] =
-  let wantedFamily =
-    case provider
-    of "zai", "zai-coding", "zai-anthropic":
-      "zai"
-    else:
-      provider
-  var seen: seq[string] = @[]
-  for entry in entries:
-    let entryFamily =
-      case entry.providerName
-      of "zai", "zai-coding", "zai-anthropic":
-        "zai"
-      else:
-        entry.providerName
-    if entryFamily == wantedFamily and entry.modelName notin seen:
-      result.add(entry)
-      seen.add(entry.modelName)
-
-func sortModelCatalog*(entries: seq[ModelCatalogEntry]): seq[ModelCatalogEntry] =
-  result = entries
-  result.sort(proc(a, b: ModelCatalogEntry): int =
-    if a.isFree != b.isFree:
-      return if a.isFree: -1 else: 1
-    cmp(a.label.toLowerAscii(), b.label.toLowerAscii())
-  )
 
 func pageCount*(entries: seq[ModelCatalogEntry]; pageSize = ModelPageSize): int =
   if entries.len == 0: return 1
@@ -191,11 +166,7 @@ func buildModelPageTitle*(provider: string; page: int; entries: seq[ModelCatalog
   "Modelos de " & provider & " — página " & $(page + 1) & "/" & $max(pageCount(entries), 1)
 
 proc buildCatalogSourceText*(catalog: ModelCatalogResult): string =
-  let sourceText = catalogSourceLabel(catalog.source)
-  if catalog.source == mcsFallback or catalog.fetchedAtUnix <= 0:
-    "Fonte: " & sourceText
-  else:
-    "Fonte: " & sourceText & " (" & relativeAgeText(getTime().toUnix() - catalog.fetchedAtUnix) & ")"
+  catalogSourceText(catalog, getTime().toUnix())
 
 proc buildModelPageText*(provider: string;
                          page: int;
@@ -236,25 +207,6 @@ proc buildModelPageButtons*(provider: string;
   navRow.add(("← voltar", "models:back"))
   result.add(navRow)
 
-proc parseModelsSelection*(value: string): Result[(string, string), string] =
-  ## `/models <provider> <model>`: the shape and a known provider. Whether
-  ## the model is offered is checked against a catalog by the caller.
-  let parts = value.splitWhitespace()
-  if parts.len != 2:
-    return err("Use `/models <provider> <model>`.")
-  let provider = parts[0]
-  if provider notin supportedProviders():
-    return err("Provider inválido: `" & provider & "`.")
-  ok((provider, parts[1]))
-
-proc parseModelsArgs*(value: string): Result[(string, string), string] =
-  ## parseModelsSelection checked against the static model list.
-  let (provider, model) = ? parseModelsSelection(value)
-  let models = supportedModels(provider)
-  if models.len > 0 and model notin models:
-    return err("Modelo inválido para `" & provider & "`: `" & model & "`.")
-  ok((provider, model))
-
 proc parseModelsProviderArg*(value: string): Result[string, string] =
   let parts = value.splitWhitespace()
   if parts.len != 1:
@@ -264,16 +216,6 @@ proc parseModelsProviderArg*(value: string): Result[string, string] =
     return err("Provider inválido: `" & provider & "`.")
   ok(provider)
 
-func formatModelCatalogLine(entry: ModelCatalogEntry): string =
-  "- `" & entry.modelName & "`" & (if entry.isFree: " [free]" else: "")
-
 proc buildProviderCatalogText*(provider: string;
                               catalog: ModelCatalogResult): string =
-  let sorted = sortModelCatalog(normalizeModelCatalog(provider, catalog.entries))
-  result = "Provider: " & provider
-  if sorted.len > 0:
-    result.add("\nModelos:\n" & sorted.map(formatModelCatalogLine).join("\n"))
-  else:
-    result.add("\nNenhum modelo listado no catálogo atual.")
-  result.add("\n" & buildCatalogSourceText(catalog))
-  result.add("\n\nUse `/models " & provider & " <model>` para trocar.")
+  providerCatalogText(provider, catalog, getTime().toUnix())

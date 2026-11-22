@@ -11,7 +11,7 @@ import ../../app/skill_runtime
 import ../../core/commands/command_text
 import ./md_file
 
-export channel_prefs_parse.parseChannelPrefs
+export channel_prefs_parse.parseChannelPrefs, channel_prefs_parse.tryParseChannelPrefs
 
 func donkeyHomeDir*(memory: MdFileAdapter): string =
   donkeyHomeDirFromPaddocks(memory.paddocksDir)
@@ -19,8 +19,18 @@ func donkeyHomeDir*(memory: MdFileAdapter): string =
 func userSkillsPath*(memory: MdFileAdapter; userId: UserId): string =
   skill_runtime.userSkillsPath(memory.paddockDir(userId))
 
-proc loadChannelPrefs*(memory: MdFileAdapter; userId: UserId): ChannelPrefs =
-  parseChannelPrefs(memory.loadContext(userId).preferencesMd)
+proc readPreferences*(memory: MdFileAdapter; userId: UserId): Result[string, string] =
+  ## PREFERENCES.md as the store holds it, or why it cannot be read: the
+  ## graph when MAGMA is ready, the file without a graph (missing reads as
+  ## empty), an error when the graph is unavailable or the file unreadable.
+  ## Unlike loadContext, a failed read never looks like default preferences.
+  try:
+    memory.storedPreferences(userId)
+  except CatchableError as e:
+    err("PREFERENCES.md: " & e.msg)
+
+proc loadChannelPrefs*(memory: MdFileAdapter; userId: UserId): Result[ChannelPrefs, string] =
+  tryParseChannelPrefs(? memory.readPreferences(userId))
 
 func preferenceKey(line: string): string =
   ## The key of a `key = value` line; "" for blanks, comments and other text.
@@ -69,9 +79,10 @@ func setPreferences*(preferencesMd: string;
 
 proc loadChannelPreference*(memory: MdFileAdapter;
                             userId: UserId;
-                            key: string): string =
-  ## Reads one preference value by key, without parsing the whole document.
-  parsePreferenceString(memory.loadContext(userId).preferencesMd, key)
+                            key: string): Result[string, string] =
+  ## Reads one preference value by key, without parsing the whole document;
+  ## "" when the key is absent.
+  ok(parsePreferenceString(? memory.readPreferences(userId), key))
 
 proc saveChannelPreferences*(memory: MdFileAdapter;
                              userId: UserId;
@@ -91,17 +102,18 @@ proc saveChannelPreference*(memory: MdFileAdapter;
   memory.saveChannelPreferences(userId, [(key, value)])
 
 proc getCurrentProviderModel*(memory: MdFileAdapter;
-                              userId: UserId): (string, string) =
-  let prefs = memory.loadChannelPrefs(userId)
-  (prefs.provider, prefs.model)
+                              userId: UserId): Result[(string, string), string] =
+  let prefs = ? memory.loadChannelPrefs(userId)
+  ok((prefs.provider, prefs.model))
 
-proc getCurrentThinkLevel*(memory: MdFileAdapter; userId: UserId): string =
-  memory.loadChannelPrefs(userId).thinking
+proc getCurrentThinkLevel*(memory: MdFileAdapter; userId: UserId): Result[string, string] =
+  ok((? memory.loadChannelPrefs(userId)).thinking)
 
-proc getCurrentBudgetPolicy*(memory: MdFileAdapter; userId: UserId): string =
-  parseSmartRoutingPrefs(memory.loadContext(userId).preferencesMd).budgetPolicy
-
+proc getCurrentBudgetPolicy*(memory: MdFileAdapter; userId: UserId): Result[string, string] =
+  let doc = ? memory.readPreferences(userId)
+  discard ? tryParseChannelPrefs(doc)
+  ok(parseSmartRoutingPrefs(doc).budgetPolicy)
 
 proc buildConfigText*(memory: MdFileAdapter; userId: UserId;
-                      withButtons = true): string =
-  buildConfigText(memory.loadChannelPrefs(userId), withButtons)
+                      withButtons = true): Result[string, string] =
+  ok(buildConfigText(? memory.loadChannelPrefs(userId), withButtons))

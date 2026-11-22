@@ -6,6 +6,7 @@ when defined(withSqlite):
   import donkey/core/pipeops
   import donkey/core/types
   import donkey/adapters/channel/common_runtime
+  import donkey/app/preference_commands
   import donkey/adapters/memory/md_file
   import donkey/adapters/memory/magma_memory_adapter
   import donkey/adapters/memory/multigraph_runtime
@@ -385,19 +386,26 @@ when defined(withSqlite):
     test "a channel preference that was not saved is not confirmed":
       let good = newAdapter()
       check saveChannelPreference(good, uid, "thinking", "low").isOk
-      check applyThinkTextCommand(good, uid, "high").isOk
-      check loadChannelPreference(good, uid, "thinking") == "high"
+      check preferenceCommandDeps(good).runThinkCommand(uid, "high").isOk
+      check loadChannelPreference(good, uid, "thinking").get == "high"
       writeFile(root / "blocker", "x")
       let broken = MdFileAdapter(
         paddocksDir: root / "paddocks",
         magmaSqlitePath: root / "blocker" / "magma.sqlite",
       )
       check saveChannelPreference(broken, uid, "thinking", "off").isErr
-      check applyThinkTextCommand(broken, uid, "off").isErr
-      check applyBudgetTextCommand(broken, uid, "balanced").isErr
+      check preferenceCommandDeps(broken).runThinkCommand(uid, "off").isErr
+      check preferenceCommandDeps(broken).runBudgetCommand(uid, "balanced").isErr
+      ## Reading through the broken graph is an error, never the defaults.
+      check loadChannelPrefs(broken, uid).isErr
+      check getCurrentThinkLevel(broken, uid).isErr
+      check getCurrentProviderModel(broken, uid).isErr
+      check loadChannelPreference(broken, uid, "thinking").isErr
+      check preferenceCommandDeps(broken).runThinkCommand(uid, "").error.startsWith(
+        "Não foi possível ler suas preferências:")
       check savedOrError(Result[void, string].err("x"), "feito") != "feito"
       check savedOrError(Result[void, string].ok(), "feito") == "feito"
-      check loadChannelPreference(good, uid, "thinking") == "high"
+      check loadChannelPreference(good, uid, "thinking").get == "high"
 
     test "the first search imports a paddock that only has files":
       let a = newAdapter()
