@@ -228,12 +228,18 @@ proc runTests*() =
           "GET /api/events HTTP/1.1\r\nHost: x\r\nConnection: close\r\n" &
           "Authorization: Bearer " & Token & "\r\n\r\n")
         var seen = ""
-        while ": connected" notin seen:
+        let deadline = Moment.now() + chronos.milliseconds(5_000)
+        while ": connected" notin seen and Moment.now() < deadline:
           var buf = newSeq[byte](1024)
-          let n = await transport.readOnce(addr buf[0], buf.len)
+          let reading = transport.readOnce(addr buf[0], buf.len)
+          if not await reading.withTimeout(deadline - Moment.now()):
+            break
+          let n = reading.read()
           if n <= 0: break
           seen.add cast[string](buf[0 ..< n])
-        doAssert ": connected" in seen, "the stream never confirmed"
+        if ": connected" notin seen:
+          await transport.closeWait()
+          doAssert false, "the stream never confirmed within 5 s"
         return transport
       let stream = waitFor openStream()
       defer: waitFor stream.closeWait()
