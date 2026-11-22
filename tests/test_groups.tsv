@@ -62,6 +62,7 @@ g0	tests/app/t_heartbeat.nim
 g0	tests/app/t_http_gateway.nim
 g0	tests/app/t_image_fallback.nim
 g0	tests/app/t_inbound_gate.nim
+g0	tests/app/t_ipc_server.nim
 g0	tests/app/t_inbound_media.nim
 g0	tests/app/t_inline_image_retention.nim
 g0	tests/app/t_inline_image_turn.nim

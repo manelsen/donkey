@@ -6,8 +6,9 @@
 ##   {"cmd":"status"}       → {"ok":true,"data":{DaemonStatus}}
 ##   {"cmd":"logs","n":50}  → {"ok":true,"data":[IpcLogEntry,...]}
 ##
-## runIpcServer is called once from startDaemon. gStatusFn and gLogFn must
-## be set before calling; they are read on every incoming connection.
+## startIpcServer is called once from startDaemon. The connection handler
+## closes over the two providers: the server runs on the Chronos event loop
+## of the calling thread, so no global state and no cross-thread access.
 
 import std/[json, os]
 import chronos
@@ -18,17 +19,7 @@ type
   StatusProvider* = proc(): DaemonStatus {.gcsafe, raises: [].}
   LogProvider*    = proc(n: int): seq[IpcLogEntry] {.gcsafe, raises: [].}
 
-## Module-level state avoids GC-safety issues with callback closures.
-var gStatusFn: StatusProvider
-var gLogFn:    LogProvider
-
-proc callStatus(): DaemonStatus {.gcsafe, raises: [].} =
-  {.cast(gcsafe).}: result = gStatusFn()
-
-proc callLogs(n: int): seq[IpcLogEntry] {.gcsafe, raises: [].} =
-  {.cast(gcsafe).}: result = gLogFn(n)
-
-proc handleConn(server: StreamServer;
+proc handleConn(statusFn: StatusProvider; logFn: LogProvider;
                 transport: StreamTransport) {.async: (raises: []).} =
   try:
     let line = await transport.readLine(sep = "\n")
@@ -40,11 +31,11 @@ proc handleConn(server: StreamServer;
     var resp: JsonNode
     case cmd
     of "status":
-      resp = %*{"ok": true, "data": callStatus().toJson()}
+      resp = %*{"ok": true, "data": statusFn().toJson()}
     of "logs":
       let n = req{"n"}.getInt(50)
       var arr = newJArray()
-      for e in callLogs(n): arr.add(e.toJson())
+      for e in logFn(n): arr.add(e.toJson())
       resp = %*{"ok": true, "data": arr}
     else:
       resp = %*{"ok": false, "error": "unknown command: " & cmd}
@@ -58,13 +49,13 @@ proc startIpcServer*(sockPath:  string;
                      logFn:     LogProvider) {.gcsafe.} =
   ## Sets up the Unix socket server synchronously. The accept loop runs
   ## inside the Chronos event loop automatically after server.start().
-  {.cast(gcsafe).}:
-    gStatusFn = statusFn
-    gLogFn    = logFn
+  proc onConnection(server: StreamServer;
+                    transport: StreamTransport) {.async: (raises: []).} =
+    await handleConn(statusFn, logFn, transport)
 
   ## Remove stale socket from a previous run.
   if fileExists(sockPath):
     removeFile(sockPath)
 
-  let server = createStreamServer(initTAddress(sockPath), handleConn)
+  let server = createStreamServer(initTAddress(sockPath), onConnection)
   server.start()
