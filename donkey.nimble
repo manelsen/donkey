@@ -9,7 +9,8 @@ bin         = @["donkey"]
 
 # Dependencies
 # Nim 2.4.2 (CI and the Docker build pin it). Every package is pinned to an
-# exact version, the transitive ones too (they come with chronos), so a fresh
+# exact version (by commit for the three that publish no tags, where a version
+# names no revision), the transitive ones too (they come with chronos), so a fresh
 # install resolves the same tree. There is no nimble.lock: with a lock file
 # present the compiler stops using the default nimble path, and the grouped
 # test builds (entries outside the repo, without config.nims) cannot find
@@ -23,11 +24,11 @@ requires "nim >= 2.4.2"
 requires "chronos == 4.4.1"
 requires "nimcrypto == 0.7.3"
 requires "results == 0.5.1"
-requires "ws == 0.6.0"
-requires "db_connector == 0.1.0" ## PostgreSQL + pgvector + AGE (-d:withPostgres)
+requires "ws#c9c0c7b51e2e83cc9305a895a0b144a297b4bea8" ## 0.6.0; untagged upstream, so pinned by commit
+requires "db_connector#29450a2063970712422e1ab857695c12d80112a6" ## 0.1.0, untagged upstream: pinned by commit. PostgreSQL + pgvector + AGE (-d:withPostgres)
 requires "illwill == 0.4.1" ## TUI dashboard (donkey tui)
 requires "checksums == 0.2.2" ## SHA1 for WeChat webhook signature (replaces deprecated std/sha1)
-requires "threading == 0.2.1" ## shared-memory channels for adapter event queues (gcsafe, no casts)
+requires "threading#653c8eb013ab1b0486c1ebf06e14d8b79843c385" ## 0.2.1, untagged upstream: pinned by commit. Shared-memory channels for event queues
 # Transitive, through chronos; pinned for a reproducible tree.
 requires "stew == 0.6.5"
 requires "httputils == 0.6.0"

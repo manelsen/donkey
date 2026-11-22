@@ -92,7 +92,12 @@ proc threadCheckBuilder(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} 
     expected = gExpectedBuilderThreadId
   if getThreadId() == expected:
     raise newException(ValueError, "builder ran on the event loop thread")
+  ## The closure captures the thread that built it and checks it runs there:
+  ## built on one worker and called on another would fail too.
+  let builtOn = getThreadId()
   let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+    if getThreadId() != builtOn:
+      return err("closure called on another thread than the one that built it")
     ok(CompletionResponse(text: "worker-builder"))
   ProviderBundle(completeFn: complete)
 
