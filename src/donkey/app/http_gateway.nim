@@ -1,6 +1,10 @@
 ## HTTP gateway — embedded HTTP/1.1 server for browser/UI clients.
 ##
-## Runs on a dedicated OS thread (same pattern as WeChat/QQ webhook servers).
+## Runs on the Chronos event loop of the thread that starts it (the daemon's
+## main loop): no worker threads, no shared state, no global callbacks. The
+## providers below are captured by the connection handler, and every wait
+## (request reads, agent turns, event streams) is an `await`, so one slow
+## client never holds up the others.
 ## Port: DONKEY_HTTP_PORT env var, default 8080.
 ##
 ## Endpoints:
@@ -28,9 +32,9 @@
 ## any `api:<name>`. Per-user authentication is an explicit PRD non-goal and is
 ## pinned by `tests/app/t_http_gateway.nim` so the limitation stays deliberate.
 
-import std/[json, monotimes, net, os, strutils, times]
-import locks
-import std/posix
+import std/[json, os, strutils, times]
+import chronos
+import chronos/transports/stream
 import ../core/pipeops
 import ../core/types
 import ../core/log
@@ -53,10 +57,6 @@ const
   SseHeartbeatIntervalMs = 5000   ## ms between SSE heartbeat/push cycles
   SseMaxPollCycles = 60           ## bounded to ~5 minutes at 5s intervals
   MaxConcurrentHttpConnections = 32
-  ## SSE streams occupy a worker for their whole lifetime (up to ~5 minutes),
-  ## so keep this well below GatewayWorkerCount: at least half of the workers
-  ## must stay available for normal requests and 503 responses.
-  MaxConcurrentSseConnections = 4
   GatewayMaxRequestLine = 8192
   GatewayMaxHeaderLines = 64
   GatewayMaxHeaderBytes = 64 * 1024
@@ -145,10 +145,10 @@ type
 # ── StatusProvider / LogProvider (same types as ipc_server) ───────────────────
 
 type
-  GatewayStatusFn* = proc(): DaemonStatus {.gcsafe.}
-  GatewayLogFn*    = proc(n: int): seq[IpcLogEntry] {.gcsafe.}
-  GatewayEventFn*  = proc(n: int): seq[AgentEvent] {.gcsafe.}
-  GatewayAgentDispatchFn* = proc(msg: InboundMessage) {.gcsafe.}
+  GatewayStatusFn* = proc(): DaemonStatus {.gcsafe, raises: [CatchableError].}
+  GatewayLogFn*    = proc(n: int): seq[IpcLogEntry] {.gcsafe, raises: [CatchableError].}
+  GatewayEventFn*  = proc(n: int): seq[AgentEvent] {.gcsafe, raises: [CatchableError].}
+  GatewayAgentDispatchFn* = proc(msg: InboundMessage) {.gcsafe, raises: [CatchableError].}
     ## Starts one agent turn through the same ingress used by `/api/chat`.
 
   GatewayResponse* = object
@@ -158,10 +158,10 @@ type
     contentType*: string
     body*: string
 
-  GatewaySessionsFn* = proc(): seq[SessionDetail] {.gcsafe.}
+  GatewaySessionsFn* = proc(): seq[SessionDetail] {.gcsafe, raises: [CatchableError].}
     ## Returns every session; paging is applied by `buildSessionsJson`.
 
-  GatewayProvidersFn* = proc(): string {.gcsafe.}
+  GatewayProvidersFn* = proc(): string {.gcsafe, raises: [CatchableError].}
     ## Returns the provider-health JSON built by `buildProvidersJson`.
 
   GatewaySessionActionOutcome* = enum
@@ -171,16 +171,16 @@ type
 
   GatewaySessionActionFn* = proc(rawUserId: string; taskKind: TaskKind;
                                   payload: string): GatewaySessionActionOutcome
-                                 {.gcsafe.}
+                                 {.gcsafe, raises: [CatchableError].}
     ## Performs the one management action. The raw id is the session key, not
     ## an `api:`-prefixed identity; the wiring owns lookup and revocation.
 
 # ── Inbound handler ───────────────────────────────────────────────────────────
 
 type
-  GatewayInboundFn* = proc(msg: InboundMessage) {.gcsafe.}
+  GatewayInboundFn* = proc(msg: InboundMessage) {.gcsafe, raises: [CatchableError].}
     ## Callback to handle inbound messages from web UI POST /api/chat.
-    ## Called on the gateway thread; must be thread-safe.
+    ## Called on the event loop that runs the gateway.
 
 func parseGatewayRequest*(requestLine: string): GatewayRequest =
   ## Parses the first line of an HTTP request into method + path.
@@ -518,13 +518,9 @@ proc agentClockMs(): int64 {.gcsafe, raises: [].} =
   int64(epochTime() * 1000)
 
 proc agentNap(ms: int) {.gcsafe, raises: [].} =
+  ## Only for a bridge built here when the caller passes none; the turns
+  ## themselves wait with `sleepAsync`.
   os.sleep(ms)
-
-var gAgentStreamNap: AgentStreamNapFn = agentNap
-  ## The streaming path needs the same dispatcher pump as the non-streaming
-  ## one: the turn's ingress actor runs on this gateway worker, so a plain
-  ## sleep left SSE without events until the deadline. Injected by the daemon,
-  ## which owns the chronos nanosecond loop for this thread.
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
 
@@ -532,39 +528,61 @@ const CorsHeaders = "Access-Control-Allow-Origin: *\r\n" &
                     "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" &
                     "Access-Control-Allow-Headers: Content-Type, Authorization\r\n"
 
-proc readHttpLine(s: Socket; deadline: MonoTime): Result[string, string] =
-  ## Reads one CRLF/LF line with a bounded length and a total request deadline.
-  ## `SO_RCVTIMEO` alone only bounds each blocking recv, not slowloris clients.
-  var line = ""
-  while line.len < GatewayMaxRequestLine:
-    if getMonoTime() > deadline:
-      return err("request deadline exceeded")
-    var c: char
-    let n = s.recv(c.addr, 1)
-    if n <= 0:
-      return err("connection closed or read timed out")
-    if c == '\r':
-      var lf: char
-      discard s.recv(lf.addr, 1)
-      return ok(line)
-    if c == '\n':
-      return ok(line)
-    line.add(c)
-  err("request line too long")
+proc remaining(deadline: Moment): chronos.Duration =
+  let left = deadline - Moment.now()
+  if left > chronos.ZeroDuration: left else: chronos.ZeroDuration
 
-proc sendResponse(s: Socket; status, contentType, body: string; log: Logger) =
+proc readHttpLine(conn: StreamTransport; deadline: Moment):
+    Future[Result[string, string]] {.async: (raises: []).} =
+  ## Reads one CRLF/LF line with a bounded length and the request deadline,
+  ## which bounds the whole request (a slowloris client cannot stretch it).
+  if Moment.now() >= deadline:
+    return err("request deadline exceeded")
+  let reading = conn.readLine(limit = GatewayMaxRequestLine + 1, sep = "\n")
+  try:
+    if not await reading.withTimeout(deadline.remaining):
+      return err("request deadline exceeded")
+    var line = reading.read()
+    if line.len > GatewayMaxRequestLine:
+      return err("request line too long")
+    if line.endsWith("\r"):
+      line.setLen(line.len - 1)
+    if line.len == 0 and conn.atEof:
+      return err("connection closed")
+    return ok(line)
+  except CancelledError:
+    return err("request cancelled")
+  except CatchableError as e:
+    return err("connection closed or read failed: " & e.msg)
+
+proc sendRaw(conn: StreamTransport; data: string): Future[bool] {.async: (raises: []).} =
+  ## False when the client is gone.
+  if data.len == 0:
+    return true
+  try:
+    discard await conn.write(data)
+    return true
+  except CancelledError:
+    return false
+  except CatchableError:
+    return false
+
+proc sendResponse(conn: StreamTransport; status, contentType, body: string;
+                  log: Logger): Future[void] {.async: (raises: []).} =
   let resp = "HTTP/1.1 " & status & "\r\n" &
              CorsHeaders &
              "Content-Type: " & contentType & "; charset=utf-8\r\n" &
              "Content-Length: " & $body.len & "\r\n" &
              "Connection: close\r\n\r\n" & body
-  try: s.send(resp) except CatchableError:
-    log.warn("http_gateway: sendResponse failed: " & getCurrentExceptionMsg())
+  if not await conn.sendRaw(resp):
+    log.warn("http_gateway: sendResponse failed: client gone")
 
-proc sendJson(s: Socket; body: string; log: Logger) =
-  s.sendResponse("200 OK", "application/json", body, log)
+proc sendJson(conn: StreamTransport; body: string; log: Logger): Future[void]
+    {.async: (raises: []).} =
+  await conn.sendResponse("200 OK", "application/json", body, log)
 
-proc sendSseHeaders(s: Socket; log: Logger): bool =
+proc sendSseHeaders(conn: StreamTransport; log: Logger): Future[bool]
+    {.async: (raises: []).} =
   ## Sends SSE-specific response headers, keeps connection open.
   ## Returns false when the client is already gone.
   let headers = "HTTP/1.1 200 OK\r\n" &
@@ -572,20 +590,14 @@ proc sendSseHeaders(s: Socket; log: Logger): bool =
                 "Content-Type: text/event-stream\r\n" &
                 "Cache-Control: no-cache\r\n" &
                 "Connection: keep-alive\r\n\r\n"
-  try:
-    s.send(headers)
-    true
-  except CatchableError:
-    log.warn("http_gateway: sendSseHeaders failed: " & getCurrentExceptionMsg())
-    false
+  result = await conn.sendRaw(headers)
+  if not result:
+    log.warn("http_gateway: sendSseHeaders failed: client gone")
 
-proc sendSseData(s: Socket; event, data: string): bool =
+proc sendSseData(conn: StreamTransport; event, data: string): Future[bool]
+    {.async: (raises: []).} =
   ## Returns false if the connection is broken.
-  try:
-    s.send(buildSseEvent(event, data))
-    true
-  except CatchableError:
-    false
+  return await conn.sendRaw(buildSseEvent(event, data))
 
 # ── Query string parsing ──────────────────────────────────────────────────────
 
@@ -641,505 +653,67 @@ proc parseChatPost*(body: string): Result[InboundMessage, string] =
     channel:   ckCli,
   ))
 
-# ── Connection handler ────────────────────────────────────────────────────────
-
-proc tryAcquireSseConnection(): bool {.gcsafe.}
-proc releaseSseConnection() {.gcsafe.}
-proc runAdmittedAgentTurn*(body: string;
-                           bridge: ChatBridge;
-                           dispatch: GatewayAgentDispatchFn;
-                           authorize: AuthorizeFn;
-                           tokenConfigured: bool;
-                           now: AgentNowFn;
-                           timeoutMs = DefaultAgentTurnTimeoutMs;
-                           model = ""): AgentChatReply {.gcsafe.}
-
-proc readRequestBody(client: Socket; contentLength: int;
-                    deadline: MonoTime): string =
-  ## Reads at most `contentLength` bytes before the request deadline. Returns
-  ## whatever arrived; the caller validates emptiness.
-  if contentLength <= 0:
-    return ""
-  var buf = newString(contentLength)
-  var received = 0
-  while received < contentLength:
-    if getMonoTime() > deadline:
-      break
-    let n = client.recv(buf[received].addr, contentLength - received)
-    if n <= 0:
-      break
-    received += n
-  if received > 0: buf[0 ..< received] else: ""
-
-proc readRequestBodyStrict(client: Socket; contentLength: int;
-                           deadline: MonoTime): Result[string, string] =
-  ## Like `readRequestBody`, but refuses a short read: a JSON prefix is not the
-  ## body the client declared, and acting on it would accept a truncated
-  ## request.
-  if contentLength <= 0:
-    return ok("")
-  var buf = newString(contentLength)
-  var received = 0
-  while received < contentLength:
-    if getMonoTime() > deadline:
-      return err("request body incomplete")
-    let n = client.recv(buf[received].addr, contentLength - received)
-    if n <= 0:
-      break
-    received += n
-  if received != contentLength:
-    return err("request body incomplete")
-  ok(buf)
-
-proc handleGatewayConn(client: Socket;
-                        statusFn: GatewayStatusFn;
-                        logFn:    GatewayLogFn;
-                        eventFn:  GatewayEventFn;
-                        inboundFn: GatewayInboundFn;
-                        agentDispatchFn: GatewayAgentDispatchFn;
-                        sessionsFn: GatewaySessionsFn;
-                        providersFn: GatewayProvidersFn;
-                        sessionActionFn: GatewaySessionActionFn;
-                        authorizeFn: AuthorizeFn;
-                        chatBridge: ChatBridge;
-                        modelName: string;
-                        agentTimeoutMs: int;
-                        authToken: string;
-                        log:      Logger) {.gcsafe.} =
-  defer:
-    try: client.close() except CatchableError: discard
-  try:
-    let deadline = getMonoTime() + initDuration(seconds = GatewayRequestDeadlineSec)
-    let requestLineResult = client.readHttpLine(deadline)
-    if requestLineResult.isErr:
-      client.sendResponse("400 Bad Request", "text/plain",
-                          requestLineResult.error & "\n", log)
-      return
-    let requestLine = requestLineResult.get
-    if requestLine.len == 0:
-      return
-
-    ## Drain headers with bounded line count/bytes and a total deadline.
-    var rawPath = if requestLine.splitWhitespace().len >= 2: requestLine.splitWhitespace()[1] else: "/"
-    var contentLength = 0
-    var authHeader = ""
-    var contentType = ""
-    var origin = ""
-    var headerLines = 0
-    var headerBytes = 0
-    while true:
-      if headerLines >= GatewayMaxHeaderLines:
-        client.sendResponse("400 Bad Request", "text/plain", "too many headers\n", log)
-        return
-      let headerResult = client.readHttpLine(deadline)
-      if headerResult.isErr:
-        client.sendResponse("400 Bad Request", "text/plain",
-                            headerResult.error & "\n", log)
-        return
-      inc headerLines
-      headerBytes += headerResult.value.len
-      if headerBytes > GatewayMaxHeaderBytes:
-        client.sendResponse("400 Bad Request", "text/plain", "headers too large\n", log)
-        return
-      let h = headerResult.value
-      if h.len == 0: break
-      let lc = h.toLowerAscii()
-      if lc.startsWith("content-length:"):
-        let val = lc[15..^1].strip()
-        try:
-          let parsed = parseBiggestInt(val)
-          if parsed > MaxApiRequestBytes:
-            client.sendResponse("413 Payload Too Large", "application/json",
-                                "{\"error\":{\"message\":\"body too large\"," &
-                                "\"type\":\"invalid_request_error\"," &
-                                "\"code\":\"payload_too_large\"}}\n", log)
-            return
-          contentLength = parsed.int
-        except ValueError:
-          discard
-      elif lc.startsWith("authorization:"):
-        authHeader = h[14..^1].strip()
-      elif lc.startsWith("content-type:"):
-        contentType = h[13..^1].strip()
-      elif lc.startsWith("origin:"):
-        origin = h[7..^1].strip()
-
-    let req = parseGatewayRequest(requestLine)
-    var action = routeGatewayRequest(req)
-    if req.meth == "OPTIONS":
-      ## Preflights are answered before the body is read, but `/api/*` still
-      ## needs the bearer check: `Access-Control-Allow-Origin: *` would
-      ## otherwise let any page probe the data routes from loopback.
-      if isApiRouteAction(action) and
-         not isAuthorized(authHeader, authToken):
-        client.sendResponse("401 Unauthorized", "application/json",
-                            "{\"error\":\"unauthorized\"}\n", log)
-        return
-      client.sendResponse("204 No Content", "text/plain", "", log)
-      return
-    var sessionTaskUser = ""
-    if action == "notfound" and req.meth == "POST":
-      let parsedTaskPath = parseSessionTaskPath(req.path)
-      if parsedTaskPath.isOk:
-        action = "session_task"
-        sessionTaskUser = parsedTaskPath.get()
-    case gatewayAuthVerdict(action, authHeader, authToken)
-    of gavRejected:
-      client.sendResponse("401 Unauthorized", "application/json",
-                          "{\"error\":\"unauthorized\"}\n", log)
-      return
-    of gavNoToken:
-      client.sendResponse("401 Unauthorized", "application/json",
-                          "{\"error\":\"api routes require DONKEY_HTTP_TOKEN\"}\n", log)
-      return
-    of gavPublic, gavAllowed:
-      discard
-    if not isPublicGatewayAction(action) and authToken.len == 0 and origin.len > 0 and
-       not isLocalOrigin(origin):
-      client.sendResponse("403 Forbidden", "application/json",
-                          "{\"error\":\"cross-origin access requires a token\"}\n", log)
-      return
-
-    case action
-    of "index":
-      client.sendResponse("200 OK", "text/plain",
-        "Donkey HTTP gateway\nEndpoints: /dashboard /api/status /api/logs /api/events /api/chat /v1/models /v1/chat/completions\n", log)
-
-    of "health":
-      client.sendResponse("200 OK", "text/plain", "ok\n", log)
-
-    of "dashboard":
-      client.sendResponse("200 OK", "text/html", buildDashboardHtml(), log)
-
-    of "status":
-      let st = statusFn()
-      client.sendJson(buildStatusBody(st), log)
-
-    of "logs":
-      let n = parseQueryInt(rawPath, "n", 50)
-      let entries = logFn(n)
-      client.sendJson(buildLogsBody(entries), log)
-
-    of "sessions":
-      if req.meth != "GET":
-        client.sendResponse("405 Method Not Allowed", "application/json", "", log)
-      else:
-        let limit = parseQueryInt(rawPath, "limit", DashboardDefaultLimit)
-        let offset = parseQueryInt(rawPath, "offset", 0)
-        let res = handleSessionsRequest(sessionsFn, limit, offset)
-        client.sendResponse(httpStatusLine(res.status), res.contentType,
-                            res.body, log)
-
-    of "providers":
-      if req.meth != "GET":
-        client.sendResponse("405 Method Not Allowed", "application/json", "", log)
-      else:
-        let res = handleProvidersRequest(providersFn)
-        client.sendResponse(httpStatusLine(res.status), res.contentType,
-                            res.body, log)
-
-    of "session_task":
-      if req.meth != "POST":
-        client.sendResponse("405 Method Not Allowed", "application/json", "", log)
-      else:
-        let bodyResult = readRequestBodyStrict(client, contentLength, deadline)
-        if bodyResult.isErr:
-          client.sendResponse("400 Bad Request", "application/json",
-                              "{\"error\":\"request body incomplete\"}\n", log)
-          return
-        let res = handleSessionActionRequest(sessionActionFn, sessionTaskUser,
-                                             bodyResult.get(), authHeader, authToken)
-        client.sendResponse(httpStatusLine(res.status), res.contentType,
-                            res.body, log)
-
-    of "events":
-      if not tryAcquireSseConnection():
-        client.sendResponse("503 Service Unavailable", "text/plain",
-                            "too many event streams\n", log)
-        return
-      try:
-        if not client.sendSseHeaders(log):
-          return
-        ## Push a heartbeat comment immediately to confirm stream started.
-        try: client.send(": connected\n\n") except CatchableError: discard
-        ## Poll loop: push log + agent event snapshots every SseHeartbeatIntervalMs.
-        var lastLogCount   = 0
-        var lastEventCount = 0
-        for _ in 0 ..< SseMaxPollCycles:
-          os.sleep(SseHeartbeatIntervalMs)
-          let entries = logFn(100)
-          if entries.len > lastLogCount or entries.len > 0:
-            lastLogCount = entries.len
-            if not client.sendSseData("logs", buildLogsBody(entries)):
-              break
-          if eventFn != nil:
-            let evs = eventFn(100)
-            if evs.len > lastEventCount or evs.len > 0:
-              lastEventCount = evs.len
-              if not client.sendSseData("agent", buildAgentEventsBody(evs)):
-                break
-          if entries.len == 0 and (eventFn == nil or eventFn(1).len == 0):
-            ## Heartbeat comment to keep connection alive.
-            try: client.send(": heartbeat\n\n") except CatchableError: break
-      finally:
-        releaseSseConnection()
-
-    of "chat":
-      let methAction = routeChatMethod(req.meth)
-      case methAction
-      of "chat":
-        if not chatRequestAllowed(origin, contentType, authToken):
-          client.sendResponse("403 Forbidden", "application/json",
-                             "{\"error\":\"cross-origin chat requires a token\"}\n", log)
-        elif inboundFn == nil:
-          client.sendResponse("503 Service Unavailable", "application/json",
-                             "{\"error\":\"inbound handler not configured\"}\n", log)
-        else:
-          let body = readRequestBody(client, contentLength, deadline)
-          if body.len == 0:
-            client.sendResponse("400 Bad Request", "application/json",
-                               "{\"error\":\"empty body\"}\n", log)
-          else:
-            let msgResult = parseChatPost(body)
-            if msgResult.isErr:
-              client.sendResponse("400 Bad Request", "application/json",
-                                 "{\"error\":\"" & msgResult.error & "\"}\n", log)
-            else:
-              inboundFn(msgResult.get())
-              client.sendResponse("202 Accepted", "application/json",
-                                 "{\"status\":\"accepted\"}\n", log)
-      of "chat_get":
-        client.sendResponse("200 OK", "application/json",
-                           "{\"info\":\"POST to /api/chat to send messages\"}\n", log)
-      else:
-        client.sendResponse("405 Method Not Allowed", "text/plain", "", log)
-
-    of "openai_chat":
-      if req.meth != "POST":
-        client.sendResponse("405 Method Not Allowed", "application/json", "", log)
-      else:
-        let body = readRequestBody(client, contentLength, deadline)
-        if agentChatStreamRequested(body):
-          var streamNapFn: AgentStreamNapFn = agentNap
-          {.cast(gcsafe).}:
-            streamNapFn = gAgentStreamNap
-          let openSse = proc(): bool {.gcsafe.} =
-            client.sendSseHeaders(log)
-          let sendSse = proc(chunk: string): bool {.gcsafe.} =
-            try:
-              client.send(chunk)
-              true
-            except CatchableError:
-              false
-          let streamResult = runAgentStream(
-            body            = body,
-            bridge          = chatBridge,
-            dispatch        = agentDispatchFn,
-            authorize       = authorizeFn,
-            tokenConfigured = authToken.len > 0,
-            now             = agentNowSeconds,
-            openStream      = openSse,
-            send            = sendSse,
-            acquireSlot     = tryAcquireSseConnection,
-            releaseSlot     = releaseSseConnection,
-            streamNow       = agentClockMs,
-            streamNap       = streamNapFn,
-            timeoutMs       = agentTimeoutMs,
-            model           = modelName,
-          )
-          if streamResult.outcome == asPreflightError:
-            client.sendResponse(httpStatusLine(streamResult.reply.status),
-                                "application/json",
-                                streamResult.reply.body & "\n", log)
-        else:
-          let reply = runAdmittedAgentTurn(
-            body            = body,
-            bridge          = chatBridge,
-            dispatch        = agentDispatchFn,
-            authorize       = authorizeFn,
-            tokenConfigured = authToken.len > 0,
-            now             = agentNowSeconds,
-            timeoutMs       = agentTimeoutMs,
-            model           = modelName,
-          )
-          client.sendResponse(httpStatusLine(reply.status), "application/json",
-                              reply.body & "\n", log)
-
-    of "openai_models":
-      if req.meth != "GET":
-        client.sendResponse("405 Method Not Allowed", "application/json", "", log)
-      else:
-        client.sendJson(buildOpenAiModels(modelName, epochTime().int64), log)
-
-    of "notfound":
-      client.sendResponse("404 Not Found", "text/plain", "Not found\n", log)
-
-    else:
-      client.sendResponse("405 Method Not Allowed", "text/plain", "", log)
-
-  except CatchableError:
-    let errMsg = getCurrentExceptionMsg()
-    log.warn("http_gateway: connection handler error: " & errMsg)
-    recordWebhookFailure("http_gateway", errMsg)
-
-# ── Gateway thread ────────────────────────────────────────────────────────────
-
-type GatewayArgs = object
-  port:      int
-  bindAddr:  string
-  authToken: string
-  statusFn:  GatewayStatusFn
-  logFn:     GatewayLogFn
-  eventFn:   GatewayEventFn
-  inboundFn: GatewayInboundFn
-  agentDispatchFn: GatewayAgentDispatchFn
-  sessionsFn: GatewaySessionsFn
-  providersFn: GatewayProvidersFn
-  sessionActionFn: GatewaySessionActionFn
-  authorizeFn: AuthorizeFn
-  chatBridge: ChatBridge
-  modelName: string
-  agentTimeoutMs: int
-  log:       Logger
-
-var gGatewayStatusFn: GatewayStatusFn
-var gGatewayLogFn:    GatewayLogFn
-var gGatewayEventFn:  GatewayEventFn
-var gGatewayInboundFn: GatewayInboundFn
-var gGatewayAgentDispatchFn: GatewayAgentDispatchFn
-var gGatewaySessionsFn: GatewaySessionsFn
-var gGatewayProvidersFn: GatewayProvidersFn
-var gGatewaySessionActionFn: GatewaySessionActionFn
-var gGatewayAuthorizeFn: AuthorizeFn
-var gGatewayChatBridge: ChatBridge
-var gGatewayModelName: string
-var gGatewayAgentTimeoutMs: int
-var gGatewayLog:      Logger
-var gGatewayAuthToken: string
-
-const GatewayWorkerCount = 8
-const GatewayQueueDepth = 64
-
-var
-  gGatewayQueue {.global.}: Channel[SocketHandle]
-  gGatewayWorkers {.global.}: array[GatewayWorkerCount, Thread[int]]
-  gGatewayPoolStarted = false
-  gGatewayPoolAttempted = false
-
-proc applyClientTimeouts(sock: Socket; seconds: int = 10): Result[void, string] =
-  ## Bounds header reads and sends from a connected client.
-  var tv: posix.Timeval
-  tv.tv_sec = posix.Time(seconds)
-  tv.tv_usec = posix.Suseconds(0)
-  if setsockopt(sock.getFd, SOL_SOCKET, SO_RCVTIMEO, addr tv, SockLen(sizeof(tv))) != 0:
-    return err("SO_RCVTIMEO failed")
-  if setsockopt(sock.getFd, SOL_SOCKET, SO_SNDTIMEO, addr tv, SockLen(sizeof(tv))) != 0:
-    return err("SO_SNDTIMEO failed")
-  ok()
-
-type HttpConnectionArgs = object
-  client:    Socket
-  statusFn:  GatewayStatusFn
-  logFn:     GatewayLogFn
-  eventFn:   GatewayEventFn
-  inboundFn: GatewayInboundFn
-  authToken: string
-  log:       Logger
+# ── Admission ─────────────────────────────────────────────────────────────────
+#
+# Everything runs on one event loop, so the counters are plain integers: no
+# lock and no thread can touch them concurrently. The limits are resource
+# caps (open connections, streams, waiting turns), decided by the pure
+# `capacity.admitLongLived` policy.
 
 var gActiveHttpConnections = 0
 var gActiveSseConnections = 0
 var gActiveAgentTurns = 0
-  ## Non-streaming `/v1/chat/completions` workers. Streaming chat is counted
-  ## as an SSE connection instead, so one worker is never counted twice.
-var gHttpConnLock: Lock
-initLock(gHttpConnLock)  # Module init runs before any gateway thread starts.
+  ## Non-streaming `/v1/chat/completions` turns. Streaming chat is counted
+  ## as an SSE connection instead, so one request is never counted twice.
 
-proc tryAcquireHttpConnection(): bool =
-  acquire(gHttpConnLock)
-  try:
-    if gActiveHttpConnections >= MaxConcurrentHttpConnections:
-      return false
-    inc gActiveHttpConnections
-    true
-  finally:
-    release(gHttpConnLock)
+proc tryAcquireHttpConnection(): bool {.gcsafe, raises: [].} =
+  if gActiveHttpConnections >= MaxConcurrentHttpConnections:
+    return false
+  inc gActiveHttpConnections
+  true
 
-proc releaseHttpConnection() =
-  acquire(gHttpConnLock)
-  try:
-    if gActiveHttpConnections > 0:
-      dec gActiveHttpConnections
-  finally:
-    release(gHttpConnLock)
+proc releaseHttpConnection() {.gcsafe, raises: [].} =
+  if gActiveHttpConnections > 0:
+    dec gActiveHttpConnections
 
-# ── Long-lived worker admission ───────────────────────────────────────────────
-#
-# Non-streaming agent turns and SSE streams both block a gateway worker for
-# their whole lifetime. They share one counter set under `gHttpConnLock` and
-# one policy (`capacity.admitLongLived`): at most `MaxLongLivedWorkers` of the
-# 8 workers may be long-lived, so `/health`, `/api/*` and `/v1/models` always
-# keep the 2 reserved workers. There is no second pool and no class is exempt.
+proc resetLongLivedCountersForTest*() {.gcsafe, raises: [].} =
+  ## Test/diagnostic hook: clears both long-lived counters.
+  gActiveAgentTurns = 0
+  gActiveSseConnections = 0
 
-proc resetLongLivedCountersForTest*() {.gcsafe.} =
-  ## Test/diagnostic hook: clears both counters. The gateway never calls it and
-  ## it must not run while worker threads are serving requests.
-  acquire(gHttpConnLock)
-  try:
-    gActiveAgentTurns = 0
-    gActiveSseConnections = 0
-  finally:
-    release(gHttpConnLock)
-
-proc longLivedOccupancy*(): capacity.LongLivedSnapshot {.gcsafe.} =
+proc longLivedOccupancy*(): capacity.LongLivedSnapshot {.gcsafe, raises: [].} =
   ## Occupancy before the next request is decided. `longLivedWorkers` is the
   ## sum of both classes, never just the larger one.
-  acquire(gHttpConnLock)
-  try:
-    capacity.LongLivedSnapshot(
-      pendingTurns:     gActiveAgentTurns,
-      sseConnections:   gActiveSseConnections,
-      longLivedWorkers: gActiveAgentTurns + gActiveSseConnections,
-    )
-  finally:
-    release(gHttpConnLock)
+  capacity.LongLivedSnapshot(
+    pendingTurns:     gActiveAgentTurns,
+    sseConnections:   gActiveSseConnections,
+    longLivedWorkers: gActiveAgentTurns + gActiveSseConnections,
+  )
 
 proc tryReserveLongLived*(kind: capacity.LongLivedKind):
-    capacity.CapacityVerdict {.gcsafe.} =
+    capacity.CapacityVerdict {.gcsafe, raises: [].} =
   ## Runs `admitLongLived` against the live counters and increments the class
   ## counter only on `cvAdmit`. A refusal leaves the snapshot untouched, so an
-  ## over-capacity request never consumes (or releases) someone else's worker.
-  acquire(gHttpConnLock)
-  try:
-    let snapshot = capacity.LongLivedSnapshot(
-      pendingTurns:     gActiveAgentTurns,
-      sseConnections:   gActiveSseConnections,
-      longLivedWorkers: gActiveAgentTurns + gActiveSseConnections,
-    )
-    result = capacity.admitLongLived(kind, snapshot)
-    if result.admitted:
-      case kind
-      of capacity.llChatTurn: inc gActiveAgentTurns
-      of capacity.llSseConnection: inc gActiveSseConnections
-  finally:
-    release(gHttpConnLock)
-
-proc releaseLongLived*(kind: capacity.LongLivedKind) {.gcsafe.} =
-  acquire(gHttpConnLock)
-  try:
+  ## over-capacity request never consumes (or releases) someone else's slot.
+  result = capacity.admitLongLived(kind, longLivedOccupancy())
+  if result.admitted:
     case kind
-    of capacity.llChatTurn:
-      if gActiveAgentTurns > 0:
-        dec gActiveAgentTurns
-    of capacity.llSseConnection:
-      if gActiveSseConnections > 0:
-        dec gActiveSseConnections
-  finally:
-    release(gHttpConnLock)
+    of capacity.llChatTurn: inc gActiveAgentTurns
+    of capacity.llSseConnection: inc gActiveSseConnections
 
-proc tryAcquireSseConnection(): bool {.gcsafe.} =
+proc releaseLongLived*(kind: capacity.LongLivedKind) {.gcsafe, raises: [].} =
+  case kind
+  of capacity.llChatTurn:
+    if gActiveAgentTurns > 0:
+      dec gActiveAgentTurns
+  of capacity.llSseConnection:
+    if gActiveSseConnections > 0:
+      dec gActiveSseConnections
+
+proc tryAcquireSseConnection(): bool {.gcsafe, raises: [].} =
   tryReserveLongLived(capacity.llSseConnection).admitted
 
-proc releaseSseConnection() {.gcsafe.} =
+proc releaseSseConnection() {.gcsafe, raises: [].} =
   releaseLongLived(capacity.llSseConnection)
 
 proc runAdmittedAgentTurn*(body: string;
@@ -1149,13 +723,14 @@ proc runAdmittedAgentTurn*(body: string;
                            tokenConfigured: bool;
                            now: AgentNowFn;
                            timeoutMs: int;
-                           model: string): AgentChatReply =
-  ## Non-streaming `/v1/chat/completions`: reserve one long-lived worker
-  ## before the turn can register or dispatch. A refusal never reaches the
-  ## dispatch hook and keeps the streaming path's mapping: `429` with a
+                           model: string;
+                           nap: AgentNapFn = nil): Future[AgentChatReply]
+                          {.async.} =
+  ## Non-streaming `/v1/chat/completions`: reserve one long-lived slot before
+  ## the turn can register or dispatch. A refusal never reaches the dispatch
+  ## hook and keeps the streaming path's mapping: `429` with a
   ## `rate_limit_error` body for both capacity verdicts (`cvNoWorker` is a
-  ## backlog condition that clears on its own, not a server fault, so `503`
-  ## would invite clients to retry a different way for no benefit). The code
+  ## backlog condition that clears on its own, not a server fault). The code
   ## still distinguishes a full turn queue from a full shared pool.
   ##
   ## `finally` releases the reservation on every exit: 200, 502 from a
@@ -1182,7 +757,7 @@ proc runAdmittedAgentTurn*(body: string;
       body: buildAgentError(message, "rate_limit_error", code),
     )
   try:
-    runAgentChat(
+    return await runAgentChat(
       body            = body,
       bridge          = bridge,
       dispatch        = dispatch,
@@ -1191,126 +766,359 @@ proc runAdmittedAgentTurn*(body: string;
       now             = now,
       timeoutMs       = timeoutMs,
       model           = model,
+      nap             = nap,
     )
   finally:
     releaseLongLived(capacity.llChatTurn)
 
-proc gatewayWorker(id: int) {.thread.} =
-  {.cast(gcsafe).}:
-    while true:
-      let fd = gGatewayQueue.recv()
-      if fd == SocketHandle(-1):
+# ── Connection handler ────────────────────────────────────────────────────────
+
+type
+  GatewayContext = ref object
+    ## Everything a connection needs, captured by the handler closure.
+    statusFn:        GatewayStatusFn
+    logFn:           GatewayLogFn
+    eventFn:         GatewayEventFn
+    inboundFn:       GatewayInboundFn
+    agentDispatchFn: GatewayAgentDispatchFn
+    sessionsFn:      GatewaySessionsFn
+    providersFn:     GatewayProvidersFn
+    sessionActionFn: GatewaySessionActionFn
+    authorizeFn:     AuthorizeFn
+    chatBridge:      ChatBridge
+    modelName:       string
+    agentTimeoutMs:  int
+    authToken:       string
+    log:             Logger
+
+  GatewayServer* = ref object
+    ## A running gateway; `stopHttpGateway` closes it.
+    server: StreamServer
+    port*:  int
+
+proc readRequestBody(conn: StreamTransport; contentLength: int;
+                     deadline: Moment): Future[string] {.async: (raises: []).} =
+  ## Reads at most `contentLength` bytes before the request deadline. Returns
+  ## whatever arrived; the caller validates emptiness.
+  if contentLength <= 0:
+    return ""
+  var buf = newString(contentLength)
+  var received = 0
+  while received < contentLength and Moment.now() < deadline:
+    let reading = conn.readOnce(addr buf[received], contentLength - received)
+    try:
+      if not await reading.withTimeout(deadline.remaining):
         break
-      var client: Socket
-      try:
-        client = newSocket(fd, buffered = true)
-      except CatchableError as exc:
-        gGatewayLog.warn("http_gateway: cannot wrap accepted socket: " & exc.msg)
-        discard posix.close(fd)
-        releaseHttpConnection()
-        continue
-      let timeoutResult = applyClientTimeouts(client)
-      if timeoutResult.isErr:
-        gGatewayLog.warn("http_gateway: " & timeoutResult.error)
-        client.close()
-        releaseHttpConnection()
-        continue
-      try:
-        handleGatewayConn(client, gGatewayStatusFn, gGatewayLogFn, gGatewayEventFn,
-                          gGatewayInboundFn, gGatewayAgentDispatchFn,
-                          gGatewaySessionsFn, gGatewayProvidersFn,
-                          gGatewaySessionActionFn,
-                          gGatewayAuthorizeFn, gGatewayChatBridge, gGatewayModelName,
-                          gGatewayAgentTimeoutMs, gGatewayAuthToken, gGatewayLog)
-      finally:
-        releaseHttpConnection()
+      let n = reading.read()
+      if n <= 0:
+        break
+      received += n
+    except CatchableError:
+      break
+  buf.setLen(received)
+  return buf
 
-var gGatewayListenerActive = false
-  ## The pool and the listener have different lifetimes: a failed bind leaves
-  ## the pool usable, so a retry must be allowed once the port is free.
+proc readRequestBodyStrict(conn: StreamTransport; contentLength: int;
+                           deadline: Moment): Future[Result[string, string]]
+                          {.async: (raises: []).} =
+  ## Like `readRequestBody`, but refuses a short read: a JSON prefix is not the
+  ## body the client declared, and acting on it would accept a truncated
+  ## request.
+  let body = await conn.readRequestBody(contentLength, deadline)
+  if body.len != max(contentLength, 0):
+    return err("request body incomplete")
+  return ok(body)
 
-proc gatewayThread(args: GatewayArgs) {.thread.} =
-  {.cast(gcsafe).}:
-    let host =
-      if args.bindAddr.startsWith("[") and args.bindAddr.endsWith("]"):
-        args.bindAddr[1 .. ^2]
-      else:
-        args.bindAddr
-    let ipv6 = ':' in host
-    var server: Socket
-    try:
-      server =
-        if ipv6: newSocket(Domain.AF_INET6, SockType.SOCK_STREAM, Protocol.IPPROTO_TCP)
-        else: newSocket()
-      server.setSockOpt(OptReuseAddr, true)
-      server.bindAddr(Port(args.port), host)
-      server.listen()
-      {.cast(gcsafe).}:
-        gGatewayListenerActive = true
-    except CatchableError as exc:
-      args.log.error("http_gateway: bind " & host & ":" & $args.port & " failed — " & exc.msg)
-      {.cast(gcsafe).}:
-        gGatewayListenerActive = false
-      if server != nil:
-        server.close()
-      return
-    while true:
-      var client: Socket
-      server.accept(client)
-      let timeoutResult = applyClientTimeouts(client)
-      if timeoutResult.isErr:
-        args.log.warn("http_gateway: " & timeoutResult.error)
-        client.close()
-        continue
-      if not tryAcquireHttpConnection():
-        client.sendResponse("503 Service Unavailable", "text/plain",
-                            "too many connections\n", args.log)
-        client.close()
-        continue
-      if not gGatewayQueue.trySend(client.getFd):
-        client.sendResponse("503 Service Unavailable", "text/plain",
-                            "too many connections\n", args.log)
-        client.close()
-        releaseHttpConnection()
-        continue
-      # Ownership of the fd transfers to the worker; do not close here.
-
-var gGatewayThread: Thread[GatewayArgs]
-
-proc startGatewayPool(log: Logger): Result[void, string] =
-  ## Opens the queue and starts every worker. Must be called with
-  ## `gHttpConnLock` held so concurrent `startHttpGateway` calls cannot start
-  ## duplicate workers. The pool is only marked started once the queue is
-  ## open; a partial thread-start failure is reported but never retried into
-  ## duplicates because the queue cannot be reopened.
-  if gGatewayPoolStarted:
-    return ok()
-  if gGatewayPoolAttempted:
-    return err("http_gateway: worker pool initialization already failed; not retrying")
-  gGatewayPoolAttempted = true
+proc handleGatewayConn(ctx: GatewayContext; client: StreamTransport)
+    {.async: (raises: []).} =
+  let log = ctx.log
   try:
-    gGatewayQueue.open(GatewayQueueDepth)
-  except CatchableError as exc:
-    return err("http_gateway: cannot open worker queue — " & exc.msg)
+    let deadline = Moment.now() + chronos.seconds(GatewayRequestDeadlineSec)
+    let requestLineResult = await client.readHttpLine(deadline)
+    if requestLineResult.isErr:
+      if requestLineResult.error != "connection closed":
+        await client.sendResponse("400 Bad Request", "text/plain",
+                                  requestLineResult.error & "\n", log)
+      return
+    let requestLine = requestLineResult.get
+    if requestLine.len == 0:
+      return
 
-  var started = 0
-  var firstError = ""
-  for i in 0 ..< GatewayWorkerCount:
-    try:
-      createThread(gGatewayWorkers[i], gatewayWorker, i)
-      inc started
-    except CatchableError as exc:
-      if firstError.len == 0:
-        firstError = exc.msg
+    ## Drain headers with bounded line count/bytes and a total deadline.
+    let rawPath = if requestLine.splitWhitespace().len >= 2: requestLine.splitWhitespace()[1] else: "/"
+    var contentLength = 0
+    var authHeader = ""
+    var contentType = ""
+    var origin = ""
+    var headerLines = 0
+    var headerBytes = 0
+    while true:
+      if headerLines >= GatewayMaxHeaderLines:
+        await client.sendResponse("400 Bad Request", "text/plain", "too many headers\n", log)
+        return
+      let headerResult = await client.readHttpLine(deadline)
+      if headerResult.isErr:
+        await client.sendResponse("400 Bad Request", "text/plain",
+                                  headerResult.error & "\n", log)
+        return
+      inc headerLines
+      headerBytes += headerResult.value.len
+      if headerBytes > GatewayMaxHeaderBytes:
+        await client.sendResponse("400 Bad Request", "text/plain", "headers too large\n", log)
+        return
+      let h = headerResult.value
+      if h.len == 0: break
+      let lc = h.toLowerAscii()
+      if lc.startsWith("content-length:"):
+        let val = lc[15..^1].strip()
+        try:
+          let parsed = parseBiggestInt(val)
+          if parsed > MaxApiRequestBytes:
+            await client.sendResponse("413 Payload Too Large", "application/json",
+                                      "{\"error\":{\"message\":\"body too large\"," &
+                                      "\"type\":\"invalid_request_error\"," &
+                                      "\"code\":\"payload_too_large\"}}\n", log)
+            return
+          contentLength = parsed.int
+        except ValueError:
+          discard
+      elif lc.startsWith("authorization:"):
+        authHeader = h[14..^1].strip()
+      elif lc.startsWith("content-type:"):
+        contentType = h[13..^1].strip()
+      elif lc.startsWith("origin:"):
+        origin = h[7..^1].strip()
 
-  if started > 0:
-    gGatewayPoolStarted = true
-  if started < GatewayWorkerCount:
-    let msg = "http_gateway: started " & $started & "/" & $GatewayWorkerCount &
-              " workers — " & firstError
-    log.error(msg)
-    return err(msg)
-  ok()
+    let req = parseGatewayRequest(requestLine)
+    var action = routeGatewayRequest(req)
+    if req.meth == "OPTIONS":
+      ## Preflights are answered before the body is read, but `/api/*` still
+      ## needs the bearer check: `Access-Control-Allow-Origin: *` would
+      ## otherwise let any page probe the data routes from loopback.
+      if isApiRouteAction(action) and
+         not isAuthorized(authHeader, ctx.authToken):
+        await client.sendResponse("401 Unauthorized", "application/json",
+                                  "{\"error\":\"unauthorized\"}\n", log)
+        return
+      await client.sendResponse("204 No Content", "text/plain", "", log)
+      return
+    var sessionTaskUser = ""
+    if action == "notfound" and req.meth == "POST":
+      let parsedTaskPath = parseSessionTaskPath(req.path)
+      if parsedTaskPath.isOk:
+        action = "session_task"
+        sessionTaskUser = parsedTaskPath.get()
+    case gatewayAuthVerdict(action, authHeader, ctx.authToken)
+    of gavRejected:
+      await client.sendResponse("401 Unauthorized", "application/json",
+                                "{\"error\":\"unauthorized\"}\n", log)
+      return
+    of gavNoToken:
+      await client.sendResponse("401 Unauthorized", "application/json",
+                                "{\"error\":\"api routes require DONKEY_HTTP_TOKEN\"}\n", log)
+      return
+    of gavPublic, gavAllowed:
+      discard
+    if not isPublicGatewayAction(action) and ctx.authToken.len == 0 and
+       origin.len > 0 and not isLocalOrigin(origin):
+      await client.sendResponse("403 Forbidden", "application/json",
+                                "{\"error\":\"cross-origin access requires a token\"}\n", log)
+      return
+
+    case action
+    of "index":
+      await client.sendResponse("200 OK", "text/plain",
+        "Donkey HTTP gateway\nEndpoints: /dashboard /api/status /api/logs /api/events /api/chat /v1/models /v1/chat/completions\n", log)
+
+    of "health":
+      await client.sendResponse("200 OK", "text/plain", "ok\n", log)
+
+    of "dashboard":
+      await client.sendResponse("200 OK", "text/html", buildDashboardHtml(), log)
+
+    of "status":
+      await client.sendJson(buildStatusBody(ctx.statusFn()), log)
+
+    of "logs":
+      let n = parseQueryInt(rawPath, "n", 50)
+      await client.sendJson(buildLogsBody(ctx.logFn(n)), log)
+
+    of "sessions":
+      if req.meth != "GET":
+        await client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        let limit = parseQueryInt(rawPath, "limit", DashboardDefaultLimit)
+        let offset = parseQueryInt(rawPath, "offset", 0)
+        let res = handleSessionsRequest(ctx.sessionsFn, limit, offset)
+        await client.sendResponse(httpStatusLine(res.status), res.contentType,
+                                  res.body, log)
+
+    of "providers":
+      if req.meth != "GET":
+        await client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        let res = handleProvidersRequest(ctx.providersFn)
+        await client.sendResponse(httpStatusLine(res.status), res.contentType,
+                                  res.body, log)
+
+    of "session_task":
+      if req.meth != "POST":
+        await client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        let bodyResult = await client.readRequestBodyStrict(contentLength, deadline)
+        if bodyResult.isErr:
+          await client.sendResponse("400 Bad Request", "application/json",
+                                    "{\"error\":\"request body incomplete\"}\n", log)
+          return
+        let res = handleSessionActionRequest(ctx.sessionActionFn, sessionTaskUser,
+                                             bodyResult.get(), authHeader, ctx.authToken)
+        await client.sendResponse(httpStatusLine(res.status), res.contentType,
+                                  res.body, log)
+
+    of "events":
+      if not tryAcquireSseConnection():
+        await client.sendResponse("503 Service Unavailable", "text/plain",
+                                  "too many event streams\n", log)
+        return
+      try:
+        if not await client.sendSseHeaders(log):
+          return
+        ## Push a heartbeat comment immediately to confirm stream started.
+        if not await client.sendRaw(": connected\n\n"):
+          return
+        ## Poll loop: push log + agent event snapshots every SseHeartbeatIntervalMs.
+        for _ in 0 ..< SseMaxPollCycles:
+          await sleepAsync(chronos.milliseconds(SseHeartbeatIntervalMs))
+          let entries = ctx.logFn(100)
+          if entries.len > 0:
+            if not await client.sendSseData("logs", buildLogsBody(entries)):
+              break
+          var agentEvents = 0
+          if ctx.eventFn != nil:
+            let evs = ctx.eventFn(100)
+            agentEvents = evs.len
+            if evs.len > 0:
+              if not await client.sendSseData("agent", buildAgentEventsBody(evs)):
+                break
+          if entries.len == 0 and agentEvents == 0:
+            ## Heartbeat comment to keep connection alive.
+            if not await client.sendRaw(": heartbeat\n\n"):
+              break
+      finally:
+        releaseSseConnection()
+
+    of "chat":
+      let methAction = routeChatMethod(req.meth)
+      case methAction
+      of "chat":
+        if not chatRequestAllowed(origin, contentType, ctx.authToken):
+          await client.sendResponse("403 Forbidden", "application/json",
+                                    "{\"error\":\"cross-origin chat requires a token\"}\n", log)
+        elif ctx.inboundFn == nil:
+          await client.sendResponse("503 Service Unavailable", "application/json",
+                                    "{\"error\":\"inbound handler not configured\"}\n", log)
+        else:
+          let body = await client.readRequestBody(contentLength, deadline)
+          if body.len == 0:
+            await client.sendResponse("400 Bad Request", "application/json",
+                                      "{\"error\":\"empty body\"}\n", log)
+          else:
+            let msgResult = parseChatPost(body)
+            if msgResult.isErr:
+              await client.sendResponse("400 Bad Request", "application/json",
+                                        "{\"error\":\"" & msgResult.error & "\"}\n", log)
+            else:
+              ctx.inboundFn(msgResult.get())
+              await client.sendResponse("202 Accepted", "application/json",
+                                        "{\"status\":\"accepted\"}\n", log)
+      of "chat_get":
+        await client.sendResponse("200 OK", "application/json",
+                                  "{\"info\":\"POST to /api/chat to send messages\"}\n", log)
+      else:
+        await client.sendResponse("405 Method Not Allowed", "text/plain", "", log)
+
+    of "openai_chat":
+      if req.meth != "POST":
+        await client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        let body = await client.readRequestBody(contentLength, deadline)
+        if agentChatStreamRequested(body):
+          let openSse: AgentStreamOpenFn = proc(): Future[bool] {.async.} =
+            return await client.sendSseHeaders(log)
+          let sendSse: AgentStreamSendFn = proc(chunk: string): Future[bool] {.async.} =
+            return await client.sendRaw(chunk)
+          let streamResult = await runAgentStream(
+            body            = body,
+            bridge          = ctx.chatBridge,
+            dispatch        = ctx.agentDispatchFn,
+            authorize       = ctx.authorizeFn,
+            tokenConfigured = ctx.authToken.len > 0,
+            now             = agentNowSeconds,
+            openStream      = openSse,
+            send            = sendSse,
+            acquireSlot     = tryAcquireSseConnection,
+            releaseSlot     = releaseSseConnection,
+            streamNow       = agentClockMs,
+            timeoutMs       = ctx.agentTimeoutMs,
+            model           = ctx.modelName,
+          )
+          if streamResult.outcome == asPreflightError:
+            await client.sendResponse(httpStatusLine(streamResult.reply.status),
+                                      "application/json",
+                                      streamResult.reply.body & "\n", log)
+        else:
+          let reply = await runAdmittedAgentTurn(
+            body            = body,
+            bridge          = ctx.chatBridge,
+            dispatch        = ctx.agentDispatchFn,
+            authorize       = ctx.authorizeFn,
+            tokenConfigured = ctx.authToken.len > 0,
+            now             = agentNowSeconds,
+            timeoutMs       = ctx.agentTimeoutMs,
+            model           = ctx.modelName,
+          )
+          await client.sendResponse(httpStatusLine(reply.status), "application/json",
+                                    reply.body & "\n", log)
+
+    of "openai_models":
+      if req.meth != "GET":
+        await client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        await client.sendJson(buildOpenAiModels(ctx.modelName, epochTime().int64), log)
+
+    of "notfound":
+      await client.sendResponse("404 Not Found", "text/plain", "Not found\n", log)
+
+    else:
+      await client.sendResponse("405 Method Not Allowed", "text/plain", "", log)
+
+  except CancelledError:
+    discard
+  except CatchableError as e:
+    log.warn("http_gateway: connection handler error: " & e.msg)
+    recordWebhookFailure("http_gateway", e.msg)
+
+# ── Server ────────────────────────────────────────────────────────────────────
+
+proc gatewayBindAddress*(bindAddr: string; port: int):
+    Result[TransportAddress, string] =
+  ## The address to listen on. A literal IP (`127.0.0.1`, `::1`, `[::1]`) is
+  ## used as it is; a host name such as `localhost` is resolved over IPv4,
+  ## as the previous `std/net` socket did for any address without a colon.
+  let host =
+    if bindAddr.startsWith("[") and bindAddr.endsWith("]"): bindAddr[1 .. ^2]
+    else: bindAddr
+  try:
+    return ok(initTAddress(host, Port(port)))
+  except CatchableError:
+    discard
+  try:
+    let resolved = resolveTAddress(host, Port(port), Domain.AF_INET)
+    if resolved.len > 0:
+      return ok(resolved[0])
+    err("cannot resolve " & host)
+  except CatchableError as e:
+    err("cannot resolve " & host & ": " & e.msg)
 
 proc startHttpGateway*(port: int;
                        statusFn: GatewayStatusFn;
@@ -1327,68 +1135,62 @@ proc startHttpGateway*(port: int;
                        chatBridge: ChatBridge = nil;
                        modelName = "";
                        agentTimeoutMs = 0;
-                       agentStreamNapFn: AgentStreamNapFn = nil;
                        log:       Logger = newLogger("http_gateway")
-                      ): Result[void, string] =
-  ## A second call would publish a new dispatcher/bridge before binding; even
-  ## if the bind failed, the running listener would keep using the new wiring.
-  if gGatewayListenerActive:
-    return err("http_gateway: already running")
+                      ): Result[GatewayServer, string] =
+  ## Binds and starts the gateway on the calling thread's Chronos loop; the
+  ## connections are served while that loop runs (the daemon's main loop).
+  ## The providers are called on that loop, so they need no locking.
   ## A private bridge is never fed by the daemon outbox drainer: every turn
   ## would register and poll a queue nobody drains, ending in 504.
   if agentDispatchFn != nil and chatBridge == nil:
     return err("http_gateway: the agent endpoint requires the shared ChatBridge")
-  if agentStreamNapFn != nil:
-    {.cast(gcsafe).}:
-      gAgentStreamNap = agentStreamNapFn
-  ## Starts the HTTP gateway on a dedicated OS thread.
-  ## statusFn, logFn, and eventFn are called on each request; they must be gcsafe.
-  ## inboundFn is called when POST /api/chat is received; may be nil.
-  ## agentDispatchFn starts `/v1/chat/completions` turns through the same
-  ## ingress; `chatBridge` is shared with the daemon outbox drainer.
-  {.cast(gcsafe).}:
-    gGatewayStatusFn  = statusFn
-    gGatewayLogFn     = logFn
-    gGatewayEventFn   = eventFn
-    gGatewayInboundFn = inboundFn
-    gGatewayAgentDispatchFn = agentDispatchFn
-    gGatewaySessionsFn = sessionsFn
-    gGatewayProvidersFn = providersFn
-    gGatewaySessionActionFn = sessionActionFn
-    gGatewayAuthorizeFn = authorizeFn
-    gGatewayChatBridge = if chatBridge != nil: chatBridge
-                         else: newChatBridge(agentClockMs, agentNap)
-    gGatewayModelName = modelName
-    gGatewayAgentTimeoutMs =
+  let ctx = GatewayContext(
+    statusFn: statusFn, logFn: logFn, eventFn: eventFn, inboundFn: inboundFn,
+    agentDispatchFn: agentDispatchFn, sessionsFn: sessionsFn,
+    providersFn: providersFn, sessionActionFn: sessionActionFn,
+    authorizeFn: authorizeFn,
+    chatBridge: if chatBridge != nil: chatBridge
+                else: newChatBridge(agentClockMs, agentNap),
+    modelName: modelName,
+    agentTimeoutMs:
       if agentTimeoutMs > 0: agentTimeoutMs
-      else: resolveAgentTimeoutMs(getEnv("DONKEY_HTTP_AGENT_TIMEOUT_SEC"))
-    gGatewayLog       = log
-    gGatewayAuthToken = authToken
-    acquire(gHttpConnLock)
-    let poolResult =
-      try:
-        startGatewayPool(log)
-      finally:
-        release(gHttpConnLock)
-    if poolResult.isErr:
-      # startGatewayPool already logged the detailed failure.
-      return err(poolResult.error)
-    let args = GatewayArgs(port: port, bindAddr: bindAddr, authToken: authToken,
-                           statusFn: statusFn, logFn: logFn,
-                           eventFn: eventFn, inboundFn: inboundFn,
-                           agentDispatchFn: agentDispatchFn,
-                           sessionsFn: sessionsFn,
-                           providersFn: providersFn,
-                           sessionActionFn: sessionActionFn,
-                           authorizeFn: authorizeFn,
-                           chatBridge: gGatewayChatBridge,
-                           modelName: modelName,
-                           agentTimeoutMs: gGatewayAgentTimeoutMs,
-                           log: log)
+      else: resolveAgentTimeoutMs(getEnv("DONKEY_HTTP_AGENT_TIMEOUT_SEC")),
+    authToken: authToken,
+    log: log)
+
+  proc onConnection(server: StreamServer; client: StreamTransport)
+      {.async: (raises: []).} =
+    if not tryAcquireHttpConnection():
+      await client.sendResponse("503 Service Unavailable", "text/plain",
+                                "too many connections\n", ctx.log)
+      await client.closeWait()
+      return
     try:
-      createThread(gGatewayThread, gatewayThread, args)
-    except CatchableError as exc:
-      let msg = "http_gateway: cannot start server thread — " & exc.msg
-      log.error(msg)
-      return err(msg)
-    ok()
+      await handleGatewayConn(ctx, client)
+    finally:
+      releaseHttpConnection()
+      await client.closeWait()
+
+  let address = gatewayBindAddress(bindAddr, port).valueOr:
+    let msg = "http_gateway: bind " & bindAddr & ":" & $port & " failed — " & error
+    log.error(msg)
+    return err(msg)
+  try:
+    let server = createStreamServer(address, onConnection, {ServerFlags.ReuseAddr})
+    server.start()
+    ok(GatewayServer(server: server, port: port))
+  except CatchableError as e:
+    let msg = "http_gateway: bind " & bindAddr & ":" & $port & " failed — " & e.msg
+    log.error(msg)
+    err(msg)
+
+proc stopHttpGateway*(gateway: GatewayServer): Future[void] {.async: (raises: []).} =
+  ## Stops accepting and closes the listening socket. Connections already
+  ## being served finish on their own.
+  if gateway == nil or gateway.server == nil:
+    return
+  try:
+    gateway.server.stop()
+  except CatchableError:
+    discard
+  await gateway.server.closeWait()

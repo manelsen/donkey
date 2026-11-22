@@ -2,6 +2,7 @@
 ## Tests: request parsing, SSE formatting, JSON serialization, route dispatch.
 
 import std/[json, strutils, unittest]
+import chronos
 import donkey/app/http_gateway
 import donkey/app/chat_bridge
 import donkey/app/agent_chat_runtime
@@ -35,6 +36,16 @@ proc capClock(): int64 {.gcsafe, raises: [].} =
 proc capNap(ms: int) {.gcsafe, raises: [].} =
   capNow += int64(ms)
 
+proc completed[T](value: T): Future[T] {.raises: [].} =
+  result = newFuture[T]("fake")
+  result.complete(value)
+
+proc capAsyncNap(ms: int): Future[void] {.gcsafe, raises: [].} =
+  ## Advances the fake clock instead of sleeping.
+  capNow += int64(ms)
+  result = newFuture[void]("fake nap")
+  result.complete()
+
 proc capAuthorize(userId: UserId): AuthVerdict {.gcsafe, raises: [].} =
   discard userId
   avAllowed
@@ -45,7 +56,7 @@ proc capSample() {.gcsafe.} =
   capDuringSse = occ.sseConnections
   capDuringTotal = occ.longLivedWorkers
 
-proc capDispatch(msg: InboundMessage) {.gcsafe.} =
+proc capDispatch(msg: InboundMessage) {.gcsafe, raises: [CatchableError].} =
   inc capDispatched
   capSample()
   case capMode
@@ -57,19 +68,19 @@ proc capDispatch(msg: InboundMessage) {.gcsafe.} =
   of cdmNothing:
     discard
 
-proc capOpenStream(): bool {.gcsafe.} =
-  true
+proc capOpenStream(): Future[bool] {.gcsafe, raises: [].} =
+  completed(true)
 
-proc capSendStream(chunk: string): bool {.gcsafe.} =
+proc capSendStream(chunk: string): Future[bool] {.gcsafe, raises: [].} =
   discard chunk
   capSample()
-  true
+  completed(true)
 
-proc capAcquireSse(): bool {.gcsafe.} =
+proc capAcquireSse(): bool {.gcsafe, raises: [].} =
   inc capSseAcquireCalls
   tryReserveLongLived(llSseConnection).admitted
 
-proc capReleaseSse() {.gcsafe.} =
+proc capReleaseSse() {.gcsafe, raises: [].} =
   inc capSseReleaseCalls
   releaseLongLived(llSseConnection)
 
@@ -98,7 +109,7 @@ func capacityBody(user = "alice"; text = "oi"): string =
   })
 
 proc runCapacityTurn(timeoutMs = 100): AgentChatReply =
-  runAdmittedAgentTurn(
+  waitFor runAdmittedAgentTurn(
     body            = capacityBody(),
     bridge          = capBridge,
     dispatch        = capDispatch,
@@ -107,10 +118,11 @@ proc runCapacityTurn(timeoutMs = 100): AgentChatReply =
     now             = capClock,
     timeoutMs       = timeoutMs,
     model           = "donkey/test",
+    nap             = capAsyncNap,
   )
 
 proc runCapacityStream(timeoutMs = 5_000): AgentStreamResult =
-  runAgentStream(
+  waitFor runAgentStream(
     body            = capacityBody(),
     bridge          = capBridge,
     dispatch        = capDispatch,
@@ -122,7 +134,7 @@ proc runCapacityStream(timeoutMs = 5_000): AgentStreamResult =
     acquireSlot     = capAcquireSse,
     releaseSlot     = capReleaseSse,
     streamNow       = capClock,
-    streamNap       = capNap,
+    streamNap       = capAsyncNap,
     timeoutMs       = timeoutMs,
     model           = "donkey/test",
   )
@@ -256,6 +268,15 @@ proc runTests*() =
         check gatewayAuthVerdict(action, "", "") == gavAllowed
         check gatewayAuthVerdict(action, "", "secret") == gavRejected
         check gatewayAuthVerdict(action, "Bearer secret", "secret") == gavAllowed
+
+    test "the bind address accepts literal IPs and resolves host names":
+      ## DONKEY_HTTP_BIND=localhost must keep working: a name resolves over
+      ## IPv4, as the previous socket did; literals are used as they are.
+      check $gatewayBindAddress("127.0.0.1", 8080).get() == "127.0.0.1:8080"
+      check $gatewayBindAddress("localhost", 8080).get() == "127.0.0.1:8080"
+      check $gatewayBindAddress("[::1]", 8080).get() == "[::1]:8080"
+      check $gatewayBindAddress("::1", 8080).get() == "[::1]:8080"
+      check gatewayBindAddress("no-such-host.invalid", 8080).isErr
 
     test "non-loopback bind requires a token and explicit insecure opt-in":
       check gatewayBindIsAllowed("127.0.0.1", "")

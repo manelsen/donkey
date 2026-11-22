@@ -5,6 +5,7 @@
 ## notices never become content.
 
 import std/[json, strutils, unittest]
+import chronos
 import results
 import donkey/core/types
 import donkey/core/tooling/tool_loop
@@ -27,6 +28,17 @@ proc fakeNapFn(ms: int) {.gcsafe, raises: [].} =
 proc fakeEpochSec(): int64 {.gcsafe, raises: [].} =
   1_700_000_000
 
+proc completed[T](value: T): Future[T] {.raises: [].} =
+  ## An already-finished future: the fakes answer at once, with no real wait.
+  result = newFuture[T]("fake")
+  result.complete(value)
+
+proc fakeAsyncNap(ms: int): Future[void] {.gcsafe, raises: [].} =
+  ## Advances the fake clock instead of sleeping.
+  fakeNowMs += int64(ms)
+  result = newFuture[void]("fake nap")
+  result.complete()
+
 # ── fake dispatch / authorize ─────────────────────────────────────────────────
 
 type DispatchMode = enum
@@ -40,6 +52,7 @@ type DispatchMode = enum
   dmCumulativePartials
   dmTokenEchoFinal        ## the terminal carries the inbound turn token
   dmWrongTokenFinal       ## a terminal from another generation
+  dmManyPartials          ## more partial deltas than a stream may send, no terminal
 
 var fakeBridge {.threadvar.}: ChatBridge
 var dispatched {.threadvar.}: seq[InboundMessage]
@@ -67,6 +80,9 @@ proc fakeDispatch(msg: InboundMessage) {.gcsafe.} =
   case dispatchMode
   of dmNothing:
     discard
+  of dmManyPartials:
+    for i in 0 ..< MaxSseChunksPerTurn + 10:
+      deliverToBridge(msg.userId, "[" & $i & "]", rkFinalAnswer, partial = true)
   of dmFinal:
     deliverToBridge(msg.userId, finalText, rkFinalAnswer,
                                inputTokens = 11, outputTokens = 7)
@@ -140,9 +156,10 @@ func bodyFor(user, text: string): string =
 
 proc run(body: string; tokenConfigured = true;
          timeoutMs = 50): AgentChatReply =
-  runAgentChat(body, fakeBridge, fakeDispatch, fakeAuthorize,
-               tokenConfigured = tokenConfigured, now = fakeEpochSec,
-               timeoutMs = timeoutMs, model = "donkey/test")
+  waitFor runAgentChat(body, fakeBridge, fakeDispatch, fakeAuthorize,
+                       tokenConfigured = tokenConfigured, now = fakeEpochSec,
+                       timeoutMs = timeoutMs, model = "donkey/test",
+                       nap = fakeAsyncNap)
 
 proc contentOf(body: string): string =
   let node = parseJson(body)
@@ -158,21 +175,19 @@ var
   sseAcquireAllowed = true
   sseFailAt:        int  ## 0 = never fail; N = fail on the Nth sent chunk
 
-proc sseSend(chunk: string): bool {.gcsafe.} =
+proc sseSend(chunk: string): Future[bool] {.gcsafe, raises: [].} =
   sseChunks.add(chunk)
-  if sseFailAt > 0 and sseChunks.len >= sseFailAt:
-    return false
-  true
+  completed(not (sseFailAt > 0 and sseChunks.len >= sseFailAt))
 
-proc sseOpen(): bool {.gcsafe.} =
+proc sseOpen(): Future[bool] {.gcsafe, raises: [].} =
   sseOpened = true
-  true
+  completed(true)
 
-proc sseAcquire(): bool {.gcsafe.} =
+proc sseAcquire(): bool {.gcsafe, raises: [].} =
   inc sseAcquireCalls
   sseAcquireAllowed
 
-proc sseRelease() {.gcsafe.} =
+proc sseRelease() {.gcsafe, raises: [].} =
   inc sseReleaseCalls
 
 proc resetStream() =
@@ -185,7 +200,7 @@ proc resetStream() =
   sseFailAt = 0
 
 proc runStream(body: string; timeoutMs = 5_000): AgentStreamResult =
-  runAgentStream(
+  waitFor runAgentStream(
     body             = body,
     bridge           = fakeBridge,
     dispatch         = fakeDispatch,
@@ -197,7 +212,7 @@ proc runStream(body: string; timeoutMs = 5_000): AgentStreamResult =
     acquireSlot      = sseAcquire,
     releaseSlot      = sseRelease,
     streamNow        = fakeNowFn,
-    streamNap        = fakeNapFn,
+    streamNap        = fakeAsyncNap,
     timeoutMs        = timeoutMs,
     model            = "donkey/test",
   )
@@ -418,10 +433,11 @@ proc runTests*() =
         dispatched.add(msg)
         discard fakeBridge.fail(msg.userId, "provider key sk-secret-123 failed")
 
-      let reply = runAgentChat(bodyFor("alice", "oi"), fakeBridge, failDispatch,
-                               fakeAuthorize, tokenConfigured = true,
-                               now = fakeEpochSec, timeoutMs = 100,
-                               model = "donkey/test")
+      let reply = waitFor runAgentChat(bodyFor("alice", "oi"), fakeBridge,
+                                       failDispatch, fakeAuthorize,
+                                       tokenConfigured = true,
+                                       now = fakeEpochSec, timeoutMs = 100,
+                                       model = "donkey/test", nap = fakeAsyncNap)
       check reply.status == 502
       check not reply.body.contains("sk-secret-123")
       check reply.body.contains("[redacted]")
@@ -507,6 +523,20 @@ proc runTests*() =
       check nodes[^1]["choices"][0]["finish_reason"].getStr() == "length"
 
   suite "runAgentStream SSE":
+
+    test "a stream cut by the chunk limit on partials releases the user's turn":
+      ## No terminal ever arrives: the stream closes with `length`, and the
+      ## bridge must not keep the turn reserved for a reader that left.
+      resetStream()
+      dispatchMode = dmManyPartials
+      let result = runStream(bodyFor("alice", "oi"))
+      check result.outcome == asCompleted
+      check doneCount() == 1
+      check streamNodes()[^1]{"choices"}[0]{"finish_reason"}.getStr() == "length"
+      ## The turn was abandoned, not left pending: its late terminal is
+      ## discarded and frees the user, who can start a new turn.
+      deliverToBridge(UserId("api:alice"), "late answer", rkFinalAnswer)
+      check fakeBridge.register(UserId("api:alice"), timeoutMs = 1_000).isOk
 
     test "emits role, one content chunk per partial, a final stop and one [DONE]":
       resetStream()
