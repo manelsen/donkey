@@ -29,6 +29,7 @@ import ../http/std_http
 import ../identity/identity_resolver
 import ../webhook/http_request_reader
 import ../../app/metrics
+import ./event_queue
 
 const WeComApiBase = "https://qyapi.weixin.qq.com"
 
@@ -53,9 +54,9 @@ type
     tokenExpiry:    int64   ## epoch ms; 0 = not yet fetched
 
 ## Module-level channel — opened once, valid for daemon lifetime.
-## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
-## lock internally and deep-copy the payload. Must be open()ed before use.
-var gWeComEvents* {.global.}: Channel[WeComEvent]
+## Thread-safe: an `EventQueue` (shared memory, events moved, not copied),
+## created with the module; the receiving thread pushes, the daemon loop polls.
+var gWeComEvents* = initEventQueue[WeComEvent]("wecom")
 
 # ── Token management ──────────────────────────────────────────────────────────
 
@@ -218,13 +219,12 @@ proc handleWeComConn*(client: Socket; token: string; logger: Logger;
       return
 
     logger.info("wecom: message from " & r.rawId)
-    {.cast(gcsafe).}:
-      gWeComEvents.send(WeComEvent(
-        msgType:  "text",
-        fromUser: r.rawId,
-        msgId:    r.msgId,
-        content:  text,
-      ))
+    gWeComEvents.push(WeComEvent(
+      msgType:  "text",
+      fromUser: r.rawId,
+      msgId:    r.msgId,
+      content:  text,
+    ))
   except CatchableError as e:
     logger.warn("wecom: conn error: " & e.msg)
     recordWebhookFailure("wecom", e.msg)
@@ -258,13 +258,12 @@ var gWeComThread: Thread[WeComWebhookArgs]
 proc startWebhook*(a: WeComAdapter; port: Port; logger: Logger) =
   ## Starts the webhook listener on a dedicated OS thread.
   initLock(gWeComSeenLock)
-  gWeComEvents.open()
   {.cast(gcsafe).}:
     let args = WeComWebhookArgs(token: a.callbackToken, port: port.int, logger: logger)
     createThread(gWeComThread, webhookThread, args)
 
 proc tryRecvEvent*(a: var WeComAdapter): (bool, WeComEvent) =
-  let (ok, ev) = gWeComEvents.tryRecv()
+  let (ok, ev) = gWeComEvents.tryTake()
   (ok, ev)
 
 # ── Constructor ────────────────────────────────────────────────────────────────

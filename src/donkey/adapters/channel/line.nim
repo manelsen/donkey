@@ -38,6 +38,7 @@ import ../../ports/http
 import ../../ports/link_codes
 import ../http/std_http
 import ../identity/identity_resolver
+import ./event_queue
 
 export line_pure
 export identity_resolver
@@ -76,14 +77,13 @@ type
 
 # ── Webhook queue ─────────────────────────────────────────────────────────────
 
-## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
-## lock internally and deep-copy the payload. Must be open()ed before use.
-## Opened once at daemon startup via openQueue().
-var gLineEvents* {.global.}: Channel[LineParseResult]
-
+## Thread-safe: an `EventQueue` (shared memory, events moved, not copied),
+## created with the module; the receiving thread pushes, the daemon loop polls.
 const LineQueueCapacity* = 256
   ## Bounded: an unbuffered queue makes the webhook worker block until the
   ## daemon drains, and a burst would stall every connection on that worker.
+
+var gLineEvents* = initEventQueue[LineParseResult]("line", capacity = LineQueueCapacity)
 
 proc pushEvent*(payload: JsonNode): bool {.discardable.} =
   ## Parses a LINE webhook payload (already signature-verified upstream) and
@@ -96,14 +96,13 @@ proc pushEvent*(payload: JsonNode): bool {.discardable.} =
   result = true
   for ev in parseWebhook(payload):
     {.cast(gcsafe).}:
-      if not gLineEvents.trySend(ev):
+      if not gLineEvents.push(ev):
         result = false
 
 proc openQueue*() =
   ## Opens the module-level event queue. Call once at daemon startup, before
   ## the `/webhook/line` route starts accepting payloads.
-  {.cast(gcsafe).}:
-    gLineEvents.open(LineQueueCapacity)
+  discard  ## the queue is created with the module
 
 proc openQueue*(a: LineAdapter) =
   ## Adapter-shaped overload used by the shared channel startup convention.
@@ -538,7 +537,7 @@ proc tryRecvEvent*(a: var LineAdapter): (bool, LineParseResult) =
   var has = false
   var ev: LineParseResult
   {.cast(gcsafe).}:
-    (has, ev) = gLineEvents.tryRecv()
+    (has, ev) = gLineEvents.tryTake()
   (has, ev)
 
 proc receive*(a: var LineAdapter): Result[seq[InboundMessage], string] =

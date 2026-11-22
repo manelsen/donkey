@@ -34,6 +34,7 @@ import donkey/adapters/channel/telegram_runtime
 import donkey/core/commands/command_routing
 import donkey/app/command_dispatch
 import donkey/app/session_manager
+import donkey/adapters/channel/event_queue
 
 # ── Recording HTTP server ─────────────────────────────────────────────────────
 
@@ -355,8 +356,8 @@ proc runTests*() =
       var msgSeq = 0
       var wc = newWeComAdapter("corp", "secret", "tok", 42, Tmp / "wc" / "ids.tsv",
                                apiBase = base())
-      gWeComEvents.open()
-      gWeComEvents.send(WeComEvent(msgType: "text", fromUser: "wc-user",
+      ## the WeCom queue exists with the module
+      gWeComEvents.push(WeComEvent(msgType: "text", fromUser: "wc-user",
                                    msgId: "c1", content: "/mycode"))
       drainWeComEvents(wc, "corp", sm, env("wc"), msgSeq, noop, logger)
       check anyRequest(proc(r: Recorded): bool =

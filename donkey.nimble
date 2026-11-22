@@ -20,6 +20,7 @@ requires "ws >= 0.6.0"
 requires "db_connector >= 0.1.0" ## PostgreSQL + pgvector + AGE (-d:withPostgres)
 requires "illwill >= 0.4.1" ## TUI dashboard (donkey tui)
 requires "checksums >= 0.2.2" ## SHA1 for WeChat webhook signature (replaces deprecated std/sha1)
+requires "threading >= 0.2.1" ## shared-memory channels for adapter event queues (gcsafe, no casts)
 
 # Tasks
 task test, "Compile and run all tests (execution mode)":

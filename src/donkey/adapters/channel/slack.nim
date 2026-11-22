@@ -21,6 +21,7 @@ import ../../domain/channels/slack_pure
 import ../../ports/http
 import ../http/std_http
 import ../identity/identity_resolver
+import ./event_queue
 
 export identity_resolver
 
@@ -49,10 +50,9 @@ type
 
 # ── Module-level event queue ──────────────────────────────────────────────────
 
-## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
-## lock internally and deep-copy the payload. Must be open()ed before use.
-## Opened once at daemon startup via openQueue().
-var gSlackEvents* {.global.}: Channel[SlackRawEvent]
+## Thread-safe: an `EventQueue` (shared memory, events moved, not copied),
+## created with the module; the receiving thread pushes, the daemon loop polls.
+var gSlackEvents* = initEventQueue[SlackRawEvent]("slack")
 
 # ── Inbound helpers (called by HTTP layer) ────────────────────────────────────
 
@@ -69,7 +69,7 @@ proc pushEvent*(payload: JsonNode) =
   case r.kind
   of sekVerification, sekUnknown: discard
   of sekMessage:
-    gSlackEvents.send(SlackRawEvent(
+    gSlackEvents.push(SlackRawEvent(
       kind:        srMessage,
       slackUserId: r.rawId,
       text:        r.text,
@@ -79,7 +79,7 @@ proc pushEvent*(payload: JsonNode) =
       eventTs:     r.eventTs,
     ))
   of sekSlashCommand:
-    gSlackEvents.send(SlackRawEvent(
+    gSlackEvents.push(SlackRawEvent(
       kind:        srSlashCommand,
       slackUserId: r.rawId,
       text:        r.text,
@@ -89,7 +89,7 @@ proc pushEvent*(payload: JsonNode) =
       triggerId:   r.triggerId,
     ))
   of sekBlockAction:
-    gSlackEvents.send(SlackRawEvent(
+    gSlackEvents.push(SlackRawEvent(
       kind:        srBlockAction,
       slackUserId: r.rawId,
       text:        r.text,
@@ -289,13 +289,12 @@ proc ack*(a: SlackAdapter; channelId: string) =
 # ── Queue management ──────────────────────────────────────────────────────────
 
 proc openQueue*(a: SlackAdapter) =
-  ## Opens the module-level event queue. Call once at daemon startup.
-  {.cast(gcsafe).}:
-    gSlackEvents.open()
+  ## Kept for the startup sequence: the queue already exists with the module.
+  discard
 
 proc tryRecvEvent*(a: SlackAdapter): (bool, SlackRawEvent) =
   ## Non-blocking poll for webhook events. Returns (false, default) when empty.
-  gSlackEvents.tryRecv()
+  gSlackEvents.tryTake()
 
 const
   SlackDedupeTtlSec*   = 600.0   ## Slack retries are bounded; keep 10 minutes

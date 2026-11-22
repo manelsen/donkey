@@ -36,6 +36,7 @@ import donkey/adapters/channel/slack_runtime
 import donkey/adapters/identity/identity_resolver
 import donkey/app/gateway_drainer
 import donkey/app/session_manager
+import donkey/adapters/channel/event_queue
 
 const GateTmp = "/tmp/donkey_dm_gate_tests"
 
@@ -107,10 +108,10 @@ proc runTests*() =
           ok(CompletionResponse(text: "unexpected provider call"))
       var msgSeq = 0
 
-      gWeComEvents.open()
-      gWeComEvents.send(WeComEvent(
+      ## the WeCom queue exists with the module
+      gWeComEvents.push(WeComEvent(
         msgType: "text", fromUser: "intruder", msgId: "m1", content: "/status"))
-      gWeComEvents.send(WeComEvent(
+      gWeComEvents.push(WeComEvent(
         msgType: "text", fromUser: "allowed-user", msgId: "m2", content: "hello"))
 
       let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
