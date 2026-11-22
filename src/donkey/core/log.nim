@@ -201,6 +201,25 @@ func child*(logger: Logger; subsystem: string): Logger =
          minLevel:  logger.minLevel,
          sink:      logger.sink)
 
+# ── thread hand-off ───────────────────────────────────────────────────────────
+
+type LogSpec* = object
+  ## A logger as plain data, for a thread argument. `Logger.sink` is a
+  ## closure, which must not be copied into another thread (ORC counts its
+  ## environment without atomics); the thread rebuilds its logger with the
+  ## standard sink, which writes to stderr and the shared ring.
+  subsystem*: string
+  minLevel*:  LogLevel
+
+func spec*(logger: Logger): LogSpec =
+  LogSpec(subsystem: logger.subsystem, minLevel: logger.minLevel)
+
+func toLogger*(spec: LogSpec): Logger =
+  newLogger(spec.subsystem, spec.minLevel)
+
+converter threadLogger*(spec: LogSpec): Logger = spec.toLogger
+  ## Lets a thread use its LogSpec wherever a Logger is expected.
+
 # ── emit ──────────────────────────────────────────────────────────────────────
 
 proc log*(logger: Logger; level: LogLevel; msg: string) {.gcsafe, raises: [].} =

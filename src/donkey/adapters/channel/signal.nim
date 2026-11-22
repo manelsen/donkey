@@ -63,16 +63,29 @@ type
 
 # ── ChannelPort implementation ─────────────────────────────────────────────────
 
+type PolledSignal* = (string, InboundMessage)
+  ## The sender id and the message, before identity resolution.
+
+proc fetchPending*(sockPath: string): Result[seq[PolledSignal], string] =
+  ## Polls signal-cli for pending messages via JSON-RPC "receive", ignoring
+  ## non-data-message envelopes. Needs only the socket path, so it may run
+  ## on its own thread; senders stay unresolved.
+  let items = ? rpcCall(sockPath, "receive", newJObject())
+  var polled: seq[PolledSignal]
+  for r in items |> parseEnvelopes:
+    polled.add((r.rawId, r.toInbound(UserId(""))))
+  ok(polled)
+
+proc resolvePolled*(a: SignalAdapter; polled: seq[PolledSignal]): seq[InboundMessage] =
+  ## Resolves each sender to a user, on the daemon loop.
+  for (sender, msg) in polled:
+    var resolved = msg
+    resolved.userId = a.resolver.resolve(ckSignal, sender)
+    result.add resolved
+
 proc receive*(a: var SignalAdapter): Result[seq[InboundMessage], string] =
-  ## Polls signal-cli for pending messages via JSON-RPC "receive".
-  ## Returns all queued InboundMessages; ignores non-data-message envelopes.
-  let items = ? rpcCall(a.sockPath, "receive", newJObject())
-  let results = items |> parseEnvelopes
-  var msgs: seq[InboundMessage]
-  for r in results:
-    let userId = a.resolver.resolve(ckSignal, r.rawId)
-    msgs.add(r.toInbound(userId))
-  ok(msgs)
+  ## Fetches and resolves in one go, on the calling thread.
+  ok(a.resolvePolled(? fetchPending(a.sockPath)))
 
 proc send*(a: SignalAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message to the user's Signal phone number.

@@ -9,12 +9,97 @@
 ## owns. The block lives as long as the process (the thread may outlive the
 ## caller), unless `joinAndFree` releases it after the thread ended.
 
+##
+## The argument is copied into the thread, and ORC counts references without
+## atomics: a `ref` or a closure environment in it would be counted by two
+## threads at once. `spawnThread` refuses such an argument at compile time
+## (`sharesNothing`). Strings and seqs are copied, so they are fine; a raw
+## `ptr` is an explicit opt-in to manual sharing (locks, atomics); a
+## `nimcall` proc has no environment. A thread that needs a closure (an HTTP
+## port, a provider) builds it itself, from plain data or a `nimcall` factory.
+
+import std/macros
+
 type ThreadHandle*[T] = ptr Thread[T]
+
+proc gcShared(t: NimNode; seen: var seq[string]): bool {.compileTime.}
+
+proc fieldsShared(n: NimNode; seen: var seq[string]): bool {.compileTime.} =
+  ## Walks an object or tuple body: fields, variant branches, the base type.
+  case n.kind
+  of nnkIdentDefs:
+    gcShared(n[^2], seen)
+  of nnkOfInherit:
+    gcShared(n[0], seen)
+  of nnkRecCase:
+    if gcShared(n[0][^2], seen): return true
+    for i in 1 ..< n.len:
+      if fieldsShared(n[i], seen): return true
+    false
+  of nnkSym:
+    n.symKind == nskType and gcShared(n, seen)
+  else:
+    for c in n:
+      if fieldsShared(c, seen): return true
+    false
+
+proc gcShared(t: NimNode; seen: var seq[string]): bool =
+  ## True when a value of type `t` can hold a ref or a closure environment.
+  let key = t.repr & "/" & $t.typeKind
+  if key in seen: return false  ## recursive type: already being checked
+  seen.add key
+  case t.typeKind
+  of ntyRef:
+    true
+  of ntyPtr, ntyPointer, ntyCString, ntyString, ntyBool, ntyChar, ntyEnum,
+     ntyInt..ntyUInt64, ntyNil, ntyEmpty, ntyVoid:
+    false
+  of ntyProc:
+    ## A proc type is a closure unless declared with another convention.
+    let impl = t.getTypeImpl
+    var callConvSet = false
+    if impl.kind == nnkProcTy and impl.len > 1:
+      for p in impl[1]:
+        if p.kind in {nnkIdent, nnkSym} and
+           $p in ["nimcall", "cdecl", "stdcall", "noconv", "inline", "fastcall",
+                  "safecall", "syscall"]:
+          callConvSet = true
+    not callConvSet
+  of ntyDistinct, ntyGenericInst, ntyAlias, ntyTypeDesc:
+    let impl = t.getTypeImpl
+    if impl == t: return false
+    if impl.kind == nnkDistinctTy: gcShared(impl[0], seen)
+    else: gcShared(impl, seen)
+  of ntySequence, ntyOpenArray, ntyVarargs, ntySet, ntyRange, ntyUncheckedArray:
+    let impl = t.getTypeImpl
+    gcShared(impl[^1], seen)
+  of ntyArray:
+    gcShared(t.getTypeImpl[2], seen)
+  of ntyTuple, ntyObject:
+    let impl = t.getTypeImpl
+    if impl.kind == nnkTupleConstr:
+      for c in impl:
+        if gcShared(c, seen): return true
+      false
+    else:
+      fieldsShared(impl, seen)
+  else:
+    true  ## unknown kind: refuse rather than guess
+
+macro sharesNothing*(T: typedesc): bool =
+  ## True when a `T` holds no ref and no closure: safe to copy into another
+  ## thread under ORC.
+  var seen: seq[string]
+  newLit(not gcShared(T.getTypeInst[1], seen))
 
 proc spawnThread*[T](fn: proc(arg: T) {.thread, nimcall.};
                      arg: T): ThreadHandle[T] =
   ## Starts `fn(arg)` on a new thread. Raises ResourceExhaustedError like
   ## `createThread` when the OS refuses.
+  when not sharesNothing(T):
+    {.error: "spawnThread: the thread argument holds a ref or a closure, " &
+             "which ORC would count from two threads; pass plain data and " &
+             "build it in the thread".}
   result = cast[ThreadHandle[T]](allocShared0(sizeof(Thread[T])))
   try:
     createThread(result[], fn, arg)

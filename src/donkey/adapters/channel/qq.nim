@@ -49,7 +49,7 @@ type
     listenFd: SocketHandle   ## bound + listening, owned by the thread
     domain:   Domain
     secret:   string
-    logger:   Logger
+    logger:   LogSpec
 
 var gQQOneBotEvents = initEventQueue[QQEvent]("qq_onebot")
 var gQQOneBotEventsOpen    = false
@@ -181,7 +181,7 @@ proc startWebhook*(a: QQAdapter; host: string; port: Port; secret: string;
   try:
     gQQOneBotWebhookThread = spawnThread(qqOneBotWebhookThread,
                  QQOneBotWebhookArgs(listenFd: server.getFd, domain: domain,
-                                     secret: secret, logger: logger))
+                                     secret: secret, logger: logger.spec))
   except CatchableError as e:
     ## Undo so a later call can retry instead of seeing "already started".
     gQQOneBotEventsOpen = false

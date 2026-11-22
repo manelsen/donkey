@@ -497,12 +497,12 @@ type
     port:      int
     host:      string
     cfg:       WebhookConfig
-    logger:    Logger
+    logger:    LogSpec
     handshake: ptr Channel[string]
 
   WebhookWorkerArg = object
     cfg:    WebhookConfig
-    logger: Logger
+    logger: LogSpec
     ready:  ptr Channel[string]
 
 var
@@ -617,7 +617,7 @@ proc startWebhookPool(cfg: WebhookConfig; logger: Logger): Result[void, string] 
   try:
     for i in 0 ..< WebhookWorkerCount:
       gWebhookWorkers[i] = spawnThread(webhookWorker,
-                   WebhookWorkerArg(cfg: cfg, logger: logger,
+                   WebhookWorkerArg(cfg: cfg, logger: logger.spec,
                                     ready: addr ready))
       inc gWebhookWorkersStarted
   except CatchableError as e:
@@ -771,7 +771,7 @@ proc startWebhookReceiver*(cfg: WebhookConfig;
     try:
       gWebhookThread = spawnThread(webhookServerThread,
                      WebhookServerArgs(port: port, host: host, cfg: cfg,
-                                       logger: logger, handshake: addr handshake))
+                                       logger: logger.spec, handshake: addr handshake))
     except CatchableError as e:
       return err("cannot start webhook thread: " & e.msg)
 

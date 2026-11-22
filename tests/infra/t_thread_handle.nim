@@ -2,7 +2,7 @@
 ## global handle is gcsafe: the starter below is {.gcsafe.} and touches the
 ## global with no cast.
 
-import std/[atomics, unittest]
+import std/[atomics, json, unittest]
 import donkey/infra/thread_handle
 
 type Args = object
@@ -19,7 +19,52 @@ proc worker(args: Args) {.thread.} =
 proc start() {.gcsafe.} =
   gHandle = spawnThread(worker, Args(label: "abc", times: 4))
 
+type
+  Plain = object
+    name: string
+    tags: seq[string]
+    count: int
+    pair: (string, int)
+    fixed: array[2, string]
+  WithRef = object
+    name: string
+    node: JsonNode
+  WithClosure = object
+    fn: proc(x: int): int {.gcsafe.}
+  WithNimcall = object
+    fn: proc(x: int): int {.nimcall, gcsafe.}
+  WithPtr = object
+    shared: ptr int
+  Nested = object
+    inner: seq[WithRef]
+  Variant = object
+    case hasRef: bool
+    of true: node: JsonNode
+    of false: text: string
+  Leaf = ref object
+    value: int
+
 proc runTests*() =
+  suite "thread arguments share nothing the GC counts":
+    test "plain values, nimcall procs and raw pointers are accepted":
+      check sharesNothing(Plain)
+      check sharesNothing(WithNimcall)
+      check sharesNothing(WithPtr)
+      check sharesNothing(string)
+      check sharesNothing(int)
+
+    test "a ref or a closure anywhere inside is refused":
+      check not sharesNothing(WithRef)
+      check not sharesNothing(WithClosure)
+      check not sharesNothing(Nested)
+      check not sharesNothing(Variant)
+      check not sharesNothing(Leaf)
+      check not sharesNothing(JsonNode)
+
+    test "spawnThread does not compile with such an argument":
+      proc takesRef(arg: WithRef) {.thread.} = discard
+      check not compiles(spawnThread(takesRef, WithRef()))
+
   suite "thread handle":
     test "a thread started from gcsafe code runs with its argument and is joined":
       gSeen.store(0)

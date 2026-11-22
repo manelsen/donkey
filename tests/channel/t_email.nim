@@ -7,6 +7,8 @@ import donkey/adapters/channel/email
 import donkey/adapters/identity/identity_resolver
 import donkey/core/types
 import donkey/domain/channels/email_pure
+import donkey/domain/message
+import donkey/infra/thread_handle
 
 # ── IdentityResolver (Email) ───────────────────────────────────────────────────
 
@@ -48,6 +50,34 @@ proc runTests*() =
       check uid1 == uid2
 
   # ── EmailAdapter construction ──────────────────────────────────────────────────
+
+  suite "Email polling off the daemon loop":
+
+    test "the poll thread gets plain IMAP data, not the adapter":
+      ## The adapter holds the identity resolver (refs); the thread must not.
+      check sharesNothing(EmailInbox)
+      let a = newEmailAdapter("imap.example.com", "smtp.example.com",
+                              "user@example.com", "secret", "/tmp/ids_inbox.tsv",
+                              imapPort = 1993)
+      let box = a.inbox
+      check box.host == "imap.example.com"
+      check box.port == 1993
+      check box.user == "user@example.com"
+      check box.password == "secret"
+
+    test "senders are resolved on the loop, after the poll":
+      let path = getTempDir() / "donkey_test_ids_em_polled.tsv"
+      removeFile(path)
+      defer: removeFile(path)
+      let a = newEmailAdapter("imap.example.com", "smtp.example.com",
+                              "user@example.com", "secret", path)
+      let polled = @[("alice@example.com",
+                      InboundMessage(channel: ckEmail, channelId: "<m1>", text: "oi"))]
+      let msgs = a.resolvePolled(polled)
+      check msgs.len == 1
+      check msgs[0].userId == a.resolver.resolve(ckEmail, "alice@example.com")
+      check msgs[0].text == "oi"
+      check msgs[0].channelId == "<m1>"
 
   suite "EmailAdapter construction":
 

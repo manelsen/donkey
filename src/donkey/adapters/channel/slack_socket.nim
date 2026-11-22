@@ -28,11 +28,17 @@ type
     fdLock:   Lock
     activeFd: SocketHandle
 
+  SlackHttpFactory* = proc(): HttpRuntimePort {.nimcall, gcsafe.}
+    ## Builds the reader thread's HTTP port. Called on that thread, so the
+    ## port's closures are never shared with the daemon loop.
+
   SlackSocketArgs = object
-    appToken: string
-    http:     HttpRuntimePort
-    logger:   Logger
-    control:  ptr SlackSocketControl
+    ## Plain data only (spawnThread checks it): the thread builds its HTTP
+    ## port and its logger itself.
+    appToken:    string
+    httpFactory: SlackHttpFactory
+    logger:      LogSpec
+    control:     ptr SlackSocketControl
 
   SlackSocketMode* = ref object
     ## Built and used by the reader thread only.
@@ -122,8 +128,10 @@ proc sleepOrStop(client: SlackSocketMode; ms: int): bool =
   not client.control.stop.load()
 
 proc runSlackSocket(args: SlackSocketArgs) {.thread.} =
-  let client = SlackSocketMode(appToken: args.appToken, http: args.http,
-                               logger: args.logger, control: args.control)
+  let client = SlackSocketMode(appToken: args.appToken,
+                               http: args.httpFactory(),
+                               logger: args.logger.toLogger,
+                               control: args.control)
   var backoff = SlackSocketReconnectMinMs
   while not client.control.stop.load():
     let urlRes = client.openSocketUrl()
@@ -222,13 +230,15 @@ proc runSlackSocket(args: SlackSocketArgs) {.thread.} =
         break
 
 proc startSlackSocketMode*(appToken: string;
-                           http: HttpRuntimePort;
+                           httpFactory: SlackHttpFactory;
                            logger: Logger): Result[void, string] {.gcsafe, raises: [].} =
   ## Starts the Socket Mode reader thread. Requires the app-level token; the
   ## bot token is validated by the gateway caller because it is only needed
   ## for outbound messages.
   if appToken.len == 0:
     return err("SLACK_APP_TOKEN is empty")
+  if httpFactory == nil:
+    return err("Slack Socket Mode needs an HTTP port factory")
   if gSlackSocketStarted:
     return err("Slack Socket Mode is already started")
 
@@ -238,7 +248,8 @@ proc startSlackSocketMode*(appToken: string;
   initLock(control.fdLock)
   try:
     gSlackSocketThread = spawnThread(runSlackSocket,
-      SlackSocketArgs(appToken: appToken, http: http, logger: logger, control: control))
+      SlackSocketArgs(appToken: appToken, httpFactory: httpFactory,
+                      logger: logger.spec, control: control))
   except CatchableError as e:
     deinitLock(control.fdLock)
     deallocShared(control)

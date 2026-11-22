@@ -24,11 +24,11 @@ const
 type MetricsServerArgs = object
   host: string
   port: int
-  log:  Logger
+  log:  LogSpec
 
 type MetricsWorkerArg = object
   id: int
-  log: Logger
+  log: LogSpec
 
 var
   ## Handles and the socket queue live in shared memory behind pointers, so
@@ -121,7 +121,7 @@ proc startMetricsPool(log: Logger): Result[void, string] =
   var firstError = ""
   for i in 0 ..< MetricsWorkerCount:
     try:
-      gMetricsWorkers[i] = spawnThread(metricsWorker, MetricsWorkerArg(id: i, log: log))
+      gMetricsWorkers[i] = spawnThread(metricsWorker, MetricsWorkerArg(id: i, log: log.spec))
       inc started
     except CatchableError as exc:
       if firstError.len == 0:
@@ -189,7 +189,7 @@ proc startMetricsServer*(host: string; port: int; log: Logger): Result[void, str
     return poolResult
   try:
     gMetricsThread = spawnThread(metricsServerThread,
-                                 MetricsServerArgs(host: host, port: port, log: log))
+                                 MetricsServerArgs(host: host, port: port, log: log.spec))
   except CatchableError as exc:
     let msg = "metrics: cannot start server thread — " & exc.msg
     log.error(msg)
