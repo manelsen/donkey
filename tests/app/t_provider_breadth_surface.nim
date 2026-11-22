@@ -9,6 +9,8 @@ import std/[options, os, strutils, unittest]
 import donkey/adapters/channel/common_runtime
 import donkey/app/session_bootstrap
 import donkey/app/setup_wizard
+import donkey/app/credential_runtime
+import donkey/config/environment
 import donkey/core/providers/provider_defaults
 import donkey/core/providers/smart_routing
 import donkey/domain/providers/descriptors
@@ -17,19 +19,14 @@ const
   NvidiaEnv = "NVIDIA_API_KEY"
   AlibabaEnv = "DASHSCOPE_API_KEY"
 
-proc setOrClear(name, value: string) =
-  if value.len > 0: putEnv(name, value) else: delEnv(name)
-
 proc withEnv(name, value: string; body: proc()) =
-  ## Run `body` with `name` set to `value` ("" clears it). Restores the old
-  ## value, set or unset.
-  let had = existsEnv(name)
-  let previous = getEnv(name)
-  setOrClear(name, value)
+  ## Run `body` with `name` set to `value` ("" clears it) in the installed
+  ## credentials, and clear it afterwards.
+  setCredentialForTest(name, value)
   try:
     body()
   finally:
-    setOrClear(name, if had: previous else: "")
+    setCredentialForTest(name, "")
 
 proc withoutEnv(name: string; body: proc()) =
   withEnv(name, "", body)
@@ -83,7 +80,7 @@ proc runTests*() =
     test "the channel surface derives both from the same env":
       withEnv(NvidiaEnv, "nvapi-test"):
         withEnv(AlibabaEnv, "dashscope-test"):
-          let availability = availableProvidersFromEnv()
+          let availability = detectProviderAvailability()
           check availability.nvidia
           check availability.alibaba
 
@@ -95,8 +92,8 @@ proc runTests*() =
               let availability = detectProviderAvailability()
               check not availability.nvidia
               check not availability.alibaba
-              check not availableProvidersFromEnv().nvidia
-              check not availableProvidersFromEnv().alibaba
+              check not detectProviderAvailability().nvidia
+              check not detectProviderAvailability().alibaba
 
     test "availableProviderNames reports both configured providers":
       let names = availableProviderNames(ProviderAvailability(
@@ -127,19 +124,16 @@ proc runTests*() =
       check "OPENCODE_API_KEY=zen-key" notin env
 
     test "setup detects a key from any descriptor env name":
-      withoutEnv("ZAI_CODING_API_KEY"):
-        withoutEnv("ZAI_CODING_API_KEYS"):
-          withoutEnv("ZHIPU_API_KEY"):
-            withEnv("ZHIPU_API_KEY", "zk-alt"):
-              check providerKeyFromEnv("zai-coding") == "zk-alt"
+      check providerKeyFromEnv(environmentOf({"ZHIPU_API_KEY": "zk-alt"}),
+                               "zai-coding") == "zk-alt"
 
     test "setup detects the plural *_KEYS form":
-      withoutEnv("OPENAI_API_KEY"):
-        withEnv("OPENAI_API_KEYS", "sk-first,sk-second"):
-          check providerKeyFromEnv("openai") == "sk-first"
+      check providerKeyFromEnv(environmentOf({"OPENAI_API_KEYS": "sk-first,sk-second"}),
+                               "openai") == "sk-first"
 
     test "an endpoint-configured provider never yields an API key":
-      check providerKeyFromEnv("ollama") == ""
+      check providerKeyFromEnv(environmentOf({"OLLAMA_BASE_URL": "http://localhost:11434"}),
+                               "ollama") == ""
 
   suite "fireworks breadth — descriptor to availability":
 
@@ -166,13 +160,13 @@ proc runTests*() =
         let availability = detectProviderAvailability()
         check availability.fireworks
         check availableProviderNames(availability).has("fireworks")
-        check availableProvidersFromEnv().fireworks
+        check detectProviderAvailability().fireworks
 
     test "unset env leaves Fireworks unavailable":
       withoutEnv(FireworksEnv):
         withoutEnv("FIREWORKS_API_KEYS"):
           check not detectProviderAvailability().fireworks
-          check not availableProvidersFromEnv().fireworks
+          check not detectProviderAvailability().fireworks
 
 when isMainModule:
   runTests()

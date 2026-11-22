@@ -19,33 +19,12 @@ import ../../domain/message
 import ../../ports/command_services
 import ../../ports/provider
 import ../../app/skill_runtime
+import ../../app/credential_runtime
 import ../../app/preference_commands
 import ./model_catalog_ui
 
 when defined(withPostgres) or defined(withSqlite):
   import ../../adapters/memory/magma_memory_adapter
-
-func availableProvidersFromEnv*(): ProviderAvailability =
-  ## Credential presence for the channel status line. Exported so the surface
-  ## tests can assert it without a message loop.
-  ProviderAvailability(
-    openrouter: getEnv("OPENROUTER_API_KEY").len > 0,
-    anthropic: getEnv("ANTHROPIC_API_KEY").len > 0,
-    zaiAnthropic: getEnv(
-      "ZAI_ANTHROPIC_API_KEY",
-      getEnv(
-        "ANTHROPIC_AUTH_TOKEN",
-        getEnv("ZAI_CODING_API_KEY", getEnv("ZAI_API_KEY", getEnv("ZHIPU_API_KEY")))
-      )
-    ).len > 0,
-    gemini: getEnv("GEMINI_API_KEY").len > 0,
-    minimax: getEnv("MINIMAX_API_KEY").len > 0,
-    zai: getEnv("ZAI_API_KEY").len > 0,
-    zaiCoding: getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")).len > 0,
-    nvidia: getEnv("NVIDIA_API_KEY").len > 0,
-    alibaba: getEnv("DASHSCOPE_API_KEY").len > 0,
-    fireworks: getEnv("FIREWORKS_API_KEY").len > 0,
-  )
 
 proc preferenceCommandDeps*(memory: MdFileAdapter;
                             modelCatalogLoader: ModelCatalogLoader = nil): PreferenceCommandDeps =
@@ -58,7 +37,7 @@ proc preferenceCommandDeps*(memory: MdFileAdapter;
       memory.saveChannelPreferences(userId, entries),
     catalogLoader: modelCatalogLoader,
     menu: currentModelMenu(),
-    availability: availableProvidersFromEnv(),
+    availability: detectProviderAvailability(),
   )
 
 proc applySkillTextCommand*(memory: MdFileAdapter;
@@ -81,7 +60,7 @@ proc buildProviderStatusLine*(memory: MdFileAdapter; userId: UserId): Result[str
   let doc = ? memory.readPreferences(userId).mapErr(preferencesUnreadableText)
   let current = ? tryParseChannelPrefs(doc).mapErr(preferencesUnreadableText)
   let prefs = parseSmartRoutingPrefs(doc)
-  let availability = availableProvidersFromEnv()
+  let availability = detectProviderAvailability()
   if prefs.usesSmartRouting:
     let preview = formatSelectionPreview(previewSmartRouteSelections(prefs, availability))
     if preview.len > 0:
@@ -121,22 +100,22 @@ proc buildAboutText*(memory: MdFileAdapter;
                      sessionCount: int): Result[string, string] =
   let (prov, mdl) = ? memory.getCurrentProviderModel(userId).mapErr(preferencesUnreadableText)
   let storage =
-    if getEnv("DONKEY_PG_DSN").strip.len > 0 or memory.magmaDsn.len > 0:
+    if credentialSet("DONKEY_PG_DSN") or memory.magmaDsn.len > 0:
       "PostgreSQL-backed MAGMA"
     elif memory.magmaSqlitePath.len > 0:
       "SQLite-first MAGMA (" & memory.magmaSqlitePath & ")"
     else:
       "Markdown paddocks"
   let webSearch =
-    if getEnv("BRAVE_API_KEY").len > 0: "enabled"
+    if credentialSet("BRAVE_API_KEY"): "enabled"
     else: "disabled"
   var channels: seq[string] = @[]
-  if getEnv("TELEGRAM_BOT_TOKEN").len > 0: channels.add("Telegram")
-  if getEnv("DISCORD_BOT_TOKEN").len > 0: channels.add("Discord")
-  if getEnv("WECOM_CORP_ID").len > 0: channels.add("WeCom")
-  if getEnv("WECHAT_APP_ID").len > 0 or getEnv("WECHAT_CALLBACK_TOKEN").len > 0: channels.add("WeChat")
-  if getEnv("FEISHU_APP_ID").len > 0: channels.add("Feishu")
-  if getEnv("QQ_ONEBOT_URL").len > 0 or getEnv("QQ_OFFICIAL_APP_ID").len > 0: channels.add("QQ")
+  if credentialSet("TELEGRAM_BOT_TOKEN"): channels.add("Telegram")
+  if credentialSet("DISCORD_BOT_TOKEN"): channels.add("Discord")
+  if credentialSet("WECOM_CORP_ID"): channels.add("WeCom")
+  if credentialSet("WECHAT_APP_ID") or credentialSet("WECHAT_CALLBACK_TOKEN"): channels.add("WeChat")
+  if credentialSet("FEISHU_APP_ID"): channels.add("Feishu")
+  if credentialSet("QQ_ONEBOT_URL") or credentialSet("QQ_OFFICIAL_APP_ID"): channels.add("QQ")
   ok "🫏 *Donkey*\n\n" &
     "*Provider atual:* `" & prov & " / " & mdl & "`\n" &
     "*Storage:* " & storage & "\n" &
@@ -214,10 +193,10 @@ proc buildDoctorReport*(memory: MdFileAdapter;
   
   ## Canais ativos (verifica identidade)
   var channels: seq[string] = @[]
-  if getEnv("TELEGRAM_BOT_TOKEN").len > 0: channels.add("Telegram")
-  if getEnv("DISCORD_BOT_TOKEN").len > 0: channels.add("Discord")
-  if getEnv("FEISHU_APP_ID").len > 0: channels.add("Feishu")
-  if getEnv("WECOM_CORP_ID").len > 0: channels.add("WeCom")
+  if credentialSet("TELEGRAM_BOT_TOKEN"): channels.add("Telegram")
+  if credentialSet("DISCORD_BOT_TOKEN"): channels.add("Discord")
+  if credentialSet("FEISHU_APP_ID"): channels.add("Feishu")
+  if credentialSet("WECOM_CORP_ID"): channels.add("WeCom")
   if channels.len > 0:
     report.add("📡 Active channels: " & channels.join(", ") & "\n")
   else:
@@ -239,7 +218,7 @@ proc buildDoctorReport*(memory: MdFileAdapter;
   ]
   var configuredProviders: seq[string] = @[]
   for (envVar, name) in envVars:
-    if getEnv(envVar).len > 0:
+    if credentialSet(envVar):
       configuredProviders.add(name)
   if configuredProviders.len > 0:
     report.add("🔑 API keys: " & configuredProviders.join(", ") & "\n")

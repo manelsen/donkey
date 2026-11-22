@@ -98,6 +98,7 @@ import donkey/app/gateway_drainer
 import donkey/app/session_manager
 import donkey/adapters/state/daemon_lease
 import donkey/app/session_bootstrap
+import donkey/app/credential_runtime
 import donkey/app/session_ingress
 import donkey/app/doctor
 import donkey/app/setup_wizard
@@ -1773,7 +1774,8 @@ proc main =
 
   # setup doesn't need config — handle it early
   if args.len >= 1 and args[0] == "setup":
-    runSetupWizard(resolveHome(readEnvironment()))
+    let env = readEnvironment()
+    runSetupWizard(resolveHome(env), env)
     quit(0)
 
   if configPath.len == 0:
@@ -1805,6 +1807,9 @@ proc main =
       ## Reload env-backed policies (dm_policy, allowlist, ...) after the
       ## vault populated variables that were absent from donkey.env.
       cfg = loadConfig(configPath, readEnvironment())
+  ## Provider keys and the presence checks of /about and /doctor read the
+  ## snapshot installed here, on the loop thread that uses them.
+  useCredentials(cfg.env)
   configureApprovalServiceFromEnv(
     newApprovalStore(cfg.home / "state" / "approvals.json").toApprovalPort())
 
@@ -1841,7 +1846,7 @@ proc main =
   cmdReg.register(CommandEntry(
     name: "setup", minArgs: 1,
     handler: proc(a: seq[string]): int =
-      runSetupWizard(resolveHome(cfg.env)); 0,
+      runSetupWizard(resolveHome(cfg.env), cfg.env); 0,
     context: ccNone, description: "Interactive first-run configuration wizard"))
 
   # Post-bootstrap commands

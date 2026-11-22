@@ -20,8 +20,8 @@ const SingleKeys = [
 proc clearEnv() =
   resetCredentialPools()
   for name in SingleKeys:
-    delEnv(name)
-    delEnv(poolEnvName(name))
+    setCredentialForTest(name, "")
+    setCredentialForTest(poolEnvName(name), "")
 
 proc specFor(name: string; model = ""): ProviderSpec =
   resetCredentialPools()
@@ -47,51 +47,51 @@ proc runTests*() =
         (provider: "zai-coding", envName: "ZAI_CODING_API_KEY", expectedName: "zai-coding", expectedModel: "glm-4.7"),
       ]
       for c in cases:
-        putEnv(c.envName, "key-" & c.provider)
+        setCredentialForTest(c.envName, "key-" & c.provider)
         let spec = specFor(c.provider)
         check spec.providerName == c.expectedName
         check spec.modelName == c.expectedModel
         check spec.apiKey == "key-" & c.provider
 
     test "an explicit model overrides the descriptor default":
-      putEnv("OPENAI_API_KEY", "k")
+      setCredentialForTest("OPENAI_API_KEY", "k")
       let spec = specFor("openai", model = "gpt-custom")
       check spec.modelName == "gpt-custom"
 
     test "opencode and opencode-go resolve to the same provider":
-      putEnv("OPENCODE_API_KEY", "k")
+      setCredentialForTest("OPENCODE_API_KEY", "k")
       let spec = specFor("opencode")
       check spec.providerName == "opencode-go"
       check spec.modelName == "opencode/deepseek-4.1-flash"
       check spec.apiKey == "k"
 
     test "zen alias keeps the zen identity":
-      putEnv("ZEN_API_KEY", "k")
+      setCredentialForTest("ZEN_API_KEY", "k")
       let spec = specFor("opencode-zen")
       check spec.providerName == "zen"
       check spec.modelName == "zen/deepseek-4.1-flash"
       check spec.apiKey == "k"
 
     test "ollama uses OLLAMA_BASE_URL as its endpoint":
-      putEnv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+      setCredentialForTest("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
       let spec = specFor("ollama")
       check spec.providerName == "ollama"
       check spec.modelName == "llama3.3"
       check spec.apiKey == "http://127.0.0.1:11434"
 
     test "zai-anthropic keeps the documented fallback order":
-      putEnv("ANTHROPIC_AUTH_TOKEN", "from-anthropic-token")
-      putEnv("ZAI_CODING_API_KEY", "from-coding")
+      setCredentialForTest("ANTHROPIC_AUTH_TOKEN", "from-anthropic-token")
+      setCredentialForTest("ZAI_CODING_API_KEY", "from-coding")
       let spec = specFor("zai-anthropic")
       check spec.apiKey == "from-anthropic-token"
       check spec.modelName == "glm-4.7"
 
     test "zai-anthropic falls through to ZHIPU_API_KEY":
-      putEnv("ZHIPU_API_KEY", "from-zhipu")
+      setCredentialForTest("ZHIPU_API_KEY", "from-zhipu")
       check specFor("zai-anthropic").apiKey == "from-zhipu"
 
     test "an unknown provider keeps the zai-coding fallback":
-      putEnv("ZAI_CODING_API_KEY", "k")
+      setCredentialForTest("ZAI_CODING_API_KEY", "k")
       let spec = specFor("invented")
       check spec.providerName == "zai-coding"
       check spec.modelName == "glm-4.7"
@@ -106,21 +106,21 @@ proc runTests*() =
     teardown: clearEnv()
 
     test "the plural env alone marks a provider available":
-      putEnv("OPENAI_API_KEYS", "a,b")
+      setCredentialForTest("OPENAI_API_KEYS", "a,b")
       check detectProviderAvailability().openai
 
     test "each provider lights its own field":
-      putEnv("OPENROUTER_API_KEY", "k")
+      setCredentialForTest("OPENROUTER_API_KEY", "k")
       check detectProviderAvailability().openrouter
       clearEnv()
 
-      putEnv("OPENCODE_API_KEY", "k")
+      setCredentialForTest("OPENCODE_API_KEY", "k")
       let av = detectProviderAvailability()
       check av.opencodeGo
       check av.zen
       clearEnv()
 
-      putEnv("ZHIPU_API_KEY", "k")
+      setCredentialForTest("ZHIPU_API_KEY", "k")
       let zai = detectProviderAvailability()
       check zai.zaiCoding
       check zai.zaiAnthropic

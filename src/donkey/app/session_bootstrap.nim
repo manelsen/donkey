@@ -13,6 +13,7 @@ import ./channel_prefs_parse
 import ../core/providers/credential_pool
 import ../domain/providers/descriptors
 import ./credential_runtime
+export credential_runtime.detectProviderAvailability
 import ../domain/agent_message
 import ../domain/message
 import ../domain/channels/telegram_pure
@@ -144,28 +145,6 @@ func availableProviderNames*(av: ProviderAvailability): seq[string] =
   if av.nvidia: result.add("nvidia")
   if av.alibaba: result.add("alibaba")
   if av.fireworks: result.add("fireworks")
-
-func detectProviderAvailability*(): ProviderAvailability =
-  ## One field per provider, all derived from the descriptor env names. The
-  ## plural credential env alone also marks a provider available.
-  ProviderAvailability(
-    openrouter: providerConfigured("openrouter"),
-    anthropic: providerConfigured("anthropic"),
-    openai: providerConfigured("openai"),
-    deepseek: providerConfigured("deepseek"),
-    zaiAnthropic: providerConfigured("zai-anthropic"),
-    gemini: providerConfigured("gemini"),
-    minimax: providerConfigured("minimax"),
-    zai: providerConfigured("zai"),
-    zaiCoding: providerConfigured("zai-coding"),
-    groq: providerConfigured("groq"),
-    ollama: providerConfigured("ollama"),
-    opencodeGo: providerConfigured("opencode-go"),
-    zen: providerConfigured("zen"),
-    nvidia: providerConfigured("nvidia"),
-    alibaba: providerConfigured("alibaba"),
-    fireworks: providerConfigured("fireworks"),
-  )
 
 proc toProviderSpec*(selection: ProviderSelection): ProviderSpec =
   buildProviderSpec(ProviderPrefs(
@@ -486,7 +465,7 @@ proc loadRecentContext*(memory: MemoryRuntimePort;
 proc userSkillsDir*(memory: MemoryRuntimePort; userId: UserId): string {.gcsafe.} =
   memory.paddockDir(userId) / "skills"
 
-func nativeSessionTools*(): seq[ToolDescription] =
+proc nativeSessionTools*(): seq[ToolDescription] {.gcsafe, raises: [].} =
   result = @[
     ToolDescription(name: ReminderToolName, description: ReminderToolDescription, schemaJson: ReminderToolSchema),
     ToolDescription(name: CurrentTimeToolName, description: CurrentTimeToolDescription, schemaJson: CurrentTimeToolSchema),
@@ -536,14 +515,14 @@ func nativeSessionTools*(): seq[ToolDescription] =
     (CancelSubagentToolName, CancelSubagentToolDescription, CancelSubagentToolSchema),
   ]:
     result.add(ToolDescription(name: n, description: d, schemaJson: s))
-  if getEnv("BRAVE_API_KEY").len > 0:
+  if webSearchKey().len > 0:
     result.add(ToolDescription(
       name: WebSearchToolName,
       description: WebSearchToolDescription,
       schemaJson: WebSearchToolSchema,
     ))
 
-func addNativeSessionTools*(tools: seq[ToolDescription]): seq[ToolDescription] =
+proc addNativeSessionTools*(tools: seq[ToolDescription]): seq[ToolDescription] {.gcsafe, raises: [].} =
   result = tools
   result.add(nativeSessionTools())
 
@@ -575,7 +554,7 @@ proc withUserSkills*(input: (string, SkillRuntimeBuilder, SkillRuntimePolicyReso
   mergeUserSkillsIntoSession(
     skillsDir, skillRuntimeBuilder, skillRuntimePolicyResolver, result.clients, result.tools)
 
-func withNativeTools*(toolBundle: SessionToolBundle): SessionToolBundle =
+proc withNativeTools*(toolBundle: SessionToolBundle): SessionToolBundle {.gcsafe, raises: [].} =
   result = toolBundle
   result.tools = result.tools |> addNativeSessionTools
 

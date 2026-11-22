@@ -193,9 +193,10 @@ proc runTests*() =
   suite "credential source preservation (G1/G2)":
 
     test "G1: plural *_KEYS pool keeps the plural env name and the whole pool":
-      withEnv("OPENAI_API_KEY", ""):
-        withEnv("OPENAI_API_KEYS", "A,B"):
-          let credential = providerCredentialFromEnv("openai")
+      block:
+        block:
+          let credential = providerCredentialFromEnv(
+            environmentOf({"OPENAI_API_KEYS": "A,B"}), "openai")
           check credential.envName == "OPENAI_API_KEYS"
           check credential.value == "A,B"
           let env = buildEnvContent(
@@ -205,11 +206,12 @@ proc runTests*() =
           check "\nOPENAI_API_KEY=" notin env
 
     test "G2: Go and Zen persist their own env names when no shared key exists":
-      withEnv("OPENCODE_API_KEY", ""):
-        withEnv("OPENCODE_GO_API_KEY", "A"):
-          withEnv("ZEN_API_KEY", "B"):
-            let go = providerCredentialFromEnv("opencode-go")
-            let zen = providerCredentialFromEnv("zen")
+      block:
+        let vars = environmentOf({"OPENCODE_GO_API_KEY": "A", "ZEN_API_KEY": "B"})
+        block:
+          block:
+            let go = providerCredentialFromEnv(vars, "opencode-go")
+            let zen = providerCredentialFromEnv(vars, "zen")
             check go.envName == "OPENCODE_GO_API_KEY"
             check go.value == "A"
             check zen.envName == "ZEN_API_KEY"
@@ -222,11 +224,12 @@ proc runTests*() =
             check "\nOPENCODE_API_KEY=" notin env
 
     test "G2: a shared key is still written once in the source-aware form":
-      withEnv("OPENCODE_API_KEY", "shared"):
-        withEnv("OPENCODE_GO_API_KEY", ""):
-          withEnv("ZEN_API_KEY", ""):
-            let go = providerCredentialFromEnv("opencode-go")
-            let zen = providerCredentialFromEnv("zen")
+      block:
+        let vars = environmentOf({"OPENCODE_API_KEY": "shared"})
+        block:
+          block:
+            let go = providerCredentialFromEnv(vars, "opencode-go")
+            let zen = providerCredentialFromEnv(vars, "zen")
             check go.envName == "OPENCODE_API_KEY"
             check zen.envName == "OPENCODE_API_KEY"
             let env = buildEnvContent(

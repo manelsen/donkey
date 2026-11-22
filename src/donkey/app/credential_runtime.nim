@@ -5,17 +5,43 @@
 ## keys, and a key that returned an auth/rate/quota error cools down so the
 ## next request uses another one.
 ##
+## The keys come from the environment snapshot, installed once at startup
+## with `useCredentials` (tests install their own instead of `putEnv`).
 ## Provider specs are built on the event loop and the credential hooks run
-## there after each await, so the pools are thread-local to it: gcsafe with
-## no lock and no cast. Another thread would see its own (empty) pools, which
-## costs rotation, never memory safety.
+## there after each await, so the snapshot and the pools are thread-local to
+## it: gcsafe with no lock and no cast. Another thread would see no keys;
+## `ThreadOwner` logs such a use instead of letting it pass as "no credential".
 
-import std/[options, os, strutils, tables]
+import std/[options, strutils, tables]
 import ../core/pipeops
 import ../core/providers/credential_pool
+import ../core/providers/smart_routing
+import ../config/environment
 import ../domain/providers/descriptors
+import ../infra/thread_owner
 
-var gPools {.threadvar.}: Table[string, CredentialPool]
+var
+  gPools {.threadvar.}: Table[string, CredentialPool]
+  gCredentials {.threadvar.}: Environment
+  gCredentialsOwner: ThreadOwner
+
+proc useCredentials*(env: Environment) {.gcsafe, raises: [].} =
+  ## Installs the snapshot the provider keys are read from, and forgets the
+  ## pools built from the previous one.
+  if gCredentialsOwner.isOwner("provider credentials"):
+    gCredentials = env
+    gPools.clear()
+
+proc setCredentialForTest*(name, value: string) {.gcsafe, raises: [].} =
+  ## Test hook: sets one variable in the installed snapshot ("" unsets it).
+  if gCredentialsOwner.isOwner("provider credentials"):
+    gCredentials = gCredentials.with(name, value)
+
+proc credentialValue(name: string): string {.gcsafe, raises: [].} =
+  if gCredentialsOwner.isOwner("provider credentials"):
+    gCredentials.stripped(name)
+  else:
+    ""
 
 func poolEnvName*(envName: string): string =
   ## `openai` + `OPENAI_API_KEY` -> `OPENAI_API_KEYS`.
@@ -30,15 +56,42 @@ func splitKeys*(raw: string): seq[string] =
     if key.len > 0 and key notin result:
       result.add key
 
-func hasCredentialKey*(envNames: openArray[string]): bool =
-  ## True when any name has a single or plural value. Pure: availability is
-  ## computed without touching the pool.
+proc credentialSet*(name: string): bool {.gcsafe, raises: [].} =
+  ## Whether the installed snapshot has a value for `name`: presence only,
+  ## for status views that list what is configured (never the value).
+  credentialValue(name).len > 0
+
+proc webSearchKey*(): string {.gcsafe, raises: [].} =
+  ## The Brave Search key behind the web_search tool; "" when it is off.
+  credentialValue("BRAVE_API_KEY")
+
+func firstCredential*(env: Environment; envNames: openArray[string]): string =
+  ## The first value over the names, single or plural; "" when none is set.
   for envName in envNames:
-    if getEnv(envName).strip.len > 0:
-      return true
-    if splitKeys(getEnv(poolEnvName(envName))).len > 0:
-      return true
-  false
+    let single = env.stripped(envName)
+    if single.len > 0:
+      return single
+    let plural = splitKeys(env.get(poolEnvName(envName)))
+    if plural.len > 0:
+      return plural[0]
+  ""
+
+func configuredIn*(env: Environment; id: string): bool =
+  ## True when the descriptor's env has a single or plural value in `env`.
+  ## Local providers use their endpoint env instead of a credential.
+  let d = descriptorOr(id)
+  if d.authType == atNone:
+    return d.envNames.len > 0 and env.has(d.envNames[0])
+  firstCredential(env, d.envNames).len > 0
+
+proc installedCredentials(): Environment {.gcsafe, raises: [].} =
+  if gCredentialsOwner.isOwner("provider credentials"): gCredentials
+  else: Environment()
+
+proc hasCredentialKey*(envNames: openArray[string]): bool {.gcsafe, raises: [].} =
+  ## True when any name has a single or plural value in the installed
+  ## snapshot. Availability is computed without touching the pool.
+  firstCredential(installedCredentials(), envNames).len > 0
 
 proc resetCredentialPools*() {.gcsafe, raises: [].} =
   ## Test hook: forget rotation and cooldown state.
@@ -53,9 +106,9 @@ proc resolveCredentialKey*(providerName: string;
   if providerName.len == 0:
     return ""
   for envName in envNames:
-    var keys = splitKeys(getEnv(poolEnvName(envName)))
+    var keys = splitKeys(credentialValue(poolEnvName(envName)))
     if keys.len == 0:
-      let single = getEnv(envName).strip
+      let single = credentialValue(envName)
       if single.len > 0:
         keys = @[single]
     if keys.len == 0:
@@ -70,13 +123,9 @@ proc resolveCredentialKey*(providerName: string;
     return ""
   ""
 
-func providerConfigured*(id: string): bool {.gcsafe, raises: [].} =
-  ## True when the descriptor's env has a single or plural value. Local
-  ## providers use their endpoint env instead of a credential.
-  let d = descriptorOr(id)
-  if d.authType == atNone:
-    return d.envNames.len > 0 and getEnv(d.envNames[0]).strip.len > 0
-  hasCredentialKey(d.envNames)
+proc providerConfigured*(id: string): bool {.gcsafe, raises: [].} =
+  ## `configuredIn` over the installed snapshot.
+  configuredIn(installedCredentials(), id)
 
 proc descriptorApiKey*(d: ProviderDescriptor; nowMs = nowMs()): string
                        {.gcsafe, raises: [].} =
@@ -84,7 +133,7 @@ proc descriptorApiKey*(d: ProviderDescriptor; nowMs = nowMs()): string
   if d.authType == atNone:
     if d.envNames.len == 0:
       return ""
-    return getEnv(d.envNames[0]).strip
+    return credentialValue(d.envNames[0])
   resolveCredentialKey(d.id, d.envNames, nowMs)
 
 proc nextCredentialKey*(providerName, currentKey: string;
@@ -121,3 +170,25 @@ proc noteCredentialResult*(providerName, key: string; ok: bool;
   else:
     pool.noteFailure(key, nowMs, cooldownForError(error))
   gPools[providerName] = pool
+
+proc detectProviderAvailability*(): ProviderAvailability {.gcsafe, raises: [].} =
+  ## One field per provider, all derived from the descriptor env names. The
+  ## plural credential env alone also marks a provider available.
+  ProviderAvailability(
+    openrouter: providerConfigured("openrouter"),
+    anthropic: providerConfigured("anthropic"),
+    openai: providerConfigured("openai"),
+    deepseek: providerConfigured("deepseek"),
+    zaiAnthropic: providerConfigured("zai-anthropic"),
+    gemini: providerConfigured("gemini"),
+    minimax: providerConfigured("minimax"),
+    zai: providerConfigured("zai"),
+    zaiCoding: providerConfigured("zai-coding"),
+    groq: providerConfigured("groq"),
+    ollama: providerConfigured("ollama"),
+    opencodeGo: providerConfigured("opencode-go"),
+    zen: providerConfigured("zen"),
+    nvidia: providerConfigured("nvidia"),
+    alibaba: providerConfigured("alibaba"),
+    fireworks: providerConfigured("fireworks"),
+  )

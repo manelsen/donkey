@@ -58,6 +58,7 @@ import ./session_state
 import ./channel_prefs_parse
 import ./native_tools
 import ./approval_runtime
+import ./credential_runtime
 import ./onboarding_runtime
 import ./tool_loop_runtime
 import ./subagent_runtime
@@ -229,7 +230,7 @@ proc buildNativeCtx*(uid: UserId;
     completeFn:   completeFn,
     http:         http,
     fs:           fs,
-    braveApiKey:  getEnv("BRAVE_API_KEY", ""),
+    braveApiKey:  webSearchKey(),
     webAllowlist: cfg.webAllowlist,
     toolWebPolicy: cfg.toolWebPolicy,
     tools:        tools,

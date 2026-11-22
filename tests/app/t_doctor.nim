@@ -9,39 +9,37 @@ import donkey/app/doctor
 import donkey/core/diagnostics
 import donkey/core/pipeops
 import donkey/config/types
+import donkey/config/environment
 
 # ── checkApiKey ────────────────────────────────────────────────────────────────
 
-proc restoreEnv(name: string; had: bool; previous: string) =
-  if had: putEnv(name, previous) else: delEnv(name)
+let noEnv = Environment()
 
 
 proc runTests*() =
   suite "doctor — checkApiKey":
 
     test "returns dsErr when env var is not set":
-      putEnv("_DONKEY_TEST_KEY_ABSENT", "")
-      let r = checkApiKey("TestProvider", "_DONKEY_TEST_KEY_ABSENT")
+      let r = checkApiKey(noEnv, "TestProvider", "_DONKEY_TEST_KEY_ABSENT")
       check r.name == "TestProvider"
       # env var is empty → dsErr (caller decides to markWarn)
       check r.status == dsErr
       check "not set" in r.detail
 
     test "returns dsOk when env var is set":
-      putEnv("_DONKEY_TEST_KEY_PRESENT", "sk-test-12345")
-      let r = checkApiKey("TestProvider", "_DONKEY_TEST_KEY_PRESENT")
+      let env = environmentOf({"_DONKEY_TEST_KEY_PRESENT": "sk-test-12345"})
+      let r = checkApiKey(env, "TestProvider", "_DONKEY_TEST_KEY_PRESENT")
       check r.status == dsOk
       check "set" in r.detail
 
     test "detail includes char count when key is set":
-      putEnv("_DONKEY_TEST_KEY_LEN", "abc123")
-      let r = checkApiKey("Len", "_DONKEY_TEST_KEY_LEN")
+      let env = environmentOf({"_DONKEY_TEST_KEY_LEN": "abc123"})
+      let r = checkApiKey(env, "Len", "_DONKEY_TEST_KEY_LEN")
       check r.status == dsOk
       check "6" in r.detail    # len("abc123") == 6
 
     test "markWarn downgrades missing key to dsWarn":
-      putEnv("_DONKEY_TEST_KEY_WARN", "")
-      let r = checkApiKey("Optional", "_DONKEY_TEST_KEY_WARN") |> markWarn
+      let r = checkApiKey(noEnv, "Optional", "_DONKEY_TEST_KEY_WARN") |> markWarn
       check r.status == dsWarn
 
   # ── checkPgvector ──────────────────────────────────────────────────────────────
@@ -49,19 +47,14 @@ proc runTests*() =
   suite "doctor — checkPgvector":
 
     test "returns dsWarn when DONKEY_PG_DSN is not set":
-      let saved = getEnv("DONKEY_PG_DSN")
-      putEnv("DONKEY_PG_DSN", "")
-      let r = checkPgvector()
+      let r = checkPgvector(noEnv)
       check r.name   == "pgvector"
       check r.status == dsWarn    # always advisory
       check "docker compose up -d postgres" in r.detail
-      if saved.len > 0: putEnv("DONKEY_PG_DSN", saved)
 
     test "returns dsOk when DONKEY_PG_DSN is set (DSN is configured)":
-      putEnv("DONKEY_PG_DSN", "postgres://localhost/test")
-      let r = checkPgvector()
+      let r = checkPgvector(environmentOf({"DONKEY_PG_DSN": "postgres://localhost/test"}))
       check r.status == dsOk      # DSN is set — configuration looks ok
-      putEnv("DONKEY_PG_DSN", "")
 
   # ── checkContainerRuntime ─────────────────────────────────────────────────────
 
@@ -209,9 +202,6 @@ proc runTests*() =
   suite "doctor — summary":
 
     test "doctor summary reflects sqlite-first defaults and smart routing":
-      putEnv("DONKEY_PG_DSN", "")
-      putEnv("DONKEY_MAGMA_SQLITE_PATH", "")
-      putEnv("BRAVE_API_KEY", "")
       let cfg = DonkeyConfig(
         home: "/tmp/donkey-home",
         sandboxMode: smOci,
@@ -228,9 +218,9 @@ proc runTests*() =
       check "mode=oci" in summary
 
     test "doctor summary reflects configured defaults and pg runtime":
-      putEnv("DONKEY_PG_DSN", "postgres://localhost/test")
-      putEnv("BRAVE_API_KEY", "brave-key")
       let cfg = DonkeyConfig(
+        env: environmentOf({"DONKEY_PG_DSN": "postgres://localhost/test",
+                            "BRAVE_API_KEY": "brave-key"}),
         home: "/tmp/donkey-home",
         defaultProvider: "zai-coding",
         defaultModel: "glm-4.7",
@@ -250,64 +240,32 @@ proc runTests*() =
   suite "doctor — provider credentials":
 
     test "accepts any descriptor env name, not only the first":
-      let hadFirst = existsEnv("ZAI_CODING_API_KEY")
-      let previousFirst = getEnv("ZAI_CODING_API_KEY")
-      let hadPlural = existsEnv("ZAI_CODING_API_KEYS")
-      let previousPlural = getEnv("ZAI_CODING_API_KEYS")
-      let hadZhipu = existsEnv("ZHIPU_API_KEY")
-      let previousZhipu = getEnv("ZHIPU_API_KEY")
-      defer:
-        restoreEnv("ZAI_CODING_API_KEY", hadFirst, previousFirst)
-        restoreEnv("ZAI_CODING_API_KEYS", hadPlural, previousPlural)
-        restoreEnv("ZHIPU_API_KEY", hadZhipu, previousZhipu)
-      delEnv("ZAI_CODING_API_KEY")
-      delEnv("ZAI_CODING_API_KEYS")
-      putEnv("ZHIPU_API_KEY", "zk-fallback")
+      let env = environmentOf({"ZHIPU_API_KEY": "zk-fallback"})
       let row = doctorProviderRows().filterIt(it.id == "zai-coding")[0]
-      let r = checkProviderRow(row)
+      let r = checkProviderRow(env, row)
       check r.name == "ZAI Coding"
       check r.status == dsOk
       check "set (" in r.detail
 
     test "accepts the plural *_KEYS form":
-      let hadSingle = existsEnv("OPENAI_API_KEY")
-      let previousSingle = getEnv("OPENAI_API_KEY")
-      let hadPlural = existsEnv("OPENAI_API_KEYS")
-      let previousPlural = getEnv("OPENAI_API_KEYS")
-      defer:
-        restoreEnv("OPENAI_API_KEY", hadSingle, previousSingle)
-        restoreEnv("OPENAI_API_KEYS", hadPlural, previousPlural)
-      delEnv("OPENAI_API_KEY")
-      putEnv("OPENAI_API_KEYS", "sk-a,sk-b")
+      let env = environmentOf({"OPENAI_API_KEYS": "sk-a,sk-b"})
       let row = doctorProviderRows().filterIt(it.id == "openai")[0]
-      check checkProviderRow(row).status == dsOk
+      check checkProviderRow(env, row).status == dsOk
 
     test "an endpoint provider is configured by its endpoint, not a key":
-      let had = existsEnv("OLLAMA_BASE_URL")
-      let previous = getEnv("OLLAMA_BASE_URL")
-      defer: restoreEnv("OLLAMA_BASE_URL", had, previous)
-      delEnv("OLLAMA_BASE_URL")
       let row = doctorProviderRows().filterIt(it.id == "ollama")[0]
-      let missing = checkProviderRow(row)
+      let missing = checkProviderRow(noEnv, row)
       check missing.status == dsErr
       check "OLLAMA_BASE_URL" in missing.detail
-      putEnv("OLLAMA_BASE_URL", "http://localhost:11434")
-      let configured = checkProviderRow(row)
+      let configured = checkProviderRow(
+        environmentOf({"OLLAMA_BASE_URL": "http://localhost:11434"}), row)
       check configured.status == dsOk
       check "endpoint" in configured.detail
 
     test "the formatted report never prints the secret, only its length":
       const secret = "sk-doctor-super-secret-value"
-      let hadSingle = existsEnv("OPENROUTER_API_KEY")
-      let previousSingle = getEnv("OPENROUTER_API_KEY")
-      let hadPlural = existsEnv("OPENROUTER_API_KEYS")
-      let previousPlural = getEnv("OPENROUTER_API_KEYS")
-      defer:
-        restoreEnv("OPENROUTER_API_KEY", hadSingle, previousSingle)
-        restoreEnv("OPENROUTER_API_KEYS", hadPlural, previousPlural)
-      delEnv("OPENROUTER_API_KEYS")
-      putEnv("OPENROUTER_API_KEY", secret)
-      let results = runDoctorChecks(DonkeyConfig(sandboxMode: smNone))
+      let results = runDoctorChecks(DonkeyConfig(
+        sandboxMode: smNone, env: environmentOf({"OPENROUTER_API_KEY": secret})))
       let report = results |>-> formatReport("Donkey Doctor")
       check secret notin report
       check "set (" & $secret.len & " chars)" in report
