@@ -20,7 +20,7 @@ proc runTests*() =
       let tomlPath = testDir / ConfigFileName
       writeFile(tomlPath, tomlContent)
 
-      let cfg = loadConfig(tomlPath)
+      let cfg = loadConfig(tomlPath, Environment())
       check cfg.home == testDir
       check cfg.logLevel == lvlDebug
       check cfg.sandboxMode == smOci
@@ -43,7 +43,7 @@ proc runTests*() =
       let tomlPath = testDir / ConfigFileName
       writeFile(tomlPath, tomlContent)
 
-      let cfg = loadConfig(tomlPath)
+      let cfg = loadConfig(tomlPath, Environment())
       check cfg.defaultProvider == "zai-coding"
       check cfg.defaultModel == "glm-4.7"
 

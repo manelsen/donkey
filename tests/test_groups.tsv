@@ -116,6 +116,7 @@ g1	tests/architecture/t_nim_source.nim
 g1	tests/architecture/t_no_swallowed_errors.nim
 g1	tests/architecture/t_gcsafe_casts.nim
 g1	tests/architecture/t_thread_spawning.nim
+g1	tests/architecture/t_env_reads.nim
 g1	tests/channel/t_dingtalk.nim
 g1	tests/channel/t_discord.nim
 g1	tests/channel/t_email.nim
@@ -132,6 +133,7 @@ g1	tests/channel/t_wecom.nim
 g1	tests/channel/t_whatsapp.nim
 g1	tests/config/t_clawhub_registry.nim
 g1	tests/config/t_dotenv.nim
+g1	tests/config/t_environment.nim
 g1	tests/config/t_toml.nim
 g1	tests/config/t_loader.nim
 g1	tests/config/t_skills_registry.nim

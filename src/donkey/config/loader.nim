@@ -7,6 +7,7 @@
 ##   3. Built-in defaults (see config/types.nim)
 
 import std/[options, os, strutils]
+import ./environment
 import ./toml
 import ./types
 import ../core/types
@@ -14,7 +15,7 @@ import ../core/app_meta
 import ../core/pipeops
 import ../core/security/dm_policy
 
-export types
+export types, environment
 
 const EnvHome* = "DONKEY_HOME"
 const EnvWebAllowlist* = "DONKEY_WEB_ALLOWLIST"
@@ -52,8 +53,8 @@ proc resolveHomeFromEnv*(homeEnv: string): string =
     return homeEnv
   expandTilde("~/" & HomeDirName)
 
-proc resolveHome*(): string =
-  resolveHomeFromEnv(getEnv(EnvHome))
+proc resolveHome*(env: Environment): string =
+  resolveHomeFromEnv(env.get(EnvHome))
 
 proc parseSandboxMode*(rawMode: string): Option[SandboxMode] =
   case rawMode.strip().toLowerAscii()
@@ -182,12 +183,13 @@ proc applySecurityConfigPatch*(patch: SecurityConfigPatch; cfg: DonkeyConfig): D
   if patch.invalidDmPolicy.isSome:
     result.invalidDmPolicy = patch.invalidDmPolicy.get()
 
-proc applyEnvOverrides*(cfg: DonkeyConfig): DonkeyConfig =
+proc applyEnvOverrides*(cfg: DonkeyConfig; env: Environment): DonkeyConfig =
   result = cfg
-  let rawAllowlist = getEnv(EnvWebAllowlist).strip()
+  result.env = env
+  let rawAllowlist = env.stripped(EnvWebAllowlist)
   if rawAllowlist.len > 0:
     result.webAllowlist = parseHostList(rawAllowlist)
-  let rawDmPolicy = getEnv(EnvDmPolicy).strip()
+  let rawDmPolicy = env.stripped(EnvDmPolicy)
   if rawDmPolicy.len > 0:
     let parsed = parseDmPolicy(rawDmPolicy)
     if parsed.isSome:
@@ -305,11 +307,13 @@ proc loadTomlConfig*(path: string): Option[TomlValueRef] =
   except CatchableError:
     none(TomlValueRef)
 
-proc loadConfig*(path: string): DonkeyConfig =
-  let baseConfig = defaultConfig(resolveHome())
+proc loadConfig*(path: string; env: Environment): DonkeyConfig =
+  ## donkey.toml over the defaults, then the environment over both. The
+  ## snapshot is kept in `env` for the settings read from it later.
+  let baseConfig = defaultConfig(resolveHome(env))
   let docOpt = loadTomlConfig(path)
   if docOpt.isNone:
-    var fallback = baseConfig |> applyEnvOverrides
+    var fallback = baseConfig.applyEnvOverrides(env)
     if fileExists(path) and fallback.invalidDmPolicy.len == 0:
       # A file that exists but cannot be parsed must not silently fall back to
       # DmPolicyOpen; startup will reject it.
@@ -325,4 +329,4 @@ proc loadConfig*(path: string): DonkeyConfig =
     applyMainConfigPatch(mainPatch) |>->
     applySecurityConfigPatch(securityPatch) |>->
     applySandboxConfigPatch(sandboxPatch)
-  result = result |> applyEnvOverrides
+  result = result.applyEnvOverrides(env)

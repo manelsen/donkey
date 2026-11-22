@@ -119,7 +119,7 @@ proc runImageTurn(completeFn: CompleteFn;
   var history = newHistory()
   history.addUserWithImage("veja a foto", DataPng)
   result = await runToolLoop(
-    outbox, toolInbox, toolOut, MemoryRuntimePort(), completeFn, nil, nil,
+    outbox, toolInbox, toolOut, MemoryRuntimePort(), completeFn, nil, StreamFactory(),
     ctx, newSessionState(), history, UserId("u-turn"), ckTelegram, "",
     "msg-turn", "stream-turn", "system", "", @[], "openai", true, false, false,
     logger, asyncCompleteFn)

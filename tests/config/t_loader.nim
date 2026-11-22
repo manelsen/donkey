@@ -22,16 +22,19 @@ proc runTests*() =
     test "loadTomlConfig returns none for missing file":
       check loadTomlConfig("/tmp/donkey_nonexistent_12345.toml").isNone
 
+    test "the environment snapshot is kept in the config":
+      let env = environmentOf({"DONKEY_HTTP_PORT": "9000"})
+      check loadConfig("/tmp/donkey_nonexistent_12345.toml", env).env.get("DONKEY_HTTP_PORT") == "9000"
+
     test "returns defaults when config file is missing":
-      let cfg = loadConfig("/tmp/donkey_nonexistent_12345.toml")
+      let cfg = loadConfig("/tmp/donkey_nonexistent_12345.toml", Environment())
       check cfg.logLevel == lvlInfo
       check cfg.paddocks.endsWith("paddocks")
       check cfg.home.len > 0
 
     test "respects DONKEY_HOME env override":
-      putEnv("DONKEY_HOME", "/tmp/donkey_test_home")
-      let cfg = loadConfig("/tmp/donkey_nonexistent_12345.toml")
-      delEnv("DONKEY_HOME")
+      let cfg = loadConfig("/tmp/donkey_nonexistent_12345.toml",
+                           environmentOf({"DONKEY_HOME": "/tmp/donkey_test_home"}))
       check cfg.home == "/tmp/donkey_test_home"
       check cfg.paddocks == "/tmp/donkey_test_home/paddocks"
 
@@ -45,7 +48,7 @@ proc runTests*() =
       let tmp = getTempDir() / "t_loader_malformed.toml"
       writeFile(tmp, "[security\ndm_policy = \"open\"\n")
       defer: removeFile(tmp)
-      check loadConfig(tmp).invalidDmPolicy.len > 0
+      check loadConfig(tmp, Environment()).invalidDmPolicy.len > 0
 
     test "invalid dm_policy is recorded for startup rejection":
       let tmp = getTempDir() / "t_loader_bad_dm_policy.toml"
@@ -54,12 +57,11 @@ proc runTests*() =
 dm_policy = "nonsense"
 """)
       defer: removeFile(tmp)
-      check loadConfig(tmp).invalidDmPolicy == "nonsense"
+      check loadConfig(tmp, Environment()).invalidDmPolicy == "nonsense"
 
     test "invalid DONKEY_DM_POLICY is recorded for startup rejection":
-      putEnv("DONKEY_DM_POLICY", "nonsense")
-      let cfg = loadConfig("/tmp/donkey_nonexistent_12345.toml")
-      delEnv("DONKEY_DM_POLICY")
+      let cfg = loadConfig("/tmp/donkey_nonexistent_12345.toml",
+                           environmentOf({"DONKEY_DM_POLICY": "nonsense"}))
       check cfg.invalidDmPolicy == "nonsense"
 
     test "valid env dm_policy clears an invalid TOML value":
@@ -68,9 +70,7 @@ dm_policy = "nonsense"
 [security]
 dm_policy = "nonsense"
 """)
-      putEnv("DONKEY_DM_POLICY", "open")
-      let cfg = loadConfig(tmp)
-      delEnv("DONKEY_DM_POLICY")
+      let cfg = loadConfig(tmp, environmentOf({"DONKEY_DM_POLICY": "open"}))
       removeFile(tmp)
       check cfg.dmPolicy == DmPolicyOpen
       check cfg.invalidDmPolicy.len == 0
@@ -82,7 +82,7 @@ dm_policy = "nonsense"
 dm_policy = ""
 """)
       defer: removeFile(tmp)
-      check loadConfig(tmp).invalidDmPolicy.len > 0
+      check loadConfig(tmp, Environment()).invalidDmPolicy.len > 0
 
     test "reads dm_policy from the security section":
       let tmp = getTempDir() / "t_loader_dm_policy.toml"
@@ -91,7 +91,7 @@ dm_policy = ""
 dm_policy = "allowlist"
 """)
       defer: removeFile(tmp)
-      check loadConfig(tmp).dmPolicy == DmPolicyAllowlist
+      check loadConfig(tmp, Environment()).dmPolicy == DmPolicyAllowlist
 
     test "DONKEY_DM_POLICY overrides the config file":
       let tmp = getTempDir() / "t_loader_dm_env.toml"
@@ -99,9 +99,7 @@ dm_policy = "allowlist"
 [security]
 dm_policy = "open"
 """)
-      putEnv("DONKEY_DM_POLICY", "allowlist")
-      let cfg = loadConfig(tmp)
-      delEnv("DONKEY_DM_POLICY")
+      let cfg = loadConfig(tmp, environmentOf({"DONKEY_DM_POLICY": "allowlist"}))
       removeFile(tmp)
       check cfg.dmPolicy == DmPolicyAllowlist
 
@@ -112,7 +110,7 @@ dm_policy = "open"
 log_level = "debug"
 """)
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check cfg.logLevel == lvlDebug
 
     test "unknown log_level falls back to info":
@@ -122,7 +120,7 @@ log_level = "debug"
 log_level = "nonsense"
 """)
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check cfg.logLevel == lvlInfo
 
     test "reads custom log_file":
@@ -132,7 +130,7 @@ log_level = "nonsense"
 log_file = "/var/log/donkey.log"
 """)
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check cfg.logFile == "/var/log/donkey.log"
 
     test "expands tilde in log_file and paddocks":
@@ -143,7 +141,7 @@ log_file = "~/var/donkey.log"
 paddocks = "~/work/paddocks"
 """)
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check not cfg.logFile.startsWith("~")
       check not cfg.paddocks.startsWith("~")
 
@@ -154,18 +152,18 @@ paddocks = "~/work/paddocks"
 paddocks = "/srv/donkey/paddocks"
 """)
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check cfg.paddocks == "/srv/donkey/paddocks"
 
     test "invalid TOML falls back to defaults without crashing":
       let tmp = getTempDir() / "t_loader_broken.toml"
       writeFile(tmp, "this is { not valid } toml !!!")
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check cfg.logLevel == lvlInfo  # defaults intact
 
     test "default sandbox mode is none":
-      let cfg = loadConfig("/tmp/donkey_nonexistent_12345.toml")
+      let cfg = loadConfig("/tmp/donkey_nonexistent_12345.toml", Environment())
       check cfg.sandboxMode == smNone
       check not cfg.sandboxAllowHostFallback
       check not cfg.sandboxAllowNetwork
@@ -181,7 +179,7 @@ log_level = "info"
 mode = "oci"
 """)
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check cfg.sandboxMode == smOci
 
     test "tracks invalid removed sandbox mode":
@@ -191,7 +189,7 @@ mode = "oci"
 mode = "wasmer"
 """)
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check cfg.sandboxMode == smNone
       check cfg.invalidSandboxMode == "wasmer"
 
@@ -207,7 +205,7 @@ allow_network = true
 read_only_rootfs = false
 """)
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check cfg.sandboxMode  == smOci
       check cfg.sandboxRuntimeCmd == "podman"
       check cfg.sandboxImage == "debian:bookworm-slim"
@@ -222,7 +220,7 @@ read_only_rootfs = false
 mode = "kubernetes"
 """)
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check cfg.sandboxMode == smNone
       check cfg.invalidSandboxMode == "kubernetes"
 
@@ -233,7 +231,7 @@ mode = "kubernetes"
 mode = "docker"
 """)
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check cfg.sandboxImage == "alpine"
       check cfg.sandboxRuntimeCmd == "docker"
 
@@ -245,7 +243,7 @@ log_file = "   "
 paddocks = "   "
 """)
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check cfg.logFile.endsWith("donkey.log")
       check cfg.paddocks.endsWith("paddocks")
 
@@ -257,7 +255,7 @@ mode = "docker"
 image = "   "
 """)
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check cfg.sandboxMode == smOci
       check cfg.sandboxImage == "alpine"
 
@@ -268,7 +266,7 @@ image = "   "
 web_allowlist = ["example.com", "api.github.com"]
 """)
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check cfg.webAllowlist == @["example.com", "api.github.com"]
 
     test "DONKEY_WEB_ALLOWLIST overrides toml":
@@ -277,11 +275,9 @@ web_allowlist = ["example.com", "api.github.com"]
 [security]
 web_allowlist = ["example.com"]
 """)
-      defer:
-        delEnv("DONKEY_WEB_ALLOWLIST")
-        removeFile(tmp)
-      putEnv("DONKEY_WEB_ALLOWLIST", "docs.nim-lang.org, api.github.com")
-      let cfg = loadConfig(tmp)
+      defer: removeFile(tmp)
+      let cfg = loadConfig(tmp, environmentOf(
+        {"DONKEY_WEB_ALLOWLIST": "docs.nim-lang.org, api.github.com"}))
       check cfg.webAllowlist == @["docs.nim-lang.org", "api.github.com"]
 
     test "reads tool and skill network policies":
@@ -294,7 +290,7 @@ allow = ["docs.nim-lang.org/manual", "api.github.com/repos/"]
 allow_net = ["api.github.com"]
 """)
       defer: removeFile(tmp)
-      let cfg = loadConfig(tmp)
+      let cfg = loadConfig(tmp, Environment())
       check cfg.toolWebPolicy.len == 1
       check cfg.toolWebPolicy[0].toolName == "fetch"
       check cfg.toolWebPolicy[0].allow[0].host == "docs.nim-lang.org"

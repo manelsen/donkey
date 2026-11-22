@@ -42,7 +42,7 @@ proc makeTestServices(memory: MdFileAdapter;
     memory = memory.toRuntimePort(),
     cfg = DonkeyConfig(defaultProvider: "openai", defaultModel: "gpt-4o"),
     completeFn = stubComplete,
-    streamFactory = nil,
+    streamFactory = StreamFactory(),
     toolClients = emptyClients,
     tools = emptyTools,
     globalOutbox = outbox,

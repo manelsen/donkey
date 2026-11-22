@@ -111,7 +111,7 @@ proc runStreamJob(job: StreamJob) {.thread, nimcall, raises: [].} =
   let events = job.events
   var final = StreamEvent(done: true)
   try:
-    let fn = job.factory()
+    let fn = job.factory.build(job.factory.credential)
     if fn == nil:
       final.error = "streaming unavailable"
     else:
@@ -560,14 +560,14 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
     var req = buildPrompt(systemBase, loopState.history, context, tools, reasoning = showReasoning)
 
     let canStreamToolCalls =
-      streamFactory != nil and streamSlotAvailable() and
+      streamFactory.available and streamSlotAvailable() and
       providerLabel.toLowerAscii().startsWith("openrouter")
     ## Suppressing tool progress must not disable plain streaming on the
     ## first round; only the tool-call stream channel stays hidden.
     if decideToolLoopStreaming(
       round = round,
       toolsCount = tools.len,
-      streamingAvailable = streamFactory != nil and streamSlotAvailable(),
+      streamingAvailable = streamFactory.available and streamSlotAvailable(),
       streamingToolCalls = canStreamToolCalls and not suppressProgress,
     ).useStreaming:
       var streamedRes = await streamToOutbox(

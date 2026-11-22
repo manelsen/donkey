@@ -3,6 +3,7 @@
 import ../core/types
 import ../core/security/dm_policy
 import ../core/app_meta
+import ./environment
 
 type
   WebAccessRule* = object
@@ -43,6 +44,7 @@ type
     dmPolicy*:      DmPolicy     ## DM security policy; default: DmPolicyOpen
     invalidDmPolicy*: string     ## Raw invalid value from TOML/env; blocks startup
     wiring*:        bool         ## Enable advanced session wiring; default: false
+    env*:           Environment  ## The environment snapshot the config was loaded with
 
 func defaultConfig*(home: string): DonkeyConfig =
   DonkeyConfig(
