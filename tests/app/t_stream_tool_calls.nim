@@ -204,6 +204,21 @@ proc runTests*() =
       check liveStreams() == 0
       check streamSlotAvailable()
 
+    test "a saturated turn with no completion function ends with an error":
+      ## At the cap the loop does not stream; with no completion function to
+      ## fall back on it must fail cleanly, not call a nil proc.
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let stopped = currentSessionStopGeneration() + 1
+      for _ in 0 ..< MaxLiveStreams:
+        discard waitFor streamToOutbox(slowFactory, CompletionRequest(), outbox,
+          UserId("u1"), ckTelegram, "", "sid", stopGeneration = stopped)
+      gStreamCalls.store(0)
+      let loop = waitFor runStreamingImageTurn()
+      check loop.done
+      check gStreamCalls.load() == 0
+      waitFor sleepAsync(chronos.milliseconds(2000))
+      check liveStreams() == 0
+
   # ── Turn-scoped retry in the streaming branch ────────────────────────────────
   #
   # OpenRouter streams the first round. A vision-less model refuses the inline

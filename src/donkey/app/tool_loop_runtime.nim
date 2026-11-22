@@ -29,6 +29,7 @@ import ../app/prompt_building
 import ../app/provider_executor
 import ../infra/event_queue
 import ../infra/thread_handle
+import ../infra/thread_owner
 
 export tool_loop
 
@@ -75,12 +76,24 @@ const
   StreamChannelDepth = 512
   MaxLiveStreams* = 8
 
-var gLiveStreams = 0
-  ## Started and not yet joined. Touched only on the event loop thread.
+var gLiveStreams {.threadvar.}: int
+  ## Started and not yet joined. Event loop state: another thread would see
+  ## its own zero and slip past the cap, so gStreamsOwner refuses it.
+var gStreamsOwner: ThreadOwner
 
-proc liveStreams*(): int {.gcsafe.} = gLiveStreams
+proc liveStreams*(): int {.gcsafe.} =
+  if gStreamsOwner.isOwner("live stream count"): gLiveStreams else: 0
 
-proc streamSlotAvailable*(): bool {.gcsafe.} = gLiveStreams < MaxLiveStreams
+proc streamSlotAvailable*(): bool {.gcsafe.} =
+  ## False on any thread but the loop's: streaming is only counted there.
+  gStreamsOwner.isOwner("live stream count") and
+    gLiveStreams < MaxLiveStreams
+
+proc streamStarted() {.gcsafe.} =
+  if gStreamsOwner.isOwner("live stream count"): inc gLiveStreams
+
+proc streamReaped() {.gcsafe.} =
+  if gStreamsOwner.isOwner("live stream count"): dec gLiveStreams
 
 type
   StreamEvent = object
@@ -126,7 +139,7 @@ proc reapStream(handle: ThreadHandle[StreamJob];
       except CancelledError: return  ## shutting down: leave the thread be
   joinAndFree(h)
   q.dispose()
-  dec gLiveStreams
+  streamReaped()
 
 proc streamToOutbox*(factory:   StreamFactory;
                     req:       CompletionRequest;
@@ -151,7 +164,7 @@ proc streamToOutbox*(factory:   StreamFactory;
   except CatchableError as e:
     events.dispose()
     return err("stream thread: " & e.msg)
-  inc gLiveStreams
+  streamStarted()
 
   var accumulated = ""
   var lastFlush   = nowMs()
@@ -170,7 +183,7 @@ proc streamToOutbox*(factory:   StreamFactory;
           continue
         joinAndFree(handle)
         events.dispose()
-        dec gLiveStreams
+        streamReaped()
         joined = true
         if ev.error.len > 0:
           return err(ev.error)
@@ -267,6 +280,8 @@ proc completeOnce(req: CompletionRequest;
       raise
     except Exception as e:  ## effect boundary: callee raises are unannotated
       return completionErr(e.msg)
+  if completeFn == nil:
+    return completionErr("provider unavailable: no completion function")
   safeComplete(completeFn, req)
 
 proc awaitExpectedReply*(outbox: AsyncQueue[AgentMessage];
