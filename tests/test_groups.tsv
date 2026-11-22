@@ -45,6 +45,8 @@ g0	tests/app/t_command_dispatch_app.nim
 g0	tests/app/t_preference_commands.nim
 g0	tests/app/t_route_health.nim
 g0	tests/app/t_daemon_endpoints.nim
+g0	tests/app/t_turn_reaction.nim
+g0	tests/app/t_cli_help.nim
 g0	tests/app/t_album_mention_gate.nim
 g0	tests/app/t_append_memory_origin.nim
 g0	tests/app/t_approval_runtime.nim

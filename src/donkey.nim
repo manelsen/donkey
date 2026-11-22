@@ -17,6 +17,8 @@ import donkey/infra/thread_handle
 import donkey/app/route_health
 import donkey/app/daemon_endpoints
 import donkey/adapters/filesystem/subagent_workspace
+import donkey/app/turn_reaction
+import donkey/app/cli_help
 import donkey/core/pipeops
 import donkey/adapters/http/circuit_breakers
 import donkey/core/agent_events
@@ -105,65 +107,10 @@ import donkey/ctl_handler
 import donkey/ports/memory
 import donkey/adapters/ipc/types    as ipcTypes
 
-const Version* = AppVersion
 
-proc printVersion =
-  echo AppSlug & " " & Version
+proc printVersion = echo versionText()
 
-proc printHelp =
-  echo AppSlug & " " & Version & """
-
-Usage:
-  """ & AppSlug & """ [options] [command]
-
-Options:
-  --version        Print version and exit
-  --help           Show this help
-  --config <path>  Path to """ & ConfigFileName & """  (default: ~/.config/""" & ConfigDirName & "/" & ConfigFileName & """)
-  --dev-mode       Enable development mode (allows sandbox=none)
-
-Commands:
-  setup                          Interactive first-run configuration wizard
-  about                          Show a concise runtime overview
-  start                          Start the daemon
-  ctl user list                  List registered users
-  ctl user show <uuid>           Show user profile
-  ctl user edit <uuid> <field> <value>
-                                Edit a USER.md field
-  ctl user revoke <uuid>        Revoke user access
-  ctl user allow <uuid>         Restore user access
-  ctl pair list                 List pending DM pairing requests
-  ctl pair approve <code>       Approve a pairing request and allow the user
-  ctl pair reject <code>        Discard a pairing request
-  ctl approval list [user]      List pending tool approvals
-  ctl approval approve <id>     Approve a pending tool call
-  ctl approval deny <id>        Deny a pending tool call
-  ctl secret set <name>         Encrypt a secret read from stdin
-  ctl secret list               List stored secret names (never values)
-  ctl secret remove <name>      Remove a stored secret
-  ctl secret import-env [path]  Encrypt KEY=VALUE pairs from donkey.env
-  ctl session list <uuid>        List active sessions for a user
-  ctl tool install <command>            Register an MCP server
-  ctl skill search <query>              Search remote skills on ClawHub
-  ctl skill install <name> <script>     Register a local Deno skill
-  ctl skill install <slug>              Download/install remote skill bundle
-  ctl skill list                        List local skill registry + remote installs
-  ctl skill update <name> <script>      Update a local skill path
-  ctl skill update [slug]               Update one/all remote installed skills
-  ctl provider test <name>              Test provider connectivity
-  ctl memory search <uuid> <q>   Semantic search in user memory via MAGMA
-  ctl memory import <uuid>       Import .md paddock into MAGMA
-  ctl memory export <uuid> [dir] Export MAGMA memory view as .md
-  ctl status                     Show daemon status (daemon must be running)
-  tui                            Open live TUI dashboard (daemon must be running)
-  service install                Install as systemd --user service
-  service remove                 Remove the systemd --user service
-  service start                  systemctl --user start """ & AppSlug & """
-  service stop                   systemctl --user stop """ & AppSlug & """
-  service restart                systemctl --user restart """ & AppSlug & """
-  service logs [-f] [--cat]      Show service logs (follow with -f, clean output with --cat)
-  doctor                         Run the full runtime diagnostic
-"""
+proc printHelp = echo cliHelpText()
 
 # ── daemon ─────────────────────────────────────────────────────────────────────
 ##
@@ -173,7 +120,8 @@ Commands:
 ##   Daemon loop is async; Telegram uses pollTimeout=0 (non-blocking per iter).
 ##   Each iteration: drain globalOutbox → drain Discord → poll Telegram → yield.
 ##   Orchestrators are asyncSpawn tasks; debounce lives in collectWithDebounce
-##   (withTimeout, timer-exact). Streaming uses an OS thread + Channel[string].
+##   (withTimeout, timer-exact). Streaming runs on its own thread, which builds
+##   the provider closure from a StreamFactory (app/tool_loop_runtime).
 ##
 ## Stream routing:
 ##   OutboundMessage.streamId non-empty → streaming turn.
@@ -1040,35 +988,6 @@ proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
                                   services: SessionIngressServices) =
   handleSessionFallback(runtime.sm, runtime.msgSeq, msg, services)
 
-func inboundStatusMessageId(msg: InboundMessage): string =
-  if msg.messageId.len > 0: msg.messageId else: msg.channelId
-
-func shouldStageInboundReaction(msg: InboundMessage): bool =
-  supportsMessageReactions(msg.channel) and
-    msg.callbackId.len == 0 and
-    inboundStatusMessageId(msg).len > 0
-
-proc stageInboundReactionStatus(runtime: var DaemonRuntime;
-                                outboundPorts: OutboundChannelPorts;
-                                msg: InboundMessage) =
-  if not shouldStageInboundReaction(msg):
-    return
-  let statusMsgId = inboundStatusMessageId(msg)
-  discard setOutboundReaction(msg.channel, msg.userId, msg.channelId, statusMsgId, "⏳", outboundPorts, newLogger("status.reaction"))
-  runtime.presentationState.rememberStatus(msg.channel, msg.userId, "turn", statusMsgId, msg.channelId)
-
-proc completeInboundReactionStatus(runtime: var DaemonRuntime;
-                                   outboundPorts: OutboundChannelPorts;
-                                   channel: ChannelKind;
-                                   userId: UserId;
-                                   channelId, msgId: string;
-                                   isError: bool) =
-  if not supportsMessageReactions(channel) or msgId.len == 0:
-    return
-  runtime.presentationState.clearStatus(channel, userId, "turn")
-  let finalEmoji = if isError: "❌" else: "✅"
-  discard setOutboundReaction(channel, userId, channelId, msgId, finalEmoji, outboundPorts, newLogger("status.reaction"))
-
 proc handleTelegramFallback(runtime:      var DaemonRuntime;
                             msg:          InboundMessage;
                             services:     SessionIngressServices) =
@@ -1153,11 +1072,11 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
       log.warn("telegram: unauthorized message from " & $msg.userId)
       continue
 
-    let stagedReaction = shouldStageInboundReaction(msg)
+    let stagedReaction = shouldStageReaction(msg)
     if stagedReaction:
       tgAdapter.sendTyping(msg.userId).isOkOr:
         log.warn("tg sendTyping (staged) failed for user=" & $msg.userId & " reason=" & error)
-      stageInboundReactionStatus(runtime, outboundPorts, msg)
+      stageReaction(runtime.presentationState, outboundPorts, msg)
     
     # Download media if present
     processInboundMediaDownload(msg, outboundPorts.telegram,
@@ -1170,7 +1089,8 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
       proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} =
         ensureSessionTask(runtimePtr[].sm, msg, services, runtimePtr[].msgSeq, taskKind, payload)):
       if stagedReaction:
-        completeInboundReactionStatus(runtime, outboundPorts, msg.channel, msg.userId, msg.channelId, inboundStatusMessageId(msg), false)
+        completeReaction(runtime.presentationState, outboundPorts, msg.channel,
+                         msg.userId, msg.channelId, statusMessageId(msg), false)
     else:
       handleTelegramFallback(runtime, msg, services)
   true
@@ -1199,18 +1119,6 @@ proc publishDueReminders(runtime: var DaemonRuntime;
     memory.deleteReminder(rUid, rId)
     log.info("reminder fired " & $rUid)
 
-proc completeInboundReactionStatus(runtime:   var DaemonRuntime;
-                                   outboundPorts: OutboundChannelPorts;
-                                   outMsg:    OutboundMessage) =
-  let msgId = runtime.presentationState.lookupStatus(outMsg.channel, outMsg.userId, "turn")
-  if not supportsMessageReactions(outMsg.channel) or outMsg.isPartial or msgId.len == 0:
-    return
-
-  let channelId = runtime.presentationState.lookupStatusChannelId(outMsg.channel, outMsg.userId, "turn")
-  let isError = outMsg.text.startsWith("Desculpe") or
-                outMsg.text.startsWith("Tool call loop")
-  completeInboundReactionStatus(runtime, outboundPorts, outMsg.channel, outMsg.userId, channelId, msgId, isError)
-
 proc drainGlobalOutbox(runtime:  var DaemonRuntime;
                        adapters: var DaemonAdapters;
                        log:      Logger) =
@@ -1228,7 +1136,7 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
       if runtime.apiChatBridge != nil:
         discard runtime.apiChatBridge.deliver(outMsg, outMsg.bridgeToken)
       continue
-    completeInboundReactionStatus(runtime, outboundPorts, outMsg)
+    completeReactionFor(runtime.presentationState, outboundPorts, outMsg)
     routeOutbound(outMsg, outboundPorts, log, runtime.presentationState, runtime.ledger)
 
 proc startDaemonIngress(ctx: DaemonContext;
@@ -1325,10 +1233,10 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, cmdEnv,
           ctx.runtime.msgSeq, log,
           proc(msg: InboundMessage) =
-            stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),
+            stageReaction(ctx.runtime.presentationState, outboundPorts, msg),
           proc(msg: InboundMessage) =
-            completeInboundReactionStatus(ctx.runtime, outboundPorts, msg.channel, msg.userId,
-              msg.channelId, inboundStatusMessageId(msg), false),
+            completeReaction(ctx.runtime.presentationState, outboundPorts, msg.channel, msg.userId,
+              msg.channelId, statusMessageId(msg), false),
           fallback)
         true
       ),
@@ -1754,10 +1662,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
                            ctx.runtime.daemonStartMs),
       ctx.runtime.msgSeq, log,
       proc(msg: InboundMessage) {.gcsafe.} =
-        stageInboundReactionStatus(ctx.runtime, outboundPorts, msg),
+        stageReaction(ctx.runtime.presentationState, outboundPorts, msg),
       proc(msg: InboundMessage) {.gcsafe.} =
-        completeInboundReactionStatus(ctx.runtime, outboundPorts, msg.channel, msg.userId,
-          msg.channelId, inboundStatusMessageId(msg), false),
+        completeReaction(ctx.runtime.presentationState, outboundPorts, msg.channel, msg.userId,
+          msg.channelId, statusMessageId(msg), false),
       proc(msg: InboundMessage) {.gcsafe.} =
         handleGatewayFallback(ctx, cfg, memory, msg, log))
 
