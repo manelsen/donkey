@@ -19,6 +19,7 @@ proc spawnThread*[T](fn: proc(arg: T) {.thread, nimcall.};
   try:
     createThread(result[], fn, arg)
   except CatchableError as e:
+    reset(result[])  ## destroy the argument createThread may have stored
     deallocShared(result)
     raise e
 
@@ -29,5 +30,6 @@ proc joinAndFree*[T](handle: var ThreadHandle[T]) =
   ## Waits for the thread and releases its block.
   if handle == nil: return
   joinThread(handle[])
+  reset(handle[])  ## destroy the stored argument (strings, closures) first
   deallocShared(handle)
   handle = nil
