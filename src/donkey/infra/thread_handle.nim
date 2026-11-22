@@ -93,7 +93,8 @@ proc wrappedShared(t, impl: NimNode; seen: var seq[NimNode]): bool {.compileTime
     case $impl[0]
     of "ptr", "pointer": false
     of "ref": true
-    of "seq", "set", "openArray", "varargs", "UncheckedArray", "range":
+    of "range": false  ## an ordinal subrange holds no ref
+    of "seq", "set", "openArray", "varargs", "UncheckedArray":
       gcShared(impl[^1], seen)
     of "array": gcShared(impl[^1], seen)
     else: true
@@ -103,19 +104,30 @@ proc wrappedShared(t, impl: NimNode; seen: var seq[NimNode]): bool {.compileTime
   else:
     true
 
+const MaxTypeDepth = 64
+  ## Deeper than any real argument. A type the walker cannot make progress on
+  ## stops here and is refused, instead of exhausting the VM.
+
+var typeDepth {.compileTime.} = 0
+
 proc gcShared(t: NimNode; seen: var seq[NimNode]): bool =
   ## True when a value of type `t` can hold a ref or a closure environment.
+  if typeDepth >= MaxTypeDepth:
+    error("sharesNothing: cannot classify " & t.repr &
+          " (no progress); refusing it as a thread argument", t)
+  inc typeDepth
+  defer: dec typeDepth
   case t.typeKind
   of ntyRef:
     true
   of ntyPtr, ntyPointer, ntyCString, ntyString, ntyBool, ntyChar, ntyEnum,
-     ntyInt..ntyUInt64, ntyNil, ntyEmpty, ntyVoid:
+     ntyInt..ntyUInt64, ntyNil, ntyEmpty, ntyVoid, ntyRange:
     false
   of ntyProc:
     closureProc(t.getTypeImpl)
   of ntyDistinct, ntyGenericInst, ntyAlias, ntyTypeDesc:
     wrappedShared(t, t.getTypeImpl, seen)
-  of ntySequence, ntyOpenArray, ntyVarargs, ntySet, ntyRange, ntyUncheckedArray:
+  of ntySequence, ntyOpenArray, ntyVarargs, ntySet, ntyUncheckedArray:
     gcShared(t.getTypeImpl[^1], seen)
   of ntyArray:
     gcShared(t.getTypeImpl[2], seen)

@@ -53,6 +53,11 @@ type
   RefOf[T] = ref T
   Items[T] = seq[T]
   Named = distinct string
+  Percent = range[0..100]
+  Bounded[N: static[int]] = range[0..N]
+  WithRange = object
+    level: range[1..5]
+    pct: Percent
   Handle = distinct JsonNode
 
 proc homonymChecks(): array[4, bool] =
@@ -107,6 +112,12 @@ proc runTests*() =
       check sharesNothing(Items[int])
       check sharesNothing(Named)
       check not sharesNothing(Handle)
+
+    test "ranges are plain values":
+      check sharesNothing(Percent)
+      check sharesNothing(Bounded[3])
+      check sharesNothing(WithRange)
+      check not sharesNothing(seq[ref int])
 
     test "a recursive plain type is accepted":
       check sharesNothing(Tree)
