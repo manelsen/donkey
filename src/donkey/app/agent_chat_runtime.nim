@@ -5,10 +5,14 @@
 ## `runAgentStream` turns the same bridge events into OpenAI SSE chunks and
 ## closes with exactly one `[DONE]` (or an error event after the first byte).
 ##
-## Every wait goes through the injected `ChatBridge` clock (`now`/`nap`), so a
+## Both run on the Chronos event loop: every wait is an injected async `nap`
+## (`sleepAsync` in production) and every write an async `send`, so a turn
+## never blocks the loop that also serves the other connections and drains
+## the outbox that answers it. Tests inject a fake clock and nap, so a
 ## deadline test never sleeps for real.
 
-import std/[monotimes, os, strutils]
+import std/[monotimes, strutils]
+import chronos
 import results
 import ../core/types
 import ../domain/message
@@ -29,7 +33,7 @@ const
     ## `: ping` cadence while the agent turn is still working.
 
 type
-  AgentDispatchFn* = proc(msg: InboundMessage) {.gcsafe.}
+  AgentDispatchFn* = proc(msg: InboundMessage) {.gcsafe, raises: [CatchableError].}
     ## Starts one turn through the session ingress (same path as `/api/chat`).
 
   AgentNowFn* = proc(): int64 {.gcsafe, raises: [].}
@@ -39,19 +43,20 @@ type
     status*: int    ## HTTP status code
     body*:   string ## serialised JSON body
 
-  AgentStreamOpenFn* = proc(): bool {.gcsafe.}
+  AgentStreamOpenFn* = proc(): Future[bool] {.gcsafe, raises: [].}
     ## Sends the SSE response headers; false means the client already left.
 
-  AgentStreamSendFn* = proc(chunk: string): bool {.gcsafe.}
+  AgentStreamSendFn* = proc(chunk: string): Future[bool] {.gcsafe, raises: [].}
     ## Writes one already-framed SSE chunk; false means the client left.
 
-  AgentSlotAcquireFn* = proc(): bool {.gcsafe.}
+  AgentSlotAcquireFn* = proc(): bool {.gcsafe, raises: [].}
     ## Reserves one SSE slot through `CapacityPolicy`; false maps to 429.
 
-  AgentSlotReleaseFn* = proc() {.gcsafe.}
+  AgentSlotReleaseFn* = proc() {.gcsafe, raises: [].}
 
   AgentStreamClockFn* = proc(): int64 {.gcsafe, raises: [].}
-  AgentStreamNapFn* = proc(ms: int) {.gcsafe, raises: [].}
+  AgentNapFn* = proc(ms: int): Future[void] {.gcsafe, raises: [].}
+    ## Waits without blocking the event loop; `sleepAsync` in production.
 
   AgentStreamOutcome* = enum
     asPreflightError  ## nothing was written; send `reply` as JSON
@@ -121,6 +126,9 @@ proc prepareTurn(body: string;
     if timeoutMs > 0: timeoutMs else: DefaultAgentTurnTimeoutMs
   ok(PreparedTurn(request: request, timeoutMs: effectiveTimeout.int64))
 
+proc defaultNap(ms: int): Future[void] {.gcsafe, raises: [].} =
+  sleepAsync(chronos.milliseconds(max(ms, 0)))
+
 proc runAgentChat*(body: string;
                    bridge: ChatBridge;
                    dispatch: AgentDispatchFn;
@@ -128,7 +136,8 @@ proc runAgentChat*(body: string;
                    tokenConfigured: bool;
                    now: AgentNowFn;
                    timeoutMs = DefaultAgentTurnTimeoutMs;
-                   model = ""): AgentChatReply =
+                   model = "";
+                   nap: AgentNapFn = nil): Future[AgentChatReply] {.async.} =
   ## Maps the endpoint contract to a status/body pair:
   ## 503 without a token, 400 parser errors, 403 before dispatch, 413 for an
   ## oversized body, 429 when the user already has a turn in flight, 504 on the
@@ -163,19 +172,20 @@ proc runAgentChat*(body: string;
   except CatchableError as exc:
     ## No turn is running, so close the reservation instead of abandoning it.
     discard bridge.fail(request.userId, exc.msg, token = turnToken)
-    discard bridge.poll(request.userId, token = turnToken)
+    discard bridge.poll(request.userId, stepMs = 0, token = turnToken)
     return errorReply(502, exc.msg, "server_error", "dispatch_failed")
 
+  let wait = if nap != nil: nap else: defaultNap
   var terminal: ChatBridgeEvent
   var haveTerminal = false
   var truncated = false
   while true:
-    let batch = bridge.poll(request.userId, token = turnToken)
+    let batch = bridge.poll(request.userId, stepMs = 0, token = turnToken)
     case batch.status
     of cbpEvents:
       ## Partials (including streamed deltas) are never concatenated; keep
       ## waiting for the one event that closes the turn.
-      discard
+      await wait(PollStepMs)
     of cbpDone:
       truncated = batch.truncated
       for event in batch.events:
@@ -216,9 +226,97 @@ proc runAgentChat*(body: string;
 proc defaultStreamNowMs(): int64 {.gcsafe, raises: [].} =
   getMonoTime().ticks div 1_000_000
 
-proc defaultStreamNap(ms: int) {.gcsafe, raises: [].} =
-  if ms > 0:
-    os.sleep(ms)
+type StreamState = object
+  ## What the stream has sent and decided so far. `react` turns one bridge
+  ## event into the chunks to write next; the caller does the writing, so
+  ## the decisions stay free of I/O.
+  chunkId:        string
+  model:          string
+  created:        int64
+  planned:        int     ## chunks written plus chunks about to be written
+  sentContent:    string
+  finished:       bool
+  errored:        bool
+  finishReason:   string
+  inputTokens:    int
+  outputTokens:   int
+  gaveUpForChunks: bool
+    ## The chunk budget forced us to close the stream before the terminal:
+    ## the late answer has no reader, so the reservation must be released.
+
+proc plan(state: var StreamState; output: var seq[string]; payload: string) =
+  output.add sseData(payload)
+  inc state.planned
+
+proc react(state: var StreamState; event: ChatBridgeEvent): seq[string] =
+  case event.kind
+  of rkFinalAnswer:
+    if event.isPartial:
+      let incoming = deltaText(event.text, event.kind)
+      if incoming.len > 0:
+        ## Producers differ: the tool loop flushes cumulative snapshots
+        ## (`"Olá, mundo"` after `"Olá, "`), while a channel-style producer
+        ## sends true deltas. Normalise both to a delta so an SSE client that
+        ## concatenates chunks never sees the same text twice.
+        ## A clipped cumulative snapshot can be shorter than what was
+        ## already sent; treating it as a delta duplicated text. Only a
+        ## snapshot that extends the sent text contributes its suffix; an
+        ## older prefix inside it contributes nothing; anything else is a
+        ## genuine delta.
+        let text =
+          if incoming.len <= state.sentContent.len and
+             state.sentContent.contains(incoming):
+            ""
+          elif incoming.startsWith(state.sentContent):
+            incoming[state.sentContent.len .. ^1]
+          else:
+            incoming
+        if text.len > 0:
+          if state.planned >= MaxSseChunksPerTurn:
+            state.finishReason = "length"
+            state.finished = true
+            return
+          state.plan(result, buildAgentChunk(
+            state.chunkId, state.model, state.created, content = text))
+          state.sentContent.add(text)
+    else:
+      var text = event.text
+      if state.sentContent.len > 0:
+        if text.startsWith(state.sentContent):
+          # The terminal answer is the full text; only its unseen suffix is
+          # still a delta (an identical answer adds nothing).
+          text = text[state.sentContent.len .. ^1]
+        else:
+          # A stream is append-only: never append a second answer that
+          # would contradict what the client already received.
+          text = ""
+      if text.len > 0:
+        if state.planned >= MaxSseChunksPerTurn:
+          state.finishReason = "length"
+          state.finished = true
+          state.gaveUpForChunks = true
+          return
+        state.plan(result, buildAgentChunk(
+          state.chunkId, state.model, state.created, content = text))
+        state.sentContent.add(text)
+      state.inputTokens = event.inputTokens
+      state.outputTokens = event.outputTokens
+      state.finished = true
+  of rkTurnError:
+    ## Diagnostics, not assistant content: redacted error event.
+    state.plan(result, buildAgentError(event.text, "provider_error", "turn_error"))
+    state.errored = true
+  of rkToolNotice:
+    if event.toolCall.name.len > 0 or event.toolCall.id.len > 0:
+      if state.planned >= MaxSseChunksPerTurn:
+        state.finishReason = "length"
+        state.finished = true
+        state.gaveUpForChunks = true
+        return
+      state.plan(result, buildAgentChunk(
+        state.chunkId, state.model, state.created, toolCall = event.toolCall))
+  of rkDebug, rkChannel:
+    discard
 
 proc runAgentStream*(body: string;
                      bridge: ChatBridge;
@@ -231,9 +329,9 @@ proc runAgentStream*(body: string;
                      acquireSlot: AgentSlotAcquireFn = nil;
                      releaseSlot: AgentSlotReleaseFn = nil;
                      streamNow: AgentStreamClockFn = nil;
-                     streamNap: AgentStreamNapFn = nil;
+                     streamNap: AgentNapFn = nil;
                      timeoutMs = DefaultAgentTurnTimeoutMs;
-                     model = ""): AgentStreamResult =
+                     model = ""): Future[AgentStreamResult] {.async.} =
   ## Runs the same turn behind `stream: true` and emits OpenAI
   ## `chat.completion.chunk` events: role, content deltas (one per partial),
   ## tool-call deltas, then a single finish chunk with usage and `[DONE]`.
@@ -249,232 +347,139 @@ proc runAgentStream*(body: string;
   let request = prepared.get().request
   let effectiveTimeout = prepared.get().timeoutMs
 
-  var slotHeld = false
-  defer:
-    if slotHeld:
-      slotHeld = false
-      if releaseSlot != nil:
-        releaseSlot()
-
-  if acquireSlot != nil:
-    if not acquireSlot():
-      return AgentStreamResult(
-        outcome: asPreflightError,
-        reply: errorReply(429, "too many concurrent streams",
-                          "rate_limit_error", "sse_capacity"))
-    slotHeld = true
-
-  let registered = bridge.register(
-    request.userId, timeoutMs = effectiveTimeout)
-  if registered.isErr:
-    if registered.error.kind == ChatBridgeBusy:
-      return AgentStreamResult(
-        outcome: asPreflightError,
-        reply: errorReply(429, "a turn is already pending for this user",
-                          "rate_limit_error", "chat_bridge_busy"))
+  if acquireSlot != nil and not acquireSlot():
     return AgentStreamResult(
       outcome: asPreflightError,
-      reply: errorReply(503, "agent turn could not be registered"))
-  let turnToken = registered.get()
-
+      reply: errorReply(429, "too many concurrent streams",
+                        "rate_limit_error", "sse_capacity"))
   try:
-    dispatch(InboundMessage(
-      userId:    request.userId,
-      channel:   ckCli,
-      channelId: $request.userId,
-      text:      request.text,
-      bridgeToken: turnToken,
-    ))
-  except CatchableError as exc:
-    ## No turn is running, so close the reservation instead of abandoning it.
-    discard bridge.fail(request.userId, exc.msg, token = turnToken)
-    discard bridge.poll(request.userId, token = turnToken)
-    return AgentStreamResult(
-      outcome: asPreflightError,
-      reply: errorReply(502, exc.msg, "server_error", "dispatch_failed"))
+    let registered = bridge.register(
+      request.userId, timeoutMs = effectiveTimeout)
+    if registered.isErr:
+      if registered.error.kind == ChatBridgeBusy:
+        return AgentStreamResult(
+          outcome: asPreflightError,
+          reply: errorReply(429, "a turn is already pending for this user",
+                            "rate_limit_error", "chat_bridge_busy"))
+      return AgentStreamResult(
+        outcome: asPreflightError,
+        reply: errorReply(503, "agent turn could not be registered"))
+    let turnToken = registered.get()
 
-  if not openStream():
-    discard bridge.abandon(request.userId, token = turnToken)
-    return AgentStreamResult(outcome: asClientGone)
+    try:
+      dispatch(InboundMessage(
+        userId:    request.userId,
+        channel:   ckCli,
+        channelId: $request.userId,
+        text:      request.text,
+        bridgeToken: turnToken,
+      ))
+    except CatchableError as exc:
+      ## No turn is running, so close the reservation instead of abandoning it.
+      discard bridge.fail(request.userId, exc.msg, token = turnToken)
+      discard bridge.poll(request.userId, stepMs = 0, token = turnToken)
+      return AgentStreamResult(
+        outcome: asPreflightError,
+        reply: errorReply(502, exc.msg, "server_error", "dispatch_failed"))
 
-  let created = now()
-  let chosenModel =
-    if model.len > 0: model
-    elif request.model.len > 0: request.model
-    else: "donkey/default"
-  let chunkId = "chatcmpl-" & $created
-  let clock = if streamNow != nil: streamNow else: defaultStreamNowMs
-  let nap = if streamNap != nil: streamNap else: defaultStreamNap
-
-  var chunksSent = 0
-  var sentContent = ""
-  var finished = false
-  var errored = false
-  var clientGone = false
-  var finishReason = "stop"
-  var inputTokens = 0
-  var outputTokens = 0
-  var reservationClosed = false
-    ## `poll` returning done/missing removes the bridge entry; abandoning then
-    ## would hit whatever turn registered next for the same user.
-  var gaveUpForChunks = false
-    ## The chunk budget forced us to close the stream before the terminal:
-    ## the late answer has no reader, so the reservation must be released.
-
-  proc writeData(payload: string): bool =
-    if send(sseData(payload)):
-      inc chunksSent
-      true
-    else:
-      clientGone = true
-      false
-
-  proc handleEvent(event: ChatBridgeEvent) =
-    case event.kind
-    of rkFinalAnswer:
-      if event.isPartial:
-        let incoming = deltaText(event.text, event.kind)
-        if incoming.len > 0:
-          ## Producers differ: the tool loop flushes cumulative snapshots
-          ## (`"Olá, mundo"` after `"Olá, "`), while a channel-style producer
-          ## sends true deltas. Normalise both to a delta so an SSE client that
-          ## concatenates chunks never sees the same text twice.
-          ## A clipped cumulative snapshot can be shorter than what was
-          ## already sent; treating it as a delta duplicated text. Only a
-          ## snapshot that extends the sent text contributes its suffix; an
-          ## older prefix inside it contributes nothing; anything else is a
-          ## genuine delta.
-          let text =
-            if incoming.len <= sentContent.len and
-               sentContent.contains(incoming):
-              ""
-            elif incoming.startsWith(sentContent):
-              incoming[sentContent.len .. ^1]
-            else:
-              incoming
-          if text.len > 0:
-            if chunksSent >= MaxSseChunksPerTurn:
-              finishReason = "length"
-              finished = true
-              return
-            if not writeData(buildAgentChunk(
-                chunkId, chosenModel, created, content = text)):
-              return
-            sentContent.add(text)
-      else:
-        var text = event.text
-        if sentContent.len > 0:
-          if text.startsWith(sentContent):
-            # The terminal answer is the full text; only its unseen suffix is
-            # still a delta (an identical answer adds nothing).
-            text = text[sentContent.len .. ^1]
-          else:
-            # A stream is append-only: never append a second answer that
-            # would contradict what the client already received.
-            text = ""
-        if text.len > 0:
-          if chunksSent >= MaxSseChunksPerTurn:
-            finishReason = "length"
-            finished = true
-            gaveUpForChunks = true
-            return
-          if not writeData(buildAgentChunk(
-              chunkId, chosenModel, created, content = text)):
-            return
-          sentContent.add(text)
-        inputTokens = event.inputTokens
-        outputTokens = event.outputTokens
-        finished = true
-    of rkTurnError:
-      ## Diagnostics, not assistant content: redacted error event.
-      discard writeData(buildAgentError(
-        event.text, "provider_error", "turn_error"))
-      if not clientGone:
-        errored = true
-    of rkToolNotice:
-      if event.toolCall.name.len > 0 or event.toolCall.id.len > 0:
-        if chunksSent >= MaxSseChunksPerTurn:
-          finishReason = "length"
-          finished = true
-          gaveUpForChunks = true
-          return
-        discard writeData(buildAgentChunk(
-          chunkId, chosenModel, created, toolCall = event.toolCall))
-    of rkDebug, rkChannel:
-      discard
-
-  if not writeData(buildAgentChunk(
-      chunkId, chosenModel, created, role = "assistant")):
-    if not reservationClosed:
+    if not await openStream():
       discard bridge.abandon(request.userId, token = turnToken)
-    return AgentStreamResult(outcome: asClientGone)
+      return AgentStreamResult(outcome: asClientGone)
 
-  var lastPing = clock()
-  while not finished and not errored and not clientGone:
-    let batch = bridge.poll(request.userId, stepMs = 0, token = turnToken)
-    case batch.status
-    of cbpEvents:
-      for event in batch.events:
-        handleEvent(event)
-        if finished or errored or clientGone:
-          break
-    of cbpDone:
-      reservationClosed = true
-      if batch.truncated:
-        finishReason = "length"
-      for event in batch.events:
-        handleEvent(event)
-        if finished or errored or clientGone:
-          break
-      if not finished and not errored and not clientGone:
-        finished = true
-    of cbpDeadline:
-      ## The bridge already holds the key as an orphan. It is no longer ours
-      ## to abandon: by the time the error is written the orphan may have been
-      ## reclaimed and a new turn registered for the same user.
-      reservationClosed = true
-      discard writeData(buildAgentError(
-        "agent turn timed out", "timeout_error", "turn_timeout"))
-      if not clientGone:
-        errored = true
-    of cbpMissing:
-      reservationClosed = true
-      discard writeData(buildAgentError(
-        "agent turn is no longer pending", "server_error", "turn_missing"))
-      if not clientGone:
-        errored = true
+    let created = now()
+    var state = StreamState(
+      chunkId: "chatcmpl-" & $created,
+      model:
+        if model.len > 0: model
+        elif request.model.len > 0: request.model
+        else: "donkey/default",
+      created: created,
+      finishReason: "stop")
+    let clock = if streamNow != nil: streamNow else: defaultStreamNowMs
+    let wait = if streamNap != nil: streamNap else: defaultNap
+    var clientGone = false
+    var reservationClosed = false
+      ## `poll` returning done/missing removes the bridge entry; abandoning
+      ## then would hit whatever turn registered next for the same user.
 
-    if not finished and not errored and not clientGone:
-      let current = clock()
-      if current - lastPing >= SseKeepaliveIntervalMs:
-        if send(": ping\n\n"):
-          lastPing = current
-        else:
+    proc closeAsGone(): AgentStreamResult =
+      if not reservationClosed:
+        discard bridge.abandon(request.userId, token = turnToken)
+      AgentStreamResult(outcome: asClientGone)
+
+    var opening: seq[string]
+    state.plan(opening, buildAgentChunk(
+      state.chunkId, state.model, state.created, role = "assistant"))
+    if not await send(opening[0]):
+      return closeAsGone()
+
+    var lastPing = clock()
+    while not state.finished and not state.errored and not clientGone:
+      let batch = bridge.poll(request.userId, stepMs = 0, token = turnToken)
+      var pending: seq[string]
+      case batch.status
+      of cbpEvents:
+        for event in batch.events:
+          pending.add state.react(event)
+          if state.finished or state.errored: break
+      of cbpDone:
+        reservationClosed = true
+        if batch.truncated:
+          state.finishReason = "length"
+        for event in batch.events:
+          pending.add state.react(event)
+          if state.finished or state.errored: break
+        if not state.finished and not state.errored:
+          state.finished = true
+      of cbpDeadline:
+        ## The bridge already holds the key as an orphan. It is no longer ours
+        ## to abandon: by the time the error is written the orphan may have
+        ## been reclaimed and a new turn registered for the same user.
+        reservationClosed = true
+        state.plan(pending, buildAgentError(
+          "agent turn timed out", "timeout_error", "turn_timeout"))
+        state.errored = true
+      of cbpMissing:
+        reservationClosed = true
+        state.plan(pending, buildAgentError(
+          "agent turn is no longer pending", "server_error", "turn_missing"))
+        state.errored = true
+
+      for chunk in pending:
+        if not await send(chunk):
           clientGone = true
-    if not finished and not errored and not clientGone:
-      nap(PollStepMs)
+          break
 
-  if clientGone:
-    if not reservationClosed:
-      discard bridge.abandon(request.userId, token = turnToken)
-    return AgentStreamResult(outcome: asClientGone)
-  if errored:
-    return AgentStreamResult(outcome: asErrored)
+      if not state.finished and not state.errored and not clientGone:
+        let current = clock()
+        if current - lastPing >= SseKeepaliveIntervalMs:
+          if await send(": ping\n\n"):
+            lastPing = current
+          else:
+            clientGone = true
+      if not state.finished and not state.errored and not clientGone:
+        await wait(PollStepMs)
 
-  if not writeData(buildAgentChunk(
-      chunkId, chosenModel, created,
-      finishReason = finishReason,
-      inputTokens = inputTokens,
-      outputTokens = outputTokens)):
-    if not reservationClosed:
+    if clientGone:
+      return closeAsGone()
+    if state.errored:
+      return AgentStreamResult(outcome: asErrored)
+
+    if not await send(sseData(buildAgentChunk(
+        state.chunkId, state.model, state.created,
+        finishReason = state.finishReason,
+        inputTokens = state.inputTokens,
+        outputTokens = state.outputTokens))):
+      return closeAsGone()
+    let doneSent = await send(sseDone())
+    if state.gaveUpForChunks and not reservationClosed:
+      ## We closed the stream without the terminal; release the user's slot
+      ## instead of leaving it reserved for a reader that no longer exists. Do
+      ## it even when `[DONE]` fails: the client is gone either way.
       discard bridge.abandon(request.userId, token = turnToken)
-    return AgentStreamResult(outcome: asClientGone)
-  let doneSent = send(sseDone())
-  if gaveUpForChunks and not reservationClosed:
-    ## We closed the stream without the terminal; release the user's slot
-    ## instead of leaving it reserved for a reader that no longer exists. Do
-    ## it even when `[DONE]` fails: the client is gone either way.
-    discard bridge.abandon(request.userId, token = turnToken)
-  if not doneSent:
-    return AgentStreamResult(outcome: asClientGone)
-  AgentStreamResult(outcome: asCompleted)
+    if not doneSent:
+      return AgentStreamResult(outcome: asClientGone)
+    return AgentStreamResult(outcome: asCompleted)
+  finally:
+    if acquireSlot != nil and releaseSlot != nil:
+      releaseSlot()

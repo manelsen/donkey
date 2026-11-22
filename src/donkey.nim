@@ -1121,13 +1121,11 @@ proc apiChatNowMs(): int64 {.gcsafe, raises: [].} =
   int64(epochTime() * 1000)
 
 proc apiChatNap(ms: int) {.gcsafe, raises: [].} =
-  ## The ingress actor for an API turn is spawned on the gateway worker thread
-  ## (same path as `/api/chat`), so this bounded wait also drives that thread's
-  ## dispatcher while the worker waits on the bridge.
-  try:
-    waitFor(sleepAsync(chronos.milliseconds(ms)))
-  except CatchableError:
-    discard
+  ## The gateway runs on the daemon loop and its turns wait with `sleepAsync`
+  ## (`poll(stepMs = 0)`), so the bridge never naps here. A blocking poll on
+  ## this loop would stall every connection: nested `waitFor` is not an
+  ## option, so this only bounds such a misuse.
+  os.sleep(ms)
 
 # Forward declaration for handleGatewayFallback (defined later, used in setupIpcServer)
 proc handleGatewayFallback(ctx: DaemonContext; cfg: DonkeyConfig;
@@ -1231,8 +1229,15 @@ proc setupIpcServer(cfg: DonkeyConfig;
   let ipcLogFn: LogProvider = proc(n: int): seq[IpcLogEntry] {.gcsafe, raises: [].} =
     for e in ringSnapshot(n):
       result.add(IpcLogEntry(ts: e.ts, level: e.level, subsys: e.sub, msg: e.msg))
-  let gwInboundFn: GatewayInboundFn = proc(msg: InboundMessage) {.gcsafe.} =
-    handleGatewayFallback(gatewayInboundCtx, cfg, gatewayInboundMemory, msg, gatewayInboundLog)
+  let gwInboundFn: GatewayInboundFn =
+    proc(msg: InboundMessage) {.gcsafe, raises: [CatchableError].} =
+      try:
+        handleGatewayFallback(gatewayInboundCtx, cfg, gatewayInboundMemory, msg,
+                              gatewayInboundLog)
+      except CatchableError as e:
+        raise e
+      except Exception as e:  ## effect boundary: callee raises are unannotated
+        raise newException(CatchableError, "gateway inbound: " & e.msg, e)
   let gwAuthorizeFn: AuthorizeFn =
     proc(userId: UserId): AuthVerdict {.gcsafe, raises: [].} =
       ## Same policy as the ingress: revocation wins, then the DM allowlist.
@@ -1270,7 +1275,8 @@ proc setupIpcServer(cfg: DonkeyConfig;
       aggregateProviderFeedback(withRouteLock(runtime.currentRouteFeedback())))
   let gwSessionActionFn: GatewaySessionActionFn =
     proc(rawUserId: string; taskKind: TaskKind;
-         payload: string): GatewaySessionActionOutcome {.gcsafe.} =
+         payload: string): GatewaySessionActionOutcome
+        {.gcsafe, raises: [CatchableError].} =
       ## The dashboard carries the raw session key; it is never run through
       ## `apiUserId`. An unknown key is a 404, a revoked profile a 403
       ## (`isRevoked` already answers "revoked" when the profile is unreadable).
@@ -1290,20 +1296,25 @@ proc setupIpcServer(cfg: DonkeyConfig;
       ## as a `ckCli` channel id recorded a fake channel and sent the
       ## confirmation to stdout.
       let target = runtime.sm.latestChannelFor(sessionKey)
-      ensureSessionTask(
-        runtime.sm,
-        InboundMessage(
-          userId: uid,
-          channel: target.kind,
-          channelId: target.rawId,
-          rawChannelId: target.rawId,
-        ),
-        buildDaemonSessionServices(gatewayInboundCtx, cfg, gatewayInboundMemory,
-                                   gatewayInboundLog),
-        runtime.msgSeq,
-        taskKind,
-        payload,
-      )
+      try:
+        ensureSessionTask(
+          runtime.sm,
+          InboundMessage(
+            userId: uid,
+            channel: target.kind,
+            channelId: target.rawId,
+            rawChannelId: target.rawId,
+          ),
+          buildDaemonSessionServices(gatewayInboundCtx, cfg, gatewayInboundMemory,
+                                     gatewayInboundLog),
+          runtime.msgSeq,
+          taskKind,
+          payload,
+        )
+      except CatchableError as e:
+        raise e
+      except Exception as e:  ## effect boundary: callee raises are unannotated
+        raise newException(CatchableError, "gateway session task: " & e.msg, e)
       gsaoAccepted
   let httpBind = block:
     let raw = getEnv("DONKEY_HTTP_BIND").strip()
@@ -1320,7 +1331,6 @@ proc setupIpcServer(cfg: DonkeyConfig;
       let gatewayStart = startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
                                           bindAddr = httpBind, authToken = httpToken,
                                           agentDispatchFn = gwInboundFn,
-                                          agentStreamNapFn = apiChatNap,
                                           sessionsFn = gwSessionsFn,
                                           providersFn = gwProvidersFn,
                                           sessionActionFn = gwSessionActionFn,

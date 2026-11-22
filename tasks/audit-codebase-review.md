@@ -43,6 +43,10 @@ They cover memory/profile, the DM allowlist (`isDmAllowed`/`addDmAllowed`), remi
 **Fix:** split into `ReminderPort`, `AllowlistPort` and `IdentityPort`. The MdFile store can keep implementing all of them, but each should sit behind its own port.
 
 ### 6. `app/http_gateway.nim` is a 1394-line monolith
+
+**Progress:** the gateway now runs on the Chronos loop (no worker threads, no global callbacks, no locks; the agent turn and its stream are `async`). The split into pure modules is still open.
+
+**Follow-up from the move:** the gateway shares the main loop with the channel adapters, whose HTTP calls are synchronous. A stalled channel API now delays the gateway too, as it already delayed the session actors. The fix for all of them is the async `HttpPort` (`ChronosHttpAdapter`).
 It contains bearer auth, routing, the dashboard HTML, SSE, connection admission and limits, request parsing and the thread pool.
 **Fix:** move auth and routing into pure modules (some already exist in `domain/gateway/`), keep socket I/O in an adapter, and keep use-case orchestration in `app`.
 
