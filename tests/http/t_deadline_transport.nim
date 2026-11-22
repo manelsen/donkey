@@ -21,12 +21,15 @@ proc readRequest(client: Socket): string =
   while true:
     client.readLine(line, timeout = 2000)
     if line == "\r\n" or line.len == 0: break
+    if line.toLowerAscii.startsWith("authorization:"):
+      result.add "\n" & line
     if line.toLowerAscii.startsWith("content-length:"):
       length = parseInt(line.split(':')[1].strip)
   if length > 0:
     result.add "\n" & client.recv(length, timeout = 2000)
 
 var gCounted: Atomic[int]  ## requests that reached /count
+var gPortForServer: int    ## set before the server starts; read by handlers
 
 type ConnArg = object
   fd: SocketHandle  ## plain data: the connection is rebuilt in its thread
@@ -55,6 +58,27 @@ proc handle(arg: ConnArg) {.thread.} =
         let meth = request.split(' ')[0]
         client.send("HTTP/1.1 200 OK\r\nContent-Length: " & $meth.len &
                     "\r\nConnection: close\r\n\r\n" & meth)
+      of "/to303":
+        client.send("HTTP/1.1 303 See Other\r\nLocation: /to307\r\n" &
+                    "Content-Length: 0\r\nConnection: close\r\n\r\n")
+      of "/to307":
+        client.send("HTTP/1.1 307 Temporary Redirect\r\nLocation: /method\r\n" &
+                    "Content-Length: 0\r\nConnection: close\r\n\r\n")
+      of "/cross":
+        ## To another host name (same server), which redirects within itself.
+        client.send("HTTP/1.1 302 Found\r\nLocation: http://localhost:" &
+                    $gPortForServer & "/samehost\r\nContent-Length: 0\r\n" &
+                    "Connection: close\r\n\r\n")
+      of "/samehost":
+        client.send("HTTP/1.1 302 Found\r\nLocation: /whoami\r\n" &
+                    "Content-Length: 0\r\nConnection: close\r\n\r\n")
+      of "/whoami":
+        var auth = "none"
+        for line in request.splitLines:
+          if line.toLowerAscii.startsWith("authorization:"):
+            auth = line.split(':', 1)[1].strip
+        client.send("HTTP/1.1 200 OK\r\nContent-Length: " & $auth.len &
+                    "\r\nConnection: close\r\n\r\n" & auth)
       of "/count":
         discard gCounted.fetchAdd(1)
         client.send("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
@@ -122,6 +146,7 @@ proc timed(body: proc(): Result[TransportResponse, string]): (Result[TransportRe
   (res, epochTime() - started)
 
 proc runTests*() =
+  gPortForServer = gPort
   gServer = spawnThread(serve, ServerArg(port: gPort))
   sleep(200)
 
@@ -173,6 +198,23 @@ proc runTests*() =
         meth: "POST", url: url("/redirect303"), body: "payload",
         redirectLimit: 5, deadlineMs: 5_000))
       check switched.get.body == "GET"
+
+    test "each redirect starts from the previous hop, not the original request":
+      ## POST -> 303 (now a GET without body) -> 307 keeps that GET.
+      let chained = transportRequest(TransportRequest(
+        meth: "POST", url: url("/to303"), body: "payload",
+        headers: @[("Content-Type", "text/plain")], redirectLimit: 5,
+        deadlineMs: 5_000))
+      check chained.get.body == "GET"
+
+    test "credentials dropped at a cross-host redirect never come back":
+      ## 127.0.0.1 -> localhost (another host: Authorization dropped) ->
+      ## localhost again: it must stay dropped.
+      let res = transportRequest(TransportRequest(
+        meth: "GET", url: url("/cross"),
+        headers: @[("Authorization", "Bearer secret")], redirectLimit: 5,
+        deadlineMs: 5_000))
+      check res.get.body == "none"
 
     test "a request that waited past its deadline in the queue never runs":
       ## Every worker busy on a silent server: the short request fails at its

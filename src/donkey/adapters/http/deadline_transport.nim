@@ -96,69 +96,101 @@ func methodOf(name: string): Result[HttpMethod, string] =
   of "HEAD": ok(MethodHead)
   else: err("unsupported HTTP method: " & name)
 
+type Hop = object
+  ## What one request of a redirect chain sends. Each hop is derived from the
+  ## previous one, never from the original request, so a change a redirect
+  ## made (a 303 turning a POST into a GET, credentials dropped at another
+  ## host) holds for the rest of the chain.
+  address: HttpAddress
+  meth:    HttpMethod
+  body:    string
+  headers: seq[(string, string)]
+
+const CredentialHeaders = ["authorization", "cookie", "proxy-authorization"]
+
 func sameHost(a, b: HttpAddress): bool =
   a.hostname == b.hostname and a.port == b.port
 
-proc followed(session: HttpSessionRef; previous: HttpClientRequestRef;
-              status: int; location: string; meth: HttpMethod;
-              request: TransportRequest): HttpResult[HttpClientRequestRef] =
-  ## The request a redirect asks for. 307 and 308 repeat the method with the
-  ## original body (send() consumed the previous request's buffer, so it is
-  ## rebuilt from `request`); 301, 302 and 303 become a GET without a body,
-  ## as browsers and std/httpclient do. Credentials do not follow to another
-  ## host.
-  let address = ? session.redirect(previous.address, parseUri(location))
-  let keepBody = status in [307, 308]
-  var headers: seq[(string, string)]
-  for (name, value) in request.headers:
-    let lower = name.toLowerAscii
-    if not keepBody and lower in ["content-type", "content-length"]: continue
-    if not sameHost(address, previous.address) and
-       lower in ["authorization", "cookie", "proxy-authorization"]: continue
-    headers.add((name, value))
-  ok(HttpClientRequestRef.new(
-    session, address, if keepBody: meth else: MethodGet, headers = headers,
-    body = if keepBody: request.body.toOpenArrayByte(0, request.body.high)
-           else: "".toOpenArrayByte(0, -1)))
+func requestHeaders(headers: seq[(string, string)]): seq[(string, string)] =
+  ## The caller's headers without the ones Chronos derives per request.
+  for (name, value) in headers:
+    if name.toLowerAscii notin ["host", "content-length"]:
+      result.add((name, value))
 
-proc perform(request: TransportRequest; deadlineMs: int): Future[TransportReply] {.
+func nextHop*(current: Hop; status: int; target: HttpAddress): Hop =
+  ## 307 and 308 repeat the current method and body; 301, 302 and 303 become
+  ## a GET without a body (and without its Content-Type), as browsers and
+  ## std/httpclient do. Credentials do not follow to another host, and once
+  ## dropped they stay dropped.
+  let keepBody = status in [307, 308]
+  let crossHost = not sameHost(target, current.address)
+  result = Hop(address: target,
+               meth: if keepBody: current.meth else: MethodGet,
+               body: if keepBody: current.body else: "")
+  for (name, value) in requestHeaders(current.headers):
+    let lower = name.toLowerAscii
+    if not keepBody and lower == "content-type": continue
+    if crossHost and lower in CredentialHeaders: continue
+    result.headers.add((name, value))
+
+proc nowNs(): int64 = getMonoTime().ticks
+
+proc readyToConnect(address: var HttpAddress; expiresAt: int64;
+                    proxied: bool; request: TransportRequest): Result[void, string] =
+  ## Resolves the name before connecting, then checks the deadline: the
+  ## resolver blocks this thread, and no connection or send may start after
+  ## the caller was told the request failed. With an egress proxy the proxy
+  ## resolves the target. Resolved addresses keep Chronos from resolving again.
+  if not proxied and address.addresses.len == 0:
+    try:
+      address.addresses = resolveTAddress(address.hostname, Port(address.port))
+    except TransportAddressError as e:
+      return err("name lookup failed for " & address.hostname & ": " & e.msg)
+  if nowNs() >= expiresAt:
+    return err(deadlineError(request))
+  ok()
+
+proc perform(request: TransportRequest; expiresAt: int64): Future[TransportReply] {.
     async: (raises: [CancelledError]).} =
   let meth = methodOf(request.meth).valueOr:
     return err(error)
-  var flags: HttpClientFlags = {}
-  if request.redirectLimit <= 0:
-    flags.incl HttpClientFlag.NoAutomaticRedirect
+  var hop = Hop(meth: meth, body: request.body,
+                headers: requestHeaders(request.headers))
+  hop.address = getHttpAddress(request.url).valueOr:
+    return err("invalid request URL: " & $error)
+  var flags: HttpClientFlags = {HttpClientFlag.NoAutomaticRedirect}
   var provider: HttpConnectionProvider = nil
   if request.proxy.len > 0:
     let proxy = getHttpAddress(request.proxy).valueOr:
       return err("invalid proxy URL: " & $error)
     provider = httpConnectProvider(proxy)
-  let phase = chronos.milliseconds(deadlineMs)
+  let proxied = provider != nil
+  let phase = chronos.milliseconds(max(1, int((expiresAt - nowNs()) div 1_000_000)))
   let session = HttpSessionRef.new(
     flags = flags, maxRedirections = max(request.redirectLimit, 0),
     connectTimeout = phase, headersTimeout = phase, provider = provider)
   var exchange: HttpClientRequestRef = nil
   var response: HttpClientResponseRef = nil
   try:
-    let address = getHttpAddress(request.url).valueOr:
-      return err("invalid request URL: " & $error)
-    exchange = HttpClientRequestRef.new(
-      session, address, meth, headers = request.headers,
-      body = request.body.toOpenArrayByte(0, request.body.high))
-    response = await exchange.send()
-    ## Redirects are followed here, up to the limit: send() returns them.
     var hops = 0
-    while response.status in 300 .. 399 and hops < request.redirectLimit:
+    while true:
+      ? readyToConnect(hop.address, expiresAt, proxied, request)
+      exchange = HttpClientRequestRef.new(
+        session, hop.address, hop.meth, headers = hop.headers,
+        body = hop.body.toOpenArrayByte(0, hop.body.high))
+      response = await exchange.send()
+      ## Redirects are followed here, up to the limit: send() returns them.
       let location = response.headers.getString("location")
-      if location.len == 0: break
-      let next = followed(session, exchange, response.status, location,
-                          meth, request).valueOr:
+      if response.status notin 300 .. 399 or hops >= request.redirectLimit or
+         location.len == 0:
+        break
+      let target = session.redirect(hop.address, parseUri(location)).valueOr:
         return err("redirect: " & error)
+      hop = nextHop(hop, response.status, target)
       await response.closeWait()
       response = nil
       await exchange.closeWait()
-      exchange = next
-      response = await exchange.send()
+      exchange = nil
       inc hops
     let bytes = await response.getBodyBytes()
     var reply = TransportResponse(status: response.status,
@@ -174,8 +206,6 @@ proc perform(request: TransportRequest; deadlineMs: int): Future[TransportReply]
     if exchange != nil: await exchange.closeWait()
     await session.closeWait()
 
-proc nowNs(): int64 = getMonoTime().ticks
-
 proc runJob(job: TransportJob) =
   ## Runs only within what is left of the deadline. A job that waited in the
   ## queue past it is dropped: its caller was already told it failed, and
@@ -186,7 +216,7 @@ proc runJob(job: TransportJob) =
     return
   var reply: TransportReply
   try:
-    reply = waitFor perform(job.request, leftMs).wait(chronos.milliseconds(leftMs))
+    reply = waitFor perform(job.request, job.expiresAt).wait(chronos.milliseconds(leftMs))
   except AsyncTimeoutError:
     reply = TransportReply.err(deadlineError(job.request))
   except CancelledError as e:
