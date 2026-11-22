@@ -2,7 +2,7 @@
 
 import std/[unittest, times, os, tables]
 import donkey/core/pipeops
-import donkey/core/reliability
+import donkey/adapters/http/circuit_breakers
 
 proc runTests*() =
   suite "Reliability - Backoff":

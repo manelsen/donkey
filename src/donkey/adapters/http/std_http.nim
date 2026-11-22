@@ -4,7 +4,7 @@
 import std/[httpclient, strutils, os, json]
 import ../../ports/http
 import ../../core/pipeops
-import ../../core/reliability
+import ./circuit_breakers
 import ../../core/security/net_boundary
 import ../network/dns_resolver
 import ./helpers
