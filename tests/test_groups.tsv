@@ -1,6 +1,7 @@
 g0	tests/adapters/channel/t_common_runtime.nim
 g0	tests/adapters/channel/t_dm_gate_runtimes.nim
 g0	tests/adapters/channel/t_embedded_webhooks.nim
+g0	tests/adapters/channel/t_event_queue.nim
 g0	tests/adapters/channel/t_doctor_report.nim
 g0	tests/adapters/channel/t_line_adapter.nim
 g0	tests/adapters/channel/t_line_runtime.nim

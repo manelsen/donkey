@@ -24,6 +24,7 @@ import ../../ports/channel
 import ../../ports/http
 import ../http/std_http
 import ../identity/identity_resolver
+import ./event_queue
 
 export identity_resolver
 export channel.FileDownload
@@ -46,10 +47,9 @@ type
 
 # ── Module-level event queue ──────────────────────────────────────────────────
 
-## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
-## lock internally and deep-copy the payload. Must be open()ed before use.
-## Opened once at daemon startup via openQueue().
-var gFsEvents* {.global.}: Channel[FeishuEvent]
+## Thread-safe: an `EventQueue` (shared memory, events moved, not copied),
+## created with the module; the receiving thread pushes, the daemon loop polls.
+var gFsEvents* = initEventQueue[FeishuEvent]("feishu")
 
 # ── Inbound helpers (called by HTTP layer) ────────────────────────────────────
 
@@ -66,7 +66,7 @@ proc pushEvent*(payload: JsonNode) =
   case r.kind
   of fmkUnknown, fmkEvent, fmkInteractive: discard
   of fmkText:
-    gFsEvents.send(FeishuEvent(
+    gFsEvents.push(FeishuEvent(
       msgType:  "text",
       openId:   r.rawId,
       msgId:    r.messageId,
@@ -75,7 +75,7 @@ proc pushEvent*(payload: JsonNode) =
       content:  r.text,
     ))
   of fmkImage:
-    gFsEvents.send(FeishuEvent(
+    gFsEvents.push(FeishuEvent(
       msgType:  "image",
       openId:   r.rawId,
       msgId:    r.messageId,
@@ -84,7 +84,7 @@ proc pushEvent*(payload: JsonNode) =
       fileKey:  r.fileKey,
     ))
   of fmkAudio:
-    gFsEvents.send(FeishuEvent(
+    gFsEvents.push(FeishuEvent(
       msgType:  "audio",
       openId:   r.rawId,
       msgId:    r.messageId,
@@ -93,7 +93,7 @@ proc pushEvent*(payload: JsonNode) =
       fileKey:  r.fileKey,
     ))
   of fmkFile:
-    gFsEvents.send(FeishuEvent(
+    gFsEvents.push(FeishuEvent(
       msgType:  "file",
       openId:   r.rawId,
       msgId:    r.messageId,
@@ -102,7 +102,7 @@ proc pushEvent*(payload: JsonNode) =
       fileKey:  r.fileKey,
     ))
   of fmkSticker:
-    gFsEvents.send(FeishuEvent(
+    gFsEvents.push(FeishuEvent(
       msgType:  "sticker",
       openId:   r.rawId,
       msgId:    r.messageId,
@@ -243,9 +243,8 @@ proc ack*(a: FeishuAdapter; msgId: string) =
 # ── Queue management ──────────────────────────────────────────────────────────
 
 proc openQueue*(a: FeishuAdapter) =
-  ## Opens the module-level event queue. Call once at daemon startup.
-  {.cast(gcsafe).}:
-    gFsEvents.open()
+  ## Kept for the startup sequence: the queue already exists with the module.
+  discard
 
 proc startGateway*(a: var FeishuAdapter) =
   ## Opens the webhook event queue. For HTTP callback mode this is equivalent
@@ -255,7 +254,7 @@ proc startGateway*(a: var FeishuAdapter) =
 
 proc tryRecvEvent*(a: FeishuAdapter): (bool, FeishuEvent) =
   ## Non-blocking poll for webhook events. Returns (false, default) when empty.
-  gFsEvents.tryRecv()
+  gFsEvents.tryTake()
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

@@ -24,6 +24,7 @@ import ../http/std_http
 import ../identity/identity_resolver
 import ../webhook/http_request_reader
 import ../../app/metrics
+import ./event_queue
 
 const
   OneBotDefaultBase* = "http://127.0.0.1:5700"
@@ -49,7 +50,7 @@ type
     secret:   string
     logger:   Logger
 
-var gQQOneBotEvents: Channel[QQEvent]
+var gQQOneBotEvents = initEventQueue[QQEvent]("qq_onebot")
 var gQQOneBotEventsOpen    = false
 var gQQOneBotWebhookStarted = false
 var gQQOneBotWebhookThread: Thread[QQOneBotWebhookArgs]
@@ -118,7 +119,7 @@ proc handleQQOneBotConn*(client: Socket; logger: Logger; secret = "";
       return
     let evRes = parseEventJson(req.body)
     if evRes.isOk and gQQOneBotEventsOpen:
-      gQQOneBotEvents.send(evRes.value)
+      gQQOneBotEvents.push(evRes.value)
     client.respond("200 OK")
   else:
     client.respond("405 Method Not Allowed")
@@ -175,7 +176,6 @@ proc startWebhook*(a: QQAdapter; host: string; port: Port; secret: string;
     return ok()
   let server = ? bindOneBotListener(host, port)
   let domain = listenDomain(host)
-  gQQOneBotEvents.open()
   gQQOneBotEventsOpen = true
   try:
     {.cast(gcsafe).}:
@@ -185,7 +185,6 @@ proc startWebhook*(a: QQAdapter; host: string; port: Port; secret: string;
   except CatchableError as e:
     ## Undo so a later call can retry instead of seeing "already started".
     gQQOneBotEventsOpen = false
-    gQQOneBotEvents.close()
     try: server.close() except CatchableError: discard
     return err("qq webhook thread: " & e.msg)
   gQQOneBotWebhookStarted = true
@@ -194,14 +193,14 @@ proc startWebhook*(a: QQAdapter; host: string; port: Port; secret: string;
 proc enqueueEventJson*(a: var QQAdapter; payload: string): Result[void, string] =
   let event = ? parseEventJson(payload)
   if gQQOneBotEventsOpen:
-    gQQOneBotEvents.send(event)
+    gQQOneBotEvents.push(event)
   else:
     a.events.add(event)
   ok()
 
 proc tryRecvEvent*(a: var QQAdapter): (bool, QQEvent) =
   if gQQOneBotEventsOpen:
-    let (ok, ev) = gQQOneBotEvents.tryRecv()
+    let (ok, ev) = gQQOneBotEvents.tryTake()
     if ok:
       return (true, ev)
   if a.events.len == 0:

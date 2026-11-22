@@ -25,6 +25,7 @@ import ../../ports/http
 import ../../ports/channel
 import ../http/std_http
 import ../identity/identity_resolver
+import ./event_queue
 
 export identity_resolver
 export FileDownload
@@ -51,10 +52,9 @@ type
 
 # ── Module-level event queue ───────────────────────────────────────────────────
 
-## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
-## lock internally and deep-copy the payload. Must be open()ed before use.
-## Opened once at daemon startup via openQueue().
-var gWaEvents* {.global.}: Channel[WaRawEvent]
+## Thread-safe: an `EventQueue` (shared memory, events moved, not copied),
+## created with the module; the receiving thread pushes, the daemon loop polls.
+var gWaEvents* = initEventQueue[WaRawEvent]("whatsapp")
 
 # ── Inbound helpers (called by HTTP layer) ─────────────────────────────────────
 
@@ -74,7 +74,7 @@ proc pushEvent*(payload: JsonNode) =
   for r in msgs:
     case r.kind
     of wmkText:
-      gWaEvents.send(WaRawEvent(
+      gWaEvents.push(WaRawEvent(
         kind:          wrkText,
         waUserId:      r.rawId,
         text:          r.text,
@@ -82,7 +82,7 @@ proc pushEvent*(payload: JsonNode) =
         phoneNumberId: r.phoneNumberId,
       ))
     of wmkInteractive:
-      gWaEvents.send(WaRawEvent(
+      gWaEvents.push(WaRawEvent(
         kind:          wrkInteractive,
         waUserId:      r.rawId,
         text:          r.text,
@@ -90,7 +90,7 @@ proc pushEvent*(payload: JsonNode) =
         phoneNumberId: r.phoneNumberId,
       ))
     of wmkMedia:
-      gWaEvents.send(WaRawEvent(
+      gWaEvents.push(WaRawEvent(
         kind:          wrkMedia,
         waUserId:      r.rawId,
         text:          "",
@@ -292,13 +292,12 @@ proc ack*(a: WhatsAppAdapter; phoneNumberId, messageId: string) =
 # ── Queue management ───────────────────────────────────────────────────────────
 
 proc openQueue*(a: WhatsAppAdapter) =
-  ## Opens the module-level event queue. Call once at daemon startup.
-  {.cast(gcsafe).}:
-    gWaEvents.open()
+  ## Kept for the startup sequence: the queue already exists with the module.
+  discard
 
 proc tryRecvEvent*(a: WhatsAppAdapter): (bool, WaRawEvent) =
   ## Non-blocking poll for webhook events. Returns (false, default) when empty.
-  gWaEvents.tryRecv()
+  gWaEvents.tryTake()
 
 # ── Constructor ────────────────────────────────────────────────────────────────
 

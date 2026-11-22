@@ -31,6 +31,7 @@ import ../../ports/channel
 import ../../ports/http
 import ../http/std_http
 import ../identity/identity_resolver
+import ./event_queue
 
 export identity_resolver
 export channel.FileDownload
@@ -51,10 +52,9 @@ type
 
 # ── Module-level event queue ──────────────────────────────────────────────────
 
-## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
-## lock internally and deep-copy the payload. Must be open()ed before use.
-## Opened once at daemon startup via openQueue().
-var gDtEvents* {.global.}: Channel[DingTalkEvent]
+## Thread-safe: an `EventQueue` (shared memory, events moved, not copied),
+## created with the module; the receiving thread pushes, the daemon loop polls.
+var gDtEvents* = initEventQueue[DingTalkEvent]("dingtalk")
 
 # ── Inbound helpers (called by HTTP layer) ────────────────────────────────────
 
@@ -66,49 +66,44 @@ proc pushEvent*(payload: JsonNode) =
   of dtkUnknown: discard
   of dtkText:
     let evRawId = if r.isGroup: "conv:" & r.conversationId else: r.rawId
-    {.cast(gcsafe).}:
-      gDtEvents.send(DingTalkEvent(
-        msgType:   "text",
-        rawId:     evRawId,
-        messageId: r.messageId,
-        content:   r.text,
-      ))
+    gDtEvents.push(DingTalkEvent(
+      msgType:   "text",
+      rawId:     evRawId,
+      messageId: r.messageId,
+      content:   r.text,
+    ))
   of dtkImage:
     let evRawId = if r.isGroup: "conv:" & r.conversationId else: r.rawId
-    {.cast(gcsafe).}:
-      gDtEvents.send(DingTalkEvent(
-        msgType:      "image",
-        rawId:        evRawId,
-        messageId:    r.messageId,
-        downloadCode: r.downloadCode,
-      ))
+    gDtEvents.push(DingTalkEvent(
+      msgType:      "image",
+      rawId:        evRawId,
+      messageId:    r.messageId,
+      downloadCode: r.downloadCode,
+    ))
   of dtkAudio:
     let evRawId = if r.isGroup: "conv:" & r.conversationId else: r.rawId
-    {.cast(gcsafe).}:
-      gDtEvents.send(DingTalkEvent(
-        msgType:      "audio",
-        rawId:        evRawId,
-        messageId:    r.messageId,
-        downloadCode: r.downloadCode,
-      ))
+    gDtEvents.push(DingTalkEvent(
+      msgType:      "audio",
+      rawId:        evRawId,
+      messageId:    r.messageId,
+      downloadCode: r.downloadCode,
+    ))
   of dtkVideo:
     let evRawId = if r.isGroup: "conv:" & r.conversationId else: r.rawId
-    {.cast(gcsafe).}:
-      gDtEvents.send(DingTalkEvent(
-        msgType:      "video",
-        rawId:        evRawId,
-        messageId:    r.messageId,
-        downloadCode: r.downloadCode,
-      ))
+    gDtEvents.push(DingTalkEvent(
+      msgType:      "video",
+      rawId:        evRawId,
+      messageId:    r.messageId,
+      downloadCode: r.downloadCode,
+    ))
   of dtkFile:
     let evRawId = if r.isGroup: "conv:" & r.conversationId else: r.rawId
-    {.cast(gcsafe).}:
-      gDtEvents.send(DingTalkEvent(
-        msgType:      "file",
-        rawId:        evRawId,
-        messageId:    r.messageId,
-        downloadCode: r.downloadCode,
-      ))
+    gDtEvents.push(DingTalkEvent(
+      msgType:      "file",
+      rawId:        evRawId,
+      messageId:    r.messageId,
+      downloadCode: r.downloadCode,
+    ))
 
 # ── DingTalkAdapter ───────────────────────────────────────────────────────────
 
@@ -330,9 +325,8 @@ proc ack*(a: DingTalkAdapter; msgId: string) =
 # ── Queue management ──────────────────────────────────────────────────────────
 
 proc openQueue*(a: DingTalkAdapter) =
-  ## Opens the module-level event queue. Call once at daemon startup.
-  {.cast(gcsafe).}:
-    gDtEvents.open()
+  ## Kept for the startup sequence: the queue already exists with the module.
+  discard
 
 proc startGateway*(a: var DingTalkAdapter) =
   ## Opens the webhook event queue. Named startGateway to match the ChannelPort
@@ -341,8 +335,7 @@ proc startGateway*(a: var DingTalkAdapter) =
 
 proc tryRecvEvent*(a: DingTalkAdapter): (bool, DingTalkEvent) =
   ## Non-blocking poll for webhook events. Returns (false, default) when empty.
-  {.cast(gcsafe).}:
-    gDtEvents.tryRecv()
+  gDtEvents.tryTake()
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

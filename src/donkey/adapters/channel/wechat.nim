@@ -24,6 +24,7 @@ import ../http/std_http
 import ../identity/identity_resolver
 import ../webhook/http_request_reader
 import ../../app/metrics
+import ./event_queue
 
 const
   WeChatApiBase* = "https://api.weixin.qq.com"
@@ -61,7 +62,7 @@ type
     token:  string
     logger: Logger
 
-var gWeChatEvents: Channel[WeChatEvent]
+var gWeChatEvents = initEventQueue[WeChatEvent]("wechat")
 var gWeChatEventsOpen  = false
 var gWeChatWebhookStarted = false
 var gWeChatWebhookThread: Thread[WeChatWebhookArgs]
@@ -136,7 +137,7 @@ proc verifyWebhookSignature*(token, timestamp, nonce, signature: string): bool =
 proc enqueueWebhookXml*(a: var WeChatAdapter; xml: string): Result[void, string] =
   let event = ? parseWebhookXml(xml)
   if gWeChatEventsOpen:
-    gWeChatEvents.send(event)
+    gWeChatEvents.push(event)
   else:
     a.events.add(event)
   ok()
@@ -287,7 +288,7 @@ proc handleWeChatConn*(client: Socket; token: string; logger: Logger;
       logger.warn("wechat webhook: dropped unparseable event: " & evRes.error)
       recordWebhookFailure("wechat", "unparseable event")
     elif gWeChatEventsOpen:
-      gWeChatEvents.send(evRes.value)
+      gWeChatEvents.push(evRes.value)
     client.respond("200 OK", "success")
   else:
     client.respond("405 Method Not Allowed", "")
@@ -318,7 +319,6 @@ proc startWebhook*(a: WeChatAdapter; port: Port; logger: Logger) {.gcsafe.} =
   {.cast(gcsafe).}:
     if gWeChatWebhookStarted:
       return
-    gWeChatEvents.open()
     gWeChatEventsOpen    = true
     gWeChatWebhookStarted = true
     createThread(gWeChatWebhookThread, wechatWebhookThread,
@@ -326,7 +326,7 @@ proc startWebhook*(a: WeChatAdapter; port: Port; logger: Logger) {.gcsafe.} =
 
 proc tryRecvEvent*(a: var WeChatAdapter): (bool, WeChatEvent) =
   if gWeChatEventsOpen:
-    let (ok, ev) = gWeChatEvents.tryRecv()
+    let (ok, ev) = gWeChatEvents.tryTake()
     if ok:
       return (true, ev)
   if a.events.len == 0:

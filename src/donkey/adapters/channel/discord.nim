@@ -28,6 +28,7 @@ import ../../core/media_download
 import ../http/std_http
 import ../identity/identity_resolver
 import ./ws_client
+import ./event_queue
 
 const DiscordMaxChars* = 2000
 
@@ -52,9 +53,9 @@ type
 # ── Gateway thread ─────────────────────────────────────────────────────────────
 
 ## Module-level channel — opened once, valid for daemon lifetime.
-## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
-## lock internally and deep-copy the payload. Must be open()ed before use.
-var gDiscordEvents* {.global.}: Channel[DiscordRawEvent]
+## Thread-safe: an `EventQueue` (shared memory, events moved, not copied),
+## created with the module; the receiving thread pushes, the daemon loop polls.
+var gDiscordEvents* = initEventQueue[DiscordRawEvent]("discord")
 
 ## Buffer for messages received before gateway is ready (READY dispatch).
 ## Protected by gDiscordBufLock — written from gateway OS thread in
@@ -127,7 +128,7 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
     let ready = gDiscordReady
     release(gDiscordBufLock)
     if ready:
-      gDiscordEvents.send(event)
+      gDiscordEvents.push(event)
     else:
       {.cast(gcsafe).}:
         acquire(gDiscordBufLock)
@@ -163,7 +164,7 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
     let ready = gDiscordReady
     release(gDiscordBufLock)
     if ready:
-      gDiscordEvents.send(event)
+      gDiscordEvents.push(event)
     else:
       {.cast(gcsafe).}:
         acquire(gDiscordBufLock)
@@ -183,7 +184,7 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
     let ready = gDiscordReady
     release(gDiscordBufLock)
     if ready:
-      gDiscordEvents.send(event)
+      gDiscordEvents.push(event)
     else:
       {.cast(gcsafe).}:
         acquire(gDiscordBufLock)
@@ -203,7 +204,7 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
     let ready = gDiscordReady
     release(gDiscordBufLock)
     if ready:
-      gDiscordEvents.send(event)
+      gDiscordEvents.push(event)
     else:
       {.cast(gcsafe).}:
         acquire(gDiscordBufLock)
@@ -295,7 +296,7 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
               if pendingCount > 0:
                 logger.info("discord: flushing " & $pendingCount & " buffered message(s)")
                 for event in gDiscordPending:
-                  gDiscordEvents.send(event)
+                  gDiscordEvents.push(event)
                 gDiscordPending = @[]
               release(gDiscordBufLock)
             else:
@@ -754,12 +755,11 @@ proc ack*(a: DiscordAdapter; channelId: string) =
 proc startGateway*(a: DiscordAdapter; logger: Logger) {.gcsafe.} =
   ## Starts the Discord gateway thread. Call once at daemon startup.
   {.cast(gcsafe).}:
-    gDiscordEvents.open()
     createThread(gGatewayThread, discordGatewayThread, GatewayArgs(token: a.token, logger: logger))
 
 proc tryRecvEvent*(a: DiscordAdapter): (bool, DiscordRawEvent) =
   ## Non-blocking poll for gateway events. Returns (false, default) when empty.
-  gDiscordEvents.tryRecv()
+  gDiscordEvents.tryTake()
 
 # ── Slash command registration ─────────────────────────────────────────────────
 

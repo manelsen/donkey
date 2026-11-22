@@ -17,6 +17,7 @@ import ../../domain/message
 import ../../ports/http
 import ../http/std_http
 import ./ws_client
+import ./event_queue
 
 const
   QQOfficialDefaultApiBase* = "https://api.sgroup.qq.com"
@@ -65,10 +66,10 @@ type
     tokenBase:    string
     intents:      int
 
-## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
-## lock internally and deep-copy the payload. Must be open()ed before use.
+## Thread-safe: an `EventQueue` (shared memory, events moved, not copied),
+## created with the module; the receiving thread pushes, the daemon loop polls.
 ## Opened once at daemon startup via startGateway().
-var gQQOfficialEvents* {.global.}: Channel[QQOfficialEvent]
+var gQQOfficialEvents* = initEventQueue[QQOfficialEvent]("qq_official")
 
 ## Thread handle for the QQ official gateway OS thread.
 ## Safe: only assigned once via createThread in startGateway.
@@ -343,7 +344,7 @@ proc enqueueEventJson*(a: var QQOfficialAdapter; payload: string): Result[void, 
 
 proc tryRecvEvent*(a: var QQOfficialAdapter): (bool, QQOfficialEvent) =
   if a.events.len == 0:
-    return gQQOfficialEvents.tryRecv()
+    return gQQOfficialEvents.tryTake()
   let localEvent = a.events[0]
   a.events.delete(0)
   (true, localEvent)
@@ -420,13 +421,13 @@ proc handleGatewayDispatch(adapter: var QQOfficialAdapter;
   if eventType == "INTERACTION_CREATE":
     let event = parseInteractionEventNode(data).valueOr:
       return
-    gQQOfficialEvents.send(event)
+    gQQOfficialEvents.push(event)
     discard adapter.acknowledgeInteraction(data.getOrDefault("id").getStr(""))
     return
 
   let eventRes = parseOfficialEventNode(eventType, data)
   if eventRes.isOk:
-    gQQOfficialEvents.send(eventRes.value)
+    gQQOfficialEvents.push(eventRes.value)
 
 proc runGatewaySession(adapter: var QQOfficialAdapter;
                        intents: int;
@@ -540,7 +541,6 @@ proc startGateway*(a: QQOfficialAdapter; intents = QQOfficialDefaultIntents) {.g
   {.cast(gcsafe).}:
     if gQQOfficialGatewayStarted:
       return
-    gQQOfficialEvents.open()
     gQQOfficialGatewayStarted = true
     createThread(gQQOfficialGatewayThread, qqOfficialGatewayThread, QQOfficialGatewayArgs(
       appId: a.appId,

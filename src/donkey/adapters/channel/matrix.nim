@@ -31,6 +31,7 @@ import ../../ports/channel
 import ../../ports/http
 import ../http/std_http
 import ../identity/identity_resolver
+import ./event_queue
 
 export identity_resolver
 export channel.FileDownload
@@ -53,9 +54,9 @@ type
 
 # ── Module-level event queue ──────────────────────────────────────────────────
 
-## Thread-safe: Nim built-in system.Channel (not chronos AsyncChannel); send/tryRecv
-## lock internally and deep-copy the payload. Must be open()ed before use.
-var gMxEvents* {.global.}: Channel[MatrixEvent]
+## Thread-safe: an `EventQueue` (shared memory, events moved, not copied),
+## created with the module; the receiving thread pushes, the daemon loop polls.
+var gMxEvents* = initEventQueue[MatrixEvent]("matrix")
 
 # ── Transaction ID counter ────────────────────────────────────────────────────
 
@@ -82,50 +83,45 @@ proc pushEvent*(payload: JsonNode) =
   case r.kind
   of mxkUnknown: discard
   of mxkText:
-    {.cast(gcsafe).}:
-      gMxEvents.send(MatrixEvent(
-        msgType:  "text",
-        roomId:   r.roomId,
-        senderId: r.senderId,
-        eventId:  r.eventId,
-        content:  r.text,
-      ))
+    gMxEvents.push(MatrixEvent(
+      msgType:  "text",
+      roomId:   r.roomId,
+      senderId: r.senderId,
+      eventId:  r.eventId,
+      content:  r.text,
+    ))
   of mxkImage:
-    {.cast(gcsafe).}:
-      gMxEvents.send(MatrixEvent(
-        msgType:  "image",
-        roomId:   r.roomId,
-        senderId: r.senderId,
-        eventId:  r.eventId,
-        mediaUrl: r.mediaUrl,
-      ))
+    gMxEvents.push(MatrixEvent(
+      msgType:  "image",
+      roomId:   r.roomId,
+      senderId: r.senderId,
+      eventId:  r.eventId,
+      mediaUrl: r.mediaUrl,
+    ))
   of mxkAudio:
-    {.cast(gcsafe).}:
-      gMxEvents.send(MatrixEvent(
-        msgType:  "audio",
-        roomId:   r.roomId,
-        senderId: r.senderId,
-        eventId:  r.eventId,
-        mediaUrl: r.mediaUrl,
-      ))
+    gMxEvents.push(MatrixEvent(
+      msgType:  "audio",
+      roomId:   r.roomId,
+      senderId: r.senderId,
+      eventId:  r.eventId,
+      mediaUrl: r.mediaUrl,
+    ))
   of mxkVideo:
-    {.cast(gcsafe).}:
-      gMxEvents.send(MatrixEvent(
-        msgType:  "video",
-        roomId:   r.roomId,
-        senderId: r.senderId,
-        eventId:  r.eventId,
-        mediaUrl: r.mediaUrl,
-      ))
+    gMxEvents.push(MatrixEvent(
+      msgType:  "video",
+      roomId:   r.roomId,
+      senderId: r.senderId,
+      eventId:  r.eventId,
+      mediaUrl: r.mediaUrl,
+    ))
   of mxkFile:
-    {.cast(gcsafe).}:
-      gMxEvents.send(MatrixEvent(
-        msgType:  "file",
-        roomId:   r.roomId,
-        senderId: r.senderId,
-        eventId:  r.eventId,
-        mediaUrl: r.mediaUrl,
-      ))
+    gMxEvents.push(MatrixEvent(
+      msgType:  "file",
+      roomId:   r.roomId,
+      senderId: r.senderId,
+      eventId:  r.eventId,
+      mediaUrl: r.mediaUrl,
+    ))
 
 # ── MatrixAdapter ─────────────────────────────────────────────────────────────
 
@@ -264,9 +260,8 @@ proc ack*(a: MatrixAdapter; msgId: string) =
 # ── Queue management ──────────────────────────────────────────────────────────
 
 proc openQueue*(a: MatrixAdapter) =
-  ## Opens the module-level event queue. Call once at daemon startup.
-  {.cast(gcsafe).}:
-    gMxEvents.open()
+  ## Kept for the startup sequence: the queue already exists with the module.
+  discard
 
 proc startGateway*(a: var MatrixAdapter) =
   ## Opens the event queue. Named startGateway to match the ChannelPort
@@ -275,8 +270,7 @@ proc startGateway*(a: var MatrixAdapter) =
 
 proc tryRecvEvent*(a: MatrixAdapter): (bool, MatrixEvent) =
   ## Non-blocking poll for queued events. Returns (false, default) when empty.
-  {.cast(gcsafe).}:
-    gMxEvents.tryRecv()
+  gMxEvents.tryTake()
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 
