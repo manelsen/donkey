@@ -15,6 +15,7 @@ import donkey/adapters/tool/runtime_builder
 import donkey/core/log
 import donkey/infra/thread_handle
 import donkey/app/route_health
+import donkey/adapters/state/route_health_file
 import donkey/app/daemon_endpoints
 import donkey/adapters/filesystem/subagent_workspace
 import donkey/app/turn_reaction
@@ -572,7 +573,7 @@ proc initDaemonRuntime(home: string): DaemonRuntime =
   result.ledger = stateStore.deliveryLedger()
   result.presentationState = initPresentationState()
   result.routeHealth = newRouteHealth(
-    home / "state" / "route_health.json",
+    routeHealthFileStore(home / "state" / "route_health.json"),
     sampleTtlSec = envSeconds("DONKEY_ROUTE_HEALTH_TTL_SEC",
                               DefaultRecentRouteSampleTtlSec),
     cooldownSec = envSeconds("DONKEY_PROVIDER_COOLDOWN_SEC",
@@ -858,18 +859,18 @@ proc setupIpcServer(cfg: DonkeyConfig;
         raise e
       except Exception as e:  ## effect boundary: callee raises are unannotated
         raise newException(CatchableError, "gateway inbound: " & e.msg, e)
+  ## The memory adapter answers with plain booleans and may raise; the
+  ## checks hand the policy a Result.
   let isRevokedCheck: ProfileCheck =
-    proc(userId: UserId): bool {.gcsafe, raises: [CatchableError].} =
-      try: gatewayInboundMemory.isRevoked(userId)
-      except CatchableError as e: raise e
+    proc(userId: UserId): Result[bool, string] {.gcsafe, raises: [].} =
+      try: ok(gatewayInboundMemory.isRevoked(userId))
       except Exception as e:  ## effect boundary: callee raises are unannotated
-        raise newException(CatchableError, e.msg, e)
+        err(e.msg)
   let isDmAllowedCheck: ProfileCheck =
-    proc(userId: UserId): bool {.gcsafe, raises: [CatchableError].} =
-      try: gatewayInboundMemory.isDmAllowed(userId)
-      except CatchableError as e: raise e
+    proc(userId: UserId): Result[bool, string] {.gcsafe, raises: [].} =
+      try: ok(gatewayInboundMemory.isDmAllowed(userId))
       except Exception as e:  ## effect boundary: callee raises are unannotated
-        raise newException(CatchableError, e.msg, e)
+        err(e.msg)
   let gwAuthorizeFn: AuthorizeFn =
     proc(userId: UserId): AuthVerdict {.gcsafe, raises: [].} =
       authorizeUser(userId, isRevokedCheck, isDmAllowedCheck, cfg.dmPolicy)

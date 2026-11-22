@@ -3,6 +3,7 @@
 ## gateway applies, and the dashboard's session action. The composition root
 ## only plugs these into the servers.
 
+import ../core/pipeops
 import ../core/types
 import ../core/security/dm_policy
 import ../domain/agent_message
@@ -27,7 +28,8 @@ type
     memoryBackend*: string
     memoryStats*:   MemoryStats
 
-  ProfileCheck* = proc(userId: UserId): bool {.gcsafe, raises: [CatchableError].}
+  ProfileCheck* = proc(userId: UserId): Result[bool, string] {.gcsafe, raises: [].}
+    ## A question about the user's profile; an Err when it cannot be read.
 
   SessionTaskEnqueue* = proc(msg: InboundMessage; kind: TaskKind; payload: string)
                             {.gcsafe, raises: [CatchableError].}
@@ -69,13 +71,16 @@ proc authorizeUser*(userId: UserId; isRevoked, isDmAllowed: ProfileCheck;
                     dmPolicy: DmPolicy): AuthVerdict {.raises: [].} =
   ## The ingress policy, for the gateway: revocation wins, then the DM
   ## allowlist (unless the policy is open). A profile that cannot be read
-  ## fails closed.
-  try:
-    if isRevoked(userId): avRevoked
-    elif dmPolicy != DmPolicyOpen and not isDmAllowed(userId): avNotAllowed
-    else: avAllowed
-  except CatchableError:
-    avRevoked
+  ## fails closed, whatever the policy.
+  let revoked = isRevoked(userId).valueOr:
+    return avRevoked
+  if revoked:
+    return avRevoked
+  if dmPolicy == DmPolicyOpen:
+    return avAllowed
+  let allowed = isDmAllowed(userId).valueOr:
+    return avRevoked
+  if allowed: avAllowed else: avNotAllowed
 
 proc runSessionAction*(sm: SessionManager; rawUserId: string; kind: TaskKind;
                        payload: string; authorize: AuthorizeFn;

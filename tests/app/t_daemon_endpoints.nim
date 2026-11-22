@@ -3,6 +3,7 @@
 ## session action. No sockets, no daemon.
 
 import std/unittest
+import donkey/core/pipeops
 import donkey/core/types
 import donkey/core/security/dm_policy
 import donkey/domain/agent_message
@@ -10,6 +11,7 @@ import donkey/domain/gateway/identity_pure
 import donkey/domain/message
 import donkey/app/http_gateway
 import donkey/app/route_health
+import donkey/ports/route_health_store
 import donkey/app/session_manager
 import donkey/app/daemon_endpoints
 import donkey/core/providers/smart_routing
@@ -35,7 +37,7 @@ proc runTests*() =
       sm.init()
       discard sm.getOrCreate(UserId("u1"))
       sm.recordChannel(UserId("u1"), ckTelegram, "tg-1", persist = false)
-      let health = newRouteHealth("")
+      let health = newRouteHealth(RouteHealthStore())
       health.recordChoice(ProviderSelection(providerName: "openrouter", modelName: "a"))
       let st = daemonStatus(sm, DaemonStatusInputs(
         channels: ActiveChannels(telegram: true), health: health,
@@ -51,12 +53,12 @@ proc runTests*() =
       check st.memoryBackend == "md"
 
   suite "access policy":
-    proc notRevoked(u: UserId): bool {.gcsafe, raises: [CatchableError].} = false
-    proc revoked(u: UserId): bool {.gcsafe, raises: [CatchableError].} = true
-    proc unreadable(u: UserId): bool {.gcsafe, raises: [CatchableError].} =
-      raise newException(IOError, "profile unreadable")
-    proc allowed(u: UserId): bool {.gcsafe, raises: [CatchableError].} = true
-    proc notAllowed(u: UserId): bool {.gcsafe, raises: [CatchableError].} = false
+    proc notRevoked(u: UserId): Result[bool, string] {.gcsafe, raises: [].} = ok(false)
+    proc revoked(u: UserId): Result[bool, string] {.gcsafe, raises: [].} = ok(true)
+    proc unreadable(u: UserId): Result[bool, string] {.gcsafe, raises: [].} =
+      err("profile unreadable")
+    proc allowed(u: UserId): Result[bool, string] {.gcsafe, raises: [].} = ok(true)
+    proc notAllowed(u: UserId): Result[bool, string] {.gcsafe, raises: [].} = ok(false)
 
     test "revocation wins over the DM policy":
       check authorizeUser(UserId("u"), revoked, allowed, DmPolicyOpen) == avRevoked
@@ -68,6 +70,7 @@ proc runTests*() =
 
     test "a profile that cannot be read fails closed":
       check authorizeUser(UserId("u"), unreadable, allowed, DmPolicyOpen) == avRevoked
+      check authorizeUser(UserId("u"), notRevoked, unreadable, DmPolicyAllowlist) == avRevoked
 
   suite "dashboard session action":
     setup:

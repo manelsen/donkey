@@ -27,13 +27,18 @@ func shouldStageReaction*(msg: InboundMessage): bool =
 
 func isErrorReply*(reply: OutboundMessage): bool =
   ## A turn ends in error when its reply says so: by kind, or by the wording
-  ## of replies that carry no kind.
-  if reply.replyKind == rkTurnError:
-    return true
-  for prefix in LegacyErrorPrefixes:
-    if reply.text.startsWith(prefix):
-      return true
-  false
+  ## of replies that carry no kind (rkChannel, the default). A reply that
+  ## states another kind is judged by it alone.
+  case reply.replyKind
+  of rkTurnError:
+    true
+  of rkChannel:
+    for prefix in LegacyErrorPrefixes:
+      if reply.text.startsWith(prefix):
+        return true
+    false
+  else:
+    false
 
 proc react(channel: ChannelKind; userId: UserId; channelId, msgId, emoji: string;
            ports: OutboundChannelPorts) =

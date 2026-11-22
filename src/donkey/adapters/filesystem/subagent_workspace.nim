@@ -9,9 +9,10 @@ import ../../core/pipeops
 import ../../ports/subagent_workspace
 
 when defined(posix):
-  const
-    PosixODirectory = cint(0o200000)
-    PosixONoFollow = cint(0o400000)
+  ## From the platform's headers: the values differ between systems (on
+  ## macOS O_NOFOLLOW is 0x100), and a wrong constant silently follows links.
+  var PosixODirectory {.importc: "O_DIRECTORY", header: "<fcntl.h>".}: cint
+  var PosixONoFollow {.importc: "O_NOFOLLOW", header: "<fcntl.h>".}: cint
 
 proc ensurePrivateDir(path: string): Result[void, string]
                                       {.gcsafe, raises: [].} =

@@ -19,6 +19,7 @@ g0	tests/adapters/channel/t_requester_only_send_paths.nim
 g0	tests/adapters/channel/t_wechat.nim
 g0	tests/adapters/filesystem/t_media_paths.nim
 g0	tests/adapters/filesystem/t_subagent_workspace.nim
+g0	tests/adapters/state/t_route_health_file.nim
 g0	tests/adapters/memory/t_channel_prefs_store.nim
 g0	tests/adapters/memory/t_session_search_adapter.nim
 g0	tests/adapters/network/t_dns_resolver.nim

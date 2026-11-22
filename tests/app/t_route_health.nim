@@ -2,7 +2,9 @@
 ## persisted across restarts, and provider cooldowns opened by a failing
 ## provider. Driven by an injected clock; no daemon.
 
-import std/[os, strutils, unittest]
+import std/[strutils, unittest]
+import donkey/core/pipeops
+import donkey/ports/route_health_store
 import donkey/core/providers/smart_routing
 import donkey/app/route_health
 
@@ -12,9 +14,26 @@ proc fakeClock(): int64 {.gcsafe, nimcall, raises: [].} = gNow
 func sel(provider, model: string): ProviderSelection =
   ProviderSelection(providerName: provider, modelName: model)
 
-proc fresh(path = ""; ttlSec = 3600'i64; cooldownSec = 600'i64): RouteHealth =
-  newRouteHealth(path, sampleTtlSec = ttlSec, cooldownSec = cooldownSec,
-                 clock = fakeClock)
+var gSaved {.threadvar.}: RouteHealthSnapshot
+
+proc memoryStore(): RouteHealthStore =
+  RouteHealthStore(
+    load: proc(): Result[RouteHealthSnapshot, string] {.gcsafe, raises: [].} =
+      {.cast(gcsafe).}: ok(gSaved),
+    save: proc(snapshot: RouteHealthSnapshot): Result[void, string] {.gcsafe, raises: [].} =
+      {.cast(gcsafe).}: gSaved = snapshot
+      ok())
+
+proc failingStore(): RouteHealthStore =
+  RouteHealthStore(
+    load: proc(): Result[RouteHealthSnapshot, string] {.gcsafe, raises: [].} =
+      err("disk gone"),
+    save: proc(snapshot: RouteHealthSnapshot): Result[void, string] {.gcsafe, raises: [].} =
+      err("disk gone"))
+
+proc fresh(ttlSec = 3600'i64; cooldownSec = 600'i64): RouteHealth =
+  newRouteHealth(RouteHealthStore(), sampleTtlSec = ttlSec,
+                 cooldownSec = cooldownSec, clock = fakeClock)
 
 proc runTests*() =
   suite "route health":
@@ -51,28 +70,26 @@ proc runTests*() =
       gNow += 601
       check h.cooldowns().len == 0
 
+    test "a store that fails does not stop recording":
+      ## Persistence is best effort: routing goes on without it.
+      let h = newRouteHealth(failingStore(), clock = fakeClock)
+      h.load()
+      h.recordResult(sel("openrouter", "a"), 100, ok = true)
+      check h.feedback().len == 1
+
     test "samples and cooldowns survive a restart":
-      let path = getTempDir() / ("donkey_route_health_" & $getCurrentProcessId() & ".json")
-      defer: removeFile(path)
+      gSaved = RouteHealthSnapshot()
       block:
-        let h = fresh(path)
+        let h = newRouteHealth(memoryStore(), clock = fakeClock)
         for _ in 0 ..< 4:
           h.recordResult(sel("gemini", "g"), 100, ok = false)
         h.recordResult(sel("openrouter", "a"), 50, ok = true)
-      let reloaded = fresh(path)
+      let reloaded = newRouteHealth(memoryStore(), clock = fakeClock)
       reloaded.load()
       check reloaded.feedback().len == 2
       check reloaded.cooldowns().len == 1
       check reloaded.topRecentProviderMetrics().len == 2
 
-    test "a missing or broken file starts empty":
-      let path = getTempDir() / ("donkey_route_health_bad_" & $getCurrentProcessId() & ".json")
-      defer: removeFile(path)
-      writeFile(path, "{not json")
-      let h = fresh(path)
-      h.load()
-      check h.feedback().len == 0
-      fresh(path & ".missing").load()
 
 when isMainModule:
   runTests()

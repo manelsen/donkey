@@ -3,8 +3,10 @@
 ##
 ## - Counters per route (choices, calls, ok, errors, latency) for the
 ##   daemon's lifetime.
-## - Recent samples per route, kept within a TTL and capped, persisted to
-##   `state/route_health.json` so a restart does not forget a failing route.
+## - Recent samples per route, kept within a TTL and capped, persisted
+##   through a RouteHealthStore (in production `state/route_health.json`) so a
+##   restart does not forget a failing route. Persistence is best effort: a
+##   store that fails does not stop routing.
 ## - Provider cooldowns: a provider whose recent results trip
 ##   `shouldCircuitBreakProvider` is skipped for `cooldownSec`.
 ##
@@ -12,10 +14,12 @@
 ## and the IPC server and HTTP gateway run on the same loop. The clock is
 ## injectable for tests.
 
-import std/[algorithm, json, os, tables, times]
+import std/[algorithm, tables, times]
+import ../core/pipeops
 import ../core/providers/smart_routing
 import ../ports/ipc
 import ../ports/provider
+import ../ports/route_health_store
 
 const
   RecentRouteSampleLimit* = 32
@@ -23,15 +27,12 @@ const
   DefaultProviderCooldownSec* = 10 * 60
 
 type
-  RouteSample = object
-    ok: bool
-    elapsedMs: int
-    recordedAtUnix: int64
+  RouteSample = RouteSampleRecord
 
   Clock* = proc(): int64 {.gcsafe, nimcall, raises: [].}
 
   RouteHealth* = ref object
-    path: string                 ## "" keeps everything in memory
+    store: RouteHealthStore      ## empty: everything stays in memory
     sampleTtlSec: int64
     cooldownSec: int64
     clock: Clock
@@ -45,11 +46,11 @@ type
 
 proc systemClock(): int64 {.gcsafe, nimcall, raises: [].} = getTime().toUnix()
 
-proc newRouteHealth*(path: string;
+proc newRouteHealth*(store: RouteHealthStore;
                      sampleTtlSec = int64(DefaultRecentRouteSampleTtlSec);
                      cooldownSec = int64(DefaultProviderCooldownSec);
                      clock: Clock = nil): RouteHealth =
-  RouteHealth(path: path,
+  RouteHealth(store: store,
               sampleTtlSec: if sampleTtlSec > 0: sampleTtlSec
                             else: DefaultRecentRouteSampleTtlSec,
               cooldownSec: if cooldownSec > 0: cooldownSec
@@ -82,62 +83,31 @@ proc pruneCooldowns(h: RouteHealth) =
 
 proc save(h: RouteHealth) =
   ## Best effort: losing the file only costs the memory of recent failures.
-  if h.path.len == 0:
+  if not h.store.hasRouteHealthStore:
     return
-  try:
-    h.pruneSamples()
-    createDir(parentDir(h.path))
-    var routes = newJArray()
-    for route, samples in h.recentSamples:
-      if samples.len == 0:
-        continue
-      var sampleData = newJArray()
-      for sample in samples:
-        sampleData.add(%*{
-          "ok": sample.ok,
-          "elapsed_ms": sample.elapsedMs,
-          "recorded_at": sample.recordedAtUnix,
-        })
-      routes.add(%*{"route": route, "samples": sampleData})
-    var cooldowns = newJArray()
-    for providerName, untilUnix in h.cooldownUntil:
-      cooldowns.add(%*{"provider": providerName, "until_unix": untilUnix})
-    writeFile(h.path, $(%*{
-      "saved_at": h.now(),
-      "routes": routes,
-      "provider_cooldowns": cooldowns,
-    }))
-  except CatchableError:
-    discard
+  h.pruneSamples()
+  var snapshot = RouteHealthSnapshot(savedAt: h.now())
+  for route, samples in h.recentSamples:
+    if samples.len > 0:
+      snapshot.routes.add(RouteSamples(route: route, samples: samples))
+  for providerName, untilUnix in h.cooldownUntil:
+    snapshot.cooldowns.add(ProviderCooldown(providerName: providerName,
+                                            untilUnix: untilUnix))
+  discard h.store.save(snapshot)
 
 proc load*(h: RouteHealth) =
   ## Restores the recent samples and cooldowns saved by an earlier run. A
-  ## missing or unreadable file starts empty.
-  if h.path.len == 0 or not fileExists(h.path):
+  ## store with nothing saved, or one that fails, starts empty.
+  if not h.store.hasRouteHealthStore:
     return
-  try:
-    let parsed = parseJson(readFile(h.path))
-    for routeNode in parsed{"routes"}:
-      let route = routeNode{"route"}.getStr("")
-      if route.len == 0:
-        continue
-      var samples: seq[RouteSample] = @[]
-      for sampleNode in routeNode{"samples"}:
-        samples.add(RouteSample(
-          ok: sampleNode{"ok"}.getBool(false),
-          elapsedMs: sampleNode{"elapsed_ms"}.getInt(0),
-          recordedAtUnix: sampleNode{"recorded_at"}.getBiggestInt(0),
-        ))
-      h.recentSamples[route] = samples
-    h.pruneSamples()
-    for cooldownNode in parsed{"provider_cooldowns"}:
-      let providerName = cooldownNode{"provider"}.getStr("")
-      let untilUnix = cooldownNode{"until_unix"}.getBiggestInt(0)
-      if providerName.len > 0 and untilUnix > 0:
-        h.cooldownUntil[providerName] = untilUnix
-    h.pruneCooldowns()
-  except CatchableError:
-    discard
+  let snapshot = h.store.load().valueOr:
+    return
+  for route in snapshot.routes:
+    h.recentSamples[route.route] = route.samples
+  h.pruneSamples()
+  for cooldown in snapshot.cooldowns:
+    h.cooldownUntil[cooldown.providerName] = cooldown.untilUnix
+  h.pruneCooldowns()
 
 # ── recording ─────────────────────────────────────────────────────────────────
 

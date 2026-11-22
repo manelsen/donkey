@@ -42,6 +42,9 @@ proc runTests*() =
       check isErrorReply(OutboundMessage(text: "falhou", replyKind: rkTurnError))
       ## Replies that still carry no kind are recognised by their wording.
       check isErrorReply(OutboundMessage(text: "Desculpe, o provedor falhou."))
+      ## A reply that states its kind is judged by it, not by its wording.
+      check not isErrorReply(OutboundMessage(text: "Desculpe, o provedor falhou.",
+                                             replyKind: rkFinalAnswer))
 
     test "staging leaves ⏳ and remembers the message; the reply closes it":
       stageReaction(state, fakePorts(), inbound())

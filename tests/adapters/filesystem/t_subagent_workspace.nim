@@ -62,9 +62,12 @@ proc runTests*() =
       check removeSubagentPaddock(child).isOk
       check not dirExists(child)
       when defined(posix):
+        writeFile(target / "keep.txt", "sentinel")
         createSymlink(target, root / "link")
         check removeSubagentPaddock(root / "link").isOk
-        check dirExists(target)  ## the link goes, never what it points to
+        ## The link goes, never what it points to.
+        check not symlinkExists(root / "link")
+        check readFile(target / "keep.txt") == "sentinel"
       check removeSubagentPaddock(root / "never-existed").isOk
       check removeSubagentPaddock("").isOk
 
