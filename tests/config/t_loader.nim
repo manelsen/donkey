@@ -9,6 +9,21 @@ import donkey/core/security/dm_policy
 proc runTests*() =
   suite "Config Loader":
 
+    test "home and ~ paths follow the snapshot, not the process":
+      let env = environmentOf({"HOME": "/srv/alice"})
+      check resolveHome(env) == "/srv/alice/.donkey"
+      check resolveHome(env.with("DONKEY_HOME", "/opt/donkey")) == "/opt/donkey"
+      check expandHome("~", env) == "/srv/alice"
+      check expandHome("~/paddocks", env) == "/srv/alice/paddocks"
+      check expandHome("/abs/~/x", env) == "/abs/~/x"
+      let tmp = getTempDir() / "t_loader_home_tilde.toml"
+      writeFile(tmp, "[donkey]\npaddocks = \"~/pads\"\nlog_file = \"~/d.log\"\n")
+      defer: removeFile(tmp)
+      let cfg = loadConfig(tmp, env)
+      check cfg.home == "/srv/alice/.donkey"
+      check cfg.paddocks == "/srv/alice/pads"
+      check cfg.logFile == "/srv/alice/d.log"
+
     test "resolveHomeFromEnv prefers explicit env value":
       check resolveHomeFromEnv("/tmp/donkey_home_x") == "/tmp/donkey_home_x"
 

@@ -53,8 +53,24 @@ proc resolveHomeFromEnv*(homeEnv: string): string =
     return homeEnv
   expandTilde("~/" & HomeDirName)
 
+proc userHome*(env: Environment): string =
+  ## The user's home directory from the snapshot's `HOME`; the platform's
+  ## answer only when the snapshot has none (Windows has no `HOME`).
+  let home = env.get("HOME")
+  if home.len > 0: home else: getHomeDir()
+
+proc expandHome*(path: string; env: Environment): string =
+  ## `expandTilde` resolved against the snapshot instead of the process:
+  ## `~` and `~/x` start at `userHome(env)`; anything else is left alone.
+  if path == "~": userHome(env)
+  elif path.startsWith("~/"): userHome(env) / path[2 .. ^1]
+  else: path
+
 proc resolveHome*(env: Environment): string =
-  resolveHomeFromEnv(env.get(EnvHome))
+  ## `DONKEY_HOME` when set, otherwise `~/.donkey` under the snapshot's home.
+  let explicit = env.get(EnvHome)
+  if explicit.len > 0: explicit
+  else: expandHome("~/" & HomeDirName, env)
 
 proc parseSandboxMode*(rawMode: string): Option[SandboxMode] =
   case rawMode.strip().toLowerAscii()
@@ -198,7 +214,8 @@ proc applyEnvOverrides*(cfg: DonkeyConfig; env: Environment): DonkeyConfig =
     else:
       result.invalidDmPolicy = rawDmPolicy
 
-proc parseMainConfigPatch*(doc: TomlValueRef): MainConfigPatch =
+proc parseMainConfigPatch*(doc: TomlValueRef; env: Environment): MainConfigPatch =
+  ## Paths may start with `~`, resolved against the snapshot's home.
   if not doc.hasKey(ConfigSectionName):
     return
   let mainSection = doc[ConfigSectionName]
@@ -206,7 +223,7 @@ proc parseMainConfigPatch*(doc: TomlValueRef): MainConfigPatch =
   if mainSection.hasKey("home"):
     let homeVal = mainSection["home"].getStr().strip()
     if homeVal.len > 0:
-      result.home = some(expandTilde(homeVal))
+      result.home = some(expandHome(homeVal, env))
 
   if mainSection.hasKey("log_level"):
     result.logLevel = some(parseLogLevel(mainSection["log_level"].getStr()))
@@ -214,12 +231,12 @@ proc parseMainConfigPatch*(doc: TomlValueRef): MainConfigPatch =
   if mainSection.hasKey("log_file"):
     let logFile = mainSection["log_file"].getStr().strip()
     if logFile.len > 0:
-      result.logFile = some(expandTilde(logFile))
+      result.logFile = some(expandHome(logFile, env))
 
   if mainSection.hasKey("paddocks"):
     let paddocks = mainSection["paddocks"].getStr().strip()
     if paddocks.len > 0:
-      result.paddocks = some(expandTilde(paddocks))
+      result.paddocks = some(expandHome(paddocks, env))
 
   if mainSection.hasKey("default_provider"):
     let defaultProvider = mainSection["default_provider"].getStr().strip()
@@ -321,7 +338,7 @@ proc loadConfig*(path: string; env: Environment): DonkeyConfig =
     return fallback
 
   let doc = docOpt.get()
-  let mainPatch = parseMainConfigPatch(doc)
+  let mainPatch = parseMainConfigPatch(doc, env)
   let securityPatch = parseSecurityConfigPatch(doc)
   let sandboxPatch = parseSandboxConfigPatch(doc)
   result =

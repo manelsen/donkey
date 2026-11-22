@@ -26,7 +26,9 @@ const
 
 func readLines(code: string): seq[int] =
   ## 0-based lines with a call to one of `EnvCalls` (`getEnv(` or `getEnv (`),
-  ## not the tail of a longer name.
+  ## not the tail of a longer name. A qualified call counts too (`os.getEnv`,
+  ## or through any module alias): nothing in src has a method of these names,
+  ## so a dot in front never makes it something else.
   let lines = code.splitLines()
   for i, line in lines:
     for name in EnvCalls:
@@ -35,7 +37,7 @@ func readLines(code: string): seq[int] =
         let before = if at > 0: line[at - 1] else: ' '
         var after = at + name.len
         while after < line.len and line[after] == ' ': inc after
-        if not isIdentChar(before) and before != '.' and
+        if not isIdentChar(before) and
            after < line.len and line[after] in {'(', '"'}:
           result.add i
         at = line.find(name, at + 1)
@@ -50,7 +52,9 @@ proc runTests*() =
       check readLines(codeOnly("## never call getEnv(\"A\") here")).len == 0
       check readLines(codeOnly("let s = \"getEnv(A)\"")).len == 0
       check readLines(codeOnly("let x = myGetEnv(\"A\")")).len == 0
-      check readLines(codeOnly("let x = env.getEnv(\"A\")")).len == 0
+      check readLines(codeOnly("let x = os.getEnv(\"A\")")).len == 1
+      check readLines(codeOnly("let x = sysos.existsEnv(\"A\")")).len == 1
+      check readLines(codeOnly("let x = env.get(\"A\")")).len == 0
       check readLines(codeOnly("let x = getEnvironment()")).len == 0
 
     test "reads outside the owners stay within a budget that only goes down":
