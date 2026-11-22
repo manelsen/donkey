@@ -27,6 +27,9 @@ import ../app/approval_runtime
 import ./session_manager
 import ../app/prompt_building
 import ../app/provider_executor
+import ../infra/event_queue
+import ../infra/thread_handle
+import ../infra/thread_owner
 
 export tool_loop
 
@@ -55,28 +58,90 @@ type ToolCallResult* = object
 type ToolBatchResult* = ToolBatchState
 
 # ── Thread-based streaming ─────────────────────────────────────────────────────
+#
+# The provider call blocks, so it runs on its own thread. Nothing GC-managed is
+# shared with it: the job carries the request (copied into the thread), a
+# `nimcall` factory and an atomically counted channel. The thread builds the
+# provider closure itself, sends tokens and then one final event, and the
+# event loop polls the queue.
+#
+# A stopped turn returns at once and leaves its thread to be reaped in the
+# background, so a hung provider could pile threads up. Every stream counts
+# against `MaxLiveStreams` until it is joined; at the cap the tool loop falls
+# back to the executor (bounded queue) instead of streaming.
 
 const
-  doneSentinel* = "\x00DONE"
   StreamFlushMs* = 1_000
+  StreamPollMs = 30
+  StreamChannelDepth = 512
+  MaxLiveStreams* = 8
 
-type StreamJob* = object
-  fn*:  StreamFn
-  req*: CompletionRequest
-  ch*:  ptr Channel[string]
-  res*: ptr CompletionResponse # Output
-  errOut*: ptr string
+var gLiveStreams {.threadvar.}: int
+  ## Started and not yet joined. Event loop state: another thread would see
+  ## its own zero and slip past the cap, so gStreamsOwner refuses it.
+var gStreamsOwner: ThreadOwner
 
-proc doStreamJob*(job: StreamJob) {.thread, gcsafe.} =
-  let res = job.fn(job.req,
-                   proc(tok: string) {.gcsafe.} = job.ch[].send(tok))
-  if res.isOk:
-    job.res[] = res.value
-  else:
-    job.errOut[] = res.error
-  job.ch[].send(doneSentinel)
+proc liveStreams*(): int {.gcsafe.} =
+  if gStreamsOwner.isOwner("live stream count"): gLiveStreams else: 0
 
-proc streamToOutbox*(fn:        StreamFn;
+proc streamSlotAvailable*(): bool {.gcsafe.} =
+  ## False on any thread but the loop's: streaming is only counted there.
+  gStreamsOwner.isOwner("live stream count") and
+    gLiveStreams < MaxLiveStreams
+
+proc streamStarted() {.gcsafe.} =
+  if gStreamsOwner.isOwner("live stream count"): inc gLiveStreams
+
+proc streamReaped() {.gcsafe.} =
+  if gStreamsOwner.isOwner("live stream count"): dec gLiveStreams
+
+type
+  StreamEvent = object
+    done:     bool              ## the last event: `response` or `error` is set
+    token:    string
+    response: CompletionResponse
+    error:    string
+
+  StreamJob = object
+    factory: StreamFactory
+    req:     CompletionRequest
+    events:  EventQueue[StreamEvent]
+
+proc runStreamJob(job: StreamJob) {.thread, nimcall, raises: [].} =
+  let events = job.events
+  var final = StreamEvent(done: true)
+  try:
+    let fn = job.factory()
+    if fn == nil:
+      final.error = "streaming unavailable"
+    else:
+      let res = fn(job.req,
+                   proc(tok: string) {.gcsafe.} =
+                     events.waitPush(StreamEvent(token: tok)))
+      if res.isOk: final.response = res.value
+      else: final.error = res.error
+  except Exception as e:  ## effect boundary: callee raises are unannotated
+    final.error = e.msg
+  events.waitPush(final)
+
+proc reapStream(handle: ThreadHandle[StreamJob];
+                events: EventQueue[StreamEvent]) {.async: (raises: []).} =
+  ## Drains an abandoned stream (stopped or cancelled turn) until its final
+  ## event, then joins the thread, without blocking the event loop meanwhile.
+  var h = handle
+  var q = events
+  while true:
+    var ev: StreamEvent
+    if q.tryPop(ev):
+      if ev.done: break
+    else:
+      try: await sleepAsync(milliseconds(StreamPollMs))
+      except CancelledError: return  ## shutting down: leave the thread be
+  joinAndFree(h)
+  q.dispose()
+  streamReaped()
+
+proc streamToOutbox*(factory:   StreamFactory;
                     req:       CompletionRequest;
                     outbox:    AsyncQueue[OutboundMessage];
                     userId:    UserId;
@@ -86,32 +151,43 @@ proc streamToOutbox*(fn:        StreamFn;
                     stopGeneration: uint64 = 0;
                     bridgeToken: uint64 = 0):
                     Future[Result[CompletionResponse, string]] {.async.} =
-  var tokenChan: Channel[string]
-  var finalResponse: CompletionResponse
-  var streamErr = ""
-  tokenChan.open(512)
-
-  var t: Thread[StreamJob]
-  createThread(t, doStreamJob,
-               StreamJob(fn: fn, req: req, ch: addr tokenChan,
-                         res: addr finalResponse, errOut: addr streamErr))
+  ## Streams one completion into `outbox` as partial edits and a final
+  ## message. A stop returns at once; the thread is reaped in the background.
+  if not streamSlotAvailable():
+    return err("streaming saturated: " & $gLiveStreams &
+               " stream(s) still running")
+  var events = initEventQueue[StreamEvent]("stream", StreamChannelDepth)
+  var handle: ThreadHandle[StreamJob]
+  try:
+    handle = spawnThread(runStreamJob,
+                         StreamJob(factory: factory, req: req, events: events))
+  except CatchableError as e:
+    events.dispose()
+    return err("stream thread: " & e.msg)
+  streamStarted()
 
   var accumulated = ""
   var lastFlush   = nowMs()
   var lastSent    = ""
-  var stopSeen    = false
+  var joined      = false
 
-  while true:
-    if isSessionStopRequested(stopGeneration):
-      stopSeen = true
-      break
-    var (has, tok) = tokenChan.tryRecv()
-    while has:
-      if tok == doneSentinel:
-        tokenChan.close()
-        joinThread(t)
-        if streamErr.len > 0:
-          return err(streamErr)
+  try:
+    while true:
+      if isSessionStopRequested(stopGeneration):
+        return ok(CompletionResponse())
+      while true:
+        var ev: StreamEvent  ## fresh each time: see EventQueue.tryPop
+        if not events.tryPop(ev): break
+        if not ev.done:
+          accumulated.add(ev.token)
+          continue
+        joinAndFree(handle)
+        events.dispose()
+        streamReaped()
+        joined = true
+        if ev.error.len > 0:
+          return err(ev.error)
+        let finalResponse = ev.response
         if finalResponse.toolCalls.len == 0 and
            not isSessionStopRequested(stopGeneration):
           let visible = cleanResponse(finalResponse.text)
@@ -130,35 +206,29 @@ proc streamToOutbox*(fn:        StreamFn;
             outputTokens: max(0, finalResponse.outputTokens),
           ))
         return ok(finalResponse)
-      accumulated.add(tok)
-      (has, tok) = tokenChan.tryRecv()
 
-    if accumulated.len > 0 and nowMs() - lastFlush >= StreamFlushMs:
-      lastFlush = nowMs()
-      let visible = cleanResponse(safeStreamPrefix(accumulated))
-      if visible.strip.len > 0 and visible != lastSent:
-        if isSessionStopRequested(stopGeneration):
-          stopSeen = true
-          break
-        lastSent = visible
-        await outbox.put(OutboundMessage(
-          userId:    userId,
-          channel:   ch,
-          text:      visible,
-          replyTo:   replyTo,
-          streamId:  streamId,
-          isPartial: true,
-          replyKind: rkFinalAnswer,
-          bridgeToken: bridgeToken,
-        ))
+      if accumulated.len > 0 and nowMs() - lastFlush >= StreamFlushMs:
+        lastFlush = nowMs()
+        let visible = cleanResponse(safeStreamPrefix(accumulated))
+        if visible.strip.len > 0 and visible != lastSent:
+          if isSessionStopRequested(stopGeneration):
+            return ok(CompletionResponse())
+          lastSent = visible
+          await outbox.put(OutboundMessage(
+            userId:    userId,
+            channel:   ch,
+            text:      visible,
+            replyTo:   replyTo,
+            streamId:  streamId,
+            isPartial: true,
+            replyKind: rkFinalAnswer,
+            bridgeToken: bridgeToken,
+          ))
 
-    await sleepAsync(milliseconds(30))
-
-  tokenChan.close()
-  joinThread(t)
-  if stopSeen:
-    return ok(finalResponse)
-  if streamErr.len > 0: err(streamErr) else: ok(finalResponse)
+      await sleepAsync(milliseconds(StreamPollMs))
+  finally:
+    if not joined:
+      asyncSpawn reapStream(handle, events)
 
 # ── Typing loop ───────────────────────────────────────────────────────────────
 
@@ -210,6 +280,8 @@ proc completeOnce(req: CompletionRequest;
       raise
     except Exception as e:  ## effect boundary: callee raises are unannotated
       return completionErr(e.msg)
+  if completeFn == nil:
+    return completionErr("provider unavailable: no completion function")
   safeComplete(completeFn, req)
 
 proc awaitExpectedReply*(outbox: AsyncQueue[AgentMessage];
@@ -455,7 +527,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
                  memory: MemoryRuntimePort;
                  completeFn: CompleteFn;
                  errorExplainFn: CompleteFn;
-                 streamFn: StreamFn;
+                 streamFactory: StreamFactory;
                  nativeCtx: NativeCtx;
                  state: SessionState;
                  history: ConversationHistory;
@@ -488,17 +560,18 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
     var req = buildPrompt(systemBase, loopState.history, context, tools, reasoning = showReasoning)
 
     let canStreamToolCalls =
-      streamFn != nil and providerLabel.toLowerAscii().startsWith("openrouter")
+      streamFactory != nil and streamSlotAvailable() and
+      providerLabel.toLowerAscii().startsWith("openrouter")
     ## Suppressing tool progress must not disable plain streaming on the
     ## first round; only the tool-call stream channel stays hidden.
     if decideToolLoopStreaming(
       round = round,
       toolsCount = tools.len,
-      streamingAvailable = streamFn != nil,
+      streamingAvailable = streamFactory != nil and streamSlotAvailable(),
       streamingToolCalls = canStreamToolCalls and not suppressProgress,
     ).useStreaming:
       var streamedRes = await streamToOutbox(
-        streamFn, req, globalOutbox, uid, channel, replyTo, streamId,
+        streamFactory, req, globalOutbox, uid, channel, replyTo, streamId,
         nativeCtx.stopGeneration, bridgeToken = bridgeToken)
       ## The streaming branch goes through the same one-shot demotion: a
       ## vision-less model can refuse the inline image before the first token.
@@ -509,7 +582,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         loopState.history = demoteInlineImagesForTurn(loopState.history)
         req = withoutInlineImages(req)
         streamedRes = await streamToOutbox(
-          streamFn, req, globalOutbox, uid, channel, replyTo, streamId,
+          streamFactory, req, globalOutbox, uid, channel, replyTo, streamId,
           nativeCtx.stopGeneration, bridgeToken = bridgeToken)
       if streamedRes.isErr:
         nativeCtx.log.warn("provider error: " & clipProviderError(streamedRes.error))
@@ -673,7 +746,7 @@ proc finalizeNormalTurn*(globalOutbox: AsyncQueue[OutboundMessage];
                         channel: ChannelKind;
                         replyTo: string;
                         streamId: string;
-                        streamFn: StreamFn;
+                        streamFactory: StreamFactory;
                         suppressProgress: bool;
                         suppressQuietFinal: bool;
                         showReasoning: bool;
