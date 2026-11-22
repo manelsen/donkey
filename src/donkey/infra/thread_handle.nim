@@ -22,9 +22,9 @@ import std/macros
 
 type ThreadHandle*[T] = ptr Thread[T]
 
-proc gcShared(t: NimNode; seen: var seq[string]): bool {.compileTime.}
+proc gcShared(t: NimNode; seen: var seq[NimNode]): bool {.compileTime.}
 
-proc fieldsShared(n: NimNode; seen: var seq[string]): bool {.compileTime.} =
+proc fieldsShared(n: NimNode; seen: var seq[NimNode]): bool {.compileTime.} =
   ## Walks an object or tuple body: fields, variant branches, the base type.
   case n.kind
   of nnkIdentDefs:
@@ -43,11 +43,14 @@ proc fieldsShared(n: NimNode; seen: var seq[string]): bool {.compileTime.} =
       if fieldsShared(c, seen): return true
     false
 
-proc gcShared(t: NimNode; seen: var seq[string]): bool =
+proc gcShared(t: NimNode; seen: var seq[NimNode]): bool =
   ## True when a value of type `t` can hold a ref or a closure environment.
-  let key = t.repr & "/" & $t.typeKind
-  if key in seen: return false  ## recursive type: already being checked
-  seen.add key
+  ## Already met (a recursive type, or a type used twice): it adds nothing.
+  ## Compared by type identity, not by name: two modules may each have a
+  ## `Payload`.
+  for known in seen:
+    if sameType(known, t): return false
+  seen.add t
   case t.typeKind
   of ntyRef:
     true
@@ -89,7 +92,7 @@ proc gcShared(t: NimNode; seen: var seq[string]): bool =
 macro sharesNothing*(T: typedesc): bool =
   ## True when a `T` holds no ref and no closure: safe to copy into another
   ## thread under ORC.
-  var seen: seq[string]
+  var seen: seq[NimNode]
   newLit(not gcShared(T.getTypeInst[1], seen))
 
 proc spawnThread*[T](fn: proc(arg: T) {.thread, nimcall.};

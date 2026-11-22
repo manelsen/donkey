@@ -16,13 +16,25 @@ const DirectCreateThread = [
     # The argument is a `ptr` to a shared block of Channels.
 ]
 
+func nimIdent(name: string): string =
+  ## The identity Nim gives an identifier: the first letter as written, the
+  ## rest without `_` and in lower case.
+  if name.len == 0: return
+  result.add name[0]
+  for c in name[1 .. ^1]:
+    if c != '_': result.add c.toLowerAscii
+
 func callsCreateThread(code: string): bool =
-  var at = code.find("createThread")
-  while at >= 0:
-    if (at == 0 or not isIdentChar(code[at - 1])) and
-       (at + 12 >= code.len or not isIdentChar(code[at + 12])):
-      return true
-    at = code.find("createThread", at + 1)
+  ## True when an identifier Nim reads as `createThread` appears in `code`.
+  var i = 0
+  while i < code.len:
+    if isIdentChar(code[i]) and (i == 0 or not isIdentChar(code[i - 1])):
+      var j = i
+      while j < code.len and isIdentChar(code[j]): inc j
+      if nimIdent(code[i ..< j]) == "createthread": return true
+      i = j
+    else:
+      inc i
   false
 
 proc runTests*() =
@@ -32,6 +44,13 @@ proc runTests*() =
       check not callsCreateThread(codeOnly("## createThread(t, fn, arg)"))
       check not callsCreateThread(codeOnly("let s = \"createThread\""))
       check not callsCreateThread(codeOnly("myCreateThreadHelper()"))
+
+    test "every spelling Nim treats as createThread is found":
+      ## Nim ignores `_` and case after the first letter of an identifier.
+      check callsCreateThread(codeOnly("create_thread(t, fn, arg)"))
+      check callsCreateThread(codeOnly("createTHREAD(t, fn, arg)"))
+      check callsCreateThread(codeOnly("create_Thread(t, fn, arg)"))
+      check not callsCreateThread(codeOnly("CreateThread(t, fn, arg)"))
 
     test "threads start through spawnThread outside the listed places":
       let allowed = toHashSet(DirectCreateThread)

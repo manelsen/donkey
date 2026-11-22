@@ -118,13 +118,10 @@ suite "webhook TLS stress":
       let secret = "rotation-secret"
       let cfg = WebhookConfig(slackSigningSecret: secret,
                               tlsCertFile: cert, tlsKeyFile: key)
-      var logChan: Channel[string]
-      logChan.open(16)
-      let rotationLog = newLogger("stress.tls.rotation", lvlError,
-        proc(entry: LogEntry) {.gcsafe.} =
-          {.cast(gcsafe).}:
-            {.cast(raises: []).}:
-              logChan.send(entry.message))
+      ## The worker thread logs with the standard sink (a thread argument
+      ## carries no closure), which also feeds the shared log ring.
+      ringInit()
+      let rotationLog = newLogger("stress.tls.rotation", lvlError)
       let started = startWebhookReceiver(cfg, port, "127.0.0.1", rotationLog)
       check started.isOk
       defer: stopWebhookReceiver()
@@ -138,13 +135,10 @@ suite "webhook TLS stress":
       check "rotation-ok" in response
 
       var sawReloadError = false
-      while true:
-        let (hasMessage, message) = logChan.tryRecv()
-        if not hasMessage:
-          break
-        if "cannot load TLS certificate" in message:
+      for entry in ringSnapshot(200):
+        if entry.sub == "stress.tls.rotation" and
+           "cannot load TLS certificate" in entry.msg:
           sawReloadError = true
-      logChan.close()
       check sawReloadError
 
   test "a slow TLS client does not block shutdown forever":
