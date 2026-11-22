@@ -50,6 +50,10 @@ type
     children: seq[Tree]
   Box[T] = object
     value: T
+  RefOf[T] = ref T
+  Items[T] = seq[T]
+  Named = distinct string
+  Handle = distinct JsonNode
 
 proc homonymChecks(): array[4, bool] =
   ## Two types named `Payload`: this local one holds a ref, the module's one
@@ -96,6 +100,13 @@ proc runTests*() =
       check not sharesNothing(Box[ref int])
       check not sharesNothing(Box[proc() {.gcsafe.}])
       check not sharesNothing(Box[Box[JsonNode]])
+
+    test "generic aliases and distinct types are judged by what they wrap":
+      check not sharesNothing(RefOf[int])
+      check not sharesNothing(Items[ref int])
+      check sharesNothing(Items[int])
+      check sharesNothing(Named)
+      check not sharesNothing(Handle)
 
     test "a recursive plain type is accepted":
       check sharesNothing(Tree)

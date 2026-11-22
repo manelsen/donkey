@@ -23,6 +23,7 @@ import std/macros
 type ThreadHandle*[T] = ptr Thread[T]
 
 proc gcShared(t: NimNode; seen: var seq[NimNode]): bool {.compileTime.}
+proc bodyShared(t, impl: NimNode; seen: var seq[NimNode]): bool {.compileTime.}
 
 proc fieldsShared(n: NimNode; seen: var seq[NimNode]): bool {.compileTime.} =
   ## Walks an object or tuple body: fields, variant branches, the base type.
@@ -59,6 +60,49 @@ proc bodyShared(t, impl: NimNode; seen: var seq[NimNode]): bool {.compileTime.} 
   else:
     fieldsShared(impl, seen)
 
+proc closureProc(impl: NimNode): bool {.compileTime.} =
+  ## A proc type is a closure unless declared with another convention.
+  if impl.kind == nnkProcTy and impl.len > 1:
+    for p in impl[1]:
+      if p.kind in {nnkIdent, nnkSym} and
+         $p in ["nimcall", "cdecl", "stdcall", "noconv", "inline", "fastcall",
+                "safecall", "syscall"]:
+        return false
+  true
+
+proc wrappedShared(t, impl: NimNode; seen: var seq[NimNode]): bool {.compileTime.} =
+  ## A distinct type, alias or generic instance, judged by the shape of its
+  ## expansion rather than by its type kind, which can still read as the
+  ## wrapper (`RefOf[T] = ref T`) and would loop. A shape not listed here is
+  ## refused, never accepted unread.
+  case impl.kind
+  of nnkRefTy:
+    true
+  of nnkPtrTy:
+    false
+  of nnkDistinctTy:
+    gcShared(impl[0], seen)
+  of nnkObjectTy, nnkTupleConstr, nnkTupleTy:
+    bodyShared(t, impl, seen)
+  of nnkProcTy:
+    closureProc(impl)
+  of nnkBracketExpr:
+    ## seq[T], set[T], openArray[T], array[I, T], ptr/ref generics: judged by
+    ## the container and its element.
+    if impl.len < 2: return true
+    case $impl[0]
+    of "ptr", "pointer": false
+    of "ref": true
+    of "seq", "set", "openArray", "varargs", "UncheckedArray", "range":
+      gcShared(impl[^1], seen)
+    of "array": gcShared(impl[^1], seen)
+    else: true
+  of nnkSym:
+    if sameType(impl, t): true  ## no progress: refuse rather than accept
+    else: gcShared(impl, seen)
+  else:
+    true
+
 proc gcShared(t: NimNode; seen: var seq[NimNode]): bool =
   ## True when a value of type `t` can hold a ref or a closure environment.
   case t.typeKind
@@ -68,25 +112,9 @@ proc gcShared(t: NimNode; seen: var seq[NimNode]): bool =
      ntyInt..ntyUInt64, ntyNil, ntyEmpty, ntyVoid:
     false
   of ntyProc:
-    ## A proc type is a closure unless declared with another convention.
-    let impl = t.getTypeImpl
-    var callConvSet = false
-    if impl.kind == nnkProcTy and impl.len > 1:
-      for p in impl[1]:
-        if p.kind in {nnkIdent, nnkSym} and
-           $p in ["nimcall", "cdecl", "stdcall", "noconv", "inline", "fastcall",
-                  "safecall", "syscall"]:
-          callConvSet = true
-    not callConvSet
+    closureProc(t.getTypeImpl)
   of ntyDistinct, ntyGenericInst, ntyAlias, ntyTypeDesc:
-    ## A wrapper is judged by what it expands to; an object body is examined
-    ## right here, under the instance's own identity.
-    let impl = t.getTypeImpl
-    if impl == t: return false
-    if impl.kind == nnkDistinctTy: gcShared(impl[0], seen)
-    elif impl.kind in {nnkObjectTy, nnkTupleConstr, nnkTupleTy}:
-      bodyShared(t, impl, seen)
-    else: gcShared(impl, seen)
+    wrappedShared(t, t.getTypeImpl, seen)
   of ntySequence, ntyOpenArray, ntyVarargs, ntySet, ntyRange, ntyUncheckedArray:
     gcShared(t.getTypeImpl[^1], seen)
   of ntyArray:
