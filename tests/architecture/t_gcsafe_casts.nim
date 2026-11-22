@@ -41,8 +41,9 @@ func castCount(code: string): int =
   ## block form `{.gcsafe.}:` switches the check off the same way and counts
   ## too (a proc pragma `{.gcsafe.} =` does not).
   let squeezed = code.multiReplace((" ", ""), ("\t", ""))
-  if squeezed.startsWith("{.gcsafe.}:"):
-    inc result
+  ## Anywhere on the line (`proc p() = {.gcsafe.}: discard`); a proc pragma
+  ## is followed by `=`, never by `:`.
+  result += squeezed.count("{.gcsafe.}:")
   var at = squeezed.find("cast(gcsafe)")
   while at >= 0:
     if at == 0 or not isIdentChar(squeezed[at - 1]):  ## not `broadcast(...)`
@@ -79,6 +80,8 @@ proc runTests*() =
       check castSites("x", "broadcast(gcsafe)").len == 0
       check castSites("x", "  {.gcsafe.}:\n    discard").len == 1
       check castSites("x", "proc p() {.gcsafe.} = discard").len == 0
+      check castSites("x", "proc p() = {.gcsafe.}: discard").len == 1
+      check castSites("x", "let f: proc() {.gcsafe.} = nil").len == 0
       check castSites("x", "{.raises: [], cast(gcsafe).}: discard").len == 1
       check not castSites("x", "let l = \"## gcsafe: not a comment\"\n{.cast(gcsafe).}:")[0].explained
       check castSites("x", "let l = 1  ## gcsafe: a real comment\n{.cast(gcsafe).}:")[0].explained
