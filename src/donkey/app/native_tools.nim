@@ -65,6 +65,8 @@ import ../domain/reminder
 import ../ports/http as httpPort
 import ../ports/provider
 import ../ports/memory
+import ../core/tooling/native_tool_args
+export native_tool_args  # argument contexts and their pure parsers
 import ../config/types as cfgTypes
 import ../config/environment
 from ./skill_runtime import skillRegistry
@@ -147,118 +149,6 @@ type
     listSubagents*: ListSubagentsFn
     cancelSubagent*: CancelSubagentFn
 
-  AskContext* = object
-    question*: string
-
-  SessionSearchContext* = object
-    query*:         string
-    limit*:         int
-    includeMemory*: bool
-
-  MemoryIngestContext* = object
-    path*:       string
-    text*:       string
-    chunkChars*: int
-    maxChunks*:  int
-
-  SpawnSubagentContext* = object
-    request*: SubagentRequest
-    wait*:    bool
-
-  AwaitSubagentContext* = object
-    subagentId*: string
-
-  BashContext* = object
-    command*: string
-
-  ReadFileContext* = object
-    path*:      string
-    startLine*: int
-    maxLines*:  int
-
-  FindContext* = object
-    path*:    string
-    pattern*: string
-    kind*:    string
-    max*:     int
-
-  GrepContext* = object
-    pattern*:   string
-    path*:      string
-    recursive*: bool
-    max*:       int
-
-  SedContext* = object
-    expression*: string
-    path*:       string
-
-  WcContext* = object
-    path*:  string
-    flags*: string
-
-  HeadTailContext* = object
-    path*:  string
-    lines*: int
-
-  SortContext* = object
-    path*:  string
-    flags*: string
-
-  CpMvContext* = object
-    source*: string
-    dest*:   string
-
-  FetchContext* = object
-    url*:    string
-    maxCh*:  int
-
-  WebSearchContext* = object
-    query*: string
-    count*: int
-
-  CalcContext* = object
-    expression*: string
-
-  MermaidContext* = object
-    diagram*: string
-
-  TranscribeContext* = object
-    path*:     string
-    language*: string
-    prompt*:   string
-
-  SpeechContext* = object
-    text*:    string
-    voice*:   string
-    format*:  string
-    asVoice*: bool
-    caption*: string
-
-  InspectImageContext* = object
-    path*:   string
-    prompt*: string
-
-  TaskContext* = object
-    prompt*:  string
-    context*: string
-
-  AwaitContext* = object
-    ids*: seq[string]
-
-  FindingContext* = object
-    finding*: string
-
-  ManageSkillsContext* = object
-    action*:   string
-    query*:    string
-    slug*:     string
-    name*:     string
-    registry*: string
-
-  EditFileContext* = object
-    path*:  string
-    edits*: seq[EditFileOp]
-
   NativeToolCategoryHandler = proc(tc: ToolCallRequest;
                                    ctx: NativeCtx;
                                    state: SessionState;
@@ -310,428 +200,91 @@ proc resolvedToolPath(path, paddockDir: string;
     return err("Error: path outside paddock (symlink): " & path)
   ok(resolvedPath)
 
-proc requireStringField(j: JsonNode; key: string): Result[string, string] {.gcsafe, raises: [].} =
-  let value = j.getOrDefault(key).getStr("")
-  if value.len == 0:
-    return err("Error: '" & key & "' is required.")
-  ok(value)
+# Arguments are parsed by `core/tooling/native_tool_args` (pure); tools that
+# take a path resolve it inside the paddock here, where the file system is.
 
-proc parseSessionSearchContext*(j: JsonNode): Result[SessionSearchContext, string]
-                                                                  {.gcsafe, raises: [].} =
-  let queryNode = j.getOrDefault("query")
-  let query =
-    if queryNode != nil and queryNode.kind == JString:
-      queryNode.getStr("").strip()
-    else:
-      ""
-  if query.len == 0:
-    return err("'query' is required")
-  if query.len > SessionSearchMaxQueryChars:
-    return err("query exceeds " & $SessionSearchMaxQueryChars & " characters")
-  let limitNode = j.getOrDefault("limit")
-  let limit =
-    if limitNode != nil and limitNode.kind == JInt:
-      clampSessionSearchLimit(limitNode.getInt())
-    else:
-      SessionSearchDefaultLimit
-  let memoryNode = j.getOrDefault("include_memory")
-  let includeMemory =
-    if memoryNode != nil and memoryNode.kind == JBool: memoryNode.getBool()
-    else: true
-  ok(SessionSearchContext(query: query, limit: limit,
-                          includeMemory: includeMemory))
+proc resolvedPathOf[T](parsed: Result[T, string]; paddockDir: string;
+                       log: Logger; toolName: string;
+                       fs: FsRuntimePort): Result[T, string] {.gcsafe, raises: [].} =
+  ## `parsed` with its `path` resolved inside the paddock.
+  var ctx = ?parsed
+  ctx.path = ?resolvedToolPath(ctx.path, paddockDir, log, toolName, fs)
+  ok(ctx)
 
-proc parseMemoryIngestContext*(j: JsonNode): Result[MemoryIngestContext, string]
-                                                                  {.gcsafe, raises: [].} =
-  let path = j.getOrDefault("path").getStr("").strip()
-  let text = j.getOrDefault("text").getStr("")
-  if path.len > 0 and text.strip.len > 0:
-    return err("use either 'path' or 'text', not both")
-  if path.len == 0 and text.strip.len == 0:
-    return err("'path' or 'text' is required")
-  let chunkNode = j.getOrDefault("chunk_chars")
-  let chunkChars =
-    if chunkNode != nil and chunkNode.kind == JInt:
-      clampChunkChars(chunkNode.getInt())
-    else:
-      DefaultIngestChunkChars
-  let maxNode = j.getOrDefault("max_chunks")
-  let maxChunks =
-    if maxNode != nil and maxNode.kind == JInt:
-      clampMaxChunks(maxNode.getInt())
-    else:
-      DefaultIngestMaxChunks
-  ok(MemoryIngestContext(path: path, text: text,
-                         chunkChars: chunkChars, maxChunks: maxChunks))
-
-proc optionalIntField(j: JsonNode; key: string): Result[int, string]
-                                                         {.gcsafe, raises: [].} =
-  let node = j.getOrDefault(key)
-  if node == nil or node.kind == JNull:
-    return ok(0)
-  if node.kind != JInt:
-    return err("'" & key & "' must be an integer")
-  ok(node.getInt())
-
-proc optionalBoolField(j: JsonNode; key: string; fallback: bool):
-                       Result[bool, string] {.gcsafe, raises: [].} =
-  let node = j.getOrDefault(key)
-  if node == nil or node.kind == JNull:
-    return ok(fallback)
-  if node.kind != JBool:
-    return err("'" & key & "' must be a boolean")
-  ok(node.getBool())
-
-proc optionalStringField(j: JsonNode; key: string): Result[string, string]
-                                                         {.gcsafe, raises: [].} =
-  let node = j.getOrDefault(key)
-  if node == nil or node.kind == JNull:
-    return ok("")
-  if node.kind != JString:
-    return err("'" & key & "' must be a string")
-  ok(node.getStr(""))
-
-proc stringArrayField(j: JsonNode; key: string): Result[seq[string], string]
-                                                         {.gcsafe, raises: [].} =
-  let node = j.getOrDefault(key)
-  if node == nil or node.kind == JNull:
-    return ok(newSeq[string]())
-  if node.kind != JArray:
-    return err("'" & key & "' must be an array of strings")
-  var values: seq[string]
-  for item in node.items:
-    if item.kind != JString:
-      return err("'" & key & "' must contain only strings")
-    let value = item.getStr("").strip()
-    if value.len > 0 and value notin values:
-      values.add(value)
-  ok(values)
-
-proc parseSpawnSubagentContext*(j: JsonNode):
-                                Result[SpawnSubagentContext, string]
-                                {.gcsafe, raises: [].} =
-  let task = j.getOrDefault("task").getStr("").strip()
-  if task.len == 0:
-    return err("'task' is required")
-  let context = ?optionalStringField(j, "context")
-  let tools = ?stringArrayField(j, "tools")
-  let maxToolCalls = ?optionalIntField(j, "max_tool_calls")
-  let maxTokens = ?optionalIntField(j, "max_tokens")
-  let maxDurationSec = ?optionalIntField(j, "max_duration_sec")
-  let wait = ?optionalBoolField(j, "wait", true)
-  let maxDurationSecClamped =
-    if maxDurationSec <= 0:
-      0
-    else:
-      min(maxDurationSec, int(SubagentMaxDurationMs div 1000'i64))
-  let limits = clampSubagentLimits(SubagentLimits(
-    maxToolCalls: maxToolCalls,
-    maxTokens: maxTokens,
-    maxDurationMs: int64(maxDurationSecClamped) * 1000'i64,
-  ))
-  ok(SpawnSubagentContext(
-    request: SubagentRequest(
-      task: task,
-      context: context,
-      tools: tools,
-      limits: limits,
-    ),
-    wait: wait,
-  ))
-
-proc parseAwaitSubagentContext*(j: JsonNode):
-                                Result[AwaitSubagentContext, string]
-                                {.gcsafe, raises: [].} =
-  let subagentId = j.getOrDefault("subagent_id").getStr("").strip()
-  if subagentId.len == 0:
-    return err("'subagent_id' is required")
-  ok(AwaitSubagentContext(subagentId: subagentId))
-
-proc parseAskContext*(j: JsonNode): Result[AskContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("question") >>=
-    proc(question: string): Result[AskContext, string] =
-      ok(AskContext(question: question))
-
-proc parseBashContext*(j: JsonNode): Result[BashContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("command") >>=
-    proc(command: string): Result[BashContext, string] =
-      ok(BashContext(command: command))
-
-proc parseReadFileContext*(j: JsonNode;
-                           paddockDir: string;
-                           log: Logger = Logger();
-                           toolName = ReadFileToolName;
-                           fs: FsRuntimePort = unavailableFs()): Result[ReadFileContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("path") >>=
-    proc(p: string): Result[ReadFileContext, string] =
-      resolvedToolPath(p, paddockDir, log, toolName, fs) >>=
-        proc(rp: string): Result[ReadFileContext, string] =
-          ok(ReadFileContext(
-            path: rp,
-            startLine: max(1, j.getOrDefault("start_line").getInt(1)),
-            maxLines: max(1, j.getOrDefault("max_lines").getInt(200)),
-          ))
+proc parseReadFileContext*(j: JsonNode; paddockDir: string;
+                           log: Logger = Logger(); toolName = ReadFileToolName;
+                           fs: FsRuntimePort = unavailableFs()):
+                           Result[ReadFileContext, string] {.gcsafe, raises: [].} =
+  parseReadFileArgs(j).resolvedPathOf(paddockDir, log, toolName, fs)
 
 proc parseFindContext*(j: JsonNode; paddockDir: string;
-                       log: Logger = Logger();
-                       toolName = FindToolName;
-                       fs: FsRuntimePort = unavailableFs()): Result[FindContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("path") >>=
-    proc(p: string): Result[FindContext, string] =
-      resolvedToolPath(p, paddockDir, log, toolName, fs) >>=
-        proc(rp: string): Result[FindContext, string] =
-          ok(FindContext(
-            path: rp,
-            pattern: j.getOrDefault("pattern").getStr("*"),
-            kind: j.getOrDefault("type").getStr("file"),
-            max: j.getOrDefault("max").getInt(50),
-          ))
+                       log: Logger = Logger(); toolName = FindToolName;
+                       fs: FsRuntimePort = unavailableFs()):
+                       Result[FindContext, string] {.gcsafe, raises: [].} =
+  parseFindArgs(j).resolvedPathOf(paddockDir, log, toolName, fs)
 
 proc parseGrepContext*(j: JsonNode; paddockDir: string;
-                       log: Logger = Logger();
-                       toolName = GrepToolName;
-                       fs: FsRuntimePort = unavailableFs()): Result[GrepContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("pattern") >>=
-    proc(pat: string): Result[GrepContext, string] =
-      j.requireStringField("path") >>=
-        proc(p: string): Result[GrepContext, string] =
-          resolvedToolPath(p, paddockDir, log, toolName, fs) >>=
-            proc(rp: string): Result[GrepContext, string] =
-              ok(GrepContext(
-                pattern: pat,
-                path: rp,
-                recursive: j.getOrDefault("recursive").getBool(true),
-                max: j.getOrDefault("max").getInt(50),
-              ))
+                       log: Logger = Logger(); toolName = GrepToolName;
+                       fs: FsRuntimePort = unavailableFs()):
+                       Result[GrepContext, string] {.gcsafe, raises: [].} =
+  parseGrepArgs(j).resolvedPathOf(paddockDir, log, toolName, fs)
 
 proc parseSedContext*(j: JsonNode; paddockDir: string;
-                      log: Logger = Logger();
-                      toolName = SedToolName;
-                      fs: FsRuntimePort = unavailableFs()): Result[SedContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("expression") >>=
-    proc(expr: string): Result[SedContext, string] =
-      j.requireStringField("path") >>=
-        proc(p: string): Result[SedContext, string] =
-          resolvedToolPath(p, paddockDir, log, toolName, fs) >>=
-            proc(rp: string): Result[SedContext, string] =
-              ok(SedContext(expression: expr, path: rp))
+                      log: Logger = Logger(); toolName = SedToolName;
+                      fs: FsRuntimePort = unavailableFs()):
+                      Result[SedContext, string] {.gcsafe, raises: [].} =
+  parseSedArgs(j).resolvedPathOf(paddockDir, log, toolName, fs)
 
 proc parsePathOnly*(j: JsonNode; paddockDir: string;
-                    log: Logger = Logger();
-                    toolName = "";
-                    fs: FsRuntimePort = unavailableFs()): Result[string, string] {.gcsafe, raises: [].} =
-  j.requireStringField("path") >>=
-    proc(p: string): Result[string, string] = resolvedToolPath(p, paddockDir, log, toolName, fs)
+                    log: Logger = Logger(); toolName = "";
+                    fs: FsRuntimePort = unavailableFs()):
+                    Result[string, string] {.gcsafe, raises: [].} =
+  resolvedToolPath(?j.requireStringField("path"), paddockDir, log, toolName, fs)
 
 proc parseWcContext*(j: JsonNode; paddockDir: string;
-                     log: Logger = Logger();
-                     toolName = WcToolName;
-                     fs: FsRuntimePort = unavailableFs()): Result[WcContext, string] {.gcsafe, raises: [].} =
-  parsePathOnly(j, paddockDir, log, toolName, fs) >>=
-    proc(p: string): Result[WcContext, string] =
-      ok(WcContext(path: p, flags: j.getOrDefault("flags").getStr("")))
+                     log: Logger = Logger(); toolName = WcToolName;
+                     fs: FsRuntimePort = unavailableFs()):
+                     Result[WcContext, string] {.gcsafe, raises: [].} =
+  parseWcArgs(j).resolvedPathOf(paddockDir, log, toolName, fs)
 
 proc parseHeadTailContext*(j: JsonNode; paddockDir: string;
-                           log: Logger = Logger();
-                           toolName = "";
-                           fs: FsRuntimePort = unavailableFs()): Result[HeadTailContext, string] {.gcsafe, raises: [].} =
-  parsePathOnly(j, paddockDir, log, toolName, fs) >>=
-    proc(p: string): Result[HeadTailContext, string] =
-      ok(HeadTailContext(path: p, lines: j.getOrDefault("lines").getInt(10)))
+                           log: Logger = Logger(); toolName = "";
+                           fs: FsRuntimePort = unavailableFs()):
+                           Result[HeadTailContext, string] {.gcsafe, raises: [].} =
+  parseHeadTailArgs(j).resolvedPathOf(paddockDir, log, toolName, fs)
 
 proc parseSortContext*(j: JsonNode; paddockDir: string;
-                       log: Logger = Logger();
-                       toolName = SortToolName;
-                       fs: FsRuntimePort = unavailableFs()): Result[SortContext, string] {.gcsafe, raises: [].} =
-  parsePathOnly(j, paddockDir, log, toolName, fs) >>=
-    proc(p: string): Result[SortContext, string] =
-      ok(SortContext(path: p, flags: j.getOrDefault("flags").getStr("")))
+                       log: Logger = Logger(); toolName = SortToolName;
+                       fs: FsRuntimePort = unavailableFs()):
+                       Result[SortContext, string] {.gcsafe, raises: [].} =
+  parseSortArgs(j).resolvedPathOf(paddockDir, log, toolName, fs)
 
 proc parseCpMvContext*(j: JsonNode; paddockDir: string;
-                       log: Logger = Logger();
-                       toolName = "";
-                       fs: FsRuntimePort = unavailableFs()): Result[CpMvContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("source") >>=
-    proc(s: string): Result[CpMvContext, string] =
-      j.requireStringField("dest") >>=
-        proc(d: string): Result[CpMvContext, string] =
-          let rs = resolvedToolPath(s, paddockDir, log, toolName, fs)
-          if rs.isErr: return err(rs.error)
-          let rd = resolvedToolPath(d, paddockDir, log, toolName, fs)
-          if rd.isErr: return err(rd.error)
-          ok(CpMvContext(source: rs.value, dest: rd.value))
+                       log: Logger = Logger(); toolName = "";
+                       fs: FsRuntimePort = unavailableFs()):
+                       Result[CpMvContext, string] {.gcsafe, raises: [].} =
+  var ctx = ?parseCpMvArgs(j)
+  ctx.source = ?resolvedToolPath(ctx.source, paddockDir, log, toolName, fs)
+  ctx.dest = ?resolvedToolPath(ctx.dest, paddockDir, log, toolName, fs)
+  ok(ctx)
 
-proc parseFetchContext*(j: JsonNode; defaultMax: int): Result[FetchContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("url") >>=
-    proc(u: string): Result[FetchContext, string] =
-      ok(FetchContext(url: u, maxCh: j.getOrDefault("max_chars").getInt(defaultMax)))
-
-proc parseWebSearchContext*(j: JsonNode): Result[WebSearchContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("query") >>=
-    proc(q: string): Result[WebSearchContext, string] =
-      ok(WebSearchContext(query: q, count: j.getOrDefault("count").getInt(5)))
-
-proc parseCalcContext*(j: JsonNode): Result[CalcContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("expression") >>=
-    proc(e: string): Result[CalcContext, string] =
-      ok(CalcContext(expression: e))
-
-proc parseMermaidContext*(j: JsonNode): Result[MermaidContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("diagram") >>=
-    proc(d: string): Result[MermaidContext, string] =
-      ok(MermaidContext(diagram: d))
-
-proc parseInspectImageContext*(j: JsonNode;
-                               paddockDir: string;
-                               log: Logger = Logger();
-                               toolName = InspectImageToolName;
-                               fs: FsRuntimePort = unavailableFs()): Result[InspectImageContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("path") >>=
-    proc(p: string): Result[InspectImageContext, string] =
-      resolvedToolPath(p, paddockDir, log, toolName, fs) >>=
-        proc(rp: string): Result[InspectImageContext, string] =
-          ok(InspectImageContext(path: rp, prompt: j.getOrDefault("prompt").getStr("")))
+proc parseInspectImageContext*(j: JsonNode; paddockDir: string;
+                               log: Logger = Logger(); toolName = InspectImageToolName;
+                               fs: FsRuntimePort = unavailableFs()):
+                               Result[InspectImageContext, string] {.gcsafe, raises: [].} =
+  parseInspectImageArgs(j).resolvedPathOf(paddockDir, log, toolName, fs)
 
 proc parseTranscribeContext*(j: JsonNode; paddockDir: string;
                              log: Logger = Logger();
                              fs: FsRuntimePort = unavailableFs()):
-                               Result[TranscribeContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("path") >>=
-    proc(p: string): Result[TranscribeContext, string] =
-      resolvedToolPath(p, paddockDir, log, TranscribeAudioToolName, fs) >>=
-        proc(rp: string): Result[TranscribeContext, string] =
-          ok(TranscribeContext(
-            path: rp,
-            language: j.getOrDefault("language").getStr("").strip,
-            prompt: j.getOrDefault("prompt").getStr("").strip))
+                             Result[TranscribeContext, string] {.gcsafe, raises: [].} =
+  parseTranscribeArgs(j).resolvedPathOf(paddockDir, log, TranscribeAudioToolName, fs)
 
-proc parseSpeechContext*(j: JsonNode): Result[SpeechContext, string]
-                         {.gcsafe, raises: [].} =
-  j.requireStringField("text") >>=
-    proc(t: string): Result[SpeechContext, string] =
-      let asVoice = ?optionalBoolField(j, "as_voice", false)
-      let caption = ?optionalStringField(j, "caption")
-      ok(SpeechContext(
-        text: t,
-        voice: j.getOrDefault("voice").getStr("").strip,
-        format: j.getOrDefault("format").getStr("").strip,
-        asVoice: asVoice,
-        caption: caption))
-
-proc parseTaskContext*(j: JsonNode): Result[TaskContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("prompt") >>=
-    proc(p: string): Result[TaskContext, string] =
-      ok(TaskContext(prompt: p, context: j.getOrDefault("context").getStr("")))
-
-proc parseAwaitContext*(j: JsonNode): Result[AwaitContext, string] {.gcsafe, raises: [].} =
-  let ids = j.getOrDefault("job_ids")
-  if ids.kind != JArray:
-    return err("Error: 'job_ids' must be an array.")
-  ok(AwaitContext(ids: ids.mapIt(it.getStr())))
-
-proc parseFindingContext*(j: JsonNode): Result[FindingContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("finding") >>=
-    proc(f: string): Result[FindingContext, string] =
-      ok(FindingContext(finding: f))
-
-proc parseManageSkillsContext*(j: JsonNode): Result[ManageSkillsContext, string] {.gcsafe, raises: [].} =
-  let action = j.getOrDefault("action").getStr("help").strip.toLowerAscii()
-  case action
-  of "", "help", "list":
-    ok(ManageSkillsContext(action: if action.len == 0: "help" else: action))
-  of "search":
-    j.requireStringField("query") >>=
-      proc(q: string): Result[ManageSkillsContext, string] =
-        ok(ManageSkillsContext(action: action, query: q,
-                               registry: j.getOrDefault("registry").getStr("")))
-  of "install", "enable":
-    j.requireStringField("slug") >>=
-      proc(s: string): Result[ManageSkillsContext, string] =
-        ok(ManageSkillsContext(action: action, slug: s,
-                               registry: j.getOrDefault("registry").getStr("")))
-  of "disable", "remove":
-    j.requireStringField("name") >>=
-      proc(n: string): Result[ManageSkillsContext, string] =
-        ok(ManageSkillsContext(action: "disable", name: n,
-                               registry: j.getOrDefault("registry").getStr("")))
-  of "read":
-    j.requireStringField("slug") >>=
-      proc(s: string): Result[ManageSkillsContext, string] =
-        ok(ManageSkillsContext(action: action, slug: s,
-                               registry: j.getOrDefault("registry").getStr("")))
-  else:
-    err("Error: unsupported manage_skills action '" & action & "'.")
-
-func buildManageSkillsValue(ctx: ManageSkillsContext): string =
-  case ctx.action
-  of "help", "list": ctx.action
-  of "search": "search " & ctx.query
-  of "install", "enable": ctx.action & " " & ctx.slug
-  of "disable": "disable " & ctx.name
-  of "read": "read " & ctx.slug
-  else: ctx.action
-
-proc parseTodoOps*(j: JsonNode): Result[JsonNode, string] {.gcsafe, raises: [].} =
-  let ops = j.getOrDefault("ops")
-  if ops.kind != JArray:
-    return err("Error: 'ops' must be an array.")
-  ok(ops)
-
-proc parseEditFileContext*(j: JsonNode;
-                           paddockDir: string;
-                           log: Logger = Logger();
-                           toolName = EditFileToolName;
-                           fs: FsRuntimePort = unavailableFs()): Result[EditFileContext, string] {.gcsafe, raises: [].} =
-  j.requireStringField("path") >>=
-    proc(p: string): Result[EditFileContext, string] =
-      resolvedToolPath(p, paddockDir, log, toolName, fs) >>=
-        proc(rp: string): Result[EditFileContext, string] =
-          let editsNode = j.getOrDefault("edits")
-          if editsNode.kind != JArray:
-            return err("Error: 'edits' must be an array.")
-          var edits: seq[EditFileOp] = @[]
-          for item in editsNode:
-            let opKind = case item.getOrDefault("op").getStr("")
-              of "replace": efokReplace
-              of "append": efokAppend
-              of "prepend": efokPrepend
-              else: return err("Error: unsupported edit op '" & item.getOrDefault("op").getStr("") & "'.")
-            var pos = none(HashlineAnchor)
-            var stop = none(HashlineAnchor)
-            let posRaw =
-              block:
-                let primary = item.getOrDefault("pos").getStr("")
-                if primary.len > 0: primary
-                else:
-                  let alias = item.getOrDefault("anchor").getStr("")
-                  if alias.len > 0: alias
-                  else: item.getOrDefault("start").getStr("")
-            if posRaw.len > 0:
-              let pa = parseHashlineAnchor(posRaw)
-              if pa.isErr: return err(pa.error)
-              pos = some(pa.value)
-            let stopRaw =
-              block:
-                let primary = item.getOrDefault("end").getStr("")
-                if primary.len > 0: primary
-                else:
-                  let alias = item.getOrDefault("stop").getStr("")
-                  if alias.len > 0: alias
-                  else: item.getOrDefault("to").getStr("")
-            if stopRaw.len > 0:
-              let sa = parseHashlineAnchor(stopRaw)
-              if sa.isErr: return err(sa.error)
-              stop = some(sa.value)
-            if opKind == efokReplace and pos.isNone:
-              return err("Error: replace edits require 'pos'.")
-            var lines: seq[string] = @[]
-            let linesNode = item.getOrDefault("lines")
-            if linesNode.kind == JArray:
-              for li in linesNode:
-                if li.kind == JString: lines.add(li.getStr())
-                else: return err("Error: 'lines' must be an array of strings.")
-            edits.add(EditFileOp(kind: opKind, pos: pos, stop: stop, lines: lines))
-          ok(EditFileContext(path: rp, edits: edits))
+proc parseEditFileContext*(j: JsonNode; paddockDir: string;
+                           log: Logger = Logger(); toolName = EditFileToolName;
+                           fs: FsRuntimePort = unavailableFs()):
+                           Result[EditFileContext, string] {.gcsafe, raises: [].} =
+  parseEditFileArgs(j).resolvedPathOf(paddockDir, log, toolName, fs)
 
 # ── Result helpers ────────────────────────────────────────────────────────────
 
@@ -782,15 +335,6 @@ proc buildCheckpointResult*(state: SessionState): NativeToolResult {.gcsafe, rai
 
 proc buildSubmitResult*(j: JsonNode): NativeToolResult {.gcsafe, raises: [].} =
   handledText(j.getOrDefault("result").getStr(""))
-
-proc parseRewindIndex*(j: JsonNode; checkpointCount: int): Result[int, string] {.gcsafe, raises: [].} =
-  if checkpointCount == 0:
-    return err("Error: no checkpoints saved.")
-  let idx = j.getOrDefault("index").getInt(checkpointCount - 1)
-  if idx < 0 or idx >= checkpointCount:
-    return err("Error: checkpoint index " & $idx & " out of range (0.." &
-               $(checkpointCount - 1) & ").")
-  ok(idx)
 
 proc buildRewindResult*(state: SessionState; idx: int): Result[NativeToolResult, string] {.gcsafe, raises: [].} =
   if idx < 0 or idx >= state.checkpoints.len:

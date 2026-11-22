@@ -232,6 +232,9 @@ type DaemonServices = object
   globalStreamFactory: StreamFactory
   tgTypingFn:       TypingFn
   globalSearchFn:   SearchFn
+  modelCatalogLoader: ModelCatalogLoader
+    ## One for the daemon: its 5-minute catalog cache lives in the closure,
+    ## so building one per poll (as Telegram did) never reused it.
 
 type
   PollResult = Result[seq[(string, InboundMessage)], string]
@@ -421,6 +424,7 @@ proc initDaemonServices(cfg: DonkeyConfig;
                                      cfg.env.stripped("DONKEY_TELEGRAM_API_BASE"),
                                      telegramSettings(cfg.env), log)
   result.globalSearchFn = buildGlobalSearchFn(env.memory)
+  result.modelCatalogLoader = buildModelCatalogLoader(cfg.env)
   when defined(withPostgres) or defined(withSqlite):
     if result.globalSearchFn != nil:
       log.info("MAGMA semantic search enabled")
@@ -1074,9 +1078,9 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
                          outboundPorts: OutboundChannelPorts;
                          services:     SessionIngressServices;
                          memory:       MdFileAdapter;
+                         modelCatalogLoader: ModelCatalogLoader;
                          log:          Logger): bool =
   let completeBuilder = makeCompleteBuilder()
-  let modelCatalogLoader = buildModelCatalogLoader(services.cfg.env)
   let runtimePtr = addr runtime
   var tgMsgs = tgAdapter.receive().valueOr:
     log.error("telegram receive: " & error)
@@ -1238,7 +1242,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
                                memory: MdFileAdapter;
                                log: Logger): GatewayDrainer =
   let completeBuilder = makeCompleteBuilder()
-  let modelCatalogLoader = buildModelCatalogLoader(cfg.env)
+  let modelCatalogLoader = ctx.services.modelCatalogLoader
   let toolsCount = ctx.services.tools.len + nativeSessionTools().len
   let toolClientsCount = ctx.services.toolClients.len
   let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
@@ -1388,7 +1392,8 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
       let services =
         buildDaemonSessionServices(ctx, cfg, memory, log) |>->
         withTypingFn(ctx.services.tgTypingFn)
-      drainTelegramEvents(ctx.runtime, ctx.adapters.tg, outboundPorts, services, memory, log),
+      drainTelegramEvents(ctx.runtime, ctx.adapters.tg, outboundPorts, services, memory,
+                          ctx.services.modelCatalogLoader, log),
     drainWhatsApp = proc(): bool =
       drainWhatsAppGateway(ctx.env.whatsappAccessToken.len > 0, proc(): bool =
         whatsapp_runtime.drainWhatsAppEvents(
@@ -1674,7 +1679,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ## One-time startup: recover messages received while bot was offline.
   block:
     let completeBuilder = makeCompleteBuilder()
-    let modelCatalogLoader = buildModelCatalogLoader(cfg.env)
+    let modelCatalogLoader = ctx.services.modelCatalogLoader
     let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
     discord_runtime.checkDiscordOfflineMessages(
       ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState,
