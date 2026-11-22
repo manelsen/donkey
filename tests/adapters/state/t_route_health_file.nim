@@ -36,5 +36,17 @@ proc runTests*() =
       writeFile(path, "{not json")
       check routeHealthFileStore(path).load().isErr
 
+    test "valid JSON with the wrong shape is an error, never a crash":
+      let path = scratchPath("shape")
+      defer: removeDir(parentDir(path))
+      createDir(parentDir(path))
+      for doc in ["[]", "{\"routes\": null}", "{\"provider_cooldowns\": 3}",
+                  "{\"routes\": [{\"route\": \"a/b\", \"samples\": \"x\"}]}",
+                  "{\"routes\": [7]}"]:
+        writeFile(path, doc)
+        check routeHealthFileStore(path).load().isErr
+      writeFile(path, "{}")
+      check routeHealthFileStore(path).load().get == RouteHealthSnapshot()
+
 when isMainModule:
   runTests()

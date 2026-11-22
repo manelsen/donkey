@@ -24,35 +24,54 @@ proc encode(snapshot: RouteHealthSnapshot): JsonNode =
   %*{"saved_at": snapshot.savedAt, "routes": routes,
      "provider_cooldowns": cooldowns}
 
-proc decode(node: JsonNode): RouteHealthSnapshot =
-  result.savedAt = node{"saved_at"}.getBiggestInt(0)
-  for routeNode in node{"routes"}:
+func arrayAt(node: JsonNode; key: string): Result[seq[JsonNode], string] =
+  ## The array under `key`; absent is empty, any other kind is an error.
+  ## Iterating a non-array JsonNode fails with a Defect, not an exception.
+  let value = node{key}
+  if value == nil: return ok(newSeq[JsonNode]())
+  if value.kind != JArray: return err("`" & key & "` is not an array")
+  ok(value.elems)
+
+func decode(node: JsonNode): Result[RouteHealthSnapshot, string] =
+  ## A snapshot from the saved document, checking each level's shape first.
+  if node.kind != JObject:
+    return err("the document is not an object")
+  var snapshot = RouteHealthSnapshot(savedAt: node{"saved_at"}.getBiggestInt(0))
+  for routeNode in ? node.arrayAt("routes"):
+    if routeNode.kind != JObject:
+      return err("a route entry is not an object")
     let route = routeNode{"route"}.getStr("")
     if route.len == 0:
       continue
     var entry = RouteSamples(route: route)
-    for sampleNode in routeNode{"samples"}:
+    for sampleNode in ? routeNode.arrayAt("samples"):
+      if sampleNode.kind != JObject:
+        return err("a sample is not an object")
       entry.samples.add(RouteSampleRecord(
         ok: sampleNode{"ok"}.getBool(false),
         elapsedMs: sampleNode{"elapsed_ms"}.getInt(0),
         recordedAtUnix: sampleNode{"recorded_at"}.getBiggestInt(0)))
-    result.routes.add(entry)
-  for cooldownNode in node{"provider_cooldowns"}:
+    snapshot.routes.add(entry)
+  for cooldownNode in ? node.arrayAt("provider_cooldowns"):
+    if cooldownNode.kind != JObject:
+      return err("a cooldown is not an object")
     let providerName = cooldownNode{"provider"}.getStr("")
     let untilUnix = cooldownNode{"until_unix"}.getBiggestInt(0)
     if providerName.len > 0 and untilUnix > 0:
-      result.cooldowns.add(ProviderCooldown(providerName: providerName,
-                                            untilUnix: untilUnix))
+      snapshot.cooldowns.add(ProviderCooldown(providerName: providerName,
+                                              untilUnix: untilUnix))
+  ok(snapshot)
 
 proc routeHealthFileStore*(path: string): RouteHealthStore =
   RouteHealthStore(
     load: proc(): Result[RouteHealthSnapshot, string] {.gcsafe, raises: [].} =
       if not fileExists(path):
         return ok(RouteHealthSnapshot())
-      try:
-        ok(decode(parseJson(readFile(path))))
-      except CatchableError as e:
-        err("route health " & path & ": " & e.msg),
+      let parsed =
+        try: parseJson(readFile(path))
+        except CatchableError as e:
+          return err("route health " & path & ": " & e.msg)
+      decode(parsed).mapErr(proc(e: string): string = "route health " & path & ": " & e),
     save: proc(snapshot: RouteHealthSnapshot): Result[void, string] {.gcsafe, raises: [].} =
       try:
         createDir(parentDir(path))
