@@ -24,3 +24,4 @@ tests/stress/t_secret_vault_stress.nim	stress profile (DONKEY_STRESS), opt-in
 tests/stress/t_slack_socket_stress.nim	stress profile (DONKEY_STRESS), opt-in
 tests/stress/t_ssrf_corpus.nim	stress profile (DONKEY_STRESS), opt-in
 tests/stress/t_webhook_tls_stress.nim	stress profile (DONKEY_STRESS), opt-in
+tests/app/t_gateway_http.nim	starts the HTTP gateway once per process; needs its own binary
