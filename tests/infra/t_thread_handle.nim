@@ -48,6 +48,8 @@ type
     value: int
   Tree = object
     children: seq[Tree]
+  Box[T] = object
+    value: T
 
 proc homonymChecks(): array[4, bool] =
   ## Two types named `Payload`: this local one holds a ref, the module's one
@@ -87,6 +89,13 @@ proc runTests*() =
       check not shares[1]      ## the local Payload with a ref
       check not shares[2]      ## plain first, ref second
       check not shares[3]      ## ref first, plain second
+
+    test "a generic instance is judged by what it holds":
+      check sharesNothing(Box[int])
+      check sharesNothing(Box[string])
+      check not sharesNothing(Box[ref int])
+      check not sharesNothing(Box[proc() {.gcsafe.}])
+      check not sharesNothing(Box[Box[JsonNode]])
 
     test "a recursive plain type is accepted":
       check sharesNothing(Tree)

@@ -43,14 +43,24 @@ proc fieldsShared(n: NimNode; seen: var seq[NimNode]): bool {.compileTime.} =
       if fieldsShared(c, seen): return true
     false
 
+proc bodyShared(t, impl: NimNode; seen: var seq[NimNode]): bool {.compileTime.} =
+  ## An object or tuple `t` with its expanded body `impl`. Only these are
+  ## recorded in `seen`: they are the only types that can contain themselves.
+  ## Compared by type identity, not by name (two scopes may each have a
+  ## `Payload`), and recorded under the type itself, so `Box[int]` and
+  ## `Box[ref int]` stay distinct.
+  for known in seen:
+    if sameType(known, t): return false  ## recursive, or met before
+  seen.add t
+  if impl.kind == nnkTupleConstr:
+    for c in impl:
+      if gcShared(c, seen): return true
+    false
+  else:
+    fieldsShared(impl, seen)
+
 proc gcShared(t: NimNode; seen: var seq[NimNode]): bool =
   ## True when a value of type `t` can hold a ref or a closure environment.
-  ## Already met (a recursive type, or a type used twice): it adds nothing.
-  ## Compared by type identity, not by name: two modules may each have a
-  ## `Payload`.
-  for known in seen:
-    if sameType(known, t): return false
-  seen.add t
   case t.typeKind
   of ntyRef:
     true
@@ -69,23 +79,20 @@ proc gcShared(t: NimNode; seen: var seq[NimNode]): bool =
           callConvSet = true
     not callConvSet
   of ntyDistinct, ntyGenericInst, ntyAlias, ntyTypeDesc:
+    ## A wrapper is judged by what it expands to; an object body is examined
+    ## right here, under the instance's own identity.
     let impl = t.getTypeImpl
     if impl == t: return false
     if impl.kind == nnkDistinctTy: gcShared(impl[0], seen)
+    elif impl.kind in {nnkObjectTy, nnkTupleConstr, nnkTupleTy}:
+      bodyShared(t, impl, seen)
     else: gcShared(impl, seen)
   of ntySequence, ntyOpenArray, ntyVarargs, ntySet, ntyRange, ntyUncheckedArray:
-    let impl = t.getTypeImpl
-    gcShared(impl[^1], seen)
+    gcShared(t.getTypeImpl[^1], seen)
   of ntyArray:
     gcShared(t.getTypeImpl[2], seen)
   of ntyTuple, ntyObject:
-    let impl = t.getTypeImpl
-    if impl.kind == nnkTupleConstr:
-      for c in impl:
-        if gcShared(c, seen): return true
-      false
-    else:
-      fieldsShared(impl, seen)
+    bodyShared(t, t.getTypeImpl, seen)
   else:
     true  ## unknown kind: refuse rather than guess
 
