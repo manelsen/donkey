@@ -100,6 +100,12 @@ proc runTests*() =
     test "no key configured yields an empty apiKey":
       check specFor("openai").apiKey == ""
 
+    test "the descriptor's base URL override travels in the spec":
+      setCredentialForTest("NVIDIA_BASE_URL", "https://nim.example/v1")
+      defer: setCredentialForTest("NVIDIA_BASE_URL", "")
+      check specFor("nvidia").baseUrl == "https://nim.example/v1"
+      check specFor("openai").baseUrl == ""
+
   suite "provider availability parity":
 
     setup: clearEnv()

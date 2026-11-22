@@ -98,6 +98,7 @@ import donkey/app/gateway_drainer
 import donkey/app/session_manager
 import donkey/adapters/state/daemon_lease
 import donkey/app/session_bootstrap
+from donkey/app/skill_runtime import skillRegistry
 import donkey/app/credential_runtime
 import donkey/app/session_ingress
 import donkey/app/doctor
@@ -132,11 +133,13 @@ proc printHelp = echo cliHelpText()
 ##     - subsequent partials: editMessage
 ##     - isPartial=false: editMessage + delete from presentationState
 
-proc makeTgTypingFn(token, identityPath, apiBase: string; log: Logger): TypingFn =
+proc makeTgTypingFn(token, identityPath, apiBase: string;
+                    settings: TelegramSettings; log: Logger): TypingFn =
   ## Returns a TypingFn that sends typing indicators to Telegram users.
   ## Uses its own TelegramAdapter instance (token + resolver shared via ref).
   let tg = new TelegramAdapter
   tg[] = newTelegramAdapter(token, identityPath, apiBase = apiBase,
+                            settings = settings,
                             pollTimeout = 0)
   result = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: [].} =
     if channel == ckTelegram:
@@ -415,7 +418,8 @@ proc initDaemonServices(cfg: DonkeyConfig;
   result.globalCompleteFn = providerBundle.completeFn
   result.globalStreamFactory = providerBundle.streamFactory
   result.tgTypingFn = makeTgTypingFn(env.telegramToken, env.identityPath,
-                                     cfg.env.stripped("DONKEY_TELEGRAM_API_BASE"), log)
+                                     cfg.env.stripped("DONKEY_TELEGRAM_API_BASE"),
+                                     telegramSettings(cfg.env), log)
   result.globalSearchFn = buildGlobalSearchFn(env.memory)
   when defined(withPostgres) or defined(withSqlite):
     if result.globalSearchFn != nil:
@@ -444,6 +448,7 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
     paddocksDir:     cfg.paddocks,
     magmaDsn:       pgDsn,
     magmaSqlitePath: configuredMagmaSqlitePath(cfg.home, cfg.env),
+    magmaEnv:       magmaEnvironment(cfg.env),
     magmaSqliteVectorPath:
       block:
         let vecPath = cfg.env.get("DONKEY_SQLITE_VEC_PATH")
@@ -497,7 +502,7 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
   result.tg = newTelegramAdapter(
     env.telegramToken, env.identityPath,
     apiBase = cfg.env.get("DONKEY_TELEGRAM_API_BASE").strip(),
-    pollTimeout = 0)
+    pollTimeout = 0, settings = telegramSettings(cfg.env))
   result.dc = newDiscordAdapter(env.discordToken, env.identityPath)
   result.wc = newWeComAdapter(env.wecomCorpId, cfg.env.get("WECOM_CORP_SECRET"),
                               cfg.env.get("WECOM_CALLBACK_TOKEN"), env.wecomAgentId,
@@ -529,7 +534,8 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
   ## fails sends with "missing token", which is the truth).
   result.ln =
     if env.lineChannelAccessToken.len > 0:
-      newLineAdapter(env.lineChannelAccessToken, env.identityPath)
+      newLineAdapter(env.lineChannelAccessToken, env.identityPath,
+                     apiBase = cfg.env.stripped("LINE_API_BASE"))
     else:
       newLineAdapter("", env.identityPath, apiBase = "https://api.line.me")
   result.mx = newMatrixAdapter(cfg.env.get("MATRIX_HOMESERVER"), cfg.env.get("MATRIX_BOT_USER_ID"),
@@ -1070,7 +1076,7 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
                          memory:       MdFileAdapter;
                          log:          Logger): bool =
   let completeBuilder = makeCompleteBuilder()
-  let modelCatalogLoader = buildModelCatalogLoader()
+  let modelCatalogLoader = buildModelCatalogLoader(services.cfg.env)
   let runtimePtr = addr runtime
   var tgMsgs = tgAdapter.receive().valueOr:
     log.error("telegram receive: " & error)
@@ -1099,7 +1105,8 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
       modelCatalogLoader,
       services.toolClients.len, services.tools.len + nativeSessionTools().len, runtime.msgSeq, runtime.daemonStartMs, log,
       proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} =
-        ensureSessionTask(runtimePtr[].sm, msg, services, runtimePtr[].msgSeq, taskKind, payload)):
+        ensureSessionTask(runtimePtr[].sm, msg, services, runtimePtr[].msgSeq, taskKind, payload),
+      skillRegistry(services.cfg.env)):
       if stagedReaction:
         completeReaction(runtime.presentationState, outboundPorts, msg.channel,
                          msg.userId, msg.channelId, statusMessageId(msg), false)
@@ -1231,7 +1238,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
                                memory: MdFileAdapter;
                                log: Logger): GatewayDrainer =
   let completeBuilder = makeCompleteBuilder()
-  let modelCatalogLoader = buildModelCatalogLoader()
+  let modelCatalogLoader = buildModelCatalogLoader(cfg.env)
   let toolsCount = ctx.services.tools.len + nativeSessionTools().len
   let toolClientsCount = ctx.services.toolClients.len
   let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
@@ -1239,7 +1246,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
     handleGatewayFallback(ctx, cfg, memory, msg, log)
   let cmdEnv = newChannelRuntimeEnv(
     memory, completeBuilder, modelCatalogLoader, toolsCount,
-    toolClientsCount, ctx.runtime.daemonStartMs)
+    toolClientsCount, ctx.runtime.daemonStartMs, skillRegistry(cfg.env))
 
   initGatewayDrainer(
     drainDiscord = proc(): bool =
@@ -1667,14 +1674,14 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ## One-time startup: recover messages received while bot was offline.
   block:
     let completeBuilder = makeCompleteBuilder()
-    let modelCatalogLoader = buildModelCatalogLoader()
+    let modelCatalogLoader = buildModelCatalogLoader(cfg.env)
     let outboundPorts = buildRuntimeOutboundPorts(ctx.adapters)
     discord_runtime.checkDiscordOfflineMessages(
       ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState,
       newChannelRuntimeEnv(memory, completeBuilder, modelCatalogLoader,
                            ctx.services.tools.len + nativeSessionTools().len,
                            ctx.services.toolClients.len,
-                           ctx.runtime.daemonStartMs),
+                           ctx.runtime.daemonStartMs, skillRegistry(cfg.env)),
       ctx.runtime.msgSeq, log,
       proc(msg: InboundMessage) {.gcsafe.} =
         stageReaction(ctx.runtime.presentationState, outboundPorts, msg),
@@ -1867,7 +1874,7 @@ proc main =
   cmdReg.register(CommandEntry(
     name: "tui", minArgs: 1,
     handler: proc(a: seq[string]): int =
-      dispatchTui(cfg.home / SockFileName),
+      dispatchTui(cfg.home / SockFileName, cfg.env),
     context: ccConfigLoaded, description: "Open live TUI dashboard"))
   cmdReg.register(CommandEntry(
     name: "doctor", minArgs: 1,

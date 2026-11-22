@@ -67,6 +67,7 @@ import ../ports/provider
 import ../ports/memory
 import ../config/types as cfgTypes
 import ../config/environment
+from ./skill_runtime import skillRegistry
 import ../infra/sandbox/wasm_tools
 import ./sandbox
 import ./session_state
@@ -1291,7 +1292,8 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
       return handledError(error)
     let reply = performManageSkills(
       ctx.memory, ctx.uid, buildManageSkillsValue(skillCtx),
-      registry = skillCtx.registry,
+      registry = (if skillCtx.registry.len > 0: skillCtx.registry
+                  else: skillRegistry(ctx.env)),
     ).valueOr:
       return handledError(error)
     return handledText(reply)

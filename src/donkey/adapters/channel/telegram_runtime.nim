@@ -114,9 +114,11 @@ proc telegramCommandEnv(memory: MdFileAdapter;
                         completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
                         modelCatalogLoader: ModelCatalogLoader = nil;
                         toolsCount = 0; toolClientsCount = 0;
-                        daemonStartMs = 0'i64): CommandEnv =
+                        daemonStartMs = 0'i64;
+                        skillRegistry = ""): CommandEnv =
   CommandEnv(services: newCommandServices(memory, completeBuilder, modelCatalogLoader,
-                                          toolsCount, toolClientsCount, daemonStartMs))
+                                          toolsCount, toolClientsCount, daemonStartMs,
+                                          skillRegistry))
 
 proc telegramCommandRequest(msg: InboundMessage; command: CommandDecision;
                             tgAdapter: TelegramAdapter;
@@ -607,7 +609,8 @@ proc handleTelegramCommand*(sm: var SessionManager;
                             msgSeq: var int;
                             daemonStartMs: int64;
                             logger: Logger;
-                            ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
+                            ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil;
+                            skillRegistry = ""): bool =
   ## Every Telegram command goes through the shared dispatcher. Telegram only
   ## presents: the menu as a keyboard, a refreshed config keyboard after
   ## /reasoning, markdown and progress texts, and the group refusal for
@@ -630,7 +633,8 @@ proc handleTelegramCommand*(sm: var SessionManager;
     sendTelegramText(tgAdapter, msg, RequesterOnlyNotice, logger)
     return true
   let env = telegramCommandEnv(memory, completeBuilder, modelCatalogLoader,
-                               toolsCount, toolClientsCount, daemonStartMs)
+                               toolsCount, toolClientsCount, daemonStartMs,
+                               skillRegistry)
   let outcome = dispatchCommand(env, sm, msgSeq,
     telegramCommandRequest(msg, command, tgAdapter, ensureTaskSession))
   if command.route == crLocal and action == lcaReasoningToggle and
@@ -713,17 +717,18 @@ proc handleTelegramMessage*(msg: InboundMessage;
                             msgSeq: var int;
                             daemonStartMs: int64;
                             logger: Logger;
-                            ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil): bool =
+                            ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil;
+                            skillRegistry = ""): bool =
   ## Behavior derived from hermes-agent (MIT) fix 1e18e0503f; see
   ## docs/hermes-mining/telegram/CASES.md#tg-015
   ##
   ## In groups the bot may see every message. With the mention gate enabled,
   ## only messages that mention the bot start a turn; `/cmd@bot` already works
   ## because parseCommandText strips the suffix.
-  let botUsername = telegramBotUsername()
+  let botUsername = tgAdapter.settings.botUsername
   ## Callbacks are button taps, not free text: the mention gate does not apply.
   if msg.isGroup and msg.callbackId.len == 0 and
-     telegramRequireMention() and botUsername.len > 0 and
+     tgAdapter.settings.requireMention and botUsername.len > 0 and
      not isApprovalCommandText(msg.text):
     let nowMs = epochMs()
     let key = albumKey($msg.userId, msg.mediaGroupId)
@@ -783,4 +788,4 @@ proc handleTelegramMessage*(msg: InboundMessage;
   handleTelegramCommand(sm, msg, command, tgAdapter, presentationState, memory,
                         completeBuilder, modelCatalogLoader, toolsCount,
                         toolClientsCount, msgSeq, daemonStartMs, logger,
-                        ensureTaskSession)
+                        ensureTaskSession, skillRegistry)

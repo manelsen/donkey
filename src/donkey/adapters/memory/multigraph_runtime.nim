@@ -3,6 +3,7 @@
 when defined(withPostgres) or defined(withSqlite):
   import std/[os, strutils]
   import ../../core/types
+  import ../../config/environment
   import ../../core/providers/smart_routing
   import ../../app/channel_prefs_parse
   import ../../core/memory_rerank_prefs
@@ -26,14 +27,14 @@ when defined(withPostgres) or defined(withSqlite):
       provider: string
       model: string
 
-  proc buildMagmaEmbedFn(): EmbedFn {.gcsafe.} =
-    let embedKey = getEnv("OPENROUTER_API_KEY")
+  proc buildMagmaEmbedFn(env: Environment): EmbedFn {.gcsafe.} =
+    let embedKey = env.get("OPENROUTER_API_KEY")
     let embedAdapter = newOpenRouterEmbeddingAdapter(embedKey)
     result = proc(text: string): seq[float32] {.gcsafe.} =
       embedAdapter.embed(text)
 
-  proc envIntOr(name: string; defaultValue: int): int =
-    let raw = getEnv(name)
+  proc envIntOr(env: Environment; name: string; defaultValue: int): int =
+    let raw = env.stripped(name)
     if raw.len == 0:
       return defaultValue
     try:
@@ -41,8 +42,8 @@ when defined(withPostgres) or defined(withSqlite):
     except ValueError:
       result = defaultValue
 
-  proc envFloatOrUnit(name: string; defaultValue: float32): float32 =
-    let raw = getEnv(name)
+  proc envFloatOrUnit(env: Environment; name: string; defaultValue: float32): float32 =
+    let raw = env.stripped(name)
     if raw.len == 0:
       return defaultValue
     try:
@@ -54,21 +55,21 @@ when defined(withPostgres) or defined(withSqlite):
     elif result > 1.0'f32:
       result = 1.0'f32
 
-  proc buildMagmaSearchConfig(): SearchConfig =
+  proc buildMagmaSearchConfig(env: Environment): SearchConfig =
     result = defaultSearchConfig()
-    result.semanticTopKMultiplier = max(1, envIntOr(
+    result.semanticTopKMultiplier = max(1, env.envIntOr(
       "DONKEY_MEMORY_SEARCH_SEMANTIC_MULTIPLIER",
       result.semanticTopKMultiplier,
     ))
-    result.recentTopKMultiplier = max(1, envIntOr(
+    result.recentTopKMultiplier = max(1, env.envIntOr(
       "DONKEY_MEMORY_SEARCH_RECENT_MULTIPLIER",
       result.recentTopKMultiplier,
     ))
-    result.rerankPoolSize = max(1, envIntOr(
+    result.rerankPoolSize = max(1, env.envIntOr(
       "DONKEY_MEMORY_RERANK_POOL",
       result.rerankPoolSize,
     ))
-    result.rerankWeight = envFloatOrUnit(
+    result.rerankWeight = env.envFloatOrUnit(
       "DONKEY_MEMORY_RERANK_WEIGHT",
       result.rerankWeight,
     )
@@ -80,28 +81,28 @@ when defined(withPostgres) or defined(withSqlite):
     else:
       raw.strip.toLowerAscii()
 
-  proc inferRerankProvider(model: string): string =
+  proc inferRerankProvider(env: Environment; model: string): string =
     let normalized = model.strip
     if normalized.len == 0:
       return ""
     if normalized.startsWith("MiniMax-"):
       return "minimax"
     if normalized.toLowerAscii().startsWith("glm-"):
-      if getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY")).len > 0:
+      if env.get("ZAI_CODING_API_KEY", env.get("ZHIPU_API_KEY")).len > 0:
         return "zai-coding"
-      if getEnv("ZAI_API_KEY").len > 0:
+      if env.get("ZAI_API_KEY").len > 0:
         return "zai"
       return "zai-coding"
     if normalized.contains("/"):
       return "openrouter"
     ""
 
-  proc resolveMagmaRerank(preferencesMd: string): ResolvedMagmaRerank =
+  proc resolveMagmaRerank(env: Environment; preferencesMd: string): ResolvedMagmaRerank =
     let rerankPrefs = parseMemoryRerankPrefs(preferencesMd)
-    let envMode = normalizeMemoryRerankMode(getEnv("DONKEY_MEMORY_RERANK_MODE"))
+    let envMode = normalizeMemoryRerankMode(env.get("DONKEY_MEMORY_RERANK_MODE"))
     let explicitModel =
       if rerankPrefs.model.len > 0: rerankPrefs.model
-      else: getEnv("DONKEY_MEMORY_RERANK_MODEL")
+      else: env.get("DONKEY_MEMORY_RERANK_MODEL")
 
     var mode =
       if rerankPrefs.mode.len > 0: rerankPrefs.mode
@@ -130,24 +131,24 @@ when defined(withPostgres) or defined(withSqlite):
         return ResolvedMagmaRerank()
       let explicitProvider =
         if rerankPrefs.provider.len > 0: rerankPrefs.provider
-        else: getEnv("DONKEY_MEMORY_RERANK_PROVIDER")
+        else: env.get("DONKEY_MEMORY_RERANK_PROVIDER")
       result.provider = normalizeRerankProvider(
         if explicitProvider.len > 0: explicitProvider
-        else: inferRerankProvider(normalizedModel)
+        else: env.inferRerankProvider(normalizedModel)
       )
       result.model = normalizedModel
     else:
       discard
 
-  proc buildMagmaRerankFn(preferencesMd = ""): RerankFn {.gcsafe.} =
-    let rerank = resolveMagmaRerank(preferencesMd)
+  proc buildMagmaRerankFn(env: Environment; preferencesMd = ""): RerankFn {.gcsafe.} =
+    let rerank = env.resolveMagmaRerank(preferencesMd)
     if rerank.model.len == 0:
       return nil
-    let maxChars = max(128, envIntOr("DONKEY_MEMORY_RERANK_MAX_CHARS", DefaultRerankMaxChars))
-    let maxTokens = max(128, envIntOr("DONKEY_MEMORY_RERANK_MAX_TOKENS", DefaultRerankMaxTokens))
+    let maxChars = max(128, env.envIntOr("DONKEY_MEMORY_RERANK_MAX_CHARS", DefaultRerankMaxChars))
+    let maxTokens = max(128, env.envIntOr("DONKEY_MEMORY_RERANK_MAX_TOKENS", DefaultRerankMaxTokens))
     case rerank.provider
     of "openrouter":
-      let rerankKey = getEnv("OPENROUTER_API_KEY")
+      let rerankKey = env.get("OPENROUTER_API_KEY")
       if rerankKey.len == 0:
         return nil
       let rerankAdapter = newOpenRouterRerankAdapter(
@@ -159,7 +160,7 @@ when defined(withPostgres) or defined(withSqlite):
       result = proc(query: string; candidates: seq[RerankCandidate]): seq[float32] {.gcsafe.} =
         rerankAdapter.rerank(query, candidates)
     of "zai":
-      let rerankKey = getEnv("ZAI_API_KEY")
+      let rerankKey = env.get("ZAI_API_KEY")
       if rerankKey.len == 0:
         return nil
       let rerankAdapter = newZaiRerankAdapter(
@@ -171,7 +172,7 @@ when defined(withPostgres) or defined(withSqlite):
       result = proc(query: string; candidates: seq[RerankCandidate]): seq[float32] {.gcsafe.} =
         rerankAdapter.rerank(query, candidates)
     of "zai-coding":
-      let rerankKey = getEnv("ZAI_CODING_API_KEY", getEnv("ZHIPU_API_KEY"))
+      let rerankKey = env.get("ZAI_CODING_API_KEY", env.get("ZHIPU_API_KEY"))
       if rerankKey.len == 0:
         return nil
       let rerankAdapter = newZaiCodingRerankAdapter(
@@ -183,7 +184,7 @@ when defined(withPostgres) or defined(withSqlite):
       result = proc(query: string; candidates: seq[RerankCandidate]): seq[float32] {.gcsafe.} =
         rerankAdapter.rerank(query, candidates)
     of "minimax":
-      let rerankKey = getEnv("MINIMAX_API_KEY")
+      let rerankKey = env.get("MINIMAX_API_KEY")
       if rerankKey.len == 0:
         return nil
       let rerankAdapter = newMiniMaxRerankAdapter(
@@ -202,18 +203,18 @@ when defined(withPostgres) or defined(withSqlite):
       if memory.magmaSqlitePath.len > 0:
         return newSqliteMagmaMemoryAdapter(
           memory.magmaSqlitePath,
-          buildMagmaEmbedFn(),
+          buildMagmaEmbedFn(memory.magmaEnv),
           nil,
-          buildMagmaSearchConfig(),
+          buildMagmaSearchConfig(memory.magmaEnv),
           vectorExtensionPath = memory.magmaSqliteVectorPath,
         )
     when defined(withPostgres):
       if memory.magmaDsn.len > 0:
         return newMagmaMemoryAdapter(
           memory.magmaDsn,
-          buildMagmaEmbedFn(),
+          buildMagmaEmbedFn(memory.magmaEnv),
           nil,
-          buildMagmaSearchConfig(),
+          buildMagmaSearchConfig(memory.magmaEnv),
         )
     nil
 
@@ -256,7 +257,7 @@ when defined(withPostgres) or defined(withSqlite):
       return
     let uid = UserId(uuid)
     let prefsMd = memory.loadContext(uid).preferencesMd
-    let hits = magma.searchWithRerank(uid, query, limit, buildMagmaRerankFn(prefsMd))
+    let hits = magma.searchWithRerank(uid, query, limit, buildMagmaRerankFn(memory.magmaEnv, prefsMd))
     if hits.len == 0:
       echo "(no results)"
       return
@@ -304,7 +305,7 @@ when defined(withPostgres) or defined(withSqlite):
                   {.gcsafe, raises: [].} =
       try:
         let ctx = memory.loadContext(userId)
-        let rerankFn = buildMagmaRerankFn(ctx.preferencesMd)
+        let rerankFn = buildMagmaRerankFn(memory.magmaEnv, ctx.preferencesMd)
         magmaSearch.searchWithRerank(userId, query, limit, rerankFn)
       except Exception:  ## effect boundary: callee raises are unannotated
         @[]

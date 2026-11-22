@@ -136,6 +136,10 @@ proc descriptorApiKey*(d: ProviderDescriptor; nowMs = nowMs()): string
     return credentialValue(d.envNames[0])
   resolveCredentialKey(d.id, d.envNames, nowMs)
 
+proc descriptorBaseUrl*(d: ProviderDescriptor): string {.gcsafe, raises: [].} =
+  ## The descriptor's `baseUrlEnv` override from the installed snapshot.
+  if d.baseUrlEnv.len == 0: "" else: credentialValue(d.baseUrlEnv)
+
 proc nextCredentialKey*(providerName, currentKey: string;
                         nowMs = nowMs()): string {.gcsafe, raises: [].} =
   ## Another healthy key for an in-flight retry; "" when there is none.

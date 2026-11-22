@@ -800,6 +800,7 @@ proc dispatchCtl*(cfg: DonkeyConfig;
       MdFileAdapter(
         paddocksDir: cfg.paddocks,
         magmaDsn: cfg.env.get("DONKEY_PG_DSN"),
+        magmaEnv: magmaEnvironment(cfg.env),
         magmaSqlitePath:
           block:
             cfg.env.get("DONKEY_MAGMA_SQLITE_PATH", cfg.home / "state" / "magma.sqlite"),

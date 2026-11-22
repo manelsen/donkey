@@ -17,6 +17,8 @@ type
     providerName*: string
     modelName*:    string
     apiKey*:       string
+    baseUrl*:      string   ## the descriptor's `baseUrlEnv` override, read
+                            ## on the loop; empty means the descriptor's URL
 
   ModelCatalogEntry* = object
     providerName*: string

@@ -68,6 +68,15 @@ It holds about 25 `parse*Context` functions (argument parsing and validation) an
 There are 127 `getEnv` calls outside `config/` (59 in `app/`, 62 in `adapters/`, plus 87 in `src/donkey.nim`). `adapters/channel/command_services.nim` alone has 25 (`/about` and `/doctor` read the environment to list channels and keys).
 **Fix:** read the environment once into `DonkeyConfig` and inject it.
 
+**Status (0.3.x): done** (#99–#102). `config/environment` takes one snapshot after `donkey.env` and the vault have filled the process environment; it travels in `DonkeyConfig.env`. 233 reads became 0, and `tests/architecture/t_env_reads.nim` keeps it there (qualified `os.getEnv` included). How each family gets it:
+- composition root and `ctl`: `cfg.env`, typed into `DaemonEnv` for the channels and gateways;
+- provider keys, availability, base-URL overrides and the presence checks of `/about` and `/doctor`: the snapshot installed on the loop with `useCredentials` (next to the key pools, guarded by `ThreadOwner`); the key and the base URL travel to the worker inside `ProviderSpec`, and the stream thread gets its key in the `StreamFactory`;
+- tools and turns: `NativeCtx.env` and the orchestrator's per-actor state (speech, `execute_code`, approval summaries, debounce, review, consolidation);
+- adapters: typed settings (`TelegramSettings`, `SpeechSettings`), the MAGMA subset in `MdFileAdapter.magmaEnv`, explicit LINE token/base, the catalog loader built with the snapshot;
+- children (sandbox shell, code runner, browser) get a filtered copy of the live environment through `inheritedByChild`: forwarded, never interpreted.
+
+Fixed on the way: the `/models` routing preview used its own availability check that knew 10 of the 16 providers; `~` paths and the default home followed the process `HOME` instead of the snapshot; the per-turn `NativeCtx` was built from a hand-made config with no environment.
+
 ### 10. Pending items from PR #75
 - ~~The `/models`, `/think` and `/budget` policy is still in `command_services` (an adapter).~~ Done in 0.3.0 (see the checklist below).
 - ~~`command_text.nim` mixes texts, argument parsing and availability, so `ports/channel_capability` imports a text module.~~ Done: availability is `core/commands/command_surface`, arguments `core/commands/command_args`, texts stay in `command_text`; ports import only the surface (checked by `check_boundaries.sh`).

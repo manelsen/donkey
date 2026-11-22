@@ -110,15 +110,6 @@ proc openQueue*(a: LineAdapter) =
 
 # ── Configuration and API base ────────────────────────────────────────────────
 
-func lineChannelAccessToken*(): string =
-  ## The channel access token is a static Bearer secret; it is read from the
-  ## environment and never logged.
-  getEnv("LINE_CHANNEL_ACCESS_TOKEN").strip
-
-func lineApiBaseFromEnv*(): string =
-  ## Optional deployment override; tests pass `apiBase` directly.
-  getEnv("LINE_API_BASE").strip
-
 func lineApiHost*(apiBase: string): string =
   ## Host exactly as the HTTP transport derives it (includes a port).
   let base = apiBase.strip
@@ -561,19 +552,13 @@ proc downloadFile*(a: LineAdapter; fileId: string): Result[FileDownload, string]
 proc newLineAdapter*(channelAccessToken, identityPath: string;
                      apiBase = "";
                      http: HttpRuntimePort = HttpRuntimePort()): LineAdapter =
-  ## `channelAccessToken` empty falls back to `LINE_CHANNEL_ACCESS_TOKEN`.
-  ## `apiBase` (tests) wins over `LINE_API_BASE`; both default to the official
-  ## endpoint. An injected `http` is used verbatim, so tests never open a
-  ## socket. The default transport disables retries for non-idempotent sends
-  ## and allows egress only to the configured LINE host.
-  let token =
-    if channelAccessToken.strip.len > 0: channelAccessToken.strip
-    else: lineChannelAccessToken()
-  let envBase = lineApiBaseFromEnv()
-  let base =
-    if apiBase.strip.len > 0: apiBase.strip
-    elif envBase.len > 0: envBase
-    else: ""
+  ## The daemon passes `LINE_CHANNEL_ACCESS_TOKEN` (a static Bearer secret,
+  ## never logged) and `LINE_API_BASE` from the environment snapshot; an empty
+  ## base is the official endpoint. An injected `http` is used verbatim, so
+  ## tests never open a socket. The default transport disables retries for
+  ## non-idempotent sends and allows egress only to the configured LINE host.
+  let token = channelAccessToken.strip
+  let base = apiBase.strip
 
   ## Do not raise: an invalid base would abort daemon startup and take every
   ## other channel with it. The adapter records the reason and fails sends.

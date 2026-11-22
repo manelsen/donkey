@@ -114,6 +114,7 @@ proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: []
     modelName: if prefs.modelName.len > 0: prefs.modelName
                else: descriptor.defaultModel,
     apiKey: descriptorApiKey(descriptor),
+    baseUrl: descriptorBaseUrl(descriptor),
   )
 
 proc buildProviderBundle*(preferencesMd: string;

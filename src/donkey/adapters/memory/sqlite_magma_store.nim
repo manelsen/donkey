@@ -62,20 +62,13 @@ when defined(withSqlite):
     else:
       "vec0.so"
 
-  func configuredVecEnvPath(): string =
-    let vecPath = getEnv("DONKEY_SQLITE_VEC_PATH")
-    if vecPath.len > 0:
-      return vecPath
-    getEnv("DONKEY_SQLITE_VECTOR_PATH")
-
   proc resolveVecExtensionPath*(explicitPath = "";
                                 cwd = getCurrentDir();
                                 appPath = getAppFilename()): string =
-    let configured =
-      if explicitPath.len > 0: explicitPath
-      else: configuredVecEnvPath()
-    if configured.len > 0 and fileExists(configured):
-      return configured
+    ## The configured path (DONKEY_SQLITE_VEC_PATH, read by the caller from
+    ## the environment snapshot) wins when it exists; otherwise autodetect.
+    if explicitPath.len > 0 and fileExists(explicitPath):
+      return explicitPath
     let rel = joinPath("vendor", "sqlite-vec", sqliteVecPlatformDir(), sqliteVecExtensionFileName())
     let appDir = appPath.parentDir()
     let candidates = @[
@@ -90,7 +83,7 @@ when defined(withSqlite):
     ""
 
   proc newSqliteMagmaStoreAdapter*(dbPath: string;
-                                   vectorExtensionPath = configuredVecEnvPath()): SqliteMagmaStoreAdapter =
+                                   vectorExtensionPath = ""): SqliteMagmaStoreAdapter =
     SqliteMagmaStoreAdapter(
       dbPath: dbPath,
       vectorExtensionPath: resolveVecExtensionPath(vectorExtensionPath),

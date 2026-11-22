@@ -329,7 +329,10 @@ proc newCommandServices*(memory: MdFileAdapter;
                          completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
                          modelCatalogLoader: ModelCatalogLoader;
                          toolsCount, toolClientsCount: int;
-                         daemonStartMs: int64): CommandServicesPort =
+                         daemonStartMs: int64;
+                         skillRegistry = ""): CommandServicesPort =
+  ## `skillRegistry` is where `/skill` searches and installs ("" is the
+  ## public registry); the daemon passes `CLAWHUB_REGISTRY` from the snapshot.
   CommandServicesPort(
     about: proc(userId: UserId; sessionCount: int): Result[string, string] {.gcsafe.} =
       guarded: buildAboutText(memory, userId, toolsCount, toolClientsCount, sessionCount),
@@ -349,7 +352,7 @@ proc newCommandServices*(memory: MdFileAdapter;
       except CatchableError as e:
         err(e.msg),
     skill: proc(userId: UserId; value: string): Result[string, string] {.gcsafe.} =
-      guarded: applySkillTextCommand(memory, userId, value,
+      guarded: applySkillTextCommand(memory, userId, value, registry = skillRegistry,
                                      homeDir = memory.donkeyHomeDir()),
     models: proc(userId: UserId; value: string): Result[string, string] {.gcsafe.} =
       guarded: preferenceCommandDeps(memory, modelCatalogLoader)

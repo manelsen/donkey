@@ -8,8 +8,10 @@
 ## - `config/dotenv` and `adapters/secrets/vault` fill it before the snapshot
 ##   (children such as MCP servers inherit what they set), so they may read it
 ##   to keep the variables already there.
-## - Reads elsewhere have a budget that only goes down while the migration
-##   runs. Removing some means lowering `ReadBudget` in the same change.
+## - `inheritedByChild` (also in config/environment) reads the live process
+##   for the filtered environments handed to child processes.
+## - Reads elsewhere: none. The migration (233 reads when it started) ended at
+##   zero, and `ReadBudget` keeps it there.
 
 import std/[os, strutils, unittest]
 import ./t_nim_source
@@ -21,8 +23,8 @@ const
     "src/donkey/config/dotenv.nim",       ## fills the environment from donkey.env
     "src/donkey/adapters/secrets/vault.nim",  ## fills it from the vault
   ]
-  ReadBudget = 29
-    ## Reads outside the owners. Only goes down.
+  ReadBudget = 0
+    ## Reads outside the owners: none may come back.
 
 func readLines(code: string): seq[int] =
   ## 0-based lines with a call to one of `EnvCalls` (`getEnv(` or `getEnv (`),

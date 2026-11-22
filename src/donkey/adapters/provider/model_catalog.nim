@@ -1,3 +1,4 @@
+import ../../config/environment
 import std/[algorithm, json, math, options, os, strutils, tables, times]
 import ../../domain/providers/descriptors
 import ../../ports/provider
@@ -25,11 +26,11 @@ const
 type
   CatalogParser = proc(json: JsonNode): Result[seq[ModelCatalogEntry], string] {.gcsafe.}
 
-func catalogEnvValue(id: string): string =
+func catalogEnvValue(env: Environment; id: string): string =
   ## First non-empty credential/base-URL env for the provider, in descriptor
   ## order. Aliases resolve through the same table as the runtime builder.
   for envName in descriptorOr(id).envNames:
-    let value = getEnv(envName)
+    let value = env.get(envName)
     if value.len > 0:
       return value
   ""
@@ -601,8 +602,10 @@ proc loadMinimaxCatalog(apiKey: string): Result[ModelCatalogResult, string] =
     return ok(fallbackCatalog("minimax"))
   ok(catalogResult(staticCatalog("minimax"), mcsFallback, getTime().toUnix()))
 
-proc buildModelCatalogLoader*(http: HttpRuntimePort = defaultCatalogHttp()): ModelCatalogLoader {.gcsafe.} =
-  ## Returns a closure that loads model catalogs with caching.
+proc buildModelCatalogLoader*(env: Environment;
+                              http: HttpRuntimePort = defaultCatalogHttp()): ModelCatalogLoader {.gcsafe.} =
+  ## Returns a closure that loads model catalogs with caching. The provider
+  ## keys come from `env`, the environment snapshot.
   ## models.dev result is cached for 5 minutes to avoid re-fetching on every click.
   var cachedModelsDev: Option[ModelCatalogResult] = none(ModelCatalogResult)
   var cachedOpenRouter: Option[ModelCatalogResult] = none(ModelCatalogResult)
@@ -618,7 +621,7 @@ proc buildModelCatalogLoader*(http: HttpRuntimePort = defaultCatalogHttp()): Mod
       if cachedOpenRouter.isSome and
          (now - cachedOpenRouter.get().fetchedAtUnix) <= CacheTtlSec:
         return ok(cachedOpenRouter.get())
-      let direct = loadOpenRouterCatalog(catalogEnvValue("openrouter"), http)
+      let direct = loadOpenRouterCatalog(env.catalogEnvValue("openrouter"), http)
       if direct.isOk:
         cachedOpenRouter = some(direct.get())
         return direct
@@ -647,28 +650,28 @@ proc buildModelCatalogLoader*(http: HttpRuntimePort = defaultCatalogHttp()): Mod
       if openRouterError.len > 0:
         err(openRouterError)
       else:
-        loadOpenRouterCatalog(catalogEnvValue("openrouter"), http)
+        loadOpenRouterCatalog(env.catalogEnvValue("openrouter"), http)
     of "groq":
-      loadGroqCatalog(catalogEnvValue("groq"), http)
+      loadGroqCatalog(env.catalogEnvValue("groq"), http)
     of "anthropic":
-      loadAnthropicCatalog(catalogEnvValue("anthropic"), http)
+      loadAnthropicCatalog(env.catalogEnvValue("anthropic"), http)
     of "gemini":
-      loadGeminiCatalog(catalogEnvValue("gemini"), http)
+      loadGeminiCatalog(env.catalogEnvValue("gemini"), http)
     of "minimax":
-      loadMinimaxCatalog(catalogEnvValue("minimax"))
+      loadMinimaxCatalog(env.catalogEnvValue("minimax"))
     of "zai":
       ## The general Z.ai platform endpoint: `codingEndpoint = false` is the
       ## reachable branch for this provider (the coding plan has its own id).
-      loadZaiCatalog(catalogEnvValue("zai"), providerName, false, http)
+      loadZaiCatalog(env.catalogEnvValue("zai"), providerName, false, http)
     of "zai-coding":
-      loadZaiCatalog(catalogEnvValue("zai-coding"), providerName, true, http)
+      loadZaiCatalog(env.catalogEnvValue("zai-coding"), providerName, true, http)
     of "zai-anthropic":
-      loadZaiCatalog(catalogEnvValue("zai-anthropic"), providerName, true, http)
+      loadZaiCatalog(env.catalogEnvValue("zai-anthropic"), providerName, true, http)
     of "opencode-go", "opencode":
-      loadOpencodeGoCatalog(catalogEnvValue("opencode-go"), http)
+      loadOpencodeGoCatalog(env.catalogEnvValue("opencode-go"), http)
     of "zen", "opencode-zen":
-      loadZenCatalog(http, catalogEnvValue("zen"))
+      loadZenCatalog(http, env.catalogEnvValue("zen"))
     of "ollama":
-      loadOllamaCatalog(catalogEnvValue("ollama"), http)
+      loadOllamaCatalog(env.catalogEnvValue("ollama"), http)
     else:
       ok(fallbackCatalog(providerName))
