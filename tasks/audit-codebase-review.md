@@ -62,15 +62,15 @@ There are 127 `getEnv` calls outside `config/` (59 in `app/`, 62 in `adapters/`,
 **Fix:** read the environment once into `DonkeyConfig` and inject it.
 
 ### 10. Pending items from PR #75
-- The `/models`, `/think` and `/budget` policy is still in `command_services` (an adapter).
+- ~~The `/models`, `/think` and `/budget` policy is still in `command_services` (an adapter).~~ Done in 0.3.0 (see the checklist below).
 - `command_text.nim` mixes texts, argument parsing and availability, so `ports/channel_capability` imports a text module.
 - `channel_prefs_store` produces presentation text (`buildConfigText`).
-- `model_catalog_ui` reads preferences from storage.
+- ~~`model_catalog_ui` reads preferences from storage.~~ Done in 0.3.0: the buttons take the current selection as data.
 - `CommandServicesPort` carries counters.
 
 **Reminder (owner asked to be reminded; from the #79 review of the #75 code):**
-- [ ] Move the `/models`, `/think` and `/budget` policy out of `adapters/channel/command_services.nim`: argument meaning and validation into `core` (pure), orchestration (check, save, reply) into `app`, and keep only catalog and persistence operations in the adapter. That lets the policy be tested without the Markdown store.
-- [ ] Make preference reads return `Result`: `loadChannelPrefs`, `loadChannelPreference`, `getCurrentProviderModel`, `getCurrentThinkLevel`, `getCurrentBudgetPolicy` and the UI builders that call them read through `loadContext` but return plain values, so a failed read looks like default preferences. Propagate the error and let each caller decide.
+- [x] Move the `/models`, `/think` and `/budget` policy out of `adapters/channel/command_services.nim` (0.3.0). `core/commands/preference_commands` holds what an argument means, the selection check against catalog and menu, the answers and the catalog presentation (pure, with the menu, the catalog and the time passed in). `app/preference_commands` runs it over a read and a save proc (tested with an in-memory store). The adapter only builds those procs from the Markdown/MAGMA store and the catalog loader.
+- [x] Make preference reads return `Result` (0.3.0). `readPreferences` reads what the store holds (graph, file, or an error when the graph is unavailable or the file unreadable), and `loadChannelPrefs`, `loadChannelPreference`, `getCurrentProviderModel`, `getCurrentThinkLevel`, `getCurrentBudgetPolicy` and `buildConfigText` return `Result`; a malformed PREFERENCES.md is an error too (`tryParseChannelPrefs`). Each caller decides: commands and pickers tell the user the preferences cannot be read; /status, /about and ping fail with that message; /doctor reports it and goes on; the Discord reasoning toggle refuses instead of flipping the default; the Discord offline cursor skips the user for that round instead of reading "no cursor" (which marks the history as seen).
 
 ## P3: duplication and dead code
 

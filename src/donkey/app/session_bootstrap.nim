@@ -9,6 +9,7 @@ import ../config/skills_registry
 import ../config/clawhub_registry
 import ../core/pipeops
 import ../core/providers/smart_routing
+import ./channel_prefs_parse
 import ../core/providers/credential_pool
 import ../domain/providers/descriptors
 import ./credential_runtime

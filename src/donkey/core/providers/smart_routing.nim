@@ -122,14 +122,25 @@ func normalizeBudgetPolicy*(value: string): string =
   else:
     "balanced"
 
-func parseSmartRoutingPrefs*(preferencesMd: string): SmartRoutingPrefs =
+func preferenceValue(raw: string): string =
+  ## The value of a `key = value` line as TOML reads a one-line string:
+  ## between its delimiters (`"`, `'`, or the triple forms), otherwise up to
+  ## a `#` comment.
+  let text = raw.strip()
+  for delim in ["\"\"\"", "'''", "\"", "'"]:
+    if text.startsWith(delim):
+      let close = text.find(delim, delim.len)
+      return if close >= delim.len: text[delim.len ..< close]
+             else: text[delim.len .. ^1]
+  let hash = text.find('#')
+  (if hash >= 0: text[0 ..< hash] else: text).strip()
+
+func smartRoutingPrefsFrom*(entries: openArray[(string, string)]): SmartRoutingPrefs =
+  ## Routing preferences from values already read (decoded) by the caller:
+  ## `app/channel_prefs_parse.parseSmartRoutingPrefs` reads them with the
+  ## TOML parser. Later entries win.
   result = defaultSmartRoutingPrefs()
-  for line in preferencesMd.splitLines():
-    let parts = line.split('=', 1)
-    if parts.len != 2:
-      continue
-    let key = parts[0].strip()
-    let value = parts[1].strip().strip(chars = {'"'})
+  for (key, value) in entries:
     case key
     of "provider":
       result.providerName = value
@@ -143,6 +154,19 @@ func parseSmartRoutingPrefs*(preferencesMd: string): SmartRoutingPrefs =
       result.budgetPolicy = normalizeBudgetPolicy(value)
     else:
       discard
+
+
+func scanSmartRoutingPrefs*(preferencesMd: string): SmartRoutingPrefs =
+  ## Best-effort reading, line by line, of a document that is not valid TOML
+  ## (hand-edited prose, say), so a turn can still be routed; commands
+  ## report such a document as unreadable. Valid documents are read by the
+  ## TOML parser instead.
+  var entries: seq[(string, string)]
+  for line in preferencesMd.splitLines():
+    let parts = line.split('=', 1)
+    if parts.len == 2:
+      entries.add((parts[0].strip(), preferenceValue(parts[1])))
+  smartRoutingPrefsFrom(entries)
 
 func usesSmartRouting*(prefs: SmartRoutingPrefs): bool =
   if prefs.modelExplicit:

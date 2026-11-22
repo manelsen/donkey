@@ -3,18 +3,23 @@
 ## (overview, diagnostics, status, ping, memory view, preference commands,
 ## skills). `newCommandServices` wraps each one so a failure, including an
 ## exception from file or provider I/O, comes back as `Result`.
+##
+## The /models, /think and /budget policy is not here: `app/preference_commands`
+## runs it over the store and the catalog this module hands it.
 
-import std/[os, sequtils, strutils]
+import std/[os, strutils]
 import ../../core/pipeops
 import ../../core/utf8
 import ../../core/commands/command_text
 import ../../core/providers/smart_routing
+import ../../app/channel_prefs_parse
 import ../../adapters/memory/md_file
 import ../../adapters/memory/channel_prefs_store
 import ../../domain/message
 import ../../ports/command_services
 import ../../ports/provider
 import ../../app/skill_runtime
+import ../../app/preference_commands
 import ./model_catalog_ui
 
 when defined(withPostgres) or defined(withSqlite):
@@ -42,102 +47,19 @@ func availableProvidersFromEnv*(): ProviderAvailability =
     fireworks: getEnv("FIREWORKS_API_KEY").len > 0,
   )
 
-proc buildModelsHelpText*(memory: MdFileAdapter;
-                          userId: UserId;
-                          modelCatalogLoader: ModelCatalogLoader = nil): string =
-  let prefs = parseSmartRoutingPrefs(memory.loadContext(userId).preferencesMd)
-  let availability = availableProvidersFromEnv()
-  let (provider, model) = memory.getCurrentProviderModel(userId)
-  let providerText = supportedProviders().join(", ")
-  var text =
-    if prefs.usesSmartRouting:
-      "Provider atual: auto [" & prefs.budgetPolicy & "]"
-    else:
-      "Provider atual: " & provider
-  if model.len > 0 and not prefs.usesSmartRouting:
-    text.add(" / " & model)
-  if prefs.usesSmartRouting:
-    let preview = formatSelectionPreview(previewSmartRouteSelections(prefs, availability))
-    if preview.len > 0:
-      text.add("\nRota base: " & preview)
-  text.add("\n\nProviders: " & providerText)
-  var catalogInfo = ""
-  let currentModels =
-    if modelCatalogLoader != nil:
-      let catalog = modelCatalogLoader(provider).valueOr: emptyCatalogResult()
-      let sorted = sortModelCatalog(normalizeModelCatalog(provider, catalog.entries))
-      catalogInfo = buildCatalogSourceText(catalog)
-      if sorted.len > 0: sorted.mapIt(it.modelName) else: supportedModels(provider)
-    else:
-      supportedModels(provider)
-  if currentModels.len > 0:
-    text.add("\nModelos para `" & provider & "`: " & currentModels.join(", "))
-  if catalogInfo.len > 0:
-    text.add("\n" & catalogInfo)
-  text.add("\n\nUse `/models <provider> <model>` para trocar.")
-  text
-
-proc buildThinkHelpText*(memory: MdFileAdapter; userId: UserId): string =
-  "Thinking atual: " & memory.getCurrentThinkLevel(userId) &
-  "\nNíveis: " & ThinkLevels.join(", ") &
-  "\n\nUse `/think <level>` para trocar."
-
-proc buildBudgetHelpText*(memory: MdFileAdapter; userId: UserId): string =
-  "Budget atual: " & memory.getCurrentBudgetPolicy(userId) &
-  "\nPolicies: " & BudgetPolicies.join(", ") &
-  "\n\nUse `/budget <policy>` para trocar."
-
-proc applyModelsTextCommand*(memory: MdFileAdapter;
-                             userId: UserId;
-                             value: string;
-                             modelCatalogLoader: ModelCatalogLoader = nil): Result[string, string] =
-  if value.strip.len == 0:
-    return ok(memory.buildModelsHelpText(userId, modelCatalogLoader))
-  let parts = value.splitWhitespace()
-  if parts.len == 1:
-    let provider = parts[0]
-    if provider notin supportedProviders():
-      return err("Provider inválido: `" & provider & "`.")
-    if modelCatalogLoader != nil:
-      let catalog = modelCatalogLoader(provider).valueOr: emptyCatalogResult()
-      return ok(buildProviderCatalogText(provider, catalog))
-    let entries = supportedModels(provider).mapIt(
-      ModelCatalogEntry(providerName: provider, modelName: it, label: it, isFree: false, available: true))
-    return ok(buildProviderCatalogText(
-      provider,
-      ModelCatalogResult(entries: entries, source: mcsFallback, fetchedAtUnix: 0)))
-  ## The selection is checked against the catalog `/models <provider>`
-  ## shows; the static list applies only when no catalog was loaded.
-  let (provider, model) = ? parseModelsSelection(value)
-  var loaded: seq[ModelCatalogEntry]
-  if modelCatalogLoader != nil:
-    let catalog = modelCatalogLoader(provider).valueOr: emptyCatalogResult()
-    loaded = normalizeModelCatalog(provider, catalog.entries)
-  if loaded.len > 0:
-    if loaded.allIt(it.modelName != model):
-      return err("Modelo indisponível agora para `" & provider & "`: `" & model & "`.")
-  else:
-    discard ? parseModelsArgs(value)
-  ? memory.saveChannelPreferences(userId, [("provider", provider), ("model", model)])
-  ok("Modelo definido: " & provider & " / " & model)
-
-proc applyThinkTextCommand*(memory: MdFileAdapter;
-                            userId: UserId;
-                            value: string): Result[string, string] =
-  if value.strip.len == 0:
-    return ok(memory.buildThinkHelpText(userId))
-  let level = ? parseThinkArgs(value)
-  ? memory.saveChannelPreference(userId, "thinking", level)
-  ok("Thinking definido: " & level)
-
-proc applyBudgetTextCommand*(memory: MdFileAdapter;
-                             userId: UserId;
-                             value: string): Result[string, string] =
-  if value.strip.len == 0:
-    return ok(memory.buildBudgetHelpText(userId))
-  let policy = ? parseBudgetArgs(value)
-  ? memory.saveChannelPreference(userId, "budget", policy)
-  ok("Budget definido: " & policy)
+proc preferenceCommandDeps*(memory: MdFileAdapter;
+                            modelCatalogLoader: ModelCatalogLoader = nil): PreferenceCommandDeps =
+  ## The store and the catalog the /models, /think and /budget policy needs.
+  PreferenceCommandDeps(
+    readPreferences: proc(userId: UserId): Result[string, string] {.gcsafe.} =
+      memory.readPreferences(userId),
+    savePreferences: proc(userId: UserId;
+                          entries: seq[(string, string)]): Result[void, string] {.gcsafe.} =
+      memory.saveChannelPreferences(userId, entries),
+    catalogLoader: modelCatalogLoader,
+    menu: currentModelMenu(),
+    availability: availableProvidersFromEnv(),
+  )
 
 proc applySkillTextCommand*(memory: MdFileAdapter;
                             userId: UserId;
@@ -155,30 +77,35 @@ proc applySkillTextCommand*(memory: MdFileAdapter;
     installBackend = installBackend,
   )
 
-proc buildProviderStatusLine*(memory: MdFileAdapter; userId: UserId): string =
-  let prefs = parseSmartRoutingPrefs(memory.loadContext(userId).preferencesMd)
+proc buildProviderStatusLine*(memory: MdFileAdapter; userId: UserId): Result[string, string] =
+  let doc = ? memory.readPreferences(userId).mapErr(preferencesUnreadableText)
+  let current = ? tryParseChannelPrefs(doc).mapErr(preferencesUnreadableText)
+  let prefs = parseSmartRoutingPrefs(doc)
   let availability = availableProvidersFromEnv()
-  let (provider, model) = memory.getCurrentProviderModel(userId)
   if prefs.usesSmartRouting:
     let preview = formatSelectionPreview(previewSmartRouteSelections(prefs, availability))
     if preview.len > 0:
-      "Provider: auto [" & prefs.budgetPolicy & "] (" & preview & ")"
+      ok("Provider: auto [" & prefs.budgetPolicy & "] (" & preview & ")")
     else:
-      "Provider: auto [" & prefs.budgetPolicy & "]"
+      ok("Provider: auto [" & prefs.budgetPolicy & "]")
   else:
-    "Provider: " & provider & " / " & model
+    ok("Provider: " & current.provider & " / " & current.model)
 
 proc buildTextStatusText*(memory: MdFileAdapter;
                           userId: UserId;
                           toolsCount: int;
                           sessionCount: int;
-                          daemonStartMs: int64): string =
-  let ctx = memory.loadContext(userId)
-  let memLines = ctx.memoryMd.countLines()
+                          daemonStartMs: int64): Result[string, string] =
+  ## Preferences first, so an unreadable PREFERENCES.md is reported as such;
+  ## a memory file that cannot be read is an error too, never an exception.
+  let providerLine = ? buildProviderStatusLine(memory, userId)
+  let prefs = ? memory.loadChannelPrefs(userId).mapErr(preferencesUnreadableText)
+  let memLines =
+    try: memory.loadContext(userId).memoryMd.countLines()
+    except CatchableError as e:
+      return err("Não foi possível ler a memória: " & e.msg)
   let uptimeStr = formatUptime((nowMs() - daemonStartMs) div 1_000)
-  let providerLine = buildProviderStatusLine(memory, userId)
-  let prefs = memory.loadChannelPrefs(userId)
-  "Status\n\n" &
+  ok "Status\n\n" &
     providerLine & "\n" &
     "Thinking: " & prefs.thinking & "\n" &
     "Reasoning: " & prefs.reasoning & "\n" &
@@ -191,8 +118,8 @@ proc buildAboutText*(memory: MdFileAdapter;
                      userId: UserId;
                      toolsCount: int;
                      toolClientsCount: int;
-                     sessionCount: int): string =
-  let (prov, mdl) = memory.getCurrentProviderModel(userId)
+                     sessionCount: int): Result[string, string] =
+  let (prov, mdl) = ? memory.getCurrentProviderModel(userId).mapErr(preferencesUnreadableText)
   let storage =
     if getEnv("DONKEY_PG_DSN").strip.len > 0 or memory.magmaDsn.len > 0:
       "PostgreSQL-backed MAGMA"
@@ -210,7 +137,7 @@ proc buildAboutText*(memory: MdFileAdapter;
   if getEnv("WECHAT_APP_ID").len > 0 or getEnv("WECHAT_CALLBACK_TOKEN").len > 0: channels.add("WeChat")
   if getEnv("FEISHU_APP_ID").len > 0: channels.add("Feishu")
   if getEnv("QQ_ONEBOT_URL").len > 0 or getEnv("QQ_OFFICIAL_APP_ID").len > 0: channels.add("QQ")
-  "🫏 *Donkey*\n\n" &
+  ok "🫏 *Donkey*\n\n" &
     "*Provider atual:* `" & prov & " / " & mdl & "`\n" &
     "*Storage:* " & storage & "\n" &
     "*Web search:* " & webSearch & "\n" &
@@ -227,24 +154,26 @@ proc buildDoctorReport*(memory: MdFileAdapter;
                         sessionCount: int): string =
   var report = "🩺 Donkey Doctor\n\n"
   
-  ## Teste do provider ativo do usuário (não o default da instância)
-  let t0 = nowMs()
-  let userPrefs = memory.loadContext(userId).preferencesMd
-  let testFn = completeBuilder(userPrefs)
-  var history = newHistory()
-  history.addUser("ping")
-  let req = buildPrompt("Reply with one word: pong", history, "")
-  let resp = testFn(req)
-  let delta = nowMs() - t0
-  if resp.isOk:
-    report.add("✅ Provider: OK (" & $delta & "ms)\n")
+  ## Teste do provider ativo do usuário (não o default da instância). Sem
+  ## as preferências não se sabe qual é: o relatório diz isso e segue.
+  let userPrefs = memory.readPreferences(userId)
+  let current = userPrefs.flatMap(tryParseChannelPrefs)
+  if current.isErr:
+    report.add("❌ Preferências: " & clipUtf8(current.error.strip, 300) & "\n")
   else:
-    let clipped = clipUtf8(resp.error.strip, 300)
-    report.add("❌ Provider: " & clipped & "\n")
-  
-  ## Modelo atual
-  let (prov, mdl) = memory.getCurrentProviderModel(userId)
-  report.add("📦 Modelo: " & prov & " / " & mdl & "\n")
+    let t0 = nowMs()
+    let testFn = completeBuilder(userPrefs.get)
+    var history = newHistory()
+    history.addUser("ping")
+    let req = buildPrompt("Reply with one word: pong", history, "")
+    let resp = testFn(req)
+    let delta = nowMs() - t0
+    if resp.isOk:
+      report.add("✅ Provider: OK (" & $delta & "ms)\n")
+    else:
+      let clipped = clipUtf8(resp.error.strip, 300)
+      report.add("❌ Provider: " & clipped & "\n")
+    report.add("📦 Modelo: " & current.get.provider & " / " & current.get.model & "\n")
 
   when defined(withPostgres) or defined(withSqlite):
     if memory.hasMagmaBackend:
@@ -394,7 +323,7 @@ proc pingProvider*(memory: MdFileAdapter;
                    Result[string, string] =
   ## Round-trip to the user's provider: the pong line, or the error line.
   let t0 = nowMs()
-  let (prov, mdl) = memory.getCurrentProviderModel(userId)
+  let (prov, mdl) = ? memory.getCurrentProviderModel(userId).mapErr(preferencesUnreadableText)
   let pingFn = completeBuilder("provider = \"" & prov & "\"\nmodel = \"" & mdl & "\"")
   var history = newHistory()
   history.addUser("ping")
@@ -424,13 +353,13 @@ proc newCommandServices*(memory: MdFileAdapter;
                          daemonStartMs: int64): CommandServicesPort =
   CommandServicesPort(
     about: proc(userId: UserId; sessionCount: int): Result[string, string] {.gcsafe.} =
-      guarded: ok(buildAboutText(memory, userId, toolsCount, toolClientsCount, sessionCount)),
+      guarded: buildAboutText(memory, userId, toolsCount, toolClientsCount, sessionCount),
     doctor: proc(userId: UserId; sessionCount: int): Result[string, string] {.gcsafe.} =
       guarded: ok(buildDoctorReport(memory, completeBuilder, userId, toolsCount,
                                     toolClientsCount, sessionCount)),
     status: proc(userId: UserId; sessionCount: int): Result[string, string] {.gcsafe.} =
-      guarded: ok(buildTextStatusText(memory, userId, toolsCount, sessionCount,
-                                      daemonStartMs)),
+      guarded: buildTextStatusText(memory, userId, toolsCount, sessionCount,
+                                   daemonStartMs),
     ping: proc(userId: UserId): Result[string, string] {.gcsafe.} =
       guarded: pingProvider(memory, userId, completeBuilder),
     memoryView: proc(userId: UserId): Result[string, string] {.gcsafe.} =
@@ -444,16 +373,14 @@ proc newCommandServices*(memory: MdFileAdapter;
       guarded: applySkillTextCommand(memory, userId, value,
                                      homeDir = memory.donkeyHomeDir()),
     models: proc(userId: UserId; value: string): Result[string, string] {.gcsafe.} =
-      guarded: applyModelsTextCommand(memory, userId, value, modelCatalogLoader),
+      guarded: preferenceCommandDeps(memory, modelCatalogLoader)
+                 .runModelsCommand(userId, value),
     think: proc(userId: UserId; value: string): Result[string, string] {.gcsafe.} =
-      guarded: applyThinkTextCommand(memory, userId, value),
+      guarded: preferenceCommandDeps(memory).runThinkCommand(userId, value),
     budget: proc(userId: UserId; value: string): Result[string, string] {.gcsafe.} =
-      guarded: applyBudgetTextCommand(memory, userId, value),
+      guarded: preferenceCommandDeps(memory).runBudgetCommand(userId, value),
     channelPrefs: proc(userId: UserId): Result[ChannelPrefs, string] {.gcsafe.} =
-      try:
-        ok(memory.loadChannelPrefs(userId))
-      except CatchableError as e:
-        err(e.msg),
+      guarded: memory.loadChannelPrefs(userId),
     savePreference: proc(userId: UserId; key, value: string): Result[void, string] {.gcsafe.} =
       try:
         memory.saveChannelPreference(userId, key, value)

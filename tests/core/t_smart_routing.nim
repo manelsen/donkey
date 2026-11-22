@@ -1,10 +1,45 @@
 import std/unittest
 import donkey/core/providers/smart_routing
+import donkey/app/channel_prefs_parse
 import donkey/core/providers/provider_catalog
 import donkey/domain/message
 
 proc runTests*() =
   suite "smart_routing":
+
+    test "parseSmartRoutingPrefs reads values the way TOML does":
+      ## A trailing comment is not part of the value: it used to turn a valid
+      ## `budget` into the default and a `provider` into an unknown one.
+      let prefs = parseSmartRoutingPrefs(
+        "budget = \"quality-first\" # preferência local\n" &
+        "provider = \"anthropic\"   # fixo\n" &
+        "thinking = high # sem aspas")
+      check prefs.budgetPolicy == "quality-first"
+      check prefs.providerName == "anthropic"
+      check prefs.thinking == "high"
+      check parseSmartRoutingPrefs("model = \"a#b\"").modelName == "a#b"
+
+    test "parseSmartRoutingPrefs decodes TOML escapes like the TOML parser":
+      let prefs = parseSmartRoutingPrefs(
+        "provider = \"\\u0061nthropic\"\nbudget = \"quality-\\u0066irst\"")
+      check prefs.providerName == "anthropic"
+      check prefs.budgetPolicy == "quality-first"
+
+    test "a document that is not TOML is still read line by line":
+      ## Hand-edited prose must not cost the user their routing; commands
+      ## report the unreadable document.
+      let prefs = parseSmartRoutingPrefs(
+        "Gosto de respostas curtas.\nprovider = \"anthropic\"\nbudget = quality-first")
+      check prefs.providerName == "anthropic"
+      check prefs.providerExplicit
+      check prefs.budgetPolicy == "quality-first"
+
+    test "parseSmartRoutingPrefs reads triple-quoted and literal strings":
+      let triple = parseSmartRoutingPrefs("provider = \"\"\"anthropic\"\"\"")
+      check triple.providerName == "anthropic"
+      check triple.providerExplicit
+      check parseSmartRoutingPrefs("budget = 'quality-first' # c").budgetPolicy == "quality-first"
+      check parseSmartRoutingPrefs("model = '''x#y''' # c").modelName == "x#y"
 
     test "parseSmartRoutingPrefs keeps auto routing when no provider override":
       let prefs = parseSmartRoutingPrefs("thinking = \"high\"")

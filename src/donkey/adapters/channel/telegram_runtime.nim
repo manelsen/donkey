@@ -99,28 +99,8 @@ type
 
 proc defaultTelegramPrefs*(): TelegramPrefs = defaultChannelPrefs()
 proc parseTelegramPrefs*(preferencesMd: string): TelegramPrefs = parseChannelPrefs(preferencesMd)
-proc loadTelegramPrefs*(memory: MdFileAdapter; userId: UserId): TelegramPrefs =
+proc loadTelegramPrefs*(memory: MdFileAdapter; userId: UserId): Result[TelegramPrefs, string] =
   loadChannelPrefs(memory, userId)
-
-proc getCurrentThinkLevel*(memory: MdFileAdapter; userId: UserId): string =
-  common_runtime.getCurrentThinkLevel(memory, userId)
-
-proc getCurrentProviderModel*(memory: MdFileAdapter;
-                              userId: UserId): (string, string) =
-  common_runtime.getCurrentProviderModel(memory, userId)
-
-proc buildThinkButtons*(memory: MdFileAdapter;
-                        userId: UserId): seq[seq[(string, string)]] =
-  common_runtime.buildThinkButtons(memory, userId)
-
-proc buildProviderButtons*(memory: MdFileAdapter;
-                           userId: UserId): seq[seq[(string, string)]] =
-  common_runtime.buildProviderButtons(memory, userId)
-
-proc buildModelButtons*(memory: MdFileAdapter;
-                        provider: string;
-                        userId: UserId): seq[seq[(string, string)]] =
-  common_runtime.buildModelButtons(memory, provider, userId)
 
 proc saveTelegramPreference*(memory: MdFileAdapter;
                              userId: UserId;
@@ -207,6 +187,24 @@ proc sendTelegramText(tgAdapter: var TelegramAdapter; msg: InboundMessage;
   )).isOkOr:
     logger.error("tg send failed for user=" & $msg.userId & " reason=" & error)
 
+proc tellPrefsUnreadable(tgAdapter: var TelegramAdapter;
+                         presentationState: var PresentationState;
+                         msg: InboundMessage; reason, slot: string) =
+  ## A picker needs the current preferences to mark the selection. When they
+  ## cannot be read the user is told so: in the picker message when there is
+  ## one, otherwise (none, or deleted by the user) in a new message. Either
+  ## way the picker is over, so its slot is cleared: the next command opens
+  ## a fresh one instead of editing a notice that may be gone.
+  let text = preferencesUnreadableText(reason)
+  let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, slot)
+  common_runtime.clearUiMsgId(presentationState, ckTelegram, msg.userId, slot)
+  if kbdId.len > 0 and
+     tgAdapter.editKeyboardText(msg.userId, kbdId, text, @[]).isOk:
+    return
+  tgAdapter.send(OutboundMessage(userId: msg.userId, channel: ckTelegram,
+                                 text: text, replyTo: replyTarget(msg))).isOkOr:
+    logSendFailure("preferences unreadable", error)
+
 proc presentTelegramOutcome(tgAdapter: var TelegramAdapter; msg: InboundMessage;
                             outcome: CommandOutcome; logger: Logger): bool =
   ## False only for a fallback: the message belongs to the session.
@@ -262,7 +260,9 @@ proc handleTelegramModels*(msg: InboundMessage;
     let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
     let catalog = modelCatalogLoader(providerOnly).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(providerOnly, catalog.entries))
-    let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
+    let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId).valueOr:
+      tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotModels)
+      return true
     let title = buildModelPageText(providerOnly, 0, entries, catalog)
     let buttons = buildModelPageButtons(providerOnly, entries, currProv, currModel, 0)
     if currentKbdId.len > 0:
@@ -277,15 +277,18 @@ proc handleTelegramModels*(msg: InboundMessage;
   if command.value.strip.len > 0:
     return presentTelegramUiText(tgAdapter, msg, command, memory, modelCatalogLoader)
   let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
+  let (currProv, _) = memory.getCurrentProviderModel(msg.userId).valueOr:
+    tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotModels)
+    return true
   if currentKbdId.len > 0:
     tgAdapter.editKeyboardText(
       msg.userId, currentKbdId,
       "Escolha o provider:",
-      memory.buildProviderButtons(msg.userId)).isOkOr:
+      buildProviderButtons(currProv)).isOkOr:
         logSendFailure("handleTelegramModels", error)
   else:
     let sentId = tgAdapter.sendKeyboard(msg.userId,
-      "Escolha o provider:", memory.buildProviderButtons(msg.userId),
+      "Escolha o provider:", buildProviderButtons(currProv),
       replyTo = replyTarget(msg)).valueOr:
         core_log.log(logger, core_log.lvlError, "tg send provider keyboard error: " & error)
         return true
@@ -306,7 +309,9 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
   of cbkModelsProvider:
     logger.info("tg callback models:provider:" & callback.provider)
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
-    let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
+    let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId).valueOr:
+      tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotModels)
+      return true
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
     if kbdId.len > 0:
@@ -353,7 +358,9 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
   of cbkModelsPage:
     logger.info("tg callback models:page:" & callback.provider & ":" & $callback.page)
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
-    let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
+    let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId).valueOr:
+      tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotModels)
+      return true
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
     if kbdId.len > 0:
@@ -366,9 +373,12 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
 
   of cbkModelsBack:
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
+    let (currProv, _) = memory.getCurrentProviderModel(msg.userId).valueOr:
+      tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotModels)
+      return true
     if kbdId.len > 0:
       tgAdapter.editKeyboard(msg.userId, kbdId,
-                             memory.buildProviderButtons(msg.userId)).isOkOr:
+                             buildProviderButtons(currProv)).isOkOr:
         logSendFailure("handleTelegramModelCallback", error)
     return true
 
@@ -417,15 +427,18 @@ proc handleTelegramThink*(msg: InboundMessage;
   if command.value.strip.len > 0:
     return presentTelegramUiText(tgAdapter, msg, command, memory)
   let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotThink)
+  let level = memory.getCurrentThinkLevel(msg.userId).valueOr:
+    tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotThink)
+    return true
   if currentKbdId.len > 0:
     tgAdapter.editKeyboardText(
       msg.userId, currentKbdId,
       "Nível de raciocínio:",
-      memory.buildThinkButtons(msg.userId)).isOkOr:
+      buildThinkButtons(level)).isOkOr:
         logSendFailure("handleTelegramThink", error)
   else:
     let sentId = tgAdapter.sendKeyboard(msg.userId,
-      "Nível de raciocínio:", memory.buildThinkButtons(msg.userId),
+      "Nível de raciocínio:", buildThinkButtons(level),
       replyTo = replyTarget(msg)).valueOr:
         return true
     common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotThink, sentId)
@@ -452,12 +465,15 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
   case command.kind
   of cmdConfig:
     let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
+    let configText = memory.buildConfigText(msg.userId).valueOr:
+      tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotConfig)
+      return true
     if currentKbdId.len > 0:
       discard tgAdapter.editKeyboardText(
-        msg.userId, currentKbdId, memory.buildConfigText(msg.userId), buildConfigButtons())
+        msg.userId, currentKbdId, configText, buildConfigButtons())
     else:
       let sentId = tgAdapter.sendKeyboard(
-        msg.userId, memory.buildConfigText(msg.userId), buildConfigButtons(), replyTo = replyTarget(msg)).valueOr:
+        msg.userId, configText, buildConfigButtons(), replyTo = replyTarget(msg)).valueOr:
           return true
       common_runtime.setUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig, sentId)
     true
@@ -544,9 +560,9 @@ proc buildTelegramStatusText*(memory: MdFileAdapter;
                               userId: UserId;
                               toolsCount: int;
                               sessionCount: int;
-                              daemonStartMs: int64): string =
-  decorateTelegramStatus(
-    buildTextStatusText(memory, userId, toolsCount, sessionCount, daemonStartMs))
+                              daemonStartMs: int64): Result[string, string] =
+  ok(decorateTelegramStatus(
+    ? buildTextStatusText(memory, userId, toolsCount, sessionCount, daemonStartMs)))
 
 proc handleTelegramPing*(msg: InboundMessage;
                          command: CommandDecision;
@@ -620,9 +636,10 @@ proc handleTelegramCommand*(sm: var SessionManager;
   if command.route == crLocal and action == lcaReasoningToggle and
      outcome.kind == cokReply and not outcome.reply.failed:
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
-    if kbdId.len > 0:
+    let configText = memory.buildConfigText(msg.userId)
+    if kbdId.len > 0 and configText.isOk:
       let edited = tgAdapter.editKeyboardText(msg.userId, kbdId,
-        memory.buildConfigText(msg.userId), buildConfigButtons())
+        configText.get, buildConfigButtons())
       if edited.isOk:
         return true
       ## The /config message may be gone. The preference is already saved:

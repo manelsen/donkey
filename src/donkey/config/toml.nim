@@ -245,7 +245,7 @@ func parseKey(p: var Parser): seq[string] =
 
 # ── values ────────────────────────────────────────────────────────────────────
 
-func parseValue(p: var Parser): TomlValueRef
+func parseValue(p: var Parser): TomlValueRef {.raises: [TomlError, KeyError].}
 
 func parseNumberOrBool(p: var Parser): TomlValueRef =
   var word = ""
@@ -300,7 +300,7 @@ func parseArray(p: var Parser): TomlValueRef =
       p.fail("expected ',' or ']' in array")
 
 func setPath(p: Parser; table: TomlValueRef; path: seq[string];
-             value: TomlValueRef)
+             value: TomlValueRef) {.raises: [TomlError, KeyError].}
 
 func closeInline(v: TomlValueRef) =
   ## Marks an inline table and every table built inside it as closed.
@@ -332,7 +332,7 @@ func parseInlineTable(p: var Parser): TomlValueRef =
     else:
       p.fail("expected ',' or '}' in inline table")
 
-func parseValue(p: var Parser): TomlValueRef =
+func parseValue(p: var Parser): TomlValueRef {.raises: [TomlError, KeyError].} =
   p.skipSpaces()
   case p.peek
   of '"': TomlValueRef(kind: TomlValueKind.String, stringVal: p.parseBasicString())
@@ -367,7 +367,7 @@ func childTable(p: Parser; table: TomlValueRef; key: string;
     p.fail("'" & key & "' is already a value")
 
 func setPath(p: Parser; table: TomlValueRef; path: seq[string];
-             value: TomlValueRef) =
+             value: TomlValueRef) {.raises: [TomlError, KeyError].} =
   ## A dotted key defines its intermediate tables; it may extend tables it
   ## defined itself, never one defined by a header.
   var target = table
@@ -383,7 +383,7 @@ func setPath(p: Parser; table: TomlValueRef; path: seq[string];
     p.fail("duplicate key '" & path.join(".") & "'")
   target.tableVal[last] = value
 
-func parseToml*(text: string): TomlValueRef =
+func parseToml*(text: string): TomlValueRef {.raises: [TomlError, KeyError].} =
   ## Parses a TOML document; raises TomlError on invalid input.
   var p = Parser(src: text, line: 1)
   result = newTable()

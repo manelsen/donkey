@@ -1,5 +1,6 @@
 import std/[unittest, options]
 import donkey/core/providers/smart_routing
+import donkey/app/channel_prefs_parse
 import donkey/core/providers/provider_catalog
 import donkey/domain/message
 

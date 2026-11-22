@@ -6,6 +6,7 @@ import donkey/core/log
 import donkey/core/outbound/outbound
 import donkey/adapters/channel/telegram
 import donkey/adapters/channel/telegram_runtime
+import donkey/adapters/channel/model_catalog_ui
 import donkey/app/session_manager
 import donkey/adapters/memory/md_file
 import donkey/domain/agent_message
@@ -213,27 +214,14 @@ thinking = "high"
           msg, newCommandDecision(kind), tgAdapter, presentationState, memory,
           modelCatalogLoader, 0, 0, logger)
 
-    test "buildProviderButtons marks current provider":
-      let tmpDir = getTempDir() / "donkey_tg_runtime_provider"
-      let memory = MdFileAdapter(paddocksDir: tmpDir)
-      let userId = UserId("u-tg-provider")
-      defer:
-        if dirExists(tmpDir):
-          removeDir(tmpDir)
-      memory.savePreferences(userId, "provider = \"gemini\"")
-      let buttons = buildProviderButtons(memory, userId)
+    test "buildProviderButtons marks the provider it is given":
+      ## The buttons take the selection as data: they read no preferences.
+      let buttons = buildProviderButtons("gemini")
       check buttons.len > 0
       check buttons.anyIt(it.anyIt(it[0].startsWith("✓ gemini")))
 
-    test "buildThinkButtons marks current thinking level":
-      let tmpDir = getTempDir() / "donkey_tg_runtime_think"
-      let memory = MdFileAdapter(paddocksDir: tmpDir)
-      let userId = UserId("u-tg-think")
-      defer:
-        if dirExists(tmpDir):
-          removeDir(tmpDir)
-      memory.savePreferences(userId, "thinking = \"medium\"")
-      let buttons = buildThinkButtons(memory, userId)
+    test "buildThinkButtons marks the level it is given":
+      let buttons = buildThinkButtons("medium")
       check buttons.len == 1
       check buttons[0].anyIt(it[0] == "✓ medium")
 
@@ -275,7 +263,7 @@ provider = "anthropic"
 model = "claude-opus"
 thinking = "low"
 """)
-      let text = buildTelegramStatusText(memory, userId, 7, 2, 0)
+      let text = buildTelegramStatusText(memory, userId, 7, 2, 0).get
       check text.contains("anthropic / claude-opus")
       check text.contains("Thinking: low")
 

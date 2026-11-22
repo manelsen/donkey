@@ -12,6 +12,7 @@ import ../core/pipeops
 import ../core/commands/command_outcome
 import ../core/commands/command_routing
 import ../core/commands/command_text
+import ../core/commands/preference_commands
 import ../domain/agent_message
 import ../domain/message
 import ../ports/channel_capability
@@ -67,8 +68,7 @@ func fromResult(topic: ReplyTopic; res: Result[string, string];
 
 proc reasoningReply(env: CommandEnv; userId: UserId): CommandOutcome =
   let prefs = env.services.channelPrefs(userId).valueOr:
-    return replied(rtReasoning, "Não foi possível ler as preferências: " & error,
-                   failed = true)
+    return replied(rtReasoning, preferencesUnreadableText(error), failed = true)
   let next = nextReasoning(prefs.reasoning)
   let saved = env.services.savePreference(userId, "reasoning", next)
   replied(rtReasoning, savedOrError(saved, reasoningToggleText(next)),
@@ -141,8 +141,7 @@ proc dispatchUiCommand*(env: CommandEnv; req: CommandDispatchRequest): CommandOu
     if not commandAvailable(cmdConfig, commandCaps(req.channel)):
       return replied(rtUnsupported, UnsupportedCommandText)
     let prefs = s.channelPrefs(userId).valueOr:
-      return replied(rtConfig, "Não foi possível ler as preferências: " & error,
-                     failed = true)
+      return replied(rtConfig, preferencesUnreadableText(error), failed = true)
     replied(rtConfig, buildConfigText(prefs, withButtons = false))
   else:
     replied(rtUnsupported, UnsupportedCommandText)

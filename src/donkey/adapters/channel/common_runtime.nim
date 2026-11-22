@@ -15,8 +15,10 @@ import ../../core/commands/command_routing
 import ../identity/identity_resolver
 import ./command_services
 import ./model_catalog_ui
+import ../../core/commands/preference_commands
 
 export command_text, channel_prefs_store, model_catalog_ui, command_services
+export preference_commands.preferencesUnreadableText
 
 const UiSlotMenu* = "menu"
 const UiSlotConfig* = "config"

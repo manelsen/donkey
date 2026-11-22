@@ -1,6 +1,7 @@
 import std/[os, sequtils, strutils, tables, times, unittest]
 import results
 import donkey/adapters/channel/common_runtime
+import donkey/app/preference_commands
 import donkey/adapters/memory/md_file
 import donkey/config/clawhub_registry
 import donkey/config/skills_registry
@@ -111,14 +112,15 @@ proc runTests*() =
       if not canRead(memory.memoryMdPath(userId)):
         check services.memoryView(userId).isErr
 
-    test "parseModelsArgs validates provider and model":
-      let parsed = parseModelsArgs("gemini gemini-2.5-pro").get()
-      check parsed[0] == "gemini"
-      check parsed[1] == "gemini-2.5-pro"
-      check parseModelsArgs("gemini nope").isErr
-      let zaiAnthropic = parseModelsArgs("zai-anthropic glm-4.7").get()
-      check zaiAnthropic[0] == "zai-anthropic"
-      check zaiAnthropic[1] == "glm-4.7"
+    test "the real model menu validates provider and model":
+      let menu = currentModelMenu()
+      let parsed = parseModelsRequest("gemini gemini-2.5-pro", menu).get()
+      check (parsed.provider, parsed.model) == ("gemini", "gemini-2.5-pro")
+      check checkModelSelection(parsed, @[], menu).isOk
+      let nope = parseModelsRequest("gemini nope", menu).get()
+      check checkModelSelection(nope, @[], menu).isErr
+      let zaiAnthropic = parseModelsRequest("zai-anthropic glm-4.7", menu).get()
+      check checkModelSelection(zaiAnthropic, @[], menu).isOk
 
     test "parseModelsProviderArg validates provider-only route":
       check parseModelsProviderArg("anthropic").get() == "anthropic"
@@ -132,9 +134,9 @@ proc runTests*() =
       defer:
         if dirExists(tmpDir):
           removeDir(tmpDir)
-      let text = applyModelsTextCommand(memory, userId, "gemini gemini-2.5-pro").get()
+      let text = preferenceCommandDeps(memory).runModelsCommand(userId, "gemini gemini-2.5-pro").get()
       check text.contains("gemini / gemini-2.5-pro")
-      check getCurrentProviderModel(memory, userId) == ("gemini", "gemini-2.5-pro")
+      check getCurrentProviderModel(memory, userId).get == ("gemini", "gemini-2.5-pro")
 
     when defined(withSqlite):
       test "applyModelsTextCommand preserves agent identity in magma sqlite preferences":
@@ -153,7 +155,7 @@ proc runTests*() =
           initiative: "proativo",
         ), "Ostervalt").isOk
 
-        let text = applyModelsTextCommand(memory, userId, "minimax MiniMax-M2").get()
+        let text = preferenceCommandDeps(memory).runModelsCommand(userId, "minimax MiniMax-M2").get()
         check text.contains("minimax / MiniMax-M2")
 
         let prefsMd = memory.loadContext(userId).preferencesMd
@@ -177,7 +179,7 @@ proc runTests*() =
             source: mcsLive,
             fetchedAtUnix: getTime().toUnix(),
           ))
-      let text = applyModelsTextCommand(memory, userId, "anthropic", loader).get()
+      let text = preferenceCommandDeps(memory, loader).runModelsCommand(userId, "anthropic").get()
       check text.contains("Provider: anthropic")
       check text.contains("`free-model` [free]")
       check text.contains("Fonte: live")
@@ -199,15 +201,15 @@ proc runTests*() =
             source: mcsLive, fetchedAtUnix: getTime().toUnix()))
       check "gemini-brand-new" notin supportedModels("gemini")
       check supportedModels("gemini").len > 0
-      let chosen = applyModelsTextCommand(memory, userId, "gemini gemini-brand-new", loader)
+      let chosen = preferenceCommandDeps(memory, loader).runModelsCommand(userId, "gemini gemini-brand-new")
       check chosen.isOk
-      check getCurrentProviderModel(memory, userId) == ("gemini", "gemini-brand-new")
-      check applyModelsTextCommand(memory, userId, "gemini gemini-2.5-pro", loader).isErr
+      check getCurrentProviderModel(memory, userId).get == ("gemini", "gemini-brand-new")
+      check preferenceCommandDeps(memory, loader).runModelsCommand(userId, "gemini gemini-2.5-pro").isErr
       let empty: ModelCatalogLoader =
         proc(providerName: string): Result[ModelCatalogResult, string] =
           ok(ModelCatalogResult(source: mcsLive))
-      check applyModelsTextCommand(memory, userId, "gemini gemini-brand-new", empty).isErr
-      check applyModelsTextCommand(memory, userId, "gemini gemini-2.5-pro", empty).isOk
+      check preferenceCommandDeps(memory, empty).runModelsCommand(userId, "gemini gemini-brand-new").isErr
+      check preferenceCommandDeps(memory, empty).runModelsCommand(userId, "gemini gemini-2.5-pro").isOk
 
     test "normalizeModelCatalog treats ZAI provider aliases as the same catalog family":
       let normalized = normalizeModelCatalog("zai-anthropic", @[
@@ -237,9 +239,9 @@ proc runTests*() =
       defer:
         if dirExists(tmpDir):
           removeDir(tmpDir)
-      let text = applyThinkTextCommand(memory, userId, "high").get()
+      let text = preferenceCommandDeps(memory).runThinkCommand(userId, "high").get()
       check text.contains("high")
-      check getCurrentThinkLevel(memory, userId) == "high"
+      check getCurrentThinkLevel(memory, userId).get == "high"
 
     test "applyBudgetTextCommand persists policy":
       let tmpDir = getTempDir() / "donkey_common_runtime_budget"
@@ -248,9 +250,9 @@ proc runTests*() =
       defer:
         if dirExists(tmpDir):
           removeDir(tmpDir)
-      let text = applyBudgetTextCommand(memory, userId, "cheap-first").get()
+      let text = preferenceCommandDeps(memory).runBudgetCommand(userId, "cheap-first").get()
       check text.contains("cheap-first")
-      check getCurrentBudgetPolicy(memory, userId) == "cheap-first"
+      check getCurrentBudgetPolicy(memory, userId).get == "cheap-first"
 
     test "buildModelsHelpText shows catalog source":
       let tmpDir = getTempDir() / "donkey_common_runtime_catalog"
@@ -268,7 +270,7 @@ proc runTests*() =
             source: mcsCache,
             fetchedAtUnix: getTime().toUnix(),
           ))
-      let text = buildModelsHelpText(memory, userId, loader)
+      let text = preferenceCommandDeps(memory, loader).runModelsCommand(userId, "").get
       check text.contains("Fonte: cache")
       check text.contains("model-a")
 
@@ -280,7 +282,7 @@ proc runTests*() =
         if dirExists(tmpDir):
           removeDir(tmpDir)
       memory.savePreferences(userId, "thinking = \"medium\"\nbudget = \"cheap-first\"")
-      let text = buildModelsHelpText(memory, userId)
+      let text = preferenceCommandDeps(memory).runModelsCommand(userId, "").get
       check text.contains("Provider atual: auto")
       check text.contains("cheap-first")
 
@@ -292,7 +294,7 @@ proc runTests*() =
         if dirExists(tmpDir):
           removeDir(tmpDir)
       memory.savePreferences(userId, "thinking = \"high\"\nbudget = \"quality-first\"")
-      let text = buildTextStatusText(memory, userId, 3, 1, 0)
+      let text = buildTextStatusText(memory, userId, 3, 1, 0).get
       check text.contains("Provider: auto [quality-first]")
 
     suite "common_runtime skills":

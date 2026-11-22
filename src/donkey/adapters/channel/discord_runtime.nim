@@ -51,6 +51,13 @@ proc sendDiscordEmbed(event: DiscordRawEvent;
   else:
     sendDiscordReply(event, dcAdapter, userId, description, logger)
 
+
+proc tellPrefsUnreadable(event: DiscordRawEvent; dcAdapter: DiscordAdapter;
+                         userId: UserId; reason: string; logger: Logger) =
+  ## A picker needs the current preferences to mark the selection; when they
+  ## cannot be read the user is told so instead of seeing defaults.
+  sendDiscordEmbed(event, dcAdapter, userId, "⚙️ Preferências",
+                   preferencesUnreadableText(reason), 0xE74C3C, logger)
 proc sendDiscordKeyboard(dcAdapter: DiscordAdapter;
                          event: DiscordRawEvent;
                          presentationState: var PresentationState;
@@ -101,14 +108,17 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
   case command.kind
   of cmdConfig:
     let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotConfig)
+    let configText = memory.buildConfigText(userId).valueOr:
+      tellPrefsUnreadable(event, dcAdapter, userId, error, logger)
+      return true
     if kbdId.len > 0 and event.interactionId.len == 0:
       dcAdapter.smartEditKeyboard(
-        event, userId, kbdId, memory.buildConfigText(userId), buildConfigButtons()).isOkOr:
+        event, userId, kbdId, configText, buildConfigButtons()).isOkOr:
           core_log.log(logger, core_log.lvlWarn, "dc config keyboard: " & error)
     else:
       sendDiscordKeyboard(
         dcAdapter, event, presentationState, userId, UiSlotConfig,
-        memory.buildConfigText(userId), buildConfigButtons(),
+        configText, buildConfigButtons(),
         "Abri a configuração na sua DM.", logger,
       )
     true
@@ -130,7 +140,9 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
       else: ""
     if providerOnly.len > 0:
       let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotModels)
-      let (currProv, currModel) = memory.getCurrentProviderModel(userId)
+      let (currProv, currModel) = memory.getCurrentProviderModel(userId).valueOr:
+        tellPrefsUnreadable(event, dcAdapter, userId, error, logger)
+        return true
       let catalog = modelCatalogLoader(providerOnly).valueOr: emptyCatalogResult()
       let entries = sortModelCatalog(normalizeModelCatalog(providerOnly, catalog.entries))
       let title = buildModelPageText(providerOnly, 0, entries, catalog)
@@ -147,14 +159,17 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
       return false  ## text form: answered by the shared dispatcher
     else:
       let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotModels)
+      let (currProv, _) = memory.getCurrentProviderModel(userId).valueOr:
+        tellPrefsUnreadable(event, dcAdapter, userId, error, logger)
+        return true
       if kbdId.len > 0 and event.interactionId.len == 0:
-        dcAdapter.smartEditKeyboard(event, userId, kbdId, "Escolha o provider:", memory.buildProviderButtons(userId)).isOkOr:
+        dcAdapter.smartEditKeyboard(event, userId, kbdId, "Escolha o provider:", buildProviderButtons(currProv)).isOkOr:
             core_log.log(logger, core_log.lvlError, "dc provider reopen: " & error)
       else:
         sendDiscordKeyboard(
           dcAdapter, event, presentationState, userId, UiSlotModels,
           "Escolha o provider:",
-          memory.buildProviderButtons(userId),
+          buildProviderButtons(currProv),
           "Abri o seletor de modelo na sua DM.",
           logger,
         )
@@ -164,14 +179,17 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
       return false  ## text form: answered by the shared dispatcher
     else:
       let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotThink)
+      let level = memory.getCurrentThinkLevel(userId).valueOr:
+        tellPrefsUnreadable(event, dcAdapter, userId, error, logger)
+        return true
       if kbdId.len > 0 and event.interactionId.len == 0:
-        dcAdapter.smartEditKeyboard(event, userId, kbdId, "Nível de raciocínio:", memory.buildThinkButtons(userId)).isOkOr:
+        dcAdapter.smartEditKeyboard(event, userId, kbdId, "Nível de raciocínio:", buildThinkButtons(level)).isOkOr:
             core_log.log(logger, core_log.lvlError, "dc think reopen: " & error)
       else:
         sendDiscordKeyboard(
           dcAdapter, event, presentationState, userId, UiSlotThink,
           "Nível de raciocínio:",
-          memory.buildThinkButtons(userId),
+          buildThinkButtons(level),
           "Abri o seletor de thinking na sua DM.",
           logger,
         )
@@ -194,7 +212,9 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
   logger.info("dc callback " & $callback.kind & " from " & $userId)
   case callback.kind
   of cbkModelsProvider:
-    let (currProv, currModel) = memory.getCurrentProviderModel(userId)
+    let (currProv, currModel) = memory.getCurrentProviderModel(userId).valueOr:
+      tellPrefsUnreadable(event, dcAdapter, userId, error, logger)
+      return true
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
     let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotModels)
@@ -229,7 +249,9 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
         core_log.log(logger, core_log.lvlError, "dc model confirm: " & error)
     true
   of cbkModelsPage:
-    let (currProv, currModel) = memory.getCurrentProviderModel(userId)
+    let (currProv, currModel) = memory.getCurrentProviderModel(userId).valueOr:
+      tellPrefsUnreadable(event, dcAdapter, userId, error, logger)
+      return true
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
     let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotModels)
@@ -242,9 +264,12 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
     true
   of cbkModelsBack:
     let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotModels)
+    let (currProv, _) = memory.getCurrentProviderModel(userId).valueOr:
+      tellPrefsUnreadable(event, dcAdapter, userId, error, logger)
+      return true
     if kbdId.len > 0:
       dcAdapter.smartEditKeyboard(
-        event, userId, kbdId, "Escolha o provider:", memory.buildProviderButtons(userId)).isOkOr:
+        event, userId, kbdId, "Escolha o provider:", buildProviderButtons(currProv)).isOkOr:
           core_log.log(logger, core_log.lvlError, "dc provider menu: " & error)
     true
   of cbkHelpPage:
@@ -276,7 +301,11 @@ proc handleDiscordUiCallback(event: DiscordRawEvent;
           core_log.log(logger, core_log.lvlError, "dc think confirm: " & error)
     true
   of cbkReasoning:
-    let prefs = common_runtime.loadChannelPrefs(memory, userId)
+    ## The toggle flips what is stored: without it, flipping the default
+    ## could switch reasoning the wrong way.
+    let prefs = common_runtime.loadChannelPrefs(memory, userId).valueOr:
+      tellPrefsUnreadable(event, dcAdapter, userId, error, logger)
+      return true
     let next = if prefs.reasoning == "on": "off" else: "on"
     let saved = common_runtime.saveChannelPreference(memory, userId, "reasoning", next)
     dcAdapter.send(OutboundMessage(
@@ -581,7 +610,11 @@ proc checkDiscordOfflineMessages*(sm: var SessionManager;
     let discordId = dcAdapter.resolver.reverseChannel(userId, ckDiscord)
     if discordId.len == 0:
       continue
-    let lastMsgId = memory.loadChannelPreference(userId, "discord_last_msg_id")
+    ## An unreadable cursor is not an absent one: absent marks the history as
+    ## seen and skips it, so this user waits for the next check instead.
+    let lastMsgId = memory.loadChannelPreference(userId, "discord_last_msg_id").valueOr:
+      logger.warn("discord offline: cannot read the cursor of " & userIdStr & ": " & error)
+      continue
     let floorId = discordSnowflakeFloor(entry.lastInboundEpochMs)
     let chId = dcAdapter.dmChannelFor(discordId).valueOr:
       logger.warn("discord offline: cannot get DM channel for " & discordId)

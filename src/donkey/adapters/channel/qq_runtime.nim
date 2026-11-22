@@ -87,6 +87,15 @@ func qqStatusText*(providerLine, thinking: string;
     "- Sessões ativas: **" & $sessionCount & "**\n" &
     "- Uptime: **" & uptimeStr & "**"
 
+proc tellPrefsUnreadable(qqAdapter: var QQChannelAdapter; msg: InboundMessage;
+                         reason: string) =
+  ## A picker needs the current preferences to mark the selection; when they
+  ## cannot be read the user is told so instead of seeing defaults.
+  qqAdapter.sendTo(msg.rawChannelId, OutboundMessage(
+    userId: msg.userId, channel: ckQQ,
+    text: preferencesUnreadableText(reason), replyTo: msg.channelId)).isOkOr:
+      logSendFailure("preferences unreadable", error)
+
 proc handleQQModelCallback(msg: InboundMessage;
                            callback: CallbackDecision;
                            qqAdapter: var QQChannelAdapter;
@@ -97,7 +106,9 @@ proc handleQQModelCallback(msg: InboundMessage;
   of cbkModelsProvider:
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
-    let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
+    let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId).valueOr:
+      tellPrefsUnreadable(qqAdapter, msg, error)
+      return true
     qqAdapter.sendKeyboardTo(
       msg.rawChannelId,
       qqModelPickerTitle(callback.provider, 0, entries, catalog),
@@ -123,7 +134,9 @@ proc handleQQModelCallback(msg: InboundMessage;
   of cbkModelsPage:
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
-    let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
+    let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId).valueOr:
+      tellPrefsUnreadable(qqAdapter, msg, error)
+      return true
     qqAdapter.sendKeyboardTo(
       msg.rawChannelId,
       qqModelPickerTitle(callback.provider, callback.page, entries, catalog),
@@ -133,10 +146,13 @@ proc handleQQModelCallback(msg: InboundMessage;
         logSendFailure("handleQQModelCallback", error)
     true
   of cbkModelsBack:
+    let (currProv, _) = memory.getCurrentProviderModel(msg.userId).valueOr:
+      tellPrefsUnreadable(qqAdapter, msg, error)
+      return true
     qqAdapter.sendKeyboardTo(
       msg.rawChannelId,
       qqProviderPickerTitle(),
-      memory.buildProviderButtons(msg.userId),
+      buildProviderButtons(currProv),
       replyTo = msg.channelId,
       allowedRawUserId = rawUserId).isOkOr:
         logSendFailure("handleQQModelCallback", error)
@@ -173,7 +189,9 @@ proc handleQQUiCommand(msg: InboundMessage;
     let provider = qqDirectModelProvider(qqAdapter.kind, command)
     if provider.len > 0:
         let catalog = modelCatalogLoader(provider).valueOr: emptyCatalogResult()
-        let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId)
+        let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId).valueOr:
+          tellPrefsUnreadable(qqAdapter, msg, error)
+          return true
         let entries = sortModelCatalog(normalizeModelCatalog(provider, catalog.entries))
         qqAdapter.sendKeyboardTo(
           msg.rawChannelId,
@@ -185,16 +203,22 @@ proc handleQQUiCommand(msg: InboundMessage;
         return true
     if command.value.strip.len > 0 or qqAdapter.kind != qbkOfficial:
       return false  ## text form: answered by the shared dispatcher
+    let (currProv, _) = memory.getCurrentProviderModel(msg.userId).valueOr:
+      tellPrefsUnreadable(qqAdapter, msg, error)
+      return true
     qqAdapter.sendKeyboardTo(msg.rawChannelId, qqProviderPickerTitle(),
-      memory.buildProviderButtons(msg.userId), replyTo = msg.channelId,
+      buildProviderButtons(currProv), replyTo = msg.channelId,
       allowedRawUserId = rawUserId).isOkOr:
         logSendFailure("handleQQUiCommand", error)
     true
   of cmdThink:
     if not qqShouldOpenThinkPicker(qqAdapter.kind, command):
       return false  ## text form: answered by the shared dispatcher
+    let level = memory.getCurrentThinkLevel(msg.userId).valueOr:
+      tellPrefsUnreadable(qqAdapter, msg, error)
+      return true
     qqAdapter.sendKeyboardTo(msg.rawChannelId, qqThinkPickerTitle(),
-      memory.buildThinkButtons(msg.userId), replyTo = msg.channelId,
+      buildThinkButtons(level), replyTo = msg.channelId,
       allowedRawUserId = rawUserId).isOkOr:
         logSendFailure("handleQQUiCommand", error)
     true
@@ -280,9 +304,13 @@ proc drainQQEvents*(qqAdapter: var QQChannelAdapter;
           log.error("qq send notice failed for user=" & $userId & " reason=" & error)
       elif command.route == crStatus and command.kind == cmdStatus and
            qqAdapter.kind == qbkOfficial:
-        let text = qqStatusText(buildProviderStatusLine(env.memory, userId),
-                                env.memory.getCurrentThinkLevel(userId), env.toolsCount,
-                                sm.sessionCount(), qqUptimeText(env.daemonStartMs))
+        let statusLine = buildProviderStatusLine(env.memory, userId)
+        let thinking = env.memory.getCurrentThinkLevel(userId)
+        let text =
+          if statusLine.isErr: statusLine.error
+          elif thinking.isErr: preferencesUnreadableText(thinking.error)
+          else: qqStatusText(statusLine.get, thinking.get, env.toolsCount,
+                             sm.sessionCount(), qqUptimeText(env.daemonStartMs))
         qqAdapter.sendTo(rawId, OutboundMessage(userId: userId, channel: ckQQ, text: text,
                                               replyTo: event.messageId)).isOkOr:
           log.error("qq send status failed for user=" & $userId & " reason=" & error)
