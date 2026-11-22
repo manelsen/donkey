@@ -14,6 +14,10 @@ type
   CommandArgFn* = proc(userId: UserId; value: string): Result[string, string] {.gcsafe.}
   CommandCountFn* = proc(userId: UserId; sessionCount: int): Result[string, string] {.gcsafe.}
 
+  ToolCounts* = object
+    tools*:   int  ## native tools available to a session
+    clients*: int  ## connected MCP clients
+
   CommandServicesPort* = object
     about*:       CommandCountFn  ## runtime overview
     doctor*:      CommandCountFn  ## diagnostics report
@@ -27,5 +31,6 @@ type
     budget*:      CommandArgFn    ## /budget text form
     channelPrefs*: proc(userId: UserId): Result[ChannelPrefs, string] {.gcsafe.}
     savePreference*: proc(userId: UserId; key, value: string): Result[void, string] {.gcsafe.}
-    toolsCount*:       int
-    toolClientsCount*: int
+    toolCounts*: proc(): ToolCounts {.gcsafe.}
+      ## The tools the runtime has now: a query like every other field, so
+      ## the port holds operations only.

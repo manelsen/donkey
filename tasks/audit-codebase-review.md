@@ -63,10 +63,10 @@ There are 127 `getEnv` calls outside `config/` (59 in `app/`, 62 in `adapters/`,
 
 ### 10. Pending items from PR #75
 - ~~The `/models`, `/think` and `/budget` policy is still in `command_services` (an adapter).~~ Done in 0.3.0 (see the checklist below).
-- `command_text.nim` mixes texts, argument parsing and availability, so `ports/channel_capability` imports a text module.
-- `channel_prefs_store` produces presentation text (`buildConfigText`).
+- ~~`command_text.nim` mixes texts, argument parsing and availability, so `ports/channel_capability` imports a text module.~~ Done: availability is `core/commands/command_surface`, arguments `core/commands/command_args`, texts stay in `command_text`; ports import only the surface (checked by `check_boundaries.sh`).
+- ~~`channel_prefs_store` produces presentation text (`buildConfigText`).~~ Done: the store only reads and writes; the /config view is `configViewText` in the channel layer (`common_runtime`), and the memory store may not import command texts (checked).
 - ~~`model_catalog_ui` reads preferences from storage.~~ Done in 0.3.0: the buttons take the current selection as data.
-- `CommandServicesPort` carries counters.
+- ~~`CommandServicesPort` carries counters.~~ Done: the tool counts are a query (`toolCounts`), so the port holds operations only.
 
 **Reminder (owner asked to be reminded; from the #79 review of the #75 code):**
 - [x] Move the `/models`, `/think` and `/budget` policy out of `adapters/channel/command_services.nim` (0.3.0). `core/commands/preference_commands` holds what an argument means, the selection check against catalog and menu, the answers and the catalog presentation (pure, with the menu, the catalog and the time passed in). `app/preference_commands` runs it over a read and a save proc (tested with an in-memory store). The adapter only builds those procs from the Markdown/MAGMA store and the catalog loader.

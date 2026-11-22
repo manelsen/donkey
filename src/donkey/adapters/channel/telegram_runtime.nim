@@ -465,7 +465,7 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
   case command.kind
   of cmdConfig:
     let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
-    let configText = memory.buildConfigText(msg.userId).valueOr:
+    let configText = configViewText(memory, msg.userId).valueOr:
       tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotConfig)
       return true
     if currentKbdId.len > 0:
@@ -636,7 +636,7 @@ proc handleTelegramCommand*(sm: var SessionManager;
   if command.route == crLocal and action == lcaReasoningToggle and
      outcome.kind == cokReply and not outcome.reply.failed:
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
-    let configText = memory.buildConfigText(msg.userId)
+    let configText = configViewText(memory, msg.userId)
     if kbdId.len > 0 and configText.isOk:
       let edited = tgAdapter.editKeyboardText(msg.userId, kbdId,
         configText.get, buildConfigButtons())

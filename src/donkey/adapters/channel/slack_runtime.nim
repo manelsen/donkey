@@ -50,7 +50,7 @@ proc slackCommandOutcome(slAdapter: var SlackAdapter;
   elif command.kind == cmdConfig:
     ## Unreadable preferences fall through to the dispatcher, which reports
     ## the error instead of showing defaults.
-    let configText = env.memory.buildConfigText(userId)
+    let configText = configViewText(env.memory, userId)
     if configText.isOk and
        slAdapter.sendKeyboard(userId, configText.get, buildConfigButtons()).isOk:
       presented = true

@@ -51,8 +51,8 @@ proc fakeServices(p: Probe; memoryFails = false): CommandServicesPort =
     savePreference: proc(u: UserId; k, v: string): Result[void, string] {.gcsafe.} =
       {.cast(gcsafe).}: p.saved.add((k, v))
       ok(),
-    toolsCount: 3,
-    toolClientsCount: 1,
+    toolCounts: proc(): ToolCounts {.gcsafe.} =
+      ToolCounts(tools: 3, clients: 1),
   )
 
 proc fakeLinks(p: Probe): IdentityLinkPort =
@@ -90,6 +90,12 @@ proc runTests*() =
         check o.kind == cokReply
         check o.reply.topic == topic
         check o.reply.text.len > 0
+
+    test "/agents asks the port for the tool counts":
+      let o = dispatchCommand(env, sm, msgSeq, request(p, cmdAgents))
+      check o.reply.topic == rtUi
+      check "3 carregadas" in o.reply.text
+      check "1 conectados" in o.reply.text
 
     test "/mycode mints through the link port and is requester-only":
       let o = dispatchCommand(env, sm, msgSeq, request(p, cmdMyCode))

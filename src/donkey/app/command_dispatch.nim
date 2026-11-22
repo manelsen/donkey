@@ -133,7 +133,9 @@ proc dispatchUiCommand*(env: CommandEnv; req: CommandDispatchRequest): CommandOu
   of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
     replied(rtUi, buildDeferredUiCommandText(req.command.kind))
   of cmdTasks:  replied(rtUi, buildTasksText())
-  of cmdAgents: replied(rtUi, buildAgentsText(s.toolsCount, s.toolClientsCount))
+  of cmdAgents:
+    let counts = if s.toolCounts != nil: s.toolCounts() else: ToolCounts()
+    replied(rtUi, buildAgentsText(counts.tools, counts.clients))
   of cmdPoll:   replied(rtUi, buildPollText())
   of cmdConfig:
     ## Channels with a config view present it themselves; this is the

@@ -1,33 +1,18 @@
 ## Pure command texts shared by every channel: help, menus, link codes,
-## identity, deferred UI commands, ping/uptime formatting and argument
-## parsing. Nothing here reads files, the environment or the clock.
+## identity, deferred UI commands, ping/uptime formatting. Availability lives
+## in `command_surface` and arguments in `command_args` (both re-exported
+## here for the channels that present texts). Nothing here reads files, the
+## environment or the clock.
 
 import std/strutils
 import ../pipeops
 import ../types
-import ../providers/smart_routing
 import ./command_catalog
 import ./command_routing
+import ./command_surface
+import ./command_args
 
-type
-  CommandSurfaceCaps* = object
-    ## What a channel's command surface can answer beyond plain text.
-    configUi*:         bool  ## a /config view with buttons
-    interactiveMenus*: bool  ## a /menu with buttons
-
-const
-  ThinkLevels* = ["off", "low", "medium", "high"]
-  BudgetPolicies* = ["cheap-first", "balanced", "quality-first"]
-  AllCommandSurfaceCaps* = CommandSurfaceCaps(configUi: true, interactiveMenus: true)
-
-func commandAvailable*(kind: CommandKind; caps: CommandSurfaceCaps): bool =
-  ## Whether a channel with `caps` answers `kind` with something other than
-  ## "unsupported". /config and /menu only exist as button views.
-  case kind
-  of cmdConfig: caps.configUi
-  of cmdMenu:   caps.interactiveMenus
-  of cmdNone, cmdCallback, cmdPair: false
-  else: true
+export command_surface, command_args
 
 func savedOrError*(saved: Result[void, string]; confirmation: string): string =
   ## What to tell the user after a preference change: the confirmation only
@@ -49,22 +34,6 @@ func buildDeferredUiCommandText*(kind: CommandKind): string =
     "TTS ainda não está disponível por slash command neste canal."
   else:
     ""
-
-func parseThinkArgs*(value: string): Result[string, string] =
-  let level = value.strip.toLowerAscii()
-  if level.len == 0:
-    return err("Use `/think <off|low|medium|high>`.")
-  if level notin ThinkLevels:
-    return err("Nível inválido: `" & level & "`.")
-  ok(level)
-
-func parseBudgetArgs*(value: string): Result[string, string] =
-  let policy = normalizeBudgetPolicy(value)
-  if value.strip.len == 0:
-    return err("Use `/budget <cheap-first|balanced|quality-first>`.")
-  if policy != value.strip.toLowerAscii():
-    return err("Policy inválida: `" & value.strip & "`.")
-  ok(policy)
 
 func buildWhoamiText*(userId: UserId; sessionId, channelId: string): string =
   "🆔 *Identity*\n\n" &
@@ -105,13 +74,6 @@ func appendCatalogLines(lines: var seq[string];
         lines.add(indent & "  " & formatHelpCommandLine(detail, withBackticks))
     if includeCategoryTitle:
       lines.add("")
-
-func helpCommandKinds*(caps: CommandSurfaceCaps): seq[CommandKind] =
-  ## Every command `/help` lists for a channel with `caps`.
-  let catalog = newCommandCatalog()
-  for cmd in catalog.commandsForCategories(defaultMenuCategories(), csHelp):
-    if commandAvailable(cmd.kind, caps) and cmd.kind notin result:
-      result.add(cmd.kind)
 
 func buildMenuButtons*(): seq[seq[(string, string)]] =
   ## Main menu buttons grouped by category.
@@ -241,9 +203,6 @@ func formatPingText*(provider, model: string; elapsedMs: int64;
     "pong — " & provider & " / " & model & " — " & $elapsedMs & "ms"
   else:
     provider & " error: " & error
-
-func nextReasoning*(current: string): string =
-  if current == "on": "off" else: "on"
 
 func reasoningToggleText*(next: string): string =
   if next == "on": "Reasoning ativado." else: "Reasoning desativado."

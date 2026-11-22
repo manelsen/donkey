@@ -386,6 +386,6 @@ proc newCommandServices*(memory: MdFileAdapter;
         memory.saveChannelPreference(userId, key, value)
       except CatchableError as e:
         err(e.msg),
-    toolsCount: toolsCount,
-    toolClientsCount: toolClientsCount,
+    toolCounts: proc(): ToolCounts {.gcsafe.} =
+      ToolCounts(tools: toolsCount, clients: toolClientsCount),
   )

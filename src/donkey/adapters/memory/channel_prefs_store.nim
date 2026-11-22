@@ -8,7 +8,6 @@ import ../../core/providers/smart_routing
 import ../../domain/message
 import ../../app/channel_prefs_parse
 import ../../app/skill_runtime
-import ../../core/commands/command_text
 import ./md_file
 
 export channel_prefs_parse.parseChannelPrefs, channel_prefs_parse.tryParseChannelPrefs
@@ -113,7 +112,3 @@ proc getCurrentBudgetPolicy*(memory: MdFileAdapter; userId: UserId): Result[stri
   let doc = ? memory.readPreferences(userId)
   discard ? tryParseChannelPrefs(doc)
   ok(parseSmartRoutingPrefs(doc).budgetPolicy)
-
-proc buildConfigText*(memory: MdFileAdapter; userId: UserId;
-                      withButtons = true): Result[string, string] =
-  ok(buildConfigText(? memory.loadChannelPrefs(userId), withButtons))

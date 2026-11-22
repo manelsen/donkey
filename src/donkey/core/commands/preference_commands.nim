@@ -9,7 +9,7 @@
 import std/[algorithm, sequtils, strutils]
 import ../pipeops
 import ../../ports/provider
-import ./command_text
+import ./command_args
 
 type
   ModelMenu* = seq[tuple[provider: string, models: seq[string]]]
